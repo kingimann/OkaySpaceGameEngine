@@ -1814,6 +1814,7 @@ int main(int argc, char** argv) {
 #endif
     Uint64 last = SDL_GetPerformanceCounter();
     bool windowFocused = true;   // Unity's Run In Background / mute-on-focus-loss
+    bool cursorReleased = false; // Esc / focus loss freed a game-locked cursor; a click re-locks it
     auto frame = [&]() {
         Uint64 fStart = SDL_GetPerformanceCounter();
         Input::ClearTypedText();                 // collect this frame's typed chars
@@ -1841,8 +1842,10 @@ int main(int argc, char** argv) {
 #endif
             if (e.type == SDL_WINDOWEVENT) {
                 if (e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) windowFocused = true;
-                else if (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) windowFocused = false;
+                else if (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) { windowFocused = false; cursorReleased = true; }
             }
+            // A click in the window gives a released cursor back to the game.
+            if (e.type == SDL_MOUSEBUTTONDOWN && cursorReleased) cursorReleased = false;
             if (e.type == SDL_CONTROLLERDEVICEADDED && !pad)
                 pad = SDL_GameControllerOpen(e.cdevice.which);
             if (e.type == SDL_TEXTINPUT) Input::FeedText(e.text.text);   // real characters
@@ -1870,6 +1873,9 @@ int main(int argc, char** argv) {
                     // hard-quit on Escape when the scene has no pause menu.
                     bool hasPause = scene.FindObjectOfType<okay::PauseMenu>() != nullptr;
                     if (!typing && cfg.quitOnEscape && !hasPause) running = false;
+                    // No pause menu to free it: Esc shows a locked cursor again (FPS/TPS
+                    // controllers re-lock it every frame); a click captures it again.
+                    else if (!hasPause && Cursor::IsLocked()) cursorReleased = true;
                 }
             }
         }
@@ -1946,7 +1952,7 @@ int main(int argc, char** argv) {
 
         // Apply the game's requested cursor state (Unity-style Cursor lock/visibility).
         static Vec2 s_virtualMouse{0, 0};
-        bool locked = Cursor::IsLocked() && !invModal;
+        bool locked = Cursor::IsLocked() && !invModal && !cursorReleased;
         // Unity-style hand-off: when a bag opens (mouselook was locked) free the pointer
         // AT SCREEN CENTRE, and when it closes warp back to centre before re-locking, so
         // the cursor always appears in the middle and the look anchor resets cleanly.
@@ -1962,7 +1968,7 @@ int main(int argc, char** argv) {
         // tip — ~half a slot above where it looks like it's pointing — which biased the
         // nearest-slot drop to the slot above. Hiding it makes the icon centre the only
         // reference, so "drop where the item is" lines up with the slot under it.
-        bool showCursor = (Cursor::visible || invModal) && !itemDragging;
+        bool showCursor = (Cursor::visible || invModal || cursorReleased) && !itemDragging;
         SDL_ShowCursor(showCursor ? SDL_ENABLE : SDL_DISABLE);
 
         // Feed the mouse (position in pixels + left/right/middle button state). When

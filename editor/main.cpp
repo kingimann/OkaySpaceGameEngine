@@ -1777,7 +1777,21 @@ static bool DragVec3Axis(const char* label, float v[3], float speed = 0.05f,
     for (int i = 0; i < 3; ++i) {
         ImGui::PushID(i);
         if (i > 0) ImGui::SameLine(0, st.ItemInnerSpacing.x);
-        if (ImGui::DragFloat("##c", &v[i], speed, 0.0f, 0.0f, fmt)) changed = true;
+        // In a narrow Inspector show fewer decimals rather than clipping the number
+        // (the value keeps full precision; only the display shortens).
+        const char* f = fmt;
+        static const char* kShorter[] = {"%.3f", "%.2f", "%.1f", "%.0f"};
+        const float room = ImGui::CalcItemWidth() - st.FramePadding.x * 2.0f - 4.0f;
+        for (int k = 0; k < 4; ++k) {
+            if (std::strcmp(f, kShorter[k]) != 0) continue;
+            for (; k < 3; ++k) {
+                char buf[32]; std::snprintf(buf, sizeof(buf), kShorter[k], v[i]);
+                if (ImGui::CalcTextSize(buf).x <= room) break;
+            }
+            f = kShorter[k];
+            break;
+        }
+        if (ImGui::DragFloat("##c", &v[i], speed, 0.0f, 0.0f, f)) changed = true;
         if (activated && ImGui::IsItemActivated()) *activated = true;
         ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
         ImGui::GetWindowDrawList()->AddRectFilled(mn, ImVec2(mn.x + 3.0f, mx.y), axCol[i], 2.0f);
@@ -2828,6 +2842,11 @@ bool   g_playPersp = true;
 // testing in the editor (Unity's "the Game view grabs the mouse"). Toggled in the Game
 // toolbar or auto-engaged when the game requests Cursor lock; Esc releases it.
 bool   g_gameMouseCapture = false;
+// Esc (or switching away from the editor) hands the cursor back even while the game
+// keeps asking for a locked one (FPS/TPS controllers re-lock every frame); clicking
+// in the Game view gives it to the game again, like Unity.
+bool   g_gameCursorReleased = false;
+bool   g_gameCanvasHovered = false;   // mouse over the Game view's picture (last frame)
 
 // Shortest distance (pixels) from point p to the segment a-b, for handle picking.
 static float SegDistPx(ImVec2 p, ImVec2 a, ImVec2 b) {
@@ -3957,6 +3976,115 @@ void ApplyTheme() {
 }
 
 // Build the default Unity-style dock layout once.
+// Right-click a panel's tab (Unity's tab menu): add another panel as a tab in the same
+// spot, close this one or the others beside it, or float it. Runs once per frame after
+// every panel has been drawn, so it covers all docked windows without each panel
+// wiring its own menu.
+struct DockPanelDef { const char* label; const char* window; bool* open; const char* group; };
+static const DockPanelDef* DockPanels(int& n) {
+    static const DockPanelDef k[] = {
+        {"Hierarchy",     "Hierarchy",                 &g_showHierarchy,     "Panels"},
+        {"Inspector",     "Inspector",                 &g_showInspector,     "Panels"},
+        {"Project",       "Project",                   &g_showProject,       "Panels"},
+        {"Console",       "Console###Console",         &g_showConsole,       "Panels"},
+        {"Game",          "Game",                      &g_showGame,          "Panels"},
+        {"Services",      "Services",                  &g_showServices,      "Panels"},
+        {"Scenes",        "Scenes",                    &g_showScenes,        "Panels"},
+        {"Save Manager",  "Save Manager",              &g_showSaveManager,   "Panels"},
+        {"Variables",     "Variables",                 &g_showVarWatch,      "Panels"},
+        {"History",       "History",                   &g_showHistory,       "Panels"},
+        {"Stats",         "Stats",                     &g_showStats,         "Panels"},
+        {"Lighting",      "Lighting",                  &g_showSceneSettings, "Panels"},
+        {"Profiler",      "Profiler",                  &g_showProfiler,      "Panels"},
+        {"Asset Manager", "Asset Manager",             &g_showAssetManager,  "Panels"},
+        {"Crash Log",     "Crash Log",                 &g_showCrashLog,      "Panels"},
+        {"Script Editor", "Script Editor",             &g_showScriptEditor,  "Editors & Tools"},
+        {"Visual Script", "Visual Script",             &g_showVisualScript,  "Editors & Tools"},
+        {"Custom Actions","Custom Actions",            &g_showCustomActions, "Editors & Tools"},
+        {"Animation",     "Animation###AnimationDock", &g_showAnimation,     "Editors & Tools"},
+        {"Animator",      "Animator",                  &g_showAnimatorGraph, "Editors & Tools"},
+        {"Modeling",      "Modeling",                  &g_showModeling,      "Editors & Tools"},
+        {"Sprite Editor", "Sprite Editor",             &g_showSpriteEditor,  "Editors & Tools"},
+        {"UI Theme",      "UI Theme",                  &g_showUIThemer,      "Editors & Tools"},
+    };
+    n = (int)(sizeof(k) / sizeof(k[0]));
+    return k;
+}
+static void DrawPanelTabMenu() {
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    static ImGuiID s_tabWin = 0;            // window whose tab was right-clicked
+    static std::string s_focusNext;         // a panel just added: focus it once it exists
+    int n = 0; const DockPanelDef* defs = DockPanels(n);
+    if (!s_focusNext.empty()) {
+        ImGuiWindow* fw = ImGui::FindWindowByName(s_focusNext.c_str());
+        if (fw && fw->WasActive) { ImGui::SetWindowFocus(s_focusNext.c_str()); s_focusNext.clear(); }
+    }
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && g.HoveredWindow && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) {
+        for (ImGuiWindow* w : g.Windows) {
+            ImGuiDockNode* node = w->DockNode;
+            if (!node || !node->IsVisible || !node->TabBar || node->IsHiddenTabBar() || node->IsNoTabBar()) continue;
+            if (g.HoveredWindow != node->HostWindow) continue;
+            if (!ImGui::IsMouseHoveringRect(w->DC.DockTabItemRect.Min, w->DC.DockTabItemRect.Max, false)) continue;
+            s_tabWin = w->ID;
+            ImGui::OpenPopup("##paneltabmenu");
+            break;
+        }
+    }
+    if (!ImGui::BeginPopup("##paneltabmenu")) return;
+    ImGuiWindow* w = ImGui::FindWindowByID(s_tabWin);
+    if (!w || !w->DockNode) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+    auto defFor = [&](const char* winName) -> const DockPanelDef* {
+        for (int i = 0; i < n; ++i) if (std::strcmp(defs[i].window, winName) == 0) return &defs[i];
+        return nullptr;
+    };
+    const DockPanelDef* self = defFor(w->Name);
+    if (self) ImGui::TextDisabled("%s", self->label);
+    else ImGui::TextDisabled("%s", std::string((const char*)w->Name, ImGui::FindRenderedTextEnd(w->Name)).c_str());
+    ImGui::Separator();
+    const ImGuiID nodeId = w->DockNode->ID;
+    auto addTab = [&](const DockPanelDef& d) {
+        if (ImGuiWindow* dw = ImGui::FindWindowByName(d.window); dw && dw->DockNode && dw->DockNode->ID == nodeId && *d.open) {
+            ImGui::SetWindowFocus(d.window);   // already a tab here: just bring it forward
+            return;
+        }
+        ImGui::DockBuilderDockWindow(d.window, nodeId);
+        *d.open = true;
+        s_focusNext = d.window;
+    };
+    if (ImGui::BeginMenu("Add Tab")) {
+        const char* lastGroup = nullptr;
+        for (int i = 0; i < n; ++i) {
+            const DockPanelDef& d = defs[i];
+            if (&d == self) continue;
+            if (lastGroup && std::strcmp(lastGroup, d.group) != 0) ImGui::Separator();
+            lastGroup = d.group;
+            ImGuiWindow* dw = ImGui::FindWindowByName(d.window);
+            const bool here = *d.open && dw && dw->DockNode && dw->DockNode->ID == nodeId;
+            if (ImGui::MenuItem(d.label, here ? "here" : (*d.open ? "open" : nullptr))) addTab(d);
+            if (ImGui::IsItemHovered() && *d.open && !here)
+                ImGui::SetTooltip("Already open elsewhere: moves it into this tab group.");
+        }
+        ImGui::EndMenu();
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("Close Tab", nullptr, false, self != nullptr)) *self->open = false;
+    {
+        int others = 0;
+        for (int i = 0; i < n; ++i) {
+            ImGuiWindow* dw = ImGui::FindWindowByName(defs[i].window);
+            if (&defs[i] != self && *defs[i].open && dw && dw->DockNode && dw->DockNode->ID == nodeId) ++others;
+        }
+        if (ImGui::MenuItem("Close Other Tabs", nullptr, false, others > 0))
+            for (int i = 0; i < n; ++i) {
+                ImGuiWindow* dw = ImGui::FindWindowByName(defs[i].window);
+                if (&defs[i] != self && dw && dw->DockNode && dw->DockNode->ID == nodeId) *defs[i].open = false;
+            }
+    }
+    if (ImGui::MenuItem("Float (undock)")) ImGui::DockContextQueueUndockWindow(&g, w);
+    ImGui::Separator();
+    if (ImGui::MenuItem("Reset Layout")) g_resetLayout = true;
+    ImGui::EndPopup();
+}
 void BuildDefaultLayout(ImGuiID dockId, ImVec2 size) {
     ImGui::DockBuilderRemoveNode(dockId);
     ImGui::DockBuilderAddNode(dockId, ImGuiDockNodeFlags_DockSpace);
@@ -7289,6 +7417,7 @@ void DrawProject(EditorState& ed) {
     const float detailsH = selected.empty() ? ImGui::GetFrameHeightWithSpacing() + 4.0f
                                             : 112.0f;
     ImGui::BeginChild("gridscroll", ImVec2(0, -detailsH), false);
+    const float gridAvailH = ImGui::GetContentRegionAvail().y;   // for fitting the tiles (below)
 
     // Map the filter to a set of extensions ("" = always show, dirs always show).
     auto passFilter = [&](const std::string& ext, bool isDir) -> bool {
@@ -7409,7 +7538,10 @@ void DrawProject(EditorState& ed) {
             else { if (!qText.empty()) qText += ' '; qText += w; }
         }
     }
-    const float cell = s_cell;
+    // In a short panel (the default dock is only a few rows tall) shrink the tiles so
+    // at least one full row, names included, fits instead of being cut off mid-tile.
+    const float tileLabelH = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y + 10.0f;
+    const float cell = std::clamp(gridAvailH - tileLabelH, std::min(40.0f, s_cell), s_cell);
     float availW = ImGui::GetContentRegionAvail().x;
     int cols = (int)(availW / (cell + ImGui::GetStyle().ItemSpacing.x));
     if (cols < 1) cols = 1;
@@ -7475,6 +7607,20 @@ void DrawProject(EditorState& ed) {
             if (s_multi.size() > 1)
                 ImGui::TextDisabled("%d selected", (int)s_multi.size());
             if (ImGui::MenuItem("Open")) wantOpen = true;
+            if (!isDir && ext == ".okayscene" && ImGui::MenuItem("Add to Open Scene")) MergeSceneIntoCurrent(ed, full);
+            if (!isDir && ext == ".okayscene" && ImGui::IsItemHovered())
+                ImGui::SetTooltip("Load its objects into the scene you have open (additive), instead of switching scenes.");
+            if (!isDir && ext == ".okayprefab" && ImGui::MenuItem("Place in Scene")) wantOpen = true;
+            if (!isDir && ext == ".okayprefab" && ImGui::MenuItem("Place as Child of Selected", nullptr, false, ed.selected() != nullptr)) {
+                ed.PushUndo();
+                std::string err;
+                if (GameObject* r = SceneSerializer::InstantiateFromFile(ed.scene(), full, &err)) {
+                    r->transform->SetParent(ed.selected()->transform, false);
+                    ed.Select(r); ed.dirty = true;
+                } else ConsoleLog("Prefab load failed: " + err);
+            }
+            if (isDir && ImGui::MenuItem(IsFavFolder(full) ? "Remove from Favorites" : "Add to Favorites"))
+                ToggleFavFolder(full);
             // A direct "edit in Script Editor" for code files (in case a
             // double-click was missed).
             if (!isDir && (ext == ".okay" || ext == ".lua" || ext == ".cs")) {
@@ -7502,7 +7648,16 @@ void DrawProject(EditorState& ed) {
             // Paste lands inside a folder when right-clicked on one, else beside the item.
             if (!s_assetClip.empty() && ImGui::MenuItem(isDir ? "Paste Into" : "Paste"))
                 pasteInto(isDir ? fs::path(full) : dir);
-            if (ImGui::MenuItem("Copy Path")) ImGui::SetClipboardText(full.c_str());
+            if (ImGui::BeginMenu("Copy Text")) {
+                if (ImGui::MenuItem("Name")) ImGui::SetClipboardText(name.c_str());
+                if (ImGui::MenuItem("Path in Project")) {
+                    std::error_code re;
+                    fs::path rel = fs::relative(fs::path(full), root.parent_path(), re);
+                    ImGui::SetClipboardText((re ? full : rel.generic_string()).c_str());
+                }
+                if (ImGui::MenuItem("Full Path")) ImGui::SetClipboardText(full.c_str());
+                ImGui::EndMenu();
+            }
             if (ImGui::BeginMenu("Label")) {
                 int cur = AssetLabelOf(labelProj, full);
                 for (int li = 0; li < kAssetLabelCount; ++li) {
@@ -7642,11 +7797,21 @@ void DrawProject(EditorState& ed) {
                 ImGui::EndDragDropSource();
             }
             if (isDir) AssetDropTarget(e.path());
-            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + cell);
-            if (isSel) ImGui::PushStyleColor(ImGuiCol_Text, AccentCol(1.0f));
-            ImGui::TextWrapped("%s", name.c_str());
-            if (isSel) ImGui::PopStyleColor();
-            ImGui::PopTextWrapPos();
+            {   // one line, elided to the tile width (the tooltip has the full name), so
+                // a long name can't spill past the row the grid reserved for it
+                std::string lbl = name;
+                if (ImGui::CalcTextSize(lbl.c_str()).x > cell) {
+                    while (lbl.size() > 1 && ImGui::CalcTextSize((lbl + "\xE2\x80\xA6").c_str()).x > cell) {
+                        // drop a whole UTF-8 character (its continuation bytes, then its lead byte)
+                        while (lbl.size() > 1 && ((unsigned char)lbl.back() & 0xC0) == 0x80) lbl.pop_back();
+                        lbl.pop_back();
+                    }
+                    lbl += "\xE2\x80\xA6";
+                }
+                if (isSel) ImGui::PushStyleColor(ImGuiCol_Text, AccentCol(1.0f));
+                ImGui::TextUnformatted(lbl.c_str());
+                if (isSel) ImGui::PopStyleColor();
+            }
             ImGui::EndGroup();
             hov = ImGui::IsItemHovered();
             if (hov) {
@@ -7757,6 +7922,25 @@ void DrawProject(EditorState& ed) {
             if (!s_assetClip.empty() && ImGui::MenuItem("Paste")) pasteInto(dir);
             ImGui::Separator();
         }
+        if (ImGui::BeginMenu("View")) {
+            if (ImGui::MenuItem("Grid", nullptr, s_view == 0)) { s_view = 0; SaveProjectViewPrefs(); }
+            if (ImGui::MenuItem("List", nullptr, s_view == 1)) { s_view = 1; SaveProjectViewPrefs(); }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Sort By")) {
+            const char* sorts[] = {"Name", "Type", "Size", "Date modified"};
+            for (int si = 0; si < 4; ++si)
+                if (ImGui::MenuItem(sorts[si], nullptr, s_sort == si)) { s_sort = si; SaveProjectViewPrefs(); }
+            ImGui::EndMenu();
+        }
+        ImGui::Separator();
+        if (dir != root && ImGui::MenuItem("Up One Folder")) {
+            std::strncpy(dirBuf, dir.parent_path().string().c_str(), sizeof(dirBuf) - 1);
+            dirBuf[sizeof(dirBuf) - 1] = '\0';
+        }
+        if (canEdit && ImGui::MenuItem(IsFavFolder(dir.string()) ? "Remove Folder from Favorites" : "Add Folder to Favorites"))
+            ToggleFavFolder(dir.string());
+        if (ImGui::MenuItem("Copy Folder Path")) ImGui::SetClipboardText(dir.string().c_str());
         if (ImGui::MenuItem("Show in Explorer")) extide::RevealInFiles(dir.string());
         ImGui::EndPopup();
     }
@@ -13458,6 +13642,14 @@ void HandleShortcuts(EditorState& ed) {
         g_clipboard = SceneSerializer::SerializeObject(*ed.selected());
         ConsoleLog("Copied " + ed.selected()->name);
     }
+    // (Not while the Project panel is focused: there Ctrl+X cuts the selected files.)
+    const bool projFocused = GImGui->NavWindow && GImGui->NavWindow->RootWindow &&
+                             std::strcmp(GImGui->NavWindow->RootWindow->Name, "Project") == 0;
+    if (!animKeys && !projFocused && ctrl && ImGui::IsKeyPressed(ImGuiKey_X, false) && ed.selected()) {
+        g_clipboard = SceneSerializer::SerializeObject(*ed.selected());
+        ConsoleLog("Cut " + ed.selected()->name + " (Ctrl+V to paste)");
+        ed.DeleteSelected();
+    }
     if (!animKeys && ctrl && ImGui::IsKeyPressed(ImGuiKey_V, false) && !g_clipboard.empty()) {
         ed.PushUndo();
         if (GameObject* go = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard)) {
@@ -14861,6 +15053,44 @@ static void HierKindIcon(GameObject* go, const ImVec2& pos, float sz, ImDrawList
             dl->AddLine(ImVec2(c.x + std::cos(a) * r * 0.72f, c.y + std::sin(a) * r * 0.72f),
                         ImVec2(c.x + std::cos(a) * r * 1.05f, c.y + std::sin(a) * r * 1.05f), ic, 1.4f);
         }
+    } else if (go->GetComponent<Canvas>()) {                 // UI canvas: a screen
+        ImU32 ic = col(120, 200, 235);
+        dl->AddRect(ImVec2(c.x - r, c.y - r * 0.75f), ImVec2(c.x + r, c.y + r * 0.55f), ic, 1.5f, 0, 1.5f);
+        dl->AddLine(ImVec2(c.x - r * 0.4f, c.y + r * 0.95f), ImVec2(c.x + r * 0.4f, c.y + r * 0.95f), ic, 1.5f);
+    } else if (go->GetComponent<UIButton>()) {               // button: rounded box with a click point
+        ImU32 ic = col(110, 170, 250);
+        dl->AddRectFilled(ImVec2(c.x - r, c.y - r * 0.55f), ImVec2(c.x + r, c.y + r * 0.55f), ic, r * 0.45f);
+        dl->AddCircleFilled(c, r * 0.22f, IM_COL32(20, 24, 32, 255), 8);
+    } else if (go->GetComponent<UIToggle>()) {               // switch
+        ImU32 ic = col(110, 200, 150);
+        dl->AddRect(ImVec2(c.x - r, c.y - r * 0.5f), ImVec2(c.x + r, c.y + r * 0.5f), ic, r * 0.5f, 0, 1.4f);
+        dl->AddCircleFilled(ImVec2(c.x + r * 0.45f, c.y), r * 0.32f, ic, 10);
+    } else if (go->GetComponent<UISlider>() || go->GetComponent<UIProgressBar>()) {   // bar
+        ImU32 ic = col(110, 200, 150);
+        dl->AddRect(ImVec2(c.x - r, c.y - r * 0.28f), ImVec2(c.x + r, c.y + r * 0.28f), ic, r * 0.28f, 0, 1.3f);
+        dl->AddRectFilled(ImVec2(c.x - r, c.y - r * 0.28f), ImVec2(c.x + r * 0.15f, c.y + r * 0.28f), ic, r * 0.28f);
+    } else if (go->GetComponent<UIInputField>() || go->GetComponent<UIDropdown>()) {   // field
+        ImU32 ic = col(170, 180, 200);
+        dl->AddRect(ImVec2(c.x - r, c.y - r * 0.55f), ImVec2(c.x + r, c.y + r * 0.55f), ic, 2.0f, 0, 1.4f);
+        if (go->GetComponent<UIDropdown>())
+            dl->AddTriangleFilled(ImVec2(c.x + r * 0.2f, c.y - r * 0.15f), ImVec2(c.x + r * 0.7f, c.y - r * 0.15f), ImVec2(c.x + r * 0.45f, c.y + r * 0.2f), ic);
+        else dl->AddLine(ImVec2(c.x - r * 0.55f, c.y - r * 0.3f), ImVec2(c.x - r * 0.55f, c.y + r * 0.3f), ic, 1.4f);
+    } else if (go->GetComponent<UIImage>()) {                // picture
+        ImU32 ic = col(130, 220, 150);
+        dl->AddRect(ImVec2(c.x - r, c.y - r * 0.8f), ImVec2(c.x + r, c.y + r * 0.8f), ic, 1.5f, 0, 1.4f);
+        dl->AddTriangleFilled(ImVec2(c.x - r * 0.7f, c.y + r * 0.6f), ImVec2(c.x, c.y - r * 0.1f), ImVec2(c.x + r * 0.7f, c.y + r * 0.6f), ic);
+    } else if (go->GetComponent<UIPanel>() || go->GetComponent<UIScrollView>() || go->GetComponent<UITabs>()) {
+        ImU32 ic = col(150, 165, 195);                        // panel: a card
+        dl->AddRectFilled(ImVec2(c.x - r, c.y - r * 0.75f), ImVec2(c.x + r, c.y + r * 0.75f), IM_COL32(150, 165, 195, 60), 2.5f);
+        dl->AddRect(ImVec2(c.x - r, c.y - r * 0.75f), ImVec2(c.x + r, c.y + r * 0.75f), ic, 2.5f, 0, 1.4f);
+    } else if (go->GetComponent<UIRadialProgress>()) {
+        ImU32 ic = col(110, 200, 150);
+        dl->AddCircle(c, r * 0.8f, IM_COL32(110, 200, 150, 90), 16, 1.6f);
+        dl->PathArcTo(c, r * 0.8f, -1.57f, 1.2f, 10); dl->PathStroke(ic, 0, 1.8f);
+    } else if (go->GetComponent<EventSystem>()) {            // pointer arrow
+        ImU32 ic = col(170, 180, 200);
+        const ImVec2 pts[] = {ImVec2(c.x - r * 0.6f, c.y - r), ImVec2(c.x - r * 0.6f, c.y + r * 0.6f), ImVec2(c.x - r * 0.15f, c.y + r * 0.2f), ImVec2(c.x + r * 0.5f, c.y + r * 0.2f)};
+        dl->AddPolyline(pts, 4, ic, ImDrawFlags_Closed, 1.4f);
     } else if (go->GetComponent<MeshRenderer>()) {
         ImU32 ic = col(120, 170, 250);   // little isometric cube
         dl->AddRect(ImVec2(c.x - r, c.y - r * 0.45f), ImVec2(c.x + r * 0.45f, c.y + r), ic, 0, 0, 1.5f);
@@ -14894,6 +15124,12 @@ static void HierKindIcon(GameObject* go, const ImVec2& pos, float sz, ImDrawList
         dl->AddRectFilled(ImVec2(c.x - r, c.y - r * 0.45f), ImVec2(c.x - r * 0.25f, c.y + r * 0.45f), ic, 1.0f);
         dl->AddTriangleFilled(ImVec2(c.x - r * 0.35f, c.y), ImVec2(c.x + r * 0.5f, c.y - r * 0.8f),
                               ImVec2(c.x + r * 0.5f, c.y + r * 0.8f), ic);
+    } else if (go->transform && go->transform->ChildCount() > 0 && go->Components().size() <= 1) {
+        ImU32 ic = col(170, 175, 190);   // an empty group of children: a folder
+        dl->AddRect(ImVec2(c.x - r, c.y - r * 0.55f), ImVec2(c.x + r, c.y + r * 0.75f), ic, 1.5f, 0, 1.3f);
+        dl->AddLine(ImVec2(c.x - r, c.y - r * 0.55f), ImVec2(c.x - r * 0.6f, c.y - r * 0.9f), ic, 1.3f);
+        dl->AddLine(ImVec2(c.x - r * 0.6f, c.y - r * 0.9f), ImVec2(c.x - r * 0.05f, c.y - r * 0.9f), ic, 1.3f);
+        dl->AddLine(ImVec2(c.x - r * 0.05f, c.y - r * 0.9f), ImVec2(c.x + r * 0.15f, c.y - r * 0.55f), ic, 1.3f);
     } else {
         dl->AddCircleFilled(c, r * 0.32f, IM_COL32(150, 155, 165, 200), 8);
     }
@@ -14908,6 +15144,20 @@ static char g_prefabNameBuf[128] = "";
 static bool g_hierSort   = false;            // sort siblings A->Z (Unity's alpha sort)
 static int  g_hierExpand = 0;                // 1=expand-all, 2=collapse-all (one frame)
 static GameObject* g_hierOpenNode = nullptr; // Left/Right arrow expand/collapse target
+static GameObject* g_hierExpandRoot = nullptr; // "Expand/Collapse All Below" target (one frame)
+static int  g_hierExpandRootVal = 0;          // 1 = expand, 0 = collapse
+// Select a set of objects in the Hierarchy (the first becomes the active one).
+static void HierSelectMany(EditorState& ed, const std::vector<GameObject*>& objs) {
+    if (objs.empty()) return;
+    ed.Select(objs.back());   // ToggleSelect makes each added object active, so go back to front
+    for (std::size_t i = objs.size() - 1; i-- > 0;) if (!ed.IsSelected(objs[i])) ed.ToggleSelect(objs[i]);
+}
+// Hierarchy path of an object ("Canvas/Lobby/Title"), for Copy Path.
+static std::string HierPath(GameObject* g) {
+    std::string path = g->name;
+    for (Transform* t = g->transform->Parent(); t; t = t->Parent()) path = t->gameObject->name + "/" + path;
+    return path;
+}
 static int  g_hierOpenVal = 0;               // 1 = expand, 0 = collapse (one frame)
 
 // Component "icon" badges at a Hierarchy row's right edge (like Unity showing
@@ -15153,7 +15403,12 @@ void DrawHierarchy(EditorState& ed) {
     int hierRow = 0;                        // visible-row counter for the zebra striping
     std::vector<GameObject*> visRows;       // visible rows in draw order (arrow-key nav)
     GameObject* rangeClick = nullptr;       // Shift+click target — resolved after the draw
+    bool cutPending = false;                // menu Cut: delete the selection after the draw
     std::string curSceneSection = "\x01";   // sentinel distinct from any real value (incl. "")
+    // The selection changed this frame: open its parents once so it's visible.
+    static GameObject* s_revealFor = nullptr;
+    GameObject* revealSel = nullptr;
+    if (ed.selected() != s_revealFor) { s_revealFor = ed.selected(); revealSel = s_revealFor; }
     for (GameObject* go : roots) {
         if (anyMerged && go->sourceScene != curSceneSection) {
             curSceneSection = go->sourceScene;
@@ -15178,15 +15433,22 @@ void DrawHierarchy(EditorState& ed) {
             }
             ImGui::Separator();
         }
+        // Unity-style folding: top-level objects start open, everything deeper starts
+        // closed (a prebuilt UI screen or an imported model no longer floods the list),
+        // and selecting an object opens its parents so it's visible (revealSel, above).
         std::function<void(GameObject*)> drawNode = [&](GameObject* node) {
             ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow |
-                                       ImGuiTreeNodeFlags_DefaultOpen |
                                        ImGuiTreeNodeFlags_SpanAvailWidth;
+            if (!node->transform->Parent()) flags |= ImGuiTreeNodeFlags_DefaultOpen;
             if (ed.IsSelected(node)) flags |= ImGuiTreeNodeFlags_Selected;
             int childCount = node->transform->ChildCount();
             if (childCount == 0) flags |= ImGuiTreeNodeFlags_Leaf;
+            if (revealSel && childCount > 0 && revealSel != node && revealSel->IsSelfOrDescendantOf(node))
+                ImGui::SetNextItemOpen(true);
             // Expand All / Collapse All applies to nodes that actually have children.
             if (g_hierExpand && childCount > 0) ImGui::SetNextItemOpen(g_hierExpand == 1);
+            if (g_hierExpandRoot && childCount > 0 && node->IsSelfOrDescendantOf(g_hierExpandRoot))
+                ImGui::SetNextItemOpen(g_hierExpandRootVal == 1);
             // Left/Right arrow expand/collapse request from last frame's key press.
             if (node == g_hierOpenNode && childCount > 0)
                 ImGui::SetNextItemOpen(g_hierOpenVal == 1);
@@ -15396,6 +15658,10 @@ void DrawHierarchy(EditorState& ed) {
                     ed.dirty = true;
                 }
                 ImGui::Separator();
+                if (ImGui::MenuItem("Cut", "Ctrl+X")) {
+                    g_clipboard = SceneSerializer::SerializeObject(*node);
+                    cutPending = true;   // deleted after the tree is drawn
+                }
                 if (ImGui::MenuItem("Copy", "Ctrl+C"))
                     g_clipboard = SceneSerializer::SerializeObject(*node);
                 if (ImGui::MenuItem("Paste As Sibling", "Ctrl+V", false, !g_clipboard.empty())) {
@@ -15435,10 +15701,13 @@ void DrawHierarchy(EditorState& ed) {
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bind this model's mesh to the humanoid skeleton (auto weights):\nevery built-in animation, authored clip, movement state, controller\nand the Animation window then work on it. The model should stand\nupright facing +Z, in a T/A/rest pose.");
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem("Move Up", "Ctrl+Up"))     { ed.PushUndo(); ed.scene().MoveSibling(node, -1); ed.dirty = true; }
-                if (ImGui::MenuItem("Move Down", "Ctrl+Down")) { ed.PushUndo(); ed.scene().MoveSibling(node, +1); ed.dirty = true; }
-                if (ImGui::MenuItem("Move to Top"))    { ed.PushUndo(); ed.scene().MoveSiblingToEdge(node, true);  ed.dirty = true; }
-                if (ImGui::MenuItem("Move to Bottom")) { ed.PushUndo(); ed.scene().MoveSiblingToEdge(node, false); ed.dirty = true; }
+                if (ImGui::BeginMenu("Order")) {
+                    if (ImGui::MenuItem("Move Up", "Ctrl+Up"))     { ed.PushUndo(); ed.scene().MoveSibling(node, -1); ed.dirty = true; }
+                    if (ImGui::MenuItem("Move Down", "Ctrl+Down")) { ed.PushUndo(); ed.scene().MoveSibling(node, +1); ed.dirty = true; }
+                    if (ImGui::MenuItem("Move to Top"))    { ed.PushUndo(); ed.scene().MoveSiblingToEdge(node, true);  ed.dirty = true; }
+                    if (ImGui::MenuItem("Move to Bottom")) { ed.PushUndo(); ed.scene().MoveSiblingToEdge(node, false); ed.dirty = true; }
+                    ImGui::EndMenu();
+                }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Create Empty Child")) {
                     GameObject* child = ed.scene().CreateGameObject("Child");
@@ -15494,10 +15763,54 @@ void DrawHierarchy(EditorState& ed) {
                     ed.dirty = true;
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem("Focus (frame)")) {
-                    ed.camTarget = node->transform->Position();
-                    ed.cameraPos = {node->transform->Position().x, node->transform->Position().y};
+                if (ImGui::BeginMenu("Select")) {
+                    std::vector<GameObject*> pick;
+                    if (ImGui::MenuItem("Children", nullptr, false, childCount > 0)) {
+                        for (Transform* c : node->transform->Children()) pick.push_back(c->gameObject);
+                    }
+                    if (ImGui::MenuItem("Everything Below", nullptr, false, childCount > 0)) {
+                        for (const auto& up : ed.scene().Objects())
+                            if (up.get() != node && up->IsSelfOrDescendantOf(node)) pick.push_back(up.get());
+                    }
+                    if (ImGui::MenuItem("Parent", nullptr, false, node->transform->Parent() != nullptr))
+                        pick.push_back(node->transform->Parent()->gameObject);
+                    if (ImGui::MenuItem("Siblings")) {
+                        Transform* par = node->transform->Parent();
+                        for (const auto& up : ed.scene().Objects())
+                            if (up->transform->Parent() == par) pick.push_back(up.get());
+                    }
+                    if (ImGui::MenuItem("Same Name")) {
+                        for (const auto& up : ed.scene().Objects())
+                            if (up->name == node->name) pick.push_back(up.get());
+                    }
+                    if (!pick.empty()) {
+                        HierSelectMany(ed, pick);
+                        s_revealFor = nullptr;   // open their parents so they show
+                    }
+                    ImGui::EndMenu();
                 }
+                if (childCount > 0) {
+                    if (ImGui::MenuItem("Expand All Below"))   { g_hierExpandRoot = node; g_hierExpandRootVal = 1; }
+                    if (ImGui::MenuItem("Collapse All Below")) { g_hierExpandRoot = node; g_hierExpandRootVal = 0; }
+                }
+                if (ImGui::BeginMenu("Transform")) {
+                    auto each = [&](auto fn) { ed.PushUndo(); for (GameObject* g : HierTargets(ed, node)) fn(g->transform); ed.dirty = true; };
+                    if (ImGui::MenuItem("Reset Position")) each([](Transform* t) { t->localPosition = Vec3::Zero; });
+                    if (ImGui::MenuItem("Reset Rotation")) each([](Transform* t) { t->localRotation = Quat::Identity; });
+                    if (ImGui::MenuItem("Reset Scale"))    each([](Transform* t) { t->localScale = Vec3::One; });
+                    if (ImGui::MenuItem("Reset All"))      each([](Transform* t) { t->localPosition = Vec3::Zero; t->localRotation = Quat::Identity; t->localScale = Vec3::One; });
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Move to View Centre")) each([&](Transform* t) { t->SetPosition(ed.camTarget); });
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Put it where the Scene view camera is looking.");
+                    ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("Copy Text")) {
+                    if (ImGui::MenuItem("Name")) ImGui::SetClipboardText(node->name.c_str());
+                    if (ImGui::MenuItem("Path")) ImGui::SetClipboardText(HierPath(node).c_str());
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", HierPath(node).c_str());
+                    ImGui::EndMenu();
+                }
+                ImGui::Separator();
                 if (ImGui::MenuItem("Save As Prefab...")) {
                     g_prefabSaveTarget = node;
                     std::strncpy(g_prefabNameBuf, node->name.c_str(), sizeof(g_prefabNameBuf) - 1);
@@ -15519,6 +15832,7 @@ void DrawHierarchy(EditorState& ed) {
         drawNode(go);
     }
     g_hierOpenNode = nullptr;   // the arrow expand/collapse request was applied above
+    if (cutPending) { ed.DeleteSelected(); ConsoleLog("Cut to the clipboard (Ctrl+V to paste)"); }
     // Shift+click: select the whole range between the active object and the
     // clicked row, in visible order (Unity/Explorer-style range selection).
     if (rangeClick) {
@@ -15578,6 +15892,7 @@ void DrawHierarchy(EditorState& ed) {
         }
     }
     g_hierExpand = 0;   // expand/collapse-all is a one-frame request
+    g_hierExpandRoot = nullptr;
     // Right-click empty space to create objects.
     if (ImGui::BeginPopupContextWindow("HierarchyCtx",
             ImGuiPopupFlags_NoOpenOverItems | ImGuiPopupFlags_MouseButtonRight)) {
@@ -15646,6 +15961,17 @@ void DrawHierarchy(EditorState& ed) {
             ed.PushUndo();
             if (GameObject* p = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard)) { ed.Select(p); ed.dirty = true; }
         }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Select All", "Ctrl+A")) {
+            std::vector<GameObject*> all;
+            for (const auto& up : ed.scene().Objects()) all.push_back(up.get());
+            HierSelectMany(ed, all);
+        }
+        if (ImGui::MenuItem("Deselect", nullptr, false, ed.selected() != nullptr)) ed.Select(nullptr);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Expand All"))   g_hierExpand = 1;
+        if (ImGui::MenuItem("Collapse All")) g_hierExpand = 2;
+        ImGui::MenuItem("Sort A-Z", nullptr, &g_hierSort);
         ImGui::EndPopup();
     }
 
@@ -22311,22 +22637,80 @@ static int sCompForceOpen    = -1;
 static okay::Component* sMoveComp = nullptr;
 static int sMoveDelta = 0;
 
+// Put the next item on the same line if `nextW` px still fit there, else on a new
+// line — rows of buttons / small fields flow instead of clipping in a narrow panel.
+static bool SameLineOrWrap(float nextW) {
+    const float right = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+    const float used = ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x;
+    if (right - used < nextW) return false;   // wraps onto a new line
+    ImGui::SameLine();
+    return true;
+}
+static float ButtonW(const char* label) {
+    return ImGui::CalcTextSize(label, nullptr, true).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+}
+
+// One header bar per component (Unity-style): fold arrow, enable box and a type
+// glyph inside the bar, the name, and a "..." menu on the right (move up / down,
+// expand / collapse all, remove). The name gets the whole bar instead of being
+// squeezed out by separate arrow buttons in a narrow Inspector.
 static bool CompHeader(const char* label, okay::Component* comp, okay::Component** toRemove,
                        bool removable = true) {
     ImGui::PushID(comp);
     bool en = comp->enabled;
-    if (ImGui::Checkbox("##enabled", &en)) comp->enabled = en;
-    ImGui::SameLine();
-    if (ImGui::ArrowButton("##mvup", ImGuiDir_Up))   { sMoveComp = comp; sMoveDelta = -1; }
-    ImGui::SameLine();
-    if (ImGui::ArrowButton("##mvdn", ImGuiDir_Down)) { sMoveComp = comp; sMoveDelta = +1; }
-    ImGui::SameLine();
+    const float fh = ImGui::GetFrameHeight();
+    const float startX = ImGui::GetCursorPosX();
+    const float barW = ImGui::GetContentRegionAvail().x;
+    // Room after the fold arrow for the enable box + glyph, and before the "..." menu.
+    const float arrowW = ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.x * 2.0f;
+    const float lead = fh + 4.0f + fh * 0.66f + 6.0f;
+    const float spaceW = std::max(1.0f, ImGui::CalcTextSize(" ").x);
+    std::string title = std::string((std::size_t)std::ceil(lead / spaceW), ' ');
+    {   // fit the name between the glyph and the "..." button
+        std::string nm = label;
+        const float room = barW - arrowW - lead - fh - 10.0f;
+        if (room > 20.0f && ImGui::CalcTextSize(nm.c_str()).x > room) {
+            while (nm.size() > 1 && ImGui::CalcTextSize((nm + "\xE2\x80\xA6").c_str()).x > room) nm.pop_back();
+            nm += "\xE2\x80\xA6";
+        }
+        title += nm;
+    }
+    title += "###hdr";
+    // Default to open the first time we see this component, then honor what the user
+    // toggled it to (per INSTANCE, so several Actions don't fold together).
+    char okey[32]; std::snprintf(okey, sizeof(okey), "%p", (void*)comp);
+    auto it = sCompOpen.find(okey);
+    bool want = it == sCompOpen.end() ? true : it->second;
+    if (sCompForceOpen != -1) want = sCompForceOpen == 1;   // Expand/Collapse All
+    ImGui::SetNextItemOpen(want, ImGuiCond_Always);
+    if (!en) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.62f, 0.66f, 1.0f));
+    bool open = ImGui::CollapsingHeader(title.c_str(), ImGuiTreeNodeFlags_AllowOverlap);
+    if (!en) ImGui::PopStyleColor();
+    sCompOpen[okey] = open;
+    const ImVec2 hmn = ImGui::GetItemRectMin(), hmx = ImGui::GetItemRectMax();
+    {   // accent bar down the left edge: each component reads as a titled card
+        ImVec4 barCol = CategoryColor(label); barCol.w = 0.95f;
+        ImGui::GetWindowDrawList()->AddRectFilled(hmn, ImVec2(hmn.x + 3.0f, hmx.y),
+            ImGui::GetColorU32(en ? barCol : ImVec4(0.45f, 0.47f, 0.51f, 0.8f)), 1.5f);
+    }
+    const bool hdrRightClick = ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right);
+    // Enable box, inside the bar after the fold arrow.
+    ImGui::SameLine(startX + arrowW);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 2));
+    {
+        const float cb = ImGui::GetFrameHeight();
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (fh - cb) * 0.5f);
+        if (ImGui::Checkbox("##enabled", &en)) comp->enabled = en;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip(en ? "Enabled (click to turn this component off)" : "Disabled (click to turn it on)");
+    }
+    ImGui::PopStyleVar();
+    ImGui::SameLine(0, 6.0f);
     {   // Category glyph chip: a tiny drawn icon in the component family's color
         // (square = rendering, circle = physics, triangle = animation, diamond =
         // scripts, speaker = audio, ring = UI) so headers scan by shape too.
         ImVec4 c = CategoryColor(label);
-        float h = ImGui::GetFrameHeight(), s = h * 0.66f, off = (h - s) * 0.5f;
-        ImVec2 p = ImGui::GetCursorScreenPos();
+        float h = fh, s = h * 0.66f, off = (h - s) * 0.5f;
+        ImVec2 p = ImVec2(ImGui::GetCursorScreenPos().x, hmn.y);
         ImVec2 a(p.x, p.y + off), b2(p.x + s, p.y + off + s);
         ImDrawList* dl = ImGui::GetWindowDrawList();
         dl->AddRectFilled(a, b2, ImGui::GetColorU32(ImVec4(c.x, c.y, c.z, 0.18f)), 3.0f);
@@ -22351,37 +22735,23 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
             case 6: dl->AddCircle(ctr, r, ic, 16, 2.0f); dl->AddCircleFilled(ctr, r * 0.35f, ic, 10); break;
             default: dl->AddCircleFilled(ctr, r * 0.75f, ic, 12); break;
         }
-        ImGui::Dummy(ImVec2(s, h));
     }
-    ImGui::SameLine();
-    // Default to open the first time we see this component type, then honor whatever
-    // the user toggled it to. SetNextItemOpen(..., Always) seeds the state before the
-    // header processes the click, and CollapsingHeader returns the post-click state,
-    // so a click still toggles — we just capture and remember the result.
-    // Remember open/closed PER COMPONENT INSTANCE (keyed by pointer), not per label —
-    // otherwise several components of the same type (e.g. multiple Actions) would all
-    // collapse/expand together. Default open the first time we see an instance.
-    char okey[32]; std::snprintf(okey, sizeof(okey), "%p", (void*)comp);
-    auto it = sCompOpen.find(okey);
-    bool want = it == sCompOpen.end() ? true : it->second;
-    if (sCompForceOpen != -1) want = sCompForceOpen == 1;   // Expand/Collapse All
-    ImGui::SetNextItemOpen(want, ImGuiCond_Always);
-    // A disabled component reads dimmed so it's obvious at a glance.
-    if (!en) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.62f, 0.66f, 1.0f));
-    bool open = ImGui::CollapsingHeader(label, ImGuiTreeNodeFlags_AllowOverlap);
-    if (!en) ImGui::PopStyleColor();
-    // Accent bar down the left edge of the header — makes each component read as a
-    // titled card, and keeps the panel legible when many are stacked.
+    // "..." menu button at the right end of the bar.
+    ImGui::SameLine(startX + barW - fh);
     {
-        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-        ImVec4 barCol = CategoryColor(label); barCol.w = 0.95f;
-        ImGui::GetWindowDrawList()->AddRectFilled(
-            mn, ImVec2(mn.x + 3.0f, mx.y),
-            ImGui::GetColorU32(en ? barCol : ImVec4(0.45f, 0.47f, 0.51f, 0.8f)),
-            1.5f);
+        const ImVec2 bp(ImGui::GetCursorScreenPos().x, hmn.y);
+        ImGui::SetCursorScreenPos(bp);
+        if (ImGui::InvisibleButton("##compmenu", ImVec2(fh, fh))) ImGui::OpenPopup("##compctx");
+        const bool hov = ImGui::IsItemHovered();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        if (hov) dl->AddRectFilled(bp, ImVec2(bp.x + fh, bp.y + fh), IM_COL32(255, 255, 255, 24), 4.0f);
+        for (int d = -1; d <= 1; ++d)
+            dl->AddCircleFilled(ImVec2(bp.x + fh * 0.5f + d * 4.5f, bp.y + fh * 0.5f), 1.6f,
+                                ImGui::GetColorU32(hov ? ImGuiCol_Text : ImGuiCol_TextDisabled), 8);
+        if (hov) ImGui::SetTooltip("Component options (or right-click the header)");
     }
-    sCompOpen[okey] = open;
-    if (ImGui::BeginPopupContextItem("##compctx")) {
+    if (hdrRightClick) ImGui::OpenPopup("##compctx");
+    if (ImGui::BeginPopup("##compctx")) {
         if (ImGui::MenuItem("Move Up"))   { sMoveComp = comp; sMoveDelta = -1; }
         if (ImGui::MenuItem("Move Down")) { sMoveComp = comp; sMoveDelta = +1; }
         ImGui::Separator();
@@ -23813,9 +24183,11 @@ void DrawInspector(EditorState& ed) {
     float staticW = ImGui::CalcTextSize("Static").x + ImGui::CalcTextSize("Lock").x +
                     ImGui::GetFrameHeight() * 2.0f +
                     (ImGui::GetStyle().ItemInnerSpacing.x + ImGui::GetStyle().ItemSpacing.x) * 2.0f;
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - staticW);
+    // Narrow Inspector: the name gets the whole row and Static / Lock drop below it.
+    const bool narrowHdr = ImGui::GetContentRegionAvail().x - staticW < 120.0f;
+    ImGui::SetNextItemWidth(narrowHdr ? -1.0f : ImGui::GetContentRegionAvail().x - staticW);
     if (ImGui::InputText("##name", nameBuf, sizeof(nameBuf))) { go->name = nameBuf; ed.dirty = true; }
-    ImGui::SameLine();
+    if (!narrowHdr) ImGui::SameLine();
     if (ImGui::Checkbox("Static", &go->isStatic)) ed.dirty = true;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Marks the object as non-moving (saved with the scene)");
     ImGui::SameLine();
@@ -23832,7 +24204,9 @@ void DrawInspector(EditorState& ed) {
     static const char* kTagPresets[] = {"Untagged", "Player", "MainCamera", "Enemy",
                                         "Respawn", "Finish", "GameController", "UI"};
     std::string curTag = go->tag.empty() ? "Untagged" : go->tag;
-    ImGui::SetNextItemWidth(150);
+    const float tagLblW = ImGui::CalcTextSize("Layer").x + ImGui::GetStyle().ItemInnerSpacing.x;
+    const float comboW = std::clamp(ImGui::GetContentRegionAvail().x - tagLblW, 90.0f, 150.0f);
+    ImGui::SetNextItemWidth(comboW);
     if (ImGui::BeginCombo("Tag", curTag.c_str())) {
         for (const char* t : kTagPresets) {
             bool sel = (curTag == t);
@@ -23879,9 +24253,9 @@ void DrawInspector(EditorState& ed) {
         }
         ImGui::EndCombo();
     }
-    ImGui::SameLine();
+    SameLineOrWrap(comboW + tagLblW);
     // Layer dropdown (Unity-style): which of the 32 named layers the object sits on.
-    ImGui::SetNextItemWidth(130);
+    ImGui::SetNextItemWidth(comboW);
     if (ImGui::BeginCombo("Layer", okay::Layers::Name(go->layer).c_str())) {
         for (int i = 0; i < 32; ++i) {
             std::string nm = okay::Layers::Name(i);
@@ -23892,10 +24266,15 @@ void DrawInspector(EditorState& ed) {
         }
         ImGui::EndCombo();
     }
-    ImGui::SameLine();
     float btnW = ImGui::CalcTextSize("Save as Prefab").x + ImGui::GetStyle().FramePadding.x * 2;
-    float avail = ImGui::GetContentRegionAvail().x;
-    if (avail > btnW) ImGui::SameLine(ImGui::GetCursorPosX() + (avail - btnW));
+    {   // right-aligned, on the Layer row when it fits, else on its own row
+        const bool same = SameLineOrWrap(btnW);
+        float avail = ImGui::GetContentRegionAvail().x;
+        if (avail > btnW) {
+            if (same) ImGui::SameLine(ImGui::GetCursorPosX() + (avail - btnW));
+            else ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - btnW));
+        }
+    }
     if (ImGui::Button("Save as Prefab")) {
         std::string p = go->name + ".okayprefab";
         if (SceneSerializer::SaveObjectToFile(*go, p)) {
@@ -24010,15 +24389,19 @@ void DrawInspector(EditorState& ed) {
     }
 
     Component* toRemove = nullptr; // removed after drawing (avoids dangling use)
+    // Fields fill the panel minus a label column that grows with it (labels sit on
+    // the right): a narrow Inspector keeps labels readable instead of clipping them.
+    const float inspLabelW = std::clamp(ImGui::GetContentRegionAvail().x * 0.42f, 96.0f, 170.0f);
+    ImGui::PushItemWidth(-inspLabelW);
 
     // UI layering + quick-center for any screen-space widget. Draw order follows the
     // hierarchy (a later sibling / a child draws on top); Bring to Front / Send to
     // Back reorder the widget among its siblings to change that.
     if (IsUIElement(go)) {
         if (ImGui::Button("Bring to Front")) { ed.scene().MoveToFront(go); ed.dirty = true; }
-        ImGui::SameLine();
+        SameLineOrWrap(ButtonW("Send to Back"));
         if (ImGui::Button("Send to Back"))   { ed.scene().MoveToBack(go);  ed.dirty = true; }
-        ImGui::SameLine();
+        SameLineOrWrap(90.0f + ImGui::CalcTextSize("Draw Order").x + 10.0f);
         // Per-object draw-order override. 0 = use the widget's default type order
         // (images under panels under text, etc.). Any non-zero value places this
         // widget in the single UI pass by this key instead — higher draws on top —
@@ -24035,7 +24418,7 @@ void DrawInspector(EditorState& ed) {
                 "  toggle 10 | tabs 11 | button 12 | text 13 | dropdown 15 | input 16\n"
                 "Pick a value just above the layer of whatever you want to cover.");
         int defLayer = UIDefaultLayer(go);
-        if (defLayer >= 0) { ImGui::SameLine(); ImGui::TextDisabled("(default %d)", defLayer); }
+        if (defLayer >= 0) { SameLineOrWrap(ImGui::CalcTextSize("(default 00)").x); ImGui::TextDisabled("(default %d)", defLayer); }
         // Anchor/fill reference rect: a UI child anchors WITHIN its parent (Unity-
         // style, matching the renderer), so use the parent's size when there is one;
         // otherwise the whole canvas.
@@ -24043,7 +24426,7 @@ void DrawInspector(EditorState& ed) {
         float refW, refH; bool hasParent = false;
         if (uiParent) { UIRect pr = GetUIRect(uiParent); if (pr.valid) { refW = pr.size.x; refH = pr.size.y; hasParent = true; } }
         if (!hasParent) { refW = UICanvas::Width(); refH = UICanvas::Height(); }
-        ImGui::SameLine();
+        SameLineOrWrap(ButtonW(hasParent ? "Center in Parent" : "Center in Canvas"));
         if (ImGui::Button(hasParent ? "Center in Parent" : "Center in Canvas")) {
             UIRect r = GetUIRect(go);
             if (r.position) {
@@ -24091,9 +24474,9 @@ void DrawInspector(EditorState& ed) {
                 ed.dirty = true;
             };
             if (ImGui::Button("Fill Width"))  fill(true, false);
-            ImGui::SameLine();
+            SameLineOrWrap(ButtonW("Fill Height"));
             if (ImGui::Button("Fill Height")) fill(false, true);
-            ImGui::SameLine();
+            SameLineOrWrap(ButtonW(hasParent ? "Fill Parent" : "Fill Canvas"));
             if (ImGui::Button(hasParent ? "Fill Parent" : "Fill Canvas")) fill(true, true);
         }
         // Layout tools: put this widget on a card, or shrink-wrap a card around its children.
@@ -24110,7 +24493,7 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Put the selected widget(s) on a new card that fits around them (16 px padding)");
             if (hasUIKids && ar.sizePtr) {
-                ImGui::SameLine();
+                SameLineOrWrap(ButtonW("Fit to Children"));
                 if (ImGui::Button("Fit to Children")) {
                     ed.PushUndo();
                     if (okay::UILayout::FitToChildren(go)) ed.dirty = true;
@@ -24201,12 +24584,12 @@ void DrawInspector(EditorState& ed) {
         if (isCam) { ImGui::EndDisabled(); ImGui::TextDisabled("(camera scale is locked)"); }
         // Quick resets (Unity's right-click-component conveniences).
         if (ImGui::SmallButton("Reset Pos")) { ed.PushUndo(); t->localPosition = {0, 0, 0}; ed.dirty = true; }
-        ImGui::SameLine();
+        SameLineOrWrap(ButtonW("Reset Rot"));
         if (ImGui::SmallButton("Reset Rot")) { ed.PushUndo(); g_euler[go] = {0, 0, 0}; t->localRotation = Quat::Euler({0, 0, 0}); ed.dirty = true; }
-        ImGui::SameLine();
+        if (!isCam) SameLineOrWrap(ButtonW("Reset Scale"));
         if (!isCam && ImGui::SmallButton("Reset Scale")) { ed.PushUndo(); t->localScale = {1, 1, 1}; ed.dirty = true; }
         if (!isCam) {
-            ImGui::SameLine();
+            SameLineOrWrap(ImGui::GetFrameHeight() + ImGui::CalcTextSize("Uniform").x + 8.0f);
             ImGui::Checkbox("Uniform##scl", &s_uniformScale);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Link the scale axes: dragging X/Y/Z scales all three by the same ratio.");
@@ -30906,6 +31289,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::EndDragDropTarget();
         }
     }
+    ImGui::PopItemWidth();
     ImGui::PopStyleVar(3);
     ImGui::End();
 }
@@ -36639,12 +37023,19 @@ void DrawGameView(EditorState& ed) {
     }
     // FPS testing: grab the mouse so look controls work in the Game tab.
     ImGui::SameLine();
-    if (ImGui::Checkbox("Capture mouse", &g_gameMouseCapture)) {}
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lock + hide the cursor for FPS/TPS mouselook while testing.\nPress Esc to release. Auto-engages if the game locks the cursor.");
+    if (ImGui::Checkbox("Capture mouse", &g_gameMouseCapture)) {
+        if (g_gameMouseCapture) g_gameCursorReleased = false;   // grab it now (if playing)
+        else if (ed.isPlaying() && Cursor::IsLocked()) g_gameCursorReleased = true;   // let go now
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lock + hide the cursor for FPS/TPS mouselook while testing.\nEsc shows the cursor again; click the Game view to give it back.\nGames that lock the cursor (FPS/TPS controllers) grab it automatically.");
     ImGui::SameLine();
     if (ImGui::Checkbox("Stats", &g_gameStatsOverlay)) SaveSettings();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("FPS / frame time / object + triangle counts, overlaid on the view");
-    if (ed.isPlaying() && g_gameMouseCapture) { ImGui::SameLine(); ImGui::TextColored(ImVec4(0.5f,1,0.6f,1), "(Esc to release)"); }
+    if (ed.isPlaying() && (g_gameMouseCapture || Cursor::IsLocked())) {
+        ImGui::SameLine();
+        if (g_gameCursorReleased) ImGui::TextDisabled("(click the view to capture)");
+        else ImGui::TextColored(ImVec4(0.5f,1,0.6f,1), "(Esc to release)");
+    }
 
     ImVec2 avail = ImGui::GetContentRegionAvail();
     if (avail.x < 50) avail.x = 50;
@@ -36663,6 +37054,7 @@ void DrawGameView(EditorState& ed) {
     g_playCanvasPos = canvasPos;
     g_playCanvasSize = canvasSize;
     g_playPersp = persp;
+    g_gameCanvasHovered = ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(canvasPos, canvasEnd);
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
     // Dark letterbox bars over the whole region, then the camera background.
@@ -37594,6 +37986,8 @@ int main(int argc, char** argv) {
             if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE &&
                 e.window.windowID == SDL_GetWindowID(window))
                 g_quitRequested = true;
+            if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_LOST && ed.isPlaying())
+                g_gameCursorReleased = true;   // alt-tab: never leave the pointer trapped
             // Route typed characters to the playing game's UI input fields (but not
             // while an ImGui field — inspector/markup box — is capturing text).
             if (e.type == SDL_TEXTINPUT && ed.isPlaying() && !ImGui::GetIO().WantTextInput)
@@ -37735,9 +38129,12 @@ int main(int argc, char** argv) {
                 if (auto* ce = up->GetComponent<ChestInventory>()) if (ce->open) gameModal = true;
                 if (auto* mm = up->GetComponent<Minimap>()) if (mm->fullscreen) gameModal = true;
             }
-            // Esc releases the manual capture.
+            // Esc frees the cursor, even when the game itself locked it; a click on the
+            // Game view takes it back.
             const Uint8* ks2 = SDL_GetKeyboardState(nullptr);
-            if (ks2[SDL_SCANCODE_ESCAPE]) g_gameMouseCapture = false;
+            if (ks2[SDL_SCANCODE_ESCAPE]) g_gameCursorReleased = true;
+            else if (g_gameCursorReleased && g_gameCanvasHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                g_gameCursorReleased = false;
             // Unity-style hand-off (mirrors the player): when a bag/chest opens or closes
             // while the game wants a locked cursor, warp the pointer to the Game-view
             // centre so it appears in the middle on open and the look anchor resets on
@@ -37755,7 +38152,7 @@ int main(int argc, char** argv) {
             s_prevGameModal = gameModal;
             // Capture when the user asked OR the game requested a locked cursor, unless a
             // modal panel is open (then we need a visible cursor to click it).
-            bool capture = (g_gameMouseCapture || Cursor::IsLocked()) && !gameModal;
+            bool capture = (g_gameMouseCapture || Cursor::IsLocked()) && !gameModal && !g_gameCursorReleased;
             static Vec2 s_gameVMouse{0, 0};
             if (capture) {
                 SDL_SetRelativeMouseMode(SDL_TRUE);
@@ -37785,7 +38182,11 @@ int main(int argc, char** argv) {
             }
         } else if (!ed.isPlaying()) {
             Input::FeedKeys({}); // release everything in edit mode
-            if (g_gameMouseCapture || SDL_GetRelativeMouseMode()) { g_gameMouseCapture = false; SDL_SetRelativeMouseMode(SDL_FALSE); }
+            // Keep the Capture mouse choice for the next Play; just free the pointer and
+            // forget the last run's cursor lock.
+            if (SDL_GetRelativeMouseMode()) SDL_SetRelativeMouseMode(SDL_FALSE);
+            g_gameCursorReleased = false;
+            if (Cursor::IsLocked() || !Cursor::visible) Cursor::Capture(false);
         }
 
         // Keep each scroll view's contentHeight matched to its children so the
@@ -38287,6 +38688,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.SceneSettings"); if (g_showSceneSettings) DrawSceneSettings(ed); }
         { OKAY_PROFILE("UI.SaveManager"); if (g_showSaveManager) DrawSaveManager(ed); }
         { OKAY_PROFILE("UI.Scenes"); if (g_showScenes)    DrawScenes(ed); }
+        DrawPanelTabMenu();   // right-click on any panel tab
 
         // Play-mode tint: a colored border around the whole window so it's
         // obvious the game is running (green) or paused (amber) — like Unity.

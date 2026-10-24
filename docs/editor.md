@@ -392,8 +392,35 @@ unchanged.
 - **Console**: the tab badge shows live error/warning counts; **Error Pause**
   pauses Play the moment a new error is logged.
 - **Play tint**: the editor chrome darkens subtly while the game runs.
+- **Mouse in Play mode**: games that lock the cursor (FPS / TPS controllers)
+  grab the mouse when you press Play. **Esc** shows the cursor again, even
+  though the game keeps asking for it, and so does switching to another
+  window. **Click the Game view** to give the mouse back to the game. The Game
+  toolbar's **Capture mouse** grabs it for games that don't lock it, and is
+  remembered between Play sessions. A built game does the same when it has no
+  Pause Menu: Esc frees the cursor and a click captures it again.
 
 ## Editor quality-of-life
+
+- **Right-click a panel's tab** for **Add Tab** (open any panel as a new tab in
+  that spot, or move one that's open elsewhere), **Close Tab**, **Close Other
+  Tabs**, **Float (undock)** and **Reset Layout**.
+- **Hierarchy right-click**:
+  - On an object: Cut / Copy / Paste, **Select** (children, everything below,
+    parent, siblings, same name), **Expand / Collapse All Below**, **Transform**
+    (reset position, rotation, scale or all; move to the view centre), **Order**
+    (move up, down, to top or bottom), **Copy Text** (name or hierarchy path),
+    plus create, parent and prefab actions.
+  - On empty space: create objects, **Select All**, **Deselect**,
+    **Expand / Collapse All** and **Sort A-Z**.
+- **Project right-click**:
+  - On an asset: **Add to Open Scene** (scenes), **Place in Scene** or **Place
+    as Child of Selected** (prefabs), **Add to Favorites** (folders), and **Copy
+    Text** (name, path in the project, or full path).
+  - On empty space: **View** (grid or list), **Sort By**, **Up One Folder**,
+    **Add Folder to Favorites** and **Copy Folder Path**.
+- Selecting an object (in the Scene view, a search, or a menu) opens its
+  parents in the Hierarchy so the row is visible.
 
 - **Multi-window panels (dual monitor)**: drag any tab outside the editor and
   it becomes its own OS window — put the Inspector, Console, Script Editor or

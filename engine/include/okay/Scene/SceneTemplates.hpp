@@ -802,6 +802,7 @@ inline void MainMenu(Scene& scene) {
     // Unity-style UI root: a Canvas holding the widgets, plus an Event System.
     GameObject* canvas = scene.CreateGameObject("Canvas");
     auto* cv = canvas->AddComponent<Canvas>();
+    cv->screenMatch = Canvas::ScreenMatch::Expand;
     cv->scaleMode = Canvas::ScaleMode::ScaleWithScreenSize;
     scene.CreateGameObject("EventSystem")->AddComponent<EventSystem>();
 
@@ -886,6 +887,7 @@ inline void Inventory(Scene& scene) {
 
     GameObject* canvas = scene.CreateGameObject("Canvas");
     auto* cv = canvas->AddComponent<Canvas>();
+    cv->screenMatch = Canvas::ScreenMatch::Expand;
     cv->scaleMode = Canvas::ScaleMode::ScaleWithScreenSize;
     scene.CreateGameObject("EventSystem")->AddComponent<EventSystem>();
 

@@ -1,6 +1,7 @@
 // Modeling milestone 2: the polygon mesh (quads / n-gons), its conversion to
 // and from the triangle Mesh, topology checks and .okaymesh files.
 #include "test_framework.hpp"
+#include <filesystem>
 #include <Okay.hpp>
 #include "okay/Modeling/PolyMesh.hpp"
 #include <cmath>
@@ -165,7 +166,7 @@ int main() {
         CHECK(r.faces[2].material == 3 && r.faces[1].hasColor && std::fabs(r.faces[1].color.b - 0.75f) < 1e-6f);
         CHECK(r.faces[0].uvs.size() == 4);
 
-        const std::string path = "/tmp/okay_test_polymesh.okaymesh";
+        const std::string path = (std::filesystem::temp_directory_path() / "okay_test_polymesh.okaymesh").string();
         CHECK(p.Save(path, &err));
         PolyMesh l;
         CHECK(PolyMesh::Load(path, l, &err));

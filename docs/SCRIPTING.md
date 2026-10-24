@@ -253,7 +253,10 @@ ui_end()
 
 ### Tweening (DOTween-style) & saves
 Every tween accepts an optional easing and an optional **on-complete** function
-name as its trailing argument(s).
+name as its trailing argument(s), and **returns an id**. You can use the id with
+`tween_loops`, `tween_delay`, `tween_pause`, `tween_kill` and the `seq_*`
+sequence functions. [docs/scripting.md](docs/scripting.md#tweening-dotween-style)
+has the full list, plus the **Tween Animation** component for tweens without code.
 
 | Function | Description |
 |---|---|

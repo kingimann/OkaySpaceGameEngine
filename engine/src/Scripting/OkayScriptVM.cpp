@@ -1,6 +1,7 @@
 #include "okay/Scripting/OkayScriptVM.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/UIAnimation.hpp"
+#include "okay/Components/TweenAnimation.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Input/Cursor.hpp"
@@ -2383,6 +2384,9 @@ private:
 // ===================== OkayScriptVM::Impl =====================
 struct OkayScriptVM::Impl {
     Runtime rt;
+    // Tweens and timers outlive a call; their callbacks check this so they do
+    // nothing once the script is gone (its component removed or reloaded).
+    std::shared_ptr<int> life = std::make_shared<int>(0);
     std::vector<StmtPtr> topLevel;
     bool loaded = false;
     ~Impl() { rt.StopCoroutines(""); }   // unwind every suspended coroutine thread
@@ -5970,308 +5974,327 @@ struct OkayScriptVM::Impl {
         };
 
         // ---- Tweening (DOTween-style) ----------------------------------
-        // Smoothly animate the object's transform over time via the scene's
-        // scheduler, with an optional easing name ("out_quad", "in_out_sine"...).
+        // Every tween_* call starts a tween on this object and returns its id, so it
+        // can be configured and controlled afterwards (tween_loops(id, -1, "yoyo"),
+        // tween_kill(id) ...). Tweens die with their object. Ease names are forgiving:
+        // "out_quad", "OutQuad", "in_out_sine"...
         auto easeFromArg = [](std::vector<Value>& a, std::size_t i) -> Ease {
             if (i >= a.size() || !a[i].IsString()) return Ease::Linear;
-            std::string s = a[i].AsString();
-            if (s == "in_quad") return Ease::QuadIn;
-            if (s == "out_quad") return Ease::QuadOut;
-            if (s == "in_out_quad") return Ease::QuadInOut;
-            if (s == "in_cubic") return Ease::CubicIn;
-            if (s == "out_cubic") return Ease::CubicOut;
-            if (s == "in_out_cubic") return Ease::CubicInOut;
-            if (s == "in_sine") return Ease::SineIn;
-            if (s == "out_sine") return Ease::SineOut;
-            if (s == "in_out_sine") return Ease::SineInOut;
-            if (s == "in_expo") return Ease::ExpoIn;
-            if (s == "out_expo") return Ease::ExpoOut;
-            if (s == "in_out_expo") return Ease::ExpoInOut;
-            if (s == "out_back") return Ease::BackOut;
-            if (s == "in_back") return Ease::BackIn;
-            if (s == "out_elastic") return Ease::ElasticOut;
-            if (s == "out_bounce") return Ease::BounceOut;
-            return Ease::Linear;
+            return Easing::FromName(a[i].AsString(), Ease::Linear);
         };
-        auto sched = [this]() -> Scheduler* {
+        auto tweens = [this]() -> TweenManager* {
             if (rt.host && rt.host->gameObject && rt.host->gameObject->scene())
-                return &rt.host->gameObject->scene()->scheduler();
+                return &rt.host->gameObject->scene()->tweens();
             return nullptr;
         };
-        // Optional trailing on-complete: if arg `i` is the name of a script
-        // function, returns a callback that invokes it when the tween finishes
-        // (DOTween's OnComplete). Anything else yields an empty callback.
-        auto onDoneFromArg = [this](std::vector<Value>& a, std::size_t i) -> std::function<void()> {
+        // Optional on-complete: if arg `i` names a script function, a callback that
+        // calls it (DOTween's OnComplete). Anything else yields an empty callback.
+        auto fnFromArg = [this](std::vector<Value>& a, std::size_t i) -> std::function<void()> {
             if (i >= a.size() || !a[i].IsString()) return {};
             std::string fn = a[i].AsString();
             if (!rt.functions.count(fn)) return {};
-            return [this, fn]() { std::vector<Value> none; rt.Call(fn, none); };
-        };
-        b["tween_move"] = [this, sched, easeFromArg, onDoneFromArg](std::vector<Value>& a) {
-            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
-            if (!t || !s || a.size() < 3) return Value{};
-            Vec3 start = t->localPosition, target{a[0].AsFloat(), a[1].AsFloat(), start.z};
-            Ease e = easeFromArg(a, 3);
-            s->Tween(a[2].AsFloat(), [t, start, target, e](float u) { float k = Easing::Evaluate(e, u); t->localPosition = start + (target - start) * k; }, onDoneFromArg(a, 4));
-            return Value{};
-        };
-        b["tween_move3"] = [this, sched, easeFromArg, onDoneFromArg](std::vector<Value>& a) {
-            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
-            if (!t || !s || a.size() < 4) return Value{};
-            Vec3 start = t->localPosition, target{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
-            Ease e = easeFromArg(a, 4);
-            s->Tween(a[3].AsFloat(), [t, start, target, e](float u) { float k = Easing::Evaluate(e, u); t->localPosition = start + (target - start) * k; }, onDoneFromArg(a, 5));
-            return Value{};
-        };
-        b["tween_scale"] = [this, sched, easeFromArg, onDoneFromArg](std::vector<Value>& a) {
-            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
-            if (!t || !s || a.size() < 2) return Value{};
-            Vec3 start = t->localScale; float v = a[0].AsFloat(); Vec3 target{v, v, v};
-            Ease e = easeFromArg(a, 2);
-            s->Tween(a[1].AsFloat(), [t, start, target, e](float u) { float k = Easing::Evaluate(e, u); t->localScale = start + (target - start) * k; }, onDoneFromArg(a, 3));
-            return Value{};
-        };
-        // Spin by `deg` degrees about Z over `dur` seconds.
-        b["tween_rotate"] = [this, sched, easeFromArg, onDoneFromArg](std::vector<Value>& a) {
-            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
-            if (!t || !s || a.size() < 2) return Value{};
-            Quat start = t->localRotation; float deg = a[0].AsFloat(); Ease e = easeFromArg(a, 2);
-            s->Tween(a[1].AsFloat(), [t, start, deg, e](float u) { float k = Easing::Evaluate(e, u); t->localRotation = start * Quat::Euler({0, 0, deg * k}); }, onDoneFromArg(a, 3));
-            return Value{};
-        };
-        // Ping-pong move forever between the current spot and (x, y) — great for
-        // floating pickups, patrolling platforms, hovering UI. Each leg eases.
-        b["tween_loop_move"] = [this, sched, easeFromArg](std::vector<Value>& a) {
-            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
-            if (!t || !s || a.size() < 3) return Value{};
-            Vec3 start = t->localPosition, target{a[0].AsFloat(), a[1].AsFloat(), start.z};
-            float dur = a[2].AsFloat(); Ease e = easeFromArg(a, 3);
-            auto step = std::make_shared<std::function<void(bool)>>();
-            *step = [s, t, start, target, e, dur, step](bool fwd) {
-                Vec3 from = fwd ? start : target, to = fwd ? target : start;
-                s->Tween(dur, [t, from, to, e](float u) { float k = Easing::Evaluate(e, u); t->localPosition = from + (to - from) * k; },
-                         [step, fwd]() { (*step)(!fwd); });
+            return [this, fn, alive = std::weak_ptr<int>(life)]() {
+                if (alive.expired()) return;
+                std::vector<Value> none; rt.Call(fn, none);
             };
-            (*step)(true);
-            return Value{};
         };
-        // Punch the scale outward and settle back (DOTween's DOPunchScale) —
-        // perfect for button presses, pickups, "juice". `amount` is the bulge.
-        b["tween_punch_scale"] = [this, sched](std::vector<Value>& a) {
-            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
-            if (!t || !s || a.size() < 2) return Value{};
-            Vec3 start = t->localScale; float amount = a[0].AsFloat(); float dur = a[1].AsFloat();
-            float vib = a.size() > 2 ? a[2].AsFloat() : 6.0f;
-            s->Tween(dur, [t, start, amount, vib](float u) {
-                float osc = Mathf::Sin(u * Mathf::PI * vib) * amount * (1.0f - u);
-                t->localScale = start + Vec3{osc, osc, osc};
-            }, [t, start]() { t->localScale = start; });
-            return Value{};
+        // Script-facing ids for tweens (also those moved into a sequence).
+        struct TweenRefs { std::unordered_map<int, std::weak_ptr<Tweener>> map; int next = 1; };
+        auto refs = std::make_shared<TweenRefs>();
+        auto reg = [refs](const std::shared_ptr<Tweener>& t) -> Value {
+            if (!t) return Value{0.0f};
+            if (refs->map.size() > 256 && (refs->next % 64) == 0)   // forget finished ones now and then
+                for (auto it = refs->map.begin(); it != refs->map.end();) it = it->second.expired() ? refs->map.erase(it) : std::next(it);
+            const int id = refs->next++;
+            refs->map[id] = t;
+            return Value{(float)id};
         };
-        // Punch the position toward (dx, dy) and settle back.
-        b["tween_punch_pos"] = [this, sched](std::vector<Value>& a) {
-            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
-            if (!t || !s || a.size() < 3) return Value{};
-            Vec3 start = t->localPosition; Vec2 dir{a[0].AsFloat(), a[1].AsFloat()}; float dur = a[2].AsFloat();
-            float vib = a.size() > 3 ? a[3].AsFloat() : 6.0f;
-            s->Tween(dur, [t, start, dir, vib](float u) {
-                float osc = Mathf::Sin(u * Mathf::PI * vib) * (1.0f - u);
-                t->localPosition = start + Vec3{dir.x * osc, dir.y * osc, 0.0f};
-            }, [t, start]() { t->localPosition = start; });
-            return Value{};
+        auto lookup = [refs](std::vector<Value>& a, std::size_t i = 0) -> std::shared_ptr<Tweener> {
+            if (i >= a.size()) return nullptr;
+            auto it = refs->map.find((int)std::lround(a[i].AsFloat()));
+            if (it == refs->map.end()) return nullptr;
+            auto t = it->second.lock();
+            return t && t->IsActive() ? t : nullptr;
         };
-        // Shake the position randomly, decaying to a stop (camera/impact shake).
-        b["tween_shake"] = [this, sched](std::vector<Value>& a) {
-            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
-            if (!t || !s || a.size() < 2) return Value{};
-            Vec3 start = t->localPosition; float intensity = a[0].AsFloat(); float dur = a[1].AsFloat();
-            s->Tween(dur, [t, start, intensity](float u) {
-                float decay = (1.0f - u) * intensity;
-                float ox = Random::Shared().Range(-1.0f, 1.0f) * decay;
-                float oy = Random::Shared().Range(-1.0f, 1.0f) * decay;
-                t->localPosition = start + Vec3{ox, oy, 0.0f};
-            }, [t, start]() { t->localPosition = start; });
-            return Value{};
+        // Finish a new tween: ease from arg `ei` (else keep its own), on-complete from `di`.
+        auto finish = [easeFromArg, fnFromArg, reg](std::vector<Value>& a, std::shared_ptr<Tweener> t, std::size_t ei, std::size_t di) -> Value {
+            if (!t) return Value{0.0f};
+            if (ei < a.size() && a[ei].IsString()) t->SetEase(easeFromArg(a, ei));
+            else if (ei != (std::size_t)-1) t->SetEase(Ease::Linear);
+            if (auto f = fnFromArg(a, di)) t->OnComplete(f);
+            return reg(t);
         };
-        // Relative move (DOTween's DOBlendableMoveBy): glide by an offset.
-        b["tween_move_by"] = [this, sched, easeFromArg, onDoneFromArg](std::vector<Value>& a) {
-            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
-            if (!t || !s || a.size() < 3) return Value{};
-            Vec3 start = t->localPosition, target{start.x + a[0].AsFloat(), start.y + a[1].AsFloat(), start.z};
-            Ease e = easeFromArg(a, 3);
-            s->Tween(a[2].AsFloat(), [t, start, target, e](float u) { float k = Easing::Evaluate(e, u); t->localPosition = start + (target - start) * k; }, onDoneFromArg(a, 4));
-            return Value{};
+        const std::size_t kNone = (std::size_t)-1;
+        auto self = go;
+        auto num = [](std::vector<Value>& a, std::size_t i, float def) { return i < a.size() && !a[i].IsString() ? a[i].AsFloat() : def; };
+
+        b["tween_move"] = [self, finish](std::vector<Value>& a) {
+            GameObject* g = self(); if (!g || a.size() < 3) return Value{0.0f};
+            const float z = g->transform->localPosition.z;
+            return finish(a, DOTween::LocalMove(g, {a[0].AsFloat(), a[1].AsFloat(), z}, a[2].AsFloat()), 3, 4);
         };
-        // Jump in an arc to (x, y) peaking `height` units up (DOTween's DOJump) —
-        // coins flying to the HUD, hop-to-tile, loot pop.
-        b["tween_jump"] = [this, sched, onDoneFromArg](std::vector<Value>& a) {
-            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
-            if (!t || !s || a.size() < 4) return Value{};
-            Vec3 start = t->localPosition, target{a[0].AsFloat(), a[1].AsFloat(), start.z};
-            float height = a[2].AsFloat();
-            s->Tween(a[3].AsFloat(), [t, start, target, height](float u) {
-                Vec3 base = start + (target - start) * u;
-                base.y += height * 4.0f * u * (1.0f - u);   // parabola, peak at u=0.5
-                t->localPosition = base;
-            }, [t, target, onDone = onDoneFromArg(a, 4)]() { t->localPosition = target; if (onDone) onDone(); });
-            return Value{};
+        b["tween_move3"] = [self, finish](std::vector<Value>& a) {
+            GameObject* g = self(); if (!g || a.size() < 4) return Value{0.0f};
+            return finish(a, DOTween::LocalMove(g, {a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()}, a[3].AsFloat()), 4, 5);
         };
-        // Move through a list of waypoints (DOTween's DOPath): tween_path(dur, x1,y1, x2,y2, ...).
-        b["tween_path"] = [this, sched](std::vector<Value>& a) {
-            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
-            if (!t || !s || a.size() < 3) return Value{};
-            float dur = a[0].AsFloat();
-            auto pts = std::make_shared<std::vector<Vec3>>();
-            pts->push_back(t->localPosition);
-            for (std::size_t i = 1; i + 1 < a.size(); i += 2)
-                pts->push_back(Vec3{a[i].AsFloat(), a[i + 1].AsFloat(), t->localPosition.z});
-            if (pts->size() < 2) return Value{};
-            s->Tween(dur, [t, pts](float u) {
-                int segs = (int)pts->size() - 1;
-                float f = u * segs; int i = (int)f; if (i >= segs) i = segs - 1;
-                float local = f - i;
-                t->localPosition = (*pts)[i] + ((*pts)[i + 1] - (*pts)[i]) * local;
-            }, [t, pts]() { t->localPosition = pts->back(); });
-            return Value{};
+        // Glide by an offset (DOTween's DOBlendableMoveBy).
+        b["tween_move_by"] = [self, finish](std::vector<Value>& a) {
+            GameObject* g = self(); if (!g || a.size() < 3) return Value{0.0f};
+            auto t = DOTween::LocalMove(g, {a[0].AsFloat(), a[1].AsFloat(), 0.0f}, a[2].AsFloat());
+            t->SetRelative();
+            return finish(a, t, 3, 4);
         };
-        // Ping-pong the uniform scale forever (pulsing pickups, breathing UI).
-        b["tween_loop_scale"] = [this, sched, easeFromArg](std::vector<Value>& a) {
-            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
-            if (!t || !s || a.size() < 2) return Value{};
-            Vec3 start = t->localScale; float v = a[0].AsFloat(); Vec3 target{v, v, v};
-            float dur = a[1].AsFloat(); Ease e = easeFromArg(a, 2);
-            auto step = std::make_shared<std::function<void(bool)>>();
-            *step = [s, t, start, target, e, dur, step](bool fwd) {
-                Vec3 from = fwd ? start : target, to = fwd ? target : start;
-                s->Tween(dur, [t, from, to, e](float u) { float k = Easing::Evaluate(e, u); t->localScale = from + (to - from) * k; },
-                         [step, fwd]() { (*step)(!fwd); });
+        // World-space move (ignores the parent).
+        b["tween_move_world"] = [self, finish](std::vector<Value>& a) {
+            GameObject* g = self(); if (!g || a.size() < 4) return Value{0.0f};
+            return finish(a, DOTween::Move(g, {a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()}, a[3].AsFloat()), 4, 5);
+        };
+        b["tween_scale"] = [self, finish](std::vector<Value>& a) {
+            GameObject* g = self(); if (!g || a.size() < 2) return Value{0.0f};
+            return finish(a, DOTween::Scale(g, a[0].AsFloat(), a[1].AsFloat()), 2, 3);
+        };
+        b["tween_scale_xy"] = [self, finish](std::vector<Value>& a) {
+            GameObject* g = self(); if (!g || a.size() < 3) return Value{0.0f};
+            return finish(a, DOTween::Scale(g, {a[0].AsFloat(), a[1].AsFloat(), g->transform->localScale.z}, a[2].AsFloat()), 3, 4);
+        };
+        // Spin by `deg` degrees about Z (full turns work).
+        b["tween_rotate"] = [self, finish](std::vector<Value>& a) {
+            GameObject* g = self(); if (!g || a.size() < 2) return Value{0.0f};
+            auto t = DOTween::Rotate(g, {0, 0, a[0].AsFloat()}, a[1].AsFloat());
+            t->SetRelative();
+            return finish(a, t, 2, 3);
+        };
+        // Rotate to an absolute Z angle (DOTween's DORotate).
+        b["tween_rotate_to"] = [self, finish](std::vector<Value>& a) {
+            GameObject* g = self(); if (!g || a.size() < 2) return Value{0.0f};
+            return finish(a, DOTween::Rotate(g, {0, 0, a[0].AsFloat()}, a[1].AsFloat()), 2, 3);
+        };
+        // Rotate to x, y, z degrees (3D).
+        b["tween_rotate3"] = [self, finish](std::vector<Value>& a) {
+            GameObject* g = self(); if (!g || a.size() < 4) return Value{0.0f};
+            return finish(a, DOTween::Rotate(g, {a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()}, a[3].AsFloat()), 4, 5);
+        };
+        // Ping-pong forever between here and (x, y) — floating pickups, patrols.
+        b["tween_loop_move"] = [self, finish](std::vector<Value>& a) {
+            GameObject* g = self(); if (!g || a.size() < 3) return Value{0.0f};
+            auto t = DOTween::LocalMove(g, {a[0].AsFloat(), a[1].AsFloat(), g->transform->localPosition.z}, a[2].AsFloat());
+            t->SetLoops(-1, LoopType::Yoyo);
+            return finish(a, t, 3, kNone);
+        };
+        b["tween_loop_scale"] = [self, finish](std::vector<Value>& a) {
+            GameObject* g = self(); if (!g || a.size() < 2) return Value{0.0f};
+            auto t = DOTween::Scale(g, a[0].AsFloat(), a[1].AsFloat());
+            t->SetLoops(-1, LoopType::Yoyo);
+            return finish(a, t, 2, kNone);
+        };
+        // Spin forever: a full turn every `dur` seconds (dir +1 CCW, -1 CW).
+        b["tween_loop_rotate"] = [self, reg](std::vector<Value>& a) {
+            GameObject* g = self(); if (!g || a.empty() || a[0].AsFloat() < 1e-3f) return Value{0.0f};
+            const float dir = a.size() > 1 ? (a[1].AsFloat() < 0 ? -1.0f : 1.0f) : 1.0f;
+            auto t = DOTween::Rotate(g, {0, 0, 360.0f * dir}, a[0].AsFloat());
+            t->SetRelative().SetEase(Ease::Linear).SetLoops(-1, LoopType::Incremental);
+            return reg(t);
+        };
+        // Punch the scale out and settle back (DOPunchScale) — button presses, pickups.
+        b["tween_punch_scale"] = [self, reg, num](std::vector<Value>& a) {
+            GameObject* g = self(); if (!g || a.size() < 2) return Value{0.0f};
+            const float p = a[0].AsFloat();
+            return reg(DOTween::PunchScale(g, {p, p, p}, a[1].AsFloat(), (int)num(a, 2, 6.0f)));
+        };
+        b["tween_punch_pos"] = [self, reg, num](std::vector<Value>& a) {
+            GameObject* g = self(); if (!g || a.size() < 3) return Value{0.0f};
+            return reg(DOTween::PunchPosition(g, {a[0].AsFloat(), a[1].AsFloat(), 0}, a[2].AsFloat(), (int)num(a, 3, 6.0f)));
+        };
+        b["tween_punch_rotate"] = [self, reg, num](std::vector<Value>& a) {
+            GameObject* g = self(); if (!g || a.size() < 2) return Value{0.0f};
+            return reg(DOTween::PunchRotation(g, {0, 0, a[0].AsFloat()}, a[1].AsFloat(), (int)num(a, 2, 6.0f)));
+        };
+        // Shake, fading out (camera / impact shake).
+        b["tween_shake"] = [self, reg, num](std::vector<Value>& a) {
+            GameObject* g = self(); if (!g || a.size() < 2) return Value{0.0f};
+            const float s = a[0].AsFloat();
+            return reg(DOTween::ShakePosition(g, a[1].AsFloat(), {s, s, 0}, (int)num(a, 2, 20.0f)));
+        };
+        b["tween_shake_rotate"] = [self, reg, num](std::vector<Value>& a) {
+            GameObject* g = self(); if (!g || a.size() < 2) return Value{0.0f};
+            return reg(DOTween::ShakeRotation(g, a[1].AsFloat(), {0, 0, a[0].AsFloat()}, (int)num(a, 2, 14.0f)));
+        };
+        b["tween_shake_scale"] = [self, reg, num](std::vector<Value>& a) {
+            GameObject* g = self(); if (!g || a.size() < 2) return Value{0.0f};
+            const float s = a[0].AsFloat();
+            return reg(DOTween::ShakeScale(g, a[1].AsFloat(), {s, s, s}, (int)num(a, 2, 14.0f)));
+        };
+        // Jump to (x, y) in an arc `height` high: tween_jump(x, y, height, dur[, jumps][, "done"]).
+        b["tween_jump"] = [self, finish, num](std::vector<Value>& a) {
+            GameObject* g = self(); if (!g || a.size() < 4) return Value{0.0f};
+            const int jumps = (int)num(a, 4, 1.0f);
+            const std::size_t di = a.size() > 4 && a[4].IsString() ? 4 : 5;
+            auto t = DOTween::Jump(g, {a[0].AsFloat(), a[1].AsFloat(), g->transform->localPosition.z}, a[2].AsFloat(), jumps, a[3].AsFloat());
+            return finish(a, t, kNone, di);
+        };
+        // Through waypoints: tween_path(dur, x1, y1, x2, y2, ...). tween_path_smooth curves through them.
+        auto pathFn = [self, reg](std::vector<Value>& a, DOTween::PathType type) -> Value {
+            GameObject* g = self(); if (!g || a.size() < 3) return Value{0.0f};
+            std::vector<Vec3> pts;
+            for (std::size_t i = 1; i + 1 < a.size(); i += 2) pts.push_back({a[i].AsFloat(), a[i + 1].AsFloat(), g->transform->localPosition.z});
+            auto t = DOTween::Path(g, pts, a[0].AsFloat(), type);
+            t->SetEase(Ease::Linear);
+            return reg(t);
+        };
+        b["tween_path"] = [pathFn](std::vector<Value>& a) { return pathFn(a, DOTween::PathType::Linear); };
+        b["tween_path_smooth"] = [pathFn](std::vector<Value>& a) { return pathFn(a, DOTween::PathType::CatmullRom); };
+        // Count this object's text from -> to (score ticks); optional prefix "Score: ".
+        b["tween_number"] = [self, reg](std::vector<Value>& a) {
+            GameObject* g = self(); if (!g || a.size() < 3) return Value{0.0f};
+            const std::string prefix = (a.size() > 3 && a[3].IsString()) ? a[3].AsString() : std::string{};
+            auto t = DOTween::Counter(g, a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat(), prefix);
+            t->SetEase(Ease::Linear);
+            return reg(t);
+        };
+        // Type this object's text out letter by letter (dialogue): tween_text("Hello!", dur[, "done"]).
+        b["tween_text"] = [self, finish](std::vector<Value>& a) {
+            GameObject* g = self(); if (!g || a.size() < 2) return Value{0.0f};
+            return finish(a, DOTween::Text(g, a[0].AsString(), a[1].AsFloat()), kNone, 2);
+        };
+        // A UI widget's anchored position / size — slide menus and panels in and out.
+        b["tween_ui_move"] = [self, finish](std::vector<Value>& a) {
+            GameObject* g = self(); if (!g || a.size() < 3) return Value{0.0f};
+            return finish(a, DOTween::AnchorPos(g, {a[0].AsFloat(), a[1].AsFloat()}, a[2].AsFloat()), 3, 4);
+        };
+        b["tween_ui_size"] = [self, finish](std::vector<Value>& a) {
+            GameObject* g = self(); if (!g || a.size() < 3) return Value{0.0f};
+            return finish(a, DOTween::SizeDelta(g, {a[0].AsFloat(), a[1].AsFloat()}, a[2].AsFloat()), 3, 4);
+        };
+        // This object's colour (sprite, mesh, UI or text) / its alpha.
+        b["tween_color"] = [self, finish](std::vector<Value>& a) {
+            GameObject* g = self(); Color* c = DOTween::ColorOf(g);
+            if (!c || a.size() < 4) return Value{0.0f};
+            return finish(a, DOTween::ColorTo(g, Color{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat(), c->a}, a[3].AsFloat()), 4, 5);
+        };
+        b["tween_fade"] = [self, finish](std::vector<Value>& a) {
+            GameObject* g = self(); if (!g || a.size() < 2) return Value{0.0f};
+            return finish(a, DOTween::Fade(g, a[0].AsFloat(), a[1].AsFloat()), 2, 3);
+        };
+        // flash(r, g, b[, dur]): snap to a colour, then fade back (hit feedback).
+        b["flash"] = [self, reg](std::vector<Value>& a) {
+            GameObject* g = self(); Color* c = DOTween::ColorOf(g);
+            if (!c || a.size() < 3) return Value{0.0f};
+            const Color orig = *c;
+            auto t = DOTween::ColorTo(g, orig, a.size() > 3 ? a[3].AsFloat() : 0.2f);
+            *c = Color{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat(), orig.a};
+            t->SetEase(Ease::Linear);
+            return reg(t);
+        };
+        // A script variable: tween_var("speed", 10, 2[, ease][, "done"]) (DOTween.To).
+        b["tween_var"] = [this, tweens, finish](std::vector<Value>& a) {
+            TweenManager* m = tweens(); if (!m || !rt.host || a.size() < 3) return Value{0.0f};
+            const std::string name = a[0].AsString();
+            std::weak_ptr<int> alive = life;
+            auto t = m->To([this, alive, name]() {
+                               if (alive.expired()) return 0.0f;
+                               auto& g = rt.Global().vars; auto it = g.find(name);
+                               return it != g.end() ? it->second.AsFloat() : 0.0f; },
+                           [this, alive, name](float v) { if (!alive.expired()) rt.Global().vars[name] = Value{v}; },
+                           a[1].AsFloat(), a[2].AsFloat());
+            t->SetTarget(rt.host->gameObject);
+            return finish(a, t, 3, 4);
+        };
+        // Call a function after a delay: tween_call(seconds, "fn") (DOVirtual.DelayedCall).
+        b["tween_call"] = [this, tweens, fnFromArg, reg](std::vector<Value>& a) {
+            TweenManager* m = tweens(); if (!m || a.size() < 2) return Value{0.0f};
+            auto t = m->DelayedCall(a[0].AsFloat(), fnFromArg(a, 1));
+            if (rt.host) t->SetTarget(rt.host->gameObject);
+            return reg(t);
+        };
+
+        // ---- Settings: each returns the id, so they nest ----
+        auto setting = [lookup](std::function<void(Tweener&, std::vector<Value>&)> fn) {
+            return [lookup, fn](std::vector<Value>& a) -> Value {
+                auto t = lookup(a, 0);
+                if (t) fn(*t, a);
+                return a.empty() ? Value{0.0f} : a[0];
             };
-            (*step)(true);
-            return Value{};
         };
-        // Spin continuously forever: a full turn every `dur` seconds (loaders, coins).
-        b["tween_loop_rotate"] = [this, sched](std::vector<Value>& a) {
-            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
-            if (!t || !s || a.empty()) return Value{};
-            float dur = a[0].AsFloat(); if (dur < 1e-3f) return Value{};
-            float dir = a.size() > 1 ? a[1].AsFloat() : 1.0f;   // +1 = CCW, -1 = CW
-            auto base = std::make_shared<Quat>(t->localRotation);
-            auto step = std::make_shared<std::function<void()>>();
-            *step = [s, t, dur, dir, base, step]() {
-                Quat from = *base;
-                s->Tween(dur, [t, from, dir](float u) { t->localRotation = from * Quat::Euler({0, 0, 360.0f * dir * u}); },
-                         [t, base, step]() { *base = t->localRotation; (*step)(); });
+        b["tween_delay"]    = setting([](Tweener& t, std::vector<Value>& a) { t.SetDelay(a.size() > 1 ? a[1].AsFloat() : 0.0f); });
+        b["tween_ease"]     = setting([easeFromArg](Tweener& t, std::vector<Value>& a) { t.SetEase(easeFromArg(a, 1)); });
+        b["tween_speed"]    = setting([](Tweener& t, std::vector<Value>& a) { t.SetSpeed(a.size() > 1 ? a[1].AsFloat() : 1.0f); });
+        b["tween_unscaled"] = setting([](Tweener& t, std::vector<Value>& a) { t.SetUpdate(a.size() > 1 ? a[1].AsBool() : true); });
+        b["tween_set_id"]   = setting([](Tweener& t, std::vector<Value>& a) { t.SetId(a.size() > 1 ? a[1].AsString() : std::string{}); });
+        b["tween_from"]     = setting([](Tweener& t, std::vector<Value>&) { t.From(); });
+        b["tween_relative"] = setting([](Tweener& t, std::vector<Value>&) { t.SetRelative(); });
+        b["tween_keep"]     = setting([](Tweener& t, std::vector<Value>&) { t.SetAutoKill(false); });
+        // tween_loops(id, count[, "restart" | "yoyo" | "incremental"]); count -1 = forever.
+        b["tween_loops"] = setting([](Tweener& t, std::vector<Value>& a) {
+            std::string ty = a.size() > 2 && a[2].IsString() ? a[2].AsString() : std::string("restart");
+            for (auto& ch : ty) ch = (char)std::tolower((unsigned char)ch);
+            const LoopType lt = ty == "yoyo" ? LoopType::Yoyo : ty == "incremental" ? LoopType::Incremental : LoopType::Restart;
+            t.SetLoops(a.size() > 1 ? (int)a[1].AsFloat() : 1, lt);
+        });
+        b["tween_on_complete"] = setting([fnFromArg](Tweener& t, std::vector<Value>& a) { t.OnComplete(fnFromArg(a, 1)); });
+        b["tween_on_step"]     = setting([fnFromArg](Tweener& t, std::vector<Value>& a) { t.OnStepComplete(fnFromArg(a, 1)); });
+        b["tween_on_start"]    = setting([fnFromArg](Tweener& t, std::vector<Value>& a) { t.OnStart(fnFromArg(a, 1)); });
+        b["tween_on_update"]   = setting([fnFromArg](Tweener& t, std::vector<Value>& a) { t.OnUpdate(fnFromArg(a, 1)); });
+
+        // ---- Control ----
+        b["tween_kill"]      = setting([](Tweener& t, std::vector<Value>& a) { t.Kill(a.size() > 1 && a[1].AsBool()); });
+        b["tween_pause"]     = setting([](Tweener& t, std::vector<Value>&) { t.Pause(); });
+        b["tween_play"]      = setting([](Tweener& t, std::vector<Value>&) { t.Play(); });
+        b["tween_toggle"]    = setting([](Tweener& t, std::vector<Value>&) { t.TogglePause(); });
+        b["tween_restart"]   = setting([](Tweener& t, std::vector<Value>&) { t.Restart(); });
+        b["tween_rewind"]    = setting([](Tweener& t, std::vector<Value>&) { t.Rewind(); });
+        b["tween_complete"]  = setting([](Tweener& t, std::vector<Value>&) { t.Complete(); });
+        b["tween_backwards"] = setting([](Tweener& t, std::vector<Value>&) { t.PlayBackwards(); });
+        b["tween_goto"]      = setting([](Tweener& t, std::vector<Value>& a) { t.Goto(a.size() > 1 ? a[1].AsFloat() : 0.0f, a.size() > 2 && a[2].AsBool()); });
+        b["tween_playing"] = [lookup](std::vector<Value>& a) { auto t = lookup(a, 0); return Value{t && t->IsPlaying()}; };
+        b["tween_active"]  = [lookup](std::vector<Value>& a) { auto t = lookup(a, 0); return Value{t != nullptr}; };
+        b["tween_progress"] = [lookup](std::vector<Value>& a) { auto t = lookup(a, 0); return Value{t ? t->ElapsedPercentage() : 1.0f}; };
+        // Everything on this object.
+        b["tween_kill_all"]  = [self](std::vector<Value>& a) { return Value{(float)DOTween::Kill(self(), !a.empty() && a[0].AsBool())}; };
+        b["tween_pause_all"] = [self](std::vector<Value>&) { return Value{(float)DOTween::Pause(self())}; };
+        b["tween_play_all"]  = [self](std::vector<Value>&) { return Value{(float)DOTween::Play(self())}; };
+        b["is_tweening"] = [self](std::vector<Value>&) {
+            GameObject* g = self();
+            return Value{g && g->scene() && g->scene()->tweens().IsTweening(g)};
+        };
+        // Everything with an id set by tween_set_id (or a Tween Animation's Id), scene-wide.
+        auto byId = [this, tweens](int op) {
+            return [this, tweens, op](std::vector<Value>& a) -> Value {
+                TweenManager* m = tweens(); if (!m || a.empty()) return Value{0.0f};
+                const std::string id = a[0].AsString();
+                int n = op == 0 ? m->Kill(id) : op == 1 ? m->Pause(id) : op == 2 ? m->Play(id) : m->Restart(id);
+                if (op == 2 || op == 3)   // Tween Animations that haven't started yet
+                    n += TweenAnimation::PlayAll(*rt.host->gameObject->scene(), id, op == 3);
+                return Value{(float)n};
             };
-            (*step)();
-            return Value{};
         };
-        // Count a sibling TextRenderer's number from->to over dur (score ticks,
-        // damage popups). Optional trailing string is a prefix: "Score: ".
-        b["tween_number"] = [this, sched, go](std::vector<Value>& a) {
-            Scheduler* s = sched();
-            if (!s || a.size() < 3) return Value{};
-            float from = a[0].AsFloat(), to = a[1].AsFloat(), dur = a[2].AsFloat();
-            std::string prefix = (a.size() > 3 && a[3].IsString()) ? a[3].AsString() : std::string{};
-            s->Tween(dur, [go, from, to, prefix](float u) {
-                int val = (int)std::lround(from + (to - from) * u);
-                if (GameObject* g = go())
-                    if (auto* tr = g->GetComponent<TextRenderer>())
-                        tr->text = prefix + std::to_string(val);
-            }, [go, to, prefix]() {
-                if (GameObject* g = go())
-                    if (auto* tr = g->GetComponent<TextRenderer>())
-                        tr->text = prefix + std::to_string((int)std::lround(to));
-            });
-            return Value{};
+        b["tween_kill_id"]    = byId(0);
+        b["tween_pause_id"]   = byId(1);
+        b["tween_play_id"]    = byId(2);
+        b["tween_restart_id"] = byId(3);
+
+        // ---- Sequences: tweens one after another / together on one timeline ----
+        b["seq_new"] = [this, tweens, reg](std::vector<Value>&) {
+            TweenManager* m = tweens(); if (!m) return Value{0.0f};
+            auto s = m->Sequence();
+            if (rt.host) s->SetTarget(rt.host->gameObject);
+            return reg(s);
         };
-        // Rotate to an ABSOLUTE Z angle over dur (DOTween's DORotate) — unlike
-        // tween_rotate which spins by a relative amount.
-        b["tween_rotate_to"] = [this, sched, easeFromArg, onDoneFromArg](std::vector<Value>& a) {
-            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
-            if (!t || !s || a.size() < 2) return Value{};
-            Quat start = t->localRotation, target = Quat::Euler({0, 0, a[0].AsFloat()});
-            Ease e = easeFromArg(a, 2);
-            s->Tween(a[1].AsFloat(), [t, start, target, e](float u) { float k = Easing::Evaluate(e, u); t->localRotation = Quat::Slerp(start, target, k); }, onDoneFromArg(a, 3));
-            return Value{};
+        auto seqOp = [lookup](std::function<void(TweenSequence&, std::vector<Value>&)> fn) {
+            return [lookup, fn](std::vector<Value>& a) -> Value {
+                auto s = std::dynamic_pointer_cast<TweenSequence>(lookup(a, 0));
+                if (s) fn(*s, a);
+                return a.empty() ? Value{0.0f} : a[0];
+            };
         };
-        // Non-uniform scale to (sx, sy) (DOTween's DOScale with a Vector).
-        b["tween_scale_xy"] = [this, sched, easeFromArg, onDoneFromArg](std::vector<Value>& a) {
-            Transform* t = rt.host ? rt.host->transform : nullptr; Scheduler* s = sched();
-            if (!t || !s || a.size() < 3) return Value{};
-            Vec3 start = t->localScale, target{a[0].AsFloat(), a[1].AsFloat(), start.z};
-            Ease e = easeFromArg(a, 3);
-            s->Tween(a[2].AsFloat(), [t, start, target, e](float u) { float k = Easing::Evaluate(e, u); t->localScale = start + (target - start) * k; }, onDoneFromArg(a, 4));
-            return Value{};
-        };
-        // Tween a UI widget's anchored position (UI widgets don't use the
-        // Transform) — slide menus/panels in and out.
-        b["tween_ui_move"] = [this, sched, easeFromArg, onDoneFromArg](std::vector<Value>& a) {
-            Scheduler* s = sched();
-            if (!s || !rt.host || !rt.host->gameObject || a.size() < 3) return Value{};
-            UIRect r = GetUIRect(rt.host->gameObject);
-            if (!r.valid || !r.position) return Value{};
-            Vec2* pos = r.position; Vec2 start = *pos, target{a[0].AsFloat(), a[1].AsFloat()};
-            Ease e = easeFromArg(a, 3);
-            s->Tween(a[2].AsFloat(), [pos, start, target, e](float u) { float k = Easing::Evaluate(e, u); *pos = start + (target - start) * k; }, onDoneFromArg(a, 4));
-            return Value{};
-        };
-        // Tween a UI widget's size (grow/shrink panels, popups).
-        b["tween_ui_size"] = [this, sched, easeFromArg, onDoneFromArg](std::vector<Value>& a) {
-            Scheduler* s = sched();
-            if (!s || !rt.host || !rt.host->gameObject || a.size() < 3) return Value{};
-            UIRect r = GetUIRect(rt.host->gameObject);
-            if (!r.valid || !r.sizePtr) return Value{};
-            Vec2* sz = r.sizePtr; Vec2 start = *sz, target{a[0].AsFloat(), a[1].AsFloat()};
-            Ease e = easeFromArg(a, 3);
-            s->Tween(a[2].AsFloat(), [sz, start, target, e](float u) { float k = Easing::Evaluate(e, u); *sz = start + (target - start) * k; }, onDoneFromArg(a, 4));
-            return Value{};
-        };
-        // Returns the host's tweenable albedo color, if any (sprite, mesh, or UI).
-        auto colorPtr = [this]() -> Color* {
-            if (!rt.host || !rt.host->gameObject) return nullptr;
-            GameObject* g = rt.host->gameObject;
-            if (auto* sr = g->GetComponent<SpriteRenderer>()) return &sr->color;
-            if (auto* mr = g->GetComponent<MeshRenderer>())   return &mr->color;
-            if (auto* im = g->GetComponent<UIImage>())        return &im->color;
-            if (auto* pn = g->GetComponent<UIPanel>())        return &pn->color;
-            return nullptr;
-        };
-        b["tween_color"] = [this, sched, easeFromArg, colorPtr, onDoneFromArg](std::vector<Value>& a) {
-            Scheduler* s = sched(); Color* c = colorPtr();
-            if (!s || !c || a.size() < 4) return Value{};
-            Color start = *c, target{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat(), start.a};
-            Ease e = easeFromArg(a, 4);
-            s->Tween(a[3].AsFloat(), [c, start, target, e](float u) {
-                float k = Easing::Evaluate(e, u);
-                c->r = start.r + (target.r - start.r) * k;
-                c->g = start.g + (target.g - start.g) * k;
-                c->b = start.b + (target.b - start.b) * k;
-            }, onDoneFromArg(a, 5));
-            return Value{};
-        };
-        // flash(r, g, b[, dur]): snap to a color, then fade back to the current one.
-        // Hit-feedback in one line (e.g. flash(1,0,0) turns red then back).
-        b["flash"] = [this, sched, colorPtr](std::vector<Value>& a) {
-            Scheduler* s = sched(); Color* c = colorPtr();
-            if (!s || !c || a.size() < 3) return Value{};
-            float dur = a.size() > 3 ? a[3].AsFloat() : 0.2f;
-            Color orig = *c;
-            Color hit{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat(), orig.a};
-            *c = hit;
-            s->Tween(dur, [c, hit, orig](float u) {
-                c->r = hit.r + (orig.r - hit.r) * u;
-                c->g = hit.g + (orig.g - hit.g) * u;
-                c->b = hit.b + (orig.b - hit.b) * u;
-            });
-            return Value{};
-        };
-        b["tween_fade"] = [this, sched, easeFromArg, colorPtr, onDoneFromArg](std::vector<Value>& a) {
-            Scheduler* s = sched(); Color* c = colorPtr();
-            if (!s || !c || a.size() < 2) return Value{};
-            float start = c->a, target = a[0].AsFloat(); Ease e = easeFromArg(a, 2);
-            s->Tween(a[1].AsFloat(), [c, start, target, e](float u) { float k = Easing::Evaluate(e, u); c->a = start + (target - start) * k; }, onDoneFromArg(a, 3));
-            return Value{};
-        };
+        b["seq_append"] = seqOp([lookup](TweenSequence& s, std::vector<Value>& a) { if (auto t = lookup(a, 1)) s.Append(t); });
+        b["seq_join"]   = seqOp([lookup](TweenSequence& s, std::vector<Value>& a) { if (auto t = lookup(a, 1)) s.Join(t); });
+        b["seq_insert"] = seqOp([lookup](TweenSequence& s, std::vector<Value>& a) { if (auto t = lookup(a, 2)) s.Insert(a[1].AsFloat(), t); });
+        b["seq_interval"] = seqOp([](TweenSequence& s, std::vector<Value>& a) { s.AppendInterval(a.size() > 1 ? a[1].AsFloat() : 0.0f); });
+        b["seq_prepend_interval"] = seqOp([](TweenSequence& s, std::vector<Value>& a) { s.PrependInterval(a.size() > 1 ? a[1].AsFloat() : 0.0f); });
+        b["seq_callback"] = seqOp([fnFromArg](TweenSequence& s, std::vector<Value>& a) { if (auto f = fnFromArg(a, 1)) s.AppendCallback(f); });
+        b["seq_insert_callback"] = seqOp([fnFromArg](TweenSequence& s, std::vector<Value>& a) {
+            if (auto f = fnFromArg(a, 2)) s.InsertCallback(a.size() > 1 ? a[1].AsFloat() : 0.0f, f);
+        });
         // ---- Save system: snapshot the whole scene to a slot file ------
         b["save_game"] = [this](std::vector<Value>& a) {
             Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;

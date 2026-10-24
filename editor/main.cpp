@@ -1784,7 +1784,9 @@ static bool DragVec3Axis(const char* label, float v[3], float speed = 0.05f,
         const float room = ImGui::CalcItemWidth() - st.FramePadding.x * 2.0f - 4.0f;
         for (int k = 0; k < 4; ++k) {
             if (std::strcmp(f, kShorter[k]) != 0) continue;
-            for (; k < 3; ++k) {
+            // Never round to a whole number unless it is one (0.2 must not read "0").
+            const int lastK = std::fabs(v[i] - std::round(v[i])) < 0.05f ? 3 : 2;
+            for (; k < lastK; ++k) {
                 char buf[32]; std::snprintf(buf, sizeof(buf), kShorter[k], v[i]);
                 if (ImGui::CalcTextSize(buf).x <= room) break;
             }
@@ -9576,10 +9578,21 @@ void DrawScriptDocs() {
         fapi("tween_loop_rotate(dur[,dir])", "spin continuously (loaders, coins)");
         fapi("tween_number(from,to,dur[,\"prefix\"])", "count a sibling text number (score ticks)");
         fapi("tween_punch_scale(amt,dur[,vib]) / tween_punch_pos(dx,dy,dur[,vib])", "punch & settle (juice)");
-        fapi("tween_shake(intensity, dur)", "random shake that decays to a stop");
+        fapi("tween_shake(i, dur) / tween_shake_rotate / tween_shake_scale", "shake, fading out");
+        fapi("tween_punch_rotate(deg,dur) / tween_path_smooth(dur, x1,y1, ...)", "wobble / curved path");
+        fapi("tween_text(\"Hi!\",dur) / tween_var(\"name\",to,dur) / tween_call(s,\"fn\")", "typewriter / a variable / delayed call");
+        ImGui::TextDisabled("Every tween returns an id. Set it up (each returns the id, so they nest):");
+        fapi("tween_loops(id, n[, \"yoyo\"|\"incremental\"]) / tween_delay(id, s)", "repeat (-1 forever) / wait first");
+        fapi("tween_ease(id, e) / tween_speed(id, x) / tween_unscaled(id)", "ease / speed / ignore time scale");
+        fapi("tween_from(id) / tween_relative(id) / tween_set_id(id, \"name\")", "from the end value / offset / name it");
+        fapi("tween_on_complete(id, \"fn\") / tween_on_step / tween_on_start", "callbacks");
+        fapi("tween_pause / play / restart / rewind / complete / kill(id)", "control one tween");
+        fapi("tween_kill_all() / tween_play_id(\"name\") / is_tweening()", "this object / by name");
+        fapi("seq_new() / seq_append(s, id) / seq_join(s, id)", "sequence: after / together");
+        fapi("seq_interval(s, t) / seq_callback(s, \"fn\") / seq_insert(s, t, id)", "pauses, calls, timing");
         fapi("save_game([slot]) / load_game([slot])", "snapshot / restore the scene");
         fapi("save_exists([slot]) / delete_save([slot])", "manage save slots");
-        ImGui::TextDisabled("Easings: linear, in/out/in_out_quad, ..._cubic, ..._sine, ..._expo, in_back, out_back, out_elastic, out_bounce.");
+        ImGui::TextDisabled("Eases: linear, in_/out_/in_out_ + quad cubic quart quint sine expo circ back elastic bounce.");
     }
 
     if (sec("Persistence, PlayerPrefs & Data Assets")) {
@@ -9860,6 +9873,18 @@ static const std::vector<std::string>& ScriptCompletions() {
         // tweens
         "tween_move","tween_move3","tween_scale","tween_rotate","tween_color","tween_fade",
         "tween_loop_move","tween_punch_scale","tween_shake",
+        "tween_move_by","tween_move_world","tween_rotate_to","tween_rotate3","tween_scale_xy",
+        "tween_ui_move","tween_ui_size","tween_jump","tween_path","tween_path_smooth",
+        "tween_loop_scale","tween_loop_rotate","tween_number","tween_text","tween_var","tween_call",
+        "tween_punch_pos","tween_punch_rotate","tween_shake_rotate","tween_shake_scale","flash",
+        "tween_loops","tween_delay","tween_ease","tween_speed","tween_unscaled","tween_from",
+        "tween_relative","tween_set_id","tween_keep","tween_on_complete","tween_on_step",
+        "tween_on_start","tween_on_update","tween_kill","tween_pause","tween_play","tween_toggle",
+        "tween_restart","tween_rewind","tween_complete","tween_backwards","tween_goto",
+        "tween_playing","tween_active","tween_progress","tween_kill_all","tween_pause_all",
+        "tween_play_all","is_tweening","tween_kill_id","tween_pause_id","tween_play_id",
+        "tween_restart_id","seq_new","seq_append","seq_join","seq_insert","seq_interval",
+        "seq_prepend_interval","seq_callback","seq_insert_callback",
         // networking
         "net_host","net_join","net_send","net_poll","net_is_server",
         // ui
@@ -22681,6 +22706,95 @@ static float ButtonW(const char* label) {
 // squeezed out by separate arrow buttons in a narrow Inspector.
 static void DrawLoadingScreenCmds(ImDrawList* dl, const okay::LoadingScreen& ls, ImVec2 pos, ImVec2 size,
                                   float previewTime = -1.0f);
+// Ease picker: every ease by name, each with a drawing of its curve.
+static void DrawEaseCurve(ImDrawList* dl, ImVec2 p0, ImVec2 sz, okay::Ease e, ImU32 col) {
+    const float pad = sz.y * 0.22f;
+    ImVec2 prev;
+    for (int i = 0; i <= 24; ++i) {
+        const float t = i / 24.0f, k = okay::Easing::Evaluate(e, t);
+        ImVec2 pt(p0.x + t * sz.x, p0.y + sz.y - pad - k * (sz.y - pad * 2.0f));
+        if (i > 0) dl->AddLine(prev, pt, col, 1.5f);
+        prev = pt;
+    }
+}
+static bool EaseCombo(const char* label, int& ease) {
+    bool changed = false;
+    const int cur = std::clamp(ease, 0, (int)okay::Ease::Count - 1);
+    if (ImGui::BeginCombo(label, okay::Easing::Name((okay::Ease)cur), ImGuiComboFlags_HeightLarge)) {
+        const float h = ImGui::GetTextLineHeight();
+        for (int i = 0; i < (int)okay::Ease::Count; ++i) {
+            ImGui::PushID(i);
+            if (ImGui::Selectable(okay::Easing::Name((okay::Ease)i), i == cur)) { ease = i; changed = true; }
+            const ImVec2 mx = ImGui::GetItemRectMax(), mn = ImGui::GetItemRectMin();
+            DrawEaseCurve(ImGui::GetWindowDrawList(), ImVec2(mx.x - h * 2.6f, mn.y), ImVec2(h * 2.2f, mx.y - mn.y),
+                          (okay::Ease)i, ImGui::GetColorU32(AccentCol(i == cur ? 1.0f : 0.7f)));
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    {   // the chosen curve, small, at the end of the row
+        const ImVec2 mx = ImGui::GetItemRectMax(), mn = ImGui::GetItemRectMin();
+        const float h = mx.y - mn.y;
+        ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(mx.x + 4, mn.y), ImVec2(mx.x + 4 + h * 1.8f, mx.y), IM_COL32(0, 0, 0, 60), 3.0f);
+        DrawEaseCurve(ImGui::GetWindowDrawList(), ImVec2(mx.x + 6, mn.y), ImVec2(h * 1.8f - 4, h), (okay::Ease)cur, ImGui::GetColorU32(AccentCol(1.0f)));
+    }
+    return changed;
+}
+// Tween Animation preview in edit mode: play its tween on the real object, then put
+// the object back exactly as it was.
+static struct {
+    okay::TweenAnimation* comp = nullptr;
+    GameObject* go = nullptr;
+    std::weak_ptr<okay::Tweener> tween;
+    Vec3 pos, scale; Quat rot;
+    bool hasColor = false; okay::Color color;
+    bool hasUI = false; Vec2 uiPos, uiSize;
+    std::string text;
+    float holdAfter = 0.0f;
+} g_tweenPreview;
+static bool TweenPreviewActive(const okay::TweenAnimation* ta) { return ta && g_tweenPreview.comp == ta; }
+static void StopTweenPreview() {
+    auto& p = g_tweenPreview;
+    if (!p.comp) return;
+    if (auto t = p.tween.lock()) t->Kill();
+    if (GameObject* go = p.go) {
+        go->transform->localPosition = p.pos; go->transform->localScale = p.scale; go->transform->localRotation = p.rot;
+        if (p.hasColor) if (okay::Color* c = okay::DOTween::ColorOf(go)) *c = p.color;
+        if (p.hasUI) { UIRect r = GetUIRect(go); if (r.position) *r.position = p.uiPos; if (r.sizePtr) *r.sizePtr = p.uiSize; }
+        if (auto* tr = go->GetComponent<TextRenderer>()) tr->text = p.text;
+    }
+    p = {};
+}
+static void StartTweenPreview(EditorState& ed, okay::TweenAnimation* ta) {
+    StopTweenPreview();
+    auto& p = g_tweenPreview;
+    GameObject* go = ta ? ta->gameObject : nullptr;
+    if (!go || ed.isPlaying()) return;
+    p.comp = ta; p.go = go;
+    p.pos = go->transform->localPosition; p.scale = go->transform->localScale; p.rot = go->transform->localRotation;
+    if (okay::Color* c = okay::DOTween::ColorOf(go)) { p.hasColor = true; p.color = *c; }
+    if (UIRect r = GetUIRect(go); r.valid) { p.hasUI = true; if (r.position) p.uiPos = *r.position; if (r.sizePtr) p.uiSize = *r.sizePtr; }
+    if (auto* tr = go->GetComponent<TextRenderer>()) p.text = tr->text;
+    auto t = ta->CreateTween();
+    if (t) t->SetAutoKill(false);
+    p.tween = t;
+}
+// Each editor frame: advance the preview; put the object back shortly after a
+// one-shot preview ends (and at once if Play starts or the object goes away).
+static void TickTweenPreview(EditorState& ed, float dt) {
+    auto& p = g_tweenPreview;
+    if (!p.comp) return;
+    bool alive = false;
+    for (const auto& up : ed.scene().Objects()) if (up.get() == p.go) { alive = true; break; }
+    if (!alive) { p = {}; return; }
+    if (ed.isPlaying()) { StopTweenPreview(); return; }
+    ed.scene().tweens().Update(dt, dt);
+    auto t = p.tween.lock();
+    if (!t || t->IsComplete()) {
+        p.holdAfter += dt;
+        if (p.holdAfter > 0.6f) StopTweenPreview();
+    }
+}
 static bool CompHeader(const char* label, okay::Component* comp, okay::Component** toRemove,
                        bool removable = true) {
     ImGui::PushID(comp);
@@ -24421,97 +24535,128 @@ void DrawInspector(EditorState& ed) {
     const float inspLabelW = std::clamp(ImGui::GetContentRegionAvail().x * 0.42f, 96.0f, 170.0f);
     ImGui::PushItemWidth(-inspLabelW);
 
-    // UI layering + quick-center for any screen-space widget. Draw order follows the
-    // hierarchy (a later sibling / a child draws on top); Bring to Front / Send to
-    // Back reorder the widget among its siblings to change that.
+    // UI layout card for any screen-space widget (Unity's Rect Transform tools):
+    // an anchor picker drawn as a little frame, then labelled rows for Size, Order
+    // (draw order / front / back) and Arrange (wrap in panel, fit to children).
     if (IsUIElement(go)) {
-        if (ImGui::Button("Bring to Front")) { ed.scene().MoveToFront(go); ed.dirty = true; }
-        SameLineOrWrap(ButtonW("Send to Back"));
-        if (ImGui::Button("Send to Back"))   { ed.scene().MoveToBack(go);  ed.dirty = true; }
-        SameLineOrWrap(90.0f + ImGui::CalcTextSize("Draw Order").x + 10.0f);
-        // Per-object draw-order override. 0 = use the widget's default type order
-        // (images under panels under text, etc.). Any non-zero value places this
-        // widget in the single UI pass by this key instead — higher draws on top —
-        // so it can layer freely against widgets of ANY other type, even when they
-        // are not nested. Hierarchy order breaks ties between equal values.
-        ImGui::SetNextItemWidth(90.0f);
-        if (ImGui::DragInt("Draw Order", &go->uiDrawOrder, 0.1f))
-            ed.dirty = true;
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip(
-                "0 = default type order. Non-zero overrides it (higher draws on top), so this\n"
-                "widget can layer above/below other types without nesting. Default layers:\n"
-                "  image 1 | panel 2 | scroll 4 | bars 5-6 | slider/stepper 7-8 | rating 9\n"
-                "  toggle 10 | tabs 11 | button 12 | text 13 | dropdown 15 | input 16\n"
-                "Pick a value just above the layer of whatever you want to cover.");
-        int defLayer = UIDefaultLayer(go);
-        if (defLayer >= 0) { SameLineOrWrap(ImGui::CalcTextSize("(default 00)").x); ImGui::TextDisabled("(default %d)", defLayer); }
-        // Anchor/fill reference rect: a UI child anchors WITHIN its parent (Unity-
-        // style, matching the renderer), so use the parent's size when there is one;
-        // otherwise the whole canvas.
-        GameObject* uiParent = OwningUIParent(go);
-        float refW, refH; bool hasParent = false;
+        GameObject* uiParent = OwningUIParent(go);   // a UI child anchors within its parent
+        float refW = UICanvas::Width(), refH = UICanvas::Height(); bool hasParent = false;
         if (uiParent) { UIRect pr = GetUIRect(uiParent); if (pr.valid) { refW = pr.size.x; refH = pr.size.y; hasParent = true; } }
-        if (!hasParent) { refW = UICanvas::Width(); refH = UICanvas::Height(); }
-        SameLineOrWrap(ButtonW(hasParent ? "Center in Parent" : "Center in Canvas"));
-        if (ImGui::Button(hasParent ? "Center in Parent" : "Center in Canvas")) {
-            UIRect r = GetUIRect(go);
-            if (r.position) {
-                // Center the resolved rect within the reference (parent or canvas).
-                Vec2 term = ResolveAnchor(r.anchor, Vec2{0, 0}, r.size, refW, refH);
-                r.position->x = (refW - r.size.x) * 0.5f - term.x;
-                r.position->y = (refH - r.size.y) * 0.5f - term.y;
-                ed.dirty = true;
-            }
-        }
-        // Anchor presets (Unity's 3x3): pick a corner/edge/center; the widget
-        // keeps its on-screen position (its offset is recomputed for the new
-        // anchor) so re-anchoring never makes it jump. Resolved against the parent.
         UIRect ar = GetUIRect(go);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.16f, 0.17f, 0.20f, 1.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 6));
+        ImGui::BeginChild("##uilayoutcard", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+        const float capW = ImGui::CalcTextSize("ARRANGE").x + 12.0f;
+        // A row: caption on the left, its controls in a group so they wrap under
+        // each other (not back under the caption) in a narrow Inspector.
+        auto caption = [&](const char* t) {
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("%s", t);
+            ImGui::SameLine(capW);
+            ImGui::BeginGroup();
+        };
+        // -- Anchor: a frame with the 9 anchor points; the chosen one is lit. --
         if (ar.anchorPtr && ar.position) {
-            ImGui::TextDisabled(hasParent ? "Anchor preset (within parent):" : "Anchor preset:");
-            Vec2 resolved = ResolveAnchor(*ar.anchorPtr, *ar.position, ar.size, refW, refH);
-            for (int row = 0; row < 3; ++row) {
+            static const char* kAnchorNames[] = {"Top Left", "Top Center", "Top Right", "Middle Left", "Center",
+                                                 "Middle Right", "Bottom Left", "Bottom Center", "Bottom Right"};
+            ImGui::TextDisabled("ANCHOR");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip(hasParent ? "Where it's pinned inside its parent. It stays where it is on screen when you change it."
+                                                                    : "Where it's pinned on the screen. It stays where it is when you change it.");
+            ImGui::SameLine(capW);
+            const Vec2 resolved = ResolveAnchor(*ar.anchorPtr, *ar.position, ar.size, refW, refH);
+            const float bw = 66.0f, bh = 50.0f;
+            ImVec2 b0 = ImGui::GetCursorScreenPos();
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            dl->AddRect(ImVec2(b0.x + 6, b0.y + 6), ImVec2(b0.x + bw - 6, b0.y + bh - 6), IM_COL32(255, 255, 255, 50), 3.0f);
+            for (int row = 0; row < 3; ++row)
                 for (int col = 0; col < 3; ++col) {
-                    if (col) ImGui::SameLine();
-                    UIAnchor cand = (UIAnchor)(row * 3 + col);
-                    bool sel = (*ar.anchorPtr == cand);
-                    if (sel) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.45f, 0.75f, 1.0f));
+                    const UIAnchor cand = (UIAnchor)(row * 3 + col);
+                    const ImVec2 c(b0.x + 6 + col * (bw - 12) * 0.5f, b0.y + 6 + row * (bh - 12) * 0.5f);
+                    ImGui::SetCursorScreenPos(ImVec2(c.x - 7, c.y - 7));
                     ImGui::PushID(row * 3 + col);
-                    if (ImGui::Button("##anc", ImVec2(20, 18))) {
-                        *ar.anchorPtr = cand;       // preserve on-screen position
-                        Vec2 term = ResolveAnchor(cand, Vec2{0, 0}, ar.size, refW, refH);
+                    const bool clicked = ImGui::InvisibleButton("##anc", ImVec2(14, 14));
+                    const bool hov = ImGui::IsItemHovered();
+                    ImGui::PopID();
+                    const bool sel = *ar.anchorPtr == cand;
+                    dl->AddCircleFilled(c, sel ? 5.0f : 3.5f, sel ? ImGui::GetColorU32(AccentCol(1.0f))
+                                                            : hov ? IM_COL32(220, 225, 235, 255) : IM_COL32(140, 146, 160, 255));
+                    if (hov) ImGui::SetTooltip("%s", kAnchorNames[row * 3 + col]);
+                    if (clicked) {
+                        *ar.anchorPtr = cand;   // keep the on-screen position
+                        const Vec2 term = ResolveAnchor(cand, Vec2{0, 0}, ar.size, refW, refH);
                         ar.position->x = resolved.x - term.x;
                         ar.position->y = resolved.y - term.y;
                         ed.dirty = true;
                     }
-                    ImGui::PopID();
-                    if (sel) ImGui::PopStyleColor();
                 }
+            ImGui::SetCursorScreenPos(ImVec2(b0.x + bw + 8, b0.y + 2));
+            ImGui::BeginGroup();
+            const int ai = (int)*ar.anchorPtr;
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextUnformatted(ai >= 0 && ai < 9 ? kAnchorNames[ai] : "Stretch");
+            ImGui::PopTextWrapPos();
+            if (ImGui::SmallButton("Center")) {
+                const Vec2 term = ResolveAnchor(ar.anchor, Vec2{0, 0}, ar.size, refW, refH);
+                ar.position->x = (refW - ar.size.x) * 0.5f - term.x;
+                ar.position->y = (refH - ar.size.y) * 0.5f - term.y;
+                ed.dirty = true;
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip(hasParent ? "Center it in its parent" : "Center it on the screen");
+            ImGui::EndGroup();
+            ImGui::SetCursorScreenPos(ImVec2(b0.x, std::max(ImGui::GetItemRectMax().y, b0.y + bh) + 4));
+            ImGui::Dummy(ImVec2(0, 0));
         }
-        // Stretch helpers for resizable widgets: fill the parent (or canvas) on an axis.
-        if (ar.sizePtr && ar.position) {
+        // -- Size: stretch to the parent / screen on an axis. --
+        if (ar.sizePtr && ar.position && ar.anchorPtr) {
             auto fill = [&](bool x, bool y) {
                 if (x) ar.sizePtr->x = refW;
                 if (y) ar.sizePtr->y = refH;
-                Vec2 term = ResolveAnchor(*ar.anchorPtr, Vec2{0, 0}, *ar.sizePtr, refW, refH);
-                if (x) ar.position->x = -term.x;   // resolved left -> 0
-                if (y) ar.position->y = -term.y;   // resolved top  -> 0
+                const Vec2 term = ResolveAnchor(*ar.anchorPtr, Vec2{0, 0}, *ar.sizePtr, refW, refH);
+                if (x) ar.position->x = -term.x;
+                if (y) ar.position->y = -term.y;
                 ed.dirty = true;
             };
-            if (ImGui::Button("Fill Width"))  fill(true, false);
+            caption("SIZE");
+            if (ImGui::SmallButton("Fill Width"))  fill(true, false);
             SameLineOrWrap(ButtonW("Fill Height"));
-            if (ImGui::Button("Fill Height")) fill(false, true);
-            SameLineOrWrap(ButtonW(hasParent ? "Fill Parent" : "Fill Canvas"));
-            if (ImGui::Button(hasParent ? "Fill Parent" : "Fill Canvas")) fill(true, true);
+            if (ImGui::SmallButton("Fill Height")) fill(false, true);
+            SameLineOrWrap(ButtonW("Fill All"));
+            if (ImGui::SmallButton("Fill All")) fill(true, true);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip(hasParent ? "Cover the whole parent" : "Cover the whole screen");
+            ImGui::EndGroup();
         }
-        // Layout tools: put this widget on a card, or shrink-wrap a card around its children.
+        // -- Order: what draws on top. --
+        {
+            caption("ORDER");
+            if (ImGui::SmallButton("To Front")) { ed.scene().MoveToFront(go); ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw on top of its siblings (moves it last in the Hierarchy)");
+            SameLineOrWrap(ButtonW("To Back"));
+            if (ImGui::SmallButton("To Back")) { ed.scene().MoveToBack(go); ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw under its siblings (moves it first in the Hierarchy)");
+            SameLineOrWrap(70.0f);
+            ImGui::SetNextItemWidth(std::max(60.0f, ImGui::GetContentRegionAvail().x));
+            // 0 = the widget type's default layer; any other value layers it by this
+            // number against every widget (higher on top), nested or not.
+            const int defLayer = UIDefaultLayer(go);
+            char fmt[40];
+            std::snprintf(fmt, sizeof(fmt), go->uiDrawOrder == 0 && defLayer >= 0 ? "auto (%d)" : "%%d", defLayer);
+            if (go->uiDrawOrder != 0) std::snprintf(fmt, sizeof(fmt), "layer %%d");
+            if (ImGui::DragInt("##draworder", &go->uiDrawOrder, 0.1f, -100, 100, fmt)) ed.dirty = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(
+                    "Draw order. auto = the widget type's usual layer; set a number to layer it\n"
+                    "against any widget (higher draws on top), even ones it isn't nested in.\n"
+                    "Usual layers: image 1 | panel 2 | scroll 4 | bars 5-6 | slider 7-8 | rating 9\n"
+                    "  toggle 10 | tabs 11 | button 12 | text 13 | dropdown 15 | input 16");
+            ImGui::EndGroup();
+        }
+        // -- Arrange: cards around widgets. --
         {
             bool hasUIKids = false;
             for (Transform* ch : go->transform->Children())
                 if (ch && ch->gameObject && GetUIRect(ch->gameObject).valid) { hasUIKids = true; break; }
-            if (ImGui::Button("Wrap in Panel")) {
+            caption("ARRANGE");
+            if (ImGui::SmallButton("Wrap in Panel")) {
                 ed.PushUndo();
                 std::vector<GameObject*> items = ed.MultiSelection();
                 if (items.size() < 2) items = {go};
@@ -24521,13 +24666,17 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Put the selected widget(s) on a new card that fits around them (16 px padding)");
             if (hasUIKids && ar.sizePtr) {
                 SameLineOrWrap(ButtonW("Fit to Children"));
-                if (ImGui::Button("Fit to Children")) {
+                if (ImGui::SmallButton("Fit to Children")) {
                     ed.PushUndo();
                     if (okay::UILayout::FitToChildren(go)) ed.dirty = true;
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Resize this to wrap its child widgets (16 px padding); the children stay put on screen");
             }
+            ImGui::EndGroup();
         }
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
         ImGui::Spacing();
     }
 
@@ -29982,6 +30131,93 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##udd")) toRemove = dd;
         }
     }
+    if (auto* ta = dynamic_cast<TweenAnimation*>(curComp)) {
+        if (CompHeader("Tween Animation", ta, &toRemove)) {
+            using TT = TweenAnimation::Type;
+            const TT ty = (TT)ta->type;
+            if (ImGui::BeginCombo("Animate##ta", TweenAnimation::TypeName(ty))) {
+                const char* groups[] = {"Transform", "Look", "UI", "Feel (punch / shake)", "Motion"};
+                const int groupOf[] = {0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 3, 3, 3, 3, 4};
+                for (int gI = 0; gI < 5; ++gI) {
+                    ImGui::TextDisabled("%s", groups[gI]);
+                    for (int i = 0; i < (int)TT::Count; ++i) {
+                        if (groupOf[i] != gI) continue;
+                        if (ImGui::Selectable((std::string("  ") + TweenAnimation::TypeName((TT)i)).c_str(), ta->type == i)) {
+                            ta->type = i; ed.dirty = true;
+                            if (i >= (int)TT::PunchPosition && i <= (int)TT::ShakeScale && ta->endValue.x == 0 && ta->endValue.y == 1)
+                                ta->endValue = i == (int)TT::PunchRotation || i == (int)TT::ShakeRotation ? Vec3{0, 0, 15} : Vec3{0.2f, 0.2f, 0.2f};
+                        }
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            const bool punchy = ty >= TT::PunchPosition && ty <= TT::ShakeScale;
+            const char* endLbl = ty == TT::Rotate ? "Angles##ta" : punchy ? "Strength##ta" : ty == TT::UIMove ? "Position##ta"
+                               : ty == TT::UISize ? "Size##ta" : "End##ta";
+            if (ty == TT::Fade) {
+                if (ImGui::SliderFloat("End alpha##ta", &ta->endFloat, 0.0f, 1.0f)) ed.dirty = true;
+            } else if (ty == TT::Color) {
+                float c4[4] = {ta->endColor.r, ta->endColor.g, ta->endColor.b, ta->endColor.a};
+                if (ImGui::ColorEdit4("End color##ta", c4)) { ta->endColor = {c4[0], c4[1], c4[2], c4[3]}; ed.dirty = true; }
+            } else if (ty == TT::UIMove || ty == TT::UISize) {
+                float v2[2] = {ta->endValue.x, ta->endValue.y};
+                if (ImGui::DragFloat2(endLbl, v2, 1.0f)) { ta->endValue.x = v2[0]; ta->endValue.y = v2[1]; ed.dirty = true; }
+            } else {
+                float v3[3] = {ta->endValue.x, ta->endValue.y, ta->endValue.z};
+                if (DragVec3Axis(endLbl, v3, 0.05f, "%.2f")) { ta->endValue = {v3[0], v3[1], v3[2]}; ed.dirty = true; }
+            }
+            if (ty == TT::Jump) {
+                if (ImGui::DragFloat("Height##ta", &ta->endFloat, 0.05f, 0.0f, 100.0f)) ed.dirty = true;
+                if (ImGui::SliderInt("Jumps##ta", &ta->jumps, 1, 10)) ed.dirty = true;
+            }
+            if (!punchy && ty != TT::Fade && ty != TT::Color) {
+                if (ImGui::Checkbox("Relative##ta", &ta->relative)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip(ty == TT::Rotate ? "Spin BY the angles (360 = a full turn) instead of TO them."
+                                                                                : "End is an offset from where it starts.");
+                ImGui::SameLine();
+            }
+            if (!punchy) {
+                if (ImGui::Checkbox("From##ta", &ta->from)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play from End back to where it is now (an intro).");
+            }
+            if (punchy) {
+                if (ImGui::SliderInt("Vibrato##ta", &ta->vibrato, 1, 40)) ed.dirty = true;
+                if (ty <= TT::PunchRotation && ImGui::SliderFloat("Elasticity##ta", &ta->elasticity, 0.0f, 1.0f)) ed.dirty = true;
+            }
+            if (ImGui::DragFloat("Duration (s)##ta", &ta->duration, 0.01f, 0.01f, 120.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Delay (s)##ta", &ta->delay, 0.01f, 0.0f, 120.0f)) ed.dirty = true;
+            if (!punchy && EaseCombo("Ease##ta", ta->ease)) ed.dirty = true;
+            {
+                bool forever = ta->loops < 0;
+                int n = forever ? 1 : ta->loops;
+                ImGui::SetNextItemWidth(ImGui::CalcItemWidth() * 0.45f);
+                ImGui::BeginDisabled(forever);
+                if (ImGui::DragInt("##taloops", &n, 0.1f, 1, 999)) { ta->loops = std::max(1, n); ed.dirty = true; }
+                ImGui::EndDisabled();
+                ImGui::SameLine();
+                if (ImGui::Checkbox("Forever##ta", &forever)) { ta->loops = forever ? -1 : 1; ed.dirty = true; }
+                ImGui::SameLine(); ImGui::TextUnformatted("Loops");
+                if (ta->loops != 1) {
+                    static const char* kLoopTypes[] = {"Restart", "Yoyo (back and forth)", "Incremental (keep going)"};
+                    if (ImGui::Combo("Loop type##ta", &ta->loopType, kLoopTypes, IM_ARRAYSIZE(kLoopTypes))) ed.dirty = true;
+                }
+            }
+            if (ImGui::Checkbox("Play on start##ta", &ta->autoPlay)) ed.dirty = true;
+            SameLineOrWrap(ButtonW("Ignore time scale") + 30);
+            if (ImGui::Checkbox("Ignore time scale##ta", &ta->unscaled)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keeps playing while the game is paused (menus).");
+            char idb[64]; std::snprintf(idb, sizeof(idb), "%s", ta->id.c_str());
+            if (ImGui::InputTextWithHint("Id##ta", "for tween_play_id(\"...\")", idb, sizeof(idb))) { ta->id = idb; ed.dirty = true; }
+            if (!ta->autoPlay && ta->id.empty())
+                ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.35f, 1.0f), "Not on start and no Id: nothing will play it.");
+            // Preview in the editor (restores the object after).
+            const bool previewing = TweenPreviewActive(ta);
+            if (ImGui::Button(previewing ? "Stop Preview##ta" : "Preview##ta")) {
+                if (previewing) StopTweenPreview(); else StartTweenPreview(ed, ta);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play it here without pressing Play; the object is put back afterwards.");
+        }
+    }
     if (auto* ua = dynamic_cast<UIAnimation*>(curComp)) {
         if (CompHeader("UI Animation", ua, &toRemove)) {
             static const char* kIntro[] = {"None", "Fade In", "Slide In from Left", "Slide In from Right", "Slide In from Top",
@@ -31057,6 +31293,11 @@ void DrawInspector(EditorState& ed) {
                 ed.dirty = true;
             }
             if (item(!go->GetComponent<RootMotion>(), "Root Motion (anim drives the body)")) { go->AddComponent<RootMotion>(); ed.dirty = true; }
+            if (item(true, "Tween Animation (move / scale / fade / punch / shake, no code)")) {
+                auto* ta = go->AddComponent<TweenAnimation>();
+                if (GetUIRect(go).valid) { ta->type = (int)TweenAnimation::Type::PunchScale; ta->endValue = {0.15f, 0.15f, 0.15f}; ta->duration = 0.4f; }
+                ed.dirty = true;
+            }
           } EndCat(o); }
 
         { bool o = BeginCat("Physics 2D");
@@ -38774,6 +39015,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.SaveManager"); if (g_showSaveManager) DrawSaveManager(ed); }
         { OKAY_PROFILE("UI.Scenes"); if (g_showScenes)    DrawScenes(ed); }
         DrawPanelTabMenu();   // right-click on any panel tab
+        TickTweenPreview(ed, ImGui::GetIO().DeltaTime);
 
         // Play-mode tint: a colored border around the whole window so it's
         // obvious the game is running (green) or paused (amber) — like Unity.

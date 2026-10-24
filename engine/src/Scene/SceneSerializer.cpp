@@ -75,6 +75,7 @@
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/UITooltip.hpp"
 #include "okay/Components/UIAnimation.hpp"
+#include "okay/Components/TweenAnimation.hpp"
 #include "okay/Components/UITextBind.hpp"
 #include "okay/Components/UIBarBind.hpp"
 #include "okay/Components/UIDraggable.hpp"
@@ -1657,6 +1658,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << ua->duration << " " << ua->delay << " " << ua->distance << " " << (int)ua->ease << " "
             << ua->loopSpeed << " " << ua->loopAmount << " " << (ua->playOnStart ? 1 : 0) << " "
             << (ua->replayOnShow ? 1 : 0) << " " << (ua->hideAfterOutro ? 1 : 0) << "\n";
+    }
+    for (TweenAnimation* ta : go->GetComponents<TweenAnimation>()) {
+        out << "  tweenanim " << ta->type << " " << ta->endValue.x << " " << ta->endValue.y << " " << ta->endValue.z
+            << " " << ta->endColor.r << " " << ta->endColor.g << " " << ta->endColor.b << " " << ta->endColor.a
+            << " " << ta->endFloat << " " << (ta->relative ? 1 : 0) << " " << (ta->from ? 1 : 0)
+            << " " << ta->duration << " " << ta->delay << " " << ta->ease << " " << ta->loops << " " << ta->loopType
+            << " " << (ta->autoPlay ? 1 : 0) << " " << (ta->autoKill ? 1 : 0) << " " << (ta->unscaled ? 1 : 0)
+            << " " << ta->vibrato << " " << ta->elasticity << " " << ta->jumps << " " << (ta->enabled ? 1 : 0)
+            << " " << Quote(ta->id) << "\n";
     }
     if (auto* lg = go->GetComponent<UILayoutGroup>()) {
         out << "  uilayout " << (int)lg->direction << " " << (int)lg->anchor << " "
@@ -4335,6 +4345,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> ua->loopSpeed >> ua->loopAmount >> pos >> ros >> hao;
                     ua->intro = (UIAnimation::Intro)it; ua->loop = (UIAnimation::Loop)lp; ua->outro = (UIAnimation::Outro)ot;
                     ua->ease = (Ease)es; ua->playOnStart = pos != 0; ua->replayOnShow = ros != 0; ua->hideAfterOutro = hao != 0;
+                } else if (field == "tweenanim") {
+                    auto* ta = go->AddComponent<TweenAnimation>();
+                    int rel = 0, frm = 0, ap = 1, ak = 1, us = 0, en = 1;
+                    in >> ta->type >> ta->endValue.x >> ta->endValue.y >> ta->endValue.z
+                       >> ta->endColor.r >> ta->endColor.g >> ta->endColor.b >> ta->endColor.a
+                       >> ta->endFloat >> rel >> frm >> ta->duration >> ta->delay >> ta->ease >> ta->loops >> ta->loopType
+                       >> ap >> ak >> us >> ta->vibrato >> ta->elasticity >> ta->jumps >> en;
+                    ta->relative = rel != 0; ta->from = frm != 0; ta->autoPlay = ap != 0; ta->autoKill = ak != 0;
+                    ta->unscaled = us != 0; ta->enabled = en != 0;
+                    ta->id = ReadQuoted(in);
                 } else if (field == "uitooltip") {
                     auto* tt = go->AddComponent<UITooltip>();
                     tt->text = ReadQuoted(in);

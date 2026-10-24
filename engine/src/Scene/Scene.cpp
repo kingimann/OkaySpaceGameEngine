@@ -2,6 +2,7 @@
 #include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Core/Time.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
@@ -48,6 +49,7 @@ void Scene::Clear() {
     m_active.clear();
     m_destroyQueue.clear();
     m_scheduler.Clear();
+    m_tweens.Clear();
     m_physics.Clear();
     mainCamera = nullptr;
     m_objects.clear();
@@ -109,6 +111,10 @@ void Scene::Update(float deltaTime) {
     m_active.erase(std::remove(m_active.begin(), m_active.end(), nullptr), m_active.end());
 
     m_scheduler.Update(deltaTime);
+    {   // Tweens set to ignore the time scale use the real frame time.
+        const float ts = Time::TimeScale();
+        m_tweens.Update(deltaTime, ts > 1e-6f ? deltaTime / ts : Time::UnscaledDeltaTime());
+    }
 
     // Pump a non-native realtime transport (e.g. Photon needs its client
     // serviced every frame). Native is a no-op — the NetworkManager component
@@ -305,6 +311,7 @@ void Scene::FlushDestroyed() {
         for (Component* c : m_pending) if (c && !dying.count(c->gameObject)) survivors.push_back(c);
         for (Component* c : survivors) c->OnObjectsDestroyed(dying);
     }
+    m_tweens.OnObjectsDestroyed(dying);   // nothing keeps animating a freed object
     for (GameObject* go : m_destroyQueue) {
         // Run OnDestroy and drop the object's components from the lists.
         for (auto& obj : m_objects) {

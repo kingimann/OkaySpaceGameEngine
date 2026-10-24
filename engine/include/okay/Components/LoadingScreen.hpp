@@ -23,6 +23,30 @@ namespace okay {
 /// You can also trigger one mid-game from code/script via Begin("NextLevel").
 class LoadingScreen : public Behaviour {
 public:
+    /// How the pieces are arranged (see LoadingScreenLayout.hpp for each one).
+    enum class Layout {
+        Classic,    ///< title, tip and bar centred at the positions set below
+        Minimal,    ///< a spinner and a small title in the middle, thin bar
+        Cinematic,  ///< letterbox bars, title bottom-left, bar along the lower bar
+        Splash,     ///< a big centred logo (or title) with a thin bar under it
+        Card,       ///< a raised card in the middle holding everything
+        Corner,     ///< title bottom-left, spinner bottom-right, bar along the bottom
+        Ring,       ///< a round progress ring with the percent inside
+        Count
+    };
+    enum class BarStyle { Solid, Segmented, Shimmer, Indeterminate, Count };
+    enum class SpinnerStyle { Dots, Arc, Bars, Pulse, Count };
+
+    int         layout          = (int)Layout::Classic;
+    int         barStyle        = (int)BarStyle::Solid;
+    int         spinnerStyle    = (int)SpinnerStyle::Dots;
+    std::string subtitle;                        ///< smaller line with the title (level name, chapter...)
+    std::string logoImage;                       ///< optional logo (Splash shows it big)
+    float       logoSize        = 0.25f;         ///< logo size as a fraction of screen height
+    bool        logoPulse       = true;          ///< logo gently breathes
+    bool        kenBurns        = false;         ///< background image slowly zooms in
+    Color       cardColor       = Color::FromBytes(28, 32, 44);   ///< Card layout's panel
+    float       tipInterval     = 0.0f;          ///< > 0: show the next tip every N seconds
     Color       backgroundColor = Color::FromBytes(12, 14, 20);
     Color       backgroundColor2 = Color::FromBytes(20, 24, 34); ///< gradient bottom colour
     bool        gradientBackground = false;      ///< vertical gradient backgroundColor -> backgroundColor2
@@ -89,7 +113,7 @@ public:
     /// Show the loading screen now; optionally override the scene to load when done.
     void Begin(const std::string& target = "") {
         if (!target.empty()) targetScene = target;
-        active_ = true; loaded_ = false; timer_ = 0.0f;
+        active_ = true; loaded_ = false; timer_ = 0.0f; tipTimer_ = 0.0f;
         PickTip();
     }
 
@@ -98,6 +122,10 @@ public:
     void Update(float dt) override {
         if (!active_) return;
         timer_ += dt;
+        if (tipInterval > 0.0f && tips.size() > 1) {
+            tipTimer_ += dt;
+            if (tipTimer_ >= tipInterval) { tipTimer_ = 0.0f; PickTip(); }
+        }
         if (timer_ >= duration && !loaded_) {
             loaded_ = true;
             if (!targetScene.empty()) {
@@ -112,6 +140,7 @@ public:
 private:
     bool  active_ = false, loaded_ = false;
     float timer_  = 0.0f;
+    float tipTimer_ = 0.0f;
     int   tipIndex_ = -1;
     std::string tip_;
 

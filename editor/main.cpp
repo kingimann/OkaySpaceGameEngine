@@ -4344,7 +4344,32 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         add("Pause Menu",           &okay::UITemplates::AddPauseMenu);
         add("Settings",             &okay::UITemplates::AddSettings);
         add("Confirm Dialog",       &okay::UITemplates::AddConfirmDialog);
-        add("Loading Screen",       &okay::UITemplates::AddLoadingScreen);
+        if (ImGui::BeginMenu("Loading Screens")) {
+            ImGui::TextDisabled("UI you can edit (bar follows `loading`)");
+            add("Loading Screen",      &okay::UITemplates::AddLoadingScreen);
+            add("Minimal",             &okay::UITemplates::AddLoadingMinimal);
+            add("Card",                &okay::UITemplates::AddLoadingCard);
+            add("Splash (logo)",       &okay::UITemplates::AddLoadingSplash);
+            add("Cinematic",           &okay::UITemplates::AddLoadingCinematic);
+            ImGui::Separator();
+            ImGui::TextDisabled("Automatic overlay (shows on Play, times itself)");
+            static const char* kOverlay[] = {"Classic", "Minimal", "Cinematic", "Splash", "Card", "Corner", "Ring"};
+            for (int li = 0; li < (int)okay::LoadingScreen::Layout::Count; ++li) {
+                if (ImGui::MenuItem((std::string(kOverlay[li]) + " overlay").c_str())) {
+                    ed.PushUndo();
+                    GameObject* g = ed.scene().CreateGameObject("Loading Screen");
+                    auto* ls = g->AddComponent<okay::LoadingScreen>();
+                    okay::ApplyLoadingPreset(*ls, (okay::LoadingScreen::Layout)li);
+                    ls->tips = {"Tip: hold Shift to sprint.", "Tip: press Esc to pause."};
+                    ls->tipInterval = 2.5f;
+                    ed.Select(g);
+                    ConsoleLog(std::string("Added a ") + kOverlay[li] + " loading screen (pick another look in the Inspector)");
+                    ed.dirty = true; created = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("A LoadingScreen component: covers the game when the scene starts\n(or call Begin(\"NextLevel\")), fills its bar, then reveals or loads a scene.");
+            }
+            ImGui::EndMenu();
+        }
         ImGui::Separator();
         ImGui::TextDisabled("In game");
         add("HUD (health + score)", &okay::UITemplates::AddHUD);
@@ -22654,6 +22679,8 @@ static float ButtonW(const char* label) {
 // glyph inside the bar, the name, and a "..." menu on the right (move up / down,
 // expand / collapse all, remove). The name gets the whole bar instead of being
 // squeezed out by separate arrow buttons in a narrow Inspector.
+static void DrawLoadingScreenCmds(ImDrawList* dl, const okay::LoadingScreen& ls, ImVec2 pos, ImVec2 size,
+                                  float previewTime = -1.0f);
 static bool CompHeader(const char* label, okay::Component* comp, okay::Component** toRemove,
                        bool removable = true) {
     ImGui::PushID(comp);
@@ -27329,8 +27356,41 @@ void DrawInspector(EditorState& ed) {
     if (auto* ls = dynamic_cast<LoadingScreen*>(curComp)) {
         if (CompHeader("Loading Screen", ls, &toRemove)) {
             ImGui::TextDisabled("A full-screen overlay shown on Play (and in built games).");
+            {   // Live preview (16:9), animated, of exactly what the game draws.
+                const float pw = ImGui::GetContentRegionAvail().x, ph = pw * 9.0f / 16.0f;
+                ImVec2 pp = ImGui::GetCursorScreenPos();
+                ImGui::Dummy(ImVec2(pw, ph));
+                ImDrawList* pdl = ImGui::GetWindowDrawList();
+                DrawLoadingScreenCmds(pdl, *ls, pp, ImVec2(pw, ph), (float)ImGui::GetTime());
+                pdl->AddRect(pp, ImVec2(pp.x + pw, pp.y + ph), IM_COL32(255, 255, 255, 40), 3.0f);
+            }
+            // Layout looks: one click sets the arrangement and colours that suit it.
+            static const char* kLsLayouts[] = {"Classic", "Minimal", "Cinematic", "Splash", "Card", "Corner", "Ring"};
+            static const char* kLsLayoutTips[] = {
+                "Title, tip and bar centred (positions below).",
+                "A spinner and a small title in the middle, thin bar.",
+                "Letterbox bars, title bottom-left, bar along the lower bar, slow zoom.",
+                "A big centred logo (or title) with a thin bar under it.",
+                "A raised card in the middle holding everything.",
+                "Title bottom-left, spinner bottom-right, bar along the bottom edge.",
+                "A round progress ring with the percent inside."};
+            ImGui::TextUnformatted("Look");
+            for (int li = 0; li < (int)LoadingScreen::Layout::Count; ++li) {
+                if (li > 0) SameLineOrWrap(ButtonW(kLsLayouts[li]));
+                const bool cur = ls->layout == li;
+                if (cur) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+                if (ImGui::Button((std::string(kLsLayouts[li]) + "##lslook").c_str())) {
+                    ed.PushUndo(); okay::ApplyLoadingPreset(*ls, (LoadingScreen::Layout)li); ed.dirty = true;
+                }
+                if (cur) ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nSets the layout plus colours, bar and spinner to match.\nYour text, tips and images stay.", kLsLayoutTips[li]);
+            }
+            if (ImGui::Combo("Layout##ls", &ls->layout, kLsLayouts, IM_ARRAYSIZE(kLsLayouts))) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Change only the arrangement (keeps your colours).");
             char tb[128]; std::snprintf(tb, sizeof(tb), "%s", ls->title.c_str());
             if (ImGui::InputText("Title##ls", tb, sizeof(tb))) { ls->title = tb; ed.dirty = true; }
+            char stb[128]; std::snprintf(stb, sizeof(stb), "%s", ls->subtitle.c_str());
+            if (ImGui::InputTextWithHint("Subtitle##ls", "level name, chapter...", stb, sizeof(stb))) { ls->subtitle = stb; ed.dirty = true; }
             if (ImGui::Checkbox("Show title##ls", &ls->showTitle)) ed.dirty = true; ImGui::SameLine();
             if (ImGui::Checkbox("Show bar##ls", &ls->showBar)) ed.dirty = true;
             if (ImGui::Checkbox("Show on scene start##ls", &ls->showOnStart)) ed.dirty = true;
@@ -27344,6 +27404,20 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Background##ls", bgc)) { ls->backgroundColor = {bgc[0], bgc[1], bgc[2], bgc[3]}; ed.dirty = true; }
             ImGui::Text("Background image"); ImGui::SameLine(150);
             if (AssetSlot("lsbg", ls->backgroundImage, "Image", {".png", ".jpg", ".jpeg", ".bmp"})) ed.dirty = true;
+            if (!ls->backgroundImage.empty()) {
+                if (ImGui::Checkbox("Slow zoom##ls", &ls->kenBurns)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The background image slowly zooms in while the screen is up.");
+            }
+            ImGui::Text("Logo"); ImGui::SameLine(150);
+            if (AssetSlot("lslogo", ls->logoImage, "Image", {".png", ".jpg", ".jpeg", ".bmp"})) ed.dirty = true;
+            if (!ls->logoImage.empty()) {
+                if (ImGui::SliderFloat("Logo size##ls", &ls->logoSize, 0.05f, 0.8f)) ed.dirty = true;
+                if (ImGui::Checkbox("Logo pulse##ls", &ls->logoPulse)) ed.dirty = true;
+            }
+            if (ls->layout == (int)LoadingScreen::Layout::Card) {
+                float cc4[4] = {ls->cardColor.r, ls->cardColor.g, ls->cardColor.b, ls->cardColor.a};
+                if (ImGui::ColorEdit4("Card##ls", cc4)) { ls->cardColor = {cc4[0], cc4[1], cc4[2], cc4[3]}; ed.dirty = true; }
+            }
             float txc[4] = {ls->textColor.r, ls->textColor.g, ls->textColor.b, ls->textColor.a};
             if (ImGui::ColorEdit4("Text##ls", txc)) { ls->textColor = {txc[0], txc[1], txc[2], txc[3]}; ed.dirty = true; }
             float bbc[4] = {ls->barBackground.r, ls->barBackground.g, ls->barBackground.b, ls->barBackground.a};
@@ -27359,6 +27433,8 @@ void DrawInspector(EditorState& ed) {
                     if (ImGui::SmallButton((std::string("x##tipdel") + std::to_string(i)).c_str())) { ls->tips.erase(ls->tips.begin() + i); ed.dirty = true; break; }
                 }
                 if (ImGui::SmallButton("+ Add tip##ls")) { ls->tips.push_back("New tip"); ed.dirty = true; }
+                if (ImGui::DragFloat("Next tip every (s)##ls", &ls->tipInterval, 0.1f, 0.0f, 60.0f, ls->tipInterval > 0 ? "%.1f" : "off")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = one tip each time the screen shows; more = cycle through the tips.");
                 ImGui::TreePop();
             }
             auto lc = [&](const char* lbl, Color& c, const char* id) {
@@ -27383,6 +27459,9 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TreePop();
             }
             if (ImGui::TreeNode("Progress bar##lsbar")) {
+                static const char* kBarStyles[] = {"Solid", "Segmented", "Shimmer", "Indeterminate"};
+                if (ImGui::Combo("Style##lsbar", &ls->barStyle, kBarStyles, IM_ARRAYSIZE(kBarStyles))) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Indeterminate: a sliding chunk, for loads with no known length.");
                 if (ImGui::SliderFloat("Width##lsbar", &ls->barWidth, 0.05f, 1.0f)) ed.dirty = true;
                 if (ImGui::SliderFloat("Height##lsbar", &ls->barHeight, 0.005f, 0.1f)) ed.dirty = true;
                 if (ImGui::SliderFloat("Y##lsbar", &ls->barY, 0.0f, 1.0f)) ed.dirty = true;
@@ -27394,6 +27473,8 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::TreeNode("Spinner##lsspin")) {
                 if (ImGui::Checkbox("Show spinner##ls", &ls->showSpinner)) ed.dirty = true;
+                static const char* kSpinStyles[] = {"Dots", "Arc", "Bars", "Pulse"};
+                if (ImGui::Combo("Style##lsspin", &ls->spinnerStyle, kSpinStyles, IM_ARRAYSIZE(kSpinStyles))) ed.dirty = true;
                 lc("Spinner color", ls->spinnerColor, "lsspc");
                 if (ImGui::SliderFloat("Radius##lsspin", &ls->spinnerRadius, 0.01f, 0.2f)) ed.dirty = true;
                 if (ImGui::DragFloat("Dot size##lsspin", &ls->spinnerDotSize, 0.1f, 1.0f, 30.0f)) ed.dirty = true;
@@ -31439,6 +31520,50 @@ static Camera* SceneCamera(Scene& s) {
     s.mainCamera = okay::PickRenderCamera(s.mainCamera, cams);
     return s.mainCamera;
 }
+// Draw a LoadingScreen in the Game view: the same commands the built player draws
+// (okay::BuildLoadingScreen), so every layout previews exactly.
+static void DrawLoadingScreenCmds(ImDrawList* dl, const okay::LoadingScreen& ls, ImVec2 pos, ImVec2 size,
+                                  float previewTime) {
+    using K = okay::LoadingDrawCmd::Kind;
+    auto col = [](const okay::Color& c, float a) {
+        return IM_COL32((int)(c.r * 255), (int)(c.g * 255), (int)(c.b * 255),
+                        (int)(std::clamp(a * c.a, 0.0f, 1.0f) * 255));
+    };
+    dl->PushClipRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), true);
+    for (const okay::LoadingDrawCmd& d : okay::BuildLoadingScreen(ls, size.x, size.y, previewTime)) {
+        const ImVec2 p0(pos.x + d.x, pos.y + d.y), p1(pos.x + d.x + d.w, pos.y + d.y + d.h);
+        switch (d.kind) {
+        case K::Rect:     dl->AddRectFilled(p0, p1, col(d.color, d.alpha), d.radius); break;
+        case K::Gradient: dl->AddRectFilledMultiColor(p0, p1, col(d.color, d.alpha), col(d.color, d.alpha),
+                                                      col(d.color2, d.alpha), col(d.color2, d.alpha)); break;
+        case K::Outline:  dl->AddRect(p0, p1, col(d.color, d.alpha), d.radius); break;
+        case K::Image:
+            if (SDL_Texture* tex = GetThumb(d.text))
+                dl->AddImage((ImTextureID)tex, p0, p1, ImVec2(d.u0, d.v0), ImVec2(d.u1, d.v1),
+                             IM_COL32(255, 255, 255, (int)(std::clamp(d.alpha, 0.0f, 1.0f) * 255)));
+            break;
+        case K::Text: {
+            ImFont* f = ImGui::GetFont();
+            const float fs = d.h / 0.72f;   // the 8x8 font's text height is about a cap height
+            const ImVec2 ts = f->CalcTextSizeA(fs, FLT_MAX, 0.0f, d.text.c_str());
+            const float x = d.align == 1 ? d.x - ts.x * 0.5f : d.align == 2 ? d.x - ts.x : d.x;
+            dl->AddText(f, fs, ImVec2(pos.x + x, pos.y + d.y - fs * 0.12f), col(d.color, d.alpha), d.text.c_str());
+            break;
+        }
+        case K::Circle: dl->AddCircleFilled(ImVec2(pos.x + d.x, pos.y + d.y), d.w, col(d.color, d.alpha)); break;
+        case K::Line:   dl->AddLine(ImVec2(pos.x + d.x, pos.y + d.y), ImVec2(pos.x + d.w, pos.y + d.h), col(d.color, d.alpha), d.radius); break;
+        case K::Arc: {
+            const float span = std::fabs(d.u1 - d.u0);
+            const int segs = std::max(8, (int)(span / 6.2831853f * 64.0f));
+            dl->PathArcTo(ImVec2(pos.x + d.x, pos.y + d.y), d.w, d.u0, d.u1, segs);
+            dl->PathStroke(col(d.color, d.alpha), span >= 6.28f ? ImDrawFlags_Closed : 0, d.radius);
+            break;
+        }
+        }
+    }
+    dl->PopClipRect();
+}
+
 
 // Screen-space UI overlay (text, images, panels, bars, sliders, toggles,
 // buttons). UI objects anchor to the canvas via UICanvas, so this is identical
@@ -32897,49 +33022,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     for (const auto& up : objs) {
         auto* ls = up ? up->GetComponent<okay::LoadingScreen>() : nullptr;
         if (!ls || !ls->Active()) continue;
-        float a = ls->Alpha(); a = a < 0 ? 0 : (a > 1 ? 1 : a);
-        auto col = [&](const okay::Color& c) {
-            return IM_COL32((int)(c.r * 255), (int)(c.g * 255), (int)(c.b * 255), (int)(a * 255));
-        };
-        ImVec2 p0 = canvasPos, p1 = ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y);
-        SDL_Texture* bgtex = ls->backgroundImage.empty() ? nullptr : GetThumb(ls->backgroundImage);
-        if (bgtex) dl->AddImage((ImTextureID)bgtex, p0, p1, ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, (int)(a * 255)));
-        else if (ls->gradientBackground)
-            dl->AddRectFilledMultiColor(p0, p1, col(ls->backgroundColor), col(ls->backgroundColor),
-                                        col(ls->backgroundColor2), col(ls->backgroundColor2));
-        else dl->AddRectFilled(p0, p1, col(ls->backgroundColor));
-        float cx = canvasPos.x + canvasSize.x * 0.5f;
-        if (ls->showTitle && !ls->title.empty()) {
-            ImVec2 ts = ImGui::CalcTextSize(ls->title.c_str());
-            dl->AddText(ImVec2(cx - ts.x * 0.5f, canvasPos.y + canvasSize.y * ls->titleY), col(ls->titleColor), ls->title.c_str());
-        }
-        if (!ls->CurrentTip().empty()) {
-            ImVec2 ts = ImGui::CalcTextSize(ls->CurrentTip().c_str());
-            dl->AddText(ImVec2(cx - ts.x * 0.5f, canvasPos.y + canvasSize.y * ls->tipY), col(ls->tipColor), ls->CurrentTip().c_str());
-        }
-        if (ls->showBar) {
-            float bw = canvasSize.x * ls->barWidth, bh = canvasSize.y * ls->barHeight; if (bh < 4.0f) bh = 4.0f;
-            float bx = cx - bw * 0.5f, by = canvasPos.y + canvasSize.y * ls->barY;
-            dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw, by + bh), col(ls->barBackground), ls->barRadius);
-            dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw * ls->Progress(), by + bh), col(ls->barFill), ls->barRadius);
-            if (ls->barBorder) dl->AddRect(ImVec2(bx, by), ImVec2(bx + bw, by + bh), col(ls->barBorderColor), ls->barRadius);
-            if (ls->showPercent) {
-                char pc[8]; std::snprintf(pc, sizeof(pc), "%d%%", (int)(ls->Progress() * 100.0f + 0.5f));
-                dl->AddText(ImVec2(bx + bw + 8, by - 2), col(ls->textColor), pc);
-            }
-        }
-        if (ls->showSpinner) {
-            float scx = cx, scy = canvasPos.y + canvasSize.y * ls->spinnerY, rad = canvasSize.y * ls->spinnerRadius;
-            float ds = ls->spinnerDotSize * (canvasSize.y / 720.0f); if (ds < 2.0f) ds = 2.0f;
-            float phase = ls->Elapsed() * ls->spinnerSpeed;
-            for (int i = 0; i < 8; ++i) {
-                float ang = (float)i / 8 * 6.2831853f;
-                float bright = 0.25f + 0.75f * (0.5f + 0.5f * std::cos(ang - phase));
-                ImU32 dc = IM_COL32((int)(ls->spinnerColor.r*255), (int)(ls->spinnerColor.g*255), (int)(ls->spinnerColor.b*255), (int)(a * 255 * bright));
-                ImVec2 dp(scx + std::cos(ang) * rad, scy + std::sin(ang) * rad);
-                dl->AddRectFilled(ImVec2(dp.x - ds*0.5f, dp.y - ds*0.5f), ImVec2(dp.x + ds*0.5f, dp.y + ds*0.5f), dc);
-            }
-        }
+        DrawLoadingScreenCmds(dl, *ls, canvasPos, canvasSize);
         break;
     }
     UIWorld().active = false;   // end world-space UI projection for this overlay
@@ -38461,6 +38544,8 @@ int main(int argc, char** argv) {
                     {"Main Menu", &AddMainMenu}, {"Pause Menu", &AddPauseMenu}, {"Settings", &AddSettings},
                     {"HUD", &AddHUD}, {"Dialog Box", &AddDialogBox}, {"Health Bar", &AddHealthBar}, {"Lobby", &AddLobby},
                     {"Scoreboard", &AddScoreboard}, {"Game Over", &AddGameOver}, {"Loading Screen", &AddLoadingScreen},
+                    {"Loading (Minimal)", &AddLoadingMinimal}, {"Loading (Card)", &AddLoadingCard},
+                    {"Loading (Splash)", &AddLoadingSplash}, {"Loading (Cinematic)", &AddLoadingCinematic},
                     {"Shop", &AddShop}, {"Confirm Dialog", &AddConfirmDialog}, {"Notification", &AddNotificationScreen},
                     {"Matchmaking", &AddMatchmaking}, {"Leaderboard", &AddLeaderboard}};
                 for (const auto& sc : kScreens)

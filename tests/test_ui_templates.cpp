@@ -62,6 +62,8 @@ int main() {
         {"Lobby", &AddLobby}, {"Scoreboard", &AddScoreboard}, {"Game Over", &AddGameOver},
         {"Loading Screen", &AddLoadingScreen}, {"Shop", &AddShop}, {"Confirm Dialog", &AddConfirmDialog},
         {"Notification", &AddNotificationScreen}, {"Matchmaking", &AddMatchmaking}, {"Leaderboard", &AddLeaderboard},
+        {"Loading (Minimal)", &AddLoadingMinimal}, {"Loading (Card)", &AddLoadingCard},
+        {"Loading (Splash)", &AddLoadingSplash}, {"Loading (Cinematic)", &AddLoadingCinematic},
     };
 
     {   // Every screen in one scene: one Canvas, one EventSystem, all widgets placed.

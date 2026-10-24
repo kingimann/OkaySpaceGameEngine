@@ -33,7 +33,7 @@ The **UI** button on the Scene toolbar switches to the UI editing view. Its
 | --- | --- |
 | **Basic** / **Controls** / **HUD** / **Layout** | Single widgets: button, panel, image, text, slider, toggle, stepper, rating, tabs, input field, dropdown, progress bar, radial, minimap, crosshair, tooltip, scroll view, layout group, drag and drop. |
 | **Kit (launcher look)** | Ready-styled building blocks: Card, Heading, List Row, Badge, Avatar, Divider, Primary / Secondary / Danger / Ghost buttons, Switch, Spinner and Notification. |
-| **Prebuilt Screens** | Whole screens. **Menus:** Main Menu, Pause Menu, Settings, Confirm Dialog, Loading Screen. **In game:** HUD, Health Bar, Dialog Box, Notification, Shop, Game Over. **Multiplayer:** Lobby, Scoreboard, Leaderboard, Matchmaking. |
+| **Prebuilt Screens** | Whole screens. **Menus:** Main Menu, Pause Menu, Settings, Confirm Dialog, Loading Screens (see below). **In game:** HUD, Health Bar, Dialog Box, Notification, Shop, Game Over. **Multiplayer:** Lobby, Scoreboard, Leaderboard, Matchmaking. |
 
 Select a panel or card first and new widgets and kit pieces go **inside** it.
 Otherwise they go on the scene's Canvas, which is created if it's missing.
@@ -71,6 +71,42 @@ Screens lay out against a 1280×720 canvas that **scales with the screen**, so
 they keep their layout at any window size. The HUD's health bar and number
 follow the `hp` variable, and the score follows `score`. The Loading Screen's
 bar follows `loading` (0 to 1).
+
+## Loading screens
+
+**Prebuilt Screens → Loading Screens** has two kinds:
+
+- **UI you can edit**: Loading Screen, Minimal, Card, Splash (logo) and
+  Cinematic. These are ordinary widgets, so you can move or restyle every part.
+  Their bar follows the `loading` variable (0 to 1).
+- **Automatic overlay**: a **Loading Screen** component in one of seven layouts.
+  It covers the game when the scene starts (or when a script calls
+  `Begin("NextLevel")`), fills its bar over **Duration**, then reveals the scene
+  or loads **Load scene when done**.
+
+The component's Inspector shows a live, animated preview. Its **Look** buttons
+switch layout in one click, and set colours, bar and spinner to match. Your
+text, tips and images stay.
+
+| Layout | What it looks like |
+| --- | --- |
+| **Classic** | Title, tip and bar centred, at the positions you set. |
+| **Minimal** | A spinner and a small title in the middle, with a thin bar. |
+| **Cinematic** | Letterbox bars, the title bottom-left, the bar along the lower bar. |
+| **Splash** | A big centred logo (or the title) with a thin bar under it. |
+| **Card** | A raised card in the middle holding everything. |
+| **Corner** | Title bottom-left, spinner bottom-right, bar along the bottom edge. |
+| **Ring** | A round progress ring with the percent inside. |
+
+More options:
+
+- **Bar style:** Solid, Segmented, Shimmer, or Indeterminate (a sliding chunk,
+  for loads with no known length).
+- **Spinner style:** Dots, Arc, Bars or Pulse.
+- **Subtitle:** a second line, such as the level name or chapter.
+- **Logo:** an image, with an optional gentle pulse.
+- **Slow zoom:** the background image slowly zooms in.
+- **Next tip every N seconds:** cycles through the tips while the screen is up.
 
 ## Building blocks
 

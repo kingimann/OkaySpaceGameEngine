@@ -169,6 +169,7 @@
 #include "okay/Components/StructureBuilder.hpp"
 #include "okay/Components/BuilderMode.hpp"
 #include "okay/Components/LoadingScreen.hpp"
+#include "okay/Components/LoadingScreenLayout.hpp"
 #include "okay/Components/InventoryUI.hpp"
 #include "okay/Components/GridInventory.hpp"
 #include "okay/Components/GridInventoryUI.hpp"

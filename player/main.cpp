@@ -384,80 +384,89 @@ static void DrawVignette(SDL_Renderer* r, float strength) {
     SDL_SetRenderDrawBlendMode(r, prev);
 }
 
-// Full-screen loading-screen overlay (background + centred title + tip + progress bar).
+// Full-screen loading-screen overlay: draws the layout BuildLoadingScreen() makes
+// (the editor's Play view draws the same list, so both look the same).
 static void DrawLoadingScreen(SDL_Renderer* r, okay::LoadingScreen& ls, const std::string& baseDir,
                               std::unordered_map<std::string, SDL_Texture*>& cache) {
     int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
     if (W <= 0 || H <= 0) return;
-    float a = ls.Alpha(); a = a < 0 ? 0 : (a > 1 ? 1 : a);
-    const Uint8 A = (Uint8)(255.0f * a);
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-    SDL_Rect full{0, 0, W, H};
-    SDL_Texture* bgTex = ls.backgroundImage.empty() ? nullptr : GetTexture(r, ls.backgroundImage, baseDir, cache);
-    if (bgTex) { SDL_SetTextureAlphaMod(bgTex, A); SDL_RenderCopy(r, bgTex, nullptr, &full); }
-    else if (ls.gradientBackground) {
-        const Color& b0 = ls.backgroundColor; const Color& b1 = ls.backgroundColor2;
-        const int bands = 64;
-        for (int i = 0; i < bands; ++i) {
-            float t = (float)i / (bands - 1);
-            SDL_SetRenderDrawColor(r, (Uint8)((b0.r + (b1.r - b0.r) * t) * 255),
-                                   (Uint8)((b0.g + (b1.g - b0.g) * t) * 255),
-                                   (Uint8)((b0.b + (b1.b - b0.b) * t) * 255), A);
-            SDL_Rect band{0, (int)(H * i / (float)bands), W, H / bands + 1};
-            SDL_RenderFillRect(r, &band);
-        }
-    }
-    else {
-        const Color& b = ls.backgroundColor;
-        SDL_SetRenderDrawColor(r, (Uint8)(b.r * 255), (Uint8)(b.g * 255), (Uint8)(b.b * 255), A);
-        SDL_RenderFillRect(r, &full);
-    }
-    auto sc = [](const Color& c, Uint8 al) {
-        return SDL_Color{(Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), al};
+    auto sc = [](const Color& c, float a) {
+        return SDL_Color{(Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255),
+                         (Uint8)(std::clamp(a * c.a, 0.0f, 1.0f) * 255)};
     };
-    const float adv = (float)(Font8x8::Width + 1);
-    if (ls.showTitle && !ls.title.empty()) {
-        float px = H * 0.006f * ls.titleScale; if (px < 2.0f) px = 2.0f;
-        float tw = ls.title.size() * adv * px;
-        DrawText(r, ls.title, (W - tw) * 0.5f, H * ls.titleY, px, sc(ls.titleColor, A));
-    }
-    if (!ls.CurrentTip().empty()) {
-        float px = H * 0.0032f * ls.tipScale; if (px < 1.0f) px = 1.0f;
-        float tw = ls.CurrentTip().size() * adv * px;
-        DrawText(r, ls.CurrentTip(), (W - tw) * 0.5f, H * ls.tipY, px, sc(ls.tipColor, A));
-    }
-    if (ls.showBar) {
-        int bw = (int)(W * ls.barWidth), bh = (int)(H * ls.barHeight); if (bh < 4) bh = 4;
-        int bx = (W - bw) / 2, by = (int)(H * ls.barY);
-        SDL_Rect bgr{bx, by, bw, bh};
-        UIShape shp = ls.barRadius > 0.5f ? UIShape::Rounded : UIShape::Rectangle;
-        FillUIShape(r, bgr, shp, ls.barRadius, ls.barBackground, ls.barBackground, false, false, a);
-        SDL_Rect fr{bx, by, (int)(bw * ls.Progress()), bh};
-        if (fr.w > 0) FillUIShape(r, fr, shp, ls.barRadius, ls.barFill, ls.barFill, false, false, a);
-        if (ls.barBorder) {
-            SDL_SetRenderDrawColor(r, (Uint8)(ls.barBorderColor.r*255), (Uint8)(ls.barBorderColor.g*255),
-                                   (Uint8)(ls.barBorderColor.b*255), A);
-            SDL_RenderDrawRect(r, &bgr);
+    using K = okay::LoadingDrawCmd::Kind;
+    for (const okay::LoadingDrawCmd& d : okay::BuildLoadingScreen(ls, (float)W, (float)H)) {
+        SDL_Rect box{(int)std::lround(d.x), (int)std::lround(d.y), (int)std::lround(d.w), (int)std::lround(d.h)};
+        switch (d.kind) {
+        case K::Rect: {
+            UIShape shp = d.radius > 0.5f ? UIShape::Rounded : UIShape::Rectangle;
+            FillUIShape(r, box, shp, d.radius, d.color, d.color, false, false, d.alpha);
+            break;
         }
-        if (ls.showPercent) {
-            char pc[8]; std::snprintf(pc, sizeof(pc), "%d%%", (int)(ls.Progress() * 100.0f + 0.5f));
-            float px = H * 0.0030f; if (px < 1.0f) px = 1.0f;
-            DrawText(r, pc, bx + bw + 8, by + (bh - (Font8x8::Height) * px) * 0.5f, px, sc(ls.textColor, A));
+        case K::Gradient:
+            FillUIShape(r, box, UIShape::Rectangle, 0.0f, d.color, d.color2, true, false, d.alpha);
+            break;
+        case K::Outline: {
+            SDL_Color c = sc(d.color, d.alpha);
+            SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
+            SDL_RenderDrawRect(r, &box);
+            break;
         }
-    }
-    if (ls.showSpinner) {
-        float ccx = W * 0.5f, ccy = H * ls.spinnerY, rad = H * ls.spinnerRadius;
-        float ds = ls.spinnerDotSize * (H / 720.0f); if (ds < 2.0f) ds = 2.0f;
-        const int dots = 8;
-        float phase = ls.Elapsed() * ls.spinnerSpeed;
-        for (int i = 0; i < dots; ++i) {
-            float ang = (float)i / dots * 6.2831853f;
-            float dx = ccx + std::cos(ang) * rad, dy = ccy + std::sin(ang) * rad;
-            float bright = 0.25f + 0.75f * (0.5f + 0.5f * std::cos(ang - phase));   // chase
-            SDL_SetRenderDrawColor(r, (Uint8)(ls.spinnerColor.r*255), (Uint8)(ls.spinnerColor.g*255),
-                                   (Uint8)(ls.spinnerColor.b*255), (Uint8)(A * bright));
-            SDL_Rect d{(int)(dx - ds*0.5f), (int)(dy - ds*0.5f), (int)ds, (int)ds};
-            SDL_RenderFillRect(r, &d);
+        case K::Image: {
+            SDL_Texture* tex = GetTexture(r, d.text, baseDir, cache);
+            if (!tex) break;
+            int tw = 0, th = 0; SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+            SDL_Rect src{(int)(d.u0 * tw), (int)(d.v0 * th), (int)((d.u1 - d.u0) * tw), (int)((d.v1 - d.v0) * th)};
+            SDL_SetTextureAlphaMod(tex, (Uint8)(std::clamp(d.alpha, 0.0f, 1.0f) * 255));
+            SDL_RenderCopy(r, tex, &src, &box);
+            break;
+        }
+        case K::Text: {
+            const float px = std::max(1.0f, d.h / (float)Font8x8::Height);
+            const float tw = UITextW(d.text, px);
+            const float x = d.align == 1 ? d.x - tw * 0.5f : d.align == 2 ? d.x - tw : d.x;
+            DrawText(r, d.text, x, d.y, px, sc(d.color, d.alpha));
+            break;
+        }
+        case K::Circle:
+            MMFillCircle(r, (int)std::lround(d.x), (int)std::lround(d.y), std::max(1, (int)std::lround(d.w)), sc(d.color, d.alpha));
+            break;
+        case K::Line:
+            MMThickLine(r, d.x, d.y, d.w, d.h, d.radius, sc(d.color, d.alpha));
+            break;
+        case K::Arc: {   // exact pixel spans of the ring, so a see-through track has no seams
+            SDL_Color c = sc(d.color, d.alpha);
+            SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
+            const float ro = d.w + d.radius * 0.5f, ri = std::max(0.0f, d.w - d.radius * 0.5f);
+            const float span = d.u1 - d.u0;
+            const bool full = std::fabs(span) >= 6.2831853f - 1e-3f;
+            const float lo = std::min(d.u0, d.u1);
+            auto inArc = [&](float px, float py) {
+                float ang = std::atan2(py - d.y, px - d.x) - lo;
+                ang = std::fmod(ang, 6.2831853f); if (ang < 0) ang += 6.2831853f;
+                return ang <= std::fabs(span);
+            };
+            for (int yy = (int)std::floor(d.y - ro); yy <= (int)std::ceil(d.y + ro); ++yy) {
+                const float dy = yy + 0.5f - d.y;
+                if (std::fabs(dy) > ro) continue;
+                const float xo = std::sqrt(ro * ro - dy * dy);
+                const float xi = std::fabs(dy) < ri ? std::sqrt(ri * ri - dy * dy) : 0.0f;
+                const int spans[2][2] = {{(int)std::lround(d.x - xo), (int)std::lround(d.x - xi)},
+                                         {(int)std::lround(d.x + xi), (int)std::lround(d.x + xo)}};
+                for (int k = 0; k < (xi > 0.0f ? 2 : 1); ++k) {
+                    int s0 = spans[k][0], s1 = xi > 0.0f ? spans[k][1] : spans[1][1];
+                    if (full) { if (s1 > s0) SDL_RenderDrawLine(r, s0, yy, s1 - 1, yy); continue; }
+                    int run = -1;   // draw the runs of pixels inside the arc's angle range
+                    for (int xx = s0; xx <= s1; ++xx) {
+                        const bool in = xx < s1 && inArc(xx + 0.5f, yy + 0.5f);
+                        if (in && run < 0) run = xx;
+                        else if (!in && run >= 0) { SDL_RenderDrawLine(r, run, yy, xx - 1, yy); run = -1; }
+                    }
+                }
+            }
+            break;
+        }
         }
     }
 }
@@ -3625,7 +3634,9 @@ int main(int argc, char** argv) {
         for (const auto& up : scene.Objects()) {
             auto* ls = up ? up->GetComponent<LoadingScreen>() : nullptr;
             if (!ls || !ls->Active()) continue;
+            g_uiDefaultFont = okay::SceneUIFont(scene.uiFont);   // same text as the game's UI
             DrawLoadingScreen(renderer, *ls, baseDir, textureCache);
+            g_uiDefaultFont = nullptr;
             break;
         }
         // Post: screen-space vignette (on top of the scene + UI, under nothing).

@@ -384,6 +384,12 @@ inline const std::vector<VsDef>& Registry() {
         {"FindObject",      "Find Object",      CAT_XFORM, false, {}, {}, {"Object"}, 1, "object name"},
         {"GetName",         "Get Name",         CAT_XFORM, false, {}, {}, {"Name"}, 0, nullptr},
         {"GetTag",          "Get Tag",          CAT_XFORM, false, {}, {}, {"Tag"}, 0, nullptr},
+        // Functions: pins come from the Function node's signature (see VsDefFor).
+        {"FunctionStart",   "Function",         CAT_FLOW,  false, {""}, {}, {}, 1, "Name(a: Number) -> out: Number"},
+        {"Return",          "Return",           CAT_FLOW,  true, {}, {}, {}, 6, nullptr},
+        {"CallFunction",    "Call Function",    CAT_FLOW,  true, {""}, {}, {}, 6, nullptr},
+        {"SetLocal",        "Set Local",        CAT_VAR,   true, {""}, {"Value"}, {}, 1, "name"},
+        {"GetLocal",        "Get Local",        CAT_VAR,   false, {}, {}, {"Value"}, 1, "name"},
     });
     return defs;
 }
@@ -693,13 +699,70 @@ inline const VsEditNode* VsFind(const VsEditGraph& g, int id) {
     for (const auto& n : g.nodes) if (n.id == id) return &n;
     return nullptr;
 }
+// ---- Functions: the signature a Function / Call / Return node uses ----------
+inline bool IsFunctionNode(const std::string& t) { return t == "FunctionStart" || t == "CallFunction" || t == "Return"; }
+/// The signature of the function `n` is (Function node) or uses (Call / Return).
+inline bool VsSigFor(const VsEditGraph& g, const VsEditNode& n, okay::vs::FunctionSig& out) {
+    if (n.type == "FunctionStart") return okay::vs::ParseFunctionSignature(n.arg, out);
+    const std::string want = okay::vs::FunctionNameOf(n.arg);
+    if (want.empty()) return false;
+    for (const auto& m : g.nodes)
+        if (m.type == "FunctionStart" && okay::vs::FunctionNameOf(m.arg) == want) return okay::vs::ParseFunctionSignature(m.arg, out);
+    return false;
+}
+/// The node's pins: the registry entry, or for function nodes one built from
+/// the signature (parameters / return values become data pins).
+inline const VsDef* VsDefFor(const VsEditGraph& g, const VsEditNode& n) {
+    const VsDef* base = FindDef(n.type);
+    if (!base || !IsFunctionNode(n.type)) return base;
+    struct Dyn { std::string key; std::vector<std::string> labels; VsDef def; };
+    static std::map<int, std::unique_ptr<Dyn>> cache;   // node id -> its pins
+    okay::vs::FunctionSig sig;
+    const bool ok = VsSigFor(g, n, sig);
+    std::string key = n.type + "|" + n.arg + "|";
+    if (ok) {
+        for (const auto& p : sig.params) key += p.name + ",";
+        key += "|";
+        for (const auto& p : sig.returns) key += p.name + ",";
+    }
+    auto& slot = cache[n.id];
+    if (slot && slot->key == key) return &slot->def;
+    slot = std::make_unique<Dyn>();
+    slot->key = key;
+    slot->def = *base;
+    if (ok) {
+        const auto& ins  = n.type == "FunctionStart" ? std::vector<okay::vs::FunctionSig::Pin>{} : n.type == "Return" ? sig.returns : sig.params;
+        const auto& outs = n.type == "FunctionStart" ? sig.params : n.type == "Return" ? std::vector<okay::vs::FunctionSig::Pin>{} : sig.returns;
+        slot->labels.reserve(ins.size() + outs.size());
+        for (const auto& p : ins) slot->labels.push_back(p.name);
+        for (const auto& p : outs) slot->labels.push_back(p.name);
+        slot->def.dataIn.clear(); slot->def.dataOut.clear();
+        for (std::size_t i = 0; i < ins.size(); ++i) slot->def.dataIn.push_back(slot->labels[i].c_str());
+        for (std::size_t i = 0; i < outs.size(); ++i) slot->def.dataOut.push_back(slot->labels[ins.size() + i].c_str());
+    }
+    return &slot->def;
+}
 inline okay::vs::PinType VsOutPinType(const VsEditGraph& g, int nodeId, int pin) {
     const VsEditNode* n = VsFind(g, nodeId);
-    return n ? okay::vs::OutputType(n->type, pin, n->arg) : okay::vs::PinType::Any;
+    if (!n) return okay::vs::PinType::Any;
+    if (n->type == "FunctionStart" || n->type == "CallFunction") {
+        okay::vs::FunctionSig sig;
+        if (!VsSigFor(g, *n, sig)) return okay::vs::PinType::Any;
+        const auto& pins = n->type == "FunctionStart" ? sig.params : sig.returns;
+        return pin >= 0 && pin < (int)pins.size() ? pins[(std::size_t)pin].type : okay::vs::PinType::Any;
+    }
+    return okay::vs::OutputType(n->type, pin, n->arg);
 }
 inline okay::vs::PinType VsInPinType(const VsEditGraph& g, int nodeId, int pin) {
     const VsEditNode* n = VsFind(g, nodeId);
-    return n ? okay::vs::InputType(n->type, pin) : okay::vs::PinType::Any;
+    if (!n) return okay::vs::PinType::Any;
+    if (n->type == "Return" || n->type == "CallFunction") {
+        okay::vs::FunctionSig sig;
+        if (!VsSigFor(g, *n, sig)) return okay::vs::PinType::Any;
+        const auto& pins = n->type == "Return" ? sig.returns : sig.params;
+        return pin >= 0 && pin < (int)pins.size() ? pins[(std::size_t)pin].type : okay::vs::PinType::Any;
+    }
+    return okay::vs::InputType(n->type, pin);
 }
 inline int VsExecTarget(const VsEditGraph& g, int fromNode, int pin) {
     for (const auto& l : g.execLinks) if (l.from == fromNode && l.pin == pin) return l.to;
@@ -1146,13 +1209,14 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
         for (const auto& n : g.nodes) {
             const int tp = okay::vs::TargetPinFor(n.type);
             bool objectUse = n.type == "Self" || n.type == "Other" || n.type == "FindObject" || n.type == "Raycast3D" ||
+                             IsFunctionNode(n.type) || n.type == "SetLocal" || n.type == "GetLocal" ||
                              (tp >= 0 && pinUsed(n.id, tp)) || (n.type == "Destroy" && pinUsed(n.id, 0));
             if (n.type == "Spawn")
                 for (const auto& l : g.dataLinks) if (l.producer == n.id) objectUse = true;
             if (objectUse) untranslated.push_back(n.type + " #" + std::to_string(n.id));
         }
         if (!untranslated.empty()) {
-            out += "    // NOT TRANSLATED - these nodes use object references, which this\n"
+            out += "    // NOT TRANSLATED - these nodes use object references or functions, which this\n"
                    "    // generated code doesn't support yet (the graph itself runs them):\n    //  ";
             for (std::size_t i = 0; i < untranslated.size(); ++i) out += (i ? ", " : "") + untranslated[i];
             out += "\n\n";
@@ -1713,6 +1777,20 @@ inline void Draw(EditorState& ed, bool* open) {
             ++shown;
         }
         if (!shown) ImGui::TextWrapped("No events yet. Add one with + Add > Events (On Start, On Key...).");
+        // The graph's functions (Function nodes), each with how often it's called.
+        bool fnHeader = false;
+        for (const auto& n : g.nodes) {
+            if (n.type != "FunctionStart") continue;
+            if (!fnHeader) { ImGui::Spacing(); ImGui::TextDisabled("FUNCTIONS"); ImGui::Separator(); fnHeader = true; }
+            const std::string nm = okay::vs::FunctionNameOf(n.arg);
+            int calls = 0;
+            for (const auto& m : g.nodes) if (m.type == "CallFunction" && okay::vs::FunctionNameOf(m.arg) == nm) ++calls;
+            ImGui::PushID(n.id);
+            std::string lbl = "\xC6\x92 " + (nm.empty() ? std::string("(unnamed)") : nm);
+            if (ImGui::Selectable(lbl.c_str(), st.sel.count(n.id) > 0)) { st.sel = {n.id}; st.selected = n.id; st.focusNode = n.id; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nCalled from %d place(s). Click to jump there.", n.arg.c_str(), calls);
+            ImGui::PopID();
+        }
         ImGui::EndChild();
         ImGui::SameLine();
     }
@@ -1925,6 +2003,9 @@ inline void Draw(EditorState& ed, bool* open) {
         return rid >= 0 ? live->Node(rid) : nullptr;
     };
 
+    // A function node's pins follow its signature. Wires to pins it doesn't
+    // have right now (mid-edit of the signature) are kept, not deleted: they come
+    // back when the pin does, and the checker reports them meanwhile.
     struct VsBadge { ImVec2 c; ImU32 col; std::string tips; };
     std::vector<VsBadge> badges;   // checker findings, drawn over the nodes
     // ---- Nodes ----------------------------------------------------------------------
@@ -1932,7 +2013,7 @@ inline void Draw(EditorState& ed, bool* open) {
     int pendingDelete = -1, pendingDup = -1;
     bool startNodeDrag = false;
     for (auto& n : g.nodes) {
-        const VsDef* d = FindDef(n.type);
+        const VsDef* d = VsDefFor(g, n);
         if (!d) continue;
         int leftRows  = (d->execIn ? 1 : 0) + (int)d->dataIn.size();
         int rightRows = (int)d->execOut.size() + (int)d->dataOut.size();
@@ -1946,7 +2027,7 @@ inline void Draw(EditorState& ed, bool* open) {
         for (const char* lbl : d->dataOut) outLabelW = std::max(outLabelW, ImGui::CalcTextSize(lbl).x);
         for (const char* lbl : d->execOut) outLabelW = std::max(outLabelW, ImGui::CalcTextSize(lbl).x);
         const std::string title = VsNodeTitle(n, *d);
-        const bool isStep = d->param >= 3;
+        const bool isStep = d->param >= 3 && d->param <= 5;   // Action / Action Steps / Check
         const std::string stepLine = isStep ? VsStepLine(n) : std::string();
         float titleW = ImGui::CalcTextSize(title.c_str()).x + PAD * 2.0f;
         if (isStep) titleW = std::max(titleW, std::min(ImGui::CalcTextSize(stepLine.c_str()).x, 320.0f * z) + PAD * 2.0f);
@@ -2050,7 +2131,7 @@ inline void Draw(EditorState& ed, bool* open) {
         for (int i = 0; i < (int)d->dataIn.size(); ++i, ++li) {
             ImVec2 pp(p0.x, ly + li * ROW_H + ROW_H * 0.5f);
             const bool linked = inputLinked(n.id, i);
-            const okay::vs::PinType pt = okay::vs::InputType(n.type, i);
+            const okay::vs::PinType pt = VsInPinType(g, n.id, i);
             dataDot(pp, linked, VsPinColor(pt));
             if (ImGui::IsWindowHovered() && std::fabs(io.MousePos.x - pp.x) < PIN_R * 1.8f && std::fabs(io.MousePos.y - pp.y) < PIN_R * 1.8f)
                 ImGui::SetTooltip("%s  (%s)", d->dataIn[i], okay::vs::PinTypeName(pt));
@@ -2088,7 +2169,7 @@ inline void Draw(EditorState& ed, bool* open) {
             ImVec2 pp(p1.x, ly + ri * ROW_H + ROW_H * 0.5f);
             bool used = false;
             for (const auto& l : g.dataLinks) if (l.producer == n.id && l.outPin == i) { used = true; break; }
-            const okay::vs::PinType pt = okay::vs::OutputType(n.type, i, n.arg);
+            const okay::vs::PinType pt = VsOutPinType(g, n.id, i);
             dataDot(pp, used, VsPinColor(pt));
             if (ImGui::IsWindowHovered() && std::fabs(io.MousePos.x - pp.x) < PIN_R * 1.8f && std::fabs(io.MousePos.y - pp.y) < PIN_R * 1.8f)
                 ImGui::SetTooltip("%s  (%s)", d->dataOut[i], okay::vs::PinTypeName(pt));
@@ -2162,6 +2243,33 @@ inline void Draw(EditorState& ed, bool* open) {
                     ImGui::SetWindowFontScale(1.0f);
                     ImGui::EndPopup();
                 }
+            } else if (d->param == 6) {   // pick one of this graph's functions
+                const std::string cur = okay::vs::FunctionNameOf(n.arg);
+                if (ImGui::BeginCombo("##fn", cur.empty() ? "(pick a function)" : cur.c_str())) {
+                    bool any = false;
+                    for (const auto& m : g.nodes) {
+                        if (m.type != "FunctionStart") continue;
+                        const std::string nm = okay::vs::FunctionNameOf(m.arg);
+                        if (nm.empty()) continue;
+                        any = true;
+                        if (ImGui::Selectable(nm.c_str(), nm == cur)) { n.arg = nm; g.dirty = true; }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", m.arg.c_str());
+                    }
+                    if (!any) ImGui::TextDisabled("No functions yet: add a Function node first");
+                    ImGui::EndCombo();
+                }
+            } else if (n.type == "FunctionStart") {   // the signature (may be long)
+                char sbuf[256]; std::snprintf(sbuf, sizeof(sbuf), "%s", n.arg.c_str());
+                if (ImGui::InputTextWithHint("##sig", d->paramHint, sbuf, sizeof(sbuf))) {
+                    // Renaming the function renames the Calls and Returns that use it.
+                    const std::string was = okay::vs::FunctionNameOf(n.arg), now = okay::vs::FunctionNameOf(sbuf);
+                    if (!was.empty() && !now.empty() && was != now)
+                        for (auto& m : g.nodes)
+                            if ((m.type == "CallFunction" || m.type == "Return") && okay::vs::FunctionNameOf(m.arg) == was) m.arg = now;
+                    n.arg = sbuf; g.dirty = true;
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Name(param: Type, ...) -> result: Type\nTypes: Number, Bool, Text, Vector3, Object, List, Any");
             } else if (d->param == 2) {   // compare op combo
                 const char* ops[] = {">", "<", ">=", "<=", "==", "!="};
                 if (ImGui::BeginCombo("##op", n.arg.c_str())) {

@@ -562,3 +562,58 @@ errors, the build stops and Build Settings lists them, with **Build anyway** and
 Not covered yet: integer, Vector2, colour, quaternion and enum values. Pins use
 the types above; colours stay R / G / B / A numbers and rotations stay Euler
 Vector3s.
+
+## Functions
+
+A function is a chain you write once and run from anywhere in the same graph.
+
+1. Add a **Function** node and write its signature in its text field:
+   `Damage(amount: Number, who: Object) -> left: Number, dead: Bool`.
+   The parameters become the node's output pins. Return values after `->` are
+   optional, and so are types; a parameter without a type is Any. The types are
+   Number, Bool, Text, Vector3, Object, List and Any.
+2. Wire the body from its exec pin, and end it with **Return**: pick the
+   function, then wire the values to return.
+3. Run it with **Call Function**: pick the function, and its inputs (the
+   parameters) and outputs (the return values) appear. The outputs hold the
+   values of the call that just ran, so read them after it.
+
+Rules, all checked by the graph checker and enforced while playing:
+
+- **Return ends the function at once**, even from inside a loop.
+- **Recursion works.** A function that calls itself more than 64 deep is
+  refused with an error, and the event carries on.
+- **Set Local / Get Local** are variables of one call; they're gone when it
+  returns. Outside a function they're errors (use Set Var / Get Var there).
+- **No pausing:** a function runs to the end at once, so Delay and Wait can't be
+  inside one. Put the delay after the Call Function instead.
+- **Renaming** a function in its signature renames the Calls and Returns
+  that use it.
+- **Changing a signature** keeps existing wires. A wire to a parameter that no
+  longer exists is reported until you fix it.
+- Functions belong to their graph. Another object's graph can't call them;
+  use Send Event for that.
+
+The left-hand list shows the graph's functions, with how many places call each one.
+
+Example: test E from the audit (Start → Call Function → Return → Print):
+
+```
+node 10 FunctionStart "Double(x: Number) -> result: Number"
+node 11 Mul
+node 12 Const 2
+node 13 Return Double
+data 11 0 10 0
+data 11 1 12 0
+data 13 0 11 0
+exec 10 0 13
+node 0 OnStart
+node 1 CallFunction Double
+node 2 Const 21
+node 3 Print
+data 1 0 2 0
+data 3 0 1 0
+exec 0 0 1
+exec 1 0 3
+entry OnStart 0
+```

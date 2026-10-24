@@ -68,7 +68,7 @@ int main() {
 
     // ---- A correct graph has no issues -----------------------------------------
     {
-        auto v = ValidateGraphText(R"(
+        auto v = ValidateGraphText(R"VS(
 node 0 OnUpdate
 node 1 AxisX
 node 2 Const 5
@@ -83,13 +83,13 @@ data 5 1 4 0
 data 6 0 5 0
 exec 0 0 6
 entry OnUpdate 0
-)");
+)VS");
         CHECK(v.empty());
         for (const auto& i : v) std::fprintf(stderr, "  unexpected: %s\n", i.message.c_str());
     }
     // ---- Wires that can't work are errors, with a tip --------------------------
     {
-        auto v = ValidateGraphText(R"(
+        auto v = ValidateGraphText(R"VS(
 node 0 OnStart
 node 1 GetPosition
 node 2 Add
@@ -104,7 +104,7 @@ data 6 0 5 0
 exec 0 0 3
 exec 3 0 6
 entry OnStart 0
-)");
+)VS");
         CHECK(Errors(v) == 2);
         CHECK(Has(v, 0, 2, "Vector3"));
         CHECK(Has(v, 0, 2, "Vec X"));            // the tip
@@ -112,7 +112,7 @@ entry OnStart 0
     }
     // ---- Number into a Bool input, object into Print, name into a Target: fine ---
     {
-        auto v = ValidateGraphText(R"(
+        auto v = ValidateGraphText(R"VS(
 node 0 OnStart
 node 1 Const 1
 node 2 Branch
@@ -127,12 +127,12 @@ exec 0 0 2
 exec 2 0 4
 exec 4 0 5
 entry OnStart 0
-)");
+)VS");
         CHECK(Errors(v) == 0);
     }
     // ---- Unreachable nodes, idle events, unset variables -------------------------
     {
-        auto v = ValidateGraphText(R"(
+        auto v = ValidateGraphText(R"VS(
 node 0 OnStart
 node 1 Print
 node 2 Print
@@ -143,7 +143,7 @@ data 5 0 4 0
 exec 0 0 5
 entry OnStart 0
 entry OnUpdate 3
-)");
+)VS");
         CHECK(Has(v, 1, 1, "nothing runs"));
         CHECK(Has(v, 1, 2, "nothing runs"));
         CHECK(Has(v, 1, 3, "does nothing"));
@@ -182,6 +182,105 @@ entry OnUpdate 3
         auto v = ValidateGraphText(ActionListToGraph(al));
         CHECK(Errors(v) == 0);
         for (const auto& i : v) if (i.severity == 0) std::fprintf(stderr, "  actions graph: %s\n", i.message.c_str());
+    }
+
+    // ---- Function signatures --------------------------------------------------
+    {
+        FunctionSig f; std::string err;
+        CHECK(ParseFunctionSignature("Damage(amount: Number, who: Object) -> left: Number, dead: Bool", f, &err));
+        CHECK(f.name == "Damage" && f.params.size() == 2 && f.returns.size() == 2);
+        CHECK(f.params[1].type == PinType::Object && f.returns[1].type == PinType::Bool);
+        CHECK(ParseFunctionSignature("Reset()", f) && f.params.empty() && f.returns.empty());
+        CHECK(ParseFunctionSignature("Reset", f) && f.name == "Reset");
+        CHECK(ParseFunctionSignature("Mix(a, b: Vector3)", f) && f.params[0].type == PinType::Any);
+        CHECK(!ParseFunctionSignature("(x: Number)", f, &err) && err.find("no name") != std::string::npos);
+        CHECK(!ParseFunctionSignature("F(x: Numbr)", f, &err) && err.find("unknown type 'Numbr'") != std::string::npos);
+        CHECK(!ParseFunctionSignature("F(x, x)", f, &err) && err.find("twice") != std::string::npos);
+        CHECK(!ParseFunctionSignature("F(x", f, &err) && err.find("')'") != std::string::npos);
+        CHECK(!ParseFunctionSignature("2F()", f, &err));
+    }
+    // ---- Function rules in the checker -------------------------------------------
+    {
+        auto v = ValidateGraphText(R"VS(
+node 10 FunctionStart "Double(x: Number) -> r: Number"
+node 11 Mul
+node 12 Return Double
+data 11 0 10 0
+data 12 0 11 0
+exec 10 0 12
+node 20 FunctionStart "Unused()"
+node 21 Print
+exec 20 0 21
+node 30 FunctionStart "Double(y: Number)"
+node 40 FunctionStart "Slow()"
+node 41 Delay 1
+node 42 Return Double
+exec 40 0 41
+exec 41 0 42
+node 0 OnStart
+node 1 CallFunction Double
+node 2 Const "abc"
+node 3 Return Double
+node 4 CallFunction Nope
+node 5 SetLocal t
+node 6 GetLocal t
+node 7 Print
+node 8 CallFunction Slow
+data 1 0 2 0
+data 7 0 6 0
+data 5 0 10 0
+exec 0 0 1
+exec 1 0 4
+exec 4 0 5
+exec 5 0 7
+exec 7 0 8
+exec 8 0 3
+entry OnStart 0
+)VS");
+        CHECK(Errors(v) > 0);
+        CHECK(Has(v, 0, 1, "needs a Number"));                // Text into Double's Number parameter
+        CHECK(Has(v, 0, 30, "already a function named 'Double'"));
+        CHECK(Has(v, 0, 4, "no function named 'Nope'"));
+        CHECK(Has(v, 0, 3, "outside a function"));
+        CHECK(Has(v, 0, 41, "can't pause inside a function"));
+        CHECK(Has(v, 0, 42, "returns from 'Double'"));
+        CHECK(Has(v, 0, 5, "Set Local only works inside a function"));
+        CHECK(Has(v, 0, 6, "Get Local only works inside a function"));
+        CHECK(Has(v, 0, 10, "read by an event's chain"));
+        CHECK(Has(v, 1, 20, "never called"));
+        CHECK(!Has(v, 1, 21, "nothing runs"));                 // its body counts as reachable
+        CHECK(!Has(v, 1, 11, "nothing runs"));
+    }
+    {   // wires to pins a function no longer has
+        auto v = ValidateGraphText("node 10 FunctionStart \"F(a: Number) -> r: Number\"\nnode 11 Return F\nnode 12 Print\n"
+                                   "data 11 0 10 0\ndata 12 0 10 1\nexec 10 0 11\n"
+                                   "node 0 OnStart\nnode 1 CallFunction F\nnode 2 Const 1\ndata 1 0 2 0\ndata 1 1 2 0\n"
+                                   "exec 0 0 1\nentry OnStart 0\n");
+        CHECK(Has(v, 0, 12, "parameter #2 of 'F'"));
+        CHECK(Has(v, 0, 1, "parameter #2 of 'F'"));
+    }
+    {   // a correct function graph is clean
+        auto v = ValidateGraphText(R"VS(
+node 10 FunctionStart "Double(x: Number) -> r: Number"
+node 11 Mul
+node 12 Const 2
+node 13 Return Double
+data 11 0 10 0
+data 11 1 12 0
+data 13 0 11 0
+exec 10 0 13
+node 0 OnStart
+node 1 CallFunction Double
+node 2 Const 21
+node 3 Print
+data 1 0 2 0
+data 3 0 1 0
+exec 0 0 1
+exec 1 0 3
+entry OnStart 0
+)VS");
+        CHECK(v.empty());
+        for (const auto& i : v) std::fprintf(stderr, "  unexpected: %s\n", i.message.c_str());
     }
 
     // ---- Scene-wide check (what Play and Build run) names the object and node ----

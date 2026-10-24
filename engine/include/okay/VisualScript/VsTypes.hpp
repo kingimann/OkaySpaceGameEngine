@@ -44,6 +44,20 @@ const char* PinTypeName(PinType t);
 /// What to use instead when `from` can't feed `to` ("" when there's no tip).
 std::string ConversionHint(PinType from, PinType to);
 
+/// A visual-script function's signature, written in its Function node's text
+/// field: `Damage(amount: Number, who: Object) -> left: Number, dead: Bool`
+/// (no parameters: `Reset()`; returns are optional; a type may be left out
+/// and is then Any). Types: Number, Bool, Text, Vector3, Object, List, Any.
+struct FunctionSig {
+    std::string name;
+    struct Pin { std::string name; PinType type = PinType::Any; };
+    std::vector<Pin> params, returns;
+};
+/// False (with `error` saying what's wrong) when `text` isn't a valid signature.
+bool ParseFunctionSignature(const std::string& text, FunctionSig& out, std::string* error = nullptr);
+/// The function name a signature text starts with (whatever is before '('), trimmed.
+std::string FunctionNameOf(const std::string& signatureText);
+
 /// One problem found in a graph. `node` is the node's id in the file/editor
 /// (-1 for the whole graph); `severity` 0 = error (it won't work), 1 = warning.
 struct VsIssue {

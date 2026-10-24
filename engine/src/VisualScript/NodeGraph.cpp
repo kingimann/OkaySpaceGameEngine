@@ -1,4 +1,6 @@
 #include "okay/VisualScript/NodeGraph.hpp"
+#include "okay/VisualScript/VsTypes.hpp"
+#include "okay/VisualScript/NodesFunctions.hpp"
 #include "okay/VisualScript/Nodes.hpp"
 #include "okay/VisualScript/NodesWave4.hpp"
 #include "okay/VisualScript/NodesActions.hpp"
@@ -76,6 +78,29 @@ VsValue NodeGraph::Pull(int nodeId, int outPin, VsContext& ctx) {
     return v;
 }
 
+bool NodeGraph::CallFunction(const std::string& name, std::vector<VsValue> args, std::vector<VsValue>& rets,
+                             const VsNode* caller, VsContext& ctx) {
+    const int start = FunctionNode(name);
+    if (start < 0) {
+        ReportError(caller, ctx, name.empty() ? std::string("no function is picked to call")
+                                              : "there's no function named '" + name + "' in this graph");
+        return false;
+    }
+    if ((int)m_frames.size() >= kMaxCallDepth) {
+        ReportError(caller, ctx, "function '" + name + "' was called more than " + std::to_string(kMaxCallDepth) +
+                                 " deep (a function calling itself with no way to stop?); the call was skipped");
+        return false;
+    }
+    Frame f; f.name = name; f.args = std::move(args);
+    m_frames.push_back(std::move(f));
+    // The body runs as a nested chain: it shares the event's step budget, so a
+    // function looping forever is stopped like any other runaway loop.
+    Run(start, ctx);
+    rets = std::move(m_frames.back().rets);
+    m_frames.pop_back();
+    return !m_abort;
+}
+
 bool NodeGraph::ResolveTarget(VsNode* n, VsContext& ctx, GameObject*& out) {
     out = nullptr;
     if (!n || n->targetPin < 0 || !n->HasInput(n->targetPin)) return true;
@@ -114,7 +139,7 @@ void NodeGraph::Run(int entryNode, VsContext& ctx, bool resume) {
     ++m_runDepth;
     int cur = entryNode;
     bool first = true;
-    while (cur >= 0 && !m_abort) {
+    while (cur >= 0 && !Aborted()) {
         VsNode* n = Node(cur);
         if (!n) break;
         if (++m_steps > kMaxStepsPerEvent) {
@@ -144,6 +169,14 @@ void NodeGraph::Run(int entryNode, VsContext& ctx, bool resume) {
             m_resuming = false;
         }
         first = false;
+        if (outPin == kSuspend && !m_frames.empty()) {
+            // A function has to finish before its caller carries on: there's no
+            // caller to come back to next frame.
+            ReportError(n, ctx, "Delay / Wait can't pause inside a function (a function runs to the end at once); "
+                                "the function stopped here");
+            m_frames.back().returned = true;
+            break;
+        }
         if (outPin == kSuspend) {   // park here; Resume() continues from this node
             if (!IsSuspended(cur)) m_suspended.push_back(cur);
             break;
@@ -465,6 +498,15 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "OtherName")      return std::make_unique<OtherNameNode>();
     if (type == "AnimEventName")  return std::make_unique<AnimEventNameNode>();
     if (type == "OtherTag")       return std::make_unique<OtherTagNode>();
+    if (type == "FunctionStart" || type == "Return" || type == "CallFunction") {
+        std::string text;   // the signature / function name may contain spaces
+        for (const auto& a : args) { if (!text.empty()) text += ' '; text += a; }
+        if (type == "FunctionStart") return std::make_unique<FunctionStartNode>(text);
+        if (type == "Return")        return std::make_unique<ReturnNode>(FunctionNameOf(text));
+        return std::make_unique<CallFunctionNode>(FunctionNameOf(text));
+    }
+    if (type == "SetLocal")       return std::make_unique<SetLocalNode>(argOr("x"));
+    if (type == "GetLocal")       return std::make_unique<GetLocalNode>(argOr("x"));
     if (type == "Self")           return std::make_unique<SelfNode>();
     if (type == "Other")          return std::make_unique<OtherNode>();
     if (type == "FindObject")     return std::make_unique<FindObjectNode>(argOr(""));
@@ -538,6 +580,11 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
 
 // ---- Text-format parser ----------------------------------------------
 namespace {
+std::string JoinArgs(const std::vector<std::string>& a) {
+    std::string s;
+    for (const auto& x : a) { if (!s.empty()) s += ' '; s += x; }
+    return s;
+}
 // Split a line into tokens, keeping "quoted strings" intact.
 std::vector<std::string> Tokenize(const std::string& line) {
     std::vector<std::string> out;
@@ -606,6 +653,10 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
             added->fileId = fileId;
             added->type = type;
             added->targetPin = TargetPinFor(type);
+            if (type == "FunctionStart") {
+                const std::string fname = FunctionNameOf(args.empty() ? std::string() : JoinArgs(args));
+                if (!fname.empty() && !graph->m_functions.count(fname)) graph->m_functions[fname] = added->id;
+            }
             fileToGraph[fileId] = added->id;
         } else if (kind == "exec") {
             if (tok.size() < 4) return fail("exec needs <from> <pin> <to>");

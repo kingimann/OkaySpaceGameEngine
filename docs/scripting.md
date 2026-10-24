@@ -379,6 +379,16 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `npc_state(name)` | the NPC's AI state name: `Idle`/`Wander`/`Patrol`/`Follow`/`Flee`/`Chase`/`Search`/`Return` |
 | `spawner_start(name)` / `spawner_stop(name)` | run / pause a Spawner component's waves (`""` targets a sibling Spawner) |
 | `spawner_alive(name)` | how many objects that Spawner created are still alive (wave HUDs) |
+| `build_enter()` / `build_exit()` / `build_toggle()` / `build_active()` | turn the player's in-game build mode on / off, or ask whether it's on (see [build_mode.md](build_mode.md)) |
+| `build_link_mode(on)` | switch build mode's wiring (link) mode on / off; no argument toggles |
+| `build_palette_clear()` / `build_palette_add(name, prefab, icon)` | set what players can place; `add` returns the new slot (0-based) |
+| `build_palette_select(slot)` / `build_selected()` | pick / read the selected hotbar slot |
+| `build_save(name)` / `build_load(name)` / `build_exists(name)` | save / load / check a creation (everything players placed, with its wiring) in the save folder |
+| `build_clear()` / `build_count()` | remove everything players placed / how many objects they placed |
+| `build_undo()` / `build_redo()` | undo / redo the player's build actions |
+| `logic_press(name)` / `logic_state(name)` | press a Logic Source button / read a source's output or a target's on-off state |
+| `on_object_placed(name)` / `on_object_removed(name)` | events: a player placed / deleted an object (globals `build_object`, `build_id`) |
+| `on_logic_signal(name)` | event: a wired Logic Target turned on or off (globals `signal_name`, `signal_on`) |
 | `count_tag(tag)` | how many active objects have a tag (coins left, enemies alive) |
 | `nearest_tag(tag)` | name of the nearest tagged object to this one ("" if none) — targeting |
 | `screen_w()` / `screen_h()` | render-target size in pixels |

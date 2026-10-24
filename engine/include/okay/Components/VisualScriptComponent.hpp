@@ -102,6 +102,16 @@ public:
         for (char& c : key) if (c == ' ' || c == '\t') c = '_';
         Fire(("OnEvent:" + key).c_str(), sender);
     }
+    /// Run this graph's `entry` event nodes for an engine event (On Object Placed,
+    /// On Logic Signal, ...): `other` is readable with Other Name, `name` / `value`
+    /// with Event Name / Event Value. Nothing happens if the graph has no such node.
+    void RaiseEvent(const char* entry, GameObject* other, const std::string& name = "",
+                    const vs::VsValue& value = {}) {
+        if (!m_graph || m_graph->Entries(entry).empty()) return;
+        m_ctx.variables["event_name"] = vs::VsValue(name);
+        m_ctx.variables["event_value"] = value;
+        Fire(entry, other);
+    }
     /// Set a blackboard variable from outside (Set Object Var node, gameplay code).
     void SetVariable(const std::string& name, const vs::VsValue& v) { m_ctx.variables[name] = v; }
 

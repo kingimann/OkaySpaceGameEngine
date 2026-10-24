@@ -347,6 +347,16 @@ inline const std::vector<VsDef>& Registry() {
         {"BroadcastEvent",  "Broadcast Event",  CAT_ACTION, true, {""}, {"Value"}, {}, 1, "event name"},
         {"EventValue",      "Event Value",      CAT_DATA, false, {}, {}, {"Value"}, 0, nullptr},
         {"EventName",       "Event Name",       CAT_DATA, false, {}, {}, {"Name"}, 0, nullptr},
+        // In-game build mode (the player's Build Mode component) and logic links.
+        {"OnObjectPlaced",  "On Object Placed", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnObjectRemoved", "On Object Removed",CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnLogicSignal",   "On Logic Signal",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"EnterBuildMode",  "Enter Build Mode", CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"ExitBuildMode",   "Exit Build Mode",  CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"InBuildMode",     "In Build Mode?",   CAT_DATA, false, {}, {}, {"Bool"}, 0, nullptr},
+        {"SetBuildPalette", "Set Build Palette",CAT_ACTION, true, {""}, {}, {}, 1, "Name=prefab|icon, ..."},
+        {"SaveCreation",    "Save Creation",    CAT_ACTION, true, {""}, {}, {"Saved"}, 1, "creation name"},
+        {"LoadCreation",    "Load Creation",    CAT_ACTION, true, {""}, {}, {"Loaded"}, 1, "creation name"},
         // Other objects' variables, save / load.
         {"SetObjectVar",    "Set Object Var",   CAT_VAR, true, {""}, {"Target", "Value"}, {}, 1, "variable"},
         {"GetObjectVar",    "Get Object Var",   CAT_VAR, false, {}, {"Target"}, {"Value"}, 1, "variable"},
@@ -557,7 +567,8 @@ inline std::string VsEntryName(const std::string& type, const std::string& arg) 
         type == "OnMouseEnter" || type == "OnMouseExit" || type == "OnMouseDown" || type == "OnMouseUp" ||
         type == "OnMouseOver" || type == "OnCollisionStay" || type == "OnLateUpdate" ||
         type == "OnTriggerStay" ||
-        type == "OnFixedUpdate" || type == "OnDestroy" || type == "OnEnable" || type == "OnDisable") return type;
+        type == "OnFixedUpdate" || type == "OnDestroy" || type == "OnEnable" || type == "OnDisable" ||
+        type == "OnObjectPlaced" || type == "OnObjectRemoved" || type == "OnLogicSignal") return type;
     if (type == "OnAnimEvent") return arg.empty() ? std::string("OnAnimEvent") : "OnAnimEvent:" + tok(arg, "");
     if (type == "OnKey")   return "OnKey:" + tok(arg, "space");
     if (type == "OnKeyUp") return "OnKeyUp:" + tok(arg, "space");
@@ -588,7 +599,8 @@ struct VsEditGraph {
             {"Format", "Score: {0}"}, {"FindWithTag", "Player"}, {"CountWithTag", "Enemy"}, {"FindObject", "Player"},
             {"NearestWithTag", "Enemy"}, {"Teleport", "self"},
             {"ShowUI", "self"}, {"HideUI", "self"}, {"Delay", "1"}, {"Action", "log Hello"},
-            {"Condition", "always"}, {"Actions", "log Hello"}};
+            {"Condition", "always"}, {"Actions", "log Hello"},
+            {"SetBuildPalette", "Block=Assets/block.okayprefab"}, {"SaveCreation", "creation"}, {"LoadCreation", "creation"}};
         if (d) if (auto it = kArg.find(d->type); it != kArg.end()) n.arg = it->second;
         nodes.push_back(n); dirty = true; return n.id;
     }
@@ -1004,6 +1016,8 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
     auto In = [&](int p, const char* d) { return VsInput(g, nodeId, p, d); };
     if (t == "OnEvent" || t == "EventValue") return "value";
     if (t == "EventName")      return "event_name";
+    if (t == "InBuildMode")    return "build_active()";
+    if (t == "SaveCreation" || t == "LoadCreation") return "build_exists(" + q(lit("creation")) + ")";
     if (t == "GetObjectVar")   return "get_object_var(" + In(0, "\"self\"") + ", " + q(lit("hp")) + ")";
     if (t == "LoadValue")      return "load(" + q(lit("score")) + ", " + In(0, "0") + ")";
     if (t == "Format") {       // "Score: {0} / {1}" -> "Score: " + str(a) + " / " + str(b)
@@ -1181,6 +1195,26 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="BroadcastEvent")out += ind + "broadcast_event(" + q(arg("Event")) + ", " + in(0, "0") + ")\n";
     else if (t=="SetObjectVar")  out += ind + "set_object_var(" + in(0, "\"self\"") + ", " + q(arg("hp")) + ", " + in(1, "0") + ")\n";
     else if (t=="SaveValue")     out += ind + "save(" + q(arg("score")) + ", " + in(0, "0") + ")\n";
+    else if (t=="EnterBuildMode") out += ind + "build_enter()\n";
+    else if (t=="ExitBuildMode")  out += ind + "build_exit()\n";
+    else if (t=="SaveCreation")   out += ind + "build_save(" + q(arg("creation")) + ")\n";
+    else if (t=="LoadCreation")   out += ind + "build_load(" + q(arg("creation")) + ")\n";
+    else if (t=="SetBuildPalette") {   // "Name=prefab|icon, ..." -> one build_palette_add per item
+        out += ind + "build_palette_clear()\n";
+        auto trim = [](const std::string& v) { size_t a = v.find_first_not_of(" \t"), b = v.find_last_not_of(" \t");
+                                               return a == std::string::npos ? std::string() : v.substr(a, b - a + 1); };
+        std::stringstream ss(arg(""));
+        for (std::string item; std::getline(ss, item, ',');) {
+            item = trim(item);
+            if (item.empty()) continue;
+            std::string name = item, prefab = item, icon;
+            size_t eq = item.find('=');
+            if (eq != std::string::npos) { name = trim(item.substr(0, eq)); prefab = trim(item.substr(eq + 1)); }
+            size_t bar = prefab.find('|');
+            if (bar != std::string::npos) { icon = trim(prefab.substr(bar + 1)); prefab = trim(prefab.substr(0, bar)); }
+            out += ind + "build_palette_add(" + q(name) + ", " + q(prefab) + ", " + q(icon) + ")\n";
+        }
+    }
     else if (t=="Teleport") {
         auto ax = [&](int p) { return VsInputLinkedOrSet(g, nodeId, p) ? in(p) : std::string("\"keep\""); };
         out += ind + "set_object_position(" + q(arg("self")) + ", " + ax(0) + ", " + ax(1) + ", " + ax(2) + ")\n";
@@ -1358,7 +1392,10 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
         {"OnFixedUpdate",   "void FixedUpdate()"},
         {"OnEnable",        "void OnEnable()"},
         {"OnDisable",       "void OnDisable()"},
-        {"OnDestroy",       "void OnDestroy()"}};
+        {"OnDestroy",       "void OnDestroy()"},
+        {"OnObjectPlaced",  "void OnObjectPlaced(string name)"},    // name = the placed object's name
+        {"OnObjectRemoved", "void OnObjectRemoved(string name)"},
+        {"OnLogicSignal",   "void OnLogicSignal(string name)"}};
     // Events sharing a handler (On Click + On Mouse Down) go into one method.
     std::set<std::string> doneSig;
     for (const auto& ev : kEvents) {

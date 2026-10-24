@@ -10417,6 +10417,16 @@ void DrawScriptDocs() {
         fapi("npc_stop(\"n\") / npc_busy(\"n\") / npc_state(\"n\")", "cancel / query the NPC");
         fapi("spawner_start(\"n\") / spawner_stop(\"n\")", "run / pause a Spawner's waves");
         fapi("spawner_alive(\"n\")", "live objects a Spawner created (enemies left)");
+        fapi("build_enter() / build_exit() / build_toggle()", "in-game build mode on / off (Build Mode component)");
+        fapi("build_active() / build_link_mode(on)", "in build mode? / wiring (link) mode");
+        fapi("build_palette_clear() / build_palette_add(name, prefab, icon)", "what players can place");
+        fapi("build_palette_select(i) / build_selected()", "the selected hotbar slot (0-based)");
+        fapi("build_save(\"name\") / build_load(\"name\")", "save / load what players built (save folder)");
+        fapi("build_exists(\"name\") / build_clear() / build_count()", "a saved creation? / remove all / how many placed");
+        fapi("build_undo() / build_redo()", "undo / redo the player's build actions");
+        fapi("logic_press(\"n\") / logic_state(\"n\")", "press a logic button / read a source or target");
+        fapi("on_object_placed(name) / on_object_removed(name)", "events: a player placed / deleted something");
+        fapi("on_logic_signal(name)", "event: a wired target turned on / off (signal_on)");
         fapi("vel_toward(\"n\", speed)", "aim this body's velocity at a target");
         fapi("destroy_obj(\"n\")", "destroy a named object");
         fapi("count_tag(\"t\") / nearest_tag(\"t\")", "tag queries");
@@ -10779,6 +10789,9 @@ static const std::vector<std::string>& ScriptCompletions() {
         "set_parent","exists","is_active","obj_x","obj_y","dist_to","destroy_obj","count_tag",
         "npc_goto","npc_stop","npc_busy","npc_state",
         "spawner_start","spawner_stop","spawner_alive",
+        "build_enter","build_exit","build_toggle","build_active","build_link_mode","build_palette_clear",
+        "build_palette_add","build_palette_select","build_selected","build_save","build_load","build_exists",
+        "build_clear","build_undo","build_redo","build_count","logic_press","logic_state",
         "nearest_tag","set_cam","move_cam","set_cam_zoom","set_bg","set_light","set_ambient",
         "load_scene","load_scene_index","load_next_scene","screen_w","screen_h",
         // components / fx
@@ -10882,6 +10895,13 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"npc_busy","npc_busy(\"name\")"}, {"npc_state","npc_state(\"name\")"},
         {"spawner_start","spawner_start(\"name\")"}, {"spawner_stop","spawner_stop(\"name\")"},
         {"spawner_alive","spawner_alive(\"name\")"},
+        {"build_enter","build_enter()"}, {"build_exit","build_exit()"}, {"build_toggle","build_toggle()"},
+        {"build_active","build_active()"}, {"build_link_mode","build_link_mode(on)"},
+        {"build_palette_clear","build_palette_clear()"}, {"build_palette_add","build_palette_add(\"name\", \"prefab\", \"icon\")"},
+        {"build_palette_select","build_palette_select(slot)"}, {"build_selected","build_selected()"},
+        {"build_save","build_save(\"name\")"}, {"build_load","build_load(\"name\")"}, {"build_exists","build_exists(\"name\")"},
+        {"build_clear","build_clear()"}, {"build_undo","build_undo()"}, {"build_redo","build_redo()"},
+        {"build_count","build_count()"}, {"logic_press","logic_press(\"name\")"}, {"logic_state","logic_state(\"name\")"},
         {"set_cam","set_cam(x, y)"}, {"move_cam","move_cam(dx, dy)"}, {"set_cam_zoom","set_cam_zoom(z)"},
         {"camera_shake","camera_shake(strength)"}, {"camera_zoom_to","camera_zoom_to(zoom, seconds)"},
         {"camera_dutch","camera_dutch(degrees)"}, {"camera_fov","camera_fov(degrees)"},
@@ -28714,6 +28734,195 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##bp")) toRemove = bp;
         }
     }
+    // ---- In-game build mode + logic links ----
+    // One-letter key field ("" = unbound), mouse button and gamepad button pickers.
+    auto bmKey = [&](const char* label, char& key) {
+        char b[2] = {key > ' ' ? key : (key == ' ' ? '_' : 0), 0};
+        ImGui::SetNextItemWidth(40);
+        if (ImGui::InputText(label, b, sizeof(b))) {
+            char c = b[0];
+            if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+            key = c == '_' ? ' ' : c;
+            ed.dirty = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A letter or digit (empty = no key, _ = Space).");
+    };
+    auto bmMouse = [&](const char* label, int& btn) {
+        const char* names[] = {"(none)", "Left", "Right", "Middle"};
+        int cur = btn < 0 || btn > 2 ? 0 : btn + 1;
+        ImGui::SetNextItemWidth(96);
+        if (ImGui::Combo(label, &cur, names, 4)) { btn = cur - 1; ed.dirty = true; }
+    };
+    auto bmPad = [&](const char* label, int& btn) {
+        const char* names[] = {"(none)", "A", "B", "X", "Y", "Back", "Start", "L", "R"};
+        int cur = btn < 0 || btn > 7 ? 0 : btn + 1;
+        ImGui::SetNextItemWidth(96);
+        if (ImGui::Combo(label, &cur, names, 9)) { btn = cur - 1; ed.dirty = true; }
+    };
+    if (auto* bm = dynamic_cast<BuildMode*>(curComp)) {
+        if (CompHeader("Build Mode (players build)", bm, &toRemove)) {
+            ImGui::TextDisabled("In Play, B enters build mode: place palette prefabs, move, rotate, copy,");
+            ImGui::TextDisabled("delete and wire them (L). Only objects with an editable Buildable change.");
+            if (ImGui::TreeNodeEx("Palette##bmd", ImGuiTreeNodeFlags_DefaultOpen)) {
+                int del = -1;
+                for (std::size_t i = 0; i < bm->palette.size(); ++i) {
+                    BuildPaletteItem& it = bm->palette[i];
+                    ImGui::PushID((int)i);
+                    char nb[64]; std::snprintf(nb, sizeof(nb), "%s", it.name.c_str());
+                    ImGui::SetNextItemWidth(120);
+                    if (ImGui::InputTextWithHint("##name", "name", nb, sizeof(nb))) { it.name = nb; ed.dirty = true; }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("x")) del = (int)i;
+                    ImGui::Text("Prefab"); ImGui::SameLine(120);
+                    if (AssetSlot("bmdpf", it.prefab, "Prefab", {".okayprefab"})) ed.dirty = true;
+                    ImGui::Text("Icon"); ImGui::SameLine(120);
+                    if (AssetSlot("bmdic", it.icon, "Texture", {".png", ".jpg", ".jpeg"})) ed.dirty = true;
+                    ImGui::Separator();
+                    ImGui::PopID();
+                }
+                if (del >= 0) { bm->palette.erase(bm->palette.begin() + del); ed.dirty = true; }
+                if (ImGui::SmallButton("+ Add item##bmd")) { bm->palette.push_back({"Item", "", ""}); ed.dirty = true; }
+                ImGui::TreePop();
+            }
+            if (ImGui::DragFloat("Grid##bmd", &bm->gridSize, 0.05f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap step in world units (0 = no grid).");
+            if (ImGui::DragFloat("Rotate Step (deg)##bmd", &bm->rotationStep, 1.0f, 1.0f, 180.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Max Reach##bmd", &bm->maxReach, 0.25f, 0.5f, 200.0f)) ed.dirty = true;
+            if (ImGui::DragInt("Max Objects##bmd", &bm->maxObjects, 1.0f, 0, 100000)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cap on objects players can place (0 = no cap).");
+            {
+                char lb[96]; std::snprintf(lb, sizeof(lb), "%s", LayerMaskToList(bm->buildLayers).c_str());
+                if (ImGui::InputTextWithHint("Build On Layers##bmd", "all layers", lb, sizeof(lb))) {
+                    bm->buildLayers = okay::Layers::MaskFromList(lb); ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Collider layers players may build on: numbers or names\nseparated by commas (0,3 or Default,Ground). Blank = all layers.");
+            }
+            if (ImGui::Checkbox("Start in build mode##bmd", &bm->startActive)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Allow mid-air##bmd", &bm->allowAirPlacement)) ed.dirty = true;
+            if (ImGui::Checkbox("Built-in hotbar##bmd", &bm->showHotbar)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: draw your own palette UI (read build_selected() / build_active()).");
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Ghost preview##bmd", &bm->showGhost)) ed.dirty = true;
+            char fb[96]; std::snprintf(fb, sizeof(fb), "%s", bm->creationFolder.c_str());
+            if (ImGui::InputTextWithHint("Creations Folder##bmd", "creations", fb, sizeof(fb))) { bm->creationFolder = fb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Folder inside the player's save folder where build_save(name) writes.");
+            if (ImGui::TreeNodeEx("Colours##bmd")) {
+                auto col = [&](const char* l, Color& c) {
+                    float v[4] = {c.r, c.g, c.b, c.a};
+                    if (ImGui::ColorEdit4(l, v)) { c = {v[0], v[1], v[2], v[3]}; ed.dirty = true; }
+                };
+                col("Fits##bmd", bm->validColor); col("Blocked##bmd", bm->invalidColor);
+                col("Selection##bmd", bm->highlightColor); col("Wire##bmd", bm->wireColor); col("Wire (on)##bmd", bm->wireOnColor);
+                ImGui::TreePop();
+            }
+            if (ImGui::TreeNodeEx("Controls##bmd")) {
+                BuildBindings& k = bm->bindings;
+                bmKey("Build mode##bmdk", k.toggle); ImGui::SameLine(); bmPad("##bmdpt", k.padToggle);
+                bmMouse("Place##bmdk", k.place);     ImGui::SameLine(); bmPad("##bmdpp", k.padPlace);
+                bmMouse("Delete##bmdk", k.remove);   ImGui::SameLine(); bmPad("##bmdpr", k.padRemove);
+                bmKey("Delete key##bmdk", k.removeKey);
+                bmKey("Rotate##bmdk", k.rotate);     ImGui::SameLine(); bmPad("##bmdpro", k.padRotate);
+                bmKey("Move##bmdk", k.move);         ImGui::SameLine(); bmPad("##bmdpm", k.padMove);
+                bmKey("Copy##bmdk", k.duplicate);    ImGui::SameLine(); bmPad("##bmdpd", k.padDuplicate);
+                bmKey("Link mode##bmdk", k.link);    ImGui::SameLine(); bmPad("##bmdpl", k.padLink);
+                bmKey("Undo##bmdk", k.undo);         ImGui::SameLine(); bmPad("##bmdpu", k.padUndo);
+                bmKey("Redo##bmdk", k.redo);         ImGui::SameLine(); bmPad("##bmdpre", k.padRedo);
+                bmKey("Next item##bmdk", k.nextItem); ImGui::SameLine(); bmPad("##bmdpn", k.padNext);
+                bmKey("Prev item##bmdk", k.prevItem); ImGui::SameLine(); bmPad("##bmdpv", k.padPrev);
+                if (ImGui::Checkbox("1-9 pick items##bmdk", &k.numberKeys)) ed.dirty = true;
+                ImGui::SameLine();
+                if (ImGui::Checkbox("Wheel cycles##bmdk", &k.mouseWheel)) ed.dirty = true;
+                ImGui::TreePop();
+            }
+            if (ImGui::SmallButton("Remove##bmd")) toRemove = bm;
+        }
+    }
+    if (auto* bl = dynamic_cast<Buildable*>(curComp)) {
+        if (CompHeader("Buildable", bl, &toRemove)) {
+            ImGui::TextDisabled("Players may edit this in build mode. Put one on every palette prefab");
+            ImGui::TextDisabled("and on level props players are allowed to rearrange.");
+            if (ImGui::Checkbox("Players can edit##bl", &bl->editable)) ed.dirty = true;
+            ImGui::Text("Build id: %d", bl->buildId);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("New id##bl")) { bl->buildId = Buildable::MaxId(ed.scene()) + 1; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Logic links and saved creations find objects by this id.");
+            if (bl->placed) ImGui::TextDisabled("Placed by a player (saved with creations)");
+            if (ImGui::SmallButton("Remove##bl")) toRemove = bl;
+        }
+    }
+    if (auto* ls = dynamic_cast<LogicSource*>(curComp)) {
+        if (CompHeader("Logic Source", ls, &toRemove)) {
+            ImGui::TextDisabled("Sends on / off down its links (wire them in build mode with L).");
+            const char* kinds[] = {"Button", "Pressure Plate", "Trigger Zone", "Timer"};
+            int k = (int)ls->kind;
+            if (ImGui::Combo("Kind##ls", &k, kinds, LogicSource::kKindCount)) {
+                ls->kind = (LogicSource::Kind)k;
+                // Sensible zone defaults: a plate senses on top of itself, a zone fills itself.
+                if (ls->kind == LogicSource::Kind::TriggerZone) { ls->zoneSize = {1, 1, 1}; ls->zoneOffset = {0, 0, 0}; }
+                if (ls->kind == LogicSource::Kind::PressurePlate) { ls->zoneSize = {0.9f, 0.6f, 0.9f}; ls->zoneOffset = {0, 0.35f, 0}; }
+                ed.dirty = true;
+            }
+            if (ls->kind == LogicSource::Kind::Button) {
+                if (ImGui::Checkbox("Toggle (else momentary)##ls", &ls->toggle)) ed.dirty = true;
+                if (!ls->toggle && ImGui::DragFloat("Hold Time (s)##ls", &ls->holdTime, 0.05f, 0.05f, 60.0f)) ed.dirty = true;
+                if (ls->toggle && ImGui::Checkbox("Starts on##ls", &ls->startOn)) ed.dirty = true;
+                bmKey("Press Key##ls", ls->pressKey); ImGui::SameLine(); bmPad("Pad##ls", ls->pressPadButton);
+                if (ImGui::DragFloat("Press Reach##ls", &ls->pressReach, 0.1f, 0.5f, 50.0f)) ed.dirty = true;
+            } else if (ls->kind == LogicSource::Kind::Timer) {
+                if (ImGui::DragFloat("Interval (s)##ls", &ls->interval, 0.05f, 0.05f, 3600.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("On Time (s)##ls", &ls->onTime, 0.05f, 0.0f, 3600.0f)) ed.dirty = true;
+                if (ImGui::Checkbox("Starts on##ls", &ls->startOn)) ed.dirty = true;
+            } else {
+                float zs[3] = {ls->zoneSize.x, ls->zoneSize.y, ls->zoneSize.z};
+                if (ImGui::DragFloat3("Zone Size##ls", zs, 0.05f, 0.01f, 1000.0f)) { ls->zoneSize = {zs[0], zs[1], zs[2]}; ed.dirty = true; }
+                float zo[3] = {ls->zoneOffset.x, ls->zoneOffset.y, ls->zoneOffset.z};
+                if (ImGui::DragFloat3("Zone Offset##ls", zo, 0.05f)) { ls->zoneOffset = {zo[0], zo[1], zo[2]}; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("In the object's local units (scaled with it).");
+                char tb[64]; std::snprintf(tb, sizeof(tb), "%s", ls->activatorTag.c_str());
+                if (ImGui::InputTextWithHint("Only Tag##ls", "anything that moves", tb, sizeof(tb))) { ls->activatorTag = tb; ed.dirty = true; }
+            }
+            std::string ids;
+            for (int id : ls->links) ids += (ids.empty() ? "" : ", ") + std::to_string(id);
+            ImGui::TextDisabled("Links: %s", ids.empty() ? "none" : ids.c_str());
+            if (!ls->links.empty()) { ImGui::SameLine(); if (ImGui::SmallButton("Clear##lsl")) { ls->links.clear(); ed.dirty = true; } }
+            if (ImGui::SmallButton("Remove##ls")) toRemove = ls;
+        }
+    }
+    if (auto* lt = dynamic_cast<LogicTarget*>(curComp)) {
+        if (CompHeader("Logic Target", lt, &toRemove)) {
+            ImGui::TextDisabled("Reacts to the sources linked to it (on while any is on).");
+            const char* kinds[] = {"Door", "Mover", "Light", "Spawner", "Event"};
+            int k = (int)lt->kind;
+            if (ImGui::Combo("Kind##lt", &k, kinds, LogicTarget::kKindCount)) { lt->kind = (LogicTarget::Kind)k; ed.dirty = true; }
+            const char* modes[] = {"Follow (on while powered)", "Toggle (each signal flips)"};
+            int m = (int)lt->mode;
+            if (ImGui::Combo("Mode##lt", &m, modes, 2)) { lt->mode = (LogicTarget::Mode)m; ed.dirty = true; }
+            if (ImGui::Checkbox("Invert##lt", &lt->invert)) ed.dirty = true;
+            if (lt->kind == LogicTarget::Kind::Door || lt->kind == LogicTarget::Kind::Mover) {
+                float o[3] = {lt->openOffset.x, lt->openOffset.y, lt->openOffset.z};
+                if (ImGui::DragFloat3("Open Offset##lt", o, 0.05f)) { lt->openOffset = {o[0], o[1], o[2]}; ed.dirty = true; }
+                if (ImGui::DragFloat("Open Turn (deg)##lt", &lt->openYaw, 1.0f, -360.0f, 360.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Move Time (s)##lt", &lt->moveTime, 0.02f, 0.02f, 60.0f)) ed.dirty = true;
+            } else if (lt->kind == LogicTarget::Kind::Light) {
+                if (ImGui::DragFloat("Intensity When On##lt", &lt->lightIntensity, 0.05f, 0.0f, 100.0f)) ed.dirty = true;
+                float g[4] = {lt->onEmissive.r, lt->onEmissive.g, lt->onEmissive.b, lt->onEmissive.a};
+                if (ImGui::ColorEdit4("Glow When On##lt", g)) { lt->onEmissive = {g[0], g[1], g[2], g[3]}; ed.dirty = true; }
+            } else if (lt->kind == LogicTarget::Kind::Spawner) {
+                ImGui::Text("Prefab"); ImGui::SameLine(120);
+                if (AssetSlot("ltpf", lt->spawnPrefab, "Prefab", {".okayprefab"})) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Empty: uses a Spawner component on this object.");
+                float o[3] = {lt->spawnOffset.x, lt->spawnOffset.y, lt->spawnOffset.z};
+                if (ImGui::DragFloat3("Spawn Offset##lt", o, 0.05f)) { lt->spawnOffset = {o[0], o[1], o[2]}; ed.dirty = true; }
+                if (ImGui::DragInt("Max Alive##lt", &lt->maxAlive, 0.2f, 0, 1000)) ed.dirty = true;
+            }
+            char eb[64]; std::snprintf(eb, sizeof(eb), "%s", lt->eventName.c_str());
+            if (ImGui::InputTextWithHint(lt->kind == LogicTarget::Kind::Event ? "Event Name##lt" : "Signal Name##lt",
+                                         "object name", eb, sizeof(eb))) { lt->eventName = eb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The name On Logic Signal reports (an Event target also sends it\nas a custom event: On Custom Event / OnEvent_<name>).");
+            if (ImGui::SmallButton("Remove##lt")) toRemove = lt;
+        }
+    }
     if (auto* ls = dynamic_cast<LoadingScreen*>(curComp)) {
         if (CompHeader("Loading Screen", ls, &toRemove)) {
             ImGui::TextDisabled("A full-screen overlay shown on Play (and in built games).");
@@ -33021,6 +33230,14 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<StructureBuilder>(), "Structure Builder (Rust-style)")) { go->AddComponent<StructureBuilder>(); ed.dirty = true; }
             // Builder Mode is a built-in engine feature (press F2 in Play) — not a
             // component you add — so it's intentionally not listed here.
+            // Players building in your game: Build Mode on the player, Buildable on what
+            // they may edit, Logic Source / Target on wireable prefabs.
+            if (item(!go->GetComponent<BuildMode>(), "Build Mode (players build + wire)")) { go->AddComponent<BuildMode>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Buildable>(), "Buildable (players may edit)")) {
+                go->AddComponent<Buildable>()->buildId = Buildable::MaxId(ed.scene()) + 1; ed.dirty = true;
+            }
+            if (item(!go->GetComponent<LogicSource>(), "Logic Source (button / plate / zone / timer)")) { go->AddComponent<LogicSource>(); ed.dirty = true; }
+            if (item(!go->GetComponent<LogicTarget>(), "Logic Target (door / light / spawner / event)")) { go->AddComponent<LogicTarget>(); ed.dirty = true; }
             if (item(!go->GetComponent<SurvivalStats>(), "Survival Stats (native)")) { go->AddComponent<SurvivalStats>(); ed.dirty = true; }
             if (item(!go->GetComponent<HealthStat>(), "Stat: Health")) { go->AddComponent<HealthStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<HungerStat>(), "Stat: Hunger")) { go->AddComponent<HungerStat>(); ed.dirty = true; }

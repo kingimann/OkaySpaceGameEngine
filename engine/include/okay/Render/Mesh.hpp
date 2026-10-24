@@ -1668,12 +1668,81 @@ struct Mesh {
     }
     static Mesh Combined(const Mesh& a, const Mesh& b) { Mesh m = a; m.Combine(b); return m; }
 
+    /// How sound the surface is, by edge: an edge used by one triangle is a
+    /// boundary (a hole), by more than two is non-manifold (overlapping or
+    /// fanned geometry). Edges are matched by vertex position, so split vertices
+    /// (UV/normal seams) still count as one edge.
+    struct TopologyReport {
+        int edges = 0, boundaryEdges = 0, nonManifoldEdges = 0, degenerateTris = 0;
+        bool Closed() const { return boundaryEdges == 0 && nonManifoldEdges == 0; }
+    };
+    TopologyReport Topology() const {
+        TopologyReport r;
+        // Weld by position (quantised) so seams don't read as holes.
+        std::map<std::tuple<long, long, long>, int> ids;
+        std::vector<int> id(vertices.size());
+        for (std::size_t i = 0; i < vertices.size(); ++i) {
+            const Vec3& v = vertices[i];
+            auto key = std::make_tuple(std::lround(v.x * 1e5f), std::lround(v.y * 1e5f), std::lround(v.z * 1e5f));
+            auto it = ids.emplace(key, (int)ids.size()).first;
+            id[i] = it->second;
+        }
+        std::map<std::pair<int, int>, int> uses;
+        for (std::size_t t = 0; t + 2 < triangles.size(); t += 3) {
+            int a = triangles[t], b = triangles[t + 1], c = triangles[t + 2];
+            if (a < 0 || b < 0 || c < 0 || a >= (int)id.size() || b >= (int)id.size() || c >= (int)id.size()) { ++r.degenerateTris; continue; }
+            int k[3] = {id[a], id[b], id[c]};
+            if (k[0] == k[1] || k[1] == k[2] || k[0] == k[2]) { ++r.degenerateTris; continue; }
+            for (int e = 0; e < 3; ++e) {
+                int p = k[e], q = k[(e + 1) % 3];
+                ++uses[{std::min(p, q), std::max(p, q)}];
+            }
+        }
+        r.edges = (int)uses.size();
+        for (const auto& u : uses) {
+            if (u.second == 1) ++r.boundaryEdges;
+            else if (u.second > 2) ++r.nonManifoldEdges;
+        }
+        return r;
+    }
+
     /// Mirror the mesh across an axis plane through the origin (0 = X / yz-plane,
     /// 1 = Y, 2 = Z), appending a flipped copy so the model becomes symmetric —
     /// model one half, mirror the rest. When `weld` is on, vertices on the mirror
     /// plane are merged so there's no seam down the middle.
+    /// A mesh that crosses the plane is cut there first, keeping the + side, so
+    /// the two halves never overlap (a centred cube stays one closed cube).
     void Mirror(int axis = 0, bool weld = true) {
         if (axis < 0 || axis > 2 || vertices.empty()) return;
+        {
+            const float eps = 1e-5f;
+            bool pos = false, neg = false;
+            for (const Vec3& v : vertices) {
+                const float c = (&v.x)[axis];
+                if (c > eps) pos = true;
+                else if (c < -eps) neg = true;
+            }
+            if (pos && neg) {
+                Vec3 n{axis == 0 ? 1.0f : 0.0f, axis == 1 ? 1.0f : 0.0f, axis == 2 ? 1.0f : 0.0f};
+                Bisect({0, 0, 0}, n, /*cap=*/false, /*keepPositive=*/true);
+                if (vertices.empty()) return;
+            } else if (pos || neg) {
+                // A closed half model with a face lying on the plane: after the
+                // mirror that face and its copy would sit back to back inside the
+                // model, so drop them (a mesh that is entirely flat on the plane
+                // has no "inside" and keeps its faces).
+                std::vector<int> onPlane;
+                for (int f = 0; f * 3 + 2 < (int)triangles.size(); ++f) {
+                    bool all = true;
+                    for (int k = 0; k < 3 && all; ++k) {
+                        const int vi = triangles[f * 3 + k];
+                        all = vi >= 0 && vi < (int)vertices.size() && std::fabs((&vertices[vi].x)[axis]) <= eps;
+                    }
+                    if (all) onPlane.push_back(f);
+                }
+                if (!onPlane.empty()) DeleteFaces(onPlane);
+            }
+        }
         const bool faceCols = HasFaceColors();
         const bool hadNormals = HasNormals();
         Mesh copy = *this;

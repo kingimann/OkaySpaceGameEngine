@@ -72,6 +72,9 @@ floor or carve a doorway. Colliders auto-refit whenever the mesh changes.
   (with UVs) to `Assets/<name>.obj`.
 - Symmetry / deform: **Mirror X/Y/Z**, **Spherify**, **Twist Y**,
   **Solidify** (give a surface thickness), **Taper Y**, **Bend X**.
+  **Mirror** never makes overlapping geometry:
+  - **A mesh crossing the mirror plane** is cut there first, keeping the + side, so a centred cube stays one closed cube.
+  - **A closed half model** loses the faces lying on the plane before the copy is added, so no faces are left back to back inside the model.
 
 ### UV Unwrap
 
@@ -115,11 +118,38 @@ or **Column** preset, then:
 
 ## Edit Mesh — vertex/face editing in the viewport
 
-Tick **Edit Mesh** to enter edit mode (the mesh is auto-welded so shared
-corners move together). Click in the 3D view to select **Vertices**,
-**Edges**, or **Faces** (Shift-click to add, **Alt+Click** an edge to grab
-its whole loop), drag the axis handles to move, hold **V** to snap to
-nearby vertices.
+Press **Tab** with the mouse over the 3D view, or tick **Edit Mesh**, to enter edit mode.
+The mesh is auto-welded, so shared corners move together.
+
+- **Mode header:** a header at the top of the 3D view shows **Object** / **Edit**. While editing it also shows **Vertex** / **Edge** / **Face**. Click them, or press **1** / **2** / **3**.
+- **Selecting:** click in the 3D view to select. Shift-click adds to the selection, and **Alt+Click** an edge to grab its whole loop.
+- **Moving:** drag the axis handles to move, and hold **V** to snap to nearby vertices.
+
+### Move, rotate and scale: G / R / S
+
+With something selected, press **G** (move), **R** (rotate) or **S** (scale) with the mouse over the 3D view, then move the mouse.
+
+| Key | What it does |
+|---|---|
+| **X** / **Y** / **Z** | Lock to that world axis (press again to unlock) |
+| **Shift+X** / **Y** / **Z** | Lock to the plane of the other two axes |
+| Digits, **.**, **-**, Backspace | Type an exact value: a distance, an angle in degrees, or a scale factor |
+| **Ctrl** (or the Snap toggle) | Snap: moves to the grid size, rotations to the rotate-snap angle, scale to 0.1 steps |
+| **G** / **R** / **S** again | Switch to that tool, starting over |
+| **Enter** or click | Confirm: one undo step |
+| **Esc** or right-click | Cancel: everything goes back exactly as it was |
+
+- **What it turns around:** rotate and scale work about the centre of the selection. With no axis lock, rotate turns about the view direction and scale is uniform.
+- **Where a typed distance goes:** along the locked axis, or along X when nothing is locked.
+- **Other tools still apply:** **Soft Select** and **Symmetry X** work with G / R / S too.
+- **Status line:** the line at the bottom of the view shows the tool, the lock, the current value and the keys.
+- **Undo:** you stay in edit mode after undo and redo.
+
+### Tools greyed out
+
+A tool that needs a selection you don't have yet is greyed out; hover it to see what to select. Extrude Faces, for example, needs faces in Face mode.
+The row **Coming with the polygon mesh core** lists tools that need real quads and edge loops: Knife, Edge Bevel, Dissolve, Bridge Edge Loops and Edge Slide.
+They're planned for the next modeling milestones and can't be used yet.
 
 Selection tools: **Grow** adds every vertex touching the selection,
 **Shrink** peels its rim off, **Linked** flood-fills everything connected

@@ -6,7 +6,7 @@ namespace okay {
 
 class Scene;
 
-/// A lightweight scene registry and loader — the engine's analogue of Unity's
+/// A lightweight scene registry and loader — the engine's
 /// SceneManager plus the Build Settings scene list. Register scene file paths
 /// (the "build list") once, then load them by index or by name at runtime.
 /// Every load defers through Scene::RequestLoad, so it is safe to call from

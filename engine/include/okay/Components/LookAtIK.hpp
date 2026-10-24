@@ -1,6 +1,6 @@
 #pragma once
 // ---------------------------------------------------------------------------
-// LookAtIK — head/eye tracking (Unity's Look-At IK). Rotates a chain of bones
+// LookAtIK — head/eye tracking. Rotates a chain of bones
 // (e.g. spine -> neck -> head) so a forward axis points at a target: NPCs that
 // watch the player, a character that looks where you aim. Weighted and angle-
 // clamped so it eases in and never snaps the neck past a believable limit.

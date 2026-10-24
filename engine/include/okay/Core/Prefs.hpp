@@ -4,7 +4,7 @@
 
 namespace okay {
 
-/// Persistent key/value storage, like Unity's PlayerPrefs — the easy way to save
+/// Persistent key/value storage, like PlayerPrefs — the easy way to save
 /// high scores, settings, and progress. Values live in memory until Save() writes
 /// them to a small text file that Load() reads back. Numbers are stored as
 /// strings, so a key can be read as int, float, or string interchangeably.

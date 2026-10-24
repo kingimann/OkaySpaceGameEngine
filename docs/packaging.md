@@ -28,7 +28,7 @@ an `SDL2.dll`.**
 
 (If you'd rather ship a single DLL, build with `-DOKAY_STATIC_SDL=ON` to link
 SDL2 statically; then no `SDL2.dll` ships at all. The default is dynamic linking,
-Unity-style, which keeps the exes small and the DLL swappable.)
+— which keeps the exes small and the DLL swappable.)
 
 ## Building it
 

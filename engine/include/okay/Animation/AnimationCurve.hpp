@@ -12,7 +12,7 @@ struct Keyframe {
     float value = 0.0f;
 };
 
-/// A piecewise curve of keyframes evaluated over time, like Unity's
+/// A piecewise curve of keyframes evaluated over time
 /// `AnimationCurve`. Keys are kept sorted; evaluation interpolates between them.
 class AnimationCurve {
 public:

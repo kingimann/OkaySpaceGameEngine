@@ -2,17 +2,17 @@
 
 namespace okay {
 
-/// Mouse-cursor control, mirroring Unity's `Cursor`. Gameplay sets the desired
+/// Mouse-cursor control, mirroring `Cursor`. Gameplay sets the desired
 /// state (e.g. lock + hide for a shooter); the host (player / editor) reads it each
 /// frame and applies it to the window. Scripts and controllers just set the fields.
 class Cursor {
 public:
-    enum class LockMode { None, Locked };   // Unity also has Confined; Locked covers FPS/TPS
+    enum class LockMode { None, Locked };   // Locked covers FPS/TPS
 
-    /// Hide/show the hardware cursor (Unity's Cursor.visible).
+    /// Hide/show the hardware cursor.
     static inline bool visible = true;
     /// None = free cursor; Locked = cursor hidden-centered, motion delivered as
-    /// relative deltas so mouse-look keeps working (Unity's Cursor.lockState).
+    /// relative deltas so mouse-look keeps working.
     static inline LockMode lockState = LockMode::None;
 
     static void SetVisible(bool v) { visible = v; }

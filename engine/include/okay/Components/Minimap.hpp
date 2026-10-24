@@ -17,7 +17,7 @@ namespace okay {
 /// per map pixel; smaller = more zoomed in). In 3D (`useXZ`) world X is horizontal
 /// and world Z vertical; in 2D it uses X and Y.
 ///
-/// Expanded (Unity-style) options: a circular mask, heading-up rotation that turns
+/// Expanded options: a circular mask, heading-up rotation that turns
 /// the whole map so the target always faces "up", a directional player arrow at the
 /// centre, off-map blips clamped to the edge as direction pointers, and an optional
 /// reference grid.

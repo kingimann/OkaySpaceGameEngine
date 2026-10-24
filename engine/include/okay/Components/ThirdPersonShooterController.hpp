@@ -22,7 +22,7 @@ namespace okay {
 /// camera direction (so you walk/strafe and shoot where you look), mouse looks around,
 /// right mouse aims (camera pulls in over the shoulder), left mouse fires (calls the
 /// sibling ScriptComponent's on_fire()). Locks/hides the cursor while playing, like
-/// Unity. Movement has momentum and a forgiving jump.
+/// most engines. Movement has momentum and a forgiving jump.
 ///
 /// Setup: attach to the player; have a main Camera in the scene (positioned by this
 /// each frame). A Character on the player (or a child) animates from movement.
@@ -65,7 +65,7 @@ public:
     float fireRate = 8.0f;               // shots/sec when autoFire
 
     // ---- Cursor ----
-    bool  lockCursor = true;             // hide + lock the cursor while playing (Unity-style)
+    bool  lockCursor = true;             // hide + lock the cursor while playing
 
     // ---- Lean (peek with Q/E): the camera shifts/rolls AND the body leans ----
     char  leanLeftKey  = 'q';

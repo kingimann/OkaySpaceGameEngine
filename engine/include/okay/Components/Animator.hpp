@@ -10,7 +10,7 @@ namespace okay {
 
 /// Plays an AnimationClip and drives its GameObject's Transform from the clip's
 /// tracks ("position.x/y/z", "rotation.z", "scale.x/y/z"). A lightweight
-/// counterpart to Unity's Animator.
+/// counterpart to Animator.
 class Animator : public Behaviour {
 public:
     AnimationClip clip;

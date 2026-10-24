@@ -10,7 +10,7 @@
 
 namespace okay {
 
-/// A screen-space texture drawn through a UV rectangle (Unity's RawImage): show
+/// A screen-space texture drawn through a UV rectangle: show
 /// part of an image, tile it (UV size above 1 repeats it), or scroll it (a moving
 /// background, a conveyor, a minimap). No slicing or fills: the texture as is.
 class UIRawImage : public Behaviour {

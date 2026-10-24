@@ -8,7 +8,7 @@
 
 namespace okay {
 
-/// A billboarded particle emitter — a compact but feature-rich take on Unity's
+/// A billboarded particle emitter — compact but feature-rich, modelled on a classic
 /// ParticleSystem. Spawns particles from a configurable emission SHAPE and
 /// integrates them with velocity, gravity, drag, colour-over-lifetime,
 /// size-over-lifetime, lifetime/size/speed randomness, timed bursts, and a
@@ -73,7 +73,7 @@ public:
     /// drawn as a camera-facing billboard tinted by the particle colour. Empty =
     /// a soft round puff. Build Game bundles the file alongside the exe.
     std::string texture;
-    /// Per-particle billboard spin (Unity's Rotation / Rotation-over-Lifetime),
+    /// Per-particle billboard spin,
     /// degrees and degrees-per-second, each with a +/- randomiser.
     float startRotation = 0.0f;
     float startRotationRandom = 0.0f;
@@ -81,7 +81,7 @@ public:
     float rotationSpeedRandom = 0.0f;
 
     /// How particles face the camera. Billboard = an upright camera-facing quad
-    /// (the default). Stretch = elongated along the velocity (Unity's Stretched
+    /// (the default). Stretch = elongated along the velocity (Stretched
     /// Billboard) for rain, sparks, tracers and speed lines; `stretchScale` sets
     /// how much speed lengthens the streak.
     enum class RenderMode { Billboard, Stretch };
@@ -97,10 +97,10 @@ public:
 
     // ---- Forces ----
     Vec3  gravity{0.0f, -2.0f, 0.0f};   // 3D gravity/wind acceleration
-    float gravityModifier = 1.0f;       // scales gravity (Unity-style)
+    float gravityModifier = 1.0f;       // scales gravity
     float damping = 0.0f;               // linear drag per second (0 = none)
 
-    // ---- Collision (Unity's Collision module, world-plane mode) ----
+    // ---- Collision ----
     /// Bounce particles off a horizontal ground plane at world height `collisionY`
     /// (sparks skittering off a floor, bouncing debris, rain splatter). Cheap — one
     /// plane test per particle, no colliders needed.

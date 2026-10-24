@@ -6,7 +6,7 @@
 
 namespace okay {
 
-/// A heightmap terrain like Unity's Terrain: a square grid of height samples you
+/// A heightmap terrain like Terrain: a square grid of height samples you
 /// sculpt with brushes (raise/lower/smooth/flatten) or generate (random / hills),
 /// rendered as a mesh built from the heights. It lives next to a MeshRenderer and
 /// (re)builds that renderer's mesh whenever it changes — so the existing 3D
@@ -18,7 +18,7 @@ public:
     Color color = Color::FromBytes(96, 140, 80);
     std::vector<float> heights; // row-major, Dim()*Dim()
 
-    // ---- Auto-coloring "layers" (a simplified Unity splat): each face is tinted
+    // ---- Auto-coloring "layers": each face is tinted
     //      by its elevation and steepness — water/sand at the bottom, grass in
     //      the middle, rock on steep slopes, snow on the peaks. ----
     bool  autoColor  = true;

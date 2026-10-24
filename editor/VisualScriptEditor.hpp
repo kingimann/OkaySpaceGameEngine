@@ -609,6 +609,33 @@ struct VsEditGraph {
     }
 };
 
+// The graph a new visual script starts with: the same thing the starter text
+// script does, so every node is doing a job. On Start prints that the object is
+// ready; On Update moves it with WASD / the arrow keys at `speed` units a second
+// (Axis x speed x Delta Time on each axis).
+inline void SeedStarterGraph(VsEditGraph& g) {
+    g.clear();
+    const int start = g.add("OnStart", 40, 40);
+    const int print = g.add("Print", 300, 40);
+    if (auto* n = g.find(print)) n->pinDefault[0] = "Ready! Move with WASD or the arrow keys";
+    const int update = g.add("OnUpdate", 40, 200);
+    const int move = g.add("Translate", 820, 200);
+    const int speed = g.add("Const", 40, 340);
+    if (auto* n = g.find(speed)) n->arg = "5";
+    const int ax = g.add("AxisX", 40, 440), ay = g.add("AxisY", 40, 540), dt = g.add("DeltaTime", 40, 640);
+    const int mx = g.add("Mul", 300, 380), my = g.add("Mul", 300, 540);
+    const int mxdt = g.add("Mul", 560, 380), mydt = g.add("Mul", 560, 540);
+    g.linkExec(start, 0, print);
+    g.linkExec(update, 0, move);
+    g.linkData(mx, 0, ax, 0);   g.linkData(mx, 1, speed, 0);
+    g.linkData(my, 0, ay, 0);   g.linkData(my, 1, speed, 0);
+    g.linkData(mxdt, 0, mx, 0); g.linkData(mxdt, 1, dt, 0);
+    g.linkData(mydt, 0, my, 0); g.linkData(mydt, 1, dt, 0);
+    g.linkData(move, 0, mxdt, 0);
+    g.linkData(move, 1, mydt, 0);
+    if (auto* n = g.find(move)) n->pinDefault[2] = "0";
+}
+
 // ---- Graph -> OkayScript compiler ------------------------------------------
 // Turns a node/flow graph into readable OkayScript so the two scripting
 // front-ends describe the same thing: data pins become expressions, the exec
@@ -1014,18 +1041,12 @@ inline void VsEmitChain(const VsEditGraph& g, int nodeId, std::string& out,
     }
 }
 inline std::string CompileToOkayScript(const VsEditGraph& g) {
-    // C#-style output: the graph becomes a component class; its events become
-    // Start / Update / OnCollisionEnter / OnTriggerEnter / OnMouseDown methods.
-    std::string cls = "VisualGraph";
-    if (!g.path.empty()) {
-        std::string stem = std::filesystem::path(g.path).stem().string(), id;
-        for (char c : stem) id += (std::isalnum((unsigned char)c) || c == '_') ? c : '_';
-        if (!id.empty() && !std::isdigit((unsigned char)id[0])) cls = id;
-    }
-    std::string out = "// Generated from the visual graph. Plain C#-style OkayScript:\n"
-                      "// edit it freely, or keep wiring nodes; both drive the same runtime.\n"
-                      "using UnityEngine;\n\n"
-                      "public class " + cls + " : MonoBehaviour\n{\n";
+    // The graph's events become Start / Update / OnCollisionEnter / OnTriggerEnter /
+    // OnMouseDown functions; its state becomes fields. A script's fields and
+    // functions are the component, so there's no class wrapper. (Built indented
+    // one level, then dedented at the end.)
+    std::string out = "    // Generated from the visual graph: edit it freely, or keep wiring nodes;\n"
+                      "    // both drive the same runtime.\n\n";
     // Every event node of a kind contributes to the one method for that event
     // (a graph may have several On Update nodes; they all run, in order).
     auto ofType = [&](const char* type) {
@@ -1089,19 +1110,19 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
             out += "    }\n";
         }
     }
-    // Collision / trigger / mouse events become the matching Unity-style handlers.
+    // Collision / trigger / mouse events become the matching handlers.
     static const std::pair<const char*, const char*> kEvents[] = {
-        {"OnCollision",     "void OnCollisionEnter(Collision other)"},
-        {"OnCollisionExit", "void OnCollisionExit(Collision other)"},
-        {"OnTrigger",       "void OnTriggerEnter(Collider other)"},
-        {"OnTriggerExit",   "void OnTriggerExit(Collider other)"},
+        {"OnCollision",     "void OnCollisionEnter(string other)"},   // other = the other object's name
+        {"OnCollisionExit", "void OnCollisionExit(string other)"},
+        {"OnTrigger",       "void OnTriggerEnter(string other)"},
+        {"OnTriggerExit",   "void OnTriggerExit(string other)"},
         {"OnClick",         "void OnMouseDown()"},
         {"OnMouseEnter",    "void OnMouseEnter()"},
         {"OnMouseExit",     "void OnMouseExit()"},
         {"OnMouseDown",     "void OnMouseDown()"},
         {"OnMouseUp",       "void OnMouseUp()"},
         {"OnMouseOver",     "void OnMouseOver()"},
-        {"OnCollisionStay", "void OnCollisionStay(Collision other)"},
+        {"OnCollisionStay", "void OnCollisionStay(string other)"},
         {"OnLateUpdate",    "void LateUpdate()"}};
     // Events sharing a handler (On Click + On Mouse Down) go into one method.
     std::set<std::string> doneSig;
@@ -1121,7 +1142,7 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
         std::map<std::string, std::vector<const VsEditNode*>> byName;
         for (auto* n : ofType("OnEvent")) byName[sanitize(n->arg)].push_back(n);
         for (auto& kv : byName) {
-            open("void OnEvent_" + kv.first + "(object value)");
+            open("void OnEvent_" + kv.first + "(value)");
             for (auto* n : kv.second) chain(n->id, "        ");
             out += "    }\n";
         }
@@ -1143,8 +1164,8 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
     }
     if (!anyEvent)
         out += "    // Add an On Start / On Update event node to generate runnable code.\n";
-    out += "}\n";
-    // C# statement terminators inside method bodies (8+ spaces of indent).
+    // C# statement terminators inside method bodies (8+ spaces of indent), then
+    // dedent everything one level.
     std::string fin; fin.reserve(out.size() + 64);
     std::size_t a = 0;
     while (a < out.size()) {
@@ -1156,6 +1177,7 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
             const bool comment = line.compare(ind, 2, "//") == 0;
             if (!comment && last != '{' && last != '}' && last != ':' && last != ';') line += ';';
         }
+        if (line.compare(0, 4, "    ") == 0) line.erase(0, 4);
         fin += line; if (e < out.size()) fin += '\n';
         a = e + 1;
     }
@@ -1386,7 +1408,8 @@ inline void Draw(EditorState& ed, bool* open) {
     bool addComment = false;
     if (ImGui::Button("File")) ImGui::OpenPopup("##vsfile");
     if (ImGui::BeginPopup("##vsfile")) {
-        if (ImGui::MenuItem("New graph")) { g.clear(); ResetEditState(st); }
+        if (ImGui::MenuItem("New graph")) { SeedStarterGraph(g); ResetEditState(st); st.frameAll = true; }
+        if (ImGui::MenuItem("New empty graph")) { g.clear(); ResetEditState(st); }
         if (ImGui::BeginMenu("Open")) {
             // Every graph in the project's Assets.
             namespace fs = std::filesystem;

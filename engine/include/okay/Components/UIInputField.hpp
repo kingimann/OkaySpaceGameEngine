@@ -12,7 +12,7 @@
 
 namespace okay {
 
-/// A screen-space text input box (Unity's InputField). Click it to focus, then
+/// A screen-space text input box. Click it to focus, then
 /// type — characters come from the OS text-input event so uppercase, symbols
 /// and punctuation all work (Shift/Caps respected); Backspace deletes, Enter
 /// submits (calls the sibling ScriptComponent's on_submit()) and Esc cancels.

@@ -626,7 +626,7 @@ int main() {
         ActionList::ResetVars();
     }
 
-    // --- Stretch anchors: position/size become Unity offsetMin/offsetMax margins ---
+    // --- Stretch anchors: position/size become offsetMin/offsetMax margins ---
     {
         Scene scene("Stretch");
         GameObject* go = scene.CreateGameObject("Bar");

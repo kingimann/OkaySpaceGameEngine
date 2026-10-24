@@ -1,4 +1,4 @@
-// OkaySpace Editor — a Unity-style desktop editor (Dear ImGui + SDL2 + OpenGL).
+// OkaySpace Editor — a desktop editor (Dear ImGui + SDL2 + OpenGL).
 //
 // Panels: Hierarchy, Inspector, Scene viewport (mouse select + drag, pan/zoom),
 // and a Play/Stop/Step toolbar. File menu saves/loads scenes via the engine's
@@ -568,7 +568,7 @@ static void InstallCrashSignals() {
 #endif
 
 SDL_Renderer* g_sdlRenderer = nullptr;
-// GPU (OpenGL) 3D rendering — "what Unity uses". The scene is rasterized by the GPU
+// GPU (OpenGL) 3D rendering. The scene is rasterized by the GPU
 // (hardware MSAA + depth) on an isolated hidden GL context, read back, and shown via
 // the same texture path as the software renderer. Isolated context = the editor's
 // SDL_Renderer UI is never disturbed. Experimental + off by default.
@@ -1426,7 +1426,7 @@ std::string g_openScenePath;      // scene to open at startup via --open (launch
 // Panel visibility (View menu).
 bool g_showHierarchy = true, g_showInspector = true, g_showConsole = true,
      g_showProject = true, g_showServices = true, g_showScriptEditor = true;
-bool g_showGame = true;   // Unity-style Game view (main-camera render)
+bool g_showGame = true;   // Game view (main-camera render)
 bool g_showProfiler = false;   // CPU/GPU profiler window
 bool g_showAssetManager = false;   // Asset Manager: marketplace downloads -> project
 bool g_showPluginManager = false;  // Plugin Manager (editor plugins)
@@ -1466,7 +1466,7 @@ GameObject* g_hoverBone = nullptr;   // bone under the cursor (picked before mes
 // of the meshes they're inside).
 struct SkelDraw { ImVec2 q[4]; ImVec2 head; bool shape; ImU32 fill, edge; float thick, dot; };
 static std::vector<SkelDraw> g_skelDraw;
-// Isolate mode (Unity's Isolation view): the Scene view shows ONLY this object
+// Isolate mode: the Scene view shows ONLY this object
 // and its children (lights stay on for shading). View-only — nothing in the
 // scene is modified, and the Game view / Play mode are unaffected.
 okay::GameObject* g_isolate = nullptr;
@@ -1477,8 +1477,8 @@ bool g_wireframeAll = false;     // debug: draw every mesh as wireframe (Scene v
 bool g_showWorldAxes = false;    // debug: draw the world X/Y/Z axes at the origin
 bool g_showCamHud = true;        // debug: on-screen readout of Scene camera zoom/angle/position
 float g_editorFov = 60.0f;       // Scene-view camera vertical FOV (degrees) — matches
-                                 // Unity's default 60deg so models aren't magnified.
-float g_editorNear = 0.3f;       // Scene-view camera near clip (Unity-like). Adjustable
+                                 // default 60deg so models aren't magnified.
+float g_editorNear = 0.3f;       // Scene-view camera near clip. Adjustable
                                  // in Stats > Rendering > Debug view.
 // Debug capture: stash the last Scene-view camera so a button can re-render the
 // exact frame straight to a PNG (the true engine output, bypassing the display).
@@ -1512,7 +1512,7 @@ bool g_showUIEditor = false;     // separate dockable "UI" window (Scene view lo
 bool g_uiShowAllBounds = false;  // UI-Only: outline every widget's rect (see the whole layout)
 bool g_uiShowGuides = true;      // UI-Only: draw the thirds/center alignment guides
 bool g_uiShowSafeArea = false;   // UI-Only: draw a ~5% safe-area inset (TV/notch margin)
-bool g_uiSmartSnap = true;       // UI editor: Unity-style alignment snapping + blue guide lines (independent of the pixel-grid Snap)
+bool g_uiSmartSnap = true;       // UI editor: alignment snapping + blue guide lines (independent of the pixel-grid Snap)
 bool g_uiShowSubdiv = false;     // UI-Only: draw an N×M subdivision grid over the game screen (+ snap UI to it), like subdividing a 3D model
 int  g_uiSubdivX = 3;            // UI-Only: subdivision columns
 int  g_uiSubdivY = 3;            // UI-Only: subdivision rows
@@ -1522,7 +1522,7 @@ int  g_accent = 0;               // accent colour preset (see kAccents)
 // checks, tabs, etc.). Index persists in settings.
 struct AccentPreset { const char* name; float r, g, b; };
 static const AccentPreset kAccents[] = {
-    {"Unity",   0.235f, 0.475f, 0.800f}, // Unity Editor selection blue (default)
+    {"Classic", 0.235f, 0.475f, 0.800f}, // muted selection blue (default)
     {"Blue",    0.26f, 0.59f, 0.98f},
     {"Teal",    0.18f, 0.78f, 0.74f},
     {"Violet",  0.56f, 0.46f, 0.96f},
@@ -1598,7 +1598,7 @@ static bool AccentToggleButton(const char* label, bool active, const ImVec2& siz
 // Compact square toolbar buttons with drawn vector glyphs (the UI font has no
 // icon glyphs). Panels use these instead of rows of text buttons and checkboxes:
 // the primary actions stay one click away and everything else lives in a "more"
-// menu, so toolbars fit on one line like Unity/Unreal.
+// menu, so toolbars fit on one line like other editors.
 enum class TbIcon { More, Plus, Move, Rotate, Scale, Global, Local, Snap, Frame, Search, Clear, Expand, Collapse, Sort, Folder, Grid, List };
 static void DrawTbIcon(ImDrawList* dl, TbIcon ic, ImVec2 c, float s, ImU32 col) {
     const float t = 1.6f;
@@ -1763,7 +1763,7 @@ static void SameLineRight(float w) {
     ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - w);
 }
 // A vector3 drag field with per-axis colour cues (X=red, Y=green, Z=blue) — a
-// 3px coloured bar down each component, like Unity/Godot/Blender. `activated` is
+// 3px coloured bar down each component, like other editors. `activated` is
 // set when a drag begins on any field (so the caller can push one undo step).
 static bool DragVec3Axis(const char* label, float v[3], float speed = 0.05f,
                          const char* fmt = "%.3f", bool* activated = nullptr) {
@@ -1953,7 +1953,7 @@ void LoadSettings() {
         // (multiwin is no longer a setting — multi-window panels are always on)
         // (gpurender is no longer persisted — it's auto-on every launch, OS-selected)
     }
-    // One-time migration to the Unity-like 3D view defaults: 60deg FOV (so models
+    // One-time migration to the 3D view defaults: 60deg FOV (so models
     // aren't magnified) and AA OFF (the top-left fill rule killed the shimmer at the
     // source, so the FPS-costly supersample isn't needed). ver 3 also undoes the
     // earlier ver-2 migration that had forced 2x AA on. Bumps the version so the
@@ -2387,7 +2387,7 @@ int   g_buildPlatform = 0;   // 0 = Desktop (Windows), 1 = Web (WASM/WebGL), 2 =
 // ticked scene is where the game starts; the rest load by index / name.
 struct BuildScene { std::string path; bool on = true; };
 
-// Unity-style Build Settings: window + player options written into the build's
+// Build Settings: window + player options written into the build's
 // game.okayconfig, plus which scenes to include.
 struct BuildSettings {
     char  company[128] = "OkaySpace";
@@ -2407,8 +2407,8 @@ struct BuildSettings {
     bool  cleanOutput = true;              // wipe stale build files first
     bool  dataFolder = true;               // clean Data/ layout (exe at root)
     bool  encryptData = false;             // obfuscate scenes + config
-    // ---- Player presentation (Unity-parity) ----
-    char  icon[260] = "";                  // window/taskbar icon PNG (Unity's Default Icon)
+    // ---- Player presentation ----
+    char  icon[260] = "";                  // window/taskbar icon PNG
     char  bundleId[160] = "com.okayspace.game";  // application identifier
     bool  runInBackground = true;          // keep updating when the window loses focus
     bool  muteOnFocusLoss = false;         // silence audio when unfocused
@@ -2455,7 +2455,7 @@ struct BuildSettings {
 };
 BuildSettings g_build;
 
-// ---- Build profiles (Unity-style named build configurations) -------------
+// ---- Build profiles -------------
 // Persist the full Build Settings under named profiles in the project's
 // .okay/build_profiles.cfg, so "Dev" / "Release" / "Demo" setups can be kept
 // and switched. Also remembers settings across editor restarts.
@@ -2635,7 +2635,7 @@ struct ProjectSettings {
     float gravity3D[3]  = {0.0f, -9.81f, 0.0f};
     float ambient       = 0.30f;
     bool  skybox        = true;
-    std::vector<std::string> customTags;   // project-wide user tags (Unity-style), persisted
+    std::vector<std::string> customTags;   // project-wide user tags, persisted
     // ---- Editor loading screen (per-project splash customization) ----
     char  splashLogo[260] = "";            // optional PNG shown instead of the cube
     float splashBgTop[3]  = {0.094f, 0.094f, 0.106f};
@@ -2712,10 +2712,10 @@ inline void ApplyUIEditZoom(ImVec2& pos, ImVec2& size) {
     pos.y = c.y - size.y * 0.5f + g_uiEditPan.y;
 }
 // Alignment guides: screen-space lines the UI drag snapped to this frame, drawn
-// by the overlay (Unity-style smart snapping). Cleared and refilled each drag.
+// by the overlay. Cleared and refilled each drag.
 float g_uiGuideX = -1.0f;   // canvas-x of a vertical guide, or <0 = none
 float g_uiGuideY = -1.0f;   // canvas-y of a horizontal guide, or <0 = none
-// Active transform tool for the Scene view (Unity's W/E/R).
+// Active transform tool for the Scene view.
 enum class Tool { Move, Rotate, Scale };
 Tool  g_tool = Tool::Move;
 int   g_gizmoAxis = -1;     // axis being dragged: 0=X 1=Y 2=Z, 3=view, -1 = none
@@ -2746,7 +2746,7 @@ bool  g_uiDragRawValid = false; // a UI move drag is accumulating into the below
 bool  g_uiResizeRawValid = false;   // a UI resize drag: the edges' true (unsnapped) screen positions
 float g_uiResizeRaw[4] = {0, 0, 0, 0};   // left, top, right, bottom
 Vec2  g_uiDragRaw{0, 0};
-bool  g_gizmoLocal = false; // gizmo axes in the object's local space (Unity's Local/Global)
+bool  g_gizmoLocal = false; // gizmo axes in the object's local space
 bool  g_terrainSculpt = false; // terrain brush active in the 3D scene view
 float g_terrainRadius = 6.0f;
 float g_terrainStrength = 4.0f;
@@ -2794,7 +2794,7 @@ bool  g_meshPaint   = false;          // face-paint brush active (instead of sel
 float g_paintColor[4] = {0.9f, 0.25f, 0.2f, 1.0f};
 float g_paintRadius = 0.5f, g_paintBlend = 0.8f;
 // Interactive collider editing: drag the 6 face handles of the selected Box
-// collider in the 3D view to hand-fit it to the model (Unity's "Edit Collider").
+// collider in the 3D view to hand-fit it to the model ("Edit Collider").
 bool  g_colliderEdit = false;         // collider edit mode active
 int   g_colliderDragAxis = -1;        // 0=X 1=Y 2=Z, -1 = none held
 int   g_colliderDragSign = 1;         // which face (+1 or -1 along the axis)
@@ -2845,12 +2845,12 @@ ImVec2 g_playCanvasPos = ImVec2(0, 0);
 ImVec2 g_playCanvasSize = ImVec2(1280, 720);
 bool   g_playPersp = true;
 // Game-tab mouse capture: lock + hide the OS cursor so FPS/TPS mouselook works while
-// testing in the editor (Unity's "the Game view grabs the mouse"). Toggled in the Game
+// testing in the editor ("the Game view grabs the mouse"). Toggled in the Game
 // toolbar or auto-engaged when the game requests Cursor lock; Esc releases it.
 bool   g_gameMouseCapture = false;
 // Esc (or switching away from the editor) hands the cursor back even while the game
 // keeps asking for a locked one (FPS/TPS controllers re-lock every frame); clicking
-// in the Game view gives it to the game again, like Unity.
+// in the Game view gives it to the game again.
 bool   g_gameCursorReleased = false;
 bool   g_gameCanvasHovered = false;   // mouse over the Game view's picture (last frame)
 
@@ -3003,50 +3003,45 @@ const char* StarterScript(const std::string& lang) {
     if (lang == "csharp")
         return "class Script {\n    void Start() { Okay.SetPos(0, 0); }\n"
                "    void Update(float dt) { Okay.Move(2 * dt, 0); }\n}\n";
-    // OkayScript defaults to C#/Unity style: the class is your component,
-    // public fields show in the Inspector, Start() runs once and Update() every
-    // frame, coroutines pause at `yield return`. (No "class " in the comments
-    // above the declaration: StarterScriptNamed renames the first one.)
-    return "using UnityEngine;\n"
-           "using System.Collections;\n"
-           "using System.Collections.Generic;\n"
+    // OkayScript: the file's fields and functions ARE the component (no class
+    // or base type needed). Every line here does something: `public` puts a value
+    // in the Inspector, [Header] groups it there, the types are enforced, and the
+    // engine calls Start / Update / the coroutine by name.
+    return "// Attach this script to an object. Its fields and functions are the component.\n"
            "\n"
-           "// This script is a component: attach it to an object in the scene.\n"
-           "public class NewScript : MonoBehaviour\n"
+           "[Header(\"Movement\")]\n"
+           "public float speed = 5;        // public: shows in the Inspector, so you can tune it there\n"
+           "public float hopHeight = 1;\n"
+           "public int maxHops = 3;\n"
+           "\n"
+           "int hops = 0;                   // not public: only this script sees it\n"
+           "\n"
+           "// Runs once, before the first frame.\n"
+           "void Start()\n"
            "{\n"
-           "    [Header(\"Movement\")]\n"
-           "    public float speed = 5f;\n"
-           "    public float hopHeight = 1f;\n"
+           "    Debug.Log($\"{gameObject.name} is ready\");\n"
+           "}\n"
            "\n"
-           "    private int hops = 0;\n"
+           "// Runs every frame: WASD / the arrow keys move, Space hops (up to maxHops times).\n"
+           "void Update()\n"
+           "{\n"
+           "    float h = Input.GetAxis(\"Horizontal\");\n"
+           "    float v = Input.GetAxis(\"Vertical\");\n"
+           "    transform.position += new Vector3(h, v, 0) * speed * Time.deltaTime;\n"
            "\n"
-           "    // Runs once, before the first frame.\n"
-           "    void Start()\n"
+           "    if (Input.GetKeyDown(KeyCode.Space) && hops < maxHops)\n"
            "    {\n"
-           "        Debug.Log($\"{gameObject.name} is ready\");\n"
+           "        hops++;\n"
+           "        StartCoroutine(Hop());\n"
            "    }\n"
+           "}\n"
            "\n"
-           "    // Runs every frame. Move with WASD / the arrow keys, hop with Space.\n"
-           "    void Update()\n"
-           "    {\n"
-           "        float h = Input.GetAxis(\"Horizontal\");\n"
-           "        float v = Input.GetAxis(\"Vertical\");\n"
-           "        transform.position += new Vector3(h, v, 0) * speed * Time.deltaTime;\n"
-           "\n"
-           "        if (Input.GetKeyDown(KeyCode.Space))\n"
-           "        {\n"
-           "            hops++;\n"
-           "            StartCoroutine(Hop());\n"
-           "        }\n"
-           "    }\n"
-           "\n"
-           "    // A coroutine runs across frames, pausing at each yield.\n"
-           "    IEnumerator Hop()\n"
-           "    {\n"
-           "        transform.position += Vector3.up * hopHeight;\n"
-           "        yield return new WaitForSeconds(0.25f);\n"
-           "        transform.position -= Vector3.up * hopHeight;\n"
-           "    }\n"
+           "// A coroutine runs across frames, pausing at each yield.\n"
+           "IEnumerator Hop()\n"
+           "{\n"
+           "    transform.position += Vector3.up * hopHeight;\n"
+           "    yield return new WaitForSeconds(0.25);\n"
+           "    transform.position -= Vector3.up * hopHeight;\n"
            "}\n";
 }
 
@@ -3059,7 +3054,7 @@ inline std::string ClassIdent(const std::string& stem) {
     return id;
 }
 
-// Rewrite the first `class <X>` in OkayScript/C# source to `newName` (Unity-style:
+// Rewrite the first `class <X>` in OkayScript/C# source to `newName` (:
 // the class follows the file name). Returns the source unchanged if it has no class.
 inline std::string RenameScriptClass(const std::string& src, const std::string& newName) {
     auto p = src.find("class ");
@@ -3164,7 +3159,7 @@ struct Options {
     bool encryptData = false;  // obfuscate scenes + config so players can't read/edit them
     bool fullscreenToggle = true;           // Alt+Enter / F11 in the shipped game
     std::vector<std::string> sceneList;     // Scenes In Build, in order (empty = the open scene)
-    // ---- Player presentation (Unity-parity) ----
+    // ---- Player presentation ----
     std::string iconPath;      // window icon PNG (copied into the build)
     std::string bundleId = "com.okayspace.game";
     bool runInBackground = true;
@@ -3270,7 +3265,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
                 fs::remove(e.path(), ce);
     }
 
-    // Unity-style layout: the exe + runtime DLLs sit at the root; everything else
+    // layout: the exe + runtime DLLs sit at the root; everything else
     // (scenes, config, assets) lives in a Data/ subfolder so the game root is clean.
     fs::path data = opt.dataFolder ? (dir / "Data") : dir;
     fs::create_directories(data, ec);
@@ -3347,7 +3342,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         cf << "antialias=" << opt.antialias << "\n";
         cf << "gpu=" << (opt.gpuRenderer ? 1 : 0) << "\n";
         cf << "d3d12=" << (opt.preferD3D12 ? 1 : 0) << "\n";
-        // Player presentation (Unity-parity).
+        // Player presentation.
         if (!opt.iconPath.empty()) cf << "icon=" << fs::path(opt.iconPath).filename().string() << "\n";
         cf << "bundle_id=" << opt.bundleId << "\n";
         cf << "run_background=" << (opt.runInBackground ? 1 : 0) << "\n";
@@ -3459,7 +3454,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         fs::copy_file(src, dst, fs::copy_options::overwrite_existing, aec);
         if (!aec) { ++copied; std::error_code se; assetBytes += fs::file_size(dst, se); }
     }
-    // Window icon (Unity's Default Icon): copy it beside the config in Data/.
+    // Window icon: copy it beside the config in Data/.
     if (!opt.iconPath.empty()) {
         std::error_code ie; fs::path isrc(opt.iconPath);
         if (fs::exists(isrc, ie) && fs::is_regular_file(isrc, ie))
@@ -3905,7 +3900,7 @@ std::string BuildServer(EditorState& ed, const std::string& outDir, const std::s
 builder::BuildReport g_buildReport;   // per-file size breakdown of the last build
 
 // ---- Console log -------------------------------------------------------
-// A Unity-style console entry: severity, text, a short timestamp, and a repeat
+// A console entry: severity, text, a short timestamp, and a repeat
 // count (incremented when the same line is logged twice in a row).
 struct ConsoleEntry {
     int level = 0;            // 0 = info, 1 = warning, 2 = error
@@ -3956,10 +3951,10 @@ void ApplyTheme() {
     s.ItemSpacing     = ImVec2(8, 7);   s.ItemInnerSpacing = ImVec2(7, 5);
     s.CellPadding     = ImVec2(6, 4);   s.IndentSpacing = 18.0f;
     s.ScrollbarSize   = 8.0f;           s.GrabMinSize = 11.0f;
-    s.WindowBorderSize = 0.0f;          s.FrameBorderSize = 1.0f;   // thin frame borders for definition (Unity-like)
+    s.WindowBorderSize = 0.0f;          s.FrameBorderSize = 1.0f;   // thin frame borders for definition
     s.PopupBorderSize = 1.0f;           s.SeparatorTextBorderSize = 1.0f;   // subtler section rules
     s.WindowTitleAlign = ImVec2(0.02f, 0.5f);
-    s.SeparatorTextAlign = ImVec2(0.0f, 0.5f);   // left-align section headers like Unity
+    s.SeparatorTextAlign = ImVec2(0.0f, 0.5f);   // left-align section headers
     s.SeparatorTextPadding = ImVec2(18.0f, 4.0f);
     s.WindowMenuButtonPosition = ImGuiDir_None;
     s.ButtonTextAlign = ImVec2(0.5f, 0.5f);
@@ -3981,8 +3976,8 @@ void ApplyTheme() {
     okaytheme::ApplySlateColors(s, ImVec4(ap.r, ap.g, ap.b, 1.0f));
 }
 
-// Build the default Unity-style dock layout once.
-// Right-click a panel's tab (Unity's tab menu): add another panel as a tab in the same
+// Build the default dock layout once.
+// Right-click a panel's tab: add another panel as a tab in the same
 // spot, close this one or the others beside it, or float it. Runs once per frame after
 // every panel has been drawn, so it covers all docked windows without each panel
 // wiring its own menu.
@@ -4112,11 +4107,11 @@ void BuildDefaultLayout(ImGuiID dockId, ImVec2 size) {
     ImGui::DockBuilderDockWindow("Stats", right);
     ImGui::DockBuilderDockWindow("Lighting", right);
     ImGui::DockBuilderDockWindow("Scene", center);
-    ImGui::DockBuilderDockWindow("Game", center);   // tab alongside Scene (Unity-style)
+    ImGui::DockBuilderDockWindow("Game", center);   // tab alongside Scene
     ImGui::DockBuilderFinish(dockId);
 }
 
-// Unity's UI rule: every widget lives under a Canvas, and a scene needs one
+// UI rule: every widget lives under a Canvas, and a scene needs one
 // Event System to route pointer input. Ensure both exist and return the Canvas
 // GameObject so a freshly created widget can be parented to it.
 GameObject* EnsureUIRoot(EditorState& ed) {
@@ -4139,7 +4134,7 @@ GameObject* EnsureUIRoot(EditorState& ed) {
     return canvas;
 }
 
-// Give a UIButton its own child Text object (Unity's Button→Text), so the label
+// Give a UIButton its own child Text object, so the label
 // can be styled/positioned independently. The child is a centered, screen-space
 // TextRenderer parented under the button; it follows the button's rect via the UI
 // parent rules, and the button stops drawing its built-in label (UIButtonTextChild).
@@ -4406,7 +4401,7 @@ static void StopModelScenePreview(EditorState& ed);
 static void StopLivePreview(EditorState& ed);
 
 void DrawMenuAndToolbar(EditorState& ed) {
-    // Unity-style play tint: while the game runs, darken the editor chrome a
+    // play tint: while the game runs, darken the editor chrome a
     // touch so edit vs play is unmistakable at a glance. Only the custom dark
     // theme (its palette constants are known); reset exactly on stop.
     if (g_theme == 0) {
@@ -4532,7 +4527,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Paint custom 2D sprites pixel-by-pixel, start from a shape, and save them into the project's Assets/Sprites.");
             ImGui::Separator();
             ImGui::MenuItem("UI Editing Mode", nullptr, &g_uiOnlyMode);   // flat UI canvas draws directly, independent of the scene overlay toggle
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lock THIS Scene view to a flat UI canvas with the 3D scene hidden (Unity's UI view).\nAlso available as the 'UI Only' button on the Scene toolbar.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lock THIS Scene view to a flat UI canvas with the 3D scene hidden.\nAlso available as the 'UI Only' button on the Scene toolbar.");
             ImGui::MenuItem("UI Editor (separate tab)", nullptr, &g_showUIEditor);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open a dedicated, dockable UI editing tab (flat canvas) beside the Scene view,\nso you can keep the 3D Scene and the UI layout visible at the same time.");
             ImGui::MenuItem("UI Theme", nullptr, &g_showUIThemer);
@@ -5040,7 +5035,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
 
     // Transport: one compact segmented pill of icon buttons, centered —
     // [play/stop][pause][step] — then a quiet Build button. Colour only marks
-    // state (green while playing, amber while paused), like Unity's toolbar.
+    // state (green while playing, amber while paused), like toolbar.
     const ImU32 kIconWhite = IM_COL32(255, 255, 255, 235);
     const float tb = ImGui::GetFrameHeight();
     const float bw = tb * 1.45f;                 // transport button width
@@ -5077,7 +5072,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
         } else { ed.Stop(); g_paused = false; ConsoleLog("Stop"); }
     }
-    // Pause (toggle; usable before Play too, so Play starts paused like Unity)
+    // Pause
     ImGui::SameLine();
     if (g_paused) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.62f, 0.48f, 0.14f, 1.0f));
     bool pauseHit = ImGui::Button("##tpause", ImVec2(bw, tb));
@@ -5150,7 +5145,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
 }
 
 // Full-window host that hosts the dockspace + menu/toolbar.
-// A slim bottom status bar (Unity/Godot-style): the current selection on the left,
+// A slim bottom status bar: the current selection on the left,
 // object count · active tool · edit/play mode · FPS on the right.
 void DrawStatusBar(EditorState& ed) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.135f, 0.135f, 0.145f, 1.0f));
@@ -5376,7 +5371,7 @@ void DrawCrashLog() {
     ImGui::End();
 }
 
-// A Unity-style console: severity icons + colors, Collapse, per-level filter
+// A console: severity icons + colors, Collapse, per-level filter
 // toggles with counts, search, a selectable list, and a details pane.
 void DrawConsole() {
     static char filter[96] = "";
@@ -5771,7 +5766,7 @@ static std::string AgoShort(const std::filesystem::path& p) {
     return std::to_string(secs / 86400) + "d";
 }
 
-// A Unity-style asset reference slot for the inspector: NOT editable. Shows the
+// An asset reference slot for the inspector: NOT editable. Shows the
 // assigned file's name (or "None (<kind>)") and only accepts a matching asset
 // dragged from the Project panel; an "x" clears it. Returns true (and updates
 // `field`) when the value changes. `exts` are accepted lowercase extensions.
@@ -5887,11 +5882,11 @@ static void DrawAssetIcon(ImDrawList* dl, ImVec2 mn, ImVec2 mx, const AssetKind&
 std::string g_assetImportDir;
 
 // Favorite (pinned) folders shown at the top of the Project panel's tree pane —
-// Unity's "Favorites" for one-click jumps to folders you use a lot. Session-lived
+// "Favorites" for one-click jumps to folders you use a lot. Session-lived
 // (reset on restart), keyed by absolute path.
 std::vector<std::string> g_favFolders;
 
-// "Ping" an asset in the Project panel (Unity-style): navigate to its folder and
+// "Ping" an asset in the Project panel: navigate to its folder and
 // highlight it. Set by Inspector fields' "Show in Project"; consumed by DrawProject.
 std::string g_pingAsset;
 
@@ -6193,7 +6188,7 @@ static void MoveAssetInto(const std::string& src, const std::filesystem::path& d
                   : ("Moved " + s.filename().string() + " -> " + destDir.filename().string()));
 }
 
-// Save a GameObject as a .okayprefab in `destDir` (Unity-style: drag from the
+// Save a GameObject as a .okayprefab in `destDir` (drag from the
 // Hierarchy into the Project panel). Picks a non-clashing "<name>.okayprefab".
 static void SavePrefabInto(GameObject* go, const std::filesystem::path& destDir) {
     namespace fs = std::filesystem;
@@ -6211,7 +6206,7 @@ static void SavePrefabInto(GameObject* go, const std::filesystem::path& destDir)
 }
 
 // A drop target on the last-drawn item: an asset path is MOVED into `destDir`; a
-// GameObject dragged from the Hierarchy is SAVED there as a prefab (Unity-style).
+// GameObject dragged from the Hierarchy is SAVED there as a prefab.
 static void AssetDropTarget(const std::filesystem::path& destDir) {
     if (ImGui::BeginDragDropTarget()) {
         // Accent glow over the hovered folder so the drop target is unmistakable
@@ -6242,7 +6237,7 @@ static bool PathIsAncestor(const std::filesystem::path& anc, const std::filesyst
     return ai == a.end() && di != d.end();
 }
 
-// The Project panel's folder tree (Unity-style). `reveal` is set for one frame
+// The Project panel's folder tree. `reveal` is set for one frame
 // when the browsed folder changed from OUTSIDE the tree (breadcrumb, grid
 // double-click, ping, favorites) — the tree then expands every ancestor so the
 // highlight is always visible, without fighting manual collapses otherwise.
@@ -6322,7 +6317,7 @@ static void DrawFolderTree(const std::filesystem::path& dir, char* dirBuf, std::
 
 // Does a GameObject reference the asset with this filename? Checks the common
 // path-bearing components (textures, meshes, fonts, scripts) so the Project tab can
-// "Find References in Scene" — Unity's most-used Project action. Matches by filename
+// "Find References in Scene" — most-used Project action. Matches by filename
 // suffix so a relative or absolute path both count.
 static bool ObjectUsesAsset(GameObject* go, const std::string& fname) {
     if (!go || fname.empty()) return false;
@@ -7159,7 +7154,7 @@ void DrawProject(EditorState& ed) {
             s_navLast = cur;
             revealTree = true;
             s_smart = -1;   // browsing a folder leaves the smart view
-            // Navigating clears a stale search (Unity behaviour) — a leftover
+            // Navigating clears a stale search — a leftover
             // filter made every other folder look empty ("the panel is broken").
             if (!s_keepSearchOnce) search[0] = '\0';
         }
@@ -7352,7 +7347,7 @@ void DrawProject(EditorState& ed) {
     if (ro) { DrawFolderTree(root, dirBuf, sizeof(dirBuf), search, revealTree); ImGui::TreePop(); }
     ImGui::EndChild();
 
-    // Splitter: drag to resize the folder pane (Unity-style), double-click to reset.
+    // Splitter: drag to resize the folder pane, double-click to reset.
     ImGui::SameLine(0, 0);
     ImGui::InvisibleButton("##projsplit", ImVec2(7.0f, -1.0f));
     if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
@@ -7417,7 +7412,7 @@ void DrawProject(EditorState& ed) {
         return p;
     };
     // Open the rename dialog on a freshly-created asset, so users name it on the
-    // spot (Unity-style "create, then type the name").
+    // spot ("create, then type the name").
     auto nameOnCreate = [&](const fs::path& p) {
         renameTarget = p.string();
         std::string fn = p.filename().string();
@@ -7427,11 +7422,11 @@ void DrawProject(EditorState& ed) {
         s_multi.clear(); s_multi.insert(p.string());
     };
     // The asset-creation actions, shared by the toolbar's Create menu and the
-    // empty-space right-click menu (Unity-style "Create ▸ ...").
+    // empty-space right-click menu ("Create ▸ ...").
     auto mkFolder = [&]{ std::error_code ce; fs::path p = uniquePath("New Folder", ""); if (fs::create_directory(p, ce)) nameOnCreate(p); };
     auto mkScript = [&]{ fs::path p = uniquePath("NewScript", ".okay"); std::ofstream(p) << extide::StarterScript("okayscript"); ConsoleLog("Created " + p.string()); nameOnCreate(p); };
     auto mkMaterial = [&]{ fs::path p = uniquePath("New Material", ".okaymat"); if (Material{}.SaveToFile(p.string())) { ConsoleLog("Created " + p.string()); nameOnCreate(p); } };
-    // A new scene starts usable (like Unity's): a Main Camera, plus a sun in 3D.
+    // A new scene starts usable: a Main Camera, plus a sun in 3D.
     auto mkScene = [&]{
         fs::path p = uniquePath("New Scene", ".okayscene");
         okay::Scene sc("New Scene");
@@ -7462,7 +7457,7 @@ void DrawProject(EditorState& ed) {
 
     // Reserve room at the bottom for the selected-asset details strip and scroll
     // only the tile grid, so the "inspector" footer stays pinned in view even when
-    // the folder has more assets than fit (Unity keeps the preview always visible).
+    // the folder has more assets than fit.
     const float detailsH = selected.empty() ? ImGui::GetFrameHeightWithSpacing() + 4.0f
                                             : 112.0f;
     ImGui::BeginChild("gridscroll", ImVec2(0, -detailsH), false);
@@ -7540,7 +7535,7 @@ void DrawProject(EditorState& ed) {
                     for (auto& e : fs::directory_iterator(dir, sec)) s_scanEntries.push_back(e);
                 } else {
                     // A search looks through THIS FOLDER AND EVERYTHING BELOW it
-                    // (Unity-style), capped so a giant tree can't stall the scan.
+                    // capped so a giant tree can't stall the scan.
                     for (auto& e : fs::recursive_directory_iterator(
                              dir, fs::directory_options::skip_permission_denied, sec)) {
                         s_scanEntries.push_back(e);
@@ -7571,7 +7566,7 @@ void DrawProject(EditorState& ed) {
     std::vector<fs::directory_entry>& entries = s_scanEntries;
 
     std::string needle = Lower(search);
-    // Search syntax (Unity-style): plain words match names; "t:model" (model,
+    // Search syntax: plain words match names; "t:model" (model,
     // texture, audio, script, scene, material, prefab, data, folder), "l:red"
     // (a color label) and "ext:png" narrow it down. Combine freely.
     int qType = -1, qLabel = -1; std::string qExt, qText;
@@ -7723,7 +7718,7 @@ void DrawProject(EditorState& ed) {
                 ImGui::EndMenu();
             }
             // Find every scene object that references this asset (texture, mesh, font,
-            // script) and select the first — Unity's "Find References In Scene".
+            // script) and select the first — "Find References In Scene".
             if (!isDir && ImGui::MenuItem("Find References in Scene")) {
                 std::string fn = fs::path(full).filename().string();
                 int hits = 0; GameObject* first = nullptr;
@@ -7935,7 +7930,7 @@ void DrawProject(EditorState& ed) {
             : (s_filter == 0 && needle.empty() ? "Empty folder." : "No matching assets."));
     }
     // Shift+click: select everything between the active item and the clicked one,
-    // in display order (Explorer/Unity-style range selection).
+    // in display order.
     if (!rangeTo.empty()) {
         int a = -1, b = -1;
         for (int i = 0; i < (int)shownPaths.size(); ++i) {
@@ -7996,7 +7991,7 @@ void DrawProject(EditorState& ed) {
     ImGui::EndChild();   // gridscroll
 
     // ---- Details / preview strip (pinned footer) ---------------------------
-    // Unity's Project panel shows a preview + metadata for the highlighted asset;
+    // Project panel shows a preview + metadata for the highlighted asset;
     // do the same so this is an inspector, not just a bare file list. Nothing
     // selected -> just the item count and clipboard hint.
     ImGui::Separator();
@@ -8062,7 +8057,7 @@ void DrawProject(EditorState& ed) {
         ImGui::TextDisabled("%s", (re2 || rel.empty() || rel.native()[0] == '.')
                                       ? sp.string().c_str()
                                       : ("Assets/" + rel.generic_string()).c_str());
-        // Scene usage for referenceable assets (Unity's "used in scene").
+        // Scene usage for referenceable assets ("used in scene").
         if (!selDir && (sk.icon == AssetIcon::Image || sk.icon == AssetIcon::Mesh ||
                         sk.icon == AssetIcon::Script || sk.icon == AssetIcon::Material)) {
             std::string fn = sp.filename().string(); int uses = 0;
@@ -8088,7 +8083,7 @@ void DrawProject(EditorState& ed) {
         ImGui::EndGroup();
     }
 
-    // F2 renames the selected asset (Explorer/Unity-style) when the Project
+    // F2 renames the selected asset when the Project
     // window is focused and nothing else is being typed.
     if (renameTarget.empty() && !selected.empty() &&
         ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
@@ -8113,7 +8108,7 @@ void DrawProject(EditorState& ed) {
             fs::path src(renameTarget), dst = fs::path(renameTarget).parent_path() / renameBuf;
             std::error_code re; fs::rename(src, dst, re);
             ConsoleLog((re ? "Rename failed: " : "Renamed to ") + dst.string());
-            // Unity-style: when a script asset is renamed, rename its class to match.
+            // when a script asset is renamed, rename its class to match.
             if (!re) {
                 std::string ext = Lower(dst.extension().string());
                 if (ext == ".okay" || ext == ".cs") {
@@ -8188,7 +8183,7 @@ void DrawProject(EditorState& ed) {
         }
     }
     // Whole-grid drop: drag a GameObject from the Hierarchy anywhere onto the asset
-    // area to save it here as a prefab (Unity-style "drag to Project to make a prefab").
+    // area to save it here as a prefab ("drag to Project to make a prefab").
     if (ImGuiWindow* gw = ImGui::GetCurrentWindow()) {
         if (ImGui::BeginDragDropTargetCustom(gw->InnerClipRect, gw->ID)) {
             if (const ImGuiPayload* g = ImGui::AcceptDragDropPayload("GO_PTR"))
@@ -8645,7 +8640,7 @@ void DrawSaveManager(EditorState& ed) {
     ImGui::End();
 }
 
-// Edit a .okaymat asset (Unity-style material inspector): tweak the surface
+// Edit a .okaymat asset: tweak the surface
 // look and Save, or stamp it onto the selected mesh with Apply to Selection.
 void DrawMaterialEditor(EditorState& ed) {
     if (!g_matAssetOpen) return;
@@ -8820,7 +8815,7 @@ void DrawSceneSettings(EditorState& ed) {
     if (!ImGui::Begin("Lighting", &g_showSceneSettings, ImGuiWindowFlags_NoFocusOnAppearing)) { ImGui::End(); return; }
     // Default UI font for this scene: every button/label/widget without its own
     // font uses it (saved with the scene, so the built game matches). Drag a .ttf
-    // from the Project panel onto the field, Unity-style.
+    // from the Project panel onto the field.
     if (ImGui::CollapsingHeader("UI Font")) {
         std::string& uf = ed.scene().uiFont;
         ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("Default UI Font"); ImGui::SameLine();
@@ -8932,7 +8927,7 @@ void DrawSceneSettings(EditorState& ed) {
         ImGui::Spacing();
         ImGui::SeparatorText("Lightmap Baking");
         // Bake the scene's lighting + cast shadows + AO into every mesh's per-face
-        // colors (Unity-style), then render them unlit for near-zero runtime cost.
+        // colors, then render them unlit for near-zero runtime cost.
         if (ImGui::Button("Bake Lighting")) {
             ed.PushUndo();
             okay::ApplySceneLight(ed.scene());
@@ -9095,7 +9090,7 @@ void DrawSceneSettings(EditorState& ed) {
     ImGui::End();
 }
 
-// The Scene Manager panel: the project's scenes (Unity's Build Settings list).
+// The Scene Manager panel: the project's scenes.
 // Lists the .okayscene files in the project, opens them, and manages a build
 // order with a startup scene the player loads first. The build list is fed into
 // the engine SceneManager so scripts can load_scene_index / load_next_scene.
@@ -9419,13 +9414,14 @@ void DrawScriptDocs() {
         ImGui::Spacing();
     }
 
-    ImGui::TextWrapped("OkaySpace scripts are written in OkayScript — a small "
-        "C-style language. Attach a Script component, then edit it in the Script "
-        "Editor. Two functions drive a script, the same way Unity uses a base "
-        "class (here it's OkaySource):");
+    ImGui::TextWrapped("OkaySpace scripts are written in OkayScript. Attach a Script component, "
+        "then edit it in the Script Editor. A script's fields and functions ARE the component: "
+        "no class or base type is needed. The engine calls these by name:");
     ImGui::Indent();
-    ImGui::TextDisabled("start()      runs once when the scene starts");
-    ImGui::TextDisabled("update(dt)   runs every frame; dt is seconds elapsed");
+    ImGui::TextDisabled("Awake() / OnEnable() / Start()   once, in that order, when the scene starts");
+    ImGui::TextDisabled("Update()                         every frame (Time.deltaTime = seconds since the last)");
+    ImGui::TextDisabled("FixedUpdate()                    50 times a second, however fast the game draws");
+    ImGui::TextDisabled("OnDisable() / OnDestroy()        when the object is destroyed");
     ImGui::Unindent();
 
     // Live filter so a long, complete reference stays searchable.
@@ -9463,10 +9459,11 @@ void DrawScriptDocs() {
             "Operators: + - * / %   == != < > <= >=   && || !\n"
             "Arrays: var a = [1,2,3]; a[0] = 10;   Maps: var m = map(); m[\"k\"] = 1;\n"
             "foreach (var item in a) { print(item); }");
-        ImGui::TextWrapped("Unity/C# flavor also parses: PascalCase Start()/Update(), "
-            "transform.position, Input.GetKeyDown(...), Time.deltaTime, new Vector3(...), "
-            "typed vars (float speed = 5f;), i++, and a `class : OkaySource` wrapper. "
-            "See docs/scripting.md for the full Unity-style surface.");
+        ImGui::TextWrapped("Types are real: int drops decimals, float / bool / string only hold their own "
+            "kind, and function parameter and return types convert too. const and readonly can't "
+            "change; static is shared by every object running the script; public fields show in "
+            "the Inspector. Pasted C# with `using`, a class wrapper or a base type still runs; the "
+            "editor marks those lines because they do nothing. See docs/scripting.md.");
     }
 
     if (sec("Movement & Transform (2D)")) {
@@ -9855,20 +9852,21 @@ static const std::vector<std::string>& ScriptCompletions() {
     static const std::vector<std::string> w = {
         // keywords
         "if","else","for","while","do","return","break","continue","switch","case",
-        "var","function","class","new","public","private","true","false","foreach","in",
+        "var","function","new","public","true","false","foreach","in",
         "try","catch","throw",
-        // C# keywords + types
-        "void","int","float","double","bool","string","char","static","const","readonly","override",
-        "virtual","protected","using","namespace","enum","struct","yield","null","this","default",
-        "MonoBehaviour","IEnumerator","WaitForSeconds","StartCoroutine","StopCoroutine","StopAllCoroutines",
+        // types + modifiers that do something
+        "void","int","float","bool","string","static","const","readonly",
+        "enum","yield","null","this","default",
+        "IEnumerator","WaitForSeconds","StartCoroutine","StopCoroutine","StopAllCoroutines",
         "GetComponent","Instantiate","Destroy","Invoke","InvokeRepeating","CancelInvoke","CompareTag",
         "List","Dictionary","KeyValuePair","Rigidbody2D","Rigidbody","SpriteRenderer","Animator",
         "AudioSource","Collider2D","Collision2D","Collider","Collision","KeyCode","GameObject","Transform",
-        "Start","Update","Awake","LateUpdate","OnTriggerEnter2D","OnTriggerEnter","OnCollisionEnter2D",
+        "Start","Update","Awake","LateUpdate","FixedUpdate","OnEnable","OnDisable","OnDestroy",
+        "OnTriggerEnter2D","OnTriggerEnter","OnCollisionEnter2D",
         "OnCollisionEnter","OnMouseDown","SerializeField","Header","Range","Tooltip",
-        // Unity-style API
+        // API
         "Vector3","Vector2","Color","Mathf","Input","Time","Debug","Random","Physics2D",
-        "SceneManager","Quaternion","transform","gameObject","OkaySource",
+        "SceneManager","Quaternion","transform","gameObject",
         // transform / movement
         "move","set_pos","set_x","set_y","pos_x","pos_y","rotate","move_toward","look_at",
         "move3","set_pos3","set_z","pos_z","rotate3","set_scale","set_scale3","move_forward",
@@ -10130,12 +10128,12 @@ static AcKind ClassifyCompletion(const std::string& name) {
         "var","function","class","new","public","private","true","false","foreach","in",
         "try","catch","throw","and","or","not","null","this","const","let","then","end",
         "void","int","float","double","bool","string","char","static","readonly","override",
-        "virtual","protected","using","namespace","enum","struct","yield","default"
+        "enum","yield","default"
     };
     static const std::unordered_set<std::string> types = {
         "Vector3","Vector2","Color","Mathf","Input","Time","Debug","Random","Physics2D",
-        "SceneManager","Quaternion","transform","gameObject","OkaySource",
-        "MonoBehaviour","IEnumerator","WaitForSeconds","List","Dictionary","KeyValuePair","Rigidbody2D",
+        "SceneManager","Quaternion","transform","gameObject",
+        "IEnumerator","WaitForSeconds","List","Dictionary","KeyValuePair","Rigidbody2D",
         "Rigidbody","SpriteRenderer","Animator","AudioSource","Collider2D","Collision2D","Collider",
         "Collision","KeyCode","GameObject","Transform","SerializeField","Header","Range","Tooltip"
     };
@@ -10317,7 +10315,7 @@ static const std::string* ScriptDoc(const std::string& name) {
     return it == doc.end() ? nullptr : &it->second;
 }
 
-// Members offered after "<receiver>." in the editor (Unity-style API surface, so
+// Members offered after "<receiver>." in the editor (API surface, so
 // e.g. typing `transform.` lists position/rotation/Translate/…). Returns an empty
 // list for unknown receivers.
 static const std::vector<std::string>& ScriptMembers(const std::string& receiver) {
@@ -10352,7 +10350,7 @@ static const std::vector<std::string>& ScriptMembers(const std::string& receiver
 // ---- C#-aware member completion ---------------------------------------------
 // After `expr.` the popup lists what `expr` actually has: we work out its type
 // from the script itself (declarations `Type name`, `var x = new T(..)`,
-// `GetComponent<T>()`, method parameters, enums) or from well-known Unity
+// `GetComponent<T>()`, method parameters, enums) or from well-known engine
 // properties (`transform.position` is a Vector3). Methods carry a trailing '('
 // so the popup can show "()" and put the caret inside on accept.
 static const std::vector<std::string>* CsTypeMembers(const std::string& type) {
@@ -10558,7 +10556,7 @@ static std::vector<std::string> CsMembersFor(const std::string& src, const std::
 struct ScriptHelp { const char* doc; const char* example; };
 static const ScriptHelp* ScriptHelpFor(const std::string& key) {
     static const std::unordered_map<std::string, ScriptHelp> H = {
-        // ---- C# / Unity-style API
+        // ---- C# / API
         {"Input.GetAxis", {"-1..1 from the keyboard (A/D, arrows) or a stick. \"Horizontal\" or \"Vertical\".",
             "float h = Input.GetAxis(\"Horizontal\");\nfloat v = Input.GetAxis(\"Vertical\");\ntransform.position += new Vector3(h, 0, v) * speed * Time.deltaTime;"}},
         {"Input.GetKeyDown", {"True only on the frame the key goes down.",
@@ -10704,8 +10702,12 @@ static const ScriptHelp* ScriptHelpFor(const std::string& key) {
             "while (ammo > 0)\n{\n    Fire();\n    ammo--;\n}"}},
         {"switch", {"Pick a branch by value.",
             "switch (state)\n{\n    case 0: Idle(); break;\n    case 1: Run(); break;\n    default: break;\n}"}},
-        {"class", {"Declare a type. A script's class extends MonoBehaviour.",
-            "public class Coin : MonoBehaviour\n{\n    public int value = 1;\n}"}},
+        {"class", {"Not needed: a script's fields and functions are already the component, so a class wrapper does nothing.",
+            "public int value = 1;\n\nvoid Start()\n{\n    Debug.Log(value);\n}"}},
+        {"const", {"A value that never changes. Assigning to it again is an error.",
+            "const float GRAVITY = 9.8;"}},
+        {"static", {"One value shared by every object running this script.",
+            "static int alive = 0;\n\nvoid Start() { alive++; }"}},
         {"enum", {"A named set of values.",
             "enum State { Idle, Walk, Jump }\nState state = State.Idle;"}},
         {"return", {"Leave the function (with a value, if it returns one).",
@@ -10775,12 +10777,12 @@ static std::string ScriptExampleFromSignature(const std::string& sig) {
 static void DrawCodeSnippet(const std::string& code) {
     static const std::unordered_set<std::string> kw = {
         "if","else","for","foreach","in","while","do","return","break","continue","switch","case","default",
-        "new","public","private","protected","static","void","int","float","bool","string","var","class",
-        "enum","struct","true","false","null","this","yield","using","override","const","readonly"};
+        "new","public","private","static","void","int","float","bool","string","var",
+        "enum","true","false","null","this","yield","const","readonly"};
     static const std::unordered_set<std::string> types = {
         "Vector3","Vector2","Quaternion","Color","Mathf","Time","Input","KeyCode","Debug","Random",
         "List","Dictionary","GameObject","Transform","Rigidbody","Rigidbody2D","SpriteRenderer",
-        "Animator","AudioSource","Collision","Collision2D","IEnumerator","WaitForSeconds","MonoBehaviour",
+        "Animator","AudioSource","Collision","Collision2D","IEnumerator","WaitForSeconds",
         "SceneManager","State","Coin"};
     const ImU32 cDef = IM_COL32(169, 183, 198, 255), cKw = IM_COL32(204, 120, 50, 255),
                 cTy = IM_COL32(78, 201, 176, 255), cStr = IM_COL32(106, 135, 89, 255),
@@ -10887,11 +10889,11 @@ static const TextEditor::LanguageDefinition& OkayScriptLangDef() {
             "operator","nameof","when","where","partial",
         };
         for (auto* k : kw) d.mKeywords.insert(k);
-        // C# / Unity type names OkayScript understands: teal (TypeName), with a
+        // Type names OkayScript understands: teal (TypeName), with a
         // hover tooltip. Classes / enums declared in the script are added per
         // editor (SetUserTypes).
         static const char* kTypes[] = {
-            "MonoBehaviour","OkaySource","GameObject","Transform","Vector3","Vector2","Quaternion","Color",
+            "GameObject","Transform","Vector3","Vector2","Quaternion","Color",
             "Mathf","Time","Input","KeyCode","Debug","Random","Space","Screen","List","Dictionary",
             "KeyValuePair","HashSet","Queue","Stack","IEnumerator","Coroutine","WaitForSeconds",
             "WaitForEndOfFrame","Rigidbody","Rigidbody2D","SpriteRenderer","MeshRenderer","Renderer",
@@ -10900,7 +10902,7 @@ static const TextEditor::LanguageDefinition& OkayScriptLangDef() {
             "SortedDictionary","IEnumerable",
         };
         for (auto* t : kTypes) {
-            TextEditor::Identifier id; id.mDeclaration = std::string(t) + " (C# / Unity type)";
+            TextEditor::Identifier id; id.mDeclaration = std::string(t) + " (built-in type)";
             d.mIdentifiers.insert(std::make_pair(std::string(t), id));
             d.mTypeNames.insert(t);
         }
@@ -11562,24 +11564,25 @@ void DrawScriptEditor(EditorState& ed) {
         ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowSize(ImVec2(std::min(760.0f, ImGui::GetMainViewport()->Size.x - 40.0f), 0), ImGuiCond_Appearing);
         if (ImGui::BeginPopup("##cscheat")) {
-            ImGui::TextColored(AccentCol(), "C# in OkayScript");
-            ImGui::TextDisabled("Write Unity-style C#; these all work:");
+            ImGui::TextColored(AccentCol(), "OkayScript cheat sheet");
+            ImGui::TextDisabled("Each of these does something:");
             ImGui::Separator();
             static const char* kRows[][2] = {
-                {"public class Player : MonoBehaviour { }", "the class is your component"},
-                {"public float speed = 5f;  [Header(\"Move\")]", "Inspector fields + attributes"},
-                {"void Start() / void Update() / Awake()", "lifecycle (Time.deltaTime inside)"},
+                {"public float speed = 5;  [Header(\"Move\")]", "Inspector fields + a heading for them"},
+                {"int lives = 3;  float t;  bool on;  string name;", "typed: int drops decimals, wrong kinds are errors"},
+                {"const float G = 9.8;  static int alive;", "never changes / shared by every object"},
+                {"void Start() / Update() / FixedUpdate() / OnDestroy()", "lifecycle (Time.deltaTime inside)"},
                 {"transform.position += Vector3.up * 2;", "Vector3 maths, transform.Translate/Rotate"},
                 {"Input.GetAxis(\"Horizontal\"), GetKeyDown(KeyCode.Space)", "input"},
                 {"List<int>, Dictionary<string,int>, int[]", "collections + Add/Remove/Count/..."},
                 {"xs.Where(x => x > 2).Select(x => x * 10)", "lambdas + LINQ-style helpers"},
                 {"(int)f, $\"hp {hp}\", s.ToUpper(), n.ToString(\"F2\")", "casts, strings"},
                 {"enum State { Idle, Run }  switch (state) { case State.Run: }", "enums + switch"},
-                {"IEnumerator Blink() { yield return new WaitForSeconds(1f); }", "coroutines (StartCoroutine)"},
+                {"IEnumerator Blink() { yield return new WaitForSeconds(1); }", "coroutines (StartCoroutine)"},
                 {"GetComponent<Rigidbody2D>().velocity = v;", "components: Rigidbody(2D), Animator, Renderer, Text, AudioSource"},
                 {"void OnTriggerEnter2D(Collider2D other) { other.CompareTag(..) }", "physics events"},
-                {"Destroy(gameObject, 2f), Instantiate(prefab, pos, rot)", "objects"},
-                {"Invoke(\"Fire\", 1f), InvokeRepeating(..), Debug.Log(..)", "timers + logging"},
+                {"Destroy(gameObject, 2), Instantiate(prefab, pos, rot)", "objects"},
+                {"Invoke(\"Fire\", 1), InvokeRepeating(..), Debug.Log(..)", "timers + logging"},
             };
             if (ImGui::BeginTable("##cst", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
                 ImGui::TableSetupColumn("code", ImGuiTableColumnFlags_WidthStretch, 0.6f);
@@ -12282,8 +12285,16 @@ void DrawScriptEditor(EditorState& ed) {
                 }
                 if (sc->Language() == "okayscript") {
                     static std::unique_ptr<okay::IScriptVM> s_checkVM = okay::CreateScriptVM("okayscript");
-                    if (s_checkVM) s_diags = s_checkVM->ValidateAll(buf.data());
+                    // Errors (won't run) stay in s_diags; "does nothing" / "probably not what you
+                    // meant" warnings join the editor's own lint warnings.
+                    std::vector<ScriptLint> vmWarns;
+                    if (s_checkVM)
+                        for (auto& d : s_checkVM->ValidateAll(buf.data())) {
+                            if (d.severity == 0) s_diags.push_back(d);
+                            else vmWarns.push_back({d.line, d.message});
+                        }
                     if (!s_diags.empty()) {
+                        s_warns = vmWarns;
                         s_error = (s_diags[0].line > 0 ? "line " + std::to_string(s_diags[0].line) + ": " : std::string()) + s_diags[0].message;
                     } else {
                         // Every builtin + its max argument count (from the signature table;
@@ -12307,6 +12318,9 @@ void DrawScriptEditor(EditorState& ed) {
                         std::unordered_set<std::string> known = s_known;
                         known.insert(s_userTypes.begin(), s_userTypes.end());
                         s_warns = AnalyzeScriptWarnings(buf.data(), known, s_maxArgs);
+                        s_warns.insert(s_warns.begin(), vmWarns.begin(), vmWarns.end());
+                        std::stable_sort(s_warns.begin(), s_warns.end(),
+                                         [](const ScriptLint& x, const ScriptLint& y) { return x.line < y.line; });
                     }
                 }
             }
@@ -13006,7 +13020,7 @@ void DrawScriptEditor(EditorState& ed) {
                 if (!csMembers.empty()) membersP = &csMembers;
             }
             if (membersP != &csMembers && !membersP->empty()) {
-                // Static Unity API lists: capitalised names are methods (bar constants).
+                // Static API lists: capitalised names are methods (bar constants).
                 static const std::unordered_set<std::string> consts = {"PI", "Deg2Rad", "Rad2Deg", "Epsilon", "Infinity"};
                 csMembers.clear();
                 for (const auto& m : *membersP)
@@ -13628,7 +13642,7 @@ void DrawScriptEditor(EditorState& ed) {
     ImGui::End();
 }
 
-// Frame the current selection in the editor view (Unity's F): centre the camera on
+// Frame the current selection in the editor view: centre the camera on
 // the selection and pull back far enough to fit it, using each object's mesh bounds.
 static void FocusSelected(EditorState& ed) {
     const auto& sel = ed.MultiSelection();
@@ -13705,7 +13719,7 @@ void HandleShortcuts(EditorState& ed) {
     if (!animKeys && ctrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_D, false) && ed.selected()) {
         ed.DuplicateSelected(); ConsoleLog("Duplicated selection");
     }
-    // Ctrl+Shift+G: group the selection under a new empty parent (Unity-style).
+    // Ctrl+Shift+G: group the selection under a new empty parent.
     if (ctrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_G, false) && ed.selected()) {
         ed.GroupSelected(); ConsoleLog("Grouped selection");
     }
@@ -13739,9 +13753,9 @@ void HandleShortcuts(EditorState& ed) {
     if (ctrl && ed.selected() && ImGui::IsKeyPressed(ImGuiKey_DownArrow, false)) {
         ed.PushUndo(); ed.scene().MoveSibling(ed.selected(), +1); ed.dirty = true;
     }
-    // F focuses (frames) the selection in the view, like Unity.
+    // F focuses (frames) the selection in the view.
     if (!animKeys && !ctrl && ImGui::IsKeyPressed(ImGuiKey_F, false) && ed.selected()) FocusSelected(ed);
-    // Shift+I toggles Isolate mode on the selection (Unity's isolation view).
+    // Shift+I toggles Isolate mode on the selection.
     if (!ctrl && ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_I, false)) {
         g_isolate = g_isolate ? nullptr : ed.selected();
         ConsoleLog(g_isolate ? "Isolating '" + g_isolate->name + "' (Shift+I to exit)"
@@ -13770,7 +13784,7 @@ void HandleShortcuts(EditorState& ed) {
     if (!animKeys && ImGui::IsKeyPressed(ImGuiKey_Delete, false) && ed.selected()) {
         ed.DeleteSelected(); ConsoleLog("Deleted selection");
     }
-    // Play/Stop toggle is Ctrl+P (Unity-style). It used to be plain Space, which
+    // Play/Stop toggle is Ctrl+P. It used to be plain Space, which
     // clashed with the in-game jump — pressing Space in play mode stopped the game.
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_P, false)) {
         if (ed.isPlaying()) { ed.Stop(); g_paused = false; ConsoleLog("Stop"); }
@@ -14068,7 +14082,7 @@ void DrawFileDialogs(EditorState& ed) {
         else ImGui::TextDisabled("Export a standalone game:  <Name>.exe + game.okayscene + game.okayconfig");
         ImGui::Spacing();
 
-        // ---- Build profiles bar (Unity 6 "Build Profiles") ----------------
+        // ---- Build profiles bar ----------------
         // Save the whole dialog as a named profile and switch between setups.
         {
             static char newProfName[64] = "";
@@ -14138,7 +14152,7 @@ void DrawFileDialogs(EditorState& ed) {
         if (g_build.height < 240) g_build.height = 240;
         if (g_build.fpsCap < 0)   g_build.fpsCap = 0;
 
-        // ---- Target platform first, as in Unity ----
+        // ---- Target platform first ----
         // Target platform: Desktop ships a Windows .exe; Web/Android export a
         // ready-to-build project (the editor can't run Emscripten / the Android NDK
         // itself, so it lays down the data + build script + instructions).
@@ -14323,7 +14337,7 @@ void DrawFileDialogs(EditorState& ed) {
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bump the patch number (1.0.0 -> 1.0.1).");
                 ImGui::SetNextItemWidth(300); ImGui::InputText("Identifier", g_build.bundleId, sizeof(g_build.bundleId));
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Application identifier (Unity's bundle id), e.g. com.studio.game.");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Application identifier, e.g. com.studio.game.");
                 ImGui::SetNextItemWidth(388); ImGui::InputText("##bdir", g_buildDirBuf, sizeof(g_buildDirBuf));
                 ImGui::SameLine(0, 4);
                 if (ImGui::Button("...##bdir")) {   // native folder picker
@@ -14340,13 +14354,13 @@ void DrawFileDialogs(EditorState& ed) {
                         std::snprintf(g_build.icon, sizeof(g_build.icon), "%s", p);
                 }
                 ImGui::SameLine(0, 6); ImGui::TextUnformatted("Icon (PNG)");
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Window/taskbar icon (Unity's Default Icon). A PNG path; bundled into the build.");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Window/taskbar icon. A PNG path; bundled into the build.");
                 ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
                 ImGui::Checkbox("Development build", &g_build.developmentBuild);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extra logging; marks the build as non-final");
                 ImGui::Checkbox("Show FPS overlay", &g_build.showFps);
                 ImGui::Checkbox("Save to user folder", &g_build.saveToUserDir);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write game saves/prefs to a per-user app folder (Unity's persistentDataPath),\nfrom Company + Product name. Saving then works even from a read-only install\n(e.g. Program Files), and two games never overwrite each other.\nOff = save beside the .exe (old behaviour).");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write game saves/prefs to a per-user app folder,\nfrom Company + Product name. Saving then works even from a read-only install\n(e.g. Program Files), and two games never overwrite each other.\nOff = save beside the .exe (old behaviour).");
                 ImGui::Spacing(); SectionHeader("Splash screen");
                 ImGui::SetNextItemWidth(388); ImGui::InputText("##bsplash", g_build.splash, sizeof(g_build.splash));
                 ImGui::SameLine(0, 4);
@@ -14400,7 +14414,7 @@ void DrawFileDialogs(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop the player shrinking the window below this (0 = no minimum).");
                 ImGui::Spacing(); SectionHeader("Focus");
                 ImGui::Checkbox("Run in background", &g_build.runInBackground);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep the game updating when its window isn't focused (Unity's Run In Background). Off = pause when minimized/unfocused.");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep the game updating when its window isn't focused. Off = pause when minimized/unfocused.");
                 ImGui::Checkbox("Mute audio when unfocused", &g_build.muteOnFocusLoss);
             }
             if (s_buildSec == 3) {
@@ -14466,7 +14480,7 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::Checkbox("Clean output folder", &g_build.cleanOutput);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove leftover files from a previous build first, so the folder has no stale junk.");
                 ImGui::Checkbox("Tidy layout (Data/ folder)", &g_build.dataFolder);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Unity-style: the game .exe + DLLs sit at the root; scenes/config/assets go in a Data/ subfolder so the game root is clean.");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The game .exe + DLLs sit at the root; scenes/config/assets go in a Data/ subfolder so the game root is clean.");
                 ImGui::Checkbox("Encrypt game data", &g_build.encryptData);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Obfuscate the shipped scenes + config so players can't open them in a text editor to read or cheat-edit your game.\nNote: deters casual tampering, not a determined attacker (the key ships in the game).");
                 ImGui::Spacing(); SectionHeader("After the build");
@@ -14962,7 +14976,7 @@ void DrawAboutPopup() {
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f);
-        ImGui::TextWrapped("A Unity-inspired C++ game engine. Build 2D/3D scenes, "
+        ImGui::TextWrapped("A C++ game engine. Build 2D/3D scenes, "
                            "script them, and export a standalone game with File > Build Game.");
         ImGui::PopTextWrapPos();
         ImGui::Spacing();
@@ -15216,7 +15230,7 @@ static bool        g_hierRenameOpen = false; // request to open the rename popup
 static char g_hierRenameBuf[128] = "";
 static GameObject* g_prefabSaveTarget = nullptr; // object being saved as a prefab
 static char g_prefabNameBuf[128] = "";
-static bool g_hierSort   = false;            // sort siblings A->Z (Unity's alpha sort)
+static bool g_hierSort   = false;            // sort siblings A->Z
 static int  g_hierExpand = 0;                // 1=expand-all, 2=collapse-all (one frame)
 static GameObject* g_hierOpenNode = nullptr; // Left/Right arrow expand/collapse target
 static GameObject* g_hierExpandRoot = nullptr; // "Expand/Collapse All Below" target (one frame)
@@ -15235,7 +15249,7 @@ static std::string HierPath(GameObject* g) {
 }
 static int  g_hierOpenVal = 0;               // 1 = expand, 0 = collapse (one frame)
 
-// Component "icon" badges at a Hierarchy row's right edge (like Unity showing
+// Component "icon" badges at a Hierarchy row's right edge (showing
 // component icons): a quick read of what's attached. Drawn via the draw list so
 // they don't interfere with the row's own click/drag handling.
 static void HierComponentBadges(GameObject* go, ImVec2 rowMin, ImVec2 rowMax) {
@@ -15269,7 +15283,7 @@ static void HierComponentBadges(GameObject* go, ImVec2 rowMin, ImVec2 rowMax) {
 // The lock hotspot sits immediately left of it, same width.
 static constexpr float kHierEyeW = 20.0f;
 
-// Unity-style visibility eye at the row's far right: open when active, struck
+// visibility eye at the row's far right: open when active, struck
 // through when off. Draw-list only — the row's own click handler owns the input.
 static void HierEye(GameObject* go, ImVec2 rowMin, ImVec2 rowMax) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -15302,7 +15316,7 @@ static void SetLockedRecursive(GameObject* go, bool on) {
 }
 
 // Set a GameObject and its whole subtree active/inactive, so toggling a parent in
-// the Hierarchy takes its children with it (Unity's active-in-hierarchy feel).
+// the Hierarchy takes its children with it.
 static void SetActiveRecursive(GameObject* go, bool on) {
     if (!go) return;
     go->active = on;
@@ -15508,7 +15522,7 @@ void DrawHierarchy(EditorState& ed) {
             }
             ImGui::Separator();
         }
-        // Unity-style folding: top-level objects start open, everything deeper starts
+        // folding: top-level objects start open, everything deeper starts
         // closed (a prebuilt UI screen or an imported model no longer floods the list),
         // and selecting an object opens its parents so it's visible (revealSel, above).
         std::function<void(GameObject*)> drawNode = [&](GameObject* node) {
@@ -15527,7 +15541,7 @@ void DrawHierarchy(EditorState& ed) {
             // Left/Right arrow expand/collapse request from last frame's key press.
             if (node == g_hierOpenNode && childCount > 0)
                 ImGui::SetNextItemOpen(g_hierOpenVal == 1);
-            // Unity dims inactive objects; grey the whole row (and its subtree label).
+            // Dim inactive objects; grey the whole row (and its subtree label).
             // Isolation dims everything outside the isolated subtree the same way.
             bool dim = !node->active || (g_isolate && !node->IsSelfOrDescendantOf(g_isolate));
             if (dim) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
@@ -15542,7 +15556,7 @@ void DrawHierarchy(EditorState& ed) {
                         ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowWidth(), p.y + ImGui::GetFrameHeight()),
                         IM_COL32(255, 255, 255, 5));
             }
-            // Show a child count on parents (Unity-style), plus an (off) marker.
+            // Show a child count on parents, plus an (off) marker.
             char cnt[16] = ""; if (childCount > 0) std::snprintf(cnt, sizeof(cnt), "  (%d)", childCount);
             bool open = ImGui::TreeNodeEx(node, flags, "     %s%s%s",
                                           node->name.c_str(), cnt, node->active ? "" : "  (off)");
@@ -15646,7 +15660,7 @@ void DrawHierarchy(EditorState& ed) {
                             // Re-parent. For a UI widget, its pixel offset is resolved
                             // WITHIN its parent, so a plain re-parent makes it jump on
                             // screen. Capture its screen rect, re-parent, then nudge its
-                            // offset so it stays exactly where it was (Unity-style).
+                            // offset so it stays exactly where it was.
                             float cw = g_lastUICanvas.x > 1.0f ? g_lastUICanvas.x : (float)g_lastSceneW;
                             float ch = g_lastUICanvas.y > 1.0f ? g_lastUICanvas.y : (float)g_lastSceneH;
                             Vec2 oldO, oldSz;
@@ -15667,7 +15681,7 @@ void DrawHierarchy(EditorState& ed) {
                 }
                 // Drop a Project asset onto an object: a .okaymat applies its look
                 // to the object's Mesh Renderer; an image sets the texture on a
-                // Mesh/Sprite Renderer (Unity-style).
+                // Mesh/Sprite Renderer.
                 if (const ImGuiPayload* ap = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
                     std::string path((const char*)ap->Data);
                     std::string ext;
@@ -15686,7 +15700,7 @@ void DrawHierarchy(EditorState& ed) {
                         else if (auto* mr = node->GetComponent<MeshRenderer>())   mr->texture = path;
                         else if (auto* sr = node->GetComponent<SpriteRenderer>()) sr->texture = path;
                         ed.dirty = true; ConsoleLog("Set texture on " + node->name);
-                    } else if (ext == ".okay" || ext == ".okayvs") {   // attach a script (Unity-style)
+                    } else if (ext == ".okay" || ext == ".okayvs") {   // attach a script
                         AttachScriptAsset(ed, node, path);
                         ed.Select(node);
                     } else if (ext == ".ttf" || ext == ".otf") {   // set font on a Text/Button
@@ -15771,7 +15785,7 @@ void DrawHierarchy(EditorState& ed) {
                         ConsoleLog(log + (found >= 8 ? " - press Play, or pick a clip on its Character" : ""), found >= 8 ? 0 : 1);
                         ed.Select(node); ed.dirty = true;
                     }
-                    if (hb >= 8 && ImGui::IsItemHovered()) ImGui::SetTooltip("Play the engine's built-in idle / walk / run / jump / gesture animations\non this model's OWN skeleton and skin (%d/15 humanoid bones recognised:\nMixamo, Unreal/Quaternius, Blender names). Best for rigged models with\nno clips of their own.", hb);
+                    if (hb >= 8 && ImGui::IsItemHovered()) ImGui::SetTooltip("Play the engine's built-in idle / walk / run / jump / gesture animations\non this model's OWN skeleton and skin. Best for rigged models with\nno clips of their own.", hb);
                     if (ImGui::MenuItem("Rig Model (Humanoid)")) RigModelHumanoid(ed, node);
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bind this model's mesh to the humanoid skeleton (auto weights):\nevery built-in animation, authored clip, movement state, controller\nand the Animation window then work on it. The model should stand\nupright facing +Z, in a T/A/rest pose.");
                 }
@@ -15797,7 +15811,7 @@ void DrawHierarchy(EditorState& ed) {
                     if (ImGui::MenuItem("Light"))  { GameObject* g = ed.CreateEmpty("Light"); g->AddComponent<Light>(); childOf(g); }
                     ImGui::EndMenu();
                 }
-                // Wrap this object in a new empty parent (Unity's "Create Parent"),
+                // Wrap this object in a new empty parent ("Create Parent"),
                 // keeping its on-screen transform unchanged.
                 if (ImGui::MenuItem("Create Parent")) {
                     ed.PushUndo();
@@ -15809,7 +15823,7 @@ void DrawHierarchy(EditorState& ed) {
                     ed.Select(parent); ed.dirty = true;
                 }
                 // Explicit re-parenting: make this object a child of any other object
-                // (Unity's "drag onto parent", but from a menu). Descendants of this
+                // ("drag onto parent", but from a menu). Descendants of this
                 // object are skipped so you can't create a cycle. World pose is kept.
                 if (ImGui::BeginMenu("Parent To")) {
                     bool any = false;
@@ -15909,7 +15923,7 @@ void DrawHierarchy(EditorState& ed) {
     g_hierOpenNode = nullptr;   // the arrow expand/collapse request was applied above
     if (cutPending) { ed.DeleteSelected(); ConsoleLog("Cut to the clipboard (Ctrl+V to paste)"); }
     // Shift+click: select the whole range between the active object and the
-    // clicked row, in visible order (Unity/Explorer-style range selection).
+    // clicked row, in visible order.
     if (rangeClick) {
         int a = -1, b = -1;
         for (int i = 0; i < (int)visRows.size(); ++i) {
@@ -15922,7 +15936,7 @@ void DrawHierarchy(EditorState& ed) {
                 if (!ed.IsSelected(visRows[i])) ed.ToggleSelect(visRows[i]);
         } else ed.Select(rangeClick);
     }
-    // Up/Down arrows walk the visible rows (Unity-style keyboard navigation).
+    // Up/Down arrows walk the visible rows.
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && !g_hierRename &&
         !ImGui::GetIO().WantTextInput && !visRows.empty() && ed.selected()) {
         int cur = -1;
@@ -15987,7 +16001,7 @@ void DrawHierarchy(EditorState& ed) {
         }
         if (ImGui::BeginMenu("UI")) {
             // Create a UI widget under the canvas/UI root and centre it (so it's
-            // visible), mirroring the top GameObject > UI menu — Unity-style
+            // visible), mirroring the top GameObject > UI menu
             // right-click-to-create in the Hierarchy.
             auto mkUI = [&](const char* name, auto build) {
                 GameObject* root = EnsureUIRoot(ed);
@@ -16153,7 +16167,7 @@ void DrawHierarchy(EditorState& ed) {
 }
 
 // Re-anchor a widget WITHOUT moving it: solve the new anchor's position/size so
-// the widget keeps its on-screen rect (Unity keeps the visual placement too).
+// the widget keeps its on-screen rect.
 // The anchor maps (position, size) to (origin, extent) affinely, so the four
 // unknowns come from a small linear solve; works for fixed and stretch anchors.
 static bool ReanchorKeepRect(GameObject* go, okay::UIAnchor newAnchor, bool snapToAnchor) {
@@ -16251,7 +16265,7 @@ static void AnchorCombo(const char* id, okay::UIAnchor& anchor, EditorState& ed)
     diagram(ImGui::GetWindowDrawList(), ImVec2(bp.x + 4, bp.y + 3), ImVec2(bp.x + sz - 2, bp.y + sz - 3), ai, false);
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip(okay::AnchorIsStretch(anchor)
-            ? "Stretch: the widget fills its parent / the canvas on the stretched axis;\nPosition and Size become margins (like Unity). Click to change."
+            ? "Stretch: the widget fills its parent / the canvas on the stretched axis;\nPosition and Size become margins. Click to change."
             : "Which point of its parent / the screen this widget sticks to when the\nwindow resizes. Click to change.");
     ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x); ImGui::TextUnformatted(name.c_str());
     if (ImGui::BeginPopup(popId.c_str())) {
@@ -16289,7 +16303,7 @@ static void AnchorCombo(const char* id, okay::UIAnchor& anchor, EditorState& ed)
 }
 
 /// Labels for the Position/Size drag fields that adapt to a stretch anchor, so the
-/// inspector reads like Unity (margins instead of an offset+extent). Returns the two
+/// inspector reads as margins instead of an offset+extent. Returns the two
 /// component labels for Position (px,py) and Size (sx,sy) respectively.
 static void AnchorFieldLabels(okay::UIAnchor a,
                               const char*& posX, const char*& posY,
@@ -16309,7 +16323,7 @@ static void AnchorFieldLabels(okay::UIAnchor a,
 /// Draw a widget's Position + Size drag fields, adapting to its anchor. Fixed
 /// anchors get the classic "Pos (px)" / "Size (px)" DragFloat2s; stretch anchors get
 /// four separately-labelled margin fields (Left/Top/Right/Bottom-style) so the
-/// inspector reads like Unity's stretched RectTransform. Sets ed.dirty on any edit.
+/// inspector reads like stretched RectTransform. Sets ed.dirty on any edit.
 static void UIRectFields(const char* idSuffix, okay::UIAnchor anchor,
                          okay::Vec2& position, okay::Vec2& size, EditorState& ed) {
     char lbl[80];
@@ -16351,7 +16365,7 @@ static void CornerMaskEditor(const char* idSuffix, int& mask, EditorState& ed) {
     if (ImGui::SmallButton(lbl)) { mask = okay::UICornerAll; ed.dirty = true; }
 }
 
-// Size a 3D collider to wrap the object's MeshRenderer bounds (Unity's "fit").
+// Size a 3D collider to wrap the object's MeshRenderer bounds ("fit").
 // Collider size/offset are in local units (scaled by the Transform), matching
 // how the mesh is drawn, so the wireframe lands right on the mesh.
 static bool MeshBounds(GameObject* go, Vec3& lo, Vec3& hi) {
@@ -17852,7 +17866,7 @@ static void ApplyClipToTransform(const AnimationClip& clip, Transform* tr, float
 // from the clip, the focused preview renders, then every touched transform is
 // RESTORED — the scene itself is never left mid-pose (nothing to dirty, nothing to
 // fight Play mode or saving). In Play mode the clips run live instead.
-// ---- "Preview in Scene view" (Unity-style): while on, the clip preview pose is
+// ---- "Preview in Scene view": while on, the clip preview pose is
 // LEFT applied to the scene each frame instead of being restored after the inset
 // render — the model animates right in the Scene/Game view while you scrub. The
 // pre-preview pose is captured at toggle-on and restored at toggle-off/close.
@@ -18018,7 +18032,7 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
     ch |= ImGui::DragFloat("Speed##maed", &ma->speed, 0.02f, 0.05f, 5.0f);
     if (ch) ed.dirty = true;
 
-    // Unity-style scene preview: the playing/scrubbed pose shows on the model in
+    // scene preview: the playing/scrubbed pose shows on the model in
     // the Scene view itself, not just the inset above.
     bool scenePrev = (g_maScenePrev == ma);
     if (ImGui::Checkbox("Preview in Scene view##maed", &scenePrev)) {
@@ -18039,7 +18053,7 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
             g_maScenePrev = ma;
         }
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Animate the model in the Scene view while you play/scrub here\n(like Unity's animation preview). The original pose is restored when\nyou untick this or close the window — turn it OFF before saving.");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Animate the model in the Scene view while you play/scrub here.\nThe original pose is restored when\nyou untick this or close the window — turn it OFF before saving.");
 
     // ---- Manage the clip library: rename / duplicate / delete ----
     ImGui::Separator();
@@ -18334,7 +18348,7 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
 
 // ---------------------------------------------------------------------------
 // Animator window — a visual node-graph editor for the AnimStateMachine
-// (Unity-style): drag state nodes, draw transitions between them, edit each
+// drag state nodes, draw transitions between them, edit each
 // transition's condition in the side panel, and watch the ACTIVE state light
 // up during Play. Node positions save with the scene (animsmpos record).
 // ---------------------------------------------------------------------------
@@ -19314,7 +19328,7 @@ static void DrawAnimatorGraph(EditorState& ed) {
                 if (ImGui::Selectable(st.name.c_str(), sm->entry == st.name)) { sm->entry = st.name; ed.dirty = true; }
             ImGui::EndCombo();
         }
-        // ---- Parameters (Unity's Animator list): declare once, pick from
+        // ---- Parameters: declare once, pick from
         //      dropdowns in transitions; live values shown in Play mode. ----
         ImGui::Separator();
         ImGui::TextDisabled("Parameters:");
@@ -19509,7 +19523,7 @@ static void DrawAnimationEditor(EditorState& ed) {
     ImGui::End();
 }
 
-// ---- Object Animator timeline (Unity-style Animation window) ---------------------
+// ---- Object Animator timeline ---------------------
 // Edit-mode authoring for a plain Animator: the editor owns the playhead and plays
 // the clip itself (scene Update doesn't run outside Play), the pose is sampled only
 // when the playhead moves (so gizmo edits in the Scene view stick), and Record mode
@@ -21292,7 +21306,7 @@ static void DrawSimpleRules(EditorState& ed, ActionList* al, GameObject* go) {
         ImVec2 br{p.x + NW, p.y + NH};
         float rad = 7.0f * z;
         int cr = (col>>IM_COL32_R_SHIFT)&0xFF, cg = (col>>IM_COL32_G_SHIFT)&0xFF, cb = (col>>IM_COL32_B_SHIFT)&0xFF;
-        // Blueprint/Unity-style node: a colored header bar (the category color)
+        // Blueprint-style node: a colored header bar (the category color)
         // over a dark rounded body, soft drop shadow, left connector knobs and a
         // hover outline — a clear, modern node-editor look.
         dl->AddRectFilled(ImVec2(p.x + 3 * z, p.y + 5 * z), ImVec2(br.x + 3 * z, br.y + 5 * z), IM_COL32(0, 0, 0, 80), rad);
@@ -22276,7 +22290,7 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
             if (ImGui::InputTextWithHint("##rpre", "prefix", pb, sizeof(pb))) setArg(dirIdx+2, pb);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stores <prefix>_hit/_dist/_x/_y/_z, _nx/_ny/_nz (normal),\nand text _name/_tag (what it hit — compare with str_eq).");
         }
-        // Optional Unity-style filters, stored as trailing tokens (h: / ig: / only:)
+        // Optional filters, stored as trailing tokens (h: / ig: / only:)
         // that always sit AFTER the positional args so setting the prefix never clobbers
         // them (and vice-versa).
         std::size_t baseCount = dirIdx + (isInstr ? 3 : 2);   // direction, distance[, prefix]
@@ -22310,7 +22324,7 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only hit objects with this tag (like a layer mask).");
     } else if (it.op == "set_text" || it.op == "set_text_on" || it.op == "set_bar" ||
                it.op == "get_prefs") {
-        // Friendly, Unity-style fields so it's clear WHAT you're setting and WHAT
+        // Friendly, fields so it's clear WHAT you're setting and WHAT
         // you're reading — instead of one cryptic space-separated box.
         auto getArg = [&](std::size_t i) { return i < it.args.size() ? it.args[i] : std::string{}; };
         auto setArg = [&](std::size_t i, const std::string& v) {
@@ -22596,7 +22610,7 @@ static std::size_t ApplyItemAction(std::vector<ActionList::Item>& list, std::siz
 }
 
 // A small inline preview under an image-path field; hovering zooms it in a
-// tooltip; right-click offers "Show in Project" (Unity's ping).
+// tooltip; right-click offers "Show in Project".
 static void TexFieldThumb(const std::string& path) {
     if (path.empty()) return;
     SDL_Texture* t = GetThumb(path);
@@ -22691,7 +22705,7 @@ static bool AcceptAssetPathField(std::string& field) {
     return changed;
 }
 
-// Unity-style component header: an enable/disable checkbox, the collapsing
+// component header: an enable/disable checkbox, the collapsing
 // header title, and a right-click context menu offering "Remove Component"
 // (which sets *toRemove, removed safely after the inspector finishes drawing).
 // Returns whether the component body should be drawn.
@@ -22726,7 +22740,7 @@ static float ButtonW(const char* label) {
     return ImGui::CalcTextSize(label, nullptr, true).x + ImGui::GetStyle().FramePadding.x * 2.0f;
 }
 
-// One header bar per component (Unity-style): fold arrow, enable box and a type
+// One header bar per component: fold arrow, enable box and a type
 // glyph inside the bar, the name, and a "..." menu on the right (move up / down,
 // expand / collapse all, remove). The name gets the whole bar instead of being
 // squeezed out by separate arrow buttons in a narrow Inspector.
@@ -22934,7 +22948,7 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
 }
 
 // A public field discovered in a script: its name, declared type, default value,
-// and any Unity attributes (Header/Tooltip/Range). Used to show Unity-style
+// and any attributes (Header/Tooltip/Range). Used to show
 // serialized fields in the Script inspector.
 struct ScriptField {
     std::string name, type, def;
@@ -22957,7 +22971,7 @@ static bool ScriptAttrArg(const std::string& line, const char* attr, std::string
 }
 
 // Scan script source for public/top-level field declarations: lines with `=` at
-// brace depth 0 (classic top-level) or 1 (inside a `class` body, Unity style),
+// brace depth 0 (classic top-level) or 1,
 // where the left side is an identifier (optionally typed / public / attributed)
 // and not a function call. Locals inside function bodies (deeper) are ignored.
 static std::vector<ScriptField> ParseScriptFields(const std::string& src) {
@@ -22966,7 +22980,7 @@ static std::vector<ScriptField> ParseScriptFields(const std::string& src) {
     static const std::unordered_set<std::string> kw = {
         "return","if","else","while","for","switch","case","do","break","continue"};
     int depth = 0;
-    // Attributes attach to the NEXT field (Unity puts them on the line above).
+    // Attributes attach to the NEXT field.
     std::string pendH, pendT; bool pendR = false; float pendRmin = 0, pendRmax = 1;
     std::istringstream in(src);
     std::string line;
@@ -24249,7 +24263,7 @@ void DrawModeling(EditorState& ed) {
 // edits but keeping the instance's place in the scene (world transform, parent,
 // name, and the prefab link). The passed-in `inst` is DESTROYED — callers must
 // drop every reference to it and use the returned fresh root instead (nullptr on
-// failure). This is the engine side of Unity's per-instance "Revert".
+// failure). This is the engine side of per-instance "Revert".
 static GameObject* RevertPrefabInstance(EditorState& ed, GameObject* inst) {
     if (!inst || inst->prefabSource.empty()) return nullptr;
     const std::string path = inst->prefabSource;
@@ -24273,7 +24287,7 @@ static GameObject* RevertPrefabInstance(EditorState& ed, GameObject* inst) {
     return fresh;
 }
 
-// Revert EVERY instance in the scene spawned from `path` (Unity's "reload all
+// Revert EVERY instance in the scene spawned from `path` ("reload all
 // instances" after the prefab file changed). Returns how many were reloaded.
 static int ReloadPrefabInstances(EditorState& ed, const std::string& path) {
     if (path.empty()) return 0;
@@ -24294,7 +24308,7 @@ void DrawInspector(EditorState& ed) {
     ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(8, 6));
 
     // Lock (pin) the inspector to the current object so it stays put while you
-    // click around the scene/hierarchy — Unity's inspector lock.
+    // click around the scene/hierarchy — inspector lock.
     static bool s_locked = false;
     static GameObject* s_pinned = nullptr;
     if (ImGui::Checkbox("Lock", &s_locked)) s_pinned = s_locked ? ed.selected() : nullptr;
@@ -24314,7 +24328,7 @@ void DrawInspector(EditorState& ed) {
         return;
     }
 
-    // Header (Unity-style): an active toggle + a type chip + the object name on
+    // Header: an active toggle + a type chip + the object name on
     // a tinted bar, then a Tag field + Save-as-Prefab, then a divider. The child
     // auto-sizes to its contents so there's no empty gap at the top.
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.16f, 0.17f, 0.20f, 1.0f));
@@ -24323,7 +24337,7 @@ void DrawInspector(EditorState& ed) {
                       ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
 
     // Row 1: active toggle · type chip · editable name (fills the rest).
-    // Toggling an object takes its whole subtree with it (Unity active-in-hierarchy),
+    // Toggling an object takes its whole subtree with it,
     // so disabling a parent disables its children and re-enabling brings them back.
     bool act = go->active;
     if (ImGui::Checkbox("##active", &act)) {
@@ -24346,7 +24360,7 @@ void DrawInspector(EditorState& ed) {
     char nameBuf[128];
     std::strncpy(nameBuf, go->name.c_str(), sizeof(nameBuf) - 1);
     nameBuf[sizeof(nameBuf) - 1] = '\0';
-    // Leave room on the right for the Static + Lock toggles (Unity places them here).
+    // Leave room on the right for the Static + Lock toggles.
     float staticW = ImGui::CalcTextSize("Static").x + ImGui::CalcTextSize("Lock").x +
                     ImGui::GetFrameHeight() * 2.0f +
                     (ImGui::GetStyle().ItemInnerSpacing.x + ImGui::GetStyle().ItemSpacing.x) * 2.0f;
@@ -24365,7 +24379,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::SetTooltip("Locked objects (and children) can't be click-selected in the Scene view");
     }
 
-    // Row 2: Tag dropdown (Unity-style presets + your own custom tags) + Save-as-Prefab.
+    // Row 2: Tag dropdown + Save-as-Prefab.
     // Built-in presets, then any project-wide custom tags (persisted in project.okayproj),
     // then an "Add Tag" field that creates a new tag AND applies it in one step.
     static const char* kTagPresets[] = {"Untagged", "Player", "MainCamera", "Enemy",
@@ -24421,7 +24435,7 @@ void DrawInspector(EditorState& ed) {
         ImGui::EndCombo();
     }
     SameLineOrWrap(comboW + tagLblW);
-    // Layer dropdown (Unity-style): which of the 32 named layers the object sits on.
+    // Layer dropdown: which of the 32 named layers the object sits on.
     ImGui::SetNextItemWidth(comboW);
     if (ImGui::BeginCombo("Layer", okay::Layers::Name(go->layer).c_str())) {
         for (int i = 0; i < 32; ++i) {
@@ -24453,7 +24467,7 @@ void DrawInspector(EditorState& ed) {
     ImGui::EndChild();
     // Drop a Project asset onto the object header to attach it: a .okay script
     // adds a Script component bound to that file; a .okaymat applies its look; an
-    // image sets the texture. (Unity-style drag from Project into the Inspector.)
+    // image sets the texture.
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
             std::string path((const char*)p->Data), ext;
@@ -24482,7 +24496,7 @@ void DrawInspector(EditorState& ed) {
     ImGui::PopStyleColor();
     ImGui::Spacing();
 
-    // ---- Prefab instance banner (Unity-style) --------------------------------
+    // ---- Prefab instance banner --------------------------------
     // Shown when this object was instantiated from a .okayprefab: it links back to
     // its source so you can Apply local edits to the prefab, Revert this instance,
     // Reload every instance in the scene, find the asset in Project, or Unlink.
@@ -24561,7 +24575,7 @@ void DrawInspector(EditorState& ed) {
     const float inspLabelW = std::clamp(ImGui::GetContentRegionAvail().x * 0.42f, 96.0f, 170.0f);
     ImGui::PushItemWidth(-inspLabelW);
 
-    // UI layout card for any screen-space widget (Unity's Rect Transform tools):
+    // UI layout card for any screen-space widget:
     // an anchor picker drawn as a little frame, then labelled rows for Size, Order
     // (draw order / front / back) and Arrange (wrap in panel, fit to children).
     if (IsUIElement(go)) {
@@ -24708,7 +24722,7 @@ void DrawInspector(EditorState& ed) {
 
     bool tfOpen = ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen);
     // Right-click the Transform header: copy the whole TRS, paste it onto another
-    // object (Unity's Copy/Paste Component Values for the common case).
+    // object.
     {
         static bool s_tcopyValid = false;
         static Vec3 s_tcopyPos, s_tcopyScl;
@@ -24732,7 +24746,7 @@ void DrawInspector(EditorState& ed) {
     if (tfOpen) {
         Transform* t = go->transform;
         // With several objects selected, edits apply the same value to ALL of them
-        // (Unity's multi-object editing for the common case).
+        //.
         const bool multi = ed.MultiSelection().size() > 1;
         auto others = [&](auto&& apply) {
             if (!multi) return;
@@ -24784,7 +24798,7 @@ void DrawInspector(EditorState& ed) {
         }
         if (act) ed.PushUndo();
         if (isCam) { ImGui::EndDisabled(); ImGui::TextDisabled("(camera scale is locked)"); }
-        // Quick resets (Unity's right-click-component conveniences).
+        // Quick resets.
         if (ImGui::SmallButton("Reset Pos")) { ed.PushUndo(); t->localPosition = {0, 0, 0}; ed.dirty = true; }
         SameLineOrWrap(ButtonW("Reset Rot"));
         if (ImGui::SmallButton("Reset Rot")) { ed.PushUndo(); g_euler[go] = {0, 0, 0}; t->localRotation = Quat::Euler({0, 0, 0}); ed.dirty = true; }
@@ -25204,7 +25218,7 @@ void DrawInspector(EditorState& ed) {
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Clear##smap")) { mr->specularMap.clear(); ed.dirty = true; }
             }
-            // Ambient-occlusion map (Unity's Occlusion / Unreal's AO): darkens ambient
+            // Ambient-occlusion map: darkens ambient
             // + diffuse in creases. Works on the software AND GPU (GL/D3D11) renderers.
             char aomap[260];
             std::strncpy(aomap, mr->aoMap.c_str(), sizeof(aomap) - 1);
@@ -26312,7 +26326,7 @@ void DrawInspector(EditorState& ed) {
             } else {
                 if (ImGui::Checkbox("Physical Camera", &cam->physicalCamera)) ed.dirty = true;
                 if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Drive FOV from real lens optics (focal length + sensor size),\nlike Unity's physical camera.");
+                    ImGui::SetTooltip("Drive FOV from real lens optics (focal length + sensor size),\nlike a real camera.");
                 if (cam->physicalCamera) {
                     if (ImGui::DragFloat("Focal Length", &cam->focalLength, 0.5f, 1.0f, 300.0f, "%.1f mm")) ed.dirty = true;
                     if (ImGui::DragFloat("Sensor Height", &cam->sensorHeight, 0.1f, 1.0f, 100.0f, "%.1f mm")) ed.dirty = true;
@@ -26406,10 +26420,10 @@ void DrawInspector(EditorState& ed) {
                 cam->rectX = r[0]; cam->rectY = r[1]; cam->rectW = r[2]; cam->rectH = r[3]; ed.dirty = true;
             }
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Where on screen this camera draws (0..1, origin bottom-left)\n— like Unity's Camera.rect. Use for split-screen / mini-maps.");
+                ImGui::SetTooltip("Where on screen this camera draws (0..1, origin bottom-left).\nUse for split-screen / mini-maps.");
 
             SectionHeader("Culling Mask");
-            // Layer set this camera renders (Unity's Camera.cullingMask). Summarize the
+            // Layer set this camera renders. Summarize the
             // selection on the combo preview, with per-layer toggles + Everything/Nothing.
             std::string maskPreview;
             if (cam->cullingMask == ~0) maskPreview = "Everything";
@@ -27084,7 +27098,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Auto Fit##bc3", &bc->autoFit)) { if (bc->autoFit) FitColliders(go); ed.dirty = true; }
             if (bc->autoFit) FitColliders(go, true);
             // Interactive edit: drag the 6 face handles in the Scene view to hand-fit
-            // the box to the model (Unity's Edit Collider).
+            // the box to the model.
             if (AccentToggleButton("Edit Collider##bc3", g_colliderEdit)) {
                 g_colliderEdit = !g_colliderEdit;
                 if (!g_colliderEdit) g_colliderDragAxis = -1;   // leaving edit mode ends any drag
@@ -27133,7 +27147,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##cap3")) toRemove = cap;
         }
     }
-    // A GameObject may carry several scripts (like Unity's multiple MonoBehaviours).
+    // A GameObject may carry several scripts.
     if (auto* sc = dynamic_cast<ScriptComponent*>(curComp)) {
         // Scope every widget by the component pointer so multiple scripts on one
         // object don't collide IDs (which makes ImGui flag a conflict on hover).
@@ -27149,7 +27163,7 @@ void DrawInspector(EditorState& ed) {
                 g_activeScriptTab = sc; g_focusScriptTab = sc;
             }
 
-            // Public variables (Unity's serialized fields): editable values that
+            // Public variables: editable values that
             // override the script's defaults per object.
             // Parse the live editor buffer when this script is open (so new public
             // vars appear as you type), else the last-compiled source.
@@ -27169,7 +27183,7 @@ void DrawInspector(EditorState& ed) {
                     ImGui::PushID(f.name.c_str());
                     bool changed = false;
                     if (!f.header.empty()) { ImGui::Spacing(); SectionHeader(f.header.c_str()); }
-                    // Variable NAME on the left (Unity-style), value widget on the right.
+                    // Variable NAME on the left, value widget on the right.
                     ImGui::AlignTextToFramePadding();
                     if (overridden) ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.55f, 1.0f), "%s", f.name.c_str());
                     else            ImGui::TextUnformatted(f.name.c_str());
@@ -27202,7 +27216,7 @@ void DrawInspector(EditorState& ed) {
                         }
                     } else if (f.type.find("GameObject") != std::string::npos ||
                                f.type.find("Transform") != std::string::npos) {
-                        // Object reference: a Unity-style slot you can't type into —
+                        // Object reference: a slot you can't type into —
                         // drag a GameObject from the Hierarchy onto it to assign. Stores
                         // the target's name; scripts resolve it by name (find/dist_to/...).
                         std::string sv = cur;
@@ -29275,7 +29289,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat("Fire Rate##tps", &ts->fireRate, 0.2f, 0.5f, 30.0f, "%.1f /s")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Left mouse fires; calls the script's on_fire()");
             if (ImGui::Checkbox("Lock Cursor##tps", &ts->lockCursor)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide + lock the cursor while playing (Unity-style)");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide + lock the cursor while playing");
             ImGui::TextDisabled("Over-the-shoulder aim. Body faces the camera; RMB aims, LMB fires.");
             if (ImGui::SmallButton("Remove##tps")) toRemove = ts;
         }
@@ -29837,7 +29851,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Letter Spacing##txt", &tr->letterSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Line Spacing##txt", &tr->lineSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
             // Font: a drag-only slot — empty = built-in 8x8 bitmap; drop a .ttf/.otf
-            // from the Project panel to use it. (No typing, Unity-style.)
+            // from the Project panel to use it.
             ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("Font"); ImGui::SameLine();
             if (AssetSlot("txtfont", tr->fontPath, "Font", {".ttf", ".otf"})) ed.dirty = true;
             if (tr->fontPath.empty())            ImGui::TextDisabled("Built-in 8x8 bitmap font.");
@@ -30101,7 +30115,7 @@ void DrawInspector(EditorState& ed) {
     if (auto* btn = dynamic_cast<UIButton*>(curComp)) {
         if (CompHeader("UI Button", btn, &toRemove)) {
             UIStyleBar(ed, btn);
-            // The label lives on a child Text object (Unity-style). When one exists,
+            // The label lives on a child Text object. When one exists,
             // text is edited/styled THERE — don't show a duplicate text field on the
             // button. Only the legacy case (no child) edits the built-in label here.
             GameObject* txtChild = UIButtonTextChild(go);
@@ -30123,7 +30137,7 @@ void DrawInspector(EditorState& ed) {
                     ed.dirty = true;
                 }
                 if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Split the label into its own child Text object (Unity-style) so it can be styled and positioned independently.");
+                    ImGui::SetTooltip("Split the label into its own child Text object so it can be styled and positioned independently.");
             }
             float pos[2] = {btn->position.x, btn->position.y};
             if (ImGui::DragFloat2("Pos (px)##uib", pos, 1.0f)) { btn->position = {pos[0], pos[1]}; ed.dirty = true; }
@@ -30147,7 +30161,7 @@ void DrawInspector(EditorState& ed) {
               if (tbound != btn) { std::strncpy(tgt, btn->clickTarget.c_str(), sizeof(tgt)-1); tgt[sizeof(tgt)-1]='\0'; tbound = btn; }
               if (ImGui::InputText("Target Object##uibclk", tgt, sizeof(tgt))) { btn->clickTarget = tgt; ed.dirty = true; }
               // Drag an object from the Hierarchy onto the field to set the target
-              // (Unity-style) — its public functions then populate the dropdown below.
+              // — its public functions then populate the dropdown below.
               if (ImGui::BeginDragDropTarget()) {
                   if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("GO_PTR")) {
                       GameObject* dropped = *static_cast<GameObject* const*>(p->Data);
@@ -31465,7 +31479,7 @@ void DrawInspector(EditorState& ed) {
     ImGui::Separator();
     ImGui::Spacing();
     static char acFilter[64] = "";
-    // Prominent, accent-tinted primary action — the way Unity centres a wide
+    // Prominent, accent-tinted primary action — centre a wide
     // "Add Component" button under the component list.
     ImGui::PushStyleColor(ImGuiCol_Button,        AccentCol(0.85f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.0f));
@@ -31487,7 +31501,7 @@ void DrawInspector(EditorState& ed) {
     ImGui::SetNextWindowSize(ImVec2(640, 0), ImGuiCond_Always);
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopup("AddComponent")) {
-        // Centered "Component" title + search box, like Unity's Add Component.
+        // Centered "Component" title + search box, like Add Component.
         const char* title = "Component";
         float availW = ImGui::GetContentRegionAvail().x;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - ImGui::CalcTextSize(title).x) * 0.5f);
@@ -31663,10 +31677,10 @@ void DrawInspector(EditorState& ed) {
 
         { bool o = BeginCat("Scripts");
           if (o) {
-            // A GameObject can carry MANY scripts (like Unity). Existing .okay
+            // A GameObject can carry MANY scripts. Existing .okay
             // scripts show up directly (one click attaches one). You can attach
             // as many as you like, including the same script more than once
-            // (Unity allows multiple instances). "New Script..." makes a file.
+            //. "New Script..." makes a file.
             namespace fs = std::filesystem;
             fs::path assets = ed.projectDir().empty() ? fs::path("Assets")
                                                       : fs::path(ed.projectDir()) / "Assets";
@@ -31688,17 +31702,16 @@ void DrawInspector(EditorState& ed) {
                 std::snprintf(g_newScriptName, sizeof(g_newScriptName), "%sScript", go->name.c_str());
             }
             if (item(true, "New Visual Script (nodes)")) {
-                // A starter graph (On Start + On Update), saved under Assets, attached,
-                // and opened in the node editor.
+                // The starter graph (On Start prints, On Update moves with WASD), saved
+                // under Assets, attached, and opened in the node editor.
                 namespace fsn = std::filesystem;
                 fsn::path dir = ed.projectDir().empty() ? fsn::path("Assets") : fsn::path(ed.projectDir()) / "Assets";
                 std::error_code mk; fsn::create_directories(dir, mk);
                 fsn::path p = dir / (go->name + "Graph.okayvs");
                 for (int k = 2; fsn::exists(p, mk); ++k) p = dir / (go->name + "Graph" + std::to_string(k) + ".okayvs");
                 auto& vg = okay::editor::vsed::State().g;
-                vg.clear();
-                vg.add("OnStart", 40, 40);
-                vg.add("OnUpdate", 40, 160);
+                okay::editor::vsed::SeedStarterGraph(vg);
+                okay::editor::vsed::State().frameAll = true;
                 if (vg.save(p.string())) {
                     AttachScriptAsset(ed, go, p.string());
                     g_showVisualScript = true;
@@ -31863,7 +31876,7 @@ void DrawInspector(EditorState& ed) {
     }
 
     // "New Script" naming dialog: create a fresh .okay under Assets and attach it
-    // to the target object (Unity's Add Component > New Script > Create and Add).
+    // to the target object.
     if (g_newScriptOpen && !ImGui::IsPopupOpen("New Script")) ImGui::OpenPopup("New Script");
     if (ImGui::BeginPopupModal("New Script", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextDisabled("Creates Assets/<name>.okay and attaches it.");
@@ -31896,7 +31909,7 @@ void DrawInspector(EditorState& ed) {
             if (fs::exists(p, se)) {
                 ConsoleLog("Script already exists: " + p.string());
             } else {
-                // Class name follows the file name (Unity-style).
+                // Class name follows the file name.
                 std::ofstream(p) << extide::StarterScriptNamed("okayscript", p.stem().string());
             }
             auto* nsc = g_newScriptGO->AddComponent<ScriptComponent>("okayscript");
@@ -32172,7 +32185,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // against the same dimensions the preview uses.
     UICanvas::Set(canvasSize.x, canvasSize.y);
 
-    // Each widget's pixels are scaled by its owning Canvas (Unity's CanvasScaler):
+    // Each widget's pixels are scaled by its owning Canvas:
     // ScaleWithScreenSize grows/shrinks the whole HUD with the window. Widgets not
     // parented to a Canvas fall back to scale 1.
     auto uiScale = [&](GameObject* go) { return UIScaleFor(go, canvasSize.x, canvasSize.y); };
@@ -32927,7 +32940,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             dl->AddRectFilled(ia, ImVec2(ia.x + isz, ia.y + isz), IM_COL32(255, 255, 255, 40), 3.0f);
             dl->AddRect(ia, ImVec2(ia.x + isz, ia.y + isz), IM_COL32(255, 255, 255, 110), 3.0f);
         }
-        // Skip the built-in label when a child Text object provides it (Unity-style
+        // Skip the built-in label when a child Text object provides it (
         // Button→Text) — that child renders itself in the text pass.
         if (!UIButtonTextChild(up.get())) {
             float px = btn->fontScale * s;
@@ -33149,7 +33162,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                               IM_COL32(0, 0, 0, 140), 3.0f);
             dl->AddText(tp, IM_COL32(255, 220, 120, 255), dims);
         }
-        // Smart-snap alignment guides (Unity-style BLUE lines), full canvas extent —
+        // Smart-snap alignment guides, full canvas extent —
         // shown while dragging an edge/center that lines up with a canvas/parent/sibling
         // edge or center.
         const ImU32 kSnapBlue = IM_COL32(70, 150, 255, 235);
@@ -33748,7 +33761,7 @@ static void MoveUIChildrenBy(GameObject* dragged, GameObject* go, float dx, floa
 
 // Scale a widget's descendants proportionally as the widget is resized, so a
 // container (a Button, Panel…) and everything inside it — its label Text, an icon —
-// grow and shrink as ONE group, like Unity's scale tool. Each child's offset, box
+// grow and shrink as ONE group, like scale tool. Each child's offset, box
 // size and text pixel-size scale by (sx,sy); recurses through the subtree. Anchored
 // children already RE-POSITION within the parent's rect; this adds the proportional
 // GROW so the label no longer stays a fixed size while its button changes.
@@ -33954,7 +33967,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                     if (bottom) g_uiResizeRaw[3] = Mathf::Max(g_uiResizeRaw[3] + io.MouseDelta.y, g_uiResizeRaw[1] + minPx);
                     float l  = left   ? g_uiResizeRaw[0] : o.x,        t  = top    ? g_uiResizeRaw[1] : o.y;
                     float rr = right  ? g_uiResizeRaw[2] : o.x + sz.x, bb = bottom ? g_uiResizeRaw[3] : o.y + sz.y;
-                    // Resize modifiers (Unity/Photoshop-style): Shift = keep the original
+                    // Resize modifiers: Shift = keep the original
                     // aspect ratio, Alt = resize symmetrically about the original center.
                     const float cx0 = o.x + sz.x * 0.5f, cy0 = o.y + sz.y * 0.5f;
                     if (io.KeyShift && sz.x > 1e-3f && sz.y > 1e-3f) {
@@ -34010,7 +34023,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                         if (bottom) bb = edge(bb, cy, g_uiGuideY, gyHit);
                         // Stickier snap to the OWNING PARENT's edges so you can drag a
                         // child flush to its parent (and so dragging both corners makes
-                        // it exactly the parent's size) — Unity-style. Parent wins over
+                        // it exactly the parent's size). Parent wins over
                         // the generic guides above, with a slightly larger threshold.
                         if (GameObject* par = OwningUIParent(g_uiDragTarget)) {
                             Vec2 po, ps;
@@ -34047,7 +34060,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                     r.sizePtr->x  = gsnap(newScreen.x / s, gxHit);
                     r.sizePtr->y  = gsnap(newScreen.y / s, gyHit);
                     // Grow/shrink the widget's children with it (label, icon…) so a button
-                    // and its text resize as one group — Unity's scale-tool feel.
+                    // and its text resize as one group — scale-tool feel.
                     if (oldW > 0.5f && oldH > 0.5f)
                         ScaleUIChildrenBy(g_uiDragTarget, r.sizePtr->x / oldW, r.sizePtr->y / oldH);
                     // Undo the scroll offset here (the stored position is scroll-free).
@@ -34065,7 +34078,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                     g_uiDragRaw.y += dy;
                     r.position->x = snap(g_uiDragRaw.x);
                     r.position->y = snap(g_uiDragRaw.y);
-                    // Unity-style smart guides: snap our edges/center to the canvas
+                    // smart guides: snap our edges/center to the canvas
                     // edges/center and to sibling widgets, drawing a guide line.
                     g_uiGuideX = g_uiGuideY = -1.0f;
                     if (g_snap || g_uiSmartSnap) {
@@ -34112,7 +34125,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                         // snapped could never be dragged away again. Recomputed from the
                         // raw rect each frame, the snap now lets go once you drag past it.
                         float pullX = adjX, pullY = adjY;
-                        // Unity-style: a child clings to its OWNING PARENT. Snap our
+                        // a child clings to its OWNING PARENT. Snap our
                         // edges/center to the parent's edges, center and thirds with a
                         // wider (stickier) threshold so it wins over sibling/canvas guides.
                         if (GameObject* par = OwningUIParent(g_uiDragTarget)) {
@@ -34240,7 +34253,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
         // Otherwise pick a widget under the cursor and start moving it.
         if (!g_uiHandled) {
             // Pick the SMALLEST widget under the cursor, not the top-most draw-order one
-            // (Unity selects the most specific element). This makes small widgets on top
+            //. This makes small widgets on top
             // of big panels actually selectable — the old top-most rule made you keep
             // hitting the panel/background. World-space widgets fall back to UIRaycast.
             GameObject* hit = nullptr; float bestArea = 3.4e38f;
@@ -34261,7 +34274,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
             if (hit) {
                 // Clicking a button's label text selects the BUTTON so you always grab and
                 // move the button (and its text) as one. DOUBLE-click drills into the text
-                // child to edit it directly (Unity: click selects the object, double-click
+                // child to edit it directly (click selects the object, double-click
                 // enters it). This makes "move the whole button" the default, reliably.
                 bool drillIn = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
                 if (!drillIn)
@@ -34439,7 +34452,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         if (tr->bold) DrawBitmapText(dl, tr->text, o.x + (fnt ? 1.0f : px), o.y, px, col, 0, 0, false, false, 0, fnt);  // faux-bold
     }
 
-    // 2D collider wireframes (Unity-style green outlines), Scene view only.
+    // 2D collider wireframes, Scene view only.
     if (!gameView && g_showColliders) {
         const ImU32 cg = IM_COL32(90, 230, 120, 255);
         for (const auto& up : objs) {
@@ -34591,7 +34604,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             ed.dirty = true;
         }
     }
-    // Selecting and dragging work in Play too (edits revert on Stop, like Unity).
+    // Selecting and dragging work in Play too.
     // Skipped while a UI widget or a sprite handle is being dragged.
     else if (ed.selected() && hovered && !g_uiHandled && g_spriteHandle < 0 &&
         !IsUIElement(ed.selected()) &&
@@ -34639,7 +34652,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         ed.camPitch = Mathf::Clamp(ed.camPitch + io.MouseDelta.y * 0.4f, -85.0f, 85.0f);
     }
     // Fly the Scene camera with WASD while holding the right mouse button
-    // (Unity-style); Q/E go down/up, Shift moves faster. Right-mouse gating keeps
+    //; Q/E go down/up, Shift moves faster. Right-mouse gating keeps
     // the W/E/R tool shortcuts working normally when not flying.
     if (!gameView && ImGui::IsMouseDown(ImGuiMouseButton_Right) && !io.WantTextInput) {
         float yr = ed.camYaw * Mathf::Deg2Rad;
@@ -34663,7 +34676,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     Mat4 view = Mat4::LookAt(eye, ed.camTarget, Vec3::Up);
     Mat4 proj = Mat4::Perspective(g_editorFov, canvasSize.x / canvasSize.y, g_editorNear, 2000.0f);
     // Where the 3D image is drawn within the panel. The Game view honors the main
-    // camera's normalized viewport rect (Unity's Camera.rect) for split-screen /
+    // camera's normalized viewport rect for split-screen /
     // mini-map / picture-in-picture; the Scene view always fills the panel.
     ImVec2 view3dMin = canvasPos, view3dMax = canvasEnd;
     // The Game view renders through the scene's main camera instead.
@@ -34671,7 +34684,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         if (Camera* mc = SceneCamera(ed.scene())) {
             eye = mc->gameObject->transform->Position();
             view = mc->ViewMatrix();
-            // Clamp the rect to 0..1 and compute the on-panel pixel rectangle. Unity's
+            // Clamp the rect to 0..1 and compute the on-panel pixel rectangle. The
             // rect y is measured from the BOTTOM, so flip it for top-left screen space.
             float rw = Mathf::Clamp(mc->rectW, 0.01f, 1.0f), rh = Mathf::Clamp(mc->rectH, 0.01f, 1.0f);
             float rx = Mathf::Clamp(mc->rectX, 0.0f, 1.0f - rw), ry = Mathf::Clamp(mc->rectY, 0.0f, 1.0f - rh);
@@ -34831,7 +34844,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                                          {6,4},{0,4},{1,5},{2,6},{3,7}};
             for (auto& ed2 : e) line(cr[ed2[0]], cr[ed2[1]], col, 1.0f);
         };
-        const ImU32 kColliderCol = IM_COL32(90, 230, 120, 255); // Unity-ish green
+        const ImU32 kColliderCol = IM_COL32(90, 230, 120, 255); // collider green
 
         // Project a world point to the screen if it's in front of the near plane.
         auto project = [&](const Vec3& wp, ImVec2& out) -> bool {
@@ -34873,7 +34886,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 dl->AddLine(ImVec2(s.x - 3, s.y + r + 1), ImVec2(s.x + 3, s.y + r + 1), col, 1.6f);
             }
         };
-        // A small name label under an icon (Unity shows the object name by its gizmo).
+        // A small name label under an icon.
         auto iconLabel = [&](ImVec2 s, const char* nm, ImU32 col) {
             ImVec2 ts = ImGui::CalcTextSize(nm);
             ImVec2 tp(s.x - ts.x * 0.5f, s.y + 12.0f);
@@ -35038,7 +35051,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     line(p, c[i], col);
                     line(c[i], c[(i + 1) % 4], col);
                 }
-                ImVec2 sp;   // Unity-style billboard icon + name at the camera's position
+                ImVec2 sp;   // billboard icon + name at the camera's position
                 if (project(p, sp)) { cameraIcon(sp, col, up.get() == ed.selected()); iconLabel(sp, up->name.c_str(), col); }
             }
 
@@ -35076,11 +35089,11 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     line(tip, tip - f * 0.3f + u * 0.15f, col);
                     line(tip, tip - f * 0.3f - u * 0.15f, col);
                 }
-                ImVec2 sp;   // Unity-style billboard icon + name at the light's position
+                ImVec2 sp;   // billboard icon + name at the light's position
                 if (project(p, sp)) { lightIcon(sp, col, (int)lt->type, up.get() == ed.selected()); iconLabel(sp, up->name.c_str(), col); }
             }
 
-            // 3D collider wireframes (Unity-style green outlines).
+            // 3D collider wireframes.
             if (g_showColliders) {
                 const Vec3 X{1, 0, 0}, Y{0, 1, 0}, Z{0, 0, 1};
                 if (auto* bc = up->GetComponent<BoxCollider3D>())
@@ -35337,7 +35350,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // overlays the Canvas; only the Game view (what the player sees) draws UI here.
     if (gameView || (g_showUIOverlay && !g_uiOnlyMode)) DrawUIOverlay(ed, dl, canvasPos, canvasSize, gameView);
 
-    // Camera Preview (Unity): when a perspective Camera is selected, show what
+    // Camera Preview: when a perspective Camera is selected, show what
     // it sees in a small inset in the corner of the Scene view (slot 2 so it
     // doesn't clobber the Scene/Game textures).
     if (!gameView && ed.selected()) {
@@ -35799,7 +35812,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     }
 
     // ---- Collider edit: drag the 6 face handles of the selected Box collider to
-    //      hand-fit it to the model (Unity's "Edit Collider"). Suppresses the
+    //      hand-fit it to the model ("Edit Collider"). Suppresses the
     //      transform gizmo while active, like mesh-edit mode. ----
     bool colliderEditActive = !gameView && g_colliderEdit && ed.selected()
                               && ed.selected()->GetComponent<BoxCollider3D>();
@@ -35875,12 +35888,12 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     }
 
     // ---- Transform gizmo: 3 colored axis handles at the selected object
-    //      (Unity W/E/R). Grab a handle and drag to move/rotate/scale on that
+    //. Grab a handle and drag to move/rotate/scale on that
     //      axis. X=red, Y=green, Z=blue. ----
     GameObject* sel = (meshEditActive || colliderEditActive) ? nullptr : ed.selected();
     bool grabbedThisClick = false;
     // The transform gizmo works in Play too, so you can move/rotate/scale a
-    // selection live (edits revert on Stop, just like Unity).
+    // selection live.
     if (sel) {
         Transform* t = sel->transform;
         // Cameras may be moved/rotated but not scaled (scaling a camera warps the
@@ -35904,13 +35917,13 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         for (int i = 0; i < 3; ++i) tipOk[i] = toScreen(vp * Vec4{o + axis[i] * L, 1}, tip[i]);
 
         // View basis at the object (camera-facing) for the screen-aligned ring
-        // and for fading the back half of each ring, Unity-style.
+        // and for fading the back half of each ring.
         Vec3 vToCam = eye - o;
         Vec3 vdir   = vToCam.Normalized();
         Vec3 vright = Vec3::Cross(Vec3::Up, vdir).Normalized();
         Vec3 vup    = Vec3::Cross(vdir, vright);
 
-        // Rotate uses Unity-style rings: a circle per axis (X/Y/Z) plus an outer
+        // Rotate uses rings: a circle per axis (X/Y/Z) plus an outer
         // screen-aligned ring (i==3) for view-axis "trackball" spin. Move/Scale
         // use straight arms with knobs.
         const int RING_SEG = 64;
@@ -36117,7 +36130,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
     }
 
-    // ---- Vertex snapping (Unity's V): hold V and drag the selected mesh — the
+    // ---- Vertex snapping: hold V and drag the selected mesh — the
     // vertex of it nearest the cursor glues to the nearest vertex of any OTHER
     // mesh under the cursor. Large meshes are stride-sampled to stay responsive.
     static bool s_vSnapDragging = false;
@@ -36251,7 +36264,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
 // ---- Shared game / UI screen resolution ------------------------------------
 // The Game tab and the UI-Only editor frame UI against the SAME screen, so what you
-// lay out in the UI editor is exactly what ships — WYSIWYG, the way Unity's Game-view
+// lay out in the UI editor is exactly what ships — WYSIWYG, the way Game-view
 // resolution drives the Canvas rect you edit in the Scene view. Both index this one
 // table with g_gameResPreset; the UI editor has no separate aspect setting anymore.
 struct GameResPreset { const char* name; float aspect; int w, h; };
@@ -36339,7 +36352,7 @@ static void CurrentGameRes(float& aspect, int& w, int& h) {
 
 // Letterbox the current game screen inside an available region (centered). "Free"
 // aspect fills the region. Also returns the CanvasScaler resolution-scale a fixed-
-// resolution HUD previews at (Unity's UIResolutionScale = on-screen height / target
+// resolution HUD previews at (UIResolutionScale = on-screen height / target
 // height) so a Constant-Pixel-Size canvas looks identical in the editor and the game.
 static void LetterboxGameScreen(ImVec2 origin, ImVec2 avail,
                                 ImVec2& outPos, ImVec2& outSize, float& outResScale) {
@@ -36495,7 +36508,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show ONLY the selected object and its children in the Scene view.\nView-only: the Game view and Play mode are unaffected.");
         }
         bool camSel = ed.view3D && ed.selected() && ed.selected()->GetComponent<Camera>();
-        // Unity's Align With View: snap the selected Camera to the editor eye.
+        // Align With View: snap the selected Camera to the editor eye.
         if (ImGui::MenuItem("Align camera to view", nullptr, false, camSel)) {
             float yawR = ed.camYaw * Mathf::Deg2Rad, pitchR = ed.camPitch * Mathf::Deg2Rad;
             Vec3 dir{Mathf::Cos(pitchR) * Mathf::Sin(yawR), Mathf::Sin(pitchR),
@@ -36595,7 +36608,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
             ImGui::EndPopup();
         }
         // Anchor presets: a 3x3 quick-picker to snap the selected UI element to a canvas
-        // corner / edge / center (Unity's anchor presets). Only when a UI widget is selected.
+        // corner / edge / center. Only when a UI widget is selected.
         if (ed.selected()) {
             UIRect ar = GetUIRect(ed.selected());
             if (ar.anchorPtr && ar.position) {
@@ -36702,7 +36715,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     ImVec2 canvasPos  = ImGui::GetCursorScreenPos();
     ImVec2 canvasSize = ImGui::GetContentRegionAvail();
     // ---- View-axis gizmo (top-right corner, 3D view): shows the camera
-    // orientation; CLICK an axis tip to snap to that view (Unity's view cube).
+    // orientation; CLICK an axis tip to snap to that view.
     if (ed.view3D && canvasSize.x > 160.0f && canvasSize.y > 120.0f) {
         float yawR = ed.camYaw * Mathf::Deg2Rad, pitchR = ed.camPitch * Mathf::Deg2Rad;
         Vec3 dir{Mathf::Cos(pitchR) * Mathf::Sin(yawR), Mathf::Sin(pitchR),
@@ -36778,7 +36791,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
 
     // Drag an asset from the Project panel straight onto the Scene to place it
-    // (Unity-style): prefabs instantiate, scenes open, images become sprites,
+    // prefabs instantiate, scenes open, images become sprites,
     // OBJ models become 3D objects. New objects land at the camera's focus.
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
@@ -37018,7 +37031,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     ImGui::End();
 }
 
-// Unity-style "Game" view: renders the scene through its main camera with no
+// "Game" view: renders the scene through its main camera with no
 // editor chrome (grid, gizmos, selection) — what the built game shows. 2D or 3D
 // follows the camera's projection. Read-only; press Play to make it live.
 // ---- Sprite Editor (shape helpers live near the top of the file) -----------
@@ -37404,7 +37417,7 @@ void DrawUIThemer(EditorState& ed) {
     ImGui::End();
 }
 
-// Advanced Unity-style CPU/GPU profiler. A frame/CPU/GPU timeline you can pause and
+// Advanced CPU/GPU profiler. A frame/CPU/GPU timeline you can pause and
 // scrub, a stacked CPU-category area (Scripts / Physics / Render / Other), per-section
 // self/total/calls/%-of-frame with min/avg/max over the window, live draw stats, and
 // CSV copy of the selected frame. Data comes from OKAY_PROFILE scopes in the engine +
@@ -37413,7 +37426,7 @@ void DrawProfiler(EditorState& ed) {
     okay::Profiler& P = okay::Prof();
     if (!ImGui::Begin("Profiler", &g_showProfiler)) { ImGui::End(); return; }
 
-    // Live scene draw stats (mirrors Unity's Stats overlay) -> fed into this frame.
+    // Live scene draw stats -> fed into this frame.
     int objs = 0, tris = 0, parts = 0;
     for (const auto& up : ed.scene().Objects()) {
         if (!up || !up->active) continue;
@@ -37676,7 +37689,7 @@ void DrawGameView(EditorState& ed) {
     Camera* mc = SceneCamera(ed.scene());
     bool persp = mc && mc->projection == Camera::Projection::Perspective;
 
-    // Resolution / aspect selector (Unity's Game-view dropdown): "Free", aspect ratios,
+    // Resolution / aspect selector: "Free", aspect ratios,
     // and fixed pixel resolutions (desktop + mobile). Backed by the shared kGameResPresets
     // table so the Game tab and the UI-Only editor always frame UI against the same screen.
     int& s_aspect = g_gameResPreset;   // persisted across sessions
@@ -37763,7 +37776,7 @@ void DrawGameView(EditorState& ed) {
 
     // Letterbox the game screen centered in the available region — the SAME helper the
     // UI-Only editor uses, so the two views are pixel-identical. resScale is applied
-    // just below (Unity's UIResolutionScale) for fixed-resolution HUD previews.
+    // just below for fixed-resolution HUD previews.
     ImVec2 canvasSize, canvasPos; float resScale = 1.0f;
     LetterboxGameScreen(origin, avail, canvasPos, canvasSize, resScale);
     ImVec2 canvasEnd(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y);
@@ -37791,7 +37804,7 @@ void DrawGameView(EditorState& ed) {
 
     // Preview a fixed-resolution HUD at the picked resolution: a Constant-Pixel-Size
     // canvas authored for the target height should shrink/grow with the on-screen size,
-    // just like Unity's Game view. For a live (free) resolution the on-screen canvas *is*
+    // just like Game view. For a live (free) resolution the on-screen canvas *is*
     // the target, so the scale is 1. ScaleWithScreenSize canvases ignore this entirely.
     // `resScale` is exactly what the UI-Only editor applies — same helper, same result.
     okay::UIResolutionScale() = resScale;
@@ -37843,7 +37856,7 @@ void DrawGameView(EditorState& ed) {
         dl->AddText(tp, IM_COL32(220, 220, 230, 220), resLbl);
     }
 
-    // Play-mode cue (Unity-style): a soft accent border around the running view so
+    // Play-mode cue: a soft accent border around the running view so
     // it's unmistakable you're live, plus a small "● PLAYING" pill.
     if (ed.isPlaying()) {
         ImU32 pc = g_paused ? IM_COL32(240, 180, 55, 255) : IM_COL32(90, 215, 110, 255);
@@ -37883,7 +37896,7 @@ void DrawGameView(EditorState& ed) {
                           IM_COL32(0, 0, 0, 120), 3.0f);
         dl->AddText(ip, IM_COL32(200, 202, 212, 230), idle);
     }
-    // In-view Stats overlay (Unity's Game-view Stats): FPS, frame time, object
+    // In-view Stats overlay: FPS, frame time, object
     // and triangle counts, drawn over the running game's top-right corner.
     if (g_gameStatsOverlay) {
         int objs = 0, tris = 0, active3d = 0;
@@ -38512,7 +38525,7 @@ int main(int argc, char** argv) {
     // "MESSAGE FROM DEAR IMGUI" overlay about conflicting widget IDs (duplicate
     // button labels like "Load" in a panel) at end users.
     io.ConfigDebugHighlightIdConflicts = false;
-    // A clean, modern proportional UI font (Roboto Medium, embedded — Unity's
+    // A clean, modern proportional UI font (Roboto Medium, embedded — the
     // runtime/Material typeface) instead of Dear ImGui's tiny built-in bitmap font.
     // Crisper at any zoom and far more legible across the whole editor. Falls back
     // to the default font if the atlas build ever fails.
@@ -38652,7 +38665,7 @@ int main(int argc, char** argv) {
     splashTick();   // keep the loading frame moving right up to the first real frame
 
     // Route engine logs (and script print/log/debug output) into the Console
-    // with the matching severity (Unity-style info/warning/error).
+    // with the matching severity.
     Log::sink = [](Log::Level lvl, const std::string& msg) {
         int level = lvl == Log::Level::Error ? 2 : lvl == Log::Level::Warning ? 1 : 0;
         ConsoleLog(msg, level);
@@ -38733,7 +38746,7 @@ int main(int argc, char** argv) {
         float dt = (float)((now - last) / (double)SDL_GetPerformanceFrequency());
         last = now;
 
-        // Edit-mode particle preview (Unity-style scene-view preview): simulate
+        // Edit-mode particle preview: simulate
         // emitters so the effect is visible without pressing Play. During Play the
         // normal scene tick drives them, so only do this while stopped.
         if (!ed.isPlaying()) {
@@ -38854,7 +38867,7 @@ int main(int argc, char** argv) {
             if (ks2[SDL_SCANCODE_ESCAPE]) g_gameCursorReleased = true;
             else if (g_gameCursorReleased && g_gameCanvasHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
                 g_gameCursorReleased = false;
-            // Unity-style hand-off (mirrors the player): when a bag/chest opens or closes
+            // hand-off (mirrors the player): when a bag/chest opens or closes
             // while the game wants a locked cursor, warp the pointer to the Game-view
             // centre so it appears in the middle on open and the look anchor resets on
             // close before re-locking.
@@ -39421,7 +39434,7 @@ int main(int argc, char** argv) {
         TickTweenPreview(ed, ImGui::GetIO().DeltaTime);
 
         // Play-mode tint: a colored border around the whole window so it's
-        // obvious the game is running (green) or paused (amber) — like Unity.
+        // obvious the game is running (green) or paused (amber) —.
         if (ed.isPlaying()) {
             ImGuiViewport* mv = ImGui::GetMainViewport();
             ImU32 c = g_paused ? IM_COL32(220, 180, 60, 200) : IM_COL32(70, 200, 110, 200);

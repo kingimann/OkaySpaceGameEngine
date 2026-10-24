@@ -22,11 +22,12 @@ struct ScriptHost {
     std::unordered_map<std::string, vs::VsValue> globals;
 };
 
-/// One syntax problem found by ValidateAll — a 1-based source line and a
-/// human-readable message. The editor lists these in its Problems panel.
+/// One problem found by ValidateAll — a 1-based source line, a human-readable
+/// message, and how serious it is. The editor lists these in its Problems panel.
 struct ScriptDiagnostic {
     int         line = 0;
     std::string message;
+    int         severity = 0;   ///< 0 = error (won't run as written), 1 = warning (runs, but probably not as meant / does nothing)
 };
 
 /// Abstract scripting backend. Load source once, then drive Start/Update.
@@ -83,7 +84,7 @@ public:
     virtual vs::VsValue GetGlobal(const std::string& name) const = 0;
 
     /// Set a global variable — used to apply a component's serialized public-field
-    /// overrides over the script's defaults (Unity-style inspector values).
+    /// overrides over the script's defaults.
     virtual void SetGlobal(const std::string& /*name*/, const vs::VsValue& /*v*/) {}
 };
 

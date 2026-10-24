@@ -3,7 +3,7 @@
 
 namespace okay {
 
-/// 2D vector, modeled after Unity's `Vector2`.
+/// 2D vector, modeled after `Vector2`.
 struct Vec2 {
     float x = 0.0f, y = 0.0f;
 
@@ -91,7 +91,7 @@ struct Vec2 {
         float r = degrees * Mathf::Deg2Rad, c = Mathf::Cos(r), s = Mathf::Sin(r);
         return {v.x * c - v.y * s, v.x * s + v.y * c};
     }
-    /// Critically-damped spring toward `target` (Unity's Vector2.SmoothDamp).
+    /// Critically-damped spring toward `target`.
     /// `velocity` is carried between calls. Great for smooth camera/object follow.
     static Vec2 SmoothDamp(const Vec2& current, Vec2 target, Vec2& velocity,
                            float smoothTime, float deltaTime,

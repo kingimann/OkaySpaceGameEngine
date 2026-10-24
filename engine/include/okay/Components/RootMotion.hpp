@@ -1,6 +1,6 @@
 #pragma once
 // ---------------------------------------------------------------------------
-// RootMotion — drive the body from the animation's root movement (Unity's "Apply
+// RootMotion — drive the body from the animation's root movement ("Apply
 // Root Motion"). Each frame it reads how far the animated `rootNode` bone moved,
 // applies that to the GameObject's world position, and re-centers the bone so the
 // mesh doesn't double-move. Answers the classic question "does the animation drive

@@ -1451,7 +1451,7 @@ void ActionList::Update(float dt) {
                 Vars()[pre + "_x"] = h.point.x;
                 Vars()[pre + "_y"] = h.point.y;
                 Vars()[pre + "_z"] = h.point.z;
-                Vars()[pre + "_nx"] = h.normal.x;   // surface normal (Unity's hit.normal)
+                Vars()[pre + "_nx"] = h.normal.x;   // surface normal
                 Vars()[pre + "_ny"] = h.normal.y;
                 Vars()[pre + "_nz"] = h.normal.z;
                 StrVars()[pre + "_name"] = h.gameObject ? h.gameObject->name : std::string();

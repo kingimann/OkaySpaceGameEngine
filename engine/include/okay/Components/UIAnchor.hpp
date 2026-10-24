@@ -8,9 +8,9 @@ namespace okay {
 /// center so layouts adapt to the window size. `position` is then an *offset*
 /// from that anchor — e.g. `TopRight` with offset `(-20, 20)` keeps an element
 /// 20px in from the top-right corner whatever the resolution.
-/// The nine fixed points are followed by three *stretch* anchors (Unity's
-/// stretch presets). A stretch widget fills a canvas axis and reinterprets its
-/// `position`/`size` as MARGINS (Unity's offsetMin/offsetMax) rather than an
+/// The nine fixed points are followed by three *stretch* anchors
+/// (stretch presets). A stretch widget fills a canvas axis and reinterprets its
+/// `position`/`size` as MARGINS rather than an
 /// offset + extent — see ResolveAnchorRect. New values are appended so the
 /// serialized anchor index of existing scenes is unchanged.
 enum class UIAnchor {
@@ -41,7 +41,7 @@ struct UICanvas {
 
 /// Extra scale applied to Constant-Pixel-Size UI so the editor's Game view can preview
 /// the game at a chosen resolution (a fixed-px HUD looks smaller at 4K than at 720p,
-/// just like Unity). 1.0 everywhere except the editor Game view when a fixed resolution
+///). 1.0 everywhere except the editor Game view when a fixed resolution
 /// is selected, where it's (on-screen height / target height). ScaleWithScreenSize
 /// canvases are unaffected — they already scale with the reference resolution.
 inline float& UIResolutionScale() { static float s = 1.0f; return s; }
@@ -73,7 +73,7 @@ inline Vec2 ResolveAnchor(UIAnchor a, const Vec2& position, const Vec2& size) {
 /// Resolve a widget to BOTH its absolute top-left pixel and its effective size on a
 /// canvas of `cw` x `ch`. For the nine fixed anchors this just forwards to
 /// ResolveAnchor and passes `size` through. For the three stretch anchors it
-/// reinterprets `position`/`size` as margins (Unity's offsetMin/offsetMax):
+/// reinterprets `position`/`size` as margins:
 ///   - StretchHorizontal: width = cw - left - right (position.x=left, size.x=right);
 ///                        height stays `size.y`, top stays `position.y`.
 ///   - StretchVertical:   height = ch - top - bottom (position.y=top, size.y=bottom);

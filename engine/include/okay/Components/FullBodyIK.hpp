@@ -16,7 +16,7 @@
 // tighter than their limit; the chest bend is spread over the spine bones.
 //
 // Bones are found automatically from common rig names (Mixamo "mixamorig:LeftArm",
-// Unity/Blender "UpperArm.L", "thigh_l", the built-in Character parts "L Hand"...)
+// Blender-style "UpperArm.L", "thigh_l", the built-in Character parts "L Hand"...)
 // under this object, or assigned by name. Bones are ROTATED (so a skinned mesh
 // bends with them); rigs whose joints aren't parented are positioned as well.
 // Solve happens in LateUpdate, after every animation driver.

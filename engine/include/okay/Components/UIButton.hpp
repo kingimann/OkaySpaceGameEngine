@@ -35,7 +35,7 @@ public:
     /// it); the label shifts right to make room.
     std::string icon;
     float iconSize = 0.0f;
-    // Assignable click action (Unity-style OnClick): when clicked, call a named
+    // Assignable click action: when clicked, call a named
     // public script function. `clickTarget` is the object whose script to call
     // (blank = this button's own object); `clickFunction` is the function name
     // (blank = none). This runs in addition to a sibling script's on_click().
@@ -63,7 +63,7 @@ public:
     Vec2  shadowOffset{0.0f, 3.0f};
     float shadowSoftness = 0.0f;   // 0 = crisp; higher = a soft blurred shadow
     /// Grow effect when hovered/focused: 1 = none, e.g. 1.1 = 10% bigger. A
-    /// lightweight Unity-style "transition" for tactile menus.
+    /// lightweight "transition" for tactile menus.
     float hoverScale = 1.0f;
     /// When false the button is greyed out and ignores hover/click (e.g. a
     /// "Continue" entry with no save). Scripts toggle it via set_interactable().
@@ -72,7 +72,7 @@ public:
     bool focusable = true;
     /// Text color while hovered/focused (defaults to the normal text color).
     Color hoverTextColor = Color::White;
-    /// Color-transition speed (units/sec) for hover/press; 0 = instant (Unity's
+    /// Color-transition speed (units/sec) for hover/press; 0 = instant (the
     /// ColorTween). The renderer should use DisplayColor().
     float transitionSpeed = 0.0f;
     /// Toggle button: a click flips `isOn` and the button stays in its pressed

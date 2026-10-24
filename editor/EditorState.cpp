@@ -6,7 +6,7 @@
 #include <filesystem>
 
 namespace {
-// Every new 3D primitive ships with a collider fitted to its mesh (Unity-style), so
+// Every new 3D primitive ships with a collider fitted to its mesh, so
 // objects block and can be stood on the moment they're created. A box matches most
 // primitives; it's auto-fit so it tracks the mesh.
 void AddFittedBoxCollider(okay::GameObject* go) {
@@ -196,7 +196,7 @@ GameObject* EditorState::CreateCube(const std::string& name) {
     GameObject* go = m_scene.CreateGameObject(name);
     auto* mr = go->AddComponent<MeshRenderer>();
     mr->mesh = Mesh::Cube();
-    mr->color = Color::FromBytes(200, 200, 205); // neutral gray (Unity/Blender)
+    mr->color = Color::FromBytes(200, 200, 205); // neutral gray
     AddFittedBoxCollider(go);
     m_selected = go;
     view3D = true;
@@ -209,7 +209,7 @@ GameObject* EditorState::CreatePyramid(const std::string& name) {
     GameObject* go = m_scene.CreateGameObject(name);
     auto* mr = go->AddComponent<MeshRenderer>();
     mr->mesh = Mesh::Pyramid();
-    mr->color = Color::FromBytes(200, 200, 205); // neutral gray (Unity/Blender)
+    mr->color = Color::FromBytes(200, 200, 205); // neutral gray
     AddFittedBoxCollider(go);
     m_selected = go;
     view3D = true;
@@ -222,7 +222,7 @@ GameObject* EditorState::CreateMesh(const std::string& meshName) {
     GameObject* go = m_scene.CreateGameObject(meshName);
     auto* mr = go->AddComponent<MeshRenderer>();
     mr->mesh = Mesh::FromName(meshName);
-    mr->color = Color::FromBytes(200, 200, 205); // neutral gray (Unity/Blender)
+    mr->color = Color::FromBytes(200, 200, 205); // neutral gray
     AddFittedBoxCollider(go);
     m_selected = go;
     view3D = true;
@@ -296,7 +296,7 @@ void EditorState::NewScene() {
     StopNetwork();
     m_scene.Clear();
     m_scene.SetName("Untitled");
-    // Every scene starts with a Main Camera (Unity-like) so a fresh/empty scene can
+    // Every scene starts with a Main Camera so a fresh/empty scene can
     // render and Play right away. Templates Clear() the scene and add their own, so
     // this never doubles up.
     GameObject* camObj = m_scene.CreateGameObject("Main Camera");
@@ -332,7 +332,7 @@ void EditorState::NewScene3D() {
     m_scene.SetName("Untitled 3D");
     // NewScene already made a perspective Main Camera at {0,2,10}; reuse it.
 
-    // A polished, populated default (like Unreal's default level, not an empty
+    // A polished, populated default (like default level, not an empty
     // void): a ground plane, a warm sun with soft sky fill, and a couple of hero
     // shapes — so lighting, shadows, sky and reflections all read immediately.
 

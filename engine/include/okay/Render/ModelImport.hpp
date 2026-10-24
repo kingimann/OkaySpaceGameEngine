@@ -59,7 +59,7 @@ ModelReport AnalyzeModel(Scene& scene, GameObject* root);
 /// Make an imported humanoid play the engine's BUILT-IN animations (idle,
 /// walk, run, jump, gestures, emotions, authored clips) on its OWN skeleton and
 /// skin: adds a Character (drive-external) + HumanoidRetarget to `modelRoot`,
-/// matching bones by name (Mixamo, Unreal/Quaternius, Blender/Rigify...).
+/// matching bones by name.
 /// Returns how many of the 15 humanoid bones were found (< 8 = not set up;
 /// `outLog` says why).
 int EnableBuiltinAnimations(Scene& scene, GameObject* modelRoot, std::string* outLog = nullptr);

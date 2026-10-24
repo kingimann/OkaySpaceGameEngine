@@ -270,7 +270,7 @@ void Physics2D::Step(Scene& scene, float dt) {
     if (dt <= 0.0f) return;
 
     // Sleeping thresholds: below these speeds for kSleepTime seconds, a dynamic
-    // body sleeps (skipped until woken). Mirrors Unity/Box2D's rest optimisation.
+    // body sleeps (skipped until woken). Mirrors Box2D's rest optimisation.
     constexpr float kLinSleep = 0.05f;   // world units / second
     constexpr float kAngSleep = 2.0f;    // degrees / second
     constexpr float kSleepTime = 0.5f;   // seconds at rest before sleeping
@@ -399,7 +399,7 @@ void Physics2D::Step(Scene& scene, float dt) {
                                              rb ? rb->bounciness : 0.0f);
                         // Below a small approach speed, drop restitution so bodies
                         // settle (and then sleep) instead of buzzing with micro-bounces
-                        // (Box2D/Unity's velocity threshold).
+                        //.
                         if (-velAlongNormal < 0.5f) e = 0.0f;
                         jImp = -(1.0f + e) * velAlongNormal / denom;
                         Vec2 impulse = c.normal * jImp;

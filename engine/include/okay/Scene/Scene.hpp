@@ -17,7 +17,7 @@ class Camera;
 class IRenderer;
 
 /// Owns a graph of GameObjects and drives their lifecycle and rendering.
-/// Analogous to a Unity Scene.
+/// One level / screen of the game.
 class Scene {
 public:
     explicit Scene(std::string name = "Scene");

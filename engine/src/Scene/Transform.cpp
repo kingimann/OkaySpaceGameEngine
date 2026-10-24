@@ -83,7 +83,7 @@ void Transform::SetParent(Transform* parent, bool worldPositionStays) {
     }
     m_parent = parent;
     if (m_parent) m_parent->m_children.push_back(this);
-    // Preserve the world position only when asked (Unity's worldPositionStays).
+    // Preserve the world position only when asked.
     if (worldPositionStays) SetPosition(world);
 }
 

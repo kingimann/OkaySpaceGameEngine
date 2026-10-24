@@ -9,7 +9,7 @@
 
 using namespace okay;
 
-// OkayScript accepts the C# / Unity style people already know: classes with
+// OkayScript accepts the C# / people already know: classes with
 // fields + methods, using/namespace, casts, enums, generics (List, Dictionary,
 // arrays), methods on values (s.ToUpper(), xs.Add()), lambdas + LINQ-style
 // helpers, Vector3 math, GetComponent<T>() references, collision handlers with
@@ -25,13 +25,13 @@ static bool Try(const char* name, const std::string& body, const char* check = n
     if (check && !sc->VM()->GetGlobal(check).AsBool()) { std::printf("  %s: '%s' is false\n", name, check); return false; }
     return true;
 }
-#define CLS(body) std::string("using UnityEngine;\nusing System.Collections;\n\npublic class Player : MonoBehaviour\n{\n") + body + "\n}\n"
+#define CLS(body) std::string("using System;\nusing System.Collections;\n\npublic class Player : Component\n{\n") + body + "\n}\n"
 
 int main() {
     RUN_SUITE("okayscript_csharp");
     Log::sink = [](Log::Level l, const std::string& m) { if (l >= Log::Level::Error) g_errs.push_back(m); };
 
-    CHECK(Try("using + MonoBehaviour", CLS("void Start() { ok = true; }\nbool ok;"), "ok"));
+    CHECK(Try("using + base class", CLS("void Start() { ok = true; }\nbool ok;"), "ok"));
     CHECK(Try("public field", CLS("public float speed = 5f;\nbool ok;\nvoid Start() { ok = speed == 5; }"), "ok"));
     CHECK(Try("[SerializeField] private", CLS("[SerializeField] private float speed = 5f;\nprivate bool ok = false;\nvoid Start() { ok = speed > 4; }"), "ok"));
     CHECK(Try("[Header] attribute", CLS("[Header(\"Move\")]\npublic float speed = 2.0f;\nbool ok;\nvoid Start(){ ok = speed == 2; }"), "ok"));
@@ -73,7 +73,7 @@ int main() {
     CHECK(Try("GetComponent<T>()", CLS("bool ok = true;\nvoid Start() { var rb = GetComponent<Rigidbody2D>(); }"), "ok"));
     CHECK(Try("Quaternion.Euler rot", CLS("bool ok;\nvoid Start() { transform.rotation = Quaternion.Euler(0, 45, 0); ok = true; }"), "ok"));
     CHECK(Try("Mathf.Sin(Time.time)", CLS("bool ok;\nvoid Update() { transform.position = new Vector3(Mathf.Sin(Time.time), 0, 0); ok = true; }"), "ok"));
-    CHECK(Try("namespace wrapper", "namespace Game {\npublic class P : MonoBehaviour {\n bool ok;\n void Start() { ok = true; }\n}\n}\n", "ok"));
+    CHECK(Try("namespace wrapper", "namespace Game {\npublic class P : Component {\n bool ok;\n void Start() { ok = true; }\n}\n}\n", "ok"));
     CHECK(Try("string.Length / ToUpper", CLS("bool ok;\nvoid Start() { string s = \"ab\"; ok = s.Length == 2 && s.ToUpper() == \"AB\"; }"), "ok"));
     CHECK(Try("x.ToString()", CLS("bool ok;\nvoid Start() { int a = 5; ok = a.ToString() == \"5\"; }"), "ok"));
     CHECK(Try("Dictionary", CLS("bool ok;\nDictionary<string,int> d = new Dictionary<string,int>();\nvoid Start() { d[\"a\"] = 2; ok = d[\"a\"] == 2 && d.ContainsKey(\"a\"); }"), "ok"));

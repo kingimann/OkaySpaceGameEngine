@@ -206,7 +206,7 @@ int main() {
             }
     }
 
-    // ---- Transition interruption (per transition, like Unity's Interruption Source).
+    // ---- Transition interruption.
     {
         using I = AnimStateMachine::Transition::Interrupt;
         auto run = [](I rule, const char* fire2, int framesBetween) {

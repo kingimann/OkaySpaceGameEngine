@@ -7,7 +7,7 @@
 
 namespace okay {
 
-/// An advanced, Unity-style frame profiler. Scoped CPU timers group into named
+/// An advanced, frame profiler. Scoped CPU timers group into named
 /// sections (self + inclusive time, call counts, nesting depth). Every frame is
 /// snapshotted into a ring buffer so the editor can PAUSE and SCRUB back through
 /// recent frames, graph the frame/CPU/GPU timeline, draw a stacked CPU-category
@@ -79,7 +79,7 @@ public:
         return s;
     }
 
-    /// Per-section min/avg/max self-ms across the whole ring (Unity's "Overview").
+    /// Per-section min/avg/max self-ms across the whole ring ("Overview").
     Stat SectionStat(const std::string& name) const {
         Stat r; double sum = 0; bool first = true; int n = Count();
         for (int i = 0; i < n; ++i)

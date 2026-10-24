@@ -11,7 +11,7 @@
 
 namespace okay {
 
-/// A named set of animation tracks (one curve per property), like Unity's
+/// A named set of animation tracks (one curve per property)
 /// `AnimationClip`. Track names the Animator understands out of the box:
 /// "position.x/y/z", "rotation.z", "scale.x/y/z".
 class AnimationClip {

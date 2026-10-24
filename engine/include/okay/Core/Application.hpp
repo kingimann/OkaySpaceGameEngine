@@ -8,7 +8,7 @@ namespace okay {
 class Scene;
 
 /// The engine entry point: owns the renderer and runs the game loop, pumping
-/// Time, Input, Update, and Render each frame. Comparable to Unity's player
+/// Time, Input, Update, and Render each frame. Comparable to player
 /// loop, distilled to its essentials.
 class Application {
 public:

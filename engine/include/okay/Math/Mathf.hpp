@@ -4,7 +4,7 @@
 
 namespace okay {
 
-/// Scalar math helpers, mirroring Unity's `Mathf` static class.
+/// Scalar math helpers, mirroring `Mathf` static class.
 struct Mathf {
     static constexpr float PI       = 3.14159265358979323846f;
     static constexpr float Deg2Rad  = PI / 180.0f;
@@ -88,7 +88,7 @@ struct Mathf {
         return MoveTowards(current, current + d, maxDelta);
     }
 
-    /// Critically-damped spring toward a target (Unity's SmoothDamp).
+    /// Critically-damped spring toward a target.
     static float SmoothDamp(float current, float target, float& velocity,
                             float smoothTime, float deltaTime,
                             float maxSpeed = Infinity) {

@@ -10,7 +10,7 @@
 namespace okay {
 
 /// A named container of Components living in a Scene — the engine's primary
-/// unit of composition, modeled directly on Unity's GameObject.
+/// unit of composition, modeled directly on GameObject.
 class GameObject {
 public:
     std::string name;
@@ -26,7 +26,7 @@ public:
     /// Render/physics layer (0-31). A camera's cullingMask selects which layers it
     /// draws (bit 1<<layer); also used by the physics collision matrix.
     int layer = 0;
-    /// Marked non-moving (Unity-style). A hint for tools/builds; objects flagged
+    /// Marked non-moving. A hint for tools/builds; objects flagged
     /// static are not expected to move at runtime.
     bool isStatic = false;
 

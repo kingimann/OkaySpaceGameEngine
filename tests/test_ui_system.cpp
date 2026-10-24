@@ -187,7 +187,7 @@ int main() {
         CHECK(SceneHasEventSystem(s));
     }
 
-    // --- The Main Menu template builds the Unity UI structure -----------
+    // --- The Main Menu template builds the canvas UI structure -----------
     {
         Scene s("mm");
         Templates::MainMenu(s);

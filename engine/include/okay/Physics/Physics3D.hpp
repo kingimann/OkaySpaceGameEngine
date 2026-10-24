@@ -12,7 +12,7 @@ class Collider3D;
 class GameObject;
 
 /// Data passed to OnCollision3D callbacks describing a contact with another
-/// object (mirrors Unity's Collision, simplified).
+/// object.
 struct Collision3D {
     GameObject* gameObject = nullptr;  // the other object
     Collider3D* collider   = nullptr;  // the other collider
@@ -63,7 +63,7 @@ public:
     /// ignoring the player it's attached to.
     RaycastHit3D Raycast(Scene& scene, const Vec3& origin, const Vec3& direction,
                          float maxDistance = 1e9f, GameObject* ignore = nullptr);
-    /// Cast between two points (Unity's Linecast): the nearest hit on segment a→b.
+    /// Cast between two points: the nearest hit on segment a→b.
     RaycastHit3D Linecast(Scene& scene, const Vec3& a, const Vec3& b, GameObject* ignore = nullptr) {
         Vec3 d = b - a; float len = d.Magnitude();
         if (len < 1e-6f) return RaycastHit3D{};
@@ -73,7 +73,7 @@ public:
     std::vector<Collider3D*> OverlapSphere(Scene& scene, const Vec3& center, float radius);
 
     /// Sweep a sphere of `radius` from `origin` along `direction` and return the
-    /// first collider it touches (Unity's Physics.SphereCast) — a "thick ray" that
+    /// first collider it touches — a "thick ray" that
     /// won't slip through gaps a zero-width ray would. `ignore` skips a GameObject.
     /// The hit point is on the struck surface; the normal points back toward origin.
     RaycastHit3D SphereCast(Scene& scene, const Vec3& origin, const Vec3& direction,

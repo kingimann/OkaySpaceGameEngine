@@ -4,7 +4,7 @@
 
 namespace okay {
 
-/// Unity-style named layers. There are 32 layers (0-31); a GameObject sits on one
+/// named layers. There are 32 layers (0-31); a GameObject sits on one
 /// (GameObject::layer) and a Camera renders a set of them (Camera::cullingMask, a
 /// 32-bit mask). Layer names are global project settings, editable in the editor.
 struct Layers {

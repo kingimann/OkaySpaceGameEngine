@@ -152,7 +152,7 @@ public:
     float stepOffset = 0.35f;
     /// Steepest terrain slope (degrees) the player can stand on / climb; on
     /// steeper ground the uphill velocity is cancelled and the body slides
-    /// back down (Unity's slope limit). 0 = no limit.
+    /// back down. 0 = no limit.
     float slopeLimit = 50.0f;
     void Start() override {
         if (footIK) AttachCharacterFootIK(gameObject);

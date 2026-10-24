@@ -9,7 +9,7 @@
 
 namespace okay {
 
-/// A scrollable UI region (Unity's Scroll View). Its child UI widgets are
+/// A scrollable UI region. Its child UI widgets are
 /// offset by `scroll` and clipped to the viewport rect, with a scrollbar on the
 /// right. Put widgets as children of the scroll view's GameObject and set
 /// `contentHeight` to the total height of that content; the mouse wheel (or a

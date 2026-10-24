@@ -24,7 +24,7 @@ public:
     virtual void EndFrame() = 0;
 
     /// Configure the active orthographic camera. `orthoSize` is the half-height
-    /// of the view in world units (matching Unity's orthographic camera).
+    /// of the view in world units.
     virtual void SetCamera(const Vec3& position, float orthoSize, float aspect) = 0;
 
     /// Draw an axis-aligned, world-space quad centered at `center`.

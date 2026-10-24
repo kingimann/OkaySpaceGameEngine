@@ -33,7 +33,7 @@ public:
     /// Screen-space bounding box (unscaled pixels). The text is laid out *inside*
     /// this box (by `align` horizontally and vertically centered), so a label has
     /// a stable, selectable, resizable rect that doesn't jump around as the text
-    /// changes — like a Unity Text's RectTransform.
+    /// changes — like a UI text box.
     Vec2  size{220.0f, 48.0f};
     /// Screen-space only: which screen point the box anchors to, so a centered
     /// title or a bottom-right score adapts to the window size.
@@ -80,7 +80,7 @@ public:
     /// Word-wrap the text to the box width (screen space). Long words overflow.
     bool  wrap = false;
 
-    /// Best Fit (Unity-style): auto-scale the text so it fills its `size` box — big
+    /// Best Fit: auto-scale the text so it fills its `size` box — big
     /// when there's room, shrinking to fit when the string is long. Overrides
     /// `pixelSize` for drawing (the fitted size is clamped to [autoSizeMin,
     /// autoSizeMax], same font-pixel units as pixelSize). Ignored when `wrap` is on.

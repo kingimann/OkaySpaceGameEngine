@@ -6,7 +6,7 @@
 
 namespace okay {
 
-/// Polled keyboard state, mirroring Unity's static `Input` API. On a terminal
+/// Polled keyboard state, mirroring static `Input` API. On a terminal
 /// it reads non-blocking keystrokes; in non-interactive environments it simply
 /// reports no input, so games still run headlessly.
 class Input {
@@ -53,7 +53,7 @@ public:
     /// Composite WASD / arrow axis in the range [-1, 1] per component.
     static Vec2 AxisWASD();
 
-    /// True if ANY key is held this frame (Unity's Input.anyKey) — "press any key".
+    /// True if ANY key is held this frame — "press any key".
     static bool AnyKey();
     /// True only on the frame a new key was first pressed (Input.anyKeyDown).
     static bool AnyKeyDown();

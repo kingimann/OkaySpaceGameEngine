@@ -2,7 +2,7 @@
 
 namespace okay {
 
-/// How a force is applied to a Rigidbody (matches Unity's ForceMode). Shared by
+/// How a force is applied to a Rigidbody. Shared by
 /// the 2D and 3D bodies.
 ///   * Force          — continuous force, mass-dependent, integrated over the step.
 ///   * Acceleration   — continuous acceleration, mass-independent (ignores mass).

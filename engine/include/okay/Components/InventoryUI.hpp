@@ -34,7 +34,7 @@ public:
     float slotSize = 50.0f;       ///< slot square, pixels (at the reference height)
     float slotGap  = 6.0f;
     bool  scaleToScreen  = true;  ///< scale the whole UI by screenHeight / referenceHeight
-    float referenceHeight = 720.0f; ///< the height the sizes above are authored for (Unity-style)
+    float referenceHeight = 720.0f; ///< the height the sizes above are authored for
     std::string iconFolder = "textures/items/";   ///< <folder><item>.png icons (optional; falls back to the name)
     Color slotColor     = Color::FromBytes(28, 30, 38, 210);
     Color slotBorder    = Color::FromBytes(70, 72, 84, 255);

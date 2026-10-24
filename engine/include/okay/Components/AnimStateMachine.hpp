@@ -1,6 +1,6 @@
 #pragma once
 // ---------------------------------------------------------------------------
-// AnimStateMachine — a Unity-style animation state machine for imported models.
+// AnimStateMachine — an animation state machine for imported models.
 // States name a ModelAnimator clip (with speed/loop overrides); transitions move
 // between them when their condition passes: a clip finishing, a float parameter
 // compared to a value, a bool parameter, or a one-frame trigger. Each transition
@@ -80,7 +80,7 @@ public:
         float       offset = 0.0f;      ///< normalized time the target state starts at (0..1)
         bool        muted = false;      ///< never fires (try the machine without it, keep it for later)
         /// While this transition is blending, which state's transitions may cut it
-        /// short (Unity's Interruption Source). NextState = the target's own
+        /// short. NextState = the target's own
         /// transitions (the engine's long-standing behaviour); None = nothing but
         /// Any State until the blend ends; CurrentState = the state being left.
         enum class Interrupt { NextState = 0, None, CurrentState, CurrentThenNext, NextThenCurrent };
@@ -124,7 +124,7 @@ public:
     /// Called with the state's name when the machine enters / leaves a state.
     std::function<void(const std::string&)> onStateEnter, onStateExit;
 
-    /// Declared parameters (Unity's Animator parameter list): purely for the
+    /// Declared parameters: purely for the
     /// editor — transitions pick from this list instead of retyping names, and
     /// Play mode shows their live values. The runtime maps stay name-keyed, so
     /// undeclared names still work from scripts. Serialized.

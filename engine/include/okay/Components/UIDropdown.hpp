@@ -13,7 +13,7 @@
 
 namespace okay {
 
-/// A screen-space dropdown / option selector (Unity's Dropdown): a header box
+/// A screen-space dropdown / option selector: a header box
 /// showing the current choice; clicking it opens a list of options below, and
 /// picking one sets `value` (the selected index) and calls the sibling
 /// ScriptComponent's on_change() handler. Position/size are window pixels

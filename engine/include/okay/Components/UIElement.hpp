@@ -130,7 +130,7 @@ inline bool IsUIFocused(GameObject* go) {
 }
 
 /// The Canvas a widget belongs to: the nearest Canvas on itself or an ancestor
-/// (Unity's rule that UI lives under a Canvas). nullptr if it isn't parented to
+///. nullptr if it isn't parented to
 /// one — legacy UI then renders against the raw screen at scale 1.
 inline Canvas* OwningCanvas(GameObject* go) {
     for (Transform* t = go ? go->transform : nullptr; t; t = t->Parent())
@@ -266,7 +266,7 @@ inline int CanvasSortOrder(GameObject* go) {
 /// before its children, earlier siblings before later ones. Walking the transform
 /// tree from each root (in scene order) gives every object a rank; orphaned
 /// transforms (shouldn't happen) get ranks after the rest. This is the tie-breaker
-/// the UI draw order uses so nested widgets layer like Unity and bring-to-front /
+/// the UI draw order uses so nested widgets layer naturally and bring-to-front /
 /// send-to-back (sibling reordering) takes effect. `objects` is the scene's
 /// `std::vector<std::unique_ptr<GameObject>>`.
 template <class ObjVec>
@@ -305,7 +305,7 @@ inline std::vector<std::size_t> BuildUIPreOrder(const ObjVec& objects) {
 /// The order UI should be drawn in: primary key the owning Canvas's sortOrder
 /// (higher draws on top), secondary key the scene's hierarchy PRE-ORDER. Returns
 /// indices into `objects`. Renderers that still use per-type passes iterate this so
-/// nested widgets layer like Unity — a child panel above its parent — and sibling
+/// nested widgets layer naturally — a child panel above its parent — and sibling
 /// reordering takes effect. The single-pass renderer instead uses BuildUIPreOrder
 /// directly together with each widget's layer (see BuildUIDrawList).
 template <class ObjVec>
@@ -414,7 +414,7 @@ inline UIScrollView* OwningScrollView(GameObject* go) {
 }
 
 /// The nearest ancestor that is itself a UI widget (so a child can be positioned
-/// RELATIVE to its parent, Unity-style). Scroll Views are skipped — they manage
+/// RELATIVE to its parent). Scroll Views are skipped — they manage
 /// their own content offset/clip — so this is for panels/images/buttons/etc.
 inline GameObject* OwningUIParent(GameObject* go) {
     if (!go || !go->transform) return nullptr;
@@ -429,7 +429,7 @@ inline GameObject* OwningUIParent(GameObject* go) {
 
 /// A button's text child: the first active direct child carrying a screen-space
 /// TextRenderer. When present, the button draws its label through that child
-/// (Unity's Button→Text object) instead of its built-in `label`, so the text can be
+/// instead of its built-in `label`, so the text can be
 /// styled/moved independently. Returns nullptr for legacy buttons with no child.
 inline GameObject* UIButtonTextChild(GameObject* go) {
     if (!go || !go->transform) return nullptr;
@@ -466,7 +466,7 @@ inline bool UIDesignRect(GameObject* go, float dW, float dH, Vec2& origin, Vec2&
 /// Resolve a widget to its final screen rect. Offsets/sizes scale by the owning
 /// Canvas factor. If the widget is parented under another UI widget, its anchor
 /// resolves WITHIN the parent's rect (so moving/resizing the parent moves the
-/// child — like Unity); otherwise it anchors against the whole screen. This is the
+/// child —); otherwise it anchors against the whole screen. This is the
 /// single source of truth shared by rendering, hit-testing and the editor.
 inline bool GetUIScreenRect(GameObject* go, float screenW, float screenH,
                             Vec2& origin, Vec2& size, float* outScale = nullptr) {
@@ -547,7 +547,7 @@ inline float ScrollViewContentHeight(GameObject* sv) {
 inline Vec2 UIResolveSize(GameObject* go, float screenW, float screenH);   // fwd: origin resolves stretch parents through it
 
 /// The top-left screen pixel of a widget, resolved WITHIN its UI parent when it has
-/// one (so moving/resizing the parent moves the child — Unity-style), else against
+/// one, else against
 /// the whole screen. Unscaled (Canvas scale = 1); the renderers that don't apply a
 /// Canvas scale use this so children follow their parent. Mirrors GetUIScreenRect's
 /// anchor math without the scale factor.
@@ -622,7 +622,7 @@ inline Vec2 UIResolveSize(GameObject* go, float screenW, float screenH) {
 
 /// The draw origin for a screen-space TextRenderer that RESPECTS its UI parent:
 /// the label's box is anchored within its owning widget (so a text child of a
-/// panel/button follows it — Unity-style), then the text's own align/vcenter
+/// panel/button follows it), then the text's own align/vcenter
 /// offset is applied. For unparented text (or a Canvas child) this equals the
 /// plain ResolvedScreenPos, so existing layouts are unchanged. Renderers use this
 /// for screen-space text instead of TextRenderer::ResolvedScreenPos so parented

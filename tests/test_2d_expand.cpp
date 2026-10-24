@@ -12,7 +12,7 @@ static bool V2(const Vec2& a, const Vec2& b, float eps = 1e-3f) {
 int main() {
     RUN_SUITE("2d_expand");
 
-    // ---- Vec2 math (GLM/Unity parity) ----
+    // ---- Vec2 math ----
     CHECK(V2(Vec2::Reflect({1, -1}, {0, 1}), {1, 1}));               // bounce off the floor
     CHECK(V2(Vec2::Perpendicular({1, 0}), {0, 1}));                  // +90° CCW
     CHECK(V2(Vec2::Project({3, 4}, {1, 0}), {3, 0}));

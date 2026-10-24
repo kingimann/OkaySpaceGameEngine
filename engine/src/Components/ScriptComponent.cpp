@@ -1,6 +1,7 @@
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Core/Log.hpp"
+#include <algorithm>
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Physics2D.hpp"
@@ -87,8 +88,21 @@ void ScriptComponent::Start() {
 void ScriptComponent::Update(float dt) {
     if (!m_vm) return;
     m_host.transform = transform;
+    // FixedUpdate(): whole fixed steps for the time that passed (at most 5 per frame
+    // so a long hitch can't snowball), before this frame's Update.
+    m_fixedAcc = std::min(m_fixedAcc + dt, kFixedStep * 5.0f);
+    if (m_fixedAcc >= kFixedStep) {
+        m_host.deltaTime = kFixedStep;
+        while (m_fixedAcc >= kFixedStep) { m_fixedAcc -= kFixedStep; m_vm->CallEvent("on_fixed_update"); }
+    }
     m_host.deltaTime = dt;
     m_vm->CallUpdate(dt);
+}
+
+void ScriptComponent::OnDestroy() {
+    if (!m_vm) return;
+    m_vm->CallEvent("on_disable");
+    m_vm->CallEvent("on_destroy");
 }
 
 void ScriptComponent::FireWithObject(const char* event, GameObject* other) {

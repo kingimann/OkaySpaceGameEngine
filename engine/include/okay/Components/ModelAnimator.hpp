@@ -78,7 +78,7 @@ public:
     /// Continuous locomotion (used with driveByMovement): instead of switching
     /// idle/walk/run discretely, the two clips around the current speed are
     /// evaluated at a shared normalized phase (foot cycles stay aligned) and
-    /// blended per bone every frame — a Unity 1D blend tree.
+    /// blended per bone every frame — a 1D blend tree.
     bool smoothLocomotion = false;
 
     /// Push callback for fired clip events; or poll with Consume/NextAnimEvent.

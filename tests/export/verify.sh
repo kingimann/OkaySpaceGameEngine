@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Export tests/export/vs_export.okayscene with the editor's real Build (the same
 # one the Build window runs), run the exported game headless, and check that its
-# visual scripts printed exactly expected.txt. Windows CI runs verify.ps1, the
-# same check for the Windows build.
+# visual scripts printed exactly expected.txt (including the height of a mesh
+# built from a bundled .okaymesh asset). Windows CI runs verify.ps1, the same
+# check for the Windows build.
 #
 #   tests/export/verify.sh path/to/OkayEngine [work-dir]
 # The player runtime must sit beside the editor (Build copies it from there).

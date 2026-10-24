@@ -53,7 +53,7 @@ jobs:
           tests/export/verify.sh build-editor/bin/OkayEngine
 
   # Cross-compile the Windows editor + player (the release build) and the
-  # visual-scripting tests, for the windows-export job to run on real Windows.
+  # visual-scripting and mesh file tests, for the windows-export job to run on real Windows.
   windows-cross:
     name: Cross-compile Windows build (MinGW)
     runs-on: ubuntu-latest
@@ -104,7 +104,7 @@ jobs:
       - name: Build the Windows distribution
         run: scripts/build-windows-dist.sh
 
-      - name: Build the visual-scripting tests for Windows
+      - name: Build the visual-scripting and mesh file tests for Windows
         run: |
           cmake -S . -B build-win-tests -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.toolchain.cmake -DCMAKE_BUILD_TYPE=Release \
@@ -114,10 +114,12 @@ jobs:
             -DCMAKE_PREFIX_PATH="$SDL2_MINGW_PREFIX" \
             -DCMAKE_FIND_ROOT_PATH="/usr/x86_64-w64-mingw32;$SDL2_MINGW_PREFIX" \
             -DOKAY_SODIUM_PREFIX="$OKAY_SODIUM_MINGW_PREFIX"
-          cmake --build build-win-tests -j --target test_vs_acceptance test_vs_debug test_game_fiber
+          cmake --build build-win-tests -j --target test_vs_acceptance test_vs_debug test_game_fiber \
+            test_polymesh test_mesh_asset
           mkdir -p win-tests
           cp build-win-tests/tests/test_vs_acceptance.exe build-win-tests/tests/test_vs_debug.exe \
-             build-win-tests/tests/test_game_fiber.exe "$SDL2_MINGW_PREFIX/bin/SDL2.dll" win-tests/
+             build-win-tests/tests/test_game_fiber.exe build-win-tests/tests/test_polymesh.exe \
+             build-win-tests/tests/test_mesh_asset.exe "$SDL2_MINGW_PREFIX/bin/SDL2.dll" win-tests/
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v6
@@ -129,8 +131,8 @@ jobs:
           retention-days: 3
 
   # On a real Windows machine: run the visual-scripting tests (including the
-  # Windows fiber the editor's debugger uses), then export a game with the
-  # Windows editor and check what its visual scripts print.
+  # Windows fiber the editor's debugger uses) and the mesh file tests, then
+  # export a game with the Windows editor and check what its visual scripts print.
   windows-export:
     name: Windows export check
     needs: windows-cross
@@ -145,11 +147,11 @@ jobs:
           name: windows-ci-build
           path: winbuild
 
-      - name: Run the visual-scripting tests
+      - name: Run the visual-scripting and mesh file tests
         shell: pwsh
         run: |
           $failed = @()
-          foreach ($t in "test_vs_acceptance", "test_vs_debug", "test_game_fiber") {
+          foreach ($t in "test_vs_acceptance", "test_vs_debug", "test_game_fiber", "test_polymesh", "test_mesh_asset") {
             Write-Host "== $t"
             & "winbuild/win-tests/$t.exe"
             if ($LASTEXITCODE -ne 0) { $failed += $t }

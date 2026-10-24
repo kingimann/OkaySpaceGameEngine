@@ -2,6 +2,7 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Render/Mesh.hpp"
 #include "okay/Render/Color.hpp"
+#include <cstdint>
 #include <string>
 
 namespace okay {
@@ -131,6 +132,10 @@ public:
     /// Optional .OBJ model file. When set, the scene loader replaces `mesh` with
     /// the loaded geometry (and Build Game bundles the file alongside the exe).
     std::string meshPath;
+    /// Fingerprint (modeling::GeometryHash) of the geometry `meshPath` held when
+    /// it was loaded, so saving can tell an edited mesh from the file's (0 = not
+    /// known yet). Not saved.
+    std::uint64_t meshPathHash = 0;
 
     /// Procedural variant for named nature props (Tree/Pine/Rock/Bush). 0 = the
     /// canonical model; nonzero regenerates a deterministically-varied shape via

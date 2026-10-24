@@ -145,11 +145,23 @@ With something selected, press **G** (move), **R** (rotate) or **S** (scale) wit
 - **Status line:** the line at the bottom of the view shows the tool, the lock, the current value and the keys.
 - **Undo:** you stay in edit mode after undo and redo.
 
+### Undo in edit mode
+
+While you're in edit mode, **Ctrl+Z** / **Ctrl+Y** (and Edit > Undo / Redo) step through your mesh edits one operation at a time.
+A move, an extrude or a sculpt or paint stroke is each one step.
+When you leave edit mode, the whole session becomes a single scene undo step. Undoing that step later puts the mesh back the way it was before you entered.
+
+### Polygon stats
+
+The Edit Mesh page shows what the mesh is made of: its vertices and faces, how many faces are quads, triangles and n-gons, and whether it's **closed**.
+If it isn't closed, the line says how many open or non-manifold edges it has.
+Faces are counted after merging flat triangle pairs back into quads.
+
 ### Tools greyed out
 
 A tool that needs a selection you don't have yet is greyed out; hover it to see what to select. Extrude Faces, for example, needs faces in Face mode.
-The row **Coming with the polygon mesh core** lists tools that need real quads and edge loops: Knife, Edge Bevel, Dissolve, Bridge Edge Loops and Edge Slide.
-They're planned for the next modeling milestones and can't be used yet.
+The row **Coming next (edge-loop tools)** lists tools that work on quads and edge loops: Knife, Edge Bevel, Dissolve, Bridge Edge Loops and Edge Slide.
+They're planned for the next modeling milestone and can't be used yet.
 
 Selection tools: **Grow** adds every vertex touching the selection,
 **Shrink** peels its rim off, **Linked** flood-fills everything connected
@@ -214,15 +226,42 @@ paint strokes too).
 
 ## Import
 
-Load an `.obj` into the renderer by path, and one-click **Add Physics**
+Load an `.obj` or `.okaymesh` file into the renderer by path (the **Mesh File** field), and one-click **Add Physics**
 (Rigidbody + fitted box). For FBX/GLB/DAE and other formats, drag the file
 into the viewport or use the Project panel — see `docs/animation.md` for
 what animated imports bring in.
 
+## Mesh assets (.okaymesh)
+
+**Save as Mesh Asset** (on the Edit Mesh and Import pages) writes the selected mesh to its own `.okaymesh` file and links the object to it.
+The file goes in the project's `Assets` folder, or next to the scene when there's no project.
+
+- **Shared:** several objects (or scenes) can use the same file.
+- **Saving:** while an object is linked, saving the scene (**Ctrl+S**) also writes your edits back to the file. Every object using it picks the change up.
+- **Building:** Build Game copies the file into the game's `Data` folder, and the game finds it there.
+
+An `.okaymesh` file is plain text and keeps real polygons, not just triangles:
+
+```
+okaymesh 1
+verts 8
+v -0.5 -0.5 -0.5
+...
+faces 6
+f 4 0 3 2 1            # vertex count, then the vertex numbers
+f 4 6 7 4 5 uv ...     # optional: per-corner UVs, color r g b a, mat k
+```
+
+- **Faces:** a face can have any number of corners (quads and n-gons included).
+- **Vertex order:** stays the same when you edit, so vertex 5 is still vertex 5 after a save.
+- **What a face can carry:** per-corner UVs, a face color and a material slot.
+
 ## How edits are saved
 
-- A **primitive** saves by name and regenerates on load.
-- A mesh **loaded from a path** saves the path.
-- A **hand-edited** mesh saves its geometry verbatim in the scene file —
-  positions, triangles, and UVs — so your edits (and texturing) are exactly
-  restored.
+- **Primitive:** saves by name and regenerates on load.
+- **Mesh loaded from a file** (`.obj` or `.okaymesh`): saves the path.
+- **Hand-edited mesh:** saves its geometry verbatim in the scene file (positions, triangles and UVs), so your edits and texturing are exactly restored.
+- **File-backed mesh that you edit:** keeps the edit.
+  - A `.okaymesh` asset is written back to its file when you save.
+  - An `.obj` stays untouched, and the edited geometry is saved in the scene instead.
+  - Before this, editing an `.obj`-backed mesh and reopening the scene lost the edit.

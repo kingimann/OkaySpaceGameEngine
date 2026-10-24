@@ -74,6 +74,8 @@ add_library(okay_engine
     src/Graphics/EmbeddedFont.cpp
     src/Render/ModelImport.cpp
     src/Modeling/EditTransform.cpp
+    src/Modeling/PolyMesh.cpp
+    src/Modeling/MeshAsset.cpp
     third_party/ufbx/ufbx.c
 )
 

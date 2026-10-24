@@ -1,6 +1,7 @@
 # Windows version of verify.sh: export tests/export/vs_export.okayscene with the
 # editor's real Build, run the exported game headless, and check that its visual
-# scripts printed exactly expected.txt.
+# scripts printed exactly expected.txt (including the height of a mesh built from
+# a bundled .okaymesh asset).
 #
 #   powershell -File tests/export/verify.ps1 -Editor path\to\OkayEngine.exe [-Work dir]
 # The player runtime (OkaySpacePlayer.exe + SDL2.dll) must sit beside the editor.

@@ -1,6 +1,8 @@
 #include "okay/Net/Matchmaker.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "EditorState.hpp"
+#include "okay/Modeling/MeshAsset.hpp"
+#include "okay/Modeling/PolyMesh.hpp"
 #include "okay/VisualScript/VsTypes.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
 #include "okay/Core/Log.hpp"
@@ -626,7 +628,46 @@ void EditorState::NewInventory() {
     dirty = false;
 }
 
+int EditorState::SaveEditedMeshAssets(std::string* report) {
+    // A mesh edited since it was loaded from its .okaymesh file is written back
+    // to that file, and every other object using the file picks the change up.
+    int written = 0;
+    for (const auto& up : m_scene.Objects()) {
+        auto* mr = up ? up->GetComponent<MeshRenderer>() : nullptr;
+        if (!mr || !modeling::IsOkayMeshPath(mr->meshPath) || mr->mesh.vertices.empty()) continue;
+        const std::uint64_t h = modeling::GeometryHash(mr->mesh);
+        if (mr->meshPathHash != 0 && h == mr->meshPathHash) continue;
+        if (mr->meshPathHash == 0) {   // not loaded through the serializer: compare with the file
+            Mesh onDisk;
+            if (modeling::LoadMeshAsset(mr->meshPath, onDisk) && modeling::GeometryHash(onDisk) == h) { mr->meshPathHash = h; continue; }
+        }
+        std::string err;
+        if (!modeling::SaveMeshAsset(mr->meshPath, mr->mesh, &err)) {
+            if (report) *report += "couldn't write " + mr->meshPath + ": " + err + "\n";
+            continue;
+        }
+        ++written;
+        if (report) *report += "wrote " + mr->meshPath + "\n";
+        // What the file now holds (quads re-triangulated), for this object and the others using it.
+        Mesh fresh;
+        modeling::LoadMeshAsset(mr->meshPath, fresh);
+        const std::uint64_t fh = modeling::GeometryHash(fresh);
+        mr->meshPathHash = fh;
+        const std::string path = mr->meshPath;
+        for (const auto& other : m_scene.Objects()) {
+            auto* omr = other && other.get() != up.get() ? other->GetComponent<MeshRenderer>() : nullptr;
+            if (omr && omr->meshPath == path) { omr->mesh = fresh; omr->meshPathHash = fh; }
+        }
+        // This object takes what the file holds too, so the scene doesn't also keep
+        // a private copy. Vertex numbers are kept; triangles may be re-ordered.
+        mr->mesh = fresh;
+        if (onMeshTrianglesReordered) onMeshTrianglesReordered(up.get());
+    }
+    return written;
+}
+
 bool EditorState::Save(const std::string& path) {
+    SaveEditedMeshAssets();
     if (!SceneSerializer::SaveToFile(m_scene, path)) return false;
     m_path = path;
     dirty = false;

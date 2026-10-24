@@ -1,4 +1,5 @@
 #include "okay/Scene/SceneSerializer.hpp"
+#include "okay/Modeling/MeshAsset.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -138,6 +139,10 @@
 #include <vector>
 
 namespace okay {
+
+// The folder of the scene file being loaded (LoadFromFile), so mesh files it
+// points at can be found next to it in an exported game.
+static thread_local std::string g_loadingSceneDir;
 
 namespace {
 // Quote a string for the line-based format (escapes quotes/backslashes).
@@ -321,7 +326,18 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         // (Skip when a SkinnedMesh owns this renderer — it serializes the BIND mesh via
         // `skinmesh` below and rebuilds the deformed mesh at runtime; storing the live
         // deformed pose here would be wrong and redundant.)
-        if (mr->mesh.name.empty() && mr->meshPath.empty() && !mr->mesh.vertices.empty()
+        // A mesh loaded from a file (meshPath) that has been edited since is written
+        // too, so the edit isn't lost when the scene is opened again (the `meshgeo`
+        // record wins over the file on load).
+        bool editedFromFile = false;
+        if (!mr->meshPath.empty() && mr->mesh.name.empty() && !mr->mesh.vertices.empty()) {
+            if (mr->meshPathHash == 0) {   // not known yet: fingerprint what the file holds
+                Mesh onDisk; std::string tex;
+                if (modeling::LoadMeshAsset(mr->meshPath, onDisk, &tex, nullptr)) mr->meshPathHash = modeling::GeometryHash(onDisk);
+            }
+            editedFromFile = modeling::GeometryHash(mr->mesh) != mr->meshPathHash;
+        }
+        if (mr->mesh.name.empty() && (mr->meshPath.empty() || editedFromFile) && !mr->mesh.vertices.empty()
             && !go->GetComponent<SkinnedMesh>()) {
             out << "  meshgeo " << mr->mesh.vertices.size();
             for (const Vec3& v : mr->mesh.vertices)
@@ -2375,11 +2391,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (in.peek() == '"') {
                         mr->meshPath = ReadQuoted(in);
                         if (!mr->meshPath.empty()) {
-                            bool ok = false; std::string tex;
-                            Mesh loaded = Mesh::LoadOBJ(mr->meshPath, &ok, &tex);
-                            if (ok && !loaded.vertices.empty()) {
+                            // .okaymesh or .obj; an exported game finds the file next to its scene.
+                            Mesh loaded; std::string tex, err;
+                            if (modeling::LoadMeshAsset(mr->meshPath, loaded, &tex, &err, g_loadingSceneDir)) {
                                 mr->mesh = loaded;
+                                mr->meshPathHash = modeling::GeometryHash(mr->mesh);
                                 if (!tex.empty() && mr->texture.empty()) mr->texture = tex;
+                            } else {
+                                OKAY_WARN("Mesh file for '", go->name, "': ", err);
                             }
                         }
                     }
@@ -5306,7 +5325,13 @@ bool SceneSerializer::LoadFromFile(Scene& scene, const std::string& path, std::s
     std::string raw = ss.str();
     std::string text = DataPack::Unpack(raw);   // decode if obfuscated (plaintext passes through)
     if (text.empty() && DataPack::IsPacked(raw)) { if (error) *error = "tampered or unreadable " + path; return false; }
-    return Deserialize(scene, text, error);
+    // Mesh files the scene points at are also looked for next to it.
+    const std::size_t slash = path.find_last_of("/\\");
+    const std::string prevDir = g_loadingSceneDir;
+    g_loadingSceneDir = slash == std::string::npos ? std::string() : path.substr(0, slash + 1);
+    const bool ok = Deserialize(scene, text, error);
+    g_loadingSceneDir = prevDir;
+    return ok;
 }
 
 bool SceneSerializer::MergeFromText(Scene& scene, const std::string& text, const Vec3& offset,

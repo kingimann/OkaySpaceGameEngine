@@ -29,7 +29,8 @@ void ActionTriggerToEvent(int trigger, const std::string& key, std::string& type
         case T::OnCollisionStay:  type = "OnCollisionStay"; break;
         case T::OnInterval:       type = "OnTimer"; arg = key.empty() ? "1" : key; break;
         case T::OnLateUpdate:     type = "OnLateUpdate"; break;
-        default:                  type = "OnStart"; break;
+        case T::OnTriggerStay:    type = "OnTriggerStay"; break;
+        default:                 type = "OnStart"; break;
     }
 }
 
@@ -82,7 +83,8 @@ void EmitHandler(Writer& w, int trigger, const std::string& key, bool once,
     if (type == "OnStart" || type == "OnUpdate" || type == "OnCollision" || type == "OnTrigger" ||
         type == "OnClick" || type == "OnCollisionExit" || type == "OnTriggerExit" ||
         type == "OnMouseEnter" || type == "OnMouseExit" || type == "OnMouseDown" || type == "OnMouseUp" ||
-        type == "OnMouseOver" || type == "OnCollisionStay" || type == "OnLateUpdate")
+        type == "OnMouseOver" || type == "OnCollisionStay" || type == "OnLateUpdate" ||
+        type == "OnTriggerStay")
         w.o << "entry " << type << ' ' << ev << "\n";
     else if (type == "OnEvent") w.o << "entry OnEvent:" << Token(arg) << ' ' << ev << "\n";
     else w.o << "entry " << type << ':' << Token(arg) << ' ' << ev << "\n";

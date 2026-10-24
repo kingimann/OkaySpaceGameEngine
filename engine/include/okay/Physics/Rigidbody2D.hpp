@@ -21,6 +21,10 @@ public:
     float    drag       = 0.0f;     // linear damping per second
     float    bounciness = 0.0f;     // restitution [0,1]
     float    friction   = 0.4f;     // Coulomb friction coefficient (0 = ice)
+    /// Continuous collision detection: sweep the body along each step's motion so a
+    /// fast object (bullet, thrown ball) stops at a thin wall instead of jumping
+    /// past it between two frames. Opt-in (a circle cast per fast step).
+    bool     continuousCollision = false;
 
     // ---- Angular dynamics (rotation about Z) ----
     /// Spin rate in DEGREES per second (Unity's Rigidbody2D.angularVelocity).

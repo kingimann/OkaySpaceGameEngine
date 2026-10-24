@@ -97,9 +97,42 @@ void ScriptComponent::FireWithObject(const char* event, GameObject* other) {
     m_vm->SetGlobal("other", name);
     m_vm->CallEventWith(event, name);
 }
-void ScriptComponent::FireOther(const char* event, Collider2D* c)          { FireWithObject(event, c ? c->gameObject : nullptr); }
-void ScriptComponent::FireOther(const char* event, Collider3D* c)          { FireWithObject(event, c ? c->gameObject : nullptr); }
-void ScriptComponent::FireOther(const char* event, const Collision2D& c)   { FireWithObject(event, c.gameObject); }
-void ScriptComponent::FireOther(const char* event, const Collision3D& c)   { FireWithObject(event, c.gameObject); }
+// Contact details for the handler about to run: contact_point / contact_normal
+// (vectors), the same as contact_x/_y/_z and contact_nx/_ny/_nz numbers,
+// impact_speed (how hard it hit; 0 for triggers) and other_tag.
+void ScriptComponent::SetContact(const Vec3& point, const Vec3& normal, float impactSpeed,
+                                 GameObject* other) {
+    if (!m_vm) return;
+    m_vm->SetGlobal("contact_point", vs::VsValue(point));
+    m_vm->SetGlobal("contact_normal", vs::VsValue(normal));
+    m_vm->SetGlobal("contact_x", vs::VsValue(point.x));
+    m_vm->SetGlobal("contact_y", vs::VsValue(point.y));
+    m_vm->SetGlobal("contact_z", vs::VsValue(point.z));
+    m_vm->SetGlobal("contact_nx", vs::VsValue(normal.x));
+    m_vm->SetGlobal("contact_ny", vs::VsValue(normal.y));
+    m_vm->SetGlobal("contact_nz", vs::VsValue(normal.z));
+    m_vm->SetGlobal("impact_speed", vs::VsValue(impactSpeed));
+    m_vm->SetGlobal("other_tag", vs::VsValue(other ? other->tag : std::string()));
+}
+void ScriptComponent::FireOther(const char* event, Collider2D* c) {
+    const TriggerContact2D* tc = Physics2D::CurrentTrigger();
+    SetContact(tc ? Vec3{tc->point} : Vec3::Zero, tc ? Vec3{tc->normal} : Vec3::Zero, 0.0f,
+               c ? c->gameObject : nullptr);
+    FireWithObject(event, c ? c->gameObject : nullptr);
+}
+void ScriptComponent::FireOther(const char* event, Collider3D* c) {
+    const TriggerContact3D* tc = Physics3D::CurrentTrigger();
+    SetContact(tc ? tc->point : Vec3::Zero, tc ? tc->normal : Vec3::Zero, 0.0f,
+               c ? c->gameObject : nullptr);
+    FireWithObject(event, c ? c->gameObject : nullptr);
+}
+void ScriptComponent::FireOther(const char* event, const Collision2D& c) {
+    SetContact(Vec3{c.point}, Vec3{c.normal}, c.impactSpeed, c.gameObject);
+    FireWithObject(event, c.gameObject);
+}
+void ScriptComponent::FireOther(const char* event, const Collision3D& c) {
+    SetContact(c.point, c.normal, c.impactSpeed, c.gameObject);
+    FireWithObject(event, c.gameObject);
+}
 
 } // namespace okay

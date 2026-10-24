@@ -372,3 +372,34 @@ OkayScript export: `run_action("...")` / `check_action("...")`.
 
 Toolbar: File, Edit, + Add, Templates ... Fit, zoom, View. The Events list on the
 left jumps to each chain; right- or middle-drag pans; F frames the selection.
+
+## Physics: 3D raycasts, overlaps, trigger stay and contact details
+
+| Node | What it does |
+|---|---|
+| On Trigger Stay | runs every frame something stays inside this object's trigger (healing zones, lava) |
+| Raycast 3D | a line from Origin along Direction (this object, forward, when unwired). Outputs Hit, Point, Normal, Distance, Object. Ignore Triggers passes through trigger colliders |
+| Sphere Cast | the same with a ball of Radius, so it can't slip through small gaps (skips triggers) |
+| Raycast All 3D | everything along the line, nearest first: Count, Objects (names), Nearest |
+| Overlap Sphere / Overlap Box | the objects inside a ball / box (Half Size is half the box): Count, Objects |
+| Contact Point / Contact Normal / Impact Speed | where the collision or trigger touch that started this chain happened, which way the surface faces, and how hard it hit |
+
+The casts and overlaps never hit this object's own colliders. Their setting is an
+optional **layer list** (`0,3` or `Default,Enemy`; `!3` = everything but layer 3;
+blank = all layers). In the text format: `node 5 Raycast3D Default,Enemy`; the
+contact nodes read `contact_point` / `contact_normal` / `impact_speed` from the
+blackboard, which the On Collision / On Trigger events fill in. As OkayScript the
+casts become `ray3_cast("point", origin, direction, dist, "layers")` and the
+overlaps `overlap3("sphere", center, radius)`.
+
+**Actions raycasts** (Raycast Hits / Raycast (store hit)) gained three options next
+to *start Y / ignore / only*: **radius** (above 0 it's a sphere cast), **layers**
+(the same layer list) and **skip triggers**. Stored as the trailing tokens `r:`,
+`lm:` and `nt:1`. The Actions trigger list also has **On Trigger Stay**.
+
+**Physics debug view.** *View ▸ Scene Overlays ▸ Physics Debug* (or the **Physics**
+checkbox on the Game view toolbar) draws colliders (green solid, blue trigger,
+grey asleep), this frame's contact points with their normals (red) and, with
+*Rays cast from scripts* on, every ray / cast made by OkayScript, visual scripts
+and Actions (green to the hit with a white normal, yellow on a miss) — in the
+Scene and Game views while playing. When it's off the physics records nothing.

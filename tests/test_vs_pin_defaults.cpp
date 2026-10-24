@@ -103,7 +103,10 @@ int main() {
             "ForLoop","Gate","DoN","SwitchInt","RandomInt","Ceil","Asin","Acos","Deg2Rad","Rad2Deg","Frac",
             "OneMinus","Saturate","Vec3Cross","Vec3Lerp","Vec3Negate","UpVector","ForwardVector","RightVector",
             "GetScale","GetRotation","SetPositionVec","MoveBy","Rotate3","SetRotation3","SetColor","PlayClip",
-            "SetTimeScale","SetBlendShape","GetBlendShape","MouseWheel","TimeScale","FrameCount"};
+            "SetTimeScale","SetBlendShape","GetBlendShape","MouseWheel","TimeScale","FrameCount",
+            // Physics queries / contact details.
+            "Raycast3D","SphereCast3D","RaycastAll3D","OverlapSphere3D","OverlapBox3D",
+            "ContactPoint","ContactNormal","ImpactSpeed"};
         int built = 0, ran = 0;
         for (const char* t : types) {
             std::string e;

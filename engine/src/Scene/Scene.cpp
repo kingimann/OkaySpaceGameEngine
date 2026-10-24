@@ -110,6 +110,10 @@ void Scene::Update(float deltaTime) {
     // Drop any components removed last frame (their slots were nulled).
     m_active.erase(std::remove(m_active.begin(), m_active.end(), nullptr), m_active.end());
 
+    // Physics debug view: this frame's rays / contacts replace last frame's.
+    m_physics.BeginDebugFrame();
+    m_physics3d.BeginDebugFrame();
+
     m_scheduler.Update(deltaTime);
     {   // Tweens set to ignore the time scale use the real frame time.
         const float ts = Time::TimeScale();

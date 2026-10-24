@@ -2001,6 +2001,22 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << ps->collisionFriction << " " << ps->collisionLifeLoss << " "
             // --- appended (v6): render mode (billboard/stretch) ---
             << (int)ps->renderMode << " " << ps->stretchScale << "\n";
+        // Gradients/curves + motion modules live on their own line (read after the
+        // "particles" line above); older scenes simply don't have it.
+        out << "  particlesfx 1 " << (int)ps->simulationSpace << " " << ps->inheritVelocity << " "
+            << ps->noiseStrength << " " << ps->noiseFrequency << " " << ps->noiseScroll << " "
+            << ps->orbitSpeed << " " << ps->orbitAxis.x << " " << ps->orbitAxis.y << " " << ps->orbitAxis.z << " "
+            << ps->vortexStrength << " " << ps->vortexPull << " " << (ps->speedOverLife ? 1 : 0);
+        const ParticleGradient& g = ps->colorGradient;
+        out << " " << g.count;
+        for (int i = 0; i < g.count; ++i)
+            out << " " << g.stops[i].time << " " << g.stops[i].color.r << " " << g.stops[i].color.g
+                << " " << g.stops[i].color.b << " " << g.stops[i].color.a;
+        for (const ParticleCurve* c : {&ps->sizeCurve, &ps->speedCurve}) {
+            out << " " << c->count << " " << (c->smooth ? 1 : 0);
+            for (int i = 0; i < c->count; ++i) out << " " << c->keys[i].time << " " << c->keys[i].value;
+        }
+        out << "\n";
     }
 }
 } // namespace
@@ -4928,6 +4944,43 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     }
                                 }
                             }
+                        }
+                    }
+                } else if (field == "particlesfx") {
+                    // Gradients/curves + motion modules (follows the "particles" line).
+                    auto* ps = go->GetComponent<ParticleSystem>();
+                    if (!ps) ps = go->AddComponent<ParticleSystem>();
+                    std::string rest; std::getline(in, rest);   // whole line: tolerant of short/extended data
+                    std::istringstream rs(rest);
+                    int ver = 0, space = 0, spdLife = 0;
+                    rs >> ver >> space >> ps->inheritVelocity
+                       >> ps->noiseStrength >> ps->noiseFrequency >> ps->noiseScroll
+                       >> ps->orbitSpeed >> ps->orbitAxis.x >> ps->orbitAxis.y >> ps->orbitAxis.z
+                       >> ps->vortexStrength >> ps->vortexPull >> spdLife;
+                    ps->simulationSpace = space == 1 ? ParticleSystem::SimulationSpace::Local
+                                                     : ParticleSystem::SimulationSpace::World;
+                    ps->speedOverLife = (spdLife != 0);
+                    // Counts are clamped so a hand-edited file can't overrun the fixed arrays.
+                    int n = 0;
+                    if (rs >> n) {
+                        ParticleGradient& g = ps->colorGradient;
+                        g.count = 0;
+                        n = n < 0 ? 0 : (n > ParticleGradient::kMaxStops ? ParticleGradient::kMaxStops : n);
+                        for (int i = 0; i < n; ++i) {
+                            ParticleGradient::Stop s;
+                            if (!(rs >> s.time >> s.color.r >> s.color.g >> s.color.b >> s.color.a)) break;
+                            g.stops[g.count++] = s;
+                        }
+                    }
+                    for (ParticleCurve* c : {&ps->sizeCurve, &ps->speedCurve}) {
+                        int sm = 0;
+                        if (!(rs >> n >> sm)) break;
+                        c->count = 0; c->smooth = (sm != 0);
+                        n = n < 0 ? 0 : (n > ParticleCurve::kMaxKeys ? ParticleCurve::kMaxKeys : n);
+                        for (int i = 0; i < n; ++i) {
+                            ParticleCurve::Key k;
+                            if (!(rs >> k.time >> k.value)) break;
+                            c->keys[c->count++] = k;
                         }
                     }
                 } else {

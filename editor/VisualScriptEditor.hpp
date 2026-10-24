@@ -10,6 +10,7 @@
 #include "okay/Components/ActionList.hpp"
 #include "okay/VisualScript/ActionGraph.hpp"
 #include "okay/VisualScript/VsTypes.hpp"
+#include "okay/VisualScript/VsApi.hpp"
 #include "VisualScriptNodeHelp.hpp"
 #include <algorithm>
 #include <cctype>
@@ -27,7 +28,7 @@
 namespace okay::editor::vsed {
 
 // ---- Node registry: describes each node type the editor can place ----------
-enum VsCat { CAT_EVENT, CAT_FLOW, CAT_VAR, CAT_MATH, CAT_LOGIC, CAT_INPUT, CAT_XFORM, CAT_ACTION, CAT_DATA, CAT_NET, CAT_COUNT };
+enum VsCat { CAT_EVENT, CAT_FLOW, CAT_VAR, CAT_MATH, CAT_LOGIC, CAT_INPUT, CAT_XFORM, CAT_ACTION, CAT_DATA, CAT_NET, CAT_API, CAT_COUNT };
 
 inline ImU32 CatColor(int cat) {
     switch (cat) {
@@ -40,6 +41,7 @@ inline ImU32 CatColor(int cat) {
         case CAT_XFORM:  return IM_COL32(78, 104, 104, 255);
         case CAT_ACTION: return IM_COL32(108, 88, 72, 255);
         case CAT_NET:    return IM_COL32(72, 92, 120, 255);
+        case CAT_API:    return IM_COL32(92, 104, 76, 255);
         default:         return IM_COL32(88, 88, 96, 255);
     }
 }
@@ -76,9 +78,24 @@ inline std::vector<VsDef> VsWithTargetPins(std::vector<VsDef> defs) {
     return defs;
 }
 
-// A curated, genuinely-useful set of nodes (all supported by the engine runtime).
+// Engine-API nodes, generated from the binding table C#-style scripts use (see
+// okay/VisualScript/VsApi.hpp): one per property / method, pins included.
+inline std::vector<VsDef> VsWithApiDefs(std::vector<VsDef> defs) {
+    for (const okay::vs::VsApiEntry& e : okay::vs::VsApiEntries()) {
+        VsDef d{e.type.c_str(), e.title.c_str(), CAT_API, e.exec, {}, {}, {}, 0, nullptr};
+        if (e.exec) d.execOut.push_back("");
+        for (const auto& p : e.ins) d.dataIn.push_back(p.name.c_str());
+        for (const auto& p : e.outs) d.dataOut.push_back(p.name.c_str());
+        defs.push_back(std::move(d));
+    }
+    return defs;
+}
+inline bool IsApiNode(const std::string& t) { return okay::vs::VsApiFind(t) != nullptr; }
+
+// A curated, genuinely-useful set of nodes (all supported by the engine runtime),
+// then the generated engine-API nodes.
 inline const std::vector<VsDef>& Registry() {
-    static const std::vector<VsDef> defs = VsWithTargetPins({
+    static const std::vector<VsDef> defs = VsWithApiDefs(VsWithTargetPins({
         // Events
         {"OnStart",  "On Start",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnUpdate", "On Update", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
@@ -390,7 +407,7 @@ inline const std::vector<VsDef>& Registry() {
         {"CallFunction",    "Call Function",    CAT_FLOW,  true, {""}, {}, {}, 6, nullptr},
         {"SetLocal",        "Set Local",        CAT_VAR,   true, {""}, {"Value"}, {}, 1, "name"},
         {"GetLocal",        "Get Local",        CAT_VAR,   false, {}, {}, {"Value"}, 1, "name"},
-    });
+    }));
     return defs;
 }
 
@@ -1209,15 +1226,16 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
         for (const auto& n : g.nodes) {
             const int tp = okay::vs::TargetPinFor(n.type);
             bool objectUse = n.type == "Self" || n.type == "Other" || n.type == "FindObject" || n.type == "Raycast3D" ||
-                             IsFunctionNode(n.type) || n.type == "SetLocal" || n.type == "GetLocal" ||
+                             IsFunctionNode(n.type) || n.type == "SetLocal" || n.type == "GetLocal" || IsApiNode(n.type) ||
                              (tp >= 0 && pinUsed(n.id, tp)) || (n.type == "Destroy" && pinUsed(n.id, 0));
             if (n.type == "Spawn")
                 for (const auto& l : g.dataLinks) if (l.producer == n.id) objectUse = true;
             if (objectUse) untranslated.push_back(n.type + " #" + std::to_string(n.id));
         }
         if (!untranslated.empty()) {
-            out += "    // NOT TRANSLATED - these nodes use object references or functions, which this\n"
-                   "    // generated code doesn't support yet (the graph itself runs them):\n    //  ";
+            out += "    // NOT TRANSLATED - these nodes use object references, functions or engine-API\n"
+                   "    // nodes, which this generated code doesn't support yet (the graph itself runs them;\n"
+                   "    // an engine-API node's tooltip shows the C#-style line it equals):\n    //  ";
             for (std::size_t i = 0; i < untranslated.size(); ++i) out += (i ? ", " : "") + untranslated[i];
             out += "\n\n";
         }
@@ -2093,7 +2111,12 @@ inline void Draw(EditorState& ed, bool* open) {
             startNodeDrag = true;   // move every selected node together (after the loop)
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && d->cat != CAT_EVENT && !ImGui::IsItemActive())
-            ImGui::SetTooltip("%s  (%s)", title.c_str(), d->type);
+        {
+            if (const okay::vs::VsApiEntry* api = d->cat == CAT_API ? okay::vs::VsApiFind(d->type) : nullptr)
+                ImGui::SetTooltip("%s\n%s\nIn a script: %s", title.c_str(), api->doc.c_str(), api->code.c_str());
+            else
+                ImGui::SetTooltip("%s  (%s)", title.c_str(), d->type);
+        }
         if (ImGui::BeginPopupContextItem("##nctx")) {
             if (!st.sel.count(n.id)) { st.sel.clear(); st.sel.insert(n.id); st.selected = n.id; }
             // Applied after the loop: the node list mustn't change while it's iterated.
@@ -2548,7 +2571,7 @@ inline void Draw(EditorState& ed, bool* open) {
     };
     ImGui::SetNextWindowSize(ImVec2(640, 470), ImGuiCond_Always);
     if (ImGui::BeginPopup("##vspalette")) {
-        static const char* catNames[CAT_COUNT] = {"Events","Flow","Variables","Math","Logic","Input","Transform","Actions","Data","Multiplayer & Steam"};
+        static const char* catNames[CAT_COUNT] = {"Events","Flow","Variables","Math","Logic","Input","Transform","Actions","Data","Multiplayer & Steam","Engine API"};
         auto fits = [&](const VsDef& d) { return !st.linkPending || VsCompatible(d, st.linkExec, st.linkFromOutput); };
         auto lower = [](std::string x) { for (char& ch : x) ch = (char)std::tolower((unsigned char)ch); return x; };
         auto bright = [](ImU32 c) {   // the category colour, lifted so a dot reads on the dark list
@@ -2564,6 +2587,8 @@ inline void Draw(EditorState& ed, bool* open) {
         for (const auto& d : Registry()) {
             if (!fits(d)) continue;
             Entry e; e.def = &d; e.title = d.title; e.cat = catNames[d.cat]; e.key = std::string("n:") + d.type;
+            const okay::vs::VsApiEntry* api = d.cat == CAT_API ? okay::vs::VsApiFind(d.type) : nullptr;
+            if (api) e.cat += " / " + api->apiType;
             e.group = d.cat; e.col = bright(CatColor(d.cat));
             // Built from the pins: what goes in, what comes out.
             auto join = [](const std::vector<const char*>& v) {
@@ -2572,6 +2597,7 @@ inline void Draw(EditorState& ed, bool* open) {
             const std::string in = join(d.dataIn), out = join(d.dataOut), ex = join(d.execOut);
             // What it does in plain words (VisualScriptNodeHelp.hpp), then how it plugs in.
             if (const char* what = VsNodeHelp(d.type)) e.desc = std::string(what) + " ";
+            if (api) e.desc = api->doc + " In a script: " + api->code + ". ";
             if (!d.execIn && !d.execOut.empty() && d.dataIn.empty()) e.desc += "An event: starts a flow. ";
             else if (d.execIn) e.desc += "Runs when the flow reaches it. ";
             else e.desc += "Gives a value to other nodes. ";

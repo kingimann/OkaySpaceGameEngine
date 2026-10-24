@@ -3,6 +3,9 @@
 // behaviour a user builds in the Visual Script editor.
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include "okay/Scripting/NextScriptVM.hpp"
+#include "okay/VisualScript/VsApi.hpp"
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <string>
@@ -758,6 +761,169 @@ entry OnStart 0
         g_log.clear(); r.Start(); Tick(r, 1);
         CHECK(Logged("8"));
         std::remove("vs_acceptance_fn.okayscene");
+    }
+
+    // ==== Shared engine API: the nodes C#-style scripts' bindings generate ======
+    // ---- The same binding from a graph and from a script gives the same result --
+    {
+        Scene s("Api1");
+        auto ball = [&](const char* name, float x) {
+            GameObject* b = s.CreateGameObject(name);
+            b->transform->localPosition = {x, 0, 0};
+            auto* rb = b->AddComponent<Rigidbody3D>();
+            rb->gravityScale = 0.0f;
+            rb->mass = 2.0f;
+            return b;
+        };
+        GameObject* bg = ball("BallG", 0);
+        GameObject* bs = ball("BallS", 10);
+        // Graph on another object kicks BallG through its Target pin.
+        GameObject* kicker = s.CreateGameObject("Kicker");
+        Attach(kicker, R"VS(
+node 0 OnStart
+node 1 Rigidbody.AddImpulse/1
+node 2 Vector3.up
+default 1 1 "BallG"
+data 1 0 2 0
+exec 0 0 1
+entry OnStart 0
+)VS");
+        auto* sc = bs->AddComponent<ScriptComponent>(NextScriptVM::kLanguage);
+        std::string err;
+        CHECK(sc->LoadSource("class Kick : Behaviour {\n"
+                             "    void Start() { GetComponent<Rigidbody>().AddImpulse(Vector3.up); }\n"
+                             "}\n", &err));
+        if (!err.empty()) std::cerr << "  script error: " << err << "\n";
+        s.Start(); Tick(s, 30);
+        auto* rg = bg->GetComponent<Rigidbody3D>();
+        auto* rs = bs->GetComponent<Rigidbody3D>();
+        CHECK_NEAR(rg->velocity.y, 0.5f, 1e-4f);                  // impulse 1 / mass 2
+        CHECK_NEAR(rg->velocity.y, rs->velocity.y, 1e-6f);
+        CHECK(bg->transform->Position().y > 0.2f);
+        CHECK_NEAR(bg->transform->Position().y, bs->transform->Position().y, 1e-5f);
+    }
+    // ---- Value nodes (Mathf, Vector3) feed steps (Set position, Debug.Log) -------
+    {
+        Scene s("Api2"); GameObject* go = s.CreateGameObject("Mover");
+        Attach(go, R"VS(
+node 0 OnStart
+node 1 Transform.position=
+node 2 Vector3.Lerp/3
+node 3 Vector3.zero
+node 4 Vector3.one
+node 5 Debug.Log/1
+node 6 Mathf.Clamp/3
+node 7 Transform.position
+node 8 Debug.Log/1
+default 2 2 0.5
+default 6 0 50
+default 6 1 0
+default 6 2 7
+data 2 0 3 0
+data 2 1 4 0
+data 1 0 2 0
+data 5 0 6 0
+data 8 0 7 0
+exec 0 0 1
+exec 1 0 5
+exec 5 0 8
+entry OnStart 0
+)VS");
+        g_log.clear(); s.Start(); Tick(s, 1);
+        CHECK_NEAR(go->transform->Position().x, 0.5f, 1e-5f);
+        CHECK_NEAR(go->transform->Position().z, 0.5f, 1e-5f);
+        CHECK(Logged("[script] 7"));
+        CHECK(Logged("[script] (0.5, 0.5, 0.5)"));
+    }
+    // ---- Input.GetKey drives Transform.Translate (real key feed) ----------------
+    {
+        Scene s("Api3"); GameObject* go = s.CreateGameObject("P");
+        Attach(go, R"VS(
+node 0 OnUpdate
+node 1 Branch
+node 2 Input.GetKey/1
+node 3 Transform.Translate/3
+default 2 0 "d"
+default 3 0 1
+default 3 1 0
+default 3 2 0
+data 1 0 2 0
+exec 0 0 1
+exec 1 0 3
+entry OnUpdate 0
+)VS");
+        s.Start();
+        for (int i = 0; i < 3; ++i) { Input::FeedKeys({'d'}); s.Update(1.0f / 60.0f); }
+        for (int i = 0; i < 2; ++i) { Input::FeedKeys({}); s.Update(1.0f / 60.0f); }
+        CHECK_NEAR(go->transform->localPosition.x, 3.0f, 1e-5f);
+        Input::FeedKeys({}); Input::FeedKeys({});
+    }
+    // ---- Binding errors are reported on the node and the event carries on -------
+    {
+        Scene s("Api4"); GameObject* go = s.CreateGameObject("NoBody");
+        auto* v = Attach(go, R"VS(
+node 0 OnStart
+node 1 Rigidbody.AddForce/1
+node 2 Transform.Translate/3
+node 3 Input.GetAxis/1
+node 4 Print
+node 5 SetVar ax
+default 2 0 1
+default 2 3 "Nobody"
+default 3 0 "Sideways"
+default 4 0 "still running"
+data 5 0 3 0
+exec 0 0 1
+exec 1 0 2
+exec 2 0 5
+exec 5 0 4
+entry OnStart 0
+)VS");
+        g_log.clear(); s.Start(); Tick(s, 1);
+        CHECK(Logged("'NoBody' has no Rigidbody"));
+        CHECK(Logged("no object named 'Nobody'"));
+        CHECK(Logged("isn't an axis"));
+        CHECK(Logged("still running"));
+        CHECK(v->Graph() && v->Graph()->ErrorCount() >= 3);
+        CHECK_NEAR(go->transform->localPosition.x, 0.0f, 1e-6f);   // Translate on a missing Target did nothing
+    }
+    // ---- Engine-API graphs survive save -> reload --------------------------------
+    {
+        Scene s("SaveApi"); GameObject* go = s.CreateGameObject("Saved");
+        Attach(go, R"VS(
+node 0 OnStart
+node 1 Transform.Translate/3
+node 2 Mathf.Max/2
+default 2 0 2
+default 2 1 9
+default 1 1 0
+default 1 2 0
+data 1 0 2 0
+exec 0 0 1
+entry OnStart 0
+)VS");
+        CHECK(SceneSerializer::SaveToFile(s, "vs_acceptance_api.okayscene"));
+        Scene r("R");
+        CHECK(SceneSerializer::LoadFromFile(r, "vs_acceptance_api.okayscene"));
+        r.Start(); Tick(r, 1);
+        GameObject* back = r.Find("Saved");
+        CHECK(back != nullptr);
+        if (back) CHECK_NEAR(back->transform->localPosition.x, 9.0f, 1e-5f);
+        std::remove("vs_acceptance_api.okayscene");
+    }
+    // ---- Every member of the binding table is a node, and scripts know it too -----
+    {
+        const auto names = NextScriptVM().BuiltinNames();
+        int missing = 0;
+        for (const auto& e : vs::VsApiEntries()) {
+            if (std::find(names.begin(), names.end(), e.member) == names.end()) ++missing;
+            std::string err;
+            if (!vs::MakeNode(e.type, {}, &err)) ++missing;
+        }
+        CHECK(missing == 0);
+        CHECK(vs::VsApiFind("Rigidbody.AddForce/1") != nullptr);
+        CHECK(vs::VsApiFind("Mathf.Clamp/3") && !vs::VsApiFind("Mathf.Clamp/3")->exec);   // maths: a value node
+        CHECK(vs::VsApiFind("Debug.Log/1") && vs::VsApiFind("Debug.Log/1")->exec);         // a step
     }
 
     std::remove(prefab.c_str());

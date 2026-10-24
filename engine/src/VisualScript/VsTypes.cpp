@@ -1,5 +1,6 @@
 #include "okay/VisualScript/VsTypes.hpp"
 #include "okay/VisualScript/NodeGraph.hpp"
+#include "okay/VisualScript/VsApi.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -307,6 +308,7 @@ const std::unordered_map<std::string, NodeSignature>& Table() {
 std::vector<std::string> AllNodeTypes() {
     std::vector<std::string> v;
     for (const Row& r : kRows) v.push_back(r.type);
+    for (const VsApiEntry& e : VsApiEntries()) v.push_back(e.type);
     return v;
 }
 
@@ -319,6 +321,7 @@ const NodeSignature* SignatureFor(const std::string& type) {
         it = Table().find(type.substr(0, c));
         if (it != Table().end()) return &it->second;
     }
+    if (const VsApiEntry* e = VsApiFind(type)) return &e->sig;
     return nullptr;
 }
 
@@ -484,6 +487,7 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
     std::vector<Data> datas;
     std::multimap<int, int> execOut;   // from -> to
     std::set<int> entries, hasExecOut;
+    std::map<std::pair<int, int>, std::string> typed;   // (node, pin) -> value typed into the pin
     std::istringstream in(text);
     std::string line;
     while (std::getline(in, line)) {
@@ -507,6 +511,10 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
                 hasExecOut.insert(std::stoi(t[1]));
             } else if (t[0] == "entry" && t.size() >= 3) {
                 entries.insert(std::stoi(t[2]));
+            } else if (t[0] == "default" && t.size() >= 4) {
+                std::string v;
+                for (std::size_t i = 3; i < t.size(); ++i) v += (i > 3 ? " " : "") + t[i];
+                typed[{std::stoi(t[1]), std::stoi(t[2])}] = Unquote(v);
             }
         } catch (...) {}
     }
@@ -688,6 +696,29 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
                                                std::string(1, (char)std::tolower((unsigned char)k[0])) +
                                                "'. Use one letter or digit, space, enter, escape, tab, backspace, "
                                                "shift, ctrl or an arrow (up / down / left / right)"});
+        }
+    }
+
+    // 4b) Engine-API inputs the binding itself checks (key names, axis names),
+    // when the value is typed into the pin or comes straight from a Const.
+    for (const auto& kv : nodes) {
+        const VsApiEntry* e = VsApiFind(kv.second.type);
+        if (!e) continue;
+        for (int pin = 0; pin < (int)e->ins.size(); ++pin) {
+            std::string lit;
+            bool known = true;
+            const Data* wire = nullptr;
+            for (const Data& d : datas) if (d.consumer == kv.first && d.inPin == pin) { wire = &d; break; }
+            if (wire) {
+                auto p = nodes.find(wire->producer);
+                if (p == nodes.end() || p->second.type != "Const") known = false;
+                else lit = Unquote(p->second.arg);
+            } else if (auto it = typed.find({kv.first, pin}); it != typed.end()) {
+                lit = it->second;
+            }
+            if (!known) continue;
+            const std::string why = VsApiCheckLiteral(kv.second.type, pin, lit);
+            if (!why.empty()) issues.push_back({0, kv.first, "input '" + e->ins[(std::size_t)pin].name + "': " + why});
         }
     }
 

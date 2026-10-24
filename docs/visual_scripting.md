@@ -617,3 +617,48 @@ exec 0 0 1
 exec 1 0 3
 entry OnStart 0
 ```
+
+## Engine API nodes
+
+The **Engine API** group in the node search holds one node for every property and
+method of the typed script language: GameObject, Transform, Rigidbody, Vector3, Input,
+Time, Mathf and Debug. That language is `okayscript-next` in the Script Editor's
+language list, with scripts written as `class Name : Behaviour { ... }`. These nodes
+are generated from the same binding table that language uses, and they call the same
+code. Anything added to that table appears as a
+script member and as a node at once. The full list, with each node's pins, is in
+[engine_api.md](engine_api.md), which is generated from the table too.
+
+Each node is named the way the code reads, and its tooltip shows the line of script
+it equals:
+
+| Node | In a script | Kind |
+|---|---|---|
+| `Transform.position` | `transform.position` | value |
+| `Set Transform.position` | `transform.position = position` | step |
+| `Transform.Translate(x, y, z)` | `transform.Translate(x, y, z)` | step |
+| `Rigidbody.AddImpulse(impulse)` | `GetComponent<Rigidbody>().AddImpulse(impulse)` | step |
+| `Mathf.Clamp(value, min, max)` | `Mathf.Clamp(value, min, max)` | value |
+| `Input.GetKey(key)` | `Input.GetKey(key)` | value |
+
+- **Steps vs values.** Setting a property, and methods that change something
+  (Translate, AddForce, Debug.Log...), are steps you wire into the flow. Reading a
+  property, maths, and questions like `Input.GetKey` are value nodes.
+- **Target.** Members of GameObject, Transform and Rigidbody have a last **Target**
+  input. Leave it empty to act on this object, or wire in an object (Self, Other, Find
+  Object, a spawned object...) or type an object's name.
+- **Vector3 members** (`magnitude`, `normalized`) take the vector as their input.
+- **Checked like scripts.** Key and axis names typed into `Input.GetKey` /
+  `Input.GetAxis` (or fed straight from a Const) are checked before Play. Wires of
+  the wrong kind are refused.
+- **Errors while playing** go to the Console and the node is outlined in red. Examples:
+  an object with no Rigidbody, a Target that doesn't exist, an unknown axis name. The
+  event carries on with the next step.
+- **In files** the node types read like the code: `Transform.position` (get),
+  `Transform.position=` (set), `Transform.Translate/3` (a method and how many
+  parameters it takes).
+
+The older hand-made nodes (Translate, Get Position, Add Force...) still work and stay
+in their groups. The **Engine API** nodes are the ones that match the scripts exactly.
+The generated-code preview doesn't translate Engine API nodes yet. It lists them as
+not translated, and each node's tooltip gives the line of script.

@@ -1,5 +1,6 @@
 #include "okay/VisualScript/NodeGraph.hpp"
 #include "okay/VisualScript/VsTypes.hpp"
+#include "okay/VisualScript/VsApi.hpp"
 #include "okay/VisualScript/NodesFunctions.hpp"
 #include "okay/VisualScript/Nodes.hpp"
 #include "okay/VisualScript/NodesWave4.hpp"
@@ -199,7 +200,10 @@ int TargetPinFor(const std::string& type) {
         {"SetBlendShape", 1}, {"GetBlendShape", 0}, {"IkLook", 2}, {"IkHand", 2},
         {"GetName", 0}, {"GetTag", 0}};
     auto it = kPins.find(type);
-    return it != kPins.end() ? it->second : -1;
+    if (it != kPins.end()) return it->second;
+    // Engine-API nodes of an object type take their Target last, like the rest.
+    if (const VsApiEntry* e = VsApiFind(type)) return e->hasTarget ? (int)e->ins.size() - 1 : -1;
+    return -1;
 }
 
 // ---- Node factory -----------------------------------------------------
@@ -247,6 +251,8 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     }
     if (type == "OnFixedUpdate" || type == "OnDestroy" || type == "OnEnable" || type == "OnDisable")
         return std::make_unique<EventNode>();
+    // Engine-API nodes ("Transform.Translate/3"): generated from the script bindings.
+    if (auto api = MakeApiNode(type)) return api;
     if (type == "OnStart" || type == "OnUpdate" || type == "OnCollision" || type == "OnTrigger" || type == "OnClick" || type == "OnAnimEvent" ||
         type == "OnKey" || type == "OnKeyUp" || type == "OnTimer" || type == "OnCollisionExit" ||
         type == "OnTriggerExit" || type == "OnMouseEnter" || type == "OnMouseExit" ||
@@ -574,7 +580,9 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "MouseWheel")  return std::make_unique<EngineReadNode>(EngineReadNode::Op::MouseWheel);
     if (type == "TimeScale")   return std::make_unique<EngineReadNode>(EngineReadNode::Op::TimeScale);
     if (type == "FrameCount")  return std::make_unique<EngineReadNode>(EngineReadNode::Op::FrameCount);
-    if (err) *err = "unknown node type '" + type + "'";
+    if (err) *err = type.find('.') != std::string::npos
+                        ? "unknown node type '" + type + "': there's no engine binding by that name"
+                        : "unknown node type '" + type + "'";
     return nullptr;
 }
 

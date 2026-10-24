@@ -32,6 +32,8 @@ inline const char* VsCatBlurb(int cat) {
         "and the data that arrives with events and collisions.",
         "Online play and Steam: host or join a game, sync variables, send messages and RPCs, "
         "spawn networked objects, achievements, stats and leaderboards.",
+        "The engine API C#-style scripts use, as nodes: GameObject, Transform, Rigidbody, Vector3, "
+        "Input, Time, Mathf and Debug. Each node does exactly what its line of script does.",
     };
     return (cat >= 0 && cat < (int)(sizeof blurbs / sizeof blurbs[0])) ? blurbs[cat] : "";
 }

@@ -400,11 +400,44 @@ unchanged.
   remembered between Play sessions. A built game does the same when it has no
   Pause Menu: Esc frees the cursor and a click captures it again.
 
-## Editor quality-of-life
+## Panel tabs & layouts
 
+- **Tabs**: every panel tab shows an icon before its name. The active tab of each
+  group matches the panel under it, and the group you're working in has an accent
+  line along its active tab (its icon turns the accent colour too). A tab's close
+  button appears when you hover it; middle-click also closes. Drag a tab sideways
+  to reorder it, onto another group to move it there, or out of the window to float it.
 - **Right-click a panel's tab** for **Add Tab** (open any panel as a new tab in
   that spot, or move one that's open elsewhere), **Close Tab**, **Close Other
-  Tabs**, **Float (undock)** and **Reset Layout**.
+  Tabs**, **Float (undock)**, **Show Group as Side Tabs** and the **Layout** menu.
+- **Tab overflow**: when a group's tabs don't fit at full width, a small list
+  button appears at the end of its tab strip. It opens a searchable list of that
+  group's tabs and every other open panel; type to filter, Enter picks the first.
+- **Ctrl+Tab** switches panels like an IDE: a list of the open panels (most
+  recently used first) shows while Ctrl is held; tap Tab to move down it (Shift+Tab
+  or the arrow keys go back), let go of Ctrl to switch, Esc cancels. One quick
+  Ctrl+Tab flips between the last two panels. (This replaces Dear ImGui's own
+  window switcher; the Script Editor doesn't use Ctrl+Tab, so there's no clash.)
+- **Layouts**: pick one from **View ▸ Layout** or the **Layout** dropdown at the
+  top right of the menu bar. Built-in: **Default**, **Tall** (Scene over Game,
+  tall Hierarchy / Project / Inspector columns), **Wide** (Hierarchy, Project and
+  Console side by side under a wide Scene), **2 by 3** (Scene over Game plus three
+  columns), **Scripting** (a big Script Editor in the middle) and **Animation**
+  (a wide Animation timeline and the Animator under the Scene). A preset opens the
+  panels it arranges and tabs any other open panel into one of its groups.
+  **Save Layout...** stores the current arrangement (and which panels are open)
+  under a name; saved layouts are listed under the built-in ones and **Delete
+  Layout** removes one. They live in `okay_layouts.txt` beside the editor (the dock
+  layout itself is Dear ImGui ini text, so older `imgui.ini` files keep working).
+- **Side tabs** (View ▸ Layout ▸ Side Tabs, saved as a preference): lists one tab
+  group down the left or right edge of the window as an icon + name strip, like
+  VS Code's activity bar, instead of a tab strip — the group loses its tab row,
+  saving height. On the left it shows the Hierarchy's group, on the right the
+  Inspector's; right-click any tab ▸ **Show Group as Side Tabs** picks another.
+  Click an entry to show that panel, right-click it for its tab menu. Off by default.
+
+## Editor quality-of-life
+
 - **Hierarchy right-click**:
   - On an object: Cut / Copy / Paste, **Select** (children, everything below,
     parent, siblings, same name), **Expand / Collapse All Below**, **Transform**

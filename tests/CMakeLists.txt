@@ -776,3 +776,7 @@ add_test(NAME crash_reports COMMAND test_crash_reports)
 add_executable(test_tween test_tween.cpp)
 target_link_libraries(test_tween PRIVATE okay::engine)
 add_test(NAME tween COMMAND test_tween)
+
+add_executable(test_editor_tabs test_editor_tabs.cpp)
+target_include_directories(test_editor_tabs PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_test(NAME editor_tabs COMMAND test_editor_tabs)

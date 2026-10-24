@@ -9,6 +9,7 @@
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/ActionList.hpp"
 #include "okay/VisualScript/ActionGraph.hpp"
+#include "VisualScriptNodeHelp.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -2187,96 +2188,220 @@ inline void Draw(EditorState& ed, bool* open) {
             st.linkPending = false;
         }
     };
+    // The node browser: categories on the left, the nodes in the middle, and what
+    // the highlighted node does (with its inputs / outputs) on the right. Typing
+    // searches every node by name, category and description; arrows move the
+    // highlight and Enter adds it.
+    {
+        const float em = ImGui::GetFontSize();
+        const ImVec2 vp = ImGui::GetMainViewport()->WorkSize;
+        ImGui::SetNextWindowSize(ImVec2(std::min(em * 58.0f, vp.x - 40.0f), std::min(em * 34.0f, vp.y - 40.0f)), ImGuiCond_Always);
+    }
     if (ImGui::BeginPopup("##vspalette")) {
         static const char* catNames[CAT_COUNT] = {"Events","Flow","Variables","Math","Logic","Input","Transform","Actions","Data","Multiplayer & Steam"};
+        enum { kAll = -1, kDo = CAT_COUNT, kCheck = CAT_COUNT + 1 };
         auto fits = [&](const VsDef& d) { return !st.linkPending || VsCompatible(d, st.linkExec, st.linkFromOutput); };
-        if (st.linkPending) ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Add a node and connect it");
-        // Type to search every node by title, type name or category; Enter adds
-        // the first match.
-        static char search[64] = "";
-        if (ImGui::IsWindowAppearing()) { search[0] = '\0'; ImGui::SetKeyboardFocusHere(); }
-        ImGui::SetNextItemWidth(260);
-        const bool enter = ImGui::InputTextWithHint("##vssearch", "Search nodes...", search, sizeof search,
-                                                    ImGuiInputTextFlags_EnterReturnsTrue);
-        ImGui::Separator();
         auto lower = [](std::string x) { for (char& ch : x) ch = (char)std::tolower((unsigned char)ch); return x; };
+        auto catLabel = [&](int c) { return c == kDo ? "Do something" : c == kCheck ? "Check something" : catNames[c]; };
+        auto catBlurb = [&](int c) { return c == kDo ? VsStepCatBlurb(false) : c == kCheck ? VsStepCatBlurb(true) : VsCatBlurb(c); };
+        auto catColor = [&](int c) { return c == kDo ? CatColor(CAT_ACTION) : c == kCheck ? CatColor(CAT_LOGIC) : CatColor(c); };
+        auto catText  = [&](int c) {   // the swatch colour, lifted so it reads as text
+            ImVec4 v = ImGui::ColorConvertU32ToFloat4(catColor(c));
+            return ImVec4(v.x + (1.0f - v.x) * 0.45f, v.y + (1.0f - v.y) * 0.45f, v.z + (1.0f - v.z) * 0.45f, 1.0f);
+        };
+
+        static char search[64] = "";
+        static int  palCat = kAll;   // the category picked on the left
+        static int  hl = 0;          // highlighted row (keyboard / Enter)
+        static std::string lastQuery; static int lastCat = kAll;
+        if (ImGui::IsWindowAppearing()) { search[0] = '\0'; hl = 0; ImGui::SetKeyboardFocusHere(); }
+
+        if (st.linkPending) ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Only nodes that can connect to the wire you dragged are shown.");
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        const bool enter = ImGui::InputTextWithHint("##vssearch", "Search nodes by name or what they do (jump, score, timer, distance...)",
+                                                    search, sizeof search, ImGuiInputTextFlags_EnterReturnsTrue);
+        if (ImGui::IsItemActive() || ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows)) {
+            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) ++hl;
+            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) --hl;
+        }
+        const bool keyMoved = ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_UpArrow);
         const std::string needle = lower(search);
+
+        // Everything that can be added: graph nodes plus the ready-made steps.
+        struct Entry { const VsDef* def; const VsStepInfo* step; int cat; int rank; };
+        std::vector<Entry> all;
+        for (const auto& d : Registry()) if (fits(d)) all.push_back({&d, nullptr, d.cat, 0});
+        for (int pass = 0; pass < 2; ++pass) {
+            const VsDef* sd = FindDef(pass ? "Condition" : "Action");
+            if (!StepCatalog || !sd || !fits(*sd)) continue;
+            if (const auto* cat = StepCatalog(pass == 1))
+                for (const auto& si : *cat) if (!si.listOnly) all.push_back({sd, &si, pass ? (int)kCheck : (int)kDo, 0});
+        }
+        auto title = [](const Entry& e) { return e.step ? e.step->label.c_str() : e.def->title; };
+        auto desc  = [](const Entry& e) -> const char* {
+            if (e.step) return e.step->desc.empty() ? nullptr : e.step->desc.c_str();
+            return VsNodeHelp(e.def->type);
+        };
+        int counts[CAT_COUNT + 2] = {};
+        for (const auto& e : all) ++counts[e.cat];
+
+        // The rows shown in the middle: search results (best matches first) or one category.
+        std::vector<Entry> rows;
         if (!needle.empty()) {
-            int shown = 0;
-            for (const auto& d : Registry()) {
-                if (!fits(d)) continue;
-                const std::string hay = lower(std::string(d.title) + " " + d.type + " " + catNames[d.cat]);
-                if (hay.find(needle) == std::string::npos) continue;
-                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-                ImGui::TextUnformatted(catNames[d.cat]);
-                ImGui::PopStyleColor();
-                ImGui::SameLine(150);
-                if (ImGui::Selectable(d.title, shown == 0 && enter) || (shown == 0 && enter)) {
-                    addFromPalette(d);
-                    ImGui::CloseCurrentPopup();
-                }
-                if (++shown >= 40) break;
+            for (Entry e : all) {
+                const std::string t = lower(title(e));
+                const char* dsc = desc(e);
+                if (t.rfind(needle, 0) == 0) e.rank = 0;
+                else if (t.find(needle) != std::string::npos) e.rank = 1;
+                else if (lower(std::string(e.step ? e.step->op : e.def->type) + " " + catLabel(e.cat) +
+                               (e.step ? " " + e.step->group : std::string())).find(needle) != std::string::npos) e.rank = 2;
+                else if (dsc && lower(dsc).find(needle) != std::string::npos) e.rank = 3;
+                else continue;
+                rows.push_back(e);
             }
-            // ...and every Actions step (Move, Play Sound, Has Tag...).
-            for (int pass = 0; pass < 2 && shown < 60; ++pass) {
-                const bool cond = pass == 1;
-                const VsDef* sd = FindDef(cond ? "Condition" : "Action");
-                if (!StepCatalog || !sd || !fits(*sd)) continue;
-                if (const auto* cat = StepCatalog(cond))
-                    for (const auto& si : *cat) {
-                        if (si.listOnly) continue;
-                        const std::string hay = lower(si.label + " " + si.op + " " + si.group);
-                        if (hay.find(needle) == std::string::npos) continue;
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-                        ImGui::TextUnformatted(cond ? "Check" : "Do");
-                        ImGui::PopStyleColor();
-                        ImGui::SameLine(150);
-                        ImGui::PushID(si.op.c_str()); ImGui::PushID(pass);
-                        if (ImGui::Selectable(si.label.c_str(), shown == 0 && enter) || (shown == 0 && enter)) {
-                            addFromPalette(*sd, okay::ActionList::EncodeItem({si.op, {}}));
-                            ImGui::CloseCurrentPopup();
-                        }
-                        if (ImGui::IsItemHovered() && !si.desc.empty()) ImGui::SetTooltip("%s", si.desc.c_str());
-                        ImGui::PopID(); ImGui::PopID();
-                        if (++shown >= 60) break;
-                    }
-            }
-            if (shown == 0) ImGui::TextDisabled("No node matches \"%s\"", search);
+            std::stable_sort(rows.begin(), rows.end(), [](const Entry& a, const Entry& b) { return a.rank < b.rank; });
         } else {
-            for (int c = 0; c < CAT_COUNT; ++c) {
-                bool any = false;
-                for (const auto& d : Registry()) if (d.cat == c && fits(d)) { any = true; break; }
-                if (!any) continue;
-                if (ImGui::BeginMenu(catNames[c])) {
-                    for (const auto& d : Registry())
-                        if (d.cat == c && fits(d) && ImGui::MenuItem(d.title)) addFromPalette(d);
-                    ImGui::EndMenu();
-                }
+            for (const auto& e : all) if (palCat == kAll || e.cat == palCat) rows.push_back(e);
+            if (palCat == kAll)
+                std::stable_sort(rows.begin(), rows.end(), [](const Entry& a, const Entry& b) { return a.cat < b.cat; });
+        }
+        if (needle != lastQuery || palCat != lastCat) { hl = 0; lastQuery = needle; lastCat = palCat; }
+        if (rows.empty()) hl = 0; else hl = std::clamp(hl, 0, (int)rows.size() - 1);
+
+        bool addNow = enter && !rows.empty();
+        int  addIdx = hl, hovered = -1;
+        const float em = ImGui::GetFontSize();
+        const float bodyH = ImGui::GetContentRegionAvail().y;
+
+        // ---- Left: categories ----
+        ImGui::BeginChild("##palcats", ImVec2(em * 11.0f, bodyH), true);
+        auto catRow = [&](int c, const char* label, int n) {
+            ImGui::PushID(c + 100);
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            const bool sel = needle.empty() && palCat == c;
+            char buf[96]; std::snprintf(buf, sizeof buf, "     %s", label);
+            if (n == 0) ImGui::BeginDisabled();
+            if (ImGui::Selectable(buf, sel, ImGuiSelectableFlags_DontClosePopups)) { palCat = c; search[0] = '\0'; }
+            if (n == 0) ImGui::EndDisabled();
+            if (c != kAll) {
+                const float h = ImGui::GetTextLineHeight();
+                ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(p.x + 2, p.y + h * 0.2f), ImVec2(p.x + 2 + h * 0.6f, p.y + h * 0.8f), catColor(c), 2.0f);
             }
-            // The Actions library: every no-code step, grouped like the old Actions menus.
-            for (int pass = 0; pass < 2; ++pass) {
-                const bool cond = pass == 1;
-                const VsDef* sd = FindDef(cond ? "Condition" : "Action");
-                if (!StepCatalog || !sd || !fits(*sd)) continue;
-                const auto* cat = StepCatalog(cond);
-                if (!cat || cat->empty()) continue;
-                if (pass == 0) ImGui::Separator();
-                if (ImGui::BeginMenu(cond ? "Check something" : "Do something")) {
-                    std::vector<std::string> groups;
-                    for (const auto& si : *cat)
-                        if (!si.listOnly && std::find(groups.begin(), groups.end(), si.group) == groups.end()) groups.push_back(si.group);
-                    for (const auto& gname : groups) {
-                        if (!ImGui::BeginMenu(gname.empty() ? "Other" : gname.c_str())) continue;
-                        for (const auto& si : *cat) {
-                            if (si.group != gname || si.listOnly) continue;
-                            if (ImGui::MenuItem(si.label.c_str())) addFromPalette(*sd, okay::ActionList::EncodeItem({si.op, {}}));
-                            if (ImGui::IsItemHovered() && !si.desc.empty()) ImGui::SetTooltip("%s", si.desc.c_str());
-                        }
-                        ImGui::EndMenu();
-                    }
-                    ImGui::EndMenu();
-                }
+            ImGui::SameLine(ImGui::GetContentRegionMax().x - ImGui::CalcTextSize("000").x);
+            ImGui::TextDisabled("%d", n);
+            ImGui::PopID();
+        };
+        catRow(kAll, "All nodes", (int)all.size());
+        ImGui::Separator();
+        for (int c = 0; c < CAT_COUNT; ++c) catRow(c, catNames[c], counts[c]);
+        if (counts[kDo] || counts[kCheck]) {
+            ImGui::Separator();
+            ImGui::TextDisabled("Ready-made");
+            catRow(kDo, "Do something", counts[kDo]);
+            catRow(kCheck, "Check something", counts[kCheck]);
+        }
+        ImGui::EndChild();
+        ImGui::SameLine();
+
+        // ---- Middle: the nodes ----
+        ImGui::BeginChild("##palnodes", ImVec2(em * 19.0f, bodyH), true);
+        if (needle.empty() && palCat != kAll) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("%s", catBlurb(palCat));
+            ImGui::PopTextWrapPos();
+            ImGui::Separator();
+        } else if (!needle.empty()) {
+            ImGui::TextDisabled("%d match%s", (int)rows.size(), rows.size() == 1 ? "" : "es");
+            ImGui::Separator();
+        }
+        int prevCat = -999;
+        for (int i = 0; i < (int)rows.size(); ++i) {
+            const Entry& e = rows[i];
+            const bool grouped = needle.empty() && palCat == kAll;
+            if (grouped && e.cat != prevCat) {
+                if (prevCat != -999) ImGui::Spacing();
+                ImGui::TextColored(catText(e.cat), "%s", catLabel(e.cat));
+                ImGui::Separator();
             }
+            prevCat = e.cat;
+            ImGui::PushID(i);
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            char buf[160]; std::snprintf(buf, sizeof buf, "     %s", title(e));
+            if (ImGui::Selectable(buf, i == hl)) { addNow = true; addIdx = i; }
+            if (ImGui::IsItemHovered()) hovered = i;
+            const float h = ImGui::GetTextLineHeight();
+            ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(p.x + 2, p.y + h * 0.2f), ImVec2(p.x + 2 + h * 0.6f, p.y + h * 0.8f), catColor(e.cat), 2.0f);
+            if (!grouped) {   // say where it lives when the list mixes categories
+                const char* where = e.step ? (e.step->group.empty() ? catLabel(e.cat) : e.step->group.c_str()) : catLabel(e.cat);
+                const float w = ImGui::CalcTextSize(where).x;
+                ImGui::SameLine(std::max(ImGui::GetContentRegionMax().x - w, ImGui::CalcTextSize(buf).x + em));
+                ImGui::TextDisabled("%s", where);
+            }
+            if (i == hl && keyMoved) ImGui::SetScrollHereY(0.5f);
+            ImGui::PopID();
+        }
+        if (rows.empty()) {
+            if (!needle.empty()) ImGui::TextDisabled("Nothing matches \"%s\".", search);
+            else ImGui::TextDisabled("No nodes here can connect to that wire.");
+        }
+        ImGui::EndChild();
+        ImGui::SameLine();
+
+        // ---- Right: what the node does ----
+        ImGui::BeginChild("##paldesc", ImVec2(0, bodyH), true);
+        const int show = hovered >= 0 ? hovered : hl;
+        if (show >= 0 && show < (int)rows.size()) {
+            const Entry& e = rows[show];
+            const VsDef& d = *e.def;
+            ImGui::TextColored(catText(e.cat), "%s", title(e));
+            ImGui::TextDisabled("%s%s%s", catLabel(e.cat), e.step && !e.step->group.empty() ? "  /  " : "",
+                                e.step ? e.step->group.c_str() : "");
+            ImGui::Separator();
+            ImGui::PushTextWrapPos(0.0f);
+            if (const char* dsc = desc(e)) ImGui::TextUnformatted(dsc);
+            else ImGui::TextDisabled("No description yet.");
+            ImGui::Spacing();
+            // How it plugs in.
+            if (!e.step) {
+                const bool isEvent = !d.execIn && !d.execOut.empty();
+                const bool isValue = !d.execIn && d.execOut.empty();
+                ImGui::TextDisabled("%s", isEvent ? "Starts a chain: wire its output into what should happen."
+                                       : isValue ? "Gives a value: wire its output into another node's input."
+                                                 : "Runs when the flow reaches it (wire into its left triangle).");
+                if (!d.dataIn.empty()) {
+                    ImGui::Spacing(); ImGui::Text("Inputs");
+                    for (const char* pin : d.dataIn) ImGui::BulletText("%s", pin);
+                }
+                bool namedExec = false;
+                for (const char* x : d.execOut) if (x && *x) namedExec = true;
+                if (!d.dataOut.empty() || namedExec) {
+                    ImGui::Spacing(); ImGui::Text("Outputs");
+                    if (namedExec) for (const char* x : d.execOut) if (x && *x) ImGui::BulletText("%s  (flow)", x);
+                    for (const char* pin : d.dataOut) ImGui::BulletText("%s", pin);
+                }
+                if (d.param == 1 && d.paramHint) { ImGui::Spacing(); ImGui::Text("Setting"); ImGui::BulletText("%s", d.paramHint); }
+                else if (d.param == 2) { ImGui::Spacing(); ImGui::Text("Setting"); ImGui::BulletText("comparison (<, >, =, ...)"); }
+            } else {
+                ImGui::TextDisabled("%s", e.cat == kCheck ? "Adds a Check node set to this; it goes out True or False."
+                                                          : "Adds an Action node set to this step; set its options in the node.");
+            }
+            ImGui::PopTextWrapPos();
+            ImGui::Spacing();
+            if (ImGui::Button("Add node")) { addNow = true; addIdx = show; }
+            ImGui::SameLine(); ImGui::TextDisabled("or click it / press Enter");
+        } else if (needle.empty()) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("%s", palCat == kAll ? "Pick a category on the left, or start typing to search every node."
+                                                     : catBlurb(palCat));
+            ImGui::PopTextWrapPos();
+        }
+        ImGui::EndChild();
+
+        if (addNow && addIdx >= 0 && addIdx < (int)rows.size()) {
+            const Entry& e = rows[addIdx];
+            if (e.step) addFromPalette(*e.def, okay::ActionList::EncodeItem({e.step->op, {}}));
+            else addFromPalette(*e.def);
+            ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
     } else if (st.linkPending && !openPaletteNow) {

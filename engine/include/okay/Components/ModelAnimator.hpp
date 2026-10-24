@@ -547,9 +547,11 @@ public:
 
         // Drive the union of both clips' nodes directly. Nodes in only one clip
         // use it unblended. The A->B node pairing is cached per clip pair.
-        const PairMap& pm = Pair(A, B);
+        // Bind first: it refreshes the node cache when the scene changed, which
+        // also drops the cached pairings - a PairMap taken before it would dangle.
         const auto& bA = Bind(A);
         const auto& bB = Bind(B);
+        const PairMap& pm = Pair(A, B);
         auto blendWrite = [&](Transform* t, int ia, int ib) {
             Vec3 pA = t->localPosition, sA = t->localScale; Quat rA = t->localRotation;
             Vec3 pB = pA, sB = sA; Quat rB = rA;

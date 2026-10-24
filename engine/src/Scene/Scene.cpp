@@ -109,6 +109,7 @@ void Scene::Update(float deltaTime) {
     FlushPending(); // adopt anything created since last frame
     // Drop any components removed last frame (their slots were nulled).
     m_active.erase(std::remove(m_active.begin(), m_active.end(), nullptr), m_active.end());
+    DispatchActivation();
 
     // Physics debug view: this frame's rays / contacts replace last frame's.
     m_physics.BeginDebugFrame();
@@ -304,11 +305,36 @@ void Scene::ResolveMainCamera() {
     mainCamera = PickRenderCamera(mainCamera, cams);
 }
 
+void Scene::DispatchActivation() {
+    // Index loop: a handler may create objects (they are first seen next frame).
+    const std::size_t n = m_objects.size();
+    for (std::size_t i = 0; i < n && i < m_objects.size(); ++i) {
+        GameObject* go = m_objects[i].get();
+        if (!go) continue;
+        const signed char now = go->active ? 1 : 0;
+        if (go->activeSeen == now) continue;
+        const bool first = go->activeSeen < 0;
+        go->activeSeen = now;
+        if (first) continue;   // its starting state, not a change
+        std::vector<Component*> comps;
+        for (const auto& c : go->Components()) comps.push_back(c.get());
+        for (Component* c : comps) {
+            if (!c || !c->enabled) continue;
+            if (now) c->OnEnable(); else c->OnDisable();
+        }
+    }
+}
+
 void Scene::FlushDestroyed() {
-    if (m_destroyQueue.empty()) return;
+    // OnDestroy handlers (scripts, visual scripts) may destroy or spawn more
+    // objects: take the queue as a batch so they can't invalidate it, and treat
+    // what they queued as the next batch (a few rounds; the rest waits a frame).
+    for (int round = 0; round < 8 && !m_destroyQueue.empty(); ++round) {
+    std::vector<GameObject*> batch;
+    batch.swap(m_destroyQueue);
     // Survivors get to drop references to what's going away (skinned meshes to
     // their bones, IK to its targets, ...) before anything is freed.
-    const std::unordered_set<const GameObject*> dying(m_destroyQueue.begin(), m_destroyQueue.end());
+    const std::unordered_set<const GameObject*> dying(batch.begin(), batch.end());
     {
         std::vector<Component*> survivors;
         for (Component* c : m_active)  if (c && !dying.count(c->gameObject)) survivors.push_back(c);
@@ -316,13 +342,14 @@ void Scene::FlushDestroyed() {
         for (Component* c : survivors) c->OnObjectsDestroyed(dying);
     }
     m_tweens.OnObjectsDestroyed(dying);   // nothing keeps animating a freed object
-    for (GameObject* go : m_destroyQueue) {
+    for (GameObject* go : batch) {
         // Run OnDestroy and drop the object's components from the lists.
-        for (auto& obj : m_objects) {
-            if (obj.get() != go) continue;
-            for (Component* c : m_active)
-                if (c && c->gameObject == go) c->OnDestroy();
-            break;
+        bool live = false;
+        for (auto& obj : m_objects) if (obj.get() == go) { live = true; break; }
+        if (live) {
+            std::vector<Component*> own;   // copy: OnDestroy may add components / objects
+            for (Component* c : m_active) if (c && c->gameObject == go) own.push_back(c);
+            for (Component* c : own) c->OnDestroy();
         }
         auto isOwned = [go](Component* c) { return !c || c->gameObject == go; };
         m_active.erase(std::remove_if(m_active.begin(), m_active.end(), isOwned), m_active.end());
@@ -345,7 +372,7 @@ void Scene::FlushDestroyed() {
                 break;
             }
     }
-    m_destroyQueue.clear();
+    }
     if (m_graveyard.size() > 20000) m_graveyard.erase(m_graveyard.begin(), m_graveyard.begin() + 10000);   // bullets etc.: oldest shells go
     ++m_structureVersion;
 }

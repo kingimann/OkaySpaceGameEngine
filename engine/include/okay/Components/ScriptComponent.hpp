@@ -55,6 +55,10 @@ public:
     void LateUpdate(float dt) override;
     /// The script's OnDisable() then OnDestroy(), when its object is destroyed.
     void OnDestroy() override;
+    /// The script's OnEnable() / OnDisable() when its object is switched on / off
+    /// during play (after it has started).
+    void OnEnable() override;
+    void OnDisable() override;
     /// FixedUpdate() runs at this fixed rate (steps per second), however fast the game draws.
     static constexpr float kFixedStep = 1.0f / 50.0f;
 
@@ -95,6 +99,7 @@ public:
     void OnMouseClick() override { Fire("on_click"); }
 
 private:
+    bool  m_started = false;         // Start() ran the script's Awake/OnEnable/Start
     bool  m_startDeferred = false;   // Start() arrived while scripts were off
     float m_fixedAcc = 0.0f;   // time banked toward the next FixedUpdate()
     void Fire(const char* event) { if (m_vm && ScriptsRun(gameObject)) m_vm->CallEvent(event); }

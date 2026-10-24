@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/Math/Vec3.hpp"
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <string>
@@ -7,6 +8,15 @@
 #include <vector>
 
 namespace okay::vs {
+
+/// A reference to a GameObject flowing on a wire (Self, Other, a spawned object,
+/// a raycast hit...). Holds the object's instance id, never a pointer, so it is
+/// safe after the object is destroyed (it then resolves to nothing).
+struct VsObject { std::uint64_t id = 0; };
+/// The name of a referenced object ("" when it no longer exists). NodeGraph.cpp.
+std::string VsObjectName(std::uint64_t id);
+/// True while the referenced object exists. NodeGraph.cpp.
+bool VsObjectAlive(std::uint64_t id);
 
 /// A dynamically-typed value flowing between graph nodes (the data carried on
 /// the wires of a visual script). Can also hold a shared, mutable array or map
@@ -28,6 +38,16 @@ public:
     VsValue(const char* v) : m_data(std::string(v)) {}
     VsValue(ArrayRef a) : m_data(std::move(a)) {}
     VsValue(MapRef m) : m_data(std::move(m)) {}
+    VsValue(VsObject o) : m_data(o) {}
+
+    /// An object reference value (0 = no object).
+    static VsValue Object(std::uint64_t instanceId) { return VsValue(VsObject{instanceId}); }
+    bool IsObject() const { return std::holds_alternative<VsObject>(m_data); }
+    /// The referenced object's instance id (0 when this isn't an object).
+    std::uint64_t AsObjectId() const {
+        if (auto* o = std::get_if<VsObject>(&m_data)) return o->id;
+        return 0;
+    }
 
     /// Make a new (empty) array value.
     static VsValue MakeArray() { return VsValue(std::make_shared<Array>()); }
@@ -59,6 +79,7 @@ public:
         if (auto* s = std::get_if<std::string>(&m_data)) return !s->empty();
         if (auto* a = std::get_if<ArrayRef>(&m_data)) return *a && !(*a)->empty();
         if (auto* m = std::get_if<MapRef>(&m_data)) return *m && !(*m)->empty();
+        if (auto* o = std::get_if<VsObject>(&m_data)) return o->id != 0 && VsObjectAlive(o->id);
         return false;
     }
     Vec3 AsVec3() const {
@@ -97,6 +118,7 @@ public:
             }
             return s + "}";
         }
+        if (auto* o = std::get_if<VsObject>(&m_data)) return o->id ? VsObjectName(o->id) : std::string();
         return {};
     }
 
@@ -116,7 +138,7 @@ public:
     }
 
 private:
-    std::variant<float, bool, Vec3, std::string, ArrayRef, MapRef> m_data;
+    std::variant<float, bool, Vec3, std::string, ArrayRef, MapRef, VsObject> m_data;
 };
 
 } // namespace okay::vs

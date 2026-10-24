@@ -17,6 +17,9 @@ public:
     std::string name;
     /// Inactive GameObjects are skipped by Update and Render.
     bool active = true;
+    /// Scene bookkeeping: the `active` value last reported to OnEnable/OnDisable
+    /// (-1 = not seen yet, so the first frame never fires either).
+    signed char activeSeen = -1;
     /// Optional tag for lookups (see Scene::FindWithTag).
     std::string tag;
     /// If this object was instantiated from a .okayprefab file, the path to that

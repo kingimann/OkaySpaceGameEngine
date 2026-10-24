@@ -40630,6 +40630,12 @@ int main(int argc, char** argv) {
                     for (const auto& up : ed.scene().Objects()) if (up->name == dn) { ed.Select(up.get()); break; }
                 if (ed.selected()) { ConsoleLog("Dev: deleting " + ed.selected()->name); ed.DeleteSelected(); }
             }
+            // OKAY_UI_VSFILE=graph.okayvs: open that graph file in the Visual Script editor.
+            if (const char* vf = std::getenv("OKAY_UI_VSFILE"); vf && s_focusFrames == 42) {
+                okay::editor::vsed::State().g.load(vf);
+                okay::editor::vsed::State().frameAll = true;
+                g_showVisualScript = true;
+            }
             if (std::getenv("OKAY_UI_VS") && s_focusFrames == 42) {
                 auto& vg = okay::editor::vsed::State().g;
                 vg = okay::editor::vsed::VsEditGraph{};

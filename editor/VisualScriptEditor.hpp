@@ -55,9 +55,23 @@ struct VsDef {
     const char* paramHint;
 };
 
+// Node types that act on an object get a last "Target" input (empty = this
+// object). The engine's table decides which types and at which pin, so the
+// editor and the runtime can't disagree.
+inline std::vector<VsDef> VsWithTargetPins(std::vector<VsDef> defs) {
+    for (VsDef& d : defs) {
+        const int tp = okay::vs::TargetPinFor(d.type);
+        if (tp < 0) continue;
+        if (tp == (int)d.dataIn.size()) d.dataIn.push_back("Target");
+        else std::fprintf(stderr, "Visual Script: node %s expects its Target at pin %d but has %d inputs\n",
+                          d.type, tp, (int)d.dataIn.size());
+    }
+    return defs;
+}
+
 // A curated, genuinely-useful set of nodes (all supported by the engine runtime).
 inline const std::vector<VsDef>& Registry() {
-    static const std::vector<VsDef> defs = {
+    static const std::vector<VsDef> defs = VsWithTargetPins({
         // Events
         {"OnStart",  "On Start",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnUpdate", "On Update", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
@@ -99,8 +113,8 @@ inline const std::vector<VsDef>& Registry() {
         // Actions
         {"Print",     "Print",     CAT_ACTION, true, {""}, {"Value"}, {}, 0, nullptr},
         {"PlaySound", "Play Sound",CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
-        {"Spawn",     "Spawn",     CAT_ACTION, true, {""}, {"X","Y","Z"}, {}, 1, "prefab"},
-        {"Destroy",   "Destroy",   CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"Spawn",     "Spawn",     CAT_ACTION, true, {""}, {"X","Y","Z"}, {"Object"}, 1, "prefab"},
+        {"Destroy",   "Destroy",   CAT_ACTION, true, {""}, {"Target"}, {}, 0, nullptr},
         // --- More math (data) ---
         {"Mod",   "Mod (%)",  CAT_MATH, false, {}, {"A","B"}, {"Out"}, 0, nullptr},
         {"Pow",   "Pow (^)",  CAT_MATH, false, {}, {"A","B"}, {"Out"}, 0, nullptr},
@@ -192,14 +206,14 @@ inline const std::vector<VsDef>& Registry() {
         {"Upper",      "Upper Case",  CAT_DATA, false, {}, {"Text"}, {"Text"}, 0, nullptr},
         {"Lower",      "Lower Case",  CAT_DATA, false, {}, {"Text"}, {"Text"}, 0, nullptr},
         // --- Objects ---
-        {"ObjectExists",  "Object Exists",  CAT_XFORM, false, {}, {}, {"Bool"}, 1, "name"},
-        {"ObjectPosition","Object Position",CAT_XFORM, false, {}, {}, {"Pos"}, 1, "name / self / other"},
-        {"DistanceTo",    "Distance To",    CAT_XFORM, false, {}, {}, {"Dist"}, 1, "name / other"},
+        {"ObjectExists",  "Object Exists",  CAT_XFORM, false, {}, {"Object"}, {"Bool"}, 1, "name"},
+        {"ObjectPosition","Object Position",CAT_XFORM, false, {}, {"Object"}, {"Pos"}, 1, "name / self / other"},
+        {"DistanceTo",    "Distance To",    CAT_XFORM, false, {}, {"Object"}, {"Dist"}, 1, "name / other"},
         {"SelfName",      "Self Name",      CAT_XFORM, false, {}, {}, {"Name"}, 0, nullptr},
-        {"LookAt",        "Look At",        CAT_XFORM, true, {""}, {}, {}, 1, "name / other"},
-        {"MoveTowards",   "Move Towards",   CAT_XFORM, true, {""}, {"Speed"}, {}, 1, "name / other"},
-        {"SetActive",     "Set Active",     CAT_ACTION, true, {""}, {"On"}, {}, 1, "name / self / other"},
-        {"SetText",       "Set Text",       CAT_ACTION, true, {""}, {"Text"}, {}, 1, "text object name"},
+        {"LookAt",        "Look At",        CAT_XFORM, true, {""}, {"Object"}, {}, 1, "name / other"},
+        {"MoveTowards",   "Move Towards",   CAT_XFORM, true, {""}, {"Speed","Object"}, {}, 1, "name / other"},
+        {"SetActive",     "Set Active",     CAT_ACTION, true, {""}, {"On","Object"}, {}, 1, "name / self / other"},
+        {"SetText",       "Set Text",       CAT_ACTION, true, {""}, {"Text","Object"}, {}, 1, "text object name"},
         {"LoadScene",     "Load Scene",     CAT_ACTION, true, {""}, {}, {}, 1, "scene name"},
         // --- Input / flow ---
         {"MouseButton",     "Mouse Held",    CAT_INPUT, false, {}, {}, {"Down"}, 1, "0 L / 1 R / 2 M"},
@@ -295,6 +309,10 @@ inline const std::vector<VsDef>& Registry() {
         {"OnMouseOver",     "On Mouse Over",    CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnCollisionStay", "On Collision Stay",CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnLateUpdate",    "On Late Update",   CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnFixedUpdate",   "On Fixed Update",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnEnable",        "On Enable",        CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnDisable",       "On Disable",       CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnDestroy",       "On Destroy",       CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         // The Actions step library as nodes (the arg is the encoded step / steps).
         {"Action",          "Action",           CAT_ACTION, true, {""}, {}, {}, 3, nullptr},
         {"Actions",         "Action Steps",     CAT_ACTION, true, {""}, {}, {}, 4, nullptr},
@@ -326,10 +344,10 @@ inline const std::vector<VsDef>& Registry() {
         {"Average",         "Average",          CAT_MATH, false, {}, {"A", "B"}, {"Out"}, 0, nullptr},
         {"Distance2D",      "Distance 2D",      CAT_MATH, false, {}, {"X1", "Y1", "X2", "Y2"}, {"Distance"}, 0, nullptr},
         // Finding + moving objects.
-        {"FindWithTag",     "Find With Tag",    CAT_XFORM, false, {}, {}, {"Name"}, 1, "tag"},
+        {"FindWithTag",     "Find With Tag",    CAT_XFORM, false, {}, {}, {"Object"}, 1, "tag"},
         {"CountWithTag",    "Count With Tag",   CAT_XFORM, false, {}, {}, {"Count"}, 1, "tag"},
-        {"NearestWithTag",  "Nearest With Tag", CAT_XFORM, false, {}, {}, {"Name"}, 1, "tag"},
-        {"Teleport",        "Teleport",         CAT_XFORM, true, {""}, {"X", "Y", "Z"}, {}, 1, "object (self)"},
+        {"NearestWithTag",  "Nearest With Tag", CAT_XFORM, false, {}, {}, {"Object"}, 1, "tag"},
+        {"Teleport",        "Teleport",         CAT_XFORM, true, {""}, {"X", "Y", "Z", "Object"}, {}, 1, "object (self)"},
         // Game flow.
         {"SetVisible",      "Set Visible",      CAT_ACTION, true, {""}, {"Visible"}, {}, 0, nullptr},
         {"PauseGame",       "Pause Game",       CAT_ACTION, true, {""}, {"Paused"}, {}, 0, nullptr},
@@ -353,7 +371,13 @@ inline const std::vector<VsDef>& Registry() {
         {"ContactPoint",    "Contact Point",    CAT_DATA,  false, {}, {}, {"Point"}, 0, nullptr},
         {"ContactNormal",   "Contact Normal",   CAT_DATA,  false, {}, {}, {"Normal"}, 0, nullptr},
         {"ImpactSpeed",     "Impact Speed",     CAT_DATA,  false, {}, {}, {"Speed"}, 0, nullptr},
-    };
+        // Object references: wire these into any Target / Object input.
+        {"Self",            "Self",             CAT_XFORM, false, {}, {}, {"Object"}, 0, nullptr},
+        {"Other",           "Other Object",     CAT_XFORM, false, {}, {}, {"Object"}, 0, nullptr},
+        {"FindObject",      "Find Object",      CAT_XFORM, false, {}, {}, {"Object"}, 1, "object name"},
+        {"GetName",         "Get Name",         CAT_XFORM, false, {}, {}, {"Name"}, 0, nullptr},
+        {"GetTag",          "Get Tag",          CAT_XFORM, false, {}, {}, {"Tag"}, 0, nullptr},
+    });
     return defs;
 }
 
@@ -478,7 +502,8 @@ inline std::string VsEntryName(const std::string& type, const std::string& arg) 
         type == "OnClick" || type == "OnCollisionExit" || type == "OnTriggerExit" ||
         type == "OnMouseEnter" || type == "OnMouseExit" || type == "OnMouseDown" || type == "OnMouseUp" ||
         type == "OnMouseOver" || type == "OnCollisionStay" || type == "OnLateUpdate" ||
-        type == "OnTriggerStay") return type;
+        type == "OnTriggerStay" ||
+        type == "OnFixedUpdate" || type == "OnDestroy" || type == "OnEnable" || type == "OnDisable") return type;
     if (type == "OnAnimEvent") return arg.empty() ? std::string("OnAnimEvent") : "OnAnimEvent:" + tok(arg, "");
     if (type == "OnKey")   return "OnKey:" + tok(arg, "space");
     if (type == "OnKeyUp") return "OnKeyUp:" + tok(arg, "space");
@@ -505,7 +530,7 @@ struct VsEditGraph {
             {"Compare", ">"}, {"Timer", "1"}, {"Const", "0"}, {"OnKey", "space"}, {"OnKeyUp", "space"},
             {"OnTimer", "1"}, {"OnEvent", "Event"}, {"SendEvent", "Event"}, {"BroadcastEvent", "Event"},
             {"SetObjectVar", "hp"}, {"GetObjectVar", "hp"}, {"SaveValue", "score"}, {"LoadValue", "score"},
-            {"Format", "Score: {0}"}, {"FindWithTag", "Player"}, {"CountWithTag", "Enemy"},
+            {"Format", "Score: {0}"}, {"FindWithTag", "Player"}, {"CountWithTag", "Enemy"}, {"FindObject", "Player"},
             {"NearestWithTag", "Enemy"}, {"Teleport", "self"},
             {"ShowUI", "self"}, {"HideUI", "self"}, {"Delay", "1"}, {"Action", "log Hello"},
             {"Condition", "always"}, {"Actions", "log Hello"}};
@@ -1092,6 +1117,32 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
     // one level, then dedented at the end.)
     std::string out = "    // Generated from the visual graph: edit it freely, or keep wiring nodes;\n"
                       "    // both drive the same runtime.\n\n";
+    // Object references (Target inputs, Self / Other / Find Object, Raycast 3D,
+    // Spawn's object) have no text-script equivalent yet: say exactly which nodes
+    // this code can't reproduce instead of quietly generating something else.
+    {
+        std::vector<std::string> untranslated;
+        auto pinUsed = [&](int nodeId, int pin) {
+            for (const auto& l : g.dataLinks) if (l.consumer == nodeId && l.inPin == pin) return true;
+            for (const auto& n : g.nodes)
+                if (n.id == nodeId) { auto it = n.pinDefault.find(pin); return it != n.pinDefault.end() && !it->second.empty(); }
+            return false;
+        };
+        for (const auto& n : g.nodes) {
+            const int tp = okay::vs::TargetPinFor(n.type);
+            bool objectUse = n.type == "Self" || n.type == "Other" || n.type == "FindObject" || n.type == "Raycast3D" ||
+                             (tp >= 0 && pinUsed(n.id, tp)) || (n.type == "Destroy" && pinUsed(n.id, 0));
+            if (n.type == "Spawn")
+                for (const auto& l : g.dataLinks) if (l.producer == n.id) objectUse = true;
+            if (objectUse) untranslated.push_back(n.type + " #" + std::to_string(n.id));
+        }
+        if (!untranslated.empty()) {
+            out += "    // NOT TRANSLATED - these nodes use object references, which this\n"
+                   "    // generated code doesn't support yet (the graph itself runs them):\n    //  ";
+            for (std::size_t i = 0; i < untranslated.size(); ++i) out += (i ? ", " : "") + untranslated[i];
+            out += "\n\n";
+        }
+    }
     // Every event node of a kind contributes to the one method for that event
     // (a graph may have several On Update nodes; they all run, in order).
     auto ofType = [&](const char* type) {
@@ -1169,7 +1220,11 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
         {"OnMouseOver",     "void OnMouseOver()"},
         {"OnCollisionStay", "void OnCollisionStay(string other)"},
         {"OnTriggerStay",   "void OnTriggerStay(string other)"},
-        {"OnLateUpdate",    "void LateUpdate()"}};
+        {"OnLateUpdate",    "void LateUpdate()"},
+        {"OnFixedUpdate",   "void FixedUpdate()"},
+        {"OnEnable",        "void OnEnable()"},
+        {"OnDisable",       "void OnDisable()"},
+        {"OnDestroy",       "void OnDestroy()"}};
     // Events sharing a handler (On Click + On Mouse Down) go into one method.
     std::set<std::string> doneSig;
     for (const auto& ev : kEvents) {
@@ -1842,6 +1897,10 @@ inline void Draw(EditorState& ed, bool* open) {
         if (fl > 0.0f)
             dl->AddRect(ImVec2(p0.x - 4 * z, p0.y - 4 * z), ImVec2(p1.x + 4 * z, p1.y + 4 * z),
                         IM_COL32(255, 200, 80, (int)(220 * fl)), ROUND + 4 * z, 0, 3.0f * z);
+        const bool errNode = live && live->LastErrorNode() == n.id && !live->LastError().empty();
+        if (errNode)
+            dl->AddRect(ImVec2(p0.x - 5 * z, p0.y - 5 * z), ImVec2(p1.x + 5 * z, p1.y + 5 * z),
+                        IM_COL32(255, 90, 80, 255), ROUND + 5 * z, 0, 3.0f * z);
         dl->AddRectFilled(p0, p1, IM_COL32(38, 39, 44, 245), ROUND);
         ImU32 hc = CatColor(d->cat);
         dl->AddRectFilled(p0, ImVec2(p1.x, p0.y + HEADER_H), hc, ROUND, ImDrawFlags_RoundCornersTop);
@@ -1947,6 +2006,10 @@ inline void Draw(EditorState& ed, bool* open) {
             if (st.liveValues && ln && i < (int)ln->lastOut.size()) {
                 std::string v = ln->lastOut[i].AsString();
                 if (ln->lastOut[i].IsVec3()) { Vec3 q3 = ln->lastOut[i].AsVec3(); char b3[64]; std::snprintf(b3, sizeof b3, "(%.2f, %.2f, %.2f)", q3.x, q3.y, q3.z); v = b3; }
+                else if (ln->lastOut[i].IsObject()) {   // an object: its name, or say it's gone
+                    if (!ln->lastOut[i].AsObjectId()) v = "(no object)";
+                    else if (v.empty()) v = "(destroyed)";
+                }
                 else if (!ln->lastOut[i].IsString()) {
                     char bf[32]; float f = ln->lastOut[i].AsFloat();
                     if (v == "true" || v == "false") {} else { std::snprintf(bf, sizeof bf, "%.3g", f); v = bf; }
@@ -2522,6 +2585,15 @@ inline void Draw(EditorState& ed, bool* open) {
         std::string lv = "\xE2\x97\x8F LIVE: " + liveName;
         ImVec2 ts = ImGui::CalcTextSize(lv.c_str());
         dl->AddText(ImVec2(canvasMax.x - ts.x - 16, canvasMin.y + 12), IM_COL32(115, 230, 140, 255), lv.c_str());
+        // A runtime error (runaway loop, data cycle...): say it on the canvas too,
+        // not only in the Console. The node it happened at is outlined in red.
+        if (!live->LastError().empty()) {
+            std::string er = "\xE2\x9A\xA0 " + live->LastError();
+            if (live->ErrorCount() > 1) er += "  (x" + std::to_string(live->ErrorCount()) + ")";
+            const float wrap = std::max(200.0f, canvasMax.x - canvasMin.x - 36.0f);
+            dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(canvasMin.x + 18, canvasMax.y - 12 - ImGui::GetTextLineHeight() * 2),
+                        IM_COL32(255, 120, 110, 255), er.c_str(), nullptr, wrap);
+        }
     }
 
     ImGui::EndChild();

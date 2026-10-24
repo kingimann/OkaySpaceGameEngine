@@ -1,0 +1,37 @@
+node 0 OnStart
+pos 0 40 40
+node 1 SetSceneVar score
+pos 1 300 40
+default 1 0 10
+node 2 AddSceneVar score
+pos 2 560 40
+default 2 0 5
+node 3 AddGlobalVar coins
+pos 3 820 40
+default 3 0 3
+node 4 Print
+pos 4 1080 40
+node 5 Format "EXPORT scopes: score {0}, coins {1}"
+pos 5 820 200
+node 6 GetSceneVar score
+pos 6 560 200
+node 7 GetGlobalVar coins
+pos 7 560 280
+data 5 0 6 0
+data 5 1 7 0
+data 4 0 5 0
+exec 0 0 1
+exec 1 0 2
+exec 2 0 3
+exec 3 0 4
+node 10 OnSceneVarChanged score
+pos 10 40 400
+node 11 Print
+pos 11 300 400
+node 12 Format "EXPORT changed: score {0}"
+pos 12 40 520
+data 12 0 10 0
+data 11 0 12 0
+exec 10 0 11
+entry OnStart 0
+entry OnSceneVarChanged:score 10

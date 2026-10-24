@@ -36,6 +36,16 @@ cmake --build build -j
 Run `./build/bin/OkayEngine --selftest` to exercise the editor's logic without
 a window (used in CI where there is no display).
 
+`OkayEngine --build-game SCENE OUT_DIR [--name GAME]` exports a scene without
+opening a window. It runs the same Build as the Build window. The player must be
+beside the editor; this never downloads one. The exit code is 0 only when the game was built.
+
+CI uses it to check exported games (`tests/export/`). It builds a small game whose
+visual scripts cover functions, loops, lists, scene and global variables, engine
+API calls, events and timers. Then it runs the game headless and compares what the
+scripts print with `tests/export/expected.txt`. This runs on Linux (`verify.sh`)
+and on a real Windows machine (`verify.ps1`).
+
 ### One self-contained Windows .exe
 
 The editor cross-compiles from Linux into a single `.exe` with SDL2 linked

@@ -81,6 +81,8 @@ const char* DedicatedServerUsage() {
         "  --no-encryption        don't encrypt traffic\n"
         "  --status SECONDS       print a status line this often (default 60, 0 = off)\n"
         "  --run-for SECONDS      stop after this long (for tests)\n"
+        "  --log FILE             write everything the server prints to FILE (on Windows\n"
+        "                         the game has no console, so this is where output goes)\n"
         "  --advertise            list this server in the launcher's server browser\n"
         "                         (sign in to OkaySpace on this machine first)\n"
         "  --public-addr HOST     the address players connect to (IP or hostname)\n"
@@ -231,6 +233,9 @@ bool ParseDedicatedServerArgs(int argc, char** argv, DedicatedServerOptions& out
         } else if (a == "--run-for") {
             if (!value(v) || !ParseFloat(v, 0.0f, 1e7f, fv)) return fail("--run-for needs seconds");
             out.maxRuntime = fv;
+        } else if (a == "--log") {
+            if (!value(v) || v.empty()) return fail("--log needs a file path");
+            out.logPath = v;
         } else if (a == "--advertise") out.advertise = true;
         else if (a == "--public-addr") {
             if (!value(v) || v.empty()) return fail("--public-addr needs the address players connect to");

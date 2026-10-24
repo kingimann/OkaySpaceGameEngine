@@ -1,0 +1,18 @@
+node 0 OnStart
+pos 0 40 40
+node 1 Transform.Translate/3
+pos 1 300 40
+default 1 0 1
+default 1 1 2
+default 1 2 3
+node 2 Print
+pos 2 560 40
+node 3 Format "EXPORT api: position {0}"
+pos 3 300 200
+node 4 Transform.position
+pos 4 40 200
+data 3 0 4 0
+data 2 0 3 0
+exec 0 0 1
+exec 1 0 2
+entry OnStart 0

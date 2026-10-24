@@ -434,8 +434,8 @@ entry OnCollision 0
     }
     // ---- Get Position / Get Name with a Target; a typed name works as Target too ----
     {
-        Scene s("Read"); GameObject* me = s.CreateGameObject("Me"); GameObject* far = s.CreateGameObject("Far");
-        far->transform->localPosition = {5, 6, 7}; far->tag = "Loot";
+        Scene s("Read"); GameObject* me = s.CreateGameObject("Me"); GameObject* farObj = s.CreateGameObject("Far");
+        farObj->transform->localPosition = {5, 6, 7}; farObj->tag = "Loot";
         auto* v = Attach(me, "node 0 OnStart\nnode 1 GetPosition\nnode 2 SetVar pos\nnode 3 GetTag\nnode 4 SetVar tag\n"
                              "default 1 0 \"Far\"\ndefault 3 0 \"Far\"\ndata 2 0 1 0\ndata 4 0 3 0\n"
                              "exec 0 0 2\nexec 2 0 4\nentry OnStart 0\n");

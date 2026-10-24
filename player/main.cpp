@@ -1368,6 +1368,21 @@ int main(int argc, char** argv) {
     std::string serverArgErr;
     const bool dedicatedServer = okay::ParseDedicatedServerArgs(argc, argv, serverOpts, &serverArgErr);
     if (!serverArgErr.empty()) { std::fprintf(stderr, "%s\n\n%s", serverArgErr.c_str(), okay::DedicatedServerUsage()); return 1; }
+    // --log FILE: send stdout + stderr (the engine log, [server] lines, script
+    // prints) to a file. The Windows player has no console, so without this a
+    // server's output is lost. Unbuffered so a crash still leaves the last lines.
+    if (dedicatedServer && !serverOpts.logPath.empty()) {
+        // Start it empty, then open both streams for appending, so each line lands
+        // at the end whichever stream wrote it.
+        if (std::FILE* f = std::fopen(serverOpts.logPath.c_str(), "w")) std::fclose(f);
+        if (!std::freopen(serverOpts.logPath.c_str(), "a", stdout) ||
+            !std::freopen(serverOpts.logPath.c_str(), "a", stderr)) {
+            std::fprintf(stderr, "Couldn't open the log file %s\n", serverOpts.logPath.c_str());
+            return 1;
+        }
+        std::setvbuf(stdout, nullptr, _IONBF, 0);
+        std::setvbuf(stderr, nullptr, _IONBF, 0);
+    }
     // `--join LINK` / `--connect HOST:PORT`: the launcher started us to join a
     // friend, an invite or a server from the browser (Steam's "+connect").
     std::string launchJoin;

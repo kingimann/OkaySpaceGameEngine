@@ -1,0 +1,62 @@
+okayscene 1
+name "VsExport"
+gravity 0 -9.81
+gameobject 0 "Main Camera"
+  active 1
+  parent -1
+  transform 0 2 12 0 0 0 1 1 1 1
+  camera 1 5 60 0.192157 0.301961 0.47451 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Manager"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  visualscript ""
+  visualscriptpath "manager.okayvs"
+end
+gameobject 2 "Hero"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  visualscript ""
+  visualscriptpath "hero.okayvs"
+end
+gameobject 3 "E1"
+  active 1
+  parent -1
+  tag "Enemy"
+  transform -2 0 0 0 0 0 1 1 1 1
+end
+gameobject 4 "E2"
+  active 1
+  parent -1
+  tag "Enemy"
+  transform 0 0 -2 0 0 0 1 1 1 1
+end
+gameobject 5 "E3"
+  active 1
+  parent -1
+  tag "Enemy"
+  transform 2 0 0 0 0 0 1 1 1 1
+end
+gameobject 6 "Counter"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  visualscript ""
+  visualscriptpath "lists.okayvs"
+end
+gameobject 7 "Scorer"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  visualscript ""
+  visualscriptpath "scopes.okayvs"
+end
+gameobject 8 "Mover"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  visualscript ""
+  visualscriptpath "api.okayvs"
+end

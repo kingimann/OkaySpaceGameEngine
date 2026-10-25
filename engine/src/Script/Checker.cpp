@@ -640,6 +640,28 @@ private:
             case EK::Cast: CheckCast(e); return;
             case EK::Conditional: CheckConditional(e); return;
             case EK::Index: CheckIndex(e); return;
+            case EK::Interp:
+                for (auto& a : e.args) {
+                    CheckExpr(*a);
+                    if (a->type.kind == TK::Void) Error(a->loc, "This doesn't produce a value to put in the text");
+                    else Expect(*a, Type::Of(TK::Any), "");   // an enum shows its name
+                }
+                e.type = Type::Of(TK::String);
+                return;
+            case EK::Format: {
+                CheckExpr(*e.lhs);
+                const std::string& f = e.sval;
+                const bool digits = f.size() >= 2 && f.size() <= 3 && std::all_of(f.begin() + 1, f.end(), [](char ch) { return std::isdigit((unsigned char)ch); });
+                if ((f.empty() || (f[0] != 'F' && f[0] != 'f')) || (f.size() > 1 && !digits)) {
+                    Error(e.loc, "Only :F formats work here, like {time:F1} (F and the number of decimals)");
+                    return;
+                }
+                e.ival = f.size() > 1 ? std::stoi(f.substr(1)) : 2;   // C#'s plain F is 2 decimals
+                if (e.ival > 15) { Error(e.loc, "At most 15 decimals: :F15"); return; }
+                if (!e.lhs->type.IsNumeric() && e.lhs->type.kind != TK::Error) { Error(e.loc, ":F needs a number, not " + TypeName(e.lhs->type)); return; }
+                e.type = Type::Of(TK::String);
+                return;
+            }
             case EK::NewArray: CheckNewArray(e); return;
             case EK::ArrayLit:
                 for (auto& a : e.args) CheckExpr(*a);

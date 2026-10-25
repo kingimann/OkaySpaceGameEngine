@@ -800,6 +800,19 @@ Lifecycle methods (`Start`, `Update`, ...) can't be static, since the engine cal
 them on each object, and a `const` is already shared, so it doesn't take
 `static`.
 
+### $"..." text
+
+Put any value inside `{ }` in a `$"..."` string: numbers, text, enums (their
+name), `bool`s, `Vector3`s, names of objects, whole expressions, even another
+`$"..."`. Write `{{` and `}}` for the braces themselves. `{value:F2}` shows a
+number with a fixed number of decimals, for timers and scores on a HUD.
+
+```csharp
+Debug.Log($"{gameObject.name} has {hp} HP ({state})");
+timerText = $"Time {elapsed:F1}s";          // "Time 12.5s"
+label = $"{(won ? "You win" : "Try again")}: {score} points";
+```
+
 ### foreach
 
 Loops over an array's items, with `var` or a type. The loop variable can't be

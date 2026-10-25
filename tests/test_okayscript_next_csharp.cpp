@@ -466,6 +466,65 @@ static void Statics() {
     }
 }
 
+static void Interpolation() {
+    {   // values of every type in { }, {{ }} for braces, :F<n> for fixed decimals, text in holes, escapes
+        World w(
+            "enum Mode { Easy, Hard }\n"
+            "class T : Behaviour {\n"
+            "    public string a, b, c, d, e;\n"
+            "    public int score = 5;\n"
+            "    void Start() {\n"
+            "        float t = 3.14159f;\n"
+            "        bool alive = true;\n"
+            "        Mode m = Mode.Hard;\n"
+            "        a = $\"Score: {score} next={score + 1} {{not a hole}}\";\n"
+            "        b = $\"{m} {alive} {new Vector3(1, 2, 3)} {gameObject.name}\";\n"
+            "        c = $\"time {t:F2}s, lives {score:F1}, whole {t:F0}\";\n"
+            "        d = $\"{(alive ? \"yes\" : \"no\")} {$\"in{score}\"}\";\n"
+            "        e = $\"say \\\"hi\\\"\\tok\";\n"
+            "    }\n"
+            "}\n");
+        CHECK(w.loaded);
+        CHECK(w.S("a") == "Score: 5 next=6 {not a hole}");
+        CHECK(w.S("b") == "Hard True (1, 2, 3) Player");
+        CHECK(w.S("c") == "time 3.14s, lives 5.0, whole 3");
+        CHECK(w.S("d") == "yes in5");
+        CHECK(w.S("e") == "say \"hi\"\tok");
+    }
+    {   // the same text on the old runtime
+        const std::string src = Wrap(
+            "    public string s;\n    public int score = 7;\n"
+            "    void Start() { s = $\"Score: {score} next={score + 1} {{x}} {score * 2}\"; }\n");
+        World next(src), old(src, "okayscript");
+        CHECK(next.S("s") == "Score: 7 next=8 {x} 14");
+        CHECK(next.S("s") == old.S("s"));
+    }
+    {   // mistakes, with line and column (inside { } too)
+        auto d = Diags(Wrap(
+            "    void Hit() { }\n"                                  // 2
+            "    void Start() {\n"                                  // 3
+            "        int hp = 3;\n"                                 // 4
+            "        string a = $\"hp={hpp}\";\n"                  // 5
+            "        string b = $\"{}\";\n"                         // 6
+            "        string c = $\"a } b\";\n"                      // 7
+            "        string d = $\"{hp:X4}\";\n"                    // 8
+            "        string e = $\"{a:F2}\";\n"                     // 9
+            "        string f = $\"{Hit()}\";\n"                    // 10
+            "        string g = $\"{hp b}\";\n"                     // 11
+            "        Debug.Log(a + b + c + d + e + f + g);\n"       // 12
+            "        string h = $\"open {hp\";\n"                   // 13
+            "    }\n"));
+        CHECK(Has(d, 0, "Unknown name 'hpp'. Did you mean 'hp'?", 5, 26));
+        CHECK(Has(d, 0, "Empty { } in $\"...\"", 6, 22));
+        CHECK(Has(d, 0, "A } on its own in $\"...\" is written }}", 7, 24));
+        CHECK(Has(d, 0, "Only :F formats work here, like {time:F1}", 8, 26));
+        CHECK(Has(d, 0, ":F needs a number, not string", 9, 25));
+        CHECK(Has(d, 0, "doesn't produce a value", 10, 23));
+        CHECK(Has(d, 0, "Expected '}' to close the { } here", 11, 26));
+        CHECK(Has(d, 0, "This { in $\"...\" is never closed", 13, 27));
+    }
+}
+
 static void Parity() {
     // The same C# snippet gives the same results on the old OkayScript runtime.
     const std::string src =
@@ -509,13 +568,17 @@ static void Fuzz() {
     // Truncated and garbled programs never crash the compiler.
     const std::string src =
         "enum E { A, B = 2 }\nclass T : Behaviour {\n int[] a = { 1, 2 };\n void Start() {\n"
-        "  switch (E.A) { case E.A: foreach (var x in a) { a[x % 2] += 1; } break; default: break; }\n }\n}\n";
+        "  switch (E.A) { case E.A: foreach (var x in a) { a[x % 2] += 1; } break; default: break; }\n"
+        "  string s = $\"{a[0]:F1} {{ {$\"{E.B}\"}\";\n }\n}\n";
     int n = 0;
     for (std::size_t i = 0; i <= src.size(); ++i) { Diags(src.substr(0, i)); ++n; }
     for (std::size_t i = 0; i < src.size(); ++i) { std::string s = src; s.erase(i, 1); Diags(s); }
     CHECK_EQ(n, (int)src.size() + 1);
     std::string deep = Wrap("    int[] a = " + std::string(500, '{') + "1" + std::string(500, '}') + ";\n");
     CHECK(Count(Diags(deep), 0) > 0);
+    std::string nested = "\"x\"";
+    for (int i = 0; i < 40; ++i) nested = "$\"{" + nested + "}\"";
+    CHECK(Has(Diags(Wrap("    void Start() { Debug.Log(" + nested + "); }")), 0, "nested too deeply"));
     // Statements nested far too deep are an error, not a stack overflow.
     CHECK(Has(Diags(Wrap("    void Start() " + std::string(100000, '{') + std::string(100000, '}'))), 0, "This code is nested too deeply"));
     std::string ifs;
@@ -533,6 +596,7 @@ int main() {
     Arrays();
     Foreach();
     Statics();
+    Interpolation();
     Parity();
     BackCompat();
     Fuzz();

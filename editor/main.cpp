@@ -340,6 +340,9 @@ int main(int argc, char** argv) {
 #include "okay/VisualScript/VsDebug.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
 #include "VisualScriptEditor.hpp"  // node-based visual script editor (okay::editor::vsed) — global scope
+#include "EditorWidgets.hpp"       // accent, category tints, toolbar icons, icon/search buttons
+#include "ConsolePanel.hpp"        // ConsoleLog + the Console panel
+#include "MainShared.hpp"          // main.cpp functions the split-out panels call
 
 #include <vector>
 
@@ -376,7 +379,9 @@ extern "C" {
 }
 #endif
 
-namespace {
+// The editor application: panels, tools and their shared state. A named
+// namespace (not an anonymous one) so the panels can live in their own files.
+namespace oked {
 
 // Run a shell command WITHOUT flashing a console window. On Windows std::system
 // spawns a visible cmd window for every call (the "command prompts popping up");
@@ -641,7 +646,6 @@ static long SceneTriangleLoad(const Scene& scene) {
 // Forward decls: Render3DTexture (below) uses these for the GPU-renderer self-heal,
 // but their definitions live further down the file.
 void SaveSettings();
-void ConsoleLog(const std::string& msg, int level = 0);   // default here so any call site can pass just a message
 static void SavePrefabInto(GameObject* go, const std::filesystem::path& destDir);   // defined below; used by the UI menu
 bool g_showVisualScript = false;   // the node graph editor window (okay::editor::vsed)
 
@@ -1563,250 +1567,7 @@ int  g_uiSubdivX = 3;            // UI-Only: subdivision columns
 int  g_uiSubdivY = 3;            // UI-Only: subdivision rows
 int  g_accent = 0;               // accent colour preset (see kAccents)
 
-// Selectable editor accent colours (the highlight used on selections, buttons,
-// checks, tabs, etc.). Index persists in settings.
-struct AccentPreset { const char* name; float r, g, b; };
-static const AccentPreset kAccents[] = {
-    {"Classic", 0.235f, 0.475f, 0.800f}, // muted selection blue (default)
-    {"Blue",    0.26f, 0.59f, 0.98f},
-    {"Teal",    0.18f, 0.78f, 0.74f},
-    {"Violet",  0.56f, 0.46f, 0.96f},
-    {"Green",   0.36f, 0.80f, 0.46f},
-    {"Amber",   0.95f, 0.66f, 0.26f},
-    {"Rose",    0.96f, 0.42f, 0.56f},
-    {"Slate",   0.52f, 0.58f, 0.68f},
-    {"Cyan",    0.30f, 0.80f, 0.92f},
-    {"Orange",  0.96f, 0.55f, 0.22f},
-    {"Crimson", 0.92f, 0.34f, 0.40f},
-    {"Mint",    0.40f, 0.86f, 0.66f},
-    {"Indigo",  0.42f, 0.40f, 0.92f},
-};
-static const int kAccentCount = (int)(sizeof(kAccents) / sizeof(kAccents[0]));
-// The current accent colour, for panels that want to tint their own widgets to
-// match the theme (component headers, the Add Component button, ...).
-static ImVec4 AccentCol(float alpha = 1.0f) {
-    const AccentPreset& ap = kAccents[(g_accent < 0 || g_accent >= kAccentCount) ? 0 : g_accent];
-    return ImVec4(ap.r, ap.g, ap.b, alpha);
-}
-// A tasteful category tint for a component header, derived from its label — so the
-// Inspector groups visually by system (physics/render/audio/UI/animation/script)
-// while staying cohesive. Falls back to the theme accent.
-static ImVec4 CategoryColor(const char* label) {
-    auto has = [&](const char* k) { return std::strstr(label, k) != nullptr; };
-    if (has("Collider") || has("Rigidbody") || has("Joint"))          return ImVec4(0.42f, 0.80f, 0.50f, 1.0f); // physics — green
-    if (has("Audio"))                                                 return ImVec4(0.95f, 0.62f, 0.30f, 1.0f); // audio — orange
-    if (has("Animat") || has("IK") || has("Root Motion"))            return ImVec4(0.30f, 0.78f, 0.80f, 1.0f); // animation — teal
-    if (has("Script") || has("Visual Script"))                       return ImVec4(0.90f, 0.80f, 0.35f, 1.0f); // scripting — yellow
-    if (has("UI ") || has("Canvas") || has("Button") || has("Panel") || has("Slider") ||
-        has("Toggle") || has("Tabs") || has("Dropdown") || has("Scroll") || has("Layout") ||
-        has("Progress") || has("Rating") || has("Stepper") || has("Input Field") || has("Tooltip"))
-                                                                       return ImVec4(0.66f, 0.52f, 0.96f, 1.0f); // UI — violet
-    if (has("Renderer") || has("Sprite") || has("Mesh") || has("Text") || has("Particle") ||
-        has("Light") || has("Camera") || has("Tilemap") || has("Terrain") || has("Water"))
-                                                                       return ImVec4(0.42f, 0.66f, 0.98f, 1.0f); // rendering — blue
-    return AccentCol(1.0f);
-}
-// Icon family for a component header, matching CategoryColor's keywords:
-// 0 dot (default), 1 square (rendering), 2 circle (physics), 3 triangle
-// (animation), 4 diamond (scripts), 5 speaker (audio), 6 ring (UI).
-static int CategoryGlyph(const char* label) {
-    auto has = [&](const char* k) { return std::strstr(label, k) != nullptr; };
-    if (has("Collider") || has("Rigidbody") || has("Joint"))          return 2;
-    if (has("Audio"))                                                 return 5;
-    if (has("Animat") || has("IK") || has("Root Motion"))             return 3;
-    if (has("Script") || has("Visual Script"))                        return 4;
-    if (has("UI ") || has("Canvas") || has("Button") || has("Panel") || has("Slider") ||
-        has("Toggle") || has("Tabs") || has("Dropdown") || has("Scroll") || has("Layout") ||
-        has("Progress") || has("Rating") || has("Stepper") || has("Input Field") || has("Tooltip"))
-                                                                       return 6;
-    if (has("Renderer") || has("Sprite") || has("Mesh") || has("Text") || has("Particle") ||
-        has("Light") || has("Camera") || has("Tilemap") || has("Terrain") || has("Water"))
-                                                                       return 1;
-    return 0;
-}
-
-// A button that shows an accent "pressed" look while `active` — for toolbar
-// toggles (transform tools, Local/Global, Snap, edit modes) so the active state
-// reads consistently in the theme colour instead of ad-hoc blues.
-static bool AccentToggleButton(const char* label, bool active, const ImVec2& size = ImVec2(0, 0)) {
-    if (active) {
-        ImGui::PushStyleColor(ImGuiCol_Button,        AccentCol(0.90f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.00f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  AccentCol(0.80f));
-        ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1, 1, 1, 1));
-    }
-    bool clicked = ImGui::Button(label, size);
-    if (active) ImGui::PopStyleColor(4);
-    return clicked;
-}
-
-// Compact square toolbar buttons with drawn vector glyphs (the UI font has no
-// icon glyphs). Panels use these instead of rows of text buttons and checkboxes:
-// the primary actions stay one click away and everything else lives in a "more"
-// menu, so toolbars fit on one line like other editors.
-enum class TbIcon { More, Plus, Move, Rotate, Scale, Global, Local, Snap, Frame, Search, Clear, Expand, Collapse, Sort, Folder, Grid, List };
-static void DrawTbIcon(ImDrawList* dl, TbIcon ic, ImVec2 c, float s, ImU32 col) {
-    const float t = 1.6f;
-    switch (ic) {
-    case TbIcon::More:
-        for (int i = -1; i <= 1; ++i) dl->AddCircleFilled(ImVec2(c.x + i * s * 0.36f, c.y), s * 0.1f, col);
-        break;
-    case TbIcon::Plus:
-        dl->AddLine(ImVec2(c.x - s * 0.4f, c.y), ImVec2(c.x + s * 0.4f, c.y), col, t + 0.4f);
-        dl->AddLine(ImVec2(c.x, c.y - s * 0.4f), ImVec2(c.x, c.y + s * 0.4f), col, t + 0.4f);
-        break;
-    case TbIcon::Move: {
-        float r = s * 0.48f, a = s * 0.16f;
-        dl->AddLine(ImVec2(c.x - r, c.y), ImVec2(c.x + r, c.y), col, t);
-        dl->AddLine(ImVec2(c.x, c.y - r), ImVec2(c.x, c.y + r), col, t);
-        dl->AddTriangleFilled(ImVec2(c.x + r + 1, c.y), ImVec2(c.x + r - a, c.y - a), ImVec2(c.x + r - a, c.y + a), col);
-        dl->AddTriangleFilled(ImVec2(c.x - r - 1, c.y), ImVec2(c.x - r + a, c.y + a), ImVec2(c.x - r + a, c.y - a), col);
-        dl->AddTriangleFilled(ImVec2(c.x, c.y - r - 1), ImVec2(c.x + a, c.y - r + a), ImVec2(c.x - a, c.y - r + a), col);
-        dl->AddTriangleFilled(ImVec2(c.x, c.y + r + 1), ImVec2(c.x - a, c.y + r - a), ImVec2(c.x + a, c.y + r - a), col);
-        break; }
-    case TbIcon::Rotate: {
-        float r = s * 0.38f;
-        dl->PathArcTo(c, r, IM_PI * 0.15f, IM_PI * 1.75f, 18);
-        dl->PathStroke(col, 0, t);
-        ImVec2 e(c.x + r * std::cos(IM_PI * 0.15f), c.y + r * std::sin(IM_PI * 0.15f));
-        float a = s * 0.17f;
-        dl->AddTriangleFilled(ImVec2(e.x - a, e.y - a * 0.2f), ImVec2(e.x + a, e.y - a * 0.2f), ImVec2(e.x, e.y + a * 1.1f), col);
-        break; }
-    case TbIcon::Scale: {
-        float r = s * 0.42f;
-        dl->AddRect(ImVec2(c.x - r, c.y - r * 0.1f), ImVec2(c.x + r * 0.1f, c.y + r), col, 1.0f, 0, t);
-        dl->AddLine(ImVec2(c.x - r * 0.1f, c.y + r * 0.1f), ImVec2(c.x + r, c.y - r), col, t);
-        dl->AddLine(ImVec2(c.x + r, c.y - r), ImVec2(c.x + r * 0.35f, c.y - r), col, t);
-        dl->AddLine(ImVec2(c.x + r, c.y - r), ImVec2(c.x + r, c.y - r * 0.35f), col, t);
-        break; }
-    case TbIcon::Global: {
-        float r = s * 0.42f;
-        dl->AddCircle(c, r, col, 20, t);
-        dl->AddEllipse(c, ImVec2(r * 0.42f, r), col, 0.0f, 16, t * 0.8f);
-        dl->AddLine(ImVec2(c.x - r, c.y), ImVec2(c.x + r, c.y), col, t * 0.8f);
-        break; }
-    case TbIcon::Local: {   // isometric cube outline
-        float r = s * 0.42f, h = r * 0.5f;
-        ImVec2 top(c.x, c.y - r), lft(c.x - r, c.y - h), rgt(c.x + r, c.y - h), mid(c.x, c.y);
-        ImVec2 bl(c.x - r, c.y + h), br(c.x + r, c.y + h), bot(c.x, c.y + r);
-        ImVec2 hex[6] = {top, rgt, br, bot, bl, lft};
-        dl->AddPolyline(hex, 6, col, ImDrawFlags_Closed, t);
-        dl->AddLine(lft, mid, col, t); dl->AddLine(rgt, mid, col, t); dl->AddLine(mid, bot, col, t);
-        break; }
-    case TbIcon::Snap: {    // magnet
-        float r = s * 0.3f, top = c.y - s * 0.4f;
-        dl->PathArcTo(ImVec2(c.x, c.y + s * 0.05f), r, 0.0f, IM_PI, 14);
-        dl->PathStroke(col, 0, t + 1.6f);
-        dl->AddLine(ImVec2(c.x - r, c.y + s * 0.05f), ImVec2(c.x - r, top), col, t + 1.6f);
-        dl->AddLine(ImVec2(c.x + r, c.y + s * 0.05f), ImVec2(c.x + r, top), col, t + 1.6f);
-        dl->AddLine(ImVec2(c.x - r, top + s * 0.18f), ImVec2(c.x - r, top), IM_COL32(230, 90, 90, 255), t + 1.8f);
-        dl->AddLine(ImVec2(c.x + r, top + s * 0.18f), ImVec2(c.x + r, top), IM_COL32(230, 90, 90, 255), t + 1.8f);
-        break; }
-    case TbIcon::Frame: {   // corner brackets around a dot
-        float r = s * 0.44f, k = s * 0.2f;
-        for (int sx = -1; sx <= 1; sx += 2)
-            for (int sy = -1; sy <= 1; sy += 2) {
-                ImVec2 p(c.x + sx * r, c.y + sy * r);
-                dl->AddLine(p, ImVec2(p.x - sx * k, p.y), col, t);
-                dl->AddLine(p, ImVec2(p.x, p.y - sy * k), col, t);
-            }
-        dl->AddCircleFilled(c, s * 0.12f, col);
-        break; }
-    case TbIcon::Search: {
-        float r = s * 0.27f;
-        ImVec2 o(c.x - s * 0.08f, c.y - s * 0.08f);
-        dl->AddCircle(o, r, col, 14, t);
-        dl->AddLine(ImVec2(o.x + r * 0.7f, o.y + r * 0.7f), ImVec2(c.x + s * 0.4f, c.y + s * 0.4f), col, t + 0.6f);
-        break; }
-    case TbIcon::Clear: {   // circle with a slash ("clear all")
-        float r = s * 0.38f;
-        dl->AddCircle(c, r, col, 18, t);
-        dl->AddLine(ImVec2(c.x - r * 0.7f, c.y + r * 0.7f), ImVec2(c.x + r * 0.7f, c.y - r * 0.7f), col, t);
-        break; }
-    case TbIcon::Expand: case TbIcon::Collapse: {
-        float r = s * 0.3f, d = (ic == TbIcon::Expand) ? 1.0f : -1.0f;
-        for (int k = 0; k < 2; ++k) {
-            float y = c.y + (k ? s * 0.22f : -s * 0.22f);
-            dl->AddLine(ImVec2(c.x - r, y - d * r * 0.5f), ImVec2(c.x, y + d * r * 0.5f), col, t);
-            dl->AddLine(ImVec2(c.x, y + d * r * 0.5f), ImVec2(c.x + r, y - d * r * 0.5f), col, t);
-        }
-        break; }
-    case TbIcon::Folder: {
-        float w = s * 0.46f, h = s * 0.34f;
-        dl->AddRect(ImVec2(c.x - w, c.y - h * 0.6f), ImVec2(c.x + w, c.y + h), col, 1.5f, 0, t);
-        dl->AddLine(ImVec2(c.x - w, c.y - h * 0.6f), ImVec2(c.x - w, c.y - h * 1.1f), col, t);
-        dl->AddLine(ImVec2(c.x - w, c.y - h * 1.1f), ImVec2(c.x - w * 0.15f, c.y - h * 1.1f), col, t);
-        dl->AddLine(ImVec2(c.x - w * 0.15f, c.y - h * 1.1f), ImVec2(c.x + w * 0.05f, c.y - h * 0.6f), col, t);
-        break; }
-    case TbIcon::Grid: {
-        float g = s * 0.17f, o = s * 0.2f;
-        for (int i = -1; i <= 1; i += 2)
-            for (int j = -1; j <= 1; j += 2)
-                dl->AddRectFilled(ImVec2(c.x + i * o - g, c.y + j * o - g), ImVec2(c.x + i * o + g, c.y + j * o + g), col, 1.0f);
-        break; }
-    case TbIcon::List: {
-        for (int k = -1; k <= 1; ++k) {
-            float y = c.y + k * s * 0.26f;
-            dl->AddCircleFilled(ImVec2(c.x - s * 0.36f, y), s * 0.06f, col);
-            dl->AddLine(ImVec2(c.x - s * 0.22f, y), ImVec2(c.x + s * 0.42f, y), col, t);
-        }
-        break; }
-    case TbIcon::Sort: {
-        for (int k = 0; k < 3; ++k) {
-            float y = c.y - s * 0.3f + k * s * 0.3f, w = s * (0.25f + 0.2f * k);
-            dl->AddLine(ImVec2(c.x - s * 0.42f, y), ImVec2(c.x - s * 0.42f + w, y), col, t);
-        }
-        break; }
-    }
-}
-// Square icon button (frame-height); accent-tinted while `active`. `tip` shows on hover.
-static bool IconButton(const char* id, TbIcon ic, const char* tip = nullptr, bool active = false) {
-    float h = ImGui::GetFrameHeight();
-    bool clicked = AccentToggleButton(id, active, ImVec2(h, h));
-    ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-    ImU32 col = ImGui::GetColorU32(active ? ImVec4(1, 1, 1, 1)
-                                          : ImGui::GetStyleColorVec4(ImGuiCol_Text));
-    if (!active && !ImGui::IsItemHovered()) col = ImGui::GetColorU32(ImGuiCol_Text, 0.8f);
-    DrawTbIcon(ImGui::GetWindowDrawList(), ic, ImVec2((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f),
-               h * 0.5f, col);
-    if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
-    return clicked;
-}
-// A search field with a drawn magnifier inside and a clear (x) affordance when it
-// has text. `width` <= 0 fills the remaining width minus |width|.
-static bool SearchField(const char* id, char* buf, std::size_t bufSize, const char* hint, float width) {
-    ImGuiStyle& st = ImGui::GetStyle();
-    float h = ImGui::GetFrameHeight();
-    float w = width > 0.0f ? width : ImGui::GetContentRegionAvail().x + width;
-    if (w < h * 3.0f) w = h * 3.0f;
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(h * 0.95f, st.FramePadding.y));
-    ImGui::SetNextItemWidth(w);
-    bool changed = ImGui::InputTextWithHint(id, hint, buf, bufSize);
-    ImGui::PopStyleVar();
-    ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    DrawTbIcon(dl, TbIcon::Search, ImVec2(mn.x + h * 0.5f, (mn.y + mx.y) * 0.5f), h * 0.42f,
-               ImGui::GetColorU32(ImGuiCol_TextDisabled));
-    if (buf[0]) {   // clear button drawn over the right edge of the field
-        ImVec2 xc(mx.x - h * 0.5f, (mn.y + mx.y) * 0.5f);
-        ImVec2 mp = ImGui::GetIO().MousePos;
-        bool hot = std::fabs(mp.x - xc.x) < h * 0.45f && std::fabs(mp.y - xc.y) < h * 0.45f &&
-                   ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
-        float r = h * 0.17f;
-        ImU32 xcCol = ImGui::GetColorU32(hot ? ImGuiCol_Text : ImGuiCol_TextDisabled);
-        dl->AddLine(ImVec2(xc.x - r, xc.y - r), ImVec2(xc.x + r, xc.y + r), xcCol, 1.6f);
-        dl->AddLine(ImVec2(xc.x - r, xc.y + r), ImVec2(xc.x + r, xc.y - r), xcCol, 1.6f);
-        if (hot && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-            buf[0] = '\0'; changed = true;
-            ImGui::ClearActiveID();
-        }
-    }
-    return changed;
-}
-// Right-align the next `w` pixels of items on the current line.
-static void SameLineRight(float w) {
-    ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - w);
-}
+// Theme accent, category tints and toolbar widgets: EditorWidgets.cpp / .hpp.
 // A layer mask as the friendly list the physics accepts ("" = every layer).
 static std::string LayerMaskToList(std::uint32_t mask) {
     if (mask == 0xFFFFFFFFu) return std::string();
@@ -2353,7 +2114,6 @@ void DrawVarWatch() {
 
 // Save the open scene so an auto-update relaunch never loses work. Uses the
 // current path when known, otherwise a recovery file (added to Recent).
-void ConsoleLog(const std::string& msg, int level);   // (defined below)
 // Saving (defined near the end of this namespace):
 static void SaveSceneCmd(EditorState& ed);       // File > Save Scene (Ctrl+S)
 static void SaveSceneAsCmd(EditorState& ed);     // File > Save Scene As (Ctrl+Shift+S)
@@ -2442,7 +2202,7 @@ static void OpenScriptFileInEditor(const std::string& path) {
 // error): opens/focuses the file's tab; the editor consumes the line once active.
 static std::string g_scriptPendingPath;
 static int         g_scriptPendingLine = 0;
-static void OpenScriptFileInEditorAt(const std::string& path, int line) {
+void OpenScriptFileInEditorAt(const std::string& path, int line) {
     OpenScriptFileInEditor(path);
     g_scriptPendingPath = path;
     g_scriptPendingLine = line > 0 ? line : 1;
@@ -4283,39 +4043,7 @@ std::string BuildServer(EditorState& ed, const std::string& outDir, const std::s
 
 builder::BuildReport g_buildReport;   // per-file size breakdown of the last build
 
-// ---- Console log -------------------------------------------------------
-// A console entry: severity, text, a short timestamp, and a repeat
-// count (incremented when the same line is logged twice in a row).
-struct ConsoleEntry {
-    int level = 0;            // 0 = info, 1 = warning, 2 = error
-    std::string text;
-    std::string time;
-    int count = 1;
-};
-std::vector<ConsoleEntry> g_console;
-int g_consoleCounts[3] = {0, 0, 0};   // running totals per level (for the toggles)
-
-void ConsoleLog(const std::string& msg, int level) {   // default declared at the top forward-decl
-    if (level < 0) level = 0;
-    if (level > 2) level = 2;
-    // Collapse an immediate repeat of the same message into a count.
-    if (!g_console.empty() && g_console.back().text == msg && g_console.back().level == level) {
-        g_console.back().count++;
-        g_consoleCounts[level]++;
-        return;
-    }
-    char ts[16];
-    std::time_t t = std::time(nullptr);
-    std::tm* lt = std::localtime(&t);
-    std::snprintf(ts, sizeof(ts), "%02d:%02d:%02d", lt ? lt->tm_hour : 0, lt ? lt->tm_min : 0, lt ? lt->tm_sec : 0);
-    g_console.push_back({level, msg, ts, 1});
-    g_consoleCounts[level]++;
-    if (g_console.size() > 500) g_console.erase(g_console.begin());
-}
-void ConsoleClear() {
-    g_console.clear();
-    g_consoleCounts[0] = g_consoleCounts[1] = g_consoleCounts[2] = 0;
-}
+// Console log + panel: ConsolePanel.cpp / .hpp.
 
 // ---- Editor theme (default: the shared Slate palette) ----------------------
 void ApplyTheme() {
@@ -6585,235 +6313,7 @@ void DrawCrashLog() {
     ImGui::End();
 }
 
-// A console: severity icons + colors, Collapse, per-level filter
-// toggles with counts, search, a selectable list, and a details pane.
-void DrawConsole() {
-    static char filter[96] = "";
-    static bool autoScroll = true;
-    static bool collapse = false;
-    static bool showInfo = true, showWarn = true, showError = true;
-    static int  selected = -1;
-
-    // Badge the tab with the current error/warning counts so problems are
-    // visible even when the Console is behind another tab. The ### keeps the
-    // window ID (and docking) stable while the visible label changes.
-    char conTitle[64];
-    if (g_consoleCounts[2] > 0)
-        std::snprintf(conTitle, sizeof(conTitle), "Console  [x %d]###Console", g_consoleCounts[2]);
-    else if (g_consoleCounts[1] > 0)
-        std::snprintf(conTitle, sizeof(conTitle), "Console  [! %d]###Console", g_consoleCounts[1]);
-    else
-        std::snprintf(conTitle, sizeof(conTitle), "Console###Console");
-    static bool s_errorPause = false;
-    static int  s_lastErrCount = 0;
-    if (s_errorPause && g_consoleCounts[2] > s_lastErrCount) g_paused = true;   // halt Play on new errors
-    s_lastErrCount = g_consoleCounts[2];
-    if (ImGui::Begin(conTitle, &g_showConsole)) {
-        // One clean row: [Clear] [search..........] [● 3][● 1][● 0] [...]
-        // The level pills filter the log; the rarely-changed switches (collapse,
-        // clear on play, error pause, auto-scroll) and Save/Copy live in "...".
-        const ImVec4 cInfo(0.82f, 0.84f, 0.88f, 1.0f);
-        const ImVec4 cWarn(0.95f, 0.80f, 0.35f, 1.0f);
-        const ImVec4 cErr (0.96f, 0.45f, 0.42f, 1.0f);
-        const ImGuiStyle& cst = ImGui::GetStyle();
-        if (IconButton("##cclear", TbIcon::Clear, "Clear the console")) { ConsoleClear(); selected = -1; }
-        ImGui::SameLine();
-        // Level pill: a coloured dot + count, highlighted while that level shows.
-        auto pillW = [&](int count) {
-            char b[16]; std::snprintf(b, sizeof(b), "%d", count);
-            return ImGui::CalcTextSize(b).x + ImGui::GetFontSize() * 0.9f + cst.FramePadding.x * 2.0f;
-        };
-        float pillsW = pillW(g_consoleCounts[0]) + pillW(g_consoleCounts[1]) + pillW(g_consoleCounts[2]) +
-                       cst.ItemSpacing.x * 0.5f * 2.0f;
-        float moreW = ImGui::GetFrameHeight();
-        SearchField("##cfilter", filter, sizeof(filter), "Search log",
-                    -(pillsW + moreW + cst.ItemSpacing.x * 2.0f));
-        auto pill = [&](const char* id, bool& on, const ImVec4& col, int count, const char* tip) {
-            char buf[32]; std::snprintf(buf, sizeof(buf), "%d%s", count, id);
-            float dotR = ImGui::GetFontSize() * 0.2f;
-            ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(1.0f, 0.5f));
-            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(on ? ImGuiCol_ButtonActive : ImGuiCol_FrameBg));
-            ImGui::PushStyleColor(ImGuiCol_Text, on ? col : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-            if (ImGui::Button(buf, ImVec2(pillW(count), 0))) on = !on;
-            ImGui::PopStyleColor(2);
-            ImGui::PopStyleVar();
-            ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-            ImGui::GetWindowDrawList()->AddCircleFilled(
-                ImVec2(mn.x + cst.FramePadding.x + dotR, (mn.y + mx.y) * 0.5f), dotR,
-                ImGui::GetColorU32(on ? col : ImVec4(col.x, col.y, col.z, 0.35f)));
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
-        };
-        ImGui::SameLine();
-        pill("##cinfo", showInfo,  cInfo, g_consoleCounts[0], "Show / hide messages");
-        ImGui::SameLine(0, cst.ItemSpacing.x * 0.5f);
-        pill("##cwarn", showWarn,  cWarn, g_consoleCounts[1], "Show / hide warnings");
-        ImGui::SameLine(0, cst.ItemSpacing.x * 0.5f);
-        pill("##cerr",  showError, cErr,  g_consoleCounts[2], "Show / hide errors");
-        ImGui::SameLine();
-        if (IconButton("##cmore", TbIcon::More, "Console options")) ImGui::OpenPopup("##conopts");
-        if (ImGui::BeginPopup("##conopts")) {
-            ImGui::MenuItem("Collapse duplicates", nullptr, &collapse);
-            ImGui::MenuItem("Auto-scroll", nullptr, &autoScroll);
-            ImGui::MenuItem("Clear on Play", nullptr, &g_clearConsoleOnPlay);
-            ImGui::MenuItem("Pause on error", nullptr, &s_errorPause);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pause Play mode whenever a new error is logged");
-            ImGui::Separator();
-            if (ImGui::MenuItem("Copy all")) {
-                std::string all;
-                for (const auto& e : g_console)
-                    all += std::string(e.level == 2 ? "[x] " : e.level == 1 ? "[!] " : "[i] ") +
-                           e.time + "  " + e.text + "\n";
-                ImGui::SetClipboardText(all.c_str());
-            }
-            if (ImGui::MenuItem("Save to console_log.txt")) {   // dump the whole log beside the exe
-                std::ofstream lf("console_log.txt");
-                for (const auto& e : g_console)
-                    lf << (e.level == 2 ? "[x] " : e.level == 1 ? "[!] " : "[i] ")
-                       << e.time << "  " << e.text << "\n";
-                ConsoleLog("Console saved to console_log.txt");
-            }
-            ImGui::EndPopup();
-        }
-        ImGui::Separator();
-
-        std::string needle = filter;
-        for (auto& n : needle) n = (char)std::tolower((unsigned char)n);
-        const ImVec4 levelCol[3] = {cInfo, cWarn, cErr};
-        const bool   levelShow[3] = {showInfo, showWarn, showError};
-
-        // Details pane reserves the bottom; the list fills the rest.
-        float detailsH = 90.0f;
-        ImGui::BeginChild("log", ImVec2(0, -detailsH));
-        // Optional collapse: merge identical (level,text) lines, summing counts.
-        std::vector<int> order;          // indices into g_console to display
-        std::vector<int> mergedCount;    // parallel display counts
-        if (collapse) {
-            std::vector<int> firstAt;    // first display index for a (level|text)
-            std::unordered_map<std::string, int> seen;
-            for (int i = 0; i < (int)g_console.size(); ++i) {
-                const auto& e = g_console[i];
-                std::string key = std::to_string(e.level) + "|" + e.text;
-                auto it = seen.find(key);
-                if (it == seen.end()) { seen[key] = (int)order.size(); order.push_back(i); mergedCount.push_back(e.count); }
-                else mergedCount[it->second] += e.count;
-            }
-        } else {
-            for (int i = 0; i < (int)g_console.size(); ++i) { order.push_back(i); mergedCount.push_back(g_console[i].count); }
-        }
-
-        // Pre-filter to the rows that actually show, so an ImGuiListClipper can
-        // skip the offscreen ones instead of building a label + Selectable for
-        // every entry each frame (the cost that grew with the log size).
-        std::vector<int> visible;
-        visible.reserve(order.size());
-        for (std::size_t row = 0; row < order.size(); ++row) {
-            const ConsoleEntry& e = g_console[order[row]];
-            if (!levelShow[e.level]) continue;
-            if (!needle.empty()) {
-                std::string low = e.text;
-                for (auto& ch : low) ch = (char)std::tolower((unsigned char)ch);
-                if (low.find(needle) == std::string::npos) continue;
-            }
-            visible.push_back((int)row);
-        }
-        ImGuiListClipper clipper;
-        clipper.Begin((int)visible.size());
-        while (clipper.Step())
-        for (int vi = clipper.DisplayStart; vi < clipper.DisplayEnd; ++vi) {
-            std::size_t row = (std::size_t)visible[vi];
-            int i = order[row];
-            const ConsoleEntry& e = g_console[i];
-            // Drawn level dot in place of the old [i]/[!]/[x] text markers (the
-            // severity bar + row wash below already tint the row itself).
-            ImVec2 rp = ImGui::GetCursorScreenPos();
-            ImGui::PushStyleColor(ImGuiCol_Text, levelCol[e.level]);
-            std::string label = "     " + e.time + "  " + e.text;   // leading room for the dot
-            if (mergedCount[row] > 1) label += "  (" + std::to_string(mergedCount[row]) + ")";
-            label += "##c" + std::to_string(i);
-            if (ImGui::Selectable(label.c_str(), selected == i)) selected = i;
-            {
-                float dr = ImGui::GetFontSize() * 0.22f;
-                ImGui::GetWindowDrawList()->AddCircleFilled(
-                    ImVec2(rp.x + dr + 7.0f, rp.y + ImGui::GetTextLineHeight() * 0.55f),
-                    dr, ImGui::GetColorU32(levelCol[e.level]));
-            }
-            // Right-click an entry: copy it (or everything currently visible).
-            if (ImGui::BeginPopupContextItem()) {
-                selected = i;
-                if (ImGui::MenuItem("Copy Entry"))
-                    ImGui::SetClipboardText((e.time + "  " + e.text).c_str());
-                if (ImGui::MenuItem("Copy All Visible")) {
-                    std::string all;
-                    for (std::size_t r2 = 0; r2 < order.size(); ++r2) {
-                        const ConsoleEntry& e2 = g_console[order[r2]];
-                        if (!levelShow[e2.level]) continue;
-                        if (!needle.empty()) {
-                            std::string lo = e2.text;
-                            for (auto& ch : lo) ch = (char)std::tolower((unsigned char)ch);
-                            if (lo.find(needle) == std::string::npos) continue;
-                        }
-                        all += (e2.level == 2 ? "[x] " : e2.level == 1 ? "[!] " : "[i] ");
-                        all += e2.time + "  " + e2.text + "\n";
-                    }
-                    ImGui::SetClipboardText(all.c_str());
-                }
-                ImGui::EndPopup();
-            }
-            // A severity color-bar down the left edge, plus a faint row wash for
-            // warnings/errors so they stand out when scanning a busy log.
-            ImVec2 rmn = ImGui::GetItemRectMin(), rmx = ImGui::GetItemRectMax();
-            ImDrawList* cdl = ImGui::GetWindowDrawList();
-            if (e.level > 0) {
-                const ImVec4& lc = levelCol[e.level];
-                cdl->AddRectFilled(rmn, ImVec2(rmx.x, rmx.y),
-                                   ImGui::GetColorU32(ImVec4(lc.x, lc.y, lc.z, e.level == 2 ? 0.09f : 0.05f)));
-            }
-            cdl->AddRectFilled(rmn, ImVec2(rmn.x + 3.0f, rmx.y), ImGui::GetColorU32(levelCol[e.level]));
-            ImGui::PopStyleColor();
-        }
-        clipper.End();
-        if (autoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);
-        ImGui::EndChild();
-
-        ImGui::Separator();
-        ImGui::BeginChild("details", ImVec2(0, 0));
-        if (selected >= 0 && selected < (int)g_console.size()) {
-            const ConsoleEntry& e = g_console[selected];
-            ImGui::PushStyleColor(ImGuiCol_Text, levelCol[e.level]);
-            ImGui::TextWrapped("%s", e.text.c_str());
-            ImGui::PopStyleColor();
-            ImGui::TextDisabled("%s at %s", e.level == 2 ? "Error" : e.level == 1 ? "Warning" : "Info", e.time.c_str());
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Copy##cdet")) ImGui::SetClipboardText(e.text.c_str());
-            // If the message references a script file, offer to jump straight to it
-            // (and to "line N" when the message carries one).
-            {
-                std::string spath; int sline = 0;
-                for (const char* ex : {".okay", ".lua", ".cs"}) {
-                    std::size_t p = e.text.find(ex);
-                    if (p == std::string::npos) continue;
-                    // Walk back to the start of the path token.
-                    std::size_t start = e.text.find_last_of(" \t'\"(,;", p);
-                    start = start == std::string::npos ? 0 : start + 1;
-                    spath = e.text.substr(start, p + std::strlen(ex) - start);
-                    break;
-                }
-                if (std::size_t lp = e.text.find("line "); lp != std::string::npos)
-                    sline = std::atoi(e.text.c_str() + lp + 5);
-                if (!spath.empty()) {
-                    ImGui::SameLine();
-                    char ob[48];
-                    std::snprintf(ob, sizeof(ob), sline > 0 ? "Open Script (line %d)##cdet" : "Open Script##cdet", sline);
-                    if (ImGui::SmallButton(ob)) OpenScriptFileInEditorAt(spath, sline);
-                }
-            }
-        } else {
-            ImGui::TextDisabled("Select a log entry to see details.");
-        }
-        ImGui::EndChild();
-    }
-    ImGui::End();
-}
+// Console log + panel: ConsolePanel.cpp / .hpp.
 
 // Undo/redo history (View > History): the snapshot stacks as a clickable list —
 // click any step to jump straight there (applies that many undos/redos).
@@ -41353,7 +40853,8 @@ static bool SaveProject(EditorState& ed, bool interactive) {
 }
 static bool SaveEverything(EditorState& ed) { return SaveProject(ed, false); }
 
-} // namespace
+} // namespace oked
+using namespace oked;
 
 // ---- Launcher gate ---------------------------------------------------------
 // The editor may only be opened through the OkaySpace Launcher, and only while

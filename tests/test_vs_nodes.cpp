@@ -96,7 +96,9 @@ int main() {
             src += "data " + std::to_string(id) + " 1 3 0\n";
             prev = id;
         }
-        src += "data 2 0 " + std::to_string(prev) + " 0\nexec 1 0 2\nexec 2 0 2\nentry OnStart 1\n";
+        // SetVar x <- chain, then AddVar n += 1, looping back: n counts the iterations.
+        src += "data 2 0 " + std::to_string(prev) + " 0\nnode 4 AddVar n\nnode 5 Const 1\ndata 4 0 5 0\n"
+               "exec 1 0 2\nexec 2 0 4\nexec 4 0 2\nentry OnStart 1\n";
         Scene sc;
         auto* v = sc.CreateGameObject("Busy")->AddComponent<VisualScriptComponent>();
         std::string err;
@@ -106,10 +108,14 @@ int main() {
         sc.Start();
         const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         Log::sink = sink;
-        CHECK(secs < 1.0);                           // was 1M steps x 200 pulls each
+        // The reads count toward the 1M budget: ~1M / ~205 iterations, not the
+        // ~500k (1M exec steps / 2 nodes) it did before. Counted, not timed, so
+        // slow sanitizer / debug builds give the same answer.
+        const float n = v->GetVariable("n").AsFloat();
+        CHECK(n > 1000.0f && n < 20000.0f);
         CHECK(v->Graph() && v->Graph()->ErrorCount() > 0);
         CHECK_NEAR(v->GetVariable("x").AsFloat(), 201.0f, 1e-3f);   // the work it did do was right
-        if (secs >= 1.0) std::printf("  deep pull chain took %.2fs\n", secs);
+        std::printf("  deep pull chain: %.0f iterations in %.2fs\n", n, secs);
     }
 
     TEST_MAIN_RESULT();

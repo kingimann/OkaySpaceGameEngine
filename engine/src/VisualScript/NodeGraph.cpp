@@ -50,6 +50,16 @@ NodeGraph::~NodeGraph() { VsDebugger::Get().Forget(this); }
 VsValue NodeGraph::Pull(int nodeId, int outPin, VsContext& ctx) {
     VsNode* n = Node(nodeId);
     if (m_abort) return {};
+    // Data reads count toward the event's step budget (checked before each node
+    // runs, so a node never acts on half-read inputs): an exec loop pulling a
+    // long chain every step would otherwise do a million steps' worth of work
+    // each. One node whose inputs alone blow far past it is stopped here.
+    if (m_runDepth > 0 && ++m_steps > 4 * kMaxStepsPerEvent) {
+        ReportError(n, ctx, "stopped a runaway data read: more than " + std::to_string(4 * kMaxStepsPerEvent) +
+                            " node steps and data reads in one event. The rest of this event was skipped.");
+        m_abort = true;
+        return {};
+    }
     // A data wire that loops back into itself would recurse forever.
     if (m_execGuard >= kMaxPullDepth) {
         ReportError(n, ctx, "a data wire loops back into itself (a node's input depends on its own output); "
@@ -144,6 +154,14 @@ void NodeGraph::Run(int entryNode, VsContext& ctx, bool resume) {
     // One budget per event: a top-level Run starts it, loop bodies and sequence
     // outputs (nested Runs) share it, so nested loops can't freeze the game.
     if (m_runDepth == 0) { m_steps = 0; m_abort = false; m_loops.clear(); m_loopSignal = kLoopNone; }
+    // Loop bodies and Sequence outputs run as nested Runs, so a Body wired back
+    // into its own loop would recurse in C++ until the stack ran out.
+    if (m_runDepth >= kMaxRunDepth) {
+        ReportError(Node(entryNode), ctx, "loops and sequences are nested more than " + std::to_string(kMaxRunDepth) +
+                                          " deep (a loop's Body wired back into the loop itself?); the event stopped");
+        m_abort = true;
+        return;
+    }
     ++m_runDepth;
     int cur = entryNode;
     bool first = true;
@@ -152,7 +170,7 @@ void NodeGraph::Run(int entryNode, VsContext& ctx, bool resume) {
         if (!n) break;
         if (++m_steps > kMaxStepsPerEvent) {
             ReportError(n, ctx, "stopped a runaway loop: more than " + std::to_string(kMaxStepsPerEvent) +
-                                " node steps in one event. The rest of this event was skipped.");
+                                " node steps and data reads in one event. The rest of this event was skipped.");
             m_abort = true;
             break;
         }

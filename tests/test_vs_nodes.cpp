@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Components/VisualScriptComponent.hpp"
+#include <chrono>
 #include <cmath>
 #include <string>
 
@@ -64,5 +65,52 @@ int main() {
         CHECK(n != nullptr);
         if (!n) std::printf("  missing node type: %s (%s)\n", t, e.c_str());
     }
+    // --- A loop's Body wired back into the loop itself: an error, not a C++ stack overflow ---
+    {
+        const char* loops[] = {"ForLoop", "Repeat 3", "While", "Sequence 2"};
+        for (const char* l : loops) {
+            Scene sc;
+            auto* v = sc.CreateGameObject("Loop")->AddComponent<VisualScriptComponent>();
+            std::string src = std::string("node 1 OnStart\nnode 2 ") + l + "\nnode 3 Const 0\nnode 4 Const 5\nnode 5 Const true\n"
+                              "exec 1 0 2\nexec 2 0 2\nentry OnStart 1\n";
+            if (std::string(l) == "ForLoop") src += "data 2 0 3 0\ndata 2 1 4 0\n";
+            if (std::string(l) == "While") src += "data 2 0 5 0\n";
+            std::string err;
+            CHECK(v->LoadFromText(src, &err));
+            auto sink = Log::sink; Log::sink = [](Log::Level, const std::string&) {};
+            sc.Start();                                  // used to recurse until the stack overflowed
+            Log::sink = sink;
+            CHECK(v->Graph() && v->Graph()->ErrorCount() > 0);
+            if (v->Graph() && v->Graph()->ErrorCount() == 0) std::printf("  no error for %s\n", l);
+        }
+    }
+
+    // --- The step budget counts data pulls: an exec self-loop pulling a deep chain stops fast ---
+    {
+        std::string src = "node 1 OnStart\nnode 2 SetVar x\nnode 3 Const 1\n";
+        int prev = 3;
+        for (int i = 0; i < 200; ++i) {           // Add(prev, 1) x 200
+            const int id = 10 + i;
+            src += "node " + std::to_string(id) + " Add\n";
+            src += "data " + std::to_string(id) + " 0 " + std::to_string(prev) + " 0\n";
+            src += "data " + std::to_string(id) + " 1 3 0\n";
+            prev = id;
+        }
+        src += "data 2 0 " + std::to_string(prev) + " 0\nexec 1 0 2\nexec 2 0 2\nentry OnStart 1\n";
+        Scene sc;
+        auto* v = sc.CreateGameObject("Busy")->AddComponent<VisualScriptComponent>();
+        std::string err;
+        CHECK(v->LoadFromText(src, &err));
+        auto sink = Log::sink; Log::sink = [](Log::Level, const std::string&) {};
+        const auto t0 = std::chrono::steady_clock::now();
+        sc.Start();
+        const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        Log::sink = sink;
+        CHECK(secs < 1.0);                           // was 1M steps x 200 pulls each
+        CHECK(v->Graph() && v->Graph()->ErrorCount() > 0);
+        CHECK_NEAR(v->GetVariable("x").AsFloat(), 201.0f, 1e-3f);   // the work it did do was right
+        if (secs >= 1.0) std::printf("  deep pull chain took %.2fs\n", secs);
+    }
+
     TEST_MAIN_RESULT();
 }

@@ -54,6 +54,11 @@ add_executable(test_core_features test_core_features.cpp)
 target_link_libraries(test_core_features PRIVATE okay::engine)
 add_test(NAME core_features COMMAND test_core_features)
 
+# Robustness: Scheduler callbacks that Invoke / Cancel / Clear during Update
+add_executable(test_scheduler_reentry test_scheduler_reentry.cpp)
+target_link_libraries(test_scheduler_reentry PRIVATE okay::engine)
+add_test(NAME scheduler_reentry COMMAND test_scheduler_reentry)
+
 add_executable(test_gameplay test_gameplay.cpp)
 target_link_libraries(test_gameplay PRIVATE okay::engine)
 add_test(NAME gameplay COMMAND test_gameplay)
@@ -875,8 +880,3 @@ add_test(NAME locomotion COMMAND test_locomotion)
 add_executable(test_qa_pr250 test_qa_pr250.cpp)
 target_link_libraries(test_qa_pr250 PRIVATE okay::engine)
 add_test(NAME qa_pr250 COMMAND test_qa_pr250)
-
-# Robustness: Scheduler callbacks that Invoke / Cancel / Clear during Update
-add_executable(test_scheduler_reentry test_scheduler_reentry.cpp)
-target_link_libraries(test_scheduler_reentry PRIVATE okay::engine)
-add_test(NAME scheduler_reentry COMMAND test_scheduler_reentry)

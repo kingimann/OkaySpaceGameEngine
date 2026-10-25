@@ -213,6 +213,9 @@ public:
     // ---- Functions -------------------------------------------------------
     /// Deepest functions may call each other (or themselves) before a call is refused.
     static constexpr int kMaxCallDepth = 64;
+    /// Highest pin index + 1 a .okayvs line may name (exec / data / default), and
+    /// the most outputs a Sequence can have.
+    static constexpr int kMaxPins = 64;
     /// The Function node (graph id) named `name`, or -1.
     int FunctionNode(const std::string& name) const {
         auto it = m_functions.find(name);

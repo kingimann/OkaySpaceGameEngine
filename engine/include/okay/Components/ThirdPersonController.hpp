@@ -64,6 +64,9 @@ public:
 
     enum class Stance { Stand, Crouch, Prone };
     Stance stance() const { return m_stance; }
+    /// The resized body (standing height, current height). Saving a scene writes
+    /// the standing collider, not the crouched / prone one.
+    const StanceBody& stanceBody() const { return m_body; }
 
     // ---- Lean (peek with Q/E) ----
     char  leanLeftKey  = 'q';           // 0 = disabled
@@ -273,7 +276,14 @@ public:
                 float sp = crouchSpeed + (slideSpeed - crouchSpeed) * k * k;
                 float sl = std::sqrt(m_slideDir.x * m_slideDir.x + m_slideDir.z * m_slideDir.z);
                 if (sl > 1e-4f) { rb->velocity.x = m_slideDir.x / sl * sp; rb->velocity.z = m_slideDir.z / sl * sp; }
-                if (canJump && m_jumpBuf > 0.0f) { m_slideT = 0.0f; m_stance = m_wantStance = Stance::Stand; m_prevStance = Stance::Stand; ApplyStanceHeight(gameObject, m_body, StanceHeight(Stance::Stand)); }
+                if (canJump && m_jumpBuf > 0.0f) {
+                    // Jumping out of a slide stands you up — only where there is room
+                    // to stand; under low cover the slide just carries on.
+                    Scene* sc = gameObject->scene();
+                    bool room = !resizeBody || !sc || StanceHasRoom(*sc, gameObject, m_body, StanceHeight(Stance::Stand));
+                    if (room) { m_slideT = 0.0f; m_stance = m_wantStance = Stance::Stand; m_prevStance = Stance::Stand; ApplyStanceHeight(gameObject, m_body, StanceHeight(Stance::Stand)); }
+                    else m_jumpBuf = 0.0f;
+                }
             }
             // Jump: first jump needs ground/coyote; extra jumps (double-jump) up to maxJumps.
             if (canJump && m_jumpBuf > 0.0f && m_stance == Stance::Stand) {   // no jumping while crouched/prone
@@ -548,17 +558,18 @@ private:
             if (allowProne && proneKey && Input::GetKeyDown(proneKey))
                 m_wantStance = (m_wantStance == Stance::Prone) ? Stance::Stand : Stance::Prone;
         } else {
-            if (allowProne && proneKey && Input::GetKey(proneKey)) m_wantStance = Stance::Prone;
-            else if (crouchKey && Input::GetKey(crouchKey))        m_wantStance = Stance::Crouch;
-            else if (m_padHeld <= 0.0f)                            m_wantStance = Stance::Stand;
+            // Held keys win; with none held you're in the stance the gamepad last set.
+            if (allowProne && proneKey && Input::GetKey(proneKey))  { m_wantStance = Stance::Prone;  m_padWant = Stance::Stand; }
+            else if (crouchKey && Input::GetKey(crouchKey))         { m_wantStance = Stance::Crouch; m_padWant = Stance::Stand; }
+            else                                                      m_wantStance = m_padWant;
         }
         // Gamepad: tap the stance button to crouch / stand up, hold it to drop prone.
         if (stanceGamepadButton >= 0) {
             if (Input::GetGamepadButton(stanceGamepadButton)) {
                 m_padHeld += dt;
-                if (allowProne && !m_padProned && m_padHeld >= proneHoldTime) { m_wantStance = Stance::Prone; m_padProned = true; }
+                if (allowProne && !m_padProned && m_padHeld >= proneHoldTime) { m_wantStance = m_padWant = Stance::Prone; m_padProned = true; }
             } else if (m_padHeld > 0.0f) {
-                if (!m_padProned) m_wantStance = (m_stance == Stance::Stand) ? Stance::Crouch : Stance::Stand;
+                if (!m_padProned) m_wantStance = m_padWant = (m_stance == Stance::Stand) ? Stance::Crouch : Stance::Stand;
                 m_padHeld = 0.0f; m_padProned = false;
             }
         }
@@ -602,6 +613,7 @@ private:
     Stance m_wantStance = Stance::Stand;   // what the input asks for (m_stance may wait for headroom)
     StanceBody m_body;
     float m_padHeld = 0.0f; bool m_padProned = false;
+    Stance m_padWant = Stance::Stand;   // the stance the gamepad button set (hold mode)
     float m_stanceDrop = 0.0f;        // smoothed look-target drop for crouch/prone
     Vec3 m_camPos{0, 0, 0};
     bool m_haveCamPos = false;

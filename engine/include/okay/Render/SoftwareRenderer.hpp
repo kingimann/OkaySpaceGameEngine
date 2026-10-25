@@ -1608,12 +1608,12 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 Vec3 fn = Vec3::Cross(wp0[1] - wp0[0], wp0[2] - wp0[0]).Normalized();
                 Vec3 cen = (wp0[0] + wp0[1] + wp0[2]) * (1.0f / 3.0f);
                 // Render the same faces the main pass shows (its visible surface), then
-                // expand them OUTWARD (away from the mesh, opposite the culling normal)
-                // and push them a touch farther, so the unexpanded mesh covers them
+                // expand them OUTWARD along the face normal (meshes wind outward) and
+                // push them a touch farther, so the unexpanded mesh covers them
                 // everywhere except a clean silhouette ring.
                 bool mainVisible = Vec3::Dot(fn, eye - cen) >= 0.0f;
                 if (!mainVisible) continue;
-                Vec3 outward = fn * -1.0f;
+                Vec3 outward = fn;
                 float sxo[3], syo[3], sdo[3]; bool ok = true;
                 for (int k = 0; k < 3; ++k) {
                     Vec4 c = vp * Vec4{wp0[k] + outward * mr->outlineWidth, 1.0f};

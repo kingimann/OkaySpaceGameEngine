@@ -115,10 +115,13 @@ inline bool StanceHasRoom(Scene& sc, GameObject* go, const StanceBody& st, float
 inline void ApplyStanceHeight(GameObject* go, StanceBody& st, float height) {
     Collider3D* c = StanceCollider(go);
     if (!c || !st.captured || std::fabs(height - st.curH) < 1e-4f) return;
-    if (auto* b = dynamic_cast<BoxCollider3D*>(c)) b->size.y = height;
-    else if (auto* k = dynamic_cast<CapsuleCollider3D*>(c)) k->height = std::fmax(height, 2.0f * k->radius);
-    c->offset.y = st.feetY + height * 0.5f;
-    st.curH = height;
+    // A capsule can't be shorter than its two end caps; centre the height it
+    // really has so its bottom stays on the feet.
+    float h = height;
+    if (auto* b = dynamic_cast<BoxCollider3D*>(c)) b->size.y = h;
+    else if (auto* k = dynamic_cast<CapsuleCollider3D*>(c)) { h = std::fmax(height, 2.0f * k->radius); k->height = h; }
+    c->offset.y = st.feetY + h * 0.5f;
+    st.curH = h;
 }
 
 } // namespace okay

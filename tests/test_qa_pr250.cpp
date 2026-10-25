@@ -55,7 +55,9 @@ int main() {
         GameObject* p = s.Find("Player");
         auto* box = p->GetComponent<BoxCollider3D>();
         const Vec3 st = p->transform->Position();
-        Block(s, "Bar", {st.x, st.y + 1.9f, st.z - 6.0f}, {8.0f, 1.0f, 3.0f});   // 1.4 m of headroom underneath
+        // 1.4 m of headroom underneath. (The template's floor top is y = 0; the
+        // player spawns 1 m above it, so `st.y` isn't the ground.)
+        Block(s, "Bar", {st.x, 1.9f, st.z - 6.0f}, {8.0f, 1.0f, 3.0f});
         s.Start(); Step(s, {}, 60);
         Step(s, {'w', Input::KeyShift}, 30);
         Step(s, {'w', Input::KeyShift, Input::KeyCtrl}, 1);
@@ -64,6 +66,7 @@ int main() {
         Step(s, {'w', ' '}, 1);
         Step(s, {}, 10);
         CHECK(box->size.y < 1.4f);                            // still fits under the bar
+        CHECK(p->transform->Position().y < 0.05f);            // and didn't jump into it
     }
 
     // ---- Gamepad stance tap works with Toggle Stance off ----

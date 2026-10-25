@@ -213,7 +213,9 @@ Driving a Character yourself (an NPC, a cutscene): set `anim` and, for the
 locomotion states, `moveSpeed` (m/s) and `moveAngle` (degrees, + = to the
 body's right) every frame — or call `DriveLocomotion` with the body's
 velocity and facing. Without a reported speed the cycle plays at a natural
-pace on the spot.
+pace on the spot. `DriveLocomotion` measures how far the body really moved;
+set `ignoreAxis` to leave out motion that isn't walking (the 2.5D controller
+ignores Z, so hopping between depth layers doesn't play the run cycle).
 
 **Look-At IK** and **Aim IK** also have a **Smoothing** field now: the
 head/bone swings smoothly onto a new target instead of snapping the frame

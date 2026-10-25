@@ -194,6 +194,18 @@ int main() {
         CHECK_NEAR(m.Size().y, 2.0f, 0.001f);
         CHECK_NEAR(m.Size().x, 2.0f, 0.01f);
         CHECK(Mesh::Lathe(profile, 2).vertices.empty());    // needs >= 3 segments
+        // Faces wind outward (positive enclosed volume) whichever way the profile runs.
+        auto volume = [](const Mesh& mm) {
+            double v = 0;
+            for (std::size_t i = 0; i + 2 < mm.triangles.size(); i += 3)
+                v += Vec3::Dot(mm.vertices[mm.triangles[i]],
+                               Vec3::Cross(mm.vertices[mm.triangles[i + 1]], mm.vertices[mm.triangles[i + 2]])) / 6.0;
+            return v;
+        };
+        CHECK(volume(m) > 0.0);
+        std::vector<Vec2> down(profile.rbegin(), profile.rend());
+        CHECK(volume(Mesh::Lathe(down, 12)) > 0.0);
+        CHECK_NEAR(volume(Mesh::Lathe(down, 12)), volume(m), 1e-4);
     }
 
     // --- Rotated bakes an Euler rotation into the vertices ---

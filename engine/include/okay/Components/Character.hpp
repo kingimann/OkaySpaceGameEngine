@@ -92,6 +92,9 @@ public:
         bool  sprint = false;      ///< the run input is held
         float walkSpeed = 4.5f;    ///< the controller's walk speed (run/walk split)
         float dt = 0.0f;
+        /// Movement along this axis isn't walking (2.5D: the hop between depth
+        /// layers slides along Z); zero = count every direction.
+        Vec3  ignoreAxis{0, 0, 0};
     };
     /// Pick the movement state from what the body is actually doing — idle / walk /
     /// run by real ground speed (a body pinned against a wall stands instead of

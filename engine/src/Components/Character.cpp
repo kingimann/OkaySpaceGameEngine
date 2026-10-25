@@ -535,6 +535,8 @@ void Character::DriveLocomotion(const Locomotion& l) {
         Vec3 pos = gameObject->transform->Position();
         if (m_havePos) {
             Vec3 d = pos - m_lastPos;
+            const float al = l.ignoreAxis.Magnitude();
+            if (al > 1e-5f) { Vec3 a = l.ignoreAxis * (1.0f / al); d = d - a * Vec3::Dot(d, a); }
             if (d.Magnitude() < 2.0f) vel = d * (1.0f / l.dt);
         }
         m_lastPos = pos; m_havePos = true;

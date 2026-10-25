@@ -952,9 +952,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << cy->offset.x << " " << cy->offset.y << " " << cy->offset.z << " "
             << (cy->isTrigger ? 1 : 0) << " " << cy->layer << " " << (cy->autoFit ? 1 : 0) << "\n";
     }
+    // A crouched / prone player has a shrunken collider; save the standing one.
+    const StanceBody* stance = nullptr;
+    if (auto* fpc = go->GetComponent<FirstPersonController>()) stance = &fpc->stanceBody();
+    else if (auto* tpc = go->GetComponent<ThirdPersonController>()) stance = &tpc->stanceBody();
+    const bool resized = stance && stance->captured && std::fabs(stance->curH - stance->standH) > 1e-4f;
+    const float standOffY = resized ? stance->feetY + stance->standH * 0.5f : 0.0f;
     if (auto* bc = go->GetComponent<BoxCollider3D>(); bc && bc->shape() == Collider3D::Shape::Box) {
-        out << "  boxcollider3d " << bc->size.x << " " << bc->size.y << " " << bc->size.z << " "
-            << bc->offset.x << " " << bc->offset.y << " " << bc->offset.z << " "
+        out << "  boxcollider3d " << bc->size.x << " " << (resized ? stance->standH : bc->size.y) << " " << bc->size.z << " "
+            << bc->offset.x << " " << (resized ? standOffY : bc->offset.y) << " " << bc->offset.z << " "
             << (bc->isTrigger ? 1 : 0) << " " << bc->layer << " " << (bc->autoFit ? 1 : 0) << "\n";
     }
     if (auto* sc = go->GetComponent<SphereCollider3D>()) {
@@ -963,8 +969,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << (sc->isTrigger ? 1 : 0) << " " << sc->layer << " " << (sc->autoFit ? 1 : 0) << "\n";
     }
     if (auto* cap = go->GetComponent<CapsuleCollider3D>(); cap && cap->shape() == Collider3D::Shape::Capsule) {
-        out << "  capsulecollider3d " << cap->radius << " " << cap->height << " " << cap->axis << " "
-            << cap->offset.x << " " << cap->offset.y << " " << cap->offset.z << " "
+        out << "  capsulecollider3d " << cap->radius << " " << (resized ? stance->standH : cap->height) << " " << cap->axis << " "
+            << cap->offset.x << " " << (resized ? standOffY : cap->offset.y) << " " << cap->offset.z << " "
             << (cap->isTrigger ? 1 : 0) << " " << cap->layer << " " << (cap->autoFit ? 1 : 0) << "\n";
     }
     // Trigger tag / layer filter for the object's 3D colliders (only when set).

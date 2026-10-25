@@ -496,6 +496,8 @@ private:
         if (auto* rb = gameObject->GetComponent<Rigidbody3D>()) lo.velocity = {rb->velocity.x, rb->velocity.y, 0.0f};
         lo.facing = transform ? transform->localRotation * Vec3{0, 0, -1} : Vec3{m_facing, 0, 0};
         lo.onGround = m_grounded;
+        lo.jumped = m_jumpedAt <= 0.0f;                  // DoJump ran this frame
+        lo.ignoreAxis = {0.0f, 0.0f, 1.0f};              // layer hops aren't steps
         lo.sprint = running;
         lo.walkSpeed = walkSpeed;
         lo.dt = dt;
@@ -522,6 +524,11 @@ private:
         // In the air: catch a ledge (a wall face alone isn't something to hang from).
         float ledgeY = 0.0f, faceX = 0.0f;
         if (grabHang && !m_grounded && rb && m_noLedge <= 0.0f && FindLedge(sc, ledgeY, faceX)) {
+            // A ledge so low that hanging from it would leave the feet on the floor
+            // isn't a hang; keep rising (it's caught higher up the jump, if at all).
+            const float hangX = faceX - m_facing * (BodyHalfWidth() + 0.02f), hangY = ledgeY - bodyH - 0.1f;
+            RaycastHit3D floor = Ray(sc, Vec3{hangX, hangY + bodyH * 0.5f, o.z}, Vec3{0, -1, 0}, bodyH * 0.5f + 0.08f);
+            if (floor.hit && Solid(floor)) return;
             m_hanging = true;
             m_ledgeY = ledgeY;
             m_savedGravity = rb->gravityScale;

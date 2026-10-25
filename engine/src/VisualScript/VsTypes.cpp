@@ -485,16 +485,8 @@ bool ParseFunctionSignature(const std::string& textIn, FunctionSig& out, std::st
 
 // ---- The checker -------------------------------------------------------------
 namespace {
-std::vector<std::string> Tokens(const std::string& line) {
-    std::vector<std::string> out; std::string cur; bool q = false;
-    for (char c : line) {
-        if (c == '"') { q = !q; cur += c; }
-        else if (std::isspace((unsigned char)c) && !q) { if (!cur.empty()) { out.push_back(cur); cur.clear(); } }
-        else cur += c;
-    }
-    if (!cur.empty()) out.push_back(cur);
-    return out;
-}
+// The runtime's tokenizer, so the checker reads quotes, escapes and comments the same way.
+std::vector<std::string> Tokens(const std::string& line) { return TokenizeLine(line); }
 std::string Unquote(std::string s) {
     if (s.size() >= 2 && s.front() == '"' && s.back() == '"') s = s.substr(1, s.size() - 2);
     return s;
@@ -523,12 +515,7 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
     std::istringstream in(text);
     std::string line;
     while (std::getline(in, line)) {
-        bool q = false;
-        for (std::size_t i = 0; i < line.size(); ++i) {
-            if (line[i] == '"') q = !q;
-            else if (line[i] == '#' && !q) { line.erase(i); break; }
-        }
-        auto t = Tokens(line);
+        auto t = Tokens(line);   // drops '#' comments (outside quotes)
         if (t.empty()) continue;
         try {
             if (t[0] == "node" && t.size() >= 3) {

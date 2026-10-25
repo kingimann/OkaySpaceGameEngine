@@ -677,20 +677,77 @@ std::string JoinArgs(const std::vector<std::string>& a) {
     return s;
 }
 // Split a line into tokens, keeping "quoted strings" intact.
-std::vector<std::string> Tokenize(const std::string& line) {
+std::vector<std::string> Tokenize(const std::string& line) { return TokenizeLine(line); }
+} // namespace
+
+// ---- .okayvs quoting -----------------------------------------------------
+namespace {
+// One pass over a line. `escapes` reads \" and \\ inside quotes; `unterminated`
+// is set when a quote never closes (an old, escape-free file).
+std::vector<std::string> TokenizePass(const std::string& line, bool escapes, bool& unterminated) {
     std::vector<std::string> out;
     std::string cur;
-    bool inQuotes = false;
-    for (char c : line) {
-        if (c == '"') { inQuotes = !inQuotes; cur += c; }
-        else if (std::isspace((unsigned char)c) && !inQuotes) {
-            if (!cur.empty()) { out.push_back(cur); cur.clear(); }
-        } else cur += c;
+    bool have = false;   // cur holds a token (an empty "" counts)
+    const std::size_t n = line.size();
+    std::size_t i = 0;
+    while (i < n) {
+        const char c = line[i];
+        if (c == '"') {
+            cur += '"'; have = true; ++i;
+            bool closed = false;
+            while (i < n) {
+                const char q = line[i];
+                if (escapes && q == '\\' && i + 1 < n && (line[i + 1] == '"' || line[i + 1] == '\\')) { cur += line[i + 1]; i += 2; continue; }
+                if (q == '"') { closed = true; ++i; break; }
+                cur += q; ++i;
+            }
+            cur += '"';
+            if (!closed) unterminated = true;
+        } else if (c == '#') {
+            break;   // a comment
+        } else if (std::isspace((unsigned char)c)) {
+            if (have) { out.push_back(cur); cur.clear(); have = false; }
+            ++i;
+        } else {
+            cur += c; have = true; ++i;
+        }
     }
-    if (!cur.empty()) out.push_back(cur);
+    if (have) out.push_back(cur);
     return out;
 }
 } // namespace
+
+std::vector<std::string> TokenizeLine(const std::string& line) {
+    bool bad = false;
+    std::vector<std::string> t = TokenizePass(line, true, bad);
+    if (!bad) return t;
+    bad = false;
+    return TokenizePass(line, false, bad);   // an old file: no escapes
+}
+
+std::string QuoteText(const std::string& s) {
+    std::string o = "\"";
+    for (char c : s) {
+        if (c == '"' || c == '\\') o += '\\';
+        o += c;
+    }
+    return o + '"';
+}
+
+std::string QuoteIfNeeded(const std::string& s) {
+    if (s.empty()) return "\"\"";
+    for (char c : s)
+        if (c == ' ' || c == '\t' || c == '#' || c == '"') return QuoteText(s);
+    return s;
+}
+
+bool ParseQuoted(const std::string& field, std::string& out) {
+    if (field.size() < 2 || field.front() != '"') return false;
+    const std::vector<std::string> t = TokenizeLine(field);
+    if (t.size() != 1 || t[0].size() < 2 || t[0].front() != '"' || t[0].back() != '"') return false;
+    out = t[0].substr(1, t[0].size() - 2);
+    return true;
+}
 
 std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string* error) {
     auto graph = std::make_unique<NodeGraph>();
@@ -726,14 +783,7 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
 
     while (std::getline(in, line)) {
         ++lineNo;
-        // Strip comments starting with '#' (a '#' inside "quotes" is text: Format "#{0}").
-        {
-            bool q = false;
-            for (std::size_t i = 0; i < line.size(); ++i) {
-                if (line[i] == '"') q = !q;
-                else if (line[i] == '#' && !q) { line.erase(i); break; }
-            }
-        }
+        // Comments ('#' outside "quotes": Format "#{0}" keeps its text) are dropped by the tokenizer.
         auto tok = Tokenize(line);
         if (tok.empty()) continue;
 
@@ -778,7 +828,9 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
             if (tok.size() < 3) return fail("entry needs <name> <id>");
             int id = 0;
             if (!num(tok[2], id)) return fail("bad node id '" + tok[2] + "'");
-            entries.push_back({tok[1], id});
+            std::string name = tok[1];
+            if (name.size() >= 2 && name.front() == '"' && name.back() == '"') name = name.substr(1, name.size() - 2);
+            entries.push_back({name, id});
         } else if (kind == "default") {
             // default <node> <inPin> <value>: an unconnected input's typed value.
             if (tok.size() < 4) return fail("default needs <node> <pin> <value>");

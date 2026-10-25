@@ -745,6 +745,19 @@ add_executable(test_vs_nodes test_vs_nodes.cpp)
 target_link_libraries(test_vs_nodes PRIVATE okay::engine)
 add_test(NAME vs_nodes COMMAND test_vs_nodes)
 
+# The Visual Script editor's graph model (save / load / paste), without drawing:
+# it needs the Dear ImGui headers the editor header includes, nothing linked.
+include(FetchContent)
+if(NOT DEFINED OKAY_IMGUI_TAG)
+    set(OKAY_IMGUI_TAG "036bf939b6f8d74ad76bcf926b757c56e68c54ff")
+endif()
+FetchContent_Declare(imgui GIT_REPOSITORY https://github.com/ocornut/imgui.git GIT_TAG ${OKAY_IMGUI_TAG})
+FetchContent_MakeAvailable(imgui)   # a no-op when the editor already fetched it
+add_executable(test_vs_editor_model test_vs_editor_model.cpp)
+target_include_directories(test_vs_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/editor ${imgui_SOURCE_DIR})
+target_link_libraries(test_vs_editor_model PRIVATE okay::engine)
+add_test(NAME vs_editor_model COMMAND test_vs_editor_model)
+
 add_executable(test_anim_clip_tools test_anim_clip_tools.cpp)
 target_link_libraries(test_anim_clip_tools PRIVATE okay::engine)
 add_test(NAME anim_clip_tools COMMAND test_anim_clip_tools)

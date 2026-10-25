@@ -20,6 +20,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <set>
 #include <sstream>
@@ -543,9 +544,22 @@ inline bool VsIsNumberOrBool(const std::string& v) {
     std::strtod(v.c_str(), &end);
     return end && *end == '\0';
 }
-inline std::string VsQuoted(std::string v) {
-    for (char& c : v) if (c == '"') c = '\'';   // the file format has no escapes
-    return "\"" + v + "\"";
+// Quoted for the .okayvs file: \" and \\ escapes (the runtime reads the same).
+inline std::string VsQuoted(const std::string& v) { return okay::vs::QuoteText(v); }
+// A Const's text is a literal: a number / bool stays bare, an already-"quoted"
+// string keeps its text (escaped), anything else is quoted if it has to be.
+inline std::string VsConstField(const std::string& a) {
+    if (VsIsNumberOrBool(a)) return a;
+    if (a.size() >= 2 && a.front() == '"' && a.back() == '"') return okay::vs::QuoteText(a.substr(1, a.size() - 2));
+    return okay::vs::QuoteIfNeeded(a);
+}
+// A layout coordinate as an int for the file (NaN / huge values clamp: the cast
+// would be undefined).
+inline long long VsCoord(float v) {
+    if (!(v == v)) return 0;
+    if (v > 1.0e9f) return 1000000000;
+    if (v < -1.0e9f) return -1000000000;
+    return (long long)v;
 }
 inline std::string VsLiteral(const std::string& v) { return VsIsNumberOrBool(v) ? v : VsQuoted(v); }
 struct VsExecLink { int from, pin, to; };
@@ -643,20 +657,20 @@ struct VsEditGraph {
         o << "# OkayVS graph (edited in the Visual Script editor)\n";
         for (const auto& n : nodes) {
             o << "node " << n.id << ' ' << n.type;
-            if (!n.arg.empty()) o << ' ' << (n.arg.find(' ') != std::string::npos ? VsQuoted(n.arg) : n.arg);
+            if (!n.arg.empty()) o << ' ' << (n.type == "Const" ? VsConstField(n.arg) : okay::vs::QuoteIfNeeded(n.arg));
             o << "\n";
             for (const auto& kv : n.pinDefault)
                 if (!kv.second.empty()) o << "default " << n.id << ' ' << kv.first << ' ' << VsLiteral(kv.second) << "\n";
-            o << "pos " << n.id << ' ' << (int)n.x << ' ' << (int)n.y << "\n";
+            o << "pos " << n.id << ' ' << VsCoord(n.x) << ' ' << VsCoord(n.y) << "\n";
             // Event nodes register their entry (an On Anim Event / Key / Timer /
             // Custom Event carries its name: "OnKey:space", "OnEvent:Hit").
             std::string en = VsEntryName(n.type, n.arg);
-            if (!en.empty()) o << "entry " << en << ' ' << n.id << "\n";
+            if (!en.empty()) o << "entry " << okay::vs::QuoteIfNeeded(en) << ' ' << n.id << "\n";
         }
         for (const auto& l : execLinks) o << "exec " << l.from << ' ' << l.pin << ' ' << l.to << "\n";
         for (const auto& l : dataLinks) o << "data " << l.consumer << ' ' << l.inPin << ' ' << l.producer << ' ' << l.outPin << "\n";
         for (const auto& c : comments)
-            o << "comment " << (int)c.x << ' ' << (int)c.y << ' ' << (int)c.w << ' ' << (int)c.h << ' ' << c.color << ' ' << VsQuoted(c.text) << "\n";
+            o << "comment " << VsCoord(c.x) << ' ' << VsCoord(c.y) << ' ' << VsCoord(c.w) << ' ' << VsCoord(c.h) << ' ' << c.color << ' ' << VsQuoted(c.text) << "\n";
         return o.str();
     }
     bool save(const std::string& p) {
@@ -691,11 +705,15 @@ struct VsEditGraph {
                 std::size_t a = r.find_first_not_of(" \t"); if (a == std::string::npos) return std::string();
                 r = r.substr(a);
                 while (!r.empty() && (r.back() == ' ' || r.back() == '\t' || r.back() == '\r')) r.pop_back();
+                std::string un;
+                if (okay::vs::ParseQuoted(r, un)) return un;   // one "quoted" field: unescape it
                 if (r.size() >= 2 && r.front() == '"' && r.back() == '"') r = r.substr(1, r.size() - 2);
                 return r;
             };
             if (kind == "node") {
-                VsEditNode n; ls >> n.id >> n.type; n.arg = restOf(ls);
+                VsEditNode n;
+                if (!(ls >> n.id >> n.type) || n.id < 0 || n.id == std::numeric_limits<int>::max()) continue;   // no id to give the next node
+                n.arg = restOf(ls);
                 nodes.push_back(n); maxId = std::max(maxId, n.id);
             } else if (kind == "default") {
                 int id = 0, pin = 0; ls >> id >> pin;
@@ -1655,8 +1673,12 @@ inline std::set<int> VsPasteText(VsEditGraph& g, const std::string& text, float 
         g.nodes.push_back(n);
         made.insert(nid);
     }
-    for (const auto& l : part.execLinks) g.execLinks.push_back({remap[l.from], l.pin, remap[l.to]});
-    for (const auto& l : part.dataLinks) g.dataLinks.push_back({remap[l.consumer], l.inPin, remap[l.producer], l.outPin});
+    // Only wires whose both ends were pasted (an unknown id would become node 0).
+    auto has = [&](int id) { return remap.count(id) != 0; };
+    for (const auto& l : part.execLinks)
+        if (has(l.from) && has(l.to)) g.execLinks.push_back({remap[l.from], l.pin, remap[l.to]});
+    for (const auto& l : part.dataLinks)
+        if (has(l.consumer) && has(l.producer)) g.dataLinks.push_back({remap[l.consumer], l.inPin, remap[l.producer], l.outPin});
     g.dirty = true;
     return made;
 }

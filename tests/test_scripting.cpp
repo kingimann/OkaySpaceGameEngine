@@ -523,5 +523,76 @@ int main() {
         CHECK_NEAR(vm->GetGlobal("pi").AsFloat(), 255.0f, 0.001f);
     }
 
+    // --- A stray break / continue / return at the top level is harmless ---
+    // (bare mode re-runs the top level every frame, so it must survive there too)
+    {
+        for (const char* src : {"break;", "continue;", "return;", "var a = 1;\nif (a > 0) { break; }"}) {
+            auto vm = CreateScriptVM("okayscript");
+            std::string err;
+            CHECK(vm->Load(src, &err));
+            vm->CallStart();
+            for (int i = 0; i < 3; ++i) vm->CallUpdate(1.0f / 60.0f);
+        }
+    }
+
+    // --- Endless recursion is a clean error, not a stack overflow ---
+    {
+        std::vector<std::string> errs;
+        Log::sink = [&errs](Log::Level l, const std::string& m) { if (l >= Log::Level::Error) errs.push_back(m); };
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load("int F(int n){return F(n+1)+1;} void Start(){F(0);}", &err));
+        vm->CallStart();
+        bool reported = false;
+        for (auto& e : errs) if (e.find("too deeply") != std::string::npos) reported = true;
+        CHECK(reported);
+        // ...while ordinary recursion still works.
+        auto vm2 = CreateScriptVM("okayscript");
+        CHECK(vm2->Load("function fact(n) { if (n <= 1) { return 1; } return n * fact(n - 1); }\nvar f = fact(10);", &err));
+        CHECK_NEAR(vm2->GetGlobal("f").AsFloat(), 3628800.0f, 1.0f);
+        Log::sink = nullptr;
+    }
+
+    // --- Deep nesting is an error, not a stack overflow ---
+    {
+        // from_json on 262,144 '['
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load("var r = 0;\nfunction Go() { try { var v = from_json(s); r = 1; } catch (e) { r = 2; } }", &err));
+        vm->SetGlobal("s", vs::VsValue(std::string(262144, '[')));
+        vm->CallEvent("Go");
+        CHECK_NEAR(vm->GetGlobal("r").AsFloat(), 2.0f, 1e-4f);
+        // ordinary JSON still parses
+        vm->SetGlobal("s", vs::VsValue(std::string("[[1, 2], {\"a\": [3]}]")));
+        vm->CallEvent("Go");
+        CHECK_NEAR(vm->GetGlobal("r").AsFloat(), 1.0f, 1e-4f);
+
+        // 5,000 nested parentheses
+        auto vm2 = CreateScriptVM("okayscript");
+        err.clear();
+        CHECK(!vm2->Load("var x = " + std::string(5000, '(') + "1" + std::string(5000, ')') + ";", &err));
+        CHECK(err.find("nested too deeply") != std::string::npos);
+        err.clear();
+        CHECK(!vm2->Validate("var x = " + std::string(5000, '(') + "1" + std::string(5000, ')') + ";", &err));
+        CHECK(!vm2->ValidateAll("var x = " + std::string(5000, '(') + "1" + std::string(5000, ')') + ";").empty());
+        CHECK(vm2->Load("var y = ((((2 + 1)))) * -(-2);", &err));
+        CHECK_NEAR(vm2->GetGlobal("y").AsFloat(), 6.0f, 1e-4f);
+    }
+
+    // --- noise(): no integer overflow at any coordinate, same values as before ---
+    {
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load("var a = noise(0, 5);\nvar b = noise(100000000000000000000.0, 0.5);\n"
+                       "var c = noise(-3.25, 7.5);\nvar d = noise(1.5, 2.25);", &err));
+        for (const char* n : {"a", "b", "c", "d"}) {
+            float v = vm->GetGlobal(n).AsFloat();
+            CHECK(v >= 0.0f && v <= 1.0f);
+        }
+        CHECK_NEAR(vm->GetGlobal("a").AsFloat(), 0.928949535f, 1e-6f);   // the values noise() gave before
+        CHECK_NEAR(vm->GetGlobal("c").AsFloat(), 0.730315089f, 1e-6f);
+        CHECK_NEAR(vm->GetGlobal("d").AsFloat(), 0.498388886f, 1e-6f);
+    }
+
     TEST_MAIN_RESULT();
 }

@@ -355,7 +355,18 @@ private:
 
     ExprPtr Expression() { return Assignment(); }
 
+    // Expressions nest by recursion, so cap how deep they go: thousands of '('
+    // or '-' would otherwise overflow the stack instead of giving an error.
+    static constexpr int kMaxNesting = 256;
+    int nesting_ = 0;
+    struct NestGuard {
+        int& n;
+        NestGuard(int& d, SrcLoc l) : n(d) { if (++n > kMaxNesting) { --n; throw ParseError{l, "This expression is nested too deeply"}; } }
+        ~NestGuard() { --n; }
+    };
+
     ExprPtr Assignment() {
+        NestGuard guard(nesting_, Peek().loc);
         ExprPtr lhs = Conditional();
         switch (Peek().type) {
             case T::Assign: case T::PlusEq: case T::MinusEq: case T::StarEq: case T::SlashEq: case T::PercentEq: {
@@ -409,6 +420,9 @@ private:
     }
     ExprPtr Unary() {
         SrcLoc l = Peek().loc;
+        const bool prefixed = Is(T::Minus) || Is(T::Not) || Is(T::Plus) || Is(T::PlusPlus) || Is(T::MinusMinus) || IsCastAhead();
+        if (!prefixed) return Postfix();
+        NestGuard guard(nesting_, l);   // - - - ... x recurses here, not through Assignment
         if (Is(T::Minus) || Is(T::Not)) {
             auto e = Make(EK::Unary, l); e->op = Peek().type; ++pos_;
             e->lhs = Unary();
@@ -489,7 +503,13 @@ private:
                 } catch (const std::out_of_range&) { throw ParseError{l, t.text + " is too big for an int"}; }
                 return e;
             }
-            case T::FloatLit: { ++pos_; auto e = Make(EK::FloatLit, l); e->fval = std::stof(t.text); return e; }
+            case T::FloatLit: {
+                ++pos_;
+                auto e = Make(EK::FloatLit, l);
+                try { e->fval = std::stof(t.text); }   // throws when the value doesn't fit a float
+                catch (const std::exception&) { throw ParseError{l, "number out of range"}; }
+                return e;
+            }
             case T::StringLit: { ++pos_; auto e = Make(EK::StringLit, l); e->sval = t.text; return e; }
             case T::KwTrue: case T::KwFalse: { ++pos_; auto e = Make(EK::BoolLit, l); e->bval = t.type == T::KwTrue; return e; }
             case T::KwNull: { ++pos_; return Make(EK::NullLit, l); }

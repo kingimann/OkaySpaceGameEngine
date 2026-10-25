@@ -142,11 +142,16 @@ inline void ToJson(const Value& v, std::string& out) {
 // managed to parse (best-effort) — scripts should validate important data anyway.
 struct JsonReader {
     const std::string& s; std::size_t i = 0;
+    int depth = 0;   // array/object nesting: too deep is an error, not a stack overflow
     explicit JsonReader(const std::string& src) : s(src) {}
     void Ws() { while (i < s.size() && (s[i]==' '||s[i]=='\t'||s[i]=='\n'||s[i]=='\r')) ++i; }
     Value Parse() { Ws(); if (i >= s.size()) return Value{}; char c = s[i];
-        if (c == '{') return Obj();
-        if (c == '[') return Arr();
+        if (c == '{' || c == '[') {
+            if (++depth > 256) throw std::runtime_error("from_json: nested too deeply (more than 256 levels)");
+            Value v = c == '{' ? Obj() : Arr();
+            --depth;
+            return v;
+        }
         if (c == '"') return Value{Str()};
         if (c == 't') { i += 4; return Value{true}; }
         if (c == 'f') { i += 5; return Value{false}; }
@@ -1376,6 +1381,17 @@ struct FunctionStmt : Stmt {
     void Exec(Runtime&) override { /* hoisted at compile time */ }
 };
 
+// Cap script call depth so endless recursion is an error, not a stack overflow.
+// Counted per thread: each coroutine runs on its own thread (and stack).
+thread_local int t_callDepth = 0;
+struct CallDepthGuard {
+    explicit CallDepthGuard(const std::string& what) {
+        if (t_callDepth >= 200) throw ScriptError(what + " calls itself too deeply (endless recursion?)");
+        ++t_callDepth;
+    }
+    ~CallDepthGuard() { --t_callDepth; }
+};
+
 Value Runtime::Call(const std::string& name, std::vector<Value>& args) {
     auto b = builtins.find(name);
     if (b != builtins.end()) return b->second(args);
@@ -1410,6 +1426,7 @@ Value Runtime::Call(const std::string& name, std::vector<Value>& args) {
         throw ScriptError("call to undefined function '" + name + "'");
     }
 
+    CallDepthGuard depthGuard(name + "()");
     scopes.push_back(Environment{});
     const FunctionDecl& fn = f->second;
     for (std::size_t i = 0; i < fn.params.size(); ++i) {
@@ -1442,6 +1459,7 @@ Value Runtime::CallLambda(const Value& f, std::vector<Value>& args) {
     if (it == m->end()) throw ScriptError("not a function");
     auto lb = lambdas.find((int)it->second.AsFloat());
     if (lb == lambdas.end()) throw ScriptError("lambda is no longer available");
+    CallDepthGuard depthGuard("a lambda");
     scopes.push_back(Environment{});
     const auto& ps = *lb->second.params;
     for (std::size_t i = 0; i < ps.size(); ++i) Define(ps[i], i < args.size() ? args[i] : Value{});
@@ -2432,6 +2450,10 @@ private:
         return l;
     }
     ExprPtr ParseUnary() {
+        // Every nested expression ('(', '-', '!', ...) comes through here: cap the
+        // depth so thousands of them are a parse error, not a stack overflow.
+        if (m_nesting >= 256) throw ScriptError("parse error: expression nested too deeply", Peek().line);
+        struct NestGuard { int& n; explicit NestGuard(int& d) : n(d) { ++n; } ~NestGuard() { --n; } } guard(m_nesting);
         if (Check(Tok::Minus) || Check(Tok::Not)) { Tok op = Peek().type; ++m_pos; return std::make_unique<UnaryExpr>(op, ParseUnary()); }
         // Prefix ++x / --x  ->  x = x + 1 / x = x - 1.
         if (Check(Tok::Inc) || Check(Tok::Dec)) {
@@ -2639,6 +2661,7 @@ private:
 
     std::vector<Token> m_toks;
     std::size_t m_pos = 0;
+    int m_nesting = 0;                                      // ParseUnary recursion depth
     std::set<std::string> m_enums;                          // enum type names
     std::vector<ScriptDiagnostic> m_semantic;               // type mistakes found while parsing
     bool m_inVoid = false;                                  // parsing the body of a `void` function
@@ -7074,13 +7097,22 @@ struct OkayScriptVM::Impl {
         b["noise"] = [](std::vector<Value>& a) -> Value {
             float x = a.size() > 0 ? a[0].AsFloat() : 0.0f;
             float y = a.size() > 1 ? a[1].AsFloat() : 0.0f;
-            auto hash = [](int xi, int yi) {
-                unsigned h = (unsigned)(xi * 374761393 + yi * 668265263);
+            // Unsigned arithmetic wraps instead of overflowing (same values as before).
+            auto hash = [](unsigned xi, unsigned yi) {
+                unsigned h = xi * 374761393u + yi * 668265263u;
                 h = (h ^ (h >> 13)) * 1274126177u;
                 return (float)((h ^ (h >> 16)) & 0xFFFFFFu) / (float)0xFFFFFFu;
             };
-            int x0 = (int)std::floor(x), y0 = (int)std::floor(y);
-            float fx = x - x0, fy = y - y0;
+            // Lattice cell (floor of v, wrapped mod 2^32 like the hash) and the
+            // fraction within it, safe for huge or non-finite coordinates.
+            auto cell = [](float v, unsigned& c) -> float {
+                if (!std::isfinite(v)) { c = 0; return 0.0f; }
+                const double f = std::floor((double)v);
+                c = (unsigned)(long long)std::fmod(f, 4294967296.0);
+                return (float)((double)v - f);
+            };
+            unsigned x0, y0;
+            float fx = cell(x, x0), fy = cell(y, y0);
             auto sm = [](float t) { return t * t * (3.0f - 2.0f * t); };
             float sx = sm(fx), sy = sm(fy);
             float n00 = hash(x0, y0), n10 = hash(x0 + 1, y0);
@@ -7787,6 +7819,9 @@ void OkayScriptVM::CallUpdate(float deltaTime) {
             m_impl->bareSkipFirstUpdate = false;
         } else {
             try { for (auto& s : m_impl->topLevel) s->Exec(m_impl->rt); }
+            catch (const ReturnSignal&) {}     // a stray top-level return/break/continue
+            catch (const BreakSignal&) {}      // ends this frame's run, like it does in Load
+            catch (const ContinueSignal&) {}
             catch (const std::exception& e) { Log::Error("OkayScript (bare): ", e.what()); }
         }
     }

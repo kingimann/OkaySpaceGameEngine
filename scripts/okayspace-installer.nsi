@@ -39,11 +39,15 @@ Function .onInit
   Call UseIfInstalled
 FunctionEnd
 
-; $0 = a candidate folder; the first one holding OkaySpace.exe wins.
+; $0 = a candidate folder; the first one holding an install (OkaySpace.exe AND
+; Tools\OkayEngine.exe) wins. OkaySpace.exe alone isn't enough: the release
+; also offers the launcher as a single download, and with it beside this setup
+; in Downloads, setup would quietly install into Downloads.
 Function UseIfInstalled
   ${If} $IsUpdate != "1"
   ${AndIf} $0 != ""
   ${AndIf} ${FileExists} "$0\OkaySpace.exe"
+  ${AndIf} ${FileExists} "$0\Tools\OkayEngine.exe"
     StrCpy $INSTDIR $0
     StrCpy $IsUpdate "1"
   ${EndIf}

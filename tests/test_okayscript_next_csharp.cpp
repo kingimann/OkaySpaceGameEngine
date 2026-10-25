@@ -598,6 +598,148 @@ static void NullOperators() {
     }
 }
 
+static void Classes() {
+    {   // plain classes: fields with starting values, constructors, methods, `this`, references, null
+        World w(
+            "class Node {\n"
+            "    public int value;\n"
+            "    public Node next;\n"
+            "    public Node(int v) { value = v; }\n"
+            "    public Node Prepend(int v) { Node n = new Node(v); n.next = this; return n; }\n"
+            "}\n"
+            "class Stats {\n"
+            "    public int hp = 10;\n"
+            "    public int max;\n"
+            "    public Stats(int max) { this.max = max; hp = max; }\n"
+            "    public bool Hit(int damage) { hp -= damage; return hp <= 0; }\n"
+            "    public Stats Copy() { Stats s = new Stats(max); s.hp = hp; return s; }\n"
+            "}\n"
+            "class Point {\n"
+            "    public float x, y;\n"
+            "    public Point() { }\n"
+            "    public Point(float x, float y) { this.x = x; this.y = y; }\n"
+            "}\n"
+            "class Bag { public int count; }\n"
+            "class T : Behaviour {\n"
+            "    public int sum, count, hp, copyHp, bagCount;\n"
+            "    public float px, speed;\n"
+            "    public bool firstHit, dead, missing;\n"
+            "    public string text;\n"
+            "    void SetSpeed(float speed) { this.speed = speed; }\n"
+            "    void Start() {\n"
+            "        Node head = null;\n"
+            "        for (int i = 1; i <= 3; i++) { Node n = new Node(i); n.next = head; head = n; }\n"
+            "        head = head.Prepend(4);\n"
+            "        for (Node p = head; p != null; p = p.next) { sum += p.value; count++; }\n"
+            "        Stats s = new Stats(5);\n"
+            "        firstHit = s.Hit(3);\n"
+            "        dead = s.Hit(3);\n"
+            "        Stats c = s.Copy();\n"
+            "        c.hp = 100;\n"
+            "        Stats r = s;\n"
+            "        r.hp = 7;\n"
+            "        hp = s.hp;\n"
+            "        copyHp = c.hp;\n"
+            "        Point[] ps = new Point[2];\n"
+            "        ps[0] = new Point(1.5f, 2);\n"
+            "        px = ps[0].x + new Point().x;\n"
+            "        missing = ps[1] == null;\n"
+            "        text = \"\" + s + $\" {head.next.value}\";\n"
+            "        Bag bag = (ps[1] == null ? null : new Bag()) ?? new Bag();\n"
+            "        bag.count += 2;\n"
+            "        bagCount = bag.count;\n"
+            "        SetSpeed(4);\n"
+            "    }\n"
+            "}\n");
+        CHECK(w.loaded);
+        CHECK_NEAR(w.F("sum"), 10.0f, 1e-6f);
+        CHECK_NEAR(w.F("count"), 4.0f, 1e-6f);
+        CHECK(!w.sc->VM()->GetGlobal("firstHit").AsBool());
+        CHECK(w.sc->VM()->GetGlobal("dead").AsBool());
+        CHECK_NEAR(w.F("hp"), 7.0f, 1e-6f);           // r is the same object as s
+        CHECK_NEAR(w.F("copyHp"), 100.0f, 1e-6f);     // the copy is its own object
+        CHECK_NEAR(w.F("px"), 1.5f, 1e-6f);
+        CHECK(w.sc->VM()->GetGlobal("missing").AsBool());
+        CHECK(w.S("text") == "Stats 3");
+        CHECK_NEAR(w.F("speed"), 4.0f, 1e-6f);        // this.speed is the field, not the parameter
+        CHECK_NEAR(w.F("bagCount"), 2.0f, 1e-6f);
+    }
+    {   // the example in docs/scripting.md
+        CHECK(Clean(
+            "class Item {\n"
+            "    public string name;\n"
+            "    public int count = 1;\n"
+            "    public Item(string name) { this.name = name; }\n"
+            "    public bool Use() { count--; return count <= 0; }\n"
+            "}\n"
+            "class Inventory : Behaviour {\n"
+            "    Item[] slots = new Item[4];\n"
+            "    void Start() { slots[0] = new Item(\"Potion\"); }\n"
+            "    public void UseFirst() {\n"
+            "        if (slots[0] != null && slots[0].Use()) slots[0] = null;\n"
+            "    }\n"
+            "}\n"));
+    }
+    {   // a very long chain of objects is freed without running out of stack
+        World w(
+            "class Link { public Link next; }\n"
+            "class T : Behaviour {\n"
+            "    public int made;\n"
+            "    void Start() { Link head = null; for (int i = 0; i < 300000; i++) { Link l = new Link(); l.next = head; head = l; made++; } }\n"
+            "}\n");
+        CHECK_NEAR(w.F("made"), 300000.0f, 1e-3f);
+    }
+    {   // runtime: using null is an error with its line
+        g_errs.clear();
+        World w("class Box { public int v; }\nclass T : Behaviour {\n    void Start() { Box b = null; Debug.Log(b.v); }\n}\n");
+        CHECK(ErrHas("Start() line 3: 'b' is null here"));
+        World loop("class Node { public Node next = new Node(); }\nclass T : Behaviour {\n    void Start() { Node n = new Node(); Debug.Log(n); }\n}\n");
+        CHECK(ErrHas("Making a Node makes more objects without end"));
+    }
+    {   // mistakes, with line and column
+        auto d = Diags(
+            "class Bag {\n"                                              // 1
+            "    int secret;\n"                                          // 2
+            "    void Hidden() { secret = 1; }\n"                        // 3
+            "    public int Count() { Hidden(); return secret; }\n"      // 4
+            "    public void Move() { transform.Translate(1, 0, 0); }\n" // 5
+            "    static int shared;\n"                                   // 6
+            "    public Bag(int n) { return n; }\n"                      // 7
+            "    public Bag(int a) { }\n"                                // 8
+            "}\n"                                                         // 9
+            "class Node { public int value; }\n"                         // 10
+            "class Fancy : Node { }\n"                                   // 11
+            "class Node { }\n"                                           // 12
+            "class T : Behaviour {\n"                                    // 13
+            "    T() { }\n"                                              // 14
+            "    void Start() {\n"                                       // 15
+            "        Bag b = new Bag(1);\n"                              // 16
+            "        Debug.Log(b.secret);\n"                             // 17
+            "        b.Hidden();\n"                                      // 18
+            "        Bag c = new Bag();\n"                               // 19
+            "        T t = new T();\n"                                   // 20
+            "        Node n = new Node();\n"                             // 21
+            "        Debug.Log(n.valu + b.Count());\n"                   // 22
+            "    }\n"
+            "}\n"
+            "class Other : Behaviour { }\n");                            // 25
+        CHECK(Has(d, 0, "'secret' is private to Bag: make it public to use it here", 17, 21));
+        CHECK(Has(d, 0, "'Hidden' is private to Bag: make it public to use it here", 18, 11));
+        CHECK(Has(d, 0, "'transform' only exists in the Behaviour class: Bag isn't on an object", 5, 26));
+        CHECK(Has(d, 0, "static members only work in the Behaviour class for now", 6, 16));
+        CHECK(Has(d, 0, "A constructor can't return a value", 7, 25));
+        CHECK(Has(d, 0, "Bag already has a constructor that takes 1 value", 8, 12));
+        CHECK(Has(d, 0, "Inheritance between classes isn't supported yet", 11, 15));
+        CHECK(Has(d, 0, "'Node' is declared twice", 12, 7));
+        CHECK(Has(d, 0, "A Behaviour script has no constructor: set things up in Awake() or Start()", 14, 5));
+        CHECK(Has(d, 0, "Bag has no constructor that takes 0 values", 19, 17));
+        CHECK(Has(d, 0, "Behaviour scripts are added to objects, not made with new", 20, 15));
+        CHECK(Has(d, 0, "Node has no 'valu'. Did you mean 'value'?", 22, 21));
+        CHECK(Has(d, 0, "Only one Behaviour class per script: put 'Other' in its own script", 25, 7));
+        CHECK(!Has(d, 1, "'secret' is never read"));
+    }
+}
+
 static void Parity() {
     // The same C# snippet gives the same results on the old OkayScript runtime.
     const std::string src =
@@ -640,10 +782,11 @@ static void BackCompat() {
 static void Fuzz() {
     // Truncated and garbled programs never crash the compiler.
     const std::string src =
-        "enum E { A, B = 2 }\nclass T : Behaviour {\n int[] a = { 1, 2 };\n void Start() {\n"
+        "enum E { A, B = 2 }\nclass P { public int v; public P(int x) { v = x; } public P Twin() { return new P(v); } }\nclass T : Behaviour {\n int[] a = { 1, 2 };\n void Start() {\n"
         "  switch (E.A) { case E.A: foreach (var x in a) { a[x % 2] += 1; } break; default: break; }\n"
         "  string s = $\"{a[0]:F1} {{ {$\"{E.B}\"}\";\n"
-        "  GameObject g = GameObject.Find(s) ?? gameObject; g?.transform.Translate(1, 0, 0); a ??= new int[1];\n }\n}\n";
+        "  GameObject g = GameObject.Find(s) ?? gameObject; g?.transform.Translate(1, 0, 0); a ??= new int[1];\n"
+        "  P p = new P(3).Twin(); p.v += 1; Debug.Log(p?.Twin());\n }\n}\n";
     int n = 0;
     for (std::size_t i = 0; i <= src.size(); ++i) { Diags(src.substr(0, i)); ++n; }
     for (std::size_t i = 0; i < src.size(); ++i) { std::string s = src; s.erase(i, 1); Diags(s); }
@@ -672,6 +815,7 @@ int main() {
     Statics();
     Interpolation();
     NullOperators();
+    Classes();
     Parity();
     BackCompat();
     Fuzz();

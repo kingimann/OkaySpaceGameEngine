@@ -143,7 +143,7 @@ int main() {
         auto d3 = Diags(Wrap("    const int Max = 3;\n    void Start() { Max = 4; }\n"));
         CHECK(Has(d3, 0, "'Max' is const"));
         auto d4 = Diags("class A : Behaviour { }\nclass B : Behaviour { }\n");
-        CHECK(Has(d4, 0, "Only one class per script"));
+        CHECK(Has(d4, 0, "Only one Behaviour class per script"));
     }
     {   // a script with errors refuses to load and never runs
         World w(Wrap("    void Start() { Debug.Log(\"should not run\"); int x = \"no\"; }"));

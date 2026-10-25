@@ -44,6 +44,7 @@ enum class TK : std::uint8_t {
     Any,      ///< parameter that accepts every type (Debug.Log)
     Enum,     ///< a script's enum: id = Program::enums index; an int at runtime
     Array,    ///< T[]: id = Program::arrays index (the element type)
+    Class,    ///< a plain class from the script: id = Program::classes index
 };
 struct Type {
     TK  kind = TK::Error;
@@ -66,12 +67,22 @@ struct ObjRef {
     bool operator==(const ObjRef& o) const { return go == o.go && type == o.type; }
 };
 struct ArrayObj;
+struct ScriptObj;
 using ArrayRef = std::shared_ptr<ArrayObj>;
-using Value = std::variant<std::monostate, bool, std::int32_t, float, std::string, Vec3, ObjRef, ArrayRef>;
+using ObjPtr = std::shared_ptr<ScriptObj>;
+using Value = std::variant<std::monostate, bool, std::int32_t, float, std::string, Vec3, ObjRef, ArrayRef, ObjPtr>;
 /// A T[] at runtime. Arrays are references: copies share the items.
 struct ArrayObj {
     std::vector<Value> items;
     std::string typeName;   ///< "int[]", printed when the array itself is turned into text
+    ~ArrayObj();
+};
+/// An object of one of the script's plain classes (new Node(...)): a reference, like an array.
+struct ScriptObj {
+    int cls = -1;                ///< Program::classes index
+    std::string className;       ///< printed when the object is turned into text
+    std::vector<Value> fields;
+    ~ScriptObj();                ///< frees long chains (linked lists) without deep recursion
 };
 
 std::string ValueToString(const Value& v);
@@ -193,6 +204,8 @@ enum class Bind : std::uint8_t {
     ApiProp, ApiStaticProp, ApiMethod, ApiStaticMethod, StaticType,
     VecField /*x/y/z*/, VecProp /*magnitude/normalized*/, GetComponent, Destroy, StaticField,
     EnumValue /*State.Idle: ival*/, ArrayLength,
+    ObjField /*obj.field: slot = field*/, ObjMethod /*obj.M(): slot = method, member = class*/,
+    NewObject /*new Node(): slot = class, member = constructor (-1 = none)*/,
 };
 
 struct Expr {
@@ -268,6 +281,7 @@ struct FieldDecl {
 struct Param { TypeRef type; std::string name; SrcLoc loc; Type resolved; };
 struct MethodDecl {
     bool isPublic = false, isStatic = false;   ///< static: can't use the object's own fields, methods or members
+    bool isCtor = false;                       ///< a plain class's constructor (name = the class)
     TypeRef ret;
     std::string name;
     SrcLoc loc;

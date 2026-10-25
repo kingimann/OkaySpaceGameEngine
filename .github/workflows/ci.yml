@@ -52,11 +52,13 @@ jobs:
           cp build-player/bin/okay-player build-editor/bin/
           tests/export/verify.sh build-editor/bin/OkayEngine
 
-  # Build the scripting and visual-scripting tests with AddressSanitizer and
-  # UndefinedBehaviorSanitizer and run them: any memory error, leak or undefined
-  # behaviour fails the job. Only the test targets are built, to keep it fast.
+  # Build the scripting, visual-scripting and robustness tests with
+  # AddressSanitizer and UndefinedBehaviorSanitizer and run them: any memory
+  # error, leak or undefined behaviour fails the job. Several robustness tests
+  # only catch their bug under a sanitizer. Only the listed test targets are built, to
+  # keep it fast; this is deliberately not the whole ctest suite.
   sanitizers:
-    name: Scripting tests (ASan + UBSan)
+    name: Scripting and robustness tests (ASan + UBSan)
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -88,6 +90,12 @@ jobs:
           TESTS="test_visualscript test_vs_nodes test_vs_types test_okayscript_next test_scripting"
           TESTS="$TESTS $(grep -oE 'add_executable\(test_script_[A-Za-z0-9_]+' tests/CMakeLists.txt | cut -c16- | tr '\n' ' ')"
           if grep -q 'add_executable(test_vs_editor_model' tests/CMakeLists.txt; then TESTS="$TESTS test_vs_editor_model"; fi
+          # Robustness tests whose bugs only show up under a sanitizer.
+          TESTS="$TESTS test_anim_sm_realloc test_prefs_misc test_loaders_robust test_scene_records"
+          TESTS="$TESTS test_physics_callback_removal test_physics_nan test_parent_cycles test_scheduler_reentry"
+          for t in test_net_hardening test_net_races; do
+            if grep -q "add_executable($t " tests/CMakeLists.txt; then TESTS="$TESTS $t"; fi
+          done
           echo "SAN_TESTS=$TESTS" >> "$GITHUB_ENV"
           echo "$TESTS"
 

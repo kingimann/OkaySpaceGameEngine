@@ -8,6 +8,7 @@
 #include "okay/Math/Mathf.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 #include <unordered_set>
 
@@ -355,11 +356,19 @@ void Physics2D::Step(Scene& scene, float dt) {
     // and a membership set for the exit-message cleanup (was an O(contacts*n) scan).
     const std::size_t nc = colliders.size();
     std::vector<Vec2> aabbMin(nc), aabbMax(nc);
+    // A body whose pose or velocity went non-finite (NaN/inf) is left out of the
+    // contact phase: NaN fails every AABB rejection test, so it would "touch"
+    // everything and spread NaN into each body it's resolved against.
+    std::vector<char> finite(nc, 1);
     std::unordered_set<Collider2D*> aliveSet;
     aliveSet.reserve(nc * 2 + 1);
     for (std::size_t i = 0; i < nc; ++i) {
         colliders[i]->WorldAABB(aabbMin[i], aabbMax[i]);
         aliveSet.insert(colliders[i]);
+        const Rigidbody2D* r = colliders[i]->gameObject->GetComponent<Rigidbody2D>();
+        finite[i] = std::isfinite(aabbMin[i].x) && std::isfinite(aabbMin[i].y) &&
+                    std::isfinite(aabbMax[i].x) && std::isfinite(aabbMax[i].y) &&
+                    (!r || (std::isfinite(r->velocity.x) && std::isfinite(r->velocity.y) && std::isfinite(r->angularVelocity)));
     }
 
     for (std::size_t i = 0; i < nc; ++i) {
@@ -369,6 +378,7 @@ void Physics2D::Step(Scene& scene, float dt) {
             if (!a->enabled || !b->enabled) continue;
             if (!a->gameObject->active || !b->gameObject->active) continue;
             if (a->gameObject == b->gameObject) continue;
+            if (!finite[i] || !finite[j]) continue;   // a NaN body touches nothing
             if (!LayersCollide(a->layer, b->layer)) continue; // collision matrix
 
             // Broad phase: AABB reject (precomputed AABBs).
@@ -410,8 +420,10 @@ void Physics2D::Step(Scene& scene, float dt) {
                 if (imSum > 0.0f) {
                     // Positional correction.
                     Vec2 correction = c.normal * (c.penetration / imSum);
-                    a->transform->localPosition -= Vec3{correction * ima};
-                    b->transform->localPosition += Vec3{correction * imb};
+                    // Only bodies that can move are corrected: x*0 is NaN for a NaN
+                    // correction, which would otherwise poison a static body too.
+                    if (ima > 0.0f) a->transform->localPosition -= Vec3{correction * ima};
+                    if (imb > 0.0f) b->transform->localPosition += Vec3{correction * imb};
 
                     // Angular terms: lever arms from each body's center to the contact
                     // point, and inverse inertia. When rotation is locked these are 0,
@@ -444,8 +456,8 @@ void Physics2D::Step(Scene& scene, float dt) {
                         if (-velAlongNormal < 0.5f) e = 0.0f;
                         jImp = -(1.0f + e) * velAlongNormal / denom;
                         Vec2 impulse = c.normal * jImp;
-                        if (ra) { ra->velocity -= impulse * ima; ra->angularVelocity -= rnA * jImp * iia * Mathf::Rad2Deg; }
-                        if (rb) { rb->velocity += impulse * imb; rb->angularVelocity += rnB * jImp * iib * Mathf::Rad2Deg; }
+                        if (ra) { if (ima > 0.0f) ra->velocity -= impulse * ima; if (iia > 0.0f) ra->angularVelocity -= rnA * jImp * iia * Mathf::Rad2Deg; }
+                        if (rb) { if (imb > 0.0f) rb->velocity += impulse * imb; if (iib > 0.0f) rb->angularVelocity += rnB * jImp * iib * Mathf::Rad2Deg; }
                     }
                     // Coulomb friction on the tangential relative velocity at the
                     // contact point, clamped to friction x the normal impulse. With
@@ -472,8 +484,8 @@ void Physics2D::Step(Scene& scene, float dt) {
                             float maxF = mu * jImp;
                             jt = Mathf::Clamp(jt, -maxF, maxF);
                             Vec2 fimp = t * jt;
-                            if (ra) { ra->velocity -= fimp * ima; ra->angularVelocity -= rtA * jt * iia * Mathf::Rad2Deg; }
-                            if (rb) { rb->velocity += fimp * imb; rb->angularVelocity += rtB * jt * iib * Mathf::Rad2Deg; }
+                            if (ra) { if (ima > 0.0f) ra->velocity -= fimp * ima; if (iia > 0.0f) ra->angularVelocity -= rtA * jt * iia * Mathf::Rad2Deg; }
+                            if (rb) { if (imb > 0.0f) rb->velocity += fimp * imb; if (iib > 0.0f) rb->angularVelocity += rtB * jt * iib * Mathf::Rad2Deg; }
                         }
                     }
                 }

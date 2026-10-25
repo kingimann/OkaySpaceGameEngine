@@ -11,6 +11,7 @@
 #include "okay/Math/Mathf.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 #include <unordered_set>
 
@@ -389,11 +390,19 @@ void Physics3D::Step(Scene& scene, float dt) {
     // exit-message cleanup below (was an O(contacts*colliders) linear scan).
     const std::size_t nc = colliders.size();
     std::vector<Vec3> aabbMin(nc), aabbMax(nc);
+    // A body whose pose or velocity went non-finite (NaN/inf) is left out of the
+    // contact phase: NaN fails every AABB rejection test, so it would "touch"
+    // everything and spread NaN into each body it's resolved against.
+    std::vector<char> finite(nc, 1);
     std::unordered_set<Collider3D*> aliveSet;
     aliveSet.reserve(nc * 2 + 1);
+    auto fin3 = [](const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); };
     for (std::size_t i = 0; i < nc; ++i) {
         colliders[i]->WorldAABB(aabbMin[i], aabbMax[i]);
         aliveSet.insert(colliders[i]);
+        const Rigidbody3D* r = colliders[i]->gameObject->GetComponent<Rigidbody3D>();
+        finite[i] = fin3(aabbMin[i]) && fin3(aabbMax[i]) &&
+                    (!r || (fin3(r->velocity) && fin3(r->angularVelocity)));
     }
 
     for (std::size_t i = 0; i < nc; ++i) {
@@ -403,6 +412,7 @@ void Physics3D::Step(Scene& scene, float dt) {
             if (!a->enabled || !b->enabled) continue;
             if (!a->gameObject->active || !b->gameObject->active) continue;
             if (a->gameObject == b->gameObject) continue;
+            if (!finite[i] || !finite[j]) continue;   // a NaN body touches nothing
             if (!LayersCollide(a->layer, b->layer)) continue;
 
             // Broad phase: AABB reject (precomputed AABBs).
@@ -443,8 +453,10 @@ void Physics3D::Step(Scene& scene, float dt) {
                 float imSum = ima + imb;
                 if (imSum > 0.0f) {
                     Vec3 correction = c.normal * (c.penetration / imSum);
-                    a->transform->localPosition = a->transform->localPosition - correction * ima;
-                    b->transform->localPosition = b->transform->localPosition + correction * imb;
+                    // Only bodies that can move are corrected: x*0 is NaN for a NaN
+                    // correction, which would otherwise poison a static body too.
+                    if (ima > 0.0f) a->transform->localPosition = a->transform->localPosition - correction * ima;
+                    if (imb > 0.0f) b->transform->localPosition = b->transform->localPosition + correction * imb;
 
                     // Angular terms: lever arms from each body's center to the contact
                     // point and inverse inertia. When rotation is locked these are 0, so
@@ -475,8 +487,8 @@ void Physics3D::Step(Scene& scene, float dt) {
                         if (-velAlongNormal < 0.5f) e = 0.0f;
                         jImp = -(1.0f + e) * velAlongNormal / denom;
                         Vec3 impulse = c.normal * jImp;
-                        if (ra) { ra->velocity = ra->velocity - impulse * ima; ra->angularVelocity = ra->angularVelocity - Vec3::Cross(rA, impulse) * iia; }
-                        if (rb) { rb->velocity = rb->velocity + impulse * imb; rb->angularVelocity = rb->angularVelocity + Vec3::Cross(rB, impulse) * iib; }
+                        if (ra) { if (ima > 0.0f) ra->velocity = ra->velocity - impulse * ima; if (iia > 0.0f) ra->angularVelocity = ra->angularVelocity - Vec3::Cross(rA, impulse) * iia; }
+                        if (rb) { if (imb > 0.0f) rb->velocity = rb->velocity + impulse * imb; if (iib > 0.0f) rb->angularVelocity = rb->angularVelocity + Vec3::Cross(rB, impulse) * iib; }
                     }
                     // Coulomb friction at the contact point, clamped to friction x the
                     // normal impulse. With gravity re-pressing each step this also gives
@@ -501,8 +513,8 @@ void Physics3D::Step(Scene& scene, float dt) {
                             float maxF = mu * jImp;
                             if (jt > maxF) jt = maxF; else if (jt < -maxF) jt = -maxF;
                             Vec3 fimp = t * jt;
-                            if (ra) { ra->velocity = ra->velocity - fimp * ima; ra->angularVelocity = ra->angularVelocity - Vec3::Cross(rA, fimp) * iia; }
-                            if (rb) { rb->velocity = rb->velocity + fimp * imb; rb->angularVelocity = rb->angularVelocity + Vec3::Cross(rB, fimp) * iib; }
+                            if (ra) { if (ima > 0.0f) ra->velocity = ra->velocity - fimp * ima; if (iia > 0.0f) ra->angularVelocity = ra->angularVelocity - Vec3::Cross(rA, fimp) * iia; }
+                            if (rb) { if (imb > 0.0f) rb->velocity = rb->velocity + fimp * imb; if (iib > 0.0f) rb->angularVelocity = rb->angularVelocity + Vec3::Cross(rB, fimp) * iib; }
                         }
                     }
                 }

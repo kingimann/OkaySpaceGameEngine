@@ -1,5 +1,29 @@
 OkaySpace Game Engine — Changelog
 
+v2.818.0
+  Fixes
+  - The "Humanoid player" walks properly again: foot IK keeps the walk's stride,
+    so the legs no longer just bend while the body slides along (#283).
+  - Visual scripts: malformed .okayvs files are refused with a line number;
+    self-wired loops, huge numbers and runaway data reads no longer crash or hang.
+  - Both script languages: huge number literals, stray break/continue, endless
+    recursion and very deep nesting give a clear error instead of crashing.
+  - Robustness: parent loops are refused; damaged scenes, OBJ/glTF models and
+    oversized images are rejected safely; physics survives objects removed during
+    a collision and a single broken (NaN) body; animation layers and timers no
+    longer use freed memory; prefs keep tabs, line breaks and exact numbers.
+  - Launcher: usernames with & < > sign in correctly; a brace in chat, forum or
+    marketplace text no longer hides messages; friends' bios save and load.
+  - Installer: uninstalling keeps your projects; setup no longer installs into
+    Downloads. The update dialog shows the right version's notes.
+  Security
+  - Relay sessions are isolated, script file paths are restricted, and message
+    reactions are only visible to people who can see the message (#254).
+  Scripting
+  - Typed OkayScript: enums, switch, arrays and foreach (#271).
+  Editor
+  - Stats, Lighting and Services start closed (View menu opens them).
+
 v2.336.0  (Camera/Cinemachine, modeling, terrain, editor UX + duplicate fixes)
   Fixes
   - Player lean now follows the camera on a separated character (the lean/head

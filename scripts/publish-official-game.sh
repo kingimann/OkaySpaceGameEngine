@@ -214,7 +214,9 @@ files_under() {   # files_under <folder/>  -> every object under it, recursively
         if [ "$kind" = dir ]; then files_under "$1$name/"; else printf '%s\n' "$1$name"; fi
     done < <(list "$1")
 }
-mapfile -t OLD < <(list "$PREFIX/" | cut -f1 | grep -E '^v[0-9.]+$' | sed 's/^v//' | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n | head -n -"$KEEP")
+# Never the version just published: with FORCE=1 it can be older than the
+# newest $KEEP, and it is the live one now.
+mapfile -t OLD < <(list "$PREFIX/" | cut -f1 | grep -E '^v[0-9.]+$' | sed 's/^v//' | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n | head -n -"$KEEP" | grep -vxF -- "$VER")
 for v in "${OLD[@]}"; do
     mapfile -t GONE < <(files_under "$PREFIX/v$v/")
     [ "${#GONE[@]}" -gt 0 ] || continue

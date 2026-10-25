@@ -11,7 +11,7 @@ They talk through two channels:
 
 | Direction | Channel |
 | --- | --- |
-| developer → QA | a message sent into the QA session ("test PR #N: what changed, what to try") |
+| developer → QA | a one-shot scheduled message delivered into the QA session ("test PR #N at sha X: what changed, what to try") — cloud sessions can't message each other directly, so the developer schedules a message into the QA session a minute or two ahead |
 | QA → developer | comments on the pull request under test (the developer is subscribed to the PR, so every comment wakes it up) |
 
 ## The loop

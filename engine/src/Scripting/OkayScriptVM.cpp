@@ -4202,7 +4202,12 @@ struct OkayScriptVM::Impl {
         };
         b["load_scene_name"] = [this](std::vector<Value>& a) {
             Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
-            if (s && !a.empty()) return Value{SceneManager::LoadSceneByName(*s, a[0].AsString()) ? 1.0f : 0.0f};
+            if (s && !a.empty()) {
+                // A build-list name is fine; a raw path must stay inside the game.
+                const std::string name = a[0].AsString();
+                if (SceneManager::IndexOf(name) < 0 && !ScriptPathOk(name, "load_scene_name")) return Value{0.0f};
+                return Value{SceneManager::LoadSceneByName(*s, name) ? 1.0f : 0.0f};
+            }
             return Value{0.0f};
         };
         b["load_next_scene"] = [this](std::vector<Value>&) {
@@ -4216,7 +4221,9 @@ struct OkayScriptVM::Impl {
         b["load_scene_additive"] = [this](std::vector<Value>& a) {
             Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
             if (s && !a.empty()) {
-                std::string path = SceneManager::PathForName(a[0].AsString());
+                const std::string name = a[0].AsString();
+                if (SceneManager::IndexOf(name) < 0 && !ScriptPathOk(name, "load_scene_additive")) return Value{0.0f};
+                std::string path = SceneManager::PathForName(name);
                 if (path.empty()) return Value{0.0f};
                 Vec3 off{0, 0, 0};
                 if (a.size() >= 4)      off = {a[1].AsFloat(), a[2].AsFloat(), a[3].AsFloat()};

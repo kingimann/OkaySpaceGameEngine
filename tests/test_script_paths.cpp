@@ -114,6 +114,47 @@ int main() {
         CHECK(fs::exists(root / "game" / "saves" / "slot_a.okaysave"));
     }
 
+    // ---- Every scene loader and the action-list file ops refuse outside paths ----
+    {
+        Scene m("m"); m.CreateGameObject("OUTSIDE");
+        SceneSerializer::SaveToFile(m, (root / "outside.okayscene").string());
+        auto loads = [&](const std::string& call) {
+            Scene sc("L");
+            auto* c = sc.CreateGameObject("o")->AddComponent<ScriptComponent>("okayscript");
+            std::string e;
+            if (!c->LoadSource("function start() { " + call + "; }", &e)) return true;   // treat as a failure
+            sc.Start();
+            for (int i = 0; i < 4; ++i) sc.Update(1.0f / 60.0f);
+            return sc.Find("OUTSIDE") != nullptr;
+        };
+        const std::string abs = (root / "outside.okayscene").generic_string();
+        CHECK(!loads(R"(load_scene("../outside.okayscene"))"));
+        CHECK(!loads(R"(load_scene_name("../outside.okayscene"))"));
+        CHECK(!loads("load_scene_name(\"" + abs + "\")"));
+        CHECK(!loads(R"(SceneManager.LoadScene("../outside.okayscene"))"));
+        CHECK(!loads(R"(load_scene_additive("../outside.okayscene"))"));
+        // A scene inside the game still loads by path.
+        SceneSerializer::SaveToFile(m, (root / "game" / "inside.okayscene").string());
+        CHECK(loads(R"(load_scene_name("inside.okayscene"))"));
+
+        auto act = [&](std::vector<ActionList::Item> items) {
+            Scene sc("A");
+            auto* al = sc.CreateGameObject("o")->AddComponent<ActionList>();
+            al->trigger = ActionList::Trigger::OnStart;
+            al->instructions = std::move(items);
+            sc.Start();
+            for (int i = 0; i < 4; ++i) sc.Update(1.0f / 60.0f);
+            return sc.Find("OUTSIDE") != nullptr;
+        };
+        CHECK(!act({{"load_scene", {"../outside.okayscene"}}}));
+        CHECK(!act({{"load_scene", {abs}}}));
+        act({{"set_prefs", {"k", "1"}}, {"save_prefs", {"../escaped.okayprefs"}},
+             {"save_prefs", {(root / "escaped_abs.okayprefs").string()}}, {"save_prefs", {"al.okayprefs"}}});
+        CHECK(!fs::exists(root / "escaped.okayprefs"));
+        CHECK(!fs::exists(root / "escaped_abs.okayprefs"));
+        CHECK(fs::exists(root / "game" / "al.okayprefs"));     // no save folder set: beside the game
+    }
+
     fs::current_path(oldCwd);
     std::error_code ec; fs::remove_all(root, ec);
     TEST_MAIN_RESULT();

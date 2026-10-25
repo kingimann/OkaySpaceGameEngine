@@ -38,6 +38,7 @@
 #include "okay/Platform/Achievements.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Core/Prefs.hpp"
+#include "okay/Core/SaveData.hpp"
 #include "okay/Core/Game.hpp"          // win / lose / quit instructions
 #include "okay/Input/Input.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -1405,7 +1406,16 @@ void ActionList::Update(float dt) {
             PlayFab::Get().GetUserData(Str(it, 0), v);
             StrVars()[Str(it, 1).empty() ? Str(it, 0) : Str(it, 1)] = v;
         }
-        else if (op == "load_scene") { if (scene) scene->RequestLoad(Str(it, 0)); return; }
+        else if (op == "load_scene") {
+            // Action lists are game content: a raw scene path must stay inside the game.
+            const std::string path = Str(it, 0);
+            if (SceneManager::IndexOf(path) < 0 && !Save::IsSafeRelative(path)) {
+                Log::Error("[actions] load_scene: refusing '", path, "' (absolute paths and '..' aren't allowed)");
+                return;
+            }
+            if (scene) scene->RequestLoad(path);
+            return;
+        }
         else if (op == "load_scene_index") { if (scene) SceneManager::LoadScene(*scene, (int)Num(it, 0)); return; }
         else if (op == "load_next_scene")  { if (scene) SceneManager::LoadNextScene(*scene); return; }
         else if (op == "mul_var") { Vars()[Str(it, 0)] *= Num(it, 1); }
@@ -1417,7 +1427,12 @@ void ActionList::Update(float dt) {
         // Read a saved value (e.g. the Health component's "health") into a variable,
         // so a visual script can grab a stat published by another component.
         else if (op == "get_prefs") { Vars()[Str(it, 0)] = Prefs::GetFloat(Str(it, 1), Num(it, 2)); }
-        else if (op == "save_prefs") { Prefs::Save(Str(it, 0).empty() ? "game.okayprefs" : Str(it, 0)); }
+        else if (op == "save_prefs") {   // like the scripts' prefs_save: into the game's save folder
+            const std::string name = Str(it, 0).empty() ? "game.okayprefs" : Str(it, 0);
+            if (!Save::IsSafeRelative(name))
+                Log::Error("[actions] save_prefs: refusing '", name, "' (absolute paths and '..' aren't allowed)");
+            else Prefs::Save(Save::Resolve(name));
+        }
         else if (op == "set_tag") { if (gameObject) gameObject->tag = Str(it, 0); }
         else if (op == "set_timescale_var") { Vars()[Str(it, 0)] = Time::TimeScale(); }
         else if (op == "log") { Log::Info("[actions] ", Rest(it, 0)); }

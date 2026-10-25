@@ -2,7 +2,9 @@
 #include "okay/Net/RelayProtocol.hpp"
 #include "okay/Net/Packet.hpp"
 #include "okay/Core/Log.hpp"
+#include <cmath>
 #include <cstring>
+#include <string>
 #include <vector>
 
 namespace okay::net {
@@ -24,6 +26,7 @@ void RelayServer::Stop() {
     m_peers.clear();
     m_slotEp.clear();
     m_sessions.clear();
+    m_perAddress.clear();
 }
 
 RelayServer::Peer* RelayServer::FindBySlot(std::uint32_t slot) {
@@ -53,6 +56,8 @@ std::uint32_t RelayServer::NewSlot() {
 RelayServer::PeerMap::iterator RelayServer::RemovePeer(PeerMap::iterator it) {
     const std::uint32_t slot = it->second.slot;
     m_slotEp.erase(slot);
+    auto pa = m_perAddress.find(it->first.address);
+    if (pa != m_perAddress.end() && --pa->second == 0) m_perAddress.erase(pa);
     auto s = m_sessions.find(it->second.code);
     if (s != m_sessions.end()) {
         if (s->second.hostSlot == slot) s->second.hostSlot = 0;
@@ -77,6 +82,8 @@ void RelayServer::HandleDatagram(const Endpoint& from, const std::uint8_t* data,
         if (existing == m_peers.end()) {
             // A new peer: only within the limits.
             if (m_peers.size() >= kMaxPeers) return;
+            auto pa = m_perAddress.find(from.address);
+            if (pa != m_perAddress.end() && pa->second >= kMaxPeersPerAddress) return;
             auto sit = m_sessions.find(code);
             if (sit == m_sessions.end() && m_sessions.size() >= kMaxSessions) return;
             if (sit != m_sessions.end() && sit->second.peers >= kMaxPeersPerSession) return;
@@ -86,9 +93,17 @@ void RelayServer::HandleDatagram(const Endpoint& from, const std::uint8_t* data,
             peer.host = (role == RelayHost);
             m_slotEp[peer.slot] = from;
             m_sessions[code].peers++;
+            m_perAddress[from.address]++;
             existing = m_peers.emplace(from, peer).first;
-            OKAY_INFO("relay: peer slot ", peer.slot, peer.host ? " (host)" : " (client)",
-                      " joined session '", code, "'");
+            if (m_logBudget >= 1.0f) {
+                m_logBudget -= 1.0f;
+                OKAY_INFO("relay: peer slot ", peer.slot, peer.host ? " (host)" : " (client)",
+                          " joined session '", code, "'",
+                          m_quietJoins ? " (+" + std::to_string(m_quietJoins) + " more not logged)" : std::string());
+                m_quietJoins = 0;
+            } else {
+                ++m_quietJoins;
+            }
         }
         // Re-hellos from the same address keep the slot and session they started
         // with, so a NAT-keepalive hello is idempotent.
@@ -149,6 +164,7 @@ void RelayServer::Poll(float dt, float timeout) {
     while ((n = m_socket.RecvFrom(buf.data(), buf.size(), from)) > 0)
         HandleDatagram(from, buf.data(), static_cast<std::size_t>(n));
 
+    m_logBudget = std::fmin(20.0f, m_logBudget + 5.0f * dt);
     // Expire peers we haven't heard from in a while (NAT mapping likely gone).
     for (auto it = m_peers.begin(); it != m_peers.end(); ) {
         it->second.idle += dt;

@@ -156,14 +156,42 @@ int main() {
         }
         CHECK(relay.PeerCount() == RelayServer::kMaxPeersPerSession);
 
-        // A flood of new sessions stops at the caps.
+        // A flood of new sessions from many addresses stops at the global caps.
         for (int i = 0; i < 6000; ++i) {
-            const Endpoint ep{0x7F000002u + static_cast<std::uint32_t>(i / 60000), static_cast<std::uint16_t>(1000 + i)};
+            const Endpoint ep{0x0B000000u + static_cast<std::uint32_t>(i), 1000};
             auto h = HelloBytes(RelayHost, "S" + std::to_string(i));
             relay.HandleDatagram(ep, h.data(), h.size());
         }
         CHECK(relay.PeerCount() <= RelayServer::kMaxPeers);
-        CHECK(relay.SessionCount() <= RelayServer::kMaxSessions);
+        CHECK(relay.SessionCount() == RelayServer::kMaxSessions);
+    }
+
+    // ---- One address can't take every slot and lock everyone else out ----
+    {
+        RelayServer relay;
+        for (std::uint32_t i = 0; i < 5000; ++i) {   // one IP, many source ports, a new code each
+            auto h = HelloBytes(RelayHost, "S" + std::to_string(i));
+            relay.HandleDatagram(Endpoint{0x0A000001u, static_cast<std::uint16_t>(1000 + i)}, h.data(), h.size());
+        }
+        CHECK(relay.PeerCount() == RelayServer::kMaxPeersPerAddress);
+        CHECK(relay.SessionCount() == RelayServer::kMaxPeersPerAddress);
+        auto legit = HelloBytes(RelayHost, "REAL-GAME");
+        const Endpoint real{0xC0A80002u, 5000};
+        relay.HandleDatagram(real, legit.data(), legit.size());
+        CHECK(relay.SlotOf(real) != 0);           // another machine still hosts
+        auto join = HelloBytes(RelayClient, "REAL-GAME");
+        const Endpoint friendEp{0xC0A80003u, 6000};
+        relay.HandleDatagram(friendEp, join.data(), join.size());
+        CHECK(relay.SlotOf(friendEp) != 0);
+        // The flooding address frees its slots as its peers leave.
+        const std::uint8_t bye = RelayBye;
+        relay.HandleDatagram(Endpoint{0x0A000001u, 1000}, &bye, 1);
+        auto again = HelloBytes(RelayHost, "AGAIN");
+        const Endpoint retry{0x0A000001u, 9999};
+        relay.HandleDatagram(retry, again.data(), again.size());
+        CHECK(relay.SlotOf(retry) != 0);
+        relay.HandleDatagram(Endpoint{0x0A000001u, 9998}, again.data(), again.size());
+        CHECK(relay.SlotOf(Endpoint{0x0A000001u, 9998}) == 0);   // full again
     }
 
     // ---- 10,000 random datagrams: no crash, still bounded, still works ----
@@ -178,7 +206,7 @@ int main() {
             // Bias toward the real tags so the parser paths get exercised.
             if (!d.empty() && rng() % 2) d[0] = static_cast<std::uint8_t>(RelayHello + rng() % 4);
             if (d.size() > 2 && d[0] == RelayHello && rng() % 2) { d[1] = rng() % 2; }
-            const Endpoint ep{0x7F000001u, static_cast<std::uint16_t>(50000 + rng() % 64)};
+            const Endpoint ep{0x7F000003u, static_cast<std::uint16_t>(50000 + rng() % 64)};   // not the real peers' address
             relay.HandleDatagram(ep, d.data(), d.size());
         }
         CHECK(relay.PeerCount() <= RelayServer::kMaxPeers);

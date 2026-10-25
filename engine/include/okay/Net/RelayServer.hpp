@@ -19,7 +19,8 @@ namespace okay::net {
 ///
 /// It is also exposed to the internet, so it trusts nothing: data is forwarded
 /// only between peers of the same session, slots are random (not guessable),
-/// and peers, sessions and code lengths are capped. Drive
+/// and peers, sessions and code lengths are capped — per source address too,
+/// so one machine can't take every slot and lock everyone else out. Drive
 /// it by calling Poll() in a loop (the standalone `okayspace-relay` binary does
 /// exactly that); tests pump it in-process alongside the peers.
 class RelayServer {
@@ -27,6 +28,9 @@ public:
     static constexpr std::size_t kMaxPeers = 4096;          ///< peers across all sessions
     static constexpr std::size_t kMaxSessions = 2048;
     static constexpr std::uint32_t kMaxPeersPerSession = 32;
+    /// Peers one IP address may hold at once (a LAN party or a shared NAT fits;
+    /// a flood from one machine stops here, far below the global caps).
+    static constexpr std::uint32_t kMaxPeersPerAddress = 64;
     static constexpr std::size_t kMaxCodeLength = 64;       ///< session code bytes
 
     /// Bind the relay to a UDP port (0 picks an ephemeral one). Returns false if
@@ -82,6 +86,9 @@ private:
     std::unordered_map<Endpoint, Peer, EndpointHash> m_peers;   // by real address
     std::unordered_map<std::uint32_t, Endpoint>      m_slotEp;  // slot -> real address
     std::unordered_map<std::string, Session>         m_sessions;// by code
+    std::unordered_map<std::uint32_t, std::uint32_t> m_perAddress;   // IP -> registered peers
+    float m_logBudget = 20.0f;   // join log lines allowed right now (refills 5/s), so a flood can't spam the log
+    std::uint32_t m_quietJoins = 0;   // joins not logged since the last line
 };
 
 } // namespace okay::net

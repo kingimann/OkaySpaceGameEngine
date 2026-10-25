@@ -879,12 +879,6 @@ int RunUpdateCheck(void*) {
     SetState(Up_Checking);
     SetUpMsg("Checking for updates...");
     FetchReleaseNews();   // refresh the What's-new card while we're online anyway
-    // Mirror the fetched release notes into the update dialog's changelog.
-    { std::string nv, nl;
-      if (g_upMutex) SDL_LockMutex(g_upMutex);
-      nv = g_newsVersion; nl = g_newsLines;
-      if (g_upMutex) SDL_UnlockMutex(g_upMutex);
-      if (!nl.empty()) SetUpChangelog(nl); }
     std::string base; bool fromSupabase = false;
     const std::string latest = ResolveLatest(base, fromSupabase);
     if (latest.empty()) {
@@ -895,6 +889,15 @@ int RunUpdateCheck(void*) {
     }
     if (fromSupabase) FetchSupabaseNews(latest);
     g_upLatest = latest;
+    // Mirror the release notes into the update dialog's changelog ("What's new in
+    // v<latest>"), only when they are that version's: the GitHub release can be
+    // older than the Supabase one, and its notes would be shown under the wrong
+    // version.
+    { std::string nv, nl;
+      if (g_upMutex) SDL_LockMutex(g_upMutex);
+      nv = g_newsVersion; nl = g_newsLines;
+      if (g_upMutex) SDL_UnlockMutex(g_upMutex);
+      SetUpChangelog(nv == latest || nv == "v" + latest ? nl : std::string()); }
 
     fs::path dir(g_exeDir);
     bool newer = !latest.empty() && CompareVersions(local, latest) < 0;   // installed < published

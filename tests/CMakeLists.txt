@@ -885,3 +885,8 @@ add_test(NAME relay_security COMMAND test_relay_security)
 add_executable(test_script_paths test_script_paths.cpp)
 target_link_libraries(test_script_paths PRIVATE okay::engine)
 add_test(NAME script_paths COMMAND test_script_paths)
+
+# QA regression tests for PR #254 (fail until the reported bugs are fixed)
+add_executable(test_qa_pr254 test_qa_pr254.cpp)
+target_link_libraries(test_qa_pr254 PRIVATE okay::engine)
+add_test(NAME qa_pr254 COMMAND test_qa_pr254)

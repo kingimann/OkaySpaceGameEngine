@@ -185,6 +185,8 @@ public:
     void ResolveMainCamera();
     /// Issue the render pass to the given backend.
     void Render(IRenderer& renderer);
+    /// The object the cursor was over at the last OnMouse* dispatch (nullptr if none).
+    GameObject* MouseHoverObject() const { return m_mouseHover; }
 
 private:
     friend class GameObject;

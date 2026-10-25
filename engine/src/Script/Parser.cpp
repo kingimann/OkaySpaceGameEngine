@@ -504,7 +504,8 @@ private:
         NestGuard guard(nesting_, Peek().loc);
         ExprPtr lhs = Conditional();
         switch (Peek().type) {
-            case T::Assign: case T::PlusEq: case T::MinusEq: case T::StarEq: case T::SlashEq: case T::PercentEq: {
+            case T::Assign: case T::PlusEq: case T::MinusEq: case T::StarEq: case T::SlashEq: case T::PercentEq:
+            case T::QuestionQuestionEq: {
                 auto e = Make(EK::Assign, Peek().loc);
                 e->op = Peek().type; ++pos_;
                 e->lhs = std::move(lhs);
@@ -514,8 +515,19 @@ private:
             default: return lhs;
         }
     }
+    // a ?? b ?? c: below || and above ?:, grouping from the right.
+    ExprPtr Coalesce() {
+        ExprPtr lhs = Binary(0);
+        if (!Is(T::QuestionQuestion)) return lhs;
+        NestGuard guard(nesting_, Peek().loc);
+        auto e = Make(EK::Binary, Peek().loc);
+        e->op = T::QuestionQuestion; ++pos_;
+        e->lhs = std::move(lhs);
+        e->rhs = Coalesce();
+        return e;
+    }
     ExprPtr Conditional() {
-        ExprPtr c = Binary(0);
+        ExprPtr c = Coalesce();
         if (Is(T::Question)) {
             auto e = Make(EK::Conditional, Peek().loc); ++pos_;
             e->third = std::move(c);
@@ -598,8 +610,17 @@ private:
     bool IsGenericCallAhead() const { return Is(T::Lt) && Is(T::Ident, 1) && Is(T::Gt, 2) && Is(T::LParen, 3); }
     ExprPtr Postfix() {
         ExprPtr e = Primary();
+        // With ?. in the chain, the whole chain gives null when a ?. finds null.
+        SrcLoc condLoc;
+        std::string condName;
+        bool cond = false;
         for (;;) {
-            if (Is(T::Dot)) {
+            if (Is(T::Dot) || Is(T::QuestionDot)) {
+                const bool q = Is(T::QuestionDot);
+                if (q && !cond) {
+                    cond = true; condLoc = Peek().loc;
+                    condName = e->kind == EK::Name || e->kind == EK::Member || e->kind == EK::Call ? e->name : "this value";
+                }
                 ++pos_;
                 SrcLoc l = Peek().loc;
                 std::string name = Expect(T::Ident, "a member name after '.'").text;
@@ -608,10 +629,12 @@ private:
                     c->name = name; c->object = std::move(e);
                     if (IsGenericCallAhead()) { ++pos_; c->typeArg = Type(false); Expect(T::Gt, "'>'"); }
                     c->args = Args();
+                    c->nullCond = q;
                     e = std::move(c);
                 } else {
                     auto m = Make(EK::Member, l);
                     m->name = name; m->object = std::move(e);
+                    m->nullCond = q;
                     e = std::move(m);
                 }
                 continue;
@@ -634,12 +657,19 @@ private:
                 continue;
             }
             if (Is(T::PlusPlus) || Is(T::MinusMinus)) {
+                if (cond) throw ParseError{Peek().loc, "Something reached with ?. can't be changed: check for null first"};
                 auto i = Make(EK::IncDec, Peek().loc); i->op = Peek().type; ++pos_;
                 i->lhs = std::move(e);
                 e = std::move(i);
                 continue;
             }
             break;
+        }
+        if (cond) {
+            auto w = Make(EK::NullCond, condLoc);
+            w->name = condName;
+            w->lhs = std::move(e);
+            return w;
         }
         return e;
     }

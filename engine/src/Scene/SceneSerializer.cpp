@@ -340,25 +340,36 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         }
         if (mr->mesh.name.empty() && (mr->meshPath.empty() || editedFromFile) && !mr->mesh.vertices.empty()
             && !go->GetComponent<SkinnedMesh>()) {
-            out << "  meshgeo " << mr->mesh.vertices.size();
-            for (const Vec3& v : mr->mesh.vertices)
+            // A mesh in edit mode is welded with its exact UVs per corner: write it
+            // split at the UV seams, the form it's drawn and loaded in.
+            Mesh split;
+            if (mr->mesh.HasCornerUVs()) split = mr->mesh.SplitCornerUVs();
+            const Mesh& gm = mr->mesh.HasCornerUVs() ? split : mr->mesh;
+            out << "  meshgeo " << gm.vertices.size();
+            for (const Vec3& v : gm.vertices)
                 out << " " << v.x << " " << v.y << " " << v.z;
-            out << " " << mr->mesh.triangles.size();
-            for (int t : mr->mesh.triangles) out << " " << t;
+            out << " " << gm.triangles.size();
+            for (int t : gm.triangles) out << " " << t;
             out << "\n";
             // Per-vertex UVs for the edited geometry (separate optional record so
             // older scenes still load). Written after meshgeo because the meshgeo
             // reader clears the uvs array.
-            if (mr->mesh.uvs.size() == mr->mesh.vertices.size() && !mr->mesh.uvs.empty()) {
-                out << "  meshuv " << mr->mesh.uvs.size();
-                for (const Vec2& t : mr->mesh.uvs) out << " " << t.x << " " << t.y;
+            if (gm.uvs.size() == gm.vertices.size() && !gm.uvs.empty()) {
+                out << "  meshuv " << gm.uvs.size();
+                for (const Vec2& t : gm.uvs) out << " " << t.x << " " << t.y;
                 out << "\n";
             }
             // Which triangles make up each quad / n-gon (optional record), so the
             // polygons come back exactly for modeling after a reload.
-            if ((int)mr->mesh.polyFace.size() == mr->mesh.TriangleCount() && !mr->mesh.polyFace.empty()) {
-                out << "  meshpoly " << mr->mesh.polyFace.size();
-                for (int f : mr->mesh.polyFace) out << " " << f;
+            if ((int)gm.polyFace.size() == gm.TriangleCount() && !gm.polyFace.empty()) {
+                out << "  meshpoly " << gm.polyFace.size();
+                for (int f : gm.polyFace) out << " " << f;
+                out << "\n";
+            }
+            // UV seams (vertex pairs; the split keeps the original vertex numbers).
+            if (!gm.seams.empty()) {
+                out << "  meshseams " << gm.seams.size();
+                for (const auto& e : gm.seams) out << " " << e.first << " " << e.second;
                 out << "\n";
             }
             // Shading mode: meshgeo loads flat by default; remember when the user
@@ -2468,6 +2479,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     mr->mesh.uvs.clear();
                     mr->mesh.triColors.clear();
                     mr->mesh.polyFace.clear();
+                    mr->mesh.cornerUVs.clear();
+                    mr->mesh.seams.clear();
                     // Flat (faceted) shading, like the built-in primitives — do NOT
                     // force smooth normals, or an edited box/ground reloads looking like
                     // a soft rounded blob instead of clean flat faces.
@@ -2501,6 +2514,17 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     mr->mesh.polyFace.clear();
                     mr->mesh.polyFace.reserve(pc > 0 ? pc : 0);
                     for (int i = 0; i < pc; ++i) { int f = 0; in >> f; mr->mesh.polyFace.push_back(f); }
+                } else if (field == "meshseams") {
+                    // UV seam edges of meshgeo geometry (optional record).
+                    auto* mr = go->GetComponent<MeshRenderer>();
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int sc = 0; in >> sc;
+                    mr->mesh.seams.clear();
+                    for (int i = 0; i < sc; ++i) {
+                        int a = -1, b = -1; in >> a >> b;
+                        if (a >= 0 && b >= 0 && a < (int)mr->mesh.vertices.size() && b < (int)mr->mesh.vertices.size() && a != b)
+                            mr->mesh.seams.push_back({std::min(a, b), std::max(a, b)});
+                    }
                 } else if (field == "meshshade") {
                     // Optional: restore smooth (1) or angle-based auto-smooth (2)
                     // shading on meshgeo geometry (the meshgeo reader cleared

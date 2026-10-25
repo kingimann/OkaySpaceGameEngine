@@ -36,6 +36,14 @@ struct Mesh {
                                   // triangles with the same id make one quad / n-gon, so
                                   // modeling::PolyMesh gets the exact polygons back. Ignored
                                   // when its size doesn't match the triangle count.
+    std::vector<Vec2> cornerUVs;  // optional UV per triangle corner (parallel to triangles).
+                                  // Mesh edit mode keeps a mesh welded (one vertex per
+                                  // position) with its exact UVs here, so seams survive;
+                                  // SplitCornerUVs() turns them back into per-vertex uvs
+                                  // for drawing. Ignored when its size doesn't match.
+    std::vector<std::pair<int, int>> seams;  // UV seam edges (vertex index pairs): unwrapping
+                                  // cuts the surface open along them. A pair that isn't an
+                                  // edge of the mesh is ignored.
     std::vector<Vec3> normals;    // optional per-vertex normals (parallel to vertices);
                                   // when present the renderer smooth (Gouraud) shades.
     float autoSmoothAngle = 0.0f; // >0: normals came from ComputeAutoSmoothNormals(angle)
@@ -44,6 +52,55 @@ struct Mesh {
     int TriangleCount() const { return static_cast<int>(triangles.size() / 3); }
     bool HasFaceColors() const { return (int)triColors.size() == TriangleCount() && !triColors.empty(); }
     bool HasNormals() const { return normals.size() == vertices.size() && !vertices.empty(); }
+    bool HasCornerUVs() const { return !cornerUVs.empty() && cornerUVs.size() == triangles.size(); }
+    bool HasUVs() const { return uvs.size() == vertices.size() && !uvs.empty(); }
+
+    /// Copy the per-vertex UVs onto the triangle corners (before a weld would
+    /// merge vertices that sit on a UV seam). Keeps existing corner UVs.
+    void CaptureCornerUVs() {
+        if (HasCornerUVs() || !HasUVs()) return;
+        cornerUVs.resize(triangles.size());
+        for (std::size_t i = 0; i < triangles.size(); ++i) {
+            const int v = triangles[i];
+            cornerUVs[i] = (v >= 0 && v < (int)uvs.size()) ? uvs[v] : Vec2{0, 0};
+        }
+    }
+
+    /// The same surface with one vertex per (vertex, corner UV), so per-vertex
+    /// uvs are exact again: what renderers and exporters need. Vertex i stays
+    /// vertex i (with the UV of its first corner) and copies split off at seams
+    /// come after, so seams and selections keep their numbers and a later
+    /// weld folds the copies back. Without corner UVs it's a plain copy.
+    Mesh SplitCornerUVs() const {
+        Mesh m = *this;
+        if (!HasCornerUVs()) return m;
+        m.cornerUVs.clear();
+        const int nv = (int)vertices.size();
+        const bool nrm = HasNormals();
+        std::vector<char> seen(nv, 0);
+        m.uvs.assign(nv, Vec2{0, 0});
+        for (std::size_t i = 0; i < triangles.size(); ++i) {
+            const int v = triangles[i];
+            if (v >= 0 && v < nv && !seen[v]) { seen[v] = 1; m.uvs[v] = cornerUVs[i]; }
+        }
+        std::map<std::tuple<int, long, long>, int> copy;
+        for (std::size_t i = 0; i < triangles.size(); ++i) {
+            const int v = triangles[i];
+            if (v < 0 || v >= nv) continue;
+            const Vec2 t = cornerUVs[i];
+            if (std::fabs(t.x - m.uvs[v].x) <= 1e-6f && std::fabs(t.y - m.uvs[v].y) <= 1e-6f) continue;
+            const auto key = std::make_tuple(v, std::lround(t.x * 1e6f), std::lround(t.y * 1e6f));
+            auto it = copy.find(key);
+            if (it == copy.end()) {
+                it = copy.emplace(key, (int)m.vertices.size()).first;
+                m.vertices.push_back(vertices[v]);
+                m.uvs.push_back(t);
+                if (nrm) m.normals.push_back(normals[v]);
+            }
+            m.triangles[i] = it->second;
+        }
+        return m;
+    }
 
     /// Compute per-vertex smooth normals for Gouraud shading. Vertices sharing a
     /// position (even across separately-built parts) are grouped so the normal is
@@ -1561,59 +1618,77 @@ struct Mesh {
     // (clear `name`) so the projected UVs are what gets saved, not a primitive's
     // regenerated defaults. `tile` = how many texture repeats across the bounds.
 
-    /// Planar projection along one axis (0=X 1=Y 2=Z): the other two coordinates
-    /// map straight to (u, v). Ideal for floors/walls/flat props.
+    /// Planar projection along an axis (0 = X, 1 = Y, 2 = Z): floors, terrain, tabletops.
+    /// Like every projection here it fills one UV per triangle corner
+    /// (cornerUVs) and per-vertex uvs from each vertex's first corner;
+    /// SplitCornerUVs() makes the per-vertex ones exact where corners differ.
+    /// UVs follow the engine's convention: v = 0 is the top of the image, and a
+    /// face reads the right way round seen from outside (from + along the axis).
     void ProjectUVPlanar(int axis, float tile = 1.0f) {
         if (vertices.empty() || axis < 0 || axis > 2) return;
         Vec3 lo, hi; Bounds(lo, hi);
         Vec3 size = hi - lo;
         auto span = [&](int a) { float s = (&size.x)[a]; return s > 1e-6f ? s : 1.0f; };
         int ua = (axis == 0) ? 2 : 0, va = (axis == 1) ? 2 : 1;
-        uvs.resize(vertices.size());
-        for (std::size_t i = 0; i < vertices.size(); ++i) {
-            const Vec3& p = vertices[i];
-            uvs[i] = {((&p.x)[ua] - (&lo.x)[ua]) / span(ua) * tile,
-                      ((&p.x)[va] - (&lo.x)[va]) / span(va) * tile};
+        const bool flipU = axis == 0, flipV = axis != 1;   // seen from +X: u runs along -Z; sides: v runs down
+        std::vector<Vec2> corner(triangles.size());
+        for (std::size_t i = 0; i < triangles.size(); ++i) {
+            const Vec3& p = vertices[triangles[i]];
+            const float tu = ((&p.x)[ua] - (&lo.x)[ua]) / span(ua), tv = ((&p.x)[va] - (&lo.x)[va]) / span(va);
+            corner[i] = {(flipU ? 1.0f - tu : tu) * tile, (flipV ? 1.0f - tv : tv) * tile};
         }
-        name = "";
+        SetCornerUVs(corner);
     }
 
-    /// Box (tri-planar) projection: each vertex projects along its dominant
-    /// normal axis, so every side of a blocky shape gets sensible UVs. The go-to
-    /// unwrap for buildings and hand-edited geometry.
+    /// Box (tri-planar) projection: each face projects along its dominant
+    /// normal axis, turned so the texture reads the right way round from
+    /// outside on all six sides. The go-to for buildings and hand-edited geometry.
     void ProjectUVBox(float tile = 1.0f) {
         if (vertices.empty()) return;
         Vec3 lo, hi; Bounds(lo, hi);
         Vec3 size = hi - lo;
         auto span = [&](int a) { float s = (&size.x)[a]; return s > 1e-6f ? s : 1.0f; };
-        std::vector<Vec3> vn = Normals();
-        uvs.resize(vertices.size());
-        for (std::size_t i = 0; i < vertices.size(); ++i) {
-            const Vec3& nrm = vn[i]; const Vec3& p = vertices[i];
-            float ax = std::fabs(nrm.x), ay = std::fabs(nrm.y), az = std::fabs(nrm.z);
-            int axis = (ax >= ay && ax >= az) ? 0 : (ay >= az ? 1 : 2);
-            int ua = (axis == 0) ? 2 : 0, va = (axis == 1) ? 2 : 1;
-            uvs[i] = {((&p.x)[ua] - (&lo.x)[ua]) / span(ua) * tile,
-                      ((&p.x)[va] - (&lo.x)[va]) / span(va) * tile};
+        auto rel = [&](const Vec3& p, int a, bool flip) {
+            const float t = ((&p.x)[a] - (&lo.x)[a]) / span(a);
+            return (flip ? 1.0f - t : t) * tile;
+        };
+        std::vector<Vec2> corner(triangles.size());
+        for (std::size_t t = 0; t + 2 < triangles.size(); t += 3) {
+            const Vec3 n = Vec3::Cross(vertices[triangles[t + 1]] - vertices[triangles[t]],
+                                       vertices[triangles[t + 2]] - vertices[triangles[t]]);
+            const float ax = std::fabs(n.x), ay = std::fabs(n.y), az = std::fabs(n.z);
+            const int axis = (ax >= ay && ax >= az) ? 0 : (ay >= az ? 1 : 2);
+            const bool neg = (&n.x)[axis] < 0.0f;
+            for (int k = 0; k < 3; ++k) {
+                const Vec3& p = vertices[triangles[t + k]];
+                // u runs right and v runs down (v = 0 is the image's top) as each side
+                // is seen from outside: +X (-z, -y), -X (z, -y), +Y (x, z), -Y (x, -z), +Z (x, -y), -Z (-x, -y)
+                if (axis == 0)      corner[t + k] = {rel(p, 2, !neg), rel(p, 1, true)};
+                else if (axis == 1) corner[t + k] = {rel(p, 0, false), rel(p, 2, neg)};
+                else                corner[t + k] = {rel(p, 0, neg), rel(p, 1, true)};
+            }
         }
-        name = "";
+        SetCornerUVs(corner);
     }
 
     /// Cylindrical projection around Y: u wraps around the side, v runs bottom
-    /// to top. For columns, cans, tree trunks, lathe/screw results.
+    /// to top. For columns, cans, tree trunks, lathe/screw results. Faces that
+    /// straddle the wrap-around keep their corners on one side (no smeared band).
     void ProjectUVCylinder(float tile = 1.0f) {
         if (vertices.empty()) return;
         Vec3 lo, hi; Bounds(lo, hi);
         Vec3 c = (lo + hi) * 0.5f;
         float h = (hi.y - lo.y) > 1e-6f ? (hi.y - lo.y) : 1.0f;
         const float kPi = 3.14159265358979323846f;
-        uvs.resize(vertices.size());
-        for (std::size_t i = 0; i < vertices.size(); ++i) {
-            const Vec3& p = vertices[i];
-            float u = (std::atan2(p.z - c.z, p.x - c.x) / (2.0f * kPi) + 0.5f) * tile;
-            uvs[i] = {u, (p.y - lo.y) / h * tile};
+        std::vector<Vec2> corner(triangles.size());
+        for (std::size_t i = 0; i < triangles.size(); ++i) {
+            const Vec3& p = vertices[triangles[i]];
+            // u grows to the right seen from outside, v runs down from the top.
+            corner[i] = {0.5f - std::atan2(p.z - c.z, p.x - c.x) / (2.0f * kPi), 1.0f - (p.y - lo.y) / h};
         }
-        name = "";
+        UnwrapAroundU(corner);
+        for (Vec2& t : corner) t = t * tile;
+        SetCornerUVs(corner);
     }
 
     /// Spherical projection from the bounds centre — planets, rocks, heads.
@@ -1622,18 +1697,45 @@ struct Mesh {
         Vec3 lo, hi; Bounds(lo, hi);
         Vec3 c = (lo + hi) * 0.5f;
         const float kPi = 3.14159265358979323846f;
-        uvs.resize(vertices.size());
-        for (std::size_t i = 0; i < vertices.size(); ++i) {
-            Vec3 d = vertices[i] - c;
+        std::vector<Vec2> corner(triangles.size());
+        for (std::size_t i = 0; i < triangles.size(); ++i) {
+            Vec3 d = vertices[triangles[i]] - c;
             float m = d.Magnitude();
-            if (m < 1e-8f) { uvs[i] = {0.5f, 0.5f}; continue; }
+            if (m < 1e-8f) { corner[i] = {0.5f, 0.5f}; continue; }
             d = d * (1.0f / m);
-            uvs[i] = {(std::atan2(d.z, d.x) / (2.0f * kPi) + 0.5f) * tile,
-                      (std::asin(d.y < -1.0f ? -1.0f : (d.y > 1.0f ? 1.0f : d.y)) / kPi + 0.5f) * tile};
+            corner[i] = {0.5f - std::atan2(d.z, d.x) / (2.0f * kPi),
+                         0.5f - std::asin(d.y < -1.0f ? -1.0f : (d.y > 1.0f ? 1.0f : d.y)) / kPi};
+        }
+        UnwrapAroundU(corner);
+        for (Vec2& t : corner) t = t * tile;
+        SetCornerUVs(corner);
+    }
+
+    /// Set one UV per triangle corner; per-vertex uvs take each vertex's first corner.
+    void SetCornerUVs(const std::vector<Vec2>& corner) {
+        if (corner.size() != triangles.size()) return;
+        cornerUVs = corner;
+        uvs.assign(vertices.size(), Vec2{0, 0});
+        std::vector<char> seen(vertices.size(), 0);
+        for (std::size_t i = 0; i < triangles.size(); ++i) {
+            const int v = triangles[i];
+            if (v >= 0 && v < (int)vertices.size() && !seen[v]) { seen[v] = 1; uvs[v] = corner[i]; }
         }
         name = "";
     }
 
+private:
+    // A triangle whose u spans more than half a turn crosses the wrap: lift its low corners by 1.
+    void UnwrapAroundU(std::vector<Vec2>& corner) const {
+        for (std::size_t t = 0; t + 2 < corner.size(); t += 3) {
+            const float u0 = corner[t].x, u1 = corner[t + 1].x, u2 = corner[t + 2].x;
+            const float lo = std::min(u0, std::min(u1, u2)), hi = std::max(u0, std::max(u1, u2));
+            if (hi - lo <= 0.5f) continue;
+            for (int k = 0; k < 3; ++k) if (corner[t + k].x < 0.5f) corner[t + k].x += 1.0f;
+        }
+    }
+
+public:
     /// A copy with each vertex scaled (per-axis) then offset — the basic modeling
     /// transform for placing/sizing a part before combining.
     Mesh Transformed(const Vec3& scale, const Vec3& offset) const {
@@ -1657,8 +1759,11 @@ struct Mesh {
     /// Reverse triangle winding so faces point the other way — fix an
     /// inside-out imported mesh, or make an inward-facing skybox shell.
     void FlipWinding() {
-        for (std::size_t i = 0; i + 2 < triangles.size(); i += 3)
+        const bool cuv = HasCornerUVs();
+        for (std::size_t i = 0; i + 2 < triangles.size(); i += 3) {
             std::swap(triangles[i + 1], triangles[i + 2]);
+            if (cuv) std::swap(cornerUVs[i + 1], cornerUVs[i + 2]);
+        }
     }
 
     /// Append another mesh into this one (re-indexing its triangles) — build a
@@ -1954,21 +2059,34 @@ struct Mesh {
         // per-triangle face colors aligned to the surviving faces.
         const bool hadFC = HasFaceColors();
         const bool hadPF = (int)polyFace.size() == TriangleCount() && !polyFace.empty();
+        const bool hadCUV = HasCornerUVs();
         std::vector<int>   tris, pf;
         std::vector<Color> fc;
+        std::vector<Vec2>  cuv;
         for (std::size_t i = 0; i + 2 < triangles.size(); i += 3) {
             int a = remap[triangles[i]], b = remap[triangles[i + 1]], c = remap[triangles[i + 2]];
             if (a != b && b != c && a != c) {
                 tris.insert(tris.end(), {a, b, c}); // skip degenerate
                 if (hadFC) fc.push_back(triColors[i / 3]);
                 if (hadPF) pf.push_back(polyFace[i / 3]);
+                if (hadCUV) cuv.insert(cuv.end(), {cornerUVs[i], cornerUVs[i + 1], cornerUVs[i + 2]});
             }
         }
+        std::vector<std::pair<int, int>> sm;
+        for (const auto& e : seams) {
+            if (e.first < 0 || e.second < 0 || e.first >= (int)remap.size() || e.second >= (int)remap.size()) continue;
+            int a = remap[e.first], b = remap[e.second];
+            if (a == b) continue;
+            if (a > b) std::swap(a, b);
+            if (std::find(sm.begin(), sm.end(), std::make_pair(a, b)) == sm.end()) sm.push_back({a, b});
+        }
+        seams = std::move(sm);
         vertices = std::move(unique);
         triangles = std::move(tris);
         if (hadUV) uvs = std::move(uniqueUV); else uvs.clear();
         if (hadFC) triColors = std::move(fc); else triColors.clear();
         if (hadPF) polyFace = std::move(pf); else polyFace.clear();
+        if (hadCUV) cornerUVs = std::move(cuv); else cornerUVs.clear();
         if (removed > 0) name = "";
         RefreshNormals();   // rebuild smooth normals at the welded resolution (or stay flat)
         return removed;
@@ -2574,8 +2692,11 @@ struct Mesh {
     /// Reverse the winding of every triangle (swap the 2nd and 3rd index) so all
     /// faces point the other way, then recompute normals.
     void FlipNormals() {
-        for (std::size_t i = 0; i + 2 < triangles.size(); i += 3)
+        const bool cuv = HasCornerUVs();
+        for (std::size_t i = 0; i + 2 < triangles.size(); i += 3) {
             std::swap(triangles[i + 1], triangles[i + 2]);
+            if (cuv) std::swap(cornerUVs[i + 1], cornerUVs[i + 2]);
+        }
         name = "";
         ComputeSmoothNormals();
     }
@@ -2657,8 +2778,13 @@ struct Mesh {
             }
             if (vol < 0.0) for (int t : shell) flip[t] = !flip[t];
         }
+        const bool cuv = HasCornerUVs();
         for (int t = 0; t < nt; ++t)
-            if (flip[t]) { std::swap(triangles[t * 3 + 1], triangles[t * 3 + 2]); ++flipped; }
+            if (flip[t]) {
+                std::swap(triangles[t * 3 + 1], triangles[t * 3 + 2]);
+                if (cuv) std::swap(cornerUVs[t * 3 + 1], cornerUVs[t * 3 + 2]);
+                ++flipped;
+            }
         if (flipped) { name = ""; if (HasNormals()) ComputeSmoothNormals(); }
         return flipped;
     }

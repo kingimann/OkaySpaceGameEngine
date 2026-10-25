@@ -13,6 +13,7 @@
 #include "okay/Modeling/MeshAsset.hpp"       // .okaymesh / .obj mesh files
 #include "okay/Modeling/PolyMesh.hpp"        // polygon mesh (quads, n-gons)
 #include "okay/Modeling/PolyOps.hpp"         // edge-loop tools: loop cut, slide, bevel, knife...
+#include "okay/Modeling/UVUnwrap.hpp"        // seams, LSCM unwrap, island packing
 #include "okay/Render/SkyStars.hpp"    // deterministic skybox star field
 #include "okay/Render/GLRenderer.hpp"   // optional GPU (OpenGL) 3D renderer
 #include "okay/Render/Culling.hpp"     // frustum culling toggle + drawn/culled counts (Stats)
@@ -29,6 +30,7 @@
 #endif
 #include "tinyfiledialogs.h"            // native OS open/save file dialogs (asset import)
 
+#include <numeric>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -1449,6 +1451,7 @@ bool g_focusGameOnPlay = false;  // pressing Play brings the Game tab forward
 bool g_showScriptDocs = false;   // OkayScript reference window
 bool g_showShortcuts = false;    // keyboard shortcut cheatsheet window
 bool g_showModeling = false;     // dedicated 3D modeling panel (mesh build/edit)
+bool g_showUVEditor = false;     // UV layout of the mesh being edited, over its texture
 bool g_showFlowGraph = false;    // node/flow-graph view of the selected object's Actions
 bool g_vsSimpleView = true;      // Flow Graph window: show the plain-English "WHEN -> DO" rule cards (default) vs the node canvas
 bool g_showCustomActions = false;// manager for reusable custom instructions/conditions
@@ -3089,7 +3092,8 @@ static bool ApplyPoly(EditorState& ed, MeshRenderer* mr, const std::function<boo
     const std::vector<int> remap = okay::modeling::CompactVerts(pm);
     const bool smooth = mr->mesh.HasNormals();
     const float autoAngle = mr->mesh.autoSmoothAngle;
-    Mesh out = pm.ToMesh();
+    // Keep the welded vertices (and exact per-corner UVs) the edit works on.
+    Mesh out = pm.ToMesh(nullptr, mr != EditedRenderer());
     out.name = "";
     if (smooth) { if (autoAngle > 0.0f) out.ComputeAutoSmoothNormals(autoAngle); else out.ComputeSmoothNormals(); }
     mr->mesh = std::move(out);
@@ -3151,6 +3155,9 @@ static void SetMeshEditMode(EditorState& ed, GameObject* go, bool on) {
         bool alive = false;
         for (const auto& up : ed.scene().Objects()) if (up.get() == g_meshEditObj) { alive = true; break; }
         if (alive) MeshUndoCommit(ed);
+        // Back to the drawable form: split at the UV seams (vertex numbers kept).
+        if (auto* emr = alive ? g_meshEditObj->GetComponent<MeshRenderer>() : nullptr)
+            if (emr->mesh.HasCornerUVs()) emr->mesh = emr->mesh.SplitCornerUVs();
     }
     g_meshUndo.clear(); g_meshRedo.clear(); g_meshEditStartSet = false;
     MeshRenderer* mr = go ? go->GetComponent<MeshRenderer>() : nullptr;
@@ -3158,7 +3165,9 @@ static void SetMeshEditMode(EditorState& ed, GameObject* go, bool on) {
         g_meshEditStart = mr->mesh;   // before the weld, so undoing the session gives back the original
         g_meshEditStartSet = true;
         // Weld first so a primitive (24-vert cube) becomes clean shared
-        // topology (8 verts), then moving a vertex moves the whole corner.
+        // topology (8 verts), then moving a vertex moves the whole corner. The
+        // UVs move onto the triangle corners first, so UV seams survive the weld.
+        mr->mesh.CaptureCornerUVs();
         mr->mesh.WeldVertices();
         g_meshEdit = true; g_meshEditObj = go; g_meshEditObjName = go->name;
         g_meshSculpt = false; ed.dirty = true;
@@ -4407,6 +4416,7 @@ static const DockPanelDef* DockPanels(int& n) {
         {"Animation",     "Animation###AnimationDock", &g_showAnimation,     "Editors & Tools", PI_Animation},
         {"Animator",      "Animator",                  &g_showAnimatorGraph, "Editors & Tools", PI_Animator},
         {"Modeling",      "Modeling",                  &g_showModeling,      "Editors & Tools", PI_Modeling},
+        {"UV Editor",     "UV Editor",                 &g_showUVEditor,      "Editors & Tools", PI_Modeling},
         {"Sprite Editor", "Sprite Editor",             &g_showSpriteEditor,  "Editors & Tools", PI_Sprite},
         {"UI Theme",      "UI Theme",                  &g_showUIThemer,      "Editors & Tools", PI_Palette},
         {"UI Editor",     "UI",                        &g_showUIEditor,      "Editors & Tools", PI_UI},
@@ -5682,6 +5692,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             ImGui::MenuItem("Animator (state graph)", nullptr, &g_showAnimatorGraph);
             ImGui::Separator();
             ImGui::MenuItem("Modeling", nullptr, &g_showModeling);
+            ImGui::MenuItem("UV Editor", nullptr, &g_showUVEditor);
             ImGui::MenuItem("Sprite Editor", nullptr, &g_showSpriteEditor);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Paint custom 2D sprites pixel-by-pixel, start from a shape, and save them into the project's Assets/Sprites.");
             ImGui::Separator();
@@ -24817,6 +24828,305 @@ static std::vector<std::string> ScriptPublicFunctions(GameObject* go) {
 // the Inspector. Quick-create primitives, swap the selected mesh's shape, run
 // mesh ops (subdivide/smooth/weld/recenter), import OBJ, and sculpt terrain — all
 // in one place. Operates on the current selection's MeshRenderer/Terrain.
+// ---- UV Editor -----------------------------------------------------------------
+// The UV layout of the selected mesh over its texture, with v = 0 at the top as
+// the renderers sample it. In mesh edit mode it edits: click / Shift+click / drag
+// a box to pick UV points, double-click for a whole island, drag a picked point to
+// move the selection, and the toolbar rotates, flips, scales, fits, packs and
+// unwraps. Edits write the mesh's per-corner UVs as edit-mode undo steps.
+namespace {
+struct UVEditorState {
+    const MeshRenderer* mr = nullptr;      // whose corners `sel` refers to
+    std::set<int> sel;                     // selected triangle corners
+    Vec2 centre{0.5f, 0.5f};               // view centre, in UV
+    float span = 1.15f;                    // UV units across the view
+    bool boxing = false;
+    ImVec2 boxA{0, 0};
+    bool dragging = false, dragUndo = false;
+    Vec2 dragLast{0, 0};
+    std::uint64_t key = 0;                 // topology the caches below were built for
+    std::vector<std::pair<int, int>> outline;      // polygon edges, as corner pairs
+    std::vector<std::vector<int>> vertCorners;     // each vertex's corners
+};
+UVEditorState g_uvEd;
+
+bool SameUVPoint(const Vec2& a, const Vec2& b) { return std::fabs(a.x - b.x) <= 1e-5f && std::fabs(a.y - b.y) <= 1e-5f; }
+} // namespace
+
+static void DrawUVEditor(EditorState& ed) {
+    ImGui::SetNextWindowSize(ImVec2(620, 680), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("UV Editor", &g_showUVEditor)) { ImGui::End(); return; }
+    UVEditorState& st = g_uvEd;
+    GameObject* go = ed.selected();
+    MeshRenderer* mr = go ? go->GetComponent<MeshRenderer>() : nullptr;
+    if (!mr || mr->mesh.triangles.empty()) {
+        ImGui::TextDisabled("Select a mesh object to see its UVs.");
+        ImGui::End();
+        return;
+    }
+    Mesh& m = mr->mesh;
+    const bool editing = mr == EditedRenderer();
+    const bool cornerUV = m.HasCornerUVs();
+    const bool anyUV = cornerUV || m.HasUVs();
+    const bool canEdit = editing && cornerUV;
+    const int nc = (int)m.triangles.size();
+    auto uvOf = [&](int c) { return cornerUV ? m.cornerUVs[c] : m.uvs[m.triangles[c]]; };
+
+    // Caches per topology: the polygon outline (no triangulation diagonals) and each vertex's corners.
+    const std::uint64_t key = PolyTopologyKey(m);
+    if (st.mr != mr || st.key != key) {
+        if (st.mr != mr) st.sel.clear();
+        st.mr = mr;
+        st.key = key;
+        st.outline.clear();
+        st.vertCorners.assign(m.vertices.size(), {});
+        for (int c = 0; c < nc; ++c) if (m.triangles[c] >= 0 && m.triangles[c] < (int)m.vertices.size()) st.vertCorners[m.triangles[c]].push_back(c);
+        const bool pf = (int)m.polyFace.size() == m.TriangleCount();
+        std::map<std::pair<int, int>, std::vector<int>> edgeTris;
+        for (int t = 0; t < m.TriangleCount(); ++t)
+            for (int k = 0; k < 3; ++k) {
+                const int a = m.triangles[t * 3 + k], b = m.triangles[t * 3 + (k + 1) % 3];
+                edgeTris[{std::min(a, b), std::max(a, b)}].push_back(t);
+            }
+        for (int t = 0; t < m.TriangleCount(); ++t)
+            for (int k = 0; k < 3; ++k) {
+                const int a = m.triangles[t * 3 + k], b = m.triangles[t * 3 + (k + 1) % 3];
+                bool diagonal = false;
+                if (pf)
+                    for (int u : edgeTris[{std::min(a, b), std::max(a, b)}])
+                        if (u != t && m.polyFace[u] == m.polyFace[t]) diagonal = true;
+                if (!diagonal) st.outline.push_back({t * 3 + k, t * 3 + (k + 1) % 3});
+            }
+    }
+    for (auto it = st.sel.begin(); it != st.sel.end();) it = (*it < 0 || *it >= nc) ? st.sel.erase(it) : std::next(it);
+
+    // Corners of the same vertex at the same UV move together (one UV point).
+    auto addPoint = [&](int c, bool on) {
+        const Vec2 t = uvOf(c);
+        for (int k : st.vertCorners[m.triangles[c]])
+            if (SameUVPoint(uvOf(k), t)) { if (on) st.sel.insert(k); else st.sel.erase(k); }
+    };
+    // Grow the selection to whole UV islands (corners joined by triangles and shared UV points).
+    auto selectIslands = [&]() {
+        std::vector<int> parent(nc);
+        std::iota(parent.begin(), parent.end(), 0);
+        std::function<int(int)> find = [&](int x) { while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
+        auto join = [&](int a, int b) { a = find(a); b = find(b); if (a != b) parent[b] = a; };
+        for (int t = 0; t < m.TriangleCount(); ++t) { join(t * 3, t * 3 + 1); join(t * 3, t * 3 + 2); }
+        for (const auto& cs : st.vertCorners)
+            for (std::size_t i = 0; i < cs.size(); ++i)
+                for (std::size_t j = i + 1; j < cs.size(); ++j)
+                    if (SameUVPoint(uvOf(cs[i]), uvOf(cs[j]))) join(cs[i], cs[j]);
+        std::set<int> roots;
+        for (int c : st.sel) roots.insert(find(c));
+        for (int c = 0; c < nc; ++c) if (roots.count(find(c))) st.sel.insert(c);
+    };
+    // Transform the selected corners about their bounding-box centre (one undo step).
+    auto transformSel = [&](const std::function<Vec2(const Vec2&)>& fn) {
+        if (st.sel.empty() || !canEdit) return;
+        EditUndoPoint(ed, mr);
+        Vec2 lo{1e30f, 1e30f}, hi{-1e30f, -1e30f};
+        for (int c : st.sel) { const Vec2 t = m.cornerUVs[c]; lo.x = std::min(lo.x, t.x); lo.y = std::min(lo.y, t.y); hi.x = std::max(hi.x, t.x); hi.y = std::max(hi.y, t.y); }
+        const Vec2 mid = (lo + hi) * 0.5f;
+        for (int c : st.sel) m.cornerUVs[c] = mid + fn(m.cornerUVs[c] - mid);
+        ed.dirty = true;
+    };
+    // Unwrap / pack through the polygon mesh: triangles may be renumbered, so the UV selection resets.
+    auto polyOp = [&](const char* what, const std::function<bool(okay::modeling::PolyMesh&)>& op) {
+        if (!editing) return;
+        const std::vector<int> keepFaces = g_meshSelFaces;
+        const int tris = m.TriangleCount();
+        if (ApplyPoly(ed, mr, op)) {
+            if (mr->mesh.TriangleCount() == tris) g_meshSelFaces = keepFaces;
+            st.sel.clear();
+            ConsoleLog(what);
+        }
+    };
+    auto selectedPolyFaces = [&]() {
+        std::vector<int> out;
+        if (g_meshSelMode != 1 || g_meshSelFaces.empty()) return out;
+        std::vector<int> tf;
+        okay::modeling::PolyMesh::FromMesh(m, {false, true, 1.0f}, &tf);
+        std::set<int> fs;
+        for (int t : g_meshSelFaces) if (t >= 0 && t < (int)tf.size()) fs.insert(tf[t]);
+        return std::vector<int>(fs.begin(), fs.end());
+    };
+
+    // ---- Toolbar -----------------------------------------------------------------
+    if (!editing) ImGui::TextDisabled("Showing the UVs. Press Tab on the object (mesh edit mode) to edit them.");
+    else if (!cornerUV) ImGui::TextDisabled("No UVs yet: Unwrap, or use a projection in Modeling > Edit.");
+    ImGui::BeginDisabled(!canEdit);
+    if (ImGui::SmallButton("All##uve")) for (int c = 0; c < nc; ++c) st.sel.insert(c);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("None##uve")) st.sel.clear();
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Islands##uve")) selectIslands();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Grow the selection to the whole UV islands it touches (or double-click a point).");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("From 3D##uve")) {
+        st.sel.clear();
+        for (int f : g_meshSelFaces) if (f >= 0 && f < m.TriangleCount()) for (int k = 0; k < 3; ++k) st.sel.insert(f * 3 + k);
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select the UVs of the faces selected in the 3D view (Face mode).");
+    ImGui::SameLine(0, 14);
+    if (ImGui::SmallButton("Rot -90##uve")) transformSel([](const Vec2& d) { return Vec2{-d.y, d.x}; });
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Rot +90##uve")) transformSel([](const Vec2& d) { return Vec2{d.y, -d.x}; });
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Flip U##uve")) transformSel([](const Vec2& d) { return Vec2{-d.x, d.y}; });
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Flip V##uve")) transformSel([](const Vec2& d) { return Vec2{d.x, -d.y}; });
+    ImGui::SameLine();
+    if (ImGui::SmallButton("x0.5##uve")) transformSel([](const Vec2& d) { return d * 0.5f; });
+    ImGui::SameLine();
+    if (ImGui::SmallButton("x2##uve")) transformSel([](const Vec2& d) { return d * 2.0f; });
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Fit##uve") && !st.sel.empty()) {
+        Vec2 lo{1e30f, 1e30f}, hi{-1e30f, -1e30f};
+        for (int c : st.sel) { const Vec2 t = m.cornerUVs[c]; lo.x = std::min(lo.x, t.x); lo.y = std::min(lo.y, t.y); hi.x = std::max(hi.x, t.x); hi.y = std::max(hi.y, t.y); }
+        const float s = 1.0f / std::max(1e-6f, std::max(hi.x - lo.x, hi.y - lo.y));
+        EditUndoPoint(ed, mr);
+        for (int c : st.sel) m.cornerUVs[c] = (m.cornerUVs[c] - lo) * s;
+        ed.dirty = true;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale and move the selection to fill the 0-1 square (keeps its shape).");
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(!editing);
+    if (ImGui::SmallButton("Unwrap##uve")) {
+        const std::vector<int> faces = selectedPolyFaces();
+        polyOp("Unwrapped", [&](okay::modeling::PolyMesh& pm) { return okay::modeling::Unwrap(pm, faces); });
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Unwrap the faces selected in 3D (or all) along their seams.");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Pack##uve")) {
+        const std::vector<int> faces = selectedPolyFaces();
+        polyOp("Packed UV islands", [&](okay::modeling::PolyMesh& pm) { okay::modeling::PackUVIslands(pm, faces, 0.02f, false); return true; });
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine(0, 14);
+    if (ImGui::SmallButton("Frame##uve")) { st.centre = {0.5f, 0.5f}; st.span = 1.15f; }
+    ImGui::SameLine();
+    if (anyUV) {
+        ImGui::TextDisabled("%d selected", (int)st.sel.size());
+        if (ImGui::IsItemHovered()) {
+            const float d = okay::modeling::UVAngleDistortion(okay::modeling::PolyMesh::FromMesh(m, {false, true, 1.0f}));
+            ImGui::SetTooltip("Corners selected. Angle distortion of the whole layout: %.1f deg (0 = angles kept exactly)", d);
+        }
+    }
+
+    // ---- Canvas --------------------------------------------------------------------
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    const float size = std::max(64.0f, std::min(avail.x, avail.y));
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("##uvcanvas", ImVec2(size, size),
+                           ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
+    const bool hovered = ImGui::IsItemHovered();
+    auto toScreen = [&](const Vec2& t) { return ImVec2(p0.x + ((t.x - st.centre.x) / st.span + 0.5f) * size, p0.y + ((t.y - st.centre.y) / st.span + 0.5f) * size); };
+    auto toUV = [&](const ImVec2& s) { return Vec2{st.centre.x + ((s.x - p0.x) / size - 0.5f) * st.span, st.centre.y + ((s.y - p0.y) / size - 0.5f) * st.span}; };
+    ImGuiIO& io = ImGui::GetIO();
+    // Zoom at the cursor; middle / right drag pans.
+    if (hovered && io.MouseWheel != 0.0f) {
+        const Vec2 at = toUV(io.MousePos);
+        const float ns = std::clamp(st.span * (io.MouseWheel > 0 ? 0.85f : 1.0f / 0.85f), 0.02f, 50.0f);
+        st.centre = at + (st.centre - at) * (ns / st.span);
+        st.span = ns;
+    }
+    if (ImGui::IsItemActive() && (ImGui::IsMouseDragging(ImGuiMouseButton_Middle) || ImGui::IsMouseDragging(ImGuiMouseButton_Right))) {
+        st.centre.x -= io.MouseDelta.x / size * st.span;
+        st.centre.y -= io.MouseDelta.y / size * st.span;
+    }
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 p1(p0.x + size, p0.y + size);
+    dl->PushClipRect(p0, p1, true);
+    dl->AddRectFilled(p0, p1, IM_COL32(26, 28, 34, 255));
+    const ImVec2 q0 = toScreen({0, 0}), q1 = toScreen({1, 1});
+    SDL_Texture* tex = mr->texture.empty() ? nullptr : GetThumb(mr->texture);
+    if (tex) dl->AddImage((ImTextureID)tex, q0, q1, ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, 170));
+    else {   // checker in the 0-1 square
+        const int n = 8;
+        for (int y = 0; y < n; ++y)
+            for (int x = 0; x < n; ++x) {
+                const ImVec2 a = toScreen({(float)x / n, (float)y / n}), b = toScreen({(float)(x + 1) / n, (float)(y + 1) / n});
+                dl->AddRectFilled(a, b, ((x + y) & 1) ? IM_COL32(60, 64, 74, 255) : IM_COL32(44, 47, 56, 255));
+            }
+    }
+    dl->AddRect(q0, q1, IM_COL32(200, 205, 215, 140));
+    if (anyUV) {
+        // Faces selected in 3D, lightly filled.
+        if (g_meshSelMode == 1)
+            for (int f : g_meshSelFaces)
+                if (f >= 0 && f < m.TriangleCount())
+                    dl->AddTriangleFilled(toScreen(uvOf(f * 3)), toScreen(uvOf(f * 3 + 1)), toScreen(uvOf(f * 3 + 2)), IM_COL32(255, 170, 40, 45));
+        for (const auto& e : st.outline) {
+            const bool sel = st.sel.count(e.first) && st.sel.count(e.second);
+            dl->AddLine(toScreen(uvOf(e.first)), toScreen(uvOf(e.second)), sel ? IM_COL32(255, 170, 40, 255) : IM_COL32(190, 205, 230, 200), sel ? 2.0f : 1.0f);
+        }
+        if (nc <= 120000)
+            for (int c = 0; c < nc; ++c) dl->AddCircleFilled(toScreen(uvOf(c)), 2.0f, IM_COL32(150, 180, 230, 200));
+        for (int c : st.sel) dl->AddCircleFilled(toScreen(uvOf(c)), 3.5f, IM_COL32(255, 170, 40, 255));
+    }
+
+    // ---- Picking and moving (edit mode) -----------------------------------------------
+    if (canEdit) {
+        auto nearest = [&](const ImVec2& s) {
+            int best = -1;
+            float bd = 8.0f * 8.0f;
+            for (int c = 0; c < nc; ++c) {
+                const ImVec2 p = toScreen(m.cornerUVs[c]);
+                const float d = (p.x - s.x) * (p.x - s.x) + (p.y - s.y) * (p.y - s.y);
+                if (d < bd) { bd = d; best = c; }
+            }
+            return best;
+        };
+        if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            const int c = nearest(io.MousePos);
+            if (c >= 0) {
+                if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) { addPoint(c, true); selectIslands(); }
+                else if (io.KeyShift) addPoint(c, !st.sel.count(c));
+                else {
+                    if (!st.sel.count(c)) { st.sel.clear(); addPoint(c, true); }
+                    st.dragging = true; st.dragUndo = false; st.dragLast = toUV(io.MousePos);
+                }
+            } else {
+                st.boxing = true;
+                st.boxA = io.MousePos;
+            }
+        }
+        if (st.dragging) {
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                const Vec2 now = toUV(io.MousePos);
+                Vec2 d = now - st.dragLast;
+                if (io.KeyCtrl) {   // snap the move to 1/16ths
+                    d = Vec2{std::round(d.x * 16.0f) / 16.0f, std::round(d.y * 16.0f) / 16.0f};
+                }
+                if (d.x != 0.0f || d.y != 0.0f) {
+                    if (!st.dragUndo) { EditUndoPoint(ed, mr); st.dragUndo = true; }
+                    for (int c : st.sel) m.cornerUVs[c] = m.cornerUVs[c] + d;
+                    st.dragLast = st.dragLast + d;
+                    ed.dirty = true;
+                }
+            } else st.dragging = false;
+        }
+        if (st.boxing) {
+            const ImVec2 b = io.MousePos;
+            const ImVec2 lo(std::min(st.boxA.x, b.x), std::min(st.boxA.y, b.y)), hi(std::max(st.boxA.x, b.x), std::max(st.boxA.y, b.y));
+            dl->AddRectFilled(lo, hi, IM_COL32(255, 170, 40, 30));
+            dl->AddRect(lo, hi, IM_COL32(255, 170, 40, 200));
+            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                st.boxing = false;
+                if (!io.KeyShift) st.sel.clear();
+                for (int c = 0; c < nc; ++c) {
+                    const ImVec2 p = toScreen(m.cornerUVs[c]);
+                    if (p.x >= lo.x && p.x <= hi.x && p.y >= lo.y && p.y <= hi.y) st.sel.insert(c);
+                }
+            }
+        }
+    }
+    dl->PopClipRect();
+    ImGui::End();
+}
+
 void DrawModeling(EditorState& ed) {
     ImGui::SetNextWindowSize(ImVec2(900, 640), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Modeling", &g_showModeling)) { ImGui::End(); return; }
@@ -25158,16 +25468,26 @@ void DrawModeling(EditorState& ed) {
         static float s_uvTile = 1.0f;
         ImGui::SetNextItemWidth(90); ImGui::DragFloat("##uvt", &s_uvTile, 0.05f, 0.1f, 32.0f, "tile %.1f");
         ImGui::SameLine();
-        if (ImGui::Button("Box##uv")) { ed.PushUndo(); mr->mesh.ProjectUVBox(s_uvTile); ed.dirty = true; }
+        // Projections fill one UV per face corner. In edit mode the mesh stays welded
+        // (corner UVs); otherwise it's split at the new seams so it draws exactly.
+        auto project = [&](const std::function<void(Mesh&)>& fn) {
+            const bool editing = mr == EditedRenderer();
+            if (editing) EditUndoPoint(ed, mr); else ed.PushUndo();
+            mr->mesh.cornerUVs.clear();
+            fn(mr->mesh);
+            if (!editing) mr->mesh = mr->mesh.SplitCornerUVs();
+            ed.dirty = true;
+        };
+        if (ImGui::Button("Box##uv")) project([&](Mesh& m) { m.ProjectUVBox(s_uvTile); });
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tri-planar: each face projects along its dominant axis. The go-to for buildings and edited geometry.");
         ImGui::SameLine();
-        if (ImGui::Button("Planar Y##uv")) { ed.PushUndo(); mr->mesh.ProjectUVPlanar(1, s_uvTile); ed.dirty = true; }
+        if (ImGui::Button("Planar Y##uv")) project([&](Mesh& m) { m.ProjectUVPlanar(1, s_uvTile); });
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Straight-down projection — floors, terrain, tabletops.");
         ImGui::SameLine();
-        if (ImGui::Button("Cylinder##uv")) { ed.PushUndo(); mr->mesh.ProjectUVCylinder(s_uvTile); ed.dirty = true; }
+        if (ImGui::Button("Cylinder##uv")) project([&](Mesh& m) { m.ProjectUVCylinder(s_uvTile); });
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Wrap around Y — columns, cans, tree trunks, lathe results.");
         ImGui::SameLine();
-        if (ImGui::Button("Sphere##uv")) { ed.PushUndo(); mr->mesh.ProjectUVSphere(s_uvTile); ed.dirty = true; }
+        if (ImGui::Button("Sphere##uv")) project([&](Mesh& m) { m.ProjectUVSphere(s_uvTile); });
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Project from the centre outward — planets, rocks, heads.");
         if (mr->mesh.uvs.empty())
             ImGui::TextDisabled("No UVs yet — textures use a default mapping.");
@@ -25893,6 +26213,103 @@ void DrawModeling(EditorState& ed) {
                 ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Split the selected faces off into their own object (Blender's P > Selection).");
+
+            SectionHeader("UVs & Seams");
+            {
+                namespace mdl = okay::modeling;
+                // Polygon faces of the selected triangles (face mode); empty = the whole mesh.
+                auto selectedPolyFaces = [&]() {
+                    std::vector<int> out;
+                    if (g_meshSelMode != 1 || g_meshSelFaces.empty()) return out;
+                    std::vector<int> tf;
+                    mdl::PolyMesh::FromMesh(mr->mesh, {false, true, 1.0f}, &tf);
+                    std::set<int> fs;
+                    for (int t : g_meshSelFaces) if (t >= 0 && t < (int)tf.size()) fs.insert(tf[t]);
+                    out.assign(fs.begin(), fs.end());
+                    return out;
+                };
+                // A UV / seam change through the polygon mesh, as one undo step. The
+                // shape doesn't change, so the face selection is kept.
+                auto uvOp = [&](const std::function<bool(mdl::PolyMesh&)>& op) {
+                    const std::vector<int> keepFaces = g_meshSelFaces;
+                    const int tris = mr->mesh.TriangleCount();
+                    const bool ok = ApplyPoly(ed, mr, op);
+                    if (ok && mr->mesh.TriangleCount() == tris) g_meshSelFaces = keepFaces;
+                    return ok;
+                };
+                const mdl::EdgeList selEdges = SelectedPolyEdges(mr->mesh);
+                if (ToolButton("Mark Seam##uv", !selEdges.empty(), kNeedEdges, true)) {
+                    int n = 0;
+                    uvOp([&](mdl::PolyMesh& pm) { for (const auto& e : selEdges) if (!pm.IsSeam(e.first, e.second)) { pm.SetSeam(e.first, e.second, true); ++n; } return n > 0; });
+                    ConsoleLog("Marked " + std::to_string(n) + " seam edge" + (n == 1 ? "" : "s"));
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Unwrapping cuts the surface open along seams (shown in red).\nPut them where a cut won't be seen: under arms, along the back, around caps.");
+                ImGui::SameLine();
+                if (ToolButton("Clear Seam##uv", !selEdges.empty(), kNeedEdges, true)) {
+                    int n = 0;
+                    uvOp([&](mdl::PolyMesh& pm) { for (const auto& e : selEdges) if (pm.IsSeam(e.first, e.second)) { pm.SetSeam(e.first, e.second, false); ++n; } return n > 0; });
+                    ConsoleLog("Cleared " + std::to_string(n) + " seam edge" + (n == 1 ? "" : "s"));
+                }
+                ImGui::SameLine();
+                if (ToolButton("Clear All##uvseam", !mr->mesh.seams.empty(), "No seams yet.", true)) {
+                    const int n = (int)mr->mesh.seams.size();
+                    uvOp([&](mdl::PolyMesh& pm) { pm.seams.clear(); return true; });
+                    ConsoleLog("Cleared all " + std::to_string(n) + " seams");
+                }
+                static float s_seamAngle = 66.0f;
+                ImGui::SetNextItemWidth(110);
+                ImGui::DragFloat("##seamang", &s_seamAngle, 0.5f, 1.0f, 180.0f, "%.0f deg");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Seams from Angle##uv")) {
+                    int n = 0;
+                    const std::vector<int> faces = selectedPolyFaces();
+                    uvOp([&](mdl::PolyMesh& pm) { n = mdl::MarkSeamsByAngle(pm, s_seamAngle, faces); return n > 0; });
+                    ConsoleLog("Marked " + std::to_string(n) + " seams at edges sharper than " + std::to_string((int)s_seamAngle) + " deg");
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mark a seam on every edge whose faces meet at this angle or sharper\n(the hard edges of a box, a cylinder's caps).");
+
+                static float s_uvMargin = 0.02f;
+                auto unwrap = [&](bool smart) {
+                    const std::vector<int> faces = selectedPolyFaces();
+                    mdl::UnwrapReport rep;
+                    float distortion = 0.0f;
+                    int seams = 0;
+                    const bool ok = uvOp([&](mdl::PolyMesh& pm) {
+                        if (smart) seams = mdl::MarkSeamsByAngle(pm, s_seamAngle, faces);
+                        mdl::UnwrapOptions o;
+                        o.margin = s_uvMargin;
+                        if (!mdl::Unwrap(pm, faces, o, &rep)) return false;
+                        distortion = mdl::UVAngleDistortion(pm, faces);
+                        return true;
+                    });
+                    if (!ok) { ConsoleLog("Nothing to unwrap", 1); return; }
+                    std::string msg = "Unwrapped " + std::to_string(rep.islands) + " island" + (rep.islands == 1 ? "" : "s");
+                    if (smart) msg += " (" + std::to_string(seams) + " seams from angle)";
+                    if (rep.openedClosed) msg += ", cut " + std::to_string(rep.openedClosed) + " closed part" + (rep.openedClosed == 1 ? "" : "s") +
+                                                 " open (" + std::to_string(rep.seamsAdded) + " seams added)";
+                    if (rep.projected) msg += ", " + std::to_string(rep.projected) + " projected flat (couldn't be solved)";
+                    char d[64]; std::snprintf(d, sizeof d, "; angle distortion %.1f deg", distortion);
+                    ConsoleLog(msg + d);
+                };
+                if (ImGui::Button("Unwrap##uv")) unwrap(false);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Flatten the selected faces (or all) along their seams, keeping angles true\n(least squares conformal maps), then pack the islands into the 0-1 square.\nA closed part without seams is cut open along a shortest path.");
+                ImGui::SameLine();
+                if (ImGui::Button("Smart Unwrap##uv")) unwrap(true);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seams from Angle, then Unwrap: one island per flat-ish region. Best for hard-surface props.");
+                ImGui::SameLine();
+                if (ImGui::Button("Pack Islands##uv")) {
+                    const std::vector<int> faces = selectedPolyFaces();
+                    uvOp([&](mdl::PolyMesh& pm) { mdl::PackUVIslands(pm, faces, s_uvMargin, false); return true; });
+                    ConsoleLog("Packed UV islands");
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Arrange the existing UV islands into the 0-1 square without reshaping them.");
+                ImGui::SetNextItemWidth(110);
+                ImGui::DragFloat("##uvmargin", &s_uvMargin, 0.001f, 0.0f, 0.2f, "margin %.3f");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("UV Editor##uv")) g_showUVEditor = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("See and edit the UV layout over the texture.");
+                if (g_meshSelMode == 1 && !g_meshSelFaces.empty()) ImGui::TextDisabled("Unwrap / Pack work on the selected faces.");
+            }
 
             SectionHeader("Sculpt");
             if (ImGui::Checkbox("Sculpt Brush (drag on mesh)##me", &g_meshSculpt) && g_meshSculpt)
@@ -37973,6 +38390,12 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             if (vScreen(e.first, a) && vScreen(e.second, b))
                 dl->AddLine(a, b, IM_COL32(150, 172, 205, 150), 1.0f);
         }
+        // UV seams, in red (Modeling > Edit Mesh > UVs & Seams).
+        for (const auto& e : mesh.seams) {
+            if (e.first < 0 || e.second < 0 || e.first >= (int)mesh.vertices.size() || e.second >= (int)mesh.vertices.size()) continue;
+            ImVec2 a, b;
+            if (vScreen(e.first, a) && vScreen(e.second, b)) dl->AddLine(a, b, IM_COL32(235, 70, 60, 235), 2.5f);
+        }
         // Draw all vertices; selected verts/faces highlighted.
         for (int i = 0; i < (int)mesh.vertices.size(); ++i) {
             ImVec2 sp; if (vScreen(i, sp)) dl->AddCircleFilled(sp, 2.5f, IM_COL32(120, 180, 255, 170));
@@ -42397,6 +42820,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.ScriptEditor"); if (g_showScriptEditor) DrawScriptEditor(ed); }
         { OKAY_PROFILE("UI.VisualScript"); if (g_showVisualScript) okay::editor::vsed::Draw(ed, &g_showVisualScript); }
         { OKAY_PROFILE("UI.Modeling"); if (g_showModeling)  DrawModeling(ed); }
+        { OKAY_PROFILE("UI.UVEditor"); if (g_showUVEditor)  DrawUVEditor(ed); }
         { OKAY_PROFILE("UI.FindInFiles"); DrawFindInFiles(ed); }
         { OKAY_PROFILE("UI.ScriptDocs"); DrawScriptDocs(); }
         { OKAY_PROFILE("UI.ShortcutsWindow"); DrawShortcutsWindow(); }

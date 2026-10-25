@@ -417,6 +417,10 @@ add_executable(test_modifiers test_modifiers.cpp)
 target_link_libraries(test_modifiers PRIVATE okay::engine)
 add_test(NAME modifiers COMMAND test_modifiers)
 
+add_executable(test_uv test_uv.cpp)
+target_link_libraries(test_uv PRIVATE okay::engine)
+add_test(NAME uv COMMAND test_uv)
+
 add_executable(test_savedata test_savedata.cpp)
 target_link_libraries(test_savedata PRIVATE okay::engine)
 add_test(NAME savedata COMMAND test_savedata)

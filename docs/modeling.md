@@ -78,17 +78,23 @@ floor or carve a doorway. Colliders auto-refit whenever the mesh changes.
 
 ### UV Unwrap
 
-Quick projections that fill per-vertex texture coordinates so materials tile
-properly on modeled geometry:
+Quick projections that give every face corner its own texture coordinate, so
+materials tile properly on modeled geometry:
 
-- **Box** — tri-planar: each face projects along its dominant axis. The
-  go-to for buildings and hand-edited shapes.
+- **Box** — tri-planar: each face projects along its dominant axis, turned so
+  the texture reads the right way round on all six sides. The go-to for
+  buildings and hand-edited shapes.
 - **Planar Y** — straight down: floors, terrain, tabletops.
 - **Cylinder** — wraps around Y: columns, cans, lathe results.
 - **Sphere** — from the centre out: planets, rocks, heads.
 
 **tile** sets how many texture repeats span the mesh. Projected UVs survive
-scene save/load and OBJ export.
+scene save/load and OBJ export. For a real unwrap with seams, see
+[UVs and seams](#uvs-and-seams) under Edit Mesh.
+
+UVs follow the engine's convention everywhere: **v = 0 is the top of the
+image** (as in glTF and on the GPU renderers), and a face seen from outside
+shows the texture the right way round, not mirrored.
 
 ## Modifiers
 
@@ -280,6 +286,59 @@ to the first selected vertex (grab one island of a combined mesh), and
   just the selected vertices, **Flatten X/Y/Z** snaps them to their shared
   average (level a rim, square a wall), and **Separate** splits the selected
   faces off into a new object with the material carried over.
+
+### UVs and seams
+
+In Edit Mesh, the **UVs & Seams** section flattens the surface into texture
+space so a texture lands on it without stretching:
+
+- **Mark Seam / Clear Seam** on the selected edges (Edge mode). Seams show in
+  red; unwrapping cuts the surface open along them. Put them where a cut won't
+  be seen: under arms, along the back, around caps. **Clear All** removes them.
+- **Seams from Angle** marks every edge whose faces meet at the angle or
+  sharper (66° by default: the hard edges of a box, a cylinder's caps).
+- **Unwrap** flattens the selected faces (Face mode), or the whole mesh, with
+  *least squares conformal maps*: each island (faces joined by edges that
+  aren't seams) is flattened keeping its angles as true as possible, all
+  islands get the same texel density, and they're packed into the 0–1 square.
+  Only a disc lies flat, so a part that isn't one is cut open first and the cut
+  is marked as seams:
+  - a closed part like a sphere along the shortest path between its two farthest points;
+  - a part with more than one border (a tube's two rims) along a path joining them;
+  - a part with a handle (a torus) along the loops around it.
+- **Smart Unwrap** = Seams from Angle, then Unwrap: one island per flat-ish
+  region, the quickest good result for hard-surface props.
+- **Pack Islands** arranges the existing islands into the 0–1 square without
+  reshaping them; **margin** sets the gap between them.
+
+The console reports what happened: islands, parts cut open, seams added, and
+the *angle distortion* (0° = angles kept exactly). A 24k-vertex sphere unwraps
+in about 3 seconds.
+
+UVs are kept per face corner while you edit, so moving vertices, loop cuts,
+bevels and the other polygon tools keep the texture where it was, and leaving
+edit mode, saving and reopening keeps seams and UVs exactly. (Tools that
+rebuild triangles outside the polygon core, such as the classic extrude, fall
+back to one UV per vertex where they touch.)
+
+### UV Editor
+
+**View > Editors & Tools > UV Editor** (or **UV Editor** in the UVs & Seams section) shows
+the selected mesh's UV layout over its texture (a checker when it has none).
+Wheel zooms at the cursor; middle or right drag pans; **Frame** resets the view.
+
+In mesh edit mode it edits:
+
+- **Selecting:** click a UV point (Shift+click adds or removes), drag a box,
+  or double-click to take a whole island. **Islands** grows the selection to the
+  islands it touches, and **From 3D** takes the faces selected in the viewport.
+- **Moving:** drag a selected point to move the selection; hold Ctrl to step in
+  1/16ths.
+- **Transforming:** **Rot ±90**, **Flip U/V**, **x0.5 / x2** and **Fit**
+  (scale to fill 0–1) work on the selection around its centre.
+- **Re-laying out:** **Unwrap** and **Pack** do the same as in Edit Mesh.
+
+Each edit is one undo step (Ctrl+Z), and the viewport shows the change live.
 
 ### Sculpt
 

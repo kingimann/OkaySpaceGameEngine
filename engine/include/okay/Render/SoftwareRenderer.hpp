@@ -313,7 +313,8 @@ public:
         int tw = img.Width(), th = img.Height();
         if (tw <= 0 || th <= 0) return Color(1, 1, 1, 1);
         auto wr = [](int a, int n) { a %= n; return a < 0 ? a + n : a; };
-        float fu = u * tw - 0.5f, fv = (1.0f - v) * th - 0.5f;
+        // v = 0 is the image's top row, as on the GPU renderers and in glTF.
+        float fu = u * tw - 0.5f, fv = v * th - 0.5f;
         int x0 = (int)std::floor(fu), y0 = (int)std::floor(fv);
         float ax = fu - x0, ay = fv - y0;
         Color c00 = img.GetPixel(wr(x0, tw), wr(y0, th)), c10 = img.GetPixel(wr(x0 + 1, tw), wr(y0, th));

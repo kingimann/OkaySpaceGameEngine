@@ -10,6 +10,25 @@
 
 namespace okay {
 
+/// A mesh holding per-corner UVs (welded, in mesh edit mode) is drawn split at its
+/// UV seams; anything else is drawn as it is. Rebuilds only when the mesh changed.
+/// Returns true if the drawn mesh changed.
+inline bool RefreshSeamSplit(MeshRenderer& mr) {
+    if (!mr.mesh.HasCornerUVs()) {
+        const bool had = (bool)mr.modifiedMesh;
+        mr.modifiedMesh.reset();
+        mr.modifiedHash = 0;
+        return had;
+    }
+    const std::uint64_t h = ModifierInputHash(mr.mesh, {}, ModifierContext());
+    if (h == mr.modifiedHash && mr.modifiedMesh) return false;
+    mr.modifiedHash = h;
+    Mesh split = mr.mesh.SplitCornerUVs();
+    if (mr.modifiedMesh) *mr.modifiedMesh = std::move(split);   // same object: GPU buffer caches stay valid
+    else mr.modifiedMesh = std::make_shared<Mesh>(std::move(split));
+    return true;
+}
+
 /// A non-destructive modifier stack on a mesh object (Mirror, Array,
 /// Subdivision Surface, Solidify, Bevel, Boolean, Decimate, Displace). The
 /// MeshRenderer's `mesh` stays the editable base; the stack's result goes to
@@ -28,7 +47,7 @@ public:
     void Start() override { Refresh(); }
     void Update(float) override { Refresh(); }
     void OnDestroy() override {
-        if (auto* mr = gameObject ? gameObject->GetComponent<MeshRenderer>() : nullptr) mr->modifiedMesh.reset();
+        if (auto* mr = gameObject ? gameObject->GetComponent<MeshRenderer>() : nullptr) { mr->modifiedMesh.reset(); mr->modifiedHash = 0; }
     }
 
     /// Rebuild the result if anything it depends on changed (or always when
@@ -40,18 +59,20 @@ public:
         for (const auto& m : modifiers) if (m.enabled && (!editCage || m.showInEditMode)) { any = true; break; }
         if (!enabled || !any) {
             errors.assign(modifiers.size(), std::string());
-            bool had = (bool)mr->modifiedMesh;
-            mr->modifiedMesh.reset();
             m_hash = 0;
-            return had;
+            if (force) mr->modifiedHash = 0;
+            return RefreshSeamSplit(*mr);
         }
         ModifierContext ctx = Context();
         std::uint64_t h = ModifierInputHash(mr->mesh, modifiers, ctx);
         if (!force && h == m_hash && mr->modifiedMesh) return false;
         m_hash = h;
+        mr->modifiedHash = 0;
         // Re-evaluate into the same Mesh object: renderers cache GPU buffers per mesh
         // object, so a fresh allocation every change would pile up stale buffers.
-        Mesh result = EvaluateModifiers(mr->mesh, modifiers, ctx, &errors);
+        // A welded mesh with per-corner UVs (edit mode) is split at its seams first.
+        Mesh result = mr->mesh.HasCornerUVs() ? EvaluateModifiers(mr->mesh.SplitCornerUVs(), modifiers, ctx, &errors)
+                                              : EvaluateModifiers(mr->mesh, modifiers, ctx, &errors);
         if (mr->modifiedMesh) *mr->modifiedMesh = std::move(result);
         else mr->modifiedMesh = std::make_shared<Mesh>(std::move(result));
         return true;
@@ -96,16 +117,17 @@ private:
     }
 };
 
-/// Refresh every modifier stack in the scene, and drop results left behind by a
-/// removed stack. The editor calls this each frame (components don't Update
-/// while editing); a game's stacks refresh in Update.
+/// Refresh every modifier stack in the scene, draw meshes holding per-corner UVs
+/// split at their seams, and drop results left behind by a removed stack. The
+/// editor calls this each frame (components don't Update while editing); a
+/// game's stacks refresh in Update.
 inline void RefreshModifierStacks(Scene& scene) {
     for (const auto& go : scene.Objects()) {
         if (!go) continue;
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr) continue;
         if (auto* mm = go->GetComponent<MeshModifiers>()) mm->Refresh();
-        else if (mr->modifiedMesh) mr->modifiedMesh.reset();
+        else RefreshSeamSplit(*mr);
     }
 }
 

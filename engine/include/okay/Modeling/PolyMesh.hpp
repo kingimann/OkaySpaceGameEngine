@@ -42,6 +42,11 @@ class PolyMesh {
 public:
     std::vector<Vec3>     verts;
     std::vector<PolyFace> faces;
+    /// UV seams: edges (a < b) the unwrapper cuts the surface open along.
+    std::vector<std::pair<int, int>> seams;
+    bool IsSeam(int a, int b) const;
+    /// Mark (on) or clear an edge as a seam.
+    void SetSeam(int a, int b, bool on);
 
     /// An edge between two vertices and the faces on either side.
     struct Edge {
@@ -69,7 +74,12 @@ public:
     static PolyMesh FromMesh(const Mesh& mesh, const FromMeshOptions& opt = FromMeshOptions(),
                              std::vector<int>* triFace = nullptr);
     /// Triangles for rendering. `triFace`, if given, receives the face each triangle came from.
-    Mesh ToMesh(std::vector<int>* triFace = nullptr) const;
+    /// Vertex i of the result is polygon vertex i. With `splitSeams` (the default)
+    /// vertices are copied where a corner's UV differs, so the per-vertex uvs are
+    /// exact; without it the result keeps exactly these vertices and the exact
+    /// UVs go to Mesh::cornerUVs (what mesh edit mode works on). Seams that are
+    /// still edges carry over.
+    Mesh ToMesh(std::vector<int>* triFace = nullptr, bool splitSeams = true) const;
     /// Face normal (Newell's method, so it works for any planar or near-planar polygon).
     Vec3 FaceNormal(int face) const;
     /// Triangulate one face into corner positions within that face (triples of 0..n-1).

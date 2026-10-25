@@ -39,11 +39,15 @@ Function .onInit
   Call UseIfInstalled
 FunctionEnd
 
-; $0 = a candidate folder; the first one holding OkaySpace.exe wins.
+; $0 = a candidate folder; the first one holding an install (OkaySpace.exe AND
+; Tools\OkayEngine.exe) wins. OkaySpace.exe alone isn't enough: the release
+; also offers the launcher as a single download, and with it beside this setup
+; in Downloads, setup would quietly install into Downloads.
 Function UseIfInstalled
   ${If} $IsUpdate != "1"
   ${AndIf} $0 != ""
   ${AndIf} ${FileExists} "$0\OkaySpace.exe"
+  ${AndIf} ${FileExists} "$0\Tools\OkayEngine.exe"
     StrCpy $INSTDIR $0
     StrCpy $IsUpdate "1"
   ${EndIf}
@@ -125,7 +129,38 @@ SectionEnd
 Section "Uninstall"
   Delete "$SMPROGRAMS\OkaySpace.lnk"
   Delete "$DESKTOP\OkaySpace.lnk"
-  RMDir /r "$INSTDIR"
+  ; Remove what setup installed (and the launcher's own settings and official
+  ; game), never the whole folder: the launcher and the editor create projects
+  ; in Projects\ and Tools\Projects\ by default, and community\ / downloads\
+  ; hold the user's files. The folders go only once they're empty.
+  Delete "$INSTDIR\OkaySpace.exe"
+  Delete "$INSTDIR\OkaySpace.exe.old"
+  Delete "$INSTDIR\SDL2.dll"
+  Delete "$INSTDIR\steam_api64.dll"
+  Delete "$INSTDIR\README.txt"
+  Delete "$INSTDIR\VERSION.txt"
+  Delete "$INSTDIR\launcher.cfg"
+  Delete "$INSTDIR\notifications.cfg"
+  Delete "$INSTDIR\news.cfg"
+  Delete "$INSTDIR\scheduled.cfg"
+  Delete "$INSTDIR\servers.cfg"
+  Delete "$INSTDIR\chat_seen_*.cfg"
+  Delete "$INSTDIR\Tools\OkayEngine.exe"
+  Delete "$INSTDIR\Tools\OkaySpacePlayer.exe"
+  Delete "$INSTDIR\Tools\okayspace-relay.exe"
+  Delete "$INSTDIR\Tools\okayui_d3d11_demo.exe"
+  Delete "$INSTDIR\Tools\SDL2.dll"
+  Delete "$INSTDIR\Tools\steam_api64.dll"
+  Delete "$INSTDIR\Tools\VERSION.txt"
+  Delete "$INSTDIR\Tools\accounts.md"
+  RMDir "$INSTDIR\Tools"
+  RMDir /r "$INSTDIR\Assets\Textures"
+  RMDir /r "$INSTDIR\Assets\Fonts"
+  RMDir "$INSTDIR\Assets"
+  RMDir /r "$INSTDIR\Games\Official"
+  RMDir "$INSTDIR\Games"
+  Delete "$INSTDIR\Uninstall.exe"
+  RMDir "$INSTDIR"
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\OkaySpace"
   DeleteRegKey HKCU "Software\OkaySpace"
 SectionEnd

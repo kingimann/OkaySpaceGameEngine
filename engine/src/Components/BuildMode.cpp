@@ -38,7 +38,8 @@ namespace {
 
 // Objects build mode made for itself (ghost, wires, hotbar), or anything under one.
 bool IsRuntime(const GameObject* g) {
-    for (Transform* t = g ? g->transform : nullptr; t; t = t->Parent())
+    int depth = 0;   // bounded, so a corrupt hierarchy can't loop forever
+    for (Transform* t = g ? g->transform : nullptr; t && depth < (1 << 16); t = t->Parent(), ++depth)
         if (t->gameObject && t->gameObject->tag == BuildMode::kRuntimeTag) return true;
     return false;
 }

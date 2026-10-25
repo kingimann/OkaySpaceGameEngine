@@ -10,6 +10,11 @@ add_executable(test_serialize test_serialize.cpp)
 target_link_libraries(test_serialize PRIVATE okay::engine)
 add_test(NAME serialize COMMAND test_serialize)
 
+# Robustness: parent cycles (Transform::SetParent + scene/prefab/creation loaders)
+add_executable(test_parent_cycles test_parent_cycles.cpp)
+target_link_libraries(test_parent_cycles PRIVATE okay::engine)
+add_test(NAME parent_cycles COMMAND test_parent_cycles)
+
 add_executable(test_instantiate test_instantiate.cpp)
 target_link_libraries(test_instantiate PRIVATE okay::engine)
 add_test(NAME instantiate COMMAND test_instantiate)

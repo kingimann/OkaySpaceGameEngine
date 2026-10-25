@@ -812,6 +812,7 @@ add_test(NAME official_publish COMMAND test_official_publish)
 # ...and scripts/publish-official-game.sh, against a stub curl (no network).
 if(UNIX)
     add_test(NAME publish_official_cleanup COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_publish_official_cleanup.sh)
+    add_test(NAME publish_supabase_checks COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_publish_supabase_checks.sh)
 endif()
 
 add_executable(test_tween test_tween.cpp)

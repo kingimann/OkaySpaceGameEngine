@@ -357,6 +357,7 @@ struct Mesh {
                 int a = r * stride + s, b = a + stride;
                 m.triangles.insert(m.triangles.end(), {a, b, a + 1, a + 1, b, b + 1});
             }
+        m.FlipWinding();   // the rows above wind inward: turn every face to point outward
         m.ComputeSmoothNormals();   // round the surface (no facets)
         return m;
     }
@@ -415,6 +416,7 @@ struct Mesh {
             m.triangles.insert(m.triangles.end(), {topC, s * 2, (s + 1) * 2});
             m.triangles.insert(m.triangles.end(), {botC, (s + 1) * 2 + 1, s * 2 + 1});
         }
+        m.FlipWinding();   // the rows above wind inward: turn every face to point outward
         return m;
     }
 
@@ -435,6 +437,7 @@ struct Mesh {
             m.triangles.insert(m.triangles.end(), {s, n, apex});   // side
             m.triangles.insert(m.triangles.end(), {base, n, s});   // base cap
         }
+        m.FlipWinding();   // the rows above wind inward: turn every face to point outward
         return m;
     }
 
@@ -459,6 +462,7 @@ struct Mesh {
                 int c = r1 * sides + s1, d = r * sides + s1;
                 m.triangles.insert(m.triangles.end(), {a, b, d, d, b, c});
             }
+        m.FlipWinding();   // the rows above wind inward: turn every face to point outward
         m.ComputeSmoothNormals();   // smooth torus surface
         return m;
     }
@@ -514,6 +518,7 @@ struct Mesh {
                 int a = i * sides + s, b = i1 * sides + s, c = i1 * sides + s1, d = i * sides + s1;
                 m.triangles.insert(m.triangles.end(), {a, b, d, d, b, c});
             }
+        m.FlipWinding();   // the rows above wind inward: turn every face to point outward
         m.ComputeSmoothNormals();
         return m;
     }
@@ -544,6 +549,7 @@ struct Mesh {
             m.triangles.insert(m.triangles.end(), {ot, ot2, it2,  ot, it2, it});   // top ring
             m.triangles.insert(m.triangles.end(), {ob, ib, ib2,  ob, ib2, ob2});   // bottom ring
         }
+        m.FlipWinding();   // the rows above wind inward: turn every face to point outward
         return m;
     }
 
@@ -2176,6 +2182,7 @@ public:
                 int a = r * stride + s, b = a + stride;
                 m.triangles.insert(m.triangles.end(), {a, b, a + 1, a + 1, b, b + 1});
             }
+        m.FlipWinding();   // the rows above wind inward: turn every face to point outward
         m.ComputeSmoothNormals();   // smooth capsule surface
         return m;
     }

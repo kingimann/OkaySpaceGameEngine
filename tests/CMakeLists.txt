@@ -810,6 +810,12 @@ add_executable(test_official_publish test_official_publish.cpp)
 target_include_directories(test_official_publish PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME official_publish COMMAND test_official_publish)
 
+# The launcher's chat JSON (Messages / Servers): header-only, no engine link.
+add_executable(test_chat_json test_chat_json.cpp)
+target_compile_features(test_chat_json PRIVATE cxx_std_17)
+target_include_directories(test_chat_json PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME chat_json COMMAND test_chat_json)
+
 add_executable(test_tween test_tween.cpp)
 target_link_libraries(test_tween PRIVATE okay::engine)
 add_test(NAME tween COMMAND test_tween)

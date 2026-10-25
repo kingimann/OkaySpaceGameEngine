@@ -198,13 +198,13 @@ void DrawTtfText(Painter& r, okay::TtfFont* f, const std::string& text,
     }
 }
 
-// Scene-wide default UI font (from Scene::uiFont): DrawText falls back to it when no
+// Scene-wide default UI font (from Scene::uiFont): DrawUIText falls back to it when no
 // explicit font is given. Set around the screen-UI pass and cleared after, so world
 // text without its own font keeps the bitmap font (matching the editor preview).
 static TtfFont* g_uiDefaultFont = nullptr;
 void SetUIDefaultFont(TtfFont* f) { g_uiDefaultFont = f; }
 TtfFont* UIDefaultFont() { return g_uiDefaultFont; }
-// Width of `text` in screen pixels at font-pixel size `px`, in the font DrawText will
+// Width of `text` in screen pixels at font-pixel size `px`, in the font DrawUIText will
 // use (the scene's UI font during the UI pass, else the 8x8 bitmap font).
 float UITextW(const std::string& text, float px) {
     if (g_uiDefaultFont && g_uiDefaultFont->Valid()) return g_uiDefaultFont->Measure(text.c_str(), (float)Font8x8::Height) * px;
@@ -214,9 +214,9 @@ float UITextW(const std::string& text, float px) {
 // Draw a string with the built-in 8x8 font as filled rects, top-left at (ox, oy)
 // in screen pixels, each font pixel `px` screen pixels wide. When `ttf` is loaded,
 // the TTF atlas is used instead (same sizing space).
-void DrawText(Painter& r, const std::string& text, float ox, float oy,
-              float px, RGBA col, float letterSp, float lineSp,
-              bool italic, bool gradient, RGBA col2, TtfFont* ttf) {
+void DrawUIText(Painter& r, const std::string& text, float ox, float oy,
+                float px, RGBA col, float letterSp, float lineSp,
+                bool italic, bool gradient, RGBA col2, TtfFont* ttf) {
     if (!ttf) ttf = g_uiDefaultFont;   // scene-wide default UI font (set during the UI pass)
     if (px < 0.15f) px = 0.15f;   // a smooth font scales below one font pixel; the 8x8 font can't
     if (ttf && ttf->Valid()) { DrawTtfText(r, ttf, text, ox, oy, px, col, letterSp, lineSp); return; }
@@ -553,7 +553,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h) {
             float tw = UITextW(pct, px);
             RGBA tc{(std::uint8_t)(pb->textColor.r * 255), (std::uint8_t)(pb->textColor.g * 255),
                          (std::uint8_t)(pb->textColor.b * 255), (std::uint8_t)(pb->textColor.a * 255 * op)};
-            DrawText(p, pct, o.x + (pb->size.x - tw) * 0.5f,
+            DrawUIText(p, pct, o.x + (pb->size.x - tw) * 0.5f,
                      o.y + (pb->size.y - Font8x8::Height * px) * 0.5f, px, tc);
         }
     }
@@ -582,7 +582,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h) {
             float tw = UITextW(pct, ps);
             RGBA tc{(std::uint8_t)(rp->textColor.r * 255), (std::uint8_t)(rp->textColor.g * 255),
                          (std::uint8_t)(rp->textColor.b * 255), (std::uint8_t)(rp->textColor.a * 255 * op)};
-            DrawText(p, pct, o.x + (rp->size.x - tw) * 0.5f,
+            DrawUIText(p, pct, o.x + (rp->size.x - tw) * 0.5f,
                      o.y + (rp->size.y - Font8x8::Height * ps) * 0.5f, ps, tc);
         }
     }
@@ -772,7 +772,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h) {
             if (mm->showLabels && !bl->label.empty()) {
                 RGBA lc{(std::uint8_t)(mm->labelColor.r*255), (std::uint8_t)(mm->labelColor.g*255),
                              (std::uint8_t)(mm->labelColor.b*255), (std::uint8_t)(mm->labelColor.a*255*op)};
-                DrawText(p, bl->label, o.x+mx+half+2, o.y+my-half, mm->labelSize, lc);
+                DrawUIText(p, bl->label, o.x+mx+half+2, o.y+my-half, mm->labelSize, lc);
             }
         }
         // Route lines (GTA pink line from the player centre to a chosen marker
@@ -810,7 +810,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h) {
             if (mm->showLabels && !mk.label.empty()) {
                 RGBA lc{(std::uint8_t)(mm->labelColor.r*255), (std::uint8_t)(mm->labelColor.g*255),
                              (std::uint8_t)(mm->labelColor.b*255), (std::uint8_t)(mm->labelColor.a*255*op)};
-                DrawText(p, mk.label, px+h+2, py-h, mm->labelSize, lc);
+                DrawUIText(p, mk.label, px+h+2, py-h, mm->labelSize, lc);
             }
         }
         // User-placed waypoint (click-to-set): a bright diamond on the map.
@@ -945,7 +945,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h) {
             float px = 2.0f;
             RGBA tc{(std::uint8_t)(sl->textColor.r * 255), (std::uint8_t)(sl->textColor.g * 255),
                          (std::uint8_t)(sl->textColor.b * 255), (std::uint8_t)(sl->textColor.a * 255 * op)};
-            DrawText(p, vbuf, o.x + sl->size.x + 8.0f,
+            DrawUIText(p, vbuf, o.x + sl->size.x + 8.0f,
                      o.y + (sl->size.y - Font8x8::Height * px) * 0.5f, px, tc);
         }
         if (!sl->interactable) { Rect dr{(int)o.x, (int)o.y, (int)sl->size.x, (int)sl->size.y};
@@ -968,15 +968,15 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h) {
                      (std::uint8_t)(st->textColor.b * 255), (std::uint8_t)(st->textColor.a * 255 * op)};
         float px = 2.0f;
         // "-" and "+" glyphs centred on the end buttons.
-        DrawText(p, "-", o.x + bw * 0.5f - Font8x8::Width * px * 0.5f,
+        DrawUIText(p, "-", o.x + bw * 0.5f - Font8x8::Width * px * 0.5f,
                  o.y + (st->size.y - Font8x8::Height * px) * 0.5f, px, tc);
-        DrawText(p, "+", o.x + st->size.x - bw * 0.5f - Font8x8::Width * px * 0.5f,
+        DrawUIText(p, "+", o.x + st->size.x - bw * 0.5f - Font8x8::Width * px * 0.5f,
                  o.y + (st->size.y - Font8x8::Height * px) * 0.5f, px, tc);
         char vb[24];
         if (st->wholeNumbers) std::snprintf(vb, sizeof(vb), "%d", (int)st->value);
         else                  std::snprintf(vb, sizeof(vb), "%.2f", st->value);
         float tw = UITextW(vb, px);
-        DrawText(p, vb, o.x + (st->size.x - tw) * 0.5f,
+        DrawUIText(p, vb, o.x + (st->size.x - tw) * 0.5f,
                  o.y + (st->size.y - Font8x8::Height * px) * 0.5f, px, tc);
         if (!st->interactable) { p.SetDrawColor(30, 30, 35, 150); p.FillRect(&bg); }
     }
@@ -1047,7 +1047,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h) {
         float ty = o.y + (tg->size.y - Font8x8::Height * px) * 0.5f;
         RGBA tc{(std::uint8_t)(tg->textColor.r * 255), (std::uint8_t)(tg->textColor.g * 255),
                      (std::uint8_t)(tg->textColor.b * 255), (std::uint8_t)(tg->textColor.a * 255 * op)};
-        DrawText(p, tg->label, tx, ty, px, tc);
+        DrawUIText(p, tg->label, tx, ty, px, tc);
         if (!tg->interactable) { Rect dr{box.x, box.y, box.w, box.h};
             p.SetDrawColor(30, 30, 35, 150); p.FillRect(&dr); }
     }
@@ -1075,7 +1075,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h) {
                 case UITabsDraw::Kind::Text: {
                     RGBA tc{(std::uint8_t)(d.color.r * 255), (std::uint8_t)(d.color.g * 255), (std::uint8_t)(d.color.b * 255),
                                  (std::uint8_t)(d.color.a * 255 * op)};
-                    DrawText(p, d.text, dx, dy, d.px, tc);
+                    DrawUIText(p, d.text, dx, dy, d.px, tc);
                     break;
                 }
                 case UITabsDraw::Kind::Icon:
@@ -1161,7 +1161,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h) {
             float ty = o.y + (bsz.y - Font8x8::Height * px) * 0.5f + shift;
             Color tcc = btn->CurrentTextColor();
             RGBA tc{(std::uint8_t)(tcc.r * 255), (std::uint8_t)(tcc.g * 255), (std::uint8_t)(tcc.b * 255), (std::uint8_t)(tcc.a * 255 * op)};
-            DrawText(p, btn->label, tx, ty, px, tc, 0, 0, false, false, RGBA{0,0,0,0}, fnt);
+            DrawUIText(p, btn->label, tx, ty, px, tc, 0, 0, false, false, RGBA{0,0,0,0}, fnt);
         }
     }
         else if (_it.kind == K_Text) {   // screen-space text — on top of panels/controls
@@ -1203,19 +1203,19 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h) {
                      (std::uint8_t)(tr->colorBottom.b * 255), (std::uint8_t)(tr->colorBottom.a * 255 * op)};
         okay::TtfFont* fnt = tr->Font();
         if (tr->shadow)
-            DrawText(p, disp, o.x + tr->shadowOffset.x * ps,
+            DrawUIText(p, disp, o.x + tr->shadowOffset.x * ps,
                      o.y + tr->shadowOffset.y * ps, ps, sh, ls, lp, it, false, RGBA{0,0,0,0}, fnt);
         // Bold / outline offsets: one font pixel for the 8x8 font; for smooth TTF text
         // about one screen pixel (a font pixel is 5 px at title size: a double image).
         const float fo = fnt ? (ps * 8.0f >= 30.0f ? 1.5f : 1.0f) : ps;
         if (tr->outline) {
-            DrawText(p, disp, o.x - fo, o.y, ps, ol, ls, lp, it, false, RGBA{0,0,0,0}, fnt);
-            DrawText(p, disp, o.x + fo, o.y, ps, ol, ls, lp, it, false, RGBA{0,0,0,0}, fnt);
-            DrawText(p, disp, o.x, o.y - fo, ps, ol, ls, lp, it, false, RGBA{0,0,0,0}, fnt);
-            DrawText(p, disp, o.x, o.y + fo, ps, ol, ls, lp, it, false, RGBA{0,0,0,0}, fnt);
+            DrawUIText(p, disp, o.x - fo, o.y, ps, ol, ls, lp, it, false, RGBA{0,0,0,0}, fnt);
+            DrawUIText(p, disp, o.x + fo, o.y, ps, ol, ls, lp, it, false, RGBA{0,0,0,0}, fnt);
+            DrawUIText(p, disp, o.x, o.y - fo, ps, ol, ls, lp, it, false, RGBA{0,0,0,0}, fnt);
+            DrawUIText(p, disp, o.x, o.y + fo, ps, ol, ls, lp, it, false, RGBA{0,0,0,0}, fnt);
         }
-        DrawText(p, disp, o.x, o.y, ps, col, ls, lp, it, tr->gradient, c2, fnt);
-        if (tr->bold) DrawText(p, disp, o.x + fo, o.y, ps, col, ls, lp, it, tr->gradient, c2, fnt);
+        DrawUIText(p, disp, o.x, o.y, ps, col, ls, lp, it, tr->gradient, c2, fnt);
+        if (tr->bold) DrawUIText(p, disp, o.x + fo, o.y, ps, col, ls, lp, it, tr->gradient, c2, fnt);
     }
         else if (_it.kind == K_WorldUI) {   // in-world UI labels/markers (3D -> screen)
         auto* wu = up->GetComponent<WorldUI>();
@@ -1240,7 +1240,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h) {
         }
         RGBA tc{(std::uint8_t)(wu->color.r * 255), (std::uint8_t)(wu->color.g * 255),
                      (std::uint8_t)(wu->color.b * 255), (std::uint8_t)(wu->color.a * 255 * op)};
-        DrawText(p, wu->text, tx, ty, scale, tc);
+        DrawUIText(p, wu->text, tx, ty, scale, tc);
         if (wu->bar >= 0.0f) {                          // optional health/progress bar under the text
             float bw = tw > 36.0f ? tw : 36.0f;
             float bx = sp.x - bw * 0.5f, by = ty + th + 3.0f, bh = 4.0f * scale;
@@ -1263,7 +1263,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h) {
         RGBA tc{(std::uint8_t)(dd->textColor.r * 255), (std::uint8_t)(dd->textColor.g * 255),
                      (std::uint8_t)(dd->textColor.b * 255), (std::uint8_t)(dd->textColor.a * 255)};
         RGBA htc = dd->HasSelection() ? tc : RGBA{150, 152, 158, 255};
-        DrawText(p, dd->HeaderText(), o.x + 8.0f, ty, px, htc);
+        DrawUIText(p, dd->HeaderText(), o.x + 8.0f, ty, px, htc);
         if (dd->open) {
             float top = o.y + dd->size.y;
             for (int i = 0; i < (int)dd->options.size(); ++i) {
@@ -1272,7 +1272,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h) {
                 p.SetDrawColor((std::uint8_t)(rc.r * 255), (std::uint8_t)(rc.g * 255),
                                        (std::uint8_t)(rc.b * 255), (std::uint8_t)(rc.a * 255));
                 p.FillRect(&orow);
-                DrawText(p, dd->options[i], o.x + 8.0f,
+                DrawUIText(p, dd->options[i], o.x + 8.0f,
                          orow.y + (dd->size.y - Font8x8::Height * px) * 0.5f, px, tc);
             }
         }
@@ -1304,7 +1304,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h) {
         while (shown.size() > 1 && UITextW(shown, px) > in->size.x - pad * 2) shown.erase(0, 1);
         float ty = o.y + (in->size.y - Font8x8::Height * px) * 0.5f;
         RGBA tc{(std::uint8_t)(txc.r * 255), (std::uint8_t)(txc.g * 255), (std::uint8_t)(txc.b * 255), (std::uint8_t)(txc.a * 255)};
-        DrawText(p, shown, o.x + pad, ty, px, tc);
+        DrawUIText(p, shown, o.x + pad, ty, px, tc);
         if (in->focused && in->CaretVisible()) {        // blinking caret after visible text
             int cx = (int)(o.x + pad + UITextW(shown, px));
             p.SetDrawColor(255, 255, 255, 220);
@@ -1340,7 +1340,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h) {
         p.DrawRect(&box);
         RGBA tc{(std::uint8_t)(tt->textColor.r * 255), (std::uint8_t)(tt->textColor.g * 255),
                      (std::uint8_t)(tt->textColor.b * 255), (std::uint8_t)(tt->textColor.a * 255)};
-        DrawText(p, tt->text, m.x + 20, m.y + 19, px, tc);
+        DrawUIText(p, tt->text, m.x + 20, m.y + 19, px, tc);
         }
     }   // end single UI draw pass
     uiUseScale(1.0f);

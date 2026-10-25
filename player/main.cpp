@@ -109,7 +109,7 @@ static void DrawText(SDL_Renderer* r, const std::string& text, float ox, float o
                      bool italic = false, bool gradient = false, SDL_Color col2 = SDL_Color{0, 0, 0, 0},
                      okay::TtfFont* ttf = nullptr) {
     ui2d::SDLPainter p(r);
-    ui2d::DrawText(p, text, ox, oy, px, ui2d::FromSDL(col), letterSp, lineSp, italic, gradient,
+    ui2d::DrawUIText(p, text, ox, oy, px, ui2d::FromSDL(col), letterSp, lineSp, italic, gradient,
                    ui2d::FromSDL(col2), ttf);
 }
 // Load (and cache) a sprite texture; nullptr if the image can't be read (callers fall

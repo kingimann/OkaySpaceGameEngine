@@ -51,21 +51,22 @@ void MMFillPoly(Painter& r, const std::vector<Point>& pts, RGBA col);
 /// Draw a string with a TTF font (a textured glyph quad per character), tinted by col.
 void DrawTtfText(Painter& r, TtfFont* f, const std::string& text,
                  float ox, float oy, float px, RGBA col, float letterSp, float lineSp);
-/// The scene-wide default UI font DrawText/UITextW fall back to when no font is given.
+/// The scene-wide default UI font DrawUIText/UITextW fall back to when no font is given.
 /// RenderSceneUI sets it to the scene's UI font for its pass and clears it after, so
 /// world text and overlays keep the 8x8 bitmap font unless a host sets it around them.
 void SetUIDefaultFont(TtfFont* f);
 TtfFont* UIDefaultFont();
-/// Width of `text` in screen pixels at font-pixel size `px`, in the font DrawText will
+/// Width of `text` in screen pixels at font-pixel size `px`, in the font DrawUIText will
 /// use (the scene's UI font during RenderSceneUI, else the 8x8 bitmap font).
 float UITextW(const std::string& text, float px);
 /// Draw a string with the built-in 8x8 font as filled rects, top-left at (ox, oy), each
 /// font pixel `px` screen pixels wide. With a TTF font (`ttf`, or the scene's UI font
 /// during RenderSceneUI) the glyph atlas is used instead, in the same sizing space.
-void DrawText(Painter& r, const std::string& text, float ox, float oy,
-              float px, RGBA col, float letterSp = 0.0f, float lineSp = 0.0f,
-              bool italic = false, bool gradient = false, RGBA col2 = RGBA{0, 0, 0, 0},
-              TtfFont* ttf = nullptr);
+/// (Not named DrawText: windows.h #defines that to DrawTextA.)
+void DrawUIText(Painter& r, const std::string& text, float ox, float oy,
+                float px, RGBA col, float letterSp = 0.0f, float lineSp = 0.0f,
+                bool italic = false, bool gradient = false, RGBA col2 = RGBA{0, 0, 0, 0},
+                TtfFont* ttf = nullptr);
 
 } // namespace ui2d
 } // namespace okay

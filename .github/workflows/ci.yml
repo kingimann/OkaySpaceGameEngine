@@ -52,6 +52,58 @@ jobs:
           cp build-player/bin/okay-player build-editor/bin/
           tests/export/verify.sh build-editor/bin/OkayEngine
 
+  # Build the scripting and visual-scripting tests with AddressSanitizer and
+  # UndefinedBehaviorSanitizer and run them: any memory error, leak or undefined
+  # behaviour fails the job. Only the test targets are built, to keep it fast.
+  sanitizers:
+    name: Scripting tests (ASan + UBSan)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev
+
+      # The runner kernel's high mmap randomness can break ASan's shadow memory
+      # setup (random "DEADLYSIGNAL" crashes before main); 28 bits is safe.
+      - name: Make ASan's address layout reliable
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+
+      # -g1: line tables are enough for file:line in sanitizer stack traces and
+      # keep the Debug objects a fraction of the size of full -g.
+      - name: Configure
+        run: |
+          cmake -S . -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS_DEBUG=-g1 \
+            -DOKAY_SANITIZE=address,undefined -DOKAY_BUILD_TESTS=ON \
+            -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF -DOKAY_USE_SODIUM=OFF
+
+      # Every test_script_* target is picked up from tests/CMakeLists.txt, so new
+      # script tests join this job without editing it.
+      - name: List the tests
+        run: |
+          TESTS="test_visualscript test_vs_nodes test_vs_types test_okayscript_next test_scripting"
+          TESTS="$TESTS $(grep -oE 'add_executable\(test_script_[A-Za-z0-9_]+' tests/CMakeLists.txt | cut -c16- | tr '\n' ' ')"
+          if grep -q 'add_executable(test_vs_editor_model' tests/CMakeLists.txt; then TESTS="$TESTS test_vs_editor_model"; fi
+          echo "SAN_TESTS=$TESTS" >> "$GITHUB_ENV"
+          echo "$TESTS"
+
+      - name: Build
+        run: cmake --build build-asan -j --target $SAN_TESTS
+
+      - name: Test
+        working-directory: build-asan/tests
+        run: |
+          failed=""
+          for t in $SAN_TESTS; do
+            echo "== $t"
+            "./$t" || failed="$failed $t"
+          done
+          if [ -n "$failed" ]; then echo "failed:$failed"; exit 1; fi
+
   # Cross-compile the Windows editor + player (the release build) and the
   # visual-scripting and mesh file tests, for the windows-export job to run on real Windows.
   windows-cross:

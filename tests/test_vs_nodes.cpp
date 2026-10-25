@@ -108,14 +108,32 @@ int main() {
         sc.Start();
         const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         Log::sink = sink;
-        // The reads count toward the 1M budget: ~1M / ~205 iterations, not the
-        // ~500k (1M exec steps / 2 nodes) it did before. Counted, not timed, so
-        // slow sanitizer / debug builds give the same answer.
+        // The reads have their own 4M budget: ~4M / ~402 reads an iteration, not
+        // the ~500k (1M exec steps / 2 nodes) it did before. Counted, not timed,
+        // so slow sanitizer / debug builds give the same answer.
         const float n = v->GetVariable("n").AsFloat();
         CHECK(n > 1000.0f && n < 20000.0f);
         CHECK(v->Graph() && v->Graph()->ErrorCount() > 0);
         CHECK_NEAR(v->GetVariable("x").AsFloat(), 201.0f, 1e-3f);   // the work it did do was right
         std::printf("  deep pull chain: %.0f iterations in %.2fs\n", n, secs);
+    }
+
+    // --- A big but finite loop with reads still finishes: reads don't eat the node-run budget ---
+    {
+        // Repeat 300000 x AddVar n <- Add(Const 1, Const 0): 300k node runs, 900k reads.
+        // With one shared 1M budget this stopped as a "runaway loop" at ~250k.
+        const std::string src =
+            "node 1 OnStart\nnode 2 Repeat 300000\nnode 3 AddVar n\nnode 4 Add\nnode 5 Const 1\nnode 6 Const 0\n"
+            "data 3 0 4 0\ndata 4 0 5 0\ndata 4 1 6 0\nexec 1 0 2\nexec 2 0 3\nentry OnStart 1\n";
+        Scene sc;
+        auto* v = sc.CreateGameObject("Grid")->AddComponent<VisualScriptComponent>();
+        std::string err;
+        CHECK(v->LoadFromText(src, &err));
+        auto sink = Log::sink; Log::sink = [](Log::Level, const std::string&) {};
+        sc.Start();
+        Log::sink = sink;
+        CHECK_NEAR(v->GetVariable("n").AsFloat(), 300000.0f, 0.5f);
+        CHECK(v->Graph() && v->Graph()->ErrorCount() == 0);
     }
 
     TEST_MAIN_RESULT();

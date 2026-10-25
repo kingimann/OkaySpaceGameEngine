@@ -288,6 +288,18 @@ private:
             case EK::Conditional: return AsB(Eval(*e.third)) ? Eval(*e.lhs) : Eval(*e.rhs);
             case EK::Index: { Slot sl = IndexSlot(e); return sl.arr->items[sl.i]; }
             case EK::NewArray: case EK::ArrayLit: return MakeArray(e);
+            case EK::Interp: {
+                std::string s;
+                for (auto& a : e.args) s += ValueToString(Eval(*a));
+                return Value{std::move(s)};
+            }
+            case EK::Format: {
+                const Value v = Eval(*e.lhs);
+                const auto* i = std::get_if<std::int32_t>(&v);
+                char buf[96];
+                std::snprintf(buf, sizeof(buf), "%.*f", (int)e.ival, i ? (double)*i : (double)AsF(v));
+                return Value{std::string(buf)};
+            }
         }
         return Value{};
     }

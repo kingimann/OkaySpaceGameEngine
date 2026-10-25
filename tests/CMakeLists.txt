@@ -37,6 +37,11 @@ add_executable(test_layers test_layers.cpp)
 target_link_libraries(test_layers PRIVATE okay::engine)
 add_test(NAME physics_layers COMMAND test_layers)
 
+# Robustness: a NaN body can't poison statics / other bodies
+add_executable(test_physics_nan test_physics_nan.cpp)
+target_link_libraries(test_physics_nan PRIVATE okay::engine)
+add_test(NAME physics_nan COMMAND test_physics_nan)
+
 add_executable(test_physics3d test_physics3d.cpp)
 target_link_libraries(test_physics3d PRIVATE okay::engine)
 add_test(NAME physics3d COMMAND test_physics3d)

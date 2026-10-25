@@ -45,11 +45,12 @@ public:
     float         ReadF32() { float v = 0.0f;      ReadPod(v); return v; }
     std::string   ReadString() {
         std::uint32_t n = ReadU32();
-        std::string s;
-        if (m_read + n <= m_data.size()) {
-            s.assign(reinterpret_cast<const char*>(&m_data[m_read]), n);
-            m_read += n;
-        }
+        if (m_overflow) return {};
+        // A length past the end is a malformed packet, not a short string.
+        if (n > m_data.size() - m_read) { m_overflow = true; return {}; }
+        // data() + offset, not &m_data[m_read]: an empty string may end the packet.
+        std::string s(reinterpret_cast<const char*>(m_data.data()) + m_read, n);
+        m_read += n;
         return s;
     }
 
@@ -64,7 +65,7 @@ private:
     }
     template <typename T> void ReadPod(T& v) {
         if (m_read + sizeof(T) > m_data.size()) { m_overflow = true; return; }
-        std::memcpy(&v, &m_data[m_read], sizeof(T));
+        std::memcpy(&v, m_data.data() + m_read, sizeof(T));
         m_read += sizeof(T);
     }
 

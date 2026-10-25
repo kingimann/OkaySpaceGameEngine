@@ -125,8 +125,6 @@ struct Matchmaker::Impl {
     Clock::time_point started{};
     bool connected = false;
     std::shared_ptr<Backend> backend;
-    // settings copied at Start
-    float pollInterval = 2.0f, hostWait = 40.0f;
 
     void Set(std::uint32_t g, State s, const std::string& err = std::string()) {
         lock();
@@ -137,7 +135,8 @@ struct Matchmaker::Impl {
 
     // The search: join the queue, poll until matched, then (as a no-relay host)
     // post our join link once Pump() is hosting. Runs on its own thread.
-    void Run(std::uint32_t g, std::shared_ptr<Backend> be, MatchRequest q) {
+    // The settings come in as copies, so a later Start() can't change them under it.
+    void Run(std::uint32_t g, std::shared_ptr<Backend> be, MatchRequest q, float pollInterval, float hostWait) {
         std::string ticket, err;
         if (!be->Join(q, ticket, err)) { Set(g, State::Failed, err); return; }
         lock(); if (Live(g)) this->ticket = ticket; unlock();
@@ -194,18 +193,38 @@ struct Matchmaker::Impl {
 };
 
 namespace {
-struct RunArgs { std::shared_ptr<Matchmaker::Impl> impl; std::uint32_t gen; std::shared_ptr<Matchmaker::Backend> be; MatchRequest req; };
+struct RunArgs {
+    std::shared_ptr<Matchmaker::Impl> impl; std::uint32_t gen; std::shared_ptr<Matchmaker::Backend> be;
+    MatchRequest req; float pollInterval, hostWait;
+};
 #if defined(_WIN32)
 DWORD WINAPI RunEntry(LPVOID p) {
     std::unique_ptr<RunArgs> a(static_cast<RunArgs*>(p));
-    a->impl->Run(a->gen, a->be, a->req);
+    a->impl->Run(a->gen, a->be, a->req, a->pollInterval, a->hostWait);
     return 0;
 }
 #endif
 } // namespace
 
-Matchmaker::Matchmaker() : m(std::make_shared<Impl>()) {}
-Matchmaker::~Matchmaker() { ++m->gen; }   // a running search notices, leaves the queue and stops
+// The search thread. Start() joins the previous one (it has already been told to
+// stop) so old searches never pile up or outlive their Matchmaker.
+struct Matchmaker::Worker {
+#if defined(_WIN32)
+    HANDLE h = nullptr;
+    void Join() { if (h) { WaitForSingleObject(h, INFINITE); CloseHandle(h); h = nullptr; } }
+#elif !defined(__EMSCRIPTEN__)
+    std::thread t;
+    void Join() { if (t.joinable()) t.join(); }
+#else
+    void Join() {}
+#endif
+};
+
+Matchmaker::Matchmaker() : m(std::make_shared<Impl>()), m_worker(std::make_unique<Worker>()) {}
+Matchmaker::~Matchmaker() {
+    ++m->gen;            // a running search notices, leaves the queue and stops
+    m_worker->Join();
+}
 
 Matchmaker& Matchmaker::Shared() {
     static Matchmaker* mm = new Matchmaker();   // lives until exit (worker threads may outlive statics)
@@ -222,14 +241,15 @@ bool Matchmaker::Start(const MatchRequest& reqIn) {
     req.players = std::clamp(req.players, 2, 64);
     if (req.minPlayers > req.players) req.minPlayers = req.players;
     Cancel();
+    m_worker->Join();    // the previous search (already told to stop) finishes first
     const std::uint32_t g = ++m->gen;
     m->lock();
     std::shared_ptr<Backend> be = m->backend;
     m->state = State::Searching; m->error.clear(); m->ticket.clear(); m->linkToPost.clear();
     m->req = req; m->match = MatchAssignment{}; m->searching = 0; m->connected = false;
     m->started = Clock::now();
-    m->pollInterval = std::max(0.05f, pollInterval); m->hostWait = hostWaitSeconds;
     m->unlock();
+    const float poll = std::max(0.05f, pollInterval), wait = hostWaitSeconds;
     const bool custom = be != nullptr;
     if (!be) be = std::make_shared<SupabaseQueue>();
     if (req.game.empty()) { m->Set(g, State::Failed, "Which game? (no game title)"); return false; }
@@ -238,13 +258,18 @@ bool Matchmaker::Start(const MatchRequest& reqIn) {
     m->Set(g, State::Failed, "Matchmaking isn't available in the web build yet.");
     return false;
 #else
-    RunArgs* a = new RunArgs{m, g, be, req};
+    RunArgs* a = new RunArgs{m, g, be, req, poll, wait};
 #  if defined(_WIN32)
     HANDLE h = CreateThread(nullptr, 0, &RunEntry, a, 0, nullptr);
     if (!h) { delete a; m->Set(g, State::Failed, "Couldn't start matchmaking."); return false; }
-    CloseHandle(h);
+    m_worker->h = h;
 #  else
-    try { std::thread([a] { std::unique_ptr<RunArgs> p(a); p->impl->Run(p->gen, p->be, p->req); }).detach(); }
+    try {
+        m_worker->t = std::thread([a] {
+            std::unique_ptr<RunArgs> p(a);
+            p->impl->Run(p->gen, p->be, p->req, p->pollInterval, p->hostWait);
+        });
+    }
     catch (...) { delete a; m->Set(g, State::Failed, "Couldn't start matchmaking."); return false; }
 #  endif
     return true;

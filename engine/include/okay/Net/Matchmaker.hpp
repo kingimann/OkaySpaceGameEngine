@@ -120,8 +120,10 @@ public:
     void SetBackend(std::shared_ptr<Backend> b);
 
     struct Impl;
+    struct Worker;
 private:
     std::shared_ptr<Impl> m;   // shared with a search's worker thread
+    std::unique_ptr<Worker> m_worker;   // the current search's thread (joined before the next starts)
 };
 
 } // namespace okay

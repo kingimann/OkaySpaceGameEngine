@@ -461,9 +461,36 @@ private:
     struct FragAsm {
         std::uint32_t count = 0;
         std::uint32_t got   = 0;
+        std::size_t   bytes = 0;    // payload held so far
         std::vector<std::vector<std::uint8_t>> chunks;
         float age = 0.0f;
     };
+public:
+    /// Reassembly limits. A joined peer (or, for a client, its server) may have a
+    /// few large messages in flight; anyone else only enough for one Join with an
+    /// identity token, and only a bounded number of strangers at once — so forged
+    /// fragment headers can't balloon memory.
+    static constexpr std::uint32_t kMaxFragments = 4096;              // ~4.8 MB per message
+    static constexpr std::size_t   kMaxPendingBytes = 8u << 20;       // per peer
+    static constexpr std::size_t   kMaxPendingMessages = 8;           // per peer
+    static constexpr std::uint32_t kStrangerMaxFragments = 8;
+    static constexpr std::size_t   kMaxStrangers = 64;
+    /// Half-assembled messages held for `from` (diagnostics / tests).
+    std::size_t PendingFragmentMessages(const net::Endpoint& from) const {
+        auto it = m_fragIn.find(from);
+        return it == m_fragIn.end() ? 0 : it->second.size();
+    }
+    std::size_t PendingFragmentBytes() const {
+        std::size_t n = 0;
+        for (const auto& e : m_fragIn) for (const auto& m : e.second) n += m.second.bytes;
+        return n;
+    }
+    /// Feed one received datagram through reassembly as if it came from `from`
+    /// (tests use it to probe the limits without sockets).
+    bool FeedFragmentForTest(const net::Endpoint& from, const std::uint8_t* data, std::size_t size,
+                             std::vector<std::uint8_t>& out) { return TakeFragment(from, data, size, out); }
+private:
+    bool Handshaken(const net::Endpoint& from) const;
     bool TakeFragment(const net::Endpoint& from, const std::uint8_t* data,
                       std::size_t size, std::vector<std::uint8_t>& out);
     void PruneFragments(float dt);

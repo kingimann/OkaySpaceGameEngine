@@ -257,9 +257,12 @@ Contact TestColliders(Collider2D* a, Collider2D* b) {
     return TestCircleCircle(ac, ar, bc, br);
 }
 
+// Components a callback removes are skipped (`gone`), so a handler that removes
+// a sibling component (or its own collider/body) never runs a freed one.
 void DispatchCollision(GameObject* go, void (Component::*fn)(const Collision2D&),
-                       const Collision2D& info) {
-    for (Component* c : go->GetComponents<Component>()) (c->*fn)(info);
+                       const Collision2D& info, const Scene::RemovalWatch& gone) {
+    for (Component* c : go->GetComponents<Component>())
+        if (!gone.Gone(c)) (c->*fn)(info);
 }
 // The trigger overlap being dispatched right now (Physics2D::CurrentTrigger).
 const TriggerContact2D* g_currentTrigger = nullptr;
@@ -267,11 +270,12 @@ const TriggerContact2D* g_currentTrigger = nullptr;
 // Tell `self`'s object it overlapped `other`, with the overlap point/normal
 // readable through Physics2D::CurrentTrigger() for the duration of the calls.
 void DispatchTrigger(Collider2D* self, void (Component::*fn)(Collider2D*), Collider2D* other,
-                     const Vec2& point, const Vec2& normal) {
+                     const Vec2& point, const Vec2& normal, const Scene::RemovalWatch& gone) {
     TriggerContact2D info{self, other, point, normal};
     const TriggerContact2D* prev = g_currentTrigger;
     g_currentTrigger = &info;
-    for (Component* c : self->gameObject->GetComponents<Component>()) (c->*fn)(other);
+    for (Component* c : self->gameObject->GetComponents<Component>())
+        if (!gone.Gone(c)) (c->*fn)(other);
     g_currentTrigger = prev;
 }
 
@@ -350,6 +354,9 @@ void Physics2D::Step(Scene& scene, float dt) {
     // 2) Broad+narrow phase over every collider pair.
     auto colliders = scene.FindObjectsOfType<Collider2D>();
     std::set<Pair> current;
+    // Contact callbacks below may remove colliders / bodies (RemoveComponent frees
+    // them at once); every raw pointer held across a callback is checked first.
+    Scene::RemovalWatch gone(scene);
 
     // Precompute world AABBs once per step (were recomputed O(n) times per collider)
     // and a membership set for the exit-message cleanup (was an O(contacts*n) scan).
@@ -366,6 +373,8 @@ void Physics2D::Step(Scene& scene, float dt) {
         for (std::size_t j = i + 1; j < nc; ++j) {
             Collider2D* a = colliders[i];
             Collider2D* b = colliders[j];
+            if (gone.Gone(a)) break;
+            if (gone.Gone(b)) continue;
             if (!a->enabled || !b->enabled) continue;
             if (!a->gameObject->active || !b->gameObject->active) continue;
             if (a->gameObject == b->gameObject) continue;
@@ -484,21 +493,25 @@ void Physics2D::Step(Scene& scene, float dt) {
             bool wasContact = m_contacts.count({a, b}) != 0;
             if (trigger) {
                 if (!wasContact) {
-                    DispatchTrigger(a, &Component::OnTriggerEnter2D, b, c.point, c.normal);
-                    DispatchTrigger(b, &Component::OnTriggerEnter2D, a, c.point, -c.normal);
+                    DispatchTrigger(a, &Component::OnTriggerEnter2D, b, c.point, c.normal, gone);
+                    if (!gone.Gone(a) && !gone.Gone(b))
+                        DispatchTrigger(b, &Component::OnTriggerEnter2D, a, c.point, -c.normal, gone);
                 } else {
-                    DispatchTrigger(a, &Component::OnTriggerStay2D, b, c.point, c.normal);
-                    DispatchTrigger(b, &Component::OnTriggerStay2D, a, c.point, -c.normal);
+                    DispatchTrigger(a, &Component::OnTriggerStay2D, b, c.point, c.normal, gone);
+                    if (!gone.Gone(a) && !gone.Gone(b))
+                        DispatchTrigger(b, &Component::OnTriggerStay2D, a, c.point, -c.normal, gone);
                 }
             } else {
                 Collision2D forA = MakeCollision(b, c.normal, c.penetration, c.point, relVelBA);
                 Collision2D forB = MakeCollision(a, -c.normal, c.penetration, c.point, -relVelBA);
                 if (!wasContact) {
-                    DispatchCollision(a->gameObject, &Component::OnCollisionEnter2D, forA);
-                    DispatchCollision(b->gameObject, &Component::OnCollisionEnter2D, forB);
+                    DispatchCollision(a->gameObject, &Component::OnCollisionEnter2D, forA, gone);
+                    if (!gone.Gone(a) && !gone.Gone(b))
+                        DispatchCollision(b->gameObject, &Component::OnCollisionEnter2D, forB, gone);
                 } else {
-                    DispatchCollision(a->gameObject, &Component::OnCollisionStay2D, forA);
-                    DispatchCollision(b->gameObject, &Component::OnCollisionStay2D, forB);
+                    DispatchCollision(a->gameObject, &Component::OnCollisionStay2D, forA, gone);
+                    if (!gone.Gone(a) && !gone.Gone(b))
+                        DispatchCollision(b->gameObject, &Component::OnCollisionStay2D, forB, gone);
                 }
             }
         }
@@ -610,6 +623,7 @@ void Physics2D::Step(Scene& scene, float dt) {
     // kSleepTime seconds goes to sleep (zeroed and skipped next step). Any motion
     // resets the timer. Bodies with allowSleep off never sleep.
     for (Rigidbody2D* rb : bodies) {
+        if (gone.Gone(rb)) continue;                 // removed by a contact callback
         if (!rb->enabled || !rb->gameObject || !rb->gameObject->active) continue;
         if (rb->bodyType != Rigidbody2D::BodyType::Dynamic) continue;
         if (!rb->allowSleep) { rb->WakeUp(); continue; }
@@ -634,20 +648,27 @@ void Physics2D::Step(Scene& scene, float dt) {
         Collider2D* b = p.second;
         // The colliders may have been destroyed; guard via the live list.
         if (!aliveSet.count(a) || !aliveSet.count(b)) continue;
+        if (gone.Gone(a) || gone.Gone(b)) continue;
         if (a->isTrigger || b->isTrigger) {
             // No overlap any more: report the midpoint between the two centres.
             Vec2 mid = (a->WorldCenter() + b->WorldCenter()) * 0.5f;
             Vec2 n = (b->WorldCenter() - a->WorldCenter()).Normalized();
-            DispatchTrigger(a, &Component::OnTriggerExit2D, b, mid, n);
-            DispatchTrigger(b, &Component::OnTriggerExit2D, a, mid, n * -1.0f);
+            DispatchTrigger(a, &Component::OnTriggerExit2D, b, mid, n, gone);
+            if (!gone.Gone(a) && !gone.Gone(b))
+                DispatchTrigger(b, &Component::OnTriggerExit2D, a, mid, n * -1.0f, gone);
         } else {
             Collision2D forA = MakeCollision(b, Vec2::Zero, 0.0f, Vec2::Zero, Vec2::Zero);
             Collision2D forB = MakeCollision(a, Vec2::Zero, 0.0f, Vec2::Zero, Vec2::Zero);
-            DispatchCollision(a->gameObject, &Component::OnCollisionExit2D, forA);
-            DispatchCollision(b->gameObject, &Component::OnCollisionExit2D, forB);
+            DispatchCollision(a->gameObject, &Component::OnCollisionExit2D, forA, gone);
+            if (!gone.Gone(a) && !gone.Gone(b))
+                DispatchCollision(b->gameObject, &Component::OnCollisionExit2D, forB, gone);
         }
     }
 
+    // Drop pairs whose collider a callback removed, so no freed pointer is kept.
+    if (gone.Any())
+        for (auto it = current.begin(); it != current.end();)
+            it = (gone.Gone(it->first) || gone.Gone(it->second)) ? current.erase(it) : std::next(it);
     m_contacts.swap(current);
 }
 

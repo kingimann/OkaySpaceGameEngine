@@ -6,6 +6,7 @@
 #include "okay/Physics/Physics2D.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Render/Color.hpp"
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
@@ -195,6 +196,28 @@ public:
     /// The object the cursor was over at the last OnMouse* dispatch (nullptr if none).
     GameObject* MouseHoverObject() const { return m_mouseHover; }
 
+    /// While alive, records the address of every component removed from this
+    /// scene, so code holding raw component pointers across user callbacks (the
+    /// physics steps) can skip the ones a callback removed. The recorded pointers
+    /// are only compared, never dereferenced.
+    class RemovalWatch {
+    public:
+        explicit RemovalWatch(Scene& scene) : m_scene(scene) { scene.m_removalWatches.push_back(&m_removed); }
+        ~RemovalWatch() {
+            auto& w = m_scene.m_removalWatches;
+            w.erase(std::find(w.begin(), w.end(), &m_removed));
+        }
+        RemovalWatch(const RemovalWatch&) = delete;
+        RemovalWatch& operator=(const RemovalWatch&) = delete;
+        bool Gone(const Component* c) const {
+            return !m_removed.empty() && std::find(m_removed.begin(), m_removed.end(), c) != m_removed.end();
+        }
+        bool Any() const { return !m_removed.empty(); }
+    private:
+        Scene& m_scene;
+        std::vector<const Component*> m_removed;
+    };
+
 private:
     friend class GameObject;
     void QueuePending(Component* component);
@@ -227,6 +250,7 @@ private:
     std::string m_pendingLoad;
     bool        m_hasPendingLoad = false;
     std::vector<std::pair<std::string, Vec3>> m_pendingMerges;   // deferred additive scene merges
+    std::vector<std::vector<const Component*>*> m_removalWatches;   // live RemovalWatch lists
 };
 
 /// True when `go`'s scene lets scripts run (see Scene::runScripts).

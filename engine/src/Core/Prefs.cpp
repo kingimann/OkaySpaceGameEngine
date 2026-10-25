@@ -1,6 +1,8 @@
 #include "okay/Core/Prefs.hpp"
 
 #include <fstream>
+#include <limits>
+#include <locale>
 #include <sstream>
 
 namespace okay {
@@ -11,7 +13,15 @@ std::unordered_map<std::string, std::string>& Prefs::Store() {
 }
 
 void Prefs::SetInt(const std::string& key, int value) { Store()[key] = std::to_string(value); }
-void Prefs::SetFloat(const std::string& key, float value) { Store()[key] = std::to_string(value); }
+void Prefs::SetFloat(const std::string& key, float value) {
+    // max_digits10 so the value reads back bit-exact (std::to_string kept only
+    // six decimals: 1e-7 saved as "0.000000"). Old "0.750000"-style values still parse.
+    std::ostringstream os;
+    os.imbue(std::locale::classic());
+    os.precision(std::numeric_limits<float>::max_digits10);
+    os << value;
+    Store()[key] = os.str();
+}
 void Prefs::SetString(const std::string& key, const std::string& value) { Store()[key] = value; }
 
 int Prefs::GetInt(const std::string& key, int def) {
@@ -34,12 +44,16 @@ void Prefs::Delete(const std::string& key) { Store().erase(key); }
 void Prefs::Clear() { Store().clear(); }
 
 namespace {
-// Encode a string onto a single line: backslash-escape newlines and backslashes.
+// Encode a string onto a single line: backslash-escape backslashes, newlines,
+// carriage returns and tabs (a raw tab in a key would split it at the wrong
+// place). Files written before tab/CR escaping still decode the same way.
 std::string Encode(const std::string& s) {
     std::string out;
     for (char c : s) {
         if (c == '\\') out += "\\\\";
         else if (c == '\n') out += "\\n";
+        else if (c == '\t') out += "\\t";
+        else if (c == '\r') out += "\\r";
         else out += c;
     }
     return out;
@@ -49,7 +63,7 @@ std::string Decode(const std::string& s) {
     for (std::size_t i = 0; i < s.size(); ++i) {
         if (s[i] == '\\' && i + 1 < s.size()) {
             char n = s[++i];
-            out += (n == 'n') ? '\n' : n;
+            out += (n == 'n') ? '\n' : (n == 't') ? '\t' : (n == 'r') ? '\r' : n;
         } else {
             out += s[i];
         }

@@ -3727,7 +3727,7 @@ public:
     void MottleFaceColors(float amt, int seed = 0) {
         if (!HasFaceColors() || amt <= 0.0f) return;
         for (int f = 0; f < (int)triColors.size(); ++f) {
-            unsigned x = (unsigned)(f * 73856093 ^ seed * 19349663);
+            unsigned x = ((unsigned)f * 73856093u) ^ ((unsigned)seed * 19349663u);
             x = (x ^ (x >> 13)) * 1274126177u;
             float k = 1.0f + amt * (((float)((x ^ (x >> 16)) & 0xffffu) / 65535.0f) * 2.0f - 1.0f);
             Color& c = triColors[f];
@@ -3938,7 +3938,7 @@ public:
     void JitterVertices(const std::vector<int>& verts, float amount, int seed = 0) {
         if (amount == 0.0f || vertices.empty()) return;
         auto h = [&](int i, int c) {
-            unsigned x = (unsigned)(i * 73856093 ^ c * 19349663 ^ seed * 83492791);
+            unsigned x = ((unsigned)i * 73856093u) ^ ((unsigned)c * 19349663u) ^ ((unsigned)seed * 83492791u);
             x = (x ^ (x >> 13)) * 1274126177u;
             return ((float)((x ^ (x >> 16)) & 0xffffu) / 65535.0f) * 2.0f - 1.0f;
         };
@@ -3970,7 +3970,7 @@ public:
 private:
     /// Deterministic hash of an integer lattice point → [-1,1] (for value noise).
     static float Hash3(int x, int y, int z, int seed) {
-        unsigned h = (unsigned)(x * 374761393 + y * 668265263 + z * 2147483647 + seed * 971);
+        unsigned h = (unsigned)x * 374761393u + (unsigned)y * 668265263u + (unsigned)z * 2147483647u + (unsigned)seed * 971u;
         h = (h ^ (h >> 13)) * 1274126177u;
         return ((float)((h ^ (h >> 16)) & 0xffffu) / 65535.0f) * 2.0f - 1.0f;
     }

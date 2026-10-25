@@ -200,6 +200,8 @@ private:
     float m_lastStart = 0.0f, m_end = 0.0f, m_prevT = -1.0f;
     void Adopt(const std::shared_ptr<Tweener>& t);
     static float ChildLength(const Tweener& t);
+    /// True if `t` is this sequence's child, grandchild, ... (or this itself).
+    bool Contains(const Tweener* t) const;
 };
 
 /// Every running tween of a scene (Scene::tweens()), ticked once per frame.

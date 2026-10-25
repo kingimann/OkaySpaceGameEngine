@@ -131,7 +131,10 @@ struct Mat4 {
         return r;
     }
 
-    /// General 4x4 inverse (returns identity if the matrix is singular).
+    /// General 4x4 inverse (returns identity if the matrix is singular). The
+    /// singularity test is relative (|det| against the product of the column
+    /// lengths, Hadamard's bound), so a tiny but well-formed matrix — a uniform
+    /// 1e-4 scale — still inverts. Columns keep a large translation in one factor.
     Mat4 Inverse() const {
         const float* a = m;
         Mat4 out;
@@ -153,7 +156,10 @@ struct Mat4 {
         inv[11] = -a[0]*a[5]*a[11]  + a[0]*a[7]*a[9]   + a[4]*a[1]*a[11] - a[4]*a[3]*a[9]  - a[8]*a[1]*a[7]   + a[8]*a[3]*a[5];
         inv[15] =  a[0]*a[5]*a[10]  - a[0]*a[6]*a[9]   - a[4]*a[1]*a[10] + a[4]*a[2]*a[9]  + a[8]*a[1]*a[6]   - a[8]*a[2]*a[5];
         float det = a[0]*inv[0] + a[1]*inv[4] + a[2]*inv[8] + a[3]*inv[12];
-        if (Mathf::Abs(det) < 1e-12f) return Mat4{}; // singular
+        float bound = 1.0f;
+        for (int c = 0; c < 4; ++c)
+            bound *= Mathf::Sqrt(a[4*c]*a[4*c] + a[4*c+1]*a[4*c+1] + a[4*c+2]*a[4*c+2] + a[4*c+3]*a[4*c+3]);
+        if (!(Mathf::Abs(det) > 1e-9f * bound)) return Mat4{}; // singular (or NaN)
         float invDet = 1.0f / det;
         for (int i = 0; i < 16; ++i) inv[i] *= invDet;
         return out;

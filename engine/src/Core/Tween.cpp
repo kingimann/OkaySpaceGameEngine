@@ -153,8 +153,20 @@ void TweenSequence::Adopt(const std::shared_ptr<Tweener>& t) {
     t->paused = false;
 }
 
+bool TweenSequence::Contains(const Tweener* t) const {
+    if (t == this) return true;
+    for (const Item& it : m_items) {
+        if (it.tween.get() == t) return true;
+        if (auto* s = dynamic_cast<const TweenSequence*>(it.tween.get()); s && s->Contains(t)) return true;
+    }
+    return false;
+}
+
 TweenSequence& TweenSequence::Insert(float at, std::shared_ptr<Tweener> t) {
     if (!t || t.get() == this) return *this;
+    // A sequence that (at any depth) already holds this one would make a loop:
+    // endless recursion when it plays, and a shared_ptr cycle that never frees.
+    if (auto* s = dynamic_cast<const TweenSequence*>(t.get()); s && s->Contains(this)) return *this;
     Adopt(t);
     if (at < 0) at = 0;
     m_items.push_back({t, at});

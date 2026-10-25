@@ -30,8 +30,8 @@ public:
     /// Advance all tasks by `dt` seconds.
     void Update(float dt);
 
-    void Clear() { m_tasks.clear(); }
-    std::size_t ActiveCount() const { return m_tasks.size(); }
+    void Clear();
+    std::size_t ActiveCount() const;
 
 private:
     struct Task {
@@ -47,6 +47,9 @@ private:
 
     std::vector<Task> m_tasks;
     Handle m_nextHandle = 1;
+    // >0 while Update runs: Cancel/Clear only mark tasks dead (handle = 0) so
+    // the list never shrinks under a running callback; Update sweeps them.
+    int m_updateDepth = 0;
 };
 
 } // namespace okay

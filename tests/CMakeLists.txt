@@ -62,6 +62,11 @@ add_executable(test_prefs test_prefs.cpp)
 target_link_libraries(test_prefs PRIVATE okay::engine)
 add_test(NAME prefs COMMAND test_prefs)
 
+# Robustness: Prefs escaping/precision, TweenSequence cycles, Mat4::Inverse, UB-free hashes
+add_executable(test_prefs_misc test_prefs_misc.cpp)
+target_link_libraries(test_prefs_misc PRIVATE okay::engine)
+add_test(NAME prefs_misc COMMAND test_prefs_misc)
+
 add_executable(test_pathfinding test_pathfinding.cpp)
 target_link_libraries(test_pathfinding PRIVATE okay::engine)
 add_test(NAME pathfinding COMMAND test_pathfinding)
@@ -875,8 +880,3 @@ add_test(NAME locomotion COMMAND test_locomotion)
 add_executable(test_qa_pr250 test_qa_pr250.cpp)
 target_link_libraries(test_qa_pr250 PRIVATE okay::engine)
 add_test(NAME qa_pr250 COMMAND test_qa_pr250)
-
-# Robustness: Prefs escaping/precision, TweenSequence cycles, Mat4::Inverse, UB-free hashes
-add_executable(test_prefs_misc test_prefs_misc.cpp)
-target_link_libraries(test_prefs_misc PRIVATE okay::engine)
-add_test(NAME prefs_misc COMMAND test_prefs_misc)

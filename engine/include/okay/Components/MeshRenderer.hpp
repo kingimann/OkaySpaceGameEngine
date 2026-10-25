@@ -16,8 +16,11 @@ public:
     Mesh  mesh;
     /// Set by a MeshModifiers stack: the evaluated mesh that is drawn, cast shadows,
     /// collided with and exported. `mesh` stays the editable base every tool works on.
+    /// Also set while `mesh` holds per-corner UVs (mesh edit mode keeps it welded):
+    /// then it is `mesh` split at the UV seams, so the texture draws exactly.
     /// Null = draw `mesh` itself. Never saved (rebuilt from the stack on load).
     std::shared_ptr<Mesh> modifiedMesh;
+    std::uint64_t modifiedHash = 0;   ///< runtime: inputs modifiedMesh was last built from
     /// The mesh to draw / collide with: the modifier result if there is one, else `mesh`.
     const Mesh& DisplayMesh() const { return modifiedMesh ? *modifiedMesh : mesh; }
     /// Set by a deformer (SkinnedMesh) that rewrites `mesh` every frame: auto-fit

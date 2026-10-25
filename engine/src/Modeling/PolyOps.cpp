@@ -286,6 +286,11 @@ EdgeList LoopCut(PolyMesh& pm, int a, int b, int cuts, float position) {
         along[i].push_back(r.edges[i].first);
         for (int k = 1; k <= cuts; ++k) { along[i].push_back((int)pm.verts.size()); pm.verts.push_back(Lerp3(A, B, frac(k))); }
         along[i].push_back(r.edges[i].second);
+        // A seam on a cut edge carries on along both halves.
+        if (pm.IsSeam(r.edges[i].first, r.edges[i].second)) {
+            pm.SetSeam(r.edges[i].first, r.edges[i].second, false);
+            for (std::size_t j = 0; j + 1 < along[i].size(); ++j) pm.SetSeam(along[i][j], along[i][j + 1], true);
+        }
     }
     auto fracOf = [&](int j) { return j == 0 ? 0.0f : j == cuts + 1 ? 1.0f : frac(j); };
     const std::set<int> ringQuads(r.quads.begin(), r.quads.end());
@@ -456,6 +461,7 @@ int SplitEdge(PolyMesh& pm, int a, int b, float t) {
     if (!any) return -1;
     const int nv = (int)pm.verts.size();
     pm.verts.push_back(Lerp3(pm.verts[a], pm.verts[b], t));
+    if (pm.IsSeam(a, b)) { pm.SetSeam(a, b, false); pm.SetSeam(a, nv, true); pm.SetSeam(nv, b, true); }
     for (PolyFace& f : pm.faces) {
         const bool ab = Runs(f, a, b), ba = Runs(f, b, a);
         if (!ab && !ba) continue;
@@ -951,6 +957,13 @@ std::vector<int> CompactVerts(PolyMesh& pm) {
         if (used[i]) { remap[i] = (int)kept.size(); kept.push_back(pm.verts[i]); }
     pm.verts = std::move(kept);
     for (PolyFace& f : pm.faces) for (int& v : f.verts) v = remap[v];
+    std::vector<std::pair<int, int>> seams;
+    for (const auto& e : pm.seams) {
+        if (e.first < 0 || e.second < 0 || e.first >= (int)remap.size() || e.second >= (int)remap.size()) continue;
+        const int a = remap[e.first], b = remap[e.second];
+        if (a >= 0 && b >= 0 && a != b) seams.push_back(a < b ? std::make_pair(a, b) : std::make_pair(b, a));
+    }
+    pm.seams = std::move(seams);
     return remap;
 }
 

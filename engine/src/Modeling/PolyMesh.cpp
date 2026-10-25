@@ -5,6 +5,7 @@
 #include <cmath>
 #include <fstream>
 #include <map>
+#include <set>
 #include <sstream>
 #include <tuple>
 
@@ -182,12 +183,27 @@ static bool PolygonFromTriangles(const std::vector<PolyFace>& tris, const std::v
 
 static void MergeTrianglePairs(PolyMesh& pm, float planarDegrees, std::vector<int>* faceOf);
 
+bool PolyMesh::IsSeam(int a, int b) const {
+    const auto k = Key(a, b);
+    return std::find(seams.begin(), seams.end(), k) != seams.end();
+}
+
+void PolyMesh::SetSeam(int a, int b, bool on) {
+    if (a == b || a < 0 || b < 0) return;
+    const auto k = Key(a, b);
+    auto it = std::find(seams.begin(), seams.end(), k);
+    if (on && it == seams.end()) seams.push_back(k);
+    else if (!on && it != seams.end()) seams.erase(it);
+}
+
 PolyMesh PolyMesh::FromMesh(const Mesh& mesh, const FromMeshOptions& opt, std::vector<int>* triFace) {
     PolyMesh pm;
     if (triFace) triFace->assign(mesh.TriangleCount(), -1);
     std::vector<int> srcTri;   // mesh triangle of each kept triangle face
     const int nv = (int)mesh.vertices.size();
-    const bool hasUV = mesh.uvs.size() == mesh.vertices.size() && !mesh.uvs.empty();
+    // Exact corner UVs (a welded mesh in edit mode) win over the per-vertex ones.
+    const bool cornerUV = mesh.HasCornerUVs();
+    const bool hasUV = cornerUV || (mesh.uvs.size() == mesh.vertices.size() && !mesh.uvs.empty());
     const bool hasCol = mesh.HasFaceColors();
     // Weld by position: corners keep their own UVs, so seams survive.
     std::vector<int> remap(nv);
@@ -204,6 +220,8 @@ PolyMesh PolyMesh::FromMesh(const Mesh& mesh, const FromMeshOptions& opt, std::v
         pm.verts = mesh.vertices;
         for (int i = 0; i < nv; ++i) remap[i] = i;
     }
+    for (const auto& e : mesh.seams)
+        if (e.first >= 0 && e.second >= 0 && e.first < nv && e.second < nv) pm.SetSeam(remap[e.first], remap[e.second], true);
     const bool hasGroups = (int)mesh.polyFace.size() == mesh.TriangleCount() && !mesh.polyFace.empty();
     std::vector<int> group;   // polyFace id of each kept triangle
     for (int t = 0; t < mesh.TriangleCount(); ++t) {
@@ -213,7 +231,7 @@ PolyMesh PolyMesh::FromMesh(const Mesh& mesh, const FromMeshOptions& opt, std::v
             const int src = mesh.triangles[t * 3 + k];
             if (src < 0 || src >= nv) { ok = false; break; }
             f.verts.push_back(remap[src]);
-            if (hasUV) f.uvs.push_back(mesh.uvs[src]);
+            if (hasUV) f.uvs.push_back(cornerUV ? mesh.cornerUVs[t * 3 + k] : mesh.uvs[src]);
         }
         if (!ok || f.verts[0] == f.verts[1] || f.verts[1] == f.verts[2] || f.verts[0] == f.verts[2]) continue;
         if (hasCol) { f.hasColor = true; f.color = mesh.triColors[t]; }
@@ -349,7 +367,7 @@ static void MergeTrianglePairs(PolyMesh& pm, float planarDegrees, std::vector<in
     pm.faces = std::move(out);
 }
 
-Mesh PolyMesh::ToMesh(std::vector<int>* triFace) const {
+Mesh PolyMesh::ToMesh(std::vector<int>* triFace, bool splitSeams) const {
     Mesh m;
     bool anyUV = false, anyColor = false;
     for (const PolyFace& f : faces) {
@@ -359,7 +377,8 @@ Mesh PolyMesh::ToMesh(std::vector<int>* triFace) const {
     // One mesh vertex per (polygon vertex, UV): shared unless a seam splits it.
     std::map<std::tuple<int, long, long>, int> slot;
     auto vertexFor = [&](int pv, const Vec2& uv) {
-        const auto key = anyUV ? std::make_tuple(pv, std::lround(uv.x * 1e6f), std::lround(uv.y * 1e6f)) : std::make_tuple(pv, 0L, 0L);
+        const auto key = (anyUV && splitSeams) ? std::make_tuple(pv, std::lround(uv.x * 1e6f), std::lround(uv.y * 1e6f))
+                                               : std::make_tuple(pv, 0L, 0L);
         auto it = slot.find(key);
         if (it != slot.end()) return it->second;
         const int id = (int)m.vertices.size();
@@ -393,11 +412,20 @@ Mesh PolyMesh::ToMesh(std::vector<int>* triFace) const {
         for (std::size_t k = 0; k + 2 < tri.size(); k += 3) {
             for (int c = 0; c < 3; ++c) {
                 const int corner = tri[k + c];
-                m.triangles.push_back(vertexFor(f.verts[corner], fUV ? f.uvs[corner] : Vec2{0, 0}));
+                const Vec2 uv = fUV ? f.uvs[corner] : Vec2{0, 0};
+                m.triangles.push_back(vertexFor(f.verts[corner], uv));
+                if (anyUV && !splitSeams) m.cornerUVs.push_back(uv);
             }
             if (anyColor) m.triColors.push_back(f.hasColor ? f.color : Color{1, 1, 1, 1});
             m.polyFace.push_back(fi);
         }
+    }
+    // Seams that are still edges of some face (vertex i of the mesh is polygon vertex i).
+    if (!seams.empty()) {
+        std::set<std::pair<int, int>> edges;
+        for (const PolyFace& f : faces)
+            for (std::size_t c = 0; c < f.verts.size(); ++c) edges.insert(Key(f.verts[c], f.verts[(c + 1) % f.verts.size()]));
+        for (const auto& e : seams) if (edges.count(Key(e.first, e.second))) m.seams.push_back(Key(e.first, e.second));
     }
     if (triFace) *triFace = m.polyFace;
     return m;
@@ -421,6 +449,7 @@ std::string PolyMesh::Serialize() const {
         if (f.material != 0) o << " mat " << f.material;
         o << "\n";
     }
+    for (const auto& e : seams) o << "seam " << e.first << " " << e.second << "\n";
     return o.str();
 }
 
@@ -479,6 +508,10 @@ bool PolyMesh::Parse(const std::string& text, PolyMesh& out, std::string* error)
                 } else return fail(lineNo, "unknown face field '" + key + "'");
             }
             pm.faces.push_back(f);
+        } else if (tag == "seam") {
+            int a = -1, b = -1;
+            if (!(ls >> a >> b)) return fail(lineNo, "a seam needs two vertex numbers");
+            pm.SetSeam(a, b, true);
         } else return fail(lineNo, "unknown record '" + tag + "'");
     }
     if (!header) return fail(lineNo, "empty file");
@@ -488,6 +521,9 @@ bool PolyMesh::Parse(const std::string& text, PolyMesh& out, std::string* error)
         for (int v : pm.faces[i].verts)
             if (v < 0 || v >= (int)pm.verts.size())
                 return fail(lineNo, "face " + std::to_string(i) + " uses vertex " + std::to_string(v) + ", which doesn't exist");
+    for (const auto& e : pm.seams)
+        if (e.second >= (int)pm.verts.size())
+            return fail(lineNo, "a seam uses vertex " + std::to_string(e.second) + ", which doesn't exist");
     out = std::move(pm);
     return true;
 }

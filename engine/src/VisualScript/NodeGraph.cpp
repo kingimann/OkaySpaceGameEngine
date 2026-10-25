@@ -701,8 +701,10 @@ std::vector<std::string> TokenizePass(const std::string& line, bool escapes, boo
                 if (q == '"') { closed = true; ++i; break; }
                 cur += q; ++i;
             }
-            cur += '"';
-            if (!closed) unterminated = true;
+            // A quote that never closes is old content (the old editor wrote
+            // x"y bare): keep it as written, no closing quote invented.
+            if (closed) cur += '"';
+            else unterminated = true;
         } else if (c == '#') {
             break;   // a comment
         } else if (std::isspace((unsigned char)c)) {

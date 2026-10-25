@@ -747,16 +747,19 @@ add_test(NAME vs_nodes COMMAND test_vs_nodes)
 
 # The Visual Script editor's graph model (save / load / paste), without drawing:
 # it needs the Dear ImGui headers the editor header includes, nothing linked.
-# A tests-only configure clones ImGui from GitHub; offline, point
-# -DFETCHCONTENT_SOURCE_DIR_IMGUI=<a local imgui checkout> at it instead.
-include(FetchContent)
-if(NOT DEFINED OKAY_IMGUI_TAG)
-    set(OKAY_IMGUI_TAG "036bf939b6f8d74ad76bcf926b757c56e68c54ff")
+# With the editor in the build those come from its ImGui (nothing fetched
+# twice); only a tests-only configure fetches the same OKAY_IMGUI_TAG itself.
+# Offline, point -DFETCHCONTENT_SOURCE_DIR_IMGUI=<a local imgui checkout> at one.
+if(TARGET okay_imgui)
+    set(OKAY_VS_IMGUI_INCLUDE $<TARGET_PROPERTY:okay_imgui,INTERFACE_INCLUDE_DIRECTORIES>)
+else()
+    include(FetchContent)
+    FetchContent_Declare(imgui GIT_REPOSITORY https://github.com/ocornut/imgui.git GIT_TAG ${OKAY_IMGUI_TAG})
+    FetchContent_MakeAvailable(imgui)
+    set(OKAY_VS_IMGUI_INCLUDE ${imgui_SOURCE_DIR})
 endif()
-FetchContent_Declare(imgui GIT_REPOSITORY https://github.com/ocornut/imgui.git GIT_TAG ${OKAY_IMGUI_TAG})
-FetchContent_MakeAvailable(imgui)   # a no-op when the editor already fetched it
 add_executable(test_vs_editor_model test_vs_editor_model.cpp)
-target_include_directories(test_vs_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/editor ${imgui_SOURCE_DIR})
+target_include_directories(test_vs_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_editor_model PRIVATE okay::engine)
 add_test(NAME vs_editor_model COMMAND test_vs_editor_model)
 

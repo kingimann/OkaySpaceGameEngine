@@ -14,6 +14,7 @@
 #include "okay/VisualScript/VsDebug.hpp"
 #include "VisualScriptNodeHelp.hpp"
 #include <algorithm>
+#include <cstdlib>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -561,6 +562,17 @@ inline long long VsCoord(float v) {
     if (v < -1.0e9f) return -1000000000;
     return (long long)v;
 }
+// A layout value read from a file: any number text (1e40, nan, inf too) as a
+// float in the same +-1e9 range VsCoord saves (NaN -> 0). False if unreadable.
+inline bool VsReadCoord(std::istream& in, float& out) {
+    std::string t;
+    if (!(in >> t)) return false;
+    char* end = nullptr;
+    const double d = std::strtod(t.c_str(), &end);
+    if (end == t.c_str() || *end) return false;
+    out = d != d ? 0.0f : (float)std::max(-1.0e9, std::min(1.0e9, d));
+    return true;
+}
 inline std::string VsLiteral(const std::string& v) { return VsIsNumberOrBool(v) ? v : VsQuoted(v); }
 struct VsExecLink { int from, pin, to; };
 struct VsDataLink { int consumer, inPin, producer, outPin; };
@@ -720,17 +732,30 @@ struct VsEditGraph {
                 std::string v = restOf(ls);
                 if (auto* n = find(id)) n->pinDefault[pin] = v;
             } else if (kind == "pos") {
-                int id; float x, y; ls >> id >> x >> y;
+                int id = 0; float x = 0, y = 0;
+                if (!(ls >> id) || !VsReadCoord(ls, x) || !VsReadCoord(ls, y)) continue;
                 if (auto* n = find(id)) { n->x = x; n->y = y; }
             } else if (kind == "exec") {
-                VsExecLink l; ls >> l.from >> l.pin >> l.to; execLinks.push_back(l);
+                VsExecLink l{};
+                if (ls >> l.from >> l.pin >> l.to) execLinks.push_back(l);
             } else if (kind == "data") {
-                VsDataLink l; ls >> l.consumer >> l.inPin >> l.producer >> l.outPin; dataLinks.push_back(l);
+                VsDataLink l{};
+                if (ls >> l.consumer >> l.inPin >> l.producer >> l.outPin) dataLinks.push_back(l);
             } else if (kind == "comment") {
-                VsComment c; ls >> c.x >> c.y >> c.w >> c.h >> c.color; c.text = restOf(ls);
+                VsComment c;
+                if (!VsReadCoord(ls, c.x) || !VsReadCoord(ls, c.y) || !VsReadCoord(ls, c.w) || !VsReadCoord(ls, c.h)) continue;
+                ls >> c.color; ls.clear();
+                c.text = restOf(ls);
                 comments.push_back(c);
             }
         }
+        // Wires to nodes that weren't loaded (skipped ids, or never there) would
+        // make the next save fail to load: drop them.
+        auto has = [&](int id) { return find(id) != nullptr; };
+        execLinks.erase(std::remove_if(execLinks.begin(), execLinks.end(),
+                        [&](const VsExecLink& l) { return !has(l.from) || !has(l.to); }), execLinks.end());
+        dataLinks.erase(std::remove_if(dataLinks.begin(), dataLinks.end(),
+                        [&](const VsDataLink& l) { return !has(l.consumer) || !has(l.producer); }), dataLinks.end());
         nextId = maxId + 1;
     }
 };

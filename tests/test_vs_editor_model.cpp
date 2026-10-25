@@ -116,6 +116,52 @@ int main() {
         VsEditGraph g; g.fromText(old);
         CHECK(g.comments.size() == 1 && g.comments[0].text == "C:\\saves\\");
         CHECK(g.find(3) && g.find(3)->arg == "it's a b");
+        // The old editor wrote args bare whenever they had no space, so a lone
+        // quote mid-arg is real old content: it stays exactly as written.
+        const std::string lone =
+            "node 1 OnStart\nnode 2 SetVar t\nnode 3 Format x\"y\nnode 4 SetVar u\nnode 5 Const ab\"c\n"
+            "data 2 0 3 0\ndata 4 0 5 0\nexec 1 0 2\nexec 2 0 4\nentry OnStart 1\n";
+        CHECK(RunVar(lone, "t").s == "x\"y");                     // was x"y" (a quote added at the end)
+        CHECK(RunVar(lone, "u").s == "ab\"c");
+        VsEditGraph lg; lg.fromText(lone);
+        CHECK(lg.find(3) && lg.find(3)->arg == "x\"y");
+        CHECK(lg.find(5) && lg.find(5)->arg == "ab\"c");
+        std::vector<std::string> t = vs::TokenizeLine("node 3 Format x\"y");
+        CHECK(t.size() == 4 && t[3] == "x\"y");
+    }
+
+    // ---- Loaded layout values are checked and clamped like saved ones ----------
+    {
+        VsEditGraph g;
+        g.fromText("node 1 Print\nnode 2 Print\nnode 3 Print\n"
+                   "pos 1 1e40 nan\npos 2 -1e30 7\npos 3 inf 12.5\n"
+                   "comment 1e30 nan 3e9 -inf 0 \"c\"\n");
+        auto ok = [](float v) { return std::isfinite(v) && std::fabs(v) <= 1.0e9f; };
+        for (const auto& n : g.nodes) CHECK(ok(n.x) && ok(n.y));
+        CHECK(g.find(1) && g.find(1)->x == 1.0e9f && g.find(1)->y == 0.0f);
+        CHECK(g.find(2) && g.find(2)->x == -1.0e9f && g.find(2)->y == 7.0f);
+        CHECK(g.find(3) && g.find(3)->x == 1.0e9f && g.find(3)->y == 12.5f);
+        CHECK(g.comments.size() == 1);
+        if (!g.comments.empty()) {
+            const VsComment& c = g.comments[0];
+            CHECK(ok(c.x) && ok(c.y) && ok(c.w) && ok(c.h));
+        }
+        VsEditGraph junk; junk.fromText("node 1 Print\npos 1 abc\n");   // unreadable: stays where it was
+        CHECK(junk.find(1) && junk.find(1)->x == 0.0f && junk.find(1)->y == 0.0f);
+    }
+
+    // ---- A node skipped on load takes its wires with it ----------------------------
+    {
+        const std::string text =
+            "node 1 OnStart\nnode 2147483647 Print\nnode -4 Print\nnode 3 Print\n"
+            "exec 1 0 2147483647\nexec 1 0 -4\nexec 1 0 3\ndata 3 0 2147483647 0\ndata 3 0 -4 0\n"
+            "exec 1 0\ndata 3\nentry OnStart 1\n";
+        VsEditGraph g; g.fromText(text);
+        CHECK(g.execLinks.size() == 1 && g.dataLinks.empty());
+        for (const auto& l : g.execLinks) CHECK(g.find(l.from) && g.find(l.to));
+        std::string err;
+        CHECK(vs::NodeGraph::Parse(g.toText(), &err) != nullptr);   // what it saves loads again
+        if (!err.empty()) std::printf("  resave: %s\n", err.c_str());
     }
 
     Log::sink = sink;

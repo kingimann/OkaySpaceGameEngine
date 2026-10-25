@@ -719,6 +719,11 @@ add_executable(test_anim_sm_layers test_anim_sm_layers.cpp)
 target_link_libraries(test_anim_sm_layers PRIVATE okay::engine)
 add_test(NAME anim_sm_layers COMMAND test_anim_sm_layers)
 
+# Robustness: AnimStateMachine layers survive `states` reallocating
+add_executable(test_anim_sm_realloc test_anim_sm_realloc.cpp)
+target_link_libraries(test_anim_sm_realloc PRIVATE okay::engine)
+add_test(NAME anim_sm_realloc COMMAND test_anim_sm_realloc)
+
 add_executable(test_foot_planting test_foot_planting.cpp)
 target_link_libraries(test_foot_planting PRIVATE okay::engine)
 add_test(NAME foot_planting COMMAND test_foot_planting)
@@ -875,8 +880,3 @@ add_test(NAME locomotion COMMAND test_locomotion)
 add_executable(test_qa_pr250 test_qa_pr250.cpp)
 target_link_libraries(test_qa_pr250 PRIVATE okay::engine)
 add_test(NAME qa_pr250 COMMAND test_qa_pr250)
-
-# Robustness: AnimStateMachine layers survive `states` reallocating
-add_executable(test_anim_sm_realloc test_anim_sm_realloc.cpp)
-target_link_libraries(test_anim_sm_realloc PRIVATE okay::engine)
-add_test(NAME anim_sm_realloc COMMAND test_anim_sm_realloc)

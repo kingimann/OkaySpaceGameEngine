@@ -39,6 +39,9 @@ namespace {
 
 enum class Flow { Normal, Break, Continue, Return };
 
+// Thrown when a ?. finds null; the chain's NullCond node turns it into null.
+struct NullSkip {};
+
 float AsF(const Value& v) {
     if (auto* f = std::get_if<float>(&v)) return *f;
     if (auto* i = std::get_if<std::int32_t>(&v)) return (float)*i;
@@ -222,11 +225,14 @@ private:
         return v;
     }
 
-    Value Receiver(const Expr& obj) {
+    Value Receiver(const Expr& obj, bool nullCond = false) {
         Value v = Eval(obj);
+        if (nullCond && IsNull(v)) throw NullSkip{};
         if (std::holds_alternative<std::monostate>(v)) throw RuntimeError("'" + Describe(obj) + "' is null here", obj.loc);
         return v;
     }
+    /// null, or a reference to a destroyed object.
+    static bool IsNull(const Value& v) { return Equal(v, Value{}); }
     static std::string Describe(const Expr& e) {
         if (e.kind == EK::Name || e.kind == EK::Member || e.kind == EK::Call) return e.name;
         return "this value";
@@ -289,6 +295,8 @@ private:
             }
             case EK::Conditional: return AsB(Eval(*e.third)) ? Eval(*e.lhs) : Eval(*e.rhs);
             case EK::Index: { Slot sl = IndexSlot(e); return sl.arr->items[sl.i]; }
+            case EK::NullCond:
+                try { return Eval(*e.lhs); } catch (const NullSkip&) { return Value{}; }
             case EK::NewArray: case EK::ArrayLit: return MakeArray(e);
             case EK::Interp: {
                 std::string s;
@@ -317,7 +325,7 @@ private:
         switch (e.bind) {
             case Bind::EnumValue: return Value{e.ival};
             case Bind::ArrayLength: {
-                Value a = Receiver(*e.object);
+                Value a = Receiver(*e.object, e.nullCond);
                 return Value{(std::int32_t)std::get<ArrayRef>(a)->items.size()};
             }
             case Bind::Local: return (*locals_)[(std::size_t)e.slot];
@@ -331,7 +339,7 @@ private:
                 return Value{e.member == 0 ? v.x : e.member == 1 ? v.y : v.z};
             }
             case Bind::ApiProp: {
-                Value self = Receiver(*e.object);
+                Value self = Receiver(*e.object, e.nullCond);
                 ctx_.loc = e.loc;
                 return api_.types[(std::size_t)e.slot].props[(std::size_t)e.member].get(self, ctx_);
             }
@@ -432,6 +440,10 @@ private:
     }
 
     Value Binary(const Expr& e) {
+        if (e.op == T::QuestionQuestion) {
+            Value a = Eval(*e.lhs);
+            return IsNull(a) ? Eval(*e.rhs) : a;
+        }
         if (e.op == T::AndAnd) return Value{AsB(Eval(*e.lhs)) && AsB(Eval(*e.rhs))};
         if (e.op == T::OrOr) return Value{AsB(Eval(*e.lhs)) || AsB(Eval(*e.rhs))};
         Value a = Eval(*e.lhs), b = Eval(*e.rhs);
@@ -452,6 +464,18 @@ private:
     }
 
     Value Assign(const Expr& e) {
+        if (e.op == T::QuestionQuestionEq) {   // the value is only worked out when the target is null
+            if (e.lhs->kind == EK::Index) {
+                Slot sl = IndexSlot(*e.lhs);
+                if (!IsNull(sl.arr->items[sl.i])) return sl.arr->items[sl.i];
+                return sl.arr->items[sl.i] = Eval(*e.rhs);
+            }
+            Value cur = Load(*e.lhs);
+            if (!IsNull(cur)) return cur;
+            Value v = Eval(*e.rhs);
+            Store(*e.lhs, v);
+            return v;
+        }
         if (e.lhs->kind == EK::Index) {   // a[i] = v, a[i] += v: the array and index first, once
             Slot sl = IndexSlot(*e.lhs);
             Value rhs = Eval(*e.rhs);
@@ -489,7 +513,7 @@ private:
             case Bind::ApiStaticMethod: case Bind::ApiMethod: {
                 const ApiType& t = api_.types[(std::size_t)e.slot];
                 const ApiMethod& m = e.bind == Bind::ApiMethod ? t.methods[(std::size_t)e.member] : t.staticMethods[(std::size_t)e.member];
-                Value self = e.bind == Bind::ApiMethod ? Receiver(*e.object) : Value{};
+                Value self = e.bind == Bind::ApiMethod ? Receiver(*e.object, e.nullCond) : Value{};
                 std::vector<Value> args;
                 args.reserve(e.args.size());
                 for (auto& a : e.args) args.push_back(Eval(*a));
@@ -498,7 +522,7 @@ private:
             }
             case Bind::GetComponent: {
                 GameObject* g = nullptr;
-                if (e.object) g = Resolve(AsRef(Receiver(*e.object)), e.object->loc);
+                if (e.object) g = Resolve(AsRef(Receiver(*e.object, e.nullCond)), e.object->loc);
                 else g = ctx_.self;
                 if (!g) throw RuntimeError("This script isn't attached to an object", e.loc);
                 const ApiType& t = api_.types[(std::size_t)e.slot];

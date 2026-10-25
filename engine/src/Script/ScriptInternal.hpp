@@ -144,6 +144,7 @@ enum class T : std::uint8_t {
     LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Dot, Semicolon, Colon, Question,
     Plus, Minus, Star, Slash, Percent, Not, Lt, Gt, Le, Ge, EqEq, NotEq, AndAnd, OrOr,
     Assign, PlusEq, MinusEq, StarEq, SlashEq, PercentEq, PlusPlus, MinusMinus,
+    QuestionDot, QuestionQuestion, QuestionQuestionEq,
     // keywords
     KwClass, KwPublic, KwPrivate, KwVoid, KwInt, KwFloat, KwBool, KwString, KwVar,
     KwIf, KwElse, KwWhile, KwFor, KwReturn, KwBreak, KwContinue, KwTrue, KwFalse, KwNull,
@@ -179,6 +180,7 @@ enum class EK : std::uint8_t {
     NewArray,      ///< new T[n] / new T[] { ... }: typeArg = the array type, lhs = n (may be null), args = items
     Interp,        ///< $"...": args = the parts (text literals and { } values), joined as text
     Format,        ///< {value:F2} in $"...": lhs = the number, sval = "F2", ival = decimals (checked)
+    NullCond,      ///< a chain with ?. in it: lhs = the chain, null if a ?. found null; name = what was null
     ArrayLit,      ///< { a, b } after `T[] x =`: the type comes from the declaration
 };
 
@@ -217,6 +219,7 @@ struct Expr {
     bool toFloat = false;           ///< convert this (int) result to float where it's used
     int enumStr = -1;               ///< an enum (Program::enums index) used as text: print the member's name
     bool hasInit = false;           ///< NewArray: has a { ... } list
+    bool nullCond = false;          ///< Member/Call reached with ?. (its receiver may be null)
 };
 
 enum class SK : std::uint8_t { Block, Expr, Local, If, While, For, Return, Break, Continue, Switch, Foreach };

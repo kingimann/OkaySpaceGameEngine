@@ -586,6 +586,79 @@ static void Interpolation() {
     }
 }
 
+static void NullOperators() {
+    {   // ?? picks a fallback, ??= fills an empty reference once, ?. skips the rest when the object is gone
+        Scene scene("null-ops");
+        GameObject* player = scene.CreateGameObject("Player");
+        GameObject* crate = scene.CreateGameObject("Crate");
+        auto* sc = player->AddComponent<ScriptComponent>(NextScriptVM::kLanguage);
+        std::string err;
+        CHECK(sc->LoadSource(Wrap(
+            "    public string picked, after, path;\n"
+            "    public int looks, moved, len;\n"
+            "    GameObject target;\n"
+            "    GameObject Look() { looks++; return GameObject.Find(\"Crate\"); }\n"
+            "    void Start() {\n"
+            "        picked = (GameObject.Find(\"Boss\") ?? GameObject.Find(\"Nobody\") ?? GameObject.Find(\"Crate\")).name;\n"
+            "        int[] none = null;\n"
+            "        len = (none ?? new int[] { 1, 2, 3 }).Length;\n"
+            "    }\n"
+            "    void Update() {\n"
+            "        target ??= Look();\n"
+            "        target?.transform.Translate(1, 0, 0);\n"
+            "        Transform t = target?.transform;\n"
+            "        if (t != null) moved++;\n"
+            "        after = (target ?? gameObject).name;\n"
+            "    }\n"), &err));
+        if (!err.empty()) std::printf("    %s\n", err.c_str());
+        scene.Start();
+        for (int i = 0; i < 3; ++i) scene.Update(kDt);
+        CHECK(sc->VM()->GetGlobal("picked").AsString() == "Crate");
+        CHECK_NEAR(sc->VM()->GetGlobal("len").AsFloat(), 3.0f, 1e-6f);
+        CHECK_NEAR(sc->VM()->GetGlobal("looks").AsFloat(), 1.0f, 1e-6f);     // ??= only looked once
+        CHECK_NEAR(crate->transform->Position().x, 3.0f, 1e-5f);
+        CHECK_NEAR(sc->VM()->GetGlobal("moved").AsFloat(), 3.0f, 1e-6f);
+        CHECK(sc->VM()->GetGlobal("after").AsString() == "Crate");
+        // A destroyed object counts as null: ?. skips, ?? falls back, ??= looks again.
+        // (Destroy takes effect at the end of the frame, so the crate still moves once.)
+        scene.Destroy(crate);
+        scene.Update(kDt);
+        scene.Update(kDt);
+        scene.Update(kDt);
+        CHECK(sc->VM()->GetGlobal("after").AsString() == "Player");
+        CHECK_NEAR(sc->VM()->GetGlobal("moved").AsFloat(), 4.0f, 1e-6f);
+        CHECK_NEAR(sc->VM()->GetGlobal("looks").AsFloat(), 3.0f, 1e-6f);
+    }
+    {   // a ternary with a number like .5f still parses
+        CHECK(Clean(Wrap("    void Start() { bool b = true; float f = b ? .5f : 1f; Debug.Log(f); }")));
+    }
+    {   // mistakes, with line and column
+        auto d = Diags(Wrap(
+            "    void Start() {\n"                                         // 2
+            "        int n = 3;\n"                                         // 3
+            "        int m = n ?? 4;\n"                                    // 4
+            "        GameObject g = GameObject.Find(\"A\");\n"           // 5
+            "        Vector3 p = g?.transform.position;\n"                 // 6
+            "        n ??= 2;\n"                                           // 7
+            "        GameObject h = g ?? transform;\n"                     // 8
+            "        int[] xs = null;\n"                                   // 9
+            "        int k = xs?.Length;\n"                                // 10
+            "        Debug.Log(m + p + h + k);\n"                          // 11
+            "    }\n"));
+        CHECK(Has(d, 0, "?? only works on objects and arrays, which can be null: an int never is", 4, 19));
+        CHECK(Has(d, 0, "?. gives null when 'g' is null, but a Vector3 can't be null: check g != null first", 6, 22));
+        CHECK(Has(d, 0, "??= only works on objects and arrays, which can be null: an int never is", 7, 11));
+        CHECK(Has(d, 0, "is Transform but needs GameObject", 8, 29));
+        CHECK(Has(d, 0, "?. gives null when 'xs' is null, but an int can't be null: check xs != null first", 10, 19));
+        auto d2 = Diags(Wrap("    void Start() { Vector3 v = Vector3.zero; float x = v?.x; int[] a = null; a?.Length++; Debug.Log(x); }"));
+        CHECK(Has(d2, 0, "?. only works on objects and arrays, which can be null: use . here", 2, 59));
+        CHECK(Has(d2, 0, "Something reached with ?. can't be changed", 2, 87));
+        std::string chain = "null";
+        for (int i = 0; i < 100000; ++i) chain += " ?? null";
+        CHECK(Has(Diags(Wrap("    void Start() { GameObject g = " + chain + "; }")), 0, "nested too deeply"));
+    }
+}
+
 static void Parity() {
     // The same C# snippet gives the same results on the old OkayScript runtime.
     const std::string src =
@@ -630,7 +703,8 @@ static void Fuzz() {
     const std::string src =
         "enum E { A, B = 2 }\nclass T : Behaviour {\n int[] a = { 1, 2 };\n void Start() {\n"
         "  switch (E.A) { case E.A: foreach (var x in a) { a[x % 2] += 1; } break; default: break; }\n"
-        "  string s = $\"{a[0]:F1} {{ {$\"{E.B}\"}\";\n }\n}\n";
+        "  string s = $\"{a[0]:F1} {{ {$\"{E.B}\"}\";\n"
+        "  GameObject g = GameObject.Find(s) ?? gameObject; g?.transform.Translate(1, 0, 0); a ??= new int[1];\n }\n}\n";
     int n = 0;
     for (std::size_t i = 0; i <= src.size(); ++i) { Diags(src.substr(0, i)); ++n; }
     for (std::size_t i = 0; i < src.size(); ++i) { std::string s = src; s.erase(i, 1); Diags(s); }
@@ -658,6 +732,7 @@ int main() {
     Foreach();
     Statics();
     Interpolation();
+    NullOperators();
     Parity();
     BackCompat();
     Fuzz();

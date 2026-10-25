@@ -814,6 +814,27 @@ timerText = $"Time {elapsed:F1}s";          // "Time 12.5s"
 label = $"{(won ? "You win" : "Try again")}: {score} points";
 ```
 
+### ?? and ?.
+
+For objects and arrays, which can be null. A destroyed object counts as null
+here, just as it does in `== null`.
+
+- `a ?? b` is `a`, or `b` when `a` is null: a fallback target.
+- `x ??= value` sets `x` only while it's null, and only then works out `value`:
+  look something up once and keep it.
+- `a?.b` gives null (and skips the rest of the line's chain) when `a` is null.
+  The result has to be something that can be null, or a call whose result isn't
+  used; for a number or vector, check `a != null` first.
+
+```csharp
+GameObject target;
+void Update() {
+    target ??= GameObject.FindWithTag("Player");             // found once, again if it's destroyed
+    target?.transform.LookAt(transform.position);           // nothing happens while there's none
+    GameObject focus = target ?? gameObject;
+}
+```
+
 ### foreach
 
 Loops over an array's items, with `var` or a type. The loop variable can't be

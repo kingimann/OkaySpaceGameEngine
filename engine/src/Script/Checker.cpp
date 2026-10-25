@@ -448,7 +448,7 @@ private:
             case SK::Expr: {
                 CheckExpr(*s.expr);
                 EK k = s.expr->kind;
-                if (k != EK::Assign && k != EK::IncDec && k != EK::Call)
+                if (k != EK::Assign && k != EK::IncDec && k != EK::Call && !(k == EK::NullCond && s.expr->lhs->kind == EK::Call))
                     Error(s.expr->loc, "This line does nothing: it works out a value but doesn't use it");
                 return true;
             }
@@ -640,6 +640,17 @@ private:
             case EK::Cast: CheckCast(e); return;
             case EK::Conditional: CheckConditional(e); return;
             case EK::Index: CheckIndex(e); return;
+            case EK::NullCond: {
+                CheckExpr(*e.lhs);
+                const Type t = e.lhs->type;
+                if (t.kind != TK::Error && t.kind != TK::Void && !CanBeNull(t)) {
+                    Error(e.loc, "?. gives null when '" + e.name + "' is null, but " + Article(TypeName(t)) +
+                                 " can't be null: check " + e.name + " != null first");
+                    return;
+                }
+                e.type = t;
+                return;
+            }
             case EK::Interp:
                 for (auto& a : e.args) {
                     CheckExpr(*a);
@@ -785,7 +796,7 @@ private:
     void CheckMember(Expr& e) {
         int typeId = -1;
         int r = Receiver(*e.object, typeId);
-        if (r < 0) return;
+        if (r < 0 || BadNullCond(e, r)) return;
         if (r == 4) {
             int fi = FieldIndex(e.name);
             const FieldDecl* f = fi >= 0 ? &cls_->fields[(std::size_t)fi] : nullptr;
@@ -949,7 +960,7 @@ private:
         int typeId = -1;
         int r = Receiver(*e.object, typeId);
         for (auto& a : e.args) CheckExpr(*a);
-        if (r < 0) return;
+        if (r < 0 || BadNullCond(e, r)) return;
         if (r == 3) { Error(e.loc, prog_.enums[(std::size_t)typeId].name + " has no method '" + e.name + "'"); return; }
         if (r == 1) {
             const ApiType& t = api_.types[(std::size_t)typeId];
@@ -1036,11 +1047,26 @@ private:
         e.type = t;
     }
 
+    static bool CanBeNull(const Type& t) { return t.kind == TK::Object || t.kind == TK::Array; }
+    static std::string Article(const std::string& n) { return (std::string("aeiouAEIOU").find(n[0]) != std::string::npos ? "an " : "a ") + n; }
+    // ?. only on something that might be null: an object or an array.
+    bool BadNullCond(Expr& e, int receiverKind) {
+        if (!e.nullCond || (receiverKind == 0 && CanBeNull(e.object->type))) return false;
+        Error(e.loc, "?. only works on objects and arrays, which can be null: use . here");
+        return true;
+    }
+
     void CheckBinary(Expr& e) {
         CheckExpr(*e.lhs);
         CheckExpr(*e.rhs);
         const Type a = e.lhs->type, b = e.rhs->type;
         if (a.kind == TK::Error || b.kind == TK::Error) return;
+        if (e.op == T::QuestionQuestion) {   // a ?? b: a, or b when a is null (or a destroyed object)
+            if (!CanBeNull(a)) { Error(e.loc, "?? only works on objects and arrays, which can be null: " + Article(TypeName(a)) + " never is"); return; }
+            Expect(*e.rhs, a, "The fallback");
+            e.type = a;
+            return;
+        }
         if (a.kind == TK::Void || b.kind == TK::Void) { Error(e.loc, "A method that returns nothing can't be used in a calculation"); return; }
         auto numeric = [&]() {
             if (a.kind == TK::Float || b.kind == TK::Float) {
@@ -1165,6 +1191,11 @@ private:
         const Type lt = e.lhs->type;
         e.type = lt;
         if (e.op == T::Assign) { Expect(*e.rhs, lt, "The value"); return; }
+        if (e.op == T::QuestionQuestionEq) {
+            if (!CanBeNull(lt)) { Error(e.loc, "??= only works on objects and arrays, which can be null: " + Article(TypeName(lt)) + " never is"); return; }
+            Expect(*e.rhs, lt, "The value");
+            return;
+        }
         const Type rt = e.rhs->type;
         if (rt.kind == TK::Error) return;
         bool ok = false;

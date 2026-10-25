@@ -52,6 +52,9 @@ public:
     bool SendTo(const Endpoint& to, const void* data, std::size_t size);
     /// Receive one datagram. Returns bytes read, 0 if none pending, -1 on error.
     int  RecvFrom(void* buffer, std::size_t capacity, Endpoint& from);
+    /// Block until a datagram is waiting or `timeoutMs` passes. True if one is
+    /// ready to read (servers use it instead of sleeping between polls).
+    bool WaitReadable(int timeoutMs);
 
     /// Resolve "host:port" / "host" into an Endpoint (host may be a dotted IP).
     static bool Resolve(const std::string& host, std::uint16_t port, Endpoint& out);

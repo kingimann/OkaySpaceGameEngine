@@ -885,6 +885,67 @@ inline bool VsInputLinkedOrSet(const VsEditGraph& g, int nodeId, int pin) {
     auto it = n->pinDefault.find(pin);
     return it != n->pinDefault.end() && !it->second.empty();
 }
+// ---- Literal / name helpers for the generated OkayScript ----------------------
+// A string literal: backslashes, quotes and line breaks escaped (whatever was typed).
+inline std::string VsStrLit(const std::string& s) {
+    std::string o = "\"";
+    for (char c : s) {
+        if (c == '\\' || c == '"') { o += '\\'; o += c; }
+        else if (c == '\n') o += "\\n";
+        else if (c == '\t') o += "\\t";
+        else if (c == '\r') {}
+        else o += c;
+    }
+    return o + "\"";
+}
+inline bool VsIsNumber(const std::string& v) { return VsIsNumberOrBool(v) && v != "true" && v != "false"; }
+// A number field (seconds, counts, ports): the text if it's a number, else `def`
+// (the node is also listed as NOT TRANSLATED, see VsBadField).
+inline std::string VsNum(const std::string& v, const char* def) { return VsIsNumber(v) ? v : std::string(def); }
+// A variable name as an identifier: other characters become '_', a leading
+// digit or a keyword gets a '_' in front ("my var" -> my_var, "if" -> _if).
+inline std::string VsIdent(const std::string& v) {
+    static const std::set<std::string> kWords = {
+        "if", "else", "while", "for", "foreach", "in", "do", "return", "break", "continue", "var", "let", "const",
+        "func", "function", "fn", "void", "int", "float", "double", "string", "bool", "true", "false", "null",
+        "new", "class", "struct", "this", "self", "and", "or", "not", "switch", "case", "default", "public",
+        "private", "static", "static", "using", "import", "export", "try", "catch", "throw", "yield", "is", "as"};
+    std::string id;
+    for (char c : v) id += (std::isalnum((unsigned char)c) || c == '_') ? c : '_';
+    if (id.empty()) id = "x";
+    if (std::isdigit((unsigned char)id[0]) || kWords.count(id)) id = "_" + id;
+    return id;
+}
+// A Const node's value: numbers / bools as they are, anything else as text.
+inline std::string VsConstExpr(const std::string& a) {
+    if (a.empty()) return "0";
+    if (VsIsNumberOrBool(a)) return a;
+    if (a.size() >= 2 && a.front() == '"' && a.back() == '"') return VsStrLit(a.substr(1, a.size() - 2));
+    return VsStrLit(a);
+}
+// Text going into a // comment: one line.
+inline std::string VsCommentText(std::string v) {
+    for (char& c : v) if (c == '\n' || c == '\r') c = ' ';
+    return v;
+}
+inline bool VsIsCompareOp(const std::string& op) {
+    return op == ">" || op == "<" || op == ">=" || op == "<=" || op == "==" || op == "!=";
+}
+// A field the generated code can't use as typed (a number field that isn't a
+// number, an unknown comparison): the node is listed as NOT TRANSLATED.
+inline bool VsBadField(const VsEditNode& n) {
+    static const std::set<std::string> kNumber = {"OnTimer", "Timer", "Wait", "Delay", "Repeat", "DoN", "Chance",
+                                                  "ToFixed", "MouseButton", "MouseButtonDown", "NetHost", "Cooldown", "EveryN"};
+    if (n.arg.empty()) return false;
+    if (kNumber.count(n.type)) return !VsIsNumber(n.arg);
+    if (n.type == "Compare") return !VsIsCompareOp(n.arg);
+    if (n.type == "NetJoin") {
+        const std::size_t cut = n.arg.find_first_of(" :");
+        return cut != std::string::npos && !VsIsNumber(n.arg.substr(cut + 1));
+    }
+    return false;
+}
+
 inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
     const VsEditNode* n = VsFind(g, nodeId);
     if (!n) return "0";
@@ -893,10 +954,10 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
     auto B = [&]{ return VsInput(g, nodeId, 1); };
     auto C = [&]{ return VsInput(g, nodeId, 2); };
     auto lit = [&](const char* d){ return n->arg.empty() ? std::string(d) : n->arg; };
-    auto q   = [&](const std::string& s){ return "\"" + s + "\""; };
+    auto q   = [&](const std::string& s){ return VsStrLit(s); };
 
-    if (t == "Const")      return n->arg.empty() ? "0" : n->arg;
-    if (t == "GetVar")     return lit("x");
+    if (t == "Const")      return VsConstExpr(n->arg);
+    if (t == "GetVar")     return VsIdent(lit("x"));
     if (t == "Add")        return "(" + A() + " + " + B() + ")";
     if (t == "Sub")        return "(" + A() + " - " + B() + ")";
     if (t == "Mul")        return "(" + A() + " * " + B() + ")";
@@ -917,7 +978,7 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
     if (t == "Lerp")       return "lerp(" + A() + ", " + B() + ", " + C() + ")";
     if (t == "Random")     return "random()";
     if (t == "RandomRange")return "random_range(" + A() + ", " + B() + ")";
-    if (t == "Compare")    return "(" + A() + " " + lit(">") + " " + B() + ")";
+    if (t == "Compare")    return "(" + A() + " " + (VsIsCompareOp(lit(">")) ? lit(">") : std::string(">")) + " " + B() + ")";
     if (t == "Equals")     return "(" + A() + " == " + B() + ")";
     if (t == "NotEquals")  return "(" + A() + " != " + B() + ")";
     if (t == "And")        return "(" + A() + " && " + B() + ")";
@@ -926,7 +987,7 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
     if (t == "Not")        return "(!" + A() + ")";
     if (t == "Approx")     return "(abs(" + A() + " - " + B() + ") < 0.0001)";
     if (t == "Between")    return "(" + A() + " >= " + B() + " && " + A() + " <= " + C() + ")";
-    if (t == "Chance")     return "(random() < " + lit("0.5") + ")";
+    if (t == "Chance")     return "(random() < " + VsNum(lit("0.5"), "0.5") + ")";
     if (t == "HasVar")     return "has_var(" + q(lit("x")) + ")";
     if (t == "Select")     return "(" + A() + " ? " + B() + " : " + C() + ")";
     if (t == "Concat")     return "(str(" + A() + ") + str(" + B() + "))";
@@ -974,7 +1035,7 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
     if (t == "Vec3Dot")    return "dot(" + A() + ", " + B() + ")";
     if (t == "Vec3Distance") return "distance(" + A() + ", " + B() + ")";
     if (t == "ToString")   return "str(" + A() + ")";
-    if (t == "ToFixed")    return "to_fixed(" + A() + ", " + lit("2") + ")";
+    if (t == "ToFixed")    return "to_fixed(" + A() + ", " + VsNum(lit("2"), "2") + ")";
     if (t == "TextLength") return "len(" + A() + ")";
     if (t == "Contains")   return "str_contains(" + A() + ", " + B() + ")";
     if (t == "Upper")      return "upper(" + A() + ")";
@@ -986,8 +1047,8 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
     if (t == "OtherName")      return "other";
     if (t == "AnimEventName")  return "anim_event";
     if (t == "OtherTag")       return "tag_of(other)";
-    if (t == "MouseButton")    return "mouse_held(" + lit("0") + ")";
-    if (t == "MouseButtonDown")return "mouse_down(" + lit("0") + ")";
+    if (t == "MouseButton")    return "mouse_held(" + VsNum(lit("0"), "0") + ")";
+    if (t == "MouseButtonDown")return "mouse_down(" + VsNum(lit("0"), "0") + ")";
     if (t == "AnimState")      return "anim_state()";
     // Third wave.
     const std::string id = std::to_string(nodeId);
@@ -1108,10 +1169,10 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     const std::string& t = n->type;
     auto in  = [&](int p, const char* d = "0"){ return VsInput(g, nodeId, p, d); };
     auto arg = [&](const char* d){ return n->arg.empty() ? std::string(d) : n->arg; };
-    auto q   = [&](const std::string& s){ return "\"" + s + "\""; };
+    auto q   = [&](const std::string& s){ return VsStrLit(s); };
 
-    if      (t=="SetVar")      out += ind + arg("x") + " = " + in(0) + "\n";
-    else if (t=="AddVar")      out += ind + arg("x") + " += " + in(0) + "\n";
+    if      (t=="SetVar")      out += ind + VsIdent(arg("x")) + " = " + in(0) + "\n";
+    else if (t=="AddVar")      out += ind + VsIdent(arg("x")) + " += " + in(0) + "\n";
     else if (t=="Print")       out += ind + "Debug.Log(" + in(0,"\"\"") + ")\n";
     else if (t=="LogWarn")     out += ind + "Debug.LogWarning(" + in(0,"\"\"") + ")\n";
     else if (t=="LogError")    out += ind + "Debug.LogError(" + in(0,"\"\"") + ")\n";
@@ -1152,7 +1213,7 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="AnimSetBool") out += ind + "anim_set_bool(" + q(arg("")) + ", " + in(0) + ")\n";
     else if (t=="IkLook")      out += ind + "ik_look(vec_x(" + in(0) + "), vec_y(" + in(0) + "), vec_z(" + in(0) + "), " + in(1, "1") + ")\n";
     else if (t=="IkHand")      out += ind + "ik_hand(" + q(arg("right")) + ", vec_x(" + in(0) + "), vec_y(" + in(0) + "), vec_z(" + in(0) + "), " + in(1, "1") + ")\n";
-    else if (t=="Cooldown")    out += ind + "// Cooldown (" + arg("1") + "s): gate the actions after this with a timer\n";
+    else if (t=="Cooldown")    out += ind + "// Cooldown (" + VsCommentText(arg("1")) + "s): gate the actions after this with a timer\n";
     else if (t=="ForLoop") {
         const std::string v = "_i" + std::to_string(nodeId);
         out += ind + "for (var " + v + " = " + in(0, "0") + "; " + v + " <= " + in(1, "9") + "; " + v + " += 1) {\n";
@@ -1162,7 +1223,7 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     }
     else if (t=="Repeat") {
         const std::string v = "_r" + std::to_string(nodeId);
-        out += ind + "for (var " + v + " = 0; " + v + " < " + arg("1") + "; " + v + " += 1) {\n";
+        out += ind + "for (var " + v + " = 0; " + v + " < " + VsNum(arg("1"), "1") + "; " + v + " += 1) {\n";
         int b = VsExecTarget(g, nodeId, 0); if (b >= 0) VsEmitChain(g, b, out, ind + "    ", visited);
         out += ind + "}\n";
     }
@@ -1190,7 +1251,7 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     }
     else if (t=="DoN") {
         const std::string v = "_don_" + std::to_string(nodeId);
-        out += ind + "if (" + v + " < " + arg("1") + ") {\n" + ind + "    " + v + " += 1\n";
+        out += ind + "if (" + v + " < " + VsNum(arg("1"), "1") + ") {\n" + ind + "    " + v + " += 1\n";
         int a = VsExecTarget(g, nodeId, 0); if (a >= 0) VsEmitChain(g, a, out, ind + "    ", visited);
         out += ind + "}\n";
     }
@@ -1206,7 +1267,7 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
         }
         out += ind + "}\n";
     }
-    else if (t=="Toggle")        out += ind + arg("x") + " = !" + arg("x") + "\n";
+    else if (t=="Toggle")        out += ind + VsIdent(arg("x")) + " = !" + VsIdent(arg("x")) + "\n";
     else if (t=="SetPositionVec"){ std::string p = in(0, "vec3(0, 0, 0)"); out += ind + "transform.localPosition = " + p + "\n"; }
     else if (t=="MoveBy")        out += ind + "transform.localPosition = transform.localPosition + " + in(0, "vec3(0, 0, 0)") + "\n";
     else if (t=="Rotate3")       out += ind + "rotate3(" + in(0)+", "+in(1)+", "+in(2)+")\n";
@@ -1215,12 +1276,12 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="PlayClip")      out += ind + "play_clip(" + q(arg("")) + ")\n";
     else if (t=="SetTimeScale")  out += ind + "set_timescale(" + in(0, "1") + ")\n";
     else if (t=="SetBlendShape") out += ind + "blend_shape(" + q(arg("")) + ", " + in(0, "1") + ")\n";
-    else if (t=="NetHost")       out += ind + "net_host(" + arg("45000") + ")\n";
+    else if (t=="NetHost")       out += ind + "net_host(" + VsNum(arg("45000"), "45000") + ")\n";
     else if (t=="NetJoin") {
         std::string h = arg("127.0.0.1"), port = "45000";
         size_t cut = h.find_first_of(" :");
         if (cut != std::string::npos) { port = h.substr(cut + 1); h = h.substr(0, cut); }
-        out += ind + "net_join(" + q(h) + ", " + port + ")\n";
+        out += ind + "net_join(" + q(h) + ", " + VsNum(port, "45000") + ")\n";
     }
     else if (t=="NetDisconnect") out += ind + "net_disconnect()\n";
     else if (t=="NetSend")       out += ind + "net_send(" + q(arg("")) + ", str(" + in(0, "\"\"") + "))\n";
@@ -1288,9 +1349,9 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
         int a = VsExecTarget(g, nodeId, 0); if (a >= 0) VsEmitChain(g, a, out, ind + "    ", visited);
         out += ind + "}\n";
     }
-    else if (t=="Timer") out += ind + "// Every (" + arg("1") + "s): wire actions to this node\n";
-    else if (t=="Wait")  out += ind + "// Wait (" + arg("1") + "s): use after(t, fn) for a delay\n";
-    else if (t=="Delay") out += ind + "// Delay (" + arg("1") + "s): put what follows in after(" + arg("1") + ", fn)\n";
+    else if (t=="Timer") out += ind + "// Every (" + VsCommentText(arg("1")) + "s): wire actions to this node\n";
+    else if (t=="Wait")  out += ind + "// Wait (" + VsCommentText(arg("1")) + "s): use after(t, fn) for a delay\n";
+    else if (t=="Delay") out += ind + "// Delay (" + VsCommentText(arg("1")) + "s): put what follows in after(" + VsCommentText(arg("1")) + ", fn)\n";
     else if (t=="Action" || t=="Actions") out += ind + "run_action(" + q(n->arg) + ")\n";
     else if (t=="Condition") {
         out += ind + "if (check_action(" + q(n->arg) + ")) {\n";
@@ -1344,7 +1405,7 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
                              (tp >= 0 && pinUsed(n.id, tp)) || (n.type == "Destroy" && pinUsed(n.id, 0));
             if (n.type == "Spawn")
                 for (const auto& l : g.dataLinks) if (l.producer == n.id) objectUse = true;
-            if (objectUse) untranslated.push_back(n.type + " #" + std::to_string(n.id));
+            if (objectUse || VsBadField(n)) untranslated.push_back(n.type + " #" + std::to_string(n.id));
         }
         if (!untranslated.empty()) {
             out += "    // NOT TRANSLATED - these nodes use object references, functions, engine-API nodes,\n"
@@ -1398,17 +1459,17 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
             open("void Update()");
             for (auto* n : upd) chain(n->id, "        ");
             for (auto* n : keys) {
-                out += "        if (key_pressed(\"" + (n->arg.empty() ? std::string("space") : n->arg) + "\")) {\n";
+                out += "        if (key_pressed(" + VsStrLit(n->arg.empty() ? std::string("space") : n->arg) + ")) {\n";
                 chain(n->id, "            ");
                 out += "        }\n";
             }
             for (auto* n : keysUp) {
-                out += "        if (key_up(\"" + (n->arg.empty() ? std::string("space") : n->arg) + "\")) {\n";
+                out += "        if (key_up(" + VsStrLit(n->arg.empty() ? std::string("space") : n->arg) + ")) {\n";
                 chain(n->id, "            ");
                 out += "        }\n";
             }
             for (auto* n : timers) {
-                const std::string v = "_timer_" + std::to_string(n->id), per = n->arg.empty() ? std::string("1") : n->arg;
+                const std::string v = "_timer_" + std::to_string(n->id), per = VsNum(n->arg, "1");
                 out += "        " + v + " += Time.deltaTime\n";
                 out += "        if (" + v + " >= " + per + ") {\n";
                 out += "            " + v + " -= " + per + "\n";
@@ -1471,7 +1532,7 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
             if (!opened) { open("void on_anim_event()"); opened = true; }
             if (n.arg.empty()) chain(n.id, "        ");
             else {
-                out += "        if (anim_event == \"" + n.arg + "\")\n        {\n";
+                out += "        if (anim_event == " + VsStrLit(n.arg) + ") {\n";   // brace on this line: the terminator pass would put a ; after a bare if (...)
                 chain(n.id, "            ");
                 out += "        }\n";
             }

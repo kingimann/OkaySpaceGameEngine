@@ -164,6 +164,56 @@ int main() {
         if (!err.empty()) std::printf("  resave: %s\n", err.c_str());
     }
 
+    // ---- Graph -> OkayScript: odd text in any node's field still gives code that loads ----
+    // For every node type, each awkward value in its text field (a path ending in a
+    // backslash, a quote, a space, a '#', a '%'): the generated script must load in
+    // the OkayScript VM, or say up front which nodes it couldn't translate.
+    {
+        const char* odd[] = {"C:\\saves\\", "a\"b", "a b", "#{0}", "{0}%"};
+        int bad = 0, total = 0;
+        for (const auto& d : Registry()) {
+            const std::string type = d.type;
+            for (const char* arg : odd) {
+                VsEditGraph g;
+                const bool isEvent = !d.execIn && type.rfind("On", 0) == 0;
+                const int start = isEvent ? -1 : g.add("OnStart", 0, 0);
+                const int n = g.add(type, 0, 0);
+                g.find(n)->arg = d.param ? arg : "";
+                if (d.param == 0 && !isEvent) continue;   // nothing typed into it: nothing to escape
+                for (std::size_t i = 0; i < d.dataIn.size(); ++i) g.find(n)->pinDefault[(int)i] = arg;
+                if (isEvent) {
+                    const int p = g.add("Print", 0, 0);
+                    g.find(p)->pinDefault[0] = arg;
+                    g.linkExec(n, 0, p);
+                } else if (d.execIn) {
+                    g.linkExec(start, 0, n);
+                } else if (!d.dataOut.empty()) {
+                    const int set = g.add("SetVar", 0, 0);
+                    g.find(set)->arg = arg;                 // a variable name that isn't an identifier
+                    g.linkExec(start, 0, set);
+                    g.linkData(set, 0, n, 0);
+                } else continue;
+                ++total;
+                const std::string code = CompileToOkayScript(g);
+                std::string err;
+                auto vm = CreateScriptVM("okayscript");
+                const bool loads = vm && vm->Load(code, &err);
+                if (!loads && code.find("NOT TRANSLATED") == std::string::npos) {
+                    ++bad;
+                    if (bad <= 15) std::printf("  %s [%s]: %s\n", type.c_str(), arg, err.c_str());
+                }
+            }
+        }
+        CHECK(total > 100);
+        CHECK(bad == 0);
+        // The starter graph (what a new visual script begins as) still compiles to loading code.
+        VsEditGraph starter; SeedStarterGraph(starter);
+        std::string err;
+        auto vm = CreateScriptVM("okayscript");
+        CHECK(vm && vm->Load(CompileToOkayScript(starter), &err));
+        if (bad) std::printf("  %d of %d generated scripts don't load\n", bad, total);
+    }
+
     Log::sink = sink;
     TEST_MAIN_RESULT();
 }

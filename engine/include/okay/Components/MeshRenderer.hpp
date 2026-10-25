@@ -40,9 +40,16 @@ public:
     float  rimPower    = 3.0f;
     Color  rimColor    = Color::White;
 
+    /// Real (shadow-mapped) shadows: does this mesh block light, and does it show
+    /// the shadows other meshes cast on it? Turn casting off for skyboxes, decals,
+    /// big terrain that never occludes anything; receiving off for emissive props.
+    bool   castShadows    = true;
+    bool   receiveShadows = true;
+
     /// Ground contact shadow: cast a flat "blob" shadow projected onto the horizontal
     /// plane y = groundShadowY along the light, so objects sit on the ground instead of
-    /// looking like they float. Cheap (one extra flat pass) and works in every renderer.
+    /// looking like they float. A cheap FALLBACK: it is drawn only while real shadow
+    /// maps are off (Shadows disabled, or the sun doesn't cast shadows).
     /// On by default; turn off for flying/UI/skybox meshes.
     bool   groundShadow         = true;
     float  groundShadowY        = 0.0f;    // world height of the ground plane

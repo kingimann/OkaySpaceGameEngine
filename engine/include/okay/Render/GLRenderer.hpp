@@ -70,7 +70,10 @@ public:
 private:
     bool EnsureProgram();
     bool EnsureDepthProgram();      // depth-only program for the shadow-map pass
-    bool EnsureShadow(int size);    // (re)create the depth-only shadow FBO + texture
+    // (Re)create a depth-only FBO + compare-mode depth texture of w x h.
+    bool EnsureDepthTarget(unsigned int& fbo, unsigned int& tex, int& curW, int& curH, int w, int h);
+    void DrawShadowCasters(const Scene& scene, const Mat4& lightVP, const GameObject* ignore,
+                           const struct LightSample* local);
     bool EnsureTargets(int w, int h, int samples);
     void DestroyTargets();   // free ONLY the size-dependent FBO/renderbuffers/resolve
     void DestroyShadow();
@@ -86,8 +89,10 @@ private:
     unsigned int m_vao = 0, m_vbo = 0, m_ibo = 0;
     unsigned int m_fbo = 0, m_colorRb = 0, m_depthRb = 0;     // MSAA target
     unsigned int m_resolveFbo = 0, m_resolveTex = 0;          // single-sample resolve
-    unsigned int m_shadowFbo = 0, m_shadowTex = 0;            // directional shadow map
-    int m_shadowSize = 0;
+    unsigned int m_shadowFbo = 0, m_shadowTex = 0;            // sun cascade atlas (cascades side by side)
+    int m_shadowW = 0, m_shadowH = 0;
+    unsigned int m_localFbo = 0, m_localTex = 0;              // spot/point light tile atlas (4x4)
+    int m_localW = 0, m_localH = 0;
     // Bloom post chain: bright-pass into a half-res ping-pong pair, separable
     // gaussian blur, then additive composite back onto the resolve target.
     unsigned int m_quadVbo = 0;                               // fullscreen quad (2 tris)
@@ -135,8 +140,11 @@ private:
         m_uMetallic = -1, m_uReflectivity = -1,
         m_uSkyTop = -1, m_uSkyHor = -1, m_uSkyBot = -1, m_uEnvOn = -1,
         m_uFogOn = -1, m_uFogColor = -1, m_uFogStart = -1, m_uFogEnd = -1, m_uTonemap = -1,
-        m_uShadowTex = -1, m_uLightVP = -1, m_uShadowOn = -1,
-        m_uShadowTexel = -1, m_uShadowSize = -1, m_uDepthMVP = -1,
+        m_uShadowTex = -1, m_uShadowOn = -1, m_uDepthMVP = -1,
+        m_uCasVP = -1, m_uCasSphere = -1, m_uCasTexel = -1, m_uCasCount = -1, m_uCasSize = -1,
+        m_uShadowSoft = -1, m_uSunIndex = -1, m_uSunStrength = -1, m_uSunBias = -1,
+        m_uLocalTex = -1, m_uLocalVP = -1, m_uLShadow = -1, m_uLocalSize = -1, m_uReceive = -1,
+        m_uAmbSky = -1, m_uAmbGround = -1,
         m_uSkin = -1, m_uBones = -1, m_udSkin = -1, m_udBones = -1, m_usdSkin = -1, m_usdBones = -1;
     std::vector<float> m_boneRows;          // GPU skinning: 3 rows per joint, scratch
     std::vector<float> m_verts;             // interleaved pos(3)+normal(3)+uv(2) scratch

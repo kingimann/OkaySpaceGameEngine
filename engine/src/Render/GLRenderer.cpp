@@ -2,6 +2,7 @@
 #include "okay/Render/Lighting.hpp"
 #include "okay/Render/Culling.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"   // GetCachedTexture: shares the texture cache
+#include "okay/Render/ShadowSetup.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/SkinnedMesh.hpp"    // skinned meshes: VB cache keyed on SkinnedMesh::version
 #include "okay/Components/Character.hpp"
@@ -248,31 +249,83 @@ const char* kFrag =
     "uniform sampler2D uAoTex; uniform float uHasAo; uniform float uAoStrength;\n"  // ambient-occlusion map
     "uniform float uMetallic; uniform float uReflectivity;\n"                  // PBR metalness + env reflection
     "uniform vec3 uSkyTop; uniform vec3 uSkyHor; uniform vec3 uSkyBot; uniform float uEnvOn;\n"  // sky for reflections
-    "uniform sampler2D uShadowTex; uniform mat4 uLightVP;\n"                                   // directional cast shadows
-    "uniform float uShadowOn; uniform float uShadowTexel; uniform float uShadowSize;\n"
+    // ---- Shadows ----
+    // Sun: up to 4 ortho cascades side by side in one depth atlas (count*S x S).
+    // Local: a 4x4 atlas of tiles for spot (1 tile) and point/area (6 cube-face
+    // tiles) lights. Both are sampler2DShadow, so every tap is a hardware 2x2
+    // bilinear depth compare; 12 rotated Poisson taps on top give soft edges.
+    "uniform sampler2DShadow uShadowTex; uniform float uShadowOn;\n"
+    "uniform mat4 uCasVP[4]; uniform vec4 uCasSphere[4]; uniform float uCasTexel[4];\n"
+    "uniform float uCasCount; uniform float uCasSize; uniform float uShadowSoft;\n"
+    "uniform float uSunIndex; uniform float uSunStrength; uniform float uSunBias;\n"
+    "uniform sampler2DShadow uLocalTex; uniform mat4 uLocalVP[16]; uniform vec4 uLShadow[16];\n"   // x=first tile (-1 none), y=strength, z=bias, w=texel at 1m
+    "uniform float uLocalSize; uniform float uReceive;\n"
+    "uniform vec3 uAmbSky; uniform vec3 uAmbGround;\n"                                          // ambient mode (up / down)
     "varying vec3 vN; varying vec3 vWorld; varying vec2 vUV; varying vec3 vCol; varying vec3 vTan;\n"
-    "float shadowFactor(vec3 wpos, vec3 n){\n"                                                 // 0=shadowed .. 1=lit (12-tap Poisson PCF)
-    "  vec3 wp = wpos + n * uShadowTexel * 2.0;\n"                                             // normal-offset bias (anti-acne)
-    "  vec4 sc = uLightVP * vec4(wp, 1.0);\n"
-    "  if (sc.w <= 0.0) return 1.0;\n"
-    "  vec3 p = sc.xyz / sc.w * 0.5 + 0.5;\n"
-    "  if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0 || p.z > 1.0) return 1.0;\n"       // outside the map = lit
-    "  float ndl = clamp(dot(n, uLightDir), 0.0, 1.0);\n"
-    "  float bias = 0.0008 + 0.0022 * (1.0 - ndl);\n"                                          // slope-scaled: grazing faces need more
-    "  float t = 1.8 / max(uShadowSize, 1.0); float s = 0.0;\n"                                // ~1.8-texel Poisson disk = soft edge
-    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2(-0.326,-0.406)*t).r) ? 1.0 : 0.0;\n"
-    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2(-0.840,-0.074)*t).r) ? 1.0 : 0.0;\n"
-    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2(-0.696, 0.457)*t).r) ? 1.0 : 0.0;\n"
-    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2(-0.203, 0.621)*t).r) ? 1.0 : 0.0;\n"
-    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2( 0.962,-0.195)*t).r) ? 1.0 : 0.0;\n"
-    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2( 0.473,-0.480)*t).r) ? 1.0 : 0.0;\n"
-    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2( 0.519, 0.767)*t).r) ? 1.0 : 0.0;\n"
-    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2( 0.185,-0.893)*t).r) ? 1.0 : 0.0;\n"
-    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2( 0.507, 0.064)*t).r) ? 1.0 : 0.0;\n"
-    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2( 0.896, 0.412)*t).r) ? 1.0 : 0.0;\n"
-    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2(-0.322,-0.933)*t).r) ? 1.0 : 0.0;\n"
-    "  s += (p.z - bias <= texture2D(uShadowTex, p.xy + vec2(-0.792,-0.598)*t).r) ? 1.0 : 0.0;\n"
+    "mat2 gRot;\n"                                                                              // per-pixel Poisson rotation
+    "float sunTap(vec2 uv, vec2 o, float z, float ci){\n"
+    "  float e = 1.0 / uCasSize;\n"                                                             // stay a texel inside the cascade tile
+    "  vec2 t = clamp(uv + gRot * o, vec2(e), vec2(1.0 - e));\n"
+    "  return shadow2D(uShadowTex, vec3((ci + t.x) / uCasCount, t.y, z)).r;\n"
+    "}\n"
+    "float sunCascade(int i, vec3 wp, vec3 n){\n"
+    "  float tx = uCasTexel[i];\n"
+    // World-space bias: push the receiver off its surface along the normal (more
+    // for a wider filter) and a little toward the sun. Same rule for every cascade.
+    "  vec3 p = wp + n * (tx * (1.0 + 0.6 * uShadowSoft) * uSunBias) + uLightDir * (tx * 0.75 * uSunBias);\n"
+    "  vec3 q = (uCasVP[i] * vec4(p, 1.0)).xyz * 0.5 + 0.5;\n"
+    "  if (q.z >= 1.0) return 1.0;\n"
+    "  float r = uShadowSoft / uCasSize; float ci = float(i); float s = 0.0;\n"
+    "  s += sunTap(q.xy, vec2(-0.326,-0.406)*r, q.z, ci); s += sunTap(q.xy, vec2(-0.840,-0.074)*r, q.z, ci);\n"
+    "  s += sunTap(q.xy, vec2(-0.696, 0.457)*r, q.z, ci); s += sunTap(q.xy, vec2(-0.203, 0.621)*r, q.z, ci);\n"
+    "  s += sunTap(q.xy, vec2( 0.962,-0.195)*r, q.z, ci); s += sunTap(q.xy, vec2( 0.473,-0.480)*r, q.z, ci);\n"
+    "  s += sunTap(q.xy, vec2( 0.519, 0.767)*r, q.z, ci); s += sunTap(q.xy, vec2( 0.185,-0.893)*r, q.z, ci);\n"
+    "  s += sunTap(q.xy, vec2( 0.507, 0.064)*r, q.z, ci); s += sunTap(q.xy, vec2( 0.896, 0.412)*r, q.z, ci);\n"
+    "  s += sunTap(q.xy, vec2(-0.322,-0.933)*r, q.z, ci); s += sunTap(q.xy, vec2(-0.792,-0.598)*r, q.z, ci);\n"
     "  return s / 12.0;\n"
+    "}\n"
+    "float shadowFactor(vec3 wp, vec3 n){\n"                                                    // sun: 0 = shadowed .. 1 = lit
+    "  int cnt = int(uCasCount + 0.5);\n"
+    "  for (int i = 0; i < 4; i++) { if (i >= cnt) break;\n"
+    "    float d = length(wp - uCasSphere[i].xyz); float R = uCasSphere[i].w;\n"
+    "    if (d >= R) continue;\n"                                                               // tightest cascade holding the point
+    "    float s = sunCascade(i, wp, n);\n"
+    "    float edge = R * 0.82;\n"                                                              // blend into the next cascade (no seam)
+    "    if (d > edge) { float f = (d - edge) / (R - edge);\n"
+    "      s = mix(s, (i + 1 < cnt) ? sunCascade(i + 1, wp, n) : 1.0, f); }\n"                // last one fades out at the distance
+    "    return 1.0 - uSunStrength * (1.0 - s);\n"
+    "  }\n"
+    "  return 1.0;\n"
+    "}\n"
+    "float localTap(vec2 org, vec2 uv, vec2 o, float z){\n"
+    "  float e = 1.0 / uLocalSize;\n"
+    "  vec2 t = clamp(uv + gRot * o, vec2(e), vec2(1.0 - e));\n"
+    "  return shadow2D(uLocalTex, vec3(org + t * 0.25, z)).r;\n"
+    "}\n"
+    "float localShadow(int li, vec3 wp, vec3 n, vec3 l, float dist){\n"                         // spot/point/area: 0 = shadowed .. 1 = lit
+    "  vec4 info = uLShadow[li];\n"
+    "  float tw = dist * info.w;\n"                                                             // world size of a shadow texel here
+    "  vec3 p = wp + n * (tw * (1.5 + 0.6 * uShadowSoft) * info.z) + l * (tw * info.z);\n"
+    "  float tile = info.x;\n"
+    "  if (uLType[li] < 1.5 || uLType[li] > 2.5) {\n"                                          // point / area: pick the cube face
+    "    vec3 v = p - uLPos[li]; vec3 a = abs(v);\n"
+    "    if (a.x >= a.y && a.x >= a.z) tile += (v.x > 0.0) ? 0.0 : 1.0;\n"
+    "    else if (a.y >= a.z) tile += (v.y > 0.0) ? 2.0 : 3.0;\n"
+    "    else tile += (v.z > 0.0) ? 4.0 : 5.0;\n"
+    "  }\n"
+    "  vec4 sc = uLocalVP[int(tile + 0.5)] * vec4(p, 1.0);\n"
+    "  if (sc.w <= 1e-5) return 1.0;\n"
+    "  vec3 q = sc.xyz / sc.w * 0.5 + 0.5;\n"
+    "  if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0 || q.z >= 1.0) return 1.0;\n"
+    "  vec2 org = vec2(mod(tile, 4.0), floor(tile / 4.0 + 0.01)) * 0.25;\n"
+    "  float r = uShadowSoft / uLocalSize; float s = 0.0;\n"
+    "  s += localTap(org, q.xy, vec2(-0.326,-0.406)*r, q.z); s += localTap(org, q.xy, vec2(-0.840,-0.074)*r, q.z);\n"
+    "  s += localTap(org, q.xy, vec2(-0.696, 0.457)*r, q.z); s += localTap(org, q.xy, vec2(-0.203, 0.621)*r, q.z);\n"
+    "  s += localTap(org, q.xy, vec2( 0.962,-0.195)*r, q.z); s += localTap(org, q.xy, vec2( 0.473,-0.480)*r, q.z);\n"
+    "  s += localTap(org, q.xy, vec2( 0.519, 0.767)*r, q.z); s += localTap(org, q.xy, vec2( 0.185,-0.893)*r, q.z);\n"
+    "  s += localTap(org, q.xy, vec2( 0.507, 0.064)*r, q.z); s += localTap(org, q.xy, vec2( 0.896, 0.412)*r, q.z);\n"
+    "  s += localTap(org, q.xy, vec2(-0.322,-0.933)*r, q.z); s += localTap(org, q.xy, vec2(-0.792,-0.598)*r, q.z);\n"
+    "  return 1.0 - info.y * (1.0 - s / 12.0);\n"
     "}\n"
     "void main(){\n"
     "  if (uShadowAlpha >= 0.0) { gl_FragColor = vec4(0.0, 0.0, 0.0, uShadowAlpha); return; }\n"
@@ -315,20 +368,24 @@ const char* kFrag =
     "    if (lin) uc = pow(max(uc, vec3(0.0)), vec3(1.0/2.2));\n"
     "    gl_FragColor = vec4(uc, uAlpha); return; }\n"
     "  bool toon = uShaderMode > 1.5 && uShaderMode < 2.5 && uToonBands > 0.5;\n"
-    "  vec3 amb = uAmbient * mix(0.55, 1.15, clamp(N.y * 0.5 + 0.5, 0.0, 1.0));\n"  // hemisphere ambient
-    "  vec3 lit = amb; float spec = 0.0;\n"
-    "  float sh = (uShadowOn > 0.5) ? shadowFactor(vWorld, N) : 1.0;\n"   // sun occlusion (real cast shadows)
+    "  vec3 amb = mix(uAmbGround, uAmbSky, clamp(N.y * 0.5 + 0.5, 0.0, 1.0));\n"  // scene Ambient Mode (flat / hemisphere / sky)
+    "  vec3 lit = amb; vec3 spec = vec3(0.0);\n"
+    "  { float a = 52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))) * 6.2831853;\n"
+    "    float ca = cos(a), sa = sin(a); gRot = mat2(ca, sa, -sa, ca); }\n"   // interleaved-gradient noise: rotate the Poisson disk per pixel
+    "  vec3 Ns = normalize(vN);\n"                                // geometric normal for shadow bias (not the bumped one)
+    "  bool recv = uReceive > 0.5;\n"                            // MeshRenderer::receiveShadows
+    "  float sh = (uShadowOn > 0.5 && recv) ? shadowFactor(vWorld, Ns) : 1.0;\n"   // sun occlusion (real cast shadows)
     "  if (uLightCount < 1) {\n"                                  // fallback: the global directional
     "    float ndl = max(dot(N, uLightDir), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
     "    lit += uLightColor * ndl * sh;\n"
     "    if (uSpecular > 0.0) { vec3 H = normalize(uLightDir + Vv);\n"
-    "      spec = pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular * sh; }\n"
+    "      spec = vec3(pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular * sh); }\n"
     "  } else {\n"
     "    for (int i = 0; i < 16; i++) { if (i >= uLightCount) break;\n"   // directional + point + spot
     "      vec3 ld; float at = 1.0;\n"
-    "      float wrap = 0.0;\n"
+    "      float wrap = 0.0; float d = 0.0;\n"
     "      if (uLType[i] < 0.5) { ld = normalize(-uLDir[i]); }\n"        // directional
-    "      else { vec3 toL = uLPos[i] - vWorld; float d = length(toL); ld = toL / max(d, 1e-4);\n"
+    "      else { vec3 toL = uLPos[i] - vWorld; d = length(toL); ld = toL / max(d, 1e-4);\n"
     "        float rng = max(uLRange[i], 1e-4);\n"
     "        if (uLFalloff[i] > 0.5) { float dr = d/rng; float win = max(1.0 - dr*dr*dr*dr, 0.0); win*=win;\n"  // physical inverse-square, windowed
     "          at = win / (1.0 + 8.0*d*d/(rng*rng)); }\n"
@@ -338,11 +395,14 @@ const char* kFrag =
     "          float dn = uLCosIn[i] - uLCosOut[i];\n"
     "          float sp = dn > 1e-4 ? clamp((cs - uLCosOut[i]) / dn, 0.0, 1.0) : (cs >= uLCosOut[i] ? 1.0 : 0.0);\n"
     "          at *= sp * sp; } }\n"
-    "      float lsh = (uLType[i] < 0.5) ? sh : 1.0;\n"            // cast shadows apply to the directional sun only
     "      float ndl = max((dot(N, ld) + wrap) / (1.0 + wrap), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
+    "      if (ndl * at <= 0.0) continue;\n"                      // no light reaches here: skip the shadow lookup
+    "      float lsh = 1.0;\n"
+    "      if (uLType[i] < 0.5) { if (abs(float(i) - uSunIndex) < 0.5) lsh = sh; }\n"   // only the main sun has cascades
+    "      else if (recv && uLShadow[i].x > -0.5) lsh = localShadow(i, vWorld, Ns, ld, d);\n"     // spot / point / area shadow tiles
     "      lit += uLCol[i] * ndl * at * lsh;\n"
-    "      if (uSpecular > 0.0) { vec3 H = normalize(ld + Vv);\n"
-    "        spec += pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular * at * lsh; }\n"
+    "      if (uSpecular > 0.0) { vec3 H = normalize(ld + Vv);\n"   // highlights take the light's colour + intensity
+    "        spec += uLCol[i] * (pow(max(dot(N,H),0.0), max(uShininess,1.0)) * uSpecular * at * lsh); }\n"
     "    }\n"
     "  }\n"
     "  if (uShaderMode > 7.5) lit += fz * fz * (lit) * 0.6;\n"     // Velvet: fuzzy grazing sheen
@@ -581,10 +641,29 @@ bool GLRenderer::EnsureProgram() {
     m_uFogStart = g.GetUniformLocation(m_prog, "uFogStart");
     m_uFogEnd = g.GetUniformLocation(m_prog, "uFogEnd");
     m_uShadowTex = g.GetUniformLocation(m_prog, "uShadowTex");
-    m_uLightVP = g.GetUniformLocation(m_prog, "uLightVP");
     m_uShadowOn = g.GetUniformLocation(m_prog, "uShadowOn");
-    m_uShadowTexel = g.GetUniformLocation(m_prog, "uShadowTexel");
-    m_uShadowSize = g.GetUniformLocation(m_prog, "uShadowSize");
+    m_uCasVP = g.GetUniformLocation(m_prog, "uCasVP");
+    m_uCasSphere = g.GetUniformLocation(m_prog, "uCasSphere");
+    m_uCasTexel = g.GetUniformLocation(m_prog, "uCasTexel");
+    m_uCasCount = g.GetUniformLocation(m_prog, "uCasCount");
+    m_uCasSize = g.GetUniformLocation(m_prog, "uCasSize");
+    m_uShadowSoft = g.GetUniformLocation(m_prog, "uShadowSoft");
+    m_uSunIndex = g.GetUniformLocation(m_prog, "uSunIndex");
+    m_uSunStrength = g.GetUniformLocation(m_prog, "uSunStrength");
+    m_uSunBias = g.GetUniformLocation(m_prog, "uSunBias");
+    m_uLocalTex = g.GetUniformLocation(m_prog, "uLocalTex");
+    m_uLocalVP = g.GetUniformLocation(m_prog, "uLocalVP");
+    m_uLShadow = g.GetUniformLocation(m_prog, "uLShadow");
+    m_uLocalSize = g.GetUniformLocation(m_prog, "uLocalSize");
+    m_uReceive = g.GetUniformLocation(m_prog, "uReceive");
+    m_uAmbSky = g.GetUniformLocation(m_prog, "uAmbSky");
+    m_uAmbGround = g.GetUniformLocation(m_prog, "uAmbGround");
+    // The two shadow samplers are sampler2DShadow: give them their own texture
+    // units up front so they never alias a sampler2D unit (a draw-time error).
+    g.UseProgram(m_prog);
+    g.Uniform1i(m_uShadowTex, 4);
+    g.Uniform1i(m_uLocalTex, 5);
+    g.UseProgram(0);
     g.GenBuffers(1, &m_vbo);
     // A core-profile context refuses to draw without a bound VAO (and some drivers
     // crash on the attempt). Create one when available; on a compatibility context
@@ -612,36 +691,45 @@ bool GLRenderer::EnsureDepthProgram() {
     return true;
 }
 
-// (Re)create the depth-only shadow framebuffer at `size` x `size`. A single
-// GL_DEPTH_COMPONENT depth texture, sampled by the main shader for cast shadows.
-bool GLRenderer::EnsureShadow(int size) {
-    if (m_shadowFbo && m_shadowSize == size) return true;
-    DestroyShadow();
+// (Re)create a depth-only framebuffer of w x h: one GL_DEPTH_COMPONENT texture in
+// compare mode (sampler2DShadow: each lookup is a filtered depth test).
+bool GLRenderer::EnsureDepthTarget(unsigned int& fbo, unsigned int& tex, int& curW, int& curH, int w, int h) {
+    if (fbo && curW == w && curH == h) return true;
+    if (tex) { g.DeleteTextures(1, &tex); tex = 0; }
+    if (fbo) { g.DeleteFramebuffers(1, &fbo); fbo = 0; }
+    curW = curH = 0;
     if (!g.DrawBuffer || !g.ReadBuffer) return false;   // can't make a colourless FBO -> no shadows
-    m_shadowSize = size;
-    g.GenTextures(1, &m_shadowTex);
-    g.BindTexture(GL_TEXTURE_2D, m_shadowTex);
-    g.TexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, size, size, 0,
-                 GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+    g.GenTextures(1, &tex);
+    g.BindTexture(GL_TEXTURE_2D, tex);
+    g.TexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, w, h, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
     g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    g.GenFramebuffers(1, &m_shadowFbo);
-    g.BindFramebuffer(GL_FRAMEBUFFER, m_shadowFbo);
-    g.FramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, m_shadowTex, 0);
+    g.TexParameteri(GL_TEXTURE_2D, 0x884C /*GL_TEXTURE_COMPARE_MODE*/, 0x884E /*GL_COMPARE_REF_TO_TEXTURE*/);
+    g.TexParameteri(GL_TEXTURE_2D, 0x884D /*GL_TEXTURE_COMPARE_FUNC*/, GL_LEQUAL);
+    g.GenFramebuffers(1, &fbo);
+    g.BindFramebuffer(GL_FRAMEBUFFER, fbo);
+    g.FramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, tex, 0);
     g.DrawBuffer(0 /*GL_NONE*/);   // depth-only: declare no colour attachments
     g.ReadBuffer(0 /*GL_NONE*/);
     bool okFbo = g.CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
     g.BindFramebuffer(GL_FRAMEBUFFER, 0);
-    if (!okFbo) { DestroyShadow(); return false; }
+    if (!okFbo) {
+        g.DeleteTextures(1, &tex); tex = 0;
+        g.DeleteFramebuffers(1, &fbo); fbo = 0;
+        return false;
+    }
+    curW = w; curH = h;
     return true;
 }
 
 void GLRenderer::DestroyShadow() {
     if (m_shadowTex) { g.DeleteTextures(1, &m_shadowTex); m_shadowTex = 0; }
     if (m_shadowFbo) { g.DeleteFramebuffers(1, &m_shadowFbo); m_shadowFbo = 0; }
-    m_shadowSize = 0;
+    if (m_localTex) { g.DeleteTextures(1, &m_localTex); m_localTex = 0; }
+    if (m_localFbo) { g.DeleteFramebuffers(1, &m_localFbo); m_localFbo = 0; }
+    m_shadowW = m_shadowH = m_localW = m_localH = 0;
 }
 
 // ---- Bloom post chain -------------------------------------------------------
@@ -1171,6 +1259,63 @@ void GLRenderer::BindSkin(const SkinnedMesh* skin, const Mesh& mesh, MeshVB* mv,
     g.Uniform1f(uSkin, 1.0f);
 }
 
+// Draw every shadow-casting mesh's depth with `lightVP` into the bound depth
+// target (the caller sets the viewport to the tile). `local` = the spot/point
+// light being rendered, so casters out of its range are skipped.
+void GLRenderer::DrawShadowCasters(const Scene& scene, const Mat4& lightVP, const GameObject* ignore,
+                                   const LightSample* local) {
+    const Frustum lightFr = Frustum::FromVP(lightVP);   // only casters inside the light's view
+    for (const auto& up : scene.Objects()) {
+        GameObject* go = up.get();
+        if (!go || !go->active || (ignore && go->IsSelfOrDescendantOf(ignore) && !go->firstPersonViewmodel)) continue;
+        auto* mr = go->GetComponent<MeshRenderer>();
+        if (!mr || mr->wireframe || !mr->enabled || !mr->castShadows) continue;
+        if (mr->color.a < 0.999f) continue;   // transparent meshes don't cast
+        const Mesh& mesh = mr->mesh;
+        const auto& V = mesh.vertices; const auto& T = mesh.triangles;
+        if (V.empty() || T.size() < 3) continue;
+        if (CulledByFrustum(lightFr, go, mr)) continue;
+        if (local) {
+            Vec3 c; float r;
+            if (ObjectWorldSphere(go, mr, c, r) && !CasterInLightRange(*local, c, r)) continue;
+        }
+        Mat4 dmvp = lightVP * go->transform->LocalToWorldMatrix();
+        g.UniformMatrix4fv(m_uDepthMVP, 1, GL_FALSE, dmvp.m);
+        // Static meshes: draw positions straight from the cached interleaved
+        // buffer (stride 14). Per-frame-deformed meshes rebuild dynamically.
+        // Skinned meshes are cached too, keyed on SkinnedMesh::version.
+        const bool deformed = go->GetComponent<Character>() != nullptr;
+        if (!deformed) {
+            const auto* skin = go->GetComponent<SkinnedMesh>();
+            MeshVB* mv = EnsureMeshVB(mesh, MeshKey(skin));
+            if (!mv) continue;
+            g.BindBuffer(GL_ARRAY_BUFFER, mv->vbo);
+            g.EnableVertexAttribArray(0);
+            g.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(float), (const void*)0);
+            BindSkin(skin, mesh, mv, m_udSkin, m_udBones);
+            g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)mv->vertCount);
+            continue;
+        }
+        BindSkin(nullptr, mesh, nullptr, m_udSkin, m_udBones);
+        const int nv = (int)V.size();
+        m_verts.clear(); m_verts.reserve(T.size() * 3);
+        for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
+            int a = T[i], b = T[i + 1], c = T[i + 2];
+            if (a < 0 || b < 0 || c < 0 || a >= nv || b >= nv || c >= nv) continue;
+            const Vec3& pa = V[a]; const Vec3& pb = V[b]; const Vec3& pc = V[c];
+            m_verts.push_back(pa.x); m_verts.push_back(pa.y); m_verts.push_back(pa.z);
+            m_verts.push_back(pb.x); m_verts.push_back(pb.y); m_verts.push_back(pb.z);
+            m_verts.push_back(pc.x); m_verts.push_back(pc.y); m_verts.push_back(pc.z);
+        }
+        if (m_verts.empty()) continue;
+        g.BindBuffer(GL_ARRAY_BUFFER, m_vbo);
+        g.BufferData(GL_ARRAY_BUFFER, (GLsizeiptrOK)(m_verts.size() * sizeof(float)), m_verts.data(), GL_DYNAMIC_DRAW);
+        g.EnableVertexAttribArray(0);
+        g.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (const void*)0);
+        g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)(m_verts.size() / 3));
+    }
+}
+
 const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& vp, const Vec3& eye,
                                                 int w, int h, int samples,
                                                 float clearR, float clearG, float clearB, float clearA,
@@ -1192,74 +1337,53 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         }
     }
 
-    // ---- Shadow-map depth pre-pass (directional cast shadows) -----------------
-    // Render the scene depth from the sun's point of view into a depth texture the
-    // main shader samples (PCF) for real cast shadows. Opt-in via ShadowsEnabled().
-    Mat4 lightVP; float shadowTexel = 0.0f; bool shadowOn = false;
-    if (ShadowsEnabled() && EnsureDepthProgram() &&
-        ComputeDirectionalShadowVP(scene, vp, eye, lightVP, shadowTexel)) {
-        int ssize = ShadowMapResolution(); if (ssize < 256) ssize = 256; if (ssize > 4096) ssize = 4096;
-        if (EnsureShadow(ssize)) {
-            g.BindFramebuffer(GL_FRAMEBUFFER, m_shadowFbo);
-            g.Viewport(0, 0, ssize, ssize);
+    // ---- Shadow-map depth pre-passes -------------------------------------------
+    // Sun: one ortho cascade per tile of the sun atlas. Local lights: one
+    // perspective tile per spot light, six per point/area light (cube faces).
+    // PlanShadows (ShadowSetup.hpp) decides the cascades and tile assignment.
+    ShadowPlan plan;
+    bool shadowOn = false, localOn = false;
+    if (ShadowsEnabled() && EnsureDepthProgram()) {
+        GLint maxTex = 8192;
+        if (g.GetIntegerv) g.GetIntegerv(0x0D33 /*GL_MAX_TEXTURE_SIZE*/, &maxTex);
+        if (maxTex < 1024) maxTex = 1024;
+        PlanShadows(scene, vp, eye, plan, maxTex < 8192 ? (int)maxTex : 8192);
+        auto beginPass = [&](unsigned int fbo) {
+            g.BindFramebuffer(GL_FRAMEBUFFER, fbo);
             g.Enable(GL_DEPTH_TEST); g.DepthFunc(GL_LEQUAL); g.DepthMask(GL_TRUE);
             g.Disable(GL_BLEND);
             g.Clear(GL_DEPTH_BUFFER_BIT);
             g.UseProgram(m_depthProg);
             if (g.BindVertexArray && m_vao) g.BindVertexArray(m_vao);
-            // Only attribute 0 (position) is fed in this pass; make sure no stale
+            // Only attribute 0 (position) is fed in these passes; make sure no stale
             // arrays from a previous frame get fetched against the position buffer.
             g.DisableVertexAttribArray(1); g.DisableVertexAttribArray(2);
             g.DisableVertexAttribArray(3); g.DisableVertexAttribArray(4);
-            const Frustum lightFr = Frustum::FromVP(lightVP);   // only casters inside the shadow box
-            for (const auto& up : scene.Objects()) {
-                GameObject* go = up.get();
-                if (!go || !go->active || (ignore && go->IsSelfOrDescendantOf(ignore) && !go->firstPersonViewmodel)) continue;
-                auto* mr = go->GetComponent<MeshRenderer>();
-                if (!mr || mr->wireframe || !mr->enabled) continue;
-                if (mr->color.a < 0.999f) continue;   // transparent meshes don't cast
-                const Mesh& mesh = mr->mesh;
-                const auto& V = mesh.vertices; const auto& T = mesh.triangles;
-                if (V.empty() || T.size() < 3) continue;
-                if (CulledByFrustum(lightFr, go, mr)) continue;
-                Mat4 dmvp = lightVP * go->transform->LocalToWorldMatrix();
-                g.UniformMatrix4fv(m_uDepthMVP, 1, GL_FALSE, dmvp.m);
-                // Static meshes: draw positions straight from the cached interleaved
-                // buffer (stride 14). Per-frame-deformed meshes rebuild dynamically.
-                // Skinned meshes are cached too, keyed on SkinnedMesh::version.
-                const bool deformed = go->GetComponent<Character>() != nullptr;
-                if (!deformed) {
-                    const auto* skin = go->GetComponent<SkinnedMesh>();
-                    MeshVB* mv = EnsureMeshVB(mesh, MeshKey(skin));
-                    if (!mv) continue;
-                    g.BindBuffer(GL_ARRAY_BUFFER, mv->vbo);
-                    g.EnableVertexAttribArray(0);
-                    g.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(float), (const void*)0);
-                    BindSkin(skin, mesh, mv, m_udSkin, m_udBones);
-                    g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)mv->vertCount);
-                    continue;
-                }
-                BindSkin(nullptr, mesh, nullptr, m_udSkin, m_udBones);
-                const int nv = (int)V.size();
-                m_verts.clear(); m_verts.reserve(T.size() * 3);
-                for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
-                    int a = T[i], b = T[i + 1], c = T[i + 2];
-                    if (a < 0 || b < 0 || c < 0 || a >= nv || b >= nv || c >= nv) continue;
-                    const Vec3& pa = V[a]; const Vec3& pb = V[b]; const Vec3& pc = V[c];
-                    m_verts.push_back(pa.x); m_verts.push_back(pa.y); m_verts.push_back(pa.z);
-                    m_verts.push_back(pb.x); m_verts.push_back(pb.y); m_verts.push_back(pb.z);
-                    m_verts.push_back(pc.x); m_verts.push_back(pc.y); m_verts.push_back(pc.z);
-                }
-                if (m_verts.empty()) continue;
-                g.BindBuffer(GL_ARRAY_BUFFER, m_vbo);
-                g.BufferData(GL_ARRAY_BUFFER, (GLsizeiptrOK)(m_verts.size() * sizeof(float)), m_verts.data(), GL_DYNAMIC_DRAW);
-                g.EnableVertexAttribArray(0);
-                g.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (const void*)0);
-                g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)(m_verts.size() / 3));
+        };
+        const int S = plan.cascadeSize;
+        if (plan.cascades > 0 &&
+            EnsureDepthTarget(m_shadowFbo, m_shadowTex, m_shadowW, m_shadowH, S * plan.cascades, S)) {
+            beginPass(m_shadowFbo);
+            for (int c = 0; c < plan.cascades; ++c) {
+                g.Viewport(c * S, 0, S, S);
+                DrawShadowCasters(scene, plan.cascade[c].vp, ignore, nullptr);
             }
-            g.DisableVertexAttribArray(5); g.DisableVertexAttribArray(6);   // skin inputs off
             shadowOn = true;
         }
+        const int T = plan.tileSize, G = ShadowPlan::kLocalGrid;
+        if (!plan.local.empty() &&
+            EnsureDepthTarget(m_localFbo, m_localTex, m_localW, m_localH, T * G, T * G)) {
+            beginPass(m_localFbo);
+            const auto& L = SceneLights::List();
+            for (const LocalShadowGpu& ls : plan.local)
+                for (int f = 0; f < ls.tiles; ++f) {
+                    int t = ls.firstTile + f;
+                    g.Viewport((t % G) * T, (t / G) * T, T, T);
+                    DrawShadowCasters(scene, ls.vp[f], ignore, &L[ls.light]);
+                }
+            localOn = true;
+        }
+        g.DisableVertexAttribArray(5); g.DisableVertexAttribArray(6);   // skin inputs off
     }
 
     g.BindFramebuffer(GL_FRAMEBUFFER, m_fbo);
@@ -1282,6 +1406,12 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
     Vec3 amb = SceneLights::AmbientColor();
     if (amb.x + amb.y + amb.z < 1e-4f) amb = Vec3{0.35f, 0.36f, 0.40f};
     g.Uniform3f(m_uAmbient, amb.x, amb.y, amb.z);
+    {
+        Vec3 aSky, aGround;
+        SceneAmbientColors(scene.renderSettings, amb, aSky, aGround);   // the scene's Ambient Mode
+        g.Uniform3f(m_uAmbSky, aSky.x, aSky.y, aSky.z);
+        g.Uniform3f(m_uAmbGround, aGround.x, aGround.y, aGround.z);
+    }
     g.Uniform3f(m_uEye, eye.x, eye.y, eye.z);
     // Sky gradient for environment reflections. Refresh the shared global from the
     // scene first (the software RenderMeshes does this too, but it may not run on the
@@ -1310,18 +1440,64 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         g.Uniform1f(m_uTonemap, rs.tonemap ? 1.0f : 0.0f);
     }
 
-    // Bind the directional shadow map (texture unit 4) so the main shader can do
-    // its PCF cast-shadow lookup. Disabled (uShadowOn=0) when the pre-pass was skipped.
+    // Shadow atlases: sun cascades on texture unit 4, local light tiles on unit 5.
     g.Uniform1f(m_uShadowOn, shadowOn ? 1.0f : 0.0f);
+    g.Uniform1f(m_uShadowSoft, ShadowSoftness() < 0.0f ? 0.0f : ShadowSoftness());
+    {
+        const LightSample* sun = SceneLights::Sun();
+        g.Uniform1f(m_uSunIndex, (float)plan.sunLight);
+        g.Uniform1f(m_uSunStrength, sun ? sun->shadowStrength : 1.0f);
+        g.Uniform1f(m_uSunBias, sun ? sun->shadowBias : 1.0f);
+    }
     if (shadowOn) {
-        g.UniformMatrix4fv(m_uLightVP, 1, GL_FALSE, lightVP.m);
-        g.Uniform1f(m_uShadowTexel, shadowTexel);
-        g.Uniform1f(m_uShadowSize, (float)m_shadowSize);
+        float cvp[16 * ShadowPlan::kMaxCascades] = {0}, csph[4 * ShadowPlan::kMaxCascades] = {0};
+        float ctx[ShadowPlan::kMaxCascades] = {0};
+        for (int c = 0; c < plan.cascades; ++c) {
+            std::memcpy(&cvp[c * 16], plan.cascade[c].vp.m, sizeof(float) * 16);
+            csph[c * 4 + 0] = plan.cascade[c].center.x; csph[c * 4 + 1] = plan.cascade[c].center.y;
+            csph[c * 4 + 2] = plan.cascade[c].center.z; csph[c * 4 + 3] = plan.cascade[c].radius;
+            ctx[c] = plan.cascade[c].texelWorld;
+        }
+        g.UniformMatrix4fv(m_uCasVP, plan.cascades, GL_FALSE, cvp);
+        if (g.Uniform4fv) g.Uniform4fv(m_uCasSphere, plan.cascades, csph);
+        g.Uniform1fv(m_uCasTexel, plan.cascades, ctx);
+        g.Uniform1f(m_uCasCount, (float)plan.cascades);
+        g.Uniform1f(m_uCasSize, (float)plan.cascadeSize);
         g.ActiveTexture(GL_TEXTURE0 + 4);
         g.BindTexture(GL_TEXTURE_2D, m_shadowTex);
-        g.Uniform1i(m_uShadowTex, 4);
         g.ActiveTexture(GL_TEXTURE0);
     }
+    {
+        // Per light: x = first tile (-1 = no shadow), y = strength, z = bias, w = texel at 1m.
+        float lsh[16 * 4];
+        for (int i = 0; i < 16; ++i) { lsh[i * 4] = -1.0f; lsh[i * 4 + 1] = lsh[i * 4 + 2] = lsh[i * 4 + 3] = 0.0f; }
+        float lvp[16 * ShadowPlan::kMaxLocalTiles] = {0};
+        if (localOn) {
+            const auto& L = SceneLights::List();
+            for (const LocalShadowGpu& ls : plan.local) {
+                if (ls.light < 0 || ls.light >= 16) continue;
+                lsh[ls.light * 4 + 0] = (float)ls.firstTile;
+                lsh[ls.light * 4 + 1] = L[ls.light].shadowStrength;
+                lsh[ls.light * 4 + 2] = L[ls.light].shadowBias;
+                lsh[ls.light * 4 + 3] = ls.texelAt1;
+                for (int f = 0; f < ls.tiles; ++f)
+                    std::memcpy(&lvp[(ls.firstTile + f) * 16], ls.vp[f].m, sizeof(float) * 16);
+            }
+            g.UniformMatrix4fv(m_uLocalVP, ShadowPlan::kMaxLocalTiles, GL_FALSE, lvp);
+            g.Uniform1f(m_uLocalSize, (float)plan.tileSize);
+            g.ActiveTexture(GL_TEXTURE0 + 5);
+            g.BindTexture(GL_TEXTURE_2D, m_localTex);
+            g.ActiveTexture(GL_TEXTURE0);
+        }
+        if (g.Uniform4fv) g.Uniform4fv(m_uLShadow, 16, lsh);
+    }
+
+    // Flat ground contact shadows stand in for real shadows only when the sun's
+    // shadow map isn't drawn (Shadows off / unsupported) but the sun does cast.
+    const LightSample* sunL = SceneLights::Sun();
+    const bool sunCasts = !sunL || (sunL->castShadows && sunL->shadowStrength > 0.0f);
+    const bool mapsWork = ShadowsEnabled() && m_depthProg && (plan.cascades == 0 || shadowOn);
+    const bool planarShadows = sunCasts && !mapsWork;
 
     // Upload every gathered scene light (directional + point + spot) so all lights
     // shade on the GPU exactly like the software renderer — not just the sun.
@@ -1397,6 +1573,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         g.Uniform1f(m_uSpecular, unlit ? 0.0f : mr->specular);
         g.Uniform1f(m_uShininess, mr->shininess);
         g.Uniform1f(m_uUnlit, unlit ? 1.0f : 0.0f);
+        g.Uniform1f(m_uReceive, mr->receiveShadows ? 1.0f : 0.0f);
         g.Uniform1f(m_uShaderMode, (float)(int)mr->shader);
         g.Uniform1f(m_uToonBands, (float)mr->toonBands);
         g.Uniform1f(m_uRimStr, mr->rimStrength);
@@ -1506,16 +1683,21 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         // Ground contact shadow: re-draw the SAME geometry flattened onto the ground
         // plane (a planar projection along the light) as a flat translucent black, so
         // the object reads as sitting on the ground instead of floating.
-        if (mr->groundShadow && mr->groundShadowStrength > 0.001f) {
+        // Only a fallback: with real shadow maps on, it would double-darken the
+        // shadow and show through anything between the object and the plane.
+        if (planarShadows && mr->groundShadow && mr->castShadows && mr->groundShadowStrength > 0.001f) {
             Mat4 shadowModel = Mat4::PlanarShadow(mr->groundShadowY + 0.01f, lightTravel) * model;
             Mat4 smvp = vp * shadowModel;
             g.UniformMatrix4fv(m_uMVP, 1, GL_FALSE, smvp.m);
             g.Uniform1f(m_uShadowAlpha, mr->groundShadowStrength > 1.0f ? 1.0f : mr->groundShadowStrength);
             g.Enable(GL_BLEND);
             g.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            g.DepthMask(GL_FALSE);
+            // Every flattened triangle lies on the same plane: with a strict depth
+            // test + depth writes, overlapping triangles (front and back faces,
+            // other objects' shadows) are blended once instead of stacking darker.
+            g.DepthFunc(GL_LESS);
             g.DrawArrays(GL_TRIANGLES, 0, drawCount);
-            g.DepthMask(GL_TRUE);
+            g.DepthFunc(GL_LEQUAL);
             g.Disable(GL_BLEND);
             g.Uniform1f(m_uShadowAlpha, -1.0f);
         }

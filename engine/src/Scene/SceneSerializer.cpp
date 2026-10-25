@@ -424,6 +424,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         if (!mr->groundShadow || mr->groundShadowY != 0.0f || mr->groundShadowStrength != 0.5f)
             out << "  groundshadow " << (mr->groundShadow ? 1 : 0) << " "
                 << mr->groundShadowY << " " << mr->groundShadowStrength << "\n";
+        if (!mr->castShadows || !mr->receiveShadows)
+            out << "  meshshadows " << (mr->castShadows ? 1 : 0) << " " << (mr->receiveShadows ? 1 : 0) << "\n";
     }
     // Skinned mesh: the bind-pose geometry + per-vertex bone weights + joint names +
     // inverse-bind matrices, so an imported rigged character survives save/reload
@@ -741,7 +743,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (int)li->type << " " << li->range << " " << li->spotAngle
             << " " << li->spotSoftness << " " << (li->useTemperature ? 1 : 0) << " " << li->temperature
             << " " << li->ambientColor.r << " " << li->ambientColor.g << " " << li->ambientColor.b
-            << " " << (int)li->falloff << "\n";   // trailing (back-compatible)
+            << " " << (int)li->falloff;   // trailing (back-compatible)
+        // Shadow/flicker/enabled block: only when something differs from the
+        // defaults, so plain lights still load in older engines.
+        if (!li->castShadows || li->shadowStrength != 1.0f || li->shadowBias != 1.0f ||
+            li->flicker != 0.0f || li->flickerSpeed != 8.0f || !li->enabled)
+            out << " " << (li->castShadows ? 1 : 0) << " " << li->shadowStrength << " " << li->shadowBias
+                << " " << li->flicker << " " << li->flickerSpeed << " " << (li->enabled ? 1 : 0);
+        out << "\n";
     }
     if (auto* rb = go->GetComponent<Rigidbody2D>()) {
         out << "  rigidbody2d " << (int)rb->bodyType << " " << rb->gravityScale << " "
@@ -2167,6 +2176,8 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
         // Star field (separate append-only record so older engines still load the scene).
         if (rs.skyStars)
             out << "skystars 1 " << rs.skyStarDensity << " " << rs.skyStarBright << "\n";
+        if (rs.ambientMode != Scene::RenderSettings::AmbientHemisphere || rs.ambientSkyTint != 0.7f)
+            out << "ambientmode " << rs.ambientMode << " " << rs.ambientSkyTint << "\n";
     }
     const auto& objs = scene.Objects();
     for (std::size_t i = 0; i < objs.size(); ++i) {
@@ -2286,6 +2297,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 auto& rs = scene.renderSettings;
                 rs.skyStars = (on != 0); rs.skyStarDensity = density; rs.skyStarBright = bright;
             }
+        } else if (token == "ambientmode") {
+            int m = Scene::RenderSettings::AmbientHemisphere; float tint = 0.7f; in >> m >> tint;
+            if (m < 0 || m > 2) m = Scene::RenderSettings::AmbientHemisphere;
+            if (clear) { scene.renderSettings.ambientMode = m; scene.renderSettings.ambientSkyTint = tint; }
         } else if (token == "gameobject") {
             int idx = -1;
             in >> idx;
@@ -2832,6 +2847,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         int tp = 0; in >> mr->uvScroll.x >> mr->uvScroll.y >> tp;
                         mr->triplanar = (tp != 0);
                     }
+                } else if (field == "meshshadows") {
+                    int cs = 1, rs = 1; in >> cs >> rs;
+                    if (auto* mr = go->GetComponent<MeshRenderer>()) { mr->castShadows = (cs != 0); mr->receiveShadows = (rs != 0); }
                 } else if (field == "groundshadow") {
                     if (auto* mr = go->GetComponent<MeshRenderer>()) {
                         int gs = 1; in >> gs >> mr->groundShadowY >> mr->groundShadowStrength;
@@ -2855,6 +2873,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         li->useTemperature = (useT != 0);
                         in >> std::ws; // optional falloff mode (added later)
                         if (std::isdigit(in.peek())) { int fo = 0; in >> fo; li->falloff = (Light::Falloff)fo; }
+                        in >> std::ws; // optional shadows + flicker + enabled (added later)
+                        if (std::isdigit(in.peek())) {
+                            int cs = 1, en = 1;
+                            in >> cs >> li->shadowStrength >> li->shadowBias >> li->flicker
+                               >> li->flickerSpeed >> en;
+                            li->castShadows = (cs != 0);
+                            li->enabled = (en != 0);
+                        }
                     }
                 } else if (field == "rigidbody2d") {
                     int bt = 0; float gs = 1, mass = 1, drag = 0, bounce = 0;

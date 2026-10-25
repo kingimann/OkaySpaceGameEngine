@@ -10111,6 +10111,19 @@ void DrawSceneSettings(EditorState& ed) {
             if (ImGui::SliderFloat("Star Brightness", &rs.skyStarBright,  0.0f, 1.0f, "%.2f")) ed.dirty = true;
         }
         if (ImGui::SliderFloat("Ambient", &rs.ambient, 0.0f, 1.0f)) ed.dirty = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ambient level when the scene has no Light object\n(otherwise the first Light's Ambient is used).");
+        {
+            const char* modes[] = {"Flat", "Hemisphere", "Sky colors"};
+            int am = rs.ambientMode;
+            if (ImGui::Combo("Ambient Mode", &am, modes, 3)) { rs.ambientMode = am; ed.dirty = true; }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("How ambient (indirect) light varies with surface direction:\n"
+                                  "Flat = same everywhere.\n"
+                                  "Hemisphere = brighter on top, darker underneath (default).\n"
+                                  "Sky colors = tops take the sky colours, undersides the Sky Bottom colour.");
+            if (rs.ambientMode == Scene::RenderSettings::AmbientSky)
+                if (ImGui::SliderFloat("Sky Tint", &rs.ambientSkyTint, 0.0f, 1.5f, "%.2f")) ed.dirty = true;
+        }
         ImGui::Spacing();
         if (ImGui::Checkbox("Distance Fog", &rs.fog)) ed.dirty = true;
         if (rs.fog) {
@@ -10185,10 +10198,6 @@ void DrawSceneSettings(EditorState& ed) {
             ImGui::SetTooltip("Renders the 3D view at this fraction of resolution and\nupscales. Lower = much faster (softer image). The biggest\nFPS lever for the software renderer.");
         SectionHeader("Effects");
         ImGui::Checkbox("Per-pixel lighting (Phong)", &PerPixelLighting());
-
-        ImGui::Checkbox("Hemisphere ambient", &HemisphereAmbient());
-        if (HemisphereAmbient())
-            ImGui::SliderFloat("Hemisphere strength", &HemisphereStrength(), 0.0f, 1.5f, "%.2f");
 
         ImGui::Checkbox("Shadows", &ShadowsEnabled());
         if (ShadowsEnabled()) {
@@ -26795,10 +26804,17 @@ void DrawInspector(EditorState& ed) {
                 float oc[3] = {mr->outlineColor.r, mr->outlineColor.g, mr->outlineColor.b};
                 if (ImGui::ColorEdit3("Outline Color##mesh", oc)) { mr->outlineColor = {oc[0], oc[1], oc[2], 1.0f}; ed.dirty = true; }
             }
+            // Real (shadow-mapped) shadows: cast / receive.
+            if (ImGui::Checkbox("Cast Shadows##mesh", &mr->castShadows)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("This mesh blocks light (sun, spot and point lights).\nTurn off for skyboxes, decals or floors that never occlude anything.");
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Receive Shadows##mesh", &mr->receiveShadows)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Shadows from other meshes darken this one.");
             // Ground contact shadow: a flat blob projected onto the ground so the
-            // object doesn't look like it's floating. On by default.
+            // object doesn't look like it's floating — the fallback when real
+            // shadow maps are off.
             if (ImGui::Checkbox("Ground Shadow##mesh", &mr->groundShadow)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cast a flat contact shadow onto the ground plane so the object sits on it instead of floating.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fallback: a flat contact shadow on the ground plane, drawn only\nwhile real shadows are off (Rendering > Shadows, or the sun's Cast Shadows).");
             if (mr->groundShadow) {
                 if (ImGui::DragFloat("Shadow Ground Y##mesh", &mr->groundShadowY, 0.05f, -1000.0f, 1000.0f)) ed.dirty = true;
                 if (ImGui::SliderFloat("Shadow Strength##mesh", &mr->groundShadowStrength, 0.0f, 1.0f)) ed.dirty = true;
@@ -28003,6 +28019,33 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::SliderFloat("Spot Angle##light", &li->spotAngle, 5.0f, 170.0f)) ed.dirty = true;
                 if (ImGui::SliderFloat("Softness##light", &li->spotSoftness, 0.0f, 1.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = crisp cone edge, 1 = very feathered");
+            }
+
+            SectionHeader("Shadows");
+            if (ImGui::Checkbox("Cast Shadows##light", &li->castShadows)) ed.dirty = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(li->type == Light::Type::Directional
+                    ? "Sun shadows (cascaded). Only the first Directional light casts them.\nQuality/distance: Rendering panel > Shadows."
+                    : "Objects block this light (no light through walls).\nUp to 16 shadow tiles per frame: a Spot uses 1, a Point/Area uses 6;\nlights nearest the camera get them first.");
+            if (li->castShadows) {
+                if (ImGui::SliderFloat("Strength##lightsh", &li->shadowStrength, 0.0f, 1.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = invisible, 1 = fully dark (down to the ambient light)");
+                if (ImGui::SliderFloat("Bias##lightsh", &li->shadowBias, 0.0f, 4.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Raise if surfaces get dark speckles/stripes (shadow acne).\nLower if shadows look detached from the objects casting them.");
+            }
+
+            SectionHeader("Flicker");
+            if (ImGui::SliderFloat("Amount##lightfl", &li->flicker, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Randomly dims the light while the game runs\n(torches, candles, a failing bulb). 0 = steady.");
+            if (li->flicker > 0.0f) {
+                if (ImGui::SliderFloat("Speed##lightfl", &li->flickerSpeed, 0.5f, 30.0f, "%.1f /s")) ed.dirty = true;
+                static const struct { const char* n; float a, sp; } kFlick[] = {
+                    {"Candle", 0.25f, 6.0f}, {"Torch", 0.35f, 9.0f}, {"Faulty bulb", 0.9f, 18.0f}};
+                for (int fi = 0; fi < 3; ++fi) {
+                    if (fi) ImGui::SameLine(0, 4);
+                    if (ImGui::SmallButton(kFlick[fi].n)) { li->flicker = kFlick[fi].a; li->flickerSpeed = kFlick[fi].sp; ed.dirty = true; }
+                }
+                ImGui::TextDisabled("Flicker plays in Play mode and in the built game.");
             }
             ImGui::TextDisabled(li->type == Light::Type::Point ? "Radiates from this object's position out to Range."
                 : li->type == Light::Type::Area ? "Soft broad fill from this position out to Range (wrap-lit)."

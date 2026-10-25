@@ -403,5 +403,56 @@ int main() {
         CHECK_NEAR(go->GetComponent<Rigidbody2D>()->velocity.x, 3.0f, 0.001f);
     }
 
+    // --- Malformed graph text is refused with a line-numbered error, never a throw ---
+    {
+        auto refused = [](const std::string& src, const char* want) {
+            std::string err;
+            bool threw = false;
+            std::unique_ptr<vs::NodeGraph> g;
+            try { g = vs::NodeGraph::Parse(src, &err); } catch (...) { threw = true; }
+            CHECK(!threw);
+            CHECK(g == nullptr);
+            CHECK(err.find("line ") == 0);
+            if (want) CHECK(err.find(want) != std::string::npos);
+            bool vthrew = false;
+            try { (void)vs::ValidateGraphText(src); } catch (...) { vthrew = true; }
+            CHECK(!vthrew);
+            if (g || err.find(want ? want : "") == std::string::npos) std::cerr << "  got: " << err << "\n";
+        };
+        // Item 1: numbers that aren't numbers, or don't fit an int.
+        refused("node abc OnStart\n", "abc");
+        refused("node 99999999999 OnStart\n", "99999999999");
+        refused("node 1 OnStart\nnode 2 Print hi\nexec 1 x 2\n", "line 3");
+        refused("node 1 OnStart\nentry OnStart 1z\n", "line 2");
+        // Item 4: a link to a node that doesn't exist (the first end bad, the second fine).
+        refused("node 1 Print hi\nexec 99 0 1\n", "references unknown node");
+        refused("node 2 Print hi\ndata 99 0 2 0\n", "references unknown node");
+        // Item 3: pin indices and Sequence counts stay in range (no giant allocations).
+        refused("node 1 OnStart\nnode 2 Print hi\nexec 1 2000000000 2\n", "pin");
+        refused("node 1 Print hi\nnode 2 Const 1\ndata 1 2000000000 2 0\n", "pin");
+        refused("node 1 Print hi\nnode 2 Const 1\ndata 1 0 2 2000000000\n", "pin");
+        refused("node 1 Print hi\ndefault 1 2000000000 1\n", "pin");
+        refused("node 1 Print hi\nexec 1 -1 1\n", "pin");
+        for (const char* n : {"2000000000", "1e20", "-5", "nan"}) {
+            std::string err;
+            std::unique_ptr<vs::NodeGraph> g;
+            bool threw = false;
+            try { g = vs::NodeGraph::Parse(std::string("node 1 OnStart\nnode 2 Sequence ") + n + "\nexec 1 0 2\nentry OnStart 1\n", &err); }
+            catch (...) { threw = true; }
+            CHECK(!threw);
+            CHECK(g != nullptr);   // clamped into 1..64, not refused (old files with odd counts still load)
+            if (g) {
+                int outs = -1;
+                for (int id = 0; id < 8; ++id)
+                    if (vs::VsNode* nd = g->Node(id)) if (nd->type == "Sequence") outs = nd->ExecOutCount();
+                CHECK(outs >= 1 && outs <= 64);
+            }
+        }
+        // Well-formed text still loads, including the largest allowed pin.
+        std::string err;
+        CHECK(vs::NodeGraph::Parse("node 1 OnStart\nnode 2 Sequence 64\nexec 1 0 2\nexec 2 63 2\nentry OnStart 1\n", &err) != nullptr);
+        CHECK(err.empty());
+    }
+
     TEST_MAIN_RESULT();
 }

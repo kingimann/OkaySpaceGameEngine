@@ -13,6 +13,8 @@
 #include "okay/Scene/GameObject.hpp"
 
 #include <cctype>
+#include <charconv>
+#include <cmath>
 #include <sstream>
 #include <unordered_map>
 
@@ -231,6 +233,15 @@ VsValue ParseValue(const std::string& s) {
     catch (...) {}
     return s; // fall back to a string token
 }
+// A node argument as an int: NaN / inf / out-of-range values give `def` or the
+// nearest int instead of an undefined float -> int cast.
+int ArgInt(const std::string& a, int def) {
+    const float f = ParseValue(a).AsFloat();
+    if (!std::isfinite(f)) return def;
+    if (f >= 2147483520.0f) return 2147483647;
+    if (f <= -2147483520.0f) return -2147483647 - 1;
+    return static_cast<int>(f);
+}
 } // namespace
 
 std::unique_ptr<VsNode> MakeNode(const std::string& type,
@@ -421,8 +432,11 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "Once")        return std::make_unique<OnceNode>();
     if (type == "FlipFlop")    return std::make_unique<FlipFlopNode>();
     if (type == "Timer")       { if (!need(1)) return nullptr; return std::make_unique<TimerNode>(ParseValue(args[0]).AsFloat()); }
-    if (type == "Sequence")    { int c = args.empty() ? 2 : (int)ParseValue(args[0]).AsFloat(); return std::make_unique<SequenceNode>(c); }
-    if (type == "Repeat")      { if (!need(1)) return nullptr; return std::make_unique<RepeatNode>((int)ParseValue(args[0]).AsFloat()); }
+    if (type == "Sequence") {   // 1..kMaxPins outputs
+        int c = args.empty() ? 2 : ArgInt(args[0], 2);
+        return std::make_unique<SequenceNode>(c < 1 ? 1 : (c > NodeGraph::kMaxPins ? NodeGraph::kMaxPins : c));
+    }
+    if (type == "Repeat")      { if (!need(1)) return nullptr; return std::make_unique<RepeatNode>(ArgInt(args[0], 1)); }
     if (type == "Toggle")      { if (!need(1)) return nullptr; return std::make_unique<ToggleNode>(args[0]); }
     if (type == "LogWarn")     return std::make_unique<LogNode>(1);
     if (type == "LogError")    return std::make_unique<LogNode>(2);
@@ -435,7 +449,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "NetPeers")     return std::make_unique<NetPeersNode>();
     if (type == "NetId")        return std::make_unique<NetIdNode>();
     if (type == "NetGetVar")    { if (!need(1)) return nullptr; return std::make_unique<NetGetVarNode>(args[0]); }
-    if (type == "NetHost")      { int p = args.empty() ? 45000 : (int)ParseValue(args[0]).AsFloat(); return std::make_unique<NetHostNode>(p); }
+    if (type == "NetHost")      { int p = args.empty() ? 45000 : ArgInt(args[0], 45000); return std::make_unique<NetHostNode>(p); }
     if (type == "NetJoin") {
         // "host port" / "host:port" in one field (the editor's) or two args.
         std::string h = args.empty() || args[0].empty() ? "127.0.0.1" : args[0];
@@ -518,7 +532,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "Contains")   return std::make_unique<TextOpNode>(TO::Contains);
     if (type == "Upper")      return std::make_unique<TextOpNode>(TO::Upper);
     if (type == "Lower")      return std::make_unique<TextOpNode>(TO::Lower);
-    if (type == "ToFixed")    return std::make_unique<ToFixedNode>(args.empty() ? 2 : (int)ParseValue(args[0]).AsFloat());
+    if (type == "ToFixed")    return std::make_unique<ToFixedNode>(args.empty() ? 2 : ArgInt(args[0], 2));
     using OQ = ObjectQueryNode::Op;
     auto argOr = [&](const char* d) { return args.empty() ? std::string(d) : args[0]; };
     if (type == "ObjectExists")   return std::make_unique<ObjectQueryNode>(OQ::Exists, argOr(""));
@@ -575,7 +589,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         if (!args.empty()) {
             std::string a = args[0];
             for (auto& ch : a) ch = (char)std::tolower((unsigned char)ch);
-            b = a == "left" ? 0 : a == "right" ? 1 : (a == "middle" || a == "wheel") ? 2 : (int)ParseValue(a).AsFloat();
+            b = a == "left" ? 0 : a == "right" ? 1 : (a == "middle" || a == "wheel") ? 2 : ArgInt(a, 0);
         }
         return std::make_unique<MouseButtonNode>(b, type == "MouseButtonDown");
     }
@@ -597,7 +611,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     // ---- Third wave: loops, switch, 3D transform, colour, clips, shapes ----
     if (type == "ForLoop")    return std::make_unique<ForLoopNode>();
     if (type == "Gate")       return std::make_unique<GateNode>();
-    if (type == "DoN")        return std::make_unique<DoNNode>(args.empty() ? 1 : (int)ParseValue(args[0]).AsFloat());
+    if (type == "DoN")        return std::make_unique<DoNNode>(args.empty() ? 1 : ArgInt(args[0], 1));
     if (type == "SwitchInt")  return std::make_unique<SwitchIntNode>();
     if (type == "RandomInt")  return std::make_unique<RandomIntNode>();
     using M3 = MathFn3Node::Op;
@@ -680,6 +694,17 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
         if (error) *error = "line " + std::to_string(lineNo) + ": " + m;
         return std::unique_ptr<NodeGraph>{};
     };
+    // Whole-token integers only (no exceptions, no overflow): "abc", "1z" and
+    // "99999999999" are refused with the line they're on.
+    std::string badNumber;
+    auto num = [&](const std::string& t, int& out) {
+        const char* b = t.data(); const char* e = b + t.size();
+        auto r = std::from_chars(b, e, out);
+        if (r.ec != std::errc() || r.ptr != e) { if (badNumber.empty()) badNumber = t; return false; }
+        return true;
+    };
+    auto pinOk = [](int p) { return p >= 0 && p < kMaxPins; };
+    const std::string pinRange = "pin index out of range (0.." + std::to_string(kMaxPins - 1) + ")";
 
     while (std::getline(in, line)) {
         ++lineNo;
@@ -697,7 +722,8 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
         const std::string& kind = tok[0];
         if (kind == "node") {
             if (tok.size() < 3) return fail("node needs <id> <type>");
-            int fileId = std::stoi(tok[1]);
+            int fileId = 0;
+            if (!num(tok[1], fileId)) return fail("bad node id '" + tok[1] + "'");
             std::string type = tok[2];
             std::vector<std::string> args(tok.begin() + 3, tok.end());
             // "quoted args" (names with spaces): Const keeps the quotes (they mark
@@ -719,18 +745,30 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
             fileToGraph[fileId] = added->id;
         } else if (kind == "exec") {
             if (tok.size() < 4) return fail("exec needs <from> <pin> <to>");
-            execs.push_back({std::stoi(tok[1]), std::stoi(tok[2]), std::stoi(tok[3])});
+            PendingExec x{};
+            if (!num(tok[1], x.from) || !num(tok[2], x.pin) || !num(tok[3], x.to)) return fail("bad number '" + badNumber + "'");
+            if (!pinOk(x.pin)) return fail("exec " + pinRange);
+            execs.push_back(x);
         } else if (kind == "data") {
             if (tok.size() < 5) return fail("data needs <consumer> <inPin> <producer> <outPin>");
-            datas.push_back({std::stoi(tok[1]), std::stoi(tok[2]),
-                             std::stoi(tok[3]), std::stoi(tok[4])});
+            PendingData x{};
+            if (!num(tok[1], x.consumer) || !num(tok[2], x.inPin) || !num(tok[3], x.producer) || !num(tok[4], x.outPin))
+                return fail("bad number '" + badNumber + "'");
+            if (!pinOk(x.inPin) || !pinOk(x.outPin)) return fail("data " + pinRange);
+            datas.push_back(x);
         } else if (kind == "entry") {
             if (tok.size() < 3) return fail("entry needs <name> <id>");
-            entries.push_back({tok[1], std::stoi(tok[2])});
+            int id = 0;
+            if (!num(tok[2], id)) return fail("bad node id '" + tok[2] + "'");
+            entries.push_back({tok[1], id});
         } else if (kind == "default") {
             // default <node> <inPin> <value>: an unconnected input's typed value.
             if (tok.size() < 4) return fail("default needs <node> <pin> <value>");
-            defaults.push_back({std::stoi(tok[1]), std::stoi(tok[2]), ParseValue(tok[3])});
+            PendingDefault x{};
+            if (!num(tok[1], x.node) || !num(tok[2], x.pin)) return fail("bad number '" + badNumber + "'");
+            if (!pinOk(x.pin)) return fail("default " + pinRange);
+            x.v = ParseValue(tok[3]);
+            defaults.push_back(x);
         } else if (kind == "pos" || kind == "comment") {
             // Editor layout (node positions, comment frames): nothing to run.
         } else {
@@ -740,10 +778,11 @@ std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string
         }
     }
 
+    // Each end resolves on its own: a bad first end isn't hidden by a good second one.
     auto resolve = [&](int fileId, bool& ok) {
         auto it = fileToGraph.find(fileId);
-        ok = it != fileToGraph.end();
-        return ok ? it->second : -1;
+        if (it == fileToGraph.end()) { ok = false; return -1; }
+        return it->second;
     };
     bool ok = true;
     for (auto& e : execs) {

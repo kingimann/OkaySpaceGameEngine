@@ -116,6 +116,45 @@ int main() {
         CHECK(p.fills > 0);   // still drawn
     }
 
+    // --- Clip rects are never negative: scrolled-out Rating / Tabs stay clipped -----
+    // (SDL_IntersectRect can leave a negative size for disjoint rects, and a negative
+    // clip rect turns clipping off, so such widgets used to draw outside the view.)
+    {
+        URect a{0, 0, 10, 10}, b{20, 20, 5, 5}, out{1, 1, 1, 1};
+        CHECK(!IntersectRect(&a, &b, &out));
+        CHECK(out.w == 0 && out.h == 0);
+        URect c{5, 5, 10, 10};
+        CHECK(IntersectRect(&a, &c, &out));
+        CHECK(out.x == 5 && out.y == 5 && out.w == 5 && out.h == 5);
+
+        Scene s("scrolled"); s.physicsEnabled = false;
+        GameObject* svGo = s.CreateGameObject("scroll");
+        auto* sv = svGo->AddComponent<UIScrollView>();
+        sv->position = Vec2{10, 10}; sv->size = Vec2{200, 100};
+        sv->contentHeight = 1000.0f; sv->autoContent = false; sv->scroll = 600.0f;   // children far above
+        GameObject* rtGo = s.CreateGameObject("rating");
+        rtGo->transform->SetParent(svGo->transform, false);
+        auto* rt = rtGo->AddComponent<UIRating>(); rt->position = Vec2{8, 8}; rt->value = 3.5f; rt->allowHalf = true;
+        GameObject* tbGo = s.CreateGameObject("tabs");
+        tbGo->transform->SetParent(svGo->transform, false);
+        tbGo->AddComponent<UITabs>()->position = Vec2{8, 50};
+
+        struct ClipLog : RecordingPainter {
+            std::vector<URect> clips; bool negative = false;
+            void SetClipRect(const URect* r) override {
+                RecordingPainter::SetClipRect(r);
+                if (!r) return;
+                clips.push_back(*r);
+                if (r->w < 0 || r->h < 0) negative = true;
+            }
+        } p;
+        RenderSceneUI(s, p, 640, 360);
+        CHECK(!p.negative);
+        bool empty = false;
+        for (const URect& r : p.clips) if (r.w == 0 || r.h == 0) empty = true;
+        CHECK(empty);   // the star / tab-strip fill was clipped away, not drawn unclipped
+    }
+
     // --- WorldUI through the caller's projector ----------------------------------
     {
         Scene s("world"); s.physicsEnabled = false;

@@ -4,6 +4,9 @@
 // engine UI renderer on SDL's software renderer and compares against PNGs in
 // tests/golden/ui/ that were captured from the player's UI pass before it moved
 // into the engine. Keep the scenes deterministic: no time, input or hover state.
+// Not covered here (they need input, time or a camera): tooltips, the focus ring,
+// world-space canvases and WorldUI labels. The drop-target highlight is drawn by
+// forcing the hover flag (scroll_layers).
 #include <Okay.hpp>
 #include <string>
 

@@ -106,10 +106,10 @@ int main() {
 
         std::vector<std::uint8_t> out;
         std::string b64;
-        for (int i = 0; i < 64; ++i) b64 += "QUJDRA==";    // "ABCD" repeated
+        for (int i = 0; i < 64; ++i) b64 += "QUJD";        // "ABC" repeated
         gltf_detail::Base64Decode(b64, out);
-        CHECK(out.size() == 64 * 4);
-        CHECK(out.size() >= 4 && out[0] == 'A' && out[3] == 'D');
+        CHECK(out.size() == 64 * 3);
+        CHECK(out.size() >= 6 && out[0] == 'A' && out[2] == 'C' && out[5] == 'C');
 
         Scene s("h");
         GameObject* cam = s.CreateGameObject("cam");

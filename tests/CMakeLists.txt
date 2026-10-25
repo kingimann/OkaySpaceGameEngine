@@ -875,3 +875,8 @@ add_test(NAME locomotion COMMAND test_locomotion)
 add_executable(test_qa_pr250 test_qa_pr250.cpp)
 target_link_libraries(test_qa_pr250 PRIVATE okay::engine)
 add_test(NAME qa_pr250 COMMAND test_qa_pr250)
+
+# Robustness: parent cycles (Transform::SetParent + scene/prefab/creation loaders)
+add_executable(test_parent_cycles test_parent_cycles.cpp)
+target_link_libraries(test_parent_cycles PRIVATE okay::engine)
+add_test(NAME parent_cycles COMMAND test_parent_cycles)

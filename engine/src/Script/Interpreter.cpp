@@ -502,21 +502,26 @@ private:
 
 } // namespace
 
-std::shared_ptr<StaticStore> SharedStatics(const std::string& source) {
-    static std::unordered_map<std::string, std::shared_ptr<StaticStore>> all;
-    auto& s = all[source];
+namespace {
+std::unordered_map<const Scene*, std::unordered_map<std::string, std::shared_ptr<StaticStore>>>& AllStatics() {
+    static std::unordered_map<const Scene*, std::unordered_map<std::string, std::shared_ptr<StaticStore>>> all;
+    return all;
+}
+} // namespace
+
+std::shared_ptr<StaticStore> SceneStatics(const Scene* scene, const std::string& source) {
+    auto& s = AllStatics()[scene][source];
     if (!s) s = std::make_shared<StaticStore>();
     return s;
 }
 
 Instance::Instance(std::shared_ptr<Program> prog, GameObject* self)
-    : prog_(std::move(prog)), statics_(prog_->statics ? prog_->statics : std::make_shared<StaticStore>()) {
+    : prog_(std::move(prog)), statics_(std::make_shared<StaticStore>()) {
     ctx_.self = self;
     const ClassDecl* c = prog_->Component();
     if (c) {
         fields_.resize(c->fields.size());
         for (std::size_t i = 0; i < c->fields.size(); ++i) fields_[i] = DefaultFor(c->fields[i].resolved);
-        if (!statics_->ready) statics_->values = fields_;
     }
 }
 
@@ -525,15 +530,31 @@ void Instance::Init() {
     if (!c) return;
     steps = 0;
     Exec ex(*prog_, fields_, ctx_, *this);
-    // Static starting values are set once, by the first object.
-    const bool firstObject = !statics_->ready;
-    statics_->ready = true;
-    for (std::size_t i = 0; i < c->fields.size(); ++i) {
-        const FieldDecl& f = c->fields[i];
-        if (!f.init || (f.isStatic && !firstObject)) continue;
-        (f.isStatic ? statics_->values : fields_)[i] = ex.EvalStandalone(*f.init);
-    }
+    for (std::size_t i = 0; i < c->fields.size(); ++i)
+        if (c->fields[i].init && !c->fields[i].isStatic) fields_[i] = ex.EvalStandalone(*c->fields[i].init);
+    InitStatics();
 }
+
+// Static starting values are set once per store, by the first object to use it.
+void Instance::InitStatics() {
+    if (statics_->ready) return;
+    statics_->ready = true;
+    const ClassDecl* c = prog_->Component();
+    statics_->values.clear();
+    for (const FieldDecl& f : c->fields) statics_->values.push_back(DefaultFor(f.resolved));
+    Exec ex(*prog_, fields_, ctx_, *this);
+    for (std::size_t i = 0; i < c->fields.size(); ++i)
+        if (c->fields[i].init && c->fields[i].isStatic) statics_->values[i] = ex.EvalStandalone(*c->fields[i].init);
+}
+
+void Instance::AttachStatics(std::shared_ptr<StaticStore> store) {
+    if (!prog_->Component()) return;
+    statics_ = std::move(store);
+    steps = 0;
+    InitStatics();
+}
+
+void ForgetSceneStatics(const Scene* scene) { AllStatics().erase(scene); }
 
 Value Instance::Call(int method, std::vector<Value> args) {
     steps = 0;

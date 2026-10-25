@@ -775,10 +775,11 @@ line. `new[] { 1, 2 }` takes its type from the items (ints with floats make a
 
 ### static fields and methods
 
-A `static` field is one value shared by every object running the script, such as
-a count of all the enemies or the next free id. Its starting value is set once,
-by the first object; it isn't shown in the Inspector, because it isn't any one
-object's setting. A `static` method is a helper that needs no object: it can use
+A `static` field is one value shared by every object in the scene running the
+script, such as a count of all the enemies or the next free id. Its starting
+value is set once, by the first object, and it lasts one play session: loading a
+level, or Stop then Play in the editor, starts it again. It isn't shown in the
+Inspector, because it isn't any one object's setting. A `static` method is a helper that needs no object: it can use
 static fields and other static methods, but not the object's own fields,
 `gameObject`, `transform` or `GetComponent`. Use either directly or through the
 class name.

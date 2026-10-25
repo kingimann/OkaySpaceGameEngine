@@ -292,13 +292,15 @@ struct ClassDecl {
 };
 
 /// `static` fields' values: one set shared by every object running the same
-/// script, the first of them setting the starting values.
+/// script in a scene, the first of them setting the starting values.
 struct StaticStore {
     std::vector<Value> values;   ///< by field index (instance fields' slots stay unused)
     bool ready = false;
 };
-/// The store for scripts with this exact source (made on first use).
-std::shared_ptr<StaticStore> SharedStatics(const std::string& source);
+/// The store for scripts with this exact source in `scene` (made on first use).
+/// It lasts until the scene is cleared or destroyed (ForgetSceneStatics).
+std::shared_ptr<StaticStore> SceneStatics(const Scene* scene, const std::string& source);
+void ForgetSceneStatics(const Scene* scene);
 
 /// A checked, runnable script.
 struct Program {
@@ -306,7 +308,6 @@ struct Program {
     std::vector<EnumDecl> enums;   ///< every enum in the file (top level or inside a class)
     std::vector<Type> arrays;      ///< element type of each array type (Type{Array, i})
     int component = -1;            ///< the class that is the component
-    std::shared_ptr<StaticStore> statics;   ///< shared with other objects (see SharedStatics); null = this program's own
     std::vector<ScriptDiagnostic> diags;
     bool ok() const;
     const ClassDecl* Component() const { return component >= 0 ? &classes[(std::size_t)component] : nullptr; }
@@ -337,6 +338,9 @@ public:
     Instance(std::shared_ptr<Program> prog, GameObject* self);
     /// Run the field initializers. Throws RuntimeError.
     void Init();
+    /// Share `static` fields through `store` from now on, setting their starting
+    /// values if it's new. Until then the instance has statics of its own.
+    void AttachStatics(std::shared_ptr<StaticStore> store);
     /// Call a method by index with args. Throws RuntimeError.
     Value Call(int method, std::vector<Value> args);
     bool HasMethod(const std::string& name) const { return prog_->MethodIndex(name) >= 0; }
@@ -350,6 +354,7 @@ public:
     std::uint64_t steps = 0;
     std::uint64_t stepLimit = 50'000'000;
 private:
+    void InitStatics();
     std::shared_ptr<Program> prog_;
     std::vector<Value> fields_;
     std::shared_ptr<StaticStore> statics_;

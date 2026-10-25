@@ -419,6 +419,47 @@ static void Statics() {
             "    void Start() { id = nextId++; }\n"), 3, "id");
         CHECK(ids.size() == 3 && ids[0] == 100.0f && ids[1] == 101.0f && ids[2] == 102.0f);
     }
+    {   // statics last one play session: a new scene, or the same scene rebuilt (what Stop does), starts them again
+        const std::string src = Wrap(
+            "    // statics: restart\n"
+            "    static int nextId = 1;\n"
+            "    public int id;\n"
+            "    void Start() { id = nextId++; }\n");
+        auto first = RunMany(src, 3, "id");
+        auto again = RunMany(src, 3, "id");
+        CHECK(first.size() == 3 && first[0] == 1.0f && first[2] == 3.0f);
+        CHECK(again == first);
+        Scene scene("rebuilt");
+        auto* sc = scene.CreateGameObject("A")->AddComponent<ScriptComponent>(NextScriptVM::kLanguage);
+        CHECK(sc->LoadSource(src));
+        scene.Update(kDt);
+        CHECK_NEAR(sc->VM()->GetGlobal("id").AsFloat(), 1.0f, 1e-6f);
+        const std::string saved = SceneSerializer::Serialize(scene);
+        scene.CreateGameObject("B")->AddComponent<ScriptComponent>(NextScriptVM::kLanguage)->LoadSource(src);
+        scene.Update(kDt);   // B gets id 2 in this session
+        CHECK(SceneSerializer::Deserialize(scene, saved));
+        scene.Update(kDt);
+        GameObject* a = scene.Find("A");
+        auto* rebuilt = a ? a->GetComponent<ScriptComponent>() : nullptr;
+        CHECK(rebuilt && rebuilt->VM() && rebuilt->VM()->GetGlobal("id").AsFloat() == 1.0f);
+    }
+    {   // within one session the value lasts even while no object of the script exists (wave after wave)
+        const std::string src = Wrap(
+            "    // statics: waves\n"
+            "    static int nextId = 1;\n"
+            "    public int id;\n"
+            "    void Start() { id = nextId++; }\n");
+        Scene scene("waves");
+        GameObject* first = scene.CreateGameObject("E1");
+        first->AddComponent<ScriptComponent>(NextScriptVM::kLanguage)->LoadSource(src);
+        scene.Update(kDt);
+        scene.Destroy(first);
+        scene.Update(kDt);
+        auto* next = scene.CreateGameObject("E2")->AddComponent<ScriptComponent>(NextScriptVM::kLanguage);
+        next->LoadSource(src);
+        scene.Update(kDt);
+        CHECK_NEAR(next->VM()->GetGlobal("id").AsFloat(), 2.0f, 1e-6f);
+    }
     {   // static methods: helpers that need no object; Class.member works too
         World w(Wrap(
             "    // statics: helpers\n"

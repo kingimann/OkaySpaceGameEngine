@@ -796,6 +796,12 @@ add_executable(test_character_model_setup test_character_model_setup.cpp)
 target_link_libraries(test_character_model_setup PRIVATE okay::engine)
 add_test(NAME character_model_setup COMMAND test_character_model_setup)
 
+# Foot IK on a retargeted imported rig: walking doesn't sink the feet.
+add_executable(test_footik_drift test_footik_drift.cpp)
+target_link_libraries(test_footik_drift PRIVATE okay::engine)
+target_compile_definitions(test_footik_drift PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME footik_drift COMMAND test_footik_drift)
+
 add_executable(test_scene_defaults test_scene_defaults.cpp)
 target_link_libraries(test_scene_defaults PRIVATE okay::engine)
 add_test(NAME scene_defaults COMMAND test_scene_defaults)

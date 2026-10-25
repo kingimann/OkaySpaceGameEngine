@@ -173,14 +173,14 @@ public:
     // start), which lands them after FootIK in the Update order — solving in
     // Update let those Animators clobber the correction the same frame.
     void LateUpdate(float dt) override {
+        RestorePose();
         if (EffWeight() <= 0.0f) return;
         if (!m_init) { Learn(); m_init = true; }
         Vec3 pole = (transform ? transform->Rotation() : Quat::Identity) * Vec3::Forward;
         Scene* s = GetScene();
         // Corrections are smoothed as persistent offsets (frame-rate independent
-        // exponential ease) and re-applied on top of the pose each frame. Whether
-        // the pose was re-written this frame (an animated rig) or still holds last
-        // frame's correction (a static rig) is detected per bone, so both work.
+        // exponential ease) and re-applied on top of the animated pose each frame
+        // (RestorePose took last frame's off again wherever nothing rewrote it).
         float k = smoothing > 0.0f ? (1.0f - std::exp(-smoothing * dt)) : 1.0f;
         // The animation lays the feet out over the body's own floor (this object's
         // origin). Each foot is moved by how far the real ground under it sits above
@@ -192,13 +192,14 @@ public:
         if (adjustPelvis && pelvis) AdjustPelvis(s, k, floorY, air);
         SolveLeg(m_leg[0], leftHip,  leftKnee,  leftFoot,  m_lUp, m_lLo, pole, s, k, dt, floorY, air);
         SolveLeg(m_leg[1], rightHip, rightKnee, rightFoot, m_rUp, m_rLo, pole, s, k, dt, floorY, air);
+        for (int i = 0; i < m_touched; ++i) {
+            m_saved[i].pos = m_saved[i].t->localPosition;
+            m_saved[i].rot = m_saved[i].t->localRotation;
+        }
     }
 
 private:
     struct LegState {
-        Vec3 written;            ///< foot position we left last frame
-        Vec3 applied{0, 0, 0};   ///< correction we added on top of the animated foot
-        bool have = false;
         float lift = 0.0f;       ///< smoothed vertical correction
         bool  locked = false;
         Vec3  lockPos;
@@ -206,9 +207,33 @@ private:
         Vec3  prevAnim; bool havePrev = false;
     };
     LegState m_leg[2];
-    Vec3  m_pelvisWritten, m_pelvisApplied{0, 0, 0};
-    bool  m_havePelvis = false;
     float m_pelvisOff = 0.0f;
+
+    // Bones moved this frame (pelvis + 3 per leg): the animated local pose before
+    // the move, and what was written. Kept in LOCAL space so moving the body
+    // doesn't hide that a bone still holds last frame's correction.
+    struct Saved { Transform* t; Vec3 prePos, pos; Quat preRot, rot; };
+    Saved m_saved[7];
+    int   m_touched = 0;
+
+    // Note a bone's animated pose before this frame first moves it.
+    void Touch(Transform* t) {
+        for (int i = 0; i < m_touched; ++i) if (m_saved[i].t == t) return;
+        if (m_touched < 7) m_saved[m_touched++] = {t, t->localPosition, t->localPosition,
+                                                   t->localRotation, t->localRotation};
+    }
+    // Take last frame's corrections back off wherever the animation didn't
+    // rewrite the bone (a rotation-only retarget never rewrites positions; a
+    // static rig rewrites nothing), so they never pile up.
+    void RestorePose() {
+        for (int i = 0; i < m_touched; ++i) {
+            Saved& b = m_saved[i];
+            const Vec3& p = b.t->localPosition; const Quat& q = b.t->localRotation;
+            if (p.x == b.pos.x && p.y == b.pos.y && p.z == b.pos.z) b.t->localPosition = b.prePos;
+            if (q.x == b.rot.x && q.y == b.rot.y && q.z == b.rot.z && q.w == b.rot.w) b.t->localRotation = b.preRot;
+        }
+        m_touched = 0;
+    }
 
     void Learn() {
         if (leftHip && leftKnee && leftFoot) {
@@ -233,8 +258,6 @@ private:
         return groundY;
     }
 
-    static bool Same(const Vec3& a, const Vec3& b) { return (a - b).SqrMagnitude() < 1e-8f; }
-
     // Lower the pelvis so the foot wanting to go lowest can still reach the ground;
     // the other foot drops with the body and the per-leg IK re-plants it. The
     // shift eases in over a few frames instead of teleporting the body.
@@ -245,15 +268,11 @@ private:
     }
 
     void AdjustPelvis(Scene* s, float ease, float floorY, bool air) {
-        Vec3 cur = pelvis->Position();
-        // The animated pelvis: this frame's pose, or (unchanged since we wrote it)
-        // the pose minus our own shift.
-        Vec3 animP = (m_havePelvis && Same(cur, m_pelvisWritten)) ? cur - m_pelvisApplied : cur;
-        Vec3 shift0 = cur - animP;   // currently applied
+        Vec3 animP = pelvis->Position();
         float off = 0.0f; bool any = false;
         auto consider = [&](Transform* foot) {
             if (!foot || air) return;
-            Vec3 p = foot->Position() - shift0;      // the foot as the animation put it
+            Vec3 p = foot->Position();
             float g = GroundAt(s, p);
             if (g < p.y - maxRayDown) return;          // no ground in range
             float d = Correction(g, p.y, floorY);      // + lift, - drop
@@ -262,18 +281,15 @@ private:
         consider(leftFoot); consider(rightFoot);
         float want = any ? Mathf::Clamp(Mathf::Min(off, 0.0f), -maxPelvisShift, maxPelvisShift) * EffWeight() : 0.0f;
         m_pelvisOff += (want - m_pelvisOff) * ease;
-        Vec3 applied{0, m_pelvisOff, 0};
-        pelvis->SetPosition(animP + applied);
-        m_pelvisApplied = applied; m_pelvisWritten = pelvis->Position(); m_havePelvis = true;
+        Touch(pelvis);
+        pelvis->SetPosition(animP + Vec3{0, m_pelvisOff, 0});
     }
 
     void SolveLeg(LegState& L, Transform* hip, Transform* knee, Transform* foot,
                   float upLen, float loLen, const Vec3& pole, Scene* s,
                   float ease, float dt, float floorY, bool air) {
         if (!hip || !knee || !foot || upLen <= 0.0f || loLen <= 0.0f) return;
-        Vec3 cur = foot->Position();
-        // The foot as the animation placed it this frame (see LateUpdate).
-        Vec3 animFoot = (L.have && Same(cur, L.written)) ? cur - L.applied : cur;
+        Vec3 animFoot = foot->Position();   // as the animation placed it (see RestorePose)
         Vec3 normal;
         float g = GroundAt(s, animFoot, &normal);
         float targetY = g + footOffset;
@@ -306,10 +322,9 @@ private:
             target.x += (L.lockPos.x - target.x) * L.lockW;
             target.z += (L.lockPos.z - target.z) * L.lockW;
         }
-        if ((target - animFoot).SqrMagnitude() < 1e-8f && (cur - animFoot).SqrMagnitude() < 1e-8f) {
-            L.have = false;   // nothing to correct: the pose stays the animation's own
-            return;
-        }
+        if ((target - animFoot).SqrMagnitude() < 1e-8f) return;   // nothing to correct
+
+        Touch(hip); Touch(knee); Touch(foot);
 
         Vec3 oldMid = knee->Position(), oldEnd = foot->Position();
         Vec3 mid, end;
@@ -340,9 +355,6 @@ private:
             Quat desired = (tilt * foot->Rotation()).Normalized();
             foot->SetRotation(Quat::Slerp(foot->Rotation(), desired, EffWeight()));
         }
-        L.written = foot->Position();
-        L.applied = L.written - animFoot;
-        L.have = true;
     }
 
     bool  m_init = false;

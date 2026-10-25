@@ -579,6 +579,50 @@ int main() {
         CHECK_NEAR(vm2->GetGlobal("y").AsFloat(), 6.0f, 1e-4f);
     }
 
+    // --- A very long flat operator chain is an error, not a stack overflow ---
+    // (1+1+...+1 parses in a loop but builds a left-deep tree that evaluating and
+    // destroying would walk recursively, once per term)
+    {
+        auto chain = [](const std::string& term, const char* op, int n) {
+            std::string s = term;
+            for (int i = 1; i < n; ++i) { s += op; s += term; }
+            return s;
+        };
+        struct Case { std::string term; const char* op; };
+        for (const Case& c : {Case{"1", "+"}, Case{"true", "&&"}, Case{"false", "||"}, Case{"\"a\"", "+"}}) {
+            const std::string big = chain(c.term, c.op, 100000);
+            for (const std::string& src : {"var x = " + big + ";",
+                                           "function F() { return " + big + "; }\nvoid Start() { var y = F(); }"}) {
+                auto vm = CreateScriptVM("okayscript");
+                std::string err;
+                CHECK(!vm->Load(src, &err));
+                CHECK(err.find("too long") != std::string::npos);
+                vm->CallStart();
+                vm->CallUpdate(1.0f / 60.0f);
+                err.clear();
+                CHECK(!vm->Validate(src, &err));
+                CHECK(!vm->ValidateAll(src).empty());
+            }
+        }
+        // ...while a long but sensible chain still works.
+        auto vm = CreateScriptVM("okayscript");
+        std::string err;
+        CHECK(vm->Load("var n = " + chain("1", "+", 1001) + ";\nvar a = " + chain("true", "&&", 1001) +
+                       ";\nvar o = " + chain("false", "||", 1001) + ";\nvar s = " + chain("\"ab\"", "+", 1001) + ";", &err));
+        CHECK_NEAR(vm->GetGlobal("n").AsFloat(), 1001.0f, 1e-3f);
+        CHECK(vm->GetGlobal("a").AsBool());
+        CHECK(!vm->GetGlobal("o").AsBool());
+        CHECK(vm->GetGlobal("s").AsString().size() == 2002);
+        // The cap is 1000 operators per expression (not per script, not counting
+        // list elements): one more is an error, a big list literal is fine.
+        auto vm2 = CreateScriptVM("okayscript");
+        CHECK(!vm2->Load("var m = " + chain("1", "+", 1002) + ";", &err));
+        CHECK(err.find("too long") != std::string::npos);
+        err.clear();
+        CHECK(vm2->Load("var t = [" + chain("2", ",", 5000) + "];\nvar c = t.Count;", &err));
+        CHECK_NEAR(vm2->GetGlobal("c").AsFloat(), 5000.0f, 1e-3f);
+    }
+
     // --- noise(): no integer overflow at any coordinate, same values as before ---
     {
         auto vm = CreateScriptVM("okayscript");

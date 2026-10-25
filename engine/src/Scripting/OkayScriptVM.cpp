@@ -2295,7 +2295,10 @@ private:
     }
 
     // Expression grammar with precedence climbing.
-    ExprPtr ParseExpression() { return ParseAssignment(); }
+    ExprPtr ParseExpression() {
+        if (m_nesting == 0) m_operators = 0;   // a new top-level expression
+        return ParseAssignment();
+    }
 
     // Ternary: cond ? a : b (lower precedence than assignment's RHS).
     ExprPtr ParseTernary() {
@@ -2404,49 +2407,56 @@ private:
         }
         return left;
     }
+    // a + b + c ... parses in a loop, but builds a tree as deep as it is long that
+    // running and freeing it walk recursively: cap the operators in one expression.
+    static constexpr int kMaxOperators = 1000;
+    void CountOperator() {
+        if (++m_operators > kMaxOperators)
+            throw ScriptError("parse error: expression is too long (more than " + std::to_string(kMaxOperators) + " operators)", Peek().line);
+    }
     ExprPtr ParseOr() {
         auto l = ParseAnd();
-        while (Match(Tok::Or)) l = std::make_unique<LogicalExpr>(Tok::Or, std::move(l), ParseAnd());
+        while (Match(Tok::Or)) { CountOperator(); l = std::make_unique<LogicalExpr>(Tok::Or, std::move(l), ParseAnd()); }
         return l;
     }
     ExprPtr ParseAnd() {
         auto l = ParseBitOr();
-        while (Match(Tok::And)) l = std::make_unique<LogicalExpr>(Tok::And, std::move(l), ParseBitOr());
+        while (Match(Tok::And)) { CountOperator(); l = std::make_unique<LogicalExpr>(Tok::And, std::move(l), ParseBitOr()); }
         return l;
     }
     ExprPtr ParseBitOr() {
         auto l = ParseBitXor();
-        while (Match(Tok::BitOr)) l = std::make_unique<BinaryExpr>(Tok::BitOr, std::move(l), ParseBitXor());
+        while (Match(Tok::BitOr)) { CountOperator(); l = std::make_unique<BinaryExpr>(Tok::BitOr, std::move(l), ParseBitXor()); }
         return l;
     }
     ExprPtr ParseBitXor() {
         auto l = ParseBitAnd();
-        while (Match(Tok::BitXor)) l = std::make_unique<BinaryExpr>(Tok::BitXor, std::move(l), ParseBitAnd());
+        while (Match(Tok::BitXor)) { CountOperator(); l = std::make_unique<BinaryExpr>(Tok::BitXor, std::move(l), ParseBitAnd()); }
         return l;
     }
     ExprPtr ParseBitAnd() {
         auto l = ParseEquality();
-        while (Match(Tok::BitAnd)) l = std::make_unique<BinaryExpr>(Tok::BitAnd, std::move(l), ParseEquality());
+        while (Match(Tok::BitAnd)) { CountOperator(); l = std::make_unique<BinaryExpr>(Tok::BitAnd, std::move(l), ParseEquality()); }
         return l;
     }
     ExprPtr ParseEquality() {
         auto l = ParseComparison();
-        while (Check(Tok::Eq) || Check(Tok::Ne)) { Tok op = Peek().type; ++m_pos; l = std::make_unique<BinaryExpr>(op, std::move(l), ParseComparison()); }
+        while (Check(Tok::Eq) || Check(Tok::Ne)) { Tok op = Peek().type; ++m_pos; CountOperator(); l = std::make_unique<BinaryExpr>(op, std::move(l), ParseComparison()); }
         return l;
     }
     ExprPtr ParseComparison() {
         auto l = ParseTerm();
-        while (Check(Tok::Lt) || Check(Tok::Gt) || Check(Tok::Le) || Check(Tok::Ge)) { Tok op = Peek().type; ++m_pos; l = std::make_unique<BinaryExpr>(op, std::move(l), ParseTerm()); }
+        while (Check(Tok::Lt) || Check(Tok::Gt) || Check(Tok::Le) || Check(Tok::Ge)) { Tok op = Peek().type; ++m_pos; CountOperator(); l = std::make_unique<BinaryExpr>(op, std::move(l), ParseTerm()); }
         return l;
     }
     ExprPtr ParseTerm() {
         auto l = ParseFactor();
-        while (Check(Tok::Plus) || Check(Tok::Minus)) { Tok op = Peek().type; ++m_pos; l = std::make_unique<BinaryExpr>(op, std::move(l), ParseFactor()); }
+        while (Check(Tok::Plus) || Check(Tok::Minus)) { Tok op = Peek().type; ++m_pos; CountOperator(); l = std::make_unique<BinaryExpr>(op, std::move(l), ParseFactor()); }
         return l;
     }
     ExprPtr ParseFactor() {
         auto l = ParseUnary();
-        while (Check(Tok::Star) || Check(Tok::Slash) || Check(Tok::Percent)) { Tok op = Peek().type; ++m_pos; l = std::make_unique<BinaryExpr>(op, std::move(l), ParseUnary()); }
+        while (Check(Tok::Star) || Check(Tok::Slash) || Check(Tok::Percent)) { Tok op = Peek().type; ++m_pos; CountOperator(); l = std::make_unique<BinaryExpr>(op, std::move(l), ParseUnary()); }
         return l;
     }
     ExprPtr ParseUnary() {
@@ -2662,6 +2672,7 @@ private:
     std::vector<Token> m_toks;
     std::size_t m_pos = 0;
     int m_nesting = 0;                                      // ParseUnary recursion depth
+    int m_operators = 0;                                    // binary operators in this expression
     std::set<std::string> m_enums;                          // enum type names
     std::vector<ScriptDiagnostic> m_semantic;               // type mistakes found while parsing
     bool m_inVoid = false;                                  // parsing the body of a `void` function

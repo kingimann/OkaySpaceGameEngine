@@ -330,6 +330,39 @@ int main() {
         CHECK_NEAR(w.Get("x").AsFloat(), 6.0f, 1e-4f);
     }
 
+    {   // a very long flat operator chain is a parse error, not a stack overflow
+        // (1+1+...+1 parses in a loop but builds a left-deep tree that checking,
+        // running and destroying would walk recursively, once per term)
+        auto chain = [](const std::string& term, const char* op, int n) {
+            std::string s = term;
+            for (int i = 1; i < n; ++i) { s += op; s += term; }
+            return s;
+        };
+        struct Case { const char* type; std::string term; const char* op; };
+        for (const Case& c : {Case{"int", "1", " + "}, Case{"bool", "true", " && "}, Case{"bool", "false", " || "},
+                              Case{"string", "\"a\"", " + "}}) {
+            const std::string src = Wrap(std::string("    public ") + c.type + " x;\n    void Start() { x = " +
+                                         chain(c.term, c.op, 100000) + "; }");
+            auto d = Diags(src);
+            CHECK(Has(d, 0, "too long", 3));
+            World w(src);
+            CHECK(!w.loaded);
+            w.Frames(2);
+        }
+        // ...while a long but sensible chain still works.
+        World w(Wrap("    public int n;\n    public bool a;\n    public bool o;\n    public string s;\n"
+                     "    void Start() { n = " + chain("1", " + ", 1001) + "; a = " + chain("true", " && ", 1001) +
+                     "; o = " + chain("false", " || ", 1001) + "; s = " + chain("\"ab\"", " + ", 1001) + "; }"));
+        CHECK(w.loaded);
+        if (!w.loaded) std::cerr << "  load error: " << w.error << "\n";
+        CHECK_NEAR(w.Get("n").AsFloat(), 1001.0f, 1e-3f);
+        CHECK(w.Get("a").AsBool());
+        CHECK(!w.Get("o").AsBool());
+        CHECK(w.Get("s").AsString().size() == 2002);
+        // the cap is 1000 operators per expression: one more is an error
+        CHECK(Has(Diags(Wrap("    public int n;\n    void Start() { n = " + chain("1", " + ", 1002) + "; }")), 0, "too long", 3));
+    }
+
     Input::FeedKeys({});
     Log::sink = nullptr;
     TEST_MAIN_RESULT();

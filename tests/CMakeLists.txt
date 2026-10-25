@@ -30,6 +30,11 @@ add_executable(test_physics3d test_physics3d.cpp)
 target_link_libraries(test_physics3d PRIVATE okay::engine)
 add_test(NAME physics3d COMMAND test_physics3d)
 
+# Robustness: removing colliders / bodies / components from contact callbacks
+add_executable(test_physics_callback_removal test_physics_callback_removal.cpp)
+target_link_libraries(test_physics_callback_removal PRIVATE okay::engine)
+add_test(NAME physics_callback_removal COMMAND test_physics_callback_removal)
+
 add_executable(test_scriptapi test_scriptapi.cpp)
 target_link_libraries(test_scriptapi PRIVATE okay::engine)
 add_test(NAME scriptapi COMMAND test_scriptapi)
@@ -875,8 +880,3 @@ add_test(NAME locomotion COMMAND test_locomotion)
 add_executable(test_qa_pr250 test_qa_pr250.cpp)
 target_link_libraries(test_qa_pr250 PRIVATE okay::engine)
 add_test(NAME qa_pr250 COMMAND test_qa_pr250)
-
-# Robustness: removing colliders / bodies / components from contact callbacks
-add_executable(test_physics_callback_removal test_physics_callback_removal.cpp)
-target_link_libraries(test_physics_callback_removal PRIVATE okay::engine)
-add_test(NAME physics_callback_removal COMMAND test_physics_callback_removal)

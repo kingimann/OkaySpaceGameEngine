@@ -617,6 +617,17 @@ void Character::Update(float dt) {
     // weight to it instead of the legs snapping straight the frame you touch down.
     if (anim != m_prevAnim) {
         if (m_prevAnim == 5 && (anim == 1 || anim == 2 || anim == 3)) m_landT = 0.0f;
+        // Crossfade between the built-in animations too (idle -> run -> crouch ...),
+        // not just authored clips: snapshot the pose of the state we're leaving so
+        // a controller switching states doesn't snap the whole body in one frame.
+        if (!m_activeClip && !m_blendTreeOn && !m_editorPosing && blendTime > 1e-4f &&
+            m_prevAnim != 0 && anim != 0) {
+            const int now = anim;
+            anim = m_prevAnim;
+            m_blendFrom = CurrentSourcePose();
+            anim = now;
+            m_blendT = 0.0f;
+        }
         m_prevAnim = anim;
     }
     if (m_landT >= 0.0f) {

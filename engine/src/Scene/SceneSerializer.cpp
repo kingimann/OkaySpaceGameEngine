@@ -1453,7 +1453,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
          ("force", ts->impactForce)("bsize", ts->bulletSize).col("bcol", ts->bulletColor)
          ("muzH", ts->muzzleHeight)("muzF", ts->muzzleForward)
          ("mag", ts->magazineSize).key("reloadKey", ts->reloadKey)("reload", ts->reloadTime).b("autoReload", ts->autoReload)
-         .key("dashKey", ts->dashKey)("dashSpeed", ts->dashSpeed)("dashTime", ts->dashTime)("dashCd", ts->dashCooldown)
+         .key("dashKey", ts->dashKey)("dashPad", ts->dashGamepadButton)("dashSpeed", ts->dashSpeed)("dashTime", ts->dashTime)("dashCd", ts->dashCooldown)
          .b("dashInv", ts->dashInvulnerable)
          ("camDist", ts->cameraDistance)("camPitch", ts->cameraPitch)("camYaw", ts->cameraYaw)("camDamp", ts->cameraDamping)
          ("lead", ts->aimLookAhead)("maxLead", ts->maxLookAhead).b("zoom", ts->wheelZoom)("minDist", ts->minDistance)
@@ -3944,7 +3944,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     k.f("spread", ts->spread); k.f("force", ts->impactForce); k.f("bsize", ts->bulletSize);
                     k.col("bcol", ts->bulletColor); k.f("muzH", ts->muzzleHeight); k.f("muzF", ts->muzzleForward);
                     k.i("mag", ts->magazineSize); k.key("reloadKey", ts->reloadKey); k.f("reload", ts->reloadTime);
-                    k.b("autoReload", ts->autoReload); k.key("dashKey", ts->dashKey); k.f("dashSpeed", ts->dashSpeed);
+                    k.b("autoReload", ts->autoReload); k.key("dashKey", ts->dashKey); k.i("dashPad", ts->dashGamepadButton); k.f("dashSpeed", ts->dashSpeed);
                     k.f("dashTime", ts->dashTime); k.f("dashCd", ts->dashCooldown); k.b("dashInv", ts->dashInvulnerable);
                     k.f("camDist", ts->cameraDistance); k.f("camPitch", ts->cameraPitch); k.f("camYaw", ts->cameraYaw);
                     k.f("camDamp", ts->cameraDamping); k.f("lead", ts->aimLookAhead); k.f("maxLead", ts->maxLookAhead);

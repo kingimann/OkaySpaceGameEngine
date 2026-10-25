@@ -41,6 +41,15 @@ To start with one:
   - impact force and muzzle height.
 - **Ammo:** set a magazine size, or 0 for unlimited ammo. Reload time and auto
   reload are adjustable.
+- **Dash:** a short dodge. It starts at **Dash Speed** and eases down to your
+  movement speed over **Dash Time**, then hands straight back to normal movement:
+  no skid, and if you keep moving you carry on at walking speed. The body ducks
+  and faces the dash direction while it lasts. **Dash Cooldown** starts when the
+  dash ends. Key and pad button are both settable (Space / A by default).
+- **Animation** (with a Character): follows what the body is actually doing.
+  Idle, walk or run is picked from the real ground speed; the stride rate matches
+  the speed; the legs step backwards when you walk away from where you aim.
+  Switching between animations crossfades instead of snapping.
 - **Camera:** a high follow camera that leans toward the cursor so you see where
   you shoot, kicks a little on every shot, and zooms with the wheel.
 - **Script events** (on the player's script): `on_fire`, `on_reload`,

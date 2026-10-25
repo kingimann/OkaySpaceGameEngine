@@ -148,7 +148,8 @@ create policy "delete own messages" on public.messages for delete using (auth.ui
 -- ---------------------------------------------------------------------------
 -- Message reactions ("likes"): one row per (reactor, message, emoji). scope is
 -- 'dm' (messages) or 'channel' (channel_messages); emoji is a shortcode like
--- 'heart'. Public read + aggregate; a reactor adds/removes only their own.
+-- 'heart'. Only people who can see the message can see (or add) its
+-- reactions; a reactor adds/removes only their own.
 -- ---------------------------------------------------------------------------
 create table if not exists public.message_reactions (
   reactor     uuid not null default auth.uid() references auth.users on delete cascade,
@@ -162,8 +163,30 @@ alter table public.message_reactions enable row level security;
 drop policy if exists "reactions readable" on public.message_reactions;
 drop policy if exists "add own reaction"   on public.message_reactions;
 drop policy if exists "drop own reaction"  on public.message_reactions;
-create policy "reactions readable" on public.message_reactions for select using (true);
-create policy "add own reaction"   on public.message_reactions for insert with check (auth.uid() = reactor);
+-- Can the current user see the message a reaction is on? DM: its sender or
+-- recipient. Channel: a member of the channel's server. Group: a member of the
+-- group (group_messages comes from group_chats.sql; plpgsql resolves it only
+-- when a 'group' reaction is checked). SECURITY DEFINER so the check doesn't
+-- recurse through the messages tables' own policies.
+create or replace function public.can_see_reaction_target(p_scope text, p_target bigint)
+  returns boolean language plpgsql security definer stable set search_path = public as $$
+  begin
+    if p_scope = 'dm' then
+      return exists (select 1 from public.messages m where m.id = p_target
+                     and (m.sender = auth.uid() or m.recipient = auth.uid()));
+    elsif p_scope = 'channel' then
+      return exists (select 1 from public.channel_messages c where c.id = p_target
+                     and public.is_channel_member(c.channel_id));
+    elsif p_scope = 'group' then
+      return exists (select 1 from public.group_messages g where g.id = p_target
+                     and public.is_group_member(g.convo_id));
+    end if;
+    return false;
+  end $$;
+create policy "reactions readable" on public.message_reactions for select
+  using (public.can_see_reaction_target(scope, target_id));
+create policy "add own reaction"   on public.message_reactions for insert
+  with check (auth.uid() = reactor and public.can_see_reaction_target(scope, target_id));
 create policy "drop own reaction"  on public.message_reactions for delete using (auth.uid() = reactor);
 
 -- ---------------------------------------------------------------------------

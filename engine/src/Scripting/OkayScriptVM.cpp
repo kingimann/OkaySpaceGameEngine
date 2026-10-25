@@ -89,6 +89,25 @@
 #include <unordered_map>
 #include <vector>
 
+
+// Script-supplied file names must stay inside the game's own folders: no
+// absolute paths, no "..". Refusals are logged so the game's author sees why.
+namespace okay {
+static bool ScriptPathOk(const std::string& name, const char* api) {
+    if (Save::IsSafeRelative(name)) return true;
+    OKAY_ERROR("[script] ", api, ": refusing file '", name,
+               "' (use a name or a relative path; absolute paths and '..' aren't allowed)");
+    return false;
+}
+// A file that used to live beside the game (before saves moved to the save
+// folder): read it from there if the new place has nothing yet.
+static std::string ScriptReadPath(const std::string& name) {
+    std::string p = Save::Resolve(name);
+    if (p != name && !std::ifstream(p).good() && std::ifstream(name).good()) return name;
+    return p;
+}
+} // namespace okay
+
 namespace okay {
 namespace {
 
@@ -3268,17 +3287,20 @@ struct OkayScriptVM::Impl {
         // "creations" folder, or a path). Work without Build Mode too.
         b["build_save"] = [buildOf, sceneOf, argStr](std::vector<Value>& a) -> Value {
             std::string name = argStr(a, 0);
+            if (!name.empty() && !ScriptPathOk(name, "build_save")) return Value{false};
             if (BuildMode* m = buildOf()) return Value{m->SaveCreation(name)};
             Scene* s = sceneOf(); if (!s) return Value{false};
             return Value{BuildCreation::Save(*s, BuildMode::CreationPath(name))};
         };
         b["build_load"] = [buildOf, sceneOf, argStr](std::vector<Value>& a) -> Value {
             std::string name = argStr(a, 0);
+            if (!name.empty() && !ScriptPathOk(name, "build_load")) return Value{false};
             if (BuildMode* m = buildOf()) return Value{m->LoadCreation(name)};
             Scene* s = sceneOf(); if (!s) return Value{false};
             return Value{BuildCreation::Load(*s, BuildMode::CreationPath(name))};
         };
         b["build_exists"] = [buildOf, argStr](std::vector<Value>& a) -> Value {
+            if (!argStr(a, 0).empty() && !ScriptPathOk(argStr(a, 0), "build_exists")) return Value{false};
             BuildMode* m = buildOf();
             std::ifstream f(BuildMode::CreationPath(argStr(a, 0), m ? m->creationFolder : "creations"));
             return Value{(bool)f};
@@ -4167,7 +4189,8 @@ struct OkayScriptVM::Impl {
         };
         // Load another scene at end of frame (level transitions, restart).
         b["load_scene"] = [this](std::vector<Value>& a) {
-            if (!a.empty() && rt.host && rt.host->gameObject && rt.host->gameObject->scene())
+            if (!a.empty() && rt.host && rt.host->gameObject && rt.host->gameObject->scene() &&
+                ScriptPathOk(a[0].AsString(), "load_scene"))
                 rt.host->gameObject->scene()->RequestLoad(a[0].AsString());
             return Value{};
         };
@@ -4179,7 +4202,12 @@ struct OkayScriptVM::Impl {
         };
         b["load_scene_name"] = [this](std::vector<Value>& a) {
             Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
-            if (s && !a.empty()) return Value{SceneManager::LoadSceneByName(*s, a[0].AsString()) ? 1.0f : 0.0f};
+            if (s && !a.empty()) {
+                // A build-list name is fine; a raw path must stay inside the game.
+                const std::string name = a[0].AsString();
+                if (SceneManager::IndexOf(name) < 0 && !ScriptPathOk(name, "load_scene_name")) return Value{0.0f};
+                return Value{SceneManager::LoadSceneByName(*s, name) ? 1.0f : 0.0f};
+            }
             return Value{0.0f};
         };
         b["load_next_scene"] = [this](std::vector<Value>&) {
@@ -4193,7 +4221,9 @@ struct OkayScriptVM::Impl {
         b["load_scene_additive"] = [this](std::vector<Value>& a) {
             Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
             if (s && !a.empty()) {
-                std::string path = SceneManager::PathForName(a[0].AsString());
+                const std::string name = a[0].AsString();
+                if (SceneManager::IndexOf(name) < 0 && !ScriptPathOk(name, "load_scene_additive")) return Value{0.0f};
+                std::string path = SceneManager::PathForName(name);
                 if (path.empty()) return Value{0.0f};
                 Vec3 off{0, 0, 0};
                 if (a.size() >= 4)      off = {a[1].AsFloat(), a[2].AsFloat(), a[3].AsFloat()};
@@ -5186,24 +5216,28 @@ struct OkayScriptVM::Impl {
         b["data_num"] = [](std::vector<Value>& a) -> Value {
             if (a.size() < 2) return Value{0.0f};
             double def = a.size() > 2 ? a[2].AsFloat() : 0.0;
+            if (!ScriptPathOk(a[0].AsString(), "data_num")) return Value{(float)def};
             return Value{(float)DataAsset::Cached(a[0].AsString()).GetNumber(a[1].AsString(), def)};
         };
         b["data_str"] = [](std::vector<Value>& a) -> Value {
             if (a.size() < 2) return Value{std::string{}};
             std::string def = a.size() > 2 ? a[2].AsString() : std::string{};
+            if (!ScriptPathOk(a[0].AsString(), "data_str")) return Value{def};
             return Value{DataAsset::Cached(a[0].AsString()).GetString(a[1].AsString(), def)};
         };
         b["data_has"] = [](std::vector<Value>& a) -> Value {
             if (a.size() < 2) return Value{false};
+            if (!ScriptPathOk(a[0].AsString(), "data_has")) return Value{false};
             return Value{DataAsset::Cached(a[0].AsString()).Has(a[1].AsString())};
         };
         // Customize a data asset from code (then data_save to persist it).
         b["data_set"] = [](std::vector<Value>& a) {
-            if (a.size() >= 3) DataAsset::Cached(a[0].AsString()).Set(a[1].AsString(), a[2].AsString());
+            if (a.size() >= 3 && ScriptPathOk(a[0].AsString(), "data_set"))
+                DataAsset::Cached(a[0].AsString()).Set(a[1].AsString(), a[2].AsString());
             return Value{};
         };
         b["data_save"] = [](std::vector<Value>& a) -> Value {
-            if (a.empty()) return Value{false};
+            if (a.empty() || !ScriptPathOk(a[0].AsString(), "data_save")) return Value{false};
             return Value{DataAsset::Cached(a[0].AsString()).Save(a[0].AsString())};
         };
         // Persistent prefs (high scores, settings) — survive across runs.
@@ -5222,11 +5256,16 @@ struct OkayScriptVM::Impl {
             if (a.empty()) return Value{std::string{}};
             return Value{Prefs::GetString(a[0].AsString(), a.size() > 1 ? a[1].AsString() : std::string{})};
         };
+        // Into the game's save folder; loading falls back to the old spot beside the game.
         b["prefs_save"] = [](std::vector<Value>& a) {
-            return Value{Prefs::Save(a.empty() ? "game.okayprefs" : a[0].AsString())};
+            const std::string name = a.empty() ? "game.okayprefs" : a[0].AsString();
+            if (!ScriptPathOk(name, "prefs_save")) return Value{false};
+            return Value{Prefs::Save(Save::Resolve(name))};
         };
         b["prefs_load"] = [](std::vector<Value>& a) {
-            return Value{Prefs::Load(a.empty() ? "game.okayprefs" : a[0].AsString())};
+            const std::string name = a.empty() ? "game.okayprefs" : a[0].AsString();
+            if (!ScriptPathOk(name, "prefs_load")) return Value{false};
+            return Value{Prefs::Load(ScriptReadPath(name))};
         };
 
         // Easy-Save-3-style save system: typed values, many files, write-through.
@@ -5234,12 +5273,15 @@ struct OkayScriptVM::Impl {
         //   save("spawn", new Vector3(1,2,3), "slot1.okaysave")
         //   load("coins", 0)  /  load("name", "Hero")  /  load("spawn", vec)
         // The 3rd arg (file) is optional everywhere; values keep their type.
+        // The file argument, or "" when it would escape the save folder (refused + logged).
         auto saveFile = [](std::vector<Value>& a, size_t idx) -> std::string {
-            return (a.size() > idx && a[idx].IsString()) ? a[idx].AsString() : Save::DefaultFile();
+            std::string f = (a.size() > idx && a[idx].IsString()) ? a[idx].AsString() : Save::DefaultFile();
+            return ScriptPathOk(f, "save file") ? f : std::string();
         };
         b["save"] = [saveFile](std::vector<Value>& a) -> Value {
             if (a.size() < 2) return Value{false};
             std::string key = a[0].AsString(), file = saveFile(a, 2);
+            if (file.empty()) return Value{false};
             if (a[1].IsVec3())        Save::SetVec3(key, a[1].AsVec3(), file);
             else if (a[1].IsString()) Save::SetString(key, a[1].AsString(), file);
             else                      Save::SetFloat(key, a[1].AsFloat(), file);
@@ -5248,6 +5290,7 @@ struct OkayScriptVM::Impl {
         b["load"] = [saveFile](std::vector<Value>& a) -> Value {
             if (a.empty()) return Value{0.0f};
             std::string key = a[0].AsString(), file = saveFile(a, 2);
+            if (file.empty()) return a.size() > 1 ? a[1] : Value{0.0f};
             if (a.size() > 1 && a[1].IsVec3())   return Value{Save::GetVec3(key, a[1].AsVec3(), file)};
             if (a.size() > 1 && a[1].IsString()) return Value{Save::GetString(key, a[1].AsString(), file)};
             float def = a.size() > 1 ? a[1].AsFloat() : 0.0f;
@@ -5255,21 +5298,27 @@ struct OkayScriptVM::Impl {
         };
         b["save_has"] = [saveFile](std::vector<Value>& a) -> Value {
             if (a.empty()) return Value{false};
-            return Value{Save::Has(a[0].AsString(), saveFile(a, 1))};
+            const std::string file = saveFile(a, 1);
+            return Value{!file.empty() && Save::Has(a[0].AsString(), file)};
         };
         b["save_delete"] = [saveFile](std::vector<Value>& a) -> Value {
             if (a.empty()) return Value{};
-            Save::Delete(a[0].AsString(), saveFile(a, 1)); return Value{};
-        };
-        b["save_clear"] = [](std::vector<Value>& a) -> Value {
-            Save::Clear(a.empty() || !a[0].IsString() ? Save::DefaultFile() : a[0].AsString());
+            const std::string file = saveFile(a, 1);
+            if (!file.empty()) Save::Delete(a[0].AsString(), file);
             return Value{};
         };
-        b["save_exists"] = [](std::vector<Value>& a) -> Value {
-            return Value{Save::FileExists(a.empty() || !a[0].IsString() ? Save::DefaultFile() : a[0].AsString())};
+        b["save_clear"] = [saveFile](std::vector<Value>& a) -> Value {
+            const std::string file = saveFile(a, 0);
+            if (!file.empty()) Save::Clear(file);
+            return Value{};
         };
-        b["save_delete_file"] = [](std::vector<Value>& a) -> Value {
-            return Value{Save::DeleteFile(a.empty() || !a[0].IsString() ? Save::DefaultFile() : a[0].AsString())};
+        b["save_exists"] = [saveFile](std::vector<Value>& a) -> Value {
+            const std::string file = saveFile(a, 0);
+            return Value{!file.empty() && Save::FileExists(file)};
+        };
+        b["save_delete_file"] = [saveFile](std::vector<Value>& a) -> Value {
+            const std::string file = saveFile(a, 0);
+            return Value{!file.empty() && Save::DeleteFile(file)};
         };
         // Math helpers
         b["abs"]   = [](std::vector<Value>& a) { return Value{Mathf::Abs(a.empty() ? 0 : a[0].AsFloat())}; };
@@ -6944,23 +6993,28 @@ struct OkayScriptVM::Impl {
             Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
             if (!s) return Value{0.0f};
             std::string slot = a.empty() ? "save1" : a[0].AsString();
-            std::error_code ec; std::filesystem::create_directories("saves", ec);
-            return Value{SceneSerializer::SaveToFile(*s, "saves/" + slot + ".okaysave") ? 1.0f : 0.0f};
+            if (!ScriptPathOk(slot, "save_game")) return Value{0.0f};
+            const std::string path = Save::Resolve("saves/" + slot + ".okaysave");
+            std::error_code ec; std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
+            return Value{SceneSerializer::SaveToFile(*s, path) ? 1.0f : 0.0f};
         };
         b["load_game"] = [this](std::vector<Value>& a) {
             Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
             std::string slot = a.empty() ? "save1" : a[0].AsString();
-            std::string path = "saves/" + slot + ".okaysave";
+            if (!ScriptPathOk(slot, "load_game")) return Value{0.0f};
+            std::string path = ScriptReadPath("saves/" + slot + ".okaysave");
             if (s && std::ifstream(path).good()) { s->RequestLoad(path); return Value{1.0f}; }
             return Value{0.0f};
         };
         b["save_exists"] = [](std::vector<Value>& a) {
             std::string slot = a.empty() ? "save1" : a[0].AsString();
-            return Value{std::ifstream("saves/" + slot + ".okaysave").good() ? 1.0f : 0.0f};
+            if (!ScriptPathOk(slot, "save_exists")) return Value{0.0f};
+            return Value{std::ifstream(ScriptReadPath("saves/" + slot + ".okaysave")).good() ? 1.0f : 0.0f};
         };
         b["delete_save"] = [](std::vector<Value>& a) {
             std::string slot = a.empty() ? "save1" : a[0].AsString();
-            return Value{std::remove(("saves/" + slot + ".okaysave").c_str()) == 0 ? 1.0f : 0.0f};
+            if (!ScriptPathOk(slot, "delete_save")) return Value{0.0f};
+            return Value{std::remove(ScriptReadPath("saves/" + slot + ".okaysave").c_str()) == 0 ? 1.0f : 0.0f};
         };
 
         // ---- Friendly aliases: intuitive names for common builtins so games

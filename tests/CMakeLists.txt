@@ -875,3 +875,8 @@ add_test(NAME locomotion COMMAND test_locomotion)
 add_executable(test_qa_pr250 test_qa_pr250.cpp)
 target_link_libraries(test_qa_pr250 PRIVATE okay::engine)
 add_test(NAME qa_pr250 COMMAND test_qa_pr250)
+
+# A scene saved crouched / prone reloads in that stance (not stood up inside low cover)
+add_executable(test_stance_save test_stance_save.cpp)
+target_link_libraries(test_stance_save PRIVATE okay::engine)
+add_test(NAME stance_save COMMAND test_stance_save)

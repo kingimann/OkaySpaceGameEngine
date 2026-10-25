@@ -136,6 +136,7 @@
 #include <fstream>
 #include <filesystem>
 #include <sstream>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -1446,6 +1447,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         KvOut k{out};
         k.b("prone", fp->allowProne).b("resize", fp->resizeBody)("crouchH", fp->crouchHeight)("proneH", fp->proneHeight)
          ("pad", fp->stanceGamepadButton)("hold", fp->proneHoldTime);
+        if (fp->stance() != std::remove_pointer_t<decltype(fp)>::Stance::Stand) k("stance", (int)fp->stance());   // saved crouched / prone
         out << "\n";
     }
     if (auto* tp = go->GetComponent<ThirdPersonController>()) {
@@ -1478,6 +1480,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         KvOut k{out};
         k.b("prone", tp->allowProne).b("resize", tp->resizeBody)("crouchH", tp->crouchHeight)("proneH", tp->proneHeight)
          ("pad", tp->stanceGamepadButton)("hold", tp->proneHoldTime);
+        if (tp->stance() != std::remove_pointer_t<decltype(tp)>::Stance::Stand) k("stance", (int)tp->stance());   // saved crouched / prone
         out << "\n";
     }
     if (auto* tp = go->GetComponent<ThirdPersonController>()) {
@@ -4071,6 +4074,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         if (!c) return;
                         k.b("prone", c->allowProne); k.b("resize", c->resizeBody); k.f("crouchH", c->crouchHeight);
                         k.f("proneH", c->proneHeight); k.i("pad", c->stanceGamepadButton); k.f("hold", c->proneHoldTime);
+                        // Saved crouched / prone: start that way (the collider was saved standing).
+                        int st = 0; k.i("stance", st);
+                        using S = typename std::remove_pointer_t<decltype(c)>::Stance;
+                        if (st == (int)S::Crouch || st == (int)S::Prone) c->RestoreStance(static_cast<S>(st));
                     };
                     if (field == "fpstance") load(go->GetComponent<FirstPersonController>());
                     else                     load(go->GetComponent<ThirdPersonController>());

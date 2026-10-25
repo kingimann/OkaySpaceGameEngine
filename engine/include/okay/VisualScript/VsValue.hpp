@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <cmath>
 #include <string>
 #include <variant>
 #include <vector>
@@ -126,7 +127,11 @@ public:
     /// integers ("3"), fractions trim trailing zeros ("1.5"). Keeps script
     /// string concatenation (e.g. score counters) clean.
     static std::string FormatNumber(float f) {
-        if (f == static_cast<float>(static_cast<long long>(f)))
+        // NaN / inf and numbers past long long's range can't take the integer
+        // path (that cast is undefined): print them as they are.
+        if (std::isnan(f)) return "nan";
+        if (std::isinf(f)) return f < 0 ? "-inf" : "inf";
+        if (std::fabs(f) < 9.0e18f && f == static_cast<float>(static_cast<long long>(f)))
             return std::to_string(static_cast<long long>(f));
         std::string s = std::to_string(f);
         std::size_t dot = s.find('.');

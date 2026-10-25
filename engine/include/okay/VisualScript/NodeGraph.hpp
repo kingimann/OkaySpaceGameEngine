@@ -191,7 +191,9 @@ public:
     // ---- Runaway protection ---------------------------------------------
     /// Most node executions one event may run (including loop bodies and chains
     /// started from it) before the event is stopped and an error reported.
-    static constexpr long kMaxStepsPerEvent = 1000000;
+    static constexpr long kMaxStepsPerEvent = 1000000;   // node runs + data reads
+    /// Deepest loops / sequences may nest (each Body or output runs as a nested Run).
+    static constexpr int kMaxRunDepth = 256;
     /// Deepest a data pull may nest before it is treated as a wiring cycle.
     static constexpr int kMaxPullDepth = 512;
     /// True once the event being run was stopped, or the function being run has

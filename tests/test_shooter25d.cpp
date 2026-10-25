@@ -185,6 +185,126 @@ int main() {
         CHECK(!ts->IsDashing());
         CHECK(!hp->godMode);
     }
+    {   // Dash feel: an eased burst that hands back to normal movement (no skid),
+        // even with the old saved values (18 m/s for 0.18 s used to carry ~4.8 m).
+        for (int variant = 0; variant < 2; ++variant) {
+            Scene s("tdsdashfeel");
+            Ground(s);
+            GameObject* p = Body(s, "Player", {0, 0.02f, 0});
+            auto* ts = p->AddComponent<TopDownShooterController>();
+            ts->aimMode = (int)TopDownShooterController::AimMode::MoveDirection;
+            if (variant == 1) { ts->dashSpeed = 18.0f; ts->dashTime = 0.18f; }   // a scene saved before
+            auto* rb = p->GetComponent<Rigidbody3D>();
+            s.Start();
+            Step(s, {}, 30);
+            Step(s, {'d'}, 1);                              // face +X
+            Step(s, {}, 30);                                // stop
+            float x0 = p->transform->Position().x;
+            Step(s, {' '}, 1);                              // tap Space while standing still
+            CHECK(ts->IsDashing());
+            float peak = rb->velocity.x, prev = peak;
+            bool eased = true;
+            int frames = 1;
+            while (ts->IsDashing() && frames < 120) {
+                Step(s, {}, 1); ++frames;
+                if (rb->velocity.x > prev + 1e-3f) eased = false;   // never speeds up again
+                prev = rb->velocity.x;
+            }
+            CHECK(eased);
+            CHECK(rb->velocity.x <= ts->walkSpeed * 0.5f + 0.05f);  // no skid at full speed
+            Step(s, {}, 20);
+            CHECK_NEAR(rb->velocity.x, 0.0f, 0.05f);
+            float dist = p->transform->Position().x - x0;
+            CHECK(dist > 1.2f && dist < 3.0f);              // a dodge, not a teleport
+            CHECK(peak > 10.0f);
+        }
+    }
+    {   // Dash while moving keeps going at walk speed (no stop, no jump in speed),
+        // the pad's A button dashes too, and the cooldown runs after the dash ends.
+        Scene s("tdsdashmove");
+        Ground(s);
+        GameObject* p = Body(s, "Player", {0, 0.02f, 0});
+        auto* ts = p->AddComponent<TopDownShooterController>();
+        ts->aimMode = (int)TopDownShooterController::AimMode::MoveDirection;
+        auto* rb = p->GetComponent<Rigidbody3D>();
+        s.Start();
+        Step(s, {}, 30);
+        Step(s, {'d'}, 40);
+        CHECK_NEAR(rb->velocity.x, ts->walkSpeed, 0.3f);
+        Step(s, {'d', ' '}, 1);
+        CHECK(ts->IsDashing());
+        int n = 0;
+        while (ts->IsDashing() && n < 120) { Step(s, {'d'}, 1); ++n; }
+        Step(s, {'d'}, 1);
+        CHECK_NEAR(rb->velocity.x, ts->walkSpeed, 0.4f);   // straight back to walking
+        Step(s, {'d', ' '}, 1);
+        CHECK(!ts->IsDashing());                            // still cooling down
+        Step(s, {'d'}, (int)(ts->dashCooldown * 60.0f) + 2);
+        Input::FeedGamepad({0, 0}, 1u << 0);                // pad A
+        Step(s, {'d'}, 1);
+        CHECK(ts->IsDashing());
+        Input::FeedGamepad({0, 0}, 0);
+        Step(s, {'d'}, 30);
+    }
+    {   // Animation follows the body: duck while dashing, walk backwards when
+        // backpedalling, idle as soon as it has stopped (not while still sliding).
+        Scene s("tdsanim");
+        Ground(s);
+        GameObject* p = Body(s, "Player", {0, 0.02f, 0});
+        auto* ch = p->AddComponent<Character>();
+        auto* ts = p->AddComponent<TopDownShooterController>();
+        ts->aimMode = (int)TopDownShooterController::AimMode::Mouse;
+        GameObject* cam = s.CreateGameObject("Cam");
+        auto* c = cam->AddComponent<Camera>();
+        c->projection = Camera::Projection::Perspective; c->main = true;
+        s.Start();
+        Input::FeedMouse({640.0f, 100.0f}, 0);              // aim "up" the screen (-Z)
+        Step(s, {}, 30);
+        CHECK_EQ(ch->anim, 1);
+        Step(s, {'w'}, 40);                                 // toward the aim
+        CHECK_EQ(ch->anim, 2);
+        CHECK(ch->animSpeed > 0.8f);
+        Step(s, {'s'}, 40);                                 // away from the aim
+        CHECK_EQ(ch->anim, 2);
+        CHECK(ch->animSpeed < 0.0f);                        // legs step backwards
+        Step(s, {}, 2);
+        CHECK(ch->animSpeed < 0.0f);                        // ...while slowing down too
+        Step(s, {}, 20);
+        CHECK_EQ(ch->anim, 1);
+        CHECK_NEAR(ch->animSpeed, 1.0f, 1e-4f);
+        Step(s, {' '}, 1);
+        CHECK(ts->IsDashing());
+        CHECK_EQ(ch->anim, 6);                              // ducked dodge, not a run cycle
+        Step(s, {}, 40);
+        CHECK_EQ(ch->anim, 1);
+        Input::FeedMouse({0, 0}, 0);
+    }
+    {   // Built-in animation changes crossfade instead of snapping.
+        Scene s("charblend");
+        GameObject* g = s.CreateGameObject("C");
+        auto* ch = g->AddComponent<Character>();
+        ch->Apply();
+        s.Start();
+        for (int i = 0; i < 30; ++i) s.Update(kDt);
+        std::vector<Vec3> idle = ch->CurrentPose();
+        ch->anim = 3;                                        // idle -> run
+        s.Update(kDt);
+        std::vector<Vec3> mid = ch->CurrentPose();
+        std::vector<Vec3> run = ch->PoseAt(ch->animTime);    // the pure run pose this frame
+        float dIdle = 0.0f, dRun = 0.0f;
+        for (std::size_t i = 0; i < mid.size() && i < run.size() && i < idle.size(); ++i) {
+            dIdle += (mid[i] - idle[i]).Magnitude();
+            dRun  += (mid[i] - run[i]).Magnitude();
+        }
+        CHECK(dRun > 1.0f);                                  // not snapped to the run pose yet
+        for (int i = 0; i < 30; ++i) s.Update(kDt);
+        std::vector<Vec3> done = ch->CurrentPose();
+        std::vector<Vec3> run2 = ch->PoseAt(ch->animTime);
+        float dEnd = 0.0f;
+        for (std::size_t i = 0; i < done.size() && i < run2.size(); ++i) dEnd += (done[i] - run2[i]).Magnitude();
+        CHECK(dEnd < 1e-3f);                                 // fully the run pose once blended
+        (void)dIdle;
+    }
     {   // Projectile3D on its own: pierce, bounce, lifetime, impulse.
         Scene s("proj");
         GameObject* a = Box(s, "A", {3, 0, 0}, {1, 1, 1});
@@ -338,7 +458,7 @@ int main() {
         auto* a = s.CreateGameObject("A");
         auto* ts = a->AddComponent<TopDownShooterController>();
         ts->walkSpeed = 7.5f; ts->fireMode = 2; ts->pellets = 6; ts->spread = 22.0f; ts->magazineSize = 12;
-        ts->reloadKey = 't'; ts->dashKey = 0; ts->bulletColor = Color{0.25f, 0.5f, 0.75f, 1.0f};
+        ts->reloadKey = 't'; ts->dashKey = 0; ts->dashGamepadButton = 2; ts->bulletColor = Color{0.25f, 0.5f, 0.75f, 1.0f};
         ts->projectile = "Prefabs/My Rocket.okayprefab"; ts->aimMode = 1; ts->wheelZoom = false;
         auto* b = s.CreateGameObject("B");
         auto* pc = b->AddComponent<Platformer25DController>();
@@ -358,7 +478,7 @@ int main() {
         if (ts2) {
             CHECK_NEAR(ts2->walkSpeed, 7.5f, 1e-4f); CHECK_EQ(ts2->fireMode, 2); CHECK_EQ(ts2->pellets, 6);
             CHECK_NEAR(ts2->spread, 22.0f, 1e-4f); CHECK_EQ(ts2->magazineSize, 12); CHECK(ts2->reloadKey == 't');
-            CHECK(ts2->dashKey == 0); CHECK_NEAR(ts2->bulletColor.b, 0.75f, 1e-4f);
+            CHECK(ts2->dashKey == 0); CHECK_EQ(ts2->dashGamepadButton, 2); CHECK_NEAR(ts2->bulletColor.b, 0.75f, 1e-4f);
             CHECK(ts2->projectile == "Prefabs/My Rocket.okayprefab"); CHECK_EQ(ts2->aimMode, 1);
             CHECK(!ts2->wheelZoom);
         }

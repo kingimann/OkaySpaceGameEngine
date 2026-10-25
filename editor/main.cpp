@@ -30945,8 +30945,14 @@ void DrawInspector(EditorState& ed) {
 
             SectionHeader("Dash");
             if (KeyBindCombo("Dash Key##tds", sh->dashKey)) ed.dirty = true;
-            if (sh->dashKey) {
+            {
+                const char* pads[] = {"A", "B", "X", "Y", "None"};
+                int pb = sh->dashGamepadButton < 0 || sh->dashGamepadButton > 3 ? 4 : sh->dashGamepadButton;
+                if (ImGui::Combo("Dash Pad Button##tds", &pb, pads, 5)) { sh->dashGamepadButton = pb == 4 ? -1 : pb; ed.dirty = true; }
+            }
+            if (sh->dashKey || sh->dashGamepadButton >= 0) {
                 if (ImGui::DragFloat("Dash Speed##tds", &sh->dashSpeed, 0.2f, 0.0f, 80.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Peak speed at the start of the dash; it eases down to your move speed.");
                 if (ImGui::DragFloat("Dash Time##tds", &sh->dashTime, 0.01f, 0.02f, 2.0f, "%.2fs")) ed.dirty = true;
                 if (ImGui::DragFloat("Dash Cooldown##tds", &sh->dashCooldown, 0.05f, 0.0f, 10.0f, "%.2fs")) ed.dirty = true;
                 if (ImGui::Checkbox("Invulnerable While Dashing##tds", &sh->dashInvulnerable)) ed.dirty = true;

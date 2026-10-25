@@ -79,11 +79,15 @@ public:
     float reloadTime = 1.2f;
     bool  autoReload = true;             ///< reload when you fire an empty magazine
 
-    // ---- Dash (dodge roll) ----
-    char  dashKey = ' ';                 ///< Space / pad A
-    float dashSpeed = 18.0f;
-    float dashTime = 0.18f;
-    float dashCooldown = 0.6f;
+    // ---- Dash (dodge) ----
+    // A short burst: it starts at dashSpeed and eases down to your movement speed
+    // over dashTime, then hands straight back to normal movement (no skid). The
+    // body ducks and faces the dash direction while it lasts.
+    char  dashKey = ' ';                 ///< Space
+    int   dashGamepadButton = 0;         ///< pad A (-1 = none)
+    float dashSpeed = 16.0f;             ///< peak speed at the start of the dash
+    float dashTime = 0.25f;
+    float dashCooldown = 0.6f;           ///< after a dash ends
     bool  dashInvulnerable = true;       ///< no damage while dashing (sibling HealthStat)
 
     // ---- Camera ----
@@ -107,6 +111,7 @@ public:
 
     void Start() override {
         if (magazineSize > 0 && ammo <= 0) ammo = magazineSize;
+        if (Character* ch = FindCharacter()) m_baseAnimSpeed = ch->animSpeed;
         Cursor::Capture(false);   // twin-stick: the cursor is the crosshair
         m_aimDir = Vec3{0, 0, -1};
     }
@@ -180,33 +185,54 @@ public:
             m_aimPoint = pos + m_aimDir * 5.0f;
         }
         m_haveAim = m_haveAim || aimed;
-        {
-            Quat want = Quat::LookRotation({-m_aimDir.x, 0.0f, -m_aimDir.z});   // mesh faces -Z
-            float t = turnSpeed > 0.0f ? 1.0f - std::exp(-turnSpeed * dt) : 1.0f;
-            transform->localRotation = Quat::Slerp(transform->localRotation, want, t);
-        }
-
         // ---- Dash ----
+        bool running = sprintKey && Input::GetKey(sprintKey) && moving;
+        float speed = running ? runSpeed : walkSpeed;
+        const bool backpedal = moving && Vec3::Dot(dir, m_aimDir) < -0.3f;
+        if (backpedal) speed *= backpedalMultiplier;
         m_dashCd = Mathf::Max(0.0f, m_dashCd - dt);
+        bool dashEnded = false;
         if (m_dash > 0.0f) {
             m_dash -= dt;
-            if (m_dash <= 0.0f) EndDash();
-        } else if (!uiBlocked && dashKey && Input::GetKeyDown(dashKey) && m_dashCd <= 0.0f) {
+            if (m_dash <= 0.0f) { EndDash(); dashEnded = true; }
+        } else if (!uiBlocked && m_dashCd <= 0.0f && dashTime > 0.0f &&
+                   ((dashKey && Input::GetKeyDown(dashKey)) ||
+                    (dashGamepadButton >= 0 && Input::GetGamepadButtonDown(dashGamepadButton)))) {
             m_dashDir = moving ? dir : m_aimDir;
-            m_dash = dashTime; m_dashCd = dashCooldown + dashTime;
+            m_dash = dashTime; m_dashCd = dashTime + dashCooldown;   // the cooldown starts when the dash ends
             if (dashInvulnerable)
                 if (auto* hp = gameObject->GetComponent<HealthStat>()) { m_hpGod = hp->godMode; hp->godMode = true; m_godSet = true; }
             CallScript("on_dash");
         }
+        const bool dashing = m_dash > 0.0f;
+
+        // ---- Facing: the aim, or the dash direction while dashing ----
+        {
+            Vec3 face = dashing ? m_dashDir : m_aimDir;
+            Quat want = Quat::LookRotation({-face.x, 0.0f, -face.z});   // mesh faces -Z
+            float rate = dashing ? Mathf::Max(turnSpeed, 30.0f) : turnSpeed;
+            float t = rate > 0.0f ? 1.0f - std::exp(-rate * dt) : 1.0f;
+            transform->localRotation = Quat::Slerp(transform->localRotation, want, t);
+        }
 
         // ---- Velocity ----
-        bool running = sprintKey && Input::GetKey(sprintKey) && moving;
-        float speed = running ? runSpeed : walkSpeed;
-        if (moving && Vec3::Dot(dir, m_aimDir) < -0.3f) speed *= backpedalMultiplier;
-        Vec3 want = m_dash > 0.0f ? m_dashDir * dashSpeed : (moving ? dir * speed : Vec3{0, 0, 0});
+        // Dash speed eases from dashSpeed down to the speed you'd be moving at, so
+        // the burst blends into normal movement instead of ending in a skid.
+        const float exitSpeed = Mathf::Min(dashSpeed, moving ? speed : walkSpeed * 0.5f);
+        float dashV = 0.0f;
+        if (dashing) {
+            float p = 1.0f - Mathf::Clamp(m_dash / dashTime, 0.0f, 1.0f);   // 0 at the start .. 1 at the end
+            dashV = exitSpeed + (dashSpeed - exitSpeed) * (1.0f - p) * (1.0f - p);
+        }
+        Vec3 want = dashing ? m_dashDir * dashV : (moving ? dir * speed : Vec3{0, 0, 0});
         if (auto* rb = gameObject->GetComponent<Rigidbody3D>()) {
-            if (m_dash > 0.0f) { rb->velocity.x = want.x; rb->velocity.z = want.z; }
+            if (dashing) { rb->velocity.x = want.x; rb->velocity.z = want.z; }
             else {
+                if (dashEnded) {   // leave the dash at (at most) the exit speed
+                    Vec3 v{rb->velocity.x, 0.0f, rb->velocity.z};
+                    float vl = std::sqrt(v.x * v.x + v.z * v.z);
+                    if (vl > exitSpeed && vl > 1e-4f) { rb->velocity.x *= exitSpeed / vl; rb->velocity.z *= exitSpeed / vl; }
+                }
                 Vec3 cur{rb->velocity.x, 0.0f, rb->velocity.z};
                 Vec3 dv{want.x - cur.x, 0.0f, want.z - cur.z};
                 float rate = moving ? acceleration : deceleration;
@@ -238,8 +264,8 @@ public:
             Fire();
         }
 
-        if (driveAnimation)
-            if (Character* ch = FindCharacter()) ch->anim = m_dash > 0.0f ? 3 : (moving ? (running ? 3 : 2) : 1);
+        if (moving) m_backpedal = backpedal;   // keep stepping the same way while slowing to a stop
+        if (driveAnimation) DriveAnimation(dt, running, m_backpedal);
     }
 
     void LateUpdate(float dt) override {
@@ -285,10 +311,41 @@ private:
     Vec2  m_lastMouse{0, 0};
     bool  m_padActive = false, m_haveCam = false, m_haveAim = false, m_godSet = false, m_hpGod = false;
     float m_fireCd = 0.0f, m_reload = 0.0f, m_dash = 0.0f, m_dashCd = 0.0f, m_shake = 0.0f, m_time = 0.0f;
+    float m_baseAnimSpeed = 1.0f, m_moveSpeed = 0.0f;
+    Vec3  m_lastPos{0, 0, 0};
+    bool  m_havePos = false, m_backpedal = false;
     int   m_shots = 0;
     unsigned m_rng = 0x9E3779B9u;
 
     float Rand01() { m_rng = m_rng * 1664525u + 1013904223u; return (float)((m_rng >> 8) & 0xFFFF) / 65535.0f; }
+
+    // Animation from what the body is ACTUALLY doing (its measured ground speed),
+    // not from the keys: no idle pose while still sliding, no legs running in
+    // place against a wall, and the stride rate matches the speed.
+    void DriveAnimation(float dt, bool running, bool backpedal) {
+        Character* ch = FindCharacter();
+        if (!ch) return;
+        Vec3 pos = transform->Position();
+        float v = 0.0f;
+        if (auto* rb = gameObject->GetComponent<Rigidbody3D>())
+            v = std::sqrt(rb->velocity.x * rb->velocity.x + rb->velocity.z * rb->velocity.z);
+        else if (m_havePos && dt > 1e-5f)
+            v = std::sqrt((pos.x - m_lastPos.x) * (pos.x - m_lastPos.x) + (pos.z - m_lastPos.z) * (pos.z - m_lastPos.z)) / dt;
+        m_lastPos = pos; m_havePos = true;
+        // Smooth out physics jitter; settle faster when slowing so the body goes
+        // idle the moment it actually stops.
+        float k = 1.0f - std::exp((v < m_moveSpeed ? -30.0f : -12.0f) * dt);
+        m_moveSpeed += (v - m_moveSpeed) * k;
+        if (m_dash > 0.0f) { ch->anim = 6; ch->animSpeed = m_baseAnimSpeed; return; }   // duck through the dodge
+        if (m_moveSpeed < 0.35f) { ch->anim = 1; ch->animSpeed = m_baseAnimSpeed; return; }
+        const bool run = running || m_moveSpeed > walkSpeed * 1.15f;
+        ch->anim = run ? 3 : 2;
+        // The built-in cycles are tuned for ~walkSpeed / ~runSpeed; scale the
+        // stride rate by the real speed, and walk backwards when backpedalling.
+        float ref = run ? Mathf::Max(0.1f, runSpeed) : Mathf::Max(0.1f, walkSpeed);
+        float rate = Mathf::Clamp(m_moveSpeed / ref, 0.45f, 1.6f);
+        ch->animSpeed = m_baseAnimSpeed * rate * (backpedal ? -1.0f : 1.0f);
+    }
 
     void EndDash() {
         m_dash = 0.0f;

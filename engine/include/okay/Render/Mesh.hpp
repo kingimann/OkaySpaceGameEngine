@@ -4,6 +4,7 @@
 #include "okay/Math/Quat.hpp"
 #include "okay/Render/Color.hpp"
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
@@ -1496,6 +1497,7 @@ struct Mesh {
         struct Corner { int p, t, n; };                        // 0-based pos / uv / normal (-1 = none)
         std::vector<std::vector<Corner>> faces;
         std::string mtllib;
+        bool badIndex = false;                                 // a face index no vertex can satisfy
         const char* p = data.c_str();
         const char* end = p + data.size();
         // Bounded number readers: skip spaces/tabs only — NEVER a newline, so a short
@@ -1534,6 +1536,7 @@ struct Mesh {
                         if (vi < 0) vi = (long)pos.size() + vi + 1;
                         if (ti < 0) ti = (long)uv.size() + ti + 1;
                         if (ni < 0) ni = (long)nrm.size() + ni + 1;
+                        if (vi < 1 || vi > INT_MAX || ti < 0 || ti > INT_MAX || ni < 0 || ni > INT_MAX) badIndex = true;
                         face.push_back({(int)vi - 1, (int)ti - 1, (int)ni - 1});
                     }
                     if (face.size() >= 3) faces.push_back(std::move(face));
@@ -1549,6 +1552,12 @@ struct Mesh {
             while (p < end && *p != '\n') ++p;                    // to end of line
             if (p < end) ++p;
         }
+        // Reject a face that points past the vertex list (checked against the final
+        // count, so files that list faces before their vertices still load).
+        for (const auto& fc : faces)
+            for (const Corner& c : fc)
+                if (c.p < 0 || c.p >= (int)pos.size()) badIndex = true;
+        if (badIndex) { if (ok) *ok = false; return Mesh{}; }
         auto tri = [&](int a, int b, int cc) { m.triangles.insert(m.triangles.end(), {a, b, cc}); };
         if (uv.empty() && nrm.empty()) {               // simplest case: 1:1 with v lines
             m.vertices = pos;

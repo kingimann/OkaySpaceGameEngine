@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.819.0
+  Fixes
+  - In-game UI now draws the same in the game as in the editor's preview: the
+    player and the editor share one UI renderer (#282).
+  - Scripts: a very long operator chain (1+1+...+1) is a clear "expression is
+    too long" error instead of a crash, in both script languages (#287).
+
 v2.818.0
   Fixes
   - The "Humanoid player" walks properly again: foot IK keeps the walk's stride,

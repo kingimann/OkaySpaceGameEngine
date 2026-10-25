@@ -929,6 +929,17 @@ target_compile_features(test_friends_json PRIVATE cxx_std_17)
 target_include_directories(test_friends_json PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME friends_json COMMAND test_friends_json)
 
+# Anti-cheat (opt-in): the build's integrity manifest + ed25519, and the runtime
+# checks' logic. Linked to the engine so a libsodium build tests that backend too.
+add_executable(test_anticheat_integrity test_anticheat_integrity.cpp)
+target_link_libraries(test_anticheat_integrity PRIVATE okay::engine)
+target_include_directories(test_anticheat_integrity PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME anticheat_integrity COMMAND test_anticheat_integrity)
+add_executable(test_anticheat_checks test_anticheat_checks.cpp)
+target_link_libraries(test_anticheat_checks PRIVATE okay::engine)
+target_include_directories(test_anticheat_checks PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME anticheat_checks COMMAND test_anticheat_checks)
+
 add_executable(test_tween test_tween.cpp)
 target_link_libraries(test_tween PRIVATE okay::engine)
 add_test(NAME tween COMMAND test_tween)

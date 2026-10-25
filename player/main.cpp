@@ -29,6 +29,7 @@
 #include "Splash.hpp"                   // branded boot loading frame (no black screen at launch)
 #include "okay/UI/UIRenderer.hpp"       // the in-game UI pass (engine)
 #include "okay/UI/UIPainterSDL.hpp"     // ...drawn through this SDL backend
+#include "AntiCheatChecks.hpp"          // opt-in anti-cheat: integrity manifest + runtime checks
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"
 #include "OkayScriptUIBridge.hpp"
@@ -1236,6 +1237,7 @@ int main(int argc, char** argv) {
         bool  bootAccentOn = false;
         float bootAccent[3] = {0.235f, 0.475f, 0.800f};
         bool  bootBar = true;
+        std::string antiCheat;     // "" / off, report, enforce (docs/anticheat.md)
     } cfg;
     {
         // Read the whole config and transparently decode it if it was obfuscated at
@@ -1293,6 +1295,7 @@ int main(int argc, char** argv) {
             else if (k == "boot_bg_bot")    std::sscanf(v.c_str(), "%f %f %f", &cfg.bootBgBot[0], &cfg.bootBgBot[1], &cfg.bootBgBot[2]);
             else if (k == "boot_accent")  { std::sscanf(v.c_str(), "%f %f %f", &cfg.bootAccent[0], &cfg.bootAccent[1], &cfg.bootAccent[2]); cfg.bootAccentOn = true; }
             else if (k == "boot_bar")       cfg.bootBar = std::atoi(v.c_str()) != 0;
+            else if (k == "anticheat")      cfg.antiCheat = v;
         }
     }
     // Register the build's scenes so scripts can load_scene_index / load_next.
@@ -1324,6 +1327,33 @@ int main(int argc, char** argv) {
     std::string prefsPath = saveDir + "game.okayprefs";
     Prefs::Load(prefsPath);
     DataAsset::SetBaseDir(baseDir);   // read-only .okaydata assets stay beside the game
+
+    // Anti-cheat: off unless the build (anticheat=) or OKAY_ANTICHEAT turns it on
+    // (either can only make it stricter). Then the game's files are checked
+    // against Data/manifest.json before anything loads; report mode logs what's
+    // wrong, enforce refuses to start. The runtime checks run in the frame loop.
+    const okayac::Mode acMode = dedicatedServer ? okayac::Mode::Off
+        : okayac::Stricter(okayac::ParseMode(cfg.antiCheat), okayac::ParseMode(std::getenv("OKAY_ANTICHEAT") ? std::getenv("OKAY_ANTICHEAT") : ""));
+    std::string acRoot;
+    { char* b = SDL_GetBasePath(); acRoot = b ? b : ""; if (b) SDL_free(b); }
+    auto acLog = [&saveDir](const std::string& line) {
+        SDL_Log("%s", line.c_str());
+        std::ofstream(saveDir + "anticheat.log", std::ios::app) << line << "\n";
+    };
+    okayac::Integrity acManifest;
+    bool acHaveManifest = false;
+    if (acMode != okayac::Mode::Off) {
+        const okayac::LaunchDecision d = okayac::CheckLaunch(std::filesystem::u8path(acRoot), acMode, okayac::TrustedKeys(), &acManifest);
+        acHaveManifest = !acManifest.files.empty();
+        acLog("[anti-cheat] " + std::string(okayac::ModeName(acMode)) + ": " + d.result.Summary());
+        for (const std::string& n : d.result.notes) acLog("[anti-cheat] note: " + n);
+        for (const std::string& p : d.result.problems) acLog("[anti-cheat] problem: " + p);
+        if (!d.allow) {
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, cfg.title.c_str(), d.message.c_str(), nullptr);
+            SDL_Quit();
+            return 1;
+        }
+    }
 
     Scene scene("Game");
     std::string err;
@@ -1614,6 +1644,8 @@ int main(int argc, char** argv) {
     Uint64 last = SDL_GetPerformanceCounter();
     bool windowFocused = true;   // Run In Background / mute-on-focus-loss
     bool cursorReleased = false; // Esc / focus loss freed a game-locked cursor; a click re-locks it
+    // Debugger / injected-module / speedhack checks (Windows; idle elsewhere and when off).
+    okayac::RuntimeGuard acGuard(acMode, okayac::SystemGuardProbes(acRoot, acHaveManifest ? &acManifest : nullptr), acLog);
     auto frame = [&]() {
         Uint64 fStart = SDL_GetPerformanceCounter();
         Input::ClearTypedText();                 // collect this frame's typed chars
@@ -1901,6 +1933,11 @@ int main(int argc, char** argv) {
         }
         if (tick) scene.Update(Time::DeltaTime());
         if (okay::Game::QuitRequested()) running = false;   // a PauseMenu / script asked to quit
+        if (acGuard.Tick()) {   // only ever true in enforce mode
+            running = false;
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, cfg.title.c_str(),
+                ("The game was closed by its anti-cheat: " + acGuard.Findings().back().detail + ".").c_str(), window);
+        }
 
         // Keyboard / gamepad menu navigation (arrows/WASD + Enter/Space/A).
         NavigateUI(scene);

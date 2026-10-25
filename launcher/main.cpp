@@ -13,6 +13,7 @@
 #include "Splash.hpp"   // branded loading frame so startup isn't a black screen
 #include "CrashReports.hpp"   // editor crash reports (Settings > Crash reports)
 #include "OfficialGame.hpp"   // the official game: manifest, diff and the safe update swap (Play page)
+#include "AntiCheatIntegrity.hpp"   // opt-in anti-cheat: check a game against its Data/manifest.json before it starts
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/Achievements.hpp"
 #include "okay/Platform/Friends.hpp"
@@ -1174,10 +1175,43 @@ static std::string GameTitleFromPath(const std::string& path) {
     return stem.empty() ? std::string("Game") : stem;
 }
 
+// ---- Anti-cheat (opt-in; docs/anticheat.md) -----------------------------------
+// Settings > Behavior > Anti-cheat. Off (the default) checks nothing. Otherwise a
+// built game's files are checked against its Data/manifest.json before it
+// starts: report flags a mismatch and starts it anyway, enforce refuses.
+int g_antiCheatMode = 0;   // okayac::Mode (persisted)
+Uint32 g_toastHoldUntil = 0;   // an anti-cheat toast isn't replaced by the caller's "Playing ..."
+void Toast(const std::string& m, int kind);
+
+static bool AntiCheatAllowsLaunch(const fs::path& gameRoot, const std::string& name) {
+    const okayac::Mode mode = okayac::Mode(std::clamp(g_antiCheatMode, 0, 2));
+    if (mode == okayac::Mode::Off) return true;
+    const okayac::LaunchDecision d = okayac::CheckLaunch(gameRoot, mode, okayac::TrustedKeys());
+    if (d.result.ok) return true;
+    std::fprintf(stderr, "[anti-cheat] %s: %s\n", name.c_str(), d.result.Summary().c_str());
+    g_toastHoldUntil = SDL_GetTicks() + 6000;
+    Toast(name + ": " + (d.allow ? d.result.Summary() : d.message), 2);
+    return d.allow;
+}
+
+// A scene run by the player: checked only when it belongs to a built game (a
+// game.okayconfig beside it, or it's in the game's Data/ folder).
+static bool AntiCheatAllowsSceneLaunch(const std::string& scene) {
+    if (g_antiCheatMode == 0 || scene.empty()) return true;
+    std::error_code ec;
+    const fs::path dir = fs::u8path(scene).parent_path();
+    fs::path root;
+    if (dir.filename() == "Data" && fs::exists(dir / "game.okayconfig", ec)) root = dir.parent_path();
+    else if (fs::exists(dir / "Data" / "game.okayconfig", ec) || fs::exists(dir / "game.okayconfig", ec)) root = dir;
+    if (root.empty()) return true;   // a project scene, not a built game
+    return AntiCheatAllowsLaunch(root, root.filename().u8string());
+}
+
 // Launch an executable (detached), optionally with one argument. Launching a
 // game (the player with a scene) is tracked for playtime.
 void Launch(const std::string& exe, const std::string& arg = "") {
     if (exe.empty()) return;
+    if (!arg.empty() && exe != g_selfPath && !AntiCheatAllowsSceneLaunch(arg)) return;
     if (!arg.empty() && exe != g_selfPath) {
         const std::string title = GameTitleFromPath(arg);
         if (SpawnTracked(exe, "\"" + arg + "\"", "game:" + title, title)) return;
@@ -1546,8 +1580,10 @@ std::string g_toastMsg;
 Uint32 g_toastUntil = 0;
 int g_toastKind = 0;
 void Toast(const std::string& m, int kind = 0) {
+    const Uint32 now = SDL_GetTicks();
+    if (kind < 2 && now < g_toastHoldUntil) return;   // keep an anti-cheat warning readable
     g_toastMsg = m; g_toastKind = kind;
-    g_toastUntil = SDL_GetTicks() + 2600;
+    g_toastUntil = now + std::max<Uint32>(2600, now < g_toastHoldUntil ? g_toastHoldUntil - now : 0);
 }
 std::vector<std::string> g_favorites;   // favorited game paths (persisted)
 std::vector<std::string> g_recent;       // recently played, most-recent first (persisted)
@@ -4037,6 +4073,7 @@ void LoadPrefs() {
         else if (k == "ui_scale") { try { g_uiScale = std::stof(v); } catch (...) {} }
         else if (k == "update_on_launch") g_updateOnLaunch = (v == "1");
         else if (k == "official_auto_update") g_officialAutoUpdate = (v != "0");
+        else if (k == "anticheat") g_antiCheatMode = (int)okayac::ParseMode(v);
         else if (k == "chat_sounds") g_chatSounds = (v != "0");
         else if (k == "link_previews") g_linkPreviews = (v != "0");
         else if (k == "voice_speed") g_voiceSpeed = std::clamp(std::atoi(v.c_str()), 0, 2);
@@ -4145,6 +4182,7 @@ void SavePrefs() {
     f << "ui_scale=" << g_uiScale << "\n";
     f << "update_on_launch=" << (g_updateOnLaunch ? 1 : 0) << "\n";
     f << "official_auto_update=" << (g_officialAutoUpdate ? 1 : 0) << "\n";
+    if (g_antiCheatMode) f << "anticheat=" << okayac::ModeName(okayac::Mode(g_antiCheatMode)) << "\n";
     f << "chat_sounds=" << (g_chatSounds ? 1 : 0) << "\n";
     f << "voice_speed=" << g_voiceSpeed << "\n";
     f << "link_previews=" << (g_linkPreviews ? 1 : 0) << "\n";
@@ -10038,6 +10076,7 @@ static void MpLaunch(const okay::JoinLink& in) {
     if (!g) { g_mpPickLink = link; g_mpPickReq = true; return; }   // not in the library (by that name): ask
     const std::string player = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});
     if (player.empty()) { Toast("The OkaySpace player isn't installed next to the launcher.", 2); return; }
+    if (!AntiCheatAllowsSceneLaunch(g->scene)) return;
     if (SpawnTracked(player, "\"" + g->scene + "\" --join \"" + link + "\"", "game:" + g->title, g->title)) {
         RecordPlayed(g->scene);
         SavePrefs();
@@ -10072,6 +10111,7 @@ static void MpFindMatch(const std::string& game, const std::string& mode, int pl
     if (!mode.empty()) args += " \"" + mode + "\"";
     args += " --match-players " + std::to_string(players) + (players > 2 ? " --match-min 2" : "");
     if (!region.empty()) args += " --region \"" + region + "\"";
+    if (!AntiCheatAllowsSceneLaunch(g->scene)) return;
     if (SpawnTracked(player, args, "game:" + g->title, g->title)) {
         RecordPlayed(g->scene); SavePrefs();
         Toast("Starting " + g->title + " \xE2\x80\x94 finding a match", 1);
@@ -14841,6 +14881,7 @@ static void PlayOfficial() {
         StartOfficialJob(true, true);
         return;
     }
+    if (!AntiCheatAllowsLaunch(OfficialDir(), name)) return;
     bool applying = false;
     OffLocked([&] { applying = g_off.job == Off_Applying; if (!applying) g_off.gameRunning = true; });
     if (applying) { Toast("One moment: an update is being installed"); return; }
@@ -20145,6 +20186,13 @@ int main(int argc, char** argv) {
                     });
                     cardEnd();
 
+                    cardBegin("##sc_ac", "ANTI-CHEAT");
+                    settingRow("Check games before they start", "Compares a game's files with the list it was built with. Report flags a mismatch and still starts the game; Enforce doesn't start it.", 140.0f, 30.0f, [&](float) {
+                        ImGui::SetNextItemWidth(140);
+                        if (ImGui::Combo("##acmode", &g_antiCheatMode, "Off\0Report\0Enforce\0")) SavePrefs();
+                    });
+                    cardEnd();
+
                     cardBegin("##sc_maint", "MAINTENANCE");
                     settingRow("Configuration folder", "Preferences are stored in launcher.cfg next to the launcher.", 120.0f, 30.0f, [&](float) {
                         if (ImGui::Button("Open folder", ImVec2(120, 30))) OpenExternal(g_exeDir);
@@ -20459,7 +20507,7 @@ int main(int argc, char** argv) {
                 ImGui::PopStyleColor(2);
                 if (doReset) {
                     g_accentIndex = 0; g_themeIndex = 0; g_uiScale = 1.0f;
-                    g_updateOnLaunch = false; g_officialAutoUpdate = true; g_playSort = 0;
+                    g_updateOnLaunch = false; g_officialAutoUpdate = true; g_playSort = 0; g_antiCheatMode = 0;
                     ImGui::GetIO().FontGlobalScale = g_uiScale;
                     ApplyAccent(g_accentIndex);   // re-applies theme + accent
                     SavePrefs();

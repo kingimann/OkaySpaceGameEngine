@@ -13,6 +13,10 @@ nothing is checked and nothing is sent differently from before.
 - **P2 (identity and transport):** clients must encrypt, every packet is
   numbered and replays are refused, and a joining player can be required to
   hold a **session ticket** signed by your ticket service.
+- **P3 (client integrity, opt-in):** a signed manifest of the shipped files,
+  checked by the launcher and player before a game starts, plus Windows
+  debugger / loaded-module / clock-drift checks. See
+  [P3: client integrity](#p3-client-integrity-opt-in) below.
 
 ## Turning it on
 
@@ -120,3 +124,231 @@ Nothing is deployed. To go live:
 To rotate the key, run step 1 again, update the secrets and every server's
 `ticketKey` together, and redeploy. Tickets signed with the old key stop working
 when the servers switch.
+
+## P3: client integrity (opt-in)
+
+OkaySpace has a small, opt-in anti-cheat layer. **It is off by default**: with it
+off, builds and launches behave exactly as without it (the one visible change is
+that File > Build Game also writes `Data/manifest.json`, which nothing reads
+until anti-cheat is turned on).
+
+Read [Limits](#limits) before relying on it. In short, every check here runs on
+the player's own machine, so a determined cheater can bypass it. It is there to
+catch off-the-shelf tools, to stop casual file edits, and to give you reports to
+act on. What actually stops cheating in multiplayer is a server that doesn't
+trust the client.
+
+### What it does
+
+| Piece | Where | Platforms |
+|---|---|---|
+| **Integrity manifest**: every shipped file's size and SHA-256, optionally signed with ed25519 | written by File > Build Game (`Data/manifest.json`) | all |
+| **Launch check**: the install is compared with the manifest before the game starts | launcher (Play, library games, joins) and the player itself | all |
+| **Debugger detection** | player, while the game runs | Windows |
+| **Loaded-module allowlist**: DLLs that aren't Windows', the game's own or a known overlay | player, while the game runs | Windows |
+| **Clock-drift heartbeat**: the game's clock against a trusted clock, through a challenge-response, flagged past 5% | player, while the game runs | Windows |
+
+Windows-only checks are compiled out on other platforms; the logic behind them
+(what counts as drift, which modules are allowed) is plain code that is unit
+tested everywhere.
+
+#### Modes
+
+Each place that runs checks has one setting:
+
+- **Off** (default): nothing is checked.
+- **Report**: checks run; problems are logged and shown, and nothing is refused.
+- **Enforce**: a failed launch check refuses the launch; a runtime finding closes the game.
+
+Where it's set:
+
+- **A game**: Build Settings > Output > **Anti-cheat**. This writes
+  `anticheat=report` or `anticheat=enforce` into the game's `game.okayconfig`
+  (nothing is written for Off). The environment variable `OKAY_ANTICHEAT`
+  (`report` / `enforce`) can make a game stricter on one machine, never looser.
+- **The launcher**: Settings > Behavior > **Anti-cheat** (`anticheat=` in
+  `launcher.cfg`). The launcher checks the official game, library games that are
+  built games (they have a `game.okayconfig`), and games it starts to join a
+  session. Project scenes opened from the launcher are never checked.
+
+The player logs what it finds to its log and to `anticheat.log` in the game's
+save folder. In report mode the player shows nothing on screen. The launcher
+shows report-mode problems as a warning and still starts the game.
+
+A library game that the launcher runs through its own player (a scene, not the
+game's exe) is checked by the launcher only. That player reads its settings from
+its own folder, not the game's.
+
+![Build Settings > Output > Anti-cheat](images/anticheat/editor-build-settings.png)
+
+![Settings > Behavior > Anti-cheat in the launcher](images/anticheat/launcher-settings.png)
+
+What a player sees when a game is set to **Enforce** and one of its files was
+changed:
+
+![The game refuses to start](images/anticheat/player-tampered-build.png)
+
+The launcher in **Enforce** mode refuses to start the game. In **Report** mode it
+starts the game and shows the problem:
+
+![Launcher, enforce: refused](images/anticheat/launcher-enforce-refused.png)
+
+![Launcher, report: warning, game starts](images/anticheat/launcher-report-warning.png)
+
+### The manifest
+
+```json
+{
+  "format": "okayspace-integrity/1",
+  "game": "My Game",
+  "version": "1.0.0",
+  "files": [
+    {"path": "Data/game.okayscene", "size": 1234, "sha256": "..."},
+    {"path": "My Game.exe", "size": 5678, "sha256": "..."}
+  ],
+  "signature": {"alg": "ed25519", "key": "<public key, hex>", "sig": "<signature, hex>"}
+}
+```
+
+- It lists every file in the build folder except hidden ones and the manifest itself.
+- `signature` is there only when a signing key is set up (see below). It covers
+  the manifest's text up to `signature`, exactly as the editor writes it.
+- Files are checked with the same size + SHA-256 check (`okayofficial::Verify`)
+  that the launcher's official-game updater uses, and paths go through the same
+  path-safety rules, so a crafted manifest can't point outside the game folder.
+
+A launch check fails when:
+
+- `Data/manifest.json` is missing or malformed;
+- a listed file is missing or changed;
+- a program file (`.exe`, `.dll`, `.asi`, ...) that the manifest doesn't list sits in the game folder (for example, a proxy `version.dll` beside the exe);
+- the signature doesn't match, which means the manifest was edited;
+- the build trusts at least one key, and the manifest is unsigned or signed by a key it doesn't trust.
+
+Extra files that aren't programs, such as saves and logs, are ignored.
+
+### Keys: setup for the owner
+
+Signing proves a manifest came from you, so nobody can edit a file and then
+"fix" the manifest. **No key is in this repository and none is made by the
+build.** You create the keys and keep the private halves out of git.
+
+You need two ed25519 keypairs:
+
+- **dev**: for your own test builds;
+- **release**: for what you ship. Keep it offline or in a CI secret.
+
+1. Make each keypair with OpenSSL (any machine; on Windows, Git Bash has
+   everything used here):
+
+   ```bash
+   openssl genpkey -algorithm ed25519 -out okay-ac-release.pem
+   # the private key, as the editor reads it (64 hex digits):
+   openssl pkey -in okay-ac-release.pem -outform DER | tail -c 32 | od -An -tx1 | tr -d ' \n' > okay-ac-release.key
+   # the public key (64 hex digits):
+   openssl pkey -in okay-ac-release.pem -pubout -outform DER | tail -c 32 | od -An -tx1 | tr -d ' \n'; echo
+   ```
+
+   The `.pem` and `.key` files are secrets. Store them outside the repo and
+   restrict who can read them (`chmod 600`). A libsodium secret key (128 hex
+   digits, the seed followed by the public key) works as the `.key` file too.
+
+2. **Signing (the editor)**: before you start the editor (or the launcher that
+   starts it), set one of these:
+
+   | Variable | Value |
+   |---|---|
+   | `OKAY_AC_SIGNING_KEY_FILE` | path to the `.key` file (preferred) |
+   | `OKAY_AC_SIGNING_KEY` | the 64 hex digits themselves (for CI secrets) |
+
+   File > Build Game then signs `Data/manifest.json`, and the build message says
+   `integrity manifest signed (key <first 16 hex digits>)`. If the key can't be
+   read, the manifest is written unsigned and the message says why. Key material
+   never appears in that message.
+
+3. **Trusting (the player and the launcher)**: build them with your public keys:
+
+   ```bash
+   cmake ... -DOKAY_AC_TRUSTED_KEYS=<release public hex>,<dev public hex>
+   ```
+
+   A build with trusted keys rejects unsigned manifests and manifests signed by
+   any other key. In a build without any (the default), a signature is still
+   checked against the key it names, but that only proves the manifest wasn't
+   edited after signing, not who signed it. For local testing only, such a build
+   also accepts `OKAY_AC_TRUSTED_KEY=<public hex>` from the environment. A build
+   with keys built in ignores that variable, so a player can't point a release
+   at their own key.
+
+4. Turn anti-cheat on for the game (Build Settings > Output > Anti-cheat) and,
+   if you want the launcher to check too, in Settings > Behavior. Start with
+   **Report** and read `anticheat.log` before you switch to **Enforce**.
+
+If you rotate a key, ship a player and launcher that trust both the old and the
+new key, re-sign your builds with the new one, and then drop the old one.
+
+### Crypto
+
+- ed25519 comes from libsodium when the build has it (`OKAY_USE_SODIUM`, which
+  the engine finds through pkg-config or `OKAY_SODIUM_PREFIX` for MinGW).
+  Otherwise a portable implementation in `shared/AntiCheatCrypto.hpp` is used:
+  a port of TweetNaCl's public-domain ed25519, plus the canonical-signature
+  check libsodium makes. The launcher always uses the portable code, because it
+  doesn't link the engine. Both are tested against the RFC 8032 vectors on
+  every build.
+- SHA-256 is the engine's bundled implementation, the same one the official-game
+  updater uses.
+
+### The runtime checks (Windows)
+
+`shared/AntiCheatChecks.hpp`, run from the player's frame loop. Each check runs
+every few seconds:
+
+- **Debugger**: `IsDebuggerPresent` and `CheckRemoteDebuggerPresent`, every 5 s.
+- **Modules**: the process's module list, every 10 s. Allowed modules are:
+  - anything under the Windows folder;
+  - the game's own `.exe` / `.dll` files as its verified manifest lists them;
+  - the Steam and Discord overlays, matched by file name.
+
+  Anything else is reported once (for example a cheat DLL in `%TEMP%`). GPU
+  tools, recorders and other overlays will show up here too, which is why
+  Report is the place to start.
+- **Clock heartbeat**: every second, a challenge (random nonce + sequence)
+  is answered with the game's clock reading (the performance counter that game
+  time runs on) and tagged with HMAC-SHA256 under a per-run key. The verifier
+  compares how far the game's clock moved with how far the system clock moved
+  over a window of at least 2 s. A gap beyond 5%, after allowing for round-trip
+  time, is flagged. Common speedhacks scale the performance counter but not the
+  system time.
+
+  `ClockHeartbeat` / `AnswerChallenge` are transport-agnostic. A multiplayer
+  server can act as the verifier and carry the challenge and response in its
+  own messages, which is the stronger setup because the server's clock is out
+  of the cheater's reach. Wiring that into the network layer is not part of
+  this change.
+
+### Limits
+
+Be clear-eyed about what this is.
+
+- **It's client-side.** Every check runs in a process the player controls. A
+  cheater can patch the checks out of the exe, hook the APIs they call, or edit
+  `game.okayconfig` to switch anti-cheat off. The manifest covers
+  `game.okayconfig`, but the check that would notice is the one they've just
+  disabled. Signing raises the bar for edited game files; it doesn't make the
+  client trustworthy.
+- **It's report-first.** Debugger and module checks produce false positives
+  (overlays, accessibility tools, antivirus DLLs, developers debugging their own
+  game). Use Report, look at what turns up, and enforce only what you're sure of.
+- **The clock check is local.** In the player it compares two clocks of the same
+  machine. A tool that slows or speeds up both, or that hooks the system time
+  too, won't show up. The server-verified version is the one worth wiring in.
+- **No kernel driver, no memory scanning, no obfuscation.** This won't stop a
+  dedicated cheat developer.
+- **Integrity costs a hash of every file at each launch**, done by the launcher
+  and again by the player. That's fine for small games and noticeable for very
+  large ones.
+
+The real defence for multiplayer is server authority: the server owns positions,
+hits and inventory, and rejects what isn't possible. Anti-cheat reports are a
+signal to review, not a verdict.

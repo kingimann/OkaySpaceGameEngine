@@ -366,33 +366,109 @@ inline std::vector<UIDrawItem> SortUIDrawItems(const ObjVec& objects,
     return items;
 }
 
+/// The one shared UI layer table: every draw-block kind the single UI pass knows,
+/// valued by its default layer (higher draws on top). The player, the editor
+/// preview and UIDefaultLayer all use these constants, so a widget layers the same
+/// in the built game and in the editor, and a non-zero uiDrawOrder competes on the
+/// same scale everywhere. The values are the historic per-type pass order of the
+/// player; changing them changes how existing scenes draw. Append new kinds at the
+/// right place in the order and bump the later values (tests pin the table).
+namespace uilayers {
+enum : int {
+    K_DropBg = 0,   // drop-target slot background (behind items)
+    K_Image,        // UIImage / UIRawImage
+    K_Panel,
+    K_DropHi,       // drop-target highlight (drag feedback, above panels)
+    K_Scroll,
+    K_Progress,
+    K_Radial,
+    K_Minimap,
+    K_Slider,
+    K_Stepper,
+    K_Rating,
+    K_Toggle,
+    K_Tabs,
+    K_Button,
+    K_Text,         // screen-space TextRenderer
+    K_WorldUI,
+    K_Dropdown,
+    K_Input,
+    K_Crosshair,
+    K_FocusRing,    // keyboard/gamepad focus ring (any focused widget)
+    K_Tooltip,
+    K_Count
+};
+} // namespace uilayers
+
+/// Short display name of a layer kind ("panel", "text"...), or "" if out of range.
+inline const char* UILayerName(int kind) {
+    static const char* const kNames[uilayers::K_Count] = {
+        "drop slot", "image", "panel", "drop highlight", "scroll", "progress", "radial",
+        "minimap", "slider", "stepper", "rating", "toggle", "tabs", "button", "text",
+        "world ui", "dropdown", "input", "crosshair", "focus ring", "tooltip"};
+    return (kind >= 0 && kind < uilayers::K_Count) ? kNames[kind] : "";
+}
+
+/// Queue every draw-block item the GameObject at `index` contributes to the single
+/// UI pass (a drop target queues two: background and highlight; a focused widget
+/// adds a focus ring). Each item's layer is its kind's table value. The player and
+/// the editor preview both build their pass with this, so they can't drift; a
+/// renderer simply skips kinds it doesn't draw.
+inline void UIQueueDrawItems(GameObject* g, std::size_t index, std::vector<UIDrawItem>& out) {
+    using namespace uilayers;
+    if (!g) return;
+    auto add = [&](int k) { out.push_back(UIDrawItem{index, k, k}); };
+    if (g->GetComponent<UIDropTarget>())    { add(K_DropBg); add(K_DropHi); }
+    if (g->GetComponent<UIImage>() || g->GetComponent<UIRawImage>()) add(K_Image);
+    if (g->GetComponent<UIPanel>())          add(K_Panel);
+    if (g->GetComponent<UIScrollView>())     add(K_Scroll);
+    if (g->GetComponent<UIProgressBar>())    add(K_Progress);
+    if (g->GetComponent<UIRadialProgress>()) add(K_Radial);
+    if (g->GetComponent<Minimap>())          add(K_Minimap);
+    if (g->GetComponent<UISlider>())         add(K_Slider);
+    if (g->GetComponent<UIStepper>())        add(K_Stepper);
+    if (g->GetComponent<UIRating>())         add(K_Rating);
+    if (g->GetComponent<UIToggle>())         add(K_Toggle);
+    if (g->GetComponent<UITabs>())           add(K_Tabs);
+    if (g->GetComponent<UIButton>())         add(K_Button);
+    if (g->GetComponent<TextRenderer>())     add(K_Text);
+    if (g->GetComponent<WorldUI>())          add(K_WorldUI);
+    if (g->GetComponent<UIDropdown>())       add(K_Dropdown);
+    if (g->GetComponent<UIInputField>())     add(K_Input);
+    if (g->GetComponent<Crosshair>())        add(K_Crosshair);
+    if (IsUIFocused(g))                      add(K_FocusRing);
+    if (g->GetComponent<UITooltip>())        add(K_Tooltip);
+}
+
 /// The canonical default draw layer for whatever UI widget a GameObject carries
-/// (the order the single UI pass uses when uiDrawOrder is 0). Higher draws on top.
-/// This is the shared scale a non-zero uiDrawOrder competes on, so the editor can
-/// show the user which number a widget would need to beat. Returns -1 for non-UI
-/// objects. Box widgets are checked before text, matching GetUIRect.
+/// (the order the single UI pass uses when uiDrawOrder is 0), from the shared
+/// table above. Higher draws on top. This is the scale a non-zero uiDrawOrder
+/// competes on, so the editor can show the user which number a widget would need
+/// to beat. Returns -1 for non-UI objects. Box widgets are checked before text,
+/// matching GetUIRect.
 inline int UIDefaultLayer(GameObject* go) {
+    using namespace uilayers;
     if (!go) return -1;
-    if (go->GetComponent<UIDropTarget>())     return 0;   // slot background
-    if (go->GetComponent<UIImage>())          return 1;
-    if (go->GetComponent<UIRawImage>())       return 1;
-    if (go->GetComponent<UIPanel>())          return 2;
-    if (go->GetComponent<Minimap>())          return 3;
-    if (go->GetComponent<UIScrollView>())     return 4;
-    if (go->GetComponent<UIProgressBar>())    return 5;
-    if (go->GetComponent<UIRadialProgress>()) return 6;
-    if (go->GetComponent<UISlider>())         return 7;
-    if (go->GetComponent<UIStepper>())        return 8;
-    if (go->GetComponent<UIRating>())         return 9;
-    if (go->GetComponent<UIToggle>())         return 10;
-    if (go->GetComponent<UITabs>())           return 11;
-    if (go->GetComponent<UIButton>())         return 12;
-    if (go->GetComponent<WorldUI>())          return 14;
-    if (go->GetComponent<UIDropdown>())       return 15;
-    if (go->GetComponent<UIInputField>())     return 16;
-    if (go->GetComponent<Crosshair>())        return 17;
-    if (go->GetComponent<UITooltip>())        return 18;
-    if (auto* tr = go->GetComponent<TextRenderer>()) return tr->screenSpace ? 13 : -1;
+    if (go->GetComponent<UIDropTarget>())     return K_DropBg;
+    if (go->GetComponent<UIImage>())          return K_Image;
+    if (go->GetComponent<UIRawImage>())       return K_Image;
+    if (go->GetComponent<UIPanel>())          return K_Panel;
+    if (go->GetComponent<Minimap>())          return K_Minimap;
+    if (go->GetComponent<UIScrollView>())     return K_Scroll;
+    if (go->GetComponent<UIProgressBar>())    return K_Progress;
+    if (go->GetComponent<UIRadialProgress>()) return K_Radial;
+    if (go->GetComponent<UISlider>())         return K_Slider;
+    if (go->GetComponent<UIStepper>())        return K_Stepper;
+    if (go->GetComponent<UIRating>())         return K_Rating;
+    if (go->GetComponent<UIToggle>())         return K_Toggle;
+    if (go->GetComponent<UITabs>())           return K_Tabs;
+    if (go->GetComponent<UIButton>())         return K_Button;
+    if (go->GetComponent<WorldUI>())          return K_WorldUI;
+    if (go->GetComponent<UIDropdown>())       return K_Dropdown;
+    if (go->GetComponent<UIInputField>())     return K_Input;
+    if (go->GetComponent<Crosshair>())        return K_Crosshair;
+    if (go->GetComponent<UITooltip>())        return K_Tooltip;
+    if (auto* tr = go->GetComponent<TextRenderer>()) return tr->screenSpace ? K_Text : -1;
     return -1;
 }
 

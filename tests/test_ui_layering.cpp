@@ -37,8 +37,8 @@ int main() {
         GameObject* none = s.CreateGameObject("none");
         CHECK(UIDefaultLayer(im) == 1);
         CHECK(UIDefaultLayer(pn) == 2);
-        CHECK(UIDefaultLayer(bt) == 12);
-        CHECK(UIDefaultLayer(tx) == 13);
+        CHECK(UIDefaultLayer(bt) == 13);
+        CHECK(UIDefaultLayer(tx) == 14);
         CHECK(UIDefaultLayer(none) == -1);
         // Non-screen-space text is world text, not a UI layer.
         GameObject* wt = s.CreateGameObject("wt"); wt->AddComponent<TextRenderer>();  // screenSpace defaults false
@@ -53,7 +53,7 @@ int main() {
         GameObject* im = s.CreateGameObject("im"); im->AddComponent<UIImage>(); im->transform->SetParent(cv->transform, false);
         GameObject* tx = s.CreateGameObject("tx"); { auto* t = tx->AddComponent<TextRenderer>(); t->screenSpace = true; } tx->transform->SetParent(cv->transform, false);
         auto v = ItemsFor(s);
-        // image(1) < panel(2) < text(13) regardless of authoring order.
+        // image(1) < panel(2) < text(14) regardless of authoring order.
         CHECK(RankOf(s, v, "im") < RankOf(s, v, "pn"));
         CHECK(RankOf(s, v, "pn") < RankOf(s, v, "tx"));
     }

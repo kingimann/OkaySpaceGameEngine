@@ -2529,40 +2529,17 @@ int main(int argc, char** argv) {
         SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
         // Single UI pass: every widget's draw-block is queued as an item, then sorted
         // by Canvas sortOrder, each object's uiDrawOrder override (else its default
-        // type layer), and hierarchy pre-order. The layer constants below are the
+        // type layer), and hierarchy pre-order. The shared layer table holds the
         // historic per-type pass order, so with no overrides the result is identical
         // to the old type-grouped passes — but a non-zero uiDrawOrder now lets a
         // widget layer against widgets of any other type. A drop target queues two
-        // items (background behind, highlight above panels).
-        enum UIK { K_DropBg = 0, K_Image, K_Panel, K_DropHi, K_Scroll, K_Progress,
-                   K_Radial, K_Minimap, K_Slider, K_Stepper, K_Rating, K_Toggle, K_Tabs, K_Button,
-                   K_Text, K_WorldUI, K_Dropdown, K_Input, K_Crosshair, K_FocusRing, K_Tooltip };
+        // items (background behind, highlight above panels). Kinds and layer values
+        // come from okay::uilayers (UIElement.hpp), shared with the editor preview
+        // and UIDefaultLayer.
+        using namespace okay::uilayers;
         std::vector<UIDrawItem> uiItems;
-        for (std::size_t _qi = 0; _qi < scene.Objects().size(); ++_qi) {
-            GameObject* g = scene.Objects()[_qi].get();
-            if (!g) continue;
-            auto add = [&](int k) { uiItems.push_back(UIDrawItem{_qi, k, k}); };
-            if (g->GetComponent<UIDropTarget>())    { add(K_DropBg); add(K_DropHi); }
-            if (g->GetComponent<UIImage>() || g->GetComponent<UIRawImage>()) add(K_Image);
-            if (g->GetComponent<UIPanel>())          add(K_Panel);
-            if (g->GetComponent<UIScrollView>())     add(K_Scroll);
-            if (g->GetComponent<UIProgressBar>())    add(K_Progress);
-            if (g->GetComponent<UIRadialProgress>()) add(K_Radial);
-            if (g->GetComponent<Minimap>())          add(K_Minimap);
-            if (g->GetComponent<UISlider>())         add(K_Slider);
-            if (g->GetComponent<UIStepper>())        add(K_Stepper);
-            if (g->GetComponent<UIRating>())         add(K_Rating);
-            if (g->GetComponent<UIToggle>())         add(K_Toggle);
-            if (g->GetComponent<UITabs>())           add(K_Tabs);
-            if (g->GetComponent<UIButton>())         add(K_Button);
-            if (g->GetComponent<TextRenderer>())     add(K_Text);
-            if (g->GetComponent<WorldUI>())          add(K_WorldUI);
-            if (g->GetComponent<UIDropdown>())       add(K_Dropdown);
-            if (g->GetComponent<UIInputField>())     add(K_Input);
-            if (g->GetComponent<Crosshair>())        add(K_Crosshair);
-            if (IsUIFocused(g))                      add(K_FocusRing);
-            if (g->GetComponent<UITooltip>())        add(K_Tooltip);
-        }
+        for (std::size_t _qi = 0; _qi < scene.Objects().size(); ++_qi)
+            UIQueueDrawItems(scene.Objects()[_qi].get(), _qi, uiItems);
         uiItems = SortUIDrawItems(scene.Objects(), std::move(uiItems));
         // World-space Canvas projection: hand the shared UI layout helpers a camera
         // projector for this frame so any widget under a world-space Canvas renders

@@ -26312,12 +26312,16 @@ void DrawInspector(EditorState& ed) {
             std::snprintf(fmt, sizeof(fmt), go->uiDrawOrder == 0 && defLayer >= 0 ? "auto (%d)" : "%%d", defLayer);
             if (go->uiDrawOrder != 0) std::snprintf(fmt, sizeof(fmt), "layer %%d");
             if (ImGui::DragInt("##draworder", &go->uiDrawOrder, 0.1f, -100, 100, fmt)) ed.dirty = true;
-            if (ImGui::IsItemHovered())
+            if (ImGui::IsItemHovered()) {
+                // Listed straight from the shared layer table so it can't drift.
+                std::string layers = "Usual layers:";
+                for (int k = 0; k < okay::uilayers::K_Count; ++k)
+                    layers += (k % 7 == 0 ? "\n  " : " | ") + std::string(UILayerName(k)) + " " + std::to_string(k);
                 ImGui::SetTooltip(
                     "Draw order. auto = the widget type's usual layer; set a number to layer it\n"
-                    "against any widget (higher draws on top), even ones it isn't nested in.\n"
-                    "Usual layers: image 1 | panel 2 | scroll 4 | bars 5-6 | slider 7-8 | rating 9\n"
-                    "  toggle 10 | tabs 11 | button 12 | text 13 | dropdown 15 | input 16");
+                    "against any widget (higher draws on top), even ones it isn't nested in.\n%s",
+                    layers.c_str());
+            }
             ImGui::EndGroup();
         }
         // -- Arrange: cards around widgets. --
@@ -34385,38 +34389,13 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
 
     // Single UI preview pass: queue every widget's draw-block, then sort by Canvas
     // sortOrder, each object's uiDrawOrder override (else its default type layer), and
-    // hierarchy pre-order. The layer VALUES below are the player's canonical type
-    // order, so the editor preview layers UI identically to the built game (including
-    // for uiDrawOrder overrides). With no overrides existing scenes are unchanged.
-    enum UIK { K_DropBg = 0, K_Image = 1, K_Panel = 2, K_Minimap = 3, K_Scroll = 4, K_Progress = 5,
-               K_Radial = 6, K_Slider = 7, K_Stepper = 8, K_Rating = 9, K_Toggle = 10,
-               K_Tabs = 11, K_Button = 12, K_Text = 13, K_WorldUI = 14, K_Dropdown = 15,
-               K_Input = 16, K_Crosshair = 17, K_Tooltip = 18 };
+    // hierarchy pre-order. The layer values are the player's, from the shared table,
+    // so the editor preview layers UI identically to the built game (including for
+    // uiDrawOrder overrides). The preview skips the drop highlight and focus ring.
+    using namespace okay::uilayers;
     std::vector<UIDrawItem> edItems;
-    for (std::size_t _qi = 0; _qi < objs.size(); ++_qi) {
-        GameObject* g = objs[_qi].get();
-        if (!g) continue;
-        auto add = [&](int k) { edItems.push_back(UIDrawItem{_qi, k, k}); };
-        if (g->GetComponent<UIScrollView>())     add(K_Scroll);
-        if (g->GetComponent<UIDropTarget>())     add(K_DropBg);
-        if (g->GetComponent<UIImage>() || g->GetComponent<UIRawImage>()) add(K_Image);
-        if (g->GetComponent<UIPanel>())          add(K_Panel);
-        if (g->GetComponent<UIProgressBar>())    add(K_Progress);
-        if (g->GetComponent<UISlider>())         add(K_Slider);
-        if (g->GetComponent<UIStepper>())        add(K_Stepper);
-        if (g->GetComponent<UIRating>())         add(K_Rating);
-        if (g->GetComponent<UIToggle>())         add(K_Toggle);
-        if (g->GetComponent<UIRadialProgress>()) add(K_Radial);
-        if (g->GetComponent<Minimap>())          add(K_Minimap);
-        if (g->GetComponent<Crosshair>())        add(K_Crosshair);
-        if (g->GetComponent<UITabs>())           add(K_Tabs);
-        if (g->GetComponent<WorldUI>())          add(K_WorldUI);
-        if (g->GetComponent<UIButton>())         add(K_Button);
-        if (g->GetComponent<UIInputField>())     add(K_Input);
-        if (g->GetComponent<TextRenderer>())     add(K_Text);
-        if (g->GetComponent<UIDropdown>())       add(K_Dropdown);
-        if (g->GetComponent<UITooltip>())        add(K_Tooltip);
-    }
+    for (std::size_t _qi = 0; _qi < objs.size(); ++_qi)
+        UIQueueDrawItems(objs[_qi].get(), _qi, edItems);
     edItems = SortUIDrawItems(objs, std::move(edItems));
     // World-space UI (the WorldUI label and any world-space Canvas) is projected
     // with the UIWorld() context the CALLER installed — the 2D ortho map in the
@@ -34438,6 +34417,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         }
     };
     for (const UIDrawItem& _it : edItems) {
+        if (_it.kind == K_DropHi || _it.kind == K_FocusRing) continue;   // player-only blocks
         const auto& up = objs[_it.index];
         UIFadeGuard _fade{dl, dl->VtxBuffer.Size, UIOpacity(up.get())};
         if (_it.kind == K_Scroll) {   // Scroll View backgrounds (behind content) + scrollbar

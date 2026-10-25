@@ -2303,7 +2303,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
     // element takes at least `minChars` characters), so a bogus count can't make a
     // loader allocate or loop far past the end of the file.
     auto remaining = [&]() -> unsigned long long {
-        const std::streamoff at = in.tellg();
+        // Ask the buffer, not tellg(): tellg() sets failbit once eof is reached.
+        const std::streamoff at = in.rdbuf()->pubseekoff(0, std::ios::cur, std::ios::in);
         return at < 0 || (std::size_t)at > text.size() ? 0ull : (unsigned long long)(text.size() - (std::size_t)at);
     };
     auto countOk = [&](long long n, unsigned long long minChars) {

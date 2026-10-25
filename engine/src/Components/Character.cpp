@@ -1142,8 +1142,15 @@ bool Character::AdoptParts(GameObject* rig) {
     };
     walk(rig->transform);
     if (auto* mr = gameObject->GetComponent<MeshRenderer>()) mr->enabled = false;
+    RememberPartRest();
     m_partsBuilt = true;
     return true;
+}
+
+void Character::RememberPartRest() {
+    m_partRest.assign(m_parts.size(), Vec3{0.0f, 0.0f, 0.0f});
+    for (std::size_t i = 0; i < m_parts.size(); ++i)
+        if (m_parts[i] && m_parts[i]->transform) m_partRest[i] = m_parts[i]->transform->localPosition;
 }
 
 void Character::RemoveParts() {
@@ -1151,6 +1158,7 @@ void Character::RemoveParts() {
         if (Scene* s = GetScene()) s->Destroy(rig);   // takes its children with it
     m_rigRoot = nullptr;
     m_parts.clear();
+    m_partRest.clear();
     m_partsBuilt = false;
     if (gameObject) if (auto* mr = gameObject->GetComponent<MeshRenderer>()) mr->enabled = true;
 }
@@ -1230,6 +1238,7 @@ void Character::BuildParts() {
         m_parts[bi]->transform->localPosition = sk[bi].joint - parentJoint;
     }
     if (auto* mr = gameObject->GetComponent<MeshRenderer>()) mr->enabled = false;   // hide the baked mesh
+    RememberPartRest();
     m_partsBuilt = true;
 }
 
@@ -1386,9 +1395,13 @@ void Character::DriveParts() {
         pose[pb]     = pose[pb]     + (up   - pose[pb])     * arc;
         pose[pb + 1] = pose[pb + 1] + (fore - pose[pb + 1]) * arc;
     }
+    // The whole pose is rewritten every frame, joint offsets included: IK that moved
+    // a joint last frame (foot IK on a step) starts again from the animation.
     for (int bi = 0; bi < B_COUNT && bi < (int)pose.size(); ++bi)
-        if (m_parts[bi] && m_parts[bi]->transform)
+        if (m_parts[bi] && m_parts[bi]->transform) {
             m_parts[bi]->transform->localRotation = Quat::Euler(pose[bi]);
+            if (bi < (int)m_partRest.size()) m_parts[bi]->transform->localPosition = m_partRest[bi];
+        }
     if (m_rigRoot && m_rigRoot->transform) {
         Vec3 so = StanceOffset();
         // A steady first-person arm ignores the crouch/prone height drop so it stays in

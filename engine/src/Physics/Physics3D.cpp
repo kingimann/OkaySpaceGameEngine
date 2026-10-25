@@ -11,6 +11,7 @@
 #include "okay/Math/Mathf.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 #include <unordered_set>
 
@@ -278,9 +279,12 @@ float InvInertia(Rigidbody3D* rb, Collider3D* col) {
     return I > 1e-8f ? 1.0f / I : 0.0f;
 }
 
+// Components a callback removes are skipped (`gone`), so a handler that removes
+// a sibling component (or its own collider/body) never runs a freed one.
 void DispatchCollision(GameObject* go, void (Component::*fn)(const Collision3D&),
-                       const Collision3D& info) {
-    for (Component* c : go->GetComponents<Component>()) (c->*fn)(info);
+                       const Collision3D& info, const Scene::RemovalWatch& gone) {
+    for (Component* c : go->GetComponents<Component>())
+        if (!gone.Gone(c)) (c->*fn)(info);
 }
 // The trigger overlap being dispatched right now (Physics3D::CurrentTrigger).
 const TriggerContact3D* g_currentTrigger = nullptr;
@@ -288,11 +292,12 @@ const TriggerContact3D* g_currentTrigger = nullptr;
 // Tell `self`'s object it overlapped `other`, with the overlap point/normal
 // readable through Physics3D::CurrentTrigger() for the duration of the calls.
 void DispatchTrigger(Collider3D* self, void (Component::*fn)(Collider3D*), Collider3D* other,
-                     const Vec3& point, const Vec3& normal) {
+                     const Vec3& point, const Vec3& normal, const Scene::RemovalWatch& gone) {
     TriggerContact3D info{self, other, point, normal};
     const TriggerContact3D* prev = g_currentTrigger;
     g_currentTrigger = &info;
-    for (Component* c : self->gameObject->GetComponents<Component>()) (c->*fn)(other);
+    for (Component* c : self->gameObject->GetComponents<Component>())
+        if (!gone.Gone(c)) (c->*fn)(other);
     g_currentTrigger = prev;
 }
 
@@ -383,26 +388,40 @@ void Physics3D::Step(Scene& scene, float dt) {
     // 2) Broad + narrow phase over every collider pair.
     auto colliders = scene.FindObjectsOfType<Collider3D>();
     std::set<Pair> current;
+    // Contact callbacks below may remove colliders / bodies (RemoveComponent frees
+    // them at once); every raw pointer held across a callback is checked first.
+    Scene::RemovalWatch gone(scene);
 
     // Precompute each collider's world AABB once per step (it was recomputed O(n)
     // times per collider inside the pair loop) and a fast membership set used by the
     // exit-message cleanup below (was an O(contacts*colliders) linear scan).
     const std::size_t nc = colliders.size();
     std::vector<Vec3> aabbMin(nc), aabbMax(nc);
+    // A body whose pose or velocity went non-finite (NaN/inf) is left out of the
+    // contact phase: NaN fails every AABB rejection test, so it would "touch"
+    // everything and spread NaN into each body it's resolved against.
+    std::vector<char> finite(nc, 1);
     std::unordered_set<Collider3D*> aliveSet;
     aliveSet.reserve(nc * 2 + 1);
+    auto fin3 = [](const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); };
     for (std::size_t i = 0; i < nc; ++i) {
         colliders[i]->WorldAABB(aabbMin[i], aabbMax[i]);
         aliveSet.insert(colliders[i]);
+        const Rigidbody3D* r = colliders[i]->gameObject->GetComponent<Rigidbody3D>();
+        finite[i] = fin3(aabbMin[i]) && fin3(aabbMax[i]) &&
+                    (!r || (fin3(r->velocity) && fin3(r->angularVelocity)));
     }
 
     for (std::size_t i = 0; i < nc; ++i) {
         for (std::size_t j = i + 1; j < nc; ++j) {
             Collider3D* a = colliders[i];
             Collider3D* b = colliders[j];
+            if (gone.Gone(a)) break;
+            if (gone.Gone(b)) continue;
             if (!a->enabled || !b->enabled) continue;
             if (!a->gameObject->active || !b->gameObject->active) continue;
             if (a->gameObject == b->gameObject) continue;
+            if (!finite[i] || !finite[j]) continue;   // a NaN body touches nothing
             if (!LayersCollide(a->layer, b->layer)) continue;
 
             // Broad phase: AABB reject (precomputed AABBs).
@@ -443,8 +462,10 @@ void Physics3D::Step(Scene& scene, float dt) {
                 float imSum = ima + imb;
                 if (imSum > 0.0f) {
                     Vec3 correction = c.normal * (c.penetration / imSum);
-                    a->transform->localPosition = a->transform->localPosition - correction * ima;
-                    b->transform->localPosition = b->transform->localPosition + correction * imb;
+                    // Only bodies that can move are corrected: x*0 is NaN for a NaN
+                    // correction, which would otherwise poison a static body too.
+                    if (ima > 0.0f) a->transform->localPosition = a->transform->localPosition - correction * ima;
+                    if (imb > 0.0f) b->transform->localPosition = b->transform->localPosition + correction * imb;
 
                     // Angular terms: lever arms from each body's center to the contact
                     // point and inverse inertia. When rotation is locked these are 0, so
@@ -475,8 +496,8 @@ void Physics3D::Step(Scene& scene, float dt) {
                         if (-velAlongNormal < 0.5f) e = 0.0f;
                         jImp = -(1.0f + e) * velAlongNormal / denom;
                         Vec3 impulse = c.normal * jImp;
-                        if (ra) { ra->velocity = ra->velocity - impulse * ima; ra->angularVelocity = ra->angularVelocity - Vec3::Cross(rA, impulse) * iia; }
-                        if (rb) { rb->velocity = rb->velocity + impulse * imb; rb->angularVelocity = rb->angularVelocity + Vec3::Cross(rB, impulse) * iib; }
+                        if (ra) { if (ima > 0.0f) ra->velocity = ra->velocity - impulse * ima; if (iia > 0.0f) ra->angularVelocity = ra->angularVelocity - Vec3::Cross(rA, impulse) * iia; }
+                        if (rb) { if (imb > 0.0f) rb->velocity = rb->velocity + impulse * imb; if (iib > 0.0f) rb->angularVelocity = rb->angularVelocity + Vec3::Cross(rB, impulse) * iib; }
                     }
                     // Coulomb friction at the contact point, clamped to friction x the
                     // normal impulse. With gravity re-pressing each step this also gives
@@ -501,8 +522,8 @@ void Physics3D::Step(Scene& scene, float dt) {
                             float maxF = mu * jImp;
                             if (jt > maxF) jt = maxF; else if (jt < -maxF) jt = -maxF;
                             Vec3 fimp = t * jt;
-                            if (ra) { ra->velocity = ra->velocity - fimp * ima; ra->angularVelocity = ra->angularVelocity - Vec3::Cross(rA, fimp) * iia; }
-                            if (rb) { rb->velocity = rb->velocity + fimp * imb; rb->angularVelocity = rb->angularVelocity + Vec3::Cross(rB, fimp) * iib; }
+                            if (ra) { if (ima > 0.0f) ra->velocity = ra->velocity - fimp * ima; if (iia > 0.0f) ra->angularVelocity = ra->angularVelocity - Vec3::Cross(rA, fimp) * iia; }
+                            if (rb) { if (imb > 0.0f) rb->velocity = rb->velocity + fimp * imb; if (iib > 0.0f) rb->angularVelocity = rb->angularVelocity + Vec3::Cross(rB, fimp) * iib; }
                         }
                     }
                 }
@@ -513,21 +534,25 @@ void Physics3D::Step(Scene& scene, float dt) {
             bool wasContact = m_contacts.count({a, b}) != 0;
             if (trigger) {
                 if (!wasContact) {
-                    DispatchTrigger(a, &Component::OnTriggerEnter3D, b, c.point, c.normal);
-                    DispatchTrigger(b, &Component::OnTriggerEnter3D, a, c.point, -c.normal);
+                    DispatchTrigger(a, &Component::OnTriggerEnter3D, b, c.point, c.normal, gone);
+                    if (!gone.Gone(a) && !gone.Gone(b))
+                        DispatchTrigger(b, &Component::OnTriggerEnter3D, a, c.point, -c.normal, gone);
                 } else {
-                    DispatchTrigger(a, &Component::OnTriggerStay3D, b, c.point, c.normal);
-                    DispatchTrigger(b, &Component::OnTriggerStay3D, a, c.point, -c.normal);
+                    DispatchTrigger(a, &Component::OnTriggerStay3D, b, c.point, c.normal, gone);
+                    if (!gone.Gone(a) && !gone.Gone(b))
+                        DispatchTrigger(b, &Component::OnTriggerStay3D, a, c.point, -c.normal, gone);
                 }
             } else {
                 Collision3D forA = MakeCollision(b, c.normal, c.penetration, c.point, relVelBA);
                 Collision3D forB = MakeCollision(a, -c.normal, c.penetration, c.point, -relVelBA);
                 if (!wasContact) {
-                    DispatchCollision(a->gameObject, &Component::OnCollisionEnter3D, forA);
-                    DispatchCollision(b->gameObject, &Component::OnCollisionEnter3D, forB);
+                    DispatchCollision(a->gameObject, &Component::OnCollisionEnter3D, forA, gone);
+                    if (!gone.Gone(a) && !gone.Gone(b))
+                        DispatchCollision(b->gameObject, &Component::OnCollisionEnter3D, forB, gone);
                 } else {
-                    DispatchCollision(a->gameObject, &Component::OnCollisionStay3D, forA);
-                    DispatchCollision(b->gameObject, &Component::OnCollisionStay3D, forB);
+                    DispatchCollision(a->gameObject, &Component::OnCollisionStay3D, forA, gone);
+                    if (!gone.Gone(a) && !gone.Gone(b))
+                        DispatchCollision(b->gameObject, &Component::OnCollisionStay3D, forB, gone);
                 }
             }
         }
@@ -539,20 +564,27 @@ void Physics3D::Step(Scene& scene, float dt) {
         Collider3D* a = p.first;
         Collider3D* b = p.second;
         if (!aliveSet.count(a) || !aliveSet.count(b)) continue;
+        if (gone.Gone(a) || gone.Gone(b)) continue;
         if (a->isTrigger || b->isTrigger) {
             // No overlap any more: report the midpoint between the two centres.
             Vec3 mid = (a->WorldCenter() + b->WorldCenter()) * 0.5f;
             Vec3 n = (b->WorldCenter() - a->WorldCenter()).Normalized();
-            DispatchTrigger(a, &Component::OnTriggerExit3D, b, mid, n);
-            DispatchTrigger(b, &Component::OnTriggerExit3D, a, mid, -n);
+            DispatchTrigger(a, &Component::OnTriggerExit3D, b, mid, n, gone);
+            if (!gone.Gone(a) && !gone.Gone(b))
+                DispatchTrigger(b, &Component::OnTriggerExit3D, a, mid, -n, gone);
         } else {
             Collision3D forA = MakeCollision(b, Vec3::Zero, 0.0f, Vec3::Zero, Vec3::Zero);
             Collision3D forB = MakeCollision(a, Vec3::Zero, 0.0f, Vec3::Zero, Vec3::Zero);
-            DispatchCollision(a->gameObject, &Component::OnCollisionExit3D, forA);
-            DispatchCollision(b->gameObject, &Component::OnCollisionExit3D, forB);
+            DispatchCollision(a->gameObject, &Component::OnCollisionExit3D, forA, gone);
+            if (!gone.Gone(a) && !gone.Gone(b))
+                DispatchCollision(b->gameObject, &Component::OnCollisionExit3D, forB, gone);
         }
     }
 
+    // Drop pairs whose collider a callback removed, so no freed pointer is kept.
+    if (gone.Any())
+        for (auto it = current.begin(); it != current.end();)
+            it = (gone.Gone(it->first) || gone.Gone(it->second)) ? current.erase(it) : std::next(it);
     m_contacts.swap(current);
 
     // 4) Terrain ground-follow: heightmap terrain isn't a polygon collider, so make
@@ -910,6 +942,7 @@ void Physics3D::Step(Scene& scene, float dt) {
     // Sleep bookkeeping: a dynamic body under the speed thresholds for kSleepTime
     // seconds sleeps (zeroed and skipped next step). Any motion resets the timer.
     for (Rigidbody3D* rb : bodies) {
+        if (gone.Gone(rb)) continue;                 // removed by a contact callback
         if (!rb->enabled || !rb->gameObject || !rb->gameObject->active) continue;
         if (rb->bodyType != Rigidbody3D::BodyType::Dynamic) continue;
         if (!rb->allowSleep) { rb->WakeUp(); continue; }

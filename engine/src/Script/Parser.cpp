@@ -11,12 +11,9 @@ struct ParseError { SrcLoc loc; std::string msg; };
 // so, rather than syntax that is silently skipped.
 const std::unordered_map<std::string, const char*>& NotYet() {
     static const std::unordered_map<std::string, const char*> m = {
-        {"foreach", "foreach loops aren't supported yet: use a for loop"},
-        {"switch", "switch isn't supported yet: use if / else if"},
         {"do", "do-while loops aren't supported yet: use while"},
         {"try", "try / catch isn't supported yet"},
         {"throw", "throw isn't supported yet"},
-        {"enum", "enums aren't supported yet"},
         {"struct", "structs aren't supported yet"},
         {"interface", "interfaces aren't supported yet"},
         {"static", "static members aren't supported yet"},
@@ -62,6 +59,7 @@ public:
                     continue;
                 }
                 if (Is(T::RBrace) && nsDepth > 0) { ++pos_; --nsDepth; continue; }
+                if (IsEnumAhead()) { Enum(); continue; }
                 ClassDecl c = Class();
                 prog_.classes.push_back(std::move(c));
             } catch (const ParseError& e) {
@@ -90,7 +88,7 @@ private:
         }
         return toks_[pos_++];
     }
-    void Error(SrcLoc l, const std::string& m) { prog_.diags.push_back({l.line, m, 0}); }
+    void Error(SrcLoc l, const std::string& m) { prog_.diags.push_back({l.line, m, 0, l.col}); }
 
     void SyncTopLevel(std::size_t start) {
         if (pos_ == start) ++pos_;
@@ -137,6 +135,53 @@ private:
             Expect(T::RBracket, "']'");
         }
         return out;
+    }
+
+    // enum Name [: int] { A, B = 5, C }, after any public/private.
+    bool IsEnumAhead() const {
+        std::size_t o = 0;
+        while (Is(T::KwPublic, o) || Is(T::KwPrivate, o)) ++o;
+        return IsWord("enum", o) && Is(T::Ident, o + 1);
+    }
+    void Enum() {
+        while (Match(T::KwPublic) || Match(T::KwPrivate)) {}
+        ++pos_;   // enum
+        EnumDecl e;
+        e.loc = Peek().loc;
+        e.name = Expect(T::Ident, "the enum's name").text;
+        if (Is(T::Colon)) throw ParseError{Peek().loc, "Enums are always ints: delete the ': type'"};
+        Expect(T::LBrace, "'{'");
+        while (!Is(T::RBrace) && !Is(T::End)) {
+            EnumMember m;
+            m.loc = Peek().loc;
+            m.name = Expect(T::Ident, "a name for the enum value").text;
+            if (Match(T::Assign)) m.value = Expression();
+            e.members.push_back(std::move(m));
+            if (!Match(T::Comma)) break;
+        }
+        Expect(T::RBrace, "'}' to close the enum");
+        Match(T::Semicolon);
+        prog_.enums.push_back(std::move(e));
+    }
+
+    // { a, b, c } (a trailing comma is fine).
+    std::vector<ExprPtr> ArrayItems() {
+        std::vector<ExprPtr> items;
+        Expect(T::LBrace, "'{'");
+        while (!Is(T::RBrace) && !Is(T::End)) {
+            if (Is(T::LBrace)) throw ParseError{Peek().loc, "An array inside an array is written new int[] { ... }"};
+            items.push_back(Expression());
+            if (!Match(T::Comma)) break;
+        }
+        Expect(T::RBrace, "'}' to close the list");
+        return items;
+    }
+    // `= { ... }` after a field or variable of an array type.
+    ExprPtr Initializer() {
+        if (!Is(T::LBrace)) return Expression();
+        auto e = Make(EK::ArrayLit, Peek().loc);
+        e->args = ArrayItems();
+        return e;
     }
 
     ClassDecl Class() {
@@ -186,7 +231,13 @@ private:
         }
         ++pos_;
         if (Is(T::Lt)) throw ParseError{Peek().loc, "Generic types like " + t.name + "<...> aren't supported yet"};
-        if (Is(T::LBracket)) throw ParseError{Peek().loc, "Arrays aren't supported yet"};
+        for (;;) {
+            if (Is(T::LBracket) && Is(T::Comma, 1))
+                throw ParseError{Peek(1).loc, "Multi-dimensional arrays (" + t.name + "[,]) aren't supported: use an array of arrays, " + t.name + "[][]"};
+            if (!(Is(T::LBracket) && Is(T::RBracket, 1))) break;
+            pos_ += 2;
+            if (++t.rank > 32) throw ParseError{t.loc, "Too many [] in this type"};
+        }
         if (Is(T::Question)) throw ParseError{Peek().loc, "Nullable types (" + t.name + "?) aren't supported"};
         return t;
     }
@@ -202,6 +253,12 @@ private:
             }
             if (Match(T::KwConst)) { isConst = true; continue; }
             break;
+        }
+        if (IsWord("enum") && Is(T::Ident, 1)) {
+            if (isConst) throw ParseError{Peek().loc, "An enum can't be const (its values already are)"};
+            if (!attrs.empty()) Error(attrs[0].loc, "Attributes only work on fields");
+            Enum();
+            return;
         }
         RejectNotYet();
         if (Is(T::KwClass)) throw ParseError{Peek().loc, "Classes inside classes aren't supported"};
@@ -239,7 +296,7 @@ private:
             FieldDecl f;
             f.attrs = std::move(attrs); attrs.clear();
             f.isPublic = isPublic; f.isConst = isConst; f.type = type; f.name = name; f.loc = nameLoc;
-            if (Match(T::Assign)) f.init = Expression();
+            if (Match(T::Assign)) f.init = Initializer();
             else if (isConst) throw ParseError{nameLoc, "A const needs a value: const " + type.name + " " + name + " = ...;"};
             c.fields.push_back(std::move(f));
             if (!Match(T::Comma)) break;
@@ -266,7 +323,9 @@ private:
     bool IsLocalDeclStart() const {
         switch (Peek().type) {
             case T::KwInt: case T::KwFloat: case T::KwBool: case T::KwString: case T::KwVar: case T::KwConst: return true;
-            case T::Ident: return Is(T::Ident, 1) || (Is(T::Lt, 1) && Is(T::Ident, 2) && Is(T::Gt, 3) && Is(T::Ident, 4));
+            case T::Ident:
+                return Is(T::Ident, 1) || (Is(T::Lt, 1) && Is(T::Ident, 2) && Is(T::Gt, 3) && Is(T::Ident, 4)) ||
+                       (Is(T::LBracket, 1) && (Is(T::RBracket, 2) || Is(T::Comma, 2)));
             default: return false;
         }
     }
@@ -282,7 +341,7 @@ private:
             d.type = type;
             d.loc = Peek().loc;
             d.name = Expect(T::Ident, "a variable name").text;
-            if (Match(T::Assign)) d.init = Expression();
+            if (Match(T::Assign)) d.init = Initializer();
             else if (type.name == "var") throw ParseError{d.loc, "`var` needs a value to work out its type: var " + d.name + " = ...;"};
             s->locals.push_back(std::move(d));
         } while (Match(T::Comma));
@@ -292,6 +351,7 @@ private:
     std::unique_ptr<Stmt> Statement() {
         RejectNotYet();
         SrcLoc loc = Peek().loc;
+        NestGuard guard(stmtNesting_, loc, "code");   // blocks, ifs, loops and switches recurse here
         if (Is(T::LBrace)) return Block();
         if (Match(T::Semicolon)) throw ParseError{loc, "An empty statement does nothing. Delete the extra ';'"};
         if (Match(T::KwIf)) {
@@ -330,6 +390,23 @@ private:
             s->loopBody = Statement();
             return s;
         }
+        if (IsWord("switch") && Is(T::LParen, 1)) return Switch();
+        if (IsWord("foreach") && Is(T::LParen, 1)) {
+            ++pos_;
+            auto s = std::make_unique<Stmt>(); s->kind = SK::Foreach; s->loc = loc;
+            Expect(T::LParen, "'(' after foreach");
+            LocalDecl d;
+            d.type = Type(true);
+            d.loc = Peek().loc;
+            d.name = Expect(T::Ident, "the loop variable's name").text;
+            if (!IsWord("in")) throw ParseError{Peek().loc, "Expected 'in' here: foreach (var item in items)"};
+            ++pos_;
+            s->expr = Expression();
+            Expect(T::RParen, "')'");
+            s->locals.push_back(std::move(d));
+            s->loopBody = Statement();
+            return s;
+        }
         if (Match(T::KwReturn)) {
             auto s = std::make_unique<Stmt>(); s->kind = SK::Return; s->loc = loc;
             if (!Is(T::Semicolon)) s->expr = Expression();
@@ -350,6 +427,56 @@ private:
         return s;
     }
 
+    bool IsCaseLabel() const { return IsWord("case") || (IsWord("default") && Is(T::Colon, 1)); }
+    // switch (x) { case 1: case 2: ... break; default: ... break; }
+    std::unique_ptr<Stmt> Switch() {
+        auto s = std::make_unique<Stmt>(); s->kind = SK::Switch; s->loc = Peek().loc;
+        ++pos_;
+        Expect(T::LParen, "'(' after switch");
+        s->expr = Expression();
+        Expect(T::RParen, "')'");
+        Expect(T::LBrace, "'{' to start the switch's cases");
+        while (!Is(T::RBrace) && !Is(T::End)) {
+            if (!IsCaseLabel()) {
+                Error(Peek().loc, "Expected case or default here: switch (x) { case 1: ... break; }");
+                SyncStatement(pos_);
+                continue;
+            }
+            SwitchSection sec;
+            sec.loc = Peek().loc;
+            while (IsCaseLabel()) {
+                SrcLoc l = Peek().loc;
+                if (IsWord("default")) {
+                    if (sec.isDefault) Error(l, "A switch has only one default");
+                    sec.isDefault = true; sec.defaultLoc = l;
+                    pos_ += 2;
+                    continue;
+                }
+                ++pos_;
+                std::size_t start = pos_;
+                try {
+                    ExprPtr v = Expression();
+                    if (IsWord("when")) throw ParseError{Peek().loc, "case ... when isn't supported yet: use an if inside the case"};
+                    Expect(T::Colon, "':' after the case value");
+                    sec.labels.push_back(std::move(v));
+                    sec.labelLocs.push_back(l);
+                } catch (const ParseError& e) {
+                    Error(e.loc, e.msg);
+                    while (!Is(T::Colon) && !Is(T::RBrace) && !Is(T::End) && pos_ >= start) ++pos_;
+                    Match(T::Colon);
+                }
+            }
+            while (!Is(T::RBrace) && !Is(T::End) && !IsCaseLabel()) {
+                std::size_t start = pos_;
+                try { sec.body.push_back(Statement()); }
+                catch (const ParseError& e) { Error(e.loc, e.msg); SyncStatement(start); }
+            }
+            s->sections.push_back(std::move(sec));
+        }
+        Expect(T::RBrace, "'}' to close the switch");
+        return s;
+    }
+
     // ---- Expressions ----
     ExprPtr Make(EK k, SrcLoc l) { auto e = std::make_unique<Expr>(); e->kind = k; e->loc = l; return e; }
 
@@ -366,9 +493,12 @@ private:
     // checking, running and freeing walk recursively: cap the operators too.
     static constexpr int kMaxOperators = 1000;
     int operators_ = 0;
+    int stmtNesting_ = 0;
     struct NestGuard {
         int& n;
-        NestGuard(int& d, SrcLoc l) : n(d) { if (++n > kMaxNesting) { --n; throw ParseError{l, "This expression is nested too deeply"}; } }
+        NestGuard(int& d, SrcLoc l, const char* what = "expression") : n(d) {
+            if (++n > kMaxNesting) { --n; throw ParseError{l, std::string("This ") + what + " is nested too deeply"}; }
+        }
         ~NestGuard() { --n; }
     };
 
@@ -425,7 +555,17 @@ private:
     }
     bool IsCastAhead() const {
         if (!Is(T::LParen) || !Is(T::RParen, 2)) return false;
-        switch (Peek(1).type) { case T::KwInt: case T::KwFloat: case T::KwBool: case T::KwString: return true; default: return false; }
+        switch (Peek(1).type) {
+            case T::KwInt: case T::KwFloat: case T::KwBool: case T::KwString: return true;
+            case T::Ident:
+                // (Name)x is a cast when what follows can only start a value, as in C#.
+                switch (Peek(3).type) {
+                    case T::Ident: case T::IntLit: case T::FloatLit: case T::StringLit: case T::LParen: case T::Not:
+                    case T::KwTrue: case T::KwFalse: case T::KwNull: case T::KwThis: case T::KwNew: return true;
+                    default: return false;
+                }
+            default: return false;
+        }
     }
     ExprPtr Unary() {
         SrcLoc l = Peek().loc;
@@ -487,7 +627,16 @@ private:
                 e = std::move(c);
                 continue;
             }
-            if (Is(T::LBracket)) throw ParseError{Peek().loc, "Indexing with [ ] isn't supported yet"};
+            if (Is(T::LBracket)) {
+                auto ix = Make(EK::Index, Peek().loc);
+                ++pos_;
+                ix->lhs = Expression();
+                if (Is(T::Comma)) throw ParseError{Peek().loc, "Multi-dimensional arrays aren't supported: use a[i][j]"};
+                Expect(T::RBracket, "']'");
+                ix->object = std::move(e);
+                e = std::move(ix);
+                continue;
+            }
             if (Is(T::PlusPlus) || Is(T::MinusMinus)) {
                 auto i = Make(EK::IncDec, Peek().loc); i->op = Peek().type; ++pos_;
                 i->lhs = std::move(e);
@@ -526,7 +675,34 @@ private:
             case T::KwNew: {
                 ++pos_;
                 auto e = Make(EK::New, l);
+                if (Is(T::LBracket) && Is(T::RBracket, 1)) {   // new[] { ... }: the items give the type
+                    pos_ += 2;
+                    e->kind = EK::NewArray;
+                    e->hasInit = true;
+                    e->args = ArrayItems();
+                    return e;
+                }
                 e->typeArg = Type(false);
+                if (Is(T::LBracket)) {   // new T[n], new T[n][]
+                    e->kind = EK::NewArray;
+                    ++pos_;
+                    e->lhs = Expression();
+                    if (Is(T::Comma)) throw ParseError{Peek().loc, "Multi-dimensional arrays aren't supported: use an array of arrays, new int[n][]"};
+                    Expect(T::RBracket, "']'");
+                    ++e->typeArg.rank;
+                    while (Is(T::LBracket) && Is(T::RBracket, 1)) {
+                        pos_ += 2;
+                        if (++e->typeArg.rank > 32) throw ParseError{l, "Too many [] in this type"};
+                    }
+                    if (Is(T::LBracket)) throw ParseError{Peek().loc, "Only the first [ ] of new can have a length: new int[3][]"};
+                } else if (e->typeArg.rank > 0) {
+                    e->kind = EK::NewArray;
+                    if (!Is(T::LBrace)) throw ParseError{Peek().loc, "An array needs a length or its items: new int[3] or new int[] { 1, 2, 3 }"};
+                }
+                if (e->kind == EK::NewArray) {
+                    if (Is(T::LBrace)) { e->hasInit = true; e->args = ArrayItems(); }
+                    return e;
+                }
                 e->args = Args();
                 return e;
             }

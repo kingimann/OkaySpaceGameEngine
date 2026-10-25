@@ -5,10 +5,12 @@
 #include "okay/VisualScript/ActionGraph.hpp"
 #include "okay/VisualScript/VsTypes.hpp"
 #include "okay/VisualScript/VsApi.hpp"
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
+#include <vector>
 #include <string>
 
 using namespace okay;
@@ -387,6 +389,37 @@ entry OnStart 0
             if (si.issue.severity == 0) named = si.object == "Player" && si.nodeType == "Add" &&
                                                 si.Describe().find("Visual Script on 'Player', node 'Add' (#2)") == 0;
         CHECK(named);
+    }
+
+    // ---- Numbers too big for an integer (or not numbers) print safely ----
+    {
+        using vs::VsValue;
+        CHECK(VsValue(1e30f).AsString().find("e+30") != std::string::npos ||
+              VsValue(1e30f).AsString().size() > 20);              // a real number, not garbage from a cast
+        CHECK(VsValue(std::nanf("")).AsString() == "nan");
+        CHECK(VsValue(INFINITY).AsString() == "inf");
+        CHECK(VsValue(-INFINITY).AsString() == "-inf");
+        CHECK(VsValue(7.0f).AsString() == "7");                    // integers still print without decimals
+        CHECK(VsValue(-3.0f).AsString() == "-3");
+        CHECK(VsValue(2.5f).AsString() == "2.5");
+        CHECK(VsValue(16777216.0f).AsString() == "16777216");
+        // Through a graph: Print Pow(10, 30) and Pow(-1, 0.5).
+        std::vector<std::string> printed;
+        auto sink = Log::sink;
+        Log::sink = [&](Log::Level, const std::string& m) { printed.push_back(m); };
+        for (const char* args : {"10 30", "-1 0.5"}) {
+            Scene sc("P");
+            auto* v = sc.CreateGameObject("P")->AddComponent<VisualScriptComponent>();
+            std::string a = args, b = a.substr(a.find(' ') + 1); a = a.substr(0, a.find(' '));
+            CHECK(v->LoadFromText("node 1 OnStart\nnode 2 Print\nnode 3 Pow\nnode 4 Const " + a + "\nnode 5 Const " + b +
+                                  "\ndata 3 0 4 0\ndata 3 1 5 0\ndata 2 0 3 0\nexec 1 0 2\nentry OnStart 1\n"));
+            sc.Start();
+        }
+        Log::sink = sink;
+        bool sawBig = false, sawNan = false;
+        for (const auto& m : printed) { sawBig |= m.find("e+30") != std::string::npos || m.find("1000000015047466") != std::string::npos; sawNan |= m.find("nan") != std::string::npos; }
+        CHECK(sawBig);
+        CHECK(sawNan);
     }
 
     TEST_MAIN_RESULT();

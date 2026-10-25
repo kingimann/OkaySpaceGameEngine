@@ -10,9 +10,20 @@ add_executable(test_serialize test_serialize.cpp)
 target_link_libraries(test_serialize PRIVATE okay::engine)
 add_test(NAME serialize COMMAND test_serialize)
 
+# Robustness: parent cycles (Transform::SetParent + scene/prefab/creation loaders)
+add_executable(test_parent_cycles test_parent_cycles.cpp)
+target_link_libraries(test_parent_cycles PRIVATE okay::engine)
+add_test(NAME parent_cycles COMMAND test_parent_cycles)
+
 add_executable(test_instantiate test_instantiate.cpp)
 target_link_libraries(test_instantiate PRIVATE okay::engine)
 add_test(NAME instantiate COMMAND test_instantiate)
+
+# Robustness: scene record counts / indices are validated on load
+add_executable(test_scene_records test_scene_records.cpp)
+target_link_libraries(test_scene_records PRIVATE okay::engine)
+add_test(NAME scene_records COMMAND test_scene_records)
+set_tests_properties(scene_records PROPERTIES TIMEOUT 300)
 
 add_executable(test_remove test_remove.cpp)
 target_link_libraries(test_remove PRIVATE okay::engine)
@@ -26,9 +37,19 @@ add_executable(test_layers test_layers.cpp)
 target_link_libraries(test_layers PRIVATE okay::engine)
 add_test(NAME physics_layers COMMAND test_layers)
 
+# Robustness: a NaN body can't poison statics / other bodies
+add_executable(test_physics_nan test_physics_nan.cpp)
+target_link_libraries(test_physics_nan PRIVATE okay::engine)
+add_test(NAME physics_nan COMMAND test_physics_nan)
+
 add_executable(test_physics3d test_physics3d.cpp)
 target_link_libraries(test_physics3d PRIVATE okay::engine)
 add_test(NAME physics3d COMMAND test_physics3d)
+
+# Robustness: removing colliders / bodies / components from contact callbacks
+add_executable(test_physics_callback_removal test_physics_callback_removal.cpp)
+target_link_libraries(test_physics_callback_removal PRIVATE okay::engine)
+add_test(NAME physics_callback_removal COMMAND test_physics_callback_removal)
 
 add_executable(test_scriptapi test_scriptapi.cpp)
 target_link_libraries(test_scriptapi PRIVATE okay::engine)
@@ -54,6 +75,11 @@ add_executable(test_core_features test_core_features.cpp)
 target_link_libraries(test_core_features PRIVATE okay::engine)
 add_test(NAME core_features COMMAND test_core_features)
 
+# Robustness: Scheduler callbacks that Invoke / Cancel / Clear during Update
+add_executable(test_scheduler_reentry test_scheduler_reentry.cpp)
+target_link_libraries(test_scheduler_reentry PRIVATE okay::engine)
+add_test(NAME scheduler_reentry COMMAND test_scheduler_reentry)
+
 add_executable(test_gameplay test_gameplay.cpp)
 target_link_libraries(test_gameplay PRIVATE okay::engine)
 add_test(NAME gameplay COMMAND test_gameplay)
@@ -77,6 +103,12 @@ add_test(NAME templates COMMAND test_templates)
 add_executable(test_image test_image.cpp)
 target_link_libraries(test_image PRIVATE okay::engine)
 add_test(NAME image COMMAND test_image)
+
+# Robustness: OBJ / glTF / image loaders reject malformed input
+add_executable(test_loaders_robust test_loaders_robust.cpp)
+target_link_libraries(test_loaders_robust PRIVATE okay::engine)
+add_test(NAME loaders_robust COMMAND test_loaders_robust)
+set_tests_properties(loaders_robust PROPERTIES TIMEOUT 120)   # a glTF node cycle used to hang the import
 
 add_executable(test_text test_text.cpp)
 target_link_libraries(test_text PRIVATE okay::engine)
@@ -724,6 +756,11 @@ add_executable(test_anim_sm_layers test_anim_sm_layers.cpp)
 target_link_libraries(test_anim_sm_layers PRIVATE okay::engine)
 add_test(NAME anim_sm_layers COMMAND test_anim_sm_layers)
 
+# Robustness: AnimStateMachine layers survive `states` reallocating
+add_executable(test_anim_sm_realloc test_anim_sm_realloc.cpp)
+target_link_libraries(test_anim_sm_realloc PRIVATE okay::engine)
+add_test(NAME anim_sm_realloc COMMAND test_anim_sm_realloc)
+
 add_executable(test_foot_planting test_foot_planting.cpp)
 target_link_libraries(test_foot_planting PRIVATE okay::engine)
 add_test(NAME foot_planting COMMAND test_foot_planting)
@@ -855,6 +892,10 @@ add_executable(test_okayscript_next test_okayscript_next.cpp)
 target_link_libraries(test_okayscript_next PRIVATE okay::engine)
 add_test(NAME okayscript_next COMMAND test_okayscript_next)
 
+add_executable(test_okayscript_next_csharp test_okayscript_next_csharp.cpp)
+target_link_libraries(test_okayscript_next_csharp PRIVATE okay::engine)
+add_test(NAME okayscript_next_csharp COMMAND test_okayscript_next_csharp)
+
 add_executable(test_vs_acceptance test_vs_acceptance.cpp)
 target_link_libraries(test_vs_acceptance PRIVATE okay::engine)
 add_test(NAME vs_acceptance COMMAND test_vs_acceptance)
@@ -901,3 +942,13 @@ add_test(NAME qa_pr250 COMMAND test_qa_pr250)
 add_executable(test_stance_save test_stance_save.cpp)
 target_link_libraries(test_stance_save PRIVATE okay::engine)
 add_test(NAME stance_save COMMAND test_stance_save)
+
+# The relay is internet-facing: same-session forwarding, random slots, caps, fuzz
+add_executable(test_relay_security test_relay_security.cpp)
+target_link_libraries(test_relay_security PRIVATE okay::engine)
+add_test(NAME relay_security COMMAND test_relay_security)
+
+# Script file APIs stay inside the game's folders (no absolute paths, no "..")
+add_executable(test_script_paths test_script_paths.cpp)
+target_link_libraries(test_script_paths PRIVATE okay::engine)
+add_test(NAME script_paths COMMAND test_script_paths)

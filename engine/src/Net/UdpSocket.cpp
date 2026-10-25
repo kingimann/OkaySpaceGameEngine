@@ -14,6 +14,7 @@
 #  include <netinet/in.h>
 #  include <arpa/inet.h>
 #  include <netdb.h>
+#  include <sys/select.h>
 #  include <fcntl.h>
 #  include <unistd.h>
 #  include <errno.h>
@@ -130,6 +131,22 @@ bool UdpSocket::SendTo(const Endpoint& to, const void* data, std::size_t size) {
                         static_cast<int>(size), 0,
                         reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
     return sent == static_cast<int>(size);
+}
+
+bool UdpSocket::WaitReadable(int timeoutMs) {
+    if (!IsOpen()) return false;
+    fd_set set;
+    FD_ZERO(&set);
+#if defined(_WIN32)
+    FD_SET(static_cast<SOCKET>(m_handle), &set);
+#else
+    FD_SET(m_handle, &set);
+#endif
+    timeval tv{};
+    tv.tv_sec = timeoutMs / 1000;
+    tv.tv_usec = (timeoutMs % 1000) * 1000;
+    int r = ::select(static_cast<int>(m_handle) + 1, &set, nullptr, nullptr, &tv);
+    return r > 0;
 }
 
 int UdpSocket::RecvFrom(void* buffer, std::size_t capacity, Endpoint& from) {

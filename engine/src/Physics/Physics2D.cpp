@@ -8,6 +8,7 @@
 #include "okay/Math/Mathf.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 #include <unordered_set>
 
@@ -257,9 +258,12 @@ Contact TestColliders(Collider2D* a, Collider2D* b) {
     return TestCircleCircle(ac, ar, bc, br);
 }
 
+// Components a callback removes are skipped (`gone`), so a handler that removes
+// a sibling component (or its own collider/body) never runs a freed one.
 void DispatchCollision(GameObject* go, void (Component::*fn)(const Collision2D&),
-                       const Collision2D& info) {
-    for (Component* c : go->GetComponents<Component>()) (c->*fn)(info);
+                       const Collision2D& info, const Scene::RemovalWatch& gone) {
+    for (Component* c : go->GetComponents<Component>())
+        if (!gone.Gone(c)) (c->*fn)(info);
 }
 // The trigger overlap being dispatched right now (Physics2D::CurrentTrigger).
 const TriggerContact2D* g_currentTrigger = nullptr;
@@ -267,11 +271,12 @@ const TriggerContact2D* g_currentTrigger = nullptr;
 // Tell `self`'s object it overlapped `other`, with the overlap point/normal
 // readable through Physics2D::CurrentTrigger() for the duration of the calls.
 void DispatchTrigger(Collider2D* self, void (Component::*fn)(Collider2D*), Collider2D* other,
-                     const Vec2& point, const Vec2& normal) {
+                     const Vec2& point, const Vec2& normal, const Scene::RemovalWatch& gone) {
     TriggerContact2D info{self, other, point, normal};
     const TriggerContact2D* prev = g_currentTrigger;
     g_currentTrigger = &info;
-    for (Component* c : self->gameObject->GetComponents<Component>()) (c->*fn)(other);
+    for (Component* c : self->gameObject->GetComponents<Component>())
+        if (!gone.Gone(c)) (c->*fn)(other);
     g_currentTrigger = prev;
 }
 
@@ -350,25 +355,39 @@ void Physics2D::Step(Scene& scene, float dt) {
     // 2) Broad+narrow phase over every collider pair.
     auto colliders = scene.FindObjectsOfType<Collider2D>();
     std::set<Pair> current;
+    // Contact callbacks below may remove colliders / bodies (RemoveComponent frees
+    // them at once); every raw pointer held across a callback is checked first.
+    Scene::RemovalWatch gone(scene);
 
     // Precompute world AABBs once per step (were recomputed O(n) times per collider)
     // and a membership set for the exit-message cleanup (was an O(contacts*n) scan).
     const std::size_t nc = colliders.size();
     std::vector<Vec2> aabbMin(nc), aabbMax(nc);
+    // A body whose pose or velocity went non-finite (NaN/inf) is left out of the
+    // contact phase: NaN fails every AABB rejection test, so it would "touch"
+    // everything and spread NaN into each body it's resolved against.
+    std::vector<char> finite(nc, 1);
     std::unordered_set<Collider2D*> aliveSet;
     aliveSet.reserve(nc * 2 + 1);
     for (std::size_t i = 0; i < nc; ++i) {
         colliders[i]->WorldAABB(aabbMin[i], aabbMax[i]);
         aliveSet.insert(colliders[i]);
+        const Rigidbody2D* r = colliders[i]->gameObject->GetComponent<Rigidbody2D>();
+        finite[i] = std::isfinite(aabbMin[i].x) && std::isfinite(aabbMin[i].y) &&
+                    std::isfinite(aabbMax[i].x) && std::isfinite(aabbMax[i].y) &&
+                    (!r || (std::isfinite(r->velocity.x) && std::isfinite(r->velocity.y) && std::isfinite(r->angularVelocity)));
     }
 
     for (std::size_t i = 0; i < nc; ++i) {
         for (std::size_t j = i + 1; j < nc; ++j) {
             Collider2D* a = colliders[i];
             Collider2D* b = colliders[j];
+            if (gone.Gone(a)) break;
+            if (gone.Gone(b)) continue;
             if (!a->enabled || !b->enabled) continue;
             if (!a->gameObject->active || !b->gameObject->active) continue;
             if (a->gameObject == b->gameObject) continue;
+            if (!finite[i] || !finite[j]) continue;   // a NaN body touches nothing
             if (!LayersCollide(a->layer, b->layer)) continue; // collision matrix
 
             // Broad phase: AABB reject (precomputed AABBs).
@@ -410,8 +429,10 @@ void Physics2D::Step(Scene& scene, float dt) {
                 if (imSum > 0.0f) {
                     // Positional correction.
                     Vec2 correction = c.normal * (c.penetration / imSum);
-                    a->transform->localPosition -= Vec3{correction * ima};
-                    b->transform->localPosition += Vec3{correction * imb};
+                    // Only bodies that can move are corrected: x*0 is NaN for a NaN
+                    // correction, which would otherwise poison a static body too.
+                    if (ima > 0.0f) a->transform->localPosition -= Vec3{correction * ima};
+                    if (imb > 0.0f) b->transform->localPosition += Vec3{correction * imb};
 
                     // Angular terms: lever arms from each body's center to the contact
                     // point, and inverse inertia. When rotation is locked these are 0,
@@ -444,8 +465,8 @@ void Physics2D::Step(Scene& scene, float dt) {
                         if (-velAlongNormal < 0.5f) e = 0.0f;
                         jImp = -(1.0f + e) * velAlongNormal / denom;
                         Vec2 impulse = c.normal * jImp;
-                        if (ra) { ra->velocity -= impulse * ima; ra->angularVelocity -= rnA * jImp * iia * Mathf::Rad2Deg; }
-                        if (rb) { rb->velocity += impulse * imb; rb->angularVelocity += rnB * jImp * iib * Mathf::Rad2Deg; }
+                        if (ra) { if (ima > 0.0f) ra->velocity -= impulse * ima; if (iia > 0.0f) ra->angularVelocity -= rnA * jImp * iia * Mathf::Rad2Deg; }
+                        if (rb) { if (imb > 0.0f) rb->velocity += impulse * imb; if (iib > 0.0f) rb->angularVelocity += rnB * jImp * iib * Mathf::Rad2Deg; }
                     }
                     // Coulomb friction on the tangential relative velocity at the
                     // contact point, clamped to friction x the normal impulse. With
@@ -472,8 +493,8 @@ void Physics2D::Step(Scene& scene, float dt) {
                             float maxF = mu * jImp;
                             jt = Mathf::Clamp(jt, -maxF, maxF);
                             Vec2 fimp = t * jt;
-                            if (ra) { ra->velocity -= fimp * ima; ra->angularVelocity -= rtA * jt * iia * Mathf::Rad2Deg; }
-                            if (rb) { rb->velocity += fimp * imb; rb->angularVelocity += rtB * jt * iib * Mathf::Rad2Deg; }
+                            if (ra) { if (ima > 0.0f) ra->velocity -= fimp * ima; if (iia > 0.0f) ra->angularVelocity -= rtA * jt * iia * Mathf::Rad2Deg; }
+                            if (rb) { if (imb > 0.0f) rb->velocity += fimp * imb; if (iib > 0.0f) rb->angularVelocity += rtB * jt * iib * Mathf::Rad2Deg; }
                         }
                     }
                 }
@@ -484,21 +505,25 @@ void Physics2D::Step(Scene& scene, float dt) {
             bool wasContact = m_contacts.count({a, b}) != 0;
             if (trigger) {
                 if (!wasContact) {
-                    DispatchTrigger(a, &Component::OnTriggerEnter2D, b, c.point, c.normal);
-                    DispatchTrigger(b, &Component::OnTriggerEnter2D, a, c.point, -c.normal);
+                    DispatchTrigger(a, &Component::OnTriggerEnter2D, b, c.point, c.normal, gone);
+                    if (!gone.Gone(a) && !gone.Gone(b))
+                        DispatchTrigger(b, &Component::OnTriggerEnter2D, a, c.point, -c.normal, gone);
                 } else {
-                    DispatchTrigger(a, &Component::OnTriggerStay2D, b, c.point, c.normal);
-                    DispatchTrigger(b, &Component::OnTriggerStay2D, a, c.point, -c.normal);
+                    DispatchTrigger(a, &Component::OnTriggerStay2D, b, c.point, c.normal, gone);
+                    if (!gone.Gone(a) && !gone.Gone(b))
+                        DispatchTrigger(b, &Component::OnTriggerStay2D, a, c.point, -c.normal, gone);
                 }
             } else {
                 Collision2D forA = MakeCollision(b, c.normal, c.penetration, c.point, relVelBA);
                 Collision2D forB = MakeCollision(a, -c.normal, c.penetration, c.point, -relVelBA);
                 if (!wasContact) {
-                    DispatchCollision(a->gameObject, &Component::OnCollisionEnter2D, forA);
-                    DispatchCollision(b->gameObject, &Component::OnCollisionEnter2D, forB);
+                    DispatchCollision(a->gameObject, &Component::OnCollisionEnter2D, forA, gone);
+                    if (!gone.Gone(a) && !gone.Gone(b))
+                        DispatchCollision(b->gameObject, &Component::OnCollisionEnter2D, forB, gone);
                 } else {
-                    DispatchCollision(a->gameObject, &Component::OnCollisionStay2D, forA);
-                    DispatchCollision(b->gameObject, &Component::OnCollisionStay2D, forB);
+                    DispatchCollision(a->gameObject, &Component::OnCollisionStay2D, forA, gone);
+                    if (!gone.Gone(a) && !gone.Gone(b))
+                        DispatchCollision(b->gameObject, &Component::OnCollisionStay2D, forB, gone);
                 }
             }
         }
@@ -610,6 +635,7 @@ void Physics2D::Step(Scene& scene, float dt) {
     // kSleepTime seconds goes to sleep (zeroed and skipped next step). Any motion
     // resets the timer. Bodies with allowSleep off never sleep.
     for (Rigidbody2D* rb : bodies) {
+        if (gone.Gone(rb)) continue;                 // removed by a contact callback
         if (!rb->enabled || !rb->gameObject || !rb->gameObject->active) continue;
         if (rb->bodyType != Rigidbody2D::BodyType::Dynamic) continue;
         if (!rb->allowSleep) { rb->WakeUp(); continue; }
@@ -634,20 +660,27 @@ void Physics2D::Step(Scene& scene, float dt) {
         Collider2D* b = p.second;
         // The colliders may have been destroyed; guard via the live list.
         if (!aliveSet.count(a) || !aliveSet.count(b)) continue;
+        if (gone.Gone(a) || gone.Gone(b)) continue;
         if (a->isTrigger || b->isTrigger) {
             // No overlap any more: report the midpoint between the two centres.
             Vec2 mid = (a->WorldCenter() + b->WorldCenter()) * 0.5f;
             Vec2 n = (b->WorldCenter() - a->WorldCenter()).Normalized();
-            DispatchTrigger(a, &Component::OnTriggerExit2D, b, mid, n);
-            DispatchTrigger(b, &Component::OnTriggerExit2D, a, mid, n * -1.0f);
+            DispatchTrigger(a, &Component::OnTriggerExit2D, b, mid, n, gone);
+            if (!gone.Gone(a) && !gone.Gone(b))
+                DispatchTrigger(b, &Component::OnTriggerExit2D, a, mid, n * -1.0f, gone);
         } else {
             Collision2D forA = MakeCollision(b, Vec2::Zero, 0.0f, Vec2::Zero, Vec2::Zero);
             Collision2D forB = MakeCollision(a, Vec2::Zero, 0.0f, Vec2::Zero, Vec2::Zero);
-            DispatchCollision(a->gameObject, &Component::OnCollisionExit2D, forA);
-            DispatchCollision(b->gameObject, &Component::OnCollisionExit2D, forB);
+            DispatchCollision(a->gameObject, &Component::OnCollisionExit2D, forA, gone);
+            if (!gone.Gone(a) && !gone.Gone(b))
+                DispatchCollision(b->gameObject, &Component::OnCollisionExit2D, forB, gone);
         }
     }
 
+    // Drop pairs whose collider a callback removed, so no freed pointer is kept.
+    if (gone.Any())
+        for (auto it = current.begin(); it != current.end();)
+            it = (gone.Gone(it->first) || gone.Gone(it->second)) ? current.erase(it) : std::next(it);
     m_contacts.swap(current);
 }
 

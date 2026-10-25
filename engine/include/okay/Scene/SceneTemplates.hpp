@@ -204,6 +204,7 @@ inline void WireCharacterIK(GameObject* player, Character* pc) {
     // press feet onto lower ground, and tilt soles to the slope — this is what makes
     // foot IK VISIBLE on stairs and slopes (lift-only barely reads on flat ground).
     fik->adjustPelvis = true; fik->plantDown = true; fik->alignToGround = true;
+    fik->orient = true;   // turn the thigh and shin parts with the joints, or they come apart
     fik->maxPelvisShift = 0.35f;
     auto* rm = player->AddComponent<RootMotion>();
     rm->rootNode = T(0);

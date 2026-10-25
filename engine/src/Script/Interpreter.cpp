@@ -28,6 +28,7 @@ std::string ValueToString(const Value& v) {
             GameObject* g = GameObject::FromInstanceId(r.go);
             return g ? g->name : "(destroyed)";
         }
+        std::string operator()(const ArrayRef& a) const { return a ? a->typeName : "null"; }
     };
     return std::visit(V{}, v);
 }
@@ -49,13 +50,17 @@ ObjRef AsRef(const Value& v) { if (auto* r = std::get_if<ObjRef>(&v)) return *r;
 Value DefaultFor(const Type& t) {
     switch (t.kind) {
         case TK::Bool: return Value{false};
-        case TK::Int: return Value{std::int32_t{0}};
+        case TK::Int: case TK::Enum: return Value{std::int32_t{0}};
         case TK::Float: return Value{0.0f};
         case TK::String: return Value{std::string()};
         case TK::Vector3: return Value{Vec3::Zero};
         default: return Value{};
     }
 }
+
+// The most items one array can hold, so a bad length is an error instead of
+// running out of memory.
+constexpr std::int64_t kMaxArrayLength = 1'000'000;
 
 // Wrapping int arithmetic (like C#), done in unsigned to stay well-defined.
 std::int32_t Wrap(std::int64_t v) { return (std::int32_t)(std::uint32_t)(std::uint64_t)v; }
@@ -138,13 +143,80 @@ private:
                 return Flow::Return;
             case SK::Break: return Flow::Break;
             case SK::Continue: return Flow::Continue;
+            case SK::Switch: {
+                // The checker made sure no section runs into the next one.
+                const Value v = Eval(*s.expr);
+                const SwitchSection* hit = nullptr;
+                const SwitchSection* def = nullptr;
+                for (const SwitchSection& sec : s.sections) {
+                    if (sec.isDefault) def = &sec;
+                    for (const Value& c : sec.values) if (Equal(v, c)) { hit = &sec; break; }
+                    if (hit) break;
+                }
+                if (!hit) hit = def;
+                if (!hit) return Flow::Normal;
+                for (auto& st : hit->body) {
+                    Flow f = Run(*st);
+                    if (f == Flow::Break) return Flow::Normal;
+                    if (f != Flow::Normal) return f;
+                }
+                return Flow::Normal;
+            }
+            case SK::Foreach: {
+                const ArrayRef arr = std::get<ArrayRef>(Receiver(*s.expr));   // holds the array while looping
+                const LocalDecl& d = s.locals[0];
+                for (std::size_t i = 0; i < arr->items.size(); ++i) {
+                    Value item = arr->items[i];
+                    if (d.promote) if (auto* n = std::get_if<std::int32_t>(&item)) item = Value{(float)*n};
+                    (*locals_)[(std::size_t)d.slot] = std::move(item);
+                    Flow f = Run(*s.loopBody);
+                    if (f == Flow::Break) break;
+                    if (f == Flow::Return) return f;
+                    Step(s.loc);
+                }
+                return Flow::Normal;
+            }
         }
         return Flow::Normal;
+    }
+
+    // An array element as a place to read or write: the array and index are
+    // worked out once, however the place is then used.
+    struct Slot { ArrayRef arr; std::size_t i = 0; };
+    Slot IndexSlot(const Expr& e) {
+        Value a = Receiver(*e.object);
+        const std::int32_t i = AsI(Eval(*e.lhs));
+        ArrayRef arr = std::get<ArrayRef>(a);
+        if (i < 0 || (std::size_t)i >= arr->items.size())
+            throw RuntimeError("Index " + std::to_string(i) + " is outside the array (length " + std::to_string(arr->items.size()) + ")", e.loc);
+        return {std::move(arr), (std::size_t)i};
+    }
+
+    Value MakeArray(const Expr& e) {
+        auto arr = std::make_shared<ArrayObj>();
+        arr->typeName = prog_.NameOf(e.type);
+        const Type& elem = prog_.arrays[(std::size_t)e.type.id];
+        std::int64_t n = (std::int64_t)e.args.size();
+        if (e.kind == EK::NewArray && e.lhs) {
+            n = AsI(Eval(*e.lhs));
+            if (n < 0) throw RuntimeError("An array can't have a negative length (" + std::to_string(n) + ")", e.loc);
+            if (n > kMaxArrayLength)
+                throw RuntimeError("An array of " + std::to_string(n) + " items is too big (the most is " + std::to_string(kMaxArrayLength) + ")", e.loc);
+        }
+        arr->items.reserve((std::size_t)n);
+        for (auto& a : e.args) arr->items.push_back(Eval(*a));
+        while ((std::int64_t)arr->items.size() < n) arr->items.push_back(DefaultFor(elem));
+        return Value{std::move(arr)};
     }
 
     Value Eval(const Expr& e) {
         Value v = EvalRaw(e);
         if (e.toFloat) if (auto* i = std::get_if<std::int32_t>(&v)) v = Value{(float)*i};
+        if (e.enumStr >= 0)
+            if (auto* i = std::get_if<std::int32_t>(&v)) {
+                const std::string* n = prog_.enums[(std::size_t)e.enumStr].NameOf(*i);
+                v = Value{n ? *n : std::to_string(*i)};
+            }
         return v;
     }
 
@@ -190,17 +262,21 @@ private:
             case EK::Binary: return Binary(e);
             case EK::Assign: return Assign(e);
             case EK::IncDec: {
+                if (e.lhs->kind == EK::Index) {
+                    Slot sl = IndexSlot(*e.lhs);
+                    Value cur = sl.arr->items[sl.i];
+                    Value next = IncDecValue(cur, e.op == T::PlusPlus);
+                    sl.arr->items[sl.i] = next;
+                    return e.prefix ? next : cur;
+                }
                 Value cur = Load(*e.lhs);
-                Value next;
-                const bool inc = e.op == T::PlusPlus;
-                if (auto* i = std::get_if<std::int32_t>(&cur)) next = Value{Wrap((std::int64_t)*i + (inc ? 1 : -1))};
-                else next = Value{AsF(cur) + (inc ? 1.0f : -1.0f)};
+                Value next = IncDecValue(cur, e.op == T::PlusPlus);
                 Store(*e.lhs, next);
                 return e.prefix ? next : cur;
             }
             case EK::Cast: {
                 Value a = Eval(*e.lhs);
-                if (e.type.kind == TK::Int) {
+                if (e.type.kind == TK::Int || e.type.kind == TK::Enum) {
                     if (auto* f = std::get_if<float>(&a)) {
                         if (!std::isfinite(*f)) throw RuntimeError("Can't turn this number into an int (it isn't finite)", e.loc);
                         return Value{(std::int32_t)std::trunc(*f)};
@@ -210,12 +286,25 @@ private:
                 return Value{AsF(a)};
             }
             case EK::Conditional: return AsB(Eval(*e.third)) ? Eval(*e.lhs) : Eval(*e.rhs);
+            case EK::Index: { Slot sl = IndexSlot(e); return sl.arr->items[sl.i]; }
+            case EK::NewArray: case EK::ArrayLit: return MakeArray(e);
         }
         return Value{};
     }
 
+    static Value IncDecValue(const Value& cur, bool inc) {
+        if (auto* i = std::get_if<std::int32_t>(&cur)) return Value{Wrap((std::int64_t)*i + (inc ? 1 : -1))};
+        return Value{AsF(cur) + (inc ? 1.0f : -1.0f)};
+    }
+
     Value Load(const Expr& e) {
+        if (e.kind == EK::Index) { Slot sl = IndexSlot(e); return sl.arr->items[sl.i]; }
         switch (e.bind) {
+            case Bind::EnumValue: return Value{e.ival};
+            case Bind::ArrayLength: {
+                Value a = Receiver(*e.object);
+                return Value{(std::int32_t)std::get<ArrayRef>(a)->items.size()};
+            }
             case Bind::Local: return (*locals_)[(std::size_t)e.slot];
             case Bind::Field: return fields_[(std::size_t)e.slot];
             case Bind::SelfMember:
@@ -239,6 +328,7 @@ private:
     }
 
     void Store(const Expr& e, const Value& v) {
+        if (e.kind == EK::Index) { Slot sl = IndexSlot(e); sl.arr->items[sl.i] = v; return; }
         switch (e.bind) {
             case Bind::Local: (*locals_)[(std::size_t)e.slot] = v; return;
             case Bind::Field: fields_[(std::size_t)e.slot] = v; return;
@@ -345,6 +435,13 @@ private:
     }
 
     Value Assign(const Expr& e) {
+        if (e.lhs->kind == EK::Index) {   // a[i] = v, a[i] += v: the array and index first, once
+            Slot sl = IndexSlot(*e.lhs);
+            Value rhs = Eval(*e.rhs);
+            Value v = e.op == T::Assign ? rhs : Arith(CompoundOp(e.op), sl.arr->items[sl.i], rhs, e.lhs->type, false, false, e.loc);
+            sl.arr->items[sl.i] = v;
+            return v;
+        }
         if (e.op == T::Assign) {
             Value v = Eval(*e.rhs);
             Store(*e.lhs, v);
@@ -352,13 +449,16 @@ private:
         }
         Value cur = Load(*e.lhs);
         Value rhs = Eval(*e.rhs);
-        T op = e.op == T::PlusEq ? T::Plus : e.op == T::MinusEq ? T::Minus : e.op == T::StarEq ? T::Star
-             : e.op == T::SlashEq ? T::Slash : T::Percent;
+        T op = CompoundOp(e.op);
         const Type& lt = e.lhs->type;
         Type resultType = lt;
         Value v = Arith(op, cur, rhs, resultType, false, false, e.loc);
         Store(*e.lhs, v);
         return v;
+    }
+
+    static T CompoundOp(T op) {
+        return op == T::PlusEq ? T::Plus : op == T::MinusEq ? T::Minus : op == T::StarEq ? T::Star : op == T::SlashEq ? T::Slash : T::Percent;
     }
 
     Value Call(const Expr& e) {
@@ -439,7 +539,7 @@ bool Instance::SetField(const std::string& name, const Value& v) {
         if (f.name != name || f.isConst) continue;
         // Convert to the field's type; values that don't fit are refused.
         const TK k = f.resolved.kind;
-        if (k == TK::Int) {
+        if (k == TK::Int || k == TK::Enum) {
             if (auto* x = std::get_if<float>(&v)) { fields_[i] = Value{(std::int32_t)std::trunc(*x)}; return true; }
             if (std::holds_alternative<std::int32_t>(v)) { fields_[i] = v; return true; }
             return false;

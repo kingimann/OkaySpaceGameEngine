@@ -472,6 +472,15 @@ Vector3 at = load("spawn", new Vector3(0, 0, 0), "slot1.okaysave");
 if (!save_exists("slot1.okaysave")) { /* first time playing */ }
 ```
 
+**File names stay inside the game.** Every script call that names a file
+(`save`/`load` and the rest of this family, `prefs_save`/`prefs_load`,
+`save_game`/`load_game` slots, `data_*`, `build_save`/`build_load`,
+`load_scene`) takes a name or a relative path such as `"slots/one.okaysave"`.
+Absolute paths (`/…`, `C:\…`) and `..` are refused: the call returns false (or
+the default you passed) and the Console says why. In an exported game, saves
+and prefs go into the game's own save folder; files a game saved beside itself
+before that still load.
+
 ### Math
 `abs sin cos tan asin acos atan atan2 sqrt pow exp log floor ceil round sign
 min max clamp lerp smoothstep len hypot wrap(v, lo, hi) ping_pong(t, len)
@@ -685,6 +694,95 @@ they all call the same function, so use whichever reads best to you:
 | `save_value(k, v)` / `load_number(k, def)` / `load_text(k, def)` | `prefs_set` / `prefs_get` / `prefs_get_str` |
 | `random_float(lo, hi)` / `random_int(lo, hi)` / `random_chance(p)` | `rand` / `randi` / `chance` |
 | `log(...)` | `print` / `Debug.Log` |
+
+## C# features
+
+The typed OkayScript (scripts that start with `class Name : Behaviour { ... }`)
+is checked before it runs: every name and type is resolved, and a mistake is
+reported with its line and column instead of running wrongly. These C# features
+work in it today. More arrive phase by phase; anything not listed here gives a
+clear "isn't supported yet" error.
+
+### Enums
+
+Declare them at the top of the file or inside the class. Values count up from 0,
+or from a value you give. An enum turns into text as its member's name.
+
+```csharp
+enum State { Idle, Walking, Running = 10, Flying }   // Flying is 11
+
+class Hero : Behaviour {
+    public enum Team { Red, Blue }
+    public State state = State.Idle;
+    const State Fastest = State.Flying;
+
+    void Update() {
+        if (state < State.Running) Debug.Log("slow: " + state);   // "slow: Walking"
+        int code = (int)state;          // enum -> int needs a cast, both ways
+        State back = (State)code;
+    }
+}
+```
+
+### switch
+
+Works on `int`, `string` and enums (for a `float` or `bool`, use `if`). Case values must be fixed
+(numbers, text, enum values or consts), and appear only once. As in C#, a
+section can't run into the next one: end each with `break`, `return` or
+`continue`. Several `case` labels can share one section.
+
+```csharp
+string Describe(Weapon w) {
+    switch (w) {
+        case Weapon.Sword:
+        case Weapon.Axe: return "melee";
+        case Weapon.Bow: return "ranged";
+        default: return "unknown";
+    }
+}
+
+void OnCommand(string cmd) {
+    switch (cmd) {
+        case "jump": Jump(); break;
+        case "run": speed = 8; break;
+        default: Debug.Log("unknown command " + cmd); break;
+    }
+}
+```
+
+### Arrays
+
+`T[]` for any type, including enums, `Vector3`, engine objects and other arrays
+(`int[][]`). Arrays are references, like in C#: copying one shares its items.
+Items start at their type's default (0, false, empty text, a zero vector, null).
+
+```csharp
+int[] scores = { 5, 10, 15 };              // a list after `=` in a declaration
+Vector3[] points = new Vector3[4];         // four zero vectors
+float[] weights = new float[] { 1, 2.5f };
+int[][] rows = new int[3][];               // three null rows
+rows[0] = new int[] { 1, 2 };
+
+scores[1] += 5;
+points[2].x = 3;                           // changes the item in place
+Debug.Log(scores.Length);                  // 3
+```
+
+Reading or writing outside the array (`scores[3]`), a negative length, or an
+array of more than a million items stops the callback with an error naming the
+line. `new[] { 1, 2 }` takes its type from the items (ints with floats make a
+`float[]`).
+
+### foreach
+
+Loops over an array's items, with `var` or a type. The loop variable can't be
+assigned (as in C#); `break` and `continue` work as in any loop.
+
+```csharp
+int total = 0;
+foreach (var s in scores) total += s;
+foreach (float w in new int[] { 1, 2 }) Debug.Log(w / 2);   // ints convert to float
+```
 
 ## Other backends
 

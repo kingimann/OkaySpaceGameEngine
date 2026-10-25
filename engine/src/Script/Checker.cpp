@@ -4,6 +4,8 @@
 #include "ScriptInternal.hpp"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <optional>
 #include <set>
 
 namespace okay::script {
@@ -27,6 +29,7 @@ std::string TypeName(const Type& t) {
         case TK::Void: return "void"; case TK::Null: return "null"; case TK::Bool: return "bool";
         case TK::Int: return "int"; case TK::Float: return "float"; case TK::String: return "string";
         case TK::Vector3: return "Vector3"; case TK::Any: return "any value";
+        case TK::Enum: return "enum"; case TK::Array: return "array";
         case TK::Object: {
             const auto& api = EngineApi::Get();
             return t.id >= 0 && t.id < (int)api.types.size() ? api.types[(std::size_t)t.id].name : "object";
@@ -38,6 +41,18 @@ std::string TypeName(const Type& t) {
 bool Program::ok() const {
     for (const auto& d : diags) if (d.severity == 0) return false;
     return component >= 0;
+}
+
+Type Program::ArrayOf(const Type& elem) {
+    for (std::size_t i = 0; i < arrays.size(); ++i) if (arrays[i] == elem) return Type{TK::Array, (int)i};
+    arrays.push_back(elem);
+    return Type{TK::Array, (int)arrays.size() - 1};
+}
+
+std::string Program::NameOf(const Type& t) const {
+    if (t.kind == TK::Enum && t.id >= 0 && t.id < (int)enums.size()) return enums[(std::size_t)t.id].name;
+    if (t.kind == TK::Array && t.id >= 0 && t.id < (int)arrays.size()) return NameOf(arrays[(std::size_t)t.id]) + "[]";
+    return TypeName(t);
 }
 
 int Program::MethodIndex(const std::string& name) const {
@@ -71,7 +86,7 @@ std::string Suggest(const std::string& name, const std::vector<std::string>& opt
     return (!best.empty() && bestD <= std::max(2, (int)name.size() / 3)) ? ". Did you mean '" + best + "'?" : "";
 }
 
-struct LocalVar { std::string name; Type type; int slot; SrcLoc loc; bool used = false; };
+struct LocalVar { std::string name; Type type; int slot; SrcLoc loc; bool used = false; bool readOnly = false; };
 
 class Checker {
 public:
@@ -86,6 +101,7 @@ public:
             Error(prog_.classes[i].loc, "Only one class per script for now: put '" + prog_.classes[i].name + "' in its own script");
         ClassDecl& c = prog_.classes[0];
         cls_ = &c;
+        CheckEnums();
         if (c.base.empty()) Error(c.loc, "A script class must extend Behaviour: class " + c.name + " : Behaviour");
         else if (c.base != "Behaviour")
             Error(c.baseLoc, "'" + c.base + "' isn't something a script can extend. Scripts extend Behaviour" + Suggest(c.base, {"Behaviour"}));
@@ -130,12 +146,120 @@ private:
     ClassDecl* cls_ = nullptr;
     MethodDecl* method_ = nullptr;
     std::vector<std::vector<LocalVar>> scopes_;
-    int nextSlot_ = 0, maxSlot_ = 0, loopDepth_ = 0;
+    int nextSlot_ = 0, maxSlot_ = 0, loopDepth_ = 0, switchDepth_ = 0;
     bool inFieldInit_ = false;
+    std::vector<int> enumReady_;   ///< per enum: how many members have their value worked out
 
     bool HasErrors() const { for (auto& d : prog_.diags) if (d.severity == 0) return true; return false; }
-    void Error(SrcLoc l, const std::string& m) { prog_.diags.push_back({l.line, m, 0}); }
-    void Warning(SrcLoc l, const std::string& m) { prog_.diags.push_back({l.line, m, 1}); }
+    void Error(SrcLoc l, const std::string& m) { prog_.diags.push_back({l.line, m, 0, l.col}); }
+    void Warning(SrcLoc l, const std::string& m) { prog_.diags.push_back({l.line, m, 1, l.col}); }
+    std::string TypeName(const Type& t) const { return prog_.NameOf(t); }
+
+    int EnumIndex(const std::string& n) const {
+        for (std::size_t i = 0; i < prog_.enums.size(); ++i) if (prog_.enums[i].name == n) return (int)i;
+        return -1;
+    }
+
+    // Every enum's members get their values, in order: an explicit value must be a
+    // fixed whole number; otherwise it is one more than the member before.
+    void CheckEnums() {
+        enumReady_.assign(prog_.enums.size(), 0);
+        for (std::size_t i = 0; i < prog_.enums.size(); ++i) {
+            EnumDecl& en = prog_.enums[i];
+            if ((int)i != EnumIndex(en.name)) Error(en.loc, "'" + en.name + "' is declared twice");
+            else if (api_.Find(en.name) >= 0) Error(en.loc, "'" + en.name + "' is already an engine type: pick another name");
+            else if (en.name == cls_->name) Error(en.loc, "'" + en.name + "' is already the class's name: pick another name");
+            std::set<std::string> seen;
+            std::int64_t next = 0;
+            for (std::size_t k = 0; k < en.members.size(); ++k) {
+                EnumMember& m = en.members[k];
+                if (!seen.insert(m.name).second) Error(m.loc, "'" + m.name + "' is already in " + en.name);
+                if (m.value) {
+                    inFieldInit_ = true;
+                    CheckExpr(*m.value);
+                    inFieldInit_ = false;
+                    std::optional<Value> v;
+                    const TK k2 = m.value->type.kind;
+                    if (k2 == TK::Int || k2 == TK::Enum) v = Fold(*m.value);
+                    if (auto* iv = v ? std::get_if<std::int32_t>(&*v) : nullptr) next = *iv;
+                    else if (k2 != TK::Error) Error(m.value->loc, "An enum value must be a whole number that's fixed, like " + m.name + " = 3");
+                }
+                if (next > 2147483647LL) { Error(m.loc, "'" + m.name + "' is too big for an int"); next = 0; }
+                m.v = (std::int32_t)next;
+                ++next;
+                enumReady_[i] = (int)k + 1;
+            }
+        }
+    }
+
+    // The value of a constant expression (literals, const fields, enum values and
+    // operators on them), or nothing if it is worked out while playing.
+    std::optional<Value> Fold(const Expr& e) {
+        std::optional<Value> r;
+        switch (e.kind) {
+            case EK::IntLit: r = Value{e.ival}; break;
+            case EK::FloatLit: r = Value{e.fval}; break;
+            case EK::StringLit: r = Value{e.sval}; break;
+            case EK::BoolLit: r = Value{e.bval}; break;
+            case EK::Member: if (e.bind == Bind::EnumValue) r = Value{e.ival}; break;
+            case EK::Name:
+                if (e.bind == Bind::Field) {
+                    const FieldDecl& f = cls_->fields[(std::size_t)e.slot];
+                    if (f.isConst && f.init) r = Fold(*f.init);
+                }
+                break;
+            case EK::Unary: {
+                auto a = Fold(*e.lhs);
+                if (!a) break;
+                if (auto* b = std::get_if<bool>(&*a)) { if (e.op == T::Not) r = Value{!*b}; }
+                else if (auto* i = std::get_if<std::int32_t>(&*a)) r = Value{(std::int32_t)(std::uint32_t)(0u - (std::uint32_t)*i)};
+                else if (auto* f = std::get_if<float>(&*a)) r = Value{-*f};
+                break;
+            }
+            case EK::Cast: {
+                auto a = Fold(*e.lhs);
+                if (!a) break;
+                if (e.type.kind == TK::Float) {
+                    if (auto* i = std::get_if<std::int32_t>(&*a)) r = Value{(float)*i}; else r = a;
+                } else if (auto* f = std::get_if<float>(&*a)) {
+                    if (std::isfinite(*f) && *f > -2147483649.0f && *f < 2147483648.0f) r = Value{(std::int32_t)*f};
+                } else r = a;
+                break;
+            }
+            case EK::Binary: {
+                auto a = Fold(*e.lhs), b = Fold(*e.rhs);
+                if (!a || !b) break;
+                if (e.type.kind == TK::String && e.op == T::Plus) { r = Value{ValueToString(*a) + ValueToString(*b)}; break; }
+                auto* x = std::get_if<std::int32_t>(&*a);
+                auto* y = std::get_if<std::int32_t>(&*b);
+                if (e.type.kind != TK::Int || !x || !y) break;
+                const std::int64_t p = *x, q = *y;
+                std::int64_t v = 0;
+                switch (e.op) {
+                    case T::Plus: v = p + q; break;
+                    case T::Minus: v = p - q; break;
+                    case T::Star: v = p * q; break;
+                    case T::Slash: if (q == 0) return std::nullopt; v = p / q; break;     // 64-bit: can't overflow
+                    case T::Percent: if (q == 0) return std::nullopt; v = p % q; break;
+                    default: return std::nullopt;
+                }
+                r = Value{(std::int32_t)(std::uint32_t)(std::uint64_t)v};
+                break;
+            }
+            default: break;
+        }
+        if (r && e.toFloat) if (auto* i = std::get_if<std::int32_t>(&*r)) r = Value{(float)*i};
+        return r;
+    }
+    // How a case value reads in a message.
+    std::string ConstText(const Value& v, const Type& t) const {
+        if (t.kind == TK::Enum) {
+            const EnumDecl& en = prog_.enums[(std::size_t)t.id];
+            if (auto* i = std::get_if<std::int32_t>(&v)) if (const std::string* n = en.NameOf(*i)) return en.name + "." + *n;
+        }
+        if (auto* s = std::get_if<std::string>(&v)) return "\"" + *s + "\"";
+        return ValueToString(v);
+    }
 
     static bool IsSelfMemberName(const std::string& n) { return n == "gameObject" || n == "transform" || n == "enabled"; }
     static bool HasAttr(const FieldDecl& f, const char* n) {
@@ -144,6 +268,16 @@ private:
     }
 
     Type ResolveType(const TypeRef& t, bool allowVar) {
+        if (t.rank > 0) {
+            if (t.name == "var") { Error(t.loc, "`var` can't be an array type: write the type, e.g. int[]"); return Type{}; }
+            if (t.name == "void") { Error(t.loc, "An array can't hold void"); return Type{}; }
+            TypeRef base = t;
+            base.rank = 0;
+            Type r = ResolveType(base, false);
+            if (r.kind == TK::Error) return r;
+            for (int i = 0; i < t.rank; ++i) r = prog_.ArrayOf(r);
+            return r;
+        }
         if (t.name == "int") return Type::Of(TK::Int);
         if (t.name == "float") return Type::Of(TK::Float);
         if (t.name == "bool") return Type::Of(TK::Bool);
@@ -152,11 +286,13 @@ private:
         if (t.name == "var" && allowVar) return Type{};   // inferred by the caller
         if (t.name == "double") { Error(t.loc, "Use float for decimal numbers (double isn't supported)"); return Type{}; }
         if (t.name == "void") { Error(t.loc, "void isn't a type a value can have"); return Type{}; }
+        if (int ei = EnumIndex(t.name); ei >= 0) return Type{TK::Enum, ei};
         int id = api_.Find(t.name);
         if (id >= 0 && !api_.types[(std::size_t)id].isStatic && !api_.types[(std::size_t)id].isValueType) return Type::Obj(id);
         if (id >= 0) { Error(t.loc, t.name + " can't hold a value: use its members, like " + t.name + ".something"); return Type{}; }
         std::vector<std::string> opts = {"int", "float", "bool", "string", "Vector3"};
         for (auto& at : api_.types) if (!at.isStatic && !at.isValueType) opts.push_back(at.name);
+        for (auto& en : prog_.enums) opts.push_back(en.name);
         Error(t.loc, "Unknown type '" + t.name + "'" + Suggest(t.name, opts));
         return Type{};
     }
@@ -177,7 +313,7 @@ private:
         if (to.kind == TK::Any) return from.kind != TK::Void;
         if (from == to) return true;
         if (from.kind == TK::Int && to.kind == TK::Float) return true;
-        if (from.kind == TK::Null && to.kind == TK::Object) return true;
+        if (from.kind == TK::Null && (to.kind == TK::Object || to.kind == TK::Array)) return true;
         return false;
     }
     std::string ConvertError(const Type& from, const Type& to, const std::string& what) {
@@ -191,6 +327,23 @@ private:
     void Expect(Expr& e, const Type& to, const std::string& what) {
         if (!Convertible(e.type, to)) { Error(e.loc, ConvertError(e.type, to, what)); return; }
         if (e.type.kind == TK::Int && to.kind == TK::Float) e.toFloat = true;
+        if (e.type.kind == TK::Enum && to.kind == TK::Any) e.enumStr = e.type.id;
+    }
+    // Check a starting value, which may be a { ... } list when `to` is an array.
+    void CheckInit(Expr& init, const Type& to, const std::string& what) {
+        if (init.kind != EK::ArrayLit) { CheckExpr(init); Expect(init, to, what); return; }
+        if (to.kind == TK::Error) { for (auto& a : init.args) CheckExpr(*a); return; }
+        if (to.kind != TK::Array) {
+            for (auto& a : init.args) CheckExpr(*a);
+            Error(init.loc, "{ ... } makes an array, but " + what + " is " + TypeName(to));
+            return;
+        }
+        CheckItems(init, to);
+    }
+    void CheckItems(Expr& e, const Type& arr) {
+        const Type elem = prog_.arrays[(std::size_t)arr.id];
+        for (auto& a : e.args) { CheckExpr(*a); Expect(*a, elem, "This item"); }
+        e.type = arr;
     }
 
     // ---- Fields ----
@@ -214,9 +367,8 @@ private:
         if (f.isConst && f.isPublic) Error(f.loc, "A const can't be public: the Inspector can't change it. Remove `public`");
         if (f.init) {
             inFieldInit_ = true;
-            CheckExpr(*f.init);
+            CheckInit(*f.init, f.resolved, "The starting value of '" + f.name + "'");
             inFieldInit_ = false;
-            Expect(*f.init, f.resolved, "The starting value of '" + f.name + "'");
             if (f.isConst && !IsConstant(*f.init))
                 Error(f.init->loc, "A const's value must be fixed (numbers, text, true/false), not worked out while playing");
         }
@@ -227,6 +379,7 @@ private:
             case EK::Unary: return IsConstant(*e.lhs);
             case EK::Binary: return IsConstant(*e.lhs) && IsConstant(*e.rhs);
             case EK::Cast: return IsConstant(*e.lhs);
+            case EK::Member: return e.bind == Bind::EnumValue;
             default: return false;
         }
     }
@@ -236,7 +389,7 @@ private:
         method_ = &m;
         scopes_.clear();
         scopes_.emplace_back();
-        nextSlot_ = 0; maxSlot_ = 0; loopDepth_ = 0;
+        nextSlot_ = 0; maxSlot_ = 0; loopDepth_ = 0; switchDepth_ = 0;
         for (Param& p : m.params) {
             for (auto& v : scopes_.back()) if (v.name == p.name) Error(p.loc, "Two parameters are called '" + p.name + "'");
             scopes_.back().push_back({p.name, p.resolved, nextSlot_++, p.loc, true});
@@ -279,9 +432,10 @@ private:
     }
 
     // Statements; return whether execution can reach the end.
-    bool CheckBlockBody(Stmt& b) {
+    bool CheckBlockBody(Stmt& b) { return CheckStmts(b.body); }
+    bool CheckStmts(std::vector<StmtPtr>& body) {
         bool completes = true, warned = false;
-        for (auto& s : b.body) {
+        for (auto& s : body) {
             if (!completes && !warned) { Warning(s->loc, "This can never run: it comes after a return, break or continue"); warned = true; }
             if (!CheckStmt(*s)) completes = false;
         }
@@ -299,8 +453,14 @@ private:
             }
             case SK::Local: {
                 for (LocalDecl& d : s.locals) {
-                    Type t = d.type.name == "var" ? Type{} : ResolveType(d.type, true);
-                    if (d.init) {
+                    Type t = d.type.name == "var" && d.type.rank == 0 ? Type{} : ResolveType(d.type, true);
+                    if (d.init && d.init->kind == EK::ArrayLit && d.type.name == "var") {
+                        for (auto& a : d.init->args) CheckExpr(*a);
+                        Error(d.loc, "`var` can't tell the type of { ... }: write the type, e.g. int[] " + d.name + " = { ... }");
+                        t = Type{};
+                    } else if (d.init && d.init->kind == EK::ArrayLit) {
+                        CheckInit(*d.init, t, "'" + d.name + "'");
+                    } else if (d.init) {
                         CheckExpr(*d.init);
                         if (d.type.name == "var") {
                             t = d.init->type;
@@ -354,11 +514,84 @@ private:
                 }
                 return false;
             }
-            case SK::Break: case SK::Continue:
-                if (loopDepth_ == 0) Error(s.loc, std::string(s.kind == SK::Break ? "break" : "continue") + " only works inside a loop");
+            case SK::Break:
+                if (loopDepth_ == 0 && switchDepth_ == 0) Error(s.loc, "break only works inside a loop or a switch");
                 return false;
+            case SK::Continue:
+                if (loopDepth_ == 0) Error(s.loc, "continue only works inside a loop");
+                return false;
+            case SK::Switch: return CheckSwitch(s);
+            case SK::Foreach: {
+                CheckExpr(*s.expr);
+                LocalDecl& d = s.locals[0];
+                Type elem{};
+                if (s.expr->type.kind == TK::Array) elem = prog_.arrays[(std::size_t)s.expr->type.id];
+                else if (s.expr->type.kind != TK::Error) Error(s.expr->loc, "foreach needs an array, not " + TypeName(s.expr->type));
+                Type t = d.type.name == "var" && d.type.rank == 0 ? elem : ResolveType(d.type, false);
+                if (d.type.name != "var" && !Convertible(elem, t))
+                    Error(d.loc, "The items of " + (s.expr->kind == EK::Name ? s.expr->name : std::string("this array")) + " are " +
+                                 TypeName(elem) + " but '" + d.name + "' is " + TypeName(t));
+                d.promote = elem.kind == TK::Int && t.kind == TK::Float;
+                d.resolved = t;
+                PushScope();
+                d.slot = Declare(d.name, t, d.loc);
+                scopes_.back().back().readOnly = true;
+                scopes_.back().back().used = true;
+                ++loopDepth_;
+                PushScope(); CheckStmt(*s.loopBody); PopScope();
+                --loopDepth_;
+                PopScope();
+                return true;
+            }
         }
         return true;
+    }
+
+    // C#'s rules: the value is an int, string or enum; every case is a
+    // fixed value of that type, none twice; one default at most; and no section
+    // runs into the next (each ends in break, return or continue).
+    bool CheckSwitch(Stmt& s) {
+        CheckExpr(*s.expr);
+        const Type t = s.expr->type;
+        const bool okType = t.kind == TK::Int || t.kind == TK::String || t.kind == TK::Enum;
+        if (!okType && t.kind != TK::Error)
+            Error(s.expr->loc, "switch works on an int, a string or an enum, not " + TypeName(t) +
+                               (t.kind == TK::Float || t.kind == TK::Bool ? ": use if / else" : ""));
+        bool haveDefault = false, anyBreak = false;
+        std::vector<Value> seen;
+        ++switchDepth_;
+        PushScope();
+        for (SwitchSection& sec : s.sections) {
+            if (sec.isDefault) {
+                if (haveDefault) Error(sec.defaultLoc, "A switch has only one default");
+                haveDefault = true;
+            }
+            for (std::size_t i = 0; i < sec.labels.size(); ++i) {
+                Expr& l = *sec.labels[i];
+                CheckExpr(l);
+                std::optional<Value> v;
+                if (okType && l.type.kind != TK::Error) {
+                    if (!Convertible(l.type, t)) Error(l.loc, ConvertError(l.type, t, "The case value"));
+                    else {
+                        Expect(l, t, "The case value");
+                        v = Fold(l);
+                        if (!v) Error(l.loc, "A case value must be fixed (a number, text, an enum value or a const), not worked out while playing");
+                    }
+                }
+                if (v) {
+                    for (const Value& x : seen)
+                        if (x == *v) { Error(sec.labelLocs[i], "case " + ConstText(*v, t) + " appears twice in this switch"); break; }
+                    seen.push_back(*v);
+                }
+                sec.values.push_back(v ? *v : Value{});
+            }
+            if (CheckStmts(sec.body))
+                Error(sec.loc, "Control can't fall through from one case to the next: end this case with break, return or continue");
+            for (auto& st : sec.body) if (ContainsBreak(*st)) anyBreak = true;
+        }
+        PopScope();
+        --switchDepth_;
+        return !haveDefault || anyBreak;
     }
     static bool IsTrueLiteral(const Expr& e) { return e.kind == EK::BoolLit && e.bval; }
     static bool ContainsBreak(const Stmt& s) {
@@ -405,6 +638,57 @@ private:
             case EK::IncDec: CheckIncDec(e); return;
             case EK::Cast: CheckCast(e); return;
             case EK::Conditional: CheckConditional(e); return;
+            case EK::Index: CheckIndex(e); return;
+            case EK::NewArray: CheckNewArray(e); return;
+            case EK::ArrayLit:
+                for (auto& a : e.args) CheckExpr(*a);
+                Error(e.loc, "{ ... } only works right after `=` in a declaration: write new int[] { ... }");
+                return;
+        }
+    }
+
+    // new[] { ... }: every item has the same type (ints mixed with floats make floats).
+    void CheckImplicitArray(Expr& e) {
+        Type elem{};
+        bool same = true;
+        for (std::size_t i = 0; i < e.args.size(); ++i) {
+            CheckExpr(*e.args[i]);
+            const Type t = e.args[i]->type;
+            if (i == 0) elem = t;
+            else if (elem.IsNumeric() && t.IsNumeric()) { if (t.kind == TK::Float) elem = t; }
+            else if (t != elem) same = false;
+        }
+        if (e.args.empty() || !same || elem.kind == TK::Null || elem.kind == TK::Void) {
+            Error(e.loc, "new[] can't tell the items' type: write it, e.g. new int[] { ... }");
+            return;
+        }
+        if (elem.kind == TK::Error) return;
+        CheckItems(e, prog_.ArrayOf(elem));
+    }
+
+    void CheckIndex(Expr& e) {
+        CheckExpr(*e.object);
+        CheckExpr(*e.lhs);
+        const Type at = e.object->type;
+        if (at.kind == TK::Error) return;
+        if (at.kind != TK::Array) { Error(e.loc, TypeName(at) + " values can't be indexed with [ ]"); return; }
+        if (e.lhs->type.kind != TK::Int && e.lhs->type.kind != TK::Error)
+            Error(e.lhs->loc, "An array index must be an int, not " + TypeName(e.lhs->type));
+        e.type = prog_.arrays[(std::size_t)at.id];
+    }
+
+    void CheckNewArray(Expr& e) {
+        if (e.typeArg.name.empty()) { CheckImplicitArray(e); return; }
+        if (e.lhs) { CheckExpr(*e.lhs); Expect(*e.lhs, Type::Of(TK::Int), "The array's length"); }
+        Type t = ResolveType(e.typeArg, false);
+        if (t.kind == TK::Error) { for (auto& a : e.args) CheckExpr(*a); return; }
+        CheckItems(e, t);
+        if (e.hasInit && e.lhs) {
+            std::optional<Value> n = e.lhs->type.kind == TK::Int ? Fold(*e.lhs) : std::nullopt;
+            auto* ni = n ? std::get_if<std::int32_t>(&*n) : nullptr;
+            if (!ni) Error(e.lhs->loc, "With { ... } the length must be a fixed number (or leave it out: new int[] { ... })");
+            else if (*ni != (std::int32_t)e.args.size())
+                Error(e.loc, "The array has length " + std::to_string(*ni) + " but " + std::to_string(e.args.size()) + " values");
         }
     }
 
@@ -428,19 +712,26 @@ private:
             return;
         }
         if (MethodIdx(e.name) >= 0) { Error(e.loc, "'" + e.name + "' is a method: call it with " + e.name + "()"); return; }
+        if (EnumIndex(e.name) >= 0) { Error(e.loc, "'" + e.name + "' is an enum: use one of its values, like " + e.name + "." +
+                                                   (prog_.enums[(std::size_t)EnumIndex(e.name)].members.empty() ? std::string("Value")
+                                                    : prog_.enums[(std::size_t)EnumIndex(e.name)].members[0].name)); return; }
         int ti = api_.Find(e.name);
         if (ti >= 0) { e.bind = Bind::StaticType; e.slot = ti; e.isStaticRecv = true; e.type = Type{}; return; }
+        for (auto& en : prog_.enums)
+            for (auto& m : en.members)
+                if (m.name == e.name) { Error(e.loc, "Unknown name '" + e.name + "'. Did you mean " + en.name + "." + m.name + "?"); return; }
         Error(e.loc, "Unknown name '" + e.name + "'" + Suggest(e.name, VisibleNames()));
     }
 
     // Resolve `obj` as a member receiver: a static type, `this`, or a value.
-    // Returns: 0 = value, 1 = static type (id in typeId), 2 = this, -1 = error.
+    // Returns: 0 = value, 1 = static type (id in typeId), 2 = this, 3 = enum (id in typeId), -1 = error.
     int Receiver(Expr& obj, int& typeId) {
         if (obj.kind == EK::This) {
             if (inFieldInit_) { Error(obj.loc, "A field's starting value can't use `this`"); return -1; }
             return 2;
         }
         if (obj.kind == EK::Name && !FindLocal(obj.name) && FieldIndex(obj.name) < 0 && !IsSelfMemberName(obj.name)) {
+            if (int ei = EnumIndex(obj.name); ei >= 0) { typeId = ei; return 3; }
             int ti = api_.Find(obj.name);
             if (ti >= 0) { obj.bind = Bind::StaticType; obj.slot = ti; obj.isStaticRecv = true; typeId = ti; return 1; }
         }
@@ -461,6 +752,21 @@ private:
             CheckName(tmp);
             e.bind = tmp.bind; e.slot = tmp.slot; e.type = tmp.type;
             e.object.reset();
+            return;
+        }
+        if (r == 3) {
+            const EnumDecl& en = prog_.enums[(std::size_t)typeId];
+            for (std::size_t i = 0; i < en.members.size(); ++i)
+                if (en.members[i].name == e.name) {
+                    if ((int)i >= enumReady_[(std::size_t)typeId]) {
+                        Error(e.loc, en.name + "." + e.name + " is used before its value is worked out");
+                        return;
+                    }
+                    e.bind = Bind::EnumValue; e.ival = en.members[i].v;
+                    e.type = Type{TK::Enum, typeId};
+                    return;
+                }
+            Error(e.loc, en.name + " has no '" + e.name + "'" + Suggest(e.name, Names(en.members)));
             return;
         }
         if (r == 1) {
@@ -496,6 +802,13 @@ private:
             std::vector<std::string> opts = Names(t.props);
             for (auto& m : t.methods) opts.push_back(m.name);
             Error(e.loc, t.name + " has no '" + e.name + "'" + Suggest(e.name, opts));
+            return;
+        }
+        if (ot.kind == TK::Array) {
+            if (e.name == "Length") { e.bind = Bind::ArrayLength; e.type = Type::Of(TK::Int); return; }
+            std::string hint = Suggest(e.name, {"Length"});
+            if (hint.empty() && (e.name == "Count" || e.name == "Size" || e.name == "length" || e.name == "size")) hint = ". Did you mean 'Length'?";
+            Error(e.loc, TypeName(ot) + " has no '" + e.name + "'" + hint);
             return;
         }
         if (ot.kind == TK::String && e.name == "Length") { Error(e.loc, "Text length isn't supported yet"); return; }
@@ -584,6 +897,7 @@ private:
         int r = Receiver(*e.object, typeId);
         for (auto& a : e.args) CheckExpr(*a);
         if (r < 0) return;
+        if (r == 3) { Error(e.loc, prog_.enums[(std::size_t)typeId].name + " has no method '" + e.name + "'"); return; }
         if (r == 1) {
             const ApiType& t = api_.types[(std::size_t)typeId];
             const ApiMethod* m = PickOverload(t.staticMethods, t.name + ".", e);
@@ -633,7 +947,7 @@ private:
             int typeId = -1;
             int r = Receiver(*e.object, typeId);
             if (r < 0) return;
-            if (r == 1 || e.object->type.kind != TK::Object) { Error(e.loc, "GetComponent works on a GameObject or a component"); return; }
+            if (r == 1 || r == 3 || e.object->type.kind != TK::Object) { Error(e.loc, "GetComponent works on a GameObject or a component"); return; }
         } else e.object.reset();
         e.bind = Bind::GetComponent; e.slot = ti; e.type = Type::Obj(ti);
     }
@@ -681,7 +995,12 @@ private:
         const std::string op = TokenName(e.op);
         switch (e.op) {
             case T::Plus:
-                if (a.kind == TK::String || b.kind == TK::String) { e.type = Type::Of(TK::String); return; }
+                if (a.kind == TK::String || b.kind == TK::String) {
+                    e.type = Type::Of(TK::String);
+                    if (a.kind == TK::Enum) e.lhs->enumStr = a.id;
+                    if (b.kind == TK::Enum) e.rhs->enumStr = b.id;
+                    return;
+                }
                 [[fallthrough]];
             case T::Minus:
                 if (a.IsNumeric() && b.IsNumeric()) { numeric(); return; }
@@ -701,13 +1020,16 @@ private:
                 break;
             case T::Lt: case T::Gt: case T::Le: case T::Ge:
                 if (a.IsNumeric() && b.IsNumeric()) { numeric(); e.type = Type::Of(TK::Bool); return; }
+                if (a.kind == TK::Enum && a == b) { e.type = Type::Of(TK::Bool); return; }
                 break;
             case T::EqEq: case T::NotEq:
                 e.type = Type::Of(TK::Bool);
                 if (a.IsNumeric() && b.IsNumeric()) {
                     e.promoteL = a.kind == TK::Int && b.kind == TK::Float; e.promoteR = b.kind == TK::Int && a.kind == TK::Float; return;
                 }
-                if (a == b && (a.kind == TK::Bool || a.kind == TK::String || a.kind == TK::Vector3)) return;
+                if (a == b && (a.kind == TK::Bool || a.kind == TK::String || a.kind == TK::Vector3 || a.kind == TK::Enum)) return;
+                if ((a.kind == TK::Array || a.kind == TK::Null) && (b.kind == TK::Array || b.kind == TK::Null) && a.kind != b.kind) return;
+                if (a.kind == TK::Array && a == b) return;
                 if ((a.kind == TK::Object || a.kind == TK::Null) && (b.kind == TK::Object || b.kind == TK::Null)) {
                     if (a.kind == TK::Null && b.kind == TK::Null) { Error(e.loc, "Comparing null with null is always true"); return; }
                     if (a.kind == TK::Object && b.kind == TK::Object && a != b)
@@ -727,8 +1049,16 @@ private:
 
     // Can `e` be assigned to? Explains why not.
     bool Assignable(Expr& e) {
+        if (e.kind == EK::Index) return true;
         switch (e.bind) {
-            case Bind::Local: return true;
+            case Bind::Local:
+                if (LocalVar* v = FindLocal(e.name); v && v->readOnly) {
+                    Error(e.loc, "'" + e.name + "' is the foreach variable, so it can't be changed");
+                    return false;
+                }
+                return true;
+            case Bind::ArrayLength: Error(e.loc, "'Length' can only be read"); return false;
+            case Bind::EnumValue: Error(e.loc, "'" + e.name + "' is an enum value, so it can't change"); return false;
             case Bind::Field: {
                 FieldDecl& f = cls_->fields[(std::size_t)e.slot];
                 if (f.isConst) { Error(e.loc, "'" + f.name + "' is const, so it can't change"); return false; }
@@ -750,7 +1080,7 @@ private:
             }
             case Bind::VecField: {
                 Expr& o = *e.object;
-                if (o.bind == Bind::Local || o.bind == Bind::Field || o.bind == Bind::VecField) return Assignable(o);
+                if (o.bind == Bind::Local || o.bind == Bind::Field || o.bind == Bind::VecField || o.kind == EK::Index) return Assignable(o);
                 Error(e.loc, "This changes a copy, so it would do nothing: copy the vector into a variable, change ." +
                              e.name + ", then assign it back (e.g. var p = transform.position; p." + e.name + " = 1; transform.position = p;)");
                 return false;
@@ -815,6 +1145,11 @@ private:
             e.type = to;
             return;
         }
+        if ((to.kind == TK::Enum && (from.IsNumeric() || from.kind == TK::Enum)) || (from.kind == TK::Enum && to.IsNumeric())) {
+            if (to == from) Warning(e.loc, "This is already " + TypeName(to) + ": the cast does nothing");
+            e.type = to;
+            return;
+        }
         if (to.kind == TK::String) { Error(e.loc, "To turn a value into text, join it: \"\" + value"); return; }
         Error(e.loc, "Can't turn " + TypeName(from) + " into " + TypeName(to));
     }
@@ -827,8 +1162,8 @@ private:
         if (a.kind == TK::Error || b.kind == TK::Error) return;
         if (a == b) { e.type = a; return; }
         if (a.IsNumeric() && b.IsNumeric()) { e.type = Type::Of(TK::Float); e.lhs->toFloat = a.kind == TK::Int; e.rhs->toFloat = b.kind == TK::Int; return; }
-        if (a.kind == TK::Object && b.kind == TK::Null) { e.type = a; return; }
-        if (a.kind == TK::Null && b.kind == TK::Object) { e.type = b; return; }
+        if ((a.kind == TK::Object || a.kind == TK::Array) && b.kind == TK::Null) { e.type = a; return; }
+        if (a.kind == TK::Null && (b.kind == TK::Object || b.kind == TK::Array)) { e.type = b; return; }
         Error(e.loc, "Both sides of ?: must be the same type (" + TypeName(a) + " vs " + TypeName(b) + ")");
     }
 };

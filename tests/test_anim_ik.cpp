@@ -47,8 +47,9 @@ int main() {
         (void)upLen; (void)loLen;
         s.Start();
         s.Update(1.0f / 60.0f);
-        // Foot planted at ground + offset (0.35), lifted from its animated 0.1.
-        CHECK(std::fabs(footO->transform->Position().y - 0.35f) < 1e-2f);
+        // The animation put the ankle 0.1 over the body's floor (y = 0); on ground
+        // raised to 0.3 it keeps that height: 0.4.
+        CHECK(std::fabs(footO->transform->Position().y - 0.4f) < 1e-2f);
         // Lengths preserved and knee bent forward.
         float a = (kneeO->transform->Position() - hipO->transform->Position()).Magnitude();
         float b = (footO->transform->Position() - kneeO->transform->Position()).Magnitude();
@@ -232,7 +233,8 @@ int main() {
         s.Start();
         s.Update(1.0f / 60.0f);
         CHECK(hips->transform->Position().y < 1.0f);          // pelvis lowered toward the ground
-        CHECK(std::fabs(lFoot->transform->Position().y - (-0.3f)) < 0.1f);   // feet planted on it
+        // Feet planted on it, ankles still 0.1 over the ground as animated.
+        CHECK(std::fabs(lFoot->transform->Position().y - (-0.2f)) < 0.02f);
     }
 
     // ---- Two-bone bend limit: a max knee angle stops the limb hyperextending ----

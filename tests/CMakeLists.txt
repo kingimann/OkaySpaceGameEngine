@@ -956,6 +956,11 @@ foreach(_bad "${_okay_ac_k63}" "${_okay_ac_k64}0" "${_okay_ac_k64},${_okay_ac_k6
     add_test(NAME anticheat_keys_bad_${_id} COMMAND ${CMAKE_COMMAND} "-DKEYS=${_bad}" -P ${CMAKE_CURRENT_SOURCE_DIR}/anticheat_keys_check.cmake)
     set_tests_properties(anticheat_keys_bad_${_id} PROPERTIES WILL_FAIL TRUE)
 endforeach()
+# Anti-cheat P4: the salted hardware hash + the backend's request building / parsing.
+add_executable(test_anticheat_backend test_anticheat_backend.cpp)
+target_link_libraries(test_anticheat_backend PRIVATE okay::engine)
+target_include_directories(test_anticheat_backend PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME anticheat_backend COMMAND test_anticheat_backend)
 
 add_executable(test_tween test_tween.cpp)
 target_link_libraries(test_tween PRIVATE okay::engine)

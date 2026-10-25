@@ -147,6 +147,7 @@ trust the client.
 | **Debugger detection** | player, while the game runs | Windows |
 | **Loaded-module allowlist**: DLLs that aren't Windows', the game's own or a known overlay | player, while the game runs | Windows |
 | **Clock-drift heartbeat**: the game's clock against a trusted clock, through a challenge-response, flagged past 5% | player, while the game runs | Windows |
+| **Reports, bans, appeals** (Supabase, `docs/sql/anticheat.sql`) | launcher: Admin > Anti-cheat, the ban banner, Report cheating | all |
 
 Windows-only checks are compiled out on other platforms; the logic behind them
 (what counts as drift, which modules are allowed) is plain code that is unit
@@ -306,6 +307,120 @@ You need two ed25519 keypairs:
 
 If you rotate a key, ship a player and launcher that trust both the old and the
 new key, re-sign your builds with the new one, and then drop the old one.
+
+### The backend: reports, bans, appeals
+
+`docs/sql/anticheat.sql` adds three tables to your Supabase project.
+
+| Table | What's in it | Who can see / change it |
+|---|---|---|
+| `ac_reports` | a player reporting another player, or a player's own game reporting what its anti-cheat found (`kind = 'client_check'`) | anyone signed in can file one (20 an hour); admins read and review |
+| `ac_bans` | an anti-cheat ban of an account and/or a machine (hardware hash), with a reason and an optional end | players see their own; admins ban, edit and lift |
+| `ac_appeals` | a player's appeal against one of their bans | players file through `ac_file_appeal` (one waiting at a time, 3 per ban) and see their own; admins decide |
+
+"Admins" means `public.is_admin` from `admin.sql`, the same check the other
+admin tools use. Every admin action (ban, unban, report review, appeal decision)
+is written to `admin_log`.
+
+Anti-cheat bans are separate from site bans (`site_bans`): this file doesn't
+block anything else on its own. For a game server that wants to keep banned
+players out, `public.ac_is_banned(user_id, hw_hash)` answers whether an
+account or machine is banned right now. Calling it on join is the network
+layer's job.
+
+#### In the launcher
+
+- **Admin > Anti-cheat** (admins only):
+  - **Reports**: filter by status, open a report to see its details and machine hash, then mark it reviewing, dismiss it, or **Ban...** (prefilled from the report).
+  - **Bans**: active, or every ban; **Unban...** asks for a reason and keeps the record. **Ban a player...** bans by username.
+  - **Appeals**: read each appeal next to its ban, then **Accept...** (lifts the ban) or **Reject...**, with a note the player sees.
+- **For players**: a banner at the top of every page shows an active
+  anti-cheat ban, its reason and its end. **Appeal...** opens a box to explain;
+  the banner then shows that the appeal is waiting, or the decision and its note.
+- **Report cheating...** in a chat's menu files a player report.
+![Admin > Anti-cheat > Reports](images/anticheat/admin-reports.png)
+
+![Ban dialog, prefilled from a client-check report](images/anticheat/admin-ban-dialog.png)
+
+![Optional expiry](images/anticheat/admin-ban-expiry.png)
+
+![Bans: active and ended](images/anticheat/admin-bans.png)
+
+![Unban with a reason](images/anticheat/admin-unban-dialog.png)
+
+![Appeals](images/anticheat/admin-appeals.png)
+
+![Deciding an appeal](images/anticheat/admin-appeal-decision.png)
+
+What a banned player sees, and the appeal flow:
+
+![Ban banner](images/anticheat/player-ban-banner.png)
+
+![Appeal your ban](images/anticheat/player-appeal.png)
+
+![After a rejected appeal](images/anticheat/player-appeal-rejected.png)
+
+Reporting a cheater from a chat:
+
+![Chat menu](images/anticheat/player-report-menu.png)
+
+![Report cheating](images/anticheat/player-report-cheating.png)
+
+These screenshots use the launcher's built-in sample data (`OKAY_UI_DEMO_USER`,
+plus `OKAY_UI_DEMO_ACVIEW` / `OKAY_UI_DEMO_ACPOPUP` / `OKAY_UI_DEMO_ACBAN` /
+`OKAY_UI_DEMO_ACAPPEAL`), not a server.
+
+- A game with anti-cheat on files a `client_check` report when its checks find
+  something and the player is signed in: one report per run, sent when the game
+  closes (or before it refuses to start), with this machine's hardware hash.
+
+#### Hardware hash
+
+`shared/AntiCheatHardware.hpp`. A ban can name a machine, so a cheater can't
+come back on a new account. Only this leaves the machine:
+
+```
+HMAC-SHA256(key = "okayac-hw|" + salt, canonical text)   -> 64 hex digits
+```
+
+The canonical text is these parts, each lower-cased and trimmed, sorted by name,
+one `name=value` line each (any part the machine doesn't have is left out):
+
+| Part | Windows | Linux |
+|---|---|---|
+| `machine_guid` | `HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid` | `/etc/machine-id` |
+| `volume_serial` | serial number of the volume Windows is on | (none) |
+| `cpu` | CPUID vendor + brand string (x86) | same |
+
+- The raw values are never stored or sent.
+- The salt is `-DOKAY_AC_HW_SALT=...` (default `okayspace-ac-hw/1`). Give your
+  deployment its own so its hashes can't be matched against anyone else's. It
+  doesn't have to be secret: the machine GUID alone has 122 random bits.
+- The hash changes when Windows is reinstalled, the system drive is reformatted,
+  or the CPU is swapped. Machines cloned from one image can share a GUID. Treat
+  a hash match as a lead, not proof.
+
+#### Retention
+
+`public.ac_purge_old()` deletes:
+
+- reports older than 90 days;
+- decided appeals older than 90 days;
+- bans that ended (lifted or expired) more than 90 days ago.
+
+Active bans are kept. If the `pg_cron` extension is enabled, the SQL file
+schedules it nightly (job `okay-ac-retention`). Otherwise run
+`select public.ac_purge_old();` yourself, or from a scheduled Edge Function.
+
+#### Setting it up
+
+1. Run `docs/sql/admin.sql` first if you haven't already.
+2. Then run `docs/sql/anticheat.sql` once in the Supabase SQL editor. It is
+   idempotent, so you can re-run it after updating. (Optional: enable `pg_cron`
+   under Database > Extensions first, so the 90-day clean-up schedules itself.)
+3. Optionally set `-DOKAY_AC_HW_SALT=<something unique to you>` when building
+   the launcher and player.
+4. Admins (the `admin` badge) see **Admin > Anti-cheat** in the launcher.
 
 ### Crypto
 

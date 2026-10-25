@@ -26,6 +26,11 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+// Older MinGW headers lack this RegGetValue flag (read the 64-bit registry view
+// from a 32-bit process); its value is fixed by the Windows SDK.
+#ifndef RRF_SUBKEY_WOW6464KEY
+#define RRF_SUBKEY_WOW6464KEY 0x00010000
+#endif
 #endif
 #if (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(__i386__))
 #include <cpuid.h>

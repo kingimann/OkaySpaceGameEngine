@@ -185,7 +185,7 @@ using ExprPtr = std::unique_ptr<Expr>;
 enum class Bind : std::uint8_t {
     None, Local, Field, Method, SelfMember /*gameObject/transform/enabled*/,
     ApiProp, ApiStaticProp, ApiMethod, ApiStaticMethod, StaticType,
-    VecField /*x/y/z*/, VecProp /*magnitude/normalized*/, GetComponent, Destroy,
+    VecField /*x/y/z*/, VecProp /*magnitude/normalized*/, GetComponent, Destroy, StaticField,
     EnumValue /*State.Idle: ival*/, ArrayLength,
 };
 
@@ -247,7 +247,7 @@ struct Attribute { std::string name; std::vector<ExprPtr> args; SrcLoc loc; };
 
 struct FieldDecl {
     std::vector<Attribute> attrs;
-    bool isPublic = false, isConst = false;
+    bool isPublic = false, isConst = false, isStatic = false;   ///< static: one value shared by every object running the script
     TypeRef type;
     std::string name;
     SrcLoc loc;
@@ -260,7 +260,7 @@ struct FieldDecl {
 };
 struct Param { TypeRef type; std::string name; SrcLoc loc; Type resolved; };
 struct MethodDecl {
-    bool isPublic = false;
+    bool isPublic = false, isStatic = false;   ///< static: can't use the object's own fields, methods or members
     TypeRef ret;
     std::string name;
     SrcLoc loc;
@@ -291,12 +291,22 @@ struct ClassDecl {
     std::vector<MethodDecl> methods;
 };
 
+/// `static` fields' values: one set shared by every object running the same
+/// script, the first of them setting the starting values.
+struct StaticStore {
+    std::vector<Value> values;   ///< by field index (instance fields' slots stay unused)
+    bool ready = false;
+};
+/// The store for scripts with this exact source (made on first use).
+std::shared_ptr<StaticStore> SharedStatics(const std::string& source);
+
 /// A checked, runnable script.
 struct Program {
     std::vector<ClassDecl> classes;
     std::vector<EnumDecl> enums;   ///< every enum in the file (top level or inside a class)
     std::vector<Type> arrays;      ///< element type of each array type (Type{Array, i})
     int component = -1;            ///< the class that is the component
+    std::shared_ptr<StaticStore> statics;   ///< shared with other objects (see SharedStatics); null = this program's own
     std::vector<ScriptDiagnostic> diags;
     bool ok() const;
     const ClassDecl* Component() const { return component >= 0 ? &classes[(std::size_t)component] : nullptr; }
@@ -335,12 +345,14 @@ public:
     CallContext& Context() { return ctx_; }
     const Program& program() const { return *prog_; }
     std::vector<Value>& Fields() { return fields_; }
+    std::vector<Value>& Statics() { return statics_->values; }
     /// Statements executed in the current callback (a guard against endless loops).
     std::uint64_t steps = 0;
     std::uint64_t stepLimit = 50'000'000;
 private:
     std::shared_ptr<Program> prog_;
     std::vector<Value> fields_;
+    std::shared_ptr<StaticStore> statics_;
     CallContext ctx_;
 };
 

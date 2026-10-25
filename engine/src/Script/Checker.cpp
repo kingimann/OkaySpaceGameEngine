@@ -302,6 +302,7 @@ private:
         for (std::size_t i = 0; i < lc.size(); ++i) {
             if (m.name != lc[i].name) continue;
             m.lifecycle = (int)i;
+            if (m.isStatic) Error(m.loc, m.name + "() can't be static: the engine calls it on each object");
             if (m.retType.kind != TK::Void) Error(m.loc, m.name + "() must be void: the engine ignores anything it returns");
             if (!m.params.empty()) Error(m.loc, m.name + "() takes no parameters (the engine calls it " + lc[i].when + ")");
         }
@@ -692,6 +693,17 @@ private:
         }
     }
 
+    // A static method runs without an object, so it can't use the object's own members.
+    bool RejectInStatic(const std::string& name, SrcLoc loc) {
+        if (!method_ || !method_->isStatic) return false;
+        Error(loc, "'" + name + "' belongs to each object, so the static method " + method_->name + "() can't use it");
+        return true;
+    }
+    // `T` in T.member, when T is the script's class (and nothing local hides it).
+    bool IsOwnClass(const Expr& e) {
+        return e.kind == EK::Name && e.name == cls_->name && !FindLocal(e.name) && FieldIndex(e.name) < 0;
+    }
+
     void CheckName(Expr& e) {
         if (LocalVar* v = FindLocal(e.name)) {
             if (inFieldInit_) { Error(e.loc, "Unknown name '" + e.name + "'"); return; }
@@ -701,11 +713,13 @@ private:
         if (fi >= 0) {
             if (inFieldInit_) { Error(e.loc, "A field's starting value can't use another field: set '" + e.name + "' up in Start()"); return; }
             FieldDecl& f = cls_->fields[(std::size_t)fi];
+            if (!f.isStatic && !f.isConst && RejectInStatic(e.name, e.loc)) return;
             f.read = true;
-            e.bind = Bind::Field; e.slot = fi; e.type = f.resolved; return;
+            e.bind = f.isStatic ? Bind::StaticField : Bind::Field; e.slot = fi; e.type = f.resolved; return;
         }
         if (IsSelfMemberName(e.name)) {
             if (inFieldInit_) { Error(e.loc, "A field's starting value can't use '" + e.name + "' (the object isn't ready yet): set it in Start()"); return; }
+            if (RejectInStatic(e.name, e.loc)) return;
             e.bind = Bind::SelfMember;
             e.slot = e.name == "gameObject" ? 0 : e.name == "transform" ? 1 : 2;
             e.type = e.slot == 0 ? Type::Obj(api_.gameObject) : e.slot == 1 ? Type::Obj(api_.transform) : Type::Of(TK::Bool);
@@ -724,12 +738,15 @@ private:
     }
 
     // Resolve `obj` as a member receiver: a static type, `this`, or a value.
-    // Returns: 0 = value, 1 = static type (id in typeId), 2 = this, 3 = enum (id in typeId), -1 = error.
+    // Returns: 0 = value, 1 = static type (id in typeId), 2 = this, 3 = enum (id in typeId),
+    // 4 = the script's own class (T.staticMember), -1 = error.
     int Receiver(Expr& obj, int& typeId) {
         if (obj.kind == EK::This) {
             if (inFieldInit_) { Error(obj.loc, "A field's starting value can't use `this`"); return -1; }
+            if (method_ && method_->isStatic) { Error(obj.loc, "A static method has no `this`: use the static member directly"); return -1; }
             return 2;
         }
+        if (IsOwnClass(obj)) return 4;
         if (obj.kind == EK::Name && !FindLocal(obj.name) && FieldIndex(obj.name) < 0 && !IsSelfMemberName(obj.name)) {
             if (int ei = EnumIndex(obj.name); ei >= 0) { typeId = ei; return 3; }
             int ti = api_.Find(obj.name);
@@ -747,7 +764,13 @@ private:
         int typeId = -1;
         int r = Receiver(*e.object, typeId);
         if (r < 0) return;
-        if (r == 2) {   // this.x
+        if (r == 4) {
+            int fi = FieldIndex(e.name);
+            const FieldDecl* f = fi >= 0 ? &cls_->fields[(std::size_t)fi] : nullptr;
+            if (f && !f->isStatic && !f->isConst) { Error(e.loc, "'" + e.name + "' isn't static: use it without " + cls_->name + "."); return; }
+            if (!f && MethodIdx(e.name) < 0) { Error(e.loc, cls_->name + " has no '" + e.name + "'"); return; }
+        }
+        if (r == 2 || r == 4) {   // this.x, T.x
             Expr tmp; tmp.kind = EK::Name; tmp.name = e.name; tmp.loc = e.loc;
             CheckName(tmp);
             e.bind = tmp.bind; e.slot = tmp.slot; e.type = tmp.type;
@@ -858,7 +881,13 @@ private:
         // GetComponent<T>() (on this object or another)
         if (e.name == "GetComponent") { CheckGetComponent(e); return; }
         if (!e.typeArg.name.empty()) { Error(e.loc, e.name + " doesn't take a <type>"); return; }
-        if (!e.object || e.object->kind == EK::This) {
+        if (!e.object || e.object->kind == EK::This || IsOwnClass(*e.object)) {
+            if (e.object && e.object->kind == EK::This && method_ && method_->isStatic) {
+                for (auto& a : e.args) CheckExpr(*a);
+                Error(e.object->loc, "A static method has no `this`: call static methods directly");
+                return;
+            }
+            const bool viaClass = e.object && e.object->kind == EK::Name;
             if (e.object) e.object.reset();
             if (e.name == "Destroy") {
                 if (inFieldInit_) { Error(e.loc, "A field's starting value can't destroy things"); return; }
@@ -884,6 +913,8 @@ private:
             MethodDecl& m = cls_->methods[(std::size_t)mi];
             if (&m != method_) m.called = true;
             for (auto& a : e.args) CheckExpr(*a);
+            if (viaClass && !m.isStatic) { Error(e.loc, "'" + e.name + "' isn't static: call it without " + cls_->name + "."); return; }
+            if (!m.isStatic && RejectInStatic(e.name, e.loc)) return;
             if (e.args.size() != m.params.size()) {
                 Error(e.loc, e.name + "() takes " + std::to_string(m.params.size()) + " value" + (m.params.size() == 1 ? "" : "s") +
                              ", not " + std::to_string(e.args.size()));
@@ -947,8 +978,11 @@ private:
             int typeId = -1;
             int r = Receiver(*e.object, typeId);
             if (r < 0) return;
-            if (r == 1 || r == 3 || e.object->type.kind != TK::Object) { Error(e.loc, "GetComponent works on a GameObject or a component"); return; }
-        } else e.object.reset();
+            if (r != 0 || e.object->type.kind != TK::Object) { Error(e.loc, "GetComponent works on a GameObject or a component"); return; }
+        } else {
+            e.object.reset();
+            if (RejectInStatic("GetComponent", e.loc)) return;
+        }
         e.bind = Bind::GetComponent; e.slot = ti; e.type = Type::Obj(ti);
     }
 
@@ -1051,6 +1085,7 @@ private:
     bool Assignable(Expr& e) {
         if (e.kind == EK::Index) return true;
         switch (e.bind) {
+            case Bind::StaticField: return true;
             case Bind::Local:
                 if (LocalVar* v = FindLocal(e.name); v && v->readOnly) {
                     Error(e.loc, "'" + e.name + "' is the foreach variable, so it can't be changed");

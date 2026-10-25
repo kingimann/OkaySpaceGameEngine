@@ -16,7 +16,6 @@ const std::unordered_map<std::string, const char*>& NotYet() {
         {"throw", "throw isn't supported yet"},
         {"struct", "structs aren't supported yet"},
         {"interface", "interfaces aren't supported yet"},
-        {"static", "static members aren't supported yet"},
         {"readonly", "readonly isn't supported yet: use const for a value that never changes"},
         {"override", "override isn't supported: scripts don't inherit from each other yet"},
         {"virtual", "virtual isn't supported: scripts don't inherit from each other yet"},
@@ -188,6 +187,7 @@ private:
         Attributes();
         while (Match(T::KwPublic) || Match(T::KwPrivate)) {}
         RejectNotYet();
+        if (IsWord("static")) throw ParseError{Peek().loc, "A script class can't be static: it's a component on each object"};
         if (!Is(T::KwClass)) throw ParseError{Peek().loc, "Expected a class here: class Name : Behaviour { ... }"};
         ClassDecl c;
         c.loc = Expect(T::KwClass, "class").loc;
@@ -244,7 +244,8 @@ private:
 
     void Member(ClassDecl& c) {
         std::vector<Attribute> attrs = Attributes();
-        bool isPublic = false, isConst = false;
+        bool isPublic = false, isConst = false, isStatic = false;
+        SrcLoc staticLoc;
         for (;;) {
             if (Match(T::KwPublic)) { isPublic = true; continue; }
             if (Is(T::KwPrivate)) {
@@ -252,6 +253,7 @@ private:
                 ++pos_; continue;
             }
             if (Match(T::KwConst)) { isConst = true; continue; }
+            if (IsWord("static")) { isStatic = true; staticLoc = Peek().loc; ++pos_; continue; }
             break;
         }
         if (IsWord("enum") && Is(T::Ident, 1)) {
@@ -260,6 +262,7 @@ private:
             Enum();
             return;
         }
+        if (isStatic && isConst) Error(staticLoc, "A const is already shared: delete `static`");
         RejectNotYet();
         if (Is(T::KwClass)) throw ParseError{Peek().loc, "Classes inside classes aren't supported"};
         // Constructor: Name(
@@ -272,7 +275,7 @@ private:
             if (isConst) throw ParseError{nameLoc, "Methods can't be const"};
             if (!attrs.empty()) Error(attrs[0].loc, "Attributes only work on fields");
             MethodDecl m;
-            m.isPublic = isPublic; m.ret = type; m.name = name; m.loc = nameLoc;
+            m.isPublic = isPublic; m.isStatic = isStatic; m.ret = type; m.name = name; m.loc = nameLoc;
             Expect(T::LParen, "'('");
             if (!Is(T::RParen)) {
                 do {
@@ -295,7 +298,7 @@ private:
         for (;;) {
             FieldDecl f;
             f.attrs = std::move(attrs); attrs.clear();
-            f.isPublic = isPublic; f.isConst = isConst; f.type = type; f.name = name; f.loc = nameLoc;
+            f.isPublic = isPublic; f.isConst = isConst; f.isStatic = isStatic && !isConst; f.type = type; f.name = name; f.loc = nameLoc;
             if (Match(T::Assign)) f.init = Initializer();
             else if (isConst) throw ParseError{nameLoc, "A const needs a value: const " + type.name + " " + name + " = ...;"};
             c.fields.push_back(std::move(f));
@@ -350,6 +353,8 @@ private:
 
     std::unique_ptr<Stmt> Statement() {
         RejectNotYet();
+        if (IsWord("static") && IsTypeStart(1))
+            throw ParseError{Peek().loc, "static only works on fields and methods, not on a variable inside a method"};
         SrcLoc loc = Peek().loc;
         NestGuard guard(stmtNesting_, loc, "code");   // blocks, ifs, loops and switches recurse here
         if (Is(T::LBrace)) return Block();

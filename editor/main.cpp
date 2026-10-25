@@ -2890,6 +2890,8 @@ std::vector<std::pair<int, int>> g_bevelSelEdges;
 okay::modeling::EdgeList g_bevelEdges;         // the edges being beveled (numbered as in g_bevelStart)
 Vec3  g_bevelPivot{0, 0, 0};                   // their centre (object space)
 float g_bevelWidth = 0.1f;
+int   g_bevelSegments = 1;                     // bevel: faces across each beveled edge (mouse wheel)
+float g_bevelProfile = 0.5f;                   // 0.5 = round
 float g_bevelPxPerUnit = 100.0f;               // screen pixels per world unit at the selection
 okay::modeling::NumericInput g_ptoolTyped;     // a typed amount / width
 std::vector<okay::modeling::KnifePoint> g_knifePts;
@@ -25739,11 +25741,20 @@ void DrawModeling(EditorState& ed) {
                 static float s_bevelW = 0.1f;
                 ImGui::SetNextItemWidth(90);
                 ImGui::DragFloat("##bevelw", &s_bevelW, 0.005f, 0.001f, 10.0f, "width %.3f");
+                ImGui::SameLine(); ImGui::SetNextItemWidth(110);
+                ImGui::InputInt("##bevelseg", &g_bevelSegments);
+                g_bevelSegments = std::clamp(g_bevelSegments, 1, 32);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Segments: faces across each beveled edge (1 = a flat chamfer, more = rounded)");
+                if (g_bevelSegments > 1) {
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(100);
+                    ImGui::SliderFloat("##bevelprof", &g_bevelProfile, 0.0f, 1.0f, "profile %.2f");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Profile: 0.5 is round, lower is flatter, 1 pulls out toward the old sharp corner");
+                }
                 ImGui::SameLine();
                 if (ToolButton("Bevel##me", haveEdges, kNeedSomeEdges)) {
                     const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
                     std::string err;
-                    if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) { return pmo::BevelEdges(p, edges, s_bevelW, &err) > 0; })) {
+                    if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) { return pmo::BevelEdges(p, edges, s_bevelW, &err, g_bevelSegments, g_bevelProfile) > 0; })) {
                         g_meshSelEdges.clear(); g_meshSelVerts.clear();
                         ConsoleLog("Bevel: " + std::to_string(edges.size()) + " edge(s)");
                     } else ConsoleLog("Bevel: " + err, 1);
@@ -25792,6 +25803,61 @@ void DrawModeling(EditorState& ed) {
                     else ConsoleLog("Bridge: " + err, 1);
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Join two open edge loops (the same number of edges each) with a band of faces.");
+
+                const char* kNeedRim = "Select the edges round a hole (Alt+Click its rim in Edge mode).";
+                if (ToolButton("Fill##me", haveEdges, kNeedRim)) {
+                    const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
+                    std::string err;
+                    int n = 0;
+                    if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) { n = pmo::FillFaces(p, edges, &err); return n > 0; }))
+                        ConsoleLog("Fill: made " + std::to_string(n) + " face(s)");
+                    else ConsoleLog("Fill: " + err, 1);
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close a hole with one face across its rim.");
+                ImGui::SameLine();
+                static int s_gridSpan = 0;
+                ImGui::SetNextItemWidth(110);
+                ImGui::InputInt("##gridspan", &s_gridSpan);
+                s_gridSpan = std::clamp(s_gridSpan, 0, 64);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Span: quads along the first side of the grid (0 = automatic)");
+                ImGui::SameLine();
+                if (ToolButton("Grid Fill##me", haveEdges, kNeedRim)) {
+                    const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
+                    std::string err;
+                    int n = 0;
+                    if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) { n = pmo::GridFill(p, edges, s_gridSpan, &err); return n > 0; }))
+                        ConsoleLog("Grid fill: made " + std::to_string(n) + " quad(s)");
+                    else ConsoleLog("Grid fill: " + err, 1);
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close a hole with a grid of quads that blends its four sides (the rim needs an even number of edges).");
+                ImGui::SameLine();
+                // The vertices to merge: the selected ones (in the order clicked), or the
+                // corners of the selected edges / faces.
+                std::vector<int> mergeV;
+                if (g_meshSelMode == 0) mergeV = g_meshSelVerts;
+                else {
+                    std::set<int> seen;
+                    auto add = [&](int v) { if (v >= 0 && v < (int)mr->mesh.vertices.size() && seen.insert(v).second) mergeV.push_back(v); };
+                    if (g_meshSelMode == 2) for (const auto& e : g_meshSelEdges) { add(e.first); add(e.second); }
+                    else for (int f : g_meshSelFaces) if (f >= 0 && f < mr->mesh.TriangleCount()) for (int k = 0; k < 3; ++k) add(mr->mesh.triangles[f * 3 + k]);
+                }
+                const char* kNeedTwo = "Select two or more vertices (or edges / faces) to merge.";
+                auto merge = [&](bool atFirst) {
+                    Vec3 c{0, 0, 0};
+                    for (int v : mergeV) c += mr->mesh.vertices[v];
+                    const Vec3 at = atFirst ? mr->mesh.vertices[mergeV[0]] : c * (1.0f / (float)mergeV.size());
+                    int n = 0;
+                    if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) {
+                            n = pmo::MergeVerts(p, mergeV, at);
+                            g_meshSelVerts = {mergeV[0]}; g_meshSelEdges.clear(); g_meshSelMode = 0;
+                            return n > 0; }))
+                        ConsoleLog("Merged " + std::to_string(n + 1) + " vertices into one");
+                };
+                if (ToolButton("Merge at Center##me", mergeV.size() >= 2, kNeedTwo)) merge(false);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Merge the selected vertices into one, at their centre.");
+                ImGui::SameLine();
+                if (ToolButton("Merge at First##me", mergeV.size() >= 2, kNeedTwo)) merge(true);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Merge the selected vertices into the first one you selected.");
             }
             if (ToolButton("Separate##me", !g_meshSelFaces.empty(), kNeedFaces)) {
                 EditUndoPoint(ed, mr);
@@ -36639,7 +36705,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     ImVec2 center(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
 
     // Orbit controls (Scene view only).
-    if (!gameView && hovered && io.MouseWheel != 0.0f && !io.KeyCtrl && g_ptool != PolyTool::LoopCut)  // Ctrl+Wheel = UI zoom; loop cut: number of cuts
+    if (!gameView && hovered && io.MouseWheel != 0.0f && !io.KeyCtrl && g_ptool != PolyTool::LoopCut && g_ptool != PolyTool::Bevel)  // Ctrl+Wheel = UI zoom; loop cut / bevel: number of cuts / segments
         ed.camDist = Mathf::Clamp(ed.camDist * (1.0f - io.MouseWheel * 0.1f), 2.0f, 400.0f);
     if (!gameView && hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Left) && !ed.selected()) {
         ed.camYaw   -= io.MouseDelta.x * 0.4f;
@@ -37975,6 +38041,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 g_uiHandled = true;
             } else if (g_ptool == PolyTool::Bevel) {
                 typeInto(g_ptoolTyped);
+                if (hovered && io.MouseWheel != 0.0f) g_bevelSegments = std::clamp(g_bevelSegments + (io.MouseWheel > 0 ? 1 : -1), 1, 32);
                 ImVec2 ps;
                 float width = 0.0f;
                 const bool psOk = toScreen(vp * Vec4{M.MultiplyPoint(g_bevelPivot), 1}, ps);
@@ -37991,14 +38058,17 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 bool shown = false;
                 if (width > 1e-5f) {
                     const okay::modeling::EdgeList edges = g_bevelEdges;
-                    shown = ApplyPoly(ed, emr, [&](okay::modeling::PolyMesh& p) { return okay::modeling::BevelEdges(p, edges, width, &err) > 0; }, false);
+                    const int segs = g_bevelSegments;
+                    const float prof = g_bevelProfile;
+                    shown = ApplyPoly(ed, emr, [&](okay::modeling::PolyMesh& p) { return okay::modeling::BevelEdges(p, edges, width, &err, segs, prof) > 0; }, false);
                 }
                 g_bevelWidth = width;
                 if (psOk) dl->AddLine(ps, io.MousePos, IM_COL32(255, 255, 255, 120), 1.0f);
                 char buf[200];
-                std::snprintf(buf, sizeof(buf), "Bevel width %.3f  (%d edge%s)%s%s", width, (int)g_bevelEdges.size(), g_bevelEdges.size() == 1 ? "" : "s",
+                std::snprintf(buf, sizeof(buf), "Bevel width %.3f  %d segment%s  (%d edge%s)%s%s", width, g_bevelSegments, g_bevelSegments == 1 ? "" : "s",
+                              (int)g_bevelEdges.size(), g_bevelEdges.size() == 1 ? "" : "s",
                               g_ptoolTyped.Active() ? ("  typed " + g_ptoolTyped.Text()).c_str() : "", err.empty() ? "" : ("   " + err).c_str());
-                statusLine(buf, "Move the mouse away from the edges for a wider bevel  -  type a width  -  Ctrl snaps  -  Enter or click to confirm, Esc or right-click to cancel");
+                statusLine(buf, "Move the mouse away from the edges for a wider bevel  -  scroll for more segments  -  type a width  -  Ctrl snaps  -  Enter or click to confirm, Esc to cancel");
                 if (cancelKey) EndPolyTool(false);
                 else if (confirmKey || (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))) {
                     if (shown) {

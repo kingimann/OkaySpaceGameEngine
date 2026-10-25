@@ -308,6 +308,107 @@ int main() {
         CHECK(g4.Check().Valid() && ConsistentWinding(g4) && g4.Check().boundaryEdges == 16);
     }
 
+    // ---- Bevel with segments (a rounded profile) ----
+    {
+        const float w = 0.1f;
+        std::string err;
+        PolyMesh c = Cube();
+        const int a = FindVert(c, {-0.5f, 0.5f, -0.5f}), b = FindVert(c, {0.5f, 0.5f, -0.5f});
+        CHECK(BevelEdges(c, {{a, b}}, w, &err, 3) == 1);
+        CHECK(c.faces.size() == 9 && UsedVerts(c) == 14);       // a strip of 3, two profile points each end
+        CHECK(c.Check().Closed() && c.Check().Valid() && ConsistentWinding(c) && c.EulerCharacteristic() == 2);
+        CHECK(c.CountFaces(7) == 2);                             // the end faces take the profile points too
+        // Round: the profile points bulge out toward the old corner, past the flat chamfer.
+        bool round = true;
+        for (std::size_t i = 8; i < c.verts.size(); ++i) {
+            const Vec3 p = c.verts[i];
+            if (!Near(std::fabs(p.x), 0.5f)) continue;           // the points at the two ends
+            const float out = (p.y - 0.4f) + (-0.4f - p.z);      // how far past the chamfer line y - z = 0.9
+            if (out <= 1e-3f || p.y > 0.5f + 1e-5f || p.z < -0.5f - 1e-5f) round = false;
+        }
+        CHECK(round);
+        // Flat profile (0) keeps every profile point on the chamfer line.
+        PolyMesh f = Cube();
+        CHECK(BevelEdges(f, {{a, b}}, w, &err, 4, 0.0f) == 1);
+        bool flat = true;
+        for (const Vec3& p : f.verts) if (std::fabs(p.x) > 0.49f && p.y > 0.39f && p.z < -0.39f && !Near(p.y - p.z, 0.9f) && !Near(p.y, 0.5f)) flat = false;
+        CHECK(flat && f.Check().Closed());
+        // A loop (two bevels through each vertex), every edge (corner patches), and a
+        // chain end inside a grid (a cap): all still one closed, consistent shell.
+        PolyMesh t = Cube();
+        const int t0 = FindVert(t, {-0.5f, 0.5f, -0.5f}), t1 = FindVert(t, {0.5f, 0.5f, -0.5f});
+        const int t2 = FindVert(t, {0.5f, 0.5f, 0.5f}), t3 = FindVert(t, {-0.5f, 0.5f, 0.5f});
+        CHECK(BevelEdges(t, {{t0, t1}, {t1, t2}, {t2, t3}, {t3, t0}}, w, &err, 3) == 4);
+        CHECK(t.faces.size() == 6 + 12 && t.Check().Closed() && ConsistentWinding(t) && t.EulerCharacteristic() == 2);
+        PolyMesh all = Cube();
+        EdgeList every;
+        for (const auto& e : all.Edges()) every.push_back({e.a, e.b});
+        CHECK(BevelEdges(all, every, w, &err, 2) == 12);
+        CHECK(all.Check().Closed() && all.Check().Valid() && ConsistentWinding(all) && all.EulerCharacteristic() == 2);
+        PolyMesh g4 = Grid(4, 4);
+        CHECK(BevelEdges(g4, {{2 * 5 + 1, 2 * 5 + 2}}, w, &err, 3) == 1);
+        CHECK(g4.Check().Valid() && ConsistentWinding(g4) && g4.Check().boundaryEdges == 16);
+    }
+
+    // ---- Fill, grid fill, merge ----
+    {
+        std::string err;
+        // An open box (cube without its top): Fill closes it.
+        PolyMesh box = Cube();
+        int top = -1;
+        for (int f = 0; f < (int)box.faces.size(); ++f) if (box.FaceNormal(f).y > 0.9f) top = f;
+        box.faces.erase(box.faces.begin() + top);
+        EdgeList rim;
+        for (const auto& e : box.Edges()) if (e.faceCount == 1) rim.push_back({e.a, e.b});
+        CHECK(rim.size() == 4);
+        PolyMesh filled = box;
+        CHECK(FillFaces(filled, rim, &err) == 1);
+        CHECK(filled.Check().Closed() && ConsistentWinding(filled) && filled.FaceNormal((int)filled.faces.size() - 1).y > 0.9f);
+        PolyMesh cube = Cube();
+        CHECK(FillFaces(cube, {{0, 1}, {1, 2}}, &err) == 0 && !err.empty());   // edges between faces: refused
+        // A square hole in a grid: Grid Fill puts quads back, the centre where it was.
+        PolyMesh g = Grid(4, 4);
+        auto at = [](int x, int z) { return z * 5 + x; };
+        for (int f = (int)g.faces.size() - 1; f >= 0; --f) {
+            Vec3 c{0, 0, 0};
+            for (int v : g.faces[f].verts) c += g.verts[v];
+            c = c * 0.25f;
+            if (c.x > 1 && c.x < 3 && c.z > 1 && c.z < 3) g.faces.erase(g.faces.begin() + f);
+        }
+        CHECK(g.faces.size() == 12);
+        EdgeList hole;
+        const int ring[8] = {at(1, 1), at(2, 1), at(3, 1), at(3, 2), at(3, 3), at(2, 3), at(1, 3), at(1, 2)};
+        for (int i = 0; i < 8; ++i) hole.push_back({ring[i], ring[(i + 1) % 8]});
+        PolyMesh gf = g;
+        CHECK(GridFill(gf, hole, 0, &err) == 4);
+        CHECK(gf.faces.size() == 16 && gf.CountFaces(4) == 16 && gf.Check().boundaryEdges == 16 && ConsistentWinding(gf));
+        CHECK(FindVert(gf, {2, 0, 2}) >= 0);                     // the new centre vertex lands where the old one was
+        bool up = true;
+        for (int f = 12; f < 16; ++f) if (gf.FaceNormal(f).y < 0.9f) up = false;
+        CHECK(up);
+        PolyMesh odd = Grid(1, 1);
+        odd.faces.clear();
+        PolyFace tri; tri.verts = {0, 1, 3}; odd.faces.push_back(tri);
+        CHECK(GridFill(odd, {{0, 1}, {1, 3}, {3, 0}}, 0, &err) == 0 && err.find("even") != std::string::npos);
+        // Grid fill with UVs: the inner UV blends the rim.
+        PolyMesh gu = g;
+        for (PolyFace& f : gu.faces) { f.uvs.clear(); for (int v : f.verts) f.uvs.push_back({gu.verts[v].x / 4, gu.verts[v].z / 4}); }
+        CHECK(GridFill(gu, hole, 0, &err) == 4);
+        bool uvOk = true;
+        for (int f = 12; f < 16; ++f) for (int i = 0; i < 4; ++i) {
+            const Vec3 p = gu.verts[gu.faces[f].verts[i]];
+            if (!Near(gu.faces[f].uvs[i].x, p.x / 4) || !Near(gu.faces[f].uvs[i].y, p.z / 4)) uvOk = false;
+        }
+        CHECK(uvOk);
+        // Merge: the top four corners of a cube into one point makes a pyramid.
+        PolyMesh m = Cube();
+        std::vector<int> topV;
+        for (int i = 0; i < (int)m.verts.size(); ++i) if (m.verts[i].y > 0) topV.push_back(i);
+        CHECK(MergeVerts(m, topV, {0, 0.5f, 0}) == 3);
+        CHECK(m.faces.size() == 5 && m.CountFaces(3) == 4 && UsedVerts(m) == 5 && m.Check().Closed() && ConsistentWinding(m));
+        CHECK(MergeVerts(m, {0}, {0, 0, 0}) == 0);
+    }
+
     // ---- Knife ----
     {
         PolyMesh q = Grid(1, 1);                                 // corners 0 (0,0) 1 (1,0) 2 (0,1) 3 (1,1)

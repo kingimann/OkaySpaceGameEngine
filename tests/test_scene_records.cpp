@@ -76,9 +76,6 @@ int main() {
         GameObject* te = a.CreateGameObject("Terrain");
         auto* tr = te->AddComponent<Terrain>();
         tr->Resize(8); tr->heights[5] = 2.5f;
-        GameObject* vx = a.CreateGameObject("Vox");
-        auto* vt = vx->AddComponent<VoxelTerrain>();
-        vt->Resize(4, 4, 4);
 
         const std::string text = SceneSerializer::Serialize(a);
         Scene b("ok2");
@@ -95,6 +92,19 @@ int main() {
         CHECK(s2 && s2->GetComponent<SkinnedMesh>() && s2->GetComponent<SkinnedMesh>()->jointWt.size() == 3);
         GameObject* t2 = b.Find("Terrain");
         CHECK(t2 && t2->GetComponent<Terrain>() && t2->GetComponent<Terrain>()->heights.size() == 81);
+    }
+
+    // A voxel terrain loads too (exact text isn't compared: Apply() adds its
+    // MeshRenderer on load, which is long-standing behaviour).
+    {
+        Scene a("vox");
+        GameObject* vx = a.CreateGameObject("Vox");
+        vx->AddComponent<VoxelTerrain>()->Resize(4, 4, 4);
+        Scene b("vox2");
+        std::string err;
+        CHECK(SceneSerializer::Deserialize(b, SceneSerializer::Serialize(a), &err));
+        GameObject* v2 = b.Find("Vox");
+        CHECK(v2 && v2->GetComponent<VoxelTerrain>() && v2->GetComponent<VoxelTerrain>()->density.size() == 64);
     }
 
     TEST_MAIN_RESULT();

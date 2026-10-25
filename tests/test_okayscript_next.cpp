@@ -309,6 +309,27 @@ int main() {
         CHECK(hero && std::fabs(hero->transform->Position().x - 3.0f) < 0.05f);   // 6 units/s for 0.5 s
     }
 
+    {   // a float literal too small or too big for a float is a parse error, not a crash
+        const std::string tiny = "0." + std::string(60, '0') + "1";
+        const std::string huge = "1" + std::string(60, '0') + ".0";
+        for (const std::string& lit : {tiny, huge}) {
+            auto d = Diags(Wrap("    void Start() { float f = " + lit + "; }"));
+            CHECK(Has(d, 0, "number out of range", 2));
+        }
+    }
+    {   // deeply nested parentheses are a parse error, not a stack overflow
+        auto d = Diags(Wrap("    void Start() { int x = " + std::string(5000, '(') + "1" + std::string(5000, ')') + "; }"));
+        CHECK(Has(d, 0, "nested too deeply", 2));
+        std::string negs;
+        for (int i = 0; i < 5000; ++i) negs += "- ";
+        auto u = Diags(Wrap("    void Start() { int x = " + negs + "1; }"));
+        CHECK(Has(u, 0, "nested too deeply", 2));
+        // ...while ordinary nesting still works
+        World w(Wrap("    public int x;\n    void Start() { x = ((((2 + 1)))) * -(-2); }"));
+        CHECK(w.loaded);
+        CHECK_NEAR(w.Get("x").AsFloat(), 6.0f, 1e-4f);
+    }
+
     Input::FeedKeys({});
     Log::sink = nullptr;
     TEST_MAIN_RESULT();

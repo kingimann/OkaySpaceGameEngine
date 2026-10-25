@@ -18897,6 +18897,7 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
         {6, "Crouch"}, {7, "Prone"},      {4, "Wave"},    {8, "Point"},
         {9, "Clap"},   {10, "Thumbs Up"}, {11, "Salute"}, {12, "Wave Both"},
         {13, "Cheer"}, {14, "Sad"},       {15, "Angry"},  {16, "Think"},
+        {17, "Crouch Walk"}, {18, "Fall"}, {19, "Hang"},
     };
     if (!ed.isPlaying()) {
         ImGui::TextDisabled("Built-in animations - click one to watch it live in the Scene view:");
@@ -28366,7 +28367,7 @@ void DrawInspector(EditorState& ed) {
             SectionHeader("Animation (plays in Play mode)");
             const char* anims[] = {"None","Idle","Walk","Run","Wave","Jump","Crouch","Prone",
                                    "Point","Clap","Thumbs Up","Salute","Wave Both",
-                                   "Cheer (happy)","Sad","Angry","Think"};
+                                   "Cheer (happy)","Sad","Angry","Think","Crouch Walk","Fall","Hang"};
             ImGui::SetNextItemWidth(150);
             ImGui::Combo("Animation##char", &ch->anim, anims, IM_ARRAYSIZE(anims));
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Idle/walk/run/jump are driven by the controllers; the gestures and emotions (Point...Think) are poses you can trigger from scripts (set a Character's anim) or preview here.");
@@ -31294,6 +31295,26 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tap to toggle the stance; off = hold the key");
             if (ImGui::DragFloat("Crouch Speed##fp", &fp->crouchSpeed, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Prone Speed##fp", &fp->proneSpeed, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Allow Prone##fp", &fp->allowProne)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lie down flat and crawl (Prone Key, or hold the gamepad stance button). Off = no prone at all.");
+            ImGui::SameLine(); if (ImGui::Checkbox("Resize Body##fp", &fp->resizeBody)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Crouching and prone really make the player shorter: the collider shrinks so you can crawl under low cover, and you can't stand up into a ceiling.");
+            if (fp->resizeBody) {
+                if (ImGui::SliderFloat("Crouch Height##fp", &fp->crouchHeight, 0.3f, 1.0f, "%.2f x standing")) ed.dirty = true;
+                if (ImGui::SliderFloat("Prone Height##fp", &fp->proneHeight, 0.15f, 0.8f, "%.2f x standing")) ed.dirty = true;
+            }
+            {
+                const char* padBtns[] = {"None","A","B","X","Y","Back","Start","L","R","D-pad Up","D-pad Down","D-pad Left","D-pad Right"};
+                int sel = fp->stanceGamepadButton + 1;
+                if (sel < 0 || sel > 12) sel = 0;
+                ImGui::SetNextItemWidth(130);
+                if (ImGui::Combo("Stance Pad Button##fp", &sel, padBtns, IM_ARRAYSIZE(padBtns))) { fp->stanceGamepadButton = sel - 1; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gamepad: tap to crouch / stand up, hold to go prone.");
+                if (fp->allowProne) {
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+                    if (ImGui::DragFloat("Hold For Prone##fp", &fp->proneHoldTime, 0.02f, 0.1f, 2.0f, "%.2fs")) ed.dirty = true;
+                }
+            }
             if (ImGui::DragFloat("Stand Eye Height##fp", &fp->standEyeHeight, 0.05f, 0.0f, 3.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Crouch Eye Height##fp", &fp->crouchEyeHeight, 0.05f, 0.0f, 3.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Prone Eye Height##fp", &fp->proneEyeHeight, 0.05f, 0.0f, 3.0f)) ed.dirty = true;
@@ -31424,6 +31445,26 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tap to toggle the stance; off = hold the key");
             if (ImGui::DragFloat("Crouch Speed##tp", &tp->crouchSpeed, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Prone Speed##tp", &tp->proneSpeed, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Allow Prone##tp", &tp->allowProne)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lie down flat and crawl (Prone Key, or hold the gamepad stance button). Off = no prone at all.");
+            ImGui::SameLine(); if (ImGui::Checkbox("Resize Body##tp", &tp->resizeBody)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Crouching and prone really make the player shorter: the collider shrinks so you can crawl under low cover, and you can't stand up into a ceiling.");
+            if (tp->resizeBody) {
+                if (ImGui::SliderFloat("Crouch Height##tp", &tp->crouchHeight, 0.3f, 1.0f, "%.2f x standing")) ed.dirty = true;
+                if (ImGui::SliderFloat("Prone Height##tp", &tp->proneHeight, 0.15f, 0.8f, "%.2f x standing")) ed.dirty = true;
+            }
+            {
+                const char* padBtns[] = {"None","A","B","X","Y","Back","Start","L","R","D-pad Up","D-pad Down","D-pad Left","D-pad Right"};
+                int sel = tp->stanceGamepadButton + 1;
+                if (sel < 0 || sel > 12) sel = 0;
+                ImGui::SetNextItemWidth(130);
+                if (ImGui::Combo("Stance Pad Button##tp", &sel, padBtns, IM_ARRAYSIZE(padBtns))) { tp->stanceGamepadButton = sel - 1; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gamepad: tap to crouch / stand up, hold to go prone.");
+                if (tp->allowProne) {
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+                    if (ImGui::DragFloat("Hold For Prone##tp", &tp->proneHoldTime, 0.02f, 0.1f, 2.0f, "%.2fs")) ed.dirty = true;
+                }
+            }
             if (ImGui::DragFloat("Crouch Drop##tp", &tp->crouchHeightDrop, 0.05f, 0.0f, 3.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far the camera's look target lowers when crouched");
             if (ImGui::DragFloat("Prone Drop##tp", &tp->proneHeightDrop, 0.05f, 0.0f, 3.0f)) ed.dirty = true;
@@ -31588,7 +31629,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* pc = dynamic_cast<Platformer25DController*>(curComp)) {
         if (CompHeader("2.5D Platformer Controller", pc, &toRemove)) {
-            ImGui::TextDisabled("LittleBigPlanet-style: A/D run, Space jump, W/S change layer, E grab.");
+            ImGui::TextDisabled("LittleBigPlanet-style: A/D run, Space jump, W/S change layer, E grab.\nGamepad: stick runs (all the way = run), A jump, stick/d-pad up-down layers, RB grab.");
             SectionHeader("Run");
             if (ImGui::DragFloat("Walk Speed##p25", &pc->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (KeyBindCombo("Sprint Key##p25", pc->sprintKey)) ed.dirty = true;
@@ -31596,12 +31637,22 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Acceleration##p25", &pc->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Deceleration##p25", &pc->deceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
             if (ImGui::SliderFloat("Air Control##p25", &pc->airControl, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::DragFloat("Step Height##p25", &pc->stepHeight, 0.01f, 0.0f, 1.5f, "%.2f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ledges up to this high are walked up without jumping (kerbs, stairs). 0 = off.");
+            if (ImGui::SliderFloat("Stick Run Threshold##p25", &pc->stickRunThreshold, 0.3f, 1.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gamepad: below this the stick walks at the speed it's pushed; past it you run.");
             if (ImGui::Checkbox("Drive Animation##p25", &pc->driveAnimation)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Idle / walk / run at the speed you actually move, jump pose in the air and while hanging.");
 
             SectionHeader("Jump");
             if (ImGui::Checkbox("Can Jump##p25", &pc->canJump)) ed.dirty = true;
             if (pc->canJump) {
                 if (KeyBindCombo("Jump Key##p25", pc->jumpKey)) ed.dirty = true;
+                {
+                    const char* pads[] = {"A", "B", "X", "Y", "None"};
+                    int pb = pc->jumpGamepadButton < 0 || pc->jumpGamepadButton > 3 ? 4 : pc->jumpGamepadButton;
+                    if (ImGui::Combo("Jump Pad Button##p25", &pb, pads, 5)) { pc->jumpGamepadButton = pb == 4 ? -1 : pb; ed.dirty = true; }
+                }
                 if (ImGui::DragFloat("Jump Force##p25", &pc->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
                 if (ImGui::DragInt("Jumps##p25", &pc->maxJumps, 0.05f, 1, 5)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("2 = double jump.");
@@ -31656,7 +31707,12 @@ void DrawInspector(EditorState& ed) {
                 if (KeyBindCombo("Grab Key##p25", pc->grabKey)) ed.dirty = true;
                 if (ImGui::DragFloat("Reach##p25", &pc->grabReach, 0.02f, 0.1f, 5.0f)) ed.dirty = true;
                 if (ImGui::SliderFloat("Drag Speed##p25", &pc->grabPullSpeed, 0.1f, 1.0f, "x%.2f")) ed.dirty = true;
-                if (ImGui::Checkbox("Hang From Static Objects##p25", &pc->grabHang)) ed.dirty = true;
+                if (ImGui::Checkbox("Hang From Ledges##p25", &pc->grabHang)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hold grab in the air near the top edge of something solid to catch it and hang.\nS / down lets go, jump jumps off.");
+                if (pc->grabHang) {
+                    if (ImGui::Checkbox("Climb Up (W / up)##p25", &pc->ledgeClimb)) ed.dirty = true;
+                    if (pc->ledgeClimb) if (ImGui::DragFloat("Climb Time##p25", &pc->climbTime, 0.01f, 0.05f, 2.0f, "%.2fs")) ed.dirty = true;
+                }
             }
 
             SectionHeader("Camera");
@@ -31669,7 +31725,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Speed Zoom##p25", &pc->speedZoom, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Camera Follows Layer##p25", &pc->cameraFollowsLayer)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: the camera stays centred on the layers, like LittleBigPlanet.");
-            ImGui::TextDisabled("Script events: on_jump, on_land, on_layer, on_grab, on_release.");
+            ImGui::TextDisabled("Script events: on_jump, on_land, on_layer, on_grab, on_release, on_climb.");
             if (ImGui::SmallButton("Remove##p25")) toRemove = pc;
         }
     }
@@ -42134,7 +42190,7 @@ int main(int argc, char** argv) {
                     g_livePrevT += pdt * g_livePrevSpeed;
                     int keep = ch->anim;
                     ch->anim = g_livePrevAnim;
-                    ch->PreviewPose(ch->PoseAt(g_livePrevT));
+                    ch->PreviewPose(ch->PoseAt(g_livePrevT), ch->StanceOffsetAt(g_livePrevT));
                     if (ch->driveExternal && ch->gameObject) {
                         // Pose the imported rig from the preview (LateUpdate reads
                         // CurrentPose + StanceOffset), then re-deform its skins.

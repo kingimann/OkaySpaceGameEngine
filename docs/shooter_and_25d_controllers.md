@@ -47,8 +47,9 @@ To start with one:
   and faces the dash direction while it lasts. **Dash Cooldown** starts when the
   dash ends. Key and pad button are both settable (Space / A by default).
 - **Animation** (with a Character): follows what the body is actually doing.
-  Idle, walk or run is picked from the real ground speed; the stride rate matches
-  the speed; the legs step backwards when you walk away from where you aim.
+  Idle, walk or run is picked from the real ground speed; the stride is laid
+  out for that speed so the feet stay planted; strafing side-steps and the legs
+  step backwards when you walk away from where you aim.
   Switching between animations crossfades instead of snapping.
 - **Camera:** a high follow camera that leans toward the cursor so you see where
   you shoot, kicks a little on every shot, and zooms with the wheel.
@@ -75,11 +76,11 @@ A bullet, rocket or arrow.
 
 | Input | Action |
 |---|---|
-| A / D, stick | Run |
-| Shift | Sprint |
+| A / D, stick | Run (the stick walks at the speed it's pushed) |
+| Shift, stick pushed all the way | Sprint |
 | Space / A | Jump (hold for higher, tap for a hop) |
-| W / S, stick or d-pad up / down | Move to the layer behind / in front |
-| E / RB (hold) | Grab: drag or push a physics object, or hang from something solid |
+| W / S, stick or d-pad up / down | Move to the layer behind / in front; while hanging, climb up / let go |
+| E / RB (hold) | Grab: drag or push a physics object, or catch a ledge in the air |
 
 - **Depth layers:** the level is 3D, seen from the side. The player stays on one
   of a few depth **layers** (3 by default, like LittleBigPlanet), spaced *Layer
@@ -89,19 +90,33 @@ A bullet, rocket or arrow.
     standing.
   - A layer switch only happens when there is room on the other layer, so
     walls on one layer are walked past on another.
+  - If something gets in the way while you slide over, you go back to the
+    layer you came from instead of getting stuck between two.
+- **Moving:**
+  - Ledges up to *Step Height* (35 cm by default: kerbs, stairs) are walked up
+    without jumping.
+  - Pressing into a wall in the air doesn't stick you to it; you slide down.
+  - Trigger volumes (pickups, checkpoints) are never treated as ground or walls.
 - **Jump:**
   - variable height (*Short Hop*), extra *Fall Gravity* for snappy landings;
   - coyote time, a jump buffer, and double jumps.
 - **Grab:**
   - Hold the grab key next to a physics object to drag or push it. You keep
     facing it as you pull.
-  - Hold it in the air next to something static to hang from it.
-  - Jump to let go.
+  - Hold it in the air when your hands can reach the top edge of something
+    solid (a ledge, a bar) to catch it: you hang with your hands on the edge.
+    A bare wall face isn't something to hang from.
+  - While hanging: **W / up** climbs onto the ledge (if you fit on top), **S /
+    down** or letting go of grab drops, jump jumps off.
 - **Camera:** a side camera with look-ahead and a gentle vertical follow.
   - It pulls back a little at speed.
   - It stays centred on the layers, so switching layers doesn't swing the view.
     Turn on *Camera Follows Layer* to change that.
-- **Script events:** `on_jump`, `on_land`, `on_layer`, `on_grab`, `on_release`.
+- **Animation:** with *Drive Animation* on, the character idles, walks and runs
+  at the speed it actually moves with the feet planted (no running on the spot
+  against a wall), jumps and falls in the air, hangs with its arms up from a
+  ledge and scrambles while climbing.
+- **Script events:** `on_jump`, `on_land`, `on_layer`, `on_grab`, `on_release`, `on_climb`.
 
 ### Building a 2.5D level
 

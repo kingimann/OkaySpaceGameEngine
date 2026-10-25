@@ -3,6 +3,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
+#include "okay/Physics/Collider3D.hpp"
 
 namespace okay {
 
@@ -64,6 +65,60 @@ inline void RideMovingPlatform(Scene& sc, GameObject* go, PlatformRide& st, bool
     } else {
         st.platform = nullptr;
     }
+}
+
+/// Stance body shared by the controllers: crouching and lying prone really make
+/// the player shorter — the collider shrinks to the stance height (feet stay
+/// where they are), so you can crawl under low cover — and standing back up is
+/// refused while something is overhead.
+struct StanceBody {
+    bool  captured = false;
+    float standH = 1.8f;     ///< the authored (standing) collider height
+    float feetY = 0.0f;      ///< collider bottom, local to the object
+    float curH = -1.0f;
+};
+/// The player's box / capsule collider, or null.
+inline Collider3D* StanceCollider(GameObject* go) {
+    if (!go) return nullptr;
+    if (auto* b = go->GetComponent<BoxCollider3D>()) return b;
+    if (auto* c = go->GetComponent<CapsuleCollider3D>()) return c;
+    return nullptr;
+}
+inline void CaptureStance(GameObject* go, StanceBody& st) {
+    if (st.captured) return;
+    Collider3D* c = StanceCollider(go);
+    if (!c) return;
+    if (auto* b = dynamic_cast<BoxCollider3D*>(c)) st.standH = b->size.y;
+    else if (auto* k = dynamic_cast<CapsuleCollider3D*>(c)) st.standH = k->height;
+    st.feetY = c->offset.y - st.standH * 0.5f;
+    st.curH = st.standH;
+    st.captured = true;
+}
+/// Is there room for the body to be `height` tall where it stands now?
+inline bool StanceHasRoom(Scene& sc, GameObject* go, const StanceBody& st, float height) {
+    Collider3D* c = StanceCollider(go);
+    if (!c || !go->transform || !st.captured || height <= st.curH + 1e-3f) return true;
+    Vec3 s = go->transform->LossyScale();
+    float half = 0.25f;
+    if (auto* b = dynamic_cast<BoxCollider3D*>(c)) half = 0.5f * std::fmin(std::fabs(b->size.x * s.x), std::fabs(b->size.z * s.z));
+    else if (auto* k = dynamic_cast<CapsuleCollider3D*>(c)) half = k->radius * std::fabs(s.x);
+    half = std::fmax(0.05f, half * 0.9f);
+    // Only the part ABOVE the current body needs to be clear.
+    float lo = (st.feetY + st.curH) * std::fabs(s.y), hi = (st.feetY + height) * std::fabs(s.y);
+    Vec3 base = go->transform->Position();
+    Vec3 centre{base.x, base.y + 0.5f * (lo + hi), base.z};
+    for (Collider3D* o : sc.physics3D().OverlapBox(sc, centre, {half, 0.5f * (hi - lo), half}, Quat::Identity,
+                                                   Physics3D::kAllLayers, false, go))
+        if (o && o->gameObject != go) return false;
+    return true;
+}
+inline void ApplyStanceHeight(GameObject* go, StanceBody& st, float height) {
+    Collider3D* c = StanceCollider(go);
+    if (!c || !st.captured || std::fabs(height - st.curH) < 1e-4f) return;
+    if (auto* b = dynamic_cast<BoxCollider3D*>(c)) b->size.y = height;
+    else if (auto* k = dynamic_cast<CapsuleCollider3D*>(c)) k->height = std::fmax(height, 2.0f * k->radius);
+    c->offset.y = st.feetY + height * 0.5f;
+    st.curH = height;
 }
 
 } // namespace okay

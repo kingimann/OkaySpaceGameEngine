@@ -52,6 +52,12 @@ public:
     bool  toggleStance = true;          // tap to toggle vs hold
     float crouchSpeed = 2.2f;
     float proneSpeed  = 1.1f;
+    bool  allowProne = true;            // false: no prone at all (key and gamepad)
+    bool  resizeBody = true;            // crouch / prone shrink the collider (crawl under things; no standing into a ceiling)
+    float crouchHeight = 0.65f;         // crouched body height, fraction of standing
+    float proneHeight  = 0.33f;         // prone body height, fraction of standing
+    int   stanceGamepadButton = 1;      // tap = crouch / stand, hold = prone (-1 = none; 1 = B)
+    float proneHoldTime = 0.4f;         // seconds the gamepad button is held to go prone
     float crouchHeightDrop = 0.4f;      // Minecraft-style modest dip when crouched
     float proneHeightDrop  = 1.1f;      // ...and when prone
     float stanceLerp = 12.0f;           // how fast the target height eases
@@ -211,7 +217,7 @@ public:
         if (moving) { dir.x /= len; dir.z /= len; }
 
         // Stance (crouch / prone) + lean (Q/E peek) + run (no sprint while crouched/prone).
-        UpdateStance();
+        UpdateStance(dt);
         UpdateLean(dt);
         bool running = m_stance == Stance::Stand && moving && IsRunHeld() && !m_aim;
         float speed = m_stance == Stance::Prone  ? proneSpeed
@@ -267,7 +273,7 @@ public:
                 float sp = crouchSpeed + (slideSpeed - crouchSpeed) * k * k;
                 float sl = std::sqrt(m_slideDir.x * m_slideDir.x + m_slideDir.z * m_slideDir.z);
                 if (sl > 1e-4f) { rb->velocity.x = m_slideDir.x / sl * sp; rb->velocity.z = m_slideDir.z / sl * sp; }
-                if (canJump && m_jumpBuf > 0.0f) { m_slideT = 0.0f; m_stance = Stance::Stand; m_prevStance = Stance::Stand; }
+                if (canJump && m_jumpBuf > 0.0f) { m_slideT = 0.0f; m_stance = m_wantStance = Stance::Stand; m_prevStance = Stance::Stand; ApplyStanceHeight(gameObject, m_body, StanceHeight(Stance::Stand)); }
             }
             // Jump: first jump needs ground/coyote; extra jumps (double-jump) up to maxJumps.
             if (canJump && m_jumpBuf > 0.0f && m_stance == Stance::Stand) {   // no jumping while crouched/prone
@@ -351,11 +357,20 @@ public:
         // ---- Animation ----
         if (driveAnimation)
             if (Character* ch = FindCharacter()) {
-                // No jump/fall pose (it looked off): airborne keeps the matching
-                // ground pose (idle / walk / run).
-                ch->anim = m_stance == Stance::Prone  ? 7
-                         : m_stance == Stance::Crouch ? (moving ? 17 : 6)   // crouch-walk vs sneak-idle
-                         : (moving ? (running ? 3 : 2) : 1);
+                // State from what the body really does (speed over the ground, in the
+                // air or not); the stride follows the speed, and while aiming (body
+                // faces the camera) the legs turn toward the travel direction.
+                Character::Locomotion lo;
+                lo.velocity = rb ? rb->velocity : (moving ? dir * speed : Vec3{0, 0, 0});
+                lo.facing   = transform->localRotation * Vec3{0, 0, -1};
+                lo.onGround = !rb || m_groundContact > 0.0f || terrainGround;
+                lo.jumped   = m_jumped;
+                lo.crouch   = m_stance == Stance::Crouch;
+                lo.prone    = m_stance == Stance::Prone;
+                lo.sprint   = running;
+                lo.walkSpeed = walkSpeed;
+                lo.dt = dt;
+                ch->DriveLocomotion(lo);
                 // The head turns to keep looking where the camera points (relative to
                 // the body's current facing) AND tilts up/down with the orbit pitch,
                 // so the avatar looks around as you aim. (18 = the resting orbit pitch,
@@ -523,17 +538,52 @@ private:
         }
         return Input::GetKey(sprintKey);
     }
-    void UpdateStance() {
+    // Resolve the stance from the keys / gamepad, then size the body for it.
+    // Toggle mode remembers what you asked for, so a stand-up blocked by a low
+    // ceiling happens on its own once you crawl out from under it.
+    void UpdateStance(float dt) {
         if (toggleStance) {
             if (crouchKey && Input::GetKeyDown(crouchKey))
-                m_stance = (m_stance == Stance::Crouch) ? Stance::Stand : Stance::Crouch;
-            if (proneKey && Input::GetKeyDown(proneKey))
-                m_stance = (m_stance == Stance::Prone) ? Stance::Stand : Stance::Prone;
+                m_wantStance = (m_wantStance == Stance::Crouch) ? Stance::Stand : Stance::Crouch;
+            if (allowProne && proneKey && Input::GetKeyDown(proneKey))
+                m_wantStance = (m_wantStance == Stance::Prone) ? Stance::Stand : Stance::Prone;
         } else {
-            if (proneKey && Input::GetKey(proneKey))        m_stance = Stance::Prone;
-            else if (crouchKey && Input::GetKey(crouchKey)) m_stance = Stance::Crouch;
-            else                                            m_stance = Stance::Stand;
+            if (allowProne && proneKey && Input::GetKey(proneKey)) m_wantStance = Stance::Prone;
+            else if (crouchKey && Input::GetKey(crouchKey))        m_wantStance = Stance::Crouch;
+            else if (m_padHeld <= 0.0f)                            m_wantStance = Stance::Stand;
         }
+        // Gamepad: tap the stance button to crouch / stand up, hold it to drop prone.
+        if (stanceGamepadButton >= 0) {
+            if (Input::GetGamepadButton(stanceGamepadButton)) {
+                m_padHeld += dt;
+                if (allowProne && !m_padProned && m_padHeld >= proneHoldTime) { m_wantStance = Stance::Prone; m_padProned = true; }
+            } else if (m_padHeld > 0.0f) {
+                if (!m_padProned) m_wantStance = (m_stance == Stance::Stand) ? Stance::Crouch : Stance::Stand;
+                m_padHeld = 0.0f; m_padProned = false;
+            }
+        }
+        if (!allowProne && m_wantStance == Stance::Prone) m_wantStance = Stance::Stand;
+        Stance next = m_wantStance;
+        if (resizeBody && gameObject) {
+            CaptureStance(gameObject, m_body);
+            Scene* sc = gameObject->scene();
+            // Rising needs headroom; from prone, settle for a crouch if only that fits.
+            if (sc && m_body.captured && StanceHeight(next) > m_body.curH + 1e-3f &&
+                !StanceHasRoom(*sc, gameObject, m_body, StanceHeight(next))) {
+                if (next == Stance::Stand && m_stance == Stance::Prone &&
+                    StanceHasRoom(*sc, gameObject, m_body, StanceHeight(Stance::Crouch))) next = Stance::Crouch;
+                else next = m_stance;
+            }
+            m_stance = next;
+            ApplyStanceHeight(gameObject, m_body, StanceHeight(m_stance));
+        } else {
+            m_stance = next;
+        }
+    }
+    /// Collider height for a stance (crouch / prone are fractions of the standing body).
+    float StanceHeight(Stance s) const {
+        float h = m_body.standH;
+        return s == Stance::Prone ? h * proneHeight : (s == Stance::Crouch ? h * crouchHeight : h);
     }
     void UpdateLean(float dt) {
         float target = 0.0f;
@@ -549,6 +599,9 @@ private:
     float m_lean = 0.0f;             // eased lean amount (-1..+1)
     int   m_jumpsUsed = 0;          // jumps since last grounded (for double-jump)
     Stance m_stance = Stance::Stand;
+    Stance m_wantStance = Stance::Stand;   // what the input asks for (m_stance may wait for headroom)
+    StanceBody m_body;
+    float m_padHeld = 0.0f; bool m_padProned = false;
     float m_stanceDrop = 0.0f;        // smoothed look-target drop for crouch/prone
     Vec3 m_camPos{0, 0, 0};
     bool m_haveCamPos = false;

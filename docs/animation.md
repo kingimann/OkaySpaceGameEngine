@@ -176,14 +176,44 @@ On the built-in blocky Character, Foot IK **wires itself**: drop the
 component next to a Character and the leg bones and pelvis hook up
 automatically (and re-hook after save/load).
 
-## Built-in animation polish
+## Built-in locomotion: how the blocky character moves
 
-The procedural walk/run cycles roll each **foot** heel-to-toe through the
-stride and counter-sway the **shoulders** against the hips, and any
-jump that lands into idle/walk/run plays a short **landing recovery** —
-knees flex, the body dips, then springs back over ~0.3s. Standing still,
-the character **fidgets**: a slow side-to-side weight shift plus an
-occasional glance to one side. All automatic, on every Character.
+The built-in walk, run and crouch-walk are not fixed loops — every frame the
+legs are solved with two-bone IK from a stride laid out for **how fast the
+body really moves over the ground**:
+
+- **Feet stay planted.** A planted foot travels back under the hips at
+  exactly the body's speed, so it holds its spot on the floor instead of
+  skating. Faster means quicker *and* longer steps; above a jog the stance
+  shortens and both feet leave the ground (a real run with a flight phase).
+- **Hips ride the stride.** They drop a little while a planted foot is far
+  ahead or behind (so the legs reach the ground instead of the feet
+  floating) and arc up through a running flight. Knees always bend forward.
+- **Heel-to-toe.** Walkers land on the heel and roll off the toe; runners
+  land on the forefoot and kick the heel up behind before the knee drives
+  through. Arms swing against the legs, wider and with more elbow bend the
+  faster you go; the chest leans into speed and the head stays level.
+- **Strafing and backpedalling.** The hips and legs turn toward the travel
+  direction (up to 75°, the chest keeps facing forward) and side-step the
+  rest; travelling backwards steps backwards.
+- **Air and stances.** Jump (lead knee up, trailing leg, arms driving),
+  **Fall** (legs reaching for the ground, arms out for balance), a landing
+  absorb, **Crouch** (hips back and down, knees over the toes, hands in
+  front), **Crouch Walk**, **Prone** with a **crawl** (elbows pull in turn,
+  the opposite knee drags up) and **Hang** (arms up, legs loose).
+
+The First-Person, Third-Person, Top-Down Shooter and 2.5D controllers report
+the speed and direction automatically and pick the state from what the body
+is actually doing: pressed against a wall it stands instead of running in
+place, it idles the moment it stops, and the fall pose only shows after a
+real drop (a step down keeps the stride). Standing still, the character
+**fidgets**: a slow weight shift and an occasional glance to one side.
+
+Driving a Character yourself (an NPC, a cutscene): set `anim` and, for the
+locomotion states, `moveSpeed` (m/s) and `moveAngle` (degrees, + = to the
+body's right) every frame — or call `DriveLocomotion` with the body's
+velocity and facing. Without a reported speed the cycle plays at a natural
+pace on the spot.
 
 **Look-At IK** and **Aim IK** also have a **Smoothing** field now: the
 head/bone swings smoothly onto a new target instead of snapping the frame
@@ -211,7 +241,8 @@ them on a player (below) or drive them with the Model Animator.
 
 Select any character with the **Animation window** open and click a
 built-in animation button — **Idle, Walk, Run, Jump, Crouch, Prone, Wave,
-Point, Clap, Thumbs Up, Salute, Wave Both, Cheer, Sad, Angry, Think** —
+Point, Clap, Thumbs Up, Salute, Wave Both, Cheer, Sad, Angry, Think, Crouch
+Walk, Fall, Hang** —
 to watch it play **live in the Scene view without pressing Play**. Works
 on the blocky character, an auto-rigged model, and a retargeted imported
 model (the swapped Mixamo character waves right in the scene). A **Speed**

@@ -74,8 +74,10 @@ void Transform::SetRotation(const Quat& worldRot) {
     localRotation = (m_parent->Rotation().Conjugate() * worldRot).Normalized();
 }
 
-void Transform::SetParent(Transform* parent, bool worldPositionStays) {
-    if (parent == m_parent) return;
+bool Transform::SetParent(Transform* parent, bool worldPositionStays) {
+    if (parent == m_parent) return true;
+    for (Transform* t = parent; t; t = t->m_parent)
+        if (t == this) return false;   // self or a descendant: would form a cycle
     Vec3 world = Position();
     if (m_parent) {
         auto& sib = m_parent->m_children;
@@ -85,6 +87,7 @@ void Transform::SetParent(Transform* parent, bool worldPositionStays) {
     if (m_parent) m_parent->m_children.push_back(this);
     // Preserve the world position only when asked.
     if (worldPositionStays) SetPosition(world);
+    return true;
 }
 
 } // namespace okay

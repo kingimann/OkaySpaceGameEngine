@@ -51,7 +51,9 @@ public:
     Transform* Parent() const { return m_parent; }
     /// Reparent this transform. When `worldPositionStays` is true (the
     /// default) the world pose is preserved; when false the local pose is kept.
-    void SetParent(Transform* parent, bool worldPositionStays = true);
+    /// Refuses (returns false, nothing changes) a parent that is this transform
+    /// or one of its descendants, which would make the hierarchy a loop.
+    bool SetParent(Transform* parent, bool worldPositionStays = true);
     const std::vector<Transform*>& Children() const { return m_children; }
     int ChildCount() const { return static_cast<int>(m_children.size()); }
     /// Reorder a child among its siblings by `dir` (-1 = earlier/up, +1 = later/

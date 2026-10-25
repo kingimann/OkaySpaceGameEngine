@@ -242,8 +242,12 @@ int IndexOf(const Scene& scene, const GameObject* go) {
 // Character — like Terrain's mesh — so it isn't serialized. It's rebuilt from the
 // Character on load (BuildParts), which keeps part colours correct and avoids both
 // file bloat and duplicate rigs. True for the "Rig" node and everything under it.
+// Upper bound on any parent walk, so a corrupt hierarchy can't loop forever.
+static constexpr int kMaxParentDepth = 1 << 16;
+
 static bool IsGeneratedRig(GameObject* go) {
-    for (Transform* t = go ? go->transform : nullptr; t; t = t->Parent()) {
+    int depth = 0;
+    for (Transform* t = go ? go->transform : nullptr; t && depth < kMaxParentDepth; t = t->Parent(), ++depth) {
         GameObject* g = t->gameObject;
         if (g && g->name == "Rig") {
             Transform* par = t->Parent();
@@ -265,7 +269,8 @@ static bool IsGeneratedViewmodel(GameObject* go) {
 // Build mode's own runtime objects (placement ghost, link wires, hotbar) are
 // recreated each run, so they're never written to a scene or prefab.
 static bool IsBuildModeRuntime(GameObject* go) {
-    for (Transform* t = go ? go->transform : nullptr; t; t = t->Parent())
+    int depth = 0;
+    for (Transform* t = go ? go->transform : nullptr; t && depth < kMaxParentDepth; t = t->Parent(), ++depth)
         if (t->gameObject && t->gameObject->tag == BuildMode::kRuntimeTag) return true;
     return false;
 }
@@ -5346,12 +5351,17 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
         }
     }
 
-    // Resolve parent links now that every object exists.
+    // Resolve parent links now that every object exists. A link that would make
+    // the hierarchy a loop (an object under itself) is refused, and so is the file.
     for (auto& [childIdx, parentIdx] : parentLinks) {
         auto c = byIndex.find(childIdx);
         auto p = byIndex.find(parentIdx);
-        if (c != byIndex.end() && p != byIndex.end())
-            c->second->transform->SetParent(p->second->transform, /*worldPositionStays=*/false);
+        if (c != byIndex.end() && p != byIndex.end() &&
+            !c->second->transform->SetParent(p->second->transform, /*worldPositionStays=*/false)) {
+            if (error) *error = "object " + std::to_string(childIdx) + " has a parent cycle (parent " +
+                                std::to_string(parentIdx) + ")";
+            return false;
+        }
     }
     return true;
 }

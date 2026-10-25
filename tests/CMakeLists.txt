@@ -906,3 +906,8 @@ add_test(NAME stance_save COMMAND test_stance_save)
 add_executable(test_relay_security test_relay_security.cpp)
 target_link_libraries(test_relay_security PRIVATE okay::engine)
 add_test(NAME relay_security COMMAND test_relay_security)
+
+# Script file APIs stay inside the game's folders (no absolute paths, no "..")
+add_executable(test_script_paths test_script_paths.cpp)
+target_link_libraries(test_script_paths PRIVATE okay::engine)
+add_test(NAME script_paths COMMAND test_script_paths)

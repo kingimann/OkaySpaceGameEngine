@@ -952,9 +952,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << cy->offset.x << " " << cy->offset.y << " " << cy->offset.z << " "
             << (cy->isTrigger ? 1 : 0) << " " << cy->layer << " " << (cy->autoFit ? 1 : 0) << "\n";
     }
+    // A crouched / prone player has a shrunken collider; save the standing one.
+    const StanceBody* stance = nullptr;
+    if (auto* fpc = go->GetComponent<FirstPersonController>()) stance = &fpc->stanceBody();
+    else if (auto* tpc = go->GetComponent<ThirdPersonController>()) stance = &tpc->stanceBody();
+    const bool resized = stance && stance->captured && std::fabs(stance->curH - stance->standH) > 1e-4f;
+    const float standOffY = resized ? stance->feetY + stance->standH * 0.5f : 0.0f;
     if (auto* bc = go->GetComponent<BoxCollider3D>(); bc && bc->shape() == Collider3D::Shape::Box) {
-        out << "  boxcollider3d " << bc->size.x << " " << bc->size.y << " " << bc->size.z << " "
-            << bc->offset.x << " " << bc->offset.y << " " << bc->offset.z << " "
+        out << "  boxcollider3d " << bc->size.x << " " << (resized ? stance->standH : bc->size.y) << " " << bc->size.z << " "
+            << bc->offset.x << " " << (resized ? standOffY : bc->offset.y) << " " << bc->offset.z << " "
             << (bc->isTrigger ? 1 : 0) << " " << bc->layer << " " << (bc->autoFit ? 1 : 0) << "\n";
     }
     if (auto* sc = go->GetComponent<SphereCollider3D>()) {
@@ -963,8 +969,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << (sc->isTrigger ? 1 : 0) << " " << sc->layer << " " << (sc->autoFit ? 1 : 0) << "\n";
     }
     if (auto* cap = go->GetComponent<CapsuleCollider3D>(); cap && cap->shape() == Collider3D::Shape::Capsule) {
-        out << "  capsulecollider3d " << cap->radius << " " << cap->height << " " << cap->axis << " "
-            << cap->offset.x << " " << cap->offset.y << " " << cap->offset.z << " "
+        out << "  capsulecollider3d " << cap->radius << " " << (resized ? stance->standH : cap->height) << " " << cap->axis << " "
+            << cap->offset.x << " " << (resized ? standOffY : cap->offset.y) << " " << cap->offset.z << " "
             << (cap->isTrigger ? 1 : 0) << " " << cap->layer << " " << (cap->autoFit ? 1 : 0) << "\n";
     }
     // Trigger tag / layer filter for the object's 3D colliders (only when set).
@@ -1436,6 +1442,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (fp->zoomWithRightMouse ? 1 : 0) << " " << fp->zoomFov << " " << fp->zoomSensitivity
             << " " << fp->landDip << " " << (fp->canSlide ? 1 : 0) << " " << fp->slideSpeed << " " << fp->slideTime
             << " " << fp->slideEyeHeight << " " << (fp->driveStateMachine ? 1 : 0) << " " << (fp->ikLook ? 1 : 0) << "\n";
+        out << "  fpstance";
+        KvOut k{out};
+        k.b("prone", fp->allowProne).b("resize", fp->resizeBody)("crouchH", fp->crouchHeight)("proneH", fp->proneHeight)
+         ("pad", fp->stanceGamepadButton)("hold", fp->proneHoldTime);
+        out << "\n";
     }
     if (auto* tp = go->GetComponent<ThirdPersonController>()) {
         out << "  tpctrl " << tp->walkSpeed << " " << tp->runSpeed << " " << tp->jumpForce << " "
@@ -1463,6 +1474,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << tp->leanAngle << " " << tp->leanOffset << " " << tp->leanSpeed
             << " " << tp->maxJumps
             << " " << (tp->footIK ? 1 : 0) << "\n";
+        out << "  tpstance";
+        KvOut k{out};
+        k.b("prone", tp->allowProne).b("resize", tp->resizeBody)("crouchH", tp->crouchHeight)("proneH", tp->proneHeight)
+         ("pad", tp->stanceGamepadButton)("hold", tp->proneHoldTime);
+        out << "\n";
     }
     if (auto* tp = go->GetComponent<ThirdPersonController>()) {
         out << "  tpfeel " << tp->lookSmoothing << " " << tp->sprintFovBoost << " " << tp->fovLerp
@@ -1515,6 +1531,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
          ("turn", pc->turnSpeed)("faceCam", pc->faceCameraAngle)
          .b("grab", pc->canGrab).key("grabKey", pc->grabKey)("grabPad", pc->grabGamepadButton)("reach", pc->grabReach)
          ("pull", pc->grabPullSpeed).b("hang", pc->grabHang)
+         ("step", pc->stepHeight)("stickRun", pc->stickRunThreshold)("jumpPad", pc->jumpGamepadButton)
+         .b("climb", pc->ledgeClimb)("climbTime", pc->climbTime)
          ("camDist", pc->cameraDistance)("camH", pc->cameraHeight)("camPitch", pc->cameraPitch)("lead", pc->lookAhead)
          ("camDamp", pc->cameraDamping)("vDamp", pc->verticalDamping)("speedZoom", pc->speedZoom)
          .b("followLayer", pc->cameraFollowsLayer);
@@ -4046,6 +4064,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     k.f("camDamp", ts->cameraDamping); k.f("lead", ts->aimLookAhead); k.f("maxLead", ts->maxLookAhead);
                     k.b("zoom", ts->wheelZoom); k.f("minDist", ts->minDistance); k.f("maxDist", ts->maxDistance);
                     k.f("shake", ts->fireShake); k.str("proj", ts->projectile);
+                } else if (field == "fpstance" || field == "tpstance") {
+                    // Stance options for the controller declared just above (crouch/prone body).
+                    KvIn k(in);
+                    auto load = [&](auto* c) {
+                        if (!c) return;
+                        k.b("prone", c->allowProne); k.b("resize", c->resizeBody); k.f("crouchH", c->crouchHeight);
+                        k.f("proneH", c->proneHeight); k.i("pad", c->stanceGamepadButton); k.f("hold", c->proneHoldTime);
+                    };
+                    if (field == "fpstance") load(go->GetComponent<FirstPersonController>());
+                    else                     load(go->GetComponent<ThirdPersonController>());
                 } else if (field == "p25ctrl") {
                     auto* pc = go->AddComponent<Platformer25DController>();
                     KvIn k(in);
@@ -4060,7 +4088,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     k.b("checkFree", pc->checkLayerFree); k.f("radius", pc->bodyRadius); k.f("turn", pc->turnSpeed);
                     k.f("faceCam", pc->faceCameraAngle); k.b("grab", pc->canGrab); k.key("grabKey", pc->grabKey);
                     k.i("grabPad", pc->grabGamepadButton); k.f("reach", pc->grabReach); k.f("pull", pc->grabPullSpeed);
-                    k.b("hang", pc->grabHang); k.f("camDist", pc->cameraDistance); k.f("camH", pc->cameraHeight);
+                    k.b("hang", pc->grabHang); k.f("step", pc->stepHeight); k.f("stickRun", pc->stickRunThreshold);
+                    k.i("jumpPad", pc->jumpGamepadButton); k.b("climb", pc->ledgeClimb); k.f("climbTime", pc->climbTime);
+                    k.f("camDist", pc->cameraDistance); k.f("camH", pc->cameraHeight);
                     k.f("camPitch", pc->cameraPitch); k.f("lead", pc->lookAhead); k.f("camDamp", pc->cameraDamping);
                     k.f("vDamp", pc->verticalDamping); k.f("speedZoom", pc->speedZoom);
                     k.b("followLayer", pc->cameraFollowsLayer);

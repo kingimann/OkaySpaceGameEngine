@@ -263,12 +263,18 @@ int main() {
         CHECK_EQ(ch->anim, 1);
         Step(s, {'w'}, 40);                                 // toward the aim
         CHECK_EQ(ch->anim, 2);
-        CHECK(ch->animSpeed > 0.8f);
+        CHECK(ch->moveSpeed > 3.0f);                        // the stride is laid out for the real speed
+        CHECK(std::fabs(ch->moveAngle) < 20.0f);            // ...straight ahead
         Step(s, {'s'}, 40);                                 // away from the aim
         CHECK_EQ(ch->anim, 2);
-        CHECK(ch->animSpeed < 0.0f);                        // legs step backwards
+        CHECK(std::fabs(ch->moveAngle) > 160.0f);           // travelling backwards: the legs step backwards
+        {   // the gait clock really runs backwards
+            float p0 = ch->GaitPhase(); Step(s, {'s'}, 1); float p1 = ch->GaitPhase();
+            float d = p1 - p0; if (d > 0.5f) d -= 1.0f; if (d < -0.5f) d += 1.0f;
+            CHECK(d < 0.0f);
+        }
         Step(s, {}, 2);
-        CHECK(ch->animSpeed < 0.0f);                        // ...while slowing down too
+        CHECK(ch->moveSpeed > 0.3f);                        // still stepping while it slows down
         Step(s, {}, 20);
         CHECK_EQ(ch->anim, 1);
         CHECK_NEAR(ch->animSpeed, 1.0f, 1e-4f);
@@ -452,6 +458,128 @@ int main() {
         CHECK_NEAR(q->GetComponent<Rigidbody3D>()->gravityScale, 1.0f, 1e-4f);   // gravity restored
     }
 
+    {   // Walls don't hold you up; low steps are walked up, tall ones block.
+        Scene s("p25w");
+        Ground(s);
+        Box(s, "Wall", {2.0f, 4.0f, 0}, {1, 8, 6});
+        GameObject* p = Body(s, "Player", {0, 0.02f, 0});
+        p->AddComponent<Platformer25DController>();
+        auto* rb = p->GetComponent<Rigidbody3D>();
+        s.Start();
+        Step(s, {}, 30);
+        Step(s, {' ', 'd'}, 1);
+        int hover = 0;
+        for (int i = 0; i < 120; ++i) {
+            Step(s, {' ', 'd'});
+            if (p->transform->Position().y > 0.3f && std::fabs(rb->velocity.y) < 0.3f) ++hover;
+        }
+        CHECK(hover < 10);                                  // was ~100 frames stuck on the wall
+        CHECK(p->transform->Position().y < 0.1f);           // back on the ground
+
+        auto walkTo = [](float stepH) {
+            Scene t("p25s");
+            Ground(t);
+            Box(t, "Step", {5.5f, stepH * 0.5f, 0}, {8, stepH, 6});
+            GameObject* q = Body(t, "Player", {0, 0.02f, 0});
+            q->AddComponent<Platformer25DController>();
+            t.Start();
+            Step(t, {}, 30);
+            Step(t, {'d'}, 90);
+            return q->transform->Position();
+        };
+        Vec3 low = walkTo(0.25f), high = walkTo(0.5f);
+        CHECK(low.x > 3.0f && low.y > 0.2f);                // up and on
+        CHECK(high.x < 1.5f && high.y < 0.1f);              // too tall: a wall
+    }
+    {   // Ledges: catch the top edge, climb up with W; a bare wall face isn't a ledge.
+        Scene s("p25l");
+        Ground(s);
+        Box(s, "Ledge", {2.0f, 1.25f, 0}, {2, 2.5f, 6});
+        GameObject* p = Body(s, "Player", {0, 0.02f, 0});
+        auto* pc = p->AddComponent<Platformer25DController>();
+        s.Start();
+        Step(s, {}, 30);
+        Step(s, {'e', 'd'}, 6);                             // grab held on the ground, by the wall
+        CHECK(!pc->IsHanging());
+        Step(s, {}, 2);
+        Step(s, {' ', 'd'}, 1);
+        bool hung = false;
+        for (int i = 0; i < 60 && !hung; ++i) { Step(s, {' ', 'd', 'e'}); hung = pc->IsHanging(); }
+        CHECK(hung);
+        CHECK_NEAR(p->transform->Position().y + 1.8f + 0.1f, 2.5f, 0.05f);   // hands on the edge
+        Step(s, {'e'}, 10);
+        CHECK(pc->IsHanging());
+        Step(s, {'e', 'w'}, 1);
+        CHECK(pc->IsClimbing());
+        Step(s, {'e'}, 40);
+        CHECK(!pc->IsClimbing() && !pc->IsHanging());
+        CHECK(p->transform->Position().y > 2.4f);           // standing on top
+        CHECK(p->transform->Position().x > 1.1f);
+        CHECK_EQ(pc->layer, 0);                             // W climbed, it didn't change layer
+        Step(s, {}, 30);
+        CHECK(pc->IsGrounded());
+        CHECK_NEAR(p->GetComponent<Rigidbody3D>()->gravityScale, 1.0f, 1e-4f);
+
+        Scene d("p25d");                                    // S lets go of a ledge
+        Ground(d);
+        Box(d, "Ledge", {2.0f, 1.25f, 0}, {2, 2.5f, 6});
+        GameObject* q = Body(d, "Player", {0, 0.02f, 0});
+        auto* qc = q->AddComponent<Platformer25DController>();
+        d.Start();
+        Step(d, {}, 30);
+        Step(d, {' ', 'd'}, 1);
+        for (int i = 0; i < 60 && !qc->IsHanging(); ++i) Step(d, {' ', 'd', 'e'});
+        CHECK(qc->IsHanging());
+        Step(d, {'e', 's'}, 1);
+        CHECK(!qc->IsHanging());
+        CHECK_EQ(qc->layer, 0);
+    }
+    {   // Gamepad: A jumps, the stick switches layers (one per push), full stick runs.
+        Scene s("p25p");
+        Ground(s);
+        GameObject* p = Body(s, "Player", {0, 0.02f, 0});
+        auto* pc = p->AddComponent<Platformer25DController>();
+        auto* rb = p->GetComponent<Rigidbody3D>();
+        s.Start();
+        Step(s, {}, 30);
+        Input::FeedGamepad({0, 0}, 1u); Step(s, {}, 1);
+        CHECK(rb->velocity.y > 5.0f);
+        Input::FeedGamepad({0, 0}, 0); Step(s, {}, 60);
+        Input::FeedGamepad({0, 1}, 0); Step(s, {}, 5);       // held up: one layer, not three
+        CHECK_EQ(pc->layer, 1);
+        Input::FeedGamepad({0, 0}, 0); Step(s, {}, 30);
+        Input::FeedGamepad({0, -1}, 0); Step(s, {}, 1);
+        CHECK_EQ(pc->layer, 0);
+        Input::FeedGamepad({0.5f, 0}, 0); Step(s, {}, 40);
+        float half = rb->velocity.x;
+        Input::FeedGamepad({1.0f, 0}, 0); Step(s, {}, 40);
+        CHECK_NEAR(half, pc->walkSpeed * 0.5f, 0.3f);       // half stick: half walk speed
+        CHECK_NEAR(rb->velocity.x, pc->runSpeed, 0.3f);     // full stick: run
+        Input::FeedGamepad({0, 0}, 0);
+    }
+    {   // Blocked on the way to another layer: back to the one you came from. Triggers aren't ground.
+        Scene s("p25b");
+        Ground(s);
+        GameObject* p = Body(s, "Player", {0, 0.02f, 0});
+        auto* pc = p->AddComponent<Platformer25DController>();
+        s.Start();
+        Step(s, {}, 30);
+        Step(s, {'w'}, 1); Step(s, {}, 2);
+        Box(s, "Blocker", {0, 1, -1.2f}, {2, 2, 0.5f});
+        Step(s, {}, 60);
+        CHECK_EQ(pc->layer, 0);
+        CHECK_NEAR(p->transform->Position().z, 0.0f, 0.1f);
+
+        Scene t("p25t");
+        GameObject* zone = Box(t, "Zone", {0, -0.5f, 0}, {10, 1, 10});
+        zone->GetComponent<BoxCollider3D>()->isTrigger = true;
+        GameObject* q = Body(t, "Player", {0, 0.02f, 0});
+        auto* qc = q->AddComponent<Platformer25DController>();
+        t.Start();
+        Step(t, {}, 2);
+        CHECK(!qc->IsGrounded());                           // a trigger volume isn't a floor
+    }
+
     // ================= Saving =================
     {
         Scene s("ser");
@@ -464,6 +592,7 @@ int main() {
         auto* pc = b->AddComponent<Platformer25DController>();
         pc->layerCount = 4; pc->layerSpacing = 2.25f; pc->frontLayerZ = -3.0f; pc->layer = 2;
         pc->grabKey = 'f'; pc->maxJumps = 2; pc->jumpCut = 0.3f; pc->cameraFollowsLayer = true;
+        pc->stepHeight = 0.5f; pc->stickRunThreshold = 0.8f; pc->jumpGamepadButton = 2; pc->ledgeClimb = false; pc->climbTime = 0.6f;
         auto* c = s.CreateGameObject("C");
         auto* pj = c->AddComponent<Projectile3D>();
         pj->velocity = {1, 2, 3}; pj->damage = 33; pj->pierce = 2; pj->bounce = true; pj->gravityScale = 1.0f;
@@ -486,6 +615,8 @@ int main() {
             CHECK_EQ(pc2->layerCount, 4); CHECK_NEAR(pc2->layerSpacing, 2.25f, 1e-4f);
             CHECK_NEAR(pc2->frontLayerZ, -3.0f, 1e-4f); CHECK_EQ(pc2->layer, 2); CHECK(pc2->grabKey == 'f');
             CHECK_EQ(pc2->maxJumps, 2); CHECK_NEAR(pc2->jumpCut, 0.3f, 1e-4f); CHECK(pc2->cameraFollowsLayer);
+            CHECK_NEAR(pc2->stepHeight, 0.5f, 1e-4f); CHECK_NEAR(pc2->stickRunThreshold, 0.8f, 1e-4f);
+            CHECK_EQ(pc2->jumpGamepadButton, 2); CHECK(!pc2->ledgeClimb); CHECK_NEAR(pc2->climbTime, 0.6f, 1e-4f);
         }
         if (pj2) {
             CHECK_NEAR(pj2->velocity.z, 3.0f, 1e-4f); CHECK_NEAR(pj2->damage, 33.0f, 1e-4f);

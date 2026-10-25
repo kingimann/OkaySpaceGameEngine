@@ -357,6 +357,7 @@ struct Mesh {
                 int a = r * stride + s, b = a + stride;
                 m.triangles.insert(m.triangles.end(), {a, b, a + 1, a + 1, b, b + 1});
             }
+        m.FlipWinding();   // the rows above wind inward: turn every face to point outward
         m.ComputeSmoothNormals();   // round the surface (no facets)
         return m;
     }
@@ -415,6 +416,7 @@ struct Mesh {
             m.triangles.insert(m.triangles.end(), {topC, s * 2, (s + 1) * 2});
             m.triangles.insert(m.triangles.end(), {botC, (s + 1) * 2 + 1, s * 2 + 1});
         }
+        m.FlipWinding();   // the rows above wind inward: turn every face to point outward
         return m;
     }
 
@@ -435,6 +437,7 @@ struct Mesh {
             m.triangles.insert(m.triangles.end(), {s, n, apex});   // side
             m.triangles.insert(m.triangles.end(), {base, n, s});   // base cap
         }
+        m.FlipWinding();   // the rows above wind inward: turn every face to point outward
         return m;
     }
 
@@ -459,6 +462,7 @@ struct Mesh {
                 int c = r1 * sides + s1, d = r * sides + s1;
                 m.triangles.insert(m.triangles.end(), {a, b, d, d, b, c});
             }
+        m.FlipWinding();   // the rows above wind inward: turn every face to point outward
         m.ComputeSmoothNormals();   // smooth torus surface
         return m;
     }
@@ -514,6 +518,7 @@ struct Mesh {
                 int a = i * sides + s, b = i1 * sides + s, c = i1 * sides + s1, d = i * sides + s1;
                 m.triangles.insert(m.triangles.end(), {a, b, d, d, b, c});
             }
+        m.FlipWinding();   // the rows above wind inward: turn every face to point outward
         m.ComputeSmoothNormals();
         return m;
     }
@@ -544,6 +549,7 @@ struct Mesh {
             m.triangles.insert(m.triangles.end(), {ot, ot2, it2,  ot, it2, it});   // top ring
             m.triangles.insert(m.triangles.end(), {ob, ib, ib2,  ob, ib2, ob2});   // bottom ring
         }
+        m.FlipWinding();   // the rows above wind inward: turn every face to point outward
         return m;
     }
 
@@ -2009,11 +2015,19 @@ public:
 
     /// Revolve a 2D profile around the Y axis to make a surface of revolution —
     /// vases, bottles, goblets, columns. Each profile point is (radius, height);
-    /// `segments` sets the angular resolution.
+    /// `segments` sets the angular resolution. Faces wind outward whichever way
+    /// the profile runs (bottom-to-top or top-to-bottom).
     static Mesh Lathe(const std::vector<Vec2>& profile, int segments = 16) {
         Mesh m;
         const int rows = (int)profile.size();
         if (rows < 2 || segments < 3) return m;
+        // Signed area of the profile closed along the axis: positive when it runs
+        // up the outside (bottom to top), negative when it runs down.
+        float area = 0.0f;
+        for (int r = 0; r + 1 < rows; ++r)
+            area += profile[r].x * profile[r + 1].y - profile[r + 1].x * profile[r].y;
+        area += profile[rows - 1].x * profile[rows - 1].y - profile[0].x * profile[0].y;   // the axis edges
+        const bool up = area >= 0.0f;
         const float kPi = 3.14159265358979323846f;
         for (int s = 0; s < segments; ++s) {
             float th = 2.0f * kPi * (float)s / segments;
@@ -2026,7 +2040,8 @@ public:
             for (int r = 0; r + 1 < rows; ++r) {
                 int a = s * rows + r,  b = s * rows + r + 1;
                 int c = s1 * rows + r, d = s1 * rows + r + 1;
-                m.triangles.insert(m.triangles.end(), {a, c, b, b, c, d});
+                if (up) m.triangles.insert(m.triangles.end(), {a, b, c, b, d, c});
+                else    m.triangles.insert(m.triangles.end(), {a, c, b, b, c, d});
             }
         }
         return m;
@@ -2176,6 +2191,7 @@ public:
                 int a = r * stride + s, b = a + stride;
                 m.triangles.insert(m.triangles.end(), {a, b, a + 1, a + 1, b, b + 1});
             }
+        m.FlipWinding();   // the rows above wind inward: turn every face to point outward
         m.ComputeSmoothNormals();   // smooth capsule surface
         return m;
     }

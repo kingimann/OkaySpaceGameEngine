@@ -61,9 +61,47 @@ public:
     // ---- Animation (plays in Play mode) ----
     int   anim      = 1;     // 0 none,1 idle,2 walk,3 run,4 wave,5 jump,6 crouch,7 prone,
                              // 8 point,9 clap,10 thumbs-up,11 salute,12 wave-both,
-                             // 13 cheer/happy,14 sad,15 angry,16 think (gestures + emotions)
+                             // 13 cheer/happy,14 sad,15 angry,16 think (gestures + emotions),
+                             // 17 crouch-walk, 18 fall, 19 hang (arms up, legs dangling)
     float animSpeed = 1.0f;
     float animTime  = 0.0f;  // runtime clock (not serialized)
+
+    // ---- Locomotion (walk / run / crouch-walk / prone crawl) ----
+    // The built-in gait is laid out from how fast the body really moves over the
+    // ground, so the planted foot stays put instead of skating: the stride, cadence,
+    // hip drop and bounce all follow `moveSpeed`. Controllers set these every frame;
+    // they are not serialized.
+    //   moveSpeed  ground speed in m/s. < 0 = not reported: the cycle plays at a
+    //              natural pace for the state (an NPC set to walk walks on the spot).
+    //   moveAngle  direction of travel relative to the way the body faces, degrees,
+    //              + = toward the body's right. The hips and legs turn toward it
+    //              (strafing) and step backwards when it points behind (backpedal),
+    //              while the chest keeps facing forward.
+    float moveSpeed = -1.0f;
+    float moveAngle = 0.0f;
+    /// Where the gait cycle is, 0..1 (0 = left foot touching down, 0.5 = right foot).
+    float GaitPhase() const;
+
+    /// What a movement controller knows about the body this frame.
+    struct Locomotion {
+        Vec3  velocity;            ///< the body's world velocity (m/s)
+        Vec3  facing{0, 0, -1};    ///< the body's forward direction (world)
+        bool  onGround = true;     ///< touching the ground (a contact, not just slow vertically)
+        bool  jumped = false;      ///< a jump started this frame
+        bool  crouch = false, prone = false;
+        bool  sprint = false;      ///< the run input is held
+        float walkSpeed = 4.5f;    ///< the controller's walk speed (run/walk split)
+        float dt = 0.0f;
+        /// Movement along this axis isn't walking (2.5D: the hop between depth
+        /// layers slides along Z); zero = count every direction.
+        Vec3  ignoreAxis{0, 0, 0};
+    };
+    /// Pick the movement state from what the body is actually doing — idle / walk /
+    /// run by real ground speed (a body pinned against a wall stands instead of
+    /// running in place), crouch / crouch-walk / prone, jump while rising and fall
+    /// while dropping — and report speed + direction so the stride matches the ground.
+    /// The first- and third-person and 2.5D controllers call this every frame.
+    void DriveLocomotion(const Locomotion& l);
 
     // ---- Punch / swing (a quick right-arm arc layered over the current anim) ----
     // Trigger a one-shot punch with Punch(); the right arm swings forward and back
@@ -134,7 +172,13 @@ public:
     // ---- Animation authoring (the editor's Animation window uses these) ----
     std::vector<Vec3> CurrentPose() const;  ///< the pose being shown right now (per-bone euler)
     /// Force a specific per-bone pose for editor preview (overrides anim/clip until cleared).
-    void PreviewPose(const std::vector<Vec3>& pose) { m_editorPose = pose; m_editorPosing = true; }
+    /// `offset` lowers/raises the whole body with it (a built-in crouch or stride
+    /// preview passes StanceOffsetAt() so the feet stay on the ground).
+    void PreviewPose(const std::vector<Vec3>& pose, Vec3 offset = {0, 0, 0}) {
+        m_editorPose = pose; m_editorPosing = true; m_editorOffset = offset;
+    }
+    /// The body offset the current built-in `anim` has at clock time `t`.
+    Vec3 StanceOffsetAt(float t) const { return RawStanceOffset(t); }
     void StopPreview() { m_editorPosing = false; }
 
     /// The first-person arm as its OWN mesh (just the arm bones), kept for the
@@ -370,6 +414,20 @@ private:
     float m_headPitch = 0.0f;      // eased head tilt (toward lookPitch)
     float m_bodyLean = 0.0f;       // eased body roll (toward bodyLean)
     int   m_prevAnim = 1;          // last frame's anim state (detects jump -> ground)
+    float m_gaitSpeed = -1.0f;     // smoothed ground speed the stride is laid out for (<0 = nominal)
+    float m_lowerYaw = 0.0f;       // eased turn of the hips/legs toward the travel direction (deg, ±75)
+    float m_travelYaw = 0.0f;      // eased travel direction the feet step along (deg, unclamped)
+    float m_gaitDir = 1.0f;        // +1 stepping forward, -1 stepping backward (backpedal)
+    float m_airT = 0.0f;           // seconds off the ground (DriveLocomotion)
+    Vec3  m_lastPos{0, 0, 0};      // last frame's position (measured ground speed)
+    bool  m_havePos = false;
+    struct Gait;                   // stride layout for one speed (Character.cpp)
+    Gait GaitFor(int state, float speed) const;
+    float GaitSpeed(int state) const;                  // m_gaitSpeed, or the state's natural pace
+    float NominalFreq(int state) const;                // cycles/s of animTime for a state
+    void GaitPose(std::vector<Vec3>& r, float t, int state) const;   // legs/arms/torso for walk/run/crouch-walk
+    float GaitHipY(float t, int state) const;          // hip drop + bounce for the same cycle
+    void  AdvanceAnimClock(float dt);                  // animTime at the gait's real cadence
     float m_landT = -1.0f;         // landing-recovery progress 0..1 (<0 = idle)
     float m_landK = 0.0f;          // landing knee-bend envelope 0..1 (sin arc)
     float m_punchT = -1.0f;        // punch progress 0..1 (<0 = not punching)
@@ -407,6 +465,9 @@ private:
     void SyncStateClips();               // auto-play the clip bound to the current `anim` state
     std::vector<Vec3> m_blendFrom;       // pose captured at the last clip switch (crossfade source)
     float m_blendT = 1.0f;               // crossfade weight 0..1 (1 = no blend active)
+    float m_blendFromY = 0.0f;           // hip height at the last switch (eased with the crossfade)
+    Vec3  RawStanceOffset(float t) const;   // StanceOffset at clock time t, without the crossfade
+    Vec3  m_editorOffset{0, 0, 0};       // body offset that goes with the previewed pose
     void BeginBlend();                   // snapshot the current pose and start a crossfade
     std::vector<std::string> m_animEvents;   // event names fired since the last ConsumeAnimEvents()
     void AdvanceClip(float dt);          // step the active clip's clock and fire its events

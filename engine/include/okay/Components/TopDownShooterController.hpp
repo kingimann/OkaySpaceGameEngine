@@ -319,32 +319,39 @@ private:
 
     float Rand01() { m_rng = m_rng * 1664525u + 1013904223u; return (float)((m_rng >> 8) & 0xFFFF) / 65535.0f; }
 
-    // Animation from what the body is ACTUALLY doing (its measured ground speed),
+    // Animation from what the body is ACTUALLY doing (its measured ground velocity),
     // not from the keys: no idle pose while still sliding, no legs running in
-    // place against a wall, and the stride rate matches the speed.
+    // place against a wall. The Character lays its stride out from the reported
+    // speed and direction, so the feet stay planted, strafing side-steps and
+    // backpedalling walks backwards while the body keeps facing the aim.
     void DriveAnimation(float dt, bool running, bool backpedal) {
+        (void)backpedal;
         Character* ch = FindCharacter();
         if (!ch) return;
         Vec3 pos = transform->Position();
-        float v = 0.0f;
-        if (auto* rb = gameObject->GetComponent<Rigidbody3D>())
-            v = std::sqrt(rb->velocity.x * rb->velocity.x + rb->velocity.z * rb->velocity.z);
-        else if (m_havePos && dt > 1e-5f)
-            v = std::sqrt((pos.x - m_lastPos.x) * (pos.x - m_lastPos.x) + (pos.z - m_lastPos.z) * (pos.z - m_lastPos.z)) / dt;
+        Vec3 vel{0.0f, 0.0f, 0.0f};
+        if (auto* rb = gameObject->GetComponent<Rigidbody3D>()) vel = {rb->velocity.x, 0.0f, rb->velocity.z};
+        else if (m_havePos && dt > 1e-5f) vel = {(pos.x - m_lastPos.x) / dt, 0.0f, (pos.z - m_lastPos.z) / dt};
         m_lastPos = pos; m_havePos = true;
+        float v = std::sqrt(vel.x * vel.x + vel.z * vel.z);
         // Smooth out physics jitter; settle faster when slowing so the body goes
         // idle the moment it actually stops.
         float k = 1.0f - std::exp((v < m_moveSpeed ? -30.0f : -12.0f) * dt);
         m_moveSpeed += (v - m_moveSpeed) * k;
-        if (m_dash > 0.0f) { ch->anim = 6; ch->animSpeed = m_baseAnimSpeed; return; }   // duck through the dodge
-        if (m_moveSpeed < 0.35f) { ch->anim = 1; ch->animSpeed = m_baseAnimSpeed; return; }
+        ch->animSpeed = m_baseAnimSpeed;
+        ch->moveSpeed = m_moveSpeed;
+        if (v > 0.05f) {
+            Vec3 f = transform->localRotation * Vec3{0, 0, -1};
+            float fl = std::sqrt(f.x * f.x + f.z * f.z);
+            if (fl > 1e-4f) {
+                f = f * (1.0f / fl);
+                ch->moveAngle = std::atan2(vel.x * -f.z + vel.z * f.x, vel.x * f.x + vel.z * f.z) * Mathf::Rad2Deg;
+            }
+        }
+        if (m_dash > 0.0f) { ch->anim = 6; return; }   // duck through the dodge
+        if (m_moveSpeed < 0.35f) { ch->anim = 1; return; }
         const bool run = running || m_moveSpeed > walkSpeed * 1.15f;
         ch->anim = run ? 3 : 2;
-        // The built-in cycles are tuned for ~walkSpeed / ~runSpeed; scale the
-        // stride rate by the real speed, and walk backwards when backpedalling.
-        float ref = run ? Mathf::Max(0.1f, runSpeed) : Mathf::Max(0.1f, walkSpeed);
-        float rate = Mathf::Clamp(m_moveSpeed / ref, 0.45f, 1.6f);
-        ch->animSpeed = m_baseAnimSpeed * rate * (backpedal ? -1.0f : 1.0f);
     }
 
     void EndDash() {

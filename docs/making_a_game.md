@@ -86,3 +86,19 @@ share these movement niceties:
   down. 0 disables.
 - **Fall Reset Y** (default -100): falling below this world height teleports
   the player back to spawn (with a console hint about missing colliders).
+
+## Crouch and prone (First- and Third-Person)
+
+- **Crouch Key** (default Ctrl) and **Prone Key** (default Z) — tap to toggle
+  (**Toggle Stance** on) or hold.
+- **Gamepad:** tap the **Stance Pad Button** (default B) to crouch / stand
+  up, hold it (**Hold For Prone**, 0.4 s) to drop prone.
+- **Allow Prone** switches lying down off entirely.
+- **Resize Body** (on by default): crouching and prone really make the
+  player shorter — the collider shrinks to **Crouch Height** / **Prone
+  Height** (fractions of the standing body), so you can crawl under low
+  cover. Standing up is refused while something is overhead; in toggle mode
+  the player stands up by itself once clear (from prone it settles for a
+  crouch if only that fits).
+- Prone moves at **Prone Speed** with a crawl animation; you can't sprint or
+  jump while crouched or prone.

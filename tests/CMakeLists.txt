@@ -866,3 +866,12 @@ add_test(NAME mesh_asset COMMAND test_mesh_asset)
 add_executable(test_poly_ops test_poly_ops.cpp)
 target_link_libraries(test_poly_ops PRIVATE okay::engine)
 add_test(NAME poly_ops COMMAND test_poly_ops)
+
+add_executable(test_locomotion test_locomotion.cpp)
+target_link_libraries(test_locomotion PRIVATE okay::engine)
+add_test(NAME locomotion COMMAND test_locomotion)
+
+# QA regression tests for PR #250 (fail until the reported bugs are fixed)
+add_executable(test_qa_pr250 test_qa_pr250.cpp)
+target_link_libraries(test_qa_pr250 PRIVATE okay::engine)
+add_test(NAME qa_pr250 COMMAND test_qa_pr250)

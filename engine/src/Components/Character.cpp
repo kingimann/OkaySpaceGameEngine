@@ -4,6 +4,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Physics/Physics3D.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <algorithm>
@@ -273,6 +274,308 @@ void Character::ClearCustomBind() {
     m_built = false;
 }
 
+// ---- Procedural locomotion -------------------------------------------------
+// Rig conventions (measured on this skeleton): the rig faces +Z before the 180°
+// display flip. On a bone hanging DOWN (thigh, shin, upper arm, forearm) +X swings
+// its far end BACKWARD; on a bone pointing UP (torso, head) +X tips it FORWARD. So
+// a knee or elbow bends naturally with shin +X / forearm -X, and +X on a foot
+// points the toes down. Leg: hip joint 0.92 above the soles, knee 0.55, ankle 0.12.
+namespace {
+constexpr float kThigh = 0.37f, kShin = 0.43f, kHipToAnkle = 0.80f, kAnkleH = 0.12f;
+constexpr float kPi = 3.14159265f, kRad2Deg = 57.2957795f;
+float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
+float frac(float v) { return v - std::floor(v); }
+float smooth01(float u) { u = clampf(u, 0.0f, 1.0f); return u * u * (3.0f - 2.0f * u); }
+
+// Two-bone leg IK in the hips' frame. The ankle goes `fwd` metres ahead of the hip
+// joint, `down` below it and `side` out to the rig's +X; `pitch` is the foot's
+// angle to the ground (deg, + = toes down). The knee always bends forward.
+void LegIK(float fwd, float down, float side, float pitch, Vec3& thigh, Vec3& shin, Vec3& foot) {
+    const float a = kThigh, b = kShin;
+    float dz = std::sqrt(down * down + side * side);
+    float abd = std::atan2(side, down);
+    float d = clampf(std::sqrt(fwd * fwd + dz * dz), 0.12f, (a + b) * 0.9995f);
+    float phi = std::atan2(fwd, dz);                                         // + = ankle ahead of the hip
+    float alpha = std::acos(clampf((a * a + d * d - b * b) / (2.0f * a * d), -1.0f, 1.0f));
+    float gamma = std::acos(clampf((a * a + b * b - d * d) / (2.0f * a * b), -1.0f, 1.0f));
+    float tx = -(phi + alpha) * kRad2Deg;                                    // thigh forward (knee leads)
+    float kx = (kPi - gamma) * kRad2Deg;                                     // knee flexion
+    thigh = {tx, 0.0f, abd * kRad2Deg};
+    shin  = {kx, 0.0f, 0.0f};
+    foot  = {pitch - (tx + kx), 0.0f, 0.0f};                                 // world foot angle = pitch
+}
+// Ankle height above the ground for a foot pitched by `pitch` degrees with the
+// toe (0.2 ahead) or heel (0.1 behind) as the contact point.
+float AnkleLiftForPitch(float pitch) {
+    float r = pitch * (kPi / 180.0f);
+    return r >= 0.0f ? kAnkleH * std::cos(r) + 0.20f * std::sin(r) - kAnkleH
+                     : kAnkleH * std::cos(r) - 0.10f * std::sin(r) - kAnkleH;
+}
+} // namespace
+
+// One stride layout. Distances are in the rig's metres (feet at y = 0).
+struct Character::Gait {
+    float speed;     // ground speed the stride covers
+    float freq;      // full cycles (two steps) per second
+    float beta;      // fraction of the cycle each foot is planted (< 0.5 = flight: running)
+    float reach;     // how far the planted foot travels under the hip (front to back)
+    float lift;      // swing foot's peak height
+    float baseDrop;  // constant hip lowering (knee softness / crouch)
+    float sag;       // extra knee give at mid-stance
+    bool  crouch;
+};
+
+Character::Gait Character::GaitFor(int state, float v) const {
+    Gait g{};
+    g.crouch = (state == 17);
+    v = v < 0.0f ? 0.0f : v;
+    g.speed = v;
+    float maxReach;
+    if (g.crouch) {
+        g.freq = clampf(0.75f + 0.30f * v, 0.75f, 1.7f);
+        maxReach = 0.66f;
+        g.baseDrop = 0.17f;
+        g.lift = clampf(0.05f + 0.025f * v, 0.05f, 0.12f);
+        g.sag = 0.0f;
+    } else {
+        // Cadence rises with speed (people take quicker AND longer steps to go
+        // faster); the reach a leg can cover caps the stance, so above a jog the
+        // stance shortens below half the cycle and both feet leave the ground.
+        // Walking quickens the steps fast; past a jog the cadence levels off and
+        // the stride lengthens instead (people run faster by bounding farther).
+        g.freq = clampf(std::fmin(0.95f + 0.30f * v, 1.45f + 0.08f * v), 0.95f, 2.2f);
+        maxReach = 0.72f;
+        float vc = v < 8.0f ? v : 8.0f;
+        g.baseDrop = 0.012f + 0.006f * vc;
+        g.lift = clampf(0.05f + 0.04f * v, 0.06f, 0.32f);
+        g.sag = 0.008f * vc;
+    }
+    float stride = g.freq > 1e-4f ? v / g.freq : 0.0f;    // ground covered per cycle
+    g.beta  = stride > 1e-4f ? clampf(maxReach / stride, 0.24f, 0.62f) : 0.62f;
+    g.reach = stride * g.beta;
+    return g;
+}
+
+float Character::GaitSpeed(int state) const {
+    if (m_gaitSpeed >= 0.0f) return m_gaitSpeed;
+    return state == 3 ? 4.8f : (state == 17 ? 1.0f : (state == 7 ? 0.8f : 1.5f));   // natural pace (matches NominalFreq)
+}
+
+// The cycle clock: animTime runs at this many cycles per second for a state, and
+// Update speeds it up or slows it down to the real cadence for the reported speed,
+// so changing speed mid-stride never jumps the phase.
+float Character::NominalFreq(int state) const {
+    return GaitFor(state, state == 3 ? 4.8f : (state == 17 ? 1.0f : (state == 7 ? 0.8f : 1.5f))).freq;
+}
+
+float Character::GaitPhase() const {
+    if (anim != 2 && anim != 3 && anim != 17) return 0.0f;
+    return frac(animTime * NominalFreq(anim));
+}
+
+namespace {
+struct FootState { float fwd, lift, pitch; bool planted; float u; };
+// Where one foot is at cycle phase p (0 = touchdown).
+FootState FootAt(float p, float beta, float reach, float lift, float speed, bool crouch) {
+    FootState f{};
+    p = frac(p);
+    if (p < beta) {                                     // planted: slides back under the hip
+        float u = p / beta;
+        f.planted = true; f.u = u;
+        f.fwd = reach * (0.5f - u);
+        float heelOff = crouch ? 0.0f : clampf((u - 0.65f) / 0.35f, 0.0f, 1.0f);
+        // Walkers land heel first (toes up), runners on the forefoot (toes down).
+        float strike = crouch ? 0.0f : clampf(1.0f - u / 0.2f, 0.0f, 1.0f);
+        float strikePitch = speed < 3.0f ? -9.0f : 12.0f;
+        f.pitch = (14.0f + 2.5f * clampf(speed, 0.0f, 6.0f)) * heelOff * heelOff + strikePitch * strike * strike;
+        f.lift = AnkleLiftForPitch(f.pitch);
+    } else {                                            // swinging forward to the next step
+        float u = (p - beta) / (1.0f - beta);
+        f.planted = false; f.u = u;
+        // The heel folds up behind first (toward the seat when running), then the
+        // knee brings the foot through and the leg reaches forward to land.
+        float k = clampf((speed - 2.0f) / 4.0f, 0.0f, 1.0f);    // 0 walk .. 1 run
+        f.fwd = reach * (smooth01(std::pow(u, 1.0f + 0.35f * k)) - 0.5f);
+        f.lift = lift * std::sin(kPi * std::pow(u, 0.75f - 0.2f * k));
+        float off = crouch ? 0.0f : (14.0f + 2.5f * clampf(speed, 0.0f, 6.0f));
+        float land = crouch ? 0.0f : (speed < 3.0f ? -9.0f : 12.0f);
+        f.pitch = off * (1.0f - u) * (1.0f - u) + land * u * u;
+        f.lift += AnkleLiftForPitch(f.pitch);   // same rule as stance: no seam at lift-off / touch-down
+    }
+    return f;
+}
+} // namespace
+
+float Character::GaitHipY(float t, int state) const {
+    Gait g = GaitFor(state, GaitSpeed(state));
+    float ph = frac(t * NominalFreq(state));
+    const float maxLeg = kHipToAnkle * 0.985f;
+    // How far the hips must come down for a planted foot to reach the ground.
+    auto need = [&](const FootState& f) {
+        float n = kHipToAnkle - std::sqrt(std::fmax(0.0f, maxLeg * maxLeg - f.fwd * f.fwd)) - f.lift;
+        return n + g.sag * std::sin(kPi * f.u);
+    };
+    float drop = -1.0f;
+    for (int leg = 0; leg < 2; ++leg) {
+        FootState f = FootAt(ph + 0.5f * leg, g.beta, g.reach, g.lift, g.speed, g.crouch);
+        if (f.planted) drop = std::fmax(drop, need(f));
+    }
+    if (drop < -0.5f) {
+        // Both feet off the ground (running): a short ballistic arc that leaves
+        // exactly where the last foot pushed off and lands exactly where the next
+        // one touches down, so the hips never jump and the feet never dip.
+        float s = frac(ph) - g.beta; if (s >= 0.5f) s -= 0.5f;     // cycles into this flight
+        float flightCycles = 0.5f - g.beta;
+        float w = clampf(s / flightCycles, 0.0f, 1.0f);
+        // (Each foot in its own phase: push-off ends its stance at beta, touch-down starts one at 0.)
+        FootState off = FootAt(g.beta - 1e-4f, g.beta, g.reach, g.lift, g.speed, g.crouch);
+        FootState on  = FootAt(1e-4f, g.beta, g.reach, g.lift, g.speed, g.crouch);
+        float a = need(off), b = need(on);
+        float flight = flightCycles / g.freq;                        // seconds
+        float rise = 0.5f * 9.81f * (0.25f * flight * flight) * 4.0f * w * (1.0f - w);
+        drop = a + (b - a) * w - rise;
+    }
+    return -(g.baseDrop + drop);
+}
+
+void Character::GaitPose(std::vector<Vec3>& r, float t, int state) const {
+    Gait g = GaitFor(state, GaitSpeed(state));
+    float ph = frac(t * NominalFreq(state));
+    float hipY = GaitHipY(t, state) - 0.12f * m_landK;
+    float down = kHipToAnkle + hipY;                       // hip joint to ankle, at rest on the ground
+    FootState fl = FootAt(ph, g.beta, g.reach, g.lift, g.speed, g.crouch);
+    FootState fr = FootAt(ph + 0.5f, g.beta, g.reach, g.lift, g.speed, g.crouch);
+    float half = g.reach > 1e-4f ? 0.5f * g.reach : 1.0f;
+    float sl = clampf(fl.fwd / half, -1.0f, 1.0f), sr = clampf(fr.fwd / half, -1.0f, 1.0f);
+    float v = g.speed;
+    float twist = g.crouch ? 3.0f : clampf(3.0f + 1.0f * v, 3.0f, 9.0f);
+    // Running feet land closer to the centre line.
+    float narrow = g.crouch ? 0.0f : clampf((g.speed - 2.0f) * 0.012f, 0.0f, 0.05f);
+    // Feet are placed in the travel frame, then brought into the twisting pelvis's
+    // frame: the hip joints absorb the pelvis turn, so a planted foot stays put.
+    float tw = twist * sl * (kPi / 180.0f), c = std::cos(tw), sn = std::sin(tw);
+    // Past the hips' turn limit the rest of the travel angle is a side-step: the
+    // stride runs along the real travel direction (+ = the body's right = rig -X).
+    float rho = (m_travelYaw - m_lowerYaw) * (kPi / 180.0f), rs = std::sin(rho), rc = std::cos(rho);
+    auto place = [&](const FootState& f, float hipX, float side, Vec3& th, Vec3& sh, Vec3& ft) {
+        float x = hipX + side - f.fwd * rs, z = f.fwd * rc;  // foot, relative to the pelvis centre
+        float lx = x * c - z * sn, lz = x * sn + z * c;      // in the pelvis frame
+        LegIK(lz, down - f.lift, lx - hipX, f.pitch, th, sh, ft);
+    };
+    place(fl, -0.105f,  narrow, r[B_LTHIGH], r[B_LSHIN], r[B_LFOOT]);
+    place(fr,  0.105f, -narrow, r[B_RTHIGH], r[B_RSHIN], r[B_RFOOT]);
+
+    // Arms swing against the legs (left arm back while the left foot is forward),
+    // wider and with more elbow bend the faster you go.
+    float armA = g.crouch ? 8.0f + 5.0f * v : clampf(8.0f + 6.0f * v, 10.0f, 55.0f);
+    float elbow = g.crouch ? 30.0f : clampf(12.0f + 10.0f * v, 12.0f, 95.0f);
+    float lArm = armA * sl, rArm = armA * sr;
+    float base = g.crouch ? -18.0f : 0.0f;                 // crouched: hands carried in front
+    r[B_LUPARM] = {base + lArm, 0.0f,  6.0f};
+    r[B_RUPARM] = {base + rArm, 0.0f, -6.0f};
+    r[B_LFORE]  = {-(elbow + 0.45f * std::fmax(0.0f, -lArm)), 0.0f, 0.0f};
+    r[B_RFORE]  = {-(elbow + 0.45f * std::fmax(0.0f, -rArm)), 0.0f, 0.0f};
+
+    // Pelvis turns with the stride, shoulders counter-turn; the chest leans into speed
+    // and the head stays level.
+    float lean  = g.crouch ? 28.0f : clampf(2.0f + 1.5f * v, 2.0f, 15.0f);
+    r[B_HIPS]  = {0.0f, twist * sl - m_lowerYaw, 0.0f};
+    r[B_TORSO] = {lean + 9.0f * m_landK, -1.8f * twist * sl + m_lowerYaw, 0.0f};
+    r[B_HEAD]  = {-0.65f * lean, 0.8f * twist * sl, 0.0f};
+}
+
+// Advance the built-in animation clock. Walk / run / crouch-walk run at the
+// cadence their reported ground speed calls for (and backwards when the body
+// backpedals), so a stride always covers exactly the ground the body moved.
+void Character::AdvanceAnimClock(float dt) {
+    const bool gait = (anim == 2 || anim == 3 || anim == 17);
+    float target = -1.0f;
+    if (moveSpeed >= 0.0f) {
+        float sc = 1.0f;   // a scaled-up body takes proportionally longer strides
+        if (gameObject && gameObject->transform) {
+            Vec3 ls = gameObject->transform->LossyScale();
+            sc = 0.5f * (std::fabs(ls.x) + std::fabs(ls.z));
+            if (sc < 1e-3f) sc = 1.0f;
+        }
+        target = moveSpeed / sc;
+    }
+    if (target < 0.0f)          m_gaitSpeed = -1.0f;
+    else if (m_gaitSpeed < 0.0f) m_gaitSpeed = target;
+    else                         m_gaitSpeed += (target - m_gaitSpeed) * (1.0f - std::exp(-12.0f * dt));
+
+    // Travel direction relative to the facing: the hips and legs turn toward it
+    // (up to 75°, the chest stays forward); pointing behind, they step backwards.
+    float a = std::fmod(moveAngle + 540.0f, 360.0f) - 180.0f;
+    float limit = m_gaitDir < 0.0f ? 80.0f : 100.0f;            // hysteresis around the side
+    m_gaitDir = std::fabs(a) > limit ? -1.0f : 1.0f;
+    float yaw = m_gaitDir < 0.0f ? (a > 0.0f ? a - 180.0f : a + 180.0f) : a;
+    if (!gait || m_gaitSpeed < 0.1f) yaw = 0.0f;
+    float ek = 1.0f - std::exp(-10.0f * dt);
+    m_travelYaw += (yaw - m_travelYaw) * ek;                    // where the feet actually step
+    m_lowerYaw  += (clampf(yaw, -75.0f, 75.0f) - m_lowerYaw) * ek;   // how far the hips turn
+
+    float rate = animSpeed;
+    if (gait) {
+        float nf = NominalFreq(anim);
+        float f = GaitFor(anim, GaitSpeed(anim)).freq;
+        rate *= (nf > 1e-4f ? f / nf : 1.0f) * m_gaitDir;
+    } else if (anim == 7 && m_gaitSpeed >= 0.0f) {
+        rate *= m_gaitSpeed / 0.8f;                              // crawl cycle follows the distance
+    }
+    animTime += dt * rate;
+}
+
+void Character::DriveLocomotion(const Locomotion& l) {
+    // Measure what the body really did: a controller sets the velocity it WANTS
+    // before physics runs, so pressed against a wall the velocity still says
+    // "moving" while the body stands still. The position change is the truth
+    // (one frame behind; a teleport/respawn jump is ignored).
+    Vec3 vel = l.velocity;
+    if (gameObject && gameObject->transform && l.dt > 1e-5f) {
+        Vec3 pos = gameObject->transform->Position();
+        if (m_havePos) {
+            Vec3 d = pos - m_lastPos;
+            const float al = l.ignoreAxis.Magnitude();
+            if (al > 1e-5f) { Vec3 a = l.ignoreAxis * (1.0f / al); d = d - a * Vec3::Dot(d, a); }
+            if (d.Magnitude() < 2.0f) vel = d * (1.0f / l.dt);
+        }
+        m_lastPos = pos; m_havePos = true;
+    }
+    // On the ground: a fresh contact, or solid ground just under the feet (contact
+    // callbacks stop for a body at rest, and stepping off a curb shouldn't count).
+    bool ground = l.onGround;
+    if (!ground && !l.jumped && gameObject && gameObject->transform && gameObject->scene()) {
+        Scene* sc = gameObject->scene();
+        Vec3 o = gameObject->transform->Position();
+        RaycastHit3D h = sc->physics3D().Raycast(*sc, o + Vec3{0.0f, 0.15f, 0.0f}, Vec3{0.0f, -1.0f, 0.0f}, 0.45f,
+                                                 gameObject, Physics3D::kAllLayers, false);
+        ground = h.hit && vel.y < 1.0f;
+    }
+    Vec3 v{vel.x, 0.0f, vel.z};
+    float hs = std::sqrt(v.x * v.x + v.z * v.z);
+    moveSpeed = hs;
+    Vec3 f{l.facing.x, 0.0f, l.facing.z};
+    float fl = std::sqrt(f.x * f.x + f.z * f.z);
+    if (fl > 1e-4f && hs > 0.05f) {
+        f = f * (1.0f / fl);
+        Vec3 right{-f.z, 0.0f, f.x};                          // the body's right
+        moveAngle = std::atan2(v.x * right.x + v.z * right.z, v.x * f.x + v.z * f.z) * kRad2Deg;
+    }
+    m_airT = (ground && !l.jumped) ? 0.0f : m_airT + l.dt;
+    if (l.jumped) m_airT = 1.0f;                               // leave the ground pose at once
+    const bool wasMoving = anim == 2 || anim == 3 || anim == 17;
+    const bool moving = hs > (wasMoving ? 0.2f : 0.35f);       // hysteresis: no idle/walk flicker
+    if (l.prone)                   anim = 7;
+    else if (l.jumped)             anim = 5;
+    else if (m_airT > 0.12f)       anim = l.velocity.y > 0.4f ? 5 : 18;   // short drops keep the stride
+    else if (l.crouch)             anim = moving ? 17 : 6;
+    else if (!moving)              anim = 1;
+    else {
+        float runAt = l.walkSpeed * (anim == 3 ? 1.05f : 1.15f);
+        anim = (hs > runAt || (l.sprint && hs > l.walkSpeed * 0.9f)) ? 3 : 2;
+    }
+}
+
 std::vector<Vec3> Character::PoseAt(float t) const {
     std::vector<Vec3> r(B_COUNT, Vec3{0, 0, 0});
     if (anim == 0) {
@@ -298,63 +601,44 @@ std::vector<Vec3> Character::PoseAt(float t) const {
             r[B_HEAD].y += side * 22.0f * e;
             r[B_HEAD].x += 2.0f * e;                                 // slight tilt with it
         }
-    } else if (anim == 2 || anim == 3) {   // walk / run
-        float amp = (anim == 3) ? 42.0f : 26.0f;
-        float w = t * (anim == 3 ? 9.0f : 6.5f);
-        float s = std::sin(w);
-        r[B_LTHIGH] = {amp * s, 0, 0};   r[B_RTHIGH] = {-amp * s, 0, 0};
-        r[B_LSHIN]  = {std::fmax(0.0f, -1.2f * amp * s), 0, 0};
-        r[B_RSHIN]  = {std::fmax(0.0f,  1.2f * amp * s), 0, 0};
-        r[B_LUPARM] = {-0.8f * amp * s, 0, 5};   r[B_RUPARM] = {0.8f * amp * s, 0, -5};
-        r[B_LFORE]  = {18, 0, 0};   r[B_RFORE] = {18, 0, 0};
-        // Feet counter-rotate against the thigh swing so the sole rolls heel->toe
-        // through the stride instead of staying rigidly welded to the shin.
-        r[B_LFOOT]  = {-0.30f * amp * s, 0, 0};   r[B_RFOOT] = {0.30f * amp * s, 0, 0};
-        // Shoulder counter-sway: the torso twists slightly against the hips with the
-        // stride (real gait), which reads as much more alive than a stiff spine.
-        r[B_TORSO]  = {(anim == 3 ? 12.0f : 4.0f) + 2.0f * std::fabs(s),
-                       (anim == 3 ? 7.0f : 4.0f) * s, 0};
+    } else if (anim == 2 || anim == 3) {   // walk / run: a stride laid out from the real ground speed
+        GaitPose(r, t, anim);
     } else if (anim == 4) {                // wave
         r[B_RUPARM] = {0, 0, -150};
         r[B_RFORE]  = {0, 0, -15 + 28 * std::sin(t * 8.0f)};
         r[B_LUPARM] = {0, 0, 6};
-    } else if (anim == 5) {                // jump (arms swing straight up — never crossing)
-        // Raise both arms overhead by rotating ONLY about X (the forward/up swing).
-        // Any Z rotation is what swung the hands across the centerline and made them
-        // cross in front of the face — so the jump pose keeps Z = 0 on both arms,
-        // which makes crossing geometrically impossible (each arm stays in its own
-        // side plane). A bent elbow keeps it looking like a natural leap, not a
-        // stiff "hands up". -110° on the upper arm reaches up-and-slightly-back.
-        r[B_LUPARM] = {-110, 0, 0};   r[B_RUPARM] = {-110, 0, 0};
-        r[B_LFORE]  = {28, 0, 0};     r[B_RFORE]  = {28, 0, 0};   // elbows bent up
-        r[B_LTHIGH] = {-22, 0, 0};    r[B_RTHIGH] = {-22, 0, 0};
-        r[B_LSHIN]  = {35, 0, 0};     r[B_RSHIN]  = {35, 0, 0};
-    } else if (anim == 6) {                // crouch (Minecraft-style sneak: hunch forward, feet planted)
-        float s = std::sin(t * 2.2f);      // gentle breathing
-        // Minecraft's sneak isn't a deep squat — the upper body pivots forward at
-        // the waist and the head dips while the legs stay nearly straight and the
-        // feet stay planted. A small knee bend lowers the stance a touch; the strong
-        // torso lean is the signature read.
-        r[B_HIPS]   = {10, 0, 0};                            // tip the pelvis forward
-        r[B_TORSO]  = {34 + 1.5f * s, 0, 0};                 // the forward hunch
-        r[B_HEAD]   = {-24, 0, 0};                           // bring the head up to look ahead
-        r[B_LTHIGH] = {18, 0, 0};    r[B_RTHIGH] = {18, 0, 0};   // slight knee crouch
-        r[B_LSHIN]  = {-30, 0, 0};   r[B_RSHIN]  = {-30, 0, 0};
-        r[B_LFOOT]  = {12, 0, 0};    r[B_RFOOT]  = {12, 0, 0};   // soles stay flat
-        r[B_LUPARM] = {16, 0, 8};    r[B_RUPARM] = {16, 0, -8};  // arms hang slightly forward
-        r[B_LFORE]  = {20, 0, 0};    r[B_RFORE]  = {20, 0, 0};
-    } else if (anim == 17) {               // crouch-walk (sneak while moving: legs cycle)
-        float amp = 16.0f;                 // a shorter, lower stride than the upright walk
-        float ss = std::sin(t * 6.0f);
-        r[B_HIPS]   = {10, 0, 0};                            // keep the crouch upper body
-        r[B_TORSO]  = {34, 0, 0};
-        r[B_HEAD]   = {-24, 0, 0};
-        r[B_LTHIGH] = {18 + amp * ss, 0, 0};   r[B_RTHIGH] = {18 - amp * ss, 0, 0};   // legs swing
-        r[B_LSHIN]  = {-30 + std::fmax(0.0f, -1.2f * amp * ss), 0, 0};
-        r[B_RSHIN]  = {-30 + std::fmax(0.0f,  1.2f * amp * ss), 0, 0};
-        r[B_LFOOT]  = {12, 0, 0};    r[B_RFOOT]  = {12, 0, 0};
-        r[B_LUPARM] = {16 - 0.6f * amp * ss, 0, 8};   r[B_RUPARM] = {16 + 0.6f * amp * ss, 0, -8};
-        r[B_LFORE]  = {20, 0, 0};    r[B_RFORE]  = {20, 0, 0};
+    } else if (anim == 5) {                // jump: lead knee driven up, trail leg pushing off, arms swing up
+        LegIK( 0.26f, 0.42f, 0.0f, 10.0f, r[B_LTHIGH], r[B_LSHIN], r[B_LFOOT]);   // lead leg tucked
+        LegIK(-0.16f, 0.72f, 0.0f, 35.0f, r[B_RTHIGH], r[B_RSHIN], r[B_RFOOT]);   // trail leg, toes pointed
+        r[B_RUPARM] = {-48, 0, -10};   r[B_RFORE] = {-62, 0, 0};    // opposite arm drives forward-up, elbow bent
+        r[B_LUPARM] = {28, 0, 12};     r[B_LFORE] = {-18, 0, 0};    // the other swings back
+        r[B_TORSO]  = {6, 4, 0};
+        r[B_HEAD]   = {-6, 0, 0};
+    } else if (anim == 18) {               // fall: legs reach down for the landing, arms out for balance
+        LegIK( 0.10f, 0.66f, 0.03f, -4.0f, r[B_LTHIGH], r[B_LSHIN], r[B_LFOOT]);
+        LegIK(-0.02f, 0.73f, -0.03f, 4.0f, r[B_RTHIGH], r[B_RSHIN], r[B_RFOOT]);
+        r[B_LUPARM] = {-12, 0, 58};    r[B_RUPARM] = {-12, 0, -58};
+        r[B_LFORE]  = {-22, 0, 0};     r[B_RFORE]  = {-22, 0, 0};
+        r[B_TORSO]  = {4, 0, 0};
+        r[B_HEAD]   = {8, 0, 0};       // eyes on the ground coming up
+    } else if (anim == 19) {               // hang: arms straight up to the ledge, legs hanging loose
+        r[B_LUPARM] = {-170, 0, 6};    r[B_RUPARM] = {-170, 0, -6};
+        r[B_LFORE]  = {-8, 0, 0};      r[B_RFORE]  = {-8, 0, 0};
+        float s = std::sin(t * 1.6f);  // a slight sway
+        LegIK( 0.04f + 0.02f * s, 0.76f, 0.02f, 25.0f, r[B_LTHIGH], r[B_LSHIN], r[B_LFOOT]);
+        LegIK(-0.02f + 0.02f * s, 0.77f, -0.02f, 25.0f, r[B_RTHIGH], r[B_RSHIN], r[B_RFOOT]);
+        r[B_HEAD]   = {-14, 0, 0};     // looking up at the hands
+    } else if (anim == 6) {                // crouch: hips back and down, knees forward over the toes, chest low
+        float s = std::sin(t * 2.2f);      // breathing
+        const float down = kHipToAnkle - 0.17f;
+        LegIK( 0.12f, down, 0.03f, 0.0f, r[B_LTHIGH], r[B_LSHIN], r[B_LFOOT]);
+        LegIK( 0.04f, down, -0.03f, 0.0f, r[B_RTHIGH], r[B_RSHIN], r[B_RFOOT]);   // one foot a little behind
+        r[B_TORSO]  = {28 + 1.5f * s, 0, 0};
+        r[B_HEAD]   = {-20, 0, 0};                           // eyes forward, not at the floor
+        r[B_LUPARM] = {-20, 0, 8};   r[B_RUPARM] = {-20, 0, -8};   // hands carried in front
+        r[B_LFORE]  = {-32, 0, 0};   r[B_RFORE]  = {-32, 0, 0};
+    } else if (anim == 17) {               // crouch-walk: the same crouch, stepping heel-to-toe
+        GaitPose(r, t, 17);
     } else if (anim == 7) {                // prone (whole body flat on the ground)
         // Rotate ONLY the hips 90° so the body lies flat: the torso/head swing
         // forward along the ground and the legs swing straight back — no counter
@@ -362,8 +646,23 @@ std::vector<Vec3> Character::PoseAt(float t) const {
         // then drops the whole body down onto the floor.
         r[B_HIPS]   = {90, 0, 0};
         r[B_HEAD]   = {-52, 0, 0};         // lift the head to look ahead
-        r[B_LUPARM] = {16, 0, 14};   r[B_RUPARM] = {16, 0, -14};   // arms slightly out front
-        r[B_LFORE]  = {24, 0, 0};    r[B_RFORE]  = {24, 0, 0};
+        // Lying down, the arms reach forward past the head (-X swings an arm
+        // forward; -90 would point it at the ground) with the forearms flat on the
+        // ground in front, elbows near the shoulders.
+        r[B_LUPARM] = {-158, 0, 12};  r[B_RUPARM] = {-158, 0, -12};
+        r[B_LFORE]  = {-20, 0, 0};    r[B_RFORE]  = {-20, 0, 0};
+        r[B_LTHIGH] = {0, 0, -6};     r[B_RTHIGH] = {0, 0, 6};      // legs a little apart
+        // Crawling: when the body moves, the elbows reach and pull in turn and the
+        // opposite knee drags up along the ground (distance-driven like the walk).
+        if (m_gaitSpeed > 0.15f) {
+            float c = std::sin(t * NominalFreq(7) * 2.0f * kPi);
+            float kl = std::fmax(0.0f, -c), kr = std::fmax(0.0f, c);
+            r[B_LUPARM].x += 20.0f * c;   r[B_RUPARM].x -= 20.0f * c;
+            r[B_LFORE].x  -= 25.0f * kr;  r[B_RFORE].x  -= 25.0f * kl;
+            r[B_LTHIGH] = {0, 0, -(6.0f + 24.0f * kl)};   r[B_LSHIN] = {0, 0,  34.0f * kl};   // knee out, foot back in
+            r[B_RTHIGH] = {0, 0,  (6.0f + 24.0f * kr)};   r[B_RSHIN] = {0, 0, -34.0f * kr};
+            r[B_TORSO].y = 4.0f * c;
+        }
     }
     // ---- Hand gestures (8-12) and emotions (13-16) -----------------------------
     // The rig is blocky with no face, so "emotions" read through body language
@@ -417,16 +716,19 @@ std::vector<Vec3> Character::PoseAt(float t) const {
         r[B_LUPARM] = {6, 0, 6};
     }
 
-    // Landing recovery: layer a brief knee-bend absorb over the grounded states
-    // (idle/walk/run) right after a jump lands — legs flex, torso dips forward,
-    // arms swing out a touch for balance, then it springs back over ~0.3s.
-    if (m_landK > 0.0f && (anim == 1 || anim == 2 || anim == 3)) {
+    // Landing recovery: a brief knee-bend absorb right after a jump lands — hips
+    // drop, knees bend forward, chest dips, arms out for balance — springing back
+    // over ~0.3s. Walk/run fold it into their own stride (GaitPose).
+    if (m_landK > 0.0f && anim == 1) {
         float lk = m_landK;
-        r[B_LTHIGH].x += 26.0f * lk;   r[B_RTHIGH].x += 26.0f * lk;
-        r[B_LSHIN].x  -= 34.0f * lk;   r[B_RSHIN].x  -= 34.0f * lk;
-        r[B_LFOOT].x  += 10.0f * lk;   r[B_RFOOT].x  += 10.0f * lk;
-        r[B_TORSO].x  += 10.0f * lk;
-        r[B_LUPARM].z += 12.0f * lk;   r[B_RUPARM].z -= 12.0f * lk;   // arms out for balance
+        const float down = kHipToAnkle - 0.12f * lk;
+        LegIK(0.03f, down, 0.0f, 0.0f, r[B_LTHIGH], r[B_LSHIN], r[B_LFOOT]);
+        LegIK(0.03f, down, 0.0f, 0.0f, r[B_RTHIGH], r[B_RSHIN], r[B_RFOOT]);
+        r[B_TORSO].x  += 12.0f * lk;
+        r[B_LUPARM].z += 14.0f * lk;   r[B_RUPARM].z -= 14.0f * lk;   // arms out for balance
+    }
+    if (m_landK > 0.0f && (anim == 2 || anim == 3)) {
+        r[B_LUPARM].z += 10.0f * m_landK;   r[B_RUPARM].z -= 10.0f * m_landK;
     }
 
     // Head look: layer the (eased) gaze on top of whatever the animation set, so the
@@ -448,11 +750,26 @@ std::vector<Vec3> Character::PoseAt(float t) const {
 }
 
 Vec3 Character::StanceOffset() const {
-    if (anim == 6 || anim == 17) return {0.0f, -0.12f, 0.0f};   // crouch / crouch-walk: light knee bend
+    if (m_editorPosing) return m_editorOffset;        // a previewed pose carries its own
+    Vec3 o = RawStanceOffset(animTime);
+    if (m_blendT < 1.0f && !m_blendFrom.empty()) {   // ease the hip height with the pose crossfade
+        float w = m_blendT * m_blendT * (3.0f - 2.0f * m_blendT);
+        o.y = m_blendFromY + (o.y - m_blendFromY) * w;
+    }
+    return o;
+}
+
+Vec3 Character::RawStanceOffset(float t) const {
+    // Walk / run / crouch-walk: the hips ride the stride (lower while a planted
+    // foot is far ahead or behind, a small rise in a running flight) so the legs
+    // reach the ground instead of the feet floating. Rig units scale with height.
+    if (anim == 2 || anim == 3 || anim == 17)
+        return {0.0f, (GaitHipY(t, anim) - 0.12f * m_landK) * height, 0.0f};
+    if (anim == 6) return {0.0f, -0.17f * height, 0.0f};   // crouch: hips down, knees bent
     if (anim == 7) return {0.0f, -0.78f, 0.0f};   // prone: lay the body on the ground
     // Landing recovery: the flexed knees momentarily lower the whole body.
-    if (m_landK > 0.0f && (anim == 1 || anim == 2 || anim == 3))
-        return {0.0f, -0.10f * m_landK, 0.0f};
+    if (m_landK > 0.0f && anim == 1)
+        return {0.0f, -0.12f * m_landK * height, 0.0f};
     return {0.0f, 0.0f, 0.0f};
 }
 
@@ -548,6 +865,7 @@ void Character::StopClip() {
 void Character::BeginBlend() {
     if (blendTime <= 1e-4f) { m_blendT = 1.0f; return; }   // instant
     m_blendFrom = CurrentSourcePose();                     // freeze where we are right now
+    m_blendFromY = RawStanceOffset(animTime).y;
     m_blendT = 0.0f;
 }
 
@@ -616,7 +934,7 @@ void Character::Update(float dt) {
     // brief knee-bend "absorb" (sin arc in PoseAt/StanceOffset) so a landing has
     // weight to it instead of the legs snapping straight the frame you touch down.
     if (anim != m_prevAnim) {
-        if (m_prevAnim == 5 && (anim == 1 || anim == 2 || anim == 3)) m_landT = 0.0f;
+        if ((m_prevAnim == 5 || m_prevAnim == 18) && (anim == 1 || anim == 2 || anim == 3)) m_landT = 0.0f;
         // Crossfade between the built-in animations too (idle -> run -> crouch ...),
         // not just authored clips: snapshot the pose of the state we're leaving so
         // a controller switching states doesn't snap the whole body in one frame.
@@ -625,6 +943,7 @@ void Character::Update(float dt) {
             const int now = anim;
             anim = m_prevAnim;
             m_blendFrom = CurrentSourcePose();
+            m_blendFromY = RawStanceOffset(animTime).y;   // the hips ease too, or the feet dip through the floor
             anim = now;
             m_blendT = 0.0f;
         }
@@ -654,7 +973,7 @@ void Character::Update(float dt) {
             if (m_punchT > 1.0f) m_punchT = 1.0f;
         }
         if (m_activeClip) AdvanceClip(dt);
-        else animTime += dt * animSpeed;
+        else AdvanceAnimClock(dt);
         float ek = headTurnSpeed > 0.0f ? (1.0f - std::exp(-headTurnSpeed * dt)) : 1.0f;
         m_headYaw   += (lookYaw   - m_headYaw)   * ek;
         m_headPitch += (lookPitch - m_headPitch) * ek;
@@ -678,7 +997,7 @@ void Character::Update(float dt) {
             }
             // A playing clip drives the parts; otherwise the built-in animation.
             if (m_activeClip) AdvanceClip(dt);
-            else animTime += dt * animSpeed;
+            else AdvanceAnimClock(dt);
             // Ease the head turn / tilt and the body lean toward their targets, just
             // like the single-mesh path — otherwise a separated character never leans
             // or head-tracks ("the camera leans but not the player").
@@ -698,7 +1017,7 @@ void Character::Update(float dt) {
             Mesh m = m_rest;
             std::vector<Vec3> pose = m_editorPose; pose.resize(B_COUNT, Vec3{0, 0, 0});
             Skin(m, m_bone, pose);
-            for (Vec3& v : m.vertices) { v.y *= height; v.x = -v.x; v.z = -v.z; }
+            for (Vec3& v : m.vertices) { v.y *= height; v.x = -v.x; v.z = -v.z; v += m_editorOffset; }
             m.normals.clear(); mr->mesh = std::move(m); mr->doubleSided = true;
         }
         return;
@@ -724,7 +1043,7 @@ void Character::Update(float dt) {
         if (m_punchT > 1.0f) m_punchT = 1.0f;
     }
     if (anim == 0) return;
-    animTime += dt * animSpeed;
+    AdvanceAnimClock(dt);
 
     // Auto look-at: drive lookYaw/lookPitch so the head aims at the main camera or a
     // named target. Same sign convention the controllers use: the head Euler-Y offset
@@ -848,7 +1167,8 @@ void Character::EditorPreviewTick() {
     EnsureRest();
     Mesh m = m_rest;
     Skin(m, m_bone, CurrentSourcePose());
-    for (Vec3& v : m.vertices) { v.y *= height; v.x = -v.x; v.z = -v.z; }
+    Vec3 so = StanceOffset();
+    for (Vec3& v : m.vertices) { v.y *= height; v.x = -v.x; v.z = -v.z; v += so; }
     m.normals.clear(); mr->mesh = std::move(m); mr->doubleSided = true;
 }
 

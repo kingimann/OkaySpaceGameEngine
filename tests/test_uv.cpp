@@ -220,9 +220,6 @@ int main() {
         CHECK(m.SplitCornerUVs().vertices.size() > 8);
 
         Mesh cyl = Mesh::Cylinder(0.5f, 1.0f, 16);
-        // (The built-in cylinder winds its faces inward; turn it outward so
-        // "seen from outside" matches the winding this check reads.)
-        cyl.FlipWinding();
         cyl.WeldVertices();
         cyl.ProjectUVCylinder(1.0f);
         int sideWrong = 0, wrapped = 0;

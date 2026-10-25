@@ -280,11 +280,15 @@ float InvInertia(Rigidbody3D* rb, Collider3D* col) {
 }
 
 // Components a callback removes are skipped (`gone`), so a handler that removes
-// a sibling component (or its own collider/body) never runs a freed one.
+// a sibling component (or its own collider/body) never runs a freed one. Once the
+// other collider itself is removed, the dispatch stops: the remaining handlers
+// would be handed a freed collider.
 void DispatchCollision(GameObject* go, void (Component::*fn)(const Collision3D&),
                        const Collision3D& info, const Scene::RemovalWatch& gone) {
-    for (Component* c : go->GetComponents<Component>())
+    for (Component* c : go->GetComponents<Component>()) {
+        if (gone.Gone(info.collider)) break;
         if (!gone.Gone(c)) (c->*fn)(info);
+    }
 }
 // The trigger overlap being dispatched right now (Physics3D::CurrentTrigger).
 const TriggerContact3D* g_currentTrigger = nullptr;
@@ -296,8 +300,10 @@ void DispatchTrigger(Collider3D* self, void (Component::*fn)(Collider3D*), Colli
     TriggerContact3D info{self, other, point, normal};
     const TriggerContact3D* prev = g_currentTrigger;
     g_currentTrigger = &info;
-    for (Component* c : self->gameObject->GetComponents<Component>())
+    for (Component* c : self->gameObject->GetComponents<Component>()) {
+        if (gone.Gone(other) || gone.Gone(self)) break;   // both are handed out (CurrentTrigger)
         if (!gone.Gone(c)) (c->*fn)(other);
+    }
     g_currentTrigger = prev;
 }
 

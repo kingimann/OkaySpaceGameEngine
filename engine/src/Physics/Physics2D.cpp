@@ -259,11 +259,15 @@ Contact TestColliders(Collider2D* a, Collider2D* b) {
 }
 
 // Components a callback removes are skipped (`gone`), so a handler that removes
-// a sibling component (or its own collider/body) never runs a freed one.
+// a sibling component (or its own collider/body) never runs a freed one. Once the
+// other collider itself is removed, the dispatch stops: the remaining handlers
+// would be handed a freed collider.
 void DispatchCollision(GameObject* go, void (Component::*fn)(const Collision2D&),
                        const Collision2D& info, const Scene::RemovalWatch& gone) {
-    for (Component* c : go->GetComponents<Component>())
+    for (Component* c : go->GetComponents<Component>()) {
+        if (gone.Gone(info.collider)) break;
         if (!gone.Gone(c)) (c->*fn)(info);
+    }
 }
 // The trigger overlap being dispatched right now (Physics2D::CurrentTrigger).
 const TriggerContact2D* g_currentTrigger = nullptr;
@@ -275,8 +279,10 @@ void DispatchTrigger(Collider2D* self, void (Component::*fn)(Collider2D*), Colli
     TriggerContact2D info{self, other, point, normal};
     const TriggerContact2D* prev = g_currentTrigger;
     g_currentTrigger = &info;
-    for (Component* c : self->gameObject->GetComponents<Component>())
+    for (Component* c : self->gameObject->GetComponents<Component>()) {
+        if (gone.Gone(other) || gone.Gone(self)) break;   // both are handed out (CurrentTrigger)
         if (!gone.Gone(c)) (c->*fn)(other);
+    }
     g_currentTrigger = prev;
 }
 

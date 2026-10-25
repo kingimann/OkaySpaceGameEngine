@@ -4,12 +4,13 @@
 // per face. It is the authoring form of a model; okay::Mesh (triangles) stays
 // what the renderer, physics and exporters use, and the two convert both ways:
 //
-//   PolyMesh::FromMesh(mesh)  welds shared corners and recovers quads from
-//                             pairs of coplanar triangles (a triangulated cube
-//                             comes back as 6 quads)
+//   PolyMesh::FromMesh(mesh)  welds shared corners and rebuilds the polygons:
+//                             exactly from mesh.polyFace when it is set, else
+//                             by recovering quads from pairs of coplanar
+//                             triangles (a triangulated cube comes back as 6 quads)
 //   poly.ToMesh()             triangulates each face (ear clipping, so concave
-//                             faces work) and splits vertices only where a
-//                             corner's UV differs
+//                             faces work), splits vertices only where a corner's
+//                             UV differs, and fills mesh.polyFace
 //
 // Saved as a .okaymesh text file (see Serialize) so a model can be reused
 // across objects and scenes.
@@ -63,7 +64,10 @@ public:
     int CountNgons() const;              ///< faces with more than four corners
 
     using FromMeshOptions = PolyFromMeshOptions;
-    static PolyMesh FromMesh(const Mesh& mesh, const FromMeshOptions& opt = FromMeshOptions());
+    /// `triFace`, if given, receives the face each of the mesh's triangles went into
+    /// (skipped degenerate triangles get numbers past the last face).
+    static PolyMesh FromMesh(const Mesh& mesh, const FromMeshOptions& opt = FromMeshOptions(),
+                             std::vector<int>* triFace = nullptr);
     /// Triangles for rendering. `triFace`, if given, receives the face each triangle came from.
     Mesh ToMesh(std::vector<int>* triFace = nullptr) const;
     /// Face normal (Newell's method, so it works for any planar or near-planar polygon).

@@ -353,6 +353,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
                 for (const Vec2& t : mr->mesh.uvs) out << " " << t.x << " " << t.y;
                 out << "\n";
             }
+            // Which triangles make up each quad / n-gon (optional record), so the
+            // polygons come back exactly for modeling after a reload.
+            if ((int)mr->mesh.polyFace.size() == mr->mesh.TriangleCount() && !mr->mesh.polyFace.empty()) {
+                out << "  meshpoly " << mr->mesh.polyFace.size();
+                for (int f : mr->mesh.polyFace) out << " " << f;
+                out << "\n";
+            }
             // Shading mode: meshgeo loads flat by default; remember when the user
             // chose Shade Smooth (1) or Auto Smooth by angle (2 <angle>) so it
             // survives save/load (optional record).
@@ -2424,6 +2431,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     mr->mesh.name = "";
                     mr->mesh.uvs.clear();
                     mr->mesh.triColors.clear();
+                    mr->mesh.polyFace.clear();
                     // Flat (faceted) shading, like the built-in primitives — do NOT
                     // force smooth normals, or an edited box/ground reloads looking like
                     // a soft rounded blob instead of clean flat faces.
@@ -2449,6 +2457,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     for (int i = 0; i < uc; ++i) {
                         Vec2 t; in >> t.x >> t.y; mr->mesh.uvs.push_back(t);
                     }
+                } else if (field == "meshpoly") {
+                    // Per-triangle polygon ids for meshgeo geometry (optional record).
+                    auto* mr = go->GetComponent<MeshRenderer>();
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int pc = 0; in >> pc;
+                    mr->mesh.polyFace.clear();
+                    mr->mesh.polyFace.reserve(pc > 0 ? pc : 0);
+                    for (int i = 0; i < pc; ++i) { int f = 0; in >> f; mr->mesh.polyFace.push_back(f); }
                 } else if (field == "meshshade") {
                     // Optional: restore smooth (1) or angle-based auto-smooth (2)
                     // shading on meshgeo geometry (the meshgeo reader cleared

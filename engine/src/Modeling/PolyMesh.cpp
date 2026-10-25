@@ -145,8 +145,47 @@ std::vector<int> PolyMesh::TriangulateFace(int face) const {
     return tris;
 }
 
-PolyMesh PolyMesh::FromMesh(const Mesh& mesh, const FromMeshOptions& opt) {
+// Rebuild one polygon from the triangles that share a polyFace id: their outer
+// edges must chain into a single loop. Returns false (the triangles are then
+// treated like any others) when they don't.
+static bool PolygonFromTriangles(const std::vector<PolyFace>& tris, const std::vector<int>& members, PolyFace& out) {
+    std::map<std::pair<int, int>, int> directed;   // (from, to) -> corner's triangle, for the UV
+    for (int t : members) {
+        const PolyFace& f = tris[t];
+        for (int i = 0; i < 3; ++i) directed[{f.verts[i], f.verts[(i + 1) % 3]}] = t;
+    }
+    std::map<int, std::pair<int, int>> next;      // from -> (to, triangle)
+    for (const auto& kv : directed) {
+        if (directed.count({kv.first.second, kv.first.first})) continue;   // inside the polygon
+        if (next.count(kv.first.first)) return false;                       // not a simple loop
+        next[kv.first.first] = {kv.first.second, kv.second};
+    }
+    if (next.size() < 3) return false;
+    const PolyFace& first = tris[members[0]];
+    const bool uv = !first.uvs.empty();
+    out = PolyFace{};
+    out.material = first.material; out.hasColor = first.hasColor; out.color = first.color;
+    int v = next.begin()->first;
+    for (std::size_t steps = 0; steps < next.size(); ++steps) {
+        auto it = next.find(v);
+        if (it == next.end()) return false;
+        out.verts.push_back(v);
+        if (uv) {
+            const PolyFace& f = tris[it->second.second];
+            if (f.uvs.size() != 3) return false;
+            for (int i = 0; i < 3; ++i) if (f.verts[i] == v) out.uvs.push_back(f.uvs[i]);
+        }
+        v = it->second.first;
+    }
+    return v == out.verts.front() && out.verts.size() == next.size();
+}
+
+static void MergeTrianglePairs(PolyMesh& pm, float planarDegrees, std::vector<int>* faceOf);
+
+PolyMesh PolyMesh::FromMesh(const Mesh& mesh, const FromMeshOptions& opt, std::vector<int>* triFace) {
     PolyMesh pm;
+    if (triFace) triFace->assign(mesh.TriangleCount(), -1);
+    std::vector<int> srcTri;   // mesh triangle of each kept triangle face
     const int nv = (int)mesh.vertices.size();
     const bool hasUV = mesh.uvs.size() == mesh.vertices.size() && !mesh.uvs.empty();
     const bool hasCol = mesh.HasFaceColors();
@@ -165,6 +204,8 @@ PolyMesh PolyMesh::FromMesh(const Mesh& mesh, const FromMeshOptions& opt) {
         pm.verts = mesh.vertices;
         for (int i = 0; i < nv; ++i) remap[i] = i;
     }
+    const bool hasGroups = (int)mesh.polyFace.size() == mesh.TriangleCount() && !mesh.polyFace.empty();
+    std::vector<int> group;   // polyFace id of each kept triangle
     for (int t = 0; t < mesh.TriangleCount(); ++t) {
         PolyFace f;
         bool ok = true;
@@ -177,14 +218,62 @@ PolyMesh PolyMesh::FromMesh(const Mesh& mesh, const FromMeshOptions& opt) {
         if (!ok || f.verts[0] == f.verts[1] || f.verts[1] == f.verts[2] || f.verts[0] == f.verts[2]) continue;
         if (hasCol) { f.hasColor = true; f.color = mesh.triColors[t]; }
         pm.faces.push_back(f);
+        srcTri.push_back(t);
+        if (hasGroups) group.push_back(mesh.polyFace[t]);
     }
-    if (!opt.mergeQuads) return pm;
+    // Skipped (degenerate) triangles get a face number of their own past the end.
+    auto finish = [&](const std::vector<int>& faceOfKept) {
+        if (!triFace) return;
+        for (std::size_t k = 0; k < srcTri.size(); ++k) (*triFace)[srcTri[k]] = faceOfKept[k];
+        int extra = (int)pm.faces.size();
+        for (int& f : *triFace) if (f < 0) f = extra++;
+    };
+    if (hasGroups) {
+        // The mesh says which triangles form each polygon: rebuild those exactly
+        // (in the order they first appear); only triangles whose group doesn't
+        // make a clean polygon are left to the pair merging below.
+        std::map<int, std::vector<int>> members;
+        for (int t = 0; t < (int)pm.faces.size(); ++t) members[group[t]].push_back(t);
+        std::vector<PolyFace> exact;
+        PolyMesh rest;
+        rest.verts = pm.verts;
+        std::vector<int> restKept;                      // kept-triangle index of each face in rest
+        std::vector<int> faceOfKept(pm.faces.size(), -1);
+        std::map<int, char> done;
+        for (int t = 0; t < (int)pm.faces.size(); ++t) {
+            const int g = group[t];
+            if (done.count(g)) continue;
+            done[g] = 1;
+            const std::vector<int>& mem = members[g];
+            PolyFace poly;
+            if (mem.size() == 1) { faceOfKept[t] = (int)exact.size(); exact.push_back(pm.faces[t]); }
+            else if (PolygonFromTriangles(pm.faces, mem, poly)) { for (int m : mem) faceOfKept[m] = (int)exact.size(); exact.push_back(poly); }
+            else for (int m : mem) { restKept.push_back(m); rest.faces.push_back(pm.faces[m]); }
+        }
+        std::vector<int> restFace;
+        if (opt.mergeQuads && !rest.faces.empty()) MergeTrianglePairs(rest, opt.planarDegrees, &restFace);
+        else { restFace.resize(rest.faces.size()); for (std::size_t i = 0; i < restFace.size(); ++i) restFace[i] = (int)i; }
+        for (std::size_t i = 0; i < restKept.size(); ++i) faceOfKept[restKept[i]] = (int)exact.size() + restFace[i];
+        pm.faces = std::move(exact);
+        pm.faces.insert(pm.faces.end(), rest.faces.begin(), rest.faces.end());
+        finish(faceOfKept);
+        return pm;
+    }
+    std::vector<int> faceOfKept(pm.faces.size());
+    for (std::size_t i = 0; i < faceOfKept.size(); ++i) faceOfKept[i] = (int)i;
+    if (opt.mergeQuads) MergeTrianglePairs(pm, opt.planarDegrees, &faceOfKept);
+    finish(faceOfKept);
+    return pm;
+}
 
+// Merge pairs of triangles into quads. faceOf, if given, receives the output
+// face each input triangle ended up in.
+static void MergeTrianglePairs(PolyMesh& pm, float planarDegrees, std::vector<int>* faceOf) {
     // Quads from coplanar triangle pairs: two triangles merge across an edge
     // that is the longest edge of both (the diagonal a triangulated quad was
     // split along), when they're flat together, look the same and make a
     // convex quad. Greedy and mutual, so a quad grid comes back exactly.
-    const float cosTol = std::cos(opt.planarDegrees * kPi / 180.0f);
+    const float cosTol = std::cos(planarDegrees * kPi / 180.0f);
     const int nf = (int)pm.faces.size();
     std::map<std::pair<int, int>, std::vector<int>> edgeFaces;
     for (int f = 0; f < nf; ++f)
@@ -205,13 +294,14 @@ PolyMesh PolyMesh::FromMesh(const Mesh& mesh, const FromMeshOptions& opt) {
                std::fabs(a.color.b - b.color.b) < 1e-4f && std::fabs(a.color.a - b.color.a) < 1e-4f;
     };
     std::vector<char> merged(nf, 0);
+    if (faceOf) faceOf->assign(nf, -1);
     std::vector<PolyFace> out;
     out.reserve(nf);
     for (int f = 0; f < nf; ++f) {
         if (merged[f]) continue;
         const int i = longest(f);
         const PolyFace& A = pm.faces[f];
-        if (i < 0) { out.push_back(A); merged[f] = 1; continue; }
+        if (i < 0) { if (faceOf) (*faceOf)[f] = (int)out.size(); out.push_back(A); merged[f] = 1; continue; }
         const int x = A.verts[i], y = A.verts[(i + 1) % 3], z = A.verts[(i + 2) % 3];
         int partner = -1;
         auto it = edgeFaces.find(Key(x, y));
@@ -226,7 +316,7 @@ PolyMesh PolyMesh::FromMesh(const Mesh& mesh, const FromMeshOptions& opt) {
                     partner = g;
             }
         }
-        if (partner < 0) { out.push_back(A); merged[f] = 1; continue; }
+        if (partner < 0) { if (faceOf) (*faceOf)[f] = (int)out.size(); out.push_back(A); merged[f] = 1; continue; }
         const PolyFace& B = pm.faces[partner];
         const int j = longest(partner);
         const int o = B.verts[(j + 2) % 3];   // B's corner opposite the shared edge
@@ -237,7 +327,7 @@ PolyMesh PolyMesh::FromMesh(const Mesh& mesh, const FromMeshOptions& opt) {
             const Vec2 ax = A.uvs[i], ay = A.uvs[(i + 1) % 3], bx = B.uvs[(j + 1) % 3], by = B.uvs[j];
             if (std::fabs(ax.x - bx.x) > 1e-5f || std::fabs(ax.y - bx.y) > 1e-5f ||
                 std::fabs(ay.x - by.x) > 1e-5f || std::fabs(ay.y - by.y) > 1e-5f) {
-                out.push_back(A); merged[f] = 1; continue;
+                if (faceOf) (*faceOf)[f] = (int)out.size(); out.push_back(A); merged[f] = 1; continue;
             }
             q.uvs = {A.uvs[i], B.uvs[(j + 2) % 3], A.uvs[(i + 1) % 3], A.uvs[(i + 2) % 3]};
         }
@@ -251,12 +341,12 @@ PolyMesh PolyMesh::FromMesh(const Mesh& mesh, const FromMeshOptions& opt) {
             const Vec3& p2 = pm.verts[q.verts[(k + 2) % 4]];
             if (Vec3::Dot(Vec3::Cross(p1 - p0, p2 - p1), N) <= 1e-9f) convex = false;
         }
-        if (!convex) { out.push_back(A); merged[f] = 1; continue; }
+        if (!convex) { if (faceOf) (*faceOf)[f] = (int)out.size(); out.push_back(A); merged[f] = 1; continue; }
+        if (faceOf) (*faceOf)[f] = (*faceOf)[partner] = (int)out.size();
         out.push_back(q);
         merged[f] = merged[partner] = 1;
     }
     pm.faces = std::move(out);
-    return pm;
 }
 
 Mesh PolyMesh::ToMesh(std::vector<int>* triFace) const {
@@ -293,7 +383,6 @@ Mesh PolyMesh::ToMesh(std::vector<int>* triFace) const {
             }
         for (int v = 0; v < (int)verts.size(); ++v) vertexFor(v, firstUV[v]);
     }
-    if (triFace) triFace->clear();
     for (int fi = 0; fi < (int)faces.size(); ++fi) {
         const PolyFace& f = faces[fi];
         bool ok = f.verts.size() >= 3;
@@ -307,9 +396,10 @@ Mesh PolyMesh::ToMesh(std::vector<int>* triFace) const {
                 m.triangles.push_back(vertexFor(f.verts[corner], fUV ? f.uvs[corner] : Vec2{0, 0}));
             }
             if (anyColor) m.triColors.push_back(f.hasColor ? f.color : Color{1, 1, 1, 1});
-            if (triFace) triFace->push_back(fi);
+            m.polyFace.push_back(fi);
         }
     }
+    if (triFace) *triFace = m.polyFace;
     return m;
 }
 

@@ -12,6 +12,7 @@
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
 #include "okay/Modeling/MeshAsset.hpp"       // .okaymesh / .obj mesh files
 #include "okay/Modeling/PolyMesh.hpp"        // polygon mesh (quads, n-gons)
+#include "okay/Modeling/PolyOps.hpp"         // edge-loop tools: loop cut, slide, bevel, knife...
 #include "okay/Render/SkyStars.hpp"    // deterministic skybox star field
 #include "okay/Render/GLRenderer.hpp"   // optional GPU (OpenGL) 3D renderer
 #include "okay/Render/Culling.hpp"     // frustum culling toggle + drawn/culled counts (Stats)
@@ -2873,6 +2874,26 @@ bool  g_meshPaint   = false;          // face-paint brush active (instead of sel
 float g_paintColor[4] = {0.9f, 0.25f, 0.2f, 1.0f};
 float g_paintRadius = 0.5f, g_paintBlend = 0.8f;
 // G / R / S in edit mode (Blender-style modal transforms, see okay/Modeling/EditTransform.hpp).
+// Edge-loop tools that take over the 3D view until confirmed or cancelled
+// (one at a time, alongside the G / R / S transform session below).
+enum class PolyTool { None, LoopCut, Slide, Bevel, Knife };
+PolyTool g_ptool = PolyTool::None;
+int   g_loopCuts = 1;                          // loop cut: number of cuts (mouse wheel)
+okay::modeling::EdgeList g_slideLoop;          // edge slide: the loop being slid...
+std::vector<Vec3> g_slideFrom;                 // ...from these positions
+okay::modeling::PolyMesh g_slidePoly;          // its topology
+bool  g_slideAfterCut = false;                 // the slide finishing a loop cut (one undo step for both)
+ImVec2 g_ptoolMouse0;                          // the mouse when the tool started
+Mesh  g_bevelStart;                            // bevel: the mesh before it, re-beveled live
+std::vector<int> g_bevelSelVerts, g_bevelSelFaces;   // ...and the selection then
+std::vector<std::pair<int, int>> g_bevelSelEdges;
+okay::modeling::EdgeList g_bevelEdges;         // the edges being beveled (numbered as in g_bevelStart)
+Vec3  g_bevelPivot{0, 0, 0};                   // their centre (object space)
+float g_bevelWidth = 0.1f;
+float g_bevelPxPerUnit = 100.0f;               // screen pixels per world unit at the selection
+okay::modeling::NumericInput g_ptoolTyped;     // a typed amount / width
+std::vector<okay::modeling::KnifePoint> g_knifePts;
+std::vector<Vec3> g_knifePos;                  // the knife points (object space), for drawing
 okay::modeling::EditTransformSession g_meModal;
 GameObject* g_meModalObj = nullptr;   // the object whose mesh the session is moving
 ImVec2 g_meModalMouse0{0, 0}, g_meModalPrevMouse{0, 0};
@@ -3007,6 +3028,109 @@ static void MeshUndoCommit(EditorState& ed) {
     g_meshEditStart = Mesh{}; g_meshEditStartSet = false;
 }
 
+// ---- The polygon view of the mesh being edited --------------------------
+// Picking, the wireframe and the edge-loop tools work on real polygons (quads,
+// n-gons). The mesh's polyFace says which triangles make each one; it's kept
+// up to date here, so a tool that rebuilt the triangles still hands back clean
+// polygons (found from the triangles) and every tool sees the faces you see.
+struct EditPolyCache {
+    std::uint64_t key = 0;
+    okay::modeling::PolyMesh pm;
+    std::vector<std::pair<int, int>> edges;
+};
+static EditPolyCache g_editPoly;
+// Only the topology: moving vertices doesn't change the polygons.
+static std::uint64_t PolyTopologyKey(const Mesh& m) {
+    std::uint64_t h = 1469598103934665603ull;
+    auto mix = [&](const void* d, std::size_t n) {
+        const unsigned char* p = static_cast<const unsigned char*>(d);
+        for (std::size_t i = 0; i < n; ++i) { h ^= p[i]; h *= 1099511628211ull; }
+    };
+    const std::size_t counts[3] = {m.vertices.size(), m.triangles.size(), m.polyFace.size()};
+    mix(counts, sizeof(counts));
+    const Mesh* self = &m;   // two meshes with the same triangles are still two meshes
+    mix(&self, sizeof(self));
+    if (!m.triangles.empty()) mix(m.triangles.data(), m.triangles.size() * sizeof(int));
+    if (!m.polyFace.empty()) mix(m.polyFace.data(), m.polyFace.size() * sizeof(int));
+    return h;
+}
+static const okay::modeling::PolyMesh& EditPoly(Mesh& m) {
+    if (PolyTopologyKey(m) != g_editPoly.key) {
+        std::vector<int> map;
+        g_editPoly.pm = okay::modeling::PolyMesh::FromMesh(m, {false, true, 1.0f}, &map);
+        if (map != m.polyFace) m.polyFace = map;
+        g_editPoly.edges.clear();
+        for (const auto& e : g_editPoly.pm.Edges()) g_editPoly.edges.push_back({e.a, e.b});
+        g_editPoly.key = PolyTopologyKey(m);
+    }
+    return g_editPoly.pm;
+}
+static const std::vector<std::pair<int, int>>& EditPolyEdges(Mesh& m) { EditPoly(m); return g_editPoly.edges; }
+
+// Run a polygon tool on the edited mesh as one undo step: the triangles are
+// rebuilt, vertices no face uses any more are dropped and the selection is
+// remapped. `op` returns false to leave the mesh as it was. `undo` = false for
+// a live preview (the caller handles undo).
+static bool ApplyPoly(EditorState& ed, MeshRenderer* mr, const std::function<bool(okay::modeling::PolyMesh&)>& op, bool undo = true) {
+    if (!mr) return false;
+    okay::modeling::PolyMesh pm = okay::modeling::PolyMesh::FromMesh(mr->mesh, {false, true, 1.0f});
+    const std::vector<MeshUndoStep> redoKept = undo ? g_meshRedo : std::vector<MeshUndoStep>{};
+    if (undo) EditUndoPoint(ed, mr);   // before op: it may set the new selection
+    if (!op(pm)) {
+        if (undo && mr == EditedRenderer() && !g_meshUndo.empty()) {
+            MeshUndoRestore(mr->mesh, g_meshUndo.back());   // nothing changed: give the step back
+            g_meshUndo.pop_back();
+            g_meshRedo = redoKept;
+        }
+        return false;
+    }
+    const std::vector<int> remap = okay::modeling::CompactVerts(pm);
+    const bool smooth = mr->mesh.HasNormals();
+    const float autoAngle = mr->mesh.autoSmoothAngle;
+    Mesh out = pm.ToMesh();
+    out.name = "";
+    if (smooth) { if (autoAngle > 0.0f) out.ComputeAutoSmoothNormals(autoAngle); else out.ComputeSmoothNormals(); }
+    mr->mesh = std::move(out);
+    auto rv = [&](int v) { return v >= 0 && v < (int)remap.size() ? remap[v] : -1; };
+    std::vector<int> verts;
+    for (int v : g_meshSelVerts) if (rv(v) >= 0) verts.push_back(rv(v));
+    std::vector<std::pair<int, int>> edges;
+    for (const auto& e : g_meshSelEdges) if (rv(e.first) >= 0 && rv(e.second) >= 0) edges.push_back({rv(e.first), rv(e.second)});
+    g_meshSelVerts = std::move(verts);
+    g_meshSelEdges = std::move(edges);
+    g_meshSelFaces.clear();
+    ed.dirty = true;
+    return true;
+}
+
+// The selected edges, or (vertex / face mode) the edges between selected
+// vertices / around the selected faces, as polygon edges.
+static okay::modeling::EdgeList SelectedPolyEdges(Mesh& m) {
+    okay::modeling::EdgeList out;
+    if (g_meshSelMode == 2) return g_meshSelEdges;
+    std::set<int> vs;
+    if (g_meshSelMode == 0) vs.insert(g_meshSelVerts.begin(), g_meshSelVerts.end());
+    else for (int f : g_meshSelFaces) if (f >= 0 && f < m.TriangleCount()) for (int k = 0; k < 3; ++k) vs.insert(m.triangles[f * 3 + k]);
+    for (const auto& e : EditPolyEdges(m)) if (vs.count(e.first) && vs.count(e.second)) out.push_back(e);
+    return out;
+}
+
+// Stop whatever edge-loop tool is running. A bevel preview is undone; a slide
+// keeps where it got to.
+static void EndPolyTool(bool keep) {
+    MeshRenderer* mr = EditedRenderer();
+    if (g_ptool == PolyTool::Bevel && mr && !keep) {
+        mr->mesh = g_bevelStart;
+        g_meshSelVerts = g_bevelSelVerts; g_meshSelFaces = g_bevelSelFaces; g_meshSelEdges = g_bevelSelEdges;
+    }
+    if (g_ptool == PolyTool::Slide && mr && !keep && g_slideFrom.size() == mr->mesh.vertices.size()) mr->mesh.vertices = g_slideFrom;
+    g_ptool = PolyTool::None;
+    g_ptoolTyped.Clear();
+    g_knifePts.clear(); g_knifePos.clear();
+    g_slideLoop.clear(); g_slideFrom.clear();
+    g_slideAfterCut = false;
+}
+
 // Enter or leave mesh edit mode on `go` (the panel's Edit Mesh checkbox and Tab).
 static void SetMeshEditMode(EditorState& ed, GameObject* go, bool on) {
     if (g_meModal.Active() && g_meModalObj) {   // never leave a transform half done
@@ -3015,6 +3139,11 @@ static void SetMeshEditMode(EditorState& ed, GameObject* go, bool on) {
         if (auto* mr = alive ? g_meModalObj->GetComponent<MeshRenderer>() : nullptr) g_meModal.Cancel(mr->mesh);
         else g_meModal.Confirm();
         g_meModalObj = nullptr;
+    }
+    if (g_ptool != PolyTool::None) {   // a bevel / slide / knife half done: put it back
+        bool alive = false;
+        for (const auto& up : ed.scene().Objects()) if (up.get() == g_meshEditObj) { alive = true; break; }
+        if (alive) EndPolyTool(false); else g_ptool = PolyTool::None;
     }
     if (g_meshEdit && g_meshEditObj) {   // finishing an edit session: one scene undo step for it
         bool alive = false;
@@ -6325,7 +6454,10 @@ void DrawDockSpace(EditorState& ed) {
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar |
         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
         ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus |
-        ImGuiWindowFlags_MenuBar;
+        ImGuiWindowFlags_MenuBar |
+        // The host never scrolls: its few pixels of overflow made the mouse wheel
+        // (zooming out in the 3D view) shift the whole layout up.
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
     ImGui::Begin("##OkayDockHost", nullptr, flags);
     ImGui::PopStyleVar(3);
 
@@ -10311,7 +10443,7 @@ void DrawShortcutsWindow() {
         {"Ctrl+Shift+S",  "Save scene as..."},
         {"Ctrl+O",        "Open scene"},
         {"Ctrl+Z / Ctrl+Y","Undo / Redo"},
-        {"Ctrl+B",        "Build Settings"},
+        {"Ctrl+B",        "Build Settings (in mesh edit mode: bevel)"},
         {"Ctrl+C / Ctrl+V","Copy / paste object"},
         {"Ctrl+D",        "Duplicate selection"},
         {"Ctrl+Shift+G",  "Group selection"},
@@ -10326,6 +10458,17 @@ void DrawShortcutsWindow() {
         {"Ctrl+1..3",     "Recall camera bookmark"},
         {"Arrows",        "Nudge selected UI widget (Shift = grid step)"},
         {"Ctrl+Wheel",    "Zoom UI authoring view"},
+    });
+    section("Mesh edit mode", {
+        {"Tab",           "Object / Edit mode"},
+        {"1 / 2 / 3",     "Vertex / Edge / Face select"},
+        {"G / R / S",     "Move / Rotate / Scale the selection"},
+        {"G G",           "Edge slide"},
+        {"Ctrl+R",        "Loop cut (scroll for more cuts)"},
+        {"Ctrl+B",        "Bevel the selected edges"},
+        {"K",             "Knife (Enter cuts)"},
+        {"Alt+Click",     "Select an edge loop"},
+        {"Ctrl+Alt+Click","Select an edge ring"},
     });
     section("Panels & tabs", {
         {"Ctrl+Tab",      "Switch to the previous panel (hold Ctrl, Tab again to go further)"},
@@ -14896,7 +15039,7 @@ void HandleShortcuts(EditorState& ed) {
             ConsoleLog("Pasted " + go->name);
         }
     }
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_B, false)) g_showBuildGame = true;
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_B, false) && !g_meshEdit) g_showBuildGame = true;   // in mesh edit mode Ctrl+B bevels
     // Ctrl+Up / Ctrl+Down reorder the selected object among its siblings.
     if (ctrl && ed.selected() && ImGui::IsKeyPressed(ImGuiKey_UpArrow, false)) {
         ed.PushUndo(); ed.scene().MoveSibling(ed.selected(), -1); ed.dirty = true;
@@ -25340,7 +25483,7 @@ void DrawModeling(EditorState& ed) {
                 if (g_meshSelMode == 0)
                     for (int i = 0; i < (int)mr->mesh.vertices.size(); ++i) g_meshSelVerts.push_back(i);
                 else if (g_meshSelMode == 2)
-                    for (const auto& e : mr->mesh.VisibleEdges()) g_meshSelEdges.push_back(e);
+                    for (const auto& e : EditPolyEdges(mr->mesh)) g_meshSelEdges.push_back(e);
                 else
                     for (int i = 0; i < mr->mesh.TriangleCount(); ++i) g_meshSelFaces.push_back(i);
             }
@@ -25379,7 +25522,7 @@ void DrawModeling(EditorState& ed) {
                             || (a.first == b.second && a.second == b.first);
                     };
                     std::vector<std::pair<int,int>> inv;
-                    for (const auto& e : mr->mesh.VisibleEdges()) {
+                    for (const auto& e : EditPolyEdges(mr->mesh)) {
                         bool sel = false;
                         for (const auto& s : g_meshSelEdges) if (same(e, s)) { sel = true; break; }
                         if (!sel) inv.push_back(e);
@@ -25543,17 +25686,112 @@ void DrawModeling(EditorState& ed) {
                 EditUndoPoint(ed, mr); mr->mesh.SnapToGrid(s_snapSel, g_meshSelVerts); ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Quantize the selected vertices to this grid step — line up modular pieces exactly.");
-            // Edge-loop tools: listed so you know they're planned, but greyed out
-            // until they're built on the polygon mesh (PolyMesh).
-            ImGui::TextDisabled("Coming next (edge-loop tools):");
+            // Edge-loop tools on the polygons (quads and n-gons). The interactive
+            // versions run in the 3D view: Ctrl+R loop cut, G G slide, Ctrl+B bevel, K knife.
+            ImGui::SeparatorText("Edge loops");
             {
-                const char* why = "Not built yet. These work on quads and edge loops of the polygon mesh,\n"
-                                  "planned for modeling milestone 3.";
-                const char* later[] = {"Knife##me", "Edge Bevel##me", "Dissolve##me", "Bridge Edge Loops##me", "Edge Slide##me"};
-                for (int i = 0; i < 5; ++i) {
-                    if (i) ImGui::SameLine();
-                    ToolButton(later[i], false, why, true);
+                namespace pmo = okay::modeling;
+                const bool haveEdges = !SelectedPolyEdges(mr->mesh).empty();
+                const char* kNeedSomeEdges = "Select edges first: Edge mode (key 2) and click edges, or select the faces or vertices around them.";
+                auto growSel = [&](bool ring) {
+                    const pmo::PolyMesh& pm = EditPoly(mr->mesh);
+                    std::set<std::pair<int, int>> have;
+                    std::vector<std::pair<int, int>> out;
+                    for (const auto& e : SelectedPolyEdges(mr->mesh))
+                        for (const auto& le : ring ? pmo::EdgeRing(pm, e.first, e.second) : pmo::EdgeLoop(pm, e.first, e.second))
+                            if (have.insert({std::min(le.first, le.second), std::max(le.first, le.second)}).second) out.push_back(le);
+                    g_meshSelEdges = out; g_meshSelMode = 2;
+                };
+                if (ToolButton("Select Loop##me", haveEdges, kNeedSomeEdges)) growSel(false);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Grow the selected edges into their whole edge loops (or Alt+Click an edge).");
+                ImGui::SameLine();
+                if (ToolButton("Select Ring##me", haveEdges, kNeedSomeEdges)) growSel(true);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select the ring of edges across the quads beside each selected edge (or Ctrl+Alt+Click an edge).");
+
+                static int s_cuts = 1;
+                static float s_cutPos = 0.5f;
+                ImGui::SetNextItemWidth(110);
+                ImGui::InputInt("##cuts", &s_cuts);
+                s_cuts = std::clamp(s_cuts, 1, 32);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How many loops to cut");
+                if (s_cuts == 1) {
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+                    ImGui::SliderFloat("##cutpos", &s_cutPos, 0.05f, 0.95f, "at %.2f");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Where along the ring's edges the cut goes (0.5 = the middle)");
                 }
+                ImGui::SameLine();
+                if (ToolButton("Loop Cut##me", haveEdges, kNeedSomeEdges)) {
+                    const auto first = SelectedPolyEdges(mr->mesh).front();
+                    pmo::EdgeList made;
+                    if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) {
+                            made = pmo::LoopCut(p, first.first, first.second, s_cuts, s_cutPos);
+                            if (made.empty()) return false;
+                            g_meshSelEdges = made; g_meshSelVerts.clear(); g_meshSelMode = 2;
+                            return true; }))
+                        ConsoleLog("Loop cut: " + std::to_string(s_cuts) + " new loop(s)");
+                    else ConsoleLog("Loop cut: no ring of quads through the selected edge", 1);
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cut new edge loops across the ring of quads through the (first) selected edge.\nIn the 3D view: Ctrl+R, point at an edge, scroll for more cuts, click, then slide.");
+                ImGui::SameLine();
+                if (ToolButton("Edge Slide##me", haveEdges, kNeedSomeEdges)) { EndPolyTool(true); g_ptool = PolyTool::Slide; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Slide the selected edge loop along the faces beside it: move the mouse in the 3D view, click to confirm.\nIn the 3D view: G twice.");
+
+                static float s_bevelW = 0.1f;
+                ImGui::SetNextItemWidth(90);
+                ImGui::DragFloat("##bevelw", &s_bevelW, 0.005f, 0.001f, 10.0f, "width %.3f");
+                ImGui::SameLine();
+                if (ToolButton("Bevel##me", haveEdges, kNeedSomeEdges)) {
+                    const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
+                    std::string err;
+                    if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) { return pmo::BevelEdges(p, edges, s_bevelW, &err) > 0; })) {
+                        g_meshSelEdges.clear(); g_meshSelVerts.clear();
+                        ConsoleLog("Bevel: " + std::to_string(edges.size()) + " edge(s)");
+                    } else ConsoleLog("Bevel: " + err, 1);
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Chamfer the selected edges: each becomes a face this wide.\nIn the 3D view: Ctrl+B and move the mouse.");
+                ImGui::SameLine();
+                if (ToolButton("Knife##me", true, "")) { EndPolyTool(true); g_ptool = PolyTool::Knife; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cut new edges through faces: click points on edges or vertices in the 3D view, Enter to cut.\nIn the 3D view: K.");
+
+                if (ToolButton("Dissolve Edges##me", haveEdges, kNeedSomeEdges)) {
+                    const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
+                    int n = 0;
+                    if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) { n = pmo::DissolveEdges(p, edges); g_meshSelEdges.clear(); return n > 0; }))
+                        ConsoleLog("Dissolved " + std::to_string(n) + " edge(s)");
+                    else ConsoleLog("Dissolve: those edges are on the mesh's border (nothing to merge)", 1);
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove the selected edges, merging the faces on either side into one.");
+                ImGui::SameLine();
+                if (ToolButton("Dissolve Verts##me", !g_meshSelVerts.empty(), kNeedVerts)) {
+                    const std::vector<int> verts = g_meshSelVerts;
+                    int n = 0;
+                    if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) { n = pmo::DissolveVerts(p, verts); g_meshSelVerts.clear(); return n > 0; }))
+                        ConsoleLog("Dissolved " + std::to_string(n) + " vertex(es)");
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove the selected vertices, merging the faces around each into one.");
+                ImGui::SameLine();
+                if (ToolButton("Connect Verts##me", g_meshSelVerts.size() == 2, "Select exactly two vertices on one face (Vertex mode, Shift+click).")) {
+                    const int a = g_meshSelVerts[0], b = g_meshSelVerts[1];
+                    std::string err;
+                    if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) {
+                            const pmo::EdgeList cut = pmo::KnifeCut(p, {{a, -1, 0.0f}, {b, -1, 0.0f}}, &err);
+                            if (cut.empty()) return false;
+                            g_meshSelEdges = cut; g_meshSelMode = 2;
+                            return true; }))
+                        ConsoleLog("Connected the two vertices");
+                    else ConsoleLog("Connect: " + err, 1);
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Split the face the two selected vertices share with a new edge between them.");
+                ImGui::SameLine();
+                if (ToolButton("Bridge Edge Loops##me", haveEdges, "Select two open edge loops (the rims of two holes or tube ends).")) {
+                    const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
+                    std::string err;
+                    int n = 0;
+                    if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) { n = pmo::BridgeEdgeLoops(p, edges, &err); return n > 0; }))
+                        ConsoleLog("Bridged with " + std::to_string(n) + " face(s)");
+                    else ConsoleLog("Bridge: " + err, 1);
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Join two open edge loops (the same number of edges each) with a band of faces.");
             }
             if (ToolButton("Separate##me", !g_meshSelFaces.empty(), kNeedFaces)) {
                 EditUndoPoint(ed, mr);
@@ -36401,7 +36639,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     ImVec2 center(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
 
     // Orbit controls (Scene view only).
-    if (!gameView && hovered && io.MouseWheel != 0.0f && !io.KeyCtrl)  // Ctrl+Wheel = UI zoom
+    if (!gameView && hovered && io.MouseWheel != 0.0f && !io.KeyCtrl && g_ptool != PolyTool::LoopCut)  // Ctrl+Wheel = UI zoom; loop cut: number of cuts
         ed.camDist = Mathf::Clamp(ed.camDist * (1.0f - io.MouseWheel * 0.1f), 2.0f, 400.0f);
     if (!gameView && hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Left) && !ed.selected()) {
         ed.camYaw   -= io.MouseDelta.x * 0.4f;
@@ -37387,7 +37625,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     if (!gameView && ed.selected() && ed.selected()->GetComponent<MeshRenderer>()) {
         GameObject* mo = ed.selected();
         const bool editingThis = g_meshEdit && g_meshEditObj == mo;
-        const bool keysOk = hovered && !io.WantTextInput && !io.KeyCtrl && !io.KeyAlt && !g_meModal.Active();
+        const bool keysOk = hovered && !io.WantTextInput && !io.KeyCtrl && !io.KeyAlt && !g_meModal.Active() && g_ptool == PolyTool::None;
         if (keysOk && ImGui::IsKeyPressed(ImGuiKey_Tab, false)) {
             SetMeshEditMode(ed, mo, !editingThis);
             ConsoleLog(editingThis ? "Object mode" : "Edit mode: G move, R rotate, S scale the selection");
@@ -37459,9 +37697,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                  if (f >= 0 && f < mesh.TriangleCount()) affSet.insert(mesh.triangles[f * 3 + k]);
         std::vector<int> affected(affSet.begin(), affSet.end());
 
-        // Quad-aware wireframe: draw real edges but hide flat triangulation diagonals,
-        // so the mesh reads as quads/squares while editing (not a field of triangles).
-        for (const auto& e : mesh.VisibleEdges()) {
+        // The polygon wireframe: the edges of the quads and n-gons, not the triangles
+        // they're drawn with.
+        for (const auto& e : EditPolyEdges(mesh)) {
             ImVec2 a, b;
             if (vScreen(e.first, a) && vScreen(e.second, b))
                 dl->AddLine(a, b, IM_COL32(150, 172, 205, 150), 1.0f);
@@ -37564,11 +37802,284 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 g_meModalMouse0 = g_meModalPrevMouse = io.MousePos;
                 g_meModalRay0 = mouseRay(io.MousePos);
             };
-            if (!g_meModal.Active() && !g_meEditGrab && hovered && keysFree && !affected.empty()) {
+            // ---- Edge-loop tools: Ctrl+R loop cut, GG edge slide, Ctrl+B bevel, K knife ----
+            MeshRenderer* emr = meo->GetComponent<MeshRenderer>();
+            auto statusLine = [&](const std::string& line, const char* help) {
+                ImVec2 ts = ImGui::CalcTextSize(line.c_str()), hs = ImGui::CalcTextSize(help);
+                float w = std::max(ts.x, hs.x) + 20.0f, lh = ImGui::GetTextLineHeight();
+                ImVec2 p0(canvasPos.x + (canvasSize.x - w) * 0.5f, canvasPos.y + canvasSize.y - lh * 2.0f - 22.0f);
+                dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + lh * 2.0f + 14.0f), IM_COL32(20, 22, 28, 215), 5.0f);
+                dl->AddText(ImVec2(p0.x + 10, p0.y + 5), IM_COL32(255, 200, 90, 255), line.c_str());
+                dl->AddText(ImVec2(p0.x + 10, p0.y + 8 + lh), IM_COL32(190, 195, 205, 255), help);
+            };
+            auto typeInto = [&](okay::modeling::NumericInput& in) {
+                if (io.WantTextInput) return;
+                for (int d = 0; d <= 9; ++d)
+                    if (ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_0 + d), false) || ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_Keypad0 + d), false))
+                        in.Type((char)('0' + d));
+                if (ImGui::IsKeyPressed(ImGuiKey_Period, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadDecimal, false)) in.Type('.');
+                if (ImGui::IsKeyPressed(ImGuiKey_Minus, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract, false)) in.Type('-');
+                if (ImGui::IsKeyPressed(ImGuiKey_Backspace, true)) in.Backspace();
+            };
+            // The polygon edge nearest the mouse (and where along it, 0..1).
+            auto edgeUnderMouse = [&](float& along) {
+                float best = 14.0f;
+                std::pair<int, int> pe{-1, -1};
+                for (const auto& e : EditPolyEdges(mesh)) {
+                    ImVec2 a, b;
+                    if (!vScreen(e.first, a) || !vScreen(e.second, b)) continue;
+                    const float d = SegDistPx(io.MousePos, a, b);
+                    if (d >= best) continue;
+                    best = d; pe = e;
+                    const float dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+                    along = l2 > 1e-6f ? std::clamp(((io.MousePos.x - a.x) * dx + (io.MousePos.y - a.y) * dy) / l2, 0.0f, 1.0f) : 0.5f;
+                }
+                return pe;
+            };
+            const bool confirmKey = ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false);
+            const bool cancelKey = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right));
+            auto startSlide = [&](const okay::modeling::EdgeList& loop, bool afterCut) {
+                if (loop.empty()) { ConsoleLog("Edge slide: select an edge loop first", 1); return; }
+                g_slideLoop = loop;
+                g_slideFrom = mesh.vertices;
+                g_slidePoly = okay::modeling::PolyMesh::FromMesh(mesh, {false, true, 1.0f});
+                g_slideAfterCut = afterCut;
+                g_ptoolMouse0 = io.MousePos;
+                g_ptoolTyped.Clear();
+                g_ptool = PolyTool::Slide;
+            };
+            auto startBevel = [&]() {
+                okay::modeling::EdgeList edges = SelectedPolyEdges(mesh);
+                if (edges.empty()) { ConsoleLog("Bevel: select the edges to bevel first (Edge mode, or faces / vertices around them)", 1); return; }
+                g_bevelStart = mesh;
+                g_bevelSelVerts = g_meshSelVerts; g_bevelSelFaces = g_meshSelFaces; g_bevelSelEdges = g_meshSelEdges;
+                g_bevelEdges = edges;
+                Vec3 c{0, 0, 0};
+                for (const auto& e : edges) c += mesh.vertices[e.first] + mesh.vertices[e.second];
+                g_bevelPivot = c * (0.5f / (float)edges.size());
+                // Pixels per object-space unit at the pivot, across the view.
+                const Vec3 pw = M.MultiplyPoint(g_bevelPivot);
+                Vec3 right = Vec3::Cross(pw - eye, Vec3{0, 1, 0});
+                if (right.SqrMagnitude() < 1e-8f) right = Vec3{1, 0, 0};
+                const Vec3 localRight = Minv.MultiplyVector(right.Normalized());
+                ImVec2 a, b;
+                g_bevelPxPerUnit = 100.0f;
+                if (localRight.SqrMagnitude() > 1e-12f && toScreen(vp * Vec4{pw, 1}, a) &&
+                    toScreen(vp * Vec4{M.MultiplyPoint(g_bevelPivot + localRight.Normalized()), 1}, b))
+                    g_bevelPxPerUnit = std::max(1.0f, std::hypot(b.x - a.x, b.y - a.y));
+                g_ptoolMouse0 = io.MousePos;
+                g_ptoolTyped.Clear();
+                g_ptool = PolyTool::Bevel;
+            };
+            if (g_ptool != PolyTool::None && g_meModal.Active()) EndPolyTool(true);
+            const bool toolKeys = hovered && !io.WantTextInput && !g_meModal.Active() && g_ptool == PolyTool::None && !io.KeyShift && !io.KeyAlt;
+            if (toolKeys && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_R, false)) { g_ptool = PolyTool::LoopCut; g_uiHandled = true; }
+            else if (toolKeys && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_B, false)) startBevel();
+            else if (toolKeys && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_K, false)) { g_ptool = PolyTool::Knife; g_knifePts.clear(); g_knifePos.clear(); }
+            // A tool started from the Edit Mesh page waits for the mouse to come to the view.
+            if (g_ptool == PolyTool::Slide && g_slideFrom.empty() && hovered) startSlide(SelectedPolyEdges(mesh), false);
+            if (g_ptool == PolyTool::Bevel && g_bevelEdges.empty() && hovered) startBevel();
+            if (g_ptool == PolyTool::Slide && !g_slideFrom.empty() && g_slideFrom.size() != mesh.vertices.size()) EndPolyTool(true);
+
+            if (g_ptool == PolyTool::LoopCut) {
+                if (hovered && io.MouseWheel != 0.0f) g_loopCuts = std::clamp(g_loopCuts + (io.MouseWheel > 0 ? 1 : -1), 1, 32);
+                if (ImGui::IsKeyPressed(ImGuiKey_Equal, true) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd, true)) g_loopCuts = std::min(32, g_loopCuts + 1);
+                if (ImGui::IsKeyPressed(ImGuiKey_Minus, true) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract, true)) g_loopCuts = std::max(1, g_loopCuts - 1);
+                float along = 0.5f;
+                const std::pair<int, int> pe = hovered ? edgeUnderMouse(along) : std::pair<int, int>{-1, -1};
+                int ringEdges = 0;
+                if (pe.first >= 0) {
+                    // Preview: the new loops across the ring through this edge.
+                    const okay::modeling::PolyMesh& pm = EditPoly(mesh);
+                    const okay::modeling::EdgeList ring = okay::modeling::EdgeRing(pm, pe.first, pe.second);
+                    ringEdges = (int)ring.size();
+                    bool closed = false;
+                    if (ring.size() > 2) {
+                        const auto& a = ring.front();
+                        const auto& b = ring.back();
+                        for (const auto& f : pm.faces) {
+                            if (f.Size() != 4) continue;
+                            int hit = 0;
+                            for (int v : f.verts) if (v == a.first || v == a.second || v == b.first || v == b.second) ++hit;
+                            if (hit == 4) { closed = true; break; }
+                        }
+                    }
+                    for (int k = 1; k <= g_loopCuts; ++k) {
+                        const float t = (float)k / (float)(g_loopCuts + 1);
+                        const int segs = closed ? (int)ring.size() : (int)ring.size() - 1;
+                        for (int i = 0; i < segs; ++i) {
+                            const auto& e0 = ring[i];
+                            const auto& e1 = ring[(i + 1) % ring.size()];
+                            ImVec2 a, b;
+                            const Vec3 pa = M.MultiplyPoint(mesh.vertices[e0.first] + (mesh.vertices[e0.second] - mesh.vertices[e0.first]) * t);
+                            const Vec3 pb = M.MultiplyPoint(mesh.vertices[e1.first] + (mesh.vertices[e1.second] - mesh.vertices[e1.first]) * t);
+                            if (toScreen(vp * Vec4{pa, 1}, a) && toScreen(vp * Vec4{pb, 1}, b)) dl->AddLine(a, b, IM_COL32(255, 220, 60, 255), 2.0f);
+                        }
+                    }
+                    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                        okay::modeling::EdgeList made;
+                        const int cuts = g_loopCuts;
+                        const bool ok = ApplyPoly(ed, emr, [&](okay::modeling::PolyMesh& p) {
+                            made = okay::modeling::LoopCut(p, pe.first, pe.second, cuts, 0.5f);
+                            if (made.empty()) return false;
+                            g_meshSelEdges = made; g_meshSelVerts.clear(); g_meshSelMode = 2;
+                            return true;
+                        });
+                        g_ptool = PolyTool::None;
+                        if (ok) {
+                            ConsoleLog("Loop cut: " + std::to_string(cuts) + " new loop(s) of " + std::to_string(made.size() / cuts) + " edges");
+                            if (cuts == 1) startSlide(g_meshSelEdges, true);   // then slide it into place
+                        } else ConsoleLog("Loop cut: no ring of quads through that edge", 1);
+                    }
+                }
+                char buf[160];
+                std::snprintf(buf, sizeof(buf), "Loop cut: %d cut%s%s", g_loopCuts, g_loopCuts == 1 ? "" : "s",
+                              pe.first < 0 ? "   (point at an edge)" : ringEdges ? "" : "   (no quads to cut here)");
+                statusLine(buf, "Point at an edge  -  scroll or + / - for more cuts  -  click to cut (one cut: then move to slide it)  -  Esc or right-click to cancel");
+                if (cancelKey) g_ptool = PolyTool::None;
+                g_uiHandled = true;
+            } else if (g_ptool == PolyTool::Slide) {
+                typeInto(g_ptoolTyped);
+                // Which way the mouse slides: where the first loop vertex goes at +1.
+                okay::modeling::PolyMesh probe = g_slidePoly;
+                probe.verts = g_slideFrom;
+                okay::modeling::EdgeSlide(probe, g_slideLoop, 1.0f, &g_slideFrom);
+                const int v0 = g_slideLoop[0].first;
+                ImVec2 a, b;
+                float amount = 0.0f;
+                if (g_ptoolTyped.Active()) amount = std::clamp(g_ptoolTyped.Value(0.0f), -1.0f, 1.0f);
+                else if (toScreen(vp * Vec4{M.MultiplyPoint(g_slideFrom[v0]), 1}, a) && toScreen(vp * Vec4{M.MultiplyPoint(probe.verts[v0]), 1}, b)) {
+                    const float dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+                    if (l2 > 1.0f) amount = std::clamp(((io.MousePos.x - g_ptoolMouse0.x) * dx + (io.MousePos.y - g_ptoolMouse0.y) * dy) / l2, -1.0f, 1.0f);
+                    if (g_snap || io.KeyCtrl) amount = okay::modeling::SnapTo(amount, 0.1f);
+                }
+                okay::modeling::PolyMesh pm = g_slidePoly;
+                pm.verts = g_slideFrom;
+                okay::modeling::EdgeSlide(pm, g_slideLoop, amount, &g_slideFrom);
+                for (std::size_t i = 0; i < pm.verts.size() && i < mesh.vertices.size(); ++i) mesh.vertices[i] = pm.verts[i];
+                mesh.normals.clear();
+                ed.dirty = true;
+                char buf[160];
+                std::snprintf(buf, sizeof(buf), "Edge slide %.3f%s", amount, g_ptoolTyped.Active() ? ("  typed " + g_ptoolTyped.Text()).c_str() : "");
+                statusLine(buf, "Move the mouse along the edges  -  type a value (-1 to 1)  -  Ctrl snaps  -  Enter or click to confirm, Esc or right-click to cancel");
+                if (cancelKey) EndPolyTool(false);
+                else if (confirmKey || (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))) {
+                    if (!g_slideAfterCut) {   // its own undo step (after a loop cut, the cut's step covers both)
+                        const std::vector<Vec3> result = mesh.vertices;
+                        mesh.vertices = g_slideFrom;
+                        EditUndoPoint(ed, emr);
+                        mesh.vertices = result;
+                    }
+                    EndPolyTool(true);
+                }
+                g_uiHandled = true;
+            } else if (g_ptool == PolyTool::Bevel) {
+                typeInto(g_ptoolTyped);
+                ImVec2 ps;
+                float width = 0.0f;
+                const bool psOk = toScreen(vp * Vec4{M.MultiplyPoint(g_bevelPivot), 1}, ps);
+                if (g_ptoolTyped.Active()) width = std::max(0.0f, g_ptoolTyped.Value(0.0f));
+                else if (psOk) {
+                    const float d0 = std::hypot(g_ptoolMouse0.x - ps.x, g_ptoolMouse0.y - ps.y);
+                    const float d1 = std::hypot(io.MousePos.x - ps.x, io.MousePos.y - ps.y);
+                    width = std::max(0.0f, (d1 - d0) / g_bevelPxPerUnit);
+                    if (g_snap || io.KeyCtrl) width = okay::modeling::SnapTo(width, 0.05f);
+                }
+                mesh = g_bevelStart;
+                g_meshSelEdges = g_bevelSelEdges; g_meshSelVerts = g_bevelSelVerts; g_meshSelFaces = g_bevelSelFaces;
+                std::string err;
+                bool shown = false;
+                if (width > 1e-5f) {
+                    const okay::modeling::EdgeList edges = g_bevelEdges;
+                    shown = ApplyPoly(ed, emr, [&](okay::modeling::PolyMesh& p) { return okay::modeling::BevelEdges(p, edges, width, &err) > 0; }, false);
+                }
+                g_bevelWidth = width;
+                if (psOk) dl->AddLine(ps, io.MousePos, IM_COL32(255, 255, 255, 120), 1.0f);
+                char buf[200];
+                std::snprintf(buf, sizeof(buf), "Bevel width %.3f  (%d edge%s)%s%s", width, (int)g_bevelEdges.size(), g_bevelEdges.size() == 1 ? "" : "s",
+                              g_ptoolTyped.Active() ? ("  typed " + g_ptoolTyped.Text()).c_str() : "", err.empty() ? "" : ("   " + err).c_str());
+                statusLine(buf, "Move the mouse away from the edges for a wider bevel  -  type a width  -  Ctrl snaps  -  Enter or click to confirm, Esc or right-click to cancel");
+                if (cancelKey) EndPolyTool(false);
+                else if (confirmKey || (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))) {
+                    if (shown) {
+                        Mesh result = mesh;
+                        mesh = g_bevelStart;
+                        g_meshSelEdges = g_bevelSelEdges; g_meshSelVerts = g_bevelSelVerts; g_meshSelFaces = g_bevelSelFaces;
+                        EditUndoPoint(ed, emr);
+                        mesh = std::move(result);
+                        g_meshSelEdges.clear(); g_meshSelVerts.clear(); g_meshSelFaces.clear();
+                        char wb[32]; std::snprintf(wb, sizeof(wb), "%.3f", width);
+                        ConsoleLog("Bevel: " + std::to_string(g_bevelEdges.size()) + " edge(s), width " + wb);
+                        g_ptool = PolyTool::None;
+                        g_bevelEdges.clear();
+                        g_ptoolTyped.Clear();
+                    } else {
+                        if (!err.empty()) ConsoleLog("Bevel: " + err, 1);
+                        EndPolyTool(false);
+                    }
+                }
+                g_uiHandled = true;
+            } else if (g_ptool == PolyTool::Knife) {
+                // Snap to a vertex near the mouse, else to the nearest edge.
+                okay::modeling::KnifePoint kp;
+                Vec3 kpos{0, 0, 0};
+                bool have = false;
+                if (hovered) {
+                    float best = 10.0f * 10.0f;
+                    for (int i = 0; i < (int)mesh.vertices.size(); ++i) {
+                        ImVec2 sp; if (!vScreen(i, sp)) continue;
+                        const float dx = sp.x - io.MousePos.x, dy = sp.y - io.MousePos.y, d = dx * dx + dy * dy;
+                        if (d < best) { best = d; kp = {i, -1, 0.0f}; kpos = mesh.vertices[i]; have = true; }
+                    }
+                    if (!have) {
+                        float along = 0.5f;
+                        const auto pe = edgeUnderMouse(along);
+                        if (pe.first >= 0) {
+                            kp = {pe.first, pe.second, along};
+                            kpos = mesh.vertices[pe.first] + (mesh.vertices[pe.second] - mesh.vertices[pe.first]) * along;
+                            have = true;
+                        }
+                    }
+                }
+                ImVec2 prev, sp;
+                for (std::size_t i = 0; i < g_knifePos.size(); ++i) {
+                    if (!toScreen(vp * Vec4{M.MultiplyPoint(g_knifePos[i]), 1}, sp)) continue;
+                    if (i > 0 && toScreen(vp * Vec4{M.MultiplyPoint(g_knifePos[i - 1]), 1}, prev)) dl->AddLine(prev, sp, IM_COL32(255, 90, 90, 255), 2.0f);
+                    dl->AddCircleFilled(sp, 4.0f, IM_COL32(255, 90, 90, 255));
+                }
+                if (have && toScreen(vp * Vec4{M.MultiplyPoint(kpos), 1}, sp)) {
+                    if (!g_knifePos.empty() && toScreen(vp * Vec4{M.MultiplyPoint(g_knifePos.back()), 1}, prev))
+                        dl->AddLine(prev, sp, IM_COL32(255, 150, 150, 160), 1.5f);
+                    dl->AddCircle(sp, 6.0f, IM_COL32(255, 230, 230, 255), 0, 1.5f);
+                }
+                if (have && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) { g_knifePts.push_back(kp); g_knifePos.push_back(kpos); }
+                if (ImGui::IsKeyPressed(ImGuiKey_Backspace, true) && !g_knifePts.empty()) { g_knifePts.pop_back(); g_knifePos.pop_back(); }
+                char buf[120];
+                std::snprintf(buf, sizeof(buf), "Knife: %d point%s", (int)g_knifePts.size(), g_knifePts.size() == 1 ? "" : "s");
+                statusLine(buf, "Click on edges or vertices along the cut (each step within one face)  -  Backspace removes a point  -  Enter to cut, Esc or right-click to cancel");
+                if (cancelKey) EndPolyTool(false);
+                else if (confirmKey || ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
+                    std::string err;
+                    const std::vector<okay::modeling::KnifePoint> pts = g_knifePts;
+                    okay::modeling::EdgeList cut;
+                    const bool ok = pts.size() >= 2 && ApplyPoly(ed, emr, [&](okay::modeling::PolyMesh& p) {
+                        cut = okay::modeling::KnifeCut(p, pts, &err);
+                        if (cut.empty()) return false;
+                        g_meshSelEdges = cut; g_meshSelVerts.clear(); g_meshSelMode = 2;
+                        return true;
+                    });
+                    if (ok) ConsoleLog("Knife: cut " + std::to_string(cut.size()) + " new edge(s)");
+                    else ConsoleLog("Knife: " + (err.empty() ? std::string("click at least two points") : err), 1);
+                    EndPolyTool(ok);
+                }
+                g_uiHandled = true;
+            }
+
+            if (g_ptool == PolyTool::None && !g_meModal.Active() && !g_meEditGrab && hovered && keysFree && !affected.empty()) {
                 if (ImGui::IsKeyPressed(ImGuiKey_G, false)) beginModal(mdl::EditXform::Move);
                 else if (ImGui::IsKeyPressed(ImGuiKey_R, false)) beginModal(mdl::EditXform::Rotate);
                 else if (ImGui::IsKeyPressed(ImGuiKey_S, false)) beginModal(mdl::EditXform::Scale);
-            } else if (!g_meModal.Active() && hovered && keysFree && affected.empty() &&
+            } else if (g_ptool == PolyTool::None && !g_meModal.Active() && hovered && keysFree && affected.empty() &&
                        (ImGui::IsKeyPressed(ImGuiKey_G, false) || ImGui::IsKeyPressed(ImGuiKey_R, false) || ImGui::IsKeyPressed(ImGuiKey_S, false))) {
                 ConsoleLog("Select some vertices, edges or faces first (G / R / S move, rotate and scale the selection)", 1);
             }
@@ -37576,10 +38087,15 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 // Switch tool mid-way (Blender does): start over from the original positions.
                 if (keysFree) {
                     mdl::EditXform next = g_meModal.Kind();
-                    if (ImGui::IsKeyPressed(ImGuiKey_G, false)) next = mdl::EditXform::Move;
+                    if (ImGui::IsKeyPressed(ImGuiKey_G, false) && g_meModal.Kind() == mdl::EditXform::Move) {
+                        // G again (GG): slide the selected edges along the mesh instead.
+                        g_meModal.Cancel(mesh);
+                        g_meModalObj = nullptr;
+                        startSlide(SelectedPolyEdges(mesh), false);
+                    } else if (ImGui::IsKeyPressed(ImGuiKey_G, false)) next = mdl::EditXform::Move;
                     if (ImGui::IsKeyPressed(ImGuiKey_R, false)) next = mdl::EditXform::Rotate;
                     if (ImGui::IsKeyPressed(ImGuiKey_S, false)) next = mdl::EditXform::Scale;
-                    if (next != g_meModal.Kind()) { g_meModal.Cancel(mesh); beginModal(next); }
+                    if (g_meModal.Active() && next != g_meModal.Kind()) { g_meModal.Cancel(mesh); beginModal(next); }
                 }
             }
             if (g_meModal.Active()) {
@@ -37714,7 +38230,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             Vec3 axisW[3] = {{1,0,0},{0,1,0},{0,0,1}};
             ImU32 col[3] = {IM_COL32(230,80,80,255), IM_COL32(90,210,100,255), IM_COL32(90,150,240,255)};
             float L = ed.camDist * 0.16f;
-            ImVec2 so; bool oOk = !affected.empty() && !g_meModal.Active() && toScreen(vp * Vec4{cen, 1}, so);
+            ImVec2 so; bool oOk = !affected.empty() && !g_meModal.Active() && g_ptool == PolyTool::None && toScreen(vp * Vec4{cen, 1}, so);
             ImVec2 tip[3]; bool tipOk[3] = {false,false,false};
             if (oOk) for (int i = 0; i < 3; ++i) {
                 tipOk[i] = toScreen(vp * Vec4{cen + axisW[i] * L, 1}, tip[i]);
@@ -37781,9 +38297,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         else g_meshSelVerts.push_back(pv);
                     }
                 } else if (g_meshSelMode == 2) {
-                    // Pick the nearest visible edge by screen distance to its segment.
+                    // Pick the nearest polygon edge by screen distance to its segment.
                     float best = 10.0f; std::pair<int,int> pe{-1, -1};
-                    for (const auto& e : mesh.VisibleEdges()) {
+                    for (const auto& e : EditPolyEdges(mesh)) {
                         ImVec2 a, b;
                         if (!vScreen(e.first, a) || !vScreen(e.second, b)) continue;
                         float d = SegDistPx(io.MousePos, a, b);
@@ -37792,8 +38308,15 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     if (!add) g_meshSelEdges.clear();
                     if (pe.first >= 0) {
                         if (io.KeyAlt) {
-                            // Alt+Click: select the whole edge loop through this edge.
-                            for (const auto& le : mesh.EdgeLoop(pe.first, pe.second)) {
+                            // Alt+Click: the edge loop through this edge (across 4-way
+                            // vertices); Ctrl+Alt+Click: the ring of edges across the
+                            // quads beside it. Where the polygons give no loop (a
+                            // triangle mesh), fall back to the straightest path.
+                            const okay::modeling::PolyMesh& pm = EditPoly(mesh);
+                            std::vector<std::pair<int, int>> picked = io.KeyCtrl ? okay::modeling::EdgeRing(pm, pe.first, pe.second)
+                                                                                 : okay::modeling::EdgeLoop(pm, pe.first, pe.second);
+                            if (!io.KeyCtrl && picked.size() <= 1) picked = mesh.EdgeLoop(pe.first, pe.second);
+                            for (const auto& le : picked) {
                                 bool dup = false;
                                 for (const auto& s : g_meshSelEdges)
                                     if ((s.first == le.first && s.second == le.second) ||
@@ -37858,8 +38381,15 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                             if (it != g_meshSelFaces.end()) { if (add) g_meshSelFaces.erase(it); }
                             else g_meshSelFaces.push_back(fc);
                         };
-                        toggleFace(pf);
-                        toggleFace(quadSibling(pf));       // grab the rest of the quad
+                        // The whole polygon (every triangle of the quad / n-gon it's part of).
+                        EditPoly(mesh);
+                        if ((int)mesh.polyFace.size() == mesh.TriangleCount()) {
+                            const int poly = mesh.polyFace[pf];
+                            for (int t = 0; t < mesh.TriangleCount(); ++t) if (mesh.polyFace[t] == poly) toggleFace(t);
+                        } else {
+                            toggleFace(pf);
+                            toggleFace(quadSibling(pf));   // grab the rest of the quad
+                        }
                     }
                 }
                 g_uiHandled = true;

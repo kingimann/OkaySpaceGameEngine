@@ -122,7 +122,10 @@ Press **Tab** with the mouse over the 3D view, or tick **Edit Mesh**, to enter e
 The mesh is auto-welded, so shared corners move together.
 
 - **Mode header:** a header at the top of the 3D view shows **Object** / **Edit**. While editing it also shows **Vertex** / **Edge** / **Face**. Click them, or press **1** / **2** / **3**.
-- **Selecting:** click in the 3D view to select. Shift-click adds to the selection, and **Alt+Click** an edge to grab its whole loop.
+- **Selecting:** click in the 3D view to select. Shift-click adds to the selection.
+  - **Alt+Click** an edge to grab its whole edge loop.
+  - **Ctrl+Alt+Click** an edge to grab its ring: the edges across the quads beside it.
+- **Real polygons:** the wireframe shows the mesh's quads and n-gons, not the triangles they're drawn with. Clicking a face in Face mode selects the whole polygon.
 - **Moving:** drag the axis handles to move, and hold **V** to snap to nearby vertices.
 
 ### Move, rotate and scale: G / R / S
@@ -160,8 +163,41 @@ Faces are counted after merging flat triangle pairs back into quads.
 ### Tools greyed out
 
 A tool that needs a selection you don't have yet is greyed out; hover it to see what to select. Extrude Faces, for example, needs faces in Face mode.
-The row **Coming next (edge-loop tools)** lists tools that work on quads and edge loops: Knife, Edge Bevel, Dissolve, Bridge Edge Loops and Edge Slide.
-They're planned for the next modeling milestone and can't be used yet.
+
+### Edge loops
+
+These tools work on the mesh's polygons. Each one is a single undo step.
+
+| In the 3D view | What it does |
+|---|---|
+| **Ctrl+R** | **Loop cut.** Point at an edge: a yellow preview shows the new loop across the ring of quads through it. Scroll (or **+** / **-**) for more cuts. Click to cut. With one cut you then slide it into place: move the mouse and click (Esc keeps it in the middle). |
+| **G** then **G** | **Edge slide.** Slide the selected edge loop along the faces beside it. Move the mouse, or type a value from -1 to 1; Ctrl snaps to 0.1 steps. |
+| **Ctrl+B** | **Bevel.** Chamfer the selected edges: move the mouse away from them for a wider bevel, or type the width. |
+| **K** | **Knife.** Click points on edges or vertices, Enter to cut. Each step from one point to the next must stay within one face. Backspace removes the last point; Esc cancels. |
+
+Enter or a click confirms; Esc or a right-click cancels. The **Edge loops** group on the Edit Mesh page has the same tools as buttons, plus:
+
+- **Select Loop / Select Ring:** grow the selected edges into their loops or rings.
+- **Loop Cut:** cut through the first selected edge, with a cut count and (for one cut) its position.
+- **Bevel:** with a typed width.
+- **Dissolve Edges:** remove edges, merging the faces on either side. Vertices left in the middle of a straight side go too.
+- **Dissolve Verts:** remove vertices, merging the faces around each one.
+- **Connect Verts:** split the face two selected vertices share with a new edge.
+- **Bridge Edge Loops:** join two open borders with a band of quads, for example the ends of two tubes or the rims of two holes. Both need the same number of edges.
+
+Limits:
+
+- **Bevel:** one segment. It needs edges with a face on both sides, running through vertices that have faces all the way round them.
+- **Bridge:** works on open borders only. It doesn't remove faces first.
+- **Edge slide:** UVs aren't adjusted, so a textured surface stretches with it.
+
+#### How the polygons are kept
+
+Each mesh can store which triangles make up each of its polygons.
+
+- **What it's used for:** tools, the wireframe and **.okaymesh** files get back the exact quads and n-gons, even skewed ones.
+- **Saving:** a scene saves this with edited geometry.
+- **Triangle tools:** a tool that works on triangles (Subdivide, Extrude...) may lose that grouping. The polygons are then found again from flat pairs of triangles.
 
 Selection tools: **Grow** adds every vertex touching the selection,
 **Shrink** peels its rim off, **Linked** flood-fills everything connected

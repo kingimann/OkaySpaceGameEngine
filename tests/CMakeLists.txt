@@ -846,3 +846,7 @@ add_test(NAME polymesh COMMAND test_polymesh)
 add_executable(test_mesh_asset test_mesh_asset.cpp)
 target_link_libraries(test_mesh_asset PRIVATE okay::engine)
 add_test(NAME mesh_asset COMMAND test_mesh_asset)
+
+add_executable(test_poly_ops test_poly_ops.cpp)
+target_link_libraries(test_poly_ops PRIVATE okay::engine)
+add_test(NAME poly_ops COMMAND test_poly_ops)

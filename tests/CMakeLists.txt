@@ -875,3 +875,9 @@ add_test(NAME locomotion COMMAND test_locomotion)
 add_executable(test_qa_pr250 test_qa_pr250.cpp)
 target_link_libraries(test_qa_pr250 PRIVATE okay::engine)
 add_test(NAME qa_pr250 COMMAND test_qa_pr250)
+
+# Robustness: OBJ / glTF / image loaders reject malformed input
+add_executable(test_loaders_robust test_loaders_robust.cpp)
+target_link_libraries(test_loaders_robust PRIVATE okay::engine)
+add_test(NAME loaders_robust COMMAND test_loaders_robust)
+set_tests_properties(loaders_robust PROPERTIES TIMEOUT 120)   # a glTF node cycle used to hang the import

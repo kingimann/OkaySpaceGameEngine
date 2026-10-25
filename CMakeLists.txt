@@ -35,12 +35,13 @@ else()
 endif()
 
 # Sanitizer build (GCC/Clang), used by CI's sanitizer job. Off by default, e.g.
-#   cmake -DOKAY_SANITIZE=address,undefined ...
-# UBSan findings abort instead of printing and carrying on.
+#   cmake -DOKAY_SANITIZE=address,undefined,float-cast-overflow ...
+# Findings abort instead of printing and carrying on. GCC's "undefined" group
+# leaves out float-cast-overflow (1e30 cast to an int), so name it explicitly.
 set(OKAY_SANITIZE "" CACHE STRING "Build with -fsanitize=<list> (e.g. address,undefined); empty = off")
 if(OKAY_SANITIZE AND NOT MSVC)
-    add_compile_options(-fsanitize=${OKAY_SANITIZE} -fno-sanitize-recover=undefined -fno-omit-frame-pointer)
-    add_link_options(-fsanitize=${OKAY_SANITIZE} -fno-sanitize-recover=undefined)
+    add_compile_options(-fsanitize=${OKAY_SANITIZE} -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=${OKAY_SANITIZE} -fno-sanitize-recover=all)
 endif()
 
 # Enable testing up front so subdirectories (editor, tests) can register tests.

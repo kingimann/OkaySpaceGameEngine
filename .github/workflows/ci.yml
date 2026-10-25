@@ -78,7 +78,7 @@ jobs:
       - name: Configure
         run: |
           cmake -S . -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS_DEBUG=-g1 \
-            -DOKAY_SANITIZE=address,undefined -DOKAY_BUILD_TESTS=ON \
+            -DOKAY_SANITIZE=address,undefined,float-cast-overflow -DOKAY_BUILD_TESTS=ON \
             -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF -DOKAY_USE_SODIUM=OFF
 
       # Every test_script_* target is picked up from tests/CMakeLists.txt, so new

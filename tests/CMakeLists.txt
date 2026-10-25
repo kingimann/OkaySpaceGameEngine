@@ -815,6 +815,11 @@ add_executable(test_chat_json test_chat_json.cpp)
 target_compile_features(test_chat_json PRIVATE cxx_std_17)
 target_include_directories(test_chat_json PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME chat_json COMMAND test_chat_json)
+# ...and the friends / profile JSON (Friends.hpp).
+add_executable(test_friends_json test_friends_json.cpp)
+target_compile_features(test_friends_json PRIVATE cxx_std_17)
+target_include_directories(test_friends_json PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME friends_json COMMAND test_friends_json)
 
 add_executable(test_tween test_tween.cpp)
 target_link_libraries(test_tween PRIVATE okay::engine)

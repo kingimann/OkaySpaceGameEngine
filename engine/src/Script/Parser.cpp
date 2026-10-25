@@ -665,6 +665,32 @@ private:
                 return e;
             }
             case T::StringLit: { ++pos_; auto e = Make(EK::StringLit, l); e->sval = t.text; return e; }
+            case T::InterpBegin: {
+                ++pos_;
+                auto e = Make(EK::Interp, l);
+                while (!Is(T::InterpEnd) && !Is(T::End)) {
+                    if (Is(T::StringLit)) {
+                        auto part = Make(EK::StringLit, Peek().loc);
+                        part->sval = Peek().text;
+                        ++pos_;
+                        e->args.push_back(std::move(part));
+                        continue;
+                    }
+                    Expect(T::InterpHole, "'{'");
+                    ExprPtr v = Expression();
+                    if (Is(T::InterpFormat)) {
+                        auto f = Make(EK::Format, Peek().loc);
+                        f->sval = Peek().text;
+                        ++pos_;
+                        f->lhs = std::move(v);
+                        v = std::move(f);
+                    }
+                    Expect(T::InterpHoleEnd, "'}' to close the { }");
+                    e->args.push_back(std::move(v));
+                }
+                Expect(T::InterpEnd, "the end of the text");
+                return e;
+            }
             case T::KwTrue: case T::KwFalse: { ++pos_; auto e = Make(EK::BoolLit, l); e->bval = t.type == T::KwTrue; return e; }
             case T::KwNull: { ++pos_; return Make(EK::NullLit, l); }
             case T::KwThis: { ++pos_; return Make(EK::This, l); }

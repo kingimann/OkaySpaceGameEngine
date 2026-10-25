@@ -747,6 +747,8 @@ add_test(NAME vs_nodes COMMAND test_vs_nodes)
 
 # The Visual Script editor's graph model (save / load / paste), without drawing:
 # it needs the Dear ImGui headers the editor header includes, nothing linked.
+# A tests-only configure clones ImGui from GitHub; offline, point
+# -DFETCHCONTENT_SOURCE_DIR_IMGUI=<a local imgui checkout> at it instead.
 include(FetchContent)
 if(NOT DEFINED OKAY_IMGUI_TAG)
     set(OKAY_IMGUI_TAG "036bf939b6f8d74ad76bcf926b757c56e68c54ff")

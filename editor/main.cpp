@@ -1441,7 +1441,7 @@ std::string g_openScenePath;      // scene to open at startup via --open (launch
 
 // Panel visibility (View menu).
 bool g_showHierarchy = true, g_showInspector = true, g_showConsole = true,
-     g_showProject = true, g_showServices = true, g_showScriptEditor = true;
+     g_showProject = true, g_showServices = false, g_showScriptEditor = true;   // Services: View menu
 bool g_showGame = true;   // Game view (main-camera render)
 bool g_showProfiler = false;   // CPU/GPU profiler window
 bool g_showAssetManager = false;   // Asset Manager: marketplace downloads -> project
@@ -2161,8 +2161,8 @@ bool  g_newScriptOpen = false;
 char  g_newScriptName[96] = "";
 
 // Extra panels / tools.
-bool  g_showStats = true;
-bool  g_showSceneSettings = true;   // sky / lighting / post FX / debug view (split from Stats)
+bool  g_showStats = false;           // closed in the default layout; View menu opens it
+bool  g_showSceneSettings = false;   // Lighting: sky / lighting / post FX / debug view (split from Stats); View menu
 bool  g_showSaveManager = false;   // browse/edit .okaysave files
 // Script Editor tabs: one per open ScriptComponent (an object can have several).
 std::vector<okay::ScriptComponent*> g_scriptTabs;
@@ -4514,7 +4514,7 @@ static void BuildLayoutPreset(int preset, ImGuiID dockId, ImVec2 size) {
         dock("Inspector", right);
         dock("Console###Console", down);
         dock("Project", down);
-        dock("Services", down);
+        dock("Services", down);   // Services, Stats and Lighting start closed; opening one docks it here
         dock("Script Editor", down);
         dock("Animation###AnimationDock", down);
         dock("Asset Manager", down);
@@ -6209,9 +6209,11 @@ void DrawDockSpace(EditorState& ed) {
         const bool asked = !first;
         const int preset = (!g_resetLayout && g_layoutRequest >= 0) ? g_layoutRequest : (int)okay::edtabs::Preset::Default;
         if (g_resetLayout || (asked && preset == (int)okay::edtabs::Preset::Default)) {
-            // Reopen every core panel so a reset always restores the full workspace.
+            // Reopen every core panel so a reset always restores the full workspace;
+            // Services, Stats and Lighting aren't part of it (View menu opens them).
             g_showHierarchy = g_showInspector = g_showConsole = g_showProject =
-                g_showServices = g_showScriptEditor = g_showStats = g_showSceneSettings = g_showGame = true;
+                g_showScriptEditor = g_showGame = true;
+            g_showServices = g_showStats = g_showSceneSettings = false;
         }
         first = false; g_resetLayout = false; g_layoutRequest = -1;
         if (asked) g_focusQueue.push_back("Scene");   // the preset may queue its own main panel after this

@@ -33,7 +33,7 @@ MAX_BYTES=$((50 * 1024 * 1024))   # Supabase's per-file upload limit on this pla
 
 die() { echo "publish-supabase: $*" >&2; exit 1; }
 
-VER="$(head -n1 "$DIST_DIR/VERSION.txt" 2>/dev/null | tr -d '\r ')"
+VER="$(head -n1 "$DIST_DIR/VERSION.txt" 2>/dev/null | tr -d '\r ' || true)"   # (|| true: let the check below say why)
 [[ "$VER" =~ ^[0-9]+(\.[0-9]+)+$ ]] || die "no version in $DIST_DIR/VERSION.txt (run scripts/build-windows-dist.sh first)"
 
 # name in the bucket -> file on disk

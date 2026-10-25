@@ -814,6 +814,11 @@ add_test(NAME official_game COMMAND test_official_game)
 add_executable(test_official_publish test_official_publish.cpp)
 target_include_directories(test_official_publish PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME official_publish COMMAND test_official_publish)
+# ...and scripts/publish-official-game.sh, against a stub curl (no network).
+if(UNIX)
+    add_test(NAME publish_official_cleanup COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_publish_official_cleanup.sh)
+    add_test(NAME publish_supabase_checks COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_publish_supabase_checks.sh)
+endif()
 
 # The launcher's chat JSON (Messages / Servers): header-only, no engine link.
 add_executable(test_chat_json test_chat_json.cpp)

@@ -868,6 +868,10 @@ class Inventory : Behaviour {
 - Plain classes aren't on an object, so `gameObject`, `transform` and
   `GetComponent` only exist in the Behaviour class. They can't be `static` or
   `const` yet, and classes can't extend each other yet.
+- Objects are freed as soon as nothing refers to them, except objects that
+  refer to each other in a loop (`a.next = b; b.next = a;`). Those stay in
+  memory until the game quits, so set one of the links to `null` when you're
+  done with them.
 
 ### foreach
 

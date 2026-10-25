@@ -351,6 +351,7 @@ private:
     std::unique_ptr<Stmt> Statement() {
         RejectNotYet();
         SrcLoc loc = Peek().loc;
+        NestGuard guard(stmtNesting_, loc, "code");   // blocks, ifs, loops and switches recurse here
         if (Is(T::LBrace)) return Block();
         if (Match(T::Semicolon)) throw ParseError{loc, "An empty statement does nothing. Delete the extra ';'"};
         if (Match(T::KwIf)) {
@@ -485,9 +486,12 @@ private:
     // or '-' would otherwise overflow the stack instead of giving an error.
     static constexpr int kMaxNesting = 256;
     int nesting_ = 0;
+    int stmtNesting_ = 0;
     struct NestGuard {
         int& n;
-        NestGuard(int& d, SrcLoc l) : n(d) { if (++n > kMaxNesting) { --n; throw ParseError{l, "This expression is nested too deeply"}; } }
+        NestGuard(int& d, SrcLoc l, const char* what = "expression") : n(d) {
+            if (++n > kMaxNesting) { --n; throw ParseError{l, std::string("This ") + what + " is nested too deeply"}; }
+        }
         ~NestGuard() { --n; }
     };
 

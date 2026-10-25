@@ -426,6 +426,11 @@ static void Fuzz() {
     CHECK_EQ(n, (int)src.size() + 1);
     std::string deep = Wrap("    int[] a = " + std::string(500, '{') + "1" + std::string(500, '}') + ";\n");
     CHECK(Count(Diags(deep), 0) > 0);
+    // Statements nested far too deep are an error, not a stack overflow.
+    CHECK(Has(Diags(Wrap("    void Start() " + std::string(100000, '{') + std::string(100000, '}'))), 0, "This code is nested too deeply"));
+    std::string ifs;
+    for (int i = 0; i < 20000; ++i) ifs += "if (true) ";
+    CHECK(Has(Diags(Wrap("    void Start() { " + ifs + "Debug.Log(1); }")), 0, "This code is nested too deeply"));
 }
 
 int main() {

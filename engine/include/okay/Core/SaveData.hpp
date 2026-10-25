@@ -117,6 +117,30 @@ public:
         if (!d.empty() && d.back() != '/' && d.back() != '\\') d += '/';
         BaseDir() = d;
     }
+    /// True if `name` is a safe relative file name for a game script to use:
+    /// not empty, not absolute ("/x", "\\x", "C:x", "\\\\server\\x"), no ".."
+    /// part and no NUL byte. Scripts come from game content, so they must not
+    /// reach files outside the game's own folders.
+    static bool IsSafeRelative(const std::string& name) {
+        if (name.empty() || name.find('\0') != std::string::npos) return false;
+        if (name[0] == '/' || name[0] == '\\' || (name.size() > 1 && name[1] == ':')) return false;
+        std::size_t start = 0;
+        while (start <= name.size()) {
+            std::size_t end = name.find_first_of("/\\", start);
+            if (end == std::string::npos) end = name.size();
+            if (name.compare(start, end - start, "..") == 0 && end - start == 2) return false;
+            start = end + 1;
+        }
+        return true;
+    }
+    /// A script-supplied file name resolved into the save folder; false (and
+    /// `out` cleared) if the name could escape it.
+    static bool SafeResolve(const std::string& name, std::string& out) {
+        out.clear();
+        if (!IsSafeRelative(name)) return false;
+        out = Resolve(name);
+        return true;
+    }
     static std::string Resolve(const std::string& path) {
         const std::string& b = BaseDir();
         if (b.empty() || path.empty()) return path;

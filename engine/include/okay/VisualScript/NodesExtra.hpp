@@ -8,6 +8,8 @@
 #include "okay/VisualScript/NodeGraph.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneManager.hpp"
+#include "okay/Core/SaveData.hpp"
+#include "okay/Core/Log.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/FullBodyIK.hpp"
 #include "okay/Components/TextRenderer.hpp"
@@ -277,6 +279,10 @@ struct LoadSceneNode : VsNode {   // arg = scene name (build list) or .okayscene
     int Exec(NodeGraph&, VsContext& ctx) override {
         Scene* s = ctx.gameObject ? ctx.gameObject->scene() : nullptr;
         if (!s || scene.empty()) return 0;
+        if (!Save::IsSafeRelative(scene)) {   // graphs are game content: stay in the game's folders
+            OKAY_ERROR("[visual script] Load Scene: refusing '", scene, "' (absolute paths and '..' aren't allowed)");
+            return 0;
+        }
         if (scene.find(".okayscene") != std::string::npos) s->RequestLoad(scene);
         else if (!SceneManager::LoadSceneByName(*s, scene)) s->RequestLoad(scene + ".okayscene");
         return -1;   // the scene is being replaced: stop this chain

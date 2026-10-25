@@ -472,6 +472,15 @@ Vector3 at = load("spawn", new Vector3(0, 0, 0), "slot1.okaysave");
 if (!save_exists("slot1.okaysave")) { /* first time playing */ }
 ```
 
+**File names stay inside the game.** Every script call that names a file
+(`save`/`load` and the rest of this family, `prefs_save`/`prefs_load`,
+`save_game`/`load_game` slots, `data_*`, `build_save`/`build_load`,
+`load_scene`) takes a name or a relative path such as `"slots/one.okaysave"`.
+Absolute paths (`/…`, `C:\…`) and `..` are refused: the call returns false (or
+the default you passed) and the Console says why. In an exported game, saves
+and prefs go into the game's own save folder; files a game saved beside itself
+before that still load.
+
 ### Math
 `abs sin cos tan asin acos atan atan2 sqrt pow exp log floor ceil round sign
 min max clamp lerp smoothstep len hypot wrap(v, lo, hi) ping_pong(t, len)

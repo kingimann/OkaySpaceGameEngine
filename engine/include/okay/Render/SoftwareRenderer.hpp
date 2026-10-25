@@ -84,6 +84,8 @@ inline float& RimPower()        { static float v = 3.0f; return v; }
 
 // Hemisphere ambient: tint the ambient term by sky (up) vs ground (down). Strength
 // scales how far each hemisphere departs from the flat ambient level.
+// Legacy globals, superseded by the scene's RenderSettings::ambientMode and
+// ambientSkyTint (saved with the scene, used by every renderer). No longer read.
 inline bool&  HemisphereAmbient()  { static bool v = true; return v; }
 inline float& HemisphereStrength() { static float v = 0.7f; return v; }
 
@@ -447,7 +449,8 @@ public:
                        bool triplanar = false, float triTileX = 1.0f, float triTileY = 1.0f,
                        int clipY0 = 0, int clipY1 = (1 << 30),
                        int shaderMode = 0, const float* gradTop = nullptr, const float* gradBot = nullptr,
-                       const std::vector<Image>* aoMips = nullptr, float aoStrength = 1.0f) {
+                       const std::vector<Image>* aoMips = nullptr, float aoStrength = 1.0f,
+                       bool receiveShadows = true) {
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
         int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
         int minY = (int)std::floor(std::fmin(Y[0], std::fmin(Y[1], Y[2])));
@@ -478,7 +481,7 @@ public:
         const bool  rimOn     = RimLightEnabled() && RimStrength() > 0.0f;
         const float rimStr    = RimStrength();
         const float rimPow    = RimPower();
-        const bool  shadowsOn = Shadows().enabled;
+        const bool  shadowsOn = Shadows().enabled && receiveShadows;
         const bool  envOn     = EnvSky().enabled;
         // Incremental barycentric (linear in x): per-scanline init, per-pixel step.
         // Double precision avoids float cancellation across screen-filling triangles.
@@ -852,7 +855,7 @@ inline void RenderCascadeDepth(const Scene& scene, ShadowCascade& cas, bool cull
     const int S = cas.size;
     auto visible = [](const GameObject& go) {
         auto* mr = go.GetComponent<MeshRenderer>();
-        return mr && go.active && mr->enabled && !mr->wireframe ? mr : nullptr;
+        return mr && go.active && mr->enabled && !mr->wireframe && mr->castShadows ? mr : nullptr;
     };
     const float cr = cas.radius * 1.05f, cr2 = cr * cr;
     for (const auto& go : scene.Objects()) {
@@ -941,6 +944,8 @@ inline void RenderShadowMap(const Scene& scene, const Mat4& vp, const Vec3& eye)
     ShadowMap& sm = Shadows();
     sm.count = 0;
     if (!ShadowsEnabled()) { sm.enabled = false; return; }
+    if (const LightSample* sun = SceneLights::Sun())   // the sun's own Cast Shadows switch
+        if (!sun->castShadows || sun->shadowStrength <= 0.0f) { sm.enabled = false; return; }
 
     // Whole-scene bounds: used for the legacy fit and to size the light's depth
     // range so tall casters above a cascade still register.
@@ -1015,6 +1020,8 @@ inline void RenderShadowMap(const Scene& scene, const Mat4& vp, const Vec3& eye)
 ///   `outTexelWorld` world size of one shadow texel (for normal-offset bias).
 inline bool ComputeDirectionalShadowVP(const Scene& scene, const Mat4& camVp, const Vec3& eye,
                                        Mat4& outVP, float& outTexelWorld) {
+    if (const LightSample* sun = SceneLights::Sun())   // the sun's own Cast Shadows switch
+        if (!sun->castShadows || sun->shadowStrength <= 0.0f) return false;
     Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
     bool any = false;
     for (const auto& go : scene.Objects()) {
@@ -1076,6 +1083,28 @@ inline bool ComputeDirectionalShadowVP(const Scene& scene, const Mat4& camVp, co
     return true;
 }
 
+/// Up-facing ("sky") and down-facing ("ground") ambient colours for the scene's
+/// Ambient Mode, from the gathered flat ambient `amb`. Every renderer blends
+/// between the two by the surface normal's Y, so they all shade alike:
+///   Flat       sky = ground = amb
+///   Hemisphere sky = amb * 1.15, ground = amb * 0.55
+///   Sky        amb shifted toward the sky gradient (top/horizon) and the Sky
+///              Bottom colour by ambientSkyTint; the midpoint stays amb.
+inline void SceneAmbientColors(const Scene::RenderSettings& rs, const Vec3& amb, Vec3& sky, Vec3& ground) {
+    auto cl = [](float v) { return v < 0.0f ? 0.0f : v; };
+    if (rs.ambientMode == Scene::RenderSettings::AmbientFlat) { sky = ground = amb; return; }
+    if (rs.ambientMode != Scene::RenderSettings::AmbientSky) {
+        sky = amb * 1.15f; ground = amb * 0.55f; return;
+    }
+    Vec3 skyC{(rs.skyTop.r + rs.skyHorizon.r) * 0.5f, (rs.skyTop.g + rs.skyHorizon.g) * 0.5f,
+              (rs.skyTop.b + rs.skyHorizon.b) * 0.5f};
+    Vec3 grdC{rs.skyBottom.r, rs.skyBottom.g, rs.skyBottom.b};
+    Vec3 mid = (skyC + grdC) * 0.5f;
+    float k = rs.ambientSkyTint;
+    sky    = {cl(amb.x + (skyC.x - mid.x) * k), cl(amb.y + (skyC.y - mid.y) * k), cl(amb.z + (skyC.z - mid.z) * k)};
+    ground = {cl(amb.x + (grdC.x - mid.x) * k), cl(amb.y + (grdC.y - mid.y) * k), cl(amb.z + (grdC.z - mid.z) * k)};
+}
+
 /// Shadow softness in shadow-map texels (the Poisson disk's radius). Larger =
 /// softer, fuzzier shadow edges; smaller = crisp/hard. ~2.5 reads as soft-ish.
 inline float& ShadowSoftness() { static float v = 2.5f; return v; }
@@ -1097,6 +1126,9 @@ inline float ShadowFactor(const Vec3& wpos, const Vec3& n) {
     };
     const float radius = ShadowSoftness();
     const float bias = 0.004f;
+    const LightSample* sun = SceneLights::Sun();
+    const float strength = sun ? sun->shadowStrength : 1.0f;   // per-light Strength
+    const float biasMul = sun ? sun->shadowBias : 1.0f;         // per-light Bias
 
     // Choose the smallest cascade whose region contains the fragment (its texels
     // are the densest available there); fall back to the last (widest) cascade.
@@ -1108,7 +1140,7 @@ inline float ShadowFactor(const Vec3& wpos, const Vec3& n) {
             Vec3 d = wpos - cas.center;
             if (d.x * d.x + d.y * d.y + d.z * d.z > cas.radius * cas.radius) continue;  // try the next ring out
         }
-        Vec3 p = wpos + n * (cas.texelWorld * 3.5f);     // normal-offset bias
+        Vec3 p = wpos + n * (cas.texelWorld * 3.5f * biasMul);   // normal-offset bias
         Vec4 lc = cas.viewProj * Vec4{p, 1.0f};
         if (lc.w == 0) return 1.0f;
         float iw = 1.0f / lc.w, x = lc.x * iw, y = lc.y * iw, z = lc.z * iw;
@@ -1121,9 +1153,9 @@ inline float ShadowFactor(const Vec3& wpos, const Vec3& n) {
             int px = (int)(fx + kPoisson[s][0] * radius);
             int py = (int)(fy + kPoisson[s][1] * radius);
             if (px < 0 || py < 0 || px >= cas.size || py >= cas.size) { lit += 1.0f; continue; }
-            if (z - bias <= cas.depth[(std::size_t)py * cas.size + px]) lit += 1.0f;
+            if (z - bias * biasMul <= cas.depth[(std::size_t)py * cas.size + px]) lit += 1.0f;
         }
-        return lit / 6.0f;
+        return 1.0f - strength * (1.0f - lit / 6.0f);
     }
     return 1.0f;
 }
@@ -1476,23 +1508,9 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     // Hemisphere ambient: split the flat ambient into a sky-tinted (up) and
     // ground-tinted (down) term, keeping the midpoint equal to the current
     // ambient so the overall level is unchanged — only its direction is added.
-    SceneLights::Hemisphere() = HemisphereAmbient();
-    if (HemisphereAmbient()) {
-        Vec3 a = SceneLights::AmbientColor();
-        Vec3 skyC{(rs.skyTop.r + rs.skyHorizon.r) * 0.5f,
-                  (rs.skyTop.g + rs.skyHorizon.g) * 0.5f,
-                  (rs.skyTop.b + rs.skyHorizon.b) * 0.5f};
-        Vec3 grdC{rs.skyBottom.r, rs.skyBottom.g, rs.skyBottom.b};
-        Vec3 mid{(skyC.x + grdC.x) * 0.5f, (skyC.y + grdC.y) * 0.5f, (skyC.z + grdC.z) * 0.5f};
-        float k = HemisphereStrength();
-        auto cl = [](float v) { return v < 0.0f ? 0.0f : v; };
-        SceneLights::SkyAmbient()    = {cl(a.x + (skyC.x - mid.x) * k),
-                                        cl(a.y + (skyC.y - mid.y) * k),
-                                        cl(a.z + (skyC.z - mid.z) * k)};
-        SceneLights::GroundAmbient() = {cl(a.x + (grdC.x - mid.x) * k),
-                                        cl(a.y + (grdC.y - mid.y) * k),
-                                        cl(a.z + (grdC.z - mid.z) * k)};
-    }
+    // The scene's Ambient Mode (shared with the GPU shaders).
+    SceneLights::Hemisphere() = rs.ambientMode != Scene::RenderSettings::AmbientFlat;
+    SceneAmbientColors(rs, SceneLights::AmbientColor(), SceneLights::SkyAmbient(), SceneLights::GroundAmbient());
     RenderShadowMap(scene, vp, eye);   // depth-from-light pre-pass for cast shadows
     if (SSAOEnabled()) {      // allocate the SSAO G-buffer for this frame
         std::size_t n = (std::size_t)r.width * r.height;
@@ -1834,7 +1852,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                     mr->rimColor.r, mr->rimColor.g, mr->rimColor.b,
                                     mr->triplanar, mr->tiling.x, mr->tiling.y,
                                     bandY0, bandY1, shaderMode, gradTopC, gradBotC,
-                                    aoMips, mr->aoStrength);
+                                    aoMips, mr->aoStrength, mr->receiveShadows);
                 } else if (tex) {
                     float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
                     float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};

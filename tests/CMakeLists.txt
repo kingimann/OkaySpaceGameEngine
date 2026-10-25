@@ -409,6 +409,10 @@ add_executable(test_scene_pointer test_scene_pointer.cpp)
 target_link_libraries(test_scene_pointer PRIVATE okay::engine)
 add_test(NAME scene_pointer COMMAND test_scene_pointer)
 
+add_executable(test_light_shadows test_light_shadows.cpp)
+target_link_libraries(test_light_shadows PRIVATE okay::engine)
+add_test(NAME light_shadows COMMAND test_light_shadows)
+
 add_executable(test_savedata test_savedata.cpp)
 target_link_libraries(test_savedata PRIVATE okay::engine)
 add_test(NAME savedata COMMAND test_savedata)

@@ -317,9 +317,11 @@ Rendering defaults to the modern look — tweak everything in the
   is decoded to linear, lighting runs in linear space, and the output gets
   an ACES filmic roll-off plus proper sRGB encoding. On by default (this is
   most of the "modern engine" look); untick for the legacy flat response.
-- **Shadows** — on by default: 2048-texel maps filtered with a 12-tap
-  Poisson disk and slope-scaled bias (soft edges, no acne on slopes). Tune
-  distance/cascades/resolution, or bake lighting for zero runtime cost.
+- **Shadows** — on by default: cascaded sun shadows plus spot/point light
+  shadows (walls block lamps), soft-filtered with rotated Poisson taps. Per
+  light: Cast Shadows / Strength / Bias; per mesh: Cast / Receive Shadows. Tune
+  softness, distance, cascades and resolution, or bake lighting for zero
+  runtime cost. See [lighting.md](lighting.md).
 - **Bloom** — bright pixels glow: threshold + intensity sliders; drive it
   with emissive materials (a lamp, neon strip, laser). Works on the GPU
   renderer and the software fallback.

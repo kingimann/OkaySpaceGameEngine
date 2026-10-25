@@ -45,6 +45,9 @@ struct LightSample {
     float range = 10.0f;        // point / spot / area falloff distance
     float cosOuter = 0.7071f;   // cos(half spot angle) — cone edge
     float cosInner = 0.7071f;   // cos(soft inner angle) — full brightness inside
+    bool  castShadows = true;   // occluders block this light (sun: cascades; spot/point: shadow tiles)
+    float shadowStrength = 1.0f;// 0 = shadows invisible .. 1 = fully dark (down to ambient)
+    float shadowBias = 1.0f;    // bias multiplier: raise if surfaces self-shadow, lower if shadows float
 };
 
 /// Distance attenuation for a positional light, shared by every shading path so
@@ -72,7 +75,15 @@ struct SceneLights {
     static float& Ambient() { static float a = 0.25f; return a; }
     /// Tinted ambient (RGB). Defaults to a neutral grey scaled by Ambient().
     static Vec3& AmbientColor() { static Vec3 c{0.25f, 0.25f, 0.25f}; return c; }
-    static void Clear() { List().clear(); }
+    /// Index in List() of the main directional light (the one whose shadows the
+    /// renderers draw), or -1 when there is none. Set by ApplySceneLight.
+    static int& SunIndex() { static int i = -1; return i; }
+    static void Clear() { List().clear(); SunIndex() = -1; }
+    /// The main directional light's sample, or nullptr.
+    static const LightSample* Sun() {
+        int i = SunIndex();
+        return (i >= 0 && i < (int)List().size()) ? &List()[i] : nullptr;
+    }
     static void Add(const LightSample& s) { List().push_back(s); }
     static void SetAmbient(float a) {
         a = a < 0.0f ? 0.0f : (a > 1.0f ? 1.0f : a);

@@ -5,6 +5,7 @@
 #include "okay/Render/Color.hpp"
 #include "okay/Render/Lighting.hpp"
 #include <cmath>
+#include <cstdint>
 
 namespace okay {
 
@@ -34,6 +35,41 @@ public:
     bool  useTemperature = false;   // drive `color` from a Kelvin temperature
     float temperature = 6500.0f;    // white point in Kelvin (1000..15000)
     Color ambientColor = Color::White;  // tint of the ambient floor (x ambient)
+    // Shadows. A directional light's shadows are the cascaded sun shadows (only
+    // the first directional light casts them); point/spot/area lights render
+    // their own shadow maps (up to 16 tiles' worth, nearest the camera first).
+    bool  castShadows = true;
+    float shadowStrength = 1.0f;    // 0 = invisible .. 1 = fully dark
+    float shadowBias = 1.0f;        // multiplier: raise on acne, lower if shadows detach
+    // Flicker (torches, candles, failing bulbs): randomly dims the intensity by up
+    // to `flicker` (0..1) at `flickerSpeed` changes per second, while playing.
+    float flicker = 0.0f;
+    float flickerSpeed = 8.0f;
+
+    void Update(float dt) override { if (dt > 0.0f) m_flickerTime += dt; }
+    /// Intensity multiplier from flicker at the current play time (1 when flicker
+    /// is off or the game hasn't run yet, so edit mode shows the full light).
+    float FlickerFactor() const {
+        if (flicker <= 0.0f || m_flickerTime <= 0.0f) return 1.0f;
+        float a = flicker > 1.0f ? 1.0f : flicker;
+        float t = m_flickerTime * (flickerSpeed > 0.0f ? flickerSpeed : 0.0f);
+        // Smooth value noise: random levels at integer steps, eased between them,
+        // plus a faster small jitter so it never looks like a clean sine.
+        // Seeded per light instance so several torches don't flicker in sync.
+        const unsigned seed = m_seed ^ (unsigned)(reinterpret_cast<std::uintptr_t>(this) >> 4);
+        auto h = [seed](float i) {
+            unsigned x = (unsigned)(long long)i * 2654435761u ^ seed;
+            x ^= x >> 15; x *= 2246822519u; x ^= x >> 13; x *= 3266489917u; x ^= x >> 16;
+            return (float)(x & 0xFFFFu) / 65535.0f;
+        };
+        auto noise = [&](float u) {
+            float i = std::floor(u), f = u - i;
+            f = f * f * (3.0f - 2.0f * f);
+            return h(i) + (h(i + 1.0f) - h(i)) * f;
+        };
+        float n = 0.75f * noise(t) + 0.25f * noise(t * 3.7f + 17.0f);
+        return 1.0f - a * n;
+    }
 
     /// Approximate RGB (0..1) of a black-body at `kelvin` (Tanner Helland fit),
     /// so a light can be tinted by color temperature like a real bulb / the sun.
@@ -50,6 +86,10 @@ public:
     }
     /// The light's effective RGB (temperature-driven when enabled).
     Color EffectiveColor() const { return useTemperature ? KelvinToColor(temperature) : color; }
+
+private:
+    float m_flickerTime = 0.0f;
+    unsigned m_seed = 0x9E3779B9u;
 };
 
 /// Gather every active Light in the scene into SceneLights for multi-light
@@ -63,7 +103,7 @@ inline void ApplySceneLight(const Scene& scene) {
     for (const auto& go : scene.Objects()) {
         if (!go->active) continue;
         auto* l = go->GetComponent<Light>();
-        if (!l) continue;
+        if (!l || !l->enabled) continue;   // a disabled Light component gives no light
         any = true;
         LightSample s;
         Color ec = l->EffectiveColor();
@@ -71,13 +111,18 @@ inline void ApplySceneLight(const Scene& scene) {
         s.falloff = (int)l->falloff;
         s.dir   = go->transform->Forward();
         s.pos   = go->transform->Position();
-        s.color = Vec3{ec.r, ec.g, ec.b} * l->intensity;
+        s.color = Vec3{ec.r, ec.g, ec.b} * (l->intensity * l->FlickerFactor());
         s.range = l->range;
         float half = 0.5f * l->spotAngle * kPi / 180.0f;
         s.cosOuter = std::cos(half);
         // Soft inner cone: a fraction of the way in from the edge to the axis.
         float soft = l->spotSoftness < 0.f ? 0.f : (l->spotSoftness > 1.f ? 1.f : l->spotSoftness);
         s.cosInner = std::cos(half * (1.0f - soft));
+        s.castShadows = l->castShadows;
+        s.shadowStrength = l->shadowStrength < 0.f ? 0.f : (l->shadowStrength > 1.f ? 1.f : l->shadowStrength);
+        s.shadowBias = l->shadowBias < 0.f ? 0.f : l->shadowBias;
+        if (!setLegacy && l->type == Light::Type::Directional)
+            SceneLights::SunIndex() = (int)SceneLights::List().size();   // the shadow-casting sun
         SceneLights::Add(s);
         if (!setAmbient) {
             Vec3 ac{l->ambientColor.r * l->ambient, l->ambientColor.g * l->ambient, l->ambientColor.b * l->ambient};
@@ -105,6 +150,7 @@ inline void ApplySceneLight(const Scene& scene) {
         sun.pos = Vec3{0, 0, 0};
         sun.color = Vec3{1.0f, 0.97f, 0.92f};
         sun.range = 0.0f; sun.cosOuter = sun.cosInner = 1.0f;
+        SceneLights::SunIndex() = (int)SceneLights::List().size();
         SceneLights::Add(sun);
     }
 }

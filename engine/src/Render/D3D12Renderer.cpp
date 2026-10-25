@@ -697,7 +697,7 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
                 GameObject* go = upo.get();
                 if (!go || !go->active || (ignore && go->IsSelfOrDescendantOf(ignore) && !go->firstPersonViewmodel)) continue;
                 auto* mr = go->GetComponent<MeshRenderer>();
-                if (!mr || mr->wireframe || !mr->enabled) continue;
+                if (!mr || mr->wireframe || !mr->enabled || !mr->castShadows) continue;
                 if (mr->color.a < 0.999f) continue;     // transparent meshes don't cast
                 const Mesh& mesh = mr->mesh;
                 const auto& Vv = mesh.vertices; const auto& T = mesh.triangles;
@@ -942,7 +942,11 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
 
         // Ground contact shadow: re-draw the SAME geometry flattened onto the ground
         // plane as flat translucent black (the shader returns that when shadowAlpha>=0).
-        if (mr->groundShadow && mr->groundShadowStrength > 0.001f && p->cbNext + p->cbStride <= p->cbCap) {
+        // Only a fallback for when the shadow map is off (see GLRenderer).
+        const LightSample* sunL = SceneLights::Sun();
+        const bool planar = !shadowOn && (!sunL || (sunL->castShadows && sunL->shadowStrength > 0.0f));
+        if (planar && mr->groundShadow && mr->castShadows && mr->groundShadowStrength > 0.001f &&
+            p->cbNext + p->cbStride <= p->cbCap) {
             CB scb = cb;
             Mat4 sModel = Mat4::PlanarShadow(mr->groundShadowY + 0.01f, SceneLight::Direction()) * model;
             Mat4 sMvp = vp * sModel;

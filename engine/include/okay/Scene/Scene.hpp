@@ -166,6 +166,13 @@ public:
         bool  skyStars      = false;
         float skyStarDensity = 0.5f;    // 0..1 -> up to ~kSkyStarMax stars
         float skyStarBright  = 0.9f;    // 0..1 star alpha
+        // How the ambient (indirect) light varies with surface direction:
+        // 0 Flat = one colour everywhere; 1 Hemisphere = brighter on up-facing,
+        // darker on down-facing surfaces (the default look); 2 Sky = up-facing
+        // surfaces take the sky colours and down-facing ones the ground colour.
+        enum AmbientMode { AmbientFlat = 0, AmbientHemisphere = 1, AmbientSky = 2 };
+        int   ambientMode = AmbientHemisphere;
+        float ambientSkyTint = 0.7f;    // Sky mode: how strongly the sky colours tint (0..1.5)
     };
     RenderSettings renderSettings;
 

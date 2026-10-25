@@ -78,6 +78,7 @@ void Scene::NotifyComponentRemoved(Component* component) {
     for (auto& c : m_active)  if (c == component) c = nullptr;
     for (auto& c : m_pending) if (c == component) c = nullptr;
     if (static_cast<Component*>(mainCamera) == component) mainCamera = nullptr;
+    for (auto* w : m_removalWatches) w->push_back(component);
 }
 
 void Scene::FlushPending() {

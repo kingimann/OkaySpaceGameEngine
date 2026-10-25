@@ -278,9 +278,12 @@ float InvInertia(Rigidbody3D* rb, Collider3D* col) {
     return I > 1e-8f ? 1.0f / I : 0.0f;
 }
 
+// Components a callback removes are skipped (`gone`), so a handler that removes
+// a sibling component (or its own collider/body) never runs a freed one.
 void DispatchCollision(GameObject* go, void (Component::*fn)(const Collision3D&),
-                       const Collision3D& info) {
-    for (Component* c : go->GetComponents<Component>()) (c->*fn)(info);
+                       const Collision3D& info, const Scene::RemovalWatch& gone) {
+    for (Component* c : go->GetComponents<Component>())
+        if (!gone.Gone(c)) (c->*fn)(info);
 }
 // The trigger overlap being dispatched right now (Physics3D::CurrentTrigger).
 const TriggerContact3D* g_currentTrigger = nullptr;
@@ -288,11 +291,12 @@ const TriggerContact3D* g_currentTrigger = nullptr;
 // Tell `self`'s object it overlapped `other`, with the overlap point/normal
 // readable through Physics3D::CurrentTrigger() for the duration of the calls.
 void DispatchTrigger(Collider3D* self, void (Component::*fn)(Collider3D*), Collider3D* other,
-                     const Vec3& point, const Vec3& normal) {
+                     const Vec3& point, const Vec3& normal, const Scene::RemovalWatch& gone) {
     TriggerContact3D info{self, other, point, normal};
     const TriggerContact3D* prev = g_currentTrigger;
     g_currentTrigger = &info;
-    for (Component* c : self->gameObject->GetComponents<Component>()) (c->*fn)(other);
+    for (Component* c : self->gameObject->GetComponents<Component>())
+        if (!gone.Gone(c)) (c->*fn)(other);
     g_currentTrigger = prev;
 }
 
@@ -383,6 +387,9 @@ void Physics3D::Step(Scene& scene, float dt) {
     // 2) Broad + narrow phase over every collider pair.
     auto colliders = scene.FindObjectsOfType<Collider3D>();
     std::set<Pair> current;
+    // Contact callbacks below may remove colliders / bodies (RemoveComponent frees
+    // them at once); every raw pointer held across a callback is checked first.
+    Scene::RemovalWatch gone(scene);
 
     // Precompute each collider's world AABB once per step (it was recomputed O(n)
     // times per collider inside the pair loop) and a fast membership set used by the
@@ -400,6 +407,8 @@ void Physics3D::Step(Scene& scene, float dt) {
         for (std::size_t j = i + 1; j < nc; ++j) {
             Collider3D* a = colliders[i];
             Collider3D* b = colliders[j];
+            if (gone.Gone(a)) break;
+            if (gone.Gone(b)) continue;
             if (!a->enabled || !b->enabled) continue;
             if (!a->gameObject->active || !b->gameObject->active) continue;
             if (a->gameObject == b->gameObject) continue;
@@ -513,21 +522,25 @@ void Physics3D::Step(Scene& scene, float dt) {
             bool wasContact = m_contacts.count({a, b}) != 0;
             if (trigger) {
                 if (!wasContact) {
-                    DispatchTrigger(a, &Component::OnTriggerEnter3D, b, c.point, c.normal);
-                    DispatchTrigger(b, &Component::OnTriggerEnter3D, a, c.point, -c.normal);
+                    DispatchTrigger(a, &Component::OnTriggerEnter3D, b, c.point, c.normal, gone);
+                    if (!gone.Gone(a) && !gone.Gone(b))
+                        DispatchTrigger(b, &Component::OnTriggerEnter3D, a, c.point, -c.normal, gone);
                 } else {
-                    DispatchTrigger(a, &Component::OnTriggerStay3D, b, c.point, c.normal);
-                    DispatchTrigger(b, &Component::OnTriggerStay3D, a, c.point, -c.normal);
+                    DispatchTrigger(a, &Component::OnTriggerStay3D, b, c.point, c.normal, gone);
+                    if (!gone.Gone(a) && !gone.Gone(b))
+                        DispatchTrigger(b, &Component::OnTriggerStay3D, a, c.point, -c.normal, gone);
                 }
             } else {
                 Collision3D forA = MakeCollision(b, c.normal, c.penetration, c.point, relVelBA);
                 Collision3D forB = MakeCollision(a, -c.normal, c.penetration, c.point, -relVelBA);
                 if (!wasContact) {
-                    DispatchCollision(a->gameObject, &Component::OnCollisionEnter3D, forA);
-                    DispatchCollision(b->gameObject, &Component::OnCollisionEnter3D, forB);
+                    DispatchCollision(a->gameObject, &Component::OnCollisionEnter3D, forA, gone);
+                    if (!gone.Gone(a) && !gone.Gone(b))
+                        DispatchCollision(b->gameObject, &Component::OnCollisionEnter3D, forB, gone);
                 } else {
-                    DispatchCollision(a->gameObject, &Component::OnCollisionStay3D, forA);
-                    DispatchCollision(b->gameObject, &Component::OnCollisionStay3D, forB);
+                    DispatchCollision(a->gameObject, &Component::OnCollisionStay3D, forA, gone);
+                    if (!gone.Gone(a) && !gone.Gone(b))
+                        DispatchCollision(b->gameObject, &Component::OnCollisionStay3D, forB, gone);
                 }
             }
         }
@@ -539,20 +552,27 @@ void Physics3D::Step(Scene& scene, float dt) {
         Collider3D* a = p.first;
         Collider3D* b = p.second;
         if (!aliveSet.count(a) || !aliveSet.count(b)) continue;
+        if (gone.Gone(a) || gone.Gone(b)) continue;
         if (a->isTrigger || b->isTrigger) {
             // No overlap any more: report the midpoint between the two centres.
             Vec3 mid = (a->WorldCenter() + b->WorldCenter()) * 0.5f;
             Vec3 n = (b->WorldCenter() - a->WorldCenter()).Normalized();
-            DispatchTrigger(a, &Component::OnTriggerExit3D, b, mid, n);
-            DispatchTrigger(b, &Component::OnTriggerExit3D, a, mid, -n);
+            DispatchTrigger(a, &Component::OnTriggerExit3D, b, mid, n, gone);
+            if (!gone.Gone(a) && !gone.Gone(b))
+                DispatchTrigger(b, &Component::OnTriggerExit3D, a, mid, -n, gone);
         } else {
             Collision3D forA = MakeCollision(b, Vec3::Zero, 0.0f, Vec3::Zero, Vec3::Zero);
             Collision3D forB = MakeCollision(a, Vec3::Zero, 0.0f, Vec3::Zero, Vec3::Zero);
-            DispatchCollision(a->gameObject, &Component::OnCollisionExit3D, forA);
-            DispatchCollision(b->gameObject, &Component::OnCollisionExit3D, forB);
+            DispatchCollision(a->gameObject, &Component::OnCollisionExit3D, forA, gone);
+            if (!gone.Gone(a) && !gone.Gone(b))
+                DispatchCollision(b->gameObject, &Component::OnCollisionExit3D, forB, gone);
         }
     }
 
+    // Drop pairs whose collider a callback removed, so no freed pointer is kept.
+    if (gone.Any())
+        for (auto it = current.begin(); it != current.end();)
+            it = (gone.Gone(it->first) || gone.Gone(it->second)) ? current.erase(it) : std::next(it);
     m_contacts.swap(current);
 
     // 4) Terrain ground-follow: heightmap terrain isn't a polygon collider, so make
@@ -910,6 +930,7 @@ void Physics3D::Step(Scene& scene, float dt) {
     // Sleep bookkeeping: a dynamic body under the speed thresholds for kSleepTime
     // seconds sleeps (zeroed and skipped next step). Any motion resets the timer.
     for (Rigidbody3D* rb : bodies) {
+        if (gone.Gone(rb)) continue;                 // removed by a contact callback
         if (!rb->enabled || !rb->gameObject || !rb->gameObject->active) continue;
         if (rb->bodyType != Rigidbody3D::BodyType::Dynamic) continue;
         if (!rb->allowSleep) { rb->WakeUp(); continue; }

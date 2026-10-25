@@ -45,7 +45,7 @@ std::vector<Token> Lex(const std::string& src, std::vector<ScriptDiagnostic>& di
         if (c == '\n') { ++line; col = 1; } else ++col;
         return c;
     };
-    auto err = [&](SrcLoc l, const std::string& m) { diags.push_back({l.line, m, 0}); };
+    auto err = [&](SrcLoc l, const std::string& m) { diags.push_back({l.line, m, 0, l.col}); };
     while (i < src.size()) {
         char c = peek();
         if (c == ' ' || c == '\t' || c == '\r' || c == '\n') { adv(); continue; }

@@ -42,6 +42,8 @@ enum class TK : std::uint8_t {
     Vector3,
     Object,   ///< an engine reference type (GameObject, Transform, ...): id = ApiType index
     Any,      ///< parameter that accepts every type (Debug.Log)
+    Enum,     ///< a script's enum: id = Program::enums index; an int at runtime
+    Array,    ///< T[]: id = Program::arrays index (the element type)
 };
 struct Type {
     TK  kind = TK::Error;
@@ -63,7 +65,14 @@ struct ObjRef {
     int type = -1;
     bool operator==(const ObjRef& o) const { return go == o.go && type == o.type; }
 };
-using Value = std::variant<std::monostate, bool, std::int32_t, float, std::string, Vec3, ObjRef>;
+struct ArrayObj;
+using ArrayRef = std::shared_ptr<ArrayObj>;
+using Value = std::variant<std::monostate, bool, std::int32_t, float, std::string, Vec3, ObjRef, ArrayRef>;
+/// A T[] at runtime. Arrays are references: copies share the items.
+struct ArrayObj {
+    std::vector<Value> items;
+    std::string typeName;   ///< "int[]", printed when the array itself is turned into text
+};
 
 std::string ValueToString(const Value& v);
 
@@ -153,6 +162,7 @@ const char* TokenName(T t);
 struct TypeRef {
     std::string name;     ///< "int", "float", "Vector3", "GameObject", "var", "void", ...
     std::string generic;  ///< reserved (List<T> later)
+    int rank = 0;         ///< number of [] after the name: int[] = 1, int[][] = 2
     SrcLoc loc;
 };
 
@@ -163,6 +173,9 @@ enum class EK : std::uint8_t {
     Call,          ///< f(args) / a.f(args) / GetComponent<T>()
     New,           ///< new Vector3(...)
     Unary, Binary, Assign, IncDec, Cast, Conditional,
+    Index,         ///< a[i]: object = the array, lhs = the index
+    NewArray,      ///< new T[n] / new T[] { ... }: typeArg = the array type, lhs = n (may be null), args = items
+    ArrayLit,      ///< { a, b } after `T[] x =`: the type comes from the declaration
 };
 
 struct Expr;
@@ -173,6 +186,7 @@ enum class Bind : std::uint8_t {
     None, Local, Field, Method, SelfMember /*gameObject/transform/enabled*/,
     ApiProp, ApiStaticProp, ApiMethod, ApiStaticMethod, StaticType,
     VecField /*x/y/z*/, VecProp /*magnitude/normalized*/, GetComponent, Destroy,
+    EnumValue /*State.Idle: ival*/, ArrayLength,
 };
 
 struct Expr {
@@ -197,12 +211,23 @@ struct Expr {
     bool isStaticRecv = false;
     bool promoteL = false, promoteR = false;   ///< int -> float before the operator
     bool toFloat = false;           ///< convert this (int) result to float where it's used
+    int enumStr = -1;               ///< an enum (Program::enums index) used as text: print the member's name
+    bool hasInit = false;           ///< NewArray: has a { ... } list
 };
 
-enum class SK : std::uint8_t { Block, Expr, Local, If, While, For, Return, Break, Continue };
+enum class SK : std::uint8_t { Block, Expr, Local, If, While, For, Return, Break, Continue, Switch, Foreach };
 struct Stmt;
 using StmtPtr = std::unique_ptr<Stmt>;
 struct LocalDecl { TypeRef type; std::string name; SrcLoc loc; ExprPtr init; int slot = -1; Type resolved; bool promote = false; };
+/// One `case a: case b: ... statements` group of a switch.
+struct SwitchSection {
+    std::vector<ExprPtr> labels;        ///< the case values
+    std::vector<SrcLoc> labelLocs;      ///< where each `case` is
+    bool isDefault = false;
+    SrcLoc loc, defaultLoc;
+    std::vector<StmtPtr> body;
+    std::vector<Value> values;          ///< checked: the labels' constant values
+};
 struct Stmt {
     SK kind;
     SrcLoc loc;
@@ -212,8 +237,10 @@ struct Stmt {
     StmtPtr then, otherwise;            ///< If
     StmtPtr init;                       ///< For init (Local or Expr stmt)
     std::vector<ExprPtr> step;          ///< For step expressions
-    StmtPtr loopBody;                   ///< While / For
+    StmtPtr loopBody;                   ///< While / For / Foreach
     bool promoteReturn = false;
+    std::vector<SwitchSection> sections; ///< Switch (expr = the value switched on)
+    // Foreach: locals[0] is the loop variable, expr the array.
 };
 
 struct Attribute { std::string name; std::vector<ExprPtr> args; SrcLoc loc; };
@@ -245,6 +272,18 @@ struct MethodDecl {
     bool called = false;
     int lifecycle = -1;   ///< index into the lifecycle table, -1 = an ordinary method
 };
+struct EnumMember { std::string name; SrcLoc loc; ExprPtr value; std::int32_t v = 0; };
+struct EnumDecl {
+    std::string name;
+    SrcLoc loc;
+    std::vector<EnumMember> members;
+    /// The member's name for `v`, or "" if no member has that value.
+    const std::string* NameOf(std::int32_t v) const {
+        for (auto& m : members) if (m.v == v) return &m.name;
+        return nullptr;
+    }
+};
+
 struct ClassDecl {
     std::string name, base;
     SrcLoc loc, baseLoc;
@@ -255,11 +294,17 @@ struct ClassDecl {
 /// A checked, runnable script.
 struct Program {
     std::vector<ClassDecl> classes;
+    std::vector<EnumDecl> enums;   ///< every enum in the file (top level or inside a class)
+    std::vector<Type> arrays;      ///< element type of each array type (Type{Array, i})
     int component = -1;            ///< the class that is the component
     std::vector<ScriptDiagnostic> diags;
     bool ok() const;
     const ClassDecl* Component() const { return component >= 0 ? &classes[(std::size_t)component] : nullptr; }
     int MethodIndex(const std::string& name) const;
+    /// The array type with elements of `elem` (made on first use).
+    Type ArrayOf(const Type& elem);
+    /// TypeName that also knows this program's enums and arrays.
+    std::string NameOf(const Type& t) const;
 };
 
 /// Parse + check `src`. The program is runnable only if it has no errors.

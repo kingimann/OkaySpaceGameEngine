@@ -859,6 +859,11 @@ add_executable(test_net_anticheat test_net_anticheat.cpp)
 target_link_libraries(test_net_anticheat PRIVATE okay::engine)
 add_test(NAME net_anticheat COMMAND test_net_anticheat)
 
+# Anti-cheat as a game uses it: AntiCheatConfig / NetValidator components and the VS nodes
+add_executable(test_net_anticheat_components test_net_anticheat_components.cpp)
+target_link_libraries(test_net_anticheat_components PRIVATE okay::engine)
+add_test(NAME net_anticheat_components COMMAND test_net_anticheat_components)
+
 add_executable(test_match_results test_match_results.cpp)
 target_link_libraries(test_match_results PRIVATE okay::engine)
 add_test(NAME match_results COMMAND test_match_results)

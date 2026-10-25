@@ -349,4 +349,14 @@ struct EventValueNode : VsNode {
     }
 };
 
+// Reject Rpc: inside On Validate Rpc, refuse the RPC being checked (it won't
+// run on the server or reach anyone, and counts against the sender).
+struct RejectRpcNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        ctx.variables["rpc_reject"] = VsValue(true);
+        return 0;
+    }
+};
+
 } // namespace okay::vs

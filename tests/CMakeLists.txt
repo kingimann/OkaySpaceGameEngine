@@ -926,6 +926,11 @@ add_executable(test_polymesh test_polymesh.cpp)
 target_link_libraries(test_polymesh PRIVATE okay::engine)
 add_test(NAME polymesh COMMAND test_polymesh)
 
+# Robustness: Mesh::PropRand without signed overflow (UBSan), same values
+add_executable(test_mesh_variant_hash test_mesh_variant_hash.cpp)
+target_link_libraries(test_mesh_variant_hash PRIVATE okay::engine)
+add_test(NAME mesh_variant_hash COMMAND test_mesh_variant_hash)
+
 add_executable(test_mesh_asset test_mesh_asset.cpp)
 target_link_libraries(test_mesh_asset PRIVATE okay::engine)
 add_test(NAME mesh_asset COMMAND test_mesh_asset)

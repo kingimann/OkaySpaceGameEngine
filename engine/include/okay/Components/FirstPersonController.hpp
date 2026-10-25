@@ -86,6 +86,9 @@ public:
     /// The resized body (standing height, current height). Saving a scene writes
     /// the standing collider, not the crouched / prone one.
     const StanceBody& stanceBody() const { return m_body; }
+    /// Begin in `s` (a scene saved while crouched / prone loads that way, so a
+    /// player saved under low cover isn't stood up inside it). Applied in Start().
+    void RestoreStance(Stance s) { m_stance = m_wantStance = m_padWant = m_prevStance = s; }
 
     // ---- Lean (peek around corners) ----
     char  leanLeftKey  = 'q';           // 0 = disabled
@@ -139,6 +142,7 @@ public:
         if (lockCursor) Cursor::Capture(true);   // hide + lock for mouse-look
         if (footIK) AttachCharacterFootIK(gameObject);
         if (transform) { m_spawn = transform->Position(); m_haveSpawn = true; }
+        ApplyRestoredStance();
     }
 
     // First person: the player's own camera should IGNORE the body (so you don't
@@ -460,6 +464,12 @@ private:
         } else {
             m_stance = next;
         }
+    }
+    // A restored crouch / prone (RestoreStance) sizes the body before physics runs.
+    void ApplyRestoredStance() {
+        if (!resizeBody || !gameObject || m_stance == Stance::Stand) return;
+        CaptureStance(gameObject, m_body);
+        ApplyStanceHeight(gameObject, m_body, StanceHeight(m_stance));
     }
     /// Collider height for a stance (crouch / prone are fractions of the standing body).
     float StanceHeight(Stance s) const {

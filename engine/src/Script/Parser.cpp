@@ -190,7 +190,8 @@ private:
         if (IsWord("static")) throw ParseError{Peek().loc, "A script class can't be static: it's a component on each object"};
         if (!Is(T::KwClass)) throw ParseError{Peek().loc, "Expected a class here: class Name : Behaviour { ... }"};
         ClassDecl c;
-        c.loc = Expect(T::KwClass, "class").loc;
+        Expect(T::KwClass, "class");
+        c.loc = Peek().loc;
         c.name = Expect(T::Ident, "the class name").text;
         if (Match(T::Colon)) {
             c.baseLoc = Peek().loc;
@@ -265,17 +266,18 @@ private:
         if (isStatic && isConst) Error(staticLoc, "A const is already shared: delete `static`");
         RejectNotYet();
         if (Is(T::KwClass)) throw ParseError{Peek().loc, "Classes inside classes aren't supported"};
-        // Constructor: Name(
-        if (Is(T::Ident) && Peek().text == c.name && Is(T::LParen, 1))
-            throw ParseError{Peek().loc, "Constructors aren't supported: set things up in Awake() or Start()"};
-        TypeRef type = Type(false);
+        // A constructor, Name(...), is a void method named after its class.
+        const bool isCtor = Is(T::Ident) && Peek().text == c.name && Is(T::LParen, 1);
+        TypeRef type;
+        if (isCtor) { type.name = "void"; type.loc = Peek().loc; }
+        else type = Type(false);
         SrcLoc nameLoc = Peek().loc;
         std::string name = Expect(T::Ident, "a name").text;
         if (Is(T::LParen)) {
             if (isConst) throw ParseError{nameLoc, "Methods can't be const"};
             if (!attrs.empty()) Error(attrs[0].loc, "Attributes only work on fields");
             MethodDecl m;
-            m.isPublic = isPublic; m.isStatic = isStatic; m.ret = type; m.name = name; m.loc = nameLoc;
+            m.isPublic = isPublic; m.isStatic = isStatic; m.isCtor = isCtor; m.ret = type; m.name = name; m.loc = nameLoc;
             Expect(T::LParen, "'('");
             if (!Is(T::RParen)) {
                 do {

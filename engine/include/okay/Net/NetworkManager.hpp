@@ -2,6 +2,7 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Net/UdpSocket.hpp"
 #include "okay/Net/SecureChannel.hpp"
+#include "okay/Net/AntiCheat.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Quat.hpp"
 
@@ -94,6 +95,13 @@ public:
     int PeerViolations(std::uint32_t id) const;
     /// Client: how many times the server corrected our position.
     std::uint32_t Corrections() const { return m_corrections; }
+
+    // ---- Anti-cheat (opt-in; see okay/Net/AntiCheat.hpp) ------------------
+    /// Server: what clients may send. Off by default; an AntiCheatConfig
+    /// component (or a .okayac file) turns it on. With it off nothing changes.
+    AntiCheat anticheat;
+    /// Server: called for every message anti-cheat refuses (OnCheatDetected).
+    void SetCheatHandler(std::function<void(const CheatReport&)> f) { m_cheatHandler = std::move(f); }
 
     // ---- Scores + roster (every peer sees who's in the room) -------------
     /// Server only: set a peer's score (0 = the host). Clients can't change scores.
@@ -571,6 +579,13 @@ private:
     std::unordered_map<std::string, std::function<void(std::uint32_t, const std::string&)>> m_rpcHandlers;
     std::vector<ChatEntry> m_chatLog;
     std::function<void(const ChatEntry&)> m_chatHandler;
+
+    // Anti-cheat: refusals are reported here and kick repeat offenders.
+    std::function<void(const CheatReport&)> m_cheatHandler;
+    /// Server: may client `peer` send this? (False = drop it, already reported.)
+    bool AntiCheatAllows(std::uint32_t peer, const std::string& channel, const std::string& data);
+    bool AntiCheatAllowsSyncVar(std::uint32_t peer, const std::string& key);
+    void AntiCheatAfterRefusal(std::uint32_t peer);
 
     // Server-authoritative synced variables
     std::unordered_map<std::string, std::string> m_syncVars;

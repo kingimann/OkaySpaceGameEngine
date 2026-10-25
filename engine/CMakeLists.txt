@@ -19,6 +19,7 @@ add_library(okay_engine
     src/Components/Camera.cpp
     src/Components/SpriteRenderer.cpp
     src/Net/UdpSocket.cpp
+    src/Net/AntiCheat.cpp
     src/Net/NetworkManager.cpp
     src/Net/RelayServer.cpp
     src/Net/DedicatedServer.cpp

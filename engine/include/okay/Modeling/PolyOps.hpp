@@ -70,11 +70,14 @@ int DissolveVerts(PolyMesh& pm, const std::vector<int>& verts);
 /// Returns the number of faces made, or 0 with the reason in `error`.
 int BridgeEdgeLoops(PolyMesh& pm, const EdgeList& edges, std::string* error = nullptr);
 
-/// Bevel (chamfer) edges with one segment of the given width: each edge becomes
-/// a face, corners where beveled edges meet get a patch. Edges must have a face
-/// on both sides and run through vertices surrounded by faces. Returns the
-/// number of edges beveled, or 0 with the reason in `error`.
-int BevelEdges(PolyMesh& pm, const EdgeList& edges, float width, std::string* error = nullptr);
+/// Bevel edges to the given width: each edge becomes a strip of `segments`
+/// faces (1 = a flat chamfer). `profile` shapes a multi-segment bevel: 0.5 is
+/// round, lower is flatter, 1 is pulled out toward the old sharp corner.
+/// Corners where three or more bevels meet get one patch face. Edges must have
+/// a face on both sides and run through vertices surrounded by faces. Returns
+/// the number of edges beveled, or 0 with the reason in `error`.
+int BevelEdges(PolyMesh& pm, const EdgeList& edges, float width, std::string* error = nullptr,
+               int segments = 1, float profile = 0.5f);
 
 /// Split the edge a-b at t (0 = a, 1 = b): a new vertex is added to every face
 /// using it. Returns the new vertex, or -1.
@@ -87,6 +90,20 @@ int SplitFace(PolyMesh& pm, int f, int u, int v);
 /// between them. Returns the new edges, or empty with the reason in `error`.
 struct KnifePoint { int a = -1, b = -1; float t = 0; };
 EdgeList KnifeCut(PolyMesh& pm, const std::vector<KnifePoint>& points, std::string* error = nullptr);
+
+/// Fill: make a face from each selected loop of border edges (a hole's rim), or
+/// from a single open chain of 3+ vertices. Faces it makes run the opposite way
+/// to their neighbours (consistent normals). Returns how many faces were made.
+int FillFaces(PolyMesh& pm, const EdgeList& edges, std::string* error = nullptr);
+/// Grid fill: close a hole whose rim is one loop of an even number of edges
+/// with a grid of quads (shaped to blend the four sides). `span` is the number
+/// of quads along the first side (0 = about a quarter of the rim). Returns the
+/// number of faces made, or 0 with the reason in `error`.
+int GridFill(PolyMesh& pm, const EdgeList& edges, int span = 0, std::string* error = nullptr);
+
+/// Merge vertices into one at `at` (faces that collapse are removed). The first
+/// vertex in the list is the one kept. Returns how many vertices were merged away.
+int MergeVerts(PolyMesh& pm, const std::vector<int>& verts, const Vec3& at);
 
 /// Drop vertices no face uses. Returns old index -> new index (-1 = removed),
 /// for remapping a selection.

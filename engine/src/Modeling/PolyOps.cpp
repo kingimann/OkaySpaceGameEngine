@@ -554,9 +554,11 @@ EdgeList KnifeCut(PolyMesh& pm, const std::vector<KnifePoint>& points, std::stri
 }
 
 // ---------------------------------------------------------------------------
-int BevelEdges(PolyMesh& pm, const EdgeList& edgesIn, float width, std::string* error) {
+int BevelEdges(PolyMesh& pm, const EdgeList& edgesIn, float width, std::string* error, int segments, float profile) {
     auto fail = [&](const std::string& why) { if (error) *error = why; return 0; };
     if (width <= 0) return fail("Bevel width must be more than 0.");
+    segments = std::clamp(segments, 1, 64);
+    profile = std::clamp(profile, 0.0f, 1.0f);
     PolyTopology T(pm);
     std::set<std::pair<int, int>> sel;
     for (const auto& e : edgesIn) {
@@ -703,7 +705,34 @@ int BevelEdges(PolyMesh& pm, const EdgeList& edgesIn, float width, std::string* 
     }
     const bool anyUV = MeshHasUV(pm);
     auto uvIn = [&](int face, int vert) { return UVOf(pm.faces[face], vert); };
-    // A face for each beveled edge.
+    // The rounded profile across a bevel at one corner: the points between the
+    // two corners a and b (made once, shared by both faces that meet there),
+    // bulging toward the original vertex `around`.
+    std::map<std::pair<int, int>, std::vector<int>> arcs;   // (lower, higher) -> points from lower to higher
+    auto arcBetween = [&](int a, int b, int around) {
+        std::vector<int> out;
+        if (segments <= 1 || a == b) return out;
+        const std::pair<int, int> key = Key(a, b);
+        auto it = arcs.find(key);
+        if (it == arcs.end()) {
+            const Vec3 A = V[key.first], B = V[key.second];
+            const Vec3 mid = (A + B) * 0.5f;
+            const Vec3 C = mid + (V[around] - mid) * (2.0f * profile);   // profile 0.5: control at the old corner
+            std::vector<int> pts;
+            for (int i = 1; i < segments; ++i) {
+                const float t = (float)i / (float)segments, u = 1.0f - t;
+                pts.push_back((int)V.size());
+                V.push_back(A * (u * u) + C * (2.0f * u * t) + B * (t * t));
+            }
+            it = arcs.emplace(key, pts).first;
+        }
+        out = it->second;
+        if (a != key.first) std::reverse(out.begin(), out.end());
+        return out;
+    };
+    std::map<std::pair<int, int>, int> arcAround;   // which original vertex each arc bulges toward
+    std::vector<int> strips;                         // the faces made for the bevels (get no arcs inserted)
+    // The faces for each beveled edge: one strip of `segments` quads.
     for (const auto& e : sel) {
         const int v = e.first, w = e.second;
         const Fan& fv = fans[v];
@@ -717,18 +746,40 @@ int BevelEdges(PolyMesh& pm, const EdgeList& edgesIn, float width, std::string* 
         const std::vector<int>& rwR = rep[{w, fR}];
         const std::vector<int>& rwL = rep[{w, fL}];
         if (rvR.empty() || rvL.empty() || rwR.empty() || rwL.empty()) continue;
-        PolyFace B;
+        // The cross-section at each end, from the fR side to the fL side.
+        std::vector<int> rimV{rvR.front()}, rimW{rwR.back()};
+        for (int p : arcBetween(rvR.front(), rvL.back(), v)) rimV.push_back(p);
+        for (int p : arcBetween(rwR.back(), rwL.front(), w)) rimW.push_back(p);
+        rimV.push_back(rvL.back());
+        rimW.push_back(rwL.front());
+        arcAround[Key(rvR.front(), rvL.back())] = v;
+        arcAround[Key(rwR.back(), rwL.front())] = w;
         const PolyFace& src = old[fR];
-        B.material = src.material; B.hasColor = src.hasColor; B.color = src.color;
-        auto add = [&](int vert, int face) { B.verts.push_back(vert); if (anyUV) B.uvs.push_back(uvIn(face, vert)); };
-        add(rvR.front(), fR);
-        add(rwR.back(), fR);
-        if (endWithMiddle.count(w)) add(w, fR);
-        add(rwL.front(), fL);
-        add(rvL.back(), fL);
-        if (endWithMiddle.count(v)) add(v, fL);
-        CleanFace(B);
-        if (B.Size() >= 3) pm.faces.push_back(B);
+        const bool uvFace = anyUV;
+        const Vec2 uvR = uvIn(fR, rvR.front()), uvX = uvIn(fR, rwR.back()), uvY = uvIn(fL, rwL.front()), uvL = uvIn(fL, rvL.back());
+        for (int i = 0; i + 1 < (int)rimV.size() && i + 1 < (int)rimW.size(); ++i) {
+            PolyFace B;
+            B.material = src.material; B.hasColor = src.hasColor; B.color = src.color;
+            B.verts = {rimV[i], rimW[i], rimW[i + 1], rimV[i + 1]};
+            if (uvFace) {
+                const float t0 = (float)i / (float)segments, t1 = (float)(i + 1) / (float)segments;
+                B.uvs = {Lerp2(uvR, uvL, t0), Lerp2(uvX, uvY, t0), Lerp2(uvX, uvY, t1), Lerp2(uvR, uvL, t1)};
+            }
+            CleanFace(B);
+            if (B.Size() >= 3) { strips.push_back((int)pm.faces.size()); pm.faces.push_back(B); }
+        }
+        // A chain end with three or more plain edges keeps its vertex: close the
+        // gap between it and the bevel's two corners there with a cap.
+        for (int end = 0; end < 2; ++end) {
+            const int at = end == 0 ? v : w;
+            if (!endWithMiddle.count(at)) continue;
+            const int r = end == 0 ? rvR.front() : rwL.front();   // the corners as the cap runs past them
+            const int l = end == 0 ? rvL.back() : rwR.back();
+            PolyFace C;
+            C.verts = {l, at, r};
+            if (anyUV) for (int vert : C.verts) { Vec2 t{0, 0}; AnyUV(pm, vert, t); C.uvs.push_back(t); }
+            pm.faces.push_back(C);
+        }
     }
     // Corner patches where three or more bevels meet.
     for (const auto& kv : patch) {
@@ -737,7 +788,158 @@ int BevelEdges(PolyMesh& pm, const EdgeList& edgesIn, float width, std::string* 
         if (anyUV) for (int vert : P.verts) { Vec2 t{0, 0}; AnyUV(pm, vert, t); P.uvs.push_back(t); }
         pm.faces.push_back(P);
     }
+    // Faces that run straight across a rounded bevel's end (corner patches, the
+    // end faces at a chain end, caps) take its profile points too.
+    if (segments > 1) {
+        const std::set<int> stripSet(strips.begin(), strips.end());
+        for (int f = 0; f < (int)pm.faces.size(); ++f) {
+            if (stripSet.count(f)) continue;
+            PolyFace& F = pm.faces[f];
+            for (int c = 0; c < F.Size(); ++c) {
+                const int a = F.verts[c], b = F.verts[(c + 1) % F.Size()];
+                auto ar = arcAround.find(Key(a, b));
+                if (ar == arcAround.end()) continue;
+                const std::vector<int> pts = arcBetween(a, b, ar->second);
+                if (pts.empty()) continue;
+                const bool uv = HasUV(F);
+                const Vec2 ua = uv ? F.uvs[c] : Vec2{0, 0}, ub = uv ? F.uvs[(c + 1) % F.Size()] : Vec2{0, 0};
+                F.verts.insert(F.verts.begin() + c + 1, pts.begin(), pts.end());
+                if (uv) {
+                    std::vector<Vec2> t;
+                    for (std::size_t i = 0; i < pts.size(); ++i) t.push_back(Lerp2(ua, ub, (float)(i + 1) / (float)(pts.size() + 1)));
+                    F.uvs.insert(F.uvs.begin() + c + 1, t.begin(), t.end());
+                }
+                c += (int)pts.size();
+            }
+        }
+    }
     return (int)sel.size();
+}
+
+// ---------------------------------------------------------------------------
+namespace {
+// Orient a loop / chain of border vertices so new faces along it run against the
+// faces already there: an existing face must not already run verts[i] -> verts[i+1].
+void OrientAgainstNeighbours(const PolyMesh& pm, std::vector<int>& vs) {
+    for (std::size_t i = 0; i + 1 < vs.size(); ++i) {
+        for (const PolyFace& f : pm.faces) {
+            if (Runs(f, vs[i], vs[i + 1])) { std::reverse(vs.begin(), vs.end()); return; }
+            if (Runs(f, vs[i + 1], vs[i])) return;
+        }
+    }
+}
+} // namespace
+
+int FillFaces(PolyMesh& pm, const EdgeList& edges, std::string* error) {
+    auto fail = [&](const char* why) { if (error) *error = why; return 0; };
+    PolyTopology T(pm);
+    std::vector<EdgeChain> chains = OrderChains(edges);
+    if (chains.empty()) return fail("Select the edges round a hole (or a chain of three or more vertices).");
+    const bool uv = MeshHasUV(pm);
+    int made = 0;
+    for (EdgeChain& c : chains) {
+        if (c.verts.size() < 3) continue;
+        bool allBorder = true;
+        for (std::size_t i = 0; i + 1 < c.verts.size() || (c.closed && i < c.verts.size()); ++i) {
+            const int a = c.verts[i], b = c.verts[(i + 1) % c.verts.size()];
+            if (T.FacesOf(a, b).size() >= 2) allBorder = false;
+        }
+        if (!allBorder) continue;   // filling across faces that are already there would double them up
+        OrientAgainstNeighbours(pm, c.verts);
+        PolyFace f;
+        f.verts = c.verts;
+        if (uv) for (int v : f.verts) { Vec2 t{0, 0}; AnyUV(pm, v, t); f.uvs.push_back(t); }
+        pm.faces.push_back(f);
+        ++made;
+    }
+    if (!made) return fail("Fill needs edges on an open border (the rim of a hole), not edges between two faces.");
+    return made;
+}
+
+int GridFill(PolyMesh& pm, const EdgeList& edges, int span, std::string* error) {
+    auto fail = [&](const std::string& why) { if (error) *error = why; return 0; };
+    PolyTopology T(pm);
+    std::vector<EdgeChain> chains = OrderChains(edges);
+    if (chains.size() != 1 || !chains[0].closed) return fail("Grid Fill needs one closed loop of edges round a hole.");
+    std::vector<int> L = chains[0].verts;
+    const int n = (int)L.size();
+    if (n < 4 || n % 2) return fail("Grid Fill needs an even number of edges round the hole (it has " + std::to_string(n) + ").");
+    for (int i = 0; i < n; ++i)
+        if (!T.IsBoundary(L[i], L[(i + 1) % n])) return fail("Grid Fill needs the rim of a hole: every edge on the open border.");
+    OrientAgainstNeighbours(pm, L);
+    const int half = n / 2;
+    int a = span > 0 ? span : std::max(1, (n + 2) / 4);
+    a = std::clamp(a, 1, half - 1);
+    const int b = half - a;
+    // Start the loop at the corner that makes the four sides squarest: the vertex
+    // where the rim turns most.
+    int best = 0;
+    float sharpest = 2.0f;
+    for (int i = 0; i < n; ++i) {
+        const Vec3 p = pm.verts[L[i]];
+        const Vec3 d0 = (p - pm.verts[L[(i + n - 1) % n]]).Normalized(), d1 = (pm.verts[L[(i + 1) % n]] - p).Normalized();
+        const float c = Vec3::Dot(d0, d1);
+        if (c < sharpest) { sharpest = c; best = i; }
+    }
+    std::rotate(L.begin(), L.begin() + best, L.end());
+    // The grid: g[i][j], i along the first side (0..a), j up the second (0..b).
+    std::vector<std::vector<int>> g(a + 1, std::vector<int>(b + 1, -1));
+    for (int i = 0; i <= a; ++i) { g[i][0] = L[i]; g[i][b] = L[(a + b + (a - i)) % n]; }
+    for (int j = 0; j <= b; ++j) { g[a][j] = L[a + j]; g[0][j] = L[(n - j) % n]; }
+    const Vec3 P00 = pm.verts[g[0][0]], P10 = pm.verts[g[a][0]], P01 = pm.verts[g[0][b]], P11 = pm.verts[g[a][b]];
+    for (int i = 1; i < a; ++i)
+        for (int j = 1; j < b; ++j) {
+            const float u = (float)i / (float)a, v = (float)j / (float)b;
+            const Vec3 P = pm.verts[g[0][j]] * (1 - u) + pm.verts[g[a][j]] * u + pm.verts[g[i][0]] * (1 - v) + pm.verts[g[i][b]] * v
+                         - (P00 * ((1 - u) * (1 - v)) + P10 * (u * (1 - v)) + P01 * ((1 - u) * v) + P11 * (u * v));
+            g[i][j] = (int)pm.verts.size();
+            pm.verts.push_back(P);
+        }
+    // UVs: the rim keeps its own; inner points blend the rim the same way.
+    const bool uv = MeshHasUV(pm);
+    std::vector<std::vector<Vec2>> gu(a + 1, std::vector<Vec2>(b + 1, Vec2{0, 0}));
+    if (uv) {
+        auto rimUV = [&](int v) { Vec2 t{0, 0}; AnyUV(pm, v, t); return t; };
+        for (int i = 0; i <= a; ++i) { gu[i][0] = rimUV(g[i][0]); gu[i][b] = rimUV(g[i][b]); }
+        for (int j = 0; j <= b; ++j) { gu[0][j] = rimUV(g[0][j]); gu[a][j] = rimUV(g[a][j]); }
+        for (int i = 1; i < a; ++i)
+            for (int j = 1; j < b; ++j) {
+                const float u = (float)i / (float)a, v = (float)j / (float)b;
+                auto blend = [&](float Vec2::*c) {
+                    return gu[0][j].*c * (1 - u) + gu[a][j].*c * u + gu[i][0].*c * (1 - v) + gu[i][b].*c * v
+                         - (gu[0][0].*c * ((1 - u) * (1 - v)) + gu[a][0].*c * (u * (1 - v)) + gu[0][b].*c * ((1 - u) * v) + gu[a][b].*c * (u * v));
+                };
+                gu[i][j] = Vec2{blend(&Vec2::x), blend(&Vec2::y)};
+            }
+    }
+    int made = 0;
+    for (int i = 0; i < a; ++i)
+        for (int j = 0; j < b; ++j) {
+            PolyFace f;
+            f.verts = {g[i][j], g[i + 1][j], g[i + 1][j + 1], g[i][j + 1]};
+            if (uv) f.uvs = {gu[i][j], gu[i + 1][j], gu[i + 1][j + 1], gu[i][j + 1]};
+            pm.faces.push_back(f);
+            ++made;
+        }
+    return made;
+}
+
+int MergeVerts(PolyMesh& pm, const std::vector<int>& verts, const Vec3& at) {
+    if (verts.size() < 2) return 0;
+    const int keep = verts[0];
+    if (keep < 0 || keep >= (int)pm.verts.size()) return 0;
+    std::set<int> gone(verts.begin() + 1, verts.end());
+    gone.erase(keep);
+    pm.verts[keep] = at;
+    for (int f = (int)pm.faces.size() - 1; f >= 0; --f) {
+        PolyFace& F = pm.faces[f];
+        for (int& v : F.verts) if (gone.count(v)) v = keep;
+        CleanFace(F);
+        std::vector<int> sorted = F.verts;
+        std::sort(sorted.begin(), sorted.end());
+        if (F.Size() < 3 || std::unique(sorted.begin(), sorted.end()) != sorted.end()) pm.faces.erase(pm.faces.begin() + f);
+    }
+    return (int)gone.size();
 }
 
 std::vector<int> CompactVerts(PolyMesh& pm) {

@@ -172,22 +172,26 @@ These tools work on the mesh's polygons. Each one is a single undo step.
 |---|---|
 | **Ctrl+R** | **Loop cut.** Point at an edge: a yellow preview shows the new loop across the ring of quads through it. Scroll (or **+** / **-**) for more cuts. Click to cut. With one cut you then slide it into place: move the mouse and click (Esc keeps it in the middle). |
 | **G** then **G** | **Edge slide.** Slide the selected edge loop along the faces beside it. Move the mouse, or type a value from -1 to 1; Ctrl snaps to 0.1 steps. |
-| **Ctrl+B** | **Bevel.** Chamfer the selected edges: move the mouse away from them for a wider bevel, or type the width. |
+| **Ctrl+B** | **Bevel.** Chamfer the selected edges: move the mouse away from them for a wider bevel, or type the width. Scroll for more segments (a rounded bevel). |
 | **K** | **Knife.** Click points on edges or vertices, Enter to cut. Each step from one point to the next must stay within one face. Backspace removes the last point; Esc cancels. |
 
 Enter or a click confirms; Esc or a right-click cancels. The **Edge loops** group on the Edit Mesh page has the same tools as buttons, plus:
 
 - **Select Loop / Select Ring:** grow the selected edges into their loops or rings.
 - **Loop Cut:** cut through the first selected edge, with a cut count and (for one cut) its position.
-- **Bevel:** with a typed width.
+- **Bevel:** with a typed width, the number of **segments** and, for more than one, the **profile** (0.5 is round, lower is flatter, 1 pulls out toward the old sharp corner).
 - **Dissolve Edges:** remove edges, merging the faces on either side. Vertices left in the middle of a straight side go too.
 - **Dissolve Verts:** remove vertices, merging the faces around each one.
 - **Connect Verts:** split the face two selected vertices share with a new edge.
 - **Bridge Edge Loops:** join two open borders with a band of quads, for example the ends of two tubes or the rims of two holes. Both need the same number of edges.
+- **Fill:** close a hole with one face across its rim. Select the rim with Alt+Click.
+- **Grid Fill:** close a hole with a grid of quads that blends its four sides. The rim needs an even number of edges; **span** sets how many quads run along the first side (0 = automatic).
+- **Merge at Center / Merge at First:** merge the selected vertices (or the corners of the selected edges or faces) into one, at their centre or at the first one you clicked. Faces that collapse are removed.
 
 Limits:
 
-- **Bevel:** one segment. It needs edges with a face on both sides, running through vertices that have faces all the way round them.
+- **Bevel:** it needs edges with a face on both sides, running through vertices that have faces all the way round them. Where three or more bevels meet, the corner is closed with one face, not a rounded grid.
+- **Not here yet:** seams, sharp edges and edge split. These need the drawn mesh to split vertices that the editable mesh keeps joined, so they come with the UV milestone.
 - **Bridge:** works on open borders only. It doesn't remove faces first.
 - **Edge slide:** UVs aren't adjusted, so a textured surface stretches with it.
 

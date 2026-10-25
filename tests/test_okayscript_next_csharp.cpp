@@ -50,9 +50,9 @@ struct World {
     ScriptComponent* sc = nullptr;
     bool loaded = false;
     std::string error;
-    explicit World(const std::string& src) {
+    explicit World(const std::string& src, const char* language = NextScriptVM::kLanguage) {
         player = scene.CreateGameObject("Player");
-        sc = player->AddComponent<ScriptComponent>(NextScriptVM::kLanguage);
+        sc = player->AddComponent<ScriptComponent>(language);
         loaded = sc->LoadSource(src, &error);
         if (!loaded) std::printf("    load failed: %s\n", error.c_str());
         scene.Start();
@@ -130,6 +130,10 @@ static void Enums() {
         CHECK(Has(d, 0, "is State but needs int", 9));
         CHECK(Has(d, 0, "is int but needs State", 10));
         CHECK(Has(d, 0, "Unknown name 'Walking'. Did you mean State.Walking?", 11, 19));
+        // `: int` would only repeat the default
+        CHECK(Has(Diags("enum E : int { A }\n" + Wrap("")), 0, "Enums are always ints: delete the ': type'", 1, 8));
+        // switch on a float or bool is an if
+        CHECK(Has(Diags(Wrap("    void Start() { bool b = true; switch (b) { default: break; } }")), 0, "not bool: use if / else", 2));
     }
 }
 
@@ -139,7 +143,7 @@ static void Switches() {
             "enum Weapon { Sword, Bow, Staff }\n"
             "class T : Behaviour {\n"
             "    const int Boss = 99;\n"
-            "    public string a, b, c, d, e;\n"
+            "    public string a, b, c;\n"
             "    public int loopSum;\n"
             "    string Name(int n) {\n"
             "        switch (n) {\n"
@@ -164,8 +168,7 @@ static void Switches() {
             "        b = \"\" + Damage(Weapon.Sword) + \",\" + Damage(Weapon.Bow) + \",\" + Damage(Weapon.Staff);\n"
             "        string cmd = \"jump\";\n"
             "        switch (cmd) { case \"run\": c = \"R\"; break; case \"jump\": c = \"J\"; break; default: c = \"?\"; break; }\n"
-            "        bool f = false;\n"
-            "        switch (f) { case true: d = \"yes\"; break; case false: d = \"no\"; break; }\n"
+
             "        for (int i = 0; i < 6; i++) {\n"
             "            switch (i % 3) {\n"
             "                case 0: continue;\n"
@@ -174,18 +177,15 @@ static void Switches() {
             "            }\n"
             "            loopSum += 1000;\n"
             "        }\n"
-            "        float x = 2.5f;\n"
-            "        switch (x) { case 2.5f: e = \"half\"; break; case 1: e = \"one\"; break; }\n"
+
             "    }\n"
             "}\n");
         CHECK(w.loaded);
         CHECK(w.S("a") == "one,two or three,boss,minus four,many");
         CHECK(w.S("b") == "10,6,0");
         CHECK(w.S("c") == "J");
-        CHECK(w.S("d") == "no");
         // i=1: +1 +1000, i=2: +100 +1000, i=4: +4 +1000, i=5: +100 +1000 (0 and 3 continue)
         CHECK_NEAR(w.F("loopSum"), 4205.0f, 1e-3f);
-        CHECK(w.S("e") == "half");
     }
     {   // a switch whose every section returns (with a default) ends the method
         CHECK(Clean(Wrap(
@@ -212,7 +212,7 @@ static void Switches() {
         CHECK(Has(d, 0, "A case value must be fixed", 7, 27));
         CHECK(Has(d, 0, "is string but needs int", 8, 27));
         CHECK(Has(d, 0, "only one default", 9, 38));
-        CHECK(Has(d, 0, "switch works on int, float, bool, string or an enum, not Transform", 10, 17));
+        CHECK(Has(d, 0, "switch works on an int, a string or an enum, not Transform", 10, 17));
         CHECK(Has(d, 0, "Expected case or default", 11, 22));
         CHECK(Has(d, 0, "can't fall through", 12, 22));
         CHECK(Has(d, 0, "continue only works inside a loop", 13, 9));
@@ -302,6 +302,10 @@ static void Arrays() {
             "        int[] g = new int[2] { 1, 2, 3 };\n"           // 10
             "        var h = { 1, 2 };\n"                           // 11
             "        Debug.Log(a.Count);\n"                         // 12
+            "        var k = new[] { 1, \"x\" };\n"              // 13
+            "        var q = new[] { 1, 2.5f };\n"                // 14
+            "        float r = q[0];\n"                           // 15
+            "        Debug.Log(k.Length + r);\n"                  // 16
             "    }\n"));
         CHECK(Has(d, 0, "An array index must be an int, not string", 4, 11));
         CHECK(Has(d, 0, "is string but needs int", 5, 16));
@@ -312,6 +316,9 @@ static void Arrays() {
         CHECK(Has(d, 0, "The array has length 2 but 3 values", 10, 19));
         CHECK(Has(d, 0, "`var` can't tell the type of { ... }", 11, 13));
         CHECK(Has(d, 0, "int[] has no 'Count'. Did you mean 'Length'?", 12, 21));
+        CHECK(Has(d, 0, "new[] can't tell the items' type", 13, 17));
+        CHECK(!Has(d, 0, "", 14));   // ints with floats make a float[]
+        CHECK(!Has(d, 0, "", 15));
     }
 }
 
@@ -369,6 +376,36 @@ static void Foreach() {
     }
 }
 
+static void Parity() {
+    // The same C# snippet gives the same results on the old OkayScript runtime.
+    const std::string src =
+        "enum State { Idle, Walking, Running = 10, Flying }\n"
+        "class T : Behaviour {\n"
+        "    public string log = \"\";\n"
+        "    public int sum;\n"
+        "    string Name(int n) { switch (n) { case 1: return \"one\"; case 2: case 3: return \"few\"; default: return \"many\"; } }\n"
+        "    void Start() {\n"
+        "        State s = State.Flying;\n"
+        "        log = \"\" + (int)s + \",\" + Name(1) + Name(3) + Name(9);\n"
+        "        switch (s) { case State.Idle: log += \"!idle\"; break; case State.Flying: log += \"!fly\"; break; }\n"
+        "        int[] xs = { 1, 2, 3 };\n"
+        "        int[] ys = new int[3];\n"
+        "        ys[1] = 5;\n"
+        "        var zs = new[] { 4, 5 };\n"
+        "        foreach (var x in xs) sum += x;\n"
+        "        sum += ys[1] + xs.Length + zs[1] + zs.Length * 100;\n"
+        "    }\n"
+        "}\n";
+    World next(src), old(src, "okayscript");
+    CHECK(next.loaded && old.loaded);
+    CHECK(next.S("log") == "11,onefewmany!fly");
+    CHECK(next.S("log") == old.S("log"));
+    CHECK_NEAR(next.F("sum"), 6 + 5 + 3 + 5 + 200, 1e-6f);
+    CHECK_NEAR(next.F("sum"), old.F("sum"), 1e-6f);
+    // One deliberate difference: an enum turned into text is its name, as in C#
+    // (the old runtime prints the number).
+}
+
 static void BackCompat() {
     // Words that are new keywords in context only stay usable as names.
     CHECK(Clean(Wrap("    public int in_ = 1;\n    void Start() { int enumCount = 2, cases = 3; Debug.Log(enumCount + cases + in_); }\n")));
@@ -400,6 +437,7 @@ int main() {
     Switches();
     Arrays();
     Foreach();
+    Parity();
     BackCompat();
     Fuzz();
     Log::sink = nullptr;

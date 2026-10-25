@@ -149,10 +149,7 @@ private:
         EnumDecl e;
         e.loc = Peek().loc;
         e.name = Expect(T::Ident, "the enum's name").text;
-        if (Match(T::Colon)) {
-            if (!Is(T::KwInt)) throw ParseError{Peek().loc, "Enums hold ints: write enum " + e.name + " { ... } or enum " + e.name + " : int { ... }"};
-            ++pos_;
-        }
+        if (Is(T::Colon)) throw ParseError{Peek().loc, "Enums are always ints: delete the ': type'"};
         Expect(T::LBrace, "'{'");
         while (!Is(T::RBrace) && !Is(T::End)) {
             EnumMember m;
@@ -665,6 +662,13 @@ private:
             case T::KwNew: {
                 ++pos_;
                 auto e = Make(EK::New, l);
+                if (Is(T::LBracket) && Is(T::RBracket, 1)) {   // new[] { ... }: the items give the type
+                    pos_ += 2;
+                    e->kind = EK::NewArray;
+                    e->hasInit = true;
+                    e->args = ArrayItems();
+                    return e;
+                }
                 e->typeArg = Type(false);
                 if (Is(T::LBracket)) {   // new T[n], new T[n][]
                     e->kind = EK::NewArray;

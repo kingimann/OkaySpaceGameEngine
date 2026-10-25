@@ -257,7 +257,6 @@ private:
             if (auto* i = std::get_if<std::int32_t>(&v)) if (const std::string* n = en.NameOf(*i)) return en.name + "." + *n;
         }
         if (auto* s = std::get_if<std::string>(&v)) return "\"" + *s + "\"";
-        if (auto* b = std::get_if<bool>(&v)) return *b ? "true" : "false";
         return ValueToString(v);
     }
 
@@ -547,15 +546,16 @@ private:
         return true;
     }
 
-    // C#'s rules: the value is an int, float, bool, string or enum; every case is a
+    // C#'s rules: the value is an int, string or enum; every case is a
     // fixed value of that type, none twice; one default at most; and no section
     // runs into the next (each ends in break, return or continue).
     bool CheckSwitch(Stmt& s) {
         CheckExpr(*s.expr);
         const Type t = s.expr->type;
-        const bool okType = t.kind == TK::Int || t.kind == TK::Float || t.kind == TK::Bool || t.kind == TK::String || t.kind == TK::Enum;
+        const bool okType = t.kind == TK::Int || t.kind == TK::String || t.kind == TK::Enum;
         if (!okType && t.kind != TK::Error)
-            Error(s.expr->loc, "switch works on int, float, bool, string or an enum, not " + TypeName(t));
+            Error(s.expr->loc, "switch works on an int, a string or an enum, not " + TypeName(t) +
+                               (t.kind == TK::Float || t.kind == TK::Bool ? ": use if / else" : ""));
         bool haveDefault = false, anyBreak = false;
         std::vector<Value> seen;
         ++switchDepth_;
@@ -646,6 +646,25 @@ private:
         }
     }
 
+    // new[] { ... }: every item has the same type (ints mixed with floats make floats).
+    void CheckImplicitArray(Expr& e) {
+        Type elem{};
+        bool same = true;
+        for (std::size_t i = 0; i < e.args.size(); ++i) {
+            CheckExpr(*e.args[i]);
+            const Type t = e.args[i]->type;
+            if (i == 0) elem = t;
+            else if (elem.IsNumeric() && t.IsNumeric()) { if (t.kind == TK::Float) elem = t; }
+            else if (t != elem) same = false;
+        }
+        if (e.args.empty() || !same || elem.kind == TK::Null || elem.kind == TK::Void) {
+            Error(e.loc, "new[] can't tell the items' type: write it, e.g. new int[] { ... }");
+            return;
+        }
+        if (elem.kind == TK::Error) return;
+        CheckItems(e, prog_.ArrayOf(elem));
+    }
+
     void CheckIndex(Expr& e) {
         CheckExpr(*e.object);
         CheckExpr(*e.lhs);
@@ -658,6 +677,7 @@ private:
     }
 
     void CheckNewArray(Expr& e) {
+        if (e.typeArg.name.empty()) { CheckImplicitArray(e); return; }
         if (e.lhs) { CheckExpr(*e.lhs); Expect(*e.lhs, Type::Of(TK::Int), "The array's length"); }
         Type t = ResolveType(e.typeArg, false);
         if (t.kind == TK::Error) { for (auto& a : e.args) CheckExpr(*a); return; }
@@ -741,7 +761,7 @@ private:
                         Error(e.loc, en.name + "." + e.name + " is used before its value is worked out");
                         return;
                     }
-                    e.bind = Bind::EnumValue; e.slot = typeId; e.member = (int)i; e.ival = en.members[i].v;
+                    e.bind = Bind::EnumValue; e.ival = en.members[i].v;
                     e.type = Type{TK::Enum, typeId};
                     return;
                 }

@@ -717,7 +717,7 @@ class Hero : Behaviour {
 
 ### switch
 
-Works on `int`, `float`, `bool`, `string` and enums. Case values must be fixed
+Works on `int`, `string` and enums (for a `float` or `bool`, use `if`). Case values must be fixed
 (numbers, text, enum values or consts), and appear only once. As in C#, a
 section can't run into the next one: end each with `break`, `return` or
 `continue`. Several `case` labels can share one section.
@@ -761,7 +761,8 @@ Debug.Log(scores.Length);                  // 3
 
 Reading or writing outside the array (`scores[3]`), a negative length, or an
 array of more than a million items stops the callback with an error naming the
-line.
+line. `new[] { 1, 2 }` takes its type from the items (ints with floats make a
+`float[]`).
 
 ### foreach
 

@@ -875,3 +875,8 @@ add_test(NAME locomotion COMMAND test_locomotion)
 add_executable(test_qa_pr250 test_qa_pr250.cpp)
 target_link_libraries(test_qa_pr250 PRIVATE okay::engine)
 add_test(NAME qa_pr250 COMMAND test_qa_pr250)
+
+# Robustness: Prefs escaping/precision, TweenSequence cycles, Mat4::Inverse, UB-free hashes
+add_executable(test_prefs_misc test_prefs_misc.cpp)
+target_link_libraries(test_prefs_misc PRIVATE okay::engine)
+add_test(NAME prefs_misc COMMAND test_prefs_misc)

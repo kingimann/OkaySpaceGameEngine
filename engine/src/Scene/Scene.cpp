@@ -54,6 +54,12 @@ void Scene::Clear() {
     m_tweens.Clear();
     m_physics.Clear();
     mainCamera = nullptr;
+    // The pointer-dispatch state points at objects about to be freed: forget it,
+    // or the next Update sends OnMouseExit/Up to freed memory (the 2.813.0 crash
+    // when Play restarted or a level loaded while the cursor was over an object).
+    m_mouseHover = nullptr;
+    m_mousePress = nullptr;
+    m_mouseWasDown = false;
     m_objects.clear();
     m_graveyard.clear();
     ++m_structureVersion;
@@ -229,6 +235,15 @@ void Scene::DispatchPointer() {
             }
         }
     }
+
+    // Backstop: never message an object that's no longer in the scene, however it
+    // left (Clear and FlushDestroyed reset these; this catches any other path).
+    auto inScene = [this](GameObject* go) {
+        for (const auto& up : m_objects) if (up.get() == go) return true;
+        return false;
+    };
+    if (m_mouseHover && !inScene(m_mouseHover)) m_mouseHover = nullptr;
+    if (m_mousePress && !inScene(m_mousePress)) m_mousePress = nullptr;
 
     auto send = [](GameObject* go, void (Component::*fn)()) {
         if (!go) return;

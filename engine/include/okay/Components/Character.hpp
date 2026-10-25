@@ -437,6 +437,8 @@ private:
     bool m_partsBuilt = false;
     GameObject* m_rigRoot = nullptr;
     std::vector<GameObject*> m_parts;    // one object per bone (B_COUNT)
+    std::vector<Vec3> m_partRest;        // each part's joint offset from its parent
+    void RememberPartRest();
     GameObject* FindRig() const;         // an existing "Rig" child, or null
     bool AdoptParts(GameObject* rig);    // reuse an existing rig instead of rebuilding
     void DriveParts();                   // pose the part transforms from the animation

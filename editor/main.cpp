@@ -34303,7 +34303,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     {
         oked::UIPreviewPainter painter(dl, canvasPos, g_sdlRenderer, &GetThumb);
         okay::ui2d::UIRenderOptions opt;
-        opt.interactive = gameView && ed.isPlaying;
+        opt.interactive = gameView && ed.isPlaying();
         opt.worldLabelsViaUIWorld = true;
         okay::ui2d::RenderSceneUI(ed.scene(), painter, (int)canvasSize.x, (int)canvasSize.y, opt);
     }

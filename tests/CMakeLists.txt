@@ -875,3 +875,8 @@ add_test(NAME locomotion COMMAND test_locomotion)
 add_executable(test_qa_pr250 test_qa_pr250.cpp)
 target_link_libraries(test_qa_pr250 PRIVATE okay::engine)
 add_test(NAME qa_pr250 COMMAND test_qa_pr250)
+
+# Robustness: a NaN body can't poison statics / other bodies
+add_executable(test_physics_nan test_physics_nan.cpp)
+target_link_libraries(test_physics_nan PRIVATE okay::engine)
+add_test(NAME physics_nan COMMAND test_physics_nan)

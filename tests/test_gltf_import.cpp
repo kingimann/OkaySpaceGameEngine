@@ -11,7 +11,7 @@ using namespace okay;
 // Tiny base64 encoder for the test (the loader has its own decoder).
 static std::string B64(const std::vector<std::uint8_t>& d) {
     static const char* T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string out; int val = 0, bits = -6;
+    std::string out; unsigned val = 0; int bits = -6;   // unsigned: the shift wraps instead of overflowing (UB)
     for (std::uint8_t c : d) {
         val = (val << 8) + c; bits += 8;
         while (bits >= 0) { out += T[(val >> bits) & 0x3F]; bits -= 6; }

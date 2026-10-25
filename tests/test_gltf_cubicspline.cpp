@@ -44,7 +44,7 @@ struct GltfBuilder {
     }
     std::string B64() const {
         static const char* T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        std::string out; int val = 0, bits = -6;
+        std::string out; unsigned val = 0; int bits = -6;   // unsigned: the shift wraps instead of overflowing (UB)
         for (std::uint8_t c : buf) { val = (val << 8) + c; bits += 8; while (bits >= 0) { out += T[(val >> bits) & 0x3F]; bits -= 6; } }
         if (bits > -6) out += T[((val << 8) >> (bits + 8)) & 0x3F];
         while (out.size() % 4) out += '=';

@@ -73,6 +73,11 @@ public:
     virtual void CopyExF(Tex t, const Rect* src, const FRect* dst, double angle,
                          const FPoint* center, int flip) = 0;
     virtual void Geometry(Tex t, const Vertex* verts, int numVerts, const int* indices, int numIndices) = 0;
+
+    /// Told when a widget names a texture that can't be loaded, with the rect it
+    /// would fill (after the widget drew its fallback). Editors label it; the game
+    /// ignores it.
+    virtual void MissingTexture(const std::string& path, const Rect& where) { (void)path; (void)where; }
 };
 
 } // namespace ui2d

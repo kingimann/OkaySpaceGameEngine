@@ -247,7 +247,7 @@ void DrawUIText(Painter& r, const std::string& text, float ox, float oy,
 }
 
 
-void RenderSceneUI(Scene& scene, Painter& p, int w, int h) {
+void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions& opt) {
     // Scroll-view membership: offset a widget's origin by its owning Scroll
     // View's scroll and clip drawing to the viewport, so scrollable content
     // shows and hides correctly in the built game. Call once per UI widget
@@ -322,6 +322,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h) {
             if (!tex) {
                 Rect rr{(int)o.x, (int)o.y, (int)isz.x, (int)isz.y};
                 FillUIShape(p, rr, UIShape::Rectangle, 0.0f, ri->color, ri->color, false, false, op);
+                if (!ri->texture.empty()) p.MissingTexture(ri->texture, rr);
                 continue;
             }
             int tw = 0, th = 0; p.QueryTexture(tex, &tw, &th);
@@ -442,6 +443,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h) {
             const Rect& rr = filled ? fr : r;
             FillUIShape(p, rr, im->shape, im->cornerRadius,
                         im->color, im->color, false, false, op, 0, im->cornerMask);
+            if (!im->texture.empty()) p.MissingTexture(im->texture, r);
         }
         if (im->borderWidth > 0.0f) {                   // optional frame/matte around the image
             int b = (int)im->borderWidth;
@@ -655,7 +657,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h) {
         }
         float selfAng = targetHeading - mapHeading;   // facing of the player on-map
         // Click the open (fullscreen) map to drop a waypoint; right-click clears it.
-        if (mm->fullscreen && mm->mapClickWaypoint) {
+        if (opt.interactive && mm->fullscreen && mm->mapClickWaypoint) {
             okay::Vec2 cur = uiMouse();   // logical (canvas-scaled) coordinates
             bool inBox = cur.x >= o.x && cur.x < o.x + sz.x && cur.y >= o.y && cur.y < o.y + sz.y;
             if (inBox && Input::GetMouseButtonDown(0)) {
@@ -1016,7 +1018,8 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h) {
         Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
         enterScroll(up.get(), o);
         Rect box{(int)o.x, (int)o.y, (int)tg->size.x, (int)tg->size.y};
-        float t = tg->AnimT();                          // 0=off..1=on (smoothed)
+        float t = opt.interactive ? tg->AnimT()         // 0=off..1=on (smoothed)
+                                  : (tg->on ? 1.0f : 0.0f);
         if (tg->style == UIToggle::Style::Switch) {     // pill track + sliding knob
             auto mix = [t](const Color& a, const Color& b) {
                 return Color{a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t,
@@ -1085,6 +1088,8 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h) {
                         p.SetTextureAlphaMod(itex, (std::uint8_t)(255 * d.color.a * op));
                         p.Copy(itex, nullptr, &ir);
                         p.SetTextureAlphaMod(itex, 255);
+                    } else if (!d.text.empty()) {
+                        p.MissingTexture(d.text, Rect{(int)dx, (int)dy, (int)d.w, (int)d.h});
                     }
                     break;
                 case UITabsDraw::Kind::Clip: {   // the scrolling strip, inside any scroll-view clip
@@ -1146,6 +1151,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h) {
             Rect ir{(int)ix, (int)(o.y + (bsz.y - isz) * 0.5f + shift), (int)isz, (int)isz};
             if (itex) { p.SetTextureColorMod(itex, 255, 255, 255); p.SetTextureAlphaMod(itex, 255);
                         p.Copy(itex, nullptr, &ir); }
+            else p.MissingTexture(btn->icon, ir);
         }
         // Center the label at the button's font scale, within the area beside
         // the icon. Skip the built-in label when a child Text object provides it
@@ -1220,11 +1226,15 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h) {
         else if (_it.kind == K_WorldUI) {   // in-world UI labels/markers (3D -> screen)
         auto* wu = up->GetComponent<WorldUI>();
         if (!wu || !up->active || UIHidden(up.get()) || !up->transform) continue;
-        Camera* mc = scene.mainCamera;
-        if (!mc) continue;
         Vec3 wp = up->transform->Position() + wu->worldOffset;
         Vec2 sp; float depth = 0.0f;
-        if (!mc->WorldToScreen(wp, (float)w, (float)h, sp, &depth)) continue;   // behind camera
+        if (opt.worldLabelsViaUIWorld) {   // the caller's view camera (editor views)
+            if (!UIWorld().active || !UIWorld().project || !UIWorld().project(wp, sp, depth)) continue;
+        } else {
+            Camera* mc = scene.mainCamera;
+            if (!mc) continue;
+            if (!mc->WorldToScreen(wp, (float)w, (float)h, sp, &depth)) continue;   // behind camera
+        }
         if (wu->maxDistance > 0.0f && depth > wu->maxDistance) continue;
         float scale = wu->pixelSize;
         if (wu->scaleWithDistance && depth > 0.001f)

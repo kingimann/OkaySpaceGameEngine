@@ -2299,6 +2299,21 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
     std::unordered_map<int, GameObject*> byIndex;
     std::vector<std::pair<int, int>> parentLinks; // child index -> parent index
 
+    // Record validation. Counts are checked against the input still unread (each
+    // element takes at least `minChars` characters), so a bogus count can't make a
+    // loader allocate or loop far past the end of the file.
+    auto remaining = [&]() -> unsigned long long {
+        const std::streamoff at = in.tellg();
+        return at < 0 || (std::size_t)at > text.size() ? 0ull : (unsigned long long)(text.size() - (std::size_t)at);
+    };
+    auto countOk = [&](long long n, unsigned long long minChars) {
+        return n >= 0 && (unsigned long long)n * minChars <= remaining();
+    };
+    auto bad = [&](const std::string& what) {
+        if (error) *error = what;
+        return false;
+    };
+
     while (in >> token) {
         // The file-level globals (name, gravity, lighting, fog) describe the WHOLE
         // scene, so a merge/additive load (clear == false) reads past them but keeps
@@ -2484,15 +2499,19 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* mr = go->GetComponent<MeshRenderer>();
                     if (!mr) mr = go->AddComponent<MeshRenderer>();
                     int vcount = 0; in >> vcount;
+                    if (!in || !countOk(vcount, 3)) return bad("meshgeo: bad vertex count");
                     mr->mesh.vertices.clear();
                     mr->mesh.vertices.reserve(vcount > 0 ? vcount : 0);
-                    for (int i = 0; i < vcount; ++i) {
+                    for (int i = 0; i < vcount && in; ++i) {
                         Vec3 v; in >> v.x >> v.y >> v.z; mr->mesh.vertices.push_back(v);
                     }
                     int icount = 0; in >> icount;
+                    if (!in || !countOk(icount, 1)) return bad("meshgeo: bad index count");
                     mr->mesh.triangles.clear();
                     mr->mesh.triangles.reserve(icount > 0 ? icount : 0);
-                    for (int i = 0; i < icount; ++i) { int idx = 0; in >> idx; mr->mesh.triangles.push_back(idx); }
+                    for (int i = 0; i < icount && in; ++i) { int idx = 0; in >> idx; mr->mesh.triangles.push_back(idx); }
+                    for (int idx : mr->mesh.triangles)
+                        if (idx < 0 || idx >= (int)mr->mesh.vertices.size()) return bad("meshgeo: triangle index " + std::to_string(idx) + " out of range");
                     mr->mesh.name = "";
                     mr->mesh.uvs.clear();
                     mr->mesh.triColors.clear();
@@ -2519,9 +2538,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* mr = go->GetComponent<MeshRenderer>();
                     if (!mr) mr = go->AddComponent<MeshRenderer>();
                     int uc = 0; in >> uc;
+                    if (!in || !countOk(uc, 2)) return bad("meshuv: bad count");
                     mr->mesh.uvs.clear();
                     mr->mesh.uvs.reserve(uc > 0 ? uc : 0);
-                    for (int i = 0; i < uc; ++i) {
+                    for (int i = 0; i < uc && in; ++i) {
                         Vec2 t; in >> t.x >> t.y; mr->mesh.uvs.push_back(t);
                     }
                 } else if (field == "meshpoly") {
@@ -2529,16 +2549,17 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* mr = go->GetComponent<MeshRenderer>();
                     if (!mr) mr = go->AddComponent<MeshRenderer>();
                     int pc = 0; in >> pc;
+                    if (!in || !countOk(pc, 1)) return bad("meshpoly: bad count");
                     mr->mesh.polyFace.clear();
                     mr->mesh.polyFace.reserve(pc > 0 ? pc : 0);
-                    for (int i = 0; i < pc; ++i) { int f = 0; in >> f; mr->mesh.polyFace.push_back(f); }
+                    for (int i = 0; i < pc && in; ++i) { int f = 0; in >> f; mr->mesh.polyFace.push_back(f); }
                 } else if (field == "meshseams") {
                     // UV seam edges of meshgeo geometry (optional record).
                     auto* mr = go->GetComponent<MeshRenderer>();
                     if (!mr) mr = go->AddComponent<MeshRenderer>();
                     int sc = 0; in >> sc;
                     mr->mesh.seams.clear();
-                    for (int i = 0; i < sc; ++i) {
+                    for (int i = 0; i < sc && in; ++i) {
                         int a = -1, b = -1; in >> a >> b;
                         if (a >= 0 && b >= 0 && a < (int)mr->mesh.vertices.size() && b < (int)mr->mesh.vertices.size() && a != b)
                             mr->mesh.seams.push_back({std::min(a, b), std::max(a, b)});
@@ -2558,9 +2579,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* mr = go->GetComponent<MeshRenderer>();
                     if (!mr) mr = go->AddComponent<MeshRenderer>();
                     int cc = 0; in >> cc;
+                    if (!in || !countOk(cc, 4)) return bad("meshcolors: bad count");
                     mr->mesh.triColors.clear();
                     mr->mesh.triColors.reserve(cc > 0 ? cc : 0);
-                    for (int i = 0; i < cc; ++i) {
+                    for (int i = 0; i < cc && in; ++i) {
                         Color c; in >> c.r >> c.g >> c.b >> c.a; mr->mesh.triColors.push_back(c);
                     }
                 } else if (field == "skinmesh") {
@@ -2570,27 +2592,41 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* sm = go->GetComponent<SkinnedMesh>();
                     if (!sm) sm = go->AddComponent<SkinnedMesh>();
                     Mesh bm;
+                    // Every count is checked, and the result must be consistent:
+                    // one weight set per vertex and triangles inside the vertex
+                    // list (Skin() and WeldVertices index by them).
                     long vc = 0; in >> vc;
-                    for (long i = 0; i < vc; ++i) { Vec3 v; in >> v.x >> v.y >> v.z; bm.vertices.push_back(v); }
+                    if (!in || !countOk(vc, 3)) return bad("skinmesh: bad vertex count");
+                    for (long i = 0; i < vc && in; ++i) { Vec3 v; in >> v.x >> v.y >> v.z; bm.vertices.push_back(v); }
                     long nc = 0; in >> nc;
-                    for (long i = 0; i < nc; ++i) { Vec3 n; in >> n.x >> n.y >> n.z; bm.normals.push_back(n); }
+                    if (!in || !countOk(nc, 3)) return bad("skinmesh: bad normal count");
+                    for (long i = 0; i < nc && in; ++i) { Vec3 n; in >> n.x >> n.y >> n.z; bm.normals.push_back(n); }
                     long uc = 0; in >> uc;
-                    for (long i = 0; i < uc; ++i) { Vec2 u; in >> u.x >> u.y; bm.uvs.push_back(u); }
+                    if (!in || !countOk(uc, 2)) return bad("skinmesh: bad uv count");
+                    for (long i = 0; i < uc && in; ++i) { Vec2 u; in >> u.x >> u.y; bm.uvs.push_back(u); }
                     long tc = 0; in >> tc;
-                    for (long i = 0; i < tc; ++i) { int t = 0; in >> t; bm.triangles.push_back(t); }
+                    if (!in || !countOk(tc, 1)) return bad("skinmesh: bad triangle count");
+                    for (long i = 0; i < tc && in; ++i) { int t = 0; in >> t; bm.triangles.push_back(t); }
                     long wc = 0; in >> wc;
+                    if (!in || !countOk(wc, 8)) return bad("skinmesh: bad weight count");
+                    if (wc != vc) return bad("skinmesh: " + std::to_string(wc) + " weights for " + std::to_string(vc) + " vertices");
                     sm->jointIdx.clear(); sm->jointWt.clear();
-                    for (long i = 0; i < wc; ++i) {
+                    for (long i = 0; i < wc && in; ++i) {
                         std::array<int, 4> ji{}; std::array<float, 4> jw{};
                         in >> ji[0] >> ji[1] >> ji[2] >> ji[3] >> jw[0] >> jw[1] >> jw[2] >> jw[3];
                         sm->jointIdx.push_back(ji); sm->jointWt.push_back(jw);
                     }
                     long jc = 0; in >> jc;
+                    if (!in || !countOk(jc, 1)) return bad("skinmesh: bad joint count");
                     sm->jointNames.clear();
-                    for (long i = 0; i < jc; ++i) sm->jointNames.push_back(ReadQuoted(in));
+                    for (long i = 0; i < jc && in; ++i) sm->jointNames.push_back(ReadQuoted(in));
                     long bc = 0; in >> bc;
+                    if (!in || !countOk(bc, 16)) return bad("skinmesh: bad bind-matrix count");
                     sm->inverseBind.clear();
-                    for (long i = 0; i < bc; ++i) { Mat4 M; for (int e = 0; e < 16; ++e) in >> M.m[e]; sm->inverseBind.push_back(M); }
+                    for (long i = 0; i < bc && in; ++i) { Mat4 M; for (int e = 0; e < 16; ++e) in >> M.m[e]; sm->inverseBind.push_back(M); }
+                    if (!in) return bad("skinmesh: record cut short");
+                    for (int t : bm.triangles)
+                        if (t < 0 || t >= (int)bm.vertices.size()) return bad("skinmesh: triangle index " + std::to_string(t) + " out of range");
                     sm->bind = bm;
                     sm->joints.clear();   // re-resolved from names in Start()
                     if (auto* mr = go->GetComponent<MeshRenderer>()) mr->mesh = bm;   // show bind pose until skinned
@@ -2620,20 +2656,24 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (!ma) ma = go->AddComponent<ModelAnimator>();
                     int autop = 1, lp = 1; long clipCount = 0;
                     in >> ma->active >> autop >> ma->speed >> lp >> clipCount;
+                    if (!in || !countOk(clipCount, 2)) return bad("modelanim: bad clip count");
                     ma->autoPlay = (autop != 0); ma->loop = (lp != 0);
                     ma->clips.clear();
-                    for (long c = 0; c < clipCount; ++c) {
+                    for (long c = 0; c < clipCount && in; ++c) {
                         ModelAnimator::Clip clip;
                         clip.name = ReadQuoted(in);
                         long nodeCnt = 0; in >> nodeCnt;
-                        for (long n = 0; n < nodeCnt; ++n) {
+                        if (!in || !countOk(nodeCnt, 2)) return bad("modelanim: bad node count");
+                        for (long n = 0; n < nodeCnt && in; ++n) {
                             ModelAnimator::NodeClip nc;
                             nc.node = ReadQuoted(in);
                             long trackCnt = 0; in >> trackCnt;
-                            for (long tk = 0; tk < trackCnt; ++tk) {
+                            if (!in || !countOk(trackCnt, 2)) return bad("modelanim: bad track count");
+                            for (long tk = 0; tk < trackCnt && in; ++tk) {
                                 std::string trackName = ReadQuoted(in);
                                 long keyCnt = 0; in >> keyCnt;
-                                for (long k = 0; k < keyCnt; ++k) {
+                                if (!in || !countOk(keyCnt, 2)) return bad("modelanim: bad key count");
+                                for (long k = 0; k < keyCnt && in; ++k) {
                                     float tm = 0, val = 0; in >> tm >> val;
                                     nc.clip.AddKey(trackName, tm, val);
                                 }
@@ -2686,7 +2726,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* ma = go->GetComponent<ModelAnimator>();
                     if (!ma) ma = go->AddComponent<ModelAnimator>();
                     long ci = -1, cnt = 0; in >> ci >> cnt;
-                    for (long k = 0; k < cnt; ++k) {
+                    for (long k = 0; k < cnt && in; ++k) {
                         ModelAnimator::ClipEvent ev;
                         in >> ev.time; ev.name = ReadQuoted(in);
                         if (ci >= 0 && ci < (long)ma->clips.size())
@@ -2717,14 +2757,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     sm2->entry = ReadQuoted(in);
                     long stCnt = 0; in >> stCnt;
                     sm2->states.clear();
-                    for (long si = 0; si < stCnt; ++si) {
+                    for (long si = 0; si < stCnt && in; ++si) {
                         AnimStateMachine::State st;
                         st.name = ReadQuoted(in);
                         st.clip = ReadQuoted(in);
                         int lp = 1; long trCnt = 0;
                         in >> st.speed >> lp >> trCnt;
                         st.loop = (lp != 0);
-                        for (long ti = 0; ti < trCnt; ++ti) {
+                        for (long ti = 0; ti < trCnt && in; ++ti) {
                             AnimStateMachine::Transition tr;
                             tr.to = ReadQuoted(in);
                             int cd = 0; in >> cd;
@@ -2826,7 +2866,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "animsmparams") {
                     auto* sm2 = smFor();
                     long n = 0; in >> n;
-                    for (long i = 0; i < n; ++i) {
+                    for (long i = 0; i < n && in; ++i) {
                         AnimStateMachine::Param p;
                         p.name = ReadQuoted(in); in >> p.type;
                         if (sm2) sm2->params.push_back(std::move(p));
@@ -2835,7 +2875,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     // Animator graph node positions (index-matched to animsm's states).
                     auto* sm2 = smFor();
                     long n = 0; in >> n;
-                    for (long i = 0; i < n; ++i) {
+                    for (long i = 0; i < n && in; ++i) {
                         float x = 0, y = 0; in >> x >> y;
                         if (sm2 && i < (long)sm2->states.size()) { sm2->states[i].nx = x; sm2->states[i].ny = y; }
                     }
@@ -3021,14 +3061,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ec->offset = off; ec->isTrigger = (trig != 0); ec->layer = layer;
                     ec->oneWay = (ow != 0); ec->oneWayNormal = n;
                     ec->points.clear();
-                    for (std::size_t k = 0; k < count; ++k) { Vec2 p; in >> p.x >> p.y; ec->points.push_back(p); }
+                    for (std::size_t k = 0; k < count && in; ++k) { Vec2 p; in >> p.x >> p.y; ec->points.push_back(p); }
                 } else if (field == "polygoncollider2d") {
                     Vec2 off; int trig = 0, layer = 0; std::size_t count = 0;
                     in >> off.x >> off.y >> trig >> layer >> count;
                     auto* pc = go->AddComponent<PolygonCollider2D>();
                     pc->offset = off; pc->isTrigger = (trig != 0); pc->layer = layer;
                     pc->points.clear();
-                    for (std::size_t k = 0; k < count; ++k) { Vec2 p; in >> p.x >> p.y; pc->points.push_back(p); }
+                    for (std::size_t k = 0; k < count && in; ++k) { Vec2 p; in >> p.x >> p.y; pc->points.push_back(p); }
                 } else if (field == "rigidbody3d") {
                     int bt = 0; float gs = 1, mass = 1, drag = 0, bounce = 0;
                     int fx = 0, fy = 0, fz = 0;
@@ -3090,7 +3130,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> l->weight >> l->maxAngle
                        >> l->target.x >> l->target.y >> l->target.z;
                     std::size_t n = 0; in >> n;
-                    for (std::size_t k = 0; k < n; ++k) l->chainNames.push_back(ReadQuoted(in));
+                    for (std::size_t k = 0; k < n && in; ++k) l->chainNames.push_back(ReadQuoted(in));
                     { std::string rest; std::getline(in, rest);
                       std::istringstream rs(rest); float sm;
                       if (rs >> sm) l->smoothing = sm; }
@@ -3130,7 +3170,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> ci->target.x >> ci->target.y >> ci->target.z;
                     ci->orient = (orient != 0);
                     std::size_t bn = 0; in >> bn;
-                    for (std::size_t k = 0; k < bn; ++k) ci->boneNames.push_back(ReadQuoted(in));
+                    for (std::size_t k = 0; k < bn && in; ++k) ci->boneNames.push_back(ReadQuoted(in));
                 } else if (field == "fbik") {
                     auto* fb = go->AddComponent<FullBodyIK>();
                     int act = 1, am = 1, le = 0;
@@ -3230,7 +3270,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (in.peek() == '"') {
                         sc->SetPath(ReadQuoted(in));
                         int n = 0; in >> n;
-                        for (int i = 0; i < n; ++i) {
+                        for (int i = 0; i < n && in; ++i) {
                             std::string k = ReadQuoted(in), v = ReadQuoted(in);
                             sc->fields[k] = v;
                         }
@@ -3242,7 +3282,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "scriptfields") {
                     int n = 0; in >> n;
                     auto* sc = go->GetComponent<ScriptComponent>();
-                    for (int i = 0; i < n; ++i) {
+                    for (int i = 0; i < n && in; ++i) {
                         std::string k = ReadQuoted(in), v = ReadQuoted(in);
                         if (sc) sc->fields[k] = v;
                     }
@@ -3483,7 +3523,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ls->backgroundImage = ReadQuoted(in);
                     int n = 0; in >> n;
                     ls->tips.clear();
-                    for (int i = 0; i < n; ++i) ls->tips.push_back(ReadQuoted(in));
+                    for (int i = 0; i < n && in; ++i) ls->tips.push_back(ReadQuoted(in));
                     in >> std::ws;   // optional style block (appended later)
                     int lpk = in.peek();
                     if (std::isdigit(lpk) || lpk == '-' || lpk == '.') {
@@ -3550,7 +3590,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     in >> sr >> qm >> rn;
                                     ui->splitRightClick = (sr != 0); ui->shiftQuickMove = (qm != 0);
                                     ui->rarities.clear();
-                                    for (std::size_t ri = 0; ri < rn; ++ri) {
+                                    for (std::size_t ri = 0; ri < rn && in; ++ri) {
                                         InventoryUI::RarityRule rr; rr.item = ReadQuoted(in); rc(rr.color);
                                         ui->rarities.push_back(rr);
                                     }
@@ -3590,7 +3630,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int tk = 'i'; in >> gi->cols >> gi->rows >> tk; gi->toggleKey = (char)tk;
                     gi->title = ReadQuoted(in);
                     int n = 0; in >> n; gi->items.clear();
-                    for (int i = 0; i < n; ++i) {
+                    for (int i = 0; i < n && in; ++i) {
                         GridItem it; it.name = ReadQuoted(in);
                         in >> it.w >> it.h >> it.x >> it.y >> it.count >> it.weight;
                         gi->items.push_back(it);
@@ -3630,7 +3670,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                 rc(gu->overweightColor);
                                 std::size_t rn = 0; in >> rn;
                                 gu->rarities.clear();
-                                for (std::size_t ri = 0; ri < rn; ++ri) {
+                                for (std::size_t ri = 0; ri < rn && in; ++ri) {
                                     GridInventoryUI::RarityRule rr; rr.item = ReadQuoted(in); rc(rr.color);
                                     gu->rarities.push_back(rr);
                                 }
@@ -3671,9 +3711,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     rc(cs->panelColor); rc(cs->titleBar); rc(cs->rowColor); rc(cs->canColor);
                     rc(cs->cantColor); rc(cs->textColor); rc(cs->hoverColor);
                     std::size_t rn = 0; in >> rn; cs->recipes.clear();
-                    for (std::size_t ri = 0; ri < rn; ++ri) {
+                    for (std::size_t ri = 0; ri < rn && in; ++ri) {
                         CraftingStation::Recipe r; std::size_t ic = 0; in >> ic;
-                        for (std::size_t ii = 0; ii < ic; ++ii) {
+                        for (std::size_t ii = 0; ii < ic && in; ++ii) {
                             CraftingStation::Ingredient ing; ing.item = ReadQuoted(in); in >> ing.count;
                             r.inputs.push_back(ing);
                         }
@@ -3818,7 +3858,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int ri = 1, cd = 1, dd = 1, n = 0;
                     in >> ri >> cd >> dd >> n;
                     c->requireInventory = (ri != 0); c->consumeOnDrop = (cd != 0); c->destroyDroppedItem = (dd != 0);
-                    for (int i = 0; i < n; ++i) {
+                    for (int i = 0; i < n && in; ++i) {
                         Consumables::Recipe r;
                         r.item = ReadQuoted(in); r.action = ReadQuoted(in); in >> r.amount;
                         c->recipes.push_back(r);
@@ -3908,11 +3948,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "crafting") {
                     auto* c = go->AddComponent<Crafting>();
                     int n = 0; in >> n;
-                    for (int i = 0; i < n; ++i) {
+                    for (int i = 0; i < n && in; ++i) {
                         Crafting::Recipe r;
                         r.output = ReadQuoted(in); in >> r.outputCount;
                         int ni = 0; in >> ni;
-                        for (int j = 0; j < ni; ++j) {
+                        for (int j = 0; j < ni && in; ++j) {
                             Crafting::Ingredient ing;
                             ing.item = ReadQuoted(in); in >> ing.count;
                             r.inputs.push_back(ing);
@@ -4204,7 +4244,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* inv = go->AddComponent<Inventory>();
                     std::size_t count = 0; in >> inv->capacity >> count;
                     inv->slots.clear();
-                    for (std::size_t k = 0; k < count; ++k) {
+                    for (std::size_t k = 0; k < count && in; ++k) {
                         Inventory::Slot s; s.item = ReadQuoted(in); in >> s.count;
                         inv->slots.push_back(s);
                     }
@@ -4217,7 +4257,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> tm->current >> tm->round >> as >> count;
                     tm->autoStart = (as != 0);
                     tm->participants.clear();
-                    for (std::size_t k = 0; k < count; ++k) tm->participants.push_back(ReadQuoted(in));
+                    for (std::size_t k = 0; k < count && in; ++k) tm->participants.push_back(ReadQuoted(in));
                 } else if (field == "camerafollow") {
                     std::string tgt = ReadQuoted(in);
                     Vec3 off; float sm = 5.0f;
@@ -4267,12 +4307,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     }
                 } else if (field == "dollypath") {
                     auto* dp = go->AddComponent<DollyPath>();
-                    int lp = 0; std::size_t cnt = 0;
+                    int lp = 0; long long cnt = 0;   // signed: "-1" must not read as a huge size_t
                     in >> lp >> cnt;
+                    if (!in || !countOk(cnt, 3)) return bad("dollypath: bad waypoint count");
                     dp->looped = (lp != 0);
-                    dp->waypoints.resize(cnt);
-                    for (std::size_t k = 0; k < cnt; ++k)
-                        in >> dp->waypoints[k].x >> dp->waypoints[k].y >> dp->waypoints[k].z;
+                    dp->waypoints.clear();
+                    for (long long k = 0; k < cnt && in; ++k) {
+                        Vec3 w; in >> w.x >> w.y >> w.z; dp->waypoints.push_back(w);
+                    }
                 } else if (field == "dollycart") {
                     auto* dc = go->AddComponent<DollyCart>();
                     dc->path = ReadQuoted(in);
@@ -4343,7 +4385,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> fps >> loop >> playing >> count;
                     auto* an = go->AddComponent<SpriteAnimator>();
                     an->fps = fps; an->loop = (loop != 0); an->playing = (playing != 0);
-                    for (int k = 0; k < count; ++k) an->frames.push_back(ReadQuoted(in));
+                    for (int k = 0; k < count && in; ++k) an->frames.push_back(ReadQuoted(in));
                     in >> std::ws; // optional atlas fields (3 ints)
                     if (std::isdigit(in.peek()))
                         in >> an->atlasColumns >> an->atlasRows >> an->atlasCount;
@@ -4367,10 +4409,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* anim = go->AddComponent<Animator>();
                     anim->speed = speed; anim->playing = (playing != 0);
                     anim->clip.loop = (loop != 0); anim->clip.name = cname;
-                    for (int t = 0; t < tc; ++t) {
+                    for (int t = 0; t < tc && in; ++t) {
                         std::string tn = ReadQuoted(in);
                         int kc = 0; in >> kc;
-                        for (int k = 0; k < kc; ++k) {
+                        for (int k = 0; k < kc && in; ++k) {
                             float kt = 0, kv = 0; in >> kt >> kv;
                             anim->clip.AddKey(tn, kt, kv);
                         }
@@ -4379,12 +4421,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     float span = -1.0f; int ne = 0, nl = 0;
                     in >> span >> ne;
                     auto* anim = go->GetComponent<Animator>();
-                    for (int e = 0; e < ne; ++e) {
+                    for (int e = 0; e < ne && in; ++e) {
                         float et = 0; in >> et; std::string en = ReadQuoted(in);
                         if (anim) anim->clip.AddEvent(et, en);
                     }
                     in >> nl;
-                    for (int l = 0; l < nl; ++l) {
+                    for (int l = 0; l < nl && in; ++l) {
                         std::string tn = ReadQuoted(in);
                         if (anim) if (auto* c = anim->clip.Track(tn)) c->smooth = false;
                     }
@@ -4392,10 +4434,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "tilemap") {
                     float ts = 1.0f; int tw = 0, th = 0;
                     in >> ts >> tw >> th;
+                    if (!in || ((long long)std::max(tw, 0) * std::max(th, 0) > 0 && !countOk((long long)tw * th, 1)))
+                        return bad("tilemap: bad size");
                     auto* tm = go->AddComponent<Tilemap>();
                     tm->tileSize = ts; tm->Resize(tw, th);
-                    for (int y = 0; y < th; ++y)
-                        for (int x = 0; x < tw; ++x) { int id = 0; in >> id; tm->SetTile(x, y, id); }
+                    for (int y = 0; y < th && in; ++y)
+                        for (int x = 0; x < tw && in; ++x) { int id = 0; in >> id; tm->SetTile(x, y, id); }
                 } else if (field == "tilemapcollider") {
                     go->AddComponent<TilemapCollider2D>();
                 } else if (field == "uibutton") {
@@ -4512,8 +4556,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* tr = go->AddComponent<Terrain>();
                     int res = 32; float sz = 50.0f; Color c; std::size_t count = 0;
                     in >> res >> sz >> c.r >> c.g >> c.b >> c.a >> count;
+                    // The height grid is (res+1)^2 and is written in full, so a
+                    // resolution far beyond the stored heights is corrupt.
+                    if (!in || !countOk((long long)count, 1) ||
+                        (long long)(std::max(res, 1) + 1) * (std::max(res, 1) + 1) > std::max<long long>((long long)count, 33 * 33))
+                        return bad("terrain: bad resolution / height count");
                     tr->Resize(res); tr->size = sz; tr->color = c;
-                    for (std::size_t k = 0; k < count && k < tr->heights.size(); ++k)
+                    for (std::size_t k = 0; k < count && k < tr->heights.size() && in; ++k)
                         in >> tr->heights[k];
                     // Optional trailing auto-color fields (added later).
                     auto tmore = [&]() -> bool {
@@ -4557,6 +4606,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* v = go->AddComponent<VoxelTerrain>();
                     int X = 48, Y = 28, Z = 48, ac = 1;
                     in >> X >> Y >> Z;
+                    // The density field is stored (base64, ~1.33 chars per voxel), so
+                    // a grid far larger than the rest of the file is corrupt.
+                    if (!in || (long long)std::max(X, 2) * std::max(Y, 2) * std::max(Z, 2) >
+                                   std::max<long long>(64LL * 64 * 64, (long long)remaining()))
+                        return bad("voxelterrain: bad grid size");
                     v->Resize(X, Y, Z);
                     in >> v->voxelSize >> v->iso >> ac >> v->snowLevel >> v->rockSlope;
                     v->autoColor = (ac != 0);
@@ -4679,15 +4733,20 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "charbind") {
                     // Auto-rigged custom mesh: restore the bind geometry and re-rig.
                     Mesh bm;
-                    std::size_t nv = 0; in >> nv;
-                    bm.vertices.reserve(nv);
-                    for (std::size_t k = 0; k < nv; ++k) { Vec3 v; in >> v.x >> v.y >> v.z; bm.vertices.push_back(v); }
-                    std::size_t nt = 0; in >> nt;
-                    bm.triangles.reserve(nt);
-                    for (std::size_t k = 0; k < nt; ++k) { int t = 0; in >> t; bm.triangles.push_back(t); }
-                    std::size_t nu = 0; in >> nu;
-                    bm.uvs.reserve(nu);
-                    for (std::size_t k = 0; k < nu; ++k) { Vec2 t; in >> t.x >> t.y; bm.uvs.push_back(t); }
+                    long long nv = 0; in >> nv;   // signed: "-1" must not read as a huge size_t
+                    if (!in || !countOk(nv, 3)) return bad("charbind: bad vertex count");
+                    bm.vertices.reserve((std::size_t)nv);
+                    for (long long k = 0; k < nv && in; ++k) { Vec3 v; in >> v.x >> v.y >> v.z; bm.vertices.push_back(v); }
+                    long long nt = 0; in >> nt;
+                    if (!in || !countOk(nt, 1)) return bad("charbind: bad triangle count");
+                    bm.triangles.reserve((std::size_t)nt);
+                    for (long long k = 0; k < nt && in; ++k) { int t = 0; in >> t; bm.triangles.push_back(t); }
+                    long long nu = 0; in >> nu;
+                    if (!in || !countOk(nu, 2)) return bad("charbind: bad uv count");
+                    bm.uvs.reserve((std::size_t)nu);
+                    for (long long k = 0; k < nu && in; ++k) { Vec2 t; in >> t.x >> t.y; bm.uvs.push_back(t); }
+                    for (int t : bm.triangles)
+                        if (t < 0 || t >= (int)bm.vertices.size()) return bad("charbind: triangle index " + std::to_string(t) + " out of range");
                     auto* ch = go->GetComponent<Character>();
                     if (!ch) ch = go->AddComponent<Character>();
                     ch->BindCustomMesh(bm);
@@ -4746,12 +4805,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     tb->textColor = tc; tb->selectedTextColor = stc;
                     tb->shape = (UIShape)sp; tb->interactable = (it != 0);
                     tb->tabs.clear();
-                    for (std::size_t k = 0; k < count; ++k) tb->tabs.push_back(ReadQuoted(in));
+                    for (std::size_t k = 0; k < count && in; ++k) tb->tabs.push_back(ReadQuoted(in));
                     in >> std::ws;   // optional per-tab content pages (added later)
                     if (std::isdigit(in.peek())) {
                         std::size_t pc = 0; in >> pc;
                         tb->pages.clear();
-                        for (std::size_t k = 0; k < pc; ++k) tb->pages.push_back(ReadQuoted(in));
+                        for (std::size_t k = 0; k < pc && in; ++k) tb->pages.push_back(ReadQuoted(in));
                     }
                     in >> std::ws;   // optional (v3): style, sizing, states, motion, keys, extras
                     if (std::isdigit(in.peek())) {
@@ -4793,7 +4852,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     dd->color = c; dd->hoverColor = h; dd->listColor = l;
                     dd->textColor = t; dd->borderColor = b;
                     dd->options.clear();
-                    for (std::size_t k = 0; k < count; ++k) dd->options.push_back(ReadQuoted(in));
+                    for (std::size_t k = 0; k < count && in; ++k) dd->options.push_back(ReadQuoted(in));
                     in >> std::ws; // optional interactable (added later)
                     if (std::isdigit(in.peek())) { int it = 1; in >> it; dd->interactable = (it != 0); }
                     in >> std::ws; // optional placeholder (added later)
@@ -5000,7 +5059,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                 in >> zi >> zo >> mm->minZoom >> mm->maxZoom >> mm->zoomStep >> mn;
                                 mm->zoomInKey = (char)zi; mm->zoomOutKey = (char)zo;
                                 mm->markers.clear();
-                                for (std::size_t mi = 0; mi < mn; ++mi) {
+                                for (std::size_t mi = 0; mi < mn && in; ++mi) {
                                     Minimap::Marker mk;
                                     in >> mk.world.x >> mk.world.y
                                        >> mk.color.r >> mk.color.g >> mk.color.b >> mk.color.a >> mk.size;
@@ -5036,12 +5095,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                         if (std::isdigit(pk10) || pk10 == '-' || pk10 == '+' || pk10 == '.') {
                                             std::size_t shn = 0; in >> shn;
                                             mm->mapShapes.clear();
-                                            for (std::size_t si = 0; si < shn; ++si) {
+                                            for (std::size_t si = 0; si < shn && in; ++si) {
                                                 Minimap::MapShape sh; int kd = 0, fl = 1; std::size_t pn = 0;
                                                 in >> kd >> sh.color.r >> sh.color.g >> sh.color.b >> sh.color.a
                                                    >> sh.thickness >> fl >> pn;
                                                 sh.kind = (Minimap::MapShape::Kind)kd; sh.filled = (fl != 0);
-                                                for (std::size_t pi = 0; pi < pn; ++pi) {
+                                                for (std::size_t pi = 0; pi < pn && in; ++pi) {
                                                     Vec2 p; in >> p.x >> p.y; sh.points.push_back(p);
                                                 }
                                                 mm->mapShapes.push_back(std::move(sh));

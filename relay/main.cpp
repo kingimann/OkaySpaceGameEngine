@@ -11,7 +11,6 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
-#include <thread>
 #include <iostream>
 
 int main(int argc, char** argv) {
@@ -26,12 +25,15 @@ int main(int argc, char** argv) {
     std::cout << "OkaySpace relay running on UDP " << relay.Port()
               << " — Ctrl+C to stop." << std::endl;   // flush: shows up in docker/journal logs
 
-    // Poll at ~120 Hz: cheap, and snappy enough to forward without adding latency.
-    const auto tick = std::chrono::milliseconds(8);
-    float dt = 0.008f;
+    // Sleep in the socket until a datagram arrives (forwarded with no added
+    // latency), waking at least every 250 ms to expire silent peers.
+    auto last = std::chrono::steady_clock::now();
     for (;;) {
+        relay.Wait(250);
+        const auto now = std::chrono::steady_clock::now();
+        const float dt = std::chrono::duration<float>(now - last).count();
+        last = now;
         relay.Poll(dt, /*timeout=*/30.0f);
-        std::this_thread::sleep_for(tick);
     }
     return 0;
 }

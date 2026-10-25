@@ -875,3 +875,8 @@ add_test(NAME locomotion COMMAND test_locomotion)
 add_executable(test_qa_pr250 test_qa_pr250.cpp)
 target_link_libraries(test_qa_pr250 PRIVATE okay::engine)
 add_test(NAME qa_pr250 COMMAND test_qa_pr250)
+
+# The relay is internet-facing: same-session forwarding, random slots, caps, fuzz
+add_executable(test_relay_security test_relay_security.cpp)
+target_link_libraries(test_relay_security PRIVATE okay::engine)
+add_test(NAME relay_security COMMAND test_relay_security)

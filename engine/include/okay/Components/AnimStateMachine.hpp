@@ -323,12 +323,15 @@ private:
     }
 
     // ---- Layers: their own playback, posed after the base (see LayerPose) ----
-    struct LayerPlay { const State* st = nullptr; float time = 0.0f, phase = 0.0f; };
+    // The state is held by NAME and looked up each use: `states` may grow (and
+    // reallocate) while a layer plays, which would leave a State* dangling.
+    struct LayerPlay { std::string st; float time = 0.0f, phase = 0.0f; };
     /// Advance a layer motion and list its (clip, time) samples + weights.
     void LayerMotion(LayerPlay& lp, float dt, ModelAnimator* ma,
                      std::vector<std::pair<int, float>>& ct, std::vector<float>& w, bool advance) {
-        if (!lp.st) return;
-        const State& st = *lp.st;
+        const State* sp = lp.st.empty() ? nullptr : FindState(lp.st);
+        if (!sp) return;
+        const State& st = *sp;
         const float spd = StateSpeed(st);
         if (!st.blendTree) {
             int c = ClipIndex(ma, st.clip);
@@ -386,12 +389,12 @@ private:
         }
         (void)prevTime;
         float f = 1.0f;
-        if (m_lPrev.st && m_fadeDur > 0.0f) {
+        if (!m_lPrev.st.empty() && m_fadeDur > 0.0f) {
             m_fadeT += dt;
             f = std::fmin(1.0f, m_fadeT / m_fadeDur);
             f = f * f * (3.0f - 2.0f * f);
             LayerMotion(m_lPrev, dt, ma, ctPrev, wPrev, true);
-            if (m_fadeT >= m_fadeDur) m_lPrev.st = nullptr;
+            if (m_fadeT >= m_fadeDur) m_lPrev.st.clear();
         }
         for (std::size_t i = 0; i < ctPrev.size(); ++i) { m_lCT.push_back(ctPrev[i]); m_lW.push_back(wPrev[i] * (1.0f - f)); }
         for (std::size_t i = 0; i < ctCur.size(); ++i)  { m_lCT.push_back(ctCur[i]);  m_lW.push_back(wCur[i] * f); }
@@ -548,10 +551,10 @@ private:
         m_bLo = m_bHi = -1; m_bW = 0.0f;
         if (layer > 0) {   // layers crossfade from their previous state themselves
             m_lPrev = m_lCur;
-            m_lCur = LayerPlay{&st, 0.0f, offset};
+            m_lCur = LayerPlay{st.name, 0.0f, offset};
             if (!st.blendTree) { int c = ClipIndex(ma, st.clip); if (c >= 0) m_lCur.time = offset * ma->ClipLength(c); }
-            m_fadeT = 0.0f; m_fadeDur = m_lPrev.st ? blend : 0.0f;
-            if (!m_lPrev.st || blend <= 0.0f) m_lPrev.st = nullptr;
+            m_fadeT = 0.0f; m_fadeDur = !m_lPrev.st.empty() ? blend : 0.0f;
+            if (m_lPrev.st.empty() || blend <= 0.0f) m_lPrev.st.clear();
             if (onStateEnter) onStateEnter(st.name);
             if (!st.enterEvent.empty()) ma->FireEvent(st.enterEvent);
             return;

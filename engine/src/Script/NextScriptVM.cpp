@@ -46,6 +46,7 @@ bool NextScriptVM::Load(const std::string& source, std::string* error) {
         m_impl->inst.reset();
         return false;
     }
+    prog->statics = SharedStatics(source);
     m_impl->prog = prog;
     m_impl->inst = std::make_unique<Instance>(prog, m_host ? m_host->gameObject : nullptr);
     try {

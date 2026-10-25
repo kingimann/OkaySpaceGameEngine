@@ -135,8 +135,8 @@ int main() {
         CHECK_EQ(Count(d, 0), 0);
     }
     {   // C# features that aren't in the language yet say so
-        auto d = Diags(Wrap("    static int x;\n    void Start() { try { } catch { } }\n"));
-        CHECK(Has(d, 0, "static members aren't supported yet"));
+        auto d = Diags(Wrap("    virtual void V() { }\n    void Start() { try { } catch { } }\n"));
+        CHECK(Has(d, 0, "virtual isn't supported"));
         CHECK(Has(d, 0, "try / catch isn't supported yet"));
         auto d2 = Diags(Wrap("    [Range(0, 1)] float hidden = 0;\n    void Start() { Debug.Log(hidden); }\n"));
         CHECK(Has(d2, 0, "only shows in the Inspector for public fields"));

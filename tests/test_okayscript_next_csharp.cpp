@@ -379,6 +379,93 @@ static void Foreach() {
     }
 }
 
+// Several objects in one scene running `src` (on `language`); each object's field `field` after `frames` updates.
+static std::vector<float> RunMany(const std::string& src, int objects, const char* field, int frames = 1,
+                                  const char* language = NextScriptVM::kLanguage) {
+    Scene scene("many");
+    std::vector<ScriptComponent*> scs;
+    for (int i = 0; i < objects; ++i) {
+        auto* sc = scene.CreateGameObject("O" + std::to_string(i))->AddComponent<ScriptComponent>(language);
+        std::string err;
+        if (!sc->LoadSource(src, &err)) std::printf("    load failed: %s\n", err.c_str());
+        scs.push_back(sc);
+    }
+    scene.Start();
+    for (int i = 0; i < frames; ++i) scene.Update(kDt);
+    std::vector<float> out;
+    for (auto* sc : scs) out.push_back(sc->VM()->GetGlobal(field).AsFloat());
+    return out;
+}
+
+static void Statics() {
+    {   // one value shared by every object running the script: a count of all the enemies
+        const std::string src = Wrap(
+            "    // statics: alive count\n"
+            "    static int alive;\n"
+            "    public int seen;\n"
+            "    void Start() { alive++; }\n"
+            "    void Update() { seen = alive; }\n");
+        auto seen = RunMany(src, 3, "seen");
+        CHECK(seen.size() == 3 && seen[0] == 3.0f && seen[2] == 3.0f);
+        // the old runtime shares them the same way
+        auto old = RunMany(src, 3, "seen", 1, "okayscript");
+        CHECK(old.size() == 3 && old[0] == 3.0f && old[2] == 3.0f);
+    }
+    {   // the starting value is set once, by the first object: unique ids
+        auto ids = RunMany(Wrap(
+            "    // statics: ids\n"
+            "    static int nextId = 100;\n"
+            "    public int id;\n"
+            "    void Start() { id = nextId++; }\n"), 3, "id");
+        CHECK(ids.size() == 3 && ids[0] == 100.0f && ids[1] == 101.0f && ids[2] == 102.0f);
+    }
+    {   // static methods: helpers that need no object; Class.member works too
+        World w(Wrap(
+            "    // statics: helpers\n"
+            "    public static int calls;\n"
+            "    public float a, b;\n"
+            "    public int seen;\n"
+            "    static float Remap(float v, float lo, float hi) { calls++; return (v - lo) / (hi - lo); }\n"
+            "    static int Twice(int n) { return n <= 0 ? 0 : 2 + Twice(n - 1); }\n"
+            "    void Start() { a = Remap(5, 0, 10); b = T.Remap(3, 2, 4); T.calls += Twice(3); seen = calls; }\n"));
+        CHECK(w.loaded);
+        CHECK_NEAR(w.F("a"), 0.5f, 1e-6f);
+        CHECK_NEAR(w.F("b"), 0.5f, 1e-6f);
+        CHECK_NEAR(w.F("seen"), 8.0f, 1e-6f);
+        CHECK_NEAR(w.F("calls"), 8.0f, 1e-6f);   // a static field reads like any other
+    }
+    {   // mistakes, with line and column
+        auto d = Diags(Wrap(
+            "    public float speed = 1;\n"                                      // 2
+            "    static int count;\n"                                            // 3
+            "    static void Bad() {\n"                                          // 4
+            "        speed = 2;\n"                                               // 5
+            "        transform.Translate(1, 0, 0);\n"                           // 6
+            "        Helper();\n"                                                // 7
+            "        this.speed = 3;\n"                                          // 8
+            "    }\n"
+            "    void Helper() { count = T.speed; }\n"                           // 10
+            "    static void Update() { Bad(); }\n"                              // 11
+            "    static const int Max = 3;\n"                                    // 12
+            "    void Start() { Helper(); Debug.Log(Max); }\n"));                // 13
+        CHECK(Has(d, 0, "'speed' belongs to each object, so the static method Bad() can't use it", 5, 9));
+        CHECK(Has(d, 0, "'transform' belongs to each object, so the static method Bad() can't use it", 6, 9));
+        CHECK(Has(d, 0, "'Helper' belongs to each object, so the static method Bad() can't use it", 7, 9));
+        CHECK(Has(d, 0, "A static method has no `this`", 8, 9));
+        CHECK(Has(d, 0, "'speed' isn't static: use it without T.", 10, 31));
+        CHECK(Has(d, 0, "Update() can't be static: the engine calls it on each object", 11, 17));
+        CHECK(Has(d, 0, "A const is already shared: delete `static`", 12, 5));
+        CHECK(Has(Diags(Wrap("    void Start() { static int n = 1; Debug.Log(n); }")), 0, "static only works on fields and methods", 2, 20));
+        CHECK(Has(Diags("static class T : Behaviour { }\n"), 0, "A script class can't be static", 1, 1));
+    }
+    {   // the Inspector sets one object's fields, never a shared static
+        World w(Wrap("    // statics: inspector\n    public static int shared = 1;\n    void Start() { Debug.Log(shared); }\n"));
+        w.sc->fields["shared"] = "9";
+        w.sc->ApplyFieldOverrides();
+        CHECK_NEAR(w.F("shared"), 1.0f, 1e-6f);
+    }
+}
+
 static void Parity() {
     // The same C# snippet gives the same results on the old OkayScript runtime.
     const std::string src =
@@ -413,8 +500,8 @@ static void BackCompat() {
     // Words that are new keywords in context only stay usable as names.
     CHECK(Clean(Wrap("    public int in_ = 1;\n    void Start() { int enumCount = 2, cases = 3; Debug.Log(enumCount + cases + in_); }\n")));
     // Features still to come keep their message.
-    auto d = Diags(Wrap("    static int x;\n    void Start() { try { } }\n"));
-    CHECK(Has(d, 0, "static members aren't supported yet"));
+    auto d = Diags(Wrap("    virtual void V() { }\n    void Start() { try { } }\n"));
+    CHECK(Has(d, 0, "virtual isn't supported"));
     CHECK(Has(d, 0, "try / catch isn't supported yet"));
 }
 
@@ -445,6 +532,7 @@ int main() {
     Switches();
     Arrays();
     Foreach();
+    Statics();
     Parity();
     BackCompat();
     Fuzz();

@@ -307,6 +307,7 @@ private:
             }
             case Bind::Local: return (*locals_)[(std::size_t)e.slot];
             case Bind::Field: return fields_[(std::size_t)e.slot];
+            case Bind::StaticField: return inst_.Statics()[(std::size_t)e.slot];
             case Bind::SelfMember:
                 if (e.slot == 2) return Value{ctx_.component ? ctx_.component->enabled : true};
                 return SelfRef(e.slot);
@@ -332,6 +333,7 @@ private:
         switch (e.bind) {
             case Bind::Local: (*locals_)[(std::size_t)e.slot] = v; return;
             case Bind::Field: fields_[(std::size_t)e.slot] = v; return;
+            case Bind::StaticField: inst_.Statics()[(std::size_t)e.slot] = v; return;
             case Bind::SelfMember:
                 if (e.slot == 2 && ctx_.component) ctx_.component->enabled = AsB(v);
                 return;
@@ -500,12 +502,21 @@ private:
 
 } // namespace
 
-Instance::Instance(std::shared_ptr<Program> prog, GameObject* self) : prog_(std::move(prog)) {
+std::shared_ptr<StaticStore> SharedStatics(const std::string& source) {
+    static std::unordered_map<std::string, std::shared_ptr<StaticStore>> all;
+    auto& s = all[source];
+    if (!s) s = std::make_shared<StaticStore>();
+    return s;
+}
+
+Instance::Instance(std::shared_ptr<Program> prog, GameObject* self)
+    : prog_(std::move(prog)), statics_(prog_->statics ? prog_->statics : std::make_shared<StaticStore>()) {
     ctx_.self = self;
     const ClassDecl* c = prog_->Component();
     if (c) {
         fields_.resize(c->fields.size());
         for (std::size_t i = 0; i < c->fields.size(); ++i) fields_[i] = DefaultFor(c->fields[i].resolved);
+        if (!statics_->ready) statics_->values = fields_;
     }
 }
 
@@ -514,8 +525,14 @@ void Instance::Init() {
     if (!c) return;
     steps = 0;
     Exec ex(*prog_, fields_, ctx_, *this);
-    for (std::size_t i = 0; i < c->fields.size(); ++i)
-        if (c->fields[i].init) fields_[i] = ex.EvalStandalone(*c->fields[i].init);
+    // Static starting values are set once, by the first object.
+    const bool firstObject = !statics_->ready;
+    statics_->ready = true;
+    for (std::size_t i = 0; i < c->fields.size(); ++i) {
+        const FieldDecl& f = c->fields[i];
+        if (!f.init || (f.isStatic && !firstObject)) continue;
+        (f.isStatic ? statics_->values : fields_)[i] = ex.EvalStandalone(*f.init);
+    }
 }
 
 Value Instance::Call(int method, std::vector<Value> args) {
@@ -527,7 +544,8 @@ Value Instance::Call(int method, std::vector<Value> args) {
 Value Instance::GetField(const std::string& name) const {
     const ClassDecl* c = prog_->Component();
     if (!c) return Value{};
-    for (std::size_t i = 0; i < c->fields.size(); ++i) if (c->fields[i].name == name) return fields_[i];
+    for (std::size_t i = 0; i < c->fields.size(); ++i)
+        if (c->fields[i].name == name) return c->fields[i].isStatic ? statics_->values[i] : fields_[i];
     return Value{};
 }
 
@@ -536,7 +554,7 @@ bool Instance::SetField(const std::string& name, const Value& v) {
     if (!c) return false;
     for (std::size_t i = 0; i < c->fields.size(); ++i) {
         const FieldDecl& f = c->fields[i];
-        if (f.name != name || f.isConst) continue;
+        if (f.name != name || f.isConst || f.isStatic) continue;   // a static isn't any one object's setting
         // Convert to the field's type; values that don't fit are refused.
         const TK k = f.resolved.kind;
         if (k == TK::Int || k == TK::Enum) {

@@ -4,6 +4,8 @@
 // first/third-person prone + crouch body (shorter collider, headroom, gamepad).
 #include "test_framework.hpp"
 #include <Okay.hpp>
+
+#define CHECK_EQ(a, b) CHECK((a) == (b))
 #include <algorithm>
 #include <cmath>
 #include <vector>

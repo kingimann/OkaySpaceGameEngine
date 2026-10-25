@@ -43,7 +43,7 @@ struct JVal {
         if (type != Obj) return nullptr;
         auto it = obj.find(k); return it == obj.end() ? nullptr : &it->second;
     }
-    int    Int(int d = 0)    const { return type == Num ? (int)num : d; }
+    int    Int(int d = 0)    const { return type == Num && num >= -2147483648.0 && num <= 2147483647.0 ? (int)num : d; }   // out of range / NaN -> d
     double Number(double d=0)const { return type == Num ? num : d; }
     const std::string& Text()const { static std::string e; return type == Str ? str : e; }
     std::size_t Size()       const { return type == Arr ? arr.size() : 0; }
@@ -131,11 +131,11 @@ inline bool Base64Decode(const std::string& in, std::vector<std::uint8_t>& out) 
         if (c == '+') return 62; if (c == '/') return 63;
         return -1;
     };
-    int bits = 0, acc = 0;
+    int bits = 0; unsigned acc = 0;
     for (char c : in) {
         if (c == '=' || c == '\n' || c == '\r' || c == ' ') continue;
         int v = val(c); if (v < 0) continue;
-        acc = (acc << 6) | v; bits += 6;
+        acc = ((acc << 6) | (unsigned)v) & 0xFFFFFFu; bits += 6;
         if (bits >= 8) { bits -= 8; out.push_back((std::uint8_t)((acc >> bits) & 0xFF)); }
     }
     return true;
@@ -205,6 +205,9 @@ inline int CompSize(int ct) {
     switch (ct) { case 5120: case 5121: return 1; case 5122: case 5123: return 2;
                   case 5125: case 5126: return 4; default: return 4; }
 }
+inline bool ValidComponentType(int ct) {
+    return ct == 5120 || ct == 5121 || ct == 5122 || ct == 5123 || ct == 5125 || ct == 5126;
+}
 inline int TypeComps(const std::string& t) {
     if (t == "SCALAR") return 1; if (t == "VEC2") return 2; if (t == "VEC3") return 3;
     if (t == "VEC4") return 4; if (t == "MAT4") return 16; return 1;
@@ -216,14 +219,22 @@ inline std::vector<float> ReadView(const GltfDoc& doc, int viIdx, int byteOffset
     std::vector<float> out;
     const JVal* views = doc.root.Find("bufferViews");
     if (!views || viIdx < 0 || viIdx >= (int)views->arr.size()) return out;
+    if (!ValidComponentType(ct) || comps <= 0 || count < 0 || byteOffset < 0) return out;
     const JVal& v = views->arr[viIdx];
     int buf = v.Find("buffer") ? v.Find("buffer")->Int(-1) : -1;
     int voff = v.Find("byteOffset") ? v.Find("byteOffset")->Int(0) : 0;
     int stride = v.Find("byteStride") ? v.Find("byteStride")->Int(0) : 0;
-    if (buf < 0 || buf >= (int)doc.buffers.size()) return out;
+    if (buf < 0 || buf >= (int)doc.buffers.size() || voff < 0 || stride < 0) return out;
     const std::vector<std::uint8_t>& data = doc.buffers[buf];
     int csz = CompSize(ct);
     if (stride == 0) stride = comps * csz;
+    // The whole range must lie inside the buffer: a bogus count would otherwise
+    // allocate (and zero-fill) gigabytes from a few bytes of JSON.
+    if (count > 0) {
+        const unsigned long long need = (unsigned long long)voff + (unsigned long long)byteOffset +
+            (unsigned long long)(count - 1) * (unsigned long long)stride + (unsigned long long)comps * csz;
+        if (need > data.size()) return out;
+    }
     out.reserve((std::size_t)count * comps);
     for (int i = 0; i < count; ++i)
         for (int c = 0; c < comps; ++c) {
@@ -258,7 +269,18 @@ inline std::vector<float> ReadAccessorDense(const GltfDoc& doc, const JVal& a, i
 
 // Read accessor `ai` as a flat float array (count*components). Integer index types are
 // converted to floats too (for `indices`).
+// On any invalid accessor (bad index / bufferView / componentType, a range past
+// the buffer) it returns an empty array with outCount = outComps = 0; otherwise
+// out.size() == outCount * outComps exactly.
+inline std::vector<float> ReadAccessorRaw(const GltfDoc& doc, int ai, int& outComps, int& outCount);
 inline std::vector<float> ReadAccessor(const GltfDoc& doc, int ai, int& outComps, int& outCount) {
+    std::vector<float> out = ReadAccessorRaw(doc, ai, outComps, outCount);
+    if (outCount < 0 || outComps <= 0 || out.size() != (std::size_t)outCount * (std::size_t)outComps) {
+        out.clear(); outComps = 0; outCount = 0;
+    }
+    return out;
+}
+inline std::vector<float> ReadAccessorRaw(const GltfDoc& doc, int ai, int& outComps, int& outCount) {
     std::vector<float> out; outComps = 0; outCount = 0;
     const JVal* accs = doc.root.Find("accessors");
     const JVal* views = doc.root.Find("bufferViews");
@@ -269,11 +291,14 @@ inline std::vector<float> ReadAccessor(const GltfDoc& doc, int ai, int& outComps
     int count = a.Find("count") ? a.Find("count")->Int(0) : 0;
     int comps = TypeComps(a.Find("type") ? a.Find("type")->Text() : "SCALAR");
     int aoff = a.Find("byteOffset") ? a.Find("byteOffset")->Int(0) : 0;
+    if (!ValidComponentType(ct) || count < 0) return out;
     outComps = comps; outCount = count;
     // Sparse accessors (morph targets often are): a base (bufferView, or zeros
     // when there's none) with a list of replaced elements.
     if (const JVal* sp = a.Find("sparse")) {
-        // Base values: the dense part, if the accessor has one.
+        // Base values: the dense part, if the accessor has one. Without one the
+        // count isn't backed by any data, so keep it to a sane size.
+        if (viIdx < 0 && count > (1 << 24)) { outCount = 0; return out; }
         out.assign((std::size_t)count * comps, 0.0f);
         if (viIdx >= 0) {
             int bc = 0, bn = 0;
@@ -291,6 +316,7 @@ inline std::vector<float> ReadAccessor(const GltfDoc& doc, int ai, int& outComps
                                               vx->Find("byteOffset") ? vx->Find("byteOffset")->Int(0) : 0,
                                               ct, comps, sc, a.Find("normalized") && a.Find("normalized")->type == JVal::Bool && a.Find("normalized")->boolean);
             for (int e = 0; e < sc && (std::size_t)e < idx.size(); ++e) {
+                if (!(idx[e] >= 0.0f && idx[e] < (float)count)) continue;   // also rejects NaN
                 std::size_t at = (std::size_t)(idx[e] + 0.5f);
                 if (at >= (std::size_t)count) continue;
                 for (int c = 0; c < comps && (std::size_t)(e * comps + c) < val.size(); ++c) out[at * comps + c] = val[(std::size_t)e * comps + c];
@@ -302,57 +328,42 @@ inline std::vector<float> ReadAccessor(const GltfDoc& doc, int ai, int& outComps
     // 0..1 (unsigned) or -1..1 (signed) per the glTF spec.
     const JVal* nz = a.Find("normalized");
     const bool norm = nz && nz->type == JVal::Bool && nz->boolean;
-    if (viIdx < 0 || viIdx >= (int)views->arr.size()) return out;
-    const JVal& v = views->arr[viIdx];
-    int buf = v.Find("buffer") ? v.Find("buffer")->Int(-1) : -1;
-    int voff = v.Find("byteOffset") ? v.Find("byteOffset")->Int(0) : 0;
-    int stride = v.Find("byteStride") ? v.Find("byteStride")->Int(0) : 0;
-    if (buf < 0 || buf >= (int)doc.buffers.size()) return out;
-    const std::vector<std::uint8_t>& data = doc.buffers[buf];
-    int csz = CompSize(ct);
-    if (stride == 0) stride = comps * csz;
-    out.reserve((std::size_t)count * comps);
-    for (int i = 0; i < count; ++i) {
-        std::size_t base = (std::size_t)voff + aoff + (std::size_t)i * stride;
-        for (int c = 0; c < comps; ++c) {
-            std::size_t at = base + (std::size_t)c * csz;
-            if (at + csz > data.size()) { out.push_back(0.0f); continue; }
-            const std::uint8_t* d = data.data() + at; float fv = 0.0f;
-            switch (ct) {
-                case 5126: { float t; std::memcpy(&t, d, 4); fv = t; break; }
-                case 5125: { std::uint32_t t; std::memcpy(&t, d, 4); fv = (float)t; break; }
-                case 5123: { std::uint16_t t; std::memcpy(&t, d, 2); fv = norm ? t / 65535.0f : (float)t; break; }
-                case 5121: fv = norm ? d[0] / 255.0f : (float)d[0]; break;
-                case 5122: { std::int16_t t; std::memcpy(&t, d, 2); fv = norm ? std::fmax(t / 32767.0f, -1.0f) : (float)t; break; }
-                case 5120: fv = norm ? std::fmax((std::int8_t)d[0] / 127.0f, -1.0f) : (float)(std::int8_t)d[0]; break;
-                default: break;
-            }
-            out.push_back(fv);
-        }
-    }
-    return out;
+    return ReadView(doc, viIdx, aoff, ct, comps, count, norm);
 }
 
 // Append one primitive's geometry to `mesh` (offsetting indices by the current vertex
 // count), so a mesh's primitives — or many meshes — can be merged into one Mesh.
-inline void AppendPrimitive(const GltfDoc& doc, const JVal& prim, Mesh& mesh) {
+// Returns false (and leaves `mesh` as it was) for a malformed primitive: an
+// attribute of the wrong type (a SCALAR POSITION), an unreadable accessor, or an
+// index past the primitive's vertices.
+inline bool AppendPrimitive(const GltfDoc& doc, const JVal& prim, Mesh& mesh) {
     const JVal* attr = prim.Find("attributes");
-    if (!attr) return;
-    int base = (int)mesh.vertices.size(), pc = 0, pn = 0;
+    if (!attr) return true;
+    int base = (int)mesh.vertices.size(), pn = 0;
+    std::vector<float> pos, nor, uv, idx;
+    int pc = 0, nc = 0, nn = 0, tc = 0, tn = 0, ic = 0, in = 0;
     if (const JVal* P = attr->Find("POSITION")) {
-        auto pos = ReadAccessor(doc, P->Int(-1), pc, pn);
-        for (int i = 0; i < pn; ++i) mesh.vertices.push_back(Vec3{pos[i*3+0], pos[i*3+1], pos[i*3+2]});
+        pos = ReadAccessor(doc, P->Int(-1), pc, pn);
+        if (pc != 3) return false;
     }
     if (const JVal* N = attr->Find("NORMAL")) {
-        int nc = 0, nn = 0; auto nor = ReadAccessor(doc, N->Int(-1), nc, nn);
-        for (int i = 0; i < nn; ++i) mesh.normals.push_back(Vec3{nor[i*3+0], nor[i*3+1], nor[i*3+2]});
+        nor = ReadAccessor(doc, N->Int(-1), nc, nn);
+        if (nc != 3) return false;
     }
     if (const JVal* T = attr->Find("TEXCOORD_0")) {
-        int tc = 0, tn = 0; auto uv = ReadAccessor(doc, T->Int(-1), tc, tn);
-        for (int i = 0; i < tn; ++i) mesh.uvs.push_back(Vec2{uv[i*2+0], uv[i*2+1]});
+        uv = ReadAccessor(doc, T->Int(-1), tc, tn);
+        if (tc != 2) return false;
     }
-    if (const JVal* I = prim.Find("indices")) {
-        int ic = 0, in = 0; auto idx = ReadAccessor(doc, I->Int(-1), ic, in);
+    const JVal* I = prim.Find("indices");
+    if (I) {
+        idx = ReadAccessor(doc, I->Int(-1), ic, in);
+        if (ic != 1) return false;
+        for (float f : idx) if (!(f >= 0.0f && f < (float)pn)) return false;   // also rejects NaN
+    }
+    for (int i = 0; i < pn; ++i) mesh.vertices.push_back(Vec3{pos[i*3+0], pos[i*3+1], pos[i*3+2]});
+    for (int i = 0; i < nn; ++i) mesh.normals.push_back(Vec3{nor[i*3+0], nor[i*3+1], nor[i*3+2]});
+    for (int i = 0; i < tn; ++i) mesh.uvs.push_back(Vec2{uv[i*2+0], uv[i*2+1]});
+    if (I) {
         for (int i = 0; i < in; ++i) mesh.triangles.push_back(base + (int)(idx[i] + 0.5f));
     } else {
         for (int i = 0; i + 2 < pn; i += 3) {
@@ -361,6 +372,14 @@ inline void AppendPrimitive(const GltfDoc& doc, const JVal& prim, Mesh& mesh) {
             mesh.triangles.push_back(base + i + 2);
         }
     }
+    return true;
+}
+
+// Whether AppendPrimitive would take this primitive (for code that must stay
+// aligned with the vertices it produced, e.g. morph targets).
+inline bool PrimitiveUsable(const GltfDoc& doc, const JVal& prim) {
+    Mesh scratch;
+    return AppendPrimitive(doc, prim, scratch);
 }
 
 // Build one glTF mesh (by index) into a Mesh.
@@ -369,7 +388,7 @@ inline Mesh BuildMeshAt(const GltfDoc& doc, int meshIndex) {
     const JVal* meshes = doc.root.Find("meshes");
     if (!meshes || meshIndex < 0 || meshIndex >= (int)meshes->arr.size()) return mesh;
     if (const JVal* prims = meshes->arr[meshIndex].Find("primitives"))
-        for (const JVal& prim : prims->arr) AppendPrimitive(doc, prim, mesh);
+        for (const JVal& prim : prims->arr) AppendPrimitive(doc, prim, mesh);   // a bad primitive is left out
     if (mesh.normals.size() != mesh.vertices.size()) mesh.normals.clear();
     if (mesh.uvs.size()     != mesh.vertices.size()) mesh.uvs.clear();
     return mesh;
@@ -593,7 +612,8 @@ inline Mesh LoadGLTF(const std::string& path, bool* ok = nullptr, std::string* o
     if (!meshes) { if (ok) *ok = false; return mesh; }
     for (const JVal& m : meshes->arr)
         if (const JVal* prims = m.Find("primitives"))
-            for (const JVal& prim : prims->arr) AppendPrimitive(doc, prim, mesh);
+            for (const JVal& prim : prims->arr)
+                if (!AppendPrimitive(doc, prim, mesh)) { if (ok) *ok = false; return Mesh{}; }
     if (mesh.normals.size() != mesh.vertices.size()) mesh.normals.clear();
     if (mesh.uvs.size()     != mesh.vertices.size()) mesh.uvs.clear();
     if (outTexture) { std::string t = ResolveBaseColorTexture(doc, path); if (!t.empty()) *outTexture = t; }

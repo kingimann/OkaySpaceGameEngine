@@ -99,6 +99,12 @@ add_executable(test_image test_image.cpp)
 target_link_libraries(test_image PRIVATE okay::engine)
 add_test(NAME image COMMAND test_image)
 
+# Robustness: OBJ / glTF / image loaders reject malformed input
+add_executable(test_loaders_robust test_loaders_robust.cpp)
+target_link_libraries(test_loaders_robust PRIVATE okay::engine)
+add_test(NAME loaders_robust COMMAND test_loaders_robust)
+set_tests_properties(loaders_robust PROPERTIES TIMEOUT 120)   # a glTF node cycle used to hang the import
+
 add_executable(test_text test_text.cpp)
 target_link_libraries(test_text PRIVATE okay::engine)
 add_test(NAME text COMMAND test_text)

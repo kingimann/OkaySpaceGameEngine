@@ -262,18 +262,24 @@ static Mesh BuildSkinnedMesh(const gltf_detail::GltfDoc& doc, int meshIndex,
         if (onlyPrim >= 0 && primNo != onlyPrim) continue;
         const JVal* attr = prim.Find("attributes"); if (!attr) continue;
         int base = (int)mesh.vertices.size(), pc = 0, pn = 0;
-        if (const JVal* P = attr->Find("POSITION")) {
-            auto pos = ReadAccessor(doc, P->Int(-1), pc, pn);
-            for (int i = 0; i < pn; ++i) mesh.vertices.push_back(Vec3{pos[i*3+0], pos[i*3+1], pos[i*3+2]});
+        // Validate the primitive before taking any of it (a SCALAR POSITION, an
+        // unreadable accessor, an index past its vertices): a bad one is left out.
+        std::vector<float> pos, nor, uv, id;
+        int nc = 0, nn = 0, tc = 0, tn = 0, ic = 0, in = 0;
+        if (const JVal* P = attr->Find("POSITION")) { pos = ReadAccessor(doc, P->Int(-1), pc, pn); if (pc != 3) continue; }
+        if (const JVal* N = attr->Find("NORMAL")) { nor = ReadAccessor(doc, N->Int(-1), nc, nn); if (nc != 3) continue; }
+        if (const JVal* T = attr->Find("TEXCOORD_0")) { uv = ReadAccessor(doc, T->Int(-1), tc, tn); if (tc != 2) continue; }
+        const JVal* I = prim.Find("indices");
+        if (I) {
+            id = ReadAccessor(doc, I->Int(-1), ic, in);
+            if (ic != 1) continue;
+            bool bad = false;
+            for (float f : id) if (!(f >= 0.0f && f < (float)pn)) { bad = true; break; }
+            if (bad) continue;
         }
-        if (const JVal* N = attr->Find("NORMAL")) {
-            int nc = 0, nn = 0; auto nor = ReadAccessor(doc, N->Int(-1), nc, nn);
-            for (int i = 0; i < nn; ++i) mesh.normals.push_back(Vec3{nor[i*3+0], nor[i*3+1], nor[i*3+2]});
-        }
-        if (const JVal* T = attr->Find("TEXCOORD_0")) {
-            int tc = 0, tn = 0; auto uv = ReadAccessor(doc, T->Int(-1), tc, tn);
-            for (int i = 0; i < tn; ++i) mesh.uvs.push_back(Vec2{uv[i*2+0], uv[i*2+1]});
-        }
+        for (int i = 0; i < pn; ++i) mesh.vertices.push_back(Vec3{pos[i*3+0], pos[i*3+1], pos[i*3+2]});
+        for (int i = 0; i < nn; ++i) mesh.normals.push_back(Vec3{nor[i*3+0], nor[i*3+1], nor[i*3+2]});
+        for (int i = 0; i < tn; ++i) mesh.uvs.push_back(Vec2{uv[i*2+0], uv[i*2+1]});
         std::vector<float> jv[2], wv[2]; int jc[2] = {0, 0}, jn[2] = {0, 0}, wc[2] = {0, 0}, wn[2] = {0, 0};
         for (int set = 0; set < 2; ++set) {
             std::string js = "JOINTS_" + std::to_string(set), ws = "WEIGHTS_" + std::to_string(set);
@@ -287,7 +293,8 @@ static Mesh BuildSkinnedMesh(const gltf_detail::GltfDoc& doc, int meshIndex,
                 if (jc[set] < 4 || wc[set] < 4 || i >= jn[set] || i >= wn[set]) continue;
                 for (int k = 0; k < 4; ++k) {
                     float w = wv[set][(std::size_t)i * wc[set] + k];
-                    if (w > 0.0f) inf[ni++] = {w, (int)(jv[set][(std::size_t)i * jc[set] + k] + 0.5f)};
+                    const float jf = jv[set][(std::size_t)i * jc[set] + k];
+                    if (w > 0.0f && jf >= 0.0f && jf < 65536.0f) inf[ni++] = {w, (int)(jf + 0.5f)};
                 }
             }
             std::sort(inf, inf + ni, [](const std::pair<float, int>& a, const std::pair<float, int>& b) { return a.first > b.first; });
@@ -301,8 +308,7 @@ static Mesh BuildSkinnedMesh(const gltf_detail::GltfDoc& doc, int meshIndex,
             }
             jIdx.push_back(idx); jWt.push_back(w);
         }
-        if (const JVal* I = prim.Find("indices")) {
-            int ic = 0, in = 0; auto id = ReadAccessor(doc, I->Int(-1), ic, in);
+        if (I) {
             for (int i = 0; i < in; ++i) mesh.triangles.push_back(base + (int)(id[i] + 0.5f));
         } else {
             for (int i = 0; i + 2 < pn; i += 3) {
@@ -340,7 +346,7 @@ static void AddGltfMorphTargets(const gltf_detail::GltfDoc& doc, int meshIndex, 
         const JVal* attr = prim.Find("attributes");
         const JVal* P = attr ? attr->Find("POSITION") : nullptr;
         int pc = 0, pn = 0;
-        if (P) ReadAccessor(doc, P->Int(-1), pc, pn);
+        if (P && PrimitiveUsable(doc, prim)) ReadAccessor(doc, P->Int(-1), pc, pn);   // skipped primitives add no vertices
         for (int t = 0; t < nTargets; ++t) { dp[t].resize((std::size_t)base + pn, Vec3{0, 0, 0}); dn[t].resize((std::size_t)base + pn, Vec3{0, 0, 0}); }
         if (const JVal* T = prim.Find("targets"))
             for (int t = 0; t < (int)T->arr.size() && t < nTargets; ++t) {
@@ -1081,6 +1087,28 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
     const JVal* nodes = doc.root.Find("nodes");
     int nodeCount = nodes ? (int)nodes->arr.size() : 0;
 
+    // Reject a node graph whose "children" links loop (a node under itself): the
+    // hierarchy built from it would never end. Checked on the parent each node
+    // finally gets (the last "children" entry naming it, as the import applies).
+    {
+        std::vector<int> parentOf(nodeCount, -1);
+        for (int i = 0; i < nodeCount; ++i)
+            if (const JVal* C = nodes->arr[i].Find("children"))
+                for (const JVal& c : C->arr) {
+                    int ci = c.Int(-1);
+                    if (ci >= 0 && ci < nodeCount) parentOf[ci] = i;
+                }
+        std::vector<char> state(nodeCount, 0);   // 0 unseen, 1 on the current walk, 2 known acyclic
+        std::vector<int> walk;
+        for (int i = 0; i < nodeCount; ++i) {
+            walk.clear();
+            int j = i;
+            while (j >= 0 && state[j] == 0) { state[j] = 1; walk.push_back(j); j = parentOf[j]; }
+            if (j >= 0 && state[j] == 1) { if (ok) *ok = false; return nullptr; }   // came back round
+            for (int w : walk) state[w] = 2;
+        }
+    }
+
     GameObject* root = scene.CreateGameObject(BaseName(path));
     if (nodeCount == 0) {   // no scene graph: just merge the meshes onto the root
         bool okm = false; std::string tex; Mesh m = LoadGLTF(path, &okm, &tex);
@@ -1200,7 +1228,7 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
         }
         if (const JVal* IB = skin.Find("inverseBindMatrices")) {
             int c = 0, cnt = 0; auto fv = ReadAccessor(doc, IB->Int(-1), c, cnt);
-            for (int j = 0; j < cnt; ++j) {
+            for (int j = 0; j < cnt && c == 16; ++j) {   // MAT4 only
                 Mat4 M; for (int e = 0; e < 16; ++e) M.m[e] = fv[(std::size_t)j*16 + e];
                 invBind.push_back(M);
             }

@@ -875,3 +875,8 @@ add_test(NAME locomotion COMMAND test_locomotion)
 add_executable(test_qa_pr250 test_qa_pr250.cpp)
 target_link_libraries(test_qa_pr250 PRIVATE okay::engine)
 add_test(NAME qa_pr250 COMMAND test_qa_pr250)
+
+# Robustness: AnimStateMachine layers survive `states` reallocating
+add_executable(test_anim_sm_realloc test_anim_sm_realloc.cpp)
+target_link_libraries(test_anim_sm_realloc PRIVATE okay::engine)
+add_test(NAME anim_sm_realloc COMMAND test_anim_sm_realloc)

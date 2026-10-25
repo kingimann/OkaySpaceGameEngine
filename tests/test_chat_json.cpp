@@ -1,6 +1,8 @@
 #include "test_framework.hpp"
 #include "okay/Platform/Messages.hpp"
 #include "okay/Platform/Servers.hpp"
+#include "okay/Platform/Forums.hpp"
+#include "okay/Platform/Workshop.hpp"
 
 #include <string>
 #include <vector>
@@ -36,6 +38,9 @@ int main() {
     RUN_SUITE("chat_json");
     CheckSplit([](const std::string& s) { return okay::Messages::SplitObjects(s); });
     CheckSplit([](const std::string& s) { return okay::Servers::SplitObjects(s); });
+    // Forum posts and marketplace descriptions (also listed on Admin's review tabs).
+    CheckSplit([](const std::string& s) { return okay::Forums::SplitObjects(s); });
+    CheckSplit([](const std::string& s) { return okay::Workshop::SplitObjects(s); });
     CHECK(okay::Messages::SplitObjects("[]").empty());
     CHECK(okay::Servers::SplitObjects("").empty());
     TEST_MAIN_RESULT();

@@ -230,9 +230,10 @@ private:
         int i = (int)fl;
         float fr = t - fl;
         float u = fr * fr * (3.0f - 2.0f * fr);   // smoothstep
-        auto h = [](int n) {
+        auto h = [](int i) {   // unsigned: the classic hash's wraparound without signed overflow
+            unsigned n = (unsigned)i;
             n = (n << 13) ^ n;
-            int m = (n * (n * n * 15731 + 789221) + 1376312589) & 0x7fffffff;
+            unsigned m = (n * (n * n * 15731u + 789221u) + 1376312589u) & 0x7fffffffu;
             return 1.0f - (float)m / 1073741824.0f;   // [-1,1]
         };
         return h(i) * (1.0f - u) + h(i + 1) * u;

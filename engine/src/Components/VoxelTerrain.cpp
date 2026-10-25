@@ -665,11 +665,11 @@ std::string VoxelTerrain::EncodeDensity() const {
 bool VoxelTerrain::DecodeDensity(const std::string& b64) {
     const float clamp = Clamp() + 1e-3f;
     std::vector<unsigned char> bytes; bytes.reserve(b64.size() / 4 * 3);
-    int acc = 0, bits = 0;
+    unsigned acc = 0; int bits = 0;
     for (char c : b64) {
         if (c == '=' || c == '\n' || c == '\r' || c == ' ') continue;
         int v = B64Val(c); if (v < 0) continue;
-        acc = (acc << 6) | v; bits += 6;
+        acc = ((acc << 6) | (unsigned)v) & 0xFFFFFFu; bits += 6;
         if (bits >= 8) { bits -= 8; bytes.push_back((unsigned char)((acc >> bits) & 0xFF)); }
     }
     if (bytes.size() != density.size()) return false;

@@ -27,7 +27,7 @@ public:
         float dx = to.x - from.x, dz = to.z - from.z;
         if (std::sqrt(dx * dx + dz * dz) < cell) return out;   // adjacent — no plan needed
 
-        auto key = [](int ix, int iz) { return ((std::int64_t)ix << 32) ^ (std::uint32_t)iz; };
+        auto key = [](int ix, int iz) { return (std::int64_t)(((std::uint64_t)(std::uint32_t)ix << 32) | (std::uint32_t)iz); };
         auto cellCenter = [&](int ix, int iz) {
             return Vec3{from.x + ix * cell, from.y, from.z + iz * cell};
         };

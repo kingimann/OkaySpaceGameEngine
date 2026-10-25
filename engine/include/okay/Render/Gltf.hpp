@@ -131,11 +131,11 @@ inline bool Base64Decode(const std::string& in, std::vector<std::uint8_t>& out) 
         if (c == '+') return 62; if (c == '/') return 63;
         return -1;
     };
-    int bits = 0, acc = 0;
+    int bits = 0; unsigned acc = 0;
     for (char c : in) {
         if (c == '=' || c == '\n' || c == '\r' || c == ' ') continue;
         int v = val(c); if (v < 0) continue;
-        acc = (acc << 6) | v; bits += 6;
+        acc = ((acc << 6) | (unsigned)v) & 0xFFFFFFu; bits += 6;
         if (bits >= 8) { bits -= 8; out.push_back((std::uint8_t)((acc >> bits) & 0xFF)); }
     }
     return true;

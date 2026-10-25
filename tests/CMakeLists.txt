@@ -875,3 +875,9 @@ add_test(NAME locomotion COMMAND test_locomotion)
 add_executable(test_qa_pr250 test_qa_pr250.cpp)
 target_link_libraries(test_qa_pr250 PRIVATE okay::engine)
 add_test(NAME qa_pr250 COMMAND test_qa_pr250)
+
+# Robustness: scene record counts / indices are validated on load
+add_executable(test_scene_records test_scene_records.cpp)
+target_link_libraries(test_scene_records PRIVATE okay::engine)
+add_test(NAME scene_records COMMAND test_scene_records)
+set_tests_properties(scene_records PROPERTIES TIMEOUT 300)

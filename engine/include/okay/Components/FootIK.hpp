@@ -1,10 +1,11 @@
 #pragma once
 // ---------------------------------------------------------------------------
-// FootIK — plant a biped's feet on the ground. Each frame it
-// raycasts down under each foot, and if the ground is above where the animation
-// put the foot, it solves a two-bone IK (hip -> knee -> foot) so the foot sits on
-// the surface and the knee bends naturally — no more feet floating over slopes or
-// sinking into steps. Blendable via `weight`.
+// FootIK — plant a biped's feet on the ground. Each frame it raycasts down
+// under each foot and moves the foot by how far that ground sits above (or,
+// with plantDown, below) the floor the animation was made for: this object's
+// origin. A two-bone IK (hip -> knee -> foot) bends the knee to match — no more
+// feet floating over slopes or sinking into steps, and on flat ground the
+// animation's own steps are left alone. Blendable via `weight`.
 //
 // Assign the leg-bone Transforms (hips/knee/foot for each leg). Bone lengths are
 // learned from the rig on the first solve. Knees bend toward the body's forward.
@@ -38,7 +39,7 @@ public:
     /// weight (feet free while jumping or rolling). Runtime only.
     float stateWeight = 1.0f;
     float EffWeight() const { return weight * stateWeight; }
-    float footOffset = 0.05f;  ///< ankle height to keep above the ground surface
+    float footOffset = 0.05f;  ///< lowest the ankle may get above the ground surface
     /// Correction ease speed (per second). The foot lift fades in/out toward its
     /// target instead of snapping the frame the ground appears/disappears under a
     /// foot — that snap was the visible "pop" on stairs and ledge edges. Higher =
@@ -181,9 +182,16 @@ public:
         // the pose was re-written this frame (an animated rig) or still holds last
         // frame's correction (a static rig) is detected per bone, so both work.
         float k = smoothing > 0.0f ? (1.0f - std::exp(-smoothing * dt)) : 1.0f;
-        if (adjustPelvis && pelvis) AdjustPelvis(s, k);
-        SolveLeg(m_leg[0], leftHip,  leftKnee,  leftFoot,  m_lUp, m_lLo, pole, s, k, dt);
-        SolveLeg(m_leg[1], rightHip, rightKnee, rightFoot, m_rUp, m_rLo, pole, s, k, dt);
+        // The animation lays the feet out over the body's own floor (this object's
+        // origin). Each foot is moved by how far the real ground under it sits above
+        // or below that floor, so a swinging foot keeps its lift and flat ground
+        // changes nothing. In the air there's no ground to plant on.
+        const float floorY = transform ? transform->Position().y : 0.0f;
+        const Character* body = gameObject ? gameObject->GetComponent<Character>() : nullptr;
+        const bool air = body && (body->anim == 5 || body->anim == 18);   // jump / fall
+        if (adjustPelvis && pelvis) AdjustPelvis(s, k, floorY, air);
+        SolveLeg(m_leg[0], leftHip,  leftKnee,  leftFoot,  m_lUp, m_lLo, pole, s, k, dt, floorY, air);
+        SolveLeg(m_leg[1], rightHip, rightKnee, rightFoot, m_rUp, m_rLo, pole, s, k, dt, floorY, air);
     }
 
 private:
@@ -230,7 +238,13 @@ private:
     // Lower the pelvis so the foot wanting to go lowest can still reach the ground;
     // the other foot drops with the body and the per-leg IK re-plants it. The
     // shift eases in over a few frames instead of teleporting the body.
-    void AdjustPelvis(Scene* s, float ease) {
+    // How far a foot the animation put at `animY` should move for ground at `g`:
+    // keep its height over the body's floor, and never sink below footOffset.
+    float Correction(float g, float animY, float floorY) const {
+        return Mathf::Max(g - floorY, (g + footOffset) - animY);
+    }
+
+    void AdjustPelvis(Scene* s, float ease, float floorY, bool air) {
         Vec3 cur = pelvis->Position();
         // The animated pelvis: this frame's pose, or (unchanged since we wrote it)
         // the pose minus our own shift.
@@ -238,11 +252,11 @@ private:
         Vec3 shift0 = cur - animP;   // currently applied
         float off = 0.0f; bool any = false;
         auto consider = [&](Transform* foot) {
-            if (!foot) return;
+            if (!foot || air) return;
             Vec3 p = foot->Position() - shift0;      // the foot as the animation put it
             float g = GroundAt(s, p);
             if (g < p.y - maxRayDown) return;          // no ground in range
-            float d = (g + footOffset) - p.y;          // + lift, - drop
+            float d = Correction(g, p.y, floorY);      // + lift, - drop
             off = any ? Mathf::Min(off, d) : d; any = true;
         };
         consider(leftFoot); consider(rightFoot);
@@ -255,7 +269,7 @@ private:
 
     void SolveLeg(LegState& L, Transform* hip, Transform* knee, Transform* foot,
                   float upLen, float loLen, const Vec3& pole, Scene* s,
-                  float ease, float dt) {
+                  float ease, float dt, float floorY, bool air) {
         if (!hip || !knee || !foot || upLen <= 0.0f || loLen <= 0.0f) return;
         Vec3 cur = foot->Position();
         // The foot as the animation placed it this frame (see LateUpdate).
@@ -266,8 +280,9 @@ private:
         // Lift the foot UP to meet ground (and, when plantDown/pelvis adjust is on,
         // also press it DOWN onto lower ground). Ignore ground out of reach below.
         bool down = plantDown || adjustPelvis;
-        bool apply = !((!down && targetY <= animFoot.y) || g < animFoot.y - maxRayDown);
-        float wantLift = apply ? targetY - animFoot.y : 0.0f;
+        float want = Correction(g, animFoot.y, floorY);
+        bool apply = !air && g >= animFoot.y - maxRayDown && (down || want > 0.0f);
+        float wantLift = apply ? want : 0.0f;
         L.lift += (wantLift - L.lift) * ease;
 
         // Foot locking: pin a planted foot where it landed.
@@ -319,7 +334,7 @@ private:
 
         // Tilt the foot so its sole follows the ground slope (only while a
         // correction is actually in play — never tilt a mid-air swing foot).
-        if (alignToGround && apply && normal.SqrMagnitude() > 1e-6f) {
+        if (alignToGround && std::fabs(wantLift) > 1e-3f && normal.SqrMagnitude() > 1e-6f) {
             Vec3 up = (foot->Rotation() * footUpAxis).Normalized();
             Quat tilt = Quat::FromToRotation(up, normal.Normalized());
             Quat desired = (tilt * foot->Rotation()).Normalized();

@@ -30,6 +30,7 @@ struct ScriptDiagnostic {
     int         line = 0;
     std::string message;
     int         severity = 0;   ///< 0 = error (won't run as written), 1 = warning (runs, but probably not as meant / does nothing)
+    int         column = 0;     ///< 1-based column on `line`, 0 = not known
 };
 
 /// Abstract scripting backend. Load source once, then drive Start/Update.

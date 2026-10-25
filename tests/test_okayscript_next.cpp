@@ -135,9 +135,9 @@ int main() {
         CHECK_EQ(Count(d, 0), 0);
     }
     {   // C# features that aren't in the language yet say so
-        auto d = Diags(Wrap("    static int x;\n    void Start() { foreach (var a in b) { } }\n"));
+        auto d = Diags(Wrap("    static int x;\n    void Start() { try { } catch { } }\n"));
         CHECK(Has(d, 0, "static members aren't supported yet"));
-        CHECK(Has(d, 0, "foreach loops aren't supported yet"));
+        CHECK(Has(d, 0, "try / catch isn't supported yet"));
         auto d2 = Diags(Wrap("    [Range(0, 1)] float hidden = 0;\n    void Start() { Debug.Log(hidden); }\n"));
         CHECK(Has(d2, 0, "only shows in the Inspector for public fields"));
         auto d3 = Diags(Wrap("    const int Max = 3;\n    void Start() { Max = 4; }\n"));

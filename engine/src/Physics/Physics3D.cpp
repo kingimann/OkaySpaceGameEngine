@@ -132,7 +132,7 @@ inline bool IsBoxLike(Collider3D::Shape s) {
 bool MeshHasTris(Collider3D* col) {
     if (col->shape() != Collider3D::Shape::Mesh || !col->gameObject) return false;
     auto* mr = col->gameObject->GetComponent<MeshRenderer>();
-    return mr && !mr->mesh.triangles.empty();
+    return mr && !mr->DisplayMesh().triangles.empty();
 }
 
 // Closest point on triangle (a,b,c) to point p — Ericson, Real-Time Collision
@@ -750,12 +750,12 @@ void Physics3D::Step(Scene& scene, float dt) {
             if (!Alive(col) || col->shape() != Collider3D::Shape::Mesh) continue;
             if (!col->gameObject || !col->gameObject->transform) continue;
             auto* mr = col->gameObject->GetComponent<MeshRenderer>();
-            if (!mr || mr->mesh.triangles.empty()) continue;
+            if (!mr || mr->DisplayMesh().triangles.empty()) continue;
             Mat4 M = col->gameObject->transform->LocalToWorldMatrix();
-            MeshShape ms; ms.tri.reserve(mr->mesh.triangles.size());
-            for (int idx : mr->mesh.triangles)
-                if (idx >= 0 && idx < (int)mr->mesh.vertices.size())
-                    ms.tri.push_back(M.MultiplyPoint(mr->mesh.vertices[idx]));
+            MeshShape ms; ms.tri.reserve(mr->DisplayMesh().triangles.size());
+            for (int idx : mr->DisplayMesh().triangles)
+                if (idx >= 0 && idx < (int)mr->DisplayMesh().vertices.size())
+                    ms.tri.push_back(M.MultiplyPoint(mr->DisplayMesh().vertices[idx]));
             if (!ms.tri.empty()) meshes.push_back(std::move(ms));
         }
         if (!meshes.empty()) {

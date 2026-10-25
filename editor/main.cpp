@@ -630,7 +630,7 @@ static long SceneTriangleLoad(const Scene& scene) {
     for (const auto& go : scene.Objects()) {
         if (!go->active) continue;
         auto* mr = go->GetComponent<MeshRenderer>();
-        if (mr && !mr->wireframe) n += mr->mesh.TriangleCount();
+        if (mr && !mr->wireframe) n += mr->DisplayMesh().TriangleCount();
     }
     s_frame = f; s_cached = n;
     return n;
@@ -7304,17 +7304,17 @@ static void RigModelHumanoid(EditorState& ed, GameObject* go) {
         GameObject* g = up.get();
         if (!g || !g->IsSelfOrDescendantOf(go)) continue;
         auto* mr = g->GetComponent<MeshRenderer>();
-        if (!mr || mr->mesh.vertices.empty()) continue;
+        if (!mr || mr->DisplayMesh().vertices.empty()) continue;
         if (tex.empty()) tex = mr->texture;
         Mat4 l2r = rootInv * g->transform->LocalToWorldMatrix();
         int base = (int)merged.vertices.size();
-        bool srcUV = mr->mesh.uvs.size() == mr->mesh.vertices.size();
+        bool srcUV = mr->DisplayMesh().uvs.size() == mr->DisplayMesh().vertices.size();
         if (srcUV && merged.uvs.size() < merged.vertices.size())
             merged.uvs.resize(merged.vertices.size(), Vec2{0.0f, 0.0f});
-        for (const Vec3& v : mr->mesh.vertices) merged.vertices.push_back(l2r.MultiplyPoint(v));
-        if (srcUV) for (const Vec2& t : mr->mesh.uvs) merged.uvs.push_back(t);
+        for (const Vec3& v : mr->DisplayMesh().vertices) merged.vertices.push_back(l2r.MultiplyPoint(v));
+        if (srcUV) for (const Vec2& t : mr->DisplayMesh().uvs) merged.uvs.push_back(t);
         else if (!merged.uvs.empty()) merged.uvs.resize(merged.vertices.size(), Vec2{0.0f, 0.0f});
-        for (int t : mr->mesh.triangles) merged.triangles.push_back(t + base);
+        for (int t : mr->DisplayMesh().triangles) merged.triangles.push_back(t + base);
         if (g != go) srcNodes.push_back(g);
     }
     if (merged.vertices.empty()) {
@@ -9959,7 +9959,7 @@ void DrawStats(EditorState& ed) {
     int stTris = 0, stParts = 0;
     for (const auto& up : ed.scene().Objects()) {
         if (!up || !up->active) continue;
-        if (auto* mr = up->GetComponent<MeshRenderer>()) if (mr->enabled) stTris += mr->mesh.TriangleCount();
+        if (auto* mr = up->GetComponent<MeshRenderer>()) if (mr->enabled) stTris += mr->DisplayMesh().TriangleCount();
         if (auto* ps = up->GetComponent<ParticleSystem>()) stParts += ps->AliveCount();
     }
     struct StatRow { const char* name; int v; };
@@ -10153,7 +10153,7 @@ void DrawSceneSettings(EditorState& ed) {
                 auto* mr = up->GetComponent<MeshRenderer>();
                 if (!mr || !up->active || !mr->enabled || mr->wireframe) continue;
                 Mat4 M = up->transform->LocalToWorldMatrix();
-                const auto& tr = mr->mesh.triangles; const auto& vs = mr->mesh.vertices;
+                const auto& tr = mr->DisplayMesh().triangles; const auto& vs = mr->DisplayMesh().vertices;
                 for (std::size_t i = 0; i + 2 < tr.size(); i += 3) {
                     if (tr[i] < 0 || tr[i+1] < 0 || tr[i+2] < 0) continue;
                     if ((std::size_t)tr[i] >= vs.size() || (std::size_t)tr[i+1] >= vs.size() || (std::size_t)tr[i+2] >= vs.size()) continue;
@@ -14959,8 +14959,8 @@ static void FocusSelected(EditorState& ed) {
         if (!g || !g->transform) continue;
         Vec3 p = g->transform->Position();
         float r = 0.8f;   // default for empties / cameras / lights
-        if (auto* mr = g->GetComponent<MeshRenderer>(); mr && !mr->mesh.vertices.empty()) {
-            Vec3 lo, hi; mr->mesh.Bounds(lo, hi);
+        if (auto* mr = g->GetComponent<MeshRenderer>(); mr && !mr->DisplayMesh().vertices.empty()) {
+            Vec3 lo, hi; mr->DisplayMesh().Bounds(lo, hi);
             Vec3 sz = hi - lo;
             Vec3 sc = g->transform->localScale;
             float ms = std::max({std::fabs(sc.x), std::fabs(sc.y), std::fabs(sc.z)});
@@ -17717,7 +17717,7 @@ static void CornerMaskEditor(const char* idSuffix, int& mask, EditorState& ed) {
 static bool MeshBounds(GameObject* go, Vec3& lo, Vec3& hi) {
     auto* mr = go->GetComponent<MeshRenderer>();
     if (!mr) return false;
-    mr->mesh.Bounds(lo, hi);
+    mr->DisplayMesh().Bounds(lo, hi);
     return true;
 }
 static void FitBox(GameObject* go, BoxCollider3D* bc) {
@@ -19085,7 +19085,7 @@ static void AnimFocusBounds(GameObject* go, Vec3& center, float& radius) {
             // meshes are often authored in cm with the unit fix parked on an
             // ANCESTOR's scale — using the raw mesh size framed the camera ~100x
             // too far away and the preview showed nothing but fog/void.
-            Vec3 lo, hi; mr->mesh.Bounds(lo, hi);
+            Vec3 lo, hi; mr->DisplayMesh().Bounds(lo, hi);
             Mat4 l2w = g->transform->LocalToWorldMatrix();
             for (int c = 0; c < 8; ++c) {
                 Vec3 wpt = l2w.MultiplyPoint({c & 1 ? hi.x : lo.x, c & 2 ? hi.y : lo.y, c & 4 ? hi.z : lo.z});
@@ -24943,8 +24943,8 @@ void DrawModeling(EditorState& ed) {
         // of the original primitive's bounds. Signature = tri/vert counts + bounds.
         {
             static std::unordered_map<GameObject*, std::size_t> s_meshSig;
-            Vec3 lo, hi; mr->mesh.Bounds(lo, hi);
-            std::size_t sig = (std::size_t)mr->mesh.TriangleCount() * 1315423911u + mr->mesh.vertices.size();
+            Vec3 lo, hi; mr->DisplayMesh().Bounds(lo, hi);
+            std::size_t sig = (std::size_t)mr->DisplayMesh().TriangleCount() * 1315423911u + mr->DisplayMesh().vertices.size();
             auto mix = [&](float f) { std::size_t h = std::hash<float>()(f); sig ^= h + 0x9e3779b9 + (sig << 6) + (sig >> 2); };
             mix(lo.x); mix(lo.y); mix(lo.z); mix(hi.x); mix(hi.y); mix(hi.z);
             auto it = s_meshSig.find(go);
@@ -25148,7 +25148,7 @@ void DrawModeling(EditorState& ed) {
                                                       : fs::path(ed.projectDir()) / "Assets";
             std::error_code ec; fs::create_directories(assets, ec);
             std::string out = (assets / (base + ".obj")).string();
-            if (mr->mesh.SaveOBJ(out)) ConsoleLog("Exported " + out);
+            if (mr->DisplayMesh().SaveOBJ(out)) ConsoleLog("Exported " + out);
             else ConsoleLog("[error] OBJ export failed: " + out);
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write this mesh to Assets/<name>.obj — use it in other objects, projects, or Blender.");
@@ -27965,6 +27965,156 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SliderFloat("Head Turn Speed##char", &ch->headTurnSpeed, 0.0f, 20.0f)) ed.dirty = true;
 
             if (c) { ch->Apply(); ed.dirty = true; }
+        }
+    }
+    if (auto* mm = dynamic_cast<okay::MeshModifiers*>(curComp)) {
+        if (CompHeader("Modifiers", mm, &toRemove)) {
+            using MT = okay::MeshModifier::Type;
+            auto* mmr = go->GetComponent<MeshRenderer>();
+            if (!mmr) ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.4f, 1.0f), "Needs a Mesh Renderer on this object.");
+            else ImGui::TextDisabled("Base %d tris  ->  result %d tris", mmr->mesh.TriangleCount(), mmr->DisplayMesh().TriangleCount());
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Non-destructive: the object's own mesh is kept and still editable;\n"
+                                  "the modifiers below build what's drawn, collided with and exported.\n"
+                                  "Apply bakes one into the mesh for good.");
+            ImGui::SetNextItemWidth(160);
+            if (ImGui::BeginCombo("##addmod", "+ Add Modifier")) {
+                for (int t = 0; t < (int)MT::Count; ++t)
+                    if (ImGui::Selectable(okay::MeshModifier::TypeName((MT)t))) {
+                        ed.PushUndo();
+                        okay::MeshModifier m = okay::MeshModifier::Make((MT)t);
+                        if ((MT)t == MT::Boolean) {   // pick the nearest other mesh as a starting cutter
+                            for (const auto& up : ed.scene().Objects())
+                                if (up.get() != go && up->GetComponent<MeshRenderer>()) { m.target = up->name; break; }
+                        }
+                        mm->modifiers.push_back(m);
+                        ed.dirty = true;
+                    }
+                ImGui::EndCombo();
+            }
+            ImGui::SameLine();
+            ImGui::BeginDisabled(mm->modifiers.empty());
+            if (ImGui::SmallButton("Apply All##mods")) { ed.PushUndo(); mm->ApplyAll(); ed.dirty = true; }
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Bake the whole stack into the mesh and clear it.");
+            int moveFrom = -1, moveTo = -1, removeAt = -1, applyAt = -1;
+            // One undo step per edit: remember the stack as it was when a widget in it
+            // was grabbed, and record that once it actually changes (a drag changes it
+            // over many frames; folding a section or opening a menu changes nothing).
+            static std::vector<okay::MeshModifier> s_modBefore;
+            static okay::MeshModifiers* s_modPending = nullptr;
+            static bool s_modRecorded = false;
+            std::vector<okay::MeshModifier> before = mm->modifiers;
+            ImGui::BeginGroup();
+            for (int i = 0; i < (int)mm->modifiers.size(); ++i) {
+                okay::MeshModifier& m = mm->modifiers[i];
+                ImGui::PushID(i);
+                ImGui::Separator();
+                if (ImGui::Checkbox("##on", &m.enabled)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turn this modifier on / off");
+                ImGui::SameLine();
+                // Full name, then a right-aligned "..." menu (also on right-click) with
+                // reorder / Apply / Remove, so it fits a narrow Inspector.
+                const float menuW = ImGui::CalcTextSize("...").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+                bool open = ImGui::TreeNodeEx("##mod", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap,
+                                              "%s", okay::MeshModifier::TypeName(m.type));
+                if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("modmenu");
+                ImGui::SameLine(ImGui::GetContentRegionMax().x - menuW);
+                if (ImGui::SmallButton("...")) ImGui::OpenPopup("modmenu");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Move, Apply or Remove");
+                if (ImGui::BeginPopup("modmenu")) {
+                    if (ImGui::MenuItem("Move Up", nullptr, false, i > 0)) { moveFrom = i; moveTo = i - 1; }
+                    if (ImGui::MenuItem("Move Down", nullptr, false, i + 1 < (int)mm->modifiers.size())) { moveFrom = i; moveTo = i + 1; }
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Apply")) applyAt = i;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bake just this modifier into the mesh and remove it");
+                    if (ImGui::MenuItem("Remove")) removeAt = i;
+                    ImGui::EndPopup();
+                }
+                if (i < (int)mm->errors.size() && !mm->errors[i].empty())
+                    ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "%s", mm->errors[i].c_str());
+                if (open) {
+                    switch (m.type) {
+                        case MT::Mirror:
+                            if (ImGui::Checkbox("X##mx", &m.mirrorX)) ed.dirty = true; ImGui::SameLine();
+                            if (ImGui::Checkbox("Y##my", &m.mirrorY)) ed.dirty = true; ImGui::SameLine();
+                            if (ImGui::Checkbox("Z##mz", &m.mirrorZ)) ed.dirty = true; ImGui::SameLine();
+                            ImGui::TextDisabled("axes");
+                            if (ImGui::Checkbox("Merge at the mirror##mm", &m.mirrorMerge)) ed.dirty = true;
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Weld vertices on the mirror plane so there's no seam.\nA mesh that crosses the plane is cut there first (the + side is kept).");
+                            break;
+                        case MT::Array:
+                            if (ImGui::DragInt("Count##ac", &m.count, 0.1f, 1, 1000)) ed.dirty = true;
+                            if (ImGui::Checkbox("Relative (x mesh size)##ar", &m.relative)) ed.dirty = true;
+                            if (ImGui::DragFloat3("Offset##ao", &m.offset.x, 0.01f, 0.0f, 0.0f, "%.2f")) ed.dirty = true;
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip(m.relative ? "Step between copies, times the mesh size (1.1 = a 10%% gap)" : "Step between copies, in units");
+                            break;
+                        case MT::Subdivision:
+                            if (ImGui::SliderInt("Levels##sl", &m.levels, 0, 4)) ed.dirty = true;
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Each level splits every face into one quad per corner (x4)\nand rounds the shape (Catmull-Clark). Model in quads for best results.");
+                            if (ImGui::Checkbox("Smooth shading##ss", &m.smoothShading)) ed.dirty = true;
+                            break;
+                        case MT::Solidify:
+                            if (ImGui::DragFloat("Thickness##st", &m.thickness, 0.005f, -10.0f, 10.0f)) ed.dirty = true;
+                            break;
+                        case MT::Bevel:
+                            if (ImGui::DragFloat("Width##bw", &m.width, 0.002f, 0.0001f, 10.0f, "%.3f")) ed.dirty = true;
+                            if (ImGui::SliderInt("Segments##bs", &m.segments, 1, 8)) ed.dirty = true;
+                            if (ImGui::SliderFloat("Angle limit##ba", &m.angle, 0.0f, 180.0f, "%.0f deg")) ed.dirty = true;
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only edges whose faces meet at least this sharply are beveled.");
+                            break;
+                        case MT::Boolean: {
+                            const char* ops[] = {"Union", "Subtract", "Intersect"};
+                            if (ImGui::Combo("Operation##bo", &m.boolOp, ops, 3)) ed.dirty = true;
+                            if (ObjNamePicker("bt", m.target, &ed.scene(), false)) ed.dirty = true;
+                            ImGui::SameLine(); ImGui::TextDisabled("cutter");
+                            if (ImGui::DragFloat("Voxel size##bv", &m.voxel, 0.002f, 0.005f, 5.0f, "%.3f")) ed.dirty = true;
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The boolean is built on a voxel grid: smaller = crisper seams, slower.\nIt re-runs whenever the cutter moves.");
+                            if (GameObject* cut = ed.scene().Find(m.target))
+                                if (auto* cmr = cut->GetComponent<MeshRenderer>()) {
+                                    bool vis = cmr->enabled;
+                                    if (ImGui::Checkbox("Show cutter##bshow", &vis)) { ed.PushUndo(); cmr->enabled = vis; ed.dirty = true; }
+                                }
+                            break;
+                        }
+                        case MT::Decimate:
+                            if (ImGui::DragFloat("Cell size##dc", &m.cellSize, 0.002f, 0.0001f, 10.0f, "%.3f")) ed.dirty = true;
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Vertices closer than this merge: bigger = fewer triangles.");
+                            break;
+                        case MT::Displace:
+                            if (ImGui::DragFloat("Strength##ds", &m.strength, 0.002f, -10.0f, 10.0f)) ed.dirty = true;
+                            if (ImGui::DragFloat("Frequency##df", &m.frequency, 0.05f, 0.01f, 100.0f)) ed.dirty = true;
+                            if (ImGui::DragInt("Seed##dseed", &m.seed, 0.2f)) ed.dirty = true;
+                            break;
+                        default: break;
+                    }
+                    if (ImGui::Checkbox("Show in edit mode##se", &m.showInEditMode)) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off = hidden while you edit this object's vertices (Tab).");
+                    ImGui::TreePop();
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndGroup();
+            if (ImGui::IsItemActivated()) { s_modBefore = before; s_modPending = mm; s_modRecorded = false; }
+            const bool menuAct = moveFrom >= 0 || removeAt >= 0 || applyAt >= 0;
+            if (menuAct || (s_modPending == mm && !s_modRecorded && !okay::SameModifiers(s_modBefore, mm->modifiers))) {
+                std::vector<okay::MeshModifier> now = mm->modifiers;
+                mm->modifiers = (s_modPending == mm) ? s_modBefore : before;
+                ed.PushUndo();
+                mm->modifiers = std::move(now);
+                s_modRecorded = true;   // the rest of this drag is the same step
+            }
+            if (s_modPending == mm && !ImGui::IsAnyItemActive()) s_modPending = nullptr;
+            if (moveFrom >= 0) { mm->Move(moveFrom, moveTo); ed.dirty = true; }
+            if (removeAt >= 0) { mm->modifiers.erase(mm->modifiers.begin() + removeAt); ed.dirty = true; }
+            if (applyAt >= 0) {
+                std::string err;
+                if (mm->Apply(applyAt, &err)) { ConsoleLog("Applied modifier"); if (g_meshEdit && g_meshEditObj == go) g_meshEditStartSet = false; }
+                else ConsoleLog("Couldn't apply: " + err);
+                ed.dirty = true;
+            }
+            if (mm->modifiers.empty()) ImGui::TextDisabled("Add a modifier: Mirror, Array, Subdivision Surface, Solidify,\nBevel, Boolean, Decimate, Displace.");
         }
     }
     if (auto* li = dynamic_cast<Light*>(curComp)) {
@@ -33636,6 +33786,10 @@ void DrawInspector(EditorState& ed) {
           if (o) {
             if (item(!go->GetComponent<SpriteRenderer>(), "Sprite Renderer")) { go->AddComponent<SpriteRenderer>(); ed.dirty = true; }
             if (item(!go->GetComponent<MeshRenderer>(), "Mesh Renderer (3D)")) { go->AddComponent<MeshRenderer>(); ed.view3D = true; ed.dirty = true; }
+            if (item(!go->GetComponent<okay::MeshModifiers>(), "Modifiers (non-destructive)")) {
+                if (!go->GetComponent<MeshRenderer>()) go->AddComponent<MeshRenderer>()->mesh = Mesh::Cube();
+                go->AddComponent<okay::MeshModifiers>(); ed.view3D = true; ed.dirty = true;
+            }
             if (item(!go->GetComponent<Character>(), "Character")) { go->AddComponent<Character>()->Apply(); ed.view3D = true; ed.dirty = true; }
             if (item(!go->GetComponent<TextRenderer>(), "Text")) { go->AddComponent<TextRenderer>(); ed.dirty = true; }
             if (item(!go->GetComponent<SpriteAnimator>(), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
@@ -37397,7 +37551,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     if (!gameView && g_showGizmos && ed.selected()) {
         if (auto* mr = ed.selected()->GetComponent<MeshRenderer>()) {
             Mat4 m = vp * ed.selected()->transform->LocalToWorldMatrix();
-            Vec3 lo, hi; mr->mesh.Bounds(lo, hi);
+            Vec3 lo, hi; mr->DisplayMesh().Bounds(lo, hi);
             Vec4 corner[8];   // keep clip-space so the edges can be near-clipped
             for (int ci = 0; ci < 8; ++ci)
                 corner[ci] = m * Vec4{Vec3{(ci & 1) ? hi.x : lo.x,
@@ -38845,9 +38999,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         // Nearest-to-cursor vertex of a mesh, in world space + screen distance.
         auto nearestVert = [&](GameObject* g, Vec3& outWorld, float& outD2) -> bool {
             auto* mr = g->GetComponent<MeshRenderer>();
-            if (!mr || mr->mesh.vertices.empty()) return false;
+            if (!mr || mr->DisplayMesh().vertices.empty()) return false;
             Mat4 model = g->transform->LocalToWorldMatrix();
-            const auto& vs = mr->mesh.vertices;
+            const auto& vs = mr->DisplayMesh().vertices;
             std::size_t stride = vs.size() > 20000 ? vs.size() / 20000 : 1;
             bool found = false;
             for (std::size_t vi = 0; vi < vs.size(); vi += stride) {
@@ -38931,7 +39085,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             auto* mr = go->GetComponent<MeshRenderer>();
             if (!mr || !go->active || go->editorLocked) continue;   // locked: Hierarchy-only selection
             Mat4 model = go->transform->LocalToWorldMatrix();
-            Vec3 lo, hi; mr->mesh.Bounds(lo, hi);
+            Vec3 lo, hi; mr->DisplayMesh().Bounds(lo, hi);
             float minx = 1e30f, miny = 1e30f, maxx = -1e30f, maxy = -1e30f;
             bool any = false;
             for (int ci = 0; ci < 8; ++ci) {
@@ -40137,7 +40291,7 @@ void DrawProfiler(EditorState& ed) {
     int objs = 0, tris = 0, parts = 0;
     for (const auto& up : ed.scene().Objects()) {
         if (!up || !up->active) continue;
-        if (auto* mr = up->GetComponent<okay::MeshRenderer>()) if (mr->enabled && !mr->wireframe) { ++objs; tris += mr->mesh.TriangleCount(); }
+        if (auto* mr = up->GetComponent<okay::MeshRenderer>()) if (mr->enabled && !mr->wireframe) { ++objs; tris += mr->DisplayMesh().TriangleCount(); }
         if (auto* ps = up->GetComponent<okay::ParticleSystem>()) parts += ps->AliveCount();
     }
     P.Stat3(objs, tris, parts);
@@ -41802,6 +41956,15 @@ int main(int argc, char** argv) {
         }
         // A PauseMenu / script Quit during Play stops play (mirrors the built game).
         if (ed.isPlaying() && okay::Game::QuitRequested()) { ed.Stop(); g_paused = false; ConsoleLog("Quit (game requested exit)"); }
+        // Modifier stacks: rebuild any whose base mesh, settings or Boolean target
+        // changed (components don't Update while editing). The object in mesh edit
+        // mode hides modifiers that have "Show in Edit Mode" off.
+        if (!g_gameFiber.Suspended()) {
+            for (const auto& up : ed.scene().Objects())
+                if (auto* mm = up ? up->GetComponent<okay::MeshModifiers>() : nullptr)
+                    mm->editCage = g_meshEdit && g_meshEditObj == up.get();
+            okay::RefreshModifierStacks(ed.scene());
+        }
         ed.TickServices(dt); // Steam callbacks + networking every frame
 
         // When the open scene changes, reset the autosave timer and look for a

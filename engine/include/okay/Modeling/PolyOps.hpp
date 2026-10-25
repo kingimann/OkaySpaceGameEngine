@@ -109,4 +109,11 @@ int MergeVerts(PolyMesh& pm, const std::vector<int>& verts, const Vec3& at);
 /// for remapping a selection.
 std::vector<int> CompactVerts(PolyMesh& pm);
 
+/// Catmull-Clark subdivision surface, `levels` times. Every face becomes one quad
+/// per corner, and positions are smoothed toward the limit surface (open borders
+/// follow the 1/8-3/4-1/8 border rule; vertices on non-manifold edges stay put).
+/// UVs are split linearly per face (corners keep theirs), materials and colours
+/// are inherited. Original vertices keep their indices.
+PolyMesh CatmullClark(const PolyMesh& pm, int levels = 1);
+
 } // namespace okay::modeling

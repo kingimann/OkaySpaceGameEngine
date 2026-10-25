@@ -864,7 +864,7 @@ inline void RenderCascadeDepth(const Scene& scene, ShadowCascade& cas, bool cull
         if (cull) {
             // Sphere(cascade) vs the caster's world AABB: clamp the centre into the
             // box and test the squared distance — skip casters wholly outside.
-            Vec3 blo, bhi; mr->mesh.Bounds(blo, bhi);
+            Vec3 blo, bhi; mr->DisplayMesh().Bounds(blo, bhi);
             Vec3 wlo{1e30f, 1e30f, 1e30f}, whi{-1e30f, -1e30f, -1e30f};
             for (int c = 0; c < 8; ++c) {
                 Vec3 w = model.MultiplyPoint({(c & 1) ? bhi.x : blo.x, (c & 2) ? bhi.y : blo.y, (c & 4) ? bhi.z : blo.z});
@@ -877,7 +877,7 @@ inline void RenderCascadeDepth(const Scene& scene, ShadowCascade& cas, bool cull
             if (qx * qx + qy * qy + qz * qz > cr2) continue;
         }
         Mat4 mvp = cas.viewProj * model;
-        const auto& V = mr->mesh.vertices; const auto& T = mr->mesh.triangles;
+        const auto& V = mr->DisplayMesh().vertices; const auto& T = mr->DisplayMesh().triangles;
         for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
             float sxv[3], syv[3], szv[3]; bool ok = true;
             for (int k = 0; k < 3; ++k) {
@@ -958,7 +958,7 @@ inline void RenderShadowMap(const Scene& scene, const Mat4& vp, const Vec3& eye)
     for (const auto& go : scene.Objects()) {
         auto* mr = visible(*go); if (!mr) continue;
         Mat4 model = go->transform->LocalToWorldMatrix();
-        Vec3 blo, bhi; mr->mesh.Bounds(blo, bhi);
+        Vec3 blo, bhi; mr->DisplayMesh().Bounds(blo, bhi);
         for (int c = 0; c < 8; ++c) {
             Vec3 w = model.MultiplyPoint({(c & 1) ? bhi.x : blo.x, (c & 2) ? bhi.y : blo.y, (c & 4) ? bhi.z : blo.z});
             lo.x = std::fmin(lo.x, w.x); lo.y = std::fmin(lo.y, w.y); lo.z = std::fmin(lo.z, w.z);
@@ -1029,7 +1029,7 @@ inline bool ComputeDirectionalShadowVP(const Scene& scene, const Mat4& camVp, co
         auto* mr = go->template GetComponent<MeshRenderer>();
         if (!mr || !go->active || !mr->enabled || mr->wireframe) continue;
         Mat4 model = go->transform->LocalToWorldMatrix();
-        Vec3 blo, bhi; mr->mesh.Bounds(blo, bhi);
+        Vec3 blo, bhi; mr->DisplayMesh().Bounds(blo, bhi);
         for (int c = 0; c < 8; ++c) {
             Vec3 w = model.MultiplyPoint({(c & 1) ? bhi.x : blo.x, (c & 2) ? bhi.y : blo.y, (c & 4) ? bhi.z : blo.z});
             lo.x = std::fmin(lo.x, w.x); lo.y = std::fmin(lo.y, w.y); lo.z = std::fmin(lo.z, w.z);
@@ -1553,17 +1553,17 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         const float scrollU = mr->uvScroll.x * Time::ElapsedTime();
         const float scrollV = mr->uvScroll.y * Time::ElapsedTime();
         Mat4 model = go->transform->LocalToWorldMatrix();
-        const auto& v = mr->mesh.vertices;
-        const auto& t = mr->mesh.triangles;
-        const bool hasUV = mr->mesh.uvs.size() == v.size();
-        const bool faceCols = mr->mesh.HasFaceColors();   // per-triangle colors?
+        const auto& v = mr->DisplayMesh().vertices;
+        const auto& t = mr->DisplayMesh().triangles;
+        const bool hasUV = mr->DisplayMesh().uvs.size() == v.size();
+        const bool faceCols = mr->DisplayMesh().HasFaceColors();   // per-triangle colors?
         const std::vector<Image>* tex = mr->texture.empty() ? nullptr : GetCachedMips(mr->texture);
         const std::vector<Image>* normalMips = mr->normalMap.empty() ? nullptr : GetCachedMips(mr->normalMap);
         const std::vector<Image>* specMips = mr->specularMap.empty() ? nullptr : GetCachedMips(mr->specularMap);
         const std::vector<Image>* aoMips = mr->aoMap.empty() ? nullptr : GetCachedMips(mr->aoMap);
         Image* mcap = (mr->matcap.empty() || unlit) ? nullptr : GetCachedTexture(mr->matcap);
         // Matcap shading needs per-vertex normals; fall back if the mesh has none.
-        const bool useMatcap = mcap && mr->mesh.HasNormals();
+        const bool useMatcap = mcap && mr->DisplayMesh().HasNormals();
         // Smooth (Gouraud) shading when the mesh carries per-vertex normals and
         // isn't textured/unlit — interpolated lighting across each face. Matcap
         // also rides the smooth path (it interpolates a per-vertex sampled color).
@@ -1658,7 +1658,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             for (int k = 0; k < 3; ++k) {
                 Vec4 c = vp * Vec4{wp[k], 1.0f};
                 float uu, vt;
-                if (hasUV) { uu = mr->mesh.uvs[idx[k]].x; vt = mr->mesh.uvs[idx[k]].y; }
+                if (hasUV) { uu = mr->DisplayMesh().uvs[idx[k]].x; vt = mr->DisplayMesh().uvs[idx[k]].y; }
                 else {
                     const Vec3& p = v[idx[k]];
                     if (ax >= ay && ax >= az) { uu = p.z + 0.5f; vt = p.y + 0.5f; }
@@ -1668,8 +1668,8 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 uvx[k] = uu; uvy[k] = vt;
                 // Per-vertex world normal (smoothed if the mesh has normals, else
                 // the face normal), flipped to match a culled back face.
-                Vec3 nk = mr->mesh.HasNormals()
-                              ? xformNormal(mr->mesh.normals[idx[k]]).Normalized()
+                Vec3 nk = mr->DisplayMesh().HasNormals()
+                              ? xformNormal(mr->DisplayMesh().normals[idx[k]]).Normalized()
                               : normal;
                 if (facing < 0.0f) nk = nk * -1.0f;
 
@@ -1779,7 +1779,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             }
             // Per-face color when the mesh carries one (e.g. character skin /
             // outfit / hair); otherwise the renderer's single albedo color.
-            const Color& base = faceCols ? mr->mesh.triColors[i / 3] : mr->color;
+            const Color& base = faceCols ? mr->DisplayMesh().triColors[i / 3] : mr->color;
             float cr = base.r * lit.x + spec + mr->emissive.r;
             float cg = base.g * lit.y + spec + mr->emissive.g;
             float cb = base.b * lit.z + spec + mr->emissive.b;

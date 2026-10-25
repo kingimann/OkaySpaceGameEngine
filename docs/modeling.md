@@ -92,7 +92,9 @@ scene save/load and OBJ export.
 
 ## Modifiers
 
-Blender-style one-shot modifiers: **Array X** (repeat with offset),
+Blender-style one-shot modifiers (they change the mesh right away; for
+modifiers you can keep tweaking, see [Modifier stack](#modifier-stack-non-destructive)):
+**Array X** (repeat with offset),
 **Remesh** (watertight voxel rebuild), **Decimate** (cut triangle count),
 **Boolean** Union / Subtract / Intersect against any other mesh object in
 the scene, **Convex Hull**, **Bisect** (slice through the centre and keep a
@@ -100,6 +102,44 @@ capped half), **Split in two objects** (keep BOTH capped halves — break a
 rock apart, cut doors from a wall), **Shrink/Fatten**, **Wireframe** (turn
 edges into beams), **Displace** (noise roughen), **Cast Cyl Y**, and
 **Stretch X/Y/Z**.
+
+## Modifier stack (non-destructive)
+
+Add **Modifiers (non-destructive)** to a mesh object (Inspector → Add
+Component → Rendering, or **Add Modifier** in its Modifiers section). The
+object's mesh stays the editable base; the stack runs on top of it, in order,
+and its result is what is drawn, casts shadows, collides (Mesh Collider and
+the collider auto-fit) and is exported to OBJ. Change a setting, toggle a
+modifier, edit the base in Edit Mesh or move a Boolean cutter, and the result
+is rebuilt. Nothing is lost until you press **Apply**.
+
+| Modifier | What it does | Settings |
+|---|---|---|
+| **Mirror** | Reflects across the object's own X/Y/Z planes. A mesh crossing a plane is cut there first (the + side is kept), so the halves never overlap. | axes, Merge (weld the seam) |
+| **Array** | Copies side by side. | count, offset, Relative (offset times the mesh size; 1.1 = 10% gap) |
+| **Subdivision Surface** | Catmull-Clark on the real polygons: quads stay quads, n-gons become n quads, open borders keep their outline. | levels (0–4), Smooth shading |
+| **Solidify** | Gives a surface a thickness. | thickness |
+| **Bevel** | Rounds every edge whose faces meet sharper than the angle. | width, segments, angle |
+| **Boolean** | Union / Subtract / Intersect with another mesh object (by name), using its *modified* mesh. Moving or editing the cutter updates the result. **Show cutter** hides or shows the cutter object. | object, operation, voxel size |
+| **Decimate** | Merges vertices within cells of the given size. | cell size |
+| **Displace** | Roughens along the normals with noise. | strength, frequency, seed |
+
+Each modifier has an on/off checkbox and a **...** menu (or right-click its
+name) with **Move Up** / **Move Down**, **Apply** (bake just that one into the
+base — it runs on the base mesh, as in Blender, so apply from the top) and
+**Remove**. **Show in edit mode** off hides it while you edit the base in Edit
+Mesh, where the base's vertices are shown as a cage over the result. Every
+change is one undo step. **Apply All** bakes the
+whole stack. A modifier that can't run (no cutter, too many faces for the
+subdivision level, nothing to bevel) shows the reason in red and is skipped;
+the rest of the stack still runs.
+
+Subdivision refuses a result above 1.5 million faces. Booleans are voxel
+based, like the one-shot Boolean, so their cost depends on the voxel size.
+
+The stack is saved with the scene (`modstack` / `mod` lines) and rebuilt on
+load; in a running game it refreshes in Update, so a script that moves a
+Boolean cutter sees the cut follow it.
 
 ## Generate
 

@@ -58,6 +58,7 @@
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/SpriteAnimator.hpp"
 #include "okay/Components/MeshRenderer.hpp"
+#include "okay/Components/MeshModifiers.hpp"
 #include "okay/Components/TextRenderer.hpp"
 
 // 2D physics

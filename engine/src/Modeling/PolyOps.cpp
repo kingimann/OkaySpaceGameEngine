@@ -954,4 +954,128 @@ std::vector<int> CompactVerts(PolyMesh& pm) {
     return remap;
 }
 
+// ---- Catmull-Clark --------------------------------------------------------------
+namespace {
+PolyMesh CatmullClarkOnce(const PolyMesh& pm) {
+    const int nv = (int)pm.verts.size();
+    // Edges, keyed by (min, max), with the faces on each side.
+    std::map<std::pair<int, int>, int> edgeId;
+    struct E { int a, b; std::vector<int> faces; };
+    std::vector<E> edges;
+    std::vector<char> faceOk(pm.faces.size(), 0);
+    for (int f = 0; f < (int)pm.faces.size(); ++f) {
+        const auto& vs = pm.faces[f].verts;
+        bool ok = vs.size() >= 3;
+        for (int v : vs) if (v < 0 || v >= nv) ok = false;
+        if (!ok) continue;
+        faceOk[f] = 1;
+        for (std::size_t i = 0; i < vs.size(); ++i) {
+            int a = vs[i], b = vs[(i + 1) % vs.size()];
+            if (a == b) continue;
+            auto key = std::make_pair(std::min(a, b), std::max(a, b));
+            auto it = edgeId.find(key);
+            int e;
+            if (it == edgeId.end()) { e = (int)edges.size(); edgeId[key] = e; edges.push_back({key.first, key.second, {}}); }
+            else e = it->second;
+            edges[e].faces.push_back(f);
+        }
+    }
+    // Face points.
+    std::vector<Vec3> facePt(pm.faces.size(), Vec3{0, 0, 0});
+    for (int f = 0; f < (int)pm.faces.size(); ++f) {
+        if (!faceOk[f]) continue;
+        Vec3 c{0, 0, 0};
+        for (int v : pm.faces[f].verts) c = c + pm.verts[v];
+        facePt[f] = c * (1.0f / (float)pm.faces[f].verts.size());
+    }
+    // Edge points: interior = average of the ends and the two face points; else the midpoint.
+    std::vector<Vec3> edgePt(edges.size());
+    for (std::size_t e = 0; e < edges.size(); ++e) {
+        const E& ed = edges[e];
+        Vec3 mid = (pm.verts[ed.a] + pm.verts[ed.b]) * 0.5f;
+        if (ed.faces.size() == 2)
+            edgePt[e] = (pm.verts[ed.a] + pm.verts[ed.b] + facePt[ed.faces[0]] + facePt[ed.faces[1]]) * 0.25f;
+        else
+            edgePt[e] = mid;
+    }
+    // Vertex points.
+    std::vector<std::vector<int>> vEdges(nv), vFaces(nv);
+    for (std::size_t e = 0; e < edges.size(); ++e) { vEdges[edges[e].a].push_back((int)e); vEdges[edges[e].b].push_back((int)e); }
+    for (int f = 0; f < (int)pm.faces.size(); ++f) {
+        if (!faceOk[f]) continue;
+        for (int v : pm.faces[f].verts)
+            if (vFaces[v].empty() || vFaces[v].back() != f) vFaces[v].push_back(f);
+    }
+    std::vector<Vec3> vertPt(pm.verts);
+    for (int v = 0; v < nv; ++v) {
+        if (vEdges[v].empty()) continue;
+        int boundary = 0; bool nonManifold = false;
+        Vec3 bsum{0, 0, 0};
+        for (int e : vEdges[v]) {
+            std::size_t fc = edges[e].faces.size();
+            if (fc == 1) { ++boundary; bsum = bsum + pm.verts[edges[e].a == v ? edges[e].b : edges[e].a]; }
+            else if (fc > 2) nonManifold = true;
+        }
+        const Vec3& P = pm.verts[v];
+        if (nonManifold) continue;                         // keep put
+        if (boundary == 2) { vertPt[v] = P * 0.75f + bsum * 0.125f; continue; }   // open border
+        if (boundary != 0) continue;                       // a corner of several borders: keep
+        const float n = (float)vFaces[v].size();
+        if (n < 3.0f) continue;
+        Vec3 F{0, 0, 0}, R{0, 0, 0};
+        for (int f : vFaces[v]) F = F + facePt[f];
+        F = F * (1.0f / n);
+        for (int e : vEdges[v]) R = R + (pm.verts[edges[e].a] + pm.verts[edges[e].b]) * 0.5f;
+        R = R * (1.0f / (float)vEdges[v].size());
+        vertPt[v] = (F + R * 2.0f + P * (n - 3.0f)) * (1.0f / n);
+    }
+    // New mesh: original verts (moved), then edge points, then face points.
+    PolyMesh out;
+    out.verts = vertPt;
+    const int edgeBase = (int)out.verts.size();
+    out.verts.insert(out.verts.end(), edgePt.begin(), edgePt.end());
+    const int faceBase = (int)out.verts.size();
+    std::vector<int> faceIdx(pm.faces.size(), -1);
+    for (int f = 0; f < (int)pm.faces.size(); ++f) {
+        if (!faceOk[f]) continue;
+        faceIdx[f] = (int)out.verts.size();
+        out.verts.push_back(facePt[f]);
+    }
+    (void)faceBase;
+    auto edgeIndex = [&](int a, int b) {
+        auto it = edgeId.find(std::make_pair(std::min(a, b), std::max(a, b)));
+        return it == edgeId.end() ? -1 : edgeBase + it->second;
+    };
+    for (int f = 0; f < (int)pm.faces.size(); ++f) {
+        const PolyFace& src = pm.faces[f];
+        if (!faceOk[f]) continue;
+        const int k = src.Size();
+        const bool uv = (int)src.uvs.size() == k;
+        Vec2 uvc{0, 0};
+        if (uv) { for (const Vec2& t : src.uvs) { uvc.x += t.x; uvc.y += t.y; } uvc.x /= (float)k; uvc.y /= (float)k; }
+        for (int i = 0; i < k; ++i) {
+            const int prev = (i + k - 1) % k, next = (i + 1) % k;
+            int en = edgeIndex(src.verts[i], src.verts[next]);
+            int ep = edgeIndex(src.verts[prev], src.verts[i]);
+            if (en < 0 || ep < 0) continue;
+            PolyFace q;
+            q.verts = {src.verts[i], en, faceIdx[f], ep};
+            if (uv) {
+                const Vec2& a = src.uvs[i]; const Vec2& b = src.uvs[next]; const Vec2& c = src.uvs[prev];
+                q.uvs = {a, Vec2{(a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f}, uvc, Vec2{(a.x + c.x) * 0.5f, (a.y + c.y) * 0.5f}};
+            }
+            q.material = src.material; q.hasColor = src.hasColor; q.color = src.color;
+            out.faces.push_back(std::move(q));
+        }
+    }
+    return out;
+}
+} // namespace
+
+PolyMesh CatmullClark(const PolyMesh& pm, int levels) {
+    PolyMesh cur = pm;
+    for (int i = 0; i < levels; ++i) cur = CatmullClarkOnce(cur);
+    return cur;
+}
+
 } // namespace okay::modeling

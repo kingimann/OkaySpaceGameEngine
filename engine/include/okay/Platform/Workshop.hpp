@@ -290,12 +290,18 @@ private:
         return (long)timegm(&tm);
 #endif
     }
+public:
+    // Tiny JSON helpers (public so the tests can reach them).
+    // Top-level JSON objects. Braces inside strings ("a { in a description") don't count.
     static std::vector<std::string> SplitObjects(const std::string& json) {
         std::vector<std::string> out; int depth = 0; std::size_t start = std::string::npos;
+        bool inStr = false;
         for (std::size_t i = 0; i < json.size(); ++i) {
             char c = json[i];
-            if (c == '{') { if (depth == 0) start = i; ++depth; }
-            else if (c == '}') { if (--depth == 0 && start != std::string::npos) { out.push_back(json.substr(start, i - start + 1)); start = std::string::npos; } }
+            if (inStr) { if (c == '\\') ++i; else if (c == '"') inStr = false; continue; }
+            if (c == '"') inStr = true;
+            else if (c == '{') { if (depth == 0) start = i; ++depth; }
+            else if (c == '}' && depth > 0) { if (--depth == 0 && start != std::string::npos) { out.push_back(json.substr(start, i - start + 1)); start = std::string::npos; } }
         }
         return out;
     }

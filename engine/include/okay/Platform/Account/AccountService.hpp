@@ -217,6 +217,58 @@ inline std::string JsonEscape(const std::string& s) {
     return out;
 }
 
+// The JSON string literal whose opening quote is at json[q], with its escapes
+// decoded (\n, \t, ... and \uXXXX as UTF-8: Supabase's auth server writes "&",
+// "<" and ">" as &, <, >). Returns the index just past the
+// closing quote (json.size() if there is none).
+inline std::size_t JsonReadString(const std::string& json, std::size_t q, std::string& out) {
+    auto hex4 = [&](std::size_t at, unsigned& v) {
+        if (at + 4 > json.size()) return false;
+        v = 0;
+        for (std::size_t k = at; k < at + 4; ++k) {
+            const char h = json[k];
+            v <<= 4;
+            if (h >= '0' && h <= '9') v |= (unsigned)(h - '0');
+            else if (h >= 'a' && h <= 'f') v |= (unsigned)(h - 'a' + 10);
+            else if (h >= 'A' && h <= 'F') v |= (unsigned)(h - 'A' + 10);
+            else return false;
+        }
+        return true;
+    };
+    std::size_t i = q + 1;
+    for (; i < json.size(); ++i) {
+        char c = json[i];
+        if (c == '"') return i + 1;
+        if (c != '\\' || i + 1 >= json.size()) { out += c; continue; }
+        c = json[++i];
+        switch (c) {
+            case 'n': out += '\n'; break;
+            case 't': out += '\t'; break;
+            case 'r': out += '\r'; break;
+            case 'b': out += '\b'; break;
+            case 'f': out += '\f'; break;
+            case 'u': {
+                unsigned cp = 0, lo = 0;
+                if (!hex4(i + 1, cp)) { out += 'u'; break; }
+                i += 4;
+                if (cp >= 0xD800 && cp < 0xDC00 && i + 2 < json.size() && json[i + 1] == '\\' && json[i + 2] == 'u' &&
+                    hex4(i + 3, lo) && lo >= 0xDC00 && lo < 0xE000) {
+                    cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                    i += 6;
+                }
+                if (cp < 0x80) out += (char)cp;
+                else if (cp < 0x800) { out += (char)(0xC0 | (cp >> 6)); out += (char)(0x80 | (cp & 0x3F)); }
+                else if (cp < 0x10000) { out += (char)(0xE0 | (cp >> 12)); out += (char)(0x80 | ((cp >> 6) & 0x3F)); out += (char)(0x80 | (cp & 0x3F)); }
+                else { out += (char)(0xF0 | (cp >> 18)); out += (char)(0x80 | ((cp >> 12) & 0x3F));
+                       out += (char)(0x80 | ((cp >> 6) & 0x3F)); out += (char)(0x80 | (cp & 0x3F)); }
+                break;
+            }
+            default: out += c; break;   // \" \\ \/
+        }
+    }
+    return i;
+}
+
 // Pull the string value of a top-level "key" out of a flat JSON object.
 inline std::string JsonField(const std::string& json, const std::string& key) {
     std::string needle = "\"" + key + "\"";
@@ -227,12 +279,7 @@ inline std::string JsonField(const std::string& json, const std::string& key) {
     std::size_t q1 = json.find('"', colon + 1);
     if (q1 == std::string::npos) return {};
     std::string out;
-    for (std::size_t i = q1 + 1; i < json.size(); ++i) {
-        char c = json[i];
-        if (c == '\\' && i + 1 < json.size()) { out += json[++i]; continue; }
-        if (c == '"') break;
-        out += c;
-    }
+    JsonReadString(json, q1, out);
     return out;
 }
 
@@ -252,15 +299,8 @@ inline std::vector<std::string> JsonStringArray(const std::string& json,
         std::size_t q1 = json.find('"', i);
         if (q1 == std::string::npos || q1 >= rb) break;
         std::string s;
-        std::size_t j = q1 + 1;
-        for (; j < json.size(); ++j) {
-            char c = json[j];
-            if (c == '\\' && j + 1 < json.size()) { s += json[++j]; continue; }
-            if (c == '"') break;
-            s += c;
-        }
+        i = JsonReadString(json, q1, s);
         out.push_back(s);
-        i = j + 1;
     }
     return out;
 }
@@ -278,15 +318,8 @@ inline std::vector<std::string> JsonFieldValues(const std::string& json, const s
         std::size_t q1 = json.find('"', colon + 1);
         if (q1 == std::string::npos) break;
         std::string s;
-        std::size_t j = q1 + 1;
-        for (; j < json.size(); ++j) {
-            char c = json[j];
-            if (c == '\\' && j + 1 < json.size()) { s += json[++j]; continue; }
-            if (c == '"') break;
-            s += c;
-        }
+        pos = JsonReadString(json, q1, s);
         out.push_back(s);
-        pos = j + 1;
     }
     return out;
 }

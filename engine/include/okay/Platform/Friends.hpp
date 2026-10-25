@@ -361,12 +361,19 @@ private:
     static std::string Upper(const std::string& s) {
         std::string o = s; for (char& c : o) c = (char)std::toupper((unsigned char)c); return o;
     }
+public:
+    // Tiny JSON helpers (public so the tests can reach them). Profile text is
+    // free-form (a multi-line bio, quotes, braces), so strings are read and
+    // written with their escapes.
     static std::vector<std::string> SplitObjects(const std::string& json) {
         std::vector<std::string> out; int depth = 0; std::size_t start = std::string::npos;
+        bool inStr = false;
         for (std::size_t i = 0; i < json.size(); ++i) {
             char c = json[i];
-            if (c == '{') { if (depth == 0) start = i; ++depth; }
-            else if (c == '}') { if (--depth == 0 && start != std::string::npos) { out.push_back(json.substr(start, i - start + 1)); start = std::string::npos; } }
+            if (inStr) { if (c == '\\') ++i; else if (c == '"') inStr = false; continue; }
+            if (c == '"') inStr = true;
+            else if (c == '{') { if (depth == 0) start = i; ++depth; }
+            else if (c == '}' && depth > 0) { if (--depth == 0 && start != std::string::npos) { out.push_back(json.substr(start, i - start + 1)); start = std::string::npos; } }
         }
         return out;
     }
@@ -376,14 +383,23 @@ private:
         p = obj.find(':', p + k.size()); if (p == std::string::npos) return "";
         ++p; while (p < obj.size() && (obj[p] == ' ')) ++p;
         if (p >= obj.size()) return "";
-        if (obj[p] == '"') { std::size_t e = obj.find('"', p + 1); return e == std::string::npos ? "" : obj.substr(p + 1, e - p - 1); }
+        if (obj[p] == '"') { std::string v; okay::account::detail::JsonReadString(obj, p, v); return v; }
         std::size_t e = p; while (e < obj.size() && obj[e] != ',' && obj[e] != '}') ++e;
         std::string v = obj.substr(p, e - p);
         while (!v.empty() && (v.back() == ' ')) v.pop_back();
         return v == "null" ? "" : v;
     }
-    static std::string JStr(const std::string& s) {   // minimal JSON string literal
-        std::string o = "\""; for (char c : s) { if (c == '"' || c == '\\') o += '\\'; o += c; } o += "\""; return o;
+    static std::string JStr(const std::string& s) {   // JSON string literal (control characters escaped)
+        std::string o = "\"";
+        for (unsigned char c : s) {
+            if (c == '"' || c == '\\') { o += '\\'; o += (char)c; }
+            else if (c == '\n') o += "\\n";
+            else if (c == '\t') o += "\\t";
+            else if (c == '\r') o += "\\r";
+            else if (c < 0x20) { char b[8]; std::snprintf(b, sizeof(b), "\\u%04x", c); o += b; }
+            else o += (char)c;
+        }
+        o += "\""; return o;
     }
     static std::string Url(const std::string& s) {     // minimal URL-encode for query values
         std::string o; char b[4];

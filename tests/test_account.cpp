@@ -152,6 +152,23 @@ int main() {
         CHECK(svc.Login("alice2", "newpass1").ok);   // new name works
     }
 
+    // ---- server JSON: escapes are decoded ----
+    // Supabase's auth server writes '&', '<' and '>' as \u0026 / \u003c / \u003e,
+    // so a username like "Tom&Jerry" must not come back as "Tomu0026Jerry".
+    {
+        const std::string tokenReply =
+            "{\"access_token\":\"a.b.c\",\"user\":{\"user_metadata\":{\"username\":\"Tom\\u0026Jerry \\u003c3\"}}}";
+        CHECK(acct::detail::JsonField(tokenReply, "username") == "Tom&Jerry <3");
+        CHECK(acct::detail::JsonField(tokenReply, "access_token") == "a.b.c");
+        CHECK(acct::detail::JsonField("{\"data\":\"line1\\nline2\\t\\\"q\\\" \\\\ \\/\"}", "data") ==
+              "line1\nline2\t\"q\" \\ /");
+        CHECK(acct::detail::JsonField("{\"n\":\"caf\\u00e9 \\ud83d\\ude00\"}", "n") == "caf\xC3\xA9 \xF0\x9F\x98\x80");
+        auto keys = acct::detail::JsonStringArray("{\"keys\":[\"a\\u0026b\",\"c\\nd\"]}", "keys");
+        CHECK(keys.size() == 2 && keys[0] == "a&b" && keys[1] == "c\nd");
+        auto names = acct::detail::JsonFieldValues("[{\"name\":\"x\\u003ey\"},{\"name\":\"z\"}]", "name");
+        CHECK(names.size() == 2 && names[0] == "x>y" && names[1] == "z");
+    }
+
     fs::remove_all(dir);
     TEST_MAIN_RESULT();
 }

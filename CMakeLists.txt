@@ -34,6 +34,15 @@ else()
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+# Sanitizer build (GCC/Clang), used by CI's sanitizer job. Off by default, e.g.
+#   cmake -DOKAY_SANITIZE=address,undefined ...
+# UBSan findings abort instead of printing and carrying on.
+set(OKAY_SANITIZE "" CACHE STRING "Build with -fsanitize=<list> (e.g. address,undefined); empty = off")
+if(OKAY_SANITIZE AND NOT MSVC)
+    add_compile_options(-fsanitize=${OKAY_SANITIZE} -fno-sanitize-recover=undefined -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=${OKAY_SANITIZE} -fno-sanitize-recover=undefined)
+endif()
+
 # Enable testing up front so subdirectories (editor, tests) can register tests.
 if(OKAY_BUILD_TESTS)
     enable_testing()

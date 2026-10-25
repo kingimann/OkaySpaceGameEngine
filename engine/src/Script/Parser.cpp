@@ -480,12 +480,19 @@ private:
     // ---- Expressions ----
     ExprPtr Make(EK k, SrcLoc l) { auto e = std::make_unique<Expr>(); e->kind = k; e->loc = l; return e; }
 
-    ExprPtr Expression() { return Assignment(); }
+    ExprPtr Expression() {
+        if (nesting_ == 0) operators_ = 0;   // a new top-level expression
+        return Assignment();
+    }
 
     // Expressions nest by recursion, so cap how deep they go: thousands of '('
     // or '-' would otherwise overflow the stack instead of giving an error.
     static constexpr int kMaxNesting = 256;
     int nesting_ = 0;
+    // a + b + ... parses in a loop but builds a tree as deep as it is long, which
+    // checking, running and freeing walk recursively: cap the operators too.
+    static constexpr int kMaxOperators = 1000;
+    int operators_ = 0;
     int stmtNesting_ = 0;
     struct NestGuard {
         int& n;
@@ -536,6 +543,8 @@ private:
         for (;;) {
             int p = Prec(Peek().type);
             if (p < 0 || p <= minPrec - 1 || p < minPrec) break;
+            if (++operators_ > kMaxOperators)
+                throw ParseError{Peek().loc, "This expression is too long (more than " + std::to_string(kMaxOperators) + " operators): split it up"};
             auto e = Make(EK::Binary, Peek().loc);
             e->op = Peek().type; ++pos_;
             e->lhs = std::move(lhs);

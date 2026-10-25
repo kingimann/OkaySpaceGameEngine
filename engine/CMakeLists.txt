@@ -77,6 +77,7 @@ add_library(okay_engine
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
     src/Modeling/PolyOps.cpp
+    src/Modeling/Modifiers.cpp
     third_party/ufbx/ufbx.c
 )
 

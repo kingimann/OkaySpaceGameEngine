@@ -1062,7 +1062,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
             auto* mr = go->GetComponent<MeshRenderer>();
             if (!mr || mr->wireframe || !mr->enabled || !mr->castShadows) continue;
             if (mr->color.a < 0.999f) continue;     // transparent meshes don't cast
-            const Mesh& mesh = mr->mesh;
+            const Mesh& mesh = mr->DisplayMesh();
             const auto& V = mesh.vertices; const auto& T = mesh.triangles;
             if (V.empty() || T.size() < 3) continue;
             if (CulledByFrustum(lightFr, go, mr)) continue;
@@ -1286,7 +1286,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         if (!(RenderCullingMask() & (1 << (go->layer & 31)))) continue;   // camera layer cull
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || mr->wireframe || !mr->enabled) continue;
-        const Mesh& mesh = mr->mesh;
+        const Mesh& mesh = mr->DisplayMesh();
         const auto& V = mesh.vertices; const auto& T = mesh.triangles;
         if (V.empty() || T.size() < 3) continue;
         if (CulledByFrustum(viewFr, go, mr)) { ++culledN; continue; }

@@ -77,9 +77,9 @@ inline bool ShadowSceneBounds(const Scene& scene, Vec3& lo, Vec3& hi) {
     for (const auto& go : scene.Objects()) {
         if (!go || !go->active) continue;
         auto* mr = go->template GetComponent<MeshRenderer>();
-        if (!mr || !mr->enabled || mr->wireframe || mr->mesh.vertices.empty()) continue;
+        if (!mr || !mr->enabled || mr->wireframe || mr->DisplayMesh().vertices.empty()) continue;
         Mat4 model = go->transform->LocalToWorldMatrix();
-        Vec3 blo, bhi; mr->mesh.Bounds(blo, bhi);
+        Vec3 blo, bhi; mr->DisplayMesh().Bounds(blo, bhi);
         for (int c = 0; c < 8; ++c) {
             Vec3 w = model.MultiplyPoint({(c & 1) ? bhi.x : blo.x, (c & 2) ? bhi.y : blo.y, (c & 4) ? bhi.z : blo.z});
             lo.x = std::fmin(lo.x, w.x); lo.y = std::fmin(lo.y, w.y); lo.z = std::fmin(lo.z, w.z);

@@ -699,7 +699,7 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
                 auto* mr = go->GetComponent<MeshRenderer>();
                 if (!mr || mr->wireframe || !mr->enabled || !mr->castShadows) continue;
                 if (mr->color.a < 0.999f) continue;     // transparent meshes don't cast
-                const Mesh& mesh = mr->mesh;
+                const Mesh& mesh = mr->DisplayMesh();
                 const auto& Vv = mesh.vertices; const auto& T = mesh.triangles;
                 if (Vv.empty() || T.size() < 3) continue;
                 const int nv = (int)Vv.size();
@@ -801,7 +801,7 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
         if (!(RenderCullingMask() & (1 << (go->layer & 31)))) continue;   // camera layer cull
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || mr->wireframe || !mr->enabled) continue;
-        const Mesh& mesh = mr->mesh;
+        const Mesh& mesh = mr->DisplayMesh();
         const auto& Vv = mesh.vertices; const auto& T = mesh.triangles;
         if (Vv.empty() || T.size() < 3) continue;
         const bool hasN = mesh.HasNormals();

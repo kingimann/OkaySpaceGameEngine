@@ -413,6 +413,10 @@ add_executable(test_light_shadows test_light_shadows.cpp)
 target_link_libraries(test_light_shadows PRIVATE okay::engine)
 add_test(NAME light_shadows COMMAND test_light_shadows)
 
+add_executable(test_modifiers test_modifiers.cpp)
+target_link_libraries(test_modifiers PRIVATE okay::engine)
+add_test(NAME modifiers COMMAND test_modifiers)
+
 add_executable(test_savedata test_savedata.cpp)
 target_link_libraries(test_savedata PRIVATE okay::engine)
 add_test(NAME savedata COMMAND test_savedata)

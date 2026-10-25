@@ -41,7 +41,7 @@ inline void FitColliders(GameObject* go, bool onlyAuto = false) {
         std::vector<Collider3D*> cols;
         for (auto* c : go->GetComponents<Collider3D>()) if (!onlyAuto || c->autoFit) cols.push_back(c);
         if (cols.empty() || (onlyAuto && mr->deformed)) return;
-        Vec3 lo, hi; mr->mesh.Bounds(lo, hi);
+        Vec3 lo, hi; mr->DisplayMesh().Bounds(lo, hi);
         // Never collapse a dimension to exactly 0 — a flat plane / a face extruded flat
         // would otherwise get a zero-thickness collider that nothing can land on.
         Vec3 size{Mathf::Max(hi.x - lo.x, 0.01f),

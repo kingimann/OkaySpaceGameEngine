@@ -3,6 +3,7 @@
 #include "okay/Render/Mesh.hpp"
 #include "okay/Render/Color.hpp"
 #include <cstdint>
+#include <memory>
 #include <string>
 
 namespace okay {
@@ -13,6 +14,12 @@ namespace okay {
 class MeshRenderer : public Component {
 public:
     Mesh  mesh;
+    /// Set by a MeshModifiers stack: the evaluated mesh that is drawn, cast shadows,
+    /// collided with and exported. `mesh` stays the editable base every tool works on.
+    /// Null = draw `mesh` itself. Never saved (rebuilt from the stack on load).
+    std::shared_ptr<Mesh> modifiedMesh;
+    /// The mesh to draw / collide with: the modifier result if there is one, else `mesh`.
+    const Mesh& DisplayMesh() const { return modifiedMesh ? *modifiedMesh : mesh; }
     /// Set by a deformer (SkinnedMesh) that rewrites `mesh` every frame: auto-fit
     /// colliders then keep their size instead of chasing each pose.
     bool  deformed = false;

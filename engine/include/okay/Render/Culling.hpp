@@ -124,14 +124,14 @@ inline bool ObjectWorldSphere(const GameObject* go, const MeshRenderer* mr, Vec3
         }
         if (n == 0) return false;
         Vec3 bc; float br;
-        MeshLocalSphere(sm->bind.vertices.empty() ? mr->mesh : sm->bind, bc, br);
+        MeshLocalSphere(sm->bind.vertices.empty() ? mr->DisplayMesh() : sm->bind, bc, br);
         c = (lo + hi) * 0.5f;
         Vec3 h = (hi - lo) * 0.5f;
         r = std::sqrt(h.x * h.x + h.y * h.y + h.z * h.z) + br * maxScale() * 0.5f;
         return true;
     }
     Vec3 lc; float lr;
-    MeshLocalSphere(mr->mesh, lc, lr);
+    MeshLocalSphere(mr->DisplayMesh(), lc, lr);
     c = M.MultiplyPoint(lc);
     r = lr * maxScale();
     return true;

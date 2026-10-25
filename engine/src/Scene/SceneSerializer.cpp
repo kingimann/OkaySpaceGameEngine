@@ -7,6 +7,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Light.hpp"
+#include "okay/Components/MeshModifiers.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/ActionList.hpp"
@@ -426,6 +427,26 @@ void WriteComponents(std::ostream& out, GameObject* go) {
                 << mr->groundShadowY << " " << mr->groundShadowStrength << "\n";
         if (!mr->castShadows || !mr->receiveShadows)
             out << "  meshshadows " << (mr->castShadows ? 1 : 0) << " " << (mr->receiveShadows ? 1 : 0) << "\n";
+        // A hidden mesh (e.g. a Boolean modifier's cutter) stays hidden after a reload.
+        if (!mr->enabled) out << "  meshenabled 0\n";
+    }
+    // Modifier stack: one header line, then one line per modifier (in order).
+    if (auto* mm = go->GetComponent<MeshModifiers>()) {
+        out << "  modstack";
+        KvOut{out}.b("on", mm->enabled)("count", (int)mm->modifiers.size());
+        out << "\n";
+        for (const MeshModifier& m : mm->modifiers) {
+            out << "  mod";
+            KvOut k{out};
+            k("type", (int)m.type).b("on", m.enabled).b("edit", m.showInEditMode)
+             .b("mx", m.mirrorX).b("my", m.mirrorY).b("mz", m.mirrorZ).b("merge", m.mirrorMerge)
+             ("n", m.count).b("rel", m.relative)("ox", m.offset.x)("oy", m.offset.y)("oz", m.offset.z)
+             ("lv", m.levels).b("smooth", m.smoothShading)("th", m.thickness)
+             ("w", m.width)("seg", m.segments)("ang", m.angle)
+             .str("tgt", m.target)("op", m.boolOp)("vox", m.voxel)("cell", m.cellSize)
+             ("str", m.strength)("freq", m.frequency)("seed", m.seed);
+            out << "\n";
+        }
     }
     // Skinned mesh: the bind-pose geometry + per-vertex bone weights + joint names +
     // inverse-bind matrices, so an imported rigged character survives save/reload
@@ -2847,6 +2868,31 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         int tp = 0; in >> mr->uvScroll.x >> mr->uvScroll.y >> tp;
                         mr->triplanar = (tp != 0);
                     }
+                } else if (field == "modstack") {
+                    auto* mm = go->GetComponent<MeshModifiers>();
+                    if (!mm) mm = go->AddComponent<MeshModifiers>();
+                    KvIn k(in);
+                    k.b("on", mm->enabled);
+                } else if (field == "mod") {
+                    auto* mm = go->GetComponent<MeshModifiers>();
+                    if (!mm) mm = go->AddComponent<MeshModifiers>();
+                    KvIn k(in);
+                    MeshModifier m;
+                    int type = 0; k.i("type", type);
+                    if (type < 0 || type >= (int)MeshModifier::Type::Count) type = 0;
+                    m.type = (MeshModifier::Type)type;
+                    k.b("on", m.enabled); k.b("edit", m.showInEditMode);
+                    k.b("mx", m.mirrorX); k.b("my", m.mirrorY); k.b("mz", m.mirrorZ); k.b("merge", m.mirrorMerge);
+                    k.i("n", m.count); k.b("rel", m.relative);
+                    k.f("ox", m.offset.x); k.f("oy", m.offset.y); k.f("oz", m.offset.z);
+                    k.i("lv", m.levels); k.b("smooth", m.smoothShading); k.f("th", m.thickness);
+                    k.f("w", m.width); k.i("seg", m.segments); k.f("ang", m.angle);
+                    k.str("tgt", m.target); k.i("op", m.boolOp); k.f("vox", m.voxel); k.f("cell", m.cellSize);
+                    k.f("str", m.strength); k.f("freq", m.frequency); k.i("seed", m.seed);
+                    mm->modifiers.push_back(m);
+                } else if (field == "meshenabled") {
+                    int en = 1; in >> en;
+                    if (auto* mr = go->GetComponent<MeshRenderer>()) mr->enabled = (en != 0);
                 } else if (field == "meshshadows") {
                     int cs = 1, rs = 1; in >> cs >> rs;
                     if (auto* mr = go->GetComponent<MeshRenderer>()) { mr->castShadows = (cs != 0); mr->receiveShadows = (rs != 0); }

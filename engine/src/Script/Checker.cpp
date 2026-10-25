@@ -4,6 +4,7 @@
 #include "ScriptInternal.hpp"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <optional>
 #include <set>
 
@@ -238,8 +239,8 @@ private:
                     case T::Plus: v = p + q; break;
                     case T::Minus: v = p - q; break;
                     case T::Star: v = p * q; break;
-                    case T::Slash: if (q == 0 || (p == INT32_MIN && q == -1)) return std::nullopt; v = p / q; break;
-                    case T::Percent: if (q == 0 || q == -1) { if (q == 0) return std::nullopt; v = 0; break; } v = p % q; break;
+                    case T::Slash: if (q == 0) return std::nullopt; v = p / q; break;     // 64-bit: can't overflow
+                    case T::Percent: if (q == 0) return std::nullopt; v = p % q; break;
                     default: return std::nullopt;
                 }
                 r = Value{(std::int32_t)(std::uint32_t)(std::uint64_t)v};

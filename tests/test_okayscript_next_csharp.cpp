@@ -216,6 +216,9 @@ static void Switches() {
         CHECK(Has(d, 0, "Expected case or default", 11, 22));
         CHECK(Has(d, 0, "can't fall through", 12, 22));
         CHECK(Has(d, 0, "continue only works inside a loop", 13, 9));
+        // case values are folded: 7 / 2 and 7 % 4 are both 3
+        CHECK(Has(Diags(Wrap("    void Start() { int n = 3; switch (n) { case 7 / 2: break; case 7 % 4: break; } }")), 0,
+                  "case 3 appears twice", 2, 63));
         // break inside a switch is fine outside a loop, continue isn't
         CHECK(!Has(d, 0, "break only works inside a loop"));
     }

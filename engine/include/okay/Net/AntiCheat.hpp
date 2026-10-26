@@ -97,6 +97,9 @@ struct AntiCheatSettings {
     /// Refuse client hit claims when the server can't check where the shooter
     /// is: no maxMoveSpeed, and the server doesn't move the shooter's pawn.
     bool  hitsNeedMoveCheck = true;
+    /// The most round trip (seconds) a shot's lag compensation and target
+    /// slack allow for, however slow a client makes its pings look.
+    float maxRewindRtt = 0.3f;
 
     /// .okayac text: one "key value" per line, '#' comments:
     ///   enabled true | spawn <prefab path> (repeatable) | maxSyncSpeed 12
@@ -106,7 +109,7 @@ struct AntiCheatSettings {
     ///   serverVar <key prefix> (repeatable)
     ///   hitOriginTolerance 2 | hitTolerance 1 | maxHitRange 50 | hitDamage 10 | hitLineOfSight true
     ///   weapon <name> (repeatable)
-    ///   hitsNeedMoveCheck true
+    ///   hitsNeedMoveCheck true | maxRewindRtt 0.3
     static bool Parse(const std::string& text, AntiCheatSettings& out, std::string* error = nullptr);
     bool LoadFile(const std::string& path, std::string* error = nullptr);
     std::string ToText() const;

@@ -42,6 +42,7 @@ serverVar score                     # SyncVar key prefixes only the server may w
 maxHitRange 60                      # hit claims: the longest shot (0 = any; the component's default is 300)
 weapon rifle                        # a weapon clients may claim hits with, besides Net Validator ones (repeatable)
 hitDamage 10                        # what a hit does, unless the game says otherwise
+maxRewindRtt 0.3                    # hit claims: the most round trip (s) lag compensation allows for
 ```
 
 A game hosted through a relay (`HostViaRelay` / `net_host_relay`) runs the same
@@ -242,7 +243,8 @@ check them.
   4. the target is in front, within `maxHitRange` (0 = any), and within
      `hitTolerance` (1) of the shot's line, plus its top speed (`maxSyncSpeed`,
      else 8 u/s) times the shooter's ping, which the anti-cheat's heartbeat
-     measures (0.25 s until it does);
+     measures (the quickest of its last 8 pings; 0.25 s until it has one),
+     at most `maxRewindRtt` (0.3 s);
   5. a server raycast (3D and 2D) reaches the target, unless `hitLineOfSight
      false`: no shooting through walls;
   6. the game's own rules (the **On Validate Hit** graph event with **Reject

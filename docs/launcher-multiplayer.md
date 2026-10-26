@@ -320,8 +320,10 @@ claim against where everything was *then*: the target on the shot's line,
 nothing solid in between. So a shot at what you saw counts, even though the
 target has moved on by the time the claim arrives; one aimed at where the
 target is now (but wasn't seen) doesn't. The host rewinds no further than
-200 ms plus that player's round trip, so claiming to have seen something long
-ago doesn't work. Game code on the host can do the same with
+200 ms plus that player's round trip (the quickest of its last 8 pings, at
+most the anti-cheat's `maxRewindRtt`, 0.3 s), so claiming to have seen
+something long ago, or answering pings late, doesn't work. A claim without
+the moment it saw (an older client) is refused. Game code on the host can do the same with
 `NetworkManager::RewindRaycast(origin, direction, maxDistance, viewTick)`.
 
 Without a fixed tick, claims are checked against where things are now, with

@@ -3,12 +3,23 @@
 #include "okay/Net/Packet.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Net/SecureChannel.hpp"
+#include "AntiCheatChecks.hpp"   // shared/: okayac::detail::HmacSha256
 #include <cmath>
 #include <cstring>
+#include <iterator>
 #include <string>
 #include <vector>
 
 namespace okay::net {
+
+RelayServer::RelayServer() {
+    std::uint8_t secret[32];
+    for (std::size_t i = 0; i < sizeof secret; i += 8) {
+        const std::uint64_t k = NewHostKey();
+        std::memcpy(secret + i, &k, 8);
+    }
+    m_cookieSecret.assign(reinterpret_cast<const char*>(secret), sizeof secret);
+}
 
 bool RelayServer::Start(std::uint16_t port) {
     Stop();
@@ -28,6 +39,7 @@ void RelayServer::Stop() {
     m_slotEp.clear();
     m_sessions.clear();
     m_perAddress.clear();
+    m_helloRate.clear();
 }
 
 RelayServer::Peer* RelayServer::FindBySlot(std::uint32_t slot) {
@@ -60,6 +72,63 @@ void RelayServer::SendRefused(const Endpoint& to, std::uint8_t reason) {
     r.Write(reason);
     r.Write(kRelayProtocolVersion);
     m_socket.SendTo(to, r.Data(), r.Size());
+}
+
+// The cookie for an address in a given minute: only the relay can make it, and
+// only the machine at that address receives it.
+RelayServer::Cookie RelayServer::MakeCookie(const Endpoint& from, std::uint64_t minute) const {
+    const auto mac = okayac::detail::HmacSha256(
+        m_cookieSecret, "okay-relay-cookie|" + std::to_string(from.address) + "|" +
+                        std::to_string(from.port) + "|" + std::to_string(minute));
+    Cookie c;
+    std::memcpy(c.data(), mac.data(), c.size());
+    return c;
+}
+
+// This minute's or the last one's, so a cookie sent just before the minute
+// turns still works.
+bool RelayServer::CookieValid(const Endpoint& from, const Cookie& c) const {
+    const std::uint64_t minute = static_cast<std::uint64_t>(m_now / 60.0);
+    auto same = [&](const Cookie& want) {
+        std::uint8_t diff = 0;
+        for (std::size_t i = 0; i < c.size(); ++i) diff |= static_cast<std::uint8_t>(c[i] ^ want[i]);
+        return diff == 0;
+    };
+    return same(MakeCookie(from, minute)) || (minute > 0 && same(MakeCookie(from, minute - 1)));
+}
+
+void RelayServer::SendCookie(const Endpoint& to) {
+    ++m_cookiesSent;
+    Packet c(RelayCookie);
+    c.Write(kRelayProtocolVersion);
+    for (std::uint8_t b : MakeCookie(to, static_cast<std::uint64_t>(m_now / 60.0))) c.Write(b);
+    m_socket.SendTo(to, c.Data(), c.Size());
+}
+
+// One hello from an address that isn't a registered peer: within its rate?
+bool RelayServer::HelloAllowed(std::uint32_t address) {
+    if ((address >> 24) == 127) return true;
+    auto it = m_helloRate.find(address);
+    if (it == m_helloRate.end()) {
+        if (m_helloRate.size() >= kMaxHelloTrackers) {
+            PruneHelloRate();
+            if (m_helloRate.size() >= kMaxHelloTrackers) { ++m_droppedHellos; return false; }
+        }
+        it = m_helloRate.emplace(address, HelloBucket{2.0f * kHellosPerSecond, m_now}).first;
+    }
+    HelloBucket& b = it->second;
+    b.tokens = std::fmin(2.0f * kHellosPerSecond, b.tokens + static_cast<float>(m_now - b.refilled) * kHellosPerSecond);
+    b.refilled = m_now;
+    if (b.tokens < 1.0f) { ++m_droppedHellos; return false; }
+    b.tokens -= 1.0f;
+    return true;
+}
+
+// Forget addresses whose bucket has filled up again (they're back to the burst).
+void RelayServer::PruneHelloRate() {
+    const double full = 2.0;   // seconds for an empty bucket to refill
+    for (auto it = m_helloRate.begin(); it != m_helloRate.end(); )
+        it = m_now - it->second.refilled >= full ? m_helloRate.erase(it) : std::next(it);
 }
 
 // A random, unused, non-zero slot: a peer can't guess another session's slots.
@@ -110,6 +179,17 @@ RelayServer::PeerMap::iterator RelayServer::RemovePeer(PeerMap::iterator it) {
 
 // Top up a peer's token buckets and spend one datagram of `len` bytes. A host
 // sends to each client, so its rate scales with the session's client count.
+// What a peer receives from its whole session, however many senders: a host's
+// clients can't add up to a flood of it.
+bool RelayServer::WithinInbound(Peer& peer, std::size_t len) {
+    peer.inBytes = std::fmin(kInboundBytesPerSecond,
+                             peer.inBytes + static_cast<float>(m_now - peer.inRefilled) * kInboundBytesPerSecond);
+    peer.inRefilled = m_now;
+    if (peer.inBytes < static_cast<float>(len)) return false;
+    peer.inBytes -= static_cast<float>(len);
+    return true;
+}
+
 bool RelayServer::WithinRate(Peer& peer, std::size_t len) {
     float scale = 1.0f;
     auto s = m_sessions.find(peer.code);
@@ -133,12 +213,19 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
     if (!p.Ok() || code.empty() || code.size() > kMaxCodeLength) return;
     if (role != RelayHost && role != RelayClient) return;
     // Version 2 appends [u8 version][u64 host key]; version 1 ends at the code.
+    // Version 3 adds the cookie and pads the hello.
     std::uint8_t version = 1;
     std::uint64_t key = 0;
     {
         const std::uint8_t v = p.ReadU8();
         const std::uint32_t lo = p.ReadU32(), hi = p.ReadU32();
         if (p.Ok()) { version = v; key = (static_cast<std::uint64_t>(hi) << 32) | lo; }
+    }
+    Cookie cookie{};
+    if (version >= 3) {
+        if (len < kRelayHelloMinBytes) return;
+        for (auto& b : cookie) b = p.ReadU8();
+        if (!p.Ok()) return;
     }
     if (version < kRelayMinProtocolVersion) { SendRefused(from, RelayRefusedVersion); return; }
 
@@ -162,6 +249,16 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
         else if (peer.host || s.hostSlot != 0) SendWelcome(from, peer.slot, s.hostSlot);
         // else: a client with no host yet keeps re-helloing until one registers.
         return;
+    }
+
+    // A new sender. Nothing is allocated until it proves it receives at its
+    // address: a version-3 hello without this minute's cookie only gets one.
+    if (!HelloAllowed(from.address)) return;
+    if (version >= 3) {
+        if (!CookieValid(from, cookie)) { SendCookie(from); return; }
+    } else {
+        ++m_legacyHellos;
+        if (!m_legacyHello) { SendRefused(from, RelayRefusedVersion); return; }
     }
 
     const bool asHost = (role == RelayHost);
@@ -216,6 +313,8 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
     peer.packets = 2.0f * kPacketsPerSecond;
     peer.bytes = 2.0f * kBytesPerSecond;
     peer.refilled = m_now;
+    peer.inBytes = kInboundBytesPerSecond;
+    peer.inRefilled = m_now;
     m_slotEp[peer.slot] = from;
     Session& s = m_sessions[code];
     s.peers++;
@@ -265,7 +364,7 @@ void RelayServer::HandleData(const Endpoint& from, const std::uint8_t* data, std
     const std::uint32_t hostSlot = session != m_sessions.end() ? session->second.hostSlot : 0;
     if (dest == m_peers.end() || dest->second.code != sender->second.code || hostSlot == 0 ||
         (sender->second.slot == hostSlot) == (destSlot == hostSlot)) { ++m_droppedRoute; return; }
-    if (!WithinRate(sender->second, len)) { ++m_droppedRate; return; }
+    if (!WithinRate(sender->second, len) || !WithinInbound(dest->second, len)) { ++m_droppedRate; return; }
     // Rewrite the slot field from dest to the *sender's* slot, then forward
     // the untouched payload.
     const std::size_t payloadOff = 1 + 4;          // tag + destSlot
@@ -300,6 +399,16 @@ void RelayServer::Poll(float dt, float timeout) {
         HandleDatagram(from, buf.data(), static_cast<std::size_t>(n));
 
     m_logBudget = std::fmin(20.0f, m_logBudget + 5.0f * dt);
+    if (m_now >= m_helloPruneAt) { m_helloPruneAt = m_now + 10.0; PruneHelloRate(); }
+    // How many peers still speak version 1 or 2, so legacy hellos can be
+    // turned off once there are none.
+    if (m_now >= m_legacyLogAt) {
+        m_legacyLogAt = m_now + 60.0;
+        if (m_legacyHellos != m_legacyLogged)
+            OKAY_INFO("relay: ", m_legacyHellos - m_legacyLogged, " legacy (version 1/2) hellos in the last minute",
+                      m_legacyHello ? "" : ", refused");
+        m_legacyLogged = m_legacyHellos;
+    }
     // Expire peers we haven't heard from in a while (NAT mapping likely gone).
     for (auto it = m_peers.begin(); it != m_peers.end(); ) {
         it->second.idle += dt;

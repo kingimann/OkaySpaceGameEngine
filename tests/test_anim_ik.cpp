@@ -1,6 +1,8 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include <cmath>
+#include <cstdio>
+#include <memory>
 
 using namespace okay;
 
@@ -347,6 +349,104 @@ int main() {
         auto* lk2 = s4.Find("NPC")->GetComponent<LookAtIK>();
         CHECK(lk2 && lk2->chainNames.size() == 2 && lk2->chainNames[1] == "Head");
         CHECK(lk2 && lk2->targetName == "Player");
+    }
+
+    // ---- LimbIK on a bone chain: the bones turn (lengths kept), a weight bends
+    // part of the way, a broken target leaves the pose, nothing piles up, the
+    // pole turns with the character, soft reach eases the last stretch ----
+    {
+        struct Arm { std::unique_ptr<Scene> s; GameObject *body, *sh, *el, *hand, *tgt; LimbIK* ik; };
+        // Body > Shoulder > Elbow > Hand along +X, the elbow bent back (-Z) by `bend`.
+        auto build = [](float bend, Vec3 target) {
+            Arm a;
+            a.s = std::make_unique<Scene>("arm");
+            a.body = a.s->CreateGameObject("Body");
+            a.sh = a.s->CreateGameObject("Shoulder"); a.sh->transform->SetParent(a.body->transform, false);
+            a.el = a.s->CreateGameObject("Elbow");    a.el->transform->SetParent(a.sh->transform, false);
+            a.hand = a.s->CreateGameObject("Hand");   a.hand->transform->SetParent(a.el->transform, false);
+            a.tgt = a.s->CreateGameObject("Target");  a.tgt->transform->SetParent(a.body->transform, false);
+            a.sh->transform->SetPosition({0.2f, 1.5f, 0});
+            a.el->transform->SetPosition({0.5f, 1.5f, -bend});
+            a.hand->transform->SetPosition({0.8f, 1.5f, 0});
+            a.tgt->transform->SetPosition(target);
+            a.ik = a.body->AddComponent<LimbIK>();
+            a.ik->upper = a.sh->transform; a.ik->lower = a.el->transform; a.ik->end = a.hand->transform;
+            a.ik->targetObject = a.tgt->transform;
+            a.s->Start();
+            return a;
+        };
+        auto P = [](GameObject* g) { return g->transform->Position(); };
+        auto elbowAngle = [&](const Arm& a) {
+            Vec3 u = (P(a.sh) - P(a.el)).Normalized(), l = (P(a.hand) - P(a.el)).Normalized();
+            return std::acos(std::fmax(-1.0f, std::fmin(1.0f, Vec3::Dot(u, l)))) * 57.29578f;
+        };
+        const float upLen = std::sqrt(0.09f + 0.0025f);
+
+        Arm full = build(0.05f, {0.6f, 1.3f, 0});
+        const float animAngle = elbowAngle(full);
+        full.s->Update(1.0f / 60.0f);
+        CHECK(V3(P(full.hand), P(full.tgt), 1e-2f));                              // reached
+        CHECK(std::fabs((P(full.el) - P(full.sh)).Magnitude() - upLen) < 1e-3f); // the bones turned, not stretched
+        CHECK(std::fabs((P(full.hand) - P(full.el)).Magnitude() - upLen) < 1e-3f);
+        CHECK(P(full.el).z < -0.01f);                                             // the animation's bend kept (Auto pole)
+        const float solvedAngle = elbowAngle(full);
+        const Vec3 solvedHand = P(full.hand);
+        for (int i = 0; i < 30; ++i) full.s->Update(1.0f / 60.0f);                // a still rig: no pile-up
+        CHECK(V3(P(full.hand), solvedHand, 1e-4f));
+
+        Arm half = build(0.05f, {0.6f, 1.3f, 0});
+        half.ik->weight = 0.5f;
+        half.s->Update(1.0f / 60.0f);
+        const float halfAngle = elbowAngle(half);
+        std::printf("  limb weight 0.5: elbow %.1f deg (animated %.1f, solved %.1f)\n", halfAngle, animAngle, solvedAngle);
+        CHECK(halfAngle < animAngle - 5.0f && halfAngle > solvedAngle + 5.0f);    // part of the way
+        CHECK(std::fabs((P(half.el) - P(half.sh)).Magnitude() - upLen) < 1e-3f);  // lengths kept
+        CHECK(std::fabs((P(half.hand) - P(half.el)).Magnitude() - upLen) < 1e-3f);
+
+        Arm bad = build(0.05f, {0.6f, 1.3f, 0});
+        const Vec3 animHand = P(bad.hand);
+        bad.ik->targetObject = nullptr;
+        bad.ik->target = {std::nanf(""), 1.0f, 0.0f};
+        bad.s->Update(1.0f / 60.0f);
+        CHECK(V3(P(bad.hand), animHand, 1e-5f));                                  // NaN target: animated pose
+
+        // A straight arm bends toward the character-space pole, also after a half turn.
+        Arm turn = build(0.0f, {0.6f, 1.3f, 0});
+        turn.ik->poleMode = LimbIK::PoleMode::Character;
+        turn.ik->pole = {0, 0, 1};
+        turn.s->Update(1.0f / 60.0f);
+        CHECK(turn.body->transform->InverseTransformPoint(P(turn.el)).z > 0.05f);
+        turn.body->transform->SetRotation(Quat::Euler({0, 180, 0}));
+        for (int i = 0; i < 3; ++i) turn.s->Update(1.0f / 60.0f);
+        CHECK(turn.body->transform->InverseTransformPoint(P(turn.el)).z > 0.05f);  // no flip
+
+        // Soft reach: just inside full reach, the hand eases in instead of locking straight.
+        Arm soft = build(0.0f, {0.2f + 2.0f * upLen * 0.995f, 1.5f, 0});
+        soft.ik->softness = 0.05f;
+        soft.s->Update(1.0f / 60.0f);
+        CHECK((P(soft.hand) - P(soft.sh)).Magnitude() < 2.0f * upLen * 0.995f - 0.005f);
+    }
+
+    // ---- LimbIK options round-trip; a file from before the pole mode keeps its world pole ----
+    {
+        Scene s("limbser");
+        auto* lb = s.CreateGameObject("Rig")->AddComponent<LimbIK>();
+        lb->poleMode = LimbIK::PoleMode::Character; lb->softness = 0.05f;
+        lb->targetRotation = Quat::Euler({0, 90, 0});
+        std::string text = SceneSerializer::Serialize(s);
+        Scene s2("s2");
+        CHECK(SceneSerializer::Deserialize(s2, text));
+        auto* l2 = s2.Find("Rig")->GetComponent<LimbIK>();
+        CHECK(l2 && l2->poleMode == LimbIK::PoleMode::Character && std::fabs(l2->softness - 0.05f) < 1e-4f);
+        CHECK(l2 && Quat::Angle(l2->targetRotation, lb->targetRotation) < 0.1f);
+        // Drop the fields that came after `orient`.
+        std::size_t at = text.find("  limbik "), eol = text.find('\n', at);
+        std::string line = text.substr(at, eol - at);
+        for (int k = 0; k < 6; ++k) line = line.substr(0, line.find_last_of(' '));
+        Scene s3("s3");
+        CHECK(SceneSerializer::Deserialize(s3, text.substr(0, at) + line + text.substr(eol)));
+        auto* l3 = s3.Find("Rig")->GetComponent<LimbIK>();
+        CHECK(l3 && l3->poleMode == LimbIK::PoleMode::World && l3->softness == 0.0f);
     }
 
     // ---- FootIK / LimbIK / ChainIK / RootMotion round-trip through the scene file ----

@@ -3,8 +3,8 @@
 // HumanoidLibrary — the built-in humanoid's default clips and Animator graph.
 // The clips are baked from HumanoidMotion: idle; walk, run and crouch-walk at
 // several speeds in eight directions (the gait's hip bob in each clip's root
-// track); crouch and the prone crawl; jump, fall, land and hang; the gestures
-// and emotions. Every gait cycle loops seamlessly. Clip names are stable: the
+// track); crouch; prone, the crawl four ways, getting up through a kneel and
+// dropping down; jump, fall, land and hang; the gestures and emotions. Every gait cycle loops seamlessly. Clip names are stable: the
 // default graph and saved scenes refer to them. Every Character can play them
 // (they aren't copied into the body or the scene).
 // ---------------------------------------------------------------------------
@@ -40,6 +40,11 @@ const AnimClip* Find(const std::string& name);
 /// movement parameters a controller reports (see CharacterAnimBackend). A state
 /// clip bound on `body` (clipIdle, clipWalk, ...) plays in place of the default.
 void DefaultGraph(AnimStateMachine& sm, const Character* body = nullptr);
+/// Time the default graph's stance changes by `sm.stanceTimes`: the crossfades
+/// between standing, crouched and prone states, and how long getting up from
+/// prone (GetUp) and dropping prone (Drop) take. States with other names are
+/// left alone.
+void ApplyStanceTimes(AnimStateMachine& sm);
 /// The Animator of a Character body: its base state machine, added with the
 /// default graph when it has none. Null when `go` has no Character, or plays an
 /// imported model's clips (a Model Animator) instead.

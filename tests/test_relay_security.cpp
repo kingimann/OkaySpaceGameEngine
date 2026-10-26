@@ -57,6 +57,54 @@ void Pump(RelayServer& r, int frames = 20) {
     }
 }
 
+// A version-3 peer: echoes the relay's cookie, as the engine and the launcher do.
+struct V3Peer {
+    UdpSocket sock;
+    Endpoint relay, self;
+    std::uint8_t cookie[kRelayCookieBytes] = {};
+    std::uint32_t welcomeSlot = 0, welcomeHost = 0xFFFFFFFFu, cookies = 0;
+    std::uint64_t key = 0;
+    std::uint8_t refused = 0;
+    explicit V3Peer(std::uint16_t relayPort) {
+        sock.Open(); sock.Bind(0);
+        relay = {0x7F000001u, relayPort};
+        self = {0x7F000001u, sock.LocalPort()};
+    }
+    void Hello(RelayRole role, const std::string& code) {
+        Packet p(RelayHello); p.Write(static_cast<std::uint8_t>(role)); p.Write(code);
+        p.Write(kRelayProtocolVersion);
+        p.Write(static_cast<std::uint32_t>(key)); p.Write(static_cast<std::uint32_t>(key >> 32));
+        for (std::uint8_t b : cookie) p.Write(b);
+        while (p.Size() < kRelayHelloMinBytes) p.Write(std::uint8_t(0));
+        sock.SendTo(relay, p.Data(), p.Size());
+    }
+    void Bye() { const std::uint8_t b = RelayBye; sock.SendTo(relay, &b, 1); }
+    void Read() {
+        std::uint8_t buf[2048]; Endpoint from; int n;
+        while ((n = sock.RecvFrom(buf, sizeof buf, from)) > 0) {
+            Packet p(buf, static_cast<std::size_t>(n));
+            const std::uint8_t tag = p.ReadU8();
+            if (tag == RelayCookie && n >= 2 + static_cast<int>(kRelayCookieBytes)) {
+                std::memcpy(cookie, buf + 2, kRelayCookieBytes); ++cookies;
+            } else if (tag == RelayWelcome) {
+                welcomeSlot = p.ReadU32(); welcomeHost = p.ReadU32(); p.ReadU8();
+                const std::uint32_t lo = p.ReadU32(), hi = p.ReadU32();
+                if (p.Ok() && (lo | hi)) key = (static_cast<std::uint64_t>(hi) << 32) | lo;
+            } else if (tag == RelayRefused) {
+                refused = p.ReadU8();
+            }
+        }
+    }
+};
+
+void PumpV3(RelayServer& r, std::vector<V3Peer*> peers, int frames = 10) {
+    for (int i = 0; i < frames; ++i) {
+        r.Poll(0.01f);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        for (auto* p : peers) p->Read();
+    }
+}
+
 std::vector<std::uint8_t> HelloBytes(std::uint8_t role, const std::string& code) {
     Packet p(RelayHello); p.Write(role); p.Write(code);
     return {p.Data(), p.Data() + p.Size()};
@@ -170,13 +218,26 @@ int main() {
     {
         RelayServer relay;
         CHECK(relay.Start(0));   // Poll() advances the clock the hello rate refills on
-        for (std::uint32_t i = 0; i < 5000; ++i) {   // one IP, many source ports, a new code each
+        const std::uint32_t flooder = 0x0A000001u;
+        for (std::uint32_t i = 0; i < 200; ++i) {   // one IP, many source ports, a new code each
             auto h = HelloBytes(RelayHost, "S" + std::to_string(i));
-            relay.HandleDatagram(Endpoint{0x0A000001u, static_cast<std::uint16_t>(1000 + i)}, h.data(), h.size());
+            relay.HandleDatagram(Endpoint{flooder, static_cast<std::uint16_t>(1000 + i)}, h.data(), h.size());
             if (i % 20 == 19) relay.Poll(2.0f, 1e9f);   // within the address's hello rate
         }
-        CHECK(relay.PeerCount() == RelayServer::kMaxPeersPerAddress);
-        CHECK(relay.SessionCount() == RelayServer::kMaxPeersPerAddress);
+        CHECK(relay.SessionCount() == RelayServer::kMaxSessionsPerAddress);   // it opens at most this many
+        CHECK(relay.PeerCount() == RelayServer::kMaxSessionsPerAddress);
+        // Other machines' sessions: the same address may still join them, up to its peer cap.
+        for (std::uint32_t j = 0; j < 8; ++j) {
+            auto h = HelloBytes(RelayHost, "G" + std::to_string(j));
+            relay.HandleDatagram(Endpoint{0xC0A80100u + j, 5000}, h.data(), h.size());
+        }
+        for (std::uint32_t i = 0; i < 200; ++i) {
+            auto h = HelloBytes(RelayClient, "G" + std::to_string(i % 8));
+            relay.HandleDatagram(Endpoint{flooder, static_cast<std::uint16_t>(3000 + i)}, h.data(), h.size());
+            if (i % 20 == 19) relay.Poll(2.0f, 1e9f);
+        }
+        CHECK(relay.PeerCount() == 8 + RelayServer::kMaxPeersPerAddress);
+        CHECK(relay.SessionCount() == RelayServer::kMaxSessionsPerAddress + 8);
         auto legit = HelloBytes(RelayHost, "REAL-GAME");
         const Endpoint real{0xC0A80002u, 5000};
         relay.HandleDatagram(real, legit.data(), legit.size());
@@ -185,16 +246,55 @@ int main() {
         const Endpoint friendEp{0xC0A80003u, 6000};
         relay.HandleDatagram(friendEp, join.data(), join.size());
         CHECK(relay.SlotOf(friendEp) != 0);
-        // The flooding address frees its slots as its peers leave.
+        // The flooding address frees its slot and session as its peers leave.
         const std::uint8_t bye = RelayBye;
-        relay.HandleDatagram(Endpoint{0x0A000001u, 1000}, &bye, 1);
+        relay.HandleDatagram(Endpoint{flooder, 1000}, &bye, 1);
         relay.Poll(2.0f, 1e9f);
         auto again = HelloBytes(RelayHost, "AGAIN");
-        const Endpoint retry{0x0A000001u, 9999};
+        const Endpoint retry{flooder, 9999};
         relay.HandleDatagram(retry, again.data(), again.size());
         CHECK(relay.SlotOf(retry) != 0);
-        relay.HandleDatagram(Endpoint{0x0A000001u, 9998}, again.data(), again.size());
-        CHECK(relay.SlotOf(Endpoint{0x0A000001u, 9998}) == 0);   // full again
+        auto more = HelloBytes(RelayHost, "MORE");
+        relay.HandleDatagram(Endpoint{flooder, 9998}, more.data(), more.size());
+        CHECK(relay.SlotOf(Endpoint{flooder, 9998}) == 0);   // full again
+    }
+
+    // ---- Loopback isn't held to the per-address session cap ----
+    {
+        RelayServer relay;
+        for (std::uint32_t i = 0; i < 40; ++i) {
+            auto h = HelloBytes(RelayHost, "L" + std::to_string(i));
+            relay.HandleDatagram(Endpoint{0x7F000005u, static_cast<std::uint16_t>(1000 + i)}, h.data(), h.size());
+        }
+        CHECK(relay.SessionCount() == 40);
+    }
+
+    // ---- Hub sessions (voice calls): v3, no host key, the next hub takes over ----
+    {
+        RelayServer relay;
+        CHECK(relay.Start(0));
+        relay.SetLegacyHello(false);   // hubs speak v3: they don't need legacy hellos
+        V3Peer a(relay.Port()), b(relay.Port()), c(relay.Port());
+        for (auto* p : {&a, &b, &c}) { p->Hello(RelayHub, "CALL"); PumpV3(relay, {p}); p->Hello(RelayHub, "CALL"); PumpV3(relay, {&a, &b, &c}); }
+        CHECK(a.cookies == 1 && a.welcomeSlot != 0 && a.welcomeHost == a.welcomeSlot);
+        CHECK(a.key == 0);                                         // never protected
+        CHECK(b.welcomeHost == a.welcomeSlot && c.welcomeHost == a.welcomeSlot);
+        CHECK(b.refused == 0 && c.refused == 0);
+        a.Bye(); PumpV3(relay, {&a, &b, &c});
+        CHECK(b.welcomeHost == 0);                                 // told the hub left
+        b.Hello(RelayHub, "CALL"); PumpV3(relay, {&a, &b, &c});
+        CHECK(b.welcomeHost == b.welcomeSlot && c.welcomeHost == b.welcomeSlot);   // b took over
+        // A game host can't join a hub session that has a hub...
+        V3Peer game(relay.Port());
+        game.Hello(RelayHost, "CALL"); PumpV3(relay, {&game}); game.Hello(RelayHost, "CALL"); PumpV3(relay, {&game});
+        CHECK(game.refused == RelayRefusedHosted && relay.SlotOf(game.self) == 0);
+        // ...and a hub can't take a game's protected session.
+        V3Peer host(relay.Port()), squat(relay.Port());
+        host.Hello(RelayHost, "GAME"); PumpV3(relay, {&host}); host.Hello(RelayHost, "GAME"); PumpV3(relay, {&host});
+        CHECK(host.key != 0);
+        squat.Hello(RelayHub, "GAME"); PumpV3(relay, {&squat}); squat.Hello(RelayHub, "GAME"); PumpV3(relay, {&squat});
+        CHECK(squat.refused == RelayRefusedHosted && relay.SlotOf(squat.self) == 0);
+        relay.Stop();
     }
 
     // ---- 10,000 random datagrams: no crash, still bounded, still works ----

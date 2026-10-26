@@ -112,6 +112,10 @@ public:
         std::string speedParam;     ///< float parameter that multiplies `speed` ("" = none)
         std::string enterEvent, exitEvent;   ///< animation events fired on entering / leaving ("" = none)
         float       ikWeight = 1.0f;         ///< Foot IK / Full Body IK weight in this state (base layer)
+        /// Full Body IK weight on its own, below 0 = follow ikWeight. Lets a
+        /// state turn foot planting off while the hands keep working (prone,
+        /// crawling: the body lies down but still holds what it holds).
+        float       fullBodyIkWeight = -1.0f;
         /// Blend trees: the motions' positions are how fast each one travels, and
         /// the tree plays as fast as the body moves (speedParam's value, else the
         /// blend position's distance from 0) over the blended motions' speed, so
@@ -281,19 +285,21 @@ public:
         const State* cur = FindState(m_current);
         if (!cur) { m_current.clear(); return; }
 
-        // Per-state IK weight, eased over the transition's blend time.
+        // Per-state IK weights (feet, and the full body's own), eased over the
+        // transition's blend time.
         {
-            float want = std::fmin(std::fmax(cur->ikWeight, 0.0f), 1.0f);
-            if (m_ikW != want) {
-                float step = m_ikBlend > 1e-4f ? dt / m_ikBlend : 1.0f;
-                m_ikW = m_ikW < want ? std::fmin(want, m_ikW + step) : std::fmax(want, m_ikW - step);
-            }
-            // Push it to the IK components when it changes (plus a slow refresh, so
-            // IK added later picks it up) instead of two GetComponent scans a frame.
-            if (gameObject && (m_ikW != m_ikWritten || (m_ikRefresh -= dt) <= 0.0f)) {
+            const float want = std::fmin(std::fmax(cur->ikWeight, 0.0f), 1.0f);
+            const float wantFb = cur->fullBodyIkWeight < 0.0f ? want
+                               : std::fmin(std::fmax(cur->fullBodyIkWeight, 0.0f), 1.0f);
+            const float step = m_ikBlend > 1e-4f ? dt / m_ikBlend : 1.0f;
+            if (m_ikW != want) m_ikW = m_ikW < want ? std::fmin(want, m_ikW + step) : std::fmax(want, m_ikW - step);
+            if (m_fbW != wantFb) m_fbW = m_fbW < wantFb ? std::fmin(wantFb, m_fbW + step) : std::fmax(wantFb, m_fbW - step);
+            // Push them to the IK components when they change (plus a slow refresh,
+            // so IK added later picks it up) instead of two GetComponent scans a frame.
+            if (gameObject && (m_ikW != m_ikWritten || m_fbW != m_fbWritten || (m_ikRefresh -= dt) <= 0.0f)) {
                 if (auto* f = gameObject->GetComponent<FootIK>()) f->stateWeight = m_ikW;
-                if (auto* b = gameObject->GetComponent<FullBodyIK>()) b->stateWeight = m_ikW;
-                m_ikWritten = m_ikW; m_ikRefresh = 0.5f;
+                if (auto* b = gameObject->GetComponent<FullBodyIK>()) b->stateWeight = m_fbW;
+                m_ikWritten = m_ikW; m_fbWritten = m_fbW; m_ikRefresh = 0.5f;
             }
         }
 
@@ -587,7 +593,10 @@ private:
         offset = std::fmin(std::fmax(offset, 0.0f), 0.999f);
         m_stateTime = 0.0f; m_normTime = offset;
         m_ikBlend = blend;
-        if (first) m_ikW = std::fmin(std::fmax(st.ikWeight, 0.0f), 1.0f);
+        if (first) {
+            m_ikW = std::fmin(std::fmax(st.ikWeight, 0.0f), 1.0f);
+            m_fbW = st.fullBodyIkWeight < 0.0f ? m_ikW : std::fmin(std::fmax(st.fullBodyIkWeight, 0.0f), 1.0f);
+        }
         m_bLo = m_bHi = -1; m_bW = 0.0f;
         if (layer > 0) {   // layers crossfade from their previous state themselves
             m_lPrev = m_lCur;
@@ -633,7 +642,7 @@ private:
     std::unordered_map<std::string, bool>  m_bools;
     std::unordered_map<std::string, bool>  m_triggers;
     std::vector<float> m_bWeights;
-    float m_ikW = 1.0f, m_ikBlend = 0.25f;
+    float m_ikW = 1.0f, m_fbW = 1.0f, m_ikBlend = 0.25f;
     float m_clock = 0.0f;
     std::vector<HistoryEntry> m_history;
     // the transition currently blending (interruption rules)
@@ -645,7 +654,7 @@ private:
     // layer playback
     LayerPlay m_lCur, m_lPrev;
     std::vector<int> m_motionClips;           // per-frame scratch (2D blend tree clip indices)
-    float m_ikWritten = -1.0f, m_ikRefresh = 0.0f;   // last IK weight pushed / time to the next push
+    float m_ikWritten = -1.0f, m_fbWritten = -1.0f, m_ikRefresh = 0.0f;   // last IK weights pushed / time to the next push
     mutable std::size_t m_findHint = 0;       // FindState's last hit
     float m_fadeT = 0.0f, m_fadeDur = 0.0f;
     bool  m_hooked = false;

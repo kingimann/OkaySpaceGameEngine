@@ -87,7 +87,7 @@ share these movement niceties:
 - **Fall Reset Y** (default -100): falling below this world height teleports
   the player back to spawn (with a console hint about missing colliders).
 
-## Crouch and prone (First- and Third-Person)
+## Crouch and prone
 
 - **Crouch Key** (default Ctrl) and **Prone Key** (default Z) — tap to toggle
   (**Toggle Stance** on) or hold.
@@ -106,5 +106,10 @@ share these movement niceties:
   crouch, 0.5 s between crouch and prone, 0.8 s to get up from prone. The
   collider, the camera and the speed limit all follow the body through the
   change, and changing your mind halfway carries on from where the body is.
-  Set the times under **Stance changes** on the player's Animator. Applies to
-  First-Person, Third-Person and 2.5D Platformer.
+  Set the times under **Stance changes** on the player's Animator.
+- The other movement controllers — Character Controller 3D, Third Person
+  Shooter, Top Down, Click To Move and NPC — have the same options under
+  their **Crouch / prone** fold (keys, toggle or hold, Allow Prone, Resize
+  Body, speeds, heights). Top Down starts with prone off; Click To Move and
+  NPC have no keys by default. A script, a cutscene or an AI sets the stance
+  with `SetStance(0 stand / 1 crouch / 2 prone)` on any of the controllers.

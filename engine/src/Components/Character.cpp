@@ -359,10 +359,10 @@ Character::Gait Character::GaitFor(int state, float v) const {
         g.lift = clampf(0.05f + 0.04f * v, 0.08f, 0.32f);
     } else {
         // Always a foot on the ground (double support), heel strike, low lift. A step
-        // is capped near 0.85 m and the planted foot's sweep near 0.84 m (the hips
+        // is capped near 0.97 m and the planted foot's sweep near 0.96 m (the hips
         // would have to drop too far past that), so a faster walk quickens the steps.
         g.beta = 0.62f - 0.04f * clampf(v - 1.0f, 0.0f, 2.5f);
-        g.freq = std::fmax(0.62f + 0.25f * v, std::fmax(v / 1.7f, v * g.beta / 0.84f));
+        g.freq = std::fmax(0.55f + 0.22f * v, std::fmax(v / 1.95f, v * g.beta / 0.96f));
         g.reach = v / g.freq * g.beta;
         g.baseDrop = 0.0f;
         g.sag = 0.004f;
@@ -699,7 +699,7 @@ std::vector<Vec3> Character::PoseFor(int state, float t) const {
     } else if (state == 18) {               // fall: legs reach down for the landing, arms out for balance
         LegIK( 0.10f, 0.66f, 0.03f, -4.0f, r[B_LTHIGH], r[B_LSHIN], r[B_LFOOT]);
         LegIK(-0.02f, 0.73f, -0.03f, 4.0f, r[B_RTHIGH], r[B_RSHIN], r[B_RFOOT]);
-        r[B_LUPARM] = {-12, 0, 58};    r[B_RUPARM] = {-12, 0, -58};
+        r[B_LUPARM] = {-12, 0, -58};   r[B_RUPARM] = {-12, 0, 58};
         r[B_LFORE]  = {-22, 0, 0};     r[B_RFORE]  = {-22, 0, 0};
         r[B_TORSO]  = {4, 0, 0};
         r[B_HEAD]   = {8, 0, 0};       // eyes on the ground coming up

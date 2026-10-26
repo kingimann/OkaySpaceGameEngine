@@ -100,6 +100,9 @@
 #include "okay/Components/Flashlight.hpp"
 #include "okay/Components/FirstPersonHand.hpp"
 #include "okay/Components/NetworkSync.hpp"
+#include "okay/Components/AntiCheatConfig.hpp"
+#include "okay/Components/NetValidator.hpp"
+#include <cmath>
 #include "okay/Components/NetworkPlayerSpawner.hpp"
 #include "okay/Components/SkinnedMesh.hpp"
 #include "okay/Components/BlendShapes.hpp"
@@ -718,6 +721,17 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  netsync " << (int)ns->authority << " " << (ns->owned ? 1 : 0)
             << " " << (ns->syncAnimation ? 1 : 0) << " " << Quote(ns->netId) << "\n";
     }
+    if (auto* ac = go->GetComponent<AntiCheatConfig>()) {
+        const AntiCheatSettings& s = ac->settings;
+        std::string allow;
+        for (const auto& p : s.spawnAllowlist) { if (!allow.empty()) allow += ';'; allow += p; }
+        out << "  anticheat " << (s.enabled ? 1 : 0) << " " << s.maxSyncSpeed << " " << s.maxSyncVarsPerSecond
+            << " " << s.kickAfterViolations << " " << (s.ownerOnlySyncVars ? 1 : 0)
+            << " " << Quote(ac->file) << " " << Quote(allow) << "\n";
+    }
+    for (auto* nv : go->GetComponents<NetValidator>())
+        out << "  netvalidator " << Quote(nv->rpc) << " " << nv->maxBytes << " " << nv->maxPerSecond
+            << " " << (nv->clientsMaySend ? 1 : 0) << "\n";
     if (auto* w = go->GetComponent<Water>()) {
         out << "  water " << w->size << " " << w->resolution << " " << w->waveHeight
             << " " << w->waveLength << " " << w->waveSpeed
@@ -4686,6 +4700,32 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> ps->spawnPoint.x >> ps->spawnPoint.y >> ps->spawnPoint.z
                        >> ps->spawnSpread >> slp >> g;
                     ps->spawnLocalPlayer = (slp != 0); ps->glyph = (char)g;
+                } else if (field == "anticheat") {
+                    auto* ac = go->AddComponent<AntiCheatConfig>();
+                    AntiCheatSettings& s = ac->settings;
+                    int en = 1, own = 1;
+                    in >> en >> s.maxSyncSpeed >> s.maxSyncVarsPerSecond >> s.kickAfterViolations >> own;
+                    s.enabled = (en != 0); s.ownerOnlySyncVars = (own != 0);
+                    if (!std::isfinite(s.maxSyncSpeed) || s.maxSyncSpeed < 0.0f) s.maxSyncSpeed = 0.0f;
+                    if (s.maxSyncVarsPerSecond < 0) s.maxSyncVarsPerSecond = 0;
+                    if (s.kickAfterViolations < 0) s.kickAfterViolations = 0;
+                    ac->file = ReadQuoted(in);
+                    const std::string allow = ReadQuoted(in);
+                    s.spawnAllowlist.clear();
+                    for (std::size_t a = 0; a < allow.size();) {
+                        std::size_t b = allow.find(';', a);
+                        if (b == std::string::npos) b = allow.size();
+                        if (b > a) s.spawnAllowlist.push_back(allow.substr(a, b - a));
+                        a = b + 1;
+                    }
+                } else if (field == "netvalidator") {
+                    auto* nv = go->AddComponent<NetValidator>();
+                    nv->rpc = ReadQuoted(in);
+                    int cm = 1;
+                    in >> nv->maxBytes >> nv->maxPerSecond >> cm;
+                    nv->clientsMaySend = (cm != 0);
+                    if (nv->maxBytes < 0) nv->maxBytes = 0;
+                    if (!std::isfinite(nv->maxPerSecond) || nv->maxPerSecond < 0.0f) nv->maxPerSecond = 0.0f;
                 } else if (field == "netsync") {
                     auto* ns = go->AddComponent<NetworkSync>();
                     int au = 0, ow = 1; in >> au >> ow;

@@ -354,6 +354,10 @@ inline const std::vector<VsDef>& Registry() {
         {"OnObjectPlaced",  "On Object Placed", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnObjectRemoved", "On Object Removed",CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnLogicSignal",   "On Logic Signal",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        // Anti-cheat (server; needs an Anti-Cheat Config in the scene).
+        {"OnCheatDetected", "On Cheat Detected",CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnValidateRpc",   "On Validate Rpc",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"RejectRpc",       "Reject Rpc",       CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         {"EnterBuildMode",  "Enter Build Mode", CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         {"ExitBuildMode",   "Exit Build Mode",  CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         {"InBuildMode",     "In Build Mode?",   CAT_DATA, false, {}, {}, {"Bool"}, 0, nullptr},
@@ -595,7 +599,8 @@ inline std::string VsEntryName(const std::string& type, const std::string& arg) 
         type == "OnMouseOver" || type == "OnCollisionStay" || type == "OnLateUpdate" ||
         type == "OnTriggerStay" ||
         type == "OnFixedUpdate" || type == "OnDestroy" || type == "OnEnable" || type == "OnDisable" ||
-        type == "OnObjectPlaced" || type == "OnObjectRemoved" || type == "OnLogicSignal") return type;
+        type == "OnObjectPlaced" || type == "OnObjectRemoved" || type == "OnLogicSignal" ||
+        type == "OnCheatDetected" || type == "OnValidateRpc") return type;
     if (type == "OnAnimEvent") return arg.empty() ? std::string("OnAnimEvent") : "OnAnimEvent:" + tok(arg, "");
     if (type == "OnKey")   return "OnKey:" + tok(arg, "space");
     if (type == "OnKeyUp") return "OnKeyUp:" + tok(arg, "space");

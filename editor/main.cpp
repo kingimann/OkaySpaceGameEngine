@@ -27878,6 +27878,19 @@ void DrawInspector(EditorState& ed) {
             }
             if (delVar >= 0) { s.serverVars.erase(s.serverVars.begin() + delVar); ed.dirty = true; }
             if (ImGui::SmallButton("Add server var##ac")) { s.serverVars.push_back("score"); ed.dirty = true; }
+            ImGui::TextUnformatted("Weapons clients may claim hits with:");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Claim Hit / net_hit names a weapon. A weapon a Net Validator covers (rpc hit/<weapon>, which also sets its fire rate and ammo) or one listed here may claim; any other does no damage.");
+            int delWeapon = -1;
+            for (int i = 0; i < (int)s.weapons.size(); ++i) {
+                ImGui::PushID(2000 + i);
+                char w[64]; std::snprintf(w, sizeof(w), "%s", s.weapons[i].c_str());
+                ImGui::SetNextItemWidth(-40);
+                if (ImGui::InputText("##acweapon", w, sizeof(w))) { s.weapons[i] = w; ed.dirty = true; }
+                ImGui::SameLine(); if (ImGui::SmallButton("x")) delWeapon = i;
+                ImGui::PopID();
+            }
+            if (delWeapon >= 0) { s.weapons.erase(s.weapons.begin() + delWeapon); ed.dirty = true; }
+            if (ImGui::SmallButton("Add weapon##ac")) { s.weapons.push_back("rifle"); ed.dirty = true; }
             if (ImGui::TreeNode("Hit claims##ac")) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("How the server checks Claim Hit / net_hit (with or without the anti-cheat).");
                 if (ImGui::DragFloat("Origin tolerance##ac", &s.hitOriginTolerance, 0.05f, 0.0f, 100.0f, "%.2f u")) ed.dirty = true;

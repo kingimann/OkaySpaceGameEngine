@@ -612,6 +612,7 @@ private:
         int   violations = 0;    // rejected moves in the current minute
         float violationTimer = 0.0f;
         int   msgCount = 0;      // custom messages this second (rate limit)
+        int   hitClaims = 0;     // hit claims this second (the limit without the anti-cheat)
         float msgTimer = 0.0f;
         float joinedAt = 0.0f;   // server clock when it joined
         int   score = 0;
@@ -714,6 +715,7 @@ private:
     std::string CheckHitView(const HitClaim& claim, std::uint32_t shooter, Transform* targetT, float slack);
     void ApplyHit(HitClaim& claim);
     int m_hitsApplied = 0, m_hitsRefused = 0;
+    std::unordered_set<std::string> m_unknownWeapons;   // weapon names refused (logged once each)
     std::function<void(const AntiCheatKick&)> m_acKickHandler;
     std::unordered_map<std::uint32_t, std::vector<CheatReport>> m_recentCheats;   // last few per peer
     static constexpr std::size_t kRecentCheats = 5;

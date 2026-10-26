@@ -41,6 +41,7 @@ public:
         s.maxSyncSpeed = 0.0f;
         s.kickAfterViolations = 5;
         s.maxRpcsPerSecond = 30;
+        s.maxHitRange = 300.0f;
         return s;
     }
 
@@ -74,6 +75,7 @@ private:
         std::function<void(const CheatReport&)> cheatHandler;
         std::function<bool(std::uint32_t, const std::string&, const std::string&)> validateRpc;
         std::function<void(const std::string&, bool&, bool&)> rpcRulesFor;
+        std::function<bool(const std::string&)> coversRpc;
         std::function<void(std::uint32_t)> onForgetPeer;
         std::function<bool(HitClaim&)> validateHit;
         std::uint64_t installer = 0;

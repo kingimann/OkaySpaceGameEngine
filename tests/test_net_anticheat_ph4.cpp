@@ -180,6 +180,7 @@ int main() {
         ac->settings.kickAfterViolations = 0;
         auto* rifle = ss.CreateGameObject("Rifle")->AddComponent<NetValidator>();
         rifle->rpc = "hit/rifle"; rifle->cooldown = 0.3f;
+        ac->settings.weapons = {"nerfed", "sniper"};   // known without a validator of their own
         GameObject* referee = ss.CreateGameObject("Referee");
         referee->AddComponent<ScriptComponent>("okayscript")->LoadSource(
             "var seen = 0;\n"

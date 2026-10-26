@@ -262,6 +262,35 @@ fixed tick instead. 30 Hz is a good rate.
 This is the base for server-authoritative movement, prediction and lag
 compensation (anti-cheat plan phase 5), which build on it.
 
+## Server-authoritative movement
+
+By default each client moves its own player and sends the position, which the
+host can only speed-check. Tick **Authoritative movement** on the host's Network
+Manager (`authoritativeMovement`, `net_authoritative(1)`) to have the host move
+players itself:
+
+- Each client names the object its inputs drive: its own SpawnOwned player
+  (`SetPawn(obj)`, `net_set_pawn("Player")`). The object needs a controller that
+  can be driven by inputs. Character Controller 3D can now, and the other
+  controllers follow.
+- Once a tick, the client sends its input: the move stick, look, and buttons
+  held and pressed. Each one is numbered, and the last 3 are repeated so a lost
+  packet costs nothing.
+- The host runs that player's controller with the input, one input a tick.
+  Only the host decides where the player is, and everyone, the player included,
+  gets that position. A client's own positions (`__xform`, its avatar state)
+  are ignored.
+- The host clamps every input: the move stick to length 1, pitch to ±89°.
+  Inputs for ticks more than a second away from the host's are refused. A
+  client that sends inputs faster than the tick (a speed hack) only fills a
+  queue of 8, and the oldest are dropped. A late input is covered by the last
+  one for 3 ticks, then the player stops.
+- It runs on the fixed tick: Fixed Net Tick, or 30 Hz if that's off.
+- The player's own copy follows the host. Prediction, which moves it at once
+  and corrects it, is the next step (phase 5c). Until then you'll feel the
+  round trip.
+- Off (the default), nothing changes.
+
 ## Server authority (anti-cheat basics)
 
 The server decides; clients only ask.

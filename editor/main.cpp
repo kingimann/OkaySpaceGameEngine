@@ -10436,6 +10436,7 @@ void DrawScriptDocs() {
         fapi("on_validate_hit(shooter, target, weapon, damage)", "server event (Anti-Cheat Config): return false to refuse a hit, or a positive number for its damage");
         fapi("net_budget(id, \"rpc\"[, add])", "server: a player's Net Validator budget for an RPC (ammo); add tops it up (reload, pickup)");
         fapi("net_pin_host(\"key\")", "client: join only the host with this identity key (encryption on; \"\" = no pin)");
+        fapi("net_set_pawn(\"object\") / net_authoritative([on])", "client: the player object your inputs drive / host: server-authoritative movement");
         fapi("net_tick_rate([hz]) / net_tick()", "host: a fixed network tick (0 = off, as before) / the current tick");
         fapi("net_disconnect()", "leave / stop the session");
         fapi("net_connected() / net_is_server() / net_is_client()", "status");
@@ -32338,6 +32339,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SliderFloat("Tick Rate##nm", &nm->snapshotRate, 5.0f, 60.0f, "%.0f /s")) ed.dirty = true;
             if (ImGui::SliderFloat("Fixed Net Tick##nm", &nm->netTickRate, 0.0f, 60.0f, nm->netTickRate > 0.0f ? "%.0f Hz" : "off")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: as before (clients send every frame). On (30 is a good rate): the host ticks at this rate whatever the frame rate, snapshots carry the tick, and clients send their state once a tick. Replaces Tick Rate for snapshots.");
+            if (ImGui::Checkbox("Authoritative movement##nm", &nm->authoritativeMovement)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clients send inputs, not positions: the host moves each player's object (net_set_pawn) with its controller at the fixed tick (30 Hz if Fixed Net Tick is off), and alone decides where it is.");
 
             const char* mode = nm->IsServer() ? "Server" : nm->IsClient() ? "Client" : "Offline";
             ImGui::Text("Live: %s   Peers: %d / %d   Id: %u", mode, (int)nm->PeerCount(), nm->maxPlayers, nm->LocalId());

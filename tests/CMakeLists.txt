@@ -912,6 +912,10 @@ add_test(NAME net_anticheat_ph4 COMMAND test_net_anticheat_ph4)
 add_executable(test_net_tick test_net_tick.cpp)
 target_link_libraries(test_net_tick PRIVATE okay::engine)
 add_test(NAME net_tick COMMAND test_net_tick)
+# Net plan 5b: server-authoritative movement (inputs, not positions)
+add_executable(test_net_auth_move test_net_auth_move.cpp)
+target_link_libraries(test_net_auth_move PRIVATE okay::engine)
+add_test(NAME net_auth_move COMMAND test_net_auth_move)
 
 # Anti-cheat as a game uses it: AntiCheatConfig / NetValidator components and the VS nodes
 add_executable(test_net_anticheat_components test_net_anticheat_components.cpp)

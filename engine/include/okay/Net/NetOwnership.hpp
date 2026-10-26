@@ -25,7 +25,7 @@ inline bool IsLocallyControlled(const GameObject* go) {
     for (Transform* t = go ? go->transform : nullptr; t; t = t->Parent())
         if (t->gameObject)
             if (auto* ns = t->gameObject->GetComponent<NetworkSync>())
-                return ns->IsLocallyOwned();
+                return ns->IsLocallyOwned() && !ns->NetworkDriven();
     return true;   // no NetworkSync anywhere up the chain -> single-player / always local
 }
 

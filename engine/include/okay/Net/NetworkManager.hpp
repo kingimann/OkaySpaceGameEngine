@@ -4,6 +4,8 @@
 #include "okay/Net/SecureChannel.hpp"
 #include "okay/Net/AntiCheat.hpp"
 #include "okay/Net/ClockCheck.hpp"
+#include "okay/Net/PlayerInput.hpp"
+#include <map>
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Quat.hpp"
 
@@ -288,7 +290,36 @@ public:
     std::uint32_t NetTick() const { return m_netTick; }
     /// The fixed tick rate in use: the host's netTickRate, or on a client what
     /// the host announced (0 = none: the frame-rate behaviour).
-    float NetTickRate() const { return m_mode == Mode::Client ? m_hostTickRate : (m_mode == Mode::Server ? netTickRate : 0.0f); }
+    float NetTickRate() const { return m_mode == Mode::Client ? m_hostTickRate : (m_mode == Mode::Server ? HostTickRate() : 0.0f); }
+
+    /// Server-authoritative movement (host setting; off by default). Clients
+    /// then send their inputs, not positions: each tick, a client's InputCmd
+    /// (move, look, buttons, numbered, the last 3 repeated against loss) drives
+    /// its player on the server through the controller's Simulate (IPlayerSim),
+    /// and the server alone decides where it is. Positions and __xform from the
+    /// client for that player are ignored. Runs on the fixed tick (netTickRate,
+    /// 30 Hz if that's 0). The client's own copy follows the server (5c adds
+    /// prediction).
+    bool authoritativeMovement = false;
+    /// Client: the object this player drives (its SpawnOwned player, with a
+    /// controller that implements IPlayerSim). Its inputs go to the host when
+    /// the host runs authoritative movement.
+    void SetPawn(GameObject* pawn);
+    /// Client: where inputs come from (default: the pawn's controller reads the
+    /// keyboard / mouse / pad). For tests, bots and replays.
+    void SetInputSource(std::function<PlayerInput()> f) { m_inputSource = std::move(f); }
+    /// Whether authoritative movement is in force: the host's setting, or what
+    /// the host announced (client).
+    bool AuthoritativeMovement() const { return m_mode == Mode::Client ? m_hostAuthoritative : (m_mode == Mode::Server && authoritativeMovement); }
+    /// Client: the newest input the host has applied (from its snapshots).
+    std::uint32_t LastAckedInput() const { return m_lastAckedSeq; }
+    /// Server: inputs refused for being too far from the tick or over the budget.
+    std::uint32_t InputsDropped() const { return m_inputsDropped; }
+    /// For NetworkSync: 1 = this peer owns the object's transform because of
+    /// authoritative movement, 0 = it doesn't, -1 = not a player's object.
+    int MovementAuthority(const std::string& netId) const;
+    /// For NetworkSync: the network moves this object from a player's inputs here.
+    bool InputDriven(const std::string& netId) const;
     /// Called on every fixed tick (host and client), with the tick and its
     /// length in seconds: where fixed-step game logic goes.
     void OnNetTick(std::function<void(std::uint32_t tick, float dt)> f) { m_onNetTick = std::move(f); }
@@ -549,6 +580,14 @@ private:
         std::uint32_t relSeq = 0;   // next outgoing sequence to this client
         std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>> relOut; // unacked
         SeqWindow relSeen;          // delivered seqs (de-dup)
+        // Authoritative movement: the player object its inputs drive, the
+        // inputs waiting (by seq), the newest applied, and the last one (repeated
+        // when an input is late).
+        std::string pawn;
+        std::map<std::uint32_t, std::pair<std::uint32_t, PlayerInput>> inputs;   // seq -> (tick, input)
+        std::uint32_t lastInputSeq = 0;
+        PlayerInput lastInput;
+        int repeats = 0;            // ticks the last input stood in for a late one
         bool sealedJoin = false;    // joined through the sealed handshake
         // Anti-cheat clock heartbeat (maxClockDrift): the check, when to ask
         // next, how long since a good answer, and since its last drift report.
@@ -689,6 +728,22 @@ private:
     std::uint32_t m_statesSent = 0;
     std::function<void(std::uint32_t, float)> m_onNetTick;
     int StepNetTick(float rate, float dt);   // ticks that elapsed this frame (fires OnNetTick)
+    float HostTickRate() const { return netTickRate > 0.0f ? netTickRate : (authoritativeMovement ? 30.0f : 0.0f); }
+    // Authoritative movement.
+    void ServerMovementTick(float step);   // each fixed tick: run each player one input
+    void ClientInputTick();                // each fixed tick: send this tick's input
+    static constexpr std::size_t kMaxQueuedInputs = 8;   // the tick budget: older ones are dropped
+    static constexpr int kInputRepeats = 3;              // late-input cover before the player stops
+    std::string m_pawnId;                  // client: the object this player drives
+    std::function<PlayerInput()> m_inputSource;
+    PlayerInput m_heldInput;               // client: this frame's input
+    std::uint32_t m_pressedAccum = 0;      // client: presses since the last tick
+    std::uint32_t m_inputSeq = 0;
+    std::vector<std::pair<std::uint32_t, std::pair<std::uint32_t, PlayerInput>>> m_sentInputs;   // seq -> (tick, input), last 4
+    bool m_hostAuthoritative = false;      // client: the host announced it
+    std::uint32_t m_lastAckedSeq = 0;
+    std::unordered_map<std::string, std::uint32_t> m_pawnOwner;   // server: player object -> peer
+    std::uint32_t m_inputsDropped = 0;
     double m_acClockMs = 0.0;     // server: the clock the heartbeat checks clients against
     double m_gameClockMs = 0.0;   // client: the game clock it answers with
     std::unordered_map<net::Endpoint, PendingJoin, net::EndpointHash> m_pendingJoins;

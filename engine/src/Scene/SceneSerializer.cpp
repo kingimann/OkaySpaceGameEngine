@@ -1886,7 +1886,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << Quote(nm->startRoom) << " "
             << nm->maxPlayers << " " << nm->snapshotRate << " "
             << Quote(nm->serverName) << " " << Quote(nm->password);
-        if (nm->netTickRate > 0.0f) out << " " << nm->netTickRate;   // only when set: other scenes don't change
+        if (nm->netTickRate > 0.0f || nm->authoritativeMovement)   // only when set: other scenes don't change
+            out << " " << nm->netTickRate << " " << (nm->authoritativeMovement ? 1 : 0);
         out << "\n";
     }
     if (auto* wu = go->GetComponent<WorldUI>()) {
@@ -4957,6 +4958,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> nm->netTickRate;
                         if (!std::isfinite(nm->netTickRate) || nm->netTickRate < 0.0f) nm->netTickRate = 0.0f;
                         if (nm->netTickRate > 240.0f) nm->netTickRate = 240.0f;
+                        in >> std::ws;   // then authoritative movement
+                        if (std::isdigit(in.peek())) { int am = 0; in >> am; nm->authoritativeMovement = am != 0; }
                     }
                 } else if (field == "worldui") {
                     auto* wu = go->AddComponent<WorldUI>();

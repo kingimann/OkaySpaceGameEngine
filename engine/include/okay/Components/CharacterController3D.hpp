@@ -6,6 +6,7 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Net/NetOwnership.hpp"
+#include "okay/Net/PlayerInput.hpp"
 #include "okay/Components/StepUp.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Components/Character.hpp"
@@ -18,7 +19,7 @@ namespace okay {
 /// collides and gravity applies), otherwise moves the Transform directly. Brought
 /// up to the controller family: sprint, momentum (accel/decel), reduced air
 /// control, and optional Character animation + foot IK.
-class CharacterController3D : public Behaviour {
+class CharacterController3D : public Behaviour, public IPlayerSim {
 public:
     float speed     = 5.0f;     // walk speed on the ground plane
     float runSpeed  = 8.0f;     // speed while the sprint key is held
@@ -58,10 +59,27 @@ public:
                       "If this keeps happening, the floor is probably missing a collider "
                       "(select it and Add Component > Mesh Collider 3D).");
         }
-        if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
-        Vec2 axis = Input::AxisWASD();               // x = strafe, y = forward
+        if (!IsLocallyControlled(gameObject)) return;   // remote proxy / a server-driven player
+        Simulate(ReadLocalInput(), dt);
+    }
+
+    /// WASD, the sprint key and space, as this frame reads them.
+    PlayerInput ReadLocalInput() override {
+        PlayerInput in;
+        in.move = Input::AxisWASD();               // x = strafe, y = forward
+        if (sprintKey && Input::GetKey(sprintKey)) in.held |= PlayerInput::Sprint;
+        if (Input::GetKey(' ')) in.held |= PlayerInput::Jump;
+        if (Input::GetKeyDown(' ')) in.pressed |= PlayerInput::Jump;
+        return in;
+    }
+
+    /// Move by `in` (local play every frame, or a server with authoritative
+    /// movement every tick). Reads no Input:: globals.
+    void Simulate(const PlayerInput& in, float dt) override {
+        if (!transform) return;
+        Vec2 axis = in.move;
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
-        bool running = sprintKey && Input::GetKey(sprintKey);
+        bool running = sprintKey && in.Held(PlayerInput::Sprint);
         float spd = running ? runSpeed : speed;
         // Normalize diagonal input so W+D isn't ~41% faster than W alone (magnitude √2).
         float alen = Mathf::Sqrt(axis.x * axis.x + axis.y * axis.y);
@@ -75,7 +93,7 @@ public:
             float rate = (moving ? acceleration : deceleration) * (grounded ? 1.0f : airControl);
             rb->velocity.x = Mathf::MoveTowards(rb->velocity.x, tx, rate * dt);
             rb->velocity.z = Mathf::MoveTowards(rb->velocity.z, tz, rate * dt);
-            if (canJump && Input::GetKeyDown(' ') && grounded) {
+            if (canJump && in.Pressed(PlayerInput::Jump) && grounded) {
                 rb->velocity.y = jumpForce;
                 jumped = true;
             }

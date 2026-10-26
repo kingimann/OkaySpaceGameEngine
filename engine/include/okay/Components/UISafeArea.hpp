@@ -17,7 +17,7 @@ inline UISafeInsetFractions& UISafeInsets() { static UISafeInsetFractions f; ret
 /// "SafeArea" panel). Put HUD and menu widgets under it and they keep clear of
 /// the notch and the home bar on phones; on a desktop it simply fills the screen.
 /// Each side can be turned off (e.g. a background that should run under the notch).
-class UISafeArea : public Behaviour {
+class UISafeArea final : public Behaviour {
 public:
     bool left = true, top = true, right = true, bottom = true;
     // Unused margins: the container always fills its parent minus the insets, but

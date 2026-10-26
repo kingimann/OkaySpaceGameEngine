@@ -1,5 +1,51 @@
 OkaySpace Game Engine — Changelog
 
+v2.833.0
+  Animation and characters
+  - Stance changes are smooth: going between standing, crouching and prone
+    eases the body, the collider, the speed and the camera together over
+    0.25 s (stand/crouch), 0.5 s (crouch/prone) and 0.8 s (prone to stand),
+    and changing your mind halfway carries on from where the body is. The
+    times can be changed on the Animator (#364).
+  - Fixed: a player pushing into a wall no longer walks in place (#366).
+  - Fixed: a landing or gesture no longer plays a second time as it fades
+    into the next animation (#380).
+  - Fixed: rotations close to straight up or down no longer flip for a
+    frame in animation blends (#370).
+  - Characters can pick up and hold objects with their hands, on the
+    built-in Character and on imported humanoids. Holding styles: pistol,
+    rifle, box, flashlight, sword, cup and heavy, chosen automatically from
+    the object's name, size and weight, with fingers closing around the
+    grip on rigs that have finger bones (#362, #377).
+  Inventory
+  - Items have definitions in the project's items.okayitems: name,
+    description, icon, stack size, weight, rarity, category, equip slot,
+    use action and drop prefab. Inventories store the item's id, so
+    renaming an item no longer breaks scenes. Old scenes load unchanged
+    (#358).
+  In-game UI
+  - The UI is cached between frames and drawn in a few batches, so large
+    menus cost far less CPU (#361).
+  - New: flex rows and columns on the Layout Group, UI Mask (clips its
+    children, both drawing and clicks), horizontal and two-way scrolling,
+    and a List View that only builds the rows on screen (#374).
+  Scripting
+  - The typed C#-style OkayScript gains ??, ??= and ?., plain classes made
+    with new, List<T>, Dictionary<K, V> and do / while (#354, #369).
+  Multiplayer security
+  - With the anti-cheat on, a networked object nobody owns now belongs to
+    the server: a client can't take a scene door or a pickup by moving it.
+    For objects any player may grab, like a ball, tick Network Sync >
+    "Players can claim it" (#372).
+  - A hit claim's origin is checked against where the server knows the
+    shooter was, and a client that goes quiet can no longer bank one long
+    jump to shoot from (#355).
+  Build
+  - Release tags now point at the commit the release was built from (#373).
+  - CI cancels a pull request's older run when it gets a new push (#382).
+  Note: #354, #355, #361 and #362 merged while 2.832.0 was building, so
+  the 2.832.0 tag's generated notes list them, but they ship in 2.833.0.
+
 v2.832.0
   Animation
   - Every built-in player now has a visible Animator with a default humanoid

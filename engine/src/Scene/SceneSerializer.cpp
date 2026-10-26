@@ -1242,6 +1242,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
                 << " " << it.y << " " << it.count << " " << it.weight;
         out << " " << gi->weightLimit;   // appended (numeric-peek guarded on read)
         out << " " << Quote(gi->category) << " " << (gi->worldItem ? 1 : 0);   // Unturned role (guarded)
+        out << " " << (gi->enforceWeight ? 1 : 0) << " " << gi->maxStack      // appended (numeric-peek guarded)
+            << " " << gi->overflow.size();
+        for (const auto& it : gi->overflow)
+            out << " " << Quote(it.name) << " " << it.w << " " << it.h << " " << it.count << " " << it.weight;
         out << "\n";
     }
     if (auto* gu = go->GetComponent<GridInventoryUI>()) {
@@ -3726,6 +3730,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     }
                 } else if (field == "gridinventory") {
                     auto* gi = go->AddComponent<GridInventory>();
+                    gi->enforceWeight = false;   // older scenes only displayed the limit
                     int tk = 'i'; in >> gi->cols >> gi->rows >> tk; gi->toggleKey = (char)tk;
                     gi->title = ReadQuoted(in);
                     int n = 0; in >> n; gi->items.clear();
@@ -3742,8 +3747,19 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         if (in.peek() == '"') {
                             gi->category = ReadQuoted(in);
                             int wi = 0; in >> wi; gi->worldItem = (wi != 0);
+                            in >> std::ws;   // optional enforced weight + stack size
+                            int epk = in.peek();
+                            if (std::isdigit(epk) || epk == '-') {
+                                int ew = 0, no = 0; in >> ew >> gi->maxStack >> no; gi->enforceWeight = (ew != 0);
+                                for (int i = 0; i < no && in; ++i) {
+                                    GridItem it; it.name = ReadQuoted(in);
+                                    in >> it.w >> it.h >> it.count >> it.weight;
+                                    gi->overflow.push_back(it);
+                                }
+                            }
                         }
                     }
+                    gi->Validate();   // overlapping / out-of-bounds / bad sizes from older or hand-edited files
                 } else if (field == "gridinventoryui") {
                     auto* gu = go->AddComponent<GridInventoryUI>();
                     int dk = 1, sw = 1; in >> gu->cellSize >> gu->gap >> dk >> sw;

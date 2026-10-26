@@ -30036,8 +30036,8 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Multi-cell items in a grid; drag to rearrange in Play.");
             char tb[96]; std::snprintf(tb, sizeof(tb), "%s", gi->title.c_str());
             if (ImGui::InputText("Title##gi", tb, sizeof(tb))) { gi->title = tb; ed.dirty = true; }
-            if (ImGui::SliderInt("Columns##gi", &gi->cols, 1, 16)) ed.dirty = true;
-            if (ImGui::SliderInt("Rows##gi", &gi->rows, 1, 12)) ed.dirty = true;
+            if (ImGui::SliderInt("Columns##gi", &gi->cols, 1, 16)) { gi->Validate(); ed.dirty = true; }
+            if (ImGui::SliderInt("Rows##gi", &gi->rows, 1, 12)) { gi->Validate(); ed.dirty = true; }
             char ok[2] = {gi->toggleKey, 0};
             if (ImGui::InputText("Open Key##gi", ok, sizeof(ok))) { if (ok[0]) gi->toggleKey = ok[0]; ed.dirty = true; }
             char cab[48]; std::snprintf(cab, sizeof(cab), "%s", gi->category.c_str());
@@ -30047,6 +30047,10 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("A lootable world container — appears in the player's 'Nearby' column when in range. Leave off for worn/held bags (child of the player).");
             if (ImGui::DragFloat("Weight Limit##gi", &gi->weightLimit, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Max carry weight (0 = unlimited). The UI turns red when over.");
+            if (ImGui::Checkbox("Enforce Weight Limit##gi", &gi->enforceWeight)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Refuse adds and drags that would go over the weight limit (off = the limit is only shown).");
+            if (ImGui::DragInt("Max Stack##gi", &gi->maxStack, 0.2f, 0, 9999)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Same-name items merge when dropped on each other, up to this many (0 = never). Right-click a stack in Play to split it.");
             ImGui::Text("Total weight: %.1f%s", gi->TotalWeight(), gi->OverWeight() ? "  (OVER!)" : "");
             if (ImGui::TreeNodeEx("Items##gi", ImGuiTreeNodeFlags_DefaultOpen)) {
                 for (std::size_t i = 0; i < gi->items.size(); ++i) {
@@ -30057,15 +30061,33 @@ void DrawInspector(EditorState& ed) {
                     if (ImGui::InputText("##n", nb, sizeof(nb))) { it.name = nb; ed.dirty = true; }
                     ImGui::SameLine(); ImGui::SetNextItemWidth(150);
                     int wh[2] = {it.w, it.h};
-                    if (ImGui::DragInt2("wxh##s", wh, 0.1f, 1, 12)) { it.w = wh[0]; it.h = wh[1]; ed.dirty = true; }
+                    bool moved = false;
+                    if (ImGui::DragInt2("wxh##s", wh, 0.1f, 1, 12)) { it.w = wh[0]; it.h = wh[1]; moved = true; }
                     ImGui::SameLine(); ImGui::SetNextItemWidth(60);
                     if (ImGui::DragInt("##c", &it.count, 0.2f, 1, 9999)) ed.dirty = true;
+                    ImGui::SetNextItemWidth(110); ImGui::Indent(110);
+                    int xy[2] = {it.x, it.y};
+                    if (ImGui::DragInt2("x,y##p", xy, 0.1f, 0, 63)) { it.x = xy[0]; it.y = xy[1]; moved = true; }
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(60);
+                    if (ImGui::DragFloat("kg##w", &it.weight, 0.05f, 0.0f, 10000.0f, "%.2f")) ed.dirty = true;
+                    ImGui::Unindent(110);
                     ImGui::SameLine();
                     if (ImGui::SmallButton("x")) { gi->items.erase(gi->items.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
                     ImGui::PopID();
+                    if (moved) { gi->Validate(); ed.dirty = true; break; }   // indices may have changed
                 }
-                if (ImGui::SmallButton("+ Add item##gi")) { gi->AddItem("Item", 1, 1, 1, 0.5f); ed.dirty = true; }
+                static const GridInventory* fullBag = nullptr;   // the bag "+ Add item" last found full
+                if (ImGui::SmallButton("+ Add item##gi")) {
+                    fullBag = gi->AddItem("Item", 1, 1, 1, 0.5f) < 0 ? gi : nullptr;
+                    ed.dirty = true;
+                }
+                if (fullBag == gi) { ImGui::SameLine(); ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "No room (grid or weight limit full)"); }
                 ImGui::TreePop();
+            }
+            if (!gi->overflow.empty()) {
+                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "%d item(s) don't fit and are held aside:", (int)gi->overflow.size());
+                for (const auto& it : gi->overflow) ImGui::BulletText("%s  %dx%d  x%d", it.name.c_str(), it.w, it.h, it.count);
+                ImGui::TextDisabled("Make the grid bigger to put them back.");
             }
             if (ImGui::SmallButton("Remove##gi")) toRemove = gi;
         }
@@ -34996,6 +35018,9 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         };
         placeCol(equipped, startLX, lw);
         if (hasNear) placeCol(nearby, startLX + lw + colGap, rw);
+        std::vector<okay::GridInventory*> live(equipped);
+        live.insert(live.end(), nearby.begin(), nearby.end());
+        gui->CheckDrag(live);   // the bag being dragged from may have gone out of range or been destroyed
 
         if (gui->darkenWhenOpen)
             dl->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(0, 0, 0, (int)(gui->backdropDim * 255.0f)));
@@ -35081,11 +35106,10 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                     rectF(cxp, cyp, cs, cs, darken(gui->cellColor, 0.10f), cr);
                     rectS(cxp, cyp, cs, cs, darken(gui->cellColor, 0.32f), cr);
                 }
-            if (gui->dragInv && hovPanel == pi && gui->dragIndex >= 0 && gui->dragIndex < (int)gui->dragInv->items.size()) {
-                const auto& it = gui->dragInv->items[gui->dragIndex];
+            if (gui->dragInv && hovPanel == pi) {
+                const okay::GridItem it = gui->HeldItem();
                 int tx = hovCx - gui->grabX, ty = hovCy - gui->grabY;
-                int ign = (inv == gui->dragInv) ? gui->dragIndex : -1;
-                bool okp = inv->CanPlace(tx, ty, it.w, it.h, ign);
+                bool okp = gui->CanDrop(inv, hovCx, hovCy);
                 for (int yy = 0; yy < it.h; ++yy)
                     for (int xx = 0; xx < it.w; ++xx) {
                         int gxc = tx + xx, gyc = ty + yy;
@@ -35105,13 +35129,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
 
         // Input — Game view ONLY (the mouse is fed against the Game canvas; the Scene
         // pass uses a different canvas size and would drop into the wrong cell).
-        if (gameView && gui->rotateKey && gui->dragInv && gui->dragIndex >= 0 && gui->dragIndex < (int)gui->dragInv->items.size() &&
-            okay::Input::GetKeyDown(gui->rotateKey)) {
-            auto& it = gui->dragInv->items[gui->dragIndex];
-            std::swap(it.w, it.h);
-            if (gui->grabX >= it.w) gui->grabX = it.w - 1;
-            if (gui->grabY >= it.h) gui->grabY = it.h - 1;
-        }
+        if (gameView && gui->rotateKey && gui->dragInv && okay::Input::GetKeyDown(gui->rotateKey)) gui->RotateDrag();
         if (gameView && gui->showTooltips && !gui->dragInv && hovPanel >= 0) {
             okay::GridInventory* inv = panels[hovPanel].inv;
             int hov = inv->ItemAtCell(hovCx, hovCy);
@@ -35128,20 +35146,17 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         }
         if (gameView && !gui->dragInv && okay::Input::GetMouseButtonDown(0) && hovPanel >= 0) {
             okay::GridInventory* inv = panels[hovPanel].inv;
-            int idx = inv->ItemAtCell(hovCx, hovCy);
-            if (idx >= 0) { gui->dragInv = inv; gui->dragIndex = idx; gui->grabX = hovCx - inv->items[idx].x; gui->grabY = hovCy - inv->items[idx].y; }
+            gui->BeginDrag(inv, inv->ItemAtCell(hovCx, hovCy), hovCx, hovCy);
         }
-        if (gameView && gui->dragInv && okay::Input::GetMouseButtonUp(0)) {
-            if (hovPanel >= 0) {
-                okay::GridInventory* dst = panels[hovPanel].inv;
-                int tx = hovCx - gui->grabX, ty = hovCy - gui->grabY;
-                if (dst == gui->dragInv) dst->PlaceAt(gui->dragIndex, tx, ty);
-                else gui->dragInv->MoveTo(gui->dragIndex, *dst, tx, ty);
-            }
-            gui->dragInv = nullptr; gui->dragIndex = -1;
-        } else if (!gameView) { /* Scene pass leaves the drag state to the Game pass */ }
-        if (gameView && gui->dragInv && gui->dragIndex >= 0 && gui->dragIndex < (int)gui->dragInv->items.size()) {
-            const auto& it = gui->dragInv->items[gui->dragIndex];
+        if (gameView && !gui->dragInv && okay::Input::GetMouseButtonDown(1) && hovPanel >= 0) {   // right-click: split half
+            okay::GridInventory* inv = panels[hovPanel].inv;
+            int idx = inv->ItemAtCell(hovCx, hovCy);
+            if (idx >= 0) inv->Split(idx, inv->items[idx].count / 2);
+        }
+        if (gameView && gui->dragInv && okay::Input::GetMouseButtonUp(0))   // the Scene pass leaves the drag to the Game pass
+            gui->Drop(hovPanel >= 0 ? panels[hovPanel].inv : nullptr, hovCx, hovCy);
+        if (gameView && gui->dragInv) {
+            const okay::GridItem it = gui->HeldItem();
             float gx = m.x - gui->grabX * (cs + gp) - cs * 0.5f, gy = m.y - gui->grabY * (cs + gp) - cs * 0.5f;
             shadowE(gx, gy, it.w * cs + (it.w - 1) * gp, it.h * cs + (it.h - 1) * gp, cr);
             drawOne(it, gx, gy, true, false);

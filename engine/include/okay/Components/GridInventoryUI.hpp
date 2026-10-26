@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include <cmath>
+#include <utility>
 
 namespace okay {
 
@@ -87,6 +88,49 @@ public:
     GridInventory* dragInv = nullptr;  ///< container the dragged item came from (cross-bag drags)
     int   dragIndex = -1;     ///< item being dragged within dragInv, or -1
     int   grabX = 0, grabY = 0;   ///< grabbed cell offset within the item
+    bool  dragRotated = false;    ///< the held item is turned 90°; applied only by a successful drop
+
+    /// The held item, if the drag still points at a live item in one of `live` (the
+    /// containers on screen this frame). A drag whose container went away (out of range,
+    /// destroyed) or whose item vanished is cancelled instead of touching a stale pointer.
+    bool CheckDrag(const std::vector<GridInventory*>& live) {
+        if (!dragInv) return false;
+        bool found = false;
+        for (GridInventory* g : live) if (g == dragInv) { found = true; break; }
+        if (!found || dragIndex < 0 || dragIndex >= (int)dragInv->items.size()) { CancelDrag(); return false; }
+        return true;
+    }
+    /// The held item as it is drawn (w/h swapped while rotated). Call after CheckDrag().
+    GridItem HeldItem() const {
+        GridItem it = dragInv->items[dragIndex];
+        if (dragRotated) std::swap(it.w, it.h);
+        return it;
+    }
+    void BeginDrag(GridInventory* inv, int index, int cellX, int cellY) {
+        if (!inv || index < 0 || index >= (int)inv->items.size()) return;
+        dragInv = inv; dragIndex = index; dragRotated = false;
+        grabX = cellX - inv->items[index].x; grabY = cellY - inv->items[index].y;
+    }
+    /// Turn the held item 90° (the grab cell turns with it).
+    void RotateDrag() {
+        if (!dragInv || dragIndex < 0 || dragIndex >= (int)dragInv->items.size()) return;
+        const int h = HeldItem().h, gx = grabX;   // footprint before this turn
+        grabX = h - 1 - grabY; grabY = gx;
+        dragRotated = !dragRotated;
+    }
+    /// Would dropping the held item on cell (cellX, cellY) of `dst` succeed?
+    bool CanDrop(const GridInventory* dst, int cellX, int cellY) const {
+        return dragInv && dst && dragInv->CanMoveTo(dragIndex, *dst, cellX - grabX, cellY - grabY, dragRotated);
+    }
+    /// Drop the held item on cell (cellX, cellY) of `dst` (null = outside every grid). The
+    /// item only changes if the drop succeeds; either way the drag ends.
+    bool Drop(GridInventory* dst, int cellX, int cellY) {
+        bool ok = false;
+        if (dragInv && dst) ok = dragInv->MoveTo(dragIndex, *dst, cellX - grabX, cellY - grabY, dragRotated);
+        CancelDrag();
+        return ok;
+    }
+    void CancelDrag() { dragInv = nullptr; dragIndex = -1; dragRotated = false; grabX = grabY = 0; }
 
     GridInventory* Inv() const {
         if (gameObject)

@@ -1,4 +1,5 @@
 #include "test_framework.hpp"
+#include <cmath>
 #include <Okay.hpp>
 #include "okay/Components/AnimClip.hpp"
 
@@ -85,6 +86,41 @@ int main() {
         c.FromText(legacy);
         CHECK(c.autoPlayClip.empty());        // field absent -> stays default
         CHECK_NEAR(c.height, base.height, 1e-4f);   // the rest parsed fine
+    }
+
+    // Rotations interpolate along the short arc (slerp), not by lerping Euler angles:
+    // -150 -> +150 about z swings 60 deg through 180, instead of 300 deg the long way
+    // through 0 (the "arm flips" bug).
+    {
+        const int ru = Character::BoneIndex("r_uparm");
+        AnimClip c; c.loop = false;
+        AnimKey a; a.time = 0.0f; a.pose.assign(Character::BoneCount(), Vec3{0, 0, 0}); a.pose[ru] = Vec3{0, 0, -150};
+        AnimKey b = a; b.time = 1.0f; b.pose[ru] = Vec3{0, 0, 150};
+        c.keys = {a, b};
+        auto angleTo = [](const Vec3& e, float zDeg) {   // rotation angle between two poses, degrees
+            Quat d = Quat::Euler(e) * Quat::Euler(0, 0, zDeg).Inverse();
+            float w = std::fabs(d.w) > 1.0f ? 1.0f : std::fabs(d.w);
+            return 2.0f * std::acos(w) * 57.29578f;
+        };
+        CHECK(angleTo(c.Sample(0.5f)[ru], 180.0f) < 0.5f);
+        CHECK(angleTo(c.Sample(0.25f)[ru], -165.0f) < 0.5f);
+        CHECK(c.Sample(0.0f)[ru].z == -150.0f);      // keys themselves come back exactly
+    }
+
+    // A looping clip with a length past its last key wraps last -> first over the gap,
+    // so the loop has no seam (and Duration is the loop length).
+    {
+        const int ru = Character::BoneIndex("r_uparm");
+        AnimClip c; c.loop = true; c.length = 1.0f;
+        AnimKey a; a.time = 0.0f; a.pose.assign(Character::BoneCount(), Vec3{0, 0, 0});
+        AnimKey b = a; b.time = 0.5f; b.pose[ru] = Vec3{0, 0, 90};
+        c.keys = {a, b};
+        CHECK_NEAR(c.Duration(), 1.0f, 1e-5f);
+        CHECK_NEAR(c.Sample(0.75f)[ru].z, 45.0f, 0.01f);
+        CHECK_NEAR(c.Sample(0.999f)[ru].z, 0.18f, 0.05f);
+        c.loop = false;                               // a one-shot ignores length
+        CHECK_NEAR(c.Duration(), 0.5f, 1e-5f);
+        CHECK_NEAR(c.Sample(0.75f)[ru].z, 90.0f, 0.01f);
     }
 
     TEST_MAIN_RESULT();

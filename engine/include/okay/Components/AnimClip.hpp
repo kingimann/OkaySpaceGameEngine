@@ -45,11 +45,22 @@ struct AnimClip {
     bool loop = true;
     AnimInterp interp = AnimInterp::Linear;   ///< easing between keys
     float speed = 1.0f;                        ///< playback rate multiplier (2 = twice as fast)
+    /// Loop length (seconds). When a looping clip's length is past its last key, the
+    /// gap interpolates the last key back into the first, so the loop has no seam.
+    /// 0 (the default) = loop at the last key, as before.
+    float length = 0.0f;
+    /// Movement can't interrupt this clip: a looping manual clip normally stops as
+    /// soon as the character moves or jumps; an override clip keeps playing.
+    bool overrideMovement = false;
     std::vector<AnimKey> keys;     // kept in the order written (author them in time order)
     std::vector<AnimEvent> events; // markers fired as the clip plays (footsteps, hit windows)
 
-    /// Length of the clip (time of the last keyframe), or 0 if empty.
-    float Duration() const { return keys.empty() ? 0.0f : keys.back().time; }
+    /// Length of the clip: the time of the last keyframe (0 if empty), or the loop
+    /// `length` for a looping clip that sets one past its last key.
+    float Duration() const {
+        const float last = keys.empty() ? 0.0f : keys.back().time;
+        return (loop && length > last) ? length : last;
+    }
 
     /// Shape a 0..1 interpolation fraction by this clip's easing mode.
     float Ease(float u) const {
@@ -69,8 +80,9 @@ struct AnimClip {
         events.insert(it, e);
     }
 
-    /// The interpolated pose at time `t` (component-wise lerp between the
-    /// surrounding keyframes; clamped to the ends). Empty if the clip has no keys.
+    /// The interpolated pose at time `t` between the surrounding keyframes (each bone
+    /// slerped along the short arc; clamped to the ends, or wrapping last -> first over
+    /// a looping clip's `length`). Empty if the clip has no keys.
     std::vector<Vec3> Sample(float t) const;
 
     /// Parse one or more `clip` blocks from text. `resolveBone` maps a bone token

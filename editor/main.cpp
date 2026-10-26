@@ -18372,28 +18372,110 @@ static void StopLivePreview(EditorState& ed) {
 
 // Character animation: pose each bone, Key the whole pose at the playhead to build a
 // clip of keyframes, scrub to preview, Apply to play it (saved with the scene).
+// The Animation tab's working copy of a clip (the "draft"): edited here, then
+// Applied onto the Character. Keyed by the character's hierarchy path rather than a
+// pointer, because Undo rebuilds the scene's objects.
+struct AnimDraft {
+    AnimClip clip;
+    std::vector<Vec3> pose;      // the pose being authored at the playhead
+    float t = 0.0f;
+    int bone = 0;
+    bool playing = false;
+    bool playOnStart = false;    // Apply also sets autoPlayClip (+ overrideMovement)
+    std::string evName;
+};
+static std::unordered_map<std::string, AnimDraft> g_animDrafts;
+// Draft undo rides the editor's snapshot undo: each draft edit pushes a scene
+// snapshot too and remembers the undo depth; when Ctrl+Z pops that snapshot the
+// depth drops below the mark and the tab restores the draft as it was.
+struct AnimDraftUndo { std::string key; AnimDraft draft; int depth; };
+static std::vector<AnimDraftUndo> g_animDraftUndo;
+
+static std::string AnimDraftKey(GameObject* go) {
+    std::string k;
+    for (Transform* t = go ? go->transform : nullptr; t; t = t->Parent())
+        if (t->gameObject) k = t->gameObject->name + "/" + k;
+    return k;
+}
+
+static void PushAnimDraftUndo(EditorState& ed, const std::string& key, const AnimDraft& before) {
+    ed.PushUndo();
+    g_animDraftUndo.push_back({key, before, ed.UndoDepth()});
+    if (g_animDraftUndo.size() > 200) g_animDraftUndo.erase(g_animDraftUndo.begin());
+}
+
+static void RestoreAnimDraftsAfterUndo(EditorState& ed) {
+    while (!g_animDraftUndo.empty() && ed.UndoDepth() < g_animDraftUndo.back().depth) {
+        g_animDrafts[g_animDraftUndo.back().key] = g_animDraftUndo.back().draft;
+        g_animDraftUndo.pop_back();
+    }
+}
+
+// A clip name not yet used on the character ("Walk", "Walk2", ...).
+static std::string UniqueClipName(Character* ch, const std::string& base) {
+    if (!ch->HasClip(base)) return base;
+    for (int i = 2;; ++i) {
+        std::string n = base + std::to_string(i);
+        if (!ch->HasClip(n)) return n;
+    }
+}
+
+// Bake a built-in procedural animation into an editable clip: ~15 keys sampled over
+// one cycle of the state's motion (the gait cycle for walk/run, one breath for
+// idle). Loops get a loop length one sample past the last key, so the last key
+// eases back into the first with no seam. Jump has no cycle: a short one-shot.
+static AnimClip BakeBuiltInClip(Character* ch, int state, const std::string& name) {
+    const int keepAnim = ch->anim;
+    const float keepTime = ch->animTime;
+    ch->anim = state;
+    float period = 1.0f;
+    if (state == 2 || state == 3) {
+        ch->animTime = 0.01f;   // GaitPhase is frac(animTime * cycles-per-second)
+        float ph = ch->GaitPhase();
+        period = ph > 1e-5f ? 0.01f / ph : 1.0f;
+    } else if (state == 1) {
+        period = 6.2831853f / 1.8f;   // the idle breathing cycle
+    } else {
+        period = 0.6f;
+    }
+    AnimClip c; c.name = name;
+    c.loop = (state != 5);
+    const int n = 15;
+    for (int k = 0; k < n; ++k) {
+        float tk = c.loop ? period * k / n : period * k / (n - 1);
+        AnimKey key; key.time = tk;
+        ch->animTime = tk;
+        key.pose = ch->PoseAt(tk);
+        key.pose.resize(Character::BoneCount(), Vec3{0, 0, 0});
+        c.keys.push_back(std::move(key));
+    }
+    if (c.loop) c.length = period;
+    ch->anim = keepAnim;
+    ch->animTime = keepTime;
+    return c;
+}
+
 static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, int focusBone = -1) {
-    static std::unordered_map<void*, AnimClip> clips;
-    static std::unordered_map<void*, std::vector<Vec3>> poses;
-    static std::unordered_map<void*, float> times;
-    static std::unordered_map<void*, int> bones;
-    static std::unordered_map<void*, int> lastFocus;   // jump the bone dropdown when a new part is selected
-    static std::unordered_map<void*, bool> plays;
+    (void)go;
+    static std::unordered_map<std::string, int> lastFocus;   // jump the bone dropdown when a new part is selected
     const int nb = Character::BoneCount();
-    AnimClip& clip = clips[(void*)ch];
-    std::vector<Vec3>& pose = poses[(void*)ch];
+    RestoreAnimDraftsAfterUndo(ed);
+    const std::string key = AnimDraftKey(ch->gameObject);
+    AnimDraft& d = g_animDrafts[key];
+    AnimClip& clip = d.clip;
+    std::vector<Vec3>& pose = d.pose;
     if ((int)pose.size() != nb) pose.assign(nb, Vec3{0, 0, 0});
-    float& t = times[(void*)ch];
-    int& bone = bones[(void*)ch];
-    bool& playing = plays[(void*)ch];
+    float& t = d.t;
+    int& bone = d.bone;
+    bool& playing = d.playing;
     // When the user selects a different rig part in the hierarchy, jump the bone
     // dropdown to it (so you edit the part you clicked). Only on change, so the manual
     // dropdown still works while the same part stays selected.
-    if (focusBone >= 0 && focusBone < nb && lastFocus[(void*)ch] != focusBone) {
-        bone = focusBone; lastFocus[(void*)ch] = focusBone;
+    if (focusBone >= 0 && focusBone < nb && lastFocus[key] != focusBone) {
+        bone = focusBone; lastFocus[key] = focusBone;
     }
-    if (focusBone < 0) lastFocus[(void*)ch] = -1;   // reset when the Character itself is selected
-    if (clip.name.empty()) clip.name = "MyAnim";
+    if (focusBone < 0) lastFocus[key] = -1;   // reset when the Character itself is selected
+    if (clip.name.empty()) clip.name = UniqueClipName(ch, "MyAnim");
 
     // ---- One-click built-in animation preview (live, in the Scene view) ----
     static const struct { int id; const char* name; } kLiveAnims[] = {
@@ -18459,10 +18541,42 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
         }
         ImGui::Separator();
     }
+    // ---- Which clip to edit: one of the character's, a new one, or a copy of a
+    //      built-in animation to start from. ----
+    {
+        static const struct { int state; const char* label; const char* name; } kBake[] = {
+            {1, "Idle (from built-in)", "Idle"}, {2, "Walk (from built-in)", "Walk"},
+            {3, "Run (from built-in)", "Run"},   {5, "Jump (from built-in)", "Jump"},
+        };
+        ImGui::SetNextItemWidth(200);
+        if (ImGui::BeginCombo("Clip##caPick", clip.name.c_str())) {
+            auto load = [&](AnimClip c) {
+                PushAnimDraftUndo(ed, key, d);
+                clip = std::move(c);
+                t = 0.0f; playing = false;
+                pose = clip.keys.empty() ? std::vector<Vec3>(nb, Vec3{0, 0, 0}) : clip.keys.front().pose;
+                pose.resize(nb, Vec3{0, 0, 0});
+                d.playOnStart = !clip.name.empty() && ch->autoPlayClip == clip.name;
+            };
+            if (ImGui::Selectable("New clip##caNew")) { AnimClip c; c.name = UniqueClipName(ch, "MyAnim"); load(c); }
+            for (const auto& b : kBake)
+                if (ImGui::Selectable(b.label)) load(BakeBuiltInClip(ch, b.state, UniqueClipName(ch, b.name)));
+            ImGui::Separator();
+            for (const std::string& n : ch->ClipNames())
+                if (const AnimClip* c = ch->FindClip(n))
+                    if (ImGui::Selectable(n.c_str(), n == clip.name)) load(*c);
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Edit one of this character's clips, start a new one, or start from a copy\n"
+                              "of a built-in animation (its pose sampled into keys you can tweak).");
+    }
     char cn[48]; std::snprintf(cn, sizeof(cn), "%s", clip.name.c_str());
+    AnimDraft beforeRename = d;
     if (ImGui::InputText("Clip Name##ca", cn, sizeof(cn))) {
         std::string s(cn); for (char& c : s) if (c == ' ') c = '_'; clip.name = s; ed.dirty = true;
     }
+    if (ImGui::IsItemActivated()) PushAnimDraftUndo(ed, key, beforeRename);
     ImGui::SameLine(); ImGui::Checkbox("Loop##ca", &clip.loop);
 
     float dur = clip.Duration();
@@ -18496,10 +18610,14 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
     for (int i = 0; i < nb; ++i) names[i] = Character::BoneName(i);
     if (bone < 0 || bone >= nb) bone = 0;
     ImGui::SetNextItemWidth(160); ImGui::Combo("Bone##ca", &bone, names.data(), nb);
+    AnimDraft beforeNudge = d;   // undo checkpoint taken as a drag starts
     ImGui::DragFloat3("Bone Rotation##ca", &pose[bone].x, 0.5f);
-    ImGui::SameLine(); if (ImGui::SmallButton("0##careset")) pose[bone] = Vec3{0, 0, 0};
+    if (ImGui::IsItemActivated()) PushAnimDraftUndo(ed, key, beforeNudge);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("0##careset")) { PushAnimDraftUndo(ed, key, d); pose[bone] = Vec3{0, 0, 0}; }
 
     if (ImGui::Button("Key Pose##ca")) {
+        PushAnimDraftUndo(ed, key, d);
         // Replace a key at ~this time, else insert in time order.
         AnimKey k; k.time = t; k.pose = pose;
         bool replaced = false;
@@ -18513,25 +18631,84 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
     }
     ImGui::SameLine();
     if (ImGui::Button("Apply to Character##ca")) {
+        PushAnimDraftUndo(ed, key, d);
+        // Apply only adds/replaces the clip: the character keeps idling, walking and
+        // jumping. It plays on start only when asked, and then overrides movement.
+        clip.overrideMovement = d.playOnStart;
         ch->AddClip(clip);
-        ch->autoPlayClip = clip.name;
+        if (d.playOnStart) ch->autoPlayClip = clip.name;
+        else if (ch->autoPlayClip == clip.name) ch->autoPlayClip.clear();
+        if (ch->clipsLinked && !ch->clipsFile.empty()) {
+            std::string werr;
+            if (ch->SaveClipsToFile(ch->ResolvedClipsFile(), &werr)) ConsoleLog("Saved clips to " + ch->clipsFile);
+            else ConsoleLog("Save clips failed: " + werr, 2);
+        }
         ch->StopPreview(); g_animPreview = nullptr;
-        ch->PlayClip(clip.name);
         ed.dirty = true;
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Register + auto-play this clip on the Character (saved with the scene).");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add (or replace) this clip on the Character, saved with the scene.\n"
+                                                  "Bind it to a movement state below to use it in Play.");
     ImGui::SameLine();
     if (ImGui::Button("Save .okayanim...##ca")) {
         ch->AddClip(clip);   // make sure the edited clip is included
         const char* filt[] = {"*.okayanim"};
-        std::string def = ch->clipsFile.empty() ? (clip.name + ".okayanim") : ch->clipsFile;
+        std::string def = ch->clipsFile.empty() ? (clip.name + ".okayanim") : ch->ResolvedClipsFile();
         if (const char* p = tinyfd_saveFileDialog("Save animation clips", def.c_str(), 1, filt, "OkaySpace animation")) {
             std::string werr;
-            if (ch->SaveClipsToFile(p, &werr)) { ch->clipsFile = p; ed.dirty = true; ConsoleLog("Saved clips to " + std::string(p)); }
+            if (ch->SaveClipsToFile(p, &werr)) {
+                // Keep the path project-relative so the scene still finds it when the
+                // project moves (and so it ships with the game).
+                std::string stored = p;
+                if (!ed.projectDir().empty()) {
+                    std::error_code ec;
+                    auto rel = std::filesystem::relative(p, ed.projectDir(), ec);
+                    if (!ec && !rel.empty() && rel.native().rfind(std::filesystem::path("..").native(), 0) != 0)
+                        stored = rel.generic_string();
+                }
+                ch->clipsFile = stored; ed.dirty = true; ConsoleLog("Saved clips to " + std::string(p));
+            }
             else ConsoleLog("Save clips failed: " + werr, 2);
         }
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write all the Character's clips to a .okayanim text file you can re-load or ship.");
+    ImGui::Checkbox("Play on start (overrides movement)##ca", &d.playOnStart);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Off (default): Apply only adds the clip; bind it to a state to use it.\n"
+                          "On: the clip plays when Play starts and keeps playing while the\n"
+                          "character moves, until a script stops it.");
+    if (!ch->clipsFile.empty()) {
+        ImGui::SameLine();
+        bool linked = ch->clipsLinked;
+        if (ImGui::Checkbox("Linked to file##ca", &linked)) { ed.PushUndo(); ch->clipsLinked = linked; ed.dirty = true; }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s\nOff: clips saved with the scene win; the file only adds missing ones.\n"
+                              "On: the file is the source - Play loads it over same-named clips,\n"
+                              "and Apply re-saves it.", ch->clipsFile.c_str());
+    }
+
+    // ---- Bind clips to movement states: the controller's idle/walk/run/jump/fall/
+    //      crouch plays YOUR clip instead of the built-in one. ----
+    {
+        ImGui::TextDisabled("Use this clip for (click again to unbind):");
+        struct Slot { const char* label; std::string* field; };
+        Slot slots[] = {{"Idle", &ch->clipIdle}, {"Walk", &ch->clipWalk}, {"Run", &ch->clipRun},
+                        {"Jump", &ch->clipJump}, {"Fall", &ch->clipFall}, {"Crouch", &ch->clipCrouch}};
+        for (int i = 0; i < 6; ++i) {
+            if (i) ImGui::SameLine();
+            const bool on = !clip.name.empty() && *slots[i].field == clip.name;
+            if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.30f, 1.0f));
+            char bl[32]; std::snprintf(bl, sizeof(bl), "%s##cabind%d", slots[i].label, i);
+            if (ImGui::Button(bl) && !clip.name.empty()) {
+                ed.PushUndo();
+                if (on) slots[i].field->clear();
+                else { if (!ch->HasClip(clip.name)) ch->AddClip(clip); *slots[i].field = clip.name; }
+                ed.dirty = true;
+            }
+            if (on) ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s: %s", slots[i].label, slots[i].field->empty() ? "built-in" : slots[i].field->c_str());
+        }
+    }
 
     ImGui::Separator();
     ImGui::TextDisabled("Keyframes (click to edit)");
@@ -18543,7 +18720,7 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
         ImGui::SameLine(); if (ImGui::SmallButton("x")) del = i;
         ImGui::PopID();
     }
-    if (del >= 0) { clip.keys.erase(clip.keys.begin() + del); ed.dirty = true; }
+    if (del >= 0) { PushAnimDraftUndo(ed, key, d); clip.keys.erase(clip.keys.begin() + del); ed.dirty = true; }
     if (clip.keys.empty())
         ImGui::TextDisabled("Pose the bones, set Time, press Key Pose. Repeat, then Apply.");
 
@@ -18551,8 +18728,7 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
     //      clip plays past it (footstep sounds, a hit window, etc.). ----
     ImGui::Separator();
     ImGui::TextDisabled("Events (fire a named marker as the clip plays)");
-    static std::unordered_map<void*, std::string> evNames;
-    std::string& evName = evNames[(void*)ch];
+    std::string& evName = d.evName;
     char eb[48]; std::snprintf(eb, sizeof(eb), "%s", evName.c_str());
     ImGui::SetNextItemWidth(160);
     if (ImGui::InputText("Event Name##ca", eb, sizeof(eb))) {
@@ -18560,6 +18736,7 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
     }
     ImGui::SameLine();
     if (ImGui::Button("Add Event at Time##ca") && !evName.empty()) {
+        PushAnimDraftUndo(ed, key, d);
         AnimEvent e; e.time = t; e.name = evName;
         clip.events.push_back(e);
         std::sort(clip.events.begin(), clip.events.end(),
@@ -18574,7 +18751,7 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
         ImGui::SameLine(); if (ImGui::SmallButton("x")) edel = i;
         ImGui::PopID();
     }
-    if (edel >= 0) { clip.events.erase(clip.events.begin() + edel); ed.dirty = true; }
+    if (edel >= 0) { PushAnimDraftUndo(ed, key, d); clip.events.erase(clip.events.begin() + edel); ed.dirty = true; }
 }
 
 // Frame an object (and its whole subtree — a rig's parts) for the preview camera:
@@ -20379,7 +20556,7 @@ static void DrawAnimationEditor(EditorState& ed) {
     if (!an) {
         ImGui::TextDisabled("'%s' has no Animator.", go->name.c_str());
         if (ImGui::Button("Add Animator")) { go->AddComponent<Animator>(); ed.dirty = true; }
-        ImGui::TextDisabled("Tip: separate a Character into parts, then animate each part here.");
+        ImGui::TextDisabled("Tip: to animate a Character, select it (or any of its parts) - its pose and clip tools open here.");
         ImGui::End(); return;
     }
     DrawObjectAnimTimeline(ed, go, an);

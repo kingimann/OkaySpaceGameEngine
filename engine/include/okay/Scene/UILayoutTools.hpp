@@ -24,23 +24,23 @@ inline bool LocalRect(GameObject* go, Vec2& o, Vec2& sz) {
     UIRect r = GetUIRect(go);
     if (!r.valid || !r.position) return false;
     const Vec2 ref = RefSize(go);
-    ResolveAnchorRect(r.anchor, *r.position, r.size, ref.x, ref.y, o, sz);
+    r.ResolveWith(*r.position, r.size, ref.x, ref.y, o, sz);
     return true;
 }
 
 // Move a widget so its top-left sits at `o` in its reference frame (anchor kept).
 inline void SetLocalOrigin(GameObject* go, const Vec2& o) {
     UIRect r = GetUIRect(go);
-    if (!r.valid || !r.position || AnchorIsStretch(r.anchor)) return;
+    if (!r.valid || !r.position || r.Stretches()) return;
     const Vec2 ref = RefSize(go);
-    const Vec2 base = ResolveAnchor(r.anchor, Vec2{0, 0}, r.size, ref.x, ref.y);
+    const Vec2 base = r.OriginWith(Vec2{0, 0}, r.size, ref.x, ref.y);
     *r.position = Vec2{o.x - base.x, o.y - base.y};
 }
 
 // Set a widget's size, keeping its top-left where it is.
 inline void SetSizeKeepOrigin(GameObject* go, const Vec2& sz) {
     UIRect r = GetUIRect(go);
-    if (!r.valid || !r.sizePtr || AnchorIsStretch(r.anchor)) return;
+    if (!r.valid || !r.sizePtr || r.Stretches()) return;
     Vec2 o, cur;
     if (!LocalRect(go, o, cur)) return;
     *r.sizePtr = sz;
@@ -91,7 +91,7 @@ inline GameObject* WrapInPanel(Scene& scene, const std::vector<GameObject*>& ite
 // so the children stay where they are on screen. Returns false with no children.
 inline bool FitToChildren(GameObject* box, float pad = 16.0f) {
     UIRect br = GetUIRect(box);
-    if (!br.valid || !br.sizePtr || !br.position || AnchorIsStretch(br.anchor)) return false;
+    if (!br.valid || !br.sizePtr || !br.position || br.Stretches()) return false;
     std::vector<GameObject*> kids;
     for (Transform* c : box->transform->Children())
         if (c && c->gameObject && GetUIRect(c->gameObject).valid) kids.push_back(c->gameObject);
@@ -159,7 +159,7 @@ inline bool CanvasRect(GameObject* go, Vec2& o, Vec2& sz) {
 // (backdrops, menus) are ignored. Returns how far it moved (design px).
 inline float AvoidOverlap(Scene& scene, GameObject* piece, float gap = 12.0f) {
     UIRect r = GetUIRect(piece);
-    if (!r.valid || !r.position || AnchorIsStretch(r.anchor)) return 0.0f;
+    if (!r.valid || !r.position || r.Stretches()) return 0.0f;
     const int row = (int)r.anchor / 3;   // 0 top, 1 middle, 2 bottom
     if (row == 1) return 0.0f;
     const float W = UICanvas::Width(), H = UICanvas::Height();

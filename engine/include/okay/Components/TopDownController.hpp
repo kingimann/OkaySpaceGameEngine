@@ -5,6 +5,7 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/PlayerCollision.hpp"
+#include "okay/Components/MoveSpeed.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
@@ -66,7 +67,7 @@ public:
         bool moving = len > 0.01f;
         if (moving) { dir.x /= len; dir.z /= len; }
         bool running = sprintKey && Input::GetKey(sprintKey) && moving;
-        float speed = running ? runSpeed : walkSpeed;
+        float speed = (running ? runSpeed : walkSpeed) * MoveSpeedScale(gameObject);
 
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
         if (rb) {

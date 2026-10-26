@@ -78,6 +78,11 @@
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/UIScrollView.hpp"
 #include "okay/Components/UILayoutGroup.hpp"
+#include "okay/Components/UIFlexItem.hpp"
+#include "okay/Components/UIMask.hpp"
+#include "okay/Components/UIFrame.hpp"
+#include "okay/Components/UIElement.hpp"   // GetUIRect: settle loaded UIFrames
+#include "okay/Components/UIListView.hpp"
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/WorldUI.hpp"
 #include "okay/Components/WorldSpaceUI.hpp"
@@ -694,6 +699,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             }
             out << "\n";
         }
+        {
+            const StanceTimes def;
+            const StanceTimes& t = asm2->stanceTimes;
+            if (t.standCrouch != def.standCrouch || t.crouchProne != def.crouchProne || t.proneStand != def.proneStand)
+                out << "  animsmstance " << t.standCrouch << " " << t.crouchProne << " " << t.proneStand << "\n";
+        }
         bool anyMatch = false;
         for (const auto& st : asm2->states) anyMatch = anyMatch || st.matchSpeed;
         if (anyMatch) {   // blend trees that keep pace with the body's speed
@@ -773,7 +784,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* ns = go->GetComponent<NetworkSync>()) {
         out << "  netsync " << (int)ns->authority << " " << (ns->owned ? 1 : 0)
-            << " " << (ns->syncAnimation ? 1 : 0) << " " << Quote(ns->netId) << "\n";
+            << " " << (ns->syncAnimation ? 1 : 0) << " " << Quote(ns->netId);
+        if (ns->clientClaimable) out << " 1";   // only when set: other scenes don't change
+        out << "\n";
     }
     if (auto* ac = go->GetComponent<AntiCheatConfig>()) {
         const AntiCheatSettings& s = ac->settings;
@@ -1034,7 +1047,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* h = go->GetComponent<HoldableObject>()) {
         out << "  holdable";
         KvOut k{out};
-        k("style", (int)h->style)("weight", h->weight).str("socket", h->socket)
+        k("style", (int)h->style).b("support", h->supportHand)("weight", h->weight).str("socket", h->socket)
          ("offX", h->holdOffset.x)("offY", h->holdOffset.y)("offZ", h->holdOffset.z)
          ("rotX", h->holdRotation.x)("rotY", h->holdRotation.y)("rotZ", h->holdRotation.z);
         const HoldableObject::Grip* grips[2] = {&h->leftGrip, &h->rightGrip};
@@ -1043,14 +1056,16 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             const HoldableObject::Grip& gr = *grips[g];
             k.b((p + "On").c_str(), gr.enabled)
              ((p + "PX").c_str(), gr.position.x)((p + "PY").c_str(), gr.position.y)((p + "PZ").c_str(), gr.position.z)
-             ((p + "RX").c_str(), gr.rotation.x)((p + "RY").c_str(), gr.rotation.y)((p + "RZ").c_str(), gr.rotation.z);
+             ((p + "RX").c_str(), gr.rotation.x)((p + "RY").c_str(), gr.rotation.y)((p + "RZ").c_str(), gr.rotation.z)
+             ((p + "Curl").c_str(), gr.curl);
         }
         out << "\n";
     }
     if (auto* ph = go->GetComponent<ProceduralObjectHolding>()) {
         out << "  objholding";
         KvOut k{out};
-        k("hand", (int)ph->primaryHand)("style", (int)ph->holdingStyle).b("armIK", ph->armIK)("transition", ph->transitionTime);
+        k("hand", (int)ph->primaryHand)("style", (int)ph->holdingStyle).b("armIK", ph->armIK)("transition", ph->transitionTime)
+         .b("body", ph->bodyAdjustment)("carry", (int)ph->carryAnimations);
         out << "\n";
     }
     if (auto* rm = go->GetComponent<RootMotion>()) {
@@ -2100,13 +2115,36 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* lg = go->GetComponent<UILayoutGroup>()) {
         out << "  uilayout " << (int)lg->direction << " " << (int)lg->anchor << " "
             << lg->origin.x << " " << lg->origin.y << " " << lg->spacing << " " << lg->padding
-            << " " << lg->columns << " " << lg->spacingY << "\n";
+            << " " << lg->columns << " " << lg->spacingY
+            << " " << lg->boxSize.x << " " << lg->boxSize.y << " " << (int)lg->justify << " " << (int)lg->align
+            << " " << (lg->wrap ? 1 : 0) << "\n";   // flex fields (optional, newer)
+    }
+    if (auto* fi = go->GetComponent<UIFlexItem>()) {
+        out << "  uiflexitem " << fi->grow << " " << fi->shrink << " " << fi->baseSize.x << " " << fi->baseSize.y
+            << " " << (int)fi->alignSelf << "\n";
+    }
+    if (auto* mk = go->GetComponent<UIMask>()) out << "  uimask " << (mk->showGraphic ? 1 : 0) << "\n";
+    if (auto* fr = go->GetComponent<UIFrame>()) {
+        out << "  uiframe " << fr->anchorMin.x << " " << fr->anchorMin.y << " " << fr->anchorMax.x << " " << fr->anchorMax.y
+            << " " << fr->pivot.x << " " << fr->pivot.y << " " << fr->position.x << " " << fr->position.y
+            << " " << fr->size.x << " " << fr->size.y << "\n";
     }
     if (auto* sv = go->GetComponent<UIScrollView>()) {
         out << "  uiscroll " << sv->position.x << " " << sv->position.y << " "
             << sv->size.x << " " << sv->size.y << " " << (int)sv->anchor << " "
             << sv->contentHeight << " "
-            << sv->background.r << " " << sv->background.g << " " << sv->background.b << " " << sv->background.a << "\n";
+            << sv->background.r << " " << sv->background.g << " " << sv->background.b << " " << sv->background.a
+            << " " << (int)sv->axis << " " << sv->contentWidth << " " << (sv->autoContent ? 1 : 0) << "\n";   // optional, newer
+    }
+    if (auto* lv = go->GetComponent<UIListView>()) {
+        out << "  uilist " << lv->position.x << " " << lv->position.y << " " << lv->size.x << " " << lv->size.y
+            << " " << (int)lv->anchor << " "
+            << lv->background.r << " " << lv->background.g << " " << lv->background.b << " " << lv->background.a << " "
+            << lv->barColor.r << " " << lv->barColor.g << " " << lv->barColor.b << " " << lv->barColor.a << " "
+            << lv->itemHeight << " " << lv->spacing << " " << lv->itemCount << " " << lv->selected << " "
+            << lv->wheelSpeed << " " << lv->items.size();
+        for (const std::string& it : lv->items) out << " " << Quote(it);
+        out << "\n";
     }
     if (auto* cv = go->GetComponent<Canvas>()) {
         out << "  canvas " << (int)cv->scaleMode << " "
@@ -3004,6 +3042,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     }
                     long na = 0; in >> na;
                     for (long k = 0; k < na && in; ++k) { int m = 0; in >> m; if (k < (long)sm2->anyState.size()) sm2->anyState[k].muted = m != 0; }
+                } else if (field == "animsmstance") {
+                    StanceTimes& t = smFor()->stanceTimes;
+                    in >> t.standCrouch >> t.crouchProne >> t.proneStand;
                 } else if (field == "animsmmatch") {
                     auto* sm2 = smFor();
                     long n = 0; in >> n;
@@ -3380,8 +3421,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* h = go->AddComponent<HoldableObject>();
                     KvIn k(in);
                     int st = 0; k.i("style", st);
-                    h->style = st == 1 ? HoldableObject::Style::Custom : HoldableObject::Style::Automatic;
-                    k.f("weight", h->weight); k.str("socket", h->socket);
+                    h->style = st >= 0 && st <= (int)HoldableObject::Style::Heavy ? (HoldableObject::Style)st : HoldableObject::Style::Automatic;
+                    k.b("support", h->supportHand); k.f("weight", h->weight); k.str("socket", h->socket);
                     k.f("offX", h->holdOffset.x); k.f("offY", h->holdOffset.y); k.f("offZ", h->holdOffset.z);
                     k.f("rotX", h->holdRotation.x); k.f("rotY", h->holdRotation.y); k.f("rotZ", h->holdRotation.z);
                     HoldableObject::Grip* grips[2] = {&h->leftGrip, &h->rightGrip};
@@ -3391,6 +3432,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         k.b((p + "On").c_str(), gr.enabled);
                         k.f((p + "PX").c_str(), gr.position.x); k.f((p + "PY").c_str(), gr.position.y); k.f((p + "PZ").c_str(), gr.position.z);
                         k.f((p + "RX").c_str(), gr.rotation.x); k.f((p + "RY").c_str(), gr.rotation.y); k.f((p + "RZ").c_str(), gr.rotation.z);
+                        k.f((p + "Curl").c_str(), gr.curl);
                     }
                 } else if (field == "objholding") {
                     auto* ph = go->AddComponent<ProceduralObjectHolding>();
@@ -3400,6 +3442,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     : hand == 2 ? ProceduralObjectHolding::Hand::Both : ProceduralObjectHolding::Hand::Right;
                     ph->holdingStyle = st == 1 ? ProceduralObjectHolding::StyleMode::Custom : ProceduralObjectHolding::StyleMode::Automatic;
                     k.b("armIK", ph->armIK); k.f("transition", ph->transitionTime);
+                    int carry = 0; k.b("body", ph->bodyAdjustment); k.i("carry", carry);
+                    ph->carryAnimations = carry == 1 ? ProceduralObjectHolding::CarryAnim::Custom : ProceduralObjectHolding::CarryAnim::Automatic;
                 } else if (field == "fbikx") {
                     if (auto* fb = go->GetComponent<FullBodyIK>())
                         in >> fb->blendSpeed >> fb->goalSmoothing >> fb->lookSmoothing >> fb->armMinBend >> fb->legMinBend;
@@ -5068,6 +5112,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> std::ws;
                     if (std::isdigit(in.peek())) { int sa = 1; in >> sa; ns->syncAnimation = (sa != 0); }
                     ns->netId = ReadQuoted(in);
+                    in >> std::ws;   // clientClaimable came later
+                    if (std::isdigit(in.peek())) { int cc = 0; in >> cc; ns->clientClaimable = cc != 0; }
                 } else if (field == "water") {
                     auto* w = go->AddComponent<Water>();
                     in >> w->size >> w->resolution >> w->waveHeight >> w->waveLength >> w->waveSpeed
@@ -5350,13 +5396,45 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     lg->direction = (UILayoutGroup::Direction)dir; lg->anchor = (UIAnchor)an;
                     if (cols >= 1) lg->columns = cols;
                     if (sy >= 0.0f) lg->spacingY = sy;
+                    float bw = 0.0f, bh = 0.0f; int js = 0, al = 0, wr = 0;
+                    if (rs >> bw >> bh >> js >> al >> wr) {   // flex fields (newer scenes)
+                        lg->boxSize = {bw, bh};
+                        lg->justify = (UILayoutGroup::Justify)js; lg->align = (UILayoutGroup::Align)al; lg->wrap = wr != 0;
+                    }
                     lg->Arrange();
+                } else if (field == "uiflexitem") {
+                    auto* fi = go->AddComponent<UIFlexItem>();
+                    int as = 0;
+                    in >> fi->grow >> fi->shrink >> fi->baseSize.x >> fi->baseSize.y >> as;
+                    fi->alignSelf = (UIFlexItem::Align)as;
+                } else if (field == "uiframe") {
+                    // Read after or before the widget's own line: the end of the parse
+                    // makes the frame the source of truth and mirrors it back.
+                    auto* fr = go->AddComponent<UIFrame>();
+                    in >> fr->anchorMin.x >> fr->anchorMin.y >> fr->anchorMax.x >> fr->anchorMax.y
+                       >> fr->pivot.x >> fr->pivot.y >> fr->position.x >> fr->position.y >> fr->size.x >> fr->size.y;
+                } else if (field == "uimask") {
+                    auto* mk = go->AddComponent<UIMask>();
+                    int sg = 1; in >> sg; mk->showGraphic = sg != 0;
+                } else if (field == "uilist") {
+                    auto* lv = go->AddComponent<UIListView>();
+                    int an = 0; std::size_t n = 0;
+                    in >> lv->position.x >> lv->position.y >> lv->size.x >> lv->size.y >> an
+                       >> lv->background.r >> lv->background.g >> lv->background.b >> lv->background.a
+                       >> lv->barColor.r >> lv->barColor.g >> lv->barColor.b >> lv->barColor.a
+                       >> lv->itemHeight >> lv->spacing >> lv->itemCount >> lv->selected >> lv->wheelSpeed >> n;
+                    lv->anchor = (UIAnchor)an;
+                    for (std::size_t i = 0; i < n && in; ++i) lv->items.push_back(ReadQuoted(in));
                 } else if (field == "uiscroll") {
                     auto* sv = go->AddComponent<UIScrollView>();
+                    std::string rest; std::getline(in, rest);   // whole line: newer files carry extra fields
+                    std::istringstream rs(rest);
                     int an = 0; Color c;
-                    in >> sv->position.x >> sv->position.y >> sv->size.x >> sv->size.y
+                    rs >> sv->position.x >> sv->position.y >> sv->size.x >> sv->size.y
                        >> an >> sv->contentHeight >> c.r >> c.g >> c.b >> c.a;
                     sv->anchor = (UIAnchor)an; sv->background = c;
+                    int ax = 0, ac = 1; float cw = 0.0f;
+                    if (rs >> ax >> cw >> ac) { sv->axis = (UIScrollView::Axis)ax; sv->contentWidth = cw; sv->autoContent = ac != 0; }
                 } else if (field == "canvas") {
                     auto* cv = go->AddComponent<Canvas>();
                     int sm = 0;
@@ -5824,6 +5902,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
     // itself: give it the Animator that plays it now (its state clips carried over).
     if (version < 2)
         for (auto& [idx, go] : byIndex) { (void)idx; HumanoidLibrary::EnsureAnimator(go); }
+    // Make each loaded UIFrame the source of truth for its widget's fields now, so
+    // a script that writes those fields in its Start moves the frame.
+    for (auto& [idx, go] : byIndex) { (void)idx; if (go->GetComponent<UIFrame>()) GetUIRect(go); }
     return true;
 }
 

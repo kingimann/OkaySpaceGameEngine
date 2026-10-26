@@ -88,6 +88,7 @@ private:
         std::function<void(const std::string&, bool&, bool&)> rpcRulesFor;
         std::function<bool(const std::string&)> coversRpc;
         std::function<void(std::uint32_t)> onForgetPeer;
+        std::function<void(std::uint32_t, const std::string&)> onParkPeer, onRestorePeer;
         std::function<bool(HitClaim&)> validateHit;
         std::uint64_t installer = 0;
         std::string configError;

@@ -27,6 +27,7 @@
 #include "okay/UI/OkayUI.hpp"           // demo overlay: OkayUI drawn on top of ImGui
 #include "Splash.hpp"                   // branded loading frame (no black screen at startup)
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
+#include "UIInspectorLayout.hpp"        // flex / mask / list view inspectors
 #endif
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
 #include "tinyfiledialogs.h"            // native OS open/save file dialogs (asset import)
@@ -5232,6 +5233,7 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         // Spawn centered (on screen, or in the panel it went into) so it's visible.
         UIRect r = GetUIRect(g);
         if (r.valid && r.anchorPtr && r.position) { *r.anchorPtr = UIAnchor::Center; *r.position = {0, 0}; }
+        ConvertToUIFrame(g);   // new widgets are placed by a UI Frame
         ed.Select(g); ed.dirty = true; created = true;
     };
     if (ImGui::BeginMenu("Basic")) {
@@ -5268,6 +5270,9 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
     if (ImGui::BeginMenu("Layout")) {
         if (ImGui::MenuItem("Scroll View"))  addUI("ScrollView",  [](GameObject* g){ g->AddComponent<UIScrollView>(); });
         if (ImGui::MenuItem("Layout Group")) addUI("Layout",      [](GameObject* g){ g->AddComponent<UILayoutGroup>(); });
+        if (ImGui::MenuItem("Flex Box"))     addUI("FlexBox",     oked::BuildUIFlexBox);
+        if (ImGui::MenuItem("Masked Panel")) addUI("Mask",        oked::BuildUIMaskedPanel);
+        if (ImGui::MenuItem("List View"))    addUI("ListView",    oked::BuildUIListView);
         ImGui::EndMenu();
     }
     // Launcher-look building blocks: each is a small ready-styled group you can
@@ -26575,6 +26580,7 @@ void DrawInspector(EditorState& ed) {
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Resize this to wrap its child widgets (16 px padding); the children stay put on screen");
             }
+            oked::DrawUIFrameConvertButtons(go, ed);
             ImGui::EndGroup();
         }
         ImGui::EndChild();
@@ -27787,6 +27793,18 @@ void DrawInspector(EditorState& ed) {
                     ImGui::EndCombo();
                 }
             }
+            if (sm->layer == 0 && ImGui::TreeNode("Stance changes##asm")) {
+                StanceTimes& t = sm->stanceTimes;
+                bool changed = ImGui::DragFloat("Stand <-> crouch##asm", &t.standCrouch, 0.01f, 0.05f, 3.0f, "%.2fs");
+                changed |= ImGui::DragFloat("Crouch <-> prone##asm", &t.crouchProne, 0.01f, 0.05f, 3.0f, "%.2fs");
+                changed |= ImGui::DragFloat("Prone -> stand##asm", &t.proneStand, 0.01f, 0.05f, 4.0f, "%.2fs");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("How long the body takes to crouch, go prone and get up. The collider,\n"
+                                      "the camera, the speed limit and the default graph's blends follow it;\n"
+                                      "the Animator gets `stance` (0..2).");
+                if (changed) { HumanoidLibrary::ApplyStanceTimes(*sm); ed.dirty = true; }
+                ImGui::TreePop();
+            }
             static const char* kCondNames[] = {"On Clip End", "Float >", "Float <", "Bool true", "Bool false", "Trigger"};
             int delState = -1;
             for (int si = 0; si < (int)sm->states.size(); ++si) {
@@ -27942,6 +27960,8 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Checkbox("Owned (this peer broadcasts)##ns", &ns->owned)) ed.dirty = true;
             if (ImGui::Checkbox("Sync animation##ns", &ns->syncAnimation)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("If this object (or a child) has a Character, replicate its animation + punches too.");
+            if (ImGui::Checkbox("Players can claim it##ns", &ns->clientClaimable)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("With an Anti-Cheat Config, an object nobody owns is the host's: no player may move it or change its variables. Tick this for objects any player may grab (a ball): the first one to move it owns it.");
             if (ImGui::SmallButton("Remove##ns")) toRemove = ns;
         }
     }
@@ -29303,13 +29323,21 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TextDisabled("Hold objects with the hands: IK onto each object's grips.");
                 int hand = (int)ph->primaryHand;
                 if (ImGui::Combo("Primary Hand##poh", &hand, "Left\0Right\0Both\0")) { ph->primaryHand = (ProceduralObjectHolding::Hand)hand; ed.dirty = true; }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The hand a one-handed object goes in. Both = always two hands.");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The hand a one-handed object goes in.\nBoth: the support hand helps on pistols and swords, and small items are carried in both hands.");
                 int st = (int)ph->holdingStyle;
                 if (ImGui::Combo("Holding Style##poh", &st, "Automatic\0Custom\0")) { ph->holdingStyle = (ProceduralObjectHolding::StyleMode)st; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatic: each object's own style (a carry from its size and weight unless it says Custom).\nCustom: always the object's grip points.");
                 if (ImGui::Checkbox("Arm IK##poh", &ph->armIK)) ed.dirty = true;
                 if (ImGui::DragFloat("Transition (s)##poh", &ph->transitionTime, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
-                if (GameObject* held = ph->Held()) ImGui::Text("Holding: %s", held->name.c_str());
+                if (ImGui::Checkbox("Body Adjustment##poh", &ph->bodyAdjustment)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Heavy or big loads: lean back, walk slower, kept off the body.");
+                int ca = (int)ph->carryAnimations;
+                if (ImGui::Combo("Carry Animations##poh", &ca, "Automatic\0Custom\0")) { ph->carryAnimations = (ProceduralObjectHolding::CarryAnim)ca; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatic: the built-in lean against heavy loads.\nCustom: your Animator's own carry states, driven by its parameters\n'holding' (bool), 'carryStyle' (int) and 'carryWeight' (kg).");
+                if (GameObject* held = ph->Held()) {
+                    ImGui::Text("Holding: %s (%s)", held->name.c_str(), ph->CarryStyle() == HoldableObject::Style::Automatic ? "small item" : HoldableObject::StyleName(ph->CarryStyle()));
+                    ImGui::Text("Heaviness %.2f, speed x%.2f", ph->Heaviness(), ph->SpeedMultiplier());
+                }
                 else if (ed.isPlaying()) ImGui::TextDisabled("Holding nothing");
                 if (ImGui::SmallButton("Remove##poh")) toRemove = ph;
             }
@@ -29318,8 +29346,14 @@ void DrawInspector(EditorState& ed) {
             if (CompHeader("Holdable Object", ho, &toRemove)) {
                 ImGui::TextDisabled("A character's Procedural Object Holding can pick this up.");
                 int st = (int)ho->style;
-                if (ImGui::Combo("Style##hold", &st, "Automatic\0Custom\0")) { ho->style = (HoldableObject::Style)st; ed.dirty = true; }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatic: a carry from size and weight (small = one hand under it, big or heavy = both hands on its sides).\nCustom: the hands go to the grip points below.");
+                if (ImGui::Combo("Style##hold", &st, "Automatic\0Custom\0Pistol\0Rifle\0Box\0Flashlight\0Sword\0Cup\0Heavy\0")) { ho->style = (HoldableObject::Style)st; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatic: from the tag / name (\"pistol\", \"crate\"...), else its shape and weight.\nCustom: the hands go to the grip points below.\nGuns and lights point along -Z, a sword's blade along +Y, a cup's handle along +X\n(Hold Rotation corrects a model built another way).");
+                if (ho->style == HoldableObject::Style::Automatic) {
+                    const HoldableObject::Style rs = ho->ResolvedStyle();
+                    ImGui::TextDisabled("  -> %s", rs == HoldableObject::Style::Automatic ? "small item (one hand under it)" : HoldableObject::StyleName(rs));
+                }
+                if (ImGui::Checkbox("Support Hand##hold", &ho->supportHand)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pistol: the other hand wraps the first. Sword: held in two hands.");
                 if (ImGui::DragFloat("Weight (kg)##hold", &ho->weight, 0.1f, 0.0f, 500.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = the Rigidbody's mass.");
                 if (NameField("Socket##hold", ho->socket)) ed.dirty = true;
@@ -29327,6 +29361,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat3("Hold Offset##hold", &ho->holdOffset.x, 0.01f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Custom: where the object's origin sits from the chest (right, up, forward), metres.");
                 if (ImGui::DragFloat3("Hold Rotation##hold", &ho->holdRotation.x, 1.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Custom: the object's turn relative to the body (degrees).\nOther styles: turns a model built another way (e.g. 0, 180, 0 for a gun facing backwards).");
                 HoldableObject::Grip* grips[2] = {&ho->leftGrip, &ho->rightGrip};
                 for (int g = 0; g < 2; ++g) {
                     ImGui::PushID(g);
@@ -29335,6 +29370,7 @@ void DrawInspector(EditorState& ed) {
                     if (gr.enabled) {
                         if (ImGui::DragFloat3("Position##grip", &gr.position.x, 0.005f)) ed.dirty = true;
                         if (ImGui::DragFloat3("Rotation##grip", &gr.rotation.x, 1.0f)) ed.dirty = true;
+                        if (ImGui::SliderFloat("Finger Curl##grip", &gr.curl, 0.0f, 1.0f)) ed.dirty = true;
                     }
                     ImGui::PopID();
                 }
@@ -33293,9 +33329,10 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* lg = dynamic_cast<UILayoutGroup*>(curComp)) {
         if (CompHeader("UI Layout Group", lg, &toRemove)) {
-            const char* dirs[] = {"Vertical", "Horizontal", "Grid"};
+            const char* dirs[] = {"Vertical", "Horizontal", "Grid", "Flex Row", "Flex Column"};
             int d = (int)lg->direction;
-            if (ImGui::Combo("Direction##lg", &d, dirs, 3)) { lg->direction = (UILayoutGroup::Direction)d; lg->Arrange(); ed.dirty = true; }
+            if (ImGui::Combo("Direction##lg", &d, dirs, 5)) { lg->direction = (UILayoutGroup::Direction)d; lg->Arrange(); ed.dirty = true; }
+            oked::DrawLayoutGroupFlexFields(*lg, ed);
             bool isGrid = (lg->direction == UILayoutGroup::Direction::Grid);
             if (isGrid) {
                 if (ImGui::DragInt("Columns##lg", &lg->columns, 0.1f, 1, 32)) { if (lg->columns < 1) lg->columns = 1; lg->Arrange(); ed.dirty = true; }
@@ -33318,6 +33355,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat2("Pos (px)##usv", pos, 1.0f)) { sv->position = {pos[0], pos[1]}; ed.dirty = true; }
             float sz[2] = {sv->size.x, sv->size.y};
             if (ImGui::DragFloat2("Viewport (px)##usv", sz, 1.0f, 16.0f, 8000.0f)) { sv->size = {sz[0], sz[1]}; ed.dirty = true; }
+            oked::DrawScrollViewAxisFields(*sv, ed);
             if (ImGui::Checkbox("Auto content height##usv", &sv->autoContent)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fit the scroll range to the child widgets automatically.");
             ImGui::BeginDisabled(sv->autoContent);
@@ -33331,6 +33369,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##usv")) toRemove = sv;
         }
     }
+    oked::DrawUILayoutComponentInspector(curComp, ed, &toRemove, {CompHeader, AnchorCombo});
     if (auto* pb = dynamic_cast<UIProgressBar*>(curComp)) {
         if (CompHeader("UI Progress Bar", pb, &toRemove)) {
             UIStyleBar(ed, pb);
@@ -34641,6 +34680,10 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UITabs>(), "UI Tabs")) { go->AddComponent<UITabs>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDraggable>(), "UI Draggable")) { go->AddComponent<UIDraggable>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDropTarget>(), "UI Drop Target")) { go->AddComponent<UIDropTarget>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIFrame>() && GetUIRect(go).sizePtr, "UI Frame (anchors + pivot)")) { ConvertToUIFrame(go); ed.dirty = true; }
+            if (item(!go->GetComponent<UIMask>(), "UI Mask (clip children)")) { go->AddComponent<UIMask>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIFlexItem>(), "UI Flex Item (grow / shrink)")) { go->AddComponent<UIFlexItem>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIListView>(), "UI List View")) { oked::BuildUIListView(go); ed.dirty = true; }
             if (item(!go->GetComponent<UITextBind>(), "UI Text Bind (show a variable)")) { go->AddComponent<UITextBind>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIBarBind>(), "UI Bar Bind (var -> progress bar)")) { go->AddComponent<UIBarBind>(); ed.dirty = true; }
           } EndCat(o); }
@@ -35013,7 +35056,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             // Stretch anchors (index 9..11) have no single 3×3 pip — clamp the marker
             // index into range so we never read past the 9-element pip array (OOB crash).
             int ai = (int)r.anchor;
-            bool stretchAnchor = okay::AnchorIsStretch(r.anchor);
+            bool stretchAnchor = r.Stretches();
             int markAi = (ai >= 0 && ai < 9) ? ai : 4;   // Center as a stand-in for stretch
             ImVec2 ra, rb; UIAnchorRefRect(ed.selected(), canvasPos, canvasSize, ra, rb);
             ImVec2 pips[9]; UIAnchorPips(ra, rb, pips);
@@ -35495,6 +35538,7 @@ static void SetEditorWorldUIProjector(EditorState& ed, ImVec2 canvasSize,
             if (UIHidden(go)) return false;   // hidden canvas / inactive parent: not clickable
             return GetUIScreenRect(go, cs.x, cs.y, o, sz);
         };
+        UIWorld().clipContains = [cs](GameObject* go, const Vec2& p) { return UIClipHitTest(go, p, cs.x, cs.y); };
     }
 }
 
@@ -35820,7 +35864,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                         Vec2 po, ps;
                         if (GetUIScreenRect(par, canvasSize.x, canvasSize.y, po, ps)) { frameOrigin = po; frameSize = ps; }
                     }
-                    Vec2 term = ResolveAnchor(r.anchor, Vec2{0.0f, 0.0f}, newScreen, frameSize.x, frameSize.y);
+                    Vec2 term = r.OriginWith(Vec2{0.0f, 0.0f}, newScreen, frameSize.x, frameSize.y);
                     // Grid-snap only on axes that didn't lock onto a guide.
                     auto gsnap = [&](float v, bool guided) { return (g_snap && !guided) ? Mathf::Round(v / grid) * grid : v; };
                     float oldW = r.sizePtr->x, oldH = r.sizePtr->y;   // for proportional child scale
@@ -41535,14 +41579,9 @@ int main(int argc, char** argv) {
             if (Cursor::IsLocked() || !Cursor::visible) Cursor::Capture(false);
         }
 
-        // Keep each scroll view's contentHeight matched to its children so the
-        // scrollbar/clip preview is right while editing and the wheel/drag work in Play.
-        for (const auto& up : ed.scene().Objects())
-            if (auto* sv = up->GetComponent<UIScrollView>())
-                if (sv->autoContent) {
-                    float ch = ScrollViewContentHeight(up.get());
-                    sv->contentHeight = ch > sv->size.y ? ch : sv->size.y;
-                }
+        // Lay out the UI every frame (scroll extents, flex boxes, list rows) so the
+        // preview is right while editing and the wheel/drag work in Play.
+        UpdateUILayouts(ed.scene());
 
         // Install the world-space UI projector to match the Game view BEFORE the
         // scene ticks, so an in-world button's Contains() hit-tests where the Game
@@ -41556,6 +41595,7 @@ int main(int argc, char** argv) {
                 if (UIHidden(go)) return false;   // hidden canvas / inactive parent: not clickable
                 return GetUIScreenRect(go, cs.x, cs.y, o, sz);
             };
+            UIWorld().clipContains = [cs](GameObject* go, const Vec2& p) { return UIClipHitTest(go, p, cs.x, cs.y); };
         }
 
 #ifdef OKAY_HAVE_OKAYUI

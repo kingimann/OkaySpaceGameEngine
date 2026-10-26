@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <deque>
 #include <optional>
 #include <set>
 
@@ -53,7 +54,39 @@ std::string Program::NameOf(const Type& t) const {
     if (t.kind == TK::Enum && t.id >= 0 && t.id < (int)enums.size()) return enums[(std::size_t)t.id].name;
     if (t.kind == TK::Array && t.id >= 0 && t.id < (int)arrays.size()) return NameOf(arrays[(std::size_t)t.id]) + "[]";
     if (t.kind == TK::Class && t.id >= 0 && t.id < (int)classes.size()) return classes[(std::size_t)t.id].name;
+    if ((t.kind == TK::List || t.kind == TK::Dict || t.kind == TK::Pair) && t.id >= 0 && t.id < (int)generics.size()) {
+        const Generic& g = generics[(std::size_t)t.id];
+        if (t.kind == TK::List) return "List<" + NameOf(g.a) + ">";
+        return std::string(t.kind == TK::Dict ? "Dictionary<" : "KeyValuePair<") + NameOf(g.a) + ", " + NameOf(g.b) + ">";
+    }
+    if (t.kind == TK::Func && t.id >= 0 && t.id < (int)funcs.size()) {
+        const FuncSig& f = funcs[(std::size_t)t.id];
+        const bool action = f.ret.kind == TK::Void;
+        std::string n = action ? "Action" : "Func";
+        std::vector<std::string> parts;
+        for (const Type& p : f.params) parts.push_back(NameOf(p));
+        if (!action) parts.push_back(NameOf(f.ret));
+        if (parts.empty()) return n;
+        n += "<";
+        for (std::size_t i = 0; i < parts.size(); ++i) n += (i ? ", " : "") + parts[i];
+        return n + ">";
+    }
+    if (t.kind == TK::Lambda) return "a lambda";
     return TypeName(t);
+}
+
+Type Program::FuncOf(const std::vector<Type>& params, const Type& ret) {
+    for (std::size_t i = 0; i < funcs.size(); ++i)
+        if (funcs[i].params == params && funcs[i].ret == ret) return Type{TK::Func, (int)i};
+    funcs.push_back({params, ret});
+    return Type{TK::Func, (int)funcs.size() - 1};
+}
+
+Type Program::GenericOf(TK kind, const Type& a, const Type& b) {
+    for (std::size_t i = 0; i < generics.size(); ++i)
+        if (generics[i].kind == kind && generics[i].a == a && generics[i].b == b) return Type{kind, (int)i};
+    generics.push_back({kind, a, b});
+    return Type{kind, (int)generics.size() - 1};
 }
 
 int Program::MethodIndex(const std::string& name) const {
@@ -88,7 +121,10 @@ std::string Suggest(const std::string& name, const std::vector<std::string>& opt
     return (!best.empty() && bestD <= std::max(2, (int)name.size() / 3)) ? ". Did you mean '" + best + "'?" : "";
 }
 
-struct LocalVar { std::string name; Type type; int slot; SrcLoc loc; bool used = false; bool readOnly = false; };
+struct LocalVar {
+    std::string name; Type type; int slot; SrcLoc loc; bool used = false; bool readOnly = false;
+    bool captured = false;   ///< a lambda's copy of a variable from the code around it: slot = capture index
+};
 
 class Checker {
 public:
@@ -148,6 +184,7 @@ public:
                 if (!f.isPublic && !f.read && !HasAttr(f, "SerializeField"))
                     Warning(f.loc, "'" + f.name + "' is never read, so it does nothing");
         }
+        FlushLambdas();
         cls_ = &prog_.classes[(std::size_t)comp];
     }
 
@@ -161,6 +198,26 @@ private:
     bool inFieldInit_ = false;
     bool inEnumValue_ = false;   ///< checking an enum member's value (fields aren't declared yet)
     std::vector<int> enumReady_;   ///< per enum: how many members have their value worked out
+
+    // ---- Lambdas ----
+    // A lambda is checked like a small method inside the code around it: its own
+    // scopes and slots, plus captures for the variables it uses from outside.
+    struct Outer {
+        std::vector<std::vector<LocalVar>> scopes;
+        std::deque<LocalVar> captures;
+        LambdaDecl* lambda;
+        int nextSlot, maxSlot, loopDepth, switchDepth;
+        Type ret;
+        bool inferRet;
+        int retState;
+    };
+    std::vector<Outer> outer_;            ///< the code around the lambda being checked, innermost last
+    LambdaDecl* lambda_ = nullptr;        ///< the lambda being checked
+    std::deque<LocalVar> captures_;       ///< its captured variables (stable addresses)
+    Type lambdaRet_;
+    bool inferRet_ = false;               ///< its result type comes from its returns (Select, OrderBy)
+    int retState_ = 0;                    ///< while inferring: 0 no return yet, 1 `return;`, 2 a value
+    std::vector<Expr*> pending_;          ///< lambdas not yet given a Func / Action type
 
     bool HasErrors() const { for (auto& d : prog_.diags) if (d.severity == 0) return true; return false; }
     int ClassIndex(const std::string& n) const {
@@ -342,6 +399,8 @@ private:
             for (int i = 0; i < t.rank; ++i) r = prog_.ArrayOf(r);
             return r;
         }
+        if (!t.args.empty() || t.name == "List" || t.name == "Dictionary" || t.name == "KeyValuePair" || t.name == "Func" || t.name == "Action")
+            return ResolveGeneric(t);
         if (t.name == "int") return Type::Of(TK::Int);
         if (t.name == "float") return Type::Of(TK::Float);
         if (t.name == "bool") return Type::Of(TK::Bool);
@@ -366,6 +425,49 @@ private:
         return Type{};
     }
 
+    // List<T>, Dictionary<K, V> and KeyValuePair<K, V> (what foreach over a dictionary gives).
+    Type ResolveGeneric(const TypeRef& t) {
+        if (t.name == "List") {
+            if (t.args.size() != 1) { Error(t.loc, "List takes one type: List<int>"); return Type{}; }
+            Type a = ResolveType(t.args[0], false);
+            return a.kind == TK::Error ? a : prog_.GenericOf(TK::List, a);
+        }
+        if (t.name == "Dictionary" || t.name == "KeyValuePair") {
+            if (t.args.size() != 2) { Error(t.loc, t.name + " takes two types: " + t.name + "<string, int>"); return Type{}; }
+            Type k = ResolveType(t.args[0], false), v = ResolveType(t.args[1], false);
+            if (k.kind == TK::Error || v.kind == TK::Error) return Type{};
+            if (!IsKeyType(k)) {
+                Error(t.args[0].loc, "A Dictionary key must be an int, string, bool, enum or object, not " + TypeName(k));
+                return Type{};
+            }
+            return prog_.GenericOf(t.name == "Dictionary" ? TK::Dict : TK::Pair, k, v);
+        }
+        if (t.name == "Func" || t.name == "Action") {   // Func<int, bool>: takes an int, gives a bool
+            const bool func = t.name == "Func";
+            if (func && t.args.empty()) { Error(t.loc, "Func needs at least the type it gives: Func<int>, Func<int, bool>"); return Type{}; }
+            std::vector<Type> ps;
+            Type ret = Type::Of(TK::Void);
+            for (std::size_t i = 0; i < t.args.size(); ++i) {
+                const bool isRet = func && i + 1 == t.args.size();
+                if (t.args[i].name == "void" && t.args[i].rank == 0) {
+                    Error(t.args[i].loc, isRet ? "A Func gives a value: for one that gives nothing, use Action<...>" : "A parameter can't be void");
+                    return Type{};
+                }
+                Type a = ResolveType(t.args[i], false);
+                if (a.kind == TK::Error) return a;
+                if (isRet) ret = a; else ps.push_back(a);
+            }
+            return prog_.FuncOf(ps, ret);
+        }
+        Error(t.loc, "Only List<T>, Dictionary<K, V>, Func<...> and Action<...> are generic here");
+        return Type{};
+    }
+    static bool IsKeyType(const Type& t) {
+        return t.kind == TK::Int || t.kind == TK::String || t.kind == TK::Bool || t.kind == TK::Enum ||
+               t.kind == TK::Object || t.kind == TK::Class;
+    }
+    const Program::Generic& Gen(const Type& t) const { return prog_.generics[(std::size_t)t.id]; }
+
     void CheckLifecycleSignature(MethodDecl& m, int) {
         const auto& lc = LifecycleMethods();
         for (std::size_t i = 0; i < lc.size(); ++i) {
@@ -383,7 +485,8 @@ private:
         if (to.kind == TK::Any) return from.kind != TK::Void;
         if (from == to) return true;
         if (from.kind == TK::Int && to.kind == TK::Float) return true;
-        if (from.kind == TK::Null && (to.kind == TK::Object || to.kind == TK::Array || to.kind == TK::Class)) return true;
+        if (from.kind == TK::Null && CanBeNull(to)) return true;
+        if (from.kind == TK::Lambda) return to.kind == TK::Func || to.kind == TK::Any;   // the lambda itself is checked by Expect
         return false;
     }
     std::string ConvertError(const Type& from, const Type& to, const std::string& what) {
@@ -395,6 +498,7 @@ private:
     }
     // Check `e` can be used as `to`; mark int->float promotion.
     void Expect(Expr& e, const Type& to, const std::string& what) {
+        if (e.kind == EK::Lambda && e.type.kind == TK::Lambda) { CheckLambda(e, to, what); return; }
         if (!Convertible(e.type, to)) { Error(e.loc, ConvertError(e.type, to, what)); return; }
         if (e.type.kind == TK::Int && to.kind == TK::Float) e.toFloat = true;
         if (e.type.kind == TK::Enum && to.kind == TK::Any) e.enumStr = e.type.id;
@@ -437,8 +541,11 @@ private:
         if (f.isConst && f.isPublic) Error(f.loc, "A const can't be public: the Inspector can't change it. Remove `public`");
         if (f.init) {
             inFieldInit_ = true;
+            scopes_.clear();
+            nextSlot_ = maxSlot_ = 0;
             CheckInit(*f.init, f.resolved, "The starting value of '" + f.name + "'");
             inFieldInit_ = false;
+            FlushLambdas();
             if (f.isConst && !IsConstant(*f.init))
                 Error(f.init->loc, "A const's value must be fixed (numbers, text, true/false), not worked out while playing");
         }
@@ -471,6 +578,12 @@ private:
         PopScope();
         m.localCount = maxSlot_;
         method_ = nullptr;
+        FlushLambdas();
+    }
+    // Lambdas that ended up somewhere without a Func or Action type.
+    void FlushLambdas() {
+        for (Expr* e : pending_) Error(e->loc, "A lambda only works where a Func or Action is expected");
+        pending_.clear();
     }
 
     void PushScope() { scopes_.emplace_back(); }
@@ -480,13 +593,49 @@ private:
         nextSlot_ -= (int)scopes_.back().size();
         scopes_.pop_back();
     }
-    LocalVar* FindLocal(const std::string& n) {
-        for (auto s = scopes_.rbegin(); s != scopes_.rend(); ++s)
+    static LocalVar* FindIn(std::vector<std::vector<LocalVar>>& scopes, std::deque<LocalVar>& captures, const std::string& n) {
+        for (auto s = scopes.rbegin(); s != scopes.rend(); ++s)
             for (auto& v : *s) if (v.name == n) return &v;
+        for (auto& v : captures) if (v.name == n) return &v;
         return nullptr;
     }
+    // A variable by name. Inside a lambda, one from the code around it becomes a
+    // capture of this lambda (and of every lambda in between).
+    LocalVar* FindLocal(const std::string& n) {
+        if (LocalVar* v = FindIn(scopes_, captures_, n)) return v;
+        if (outer_.empty()) return nullptr;
+        LocalVar* v = FindAt(outer_.size() - 1, n);
+        return v ? AddCapture(lambda_, captures_, *v) : nullptr;
+    }
+    LocalVar* FindAt(std::size_t level, const std::string& n) {
+        Outer& o = outer_[level];
+        if (LocalVar* v = FindIn(o.scopes, o.captures, n)) return v;
+        if (level == 0) return nullptr;   // level 0 is the method itself
+        LocalVar* v = FindAt(level - 1, n);
+        return v ? AddCapture(o.lambda, o.captures, *v) : nullptr;
+    }
+    static LocalVar* AddCapture(LambdaDecl* l, std::deque<LocalVar>& captures, LocalVar& from) {
+        from.used = true;
+        l->captureFrom.push_back(from.captured ? -1 - from.slot : from.slot);
+        LocalVar c = from;
+        c.slot = (int)captures.size();
+        c.captured = true;
+        captures.push_back(c);
+        return &captures.back();
+    }
+    // Is `n` a variable here or in the code around this lambda? (Without capturing it.)
+    bool NameTaken(const std::string& n) {
+        if (FindIn(scopes_, captures_, n)) return true;
+        for (Outer& o : outer_) if (FindIn(o.scopes, o.captures, n)) return true;
+        return false;
+    }
+    // The lambdas being checked use the object (its fields, methods or `this`).
+    void UsesSelf() {
+        if (lambda_) lambda_->usesSelf = true;
+        for (Outer& o : outer_) if (o.lambda) o.lambda->usesSelf = true;
+    }
     int Declare(const std::string& n, Type t, SrcLoc loc) {
-        if (FindLocal(n)) Error(loc, "'" + n + "' is already a variable here: pick another name");
+        if (NameTaken(n)) Error(loc, "'" + n + "' is already a variable here: pick another name");
         else if (FieldIndex(n) >= 0) Warning(loc, "'" + n + "' hides the field with the same name");
         scopes_.back().push_back({n, t, nextSlot_++, loc, false});
         maxSlot_ = std::max(maxSlot_, nextSlot_);
@@ -533,7 +682,11 @@ private:
                         CheckInit(*d.init, t, "'" + d.name + "'");
                     } else if (d.init) {
                         CheckExpr(*d.init);
-                        if (d.type.name == "var") {
+                        if (d.type.name == "var" && d.init->kind == EK::Lambda) {
+                            Unpend(*d.init);
+                            Error(d.loc, "`var` can't tell a lambda's type: write Func<...> or Action<...>");
+                            t = Type{};
+                        } else if (d.type.name == "var") {
                             t = d.init->type;
                             if (t.kind == TK::Null) { Error(d.loc, "`var` can't tell the type from null: write the type"); t = Type{}; }
                             if (t.kind == TK::Void) { Error(d.loc, "This doesn't produce a value to store"); t = Type{}; }
@@ -558,6 +711,13 @@ private:
                 --loopDepth_;
                 return !(IsTrueLiteral(*s.expr) && !ContainsBreak(*s.loopBody));
             }
+            case SK::DoWhile: {
+                ++loopDepth_;
+                PushScope(); CheckStmt(*s.loopBody); PopScope();
+                --loopDepth_;
+                CheckCondition(*s.expr, "while");
+                return !(IsTrueLiteral(*s.expr) && !ContainsBreak(*s.loopBody));
+            }
             case SK::For: {
                 PushScope();
                 if (s.init) CheckStmt(*s.init);
@@ -574,6 +734,7 @@ private:
                 return !( !s.expr && !ContainsBreak(*s.loopBody));
             }
             case SK::Return: {
+                if (lambda_) return CheckLambdaReturn(s);
                 const Type& rt = method_->retType;
                 if (s.expr && method_->isCtor) { CheckExpr(*s.expr); Error(s.loc, "A constructor can't return a value"); return false; }
                 if (s.expr) {
@@ -597,8 +758,11 @@ private:
                 CheckExpr(*s.expr);
                 LocalDecl& d = s.locals[0];
                 Type elem{};
-                if (s.expr->type.kind == TK::Array) elem = prog_.arrays[(std::size_t)s.expr->type.id];
-                else if (s.expr->type.kind != TK::Error) Error(s.expr->loc, "foreach needs an array, not " + TypeName(s.expr->type));
+                const Type& ct = s.expr->type;
+                if (ct.kind == TK::Array) elem = prog_.arrays[(std::size_t)ct.id];
+                else if (ct.kind == TK::List) elem = Gen(ct).a;
+                else if (ct.kind == TK::Dict) elem = prog_.GenericOf(TK::Pair, Gen(ct).a, Gen(ct).b);
+                else if (ct.kind != TK::Error) Error(s.expr->loc, "foreach needs an array, a List or a Dictionary, not " + TypeName(ct));
                 Type t = d.type.name == "var" && d.type.rank == 0 ? elem : ResolveType(d.type, false);
                 if (d.type.name != "var" && !Convertible(elem, t))
                     Error(d.loc, "The items of " + (s.expr->kind == EK::Name ? s.expr->name : std::string("this array")) + " are " +
@@ -617,6 +781,33 @@ private:
             }
         }
         return true;
+    }
+
+    bool CheckLambdaReturn(Stmt& s) {
+        if (s.expr) CheckExpr(*s.expr);
+        if (inferRet_) {
+            if (s.expr && retState_ != 2) {
+                const Type t = s.expr->type;
+                if (retState_ == 1) Error(s.loc, "This lambda returns a value here but not everywhere");
+                else if (t.kind == TK::Null || t.kind == TK::Lambda) Error(s.expr->loc, "Can't tell this lambda's result type from " + TypeName(t));
+                else if (t.kind == TK::Void) Error(s.expr->loc, "This doesn't produce a value to return");
+                else lambdaRet_ = t;
+                retState_ = 2;
+            } else if (s.expr) {
+                Expect(*s.expr, lambdaRet_, "The returned value");
+            } else {
+                if (retState_ == 2) Error(s.loc, "This lambda must return " + Article(TypeName(lambdaRet_)) + " here");
+                retState_ = 1;
+            }
+            return false;
+        }
+        if (s.expr) {
+            if (lambdaRet_.kind == TK::Void) Error(s.loc, "This lambda is an Action, so it can't return a value");
+            else Expect(*s.expr, lambdaRet_, "The returned value");
+        } else if (lambdaRet_.kind != TK::Void && lambdaRet_.kind != TK::Error) {
+            Error(s.loc, "This lambda must return " + Article(TypeName(lambdaRet_)) + " here");
+        }
+        return false;
     }
 
     // C#'s rules: the value is an int, string or enum; every case is a
@@ -702,6 +893,7 @@ private:
             case EK::This:
                 if (InComponent()) { Error(e.loc, "`this` on its own isn't a value here: use this.field or this.Method()"); return; }
                 if (inFieldInit_) { Error(e.loc, "A field's starting value can't use `this`"); return; }
+                UsesSelf();
                 e.type = Type{TK::Class, ClassId()};
                 return;
             case EK::Name: CheckName(e); return;
@@ -753,7 +945,112 @@ private:
                 for (auto& a : e.args) CheckExpr(*a);
                 Error(e.loc, "{ ... } only works right after `=` in a declaration: write new int[] { ... }");
                 return;
+            case EK::Lambda:   // its type comes from where it goes (Expect)
+                e.type = Type::Of(TK::Lambda);
+                pending_.push_back(&e);
+                return;
         }
+    }
+
+    void Unpend(Expr& e) { pending_.erase(std::remove(pending_.begin(), pending_.end(), &e), pending_.end()); }
+
+    // A lambda used as `to` (a Func or Action).
+    void CheckLambda(Expr& e, const Type& to, const std::string& what) {
+        Unpend(e);
+        e.type = Type{};
+        if (to.kind == TK::Error) return;
+        if (to.kind != TK::Func) {
+            Error(e.loc, "A lambda only works where a Func or Action is expected" +
+                         (to.kind == TK::Any || what.empty() ? std::string() : ": " + what + " is " + TypeName(to)));
+            return;
+        }
+        const Program::FuncSig sig = prog_.funcs[(std::size_t)to.id];
+        if (e.lambda->params.size() != sig.params.size()) {
+            Error(e.loc, "This lambda takes " + Values(e.lambda->params.size()) + " but " + TypeName(to) + " gives it " + std::to_string(sig.params.size()));
+            return;
+        }
+        LambdaBody(e, sig.params, sig.ret, false);
+        e.type = to;
+    }
+    // A lambda whose result type is worked out from its body (Select, OrderBy, Sum):
+    // its Func type, or an error type. `who` names the method taking it.
+    Type InferLambda(Expr& e, const std::vector<Type>& params, const std::string& who) {
+        if (e.type.kind == TK::Func) {   // a Func variable: its signature must fit
+            const Program::FuncSig& sig = prog_.funcs[(std::size_t)e.type.id];
+            if (sig.params == params) return e.type;
+        }
+        if (e.kind != EK::Lambda || e.type.kind != TK::Lambda) {
+            if (e.type.kind != TK::Error) Error(e.loc, who + " needs a lambda here, like x => x * 2");
+            return Type{};
+        }
+        Unpend(e);
+        if (e.lambda->params.size() != params.size()) {
+            Error(e.loc, "This lambda takes " + Values(e.lambda->params.size()) + " but " + who + " gives it " + std::to_string(params.size()));
+            e.type = Type{};
+            return Type{};
+        }
+        const Type ret = LambdaBody(e, params, Type{}, true);
+        e.type = ret.kind == TK::Error ? Type{} : prog_.FuncOf(params, ret);
+        return e.type;
+    }
+    static bool IsStatementLike(const Expr& v) {
+        return v.kind == EK::Assign || v.kind == EK::IncDec || v.kind == EK::Call || v.kind == EK::New ||
+               (v.kind == EK::NullCond && v.lhs->kind == EK::Call);
+    }
+    // Check a lambda's body with these parameter types; returns its result type
+    // (worked out from the body when `infer`).
+    Type LambdaBody(Expr& e, const std::vector<Type>& params, Type ret, bool infer) {
+        LambdaDecl& L = *e.lambda;
+        outer_.push_back(Outer{std::move(scopes_), std::move(captures_), lambda_, nextSlot_, maxSlot_, loopDepth_, switchDepth_,
+                               lambdaRet_, inferRet_, retState_});
+        scopes_.clear();
+        scopes_.emplace_back();
+        captures_.clear();
+        lambda_ = &L;
+        L.captureFrom.clear();
+        nextSlot_ = maxSlot_ = loopDepth_ = switchDepth_ = 0;   // break / continue don't reach the loop around a lambda
+        lambdaRet_ = ret;
+        inferRet_ = infer;
+        retState_ = 0;
+        for (std::size_t i = 0; i < L.params.size(); ++i) {
+            Param& p = L.params[i];
+            p.resolved = params[i];
+            for (auto& v : scopes_.back()) if (v.name == p.name) Error(p.loc, "Two parameters are called '" + p.name + "'");
+            scopes_.back().push_back({p.name, p.resolved, nextSlot_++, p.loc, true});
+        }
+        maxSlot_ = nextSlot_;
+        if (L.value) {
+            Expr& v = *L.value;
+            CheckExpr(v);
+            if (infer) {
+                if (v.type.kind == TK::Null || v.type.kind == TK::Lambda) {
+                    Unpend(v);
+                    Error(v.loc, "Can't tell this lambda's result type from " + TypeName(v.type));
+                    lambdaRet_ = Type{};
+                } else lambdaRet_ = v.type;
+            } else if (ret.kind == TK::Void) {
+                if (!IsStatementLike(v) && v.type.kind != TK::Error) Error(v.loc, "This lambda works out a value but an Action doesn't use it");
+            } else {
+                Expect(v, ret, "This lambda's value");
+            }
+        } else {
+            const bool completes = CheckBlockBody(*L.body);
+            if (infer && retState_ == 0) lambdaRet_ = Type::Of(TK::Void);
+            if (completes && lambdaRet_.kind != TK::Void && lambdaRet_.kind != TK::Error)
+                Error(e.loc, "This lambda must return " + Article(TypeName(lambdaRet_)) + " on every path");
+        }
+        PopScope();
+        L.localCount = maxSlot_;
+        L.ret = lambdaRet_;
+        const Type result = lambdaRet_;
+        Outer& o = outer_.back();
+        scopes_ = std::move(o.scopes);
+        captures_ = std::move(o.captures);
+        lambda_ = o.lambda;
+        nextSlot_ = o.nextSlot; maxSlot_ = o.maxSlot; loopDepth_ = o.loopDepth; switchDepth_ = o.switchDepth;
+        lambdaRet_ = o.ret; inferRet_ = o.inferRet; retState_ = o.retState;
+        outer_.pop_back();
+        return result;
     }
 
     // new[] { ... }: every item has the same type (ints mixed with floats make floats).
@@ -780,10 +1077,15 @@ private:
         CheckExpr(*e.lhs);
         const Type at = e.object->type;
         if (at.kind == TK::Error) return;
-        if (at.kind != TK::Array) { Error(e.loc, TypeName(at) + " values can't be indexed with [ ]"); return; }
+        if (at.kind == TK::Dict) {   // d[key]
+            Expect(*e.lhs, Gen(at).a, "The key");
+            e.type = Gen(at).b;
+            return;
+        }
+        if (at.kind != TK::Array && at.kind != TK::List) { Error(e.loc, TypeName(at) + " values can't be indexed with [ ]"); return; }
         if (e.lhs->type.kind != TK::Int && e.lhs->type.kind != TK::Error)
-            Error(e.lhs->loc, "An array index must be an int, not " + TypeName(e.lhs->type));
-        e.type = prog_.arrays[(std::size_t)at.id];
+            Error(e.lhs->loc, std::string(at.kind == TK::List ? "A list" : "An array") + " index must be an int, not " + TypeName(e.lhs->type));
+        e.type = at.kind == TK::List ? Gen(at).a : prog_.arrays[(std::size_t)at.id];
     }
 
     void CheckNewArray(Expr& e) {
@@ -821,6 +1123,7 @@ private:
             FieldDecl& f = cls_->fields[(std::size_t)fi];
             if (!f.isStatic && !f.isConst && RejectInStatic(e.name, e.loc)) return true;
             f.read = true;
+            if (!f.isStatic && !f.isConst) UsesSelf();
             e.bind = f.isStatic ? Bind::StaticField : Bind::Field; e.slot = fi; e.type = f.resolved;
             return true;
         }
@@ -828,6 +1131,7 @@ private:
         if (RejectOutsideComponent(e.name, e.loc)) return true;
         if (inFieldInit_) { Error(e.loc, "A field's starting value can't use '" + e.name + "' (the object isn't ready yet): set it in Start()"); return true; }
         if (RejectInStatic(e.name, e.loc)) return true;
+        UsesSelf();
         e.bind = Bind::SelfMember;
         e.slot = e.name == "gameObject" ? 0 : e.name == "transform" ? 1 : 2;
         e.type = e.slot == 0 ? Type::Obj(api_.gameObject) : e.slot == 1 ? Type::Obj(api_.transform) : Type::Of(TK::Bool);
@@ -843,8 +1147,7 @@ private:
                         return;
                     }
         if (LocalVar* v = FindLocal(e.name)) {
-            if (inFieldInit_) { Error(e.loc, "Unknown name '" + e.name + "'"); return; }
-            v->used = true; e.bind = Bind::Local; e.slot = v->slot; e.type = v->type; return;
+            v->used = true; e.bind = v->captured ? Bind::Captured : Bind::Local; e.slot = v->slot; e.type = v->type; return;
         }
         if (BindOwnMember(e)) return;
         if (MethodIdx(e.name) >= 0) { Error(e.loc, "'" + e.name + "' is a method: call it with " + e.name + "()"); return; }
@@ -974,6 +1277,7 @@ private:
             Error(e.loc, TypeName(ot) + " has no '" + e.name + "'" + hint);
             return;
         }
+        if (ot.kind == TK::List || ot.kind == TK::Dict || ot.kind == TK::Pair) { CheckCollectionMember(e, ot); return; }
         if (ot.kind == TK::String && e.name == "Length") { Error(e.loc, "Text length isn't supported yet"); return; }
         Error(e.loc, TypeName(ot) + " values have no members");
     }
@@ -1016,7 +1320,52 @@ private:
         }
     }
 
+    // f(x) / f.Invoke(x): call the function `e.object` holds.
+    void CheckInvoke(Expr& e) {
+        for (auto& a : e.args) CheckExpr(*a);
+        const Type ft = e.object->type;
+        if (ft.kind == TK::Error) return;
+        const std::string who = e.object->kind == EK::Name || e.object->kind == EK::Member ? e.object->name : std::string("This value");
+        if (ft.kind != TK::Func) {
+            Error(e.loc, (who == "This value" ? who : "'" + who + "'") + " is " + TypeName(ft) + ", not a function");
+            return;
+        }
+        if (e.nullCond && !CanBeNull(ft)) return;
+        const Program::FuncSig sig = prog_.funcs[(std::size_t)ft.id];
+        if (e.args.size() != sig.params.size()) {
+            Error(e.loc, (who == "This value" ? std::string("This function") : who) + " takes " + Values(sig.params.size()) + ", not " + std::to_string(e.args.size()));
+            return;
+        }
+        for (std::size_t i = 0; i < e.args.size(); ++i) Expect(*e.args[i], sig.params[i], "Value " + std::to_string(i + 1));
+        e.bind = Bind::Invoke;
+        e.type = sig.ret;
+    }
+    // Turn `name(...)` (or `obj.name(...)`) into calling the function stored in that variable or field.
+    void AsInvoke(Expr& e, ExprPtr receiver) {
+        auto f = std::make_unique<Expr>();
+        f->kind = receiver ? EK::Member : EK::Name;
+        f->loc = e.loc;
+        f->name = e.name;
+        f->object = std::move(receiver);
+        f->nullCond = e.nullCond;
+        e.nullCond = false;
+        e.object = std::move(f);
+        e.name = "Invoke";
+        CheckExpr(*e.object);
+        CheckInvoke(e);
+    }
+
     void CheckCall(Expr& e) {
+        if (e.bind == Bind::Invoke) {   // f(x)(y), xs[0](): the parser marked it
+            e.bind = Bind::None;
+            CheckExpr(*e.object);
+            CheckInvoke(e);
+            return;
+        }
+        if (!e.object && e.typeArg.name.empty() && (FindLocal(e.name) || (FieldIndex(e.name) >= 0 && MethodIdx(e.name) < 0))) {
+            AsInvoke(e, nullptr);   // a variable or field holding a function
+            return;
+        }
         if (inFieldInit_ && !e.object) { Error(e.loc, "A field's starting value can't call methods: set it up in Start()"); return; }
         // GetComponent<T>() (on this object or another)
         if (e.name == "GetComponent") { CheckGetComponent(e); return; }
@@ -1028,6 +1377,11 @@ private:
                 return;
             }
             const bool viaClass = e.object && e.object->kind == EK::Name;
+            if (e.object && MethodIdx(e.name) < 0 && FieldIndex(e.name) >= 0) {   // this.onHit(): a field holding a function
+                ExprPtr recv = std::move(e.object);
+                AsInvoke(e, std::move(recv));
+                return;
+            }
             if (e.object) e.object.reset();
             if (e.name == "Destroy") {
                 if (inFieldInit_) { Error(e.loc, "A field's starting value can't destroy things"); return; }
@@ -1055,12 +1409,41 @@ private:
             for (auto& a : e.args) CheckExpr(*a);
             if (viaClass && !m.isStatic) { Error(e.loc, "'" + e.name + "' isn't static: call it without " + cls_->name + "."); return; }
             if (!m.isStatic && RejectInStatic(e.name, e.loc)) return;
+            if (!m.isStatic) UsesSelf();
             if (!ArgsFit(e, m)) return;
             e.bind = Bind::Method; e.slot = mi; e.type = m.retType;
             return;
         }
         int typeId = -1;
         int r = Receiver(*e.object, typeId);
+        if (r == 0 && e.object->type.kind == TK::Func) {
+            if (e.name != "Invoke") {
+                for (auto& a : e.args) CheckExpr(*a);
+                Error(e.loc, "A function has no '" + e.name + "': call it with Invoke(...) or (...)");
+                return;
+            }
+            CheckInvoke(e);
+            return;
+        }
+        if (r == 0 && e.object->type.kind == TK::Class && !e.nullCond) {   // obj.onHit(): a public field holding a function
+            ClassDecl& k = prog_.classes[(std::size_t)e.object->type.id];
+            bool method = false;
+            for (auto& m : k.methods) if (!m.isCtor && m.name == e.name) method = true;
+            for (std::size_t i = 0; i < k.fields.size() && !method; ++i) {
+                FieldDecl& f = k.fields[i];
+                if (f.name != e.name || f.resolved.kind != TK::Func) continue;
+                if (!f.isPublic && &k != cls_) { Error(e.loc, "'" + e.name + "' is private to " + k.name + ": make it public to use it here"); return; }
+                f.read = true;
+                auto m = std::make_unique<Expr>();   // obj.field, its receiver already checked
+                m->kind = EK::Member; m->loc = e.loc; m->name = e.name;
+                m->object = std::move(e.object);
+                m->bind = Bind::ObjField; m->slot = (int)i; m->type = f.resolved;
+                e.object = std::move(m);
+                e.name = "Invoke";
+                CheckInvoke(e);
+                return;
+            }
+        }
         for (auto& a : e.args) CheckExpr(*a);
         if (r < 0 || BadNullCond(e, r)) return;
         if (r == 3) { Error(e.loc, prog_.enums[(std::size_t)typeId].name + " has no method '" + e.name + "'"); return; }
@@ -1081,6 +1464,11 @@ private:
             return;
         }
         const Type& ot = e.object->type;
+        if (ot.kind == TK::List || ot.kind == TK::Array) {
+            const Type elem = ot.kind == TK::List ? Gen(ot).a : prog_.arrays[(std::size_t)ot.id];
+            if (CheckLinq(e, ot, elem)) return;
+        }
+        if (ot.kind == TK::List || ot.kind == TK::Dict) { CheckCollectionCall(e, ot); return; }
         if (ot.kind == TK::Class) {
             ClassDecl& k = prog_.classes[(std::size_t)ot.id];
             std::vector<std::string> opts;
@@ -1134,12 +1522,164 @@ private:
         } else {
             e.object.reset();
             if (RejectOutsideComponent("GetComponent", e.loc) || RejectInStatic("GetComponent", e.loc)) return;
+            UsesSelf();
         }
         e.bind = Bind::GetComponent; e.slot = ti; e.type = Type::Obj(ti);
     }
 
+    // xs.Count, d.Keys / d.Values, kv.Key / kv.Value.
+    void CheckCollectionMember(Expr& e, const Type& ot) {
+        const Program::Generic& g = Gen(ot);
+        std::vector<std::string> opts;
+        if (ot.kind == TK::Pair) {
+            if (e.name == "Key") { e.bind = Bind::PairKey; e.type = g.a; return; }
+            if (e.name == "Value") { e.bind = Bind::PairValue; e.type = g.b; return; }
+            opts = {"Key", "Value"};
+        } else {
+            if (e.name == "Count") { e.bind = Bind::CollCount; e.type = Type::Of(TK::Int); return; }
+            opts = {"Count"};
+            if (ot.kind == TK::Dict) {
+                if (e.name == "Keys") { e.bind = Bind::DictKeys; e.type = prog_.GenericOf(TK::List, g.a); return; }
+                if (e.name == "Values") { e.bind = Bind::DictValues; e.type = prog_.GenericOf(TK::List, g.b); return; }
+                opts.push_back("Keys"); opts.push_back("Values");
+            }
+        }
+        std::string hint = Suggest(e.name, opts);
+        if (hint.empty() && ot.kind != TK::Pair && (e.name == "Length" || e.name == "Size" || e.name == "count")) hint = ". Did you mean 'Count'?";
+        Error(e.loc, TypeName(ot) + " has no '" + e.name + "'" + hint);
+    }
+
+    // The LINQ-style methods of lists and arrays, and the List<T> methods that take
+    // a lambda. False when `e` isn't one of them (the plain List methods come next).
+    bool CheckLinq(Expr& e, const Type& ot, const Type& elem) {
+        const bool list = ot.kind == TK::List;
+        const std::string& n = e.name;
+        const Type B = Type::Of(TK::Bool), I = Type::Of(TK::Int), F = Type::Of(TK::Float);
+        const std::string who = n + "()";
+        auto count = [&](std::size_t lo, std::size_t hi) {
+            if (e.args.size() >= lo && e.args.size() <= hi) return true;
+            Error(e.loc, who + " takes " + (lo == hi ? Values(lo) : std::to_string(lo) + " or " + Values(hi)) + ", not " + std::to_string(e.args.size()));
+            return false;
+        };
+        auto pred = [&](std::size_t i) { Expect(*e.args[i], prog_.FuncOf({elem}, B), who + "'s condition"); };
+        auto bind = [&](CollOp op, const Type& ret) { e.bind = Bind::CollMethod; e.member = (int)op; e.type = ret; return true; };
+        if (n == "Where" || (list && n == "FindAll")) {
+            if (count(1, 1)) pred(0);
+            return bind(n == "Where" ? CollOp::Where : CollOp::FindAll, prog_.GenericOf(TK::List, elem));
+        }
+        if (n == "Select") {
+            if (!count(1, 1)) return true;
+            const Type f = InferLambda(*e.args[0], {elem}, who);
+            if (f.kind == TK::Error) return true;
+            const Type r = prog_.funcs[(std::size_t)f.id].ret;
+            if (r.kind == TK::Void) { Error(e.args[0]->loc, "Select needs a lambda that gives a value, like x => x * 2"); return true; }
+            return bind(CollOp::Select, prog_.GenericOf(TK::List, r));
+        }
+        if (n == "OrderBy" || n == "OrderByDescending") {
+            if (!count(1, 1)) return true;
+            const Type f = InferLambda(*e.args[0], {elem}, who);
+            if (f.kind == TK::Error) return true;
+            const Type k = prog_.funcs[(std::size_t)f.id].ret;
+            if (!k.IsNumeric() && k.kind != TK::String && k.kind != TK::Enum) {
+                Error(e.args[0]->loc, n + " needs a key it can sort (a number, text or an enum), like x => x.distance, not " + TypeName(k));
+                return true;
+            }
+            return bind(n == "OrderBy" ? CollOp::OrderBy : CollOp::OrderByDescending, prog_.GenericOf(TK::List, elem));
+        }
+        static const std::pair<const char*, CollOp> picks[] = {
+            {"First", CollOp::First}, {"FirstOrDefault", CollOp::FirstOrDefault}, {"Last", CollOp::Last}, {"LastOrDefault", CollOp::LastOrDefault}};
+        for (auto& pk : picks)
+            if (n == pk.first) {
+                if (count(0, 1) && e.args.size() == 1) pred(0);
+                return bind(pk.second, elem);
+            }
+        if (n == "Any" || n == "All" || n == "Count" || (list && n == "Exists")) {
+            const bool needs = n == "All" || n == "Exists";
+            if (count(needs ? 1 : 0, 1) && e.args.size() == 1) pred(0);
+            const CollOp op = n == "Any" || n == "Exists" ? CollOp::Any : n == "All" ? CollOp::All : CollOp::Count;
+            return bind(op, op == CollOp::Count ? I : B);
+        }
+        if (n == "Sum" || n == "Min" || n == "Max" || n == "Average") {
+            if (!count(0, 1)) return true;
+            Type v = elem;
+            if (e.args.size() == 1) {
+                const Type f = InferLambda(*e.args[0], {elem}, who);
+                if (f.kind == TK::Error) return true;
+                v = prog_.funcs[(std::size_t)f.id].ret;
+            }
+            if (!v.IsNumeric()) {
+                Error(e.loc, who + " works on numbers" + (e.args.empty() ? ": give it the number to use, like xs." + n + "(x => x.score)" : ", not " + TypeName(v)));
+                return true;
+            }
+            const CollOp op = n == "Sum" ? CollOp::Sum : n == "Min" ? CollOp::Min : n == "Max" ? CollOp::Max : CollOp::Average;
+            return bind(op, op == CollOp::Average ? F : v);
+        }
+        if (n == "ToList") { count(0, 0); return bind(CollOp::ToList, prog_.GenericOf(TK::List, elem)); }
+        if (!list && n == "ToArray") { count(0, 0); return bind(CollOp::ListToArray, ot); }
+        if (!list && n == "Contains") { if (count(1, 1)) Expect(*e.args[0], elem, who); return bind(CollOp::ListContains, B); }
+        if (!list) return false;
+        if (n == "Find") { if (count(1, 1)) pred(0); return bind(CollOp::Find, elem); }
+        if (n == "FindIndex") { if (count(1, 1)) pred(0); return bind(CollOp::FindIndex, I); }
+        if (n == "RemoveAll") { if (count(1, 1)) pred(0); return bind(CollOp::RemoveAll, I); }
+        if (n == "ForEach") { if (count(1, 1)) Expect(*e.args[0], prog_.FuncOf({elem}, Type::Of(TK::Void)), who); return bind(CollOp::ForEach, Type::Of(TK::Void)); }
+        if (n == "Sort" && e.args.size() == 1) {   // xs.Sort((a, b) => a.score - b.score)
+            Expect(*e.args[0], prog_.FuncOf({elem, elem}, I), "Sort's comparison");
+            return bind(CollOp::SortBy, Type::Of(TK::Void));
+        }
+        return false;
+    }
+
+    // The methods of List<T> and Dictionary<K, V>, with the old runtime's names.
+    void CheckCollectionCall(Expr& e, const Type& ot) {
+        const Program::Generic& g = Gen(ot);
+        const Type T0 = g.a, V = g.b, I = Type::Of(TK::Int), B = Type::Of(TK::Bool), N = Type::Of(TK::Void);
+        struct M { const char* name; CollOp op; std::vector<Type> params; Type ret; };
+        std::vector<M> ms;
+        if (ot.kind == TK::List) ms = {
+            {"Add", CollOp::ListAdd, {T0}, N}, {"AddRange", CollOp::ListAddRange, {ot}, N}, {"Insert", CollOp::ListInsert, {I, T0}, N},
+            {"Remove", CollOp::ListRemove, {T0}, B}, {"RemoveAt", CollOp::ListRemoveAt, {I}, N}, {"Clear", CollOp::ListClear, {}, N},
+            {"Contains", CollOp::ListContains, {T0}, B}, {"IndexOf", CollOp::ListIndexOf, {T0}, I}, {"Sort", CollOp::ListSort, {}, N},
+            {"Reverse", CollOp::ListReverse, {}, N}, {"ToArray", CollOp::ListToArray, {}, prog_.ArrayOf(T0)}};
+        else ms = {
+            {"Add", CollOp::DictAdd, {T0, V}, N}, {"TryAdd", CollOp::DictTryAdd, {T0, V}, B}, {"Remove", CollOp::DictRemove, {T0}, B},
+            {"ContainsKey", CollOp::DictContainsKey, {T0}, B}, {"ContainsValue", CollOp::DictContainsValue, {V}, B},
+            {"Clear", CollOp::DictClear, {}, N}, {"GetValueOrDefault", CollOp::DictGetValueOrDefault, {T0, V}, V}};
+        for (const M& m : ms) {
+            if (e.name != m.name) continue;
+            std::size_t want = m.params.size();
+            if (m.op == CollOp::DictGetValueOrDefault && e.args.size() == 1) want = 1;   // the default value is optional
+            if (e.args.size() != want) {
+                Error(e.loc, e.name + "() takes " + Values(want) + ", not " + std::to_string(e.args.size()));
+                return;
+            }
+            for (std::size_t i = 0; i < want; ++i) Expect(*e.args[i], m.params[i], m.name);
+            if (m.op == CollOp::ListSort && !T0.IsNumeric() && T0.kind != TK::String && T0.kind != TK::Enum) {
+                Error(e.loc, "Sort() works on numbers, text and enums, not " + TypeName(T0));
+                return;
+            }
+            e.bind = Bind::CollMethod; e.member = (int)m.op; e.type = m.ret;
+            return;
+        }
+        std::vector<std::string> opts;
+        for (const M& m : ms) opts.push_back(m.name);
+        Error(e.loc, TypeName(ot) + " has no method '" + e.name + "'" + Suggest(e.name, opts));
+    }
+
+    // new List<int>() / new List<int> { 1, 2 } / new Dictionary<string, int>()
+    void CheckNewCollection(Expr& e) {
+        const Type t = ResolveType(e.typeArg, false);
+        if (t.kind == TK::Error) return;
+        if (t.kind != TK::List && t.kind != TK::Dict) { Error(e.loc, "'new " + TypeName(t) + "' isn't something you can make"); return; }
+        if (!e.hasInit && !e.args.empty()) { Error(e.loc, "new " + TypeName(t) + "() takes no values"); return; }
+        if (e.hasInit && t.kind == TK::Dict) { Error(e.loc, "Fill a Dictionary with Add or d[key] = value"); return; }
+        for (auto& a : e.args) Expect(*a, Gen(t).a, "This item");
+        e.bind = Bind::NewCollection; e.type = t;
+    }
+
     void CheckNew(Expr& e) {
         for (auto& a : e.args) CheckExpr(*a);
+        if (!e.typeArg.args.empty() || e.typeArg.name == "List" || e.typeArg.name == "Dictionary") { CheckNewCollection(e); return; }
+        if (e.hasInit) { Error(e.loc, "{ ... } after new only fills a List: set the fields after new " + e.typeArg.name + "()"); return; }
         if (int ci = ClassIndex(e.typeArg.name); ci >= 0) { CheckNewObject(e, ci); return; }
         if (e.typeArg.name != "Vector3") {
             if (api_.Find(e.typeArg.name) >= 0 || e.typeArg.name == "GameObject")
@@ -1188,7 +1728,10 @@ private:
         e.type = t;
     }
 
-    static bool CanBeNull(const Type& t) { return t.kind == TK::Object || t.kind == TK::Array || t.kind == TK::Class; }
+    static bool CanBeNull(const Type& t) {
+        return t.kind == TK::Object || t.kind == TK::Array || t.kind == TK::Class || t.kind == TK::List || t.kind == TK::Dict ||
+               t.kind == TK::Func;
+    }
     static std::string Article(const std::string& n) { return (std::string("aeiouAEIOU").find(n[0]) != std::string::npos ? "an " : "a ") + n; }
     // ?. only on something that might be null: an object or an array.
     bool BadNullCond(Expr& e, int receiverKind) {
@@ -1251,10 +1794,10 @@ private:
                     e.promoteL = a.kind == TK::Int && b.kind == TK::Float; e.promoteR = b.kind == TK::Int && a.kind == TK::Float; return;
                 }
                 if (a == b && (a.kind == TK::Bool || a.kind == TK::String || a.kind == TK::Vector3 || a.kind == TK::Enum)) return;
-                if ((a.kind == TK::Array || a.kind == TK::Null) && (b.kind == TK::Array || b.kind == TK::Null) && a.kind != b.kind) return;
-                if (a.kind == TK::Array && a == b) return;
-                if ((a.kind == TK::Class || a.kind == TK::Null) && (b.kind == TK::Class || b.kind == TK::Null) && a.kind != b.kind) return;
-                if (a.kind == TK::Class && a == b) return;
+                // Arrays, lists, dictionaries and class objects compare as references (or with null).
+                if (a.kind != TK::Object && b.kind != TK::Object && (CanBeNull(a) || CanBeNull(b)) &&
+                    (a == b || a.kind == TK::Null || b.kind == TK::Null))
+                    return;
                 if ((a.kind == TK::Object || a.kind == TK::Null) && (b.kind == TK::Object || b.kind == TK::Null)) {
                     if (a.kind == TK::Null && b.kind == TK::Null) { Error(e.loc, "Comparing null with null is always true"); return; }
                     if (a.kind == TK::Object && b.kind == TK::Object && a != b)
@@ -1277,7 +1820,7 @@ private:
         if (e.kind == EK::Index) return true;
         switch (e.bind) {
             case Bind::StaticField: case Bind::ObjField: return true;
-            case Bind::Local:
+            case Bind::Local: case Bind::Captured:
                 if (LocalVar* v = FindLocal(e.name); v && v->readOnly) {
                     Error(e.loc, "'" + e.name + "' is the foreach variable, so it can't be changed");
                     return false;
@@ -1306,7 +1849,7 @@ private:
             }
             case Bind::VecField: {
                 Expr& o = *e.object;
-                if (o.bind == Bind::Local || o.bind == Bind::Field || o.bind == Bind::VecField || o.bind == Bind::ObjField || o.kind == EK::Index)
+                if (o.bind == Bind::Local || o.bind == Bind::Captured || o.bind == Bind::Field || o.bind == Bind::VecField || o.bind == Bind::ObjField || o.kind == EK::Index)
                     return Assignable(o);
                 Error(e.loc, "This changes a copy, so it would do nothing: copy the vector into a variable, change ." +
                              e.name + ", then assign it back (e.g. var p = transform.position; p." + e.name + " = 1; transform.position = p;)");

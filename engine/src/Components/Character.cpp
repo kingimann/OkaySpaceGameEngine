@@ -357,7 +357,7 @@ void Character::AdvanceAnimClock(float dt) {
     float limit = m_gaitDir < 0.0f ? 80.0f : 100.0f;            // hysteresis around the side
     m_gaitDir = std::fabs(a) > limit ? -1.0f : 1.0f;
     float yaw = m_gaitDir < 0.0f ? (a > 0.0f ? a - 180.0f : a + 180.0f) : a;
-    if (!gait || m_gaitSpeed < 0.1f) yaw = 0.0f;
+    if ((!gait && anim != 7) || m_gaitSpeed < 0.1f) yaw = 0.0f;   // the crawl goes every way too
     float ek = 1.0f - std::exp(-10.0f * dt);
     m_travelYaw += (yaw - m_travelYaw) * ek;                    // where the feet actually step
     m_lowerYaw  += (clampf(yaw, -75.0f, 75.0f) - m_lowerYaw) * ek;   // how far the hips turn
@@ -457,6 +457,7 @@ void Character::DriveLocomotion(const Locomotion& l) {
     if (m_poseSource && m_poseSource->Live()) {   // the Animator's graph picks the state from these
         PoseSource::Movement m;
         m.speed = hs; m.run = run; m.crouch = l.crouch; m.prone = l.prone;
+        m.stance = l.stance >= 0.0f ? l.stance : (l.prone ? 2.0f : (l.crouch ? 1.0f : 0.0f));
         m.airTime = m_airT; m.verticalSpeed = l.velocity.y;
         m_poseSource->Move(m);
         return;

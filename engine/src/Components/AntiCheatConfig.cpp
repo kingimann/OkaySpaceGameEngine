@@ -80,6 +80,8 @@ bool AntiCheatConfig::Apply() {
         m_prev.rpcRulesFor = nm->anticheat.rpcRulesFor;
         m_prev.coversRpc = nm->anticheat.coversRpc;
         m_prev.onForgetPeer = nm->anticheat.onForgetPeer;
+        m_prev.onParkPeer = nm->anticheat.onParkPeer;
+        m_prev.onRestorePeer = nm->anticheat.onRestorePeer;
         m_prev.validateHit = nm->anticheat.validateHit;
         m_prev.installer = nm->anticheat.installer;
         m_prev.configError = nm->anticheat.configError;
@@ -153,6 +155,12 @@ bool AntiCheatConfig::Apply() {
     nm->anticheat.onForgetPeer = [sc](std::uint32_t peer) {
         for (auto* nv : sc->FindObjectsOfType<NetValidator>()) nv->ForgetPeer(peer);
     };
+    nm->anticheat.onParkPeer = [sc](std::uint32_t peer, const std::string& ident) {
+        for (auto* nv : sc->FindObjectsOfType<NetValidator>()) nv->Park(peer, ident);
+    };
+    nm->anticheat.onRestorePeer = [sc](std::uint32_t peer, const std::string& ident) {
+        for (auto* nv : sc->FindObjectsOfType<NetValidator>()) nv->Restore(peer, ident);
+    };
     // A hit claim that passed the server's own checks: the game's rules. The
     // code hook that was there first, then On Validate Hit graphs (Reject Hit;
     // Set Var hit_damage changes the damage), then on_validate_hit scripts
@@ -224,6 +232,8 @@ void AntiCheatConfig::Uninstall() {
         m_nm->anticheat.rpcRulesFor = m_prev.rpcRulesFor;
         m_nm->anticheat.coversRpc = m_prev.coversRpc;
         m_nm->anticheat.onForgetPeer = m_prev.onForgetPeer;
+        m_nm->anticheat.onParkPeer = m_prev.onParkPeer;
+        m_nm->anticheat.onRestorePeer = m_prev.onRestorePeer;
         m_nm->anticheat.validateHit = m_prev.validateHit;
         m_nm->anticheat.installer = m_prev.installer;
         m_nm->anticheat.configError = m_prev.configError;

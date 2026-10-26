@@ -38,6 +38,12 @@ struct AntiCheatSettings {
     bool  enabled = false;
     /// Prefab paths clients may __spawn / SpawnOwned. Empty = clients may spawn nothing.
     std::vector<std::string> spawnAllowlist;
+    /// Spawns a client may make per second (0 = unlimited).
+    int   maxSpawnsPerSecond = 5;
+    /// SpawnOwned objects a client may have at once (0 = unlimited).
+    int   maxLiveSpawnsPerPeer = 50;
+    /// How far from the sender a spawn may be placed (0 = anywhere).
+    float spawnRadius = 0.0f;
     /// Fastest a client's NetworkSync object may move, units / second (0 = no check).
     float maxSyncSpeed = 0.0f;
     /// SyncVar writes a client may make per second (0 = unlimited).
@@ -50,6 +56,9 @@ struct AntiCheatSettings {
     /// client writing a key that starts with one is refused (forged syncvar)
     /// and told the server's value. "srv." keys are always server-only.
     std::vector<std::string> serverVars;
+    /// When any is set, clients may only write SyncVar keys starting with one
+    /// of these ("player.", "chat."); every other key is the server's.
+    std::vector<std::string> clientVars;
     /// Calls a client may make per second to any one RPC (0 = unlimited). A
     /// NetValidator with its own calls/s for that RPC takes its place.
     int   maxRpcsPerSecond = 0;
@@ -103,7 +112,8 @@ struct AntiCheatSettings {
     ///   maxSyncVarsPerSecond 20 | kickAfterViolations 5 | ownerOnlySyncVars true
     ///   requireEncryption true | ticketKey <base64url> | ticketAudience <server id>
     ///   maxRpcsPerSecond 30 | maxRpcBytes 4096 | maxClockDrift 0.05
-    ///   serverVar <key prefix> (repeatable)
+    ///   serverVar <key prefix> (repeatable) | clientVar <key prefix> (repeatable)
+    ///   maxSpawnsPerSecond 5 | maxLiveSpawnsPerPeer 50 | spawnRadius 0
     ///   hitOriginTolerance 2 | hitTolerance 1 | maxHitRange 50 | hitDamage 10 | hitLineOfSight true
     ///   weapon <name> (repeatable)
     ///   hitsNeedMoveCheck true
@@ -163,9 +173,14 @@ public:
     /// Objects the server itself drives (Authority::Host on the server): clients
     /// may never send their transform / despawn them.
     std::function<bool(const std::string& netId)> serverOwns;
+    /// Where a peer is on the server (for spawnRadius); false if not known.
+    std::function<bool(std::uint32_t peer, Vec3& at)> positionOf;
     /// Networked objects that exist on the server. Transforms for any other id
     /// are dropped quietly (nobody could apply them) and claim nothing.
     std::function<bool(const std::string& netId)> exists;
+    /// May a client claim this unowned object by driving it (its NetworkSync's
+    /// clientClaimable)? Without this hook, or false: the object is the server's.
+    std::function<bool(const std::string& netId)> claimable;
     /// Extra per-RPC check (e.g. per-RPC rules from game code): false refuses it.
     std::function<bool(std::uint32_t peer, const std::string& name, const std::string& data)> validateRpc;
     /// Called for every refusal.
@@ -182,6 +197,16 @@ public:
     /// Called when a peer is forgotten (left, kicked, timed out), so per-peer
     /// state kept elsewhere (NetValidator) can go too.
     std::function<void(std::uint32_t peer)> onForgetPeer;
+    /// A leaving peer's state kept elsewhere (NetValidator budgets) is parked
+    /// under `ident` / taken back by the peer that rejoins as `ident`.
+    std::function<void(std::uint32_t peer, const std::string& ident)> onParkPeer, onRestorePeer;
+    /// A peer is leaving (before ForgetPeer): keep its violation count, and its
+    /// budgets elsewhere (onParkPeer), under `ident` (its account, else its
+    /// address) for kParkSeconds, so leaving and rejoining resets nothing.
+    void ParkPeer(std::uint32_t peer, const std::string& ident);
+    /// A peer joined as `ident`: it takes back what that ident left behind.
+    void RestorePeer(std::uint32_t peer, const std::string& ident);
+    static constexpr double kParkSeconds = 300.0;
     /// Who installed the handlers above (an AntiCheatConfig's token; 0 = code).
     /// Lets a component remove only what it put there.
     std::uint64_t installer = 0;
@@ -222,6 +247,7 @@ private:
         int violations = 0;
         float violationTimer = 0.0f;
         int syncVars = 0;
+        int spawns = 0;   // this second
         float syncVarTimer = 0.0f;
         std::unordered_map<std::string, int> rpcCalls;   // this second, per RPC name
     };
@@ -235,6 +261,8 @@ private:
     std::unordered_map<std::uint32_t, PeerInfo> m_peers;
     std::unordered_map<std::string, std::uint32_t> m_owner;   // netId -> owning peer
     std::unordered_map<std::string, Track> m_track;           // netId -> last accepted position
+    struct Parked { int violations = 0; float violationTimer = 0.0f; double at = 0.0; };
+    std::unordered_map<std::string, Parked> m_parked;         // ident -> what a peer that left had
     int m_total = 0;
     double m_clock = 0.0;
 

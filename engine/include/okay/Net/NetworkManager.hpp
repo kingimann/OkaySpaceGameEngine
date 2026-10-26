@@ -615,6 +615,7 @@ private:
         std::string name;
         std::string room;
         std::string userId;   // verified identity (from the token verifier), or ""
+        std::string ident;    // who it is across reconnects: "u:<account>", else "a:<address>"
         net::SecureChannel secure;   // per-client encrypted session (if negotiated)
         std::unordered_map<std::uint32_t, PeerState> sentStates;  // last state sent (delta snapshots)
         bool hasState = false;   // true once this client has reported its position
@@ -843,6 +844,11 @@ private:
 
     // Server-only
     float m_serverTime = 0.0f;        // seconds since the server started
+    // Server: accounts and addresses the anti-cheat kicked, refused until `until`
+    // (m_serverTime); each repeat doubles the wait, up to an hour.
+    struct KickBan { float until = 0.0f; int strikes = 0; };
+    std::unordered_map<std::string, KickBan> m_kickBans;
+    float KickBanLeft(const std::string& ident) const;
     int   m_hostScore = 0;
     bool  m_matchOn = false, m_matchEnded = false;
     float m_matchStartAt = 0.0f, m_matchEndAt = 0.0f;

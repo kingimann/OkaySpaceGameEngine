@@ -13,6 +13,7 @@
 
 namespace okay {
 
+class AnimStateMachine;
 class Component;
 
 class AnimBackend {
@@ -66,6 +67,10 @@ public:
     /// Once a frame after the state machine's update: a backend that has no
     /// update of its own advances its single clip and crossfade here.
     virtual void  Advance(float dt) { (void)dt; }
+    /// Once a frame before the state machine tests its transitions: a backend
+    /// whose body has its own idea of the state (the Character's `anim`) syncs
+    /// the machine with it here.
+    virtual void  BeginFrame(AnimStateMachine& sm) { (void)sm; }
 };
 
 } // namespace okay

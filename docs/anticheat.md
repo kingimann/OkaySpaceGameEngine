@@ -39,7 +39,8 @@ ticketAudience arena-1              # this server's id in tickets ("" = any)
 maxClockDrift 0.05                  # a client's game clock may run 5% off; 0 = no check
 # Gameplay
 serverVar score                     # SyncVar key prefixes only the server may write (repeatable)
-maxHitRange 60                      # hit claims: the longest shot (0 = any)
+maxHitRange 60                      # hit claims: the longest shot (0 = any; the component's default is 300)
+weapon rifle                        # a weapon clients may claim hits with, besides Net Validator ones (repeatable)
 hitDamage 10                        # what a hit does, unless the game says otherwise
 ```
 
@@ -221,7 +222,12 @@ check them.
   origin, direction)` (`net_hit(...)` in OkayScript). It sends
   `"__hit" = "<target sync id>|<weapon>|<tick>|ox oy oz|dx dy dz"`, which only
   the server reads and is never relayed. The server checks the claim against
-  its own view, with or without the anti-cheat on:
+  its own view. With the anti-cheat on, a claim must name a known weapon (one
+  a Net Validator for `hit/<weapon>` covers, or a `weapon` in the rules; any
+  other does nothing and is logged once per name), and each claim counts
+  against `maxRpcsPerSecond` unless that validator sets its own rate. With the
+  anti-cheat off, a client gets 20 claims a second. Then, with or without the
+  anti-cheat on:
   1. the shooter isn't dead (if its avatar on the server has a Health);
   2. the weapon's fire rate and ammo, from a Net Validator for `hit/<weapon>`
      (cooldown and budget, as above);

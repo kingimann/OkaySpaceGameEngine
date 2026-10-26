@@ -35,6 +35,7 @@ struct AuthGame {
         host = hs.CreateGameObject("Net")->AddComponent<NetworkManager>();
         host->netTickRate = 30.0f;
         host->authoritativeMovement = authoritative;
+        host->spawnablePrefabs = {prefab};
         host->maxMessagesPerSecond = 0;
         host->interpolationRate = 0.0f;
         if (!host->StartServer(0)) return false;
@@ -79,7 +80,7 @@ int main() {
 
     // A player: CharacterController3D (5 u/s, no rigidbody, so it moves the
     // transform directly).
-    const std::string prefab = "/tmp/okay_auth_pawn.okayprefab";
+    const std::string prefab = "okay_auth_pawn.okayprefab";
     {
         Scene t("T");
         GameObject* p = t.CreateGameObject("Pawn");
@@ -275,7 +276,7 @@ int main() {
 
     // ---- ... and they play server-authoritative: the server walks them by the commands --
     auto authPawn = [&](const char* kind) {
-        const std::string pf = std::string("/tmp/okay_auth_") + kind + ".okayprefab";
+        const std::string pf = std::string("okay_auth_") + kind + ".okayprefab";
         {
             Scene t("T");
             GameObject* p = t.CreateGameObject("Pawn");
@@ -339,7 +340,7 @@ int main() {
         Scene a("A");
         auto* nm = a.CreateGameObject("Net")->AddComponent<NetworkManager>();
         nm->authoritativeMovement = true;
-        const std::string path = "/tmp/okay_auth_move.okayscene";
+        const std::string path = "okay_auth_move.okayscene";
         CHECK(SceneSerializer::SaveToFile(a, path));
         Scene b("B");
         CHECK(SceneSerializer::LoadFromFile(b, path));

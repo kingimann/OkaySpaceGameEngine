@@ -1,6 +1,8 @@
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Net/SessionTicket.hpp"
 #include "AntiCheatCrypto.hpp"   // shared/: ed25519 for the host identity (#269)
+#include "OfficialGame.hpp"      // shared/: SafeRelPath / ResolveInside for network prefab paths
+#include "okay/Components/NetworkPlayerSpawner.hpp"
 #include <cstdio>
 #include <ctime>
 #include <unordered_set>
@@ -65,6 +67,7 @@ namespace {
     // from every Msg type (1..16) and from a plaintext message's leading type byte.
     constexpr std::uint8_t kEncEnvelope = 0xEE;
     constexpr float kClientTimeout = 5.0f;
+    constexpr int kHitClaimsPerSecond = 20;    // a client's hit claims without the anti-cheat on
     constexpr float kReliableResend = 0.25f;   // resend an unacked message this often
 
     std::vector<std::uint8_t> BuildReliable(std::uint32_t seq, const std::string& channel,
@@ -150,6 +153,8 @@ bool NetworkManager::StartServer(std::uint16_t port) {
     InitServerState();
     OKAY_INFO("net: server '", serverName, "' listening on UDP ", port,
               " (max ", maxPlayers, ")");
+    OKAY_INFO("net: clients may spawn only the ", spawnablePrefabs.size(),
+              " Spawnable prefab(s) and the Player Spawner's prefab (the spawn allowlist when the anti-cheat is on)");
     return true;
 }
 
@@ -579,6 +584,9 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
         // attach a follower NetworkSync so its transform/animation track the
         // authority that spawned it. (The same parser the anti-cheat checks with.)
         const SpawnMessage m = ParseSpawnMessage(data);
+        // The server checked a client's spawn before relaying it; a client
+        // checks what the host sends, since nothing on the wire is trusted.
+        if (m_mode == Mode::Client && !SpawnPathOk(from, m.path, false)) return;
         const std::string& netId = m.netId;
         if (GameObject* g = SceneSerializer::InstantiateFromFile(*s, m.path)) {
             if (g->transform) g->transform->localPosition = m.pos;
@@ -1158,6 +1166,9 @@ void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
         anticheat.Report(shooter, CheatKind::HitRejected, why);
         AntiCheatAfterRefusal(shooter);   // (may kick: c is gone after this)
     };
+    // Without the anti-cheat's RPC limit, a fixed one: a client can't make the
+    // server raycast and rewind for a flood of claims.
+    if (!anticheat.settings.enabled && ++c.hitClaims > kHitClaimsPerSecond) { refuse("too many hit claims"); return; }
     std::vector<std::string> part;
     for (std::size_t a = 0;;) {
         const std::size_t b = data.find('|', a);
@@ -1182,6 +1193,24 @@ void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
     claim.direction = dir * (1.0f / dir.Magnitude());
     claim.damage = anticheat.settings.hitDamage;
     const AntiCheatSettings& s = anticheat.settings;
+    if (s.enabled) {
+        // Only a weapon the game knows (a Net Validator for "hit/<weapon>", or
+        // a "weapon" in the rules) may claim, so an invented name can't dodge
+        // the fire rate and ammo; and every claim counts against the RPC rate.
+        // An unknown one does nothing but isn't a violation: a game that
+        // hasn't listed its weapons yet mustn't get honest players kicked.
+        if (!anticheat.KnownWeapon(claim.weapon)) {
+            ++m_hitsRefused;
+            if (m_unknownWeapons.size() < 32 && m_unknownWeapons.insert(claim.weapon).second) {
+                std::string w = claim.weapon;
+                for (char& ch : w) if ((unsigned char)ch < 0x20 || ch == 0x7f) ch = '?';
+                OKAY_WARN("anti-cheat: refused hits with weapon \"", w, "\": add a Net Validator for hit/", w,
+                          " or \"weapon ", w, "\" to the rules");
+            }
+            return;
+        }
+        if (!anticheat.CountRpc(shooter, "hit/" + claim.weapon)) { ++m_hitsRefused; AntiCheatAfterRefusal(shooter); return; }
+    }
 
     // The shooter is alive (when its avatar has health).
     if (auto r = m_remotes.find(shooter); r != m_remotes.end() && r->second)
@@ -1408,9 +1437,63 @@ bool NetworkManager::ClientMessageOk(const Client& from, const std::string& chan
     }
     if (channel == "__xform" && m_pawnOwner.count(data.substr(0, data.find('|'))))
         return false;   // a player the server moves: its position is the server's, never the client's
-    if (channel == "__spawn" || channel == "__despawn" || channel == "__xform") return true;
+    if (channel == "__spawn") return SpawnPathOk(from.id, ParseSpawnMessage(data).path, true);
+    if (channel == "__despawn" || channel == "__xform") return true;
     if (channel.size() > 6 && channel.compare(0, 6, "__rpc/") == 0) return true;
     return false;   // __match_start and any other reserved channel: host only
+}
+
+namespace {
+// "a\\b" and "./a/b" name the same prefab as "a/b".
+std::string NetPrefabKey(std::string p) {
+    std::replace(p.begin(), p.end(), '\\', '/');
+    while (p.rfind("./", 0) == 0) p.erase(0, 2);
+    return p;
+}
+} // namespace
+
+bool NetworkManager::IsSafeNetworkPrefabPath(const std::string& path, std::string* why) {
+    namespace fs = std::filesystem;
+    auto no = [&](const char* w) { if (why) *why = w; return false; };
+    // A leading separator is an absolute, UNC, \\?\ or \\.\ path; any other
+    // backslash is just a Windows separator.
+    if (path.empty() || path[0] == '/' || path[0] == '\\') return no("not a relative path");
+    const std::string rel = NetPrefabKey(path);
+    if (!okayofficial::SafeRelPath(rel, why)) return false;   // "..", drives, device names...
+    const std::string ext = ".okayprefab";
+    if (rel.size() <= ext.size() || okayofficial::Lower(rel.substr(rel.size() - ext.size())) != ext)
+        return no("not a .okayprefab");
+    std::error_code ec;
+    const fs::path cwd = fs::current_path(ec);   // where prefab paths are opened from
+    const fs::path full = ec ? fs::path() : okayofficial::ResolveInside(cwd, rel);
+    if (full.empty()) return no("outside the game folder");
+    if (!fs::is_regular_file(full, ec)) return no("not a file");
+    const std::uintmax_t size = fs::file_size(full, ec);
+    if (ec || size > kMaxNetworkPrefabBytes) return no("too large");
+    return true;
+}
+
+bool NetworkManager::ClientMaySpawn(const std::string& path) const {
+    const std::string key = NetPrefabKey(path);
+    for (const auto& p : spawnablePrefabs) if (NetPrefabKey(p) == key) return true;
+    if (const Scene* s = GetScene())
+        for (const auto& go : s->Objects())
+            if (auto* sp = go->GetComponent<NetworkPlayerSpawner>())
+                if (!sp->prefabFile.empty() && NetPrefabKey(sp->prefabFile) == key) return true;
+    return false;
+}
+
+bool NetworkManager::SpawnPathOk(std::uint32_t from, const std::string& path, bool fromClient) const {
+    std::string why;
+    if (IsSafeNetworkPrefabPath(path, &why)) {
+        // With the anti-cheat on, its allowlist judges a client's prefab next.
+        if (!fromClient || anticheat.settings.enabled || ClientMaySpawn(path)) return true;
+        why = "clients may not spawn it here (add it to the NetworkManager's Spawnable prefabs)";
+    }
+    if (m_spawnRefusalLogged.size() > 256) m_spawnRefusalLogged.clear();
+    if (m_spawnRefusalLogged.insert(from).second)
+        OKAY_WARN("net: refused a spawn of \"", okayofficial::CleanText(path, 120, false), "\" from peer ", from, ": ", why);
+    return false;
 }
 
 bool NetworkManager::AntiCheatAllows(std::uint32_t peer, const std::string& channel, const std::string& data) {
@@ -2042,7 +2125,7 @@ void NetworkManager::ServerTick(float dt) {
     for (auto it = m_clients.begin(); it != m_clients.end();) {
         it->second.lastSeen += dt;
         it->second.stateAge += dt;
-        if ((it->second.msgTimer += dt) >= 1.0f) { it->second.msgTimer = 0.0f; it->second.msgCount = 0; }
+        if ((it->second.msgTimer += dt) >= 1.0f) { it->second.msgTimer = 0.0f; it->second.msgCount = 0; it->second.hitClaims = 0; }
         if ((it->second.violationTimer += dt) >= 60.0f) { it->second.violationTimer = 0.0f; it->second.violations = 0; }
         if (it->second.lastSeen > kClientTimeout) {
             std::uint32_t id = it->second.id;
@@ -2289,6 +2372,13 @@ void NetworkManager::ClientTick(float dt) {
         // Once our session is keyed the server seals everything: plaintext now
         // is someone else's (spoofing the server's address).
         if (!sealed && m_secure.Ready()) continue;
+        // In a sealed join (not the clear join an older or unencrypted host
+        // gets), the server's Welcome, Reject and Kicked come sealed under the
+        // JoinKey session; before that only its JoinKey and QueryInfo are in the
+        // clear. A plaintext one is a forgery that would skip the pin or end the
+        // join.
+        if (!sealed && encryption && net::SecureChannel::Available() && !m_legacyJoin &&
+            type != JoinKey && type != QueryInfo) continue;
         if (type == QueryInfo) {
             // The host's answer to "do you check sign-ins?" (before the join).
             if (m_authDecided || p.ReadString() != net::kQueryMagic || p.ReadU32() != m_authNonce) continue;
@@ -2346,7 +2436,9 @@ void NetworkManager::ClientTick(float dt) {
             m_serverName = p.ReadString();
             m_localUserId = p.ReadString();   // our verified identity ("" if anon)
             std::string serverPk = p.ReadString();   // server's encryption public key
-            if (encryption && net::SecureChannel::Available() && !serverPk.empty() && !m_secure.Ready())
+            // Only the clear join keys its session from the Welcome (an older
+            // host; never with a pin, which needs the sealed join).
+            if (m_legacyJoin && pinnedHostKey.empty() && !serverPk.empty() && !m_secure.Ready())
                 m_secure.Establish(std::vector<std::uint8_t>(serverPk.begin(), serverPk.end()),
                                    /*asServer=*/false);
             const std::uint8_t welcomeFlags = p.ReadU8();   // optional: absent from older servers

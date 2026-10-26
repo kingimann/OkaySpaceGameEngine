@@ -267,7 +267,7 @@ editor; items fire `on_drag_start/on_drag/on_drop` and targets fire
 | `net_msg_channel()` / `net_msg_data()` / `net_msg_from()` | The popped message |
 | `net_set("key", "value")` | Set a server-authoritative **synced variable** |
 | `net_get("key")` | Read a synced variable (same value on every peer) |
-| `net_spawn("prefab", x, y[, z])` | **Replicated spawn** — instantiate a prefab on every peer |
+| `net_spawn("prefab", x, y[, z])` | **Replicated spawn** — instantiate a prefab on every peer (a path relative to the game folder; from a client, one of the host's Spawnable prefabs) |
 
 ### Character animation (a Character or a Model Animator on this object, a child or a parent)
 | Function | Description |

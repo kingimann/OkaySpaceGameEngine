@@ -1,4 +1,5 @@
 #include "okay/Scene/SceneSerializer.hpp"
+#include "okay/Animation/HumanoidLibrary.hpp"
 #include "okay/Modeling/MeshAsset.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -694,6 +695,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             }
             out << "\n";
         }
+        bool anyMatch = false;
+        for (const auto& st : asm2->states) anyMatch = anyMatch || st.matchSpeed;
+        if (anyMatch) {   // blend trees that keep pace with the body's speed
+            out << "  animsmmatch " << asm2->states.size();
+            for (const auto& st : asm2->states) out << " " << (st.matchSpeed ? 1 : 0);
+            out << "\n";
+        }
     }
     if (auto* tr = go->GetComponent<Terrain>()) {
         out << "  terrain " << tr->resolution << " " << tr->size << " "
@@ -788,6 +796,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             s.hitDamage != d.hitDamage || s.hitLineOfSight != d.hitLineOfSight)
             out << "  anticheathit " << s.hitOriginTolerance << " " << s.hitTolerance << " " << s.maxHitRange
                 << " " << s.hitDamage << " " << (s.hitLineOfSight ? 1 : 0) << "\n";
+        for (const auto& w : s.weapons) out << "  anticheatweapon " << Quote(w) << "\n";
     }
     for (auto* nv : go->GetComponents<NetValidator>()) {
         out << "  netvalidator " << Quote(nv->rpc) << " " << nv->maxBytes << " " << nv->maxPerSecond
@@ -1968,6 +1977,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             out << " " << nm->netTickRate << " " << (nm->authoritativeMovement ? 1 : 0);
         if (tunedPrediction) out << " " << nm->reconcileRate << " " << nm->reconcileSnap;
         out << "\n";
+        for (const auto& pf : nm->spawnablePrefabs) out << "  netprefab " << Quote(pf) << "\n";
     }
     if (auto* wu = go->GetComponent<WorldUI>()) {
         out << "  worldui " << Quote(wu->text) << " "
@@ -2351,7 +2361,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
 
 std::string SceneSerializer::Serialize(const Scene& scene) {
     std::ostringstream out;
-    out << "okayscene 1\n";
+    out << "okayscene 2\n";
     out << "name " << Quote(scene.Name()) << "\n";
     if (!scene.uiFont.empty()) out << "uifont " << Quote(scene.uiFont) << "\n";
     out << "gravity " << scene.physics().gravity.x << " " << scene.physics().gravity.y << "\n";
@@ -2994,6 +3004,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     }
                     long na = 0; in >> na;
                     for (long k = 0; k < na && in; ++k) { int m = 0; in >> m; if (k < (long)sm2->anyState.size()) sm2->anyState[k].muted = m != 0; }
+                } else if (field == "animsmmatch") {
+                    auto* sm2 = smFor();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n && in; ++i) {
+                        int f = 0; in >> f;
+                        if (i < (long)sm2->states.size()) sm2->states[i].matchSpeed = f != 0;
+                    }
                 } else if (field == "animsmint") {
                     auto* sm2 = smFor();
                     long n = 0; in >> n;
@@ -5022,6 +5039,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         if (ok(dmg)) s.hitDamage = dmg;
                         s.hitLineOfSight = los != 0;
                     }
+                } else if (field == "anticheatweapon") {   // one per known weapon, after "anticheat"
+                    const std::string w = ReadQuoted(in);
+                    if (auto* ac = go->GetComponent<AntiCheatConfig>(); ac && !w.empty()) ac->settings.weapons.push_back(w);
                 } else if (field == "netvalidator") {
                     auto* nv = go->AddComponent<NetValidator>();
                     nv->rpc = ReadQuoted(in);
@@ -5144,6 +5164,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             if (std::isfinite(snap) && snap > 0.0f) nm->reconcileSnap = std::min(snap, 100.0f);
                         }
                     }
+                } else if (field == "netprefab") {   // one of the NetworkManager's spawnable prefabs
+                    const std::string pf = ReadQuoted(in);
+                    if (auto* nm = go->GetComponent<NetworkManager>(); nm && !pf.empty()) nm->spawnablePrefabs.push_back(pf);
                 } else if (field == "worldui") {
                     auto* wu = go->AddComponent<WorldUI>();
                     wu->text = ReadQuoted(in);
@@ -5794,6 +5817,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
             return false;
         }
     }
+    // Files from before version 2 gave a Character body its built-in animation
+    // itself: give it the Animator that plays it now (its state clips carried over).
+    if (version < 2)
+        for (auto& [idx, go] : byIndex) { (void)idx; HumanoidLibrary::EnsureAnimator(go); }
     return true;
 }
 
@@ -5814,7 +5841,7 @@ std::string SceneSerializer::SerializeObject(const GameObject& root) {
     for (std::size_t i = 0; i < subtree.size(); ++i) localIndex[subtree[i]] = (int)i;
 
     std::ostringstream out;
-    out << "okayscene 1\n";
+    out << "okayscene 2\n";
     for (std::size_t i = 0; i < subtree.size(); ++i) {
         GameObject* go = subtree[i];
         if (go->transient || IsGeneratedRig(go) || IsGeneratedViewmodel(go) || IsBuildModeRuntime(go)) continue;   // a Character's part rig (and the FP viewmodel arm) is regenerated on load

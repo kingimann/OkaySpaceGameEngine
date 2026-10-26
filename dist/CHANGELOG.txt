@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.826.0
+  Multiplayer (opt-in)
+  - Server-authoritative movement now covers the first-person and third-person
+    controllers. Single-player feel is unchanged. Until client prediction
+    lands, the client's own body turns on the host's echo (#326).
+
 v2.825.0
   Multiplayer (opt-in)
   - Fixed net tick: set a net tick rate (or --fixed-tick on dedicated servers)

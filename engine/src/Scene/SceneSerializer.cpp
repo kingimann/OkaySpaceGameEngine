@@ -694,6 +694,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             }
             out << "\n";
         }
+        {
+            const StanceTimes def;
+            const StanceTimes& t = asm2->stanceTimes;
+            if (t.standCrouch != def.standCrouch || t.crouchProne != def.crouchProne || t.proneStand != def.proneStand)
+                out << "  animsmstance " << t.standCrouch << " " << t.crouchProne << " " << t.proneStand << "\n";
+        }
         bool anyMatch = false;
         for (const auto& st : asm2->states) anyMatch = anyMatch || st.matchSpeed;
         if (anyMatch) {   // blend trees that keep pace with the body's speed
@@ -3003,6 +3009,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     }
                     long na = 0; in >> na;
                     for (long k = 0; k < na && in; ++k) { int m = 0; in >> m; if (k < (long)sm2->anyState.size()) sm2->anyState[k].muted = m != 0; }
+                } else if (field == "animsmstance") {
+                    StanceTimes& t = smFor()->stanceTimes;
+                    in >> t.standCrouch >> t.crouchProne >> t.proneStand;
                 } else if (field == "animsmmatch") {
                     auto* sm2 = smFor();
                     long n = 0; in >> n;

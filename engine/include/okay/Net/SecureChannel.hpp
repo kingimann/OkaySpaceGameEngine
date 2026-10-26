@@ -26,6 +26,11 @@ namespace okay::net {
 /// packet can't be played again. Both ends must turn it on (the anti-cheat
 /// server does, through its Welcome); off, the format is exactly as before.
 ///
+/// Associated data (opt-in, SetAssociatedData): bytes both ends know and that
+/// travel outside the ciphertext (the envelope tag, the protocol version) are
+/// authenticated with every message, so a packet sealed under a different
+/// version or header doesn't open. Empty (the default) is the old format.
+///
 /// When the engine is built WITHOUT libsodium (OKAY_HAVE_SODIUM undefined), this
 /// compiles to a stub: Available() is false and the seal/open calls fail, so the
 /// transport simply runs unencrypted.
@@ -94,6 +99,9 @@ public:
     bool Sequenced() const { return m_sequenced; }
     /// Messages Open refused as replays / too old.
     std::uint64_t Replays() const { return m_replays; }
+    /// Authenticate these bytes with every message (see the class comment).
+    void SetAssociatedData(std::vector<std::uint8_t> ad) { m_ad = std::move(ad); }
+    const std::vector<std::uint8_t>& AssociatedData() const { return m_ad; }
 
     /// Encrypt+authenticate `plain` for the peer. Output is nonce || ciphertext.
     /// Returns false (leaving `out` empty) if the channel isn't ready.
@@ -113,7 +121,8 @@ public:
         randombytes_buf(out.data(), N);                  // fresh random nonce up front
         unsigned long long clen = 0;
         crypto_aead_xchacha20poly1305_ietf_encrypt(
-            out.data() + N, &clen, plain, len, nullptr, 0, nullptr, out.data(), m_tx);
+            out.data() + N, &clen, plain, len, m_ad.empty() ? nullptr : m_ad.data(),
+            static_cast<unsigned long long>(m_ad.size()), nullptr, out.data(), m_tx);
         out.resize(N + static_cast<std::size_t>(clen));
         return true;
 #else
@@ -133,7 +142,8 @@ public:
         out.resize(len - N - A);
         unsigned long long mlen = 0;
         if (crypto_aead_xchacha20poly1305_ietf_decrypt(
-                out.data(), &mlen, nullptr, data + N, len - N, nullptr, 0, data, m_rx) != 0)
+                out.data(), &mlen, nullptr, data + N, len - N, m_ad.empty() ? nullptr : m_ad.data(),
+                static_cast<unsigned long long>(m_ad.size()), data, m_rx) != 0)
             return false;                                // authentication failed -> reject
         out.resize(static_cast<std::size_t>(mlen));
         if (m_sequenced) {
@@ -169,6 +179,7 @@ private:
         return true;
     }
     bool m_sequenced = false;
+    std::vector<std::uint8_t> m_ad;
     mutable std::uint64_t m_txSeq = 0;
     mutable std::uint64_t m_rxMax = 0, m_window = 0, m_replays = 0;
 #ifdef OKAY_HAVE_SODIUM

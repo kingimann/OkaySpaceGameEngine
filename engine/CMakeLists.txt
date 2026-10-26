@@ -21,6 +21,7 @@ add_library(okay_engine
     src/Net/UdpSocket.cpp
     src/Net/AntiCheat.cpp
     src/Net/SessionTicket.cpp
+    src/Net/ClockCheck.cpp
     src/Components/AntiCheatConfig.cpp
     src/Net/NetworkManager.cpp
     src/Net/RelayServer.cpp
@@ -114,6 +115,10 @@ set_source_files_properties(src/Graphics/Image.cpp src/Graphics/Font.cpp src/Gra
     PROPERTIES COMPILE_OPTIONS "-w;-Wno-narrowing")
 # The built-in UI font (the launcher's Roboto) lives in shared/RobotoFont.h.
 set_source_files_properties(src/Graphics/EmbeddedFont.cpp PROPERTIES
+    INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
+# The network layer signs its key exchange with #269's ed25519 (shared/AntiCheatCrypto.hpp)
+# and runs its clock heartbeat (shared/AntiCheatChecks.hpp).
+set_source_files_properties(src/Net/NetworkManager.cpp src/Net/ClockCheck.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
 
 target_compile_features(okay_engine PUBLIC cxx_std_17)

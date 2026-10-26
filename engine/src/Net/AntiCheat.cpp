@@ -22,6 +22,7 @@ const char* CheatKindName(CheatKind k) {
         case CheatKind::SpeedHack:       return "speed hack";
         case CheatKind::RpcRejected:     return "rpc rejected";
         case CheatKind::RpcFlood:        return "rpc flood";
+        case CheatKind::ClockDrift:      return "clock drift";
     }
     return "cheat";
 }
@@ -109,6 +110,9 @@ bool AntiCheatSettings::Parse(const std::string& text, AntiCheatSettings& out, s
         else if (key == "ticketAudience") { s.ticketAudience = val; }
         else if (key == "maxRpcsPerSecond") { if (!ParseInt(val, s.maxRpcsPerSecond)) return fail("maxRpcsPerSecond needs a whole number >= 0"); }
         else if (key == "maxRpcBytes") { if (!ParseInt(val, s.maxRpcBytes)) return fail("maxRpcBytes needs a whole number >= 0"); }
+        else if (key == "maxClockDrift") {
+            if (!ParseFloat(val, s.maxClockDrift) || s.maxClockDrift > 1.0f) return fail("maxClockDrift needs a fraction from 0 to 1 (0.05 = 5%)");
+        }
         else return fail("unknown setting '" + key + "'");
     }
     out = std::move(s);
@@ -136,6 +140,7 @@ std::string AntiCheatSettings::ToText() const {
     if (!ticketAudience.empty()) o << "ticketAudience " << ticketAudience << "\n";
     o << "maxRpcsPerSecond " << maxRpcsPerSecond << "\n";
     o << "maxRpcBytes " << maxRpcBytes << "\n";
+    if (maxClockDrift > 0.0f) o << "maxClockDrift " << maxClockDrift << "\n";
     return o.str();
 }
 

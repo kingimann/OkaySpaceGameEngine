@@ -10432,6 +10432,7 @@ void DrawScriptDocs() {
         fapi("net_max_speed(units) / net_rate_limit(perSec)", "server: snap back too-fast moves / drop message spam");
         fapi("net_anticheat([on]) / net_anticheat_load(path) / net_violations(id)", "server: anti-cheat on/off / load an .okayac file / a player's refusals this minute");
         fapi("on_cheat_detected(kind, peer, detail) / on_validate_rpc(name, data, sender)", "server events (Anti-Cheat Config): return false from on_validate_rpc to refuse the RPC");
+        fapi("net_pin_host(\"key\")", "client: join only the host with this identity key (encryption on; \"\" = no pin)");
         fapi("net_disconnect()", "leave / stop the session");
         fapi("net_connected() / net_is_server() / net_is_client()", "status");
         fapi("net_id() / net_peers() / net_ping()", "peer id / peer count / RTT (ms)");
@@ -27804,6 +27805,11 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Calls a client may make per second to any one RPC (0 = unlimited). A Net Validator with its own calls/s overrides it.");
             if (ImGui::DragInt("RPC max bytes##ac", &s.maxRpcBytes, 1.0f, 0, 1 << 20)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Longest RPC payload a client may send (0 = any). A Net Validator with its own max bytes overrides it.");
+            {
+                float pct = s.maxClockDrift * 100.0f;
+                if (ImGui::DragFloat("Max clock drift##ac", &pct, 0.1f, 0.0f, 100.0f, "%.1f %%")) { s.maxClockDrift = pct / 100.0f; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far a client's game clock may run off the server's (a speed hack), e.g. 5%%. 0 = no check. Older clients don't answer it: turn it on once every player has the update.");
+            }
             if (ImGui::DragInt("Kick after##ac", &s.kickAfterViolations, 0.1f, 0, 1000)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Kick a client after this many refusals within a minute (0 = never).");
             if (ImGui::Checkbox("Owner-only SyncVars##ac", &s.ownerOnlySyncVars)) ed.dirty = true;

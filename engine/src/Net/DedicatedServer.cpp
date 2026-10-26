@@ -1,5 +1,6 @@
 #include "okay/Net/DedicatedServer.hpp"
 #include "okay/Net/NetworkManager.hpp"
+#include "okay/Net/SessionTicket.hpp"
 #include "okay/Net/Matchmaking.hpp"
 #include "okay/Net/MatchResults.hpp"
 #include "okay/Platform/Account/Account.hpp"
@@ -15,6 +16,7 @@
 #include <cstdlib>
 #include <deque>
 #include <fstream>
+#include <iterator>
 #include <functional>
 #include <map>
 #include <memory>
@@ -56,6 +58,23 @@ bool ParseFloat(const std::string& s, float lo, float hi, float& out) {
     return true;
 }
 
+// The host identity seed from a file (base64url, 32 bytes; whitespace around it
+// is fine). Never echoed: an error names the file, not what's in it.
+bool LoadHostKey(const std::string& path, std::string& seed, std::string& why) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) { why = "can't open " + path; return false; }
+    std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    const auto a = text.find_first_not_of(" \t\r\n"), b = text.find_last_not_of(" \t\r\n");
+    text = a == std::string::npos ? std::string() : text.substr(a, b - a + 1);
+    std::vector<std::uint8_t> raw;
+    if (!okay::net::SessionTicket::Base64UrlDecode(text, raw) || raw.size() != 32) {
+        why = path + " must hold a 32-byte ed25519 seed in base64url";
+        return false;
+    }
+    seed = text;
+    return true;
+}
+
 // "1h 02m 05s" style uptime.
 std::string Uptime(double secs) {
     long s = (long)secs;
@@ -91,6 +110,7 @@ const char* DedicatedServerUsage() {
         "  --rate-limit N         drop a player's messages beyond N per second\n"
         "  --kick-after N         kick after N rejected moves in a minute\n"
         "  --anticheat FILE       enforce the anti-cheat rules in FILE (.okayac)\n"
+        "  --host-key FILE        sign joins with the identity seed in FILE (clients can pin it)\n"
         "Environment: OKAY_SERVER_PORT, OKAY_SERVER_MAX_PLAYERS, OKAY_SERVER_TICK,\n"
         "OKAY_SERVER_NAME, OKAY_SERVER_PASSWORD, OKAY_SERVER_AUTH=1, OKAY_SERVER_ADVERTISE=1,\n"
         "OKAY_SERVER_PUBLIC_ADDR, OKAY_SERVER_REGION (flags win).\n";
@@ -143,6 +163,11 @@ bool LoadDedicatedServerConfig(const std::string& path, DedicatedServerOptions& 
             std::string why;
             if (!out.anticheat.LoadFile(v, &why)) return bad("anticheat: " + why);
             out.anticheatFile = v;
+        }
+        else if (k == "host_key") {
+            std::string why;
+            if (!LoadHostKey(v, out.hostKeySeed, why)) return bad("host_key: " + why);
+            out.hostKeyFile = v;
         }
         else if (k == "max_speed") { if (!ParseFloat(v, 0.0f, 1e6f, fv)) return bad("max_speed must be a number"); out.maxSpeed = fv; }
         else if (k == "rate_limit") { if (!ParseInt(v, 0, 100000, iv)) return bad("rate_limit must be a number"); out.rateLimit = iv; }
@@ -264,6 +289,11 @@ bool ParseDedicatedServerArgs(int argc, char** argv, DedicatedServerOptions& out
             AntiCheatSettings s;
             if (!s.LoadFile(v, &why)) return fail("--anticheat: " + why);
             out.anticheat = s; out.anticheatFile = v;
+        } else if (a == "--host-key") {
+            if (!value(v) || v.empty()) return fail("--host-key needs a file");
+            std::string why;
+            if (!LoadHostKey(v, out.hostKeySeed, why)) return fail("--host-key: " + why);
+            out.hostKeyFile = v;
         } else if (a.rfind("--", 0) == 0) return fail("unknown option " + a);
         else if (out.scenePath.empty()) out.scenePath = a;   // a bare path = the scene
     }
@@ -478,6 +508,7 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
     // The command line's .okayac wins over a scene's AntiCheatConfig (which
     // applied its own at Start).
     if (!opts.anticheatFile.empty()) net->anticheat.settings = opts.anticheat;
+    if (!opts.hostKeySeed.empty()) net->SetHostIdentity(opts.hostKeySeed);
     if (!net->StartServer(opts.port)) {
         std::fprintf(stderr, "[server] couldn't listen on UDP port %u (is it in use?)\n", (unsigned)opts.port);
         return 2;
@@ -491,6 +522,9 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
     if (!opts.anticheatFile.empty())
         std::printf("[server] anti-cheat %s from %s\n", net->anticheat.settings.enabled ? "on" : "OFF (enabled false)",
                     opts.anticheatFile.c_str());
+    if (!opts.hostKeySeed.empty())
+        std::printf("[server] host key from %s; clients can pin %s%s\n", opts.hostKeyFile.c_str(),
+                    net->HostIdentityPublicKey().c_str(), opts.encryption ? "" : " (needs encryption on)");
     std::fflush(stdout);
 
     // Server browser listing: register, heartbeat the player count, unlist on stop.

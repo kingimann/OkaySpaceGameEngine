@@ -30,8 +30,21 @@ jobs:
       CCACHE_MAXSIZE: 2G
       # "true" when the repo has the secret that the Supabase publish step needs.
       SUPABASE_PUBLISH: ${{ secrets.SUPABASE_SERVICE_KEY != '' }}
+      # The launcher's trusted anti-cheat keys: public keys, so a repository
+      # variable (Settings > Secrets and variables > Actions > Variables).
+      OKAY_AC_TRUSTED_KEYS: ${{ vars.OKAY_AC_TRUSTED_KEYS }}
     steps:
       - uses: actions/checkout@v6
+
+      # Without keys the launcher can't tell the official game's signed build
+      # from an edited one: its anti-cheat checks are only telemetry. A warning
+      # for now; once the variable is set this becomes a failure.
+      - name: Check the launcher's trusted anti-cheat keys
+        run: |
+          if [ -z "$OKAY_AC_TRUSTED_KEYS" ]; then
+            echo "::warning title=No trusted anti-cheat keys::OKAY_AC_TRUSTED_KEYS (repository variable) is empty: this launcher won't verify who signed the official game."
+            echo "**Warning:** no trusted anti-cheat keys (repository variable \`OKAY_AC_TRUSTED_KEYS\` is empty). The launcher's integrity checks on the official game are telemetry only in this release." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       # The runner's Ubuntu mirror is sometimes slow enough that downloading the
       # MinGW compiler outlasts the step timeout. Downloaded packages go in the

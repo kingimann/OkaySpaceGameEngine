@@ -235,7 +235,7 @@ public:
                 auto* bp = g->GetComponent<BuildPiece>();
                 std::string mat = bp ? bp->material : TierMaterial(0);
                 int back = bp ? (int)(bp->cost * refundFraction) : (int)(TierCost(0) * refundFraction);
-                if (back > 0) inv->Add(mat, back);
+                if (back > 0) inv->AddPartial(mat, back);   // refund what fits (Add is all-or-nothing)
             }
         }
         s.Destroy(g);

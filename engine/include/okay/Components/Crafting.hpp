@@ -28,21 +28,20 @@ public:
     bool CanCraft(const Recipe& r) const {
         Inventory* inv = Inv();
         if (!inv) return false;
-        for (const auto& in : r.inputs) if (inv->Count(in.item) < in.count) return false;
+        for (const auto& in : Inventory::SumStacks(r.inputs)) if (inv->Count(in.item) < in.count) return false;
         return true;
     }
     bool CanCraft(const std::string& output) const {
         const Recipe* r = Find(output); return r && CanCraft(*r);
     }
 
-    /// Craft a recipe: consumes its inputs and adds its output. Returns false if the
-    /// inventory is missing ingredients (nothing is consumed) or full.
+    /// Craft a recipe: consumes its inputs and adds its output, atomically. Returns
+    /// false — and changes nothing — if ingredients are missing or the output
+    /// doesn't fit once the inputs are taken out.
     bool Craft(const Recipe& r) {
         Inventory* inv = Inv();
-        if (!inv || !CanCraft(r)) return false;
-        for (const auto& in : r.inputs) inv->Remove(in.item, in.count);
-        inv->Add(r.output, r.outputCount);
-        return true;
+        if (!inv || r.output.empty() || !CanCraft(r)) return false;
+        return inv->Exchange(Inventory::SumStacks(r.inputs), {{r.output, r.outputCount < 1 ? 1 : r.outputCount}});
     }
     bool Craft(const std::string& output) { const Recipe* r = Find(output); return r && Craft(*r); }
     bool CraftIndex(int i) { return (i >= 0 && i < (int)recipes.size()) && Craft(recipes[i]); }

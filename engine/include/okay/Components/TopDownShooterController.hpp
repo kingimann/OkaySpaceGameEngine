@@ -36,6 +36,10 @@ namespace okay {
 /// on_dash. Projectiles call on_hit on their own script.
 class TopDownShooterController : public Behaviour {
 public:
+    /// Runs before the animation components (Character, ModelAnimator,
+    /// AnimStateMachine at 0, IK at 100), so they pose this frame's movement and
+    /// state changes, not last frame's.
+    int ExecutionOrder() const override { return -10; }
     enum class AimMode { Mouse, MoveDirection, Auto };   ///< Auto: mouse, or the stick when a pad is used
     enum class FireMode { Bullets, Prefab, Hitscan };
 

@@ -21,6 +21,10 @@ namespace okay {
 /// control, and optional Character animation + foot IK.
 class CharacterController3D : public Behaviour, public IPlayerSim {
 public:
+    /// Runs before the animation components (Character, ModelAnimator,
+    /// AnimStateMachine at 0, IK at 100), so they pose this frame's movement and
+    /// state changes, not last frame's.
+    int ExecutionOrder() const override { return -10; }
     float speed     = 5.0f;     // walk speed on the ground plane
     float runSpeed  = 8.0f;     // speed while the sprint key is held
     char  sprintKey = 0;        // hold to run (0 = disabled)

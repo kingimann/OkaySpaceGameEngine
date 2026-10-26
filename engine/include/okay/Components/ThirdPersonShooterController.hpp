@@ -29,6 +29,10 @@ namespace okay {
 /// each frame). A Character on the player (or a child) animates from movement.
 class ThirdPersonShooterController : public Behaviour {
 public:
+    /// Runs before the animation components (Character, ModelAnimator,
+    /// AnimStateMachine at 0, IK at 100), so they pose this frame's movement and
+    /// state changes, not last frame's.
+    int ExecutionOrder() const override { return -10; }
     // ---- Movement ----
     float walkSpeed = 4.5f;
     float runSpeed  = 7.5f;

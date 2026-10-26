@@ -38,6 +38,10 @@ namespace okay {
 /// on_release, on_climb. Layer 0 is the front (nearest the camera).
 class Platformer25DController : public Behaviour {
 public:
+    /// Runs before the animation components (Character, ModelAnimator,
+    /// AnimStateMachine at 0, IK at 100), so they pose this frame's movement and
+    /// state changes, not last frame's.
+    int ExecutionOrder() const override { return -10; }
     // ---- Run ----
     float walkSpeed = 5.0f;
     float runSpeed = 7.5f;

@@ -32,6 +32,10 @@ namespace okay {
 /// flat plane — so it works on any flat-ish floor out of the box.
 class ClickToMoveController : public Behaviour {
 public:
+    /// Runs before the animation components (Character, ModelAnimator,
+    /// AnimStateMachine at 0, IK at 100), so they pose this frame's movement and
+    /// state changes, not last frame's.
+    int ExecutionOrder() const override { return -10; }
     float walkSpeed   = 4.0f;
     float runSpeed    = 7.0f;
     char  runKey      = 0;          // hold to run (0 = disabled)

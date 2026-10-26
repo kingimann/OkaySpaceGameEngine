@@ -151,6 +151,11 @@ public:
                 vy = (p.y - m_lastPos.y) / span;
                 // A teleport / respawn isn't speed: keep last frame's reading.
                 if ((p - m_lastPos).SqrMagnitude() > 4.0f) { spd = m_lastSpd; vy = m_lastVy; }
+                // Neither is a one-frame pop (a step lift, a platform's nudge): a
+                // reading over twice the last plus 2 m/s waits a frame and counts
+                // only if the next frame agrees, so the blend doesn't surge to run.
+                else if (spd > m_lastSpd * 2.0f + 2.0f && !m_spikeHeld) { m_spikeHeld = true; spd = m_lastSpd; vy = m_lastVy; }
+                else m_spikeHeld = false;
                 m_lastSpd = spd; m_lastVy = vy;
             }
             m_lastPos = p; m_haveLast = true; m_lastDt = dt;
@@ -1088,6 +1093,7 @@ private:
     Vec3 m_lastPos{0, 0, 0};
     float m_lastDt = 0.0f;   // the frame m_lastPos was measured in
     float m_lastSpd = 0.0f, m_lastVy = 0.0f;   // last frame's measured speeds
+    bool m_spikeHeld = false;                  // a one-frame speed spike is waiting for the next frame to confirm it
     float m_blendSpd = 0.0f;                   // the speed the locomotion blend follows (eased)
     bool m_haveLast = false;
     bool  m_inAir = false;   // air-state machine (jump/fall/land by vertical motion)

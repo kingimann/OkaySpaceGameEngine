@@ -25,6 +25,10 @@ namespace okay {
 /// it stays correct on slopes and moving platforms.
 class CharacterController2D : public Behaviour, public IPlayerSim {
 public:
+    /// Runs before the animation components (Character, ModelAnimator,
+    /// AnimStateMachine at 0, IK at 100), so they pose this frame's movement and
+    /// state changes, not last frame's.
+    int ExecutionOrder() const override { return -10; }
     enum class Mode { TopDown, Platformer };
     Mode  mode = Mode::TopDown;
 

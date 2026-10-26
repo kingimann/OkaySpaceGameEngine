@@ -14,7 +14,12 @@ nothing is checked and nothing is sent differently from before.
     ball: the first to move it owns it. The server can hand any object to a
     player with `anticheat.SetOwner(netId, peer)`.
 
-  Every refusal is reported; repeat offenders are kicked.
+  Every refusal is reported; repeat offenders are kicked. A kicked account
+  can't join again for a minute, doubling with each repeat up to an hour, and
+  neither can anonymous players from its address (other signed-in players
+  there still can). A player who leaves or is kicked keeps its refusal count and its
+  Net Validator budgets and cooldowns for five minutes (by account, else by
+  address), so reconnecting resets nothing.
 - **P2 (identity and transport):** clients must encrypt, every packet is
   numbered and replays are refused, and a joining player can be required to
   hold a **session ticket** signed by your ticket service.
@@ -44,6 +49,10 @@ ticketAudience arena-1              # this server's id in tickets ("" = any)
 maxClockDrift 0.05                  # a client's game clock may run 5% off; 0 = no check
 # Gameplay
 serverVar score                     # SyncVar key prefixes only the server may write (repeatable)
+clientVar player.                   # if any is set, the only SyncVar key prefixes clients may write (repeatable)
+maxSpawnsPerSecond 5                # spawns a client may make per second (0 = unlimited)
+maxLiveSpawnsPerPeer 50             # SpawnOwned objects a client may have at once (0 = unlimited)
+spawnRadius 0                       # how far from the sender a spawn may land (0 = anywhere)
 maxHitRange 60                      # hit claims: the longest shot (0 = any; the component's default is 300)
 weapon rifle                        # a weapon clients may claim hits with, besides Net Validator ones (repeatable)
 hitDamage 10                        # what a hit does, unless the game says otherwise
@@ -62,14 +71,31 @@ React in a visual script with **On Cheat Detected**:
 Check RPCs with **Net Validator** components (size, rate, host-only), or with an
 **On Validate Rpc** graph plus **Reject Rpc**.
 
+A new Anti-Cheat Config starts safe:
+- `requireEncryption` on (in builds with libsodium);
+- `maxSyncSpeed 20`, `maxRpcsPerSecond 30`, `maxHitRange 300`;
+- a Network Manager with no message limit gets `maxMessagesPerSecond 120`.
+
+Scenes saved before these defaults keep `requireEncryption` off.
+
+It also fails closed:
+- If its rules file doesn't load, the server refuses every join (*"server
+  misconfigured"*) and logs why, the same way `--anticheat` refuses to start.
+- Disabling or removing the component while the server runs leaves the rules
+  in force, unless **Allow Runtime Toggle** is on.
+
+On its first tick a server logs one line naming the protections that are off
+(anti-cheat, encryption, move check, message rate limit).
+
 ## P2: encryption required and replay protection
 
 With `requireEncryption true`:
 
 - The server turns its `encryption` on. A client that doesn't offer a key is
-  refused with *"encryption required"*, so set `encryption = true` on the client
-  too. Both ends need libsodium; a server built without it refuses every join
-  and says so.
+  refused with *"encryption required"*. A client from this version with
+  libsodium then turns its own `encryption` on and joins again, sealed; older
+  clients need `encryption = true` set. Both ends need libsodium; a server
+  built without it refuses every join and says so.
 - Every sealed packet carries an 8-byte sequence number inside the ciphertext.
   A packet already seen, or more than 64 behind the newest, is dropped. The
   server switches this on through a flag at the end of its Welcome, so an older
@@ -110,7 +136,14 @@ The source is in `supabase/functions/session-ticket/`:
   `POST {"aud": "<game server id>"}` with `Authorization: Bearer <player's
   Supabase access token>`.
   1. It checks the login with Supabase Auth (`/auth/v1/user`).
-  2. It returns `{"ticket": "okt1…", "exp": …}`, signed for that account and
+  2. It checks anti-cheat bans: `public.ac_is_banned(account, hw_hash)` from
+     `docs/sql/anticheat.sql`, called with the function's own service key. A
+     banned account gets `403 {"error": "banned"}` and no ticket. The body may
+     also carry `"hw_hash"` (the machine hash from `shared/AntiCheatHardware.hpp`);
+     it comes from the player, so it can only find a machine ban, never hide an
+     account ban. Without `anticheat.sql` nobody is banned; if the lookup fails
+     for any other reason the function answers `503` and issues nothing.
+  3. It returns `{"ticket": "okt1…", "exp": …}`, signed for that account and
      server. The ticket lives `OKAY_TICKET_TTL` seconds: 600 by default, at most
      86400.
 - **`ticket.ts`** does the signing, using Web Crypto only. It must match the
@@ -130,13 +163,17 @@ Nothing is deployed. To go live:
    `supabase secrets set OKAY_TICKET_SEED=<seed> OKAY_TICKET_PUBLIC_KEY=<public>`.
    The seed never goes in a game build, a `.okayac` file, chat or git.
 3. **Deploy the function:** `supabase functions deploy session-ticket`.
-   `SUPABASE_URL` and `SUPABASE_ANON_KEY` come from the Edge runtime.
+   `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` come
+   from the Edge runtime. The service key stays inside the function.
 4. **Point each game server at the public key** in its rules:
    `ticketKey <public>` and `ticketAudience <that server's id>`. The id is the
    same `aud` that clients ask for.
 5. **Fetch a ticket before joining** (still to do in the launcher or game):
    POST to the function with the player's access token and the server id, then
    `SetAuthToken(ticket)` on the client's NetworkManager.
+   `okayac::backend::SessionTicket` builds the request and `ParseTicket` reads
+   the answer; on `banned`, refresh `ac_my_bans` so the launcher's ban banner
+   shows why.
 
 To rotate the key, run step 1 again, update the secrets and every server's
 `ticketKey` together, and redeploy. Tickets signed with the old key stop working
@@ -185,6 +222,18 @@ These hold whether or not the anti-cheat is on, unless a setting is named:
   off; authoritative movement). Two presses of Jump, Dash or Fire in a player's
   inputs closer together than this: the second is dropped, so a client can't
   press every tick.
+- **A session cookie without encryption.** With `encryption` off, a player is
+  known only by its address. The Welcome then carries a random 64-bit cookie (a
+  trailing field older clients skip). The client puts it at the end of every
+  Leave, State, Message and SyncVar, so a spoofed Leave can't disconnect a player.
+  - Once a client has sent the cookie, the server drops those packets without
+    it. An older client never sends it and plays as before.
+  - Reliable messages, inputs and pings don't carry it. Encryption is the real
+    protection for those.
+- **Encryption that isn't built in is refused.** A host with `encryption` on in
+  a build without libsodium doesn't start: `StartServer` and `HostViaRelay`
+  fail with an error, and the dedicated server exits (`--no-encryption` runs it
+  unencrypted). A client with `encryption` on still falls back to plaintext.
 - **Reliable de-dup is a window.** Each peer remembers the newest reliable
   sequence number and the 4096 before it, instead of every number ever seen. A
   message older than that is acked but not run.
@@ -198,7 +247,8 @@ These hold whether or not the anti-cheat is on, unless a setting is named:
   - Clients without this update never answer, so turn it on only once every
     player has it.
   - The key travels with each challenge, so the HMAC only adds anything over an
-    encrypted session.
+    encrypted session. That's by design: the heartbeat catches a clock that runs
+    fast, not a client that forges its answers.
 
 #302 (P2) already covers:
 - `requireEncryption`: only encrypted clients;
@@ -231,7 +281,7 @@ check them.
   (a reload, a pickup) with the **Server Budget** node, with
   `net_budget(id, "fire", 5)` in OkayScript, or with
   `NetValidator::TopUp(peer, n)`. A budget isn't refilled by going quiet:
-  coming back after a pause isn't a reload.
+  coming back after a pause isn't a reload, and neither is reconnecting.
 - **Hit claims.** A client calls `NetworkManager::ClaimHit(target, weapon,
   origin, direction)` (`net_hit(...)` in OkayScript). It sends
   `"__hit" = "<target sync id>|<weapon>|<tick>|ox oy oz|dx dy dz"`, which only
@@ -275,15 +325,18 @@ check them.
 - **Kicks filed for review** (the dedicated server's `--report-kicks`, or
   `report_kicks = true` in server.cfg).
   - When the anti-cheat kicks a player who joined with a verified account, the
-    server files an `ac_reports` row for an admin to review. It's a "player"
-    report from the account the server's machine is signed in to, about the
-    kicked account, with what was caught.
+    server files an `ac_reports` row for an admin to review. It's a
+    `server_kick` report from the account the server's machine is signed in
+    to, about the kicked account, with what was caught.
   - The server prints which account that is at startup, and refuses to start
     with the flag if it isn't signed in.
   - Reports are limited to one per account per hour and 20 an hour in all,
     which is the backend's own limit. **Nothing is banned automatically.**
-  - No new SQL is needed: `anticheat.sql` already allows these rows. They are
-    marked `[server check]` in the reason.
+  - That account must be listed in `ac_report_servers`. An admin adds it once
+    per server operator: `insert into public.ac_report_servers (user_id, note)
+    values ('<account id>', 'EU 1');`. No one else may file `server_kick`
+    reports or reasons that start with `[server check]`, so a player can't
+    forge one.
   - In C++, `NetworkManager::SetAntiCheatKickHandler` gets every anti-cheat
     kick with the player's account and last refusals.
 
@@ -434,11 +487,19 @@ You need two ed25519 keypairs:
    read, the manifest is written unsigned and the message says why. Key material
    never appears in that message.
 
-3. **Trusting (the player and the launcher)**: build them with your public keys:
+3. **Trusting (the launcher, and optionally a player)**: build them with your
+   public keys:
 
    ```bash
-   cmake ... -DOKAY_AC_TRUSTED_KEYS=<release public hex>,<dev public hex>
+   cmake ... -DOKAY_AC_TRUSTED_KEYS=<release public hex>,<dev public hex>          # the launcher
+   cmake ... -DOKAY_AC_PLAYER_TRUSTED_KEYS=<release public hex>                    # a player of your own games only
    ```
+
+   `OKAY_AC_TRUSTED_KEYS` goes to the launcher only, which applies it to the
+   official game. The player gets keys only from `OKAY_AC_PLAYER_TRUSTED_KEYS`
+   (see below for why the general player has none). The release workflow takes
+   the launcher's keys from the `OKAY_AC_TRUSTED_KEYS` repository variable, and
+   warns in the job summary when it's empty.
 
    Each key must be exactly 64 hex digits, separated by commas with no spaces;
    anything else fails the CMake configure. Keys that no signature should verify
@@ -476,8 +537,9 @@ new key, re-sign your builds with the new one, and then drop the old one.
 
 | Table | What's in it | Who can see / change it |
 |---|---|---|
-| `ac_reports` | a player reporting another player, or a player's own game reporting what its anti-cheat found (`kind = 'client_check'`) | anyone signed in can file one (20 an hour); admins read and review |
-| `ac_bans` | an anti-cheat ban of an account and/or a machine (hardware hash), with a reason and an optional end | players see their own; admins ban, edit and lift |
+| `ac_reports` | a player reporting another player, a player's own game reporting what its anti-cheat found (`kind = 'client_check'`), or a game server reporting an anti-cheat kick (`kind = 'server_kick'`) | anyone signed in can file a player report (20 an hour); only `ac_report_servers` accounts file `server_kick` ones; admins read and review |
+| `ac_report_servers` | the accounts game servers file their kick reports with | admins only |
+| `ac_bans` | an anti-cheat ban of an account and/or a machine (hardware hash), with a reason and an optional end | players see their own; admins ban, edit and lift, but never a ban on their own account |
 | `ac_appeals` | a player's appeal against one of their bans | players file through `ac_file_appeal` (one waiting at a time, 3 per ban) and see their own; admins decide |
 
 "Admins" means `public.is_admin` from `admin.sql`, the same check the other
@@ -488,13 +550,17 @@ an appeal decision, and deleting a report, ban or appeal (`ac_report_delete`,
 `ac_ban_delete`, `ac_appeal_delete`). `ac_purge_old()` logs one summary line
 (`ac_purge`) instead of a line per row.
 
-Anti-cheat bans are separate from site bans (`site_bans`): this file doesn't
-block anything else on its own. For a game server that wants to keep banned
-players out, `public.ac_is_banned(user_id, hw_hash)` answers whether an
-account or machine is banned right now. Only game servers (the `service_role`
-key) and admins may call it; any other signed-in player is refused, and
-players see their own bans with `ac_my_bans`. Calling it on join is the
-network layer's job.
+Anti-cheat bans are separate from site bans (`site_bans`). They're enforced
+when a ticket is issued: the ticket service asks
+`public.ac_is_banned(user_id, hw_hash)` and signs nothing for a banned account
+or machine, so a server that requires tickets (`ticketKey`) keeps banned
+players out without ever talking to Supabase. **Never give a game server the
+`service_role` key**: it can read and change the whole database, and anyone
+running the server could take it. A server needs only the ticket service's
+public key. Besides the ticket service, only admins may call `ac_is_banned`;
+any other signed-in player is refused, and players see their own bans with
+`ac_my_bans`. A ban takes effect at the player's next ticket, so within
+`OKAY_TICKET_TTL` (10 minutes by default).
 
 Deleting an account deletes its account-only bans. A ban that also names a
 machine is kept, with `user_id` set to null, so deleting the account and
@@ -659,6 +725,10 @@ every few seconds:
 
 Be clear-eyed about what this is.
 
+- **Without trusted keys it's telemetry.** A launcher built without
+  `OKAY_AC_TRUSTED_KEYS` can't tell who signed a game, so what its checks find is
+  something to report and look at, not proof. The same goes for every player
+  without keys.
 - **It's client-side.** Every check runs in a process the player controls. A
   cheater can patch the checks out of the exe or hook the APIs they call. In a
   player without trusted keys they can also delete the `anticheat=` line from

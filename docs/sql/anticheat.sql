@@ -20,9 +20,14 @@
 -- always names one machine (never "every PC with this CPU").
 --
 -- Bans are separate from site_bans (admin.sql): an anti-cheat ban says "this
--- account / machine cheated". Game servers (the service_role key) and admins
--- can ask public.ac_is_banned(user, hw_hash) when a player joins; players see
--- only their own bans, through ac_my_bans. Nothing else is blocked by this file.
+-- account / machine cheated". They're enforced when a player asks for a session
+-- ticket: the session-ticket Edge function (supabase/functions/session-ticket)
+-- calls public.ac_is_banned(user, hw_hash) with its own service key and signs
+-- no ticket for a banned account or machine, so servers that require tickets
+-- keep banned players out. Game servers must NOT be given the service_role key:
+-- it can read and change the whole database. They need only the ticket service's
+-- public key. Admins can call ac_is_banned too; players see only their own bans,
+-- through ac_my_bans. Nothing else is blocked by this file.
 --
 -- Deleting an account deletes its account-only bans, but a ban that also names
 -- a machine stays (user_id becomes null): a cheater can't clear a machine ban
@@ -41,7 +46,7 @@ create table if not exists public.ac_reports (
   id          bigint generated always as identity primary key,
   reporter    uuid not null default auth.uid() references auth.users on delete cascade,
   reported    uuid references auth.users on delete cascade,   -- null: a client check about the reporter's own game
-  kind        text not null default 'player' check (kind in ('player', 'client_check')),
+  kind        text not null default 'player' check (kind in ('player', 'client_check', 'server_kick')),
   game        text check (char_length(game) <= 120),
   reason      text not null check (char_length(reason) between 1 and 500),
   details     text check (char_length(details) <= 4000),
@@ -54,6 +59,9 @@ create table if not exists public.ac_reports (
   check (kind = 'client_check' or reported is not null),
   check (reported is null or reported <> reporter)
 );
+-- 'server_kick' came later: an older install's check doesn't allow it.
+alter table public.ac_reports drop constraint if exists ac_reports_kind_check;
+alter table public.ac_reports add constraint ac_reports_kind_check check (kind in ('player', 'client_check', 'server_kick'));
 create index if not exists ac_reports_status  on public.ac_reports (status, created_at desc);
 create index if not exists ac_reports_created on public.ac_reports (created_at);
 create index if not exists ac_reports_reporter on public.ac_reports (reporter, created_at desc);
@@ -70,6 +78,20 @@ create policy "admins review reports" on public.ac_reports for update using (pub
   with check (public.is_admin(auth.uid()));
 create policy "admins delete reports" on public.ac_reports for delete using (public.is_admin(auth.uid()));
 
+-- Accounts that game servers file their anti-cheat kicks with (a dedicated
+-- server's --report-kicks account). Only they file 'server_kick' reports, or
+-- reasons that start with "[server check]". Admins add and remove them.
+create table if not exists public.ac_report_servers (
+  user_id    uuid primary key references auth.users on delete cascade,
+  note       text check (char_length(note) <= 200),
+  added_by   uuid default auth.uid(),
+  created_at timestamptz not null default now()
+);
+alter table public.ac_report_servers enable row level security;
+drop policy if exists "admins manage report servers" on public.ac_report_servers;
+create policy "admins manage report servers" on public.ac_report_servers for all
+  using (public.is_admin(auth.uid())) with check (public.is_admin(auth.uid()));
+
 -- New reports: from the caller, open, rate-limited. Reviews: stamped and logged.
 create or replace function public.ac_reports_guard() returns trigger
 language plpgsql security definer set search_path = public as $$
@@ -81,6 +103,10 @@ begin
       if (select count(*) from public.ac_reports r
           where r.reporter = auth.uid() and r.created_at > now() - interval '1 hour') >= 20 then
         raise exception 'Too many reports; try again later' using errcode = 'check_violation';
+      end if;
+      if (new.kind = 'server_kick' or ltrim(new.reason) ilike '[server check]%')
+         and not exists (select 1 from public.ac_report_servers s where s.user_id = auth.uid()) then
+        raise exception 'Only a game server''s account files server reports' using errcode = 'insufficient_privilege';
       end if;
     end if;
     return new;
@@ -175,7 +201,8 @@ create policy "admins ban" on public.ac_bans for insert to authenticated
   with check (public.is_admin(auth.uid()) and (user_id is null or user_id <> auth.uid()));
 create policy "admins edit bans" on public.ac_bans for update using (public.is_admin(auth.uid()))
   with check (public.is_admin(auth.uid()));
-create policy "admins delete bans" on public.ac_bans for delete using (public.is_admin(auth.uid()));
+create policy "admins delete bans" on public.ac_bans for delete
+  using (public.is_admin(auth.uid()) and (user_id is null or user_id <> auth.uid()));
 
 create or replace function public.ac_bans_guard() returns trigger
 language plpgsql security definer set search_path = public as $$
@@ -200,6 +227,11 @@ begin
     new := old;
     new.user_id := null;
     return new;
+  end if;
+  -- No one lifts, shortens or rewrites a ban on their own account (an admin
+  -- included, also by accepting their own appeal).
+  if auth.uid() is not null and old.user_id = auth.uid() then
+    raise exception 'You can''t change a ban on your own account' using errcode = 'insufficient_privilege';
   end if;
   -- Otherwise who and what stay; lifting is stamped once, and a lifted ban stays lifted.
   new.user_id := old.user_id; new.hw_hash := old.hw_hash; new.banned_by := old.banned_by;
@@ -235,12 +267,13 @@ drop trigger if exists ac_bans_log_delete on public.ac_bans;
 create trigger ac_bans_log_delete after delete on public.ac_bans
   for each row execute function public.ac_log_delete();
 
--- For game servers and admins: is this account or machine banned now? (Players
--- see their own bans with ac_my_bans, not anyone's.) Admins share the
+-- For the ticket service and admins: is this account or machine banned now?
+-- (Players see their own bans with ac_my_bans, not anyone's.) Admins share the
 -- `authenticated` role with every player, so the grant can't tell them apart:
 -- the function refuses any signed-in caller who isn't an admin. A caller with
--- no auth.uid() is the service_role key (game servers) or the SQL editor; anon
--- has no execute right at all. An empty / malformed hash never matches.
+-- no auth.uid() is the service_role key (the session-ticket Edge function, never
+-- a game server) or the SQL editor; anon has no execute right at all. An empty /
+-- malformed hash never matches.
 create or replace function public.ac_is_banned(p_user uuid, p_hw_hash text default null) returns boolean
 language plpgsql stable security definer set search_path = public as $$
 begin

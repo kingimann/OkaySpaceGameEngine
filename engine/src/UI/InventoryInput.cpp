@@ -75,7 +75,8 @@ HotbarFrame HandleHotbar(InventoryUI& ui, const HotbarLayout& L, Vec2 mouse) {
     }
     // Drop when the held button is released (either button: you held one to drag).
     if (ui.dragIndex >= 0 && (Input::GetMouseButtonUp(0) || Input::GetMouseButtonUp(1))) {
-        ui.ApplyDrag(ui.dragIndex, at);
+        if (at >= 0) ui.ApplyDrag(ui.dragIndex, at);
+        else ui.DropToWorld(ui.dragIndex, ui.dragAmount);   // released away from every slot: drop it in the world
         ui.dragIndex = -1; ui.dragAmount = 0;
     }
     if (ui.dragIndex >= (int)inv->slots.size()) { ui.dragIndex = -1; ui.dragAmount = 0; }

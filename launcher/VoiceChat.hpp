@@ -229,6 +229,7 @@ public:
         std::random_device rd; m_sid = ((std::uint32_t)rd() << 1) | 1u; m_seq = 0;
         m_state = Connecting; m_error.clear(); m_since = 0; m_startTicks = SDL_GetTicks();
         m_mySlot = m_hubSlot = 0;
+        m_cookie.fill(0); m_v1Hello = m_relayAnswered = false; m_unanswered = 0;
         if (!m_udp.Open() || !m_udp.Resolve(relayHost, relayPort)) { m_state = Failed; m_error = "Can't reach the voice server " + relayHost; m_udp.Close(); return false; }
         // Audio devices (SDL converts to/from our 16 kHz mono s16).
         SDL_AudioSpec want{}; want.freq = kRate; want.format = AUDIO_S16SYS; want.channels = 1; want.samples = kFrame;
@@ -298,7 +299,7 @@ private:
         std::deque<std::array<std::int16_t, kFrame>> jitter; bool primed = false; int readPos = 0;
         std::uint32_t sid = 0;
     };
-    enum : std::uint8_t { kHello = 0x90, kWelcome = 0x91, kData = 0x92, kBye = 0x93 };
+    enum : std::uint8_t { kHello = 0x90, kWelcome = 0x91, kData = 0x92, kBye = 0x93, kCookie = 0x95 };
     enum : std::uint8_t { kAudio = 1, kInfo = 2, kLeave = 3 };
 
     static void Put32(std::vector<std::uint8_t>& v, std::uint32_t x) { for (int i = 0; i < 4; ++i) v.push_back((std::uint8_t)(x >> (i * 8))); }
@@ -376,10 +377,21 @@ private:
         SDL_UnlockMutex(m_mx);
         for (std::uint32_t d : dests) SendTo(d, kind, m_mySlot, body);
     }
+    // Relay protocol v3 (engine/include/okay/Net/RelayProtocol.hpp): the hub role
+    // (first one in is the hub, the next takes over when it leaves), the relay's
+    // cookie for our address, zero-padded to 32 bytes. A relay older than v3
+    // ignores the hub role, so after 3 unanswered hellos we fall back to v1.
     void SendHello() {
-        std::vector<std::uint8_t> pk = {kHello, 0 /* host role: first one in is the hub */};
+        std::vector<std::uint8_t> pk = {kHello, (std::uint8_t)(m_v1Hello ? 0 : 2)};
         Put32(pk, (std::uint32_t)m_room.size());
         pk.insert(pk.end(), m_room.begin(), m_room.end());
+        if (!m_v1Hello) {
+            pk.push_back(3);
+            Put32(pk, 0); Put32(pk, 0);   // no host key: a hub session is never protected
+            pk.insert(pk.end(), m_cookie.begin(), m_cookie.end());
+            while (pk.size() < 32) pk.push_back(0);
+            if (!m_relayAnswered && ++m_unanswered > 3) m_v1Hello = true;
+        }
         m_udp.Send(pk.data(), pk.size());
     }
     void HandleApp(std::uint32_t src, const std::uint8_t* app, std::size_t n) {
@@ -442,7 +454,12 @@ private:
             if (now >= nextHello) { s->SendHello(); nextHello = now + 1000; }
             int n;
             while ((n = s->m_udp.Recv(buf.data(), buf.size())) > 0) {
-                if (buf[0] == kWelcome && n >= 9) {
+                if (buf[0] == kCookie && n >= 2 + 16) {   // prove our address, then hello again now
+                    std::memcpy(s->m_cookie.data(), &buf[2], 16);
+                    s->m_relayAnswered = true;
+                    nextHello = now;
+                } else if (buf[0] == kWelcome && n >= 9) {
+                    s->m_relayAnswered = true;
                     const std::uint32_t mine = Get32(&buf[1]), hub = Get32(&buf[5]);
                     if (hub != s->m_hubSlot) { SDL_LockMutex(s->m_mx); s->m_peers.clear(); SDL_UnlockMutex(s->m_mx); }
                     s->m_mySlot = mine; s->m_hubSlot = hub; lastWelcome = now;
@@ -505,6 +522,8 @@ private:
     volatile bool m_muted = false, m_deaf = false, m_selfSpeaking = false;
     volatile float m_selfLevel = 0.0f, m_gateDb = -46.0f;
     int m_badKey = 0;
+    std::array<std::uint8_t, 16> m_cookie{};    // (net thread) the relay's cookie for our address
+    bool m_v1Hello = false, m_relayAnswered = false; int m_unanswered = 0;   // (net thread)
     std::string m_inDev, m_outDev;
     volatile float m_inGain = 1.0f, m_outVol = 1.0f;
     float m_hp = 0.0f, m_hpPrev = 0.0f;   // capture high-pass state (audio thread)

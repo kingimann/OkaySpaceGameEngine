@@ -5,9 +5,11 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/PlayerCollision.hpp"
+#include "okay/Components/MoveSpeed.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
+#include "okay/Components/StanceControl.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -50,7 +52,15 @@ public:
     float lookHeight = 0.6f;            // look target height above the player origin
     float cameraDamping = 12.0f;        // 0 = instant follow; higher = snappier
 
-    void Start() override { if (footIK) AttachCharacterFootIK(gameObject); }
+    /// Crouch (Ctrl): a smaller, slower body that eases down and up; SetStance
+    /// from scripts. Prone is off by default (allowProne, key Z).
+    StanceControl stanceControl{Input::KeyCtrl, 'z', false};
+    void SetStance(int s) { stanceControl.Set(s); }
+
+    void Start() override {
+        if (footIK) AttachCharacterFootIK(gameObject);
+        stanceControl.Start(gameObject);
+    }
 
     void Update(float dt) override {
         if (!transform) return;
@@ -65,8 +75,10 @@ public:
         float len = std::sqrt(dir.x * dir.x + dir.z * dir.z);
         bool moving = len > 0.01f;
         if (moving) { dir.x /= len; dir.z /= len; }
-        bool running = sprintKey && Input::GetKey(sprintKey) && moving;
-        float speed = running ? runSpeed : walkSpeed;
+        stanceControl.ReadKeys();
+        stanceControl.Step(gameObject, dt);
+        bool running = stanceControl.Stance() == 0 && sprintKey && Input::GetKey(sprintKey) && moving;
+        float speed = stanceControl.Speed(running ? runSpeed : walkSpeed) * MoveSpeedScale(gameObject);
 
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
         if (rb) {
@@ -96,6 +108,9 @@ public:
                 lo.facing    = transform->localRotation * Vec3{0, 0, -1};
                 lo.onGround  = !rb || std::fabs(rb->velocity.y) < 0.5f || rb->groundedOnTerrain;
                 lo.sprint    = running;
+                lo.crouch    = stanceControl.Stance() == 1;
+                lo.prone     = stanceControl.Stance() == 2;
+                lo.stance    = stanceControl.Level();
                 lo.walkSpeed = walkSpeed;
                 lo.dt = dt;
                 ch->DriveLocomotion(lo);

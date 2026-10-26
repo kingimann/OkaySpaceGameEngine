@@ -1,0 +1,116 @@
+#pragma once
+#include "okay/Scene/Component.hpp"
+#include "okay/Scene/GameObject.hpp"
+#include "okay/Scene/Scene.hpp"
+#include "okay/Scene/SceneSerializer.hpp"
+#include "okay/Scene/Transform.hpp"
+#include "okay/Components/Inventory.hpp"
+#include "okay/Components/InventoryPlayer.hpp"
+#include "okay/Components/MeshRenderer.hpp"
+#include "okay/Inventory/InventoryOps.hpp"
+#include "okay/Inventory/ItemDatabase.hpp"
+#include "okay/Input/Input.hpp"
+#include "okay/Physics/Collider2D.hpp"
+#include "okay/Physics/Collider3D.hpp"
+#include "okay/Render/Mesh.hpp"
+#include <string>
+
+namespace okay {
+
+/// An item lying in the world. Walking into it (its trigger collider), coming within
+/// `autoRadius`, or pressing `interactKey` within `interactRange` puts it in the
+/// collector's Inventory — as much as fits; whatever doesn't fit stays on the ground.
+/// Optionally drifts toward the player inside `magnetRadius`. Items dropped from an
+/// inventory spawn one of these (Spawn), so nothing dropped is ever lost.
+class ItemPickup : public Behaviour {
+public:
+    std::string item;                 ///< ItemDatabase id
+    int   count = 1;
+    ItemInstanceData data;            ///< durability / uid / values carried by this item
+    std::string collectorTag = "Player";   ///< who can pick it up (tag or name; empty = anyone with an Inventory)
+    bool  pickupOnTouch = true;       ///< collect when the collector enters its trigger
+    float autoRadius = 0.0f;          ///< collect when the player is this close (0 = off)
+    char  interactKey = 0;            ///< press near it to collect (0 = off)
+    float interactRange = 2.0f;
+    float magnetRadius = 0.0f;        ///< drift toward the player inside this range (0 = off)
+    float magnetSpeed = 6.0f;
+
+    void OnTriggerEnter2D(Collider2D* o) override { if (pickupOnTouch && o) GiveTo(o->gameObject); }
+    void OnTriggerEnter3D(Collider3D* o) override { if (pickupOnTouch && o) GiveTo(o->gameObject); }
+    void OnCollisionEnter2D(const Collision2D& c) override { if (pickupOnTouch) GiveTo(c.gameObject); }
+    void OnCollisionEnter3D(const Collision3D& c) override { if (pickupOnTouch) GiveTo(c.gameObject); }
+
+    /// Put this item into `who`'s Inventory (on it or its root) if `who` is a collector
+    /// (collectorTag). Returns how many moved; the pickup is destroyed once it's empty.
+    int GiveTo(GameObject* who) {
+        if (!who || (!collectorTag.empty() && who->tag != collectorTag && who->name.find(collectorTag) == std::string::npos)) return 0;
+        return Give(who);
+    }
+
+    void Update(float dt) override {
+        if (m_gone || !gameObject || !gameObject->transform) return;
+        GameObject* player = FindInventoryPlayer(gameObject->scene());
+        if (!player || !player->transform) return;
+        const Vec3 me = gameObject->transform->Position(), p = player->transform->Position();
+        const Vec3 d = p - me;
+        const float dist = d.Magnitude();
+        if (autoRadius > 0.0f && dist <= autoRadius) { Give(player); return; }
+        if (interactKey && dist <= interactRange && Input::GetKeyDown(interactKey)) { Give(player); return; }
+        if (magnetRadius > 0.0f && dist <= magnetRadius && dist > 0.05f) {
+            const float step = magnetSpeed * dt;
+            gameObject->transform->SetPosition(step >= dist ? p : me + d * (step / dist));
+        }
+    }
+
+    /// The Inventory on `who`, else on its root.
+    static Inventory* InventoryOf(GameObject* who) {
+        if (!who) return nullptr;
+        if (auto* in = who->GetComponent<Inventory>()) return in;
+        Transform* t = who->transform;
+        while (t && t->Parent()) t = t->Parent();
+        return (t && t->gameObject) ? t->gameObject->GetComponent<Inventory>() : nullptr;
+    }
+
+    /// Drop `count` of `item` into the world at `pos`: the definition's world prefab
+    /// (with an ItemPickup added if it has none), else a small cube showing its icon.
+    static GameObject* Spawn(Scene& scene, const std::string& item, int count, const ItemInstanceData& data, const Vec3& pos) {
+        if (item.empty() || count <= 0) return nullptr;
+        const ItemDefinition* def = ItemDatabase::Get().Def(item);
+        GameObject* go = nullptr;
+        if (def && !def->worldPrefab.empty()) go = SceneSerializer::InstantiateFromFile(scene, def->worldPrefab);
+        if (!go) {
+            go = scene.CreateGameObject(def ? def->DisplayName() : item);
+            auto* mr = go->AddComponent<MeshRenderer>();
+            mr->mesh = Mesh::Cube();
+            mr->texture = ItemIconPath("", item);
+            go->transform->localScale = {0.4f, 0.4f, 0.4f};
+            go->AddComponent<BoxCollider3D>()->isTrigger = true;
+        }
+        go->transform->SetPosition(pos);
+        auto* pk = go->GetComponent<ItemPickup>();
+        if (!pk) pk = go->AddComponent<ItemPickup>();
+        pk->item = item; pk->count = count; pk->data = data;
+        return go;
+    }
+
+private:
+    int Give(GameObject* who) {
+        if (m_gone || !who || who == gameObject || item.empty() || count <= 0) return 0;
+        Inventory* inv = InventoryOf(who);
+        if (!inv) return 0;
+        Inventory carried;   // move through InventoryOps: partial fit and one-off items handled once
+        carried.slots.push_back(Inventory::Slot{item, count, data});
+        const InvResult r = InventoryOps::Transfer(&carried, 0, inv);
+        if (!r.Ok()) return 0;
+        count -= r.moved;
+        if (count <= 0) {
+            m_gone = true;
+            if (gameObject && gameObject->scene()) gameObject->scene()->Destroy(gameObject);
+        }
+        return r.moved;
+    }
+
+    bool m_gone = false;
+};
+
+} // namespace okay

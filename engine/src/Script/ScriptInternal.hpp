@@ -49,6 +49,8 @@ enum class TK : std::uint8_t {
     List,     ///< List<T>: id = Program::generics index (a = T)
     Dict,     ///< Dictionary<K, V>: id = Program::generics index (a = K, b = V)
     Pair,     ///< KeyValuePair<K, V> (foreach over a dictionary): id as Dict
+    Func,     ///< Func<..., R> / Action<...>: id = Program::funcs index
+    Lambda,   ///< a lambda whose Func / Action type comes from where it's used (checker only)
 };
 struct Type {
     TK  kind = TK::Error;
@@ -73,10 +75,15 @@ struct ObjRef {
 struct ArrayObj;
 struct ScriptObj;
 struct DictObj;
+struct FuncObj;
+struct Cell;
 using ArrayRef = std::shared_ptr<ArrayObj>;
 using ObjPtr = std::shared_ptr<ScriptObj>;
 using DictRef = std::shared_ptr<DictObj>;
-using Value = std::variant<std::monostate, bool, std::int32_t, float, std::string, Vec3, ObjRef, ArrayRef, ObjPtr, DictRef>;
+using FuncRef = std::shared_ptr<FuncObj>;
+using CellRef = std::shared_ptr<Cell>;
+/// CellRef only appears in a method's local slots (a local that a lambda captured); reading the local gives what's inside.
+using Value = std::variant<std::monostate, bool, std::int32_t, float, std::string, Vec3, ObjRef, ArrayRef, ObjPtr, DictRef, FuncRef, CellRef>;
 /// A T[], a List<T> or a KeyValuePair (items = key, value) at runtime. Arrays
 /// and lists are references: copies share the items.
 struct ArrayObj {
@@ -101,6 +108,24 @@ struct ScriptObj {
     std::string className;       ///< printed when the object is turned into text
     std::vector<Value> fields;
     ~ScriptObj();                ///< frees long chains (linked lists) without deep recursion
+};
+
+/// A local variable shared between a method and the lambdas that use it.
+struct Cell { Value v; };
+
+struct Program;
+struct LambdaDecl;
+class Instance;
+/// A lambda made while running: its code, the variables it captured and the object it runs for.
+struct FuncObj {
+    const LambdaDecl* decl = nullptr;
+    std::shared_ptr<const Program> prog;   ///< keeps decl alive
+    std::vector<CellRef> captures;
+    Instance* inst = nullptr;              ///< the script object that made it; only used while `alive` holds
+    std::weak_ptr<char> alive;
+    ObjPtr self;                           ///< made inside a plain class's method: that object
+    int cls = -1;
+    std::string typeName;
 };
 
 std::string ValueToString(const Value& v);
@@ -173,7 +198,7 @@ enum class T : std::uint8_t {
     LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Dot, Semicolon, Colon, Question,
     Plus, Minus, Star, Slash, Percent, Not, Lt, Gt, Le, Ge, EqEq, NotEq, AndAnd, OrOr,
     Assign, PlusEq, MinusEq, StarEq, SlashEq, PercentEq, PlusPlus, MinusMinus,
-    QuestionDot, QuestionQuestion, QuestionQuestionEq,
+    QuestionDot, QuestionQuestion, QuestionQuestionEq, Arrow /* => */,
     // keywords
     KwClass, KwPublic, KwPrivate, KwVoid, KwInt, KwFloat, KwBool, KwString, KwVar,
     KwIf, KwElse, KwWhile, KwFor, KwReturn, KwBreak, KwContinue, KwTrue, KwFalse, KwNull,
@@ -211,10 +236,12 @@ enum class EK : std::uint8_t {
     Format,        ///< {value:F2} in $"...": lhs = the number, sval = "F2", ival = decimals (checked)
     NullCond,      ///< a chain with ?. in it: lhs = the chain, null if a ?. found null; name = what was null
     ArrayLit,      ///< { a, b } after `T[] x =`: the type comes from the declaration
+    Lambda,        ///< x => ..., (a, b) => { ... }: `lambda` holds the parameters and body
 };
 
 struct Expr;
 using ExprPtr = std::unique_ptr<Expr>;
+struct LambdaDecl;
 
 /// What a checked name/member refers to (filled by the Checker).
 enum class Bind : std::uint8_t {
@@ -224,6 +251,8 @@ enum class Bind : std::uint8_t {
     EnumValue /*State.Idle: ival*/, ArrayLength,
     CollCount /*list / dictionary .Count*/, CollMethod /*xs.Add(...): member = CollOp*/,
     DictKeys, DictValues, PairKey, PairValue,
+    Captured /*a variable of the method around a lambda: slot = capture index*/,
+    Invoke /*f(x), f.Invoke(x): object = the function*/,
     NewCollection /*new List<int>(), new Dictionary<K, V>(); args = { ... } items*/,
     ObjField /*obj.field: slot = field*/, ObjMethod /*obj.M(): slot = method, member = class*/,
     NewObject /*new Node(): slot = class, member = constructor (-1 = none)*/,
@@ -233,6 +262,11 @@ enum class CollOp : std::uint8_t {
     ListAdd, ListAddRange, ListInsert, ListRemove, ListRemoveAt, ListClear, ListContains, ListIndexOf,
     ListSort, ListReverse, ListToArray,
     DictAdd, DictTryAdd, DictRemove, DictContainsKey, DictContainsValue, DictClear, DictGetValueOrDefault,
+    // LINQ-style, on lists and arrays (a lambda or nothing as the argument)
+    Where, Select, OrderBy, OrderByDescending, First, FirstOrDefault, Last, LastOrDefault, Any, All, Count,
+    Sum, Min, Max, Average, ToList,
+    // List<T> methods that take a lambda
+    Find, FindAll, FindIndex, Exists, RemoveAll, ForEach, SortBy,
 };
 
 struct Expr {
@@ -260,6 +294,7 @@ struct Expr {
     int enumStr = -1;               ///< an enum (Program::enums index) used as text: print the member's name
     bool hasInit = false;           ///< NewArray: has a { ... } list
     bool nullCond = false;          ///< Member/Call reached with ?. (its receiver may be null)
+    std::unique_ptr<LambdaDecl> lambda;   ///< Lambda
 };
 
 enum class SK : std::uint8_t { Block, Expr, Local, If, While, For, Return, Break, Continue, Switch, Foreach, DoWhile };
@@ -306,6 +341,18 @@ struct FieldDecl {
     bool read = false;
 };
 struct Param { TypeRef type; std::string name; SrcLoc loc; Type resolved; };
+struct LambdaDecl {
+    std::vector<Param> params;
+    ExprPtr value;                  ///< x => value
+    std::unique_ptr<Stmt> body;     ///< x => { body }
+    // checked
+    Type ret;                       ///< void for an Action
+    int localCount = 0;
+    /// Where each captured variable comes from when the lambda is made: a local
+    /// slot of the code around it (>= 0), or that code's own capture -1 - i.
+    std::vector<int> captureFrom;
+    bool usesSelf = false;          ///< uses the object's fields, methods or `this`
+};
 struct MethodDecl {
     bool isPublic = false, isStatic = false;   ///< static: can't use the object's own fields, methods or members
     bool isCtor = false;                       ///< a plain class's constructor (name = the class)
@@ -358,6 +405,9 @@ struct Program {
     /// List / Dictionary / KeyValuePair types: their type arguments.
     struct Generic { TK kind; Type a, b; };
     std::vector<Generic> generics;
+    /// Func / Action types: parameter types and result (void for an Action).
+    struct FuncSig { std::vector<Type> params; Type ret; };
+    std::vector<FuncSig> funcs;
     int component = -1;            ///< the class that is the component
     std::vector<ScriptDiagnostic> diags;
     bool ok() const;
@@ -367,6 +417,8 @@ struct Program {
     Type ArrayOf(const Type& elem);
     /// The List<a> / Dictionary<a, b> / KeyValuePair<a, b> type (made on first use).
     Type GenericOf(TK kind, const Type& a, const Type& b = Type{});
+    /// The Func<params..., ret> (or Action<params...> when ret is void) type (made on first use).
+    Type FuncOf(const std::vector<Type>& params, const Type& ret);
     /// TypeName that also knows this program's enums and arrays.
     std::string NameOf(const Type& t) const;
 };
@@ -401,6 +453,9 @@ public:
     bool SetField(const std::string& name, const Value& v);
     CallContext& Context() { return ctx_; }
     const Program& program() const { return *prog_; }
+    const std::shared_ptr<Program>& programPtr() const { return prog_; }
+    /// Expires when this instance is destroyed (lambdas it made check it before running).
+    std::weak_ptr<char> AliveToken() const { return alive_; }
     std::vector<Value>& Fields() { return fields_; }
     std::vector<Value>& Statics() { return statics_->values; }
     /// Statements executed in the current callback (a guard against endless loops).
@@ -412,6 +467,7 @@ private:
     std::vector<Value> fields_;
     std::shared_ptr<StaticStore> statics_;
     CallContext ctx_;
+    std::shared_ptr<char> alive_ = std::make_shared<char>(0);
 };
 
 } // namespace okay::script

@@ -15,6 +15,7 @@
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Math/IKFade.hpp"
+#include "okay/Components/IKBones.hpp"
 #include <cmath>
 #include <vector>
 #include <string>
@@ -40,13 +41,13 @@ public:
     float smoothing = 10.0f;
 
     void Start() override {
+        // Names resolve inside this character first (two copies of one model
+        // share bone names), then anywhere in the scene.
         Scene* s = GetScene();
-        if (!s) return;
         if (chain.empty() && !chainNames.empty())
             for (const std::string& n : chainNames)
-                if (GameObject* g = s->Find(n)) chain.push_back(g->transform);
-        if (!targetObject && !targetName.empty())
-            if (GameObject* g = s->Find(targetName)) targetObject = g->transform;
+                if (Transform* t = ResolveBone(s, gameObject, n)) chain.push_back(t);
+        if (!targetObject) targetObject = ResolveBone(s, gameObject, targetName);
     }
 
     // Solve in LateUpdate so the correction lands AFTER every animation driver

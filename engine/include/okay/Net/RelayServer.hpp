@@ -40,7 +40,7 @@ namespace okay::net {
 ///  * each peer's forwarded packets and bytes per second are capped, and so is
 ///    what each peer receives in total from its session;
 ///  * slots are random (not guessable), and peers, sessions and code lengths
-///    are capped, per source address too, so one machine can't take every slot
+///    are capped, per source address too (peers and sessions opened), so one machine can't take every slot
 ///    and lock everyone else out. Drive
 /// it by calling Poll() in a loop (the standalone `okayspace-relay` binary does
 /// exactly that); tests pump it in-process alongside the peers.
@@ -52,6 +52,10 @@ public:
     /// Peers one IP address may hold at once (a LAN party or a shared NAT fits;
     /// a flood from one machine stops here, far below the global caps).
     static constexpr std::uint32_t kMaxPeersPerAddress = 64;
+    /// Sessions one IP address may open (the peer that names a new code opens
+    /// it). A LAN party or a shared NAT hosts a few games and calls; everyone
+    /// else joins those. Loopback is exempt.
+    static constexpr std::uint32_t kMaxSessionsPerAddress = 16;
     static constexpr std::size_t kMaxCodeLength = 64;       ///< session code bytes
     /// Forwarding caps per peer: packets and bytes per second, with twice that
     /// as a burst. A host's caps are multiplied by its session's client count,
@@ -117,6 +121,7 @@ private:
         std::string   code;
         bool          host = false;     // announced the host role (the session's host is Session::hostSlot)
         std::uint8_t  version = 1;      // relay protocol version it spoke
+        bool          hub = false;      // announced RelayHub: its session is never key-protected
         float         idle = 0.0f;
         float         packets = 0.0f;   // forwarding allowance (token buckets)
         float         bytes = 0.0f;
@@ -131,6 +136,7 @@ private:
         std::uint32_t peers = 0;        // registered peers with this code
         std::uint64_t hostKey = 0;      // set when a version-2 host claims the code: protected
         std::uint32_t lastHostSlot = 0; // the slot a returning host gets back
+        std::uint32_t opener = 0;       // the IP address that opened it (kMaxSessionsPerAddress)
     };
     using PeerMap = std::unordered_map<Endpoint, Peer, EndpointHash>;
 
@@ -159,6 +165,7 @@ private:
     std::unordered_map<std::uint32_t, Endpoint>      m_slotEp;  // slot -> real address
     std::unordered_map<std::string, Session>         m_sessions;// by code
     std::unordered_map<std::uint32_t, std::uint32_t> m_perAddress;   // IP -> registered peers
+    std::unordered_map<std::uint32_t, std::uint32_t> m_sessionsPerAddress;   // IP -> sessions it opened
     std::unordered_map<std::uint32_t, HelloBucket>   m_helloRate;    // IP -> hellos it may still send
     std::string m_cookieSecret;   // random per process: cookies don't outlive a restart
     bool m_legacyHello = true;

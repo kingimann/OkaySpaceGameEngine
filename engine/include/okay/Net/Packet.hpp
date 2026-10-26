@@ -57,6 +57,7 @@ public:
     bool Ok() const { return !m_overflow; }
     const std::uint8_t* Data() const { return m_data.data(); }
     std::size_t Size() const { return m_data.size(); }
+    std::size_t Remaining() const { return m_read < m_data.size() ? m_data.size() - m_read : 0; }
 
 private:
     template <typename T> void WritePod(T v) {

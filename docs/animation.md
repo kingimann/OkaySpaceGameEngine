@@ -192,7 +192,17 @@ animation (state machine, blending, crossfades), correcting the final pose:
 - **Aim IK** — point one bone at a target (weapon, turret, head). **Auto:
   Head** finds the head bone.
 - **Limb IK** — arm reach/grab. **Auto: L Arm / R Arm** map
-  shoulder → forearm → hand (fingers excluded).
+  shoulder → forearm → hand (fingers excluded). The bones turn to reach, so
+  they keep their length and the mesh bends with them. A **Weight** below 1
+  bends the limb part of the way.
+  - **Pole Mode** sets where the elbow or knee points when there's no Pole
+    object. **Auto** keeps the animation's own bend; **Character** turns
+    with the character; **World** is a fixed direction.
+  - **Softness** eases the last stretch to full reach, so the limb doesn't
+    snap straight.
+  - **Match Target Rotation** without a target object uses **Target
+    Rotation**.
+  - A broken target (NaN) leaves the animated pose alone.
 - **Chain IK** — long chains (tails, tentacles), FABRIK/CCD.
 - **Foot IK** — see below.
 
@@ -256,8 +266,8 @@ real drop (a step down keeps the stride). Standing still, the character
 Every new Character (the player templates, GameObject > 3D > Character, Add
 Component > Character, rigging a model) comes with an **Animator** holding the
 default graph, and a scene saved before it existed gets one when it loads. Its
-states — Idle, Walk, Run, Crouch, CrouchWalk, Prone, Jump, Fall, Land, Hang
-and the gestures (Wave, Point, Clap, ThumbsUp, Salute, WaveBoth, Cheer, Sad,
+states — Idle, Walk, Run, Crouch, CrouchWalk, Prone, Crawl, GetUp, Drop, Jump,
+Fall, Land, Hang and the gestures (Wave, Point, Clap, ThumbsUp, Salute, WaveBoth, Cheer, Sad,
 Angry, Think) — play the **default humanoid clips**, baked from the motion
 above: the walk, run and crouch-walk at several speeds in eight directions,
 each a 2D blend tree on `gaitX`/`gaitZ` that keeps pace with the ground
@@ -265,6 +275,16 @@ each a 2D blend tree on `gaitX`/`gaitZ` that keeps pace with the ground
 fast as its speed parameter over the blended motions' speed). Every Character can play these clips by name; they aren't
 copied into the scene, and a clip of your own with the same name wins. A clip
 bound with clipIdle / clipWalk / ... plays in that state instead.
+
+Stance changes follow the Animator's **Stance changes** times: standing and
+crouching crossfade over the stand <-> crouch time, crouching and prone over
+the crouch <-> prone time. Standing still, going prone drops down through a
+kneel (**Drop**) and standing up gets up through hands-and-knees and a kneel
+(**GetUp**, over the prone -> stand time); on the move the stride blends
+straight into the crawl and back. **Crawl** goes forward, backward and to
+either side as the body moves. Foot IK is off while lying down. Any change of
+mind blends from wherever the body is. Editing the times retimes the default
+graph's blends.
 
 A movement controller feeds the graph's parameters every frame: `speed`
 (m/s), `run`, `crouch`, `prone`, `stance` (0 stand .. 1 crouch .. 2 prone,
@@ -778,6 +798,20 @@ elbows bend down and out, and the object moves with the body.
   bones) and on imported humanoids (bones found by name, through the Full Body IK
   the character already has or one it adds). Looking around with a controller's
   *IK Look* turns the chest before the hands are placed, so they stay on the grips.
+- **Body Adjustment** (on by default): a heavy or big load (from 3 kg up to
+  30 kg, more for big loads and the *Heavy* style) leans the torso back. The
+  lean is an additive layer on the character's animation, so walking and
+  running keep their motion under it, and it eases in and out. The load also
+  slows the character down (down to 0.55x at the heaviest; `SpeedMultiplier()`).
+  The first-person, third-person, shooter, top-down and click-to-move
+  controllers apply it through `MoveSpeedScale()`, the one shared movement-speed
+  hook, so the server and a predicting client agree. The object is also pushed
+  out in front instead of sinking into the chest or belly.
+- **Carry Animations**: *Automatic* is the built-in lean. *Custom* leaves the
+  posture to your Animator: it gets the parameters `holding` (bool),
+  `carryStyle` (int: 0 small item, 1 custom, 2 pistol, 3 rifle, 4 box,
+  5 flashlight, 6 sword, 7 cup, 8 heavy) and `carryWeight` (kg) for its own
+  carry states or layer. The hands still go on the grips either way.
 - Scripts: `hold_nearest(range)` and `hold_pickup("Crate")` return 1 when the
   object is in the hands, `hold_drop()` lets go, `hold_object()` is the name of
   what's held ("" when nothing).

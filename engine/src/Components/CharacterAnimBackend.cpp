@@ -25,9 +25,10 @@ void MixIn(std::vector<Vec3>& pose, Vec3& root, float& total, const std::vector<
 }
 
 // The built-in `anim` number a state stands for, by its name ("Walk" = 2,
-// "Land" = 1), or -1.
+// "Land" = 1, "Crawl" = 7), or -1.
 int StateNumber(const std::string& state) {
-    if (state == "Land") return 1;
+    if (state == "Land" || state == "GetUp") return 1;
+    if (state == "Crawl" || state == "Drop") return 7;
     return Character::BuiltinAnimIndex(state);
 }
 } // namespace

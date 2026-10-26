@@ -30,6 +30,8 @@
 #include "okay/Components/GridInventoryUI.hpp"
 #include "okay/Components/CraftingStation.hpp"
 #include "okay/Components/ChestInventory.hpp"
+#include "okay/Components/ItemPickup.hpp"
+#include "okay/Components/LootSource.hpp"
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"
@@ -80,6 +82,11 @@
 #include "okay/Components/UILayoutGroup.hpp"
 #include "okay/Components/UIFlexItem.hpp"
 #include "okay/Components/UIMask.hpp"
+#include "okay/Components/UIFrame.hpp"
+#include "okay/Components/UIModal.hpp"
+#include "okay/Components/UIContextMenu.hpp"
+#include "okay/Components/UIKeybindField.hpp"
+#include "okay/Components/UIElement.hpp"   // GetUIRect: settle loaded UIFrames
 #include "okay/Components/UIListView.hpp"
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/WorldUI.hpp"
@@ -254,6 +261,27 @@ struct KvIn {
         f((b + "R").c_str(), c.r); f((b + "G").c_str(), c.g); f((b + "B").c_str(), c.b); f((b + "A").c_str(), c.a);
     }
 };
+// The crouch / prone options of a movement controller (StanceControl) and the
+// stance it was saved in: one `<rec> key=value ...` line.
+void WriteStanceControl(std::ostream& out, const char* rec, const StanceControl& sc) {
+    out << "  " << rec;
+    KvOut k{out};
+    k.key("crouchKey", sc.crouchKey).key("proneKey", sc.proneKey).b("toggle", sc.toggle).b("prone", sc.allowProne)
+     .b("resize", sc.resizeBody)("crouchSpeed", sc.crouchSpeed)("proneSpeed", sc.proneSpeed)
+     ("crouchH", sc.crouchHeight)("proneH", sc.proneHeight);
+    if (sc.Stance() != 0) k("stance", sc.Stance());   // saved crouched / prone (the collider is saved standing)
+    out << "\n";
+}
+void ReadStanceControl(std::istream& in, StanceControl* sc) {
+    KvIn k(in);
+    if (!sc) return;
+    k.key("crouchKey", sc->crouchKey); k.key("proneKey", sc->proneKey); k.b("toggle", sc->toggle);
+    k.b("prone", sc->allowProne); k.b("resize", sc->resizeBody); k.f("crouchSpeed", sc->crouchSpeed);
+    k.f("proneSpeed", sc->proneSpeed); k.f("crouchH", sc->crouchHeight); k.f("proneH", sc->proneHeight);
+    int st = 0; k.i("stance", st);
+    if (st == 1 || st == 2) sc->Restore(st);
+}
+
 
 // Read the three shared publish toggles trailing every stat_* line.
 void ReadStatTail(std::istream& in, StatComponent* c) {
@@ -672,6 +700,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             for (const auto& tr : asm2->anyState) out << " " << tr.offset;
             out << "\n";
         }
+        // Per-state full-body IK weight, where it stops following ikWeight
+        // (a newer record; older builds skip it).
+        bool anyFb = false;
+        for (const auto& st : asm2->states) anyFb = anyFb || st.fullBodyIkWeight >= 0.0f;
+        if (anyFb) {
+            out << "  animsmfb " << asm2->states.size();
+            for (const auto& st : asm2->states) out << " " << st.fullBodyIkWeight;
+            out << "\n";
+        }
         // Muted transitions.
         bool anyMute = false;
         for (const auto& st : asm2->states) for (const auto& tr : st.transitions) anyMute = anyMute || tr.muted;
@@ -801,6 +838,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             out << " " << Quote(vars);
         }
         out << "\n";
+        out << "  anticheatsafety " << (s.requireEncryption ? 1 : 0) << " " << (ac->allowRuntimeToggle ? 1 : 0) << "\n";
         const AntiCheatSettings d;   // hit-claim tuning: its own line, only when changed
         if (s.hitOriginTolerance != d.hitOriginTolerance || s.hitTolerance != d.hitTolerance || s.maxHitRange != d.maxHitRange ||
             s.hitDamage != d.hitDamage || s.hitLineOfSight != d.hitLineOfSight || s.hitsNeedMoveCheck != d.hitsNeedMoveCheck)
@@ -1001,7 +1039,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << lb->weight << " " << lb->minBend << " " << lb->maxBend << " " << (lb->matchTargetRotation ? 1 : 0)
             << " " << lb->target.x << " " << lb->target.y << " " << lb->target.z
             << " " << lb->pole.x << " " << lb->pole.y << " " << lb->pole.z
-            << " " << (lb->orient ? 1 : 0) << "\n";
+            << " " << (lb->orient ? 1 : 0) << " " << (int)lb->poleMode << " " << lb->softness
+            << " " << lb->targetRotation.x << " " << lb->targetRotation.y << " " << lb->targetRotation.z
+            << " " << lb->targetRotation.w << "\n";
     }
     if (auto* ci = go->GetComponent<ChainIK>()) {
         out << "  chainik " << Quote(ci->targetName) << " " << ci->weight << " " << ci->iterations
@@ -1061,7 +1101,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* ph = go->GetComponent<ProceduralObjectHolding>()) {
         out << "  objholding";
         KvOut k{out};
-        k("hand", (int)ph->primaryHand)("style", (int)ph->holdingStyle).b("armIK", ph->armIK)("transition", ph->transitionTime);
+        k("hand", (int)ph->primaryHand)("style", (int)ph->holdingStyle).b("armIK", ph->armIK)("transition", ph->transitionTime)
+         .b("body", ph->bodyAdjustment)("carry", (int)ph->carryAnimations);
         out << "\n";
     }
     if (auto* rm = go->GetComponent<RootMotion>()) {
@@ -1086,6 +1127,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* fpc = go->GetComponent<FirstPersonController>()) stance = &fpc->stanceBody();
     else if (auto* tpc = go->GetComponent<ThirdPersonController>()) stance = &tpc->stanceBody();
     else if (auto* p25 = go->GetComponent<Platformer25DController>()) stance = &p25->stanceBody();
+    else if (auto* c3 = go->GetComponent<CharacterController3D>()) stance = &c3->stanceControl.Body();
+    else if (auto* tps = go->GetComponent<ThirdPersonShooterController>()) stance = &tps->stanceControl.Body();
+    else if (auto* tdc = go->GetComponent<TopDownController>()) stance = &tdc->stanceControl.Body();
+    else if (auto* ctm = go->GetComponent<ClickToMoveController>()) stance = &ctm->stanceControl.Body();
+    else if (auto* npc = go->GetComponent<NPCController>()) stance = &npc->stanceControl.Body();
     const bool resized = stance && stance->captured && std::fabs(stance->curH - stance->standH) > 1e-4f;
     const float standOffY = resized ? stance->feetY + stance->standH * 0.5f : 0.0f;
     if (auto* bc = go->GetComponent<BoxCollider3D>(); bc && bc->shape() == Collider3D::Shape::Box) {
@@ -1310,6 +1356,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         wc(ui->titleColor);
         out << " " << Quote(ui->backpackTitle);
         out << " " << Quote(ui->inventoryTarget);   // appended (quote-peek guarded)
+        out << " " << (int)(unsigned char)ui->useKey << " " << (ui->clickToUse ? 1 : 0);   // appended (numeric-peek guarded)
         out << "\n";
     }
     if (auto* gi = go->GetComponent<GridInventory>()) {
@@ -1760,6 +1807,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* ft = go->GetComponent<FollowTarget2D>()) {
         out << "  follow2d " << Quote(ft->target) << " " << ft->speed << " " << ft->stopDistance << "\n";
     }
+    // The other movement controllers' crouch / prone (after their own records, so they exist on load).
+    if (auto* c = go->GetComponent<CharacterController3D>())        WriteStanceControl(out, "cc3dstance", c->stanceControl);
+    if (auto* c = go->GetComponent<ThirdPersonShooterController>()) WriteStanceControl(out, "tpsstance", c->stanceControl);
+    if (auto* c = go->GetComponent<TopDownController>())            WriteStanceControl(out, "tdstance", c->stanceControl);
+    if (auto* c = go->GetComponent<ClickToMoveController>())        WriteStanceControl(out, "ctmstance", c->stanceControl);
+    if (auto* c = go->GetComponent<NPCController>())                WriteStanceControl(out, "npcstance", c->stanceControl);
     if (auto* sp = go->GetComponent<Spinner>()) {
         out << "  spinner " << sp->angularVelocity.x << " " << sp->angularVelocity.y
             << " " << sp->angularVelocity.z << "\n";
@@ -1797,6 +1850,27 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         for (const auto& s : inv->slots) out << " " << Quote(s.item) << " " << s.count;
         out << " " << inv->maxStack;   // appended (numeric-peek guarded on read)
         WriteInstanceData(out, inv->slots.size(), [&](std::size_t i) -> const ItemInstanceData& { return inv->slots[i].data; });
+        out << " " << inv->weightLimit << " " << (inv->slowWhenOverWeight ? 1 : 0) << " " << inv->overWeightSpeed;   // appended (guarded)
+        out << "\n";
+    }
+    if (auto* pk = go->GetComponent<ItemPickup>()) {
+        out << "  itempickup";
+        KvOut k{out};
+        k.str("item", pk->item)("count", pk->count).str("tag", pk->collectorTag).b("touch", pk->pickupOnTouch)
+         ("auto", pk->autoRadius).key("key", pk->interactKey)("range", pk->interactRange)
+         ("magnet", pk->magnetRadius)("magnetSpeed", pk->magnetSpeed);
+        if (!pk->data.Empty()) {
+            k("dur", pk->data.durability)("uid", pk->data.uid)("vals", pk->data.values.size());
+            for (std::size_t v = 0; v < pk->data.values.size(); ++v) {
+                const std::string n = std::to_string(v);
+                k.str(("k" + n).c_str(), pk->data.values[v].first).str(("v" + n).c_str(), pk->data.values[v].second);
+            }
+        }
+        out << "\n";
+    }
+    if (auto* ls = go->GetComponent<LootSource>()) {
+        out << "  lootsource";
+        KvOut{out}.str("table", ls->table)("when", (int)ls->when)("refill", ls->refill)("seed", ls->seed);
         out << "\n";
     }
     if (auto* tm = go->GetComponent<TurnManager>()) {
@@ -2120,6 +2194,32 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (int)fi->alignSelf << "\n";
     }
     if (auto* mk = go->GetComponent<UIMask>()) out << "  uimask " << (mk->showGraphic ? 1 : 0) << "\n";
+    if (auto* md = go->GetComponent<UIModal>()) {
+        out << "  uimodal " << (md->dimBackground ? 1 : 0) << " "
+            << md->dimColor.r << " " << md->dimColor.g << " " << md->dimColor.b << " " << md->dimColor.a << " "
+            << (md->closeOnCancel ? 1 : 0) << " " << (md->closeOnClickOutside ? 1 : 0) << "\n";
+    }
+    if (auto* cm = go->GetComponent<UIContextMenu>()) {
+        auto c4 = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
+        out << "  uicontext " << (cm->anywhere ? 1 : 0) << " " << cm->itemHeight << " " << cm->width << " " << cm->textSize;
+        c4(cm->background); c4(cm->hoverColor); c4(cm->textColor); c4(cm->borderColor);
+        out << " " << cm->items.size();
+        for (const std::string& it : cm->items) out << " " << Quote(it);
+        out << "\n";
+    }
+    if (auto* kb = go->GetComponent<UIKeybindField>()) {
+        auto c4 = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
+        out << "  uikeybind " << kb->position.x << " " << kb->position.y << " " << kb->size.x << " " << kb->size.y
+            << " " << (int)kb->anchor << " " << Quote(kb->action) << " " << (int)(unsigned char)kb->key
+            << " " << (int)(unsigned char)kb->defaultKey << " " << Quote(kb->prefKey) << " " << kb->textSize;
+        c4(kb->background); c4(kb->keyColor); c4(kb->listenColor); c4(kb->textColor);
+        out << " " << (kb->interactable ? 1 : 0) << " " << (kb->focusable ? 1 : 0) << "\n";
+    }
+    if (auto* fr = go->GetComponent<UIFrame>()) {
+        out << "  uiframe " << fr->anchorMin.x << " " << fr->anchorMin.y << " " << fr->anchorMax.x << " " << fr->anchorMax.y
+            << " " << fr->pivot.x << " " << fr->pivot.y << " " << fr->position.x << " " << fr->position.y
+            << " " << fr->size.x << " " << fr->size.y << "\n";
+    }
     if (auto* sv = go->GetComponent<UIScrollView>()) {
         out << "  uiscroll " << sv->position.x << " " << sv->position.y << " "
             << sv->size.x << " " << sv->size.y << " " << (int)sv->anchor << " "
@@ -3074,6 +3174,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         float o = 0; in >> o;
                         if (k < (long)sm2->anyState.size()) sm2->anyState[k].offset = o;
                     }
+                } else if (field == "animsmfb") {
+                    auto* sm2 = smFor();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n && in; ++i) {
+                        float w = -1.0f; in >> w;
+                        if (i < (long)sm2->states.size()) sm2->states[i].fullBodyIkWeight = w;
+                    }
                 } else if (field == "animsmparams") {
                     auto* sm2 = smFor();
                     long n = 0; in >> n;
@@ -3374,10 +3481,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> lb->target.x >> lb->target.y >> lb->target.z
                        >> lb->pole.x >> lb->pole.y >> lb->pole.z;
                     lb->matchTargetRotation = (mr != 0);
-                    // Optional trailing field (newer files): orient bones toggle.
+                    // Optional trailing fields (newer files): orient bones toggle, pole mode,
+                    // softness, target rotation. Files from before the pole mode bent toward
+                    // the world direction.
                     { std::string rest; std::getline(in, rest);
-                      std::istringstream rs(rest); int o;
-                      if (rs >> o) lb->orient = (o != 0); }
+                      std::istringstream rs(rest); int o, pm;
+                      if (rs >> o) lb->orient = (o != 0);
+                      lb->poleMode = (rs >> pm) ? (LimbIK::PoleMode)std::clamp(pm, 0, 2) : LimbIK::PoleMode::World;
+                      Quat q;
+                      if (rs >> lb->softness >> q.x >> q.y >> q.z >> q.w) lb->targetRotation = q; }
                 } else if (field == "chainik") {
                     auto* ci = go->AddComponent<ChainIK>();
                     ci->targetName = ReadQuoted(in);
@@ -3433,6 +3545,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     : hand == 2 ? ProceduralObjectHolding::Hand::Both : ProceduralObjectHolding::Hand::Right;
                     ph->holdingStyle = st == 1 ? ProceduralObjectHolding::StyleMode::Custom : ProceduralObjectHolding::StyleMode::Automatic;
                     k.b("armIK", ph->armIK); k.f("transition", ph->transitionTime);
+                    int carry = 0; k.b("body", ph->bodyAdjustment); k.i("carry", carry);
+                    ph->carryAnimations = carry == 1 ? ProceduralObjectHolding::CarryAnim::Custom : ProceduralObjectHolding::CarryAnim::Automatic;
                 } else if (field == "fbikx") {
                     if (auto* fb = go->GetComponent<FullBodyIK>())
                         in >> fb->blendSpeed >> fb->goalSmoothing >> fb->lookSmoothing >> fb->armMinBend >> fb->legMinBend;
@@ -3860,7 +3974,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                                 rc(ui->titleColor);
                                                 ui->backpackTitle = ReadQuoted(in);
                                                 in >> std::ws;   // optional inventory target (quoted)
-                                                if (in.peek() == '"') ui->inventoryTarget = ReadQuoted(in);
+                                                if (in.peek() == '"') {
+                                                    ui->inventoryTarget = ReadQuoted(in);
+                                                    in >> std::ws;   // optional use key + click-to-use
+                                                    if (std::isdigit(in.peek())) { int uk = 0, cu = 0; in >> uk >> cu; ui->useKey = (char)uk; ui->clickToUse = (cu != 0); }
+                                                }
                                             }
                                         }
                                     }
@@ -4409,6 +4527,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     };
                     if (field == "fpstance") load(go->GetComponent<FirstPersonController>());
                     else                     load(go->GetComponent<ThirdPersonController>());
+                } else if (field == "cc3dstance") {
+                    auto* c = go->GetComponent<CharacterController3D>(); ReadStanceControl(in, c ? &c->stanceControl : nullptr);
+                } else if (field == "tpsstance") {
+                    auto* c = go->GetComponent<ThirdPersonShooterController>(); ReadStanceControl(in, c ? &c->stanceControl : nullptr);
+                } else if (field == "tdstance") {
+                    auto* c = go->GetComponent<TopDownController>(); ReadStanceControl(in, c ? &c->stanceControl : nullptr);
+                } else if (field == "ctmstance") {
+                    auto* c = go->GetComponent<ClickToMoveController>(); ReadStanceControl(in, c ? &c->stanceControl : nullptr);
+                } else if (field == "npcstance") {
+                    auto* c = go->GetComponent<NPCController>(); ReadStanceControl(in, c ? &c->stanceControl : nullptr);
                 } else if (field == "p25ctrl") {
                     auto* pc = go->AddComponent<Platformer25DController>();
                     KvIn k(in);
@@ -4568,6 +4696,34 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (std::isdigit(mpk) || mpk == '-') {
                         in >> inv->maxStack;
                         ReadInstanceData(in, inv->slots.size(), [&](std::size_t i) -> ItemInstanceData& { return inv->slots[i].data; });
+                        in >> std::ws;   // optional weight limit + slow-down
+                        const int wpk = in.peek();
+                        if (std::isdigit(wpk) || wpk == '.' || wpk == '-') {
+                            int slow = 0;
+                            in >> inv->weightLimit >> slow >> inv->overWeightSpeed;
+                            inv->slowWhenOverWeight = (slow != 0);
+                        }
+                    }
+                } else if (field == "lootsource") {
+                    auto* ls = go->AddComponent<LootSource>();
+                    KvIn k(in);
+                    int w = 0;
+                    k.str("table", ls->table); k.i("when", w); k.f("refill", ls->refill); k.i("seed", ls->seed);
+                    ls->when = (LootSource::When)std::max(0, std::min(w, 2));
+                } else if (field == "itempickup") {
+                    auto* pk = go->AddComponent<ItemPickup>();
+                    KvIn k(in);
+                    k.str("item", pk->item); k.i("count", pk->count); k.str("tag", pk->collectorTag); k.b("touch", pk->pickupOnTouch);
+                    k.f("auto", pk->autoRadius); k.key("key", pk->interactKey); k.f("range", pk->interactRange);
+                    k.f("magnet", pk->magnetRadius); k.f("magnetSpeed", pk->magnetSpeed);
+                    pk->item = ItemId(pk->item);
+                    k.f("dur", pk->data.durability);
+                    if (const std::string* u = k.find("uid")) pk->data.uid = std::strtoull(u->c_str(), nullptr, 10);
+                    int nv = 0; k.i("vals", nv);
+                    for (int v = 0; v < nv && v < 256; ++v) {
+                        std::string key, val;
+                        k.str(("k" + std::to_string(v)).c_str(), key); k.str(("v" + std::to_string(v)).c_str(), val);
+                        pk->data.values.push_back({key, val});
                     }
                 } else if (field == "turnmgr") {
                     auto* tm = go->AddComponent<TurnManager>();
@@ -5012,6 +5168,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "anticheat") {
                     auto* ac = go->AddComponent<AntiCheatConfig>();
                     AntiCheatSettings& s = ac->settings;
+                    s.requireEncryption = false;   // as before, unless an "anticheatsafety" line follows
                     int en = 1, own = 1;
                     in >> en >> s.maxSyncSpeed >> s.maxSyncVarsPerSecond >> s.kickAfterViolations >> own;
                     s.enabled = (en != 0); s.ownerOnlySyncVars = (own != 0);
@@ -5051,6 +5208,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                 a = b + 1;
                             }
                         }
+                    }
+                } else if (field == "anticheatsafety") {   // follows the object's "anticheat" line
+                    int enc = 0, toggle = 0;
+                    in >> enc >> toggle;
+                    if (auto* ac = go->GetComponent<AntiCheatConfig>()) {
+                        ac->settings.requireEncryption = enc != 0;
+                        ac->allowRuntimeToggle = toggle != 0;
                     }
                 } else if (field == "anticheathit") {   // follows the object's "anticheat" line
                     float o = 2.0f, t = 1.0f, r = 0.0f, dmg = 10.0f; int los = 1, needMove = 1;
@@ -5388,6 +5552,40 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int as = 0;
                     in >> fi->grow >> fi->shrink >> fi->baseSize.x >> fi->baseSize.y >> as;
                     fi->alignSelf = (UIFlexItem::Align)as;
+                } else if (field == "uiframe") {
+                    // Read after or before the widget's own line: the end of the parse
+                    // makes the frame the source of truth and mirrors it back.
+                    auto* fr = go->AddComponent<UIFrame>();
+                    in >> fr->anchorMin.x >> fr->anchorMin.y >> fr->anchorMax.x >> fr->anchorMax.y
+                       >> fr->pivot.x >> fr->pivot.y >> fr->position.x >> fr->position.y >> fr->size.x >> fr->size.y;
+                } else if (field == "uimodal") {
+                    auto* md = go->AddComponent<UIModal>();
+                    int dim = 1, cc = 1, co = 0;
+                    in >> dim >> md->dimColor.r >> md->dimColor.g >> md->dimColor.b >> md->dimColor.a >> cc >> co;
+                    md->dimBackground = dim != 0; md->closeOnCancel = cc != 0; md->closeOnClickOutside = co != 0;
+                } else if (field == "uicontext") {
+                    auto* cm = go->AddComponent<UIContextMenu>();
+                    auto c4 = [&](Color& c) { in >> c.r >> c.g >> c.b >> c.a; };
+                    int any = 0; std::size_t n = 0;
+                    in >> any >> cm->itemHeight >> cm->width >> cm->textSize;
+                    c4(cm->background); c4(cm->hoverColor); c4(cm->textColor); c4(cm->borderColor);
+                    in >> n;
+                    cm->anywhere = any != 0;
+                    cm->items.clear();
+                    for (std::size_t i = 0; i < n && in; ++i) cm->items.push_back(ReadQuoted(in));
+                } else if (field == "uikeybind") {
+                    auto* kb = go->AddComponent<UIKeybindField>();
+                    auto c4 = [&](Color& c) { in >> c.r >> c.g >> c.b >> c.a; };
+                    int an = 0, k = 32, dk = 32, inter = 1, foc = 1;
+                    in >> kb->position.x >> kb->position.y >> kb->size.x >> kb->size.y >> an;
+                    kb->action = ReadQuoted(in);
+                    in >> k >> dk;
+                    kb->prefKey = ReadQuoted(in);
+                    in >> kb->textSize;
+                    c4(kb->background); c4(kb->keyColor); c4(kb->listenColor); c4(kb->textColor);
+                    in >> inter >> foc;
+                    kb->anchor = (UIAnchor)an; kb->key = (char)k; kb->defaultKey = (char)dk;
+                    kb->interactable = inter != 0; kb->focusable = foc != 0;
                 } else if (field == "uimask") {
                     auto* mk = go->AddComponent<UIMask>();
                     int sg = 1; in >> sg; mk->showGraphic = sg != 0;
@@ -5877,6 +6075,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
     // itself: give it the Animator that plays it now (its state clips carried over).
     if (version < 2)
         for (auto& [idx, go] : byIndex) { (void)idx; HumanoidLibrary::EnsureAnimator(go); }
+    // Make each loaded UIFrame the source of truth for its widget's fields now, so
+    // a script that writes those fields in its Start moves the frame.
+    for (auto& [idx, go] : byIndex) { (void)idx; if (go->GetComponent<UIFrame>()) GetUIRect(go); }
     return true;
 }
 
@@ -5981,11 +6182,12 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         if (auto* bm = go->GetComponent<BuildMode>())
             for (const auto& it : bm->palette) { add(it.prefab); add(it.icon); }
         if (auto* lt = go->GetComponent<LogicTarget>()) add(lt->spawnPrefab);
+        if (auto* ls = go->GetComponent<LootSource>()) add(ls->table);
     }
     // The item database (and its icons / drop prefabs) ships with any scene that has items.
     bool hasItems = false;
     for (const auto& go : scene.Objects())
-        if (go->GetComponent<Inventory>() || go->GetComponent<GridInventory>()) { hasItems = true; break; }
+        if (go->GetComponent<Inventory>() || go->GetComponent<GridInventory>() || go->GetComponent<ItemPickup>() || go->GetComponent<LootSource>()) { hasItems = true; break; }
     const ItemDatabase& db = ItemDatabase::Get();
     if (hasItems && !db.Path().empty()) {
         add(db.Path());

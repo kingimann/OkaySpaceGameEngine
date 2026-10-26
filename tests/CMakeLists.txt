@@ -127,6 +127,11 @@ add_executable(test_item_database test_item_database.cpp)
 target_link_libraries(test_item_database PRIVATE okay::engine)
 add_test(NAME item_database COMMAND test_item_database)
 
+# Inventory gameplay: pickups/drops, using the held item, encumbrance, loot tables
+add_executable(test_inventory_gameplay test_inventory_gameplay.cpp)
+target_link_libraries(test_inventory_gameplay PRIVATE okay::engine)
+add_test(NAME inventory_gameplay COMMAND test_inventory_gameplay)
+
 add_executable(test_pathfinding test_pathfinding.cpp)
 target_link_libraries(test_pathfinding PRIVATE okay::engine)
 add_test(NAME pathfinding COMMAND test_pathfinding)
@@ -566,6 +571,16 @@ add_test(NAME ui_render_bench COMMAND test_ui_render_bench)
 add_executable(test_ui_layout_containers test_ui_layout_containers.cpp)
 target_link_libraries(test_ui_layout_containers PRIVATE okay::engine)
 add_test(NAME ui_layout_containers COMMAND test_ui_layout_containers)
+
+# UIFrame conversion and mirroring; also drives the editor's (ImGui-free) undo stack.
+add_executable(test_ui_frame test_ui_frame.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp)
+target_include_directories(test_ui_frame PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_ui_frame PRIVATE okay::engine)
+add_test(NAME ui_frame COMMAND test_ui_frame)
+
+add_executable(test_ui_overlays test_ui_overlays.cpp)
+target_link_libraries(test_ui_overlays PRIVATE okay::engine)
+add_test(NAME ui_overlays COMMAND test_ui_overlays)
 
 add_executable(test_jump test_jump.cpp)
 target_link_libraries(test_jump PRIVATE okay::engine)

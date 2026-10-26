@@ -82,7 +82,7 @@ int main() {
     {
         Scene es("EncServer");
         auto* esrv = es.CreateGameObject("Net")->AddComponent<NetworkManager>();
-        esrv->encryption = true;
+        esrv->encryption = okay::net::SecureChannel::Available();   // without libsodium a host refuses encryption
         std::string gotMsg, gotBig;
         esrv->SetMessageHandler([&](const NetworkManager::NetMessage& m){
             if (m.channel == "secret") gotMsg = m.data;

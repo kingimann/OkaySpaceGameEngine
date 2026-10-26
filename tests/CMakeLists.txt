@@ -903,6 +903,11 @@ add_test(NAME net_anticheat_ph3 COMMAND test_net_anticheat_ph3)
 add_executable(test_net_token_policy test_net_token_policy.cpp)
 target_link_libraries(test_net_token_policy PRIVATE okay::engine)
 add_test(NAME net_token_policy COMMAND test_net_token_policy)
+# Anti-cheat plan phase 4: server-only SyncVars, fire rate / ammo budgets,
+# hit claims checked against the server's view, kicks filed for review
+add_executable(test_net_anticheat_ph4 test_net_anticheat_ph4.cpp)
+target_link_libraries(test_net_anticheat_ph4 PRIVATE okay::engine)
+add_test(NAME net_anticheat_ph4 COMMAND test_net_anticheat_ph4)
 
 # Anti-cheat as a game uses it: AntiCheatConfig / NetValidator components and the VS nodes
 add_executable(test_net_anticheat_components test_net_anticheat_components.cpp)

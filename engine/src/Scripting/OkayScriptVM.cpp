@@ -39,6 +39,7 @@
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Net/SessionTicket.hpp"
+#include "okay/Components/NetValidator.hpp"
 #include "okay/Platform/GameIpc.hpp"
 #include "okay/Net/ServerBrowser.hpp"
 #include "okay/Net/MatchResults.hpp"
@@ -4741,6 +4742,27 @@ struct OkayScriptVM::Impl {
             NetworkManager* n = EnsureNet();
             return Value{n && !a.empty() ? (float)n->anticheat.Violations((std::uint32_t)a[0].AsFloat()) : 0.0f};
         };
+        // Claim that this peer's shot hit a networked object (its sync id), fired
+        // from (ox, oy, oz) along (dx, dy, dz). The server checks it and applies
+        // the damage; on the host it's applied at once.
+        b["net_hit"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = Net();
+            if (!n || a.size() < 8) return Value{};
+            n->ClaimHit(a[0].AsString(), a[1].AsString(), Vec3(a[2].AsFloat(), a[3].AsFloat(), a[4].AsFloat()),
+                        Vec3(a[5].AsFloat(), a[6].AsFloat(), a[7].AsFloat()));
+            return Value{};
+        };
+        // Server: what's left of a player's budget for RPC `name` (a Net Validator
+        // with a budget: ammo); a third argument adds to it first (a reload, a
+        // pickup; negative takes away). -1 if no rule has a budget for it.
+        b["net_budget"] = [this](std::vector<Value>& a) {
+            Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
+            if (!s || a.size() < 2) return Value{-1.0f};
+            NetValidator* nv = NetValidator::BudgetFor(*s, a[1].AsString());
+            if (!nv) return Value{-1.0f};
+            const auto peer = (std::uint32_t)a[0].AsFloat();
+            return Value{a.size() >= 3 ? nv->TopUp(peer, a[2].AsFloat()) : nv->Budget(peer)};
+        };
         // Open the OkaySpace launcher's "Invite friends" window for this game.
         b["net_invite_friends"] = [](std::vector<Value>&) {
 #if !defined(__EMSCRIPTEN__)
@@ -7977,6 +7999,7 @@ std::string ResolveEventHandler(const Functions& functions, const std::string& f
         // Anti-cheat (AntiCheatConfig raises these on the host).
         {"on_cheat_detected", {"OnCheatDetected"}},
         {"on_validate_rpc",   {"OnValidateRpc"}},
+        {"on_validate_hit",   {"OnValidateHit"}},
     };
     if (functions.count(function)) return function;
     auto it = kAliases.find(function);

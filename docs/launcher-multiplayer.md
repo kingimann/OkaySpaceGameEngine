@@ -255,6 +255,10 @@ The server decides; clients only ask.
 | Sign joins so players can pin this host | | `--host-key FILE` (or `host_key = FILE`) |
 | Client: join only the host with this key | `net_pin_host("key")` | |
 | Flag game clocks running too fast (speed hacks) | `maxClockDrift` in the rules | (in the `--anticheat` file) |
+| Keys only the server may write (score, money) | `serverVar` in the rules | (in the `--anticheat` file) |
+| Fire rate / ammo for an RPC | a Net Validator's cooldown and budget; `net_budget(id, rpc, add)` | |
+| A hit the server checks and applies | `net_hit(target, weapon, ox, oy, oz, dx, dy, dz)`, `on_validate_hit(...)` | |
+| File anti-cheat kicks for admin review | | `--report-kicks` (or `report_kicks = true`) |
 
 These always hold, whether or not the anti-cheat is on:
 - Only a joined player can change synced variables (`SetVar`). A packet from

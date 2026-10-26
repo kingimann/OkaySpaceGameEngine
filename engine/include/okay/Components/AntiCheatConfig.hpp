@@ -75,6 +75,7 @@ private:
         std::function<bool(std::uint32_t, const std::string&, const std::string&)> validateRpc;
         std::function<void(const std::string&, bool&, bool&)> rpcRulesFor;
         std::function<void(std::uint32_t)> onForgetPeer;
+        std::function<bool(HitClaim&)> validateHit;
         std::uint64_t installer = 0;
     } m_prev;
     NetworkManager* FindManager() const;

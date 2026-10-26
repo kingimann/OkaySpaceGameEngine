@@ -1,6 +1,8 @@
 #include "okay/Net/DedicatedServer.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Net/SessionTicket.hpp"
+#include "AntiCheatBackend.hpp"   // shared/: the ac_reports request (#270)
+#include <thread>
 #include "okay/Net/Matchmaking.hpp"
 #include "okay/Net/MatchResults.hpp"
 #include "okay/Platform/Account/Account.hpp"
@@ -85,6 +87,27 @@ std::string Uptime(double secs) {
 }
 } // namespace
 
+bool KickReporter::File(const NetworkManager::AntiCheatKick& k, double now) {
+    if (k.userId.empty() || !m_send) return false;   // anonymous: nobody to name
+    if (auto it = m_lastByUser.find(k.userId); it != m_lastByUser.end() && now - it->second < 3600.0) return false;
+    while (!m_sent.empty() && now - m_sent.front() >= 3600.0) m_sent.pop_front();
+    if ((int)m_sent.size() >= kPerHour) return false;
+    std::string kinds, details;
+    for (const CheatReport& r : k.recent) {
+        const std::string kind = CheatKindName(r.kind);
+        if (kinds.find(kind) == std::string::npos) kinds += (kinds.empty() ? "" : ", ") + kind;
+        details += kind + (r.detail.empty() ? std::string() : ": " + r.detail) + "\n";
+    }
+    const std::string reason = "[server check] kicked by the server's anti-cheat" + (kinds.empty() ? std::string() : " (" + kinds + ")");
+    okayac::backend::Request q;
+    if (!okayac::backend::FileReport(k.userId, m_game, reason, "player: " + k.name + "\n" + details, "", q)) return false;
+    m_lastByUser[k.userId] = now;
+    m_sent.push_back(now);
+    m_send(q.path, q.method, q.body, q.header);
+    return true;
+}
+
+
 const char* DedicatedServerUsage() {
     return
         "Dedicated server:\n"
@@ -111,6 +134,7 @@ const char* DedicatedServerUsage() {
         "  --kick-after N         kick after N rejected moves in a minute\n"
         "  --anticheat FILE       enforce the anti-cheat rules in FILE (.okayac)\n"
         "  --host-key FILE        sign joins with the identity seed in FILE (clients can pin it)\n"
+        "  --report-kicks         file anti-cheat kicks of signed-in players for admin review\n"
         "Environment: OKAY_SERVER_PORT, OKAY_SERVER_MAX_PLAYERS, OKAY_SERVER_TICK,\n"
         "OKAY_SERVER_NAME, OKAY_SERVER_PASSWORD, OKAY_SERVER_AUTH=1, OKAY_SERVER_ADVERTISE=1,\n"
         "OKAY_SERVER_PUBLIC_ADDR, OKAY_SERVER_REGION (flags win).\n";
@@ -164,6 +188,7 @@ bool LoadDedicatedServerConfig(const std::string& path, DedicatedServerOptions& 
             if (!out.anticheat.LoadFile(v, &why)) return bad("anticheat: " + why);
             out.anticheatFile = v;
         }
+        else if (k == "report_kicks") out.reportKicks = truthy(v);
         else if (k == "host_key") {
             std::string why;
             if (!LoadHostKey(v, out.hostKeySeed, why)) return bad("host_key: " + why);
@@ -289,6 +314,8 @@ bool ParseDedicatedServerArgs(int argc, char** argv, DedicatedServerOptions& out
             AntiCheatSettings s;
             if (!s.LoadFile(v, &why)) return fail("--anticheat: " + why);
             out.anticheat = s; out.anticheatFile = v;
+        } else if (a == "--report-kicks") {
+            out.reportKicks = true;
         } else if (a == "--host-key") {
             if (!value(v) || v.empty()) return fail("--host-key needs a file");
             std::string why;
@@ -509,6 +536,25 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
     // applied its own at Start).
     if (!opts.anticheatFile.empty()) net->anticheat.settings = opts.anticheat;
     if (!opts.hostKeySeed.empty()) net->SetHostIdentity(opts.hostKeySeed);
+    // --report-kicks: the account this machine is signed in to files them, and
+    // says so, so whoever reviews them knows which server sent them.
+    std::shared_ptr<KickReporter> kickReporter;
+    if (opts.reportKicks) {
+        if (!Account::IsLoggedIn()) {
+            std::fprintf(stderr, "[server] --report-kicks needs this machine signed in to an OkaySpace account (it files the reports)\n");
+            return 2;
+        }
+        kickReporter = std::make_shared<KickReporter>(opts.name, [](const std::string& path, const std::string& method,
+                                                                      const std::string& body, const std::string& header) {
+            std::thread([=] { Account::Api(path, method, body, header); }).detach();   // never stalls the tick
+        });
+        auto started = std::chrono::steady_clock::now();
+        net->SetAntiCheatKickHandler([kickReporter, started](const NetworkManager::AntiCheatKick& k) {
+            const double now = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+            if (kickReporter->File(k, now))
+                std::printf("[server] anti-cheat kick of %s reported for review\n", k.name.c_str());
+        });
+    }
     if (!net->StartServer(opts.port)) {
         std::fprintf(stderr, "[server] couldn't listen on UDP port %u (is it in use?)\n", (unsigned)opts.port);
         return 2;
@@ -522,6 +568,9 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
     if (!opts.anticheatFile.empty())
         std::printf("[server] anti-cheat %s from %s\n", net->anticheat.settings.enabled ? "on" : "OFF (enabled false)",
                     opts.anticheatFile.c_str());
+    if (kickReporter)
+        std::printf("[server] anti-cheat kicks of signed-in players are reported for admin review as %s (nothing is banned automatically)\n",
+                    Account::Username().c_str());
     if (!opts.hostKeySeed.empty())
         std::printf("[server] host key from %s; clients can pin %s%s\n", opts.hostKeyFile.c_str(),
                     net->HostIdentityPublicKey().c_str(), opts.encryption ? "" : " (needs encryption on)");

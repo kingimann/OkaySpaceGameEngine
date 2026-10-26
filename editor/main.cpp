@@ -10432,6 +10432,9 @@ void DrawScriptDocs() {
         fapi("net_max_speed(units) / net_rate_limit(perSec)", "server: snap back too-fast moves / drop message spam");
         fapi("net_anticheat([on]) / net_anticheat_load(path) / net_violations(id)", "server: anti-cheat on/off / load an .okayac file / a player's refusals this minute");
         fapi("on_cheat_detected(kind, peer, detail) / on_validate_rpc(name, data, sender)", "server events (Anti-Cheat Config): return false from on_validate_rpc to refuse the RPC");
+        fapi("net_hit(\"target\", \"weapon\", ox, oy, oz, dx, dy, dz)", "claim a hit on a synced object: the server checks it (position, range, walls, fire rate) and applies the damage");
+        fapi("on_validate_hit(shooter, target, weapon, damage)", "server event (Anti-Cheat Config): return false to refuse a hit, or a positive number for its damage");
+        fapi("net_budget(id, \"rpc\"[, add])", "server: a player's Net Validator budget for an RPC (ammo); add tops it up (reload, pickup)");
         fapi("net_pin_host(\"key\")", "client: join only the host with this identity key (encryption on; \"\" = no pin)");
         fapi("net_disconnect()", "leave / stop the session");
         fapi("net_connected() / net_is_server() / net_is_client()", "status");
@@ -27826,6 +27829,33 @@ void DrawInspector(EditorState& ed) {
             }
             if (del >= 0) { s.spawnAllowlist.erase(s.spawnAllowlist.begin() + del); ed.dirty = true; }
             if (ImGui::SmallButton("Add prefab##ac")) { s.spawnAllowlist.push_back("prefabs/"); ed.dirty = true; }
+            ImGui::TextUnformatted("SyncVars only the server may write:");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Key prefixes (score, money, match.). A client writing one is refused and gets the server's value back. srv. keys always are.");
+            int delVar = -1;
+            for (int i = 0; i < (int)s.serverVars.size(); ++i) {
+                ImGui::PushID(1000 + i);
+                char v[128]; std::snprintf(v, sizeof(v), "%s", s.serverVars[i].c_str());
+                ImGui::SetNextItemWidth(-40);
+                if (ImGui::InputText("##acsvar", v, sizeof(v))) { s.serverVars[i] = v; ed.dirty = true; }
+                ImGui::SameLine(); if (ImGui::SmallButton("x")) delVar = i;
+                ImGui::PopID();
+            }
+            if (delVar >= 0) { s.serverVars.erase(s.serverVars.begin() + delVar); ed.dirty = true; }
+            if (ImGui::SmallButton("Add server var##ac")) { s.serverVars.push_back("score"); ed.dirty = true; }
+            if (ImGui::TreeNode("Hit claims##ac")) {
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How the server checks Claim Hit / net_hit (with or without the anti-cheat).");
+                if (ImGui::DragFloat("Origin tolerance##ac", &s.hitOriginTolerance, 0.05f, 0.0f, 100.0f, "%.2f u")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far a shot may start from where the server last saw the shooter.");
+                if (ImGui::DragFloat("Target tolerance##ac", &s.hitTolerance, 0.05f, 0.0f, 100.0f, "%.2f u")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far off the shot's line the target may be, plus its top speed x the shooter's ping.");
+                if (ImGui::DragFloat("Max range##ac", &s.maxHitRange, 0.5f, 0.0f, 100000.0f, "%.1f u")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The longest shot (0 = any range).");
+                if (ImGui::DragFloat("Damage##ac", &s.hitDamage, 0.5f, 0.0f, 100000.0f, "%.1f")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("What a hit does to the target's Health, unless On Validate Hit / on_validate_hit says otherwise.");
+                if (ImGui::Checkbox("Line of sight##ac", &s.hitLineOfSight)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("A server raycast must reach the target: no shooting through walls.");
+                ImGui::TreePop();
+            }
             if (ImGui::SmallButton("Remove##ac")) toRemove = ac;
         }
     }
@@ -27841,6 +27871,12 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Longest payload a client may send (0 = any).");
             if (ImGui::DragFloat("Calls/s##nv", &nv->maxPerSecond, 0.1f, 0.0f, 1000.0f, "%.1f")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Most calls per second per client (0 = any).");
+            if (ImGui::DragFloat("Cooldown##nv", &nv->cooldown, 0.01f, 0.0f, 60.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds a client must wait between calls: a fire rate (0 = none).");
+            if (ImGui::DragFloat("Budget##nv", &nv->budget, 0.1f, 0.0f, 100000.0f, "%.0f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Calls a client can bank, each call spends one: ammo (0 = no budget). Top it up with Server Budget / net_budget.");
+            if (ImGui::DragFloat("Refill/s##nv", &nv->refillPerSecond, 0.05f, 0.0f, 10000.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Budget regained per second (0 = only a top-up refills it).");
             if (ImGui::Checkbox("Clients may send##nv", &nv->clientsMaySend)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off = only the host may call this RPC.");
             if (ImGui::SmallButton("Remove##nv")) toRemove = nv;

@@ -75,6 +75,7 @@ bool AntiCheatConfig::Apply() {
         m_prev.validateRpc = nm->anticheat.validateRpc;
         m_prev.rpcRulesFor = nm->anticheat.rpcRulesFor;
         m_prev.onForgetPeer = nm->anticheat.onForgetPeer;
+        m_prev.validateHit = nm->anticheat.validateHit;
         m_prev.installer = nm->anticheat.installer;
         m_token = ++g_nextToken;
         LiveTokens().insert(m_token);
@@ -130,12 +131,50 @@ bool AntiCheatConfig::Apply() {
         L->Refresh(sc, nm->TickCount());
         for (auto* nv : L->validators)
             if (nv->enabled && nv->Covers(name)) {
-                if (nv->maxPerSecond > 0.0f) ownRate = true;
+                if (nv->LimitsRate()) ownRate = true;
                 if (nv->maxBytes > 0) ownSize = true;
             }
     };
     nm->anticheat.onForgetPeer = [sc](std::uint32_t peer) {
         for (auto* nv : sc->FindObjectsOfType<NetValidator>()) nv->ForgetPeer(peer);
+    };
+    // A hit claim that passed the server's own checks: the game's rules. The
+    // code hook that was there first, then On Validate Hit graphs (Reject Hit;
+    // Set Var hit_damage changes the damage), then on_validate_hit scripts
+    // (false rejects, a positive number is the damage, an error rejects; no
+    // answer, which OkayScript hands back as 0, leaves it as it was).
+    nm->anticheat.validateHit = [sc, nm, L, prev = m_prev.validateHit](HitClaim& h) {
+        if (prev && !prev(h)) return false;
+        L->Refresh(sc, nm->TickCount());
+        bool allowed = true;
+        for (auto* v : L->graphs) {
+            if (!v->Graph() || v->Graph()->Entries("OnValidateHit").empty()) continue;
+            v->SetVariable("hit_reject", vs::VsValue(false));
+            v->SetVariable("hit_target", vs::VsValue(h.target));
+            v->SetVariable("hit_damage", vs::VsValue(h.damage));
+            v->RaiseEvent("OnValidateHit", nullptr, h.weapon, vs::VsValue((float)h.shooter));
+            if (v->GetVariable("hit_reject").AsBool()) allowed = false;
+            const float d = v->GetVariable("hit_damage").AsFloat();
+            if (std::isfinite(d) && d >= 0.0f) h.damage = d;
+        }
+        const std::vector<vs::VsValue> args{vs::VsValue((float)h.shooter), vs::VsValue(h.target), vs::VsValue(h.weapon),
+                                            vs::VsValue(h.damage)};
+        for (auto* s : L->scripts) {
+            if (!s->VM()->HasEvent("on_validate_hit")) continue;
+            std::string err;
+            const vs::VsValue r = s->VM()->CallEventArgs("on_validate_hit", args, &err);
+            if (!err.empty()) {
+                if (L->warned.insert(s).second)
+                    OKAY_ERROR("anti-cheat: on_validate_hit on '", s->gameObject ? s->gameObject->name : std::string("?"),
+                               "' failed (hits it checks are refused): ", err);
+                allowed = false;
+            } else if (r.IsBool() && !r.AsBool()) {
+                allowed = false;
+            } else if (r.IsNumber() && std::isfinite(r.AsFloat()) && r.AsFloat() > 0.0f) {
+                h.damage = r.AsFloat();
+            }
+        }
+        return allowed;
     };
     return ok;
 }
@@ -157,6 +196,7 @@ void AntiCheatConfig::Uninstall() {
         m_nm->anticheat.validateRpc = m_prev.validateRpc;
         m_nm->anticheat.rpcRulesFor = m_prev.rpcRulesFor;
         m_nm->anticheat.onForgetPeer = m_prev.onForgetPeer;
+        m_nm->anticheat.validateHit = m_prev.validateHit;
         m_nm->anticheat.installer = m_prev.installer;
     }
     if (m_token) LiveTokens().erase(m_token);

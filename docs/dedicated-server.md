@@ -96,6 +96,7 @@ okay-player --server --scene arena.okayscene --port 45000 --max-players 16 --aut
 | `--public-addr HOST` | the address players connect to (required with `--advertise`) |
 | `--region TEXT` | region shown in the browser |
 | `--max-speed N`, `--rate-limit N`, `--kick-after N` | anti-cheat basics (see [launcher-multiplayer.md](launcher-multiplayer.md)) |
+| `--report-kicks` | file every anti-cheat kick of a signed-in player for admin review, as this machine's signed-in account; nothing is banned automatically ([anticheat.md](anticheat.md#gameplay-validation)) |
 | `--host-key FILE` | sign the join key exchange with the ed25519 seed in FILE (base64url); prints the public key clients can pin ([anticheat.md](anticheat.md#network-hardening)) |
 | `--config PATH` | read settings from this file instead of the default `server.cfg` |
 

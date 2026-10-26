@@ -742,11 +742,25 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << Quote(ac->file) << " " << Quote(allow)
             << " " << s.maxRpcsPerSecond << " " << s.maxRpcBytes;
         if (s.maxClockDrift > 0.0f) out << " " << s.maxClockDrift;   // only when on: other scenes don't change
+        if (!s.serverVars.empty()) {
+            std::string vars;
+            for (const auto& v : s.serverVars) { if (!vars.empty()) vars += ';'; vars += v; }
+            out << " " << Quote(vars);
+        }
+        out << "\n";
+        const AntiCheatSettings d;   // hit-claim tuning: its own line, only when changed
+        if (s.hitOriginTolerance != d.hitOriginTolerance || s.hitTolerance != d.hitTolerance || s.maxHitRange != d.maxHitRange ||
+            s.hitDamage != d.hitDamage || s.hitLineOfSight != d.hitLineOfSight)
+            out << "  anticheathit " << s.hitOriginTolerance << " " << s.hitTolerance << " " << s.maxHitRange
+                << " " << s.hitDamage << " " << (s.hitLineOfSight ? 1 : 0) << "\n";
+    }
+    for (auto* nv : go->GetComponents<NetValidator>()) {
+        out << "  netvalidator " << Quote(nv->rpc) << " " << nv->maxBytes << " " << nv->maxPerSecond
+            << " " << (nv->clientsMaySend ? 1 : 0);
+        if (nv->cooldown > 0.0f || nv->budget > 0.0f || nv->refillPerSecond > 0.0f)   // only when set
+            out << " " << nv->cooldown << " " << nv->budget << " " << nv->refillPerSecond;
         out << "\n";
     }
-    for (auto* nv : go->GetComponents<NetValidator>())
-        out << "  netvalidator " << Quote(nv->rpc) << " " << nv->maxBytes << " " << nv->maxPerSecond
-            << " " << (nv->clientsMaySend ? 1 : 0) << "\n";
     if (auto* w = go->GetComponent<Water>()) {
         out << "  water " << w->size << " " << w->resolution << " " << w->waveHeight
             << " " << w->waveLength << " " << w->waveSpeed
@@ -4805,6 +4819,29 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             in >> drift;
                             s.maxClockDrift = std::isfinite(drift) ? std::clamp(drift, 0.0f, 1.0f) : 0.0f;
                         }
+                        in >> std::ws;   // then the server-only SyncVar prefixes, when there are any
+                        if (in.peek() == '"') {
+                            const std::string vars = ReadQuoted(in);
+                            s.serverVars.clear();
+                            for (std::size_t a = 0; a < vars.size();) {
+                                std::size_t b = vars.find(';', a);
+                                if (b == std::string::npos) b = vars.size();
+                                if (b > a) s.serverVars.push_back(vars.substr(a, b - a));
+                                a = b + 1;
+                            }
+                        }
+                    }
+                } else if (field == "anticheathit") {   // follows the object's "anticheat" line
+                    float o = 2.0f, t = 1.0f, r = 0.0f, dmg = 10.0f; int los = 1;
+                    in >> o >> t >> r >> dmg >> los;
+                    if (auto* ac = go->GetComponent<AntiCheatConfig>()) {
+                        AntiCheatSettings& s = ac->settings;
+                        auto ok = [](float v) { return std::isfinite(v) && v >= 0.0f; };
+                        if (ok(o)) s.hitOriginTolerance = o;
+                        if (ok(t)) s.hitTolerance = t;
+                        if (ok(r)) s.maxHitRange = r;
+                        if (ok(dmg)) s.hitDamage = dmg;
+                        s.hitLineOfSight = los != 0;
                     }
                 } else if (field == "netvalidator") {
                     auto* nv = go->AddComponent<NetValidator>();
@@ -4814,6 +4851,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     nv->clientsMaySend = (cm != 0);
                     if (nv->maxBytes < 0) nv->maxBytes = 0;
                     if (!std::isfinite(nv->maxPerSecond) || nv->maxPerSecond < 0.0f) nv->maxPerSecond = 0.0f;
+                    in >> std::ws;   // cooldown / budget / refill came later (an older scene has none)
+                    if (std::isdigit(in.peek()) || in.peek() == '.') {
+                        in >> nv->cooldown >> nv->budget >> nv->refillPerSecond;
+                        for (float* f : {&nv->cooldown, &nv->budget, &nv->refillPerSecond})
+                            if (!std::isfinite(*f) || *f < 0.0f) *f = 0.0f;
+                    }
                 } else if (field == "netsync") {
                     auto* ns = go->AddComponent<NetworkSync>();
                     int au = 0, ow = 1; in >> au >> ow;

@@ -304,15 +304,20 @@ inline GuardProbes SystemGuardProbes(const std::string& gameRoot, const Integrit
     p.debugger = SystemDebuggerProbes();
     p.modules = [] { return LoadedModules(); };
     // The reference: monotonic and never stepped by NTP or the user (unlike the
-    // wall clock). QueryUnbiasedInterruptTime is looked up at run time (older
-    // MinGW headers hide it); GetTickCount64 is the fallback.
+    // wall clock). QueryUnbiasedInterruptTime, then GetTickCount64, are looked up
+    // at run time: headers built for an older _WIN32_WINNT hide both.
     p.trustedMs = [] {
         typedef BOOL(WINAPI * QuitFn)(PULONGLONG);
+        typedef ULONGLONG(WINAPI * Tick64Fn)();
+        static const HMODULE k32 = GetModuleHandleW(L"kernel32.dll");
         static const QuitFn quit = reinterpret_cast<QuitFn>(
-            reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "QueryUnbiasedInterruptTime")));
+            reinterpret_cast<void*>(GetProcAddress(k32, "QueryUnbiasedInterruptTime")));
+        static const Tick64Fn tick64 = reinterpret_cast<Tick64Fn>(
+            reinterpret_cast<void*>(GetProcAddress(k32, "GetTickCount64")));
         ULONGLONG t = 0;
         if (quit && quit(&t)) return (std::uint64_t)(t / 10000ull);   // 100 ns units
-        return (std::uint64_t)GetTickCount64();
+        if (tick64) return (std::uint64_t)tick64();
+        return (std::uint64_t)GetTickCount();   // pre-Vista only (wraps after 49 days)
     };
     p.gameMs = [] {
         LARGE_INTEGER c, f;

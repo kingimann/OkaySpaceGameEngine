@@ -23,6 +23,7 @@ const char* CheatKindName(CheatKind k) {
         case CheatKind::RpcRejected:     return "rpc rejected";
         case CheatKind::RpcFlood:        return "rpc flood";
         case CheatKind::ClockDrift:      return "clock drift";
+        case CheatKind::HitRejected:     return "hit rejected";
     }
     return "cheat";
 }
@@ -108,6 +109,12 @@ bool AntiCheatSettings::Parse(const std::string& text, AntiCheatSettings& out, s
             s.ticketKey = val;
         }
         else if (key == "ticketAudience") { s.ticketAudience = val; }
+        else if (key == "hitOriginTolerance") { if (!ParseFloat(val, s.hitOriginTolerance)) return fail("hitOriginTolerance needs a number >= 0"); }
+        else if (key == "hitTolerance") { if (!ParseFloat(val, s.hitTolerance)) return fail("hitTolerance needs a number >= 0"); }
+        else if (key == "maxHitRange") { if (!ParseFloat(val, s.maxHitRange)) return fail("maxHitRange needs a number >= 0"); }
+        else if (key == "hitDamage") { if (!ParseFloat(val, s.hitDamage)) return fail("hitDamage needs a number >= 0"); }
+        else if (key == "hitLineOfSight") { if (!ParseBool(val, s.hitLineOfSight)) return fail("hitLineOfSight needs true or false"); }
+        else if (key == "serverVar") { if (val.empty()) return fail("serverVar needs a key prefix"); s.serverVars.push_back(val); }
         else if (key == "maxRpcsPerSecond") { if (!ParseInt(val, s.maxRpcsPerSecond)) return fail("maxRpcsPerSecond needs a whole number >= 0"); }
         else if (key == "maxRpcBytes") { if (!ParseInt(val, s.maxRpcBytes)) return fail("maxRpcBytes needs a whole number >= 0"); }
         else if (key == "maxClockDrift") {
@@ -135,12 +142,19 @@ std::string AntiCheatSettings::ToText() const {
     o << "maxSyncVarsPerSecond " << maxSyncVarsPerSecond << "\n";
     o << "kickAfterViolations " << kickAfterViolations << "\n";
     o << "ownerOnlySyncVars " << (ownerOnlySyncVars ? "true" : "false") << "\n";
+    for (const auto& v : serverVars) o << "serverVar " << v << "\n";
     if (requireEncryption) o << "requireEncryption true\n";
     if (!ticketKey.empty()) o << "ticketKey " << ticketKey << "\n";
     if (!ticketAudience.empty()) o << "ticketAudience " << ticketAudience << "\n";
     o << "maxRpcsPerSecond " << maxRpcsPerSecond << "\n";
     o << "maxRpcBytes " << maxRpcBytes << "\n";
     if (maxClockDrift > 0.0f) o << "maxClockDrift " << maxClockDrift << "\n";
+    const AntiCheatSettings d;   // the hit-claim tuning, when it isn't the default
+    if (hitOriginTolerance != d.hitOriginTolerance) o << "hitOriginTolerance " << hitOriginTolerance << "\n";
+    if (hitTolerance != d.hitTolerance) o << "hitTolerance " << hitTolerance << "\n";
+    if (maxHitRange != d.maxHitRange) o << "maxHitRange " << maxHitRange << "\n";
+    if (hitDamage != d.hitDamage) o << "hitDamage " << hitDamage << "\n";
+    if (hitLineOfSight != d.hitLineOfSight) o << "hitLineOfSight " << (hitLineOfSight ? "true" : "false") << "\n";
     return o.str();
 }
 
@@ -279,11 +293,19 @@ bool AntiCheat::ValidateMessage(std::uint32_t peer, const std::string& channel, 
     return true;
 }
 
+bool AntiCheat::IsServerVar(const std::string& key) const {
+    if (key.rfind(kServerVarPrefix, 0) == 0) return true;
+    for (const auto& prefix : settings.serverVars)
+        if (!prefix.empty() && key.rfind(prefix, 0) == 0) return true;
+    return false;
+}
+
 bool AntiCheat::ValidateSyncVar(std::uint32_t peer, const std::string& key) {
     if (!settings.enabled || peer == 0) return true;
     PeerInfo& p = m_peers[peer];
     if (settings.maxSyncVarsPerSecond > 0 && ++p.syncVars > settings.maxSyncVarsPerSecond)
         return Refuse(peer, CheatKind::SyncVarFlood, key);
+    if (IsServerVar(key)) return Refuse(peer, CheatKind::ForgedSyncVar, key);
     if (settings.ownerOnlySyncVars) {
         // Every prefix ending at a '.' or '/' may name an object ("car.hp",
         // "car.stats.hp", "sp/3/1.hp"): if any of them is a networked object

@@ -37,6 +37,10 @@ ticketKey <base64url ed25519 public key>
 ticketAudience arena-1              # this server's id in tickets ("" = any)
 # Network hardening
 maxClockDrift 0.05                  # a client's game clock may run 5% off; 0 = no check
+# Gameplay
+serverVar score                     # SyncVar key prefixes only the server may write (repeatable)
+maxHitRange 60                      # hit claims: the longest shot (0 = any)
+hitDamage 10                        # what a hit does, unless the game says otherwise
 ```
 
 A game hosted through a relay (`HostViaRelay` / `net_host_relay`) runs the same
@@ -188,6 +192,73 @@ These hold whether or not the anti-cheat is on, unless a setting is named:
 - session tickets, and binding a player to their account id.
 
 This section adds the rest: every mode, and the Join itself.
+
+## Gameplay validation
+
+The engine doesn't network gameplay: games do damage, ammo and scores through
+RPCs and SyncVars, which the server used to take on trust. These let the server
+check them.
+
+- **Server-only SyncVars.** `serverVar <prefix>` lines (or the inspector's
+  "SyncVars only the server may write") list key prefixes such as `score`,
+  `money` or `match.`. Keys that start with `srv.` always count.
+  - A client writing one is refused as a **forged syncvar** and gets the
+    server's value back, since it already changed its own copy.
+  - This needs `enabled`. With the anti-cheat off, plain keys are anyone's to
+    write, as before.
+- **Fire rate and ammo on Net Validator.** Three settings:
+  - `cooldown`: the minimum seconds between one player's calls to the RPC;
+  - `budget`: calls a player can bank, each call spends one;
+  - `refillPerSecond`: budget regained per second, or 0 for ammo that only a
+    reload refills.
+
+  A refused call is reported as **rpc rejected**. The game tops a budget up
+  (a reload, a pickup) with the **Server Budget** node, with
+  `net_budget(id, "fire", 5)` in OkayScript, or with
+  `NetValidator::TopUp(peer, n)`. A budget isn't refilled by going quiet:
+  coming back after a pause isn't a reload.
+- **Hit claims.** A client calls `NetworkManager::ClaimHit(target, weapon,
+  origin, direction)` (`net_hit(...)` in OkayScript). It sends
+  `"__hit" = "<target sync id>|<weapon>|<tick>|ox oy oz|dx dy dz"`, which only
+  the server reads and is never relayed. The server checks the claim against
+  its own view, with or without the anti-cheat on:
+  1. the shooter isn't dead (if its avatar on the server has a Health);
+  2. the weapon's fire rate and ammo, from a Net Validator for `hit/<weapon>`
+     (cooldown and budget, as above);
+  3. the shot starts within `hitOriginTolerance` (2) of where the server last
+     saw the shooter, not where the shooter says it is;
+  4. the target is in front, within `maxHitRange` (0 = any), and within
+     `hitTolerance` (1) of the shot's line, plus its top speed (`maxSyncSpeed`,
+     else 8 u/s) times the shooter's ping, which the anti-cheat's heartbeat
+     measures (0.25 s until it does);
+  5. a server raycast (3D and 2D) reaches the target, unless `hitLineOfSight
+     false`: no shooting through walls;
+  6. the game's own rules (the **On Validate Hit** graph event with **Reject
+     Hit**, `on_validate_hit(shooter, target, weapon, damage)` in OkayScript,
+     or `NetworkManager::ValidateHit(...)` in C++).
+
+  A claim that fails is reported as **hit rejected**, with the reason. One
+  that passes does `hitDamage` (10, or what the game's rules say) to the
+  target's **Health**, on the server only. The new health then goes to every
+  client (`"__dmg"`, which clients can't send). The host's own `ClaimHit` is
+  applied at once.
+  - Don't apply damage on the client.
+  - Respawns aren't replicated yet: the server's Health respawns on its own,
+    and the clients' copies follow the next hit.
+- **Kicks filed for review** (the dedicated server's `--report-kicks`, or
+  `report_kicks = true` in server.cfg).
+  - When the anti-cheat kicks a player who joined with a verified account, the
+    server files an `ac_reports` row for an admin to review. It's a "player"
+    report from the account the server's machine is signed in to, about the
+    kicked account, with what was caught.
+  - The server prints which account that is at startup, and refuses to start
+    with the flag if it isn't signed in.
+  - Reports are limited to one per account per hour and 20 an hour in all,
+    which is the backend's own limit. **Nothing is banned automatically.**
+  - No new SQL is needed: `anticheat.sql` already allows these rows. They are
+    marked `[server check]` in the reason.
+  - In C++, `NetworkManager::SetAntiCheatKickHandler` gets every anti-cheat
+    kick with the player's account and last refusals.
 
 ## P3: client integrity (opt-in)
 

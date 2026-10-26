@@ -14,10 +14,13 @@
 //     Ctrl+C / SIGTERM (what container hosts send).
 // ---------------------------------------------------------------------------
 #include <cstdint>
+#include <deque>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include "okay/Net/AntiCheat.hpp"
+#include "okay/Net/NetworkManager.hpp"
 
 namespace okay {
 
@@ -54,6 +57,31 @@ struct DedicatedServerOptions {
     /// it prints at startup (NetworkManager::pinnedHostKey).
     std::string hostKeyFile;
     std::string hostKeySeed;
+    /// --report-kicks / report_kicks = true: every anti-cheat kick of a
+    /// signed-in player is filed to the backend (ac_reports) for admin review,
+    /// as a report from the account this machine is signed in to. Nothing is
+    /// banned automatically.
+    bool reportKicks = false;
+};
+
+/// What --report-kicks files: an ac_reports "player" row from the server's
+/// account about the kicked one (no new SQL; anticheat.sql allows it), with
+/// what the anti-cheat caught. One per account per hour and 20 an hour in all
+/// (the backend's own limit), so a flood of kicks can't flood the reports.
+/// `send` does the request (Account::Api on a background thread in the server).
+class KickReporter {
+public:
+    using Sender = std::function<void(const std::string& path, const std::string& method,
+                                      const std::string& body, const std::string& header)>;
+    KickReporter(std::string game, Sender send) : m_game(std::move(game)), m_send(std::move(send)) {}
+    /// File `k` (at `nowSeconds`); false when it isn't (anonymous, throttled, malformed).
+    bool File(const NetworkManager::AntiCheatKick& k, double nowSeconds);
+    static constexpr int kPerHour = 20;
+private:
+    std::string m_game;
+    Sender m_send;
+    std::map<std::string, double> m_lastByUser;
+    std::deque<double> m_sent;
 };
 
 /// Read `--server` and its flags (plus OKAY_SERVER_* environment variables, which

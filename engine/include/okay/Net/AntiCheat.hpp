@@ -46,6 +46,10 @@ struct AntiCheatSettings {
     int   kickAfterViolations = 0;
     /// "<netId>.<name>" SyncVar keys may only be written by that object's owner.
     bool  ownerOnlySyncVars = true;
+    /// SyncVar keys only the server may write ("score", "money", "match."): a
+    /// client writing a key that starts with one is refused (forged syncvar)
+    /// and told the server's value. "srv." keys are always server-only.
+    std::vector<std::string> serverVars;
     /// Calls a client may make per second to any one RPC (0 = unlimited). A
     /// NetValidator with its own calls/s for that RPC takes its place.
     int   maxRpcsPerSecond = 0;
@@ -73,11 +77,27 @@ struct AntiCheatSettings {
     /// on once every player has the update.
     float maxClockDrift = 0.0f;
 
+    // ---- Hit claims (NetworkManager::ClaimHit / "__hit") ----
+    // The server checks every claim against its own view, whether or not the
+    // anti-cheat is enabled; these tune it.
+    /// How far a shot may start from the shooter's position as the server knows it.
+    float hitOriginTolerance = 2.0f;
+    /// How far off the ray the target may be, plus its top speed x the shooter's ping.
+    float hitTolerance = 1.0f;
+    /// The longest shot (0 = any range).
+    float maxHitRange = 0.0f;
+    /// Damage a hit does, unless the game's Validate Hit says otherwise.
+    float hitDamage = 10.0f;
+    /// A server raycast from the shot's origin must reach the target (no shooting through walls).
+    bool  hitLineOfSight = true;
+
     /// .okayac text: one "key value" per line, '#' comments:
     ///   enabled true | spawn <prefab path> (repeatable) | maxSyncSpeed 12
     ///   maxSyncVarsPerSecond 20 | kickAfterViolations 5 | ownerOnlySyncVars true
     ///   requireEncryption true | ticketKey <base64url> | ticketAudience <server id>
     ///   maxRpcsPerSecond 30 | maxRpcBytes 4096 | maxClockDrift 0.05
+    ///   serverVar <key prefix> (repeatable)
+    ///   hitOriginTolerance 2 | hitTolerance 1 | maxHitRange 50 | hitDamage 10 | hitLineOfSight true
     static bool Parse(const std::string& text, AntiCheatSettings& out, std::string* error = nullptr);
     bool LoadFile(const std::string& path, std::string* error = nullptr);
     std::string ToText() const;
@@ -94,8 +114,21 @@ enum class CheatKind {
     RpcRejected,       ///< a NetValidator / OnValidateRpc refused the RPC
     RpcFlood,          ///< one RPC called more often than maxRpcsPerSecond
     ClockDrift,        ///< the client's game clock runs off the server's (a speed hack), or it won't say
+    HitRejected,       ///< a __hit claim the server's own view doesn't back (detail says why)
 };
 const char* CheatKindName(CheatKind k);
+
+/// A client's claim that its shot hit a networked object (NetworkManager::ClaimHit),
+/// as the server's Validate Hit hook sees it. Only `damage` may be changed.
+struct HitClaim {
+    std::uint32_t shooter = 0;      ///< peer id (0 = the host)
+    std::string   target;           ///< the target's NetworkSync id
+    std::string   weapon;
+    std::uint32_t clientTick = 0;   ///< the shooter's frame count when it fired
+    Vec3 origin{0, 0, 0};
+    Vec3 direction{0, 0, 1};        ///< unit length
+    float damage = 0.0f;            ///< what the hit does; a hook may change it
+};
 
 struct CheatReport {
     std::uint32_t peer = 0;
@@ -126,6 +159,9 @@ public:
     /// Does game code rule on this RPC's rate / size itself (a NetValidator with
     /// its own calls/s or max bytes)? Then maxRpcsPerSecond / maxRpcBytes don't apply.
     std::function<void(const std::string& rpc, bool& ownRate, bool& ownSize)> rpcRulesFor;
+    /// Game rules for hit claims, after the server's own checks passed: false
+    /// refuses the hit (reported as "hit rejected"); it may change claim.damage.
+    std::function<bool(HitClaim& claim)> validateHit;
     /// Called when a peer is forgotten (left, kicked, timed out), so per-peer
     /// state kept elsewhere (NetValidator) can go too.
     std::function<void(std::uint32_t peer)> onForgetPeer;
@@ -152,6 +188,10 @@ public:
     void Tick(float dt);
     /// A peer left: forget its counters (and its objects' last positions).
     void ForgetPeer(std::uint32_t peer);
+    /// Keys that start with this are always server-only (with anti-cheat on).
+    static constexpr const char* kServerVarPrefix = "srv.";
+    /// Only the server may write `key` (see serverVars).
+    bool IsServerVar(const std::string& key) const;
     /// Report and count a refusal found outside the message checks (the
     /// network layer's clock heartbeat). Always returns false.
     bool Report(std::uint32_t peer, CheatKind k, const std::string& detail) { return Refuse(peer, k, detail); }

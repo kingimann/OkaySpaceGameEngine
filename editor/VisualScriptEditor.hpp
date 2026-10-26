@@ -358,6 +358,9 @@ inline const std::vector<VsDef>& Registry() {
         {"OnCheatDetected", "On Cheat Detected",CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnValidateRpc",   "On Validate Rpc",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"RejectRpc",       "Reject Rpc",       CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"OnValidateHit",   "On Validate Hit",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"RejectHit",       "Reject Hit",       CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"ServerBudget",    "Server Budget",    CAT_ACTION, true, {""}, {"Player", "Add"}, {"Left"}, 1, "rpc name"},
         {"EnterBuildMode",  "Enter Build Mode", CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         {"ExitBuildMode",   "Exit Build Mode",  CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         {"InBuildMode",     "In Build Mode?",   CAT_DATA, false, {}, {}, {"Bool"}, 0, nullptr},
@@ -600,7 +603,7 @@ inline std::string VsEntryName(const std::string& type, const std::string& arg) 
         type == "OnTriggerStay" ||
         type == "OnFixedUpdate" || type == "OnDestroy" || type == "OnEnable" || type == "OnDisable" ||
         type == "OnObjectPlaced" || type == "OnObjectRemoved" || type == "OnLogicSignal" ||
-        type == "OnCheatDetected" || type == "OnValidateRpc") return type;
+        type == "OnCheatDetected" || type == "OnValidateRpc" || type == "OnValidateHit") return type;
     if (type == "OnAnimEvent") return arg.empty() ? std::string("OnAnimEvent") : "OnAnimEvent:" + tok(arg, "");
     if (type == "OnKey")   return "OnKey:" + tok(arg, "space");
     if (type == "OnKeyUp") return "OnKeyUp:" + tok(arg, "space");

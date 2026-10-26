@@ -13,6 +13,7 @@
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Core/SaveData.hpp"
 #include "okay/Components/UIAnimation.hpp"
+#include "okay/Components/NetValidator.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Input/Cursor.hpp"
 #include <algorithm>
@@ -355,6 +356,37 @@ struct RejectRpcNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph&, VsContext& ctx) override {
         ctx.variables["rpc_reject"] = VsValue(true);
+        return 0;
+    }
+};
+
+// Reject Hit: inside On Validate Hit, refuse the hit claim being checked (no
+// damage; it counts against the shooter).
+struct RejectHitNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        ctx.variables["hit_reject"] = VsValue(true);
+        return 0;
+    }
+};
+
+// Server Budget: a player's Net Validator budget for RPC `rpc` (ammo). in0 = the
+// player's peer id, in1 = how much to add first (a reload, a pickup; 0 = just
+// read). Out = what's left (-1 if no rule has a budget for that RPC).
+struct ServerBudgetNode : VsNode {
+    std::string rpc;
+    float left = -1.0f;
+    explicit ServerBudgetNode(std::string r) : rpc(std::move(r)) {}
+    int ExecOutCount() const override { return 1; }
+    VsValue Eval(int, NodeGraph&, VsContext&) override { return left; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        left = -1.0f;
+        Scene* s = ctx.gameObject ? ctx.gameObject->scene() : nullptr;
+        NetValidator* nv = s ? NetValidator::BudgetFor(*s, rpc) : nullptr;
+        if (!nv) return 0;
+        const auto peer = (std::uint32_t)std::max(0.0f, In(0, g, ctx).AsFloat());
+        const float add = HasInput(1) ? In(1, g, ctx).AsFloat() : 0.0f;
+        left = add != 0.0f ? nv->TopUp(peer, add) : nv->Budget(peer);
         return 0;
     }
 };

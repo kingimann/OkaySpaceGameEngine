@@ -9,6 +9,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Mathf.hpp"
+#include <cmath>
 #include <string>
 
 namespace okay {
@@ -147,6 +148,14 @@ public:
     }
     void AddArmor(float a) { armor += a; }
     void Revive()          { Respawn(); }
+    /// Multiplayer: the server's health for this object, set as is (armor and
+    /// the rest were applied on the server, which validated the hit).
+    void SetHealthFromServer(float h) {
+        if (dead || !std::isfinite(h)) return;
+        health = Mathf::Min(maxHealth + Mathf::Max(0.0f, overhealMax), h);
+        if (health <= 0.0f) OnDeath();
+        Publish();
+    }
     void SetGodMode(bool on) { godMode = on; }
 
 private:

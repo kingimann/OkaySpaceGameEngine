@@ -117,8 +117,9 @@ set_source_files_properties(src/Graphics/Image.cpp src/Graphics/Font.cpp src/Gra
 set_source_files_properties(src/Graphics/EmbeddedFont.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
 # The network layer signs its key exchange with #269's ed25519 (shared/AntiCheatCrypto.hpp)
-# and runs its clock heartbeat (shared/AntiCheatChecks.hpp).
-set_source_files_properties(src/Net/NetworkManager.cpp src/Net/ClockCheck.cpp PROPERTIES
+# and runs its clock heartbeat (shared/AntiCheatChecks.hpp); the dedicated server
+# files anti-cheat kicks with #270's request builder (shared/AntiCheatBackend.hpp).
+set_source_files_properties(src/Net/NetworkManager.cpp src/Net/ClockCheck.cpp src/Net/DedicatedServer.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
 
 target_compile_features(okay_engine PUBLIC cxx_std_17)

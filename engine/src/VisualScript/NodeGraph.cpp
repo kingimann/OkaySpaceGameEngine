@@ -306,7 +306,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         type == "OnMouseDown" || type == "OnMouseUp" || type == "OnMouseOver" ||
         type == "OnCollisionStay" || type == "OnLateUpdate" || type == "OnTriggerStay" ||
         type == "OnObjectPlaced" || type == "OnObjectRemoved" || type == "OnLogicSignal" ||
-        type == "OnCheatDetected" || type == "OnValidateRpc")
+        type == "OnCheatDetected" || type == "OnValidateRpc" || type == "OnValidateHit")
         return std::make_unique<EventNode>();
     if (type == "OnEvent") return std::make_unique<CustomEventNode>();
     // ---- Actions steps (the no-code library) ----
@@ -342,6 +342,8 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         if (type == "EventValue")     return std::make_unique<EventValueNode>(false);
         if (type == "EventName")      return std::make_unique<EventValueNode>(true);
         if (type == "RejectRpc")      return std::make_unique<RejectRpcNode>();
+        if (type == "RejectHit")      return std::make_unique<RejectHitNode>();
+        if (type == "ServerBudget")   return std::make_unique<ServerBudgetNode>(a0("fire"));
         if (type == "SetObjectVar")   return std::make_unique<SetObjectVarNode>(a0("x"));
         if (type == "GetObjectVar")   return std::make_unique<GetObjectVarNode>(a0("x"));
         if (type == "SaveValue")      return std::make_unique<SaveValueNode>(a0("score"));

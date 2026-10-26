@@ -14,6 +14,9 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/NetworkSync.hpp"
+#include "okay/Components/SurvivalComponents.hpp"
+#include "okay/Physics/Physics3D.hpp"
+#include "okay/Physics/Physics2D.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Core/Log.hpp"
@@ -163,7 +166,12 @@ void NetworkManager::InitServerState() {
         return it != m_syncObjs.end() && it->second.owned;
     };
     anticheat.exists = [this](const std::string& id) { return m_syncObjs.count(id) != 0; };
-    anticheat.onCheat = [this](const CheatReport& r) { if (m_cheatHandler) m_cheatHandler(r); };
+    anticheat.onCheat = [this](const CheatReport& r) {
+        auto& recent = m_recentCheats[r.peer];   // for a kick's report
+        if (recent.size() >= kRecentCheats) recent.erase(recent.begin());
+        recent.push_back(r);
+        if (m_cheatHandler) m_cheatHandler(r);
+    };
     if (snapshotRate > 0.0f) m_snapshotInterval = 1.0f / snapshotRate;
 }
 
@@ -307,6 +315,7 @@ void NetworkManager::Stop() {
     anticheat.serverOwns = nullptr;
     anticheat.exists = nullptr;
     anticheat.onCheat = nullptr;
+    m_recentCheats.clear();
     m_relayLost = false;
     // m_kicked / m_kickReason / m_relayError persist so WasKicked() can be read after the
     // disconnect; they're cleared when a new session starts.
@@ -435,6 +444,16 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
                 ns->netId = netId; ns->authority = NetworkSync::Authority::Manual; ns->owned = false;
             }
         }
+        return;
+    }
+    if (channel == "__dmg") {   // "<netId>|<health>|<damage>|<shooter>": the server applied a hit
+        if (m_mode != Mode::Client || from != 0) return;
+        const std::size_t a = data.find('|');
+        if (a == std::string::npos) return;
+        auto obj = m_syncObjs.find(data.substr(0, a));
+        if (obj == m_syncObjs.end() || !obj->second.t || !obj->second.t->gameObject) return;
+        if (auto* hs = obj->second.t->gameObject->GetComponent<HealthStat>())
+            hs->SetHealthFromServer(std::strtof(data.c_str() + a + 1, nullptr));
         return;
     }
     if (channel == "__despawn") {   // remove a SpawnOwned object on this peer
@@ -912,6 +931,154 @@ void NetworkManager::PruneFragments(float dt) {
     }
 }
 
+namespace {
+// "x y z", all of it finite.
+bool ParseVec3(const std::string& s, Vec3& out) {
+    const char* p = s.c_str();
+    float v[3];
+    for (float& f : v) {
+        char* end = nullptr;
+        f = std::strtof(p, &end);
+        if (end == p || !std::isfinite(f)) return false;
+        p = end;
+    }
+    while (*p == ' ') ++p;
+    if (*p) return false;
+    out = Vec3(v[0], v[1], v[2]);
+    return true;
+}
+// Is `o` the object `root`, or one of its children?
+bool IsPartOf(const GameObject* o, const GameObject* root) {
+    if (!o || !root) return false;
+    for (const Transform* t = o->transform; t; t = t->Parent())
+        if (t->gameObject == root) return true;
+    return false;
+}
+} // namespace
+
+void NetworkManager::ClaimHit(const std::string& targetNetId, const std::string& weapon,
+                              const Vec3& origin, const Vec3& direction) {
+    const float len = direction.Magnitude();
+    if (targetNetId.empty() || len < 1e-6f || targetNetId.find('|') != std::string::npos ||
+        weapon.find('|') != std::string::npos) return;
+    const Vec3 dir = direction * (1.0f / len);
+    if (m_mode == Mode::Server) {   // the host's own shot: trusted, only the game's rules apply
+        HitClaim claim;
+        claim.target = targetNetId; claim.weapon = weapon; claim.clientTick = (std::uint32_t)m_tickCount;
+        claim.origin = origin; claim.direction = dir; claim.damage = anticheat.settings.hitDamage;
+        if (anticheat.validateHit && !anticheat.validateHit(claim)) { ++m_hitsRefused; return; }
+        ApplyHit(claim);
+        return;
+    }
+    if (m_mode != Mode::Client || !m_joined) return;
+    char buf[192];
+    std::snprintf(buf, sizeof buf, "|%u|%.9g %.9g %.9g|%.9g %.9g %.9g", (unsigned)m_tickCount,
+                  origin.x, origin.y, origin.z, dir.x, dir.y, dir.z);
+    SendReliable("__hit", targetNetId + "|" + weapon + buf);
+}
+
+// "<targetNetId>|<weapon>|<clientTick>|ox oy oz|dx dy dz" from client `c`. The
+// server believes its own view: where it last saw the shooter, where the
+// target is, what's in between.
+void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
+    const std::uint32_t shooter = c.id;
+    auto refuse = [&](const std::string& why) {
+        ++m_hitsRefused;
+        anticheat.Report(shooter, CheatKind::HitRejected, why);
+        AntiCheatAfterRefusal(shooter);   // (may kick: c is gone after this)
+    };
+    std::vector<std::string> part;
+    for (std::size_t a = 0;;) {
+        const std::size_t b = data.find('|', a);
+        part.push_back(data.substr(a, b == std::string::npos ? std::string::npos : b - a));
+        if (b == std::string::npos) break;
+        a = b + 1;
+    }
+    HitClaim claim;
+    claim.shooter = shooter;
+    Vec3 dir;
+    char* end = nullptr;
+    if (part.size() != 5 || part[0].empty() || part[0].size() > 128 || part[1].size() > 64 ||
+        !ParseVec3(part[3], claim.origin) || !ParseVec3(part[4], dir) || dir.Magnitude() < 1e-6f) {
+        refuse("malformed hit claim");
+        return;
+    }
+    claim.target = part[0];
+    claim.weapon = part[1];
+    claim.clientTick = static_cast<std::uint32_t>(std::strtoul(part[2].c_str(), &end, 10));
+    claim.direction = dir * (1.0f / dir.Magnitude());
+    claim.damage = anticheat.settings.hitDamage;
+    const AntiCheatSettings& s = anticheat.settings;
+
+    // The shooter is alive (when its avatar has health).
+    if (auto r = m_remotes.find(shooter); r != m_remotes.end() && r->second)
+        if (auto* hs = r->second->GetComponent<HealthStat>(); hs && hs->IsDead()) { refuse("shooter is dead"); return; }
+    // The weapon's fire rate and ammo: its Net Validator ("hit/<weapon>"), as for an RPC.
+    if (anticheat.validateRpc && !anticheat.validateRpc(shooter, "hit/" + claim.weapon, data)) {
+        refuse("fire rate or ammo: " + claim.weapon);
+        return;
+    }
+    // Fired from where the server last saw the shooter, not where it says it is.
+    if (!c.hasState) { refuse("no position for the shooter yet"); return; }
+    const Vec3 at(c.state.x, c.state.y, c.state.z);
+    if ((claim.origin - at).Magnitude() > s.hitOriginTolerance) { refuse("shot from where the shooter isn't"); return; }
+    // The target, where the server has it.
+    auto obj = m_syncObjs.find(claim.target);
+    if (obj == m_syncObjs.end() || !obj->second.t || !obj->second.t->gameObject) { refuse("no such target: " + claim.target); return; }
+    GameObject* target = obj->second.t->gameObject;
+    const Vec3 tp = obj->second.t->TransformPoint(Vec3(0.0f, 0.0f, 0.0f));
+    const Vec3 to = tp - claim.origin;
+    const float along = Vec3::Dot(to, claim.direction);
+    if (along < 0.0f) { refuse("target behind the shot"); return; }
+    if (s.maxHitRange > 0.0f && along > s.maxHitRange) { refuse("out of range"); return; }
+    // Off the ray by no more than the tolerance plus how far the target can
+    // have moved while the shot travelled (its top speed x the shooter's ping).
+    const float rtt = c.rtt >= 0.0f ? std::min(c.rtt, 1.0f) : 0.25f;
+    const float speed = s.maxSyncSpeed > 0.0f ? s.maxSyncSpeed : 8.0f;
+    if ((to - claim.direction * along).Magnitude() > s.hitTolerance + speed * rtt) { refuse("missed: the target wasn't there"); return; }
+    // Nothing solid in between (a server raycast, 3D and 2D).
+    if (s.hitLineOfSight && GetScene()) {
+        Scene& sc = *GetScene();
+        GameObject* self = nullptr;
+        if (auto r = m_remotes.find(shooter); r != m_remotes.end()) self = r->second;
+        bool blocked = false;
+        for (const auto& h : sc.physics3D().RaycastAll(sc, claim.origin, claim.direction, along, nullptr,
+                                                        Physics3D::kAllLayers, /*queryTriggers=*/false)) {
+            if (IsPartOf(h.gameObject, target)) break;   // reached it
+            if (IsPartOf(h.gameObject, self)) continue;
+            if (h.distance < along - 0.05f) { blocked = true; break; }
+        }
+        const Vec2 d2(claim.direction.x, claim.direction.y);
+        if (!blocked && d2.Magnitude() > 1e-6f) {
+            const float along2 = Vec2(to.x, to.y).Magnitude();
+            for (const auto& h : sc.physics().RaycastAll(sc, Vec2(claim.origin.x, claim.origin.y), d2 * (1.0f / d2.Magnitude()),
+                                                         along2, nullptr, Physics2D::kAllLayers, /*queryTriggers=*/false)) {
+                if (IsPartOf(h.gameObject, target)) break;
+                if (IsPartOf(h.gameObject, self)) continue;
+                if (h.distance < along2 - 0.05f) { blocked = true; break; }
+            }
+        }
+        if (blocked) { refuse("through a wall"); return; }
+    }
+    // The game's own rules (Validate Hit / on_validate_hit / NetworkManager::ValidateHit).
+    if (anticheat.validateHit && !anticheat.validateHit(claim)) { refuse("refused by the game: " + claim.weapon); return; }
+    ApplyHit(claim);
+}
+
+// Damage on the server only, through the target's HealthStat, then the result
+// to every client ("__dmg").
+void NetworkManager::ApplyHit(HitClaim& claim) {
+    auto obj = m_syncObjs.find(claim.target);
+    if (obj == m_syncObjs.end() || !obj->second.t || !obj->second.t->gameObject) return;
+    auto* hs = obj->second.t->gameObject->GetComponent<HealthStat>();
+    if (!hs || claim.damage <= 0.0f || !std::isfinite(claim.damage)) return;
+    hs->Damage(claim.damage);
+    ++m_hitsApplied;
+    char buf[96];
+    std::snprintf(buf, sizeof buf, "|%.9g|%.9g|%u", hs->health, claim.damage, (unsigned)claim.shooter);
+    SendReliable("__dmg", claim.target + buf);
+}
+
 void NetworkManager::Kick(std::uint32_t id, const std::string& reason) {
     if (m_mode != Mode::Server) return;
     for (auto it = m_clients.begin(); it != m_clients.end(); ++it) {
@@ -924,6 +1091,7 @@ void NetworkManager::Kick(std::uint32_t id, const std::string& reason) {
         }
         m_clients.erase(it);
         anticheat.ForgetPeer(id);
+        m_recentCheats.erase(id);
         if (m_peerLeft) m_peerLeft(id);
         OKAY_INFO("net: kicked peer ", id, reason.empty() ? "" : (" (" + reason + ")"));
         return;
@@ -1064,6 +1232,13 @@ bool NetworkManager::AntiCheatAllowsSyncVar(std::uint32_t peer, const std::strin
 void NetworkManager::AntiCheatAfterRefusal(std::uint32_t peer) {
     const int limit = anticheat.settings.kickAfterViolations;
     if (limit > 0 && anticheat.Violations(peer) >= limit) {
+        if (m_acKickHandler) {
+            AntiCheatKick k;
+            k.peer = peer;
+            for (auto& [ep, c] : m_clients) if (c.id == peer) { k.name = c.name; k.userId = c.userId; }
+            if (auto r = m_recentCheats.find(peer); r != m_recentCheats.end()) k.recent = r->second;
+            m_acKickHandler(k);
+        }
         Kick(peer, "anti-cheat");   // (forgets its anti-cheat state too)
     }
 }
@@ -1314,7 +1489,15 @@ void NetworkManager::ServerTick(float dt) {
             {   // only joined clients may change shared state (and, with anti-cheat on, within its rules)
                 auto cl = m_clients.find(from);
                 if (cl == m_clients.end()) continue;
-                if (anticheat.settings.enabled && !AntiCheatAllowsSyncVar(cl->second.id, key)) continue;
+                if (anticheat.settings.enabled && !AntiCheatAllowsSyncVar(cl->second.id, key)) {
+                    // Put the sender's copy back to the server's value (it set it locally first).
+                    if (m_clients.count(from)) {
+                        auto cur = m_syncVars.find(key);
+                        net::Packet back(SyncVar); back.Write(key); back.Write(cur != m_syncVars.end() ? cur->second : std::string());
+                        SendDatagram(from, back.Data(), back.Size());
+                    }
+                    continue;
+                }
             }
             ApplySyncVar(key, value);
             net::Packet out(SyncVar); out.Write(key); out.Write(value);
@@ -1322,13 +1505,19 @@ void NetworkManager::ServerTick(float dt) {
         } else if (type == ClockPong) {
             // A client's clock, for the heartbeat (anti-cheat maxClockDrift).
             auto it = m_clients.find(from);
-            if (it == m_clients.end() || !it->second.clock) continue;
+            if (it == m_clients.end()) continue;
             const std::uint64_t nonce = ReadU64(p);
             const std::uint32_t seq = p.ReadU32();
             const std::uint64_t clientMs = ReadU64(p);
             const std::string tag = p.ReadString();
             if (!p.Ok()) continue;
             Client& c = it->second;
+            if (nonce == c.pingNonce && c.pingNonce != 0) {   // its round trip, for hit claims
+                const float rtt = static_cast<float>((m_acClockMs - c.pingSentMs) / 1000.0);
+                c.rtt = c.rtt < 0.0f ? rtt : c.rtt * 0.75f + rtt * 0.25f;
+                c.pingNonce = 0;
+            }
+            if (!c.clock) continue;
             const auto v = c.clock->Accept(nonce, seq, clientMs, tag, static_cast<std::uint64_t>(m_acClockMs));
             if (v == net::ClockCheck::Verdict::BadResponse) continue;
             c.clockQuiet = 0.0f;
@@ -1358,8 +1547,9 @@ void NetworkManager::ServerTick(float dt) {
                 std::string data    = p.ReadString();
                 net::Packet ack(ReliableAck); ack.Write(seq);
                 SendDatagram(from, ack.Data(), ack.Size());
-                if (it->second.relSeen.Accept(seq) && rateOk(it->second) &&   // first time -> deliver
-                    ClientMessageOk(it->second, channel, data) && AntiCheatAllows(it->second.id, channel, data))
+                if (!it->second.relSeen.Accept(seq) || !rateOk(it->second)) continue;   // a repeat, or spam
+                if (channel == "__hit") { HandleHitClaim(it->second, data); continue; }   // the server's to judge
+                if (ClientMessageOk(it->second, channel, data) && AntiCheatAllows(it->second.id, channel, data))
                     Deliver(it->second.id, channel, data);
             }
         } else if (type == ReliableAck) {
@@ -1425,6 +1615,7 @@ void NetworkManager::ServerTick(float dt) {
                 }
                 m_clients.erase(it);
                 anticheat.ForgetPeer(id);
+                m_recentCheats.erase(id);
                 if (m_peerLeft) m_peerLeft(id);
             }
         } else if (type == Message) {
@@ -1435,6 +1626,7 @@ void NetworkManager::ServerTick(float dt) {
                 p.ReadU32();                            // sender-reported id (ignored)
                 std::string channel = p.ReadString();
                 std::string data    = p.ReadString();
+                if (channel == "__hit") { HandleHitClaim(it->second, data); continue; }   // never relayed
                 if (!ClientMessageOk(it->second, channel, data)) continue;
                 if (!AntiCheatAllows(sender, channel, data)) continue;   // not applied, not relayed
                 if (dedicated || m_localRoom == senderRoom)   // host only sees its room (a dedicated server sees all)
@@ -1468,6 +1660,7 @@ void NetworkManager::ServerTick(float dt) {
             }
             it = m_clients.erase(it);
             anticheat.ForgetPeer(id);
+            m_recentCheats.erase(id);
             if (m_peerLeft) m_peerLeft(id);
         } else {
             ++it;
@@ -1477,18 +1670,30 @@ void NetworkManager::ServerTick(float dt) {
     // Anti-cheat clock heartbeat: ask each client for its game clock about once
     // a second (the answer is checked above). One that won't answer is reported
     // too, or skipping the answer would be the way around it.
-    if (anticheat.settings.enabled && anticheat.settings.maxClockDrift > 0.0f) {
+    // With the anti-cheat on, the same pings also measure each client's round
+    // trip (hit claims allow for it), whether or not the clock is checked.
+    if (anticheat.settings.enabled) {
+        const bool checkClock = anticheat.settings.maxClockDrift > 0.0f;
         std::vector<std::uint32_t> quiet;
         for (auto& [ep, c] : m_clients) {
-            if (!c.clock) c.clock = std::make_shared<net::ClockCheck>(anticheat.settings.maxClockDrift);
+            if (checkClock && !c.clock) c.clock = std::make_shared<net::ClockCheck>(anticheat.settings.maxClockDrift);
             c.clockReported += dt;
             if ((c.clockTimer -= dt) <= 0.0f) {
                 c.clockTimer = 1.0f;
-                const auto ch = c.clock->Issue(static_cast<std::uint64_t>(m_acClockMs));
                 net::Packet cp(ClockPing);
-                WriteU64(cp, ch.nonce); cp.Write(ch.seq); cp.Write(c.clock->Key());
+                if (c.clock) {
+                    const auto ch = c.clock->Issue(static_cast<std::uint64_t>(m_acClockMs));
+                    WriteU64(cp, ch.nonce); cp.Write(ch.seq); cp.Write(c.clock->Key());
+                    c.pingNonce = ch.nonce;
+                } else {
+                    std::random_device rd;
+                    c.pingNonce = ((static_cast<std::uint64_t>(rd()) << 32) ^ rd()) | 1u;
+                    WriteU64(cp, c.pingNonce); cp.Write(std::uint32_t(0)); cp.Write(std::string("rtt"));
+                }
+                c.pingSentMs = m_acClockMs;
                 SendDatagram(c.endpoint, cp.Data(), cp.Size());
             }
+            if (!checkClock) continue;
             if ((c.clockQuiet += dt) > kClockQuietLimit) {
                 c.clockQuiet = 0.0f;
                 quiet.push_back(c.id);
@@ -1578,6 +1783,7 @@ void NetworkManager::ServerTick(float dt) {
 
 void NetworkManager::ClientTick(float dt) {
     m_clock += dt;
+    ++m_tickCount;   // the frame count a hit claim carries
     m_gameClockMs += static_cast<double>(dt) * 1000.0;
     RelayKeepAlive(dt);
     // Through a relay we don't know the host's (synthetic) endpoint until the relay

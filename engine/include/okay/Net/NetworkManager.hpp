@@ -420,6 +420,33 @@ public:
     // ---- Moderation ----------------------------------------------------
     /// Server: disconnect a client by id (with an optional reason it's told).
     void Kick(std::uint32_t id, const std::string& reason = "");
+
+    /// Claim that this peer's shot hit the networked object `targetNetId`
+    /// (its NetworkSync id), fired from `origin` along `direction`. A client
+    /// sends it to the server ("__hit"), which checks it against its own view
+    /// (the shooter's position, range, line of sight, where the target was,
+    /// the weapon's Net Validator "hit/<weapon>": fire rate and ammo) and the
+    /// game's Validate Hit rules, then applies the damage through the
+    /// target's HealthStat and replicates it. On the host it's applied at once
+    /// (the host is trusted), after the game's rules. Never apply damage
+    /// locally on a client: the server's word comes back.
+    void ClaimHit(const std::string& targetNetId, const std::string& weapon, const Vec3& origin, const Vec3& direction);
+    /// Game rules for hit claims (server): false refuses one; it may change
+    /// claim.damage. The same hook as anticheat.validateHit.
+    void ValidateHit(std::function<bool(HitClaim& claim)> rule) { anticheat.validateHit = std::move(rule); }
+    /// A player the anti-cheat kicked (it reached kickAfterViolations), with its
+    /// verified account ("" if anonymous) and its last refusals, oldest first.
+    struct AntiCheatKick {
+        std::uint32_t peer = 0;
+        std::string name, userId;
+        std::vector<CheatReport> recent;
+    };
+    /// Server: called for every anti-cheat kick, before the player is dropped.
+    /// The dedicated server's --report-kicks files these for admin review.
+    void SetAntiCheatKickHandler(std::function<void(const AntiCheatKick&)> f) { m_acKickHandler = std::move(f); }
+    /// Hits the server applied / refused since it started (for tests and stats).
+    int HitsApplied() const { return m_hitsApplied; }
+    int HitsRefused() const { return m_hitsRefused; }
     /// Client: true if the server kicked this peer, plus the reason it gave.
     bool WasKicked() const { return m_kicked; }
     const std::string& KickReason() const { return m_kickReason; }
@@ -507,6 +534,11 @@ private:
         // next, how long since a good answer, and since its last drift report.
         std::shared_ptr<net::ClockCheck> clock;
         float clockTimer = 0.0f, clockQuiet = 0.0f, clockReported = 1e9f;
+        // Round trip, from the heartbeat's pings (-1 until measured): how far
+        // a target may have moved while this client's shot was on its way.
+        float rtt = -1.0f;
+        std::uint64_t pingNonce = 0;
+        double pingSentMs = 0.0;
     };
     // Sealed-join key exchanges waiting for their Join (server side), by address.
     struct PendingJoin {
@@ -579,6 +611,13 @@ private:
     void InitServerState();
     void ServerTick(float dt);
     void ClientTick(float dt);
+    // A client's hit claim ("__hit"): checked, then applied or refused.
+    void HandleHitClaim(Client& c, const std::string& data);
+    void ApplyHit(HitClaim& claim);
+    int m_hitsApplied = 0, m_hitsRefused = 0;
+    std::function<void(const AntiCheatKick&)> m_acKickHandler;
+    std::unordered_map<std::uint32_t, std::vector<CheatReport>> m_recentCheats;   // last few per peer
+    static constexpr std::size_t kRecentCheats = 5;
     GameObject* EnsureRemote(std::uint32_t id, char glyph);
     void ApplyPeer(const PeerState& s);
     /// Deliver a received custom message to the handler and the inbox queue.

@@ -96,7 +96,7 @@ public:
             }
         }
         TickMarker(scene, dt);
-        if (!m_hasDest) { Animate(false, false); StopXZ(); return; }
+        if (!m_hasDest) { Animate(dt, false); StopXZ(); return; }
 
         // ---- Steer toward the destination on the XZ plane ----
         Vec3 pos = transform->Position();
@@ -104,7 +104,7 @@ public:
         float dist = std::sqrt(to.x * to.x + to.z * to.z);
         if (dist <= stopDistance) {                  // arrived
             m_hasDest = false;
-            Animate(false, false);
+            Animate(dt, false);
             StopXZ();
             return;
         }
@@ -152,7 +152,7 @@ public:
         float t = 1.0f - std::exp(-turnSpeed * dt);
         transform->localRotation = Quat::Slerp(transform->localRotation, want, t);
 
-        Animate(true, running);
+        Animate(dt, running);
     }
 
     // RuneScape-style follow camera: trail the player and keep looking at it.
@@ -256,10 +256,20 @@ private:
         }
     }
 
-    void Animate(bool moving, bool running) {
+    void Animate(float dt, bool running) {
         if (!driveAnimation) return;
-        if (Character* ch = FindCharacter())
-            ch->anim = moving ? (running ? 3 : 2) : 1;   // run / walk / idle
+        if (Character* ch = FindCharacter()) {
+            // The body turns toward travel, so the stride just follows the real speed.
+            auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
+            Character::Locomotion lo;
+            lo.velocity  = rb ? rb->velocity : Vec3{0, 0, 0};
+            lo.facing    = transform->localRotation * Vec3{0, 0, -1};
+            lo.onGround  = !rb || std::fabs(rb->velocity.y) < 0.5f || rb->groundedOnTerrain;
+            lo.sprint    = running;
+            lo.walkSpeed = walkSpeed;
+            lo.dt = dt;
+            ch->DriveLocomotion(lo);
+        }
     }
 
     Character* FindCharacter() const {

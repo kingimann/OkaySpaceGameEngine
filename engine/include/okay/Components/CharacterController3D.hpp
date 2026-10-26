@@ -68,14 +68,17 @@ public:
         if (alen > 1.0f) { axis.x /= alen; axis.y /= alen; }
         float tx = axis.x * spd, tz = axis.y * spd;
         bool moving = (axis.x != 0.0f || axis.y != 0.0f);
+        bool grounded = true, jumped = false;
 
         if (rb) {
-            bool grounded = Mathf::Abs(rb->velocity.y) < 0.5f;
+            grounded = Mathf::Abs(rb->velocity.y) < 0.5f;
             float rate = (moving ? acceleration : deceleration) * (grounded ? 1.0f : airControl);
             rb->velocity.x = Mathf::MoveTowards(rb->velocity.x, tx, rate * dt);
             rb->velocity.z = Mathf::MoveTowards(rb->velocity.z, tz, rate * dt);
-            if (canJump && Input::GetKeyDown(' ') && grounded)
+            if (canJump && Input::GetKeyDown(' ') && grounded) {
                 rb->velocity.y = jumpForce;
+                jumped = true;
+            }
             // Slope limit: too-steep terrain cancels uphill velocity and slides.
             if (slopeLimit > 0.0f && (grounded || rb->groundedOnTerrain) && rb->groundNormal.y < std::cos(slopeLimit * Mathf::Deg2Rad)) {
                 Vec3 n = rb->groundNormal;
@@ -99,8 +102,19 @@ public:
         }
 
         if (driveAnimation)
-            if (Character* ch = FindCharacterIn(gameObject))
-                ch->anim = !moving ? 1 : (running ? 3 : 2);   // idle / run / walk
+            if (Character* ch = FindCharacterIn(gameObject)) {
+                // The body keeps its facing, so sideways input strafes and back input
+                // backpedals; the stride follows the real ground speed.
+                Character::Locomotion lo;
+                lo.velocity  = rb ? rb->velocity : Vec3{tx, 0.0f, tz};
+                lo.facing    = transform->localRotation * Vec3{0, 0, -1};
+                lo.onGround  = grounded || (rb && rb->groundedOnTerrain);
+                lo.jumped    = jumped;
+                lo.sprint    = running;
+                lo.walkSpeed = speed;
+                lo.dt = dt;
+                ch->DriveLocomotion(lo);
+            }
     }
 
 private:

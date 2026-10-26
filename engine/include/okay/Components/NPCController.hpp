@@ -283,7 +283,7 @@ public:
         if (faceMovement && move && (dir.x != 0.0f || dir.z != 0.0f)) FaceToward(dir, dt);
 
         // ---- Presentation (sibling Character) -----------------------------
-        DriveCharacter(rb, move, speed, tgt, canSee || acquired);
+        DriveCharacter(rb, move, speed, tgt, canSee || acquired, dt);
     }
 
     /// Editor/debug: the active A* route ("" while idle) and progress index.
@@ -379,14 +379,20 @@ private:
         return m > 1e-5f ? Vec3{r.x / m, 0.0f, r.z / m} : dir;
     }
 
-    void DriveCharacter(Rigidbody3D* rb, bool move, float speed, GameObject* tgt, bool see) {
+    void DriveCharacter(Rigidbody3D* rb, bool move, float speed, GameObject* tgt, bool see, float dt) {
         if (!gameObject) return;
         auto* ch = gameObject->GetComponent<Character>();
         if (!ch) return;
         if (driveAnimation) {
-            bool moving = move;
-            if (rb) { float v = std::sqrt(rb->velocity.x * rb->velocity.x + rb->velocity.z * rb->velocity.z); moving = v > 0.2f; }
-            ch->anim = moving ? (speed >= runSpeed - 0.01f ? 3 : 2) : 1;
+            // Idle / walk / run from the real ground speed, the stride matched to it.
+            Character::Locomotion lo;
+            lo.velocity  = rb ? rb->velocity : Vec3{0, 0, 0};
+            lo.facing    = transform->localRotation * Vec3{0, 0, -1};
+            lo.onGround  = !rb || std::fabs(rb->velocity.y) < 0.5f || rb->groundedOnTerrain;
+            lo.sprint    = move && speed >= runSpeed - 0.01f;
+            lo.walkSpeed = moveSpeed;
+            lo.dt = dt;
+            ch->DriveLocomotion(lo);
         }
         if (lookAtTarget) {
             if (tgt && see && IsAlerted()) { ch->lookAtTarget = targetName; }

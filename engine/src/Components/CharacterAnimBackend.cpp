@@ -93,6 +93,7 @@ bool CharacterAnimBackend::Play(const std::string& name, float blend) {
     StartFade(blend >= 0.0f ? blend : (ch ? ch->blendTime : 0.0f));
     m_cur = Playing{};
     m_cur.clip = ci;
+    m_cur.loop = m_loop;
     m_cur.rate = m_speed;
     m_fromStart = true;
     return true;
@@ -186,7 +187,7 @@ void CharacterAnimBackend::Step(Playing& p, float dt) const {
     if (p.blend) { p.phase = frac01(p.phase + dt * p.rate / std::fmax(p.cycle, 1e-4f)); return; }
     const float len = ClipLength(p.clip);
     p.time += dt * p.rate;
-    if (len > 0.0f) p.time = frac01(p.time / len) * len;
+    if (len > 0.0f) p.time = p.loop ? frac01(p.time / len) * len : std::fmin(p.time, len);   // a one-shot fading out holds its end
 }
 
 void CharacterAnimBackend::StartFade(float seconds) {
@@ -312,6 +313,7 @@ void CharacterAnimBackend::Move(const Movement& m) {
     m_sm->SetBool("run", m.run);
     m_sm->SetBool("crouch", m.crouch);
     m_sm->SetBool("prone", m.prone);
+    m_sm->SetFloat("stance", m.stance);
     m_sm->SetFloat("airTime", m.airTime);
     m_sm->SetFloat("verticalSpeed", m.verticalSpeed);
 }

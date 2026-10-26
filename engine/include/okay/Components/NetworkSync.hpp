@@ -43,6 +43,11 @@ public:
     Authority   authority = Authority::Host;    ///< who broadcasts this object
     bool        owned = true;                   ///< used when authority == Manual
     bool        syncAnimation = true;           ///< if a Character is found, replicate its anim + punches
+    /// With the anti-cheat on, an object nobody owns is the server's: no client
+    /// may move it or write its variables. True lets the first client to drive
+    /// it claim it (a ball anyone can kick). The server can still hand any
+    /// object to a client (AntiCheat::SetOwner).
+    bool        clientClaimable = false;
 
     /// Manually (re)assign authority — handy for ownership transfer from script.
     void SetOwned(bool o) { owned = o; if (m_nm && !m_id.empty()) m_nm->SetSyncOwned(m_id, OwnedNow()); }

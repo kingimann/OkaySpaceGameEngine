@@ -53,7 +53,19 @@ std::string Program::NameOf(const Type& t) const {
     if (t.kind == TK::Enum && t.id >= 0 && t.id < (int)enums.size()) return enums[(std::size_t)t.id].name;
     if (t.kind == TK::Array && t.id >= 0 && t.id < (int)arrays.size()) return NameOf(arrays[(std::size_t)t.id]) + "[]";
     if (t.kind == TK::Class && t.id >= 0 && t.id < (int)classes.size()) return classes[(std::size_t)t.id].name;
+    if ((t.kind == TK::List || t.kind == TK::Dict || t.kind == TK::Pair) && t.id >= 0 && t.id < (int)generics.size()) {
+        const Generic& g = generics[(std::size_t)t.id];
+        if (t.kind == TK::List) return "List<" + NameOf(g.a) + ">";
+        return std::string(t.kind == TK::Dict ? "Dictionary<" : "KeyValuePair<") + NameOf(g.a) + ", " + NameOf(g.b) + ">";
+    }
     return TypeName(t);
+}
+
+Type Program::GenericOf(TK kind, const Type& a, const Type& b) {
+    for (std::size_t i = 0; i < generics.size(); ++i)
+        if (generics[i].kind == kind && generics[i].a == a && generics[i].b == b) return Type{kind, (int)i};
+    generics.push_back({kind, a, b});
+    return Type{kind, (int)generics.size() - 1};
 }
 
 int Program::MethodIndex(const std::string& name) const {
@@ -342,6 +354,7 @@ private:
             for (int i = 0; i < t.rank; ++i) r = prog_.ArrayOf(r);
             return r;
         }
+        if (!t.args.empty() || t.name == "List" || t.name == "Dictionary" || t.name == "KeyValuePair") return ResolveGeneric(t);
         if (t.name == "int") return Type::Of(TK::Int);
         if (t.name == "float") return Type::Of(TK::Float);
         if (t.name == "bool") return Type::Of(TK::Bool);
@@ -366,6 +379,32 @@ private:
         return Type{};
     }
 
+    // List<T>, Dictionary<K, V> and KeyValuePair<K, V> (what foreach over a dictionary gives).
+    Type ResolveGeneric(const TypeRef& t) {
+        if (t.name == "List") {
+            if (t.args.size() != 1) { Error(t.loc, "List takes one type: List<int>"); return Type{}; }
+            Type a = ResolveType(t.args[0], false);
+            return a.kind == TK::Error ? a : prog_.GenericOf(TK::List, a);
+        }
+        if (t.name == "Dictionary" || t.name == "KeyValuePair") {
+            if (t.args.size() != 2) { Error(t.loc, t.name + " takes two types: " + t.name + "<string, int>"); return Type{}; }
+            Type k = ResolveType(t.args[0], false), v = ResolveType(t.args[1], false);
+            if (k.kind == TK::Error || v.kind == TK::Error) return Type{};
+            if (!IsKeyType(k)) {
+                Error(t.args[0].loc, "A Dictionary key must be an int, string, bool, enum or object, not " + TypeName(k));
+                return Type{};
+            }
+            return prog_.GenericOf(t.name == "Dictionary" ? TK::Dict : TK::Pair, k, v);
+        }
+        Error(t.loc, "Only List<T> and Dictionary<K, V> are generic here");
+        return Type{};
+    }
+    static bool IsKeyType(const Type& t) {
+        return t.kind == TK::Int || t.kind == TK::String || t.kind == TK::Bool || t.kind == TK::Enum ||
+               t.kind == TK::Object || t.kind == TK::Class;
+    }
+    const Program::Generic& Gen(const Type& t) const { return prog_.generics[(std::size_t)t.id]; }
+
     void CheckLifecycleSignature(MethodDecl& m, int) {
         const auto& lc = LifecycleMethods();
         for (std::size_t i = 0; i < lc.size(); ++i) {
@@ -383,7 +422,7 @@ private:
         if (to.kind == TK::Any) return from.kind != TK::Void;
         if (from == to) return true;
         if (from.kind == TK::Int && to.kind == TK::Float) return true;
-        if (from.kind == TK::Null && (to.kind == TK::Object || to.kind == TK::Array || to.kind == TK::Class)) return true;
+        if (from.kind == TK::Null && CanBeNull(to)) return true;
         return false;
     }
     std::string ConvertError(const Type& from, const Type& to, const std::string& what) {
@@ -558,6 +597,13 @@ private:
                 --loopDepth_;
                 return !(IsTrueLiteral(*s.expr) && !ContainsBreak(*s.loopBody));
             }
+            case SK::DoWhile: {
+                ++loopDepth_;
+                PushScope(); CheckStmt(*s.loopBody); PopScope();
+                --loopDepth_;
+                CheckCondition(*s.expr, "while");
+                return !(IsTrueLiteral(*s.expr) && !ContainsBreak(*s.loopBody));
+            }
             case SK::For: {
                 PushScope();
                 if (s.init) CheckStmt(*s.init);
@@ -597,8 +643,11 @@ private:
                 CheckExpr(*s.expr);
                 LocalDecl& d = s.locals[0];
                 Type elem{};
-                if (s.expr->type.kind == TK::Array) elem = prog_.arrays[(std::size_t)s.expr->type.id];
-                else if (s.expr->type.kind != TK::Error) Error(s.expr->loc, "foreach needs an array, not " + TypeName(s.expr->type));
+                const Type& ct = s.expr->type;
+                if (ct.kind == TK::Array) elem = prog_.arrays[(std::size_t)ct.id];
+                else if (ct.kind == TK::List) elem = Gen(ct).a;
+                else if (ct.kind == TK::Dict) elem = prog_.GenericOf(TK::Pair, Gen(ct).a, Gen(ct).b);
+                else if (ct.kind != TK::Error) Error(s.expr->loc, "foreach needs an array, a List or a Dictionary, not " + TypeName(ct));
                 Type t = d.type.name == "var" && d.type.rank == 0 ? elem : ResolveType(d.type, false);
                 if (d.type.name != "var" && !Convertible(elem, t))
                     Error(d.loc, "The items of " + (s.expr->kind == EK::Name ? s.expr->name : std::string("this array")) + " are " +
@@ -780,10 +829,15 @@ private:
         CheckExpr(*e.lhs);
         const Type at = e.object->type;
         if (at.kind == TK::Error) return;
-        if (at.kind != TK::Array) { Error(e.loc, TypeName(at) + " values can't be indexed with [ ]"); return; }
+        if (at.kind == TK::Dict) {   // d[key]
+            Expect(*e.lhs, Gen(at).a, "The key");
+            e.type = Gen(at).b;
+            return;
+        }
+        if (at.kind != TK::Array && at.kind != TK::List) { Error(e.loc, TypeName(at) + " values can't be indexed with [ ]"); return; }
         if (e.lhs->type.kind != TK::Int && e.lhs->type.kind != TK::Error)
-            Error(e.lhs->loc, "An array index must be an int, not " + TypeName(e.lhs->type));
-        e.type = prog_.arrays[(std::size_t)at.id];
+            Error(e.lhs->loc, std::string(at.kind == TK::List ? "A list" : "An array") + " index must be an int, not " + TypeName(e.lhs->type));
+        e.type = at.kind == TK::List ? Gen(at).a : prog_.arrays[(std::size_t)at.id];
     }
 
     void CheckNewArray(Expr& e) {
@@ -974,6 +1028,7 @@ private:
             Error(e.loc, TypeName(ot) + " has no '" + e.name + "'" + hint);
             return;
         }
+        if (ot.kind == TK::List || ot.kind == TK::Dict || ot.kind == TK::Pair) { CheckCollectionMember(e, ot); return; }
         if (ot.kind == TK::String && e.name == "Length") { Error(e.loc, "Text length isn't supported yet"); return; }
         Error(e.loc, TypeName(ot) + " values have no members");
     }
@@ -1081,6 +1136,7 @@ private:
             return;
         }
         const Type& ot = e.object->type;
+        if (ot.kind == TK::List || ot.kind == TK::Dict) { CheckCollectionCall(e, ot); return; }
         if (ot.kind == TK::Class) {
             ClassDecl& k = prog_.classes[(std::size_t)ot.id];
             std::vector<std::string> opts;
@@ -1138,8 +1194,79 @@ private:
         e.bind = Bind::GetComponent; e.slot = ti; e.type = Type::Obj(ti);
     }
 
+    // xs.Count, d.Keys / d.Values, kv.Key / kv.Value.
+    void CheckCollectionMember(Expr& e, const Type& ot) {
+        const Program::Generic& g = Gen(ot);
+        std::vector<std::string> opts;
+        if (ot.kind == TK::Pair) {
+            if (e.name == "Key") { e.bind = Bind::PairKey; e.type = g.a; return; }
+            if (e.name == "Value") { e.bind = Bind::PairValue; e.type = g.b; return; }
+            opts = {"Key", "Value"};
+        } else {
+            if (e.name == "Count") { e.bind = Bind::CollCount; e.type = Type::Of(TK::Int); return; }
+            opts = {"Count"};
+            if (ot.kind == TK::Dict) {
+                if (e.name == "Keys") { e.bind = Bind::DictKeys; e.type = prog_.GenericOf(TK::List, g.a); return; }
+                if (e.name == "Values") { e.bind = Bind::DictValues; e.type = prog_.GenericOf(TK::List, g.b); return; }
+                opts.push_back("Keys"); opts.push_back("Values");
+            }
+        }
+        std::string hint = Suggest(e.name, opts);
+        if (hint.empty() && ot.kind != TK::Pair && (e.name == "Length" || e.name == "Size" || e.name == "count")) hint = ". Did you mean 'Count'?";
+        Error(e.loc, TypeName(ot) + " has no '" + e.name + "'" + hint);
+    }
+
+    // The methods of List<T> and Dictionary<K, V>, with the old runtime's names.
+    void CheckCollectionCall(Expr& e, const Type& ot) {
+        const Program::Generic& g = Gen(ot);
+        const Type T0 = g.a, V = g.b, I = Type::Of(TK::Int), B = Type::Of(TK::Bool), N = Type::Of(TK::Void);
+        struct M { const char* name; CollOp op; std::vector<Type> params; Type ret; };
+        std::vector<M> ms;
+        if (ot.kind == TK::List) ms = {
+            {"Add", CollOp::ListAdd, {T0}, N}, {"AddRange", CollOp::ListAddRange, {ot}, N}, {"Insert", CollOp::ListInsert, {I, T0}, N},
+            {"Remove", CollOp::ListRemove, {T0}, B}, {"RemoveAt", CollOp::ListRemoveAt, {I}, N}, {"Clear", CollOp::ListClear, {}, N},
+            {"Contains", CollOp::ListContains, {T0}, B}, {"IndexOf", CollOp::ListIndexOf, {T0}, I}, {"Sort", CollOp::ListSort, {}, N},
+            {"Reverse", CollOp::ListReverse, {}, N}, {"ToArray", CollOp::ListToArray, {}, prog_.ArrayOf(T0)}};
+        else ms = {
+            {"Add", CollOp::DictAdd, {T0, V}, N}, {"TryAdd", CollOp::DictTryAdd, {T0, V}, B}, {"Remove", CollOp::DictRemove, {T0}, B},
+            {"ContainsKey", CollOp::DictContainsKey, {T0}, B}, {"ContainsValue", CollOp::DictContainsValue, {V}, B},
+            {"Clear", CollOp::DictClear, {}, N}, {"GetValueOrDefault", CollOp::DictGetValueOrDefault, {T0, V}, V}};
+        for (const M& m : ms) {
+            if (e.name != m.name) continue;
+            std::size_t want = m.params.size();
+            if (m.op == CollOp::DictGetValueOrDefault && e.args.size() == 1) want = 1;   // the default value is optional
+            if (e.args.size() != want) {
+                Error(e.loc, e.name + "() takes " + Values(want) + ", not " + std::to_string(e.args.size()));
+                return;
+            }
+            for (std::size_t i = 0; i < want; ++i) Expect(*e.args[i], m.params[i], m.name);
+            if (m.op == CollOp::ListSort && !T0.IsNumeric() && T0.kind != TK::String && T0.kind != TK::Enum) {
+                Error(e.loc, "Sort() works on numbers, text and enums, not " + TypeName(T0));
+                return;
+            }
+            e.bind = Bind::CollMethod; e.member = (int)m.op; e.type = m.ret;
+            return;
+        }
+        std::vector<std::string> opts;
+        for (const M& m : ms) opts.push_back(m.name);
+        Error(e.loc, TypeName(ot) + " has no method '" + e.name + "'" + Suggest(e.name, opts));
+    }
+
+    // new List<int>() / new List<int> { 1, 2 } / new Dictionary<string, int>()
+    void CheckNewCollection(Expr& e) {
+        const Type t = ResolveType(e.typeArg, false);
+        if (t.kind == TK::Error) return;
+        if (t.kind != TK::List && t.kind != TK::Dict) { Error(e.loc, "'new " + TypeName(t) + "' isn't something you can make"); return; }
+        if (!e.hasInit && !e.args.empty()) { Error(e.loc, "new " + TypeName(t) + "() takes no values"); return; }
+        if (e.hasInit && t.kind == TK::Dict) { Error(e.loc, "Fill a Dictionary with Add or d[key] = value"); return; }
+        for (auto& a : e.args) Expect(*a, Gen(t).a, "This item");
+        e.bind = Bind::NewCollection; e.type = t;
+    }
+
     void CheckNew(Expr& e) {
         for (auto& a : e.args) CheckExpr(*a);
+        if (!e.typeArg.args.empty() || e.typeArg.name == "List" || e.typeArg.name == "Dictionary") { CheckNewCollection(e); return; }
+        if (e.hasInit) { Error(e.loc, "{ ... } after new only fills a List: set the fields after new " + e.typeArg.name + "()"); return; }
         if (int ci = ClassIndex(e.typeArg.name); ci >= 0) { CheckNewObject(e, ci); return; }
         if (e.typeArg.name != "Vector3") {
             if (api_.Find(e.typeArg.name) >= 0 || e.typeArg.name == "GameObject")
@@ -1188,7 +1315,9 @@ private:
         e.type = t;
     }
 
-    static bool CanBeNull(const Type& t) { return t.kind == TK::Object || t.kind == TK::Array || t.kind == TK::Class; }
+    static bool CanBeNull(const Type& t) {
+        return t.kind == TK::Object || t.kind == TK::Array || t.kind == TK::Class || t.kind == TK::List || t.kind == TK::Dict;
+    }
     static std::string Article(const std::string& n) { return (std::string("aeiouAEIOU").find(n[0]) != std::string::npos ? "an " : "a ") + n; }
     // ?. only on something that might be null: an object or an array.
     bool BadNullCond(Expr& e, int receiverKind) {
@@ -1251,10 +1380,10 @@ private:
                     e.promoteL = a.kind == TK::Int && b.kind == TK::Float; e.promoteR = b.kind == TK::Int && a.kind == TK::Float; return;
                 }
                 if (a == b && (a.kind == TK::Bool || a.kind == TK::String || a.kind == TK::Vector3 || a.kind == TK::Enum)) return;
-                if ((a.kind == TK::Array || a.kind == TK::Null) && (b.kind == TK::Array || b.kind == TK::Null) && a.kind != b.kind) return;
-                if (a.kind == TK::Array && a == b) return;
-                if ((a.kind == TK::Class || a.kind == TK::Null) && (b.kind == TK::Class || b.kind == TK::Null) && a.kind != b.kind) return;
-                if (a.kind == TK::Class && a == b) return;
+                // Arrays, lists, dictionaries and class objects compare as references (or with null).
+                if (a.kind != TK::Object && b.kind != TK::Object && (CanBeNull(a) || CanBeNull(b)) &&
+                    (a == b || a.kind == TK::Null || b.kind == TK::Null))
+                    return;
                 if ((a.kind == TK::Object || a.kind == TK::Null) && (b.kind == TK::Object || b.kind == TK::Null)) {
                     if (a.kind == TK::Null && b.kind == TK::Null) { Error(e.loc, "Comparing null with null is always true"); return; }
                     if (a.kind == TK::Object && b.kind == TK::Object && a != b)

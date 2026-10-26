@@ -27987,6 +27987,8 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("What a hit does to the target's Health, unless On Validate Hit / on_validate_hit says otherwise.");
                 if (ImGui::Checkbox("Line of sight##ac", &s.hitLineOfSight)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("A server raycast must reach the target: no shooting through walls.");
+                if (ImGui::Checkbox("Need a move check##ac", &s.hitsNeedMoveCheck)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Refuse players' hit claims unless the server can check where the shooter is: a max move speed (net_max_speed / --max-speed), or Authoritative movement. Without either, a client could claim to fire from anywhere.");
                 ImGui::TreePop();
             }
             if (ImGui::SmallButton("Remove##ac")) toRemove = ac;

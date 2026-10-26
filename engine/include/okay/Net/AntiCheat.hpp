@@ -94,6 +94,9 @@ struct AntiCheatSettings {
     /// Validator covers ("hit/<weapon>"). With the anti-cheat on, a claim with
     /// any other weapon does no damage.
     std::vector<std::string> weapons;
+    /// Refuse client hit claims when the server can't check where the shooter
+    /// is: no maxMoveSpeed, and the server doesn't move the shooter's pawn.
+    bool  hitsNeedMoveCheck = true;
 
     /// .okayac text: one "key value" per line, '#' comments:
     ///   enabled true | spawn <prefab path> (repeatable) | maxSyncSpeed 12
@@ -103,6 +106,7 @@ struct AntiCheatSettings {
     ///   serverVar <key prefix> (repeatable)
     ///   hitOriginTolerance 2 | hitTolerance 1 | maxHitRange 50 | hitDamage 10 | hitLineOfSight true
     ///   weapon <name> (repeatable)
+    ///   hitsNeedMoveCheck true
     static bool Parse(const std::string& text, AntiCheatSettings& out, std::string* error = nullptr);
     bool LoadFile(const std::string& path, std::string* error = nullptr);
     std::string ToText() const;

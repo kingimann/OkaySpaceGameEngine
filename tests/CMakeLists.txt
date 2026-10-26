@@ -23,7 +23,6 @@ add_test(NAME instantiate COMMAND test_instantiate)
 add_executable(test_scene_records test_scene_records.cpp)
 target_link_libraries(test_scene_records PRIVATE okay::engine)
 add_test(NAME scene_records COMMAND test_scene_records)
-set_tests_properties(scene_records PROPERTIES TIMEOUT 300)
 
 add_executable(test_remove test_remove.cpp)
 target_link_libraries(test_remove PRIVATE okay::engine)

@@ -243,12 +243,8 @@ int IndexOf(const Scene& scene, const GameObject* go) {
 // Character — like Terrain's mesh — so it isn't serialized. It's rebuilt from the
 // Character on load (BuildParts), which keeps part colours correct and avoids both
 // file bloat and duplicate rigs. True for the "Rig" node and everything under it.
-// Upper bound on any parent walk, so a corrupt hierarchy can't loop forever.
-static constexpr int kMaxParentDepth = 1 << 16;
-
 static bool IsGeneratedRig(GameObject* go) {
-    int depth = 0;
-    for (Transform* t = go ? go->transform : nullptr; t && depth < kMaxParentDepth; t = t->Parent(), ++depth) {
+    for (Transform* t = go ? go->transform : nullptr; t; t = t->Parent()) {
         GameObject* g = t->gameObject;
         if (g && g->name == "Rig") {
             Transform* par = t->Parent();
@@ -270,8 +266,7 @@ static bool IsGeneratedViewmodel(GameObject* go) {
 // Build mode's own runtime objects (placement ghost, link wires, hotbar) are
 // recreated each run, so they're never written to a scene or prefab.
 static bool IsBuildModeRuntime(GameObject* go) {
-    int depth = 0;
-    for (Transform* t = go ? go->transform : nullptr; t && depth < kMaxParentDepth; t = t->Parent(), ++depth)
+    for (Transform* t = go ? go->transform : nullptr; t; t = t->Parent())
         if (t->gameObject && t->gameObject->tag == BuildMode::kRuntimeTag) return true;
     return false;
 }
@@ -2316,7 +2311,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
         return at < 0 || (std::size_t)at > text.size() ? 0ull : (unsigned long long)(text.size() - (std::size_t)at);
     };
     auto countOk = [&](long long n, unsigned long long minChars) {
-        return n >= 0 && (unsigned long long)n * minChars <= remaining();
+        return n >= 0 && (unsigned long long)n <= remaining() / minChars;   // divide: n * minChars can wrap
     };
     auto bad = [&](const std::string& what) {
         if (error) *error = what;
@@ -4571,8 +4566,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> res >> sz >> c.r >> c.g >> c.b >> c.a >> count;
                     // The height grid is (res+1)^2 and is written in full, so a
                     // resolution far beyond the stored heights is corrupt.
+                    const long long dim = (long long)std::max(res, 1) + 1;   // widen before +1 (res may be INT_MAX)
                     if (!in || !countOk((long long)count, 1) ||
-                        (long long)(std::max(res, 1) + 1) * (std::max(res, 1) + 1) > std::max<long long>((long long)count, 33 * 33))
+                        dim * dim > std::max<long long>((long long)count, 33 * 33))
                         return bad("terrain: bad resolution / height count");
                     tr->Resize(res); tr->size = sz; tr->color = c;
                     for (std::size_t k = 0; k < count && k < tr->heights.size() && in; ++k)
@@ -4621,8 +4617,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> X >> Y >> Z;
                     // The density field is stored (base64, ~1.33 chars per voxel), so
                     // a grid far larger than the rest of the file is corrupt.
-                    if (!in || (long long)std::max(X, 2) * std::max(Y, 2) * std::max(Z, 2) >
-                                   std::max<long long>(64LL * 64 * 64, (long long)remaining()))
+                    // Divide rather than multiply, so a huge grid can't overflow the check.
+                    const unsigned long long cap = std::max(64ULL * 64 * 64, remaining());
+                    const unsigned long long gx = (unsigned long long)std::max(X, 2), gy = (unsigned long long)std::max(Y, 2),
+                                             gz = (unsigned long long)std::max(Z, 2);
+                    if (!in || gx > cap || gy > cap / gx || gz > cap / (gx * gy))
                         return bad("voxelterrain: bad grid size");
                     v->Resize(X, Y, Z);
                     in >> v->voxelSize >> v->iso >> ac >> v->snowLevel >> v->rockSlope;

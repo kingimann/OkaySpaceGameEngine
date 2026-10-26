@@ -162,6 +162,33 @@ bool Input::GetKey(char key) {
     return it != s_current.end() && it->second;
 }
 
+char Input::FirstKeyDown() {
+    char best = 0;
+    for (const auto& kv : s_current) {
+        if (!kv.second) continue;
+        auto it = s_previous.find(kv.first);
+        if (it != s_previous.end() && it->second) continue;
+        if (best == 0 || (unsigned char)kv.first < (unsigned char)best) best = kv.first;
+    }
+    return best;
+}
+
+std::string Input::KeyName(char key) {
+    switch (key) {
+        case 0:        return "None";
+        case ' ':      return "Space";
+        case '\r':     case '\n': return "Enter";
+        case 27:       return "Escape";
+        case '\b':     return "Backspace";
+        case '\t':     return "Tab";
+        case KeyShift: return "Shift";
+        case KeyCtrl:  return "Ctrl";
+        default: break;
+    }
+    if (key >= 'a' && key <= 'z') return std::string(1, (char)(key - 'a' + 'A'));
+    return std::string(1, key);
+}
+
 bool Input::GetKeyDown(char key) {
     key = static_cast<char>(std::tolower(static_cast<unsigned char>(key)));
     bool now  = GetKey(key);

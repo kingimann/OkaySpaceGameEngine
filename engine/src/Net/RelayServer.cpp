@@ -223,9 +223,10 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
     }
     Cookie cookie{};
     if (version >= 3) {
-        if (len < kRelayHelloMinBytes) return;
-        for (auto& b : cookie) b = p.ReadU8();
-        if (!p.Ok()) return;
+        // [tag][role][u32 length + code][version][u64 key], then the cookie.
+        const std::size_t at = 1 + 1 + 4 + code.size() + 1 + 8;
+        if (len < kRelayHelloMinBytes || len < at + cookie.size()) return;
+        std::memcpy(cookie.data(), data + at, cookie.size());
     }
     if (version < kRelayMinProtocolVersion) { SendRefused(from, RelayRefusedVersion); return; }
 

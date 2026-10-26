@@ -2,6 +2,7 @@
 #include <Okay.hpp>
 
 #include <chrono>
+#include <cstdio>
 #include <cmath>
 #include <thread>
 #include <vector>
@@ -32,6 +33,7 @@ struct Room {
         srv = ss.CreateGameObject("Net")->AddComponent<NetworkManager>();
         srv->interpolationRate = 0.0f;   // remote objects snap to what's received
         srv->maxMessagesPerSecond = 0;
+        srv->spawnablePrefabs = {okPrefab};   // with the anti-cheat off, what clients may spawn
         if (anticheatOn) {
             AntiCheatSettings s;
             s.enabled = true;
@@ -78,7 +80,7 @@ int main() {
     Log::sink = [](Log::Level, const std::string&) {};
 
     // Two prefabs: one the game lets clients spawn, one it doesn't.
-    const std::string ok = "/tmp/okay_ac_crate.okayprefab", bad = "/tmp/okay_ac_nuke.okayprefab";
+    const std::string ok = "okay_ac_crate.okayprefab", bad = "okay_ac_nuke.okayprefab";
     {
         Scene t("T");
         CHECK(SceneSerializer::SaveObjectToFile(*t.CreateGameObject("Crate"), ok));
@@ -277,7 +279,8 @@ int main() {
         CHECK(r.srv->anticheat.Violations(B) == 0);
     }
 
-    // ---- With anti-cheat off the same messages behave as before -----------------------
+    // ---- With anti-cheat off the same messages behave as before, except that a -------
+    // ---- client may only spawn the host's spawnable prefabs ---------------------------
     {
         Room r;
         CHECK(r.Open(false, ok));
@@ -291,11 +294,12 @@ int main() {
         r.b->SetVar(aId + ".hp", "0");
         r.Pump(20);
         CHECK(std::fabs(PosOf(r.ss, aId).x - 100.0f) < 0.01f);   // applied, as today
-        CHECK(CountNamed(r.ss, "Nuke") == 1 && CountNamed(r.ca, "Nuke") == 1);
+        CHECK(CountNamed(r.ss, "Nuke") == 0 && CountNamed(r.ca, "Nuke") == 0);   // not spawnable: refused, not relayed
         CHECK(r.srv->GetVar(aId + ".hp") == "0");
         CHECK(r.reports.empty() && r.srv->anticheat.TotalReports() == 0);
     }
 
     Log::sink = sink;
+    std::remove(ok.c_str()); std::remove(bad.c_str());
     TEST_MAIN_RESULT();
 }

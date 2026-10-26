@@ -2,6 +2,7 @@
 #include <Okay.hpp>
 
 #include <chrono>
+#include <cstdio>
 #include <thread>
 #include <cmath>
 
@@ -18,13 +19,14 @@ int main() {
         Scene a("A");
         GameObject* p = a.CreateGameObject("Bullet");
         p->AddComponent<MeshRenderer>()->mesh = Mesh::Cube();
-        CHECK(SceneSerializer::SaveObjectToFile(*p, "/tmp/okay_bullet.okayprefab"));
+        CHECK(SceneSerializer::SaveObjectToFile(*p, "okay_bullet.okayprefab"));
     }
-    const std::string prefab = "/tmp/okay_bullet.okayprefab";
+    const std::string prefab = "okay_bullet.okayprefab";
 
     Scene serverScene("Server");
     auto* server = serverScene.CreateGameObject("Net")->AddComponent<NetworkManager>();
     server->interpolationRate = 0.0f;   // snap
+    server->spawnablePrefabs = {prefab};
     CHECK(server->StartServer(0));
     serverScene.Start();
     std::uint16_t port = server->ServerPort();
@@ -86,5 +88,6 @@ int main() {
     CHECK(clientScene.Find("Bullet") == nullptr);
 
     server->Stop(); client->Stop();
+    std::remove(prefab.c_str());
     TEST_MAIN_RESULT();
 }

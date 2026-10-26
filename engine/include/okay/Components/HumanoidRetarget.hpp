@@ -27,8 +27,9 @@ namespace okay {
 /// Bones are matched by name (the usual Mixamo / glTF conventions); anything
 /// unmapped (fingers, twist bones, extra spine links) keeps its bind pose.
 ///
-/// The model's own imported clips stay playable: a one-shot on the Model
-/// Animator (play_clip_once) suspends the retarget until it finishes.
+/// The model's own imported clips stay playable: a clip a script plays on the
+/// Model Animator (play_clip until stop_clip, play_clip_once until it ends)
+/// suspends the retarget meanwhile.
 class HumanoidRetarget : public Component {
 public:
     float weight = 1.0f;   ///< 0 = off, 1 = full pose transfer (blend vs the bind pose)
@@ -57,10 +58,10 @@ public:
         if (m_map.empty()) return;
         GameObject* rig = (m_rig && !m_rig->IsDestroyed()) ? m_rig : sc->Find(m_rigRootName);
         if (!rig || !rig->transform) return;
-        // The model's own clips take priority while a one-shot plays
-        // (play_clip_once from a script — attack, emote from the file).
+        // The model's own clips take priority while a script holds one (play_clip /
+        // the Play Clip node) or a one-shot plays (play_clip_once: attack, emote).
         if (ModelAnimator* ma = CachedAnimator(*sc, rig, dt))
-            if (ma->OneShotActive()) return;
+            if (ma->ClipOverridesPose()) return;
 
         // Engine pose: per-bone Euler (local deltas, identity rest frames) —
         // accumulate down the engine hierarchy into root-frame rotations.

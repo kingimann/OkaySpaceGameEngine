@@ -17,6 +17,7 @@
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/ModelAnimator.hpp"
+#include "okay/Components/AnimControl.hpp"
 #include "okay/Components/BlendShapes.hpp"
 #include "okay/Input/Input.hpp"
 #include <cmath>
@@ -299,17 +300,12 @@ struct CooldownNode : VsNode {   // passes at most once every `seconds`
         return 0;
     }
 };
-struct AnimParamNode : VsNode {   // Animator state machine on this object or a child
+struct AnimParamNode : VsNode {   // Animator state machine on this object, a child or a parent (AnimControl.hpp)
     enum class Op { Trigger, SetFloat, SetBool } op;
     std::string param;
     AnimParamNode(Op o, std::string p) : op(o), param(std::move(p)) {}
     int ExecOutCount() const override { return 1; }
-    static AnimStateMachine* FindSM(GameObject* go, int depth = 0) {
-        if (!go || depth > 6) return nullptr;
-        if (auto* m = go->GetComponent<AnimStateMachine>()) return m;
-        if (go->transform) for (Transform* c : go->transform->Children()) if (c && c->gameObject) if (auto* m = FindSM(c->gameObject, depth + 1)) return m;
-        return nullptr;
-    }
+    static AnimStateMachine* FindSM(GameObject* go) { return FindAnimComponent<AnimStateMachine>(go); }
     int Exec(NodeGraph& g, VsContext& ctx) override {
         if (AnimStateMachine* sm = FindSM(ctx.gameObject)) {
             if (op == Op::Trigger) sm->SetTrigger(param);
@@ -482,18 +478,16 @@ struct SetColorNode : VsNode {
         return 0;
     }
 };
-// Play a clip by name on this object's Character, or the imported model's
-// ModelAnimator (this object or a parent).
+// Play a clip by name the same way a script's play_clip does (AnimControl.hpp):
+// a Character's clip, the imported model's clip or a built-in animation, held
+// until a script's stop_clip.
 struct PlayClipNode : VsNode {
     std::string clip;
+    bool warned = false;   // "no animator" is logged once per node
     explicit PlayClipNode(std::string c) : clip(std::move(c)) {}
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph&, VsContext& ctx) override {
-        if (!ctx.gameObject || clip.empty()) return 0;
-        if (auto* c = ctx.gameObject->GetComponent<Character>(); c && c->PlayClip(clip)) return 0;
-        for (Transform* t = ctx.transform; t; t = t->Parent())
-            if (t->gameObject)
-                if (auto* m = t->gameObject->GetComponent<ModelAnimator>()) { m->Play(clip); break; }
+        PlayClipFrom(ctx.gameObject, clip, warned);
         return 0;
     }
 };

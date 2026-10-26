@@ -964,6 +964,12 @@ add_executable(test_crash_reports test_crash_reports.cpp)
 target_include_directories(test_crash_reports PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME crash_reports COMMAND test_crash_reports)
 
+# The launcher's "Delete project" safety checks (shared/ProjectDelete.hpp).
+add_executable(test_project_delete test_project_delete.cpp)
+target_compile_features(test_project_delete PRIVATE cxx_std_17)
+target_include_directories(test_project_delete PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME project_delete COMMAND test_project_delete)
+
 # The launcher's official game (shared/OfficialGame.hpp): header-only, so no engine link.
 add_executable(test_official_game test_official_game.cpp)
 target_include_directories(test_official_game PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)

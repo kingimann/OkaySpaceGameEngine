@@ -1,5 +1,42 @@
 OkaySpace Game Engine — Changelog
 
+v2.829.0
+  Launcher
+  - Delete or remove projects from the Create page: the "..." button on a
+    project card (or right-click) has "Remove from list", which hides it and
+    keeps the files, and "Delete project...", which moves the folder to the
+    Recycle Bin. The launcher only deletes real project folders, never a
+    drive root, your home folder or the projects folder, and waits for the
+    editor to be closed first.
+  - Projects opened from elsewhere whose folder has gone show as "Folder not
+    found" so they can be removed.
+  Inventory
+  - No more duplicated or lost items. Taking a stack from a chest into an
+    almost-full bag moves only what fits; crafting with a full bag fails and
+    keeps the ingredients; eating with no survival stats keeps the food; the
+    drop key no longer deletes items unless a script handles the drop.
+  - Merging, sorting and shift-moving never push a stack past its maximum.
+  - on_inventory_changed fires for every move in the inventory UI. Scripts
+    can use CanAdd and AddPartial; Add is now all-or-nothing (#335).
+  Third-person camera
+  - Smooth, not laggy: the camera follows a smoothed point on the player and
+    orbits around it with your mouse, so the player stays centred while you
+    turn instead of drifting off and swinging back. Steps and landings ease
+    the view instead of popping it (third-person and shooter controllers).
+  - The camera no longer pumps in and out near poles, railings, pickups,
+    trigger zones or things the player holds; walls still pull it in.
+  - Optional orbit smoothing. If a Camera Follow or camera brain also drives
+    the main camera, it's turned off with a warning so they don't fight.
+    Old scenes keep their camera tightness (#336).
+  First-person camera
+  - No more shake: stepping up curbs and stairs glides the view instead of
+    popping it, while jumps and landings stay immediate.
+  - Gentler head bob that fades in and out, so starting and stopping no
+    longer jolts the view; it sways slightly and is softer when running.
+  - Look smoothing (off by default) now smooths the view angles, so it feels
+    the same at any frame rate; third-person orbit smoothing uses it too
+    (#337).
+
 v2.828.0
   Multiplayer (opt-in, with a fixed net tick)
   - Other players move smoothly: they're shown about 100 ms in the past and

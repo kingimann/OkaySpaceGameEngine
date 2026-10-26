@@ -361,6 +361,13 @@ These always hold, whether or not the anti-cheat is on:
   particular, only the host starts a match.
 - The server stamps chat with the sender's roster name, so nobody can post as
   someone else.
+- A join is checked for room, then encryption (when the server requires it),
+  then the password, then the sign-in: nothing secret is checked in the
+  clear. One address gets 5 join attempts in 10 s (a refused join or a new
+  key exchange; a wrong password counts two; a join that gets in costs
+  nothing), then it's ignored for 10 s, doubling up to 5 minutes. A dedicated
+  server checks at most 64 new sign-ins at a time and tells the rest it's
+  busy.
 - A network spawn must name a `.okayprefab` by a path relative to the game
   folder: no `..`, drive letters, UNC paths, device names or links leading
   outside it, and at most 4 MB. Every peer checks the spawns it receives and

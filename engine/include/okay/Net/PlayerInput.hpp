@@ -57,6 +57,12 @@ public:
     virtual PlayerInput ReadLocalInput() = 0;
     /// Move by `in` for `dt` seconds. Reads no Input:: globals.
     virtual void Simulate(const PlayerInput& in, float dt) = 0;
+    /// Client prediction moved the body by `step` this frame to ease in a
+    /// correction from the host (not the player's own movement).
+    virtual void OnCorrected(const Vec3& step) { (void)step; }
+    /// Client prediction snapped the body to the host's position: drop any
+    /// camera smoothing that would glide across the jump.
+    virtual void OnTeleported() {}
 };
 
 /// The first IPlayerSim on `go`, or null.

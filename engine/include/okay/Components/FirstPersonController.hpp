@@ -245,6 +245,9 @@ public:
         return in;
     }
 
+    void OnCorrected(const Vec3& step) override { m_correctionY += step.y; }
+    void OnTeleported() override { m_stepOffsetY = 0.0f; m_haveBodyY = false; m_correctionY = 0.0f; }
+
     /// Look, stance, lean and move by `in` for `dt` seconds (local play and a
     /// server running this player's inputs). Reads no Input:: globals.
     void Simulate(const PlayerInput& in, float dt) override {
@@ -458,16 +461,21 @@ public:
         if (!transform || !m_haveEyeBase) return;   // the eye starts once this peer has simulated the player
         const float y = transform->Position().y;
         if (m_haveBodyY) {
-            const float dy = y - m_lastBodyY;
+            // A correction from the host (online prediction) is eased out like a
+            // step, in the air too: it isn't the player's own motion.
+            const float dy = y - m_lastBodyY - m_correctionY;
             if (std::fabs(dy) > 1.0f) m_stepOffsetY = 0.0f;   // a teleport or respawn: no glide
-            else if (m_grounded && eyeStepSmoothing > 0.0f) {
-                // Not a jump or a fall starting (those move the body with real
-                // vertical speed; a step-up or a platform doesn't).
-                const auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
-                if (!rb || std::fabs(rb->velocity.y) < 1.0f) m_stepOffsetY -= dy;
+            else {
+                if (eyeStepSmoothing > 0.0f) m_stepOffsetY -= m_correctionY;
+                if (m_grounded && eyeStepSmoothing > 0.0f) {
+                    // Not a jump or a fall starting (those move the body with real
+                    // vertical speed; a step-up or a platform doesn't).
+                    const auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
+                    if (!rb || std::fabs(rb->velocity.y) < 1.0f) m_stepOffsetY -= dy;
+                }
             }
         }
-        m_lastBodyY = y; m_haveBodyY = true;
+        m_lastBodyY = y; m_haveBodyY = true; m_correctionY = 0.0f;
         const float lim = Mathf::Max(0.0f, stepOffset) + 0.1f;
         m_stepOffsetY = Mathf::Clamp(m_stepOffsetY, -lim, lim) * (1.0f - EaseFactor(eyeStepSmoothing, dt));
         Transform* cam = FindCameraChild();
@@ -629,6 +637,7 @@ private:
     float m_sinceGround = 0.0f;              // s since grounded (bobGroundGrace)
     float m_stepOffsetY = 0.0f;              // eye smoothing: the step still being eased out
     float m_lastBodyY = 0.0f; bool m_haveBodyY = false;
+    float m_correctionY = 0.0f;              // this frame's lift from an online correction (OnCorrected)
     float m_lean = 0.0f;             // eased lean amount (-1..+1)
     int   m_jumpsUsed = 0;          // jumps since last grounded (for double-jump)
     LookSmoother m_smooth;

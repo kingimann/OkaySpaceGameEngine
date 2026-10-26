@@ -310,6 +310,11 @@ public:
     /// the host acks for each input: tiny differences are ignored, small ones
     /// eased out, large ones snapped.
     bool authoritativeMovement = false;
+    /// Client prediction: how fast a correction from the host is eased out (per
+    /// second, frame-rate independent), and the size above which it snaps
+    /// instead (units; the controller is told, so its camera doesn't glide).
+    float reconcileRate = 12.0f;
+    float reconcileSnap = 2.0f;
     /// Client: the object this player drives (its SpawnOwned player, with a
     /// controller that implements IPlayerSim). Its inputs go to the host when
     /// the host runs authoritative movement.
@@ -779,8 +784,6 @@ private:
     std::uint32_t m_lastAckedSeq = 0;
     // Prediction (client).
     static constexpr float kReconcileEpsilon = 0.02f;   // ignore smaller differences (units)
-    static constexpr float kReconcileSnap = 2.0f;       // ease out smaller, snap larger
-    static constexpr float kReconcileRate = 12.0f;      // easing, per second
     static constexpr std::size_t kMaxPredicted = 128;
     bool m_hostAcksPawn = false;           // the host sends PawnAck (Welcome bit 3)
     bool m_predicting = false;

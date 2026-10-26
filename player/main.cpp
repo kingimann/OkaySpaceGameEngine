@@ -29,6 +29,7 @@
 #include "Splash.hpp"                   // branded boot loading frame (no black screen at launch)
 #include "okay/UI/UIRenderer.hpp"       // the in-game UI pass (engine)
 #include "okay/UI/UIPainterSDL.hpp"     // ...drawn through this SDL backend
+#include "okay/UI/UIBatcher.hpp"        // ...batched into a few geometry calls
 #include "AntiCheatChecks.hpp"          // opt-in anti-cheat: integrity manifest + runtime checks
 #include "AntiCheatBackend.hpp"         // ...and the one report a run files about what they found
 #include "AntiCheatHardware.hpp"        // (with the salted hardware hash)
@@ -1414,6 +1415,12 @@ int main(int argc, char** argv) {
 
     // baseDir (resolved above) is where the game files live, for relative paths.
     std::unordered_map<std::string, SDL_Texture*> textureCache;
+    // The UI pass draws through one batcher for the whole run: it keeps the UI atlas
+    // (fonts + images) and its vertex buffers between frames.
+    ui2d::SDLPainter uiPainter(renderer, &textureCache, baseDir);
+    ui2d::BatchPainter uiBatch(uiPainter, [&baseDir](const std::string& path, Image& out) {
+        return out.Load(path) || out.Load(baseDir + path);
+    });
     // Z-buffered 3D: meshes are rasterized into this texture each frame so
     // overlapping faces occlude correctly, then blitted under the 2D/UI layers.
     Raster mesh3D;
@@ -2242,10 +2249,8 @@ int main(int argc, char** argv) {
                 return GetUIScreenRect(go, (float)ww, (float)hh, o, sz);
             };
         }
-        {
-            ui2d::SDLPainter uiPainter(renderer, &textureCache, baseDir);
-            ui2d::RenderSceneUI(scene, uiPainter, w, h);   // leaves no clip, scale 1
-        }
+        ui2d::RenderSceneUI(scene, uiBatch, w, h);
+        uiBatch.Flush();   // leaves no clip, scale 1
 
         // Optional FPS overlay (top-left) when enabled in build settings.
         if (cfg.showFps) {

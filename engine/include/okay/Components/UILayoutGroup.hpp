@@ -10,7 +10,7 @@ namespace okay {
 /// stacking them by their own sizes plus `spacing`. Combine with a Scroll View
 /// to make scrollable lists/menus without hand-placing every element. Call
 /// Arrange() after adding/removing children (Start() does it once).
-class UILayoutGroup : public Behaviour {
+class UILayoutGroup final : public Behaviour {
 public:
     enum class Direction { Vertical, Horizontal, Grid };
     Direction direction = Direction::Vertical;

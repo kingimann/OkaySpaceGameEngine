@@ -15,7 +15,7 @@ namespace okay {
 /// Draws a string with the built-in 8x8 bitmap font — score counters, labels,
 /// and HUD text without a font file. In world space it sits at the GameObject's
 /// position (sized in world units); in screen space it's pinned to window pixels.
-class TextRenderer : public Component {
+class TextRenderer final : public Component {
 public:
     std::string text = "Text";
     /// Optional path to an imported TrueType/OpenType font (e.g. "Assets/MyFont.ttf").
@@ -120,17 +120,25 @@ public:
     }
 
     std::string DisplayText() const {
-        std::string s = text;
+        std::string s;
+        return DisplayText(s);
+    }
+    /// Same, without a copy per frame: returns `text` itself when nothing changes it,
+    /// else builds the result in `scratch` (reused, so its capacity carries over).
+    const std::string& DisplayText(std::string& scratch) const {
         int vis = EffectiveVisible();
-        if (vis >= 0 && vis < (int)s.size()) s = s.substr(0, (std::size_t)vis);
-        if (uppercase)
-            for (char& c : s) c = (char)std::toupper((unsigned char)c);
+        const bool cut = vis >= 0 && vis < (int)text.size();
+        int maxChars = 0;
         if (wrap && size.x > 0.0f && pixelSize > 0.0f) {
             float glyphW = Advance() * pixelSize;
-            int maxChars = glyphW > 0.0f ? (int)(size.x / glyphW) : 0;
-            if (maxChars >= 1) s = WrapTo(s, maxChars);
+            maxChars = glyphW > 0.0f ? (int)(size.x / glyphW) : 0;
         }
-        return s;
+        if (!cut && !uppercase && maxChars < 1) return text;
+        scratch.assign(text, 0, cut ? (std::size_t)vis : text.size());
+        if (uppercase)
+            for (char& c : scratch) c = (char)std::toupper((unsigned char)c);
+        if (maxChars >= 1) scratch = WrapTo(scratch, maxChars);
+        return scratch;
     }
 
     /// The resolved TTF font for this label, or nullptr to use the bitmap font.
@@ -141,7 +149,8 @@ public:
 
     /// Width of the widest line in font pixels (honors letter spacing + wrap).
     int PixelWidth() const {
-        std::string s = DisplayText();
+        thread_local std::string scratch;
+        const std::string& s = DisplayText(scratch);
         if (TtfFont* tf = Font()) {
             float best = 0.0f, cur = 0.0f;
             float adv = letterSpacing; // extra spacing per glyph, in font pixels
@@ -164,7 +173,8 @@ public:
     }
     /// Total height of all lines in font pixels (honors line spacing + wrap).
     int PixelHeight() const {
-        std::string s = DisplayText();
+        thread_local std::string scratch;
+        const std::string& s = DisplayText(scratch);
         int lines = 1;
         for (char c : s) if (c == '\n') ++lines;
         if (TtfFont* tf = Font()) {

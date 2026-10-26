@@ -33,6 +33,20 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # The runner's Ubuntu mirror is sometimes slow enough that downloading the
+      # MinGW compiler outlasts the step timeout. Downloaded packages go in the
+      # Actions cache, saved even when the install times out, so each run starts
+      # from what earlier runs fetched instead of from the mirror.
+      - name: Note the runner image
+        run: echo "RUNNER_IMAGE=$ImageVersion" >> "$GITHUB_ENV"
+
+      - name: Restore downloaded apt packages
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/apt-cache
+          key: apt-mingw-${{ env.RUNNER_IMAGE }}-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: apt-mingw-${{ env.RUNNER_IMAGE }}-
+
       # Ubuntu mirrors occasionally hang or crawl (one release sat here 45 min):
       # bounded attempts with apt's own timeouts, retried a few times. Only the
       # 64-bit MinGW compiler is installed (the full mingw-w64 package also pulls
@@ -40,7 +54,9 @@ jobs:
       - name: Install toolchain
         timeout-minutes: 25
         run: |
-          APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          mkdir -p ~/apt-cache/partial
+          ls ~/apt-cache/*.deb 2>/dev/null | wc -l > ~/apt-debs-before
+          APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Dir::Cache::archives=$HOME/apt-cache"
           for i in 1 2 3; do
             if timeout 240 sudo apt-get $APT update && \
                timeout 600 sudo apt-get $APT install -y --no-install-recommends cmake ninja-build g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev zip nsis ccache; then
@@ -50,6 +66,26 @@ jobs:
             sleep 10
           done
           exit 1
+
+      - name: Check for newly downloaded apt packages
+        id: apt-new
+        if: always()
+        run: |
+          [ -d ~/apt-cache ] || exit 0
+          # A timed-out install can leave apt-get still downloading.
+          sudo pkill -x apt-get || true
+          sudo chown -R "$USER" ~/apt-cache
+          rm -rf ~/apt-cache/partial ~/apt-cache/lock
+          if [ "$(ls ~/apt-cache/*.deb 2>/dev/null | wc -l)" -gt "$(cat ~/apt-debs-before 2>/dev/null || echo 0)" ]; then
+            echo "save=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Save downloaded apt packages
+        if: always() && steps.apt-new.outputs.save == '1'
+        uses: actions/cache/save@v5
+        with:
+          path: ~/apt-cache
+          key: apt-mingw-${{ env.RUNNER_IMAGE }}-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Fetch SDL2 (MinGW dev)
         run: |

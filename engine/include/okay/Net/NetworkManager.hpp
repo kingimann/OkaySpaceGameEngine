@@ -748,6 +748,7 @@ private:
     std::string m_relayCode;          // shared session code
     std::uint32_t m_relaySlot = 0;    // our slot (set on welcome)
     std::uint64_t m_relayHostKey = 0; // host: the relay's key for our code (0 until welcomed)
+    std::uint8_t m_relayCookie[16] = {}; // the relay's cookie for our address, echoed in hellos (v3)
     bool m_relayLost = false;         // the relay ended our session this tick (Stop() follows)
     std::string m_relayError;         // why the relay session ended ("" if it didn't)
     float m_relayHelloTimer = 0.0f;   // re-hello cadence (NAT keepalive)

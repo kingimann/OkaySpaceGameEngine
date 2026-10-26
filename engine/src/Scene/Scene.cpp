@@ -19,13 +19,17 @@
 #include "okay/Core/Profiler.hpp"
 #include "okay/Net/NetTransport.hpp"   // per-frame pump for non-native transports
 #include <algorithm>
+#include <atomic>
 #include <functional>
 #include <limits>
 #include <vector>
 
 namespace okay {
 
-Scene::Scene(std::string name) : m_name(std::move(name)) {}
+Scene::Scene(std::string name) : m_name(std::move(name)) {
+    static std::atomic<std::uint64_t> s_nextUid{1};
+    m_uid = s_nextUid.fetch_add(1);
+}
 Scene::~Scene() {   // its scene variables and script statics go with it
     vs::ForgetSceneVariables(this);
     NextScriptVM::ForgetSceneStatics(this);
@@ -73,6 +77,7 @@ void Scene::Clear() {
 }
 
 void Scene::QueuePending(Component* component) {
+    ++m_componentVersion;
     m_pending.push_back(component);
 }
 
@@ -81,6 +86,7 @@ void Scene::NotifyComponentRemoved(Component* component) {
     // m_active iteration (a component's Update/Render) can't invalidate the loop
     // or shift elements. Null slots are skipped by every loop and compacted
     // between frames.
+    ++m_componentVersion;
     for (auto& c : m_active)  if (c == component) c = nullptr;
     for (auto& c : m_pending) if (c == component) c = nullptr;
     if (static_cast<Component*>(mainCamera) == component) mainCamera = nullptr;
@@ -428,6 +434,7 @@ void Scene::MoveToFront(GameObject* go) {
             auto held = std::move(m_objects[i]);
             m_objects.erase(m_objects.begin() + i);
             m_objects.push_back(std::move(held));   // drawn last = on top
+            ++m_structureVersion;   // root order changed (UI draws in this order)
             return;
         }
 }
@@ -442,6 +449,7 @@ void Scene::MoveToBack(GameObject* go) {
             auto held = std::move(m_objects[i]);
             m_objects.erase(m_objects.begin() + i);
             m_objects.insert(m_objects.begin(), std::move(held));  // drawn first = behind
+            ++m_structureVersion;   // root order changed (UI draws in this order)
             return;
         }
 }
@@ -464,8 +472,10 @@ void Scene::MoveSibling(GameObject* go, int dir) {
         roots.push_back(i);
     }
     int other = selfPos + dir;
-    if (selfPos >= 0 && other >= 0 && other < (int)roots.size())
+    if (selfPos >= 0 && other >= 0 && other < (int)roots.size()) {
         std::swap(m_objects[roots[selfPos]], m_objects[roots[other]]);
+        ++m_structureVersion;   // root order changed (UI draws in this order)
+    }
 }
 
 void Scene::MoveSiblingToEdge(GameObject* go, bool toFront) {
@@ -483,6 +493,7 @@ void Scene::MoveSiblingToEdge(GameObject* go, bool toFront) {
             m_objects.erase(m_objects.begin() + i);
             if (toFront) m_objects.insert(m_objects.begin(), std::move(held));
             else         m_objects.push_back(std::move(held));
+            ++m_structureVersion;   // root order changed (UI draws in this order)
             return;
         }
 }

@@ -128,6 +128,7 @@ void UIListView::Update(float dt) {
     const float wheel = Input::MouseWheel();
     if (wheel != 0.0f && inside(local(Input::MousePosition())))
         SetScroll(scroll - wheel * wheelSpeed);
+    m_touch.scrollX = false;   // lists scroll vertically
     const Vec2 d = m_touch.Step(dt, [&](const Vec2& sp) { return inside(local(sp)); }, local);
     if (d.y != 0.0f) {
         const float before = scroll;

@@ -16,6 +16,8 @@ struct UITouchScroll {
     bool  dragging = false;   // ...and has moved far enough to be a drag
     Vec2  velocity{0.0f, 0.0f};
     float friction = 4.0f;    // fling slow-down rate (1/s)
+    bool  scrollX = true;     // the axes the view scrolls; drags along the others are ignored
+    bool  scrollY = true;
 
     /// `starts(p)`: a finger landing at screen point p begins a drag here (inside the
     /// view, not on a scrollbar). `toLocal(p)`: map a screen point into the view's
@@ -42,6 +44,8 @@ struct UITouchScroll {
                 dragging = true;   // catch up the distance moved before it counted as a drag
                 d = -(toLocal(t->position) - toLocal(t->start));
             }
+            if (!scrollX) d.x = 0.0f;
+            if (!scrollY) d.y = 0.0f;
             if (dragging && dt > 0.0f) velocity = velocity * 0.5f + (d / dt) * 0.5f;
             if (t->phase == Input::Touch::Phase::Ended) {
                 tracking = false;

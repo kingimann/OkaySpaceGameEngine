@@ -102,6 +102,7 @@ public:
         }
 
         // A finger dragging the content (not a scrollbar) scrolls it, and a flick glides.
+        m_touch.scrollX = ScrollsX(); m_touch.scrollY = ScrollsY();
         const Vec2 d = m_touch.Step(dt,
             [&](const Vec2& sp) { Vec2 p = ToLocal(sp); return LocalContains(p) && !onBars(p); },
             [&](const Vec2& sp) { return ToLocal(sp); });

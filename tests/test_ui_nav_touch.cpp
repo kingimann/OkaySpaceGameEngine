@@ -1,5 +1,5 @@
 // 2-D gamepad / keyboard navigation (nearest widget in the pressed direction, wrap,
-// Left/Right kept by value widgets) and touch input (Input touch list, tap fires on
+// Left/Right kept by value widgets, focus scrolls into view) and touch input (Input touch list, tap fires on
 // lift, drags don't click, finger drag-scroll and fling in scroll views and lists).
 #include "test_framework.hpp"
 #include "okay/Components/UINavigation.hpp"
@@ -283,6 +283,47 @@ int main() {
         CHECK_NEAR(sl->value, 0.5f, 1e-4f);
         Press(s, 's');                                        // Up/Down still move away from it
         CHECK(btn->IsFocused());
+    }
+
+    // ---- Focus moving onto a hidden widget scrolls its Scroll View to show it ----
+    {
+        Scene s("navscroll");
+        auto* sv = s.CreateGameObject("sv")->AddComponent<UIScrollView>();
+        sv->position = {100, 100}; sv->size = {300, 200};
+        std::vector<UIButton*> b;
+        for (int i = 0; i < 10; ++i) b.push_back(Button(s, sv->gameObject, "item", {110, 110.0f + i * 50.0f}));
+        s.Start();
+        Frame(s);
+        Input::FeedKeys({}); NavigateUI(s);
+        CHECK(b[0]->IsFocused());
+        for (int i = 0; i < 3; ++i) Press(s, 's');
+        CHECK(b[3]->IsFocused());
+        CHECK_NEAR(sv->scroll, 0.0f, 1e-4f);                  // still fully visible: no scroll
+        Press(s, 's');
+        UpdateUILayouts(s);
+        CHECK(b[4]->IsFocused());
+        CHECK_NEAR(sv->scroll, 50.0f, 1e-3f);                 // bottom edge (250) brought to the viewport's (200)
+        for (int i = 0; i < 5; ++i) { Press(s, 's'); UpdateUILayouts(s); }
+        CHECK(b[9]->IsFocused());
+        CHECK_NEAR(sv->scroll, 300.0f, 1e-3f);                // its bottom (600) lands on the viewport's (300)
+        Press(s, 's'); UpdateUILayouts(s);                    // wraps to the first: scrolls back up
+        CHECK(b[0]->IsFocused());
+        CHECK_NEAR(sv->scroll, 10.0f, 1e-3f);                 // just enough: its top (110) at the viewport's (100)
+    }
+
+    // ---- ...and a List View likewise ----
+    {
+        Scene s("navlist");
+        auto* lv = s.CreateGameObject("list")->AddComponent<UIListView>();
+        lv->position = {0, 0}; lv->size = {300, 240};
+        lv->itemHeight = 40.0f; lv->spacing = 0.0f;
+        for (int i = 0; i < 100; ++i) lv->items.push_back("row");
+        Button(s, lv->gameObject, "template", {0, 0}, {300, 40});
+        s.Start();
+        Frame(s);
+        Input::FeedKeys({}); NavigateUI(s);
+        for (int i = 0; i < 6; ++i) { Press(s, 's'); UpdateUILayouts(s); }
+        CHECK_NEAR(lv->scroll, 40.0f, 1e-3f);                 // the 7th row (240..280) scrolled into view
     }
 
     TEST_MAIN_RESULT();

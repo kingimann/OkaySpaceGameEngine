@@ -29325,7 +29325,15 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatic: each object's own style (a carry from its size and weight unless it says Custom).\nCustom: always the object's grip points.");
                 if (ImGui::Checkbox("Arm IK##poh", &ph->armIK)) ed.dirty = true;
                 if (ImGui::DragFloat("Transition (s)##poh", &ph->transitionTime, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
-                if (GameObject* held = ph->Held()) ImGui::Text("Holding: %s", held->name.c_str());
+                if (ImGui::Checkbox("Body Adjustment##poh", &ph->bodyAdjustment)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Heavy or big loads: lean back, walk slower, kept off the body.");
+                int ca = (int)ph->carryAnimations;
+                if (ImGui::Combo("Carry Animations##poh", &ca, "Automatic\0Custom\0")) { ph->carryAnimations = (ProceduralObjectHolding::CarryAnim)ca; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatic: the built-in lean against heavy loads.\nCustom: your Animator's own carry states, driven by its parameters\n'holding' (bool), 'carryStyle' (int) and 'carryWeight' (kg).");
+                if (GameObject* held = ph->Held()) {
+                    ImGui::Text("Holding: %s (%s)", held->name.c_str(), ph->CarryStyle() == HoldableObject::Style::Automatic ? "small item" : HoldableObject::StyleName(ph->CarryStyle()));
+                    ImGui::Text("Heaviness %.2f, speed x%.2f", ph->Heaviness(), ph->SpeedMultiplier());
+                }
                 else if (ed.isPlaying()) ImGui::TextDisabled("Holding nothing");
                 if (ImGui::SmallButton("Remove##poh")) toRemove = ph;
             }

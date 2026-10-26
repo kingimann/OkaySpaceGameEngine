@@ -56,7 +56,7 @@ int main() {
         std::remove(next.c_str());
     }
 
-    // --- save_inventory / load_inventory without a scene snapshot ---
+    // --- InventoryPersistence::SaveObject / LoadObject without a scene snapshot ---
     {
         Scene s("T");
         GameObject* p = s.CreateGameObject("Player");

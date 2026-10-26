@@ -1,5 +1,16 @@
 OkaySpace Game Engine — Changelog
 
+v2.825.0
+  Multiplayer (opt-in)
+  - Fixed net tick: set a net tick rate (or --fixed-tick on dedicated servers)
+    and the server and clients simulate and send at that rate instead of every
+    frame. Snapshots carry the tick, and scripts get On Net Tick (#323).
+  - Server-authoritative movement: with authoritativeMovement on, clients
+    send their inputs and the server moves the player. Teleports and forged
+    positions are refused, and a speed hack can't move a player faster than
+    the server allows. Works with the character controller first; the
+    first-/third-person and 2D controllers follow (#324).
+
 v2.824.0
   Multiplayer and anti-cheat (opt-in unless noted)
   - Server-only values: mark SyncVars such as score or money as server-only

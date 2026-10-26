@@ -376,16 +376,16 @@ void PreparePassFrame(UIPassCache& c, const Scene& scene) {
 } // namespace
 
 void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions& opt) {
-    // Scroll-view membership: offset a widget's origin by its owning Scroll
-    // View's scroll and clip drawing to the viewport, so scrollable content
-    // shows and hides correctly in the built game. Call once per UI widget
-    // right after resolving its origin; widgets outside a scroll view reset
-    // the clip to none.
+    // Scroll / mask membership: offset a widget's origin by the scroll views it
+    // sits in and clip drawing to every enclosing viewport and mask, so
+    // scrollable and masked content shows and hides correctly in the built game.
+    // Call once per UI widget right after resolving its origin; unclipped
+    // widgets reset the clip to none.
     auto enterScroll = [&](GameObject* g, Vec2& o) {
-        if (UIScrollView* psv = OwningScrollView(g)) {
-            Vec2 vp = UIResolveOrigin(psv->gameObject, (float)w, (float)h);
-            o.y -= psv->scroll;
-            Rect clip{(int)vp.x, (int)vp.y, (int)psv->size.x, (int)psv->size.y};
+        o = o - UIScrollTotal(g);
+        Vec2 co, cs;
+        if (UIClipRectLogical(g, (float)w, (float)h, co, cs)) {
+            Rect clip{(int)co.x, (int)co.y, (int)cs.x, (int)cs.y};
             p.SetClipRect(&clip);
         } else {
             p.SetClipRect(nullptr);
@@ -420,6 +420,8 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         const auto& up = scene.Objects()[_slot.index];
         // Every UI object carries a focus-ring item; skip it outright unless focused.
         if (_it.kind == K_FocusRing && (!up->active || !IsUIFocused(up.get()))) continue;
+        // A mask with its graphic hidden only clips: its own widget doesn't draw.
+        if (const UIMask* mk = up->GetComponent<UIMask>(); mk && !mk->showGraphic && _it.kind != K_FocusRing) continue;
         {
             float want = 1.0f;
             Canvas* ucv = _slot.canvas;
@@ -644,27 +646,43 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
                                (std::uint8_t)(hc.b * 255), (std::uint8_t)(hc.a * 255));
         p.FillRect(&hr);
     }
-        else if (_it.kind == K_Scroll) {   // scroll-view backgrounds + scrollbar
+        else if (_it.kind == K_Scroll) {   // scroll-view / list-view backgrounds + scrollbars
         auto* sv = up->GetComponent<UIScrollView>();
-        if (!sv || !up->active || UIHidden(up.get())) continue;
+        auto* lv = sv ? nullptr : up->GetComponent<UIListView>();
+        if ((!sv && !lv) || !up->active || UIHidden(up.get())) continue;
         float op = _slot.opacity;
         Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
-        Rect box{(int)o.x, (int)o.y, (int)sv->size.x, (int)sv->size.y};
-        p.SetDrawColor((std::uint8_t)(sv->background.r * 255), (std::uint8_t)(sv->background.g * 255),
-                               (std::uint8_t)(sv->background.b * 255), (std::uint8_t)(sv->background.a * 255 * op));
+        enterScroll(up.get(), o);
+        const Vec2 vs = sv ? sv->size : lv->size;
+        const Color& bg = sv ? sv->background : lv->background;
+        const Color& bar = sv ? sv->barColor : lv->barColor;
+        Rect box{(int)o.x, (int)o.y, (int)vs.x, (int)vs.y};
+        p.SetDrawColor((std::uint8_t)(bg.r * 255), (std::uint8_t)(bg.g * 255),
+                               (std::uint8_t)(bg.b * 255), (std::uint8_t)(bg.a * 255 * op));
         p.FillRect(&box);
-        if (sv->ScrollMax() > 0.0f) {                   // scrollbar track + thumb
-            int barW = 6;
-            Rect track{box.x + box.w - barW - 2, box.y + 2, barW, box.h - 4};
+        // A scrollbar: track + thumb along `len` px, the thumb `frac` of it, `t` along.
+        auto drawBar = [&](bool vertical, float frac, float t) {
+            const int barW = 6;
+            Rect track = vertical ? Rect{box.x + box.w - barW - 2, box.y + 2, barW, box.h - 4}
+                                  : Rect{box.x + 2, box.y + box.h - barW - 2, box.w - 4, barW};
             p.SetDrawColor(255, 255, 255, 30);
             p.FillRect(&track);
-            float frac = sv->size.y / (sv->contentHeight > 1.0f ? sv->contentHeight : 1.0f);
-            int thumbH = (int)(track.h * (frac < 1.0f ? frac : 1.0f));
-            int thumbY = track.y + (int)((track.h - thumbH) * sv->Fraction());
-            Rect thumb{track.x, thumbY, barW, thumbH};
-            p.SetDrawColor((std::uint8_t)(sv->barColor.r * 255), (std::uint8_t)(sv->barColor.g * 255),
-                                   (std::uint8_t)(sv->barColor.b * 255), (std::uint8_t)(sv->barColor.a * 255 * op));
+            const int len = vertical ? track.h : track.w;
+            const int thumbL = (int)(len * (frac < 1.0f ? frac : 1.0f));
+            const int at = (int)((len - thumbL) * t);
+            Rect thumb = vertical ? Rect{track.x, track.y + at, barW, thumbL} : Rect{track.x + at, track.y, thumbL, barW};
+            p.SetDrawColor((std::uint8_t)(bar.r * 255), (std::uint8_t)(bar.g * 255),
+                                   (std::uint8_t)(bar.b * 255), (std::uint8_t)(bar.a * 255 * op));
             p.FillRect(&thumb);
+        };
+        if (sv) {
+            if (sv->ScrollMax() > 0.0f)
+                drawBar(true, sv->size.y / (sv->contentHeight > 1.0f ? sv->contentHeight : 1.0f), sv->Fraction());
+            if (sv->ScrollMaxX() > 0.0f)
+                drawBar(false, sv->size.x / (sv->contentWidth > 1.0f ? sv->contentWidth : 1.0f), sv->FractionX());
+        } else if (lv->ScrollMax() > 0.0f) {
+            const float ch = lv->ContentHeight();
+            drawBar(true, lv->size.y / (ch > 1.0f ? ch : 1.0f), lv->scroll / lv->ScrollMax());
         }
     }
         else if (_it.kind == K_Progress) {   // progress bars

@@ -27,6 +27,7 @@
 #include "okay/UI/OkayUI.hpp"           // demo overlay: OkayUI drawn on top of ImGui
 #include "Splash.hpp"                   // branded loading frame (no black screen at startup)
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
+#include "UIInspectorLayout.hpp"        // flex / mask / list view inspectors
 #endif
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
 #include "tinyfiledialogs.h"            // native OS open/save file dialogs (asset import)
@@ -5268,6 +5269,9 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
     if (ImGui::BeginMenu("Layout")) {
         if (ImGui::MenuItem("Scroll View"))  addUI("ScrollView",  [](GameObject* g){ g->AddComponent<UIScrollView>(); });
         if (ImGui::MenuItem("Layout Group")) addUI("Layout",      [](GameObject* g){ g->AddComponent<UILayoutGroup>(); });
+        if (ImGui::MenuItem("Flex Box"))     addUI("FlexBox",     oked::BuildUIFlexBox);
+        if (ImGui::MenuItem("Masked Panel")) addUI("Mask",        oked::BuildUIMaskedPanel);
+        if (ImGui::MenuItem("List View"))    addUI("ListView",    oked::BuildUIListView);
         ImGui::EndMenu();
     }
     // Launcher-look building blocks: each is a small ready-styled group you can
@@ -33289,9 +33293,10 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* lg = dynamic_cast<UILayoutGroup*>(curComp)) {
         if (CompHeader("UI Layout Group", lg, &toRemove)) {
-            const char* dirs[] = {"Vertical", "Horizontal", "Grid"};
+            const char* dirs[] = {"Vertical", "Horizontal", "Grid", "Flex Row", "Flex Column"};
             int d = (int)lg->direction;
-            if (ImGui::Combo("Direction##lg", &d, dirs, 3)) { lg->direction = (UILayoutGroup::Direction)d; lg->Arrange(); ed.dirty = true; }
+            if (ImGui::Combo("Direction##lg", &d, dirs, 5)) { lg->direction = (UILayoutGroup::Direction)d; lg->Arrange(); ed.dirty = true; }
+            oked::DrawLayoutGroupFlexFields(*lg, ed);
             bool isGrid = (lg->direction == UILayoutGroup::Direction::Grid);
             if (isGrid) {
                 if (ImGui::DragInt("Columns##lg", &lg->columns, 0.1f, 1, 32)) { if (lg->columns < 1) lg->columns = 1; lg->Arrange(); ed.dirty = true; }
@@ -33314,6 +33319,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat2("Pos (px)##usv", pos, 1.0f)) { sv->position = {pos[0], pos[1]}; ed.dirty = true; }
             float sz[2] = {sv->size.x, sv->size.y};
             if (ImGui::DragFloat2("Viewport (px)##usv", sz, 1.0f, 16.0f, 8000.0f)) { sv->size = {sz[0], sz[1]}; ed.dirty = true; }
+            oked::DrawScrollViewAxisFields(*sv, ed);
             if (ImGui::Checkbox("Auto content height##usv", &sv->autoContent)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fit the scroll range to the child widgets automatically.");
             ImGui::BeginDisabled(sv->autoContent);
@@ -33327,6 +33333,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##usv")) toRemove = sv;
         }
     }
+    oked::DrawUILayoutComponentInspector(curComp, ed, &toRemove, {CompHeader, AnchorCombo});
     if (auto* pb = dynamic_cast<UIProgressBar*>(curComp)) {
         if (CompHeader("UI Progress Bar", pb, &toRemove)) {
             UIStyleBar(ed, pb);
@@ -34637,6 +34644,9 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UITabs>(), "UI Tabs")) { go->AddComponent<UITabs>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDraggable>(), "UI Draggable")) { go->AddComponent<UIDraggable>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDropTarget>(), "UI Drop Target")) { go->AddComponent<UIDropTarget>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIMask>(), "UI Mask (clip children)")) { go->AddComponent<UIMask>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIFlexItem>(), "UI Flex Item (grow / shrink)")) { go->AddComponent<UIFlexItem>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIListView>(), "UI List View")) { oked::BuildUIListView(go); ed.dirty = true; }
             if (item(!go->GetComponent<UITextBind>(), "UI Text Bind (show a variable)")) { go->AddComponent<UITextBind>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIBarBind>(), "UI Bar Bind (var -> progress bar)")) { go->AddComponent<UIBarBind>(); ed.dirty = true; }
           } EndCat(o); }
@@ -35491,6 +35501,7 @@ static void SetEditorWorldUIProjector(EditorState& ed, ImVec2 canvasSize,
             if (UIHidden(go)) return false;   // hidden canvas / inactive parent: not clickable
             return GetUIScreenRect(go, cs.x, cs.y, o, sz);
         };
+        UIWorld().clipContains = [cs](GameObject* go, const Vec2& p) { return UIClipHitTest(go, p, cs.x, cs.y); };
     }
 }
 
@@ -41531,14 +41542,9 @@ int main(int argc, char** argv) {
             if (Cursor::IsLocked() || !Cursor::visible) Cursor::Capture(false);
         }
 
-        // Keep each scroll view's contentHeight matched to its children so the
-        // scrollbar/clip preview is right while editing and the wheel/drag work in Play.
-        for (const auto& up : ed.scene().Objects())
-            if (auto* sv = up->GetComponent<UIScrollView>())
-                if (sv->autoContent) {
-                    float ch = ScrollViewContentHeight(up.get());
-                    sv->contentHeight = ch > sv->size.y ? ch : sv->size.y;
-                }
+        // Lay out the UI every frame (scroll extents, flex boxes, list rows) so the
+        // preview is right while editing and the wheel/drag work in Play.
+        UpdateUILayouts(ed.scene());
 
         // Install the world-space UI projector to match the Game view BEFORE the
         // scene ticks, so an in-world button's Contains() hit-tests where the Game
@@ -41552,6 +41558,7 @@ int main(int argc, char** argv) {
                 if (UIHidden(go)) return false;   // hidden canvas / inactive parent: not clickable
                 return GetUIScreenRect(go, cs.x, cs.y, o, sz);
             };
+            UIWorld().clipContains = [cs](GameObject* go, const Vec2& p) { return UIClipHitTest(go, p, cs.x, cs.y); };
         }
 
 #ifdef OKAY_HAVE_OKAYUI

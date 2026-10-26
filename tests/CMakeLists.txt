@@ -920,6 +920,10 @@ add_test(NAME net_auth_move COMMAND test_net_auth_move)
 add_executable(test_net_predict test_net_predict.cpp)
 target_link_libraries(test_net_predict PRIVATE okay::engine)
 add_test(NAME net_predict COMMAND test_net_predict)
+# Net plan 5d: the remote interpolation buffer (through a jittery proxy)
+add_executable(test_net_interp test_net_interp.cpp)
+target_link_libraries(test_net_interp PRIVATE okay::engine)
+add_test(NAME net_interp COMMAND test_net_interp)
 
 # Anti-cheat as a game uses it: AntiCheatConfig / NetValidator components and the VS nodes
 add_executable(test_net_anticheat_components test_net_anticheat_components.cpp)

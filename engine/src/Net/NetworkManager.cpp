@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cmath>
 #include <random>
+#include <iomanip>
 #include <sstream>
 
 namespace okay {
@@ -312,6 +313,8 @@ void NetworkManager::Stop() {
     m_earlyAckSeq = 0;
     m_lastPawnAck = 0;
     m_predCorrections = m_predSnaps = 0;
+    m_interpDelay = m_interpNeed = kInterpTicks;
+    m_smoothTick = 0.0; m_smoothTickInit = false;
     m_inputSeq = 0;
     m_pressedAccum = 0;
     m_heldInput = PlayerInput{};
@@ -413,9 +416,30 @@ void NetworkManager::SyncTick(float dt) {
     {
         float t = interpolationRate > 0.0f ? interpolationRate * dt : 1.0f;
         if (t > 1.0f) t = 1.0f;
+        const bool buffered = InterpolationBuffer();
+        AdvanceSmoothTick(dt);
+        // The delay follows what the network needs (m_interpNeed) a little at a
+        // time, so the shown clock runs slightly slower or faster for a moment
+        // instead of jumping; the need eases back to kInterpTicks slowly.
+        if (buffered) {
+            const double ticks = (double)dt * (double)TickRateInForce();
+            m_interpNeed = std::max(kInterpTicks, m_interpNeed - kInterpRecover * ticks);
+            const double step = kInterpSlew * ticks;
+            if (m_interpDelay < m_interpNeed) m_interpDelay = std::min(m_interpNeed, m_interpDelay + step);
+            else m_interpDelay = std::max(m_interpNeed, m_interpDelay - step);
+        }
+        const double showAt = buffered ? m_smoothTick - m_interpDelay : 0.0;
         for (auto& [id, o] : m_syncObjs) {
             if (o.owned || !o.t || !o.hasTarget) continue;
             if (m_predicting && id == m_pawnId) continue;   // our predicted player: reconciled by PawnAck
+            if (buffered && !o.samples.empty()) {
+                // Drop what's older than the pair around showAt, then show that moment.
+                std::size_t keep = 0;
+                while (keep + 1 < o.samples.size() && o.samples[keep + 1].tick <= showAt) ++keep;
+                if (keep) o.samples.erase(o.samples.begin(), o.samples.begin() + (std::ptrdiff_t)keep);
+                SampleAt(o, showAt, o.t->localPosition, o.t->localRotation);
+                continue;
+            }
             o.t->localPosition = o.t->localPosition + (o.targetPos - o.t->localPosition) * t;
             o.t->localRotation = Quat::Slerp(o.t->localRotation, o.targetRot, t);
         }
@@ -433,9 +457,47 @@ void NetworkManager::SyncTick(float dt) {
         std::ostringstream os;
         os << id << '|' << p.x << ' ' << p.y << ' ' << p.z << ' '
            << q.x << ' ' << q.y << ' ' << q.z << ' ' << q.w;
+        // With a fixed tick: when this state is from (the sender's tick, with
+        // its fraction), for receivers' interpolation buffers. Older receivers
+        // read the seven numbers and stop.
+        if (TickRateInForce() > 0.0f) os << ' ' << std::setprecision(10) << m_smoothTick << std::setprecision(6);
         if (o.getExtra) os << '|' << o.getExtra();   // optional per-object state
         Send("__xform", os.str());
     }
+}
+
+double NetworkManager::TickTime() const {
+    const float rate = TickRateInForce();
+    return rate > 0.0f ? (double)m_netTick + (double)m_tickAccum * (double)rate : 0.0;
+}
+
+// A tick clock that runs at the frame rate and is pulled gently toward the
+// tick (a client's estimate jumps when a snapshot resyncs it): stamps and
+// shows states without that jitter. Far off (a start, a stall): it jumps.
+void NetworkManager::AdvanceSmoothTick(float dt) {
+    const float rate = TickRateInForce();
+    if (rate <= 0.0f) { m_smoothTickInit = false; return; }
+    const double target = TickTime();
+    if (!m_smoothTickInit || std::fabs(target - m_smoothTick) > 4.0) {
+        m_smoothTick = target; m_smoothTickInit = true; return;
+    }
+    m_smoothTick += (double)dt * (double)rate;
+    m_smoothTick += (target - m_smoothTick) * 0.05;
+}
+
+// The state at `tick`, between the two buffered samples either side of it;
+// before the first, the first; after the last, the last (held, not guessed).
+void NetworkManager::SampleAt(const SyncObj& o, double tick, Vec3& pos, Quat& rot) {
+    const auto& b = o.samples;
+    if (tick <= b.front().tick) { pos = b.front().pos; rot = b.front().rot; return; }
+    for (std::size_t i = 0; i + 1 < b.size(); ++i)
+        if (tick < b[i + 1].tick) {
+            const float k = (float)((tick - b[i].tick) / (b[i + 1].tick - b[i].tick));
+            pos = b[i].pos + (b[i + 1].pos - b[i].pos) * k;
+            rot = Quat::Slerp(b[i].rot, b[i + 1].rot, k);
+            return;
+        }
+    pos = b.back().pos; rot = b.back().rot;
 }
 
 void NetworkManager::Update(float dt) {
@@ -502,8 +564,31 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
                 std::stringstream ss(rest);
                 Vec3 p; Quat q;
                 ss >> p.x >> p.y >> p.z >> q.x >> q.y >> q.z >> q.w;
+                double tick = -1.0;
+                if (!(ss >> tick) || !std::isfinite(tick)) tick = -1.0;   // an older sender: stamp it on arrival
                 it->second.targetPos = p;
                 it->second.targetRot = q;
+                if (TickRateInForce() > 0.0f) {
+                    auto& buf = it->second.samples;
+                    const double now = m_smoothTick;
+                    // A sender's clock that's far off ours (or none) is stamped
+                    // with when it arrived instead.
+                    if (tick < 0.0 || std::fabs(tick - now) > 2.0 * TickRateInForce()) tick = now;
+                    // Kept in tick order (datagrams can arrive out of order).
+                    auto at = buf.end();
+                    while (at != buf.begin() && (at - 1)->tick > tick) --at;
+                    const bool newest = at == buf.end();
+                    const double gap = (newest && !buf.empty()) ? tick - buf.back().tick : 0.0;
+                    if (at == buf.begin() || (at - 1)->tick < tick) buf.insert(at, SyncObj::Sample{tick, p, q});
+                    if (buf.size() > kMaxSamples) buf.erase(buf.begin());
+                    // Show far enough back that the next state is (nearly) always
+                    // here in time: how late this one came, plus the gap to the one
+                    // after it. Rises at once, eases back down (SyncTick).
+                    if (newest) {
+                        const double need = std::min((now - tick) + gap + 1.0, (double)TickRateInForce());
+                        if (need > m_interpNeed) m_interpNeed = need;
+                    }
+                }
                 // Snap on the first sample so a freshly seen object doesn't slide
                 // in from wherever it happened to spawn.
                 if (!it->second.hasTarget && it->second.t) {

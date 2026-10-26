@@ -156,7 +156,12 @@ public:
 
     /// How fast remote avatars are eased toward their latest networked position
     /// (per second; 0 = snap instantly). Smooths the ~20 Hz snapshots into fluid
-    /// motion at the local frame rate.
+    /// motion at the local frame rate. With a fixed net tick in force, synced
+    /// objects (NetworkSync) use an interpolation buffer instead: they're shown
+    /// 3 ticks in the past (100 ms at 30 Hz; longer while states arrive later or
+    /// further apart than that allows), between the two states either side of
+    /// that moment, so they move at the speed they really moved whatever the
+    /// packet timing. interpolationRate 0 still snaps.
     float interpolationRate = 12.0f;
 
     /// Spatial interest management: a client is only sent peers within this many
@@ -835,6 +840,8 @@ private:
         Vec3  targetPos{};
         Quat  targetRot{};
         bool  hasTarget = false;
+        struct Sample { double tick; Vec3 pos; Quat rot; };
+        std::vector<Sample> samples;   // the interpolation buffer (fixed tick), oldest first
         std::function<std::string()> getExtra;            // owner packs extra state
         std::function<void(const std::string&)> setExtra; // remote applies it
     };
@@ -842,6 +849,26 @@ private:
     float m_syncTimer = 0.0f;
     std::uint32_t m_spawnCounter = 0;     // unique-id source for SpawnOwned
     void SyncTick(float dt);
+    // The interpolation buffer (fixed tick).
+    static constexpr double kInterpTicks = 3.0;          // how far in the past synced objects are shown, at least
+    static constexpr double kInterpRecover = 0.02;       // ticks per tick the need eases back once the network allows
+    static constexpr double kInterpSlew = 0.2;           // ticks per tick the delay moves toward the need
+    static constexpr std::size_t kMaxSamples = 64;
+    double m_interpDelay = kInterpTicks;                 // ticks shown in the past (follows m_interpNeed)
+    double m_interpNeed = kInterpTicks;                  // what the samples' lateness + spacing call for
+    double m_smoothTick = 0.0;                           // TickTime without the resync jumps
+    bool   m_smoothTickInit = false;
+    void AdvanceSmoothTick(float dt);
+    float TickRateInForce() const { return m_mode == Mode::Server ? HostTickRate() : (m_mode == Mode::Client ? m_hostTickRate : 0.0f); }
+    double TickTime() const;                             // the tick now, with its fraction
+    static void SampleAt(const SyncObj& o, double tick, Vec3& pos, Quat& rot);
+public:
+    /// Synced objects shown from the interpolation buffer (a fixed tick in force).
+    bool InterpolationBuffer() const { return TickRateInForce() > 0.0f && interpolationRate > 0.0f; }
+    /// How far in the past (seconds) the buffer shows them: 3 ticks (100 ms at
+    /// 30 Hz), more while states arrive later or further apart than that allows.
+    float InterpolationDelay() const { const float r = TickRateInForce(); return r > 0.0f ? (float)(m_interpDelay / r) : 0.0f; }
+private:
     void DestroyLocalSync(const std::string& id);   // despawn a synced object here
 
     // First-class RPC handlers (by name) + chat log/handler.

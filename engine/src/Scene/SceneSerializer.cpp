@@ -27,6 +27,7 @@
 #include "okay/Components/InventoryUI.hpp"
 #include "okay/Components/GridInventory.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
+#include "okay/Inventory/Recipe.hpp"
 #include "okay/Components/GridInventoryUI.hpp"
 #include "okay/Components/CraftingStation.hpp"
 #include "okay/Components/ChestInventory.hpp"
@@ -210,6 +211,24 @@ void ReadInstanceData(std::istream& in, std::size_t n, Get data) {
         in >> i >> d.durability >> d.uid >> nv;
         for (std::size_t v = 0; v < nv && in; ++v) { std::string key = ReadQuoted(in); d.values.push_back({key, ReadQuoted(in)}); }
         if (in && i < n) data(i) = d;
+    }
+}
+
+// A recipe list's newer fields (craft time, bench tag, unlock flag, byproducts),
+// appended after the older fields: one entry per recipe, in order.
+void WriteRecipeExtras(std::ostream& out, const std::vector<Recipe>& rs) {
+    for (const auto& r : rs) {
+        out << " " << r.craftTime << " " << Quote(r.station) << " " << Quote(r.unlockFlag) << " " << r.byproducts.size();
+        for (const auto& b : r.byproducts) out << " " << Quote(b.item) << " " << b.count;
+    }
+}
+void ReadRecipeExtras(std::istream& in, std::vector<Recipe>& rs) {
+    for (auto& r : rs) {
+        std::size_t nb = 0;
+        in >> r.craftTime; r.station = ReadQuoted(in); r.unlockFlag = ReadQuoted(in); in >> nb;
+        if (!in) return;
+        if (!(r.craftTime >= 0.0f)) r.craftTime = 0.0f;
+        for (std::size_t k = 0; k < nb && in; ++k) { Ingredient b; b.item = ItemId(ReadQuoted(in)); in >> b.count; r.byproducts.push_back(b); }
     }
 }
 
@@ -1293,6 +1312,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         for (const auto& it : gi->overflow)
             out << " " << Quote(it.name) << " " << it.w << " " << it.h << " " << it.count << " " << it.weight;
         WriteInstanceData(out, gi->items.size(), [&](std::size_t i) -> const ItemInstanceData& { return gi->items[i].data; });
+        out << " " << (gi->keepOnSceneLoad ? 1 : 0);   // appended (numeric-peek guarded)
         out << "\n";
     }
     if (auto* gu = go->GetComponent<GridInventoryUI>()) {
@@ -1336,6 +1356,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             out << " " << Quote(r.output) << " " << r.outputCount;
         }
         out << " " << cs->range << " " << Quote(cs->playerName);   // appended (numeric-peek guarded)
+        out << " " << Quote(cs->recipeBook) << " " << Quote(cs->stationTag);   // appended (quote-peek guarded)
+        WriteRecipeExtras(out, cs->recipes);
         out << "\n";
     }
     if (auto* ch = go->GetComponent<ChestInventory>()) {
@@ -1520,6 +1542,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             out << " " << Quote(r.output) << " " << r.outputCount << " " << r.inputs.size();
             for (const auto& in : r.inputs) out << " " << Quote(in.item) << " " << in.count;
         }
+        out << " " << Quote(c->recipeBook);   // appended (quote-peek guarded)
+        WriteRecipeExtras(out, c->recipes);
         out << "\n";
     }
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
@@ -1765,7 +1789,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         for (const auto& s : inv->slots) out << " " << Quote(s.item) << " " << s.count;
         out << " " << inv->maxStack;   // appended (numeric-peek guarded on read)
         WriteInstanceData(out, inv->slots.size(), [&](std::size_t i) -> const ItemInstanceData& { return inv->slots[i].data; });
-        out << " " << inv->weightLimit << " " << (inv->slowWhenOverWeight ? 1 : 0) << " " << inv->overWeightSpeed;   // appended (guarded)
+        out << " " << inv->weightLimit << " " << (inv->slowWhenOverWeight ? 1 : 0) << " " << inv->overWeightSpeed   // appended (guarded)
+            << " " << (inv->keepOnSceneLoad ? 1 : 0);
         out << "\n";
     }
     if (auto* pk = go->GetComponent<ItemPickup>()) {
@@ -3789,7 +3814,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                         if (std::isdigit(pk6) || pk6 == '-' || pk6 == '.') {
                                             int sm = 0, soc = 0, dk = 0;
                                             in >> sm >> soc >> dk;
-                                            ui->sortMode = (InventoryUI::SortMode)sm;
+                                            ui->sortMode = (InventoryUI::SortMode)std::max(0, std::min(sm, (int)InventoryUI::SortMode::Value));
                                             ui->sortOnClose = (soc != 0);
                                             ui->dropKey = (char)dk;
                                             in >> std::ws;   // optional style block (align/pop/colours/border/title)
@@ -3844,6 +3869,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     gi->overflow.push_back(it);
                                 }
                                 ReadInstanceData(in, gi->items.size(), [&](std::size_t i) -> ItemInstanceData& { return gi->items[i].data; });
+                                in >> std::ws;   // optional keep-on-scene-load
+                                if (std::isdigit(in.peek())) { int keep = 0; in >> keep; gi->keepOnSceneLoad = (keep != 0); }
                             }
                         }
                     }
@@ -3929,7 +3956,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (std::isdigit(spk) || spk == '-' || spk == '.') {
                         in >> cs->range;
                         in >> std::ws;
-                        if (in.peek() == '"') cs->playerName = ReadQuoted(in);
+                        if (in.peek() == '"') {
+                            cs->playerName = ReadQuoted(in);
+                            in >> std::ws;   // optional recipe book + station tag + recipe extras
+                            if (in.peek() == '"') {
+                                cs->recipeBook = ReadQuoted(in); cs->stationTag = ReadQuoted(in);
+                                ReadRecipeExtras(in, cs->recipes);
+                            }
+                        }
                     }
                 } else if (field == "chestinventory") {
                     auto* ch = go->AddComponent<ChestInventory>();
@@ -4172,6 +4206,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         }
                         c->recipes.push_back(std::move(r));
                     }
+                    in >> std::ws;   // optional recipe book + recipe extras
+                    if (in.peek() == '"') { c->recipeBook = ReadQuoted(in); ReadRecipeExtras(in, c->recipes); }
                 } else if (field == "fpfeel") {
                     if (auto* fp = go->GetComponent<FirstPersonController>()) {
                         int z = 1, sl = 1, sm = 1, ik = 1;
@@ -4521,6 +4557,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             int slow = 0;
                             in >> inv->weightLimit >> slow >> inv->overWeightSpeed;
                             inv->slowWhenOverWeight = (slow != 0);
+                            in >> std::ws;   // optional keep-on-scene-load
+                            if (std::isdigit(in.peek())) { int keep = 0; in >> keep; inv->keepOnSceneLoad = (keep != 0); }
                         }
                     }
                 } else if (field == "lootsource") {

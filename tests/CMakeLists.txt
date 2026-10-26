@@ -132,6 +132,11 @@ add_executable(test_inventory_gameplay test_inventory_gameplay.cpp)
 target_link_libraries(test_inventory_gameplay PRIVATE okay::engine)
 add_test(NAME inventory_gameplay COMMAND test_inventory_gameplay)
 
+# Inventories across scenes + save/load, one crafting system (books, craft time, benches, unlocks), def-based sorting
+add_executable(test_inventory_persist_craft test_inventory_persist_craft.cpp)
+target_link_libraries(test_inventory_persist_craft PRIVATE okay::engine)
+add_test(NAME inventory_persist_craft COMMAND test_inventory_persist_craft)
+
 add_executable(test_pathfinding test_pathfinding.cpp)
 target_link_libraries(test_pathfinding PRIVATE okay::engine)
 add_test(NAME pathfinding COMMAND test_pathfinding)

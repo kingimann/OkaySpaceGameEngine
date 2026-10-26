@@ -852,27 +852,38 @@ static void DrawCrafting(SDL_Renderer* r, okay::CraftingStation& cs) {
         FillUIShape(r, rc2, rad > 0.5f ? UIShape::Rounded : UIShape::Rectangle, rad, c, c, false, false, 1.0f);
     };
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-    int n = (int)cs.recipes.size();
-    float pw = cs.width, ph = n * cs.rowHeight + 8.0f;
-    float px = (W - pw) * 0.5f + cs.marginX, py = (H - ph) * 0.5f + cs.marginY;
-    fill(px, py - 26, pw, ph + 26, cs.panelColor, cr + 2);
+    // Layout + input are shared with the editor Play view (okay/Inventory/InventoryInput).
+    const okay::InventoryInput::CraftingLayout L = okay::InventoryInput::LayoutCrafting(cs, (float)W, (float)H);
+    const float px = L.px, py = L.py, pw = L.pw, ph = L.ph;
+    const auto recipes = cs.Recipes();
+    const bool busy = !cs.Queue().Jobs().empty();
+    fill(px, py - 26, pw, ph + 26 + (busy ? 16.0f : 0.0f), cs.panelColor, cr + 2);
     fill(px, py - 26, pw, 24, cs.titleBar, cr + 2);
     DrawText(r, cs.title, px + 8, py - 20, 1.6f, sc(cs.textColor));
-    okay::Vec2 mp = okay::Input::MousePosition();
-    for (int i = 0; i < n; ++i) {
-        const auto& rec = cs.recipes[i];
-        float ry = py + i * cs.rowHeight + 4.0f;
-        bool can = inv && cs.CanCraft(rec, *inv);
-        bool hover = mp.x >= px + 4 && mp.x < px + pw - 4 && mp.y >= ry && mp.y < ry + cs.rowHeight - 2;
+    auto label = [](const std::string& item) {
+        const okay::ItemDefinition* d = okay::ItemDatabase::Get().Find(item);
+        return d ? d->DisplayName() : item;
+    };
+    const int hover = okay::InventoryInput::HandleCrafting(cs, L, okay::Input::MousePosition());   // click: craft one, shift: max
+    for (int i = 0; i < L.rows && i < (int)recipes.size(); ++i) {
+        const auto& rec = recipes[i];
+        const float ry = L.RowY(i);
+        const bool can = inv && cs.CanCraft(rec, *inv);
         fill(px + 4, ry, pw - 8, cs.rowHeight - 2, can ? cs.canColor : cs.cantColor, cr);
-        if (hover) fill(px + 4, ry, pw - 8, cs.rowHeight - 2, cs.hoverColor, cr);
-        std::string out = rec.output + (rec.outputCount > 1 ? " x" + std::to_string(rec.outputCount) : std::string());
+        if (i == hover) fill(px + 4, ry, pw - 8, cs.rowHeight - 2, cs.hoverColor, cr);
+        std::string out = label(rec.output) + (rec.outputCount > 1 ? " x" + std::to_string(rec.outputCount) : std::string());
         DrawText(r, out, px + 10, ry + 4, 1.4f, sc(cs.textColor));
         std::string ins;
-        for (std::size_t k = 0; k < rec.inputs.size(); ++k) { if (k) ins += ", "; ins += std::to_string(rec.inputs[k].count) + " " + rec.inputs[k].item; }
+        for (std::size_t k = 0; k < rec.inputs.size(); ++k) { if (k) ins += ", "; ins += std::to_string(rec.inputs[k].count) + " " + label(rec.inputs[k].item); }
         float tw = UITextW(ins, 1.0f);
         DrawText(r, ins, px + pw - 10 - tw, ry + 6, 1.0f, sc(cs.textColor));
-        if (hover && can && okay::Input::GetMouseButtonDown(0)) cs.Craft(i);
+    }
+    if (busy) {   // the queue: progress of the item being made, and how many are waiting
+        const float by = py + ph + 2.0f;
+        fill(px + 6, by, pw - 12, 8, cs.cantColor, 3);
+        fill(px + 6, by, (pw - 12) * cs.Queue().Progress(), 8, cs.canColor, 3);
+        const int waiting = (int)cs.Queue().Jobs().size();
+        if (waiting > 1) DrawText(r, "x" + std::to_string(waiting), px + pw - 30, by - 1, 1.0f, sc(cs.textColor));
     }
 }
 

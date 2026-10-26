@@ -5,22 +5,27 @@
 #include "okay/Components/Inventory.hpp"
 #include "okay/Components/InventoryPlayer.hpp"
 #include "okay/Inventory/InventoryOps.hpp"
+#include "okay/Inventory/Recipe.hpp"
 #include "okay/Render/Color.hpp"
 #include <string>
 #include <vector>
 
 namespace okay {
 
-/// A simple crafting bench: a list of recipes (inputs -> output) that consume items
-/// from a sibling Inventory, else the player's, and produce a new one. It draws its own
-/// panel (player + editor Play view) and crafts on click; walk up and press the key —
-/// only the nearest bench in `range` opens. Minecraft/survival-style crafting, no script.
+/// A crafting bench: the same recipes as Crafting (okay::Recipe), crafted from a
+/// sibling Inventory, else the player's. It draws its own panel (player + editor Play
+/// view) with a progress bar for recipes that take time; click a row to craft one,
+/// shift-click to craft as many as you can afford. Walk up and press the key — only the
+/// nearest bench in `range` opens. With a `stationTag`, it also offers every recipe in
+/// its `recipeBook` that needs that bench.
 class CraftingStation : public InventoryInteractable {
 public:
-    struct Ingredient { std::string item; int count = 1; };
-    struct Recipe { std::vector<Ingredient> inputs; std::string output; int outputCount = 1; };
+    using Ingredient = okay::Ingredient;
+    using Recipe = okay::Recipe;
 
     std::vector<Recipe> recipes;
+    std::string recipeBook;     ///< optional .okayrecipes file
+    std::string stationTag;     ///< the bench kind ("workbench", "forge"...): book recipes needing it show here
     char  toggleKey  = 'c';
     std::string title = "Crafting";
     bool  closeWhenCrafted = false;   ///< auto-close after a successful craft
@@ -53,33 +58,56 @@ public:
         return o ? o->GetComponent<Inventory>() : nullptr;
     }
 
+    /// What this bench offers: its own recipes, then the book's recipes for its tag (or,
+    /// with no tag, the book's recipes that need no bench). Locked ones are left out.
+    std::vector<Recipe> Recipes() const {
+        std::vector<Recipe> out;
+        for (const auto& r : recipes) if (r.Unlocked()) out.push_back(r);
+        if (!recipeBook.empty())
+            for (const auto& r : RecipeBook::Cached(recipeBook).recipes)
+                if (r.Unlocked() && r.station == stationTag) out.push_back(r);
+        return out;
+    }
+
     /// Does `inv` hold every ingredient of recipe `r` (and is it non-empty)?
     bool CanCraft(const Recipe& r, const Inventory& inv) const {
-        if (r.inputs.empty() || r.output.empty()) return false;
-        for (const auto& in : Inventory::SumStacks(r.inputs))
-            if (inv.Count(in.item) < in.count) return false;
-        return true;
+        return !r.inputs.empty() && r.Unlocked() && CraftQueue::Affordable(inv, r) > 0;
     }
     bool CanCraft(int idx) const {
         Inventory* inv = Inv();
-        if (!inv || idx < 0 || idx >= (int)recipes.size()) return false;
-        return CanCraft(recipes[idx], *inv);
+        const auto all = Recipes();
+        return inv && idx >= 0 && idx < (int)all.size() && CanCraft(all[idx], *inv);
     }
 
-    /// Consume the inputs and add the output. Returns false if it isn't affordable or
-    /// the output doesn't fit. Inputs are only consumed on success.
-    bool Craft(int idx) {
+    /// Craft recipe `idx` (of Recipes()) `times` times — instantly and atomically, or
+    /// queued when it takes time. Returns false if none was crafted.
+    bool Craft(int idx, int times = 1) {
         Inventory* inv = Inv();
-        if (!inv || idx < 0 || idx >= (int)recipes.size()) return false;
-        const Recipe& r = recipes[idx];
-        if (!CanCraft(r, *inv)) return false;
-        // Atomic: inputs are taken out only if the output then fits.
-        bool ok = InventoryOps::Craft(inv, Inventory::SumStacks(r.inputs), {{r.output, r.outputCount < 1 ? 1 : r.outputCount}}).Ok();
+        const auto all = Recipes();
+        if (!inv || idx < 0 || idx >= (int)all.size() || !CanCraft(all[idx], *inv)) return false;
+        const bool ok = m_queue.Craft(*inv, all[idx], times) > 0;
         if (ok && closeWhenCrafted) open = false;
         return ok;
     }
+    /// Craft as many of recipe `idx` as the inventory can afford.
+    bool CraftMax(int idx) {
+        Inventory* inv = Inv();
+        const auto all = Recipes();
+        return inv && idx >= 0 && idx < (int)all.size() && Craft(idx, CraftQueue::Affordable(*inv, all[idx]));
+    }
+
+    const CraftQueue& Queue() const { return m_queue; }
+
+    void Update(float dt) override {
+        InventoryInteractable::Update(dt);
+        if (Inventory* inv = Inv())
+            m_queue.Update(dt, *inv, gameObject ? gameObject->scene() : nullptr,
+                           (gameObject && gameObject->transform) ? gameObject->transform->Position() : Vec3{});
+    }
 
 private:
+    CraftQueue m_queue;
+
     GameObject* Owner() const {
         if (!gameObject || !gameObject->transform) return gameObject;
         Transform* t = gameObject->transform;

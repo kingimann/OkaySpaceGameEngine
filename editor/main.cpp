@@ -905,6 +905,24 @@ static bool ItemPicker(const char* label, std::string& id, float width = 140.0f)
     return changed;
 }
 
+// A recipe's newer fields (craft time, bench tag, unlock flag), shared by the Crafting
+// and Crafting Station inspectors. Returns true when anything changed.
+static bool RecipeExtrasUI(okay::Recipe& r) {
+    bool ch = false;
+    ImGui::SetNextItemWidth(70);
+    if (ImGui::DragFloat("time##rt", &r.craftTime, 0.05f, 0.0f, 3600.0f, "%.1fs")) ch = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to craft (0 = instant). Timed crafts queue up with a progress bar.");
+    ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+    char st[48]; std::snprintf(st, sizeof(st), "%s", r.station.c_str());
+    if (ImGui::InputTextWithHint("##rst", "bench tag", st, sizeof(st))) { r.station = st; ch = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only craftable at an open Crafting Station with this tag (blank = anywhere).");
+    ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+    char ul[48]; std::snprintf(ul, sizeof(ul), "%s", r.unlockFlag.c_str());
+    if (ImGui::InputTextWithHint("##rul", "unlock flag", ul, sizeof(ul))) { r.unlockFlag = ul; ch = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hidden until this game variable is non-zero (blank = always known).");
+    return ch;
+}
+
 // Cached albedo color of a .okaymat — a cheap material "thumbnail" for the
 // Project browser (a real render would need a preview scene). Reloads when the
 // file's write time changes, so edits show up without a restart.
@@ -30087,9 +30105,9 @@ void DrawInspector(EditorState& ed) {
                 char sk[2] = {ui->sortKey, 0};
                 if (ImGui::InputText("Sort Key##iu", sk, sizeof(sk))) { ui->sortKey = sk[0]; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Press to compact + merge stacks (blank = off).");
-                const char* sortModes[] = {"Compact", "Name", "Count", "Rarity"};
+                const char* sortModes[] = {"Compact", "Name", "Count", "Rarity", "Category", "Weight", "Value"};
                 int smi = (int)ui->sortMode;
-                if (ImGui::Combo("Sort Mode##iu", &smi, sortModes, 4)) { ui->sortMode = (InventoryUI::SortMode)smi; ed.dirty = true; }
+                if (ImGui::Combo("Sort Mode##iu", &smi, sortModes, IM_ARRAYSIZE(sortModes))) { ui->sortMode = (InventoryUI::SortMode)smi; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("How the Sort key orders stacks: keep gather order, A-Z, biggest first, or by rarity list.");
                 ImGui::SameLine();
                 if (ImGui::Checkbox("Sort on close##iu", &ui->sortOnClose)) ed.dirty = true;
@@ -30153,6 +30171,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Enforce Weight Limit##gi", &gi->enforceWeight)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Refuse adds and drags that would go over the weight limit (off = the limit is only shown).");
             if (ImGui::DragInt("Max Stack##gi", &gi->maxStack, 0.2f, 0, 9999)) ed.dirty = true;
+            if (ImGui::Checkbox("Keep On Scene Load##gi", &gi->keepOnSceneLoad)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Carry these items into the next scene (load_scene): the object with the same name there gets them.");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Same-name items merge when dropped on each other, up to this many (0 = never). Right-click a stack in Play to split it.");
             ImGui::Text("Total weight: %.1f%s", gi->TotalWeight(), gi->OverWeight() ? "  (OVER!)" : "");
             if (ImGui::TreeNodeEx("Items##gi", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -30305,6 +30325,12 @@ void DrawInspector(EditorState& ed) {
             char pnc[64]; std::snprintf(pnc, sizeof(pnc), "%s", cs->playerName.c_str());
             if (ImGui::InputText("Player Object##cs", pnc, sizeof(pnc))) { cs->playerName = pnc; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Who the player is. Blank = the \"Player\"-tagged object, else the main camera's target.");
+            char rbs[256]; std::snprintf(rbs, sizeof(rbs), "%s", cs->recipeBook.c_str());
+            if (ImGui::InputText("Recipe Book##cs", rbs, sizeof(rbs))) { cs->recipeBook = rbs; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional .okayrecipes file: its recipes for this bench's tag show here too.");
+            char tg[48]; std::snprintf(tg, sizeof(tg), "%s", cs->stationTag.c_str());
+            if (ImGui::InputText("Station Tag##cs", tg, sizeof(tg))) { cs->stationTag = tg; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("What kind of bench this is (workbench, forge...). Recipes needing this tag craft here.");
             if (ImGui::DragFloat("Width##cs", &cs->width, 0.5f, 80.0f, 800.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Row Height##cs", &cs->rowHeight, 0.25f, 14.0f, 60.0f)) ed.dirty = true;
             auto cc = [&](const char* lbl, Color& c, const char* id) {
@@ -30334,6 +30360,7 @@ void DrawInspector(EditorState& ed) {
                         ImGui::PopID();
                     }
                     if (ImGui::SmallButton("+ ingredient")) { rec.inputs.push_back({}); ed.dirty = true; }
+                    if (RecipeExtrasUI(rec)) ed.dirty = true;
                     ImGui::Unindent();
                     ImGui::Separator();
                     ImGui::PopID();
@@ -30981,6 +31008,9 @@ void DrawInspector(EditorState& ed) {
     if (auto* c = dynamic_cast<Crafting*>(curComp)) {
         if (CompHeader("Crafting", c, &toRemove)) {
             ImGui::TextDisabled("Recipes consume Inventory items to make an output.");
+            char rb[256]; std::snprintf(rb, sizeof(rb), "%s", c->recipeBook.c_str());
+            if (ImGui::InputText("Recipe Book##cr", rb, sizeof(rb))) { c->recipeBook = rb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional .okayrecipes file: its recipes are added to the ones below.");
             int removeAt = -1;
             for (int i = 0; i < (int)c->recipes.size(); ++i) {
                 ImGui::PushID(i);
@@ -31008,6 +31038,7 @@ void DrawInspector(EditorState& ed) {
                 if (rmIng >= 0) { r.inputs.erase(r.inputs.begin() + rmIng); ed.dirty = true; }
                 ImGui::Indent(16.0f);
                 if (ImGui::SmallButton("+ ingredient")) { r.inputs.push_back({"item", 1}); ed.dirty = true; }
+                if (RecipeExtrasUI(r)) ed.dirty = true;
                 ImGui::Unindent(16.0f);
                 ImGui::Separator();
                 ImGui::PopID();
@@ -32097,6 +32128,8 @@ void DrawInspector(EditorState& ed) {
                 if (inv->slowWhenOverWeight && ImGui::SliderFloat("Over-weight Speed##inv", &inv->overWeightSpeed, 0.1f, 1.0f)) ed.dirty = true;
                 ImGui::Text("Weight: %.1f / %.1f%s", inv->TotalWeight(), inv->weightLimit, inv->OverWeight() ? "  (over)" : "");
             }
+            if (ImGui::Checkbox("Keep On Scene Load##inv", &inv->keepOnSceneLoad)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Carry these items into the next scene (load_scene): the object with the same name there gets them.");
             ImGui::Text("Slots: %d / %d", inv->SlotsUsed(), inv->capacity);
             int eraseS = -1;
             for (int i = 0; i < (int)inv->slots.size(); ++i) {
@@ -35245,30 +35278,39 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         okay::Inventory* inv = cs->Inv();
         auto col = [&](const okay::Color& c) { return IM_COL32((int)(c.r*255),(int)(c.g*255),(int)(c.b*255),(int)(c.a*255)); };
         float cr = cs->cornerRadius;
-        int n = (int)cs->recipes.size();
-        float pw = cs->width, ph = n * cs->rowHeight + 8.0f;
-        float lx = (canvasSize.x - pw) * 0.5f + cs->marginX, ly = (canvasSize.y - ph) * 0.5f + cs->marginY;
-        float px = canvasPos.x + lx, py = canvasPos.y + ly;
-        dl->AddRectFilled(ImVec2(px, py - 26), ImVec2(px + pw, py + ph), col(cs->panelColor), cr + 2);
+        // Layout + input shared with the built player (okay/Inventory/InventoryInput).
+        const okay::InventoryInput::CraftingLayout L = okay::InventoryInput::LayoutCrafting(*cs, canvasSize.x, canvasSize.y);
+        const float pw = L.pw, ph = L.ph, px = canvasPos.x + L.px, py = canvasPos.y + L.py;
+        const auto recipes = cs->Recipes();
+        const bool busy = !cs->Queue().Jobs().empty();
+        dl->AddRectFilled(ImVec2(px, py - 26), ImVec2(px + pw, py + ph + (busy ? 16.0f : 0.0f)), col(cs->panelColor), cr + 2);
         dl->AddRectFilled(ImVec2(px, py - 26), ImVec2(px + pw, py - 2), col(cs->titleBar), cr + 2);
         dl->AddText(ImVec2(px + 8, py - 20), col(cs->textColor), cs->title.c_str());
-        okay::Vec2 m = okay::Input::MousePosition();   // canvas-local (Game view)
-        for (int i = 0; i < n; ++i) {
-            const auto& rec = cs->recipes[i];
-            float ry = py + i * cs->rowHeight + 4.0f;            // screen-space row top
-            float lry = ly + i * cs->rowHeight + 4.0f;          // canvas-local row top
-            bool can = inv && cs->CanCraft(rec, *inv);
-            bool hover = gameView && m.x >= lx + 4 && m.x < lx + pw - 4 &&
-                         m.y >= lry && m.y < lry + cs->rowHeight - 2;
+        auto label = [](const std::string& item) {
+            const okay::ItemDefinition* d = okay::ItemDatabase::Get().Find(item);
+            return d ? d->DisplayName() : item;
+        };
+        // Click: craft one, shift-click: as many as you can afford (Game view only).
+        const int hover = gameView ? okay::InventoryInput::HandleCrafting(*cs, L, okay::Input::MousePosition()) : -1;
+        for (int i = 0; i < L.rows && i < (int)recipes.size(); ++i) {
+            const auto& rec = recipes[i];
+            const float ry = canvasPos.y + L.RowY(i);
+            const bool can = inv && cs->CanCraft(rec, *inv);
             dl->AddRectFilled(ImVec2(px + 4, ry), ImVec2(px + pw - 4, ry + cs->rowHeight - 2), col(can ? cs->canColor : cs->cantColor), cr);
-            if (hover) dl->AddRectFilled(ImVec2(px + 4, ry), ImVec2(px + pw - 4, ry + cs->rowHeight - 2), col(cs->hoverColor), cr);
-            std::string out = rec.output + (rec.outputCount > 1 ? " x" + std::to_string(rec.outputCount) : std::string());
+            if (i == hover) dl->AddRectFilled(ImVec2(px + 4, ry), ImVec2(px + pw - 4, ry + cs->rowHeight - 2), col(cs->hoverColor), cr);
+            std::string out = label(rec.output) + (rec.outputCount > 1 ? " x" + std::to_string(rec.outputCount) : std::string());
             dl->AddText(ImVec2(px + 10, ry + 5), col(cs->textColor), out.c_str());
             std::string ins;
-            for (std::size_t k = 0; k < rec.inputs.size(); ++k) { if (k) ins += ", "; ins += std::to_string(rec.inputs[k].count) + " " + rec.inputs[k].item; }
+            for (std::size_t k = 0; k < rec.inputs.size(); ++k) { if (k) ins += ", "; ins += std::to_string(rec.inputs[k].count) + " " + label(rec.inputs[k].item); }
             ImVec2 ts = ImGui::CalcTextSize(ins.c_str());
             dl->AddText(ImVec2(px + pw - 10 - ts.x, ry + 6), col(cs->textColor), ins.c_str());
-            if (hover && can && okay::Input::GetMouseButtonDown(0)) cs->Craft(i);
+        }
+        if (busy) {   // the queue: progress of the item being made, and how many are waiting
+            const float by = py + ph + 2.0f;
+            dl->AddRectFilled(ImVec2(px + 6, by), ImVec2(px + pw - 6, by + 8), col(cs->cantColor), 3.0f);
+            dl->AddRectFilled(ImVec2(px + 6, by), ImVec2(px + 6 + (pw - 12) * cs->Queue().Progress(), by + 8), col(cs->canColor), 3.0f);
+            const int waiting = (int)cs->Queue().Jobs().size();
+            if (waiting > 1) dl->AddText(ImVec2(px + pw - 30, by - 3), col(cs->textColor), ("x" + std::to_string(waiting)).c_str());
         }
         break;
     }

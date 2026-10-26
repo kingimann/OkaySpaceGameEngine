@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/Components/ChestInventory.hpp"
+#include "okay/Components/CraftingStation.hpp"
 #include "okay/Components/GridInventory.hpp"
 #include "okay/Components/GridInventoryUI.hpp"
 #include "okay/Components/InventoryUI.hpp"
@@ -90,6 +91,20 @@ struct GridFrame { int panel = -1, cx = 0, cy = 0; };
 GridFrame HoverGrid(const GridLayout& L, Vec2 mouse);
 /// Rotate key, pick up, right-click split, drop (move / transfer / merge).
 void HandleGrid(GridInventoryUI& ui, const GridLayout& L, const GridFrame& hover);
+
+// ---- Crafting bench (CraftingStation) ----
+
+struct CraftingLayout {
+    float px = 0, py = 0, pw = 0, ph = 0, rowH = 0;
+    int   rows = 0;
+    float RowY(int i) const { return py + i * rowH + 4.0f; }
+    /// Recipe row under a point, or -1.
+    int Pick(float x, float y) const;
+};
+CraftingLayout LayoutCrafting(const CraftingStation& cs, float W, float H);
+/// Click a row to craft one, shift-click to craft as many as you can afford. Returns
+/// the hovered row (-1 none).
+int HandleCrafting(CraftingStation& cs, const CraftingLayout& L, Vec2 mouse);
 
 } // namespace InventoryInput
 } // namespace okay

@@ -1,4 +1,5 @@
 #include "okay/Scene/Scene.hpp"
+#include "okay/Inventory/InventoryPersistence.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
 #include "okay/Scripting/NextScriptVM.hpp"
 #include "okay/Scene/EnsureCamera.hpp"
@@ -178,7 +179,9 @@ void Scene::Update(float deltaTime) {
         m_hasPendingLoad = false;
         m_pendingLoad.clear();
         m_pendingMerges.clear();   // a full load supersedes queued merges
+        InventoryPersistence::BeforeSceneLoad(*this);   // bags marked keepOnSceneLoad come along
         if (SceneSerializer::LoadFromFile(*this, path)) {
+            InventoryPersistence::AfterSceneLoad(*this);
             Start(); // run Awake/Start for the freshly loaded objects
         }
     }

@@ -883,6 +883,11 @@ add_test(NAME net_anticheat COMMAND test_net_anticheat)
 add_executable(test_net_anticheat_ph1 test_net_anticheat_ph1.cpp)
 target_link_libraries(test_net_anticheat_ph1 PRIVATE okay::engine)
 add_test(NAME net_anticheat_ph1 COMMAND test_net_anticheat_ph1)
+# Anti-cheat plan phase 2: relay-hosted games get the server checks; the relay
+# forwards only client<->host, keeps codes from being taken over, caps rates
+add_executable(test_net_anticheat_ph2 test_net_anticheat_ph2.cpp)
+target_link_libraries(test_net_anticheat_ph2 PRIVATE okay::engine)
+add_test(NAME net_anticheat_ph2 COMMAND test_net_anticheat_ph2)
 
 # Anti-cheat as a game uses it: AntiCheatConfig / NetValidator components and the VS nodes
 add_executable(test_net_anticheat_components test_net_anticheat_components.cpp)

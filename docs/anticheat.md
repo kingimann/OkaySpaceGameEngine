@@ -37,6 +37,11 @@ ticketKey <base64url ed25519 public key>
 ticketAudience arena-1              # this server's id in tickets ("" = any)
 ```
 
+A game hosted through a relay (`HostViaRelay` / `net_host_relay`) runs the same
+checks as a directly hosted one. The relay only forwards between the host and
+its clients, so every player's traffic reaches the host's checks; see
+[relay.md](relay.md#what-the-relay-enforces).
+
 React in a visual script with **On Cheat Detected**:
 - Event Name is what was caught;
 - Event Value is the player's peer id;

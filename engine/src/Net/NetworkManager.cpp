@@ -76,6 +76,16 @@ bool NetworkManager::StartServer(std::uint16_t port) {
         Stop();
         return false;
     }
+    InitServerState();
+    OKAY_INFO("net: server '", serverName, "' listening on UDP ", port,
+              " (max ", maxPlayers, ")");
+    return true;
+}
+
+// Everything a host needs, however it's reached: a bound port (StartServer) or
+// a relay session (StartRelay as host). Both then run the same ServerTick, so
+// the anti-cheat hooks must be there in both.
+void NetworkManager::InitServerState() {
     m_mode = Mode::Server;
     m_localId = 0;
     m_kicked = false; m_kickReason.clear();
@@ -90,9 +100,6 @@ bool NetworkManager::StartServer(std::uint16_t port) {
     anticheat.exists = [this](const std::string& id) { return m_syncObjs.count(id) != 0; };
     anticheat.onCheat = [this](const CheatReport& r) { if (m_cheatHandler) m_cheatHandler(r); };
     if (snapshotRate > 0.0f) m_snapshotInterval = 1.0f / snapshotRate;
-    OKAY_INFO("net: server '", serverName, "' listening on UDP ", port,
-              " (max ", maxPlayers, ")");
-    return true;
 }
 
 int NetworkManager::PlayerCount() const {
@@ -141,12 +148,12 @@ bool NetworkManager::StartRelay(const std::string& relayHost, std::uint16_t rela
     m_relayWelcomed = false;
     m_relayCode = code;
     m_relaySlot = 0;
+    m_relayHostKey = 0;
     m_relayHelloTimer = 0.0f;
+    m_relayError.clear();
     m_kicked = false; m_kickReason.clear();
     if (asHost) {
-        m_mode = Mode::Server;
-        m_localId = 0;
-        if (snapshotRate > 0.0f) m_snapshotInterval = 1.0f / snapshotRate;
+        InitServerState();
         OKAY_INFO("net: hosting '", serverName, "' via relay ", m_relayEp.ToString(),
                   " (session '", code, "')");
     } else {
@@ -179,6 +186,9 @@ void NetworkManager::RelayKeepAlive(float dt) {
     net::Packet h(net::RelayHello);
     h.Write(std::uint8_t(m_mode == Mode::Server ? net::RelayHost : net::RelayClient));
     h.Write(m_relayCode);
+    h.Write(net::kRelayProtocolVersion);
+    h.Write(static_cast<std::uint32_t>(m_relayHostKey));          // 0 until the relay gives one
+    h.Write(static_cast<std::uint32_t>(m_relayHostKey >> 32));
     m_socket.SendTo(m_relayEp, h.Data(), h.Size());
 }
 
@@ -195,6 +205,7 @@ void NetworkManager::Stop() {
     m_relay = false;
     m_relayWelcomed = false;
     m_relaySlot = 0;
+    m_relayHostKey = 0;
     m_relayCode.clear();
     m_relayEp = net::Endpoint{};
     m_socket.Close();
@@ -214,7 +225,14 @@ void NetworkManager::Stop() {
     m_relSeq = 0;
     m_roster.clear();
     m_corrections = 0;
-    // m_kicked / m_kickReason persist so WasKicked() can be read after the
+    // A session's anti-cheat counters and hooks end with it (InitServerState
+    // installs fresh ones); the rules themselves (settings) stay.
+    anticheat.Reset();
+    anticheat.serverOwns = nullptr;
+    anticheat.exists = nullptr;
+    anticheat.onCheat = nullptr;
+    m_relayLost = false;
+    // m_kicked / m_kickReason / m_relayError persist so WasKicked() can be read after the
     // disconnect; they're cleared when a new session starts.
     m_mode = Mode::Offline;
     m_joined = false;
@@ -688,12 +706,44 @@ int NetworkManager::ReceiveFrom(void* buffer, std::size_t capacity, net::Endpoin
             p.ReadU8();
             std::uint32_t yourSlot = p.ReadU32();
             std::uint32_t hostSlot = p.ReadU32();
-            if (p.Ok()) {
-                m_relaySlot = yourSlot;
-                m_relayWelcomed = true;
-                if (m_mode == Mode::Client) m_serverEp = SlotEndpoint(hostSlot);
+            if (!p.Ok()) continue;
+            // Version 2 relays add [u8 version][u64 host key]; the key comes
+            // only to the host, which sends it back in every hello so only it
+            // can host this code (from this address or a new one).
+            p.ReadU8();
+            const std::uint32_t keyLo = p.ReadU32(), keyHi = p.ReadU32();
+            if (p.Ok() && m_mode == Mode::Server && (keyLo | keyHi))
+                m_relayHostKey = (static_cast<std::uint64_t>(keyHi) << 32) | keyLo;
+            if (m_mode == Mode::Client) {
+                // The host we were paired with is the only server we talk to.
+                // Any change (it left: slot 0, or another host took the code)
+                // ends this session instead of re-pointing us at someone else.
+                if (m_relayWelcomed && !(m_serverEp == SlotEndpoint(hostSlot))) {
+                    m_relayError = hostSlot ? "the session's host changed" : "the host left the session";
+                    OKAY_WARN("net: relay session '", m_relayCode, "' ended: ", m_relayError);
+                    m_relayLost = true;
+                    return 0;
+                }
+                if (hostSlot == 0) continue;   // no host yet
+                m_serverEp = SlotEndpoint(hostSlot);
             }
+            m_relaySlot = yourSlot;
+            m_relayWelcomed = true;
             continue;
+        }
+        if (tag == net::RelayRefused) {
+            net::Packet p(b, static_cast<std::size_t>(n));
+            p.ReadU8();
+            const std::uint8_t why = p.ReadU8();
+            const std::uint8_t relayVersion = p.ReadU8();
+            if (!p.Ok()) continue;
+            m_relayError = why == net::RelayRefusedHosted
+                ? "session code '" + m_relayCode + "' is already hosted"
+                : "the relay needs protocol version " + std::to_string(relayVersion) +
+                  " (this game speaks " + std::to_string(net::kRelayProtocolVersion) + ")";
+            OKAY_WARN("net: relay refused us: ", m_relayError);
+            m_relayLost = true;
+            return 0;
         }
         if (tag == net::RelayData) {
             const std::size_t payloadOff = 1 + 4;    // tag + srcSlot
@@ -1224,6 +1274,7 @@ void NetworkManager::ServerTick(float dt) {
             }
         }
     }
+    if (m_relayLost) { Stop(); return; }   // the relay refused this host (RelayError())
 
     // Time out silent clients (and age the move-check / rate-limit windows).
     for (auto it = m_clients.begin(); it != m_clients.end();) {
@@ -1444,6 +1495,7 @@ void NetworkManager::ClientTick(float dt) {
             if (m_rtt < 0.0f) m_rtt = 0.0f;
         }
     }
+    if (m_relayLost) { Stop(); return; }   // host gone or changed, or refused (RelayError())
 
     // Send our local state to the server.
     if (m_joined && m_localAvatar) {

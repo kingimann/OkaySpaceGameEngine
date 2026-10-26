@@ -15,8 +15,6 @@ struct ParseError {
 // so, rather than syntax that is silently skipped.
 const std::unordered_map<std::string, const char*>& NotYet() {
     static const std::unordered_map<std::string, const char*> m = {
-        {"try", "try / catch isn't supported yet"},
-        {"throw", "throw isn't supported yet"},
         {"struct", "structs aren't supported yet"},
         {"readonly", "readonly isn't supported yet: use const for a value that never changes"},
         {"sealed", "sealed isn't supported"},
@@ -508,6 +506,15 @@ private:
             s->loopBody = Statement();
             return s;
         }
+        if (IsWord("try") && Is(T::LBrace, 1)) return Try();
+        if (IsWord("catch") || IsWord("finally")) throw ParseError{loc, "This " + Peek().text + " has no try before it"};
+        if (IsWord("throw")) {   // throw new X(...); or throw; inside a catch
+            ++pos_;
+            auto s = std::make_unique<Stmt>(); s->kind = SK::Throw; s->loc = loc;
+            if (!Is(T::Semicolon)) s->expr = Expression();
+            Expect(T::Semicolon, "';'");
+            return s;
+        }
         if (Match(T::KwReturn)) {
             auto s = std::make_unique<Stmt>(); s->kind = SK::Return; s->loc = loc;
             if (!Is(T::Semicolon)) s->expr = Expression();
@@ -538,6 +545,32 @@ private:
             default: return true;
         }
     }
+    // try { } catch (T e) { } ... finally { }
+    std::unique_ptr<Stmt> Try() {
+        auto s = std::make_unique<Stmt>();
+        s->kind = SK::Try;
+        s->loc = Peek().loc;
+        ++pos_;
+        s->then = Block();
+        while (IsWord("catch")) {
+            CatchClause c;
+            c.loc = Peek().loc;
+            ++pos_;
+            if (Match(T::LParen)) {
+                c.typed = true;
+                c.type = Type(false);
+                if (Is(T::Ident)) { c.nameLoc = Peek().loc; c.name = Peek().text; ++pos_; }
+                Expect(T::RParen, "')'");
+            }
+            if (IsWord("when")) throw ParseError{Peek().loc, "catch ... when isn't supported: use an if inside the catch (and throw; to pass it on)"};
+            c.body = Block();
+            s->catches.push_back(std::move(c));
+        }
+        if (IsWord("finally")) { ++pos_; s->finallyBody = Block(); }
+        if (s->catches.empty() && !s->finallyBody) throw ParseError{s->loc, "A try needs a catch or a finally after it"};
+        return s;
+    }
+
     bool IsCaseLabel() const { return IsWord("case") || (IsWord("default") && Is(T::Colon, 1)); }
     // switch (x) { case 1: case 2: ... break; default: ... break; }
     std::unique_ptr<Stmt> Switch() {

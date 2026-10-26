@@ -1391,6 +1391,90 @@ static void Inheritance() {
     }
 }
 
+static void TryCatch() {
+    {   // throw / catch by class, engine errors as Exception, throw; and finally in every case
+        World w(
+            "class NotEnoughGold : Exception {\n"
+            "    public int needed;\n"
+            "    public NotEnoughGold(int needed) : base(\"Need \" + needed + \" gold\") { this.needed = needed; }\n"
+            "}\n"
+            "class Shop {\n"
+            "    public int gold = 5;\n"
+            "    public void Buy(int price) { if (price > gold) throw new NotEnoughGold(price - gold); gold -= price; }\n"
+            "}\n"
+            "class T : Behaviour {\n"
+            "    public int needed, finallies, passes, ret, caught;\n"
+            "    public string msg, nullMsg, order;\n"
+            "    int Tries() { try { return 1; } finally { finallies++; } }\n"
+            "    int Forever(int n) { return Forever(n + 1); }\n"
+            "    void Start() {\n"
+            "        Shop s = new Shop();\n"
+            "        try { s.Buy(3); s.Buy(10); msg = \"bought\"; }\n"
+            "        catch (NotEnoughGold e) { needed = e.needed; msg = e.Message; }\n"
+            "        finally { finallies++; }\n"
+            "        try { Shop none = null; none.Buy(1); }\n"
+            "        catch (Exception e) { nullMsg = e.Message; }\n"
+            "        order = \"\";\n"
+            "        try {\n"
+            "            try { throw new Exception(\"inner\"); }\n"
+            "            catch (Exception e) { order += \"c1\"; throw; }\n"
+            "            finally { order += \"f1\"; }\n"
+            "        } catch (Exception e) { order += \"c2:\" + e.Message; }\n"
+            "        ret = Tries();\n"
+            "        for (int i = 0; i < 3; i++) { try { if (i == 1) break; passes++; } finally { finallies++; } }\n"
+            "    }\n"
+            "}\n");
+        CHECK(w.loaded);
+        CHECK_NEAR(w.F("needed"), 8.0f, 1e-6f);
+        CHECK(w.S("msg") == "Need 8 gold");
+        CHECK(w.S("nullMsg") == "'none' is null here");
+        CHECK(w.S("order") == "c1f1c2:inner");
+        CHECK_NEAR(w.F("ret"), 1.0f, 1e-6f);
+        CHECK_NEAR(w.F("passes"), 1.0f, 1e-6f);
+        CHECK_NEAR(w.F("finallies"), 4.0f, 1e-6f);     // the first try, Tries(), and the loop's two passes (one breaks)
+    }
+    {   // an exception nobody catches is reported with its line; endless recursion can't be caught
+        g_errs.clear();
+        World a(
+            "class Oops : Exception { public Oops() : base(\"no ammo\") { } }\n"
+            "class T : Behaviour {\n"
+            "    void Start() { throw new Oops(); }\n"
+            "}\n");
+        CHECK(ErrHas("Start() line 3: Oops: no ammo"));
+        World b(Wrap(
+            "    public int caught;\n"
+            "    int Forever(int n) { return Forever(n + 1); }\n"
+            "    void Start() { try { Forever(0); } catch { caught = 1; } }\n"));
+        CHECK(ErrHas("calls itself too deeply"));
+        CHECK_NEAR(b.F("caught"), 0.0f, 1e-6f);
+    }
+    {   // mistakes, with line and column
+        auto d = Diags(
+            "class T : Behaviour {\n"   // 1
+            "    int F() { try { return 1; } finally { return 2; } }\n"   // 2
+            "    void Start() {\n"   // 3
+            "        throw;\n"   // 4
+            "        throw 5;\n"   // 5
+            "        try { } catch (int e) { }\n"   // 6
+            "        try { } catch (Exception) { } catch (Exception e) { }\n"   // 7
+            "        for (;;) { try { } finally { break; } }\n"   // 8
+            "        Exception x = new Exception(\"a\"); x.Message = \"b\";\n"   // 9
+            "        try { }\n"   // 10
+            "        Debug.Log(F());\n"   // 11
+            "    }\n"   // 12
+            "}\n"   // 13
+            );
+        CHECK(Has(d, 0, "return can't leave a finally block", 2, 43));
+        CHECK(Has(d, 0, "throw; on its own only works inside a catch (it throws the caught exception again)", 4, 9));
+        CHECK(Has(d, 0, "throw needs an Exception, like throw new Exception(\"what went wrong\"), not int", 5, 15));
+        CHECK(Has(d, 0, "catch takes Exception or a class that extends it, not int", 6, 24));
+        CHECK(Has(d, 0, "An earlier catch already catches Exception, so this one never runs", 7, 39));
+        CHECK(Has(d, 0, "break can't leave a finally block", 8, 38));
+        CHECK(Has(d, 0, "'Message' can only be read", 9, 45));
+        CHECK(Has(d, 0, "A try needs a catch or a finally after it", 10, 9));
+    }
+}
+
 static void Parity() {
     // The same C# snippet gives the same results on the old OkayScript runtime.
     const std::string src =
@@ -1467,9 +1551,9 @@ static void BackCompat() {
     CHECK(w.loaded);
     CHECK_NEAR(w.F("total"), 12.0f, 1e-6f);
     // Features still to come keep their message.
-    auto d = Diags(Wrap("    readonly int r = 1;\n    void Start() { try { } }\n"));
+    auto d = Diags(Wrap("    readonly int r = 1;\n    void Start() { yield return null; }\n"));
     CHECK(Has(d, 0, "readonly isn't supported yet"));
-    CHECK(Has(d, 0, "try / catch isn't supported yet"));
+    CHECK(Has(d, 0, "coroutines (yield) aren't supported yet"));
 }
 
 static void Fuzz() {
@@ -1515,6 +1599,7 @@ int main() {
     Lambdas();
     Events();
     Inheritance();
+    TryCatch();
     Parity();
     Followups();
     BackCompat();

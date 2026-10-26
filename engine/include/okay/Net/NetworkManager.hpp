@@ -97,10 +97,11 @@ public:
     std::uint32_t Corrections() const { return m_corrections; }
 
     // ---- Anti-cheat (opt-in; see okay/Net/AntiCheat.hpp) ------------------
-    /// Server: what clients may send. Off by default; an AntiCheatConfig
-    /// component (or a .okayac file) turns it on. With it off nothing changes.
+    /// Server: what clients may send. Off by default (set
+    /// anticheat.settings.enabled, e.g. from a parsed .okayac); with it off
+    /// nothing is checked and nothing is sent differently.
     AntiCheat anticheat;
-    /// Server: called for every message anti-cheat refuses (OnCheatDetected).
+    /// Server: called for every message anti-cheat refuses.
     void SetCheatHandler(std::function<void(const CheatReport&)> f) { m_cheatHandler = std::move(f); }
 
     // ---- Scores + roster (every peer sees who's in the room) -------------

@@ -102,7 +102,22 @@ int main() {
         CHECK(keep.ToText() == s.ToText());                        // a bad file changes nothing
         CHECK(!AntiCheatSettings::Parse("maxSyncSpeed nan\n", keep) && !AntiCheatSettings::Parse("kickAfterViolations -1\n", keep));
         CHECK(!AntiCheatSettings::Parse("bogus 1\n", keep));
+        CHECK(!AntiCheatSettings::Parse("maxSyncSpeed 5abc\n", keep));   // the whole value, not its start
         CHECK(!AntiCheatSettings().enabled);                       // off by default
+    }
+
+    // ---- SyncVar keys nested under a plain object id are that object's owner's ----
+    {
+        AntiCheat ac;
+        ac.settings.enabled = true;
+        ac.exists = [](const std::string& id) { return id == "car"; };
+        ac.SetOwner("car", 1);
+        CHECK(ac.ValidateSyncVar(1, "car.stats.hp"));
+        CHECK(!ac.ValidateSyncVar(2, "car.hp"));
+        CHECK(!ac.ValidateSyncVar(2, "car.stats.hp"));               // was allowed: only "car.stats" was checked
+        CHECK(!ac.ValidateSyncVar(2, "car/stats/hp"));
+        CHECK(ac.ValidateSyncVar(2, "round"));
+        CHECK(ac.ValidateSyncVar(2, "scores.car"));                  // "scores" isn't an object
     }
 
     // ---- With anti-cheat on -------------------------------------------------------------
@@ -184,6 +199,82 @@ int main() {
         bool aClean = true;
         for (const auto& rep : r.reports) aClean = aClean && rep.peer != A;
         CHECK(aClean);
+    }
+
+    // ---- Review follow-ups: the spawn parser, recovery, other paths, cleanup ----------
+    {
+        Room r;
+        CHECK(r.Open(true, ok));
+        const std::uint32_t A = r.a->LocalId(), B = r.b->LocalId();
+        GameObject* crate = r.a->SpawnOwned(ok, {0.0f, 0.0f, 0.0f});
+        const std::string aId = crate ? crate->GetComponent<NetworkSync>()->netId : "";
+        GameObject* bCrate = r.b->SpawnOwned(ok, {0.0f, 9.0f, 0.0f});
+        const std::string bId = bCrate ? bCrate->GetComponent<NetworkSync>()->netId : "";
+        r.Pump(30);
+        CHECK(r.srv->HasSync(aId) && r.srv->HasSync(bId));
+
+        // A spawn whose id the receiver reads differently from a naive check:
+        // odd separators, or a second id after a newline. Both name A's id.
+        r.b->Send("__spawn", ok + "|0;0;0|" + aId);
+        r.b->Send("__spawn", ok + "|0|0|0|" + aId + "\n|" + bId);
+        r.Pump(20);
+        CHECK(r.Reports(B, CheatKind::ForgedSpawnId) == 2);
+        CHECK(CountNamed(r.ss, "Crate") == 2);                  // nothing spawned over A's crate
+        for (int i = 0; i < 10; ++i) { crate->transform->localPosition.x += 0.05f; r.Pump(1); }
+        r.Pump(5);
+        CHECK(std::fabs(PosOf(r.ss, aId).x - crate->transform->localPosition.x) < 0.01f);   // still replicating
+
+        // One overshoot (a lag burst or a respawn jump) is one violation, not a lockout.
+        crate->transform->localPosition.x += 10.0f;
+        r.Pump(10);                                              // one sync interval or two
+        const int afterJump = r.srv->anticheat.Violations(A);
+        CHECK(afterJump >= 1);
+        for (int i = 0; i < 50; ++i) { crate->transform->localPosition.x += 0.08f; r.Pump(1); }   // 4 u/s
+        r.Pump(5);
+        CHECK(r.srv->anticheat.Violations(A) == afterJump);
+        CHECK(std::fabs(PosOf(r.ss, aId).x - crate->transform->localPosition.x) < 0.01f);
+
+        // Forged transforms over the reliable and direct paths are refused too.
+        const int forged = r.Reports(B, CheatKind::ForgedTransform);
+        r.b->SendReliable("__xform", aId + "|500 0 0 0 0 0 1");
+        r.b->SendTo(0, "__xform", aId + "|600 0 0 0 0 0 1");
+        r.Pump(20);
+        CHECK(r.Reports(B, CheatKind::ForgedTransform) == forged + 2);
+        CHECK(PosOf(r.ss, aId).x < 100.0f);
+
+        // Ids the server doesn't have are dropped without claiming anything or
+        // leaving state behind: an object named ahead of time, or a thousand
+        // made-up SpawnOwned ids.
+        const std::size_t tracked = r.srv->anticheat.TrackedObjects();
+        r.b->Send("__xform", std::string("door|1 2 3 0 0 0 1"));
+        for (int i = 0; i < 1000; ++i)
+            r.b->Send("__xform", "sp/" + std::to_string(B) + "/" + std::to_string(1000 + i) + "|1 2 3 0 0 0 1");
+        r.Pump(30);
+        CHECK(r.srv->anticheat.OwnerOf("door") == 0);
+        CHECK(r.srv->anticheat.TrackedObjects() == tracked);
+
+        // A nested key on A's object is still A's.
+        r.b->SetVar(aId + ".stats.hp", "0");
+        r.Pump(10);
+        CHECK(r.Reports(B, CheatKind::ForgedSyncVar) == 1);
+        CHECK(r.srv->GetVar(aId + ".stats.hp") != "0");
+
+        // Long uptime: the anti-cheat clock is a double, so after a week the
+        // budget still refills and normal movement is still fine.
+        r.srv->anticheat.Tick(7.0f * 86400.0f);
+        const int beforeWeek = r.srv->anticheat.Violations(A);
+        for (int i = 0; i < 30; ++i) { crate->transform->localPosition.x += 0.08f; r.Pump(1); }
+        r.Pump(5);
+        CHECK(r.srv->anticheat.Violations(A) == beforeWeek);
+
+        // When B leaves, its objects' tracks go with it.
+        bCrate->transform->localPosition.y += 0.1f;
+        r.Pump(10);
+        const std::size_t withB = r.srv->anticheat.TrackedObjects();
+        r.b->Stop();
+        r.Pump(30);
+        CHECK(r.srv->anticheat.TrackedObjects() < withB);
+        CHECK(r.srv->anticheat.Violations(B) == 0);
     }
 
     // ---- With anti-cheat off the same messages behave as before -----------------------

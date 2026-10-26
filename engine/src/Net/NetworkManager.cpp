@@ -71,6 +71,7 @@ bool NetworkManager::StartServer(std::uint16_t port) {
         auto it = m_syncObjs.find(id);
         return it != m_syncObjs.end() && it->second.owned;
     };
+    anticheat.exists = [this](const std::string& id) { return m_syncObjs.count(id) != 0; };
     anticheat.onCheat = [this](const CheatReport& r) { if (m_cheatHandler) m_cheatHandler(r); };
     if (snapshotRate > 0.0f) m_snapshotInterval = 1.0f / snapshotRate;
     OKAY_INFO("net: server '", serverName, "' listening on UDP ", port,
@@ -311,16 +312,13 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
     if (channel == "__spawn") {
         Scene* s = GetScene();
         if (!s) return;
-        std::stringstream ss(data);
-        std::string path; float x = 0, y = 0, z = 0; char sep;
-        std::getline(ss, path, '|');
-        ss >> x >> sep >> y >> sep >> z;
-        // Optional "|<netId>" marks a SpawnOwned object: attach a follower
-        // NetworkSync so its transform/animation track the authority that spawned it.
-        std::string netId; char bar;
-        if (ss.get(bar) && bar == '|') std::getline(ss, netId);
-        if (GameObject* g = SceneSerializer::InstantiateFromFile(*s, path)) {
-            if (g->transform) g->transform->localPosition = {x, y, z};
+        // "<path>|x|y|z[|<netId>]"; an optional netId marks a SpawnOwned object:
+        // attach a follower NetworkSync so its transform/animation track the
+        // authority that spawned it. (The same parser the anti-cheat checks with.)
+        const SpawnMessage m = ParseSpawnMessage(data);
+        const std::string& netId = m.netId;
+        if (GameObject* g = SceneSerializer::InstantiateFromFile(*s, m.path)) {
+            if (g->transform) g->transform->localPosition = m.pos;
             if (!netId.empty()) {
                 auto* ns = g->GetComponent<NetworkSync>();
                 if (!ns) ns = g->AddComponent<NetworkSync>();
@@ -860,14 +858,14 @@ void NetworkManager::Send(const std::string& channel, const std::string& data) {
 
 bool NetworkManager::AntiCheatAllows(std::uint32_t peer, const std::string& channel, const std::string& data) {
     if (!anticheat.settings.enabled) return true;
-    if (anticheat.ValidateMessage(peer, channel, data, m_serverTime)) return true;
+    if (anticheat.ValidateMessage(peer, channel, data)) return true;
     AntiCheatAfterRefusal(peer);
     return false;
 }
 
 bool NetworkManager::AntiCheatAllowsSyncVar(std::uint32_t peer, const std::string& key) {
     if (!anticheat.settings.enabled) return true;
-    if (anticheat.ValidateSyncVar(peer, key, m_serverTime)) return true;
+    if (anticheat.ValidateSyncVar(peer, key)) return true;
     AntiCheatAfterRefusal(peer);
     return false;
 }

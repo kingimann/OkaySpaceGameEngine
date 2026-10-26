@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <charconv>
 #include <cmath>
+#include <cstdlib>
+#include <iterator>
 #include <fstream>
 #include <sstream>
 
@@ -32,9 +34,11 @@ bool ParseBool(const std::string& v, bool& out) {
     if (v == "false" || v == "0" || v == "off" || v == "no") { out = false; return true; }
     return false;
 }
-bool ParseFloat(const std::string& v, float& out) {
-    std::istringstream is(v); float f = 0.0f;
-    if (!(is >> f) || !std::isfinite(f) || f < 0.0f) return false;
+bool ParseFloat(const std::string& v, float& out) {   // the whole value: "5abc" is not 5
+    if (v.empty()) return false;
+    char* end = nullptr;
+    const float f = std::strtof(v.c_str(), &end);
+    if (end != v.c_str() + v.size() || !std::isfinite(f) || f < 0.0f) return false;
     out = f; return true;
 }
 bool ParseInt(const std::string& v, int& out) {
@@ -59,6 +63,20 @@ long long SpawnIdPeer(const std::string& id) {
     return (long long)p;
 }
 } // namespace
+
+SpawnMessage ParseSpawnMessage(const std::string& data) {
+    // Kept byte-for-byte with what Deliver always did: path up to the first '|',
+    // three numbers with any one-char separators, then an optional "|<netId>"
+    // read to the end of the line.
+    SpawnMessage m;
+    std::stringstream ss(data);
+    char sep;
+    std::getline(ss, m.path, '|');
+    ss >> m.pos.x >> sep >> m.pos.y >> sep >> m.pos.z;
+    char bar;
+    if (ss.get(bar) && bar == '|') std::getline(ss, m.netId);
+    return m;
+}
 
 bool AntiCheatSettings::Parse(const std::string& text, AntiCheatSettings& out, std::string* error) {
     AntiCheatSettings s;
@@ -115,6 +133,7 @@ int AntiCheat::Violations(std::uint32_t peer) const {
 }
 
 void AntiCheat::Tick(float dt) {
+    m_clock += dt;
     for (auto& [id, p] : m_peers) {
         if ((p.syncVarTimer += dt) >= 1.0f) { p.syncVarTimer = 0.0f; p.syncVars = 0; }
         if ((p.violationTimer += dt) >= 60.0f) { p.violationTimer = 0.0f; p.violations = 0; }
@@ -123,18 +142,22 @@ void AntiCheat::Tick(float dt) {
 
 void AntiCheat::ForgetPeer(std::uint32_t peer) {
     m_peers.erase(peer);
-    for (auto it = m_owner.begin(); it != m_owner.end();) {
-        if (it->second == peer) { m_track.erase(it->first); it = m_owner.erase(it); }
-        else ++it;
-    }
+    for (auto it = m_owner.begin(); it != m_owner.end();)
+        it = it->second == peer ? m_owner.erase(it) : std::next(it);
+    for (auto it = m_track.begin(); it != m_track.end();)
+        it = it->second.peer == peer ? m_track.erase(it) : std::next(it);
 }
 
-void AntiCheat::Reset() { m_peers.clear(); m_owner.clear(); m_track.clear(); m_total = 0; }
+void AntiCheat::Reset() { m_peers.clear(); m_owner.clear(); m_track.clear(); m_total = 0; m_clock = 0.0; }
 
 bool AntiCheat::Refuse(std::uint32_t peer, CheatKind k, const std::string& detail) {
-    ++m_peers[peer].violations;
+    const int n = ++m_peers[peer].violations;
     ++m_total;
-    OKAY_WARN("anti-cheat: refused ", CheatKindName(k), " from peer ", peer, detail.empty() ? "" : (" (" + detail + ")"));
+    // A flood of refusals mustn't flood the log: a few per peer per minute.
+    if (n <= kLoggedPerMinute)
+        OKAY_WARN("anti-cheat: refused ", CheatKindName(k), " from peer ", peer, detail.empty() ? "" : (" (" + detail + ")"));
+    else if (n == kLoggedPerMinute + 1)
+        OKAY_WARN("anti-cheat: more refusals from peer ", peer, " this minute (counted, not logged)");
     if (onCheat) onCheat(CheatReport{peer, k, detail});
     return false;
 }
@@ -145,8 +168,10 @@ bool AntiCheat::MayDrive(std::uint32_t peer, const std::string& netId, bool clai
     if (minted >= 0) return (std::uint32_t)minted == peer;      // SpawnOwned: the id names its owner
     auto it = m_owner.find(netId);
     if (it != m_owner.end()) return it->second == peer;
-    if (claim) m_owner[netId] = peer;                            // first peer to drive it owns it
-    return claim;
+    // The first peer to drive an object that exists here (and nobody owns) owns
+    // it; an id the server doesn't have can't be claimed ahead of time.
+    if (claim && (!exists || exists(netId))) { m_owner[netId] = peer; return true; }
+    return false;
 }
 
 bool AntiCheat::SpawnAllowed(const std::string& path) const {
@@ -155,19 +180,18 @@ bool AntiCheat::SpawnAllowed(const std::string& path) const {
     return false;
 }
 
-bool AntiCheat::ValidateMessage(std::uint32_t peer, const std::string& channel, const std::string& data, float now) {
+bool AntiCheat::ValidateMessage(std::uint32_t peer, const std::string& channel, const std::string& data) {
     if (!settings.enabled || peer == 0) return true;   // off, or the host itself
     if (channel == "__spawn") {
-        // "<path>|x|y|z[|<netId>]"
-        const std::string path = data.substr(0, data.find('|'));
-        if (!SpawnAllowed(path)) return Refuse(peer, CheatKind::SpawnNotAllowed, path);
-        const std::size_t last = data.rfind('|');
-        std::size_t bars = (std::size_t)std::count(data.begin(), data.end(), '|');
-        if (bars >= 4 && last != std::string::npos) {
-            const std::string netId = data.substr(last + 1);
-            const long long minted = SpawnIdPeer(netId);
-            if (minted < 0 || (std::uint32_t)minted != peer) return Refuse(peer, CheatKind::ForgedSpawnId, netId);
-            m_owner[netId] = peer;
+        // Checked as parsed by the receiver (ParseSpawnMessage), never by a
+        // second reading of its own; one line only.
+        if (data.find_first_of("\r\n") != std::string::npos) return Refuse(peer, CheatKind::ForgedSpawnId, "multi-line spawn");
+        const SpawnMessage m = ParseSpawnMessage(data);
+        if (!SpawnAllowed(m.path)) return Refuse(peer, CheatKind::SpawnNotAllowed, m.path);
+        if (!m.netId.empty()) {
+            const long long minted = SpawnIdPeer(m.netId);
+            if (minted < 0 || (std::uint32_t)minted != peer) return Refuse(peer, CheatKind::ForgedSpawnId, m.netId);
+            m_owner[m.netId] = peer;
         }
         return true;
     }
@@ -180,23 +204,36 @@ bool AntiCheat::ValidateMessage(std::uint32_t peer, const std::string& channel, 
         const std::size_t bar = data.find('|');
         if (bar == std::string::npos) return true;   // malformed: the normal path ignores it
         const std::string id = data.substr(0, bar);
+        // Nobody can apply a transform for an object the server doesn't have, so
+        // it's dropped without counting and leaves no state behind.
+        if (exists && !exists(id)) return false;
         if (!MayDrive(peer, id, /*claim=*/true)) return Refuse(peer, CheatKind::ForgedTransform, id);
         if (settings.maxSyncSpeed > 0.0f) {
             std::istringstream ss(data.substr(bar + 1));
             Vec3 p; ss >> p.x >> p.y >> p.z;
             if (!ss || !std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z))
                 return Refuse(peer, CheatKind::SpeedHack, id + " (bad position)");
-            Track& t = m_track[id];
             const float rate = settings.maxSyncSpeed * 1.25f;          // 25% slack, like the avatar check
             const float cap = rate * 0.5f + 0.25f;
-            if (!t.have) { t.pos = p; t.t = now; t.budget = cap; t.have = true; return true; }
-            t.budget = std::min(cap, t.budget + rate * std::max(0.0f, now - t.t));
-            t.t = now;
+            auto it = m_track.find(id);
+            if (it == m_track.end()) {
+                m_track[id] = Track{p, m_clock, cap, peer};
+                return true;
+            }
+            Track& t = it->second;
+            t.budget = std::min(cap, t.budget + rate * (float)std::max(0.0, m_clock - t.t));
+            t.t = m_clock;
             const Vec3 d = p - t.pos;
             const float dist = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
-            if (dist > t.budget) return Refuse(peer, CheatKind::SpeedHack, id);   // stays at the last good spot
-            t.budget -= dist;
             t.pos = p;
+            if (dist > t.budget) {
+                // The jump is refused (not applied, not relayed, counted), but the
+                // track re-anchors on it: one lag burst or respawn mustn't lock the
+                // object out for good. Jumping again is another violation.
+                t.budget = 0.0f;
+                return Refuse(peer, CheatKind::SpeedHack, id);
+            }
+            t.budget -= dist;
         }
         return true;
     }
@@ -206,19 +243,24 @@ bool AntiCheat::ValidateMessage(std::uint32_t peer, const std::string& channel, 
     return true;
 }
 
-bool AntiCheat::ValidateSyncVar(std::uint32_t peer, const std::string& key, float) {
+bool AntiCheat::ValidateSyncVar(std::uint32_t peer, const std::string& key) {
     if (!settings.enabled || peer == 0) return true;
     PeerInfo& p = m_peers[peer];
     if (settings.maxSyncVarsPerSecond > 0 && ++p.syncVars > settings.maxSyncVarsPerSecond)
         return Refuse(peer, CheatKind::SyncVarFlood, key);
     if (settings.ownerOnlySyncVars) {
-        const std::size_t cut = key.find_last_of("./");
-        if (cut != std::string::npos && cut > 0) {
+        // Every prefix ending at a '.' or '/' may name an object ("car.hp",
+        // "car.stats.hp", "sp/3/1.hp"): if any of them is a networked object
+        // this peer doesn't own, the write is refused. Plain game-wide keys
+        // ("round", "score") stay writable.
+        for (std::size_t cut = key.find_first_of("./"); cut != std::string::npos; cut = key.find_first_of("./", cut + 1)) {
+            if (cut == 0) continue;
             const std::string netId = key.substr(0, cut);
-            // Only keys that name a networked object are owned; plain game-wide
-            // keys ("round", "score") stay writable.
-            const bool known = m_owner.count(netId) || SpawnIdPeer(netId) >= 0 || (serverOwns && serverOwns(netId));
-            if (known && !MayDrive(peer, netId, /*claim=*/false)) return Refuse(peer, CheatKind::ForgedSyncVar, key);
+            bool mine = true;   // an object nobody owns yet stays writable
+            if (serverOwns && serverOwns(netId)) mine = false;
+            else if (const long long minted = SpawnIdPeer(netId); minted >= 0) mine = (std::uint32_t)minted == peer;
+            else if (auto o = m_owner.find(netId); o != m_owner.end()) mine = o->second == peer;
+            if (!mine) return Refuse(peer, CheatKind::ForgedSyncVar, key);
         }
     }
     return true;

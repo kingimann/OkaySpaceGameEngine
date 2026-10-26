@@ -12,8 +12,8 @@
 //   * SyncVar writes to "<netId>.<name>" / "<netId>/<name>" keys of an object it
 //     doesn't own, and SyncVars past a per-second rate;
 //   * NetworkSync objects moving faster than maxSyncSpeed (speed hacks).
-// Each refusal is reported (OnCheatDetected) and counts as a violation; a peer
-// with too many is kicked.
+// Each refusal is reported (NetworkManager::SetCheatHandler) and counts as a
+// violation; a peer with too many is kicked.
 //
 // It is a small layer NetworkManager calls from its receive path, so the wire
 // format and the behaviour with anti-cheat off are exactly as before.
@@ -27,7 +27,13 @@
 
 namespace okay {
 
-/// What the server enforces (an AntiCheatConfig component or a .okayac file).
+/// The "__spawn" message, "<path>|x|y|z[|<netId>]", read exactly the way a
+/// receiving peer reads it (NetworkManager::Deliver uses this too), so what the
+/// server checks is always what gets spawned.
+struct SpawnMessage { std::string path; Vec3 pos; std::string netId; };
+SpawnMessage ParseSpawnMessage(const std::string& data);
+
+/// What the server enforces (set in code or parsed from .okayac text).
 struct AntiCheatSettings {
     bool  enabled = false;
     /// Prefab paths clients may __spawn / SpawnOwned. Empty = clients may spawn nothing.
@@ -73,14 +79,17 @@ public:
 
     /// A message a client sent on `channel` (before the server applies or relays
     /// it). False = refuse it (it's reported and counted).
-    bool ValidateMessage(std::uint32_t peer, const std::string& channel, const std::string& data, float now);
+    bool ValidateMessage(std::uint32_t peer, const std::string& channel, const std::string& data);
     /// A SyncVar write from a client. False = refuse it.
-    bool ValidateSyncVar(std::uint32_t peer, const std::string& key, float now);
+    bool ValidateSyncVar(std::uint32_t peer, const std::string& key);
 
     /// Objects the server itself drives (Authority::Host on the server): clients
     /// may never send their transform / despawn them.
     std::function<bool(const std::string& netId)> serverOwns;
-    /// Extra per-RPC check (NetValidator / OnValidateRpc): false refuses it.
+    /// Networked objects that exist on the server. Transforms for any other id
+    /// are dropped quietly (nobody could apply them) and claim nothing.
+    std::function<bool(const std::string& netId)> exists;
+    /// Extra per-RPC check (e.g. per-RPC rules from game code): false refuses it.
     std::function<bool(std::uint32_t peer, const std::string& name, const std::string& data)> validateRpc;
     /// Called for every refusal.
     std::function<void(const CheatReport&)> onCheat;
@@ -95,7 +104,10 @@ public:
     int Violations(std::uint32_t peer) const;
     /// Total refusals since the server started (all peers).
     int TotalReports() const { return m_total; }
-    /// Per-second / per-minute windows.
+    /// Objects whose movement is being tracked (for tests / stats).
+    std::size_t TrackedObjects() const { return m_track.size(); }
+    /// Advance the anti-cheat clock (a double: it stays exact for months of
+    /// uptime) and the per-second / per-minute windows.
     void Tick(float dt);
     /// A peer left: forget its counters (and its objects' last positions).
     void ForgetPeer(std::uint32_t peer);
@@ -108,15 +120,18 @@ private:
         int syncVars = 0;
         float syncVarTimer = 0.0f;
     };
-    // A NetworkSync object's last accepted position and its travel budget: it
-    // refills at 1.25 x maxSyncSpeed (capped at half a second of travel + a
-    // quarter unit), and every move spends from it, so many small fast hops are
-    // caught as surely as one big one.
-    struct Track { Vec3 pos; float t = 0.0f; float budget = 0.0f; bool have = false; };
+    /// Refusals logged per peer per minute; the rest are only counted.
+    static constexpr int kLoggedPerMinute = 5;
+    // A NetworkSync object's last position and its travel budget: it refills at
+    // 1.25 x maxSyncSpeed (capped at half a second of travel + a quarter unit),
+    // and every move spends from it, so many small fast hops are caught as surely
+    // as one big one. `peer` is who drives it (so ForgetPeer drops it).
+    struct Track { Vec3 pos; double t = 0.0; float budget = 0.0f; std::uint32_t peer = 0; };
     std::unordered_map<std::uint32_t, PeerInfo> m_peers;
     std::unordered_map<std::string, std::uint32_t> m_owner;   // netId -> owning peer
     std::unordered_map<std::string, Track> m_track;           // netId -> last accepted position
     int m_total = 0;
+    double m_clock = 0.0;
 
     bool Refuse(std::uint32_t peer, CheatKind k, const std::string& detail);
     /// True if `peer` may drive `netId` (claiming it if nobody has).

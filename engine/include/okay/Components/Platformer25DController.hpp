@@ -445,7 +445,9 @@ private:
         return 1.8f;
     }
     RaycastHit3D Ray(Scene* sc, const Vec3& from, const Vec3& dir, float len) const {
-        // Solid things only: trigger volumes (pickups, checkpoints) are not ground or walls.
+        // Solid things only: trigger volumes (pickups, checkpoints) are not ground
+        // or walls, and neither are the player's own parts (a held item, a model's pieces).
+        Physics3D::IgnoreHierarchy own(gameObject);
         return sc->physics3D().Raycast(*sc, from, dir, len, gameObject, Physics3D::kAllLayers, false);
     }
     bool Solid(const RaycastHit3D& h) const {
@@ -502,7 +504,7 @@ private:
         RaycastHit3D top = Ray(sc, Vec3{probeX, o.y + stepHeight + 0.1f, o.z}, Vec3{0, -1, 0}, stepHeight + 0.12f);
         if (!top.hit || top.normal.y < 0.7f) return false;
         const float rise = top.point.y - o.y;
-        if (rise <= 0.005f || rise > stepHeight + 0.01f) return false;
+        if (rise < kMinStepHeight || rise > stepHeight + 0.01f) return false;   // lower is a seam, not a step
         // Room for the body up there?
         const float bodyH = BodyHeight();
         const Vec3 c{o.x + dir * 0.1f, top.point.y + bodyH * 0.5f + 0.02f, o.z};

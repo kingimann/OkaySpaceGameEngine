@@ -142,14 +142,6 @@ int main() {
         CHECK(vm->GetGlobal("lastPeer").AsFloat() == (float)a->LocalId());
         CHECK(srv->anticheat.Violations(a->LocalId()) == 3);
 
-        // The default rate: 100 calls in one go, at most 30 run; past the
-        // violation limit the spammer is kicked.
-        pump(60);   // a fresh second
-        for (int i = 0; i < 100; ++i) b->RpcReliable("spam", "x");
-        for (int i = 0; i < 100 && !b->WasKicked(); ++i) pump(1);
-        CHECK(ran["spam"] <= 30 && ran["spam"] >= 25);
-        CHECK(b->WasKicked());
-        CHECK(vm->GetGlobal("lastKind").AsString() == "rpc flood");
         // A NetValidator with its own rate takes the default's place for its RPC.
         pump(60);
         for (int i = 0; i < 60; ++i) a->RpcReliable("fire", "x");
@@ -158,7 +150,6 @@ int main() {
         CHECK(nv->TrackedPeers() == 1);
 
         // A peer leaving is forgotten by NetValidator too.
-        b->Stop();   // (already kicked; a is the one it counted)
         Scene cc("C");
         auto* c = cc.CreateGameObject("Net")->AddComponent<NetworkManager>();
         CHECK(c->StartClient("127.0.0.1", srv->ServerPort()));
@@ -170,6 +161,16 @@ int main() {
         c->Stop();
         for (int i = 0; i < 20; ++i) { pump(1); cc.Update(0.02f); }
         CHECK(nv->TrackedPeers() == 1);
+
+        // The default rate: 100 calls in one go, at most 30 run; past the
+        // violation limit the spammer is kicked.
+        pump(60);   // a fresh second (after the kick, nobody new joins from this address for a while)
+        for (int i = 0; i < 100; ++i) b->RpcReliable("spam", "x");
+        for (int i = 0; i < 100 && !b->WasKicked(); ++i) pump(1);
+        CHECK(ran["spam"] <= 30 && ran["spam"] >= 25);
+        CHECK(b->WasKicked());
+        CHECK(vm->GetGlobal("lastKind").AsString() == "rpc flood");
+        b->Stop();
 
         // Deactivating the rules turns the checks off and nothing calls into them.
         const float checkedBefore = vm->GetGlobal("checked").AsFloat();

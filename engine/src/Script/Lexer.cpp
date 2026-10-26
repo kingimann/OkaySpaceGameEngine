@@ -68,6 +68,7 @@ const char* TokenName(T t) {
         case T::SlashEq: return "'/='"; case T::PercentEq: return "'%='"; case T::PlusPlus: return "'++'";
         case T::MinusMinus: return "'--'";
         case T::QuestionDot: return "'?.'"; case T::QuestionQuestion: return "'??'"; case T::QuestionQuestionEq: return "'?\?='";
+        case T::Arrow: return "'=>'";
         case T::InterpBegin: return "$\"";
         case T::InterpHole: return "'{'";
         case T::InterpHoleEnd: return "'}'";
@@ -251,7 +252,7 @@ std::vector<Token> LexAt(const std::string& src, std::vector<ScriptDiagnostic>& 
         static const Op ops[] = {
             {"++", T::PlusPlus}, {"--", T::MinusMinus}, {"+=", T::PlusEq}, {"-=", T::MinusEq}, {"*=", T::StarEq},
             {"/=", T::SlashEq}, {"%=", T::PercentEq}, {"==", T::EqEq}, {"!=", T::NotEq}, {"<=", T::Le},
-            {">=", T::Ge}, {"&&", T::AndAnd}, {"||", T::OrOr}};
+            {">=", T::Ge}, {"&&", T::AndAnd}, {"||", T::OrOr}, {"=>", T::Arrow}};
         bool matched = false;
         if (peek() == '?' && peek(1) == '?') {   // ?? and ??=
             const bool eq = peek(2) == '=';

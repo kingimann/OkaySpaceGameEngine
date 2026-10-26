@@ -48,6 +48,9 @@ fi
 # secret), so the release build is online with no key file on disk.
 [ -n "${OKAY_DEFAULT_ACCOUNT_URL:-}" ] && EXTRA+=("-DOKAY_DEFAULT_ACCOUNT_URL=$OKAY_DEFAULT_ACCOUNT_URL")
 [ -n "${OKAY_DEFAULT_ACCOUNT_KEY:-}" ] && EXTRA+=("-DOKAY_DEFAULT_ACCOUNT_KEY=$OKAY_DEFAULT_ACCOUNT_KEY")
+# The launcher's trusted anti-cheat keys (public ed25519 keys, hex, comma-separated;
+# docs/anticheat.md). It applies them to the official game only; the player gets none.
+[ -n "${OKAY_AC_TRUSTED_KEYS:-}" ] && EXTRA+=("-DOKAY_AC_TRUSTED_KEYS=$OKAY_AC_TRUSTED_KEYS")
 # Authenticated packet encryption (libsodium). Point OKAY_SODIUM_MINGW_PREFIX at the
 # extracted libsodium-win64 prebuilt (contains include/sodium.h and lib/libsodium.a).
 # It's statically linked, so no extra DLL ships. If unset, the build is unencrypted.

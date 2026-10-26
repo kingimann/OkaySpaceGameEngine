@@ -6,6 +6,7 @@
 #include "okay/Net/Matchmaking.hpp"
 #include "okay/Net/MatchResults.hpp"
 #include "okay/Platform/Account/Account.hpp"
+#include "okay/Platform/Account/AccountService.hpp"   // Sha256Hex: the cache is keyed by a token's hash
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Core/Time.hpp"
@@ -100,7 +101,7 @@ bool KickReporter::File(const NetworkManager::AntiCheatKick& k, double now) {
     }
     const std::string reason = "[server check] kicked by the server's anti-cheat" + (kinds.empty() ? std::string() : " (" + kinds + ")");
     okayac::backend::Request q;
-    if (!okayac::backend::FileReport(k.userId, m_game, reason, "player: " + k.name + "\n" + details, "", q)) return false;
+    if (!okayac::backend::FileServerKick(k.userId, m_game, reason, "player: " + k.name + "\n" + details, q)) return false;
     m_lastByUser[k.userId] = now;
     m_sent.push_back(now);
     m_send(q.path, q.method, q.body, q.header);
@@ -423,8 +424,8 @@ struct AsyncTokenCheck::Impl {
     Verify verify;
     float cacheSeconds = 300.0f;
     Lock lock;
-    std::map<std::string, Entry> cache;
-    std::deque<std::string> queue;
+    std::map<std::string, Entry> cache;               // by SHA-256 of the token, not the token itself
+    std::deque<std::pair<std::string, std::string>> queue;   // (token, its hash)
     bool stop = false;
 #if defined(_WIN32)
     HANDLE thread = nullptr;
@@ -435,12 +436,13 @@ struct AsyncTokenCheck::Impl {
 
     void Run() {
         for (;;) {
-            std::string token;
+            std::string token, key;
             {
                 Guard g(lock);
                 while (!stop && queue.empty()) lock.wait();
                 if (stop) return;
-                token = queue.front();
+                token = std::move(queue.front().first);
+                key = std::move(queue.front().second);
                 queue.pop_front();
             }
             std::string uid;
@@ -448,7 +450,7 @@ struct AsyncTokenCheck::Impl {
             try { ok = verify && verify(token, uid); } catch (...) { ok = false; }
             Guard g(lock);
             const double now = NowSeconds();
-            cache[token] = Entry{ok ? 1 : 0, ok ? uid : std::string(), now};
+            cache[key] = Entry{ok ? 1 : 0, ok ? uid : std::string(), now};
             // Forget long-expired answers so a long-running server doesn't grow forever.
             for (auto it = cache.begin(); it != cache.end();)
                 it = (it->second.state >= 0 && now - it->second.at > cacheSeconds * 4) ? cache.erase(it) : std::next(it);
@@ -478,9 +480,10 @@ AsyncTokenCheck::~AsyncTokenCheck() {
 
 int AsyncTokenCheck::Check(const std::string& token, std::string& outUserId) {
     if (token.empty()) return 0;   // anonymous: rejected when sign-in is required
+    const std::string key = account::detail::Sha256Hex(token);
     Guard g(m->lock);
     const double now = NowSeconds();
-    auto it = m->cache.find(token);
+    auto it = m->cache.find(key);
     if (it != m->cache.end()) {
         if (it->second.state < 0) return -1;   // the worker is on it
         if (now - it->second.at <= m->cacheSeconds) {
@@ -488,8 +491,11 @@ int AsyncTokenCheck::Check(const std::string& token, std::string& outUserId) {
             return it->second.state;
         }
     }
-    m->cache[token] = Impl::Entry{-1, std::string(), now};
-    m->queue.push_back(token);
+    // Every new token is a web request: a flood of them waits no longer than
+    // a short queue, the rest are told to come back.
+    if (m->queue.size() >= kMaxQueued) return -2;
+    m->cache[key] = Impl::Entry{-1, std::string(), now};
+    m->queue.emplace_back(token, key);
     m->lock.notify();
     return -1;
 }

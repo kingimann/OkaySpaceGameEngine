@@ -80,6 +80,11 @@
 #include "okay/Components/UILayoutGroup.hpp"
 #include "okay/Components/UIFlexItem.hpp"
 #include "okay/Components/UIMask.hpp"
+#include "okay/Components/UIFrame.hpp"
+#include "okay/Components/UIModal.hpp"
+#include "okay/Components/UIContextMenu.hpp"
+#include "okay/Components/UIKeybindField.hpp"
+#include "okay/Components/UIElement.hpp"   // GetUIRect: settle loaded UIFrames
 #include "okay/Components/UIListView.hpp"
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/WorldUI.hpp"
@@ -698,6 +703,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             for (const auto& tr : asm2->anyState) out << " " << tr.offset;
             out << "\n";
         }
+        // Per-state full-body IK weight, where it stops following ikWeight
+        // (a newer record; older builds skip it).
+        bool anyFb = false;
+        for (const auto& st : asm2->states) anyFb = anyFb || st.fullBodyIkWeight >= 0.0f;
+        if (anyFb) {
+            out << "  animsmfb " << asm2->states.size();
+            for (const auto& st : asm2->states) out << " " << st.fullBodyIkWeight;
+            out << "\n";
+        }
         // Muted transitions.
         bool anyMute = false;
         for (const auto& st : asm2->states) for (const auto& tr : st.transitions) anyMute = anyMute || tr.muted;
@@ -1027,7 +1041,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << lb->weight << " " << lb->minBend << " " << lb->maxBend << " " << (lb->matchTargetRotation ? 1 : 0)
             << " " << lb->target.x << " " << lb->target.y << " " << lb->target.z
             << " " << lb->pole.x << " " << lb->pole.y << " " << lb->pole.z
-            << " " << (lb->orient ? 1 : 0) << "\n";
+            << " " << (lb->orient ? 1 : 0) << " " << (int)lb->poleMode << " " << lb->softness
+            << " " << lb->targetRotation.x << " " << lb->targetRotation.y << " " << lb->targetRotation.z
+            << " " << lb->targetRotation.w << "\n";
     }
     if (auto* ci = go->GetComponent<ChainIK>()) {
         out << "  chainik " << Quote(ci->targetName) << " " << ci->weight << " " << ci->iterations
@@ -1087,7 +1103,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* ph = go->GetComponent<ProceduralObjectHolding>()) {
         out << "  objholding";
         KvOut k{out};
-        k("hand", (int)ph->primaryHand)("style", (int)ph->holdingStyle).b("armIK", ph->armIK)("transition", ph->transitionTime);
+        k("hand", (int)ph->primaryHand)("style", (int)ph->holdingStyle).b("armIK", ph->armIK)("transition", ph->transitionTime)
+         .b("body", ph->bodyAdjustment)("carry", (int)ph->carryAnimations);
         out << "\n";
     }
     if (auto* rm = go->GetComponent<RootMotion>()) {
@@ -2157,6 +2174,32 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (int)fi->alignSelf << "\n";
     }
     if (auto* mk = go->GetComponent<UIMask>()) out << "  uimask " << (mk->showGraphic ? 1 : 0) << "\n";
+    if (auto* md = go->GetComponent<UIModal>()) {
+        out << "  uimodal " << (md->dimBackground ? 1 : 0) << " "
+            << md->dimColor.r << " " << md->dimColor.g << " " << md->dimColor.b << " " << md->dimColor.a << " "
+            << (md->closeOnCancel ? 1 : 0) << " " << (md->closeOnClickOutside ? 1 : 0) << "\n";
+    }
+    if (auto* cm = go->GetComponent<UIContextMenu>()) {
+        auto c4 = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
+        out << "  uicontext " << (cm->anywhere ? 1 : 0) << " " << cm->itemHeight << " " << cm->width << " " << cm->textSize;
+        c4(cm->background); c4(cm->hoverColor); c4(cm->textColor); c4(cm->borderColor);
+        out << " " << cm->items.size();
+        for (const std::string& it : cm->items) out << " " << Quote(it);
+        out << "\n";
+    }
+    if (auto* kb = go->GetComponent<UIKeybindField>()) {
+        auto c4 = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
+        out << "  uikeybind " << kb->position.x << " " << kb->position.y << " " << kb->size.x << " " << kb->size.y
+            << " " << (int)kb->anchor << " " << Quote(kb->action) << " " << (int)(unsigned char)kb->key
+            << " " << (int)(unsigned char)kb->defaultKey << " " << Quote(kb->prefKey) << " " << kb->textSize;
+        c4(kb->background); c4(kb->keyColor); c4(kb->listenColor); c4(kb->textColor);
+        out << " " << (kb->interactable ? 1 : 0) << " " << (kb->focusable ? 1 : 0) << "\n";
+    }
+    if (auto* fr = go->GetComponent<UIFrame>()) {
+        out << "  uiframe " << fr->anchorMin.x << " " << fr->anchorMin.y << " " << fr->anchorMax.x << " " << fr->anchorMax.y
+            << " " << fr->pivot.x << " " << fr->pivot.y << " " << fr->position.x << " " << fr->position.y
+            << " " << fr->size.x << " " << fr->size.y << "\n";
+    }
     if (auto* sv = go->GetComponent<UIScrollView>()) {
         out << "  uiscroll " << sv->position.x << " " << sv->position.y << " "
             << sv->size.x << " " << sv->size.y << " " << (int)sv->anchor << " "
@@ -3119,6 +3162,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         float o = 0; in >> o;
                         if (k < (long)sm2->anyState.size()) sm2->anyState[k].offset = o;
                     }
+                } else if (field == "animsmfb") {
+                    auto* sm2 = smFor();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n && in; ++i) {
+                        float w = -1.0f; in >> w;
+                        if (i < (long)sm2->states.size()) sm2->states[i].fullBodyIkWeight = w;
+                    }
                 } else if (field == "animsmparams") {
                     auto* sm2 = smFor();
                     long n = 0; in >> n;
@@ -3419,10 +3469,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> lb->target.x >> lb->target.y >> lb->target.z
                        >> lb->pole.x >> lb->pole.y >> lb->pole.z;
                     lb->matchTargetRotation = (mr != 0);
-                    // Optional trailing field (newer files): orient bones toggle.
+                    // Optional trailing fields (newer files): orient bones toggle, pole mode,
+                    // softness, target rotation. Files from before the pole mode bent toward
+                    // the world direction.
                     { std::string rest; std::getline(in, rest);
-                      std::istringstream rs(rest); int o;
-                      if (rs >> o) lb->orient = (o != 0); }
+                      std::istringstream rs(rest); int o, pm;
+                      if (rs >> o) lb->orient = (o != 0);
+                      lb->poleMode = (rs >> pm) ? (LimbIK::PoleMode)std::clamp(pm, 0, 2) : LimbIK::PoleMode::World;
+                      Quat q;
+                      if (rs >> lb->softness >> q.x >> q.y >> q.z >> q.w) lb->targetRotation = q; }
                 } else if (field == "chainik") {
                     auto* ci = go->AddComponent<ChainIK>();
                     ci->targetName = ReadQuoted(in);
@@ -3478,6 +3533,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     : hand == 2 ? ProceduralObjectHolding::Hand::Both : ProceduralObjectHolding::Hand::Right;
                     ph->holdingStyle = st == 1 ? ProceduralObjectHolding::StyleMode::Custom : ProceduralObjectHolding::StyleMode::Automatic;
                     k.b("armIK", ph->armIK); k.f("transition", ph->transitionTime);
+                    int carry = 0; k.b("body", ph->bodyAdjustment); k.i("carry", carry);
+                    ph->carryAnimations = carry == 1 ? ProceduralObjectHolding::CarryAnim::Custom : ProceduralObjectHolding::CarryAnim::Automatic;
                 } else if (field == "fbikx") {
                     if (auto* fb = go->GetComponent<FullBodyIK>())
                         in >> fb->blendSpeed >> fb->goalSmoothing >> fb->lookSmoothing >> fb->armMinBend >> fb->legMinBend;
@@ -5443,6 +5500,40 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int as = 0;
                     in >> fi->grow >> fi->shrink >> fi->baseSize.x >> fi->baseSize.y >> as;
                     fi->alignSelf = (UIFlexItem::Align)as;
+                } else if (field == "uiframe") {
+                    // Read after or before the widget's own line: the end of the parse
+                    // makes the frame the source of truth and mirrors it back.
+                    auto* fr = go->AddComponent<UIFrame>();
+                    in >> fr->anchorMin.x >> fr->anchorMin.y >> fr->anchorMax.x >> fr->anchorMax.y
+                       >> fr->pivot.x >> fr->pivot.y >> fr->position.x >> fr->position.y >> fr->size.x >> fr->size.y;
+                } else if (field == "uimodal") {
+                    auto* md = go->AddComponent<UIModal>();
+                    int dim = 1, cc = 1, co = 0;
+                    in >> dim >> md->dimColor.r >> md->dimColor.g >> md->dimColor.b >> md->dimColor.a >> cc >> co;
+                    md->dimBackground = dim != 0; md->closeOnCancel = cc != 0; md->closeOnClickOutside = co != 0;
+                } else if (field == "uicontext") {
+                    auto* cm = go->AddComponent<UIContextMenu>();
+                    auto c4 = [&](Color& c) { in >> c.r >> c.g >> c.b >> c.a; };
+                    int any = 0; std::size_t n = 0;
+                    in >> any >> cm->itemHeight >> cm->width >> cm->textSize;
+                    c4(cm->background); c4(cm->hoverColor); c4(cm->textColor); c4(cm->borderColor);
+                    in >> n;
+                    cm->anywhere = any != 0;
+                    cm->items.clear();
+                    for (std::size_t i = 0; i < n && in; ++i) cm->items.push_back(ReadQuoted(in));
+                } else if (field == "uikeybind") {
+                    auto* kb = go->AddComponent<UIKeybindField>();
+                    auto c4 = [&](Color& c) { in >> c.r >> c.g >> c.b >> c.a; };
+                    int an = 0, k = 32, dk = 32, inter = 1, foc = 1;
+                    in >> kb->position.x >> kb->position.y >> kb->size.x >> kb->size.y >> an;
+                    kb->action = ReadQuoted(in);
+                    in >> k >> dk;
+                    kb->prefKey = ReadQuoted(in);
+                    in >> kb->textSize;
+                    c4(kb->background); c4(kb->keyColor); c4(kb->listenColor); c4(kb->textColor);
+                    in >> inter >> foc;
+                    kb->anchor = (UIAnchor)an; kb->key = (char)k; kb->defaultKey = (char)dk;
+                    kb->interactable = inter != 0; kb->focusable = foc != 0;
                 } else if (field == "uimask") {
                     auto* mk = go->AddComponent<UIMask>();
                     int sg = 1; in >> sg; mk->showGraphic = sg != 0;
@@ -5932,6 +6023,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
     // itself: give it the Animator that plays it now (its state clips carried over).
     if (version < 2)
         for (auto& [idx, go] : byIndex) { (void)idx; HumanoidLibrary::EnsureAnimator(go); }
+    // Make each loaded UIFrame the source of truth for its widget's fields now, so
+    // a script that writes those fields in its Start moves the frame.
+    for (auto& [idx, go] : byIndex) { (void)idx; if (go->GetComponent<UIFrame>()) GetUIRect(go); }
     return true;
 }
 

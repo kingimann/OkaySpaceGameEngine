@@ -19,6 +19,7 @@
 #include "okay/Math/Mathf.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/ModelAnimator.hpp"
+#include "okay/Components/IKBones.hpp"
 #include <cmath>
 #include <string>
 
@@ -82,23 +83,7 @@ public:
         if (!s) return;
         // Bones resolve inside this character first (two copies of one model share
         // bone names), then anywhere in the scene.
-        Transform* top = transform;
-        while (top && top->Parent()) top = top->Parent();
-        auto inTree = [&](const std::string& n) -> Transform* {
-            if (!top) return nullptr;
-            std::vector<Transform*> stack{top};
-            while (!stack.empty()) {
-                Transform* t = stack.back(); stack.pop_back();
-                if (t->gameObject && t->gameObject->name == n) return t;
-                for (Transform* c : t->Children()) stack.push_back(c);
-            }
-            return nullptr;
-        };
-        auto R = [&](Transform*& t, const std::string& n) {
-            if (t || n.empty()) return;
-            t = inTree(n);
-            if (!t) if (GameObject* g = s->Find(n)) t = g->transform;
-        };
+        auto R = [&](Transform*& t, const std::string& n) { if (!t) t = ResolveBone(s, gameObject, n); };
         R(leftHip, leftHipName);   R(leftKnee, leftKneeName);   R(leftFoot, leftFootName);
         R(rightHip, rightHipName); R(rightKnee, rightKneeName); R(rightFoot, rightFootName);
         R(pelvis, pelvisName);

@@ -192,7 +192,17 @@ animation (state machine, blending, crossfades), correcting the final pose:
 - **Aim IK** — point one bone at a target (weapon, turret, head). **Auto:
   Head** finds the head bone.
 - **Limb IK** — arm reach/grab. **Auto: L Arm / R Arm** map
-  shoulder → forearm → hand (fingers excluded).
+  shoulder → forearm → hand (fingers excluded). The bones turn to reach, so
+  they keep their length and the mesh bends with them. A **Weight** below 1
+  bends the limb part of the way.
+  - **Pole Mode** sets where the elbow or knee points when there's no Pole
+    object. **Auto** keeps the animation's own bend; **Character** turns
+    with the character; **World** is a fixed direction.
+  - **Softness** eases the last stretch to full reach, so the limb doesn't
+    snap straight.
+  - **Match Target Rotation** without a target object uses **Target
+    Rotation**.
+  - A broken target (NaN) leaves the animated pose alone.
 - **Chain IK** — long chains (tails, tentacles), FABRIK/CCD.
 - **Foot IK** — see below.
 
@@ -806,6 +816,20 @@ elbows bend down and out, and the object moves with the body.
   bones) and on imported humanoids (bones found by name, through the Full Body IK
   the character already has or one it adds). Looking around with a controller's
   *IK Look* turns the chest before the hands are placed, so they stay on the grips.
+- **Body Adjustment** (on by default): a heavy or big load (from 3 kg up to
+  30 kg, more for big loads and the *Heavy* style) leans the torso back. The
+  lean is an additive layer on the character's animation, so walking and
+  running keep their motion under it, and it eases in and out. The load also
+  slows the character down (down to 0.55x at the heaviest; `SpeedMultiplier()`).
+  The first-person, third-person, shooter, top-down and click-to-move
+  controllers apply it through `MoveSpeedScale()`, the one shared movement-speed
+  hook, so the server and a predicting client agree. The object is also pushed
+  out in front instead of sinking into the chest or belly.
+- **Carry Animations**: *Automatic* is the built-in lean. *Custom* leaves the
+  posture to your Animator: it gets the parameters `holding` (bool),
+  `carryStyle` (int: 0 small item, 1 custom, 2 pistol, 3 rifle, 4 box,
+  5 flashlight, 6 sword, 7 cup, 8 heavy) and `carryWeight` (kg) for its own
+  carry states or layer. The hands still go on the grips either way.
 - Scripts: `hold_nearest(range)` and `hold_pickup("Crate")` return 1 when the
   object is in the hands, `hold_drop()` lets go, `hold_object()` is the name of
   what's held ("" when nothing).

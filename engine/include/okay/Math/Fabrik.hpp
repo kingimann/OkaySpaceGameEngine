@@ -2,6 +2,7 @@
 #include <cmath>
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Math/IKMath.hpp"
 #include <vector>
 
 namespace okay {
@@ -12,18 +13,27 @@ namespace okay {
 /// chains (spider legs, tentacles, spines, two-hands-on-a-wall) where the closed-
 /// form two-bone solver can't. Solves in-place on `joints` (root .. tip); `len`
 /// holds the n-1 segment lengths.
+///
+/// A root or target that isn't finite, a chain with no length, or a target
+/// sitting on the root leaves `joints` exactly as they are.
 inline void SolveFabrik(std::vector<Vec3>& joints, const std::vector<float>& len,
                         const Vec3& target, int iterations = 10, float tolerance = 1e-3f) {
     const int n = static_cast<int>(joints.size());
     if (n < 2 || static_cast<int>(len.size()) < n - 1) return;
 
     const Vec3 root = joints[0];
+    if (!Finite(root) || !Finite(target)) return;
     float total = 0.0f;
     for (int i = 0; i < n - 1; ++i) total += len[i];
+    const Vec3 toTarget = target - root;
+    const float dist = toTarget.Magnitude();
+    if (!(total > 1e-9f) || !(dist > 1e-6f)) return;
+    // Wherever two joints coincide, the direction the chain already points stands in.
+    const Vec3 chainDir = SafeNormalize(joints[n - 1] - root, Vec3::Down);
 
     // Target out of reach: stretch the chain straight toward it.
-    if ((target - root).Magnitude() >= total) {
-        Vec3 dir = (target - root).Normalized();
+    if (dist >= total) {
+        const Vec3 dir = SafeNormalize(toTarget, chainDir);
         for (int i = 1; i < n; ++i) joints[i] = joints[i - 1] + dir * len[i - 1];
         return;
     }
@@ -32,15 +42,19 @@ inline void SolveFabrik(std::vector<Vec3>& joints, const std::vector<float>& len
         if ((joints[n - 1] - target).Magnitude() < tolerance) break;
         // Backward reach: pin the tip to the target, walk to the root.
         joints[n - 1] = target;
+        Vec3 last = chainDir * -1.0f;
         for (int i = n - 2; i >= 0; --i) {
-            Vec3 d = (joints[i] - joints[i + 1]).Normalized();
+            const Vec3 d = SafeNormalize(joints[i] - joints[i + 1], last);
             joints[i] = joints[i + 1] + d * len[i];
+            last = d;
         }
         // Forward reach: pin the root back, walk to the tip.
         joints[0] = root;
+        last = chainDir;
         for (int i = 1; i < n; ++i) {
-            Vec3 d = (joints[i] - joints[i - 1]).Normalized();
+            const Vec3 d = SafeNormalize(joints[i] - joints[i - 1], last);
             joints[i] = joints[i - 1] + d * len[i - 1];
+            last = d;
         }
     }
 }
@@ -50,6 +64,7 @@ inline void SolveFabrik(std::vector<Vec3>& joints, const std::vector<float>& len
 /// line through its neighbours, so every bone length is preserved.
 inline void ApplyFabrikPole(std::vector<Vec3>& joints, const Vec3& pole) {
     const int n = static_cast<int>(joints.size());
+    if (!Finite(pole)) return;
     for (int i = 1; i < n - 1; ++i) {
         const Vec3 a = joints[i - 1], b = joints[i + 1];
         Vec3 axis = b - a;
@@ -97,12 +112,17 @@ inline void ApplyFabrikBendLimit(std::vector<Vec3>& joints, const std::vector<fl
 }
 
 /// FABRIK with a pole target and joint bend limits. `pole` may be null.
-/// Returns the remaining distance from the tip to the target.
+/// Returns the remaining distance from the tip to the target (0 when nothing
+/// could be solved: a broken target or root, or a target on the root).
 inline float SolveFabrikConstrained(std::vector<Vec3>& joints, const std::vector<float>& len,
                                     const Vec3& target, int iterations, float tolerance,
                                     const Vec3* pole, float maxBendDeg) {
     const int n = static_cast<int>(joints.size());
     if (n < 2 || static_cast<int>(len.size()) < n - 1) return 0.0f;
+    if (!Finite(joints[0]) || !Finite(target) || (target - joints[0]).SqrMagnitude() < 1e-12f) return 0.0f;
+    float total = 0.0f;
+    for (int i = 0; i < n - 1; ++i) total += len[i];
+    if (!(total > 1e-9f)) return 0.0f;
     // A pole decides the bend plane up front, so FABRIK starts from the right side.
     if (pole) ApplyFabrikPole(joints, *pole);
     for (int it = 0; it < (iterations < 1 ? 1 : iterations); ++it) {

@@ -5,6 +5,7 @@
 #include "okay/Components/SurvivalAfflictions.hpp"
 #include "okay/Components/SurvivalSystems.hpp"
 #include "okay/Components/Crafting.hpp"   // Crafting has no NativeUIActions dependency
+#include "okay/Components/UIModal.hpp"
 #include <string>
 #include <vector>
 
@@ -100,6 +101,10 @@ inline bool InvokeNativeUIAction(GameObject* go, const std::string& fn, float ar
     if (auto* c = go->GetComponent<Crafting>()) {
         if (fn == "Craft") { c->CraftIndex((int)arg); return true; }   // Amount = recipe index
     }
+    if (auto* c = go->GetComponent<UIModal>()) {   // a dialog's own buttons open / close it
+        if (fn == "Open")  { c->Open();  return true; }
+        if (fn == "Close") { c->Close(); return true; }
+    }
     // Consumables::UseItem is dispatched by UIButton (Consumables depends on this
     // header, so it can't be referenced here without a cycle).
     return false;
@@ -131,6 +136,7 @@ inline std::vector<std::string> NativeUIActionNames(GameObject* go) {
     if (go->GetComponent<CarryWeightStat>()) add({"AddLoad", "RemoveLoad", "SetLoad"});
     if (go->GetComponent<SurvivalSave>())    add({"Save", "Load"});
     if (go->GetComponent<Crafting>())        add({"Craft"});
+    if (go->GetComponent<UIModal>())         add({"Open", "Close"});
     return out;
 }
 

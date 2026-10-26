@@ -66,7 +66,7 @@ public:
     float proneHoldTime = 0.4f;         // seconds the gamepad button is held to go prone
     float crouchHeightDrop = 0.4f;      // Minecraft-style modest dip when crouched
     float proneHeightDrop  = 1.1f;      // ...and when prone
-    float stanceLerp = 12.0f;           // how fast the target height eases
+    float stanceLerp = 12.0f;           // how fast the camera follows the body down / up
 
     enum class Stance { Stand, Crouch, Prone };
     Stance stance() const { return m_stance; }
@@ -75,7 +75,9 @@ public:
     const StanceBody& stanceBody() const { return m_body; }
     /// Begin in `s` (a scene saved while crouched / prone loads that way, so a
     /// player saved under low cover isn't stood up inside it). Applied in Start().
-    void RestoreStance(Stance s) { m_stance = m_wantStance = m_padWant = m_prevStance = s; }
+    void RestoreStance(Stance s) { m_stance = m_wantStance = m_padWant = m_prevStance = s; m_stanceLevel = (float)s; }
+    /// The body's stance as it moves between stances: 0 stand .. 1 crouch .. 2 prone.
+    float stanceLevel() const { return m_stanceLevel; }
 
     // ---- Lean (peek with Q/E) ----
     char  leanLeftKey  = 'q';           // 0 = disabled
@@ -285,9 +287,8 @@ public:
         UpdateStance(in, dt);
         UpdateLean(in, dt);
         bool running = m_stance == Stance::Stand && moving && IsRunHeld(in) && !m_aim;
-        float speed = m_stance == Stance::Prone  ? proneSpeed
-                    : m_stance == Stance::Crouch ? crouchSpeed
-                    : (running ? runSpeed : walkSpeed);
+        // The speed cap follows the body from one stance's to the next.
+        float speed = StanceValue(m_stanceLevel, running ? runSpeed : walkSpeed, crouchSpeed, proneSpeed);
         speed *= Inventory::SpeedFactorOf(gameObject);   // over-encumbered (opt-in on the Inventory)
 
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
@@ -344,7 +345,10 @@ public:
                     // to stand; under low cover the slide just carries on.
                     Scene* sc = gameObject->scene();
                     bool room = !resizeBody || !sc || StanceHasRoom(*sc, gameObject, m_body, StanceHeight(Stance::Stand));
-                    if (room) { m_slideT = 0.0f; m_stance = m_wantStance = Stance::Stand; m_prevStance = Stance::Stand; ApplyStanceHeight(gameObject, m_body, StanceHeight(Stance::Stand)); }
+                    if (room) {
+                        m_slideT = 0.0f; m_stance = m_wantStance = Stance::Stand; m_prevStance = Stance::Stand;
+                        m_stanceLevel = 0.0f; ApplyStanceHeight(gameObject, m_body, StanceHeight(Stance::Stand));
+                    }
                     else m_jumpBuf = 0.0f;
                 }
             }
@@ -440,6 +444,7 @@ public:
                 lo.jumped   = m_jumped;
                 lo.crouch   = m_stance == Stance::Crouch;
                 lo.prone    = m_stance == Stance::Prone;
+                lo.stance   = m_stanceLevel;
                 lo.sprint   = running;
                 lo.walkSpeed = walkSpeed;
                 lo.dt = dt;
@@ -476,7 +481,7 @@ public:
             AnimLink::Frame f;
             f.speed = hSpeed; f.verticalSpeed = rb ? rb->velocity.y : 0.0f; f.grounded = grounded;
             if (rb) f.velocity = rb->velocity;
-            f.crouch = m_stance == Stance::Crouch; f.prone = m_stance == Stance::Prone;
+            f.crouch = m_stance == Stance::Crouch; f.prone = m_stance == Stance::Prone; f.stance = m_stanceLevel;
             f.sprint = running; f.slide = m_slideT > 0.0f; f.aim = m_aim;
             f.jumped = m_jumped; f.landed = m_landed;
             m_anim.Apply(gameObject, f);
@@ -492,10 +497,9 @@ public:
         if (!cam) return;
         if (sc->mainCamera != m_claimedCam) { ClaimMainCamera(sc->mainCamera, "Third Person Controller"); m_claimedCam = sc->mainCamera; }
 
-        // Ease the look target down when crouched / prone so the camera follows
-        // the lower head position.
-        float drop = m_stance == Stance::Prone  ? proneHeightDrop
-                   : m_stance == Stance::Crouch ? crouchHeightDrop : 0.0f;
+        // Lower the look target with the body as it crouches / goes prone, so the
+        // camera follows the head down.
+        float drop = StanceValue(m_stanceLevel, 0.0f, crouchHeightDrop, proneHeightDrop);
         float lt = stanceLerp > 0.0f ? (1.0f - std::exp(-stanceLerp * dt)) : 1.0f;
         m_stanceDrop += (drop - m_stanceDrop) * lt;
 
@@ -621,25 +625,17 @@ private:
             }
         }
         if (!allowProne && m_wantStance == Stance::Prone) m_wantStance = Stance::Stand;
-        Stance next = m_wantStance;
-        if (resizeBody && gameObject) {
-            CaptureStance(gameObject, m_body);
-            Scene* sc = gameObject->scene();
-            // Rising needs headroom; from prone, settle for a crouch if only that fits.
-            if (sc && m_body.captured && StanceHeight(next) > m_body.curH + 1e-3f &&
-                !StanceHasRoom(*sc, gameObject, m_body, StanceHeight(next))) {
-                if (next == Stance::Stand && m_stance == Stance::Prone &&
-                    StanceHasRoom(*sc, gameObject, m_body, StanceHeight(Stance::Crouch))) next = Stance::Crouch;
-                else next = m_stance;
-            }
-            m_stance = next;
-            ApplyStanceHeight(gameObject, m_body, StanceHeight(m_stance));
-        } else {
-            m_stance = next;
-        }
+        // Rising needs headroom for the target height; then the body (and its
+        // collider) eases there over the stance change time.
+        m_stance = resizeBody && gameObject
+            ? (Stance)SettleStance(gameObject, m_body, (int)m_stance, (int)m_wantStance, crouchHeight, proneHeight)
+            : m_wantStance;
+        EaseStance(gameObject, m_body, m_stanceLevel, (int)m_stance, dt, StanceTimesOf(gameObject),
+                   resizeBody, crouchHeight, proneHeight);
     }
     // A restored crouch / prone (RestoreStance) sizes the body before physics runs.
     void ApplyRestoredStance() {
+        m_stanceLevel = (float)m_stance;
         if (!resizeBody || !gameObject || m_stance == Stance::Stand) return;
         CaptureStance(gameObject, m_body);
         ApplyStanceHeight(gameObject, m_body, StanceHeight(m_stance));
@@ -665,6 +661,7 @@ private:
     int   m_jumpsUsed = 0;          // jumps since last grounded (for double-jump)
     Stance m_stance = Stance::Stand;
     Stance m_wantStance = Stance::Stand;   // what the input asks for (m_stance may wait for headroom)
+    float  m_stanceLevel = 0.0f;          // the body on its way between stances (0 stand .. 2 prone)
     StanceBody m_body;
     float m_padHeld = 0.0f; bool m_padProned = false;
     Stance m_padWant = Stance::Stand;   // the stance the gamepad button set (hold mode)

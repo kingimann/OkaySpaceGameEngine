@@ -93,6 +93,7 @@ public:
         bool  onGround = true;     ///< touching the ground (a contact, not just slow vertically)
         bool  jumped = false;      ///< a jump started this frame
         bool  crouch = false, prone = false;
+        float stance = -1.0f;      ///< the eased stance level, 0 stand .. 1 crouch .. 2 prone (< 0 = from crouch / prone)
         bool  sprint = false;      ///< the run input is held
         float walkSpeed = 4.5f;    ///< the controller's walk speed (run/walk split)
         float dt = 0.0f;
@@ -248,6 +249,7 @@ public:
             float speed = 0.0f;            ///< measured ground speed (m/s)
             bool  run = false;             ///< fast enough (or sprinting) to run
             bool  crouch = false, prone = false;
+            float stance = 0.0f;           ///< eased stance level, 0 stand .. 1 crouch .. 2 prone
             float airTime = 0.0f;          ///< seconds off the ground
             float verticalSpeed = 0.0f;    ///< m/s, + = rising
         };

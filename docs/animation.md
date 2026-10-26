@@ -267,8 +267,9 @@ copied into the scene, and a clip of your own with the same name wins. A clip
 bound with clipIdle / clipWalk / ... plays in that state instead.
 
 A movement controller feeds the graph's parameters every frame: `speed`
-(m/s), `run`, `crouch`, `prone`, `airTime` (seconds off the ground) and
-`verticalSpeed`; the body itself sets `gaitX`, `gaitZ` (direction of travel,
+(m/s), `run`, `crouch`, `prone`, `stance` (0 stand .. 1 crouch .. 2 prone,
+easing through each stance change over the Animator's **Stance changes**
+times), `airTime` (seconds off the ground) and `verticalSpeed`; the body itself sets `gaitX`, `gaitZ` (direction of travel,
 x = right, z = forward) and `gaitSpeed`. Crossfades: 0.2 s between ground
 states, 0.1 s into the air, 0.08 s back onto the ground, where a standing
 landing plays **Land** and a moving one gives at the knees mid-stride. A blend

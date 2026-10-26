@@ -27787,6 +27787,16 @@ void DrawInspector(EditorState& ed) {
                     ImGui::EndCombo();
                 }
             }
+            if (sm->layer == 0 && ImGui::TreeNode("Stance changes##asm")) {
+                StanceTimes& t = sm->stanceTimes;
+                if (ImGui::DragFloat("Stand <-> crouch##asm", &t.standCrouch, 0.01f, 0.05f, 3.0f, "%.2fs")) ed.dirty = true;
+                if (ImGui::DragFloat("Crouch <-> prone##asm", &t.crouchProne, 0.01f, 0.05f, 3.0f, "%.2fs")) ed.dirty = true;
+                if (ImGui::DragFloat("Prone -> stand##asm", &t.proneStand, 0.01f, 0.05f, 4.0f, "%.2fs")) ed.dirty = true;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("How long the body takes to crouch, go prone and get up. The collider,\n"
+                                      "the camera and the speed limit follow it; the Animator gets `stance` (0..2).");
+                ImGui::TreePop();
+            }
             static const char* kCondNames[] = {"On Clip End", "Float >", "Float <", "Bool true", "Bool false", "Trigger"};
             int delState = -1;
             for (int si = 0; si < (int)sm->states.size(); ++si) {

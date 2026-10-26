@@ -391,6 +391,11 @@ add_executable(test_net_sync test_net_sync.cpp)
 target_link_libraries(test_net_sync PRIVATE okay::engine)
 add_test(NAME net_sync COMMAND test_net_sync)
 
+# Remote players' gait: proxies get the speed they really move at, one anim writer
+add_executable(test_net_proxy_gait test_net_proxy_gait.cpp)
+target_link_libraries(test_net_proxy_gait PRIVATE okay::engine)
+add_test(NAME net_proxy_gait COMMAND test_net_proxy_gait)
+
 add_executable(test_net_spawn test_net_spawn.cpp)
 target_link_libraries(test_net_spawn PRIVATE okay::engine)
 add_test(NAME net_spawn COMMAND test_net_spawn)

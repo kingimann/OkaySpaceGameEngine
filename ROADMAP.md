@@ -4,12 +4,13 @@ What is being worked on right now and what comes next. Kept current by the main
 (coordinating) Claude session; each item links its PR once one exists. Every PR
 merges once its five CI jobs are green, and a release follows.
 
-_Last updated: 2026-10-26 16:25 UTC_
+_Last updated: 2026-10-26 18:20 UTC_
 
 ## Releases
 
 | Version | What's in it |
 |---|---|
+| 2.832.0 | Visible Animator on the built-in players (#346) and its inspector (#348), IK plan PR 1 done; one shared inventory interaction layer (#349); anti-cheat hardening PRs 1–3 and 7: safe spawns (#351), pinning (#352), hit claims (#353), relay cookies (#357); CI toolchain cache (#356) |
 | 2.831.0 | Online camera corrections (#344, camera plan done); nearest chest/bench, slot count, scene wiring (#343); Animator backend (#340) |
 | 2.830.0 | Step-up only on real steps (#338); grid inventory fixes (#339); even frame timing (#341); controllers before animation (#342) |
 | 2.829.0 | Launcher: delete or remove projects from the Create page (#334); inventory: no dupes or item loss (#335); smooth third-person camera (#336); first-person camera without shake (#337) |
@@ -34,10 +35,13 @@ _Last updated: 2026-10-26 16:25 UTC_
 | Session | Plan | Current |
 |---|---|---|
 | Main | Coordination, merges, releases | Merging and releasing as PRs go green |
-| QA | Anti-cheat hardening, PRs 1–4, 6, 8–14 | PR 1: only safe, registered prefabs can be network-spawned |
-| Humanoid | IK, animation and humanoid rigging, PRs 1–8 | PR 1b: a visible Animator on every built-in player, with baked clips (#346) |
-| Release | Anti-cheat hardening, PRs 5 and 7 | PR 5: bans enforced when a join ticket is issued |
-| Robustness | Inventory, PRs 1–9 | PR 4: one shared inventory interaction layer |
+| QA | Anti-cheat hardening, PRs 1–4, 6, 8–14 | PR 4 (#355) in CI; PR 6 (#360) waits on Iman's OK for its Edge-function part; PR 8 next |
+| Humanoid | IK, animation and humanoid rigging, PRs 1–8 | PR 2: smooth stance changes |
+| Release | Anti-cheat hardening, PRs 5 and 7 | PR 7 merged; PR 5 (#350) waits on Iman's OK |
+| Robustness | Inventory, PRs 1–9 | PR 5 item definitions (#358), PR 6a world pickups (#359) |
+| UI | In-game UI plan and component library | P0.3: cached UI pass and batched atlas rendering (#361) |
+| Scripting | Script language to C# level | P1.4: `??`/`?.`, plain classes with `new` (#354) |
+| Holding | Procedural object holding | PR 1: hold objects with IK hands (#362) |
 
 ### Camera and animation smoothing (QA)
 1. [x] Third-person camera: smooth the pivot, not the orbit; sphere-cast spring arm that ignores triggers and the player's own parts (#336).
@@ -48,10 +52,10 @@ _Last updated: 2026-10-26 16:25 UTC_
 6. [x] Online: eased corrections and a clean cut on a snap (#344).
 
 ### IK, animation and rigging (Humanoid)
-1. [ ] Animator component on the built-in players; procedural animation baked into clips. Takes the gait smoothing and per-pair crossfade times from the camera plan. In three parts: 1a backend (#340, done), 1b default graph and baked clips (#346), 1c inspector.
+1. [x] Animator component on the built-in players; procedural animation baked into clips: 1a backend (#340), 1b default graph and baked clips (#346), 1c inspector (#348).
 2. [ ] Smooth stance changes: stand, crouch and prone, moving in any direction.
 3. [ ] IK core correctness: LimbIK, ChainIK, FootIK, FullBodyIK.
-4. [ ] Controllers: ground probe (no apex double jump), eased step-up, rotating platforms, 2D one-shot clips. After camera PR 3.
+4. [ ] Controllers: ground probe (no apex double jump), eased step-up, rotating platforms, 2D one-shot clips.
 5. [ ] One shared humanoid bone mapper that rejects non-humanoids.
 6. [ ] Rest-pose normalisation and retargeting by avatar slot.
 7. [ ] Animator graph and preview for every character; import a clip into a state.
@@ -61,7 +65,7 @@ _Last updated: 2026-10-26 16:25 UTC_
 1. [x] Correctness: no dupes, no item loss, max stack respected (#335).
 2. [x] Grid fixes (#339).
 3. [x] Wiring (#343).
-4. [ ] One shared interaction layer.
+4. [x] One shared interaction layer (#349).
 5. [ ] Item definitions.
 6. [ ] Gameplay features.
 7. [ ] Scripting.
@@ -69,13 +73,13 @@ _Last updated: 2026-10-26 16:25 UTC_
 9. [ ] Networking: server-authoritative, on the anti-cheat RPC checks.
 
 ### Anti-cheat hardening (QA, Release), from the 2026-10-26 audit
-1. [ ] Only safe, registered prefabs can be network-spawned (critical).
-2. [ ] Host-key pinning can't be skipped by a plaintext Welcome, Reject or Kicked.
-3. [ ] Hit claims need a known weapon and are rate-limited.
+1. [x] Only safe, registered prefabs can be network-spawned (critical) (#351).
+2. [x] Host-key pinning can't be skipped by a plaintext Welcome, Reject or Kicked (#352).
+3. [x] Hit claims need a known weapon and are rate-limited (#353).
 4. [ ] The hit origin isn't taken from positions the client can bank.
 5. [ ] Bans enforced when a join ticket is issued; no service_role key for game servers (Release).
 6. [ ] Tickets bound to one server, one client key and one connection.
-7. [ ] Relay hellos need a cookie; caps per destination (Release).
+7. [x] Relay hellos need a cookie; caps per destination (Release) (#357). The live relay needs redeploying to get it; launcher voice calls still send old hellos, so keep legacy hellos on.
 8. [ ] Budgets and strikes survive a reconnect; rejoin cooldown after a kick.
 9. [ ] Join checks: encryption first, rate-limited password and sign-in checks.
 10. [ ] SyncVar, message and spawn limits.
@@ -86,7 +90,7 @@ _Last updated: 2026-10-26 16:25 UTC_
 
 ## Waiting on Iman
 
-- **SQL and Edge-function changes in the hardening plan** (PRs 5, 6 and 14) need Iman's OK before they merge.
+- **SQL and Edge-function changes in the hardening plan** need Iman's OK before they merge: PR 5 (#350, bans checked in `session-ticket`), PR 6 (#360, tickets bound to one server and client), and PR 14 when it's up.
 - **Join tickets (anti-cheat 3e).** The `session-ticket` edge function needs a
   signing key that Iman creates and adds to Supabase.
 - **"server_check" report kind.** A one-word addition to `anticheat.sql`.
@@ -95,7 +99,4 @@ _Last updated: 2026-10-26 16:25 UTC_
 
 ## Later
 
-- In-game UI plan: P0 item 3 (batching, caching) and P1–P4.
-- Script language: classes; `GetComponent<MyScript>()` with a per-scene script library.
-- Procedural object holding (hand IK, grips, multiplayer sync).
 - Split the largest source files (editor, launcher, OkayScript VM).

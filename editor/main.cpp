@@ -29141,6 +29141,51 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::SmallButton("Remove##fbik")) toRemove = fb;
             }
         }
+        if (auto* ph = dynamic_cast<ProceduralObjectHolding*>(curComp)) {
+            if (CompHeader("Procedural Object Holding", ph, &toRemove)) {
+                ImGui::TextDisabled("Hold objects with the hands: IK onto each object's grips.");
+                int hand = (int)ph->primaryHand;
+                if (ImGui::Combo("Primary Hand##poh", &hand, "Left\0Right\0Both\0")) { ph->primaryHand = (ProceduralObjectHolding::Hand)hand; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The hand a one-handed object goes in. Both = always two hands.");
+                int st = (int)ph->holdingStyle;
+                if (ImGui::Combo("Holding Style##poh", &st, "Automatic\0Custom\0")) { ph->holdingStyle = (ProceduralObjectHolding::StyleMode)st; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatic: each object's own style (a carry from its size and weight unless it says Custom).\nCustom: always the object's grip points.");
+                if (ImGui::Checkbox("Arm IK##poh", &ph->armIK)) ed.dirty = true;
+                if (ImGui::DragFloat("Transition (s)##poh", &ph->transitionTime, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+                if (GameObject* held = ph->Held()) ImGui::Text("Holding: %s", held->name.c_str());
+                else if (ed.isPlaying()) ImGui::TextDisabled("Holding nothing");
+                if (ImGui::SmallButton("Remove##poh")) toRemove = ph;
+            }
+        }
+        if (auto* ho = dynamic_cast<HoldableObject*>(curComp)) {
+            if (CompHeader("Holdable Object", ho, &toRemove)) {
+                ImGui::TextDisabled("A character's Procedural Object Holding can pick this up.");
+                int st = (int)ho->style;
+                if (ImGui::Combo("Style##hold", &st, "Automatic\0Custom\0")) { ho->style = (HoldableObject::Style)st; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatic: a carry from size and weight (small = one hand under it, big or heavy = both hands on its sides).\nCustom: the hands go to the grip points below.");
+                if (ImGui::DragFloat("Weight (kg)##hold", &ho->weight, 0.1f, 0.0f, 500.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = the Rigidbody's mass.");
+                if (NameField("Socket##hold", ho->socket)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hold it at this object inside the character (a holster, a back slot) instead of in front of the chest.");
+                if (ImGui::DragFloat3("Hold Offset##hold", &ho->holdOffset.x, 0.01f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Custom: where the object's origin sits from the chest (right, up, forward), metres.");
+                if (ImGui::DragFloat3("Hold Rotation##hold", &ho->holdRotation.x, 1.0f)) ed.dirty = true;
+                HoldableObject::Grip* grips[2] = {&ho->leftGrip, &ho->rightGrip};
+                for (int g = 0; g < 2; ++g) {
+                    ImGui::PushID(g);
+                    HoldableObject::Grip& gr = *grips[g];
+                    if (ImGui::Checkbox(g == 0 ? "Left Grip" : "Right Grip", &gr.enabled)) ed.dirty = true;
+                    if (gr.enabled) {
+                        if (ImGui::DragFloat3("Position##grip", &gr.position.x, 0.005f)) ed.dirty = true;
+                        if (ImGui::DragFloat3("Rotation##grip", &gr.rotation.x, 1.0f)) ed.dirty = true;
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::TextDisabled("Grip rotation 0 = palm down, fingers forward (-Z).");
+                if (GameObject* holder = ho->Holder()) ImGui::Text("Held by: %s", holder->name.c_str());
+                if (ImGui::SmallButton("Remove##hold")) toRemove = ho;
+            }
+        }
         if (auto* rm = dynamic_cast<RootMotion*>(curComp)) {
             if (CompHeader("Root Motion", rm, &toRemove)) {
                 ImGui::TextWrapped("Legacy: for an imported model, turn on Root Motion in its Model Animator instead.");
@@ -34198,6 +34243,12 @@ void DrawInspector(EditorState& ed) {
                 int n = fb->MapBones(true);
                 ConsoleLog("Full Body IK: mapped " + std::to_string(n) + "/" + std::to_string((int)FullBodyIK::BoneCount) + " bones", n >= 11 ? 0 : 1);
                 ed.dirty = true;
+            }
+            if (item(!go->GetComponent<ProceduralObjectHolding>(), "Procedural Object Holding (pick up + hold with IK hands)")) {
+                go->AddComponent<ProceduralObjectHolding>(); ed.dirty = true;
+            }
+            if (item(!go->GetComponent<HoldableObject>(), "Holdable Object (grip points, style, weight)")) {
+                go->AddComponent<HoldableObject>(); ed.dirty = true;
             }
             if (item(true, "Tween Animation (move / scale / fade / punch / shake, no code)")) {
                 auto* ta = go->AddComponent<TweenAnimation>();

@@ -1159,3 +1159,9 @@ add_test(NAME net_hardening COMMAND test_net_hardening)
 add_executable(test_net_races test_net_races.cpp)
 target_link_libraries(test_net_races PRIVATE okay::engine)
 add_test(NAME net_races COMMAND test_net_races)
+
+# Procedural object holding: hands on the grips (built-in + imported rigs), reach, drop, save/load.
+add_executable(test_object_holding test_object_holding.cpp)
+target_link_libraries(test_object_holding PRIVATE okay::engine)
+target_compile_definitions(test_object_holding PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME object_holding COMMAND test_object_holding)

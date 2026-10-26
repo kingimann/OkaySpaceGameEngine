@@ -1897,8 +1897,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << Quote(nm->startRoom) << " "
             << nm->maxPlayers << " " << nm->snapshotRate << " "
             << Quote(nm->serverName) << " " << Quote(nm->password);
-        if (nm->netTickRate > 0.0f || nm->authoritativeMovement)   // only when set: other scenes don't change
+        const bool tunedPrediction = nm->reconcileRate != 12.0f || nm->reconcileSnap != 2.0f;
+        if (nm->netTickRate > 0.0f || nm->authoritativeMovement || tunedPrediction)   // only when set: other scenes don't change
             out << " " << nm->netTickRate << " " << (nm->authoritativeMovement ? 1 : 0);
+        if (tunedPrediction) out << " " << nm->reconcileRate << " " << nm->reconcileSnap;
         out << "\n";
     }
     if (auto* wu = go->GetComponent<WorldUI>()) {
@@ -5008,6 +5010,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         if (nm->netTickRate > 240.0f) nm->netTickRate = 240.0f;
                         in >> std::ws;   // then authoritative movement
                         if (std::isdigit(in.peek())) { int am = 0; in >> am; nm->authoritativeMovement = am != 0; }
+                        in >> std::ws;   // then the prediction's correction easing
+                        if (std::isdigit(in.peek())) {
+                            float rate = 12.0f, snap = 2.0f;
+                            in >> rate >> snap;
+                            if (std::isfinite(rate) && rate >= 0.0f) nm->reconcileRate = std::min(rate, 100.0f);
+                            if (std::isfinite(snap) && snap > 0.0f) nm->reconcileSnap = std::min(snap, 100.0f);
+                        }
                     }
                 } else if (field == "worldui") {
                     auto* wu = go->AddComponent<WorldUI>();

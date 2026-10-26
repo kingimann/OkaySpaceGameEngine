@@ -1538,10 +1538,11 @@ void NetworkManager::Reconcile(std::uint32_t seq, const Vec3& server) {
     ++m_predCorrections;
     for (auto& [s2, p] : m_predicted) p = p + d;
     auto sync = m_syncObjs.find(m_pawnId);
-    if (len > kReconcileSnap && sync != m_syncObjs.end() && sync->second.t) {
+    if (len > reconcileSnap && sync != m_syncObjs.end() && sync->second.t) {
         sync->second.t->localPosition = sync->second.t->localPosition + m_predPending + d;
         m_predPending = Vec3(0.0f, 0.0f, 0.0f);
         ++m_predSnaps;
+        if (IPlayerSim* sim = FindPlayerSim(sync->second.t->gameObject)) sim->OnTeleported();
     } else {
         m_predPending = m_predPending + d;
     }
@@ -2473,10 +2474,11 @@ void NetworkManager::ClientTick(float dt) {
             m_predPressOnce = 0;
             local.Clamp();   // as the host will
             sim->Simulate(local, dt);
-            const float k = std::min(1.0f, kReconcileRate * dt);
+            const float k = reconcileRate > 0.0f ? 1.0f - std::exp(-reconcileRate * dt) : 1.0f;
             const Vec3 step = m_predPending * k;
             pawnT->localPosition = pawnT->localPosition + step;
             m_predPending = m_predPending - step;
+            sim->OnCorrected(step);
         }
     }
     // Send our local state to the server: once a frame, or once a tick when

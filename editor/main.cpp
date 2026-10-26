@@ -32390,6 +32390,12 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: as before (clients send every frame). On (30 is a good rate): the host ticks at this rate whatever the frame rate, snapshots carry the tick, and clients send their state once a tick. Replaces Tick Rate for snapshots.");
             if (ImGui::Checkbox("Authoritative movement##nm", &nm->authoritativeMovement)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clients send inputs, not positions: the host moves each player's object (net_set_pawn) with its controller at the fixed tick (30 Hz if Fixed Net Tick is off), and alone decides where it is.");
+            if (nm->authoritativeMovement) {
+                if (ImGui::SliderFloat("Correction easing##nm", &nm->reconcileRate, 0.0f, 40.0f, nm->reconcileRate > 0.0f ? "%.0f /s" : "instant")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast a client's own player is pulled to where the host says it is, when the two disagree. Lower is smoother but lags longer; 0 applies it at once.");
+                if (ImGui::SliderFloat("Snap distance##nm", &nm->reconcileSnap, 0.1f, 10.0f, "%.1f m")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("A correction bigger than this (a respawn, a wall the client went through) snaps instead of easing, and the camera jumps with it.");
+            }
 
             const char* mode = nm->IsServer() ? "Server" : nm->IsClient() ? "Client" : "Offline";
             ImGui::Text("Live: %s   Peers: %d / %d   Id: %u", mode, (int)nm->PeerCount(), nm->maxPlayers, nm->LocalId());

@@ -258,6 +258,8 @@ public:
         return in;
     }
 
+    void OnTeleported() override { m_pivot.Reset(); }
+
     /// Orbit, stance, lean and move by `in` for `dt` seconds (local play and a
     /// server running this player's inputs). Reads no Input:: globals.
     void Simulate(const PlayerInput& in, float dt) override {

@@ -100,6 +100,12 @@ forwarding rules and caps. A version-1 session gets no key, so it keeps the old
 hand-over: when its host leaves, the next host-role hello takes over. A
 version-2 game host won't join a session a version-1 peer is hosting.
 
+One gap follows from that: a version-1 peer that registers a game's code as
+host before the game's own (version-2) host does holds the code. The real host
+is refused with "already hosted" until that peer leaves. It can't see or join
+the game, so this is squatting, not a takeover. Use random session codes
+(the launcher makes them) so a code can't be guessed in advance.
+
 This is a relay (TURN-style), not hole-punching (STUN): it always works,
 including under symmetric NATs, at the cost of routing traffic through the relay
 host.

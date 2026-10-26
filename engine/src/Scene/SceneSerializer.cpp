@@ -1,4 +1,5 @@
 #include "okay/Scene/SceneSerializer.hpp"
+#include "okay/Animation/HumanoidLibrary.hpp"
 #include "okay/Modeling/MeshAsset.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -657,6 +658,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
                 out << " " << st.transitions.size();
                 for (const auto& tr : st.transitions) out << " " << (int)tr.interruption;
             }
+            out << "\n";
+        }
+        bool anyMatch = false;
+        for (const auto& st : asm2->states) anyMatch = anyMatch || st.matchSpeed;
+        if (anyMatch) {   // blend trees that keep pace with the body's speed
+            out << "  animsmmatch " << asm2->states.size();
+            for (const auto& st : asm2->states) out << " " << (st.matchSpeed ? 1 : 0);
             out << "\n";
         }
     }
@@ -2292,7 +2300,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
 
 std::string SceneSerializer::Serialize(const Scene& scene) {
     std::ostringstream out;
-    out << "okayscene 1\n";
+    out << "okayscene 2\n";
     out << "name " << Quote(scene.Name()) << "\n";
     if (!scene.uiFont.empty()) out << "uifont " << Quote(scene.uiFont) << "\n";
     out << "gravity " << scene.physics().gravity.x << " " << scene.physics().gravity.y << "\n";
@@ -2935,6 +2943,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     }
                     long na = 0; in >> na;
                     for (long k = 0; k < na && in; ++k) { int m = 0; in >> m; if (k < (long)sm2->anyState.size()) sm2->anyState[k].muted = m != 0; }
+                } else if (field == "animsmmatch") {
+                    auto* sm2 = smFor();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n && in; ++i) {
+                        int f = 0; in >> f;
+                        if (i < (long)sm2->states.size()) sm2->states[i].matchSpeed = f != 0;
+                    }
                 } else if (field == "animsmint") {
                     auto* sm2 = smFor();
                     long n = 0; in >> n;
@@ -5699,6 +5714,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
             return false;
         }
     }
+    // Files from before version 2 gave a Character body its built-in animation
+    // itself: give it the Animator that plays it now (its state clips carried over).
+    if (version < 2)
+        for (auto& [idx, go] : byIndex) { (void)idx; HumanoidLibrary::EnsureAnimator(go); }
     return true;
 }
 
@@ -5719,7 +5738,7 @@ std::string SceneSerializer::SerializeObject(const GameObject& root) {
     for (std::size_t i = 0; i < subtree.size(); ++i) localIndex[subtree[i]] = (int)i;
 
     std::ostringstream out;
-    out << "okayscene 1\n";
+    out << "okayscene 2\n";
     for (std::size_t i = 0; i < subtree.size(); ++i) {
         GameObject* go = subtree[i];
         if (go->transient || IsGeneratedRig(go) || IsGeneratedViewmodel(go) || IsBuildModeRuntime(go)) continue;   // a Character's part rig (and the FP viewmodel arm) is regenerated on load

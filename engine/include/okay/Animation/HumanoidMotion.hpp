@@ -41,6 +41,10 @@ float CycleFreq(int state, float speed, float runW);
 /// The phase a gait starts at when stepping off from a stand: the left foot
 /// planted under the hips, the right one swinging through.
 float StartPhase(int state, float speed);
+/// A landing's knee give on a striding pose (walk or run): the hips drop by
+/// 0.12·landK and both legs re-solve so the feet stay where they were, the
+/// chest dips and the arms go out. Returns the hips' height change (rig units).
+float AbsorbLanding(std::vector<Vec3>& pose, float landK);
 
 } // namespace HumanoidMotion
 } // namespace okay

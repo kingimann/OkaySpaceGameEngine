@@ -81,6 +81,8 @@ public:
     //              while the chest keeps facing forward.
     float moveSpeed = -1.0f;
     float moveAngle = 0.0f;
+    /// How quickly the stride follows a change of speed (seconds to close ~63%).
+    float gaitSpeedSmoothing = 0.05f;
     /// Where the gait cycle is, 0..1 (0 = left foot touching down, 0.5 = right foot).
     float GaitPhase() const;
 
@@ -240,12 +242,26 @@ public:
         virtual bool AnimatorPose(std::vector<Vec3>& pose, Vec3& root) = 0;
         /// Still playing (its Animator is enabled and has posed the body).
         virtual bool Live() const = 0;
+        /// What a movement controller reported (DriveLocomotion, every frame):
+        /// the Animator's graph picks the state from it.
+        struct Movement {
+            float speed = 0.0f;            ///< measured ground speed (m/s)
+            bool  run = false;             ///< fast enough (or sprinting) to run
+            bool  crouch = false, prone = false;
+            float airTime = 0.0f;          ///< seconds off the ground
+            float verticalSpeed = 0.0f;    ///< m/s, + = rising
+        };
+        virtual void Move(const Movement& m) = 0;
+        /// The stride, every frame: direction of travel as a point (x = right,
+        /// z = forward, rig units/s) and the speed it plays at.
+        virtual void Gait(float x, float z, float speed) = 0;
     };
     void SetPoseSource(PoseSource* src) { m_poseSource = src; }
     PoseSource* GetPoseSource() const { return m_poseSource; }
     /// True while the Animator's pose is the one shown.
     bool AnimatorDriven() const {
-        return m_poseSource && m_poseSource->Live() && !m_editorPosing && !(m_activeClip && !m_stateDriven);
+        return m_poseSource && m_poseSource->Live() && !m_editorPosing && !(m_activeClip && !m_stateDriven) &&
+               !m_blendTreeOn;   // a script's blend tree, like its PlayClip, wins
     }
     /// Report an event an Animator clip fired: queued for ConsumeAnimEvents,
     /// sent to onAnimEvent and to every component's OnAnimationEvent.
@@ -338,6 +354,7 @@ public:
         m_animHold = a;
         anim = a;
     }
+    bool AnimHeld() const { return m_animHold > 0; }
     void ReleaseAnim() {
         if (m_animHold == 0) return;
         m_animHold = 0;
@@ -507,7 +524,9 @@ private:
     float m_airT = 0.0f;           // seconds off the ground (DriveLocomotion)
     struct MoveSample { Vec3 p; float t; };
     static constexpr int kMoveHist = 16;
-    MoveSample m_hist[kMoveHist]{};  // recent positions (measured ground speed over ~0.12 s)
+    MoveSample m_hist[kMoveHist]{};  // recent positions (measured ground speed over ~0.08 s)
+    float m_measured = 0.0f;         // last accepted ground speed (DriveLocomotion)
+    bool  m_spike = false;           // last frame's reading was set aside as a spike
     int   m_histN = 0;
     float m_moveClock = 0.0f;
     float m_gaitPhase = 0.0f;      // the stride cycle, 0..1 (0 = left touchdown); one clock for every gait state

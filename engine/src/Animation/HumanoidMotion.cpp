@@ -250,6 +250,29 @@ float CycleFreq(int state, float speed, float runW) {
     return 0.0f;
 }
 
+float AbsorbLanding(std::vector<Vec3>& r, float landK) {
+    if (landK <= 0.0f || (int)r.size() < B_COUNT) return 0.0f;
+    const float drop = 0.12f * landK;
+    // Where each ankle is (LegIK run backwards), then the same ankle from hips that much lower.
+    auto resolve = [&](Vec3& thigh, Vec3& shin, Vec3& foot) {
+        const float a = kThigh, b = kShin, d2r = kPi / 180.0f;
+        const float gamma = kPi - shin.x * d2r;
+        const float d = std::sqrt(std::fmax(a * a + b * b - 2.0f * a * b * std::cos(gamma), 1e-6f));
+        const float alpha = std::acos(clampf((a * a + d * d - b * b) / (2.0f * a * d), -1.0f, 1.0f));
+        const float phi = -thigh.x * d2r - alpha;
+        const float dz = d * std::cos(phi), abd = thigh.z * d2r;
+        const float pitch = foot.x + thigh.x + shin.x;
+        Vec3 th, sh, ft;
+        LegIK(d * std::sin(phi), dz * std::cos(abd) - drop, dz * std::sin(abd), pitch, th, sh, ft);
+        thigh.x = th.x; thigh.z = th.z; shin.x = sh.x; foot.x = ft.x;
+    };
+    resolve(r[B_LTHIGH], r[B_LSHIN], r[B_LFOOT]);
+    resolve(r[B_RTHIGH], r[B_RSHIN], r[B_RFOOT]);
+    r[B_TORSO].x  += 9.0f * landK;
+    r[B_LUPARM].z += 10.0f * landK;   r[B_RUPARM].z -= 10.0f * landK;
+    return -drop;
+}
+
 float StartPhase(int state, float speed) { return 0.5f * GaitFor(state, SpeedFor(state, speed)).beta; }
 
 float HipY(int state, const Inputs& in) {

@@ -348,7 +348,8 @@ void Character::AdvanceAnimClock(float dt) {
     }
     if (target < 0.0f)          m_gaitSpeed = -1.0f;
     else if (m_gaitSpeed < 0.0f) m_gaitSpeed = target;
-    else                         m_gaitSpeed += (target - m_gaitSpeed) * (1.0f - std::exp(-12.0f * dt));
+    else                         m_gaitSpeed += (target - m_gaitSpeed) *
+                                                (gaitSpeedSmoothing > 1e-4f ? 1.0f - std::exp(-dt / gaitSpeedSmoothing) : 1.0f);
 
     // Travel direction relative to the facing: the hips and legs turn toward it
     // (up to 75°, the chest stays forward); pointing behind, they step backwards.
@@ -374,16 +375,26 @@ void Character::AdvanceAnimClock(float dt) {
         m_gaitFreq = 0.0f;
     }
     m_gaitPhase = frac(m_gaitPhase + rate * m_gaitFreq);
+
+    // The Animator's gait trees: the travel direction (at least as long as the
+    // slowest stride clip, so the direction always picks the clips) and speed.
+    if (m_poseSource) {
+        const float v = m_gaitSpeed >= 0.0f ? m_gaitSpeed : HumanoidMotion::NaturalSpeed(anim);
+        const float dir = (m_travelYaw + (m_gaitDir < 0.0f ? 180.0f : 0.0f)) / kRad2Deg;
+        const float r = std::fmax(v, 0.3f);
+        m_poseSource->Gait(r * std::sin(dir), r * std::cos(dir), v);
+    }
 }
 
 void Character::DriveLocomotion(const Locomotion& l) {
     // Measure what the body really did: a controller sets the velocity it WANTS
     // before physics runs, so pressed against a wall the velocity still says
     // "moving" while the body stands still. The position change is the truth. It
-    // is taken over the last ~0.12 s of frames, so it doesn't matter whether the
+    // is taken over the last ~0.08 s of frames, so it doesn't matter whether the
     // move landed this frame (a controller moving the transform) or last frame (a
     // physics step), and an uneven frame rate doesn't make the stride shimmer. A
-    // teleport/respawn jump restarts the measurement.
+    // teleport/respawn jump restarts the measurement, and a one-frame spike (a
+    // hitch, a depenetration push) is set aside unless the next frame agrees.
     Vec3 vel = l.velocity;
     float vyNow = l.velocity.y;   // vertical speed right now (the window lags a takeoff)
     if (gameObject && gameObject->transform && l.dt > 1e-5f) {
@@ -402,8 +413,8 @@ void Character::DriveLocomotion(const Locomotion& l) {
             float span = m_moveClock - m_hist[0].t;
             if (span > 1e-5f) vel = d * (1.0f / span);
         }
-        // Keep one sample at least 0.12 s old (the window's start) and the newer ones.
-        while (m_histN > 1 && m_moveClock - m_hist[1].t >= 0.12f) {
+        // Keep one sample at least 0.08 s old (the window's start) and the newer ones.
+        while (m_histN > 1 && m_moveClock - m_hist[1].t >= 0.08f) {
             for (int i = 1; i < m_histN; ++i) m_hist[i - 1] = m_hist[i];
             --m_histN;
         }
@@ -422,6 +433,15 @@ void Character::DriveLocomotion(const Locomotion& l) {
     }
     Vec3 v{vel.x, 0.0f, vel.z};
     float hs = std::sqrt(v.x * v.x + v.z * v.z);
+    const float jumpAt = 2.0f * m_measured + 2.0f;   // what the controller didn't ask for, for one frame
+    if (hs > jumpAt && std::sqrt(l.velocity.x * l.velocity.x + l.velocity.z * l.velocity.z) < jumpAt && !m_spike) {
+        m_spike = true;
+        const float k = hs > 1e-5f ? m_measured / hs : 0.0f;
+        v = v * k; hs = m_measured;
+    } else {
+        m_spike = false;
+        m_measured = hs;
+    }
     moveSpeed = hs;
     Vec3 f{l.facing.x, 0.0f, l.facing.z};
     float fl = std::sqrt(f.x * f.x + f.z * f.z);
@@ -432,6 +452,15 @@ void Character::DriveLocomotion(const Locomotion& l) {
     }
     m_airT = (ground && !l.jumped) ? 0.0f : m_airT + l.dt;
     if (l.jumped) m_airT = 1.0f;                               // leave the ground pose at once
+    const float runAt = l.walkSpeed * (anim == 3 ? 1.05f : 1.15f);
+    const bool run = hs > runAt || (l.sprint && hs > l.walkSpeed * 0.9f);
+    if (m_poseSource && m_poseSource->Live()) {   // the Animator's graph picks the state from these
+        PoseSource::Movement m;
+        m.speed = hs; m.run = run; m.crouch = l.crouch; m.prone = l.prone;
+        m.airTime = m_airT; m.verticalSpeed = l.velocity.y;
+        m_poseSource->Move(m);
+        return;
+    }
     const bool wasMoving = anim == 2 || anim == 3 || anim == 17;
     const bool moving = hs > (wasMoving ? 0.2f : 0.35f);       // hysteresis: no idle/walk flicker
     if (l.prone)                   anim = 7;
@@ -439,10 +468,7 @@ void Character::DriveLocomotion(const Locomotion& l) {
     else if (m_airT > 0.12f)       anim = l.velocity.y > 0.4f ? 5 : 18;   // short drops keep the stride
     else if (l.crouch)             anim = moving ? 17 : 6;
     else if (!moving)              anim = 1;
-    else {
-        float runAt = l.walkSpeed * (anim == 3 ? 1.05f : 1.15f);
-        anim = (hs > runAt || (l.sprint && hs > l.walkSpeed * 0.9f)) ? 3 : 2;
-    }
+    else                           anim = run ? 3 : 2;
 }
 
 std::vector<Vec3> Character::PoseAt(float t) const { return PoseFor(anim, t); }
@@ -477,6 +503,9 @@ void Character::ApplyLookAndLean(std::vector<Vec3>& r) const {
 bool Character::AnimatorSample(std::vector<Vec3>& pose, Vec3& root) const {
     if (!AnimatorDriven() || !m_poseSource->AnimatorPose(pose, root)) return false;
     pose.resize(B_COUNT, Vec3{0, 0, 0});
+    // Landing on the move: the stride gives at the knees (a standing landing
+    // plays the Land state instead).
+    if (m_landK > 0.0f && (anim == 2 || anim == 3)) root.y += HumanoidMotion::AbsorbLanding(pose, m_landK);
     return true;
 }
 

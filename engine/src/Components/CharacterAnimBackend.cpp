@@ -1,9 +1,12 @@
 #include "okay/Components/CharacterAnimBackend.hpp"
+#include "okay/Animation/HumanoidLibrary.hpp"
+#include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Component.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <iterator>
 
 namespace okay {
 
@@ -20,6 +23,13 @@ void MixIn(std::vector<Vec3>& pose, Vec3& root, float& total, const std::vector<
     for (std::size_t b = 0; b < pose.size() && b < p.size(); ++b) pose[b] = AnimClip::BlendEuler(pose[b], p[b], u);
     root = root + (r - root) * u;
 }
+
+// The built-in `anim` number a state stands for, by its name ("Walk" = 2,
+// "Land" = 1), or -1.
+int StateNumber(const std::string& state) {
+    if (state == "Land") return 1;
+    return Character::BuiltinAnimIndex(state);
+}
 } // namespace
 
 Character* CharacterAnimBackend::Body() const {
@@ -29,14 +39,33 @@ Character* CharacterAnimBackend::Body() const {
 const std::vector<std::string>& CharacterAnimBackend::Names() const {
     Character* ch = Body();
     if (!ch) { m_names.clear(); m_namesVer = ~0u; }
-    else if (ch->ClipsVersion() != m_namesVer) { m_names = ch->ClipNames(); m_namesVer = ch->ClipsVersion(); }
+    else if (ch->ClipsVersion() != m_namesVer) {   // the body's clips, then the library's
+        const std::vector<std::string> own = ch->ClipNames();
+        const std::vector<std::string>& lib = HumanoidLibrary::Names();
+        std::vector<std::string> old;
+        old.swap(m_names);
+        std::set_union(own.begin(), own.end(), lib.begin(), lib.end(), std::back_inserter(m_names));
+        m_namesVer = ch->ClipsVersion();
+        // What plays keeps playing: its clips by name in the new list.
+        auto refind = [&](int& c) {
+            if (c < 0 || c >= (int)old.size()) { c = -1; return; }
+            auto it = std::lower_bound(m_names.begin(), m_names.end(), old[c]);
+            c = (it != m_names.end() && *it == old[c]) ? (int)(it - m_names.begin()) : -1;
+        };
+        for (Playing* p : {&m_cur, &m_from}) {
+            refind(p->clip);
+            for (int& c : p->clips) refind(c);
+        }
+    }
     return m_names;
 }
 
 const AnimClip* CharacterAnimBackend::Clip(int i) const {
     const std::vector<std::string>& n = Names();
     Character* ch = Body();
-    return (ch && i >= 0 && i < (int)n.size()) ? ch->FindClip(n[i]) : nullptr;
+    if (!ch || i < 0 || i >= (int)n.size()) return nullptr;
+    const AnimClip* c = ch->FindClip(n[i]);
+    return c ? c : HumanoidLibrary::Find(n[i]);
 }
 
 int CharacterAnimBackend::FindClip(const std::string& name) const {
@@ -69,6 +98,17 @@ bool CharacterAnimBackend::Play(const std::string& name, float blend) {
     return true;
 }
 
+void CharacterAnimBackend::SetSpeed(float speed) {
+    Character* ch = Body();
+    m_speed = speed * (ch ? ch->animSpeed : 1.0f);
+}
+
+void CharacterAnimBackend::ResetBlendPhase(float p) {
+    m_cur.phase = (m_carry && p == 0.0f) ? m_carryPhase : p;
+    m_carry = false;
+    m_fromStart = true;
+}
+
 void CharacterAnimBackend::SetTime(float t) {
     if (m_cur.blend) return;
     const float len = ClipLength(m_cur.clip);
@@ -81,6 +121,8 @@ void CharacterAnimBackend::CaptureCrossfade(int A, int B, float seconds) {
 }
 
 void CharacterAnimBackend::CaptureCrossfadeMany(const std::vector<int>& clips, float seconds) {
+    m_carry = m_cur.blend && m_have;
+    m_carryPhase = m_cur.phase;
     StartFade(seconds);
     m_cur = Playing{};
     m_cur.blend = true;
@@ -219,12 +261,70 @@ void CharacterAnimBackend::Advance(float dt) {
     m_have = !pose.empty();
     m_pose = std::move(pose); m_root = root;
     m_final = false; m_dt = dt;
-    if (Character* ch = Body())
-        if (m_have && ch->GetPoseSource() != this) ch->SetPoseSource(this);
+    Character* ch = Body();
+    if (!ch) return;
+    if (m_have && ch->GetPoseSource() != this) ch->SetPoseSource(this);
+    // `anim` reads the state playing.
+    if (m_sm && !m_off) {
+        const int n = StateNumber(m_sm->Current());
+        if (n > 0) ch->anim = n;
+        m_published = ch->anim;
+    }
+}
+
+void CharacterAnimBackend::BeginFrame(AnimStateMachine& sm) {
+    m_sm = &sm;
+    Character* ch = Body();
+    if (!ch) return;
+    const int a = ch->anim;
+    if (a != m_published) {   // written from outside: go to that state and stay
+        if (a == 0) m_off = true;
+        else {
+            const AnimStateMachine::State* to = nullptr;
+            for (const auto& st : sm.states) if (StateNumber(st.name) == a) { to = &st; break; }
+            if (to) {
+                m_off = false;
+                m_forced = true;
+                if (to->name != sm.Current()) {
+                    // The graph's own blend into that state, if it has one.
+                    float blend = 0.2f;
+                    const AnimStateMachine::State* cur = nullptr;
+                    for (const auto& st : sm.states) if (st.name == sm.Current()) cur = &st;
+                    bool found = false;
+                    if (cur) for (const auto& tr : cur->transitions) if (tr.to == to->name) { blend = tr.blend; found = true; break; }
+                    if (!found) for (const auto& tr : sm.anyState) if (tr.to == to->name) { blend = tr.blend; break; }
+                    sm.GoTo(to->name, m_published < 0 ? 0.0f : blend);
+                }
+            }
+        }
+        m_published = a;
+    } else if (m_moved) {
+        m_forced = false;
+    }
+    m_moved = false;
+    sm.hold = m_forced || ch->AnimHeld();
+}
+
+void CharacterAnimBackend::Move(const Movement& m) {
+    m_moved = true;
+    if (!m_sm) return;
+    m_sm->SetFloat("speed", m.speed);
+    m_sm->SetBool("run", m.run);
+    m_sm->SetBool("crouch", m.crouch);
+    m_sm->SetBool("prone", m.prone);
+    m_sm->SetFloat("airTime", m.airTime);
+    m_sm->SetFloat("verticalSpeed", m.verticalSpeed);
+}
+
+void CharacterAnimBackend::Gait(float x, float z, float speed) {
+    if (!m_sm) return;
+    m_sm->SetFloat("gaitX", x);
+    m_sm->SetFloat("gaitZ", z);
+    m_sm->SetFloat("gaitSpeed", speed);
 }
 
 bool CharacterAnimBackend::Live() const {
-    return m_have && m_machine && m_machine->enabled;
+    return m_have && !m_off && m_machine && m_machine->enabled;
 }
 
 bool CharacterAnimBackend::AnimatorPose(std::vector<Vec3>& pose, Vec3& root) {

@@ -624,6 +624,7 @@ int g_ssaa = 1;   // 3D anti-aliasing: 1 = off (FXAA still on), 2 = 2x supersamp
 float g_renderScale = 1.0f;  // 3D view render resolution (1.0 = native; lower = faster, softer)
 bool g_autoPerf = true;  // auto-drop supersampling when the scene gets heavy
 bool g_vsync = false;    // false = uncapped FPS (no 60 Hz limit); true = vsync
+bool g_smoothFrameTime = true;   // Play steps by an evened-out frame time (Time::SmoothDelta)
 bool g_autoUpdate = false; // auto-install a newer build on startup (persisted)
 
 // Sum the triangles of all active, visible solid meshes — a cheap proxy for how
@@ -1765,6 +1766,7 @@ void LoadSettings() {
         else if (k == "autoupdate") g_autoUpdate = (v != 0);
         else if (k == "autoperf") g_autoPerf = (v != 0);
         else if (k == "vsync") g_vsync = (v != 0);
+        else if (k == "smoothframetime") g_smoothFrameTime = (v != 0);
         else if (k == "ssaa") g_ssaa = v < 1 ? 1 : (v > 2 ? 2 : v);
         else if (k == "renderscalepct") g_renderScale = (v < 25 ? 25 : (v > 100 ? 100 : v)) / 100.0f;
         else if (k == "showgizmos") g_showGizmos = (v != 0);
@@ -1815,6 +1817,7 @@ void SaveSettings() {
       << "autoupdate " << (g_autoUpdate ? 1 : 0) << "\n"
       << "autoperf "   << (g_autoPerf ? 1 : 0) << "\n"
       << "vsync "      << (g_vsync ? 1 : 0) << "\n"
+      << "smoothframetime " << (g_smoothFrameTime ? 1 : 0) << "\n"
       << "ssaa "       << g_ssaa << "\n"
       << "renderscalepct " << (int)(g_renderScale * 100 + 0.5f) << "\n"
       << "showgizmos " << (g_showGizmos ? 1 : 0) << "\n"
@@ -2250,6 +2253,7 @@ struct BuildSettings {
     bool  borderless = false;
     bool  resizable = true;
     bool  vsync = true;
+    bool  smoothDt = true;                 // even frame steps for movement and cameras (the game's smooth_dt)
     bool  hideCursor = false;
     int   fpsCap = 0;                      // 0 = uncapped (vsync paces)
     bool  quitOnEscape = true;
@@ -2348,7 +2352,7 @@ static void WriteBuildProfileBlock(std::ostream& o, const BuildProfile& p) {
     o << "width="    << b.width << "\n" << "height=" << b.height << "\n";
     o << "minWidth=" << b.minWidth << "\n" << "minHeight=" << b.minHeight << "\n";
     o << "fullscreen=" << b.fullscreen << "\n" << "borderless=" << b.borderless << "\n";
-    o << "resizable=" << b.resizable << "\n" << "vsync=" << b.vsync << "\n";
+    o << "resizable=" << b.resizable << "\n" << "vsync=" << b.vsync << "\n" << "smoothDt=" << b.smoothDt << "\n";
     o << "hideCursor=" << b.hideCursor << "\n" << "fpsCap=" << b.fpsCap << "\n";
     o << "quitOnEscape=" << b.quitOnEscape << "\n" << "masterVolume=" << b.masterVolume << "\n";
     o << "showFps=" << b.showFps << "\n" << "includeAll=" << b.includeAllProjectScenes << "\n";
@@ -2398,6 +2402,7 @@ static void ApplyBuildProfileKV(BuildProfile& p, const std::string& k, const std
     else if (k == "borderless") b.borderless = B();
     else if (k == "resizable") b.resizable = B();
     else if (k == "vsync")     b.vsync = B();
+    else if (k == "smoothDt")  b.smoothDt = B();
     else if (k == "hideCursor") b.hideCursor = B();
     else if (k == "fpsCap")    b.fpsCap = I();
     else if (k == "quitOnEscape") b.quitOnEscape = B();
@@ -3299,6 +3304,7 @@ struct Options {
     std::string version = "1.0.0";
     int  width = 1280, height = 720;
     bool fullscreen = false, borderless = false, resizable = true, vsync = true;
+    bool smoothDt = true;
     bool hideCursor = false;
     int  fpsCap = 0;
     bool quitOnEscape = true;
@@ -3482,6 +3488,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         cf << "borderless=" << (opt.borderless ? 1 : 0) << "\n";
         cf << "resizable=" << (opt.resizable ? 1 : 0) << "\n";
         cf << "vsync=" << (opt.vsync ? 1 : 0) << "\n";
+        cf << "smooth_dt=" << (opt.smoothDt ? 1 : 0) << "\n";
         cf << "cursor=" << (opt.hideCursor ? 0 : 1) << "\n";
         cf << "fps_cap=" << opt.fpsCap << "\n";
         cf << "quit_on_escape=" << (opt.quitOnEscape ? 1 : 0) << "\n";
@@ -5489,6 +5496,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
 #endif
         if (ImGui::MenuItem("VSync", nullptr, &g_vsync)) { SDL_RenderSetVSync(g_sdlRenderer, g_vsync ? 1 : 0); SaveSettings(); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("OFF = uncapped FPS (no 60 Hz limit). ON = no tearing.");
+        if (ImGui::MenuItem("Smooth frame time", nullptr, &g_smoothFrameTime)) SaveSettings();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play steps the game by an evened-out frame time (whole refresh periods with\nVSync), so movement and cameras don't micro-judder at a steady frame rate.");
         // Multi-window panels are always on now (drag a tab to a second monitor) — no toggle.
         if (ImGui::MenuItem("Auto performance", nullptr, &g_autoPerf)) SaveSettings();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatically drop anti-aliasing when the scene\nhas many models, to keep the editor smooth.");
@@ -15242,6 +15251,8 @@ void DrawFileDialogs(EditorState& ed) {
                 if (ImGui::Combo("Window mode", &wm, wmodes, 3)) { g_build.fullscreen = (wm == 2); g_build.borderless = (wm == 1); }
                 ImGui::Checkbox("Resizable", &g_build.resizable); ImGui::SameLine();
                 ImGui::Checkbox("VSync", &g_build.vsync); ImGui::SameLine();
+                ImGui::Checkbox("Smooth frame time", &g_build.smoothDt); ImGui::SameLine();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Step the game by an evened-out frame time (whole refresh periods with VSync),\nso movement and cameras don't micro-judder at a steady frame rate.");
                 ImGui::Checkbox("Start maximized", &g_build.startMaximized);
                 ImGui::Checkbox("Alt+Enter / F11 toggles fullscreen", &g_build.fullscreenToggle);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Let players switch between fullscreen and a window while playing.");
@@ -15483,7 +15494,7 @@ void DrawFileDialogs(EditorState& ed) {
             o.company = g_build.company; o.version = g_build.version;
             o.width = g_build.width; o.height = g_build.height;
             o.fullscreen = g_build.fullscreen; o.borderless = g_build.borderless;
-            o.resizable = g_build.resizable; o.vsync = g_build.vsync;
+            o.resizable = g_build.resizable; o.vsync = g_build.vsync; o.smoothDt = g_build.smoothDt;
             o.hideCursor = g_build.hideCursor; o.fpsCap = g_build.fpsCap;
             o.quitOnEscape = g_build.quitOnEscape; o.masterVolume = g_build.masterVolume; o.showFps = g_build.showFps;
             o.includeAllProjectScenes = g_build.includeAllProjectScenes;
@@ -41361,7 +41372,20 @@ int main(int argc, char** argv) {
         {   // Frozen at a visual-script breakpoint: Continue / Step resume that same tick.
             auto& dv = okay::editor::vsed::DebugView();
             if (g_gameFiber.Suspended()) { if (dv.resume) { dv.resume = false; g_gameFiber.Resume(); } }
-            else if (!g_paused) TickGame(ed, okay::Game::Paused() ? 0.0f : dt);
+            else if (!g_paused) {
+                // One hitch (a compile, an asset load, a window drag) mustn't become
+                // one huge physics step: clamp like the built game, then even it out.
+                static float s_refreshHz = 0.0f;
+                static int s_refreshAge = 0;
+                if (s_refreshAge-- <= 0) {
+                    SDL_DisplayMode dm;
+                    s_refreshHz = (window && SDL_GetWindowDisplayMode(window, &dm) == 0 && dm.refresh_rate > 0) ? (float)dm.refresh_rate : 0.0f;
+                    s_refreshAge = 120;
+                }
+                float playDt = dt > 0.1f ? 0.1f : dt;
+                if (g_smoothFrameTime) playDt = okay::Time::SmoothDelta(playDt, g_vsync ? s_refreshHz : 0.0f);
+                TickGame(ed, okay::Game::Paused() ? 0.0f : playDt);
+            }
         }
         // A PauseMenu / script Quit during Play stops play (mirrors the built game).
         if (ed.isPlaying() && okay::Game::QuitRequested()) { ed.Stop(); g_paused = false; ConsoleLog("Quit (game requested exit)"); }

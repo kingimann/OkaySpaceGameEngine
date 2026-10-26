@@ -46,7 +46,7 @@ void Application::Run(Scene& scene) {
         if (dt > 0.25f) dt = targetFrameTime > 0.0f ? targetFrameTime : 0.016f;
 
         Input::Poll();
-        Time::Advance(dt);
+        Time::Advance(m_config.smoothDt ? Time::SmoothDelta(dt) : dt);
 
         scene.Update(Time::DeltaTime());
         scene.Render(*m_renderer);

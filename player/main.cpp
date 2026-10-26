@@ -1202,6 +1202,7 @@ int main(int argc, char** argv) {
         std::string title = "OkaySpace Game";
         int  width = 960, height = 600;
         bool fullscreen = false, borderless = false, resizable = true, vsync = true;
+        bool smoothDt = true;   // even frame steps (Time::SmoothDelta) for movement and cameras
         bool showCursor = true, quitOnEscape = true, showFps = false;
         int  fpsCap = 0;
         float volume = 1.0f;
@@ -1255,6 +1256,7 @@ int main(int argc, char** argv) {
             else if (k == "borderless") cfg.borderless = std::atoi(v.c_str()) != 0;
             else if (k == "resizable")  cfg.resizable = std::atoi(v.c_str()) != 0;
             else if (k == "vsync")      cfg.vsync = std::atoi(v.c_str()) != 0;
+            else if (k == "smooth_dt")  cfg.smoothDt = std::atoi(v.c_str()) != 0;
             else if (k == "cursor")     cfg.showCursor = std::atoi(v.c_str()) != 0;
             else if (k == "fps_cap")    cfg.fpsCap = std::atoi(v.c_str());
             else if (k == "quit_on_escape") cfg.quitOnEscape = std::atoi(v.c_str()) != 0;
@@ -1851,6 +1853,17 @@ int main(int argc, char** argv) {
         float dt = (float)((now - last) / (double)SDL_GetPerformanceFrequency());
         last = now;
         if (dt > 0.1f) dt = 0.1f;
+        // The game steps by an evened-out frame time (vsync: whole refresh
+        // periods); the FPS readouts below keep the measured `dt`. The refresh
+        // rate is re-read now and then (the window can move to another display).
+        static float s_refreshHz = 0.0f;
+        static int s_refreshAge = 0;
+        if (s_refreshAge-- <= 0) {
+            SDL_DisplayMode dm;
+            s_refreshHz = (window && SDL_GetWindowDisplayMode(window, &dm) == 0 && dm.refresh_rate > 0) ? (float)dm.refresh_rate : 0.0f;
+            s_refreshAge = 120;
+        }
+        const float stepDt = cfg.smoothDt ? Time::SmoothDelta(dt, cfg.vsync ? s_refreshHz : 0.0f) : dt;
 
         // Publish the render-target size so anchored UI widgets and their
         // hit-tests (run inside scene.Update) agree on where things sit.
@@ -1933,7 +1946,7 @@ int main(int argc, char** argv) {
 
         // Drive global Time so ElapsedTime()/DeltaTime()/timeScale work, then
         // advance the scene by the scaled delta (timeScale 0 = paused).
-        Time::Step(tick ? dt : 0.0f);
+        Time::Step(tick ? stepDt : 0.0f);
         // Characters skin in the vertex shader when Direct3D 11 or OpenGL draws the
         // frame: bone matrices per frame instead of every vertex on the CPU plus a
         // full mesh re-upload. (D3D12 and the software fallback skin on the CPU.)

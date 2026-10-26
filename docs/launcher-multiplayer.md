@@ -271,8 +271,9 @@ players itself:
 
 - Each client names the object its inputs drive: its own SpawnOwned player
   (`SetPawn(obj)`, `net_set_pawn("Player")`). The object needs a controller that
-  can be driven by inputs. Character Controller 3D can now, and the other
-  controllers follow.
+  can be driven by inputs: Character Controller 3D, First Person Controller and
+  Third Person Controller can (the 2D controllers follow). Look (yaw, pitch),
+  stance, lean, sprint, jump and aim/zoom all travel in the input.
 - Once a tick, the client sends its input: the move stick, look, and buttons
   held and pressed. Each one is numbered, and the last 3 are repeated so a lost
   packet costs nothing.
@@ -288,7 +289,9 @@ players itself:
 - It runs on the fixed tick: Fixed Net Tick, or 30 Hz if that's off.
 - The player's own copy follows the host. Prediction, which moves it at once
   and corrects it, is the next step (phase 5c). Until then you'll feel the
-  round trip.
+  round trip, and with the first- and third-person controllers the look turns
+  the body only when the host's answer comes back (the first-person camera's
+  up/down tilt shows once prediction lands).
 - Off (the default), nothing changes.
 
 ## Server authority (anti-cheat basics)

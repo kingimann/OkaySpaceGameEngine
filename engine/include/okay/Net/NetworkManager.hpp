@@ -272,8 +272,28 @@ public:
     // ---- Host settings (used when this peer is the server) ------------
     int         maxPlayers = 8;     // reject joins beyond this many clients
     float       snapshotRate = 20.0f; // state broadcasts per second (tick rate)
+    /// A fixed network tick, in Hz (30 is a good rate). 0 (the default): as
+    /// before, snapshots go at snapshotRate and clients send their state every
+    /// frame. Above 0, on the host: a tick counter steps at exactly this rate
+    /// whatever the frame rate, every snapshot carries the tick and goes out
+    /// once a tick, and the Welcome tells clients the rate, so they send their
+    /// state once a tick instead of once a frame. OnNetTick runs on each tick.
+    float       netTickRate = 0.0f;
     std::string serverName;         // friendly server label, sent to clients
     std::string password;           // clients must match to join ("" = open)
+
+    /// The current network tick: the host's own count; on a client, its
+    /// estimate of the host's (the latest snapshot's tick, stepped at the rate
+    /// between snapshots). 0 when there's no fixed tick.
+    std::uint32_t NetTick() const { return m_netTick; }
+    /// The fixed tick rate in use: the host's netTickRate, or on a client what
+    /// the host announced (0 = none: the frame-rate behaviour).
+    float NetTickRate() const { return m_mode == Mode::Client ? m_hostTickRate : (m_mode == Mode::Server ? netTickRate : 0.0f); }
+    /// Called on every fixed tick (host and client), with the tick and its
+    /// length in seconds: where fixed-step game logic goes.
+    void OnNetTick(std::function<void(std::uint32_t tick, float dt)> f) { m_onNetTick = std::move(f); }
+    /// Client: state packets sent since it joined (for tests and stats).
+    std::uint32_t StatesSent() const { return m_statesSent; }
 
     /// The server's friendly name (clients learn it from the join handshake).
     const std::string& ServerName() const { return m_serverName; }
@@ -661,6 +681,14 @@ private:
     std::uint32_t m_relSeq = 0;
     std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>> m_relOut;
     SeqWindow m_relSeen;
+    // Fixed net tick (netTickRate): the tick count, the time not yet stepped,
+    // the rate the host announced (client), and the tick hook.
+    std::uint32_t m_netTick = 0;
+    float m_tickAccum = 0.0f;
+    float m_hostTickRate = 0.0f;
+    std::uint32_t m_statesSent = 0;
+    std::function<void(std::uint32_t, float)> m_onNetTick;
+    int StepNetTick(float rate, float dt);   // ticks that elapsed this frame (fires OnNetTick)
     double m_acClockMs = 0.0;     // server: the clock the heartbeat checks clients against
     double m_gameClockMs = 0.0;   // client: the game clock it answers with
     std::unordered_map<net::Endpoint, PendingJoin, net::EndpointHash> m_pendingJoins;

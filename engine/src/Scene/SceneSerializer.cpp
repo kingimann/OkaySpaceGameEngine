@@ -1885,7 +1885,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << Quote(nm->autoHost) << " " << Quote(nm->startName) << " "
             << Quote(nm->startRoom) << " "
             << nm->maxPlayers << " " << nm->snapshotRate << " "
-            << Quote(nm->serverName) << " " << Quote(nm->password) << "\n";
+            << Quote(nm->serverName) << " " << Quote(nm->password);
+        if (nm->netTickRate > 0.0f) out << " " << nm->netTickRate;   // only when set: other scenes don't change
+        out << "\n";
     }
     if (auto* wu = go->GetComponent<WorldUI>()) {
         out << "  worldui " << Quote(wu->text) << " "
@@ -4950,6 +4952,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (in.peek() == '"') nm->serverName = ReadQuoted(in);
                     in >> std::ws;
                     if (in.peek() == '"') nm->password = ReadQuoted(in);
+                    in >> std::ws;   // the fixed net tick came later
+                    if (std::isdigit(in.peek())) {
+                        in >> nm->netTickRate;
+                        if (!std::isfinite(nm->netTickRate) || nm->netTickRate < 0.0f) nm->netTickRate = 0.0f;
+                        if (nm->netTickRate > 240.0f) nm->netTickRate = 240.0f;
+                    }
                 } else if (field == "worldui") {
                     auto* wu = go->AddComponent<WorldUI>();
                     wu->text = ReadQuoted(in);

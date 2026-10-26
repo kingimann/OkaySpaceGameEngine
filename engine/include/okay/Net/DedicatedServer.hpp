@@ -62,6 +62,10 @@ struct DedicatedServerOptions {
     /// as a report from the account this machine is signed in to. Nothing is
     /// banned automatically.
     bool reportKicks = false;
+    /// --fixed-tick / fixed_tick = true: run the network on a fixed tick at
+    /// tickRate (NetworkManager::netTickRate): snapshots carry the tick and
+    /// clients send once a tick. Off: as before.
+    bool fixedTick = false;
 };
 
 /// What --report-kicks files: an ac_reports "player" row from the server's

@@ -17437,6 +17437,7 @@ static const ActionOpInfo kCondOps[] = {
     {"array_len_gt","Array Longer Than",   "array count",                "Passes if the array has more than N items.",                   "Arrays"},
     {"array_len_lt","Array Shorter Than",  "array count",                "Passes if the array has fewer than N items.",                  "Arrays"},
     {"obj_has_tag","Object Has Tag",       "object tag",                 "Passes if the NAMED object has the given tag (or $textvar for a name).", "World"},
+    {"has_item",   "Has Item",             "item [count] [object]",      "Passes if the Inventory (this object's, or a named object's) holds at least count of the item.", "World"},
     {"obj_active", "Object Is Active",      "object",                     "Passes if the named object is active.",                        "World"},
     {"any_with_tag","Any Object With Tag",  "tag",                        "Passes if any active object in the scene has this tag.",        "World"},
     {"map_has",    "Map Has Key",          "map key",                    "Passes if the named map contains the key.",                    "Maps"},
@@ -17618,6 +17619,8 @@ static const ActionOpInfo kInstrOps[] = {
     {"survival_on", "Survival On Object", "target verb amount",   "Call a survival verb on a named object.",                  "Survival"},
     {"use_item",    "Use Item",           "recipe-index",         "Use a Consumables recipe by index.",                      "Survival"},
     {"craft",       "Craft",              "recipe-index",         "Craft a Crafting recipe by index.",                       "Survival"},
+    {"give",        "Give Item",          "item [count] [object]","Add items to this object's Inventory (or a named object's), as many as fit.", "Survival"},
+    {"take",        "Take Item",          "item [count] [object]","Remove items from the Inventory: all of them, or none if there aren't enough.", "Survival"},
     // ---- Juice (tweens; they start the effect and continue immediately) ----
     {"tween_move",  "Tween Move",         "x y seconds [ease]",   "Glide to (x, y) over the duration. Ease: in / out / in_out / out_back / out_bounce / out_elastic (blank = linear). Runs alongside later actions — add a Wait to hold for it.", "Juice"},
     {"tween_scale", "Tween Scale",        "scale seconds [ease]", "Grow/shrink smoothly to a uniform scale over the duration.",           "Juice"},
@@ -18406,6 +18409,7 @@ static const char* ActionOpRequires(const std::string& op) {
         return "a Health / Survival component on the object";
     if (op=="use_item") return "a Consumables component on this object";
     if (op=="craft") return "a Crafting component on this object";
+    if (op=="give" || op=="take" || op=="has_item") return "an Inventory on this object (or the named object)";
     if (op=="play_sound"||op=="set_volume") return "an Audio Source on this object";
     if (op=="play_anim"||op=="stop_anim"||op=="set_anim"||op=="play_clip"||op=="stop_clip"||
         op=="play_layer"||op=="stop_layer"||op=="clip_speed"||op=="anim_event")

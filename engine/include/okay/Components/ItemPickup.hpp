@@ -116,7 +116,9 @@ private:
         Inventory carried;   // move through InventoryOps: partial fit and one-off items handled once
         carried.slots.push_back(Inventory::Slot{item, count, data});
         const InvResult r = InventoryOps::Transfer(&carried, 0, inv);
+        if (r.moved < count) inv->NotifyFull(item, count - r.moved);
         if (!r.Ok()) return 0;
+        InventoryEvents::Fire(inv->gameObject, "on_item_picked_up", nullptr, {vs::VsValue(item), vs::VsValue((float)r.moved)});
         count -= r.moved;
         if (count <= 0) {
             m_gone = true;

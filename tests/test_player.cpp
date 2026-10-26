@@ -38,7 +38,7 @@ int main() {
         auto* tp = p->AddComponent<ThirdPersonController>();
         tp->yaw = 0.0f; tp->pitch = 0.0f;                    // camera straight behind (+Z)
         tp->distance = 6.0f; tp->cameraHeight = 1.5f;
-        tp->cameraDamping = 0.0f;                            // instant, for a clean check
+        tp->pivotDampingXZ = tp->pivotDampingY = 0.0f;       // instant, for a clean check
         sc.Start();                                          // Camera::Awake registers mainCamera
 
         // Baseline: no obstacle -> camera sits a full `distance` behind the head.

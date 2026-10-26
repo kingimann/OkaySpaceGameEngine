@@ -8,6 +8,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
+#include "okay/Components/ControllerFeel.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Net/NetOwnership.hpp"
@@ -48,8 +49,19 @@ public:
     float distance = 4.0f;               // hip-fire camera distance
     float cameraHeight = 1.6f;           // shoulder/look height above the player origin
     float shoulderOffset = 0.7f;         // over-the-shoulder lateral offset
+    // Follow: the camera orbits a smoothed point at the shoulder (the pivot),
+    // so steps, landings and platforms don't pop the view. Horizontal and
+    // vertical ease on their own; higher = tighter, 0 = instant.
+    float pivotDampingXZ = 20.0f;
+    float pivotDampingY  = 10.0f;
+    float maxPivotLag = 0.6f;            // the pivot never trails the player by more (m); 0 = no limit
     bool  cameraCollision = true;        // pull in so the view never clips walls
     float cameraCollisionSkin = 0.3f;
+    // A sphere of this radius is swept (triggers and the player's own parts
+    // never count); the mask picks the layers that block the camera.
+    float cameraCollisionRadius = 0.2f;
+    std::uint32_t cameraCollisionMask = Physics3D::kAllLayers;
+    float cameraCollisionPullIn = 30.0f;   // how fast a hair-closer obstacle eases the camera in
     // Ease the camera back out once an obstacle clears (spring arm) instead of
     // snapping. Higher = quicker recovery.
     float cameraCollisionRecover = 6.0f;
@@ -207,10 +219,13 @@ public:
         Scene* sc = gameObject->scene();
         if (!sc || !sc->mainCamera || !sc->mainCamera->transform) return;
         Transform* cam = sc->mainCamera->transform;
+        if (sc->mainCamera != m_claimedCam) { ClaimMainCamera(sc->mainCamera, "Third Person Shooter Controller"); m_claimedCam = sc->mainCamera; }
 
         float dist  = Mathf::Lerp(distance, aimDistance, m_aim);
         float shldr = Mathf::Lerp(shoulderOffset, aimShoulder, m_aim);
-        Vec3 target = transform->Position(); target.y += cameraHeight;
+        // The pivot: the shoulder height above the player, smoothed (see pivotDampingXZ).
+        Vec3 head = transform->Position(); head.y += cameraHeight;
+        const Vec3 target = m_pivot.Step(head, pivotDampingXZ, pivotDampingY, maxPivotLag, dt);
 
         float pr = pitch * Mathf::Deg2Rad;
         Vec3 behind = Quat::Euler(0, yaw, 0) * Vec3{0, 0, 1};
@@ -218,25 +233,14 @@ public:
         Vec3 desired = target + Vec3{behind.x * cp, Mathf::Sin(pr), behind.z * cp} * dist;
         desired = desired + (Quat::Euler(0, yaw, 0) * Vec3::Right) * shldr;
 
-        // Camera collision: never clip through walls/floors. Snap in instantly when
-        // blocked, ease back out once clear (spring arm) so the view doesn't pop.
+        // Camera collision (spring arm): never clip through walls/floors.
         if (cameraCollision) {
             Vec3 d = desired - target; float dl = d.Magnitude();
             if (dl > 1e-4f) {
                 Vec3 dn = d * (1.0f / dl);
-                float allow = dl;
-                RaycastHit3D hit = sc->physics3D().Raycast(*sc, target, dn, dl + cameraCollisionSkin, gameObject);
-                if (hit.hit) allow = Mathf::Max(0.0f, hit.distance - cameraCollisionSkin);
-                if (m_springLen < 0.0f) {
-                    m_springLen = allow;   // first frame: start at the correct length (no ease-out from a stale default)
-                } else if (allow <= m_springLen) {
-                    m_springLen = allow;
-                } else {
-                    float e = cameraCollisionRecover > 0.0f
-                        ? (1.0f - std::exp(-cameraCollisionRecover * dt)) : 1.0f;
-                    m_springLen += (allow - m_springLen) * e;
-                }
-                desired = target + dn * m_springLen;
+                desired = target + dn * m_arm.Step(*sc, gameObject, target, dn, dl, cameraCollisionRadius,
+                                                   cameraCollisionSkin, cameraCollisionMask,
+                                                   cameraCollisionPullIn, cameraCollisionRecover, dt);
             }
         }
 
@@ -280,7 +284,9 @@ private:
     bool m_haveMouse = false;
     bool m_aiming = false;
     float m_aim = 0.0f;             // 0 = hip, 1 = aiming
-    float m_springLen = -1.0f;      // eased spring-arm length (camera collision); <0 = uninitialized
+    FollowPivot m_pivot;            // the smoothed point the camera orbits
+    SpringArm m_arm;                // camera collision
+    Camera* m_claimedCam = nullptr; // the main camera last checked for a competing follow
     float m_lean = 0.0f;            // eased lean (-1..+1)
     int   m_jumpsUsed = 0;         // jumps since last grounded (for double-jump)
     float m_fireCooldown = 0.0f;

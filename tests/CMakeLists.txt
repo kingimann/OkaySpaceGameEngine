@@ -832,6 +832,11 @@ add_executable(test_character_model_setup test_character_model_setup.cpp)
 target_link_libraries(test_character_model_setup PRIVATE okay::engine)
 add_test(NAME character_model_setup COMMAND test_character_model_setup)
 
+# Imported (linear) clips keep their shape through Save + Reopen.
+add_executable(test_modelanim_save test_modelanim_save.cpp)
+target_link_libraries(test_modelanim_save PRIVATE okay::engine)
+add_test(NAME modelanim_save COMMAND test_modelanim_save)
+
 # Foot IK on a retargeted imported rig: walking doesn't sink the feet.
 add_executable(test_footik_drift test_footik_drift.cpp)
 target_link_libraries(test_footik_drift PRIVATE okay::engine)

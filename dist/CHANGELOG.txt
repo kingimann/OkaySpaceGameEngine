@@ -1,5 +1,36 @@
 OkaySpace Game Engine — Changelog
 
+v2.820.0
+  Animation
+  - The default player really walks and runs: a nearly straight leg with a heel
+    strike when walking, a flight phase and scissoring legs when running. Every
+    built-in controller (third/first person, shooter, top-down, click-to-move,
+    2.5D, NPCs) now matches its stride to the real ground speed, so feet no
+    longer skate, and strafing/backpedalling step the right way (#301).
+  - Imported characters: Foot IK no longer sinks the model into the floor when
+    walking over steps or curbs (#296).
+  - Multiplayer: remote players move their feet at the speed they really travel
+    and keep the owner's walk/run choice (#300).
+  - 2D sprites get named clips (idle, run, jump, fall); the 2D platformer and
+    top-down controllers play them automatically (#306).
+  Anti-cheat (opt-in, off by default)
+  - Server checks on what clients send: forged moves, despawns and spawns,
+    SyncVar floods and speed hacks are refused; repeat offenders are kicked
+    (#291).
+  - Anti-Cheat Config and Net Validator components, plus On Cheat Detected,
+    On Validate Rpc and Reject Rpc visual-script nodes (#297).
+  Scripting
+  - Typed OkayScript: static fields and methods (#281).
+  - Visual scripts compile to OkayScript correctly when text fields contain
+    quotes, backslashes, spaces or symbols (#290); data reads have their own
+    budget (#295).
+  Fixes
+  - Corrupt scene files, glTF models and images can no longer overflow or use
+    gigabytes of memory; a broken physics body jointed to a fixed anchor no
+    longer spreads NaN into it (#303, #304).
+  - The editor's UI preview draws through the same renderer as built games
+    (#285).
+
 v2.819.0
   Fixes
   - Multiplayer: servers refuse oversized or forged packets instead of running

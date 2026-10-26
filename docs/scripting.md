@@ -838,6 +838,62 @@ Reading a missing key, adding a key that's already there, an index outside a
 list, or changing a list or dictionary inside a `foreach` over it stops the
 callback with an error naming the line.
 
+### Lambdas, Func and Action
+
+A lambda is a small function written where it's used: `x => x * 2`,
+`(a, b) => a - b`, `() => { ... }`. Its type comes from where it goes:
+`Func<int, bool>` takes an int and gives a bool, and `Action<int>` takes an int
+and gives nothing. Lambdas can be kept in variables and fields and called later.
+
+```csharp
+class Button { public Action onClick; }
+
+class Menu : Behaviour {
+    Func<float, float> half = x => x / 2;
+    int clicks;
+
+    void Start() {
+        Button play = new Button();
+        play.onClick = () => clicks++;
+        play.onClick?.Invoke();          // nothing happens while it's null
+        play.onClick();                  // same as Invoke()
+    }
+}
+```
+
+- A lambda uses the variables around it, not copies: changes on either side show
+  on the other, even after the method that made it has returned. A variable
+  declared inside a loop (including a `foreach` variable) is a new one each time
+  round, so lambdas made in the loop each keep their own. A `for` loop's own
+  counter is one variable for the whole loop.
+- `var` can't hold a lambda (write the `Func` or `Action` type). A lambda can't
+  use `break` or `continue` to reach a loop around it.
+- A lambda made by a script that has since been destroyed stops the callback
+  with an error if it's called.
+
+### LINQ-style methods
+
+Lists and arrays have the usual query methods. Each gives a new `List` (or a
+single value) and leaves the original alone.
+
+```csharp
+List<Enemy> near = enemies.Where(e => e.distance < 10).OrderBy(e => e.distance).ToList();
+Enemy closest = enemies.OrderBy(e => e.distance).FirstOrDefault();
+int alive = enemies.Count(e => e.health > 0);
+float total = enemies.Sum(e => e.damage);
+```
+
+- `Where`, `Select`, `OrderBy`, `OrderByDescending`, `ToList` (and `ToArray`
+  for arrays).
+- `First`, `FirstOrDefault`, `Last`, `LastOrDefault`, `Any`, `All` and `Count`,
+  with or without a condition.
+- `Sum`, `Min`, `Max` and `Average`, of the numbers or of what a lambda picks.
+- On a `List` only: `Find`, `FindAll`, `FindIndex`, `Exists`, `RemoveAll`,
+  `ForEach`, and `Sort((a, b) => a.score - b.score)`.
+- `First`, `Last`, `Min`, `Max` and `Average` of an empty list stop the callback
+  with an error (use the `OrDefault` forms when it may be empty). An int `Sum`
+  too big for an int is an error, not a wrong number.
+
 ### do / while
 
 `do { ... } while (condition);` runs the body once before it checks.

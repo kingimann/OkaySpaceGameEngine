@@ -273,6 +273,31 @@ float AbsorbLanding(std::vector<Vec3>& r, float landK) {
     return -drop;
 }
 
+float KneelPose(int which, std::vector<Vec3>& r) {
+    r.assign(B_COUNT, Vec3{0, 0, 0});
+    if (which == 0) {   // hands and knees: the hips 0.42 up, thighs straight down, shins back along the ground
+        r[B_HIPS]   = {60, 0, 0};        // body tipped forward (+ the chest's 10 = 70 deg)
+        r[B_TORSO]  = {10, 0, 0};
+        r[B_HEAD]   = {-55, 0, 0};       // looking ahead, not at the floor
+        r[B_LTHIGH] = {-60, 0, -4};      r[B_RTHIGH] = {-60, 0, 4};    // straight down in the world
+        r[B_LSHIN]  = {90, 0, 0};        r[B_RSHIN]  = {90, 0, 0};     // shins flat behind
+        r[B_LFOOT]  = {-30, 0, 0};       r[B_RFOOT]  = {-30, 0, 0};
+        r[B_LUPARM] = {-70, 0, 6};       r[B_RUPARM] = {-70, 0, -6};   // arms straight down onto the hands
+        return 0.42f - (kHipToAnkle + kAnkleH);
+    }
+    // Kneeling on the right knee, the left foot planted ahead, a hand on that knee.
+    const float hipH = 0.42f;
+    r[B_TORSO]  = {15, 0, 0};
+    r[B_HEAD]   = {-10, 0, 0};
+    LegIK(0.30f, hipH - kAnkleH, 0.0f, 0.0f, r[B_LTHIGH], r[B_LSHIN], r[B_LFOOT]);
+    r[B_RTHIGH] = {8, 0, 0};             // knee down, just behind the hips
+    r[B_RSHIN]  = {88, 0, 0};            // shin flat behind
+    r[B_RFOOT]  = {-35, 0, 0};           // toes tucked under
+    r[B_LUPARM] = {-30, 0, 8};   r[B_LFORE] = {-45, 0, 0};    // hand resting on the front knee
+    r[B_RUPARM] = {0, 0, -6};
+    return hipH - (kHipToAnkle + kAnkleH);
+}
+
 float StartPhase(int state, float speed) { return 0.5f * GaitFor(state, SpeedFor(state, speed)).beta; }
 
 float HipY(int state, const Inputs& in) {
@@ -370,6 +395,15 @@ void Pose(int state, float t, const Inputs& in, std::vector<Vec3>& out) {
             r[B_LTHIGH] = {0, 0, -(6.0f + 24.0f * kl)};   r[B_LSHIN] = {0, 0,  34.0f * kl};   // knee out, foot back in
             r[B_RTHIGH] = {0, 0,  (6.0f + 24.0f * kr)};   r[B_RSHIN] = {0, 0, -34.0f * kr};
             r[B_TORSO].y = 4.0f * c;
+            // Crawling sideways (travelYaw +-90 = the body's right / left): the arm on
+            // that side reaches out wide and the other tucks in to push, the chest
+            // bends toward the travel and the knee on that side draws up higher.
+            const float side = std::sin(in.travelYaw * (kPi / 180.0f));
+            const float toR = std::fmax(0.0f, side), toL = std::fmax(0.0f, -side);
+            r[B_LUPARM].z += 28.0f * toL - 10.0f * toR;
+            r[B_RUPARM].z -= 28.0f * toR - 10.0f * toL;
+            r[B_TORSO].z  += 10.0f * (toL - toR);
+            r[B_LTHIGH].z -= 14.0f * toL;  r[B_RTHIGH].z += 14.0f * toR;
         }
     }
     // ---- Hand gestures (8-12) and emotions (13-16) -----------------------------

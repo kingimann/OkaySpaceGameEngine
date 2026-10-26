@@ -10,7 +10,7 @@ namespace okay {
 
 /// A screen-space bar that fills left-to-right by `value` (0..1) — health,
 /// mana, loading, XP. Position/size are window pixels (origin top-left).
-class UIProgressBar : public Behaviour {
+class UIProgressBar final : public Behaviour {
 public:
     Vec2 position{20.0f, 20.0f};
     Vec2 size{200.0f, 24.0f};

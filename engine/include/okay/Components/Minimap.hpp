@@ -21,7 +21,7 @@ namespace okay {
 /// the whole map so the target always faces "up", a directional player arrow at the
 /// centre, off-map blips clamped to the edge as direction pointers, and an optional
 /// reference grid.
-class Minimap : public Behaviour {
+class Minimap final : public Behaviour {
 public:
     Vec2 position{20.0f, 20.0f};
     Vec2 size{180.0f, 180.0f};

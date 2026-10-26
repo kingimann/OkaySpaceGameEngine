@@ -83,6 +83,7 @@ add_library(okay_engine
     src/Graphics/TtfFont.cpp
     src/Graphics/EmbeddedFont.cpp
     src/UI/UIRenderer.cpp
+    src/UI/UIBatcher.cpp
     src/Render/ModelImport.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp

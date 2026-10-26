@@ -1822,7 +1822,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         KvOut k{out};
         k.str("item", pk->item)("count", pk->count).str("tag", pk->collectorTag).b("touch", pk->pickupOnTouch)
          ("auto", pk->autoRadius).key("key", pk->interactKey)("range", pk->interactRange)
-         ("magnet", pk->magnetRadius)("magnetSpeed", pk->magnetSpeed);
+         ("magnet", pk->magnetRadius)("magnetSpeed", pk->magnetSpeed).b("hold", pk->holdInHands);
         if (!pk->data.Empty()) {
             k("dur", pk->data.durability)("uid", pk->data.uid)("vals", pk->data.values.size());
             for (std::size_t v = 0; v < pk->data.values.size(); ++v) {
@@ -4664,7 +4664,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     KvIn k(in);
                     k.str("item", pk->item); k.i("count", pk->count); k.str("tag", pk->collectorTag); k.b("touch", pk->pickupOnTouch);
                     k.f("auto", pk->autoRadius); k.key("key", pk->interactKey); k.f("range", pk->interactRange);
-                    k.f("magnet", pk->magnetRadius); k.f("magnetSpeed", pk->magnetSpeed);
+                    k.f("magnet", pk->magnetRadius); k.f("magnetSpeed", pk->magnetSpeed); k.b("hold", pk->holdInHands);
                     pk->item = ItemId(pk->item);
                     k.f("dur", pk->data.durability);
                     if (const std::string* u = k.find("uid")) pk->data.uid = std::strtoull(u->c_str(), nullptr, 10);

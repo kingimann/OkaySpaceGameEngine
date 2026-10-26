@@ -135,7 +135,7 @@ inline GameObject* AddTopDownShooterPlayer(Scene& scene, const Vec3& pos = {0, 1
 }
 
 /// Add a 2.5D (LittleBigPlanet-style) platformer player: side view, run + jump,
-/// W / S hop between depth layers, E grabs.
+/// W / S hop between depth layers, E grabs, Ctrl crouches, Z goes prone.
 inline GameObject* AddPlatformer25DPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
     GameObject* player = BuildPlayerBody(scene, pos, "Player");
     auto* pc = player->AddComponent<Platformer25DController>();

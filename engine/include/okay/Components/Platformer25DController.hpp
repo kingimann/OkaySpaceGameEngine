@@ -9,6 +9,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/ScriptComponent.hpp"
+#include "okay/Components/StepUp.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Core/Game.hpp"
@@ -27,8 +28,11 @@ namespace okay {
 /// height (let go early for a hop), coyote time and a jump buffer; low steps are
 /// walked up; walls never hold you up (pressing into one doesn't stick). The side
 /// camera looks ahead and stays on the level, not on the layer, so switching
-/// layers doesn't swing the view. Gamepad: stick runs (push it all the way to
-/// run), A jumps, stick / d-pad up and down switch layers, RB grabs.
+/// layers doesn't swing the view. Ctrl crouches and Z goes prone (crawl); the
+/// body shrinks so you fit under low things, and won't stand up beneath them.
+/// No running crouched or prone, no jumping either, and no layer hops or grabs
+/// while prone. Gamepad: stick runs (push it all the way to run), A jumps, stick /
+/// d-pad up and down switch layers, RB grabs, B crouches (hold it to go prone).
 ///
 /// Script events on the player's script: on_jump, on_land, on_layer, on_grab,
 /// on_release, on_climb. Layer 0 is the front (nearest the camera).
@@ -54,6 +58,26 @@ public:
     float fallGravity = 1.6f;           ///< extra gravity while falling (snappier landings)
     float maxFallSpeed = 22.0f;
     float coyoteTime = 0.12f, jumpBufferTime = 0.12f;
+
+    // ---- Stance: crouch & prone ----
+    char  crouchKey = Input::KeyCtrl;   ///< 0 = disabled
+    char  proneKey = 'z';               ///< 0 = disabled
+    bool  toggleStance = true;          ///< tap to toggle vs hold
+    float crouchSpeed = 2.2f;
+    float proneSpeed = 1.1f;
+    bool  allowProne = true;            ///< false: no prone at all (key and gamepad)
+    bool  resizeBody = true;            ///< crouch / prone shrink the collider (fit under low things; no standing into a ceiling)
+    float crouchHeight = 0.65f;         ///< crouched body height, fraction of standing
+    float proneHeight = 0.33f;          ///< prone body height, fraction of standing
+    int   stanceGamepadButton = 1;      ///< B: tap = crouch / stand, hold = prone (-1 = none)
+    float proneHoldTime = 0.4f;         ///< seconds the gamepad button is held to go prone
+
+    enum class Stance { Stand, Crouch, Prone };
+    Stance stance() const { return m_stance; }
+    /// The resized body; saving a scene writes the standing collider.
+    const StanceBody& stanceBody() const { return m_body; }
+    /// Begin in `s` (a scene saved crouched / prone loads that way). Applied in Start().
+    void RestoreStance(Stance s) { m_stance = m_wantStance = m_padWant = s; }
 
     // ---- Depth layers ----
     int   layerCount = 3;               ///< LittleBigPlanet uses 3
@@ -107,11 +131,15 @@ public:
             Vec3 p = transform->Position(); p.z = LayerZ(layer);
             transform->SetPosition(p);
         }
+        if (resizeBody && gameObject && m_stance != Stance::Stand) {   // restored crouched / prone
+            CaptureStance(gameObject, m_body);
+            ApplyStanceHeight(gameObject, m_body, StanceHeight(m_stance));
+        }
     }
 
-    /// Move to another layer if it exists (and has room). Returns true on success.
+    /// Move to another layer if it exists (and has room; not while prone). Returns true on success.
     bool SwitchLayer(int to) {
-        if (to < 0 || to >= Mathf::Max(1, layerCount) || to == layer || !transform || !gameObject) return false;
+        if (m_stance == Stance::Prone || to < 0 || to >= Mathf::Max(1, layerCount) || to == layer || !transform || !gameObject) return false;
         if (checkLayerFree && !LayerFree(to)) return false;
         m_prevLayer = layer;
         m_layerStall = 0.0f;
@@ -180,6 +208,7 @@ public:
         else m_coyote = Mathf::Max(0.0f, m_coyote - dt);
         if (!m_grounded && m_coyote <= 0.0f && m_jumpsUsed == 0) m_jumpsUsed = 1;
         if (m_grounded && !wasGrounded) CallScript("on_land");
+        if (!m_hanging) UpdateStance(dt, ui);
 
         // ---- Hanging from a ledge: up climbs, down drops, jump jumps off ----
         if (m_hanging) {
@@ -192,7 +221,7 @@ public:
         }
 
         // ---- Grab: objects on the ground (once per press); ledges in the air (while held) ----
-        bool grabHeld = !ui && canGrab && ((grabKey && Input::GetKey(grabKey)) ||
+        bool grabHeld = !ui && canGrab && m_stance != Stance::Prone && ((grabKey && Input::GetKey(grabKey)) ||
                                            (grabGamepadButton >= 0 && Input::GetGamepadButton(grabGamepadButton)));
         m_noLedge = Mathf::Max(0.0f, m_noLedge - dt);
         if (grabHeld && !m_grabbed && !m_hanging && (!m_grabTried || !m_grounded)) { TryGrab(sc, rb); m_grabTried = true; }
@@ -214,9 +243,11 @@ public:
         else m_jumpBuf = Mathf::Max(0.0f, m_jumpBuf - dt);
 
         const bool padRun = padMove && Mathf::Abs(pad.x) >= stickRunThreshold;
-        bool running = ((sprintKey && Input::GetKey(sprintKey)) || padRun) && moving && !m_grabbed;
+        bool running = m_stance == Stance::Stand && ((sprintKey && Input::GetKey(sprintKey)) || padRun) && moving && !m_grabbed;
         // An analog stick walks at the speed it's pushed; keys walk at full speed.
-        float speed = (running ? runSpeed : walkSpeed) * (m_grabbed ? grabPullSpeed : 1.0f);
+        float speed = (m_stance == Stance::Prone  ? proneSpeed
+                     : m_stance == Stance::Crouch ? crouchSpeed
+                     : (running ? runSpeed : walkSpeed)) * (m_grabbed ? grabPullSpeed : 1.0f);
         const float targetZ = LayerZ(layer);
 
         if (rb) {
@@ -241,7 +272,7 @@ public:
                         if (WallAhead(sc, dir)) rb->velocity.x = 0.0f;
                 }
 
-                if (canJump && m_jumpBuf > 0.0f) {
+                if (canJump && m_jumpBuf > 0.0f && m_stance == Stance::Stand) {   // no jumping while crouched / prone
                     bool firstOk = m_jumpsUsed == 0 && (m_grounded || m_coyote > 0.0f);
                     bool extraOk = m_jumpsUsed >= 1 && m_jumpsUsed < Mathf::Max(1, maxJumps);
                     if (firstOk || extraOk) DoJump(rb);
@@ -339,6 +370,61 @@ private:
     float m_noLedge = 0.0f;                    // after dropping / jumping off: don't re-catch yet
     float m_climbT = -1.0f;                    // >= 0 while climbing onto a ledge
     Vec3  m_climbFrom{0, 0, 0}, m_climbTo{0, 0, 0};
+    Stance m_stance = Stance::Stand;
+    Stance m_wantStance = Stance::Stand;      // what the input asks for (m_stance may wait for headroom)
+    Stance m_padWant = Stance::Stand;         // the stance the gamepad button set (hold mode)
+    StanceBody m_body;
+    float m_padHeld = 0.0f; bool m_padProned = false;
+
+    // Resolve the stance from the keys / gamepad, then size the body for it.
+    // Toggle mode remembers what you asked for, so a stand-up blocked by a low
+    // ceiling happens on its own once you're out from under it.
+    void UpdateStance(float dt, bool ui) {
+        // (Typing into UI keeps the stance as it is.)
+        if (!ui && toggleStance) {
+            if (crouchKey && Input::GetKeyDown(crouchKey))
+                m_wantStance = (m_wantStance == Stance::Crouch) ? Stance::Stand : Stance::Crouch;
+            if (allowProne && proneKey && Input::GetKeyDown(proneKey))
+                m_wantStance = (m_wantStance == Stance::Prone) ? Stance::Stand : Stance::Prone;
+        } else if (!ui) {
+            // Held keys win; with none held you're in the stance the gamepad last set.
+            if (allowProne && proneKey && Input::GetKey(proneKey))  { m_wantStance = Stance::Prone;  m_padWant = Stance::Stand; }
+            else if (crouchKey && Input::GetKey(crouchKey))         { m_wantStance = Stance::Crouch; m_padWant = Stance::Stand; }
+            else                                                      m_wantStance = m_padWant;
+        }
+        // Gamepad: tap the stance button to crouch / stand up, hold it to drop prone.
+        if (stanceGamepadButton >= 0 && !ui) {
+            if (Input::GetGamepadButton(stanceGamepadButton)) {
+                m_padHeld += dt;
+                if (allowProne && !m_padProned && m_padHeld >= proneHoldTime) { m_wantStance = m_padWant = Stance::Prone; m_padProned = true; }
+            } else if (m_padHeld > 0.0f) {
+                if (!m_padProned) m_wantStance = m_padWant = (m_stance == Stance::Stand) ? Stance::Crouch : Stance::Stand;
+                m_padHeld = 0.0f; m_padProned = false;
+            }
+        }
+        if (!allowProne && m_wantStance == Stance::Prone) m_wantStance = Stance::Stand;
+        Stance next = m_wantStance;
+        if (resizeBody && gameObject) {
+            CaptureStance(gameObject, m_body);
+            Scene* sc = gameObject->scene();
+            // Rising needs headroom; from prone, settle for a crouch if only that fits.
+            if (sc && m_body.captured && StanceHeight(next) > m_body.curH + 1e-3f &&
+                !StanceHasRoom(*sc, gameObject, m_body, StanceHeight(next))) {
+                if (next == Stance::Stand && m_stance == Stance::Prone &&
+                    StanceHasRoom(*sc, gameObject, m_body, StanceHeight(Stance::Crouch))) next = Stance::Crouch;
+                else next = m_stance;
+            }
+            m_stance = next;
+            ApplyStanceHeight(gameObject, m_body, StanceHeight(m_stance));
+        } else {
+            m_stance = next;
+        }
+    }
+    /// Collider height for a stance (crouch / prone are fractions of the standing body).
+    float StanceHeight(Stance s) const {
+        float h = m_body.standH;
+        return s == Stance::Prone ? h * proneHeight : (s == Stance::Crouch ? h * crouchHeight : h);
+    }
 
     // The body's half width (along X) and height, from its collider.
     float BodyHalfWidth() const {
@@ -486,7 +572,7 @@ private:
     }
 
     // Idle / walk / run at the real speed (the stride matches the ground), jump /
-    // fall in the air, arms up while hanging, a scramble while climbing.
+    // fall in the air, crouch / crawl, arms up while hanging, a scramble while climbing.
     void DriveAnimation(float dt, bool running) {
         Character* ch = FindCharacter();
         if (!ch) return;
@@ -498,6 +584,8 @@ private:
         lo.onGround = m_grounded;
         lo.jumped = m_jumpedAt <= 0.0f;                  // DoJump ran this frame
         lo.ignoreAxis = {0.0f, 0.0f, 1.0f};              // layer hops aren't steps
+        lo.crouch = m_stance == Stance::Crouch;
+        lo.prone = m_stance == Stance::Prone;
         lo.sprint = running;
         lo.walkSpeed = walkSpeed;
         lo.dt = dt;
@@ -523,7 +611,7 @@ private:
         }
         // In the air: catch a ledge (a wall face alone isn't something to hang from).
         float ledgeY = 0.0f, faceX = 0.0f;
-        if (grabHang && !m_grounded && rb && m_noLedge <= 0.0f && FindLedge(sc, ledgeY, faceX)) {
+        if (grabHang && m_stance == Stance::Stand && !m_grounded && rb && m_noLedge <= 0.0f && FindLedge(sc, ledgeY, faceX)) {
             // A ledge so low that hanging from it would leave the feet on the floor
             // isn't a hang; keep rising (it's caught higher up the jump, if at all).
             const float hangX = faceX - m_facing * (BodyHalfWidth() + 0.02f), hangY = ledgeY - bodyH - 0.1f;

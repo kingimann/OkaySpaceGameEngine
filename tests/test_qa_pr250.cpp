@@ -139,6 +139,31 @@ int main() {
         CHECK(!ran);
     }
 
+    // ---- 2.5D: crouch / prone pose and a shorter body; no standing up under a low bar ----
+    {
+        Scene s("p25stance"); Templates::Platformer25D(s);
+        GameObject* p = s.Find("Player");
+        auto* pc = p->GetComponent<Platformer25DController>();
+        auto* ch = p->GetComponent<Character>();
+        auto* box = p->GetComponent<BoxCollider3D>();
+        Block(s, "Low Bar", {-3.0f, 1.4f, 0.0f}, {3.0f, 1.0f, 2.0f});   // 0.9 m of room under it
+        s.Start(); Step(s, {}, 30);
+        Step(s, {Input::KeyCtrl}, 1); Step(s, {}, 5);
+        CHECK_EQ(ch->anim, 6);                                       // crouch idle
+        CHECK(box->size.y < 1.4f);
+        Step(s, {'a'}, 20);
+        CHECK_EQ(ch->anim, 17);                                      // crouch-walk
+        Step(s, {'z'}, 1); Step(s, {}, 5);
+        CHECK(pc->stance() == Platformer25DController::Stance::Prone);
+        CHECK_EQ(ch->anim, 7);
+        CHECK(!pc->SwitchLayer(pc->layer + 1));                      // no layer hops while prone
+        for (int i = 0; i < 300 && p->transform->Position().x > -3.0f; ++i) Step(s, {'a'}, 1);
+        CHECK(p->transform->Position().x < -2.5f);                   // crawled under the bar
+        Step(s, {'z'}, 1); Step(s, {}, 10);                          // try to stand up
+        CHECK(pc->stance() == Platformer25DController::Stance::Prone);
+        CHECK(box->size.y < 0.9f);
+    }
+
     // ---- Winding: the fixed primitives are outward, and so is Lathe (Barrel, Windmill) ----
     {
         CHECK(SignedVolume(Mesh::Sphere()) > 0.0);

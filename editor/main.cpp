@@ -5617,7 +5617,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("2.5D Platformer (LittleBigPlanet)")) {
                 ed.PushUndo();
                 ed.Select(okay::Templates::AddPlatformer25DPlayer(ed.scene()));
-                ConsoleLog("Added 2.5D player (A/D run, Space jump, W/S change layer, E grab)"); ed.dirty = true; created = true;
+                ConsoleLog("Added 2.5D player (A/D run, Space jump, W/S change layer, E grab, Ctrl crouch, Z prone)"); ed.dirty = true; created = true;
             }
             if (ImGui::MenuItem("Top Down (2D)")) {
                 ed.PushUndo();
@@ -31308,7 +31308,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* pc = dynamic_cast<Platformer25DController*>(curComp)) {
         if (CompHeader("2.5D Platformer Controller", pc, &toRemove)) {
-            ImGui::TextDisabled("LittleBigPlanet-style: A/D run, Space jump, W/S change layer, E grab.\nGamepad: stick runs (all the way = run), A jump, stick/d-pad up-down layers, RB grab.");
+            ImGui::TextDisabled("LittleBigPlanet-style: A/D run, Space jump, W/S change layer, E grab, Ctrl crouch, Z prone.\nGamepad: stick runs (all the way = run), A jump, stick/d-pad up-down layers, RB grab, B crouch (hold = prone).");
             SectionHeader("Run");
             if (ImGui::DragFloat("Walk Speed##p25", &pc->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (KeyBindCombo("Sprint Key##p25", pc->sprintKey)) ed.dirty = true;
@@ -31341,6 +31341,29 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat("Max Fall Speed##p25", &pc->maxFallSpeed, 0.2f, 0.0f, 100.0f)) ed.dirty = true;
                 if (ImGui::DragFloat("Coyote Time##p25", &pc->coyoteTime, 0.005f, 0.0f, 0.5f, "%.3fs")) ed.dirty = true;
                 if (ImGui::DragFloat("Jump Buffer##p25", &pc->jumpBufferTime, 0.005f, 0.0f, 0.5f, "%.3fs")) ed.dirty = true;
+            }
+
+            SectionHeader("Stance");
+            if (KeyBindCombo("Crouch Key##p25", pc->crouchKey)) ed.dirty = true;
+            ImGui::SameLine(); if (KeyBindCombo("Prone Key##p25", pc->proneKey)) ed.dirty = true;
+            if (ImGui::Checkbox("Toggle Stance##p25", &pc->toggleStance)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tap to toggle the stance; off = hold the key");
+            if (ImGui::DragFloat("Crouch Speed##p25", &pc->crouchSpeed, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Prone Speed##p25", &pc->proneSpeed, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Allow Prone##p25", &pc->allowProne)) ed.dirty = true;
+            ImGui::SameLine(); if (ImGui::Checkbox("Resize Body##p25", &pc->resizeBody)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Crouching and prone really make the player shorter: the collider shrinks so you fit under low things, and you can't stand up into a ceiling.");
+            if (pc->resizeBody) {
+                if (ImGui::SliderFloat("Crouch Height##p25", &pc->crouchHeight, 0.3f, 1.0f, "%.2f x standing")) ed.dirty = true;
+                if (ImGui::SliderFloat("Prone Height##p25", &pc->proneHeight, 0.15f, 0.8f, "%.2f x standing")) ed.dirty = true;
+            }
+            {
+                const char* padBtns[] = {"None","A","B","X","Y","Back","Start","L","R","D-pad Up","D-pad Down","D-pad Left","D-pad Right"};
+                int sel = pc->stanceGamepadButton + 1;
+                if (sel < 0 || sel > 12) sel = 0;
+                ImGui::SetNextItemWidth(130);
+                if (ImGui::Combo("Stance Pad Button##p25", &sel, padBtns, IM_ARRAYSIZE(padBtns))) { pc->stanceGamepadButton = sel - 1; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gamepad: tap to crouch / stand up, hold to go prone.");
             }
 
             SectionHeader("Depth Layers");

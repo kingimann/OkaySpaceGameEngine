@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Components/Inventory.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -292,7 +293,7 @@ public:
         bool running = m_stance == Stance::Stand && moving && IsRunHeld(in) && !m_aim;
         // The speed cap follows the body from one stance's to the next.
         float speed = StanceValue(m_stanceLevel, running ? runSpeed : walkSpeed, crouchSpeed, proneSpeed);
-        speed *= MoveSpeedScale(gameObject);   // carrying a heavy load
+        speed *= MoveSpeedScale(gameObject);   // heavy load / over-encumbered (see MoveSpeed.hpp)
 
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
 

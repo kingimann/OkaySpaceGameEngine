@@ -31,6 +31,7 @@ public:
     /// Base directory prepended to relative paths when a bare path isn't found
     /// (the windowed runtime sets this to where the game's files live).
     static void SetBaseDir(const std::string& dir);
+    static const std::string& BaseDir();
     /// Load (and cache) the asset at `path`; repeated calls reuse the instance.
     static DataAsset& Cached(const std::string& path);
 

@@ -16,6 +16,7 @@
 #include "AntiCheatIntegrity.hpp"   // opt-in anti-cheat: check a game against its Data/manifest.json before it starts
 #include "AntiCheatBackend.hpp"     // anti-cheat reports / bans / appeals (Admin > Anti-cheat, the ban banner)
 #include "AntiCheatHardware.hpp"    // the salted hardware hash sent with appeals
+#include "ProjectDelete.hpp"  // Create page: which folders "Delete project" may remove
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/Achievements.hpp"
 #include "okay/Platform/Friends.hpp"
@@ -1273,6 +1274,7 @@ bool        g_projectsNeedRescan = false;   // force "Your projects" to re-list
 std::string g_projectJustMade;              // name to highlight in the list
 std::string g_projectsDir;                  // the Create page's projects folder ("" = <launcher>/Projects)
 std::vector<std::string> g_extraProjects;   // projects opened from other folders (scene paths), remembered
+std::vector<std::string> g_hiddenProjects;  // project folders removed from the list (files kept), remembered
 
 // Make a real project on disk, in the LAUNCHER, so clicking a template actually
 // creates something (the folder + Assets exist the instant you click) instead of
@@ -1324,10 +1326,26 @@ std::string CreateProject(const std::string& location, const std::string& rawNam
         o << "name \"" << finalName << "\"\n";
         Toast("Created " + finalName + " (install the editor to open it)", 1);
     }
+    g_hiddenProjects.erase(std::remove(g_hiddenProjects.begin(), g_hiddenProjects.end(), root.lexically_normal().string()), g_hiddenProjects.end());
     g_projectsNeedRescan = true;
     g_projectJustMade = finalName;
     return root.string();
 }
+
+#if defined(_WIN32)
+// Send a folder to the Recycle Bin (Windows asks first if it's too big to recycle).
+static bool MoveToRecycleBin(const fs::path& p) {
+    std::error_code ec;
+    std::wstring from = fs::absolute(p, ec).wstring();
+    if (ec || from.empty()) return false;
+    from.push_back(L'\0');
+    SHFILEOPSTRUCTW op{};
+    op.wFunc = FO_DELETE;
+    op.pFrom = from.c_str();
+    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_WANTNUKEWARNING | FOF_NOERRORUI | FOF_SILENT;
+    return SHFileOperationW(&op) == 0 && !op.fAnyOperationsAborted;
+}
+#endif
 
 // Open a URL in the default browser, or a folder in the file manager.
 void OpenExternal(const std::string& target) {
@@ -4098,6 +4116,7 @@ void LoadPrefs() {
         else if (k == "news_seen") g_newsSeen = v;
         else if (k == "projects_dir") g_projectsDir = v;
         else if (k == "extra_project") { if (!v.empty() && g_extraProjects.size() < 40) g_extraProjects.push_back(v); }
+        else if (k == "hidden_project") { if (!v.empty() && g_hiddenProjects.size() < 100) g_hiddenProjects.push_back(v); }
         else if (k == "status_until") { try { g_statusUntil = std::stol(v); } catch (...) {} }
         else if (k == "lpin" && v.size() > 2) {   // lpin=d|<id>|<when> or g|...
             long id = 0, when = 0;
@@ -4207,6 +4226,7 @@ void SavePrefs() {
     if (!g_newsSeen.empty()) f << "news_seen=" << g_newsSeen << "\n";
     if (!g_projectsDir.empty()) f << "projects_dir=" << g_projectsDir << "\n";
     for (const auto& ep : g_extraProjects) f << "extra_project=" << ep << "\n";
+    for (const auto& hp : g_hiddenProjects) f << "hidden_project=" << hp << "\n";
     if (g_statusUntil > 0) f << "status_until=" << g_statusUntil << "\n";
     if (!g_pinsShared) {   // device-only pins (the server has no message_pins yet)
         for (const auto& kv : g_pinsDm)    f << "lpin=d|" << kv.first << "|" << kv.second << "\n";
@@ -17876,7 +17896,7 @@ int main(int argc, char** argv) {
                               ? (fs::path(g_exeDir) / "Projects").string().c_str() : g_projectsDir.c_str());
 
             // ---- Projects: every <Location>/<Name>/Assets folder, plus ones opened from elsewhere ----
-            struct CrProj { std::string name, scene; long long mtime = 0; bool extra = false; bool ready = false; };
+            struct CrProj { std::string name, scene; long long mtime = 0; bool extra = false; bool ready = false; bool missing = false; };
             static std::vector<CrProj> s_projects;
             static std::string s_projScanned = "\x01";   // never equals a real path -> first scan
             auto sceneIn = [](const fs::path& root) -> std::string {
@@ -17900,22 +17920,20 @@ int main(int argc, char** argv) {
                     CrProj pr; pr.name = name; pr.scene = scene; pr.extra = extra;
                     std::error_code e;
                     pr.ready = fs::exists(fs::path(scene), e);
+                    pr.missing = extra && !pr.ready;   // moved or deleted outside the launcher
                     if (pr.ready) pr.mtime = (long long)fs::last_write_time(fs::path(scene), e).time_since_epoch().count();
                     s_projects.push_back(pr);
                 };
                 for (auto& e : fs::directory_iterator(fs::path(npLoc), pec)) {
                     if (!e.is_directory(pec)) continue;
+                    if (std::find(g_hiddenProjects.begin(), g_hiddenProjects.end(), e.path().lexically_normal().string()) != g_hiddenProjects.end()) continue;
                     std::string sc = sceneIn(e.path());
                     if (!sc.empty()) add(e.path().filename().string(), sc, false);
                 }
                 for (const auto& ep : g_extraProjects) {
-                    std::error_code e;
-                    if (!fs::exists(fs::path(ep), e)) continue;
                     bool dup = false;
                     for (const auto& pr : s_projects) if (pr.scene == ep) dup = true;
-                    fs::path root = fs::path(ep).parent_path();
-                    if (root.filename() == "Assets") root = root.parent_path();
-                    if (!dup) add(root.filename().string(), ep, true);
+                    if (!dup) add(okayproj::RootOfScene(fs::path(ep)).filename().string(), ep, true);
                 }
             }
             // Keep polling briefly after a create so the new project appears once the
@@ -17951,6 +17969,8 @@ int main(int argc, char** argv) {
                         if (f.path().extension() == ".okayscene") { sc = f.path().string(); break; }
                 }
                 if (sc.empty() || !fs::exists(fs::path(sc), e)) { Toast("No OkaySpace project (.okayscene) in that folder", 2); return; }
+                auto hid = std::find(g_hiddenProjects.begin(), g_hiddenProjects.end(), okayproj::RootOfScene(fs::path(sc)).lexically_normal().string());
+                if (hid != g_hiddenProjects.end()) { g_hiddenProjects.erase(hid); SavePrefs(); }
                 if (fs::path(sc).parent_path().parent_path().parent_path() != fs::path(npLoc) &&
                     std::find(g_extraProjects.begin(), g_extraProjects.end(), sc) == g_extraProjects.end()) {
                     g_extraProjects.insert(g_extraProjects.begin(), sc);
@@ -18108,6 +18128,21 @@ int main(int argc, char** argv) {
             static std::string gitCommitRoot, gitCommitName, gitPublishRoot, gitPublishName;
             static bool gitOpenCommit = false, gitOpenPublish = false;
             static char gitCommitMsg[200] = "Update", gitPublishUrl[300] = "";
+            // "Delete project..." (filled by the project menu below).
+            static std::string delName, delScene, delErr;
+            static bool delExtra = false, delOpen = false;
+            auto forgetProject = [&](const std::string& scene, bool extra) {
+                if (extra) {
+                    g_extraProjects.erase(std::remove(g_extraProjects.begin(), g_extraProjects.end(), scene), g_extraProjects.end());
+                } else {
+                    const std::string key = okayproj::RootOfScene(fs::path(scene)).lexically_normal().string();
+                    if (std::find(g_hiddenProjects.begin(), g_hiddenProjects.end(), key) == g_hiddenProjects.end()) {
+                        g_hiddenProjects.insert(g_hiddenProjects.begin(), key);
+                        if (g_hiddenProjects.size() > 100) g_hiddenProjects.resize(100);
+                    }
+                }
+                SavePrefs(); s_projScanned = "\x01";
+            };
             if (s_projects.empty()) {
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::Mix(okaytheme::kSunken, okaytheme::kBase, 0.35f));
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 10.0f);
@@ -18145,17 +18180,18 @@ int main(int argc, char** argv) {
                     }
                     ImGui::SetCursorPos(ImVec2(14, (cardH - 44) * 0.5f));
                     IconTile(pr.name, 44.0f);
-                    const float btnW = hov ? 132.0f : 0.0f;   // Play + Open appear on hover
+                    const float btnW = hov ? 168.0f : 0.0f;   // Play + Open + More appear on hover
                     const float tx = wp.x + 14 + 44 + 12, tmax = wp.x + cardW - 14 - btnW;
                     const float lh = ImGui::GetTextLineHeight();
                     dl->AddText(ImVec2(tx, wp.y + cardH * 0.5f - lh - 1), crText, FitText(pr.name, tmax - tx).c_str());
                     std::string sub;
-                    if (!pr.ready) sub = "Setting up\xE2\x80\xA6";
+                    if (pr.missing) sub = "Folder not found";
+                    else if (!pr.ready) sub = "Setting up\xE2\x80\xA6";
                     else { std::string ago = ModifiedAgo(fs::path(pr.scene)); sub = ago.empty() ? std::string("Project") : "Edited " + ago; }
                     if (pr.extra) sub += "  \xC2\xB7  elsewhere";
                     dl->AddText(ImVec2(tx, wp.y + cardH * 0.5f + 2), crDim, FitText(sub, tmax - tx).c_str());
                     if (hov) {
-                        ImGui::SetCursorPos(ImVec2(cardW - 14 - 132, (cardH - 30) * 0.5f));
+                        ImGui::SetCursorPos(ImVec2(cardW - 14 - 168, (cardH - 30) * 0.5f));
                         ImGui::BeginDisabled(player.empty() || !pr.ready);
                         if (ImGui::Button("Play", ImVec2(60, 30))) playProject(pr);
                         ImGui::EndDisabled();
@@ -18163,6 +18199,9 @@ int main(int argc, char** argv) {
                         ImGui::BeginDisabled(editor.empty() || !pr.ready);
                         if (PrimaryButton("Open", ImVec2(66, 30))) openProject(pr);
                         ImGui::EndDisabled();
+                        ImGui::SameLine(0, 6);
+                        if (RoundIconButton("##projmore", kRibMore, 30.0f, IM_COL32(255, 255, 255, 16), IM_COL32(255, 255, 255, 34), crText, "More"))
+                            ImGui::OpenPopup("projctx");
                         if (!ImGui::IsAnyItemHovered()) {
                             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                             if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) openProject(pr);
@@ -18172,15 +18211,11 @@ int main(int argc, char** argv) {
                         if (ImGui::MenuItem("Open in editor", nullptr, false, !editor.empty() && pr.ready)) openProject(pr);
                         if (ImGui::MenuItem("Play (no export)", nullptr, false, !player.empty() && pr.ready)) playProject(pr);
                         ImGui::Separator();
-                        if (ImGui::MenuItem("Show in Explorer"))
+                        if (ImGui::MenuItem("Show in Explorer", nullptr, false, !pr.missing))
                             OpenExternal(fs::path(pr.scene).parent_path().parent_path().string());
                         if (ImGui::MenuItem("Copy path")) ImGui::SetClipboardText(pr.scene.c_str());
-                        if (pr.extra && ImGui::MenuItem("Remove from list")) {
-                            g_extraProjects.erase(std::remove(g_extraProjects.begin(), g_extraProjects.end(), pr.scene), g_extraProjects.end());
-                            SavePrefs(); s_projScanned = "\x01";
-                        }
                         // ---- Git: sync this project with GitHub ----
-                        if (GitAvailable()) {
+                        if (GitAvailable() && !pr.missing) {
                             std::string root = fs::path(pr.scene).parent_path().parent_path().string();
                             std::error_code gec;
                             bool hasGit = fs::exists(fs::path(root) / ".git", gec);
@@ -18201,6 +18236,13 @@ int main(int argc, char** argv) {
                                 gitPublishRoot = root; gitPublishName = pr.name; gitOpenPublish = true;
                             }
                         }
+                        ImGui::Separator();
+                        if (ImGui::MenuItem("Remove from list")) { forgetProject(pr.scene, pr.extra); Toast("Removed " + pr.name + " from the list", 1); }
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1));
+                        if (ImGui::MenuItem("Delete project\xE2\x80\xA6")) {
+                            delName = pr.name; delScene = pr.scene; delExtra = pr.extra; delErr.clear(); delOpen = true;
+                        }
+                        ImGui::PopStyleColor();
                         ImGui::EndPopup();
                     }
                     ImGui::EndChild();
@@ -18208,6 +18250,88 @@ int main(int argc, char** argv) {
                     ImGui::PopStyleColor();
                     ImGui::PopID();
                 }
+            }
+            // ---- Delete project: remove from the list, or delete the folder ----
+            static std::string delWhy;
+            static bool delEditor = false;
+            const char* kCloseEditor = "Close the OkaySpace editor first: it may have this project open.";
+            auto delKeep = [&]() {
+#if defined(_WIN32)
+                const char* home = std::getenv("USERPROFILE");
+#else
+                const char* home = std::getenv("HOME");
+#endif
+                std::vector<okayproj::Kept> keep = {{fs::path(g_exeDir), "the OkaySpace launcher"}, {fs::path(npLoc), "your projects folder"}};
+                if (home && *home) keep.push_back({fs::path(home), "your home folder"});
+                return keep;
+            };
+            if (delOpen) {
+                delOpen = false;
+                delWhy = okayproj::DeleteRefusal(okayproj::RootOfScene(fs::path(delScene)), delKeep());
+                delEditor = delWhy.empty() && EditorRunning();
+                ImGui::OpenPopup("Delete project?");
+            }
+            ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+            if (ImGui::BeginPopupModal("Delete project?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                const fs::path delRoot = okayproj::RootOfScene(fs::path(delScene));
+                ImGui::PushTextWrapPos(480.0f);
+                ImGui::Text("Delete \"%s\"?", delName.c_str());
+                ImGui::TextDisabled("%s", delRoot.string().c_str());
+                ImGui::Dummy(ImVec2(0, 6));
+                ImGui::TextUnformatted("Remove from list: hides it here. Its files stay on disk.");
+#if defined(_WIN32)
+                ImGui::TextUnformatted("Delete from disk: moves the whole project folder to the Recycle Bin.");
+#else
+                ImGui::TextUnformatted("Delete from disk: permanently deletes the whole project folder. This can't be undone.");
+#endif
+                const std::string stop = !delErr.empty() ? delErr : !delWhy.empty() ? "Can't delete it from disk. " + delWhy
+                                       : delEditor ? std::string(kCloseEditor) : std::string();
+                if (!stop.empty()) { ImGui::Dummy(ImVec2(0, 4)); ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "%s", stop.c_str()); }
+                ImGui::PopTextWrapPos();
+                ImGui::Dummy(ImVec2(0, 6));
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
+                ImGui::BeginDisabled(!delWhy.empty());
+                const bool doDelete = ImGui::Button("Delete from disk", ImVec2(150, 0));
+                ImGui::EndDisabled();
+                ImGui::PopStyleColor(2);
+                if (doDelete) {
+                    delErr.clear();
+                    delEditor = EditorRunning();
+                    const std::string why = delEditor ? std::string() : okayproj::DeleteRefusal(delRoot, delKeep());
+                    if (delEditor) delErr = kCloseEditor;
+                    else if (!why.empty()) delErr = "Can't delete it from disk. " + why;
+                    else {
+#if defined(_WIN32)
+                        if (!MoveToRecycleBin(delRoot)) delErr = "Couldn't move it to the Recycle Bin. Is a file in it still open?";
+#else
+                        std::error_code rec;
+                        fs::remove_all(delRoot, rec);
+                        if (rec) delErr = "Couldn't delete every file: " + rec.message();
+#endif
+                        s_projScanned = "\x01";
+                        if (delErr.empty()) {
+                            g_extraProjects.erase(std::remove(g_extraProjects.begin(), g_extraProjects.end(), delScene), g_extraProjects.end());
+                            g_hiddenProjects.erase(std::remove(g_hiddenProjects.begin(), g_hiddenProjects.end(), delRoot.lexically_normal().string()), g_hiddenProjects.end());
+                            SavePrefs();
+#if defined(_WIN32)
+                            Toast("Moved " + delName + " to the Recycle Bin", 1);
+#else
+                            Toast("Deleted " + delName, 1);
+#endif
+                            ImGui::CloseCurrentPopup();
+                        }
+                    }
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Remove from list", ImVec2(150, 0))) {
+                    forgetProject(delScene, delExtra);
+                    Toast("Removed " + delName + " from the list", 1);
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
             }
             // ---- Git commit-message + publish-URL popups ----
             if (gitOpenCommit) { ImGui::OpenPopup("Commit & Push"); gitOpenCommit = false; }

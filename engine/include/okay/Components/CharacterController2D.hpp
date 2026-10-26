@@ -8,6 +8,7 @@
 #include "okay/Components/SpriteAnimator.hpp"    // idle / run / jump / fall clips
 #include "okay/Input/Input.hpp"
 #include "okay/Net/NetOwnership.hpp"
+#include "okay/Net/PlayerInput.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
 
@@ -22,7 +23,7 @@ namespace okay {
 /// time, jump buffering, variable (hold-for-higher) jumps, multi-jump, a fall
 /// clamp and extra fall gravity. Grounded state is read from real collisions, so
 /// it stays correct on slopes and moving platforms.
-class CharacterController2D : public Behaviour {
+class CharacterController2D : public Behaviour, public IPlayerSim {
 public:
     enum class Mode { TopDown, Platformer };
     Mode  mode = Mode::TopDown;
@@ -60,15 +61,32 @@ public:
     void Update(float dt) override {
         if (!transform) return;
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
-        auto* rb = gameObject ? gameObject->GetComponent<Rigidbody2D>() : nullptr;
+        Simulate(ReadLocalInput(), dt);
+    }
 
+    /// This frame's keys / stick (the only place the controller reads Input::):
+    /// the move axis, sprint, and jump (the jump key or W).
+    PlayerInput ReadLocalInput() override {
+        PlayerInput in;
         // Input: keyboard axis, optionally overridden by a pushed gamepad stick.
-        Vec2 axis = Input::AxisWASD();
+        in.move = Input::AxisWASD();
         if (useGamepad) {
             Vec2 pad = Input::GamepadAxis();
-            if (Mathf::Abs(pad.x) + Mathf::Abs(pad.y) > 0.15f) axis = pad;
+            if (Mathf::Abs(pad.x) + Mathf::Abs(pad.y) > 0.15f) in.move = pad;
         }
-        bool running = sprintKey && Input::GetKey(sprintKey);
+        if (sprintKey && Input::GetKey(sprintKey)) in.held |= PlayerInput::Sprint;
+        if (Input::GetKey(jumpKey) || Input::GetKey('w'))         in.held |= PlayerInput::Jump;
+        if (Input::GetKeyDown(jumpKey) || Input::GetKeyDown('w')) in.pressed |= PlayerInput::Jump;
+        return in;
+    }
+
+    /// Move by `cmd` for `dt` seconds (local play and a server running this
+    /// player's inputs). Reads no Input:: globals.
+    void Simulate(const PlayerInput& cmd, float dt) override {
+        if (!transform) return;
+        auto* rb = gameObject ? gameObject->GetComponent<Rigidbody2D>() : nullptr;
+        Vec2 axis = cmd.move;
+        bool running = sprintKey && cmd.Held(PlayerInput::Sprint);
         float curSpeed = running ? runSpeed : speed;
 
         if (mode == Mode::TopDown) {
@@ -99,7 +117,7 @@ public:
         if (grounded) { m_coyote = coyoteTime; m_jumpsLeft = maxJumps; }
         else          { m_coyote = Mathf::Max(0.0f, m_coyote - dt); }
 
-        bool jumpPressed = Input::GetKeyDown(jumpKey) || Input::GetKeyDown('w');
+        bool jumpPressed = cmd.Pressed(PlayerInput::Jump);
         if (jumpPressed) m_jumpBuf = jumpBuffer;
         else             m_jumpBuf = Mathf::Max(0.0f, m_jumpBuf - dt);
 
@@ -130,7 +148,7 @@ public:
             }
 
             // Variable jump: cut upward speed when the key is released early.
-            bool held = Input::GetKey(jumpKey) || Input::GetKey('w');
+            bool held = cmd.Held(PlayerInput::Jump);
             if (variableJump && m_jumpWasHeld && !held && rb->velocity.y > 0.0f)
                 rb->velocity.y *= jumpCutMultiplier;
             m_jumpWasHeld = held;

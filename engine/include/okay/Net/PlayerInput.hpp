@@ -23,6 +23,7 @@ struct PlayerInput {
         Fire = 1u << 4, AltFire = 1u << 5, Use = 1u << 6, Reload = 1u << 7,
         LeanLeft = 1u << 8, LeanRight = 1u << 9,
         StanceButton = 1u << 10,   ///< the pad's stance button (tap crouch / stand, hold prone)
+        Dash = 1u << 11,
         Custom0 = 1u << 16,   ///< bits 16..31: the game's own buttons
     };
     Vec2 move{0.0f, 0.0f};      ///< x = strafe (right +), y = forward; length <= 1 after Clamp

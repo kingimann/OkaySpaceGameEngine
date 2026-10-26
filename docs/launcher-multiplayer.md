@@ -271,9 +271,11 @@ players itself:
 
 - Each client names the object its inputs drive: its own SpawnOwned player
   (`SetPawn(obj)`, `net_set_pawn("Player")`). The object needs a controller that
-  can be driven by inputs: Character Controller 3D, First Person Controller and
-  Third Person Controller can (the 2D controllers follow). Look (yaw, pitch),
-  stance, lean, sprint, jump and aim/zoom all travel in the input.
+  can be driven by inputs: Character Controller 3D, First Person Controller,
+  Third Person Controller, Character Controller 2D and Top Down Controller 2D
+  can. Look (yaw, pitch), stance, lean, sprint, jump, dash, fire and aim/zoom
+  all travel in the input. A Top Down Controller 2D facing the mouse sends its
+  aim as an angle, so the host turns and shoots the same way.
 - Once a tick, the client sends its input: the move stick, look, and buttons
   held and pressed. Each one is numbered, and the last 3 are repeated so a lost
   packet costs nothing.

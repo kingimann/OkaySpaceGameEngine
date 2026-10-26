@@ -149,13 +149,11 @@ struct Quat {
         // Rotation matrix terms (from the unit quaternion).
         float sinx = 2.0f * (w * x - y * z);
         Vec3 e;
-        if (sinx > 0.9999f) {        // gimbal lock, looking up
-            e.x = 90.0f;
-            e.y = std::atan2(2.0f * (w * y + x * z), 1.0f - 2.0f * (x*x + y*y)) * Mathf::Rad2Deg;
-            e.z = 0.0f;
-        } else if (sinx < -0.9999f) { // gimbal lock, looking down
-            e.x = -90.0f;
-            e.y = std::atan2(2.0f * (w * y + x * z), 1.0f - 2.0f * (x*x + y*y)) * Mathf::Rad2Deg;
+        if (sinx > 0.9999f || sinx < -0.9999f) {   // gimbal lock, looking straight up / down
+            // Only yaw and roll together are defined: put it all in the yaw, which
+            // (Y * X * Z) is the turn of the first column.
+            e.x = sinx > 0.0f ? 90.0f : -90.0f;
+            e.y = std::atan2(2.0f * (w * y - x * z), 1.0f - 2.0f * (y*y + z*z)) * Mathf::Rad2Deg;
             e.z = 0.0f;
         } else {
             e.x = std::asin(Mathf::Clamp(sinx, -1.0f, 1.0f)) * Mathf::Rad2Deg;

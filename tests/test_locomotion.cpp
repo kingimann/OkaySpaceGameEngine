@@ -87,7 +87,7 @@ void ProneBody(void (*tpl)(Scene&)) {
     Step(s, {'w'}, 90);
     CHECK(p->transform->Position().z - start.z > -2.6f);          // standing: the bar stops you
     CHECK_NEAR(box->size.y, 1.8f, 1e-3f);
-    Step(s, {'z'}, 1); Step(s, {}, 20);
+    Step(s, {'z'}, 1); Step(s, {}, 50);                            // the body gets down over ~0.75 s
     CHECK(c->stance() == C::Stance::Prone);
     CHECK(box->size.y < 0.7f);                                     // the body really is low
     CHECK_NEAR(box->offset.y, box->size.y * 0.5f, 1e-3f);          // feet stay on the ground
@@ -110,6 +110,7 @@ void ProneBody(void (*tpl)(Scene&)) {
         Input::FeedGamepad({0, 0}, 0); Step(s, {}, 5);
     }
     CHECK(c->stance() == C::Stance::Crouch);
+    Step(s, {}, 30);                                               // settled into the crouch
     CHECK(box->size.y < 1.4f && box->size.y > 1.0f);
     Step(s, {Input::KeyCtrl}, 1); Step(s, {}, 5);
     CHECK(c->stance() == C::Stance::Stand);

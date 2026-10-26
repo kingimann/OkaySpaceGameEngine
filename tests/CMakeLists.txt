@@ -568,6 +568,10 @@ target_link_libraries(test_ui_render_bench PRIVATE okay::engine)
 target_compile_definitions(test_ui_render_bench PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 add_test(NAME ui_render_bench COMMAND test_ui_render_bench)
 
+add_executable(test_ui_layout_containers test_ui_layout_containers.cpp)
+target_link_libraries(test_ui_layout_containers PRIVATE okay::engine)
+add_test(NAME ui_layout_containers COMMAND test_ui_layout_containers)
+
 add_executable(test_jump test_jump.cpp)
 target_link_libraries(test_jump PRIVATE okay::engine)
 add_test(NAME jump COMMAND test_jump)

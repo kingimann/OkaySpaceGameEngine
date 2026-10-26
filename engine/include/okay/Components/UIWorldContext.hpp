@@ -26,6 +26,10 @@ struct UIWorldCtx {
     /// click a world-space widget where it actually appears, without this header
     /// depending on GetUIScreenRect. Null when unavailable.
     std::function<bool(GameObject*, Vec2&, Vec2&)> rectOf;
+    /// Optional: false when a screen point falls outside the scroll views / masks
+    /// clipping a widget, so the hidden part of a widget can't be clicked. Set next
+    /// to `rectOf`. Null = no clipping.
+    std::function<bool(GameObject*, const Vec2&)> clipContains;
 };
 inline UIWorldCtx& UIWorld() { static thread_local UIWorldCtx c; return c; }
 
@@ -40,6 +44,7 @@ inline Vec2 UIToLocal(GameObject* go, const Vec2& designOrigin, const Vec2& size
     if (!go || !UIWorld().rectOf) return p;
     Vec2 o, sz;
     if (!UIWorld().rectOf(go, o, sz)) return Vec2{-1.0e9f, -1.0e9f};   // behind the camera
+    if (UIWorld().clipContains && !UIWorld().clipContains(go, p)) return Vec2{-1.0e9f, -1.0e9f};   // clipped away
     const float kx = sz.x > 1e-4f ? size.x / sz.x : 1.0f;
     const float ky = sz.y > 1e-4f ? size.y / sz.y : 1.0f;
     return Vec2{designOrigin.x + (p.x - o.x) * kx, designOrigin.y + (p.y - o.y) * ky};

@@ -102,3 +102,9 @@ share these movement niceties:
   crouch if only that fits).
 - Prone moves at **Prone Speed** with a crawl animation; you can't sprint or
   jump while crouched or prone.
+- Stance changes take time: by default 0.25 s to crouch or stand from a
+  crouch, 0.5 s between crouch and prone, 0.8 s to get up from prone. The
+  collider, the camera and the speed limit all follow the body through the
+  change, and changing your mind halfway carries on from where the body is.
+  Set the times under **Stance changes** on the player's Animator. Applies to
+  First-Person, Third-Person and 2.5D Platformer.

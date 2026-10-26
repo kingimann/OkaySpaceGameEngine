@@ -4,12 +4,13 @@ What is being worked on right now and what comes next. Kept current by the main
 (coordinating) Claude session; each item links its PR once one exists. Every PR
 merges once its five CI jobs are green, and a release follows.
 
-_Last updated: 2026-10-26 18:20 UTC_
+_Last updated: 2026-10-26 20:45 UTC_
 
 ## Releases
 
 | Version | What's in it |
 |---|---|
+| 2.833.0 | Smooth stance changes (#364, IK PR 2a); fixes: walking in place at a wall (#366), one-shot replay in a fade (#380), Euler flip near straight up/down (#370); object holding PRs 1–2 (#362, #377); item definitions (#358); cached, batched UI (#361) and UI P1b layout (#374); typed OkayScript `??`/`?.`, classes, collections (#354, #369); hardening PRs 4 and 11 (#355, #372); release tags on the built commit (#373); CI cancels superseded PR runs (#382) |
 | 2.832.0 | Visible Animator on the built-in players (#346) and its inspector (#348), IK plan PR 1 done; one shared inventory interaction layer (#349); anti-cheat hardening PRs 1–3 and 7: safe spawns (#351), pinning (#352), hit claims (#353), relay cookies (#357); CI toolchain cache (#356) |
 | 2.831.0 | Online camera corrections (#344, camera plan done); nearest chest/bench, slot count, scene wiring (#343); Animator backend (#340) |
 | 2.830.0 | Step-up only on real steps (#338); grid inventory fixes (#339); even frame timing (#341); controllers before animation (#342) |
@@ -35,13 +36,13 @@ _Last updated: 2026-10-26 18:20 UTC_
 | Session | Plan | Current |
 |---|---|---|
 | Main | Coordination, merges, releases | Merging and releasing as PRs go green |
-| QA | Anti-cheat hardening, PRs 1–4, 6, 8–14 | PR 4 (#355) in CI; PR 6 (#360) waits on Iman's OK for its Edge-function part; PR 8 next |
-| Humanoid | IK, animation and humanoid rigging, PRs 1–8 | PR 2: smooth stance changes |
-| Release | Anti-cheat hardening, PRs 5 and 7 | PR 7 merged; PR 5 (#350) waits on Iman's OK |
-| Robustness | Inventory, PRs 1–9 | PR 5 item definitions (#358), PR 6a world pickups (#359) |
-| UI | In-game UI plan and component library | P0.3: cached UI pass and batched atlas rendering (#361) |
-| Scripting | Script language to C# level | P1.4: `??`/`?.`, plain classes with `new` (#354) |
-| Holding | Procedural object holding | PR 1: hold objects with IK hands (#362) |
+| QA | Anti-cheat hardening, PRs 1–4, 6, 8–14 | PRs 8, 9, 10, 12 (#363, #365, #368, #376) merging main back in after #372; PR 6 (#360) waits on Iman's OK; PR 13 next |
+| Humanoid | IK, animation and humanoid rigging, PRs 1–8 | PR 2b–2d up (#371, #375, #385); PR 3 next |
+| Release | Anti-cheat hardening, PRs 5 and 7 | PR 7 merged; relay follow-ups (voice calls on v3 hellos, sessions per address); PR 5 (#350) waits on Iman's OK |
+| Robustness | Inventory, PRs 1–9 | PR 6a–6c (#359, #367, #378): pickups and drops, bag between scenes, equipment |
+| UI | In-game UI plan and component library | P1a UIFrame (#381), then P1c: modals, context menu, keybind field, 2-D navigation, touch |
+| Scripting | Script language to C# level | P1.6 lambdas (#379), then events and inheritance |
+| Holding | Procedural object holding | PR 3: body adjustment, then PR 4: multiplayer |
 
 ### Camera and animation smoothing (QA)
 1. [x] Third-person camera: smooth the pivot, not the orbit; sphere-cast spring arm that ignores triggers and the player's own parts (#336).
@@ -53,7 +54,7 @@ _Last updated: 2026-10-26 18:20 UTC_
 
 ### IK, animation and rigging (Humanoid)
 1. [x] Animator component on the built-in players; procedural animation baked into clips: 1a backend (#340), 1b default graph and baked clips (#346), 1c inspector (#348).
-2. [ ] Smooth stance changes: stand, crouch and prone, moving in any direction.
+2. [ ] Smooth stance changes: stand, crouch and prone, moving in any direction. 2a core (#364, done); 2b animation (#371); 2c every controller (#375); 2d imported humanoids (#385).
 3. [ ] IK core correctness: LimbIK, ChainIK, FootIK, FullBodyIK.
 4. [ ] Controllers: ground probe (no apex double jump), eased step-up, rotating platforms, 2D one-shot clips.
 5. [ ] One shared humanoid bone mapper that rejects non-humanoids.
@@ -66,7 +67,7 @@ _Last updated: 2026-10-26 18:20 UTC_
 2. [x] Grid fixes (#339).
 3. [x] Wiring (#343).
 4. [x] One shared interaction layer (#349).
-5. [ ] Item definitions.
+5. [x] Item definitions (#358).
 6. [ ] Gameplay features.
 7. [ ] Scripting.
 8. [ ] UI polish.
@@ -76,14 +77,14 @@ _Last updated: 2026-10-26 18:20 UTC_
 1. [x] Only safe, registered prefabs can be network-spawned (critical) (#351).
 2. [x] Host-key pinning can't be skipped by a plaintext Welcome, Reject or Kicked (#352).
 3. [x] Hit claims need a known weapon and are rate-limited (#353).
-4. [ ] The hit origin isn't taken from positions the client can bank.
+4. [x] The hit origin isn't taken from positions the client can bank (#355).
 5. [ ] Bans enforced when a join ticket is issued; no service_role key for game servers (Release).
 6. [ ] Tickets bound to one server, one client key and one connection.
 7. [x] Relay hellos need a cookie; caps per destination (Release) (#357). The live relay needs redeploying to get it; launcher voice calls still send old hellos, so keep legacy hellos on.
 8. [ ] Budgets and strikes survive a reconnect; rejoin cooldown after a kick.
 9. [ ] Join checks: encryption first, rate-limited password and sign-in checks.
 10. [ ] SyncVar, message and spawn limits.
-11. [ ] Unowned world objects belong to the server.
+11. [x] Unowned world objects belong to the server (#372).
 12. [ ] Lag-compensation inputs the client can't stretch.
 13. [ ] Safer defaults and a config that fails closed.
 14. [ ] Small fixes (self-unban, trusted server reports, pings, press intervals, CI key check).

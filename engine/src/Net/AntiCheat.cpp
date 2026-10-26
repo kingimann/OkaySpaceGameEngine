@@ -116,6 +116,10 @@ bool AntiCheatSettings::Parse(const std::string& text, AntiCheatSettings& out, s
         else if (key == "hitLineOfSight") { if (!ParseBool(val, s.hitLineOfSight)) return fail("hitLineOfSight needs true or false"); }
         else if (key == "weapon") { if (val.empty()) return fail("weapon needs a name"); s.weapons.push_back(val); }
         else if (key == "hitsNeedMoveCheck") { if (!ParseBool(val, s.hitsNeedMoveCheck)) return fail("hitsNeedMoveCheck needs true or false"); }
+        else if (key == "clientVar") { if (val.empty()) return fail("clientVar needs a key prefix"); s.clientVars.push_back(val); }
+        else if (key == "maxSpawnsPerSecond") { if (!ParseInt(val, s.maxSpawnsPerSecond)) return fail("maxSpawnsPerSecond needs a whole number >= 0"); }
+        else if (key == "maxLiveSpawnsPerPeer") { if (!ParseInt(val, s.maxLiveSpawnsPerPeer)) return fail("maxLiveSpawnsPerPeer needs a whole number >= 0"); }
+        else if (key == "spawnRadius") { if (!ParseFloat(val, s.spawnRadius)) return fail("spawnRadius needs a number >= 0"); }
         else if (key == "serverVar") { if (val.empty()) return fail("serverVar needs a key prefix"); s.serverVars.push_back(val); }
         else if (key == "maxRpcsPerSecond") { if (!ParseInt(val, s.maxRpcsPerSecond)) return fail("maxRpcsPerSecond needs a whole number >= 0"); }
         else if (key == "maxRpcBytes") { if (!ParseInt(val, s.maxRpcBytes)) return fail("maxRpcBytes needs a whole number >= 0"); }
@@ -145,6 +149,13 @@ std::string AntiCheatSettings::ToText() const {
     o << "kickAfterViolations " << kickAfterViolations << "\n";
     o << "ownerOnlySyncVars " << (ownerOnlySyncVars ? "true" : "false") << "\n";
     for (const auto& v : serverVars) o << "serverVar " << v << "\n";
+    for (const auto& v : clientVars) o << "clientVar " << v << "\n";
+    {
+        const AntiCheatSettings d;   // the spawn limits, when they aren't the default
+        if (maxSpawnsPerSecond != d.maxSpawnsPerSecond) o << "maxSpawnsPerSecond " << maxSpawnsPerSecond << "\n";
+        if (maxLiveSpawnsPerPeer != d.maxLiveSpawnsPerPeer) o << "maxLiveSpawnsPerPeer " << maxLiveSpawnsPerPeer << "\n";
+        if (spawnRadius != d.spawnRadius) o << "spawnRadius " << spawnRadius << "\n";
+    }
     if (requireEncryption) o << "requireEncryption true\n";
     if (!ticketKey.empty()) o << "ticketKey " << ticketKey << "\n";
     if (!ticketAudience.empty()) o << "ticketAudience " << ticketAudience << "\n";
@@ -175,7 +186,7 @@ int AntiCheat::Violations(std::uint32_t peer) const {
 void AntiCheat::Tick(float dt) {
     m_clock += dt;
     for (auto& [id, p] : m_peers) {
-        if ((p.syncVarTimer += dt) >= 1.0f) { p.syncVarTimer = 0.0f; p.syncVars = 0; p.rpcCalls.clear(); }
+        if ((p.syncVarTimer += dt) >= 1.0f) { p.syncVarTimer = 0.0f; p.syncVars = 0; p.spawns = 0; p.rpcCalls.clear(); }
         if ((p.violationTimer += dt) >= 60.0f) { p.violationTimer = 0.0f; p.violations = 0; }
     }
 }
@@ -189,7 +200,29 @@ void AntiCheat::ForgetPeer(std::uint32_t peer) {
         it = it->second.peer == peer ? m_track.erase(it) : std::next(it);
 }
 
-void AntiCheat::Reset() { m_peers.clear(); m_owner.clear(); m_track.clear(); m_total = 0; m_clock = 0.0; }
+void AntiCheat::ParkPeer(std::uint32_t peer, const std::string& ident) {
+    if (!settings.enabled || ident.empty()) return;
+    for (auto it = m_parked.begin(); it != m_parked.end();)
+        it = m_clock - it->second.at > kParkSeconds ? m_parked.erase(it) : std::next(it);
+    if (auto p = m_peers.find(peer); p != m_peers.end() && p->second.violations > 0)
+        m_parked[ident] = Parked{p->second.violations, p->second.violationTimer, m_clock};
+    if (onParkPeer) onParkPeer(peer, ident);
+}
+
+void AntiCheat::RestorePeer(std::uint32_t peer, const std::string& ident) {
+    if (!settings.enabled || ident.empty()) return;
+    if (auto it = m_parked.find(ident); it != m_parked.end()) {
+        if (m_clock - it->second.at <= kParkSeconds) {
+            PeerInfo& p = m_peers[peer];
+            p.violations = it->second.violations;
+            p.violationTimer = it->second.violationTimer;
+        }
+        m_parked.erase(it);
+    }
+    if (onRestorePeer) onRestorePeer(peer, ident);
+}
+
+void AntiCheat::Reset() { m_peers.clear(); m_owner.clear(); m_track.clear(); m_parked.clear(); m_total = 0; m_clock = 0.0; }
 
 bool AntiCheat::Refuse(std::uint32_t peer, CheatKind k, const std::string& detail) {
     const int n = ++m_peers[peer].violations;
@@ -230,9 +263,21 @@ bool AntiCheat::ValidateMessage(std::uint32_t peer, const std::string& channel, 
         if (data.find_first_of("\r\n") != std::string::npos) return Refuse(peer, CheatKind::ForgedSpawnId, "multi-line spawn");
         const SpawnMessage m = ParseSpawnMessage(data);
         if (!SpawnAllowed(m.path)) return Refuse(peer, CheatKind::SpawnNotAllowed, m.path);
+        if (settings.maxSpawnsPerSecond > 0 && ++m_peers[peer].spawns > settings.maxSpawnsPerSecond)
+            return Refuse(peer, CheatKind::SpawnNotAllowed, "too many spawns: " + m.path);
+        if (settings.spawnRadius > 0.0f && positionOf) {
+            Vec3 at;
+            if (positionOf(peer, at) && (m.pos - at).Magnitude() > settings.spawnRadius)
+                return Refuse(peer, CheatKind::SpawnNotAllowed, "too far away: " + m.path);
+        }
         if (!m.netId.empty()) {
             const long long minted = SpawnIdPeer(m.netId);
             if (minted < 0 || (std::uint32_t)minted != peer) return Refuse(peer, CheatKind::ForgedSpawnId, m.netId);
+            if (settings.maxLiveSpawnsPerPeer > 0) {
+                int live = 0;
+                for (const auto& [id, owner] : m_owner) if (owner == peer && SpawnIdPeer(id) >= 0) ++live;
+                if (live >= settings.maxLiveSpawnsPerPeer) return Refuse(peer, CheatKind::SpawnNotAllowed, "too many at once: " + m.path);
+            }
             m_owner[m.netId] = peer;
         }
         return true;
@@ -323,6 +368,11 @@ bool AntiCheat::ValidateSyncVar(std::uint32_t peer, const std::string& key) {
     if (settings.maxSyncVarsPerSecond > 0 && ++p.syncVars > settings.maxSyncVarsPerSecond)
         return Refuse(peer, CheatKind::SyncVarFlood, key);
     if (IsServerVar(key)) return Refuse(peer, CheatKind::ForgedSyncVar, key);
+    if (!settings.clientVars.empty()) {
+        bool listed = false;
+        for (const auto& prefix : settings.clientVars) if (!prefix.empty() && key.rfind(prefix, 0) == 0) { listed = true; break; }
+        if (!listed) return Refuse(peer, CheatKind::ForgedSyncVar, key);
+    }
     if (settings.ownerOnlySyncVars) {
         // Every prefix ending at a '.' or '/' may name an object ("car.hp",
         // "car.stats.hp", "sp/3/1.hp"): if any of them is a networked object

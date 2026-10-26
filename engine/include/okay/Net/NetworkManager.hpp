@@ -62,6 +62,11 @@ public:
     bool RelayReady() const { return m_relay && m_relayWelcomed; }
     /// The relay session code ("" when not relayed).
     const std::string& RelayCode() const { return m_relayCode; }
+    /// Why the relay ended this peer's session, or "" if it didn't. A client
+    /// disconnects when its host leaves or changes; a host stops when the relay
+    /// refuses it (the code is hosted by someone else, or the versions don't
+    /// match). It stays readable after the disconnect, until the next session.
+    const std::string& RelayError() const { return m_relayError; }
     /// "a.b.c.d:port" of the relay in use ("" when not relayed).
     std::string RelayAddress() const;
     /// Client (direct): "a.b.c.d:port" of the server we connect to, else "".
@@ -518,6 +523,7 @@ private:
     std::unordered_map<net::Endpoint, std::unordered_map<std::uint32_t, FragAsm>, net::EndpointHash> m_fragIn;
     std::uint32_t m_fragNextId = 0;
 
+    void InitServerState();
     void ServerTick(float dt);
     void ClientTick(float dt);
     GameObject* EnsureRemote(std::uint32_t id, char glyph);
@@ -537,6 +543,9 @@ private:
     net::Endpoint m_relayEp{};        // the relay's real address
     std::string m_relayCode;          // shared session code
     std::uint32_t m_relaySlot = 0;    // our slot (set on welcome)
+    std::uint64_t m_relayHostKey = 0; // host: the relay's key for our code (0 until welcomed)
+    bool m_relayLost = false;         // the relay ended our session this tick (Stop() follows)
+    std::string m_relayError;         // why the relay session ended ("" if it didn't)
     float m_relayHelloTimer = 0.0f;   // re-hello cadence (NAT keepalive)
 
     // Local peer

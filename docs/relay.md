@@ -58,16 +58,47 @@ get there changes.
 
 ## How it works
 
-- Each peer sends `RelayHello{role, code}` to the relay (re-sent ~1/s, which also
-  keeps the NAT mapping open).
+- Each peer sends `RelayHello{role, code, version, hostKey}` to the relay
+  (re-sent ~1/s, which also keeps the NAT mapping open).
 - The relay assigns each peer a **slot** and tells it (and, for clients, the
-  host's slot) in a `RelayWelcome`.
+  host's slot) in a `RelayWelcome`. The host's welcome also carries the
+  session's **host key**.
 - App traffic is wrapped as `RelayData{destSlot}` to the relay, which forwards it
   as `RelayData{srcSlot}` to the destination.
 - Inside `NetworkManager`, a relayed peer is keyed by a synthetic
   `Endpoint{address = slot}`, so the entire server/client code path — handshake,
   snapshots, fragmentation, encryption — is unchanged between direct and relayed
   play.
+
+## What the relay enforces
+
+The relay is on the internet, so it doesn't trust its peers:
+
+- **Only host and clients talk.** A client's packets go only to its session's
+  host, and the host's only to its clients. A client can't reach another client,
+  or anyone in another session; everything between players goes through the
+  host, which runs the game's checks (including anti-cheat).
+- **Nobody can take a session code over.** The first host of a code gets a
+  secret key in its welcome and sends it back in every hello. While the session
+  exists, a host hello without that key is refused with
+  `RelayRefused{already hosted}`, and that host's `NetworkManager::RelayError()`
+  says so. The real host can move to a new address (its router changed ports)
+  with the key and keeps its slot.
+- **Clients notice the host leaving.** When the host goes, the relay sends its
+  clients a welcome with host slot 0. A client disconnects when its host slot
+  changes at all, so it's never re-pointed at a new host; `RelayError()` says
+  "the host left the session".
+- **Rates are capped per peer:** 1000 packets and 1 MiB per second, with twice
+  that as a burst. A host's caps are multiplied by its client count.
+- **Versions.** Hellos and welcomes carry the relay protocol version (2 now).
+  The relay refuses a version older than it supports with
+  `RelayRefused{version}`.
+
+Peers without a version byte (version 1: older games, and the launcher's voice
+calls, where every member announces the host role) still work. They get the
+forwarding rules and caps. A version-1 session gets no key, so it keeps the old
+hand-over: when its host leaves, the next host-role hello takes over. A
+version-2 game host won't join a session a version-1 peer is hosting.
 
 This is a relay (TURN-style), not hole-punching (STUN): it always works,
 including under symmetric NATs, at the cost of routing traffic through the relay

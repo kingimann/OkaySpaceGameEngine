@@ -39,6 +39,9 @@ key 0.6
   last key, so the last key eases back into the first (a seamless loop).
 - Each bone turns along the short arc between keys (the rotations are slerped),
   so -150° to 150° swings 60° rather than spinning the long way round.
+- `root x y z` inside a key moves the whole body (in the rig's units, before the
+  height slider scales it): a walk's hip bob, or a crouch's `root 0 -0.17 0` drop.
+  A clip with no `root` lines leaves the body where the animation puts it.
 
 ### Bone names
 
@@ -147,8 +150,10 @@ d = clip_duration("walk")  # clip length in seconds
 
 ## Animation state machine
 
-For anything beyond locomotion, add an **Anim State Machine** component next
-to the Model Animator (Add Component > Animation). Each **state** names a
+For anything beyond locomotion, add an **Animator** component next to the
+Model Animator, or onto a built-in Character (Add Component > Animation). On a
+Character it plays the Character's own clips (the Animation tab's), and while
+it has states its pose replaces the built-in animation. Each **state** names a
 clip (with speed/loop overrides); **transitions** move between states when
 their condition passes — a clip finishing, a float parameter compared to a
 value, a bool, or a one-frame trigger — each with its own crossfade time.
@@ -173,8 +178,8 @@ anim_goto("Dead")                   # force a state directly
 
 A typical setup: `Idle -> Run` (speed > 2), `Run -> Idle` (speed < 1),
 `Idle/Run -> Attack` (trigger "attack", loop off), `Attack -> Idle`
-(On Clip End). The machine drives the Model Animator, so blending, root
-motion and events all keep working.
+(On Clip End). The machine drives the Model Animator (or the Character), so
+blending, root motion and events all keep working.
 
 ## IK on imported rigs
 

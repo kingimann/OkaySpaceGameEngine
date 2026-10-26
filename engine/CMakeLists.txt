@@ -62,6 +62,7 @@ add_library(okay_engine
     src/Components/Terrain.cpp
     src/Components/VoxelTerrain.cpp
     src/Components/Character.cpp
+    src/Components/CharacterAnimBackend.cpp
     src/Components/AnimClip.cpp
     src/Components/BuildMode.cpp
     src/Platform/Steam/NullSteamService.cpp

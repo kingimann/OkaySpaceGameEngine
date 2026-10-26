@@ -19469,12 +19469,13 @@ static void DrawAnimatorGraph(EditorState& ed) {
                     if (auto* m = up->GetComponent<AnimStateMachine>()) { sm = m; smObj = up.get(); break; }
     }
     if (!sm) {
-        ImGui::TextDisabled("Select an object with an Anim State Machine (Add Component > Animation).");
-        ImGui::TextDisabled("States name a Model Animator clip; transitions switch between them\nwhen a condition passes (clip end, float compare, bool, trigger).");
+        ImGui::TextDisabled("Select an object with an Animator (Add Component > Animation).");
+        ImGui::TextDisabled("States name a clip (the Model Animator's, or the Character's); transitions switch\nbetween them when a condition passes (clip end, float compare, bool, trigger).");
         ImGui::End(); return;
     }
     ModelAnimator* ma = smObj ? smObj->GetComponent<ModelAnimator>() : nullptr;
-    std::vector<std::string> clipNames = ma ? ma->ClipNames() : std::vector<std::string>{};
+    Character* body = (smObj && !ma) ? smObj->GetComponent<Character>() : nullptr;   // the Animator plays its clips
+    std::vector<std::string> clipNames = ma ? ma->ClipNames() : body ? body->ClipNames() : std::vector<std::string>{};
 
     // ---- Layers: every machine on the object, base first; tabs pick which one
     // the graph edits. A layer plays on part of the skeleton over the base.
@@ -19501,6 +19502,7 @@ static void DrawAnimatorGraph(EditorState& ed) {
                 AnimStateMachine::State empty; empty.name = "Empty"; empty.nx = 20; empty.ny = 20;
                 lay->states.push_back(empty);
                 // A sensible default mask: the spine (upper body), if the rig has one.
+                if (body) lay->maskBone = "torso";
                 if (ma)
                     for (const auto& c : ma->clips)
                         for (const auto& nc : c.nodes) {
@@ -19528,6 +19530,9 @@ static void DrawAnimatorGraph(EditorState& ed) {
                     for (const auto& c : ma->clips)
                         for (const auto& nc : c.nodes)
                             if (seen.insert(nc.node).second && ImGui::Selectable(nc.node.c_str(), sm->maskBone == nc.node)) { sm->maskBone = nc.node; ed.dirty = true; }
+                if (body)
+                    for (int b = 0; b < Character::BoneCount(); ++b)
+                        if (ImGui::Selectable(Character::BoneName(b), sm->maskBone == Character::BoneToken(b))) { sm->maskBone = Character::BoneToken(b); ed.dirty = true; }
                 ImGui::EndCombo();
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("This layer drives this bone and everything under it.\nPick the spine for upper-body actions (attack while walking).");
@@ -27646,13 +27651,14 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* sm = dynamic_cast<AnimStateMachine*>(curComp)) {
-        if (CompHeader("Anim State Machine", sm, &toRemove)) {
+        if (CompHeader("Animator", sm, &toRemove)) {
             if (ImGui::Button("Open Animator Graph##asm")) g_showAnimatorGraph = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Visual node editor: drag states around, draw transitions,\nwatch the active state light up in Play mode.");
             auto* ma = go->GetComponent<ModelAnimator>();
-            if (!ma)
+            auto* body = ma ? nullptr : go->GetComponent<Character>();   // plays the Character's clips
+            if (!ma && !body)
                 ImGui::TextColored(ImVec4(0.95f, 0.7f, 0.4f, 1.0f),
-                                   "Needs a Model Animator on this object (import a model here).");
+                                   "Needs a Model Animator (import a model here) or a Character on this object.");
             if (ed.isPlaying())
                 ImGui::TextColored(AccentCol(1.0f), "Current state: %s",
                                    sm->Current().empty() ? "(entering)" : sm->Current().c_str());
@@ -27677,10 +27683,10 @@ void DrawInspector(EditorState& ed) {
                 ImGui::SetNextItemWidth(140);
                 if (ImGui::InputText("State##asm", nb, sizeof(nb))) { st.name = nb; ed.dirty = true; }
                 ImGui::SameLine();
-                // Clip picker (from the ModelAnimator's library, or free text without one).
+                // Clip picker (from the Model Animator's or the Character's clips).
                 ImGui::SetNextItemWidth(150);
-                if (ma && ImGui::BeginCombo("##asmclip", st.clip.empty() ? "(clip)" : st.clip.c_str())) {
-                    for (const auto& cn : ma->ClipNames())
+                if ((ma || body) && ImGui::BeginCombo("##asmclip", st.clip.empty() ? "(clip)" : st.clip.c_str())) {
+                    for (const auto& cn : ma ? ma->ClipNames() : body->ClipNames())
                         if (ImGui::Selectable(cn.c_str(), st.clip == cn)) { st.clip = cn; ed.dirty = true; }
                     ImGui::EndCombo();
                 }
@@ -34154,7 +34160,7 @@ void DrawInspector(EditorState& ed) {
         { bool o = BeginCat("Animation");
           if (o) {
             if (item(!go->GetComponent<Animator>(), "Animator (keyframes)")) { go->AddComponent<Animator>(); ed.dirty = true; }
-            if (item(!go->GetComponent<AnimStateMachine>(), "Anim State Machine (states + transitions)")) { go->AddComponent<AnimStateMachine>(); ed.dirty = true; }
+            if (item(!go->GetComponent<AnimStateMachine>(), "Animator (states + transitions)")) { go->AddComponent<AnimStateMachine>(); ed.dirty = true; }
             if (item(!go->GetComponent<SpriteAnimator>(), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
             if (item(!go->GetComponent<AimIK>(), "Aim IK (point a bone at a target)")) { go->AddComponent<AimIK>(); ed.dirty = true; }
             if (item(!go->GetComponent<LookAtIK>(), "Look-At IK (head/eye tracking)")) { go->AddComponent<LookAtIK>(); ed.dirty = true; }

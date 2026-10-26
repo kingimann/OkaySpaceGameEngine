@@ -6,13 +6,11 @@
 
 namespace okay {
 
-namespace {
-// One bone between two Euler poses (degrees, the rig's Z-X-Y order): slerp the
-// rotations so the bone takes the short arc, rather than lerping each angle (which
-// swings -150 -> 150 the long way round and flips an arm through its body). Each
-// angle of the result is moved by whole turns toward the plain lerp, so the numbers
-// stay close to what was authored.
-Vec3 BlendEuler(const Vec3& a, const Vec3& b, float u) {
+// Slerp the rotations so the bone takes the short arc, rather than lerping each
+// angle (which swings -150 -> 150 the long way round and flips an arm through its
+// body). Each angle of the result is moved by whole turns toward the plain lerp, so
+// the numbers stay close to what was authored.
+Vec3 AnimClip::BlendEuler(const Vec3& a, const Vec3& b, float u) {
     if (u <= 0.0f || (a.x == b.x && a.y == b.y && a.z == b.z)) return a;
     if (u >= 1.0f) return b;
     Vec3 e = Quat::Slerp(Quat::Euler(a), Quat::Euler(b), u).ToEuler();
@@ -21,13 +19,14 @@ Vec3 BlendEuler(const Vec3& a, const Vec3& b, float u) {
     return Vec3{near(e.x, ref.x), near(e.y, ref.y), near(e.z, ref.z)};
 }
 
+namespace {
 std::vector<Vec3> BlendPose(const AnimKey& a, const AnimKey& b, float u) {
     std::size_t n = a.pose.size() > b.pose.size() ? a.pose.size() : b.pose.size();
     std::vector<Vec3> out(n, Vec3{0, 0, 0});
     for (std::size_t k = 0; k < n; ++k) {
         Vec3 pa = k < a.pose.size() ? a.pose[k] : Vec3{0, 0, 0};
         Vec3 pb = k < b.pose.size() ? b.pose[k] : Vec3{0, 0, 0};
-        out[k] = BlendEuler(pa, pb, u);
+        out[k] = AnimClip::BlendEuler(pa, pb, u);
     }
     return out;
 }
@@ -52,6 +51,27 @@ std::vector<Vec3> AnimClip::Sample(float t) const {
         return BlendPose(a, b, Ease(u));   // eased by the clip's mode (linear / smooth / step)
     }
     return keys.back().pose;
+}
+
+Vec3 AnimClip::SampleRoot(float t) const {
+    if (!hasRoot || keys.empty()) return Vec3{0, 0, 0};
+    if (t <= keys.front().time) return keys.front().root;
+    const AnimKey* a = &keys.back();
+    const AnimKey* b = &keys.back();
+    float u = 0.0f;
+    if (t >= keys.back().time) {
+        const float last = keys.back().time;
+        if (loop && length > last && keys.size() >= 2) { b = &keys.front(); u = (t - last) / (length - last); }
+    } else {
+        for (std::size_t i = 0; i + 1 < keys.size(); ++i) {
+            if (t < keys[i].time || t > keys[i + 1].time) continue;
+            a = &keys[i]; b = &keys[i + 1];
+            float span = b->time - a->time;
+            u = span > 1e-6f ? (t - a->time) / span : 0.0f;
+            break;
+        }
+    }
+    return a->root + (b->root - a->root) * Ease(u);
 }
 
 std::vector<AnimClip> AnimClip::ParseAll(const std::string& text,
@@ -109,6 +129,12 @@ std::vector<AnimClip> AnimClip::ParseAll(const std::string& text,
             if (!(ls >> k.time)) return fail("key needs a time");
             k.pose.assign(boneCount, Vec3{0, 0, 0});
             clips.back().keys.push_back(std::move(k));
+        } else if (tok == "root") {
+            if (clips.empty() || clips.back().keys.empty()) return fail("root outside a key");
+            Vec3 r{0, 0, 0};
+            if (!(ls >> r.x >> r.y >> r.z)) return fail("root needs x y z");
+            clips.back().keys.back().root = r;
+            clips.back().hasRoot = true;
         } else {
             // A bone line: "<bone> x y z" within the current keyframe.
             if (clips.empty() || clips.back().keys.empty())
@@ -147,6 +173,7 @@ std::string AnimClip::WriteAll(const std::vector<AnimClip>& clips,
                 if (nm.empty()) continue;
                 out << nm << " " << p.x << " " << p.y << " " << p.z << "\n";
             }
+            if (c.hasRoot) out << "root " << k.root.x << " " << k.root.y << " " << k.root.z << "\n";
         }
     }
     return out.str();

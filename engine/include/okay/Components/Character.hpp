@@ -409,6 +409,9 @@ public:
     std::vector<Vec3> PoseAt(float t) const;
     /// The pose a built-in state (an `anim` value) has at clock time t.
     std::vector<Vec3> PoseFor(int state, float t) const;
+    /// Seconds per cycle of a gait state's motion in PoseFor (walk / run / crouch-walk),
+    /// or 0 for a state with no gait cycle. Used to sample a built-in into a clip.
+    float GaitCycleSeconds(int state) const;
     /// World-space body offset for the current anim (e.g. lowering the whole body
     /// for crouch / prone, since the rig's root is otherwise pinned at hip height).
     Vec3 StanceOffset() const;

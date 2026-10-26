@@ -18425,33 +18425,21 @@ static std::string UniqueClipName(Character* ch, const std::string& base) {
 // idle). Loops get a loop length one sample past the last key, so the last key
 // eases back into the first with no seam. Jump has no cycle: a short one-shot.
 static AnimClip BakeBuiltInClip(Character* ch, int state, const std::string& name) {
-    const int keepAnim = ch->anim;
-    const float keepTime = ch->animTime;
-    ch->anim = state;
-    float period = 1.0f;
-    if (state == 2 || state == 3) {
-        ch->animTime = 0.01f;   // GaitPhase is frac(animTime * cycles-per-second)
-        float ph = ch->GaitPhase();
-        period = ph > 1e-5f ? 0.01f / ph : 1.0f;
-    } else if (state == 1) {
-        period = 6.2831853f / 1.8f;   // the idle breathing cycle
-    } else {
-        period = 0.6f;
-    }
+    float period = ch->GaitCycleSeconds(state);          // walk / run: one stride cycle
+    if (period <= 0.0f) period = (state == 1) ? 6.2831853f / 1.8f   // idle: one breath
+                                              : 0.6f;               // jump: a short one-shot
     AnimClip c; c.name = name;
     c.loop = (state != 5);
     const int n = 15;
+    const float t0 = ch->animTime;   // sample from "now" so the gait phase lines up
     for (int k = 0; k < n; ++k) {
         float tk = c.loop ? period * k / n : period * k / (n - 1);
         AnimKey key; key.time = tk;
-        ch->animTime = tk;
-        key.pose = ch->PoseAt(tk);
+        key.pose = ch->PoseFor(state, t0 + tk);
         key.pose.resize(Character::BoneCount(), Vec3{0, 0, 0});
         c.keys.push_back(std::move(key));
     }
     if (c.loop) c.length = period;
-    ch->anim = keepAnim;
-    ch->animTime = keepTime;
     return c;
 }
 

@@ -159,3 +159,67 @@ Maths helpers.
 | `Mathf.Clamp(value, min, max)` | `Mathf.Clamp/3` | value | value (Number), min (Number), max (Number) | Result (Number) | Keep between min and max. |
 | `Mathf.Lerp(a, b, t)` | `Mathf.Lerp/3` | value | a (Number), b (Number), t (Number) | Result (Number) | Blend from a (t = 0) to b (t = 1). |
 | `Mathf.MoveTowards(current, target, maxDelta)` | `Mathf.MoveTowards/3` | value | current (Number), target (Number), maxDelta (Number) | Result (Number) | Step from current toward target by at most maxDelta. |
+
+## Inventory
+
+A bag of item stacks (hotbar, backpack, chest). Items are item ids; names and old names work too.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<Inventory>().capacity` | `Inventory.capacity` | value | Target (Object) | capacity (Number) | How many stacks fit. |
+| `GetComponent<Inventory>().capacity = capacity` | `Inventory.capacity=` | step | capacity (Number), Target (Object) | - | How many stacks fit. |
+| `GetComponent<Inventory>().totalWeight` | `Inventory.totalWeight` | value | Target (Object) | totalWeight (Number) | Weight carried (from the item definitions), worn items included. |
+| `GetComponent<Inventory>().isFull` | `Inventory.isFull` | value | Target (Object) | isFull (Bool) | Every slot holds something. |
+| `GetComponent<Inventory>().Add(item, count)` | `Inventory.Add/2` | step | item (Text), count (Number), Target (Object) | Result (Number) | Add as many as fit; gives back how many didn't. |
+| `GetComponent<Inventory>().Remove(item, count)` | `Inventory.Remove/2` | step | item (Text), count (Number), Target (Object) | Result (Bool) | Take items out: all of them, or none (false) if there aren't enough. |
+| `GetComponent<Inventory>().Count(item)` | `Inventory.Count/1` | value | item (Text), Target (Object) | Result (Number) | How many of the item it holds. |
+| `GetComponent<Inventory>().Has(item, count)` | `Inventory.Has/2` | value | item (Text), count (Number), Target (Object) | Result (Bool) | It holds at least that many. |
+| `GetComponent<Inventory>().Clear()` | `Inventory.Clear/0` | step | Target (Object) | - | Empty it. |
+| `GetComponent<Inventory>().SlotItem(slot)` | `Inventory.SlotItem/1` | value | slot (Number), Target (Object) | Result (Text) | The item in a slot ("" when it's empty). |
+| `GetComponent<Inventory>().SlotCount(slot)` | `Inventory.SlotCount/1` | value | slot (Number), Target (Object) | Result (Number) | How many are in a slot. |
+| `GetComponent<Inventory>().SetSlot(slot, item, count)` | `Inventory.SetSlot/3` | step | slot (Number), item (Text), count (Number), Target (Object) | Result (Bool) | Put items straight into a slot (count 0 empties it). False past the capacity. |
+| `GetComponent<Inventory>().Move(from, to, count)` | `Inventory.Move/3` | step | from (Number), to (Number), count (Number), Target (Object) | Result (Bool) | Move a stack between slots (count 0 = the whole stack): merge, swap or place. |
+| `GetComponent<Inventory>().TransferTo(target, item, count)` | `Inventory.TransferTo/3` | step | target (Object), item (Text), count (Number), Target (Object) | Result (Number) | Move items into another object's Inventory (a chest, a trade); gives back how many moved. |
+| `GetComponent<Inventory>().Drop(item, count)` | `Inventory.Drop/2` | step | item (Text), count (Number), Target (Object) | Result (Number) | Drop items in front of the object as pickups; gives back how many dropped. |
+| `GetComponent<Inventory>().Use(slot)` | `Inventory.Use/1` | step | slot (Number), Target (Object) | Result (Bool) | Use the item in a slot: eat or drink it, pick its build piece, or equip it. |
+
+## Equipment
+
+What a character wears and holds: slots like Head, Chest, Main Hand.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<Equipment>().armor` | `Equipment.armor` | value | Target (Object) | armor (Number) | Armor added by what's worn. |
+| `GetComponent<Equipment>().Equip(slot, item)` | `Equipment.Equip/2` | step | slot (Text), item (Text), Target (Object) | Result (Bool) | Put an item from the bag on, in the named slot. |
+| `GetComponent<Equipment>().Unequip(slot)` | `Equipment.Unequip/1` | step | slot (Text), Target (Object) | Result (Bool) | Take off what's in the named slot, back into the bag. |
+| `GetComponent<Equipment>().Equipped(slot)` | `Equipment.Equipped/1` | value | slot (Text), Target (Object) | Result (Text) | The item worn in the named slot ("" if none). |
+
+## Crafting
+
+Makes items from recipes, out of this object's Inventory.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<Crafting>().Craft(recipe, times)` | `Crafting.Craft/2` | step | recipe (Text), times (Number), Target (Object) | Result (Bool) | Craft a recipe (by its output item), or queue it when it takes time. |
+| `GetComponent<Crafting>().CanCraft(recipe)` | `Crafting.CanCraft/1` | value | recipe (Text), Target (Object) | Result (Bool) | Known, at the right bench, and the ingredients are there. |
+
+## GridInventory
+
+A grid bag where items take up cells (and can turn to fit).
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<GridInventory>().totalWeight` | `GridInventory.totalWeight` | value | Target (Object) | totalWeight (Number) | Weight of everything in it. |
+| `GetComponent<GridInventory>().Add(item, count)` | `GridInventory.Add/2` | step | item (Text), count (Number), Target (Object) | Result (Bool) | Add items (size and weight from their definitions): all of them, or none. |
+| `GetComponent<GridInventory>().Fits(item)` | `GridInventory.Fits/1` | value | item (Text), Target (Object) | Result (Bool) | One more would fit (either way round, within the weight limit). |
+
+## Items
+
+The project's item definitions, world pickups and loot tables.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `Items.Name(item)` | `Items.Name/1` | value | item (Text) | Result (Text) | The item's display name. |
+| `Items.Field(item, field)` | `Items.Field/2` | value | item (Text), field (Text) | Result (Text) | A field of the item's definition as text: name, description, category, weight, stack, rarity, equip, use, or a custom field. |
+| `Items.SpawnPickup(item, count, position)` | `Items.SpawnPickup/3` | step | item (Text), count (Number), position (Vector3) | Result (Object) | Put items in the world as a pickup; gives back the new object. |
+| `Items.RollLoot(table, target)` | `Items.RollLoot/2` | step | table (Text), target (Object) | Result (Number) | Roll an .okayloot table into the target's Inventory (extra drops beside it); gives back how many items. |

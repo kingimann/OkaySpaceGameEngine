@@ -144,6 +144,8 @@ struct EngineApi {
     int Find(const std::string& name) const;
     static const EngineApi& Get();
 };
+/// Inventory, Equipment, Crafting, GridInventory and Items (ApiInventory.cpp).
+void RegisterInventoryApi(EngineApi& api);
 
 /// The GameObject behind a reference, or throws a RuntimeError at `loc`.
 GameObject* Resolve(const ObjRef& r, SrcLoc loc);

@@ -1,10 +1,14 @@
 #pragma once
 #include "okay/Components/Inventory.hpp"
 #include "okay/Components/GridInventory.hpp"
+#include "okay/Math/Vec3.hpp"
 #include <string>
 #include <vector>
 
 namespace okay {
+
+class GameObject;
+class Scene;
 
 /// What an inventory operation did. `moved` counts items that changed place.
 struct InvResult {
@@ -58,6 +62,25 @@ InvResult Use(Inventory* inv, int i, GameObject* user);
 
 /// Atomically remove `take` and add `give` (crafting).
 InvResult Craft(Inventory* inv, const std::vector<Inventory::Stack>& take, const std::vector<Inventory::Stack>& give);
+
+// ---- By item (scripts, visual scripts, ActionList) ----
+
+/// Move up to `n` of `item` from `src` to `dst`, stack by stack (each keeps its instance
+/// data) until `dst` is full. Returns how many moved.
+int TransferItem(Inventory* src, const std::string& item, int n, Inventory* dst);
+/// Take up to `n` of `item` out of `inv` and drop them at `pos` as world pickups.
+/// Returns how many were dropped.
+int DropItem(Inventory* inv, const std::string& item, int n, Scene& scene, const Vec3& pos);
+/// Put `n` of `item` into slot `i` (`n` <= 0 or no item empties it). Refused past the
+/// capacity; `n` is capped to the stack limit.
+bool SetSlot(Inventory* inv, int i, const std::string& item, int n);
+/// Roll a loot table (`.okayloot`) into `target`'s Inventory (else its grid bag); what
+/// doesn't fit lands next to it as pickups. Returns how many items were rolled.
+int RollLoot(const std::string& table, GameObject* target);
+/// Equip `item` from `who`'s bag into the Equipment slot named `slot`.
+bool EquipItem(GameObject* who, const std::string& slot, const std::string& item);
+/// Put what's worn in the slot named `slot` back into `who`'s bag.
+bool UnequipSlot(GameObject* who, const std::string& slot);
 
 /// Move grid item `index` from `src` to (x,y) in `dst` (turned 90° when `rotated`),
 /// merging onto a matching stack (see GridInventory::MoveTo).

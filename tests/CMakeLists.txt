@@ -148,6 +148,10 @@ add_test(NAME inventory_holding COMMAND test_inventory_holding)
 add_executable(test_inventory_script test_inventory_script.cpp)
 target_link_libraries(test_inventory_script PRIVATE okay::engine)
 add_test(NAME inventory_script COMMAND test_inventory_script)
+# Inventory API for typed scripts and the visual-script Engine API nodes made from it
+add_executable(test_inventory_script_api test_inventory_script_api.cpp)
+target_link_libraries(test_inventory_script_api PRIVATE okay::engine)
+add_test(NAME inventory_script_api COMMAND test_inventory_script_api)
 
 add_executable(test_pathfinding test_pathfinding.cpp)
 target_link_libraries(test_pathfinding PRIVATE okay::engine)

@@ -2,6 +2,9 @@
 #include "okay/Components/BuildMode.hpp"
 #include "okay/Components/Consumables.hpp"
 #include "okay/Components/Equipment.hpp"
+#include "okay/Components/ItemPickup.hpp"
+#include "okay/Core/Random.hpp"
+#include "okay/Inventory/LootTable.hpp"
 #include "okay/Inventory/InventoryEvents.hpp"
 #include <algorithm>
 #include <utility>
@@ -161,6 +164,80 @@ InvResult Use(Inventory* inv, int i, GameObject* user) {
     const InvResult r = UseItem(inv, i, user);
     if (r.Ok()) InventoryEvents::Fire(inv->gameObject, "on_item_used", "OnItemUsed", {vs::VsValue(item)});
     return r;
+}
+
+int TransferItem(Inventory* src, const std::string& item, int n, Inventory* dst) {
+    if (!src || !dst || src == dst || item.empty() || n <= 0) return 0;
+    int moved = 0;
+    for (auto& s : src->slots) {
+        if (n <= 0) break;
+        if (Inventory::Empty(s) || s.item != item) continue;
+        Inventory carried;
+        carried.slots.push_back(Inventory::Slot{s.item, std::min(n, s.count), s.data});
+        const int want = carried.slots[0].count;
+        const InvResult r = Transfer(&carried, 0, dst);
+        s.count -= r.moved; moved += r.moved; n -= r.moved;
+        if (s.count <= 0) s = Inventory::Slot{};
+        if (r.moved < want) break;   // the target is full
+    }
+    if (moved > 0) src->NotifyChanged();
+    return moved;
+}
+
+int DropItem(Inventory* inv, const std::string& item, int n, Scene& scene, const Vec3& pos) {
+    if (!inv || item.empty()) return 0;
+    int dropped = 0;
+    for (int i = 0; i < (int)inv->slots.size() && n > 0; ++i) {
+        if (Inventory::Empty(inv->slots[i]) || inv->slots[i].item != item) continue;
+        const ItemInstanceData data = inv->slots[i].data;
+        const int k = std::min(n, inv->slots[i].count);
+        if (!Drop(inv, i, k).Ok()) break;
+        ItemPickup::Spawn(scene, item, k, data, pos);
+        dropped += k; n -= k;
+    }
+    return dropped;
+}
+
+bool SetSlot(Inventory* inv, int i, const std::string& item, int n) {
+    if (!inv || i < 0 || i > 4096 || (inv->capacity > 0 && i >= inv->capacity)) return false;
+    const long long cap = item.empty() ? 0 : std::min<long long>(n, inv->StackCap(item));
+    if ((int)inv->slots.size() <= i) inv->slots.resize((std::size_t)i + 1);
+    inv->slots[i] = (item.empty() || cap <= 0) ? Inventory::Slot{} : Inventory::Slot{item, (int)cap, {}};
+    TrimTail(*inv);
+    inv->NotifyChanged();
+    return true;
+}
+
+int RollLoot(const std::string& table, GameObject* target) {
+    if (table.empty() || !target) return 0;
+    Inventory* inv = ItemPickup::InventoryOf(target);
+    auto* grid = target->GetComponent<GridInventory>();
+    int n = 0;
+    for (const auto& s : LootTable::Cached(table).Roll(Random::Shared())) {
+        n += s.count;
+        int left = s.count;
+        if (inv) left = inv->AddPartial(s.item, left);
+        else if (grid) for (; left > 0 && grid->AddDefined(s.item, 1) >= 0; --left) {}
+        if (left > 0 && target->scene() && target->transform)
+            ItemPickup::Spawn(*target->scene(), s.item, left, {}, target->transform->Position());
+    }
+    return n;
+}
+
+bool EquipItem(GameObject* who, const std::string& slot, const std::string& item) {
+    Equipment* eq = Equipment::Of(who);
+    Inventory* inv = ItemPickup::InventoryOf(who);
+    const int to = eq ? eq->Find(slot) : -1;
+    if (!eq || !inv || to < 0) return false;
+    for (int i = 0; i < (int)inv->slots.size(); ++i)
+        if (!Inventory::Empty(inv->slots[i]) && inv->slots[i].item == item) return eq->EquipFrom(*inv, i, to).Ok();
+    return false;
+}
+
+bool UnequipSlot(GameObject* who, const std::string& slot) {
+    Equipment* eq = Equipment::Of(who);
+    Inventory* inv = ItemPickup::InventoryOf(who);
+    return eq && inv && eq->Unequip(eq->Find(slot), *inv).Ok();
 }
 
 InvResult Craft(Inventory* inv, const std::vector<Inventory::Stack>& take, const std::vector<Inventory::Stack>& give) {

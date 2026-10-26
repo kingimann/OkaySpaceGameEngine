@@ -4569,15 +4569,7 @@ struct OkayScriptVM::Impl {
             return v;
         };
         b["inv_set_slot"] = [invAt, itemArg, intArg](std::vector<Value>& a) {   // count <= 0 or "" empties it
-            Inventory* inv = invAt(a, 3);
-            const int i = intArg(a, 0, -1);
-            if (!inv || i < 0 || (inv->capacity > 0 && i >= inv->capacity) || i > 4096) return Value{0.0f};
-            const std::string item = itemArg(a, 1);
-            const long long n = std::min<long long>(intArg(a, 2, 1), inv->StackCap(item));
-            if ((int)inv->slots.size() <= i) inv->slots.resize(i + 1);
-            inv->slots[i] = (item.empty() || n <= 0) ? Inventory::Slot{} : Inventory::Slot{item, (int)n, {}};
-            inv->NotifyChanged();
-            return Value{1.0f};
+            return Value{InventoryOps::SetSlot(invAt(a, 3), intArg(a, 0, -1), itemArg(a, 1), intArg(a, 2, 1)) ? 1.0f : 0.0f};
         };
         b["inv_capacity"] = [invAt](std::vector<Value>& a) { Inventory* inv = invAt(a, 0); return Value{(float)(inv ? inv->capacity : 0)}; };
         auto invUI = [invObj](std::vector<Value>& a, std::size_t k) -> InventoryUI* {
@@ -4601,63 +4593,22 @@ struct OkayScriptVM::Impl {
             return Value{inv && InventoryOps::Move(inv, intArg(a, 0, -1), inv, intArg(a, 1, -1), intArg(a, 2, 0),
                                                    InventoryOps::UsableSlots(*inv)).Ok() ? 1.0f : 0.0f};
         };
-        b["inv_transfer"] = [invAt, invHost, itemArg, intArg](std::vector<Value>& a) {   // (target, item, n) -> moved
-            Inventory* src = invAt(a, 3);
-            GameObject* tg = invHost() && invHost()->scene() && !a.empty() ? invHost()->scene()->Find(a[0].AsString()) : nullptr;
-            Inventory* dst = ItemPickup::InventoryOf(tg);
-            const std::string item = itemArg(a, 1);
-            int left = intArg(a, 2, 1), moved = 0;
-            if (!src || !dst || src == dst) return Value{0.0f};
-            for (auto& s : src->slots) {   // stack by stack, keeping each stack's instance data
-                if (left <= 0) break;
-                if (Inventory::Empty(s) || s.item != item) continue;
-                Inventory carried;
-                carried.slots.push_back(Inventory::Slot{s.item, std::min(left, s.count), s.data});
-                const int want = carried.slots[0].count;
-                const InvResult r = InventoryOps::Transfer(&carried, 0, dst);
-                s.count -= r.moved; moved += r.moved; left -= r.moved;
-                if (s.count <= 0) s = Inventory::Slot{};
-                if (r.moved < want) break;   // the target is full
-            }
-            if (moved > 0) src->NotifyChanged();
-            return Value{(float)moved};
+        b["inv_transfer"] = [invAt, itemArg, intArg](std::vector<Value>& a) {   // (target, item, n) -> moved
+            std::vector<Value> target(a.begin(), a.begin() + std::min<std::size_t>(a.size(), 1));
+            return Value{(float)InventoryOps::TransferItem(invAt(a, 3), itemArg(a, 1), intArg(a, 2, 1), invAt(target, 0))};
         };
-        b["item_def"] = [itemArg](std::vector<Value>& a) -> Value {   // (id, field): a definition field or custom value
+        b["item_def"] = [itemArg](std::vector<Value>& a) -> Value {   // (id, field = "name"): a definition field or custom value
             const ItemDefinition* d = ItemDatabase::Get().Find(itemArg(a, 0));
             const std::string f = a.size() > 1 ? a[1].AsString() : std::string("name");
             if (!d) return Value{std::string()};
-            if (f == "name") return Value{d->DisplayName()};
-            if (f == "description") return Value{d->description};
-            if (f == "icon") return Value{d->icon};
-            if (f == "category") return Value{d->category};
-            if (f == "weight") return Value{d->weight};
-            if (f == "stack") return Value{(float)d->maxStack};
-            if (f == "rarity") return Value{(float)d->rarity};
-            if (f == "equip") return Value{std::string(EquipSlotName(d->equip))};
-            if (f == "use") return Value{d->useAction};
-            if (f == "prefab") return Value{d->worldPrefab};
-            if (f == "width") return Value{(float)d->gridW};
-            if (f == "height") return Value{(float)d->gridH};
-            return Value{d->Custom(f)};
+            const std::string v = d->FieldText(f);
+            return ItemDefinition::NumericField(f) ? Value{(float)std::atof(v.c_str())} : Value{v};
         };
         b["equip"] = [invHost, itemArg](std::vector<Value>& a) {   // (slot, item): from the host's bag
-            GameObject* g = invHost();
-            Equipment* eq = Equipment::Of(g);
-            Inventory* inv = ItemPickup::InventoryOf(g);
-            const int slot = eq && !a.empty() ? eq->Find(a[0].AsString()) : -1;
-            const std::string item = itemArg(a, 1);
-            if (!eq || !inv || slot < 0) return Value{0.0f};
-            for (int i = 0; i < (int)inv->slots.size(); ++i)
-                if (!Inventory::Empty(inv->slots[i]) && inv->slots[i].item == item)
-                    return Value{eq->EquipFrom(*inv, i, slot).Ok() ? 1.0f : 0.0f};
-            return Value{0.0f};
+            return Value{!a.empty() && InventoryOps::EquipItem(invHost(), a[0].AsString(), itemArg(a, 1)) ? 1.0f : 0.0f};
         };
         b["unequip"] = [invHost](std::vector<Value>& a) {   // (slot): back into the bag
-            GameObject* g = invHost();
-            Equipment* eq = Equipment::Of(g);
-            Inventory* inv = ItemPickup::InventoryOf(g);
-            const int slot = eq && !a.empty() ? eq->Find(a[0].AsString()) : -1;
-            return Value{eq && inv && eq->Unequip(slot, *inv).Ok() ? 1.0f : 0.0f};
+            return Value{!a.empty() && InventoryOps::UnequipSlot(invHost(), a[0].AsString()) ? 1.0f : 0.0f};
         };
         b["equipped"] = [invHost](std::vector<Value>& a) {
             Equipment* eq = Equipment::Of(invHost());
@@ -4675,21 +4626,9 @@ struct OkayScriptVM::Impl {
         };
         b["drop_item"] = [invHost, itemArg, intArg](std::vector<Value>& a) {   // (item, n = 1) -> how many dropped
             GameObject* g = invHost();
-            Inventory* inv = ItemPickup::InventoryOf(g);
-            Scene* sc = g ? g->scene() : nullptr;
-            const std::string item = itemArg(a, 0);
-            int left = intArg(a, 1, 1), dropped = 0;
-            if (!inv || !sc || !g->transform) return Value{0.0f};
+            if (!g || !g->scene() || !g->transform) return Value{0.0f};
             const Vec3 pos = g->transform->Position() + g->transform->Forward() * 1.2f;
-            for (int i = 0; i < (int)inv->slots.size() && left > 0; ++i) {
-                if (Inventory::Empty(inv->slots[i]) || inv->slots[i].item != item) continue;
-                const ItemInstanceData data = inv->slots[i].data;
-                const int k = std::min(left, inv->slots[i].count);
-                if (!InventoryOps::Drop(inv, i, k).Ok()) break;
-                ItemPickup::Spawn(*sc, item, k, data, pos);
-                dropped += k; left -= k;
-            }
-            return Value{(float)dropped};
+            return Value{(float)InventoryOps::DropItem(ItemPickup::InventoryOf(g), itemArg(a, 0), intArg(a, 1, 1), *g->scene(), pos)};
         };
         b["spawn_pickup"] = [invHost, itemArg, intArg](std::vector<Value>& a) {   // (item, n, x, y, z) -> object name
             GameObject* g = invHost();
@@ -4699,19 +4638,7 @@ struct OkayScriptVM::Impl {
             return Value{pk ? pk->name : std::string()};
         };
         b["loot_roll"] = [invObj](std::vector<Value>& a) {   // (table, target = host) -> items rolled
-            GameObject* t = invObj(a, 1);
-            if (a.empty() || !t) return Value{0.0f};
-            Inventory* inv = ItemPickup::InventoryOf(t);
-            auto* grid = t->GetComponent<GridInventory>();
-            int n = 0;
-            for (const auto& s : LootTable::Cached(a[0].AsString()).Roll(Random::Shared())) {
-                n += s.count;
-                int left = s.count;
-                if (inv) left = inv->AddPartial(s.item, left);
-                else if (grid) for (; left > 0 && grid->AddDefined(s.item, 1) >= 0; --left) {}
-                if (left > 0 && t->scene() && t->transform) ItemPickup::Spawn(*t->scene(), s.item, left, {}, t->transform->Position());
-            }
-            return Value{(float)n};
+            return Value{a.empty() ? 0.0f : (float)InventoryOps::RollLoot(a[0].AsString(), invObj(a, 1))};
         };
         auto gridAt = [invObj](std::vector<Value>& a, std::size_t k) -> GridInventory* {
             GameObject* g = invObj(a, k);

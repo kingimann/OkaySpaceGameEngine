@@ -40,6 +40,25 @@ std::string ItemDefinition::Custom(const std::string& key, const std::string& de
     for (const auto& kv : custom) if (kv.first == key) return kv.second;
     return def;
 }
+std::string ItemDefinition::FieldText(const std::string& f) const {
+    auto num = [](float v) { std::ostringstream o; o << v; return o.str(); };
+    if (f == "name") return DisplayName();
+    if (f == "description") return description;
+    if (f == "icon") return icon;
+    if (f == "category") return category;
+    if (f == "weight") return num(weight);
+    if (f == "stack") return num((float)maxStack);
+    if (f == "rarity") return num((float)rarity);
+    if (f == "equip") return EquipSlotName(equip);
+    if (f == "use") return useAction;
+    if (f == "prefab") return worldPrefab;
+    if (f == "width") return num((float)gridW);
+    if (f == "height") return num((float)gridH);
+    return Custom(f);
+}
+bool ItemDefinition::NumericField(const std::string& f) {
+    return f == "weight" || f == "stack" || f == "rarity" || f == "width" || f == "height";
+}
 bool ItemDefinition::HasTag(const std::string& tag) const {
     return std::find(tags.begin(), tags.end(), tag) != tags.end();
 }

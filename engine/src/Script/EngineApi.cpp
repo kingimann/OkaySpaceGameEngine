@@ -399,6 +399,7 @@ EngineApi Build() {
     for (ApiType& t : api.types)
         if (t.name == "GameObject" || t.name == "Vector3" || t.name == "Input" || t.name == "Mathf")
             for (ApiMethod& m : t.staticMethods) m.pure = true;
+    RegisterInventoryApi(api);
     return api;
 }
 

@@ -62,6 +62,11 @@ struct ItemDefinition {
 
     const std::string& DisplayName() const { return name.empty() ? id : name; }
     std::string Custom(const std::string& key, const std::string& def = "") const;
+    /// A field by name, as text, for scripts: name, description, icon, category, weight,
+    /// stack, rarity, equip, use, prefab, width, height, or else a custom field.
+    std::string FieldText(const std::string& field) const;
+    /// The fields FieldText returns as numbers.
+    static bool NumericField(const std::string& field);
     bool HasTag(const std::string& tag) const;
 };
 

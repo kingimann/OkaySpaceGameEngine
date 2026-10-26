@@ -23872,6 +23872,50 @@ static std::string MakeIKHelper(EditorState& ed, GameObject* owner,
     return g->name;
 }
 
+// Inspector widget for one IK joint limit, shared by every IK inspector that
+// grows limits: type, the angle ranges the type uses, auto axes and a humanoid
+// preset menu. Returns true when anything changed.
+static bool IKJointLimitUI(const char* label, IKJointLimit& l) {
+    bool ch = false;
+    ImGui::PushID(label);
+    int ty = (int)l.type;
+    ImGui::SetNextItemWidth(150);
+    if (ImGui::Combo(label, &ty, "None\0Hinge (elbow / knee)\0Ball (shoulder / hip)\0")) { l.type = (IKJointLimit::Type)ty; ch = true; }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Preset")) ImGui::OpenPopup("ikjlpreset");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Humanoid presets: sensible angles for each joint.");
+    if (ImGui::BeginPopup("ikjlpreset")) {
+        struct { const char* n; IKJointLimit v; } ps[] = {
+            {"Elbow", IKJointLimit::Elbow()}, {"Knee", IKJointLimit::Knee()},
+            {"Shoulder", IKJointLimit::Shoulder()}, {"Hip", IKJointLimit::Hip()},
+            {"Spine", IKJointLimit::Spine()}, {"Neck", IKJointLimit::Neck()}};
+        for (auto& p : ps) if (ImGui::MenuItem(p.n)) { l = p.v; ch = true; }
+        ImGui::EndPopup();
+    }
+    if (l.type != IKJointLimit::Type::None) {
+        ImGui::Indent();
+        if (l.type == IKJointLimit::Type::Ball)
+            ch |= ImGui::DragFloat("Swing (deg)", &l.swingMax, 1.0f, 0.0f, 180.0f);
+        if (l.type == IKJointLimit::Type::Hinge) {
+            float b[2] = {l.hingeMin, l.hingeMax};
+            if (ImGui::DragFloat2("Bend min/max", b, 1.0f, -180.0f, 180.0f)) { l.hingeMin = b[0]; l.hingeMax = b[1]; ch = true; }
+        }
+        float t[2] = {l.twistMin, l.twistMax};
+        if (ImGui::DragFloat2("Twist min/max", t, 1.0f, -180.0f, 180.0f)) { l.twistMin = t[0]; l.twistMax = t[1]; ch = true; }
+        ch |= ImGui::Checkbox("Auto axes (from the rig)", &l.autoAxes);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Twist axis = toward the child bone; hinge axis = the rest bend plane.\nPer bone, so the same numbers work on both sides of a mirrored rig.");
+        if (!l.autoAxes) {
+            float tw[3] = {l.twistAxis.x, l.twistAxis.y, l.twistAxis.z};
+            float hg[3] = {l.hingeAxis.x, l.hingeAxis.y, l.hingeAxis.z};
+            if (ImGui::DragFloat3("Twist axis", tw, 0.05f)) { l.twistAxis = {tw[0], tw[1], tw[2]}; ch = true; }
+            if (ImGui::DragFloat3("Hinge axis", hg, 0.05f)) { l.hingeAxis = {hg[0], hg[1], hg[2]}; ch = true; }
+        }
+        ImGui::Unindent();
+    }
+    ImGui::PopID();
+    return ch;
+}
+
 // If an asset is dropped on the previous widget, set `field` to its path.
 static bool AcceptAssetPathField(std::string& field) {
     bool changed = false;
@@ -29169,6 +29213,10 @@ void DrawInspector(EditorState& ed) {
                 ImGui::DragFloat("Weight##lik", &lb->weight, 0.01f, 0.0f, 1.0f);
                 ImGui::DragFloat("Min Bend##lik", &lb->minBend, 1.0f, 0.0f, 180.0f);
                 ImGui::DragFloat("Max Bend##lik", &lb->maxBend, 1.0f, 0.0f, 180.0f);
+                if (IKJointLimitUI("Upper limit##lik", lb->upperLimit)) ed.dirty = true;
+                if (IKJointLimitUI("Lower limit##lik", lb->lowerLimit)) ed.dirty = true;
+                if (lb->upperLimit.Active() || lb->lowerLimit.Active())
+                    ImGui::TextDisabled("Limits clamp from each bone's rest pose. A Hinge on the lower\nbone only stops twist (Min/Max Bend decide the reach).");
                 if (ImGui::DragFloat("Softness##lik", &lb->softness, 0.005f, 0.0f, 0.5f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ease the last stretch to full reach over this distance,\nso the limb doesn't snap straight as the target moves out of reach.");
                 ImGui::Checkbox("Match Target Rotation##lik", &lb->matchTargetRotation);
@@ -36874,6 +36922,44 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     jointDot(u); jointDot(m); jointDot(e);
                     Vec3 tgt; marker(scenePos(lb->targetName, tgt) ? tgt : lb->target, kTgtCol, 7.0f);
                     Vec3 pol; if (scenePos(lb->poleName, pol)) { marker(pol, kPoleCol, 5.0f); line(m, pol, kPoleCol, 1.0f); }
+                    // Joint-limit gizmos: the shoulder/hip swing cone and the
+                    // elbow/knee bend arc, drawn from the current bone directions.
+                    const ImU32 kLimCol = IM_COL32(250, 220, 90, 220);
+                    const float ub = ((m - u)).Magnitude(), lo = ((e - m)).Magnitude();
+                    if (lb->upperLimit.type == IKJointLimit::Type::Ball && ub > 1e-4f) {
+                        const Vec3 d = (m - u) * (1.0f / ub);
+                        Vec3 side = Vec3::Cross(d, Vec3::Up);
+                        if (side.SqrMagnitude() < 1e-6f) side = Vec3::Cross(d, Vec3::Right);
+                        side = side.Normalized();
+                        const Vec3 up2 = Vec3::Cross(d, side);
+                        const float sw = lb->upperLimit.swingMax * 0.01745329f, len = ub * 0.5f;
+                        const float r = len * std::sin(sw), h = len * std::cos(sw);
+                        Vec3 prev2; const int N = 24;
+                        for (int s2 = 0; s2 <= N; ++s2) {
+                            const float a2 = 6.2831853f * s2 / N;
+                            const Vec3 p2 = u + d * h + (side * std::cos(a2) + up2 * std::sin(a2)) * r;
+                            if (s2) line(prev2, p2, kLimCol, 1.0f);
+                            if (s2 % 6 == 0) line(u, p2, kLimCol, 1.0f);
+                            prev2 = p2;
+                        }
+                    }
+                    if (lb->lowerLimit.type == IKJointLimit::Type::Hinge && ub > 1e-4f && lo > 1e-4f) {
+                        // Bend 0 = straight on: sweep the allowed bend range in the
+                        // limb's current bend plane.
+                        const Vec3 straight = (m - u) * (1.0f / ub);
+                        Vec3 ax = Vec3::Cross(m - u, e - m);
+                        if (ax.SqrMagnitude() > 1e-8f) {
+                            ax = ax.Normalized();
+                            const float r = lo * 0.35f; Vec3 prev2; const int N = 20;
+                            for (int s2 = 0; s2 <= N; ++s2) {
+                                const float deg = lb->lowerLimit.hingeMin + (lb->lowerLimit.hingeMax - lb->lowerLimit.hingeMin) * s2 / N;
+                                const Vec3 p2 = m + (Quat::AngleAxis(deg, ax) * straight) * r;
+                                if (s2) line(prev2, p2, kLimCol, 1.0f); else line(m, p2, kLimCol, 1.0f);
+                                prev2 = p2;
+                            }
+                            line(m, prev2, kLimCol, 1.0f);
+                        }
+                    }
                 }
                 if (auto* ci = up->GetComponent<ChainIK>()) {
                     chain(ci->boneNames);

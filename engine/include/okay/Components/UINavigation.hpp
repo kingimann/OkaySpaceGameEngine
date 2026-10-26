@@ -6,6 +6,9 @@
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/UIElement.hpp"
+#include "okay/Components/UIListView.hpp"
+#include "okay/Components/UIScrollView.hpp"
+#include "okay/Math/Mathf.hpp"
 #include "okay/Input/Input.hpp"
 #include <algorithm>
 #include <vector>
@@ -13,9 +16,13 @@
 namespace okay {
 
 /// Keyboard / gamepad menu navigation over a scene's interactive UI widgets.
-/// Call once per frame (the player does). Up/Down (W/S or arrows, D-pad up/down)
-/// move focus between focusable widgets in top-to-bottom, left-to-right order;
-/// the focused widget is highlighted (IsFocused()). Then, by widget type:
+/// Call once per frame (the player does). Up/Down/Left/Right (WASD or arrows,
+/// D-pad) move focus to the nearest focusable widget on screen in that direction,
+/// so grids and side-by-side buttons navigate the way they look; Up/Down wrap
+/// around at the ends (in reading order). Left/Right stay with a focused slider,
+/// dropdown or tabs, which use them for their value. The focused widget is
+/// highlighted (IsFocused()); moving focus onto a widget hidden in a Scroll View or
+/// List View scrolls it into view. Then, by widget type:
 ///   * Button   — Enter/Space or gamepad A fires on_click().
 ///   * Toggle   — Enter/Space/A flips it (on_toggle()).
 ///   * Dropdown — Enter/Space/A opens/closes; Left/Right change the selection.
@@ -28,7 +35,7 @@ namespace okay {
 inline GameObject* NavigateUI(Scene& scene) {
     // Collect focusable, interactable widgets and a quick type tag.
     enum Kind { Button, Toggle, Slider, Dropdown, Tabs, Keybind };
-    struct Item { GameObject* go; Kind kind; };
+    struct Item { GameObject* go; Kind kind; Vec2 origin; Vec2 size; Vec2 centre; };
     std::vector<Item> items;
     for (const auto& go : scene.Objects()) {
         if (auto* kb = go->GetComponent<UIKeybindField>(); kb && kb->IsListening())
@@ -37,22 +44,31 @@ inline GameObject* NavigateUI(Scene& scene) {
     for (const auto& go : scene.Objects()) {
         if (!go->active || UIHidden(go.get())) continue;   // hidden pages/menus can't take focus
         if (UIModal::Blocks(go.get())) continue;            // behind an open modal
-        if (auto* b = go->GetComponent<UIButton>())   { if (b->focusable && b->interactable) items.push_back({go.get(), Button}); continue; }
-        if (auto* t = go->GetComponent<UIToggle>())   { if (t->focusable) items.push_back({go.get(), Toggle}); continue; }
-        if (auto* s = go->GetComponent<UISlider>())   { if (s->focusable) items.push_back({go.get(), Slider}); continue; }
-        if (auto* d = go->GetComponent<UIDropdown>()) { if (d->focusable) items.push_back({go.get(), Dropdown}); continue; }
-        if (auto* tb = go->GetComponent<UITabs>())    { if (tb->focusable && tb->interactable && tb->Count() > 0) items.push_back({go.get(), Tabs}); continue; }
-        if (auto* kb = go->GetComponent<UIKeybindField>()) { if (kb->focusable && kb->interactable) items.push_back({go.get(), Keybind}); continue; }
+        if (auto* b = go->GetComponent<UIButton>())   { if (b->focusable && b->interactable) items.push_back({go.get(), Button, {}, {}, {}}); continue; }
+        if (auto* t = go->GetComponent<UIToggle>())   { if (t->focusable) items.push_back({go.get(), Toggle, {}, {}, {}}); continue; }
+        if (auto* s = go->GetComponent<UISlider>())   { if (s->focusable) items.push_back({go.get(), Slider, {}, {}, {}}); continue; }
+        if (auto* d = go->GetComponent<UIDropdown>()) { if (d->focusable) items.push_back({go.get(), Dropdown, {}, {}, {}}); continue; }
+        if (auto* tb = go->GetComponent<UITabs>())    { if (tb->focusable && tb->interactable && tb->Count() > 0) items.push_back({go.get(), Tabs, {}, {}, {}}); continue; }
+        if (auto* kb = go->GetComponent<UIKeybindField>()) { if (kb->focusable && kb->interactable) items.push_back({go.get(), Keybind, {}, {}, {}}); continue; }
     }
     if (items.empty()) return nullptr;
 
-    // Top-to-bottom, left-to-right by resolved rect.
-    std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) {
-        UIRect ra = GetUIRect(a.go), rb = GetUIRect(b.go);
-        float ay = ra.position ? ra.position->y : 0.0f, by = rb.position ? rb.position->y : 0.0f;
-        float ax = ra.position ? ra.position->x : 0.0f, bx = rb.position ? rb.position->x : 0.0f;
-        if (ay != by) return ay < by;
-        return ax < bx;
+    // Where each widget is on screen: the renderer's rect when it published one
+    // (scaled canvases, world-space UI), else the resolved layout rect.
+    const float sw = UIWorld().screenW > 0.0f ? UIWorld().screenW : 1280.0f;
+    const float sh = UIWorld().screenH > 0.0f ? UIWorld().screenH : 720.0f;
+    auto screenRect = [&](GameObject* go, Vec2& o, Vec2& sz) {
+        return (UIWorld().rectOf && UIWorld().rectOf(go, o, sz)) || GetUIScreenRect(go, sw, sh, o, sz);
+    };
+    for (auto& it : items) {
+        it.origin = it.size = {0.0f, 0.0f};
+        screenRect(it.go, it.origin, it.size);
+        it.centre = it.origin + it.size * 0.5f;
+    }
+    // Reading order (top-to-bottom, left-to-right): first focus and wrap-around.
+    std::stable_sort(items.begin(), items.end(), [](const Item& a, const Item& b) {
+        if (a.origin.y != b.origin.y) return a.origin.y < b.origin.y;
+        return a.origin.x < b.origin.x;
     });
 
     auto isFocused = [](const Item& it) -> bool {
@@ -79,17 +95,80 @@ inline GameObject* NavigateUI(Scene& scene) {
 
     bool down = Input::GetKeyDown('s') || Input::GetGamepadButtonDown(9);
     bool up   = Input::GetKeyDown('w') || Input::GetGamepadButtonDown(8);
-    if (down) focused = (focused < 0) ? 0 : (focused + 1) % n;
-    else if (up) focused = (focused < 0) ? n - 1 : (focused - 1 + n) % n;
-    else if (focused < 0) focused = 0;
-
-    for (int i = 0; i < n; ++i) setFocused(items[i], i == focused);
-
-    bool activate = Input::GetKeyDown(' ') || Input::GetKeyDown('\r') ||
-                    Input::GetKeyDown('\n') || Input::GetGamepadButtonDown(0);
-    // Left/Right (A/D, arrows, D-pad) adjust value widgets.
     bool left  = Input::GetKeyDown('a') || Input::GetGamepadButtonDown(10);
     bool right = Input::GetKeyDown('d') || Input::GetGamepadButtonDown(11);
+    bool activate = Input::GetKeyDown(' ') || Input::GetKeyDown('\r') ||
+                    Input::GetKeyDown('\n') || Input::GetGamepadButtonDown(0);
+
+    // The nearest widget whose centre lies in direction (dx, dy) from the focused
+    // one. Distance ahead plus twice the sideways gap between the two rects (0 when
+    // they overlap across the direction), so the widget straight below a left-aligned
+    // column entry wins over a closer one off to the side. -1 if there is none that way.
+    auto nearest = [&](int from, float dx, float dy) {
+        const Item& a = items[from];
+        int best = -1; float bestScore = 0.0f;
+        for (int i = 0; i < n; ++i) {
+            if (i == from) continue;
+            const Item& b = items[i];
+            const Vec2 d = b.centre - a.centre;
+            const float along = d.x * dx + d.y * dy;
+            if (along < 1.0f) continue;
+            const float gap = dx != 0.0f
+                ? Mathf::Max(0.0f, Mathf::Max(b.origin.y - (a.origin.y + a.size.y), a.origin.y - (b.origin.y + b.size.y)))
+                : Mathf::Max(0.0f, Mathf::Max(b.origin.x - (a.origin.x + a.size.x), a.origin.x - (b.origin.x + b.size.x)));
+            const float score = along + 2.0f * gap;
+            if (best < 0 || score < bestScore) { best = i; bestScore = score; }
+        }
+        return best;
+    };
+
+    bool moved = false;
+    if (focused < 0) {
+        focused = up ? n - 1 : 0;
+        left = right = false;
+    } else {
+        // Left/Right belong to the focused slider / dropdown / tabs; otherwise they move.
+        const Kind fk = items[focused].kind;
+        const bool valueKeys = fk == Slider || fk == Dropdown || fk == Tabs;
+        int to = -1;
+        if (down)      { to = nearest(focused, 0.0f, 1.0f);  if (to < 0) to = 0; }
+        else if (up)   { to = nearest(focused, 0.0f, -1.0f); if (to < 0) to = n - 1; }
+        else if (!valueKeys && left)  to = nearest(focused, -1.0f, 0.0f);
+        else if (!valueKeys && right) to = nearest(focused, 1.0f, 0.0f);
+        if (!valueKeys) left = right = false;
+        if (to >= 0 && to != focused) { focused = to; left = right = false; moved = true; }
+    }
+
+    // Focus that moved onto a widget scrolled (partly) out of its Scroll View or List
+    // View scrolls that view just enough to show it.
+    if (moved) {
+        const Item& f = items[focused];
+        for (Transform* t = f.go->transform ? f.go->transform->Parent() : nullptr; t; t = t->Parent()) {
+            GameObject* v = t->gameObject;
+            auto* sv = v ? v->GetComponent<UIScrollView>() : nullptr;
+            auto* lv = v ? v->GetComponent<UIListView>() : nullptr;
+            if (!sv && !lv) continue;
+            Vec2 vo, vs;
+            if (!screenRect(v, vo, vs) || vs.x <= 0.0f || vs.y <= 0.0f) break;
+            // How far the widget sticks out of the viewport, per axis (screen pixels).
+            auto overhang = [](float a, float len, float va, float vlen) {
+                if (a < va) return a - va;
+                if (a + len > va + vlen) return Mathf::Min(a + len - (va + vlen), a - va);
+                return 0.0f;
+            };
+            const float oy = overhang(f.origin.y, f.size.y, vo.y, vs.y);
+            const float ox = overhang(f.origin.x, f.size.x, vo.x, vs.x);
+            if (sv) {   // screen pixels -> the view's own pixels (canvas scale)
+                if (sv->ScrollsY() && oy != 0.0f) sv->ScrollBy(oy * sv->size.y / vs.y);
+                if (sv->ScrollsX() && ox != 0.0f) sv->ScrollByX(ox * sv->size.x / vs.x);
+            } else if (oy != 0.0f) {
+                lv->SetScroll(lv->scroll + oy * lv->size.y / vs.y);
+            }
+            break;
+        }
+    }
+
+    for (int i = 0; i < n; ++i) setFocused(items[i], i == focused);
 
     if (focused < 0) return nullptr;
     Item& it = items[focused];

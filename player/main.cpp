@@ -1573,6 +1573,13 @@ int main(int argc, char** argv) {
                 pad = SDL_GameControllerOpen(e.cdevice.which);
             if (e.type == SDL_TEXTINPUT) Input::FeedText(e.text.text);   // real characters
             if (e.type == SDL_MOUSEWHEEL) Input::FeedMouseWheel((float)e.wheel.y);
+            if (e.type == SDL_FINGERDOWN || e.type == SDL_FINGERMOTION || e.type == SDL_FINGERUP) {
+                // Finger coordinates are 0..1 of the window; the UI works in renderer pixels.
+                int ow = 0, oh = 0;
+                SDL_GetRendererOutputSize(renderer, &ow, &oh);
+                const int state = e.type == SDL_FINGERDOWN ? 0 : e.type == SDL_FINGERMOTION ? 1 : 2;
+                Input::FeedTouch((long long)e.tfinger.fingerId, state, Vec2{e.tfinger.x * ow, e.tfinger.y * oh});
+            }
             // Alt+Enter / F11: switch between fullscreen and windowed (when enabled in Build Settings).
             if (cfg.fullscreenToggle && e.type == SDL_KEYDOWN && !e.key.repeat &&
                 (e.key.keysym.sym == SDLK_F11 ||

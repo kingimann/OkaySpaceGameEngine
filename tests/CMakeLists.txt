@@ -582,6 +582,10 @@ add_executable(test_ui_overlays test_ui_overlays.cpp)
 target_link_libraries(test_ui_overlays PRIVATE okay::engine)
 add_test(NAME ui_overlays COMMAND test_ui_overlays)
 
+add_executable(test_ui_nav_touch test_ui_nav_touch.cpp)
+target_link_libraries(test_ui_nav_touch PRIVATE okay::engine)
+add_test(NAME ui_nav_touch COMMAND test_ui_nav_touch)
+
 add_executable(test_jump test_jump.cpp)
 target_link_libraries(test_jump PRIVATE okay::engine)
 add_test(NAME jump COMMAND test_jump)

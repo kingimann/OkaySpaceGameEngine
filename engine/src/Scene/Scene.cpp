@@ -353,6 +353,7 @@ void Scene::FlushDestroyed() {
     // objects: take the queue as a batch so they can't invalidate it, and treat
     // what they queued as the next batch (a few rounds; the rest waits a frame).
     for (int round = 0; round < 8 && !m_destroyQueue.empty(); ++round) {
+    ++m_structureVersion;   // objects go away: name / bone caches re-resolve (only then, not every frame)
     std::vector<GameObject*> batch;
     batch.swap(m_destroyQueue);
     // Survivors get to drop references to what's going away (skinned meshes to
@@ -397,7 +398,6 @@ void Scene::FlushDestroyed() {
     }
     }
     if (m_graveyard.size() > 20000) m_graveyard.erase(m_graveyard.begin(), m_graveyard.begin() + 10000);   // bullets etc.: oldest shells go
-    ++m_structureVersion;
 }
 
 GameObject* Scene::Find(const std::string& name) const {

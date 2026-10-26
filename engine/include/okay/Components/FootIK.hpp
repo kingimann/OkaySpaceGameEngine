@@ -18,6 +18,7 @@
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/ModelAnimator.hpp"
 #include <cmath>
 #include <string>
 
@@ -188,7 +189,10 @@ public:
         // changes nothing. In the air there's no ground to plant on.
         const float floorY = transform ? transform->Position().y : 0.0f;
         const Character* body = gameObject ? gameObject->GetComponent<Character>() : nullptr;
-        const bool air = body && (body->anim == 5 || body->anim == 18);   // jump / fall
+        // Airborne: the Character's jump / fall anim, or — on an imported model with
+        // no Character — the ModelAnimator's own air state.
+        const ModelAnimator* anim = (!body && gameObject) ? gameObject->GetComponent<ModelAnimator>() : nullptr;
+        const bool air = body ? (body->anim == 5 || body->anim == 18) : (anim && anim->InAir());
         if (adjustPelvis && pelvis) AdjustPelvis(s, k, floorY, air);
         SolveLeg(m_leg[0], leftHip,  leftKnee,  leftFoot,  m_lUp, m_lLo, pole, s, k, dt, floorY, air);
         SolveLeg(m_leg[1], rightHip, rightKnee, rightFoot, m_rUp, m_rLo, pole, s, k, dt, floorY, air);

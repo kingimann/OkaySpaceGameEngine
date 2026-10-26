@@ -264,9 +264,12 @@ public:
                 float step = m_ikBlend > 1e-4f ? dt / m_ikBlend : 1.0f;
                 m_ikW = m_ikW < want ? std::fmin(want, m_ikW + step) : std::fmax(want, m_ikW - step);
             }
-            if (gameObject) {
+            // Push it to the IK components when it changes (plus a slow refresh, so
+            // IK added later picks it up) instead of two GetComponent scans a frame.
+            if (gameObject && (m_ikW != m_ikWritten || (m_ikRefresh -= dt) <= 0.0f)) {
                 if (auto* f = gameObject->GetComponent<FootIK>()) f->stateWeight = m_ikW;
                 if (auto* b = gameObject->GetComponent<FullBodyIK>()) b->stateWeight = m_ikW;
+                m_ikWritten = m_ikW; m_ikRefresh = 0.5f;
             }
         }
 
@@ -275,7 +278,8 @@ public:
         const float spd = StateSpeed(*cur);
         if (cur->blendTree && cur->blendDims == 2) {
             Weights2D(cur->motions, GetFloat(cur->blendParam), GetFloat(cur->blendParamY), m_bWeights);
-            std::vector<int> idx;
+            std::vector<int>& idx = m_motionClips;   // reused: no per-frame allocation
+            idx.clear();
             for (const Motion& m : cur->motions) idx.push_back(ClipIndex(ma, m.clip));
             const float prevPhase = ma->BlendPhase();
             ma->speed = spd;
@@ -470,9 +474,13 @@ private:
         if (!maskBone.empty() && m_mask.empty()) return;   // mask bone missing: drive nothing
         ma->PoseWeighted(m_lCT, m_lW, maskBone.empty() ? nullptr : &m_mask, std::fmin(layerWeight, 1.0f));
     }
+    // Looked up by name every frame (states may be edited at runtime); the last
+    // hit is tried first, so the usual case is one string compare.
     const State* FindState(const std::string& name) const {
         if (name.empty()) return nullptr;
-        for (const State& s : states) if (s.name == name) return &s;
+        if (m_findHint < states.size() && states[m_findHint].name == name) return &states[m_findHint];
+        for (std::size_t i = 0; i < states.size(); ++i)
+            if (states[i].name == name) { m_findHint = i; return &states[i]; }
         return nullptr;
     }
     static int ClipIndex(ModelAnimator* ma, const std::string& name) {
@@ -605,6 +613,9 @@ private:
     int   m_interruptions = 0;
     // layer playback
     LayerPlay m_lCur, m_lPrev;
+    std::vector<int> m_motionClips;           // per-frame scratch (2D blend tree clip indices)
+    float m_ikWritten = -1.0f, m_ikRefresh = 0.0f;   // last IK weight pushed / time to the next push
+    mutable std::size_t m_findHint = 0;       // FindState's last hit
     float m_fadeT = 0.0f, m_fadeDur = 0.0f;
     bool  m_hooked = false;
     std::vector<std::pair<int, float>> m_lCT;

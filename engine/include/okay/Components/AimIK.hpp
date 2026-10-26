@@ -64,16 +64,24 @@ public:
         Quat axisFix = Quat::FromToRotation(Vec3::Forward, aimAxis.Normalized());
         Quat desired = (look * axisFix.Inverse()).Normalized();
 
-        float ang = Quat::Angle(b->Rotation(), desired);
+        // maxAngle limits the TOTAL turn from the bone's pose before IK: the
+        // animated pose this frame, or (when nothing re-poses the bone) the pose it
+        // had when IK took over — not each frame's step, which would add up.
+        if (!m_haveWritten || !SameRot(b->localRotation, m_written)) m_base = b->localRotation;
+        const Quat baseW = (b->Parent() ? b->Parent()->Rotation() : Quat::Identity) * m_base;
+        const float total = Quat::Angle(baseW, desired);
+        if (total > maxAngle && total > 1e-4f) desired = Quat::Slerp(baseW, desired, maxAngle / total);
         // The rotation persists between frames, so easing a fraction per frame
         // converges on the aim — smooth tracking of a moving target when set.
         float ease = smoothing > 0.0f ? (1.0f - std::exp(-smoothing * dt)) : 1.0f;
-        float t = w * ease;
-        if (ang > maxAngle && ang > 1e-4f) t *= maxAngle / ang;
-        b->SetRotation(Quat::Slerp(b->Rotation(), desired, t));
+        b->SetRotation(Quat::Slerp(b->Rotation(), desired, w * ease));
+        m_written = b->localRotation; m_haveWritten = true;
     }
 private:
+    static bool SameRot(const Quat& a, const Quat& b) { return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w; }
     IKFade m_fade;
+    Quat m_base, m_written;     // pre-IK local rotation / what IK last wrote
+    bool m_haveWritten = false;
 };
 
 } // namespace okay

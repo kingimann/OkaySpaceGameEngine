@@ -1,4 +1,6 @@
 #include "okay/Scene/Transform.hpp"
+#include "okay/Scene/GameObject.hpp"
+#include "okay/Scene/Scene.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -85,6 +87,8 @@ bool Transform::SetParent(Transform* parent, bool worldPositionStays) {
     }
     m_parent = parent;
     if (m_parent) m_parent->m_children.push_back(this);
+    if (gameObject)   // a reparent changes which bones / names a model's caches see
+        if (Scene* sc = gameObject->scene()) sc->MarkStructureChanged();
     // Preserve the world position only when asked.
     if (worldPositionStays) SetPosition(world);
     return true;

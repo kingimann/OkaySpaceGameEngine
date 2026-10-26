@@ -183,7 +183,7 @@ public:
         m_hips.Undo(); m_spine.Undo(); m_head.Undo(); m_lowSpine.Undo();
         // Per-goal weights ease toward their targets: switching a goal on/off (or a
         // script reaching then releasing) fades instead of popping.
-        const float k = blendSpeed > 0.0f ? std::min(1.0f, blendSpeed * dt) : 1.0f;
+        const float k = blendSpeed > 0.0f ? 1.0f - std::exp(-blendSpeed * dt) : 1.0f;   // frame-rate independent ease
         const float gk = goalSmoothing > 0.0f ? std::min(1.0f, goalSmoothing * dt) : 1.0f;
         for (int l = 0; l < LimbCount; ++l) {
             const Effector& e = effectors[l];

@@ -1,4 +1,5 @@
 #pragma once
+#include <unordered_set>
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -42,9 +43,11 @@ public:
     }
     /// Drop the wiring so the next frame re-detects (after a model swap).
     void Rewire() { m_init = false; m_mapped = 0; m_map.clear(); }
+    void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying) override {
+        if (dying.count(m_animGo)) m_animGo = nullptr;   // the cached animator holder is going away
+    }
 
     void LateUpdate(float dt) override {
-        (void)dt;
         if (weight <= 0.0f || !gameObject) return;
         Scene* sc = gameObject->scene();
         if (!sc) return;
@@ -56,7 +59,7 @@ public:
         if (!rig || !rig->transform) return;
         // The model's own clips take priority while a one-shot plays
         // (play_clip_once from a script — attack, emote from the file).
-        if (ModelAnimator* ma = FindAnimator(*sc, rig))
+        if (ModelAnimator* ma = CachedAnimator(*sc, rig, dt))
             if (ma->OneShotActive()) return;
 
         // Engine pose: per-bone Euler (local deltas, identity rest frames) —
@@ -65,7 +68,8 @@ public:
         const std::vector<Character::Bone> sk = ch->Skeleton();
         int n = (int)sk.size();
         if ((int)pose.size() < n) pose.resize(n, Vec3{0, 0, 0});
-        std::vector<Quat> Re(n, Quat::Identity);
+        std::vector<Quat>& Re = m_rootRot;   // reused every frame (no per-frame allocation)
+        Re.assign(n, Quat::Identity);
         for (int b = 0; b < n; ++b) {
             Quat q = Quat::Euler(pose[b]);
             Re[b] = sk[b].parent >= 0 ? Re[sk[b].parent] * q : q;
@@ -257,6 +261,9 @@ private:
         Quat align;              ///< rest-stance alignment (imported dir -> engine dir)
     };
     std::vector<MapEntry> m_map;
+    std::vector<Quat> m_rootRot;            // per-frame scratch (root-frame bone rotations)
+    GameObject* m_animGo = nullptr;         // object holding the rig's ModelAnimator (cached)
+    float m_animRetry = 0.0f;               // seconds until the next search when there's none
     std::string m_rigRootName;
     GameObject* m_rig = nullptr;
     Vec3 m_rigRestPos{0, 0, 0};
@@ -270,6 +277,19 @@ private:
         for (; t && (!rigRoot || t != rigRoot->transform); t = t->Parent())
             r = t->localRotation * r;
         return r;
+    }
+
+    /// FindAnimator, cached: the holder object is remembered, and when there is no
+    /// animator the scene-wide search runs at most once a second, not every frame.
+    ModelAnimator* CachedAnimator(Scene& s, GameObject* rig, float dt) {
+        if (m_animGo && m_animGo->IsSelfOrDescendantOf(rig))
+            if (ModelAnimator* ma = m_animGo->GetComponent<ModelAnimator>()) return ma;
+        m_animGo = nullptr;
+        if ((m_animRetry -= dt) > 0.0f) return nullptr;
+        m_animRetry = 1.0f;
+        ModelAnimator* ma = FindAnimator(s, rig);
+        if (ma) m_animGo = ma->gameObject;
+        return ma;
     }
 
     /// Find the imported model under the player: the child subtree holding a

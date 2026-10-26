@@ -72,7 +72,19 @@ std::string Program::NameOf(const Type& t) const {
         return n + ">";
     }
     if (t.kind == TK::Lambda) return "a lambda";
+    if (t.kind == TK::Routine) return "IEnumerator";
+    if (t.kind == TK::Coroutine) return "Coroutine";
+    if (t.kind == TK::Wait) return WaitTypeName(t.id);
     return TypeName(t);
+}
+
+const char* WaitTypeName(int kind) {
+    static const char* const names[] = {"WaitForSeconds", "WaitUntil", "WaitWhile", "WaitForEndOfFrame", "WaitForFixedUpdate"};
+    return kind >= 0 && kind < 5 ? names[kind] : "Wait";
+}
+static int WaitKindOf(const std::string& n) {
+    for (int k = 0; k < 5; ++k) if (n == WaitTypeName(k)) return k;
+    return -1;
 }
 
 Type Program::FuncOf(const std::vector<Type>& params, const Type& ret) {
@@ -233,6 +245,7 @@ private:
     bool inEnumValue_ = false;   ///< checking an enum member's value (fields aren't declared yet)
     bool allowEvent_ = false;    ///< checking the target of += / -= (another class's event is allowed there)
     int catchDepth_ = 0;         ///< inside a catch (throw; works)
+    int tryDepth_ = 0;           ///< inside a try statement (a coroutine can't yield there)
     int finallyDepth_ = 0;       ///< inside a finally (return, and break / continue to outside it, don't)
     std::vector<int> enumReady_;   ///< per enum: how many members have their value worked out
 
@@ -505,6 +518,7 @@ private:
             if (!comp && m.isStatic) Error(m.loc, "static members only work in the Behaviour class for now");
             if (!names.insert(m.name).second) Error(m.loc, "'" + m.name + "' is declared twice (methods can't share a name yet)");
             m.retType = m.ret.name == "void" ? Type::Of(TK::Void) : ResolveType(m.ret, false);
+            m.isCoroutine = m.retType.kind == TK::Routine;
             if (comp) CheckLifecycleSignature(m, (int)i);
         }
     }
@@ -651,6 +665,9 @@ private:
         if (t.name == "bool") return Type::Of(TK::Bool);
         if (t.name == "string") return Type::Of(TK::String);
         if (t.name == "Vector3") return Type::Of(TK::Vector3);
+        if (t.name == "IEnumerator") return Type::Of(TK::Routine);
+        if (t.name == "Coroutine") return Type::Of(TK::Coroutine);
+        if (int w = WaitKindOf(t.name); w >= 0) return Type{TK::Wait, w};
         if (t.name == "var" && allowVar) return Type{};   // inferred by the caller
         if (t.name == "double") { Error(t.loc, "Use float for decimal numbers (double isn't supported)"); return Type{}; }
         if (t.name == "void") { Error(t.loc, "void isn't a type a value can have"); return Type{}; }
@@ -821,6 +838,10 @@ private:
         maxSlot_ = nextSlot_;
         if (m.isCtor) CheckBaseCtor(m);
         bool completes = CheckBlockBody(*m.body);
+        if (m.isCoroutine) {
+            if (!MarkYields(*m.body)) Error(m.loc, m.name + "() returns IEnumerator, so it's a coroutine: it needs a yield return (or yield break)");
+            completes = false;   // a coroutine just ends
+        }
         if (completes && m.retType.kind != TK::Void && m.retType.kind != TK::Error)
             Error(m.loc, m.name + "() must return a " + TypeName(m.retType) + " on every path");
         PopScope();
@@ -828,6 +849,29 @@ private:
         method_ = nullptr;
         FlushLambdas();
     }
+    // StartCoroutine(Routine()), StopCoroutine(c), StopAllCoroutines(): the object's coroutines.
+    void CheckCoroutineCall(Expr& e) {
+        for (auto& a : e.args) CheckExpr(*a);
+        if (RejectOutsideComponent(e.name, e.loc) || RejectInStatic(e.name, e.loc)) return;
+        const bool all = e.name == "StopAllCoroutines";
+        if (e.args.size() != (all ? 0u : 1u)) {
+            Error(e.loc, all ? std::string("StopAllCoroutines() takes no values") : e.name + " takes the coroutine: " + e.name + "(Blink())");
+            return;
+        }
+        if (!all) {
+            const Type t = e.args[0]->type;
+            const bool ok = t.kind == TK::Routine || (e.name == "StopCoroutine" && t.kind == TK::Coroutine);
+            if (!ok && t.kind != TK::Error) {
+                Error(e.args[0]->loc, t.kind == TK::String ? e.name + " takes the coroutine itself, not its name: " + e.name + "(Blink())"
+                                                         : e.name + " needs a coroutine (a method that returns IEnumerator), not " + TypeName(t));
+                return;
+            }
+        }
+        UsesSelf();
+        e.bind = e.name == "StartCoroutine" ? Bind::StartCoroutine : e.name == "StopCoroutine" ? Bind::StopCoroutine : Bind::StopAllCoroutines;
+        e.type = e.name == "StartCoroutine" ? Type::Of(TK::Coroutine) : Type::Of(TK::Void);
+    }
+
     // A constructor of a class that extends another runs one of the base class's
     // constructors first: the : base(...) one, or the one that takes nothing.
     void CheckBaseCtor(MethodDecl& m) {
@@ -856,6 +900,18 @@ private:
         call->args = std::move(m.baseArgs);
         call->bind = Bind::BaseCtor; call->slot = b; call->member = ctor; call->type = Type::Of(TK::Void);
         m.baseCall = std::move(call);
+    }
+
+    // Mark the statements with a yield inside (a coroutine runs those step by step).
+    static bool MarkYields(Stmt& s) {
+        bool y = s.kind == SK::Yield;
+        auto sub = [&](StmtPtr& c) { if (c && MarkYields(*c)) y = true; };
+        for (auto& c : s.body) sub(c);
+        sub(s.then); sub(s.otherwise); sub(s.loopBody); sub(s.finallyBody);
+        for (auto& sec : s.sections) for (auto& c : sec.body) sub(c);
+        for (auto& c : s.catches) sub(c.body);
+        s.hasYield = y;
+        return y;
     }
 
     // Lambdas that ended up somewhere without a Func or Action type.
@@ -955,6 +1011,10 @@ private:
             case SK::Expr: {
                 CheckExpr(*s.expr);
                 EK k = s.expr->kind;
+                if (k == EK::Call && s.expr->type.kind == TK::Routine) {
+                    Error(s.expr->loc, s.expr->name + "() makes a coroutine but doesn't run it: StartCoroutine(" + s.expr->name + "())");
+                    return true;
+                }
                 if (k != EK::Assign && k != EK::IncDec && k != EK::Call && !(k == EK::NullCond && s.expr->lhs->kind == EK::Call))
                     Error(s.expr->loc, "This line does nothing: it works out a value but doesn't use it");
                 return true;
@@ -1024,6 +1084,11 @@ private:
             case SK::Return: {
                 if (finallyDepth_ > 0) { if (s.expr) CheckExpr(*s.expr); Error(s.loc, "return can't leave a finally block"); return false; }
                 if (lambda_) return CheckLambdaReturn(s);
+                if (method_->isCoroutine) {
+                    if (s.expr) CheckExpr(*s.expr);
+                    Error(s.loc, "A coroutine ends with yield break, not return");
+                    return false;
+                }
                 const Type& rt = method_->retType;
                 if (s.expr && method_->isCtor) { CheckExpr(*s.expr); Error(s.loc, "A constructor can't return a value"); return false; }
                 if (s.expr) {
@@ -1044,6 +1109,18 @@ private:
                 if (loopDepth_ == 0) Error(s.loc, finallyDepth_ > 0 ? "continue can't leave a finally block" : "continue only works inside a loop");
                 return false;
             case SK::Try: return CheckTry(s);
+            case SK::Yield: {
+                if (s.expr) {
+                    CheckExpr(*s.expr);
+                    if (s.expr->type.kind == TK::Void) Error(s.expr->loc, "This doesn't produce a value: yield return null; waits for the next frame");
+                    else Expect(*s.expr, Type::Of(TK::Any), "");
+                }
+                if (lambda_) Error(s.loc, "yield doesn't work inside a lambda");
+                else if (!method_ || !method_->isCoroutine)
+                    Error(s.loc, "yield only works in a coroutine: a method that returns IEnumerator");
+                else if (tryDepth_ > 0) Error(s.loc, "yield can't be inside a try, catch or finally");
+                return !s.yieldBreak;
+            }
             case SK::Throw:
                 if (!s.expr) {
                     if (catchDepth_ == 0) Error(s.loc, "throw; on its own only works inside a catch (it throws the caught exception again)");
@@ -1086,6 +1163,8 @@ private:
     // try / catch / finally: it finishes normally if the try block or a catch does
     // (and the finally does).
     bool CheckTry(Stmt& s) {
+        ++tryDepth_;
+        struct Leave { int& d; ~Leave() { --d; } } leave{tryDepth_};
         bool completes = CheckStmt(*s.then);
         std::vector<Type> earlier;
         const Type any{TK::Class, prog_.exceptionClass};
@@ -1770,6 +1849,10 @@ private:
                 return;
             }
             if (e.object) e.object.reset();
+            if ((e.name == "StartCoroutine" || e.name == "StopCoroutine" || e.name == "StopAllCoroutines") && !HasMethod(e.name)) {
+                CheckCoroutineCall(e);
+                return;
+            }
             if (e.name == "Destroy") {
                 if (inFieldInit_) { Error(e.loc, "A field's starting value can't destroy things"); return; }
                 for (auto& a : e.args) CheckExpr(*a);
@@ -2060,6 +2143,15 @@ private:
         if (!e.typeArg.args.empty() || e.typeArg.name == "List" || e.typeArg.name == "Dictionary") { CheckNewCollection(e); return; }
         if (e.hasInit) { Error(e.loc, "{ ... } after new only fills a List: set the fields after new " + e.typeArg.name + "()"); return; }
         if (int ci = ClassIndex(e.typeArg.name); ci >= 0) { CheckNewObject(e, ci); return; }
+        if (int w = WaitKindOf(e.typeArg.name); w >= 0) {   // new WaitForSeconds(0.5f), new WaitUntil(() => ready), ...
+            const WaitKind k = (WaitKind)w;
+            const std::size_t want = k == WaitKind::EndOfFrame || k == WaitKind::FixedUpdate ? 0 : 1;
+            if (e.args.size() != want) { Error(e.loc, "new " + e.typeArg.name + " takes " + Values(want) + ", not " + std::to_string(e.args.size())); return; }
+            if (k == WaitKind::Seconds) Expect(*e.args[0], Type::Of(TK::Float), "The seconds");
+            if (k == WaitKind::Until || k == WaitKind::While) Expect(*e.args[0], prog_.FuncOf({}, Type::Of(TK::Bool)), "The condition");
+            e.bind = Bind::NewWait; e.member = w; e.type = Type{TK::Wait, w};
+            return;
+        }
         if (e.typeArg.name != "Vector3") {
             if (api_.Find(e.typeArg.name) >= 0 || e.typeArg.name == "GameObject")
                 Error(e.loc, "'new " + e.typeArg.name + "' isn't supported: only new Vector3(x, y, z) for now");
@@ -2132,7 +2224,7 @@ private:
 
     static bool CanBeNull(const Type& t) {
         return t.kind == TK::Object || t.kind == TK::Array || t.kind == TK::Class || t.kind == TK::List || t.kind == TK::Dict ||
-               t.kind == TK::Func;
+               t.kind == TK::Func || t.kind == TK::Routine || t.kind == TK::Coroutine || t.kind == TK::Wait;
     }
     static std::string Article(const std::string& n) { return (std::string("aeiouAEIOU").find(n[0]) != std::string::npos ? "an " : "a ") + n; }
     // ?. only on something that might be null: an object or an array.

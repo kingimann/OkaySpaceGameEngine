@@ -1048,6 +1048,53 @@ Boss boss = (Boss)hit[0];                      // an error with its line if it i
   `T`, or null. A cast `(T)x` stops the callback with an error if `x` isn't one.
 - The Behaviour class can't extend a class or implement interfaces yet.
 
+### Coroutines
+
+A coroutine is a method that runs over several frames: it returns
+`IEnumerator`, and each `yield return` pauses it until something happens.
+`StartCoroutine` runs it right away up to its first `yield`; after that the
+game picks it up once a frame, after `Update`.
+
+```csharp
+class Door : Behaviour {
+    public float openTime = 1.5f;
+    Coroutine closing;
+
+    IEnumerator OpenThenClose() {
+        transform.Translate(0, 3, 0);
+        yield return new WaitForSeconds(openTime);   // a wait you can keep in a field and reuse
+        transform.Translate(0, -3, 0);
+    }
+    IEnumerator Flash(int times) {
+        for (int i = 0; i < times; i++) { Debug.Log("on"); yield return null; }   // null: the next frame
+    }
+    public void Open() { closing = StartCoroutine(OpenThenClose()); }
+    public void Cancel() { if (closing != null) StopCoroutine(closing); }
+}
+```
+
+What `yield return` can wait for:
+
+| `yield return` | Goes on |
+|---|---|
+| `null` (or any other value) | the next frame |
+| `new WaitForSeconds(t)` | once `t` seconds of game time have passed |
+| `new WaitUntil(() => cond)` / `new WaitWhile(() => cond)` | the first frame `cond` is true / false |
+| `new WaitForEndOfFrame()`, `new WaitForFixedUpdate()` | the next frame |
+| `StartCoroutine(Other())` or a coroutine already running | when that coroutine ends |
+
+- `yield break;` ends a coroutine early; it also ends at the end of its body.
+  `return` isn't used in a coroutine.
+- Calling `Blink()` on its own only makes the coroutine; `StartCoroutine(Blink())`
+  runs it. `StopCoroutine(c)` stops one (at its next `yield`) and
+  `StopAllCoroutines()` stops every coroutine the script started.
+- A coroutine belongs to the script that started it, and stops with it.
+  A plain class can have coroutine methods too: `StartCoroutine(enemy.Patrol())`.
+- `yield` works inside loops, `if` and `switch`, not inside `try`, a lambda,
+  or a method that doesn't return `IEnumerator`.
+- An error in a coroutine stops that coroutine and is reported with its line;
+  the script's other coroutines keep running.
+
 ### try / catch and exceptions
 
 `throw` stops what's running and goes to the nearest `catch` that takes that

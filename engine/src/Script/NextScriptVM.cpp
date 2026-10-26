@@ -120,6 +120,18 @@ void NextScriptVM::CallStart() {
 void NextScriptVM::CallUpdate(float deltaTime) {
     if (m_host) m_host->deltaTime = deltaTime;
     RunMethod("Update");
+    // Then the coroutines whose wait is over (after Update, as in C# game engines).
+    if (!m_impl->inst) return;
+    CallContext& c = m_impl->inst->Context();
+    c.deltaTime = deltaTime;
+    try {
+        m_impl->inst->TickCoroutines(deltaTime);
+    } catch (const RuntimeError& e) {
+        ++m_errorCount;
+        const std::string obj = c.self ? c.self->name : std::string("?");
+        m_lastError = "line " + std::to_string(e.loc.line) + ": " + e.what();
+        Log::Error("Script on '", obj, "', coroutine line ", e.loc.line, ": ", e.what());
+    }
 }
 
 void NextScriptVM::CallEvent(const std::string& function) {

@@ -135,9 +135,9 @@ int main() {
         CHECK_EQ(Count(d, 0), 0);
     }
     {   // C# features that aren't in the language yet say so
-        auto d = Diags(Wrap("    readonly int r = 1;\n    void Start() { yield return null; }\n"));
+        auto d = Diags(Wrap("    readonly int r = 1;\n    void Start() { goto end; }\n"));
         CHECK(Has(d, 0, "readonly isn't supported yet"));
-        CHECK(Has(d, 0, "coroutines (yield) aren't supported yet"));
+        CHECK(Has(d, 0, "goto isn't supported"));
         auto d2 = Diags(Wrap("    [Range(0, 1)] float hidden = 0;\n    void Start() { Debug.Log(hidden); }\n"));
         CHECK(Has(d2, 0, "only shows in the Inspector for public fields"));
         auto d3 = Diags(Wrap("    const int Max = 3;\n    void Start() { Max = 4; }\n"));

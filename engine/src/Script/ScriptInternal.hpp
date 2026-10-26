@@ -50,6 +50,9 @@ enum class TK : std::uint8_t {
     Dict,     ///< Dictionary<K, V>: id = Program::generics index (a = K, b = V)
     Pair,     ///< KeyValuePair<K, V> (foreach over a dictionary): id as Dict
     Func,     ///< Func<..., R> / Action<...>: id = Program::funcs index
+    Routine,  ///< IEnumerator: what calling a coroutine method gives (StartCoroutine runs it)
+    Coroutine,///< what StartCoroutine gives (to stop it, or to wait for it)
+    Wait,     ///< WaitForSeconds and the like: id = WaitKind
     Lambda,   ///< a lambda whose Func / Action type comes from where it's used (checker only)
 };
 struct Type {
@@ -77,13 +80,17 @@ struct ScriptObj;
 struct DictObj;
 struct FuncObj;
 struct Cell;
+struct CoState;
+struct WaitObj;
 using ArrayRef = std::shared_ptr<ArrayObj>;
 using ObjPtr = std::shared_ptr<ScriptObj>;
 using DictRef = std::shared_ptr<DictObj>;
 using FuncRef = std::shared_ptr<FuncObj>;
 using CellRef = std::shared_ptr<Cell>;
+using CoRef = std::shared_ptr<CoState>;
+using WaitRef = std::shared_ptr<WaitObj>;
 /// CellRef only appears in a method's local slots (a local that a lambda captured); reading the local gives what's inside.
-using Value = std::variant<std::monostate, bool, std::int32_t, float, std::string, Vec3, ObjRef, ArrayRef, ObjPtr, DictRef, FuncRef, CellRef>;
+using Value = std::variant<std::monostate, bool, std::int32_t, float, std::string, Vec3, ObjRef, ArrayRef, ObjPtr, DictRef, FuncRef, CellRef, CoRef, WaitRef>;
 /// A T[], a List<T> or a KeyValuePair (items = key, value) at runtime. Arrays
 /// and lists are references: copies share the items.
 struct ArrayObj {
@@ -128,6 +135,43 @@ struct FuncObj {
     std::string typeName;
     /// a += b: the functions it calls, in order (decl is null). Never nested.
     std::vector<FuncRef> list;
+};
+
+/// What `yield return` waits for (WaitForSeconds, WaitUntil, ...).
+enum class WaitKind : std::uint8_t { Seconds, Until, While, EndOfFrame, FixedUpdate };
+struct WaitObj {
+    WaitKind kind = WaitKind::EndOfFrame;
+    float seconds = 0.0f;
+    FuncRef cond;                       ///< WaitUntil / WaitWhile
+};
+struct Stmt;
+/// Where a coroutine is in one of its statements (a block, loop or switch it's inside).
+struct CoFrame {
+    const Stmt* s = nullptr;
+    const std::vector<std::unique_ptr<Stmt>>* list = nullptr;   ///< the statements a block or switch section runs
+    std::size_t pc = 0;                 ///< the next statement in `list`, or a foreach's item index
+    int phase = 0;                      ///< loops: 0 = check / start, 1 = the body just ended
+    Value coll;                         ///< foreach: the collection
+    std::uint32_t version = 0;
+};
+struct MethodDecl;
+/// A coroutine: made by calling an IEnumerator method, run by StartCoroutine,
+/// paused at each yield and resumed by the frame loop.
+struct CoState {
+    const MethodDecl* method = nullptr;
+    std::shared_ptr<const Program> prog;
+    Instance* inst = nullptr;           ///< the script object running it; only used while `alive` holds
+    std::weak_ptr<char> alive;
+    ObjPtr self;                        ///< an IEnumerator method of a plain class: that object
+    int cls = -1;
+    std::vector<Value> locals;
+    std::vector<CoFrame> stack;
+    bool started = false, done = false;
+    // what it waits for before going on
+    float wait = 0.0f;
+    WaitRef until;
+    CoRef waitFor;
+    std::uint64_t stamp = 0;            ///< the frame tick it paused in (it resumes from the next one)
 };
 
 std::string ValueToString(const Value& v);
@@ -267,6 +311,8 @@ enum class Bind : std::uint8_t {
     ObjField /*obj.field: slot = field (in the object's fields, bases first)*/,
     ObjMethod /*obj.M(), and M() inside a plain class: slot = the method's name id, run as the object's own class has it*/,
     NewObject /*new Node(): slot = class, member = constructor (-1 = none)*/,
+    NewWait /*new WaitForSeconds(t), ...: member = WaitKind*/,
+    StartCoroutine, StopCoroutine, StopAllCoroutines,
     BaseMethod /*base.M(): slot = method, member = the class that has it*/,
     BaseCtor /*: base(...) of a constructor: slot = the base class, member = its constructor (-1 = none)*/,
 };
@@ -310,7 +356,7 @@ struct Expr {
     std::unique_ptr<LambdaDecl> lambda;   ///< Lambda
 };
 
-enum class SK : std::uint8_t { Block, Expr, Local, If, While, For, Return, Break, Continue, Switch, Foreach, DoWhile, Try, Throw };
+enum class SK : std::uint8_t { Block, Expr, Local, If, While, For, Return, Break, Continue, Switch, Foreach, DoWhile, Try, Throw, Yield };
 struct Stmt;
 using StmtPtr = std::unique_ptr<Stmt>;
 struct LocalDecl { TypeRef type; std::string name; SrcLoc loc; ExprPtr init; int slot = -1; Type resolved; bool promote = false; };
@@ -350,6 +396,8 @@ struct Stmt {
     std::vector<CatchClause> catches;   ///< Try (then = the try block)
     StmtPtr finallyBody;                ///< Try
     // Throw: expr = the exception (null: `throw;` again in a catch).
+    bool yieldBreak = false;            ///< Yield: `yield break;` (else `yield return expr;`)
+    bool hasYield = false;              ///< checked: a yield is inside (a coroutine runs it step by step)
 };
 
 struct Attribute { std::string name; std::vector<ExprPtr> args; SrcLoc loc; };
@@ -401,6 +449,7 @@ struct MethodDecl {
     bool called = false;
     int lifecycle = -1;   ///< index into the lifecycle table, -1 = an ordinary method
     int nameId = -1;      ///< Program::methodNames index (dispatch by name)
+    bool isCoroutine = false;   ///< returns IEnumerator: calling it makes a coroutine, StartCoroutine runs it
     ExprPtr baseCall;     ///< constructor of a class that extends another: the base constructor call (Bind::BaseCtor)
 };
 struct EnumMember { std::string name; SrcLoc loc; ExprPtr value; std::int32_t v = 0; };
@@ -484,6 +533,7 @@ struct Lifecycle { const char* name; const char* when; };
 const std::vector<Lifecycle>& LifecycleMethods();
 
 std::string TypeName(const Type& t);
+const char* WaitTypeName(int kind);
 
 // ---- Running ---------------------------------------------------------------
 /// One running instance of a component class.
@@ -507,6 +557,11 @@ public:
     std::weak_ptr<char> AliveToken() const { return alive_; }
     std::vector<Value>& Fields() { return fields_; }
     std::vector<Value>& Statics() { return statics_->values; }
+    /// Coroutines StartCoroutine started; the frame loop resumes them (TickCoroutines).
+    std::vector<CoRef> coroutines;
+    std::uint64_t ticks = 0;      ///< TickCoroutines calls so far
+    /// Resume the coroutines whose wait is over (once a frame, after Update). Throws RuntimeError.
+    void TickCoroutines(float dt);
     /// Statements executed in the current callback (a guard against endless loops).
     std::uint64_t steps = 0;
     std::uint64_t stepLimit = 50'000'000;

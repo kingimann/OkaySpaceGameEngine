@@ -67,7 +67,8 @@ public:
             if (p && !m_wasPunching) ++m_punchSeq;
             m_wasPunching = p;
         }
-        if (m_char && syncAnimation && !OwnedNow()) DriveProxyGait(dt);
+        // (Our own predicted player is animated by its controller, not as a proxy.)
+        if (m_char && syncAnimation && !OwnedNow() && !m_nm->Predicted(m_id)) DriveProxyGait(dt);
     }
 
     void OnDestroy() override {

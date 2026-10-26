@@ -916,6 +916,10 @@ add_test(NAME net_tick COMMAND test_net_tick)
 add_executable(test_net_auth_move test_net_auth_move.cpp)
 target_link_libraries(test_net_auth_move PRIVATE okay::engine)
 add_test(NAME net_auth_move COMMAND test_net_auth_move)
+# Net plan 5c: client prediction and reconciliation (through a delaying proxy)
+add_executable(test_net_predict test_net_predict.cpp)
+target_link_libraries(test_net_predict PRIVATE okay::engine)
+add_test(NAME net_predict COMMAND test_net_predict)
 
 # Anti-cheat as a game uses it: AntiCheatConfig / NetValidator components and the VS nodes
 add_executable(test_net_anticheat_components test_net_anticheat_components.cpp)

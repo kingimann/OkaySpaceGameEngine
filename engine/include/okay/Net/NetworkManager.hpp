@@ -298,8 +298,11 @@ public:
     /// its player on the server through the controller's Simulate (IPlayerSim),
     /// and the server alone decides where it is. Positions and __xform from the
     /// client for that player are ignored. Runs on the fixed tick (netTickRate,
-    /// 30 Hz if that's 0). The client's own copy follows the server (5c adds
-    /// prediction).
+    /// 30 Hz if that's 0). The client predicts its own player: every frame it
+    /// runs the same Simulate with the input it last sent (so an input shows
+    /// within a tick) and this frame's look, and reconciles with the position
+    /// the host acks for each input: tiny differences are ignored, small ones
+    /// eased out, large ones snapped.
     bool authoritativeMovement = false;
     /// Client: the object this player drives (its SpawnOwned player, with a
     /// controller that implements IPlayerSim). Its inputs go to the host when
@@ -315,6 +318,16 @@ public:
     std::uint32_t LastAckedInput() const { return m_lastAckedSeq; }
     /// Server: inputs refused for being too far from the tick or over the budget.
     std::uint32_t InputsDropped() const { return m_inputsDropped; }
+    /// Client: whether it is predicting its pawn now (authoritative movement
+    /// from a host that acks positions, and a pawn with a controller).
+    bool Predicting() const { return m_predicting; }
+    /// For NetworkSync: this object is the client's own predicted pawn (its
+    /// controller moves and animates it here).
+    bool Predicted(const std::string& netId) const { return m_predicting && netId == m_pawnId; }
+    /// Client: host acks that disagreed with the prediction by more than the
+    /// threshold (eased out), and those that were snapped.
+    std::uint32_t PredictionCorrections() const { return m_predCorrections; }
+    std::uint32_t PredictionSnaps() const { return m_predSnaps; }
     /// For NetworkSync: 1 = this peer owns the object's transform because of
     /// authoritative movement, 0 = it doesn't, -1 = not a player's object.
     int MovementAuthority(const std::string& netId) const;
@@ -742,6 +755,23 @@ private:
     std::vector<std::pair<std::uint32_t, std::pair<std::uint32_t, PlayerInput>>> m_sentInputs;   // seq -> (tick, input), last 4
     bool m_hostAuthoritative = false;      // client: the host announced it
     std::uint32_t m_lastAckedSeq = 0;
+    // Prediction (client).
+    static constexpr float kReconcileEpsilon = 0.02f;   // ignore smaller differences (units)
+    static constexpr float kReconcileSnap = 2.0f;       // ease out smaller, snap larger
+    static constexpr float kReconcileRate = 12.0f;      // easing, per second
+    static constexpr std::size_t kMaxPredicted = 128;
+    bool m_hostAcksPawn = false;           // the host sends PawnAck (Welcome bit 3)
+    bool m_predicting = false;
+    std::vector<std::pair<std::uint32_t, Vec3>> m_predicted;   // seq -> where the prediction put the pawn
+    Vec3 m_predPending{0.0f, 0.0f, 0.0f};  // correction still to ease in
+    PlayerInput m_predCmd;                 // the input last sent: what the prediction runs until the next tick
+    std::uint32_t m_predPressOnce = 0;     // its presses, for the first frame only
+    std::uint32_t m_predSeq = 0;           // the input the prediction is running
+    std::uint32_t m_earlyAckSeq = 0;       // its ack, if it came before we finished it
+    Vec3 m_earlyAck{0.0f, 0.0f, 0.0f};
+    std::uint32_t m_lastPawnAck = 0;
+    std::uint32_t m_predCorrections = 0, m_predSnaps = 0;
+    void Reconcile(std::uint32_t seq, const Vec3& server);
     std::unordered_map<std::string, std::uint32_t> m_pawnOwner;   // server: player object -> peer
     std::uint32_t m_inputsDropped = 0;
     double m_acClockMs = 0.0;     // server: the clock the heartbeat checks clients against

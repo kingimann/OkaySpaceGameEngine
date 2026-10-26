@@ -15,6 +15,11 @@ add_executable(test_serialize test_serialize.cpp)
 target_link_libraries(test_serialize PRIVATE okay::engine)
 add_test(NAME serialize COMMAND test_serialize)
 
+# Grid inventory: drag rotation/cancel, enforced weight, stack merge/split, Validate()
+add_executable(test_grid_inventory_fixes test_grid_inventory_fixes.cpp)
+target_link_libraries(test_grid_inventory_fixes PRIVATE okay::engine)
+add_test(NAME grid_inventory_fixes COMMAND test_grid_inventory_fixes)
+
 # Robustness: parent cycles (Transform::SetParent + scene/prefab/creation loaders)
 add_executable(test_parent_cycles test_parent_cycles.cpp)
 target_link_libraries(test_parent_cycles PRIVATE okay::engine)

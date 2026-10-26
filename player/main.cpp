@@ -725,7 +725,7 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
 static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const std::string& baseDir,
                               std::unordered_map<std::string, SDL_Texture*>& cache) {
     okay::GridInventory* primary = ui.Inv();
-    if (!primary || !primary->open) { ui.dragIndex = -1; ui.dragInv = nullptr; return; }
+    if (!primary || !primary->open) { ui.CancelDrag(); return; }
     int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
     if (W <= 0 || H <= 0) return;
     // Honour the configured sizes (just a minimal sane floor); kept in sync with the
@@ -788,6 +788,9 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
     };
     placeCol(equipped, startX, lw, false);
     if (hasNear) placeCol(nearby, startX + lw + colGap, rw, true);
+    std::vector<okay::GridInventory*> live(equipped);
+    live.insert(live.end(), nearby.begin(), nearby.end());
+    ui.CheckDrag(live);   // the bag being dragged from may have gone out of range or been destroyed
 
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
     if (ui.darkenWhenOpen) { setc(Color{0, 0, 0, ui.backdropDim}); SDL_Rect full{0, 0, W, H}; SDL_RenderFillRect(r, &full); }
@@ -881,11 +884,10 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
                 fillG(cxp, cyp, cs, cs, darken(ui.cellColor, 0.04f), darken(ui.cellColor, 0.18f), cr);
                 stroke(cxp, cyp, cs, cs, darken(ui.cellColor, 0.32f), 130);
             }
-        if (ui.dragInv && hovPanel == pi && ui.dragIndex >= 0 && ui.dragIndex < (int)ui.dragInv->items.size()) {
-            const auto& it = ui.dragInv->items[ui.dragIndex];
+        if (ui.dragInv && hovPanel == pi) {
+            const okay::GridItem it = ui.HeldItem();
             int tx = hovCx - ui.grabX, ty = hovCy - ui.grabY;
-            int ign = (inv == ui.dragInv) ? ui.dragIndex : -1;
-            bool ok = inv->CanPlace(tx, ty, it.w, it.h, ign);
+            bool ok = ui.CanDrop(inv, hovCx, hovCy);
             for (int yy = 0; yy < it.h; ++yy)
                 for (int xx = 0; xx < it.w; ++xx) {
                     int gxc = tx + xx, gyc = ty + yy;
@@ -901,14 +903,8 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
         }
     }
 
-    // Rotate the held item 90° (validated on drop).
-    if (ui.rotateKey && ui.dragInv && ui.dragIndex >= 0 && ui.dragIndex < (int)ui.dragInv->items.size() &&
-        okay::Input::GetKeyDown(ui.rotateKey)) {
-        auto& it = ui.dragInv->items[ui.dragIndex];
-        std::swap(it.w, it.h);
-        if (ui.grabX >= it.w) ui.grabX = it.w - 1;
-        if (ui.grabY >= it.h) ui.grabY = it.h - 1;
-    }
+    // Rotate the held item 90° (applied only if the drop succeeds).
+    if (ui.rotateKey && ui.dragInv && okay::Input::GetKeyDown(ui.rotateKey)) ui.RotateDrag();
     // Hover tooltip.
     if (ui.showTooltips && !ui.dragInv && hovPanel >= 0) {
         okay::GridInventory* inv = panels[hovPanel].inv;
@@ -926,22 +922,21 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
     // Pick up an item.
     if (!ui.dragInv && okay::Input::GetMouseButtonDown(0) && hovPanel >= 0) {
         okay::GridInventory* inv = panels[hovPanel].inv;
+        ui.BeginDrag(inv, inv->ItemAtCell(hovCx, hovCy), hovCx, hovCy);
+    }
+    // Right-click a stack to split half of it into the first free spot.
+    if (!ui.dragInv && okay::Input::GetMouseButtonDown(1) && hovPanel >= 0) {
+        okay::GridInventory* inv = panels[hovPanel].inv;
         int idx = inv->ItemAtCell(hovCx, hovCy);
-        if (idx >= 0) { ui.dragInv = inv; ui.dragIndex = idx; ui.grabX = hovCx - inv->items[idx].x; ui.grabY = hovCy - inv->items[idx].y; }
+        if (idx >= 0) inv->Split(idx, inv->items[idx].count / 2);
     }
-    // Drop it — same container = move, different container = transfer (cross-bag / loot).
-    if (ui.dragInv && okay::Input::GetMouseButtonUp(0)) {
-        if (hovPanel >= 0) {
-            okay::GridInventory* dst = panels[hovPanel].inv;
-            int tx = hovCx - ui.grabX, ty = hovCy - ui.grabY;
-            if (dst == ui.dragInv) dst->PlaceAt(ui.dragIndex, tx, ty);
-            else ui.dragInv->MoveTo(ui.dragIndex, *dst, tx, ty);
-        }
-        ui.dragInv = nullptr; ui.dragIndex = -1;
-    }
+    // Drop it — same container = move, different container = transfer (cross-bag / loot),
+    // onto a matching stack = merge.
+    if (ui.dragInv && okay::Input::GetMouseButtonUp(0))
+        ui.Drop(hovPanel >= 0 ? panels[hovPanel].inv : nullptr, hovCx, hovCy);
     // The lifted item floats under the cursor (with a soft drop shadow).
-    if (ui.dragInv && ui.dragIndex >= 0 && ui.dragIndex < (int)ui.dragInv->items.size()) {
-        const auto& it = ui.dragInv->items[ui.dragIndex];
+    if (ui.dragInv) {
+        const okay::GridItem it = ui.HeldItem();
         float gx = mp.x - ui.grabX * (cs + gp) - cs * 0.5f, gy = mp.y - ui.grabY * (cs + gp) - cs * 0.5f;
         float gw = it.w * cs + (it.w - 1) * gp, gh = it.h * cs + (it.h - 1) * gp;
         shadow(gx, gy, gw, gh, cr);

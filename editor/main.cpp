@@ -31067,6 +31067,23 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat("Zoom Sensitivity##fp", &fp->zoomSensitivity, 0.01f, 0.05f, 1.0f)) ed.dirty = true;
             }
             if (ImGui::DragFloat("Landing Dip##fp", &fp->landDip, 0.005f, 0.0f, 0.5f)) ed.dirty = true;
+            if (ImGui::DragFloat("Eye Step Smoothing##fp", &fp->eyeStepSmoothing, 0.2f, 0.0f, 60.0f, fp->eyeStepSmoothing <= 0 ? "off" : "%.1f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("When the body is lifted or dropped on the ground (a step, a curb, a platform),\nthe eye eases there instead of popping. Higher = quicker; 0 = off.");
+            SectionHeader("Head Bob");
+            if (ImGui::Checkbox("Head Bob##fp", &fp->headBob)) ed.dirty = true;
+            if (fp->headBob) {
+                if (ImGui::DragFloat("Bob Amount##fp", &fp->bobAmount, 0.001f, 0.0f, 0.3f, "%.3f m")) ed.dirty = true;
+                if (ImGui::DragFloat("Bob Speed##fp", &fp->bobSpeed, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bob cadence at walking speed (it speeds up with you).");
+                if (ImGui::DragFloat("Bob Sway##fp", &fp->bobSway, 0.001f, 0.0f, 0.2f, "%.3f m")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sideways sway, at half the bob's rate (0 = none).");
+                if (ImGui::DragFloat("Bob Run Scale##fp", &fp->bobRunScale, 0.01f, 0.0f, 2.0f, "x%.2f")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bob size at run speed, times the walking bob.");
+                if (ImGui::DragFloat("Bob Blend##fp", &fp->bobBlend, 0.1f, 0.0f, 40.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast the bob fades in and out as you start and stop (0 = at once).");
+                if (ImGui::DragFloat("Bob Ground Grace##fp", &fp->bobGroundGrace, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The bob and the landing dip still count you as grounded this long\nafter you leave the ground, so stairs and slopes don't twitch them.");
+            }
             SectionHeader("Slide (sprint + crouch)");
             if (ImGui::Checkbox("Can Slide##fp", &fp->canSlide)) ed.dirty = true;
             if (fp->canSlide) {

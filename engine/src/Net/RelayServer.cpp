@@ -39,6 +39,7 @@ void RelayServer::Stop() {
     m_slotEp.clear();
     m_sessions.clear();
     m_perAddress.clear();
+    m_sessionsPerAddress.clear();
     m_helloRate.clear();
 }
 
@@ -172,7 +173,11 @@ RelayServer::PeerMap::iterator RelayServer::RemovePeer(PeerMap::iterator it) {
                     SendWelcome(ep, other.slot, 0);
         }
         if (s->second.peers > 0) --s->second.peers;
-        if (s->second.peers == 0) m_sessions.erase(s);
+        if (s->second.peers == 0) {
+            auto so = m_sessionsPerAddress.find(s->second.opener);
+            if (so != m_sessionsPerAddress.end() && --so->second == 0) m_sessionsPerAddress.erase(so);
+            m_sessions.erase(s);
+        }
     }
     return m_peers.erase(it);
 }
@@ -211,7 +216,7 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
     const std::uint8_t role = p.ReadU8();
     const std::string code = p.ReadString();
     if (!p.Ok() || code.empty() || code.size() > kMaxCodeLength) return;
-    if (role != RelayHost && role != RelayClient) return;
+    if (role != RelayHost && role != RelayClient && role != RelayHub) return;
     // Version 2 appends [u8 version][u64 host key]; version 1 ends at the code.
     // Version 3 adds the cookie and pads the hello.
     std::uint8_t version = 1;
@@ -262,7 +267,8 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
         if (!m_legacyHello) { SendRefused(from, RelayRefusedVersion); return; }
     }
 
-    const bool asHost = (role == RelayHost);
+    const bool asHost = (role != RelayClient);
+    const bool asHub = (role == RelayHub);
     auto sit = m_sessions.find(code);
     bool reclaim = false;
     if (asHost && sit != m_sessions.end() && sit->second.hostKey != 0) {
@@ -293,7 +299,7 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
             return;
         }
         reclaim = true;   // the host left and is back: same slot if it's free
-    } else if (asHost && version >= 2 && sit != m_sessions.end() && sit->second.hostSlot != 0) {
+    } else if (asHost && !asHub && version >= 2 && sit != m_sessions.end() && sit->second.hostSlot != 0) {
         // A version-2 host doesn't join someone else's version-1 session.
         SendRefused(from, RelayRefusedHosted);
         return;
@@ -303,13 +309,19 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
     if (m_peers.size() >= kMaxPeers) return;
     auto pa = m_perAddress.find(from.address);
     if (pa != m_perAddress.end() && pa->second >= kMaxPeersPerAddress) return;
-    if (sit == m_sessions.end() && m_sessions.size() >= kMaxSessions) return;
+    const bool loopback = (from.address >> 24) == 127;
+    if (sit == m_sessions.end()) {
+        if (m_sessions.size() >= kMaxSessions) return;
+        auto so = m_sessionsPerAddress.find(from.address);
+        if (!loopback && so != m_sessionsPerAddress.end() && so->second >= kMaxSessionsPerAddress) return;
+    }
     if (sit != m_sessions.end() && sit->second.peers >= kMaxPeersPerSession) return;
     Peer peer;
     peer.slot = (reclaim && sit->second.lastHostSlot != 0 && !m_slotEp.count(sit->second.lastHostSlot))
                     ? sit->second.lastHostSlot : NewSlot();
     peer.code = code;
     peer.host = asHost;
+    peer.hub = asHub;
     peer.version = version;
     peer.packets = 2.0f * kPacketsPerSecond;
     peer.bytes = 2.0f * kBytesPerSecond;
@@ -317,6 +329,10 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
     peer.inBytes = kInboundBytesPerSecond;
     peer.inRefilled = m_now;
     m_slotEp[peer.slot] = from;
+    if (sit == m_sessions.end()) {
+        m_sessions[code].opener = from.address;
+        m_sessionsPerAddress[from.address]++;
+    }
     Session& s = m_sessions[code];
     s.peers++;
     m_perAddress[from.address]++;
@@ -335,10 +351,10 @@ void RelayServer::HandleHello(const Endpoint& from, const std::uint8_t* data, st
 }
 
 // `peer` becomes its session's host: a version-2 host gets the code's key (the
-// session is protected from then on); it's welcomed, and so is every other
+// session is protected from then on; a hub never does); it's welcomed, and so is every other
 // peer waiting in the session.
 void RelayServer::ClaimHost(const Endpoint& from, Peer& peer, Session& s) {
-    if (s.hostKey == 0 && peer.version >= 2) s.hostKey = NewHostKey();
+    if (s.hostKey == 0 && peer.version >= 2 && !peer.hub) s.hostKey = NewHostKey();
     s.hostSlot = peer.slot;
     SendWelcome(from, peer.slot, s.hostSlot, s.hostKey);
     for (auto& [ep, other] : m_peers)

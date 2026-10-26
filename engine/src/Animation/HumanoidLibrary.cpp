@@ -41,6 +41,29 @@ AnimClip Hold(const std::string& name, int state, float period = 0.0f, int keys 
     return Bake(name, state, period, period > 0.0f ? keys : 1, [](float) { return HumanoidMotion::Inputs{}; });
 }
 
+// A one-shot through poses at times (seconds): 1 = standing, 7 = lying prone,
+// 10 = on hands and knees, 11 = kneeling.
+AnimClip Through(const std::string& name, const std::vector<std::pair<float, int>>& keys) {
+    AnimClip c;
+    c.name = name;
+    c.loop = false;
+    c.length = keys.back().first;
+    c.hasRoot = true;
+    for (const auto& kv : keys) {
+        AnimKey k;
+        k.time = kv.first;
+        float y;
+        if (kv.second == 10 || kv.second == 11) y = HumanoidMotion::KneelPose(kv.second - 10, k.pose);
+        else {
+            HumanoidMotion::Pose(kv.second, 0.0f, HumanoidMotion::Inputs{}, k.pose);
+            y = HumanoidMotion::HipY(kv.second, HumanoidMotion::Inputs{});
+        }
+        k.root = Vec3{0.0f, y, 0.0f};
+        c.keys.push_back(std::move(k));
+    }
+    return c;
+}
+
 std::string Num(float v) {
     char b[16];
     std::snprintf(b, sizeof(b), "%g", v);
@@ -82,15 +105,27 @@ std::vector<Entry> BakeAll() {
     for (float v : {4.0f, 5.5f, 7.0f, 8.5f})       for (int d = 0; d < 8; ++d) out.push_back(Gait("Run", 3, v, d));
     for (float v : {0.3f, 1.0f, 2.0f})             for (int d = 0; d < 8; ++d) out.push_back(Gait("CrouchWalk", 17, v, d));
     add(Hold("Crouch", 6, 2.0f * kPi / 2.2f, 24), 6);
-    {   // the crawl at its natural pace (the Animator plays it as fast as the body moves)
+    add(Hold("Prone", 7), 7);
+    {   // the crawl at its natural pace, four ways (the Animator plays it as fast as the body moves)
+        static const char* const kDir[4] = {"", "_R", "_B", "_L"};   // forward keeps the name scenes saved since 1b use
         const float v = HumanoidMotion::NaturalSpeed(7);
-        Entry e;
-        e.state = 7; e.speed = v; e.z = v;
-        e.clip = Bake("Crawl", 7, 1.0f / HumanoidMotion::CycleFreq(7, v, 0.0f), 24, [&](float u) {
-            HumanoidMotion::Inputs in; in.speed = v; in.phase = u; return in;
-        });
-        out.push_back(std::move(e));
+        for (int d = 0; d < 4; ++d) {
+            const bool back = d == 2;
+            const float side = d == 1 ? 90.0f : (d == 3 ? -90.0f : 0.0f);
+            Entry e;
+            e.state = 7; e.speed = v;
+            e.x = d == 1 ? v : (d == 3 ? -v : 0.0f);
+            e.z = d == 0 ? v : (back ? -v : 0.0f);
+            e.clip = Bake(std::string("Crawl") + kDir[d], 7, 1.0f / HumanoidMotion::CycleFreq(7, v, 0.0f), 24, [&](float u) {
+                HumanoidMotion::Inputs in; in.speed = v; in.phase = back ? 1.0f - u : u; in.travelYaw = side; return in;
+            });
+            out.push_back(std::move(e));
+        }
     }
+    // Getting up from prone through hands-and-knees and a kneel, and dropping
+    // down the same way (one second each; the Animator times them).
+    add(Through("GetUp", {{0.0f, 7}, {0.3f, 10}, {0.62f, 11}, {1.0f, 1}}), 0);
+    add(Through("Drop",  {{0.0f, 1}, {0.35f, 11}, {0.65f, 10}, {1.0f, 7}}), 0);
     add(Hold("Jump", 5), 5);
     add(Hold("Fall", 18), 18);
     {   // land: the knees give and spring back over 0.28 s
@@ -200,6 +235,15 @@ void DefaultGraph(AnimStateMachine& sm, const Character* body) {
     for (const char* f : {"speed", "airTime", "verticalSpeed", "gaitX", "gaitZ", "gaitSpeed"}) sm.params.push_back({f, 0});
     for (const char* b : {"run", "crouch", "prone"}) sm.params.push_back({b, 1});
 
+    // Going prone: on the move the locomotion blends straight into the crawl;
+    // standing still drops down through a kneel; crouched goes straight down.
+    auto dropFirst = [](SM::State& st) {
+        st.transitions.insert(st.transitions.begin(), {To("Crawl", 0.2f, {Is("prone"), Speed(0.35f)}), To("Drop", 0.1f, {Is("prone")})});
+    };
+    auto proneFirst = [](SM::State& st) {
+        st.transitions.insert(st.transitions.begin(), {To("Crawl", 0.2f, {Is("prone"), Speed(0.35f)}), To("Prone", 0.2f, {Is("prone")})});
+    };
+
     SM::State idle = Clip("Idle", "Idle");
     StandOff(idle.transitions, {}, 0.2f, true);
 
@@ -222,16 +266,30 @@ void DefaultGraph(AnimStateMachine& sm, const Character* body) {
                               To("Walk", 0.2f, {Not("crouch"), Speed(0.2f)}),
                               To("Idle", 0.2f, {Not("crouch")}), To("Crouch", 0.2f, {Still(0.2f)})};
 
-    // Prone: the crawl, as fast as the body moves (still when it doesn't).
-    SM::State prone;
-    prone.name = "Prone";
-    prone.blendTree = true; prone.matchSpeed = true; prone.blendParam = "gaitSpeed";
-    {
-        SM::Motion m; m.clip = "Crawl"; m.threshold = HumanoidMotion::NaturalSpeed(7);
-        prone.motions.push_back(m);
+    // Prone, and the crawl in the direction the body goes, as fast as it moves.
+    // Out of prone into a crouch directly; up to standing through GetUp.
+    SM::State prone = Clip("Prone", "Prone"), crawl = GaitTree("Crawl", 7);
+    prone.transitions = {To("Crawl", 0.2f, {Speed(0.35f)})};
+    crawl.transitions = {To("Prone", 0.2f, {Still(0.2f)})};
+    for (SM::State* st : {&prone, &crawl}) {
+        st->transitions.push_back(To("CrouchWalk", 0.2f, {Not("prone"), Is("crouch"), Speed(0.35f)}));
+        st->transitions.push_back(To("Crouch", 0.2f, {Not("prone"), Is("crouch")}));
+        if (st == &crawl) {   // standing up on the move: straight into the stride
+            st->transitions.push_back(To("Run", 0.2f, {Not("prone"), Speed(0.35f), Is("run")}));
+            st->transitions.push_back(To("Walk", 0.2f, {Not("prone"), Speed(0.35f)}));
+        }
+        st->transitions.push_back(To("GetUp", 0.1f, {Not("prone")}));
+        st->ikWeight = 0.0f;   // lying on the ground: no foot planting
     }
-    StandOff(prone.transitions, {Not("prone")}, 0.2f, true);
-    prone.transitions.push_back(To("Idle", 0.2f, {Not("prone")}));
+    // Getting up and dropping down play through; a change of mind blends out
+    // of them from wherever the body is.
+    SM::State getUp = Clip("GetUp", "GetUp", false), drop = Clip("Drop", "Drop", false);
+    getUp.transitions = {To("Prone", 0.2f, {Is("prone")}), To("Crouch", 0.2f, {Is("crouch")})};
+    StandOff(getUp.transitions, {If(C::OnClipEnd, "")}, 0.15f, true);
+    getUp.transitions.push_back(To("Idle", 0.15f, {If(C::OnClipEnd, "")}));
+    drop.transitions = {To("Crouch", 0.2f, {Not("prone"), Is("crouch")}), To("Idle", 0.2f, {Not("prone")}),
+                        To("Crawl", 0.15f, {If(C::OnClipEnd, ""), Speed(0.35f)}), To("Prone", 0.15f, {If(C::OnClipEnd, "")})};
+    getUp.ikWeight = drop.ikWeight = 0.0f;
 
     // Air: back on the ground, land into whatever the body does (a standing
     // landing plays Land; a moving one gives at the knees mid-stride).
@@ -246,24 +304,29 @@ void DefaultGraph(AnimStateMachine& sm, const Character* body) {
     StandOff(land.transitions, {}, 0.2f, true);
     land.transitions.push_back(To("Idle", 0.2f, {If(C::OnClipEnd, "")}));
 
-    sm.states = {idle, walk, run, crouch, crouchWalk, prone, jump, fall, land, hang};
+    for (SM::State* st : {&idle, &walk, &run, &land, &hang}) dropFirst(*st);
+    for (SM::State* st : {&crouch, &crouchWalk, &jump, &fall}) proneFirst(*st);
+    sm.states = {idle, walk, run, crouch, crouchWalk, prone, crawl, getUp, drop, jump, fall, land, hang};
     // Gestures and emotions (a script's play_clip, `anim`): they last until the body moves off.
     for (const char* g : {"Wave", "Point", "Clap", "ThumbsUp", "Salute", "WaveBoth", "Cheer", "Sad", "Angry", "Think"}) {
         SM::State s = Clip(g, g);
         StandOff(s.transitions, {}, 0.2f, true);
+        dropFirst(s);
         sm.states.push_back(s);
     }
 
-    sm.anyState = {To("Prone", 0.2f, {Is("prone")}),
-                   To("Jump", 0.1f, {If(C::FloatGreater, "airTime", 0.12f), If(C::FloatGreater, "verticalSpeed", 0.4f), Not("prone")}),
+    sm.anyState = {To("Jump", 0.1f, {If(C::FloatGreater, "airTime", 0.12f), If(C::FloatGreater, "verticalSpeed", 0.4f), Not("prone")}),
                    To("Fall", 0.1f, {If(C::FloatGreater, "airTime", 0.12f), If(C::FloatLess, "verticalSpeed", 0.4f), Not("prone")})};
 
-    // Graph layout: a column per group.
+    ApplyStanceTimes(sm);
+
+    // Graph layout: standing, crouched, prone and getting up/down, air, gestures.
+    static const int kColStart[] = {0, 3, 5, 9, 13};
     for (std::size_t i = 0; i < sm.states.size(); ++i) {
-        const float col = i < 3 ? 0.0f : (i < 6 ? 1.0f : (i < 10 ? 2.0f : 3.0f));
-        const float row = (float)(i < 3 ? i : (i < 6 ? i - 3 : (i < 10 ? i - 6 : i - 10)));
-        sm.states[i].nx = 40.0f + 220.0f * col;
-        sm.states[i].ny = 40.0f + 90.0f * row;
+        int col = 4;
+        while (col > 0 && (int)i < kColStart[col]) --col;
+        sm.states[i].nx = 40.0f + 220.0f * (float)col;
+        sm.states[i].ny = 40.0f + 90.0f * (float)((int)i - kColStart[col]);
     }
 
     // A clip bound to a movement state on the body plays in its place.
@@ -275,6 +338,30 @@ void DefaultGraph(AnimStateMachine& sm, const Character* body) {
         if (b.second->empty()) continue;
         for (SM::State& s : sm.states)
             if (s.name == b.first) { s.blendTree = false; s.matchSpeed = false; s.motions.clear(); s.clip = *b.second; }
+    }
+}
+
+void ApplyStanceTimes(AnimStateMachine& sm) {
+    // Which stance a state stands for: 0 standing, 1 crouched, 2 prone (-1 = none).
+    auto stanceOf = [](const std::string& n) {
+        if (n == "Crouch" || n == "CrouchWalk") return 1;
+        if (n == "Prone" || n == "Crawl") return 2;
+        if (n == "Jump" || n == "Fall") return -1;
+        return 0;
+    };
+    const StanceTimes& t = sm.stanceTimes;
+    for (SM::State& st : sm.states) {
+        if (st.name == "Drop")  st.speed = 1.0f / std::max(0.05f, t.standCrouch + t.crouchProne);
+        if (st.name == "GetUp") st.speed = 1.0f / std::max(0.05f, t.proneStand);
+        const int from = stanceOf(st.name);
+        for (SM::Transition& tr : st.transitions) {
+            const int to = stanceOf(tr.to);
+            if (from < 0 || to < 0 || from == to || tr.to == "Drop" || tr.to == "GetUp") continue;
+            if (from + to == 1)   tr.blend = t.standCrouch;                    // stand <-> crouch
+            else if (to == 0)     tr.blend = t.proneStand;                     // prone -> stand (on the move)
+            else if (from == 0)   tr.blend = t.standCrouch + t.crouchProne;    // stand -> prone (on the move)
+            else                  tr.blend = t.crouchProne;                    // crouch <-> prone
+        }
     }
 }
 

@@ -487,8 +487,9 @@ void NetworkManager::AdvanceSmoothTick(float dt) {
 
 // The state at `tick`, between the two buffered samples either side of it;
 // before the first, the first; after the last, the last (held, not guessed).
-void NetworkManager::SampleAt(const SyncObj& o, double tick, Vec3& pos, Quat& rot) {
-    const auto& b = o.samples;
+void NetworkManager::SampleAt(const SyncObj& o, double tick, Vec3& pos, Quat& rot) { PoseAt(o.samples, tick, pos, rot); }
+
+void NetworkManager::PoseAt(const std::vector<SyncObj::Sample>& b, double tick, Vec3& pos, Quat& rot) {
     if (tick <= b.front().tick) { pos = b.front().pos; rot = b.front().rot; return; }
     for (std::size_t i = 0; i + 1 < b.size(); ++i)
         if (tick < b[i + 1].tick) {
@@ -498,6 +499,62 @@ void NetworkManager::SampleAt(const SyncObj& o, double tick, Vec3& pos, Quat& ro
             return;
         }
     pos = b.back().pos; rot = b.back().rot;
+}
+
+// ---- Lag compensation (server) ------------------------------------------------
+
+void NetworkManager::RecordHistory() {
+    const std::size_t keep = (std::size_t)std::ceil(HostTickRate()) + 2;   // ~1 s
+    for (auto& [id, o] : m_syncObjs) {
+        if (!o.t) continue;
+        o.history.push_back(SyncObj::Sample{(double)m_netTick, o.t->localPosition, o.t->localRotation});
+        if (o.history.size() > keep) o.history.erase(o.history.begin(), o.history.end() - (std::ptrdiff_t)keep);
+    }
+}
+
+std::vector<NetworkManager::Rewound> NetworkManager::RewindTo(double tick) {
+    std::vector<Rewound> saved;
+    for (auto& [id, o] : m_syncObjs) {
+        if (!o.t || o.history.empty()) continue;
+        saved.push_back({o.t, o.t->localPosition, o.t->localRotation});
+        PoseAt(o.history, tick, o.t->localPosition, o.t->localRotation);
+    }
+    return saved;
+}
+
+void NetworkManager::Restore(std::vector<Rewound>& saved) {
+    for (auto& r : saved) { r.t->localPosition = r.pos; r.t->localRotation = r.rot; }
+    saved.clear();
+}
+
+// How far back a shot may be checked: what the shooter says it saw, but no
+// further than 200 ms plus its round trip (nor the history's second), and
+// never in the future.
+double NetworkManager::ClampRewind(double viewTick, float rttSeconds) const {
+    const double now = TickTime();
+    const double rate = (double)HostTickRate();
+    const double most = std::min(1.0, (double)kRewindBase + (double)std::max(0.0f, rttSeconds)) * rate;
+    if (!std::isfinite(viewTick)) return now;
+    return std::max(now - most, std::min(now, viewTick));
+}
+
+RaycastHit3D NetworkManager::RewindRaycast(const Vec3& origin, const Vec3& direction, float maxDistance,
+                                           double viewTick, GameObject* ignore) {
+    Scene* sc = GetScene();
+    if (!sc) return RaycastHit3D{};
+    if (m_mode != Mode::Server || HostTickRate() <= 0.0f)
+        return sc->physics3D().Raycast(*sc, origin, direction, maxDistance, ignore);
+    const double at = std::max(TickTime() - (double)HostTickRate(), std::min(TickTime(), std::isfinite(viewTick) ? viewTick : TickTime()));
+    std::vector<Rewound> saved = RewindTo(at);
+    RaycastHit3D hit = sc->physics3D().Raycast(*sc, origin, direction, maxDistance, ignore);
+    Restore(saved);
+    return hit;
+}
+
+double NetworkManager::ViewTick() const {
+    if (TickRateInForce() <= 0.0f) return 0.0;
+    if (m_mode != Mode::Client) return TickTime();
+    return (m_smoothTickInit ? m_smoothTick : TickTime()) - (InterpolationBuffer() ? m_interpDelay : 0.0);
 }
 
 void NetworkManager::Update(float dt) {
@@ -1081,8 +1138,12 @@ void NetworkManager::ClaimHit(const std::string& targetNetId, const std::string&
         return;
     }
     if (m_mode != Mode::Client || !m_joined) return;
-    char buf[192];
-    std::snprintf(buf, sizeof buf, "|%u|%.9g %.9g %.9g|%.9g %.9g %.9g", (unsigned)m_tickCount,
+    char buf[224];
+    // "<frames>[:<view tick>]": an older server reads the frame count and stops.
+    char tick[64];
+    if (TickRateInForce() > 0.0f) std::snprintf(tick, sizeof tick, "%u:%.3f", (unsigned)m_tickCount, ViewTick());
+    else std::snprintf(tick, sizeof tick, "%u", (unsigned)m_tickCount);
+    std::snprintf(buf, sizeof buf, "|%s|%.9g %.9g %.9g|%.9g %.9g %.9g", tick,
                   origin.x, origin.y, origin.z, dir.x, dir.y, dir.z);
     SendReliable("__hit", targetNetId + "|" + weapon + buf);
 }
@@ -1116,6 +1177,8 @@ void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
     claim.target = part[0];
     claim.weapon = part[1];
     claim.clientTick = static_cast<std::uint32_t>(std::strtoul(part[2].c_str(), &end, 10));
+    double viewTick = -1.0;   // lag compensation: the moment the shooter saw
+    if (end && *end == ':') { viewTick = std::strtod(end + 1, nullptr); if (!std::isfinite(viewTick) || viewTick < 0.0) viewTick = -1.0; }
     claim.direction = dir * (1.0f / dir.Magnitude());
     claim.damage = anticheat.settings.hitDamage;
     const AntiCheatSettings& s = anticheat.settings;
@@ -1135,17 +1198,41 @@ void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
     // The target, where the server has it.
     auto obj = m_syncObjs.find(claim.target);
     if (obj == m_syncObjs.end() || !obj->second.t || !obj->second.t->gameObject) { refuse("no such target: " + claim.target); return; }
-    GameObject* target = obj->second.t->gameObject;
-    const Vec3 tp = obj->second.t->TransformPoint(Vec3(0.0f, 0.0f, 0.0f));
+    const float rtt = c.rtt >= 0.0f ? std::min(c.rtt, 1.0f) : 0.25f;
+    // Lag compensation: with a fixed tick and the moment the shooter saw,
+    // everything goes back to where it was then (clamped to 200 ms + its round
+    // trip) for the checks below, and is put back after. The target then
+    // only gets a tick's movement of slack, not its speed x the ping.
+    std::vector<Rewound> rewound;
+    m_lastRewind = 0.0f;
+    if (viewTick >= 0.0 && HostTickRate() > 0.0f) {
+        const double at = ClampRewind(viewTick, rtt);
+        m_lastRewind = (float)((TickTime() - at) / (double)HostTickRate());
+        rewound = RewindTo(at);
+    }
+    const std::string why = CheckHitView(claim, c.id, obj->second.t, rewound.empty() ? rtt : 1.0f / HostTickRate());
+    Restore(rewound);
+    if (!why.empty()) { refuse(why); return; }
+    // The game's own rules (Validate Hit / on_validate_hit / NetworkManager::ValidateHit).
+    if (anticheat.validateHit && !anticheat.validateHit(claim)) { refuse("refused by the game: " + claim.weapon); return; }
+    ApplyHit(claim);
+}
+
+// The view checks of a hit claim: the target in front, in range, on the ray
+// (within the tolerance plus `slack` seconds of its top speed), and nothing
+// solid in between. "" = it hit; else why not.
+std::string NetworkManager::CheckHitView(const HitClaim& claim, std::uint32_t shooter, Transform* targetT, float slack) {
+    const AntiCheatSettings& s = anticheat.settings;
+    GameObject* target = targetT->gameObject;
+    const Vec3 tp = targetT->TransformPoint(Vec3(0.0f, 0.0f, 0.0f));
     const Vec3 to = tp - claim.origin;
     const float along = Vec3::Dot(to, claim.direction);
-    if (along < 0.0f) { refuse("target behind the shot"); return; }
-    if (s.maxHitRange > 0.0f && along > s.maxHitRange) { refuse("out of range"); return; }
+    if (along < 0.0f) return "target behind the shot";
+    if (s.maxHitRange > 0.0f && along > s.maxHitRange) return "out of range";
     // Off the ray by no more than the tolerance plus how far the target can
-    // have moved while the shot travelled (its top speed x the shooter's ping).
-    const float rtt = c.rtt >= 0.0f ? std::min(c.rtt, 1.0f) : 0.25f;
+    // have moved in `slack` (the shooter's ping, or a tick when rewound).
     const float speed = s.maxSyncSpeed > 0.0f ? s.maxSyncSpeed : 8.0f;
-    if ((to - claim.direction * along).Magnitude() > s.hitTolerance + speed * rtt) { refuse("missed: the target wasn't there"); return; }
+    if ((to - claim.direction * along).Magnitude() > s.hitTolerance + speed * slack) return "missed: the target wasn't there";
     // Nothing solid in between (a server raycast, 3D and 2D).
     if (s.hitLineOfSight && GetScene()) {
         Scene& sc = *GetScene();
@@ -1168,11 +1255,9 @@ void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
                 if (h.distance < along2 - 0.05f) { blocked = true; break; }
             }
         }
-        if (blocked) { refuse("through a wall"); return; }
+        if (blocked) return "through a wall";
     }
-    // The game's own rules (Validate Hit / on_validate_hit / NetworkManager::ValidateHit).
-    if (anticheat.validateHit && !anticheat.validateHit(claim)) { refuse("refused by the game: " + claim.weapon); return; }
-    ApplyHit(claim);
+    return "";
 }
 
 // Damage on the server only, through the target's HealthStat, then the result
@@ -1368,6 +1453,7 @@ int NetworkManager::StepNetTick(float rate, float dt) {
         ++m_netTick;
         if (m_mode == Mode::Server && authoritativeMovement) ServerMovementTick(step);
         else if (m_mode == Mode::Client && m_hostAuthoritative) ClientInputTick();
+        if (m_mode == Mode::Server) RecordHistory();
         if (m_onNetTick) m_onNetTick(m_netTick, step);
         if (++ticks >= 8) { m_tickAccum = 0.0f; break; }
     }
@@ -1976,10 +2062,11 @@ void NetworkManager::ServerTick(float dt) {
     // Anti-cheat clock heartbeat: ask each client for its game clock about once
     // a second (the answer is checked above). One that won't answer is reported
     // too, or skipping the answer would be the way around it.
-    // With the anti-cheat on, the same pings also measure each client's round
-    // trip (hit claims allow for it), whether or not the clock is checked.
-    if (anticheat.settings.enabled) {
-        const bool checkClock = anticheat.settings.maxClockDrift > 0.0f;
+    // With the anti-cheat on, or a fixed tick (lag compensation clamps its
+    // rewind to the shooter's round trip), the same pings also measure each
+    // client's round trip, whether or not the clock is checked.
+    if (anticheat.settings.enabled || HostTickRate() > 0.0f) {
+        const bool checkClock = anticheat.settings.enabled && anticheat.settings.maxClockDrift > 0.0f;
         std::vector<std::uint32_t> quiet;
         for (auto& [ep, c] : m_clients) {
             if (checkClock && !c.clock) c.clock = std::make_shared<net::ClockCheck>(anticheat.settings.maxClockDrift);

@@ -311,6 +311,22 @@ players itself:
   with an older host it follows the host's position as before.
 - Off (the default), nothing changes.
 
+## Lag compensation
+
+With a fixed tick, the host keeps where every synced object was on each tick
+for about a second. A shot a client claims (`ClaimHit`) says which moment it
+saw (its view: now minus its interpolation delay), and the host checks the
+claim against where everything was *then*: the target on the shot's line,
+nothing solid in between. So a shot at what you saw counts, even though the
+target has moved on by the time the claim arrives; one aimed at where the
+target is now (but wasn't seen) doesn't. The host rewinds no further than
+200 ms plus that player's round trip, so claiming to have seen something long
+ago doesn't work. Game code on the host can do the same with
+`NetworkManager::RewindRaycast(origin, direction, maxDistance, viewTick)`.
+
+Without a fixed tick, claims are checked against where things are now, with
+the target's top speed times the shooter's ping as slack, as before.
+
 ## Server authority (anti-cheat basics)
 
 The server decides; clients only ask.

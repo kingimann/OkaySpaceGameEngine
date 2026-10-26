@@ -924,6 +924,10 @@ add_test(NAME net_predict COMMAND test_net_predict)
 add_executable(test_net_interp test_net_interp.cpp)
 target_link_libraries(test_net_interp PRIVATE okay::engine)
 add_test(NAME net_interp COMMAND test_net_interp)
+# Net plan 5e: lag compensation (hit claims and RewindRaycast against the pose history)
+add_executable(test_net_lagcomp test_net_lagcomp.cpp)
+target_link_libraries(test_net_lagcomp PRIVATE okay::engine)
+add_test(NAME net_lagcomp COMMAND test_net_lagcomp)
 
 # Anti-cheat as a game uses it: AntiCheatConfig / NetValidator components and the VS nodes
 add_executable(test_net_anticheat_components test_net_anticheat_components.cpp)

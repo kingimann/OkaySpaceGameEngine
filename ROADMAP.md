@@ -4,12 +4,13 @@ What is being worked on right now and what comes next. Kept current by the main
 (coordinating) Claude session; each item links its PR once one exists. Every PR
 merges once its five CI jobs are green, and a release follows.
 
-_Last updated: 2026-10-26 13:35 UTC_
+_Last updated: 2026-10-26 15:55 UTC_
 
 ## Releases
 
 | Version | What's in it |
 |---|---|
+| 2.830.0 | Step-up only on real steps (#338); grid inventory fixes (#339); even frame timing (#341); controllers before animation (#342) |
 | 2.829.0 | Launcher: delete or remove projects from the Create page (#334); inventory: no dupes or item loss (#335); smooth third-person camera (#336); first-person camera without shake (#337) |
 | 2.828.0 | Remote players move smoothly (#330); lag-compensated hits (#331) |
 | 2.827.0 | 2D controllers driven by inputs (#327); client prediction (#329) |
@@ -32,16 +33,16 @@ _Last updated: 2026-10-26 13:35 UTC_
 | Session | Plan | Current |
 |---|---|---|
 | Main | Coordination, merges, releases | Merging and releasing as PRs go green |
-| QA | Camera and animation smoothing, PRs 1–6 | PR 3: step-up only on real steps (#338); PR 4: frame timing |
+| QA | Camera and animation smoothing, PRs 1–6 | PR 6: online corrections (#344) |
 | Humanoid | IK, animation and humanoid rigging, PRs 1–8 | PR 1: a visible Animator on every built-in player, with baked clips |
-| Robustness | Inventory, PRs 1–9 | PR 2: grid inventory |
+| Robustness | Inventory, PRs 1–9 | PR 3: scene wiring (nearest chest/bench, who is the player) |
 
 ### Camera and animation smoothing (QA)
 1. [x] Third-person camera: smooth the pivot, not the orbit; sphere-cast spring arm that ignores triggers and the player's own parts (#336).
 2. [x] First-person camera: eye smoothing over steps, continuous head bob, angle-based look smoothing (#337).
-3. [ ] Step-up only on real steps: no hops on ramps, seams or pickups.
-4. [ ] Even frame timing in the editor and the player.
-5. [ ] Controllers update before animation; spike guard in ModelAnimator.
+3. [x] Step-up only on real steps: no hops on ramps, seams or pickups (#338).
+4. [x] Even frame timing in the editor and the player (#341).
+5. [x] Controllers update before animation; spike guard in ModelAnimator (#342).
 6. [ ] Online: eased corrections and a clean cut on a snap.
 
 ### IK, animation and rigging (Humanoid)
@@ -56,7 +57,7 @@ _Last updated: 2026-10-26 13:35 UTC_
 
 ### Inventory (Robustness)
 1. [x] Correctness: no dupes, no item loss, max stack respected (#335).
-2. [ ] Grid fixes.
+2. [x] Grid fixes (#339).
 3. [ ] Wiring.
 4. [ ] One shared interaction layer.
 5. [ ] Item definitions.

@@ -1,5 +1,31 @@
 OkaySpace Game Engine — Changelog
 
+v2.830.0
+  Movement and camera
+  - No more hops or speed surges walking up ramps and hills: stepping up now
+    only happens on real steps (a wall-like edge at least 4 cm high), and it
+    lifts the player without the old forward nudge. Pickups and other
+    trigger zones no longer lift you, and pushing a physics crate no longer
+    carries you along. Stairs and curbs still climb (#338).
+  - Even frame timing: frame steps are smoothed to the display's refresh
+    rate, so strafing past posts no longer micro-judders. In editor Play, a
+    hitch (window drag, asset load) no longer launches the player or the
+    camera. On by default; turn it off with View > Smooth frame time in the
+    editor, Build Settings > Smooth frame time for exported games, or
+    smooth_dt=0 in the game config (#341).
+  Animation
+  - Movement controllers now run before animation, so state changes like
+    jump or crouch start on the same frame as your input instead of one
+    frame late. A single-frame speed spike (a step or platform nudge) no
+    longer flashes an imported character into its run clip (#342).
+  Inventory
+  - Grid (backpack) inventories: rotating an item while dragging and then
+    dropping it somewhere invalid puts it back exactly as it was; dragging
+    from a crate that gets destroyed no longer crashes; bags can enforce
+    their weight limit; same items stack up to a max and right-click splits
+    a stack; items that no longer fit after an edit go to an overflow list
+    instead of being lost. Old scenes keep their old behaviour (#339).
+
 v2.829.0
   Launcher
   - Delete or remove projects from the Create page: the "..." button on a

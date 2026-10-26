@@ -63,7 +63,8 @@ bool AntiCheatConfig::Apply() {
         AntiCheatSettings fromFile;
         if (fromFile.LoadFile(file, &m_error)) m_active = fromFile;
         else {
-            OKAY_WARN("anti-cheat: ", m_error, " (using the component's own settings)");
+            // Not the component's own (looser) settings: no rules, no players.
+            OKAY_ERROR("anti-cheat: ", m_error, "; the server refuses every join until the rules load");
             ok = false;
         }
     }
@@ -83,12 +84,16 @@ bool AntiCheatConfig::Apply() {
         m_prev.onRestorePeer = nm->anticheat.onRestorePeer;
         m_prev.validateHit = nm->anticheat.validateHit;
         m_prev.installer = nm->anticheat.installer;
+        m_prev.configError = nm->anticheat.configError;
+        m_prev.maxMessagesPerSecond = nm->maxMessagesPerSecond;
+        if (nm->maxMessagesPerSecond == 0) nm->maxMessagesPerSecond = kMessagesPerSecond;
         m_token = ++g_nextToken;
         LiveTokens().insert(m_token);
     }
     m_nm = nm;
     nm->anticheat.installer = m_token;
     nm->anticheat.settings = m_active;
+    nm->anticheat.configError = ok ? std::string() : m_error;
 
     // The handlers hold the scene and the manager (which owns them), never this
     // component, so removing it can't leave them dangling.
@@ -197,6 +202,16 @@ bool AntiCheatConfig::Apply() {
     return ok;
 }
 
+void AntiCheatConfig::RuntimeUninstall() {
+    if (!allowRuntimeToggle && Installed() && m_nm->IsServer()) {
+        if (!m_toggleWarned)
+            OKAY_WARN("anti-cheat: the rules stay on while the server runs (Allow Runtime Toggle lets disabling the component remove them)");
+        m_toggleWarned = true;
+        return;
+    }
+    Uninstall();
+}
+
 void AntiCheatConfig::Uninstall() {
     // Only if the manager still exists and our rules are still the ones in force
     // (a second AntiCheatConfig may have taken over since).
@@ -206,8 +221,10 @@ void AntiCheatConfig::Uninstall() {
             // since: don't bring its rules back, just turn the checks off.
             AntiCheatSettings off = m_prev.settings;
             off.enabled = false;
+            const int messages = m_prev.maxMessagesPerSecond;
             m_prev = Previous{};
             m_prev.settings = off;
+            m_prev.maxMessagesPerSecond = messages;
         }
         m_nm->anticheat.settings = m_prev.settings;
         m_nm->SetCheatHandler(m_prev.cheatHandler);
@@ -219,6 +236,8 @@ void AntiCheatConfig::Uninstall() {
         m_nm->anticheat.onRestorePeer = m_prev.onRestorePeer;
         m_nm->anticheat.validateHit = m_prev.validateHit;
         m_nm->anticheat.installer = m_prev.installer;
+        m_nm->anticheat.configError = m_prev.configError;
+        m_nm->maxMessagesPerSecond = m_prev.maxMessagesPerSecond;
     }
     if (m_token) LiveTokens().erase(m_token);
     m_nm = nullptr;

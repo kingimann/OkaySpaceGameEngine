@@ -93,6 +93,7 @@ int main() {
         srv->maxMessagesPerSecond = 0;
         GameObject* rulesGo = ss.CreateGameObject("Rules");
         auto* ac = rulesGo->AddComponent<AntiCheatConfig>();        // defaults: 30 RPCs/s, kick after 5
+        ac->allowRuntimeToggle = true;                               // the toggling below takes the rules off
         auto* nv = rulesGo->AddComponent<NetValidator>();
         nv->rpc = "fire"; nv->maxPerSecond = 100.0f;                // its own rate: the default doesn't apply
         GameObject* referee = ss.CreateGameObject("Referee");
@@ -191,6 +192,7 @@ int main() {
         CHECK(ran["nuke"] == 1);
         // A second config takes over; removing the first doesn't uninstall the second.
         auto* ac2 = ss.CreateGameObject("MoreRules")->AddComponent<AntiCheatConfig>();
+        ac2->allowRuntimeToggle = true;
         ac2->settings.maxRpcsPerSecond = 7;
         pump(2);
         CHECK(srv->anticheat.settings.maxRpcsPerSecond == 7 && ac2->Installed() && !ac->Installed());

@@ -23,6 +23,7 @@ namespace okay {
 
 class Transform;
 class GameObject;
+namespace net { class Packet; }
 
 /// Authoritative-relay multiplayer over UDP. One peer runs as the server; the
 /// rest connect as clients. Each peer owns a "local avatar" Transform whose
@@ -236,8 +237,9 @@ public:
     /// Encrypt traffic. When true (and the engine is built with libsodium), peers
     /// exchange public keys during the join handshake and all post-handshake
     /// datagrams are sealed with XChaCha20-Poly1305 (confidentiality + integrity).
-    /// Set it on BOTH ends before host/join. If either end lacks encryption support,
-    /// the session falls back to plaintext, so it's safe to leave on. Default off.
+    /// Set it on BOTH ends before host/join. A client without encryption support
+    /// falls back to plaintext; a host without it refuses to start (no quietly
+    /// unencrypted server). Default off.
     bool encryption = false;
     /// True once an encrypted session is established (client: with the server;
     /// server: reported per-peer via PeerEncrypted). Handy for a HUD lock icon.
@@ -648,6 +650,11 @@ private:
         PlayerInput lastInput;
         int repeats = 0;            // ticks the last input stood in for a late one
         bool sealedJoin = false;    // joined through the sealed handshake
+        // Without encryption a client is only its address: the cookie its
+        // Welcome gave it proves a Leave / State / Message / SyncVar is its
+        // own. Required once it has sent one (an older client never does).
+        std::uint64_t cookie = 0;
+        bool cookieSeen = false;
         // Anti-cheat clock heartbeat (maxClockDrift): the check, when to ask
         // next, how long since a good answer, and since its last drift report.
         std::shared_ptr<net::ClockCheck> clock;
@@ -804,6 +811,8 @@ private:
     std::vector<std::pair<std::uint32_t, std::pair<std::uint32_t, PlayerInput>>> m_sentInputs;   // seq -> (tick, input), last 4
     bool m_hostAuthoritative = false;      // client: the host announced it
     std::uint32_t m_lastAckedSeq = 0;
+    std::uint64_t m_sessionCookie = 0;
+    bool m_protectionsLogged = false;    // server: the "protections off" line, once per start   // client: the host's cookie for an unencrypted session (0 = none)
     // Prediction (client).
     static constexpr float kReconcileEpsilon = 0.02f;   // ignore smaller differences (units)
     static constexpr std::size_t kMaxPredicted = 128;
@@ -927,6 +936,7 @@ private:
     std::vector<Rewound> RewindTo(double tick);          // move everything to `tick`; returns what to put back
     static void Restore(std::vector<Rewound>& saved);
     double ClampRewind(double viewTick, float rttSeconds) const;
+    bool CookieOk(Client& c, net::Packet& p) const;
     float m_lastRewind = 0.0f;
 public:
     /// Synced objects shown from the interpolation buffer (a fixed tick in force).

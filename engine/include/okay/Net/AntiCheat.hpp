@@ -210,6 +210,9 @@ public:
     /// Who installed the handlers above (an AntiCheatConfig's token; 0 = code).
     /// Lets a component remove only what it put there.
     std::uint64_t installer = 0;
+    /// Non-empty: the rules didn't load (an AntiCheatConfig's .okayac), so the
+    /// server refuses every join rather than run without them. Says why.
+    std::string configError;
     /// Distinct RPC names counted per peer per second; more share one count.
     static constexpr std::size_t kMaxRpcNamesPerPeer = 64;
 

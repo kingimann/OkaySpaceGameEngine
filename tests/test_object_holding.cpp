@@ -491,6 +491,7 @@ int main() {
         hold->holdingStyle = ProceduralObjectHolding::StyleMode::Custom;
         hold->armIK = false; hold->transitionTime = 0.5f;
         hold->bodyAdjustment = false; hold->carryAnimations = ProceduralObjectHolding::CarryAnim::Custom;
+        hold->replicate = false; hold->pickupRange = 3.5f;
         GameObject* o = s.CreateGameObject("O");
         auto* h = o->AddComponent<HoldableObject>();
         h->style = HoldableObject::Style::Custom;
@@ -509,6 +510,7 @@ int main() {
             CHECK(ph->holdingStyle == ProceduralObjectHolding::StyleMode::Custom);
             CHECK(!ph->armIK); CHECK_NEAR(ph->transitionTime, 0.5f, 1e-5f);
             CHECK(!ph->bodyAdjustment); CHECK(ph->carryAnimations == ProceduralObjectHolding::CarryAnim::Custom);
+            CHECK(!ph->replicate); CHECK_NEAR(ph->pickupRange, 3.5f, 1e-5f);
             CHECK(oh->style == HoldableObject::Style::Custom);
             CHECK(oh->leftGrip.enabled && oh->rightGrip.enabled);
             CHECK_NEAR(oh->leftGrip.position.z, 0.3f, 1e-5f); CHECK_NEAR(oh->rightGrip.rotation.z, -30.0f, 1e-4f);

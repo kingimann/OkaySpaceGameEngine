@@ -1184,3 +1184,8 @@ add_executable(test_object_holding test_object_holding.cpp)
 target_link_libraries(test_object_holding PRIVATE okay::engine)
 target_compile_definitions(test_object_holding PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME object_holding COMMAND test_object_holding)
+
+# Procedural object holding online: server-validated pickups, replicated holding state.
+add_executable(test_object_holding_net test_object_holding_net.cpp)
+target_link_libraries(test_object_holding_net PRIVATE okay::engine)
+add_test(NAME object_holding_net COMMAND test_object_holding_net)

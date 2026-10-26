@@ -1062,7 +1062,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  objholding";
         KvOut k{out};
         k("hand", (int)ph->primaryHand)("style", (int)ph->holdingStyle).b("armIK", ph->armIK)("transition", ph->transitionTime)
-         .b("body", ph->bodyAdjustment)("carry", (int)ph->carryAnimations);
+         .b("body", ph->bodyAdjustment)("carry", (int)ph->carryAnimations).b("replicate", ph->replicate)("range", ph->pickupRange);
         out << "\n";
     }
     if (auto* rm = go->GetComponent<RootMotion>()) {
@@ -3436,6 +3436,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     k.b("armIK", ph->armIK); k.f("transition", ph->transitionTime);
                     int carry = 0; k.b("body", ph->bodyAdjustment); k.i("carry", carry);
                     ph->carryAnimations = carry == 1 ? ProceduralObjectHolding::CarryAnim::Custom : ProceduralObjectHolding::CarryAnim::Automatic;
+                    k.b("replicate", ph->replicate); k.f("range", ph->pickupRange);
                 } else if (field == "fbikx") {
                     if (auto* fb = go->GetComponent<FullBodyIK>())
                         in >> fb->blendSpeed >> fb->goalSmoothing >> fb->lookSmoothing >> fb->armMinBend >> fb->legMinBend;

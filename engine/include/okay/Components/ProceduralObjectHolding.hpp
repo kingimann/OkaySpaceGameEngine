@@ -17,6 +17,16 @@
 //
 // Dropping hands the object back to physics and the hands ease back to the
 // animation.
+//
+// Online (a NetworkManager hosting or joined, `replicate` on): a pickup or drop
+// asks the server (the "hold" / "hold_drop" RPCs, so NetValidator rules and
+// on_validate_rpc see them). The server checks that the sender owns the
+// character, that the object is holdable, free and within reach, then holds it
+// on its copy and publishes the holding state as the server-only synced variable
+// "srv.hold/<character>" = "<object>|<hand>". Every peer (late joiners too) holds
+// the same object on its copy of that character, and computes the pose itself
+// from the same grips and rules: no bones are sent. The owner holds at once and
+// lets go again if the server refuses.
 // ---------------------------------------------------------------------------
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -27,6 +37,8 @@
 #include "okay/Components/CharacterIK.hpp"
 #include "okay/Components/FullBodyIK.hpp"
 #include "okay/Components/HoldableObject.hpp"
+#include "okay/Components/NetworkSync.hpp"
+#include "okay/Net/NetworkManager.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Math/Quat.hpp"
@@ -34,6 +46,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -55,40 +68,29 @@ public:
     bool      bodyAdjustment = true;                   ///< heavy / big loads: lean back, walk slower, kept off the body
     CarryAnim carryAnimations = CarryAnim::Automatic;  ///< Automatic: the built-in lean; Custom: your Animator's carry
                                                        ///< states, driven by the holding / carryStyle / carryWeight params
+    bool      replicate = true;                        ///< online: pickups go through the server and everyone sees the hold
+    float     pickupRange = 2.0f;                      ///< PickupNearest's reach (the server allows a metre more for lag)
 
     /// Take `obj` into the hands. Refused when it's already held (by anyone), is
     /// this character or part of it, or is null. Holding something else drops it.
+    /// Online, only the character's owner may pick up, only HoldableObjects, and
+    /// the server has the last word.
     bool Pickup(GameObject* obj) {
-        if (!obj || obj->IsDestroyed() || !obj->transform || !gameObject) return false;
-        if (obj->IsSelfOrDescendantOf(gameObject) || gameObject->IsSelfOrDescendantOf(obj)) return false;
-        auto* h = obj->GetComponent<HoldableObject>();
-        if (h && h->m_holder && h->m_holder != gameObject) return false;
-        if (obj == m_held) return true;
-        Drop();
-        FinishRelease(true);
-        if (!h) h = obj->AddComponent<HoldableObject>();
-        h->m_holder = gameObject;
-        m_held = obj; m_hold = h;
-        m_haveFrom = false; m_t = 0.0f;
-        // Physics lets go of it: no falling, no pushing the holder around.
-        m_physics.clear();
-        if (auto* rb = obj->GetComponent<Rigidbody3D>()) {
-            m_rbType = rb->bodyType; m_rb = rb;
-            rb->bodyType = Rigidbody3D::BodyType::Kinematic;
-            rb->velocity = Vec3::Zero; rb->angularVelocity = Vec3::Zero;
+        NetworkManager* nm = Net();
+        if (!nm) return PickupLocal(obj);
+        if (!obj || !obj->GetComponent<HoldableObject>() || !OwnsHolder(*nm)) return false;
+        if (!PickupLocal(obj)) return false;
+        if (nm->IsClient()) {
+            nm->RpcTo(0, kPickRpc, HolderKey() + "|" + ObjectKey(obj) + "|" + std::to_string((int)primaryHand));
+            m_pending = 2.0f;
         }
-        if (Scene* sc = obj->scene())
-            for (const auto& up : sc->Objects())
-                if (up && up->IsSelfOrDescendantOf(obj))
-                    for (auto* c : up->GetComponents<Collider3D>()) { m_physics.push_back({c, c->isTrigger}); c->isTrigger = true; }
-        if (m_ik) for (int l = 0; l < 2; ++l) m_saved[l] = m_ik->effectors[l];
-        m_savedValid = m_ik != nullptr;
         return true;
     }
 
     /// Pick up the nearest free HoldableObject within `range` metres of the
     /// character. Returns false when there's none (or it can't be taken).
-    bool PickupNearest(float range = 2.0f) {
+    bool PickupNearest(float range = -1.0f) {
+        if (range < 0.0f) range = pickupRange;
         Scene* sc = gameObject ? gameObject->scene() : nullptr;
         if (!sc || !transform) return false;
         const Vec3 at = BodyTransform()->Position();
@@ -106,16 +108,21 @@ public:
     /// Let go of the held object: physics takes it back (moving with the holder's
     /// velocity) and the hands ease back to the animation.
     void Drop() {
-        if (!m_held) return;
-        if (m_rb) {
-            m_rb->bodyType = m_rbType;
-            if (m_rbType == Rigidbody3D::BodyType::Dynamic)
-                if (auto* own = BodyRigidbody()) m_rb->velocity = own->velocity;
-        }
-        for (auto& p : m_physics) if (p.c) p.c->isTrigger = p.trigger;
-        if (m_hold && m_hold->m_holder == gameObject) m_hold->m_holder = nullptr;
-        Forget();
+        NetworkManager* nm = Net();
+        if (!m_held || (nm && !OwnsHolder(*nm))) return;
+        DropLocal();
+        if (nm && nm->IsClient()) { nm->RpcTo(0, kDropRpc, HolderKey()); m_pending = 2.0f; }
     }
+
+    /// Hold / let go on this peer only: no server, no shared state. For objects
+    /// every peer creates and decides on itself (an equipped item the inventory
+    /// already replicates); call it on every peer's copy of the character.
+    bool HoldLocal(GameObject* obj) {
+        if (!PickupLocal(obj, false)) return false;
+        m_localHold = true;
+        return true;
+    }
+    void ReleaseLocal() { DropLocal(false); }
 
     GameObject* Held() const { return m_held; }
     bool IsHolding() const { return m_held != nullptr; }
@@ -134,7 +141,31 @@ public:
     /// item in one hand).
     HoldableObject::Style CarryStyle() const { return m_style; }
 
-    void Start() override { EnsureRig(); }
+    /// This character's id on the network: its NetworkSync id, "peer:<n>" for a
+    /// NetworkPlayerSpawner player, else its name.
+    std::string HolderKey() const {
+        for (Transform* t = transform; t; t = t->Parent())
+            if (t->gameObject) if (auto* ns = t->gameObject->GetComponent<NetworkSync>())
+                return ns->netId.empty() ? t->gameObject->name : ns->netId;
+        if (!gameObject) return {};
+        const std::string& n = gameObject->name;
+        if (n == "LocalPlayer" && m_nm) return "peer:" + std::to_string(m_nm->LocalId());
+        if (n.rfind("Player_", 0) == 0) return "peer:" + n.substr(7);
+        return n;
+    }
+    /// An object's id on the network: its NetworkSync id, else its name.
+    static std::string ObjectKey(const GameObject* obj) {
+        if (!obj) return {};
+        if (auto* ns = obj->GetComponent<NetworkSync>()) if (!ns->netId.empty()) return ns->netId;
+        return obj->name;
+    }
+
+    void Start() override { EnsureRig(); FindNet(); }
+
+    void Update(float dt) override {
+        if (!m_nm && (m_netSearch -= dt) <= 0.0f) FindNet();
+        if (NetworkManager* nm = Net()) SyncFromNet(*nm, dt);
+    }
 
     void LateUpdate(float dt) override {
         if (m_releasing) FinishRelease(false);
@@ -143,8 +174,10 @@ public:
         AdjustBody(dt);
     }
 
+    // (Offline only: a character leaving the session or the scene closing must not
+    // write the shared state; the server's copy lets go on its own.)
     void OnDestroy() override {
-        Drop();
+        DropLocal();
         FinishRelease(true);
     }
 
@@ -163,9 +196,167 @@ public:
         }
         if (m_ik && dying.count(m_ik->gameObject)) { m_ik = nullptr; m_savedValid = false; m_releasing = false; }
         if (m_char && dying.count(m_char->gameObject)) m_char = nullptr;
+        if (m_nm && dying.count(m_nm->gameObject)) m_nm = nullptr;
     }
 
 private:
+    static constexpr const char* kPickRpc = "hold";
+    static constexpr const char* kDropRpc = "hold_drop";
+    static constexpr const char* kRefusedRpc = "hold_refused";
+
+    bool PickupLocal(GameObject* obj, bool publish = true) {
+        if (!obj || obj->IsDestroyed() || !obj->transform || !gameObject) return false;
+        if (obj->IsSelfOrDescendantOf(gameObject) || gameObject->IsSelfOrDescendantOf(obj)) return false;
+        auto* h = obj->GetComponent<HoldableObject>();
+        if (h && h->m_holder && h->m_holder != gameObject) return false;
+        if (obj == m_held) return true;
+        DropLocal();
+        FinishRelease(true);
+        if (!h) h = obj->AddComponent<HoldableObject>();
+        h->m_holder = gameObject;
+        m_held = obj; m_hold = h;
+        m_haveFrom = false; m_t = 0.0f;
+        // Physics lets go of it: no falling, no pushing the holder around.
+        m_physics.clear();
+        if (auto* rb = obj->GetComponent<Rigidbody3D>()) {
+            m_rbType = rb->bodyType; m_rb = rb;
+            rb->bodyType = Rigidbody3D::BodyType::Kinematic;
+            rb->velocity = Vec3::Zero; rb->angularVelocity = Vec3::Zero;
+        }
+        if (Scene* sc = obj->scene())
+            for (const auto& up : sc->Objects())
+                if (up && up->IsSelfOrDescendantOf(obj))
+                    for (auto* c : up->GetComponents<Collider3D>()) { m_physics.push_back({c, c->isTrigger}); c->isTrigger = true; }
+        if (m_ik) for (int l = 0; l < 2; ++l) m_saved[l] = m_ik->effectors[l];
+        m_savedValid = m_ik != nullptr;
+        m_localHold = false;
+        if (publish) Publish();
+        return true;
+    }
+    void DropLocal(bool publish = true) {
+        if (!m_held) return;
+        if (m_rb) {
+            m_rb->bodyType = m_rbType;
+            if (m_rbType == Rigidbody3D::BodyType::Dynamic)
+                if (auto* own = BodyRigidbody()) m_rb->velocity = own->velocity;
+        }
+        for (auto& p : m_physics) if (p.c) p.c->isTrigger = p.trigger;
+        if (m_hold && m_hold->m_holder == gameObject) m_hold->m_holder = nullptr;
+        Forget();
+        if (publish) Publish();
+    }
+
+    // ---- Network ----
+    NetworkManager* m_nm = nullptr;
+    float m_netSearch = 0.0f;
+    float m_pending = 0.0f;        // owner: waiting for the server's answer
+    bool  m_localHold = false;     // held through HoldLocal: the shared state doesn't apply
+    std::string m_netSeen;         // the shared state last acted on
+
+    void FindNet() {
+        m_netSearch = 1.0f;
+        Scene* sc = gameObject ? gameObject->scene() : nullptr;
+        if (!sc) return;
+        auto all = sc->FindObjectsOfType<NetworkManager>();
+        m_nm = all.empty() ? nullptr : all.front();
+        if (m_nm) RegisterRpcs(sc, m_nm);
+    }
+    // The NetworkManager while it's hosting or joined and this replicates.
+    NetworkManager* Net() const {
+        return replicate && m_nm && (m_nm->IsServer() || (m_nm->IsClient() && m_nm->Joined())) ? m_nm : nullptr;
+    }
+    std::string VarKey() const { return "srv.hold/" + HolderKey(); }
+    std::string StateString() const {
+        return m_held ? ObjectKey(m_held) + "|" + std::to_string((int)primaryHand) : std::string();
+    }
+    // The server writes the shared state whenever its copy's hold changes.
+    void Publish() {
+        NetworkManager* nm = Net();
+        if (!nm || !nm->IsServer()) return;
+        m_netSeen = StateString();
+        if (nm->GetVar(VarKey()) != m_netSeen) nm->SetVar(VarKey(), m_netSeen);
+    }
+    bool OwnsHolder(const NetworkManager& nm) const {
+        for (Transform* t = transform; t; t = t->Parent())
+            if (t->gameObject) if (auto* ns = t->gameObject->GetComponent<NetworkSync>()) return ns->IsLocallyOwned();
+        const std::string key = HolderKey();
+        if (key.rfind("peer:", 0) == 0) return std::strtoul(key.c_str() + 5, nullptr, 10) == nm.LocalId();
+        return nm.IsServer();
+    }
+    // Server: may peer `from` drive the character called `key`?
+    static bool SenderOwns(const NetworkManager& nm, std::uint32_t from, const std::string& key) {
+        if (from == nm.LocalId()) return true;
+        const std::string id = std::to_string(from);
+        return key == "peer:" + id || key.rfind("sp/" + id + "/", 0) == 0;
+    }
+    static ProceduralObjectHolding* FindHolder(Scene& sc, const std::string& key) {
+        for (auto* h : sc.FindObjectsOfType<ProceduralObjectHolding>()) if (h->HolderKey() == key) return h;
+        return nullptr;
+    }
+    static GameObject* FindObject(Scene& sc, const std::string& key) {
+        for (auto* ns : sc.FindObjectsOfType<NetworkSync>())
+            if (ns->gameObject && (ns->netId.empty() ? ns->gameObject->name : ns->netId) == key) return ns->gameObject;
+        return sc.Find(key);
+    }
+    // The handlers don't belong to one character (any holder registers the same
+    // ones); they find the character by id.
+    static void RegisterRpcs(Scene* sc, NetworkManager* nm) {
+        nm->OnRpc(kPickRpc, [sc, nm](std::uint32_t from, const std::string& d) {
+            if (!nm->IsServer()) return;
+            const std::size_t a = d.find('|'), b = a == std::string::npos ? a : d.find('|', a + 1);
+            if (b == std::string::npos) return;
+            const std::string key = d.substr(0, a);
+            ProceduralObjectHolding* h = FindHolder(*sc, key);
+            GameObject* obj = FindObject(*sc, d.substr(a + 1, b - a - 1));
+            bool ok = h && obj && SenderOwns(*nm, from, key) && obj->GetComponent<HoldableObject>() && obj->transform &&
+                      (obj->transform->Position() - h->BodyTransform()->Position()).Magnitude() <= h->pickupRange + 1.0f;
+            if (ok) {
+                const int hand = std::atoi(d.c_str() + b + 1);
+                h->primaryHand = hand == 0 ? Hand::Left : hand == 2 ? Hand::Both : Hand::Right;
+                ok = h->PickupLocal(obj);
+            }
+            if (!ok) nm->RpcTo(from, kRefusedRpc, key);
+        });
+        nm->OnRpc(kDropRpc, [sc, nm](std::uint32_t from, const std::string& key) {
+            if (!nm->IsServer() || !SenderOwns(*nm, from, key)) return;
+            if (ProceduralObjectHolding* h = FindHolder(*sc, key)) h->DropLocal();
+        });
+        nm->OnRpc(kRefusedRpc, [sc, nm](std::uint32_t from, const std::string& key) {
+            if (from != 0 || nm->IsServer()) return;
+            if (ProceduralObjectHolding* h = FindHolder(*sc, key)) { h->m_pending = 0.0f; h->ApplyState(nm->GetVar(h->VarKey())); }
+        });
+    }
+    // Clients: hold what the server says this character holds. The owner keeps
+    // its own pickup while the server answers (it is refused or confirmed).
+    void SyncFromNet(NetworkManager& nm, float dt) {
+        if (nm.IsServer() || (m_localHold && m_held)) return;
+        const std::string v = nm.GetVar(VarKey());
+        if (m_pending > 0.0f) {
+            m_pending -= dt;
+            if (v == StateString()) m_pending = 0.0f;
+            else if (m_pending > 0.0f) return;
+        }
+        if (v == StateString()) { m_netSeen = v; return; }
+        if (v != m_netSeen || m_pending <= 0.0f) ApplyState(v);
+    }
+    void ApplyState(const std::string& v) {
+        Scene* sc = gameObject ? gameObject->scene() : nullptr;
+        if (!sc) return;
+        if (v.empty()) { DropLocal(); m_netSeen = v; return; }
+        const std::size_t a = v.find('|');
+        GameObject* obj = FindObject(*sc, v.substr(0, a));
+        if (!obj) return;   // not spawned here yet: try again next frame
+        if (a != std::string::npos) {
+            const int hand = std::atoi(v.c_str() + a + 1);
+            primaryHand = hand == 0 ? Hand::Left : hand == 2 ? Hand::Both : Hand::Right;
+        }
+        if (auto* h = obj->GetComponent<HoldableObject>())   // the server's word wins over a stale local hold
+            if (h->m_holder && h->m_holder != gameObject)
+                for (auto* other : sc->FindObjectsOfType<ProceduralObjectHolding>())
+                    if (other->gameObject == h->m_holder) other->DropLocal();
+        if (PickupLocal(obj)) m_netSeen = v;
+    }
+
     // One frame of holding: place the object, aim the hands.
     void Hold(float dt) {
         const Body b = BodyFrame();

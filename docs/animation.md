@@ -792,7 +792,19 @@ elbows bend down and out, and the object moves with the body.
   `carryStyle` (int: 0 small item, 1 custom, 2 pistol, 3 rifle, 4 box,
   5 flashlight, 6 sword, 7 cup, 8 heavy) and `carryWeight` (kg) for its own
   carry states or layer. The hands still go on the grips either way.
-- Scripts: `hold_nearest(range)` and `hold_pickup("Crate")` return 1 when the
+- **Multiplayer Replication** (on by default): with a NetworkManager hosting or
+  joined, a pickup or drop goes to the server as the `hold` / `hold_drop` RPCs,
+  so Net Validator rules and `on_validate_rpc` can limit them. The server checks
+  that the sender owns the character (its `sp/<peer>/...` NetworkSync id or its
+  NetworkPlayerSpawner peer), that the object has a Holdable Object, is free and
+  is within **Pickup Range** plus a metre. Then it holds the object on its copy
+  and publishes the server-only synced variable `srv.hold/<character>` =
+  `<object>|<hand>`. Every peer, late joiners included, holds the same object on
+  its copy of that character and works out the arms itself from the same grips
+  and rules. No bones are sent. The owner holds at once. If the server refuses,
+  or doesn't answer within two seconds, the owner goes back to what the server
+  says. Objects are matched by their NetworkSync id, else by name.
+- Scripts: `hold_nearest([range])` and `hold_pickup("Crate")` return 1 when the
   object is in the hands, `hold_drop()` lets go, `hold_object()` is the name of
   what's held ("" when nothing).
 

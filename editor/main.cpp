@@ -29326,6 +29326,10 @@ void DrawInspector(EditorState& ed) {
                 int ca = (int)ph->carryAnimations;
                 if (ImGui::Combo("Carry Animations##poh", &ca, "Automatic\0Custom\0")) { ph->carryAnimations = (ProceduralObjectHolding::CarryAnim)ca; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatic: the built-in lean against heavy loads.\nCustom: your Animator's own carry states, driven by its parameters\n'holding' (bool), 'carryStyle' (int) and 'carryWeight' (kg).");
+                if (ImGui::Checkbox("Multiplayer Replication##poh", &ph->replicate)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Online: pickups are checked by the server and every player sees the hold\n(only the holding state is sent; each client poses the arms itself).");
+                if (ImGui::DragFloat("Pickup Range##poh", &ph->pickupRange, 0.05f, 0.1f, 10.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("hold_nearest's reach; the server allows a metre more for lag.");
                 if (GameObject* held = ph->Held()) {
                     ImGui::Text("Holding: %s (%s)", held->name.c_str(), ph->CarryStyle() == HoldableObject::Style::Automatic ? "small item" : HoldableObject::StyleName(ph->CarryStyle()));
                     ImGui::Text("Heaviness %.2f, speed x%.2f", ph->Heaviness(), ph->SpeedMultiplier());

@@ -4492,6 +4492,7 @@ struct OkayScriptVM::Impl {
         };
         // Procedural Object Holding on this object:
         //   hold_pickup(name) / hold_nearest([range])   take an object into the hands -> 1 if held
+        //                                               (range defaults to the component's Pickup Range)
         //   hold_drop()                                 let go of it
         //   hold_object()                               name of what's held ("" = nothing)
         auto holder = [this]() -> ProceduralObjectHolding* {
@@ -4506,7 +4507,7 @@ struct OkayScriptVM::Impl {
         };
         b["hold_nearest"] = [holder](std::vector<Value>& a) {
             ProceduralObjectHolding* h = holder();
-            return Value{h && h->PickupNearest(a.empty() ? 2.0f : a[0].AsFloat()) ? 1.0f : 0.0f};
+            return Value{h && h->PickupNearest(a.empty() ? -1.0f : a[0].AsFloat()) ? 1.0f : 0.0f};
         };
         b["hold_drop"] = [holder](std::vector<Value>&) {
             if (ProceduralObjectHolding* h = holder()) h->Drop();

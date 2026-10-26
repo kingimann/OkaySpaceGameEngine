@@ -1009,6 +1009,16 @@ private:
         return "this value";
     }
 
+    // The script a reference (GetComponent<Health>()) points at, found again on each use.
+    Instance& ScriptOf(const Expr& recv, bool nullCond = false) {
+        const ObjRef r = AsRef(Receiver(recv, nullCond));
+        GameObject* g = Resolve(r, recv.loc);
+        const std::string& name = ScriptClassName(-1000 - r.type);
+        Instance* other = FindScriptInstance(g, name);
+        if (!other) throw RuntimeError(g->name + " doesn't have its " + name + " script any more", recv.loc);
+        return *other;
+    }
+
     Value SelfRef(int which) {
         GameObject* g = ctx_.self;
         if (!g) throw RuntimeError("This script isn't attached to an object", ctx_.loc);
@@ -1146,6 +1156,11 @@ private:
                 for (auto& kv : d->entries) out->items.push_back(e.bind == Bind::DictKeys ? kv.first : kv.second);
                 return Value{std::move(out)};
             }
+            case Bind::ScriptField: return ScriptOf(*e.object, e.nullCond).GetField(e.name);
+            case Bind::ScriptSelf: {
+                GameObject* g = Resolve(AsRef(Receiver(*e.object, e.nullCond)), e.object->loc);
+                return MakeRef(g, e.slot == 0 ? api_.gameObject : api_.transform);
+            }
             case Bind::PairKey: case Bind::PairValue:
                 return std::get<ArrayRef>(Receiver(*e.object, e.nullCond))->items[e.bind == Bind::PairKey ? 0 : 1];
             case Bind::Local: {
@@ -1188,6 +1203,9 @@ private:
             case Bind::Captured: fn_->captures[(std::size_t)e.slot]->v = v; return;
             case Bind::Field: (*self_)[(std::size_t)e.slot] = v; return;
             case Bind::StaticField: inst_.Statics()[(std::size_t)e.slot] = v; return;
+            case Bind::ScriptField:
+                if (!ScriptOf(*e.object).SetField(e.name, v)) throw RuntimeError("Can't set " + e.name + " to " + ValueToString(v), e.loc);
+                return;
             case Bind::SelfMember:
                 if (e.slot == 2 && ctx_.component) ctx_.component->enabled = AsB(v);
                 return;
@@ -1444,6 +1462,23 @@ private:
                 if (!g) throw RuntimeError("This script isn't attached to an object", e.loc);
                 const ApiType& t = api_.types[(std::size_t)e.slot];
                 return t.find && t.find(g) ? MakeRef(g, e.slot) : Value{};
+            }
+            case Bind::GetScript: {   // the script on the object, or null
+                GameObject* g = e.object ? Resolve(AsRef(Receiver(*e.object, e.nullCond)), e.object->loc) : ctx_.self;
+                if (!g) throw RuntimeError("This script isn't attached to an object", e.loc);
+                return FindScriptInstance(g, ScriptClassName(e.slot)) ? MakeRef(g, ScriptRefType(e.slot)) : Value{};
+            }
+            case Bind::ScriptMethod: {
+                Instance& other = ScriptOf(*e.object, e.nullCond);
+                std::vector<Value> args;
+                args.reserve(e.args.size());
+                for (auto& a : e.args) args.push_back(Eval(*a));
+                const int m = other.program().MethodIndex(e.name);
+                if (m < 0) throw RuntimeError(other.program().Component()->name + " has no " + e.name + "() any more", e.loc);
+                const std::uint64_t steps = other.steps;
+                Value r = other.Call(m, std::move(args));
+                other.steps = steps;   // a call from another script isn't a callback of its own
+                return r;
             }
             case Bind::StartCoroutine: {
                 const Value v = Receiver(*e.args[0]);

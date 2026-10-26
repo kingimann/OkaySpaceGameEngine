@@ -1595,6 +1595,95 @@ static void Coroutines() {
     }
 }
 
+static void Scripts() {
+    // The attacker loads first: it names Health before Health is loaded, so it's
+    // checked again when the scene starts.
+    const std::string health =
+            "class Health : Behaviour {\n"
+            "    public int hp = 100;\n"
+            "    public int[] secrets;\n"
+            "    public void TakeDamage(int amount) { hp -= amount; if (hp <= 0) Destroy(gameObject); }\n"
+            "    public bool IsAlive() { return hp > 0; }\n"
+            "    public string Name() { return gameObject.name; }\n"
+            "    public IEnumerator Regen() { while (hp < 100) { hp++; yield return null; } }\n"
+            "}\n"
+;
+    const std::string attacker =
+            "class Attacker : Behaviour {\n"
+            "    public int seen, after, missing, later;\n"
+            "    public string who;\n"
+            "    public bool alive;\n"
+            "    Health h;\n"
+            "    void Start() {\n"
+            "        h = GameObject.Find(\"Target\").GetComponent<Health>();\n"
+            "        h.TakeDamage(30);\n"
+            "        seen = h.hp;\n"
+            "        h.hp -= 5;\n"
+            "        after = h.hp;\n"
+            "        alive = h.IsAlive();\n"
+            "        who = h.Name();\n"
+            "        missing = GetComponent<Health>() == null ? 1 : 0;\n"
+            "        StartCoroutine(h.Regen());\n"
+            "    }\n"
+            "    void Update() { later = h.hp; }\n"
+            "    public void Kill() { h.TakeDamage(1000); }\n"
+            "}\n"
+;
+    {   // fields, methods, gameObject, coroutines and null for a script the object doesn't have
+        Scene scene{"S"};
+        GameObject* a = scene.CreateGameObject("Attacker");
+        GameObject* t = scene.CreateGameObject("Target");
+        std::string err;
+        auto* sa = a->AddComponent<ScriptComponent>(NextScriptVM::kLanguage);
+        CHECK(sa->LoadSource(attacker, &err));
+        auto* st = t->AddComponent<ScriptComponent>(NextScriptVM::kLanguage);
+        CHECK(st->LoadSource(health, &err));
+        scene.Start();
+        auto F = [&](const char* n) { return sa->VM()->GetGlobal(n).AsFloat(); };
+        CHECK_NEAR(F("seen"), 70.0f, 1e-6f);
+        CHECK_NEAR(F("after"), 65.0f, 1e-6f);
+        CHECK(sa->VM()->GetGlobal("alive").AsBool());
+        CHECK(sa->VM()->GetGlobal("who").AsString() == "Target");
+        CHECK_NEAR(F("missing"), 1.0f, 1e-6f);
+        CHECK_NEAR(st->VM()->GetGlobal("hp").AsFloat(), 66.0f, 1e-6f);   // Regen ran to its first yield
+        for (int i = 0; i < 5; ++i) scene.Update(kDt);
+        CHECK(st->VM()->GetGlobal("hp").AsFloat() > 66.0f);                // and goes on in Health's frames
+        // once its object is destroyed, using it is an error with the line
+        g_errs.clear();
+        sa->VM()->CallEvent("Kill");
+        scene.Update(kDt);
+        scene.Update(kDt);
+        CHECK(ErrHas("Update() line 17: This object was destroyed"));
+    }
+    {   // a script naming one that never loads says so when the scene starts
+        g_errs.clear();
+        Scene scene{"S"};
+        GameObject* a = scene.CreateGameObject("A");
+        std::string err;
+        auto* sa = a->AddComponent<ScriptComponent>(NextScriptVM::kLanguage);
+        CHECK(sa->LoadSource("class Lonely : Behaviour {\n    void Start() { Ghost g = GetComponent<Ghost>(); }\n}\n", &err));
+        scene.Start();
+        CHECK(ErrHas("Unknown type 'Ghost'"));
+    }
+    {   // mistakes, with line and column
+        auto d = Diags(
+            "class Bad : Behaviour {\n"
+            "    void Start() {\n"
+            "        Health h = GetComponent<Health>();\n"
+            "        Debug.Log(h.secrets);\n"
+            "        h.Nope();\n"
+            "        var x = GetComponent<Helth>();\n"
+            "        h.TakeDamage(\"a\");\n"
+            "    }\n"
+            "}\n"
+            );
+        CHECK(Has(d, 0, "Health.secrets can't be used from another script: it holds an array, list or other collection", 4, 21));
+        CHECK(Has(d, 0, "Health has no public method 'Nope'", 5, 11));
+        CHECK(Has(d, 0, "'Helth' isn't a component scripts can get yet", 6, 30));
+        CHECK(Has(d, 0, "Value 1 is string but needs int", 7, 22));
+    }
+}
+
 static void Parity() {
     // The same C# snippet gives the same results on the old OkayScript runtime.
     const std::string src =
@@ -1721,6 +1810,7 @@ int main() {
     Inheritance();
     TryCatch();
     Coroutines();
+    Scripts();
     Parity();
     Followups();
     BackCompat();

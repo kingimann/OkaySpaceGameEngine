@@ -5233,6 +5233,7 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         // Spawn centered (on screen, or in the panel it went into) so it's visible.
         UIRect r = GetUIRect(g);
         if (r.valid && r.anchorPtr && r.position) { *r.anchorPtr = UIAnchor::Center; *r.position = {0, 0}; }
+        ConvertToUIFrame(g);   // new widgets are placed by a UI Frame
         ed.Select(g); ed.dirty = true; created = true;
     };
     if (ImGui::BeginMenu("Basic")) {
@@ -26601,6 +26602,7 @@ void DrawInspector(EditorState& ed) {
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Resize this to wrap its child widgets (16 px padding); the children stay put on screen");
             }
+            oked::DrawUIFrameConvertButtons(go, ed);
             ImGui::EndGroup();
         }
         ImGui::EndChild();
@@ -29345,7 +29347,15 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatic: each object's own style (a carry from its size and weight unless it says Custom).\nCustom: always the object's grip points.");
                 if (ImGui::Checkbox("Arm IK##poh", &ph->armIK)) ed.dirty = true;
                 if (ImGui::DragFloat("Transition (s)##poh", &ph->transitionTime, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
-                if (GameObject* held = ph->Held()) ImGui::Text("Holding: %s", held->name.c_str());
+                if (ImGui::Checkbox("Body Adjustment##poh", &ph->bodyAdjustment)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Heavy or big loads: lean back, walk slower, kept off the body.");
+                int ca = (int)ph->carryAnimations;
+                if (ImGui::Combo("Carry Animations##poh", &ca, "Automatic\0Custom\0")) { ph->carryAnimations = (ProceduralObjectHolding::CarryAnim)ca; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatic: the built-in lean against heavy loads.\nCustom: your Animator's own carry states, driven by its parameters\n'holding' (bool), 'carryStyle' (int) and 'carryWeight' (kg).");
+                if (GameObject* held = ph->Held()) {
+                    ImGui::Text("Holding: %s (%s)", held->name.c_str(), ph->CarryStyle() == HoldableObject::Style::Automatic ? "small item" : HoldableObject::StyleName(ph->CarryStyle()));
+                    ImGui::Text("Heaviness %.2f, speed x%.2f", ph->Heaviness(), ph->SpeedMultiplier());
+                }
                 else if (ed.isPlaying()) ImGui::TextDisabled("Holding nothing");
                 if (ImGui::SmallButton("Remove##poh")) toRemove = ph;
             }
@@ -34693,6 +34703,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UITabs>(), "UI Tabs")) { go->AddComponent<UITabs>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDraggable>(), "UI Draggable")) { go->AddComponent<UIDraggable>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDropTarget>(), "UI Drop Target")) { go->AddComponent<UIDropTarget>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIFrame>() && GetUIRect(go).sizePtr, "UI Frame (anchors + pivot)")) { ConvertToUIFrame(go); ed.dirty = true; }
             if (item(!go->GetComponent<UIMask>(), "UI Mask (clip children)")) { go->AddComponent<UIMask>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIFlexItem>(), "UI Flex Item (grow / shrink)")) { go->AddComponent<UIFlexItem>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIListView>(), "UI List View")) { oked::BuildUIListView(go); ed.dirty = true; }
@@ -35068,7 +35079,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             // Stretch anchors (index 9..11) have no single 3×3 pip — clamp the marker
             // index into range so we never read past the 9-element pip array (OOB crash).
             int ai = (int)r.anchor;
-            bool stretchAnchor = okay::AnchorIsStretch(r.anchor);
+            bool stretchAnchor = r.Stretches();
             int markAi = (ai >= 0 && ai < 9) ? ai : 4;   // Center as a stand-in for stretch
             ImVec2 ra, rb; UIAnchorRefRect(ed.selected(), canvasPos, canvasSize, ra, rb);
             ImVec2 pips[9]; UIAnchorPips(ra, rb, pips);
@@ -35876,7 +35887,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                         Vec2 po, ps;
                         if (GetUIScreenRect(par, canvasSize.x, canvasSize.y, po, ps)) { frameOrigin = po; frameSize = ps; }
                     }
-                    Vec2 term = ResolveAnchor(r.anchor, Vec2{0.0f, 0.0f}, newScreen, frameSize.x, frameSize.y);
+                    Vec2 term = r.OriginWith(Vec2{0.0f, 0.0f}, newScreen, frameSize.x, frameSize.y);
                     // Grid-snap only on axes that didn't lock onto a guide.
                     auto gsnap = [&](float v, bool guided) { return (g_snap && !guided) ? Mathf::Round(v / grid) * grid : v; };
                     float oldW = r.sizePtr->x, oldH = r.sizePtr->y;   // for proportional child scale

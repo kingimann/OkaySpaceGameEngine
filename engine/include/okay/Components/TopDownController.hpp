@@ -5,6 +5,7 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/PlayerCollision.hpp"
+#include "okay/Components/MoveSpeed.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
@@ -77,7 +78,7 @@ public:
         stanceControl.ReadKeys();
         stanceControl.Step(gameObject, dt);
         bool running = stanceControl.Stance() == 0 && sprintKey && Input::GetKey(sprintKey) && moving;
-        float speed = stanceControl.Speed(running ? runSpeed : walkSpeed);
+        float speed = stanceControl.Speed(running ? runSpeed : walkSpeed) * MoveSpeedScale(gameObject);
 
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
         if (rb) {

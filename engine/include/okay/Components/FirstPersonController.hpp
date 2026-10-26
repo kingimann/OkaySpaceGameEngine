@@ -6,6 +6,7 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/PlayerCollision.hpp"
+#include "okay/Components/MoveSpeed.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
@@ -287,6 +288,7 @@ public:
         bool running = m_stance == Stance::Stand && moving && IsRunHeld(in);
         // The speed cap follows the body from one stance's to the next.
         float speed = StanceValue(m_stanceLevel, running ? runSpeed : walkSpeed, crouchSpeed, proneSpeed);
+        speed *= MoveSpeedScale(gameObject);   // carrying a heavy load
 
         // Ease the child camera to the stance's eye height.
         ApplyEyeHeight(dt);

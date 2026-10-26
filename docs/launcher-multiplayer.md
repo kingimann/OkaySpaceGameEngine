@@ -360,7 +360,14 @@ These always hold, whether or not the anti-cheat is on:
   really use: `__spawn`, `__despawn`, `__xform`, `__chat` and `__rpc/…`. In
   particular, only the host starts a match.
 - The server stamps chat with the sender's roster name, so nobody can post as
-  someone else.
+  someone else, and cuts a chat line to 512 bytes.
+- A client's message is applied and relayed only up to the Network Manager's
+  `maxRelayedBytes` (16 KB), and a client gets four times that in bytes a
+  second. A client's SyncVar has a key of at most 128 bytes and a value of
+  at most 4 KB, a client can create at most 256 keys, and its writes reach
+  its own room only.
+- A spawn must be at a real position, and a player's SpawnOwned objects go
+  when it leaves.
 - A network spawn must name a `.okayprefab` by a path relative to the game
   folder: no `..`, drive letters, UNC paths, device names or links leading
   outside it, and at most 4 MB. Every peer checks the spawns it receives and

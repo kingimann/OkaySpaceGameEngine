@@ -80,6 +80,8 @@
 #include "okay/Components/UILayoutGroup.hpp"
 #include "okay/Components/UIFlexItem.hpp"
 #include "okay/Components/UIMask.hpp"
+#include "okay/Components/UIFrame.hpp"
+#include "okay/Components/UIElement.hpp"   // GetUIRect: settle loaded UIFrames
 #include "okay/Components/UIListView.hpp"
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/WorldUI.hpp"
@@ -1082,7 +1084,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* ph = go->GetComponent<ProceduralObjectHolding>()) {
         out << "  objholding";
         KvOut k{out};
-        k("hand", (int)ph->primaryHand)("style", (int)ph->holdingStyle).b("armIK", ph->armIK)("transition", ph->transitionTime);
+        k("hand", (int)ph->primaryHand)("style", (int)ph->holdingStyle).b("armIK", ph->armIK)("transition", ph->transitionTime)
+         .b("body", ph->bodyAdjustment)("carry", (int)ph->carryAnimations);
         out << "\n";
     }
     if (auto* rm = go->GetComponent<RootMotion>()) {
@@ -2152,6 +2155,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (int)fi->alignSelf << "\n";
     }
     if (auto* mk = go->GetComponent<UIMask>()) out << "  uimask " << (mk->showGraphic ? 1 : 0) << "\n";
+    if (auto* fr = go->GetComponent<UIFrame>()) {
+        out << "  uiframe " << fr->anchorMin.x << " " << fr->anchorMin.y << " " << fr->anchorMax.x << " " << fr->anchorMax.y
+            << " " << fr->pivot.x << " " << fr->pivot.y << " " << fr->position.x << " " << fr->position.y
+            << " " << fr->size.x << " " << fr->size.y << "\n";
+    }
     if (auto* sv = go->GetComponent<UIScrollView>()) {
         out << "  uiscroll " << sv->position.x << " " << sv->position.y << " "
             << sv->size.x << " " << sv->size.y << " " << (int)sv->anchor << " "
@@ -3465,6 +3473,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     : hand == 2 ? ProceduralObjectHolding::Hand::Both : ProceduralObjectHolding::Hand::Right;
                     ph->holdingStyle = st == 1 ? ProceduralObjectHolding::StyleMode::Custom : ProceduralObjectHolding::StyleMode::Automatic;
                     k.b("armIK", ph->armIK); k.f("transition", ph->transitionTime);
+                    int carry = 0; k.b("body", ph->bodyAdjustment); k.i("carry", carry);
+                    ph->carryAnimations = carry == 1 ? ProceduralObjectHolding::CarryAnim::Custom : ProceduralObjectHolding::CarryAnim::Automatic;
                 } else if (field == "fbikx") {
                     if (auto* fb = go->GetComponent<FullBodyIK>())
                         in >> fb->blendSpeed >> fb->goalSmoothing >> fb->lookSmoothing >> fb->armMinBend >> fb->legMinBend;
@@ -5430,6 +5440,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int as = 0;
                     in >> fi->grow >> fi->shrink >> fi->baseSize.x >> fi->baseSize.y >> as;
                     fi->alignSelf = (UIFlexItem::Align)as;
+                } else if (field == "uiframe") {
+                    // Read after or before the widget's own line: the end of the parse
+                    // makes the frame the source of truth and mirrors it back.
+                    auto* fr = go->AddComponent<UIFrame>();
+                    in >> fr->anchorMin.x >> fr->anchorMin.y >> fr->anchorMax.x >> fr->anchorMax.y
+                       >> fr->pivot.x >> fr->pivot.y >> fr->position.x >> fr->position.y >> fr->size.x >> fr->size.y;
                 } else if (field == "uimask") {
                     auto* mk = go->AddComponent<UIMask>();
                     int sg = 1; in >> sg; mk->showGraphic = sg != 0;
@@ -5919,6 +5935,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
     // itself: give it the Animator that plays it now (its state clips carried over).
     if (version < 2)
         for (auto& [idx, go] : byIndex) { (void)idx; HumanoidLibrary::EnsureAnimator(go); }
+    // Make each loaded UIFrame the source of truth for its widget's fields now, so
+    // a script that writes those fields in its Start moves the frame.
+    for (auto& [idx, go] : byIndex) { (void)idx; if (go->GetComponent<UIFrame>()) GetUIRect(go); }
     return true;
 }
 

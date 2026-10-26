@@ -14,7 +14,12 @@ nothing is checked and nothing is sent differently from before.
     ball: the first to move it owns it. The server can hand any object to a
     player with `anticheat.SetOwner(netId, peer)`.
 
-  Every refusal is reported; repeat offenders are kicked.
+  Every refusal is reported; repeat offenders are kicked. A kicked account
+  can't join again for a minute, doubling with each repeat up to an hour, and
+  neither can anonymous players from its address (other signed-in players
+  there still can). A player who leaves or is kicked keeps its refusal count and its
+  Net Validator budgets and cooldowns for five minutes (by account, else by
+  address), so reconnecting resets nothing.
 - **P2 (identity and transport):** clients must encrypt, every packet is
   numbered and replays are refused, and a joining player can be required to
   hold a **session ticket** signed by your ticket service.
@@ -44,6 +49,10 @@ ticketAudience arena-1              # this server's id in tickets ("" = any)
 maxClockDrift 0.05                  # a client's game clock may run 5% off; 0 = no check
 # Gameplay
 serverVar score                     # SyncVar key prefixes only the server may write (repeatable)
+clientVar player.                   # if any is set, the only SyncVar key prefixes clients may write (repeatable)
+maxSpawnsPerSecond 5                # spawns a client may make per second (0 = unlimited)
+maxLiveSpawnsPerPeer 50             # SpawnOwned objects a client may have at once (0 = unlimited)
+spawnRadius 0                       # how far from the sender a spawn may land (0 = anywhere)
 maxHitRange 60                      # hit claims: the longest shot (0 = any; the component's default is 300)
 weapon rifle                        # a weapon clients may claim hits with, besides Net Validator ones (repeatable)
 hitDamage 10                        # what a hit does, unless the game says otherwise
@@ -222,7 +231,7 @@ check them.
   (a reload, a pickup) with the **Server Budget** node, with
   `net_budget(id, "fire", 5)` in OkayScript, or with
   `NetValidator::TopUp(peer, n)`. A budget isn't refilled by going quiet:
-  coming back after a pause isn't a reload.
+  coming back after a pause isn't a reload, and neither is reconnecting.
 - **Hit claims.** A client calls `NetworkManager::ClaimHit(target, weapon,
   origin, direction)` (`net_hit(...)` in OkayScript). It sends
   `"__hit" = "<target sync id>|<weapon>|<tick>|ox oy oz|dx dy dz"`, which only

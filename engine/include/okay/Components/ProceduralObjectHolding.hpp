@@ -22,6 +22,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Scene.hpp"
+#include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
 #include "okay/Components/FullBodyIK.hpp"
@@ -45,11 +46,15 @@ public:
 
     enum class Hand { Left, Right, Both };
     enum class StyleMode { Automatic, Custom };
+    enum class CarryAnim { Automatic, Custom };
 
     Hand      primaryHand  = Hand::Right;              ///< the hand a one-handed object goes in (Both = support hand too)
     StyleMode holdingStyle = StyleMode::Automatic;     ///< Automatic: the object's own style; Custom: always its grip points
     bool      armIK = true;                            ///< bend the arms onto the grips (off: the object rides along)
     float     transitionTime = 0.3f;                   ///< seconds the object takes to come into the hands
+    bool      bodyAdjustment = true;                   ///< heavy / big loads: lean back, walk slower, kept off the body
+    CarryAnim carryAnimations = CarryAnim::Automatic;  ///< Automatic: the built-in lean; Custom: your Animator's carry
+                                                       ///< states, driven by the holding / carryStyle / carryWeight params
 
     /// Take `obj` into the hands. Refused when it's already held (by anyone), is
     /// this character or part of it, or is null. Holding something else drops it.
@@ -120,6 +125,14 @@ public:
     Vec3 GripPoint(bool left) const { return m_gripW[left ? 0 : 1]; }
     /// The Full Body IK the hands are driven through (null until Play wires it).
     FullBodyIK* IK() const { return m_ik; }
+    /// How heavy the load feels, 0 (light) .. 1 (30 kg, or a big heavy-style load).
+    float Heaviness() const { return m_held ? m_heavy : 0.0f; }
+    /// What movement speed is multiplied by while carrying (1 = unaffected; 0.55
+    /// at the heaviest). Controllers read it through MoveSpeedScale.
+    float SpeedMultiplier() const { return m_held && bodyAdjustment ? 1.0f - 0.45f * m_heavy : 1.0f; }
+    /// The style the held object is carried in this frame (Automatic = a small
+    /// item in one hand).
+    HoldableObject::Style CarryStyle() const { return m_style; }
 
     void Start() override { EnsureRig(); }
 
@@ -127,6 +140,7 @@ public:
         if (m_releasing) FinishRelease(false);
         if (m_held && EnsureRig()) Hold(dt);
         if (m_ik) for (int l = 0; l < 2; ++l) CurlFingers(l);
+        AdjustBody(dt);
     }
 
     void OnDestroy() override {
@@ -156,7 +170,11 @@ private:
     void Hold(float dt) {
         const Body b = BodyFrame();
         Plan p = MakePlan(b);
-        if (!p.fixed) KeepInReach(b, p);
+        if (!p.fixed) {
+            KeepInReach(b, p);
+            // (A rifle's stock belongs against the shoulder.)
+            if (bodyAdjustment && m_style != HoldableObject::Style::Rifle && KeepOutOfBody(b, p)) KeepInReach(b, p, true);
+        }
         // Ease from where it was picked up (kept relative to the body, so walking
         // during the pickup doesn't drag it) into the hold.
         const Quat inv = b.rot.Inverse();
@@ -192,6 +210,7 @@ private:
         Vec3 gp[2], gf[2], gn[2];   // grip point, finger direction, palm normal
         float curl[2] = {}, indexCurl[2] = {};   // how far the fingers (and the index finger) close
         bool fixed = false;          // at a socket: the object doesn't move to suit the arms
+        Vec3 bc{0, 0, 0}, bh{0.1f, 0.1f, 0.1f};   // the object's local bounds (centre, half size; scaled)
     };
     struct SavedCollider { Collider3D* c; bool trigger; };
 
@@ -216,6 +235,10 @@ private:
     std::vector<Finger> m_fingers[2];
     bool  m_fingersFound[2] = {};
     float m_curl[2] = {}, m_indexCurl[2] = {};
+    HoldableObject::Style m_style = HoldableObject::Style::Automatic;
+    float m_heavy = 0.0f;           // Heaviness() of the held object
+    float m_lean = 0.0f;            // eased weight of the lean-back layer
+    bool  m_announced = false;      // the Animator has been told about holding at least once
     Vec3  m_fromPos{0, 0, 0};
     Quat  m_fromRot;
     bool  m_haveFrom = false;
@@ -327,6 +350,14 @@ private:
         const bool custom = (h.style == HoldableObject::Style::Custom || holdingStyle == StyleMode::Custom) &&
                             (h.leftGrip.enabled || h.rightGrip.enabled);
         Transform* socket = h.socket.empty() ? nullptr : FindSocket(h.socket);
+        h.LocalBounds(p.bc, p.bh);
+        p.bc = p.bc * scale;
+        p.bh = {std::fabs(p.bh.x * scale.x), std::fabs(p.bh.y * scale.y), std::fabs(p.bh.z * scale.z)};
+        m_style = custom ? HoldableObject::Style::Custom : h.ResolvedStyle();
+        // Heaviness: from 3 kg (nothing) to 30 kg (all); big loads and the heavy style count more.
+        m_heavy = std::min(1.0f, std::max(0.0f, (h.Mass() - 3.0f) / 27.0f) +
+                                 (std::max(p.bh.x, p.bh.z) * 2.0f > 0.5f * b.s ? 0.25f : 0.0f));
+        if (m_style == HoldableObject::Style::Heavy) m_heavy = std::max(m_heavy, 0.6f);
         if (custom) {
             p.rot = b.rot * Quat::Euler(h.holdRotation);
             p.pos = b.chest + (b.side * h.holdOffset.x + b.up * h.holdOffset.y + b.fwd * h.holdOffset.z) * b.s;
@@ -345,10 +376,7 @@ private:
                 for (int l = 0; l < 2; ++l) if (g[l]->enabled) { SetGrip(p, l, *g[l], scale); p.use[l] = true; }
             }
         } else {
-            Vec3 c, half;
-            h.LocalBounds(c, half);
-            c = c * scale; half = {std::fabs(half.x * scale.x), std::fabs(half.y * scale.y), std::fabs(half.z * scale.z)};
-            StylePlan(b, p, h.ResolvedStyle(), c, half);
+            StylePlan(b, p, m_style, p.bc, p.bh);
         }
         if (socket) {
             p.pos = socket->Position(); p.rot = socket->Rotation();
@@ -502,7 +530,8 @@ private:
 
     // Move the object toward the body until every hand on it is within reach
     // (a little short of full stretch, where the soft IK would start easing).
-    void KeepInReach(const Body& b, Plan& p) const {
+    // `keepOut`: never move it back toward the body (it was just pushed off it).
+    void KeepInReach(const Body& b, Plan& p, bool keepOut = false) const {
         for (int it = 0; it < 4; ++it) {
             Vec3 shift{0, 0, 0};
             float worst = 0.0f;
@@ -514,8 +543,23 @@ private:
                 if (dist > maxR && dist - maxR > worst) { worst = dist - maxR; shift = d * ((dist - maxR) / dist); }
             }
             if (worst <= 1e-4f) break;
+            if (keepOut) { const float f = Vec3::Dot(shift, b.fwd); if (f < 0.0f) shift = shift - b.fwd * f; }
             p.pos = p.pos + shift;
         }
+    }
+    // Keep the object out of the torso (a box from the hips to the shoulders):
+    // anything that would sink into the chest or belly is pushed out in front.
+    // Returns true when it moved.
+    static bool KeepOutOfBody(const Body& b, Plan& p) {
+        const Vec3 hb = Extents(p.rot, p.bh, b);
+        const Vec3 rel = p.pos + p.rot * p.bc - b.chest;
+        const float x = Vec3::Dot(rel, b.side), y = Vec3::Dot(rel, b.up), z = Vec3::Dot(rel, b.fwd);
+        const float front = 0.13f * b.s;
+        const bool overlaps = std::fabs(x) - hb.x < 0.24f * b.s && y + hb.y > -0.75f * b.s && y - hb.y < 0.15f * b.s &&
+                              z - hb.z < front && z + hb.z > -0.14f * b.s;
+        if (!overlaps) return false;
+        p.pos = p.pos + b.fwd * (front + 0.01f * b.s - (z - hb.z));
+        return true;
     }
 
     GameObject* RuntimeTarget(GameObject*& slot, const char* name) {
@@ -588,6 +632,47 @@ private:
                 m_fingers[l].push_back({t, 1.0f, false, {}, {}, false});
             for (auto it = t->Children().rbegin(); it != t->Children().rend(); ++it) stack.push_back(*it);
         }
+    }
+
+    // Body adjustment through the character's animation: the Animator gets the
+    // holding / carryStyle / carryWeight parameters (its own carry states can use
+    // them), and with Automatic carry animations an additive layer leans the torso
+    // back against a heavy load, eased in and out.
+    static constexpr const char* kLeanClip = "Holding Lean";
+    void AdjustBody(float dt) {
+        if (m_held || m_announced) {
+            if (AnimStateMachine* sm = BaseAnimator()) {
+                sm->SetBool("holding", m_held != nullptr);
+                sm->SetInt("carryStyle", m_held ? (int)m_style : 0);
+                sm->SetFloat("carryWeight", m_held && m_hold ? m_hold->Mass() : 0.0f);
+                m_announced = m_held != nullptr;
+            }
+        }
+        const float want = m_held && bodyAdjustment && carryAnimations == CarryAnim::Automatic ? m_heavy : 0.0f;
+        m_lean += (want - m_lean) * (1.0f - std::exp(-4.0f * dt));
+        if (std::fabs(want - m_lean) < 1e-3f) m_lean = want;
+        Character* ch = m_char;
+        if (!ch) return;
+        const bool mine = ch->LayerClip() == kLeanClip;
+        if (m_lean <= 1e-3f) { if (mine) ch->StopLayer(); return; }
+        if (mine) { ch->SetLayerWeight(m_lean); return; }
+        if (ch->IsLayering()) return;   // a script's layer is playing: leave it be
+        if (!ch->HasClip(kLeanClip)) {
+            AnimClip c;
+            c.name = kLeanClip;
+            AnimKey k;
+            k.pose.assign(Character::BoneCount(), Vec3{0, 0, 0});
+            k.pose[1] = {-10.0f, 0.0f, 0.0f};   // torso: lean back 10 degrees at full weight
+            c.keys.push_back(k);
+            ch->AddClip(c);
+        }
+        ch->PlayLayer(kLeanClip, Character::BoneBit(1), true, m_lean);
+    }
+    AnimStateMachine* BaseAnimator() const {
+        GameObject* host = m_char ? m_char->gameObject : gameObject;
+        if (!host) return nullptr;
+        for (auto* sm : host->GetComponents<AnimStateMachine>()) if (sm->layer == 0) return sm;
+        return nullptr;
     }
 
     // Forget the object; the hands fade out on the goals they had, then the Full

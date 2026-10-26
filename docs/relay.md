@@ -98,6 +98,11 @@ The relay is on the internet, so it doesn't trust its peers:
   receives, so a forged source can't use up someone else's per-address quota.
   A version-3 hello is padded to 32 bytes and shorter ones are ignored, so the
   relay never answers with more bytes than it was sent.
+- **Sessions are capped per address:** one IP address may open at most 16
+  sessions at once (the peer that names a new code opens it), and hold at most
+  64 peers. That fits a LAN party or a home network behind one NAT hosting a
+  few games and calls, while everyone else joins those sessions; it takes at
+  least 128 addresses to fill the relay's 2048 sessions. Loopback is exempt.
 - **Hellos are rate limited:** 10 a second (20 as a burst) from each address
   that isn't a registered peer yet. Keepalive hellos from registered peers
   don't count, and loopback is exempt.
@@ -113,15 +118,22 @@ The relay is on the internet, so it doesn't trust its peers:
 accepts them while `--legacy-hello` is on (the default for now), and logs how
 many arrived each minute ("N legacy (version 1/2) hellos in the last minute").
 Once that stays at zero, run with `--legacy-hello=off`: they're refused with
-`RelayRefused{version}`. The launcher's voice calls still speak version 1, so
-they need moving to version 3 first. A version-3 game talks to a version-2 relay
+`RelayRefused{version}`. The launcher's voice calls speak version 3 (they fall
+back to version 1 only against a relay older than that), so turning legacy
+hellos off doesn't cut them off. A version-3 game talks to a version-2 relay
 unchanged: the older relay ignores the cookie and padding.
 
-Peers without a version byte (version 1: older games, and the launcher's voice
-calls, where every member announces the host role) still work. They get the
+Peers without a version byte (version 1: older games, and older launchers'
+voice calls, where every member announces the host role) still work. They get the
 forwarding rules and caps. A version-1 session gets no key, so it keeps the old
 hand-over: when its host leaves, the next host-role hello takes over. A
 version-2 game host won't join a session a version-1 peer is hosting.
+
+**Hub sessions.** Version 3 keeps that hand-over for sessions that want it with
+the `RelayHub` role (the launcher's voice calls): every member says hub, the
+first one in hosts, and the session never gets a host key, so when the hub
+leaves the next hub hello takes over. A hub hello can't take a game's protected
+session, and a game host won't join a hub session that has a hub.
 
 One gap follows from that: a version-1 peer that registers a game's code as
 host before the game's own (version-2) host does holds the code. The real host
@@ -140,8 +152,8 @@ relay. Point it at yours in **Settings > Chat > Voice server** (`host` or
 `host:port`, default port 45100), or bake a default into builds with
 `-DOKAY_DEFAULT_VOICE_RELAY=voice.example.com:45100`.
 
-Each call is a relay session: everyone registers as host, so the first one in
-becomes the room's hub and fans each 20 ms audio frame out to the others; if
+Each call is a relay session: everyone registers as hub (`RelayHub`, behind
+the relay's cookie), so the first one in becomes the room's hub and fans each 20 ms audio frame out to the others; if
 the hub leaves, the next hello makes someone else the hub. Audio is 16 kHz mono
 IMA ADPCM (~64 kbit/s per speaker), only sent while you're talking, and
 encrypted with ChaCha20 under a key that never reaches the relay: a random

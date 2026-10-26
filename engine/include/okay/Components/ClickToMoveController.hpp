@@ -3,6 +3,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Scene.hpp"
+#include "okay/Components/MoveSpeed.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
@@ -142,7 +143,7 @@ public:
         Vec3 dir = wd > 1e-4f ? Vec3{toW.x / wd, 0.0f, toW.z / wd}
                               : Vec3{to.x / dist, 0.0f, to.z / dist};
         bool running = stanceControl.Stance() == 0 && runKey && Input::GetKey(runKey);
-        float speed = stanceControl.Speed(running ? runSpeed : walkSpeed);
+        float speed = stanceControl.Speed(running ? runSpeed : walkSpeed) * MoveSpeedScale(gameObject);
         // Ease to a stop over the last `arriveRadius` metres so arrivals don't jolt.
         if (arriveRadius > 0.0f && dist < arriveRadius)
             speed *= Mathf::Max(0.3f, dist / arriveRadius);

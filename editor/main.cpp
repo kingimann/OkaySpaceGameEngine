@@ -33,6 +33,7 @@
 
 #include <numeric>
 #include <algorithm>
+#include <iterator>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -18393,6 +18394,7 @@ static int        g_livePrevAnim = 1;
 static float      g_livePrevT    = 0.0f;
 static float      g_livePrevSpeed = 1.0f;
 static int        g_livePrevKeepAnim = 1;   // ch->anim restored on stop
+static std::string g_livePrevClip;          // a clip (the Character's or the default library's) instead of g_livePrevAnim
 struct LivePrevBase { GameObject* go; Vec3 p; Quat r; Vec3 s; };
 static std::vector<LivePrevBase> g_livePrevBase;   // retargeted rig bind snapshot
 
@@ -18400,6 +18402,7 @@ static void StopLivePreview(EditorState& ed) {
     if (!g_livePrevCh) return;
     Character* ch = g_livePrevCh;
     g_livePrevCh = nullptr;
+    g_livePrevClip.clear();
     bool alive = false;
     for (const auto& up : ed.scene().Objects())
         if (up && up->GetComponent<Character>() == ch) { alive = true; break; }
@@ -18422,6 +18425,34 @@ static void StopLivePreview(EditorState& ed) {
             if (auto* sm = up->GetComponent<SkinnedMesh>()) { sm->ResolveJoints(); sm->Skin(); }
         g_livePrevBase.clear();
     }
+}
+
+// Start (or retarget) the live preview on `ch` from the beginning; the caller
+// picks what plays (g_livePrevAnim, or a clip in g_livePrevClip).
+static void StartLivePreview(EditorState& ed, Character* ch) {
+    if (g_livePrevCh != ch) {
+        StopLivePreview(ed);
+        g_livePrevKeepAnim = ch->anim;
+        // A retargeted rig gets posed for real — snapshot the model
+        // subtree so Stop restores the bind pose exactly.
+        g_livePrevBase.clear();
+        if (ch->driveExternal && ch->gameObject && ch->gameObject->transform)
+            for (const auto& up2 : ed.scene().Objects()) {
+                GameObject* g2 = up2.get();
+                if (g2 && g2 != ch->gameObject && g2->transform &&
+                    g2->IsSelfOrDescendantOf(ch->gameObject))
+                    g_livePrevBase.push_back({g2, g2->transform->localPosition,
+                                              g2->transform->localRotation,
+                                              g2->transform->localScale});
+            }
+    }
+    g_livePrevCh = ch; g_livePrevT = 0.0f; g_livePrevClip.clear();
+}
+
+// A clip a Character body can play: its own, else the default humanoid library's.
+static const AnimClip* BodyClip(Character* ch, const std::string& name) {
+    const AnimClip* c = ch->FindClip(name);
+    return c ? c : HumanoidLibrary::Find(name);
 }
 
 // Character animation: pose each bone, Key the whole pose at the playhead to build a
@@ -18531,27 +18562,12 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
         ImGui::TextDisabled("Built-in animations - click one to watch it live in the Scene view:");
         for (int i = 0; i < (int)(sizeof(kLiveAnims) / sizeof(kLiveAnims[0])); ++i) {
             if (i % 4) ImGui::SameLine();
-            bool on = (g_livePrevCh == ch && g_livePrevAnim == kLiveAnims[i].id);
+            bool on = (g_livePrevCh == ch && g_livePrevClip.empty() && g_livePrevAnim == kLiveAnims[i].id);
             if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.30f, 1.0f));
             char bl[32]; std::snprintf(bl, sizeof(bl), "%s##lp%d", kLiveAnims[i].name, kLiveAnims[i].id);
             if (ImGui::Button(bl, ImVec2(88, 0))) {
-                if (g_livePrevCh != ch) {
-                    StopLivePreview(ed);
-                    g_livePrevKeepAnim = ch->anim;
-                    // A retargeted rig gets posed for real — snapshot the model
-                    // subtree so Stop restores the bind pose exactly.
-                    g_livePrevBase.clear();
-                    if (ch->driveExternal && ch->gameObject && ch->gameObject->transform)
-                        for (const auto& up2 : ed.scene().Objects()) {
-                            GameObject* g2 = up2.get();
-                            if (g2 && g2 != ch->gameObject && g2->transform &&
-                                g2->IsSelfOrDescendantOf(ch->gameObject))
-                                g_livePrevBase.push_back({g2, g2->transform->localPosition,
-                                                          g2->transform->localRotation,
-                                                          g2->transform->localScale});
-                        }
-                }
-                g_livePrevCh = ch; g_livePrevAnim = kLiveAnims[i].id; g_livePrevT = 0.0f;
+                StartLivePreview(ed, ch);
+                g_livePrevAnim = kLiveAnims[i].id;
             }
             if (on) ImGui::PopStyleColor();
         }
@@ -18662,6 +18678,7 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
         PushAnimDraftUndo(ed, key, d);
         // Replace a key at ~this time, else insert in time order.
         AnimKey k; k.time = t; k.pose = pose;
+        if (clip.hasRoot) k.root = clip.SampleRoot(t);   // keep the hips' height where the clip had it
         bool replaced = false;
         for (auto& e : clip.keys) if (std::fabs(e.time - t) < 1e-3f) { e = k; replaced = true; break; }
         if (!replaced) {
@@ -27670,6 +27687,38 @@ void DrawInspector(EditorState& ed) {
             if (!ma && !body)
                 ImGui::TextColored(ImVec4(0.95f, 0.7f, 0.4f, 1.0f),
                                    "Needs a Model Animator (import a model here) or a Character on this object.");
+            if (body && sm->layer == 0) {
+                ImGui::SameLine();
+                if (ImGui::Button("Reset to default##asm")) {
+                    ed.PushUndo();
+                    HumanoidLibrary::DefaultGraph(*sm, body);
+                    ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Replace this graph with the default humanoid one (Idle, Walk, Run, Crouch,\n"
+                                      "Prone, Jump, Fall, Land, gestures). Clips bound on the Character stay bound.");
+            }
+            // What a state shows when previewed or edited: its clip, or for a blend
+            // tree the motion nearest the middle of the tree, straight ahead.
+            auto shownClip = [](const AnimStateMachine::State& st) -> std::string {
+                if (!st.blendTree || st.motions.empty()) return st.clip;
+                std::vector<float> along;
+                for (const auto& m : st.motions) along.push_back(st.blendDims == 2 ? m.posY : m.threshold);
+                std::nth_element(along.begin(), along.begin() + along.size() / 2, along.end());
+                const float mid = along[along.size() / 2];
+                const AnimStateMachine::Motion* best = nullptr; float bd = 1e30f;
+                for (const auto& m : st.motions) {
+                    const float dx = st.blendDims == 2 ? m.threshold : 0.0f, dy = (st.blendDims == 2 ? m.posY : m.threshold) - mid;
+                    if (dx * dx + dy * dy < bd) { bd = dx * dx + dy * dy; best = &m; }
+                }
+                return best->clip;
+            };
+            std::vector<std::string> bodyClips;   // the Character's clips and the default library's
+            if (body) {
+                const std::vector<std::string> own = body->ClipNames();
+                const std::vector<std::string>& lib = HumanoidLibrary::Names();
+                std::set_union(own.begin(), own.end(), lib.begin(), lib.end(), std::back_inserter(bodyClips));
+            }
             if (ed.isPlaying())
                 ImGui::TextColored(AccentCol(1.0f), "Current state: %s",
                                    sm->Current().empty() ? "(entering)" : sm->Current().c_str());
@@ -27694,10 +27743,14 @@ void DrawInspector(EditorState& ed) {
                 ImGui::SetNextItemWidth(140);
                 if (ImGui::InputText("State##asm", nb, sizeof(nb))) { st.name = nb; ed.dirty = true; }
                 ImGui::SameLine();
-                // Clip picker (from the Model Animator's or the Character's clips).
+                // Clip picker (from the Model Animator's or the Character's clips); a
+                // blend tree is edited in the graph.
                 ImGui::SetNextItemWidth(150);
-                if ((ma || body) && ImGui::BeginCombo("##asmclip", st.clip.empty() ? "(clip)" : st.clip.c_str())) {
-                    for (const auto& cn : ma ? ma->ClipNames() : body->ClipNames())
+                if (st.blendTree) {
+                    ImGui::TextDisabled("blend tree, %d clips", (int)st.motions.size());
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open Animator Graph to edit its motions.");
+                } else if ((ma || body) && ImGui::BeginCombo("##asmclip", st.clip.empty() ? "(clip)" : st.clip.c_str())) {
+                    for (const auto& cn : ma ? ma->ClipNames() : bodyClips)
                         if (ImGui::Selectable(cn.c_str(), st.clip == cn)) { st.clip = cn; ed.dirty = true; }
                     ImGui::EndCombo();
                 }
@@ -27708,9 +27761,37 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Checkbox("loop##asm", &st.loop)) ed.dirty = true;
                 ImGui::SameLine();
                 if (ImGui::SmallButton("x##asmst")) delState = si;
+                // On a Character: watch the state's clip in the Scene view, or open
+                // a copy of it in the Animation tab (Apply there makes it this body's).
+                const std::string shown = body ? shownClip(st) : std::string();
+                if (body && BodyClip(body, shown)) {
+                    if (!ed.isPlaying()) {
+                        const bool on = g_livePrevCh == body && g_livePrevClip == shown;
+                        if (ImGui::SmallButton(on ? "Stop##asmprev" : "Preview##asmprev")) {
+                            if (on) StopLivePreview(ed);
+                            else { StartLivePreview(ed, body); g_livePrevAnim = body->anim; g_livePrevClip = shown; }
+                        }
+                        ImGui::SameLine();
+                    }
+                    if (ImGui::SmallButton("Edit clip##asm")) {
+                        const std::string key = AnimDraftKey(go);
+                        AnimDraft& d = g_animDrafts[key];
+                        PushAnimDraftUndo(ed, key, d);
+                        d.clip = *BodyClip(body, shown);
+                        d.t = 0.0f; d.playing = false; d.playOnStart = false;
+                        d.pose = d.clip.keys.empty() ? std::vector<Vec3>() : d.clip.keys.front().pose;
+                        d.pose.resize(Character::BoneCount(), Vec3{0, 0, 0});
+                        g_showAnimation = true;
+                        g_focusQueue.push_back("Animation###AnimationDock");
+                    }
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Edit %s in the Animation tab. Apply there saves it on this\n"
+                                          "Character, where it replaces the default clip of that name.", shown.c_str());
+                }
 
                 int delTr = -1;
-                for (int ti = 0; ti < (int)st.transitions.size(); ++ti) {
+                const bool showTr = ImGui::TreeNode("##asmtr", "%d transition(s)", (int)st.transitions.size());
+                for (int ti = 0; showTr && ti < (int)st.transitions.size(); ++ti) {
                     AnimStateMachine::Transition& tr = st.transitions[ti];
                     ImGui::PushID(5000 + ti);
                     ImGui::TextDisabled("  ->"); ImGui::SameLine();
@@ -27743,12 +27824,13 @@ void DrawInspector(EditorState& ed) {
                     ImGui::PopID();
                 }
                 if (delTr >= 0) { ed.PushUndo(); st.transitions.erase(st.transitions.begin() + delTr); ed.dirty = true; }
-                ImGui::TextDisabled("  ");
-                ImGui::SameLine();
-                if (ImGui::SmallButton("+ Transition##asm")) {
-                    ed.PushUndo();
-                    st.transitions.push_back({});
-                    ed.dirty = true;
+                if (showTr) {
+                    if (ImGui::SmallButton("+ Transition##asm")) {
+                        ed.PushUndo();
+                        st.transitions.push_back({});
+                        ed.dirty = true;
+                    }
+                    ImGui::TreePop();
                 }
                 ImGui::PopID();
             }
@@ -41181,8 +41263,15 @@ int main(int argc, char** argv) {
                     okay::Character* ch = g_livePrevCh;
                     g_livePrevT += pdt * g_livePrevSpeed;
                     int keep = ch->anim;
-                    ch->anim = g_livePrevAnim;
-                    ch->PreviewPose(ch->PoseAt(g_livePrevT), ch->StanceOffsetAt(g_livePrevT));
+                    const AnimClip* pc = g_livePrevClip.empty() ? nullptr : BodyClip(ch, g_livePrevClip);
+                    if (pc) {   // an Animator state's clip
+                        const float len = pc->Duration();
+                        const float t = len > 0.0f ? std::fmod(g_livePrevT * (pc->speed > 1e-4f ? pc->speed : 1.0f), len) : 0.0f;
+                        ch->PreviewPose(pc->Sample(t), pc->SampleRoot(t) * ch->height);
+                    } else {
+                        ch->anim = g_livePrevAnim;
+                        ch->PreviewPose(ch->PoseAt(g_livePrevT), ch->StanceOffsetAt(g_livePrevT));
+                    }
                     if (ch->driveExternal && ch->gameObject) {
                         // Pose the imported rig from the preview (LateUpdate reads
                         // CurrentPose + StanceOffset), then re-deform its skins.

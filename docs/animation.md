@@ -282,6 +282,15 @@ controller reports again. `anim` 0 hands the body back to its own pose; a
 script's held gesture (`play_clip("Wave")`) holds the state until released.
 Disable the Animator and the built-in animation plays the body as before.
 
+In the Inspector the Animator lists its states, what each plays (a clip, or a
+blend tree's clip count) and its transitions (folded; click to open). On a
+Character each state also has **Preview** (plays its clip live in the Scene
+view in edit mode; a blend tree shows its middle, straight-ahead motion) and
+**Edit clip** (opens a copy in the Animation tab: Apply there saves it on this
+Character, where it replaces the default clip of the same name). **Open
+Animator Graph** edits the graph; **Reset to default** puts the default graph
+back (Undo restores yours).
+
 ### Driving it yourself
 
 Driving a Character yourself (an NPC, a cutscene): set `anim` and, for the

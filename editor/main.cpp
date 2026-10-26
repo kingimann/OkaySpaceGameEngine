@@ -28,6 +28,7 @@
 #include "Splash.hpp"                   // branded loading frame (no black screen at startup)
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
 #endif
+#include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
 #include "tinyfiledialogs.h"            // native OS open/save file dialogs (asset import)
 
 #include <numeric>
@@ -2251,6 +2252,7 @@ struct BuildSettings {
     bool  cleanOutput = true;              // wipe stale build files first
     bool  dataFolder = true;               // clean Data/ layout (exe at root)
     bool  encryptData = false;             // obfuscate scenes + config
+    int   antiCheat = 0;                   // 0 off, 1 report, 2 enforce (docs/anticheat.md)
     // ---- Player presentation ----
     char  icon[260] = "";                  // window/taskbar icon PNG
     char  bundleId[160] = "com.okayspace.game";  // application identifier
@@ -2344,6 +2346,7 @@ static void WriteBuildProfileBlock(std::ostream& o, const BuildProfile& p) {
     o << "showFps=" << b.showFps << "\n" << "includeAll=" << b.includeAllProjectScenes << "\n";
     o << "dev=" << b.developmentBuild << "\n" << "clean=" << b.cleanOutput << "\n";
     o << "dataFolder=" << b.dataFolder << "\n" << "encrypt=" << b.encryptData << "\n";
+    o << "antiCheat=" << b.antiCheat << "\n";
     o << "runBg=" << b.runInBackground << "\n" << "muteUnfocus=" << b.muteOnFocusLoss << "\n";
     o << "maximized=" << b.startMaximized << "\n" << "userDir=" << b.saveToUserDir << "\n";
     o << "splashTime=" << b.splashTime << "\n";
@@ -2399,6 +2402,7 @@ static void ApplyBuildProfileKV(BuildProfile& p, const std::string& k, const std
     else if (k == "clean")     b.cleanOutput = B();
     else if (k == "dataFolder") b.dataFolder = B();
     else if (k == "encrypt")   b.encryptData = B();
+    else if (k == "antiCheat") b.antiCheat = std::max(0, std::min(2, I()));
     else if (k == "runBg")     b.runInBackground = B();
     else if (k == "muteUnfocus") b.muteOnFocusLoss = B();
     else if (k == "maximized") b.startMaximized = B();
@@ -3303,6 +3307,7 @@ struct Options {
     bool cleanOutput = true;   // wipe stale build files first (no leftovers from old builds)
     bool dataFolder  = true;   // tuck scenes/config/assets into a "Data/" subfolder (clean root)
     bool encryptData = false;  // obfuscate scenes + config so players can't read/edit them
+    int  antiCheat = 0;        // 0 off, 1 report, 2 enforce: the player checks Data/manifest.json + runtime checks
     bool fullscreenToggle = true;           // Alt+Enter / F11 in the shipped game
     std::vector<std::string> sceneList;     // Scenes In Build, in order (empty = the open scene)
     // ---- Player presentation ----
@@ -3515,6 +3520,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         cf << "boot_bar=" << (opt.bootBar ? 1 : 0) << "\n";
         cf << "startup=game.okayscene\n";
         for (const std::string& s : sceneFiles) cf << "scene=" << s << "\n";
+        if (opt.antiCheat) cf << "anticheat=" << okayac::ModeName((okayac::Mode)opt.antiCheat) << "\n";
     }
 
     // Optional: obfuscate the shipped scenes + config so they can't be read or
@@ -3619,6 +3625,11 @@ std::string Build(EditorState& ed, const std::string& outDir,
             fs::copy_file(bsrc, data / bsrc.filename(), fs::copy_options::overwrite_existing, be);
     }
 
+    // Data/manifest.json: every shipped file's SHA-256, signed when a key is set
+    // up (shared/AntiCheatIntegrity.hpp). Unsigned and unused unless anti-cheat is on.
+    const okayac::BuildManifestResult integrity = okayac::WriteBuildManifest(dir, gameName, opt.version, okayac::LoadSigningKey(),
+                                                                             (okayac::Mode)opt.antiCheat);   // the mode is signed too
+
     // Total build size on disk (so the user sees a clean, accounted-for output) +
     // an optional per-file breakdown for the result popup.
     std::uintmax_t totalBytes = 0;
@@ -3657,6 +3668,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
     if (copied)  msg += "  (" + std::to_string(copied) + " asset(s), " + human(assetBytes) + ")";
     if (missing) msg += "  WARNING: " + std::to_string(missing) +
                         " referenced asset(s) not found and not copied.";
+    if (!integrity.message.empty()) msg += "  (" + integrity.message + ")";
     return msg;
 }
 
@@ -15305,6 +15317,9 @@ void DrawFileDialogs(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("The game .exe + DLLs sit at the root; scenes/config/assets go in a Data/ subfolder so the game root is clean.");
                 ImGui::Checkbox("Encrypt game data", &g_build.encryptData);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Obfuscate the shipped scenes + config so players can't open them in a text editor to read or cheat-edit your game.\nNote: deters casual tampering, not a determined attacker (the key ships in the game).");
+                ImGui::SetNextItemWidth(160);
+                ImGui::Combo("Anti-cheat", &g_build.antiCheat, "Off\0Report\0Enforce\0");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", okayac::kBuildSettingsTooltip);
                 ImGui::Spacing(); SectionHeader("After the build");
                 ImGui::Checkbox("Open the output folder", &g_build.openFolderAfter);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reveal the finished build in your file browser when it's done.");
@@ -15466,6 +15481,7 @@ void DrawFileDialogs(EditorState& ed) {
             o.preferD3D12 = g_build.preferD3D12;
             o.cleanOutput = g_build.cleanOutput; o.dataFolder = g_build.dataFolder;
             o.encryptData = g_build.encryptData;
+            o.antiCheat = g_build.antiCheat;
             o.iconPath = g_build.icon; o.bundleId = g_build.bundleId;
             o.runInBackground = g_build.runInBackground; o.muteOnFocusLoss = g_build.muteOnFocusLoss;
             o.startMaximized = g_build.startMaximized;

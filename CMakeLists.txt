@@ -76,6 +76,16 @@ set(OKAY_DEFAULT_VOICE_RELAY "" CACHE STRING "Default voice relay (host[:port]) 
 if(OKAY_DEFAULT_VOICE_RELAY)
     add_compile_definitions(OKAY_DEFAULT_VOICE_RELAY="${OKAY_DEFAULT_VOICE_RELAY}")
 endif()
+# Anti-cheat (opt-in, docs/anticheat.md): the ed25519 PUBLIC keys the player and
+# launcher accept on a build's Data/manifest.json, as hex, comma-separated (e.g.
+# the release key, then the dev key). Public keys only; the private keys never
+# go near CMake. Empty = none built in (a signature is checked but not its signer).
+set(OKAY_AC_TRUSTED_KEYS "" CACHE STRING "Anti-cheat: trusted ed25519 public keys (hex, comma-separated)")
+include(${CMAKE_SOURCE_DIR}/cmake/OkayAntiCheatKeys.cmake)
+okay_ac_check_trusted_keys("${OKAY_AC_TRUSTED_KEYS}")   # exactly 64 hex digits per key, or configure fails
+if(OKAY_AC_TRUSTED_KEYS)
+    add_compile_definitions(OKAY_AC_TRUSTED_KEYS="${OKAY_AC_TRUSTED_KEYS}")
+endif()
 
 # The Dear ImGui *docking-branch* commit the editor (and the editor-model test)
 # builds against; see editor/CMakeLists.txt. Override with -DOKAY_IMGUI_TAG=<ref>.

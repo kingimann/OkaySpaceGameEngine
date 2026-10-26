@@ -2,6 +2,7 @@
 // loop (player/main.cpp) onto the ui2d::Painter interface. See UIRenderer.hpp.
 #include "okay/UI/UIRenderer.hpp"
 #include <Okay.hpp>
+#include "okay/Core/Utf8.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -210,6 +211,7 @@ void MMFillPoly(Painter& r, const std::vector<Point>& pts, RGBA col) {
 // Draw a string with a TTF font (a textured glyph quad per character), tinted by col.
 void DrawTtfText(Painter& r, okay::TtfFont* f, const std::string& text,
                  float ox, float oy, float px, RGBA col, float letterSp, float lineSp) {
+    f->Prepare(text.c_str());   // bake any new characters before the atlas is uploaded
     Tex tex = r.FontAtlas(f);
     if (!tex) return;
     r.SetTextureColorMod(tex, col.r, col.g, col.b);
@@ -217,10 +219,14 @@ void DrawTtfText(Painter& r, okay::TtfFont* f, const std::string& text,
     const float s = px * (float)okay::Font8x8::Height / f->BakeHeight();
     const float baseline = f->Ascent((float)okay::Font8x8::Height) * px;
     float penX = ox, penY = oy;
-    for (char ch : text) {
-        if (ch == '\n') { penY += f->LineHeight((float)okay::Font8x8::Height) * px + lineSp * px; penX = ox; continue; }
-        const okay::TtfFont::Glyph* g = f->Get(ch);
-        if (!g) { penX += px * 4.0f; continue; }
+    std::uint32_t prev = 0;
+    for (const char* p = text.c_str(); *p;) {
+        const std::uint32_t cp = okay::NextCodepoint(p);
+        if (cp == '\n') { penY += f->LineHeight((float)okay::Font8x8::Height) * px + lineSp * px; penX = ox; prev = 0; continue; }
+        const okay::TtfFont::Glyph* g = f->GetCodepoint(cp);
+        if (!g) { penX += px * 4.0f; prev = 0; continue; }
+        penX += f->Kerning(prev, cp) * s;
+        prev = cp;
         int gw = g->x1 - g->x0, gh = g->y1 - g->y0;
         if (gw > 0 && gh > 0) {
             Rect src{g->x0, g->y0, gw, gh};

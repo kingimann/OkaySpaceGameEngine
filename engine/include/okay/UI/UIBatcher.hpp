@@ -63,6 +63,7 @@ private:
         int x = 0, y = 0, w = 0, h = 0;
         Tex own = nullptr;
         RGBA mod{255, 255, 255, 255};
+        unsigned version = 0;     // font atlas version last copied into the page
     };
     struct Page {
         Image img;

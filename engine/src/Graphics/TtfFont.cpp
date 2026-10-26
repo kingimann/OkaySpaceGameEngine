@@ -1,5 +1,6 @@
 #include "okay/Graphics/TtfFont.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Core/Utf8.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -10,6 +11,22 @@
 #include "stb_truetype.h"
 
 namespace okay {
+
+namespace {
+std::vector<std::string> g_fallbackPaths;
+}
+
+struct TtfFont::Impl {
+    std::vector<unsigned char> bytes;          // stbtt reads the font from here
+    stbtt_fontinfo info{};
+    int shelfX = 1, shelfY = 1, shelfH = 0;    // shelf packer cursor (1 px gutters)
+    bool full = false;                         // no room left: new glyphs show as '?'
+    std::unordered_map<std::uint32_t, Glyph> more;     // non-ASCII glyphs (node-stable)
+    std::unordered_map<std::uint64_t, float> kerning;  // pair -> bake-height px
+};
+
+TtfFont::TtfFont() : m_impl(std::make_unique<Impl>()) {}
+TtfFont::~TtfFont() = default;
 
 bool TtfFont::LoadFromFile(const std::string& path, float bakeHeightPx) {
     m_valid = false;
@@ -24,77 +41,143 @@ bool TtfFont::LoadFromFile(const std::string& path, float bakeHeightPx) {
     std::size_t got = std::fread(data.data(), 1, (std::size_t)sz, f);
     std::fclose(f);
     if (got != (std::size_t)sz) { Log::Error("[ttf] short read ", path); return false; }
-    return Bake(data.data(), data.size(), bakeHeightPx, path);
+    return Init(std::move(data), bakeHeightPx, path);
 }
 
 bool TtfFont::LoadFromMemory(const unsigned char* bytes, std::size_t size, float bakeHeightPx) {
     m_valid = false;
     if (!bytes || size < 16) return false;
-    return Bake(bytes, size, bakeHeightPx, "(memory)");
+    return Init(std::vector<unsigned char>(bytes, bytes + size), bakeHeightPx, "(memory)");
 }
 
-bool TtfFont::Bake(const unsigned char* bytes, std::size_t size, float bakeHeightPx, const std::string& path) {
-    (void)size;
+bool TtfFont::Init(std::vector<unsigned char> bytes, float bakeHeightPx, const std::string& path) {
     m_valid = false;
     if (bakeHeightPx < 8.0f) bakeHeightPx = 8.0f;
     m_bakeHeight = bakeHeightPx;
-
-    stbtt_fontinfo info;
-    int off = stbtt_GetFontOffsetForIndex(bytes, 0);
-    if (off < 0 || !stbtt_InitFont(&info, bytes, off)) {
+    *m_impl = Impl{};
+    m_impl->bytes = std::move(bytes);
+    const unsigned char* data = m_impl->bytes.data();
+    int off = stbtt_GetFontOffsetForIndex(data, 0);
+    if (off < 0 || !stbtt_InitFont(&m_impl->info, data, off)) {
         Log::Error("[ttf] not a valid font: ", path);
         return false;
     }
-    float scale = stbtt_ScaleForPixelHeight(&info, bakeHeightPx);
+    float scale = stbtt_ScaleForPixelHeight(&m_impl->info, bakeHeightPx);
     int asc = 0, desc = 0, gap = 0;
-    stbtt_GetFontVMetrics(&info, &asc, &desc, &gap);
+    stbtt_GetFontVMetrics(&m_impl->info, &asc, &desc, &gap);
     m_ascent     = (float)asc * scale;
     m_lineHeight = (float)(asc - desc + gap) * scale;
 
-    // Bake the printable ASCII range into a single-channel coverage atlas. Grow the
-    // atlas once if the glyphs don't fit at this bake height.
-    stbtt_bakedchar cdata[kCount];
-    int aw = 512, ah = 512;
-    std::vector<unsigned char> gray;
-    int rows = -1;
-    for (int attempt = 0; attempt < 2; ++attempt) {
-        gray.assign((std::size_t)aw * ah, 0);
-        rows = stbtt_BakeFontBitmap(bytes, off, bakeHeightPx,
-                                    gray.data(), aw, ah, kFirst, kCount, cdata);
-        if (rows > 0) break;
-        aw = 1024; ah = 1024;   // didn't fit — try a bigger atlas
-    }
-    if (rows <= 0) { Log::Error("[ttf] atlas bake failed: ", path); return false; }
+    // White everywhere, coverage in alpha, so hosts can tint it.
+    std::vector<std::uint8_t> rgba((std::size_t)kAtlasSize * kAtlasSize * 4, 255);
+    for (std::size_t i = 3; i < rgba.size(); i += 4) rgba[i] = 0;
+    m_atlas.Set(kAtlasSize, kAtlasSize, std::move(rgba));
 
-    // Expand coverage -> RGBA (white, alpha = coverage) so hosts can tint it.
-    std::vector<std::uint8_t> rgba((std::size_t)aw * ah * 4);
-    for (std::size_t i = 0; i < (std::size_t)aw * ah; ++i) {
-        rgba[i * 4 + 0] = 255; rgba[i * 4 + 1] = 255; rgba[i * 4 + 2] = 255;
-        rgba[i * 4 + 3] = gray[i];
-    }
-    m_atlas.Set(aw, ah, std::move(rgba));
-
-    for (int i = 0; i < kCount; ++i) {
-        const stbtt_bakedchar& b = cdata[i];
-        Glyph& g = m_glyphs[i];
-        g.x0 = b.x0; g.y0 = b.y0; g.x1 = b.x1; g.y1 = b.y1;
-        g.xoff = b.xoff; g.yoff = b.yoff; g.xadvance = b.xadvance;
-    }
+    for (int i = 0; i < kCount; ++i)
+        if (!Bake((std::uint32_t)(kFirst + i), m_ascii[i])) m_ascii[i] = Glyph{};
+    ++m_version;
     m_valid = true;
     return true;
+}
+
+bool TtfFont::HasGlyph(std::uint32_t cp) const {
+    return m_valid && stbtt_FindGlyphIndex(&m_impl->info, (int)cp) != 0;
+}
+
+bool TtfFont::Bake(std::uint32_t cp, Glyph& out) const {
+    // The font that has the character: this one, else the first fallback that does.
+    const Impl* src = nullptr;
+    int gi = stbtt_FindGlyphIndex(&m_impl->info, (int)cp);
+    if (gi) src = m_impl.get();
+    else {
+        auto tryFont = [&](const TtfFont* f) {
+            if (src || !f || f == this || !f->m_valid) return;
+            if (int g = stbtt_FindGlyphIndex(&f->m_impl->info, (int)cp)) { src = f->m_impl.get(); gi = g; }
+        };
+        for (const std::string& path : g_fallbackPaths) tryFont(GetFont(path));
+        tryFont(BuiltinUIFont());
+    }
+    if (!src) return false;
+
+    // Sized to this font's bake height, whichever font it comes from.
+    const float scale = stbtt_ScaleForPixelHeight(&src->info, m_bakeHeight);
+    int adv = 0, lsb = 0, x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    stbtt_GetGlyphHMetrics(&src->info, gi, &adv, &lsb);
+    stbtt_GetGlyphBitmapBox(&src->info, gi, scale, scale, &x0, &y0, &x1, &y1);
+    const int w = x1 - x0, h = y1 - y0;
+    out = Glyph{};
+    out.xoff = (float)x0; out.yoff = (float)y0; out.xadvance = (float)adv * scale;
+    if (w <= 0 || h <= 0) return true;   // blank (a space): metrics only
+
+    Impl& im = *m_impl;
+    if (im.full) return false;
+    if (im.shelfX + w + 1 > kAtlasSize) { im.shelfY += im.shelfH + 1; im.shelfX = 1; im.shelfH = 0; }
+    if (w + 2 > kAtlasSize || im.shelfY + h + 1 > kAtlasSize) {
+        im.full = true;
+        Log::Warning("[ttf] glyph atlas full; further new characters show as '?'");
+        return false;
+    }
+    const int ax = im.shelfX, ay = im.shelfY;
+    im.shelfX += w + 1;
+    if (h > im.shelfH) im.shelfH = h;
+
+    std::vector<unsigned char> gray((std::size_t)w * h);
+    stbtt_MakeGlyphBitmap(&src->info, gray.data(), w, h, w, scale, scale, gi);
+    std::uint8_t* px = m_atlas.Data();
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+            px[((std::size_t)(ay + y) * kAtlasSize + (ax + x)) * 4 + 3] = gray[(std::size_t)y * w + x];
+    out.x0 = ax; out.y0 = ay; out.x1 = ax + w; out.y1 = ay + h;
+    ++m_version;
+    return true;
+}
+
+const TtfFont::Glyph* TtfFont::GetCodepoint(std::uint32_t cp) const {
+    if (!m_valid || cp < 32 || cp == 127) return nullptr;   // controls draw nothing
+    if (cp <= (std::uint32_t)kLast) return &m_ascii[cp - kFirst];
+    auto it = m_impl->more.find(cp);
+    if (it != m_impl->more.end()) return &it->second;
+    Glyph g;
+    if (!Bake(cp, g)) g = m_ascii['?' - kFirst];   // no font has it, or the atlas is full
+    return &m_impl->more.emplace(cp, g).first->second;
+}
+
+float TtfFont::Kerning(std::uint32_t left, std::uint32_t right) const {
+    if (!m_valid || !left || !right) return 0.0f;
+    const std::uint64_t key = ((std::uint64_t)left << 32) | right;
+    auto it = m_impl->kerning.find(key);
+    if (it != m_impl->kerning.end()) return it->second;
+    float k = 0.0f;
+    const int a = stbtt_FindGlyphIndex(&m_impl->info, (int)left);
+    const int b = stbtt_FindGlyphIndex(&m_impl->info, (int)right);
+    if (a && b)
+        k = (float)stbtt_GetGlyphKernAdvance(&m_impl->info, a, b) *
+            stbtt_ScaleForPixelHeight(&m_impl->info, m_bakeHeight);
+    m_impl->kerning.emplace(key, k);
+    return k;
+}
+
+void TtfFont::Prepare(const char* text) const {
+    if (!text || !m_valid) return;
+    for (const char* p = text; *p;) GetCodepoint(NextCodepoint(p));
 }
 
 float TtfFont::Measure(const char* text, float pixelHeight) const {
     if (!text || !m_valid) return 0.0f;
     float scale = ScaleFor(pixelHeight);
     float maxW = 0.0f, lineW = 0.0f;
-    for (const char* p = text; *p; ++p) {
-        if (*p == '\n') { if (lineW > maxW) maxW = lineW; lineW = 0.0f; continue; }
-        if (const Glyph* g = Get(*p)) lineW += g->xadvance * scale;
+    std::uint32_t prev = 0;
+    for (const char* p = text; *p;) {
+        const std::uint32_t cp = NextCodepoint(p);
+        if (cp == '\n') { if (lineW > maxW) maxW = lineW; lineW = 0.0f; prev = 0; continue; }
+        if (const Glyph* g = GetCodepoint(cp)) lineW += (g->xadvance + Kerning(prev, cp)) * scale;
+        prev = cp;
     }
     if (lineW > maxW) maxW = lineW;
     return maxW;
 }
+
+void SetFontFallbacks(const std::vector<std::string>& paths) { g_fallbackPaths = paths; }
 
 // ---- Process-wide cache ------------------------------------------------------
 TtfFont* GetFont(const std::string& path) {

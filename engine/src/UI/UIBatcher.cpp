@@ -49,12 +49,13 @@ bool BatchPainter::Place(int page, int w, int h, int& x, int& y) {
     const int pw = w + kPad * 2, ph = h + kPad * 2;
     for (;;) {
         const int W = pg.img.Width(), H = pg.img.Height();
-        if (pw > W) return false;
-        if (pg.shelfX + pw > W) { pg.shelfY += pg.shelfH; pg.shelfX = 0; pg.shelfH = 0; }
-        if (pg.shelfY + ph <= H) {
-            x = pg.shelfX + kPad; y = pg.shelfY + kPad;
-            pg.shelfX += pw; pg.shelfH = std::max(pg.shelfH, ph);
-            return true;
+        if (pw <= W) {   // wider than the page: grow it below
+            if (pg.shelfX + pw > W) { pg.shelfY += pg.shelfH; pg.shelfX = 0; pg.shelfH = 0; }
+            if (pg.shelfY + ph <= H) {
+                x = pg.shelfX + kPad; y = pg.shelfY + kPad;
+                pg.shelfX += pw; pg.shelfH = std::max(pg.shelfH, ph);
+                return true;
+            }
         }
         // Out of room: double the page, keeping every entry where it is (UVs are
         // computed from pixel positions at draw time). Pending triangles of this page
@@ -107,15 +108,24 @@ Tex BatchPainter::LoadTexture(const std::string& path) {
 Tex BatchPainter::FontAtlas(TtfFont* font) {
     if (!font || !font->Valid()) return nullptr;
     if (m_passthrough) return m_b.FontAtlas(font);
-    auto it = m_byFont.find(font);
-    if (it != m_byFont.end()) return it->second;
-    Entry* e = nullptr;
     const Image& a = font->Atlas();
+    auto it = m_byFont.find(font);
+    if (it != m_byFont.end()) {
+        Entry* e = it->second;
+        // Glyphs were added since the copy (they never move, so earlier quads stay valid).
+        if (e && e->page >= 0 && e->version != font->AtlasVersion()) {
+            Blit(m_pages[e->page], a, e->x, e->y);
+            e->version = font->AtlasVersion();
+        }
+        return e;
+    }
+    Entry* e = nullptr;
     int x = 0, y = 0;
     if (EnsurePage(0) && Place(0, a.Width(), a.Height(), x, y)) {
         m_entries.push_back(Entry{});
         e = &m_entries.back();
         e->page = 0; e->x = x; e->y = y; e->w = a.Width(); e->h = a.Height();
+        e->version = font->AtlasVersion();
         Blit(m_pages[0], a, x, y);
     } else if (!m_passthrough) {
         if (Tex own = m_b.FontAtlas(font)) {

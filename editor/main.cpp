@@ -34775,23 +34775,30 @@ void DrawInspector(EditorState& ed) {
     ImGui::End();
 }
 
-// Upload a TTF font's glyph atlas as an SDL texture (once) for the editor's ImGui
-// draw lists. Cached per font; returns nullptr if it can't be created.
+// Upload a TTF font's glyph atlas as an SDL texture for the editor's ImGui draw
+// lists. Cached per font and re-uploaded when glyphs were added (AtlasVersion);
+// returns nullptr if it can't be created.
 static SDL_Texture* TtfAtlasTexture(okay::TtfFont* f) {
     if (!f || !f->Valid() || !g_sdlRenderer) return nullptr;
-    static std::unordered_map<okay::TtfFont*, SDL_Texture*> cache;
-    auto it = cache.find(f);
-    if (it != cache.end()) return it->second;
+    struct Cached { SDL_Texture* tex = nullptr; unsigned version = 0; };
+    static std::unordered_map<okay::TtfFont*, Cached> cache;
     const okay::Image& a = f->Atlas();
-    SDL_Texture* tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
-                                         SDL_TEXTUREACCESS_STATIC, a.Width(), a.Height());
-    if (tex) {
-        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
-        SDL_UpdateTexture(tex, nullptr, a.Data(), a.Width() * 4);
+    auto it = cache.find(f);
+    if (it == cache.end()) {
+        SDL_Texture* tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
+                                             SDL_TEXTUREACCESS_STATIC, a.Width(), a.Height());
+        if (tex) {
+            SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
+        }
+        it = cache.emplace(f, Cached{tex, f->AtlasVersion() - 1}).first;
     }
-    cache[f] = tex;
-    return tex;
+    Cached& c = it->second;
+    if (c.tex && c.version != f->AtlasVersion()) {
+        SDL_UpdateTexture(c.tex, nullptr, a.Data(), a.Width() * 4);
+        c.version = f->AtlasVersion();
+    }
+    return c.tex;
 }
 
 // Draw a string with a TTF font into an ImGui draw list (a textured quad per glyph,
@@ -34805,10 +34812,14 @@ static void DrawTtfText(ImDrawList* dl, okay::TtfFont* f, SDL_Texture* tex,
     const float baseline = f->Ascent((float)okay::Font8x8::Height) * px; // top -> baseline, screen px
     const float slant = italic ? 0.30f : 0.0f;
     float penX = ox, penY = oy;
-    for (char ch : text) {
-        if (ch == '\n') { penY += f->LineHeight((float)okay::Font8x8::Height) * px + lineSp * px; penX = ox; continue; }
-        const okay::TtfFont::Glyph* g = f->Get(ch);
-        if (!g) { penX += px * 4.0f; continue; }
+    std::uint32_t prev = 0;
+    for (const char* p = text.c_str(); *p;) {
+        const std::uint32_t cp = okay::NextCodepoint(p);
+        if (cp == '\n') { penY += f->LineHeight((float)okay::Font8x8::Height) * px + lineSp * px; penX = ox; prev = 0; continue; }
+        const okay::TtfFont::Glyph* g = f->GetCodepoint(cp);
+        if (!g) { penX += px * 4.0f; prev = 0; continue; }
+        penX += f->Kerning(prev, cp) * s;
+        prev = cp;
         int gw = g->x1 - g->x0, gh = g->y1 - g->y0;
         if (gw > 0 && gh > 0) {
             float x0 = penX + g->xoff * s, y0 = penY + baseline + g->yoff * s;
@@ -34840,6 +34851,7 @@ void DrawBitmapText(ImDrawList* dl, const std::string& text, float ox, float oy,
     // text keeps its size relative to its box; only the 8x8 pixel font needs >= 1.
     if (px < 0.15f) px = 0.15f;
     if (ttf && ttf->Valid()) {
+        ttf->Prepare(text.c_str());   // bake new characters before the atlas is uploaded
         if (SDL_Texture* tex = TtfAtlasTexture(ttf)) {
             DrawTtfText(dl, ttf, tex, text, ox, oy, px, col, letterSp, lineSp, italic);
             return;

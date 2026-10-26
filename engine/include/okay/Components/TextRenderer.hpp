@@ -5,6 +5,7 @@
 #include "okay/Math/Vec2.hpp"
 #include "okay/Graphics/Font.hpp"
 #include "okay/Graphics/TtfFont.hpp"
+#include "okay/Core/Utf8.hpp"
 #include <string>
 #include <cmath>
 #include <cctype>
@@ -154,10 +155,14 @@ public:
         if (TtfFont* tf = Font()) {
             float best = 0.0f, cur = 0.0f;
             float adv = letterSpacing; // extra spacing per glyph, in font pixels
-            for (char ch : s) {
-                if (ch == '\n') { best = std::max(best, cur); cur = 0.0f; continue; }
-                const TtfFont::Glyph* g = tf->Get(ch);
-                cur += (g ? g->xadvance * tf->ScaleFor((float)Font8x8::Height) : 0.0f) + adv;
+            const float k = tf->ScaleFor((float)Font8x8::Height);
+            std::uint32_t prev = 0;
+            for (const char* p = s.c_str(); *p;) {
+                const std::uint32_t cp = NextCodepoint(p);
+                if (cp == '\n') { best = std::max(best, cur); cur = 0.0f; prev = 0; continue; }
+                const TtfFont::Glyph* g = tf->GetCodepoint(cp);
+                cur += (g ? (g->xadvance + tf->Kerning(prev, cp)) * k : 0.0f) + adv;
+                prev = cp;
             }
             return (int)std::ceil(std::max(best, cur));
         }
@@ -190,9 +195,10 @@ public:
         std::string out, word; int lineLen = 0;
         auto flush = [&]() {
             if (word.empty()) return;
-            if (lineLen > 0 && lineLen + 1 + (int)word.size() > maxChars) { out += '\n'; lineLen = 0; }
+            const int len = (int)Utf8Length(word);   // characters, not bytes
+            if (lineLen > 0 && lineLen + 1 + len > maxChars) { out += '\n'; lineLen = 0; }
             else if (lineLen > 0) { out += ' '; ++lineLen; }
-            out += word; lineLen += (int)word.size(); word.clear();
+            out += word; lineLen += len; word.clear();
         };
         for (char c : s) {
             if (c == '\n') { flush(); out += '\n'; lineLen = 0; }

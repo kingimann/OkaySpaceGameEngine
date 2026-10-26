@@ -30,6 +30,8 @@
 #include "okay/UI/UIRenderer.hpp"       // the in-game UI pass (engine)
 #include "okay/UI/UIPainterSDL.hpp"     // ...drawn through this SDL backend
 #include "AntiCheatChecks.hpp"          // opt-in anti-cheat: integrity manifest + runtime checks
+#include "AntiCheatBackend.hpp"         // ...and the one report a run files about what they found
+#include "AntiCheatHardware.hpp"        // (with the salted hardware hash)
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"
 #include "OkayScriptUIBridge.hpp"
@@ -1343,6 +1345,16 @@ int main(int argc, char** argv) {
         std::ofstream(saveDir + "anticheat.log", std::ios::app) << line << "\n";
     };
     okayac::StartDecision acStart;
+    // What anti-cheat found goes to the backend (docs/sql/anticheat.sql) as one
+    // client_check report per run, when the player is signed in.
+    bool acReported = false;
+    auto acFileReport = [&](const std::string& check, const std::string& detail) {
+        if (acReported || (acStart.mode == okayac::Mode::Off && !acStart.result.ran) || !okay::Account::IsLoggedIn()) return;
+        acReported = true;
+        okayac::backend::Request q;
+        if (okayac::backend::FileClientCheck(cfg.title, check, detail, okayac::MachineHash(), q))
+            okay::Account::Api(q.path, q.method, q.body, q.header);
+    };
     if (!dedicatedServer) {
         const char* acEnv = std::getenv("OKAY_ANTICHEAT");
         const std::string acScene = argc > 1 && argv[1][0] != '-' ? std::string(argv[1]) : std::string();
@@ -1353,6 +1365,11 @@ int main(int argc, char** argv) {
             acLog("[anti-cheat] " + std::string(okayac::ModeName(acStart.mode)) + ": " + acStart.result.Summary());
             for (const std::string& n : acStart.result.notes) acLog("[anti-cheat] note: " + n);
             for (const std::string& p : acStart.result.problems) acLog("[anti-cheat] problem: " + p);
+            if (!acStart.result.ok) {
+                std::string all;
+                for (const std::string& p : acStart.result.problems) all += p + "\n";
+                acFileReport("integrity", all);
+            }
         }
         if (!acStart.allow) {
             SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, cfg.title.c_str(), acStart.message.c_str(), nullptr);
@@ -2504,6 +2521,11 @@ int main(int argc, char** argv) {
 #if !defined(__EMSCRIPTEN__)
     okay::GameIpc::ClearPresence();   // friends stop seeing a game that has closed
 #endif
+    if (!acGuard.Findings().empty()) {   // the runtime checks' findings, sent once at the end
+        std::string all;
+        for (const okayac::Finding& f : acGuard.Findings()) all += f.check + ": " + f.detail + "\n";
+        acFileReport(acGuard.Findings().front().check, all);
+    }
 
     Prefs::Save(prefsPath); // persist any prefs the game set this session
 

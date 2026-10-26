@@ -86,6 +86,17 @@ okay_ac_check_trusted_keys("${OKAY_AC_TRUSTED_KEYS}")   # exactly 64 hex digits 
 if(OKAY_AC_TRUSTED_KEYS)
     add_compile_definitions(OKAY_AC_TRUSTED_KEYS="${OKAY_AC_TRUSTED_KEYS}")
 endif()
+# The salt of the anti-cheat hardware hash (shared/AntiCheatHardware.hpp): give your
+# deployment its own so its hashes can't be matched with another's. Not a secret.
+set(OKAY_AC_HW_SALT "" CACHE STRING "Anti-cheat: hardware hash salt (empty = the built-in default)")
+if(OKAY_AC_HW_SALT)
+    string(FIND "${OKAY_AC_HW_SALT}" "\"" _okay_ac_q)
+    string(FIND "${OKAY_AC_HW_SALT}" "\\" _okay_ac_b)
+    if(NOT _okay_ac_q EQUAL -1 OR NOT _okay_ac_b EQUAL -1)
+        message(FATAL_ERROR "OKAY_AC_HW_SALT can't contain quotes or backslashes")
+    endif()
+    add_compile_definitions(OKAY_AC_HW_SALT="${OKAY_AC_HW_SALT}")
+endif()
 
 # The Dear ImGui *docking-branch* commit the editor (and the editor-model test)
 # builds against; see editor/CMakeLists.txt. Override with -DOKAY_IMGUI_TAG=<ref>.

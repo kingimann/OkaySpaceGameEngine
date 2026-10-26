@@ -578,6 +578,10 @@ target_include_directories(test_ui_frame PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_ui_frame PRIVATE okay::engine)
 add_test(NAME ui_frame COMMAND test_ui_frame)
 
+add_executable(test_ui_overlays test_ui_overlays.cpp)
+target_link_libraries(test_ui_overlays PRIVATE okay::engine)
+add_test(NAME ui_overlays COMMAND test_ui_overlays)
+
 add_executable(test_jump test_jump.cpp)
 target_link_libraries(test_jump PRIVATE okay::engine)
 add_test(NAME jump COMMAND test_jump)

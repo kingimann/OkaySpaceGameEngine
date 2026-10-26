@@ -433,11 +433,19 @@ You need two ed25519 keypairs:
    read, the manifest is written unsigned and the message says why. Key material
    never appears in that message.
 
-3. **Trusting (the player and the launcher)**: build them with your public keys:
+3. **Trusting (the launcher, and optionally a player)**: build them with your
+   public keys:
 
    ```bash
-   cmake ... -DOKAY_AC_TRUSTED_KEYS=<release public hex>,<dev public hex>
+   cmake ... -DOKAY_AC_TRUSTED_KEYS=<release public hex>,<dev public hex>          # the launcher
+   cmake ... -DOKAY_AC_PLAYER_TRUSTED_KEYS=<release public hex>                    # a player of your own games only
    ```
+
+   `OKAY_AC_TRUSTED_KEYS` goes to the launcher only, which applies it to the
+   official game. The player gets keys only from `OKAY_AC_PLAYER_TRUSTED_KEYS`
+   (see below for why the general player has none). The release workflow takes
+   the launcher's keys from the `OKAY_AC_TRUSTED_KEYS` repository variable, and
+   warns in the job summary when it's empty.
 
    Each key must be exactly 64 hex digits, separated by commas with no spaces;
    anything else fails the CMake configure. Keys that no signature should verify
@@ -658,6 +666,10 @@ every few seconds:
 
 Be clear-eyed about what this is.
 
+- **Without trusted keys it's telemetry.** A launcher built without
+  `OKAY_AC_TRUSTED_KEYS` can't tell who signed a game, so what its checks find is
+  something to report and look at, not proof. The same goes for every player
+  without keys.
 - **It's client-side.** Every check runs in a process the player controls. A
   cheater can patch the checks out of the exe or hook the APIs they call. In a
   player without trusted keys they can also delete the `anticheat=` line from

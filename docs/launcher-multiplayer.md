@@ -361,6 +361,13 @@ These always hold, whether or not the anti-cheat is on:
   particular, only the host starts a match.
 - The server stamps chat with the sender's roster name, so nobody can post as
   someone else, and cuts a chat line to 512 bytes.
+- A join is checked for room, then encryption (when the server requires it),
+  then the password, then the sign-in: nothing secret is checked in the
+  clear. One address gets 5 join attempts in 10 s (a refused join or a new
+  key exchange; a wrong password counts two; a join that gets in costs
+  nothing), then it's ignored for 10 s, doubling up to 5 minutes. A dedicated
+  server checks at most 64 new sign-ins at a time and tells the rest it's
+  busy.
 - A client's message is applied and relayed only up to the Network Manager's
   `maxRelayedBytes` (16 KB), and a client gets four times that in bytes a
   second. A client's SyncVar has a key of at most 128 bytes and a value of

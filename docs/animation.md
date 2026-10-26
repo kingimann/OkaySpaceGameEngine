@@ -192,7 +192,17 @@ animation (state machine, blending, crossfades), correcting the final pose:
 - **Aim IK** — point one bone at a target (weapon, turret, head). **Auto:
   Head** finds the head bone.
 - **Limb IK** — arm reach/grab. **Auto: L Arm / R Arm** map
-  shoulder → forearm → hand (fingers excluded).
+  shoulder → forearm → hand (fingers excluded). The bones turn to reach, so
+  they keep their length and the mesh bends with them. A **Weight** below 1
+  bends the limb part of the way.
+  - **Pole Mode** sets where the elbow or knee points when there's no Pole
+    object. **Auto** keeps the animation's own bend; **Character** turns
+    with the character; **World** is a fixed direction.
+  - **Softness** eases the last stretch to full reach, so the limb doesn't
+    snap straight.
+  - **Match Target Rotation** without a target object uses **Target
+    Rotation**.
+  - A broken target (NaN) leaves the animated pose alone.
 - **Chain IK** — long chains (tails, tentacles), FABRIK/CCD.
 - **Foot IK** — see below.
 

@@ -1,5 +1,16 @@
 OkaySpace Game Engine — Changelog
 
+v2.828.0
+  Multiplayer (opt-in, with a fixed net tick)
+  - Other players move smoothly: they're shown about 100 ms in the past and
+    blended between updates, and the delay grows on its own when the
+    connection is jittery. Older versions ignore the extra data (#330).
+  - Lag-compensated hits: when a player fires, the server rewinds everyone
+    to where the shooter saw them (up to 200 ms plus the shooter's ping),
+    checks the hit, then puts them back. A shot at what you saw counts; a
+    forged "I saw it a second ago" claim is refused. Game code can use the
+    same rewind with RewindRaycast (#331).
+
 v2.827.0
   Multiplayer (opt-in)
   - Server-authoritative movement now covers the 2D platformer and top-down

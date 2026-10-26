@@ -29,6 +29,8 @@
 #include "okay/Components/GridInventoryUI.hpp"
 #include "okay/Components/CraftingStation.hpp"
 #include "okay/Components/ChestInventory.hpp"
+#include "okay/Components/ItemPickup.hpp"
+#include "okay/Components/LootSource.hpp"
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"
@@ -1266,6 +1268,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         wc(ui->titleColor);
         out << " " << Quote(ui->backpackTitle);
         out << " " << Quote(ui->inventoryTarget);   // appended (quote-peek guarded)
+        out << " " << (int)(unsigned char)ui->useKey << " " << (ui->clickToUse ? 1 : 0);   // appended (numeric-peek guarded)
         out << "\n";
     }
     if (auto* gi = go->GetComponent<GridInventory>()) {
@@ -1753,6 +1756,27 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         for (const auto& s : inv->slots) out << " " << Quote(s.item) << " " << s.count;
         out << " " << inv->maxStack;   // appended (numeric-peek guarded on read)
         WriteInstanceData(out, inv->slots.size(), [&](std::size_t i) -> const ItemInstanceData& { return inv->slots[i].data; });
+        out << " " << inv->weightLimit << " " << (inv->slowWhenOverWeight ? 1 : 0) << " " << inv->overWeightSpeed;   // appended (guarded)
+        out << "\n";
+    }
+    if (auto* pk = go->GetComponent<ItemPickup>()) {
+        out << "  itempickup";
+        KvOut k{out};
+        k.str("item", pk->item)("count", pk->count).str("tag", pk->collectorTag).b("touch", pk->pickupOnTouch)
+         ("auto", pk->autoRadius).key("key", pk->interactKey)("range", pk->interactRange)
+         ("magnet", pk->magnetRadius)("magnetSpeed", pk->magnetSpeed);
+        if (!pk->data.Empty()) {
+            k("dur", pk->data.durability)("uid", pk->data.uid)("vals", pk->data.values.size());
+            for (std::size_t v = 0; v < pk->data.values.size(); ++v) {
+                const std::string n = std::to_string(v);
+                k.str(("k" + n).c_str(), pk->data.values[v].first).str(("v" + n).c_str(), pk->data.values[v].second);
+            }
+        }
+        out << "\n";
+    }
+    if (auto* ls = go->GetComponent<LootSource>()) {
+        out << "  lootsource";
+        KvOut{out}.str("table", ls->table)("when", (int)ls->when)("refill", ls->refill)("seed", ls->seed);
         out << "\n";
     }
     if (auto* tm = go->GetComponent<TurnManager>()) {
@@ -3762,7 +3786,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                                 rc(ui->titleColor);
                                                 ui->backpackTitle = ReadQuoted(in);
                                                 in >> std::ws;   // optional inventory target (quoted)
-                                                if (in.peek() == '"') ui->inventoryTarget = ReadQuoted(in);
+                                                if (in.peek() == '"') {
+                                                    ui->inventoryTarget = ReadQuoted(in);
+                                                    in >> std::ws;   // optional use key + click-to-use
+                                                    if (std::isdigit(in.peek())) { int uk = 0, cu = 0; in >> uk >> cu; ui->useKey = (char)uk; ui->clickToUse = (cu != 0); }
+                                                }
                                             }
                                         }
                                     }
@@ -4470,6 +4498,34 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (std::isdigit(mpk) || mpk == '-') {
                         in >> inv->maxStack;
                         ReadInstanceData(in, inv->slots.size(), [&](std::size_t i) -> ItemInstanceData& { return inv->slots[i].data; });
+                        in >> std::ws;   // optional weight limit + slow-down
+                        const int wpk = in.peek();
+                        if (std::isdigit(wpk) || wpk == '.' || wpk == '-') {
+                            int slow = 0;
+                            in >> inv->weightLimit >> slow >> inv->overWeightSpeed;
+                            inv->slowWhenOverWeight = (slow != 0);
+                        }
+                    }
+                } else if (field == "lootsource") {
+                    auto* ls = go->AddComponent<LootSource>();
+                    KvIn k(in);
+                    int w = 0;
+                    k.str("table", ls->table); k.i("when", w); k.f("refill", ls->refill); k.i("seed", ls->seed);
+                    ls->when = (LootSource::When)std::max(0, std::min(w, 2));
+                } else if (field == "itempickup") {
+                    auto* pk = go->AddComponent<ItemPickup>();
+                    KvIn k(in);
+                    k.str("item", pk->item); k.i("count", pk->count); k.str("tag", pk->collectorTag); k.b("touch", pk->pickupOnTouch);
+                    k.f("auto", pk->autoRadius); k.key("key", pk->interactKey); k.f("range", pk->interactRange);
+                    k.f("magnet", pk->magnetRadius); k.f("magnetSpeed", pk->magnetSpeed);
+                    pk->item = ItemId(pk->item);
+                    k.f("dur", pk->data.durability);
+                    if (const std::string* u = k.find("uid")) pk->data.uid = std::strtoull(u->c_str(), nullptr, 10);
+                    int nv = 0; k.i("vals", nv);
+                    for (int v = 0; v < nv && v < 256; ++v) {
+                        std::string key, val;
+                        k.str(("k" + std::to_string(v)).c_str(), key); k.str(("v" + std::to_string(v)).c_str(), val);
+                        pk->data.values.push_back({key, val});
                     }
                 } else if (field == "turnmgr") {
                     auto* tm = go->AddComponent<TurnManager>();
@@ -5842,11 +5898,12 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         if (auto* bm = go->GetComponent<BuildMode>())
             for (const auto& it : bm->palette) { add(it.prefab); add(it.icon); }
         if (auto* lt = go->GetComponent<LogicTarget>()) add(lt->spawnPrefab);
+        if (auto* ls = go->GetComponent<LootSource>()) add(ls->table);
     }
     // The item database (and its icons / drop prefabs) ships with any scene that has items.
     bool hasItems = false;
     for (const auto& go : scene.Objects())
-        if (go->GetComponent<Inventory>() || go->GetComponent<GridInventory>()) { hasItems = true; break; }
+        if (go->GetComponent<Inventory>() || go->GetComponent<GridInventory>() || go->GetComponent<ItemPickup>() || go->GetComponent<LootSource>()) { hasItems = true; break; }
     const ItemDatabase& db = ItemDatabase::Get();
     if (hasItems && !db.Path().empty()) {
         add(db.Path());

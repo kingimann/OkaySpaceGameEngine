@@ -30081,7 +30081,11 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Auto-tidy the bag whenever the backpack closes.");
                 char dk[2] = {ui->dropKey, 0};
                 if (ImGui::InputText("Drop Key##iu", dk, sizeof(dk))) { ui->dropKey = dk[0]; ed.dirty = true; }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Press to drop one of the selected hotbar item (blank = off).");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drops one of the held item into the world as a pickup (or to a script's on_item_dropped). Dragging a stack off the slots drops it too.");
+                char uk[2] = {ui->useKey, 0};
+                if (ImGui::InputText("Use Key##iu", uk, sizeof(uk))) { ui->useKey = uk[0]; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Uses the held item: eats/drinks/heals it (Consumables or its definition) or picks its build piece.");
+                if (ImGui::Checkbox("Click to Use##iu", &ui->clickToUse)) ed.dirty = true;
                 if (ImGui::Checkbox("Right-click split##iu", &ui->splitRightClick)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Right-click a stack to pick up part of it, then drop it where you want.");
                 ImGui::SameLine();
@@ -30323,6 +30327,36 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TreePop();
             }
             if (ImGui::SmallButton("Remove##cs")) toRemove = cs;
+        }
+    }
+    if (auto* pk = dynamic_cast<ItemPickup*>(curComp)) {
+        if (CompHeader("Item Pickup", pk, &toRemove)) {
+            ImGui::TextDisabled("An item in the world. Walk into it (trigger), come close, or press the key.");
+            if (ItemPicker("Item##pk", pk->item, 160)) ed.dirty = true;
+            if (ImGui::DragInt("Count##pk", &pk->count, 0.2f, 1, 99999)) ed.dirty = true;
+            char tb[64]; std::snprintf(tb, sizeof(tb), "%s", pk->collectorTag.c_str());
+            if (ImGui::InputText("Collector Tag##pk", tb, sizeof(tb))) { pk->collectorTag = tb; ed.dirty = true; }
+            if (ImGui::Checkbox("Pick Up On Touch##pk", &pk->pickupOnTouch)) ed.dirty = true;
+            if (ImGui::DragFloat("Auto Radius##pk", &pk->autoRadius, 0.05f, 0.0f, 50.0f)) ed.dirty = true;
+            char ik[2] = {pk->interactKey, 0};
+            if (ImGui::InputText("Interact Key##pk", ik, sizeof(ik))) { pk->interactKey = ik[0]; ed.dirty = true; }
+            if (pk->interactKey && ImGui::DragFloat("Interact Range##pk", &pk->interactRange, 0.05f, 0.1f, 50.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Magnet Radius##pk", &pk->magnetRadius, 0.05f, 0.0f, 50.0f)) ed.dirty = true;
+            if (pk->magnetRadius > 0.0f && ImGui::DragFloat("Magnet Speed##pk", &pk->magnetSpeed, 0.1f, 0.1f, 100.0f)) ed.dirty = true;
+        }
+    }
+    if (auto* ls = dynamic_cast<LootSource*>(curComp)) {
+        if (CompHeader("Loot Source", ls, &toRemove)) {
+            ImGui::TextDisabled("Rolls an .okayloot table into this container, or onto the ground on death.");
+            char tb[256]; std::snprintf(tb, sizeof(tb), "%s", ls->table.c_str());
+            if (ImGui::InputText("Loot Table##ls", tb, sizeof(tb))) { ls->table = tb; ed.dirty = true; }
+            int w = (int)ls->when;
+            const char* whens[] = {"On Start", "On First Open", "On Death"};
+            if (ImGui::Combo("When##ls", &w, whens, IM_ARRAYSIZE(whens))) { ls->when = (LootSource::When)w; ed.dirty = true; }
+            if (ImGui::DragFloat("Refill After (s)##ls", &ls->refill, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Once emptied, fill again after this many seconds (0 = only once).");
+            if (ImGui::DragInt("Seed##ls", &ls->seed, 1.0f, 0, 1 << 30)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Same seed = same rolls every time (0 = random).");
         }
     }
     if (auto* ch = dynamic_cast<ChestInventory*>(curComp)) {
@@ -32041,6 +32075,13 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragInt("Capacity##inv", &inv->capacity, 0.2f, 1, 999)) ed.dirty = true;
             if (ImGui::DragInt("Max Stack##inv", &inv->maxStack, 0.2f, 0, 9999)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Max items per stack (0 = unlimited). Add()/pickups and merges split past this, like Minecraft's 64.");
+            if (ImGui::DragFloat("Weight Limit##inv", &inv->weightLimit, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Carry limit from the item definitions' weights (0 = none). Scripts get on_encumbered(true/false).");
+            if (inv->weightLimit > 0.0f) {
+                if (ImGui::Checkbox("Slow When Over##inv", &inv->slowWhenOverWeight)) ed.dirty = true;
+                if (inv->slowWhenOverWeight && ImGui::SliderFloat("Over-weight Speed##inv", &inv->overWeightSpeed, 0.1f, 1.0f)) ed.dirty = true;
+                ImGui::Text("Weight: %.1f / %.1f%s", inv->TotalWeight(), inv->weightLimit, inv->OverWeight() ? "  (over)" : "");
+            }
             ImGui::Text("Slots: %d / %d", inv->SlotsUsed(), inv->capacity);
             int eraseS = -1;
             for (int i = 0; i < (int)inv->slots.size(); ++i) {
@@ -34427,6 +34468,12 @@ void DrawInspector(EditorState& ed) {
                 cs->recipes = {r};
                 ed.dirty = true;
             }
+            if (item(!go->GetComponent<ItemPickup>(), "Item Pickup")) {
+                auto* pk = go->AddComponent<ItemPickup>();
+                if (!okay::ItemDatabase::Get().Items().empty()) pk->item = okay::ItemDatabase::Get().Items().front().id;
+                ed.dirty = true;
+            }
+            if (item(!go->GetComponent<LootSource>(), "Loot Source")) { go->AddComponent<LootSource>(); ed.dirty = true; }
             if (item(!go->GetComponent<ChestInventory>(), "Chest / Container")) {
                 go->AddComponent<ChestInventory>();
                 if (!go->GetComponent<Inventory>()) {        // chest needs an Inventory for its loot

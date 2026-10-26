@@ -127,6 +127,11 @@ add_executable(test_item_database test_item_database.cpp)
 target_link_libraries(test_item_database PRIVATE okay::engine)
 add_test(NAME item_database COMMAND test_item_database)
 
+# Inventory gameplay: pickups/drops, using the held item, encumbrance, loot tables
+add_executable(test_inventory_gameplay test_inventory_gameplay.cpp)
+target_link_libraries(test_inventory_gameplay PRIVATE okay::engine)
+add_test(NAME inventory_gameplay COMMAND test_inventory_gameplay)
+
 add_executable(test_pathfinding test_pathfinding.cpp)
 target_link_libraries(test_pathfinding PRIVATE okay::engine)
 add_test(NAME pathfinding COMMAND test_pathfinding)

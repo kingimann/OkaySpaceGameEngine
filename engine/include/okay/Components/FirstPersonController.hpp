@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Components/Inventory.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -283,6 +284,7 @@ public:
         float speed = m_stance == Stance::Prone  ? proneSpeed
                     : m_stance == Stance::Crouch ? crouchSpeed
                     : (running ? runSpeed : walkSpeed);
+        speed *= Inventory::SpeedFactorOf(gameObject);   // over-encumbered (opt-in on the Inventory)
 
         // Ease the child camera to the stance's eye height.
         ApplyEyeHeight(dt);

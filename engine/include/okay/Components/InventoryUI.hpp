@@ -5,6 +5,7 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Components/Inventory.hpp"
 #include "okay/Inventory/InventoryOps.hpp"
+#include "okay/Components/ItemPickup.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Render/Color.hpp"
@@ -97,6 +98,8 @@ public:
     SortMode sortMode    = SortMode::Compact;
     bool  sortOnClose    = false;   ///< auto-Sort() the bag when the backpack closes
     char  dropKey        = 0;       ///< press to drop one of the selected hotbar item (0 = disabled)
+    char  useKey         = 0;       ///< press to use the selected hotbar item (0 = disabled)
+    bool  clickToUse     = false;   ///< left-click uses the selected item while the backpack is closed
     bool  splitRightClick = true;   ///< right-click a stack to pick up part of it
     bool  splitHalf       = true;   ///< right-click lifts half the stack (else just one)
     bool  shiftQuickMove  = true;   ///< shift+click moves a stack hotbar↔backpack
@@ -208,17 +211,36 @@ public:
         return InventoryOps::Drop(Inv(), selected, 1).Ok() ? item : std::string();
     }
 
-    /// The drop key: hands one of the selected item to a script's on_item_dropped(item)
-    /// (to spawn a pickup) and only takes it out of the bag if a script handles that
-    /// event — pressing drop never makes an item silently vanish.
-    bool DropSelectedToScript() {
-        const std::string item = SelectedItem();
-        if (item.empty() || SelectedCount() <= 0) return false;
-        IScriptVM* vm = DropHandler();
-        if (!vm) return false;
-        DropSelected();
-        vm->CallEventWith("on_item_dropped", vs::VsValue(item));
+    /// Drop `n` (0 = the whole stack) from slot `i`. A script's on_item_dropped(item)
+    /// takes it when one is listening (it spawns its own pickup); otherwise it lands in
+    /// the world in front of whoever carries this inventory as an ItemPickup, so it can
+    /// be picked up again. A dropped item is never just deleted.
+    bool DropToWorld(int i, int n = 1) {
+        Inventory* inv = Inv();
+        if (!inv || i < 0 || i >= (int)inv->slots.size() || Inventory::Empty(inv->slots[i])) return false;
+        Inventory::Slot dropped = inv->slots[i];
+        if (n > 0 && n < dropped.count) dropped.count = n;
+        if (IScriptVM* vm = DropHandler()) {
+            if (!InventoryOps::Drop(inv, i, dropped.count).Ok()) return false;
+            vm->CallEventWith("on_item_dropped", vs::VsValue(dropped.item));
+            return true;
+        }
+        GameObject* carrier = inv->gameObject;
+        Scene* sc = carrier ? carrier->scene() : nullptr;
+        if (!sc || !carrier->transform || !InventoryOps::Drop(inv, i, dropped.count).Ok()) return false;
+        const Vec3 pos = carrier->transform->Position() + carrier->transform->Forward() * 1.2f;
+        if (GameObject* g = ItemPickup::Spawn(*sc, dropped.item, dropped.count, dropped.data, pos))
+            g->GetComponent<ItemPickup>()->collectorTag = carrier->tag.empty() ? carrier->name : carrier->tag;
         return true;
+    }
+    /// The drop key: drop one of the selected hotbar item (see DropToWorld).
+    bool DropSelectedItem() { return DropToWorld(selected, 1); }
+
+    /// Use the selected hotbar item: eat/drink/heal it (Consumables) or pick its build
+    /// piece (BuildMode) — see InventoryOps::Use.
+    bool UseSelected() {
+        Inventory* inv = Inv();
+        return inv && InventoryOps::Use(inv, selected, inv->gameObject).Ok();
     }
 
     /// The Inventory this UI shows: on `inventoryTarget` when set, else on the same
@@ -270,7 +292,8 @@ public:
             if (wasOpen && !open && sortOnClose) Sort();   // auto-tidy on close
         }
         if (sortKey && Input::GetKeyDown(sortKey)) Sort();
-        if (dropKey && Input::GetKeyDown(dropKey)) DropSelectedToScript();
+        if (dropKey && Input::GetKeyDown(dropKey)) DropSelectedItem();
+        if ((useKey && Input::GetKeyDown(useKey)) || (clickToUse && !open && Input::GetMouseButtonDown(0))) UseSelected();
         if (selected < 0) selected = 0;
         if (selected >= hotbarSlots) selected = hotbarSlots - 1;
     }

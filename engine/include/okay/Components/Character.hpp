@@ -421,10 +421,11 @@ private:
     float m_travelYaw = 0.0f;      // eased travel direction the feet step along (deg, unclamped)
     float m_gaitDir = 1.0f;        // +1 stepping forward, -1 stepping backward (backpedal)
     float m_airT = 0.0f;           // seconds off the ground (DriveLocomotion)
-    Vec3  m_lastPos{0, 0, 0};      // last frame's position (measured ground speed)
-    bool  m_havePos = false;
-    float m_prevDt = 0.0f;         // last frame's dt (the physics step that moved the body)
-    Vec3  m_measVel{0, 0, 0};      // smoothed measured horizontal velocity
+    struct MoveSample { Vec3 p; float t; };
+    static constexpr int kMoveHist = 16;
+    MoveSample m_hist[kMoveHist]{};  // recent positions (measured ground speed over ~0.12 s)
+    int   m_histN = 0;
+    float m_moveClock = 0.0f;
     float m_gaitPhase = 0.0f;      // the stride cycle, 0..1 (0 = left touchdown); one clock for every gait state
     float m_gaitFreq = 0.0f;       // cycles/s the phase is advancing at (signed: < 0 backpedalling)
     float m_runW = 0.0f;           // 0 walking style .. 1 running style (eased over ~0.2 s)

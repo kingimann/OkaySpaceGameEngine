@@ -589,23 +589,32 @@ void Character::DriveLocomotion(const Locomotion& l) {
     // Measure what the body really did: a controller sets the velocity it WANTS
     // before physics runs, so pressed against a wall the velocity still says
     // "moving" while the body stands still. The position change is the truth. It
-    // happened during LAST frame's physics step, so it's divided by last frame's dt
-    // (a teleport/respawn jump is ignored), then smoothed over a few frames so an
-    // uneven frame rate doesn't make the stride shimmer.
+    // is taken over the last ~0.12 s of frames, so it doesn't matter whether the
+    // move landed this frame (a controller moving the transform) or last frame (a
+    // physics step), and an uneven frame rate doesn't make the stride shimmer. A
+    // teleport/respawn jump restarts the measurement.
     Vec3 vel = l.velocity;
     if (gameObject && gameObject->transform && l.dt > 1e-5f) {
         Vec3 pos = gameObject->transform->Position();
-        if (m_havePos && m_prevDt > 1e-5f) {
-            Vec3 d = pos - m_lastPos;
-            const float al = l.ignoreAxis.Magnitude();
+        const float al = l.ignoreAxis.Magnitude();
+        auto flat = [&](Vec3 d) {
             if (al > 1e-5f) { Vec3 a = l.ignoreAxis * (1.0f / al); d = d - a * Vec3::Dot(d, a); }
-            if (d.Magnitude() < 2.0f) vel = d * (1.0f / m_prevDt);
+            return d;
+        };
+        m_moveClock += l.dt;
+        if (m_histN > 0 && flat(pos - m_hist[m_histN - 1].p).Magnitude() > 2.0f) m_histN = 0;
+        if (m_histN > 0) {
+            Vec3 d = flat(pos - m_hist[0].p);
+            float span = m_moveClock - m_hist[0].t;
+            if (span > 1e-5f) vel = d * (1.0f / span);
         }
-        m_lastPos = pos; m_havePos = true; m_prevDt = l.dt;
-        float k = 1.0f - std::exp(-l.dt / 0.06f);
-        m_measVel.x += (vel.x - m_measVel.x) * k;
-        m_measVel.z += (vel.z - m_measVel.z) * k;
-        vel.x = m_measVel.x; vel.z = m_measVel.z;
+        // Keep one sample at least 0.12 s old (the window's start) and the newer ones.
+        while (m_histN > 1 && m_moveClock - m_hist[1].t >= 0.12f) {
+            for (int i = 1; i < m_histN; ++i) m_hist[i - 1] = m_hist[i];
+            --m_histN;
+        }
+        if (m_histN == kMoveHist) { for (int i = 1; i < m_histN; ++i) m_hist[i - 1] = m_hist[i]; --m_histN; }
+        m_hist[m_histN++] = {pos, m_moveClock};
     }
     // On the ground: a fresh contact, or solid ground just under the feet (contact
     // callbacks stop for a body at rest, and stepping off a curb shouldn't count).

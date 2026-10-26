@@ -294,6 +294,16 @@ inline Request Usernames(const std::vector<std::string>& ids) {
     return r;
 }
 
+// A session ticket for one game server (supabase/functions/session-ticket). The
+// machine hash is optional; with it the service also refuses a banned machine.
+inline Request SessionTicket(const std::string& serverId, const std::string& hwHash) {
+    Request r;
+    r.method = "POST";
+    r.path = "/functions/v1/session-ticket";
+    r.body = "{\"aud\":" + JStr(serverId) + (IsHwHash(hwHash) ? ",\"hw_hash\":" + JStr(hwHash) : std::string()) + "}";
+    return r;
+}
+
 // ---- Rows ----------------------------------------------------------------------
 struct Report {
     long id = 0;
@@ -426,9 +436,29 @@ inline bool ParseUsernames(const std::string& body, std::map<std::string, std::s
     return true;
 }
 
+// The ticket service's answer: a ticket, or banned (403 {"error":"banned"}: the
+// caller refreshes ac_my_bans so the ban banner shows), or neither (an error).
+struct TicketReply { std::string ticket; long exp = 0; bool banned = false; };
+inline bool IsBannedReply(long status, const std::string& body) {
+    detail::Value root;
+    return status == 403 && body.size() < 65536 && og::json::Reader(body).Parse(root) &&
+           root.kind == detail::Value::Object && detail::S(root, "error") == "banned";
+}
+inline bool ParseTicket(long status, const std::string& body, TicketReply& out) {
+    out = TicketReply();
+    if (IsBannedReply(status, body)) { out.banned = true; return false; }
+    detail::Value root;
+    if (status != 200 || body.size() >= 65536 || !og::json::Reader(body).Parse(root) || root.kind != detail::Value::Object) return false;
+    out.ticket = detail::S(root, "ticket");
+    out.exp = detail::N(root, "exp");
+    if (out.ticket.rfind("okt1.", 0) != 0) { out.ticket.clear(); return false; }
+    return true;
+}
+
 // A failed call, in words for a toast.
 inline std::string ErrorText(long status, const std::string& body) {
     if (status == 0) return "Couldn't reach the server.";
+    if (IsBannedReply(status, body)) return "You can't join: this account or machine has an anti-cheat ban.";
     std::string msg;
     detail::Value root;
     if (body.size() < 65536 && og::json::Reader(body).Parse(root) && root.kind == detail::Value::Object) msg = detail::S(root, "message");

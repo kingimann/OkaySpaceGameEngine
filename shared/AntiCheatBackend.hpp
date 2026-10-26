@@ -112,10 +112,26 @@ inline std::string InList(const std::vector<std::string>& ids) {
 }
 } // namespace detail
 
+namespace detail {
+inline bool Report(const char* kind, const std::string& reportedUid, const std::string& game, const std::string& reason,
+                   const std::string& details, const std::string& hwHash, Request& out, std::string* err);
+} // namespace detail
+
 // ---- Player calls --------------------------------------------------------------
 // Report another player. The server fills in the reporter (auth.uid()) and the status.
 inline bool FileReport(const std::string& reportedUid, const std::string& game, const std::string& reason,
                        const std::string& details, const std::string& hwHash, Request& out, std::string* err = nullptr) {
+    return detail::Report("player", reportedUid, game, reason, details, hwHash, out, err);
+}
+// A game server's anti-cheat kick of a player (kind 'server_kick'): only an
+// account in ac_report_servers may file it.
+inline bool FileServerKick(const std::string& reportedUid, const std::string& game, const std::string& reason,
+                           const std::string& details, Request& out, std::string* err = nullptr) {
+    return detail::Report("server_kick", reportedUid, game, reason, details, std::string(), out, err);
+}
+
+inline bool detail::Report(const char* kind, const std::string& reportedUid, const std::string& game, const std::string& reason,
+                           const std::string& details, const std::string& hwHash, Request& out, std::string* err) {
     const std::string why = Text(reason, 500);
     if (!IsUuid(reportedUid)) return detail::Fail(err, "Pick the player to report.");
     if (why.empty()) return detail::Fail(err, "Say what happened.");
@@ -124,7 +140,7 @@ inline bool FileReport(const std::string& reportedUid, const std::string& game, 
     out.method = "POST";
     out.path = "/rest/v1/ac_reports";
     out.header = "Prefer: return=minimal";
-    out.body = "{\"reported\":" + JStr(reportedUid) + ",\"kind\":\"player\",\"game\":" + JStrOrNull(Text(game, 120)) +
+    out.body = "{\"reported\":" + JStr(reportedUid) + ",\"kind\":\"" + kind + "\",\"game\":" + JStrOrNull(Text(game, 120)) +
                ",\"reason\":" + JStr(why) + ",\"details\":" + JStrOrNull(Text(details, 4000, true)) +
                ",\"hw_hash\":" + JStrOrNull(hwHash) + "}";
     return true;

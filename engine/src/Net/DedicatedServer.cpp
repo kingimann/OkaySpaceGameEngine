@@ -100,7 +100,7 @@ bool KickReporter::File(const NetworkManager::AntiCheatKick& k, double now) {
     }
     const std::string reason = "[server check] kicked by the server's anti-cheat" + (kinds.empty() ? std::string() : " (" + kinds + ")");
     okayac::backend::Request q;
-    if (!okayac::backend::FileReport(k.userId, m_game, reason, "player: " + k.name + "\n" + details, "", q)) return false;
+    if (!okayac::backend::FileServerKick(k.userId, m_game, reason, "player: " + k.name + "\n" + details, q)) return false;
     m_lastByUser[k.userId] = now;
     m_sent.push_back(now);
     m_send(q.path, q.method, q.body, q.header);

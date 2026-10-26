@@ -27787,6 +27787,16 @@ void DrawInspector(EditorState& ed) {
                     ImGui::EndCombo();
                 }
             }
+            if (sm->layer == 0 && ImGui::TreeNode("Stance changes##asm")) {
+                StanceTimes& t = sm->stanceTimes;
+                if (ImGui::DragFloat("Stand <-> crouch##asm", &t.standCrouch, 0.01f, 0.05f, 3.0f, "%.2fs")) ed.dirty = true;
+                if (ImGui::DragFloat("Crouch <-> prone##asm", &t.crouchProne, 0.01f, 0.05f, 3.0f, "%.2fs")) ed.dirty = true;
+                if (ImGui::DragFloat("Prone -> stand##asm", &t.proneStand, 0.01f, 0.05f, 4.0f, "%.2fs")) ed.dirty = true;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("How long the body takes to crouch, go prone and get up. The collider,\n"
+                                      "the camera and the speed limit follow it; the Animator gets `stance` (0..2).");
+                ImGui::TreePop();
+            }
             static const char* kCondNames[] = {"On Clip End", "Float >", "Float <", "Bool true", "Bool false", "Trigger"};
             int delState = -1;
             for (int si = 0; si < (int)sm->states.size(); ++si) {
@@ -27942,6 +27952,8 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Checkbox("Owned (this peer broadcasts)##ns", &ns->owned)) ed.dirty = true;
             if (ImGui::Checkbox("Sync animation##ns", &ns->syncAnimation)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("If this object (or a child) has a Character, replicate its animation + punches too.");
+            if (ImGui::Checkbox("Players can claim it##ns", &ns->clientClaimable)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("With an Anti-Cheat Config, an object nobody owns is the host's: no player may move it or change its variables. Tick this for objects any player may grab (a ball): the first one to move it owns it.");
             if (ImGui::SmallButton("Remove##ns")) toRemove = ns;
         }
     }

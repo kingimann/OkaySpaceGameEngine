@@ -694,6 +694,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             }
             out << "\n";
         }
+        {
+            const StanceTimes def;
+            const StanceTimes& t = asm2->stanceTimes;
+            if (t.standCrouch != def.standCrouch || t.crouchProne != def.crouchProne || t.proneStand != def.proneStand)
+                out << "  animsmstance " << t.standCrouch << " " << t.crouchProne << " " << t.proneStand << "\n";
+        }
         bool anyMatch = false;
         for (const auto& st : asm2->states) anyMatch = anyMatch || st.matchSpeed;
         if (anyMatch) {   // blend trees that keep pace with the body's speed
@@ -773,7 +779,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* ns = go->GetComponent<NetworkSync>()) {
         out << "  netsync " << (int)ns->authority << " " << (ns->owned ? 1 : 0)
-            << " " << (ns->syncAnimation ? 1 : 0) << " " << Quote(ns->netId) << "\n";
+            << " " << (ns->syncAnimation ? 1 : 0) << " " << Quote(ns->netId);
+        if (ns->clientClaimable) out << " 1";   // only when set: other scenes don't change
+        out << "\n";
     }
     if (auto* ac = go->GetComponent<AntiCheatConfig>()) {
         const AntiCheatSettings& s = ac->settings;
@@ -3003,6 +3011,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     }
                     long na = 0; in >> na;
                     for (long k = 0; k < na && in; ++k) { int m = 0; in >> m; if (k < (long)sm2->anyState.size()) sm2->anyState[k].muted = m != 0; }
+                } else if (field == "animsmstance") {
+                    StanceTimes& t = smFor()->stanceTimes;
+                    in >> t.standCrouch >> t.crouchProne >> t.proneStand;
                 } else if (field == "animsmmatch") {
                     auto* sm2 = smFor();
                     long n = 0; in >> n;
@@ -5059,6 +5070,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> std::ws;
                     if (std::isdigit(in.peek())) { int sa = 1; in >> sa; ns->syncAnimation = (sa != 0); }
                     ns->netId = ReadQuoted(in);
+                    in >> std::ws;   // clientClaimable came later
+                    if (std::isdigit(in.peek())) { int cc = 0; in >> cc; ns->clientClaimable = cc != 0; }
                 } else if (field == "water") {
                     auto* w = go->AddComponent<Water>();
                     in >> w->size >> w->resolution >> w->waveHeight >> w->waveLength >> w->waveSpeed

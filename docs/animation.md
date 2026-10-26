@@ -256,8 +256,8 @@ real drop (a step down keeps the stride). Standing still, the character
 Every new Character (the player templates, GameObject > 3D > Character, Add
 Component > Character, rigging a model) comes with an **Animator** holding the
 default graph, and a scene saved before it existed gets one when it loads. Its
-states — Idle, Walk, Run, Crouch, CrouchWalk, Prone, Jump, Fall, Land, Hang
-and the gestures (Wave, Point, Clap, ThumbsUp, Salute, WaveBoth, Cheer, Sad,
+states — Idle, Walk, Run, Crouch, CrouchWalk, Prone, Crawl, GetUp, Drop, Jump,
+Fall, Land, Hang and the gestures (Wave, Point, Clap, ThumbsUp, Salute, WaveBoth, Cheer, Sad,
 Angry, Think) — play the **default humanoid clips**, baked from the motion
 above: the walk, run and crouch-walk at several speeds in eight directions,
 each a 2D blend tree on `gaitX`/`gaitZ` that keeps pace with the ground
@@ -265,6 +265,16 @@ each a 2D blend tree on `gaitX`/`gaitZ` that keeps pace with the ground
 fast as its speed parameter over the blended motions' speed). Every Character can play these clips by name; they aren't
 copied into the scene, and a clip of your own with the same name wins. A clip
 bound with clipIdle / clipWalk / ... plays in that state instead.
+
+Stance changes follow the Animator's **Stance changes** times: standing and
+crouching crossfade over the stand <-> crouch time, crouching and prone over
+the crouch <-> prone time. Standing still, going prone drops down through a
+kneel (**Drop**) and standing up gets up through hands-and-knees and a kneel
+(**GetUp**, over the prone -> stand time); on the move the stride blends
+straight into the crawl and back. **Crawl** goes forward, backward and to
+either side as the body moves. Foot IK is off while lying down. Any change of
+mind blends from wherever the body is. Editing the times retimes the default
+graph's blends.
 
 A movement controller feeds the graph's parameters every frame: `speed`
 (m/s), `run`, `crouch`, `prone`, `stance` (0 stand .. 1 crouch .. 2 prone,

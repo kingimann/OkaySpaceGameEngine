@@ -2064,6 +2064,7 @@ EngineApi Build() {
         if (t.name == "GameObject" || t.name == "Vector3" || t.name == "Input" || t.name == "Mathf")
             for (ApiMethod& m : t.staticMethods) m.pure = m.name != "Rumble" && m.name != "RebindAction" &&
                                                       m.name != "DefineAction" && m.name != "DefineDirection";
+    RegisterInventoryApi(api);
     return api;
 }
 

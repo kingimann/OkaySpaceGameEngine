@@ -75,6 +75,7 @@ std::string Program::NameOf(const Type& t) const {
     if (t.kind == TK::Routine) return "IEnumerator";
     if (t.kind == TK::Coroutine) return "Coroutine";
     if (t.kind == TK::Wait) return WaitTypeName(t.id);
+    if (t.kind == TK::Script) return ScriptClassName(t.id);
     return TypeName(t);
 }
 
@@ -673,7 +674,7 @@ private:
         if (t.name == "void") { Error(t.loc, "void isn't a type a value can have"); return Type{}; }
         if (int ei = EnumIndex(t.name); ei >= 0) return Type{TK::Enum, ei};
         if (int ci = ClassIndex(t.name); ci >= 0) {
-            if (ci == prog_.component) { Error(t.loc, "'" + t.name + "' is this script's Behaviour class: it can't be used as a type yet"); return Type{}; }
+            if (ci == prog_.component) return Type{TK::Script, ScriptClassId(t.name)};   // another object's copy of this script
             return Type{TK::Class, ci};
         }
         int id = api_.Find(t.name);
@@ -683,6 +684,8 @@ private:
         for (auto& at : api_.types) if (!at.isStatic && !at.isValueType) opts.push_back(at.name);
         for (auto& en : prog_.enums) opts.push_back(en.name);
         for (auto& k : prog_.classes) opts.push_back(k.name);
+        if (FindScriptView(t.name)) return Type{TK::Script, ScriptClassId(t.name)};   // another script's class
+        prog_.unknownTypes.push_back(t.name);
         Error(t.loc, "Unknown type '" + t.name + "'" + Suggest(t.name, opts));
         return Type{};
     }
@@ -1712,6 +1715,7 @@ private:
             Error(e.loc, Cls(ot.id).name + " has no '" + e.name + "'" + Suggest(e.name, opts));
             return;
         }
+        if (ot.kind == TK::Script) { CheckScriptMember(e, ot); return; }
         if (ot.kind == TK::Vector3) {
             if (e.name == "x" || e.name == "y" || e.name == "z") {
                 e.bind = Bind::VecField; e.member = e.name[0] - 'x'; e.type = Type::Of(TK::Float); return;
@@ -1948,6 +1952,7 @@ private:
         }
         if (ot.kind == TK::List || ot.kind == TK::Dict) { CheckCollectionCall(e, ot); return; }
         if (ot.kind == TK::Class) { CallClassMethod(e, ot.id); return; }
+        if (ot.kind == TK::Script) { CheckScriptCall(e, ot); return; }
         if (ot.kind != TK::Object) { Error(e.loc, TypeName(ot) + " values have no methods"); return; }
         const ApiType& t = api_.types[(std::size_t)ot.id];
         const ApiMethod* m = PickOverload(t.methods, "", e);
@@ -1968,7 +1973,9 @@ private:
         if (e.typeArg.name.empty()) { Error(e.loc, "Say which component: GetComponent<Transform>()"); return; }
         if (!e.args.empty()) { Error(e.loc, "GetComponent<T>() takes no values"); return; }
         int ti = api_.Find(e.typeArg.name);
-        if (ti < 0 || !api_.types[(std::size_t)ti].isComponent) {
+        const bool script = (ti < 0 || !api_.types[(std::size_t)ti].isComponent) && ViewOf(e.typeArg.name);
+        if (!script && (ti < 0 || !api_.types[(std::size_t)ti].isComponent)) {
+            if (ti < 0) prog_.unknownTypes.push_back(e.typeArg.name);
             std::vector<std::string> comps;
             for (auto& t : api_.types) if (t.isComponent) comps.push_back(t.name);
             std::string list;
@@ -1980,13 +1987,107 @@ private:
             int typeId = -1;
             int r = Receiver(*e.object, typeId);
             if (r < 0) return;
-            if (r != 0 || e.object->type.kind != TK::Object) { Error(e.loc, "GetComponent works on a GameObject or a component"); return; }
+            if (r != 0 || (e.object->type.kind != TK::Object && e.object->type.kind != TK::Script)) { Error(e.loc, "GetComponent works on a GameObject or a component"); return; }
         } else {
             e.object.reset();
             if (RejectOutsideComponent("GetComponent", e.loc) || RejectInStatic("GetComponent", e.loc)) return;
             UsesSelf();
         }
+        if (script) {   // another script on the object: GetComponent<Health>()
+            e.bind = Bind::GetScript; e.slot = ScriptClassId(e.typeArg.name); e.type = Type{TK::Script, e.slot};
+            return;
+        }
         e.bind = Bind::GetComponent; e.slot = ti; e.type = Type::Obj(ti);
+    }
+
+    // ---- Other scripts (GetComponent<Health>()) ----
+    // What a script class offers: this script's own (from this file), or one from the library.
+    std::shared_ptr<const ScriptView> ownView_;
+    std::shared_ptr<const ScriptView> ViewOf(const std::string& name) {
+        if (prog_.component >= 0 && name == prog_.classes[(std::size_t)prog_.component].name) {
+            if (!ownView_) {
+                auto v = std::make_shared<ScriptView>();
+                const ClassDecl& c = prog_.classes[(std::size_t)prog_.component];
+                v->name = c.name;
+                for (const FieldDecl& f : c.fields)
+                    if (f.isPublic && !f.isStatic && !f.isConst && !f.isEvent) v->fields.push_back({f.name, f.type, f.loc});
+                for (const MethodDecl& m : c.methods) {
+                    if (!m.isPublic || m.isStatic || m.isCtor) continue;
+                    ScriptView::Method sm{m.name, {}, m.ret};
+                    for (const Param& p : m.params) sm.params.push_back(p.type);
+                    v->methods.push_back(std::move(sm));
+                }
+                ownView_ = std::move(v);
+            }
+            return ownView_;
+        }
+        return FindScriptView(name);
+    }
+    // A member type of another script, as this script sees it: only types that mean
+    // the same in every script cross over. Error type (with `why`) otherwise.
+    Type ForeignType(const TypeRef& t, std::string& why) {
+        if (t.rank > 0 || !t.args.empty()) { why = "an array, list or other collection"; return Type{}; }
+        if (t.name == "void") return Type::Of(TK::Void);
+        if (t.name == "int") return Type::Of(TK::Int);
+        if (t.name == "float") return Type::Of(TK::Float);
+        if (t.name == "bool") return Type::Of(TK::Bool);
+        if (t.name == "string") return Type::Of(TK::String);
+        if (t.name == "Vector3") return Type::Of(TK::Vector3);
+        if (t.name == "IEnumerator") return Type::Of(TK::Routine);
+        if (t.name == "Coroutine") return Type::Of(TK::Coroutine);
+        const int id = api_.Find(t.name);
+        if (id >= 0 && !api_.types[(std::size_t)id].isStatic && !api_.types[(std::size_t)id].isValueType) return Type::Obj(id);
+        if (ViewOf(t.name)) return Type{TK::Script, ScriptClassId(t.name)};
+        why = "its own type " + t.name;
+        return Type{};
+    }
+    // h.hp, h.gameObject: a field of another script (public ones only).
+    void CheckScriptMember(Expr& e, const Type& ot) {
+        if (e.name == "gameObject" || e.name == "transform") {
+            e.bind = Bind::ScriptSelf; e.slot = e.name == "gameObject" ? 0 : 1;
+            e.type = Type::Obj(e.slot == 0 ? api_.gameObject : api_.transform);
+            return;
+        }
+        const std::string& cls = ScriptClassName(ot.id);
+        auto v = ViewOf(cls);
+        if (!v) { Error(e.loc, "The script " + cls + " isn't loaded"); return; }
+        for (const auto& f : v->fields) {
+            if (f.name != e.name) continue;
+            std::string why;
+            const Type t = ForeignType(f.type, why);
+            if (t.kind == TK::Error) { Error(e.loc, cls + "." + e.name + " can't be used from another script: it holds " + why); return; }
+            e.bind = Bind::ScriptField; e.type = t;
+            return;
+        }
+        for (const auto& m : v->methods)
+            if (m.name == e.name) { Error(e.loc, e.name + " is a method: call it with " + e.name + "(...)"); return; }
+        std::vector<std::string> opts = {"gameObject", "transform"};
+        for (const auto& f : v->fields) opts.push_back(f.name);
+        Error(e.loc, cls + " has no public '" + e.name + "'" + Suggest(e.name, opts));
+    }
+    // h.TakeDamage(10): a public method of another script.
+    void CheckScriptCall(Expr& e, const Type& ot) {
+        const std::string& cls = ScriptClassName(ot.id);
+        auto v = ViewOf(cls);
+        if (!v) { Error(e.loc, "The script " + cls + " isn't loaded"); return; }
+        for (const auto& m : v->methods) {
+            if (m.name != e.name) continue;
+            std::string why;
+            std::vector<Type> ps;
+            for (const auto& p : m.params) {
+                ps.push_back(ForeignType(p, why));
+                if (ps.back().kind == TK::Error) { Error(e.loc, cls + "." + e.name + "() can't be called from another script: it takes " + why); return; }
+            }
+            const Type ret = ForeignType(m.ret, why);
+            if (ret.kind == TK::Error) { Error(e.loc, cls + "." + e.name + "() can't be called from another script: it gives " + why); return; }
+            if (e.args.size() != ps.size()) { Error(e.loc, e.name + "() takes " + Values(ps.size()) + ", not " + std::to_string(e.args.size())); return; }
+            for (std::size_t i = 0; i < ps.size(); ++i) Expect(*e.args[i], ps[i], "Value " + std::to_string(i + 1));
+            e.bind = Bind::ScriptMethod; e.type = ret;
+            return;
+        }
+        std::vector<std::string> opts;
+        for (const auto& m : v->methods) opts.push_back(m.name);
+        Error(e.loc, cls + " has no public method '" + e.name + "'" + Suggest(e.name, opts));
     }
 
     // xs.Count, d.Keys / d.Values, kv.Key / kv.Value.
@@ -2224,7 +2325,7 @@ private:
 
     static bool CanBeNull(const Type& t) {
         return t.kind == TK::Object || t.kind == TK::Array || t.kind == TK::Class || t.kind == TK::List || t.kind == TK::Dict ||
-               t.kind == TK::Func || t.kind == TK::Routine || t.kind == TK::Coroutine || t.kind == TK::Wait;
+               t.kind == TK::Func || t.kind == TK::Routine || t.kind == TK::Coroutine || t.kind == TK::Wait || t.kind == TK::Script;
     }
     static std::string Article(const std::string& n) { return (std::string("aeiouAEIOU").find(n[0]) != std::string::npos ? "an " : "a ") + n; }
     // ?. only on something that might be null: an object or an array.
@@ -2313,7 +2414,7 @@ private:
     bool Assignable(Expr& e) {
         if (e.kind == EK::Index) return true;
         switch (e.bind) {
-            case Bind::StaticField: return true;
+            case Bind::StaticField: case Bind::ScriptField: return true;
             case Bind::ObjField: {
                 FieldDecl* f = FindField(e.object->type.id, e.name);
                 if (f && IsBuiltinField(*f) && !cls_->builtin) { Error(e.loc, "'" + e.name + "' can only be read"); return false; }

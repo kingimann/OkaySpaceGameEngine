@@ -7,6 +7,11 @@
 namespace okay {
 
 class Scene;
+class GameObject;
+namespace script {
+class Instance;
+Instance* FindScriptInstance(GameObject* go, const std::string& name);
+}
 
 /// The new OkayScript: C#-style classes compiled and checked before they run
 /// (engine/src/Script). A script is a class extending Behaviour; its fields are
@@ -47,6 +52,8 @@ public:
     int ErrorCount() const { return m_errorCount; }
 
 private:
+    friend script::Instance* script::FindScriptInstance(GameObject* go, const std::string& name);
+    bool FinishPending();
     struct Impl;
     std::unique_ptr<Impl> m_impl;
     ScriptHost* m_host = nullptr;

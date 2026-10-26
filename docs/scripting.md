@@ -1048,6 +1048,38 @@ Boss boss = (Boss)hit[0];                      // an error with its line if it i
   `T`, or null. A cast `(T)x` stops the callback with an error if `x` isn't one.
 - The Behaviour class can't extend a class or implement interfaces yet.
 
+### Scripts using each other
+
+`GetComponent<Health>()` finds another script on an object, the same way it
+finds a `Rigidbody`. The script's class name is a type, and its `public`
+fields and methods can be used through it.
+
+```csharp
+class Health : Behaviour {
+    public int hp = 100;
+    public void TakeDamage(int amount) { hp -= amount; if (hp <= 0) Destroy(gameObject); }
+}
+
+class Bullet : Behaviour {
+    public void Hit(GameObject target) {
+        Health h = target.GetComponent<Health>();   // null if target has no Health script
+        if (h != null) h.TakeDamage(10);
+    }
+}
+```
+
+- Scripts can load in any order: a script that names one loaded later is
+  checked again when the scene starts, and an error then names the type it
+  couldn't find.
+- Only values that mean the same to every script cross between them: numbers,
+  text, `Vector3`, engine objects (`GameObject`, `Transform`, ...), other
+  scripts, and coroutines (`StartCoroutine(h.Regen())`). A public field or
+  method using one of a script's own types (an array, a list, a plain class
+  or an enum) can't be used from another script yet.
+- `h.gameObject` and `h.transform` are the object the script is on.
+- A reference finds the script again each time it's used, so after the object
+  is destroyed (or loses the script) using it is an error with its line.
+
 ### Coroutines
 
 A coroutine is a method that runs over several frames: it returns

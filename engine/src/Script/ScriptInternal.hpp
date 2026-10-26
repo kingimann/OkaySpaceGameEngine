@@ -53,6 +53,7 @@ enum class TK : std::uint8_t {
     Routine,  ///< IEnumerator: what calling a coroutine method gives (StartCoroutine runs it)
     Coroutine,///< what StartCoroutine gives (to stop it, or to wait for it)
     Wait,     ///< WaitForSeconds and the like: id = WaitKind
+    Script,   ///< another script's Behaviour class (Health h = GetComponent<Health>()): id = ScriptClassId
     Lambda,   ///< a lambda whose Func / Action type comes from where it's used (checker only)
 };
 struct Type {
@@ -313,6 +314,9 @@ enum class Bind : std::uint8_t {
     NewObject /*new Node(): slot = class, member = constructor (-1 = none)*/,
     NewWait /*new WaitForSeconds(t), ...: member = WaitKind*/,
     StartCoroutine, StopCoroutine, StopAllCoroutines,
+    GetScript /*GetComponent<Health>(): slot = ScriptClassId; object = the GameObject or component (null = this object)*/,
+    ScriptField /*h.hp: name = the field*/, ScriptMethod /*h.TakeDamage(10): name = the method*/,
+    ScriptSelf /*h.gameObject / h.transform: slot 0 / 1*/,
     BaseMethod /*base.M(): slot = method, member = the class that has it*/,
     BaseCtor /*: base(...) of a constructor: slot = the base class, member = its constructor (-1 = none)*/,
 };
@@ -507,6 +511,8 @@ struct Program {
     std::vector<std::string> methodNames;   ///< every method name in the file (MethodDecl::nameId)
     int component = -1;            ///< the class that is the component
     int exceptionClass = -1;       ///< Exception (built in, or the script's own class of that name)
+    /// Type names the checker couldn't find: maybe a script that hasn't loaded yet.
+    std::vector<std::string> unknownTypes;
     std::vector<ScriptDiagnostic> diags;
     bool ok() const;
     const ClassDecl* Component() const { return component >= 0 ? &classes[(std::size_t)component] : nullptr; }
@@ -534,6 +540,31 @@ const std::vector<Lifecycle>& LifecycleMethods();
 
 std::string TypeName(const Type& t);
 const char* WaitTypeName(int kind);
+
+// ---- Scripts using each other (GetComponent<Health>()) ----------------------
+/// What other scripts can use of a script's Behaviour class: its public fields
+/// and methods. Their types are written as in the source and resolved by the
+/// script using them; only values that mean the same in every script cross
+/// (numbers, text, Vector3, engine objects, other scripts, coroutines).
+struct ScriptView {
+    struct Field { std::string name; TypeRef type; SrcLoc loc; };
+    struct Method { std::string name; std::vector<TypeRef> params; TypeRef ret; };
+    std::string name;
+    std::vector<Field> fields;
+    std::vector<Method> methods;
+};
+/// Remember the Behaviour class of `source` (by its name) for other scripts. Sources
+/// that don't parse are ignored. Every typed script registers itself when it loads.
+void RegisterScriptSource(const std::string& source);
+/// The view of the script class `name`, or null if no script with it has been seen.
+std::shared_ptr<const ScriptView> FindScriptView(const std::string& name);
+/// A process-wide number for a script class name (stable while the program runs).
+int ScriptClassId(const std::string& name);
+const std::string& ScriptClassName(int id);
+/// ObjRef::type for a reference to the script `id` on an object (engine types are >= 0).
+inline int ScriptRefType(int id) { return -1000 - id; }
+/// The running script of class `name` on `go`, or null (defined next to the VM).
+Instance* FindScriptInstance(GameObject* go, const std::string& name);
 
 // ---- Running ---------------------------------------------------------------
 /// One running instance of a component class.

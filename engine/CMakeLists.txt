@@ -49,6 +49,7 @@ add_library(okay_engine
     src/Script/Interpreter.cpp
     src/Script/EngineApi.cpp
     src/Script/NextScriptVM.cpp
+    src/Script/ScriptLibrary.cpp
     src/Components/ScriptComponent.cpp
     src/Components/AnimControl.cpp
     src/Components/ActionList.cpp

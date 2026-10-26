@@ -312,6 +312,7 @@ void CharacterAnimBackend::Move(const Movement& m) {
     m_sm->SetBool("run", m.run);
     m_sm->SetBool("crouch", m.crouch);
     m_sm->SetBool("prone", m.prone);
+    m_sm->SetFloat("stance", m.stance);
     m_sm->SetFloat("airTime", m.airTime);
     m_sm->SetFloat("verticalSpeed", m.verticalSpeed);
 }

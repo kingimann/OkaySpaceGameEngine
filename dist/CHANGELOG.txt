@@ -1,5 +1,39 @@
 OkaySpace Game Engine — Changelog
 
+v2.821.0
+  Animation
+  - The default player walks a little slower and no longer crosses its arms
+    while falling (#310).
+  - Imported characters: clips keep their shape, the walk clip plays when
+    walking, and a jump no longer "lands" at its highest point (#299).
+  - Clips played on a character no longer take over its movement; edits in the
+    Animation tab are kept, and rotations blend smoothly (#308). Walk/Run
+    clips baked from the built-in animations are one real stride long (#312).
+  - Scripts and visual scripts find the player's imported-model animator, and
+    a clip they play stays on until they stop it. A state machine on a model
+    takes over from movement-driven animation, and clip events at time 0 fire
+    (#305).
+  - Less work per frame for animated models; IK polish (#307).
+  2.5D controller
+  - Crouch (Ctrl) and prone (Z), or B on a gamepad (hold to go prone). The body
+    shrinks to fit under low things and won't stand up beneath them (#313).
+  Multiplayer and anti-cheat (opt-in unless noted)
+  - Always on: only joined clients can set synced variables, clients can't
+    send reserved host messages, and chat carries the sender's real name
+    (#311).
+  - Anti-Cheat Config rate-limits RPCs per player (30 a second by default).
+    Scripts can answer on_validate_rpc and on_cheat_detected; removing the
+    Anti-Cheat Config component switches its checks off again; dedicated
+    servers take --anticheat FILE (#311).
+  - Signed session tickets, a replay window and required encryption (#302).
+  - Signed integrity manifest and Windows runtime checks for built games
+    (#269).
+  - Reports, bans and appeals in the launcher (Admin > Anti-cheat, "Report
+    cheating" in chat). It needs the anti-cheat database tables, which aren't
+    set up yet (#270).
+  Scripting
+  - Typed OkayScript: $"..." interpolated strings (#284).
+
 v2.820.0
   Animation
   - The default player really walks and runs: a nearly straight leg with a heel

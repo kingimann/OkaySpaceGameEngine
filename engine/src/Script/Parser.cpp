@@ -21,7 +21,6 @@ const std::unordered_map<std::string, const char*>& NotYet() {
         {"internal", "internal isn't supported: members are private unless marked public (or protected)"},
         {"async", "async isn't supported"},
         {"await", "await isn't supported"},
-        {"yield", "coroutines (yield) aren't supported yet"},
         {"delegate", "delegate types aren't supported: use Func<...> or Action<...>"},
         {"partial", "partial classes aren't supported"},
         {"lock", "lock isn't supported"},
@@ -507,6 +506,14 @@ private:
             return s;
         }
         if (IsWord("try") && Is(T::LBrace, 1)) return Try();
+        if (IsWord("yield") && (Is(T::KwReturn, 1) || Is(T::KwBreak, 1))) {   // yield return x; / yield break;
+            auto s = std::make_unique<Stmt>(); s->kind = SK::Yield; s->loc = loc;
+            ++pos_;
+            if (Match(T::KwBreak)) s->yieldBreak = true;
+            else { ++pos_; s->expr = Expression(); }
+            Expect(T::Semicolon, "';'");
+            return s;
+        }
         if (IsWord("catch") || IsWord("finally")) throw ParseError{loc, "This " + Peek().text + " has no try before it"};
         if (IsWord("throw")) {   // throw new X(...); or throw; inside a catch
             ++pos_;

@@ -1475,6 +1475,126 @@ static void TryCatch() {
     }
 }
 
+static void Coroutines() {
+    {   // StartCoroutine runs to the first yield; null waits a frame, WaitForSeconds its time,
+        // a coroutine its end, WaitUntil its condition; StopCoroutine and yield break end one
+        World w(Wrap(
+            "    public int ticks, blinks, after, nested, finished, cond, early;\n"
+            "    public bool ready;\n"
+            "    Coroutine loop;\n"
+            "    IEnumerator Count() { while (true) { ticks++; yield return null; } }\n"
+            "    IEnumerator Blink(int times) { for (int i = 0; i < times; i++) { blinks++; yield return new WaitForSeconds(0.1f); } after = 1; }\n"
+            "    IEnumerator Child() { yield return null; yield return null; nested = 1; }\n"
+            "    IEnumerator Parent() { yield return StartCoroutine(Child()); finished = nested * 10; }\n"
+            "    IEnumerator WaitReady() { yield return new WaitUntil(() => ready); cond = 1; }\n"
+            "    IEnumerator Early() { early = 1; yield break; }\n"
+            "    void Start() {\n"
+            "        loop = StartCoroutine(Count());\n"
+            "        StartCoroutine(Blink(3)); StartCoroutine(Parent()); StartCoroutine(WaitReady()); StartCoroutine(Early());\n"
+            "    }\n"
+            "    void Update() { if (ticks == 5) { StopCoroutine(loop); ready = true; } }\n"));
+        CHECK(w.loaded);
+        CHECK_NEAR(w.F("ticks"), 1.0f, 1e-6f);      // ran to its first yield inside Start
+        CHECK_NEAR(w.F("early"), 1.0f, 1e-6f);
+        w.Frames(1);
+        CHECK_NEAR(w.F("ticks"), 1.0f, 1e-6f);      // paused during Start's frame: goes on from the next one
+        w.Frames(1);
+        CHECK_NEAR(w.F("ticks"), 2.0f, 1e-6f);
+        w.Frames(4);
+        CHECK_NEAR(w.F("blinks"), 1.0f, 1e-6f);     // 0.1 s is six frames
+        CHECK_NEAR(w.F("finished"), 10.0f, 1e-6f);  // waited for Child's end
+        w.Frames(1);
+        CHECK_NEAR(w.F("blinks"), 2.0f, 1e-6f);
+        CHECK_NEAR(w.F("cond"), 1.0f, 1e-6f);
+        w.Frames(20);
+        CHECK_NEAR(w.F("ticks"), 5.0f, 1e-6f);      // stopped
+        CHECK_NEAR(w.F("blinks"), 3.0f, 1e-6f);
+        CHECK_NEAR(w.F("after"), 1.0f, 1e-6f);
+    }
+    {   // coroutines of plain classes; loops, foreach, switch, break and continue around yields
+        World w(
+            "class Spawner {\n"
+            "    public int spawned;\n"
+            "    public IEnumerator Waves(int[] sizes) {\n"
+            "        foreach (int n in sizes) {\n"
+            "            for (int i = 0; i < n; i++) { if (i == 2) break; spawned++; yield return null; }\n"
+            "            yield return null;\n"
+            "        }\n"
+            "    }\n"
+            "}\n"
+            "class T : Behaviour {\n"
+            "    public int spawned, log;\n"
+            "    Spawner sp = new Spawner();\n"
+            "    IEnumerator Machine() {\n"
+            "        int step = 0;\n"
+            "        while (true) {\n"
+            "            switch (step) {\n"
+            "                case 0: log = log * 10 + 1; step = 1; yield return null; break;\n"
+            "                case 1: log = log * 10 + 2; step = 2; continue;\n"
+            "                default: log = log * 10 + 3; yield break;\n"
+            "            }\n"
+            "            log = log * 10 + 9;\n"
+            "        }\n"
+            "    }\n"
+            "    void Start() { StartCoroutine(sp.Waves(new int[] { 1, 3 })); StartCoroutine(Machine()); }\n"
+            "    void Update() { spawned = sp.spawned; }\n"
+            "}\n");
+        CHECK(w.loaded);
+        w.Frames(20);
+        CHECK_NEAR(w.F("spawned"), 3.0f, 1e-6f);
+        CHECK_NEAR(w.F("log"), 1923.0f, 1e-6f);
+    }
+    {   // the same coroutine timing on the old runtime (yield return null exactly)
+        const std::string src = Wrap(
+            "    public int ticks, blinks, a1, a7, a8;\n"
+            "    IEnumerator Count() { while (true) { ticks++; yield return null; } }\n"
+            "    IEnumerator Blink() { while (true) { blinks++; yield return new WaitForSeconds(0.1f); } }\n"
+            "    void Start() { StartCoroutine(Count()); StartCoroutine(Blink()); }\n");
+        World next(src), old(src, "okayscript");
+        for (int f = 0; f < 15; ++f) {
+            CHECK_NEAR(next.F("ticks"), old.F("ticks"), 1e-6f);
+            // WaitForSeconds: the old runtime can land a frame later (float rounding on 0.1 - 6 * 1/60)
+            CHECK_NEAR(next.F("blinks"), old.F("blinks"), 1.0f + 1e-6f);
+            next.Frames(1); old.Frames(1);
+        }
+    }
+    {   // an error in a coroutine is reported with its line and ends that coroutine
+        g_errs.clear();
+        World w(Wrap(
+            "    public int after;\n"
+            "    IEnumerator Bad() { yield return null; int[] a = new int[1]; a[3] = 1; after = 1; }\n"
+            "    void Start() { StartCoroutine(Bad()); }\n"));
+        w.Frames(3);
+        CHECK(ErrHas("coroutine line 3: Index 3 is outside the array (length 1)"));
+        CHECK_NEAR(w.F("after"), 0.0f, 1e-6f);
+    }
+    {   // mistakes, with line and column
+        auto d = Diags(
+            "class T : Behaviour {\n"   // 1
+            "    IEnumerator NoYield() { Debug.Log(1); }\n"   // 2
+            "    IEnumerator Ret() { yield return null; return; }\n"   // 3
+            "    void NotCo() { yield return null; }\n"   // 4
+            "    IEnumerator InTry() { try { yield return null; } finally { } }\n"   // 5
+            "    void Start() {\n"   // 6
+            "        Ret();\n"   // 7
+            "        StartCoroutine(\"Ret\");\n"   // 8
+            "        var w = new WaitForSeconds();\n"   // 9
+            "        Action a = () => { yield return null; };\n"   // 10
+            "        StartCoroutine(InTry()); StartCoroutine(NoYield()); a(); NotCo(); Debug.Log(\"\" + w);\n"   // 11
+            "    }\n"   // 12
+            "}\n"   // 13
+            );
+        CHECK(Has(d, 0, "NoYield() returns IEnumerator, so it's a coroutine: it needs a yield return (or yield break)", 2, 17));
+        CHECK(Has(d, 0, "A coroutine ends with yield break, not return", 3, 44));
+        CHECK(Has(d, 0, "yield only works in a coroutine: a method that returns IEnumerator", 4, 20));
+        CHECK(Has(d, 0, "yield can't be inside a try, catch or finally", 5, 33));
+        CHECK(Has(d, 0, "Ret() makes a coroutine but doesn't run it: StartCoroutine(Ret())", 7, 9));
+        CHECK(Has(d, 0, "StartCoroutine takes the coroutine itself, not its name: StartCoroutine(Blink())", 8, 24));
+        CHECK(Has(d, 0, "new WaitForSeconds takes 1 value, not 0", 9, 17));
+        CHECK(Has(d, 0, "yield doesn't work inside a lambda", 10, 28));
+    }
+}
+
 static void Parity() {
     // The same C# snippet gives the same results on the old OkayScript runtime.
     const std::string src =
@@ -1551,9 +1671,9 @@ static void BackCompat() {
     CHECK(w.loaded);
     CHECK_NEAR(w.F("total"), 12.0f, 1e-6f);
     // Features still to come keep their message.
-    auto d = Diags(Wrap("    readonly int r = 1;\n    void Start() { yield return null; }\n"));
+    auto d = Diags(Wrap("    readonly int r = 1;\n    void Start() { goto end; }\n"));
     CHECK(Has(d, 0, "readonly isn't supported yet"));
-    CHECK(Has(d, 0, "coroutines (yield) aren't supported yet"));
+    CHECK(Has(d, 0, "goto isn't supported"));
 }
 
 static void Fuzz() {
@@ -1600,6 +1720,7 @@ int main() {
     Events();
     Inheritance();
     TryCatch();
+    Coroutines();
     Parity();
     Followups();
     BackCompat();

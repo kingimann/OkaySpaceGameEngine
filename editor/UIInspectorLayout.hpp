@@ -1,7 +1,8 @@
 #pragma once
 // Inspectors and create helpers for the UI layout widgets: flex layout fields on a
-// Layout Group, the scroll axis on a Scroll View, and the UI Flex Item, UI Mask and
-// UI List View components. main.cpp calls these from its inspector loop and menus.
+// Layout Group, the scroll axis on a Scroll View, and the UI Frame, UI Flex Item,
+// UI Mask and UI List View components. main.cpp calls these from its inspector
+// loop and menus.
 #include "EditorState.hpp"
 
 namespace oked {
@@ -12,13 +13,17 @@ struct UIInspectorHooks {
     void (*anchorCombo)(const char* id, okay::UIAnchor& anchor, okay::editor::EditorState& ed);
 };
 
-/// Draw the inspector for `comp` if it is a UI Flex Item, UI Mask or UI List View.
+/// Draw the inspector for `comp` if it is a UI Frame, UI Flex Item, UI Mask or UI List View.
 void DrawUILayoutComponentInspector(okay::Component* comp, okay::editor::EditorState& ed,
                                     okay::Component** toRemove, const UIInspectorHooks& hooks);
 /// The Flex Row / Flex Column fields of a Layout Group (box size, justify, align, wrap).
 void DrawLayoutGroupFlexFields(okay::UILayoutGroup& lg, okay::editor::EditorState& ed);
 /// A Scroll View's axis and horizontal extent fields.
 void DrawScrollViewAxisFields(okay::UIScrollView& sv, okay::editor::EditorState& ed);
+
+/// "Use UI Frame" for the selected widget and "Convert all UI" for the scene (each
+/// one undo step). Shown in the widget's Arrange card.
+void DrawUIFrameConvertButtons(okay::GameObject* go, okay::editor::EditorState& ed);
 
 /// Create > UI > Layout builders.
 void BuildUIFlexBox(okay::GameObject* g);

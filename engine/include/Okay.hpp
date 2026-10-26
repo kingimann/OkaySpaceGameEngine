@@ -131,6 +131,7 @@
 #include "okay/Components/UILayoutGroup.hpp"
 #include "okay/Components/UIFlexItem.hpp"
 #include "okay/Components/UIMask.hpp"
+#include "okay/Components/UIFrame.hpp"
 #include "okay/Components/UIListView.hpp"
 #include "okay/UI/UILayoutUpdate.hpp"
 #include "okay/Components/UIInputField.hpp"

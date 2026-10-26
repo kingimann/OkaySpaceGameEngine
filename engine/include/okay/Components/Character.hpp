@@ -228,6 +228,28 @@ public:
     /// True while a crossfade is in progress (0..1 weight not yet at 1).
     bool Blending() const { return m_blendT < 1.0f; }
 
+    // ---- Animator ----
+    /// What an Animator (AnimStateMachine) on this object plays the body through.
+    /// While one is attached its pose and body offset replace the built-in
+    /// animation; a manual PlayClip and the editor's posing still win.
+    struct PoseSource {
+        virtual ~PoseSource() = default;
+        /// This frame's pose (per-bone Euler) and body offset (rig units, before
+        /// the height scale). False while it has nothing to show yet.
+        virtual bool AnimatorPose(std::vector<Vec3>& pose, Vec3& root) = 0;
+        /// Still playing (its Animator is enabled and has posed the body).
+        virtual bool Live() const = 0;
+    };
+    void SetPoseSource(PoseSource* src) { m_poseSource = src; }
+    PoseSource* GetPoseSource() const { return m_poseSource; }
+    /// True while the Animator's pose is the one shown.
+    bool AnimatorDriven() const {
+        return m_poseSource && m_poseSource->Live() && !m_editorPosing && !(m_activeClip && !m_stateDriven);
+    }
+    /// Report an event an Animator clip fired: queued for ConsumeAnimEvents,
+    /// sent to onAnimEvent and to every component's OnAnimationEvent.
+    void EmitAnimEvent(const std::string& name);
+
     // ---- Animation events ----
     // Clips can carry named markers (AnimClip::events); as a clip plays past a marker
     // the character fires it. React either way: set onAnimEvent for a push callback,
@@ -342,6 +364,8 @@ public:
     }
     /// How many clips are registered.
     int ClipCount() const { return (int)m_clips.size(); }
+    /// Changes whenever a clip is added or replaced (cache invalidation).
+    std::uint32_t ClipsVersion() const { return m_clipsVer; }
     /// Length (seconds) of a registered clip, or 0 if there's no such clip.
     float ClipDuration(const std::string& name) const {
         auto it = m_clips.find(name);
@@ -413,6 +437,8 @@ public:
     struct Bone { int parent; Vec3 joint; };
     static int  BoneCount();
     static const char* BoneName(int i);
+    /// The short token BoneIndex reads back ("hips", "l_uparm", ...), as clip files use.
+    static const char* BoneToken(int i);
     std::vector<Bone> Skeleton() const;
 
     Mesh BuildRig(std::vector<int>& bone) const;
@@ -453,7 +479,9 @@ public:
     /// Driving an imported rig: a controller that changed `anim` after our Update
     /// starts its crossfade now, before the HumanoidRetarget reads the pose (it
     /// showed one frame of the new state, then blended back from the old one).
-    void LateUpdate(float) override { if (driveExternal) NoteStateChange(); }
+    /// An Animator's pose is shown here, after every Update has run (controllers
+    /// set its parameters, the state machine posed the body).
+    void LateUpdate(float) override;
 
     std::string ToText() const;
     void FromText(const std::string& text);
@@ -513,6 +541,7 @@ private:
     bool m_editorPosing = false;
     std::vector<Vec3> CurrentSourcePose() const;   // editorPose / active clip / built-in anim
     std::unordered_map<std::string, AnimClip> m_clips;  // registered custom clips
+    std::uint32_t m_clipsVer = 0;
     const AnimClip* m_activeClip = nullptr;             // currently playing (or null)
     std::string m_activeClipName;
     float m_clipTime = 0.0f;
@@ -546,6 +575,10 @@ private:
     void AdvanceClip(float dt);          // step the active clip's clock and fire its events
     void FireClipEvents(float from, float to);   // emit events in the (from, to] window (handles loop wrap)
     void EnsureRest() const;
+    PoseSource* m_poseSource = nullptr;   // the Animator playing the body (not owned)
+    bool AnimatorSample(std::vector<Vec3>& pose, Vec3& root) const;   // its pose, if it has one
+    void ApplyLookAndLean(std::vector<Vec3>& r) const;   // eased head look + body lean on top of a pose
+    void PresentMesh();                  // skin the single mesh with the current pose (+ punch, stance)
 };
 
 } // namespace okay

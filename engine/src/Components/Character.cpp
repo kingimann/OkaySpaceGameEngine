@@ -47,6 +47,13 @@ const char* Character::BoneName(int i) {
     return (i >= 0 && i < B_COUNT) ? n[i] : "?";
 }
 
+const char* Character::BoneToken(int i) {
+    static const char* n[B_COUNT] = {
+        "hips", "torso", "head", "l_uparm", "l_fore", "l_hand", "r_uparm", "r_fore", "r_hand",
+        "l_thigh", "l_shin", "l_foot", "r_thigh", "r_shin", "r_foot" };
+    return (i >= 0 && i < B_COUNT) ? n[i] : "";
+}
+
 std::vector<Character::Bone> Character::Skeleton() const {
     std::vector<Bone> b(B_COUNT);
     b[B_HIPS]   = {-1,       {0.0f,   0.95f, 0}};
@@ -820,26 +827,38 @@ std::vector<Vec3> Character::PoseFor(int state, float t) const {
         r[B_LUPARM].z += 10.0f * m_landK;   r[B_RUPARM].z -= 10.0f * m_landK;
     }
 
-    // Head look: layer the (eased) gaze on top of whatever the animation set, so the
-    // head turns and tilts toward where the player is looking. Clamped so the neck
-    // never breaks. (The body is flipped 180° about Y in Apply(), which negates the
-    // pitch sense — hence the minus on X.)
-    if (state != 0) {
-        r[B_HEAD].x += -Mathf::Clamp(m_headPitch, -55.0f, 55.0f);
-        r[B_HEAD].y +=  Mathf::Clamp(m_headYaw,   -72.0f, 72.0f);
-        // Body lean (peek): roll the torso sideways toward the lean direction.
-        // Splitting a little onto the hips makes it read as a whole-body lean rather
-        // than just a bent waist. (bodyLean > 0 = lean to the player's right, e.g. the
-        // 'E' key; this rolls the body that way to match.)
-        float lean = Mathf::Clamp(m_bodyLean, -40.0f, 40.0f);
-        r[B_TORSO].z += lean * 0.7f;
-        r[B_HIPS].z  += lean * 0.3f;
-    }
+    if (state != 0) ApplyLookAndLean(r);
     return r;
+}
+
+// Head look: layer the (eased) gaze on top of whatever the animation set, so the
+// head turns and tilts toward where the player is looking. Clamped so the neck
+// never breaks. (The body is flipped 180° about Y in Apply(), which negates the
+// pitch sense — hence the minus on X.)
+void Character::ApplyLookAndLean(std::vector<Vec3>& r) const {
+    r[B_HEAD].x += -Mathf::Clamp(m_headPitch, -55.0f, 55.0f);
+    r[B_HEAD].y +=  Mathf::Clamp(m_headYaw,   -72.0f, 72.0f);
+    // Body lean (peek): roll the torso sideways toward the lean direction.
+    // Splitting a little onto the hips makes it read as a whole-body lean rather
+    // than just a bent waist. (bodyLean > 0 = lean to the player's right, e.g. the
+    // 'E' key; this rolls the body that way to match.)
+    float lean = Mathf::Clamp(m_bodyLean, -40.0f, 40.0f);
+    r[B_TORSO].z += lean * 0.7f;
+    r[B_HIPS].z  += lean * 0.3f;
+}
+
+bool Character::AnimatorSample(std::vector<Vec3>& pose, Vec3& root) const {
+    if (!AnimatorDriven() || !m_poseSource->AnimatorPose(pose, root)) return false;
+    pose.resize(B_COUNT, Vec3{0, 0, 0});
+    return true;
 }
 
 Vec3 Character::StanceOffset() const {
     if (m_editorPosing) return m_editorOffset;        // a previewed pose carries its own
+    {   // the Animator's clips carry the body's offset in their root track
+        std::vector<Vec3> p; Vec3 root;
+        if (AnimatorSample(p, root)) return root * height;
+    }
     Vec3 o = RawStanceOffset(animTime);
     if (m_blendT < 1.0f && (m_blendFromAnim >= 0 || !m_blendFrom.empty())) {   // ease the hip height with the pose crossfade
         float w = m_blendT * m_blendT * (3.0f - 2.0f * m_blendT);
@@ -909,6 +928,7 @@ void Character::Apply() {
 void Character::AddClip(AnimClip clip) {
     std::string name = clip.name;
     m_clips[name] = std::move(clip);
+    ++m_clipsVer;
     if (m_activeClipName == name) m_activeClip = &m_clips[name];  // keep pointer valid on replace
 }
 
@@ -942,7 +962,7 @@ bool Character::SaveClipsToFile(const std::string& path, std::string* error) con
     std::vector<AnimClip> clips;
     clips.reserve(m_clips.size());
     for (const auto& kv : m_clips) clips.push_back(kv.second);
-    std::string text = AnimClip::WriteAll(clips, [](int i) { return std::string(BoneName(i)); });
+    std::string text = AnimClip::WriteAll(clips, [](int i) { return std::string(BoneToken(i)); });
     std::ofstream f(path, std::ios::trunc);
     if (!f) { if (error) *error = "cannot write " + path; return false; }
     f << text;
@@ -1015,6 +1035,7 @@ std::vector<std::string> Character::ClipNames() const {
 }
 
 void Character::SyncStateClips() {
+    if (m_poseSource) return;     // the Animator's states pick the clips
     if (m_blendTreeOn) return;    // the locomotion blend tree owns the base pose
     if (m_editorPosing) return;   // editor preview owns the pose
     // A manual clip (PlayClip / autoPlayClip) gives way to movement: a looping one
@@ -1142,7 +1163,8 @@ void Character::Update(float dt) {
             m_headYaw   += (lookYaw   - m_headYaw)   * k;
             m_headPitch += (lookPitch - m_headPitch) * k;
             m_bodyLean  += (bodyLean  - m_bodyLean)  * k;
-            if (animateParts || m_editorPosing || m_activeClip) DriveParts();   // preview / clip still drive
+            // (An Animator's pose is shown in LateUpdate.)
+            if (!AnimatorDriven() && (animateParts || m_editorPosing || m_activeClip)) DriveParts();   // preview / clip still drive
             return;
         }
     }
@@ -1179,7 +1201,7 @@ void Character::Update(float dt) {
         m_punchT += (punchDuration > 1e-3f ? dt / punchDuration : 1.0f);
         if (m_punchT > 1.0f) m_punchT = 1.0f;
     }
-    if (anim == 0) return;
+    if (anim == 0 && !m_poseSource) return;
     AdvanceAnimClock(dt);
 
     // Auto look-at: drive lookYaw/lookPitch so the head aims at the main camera or a
@@ -1209,11 +1231,32 @@ void Character::Update(float dt) {
     m_headYaw   += (lookYaw   - m_headYaw)   * k;
     m_headPitch += (lookPitch - m_headPitch) * k;
     m_bodyLean  += (bodyLean  - m_bodyLean)  * k;
+    if (!AnimatorDriven()) PresentMesh();   // an Animator's pose is shown in LateUpdate
+}
+
+void Character::LateUpdate(float) {
+    if (driveExternal) { NoteStateChange(); return; }   // the HumanoidRetarget shows it
+    if (!AnimatorDriven()) return;
+    if (separateParts && m_partsBuilt) { if (animateParts) DriveParts(); }
+    else PresentMesh();
+}
+
+void Character::EmitAnimEvent(const std::string& name) {
+    if (name.empty()) return;
+    m_animEvents.push_back(name);
+    if (onAnimEvent) onAnimEvent(name);
+    if (!gameObject) return;
+    const auto& cs = gameObject->Components();   // by index: a handler may add components
+    for (std::size_t i = 0; i < cs.size(); ++i)
+        if (cs[i].get() != this) cs[i]->OnAnimationEvent(name);
+}
+
+void Character::PresentMesh() {
     auto* mr = gameObject ? gameObject->GetComponent<MeshRenderer>() : nullptr;
     if (!mr) return;
     EnsureRest();
     Mesh m = m_rest;
-    std::vector<Vec3> pose = CurrentSourcePose();   // built-in anim, crossfade-aware
+    std::vector<Vec3> pose = CurrentSourcePose();   // built-in anim / Animator, crossfade-aware
     // Layer a punch arc over the right arm (swings forward and back), so the
     // character's own arm does the hitting on top of whatever it's already doing.
     if (m_punchT >= 0.0f && m_punchT < 1.0f && (int)pose.size() > B_RFORE) {
@@ -1381,8 +1424,14 @@ void Character::BuildParts() {
 
 std::vector<Vec3> Character::CurrentSourcePose() const {
     std::vector<Vec3> p;
+    Vec3 root;
     if (m_editorPosing)                       { p = m_editorPose; p.resize(B_COUNT, Vec3{0, 0, 0}); }
     else if (m_activeClip && !m_stateDriven)  { p = m_activeClip->Sample(m_clipTime); p.resize(B_COUNT, Vec3{0, 0, 0}); }  // manual clip wins
+    else if (AnimatorSample(p, root)) {       // the Animator crossfades itself
+        ApplyLookAndLean(p);
+        ApplyLayer(p);
+        return p;
+    }
     else if (m_blendTreeOn)                   p = SampleBlendTree();          // locomotion blend tree
     else if (m_activeClip)                    { p = m_activeClip->Sample(m_clipTime); p.resize(B_COUNT, Vec3{0, 0, 0}); }  // state clip
     else                                      p = PoseAt(animTime);
@@ -1610,6 +1659,16 @@ std::string Character::ToText() const {
         o << ' ' << (c.name.empty() ? "-" : c.name) << ' ' << (int)c.interp << ' ' << c.speed
           << ' ' << c.length << ' ' << (c.overrideMovement ? 1 : 0);
     }
+    // Root tracks of the clips that have one (trailing, count-prefixed).
+    int withRoot = 0;
+    for (const auto& kv : m_clips) if (kv.second.hasRoot) ++withRoot;
+    o << ' ' << withRoot;
+    for (const auto& kv : m_clips) {
+        const AnimClip& c = kv.second;
+        if (!c.hasRoot) continue;
+        o << ' ' << (c.name.empty() ? "-" : c.name) << ' ' << c.keys.size();
+        for (const auto& k : c.keys) o << ' ' << k.root.x << ' ' << k.root.y << ' ' << k.root.z;
+    }
     return o.str();
 }
 
@@ -1694,6 +1753,21 @@ void Character::FromText(const std::string& text) {
             it->second.speed = spd > 1e-4f ? spd : 1.0f;
             it->second.length = len > 0.0f ? len : 0.0f;
             it->second.overrideMovement = (ov != 0);
+        }
+    }
+    // Optional trailing root tracks.
+    int nr = 0;
+    if (in >> nr) {
+        for (int i = 0; i < nr; ++i) {
+            std::string cn; std::size_t nk = 0;
+            if (!(in >> cn >> nk)) break;
+            auto it = m_clips.find(cn == "-" ? "" : cn);
+            AnimClip* clip = (it != m_clips.end() && it->second.keys.size() == nk) ? &it->second : nullptr;
+            for (std::size_t k = 0; k < nk && in; ++k) {
+                Vec3 r; in >> r.x >> r.y >> r.z;
+                if (clip) clip->keys[k].root = r;
+            }
+            if (clip && in) clip->hasRoot = true;
         }
     }
     m_built = false;

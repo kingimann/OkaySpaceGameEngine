@@ -1,14 +1,17 @@
 #pragma once
 // ---------------------------------------------------------------------------
-// AnimStateMachine — an animation state machine for imported models.
-// States name a ModelAnimator clip (with speed/loop overrides); transitions move
+// AnimStateMachine — the Animator: an animation state machine.
+// It plays through a backend (AnimBackend): the object's ModelAnimator on an
+// imported model, or — on a built-in Character body — a CharacterAnimBackend it
+// owns, which plays the Character's clips.
+// States name a clip (with speed/loop overrides); transitions move
 // between them when their condition passes: a clip finishing, a float parameter
 // compared to a value, a bool parameter, or a one-frame trigger. Each transition
 // carries its own crossfade time.
 //
 // Gameplay sets parameters (SetFloat/SetBool/SetTrigger — or the script builtins
 // anim_set_float / anim_set_bool / anim_trigger) and the machine drives the
-// sibling ModelAnimator. States/transitions serialize; parameters are runtime.
+// backend. States/transitions serialize; parameters are runtime.
 //
 // Beyond single conditions a transition can AND extra conditions, wait for an
 // exit time (normalized clip time), and come from "Any State" (checked before
@@ -30,15 +33,15 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/ModelAnimator.hpp"
+#include "okay/Components/CharacterAnimBackend.hpp"
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/FullBodyIK.hpp"
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <memory>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
-#include <cstdint>
 #include <vector>
 
 namespace okay {
@@ -93,7 +96,7 @@ public:
 
     struct State {
         std::string name;           ///< state name (shown in editors, used by transitions)
-        std::string clip;           ///< ModelAnimator clip it plays
+        std::string clip;           ///< clip it plays
         float       speed = 1.0f;   ///< playback speed while in this state
         bool        loop  = true;   ///< loop while in this state
         std::vector<Transition> transitions;
@@ -241,21 +244,25 @@ public:
 
     void Start() override {
         m_current.clear();
-        if (layer == 0) if (ModelAnimator* ma = Anim()) ma->SetStateMachine(this);   // driveByMovement waits while we're enabled
+        if (layer == 0) if (AnimBackend* ma = Anim()) ma->SetStateMachine(this);   // driveByMovement waits while we're enabled
     }
-    void OnDestroy() override { if (ModelAnimator* ma = Anim()) ma->RemovePostPose(this); }
+    void OnDestroy() override {
+        if (AnimBackend* ma = Anim()) ma->RemovePostPose(this);
+        if (m_charBackend) m_charBackend->Detach();
+    }
 
     void Update(float dt) override {
-        ModelAnimator* ma = Anim();
+        AnimBackend* ma = Anim();
         if (!ma || states.empty()) return;
         if (layer == 0) ma->SetStateMachine(this);
         m_clock += dt;
         if (layer > 0) { LayerUpdate(dt, ma); return; }
-        // Enter the entry state once the ModelAnimator is alive.
+        // Enter the entry state once the backend is alive.
         if (m_current.empty()) {
             const State* st = FindState(entry);
             if (!st) st = &states.front();
             Enter(*st, 0.0f);
+            ma->Advance(0.0f);
             return;
         }
         const State* cur = FindState(m_current);
@@ -284,10 +291,10 @@ public:
             Weights2D(cur->motions, GetFloat(cur->blendParam), GetFloat(cur->blendParamY), m_bWeights);
             std::vector<int>& idx = m_motionClips;   // reused: no per-frame allocation
             idx.clear();
-            for (const Motion& m : cur->motions) idx.push_back(ClipIndex(ma, m.clip));
+            for (const Motion& m : cur->motions) idx.push_back(ma->FindClip(m.clip));
             const float prevPhase = ma->BlendPhase();
-            ma->speed = spd;
-            ma->externalDrive = ma->BlendMany(dt, idx, m_bWeights);
+            ma->SetSpeed(spd);
+            ma->SetExternalDrive(ma->BlendMany(dt, idx, m_bWeights));
             float ph = ma->BlendPhase();
             m_normTime += (ph >= prevPhase) ? ph - prevPhase : ph + 1.0f - prevPhase;
         } else if (cur->blendTree) {
@@ -297,20 +304,21 @@ public:
             m_bWeights.assign(cur->motions.size(), 0.0f);
             if (lo >= 0) m_bWeights[lo] += 1.0f - w;
             if (hi >= 0) m_bWeights[hi] += w;
-            int A = lo >= 0 ? ClipIndex(ma, cur->motions[lo].clip) : -1;
-            int B = hi >= 0 ? ClipIndex(ma, cur->motions[hi].clip) : -1;
+            int A = lo >= 0 ? ma->FindClip(cur->motions[lo].clip) : -1;
+            int B = hi >= 0 ? ma->FindClip(cur->motions[hi].clip) : -1;
             const float prevPhase = ma->BlendPhase();
-            ma->speed = spd;
-            ma->externalDrive = ma->BlendClips(dt, A, B, w);
+            ma->SetSpeed(spd);
+            ma->SetExternalDrive(ma->BlendClips(dt, A, B, w));
             float ph = ma->BlendPhase();
             m_normTime += (ph >= prevPhase) ? ph - prevPhase : ph + 1.0f - prevPhase;
         } else {
-            ma->speed = spd;
-            float len = ma->active >= 0 ? ma->ClipLength(ma->active) : 0.0f;
+            ma->SetSpeed(spd);
+            float len = ma->ActiveClip() >= 0 ? ma->ClipLength(ma->ActiveClip()) : 0.0f;
             m_normTime += len > 1e-5f ? dt * std::fabs(spd) / len : 0.0f;
         }
 
         EvaluateTransitions(dt, ma, cur);
+        ma->Advance(dt);
     }
 
     /// The machine that owns the parameters: the base layer on this object.
@@ -323,8 +331,15 @@ public:
     }
 
 private:
-    ModelAnimator* Anim() const {
-        return gameObject ? gameObject->GetComponent<ModelAnimator>() : nullptr;
+    /// The backend: the ModelAnimator on this object, else (on a Character body)
+    /// our own CharacterAnimBackend. Layers play through the base machine's.
+    AnimBackend* Anim() const {
+        if (layer > 0) { AnimStateMachine* b = Base(); if (b != this) return b->Anim(); }
+        if (!gameObject) return nullptr;
+        if (AnimBackend* ma = gameObject->GetComponent<ModelAnimator>()) return ma;
+        if (!gameObject->GetComponent<Character>()) return nullptr;
+        if (!m_charBackend) m_charBackend = std::make_unique<CharacterAnimBackend>(gameObject);
+        return m_charBackend.get();
     }
     float StateSpeed(const State& st) const {
         return st.speed * (st.speedParam.empty() ? 1.0f : GetFloat(st.speedParam));
@@ -335,14 +350,14 @@ private:
     // reallocate) while a layer plays, which would leave a State* dangling.
     struct LayerPlay { std::string st; float time = 0.0f, phase = 0.0f; };
     /// Advance a layer motion and list its (clip, time) samples + weights.
-    void LayerMotion(LayerPlay& lp, float dt, ModelAnimator* ma,
+    void LayerMotion(LayerPlay& lp, float dt, AnimBackend* ma,
                      std::vector<std::pair<int, float>>& ct, std::vector<float>& w, bool advance) {
         const State* sp = FindState(lp.st);   // "" (no state) finds nothing
         if (!sp) return;
         const State& st = *sp;
         const float spd = StateSpeed(st);
         if (!st.blendTree) {
-            int c = ClipIndex(ma, st.clip);
+            int c = ma->FindClip(st.clip);
             if (c < 0) return;
             float len = ma->ClipLength(c);
             if (advance) lp.time += dt * spd;
@@ -362,7 +377,7 @@ private:
         }
         float cycle = 0.0f, sum = 0.0f;
         for (std::size_t i = 0; i < st.motions.size(); ++i) {
-            int c = ClipIndex(ma, st.motions[i].clip);
+            int c = ma->FindClip(st.motions[i].clip);
             if (c < 0 || bw[i] <= 0.0f) continue;
             cycle += ma->ClipLength(c) * bw[i]; sum += bw[i];
         }
@@ -370,12 +385,12 @@ private:
         cycle /= sum;
         if (advance) lp.phase = std::fmod(lp.phase + dt * spd / std::fmax(cycle, 1e-4f), 1.0f);
         for (std::size_t i = 0; i < st.motions.size(); ++i) {
-            int c = ClipIndex(ma, st.motions[i].clip);
+            int c = ma->FindClip(st.motions[i].clip);
             if (c < 0 || bw[i] <= 0.0f) continue;
             ct.push_back({c, lp.phase * ma->ClipLength(c)}); w.push_back(bw[i] / sum);
         }
     }
-    void LayerUpdate(float dt, ModelAnimator* ma) {
+    void LayerUpdate(float dt, AnimBackend* ma) {
         if (!m_hooked) { ma->AddPostPose(this, [this](float) { LayerPose(); }); m_hooked = true; }
         if (m_current.empty()) {
             const State* st = FindState(entry);
@@ -411,11 +426,11 @@ private:
     /// Any State first, then the current state's own transitions (first match
     /// wins). While a transition is still blending, its interruption setting
     /// decides which of the target's / source's transitions may cut it short.
-    void EvaluateTransitions(float dt, ModelAnimator* ma, const State* cur) {
+    void EvaluateTransitions(float dt, AnimBackend* ma, const State* cur) {
         if (m_trActive) {
             m_trLeft -= dt;
             if (const State* src = FindState(m_trFrom)) {   // the source keeps its own clock
-                int c = src->blendTree ? -1 : ClipIndex(ma, src->clip);
+                int c = src->blendTree ? -1 : ma->FindClip(src->clip);
                 float len = c >= 0 ? ma->ClipLength(c) : 1.0f;
                 m_trSrcNorm += len > 1e-5f ? dt * std::fabs(StateSpeed(*src)) / len : 0.0f;
             }
@@ -459,24 +474,9 @@ private:
     }
     /// Pose the layer over the base on the masked bones (runs after the base pose).
     void LayerPose() {
-        ModelAnimator* ma = Anim();
+        AnimBackend* ma = Anim();
         if (!ma || m_lCT.empty() || layerWeight <= 0.0f) return;
-        Scene* sc = gameObject ? gameObject->scene() : nullptr;
-        const std::uint64_t ver = sc ? sc->StructureVersion() : 0;
-        if (ver != m_maskVer || m_maskName != maskBone) {
-            m_mask.clear(); m_maskVer = ver; m_maskName = maskBone;
-            if (!maskBone.empty())
-                if (GameObject* mb = ma->FindNode(maskBone)) {
-                    std::vector<Transform*> stack{mb->transform};
-                    while (!stack.empty()) {
-                        Transform* t = stack.back(); stack.pop_back();
-                        m_mask.insert(t);
-                        for (Transform* c : t->Children()) stack.push_back(c);
-                    }
-                }
-        }
-        if (!maskBone.empty() && m_mask.empty()) return;   // mask bone missing: drive nothing
-        ma->PoseWeighted(m_lCT, m_lW, maskBone.empty() ? nullptr : &m_mask, std::fmin(layerWeight, 1.0f));
+        ma->PoseLayer(m_lCT, m_lW, maskBone, std::fmin(layerWeight, 1.0f));
     }
     // Looked up by name every frame (states may be edited at runtime); the last
     // hit is tried first, so the usual case is one string compare.
@@ -487,12 +487,7 @@ private:
             if (states[i].name == name) { m_findHint = i; return &states[i]; }
         return nullptr;
     }
-    static int ClipIndex(ModelAnimator* ma, const std::string& name) {
-        if (name.empty()) return -1;
-        for (int i = 0; i < (int)ma->clips.size(); ++i) if (ma->clips[i].name == name) return i;
-        return -1;
-    }
-    bool Test(Cond c, const std::string& param, float value, ModelAnimator* ma, const State* cur) const {
+    bool Test(Cond c, const std::string& param, float value, AnimBackend* ma, const State* cur) const {
         switch (c) {
             case Cond::OnClipEnd:
                 // A blend tree "ends" after one full cycle; a clip when it finishes.
@@ -512,7 +507,7 @@ private:
         }
         return false;
     }
-    bool Satisfied(const Transition& tr, ModelAnimator* ma, const State* cur) const {
+    bool Satisfied(const Transition& tr, AnimBackend* ma, const State* cur) const {
         if (tr.hasExitTime) {
             // Looping states test the position inside the current loop; one-shots
             // the total. exitTime >= 1 on a loop means "after a whole cycle".
@@ -525,7 +520,7 @@ private:
         for (const Condition& c : tr.extra) if (!Test(c.cond, c.param, c.value, ma, cur)) return false;
         return true;
     }
-    bool Try(const Transition& tr, ModelAnimator* ma, const State* cur, bool presatisfied = false) {
+    bool Try(const Transition& tr, AnimBackend* ma, const State* cur, bool presatisfied = false) {
         if (tr.muted || (!presatisfied && !Satisfied(tr, ma, cur))) return false;
         const State* to = FindState(tr.to);
         if (!to) return false;
@@ -544,7 +539,7 @@ private:
         return true;
     }
     void Enter(const State& st, float blend, float offset = 0.0f) {
-        ModelAnimator* ma = Anim();
+        AnimBackend* ma = Anim();
         if (!ma) return;
         m_trActive = false;   // Try() re-arms it for a conditional transition
         if (!m_current.empty()) {
@@ -564,35 +559,35 @@ private:
         if (layer > 0) {   // layers crossfade from their previous state themselves
             m_lPrev = m_lCur;
             m_lCur = LayerPlay{st.name, 0.0f, offset};
-            if (!st.blendTree) { int c = ClipIndex(ma, st.clip); if (c >= 0) m_lCur.time = offset * ma->ClipLength(c); }
+            if (!st.blendTree) { int c = ma->FindClip(st.clip); if (c >= 0) m_lCur.time = offset * ma->ClipLength(c); }
             m_fadeT = 0.0f; m_fadeDur = !m_lPrev.st.empty() ? blend : 0.0f;
             if (blend <= 0.0f) m_lPrev.st.clear();
             if (onStateEnter) onStateEnter(st.name);
             if (!st.enterEvent.empty()) ma->FireEvent(st.enterEvent);
             return;
         }
-        ma->speed = StateSpeed(st);
+        ma->SetSpeed(StateSpeed(st));
         if (st.blendTree && st.blendDims == 2) {
             Weights2D(st.motions, GetFloat(st.blendParam), GetFloat(st.blendParamY), m_bWeights);
             std::vector<int> idx;
             for (std::size_t i = 0; i < st.motions.size(); ++i)
-                if (m_bWeights[i] > 0.0f) idx.push_back(ClipIndex(ma, st.motions[i].clip));
+                if (m_bWeights[i] > 0.0f) idx.push_back(ma->FindClip(st.motions[i].clip));
             ma->CaptureCrossfadeMany(idx, blend);
             ma->ResetBlendPhase(offset);
-            ma->externalDrive = true;
+            ma->SetExternalDrive(true);
         } else if (st.blendTree) {
             // Crossfade from the current pose into the tree, which BlendClips then poses.
             int lo, hi; float w;
             PickMotions(st, GetFloat(st.blendParam), lo, hi, w);
-            ma->CaptureCrossfade(lo >= 0 ? ClipIndex(ma, st.motions[lo].clip) : -1,
-                                 hi >= 0 ? ClipIndex(ma, st.motions[hi].clip) : -1, blend);
+            ma->CaptureCrossfade(lo >= 0 ? ma->FindClip(st.motions[lo].clip) : -1,
+                                 hi >= 0 ? ma->FindClip(st.motions[hi].clip) : -1, blend);
             ma->ResetBlendPhase(offset);
-            ma->externalDrive = true;
+            ma->SetExternalDrive(true);
         } else {
-            ma->externalDrive = false;
-            ma->loop  = st.loop;
+            ma->SetExternalDrive(false);
+            ma->SetLoop(st.loop);
             ma->Play(st.clip, blend);   // the transition's blend, not the animator's own setting
-            if (offset > 0.0f && ma->active >= 0) ma->SetTime(offset * ma->ClipLength(ma->active));
+            if (offset > 0.0f && ma->ActiveClip() >= 0) ma->SetTime(offset * ma->ClipLength(ma->ActiveClip()));
         }
         if (onStateEnter) onStateEnter(st.name);
         if (!st.enterEvent.empty()) ma->FireEvent(st.enterEvent);
@@ -623,9 +618,7 @@ private:
     bool  m_hooked = false;
     std::vector<std::pair<int, float>> m_lCT;
     std::vector<float> m_lW;
-    std::unordered_set<Transform*> m_mask;
-    std::uint64_t m_maskVer = 0;
-    std::string m_maskName;
+    mutable std::unique_ptr<CharacterAnimBackend> m_charBackend;   // the backend on a Character body
 };
 
 } // namespace okay

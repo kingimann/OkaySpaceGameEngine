@@ -12,6 +12,7 @@ namespace okay {
 struct AnimKey {
     float time = 0.0f;
     std::vector<Vec3> pose;   // sized to the rig's bone count
+    Vec3  root{0, 0, 0};      // body offset (rig units) when the clip has a root track
 };
 
 /// A named marker at a point in a clip. As the clip plays past `time`, the Character
@@ -34,6 +35,7 @@ struct AnimEvent {
 ///   key 0.4
 ///     r_uparm 0 0 -150
 ///     r_fore  0 0 -30
+///     root 0 -0.17 0        # optional: the whole body's offset (a crouch's hip drop)
 /// How a clip eases between keyframes:
 ///  - Linear: straight component-wise lerp (the default).
 ///  - Smooth: ease in/out (smoothstep) for a softer, more natural motion.
@@ -52,6 +54,10 @@ struct AnimClip {
     /// Movement can't interrupt this clip: a looping manual clip normally stops as
     /// soon as the character moves or jumps; an override clip keeps playing.
     bool overrideMovement = false;
+    /// The keys carry a root track: each key's `root` offsets the whole body (the
+    /// hips with everything on them), in the rig's units before the height scale.
+    /// A walk's hip bob and a crouch's or prone's drop live here.
+    bool hasRoot = false;
     std::vector<AnimKey> keys;     // kept in the order written (author them in time order)
     std::vector<AnimEvent> events; // markers fired as the clip plays (footsteps, hit windows)
 
@@ -84,6 +90,11 @@ struct AnimClip {
     /// slerped along the short arc; clamped to the ends, or wrapping last -> first over
     /// a looping clip's `length`). Empty if the clip has no keys.
     std::vector<Vec3> Sample(float t) const;
+    /// The root track at time `t`, interpolated like Sample (zero without one).
+    Vec3 SampleRoot(float t) const;
+    /// One bone between two Euler poses (degrees, the rig's Z-X-Y order), slerped
+    /// along the short arc; the angles stay close to the plain lerp's.
+    static Vec3 BlendEuler(const Vec3& a, const Vec3& b, float u);
 
     /// Parse one or more `clip` blocks from text. `resolveBone` maps a bone token
     /// to a rig index (or -1 to reject); `boneCount` sizes each keyframe's pose.

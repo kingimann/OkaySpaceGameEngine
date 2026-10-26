@@ -18,6 +18,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Components/BlendShapes.hpp"
+#include "okay/Components/AnimBackend.hpp"
 #include <cstdint>
 #include <functional>
 #include <unordered_map>
@@ -28,7 +29,7 @@
 
 namespace okay {
 
-class ModelAnimator : public Behaviour {
+class ModelAnimator : public Behaviour, public AnimBackend {
 public:
     struct NodeClip  { std::string node; AnimationClip clip; };  ///< one node's tracks for a clip
     /// A named marker on a clip's timeline; fires as playback crosses it
@@ -85,7 +86,7 @@ public:
     std::function<void(const std::string&)> onAnimEvent;   // not serialized
     /// Report an animation event: queued for anim_event(), sent to onAnimEvent,
     /// and to every other component's OnAnimationEvent (visual scripts' handlers).
-    void FireEvent(const std::string& name) {
+    void FireEvent(const std::string& name) override {
         if (name.empty()) return;
         m_firedEvents.push_back(name);
         if (m_firedEvents.size() > 64) m_firedEvents.erase(m_firedEvents.begin());   // nobody polling
@@ -104,7 +105,7 @@ public:
     }
 
     /// Length (seconds) of a clip = its longest node track.
-    float ClipLength(int i) const {
+    float ClipLength(int i) const override {
         if (i < 0 || i >= (int)clips.size()) return 0.0f;
         float len = 0.0f;
         for (const auto& nc : clips[i].nodes) len = std::fmax(len, nc.clip.Length());
@@ -263,11 +264,11 @@ public:
     }
     /// Run `fn` every frame after the base pose (layers register here).
     /// The owner must call RemovePostPose(owner) from its OnDestroy.
-    void AddPostPose(const void* owner, std::function<void(float)> fn) {
+    void AddPostPose(const void* owner, std::function<void(float)> fn) override {
         RemovePostPose(owner);
         m_postPose.push_back({owner, std::move(fn)});
     }
-    void RemovePostPose(const void* owner) {
+    void RemovePostPose(const void* owner) override {
         for (std::size_t i = 0; i < m_postPose.size(); ++i)
             if (m_postPose[i].owner == owner) { m_postPose.erase(m_postPose.begin() + i); return; }
     }
@@ -309,7 +310,7 @@ public:
 
     /// Switch to a clip by name; returns false if there's no such clip. `blend` is
     /// this switch's crossfade in seconds (< 0 = blendTime).
-    bool Play(const std::string& name, float blend = -1.0f) {
+    bool Play(const std::string& name, float blend = -1.0f) override {
         for (int i = 0; i < (int)clips.size(); ++i)
             if (clips[i].name == name) { PlayIndex(i, false, blend); return true; }
         return false;
@@ -339,7 +340,7 @@ public:
 
     /// An AnimStateMachine on this object registers itself here: while it's on
     /// the object and enabled it picks the clips, and driveByMovement waits.
-    void SetStateMachine(const Component* sm) { m_stateMachine = sm; }
+    void SetStateMachine(const Component* sm) override { m_stateMachine = sm; }
     bool StateMachineDrives() const {
         if (!m_stateMachine || !gameObject) return false;
         for (const auto& c : gameObject->Components())
@@ -360,7 +361,7 @@ public:
 
     /// True when a non-looping playback (a one-shot, or loop=false) has reached
     /// the end of its clip.
-    bool ClipFinished() const {
+    bool ClipFinished() const override {
         if (active < 0 || active >= (int)clips.size()) return false;
         if (!m_once && loop) return false;
         float len = ClipLength(active);
@@ -370,7 +371,7 @@ public:
     /// Playback time (seconds) into the current clip.
     float Time() const { return m_clock; }
     /// Seek the current clip to `t` seconds and pose the model there.
-    void SetTime(float t) {
+    void SetTime(float t) override {
         if (active < 0 || active >= (int)clips.size()) return;
         float len = ClipLength(active);
         if (len > 0.0f) t = (loop && !m_once) ? std::fmod(std::fmod(t, len) + len, len) : std::fmin(std::fmax(t, 0.0f), len);
@@ -524,7 +525,7 @@ public:
     }
 
     /// Index of a clip by name (-1 = none).
-    int FindClip(const std::string& name) const {
+    int FindClip(const std::string& name) const override {
         if (name.empty()) return -1;
         for (int i = 0; i < (int)clips.size(); ++i) if (clips[i].name == name) return i;
         return -1;
@@ -565,7 +566,7 @@ public:
     /// both sampled at one shared normalized phase so footfalls line up. Drives
     /// the bones directly (their Animators pause), blends root motion and fires
     /// the dominant clip's events. Returns false if neither clip exists.
-    bool BlendClips(float dt, int A, int B, float w) {
+    bool BlendClips(float dt, int A, int B, float w) override {
         if (!gameObject || !gameObject->scene()) return false;
         if (w < 0.0f) w = 0.0f; if (w > 1.0f) w = 1.0f;
         if (A >= (int)clips.size()) A = -1;
@@ -638,7 +639,7 @@ public:
     /// Pose the model as a weighted mix of any number of clips (2D blend trees),
     /// all sampled at one shared normalized phase. Weights are normalized; root
     /// motion is blended by the same weights; the heaviest clip fires events.
-    bool BlendMany(float dt, const std::vector<int>& clipIdx, const std::vector<float>& weights) {
+    bool BlendMany(float dt, const std::vector<int>& clipIdx, const std::vector<float>& weights) override {
         if (!gameObject || !gameObject->scene()) return false;
         // Scratch kept on the component: no per-frame allocation.
         std::vector<int>& ci = m_bmClip; std::vector<float>& w = m_bmW; std::vector<float>& len = m_bmLen;
@@ -723,8 +724,33 @@ public:
         }
     }
 
+    // ---- AnimBackend: the Animator's fields, and layers by mask bone ----
+    int  ActiveClip() const override { return active; }
+    void SetSpeed(float s) override { speed = s; }
+    void SetLoop(bool l) override { loop = l; }
+    void SetExternalDrive(bool on) override { externalDrive = on; }
+    void PoseLayer(const std::vector<std::pair<int, float>>& clipTimes, const std::vector<float>& weights,
+                   const std::string& maskBone, float amount) override {
+        Scene* sc = gameObject ? gameObject->scene() : nullptr;
+        const std::uint64_t ver = sc ? sc->StructureVersion() : 0;
+        if (ver != m_maskVer || m_maskName != maskBone) {   // the mask bone's subtree, cached
+            m_mask.clear(); m_maskVer = ver; m_maskName = maskBone;
+            if (!maskBone.empty())
+                if (GameObject* mb = FindNode(maskBone)) {
+                    std::vector<Transform*> stack{mb->transform};
+                    while (!stack.empty()) {
+                        Transform* t = stack.back(); stack.pop_back();
+                        m_mask.insert(t);
+                        for (Transform* c : t->Children()) stack.push_back(c);
+                    }
+                }
+        }
+        if (!maskBone.empty() && m_mask.empty()) return;   // mask bone missing: drive nothing
+        PoseWeighted(clipTimes, weights, maskBone.empty() ? nullptr : &m_mask, amount);
+    }
+
     /// CaptureCrossfade for any number of clips (entering a 2D blend tree).
-    void CaptureCrossfadeMany(const std::vector<int>& clipIdx, float seconds) {
+    void CaptureCrossfadeMany(const std::vector<int>& clipIdx, float seconds) override {
         m_blend.clear(); m_blendW = 0.0f;
         m_fadeTime = seconds;
         if (seconds <= 0.001f) return;
@@ -743,12 +769,12 @@ public:
     }
 
     /// Normalized phase (0..1) of the last BlendClips call.
-    float BlendPhase() const { return m_phase; }
-    void  ResetBlendPhase(float p = 0.0f) { m_phase = p; m_fromStart = true; }
+    float BlendPhase() const override { return m_phase; }
+    void  ResetBlendPhase(float p = 0.0f) override { m_phase = p; m_fromStart = true; }
     /// Capture the current pose of every node clips A and B animate, so the next
     /// `seconds` ease from it (the same crossfade Play uses) — call when switching
     /// into a BlendClips-driven state.
-    void CaptureCrossfade(int A, int B, float seconds) {
+    void CaptureCrossfade(int A, int B, float seconds) override {
         m_blend.clear(); m_blendW = 0.0f;
         m_fadeTime = seconds;
         if (seconds <= 0.001f) return;
@@ -1076,6 +1102,9 @@ private:
     bool                     m_once = false;        ///< current playback is a one-shot
     bool                     m_held = false;        ///< a script holds the current clip (PlayHeld)
     int                      m_heldReturnTo = -1;   ///< clip to return to after the hold
+    std::unordered_set<Transform*> m_mask;   ///< PoseLayer's mask bone subtree
+    std::uint64_t            m_maskVer = 0;
+    std::string              m_maskName;
     const Component*         m_stateMachine = nullptr;   ///< registered AnimStateMachine (see StateMachineDrives)
     float                    m_fadeTime = 0.25f;    ///< the running crossfade's length (blendTime, or a transition's blend)
     bool                     m_fromStart = true;    ///< next event window starts at a Play: an event at 0 fires too

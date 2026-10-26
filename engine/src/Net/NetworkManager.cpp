@@ -2350,6 +2350,13 @@ void NetworkManager::ClientTick(float dt) {
         // Once our session is keyed the server seals everything: plaintext now
         // is someone else's (spoofing the server's address).
         if (!sealed && m_secure.Ready()) continue;
+        // In a sealed join (not the clear join an older or unencrypted host
+        // gets), the server's Welcome, Reject and Kicked come sealed under the
+        // JoinKey session; before that only its JoinKey and QueryInfo are in the
+        // clear. A plaintext one is a forgery that would skip the pin or end the
+        // join.
+        if (!sealed && encryption && net::SecureChannel::Available() && !m_legacyJoin &&
+            type != JoinKey && type != QueryInfo) continue;
         if (type == QueryInfo) {
             // The host's answer to "do you check sign-ins?" (before the join).
             if (m_authDecided || p.ReadString() != net::kQueryMagic || p.ReadU32() != m_authNonce) continue;
@@ -2407,7 +2414,9 @@ void NetworkManager::ClientTick(float dt) {
             m_serverName = p.ReadString();
             m_localUserId = p.ReadString();   // our verified identity ("" if anon)
             std::string serverPk = p.ReadString();   // server's encryption public key
-            if (encryption && net::SecureChannel::Available() && !serverPk.empty() && !m_secure.Ready())
+            // Only the clear join keys its session from the Welcome (an older
+            // host; never with a pin, which needs the sealed join).
+            if (m_legacyJoin && pinnedHostKey.empty() && !serverPk.empty() && !m_secure.Ready())
                 m_secure.Establish(std::vector<std::uint8_t>(serverPk.begin(), serverPk.end()),
                                    /*asServer=*/false);
             const std::uint8_t welcomeFlags = p.ReadU8();   // optional: absent from older servers

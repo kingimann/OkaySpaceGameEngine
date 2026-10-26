@@ -21,6 +21,7 @@ const char* CheatKindName(CheatKind k) {
         case CheatKind::SyncVarFlood:    return "sync var flood";
         case CheatKind::SpeedHack:       return "speed hack";
         case CheatKind::RpcRejected:     return "rpc rejected";
+        case CheatKind::RpcFlood:        return "rpc flood";
     }
     return "cheat";
 }
@@ -106,6 +107,8 @@ bool AntiCheatSettings::Parse(const std::string& text, AntiCheatSettings& out, s
             s.ticketKey = val;
         }
         else if (key == "ticketAudience") { s.ticketAudience = val; }
+        else if (key == "maxRpcsPerSecond") { if (!ParseInt(val, s.maxRpcsPerSecond)) return fail("maxRpcsPerSecond needs a whole number >= 0"); }
+        else if (key == "maxRpcBytes") { if (!ParseInt(val, s.maxRpcBytes)) return fail("maxRpcBytes needs a whole number >= 0"); }
         else return fail("unknown setting '" + key + "'");
     }
     out = std::move(s);
@@ -131,6 +134,8 @@ std::string AntiCheatSettings::ToText() const {
     if (requireEncryption) o << "requireEncryption true\n";
     if (!ticketKey.empty()) o << "ticketKey " << ticketKey << "\n";
     if (!ticketAudience.empty()) o << "ticketAudience " << ticketAudience << "\n";
+    o << "maxRpcsPerSecond " << maxRpcsPerSecond << "\n";
+    o << "maxRpcBytes " << maxRpcBytes << "\n";
     return o.str();
 }
 
@@ -147,13 +152,14 @@ int AntiCheat::Violations(std::uint32_t peer) const {
 void AntiCheat::Tick(float dt) {
     m_clock += dt;
     for (auto& [id, p] : m_peers) {
-        if ((p.syncVarTimer += dt) >= 1.0f) { p.syncVarTimer = 0.0f; p.syncVars = 0; }
+        if ((p.syncVarTimer += dt) >= 1.0f) { p.syncVarTimer = 0.0f; p.syncVars = 0; p.rpcCalls.clear(); }
         if ((p.violationTimer += dt) >= 60.0f) { p.violationTimer = 0.0f; p.violations = 0; }
     }
 }
 
 void AntiCheat::ForgetPeer(std::uint32_t peer) {
     m_peers.erase(peer);
+    if (onForgetPeer) onForgetPeer(peer);
     for (auto it = m_owner.begin(); it != m_owner.end();)
         it = it->second == peer ? m_owner.erase(it) : std::next(it);
     for (auto it = m_track.begin(); it != m_track.end();)
@@ -249,8 +255,21 @@ bool AntiCheat::ValidateMessage(std::uint32_t peer, const std::string& channel, 
         }
         return true;
     }
-    if (channel.size() > 6 && channel.compare(0, 6, "__rpc/") == 0 && validateRpc) {
-        if (!validateRpc(peer, channel.substr(6), data)) return Refuse(peer, CheatKind::RpcRejected, channel.substr(6));
+    if (channel.size() > 6 && channel.compare(0, 6, "__rpc/") == 0) {
+        const std::string name = channel.substr(6);
+        bool ownRate = false, ownSize = false;
+        if ((settings.maxRpcsPerSecond > 0 || settings.maxRpcBytes > 0) && rpcRulesFor) rpcRulesFor(name, ownRate, ownSize);
+        if (settings.maxRpcBytes > 0 && !ownSize && data.size() > (std::size_t)settings.maxRpcBytes)
+            return Refuse(peer, CheatKind::RpcRejected, name + " (too long)");
+        if (settings.maxRpcsPerSecond > 0 && !ownRate) {
+            // Counted per RPC name; a client inventing names gets one shared
+            // count past the first few dozen, so it can't grow this map.
+            auto& calls = m_peers[peer].rpcCalls;
+            auto it = calls.find(name);
+            if (it == calls.end()) it = calls.size() < kMaxRpcNamesPerPeer ? calls.emplace(name, 0).first : calls.emplace("", 0).first;
+            if (++it->second > settings.maxRpcsPerSecond) return Refuse(peer, CheatKind::RpcFlood, name);
+        }
+        if (validateRpc && !validateRpc(peer, name, data)) return Refuse(peer, CheatKind::RpcRejected, name);
     }
     return true;
 }

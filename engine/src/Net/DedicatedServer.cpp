@@ -90,6 +90,7 @@ const char* DedicatedServerUsage() {
         "  --max-speed UNITS      reject player moves faster than this (units/second)\n"
         "  --rate-limit N         drop a player's messages beyond N per second\n"
         "  --kick-after N         kick after N rejected moves in a minute\n"
+        "  --anticheat FILE       enforce the anti-cheat rules in FILE (.okayac)\n"
         "Environment: OKAY_SERVER_PORT, OKAY_SERVER_MAX_PLAYERS, OKAY_SERVER_TICK,\n"
         "OKAY_SERVER_NAME, OKAY_SERVER_PASSWORD, OKAY_SERVER_AUTH=1, OKAY_SERVER_ADVERTISE=1,\n"
         "OKAY_SERVER_PUBLIC_ADDR, OKAY_SERVER_REGION (flags win).\n";
@@ -138,6 +139,11 @@ bool LoadDedicatedServerConfig(const std::string& path, DedicatedServerOptions& 
         else if (k == "advertise") out.advertise = truthy(v);
         else if (k == "public_addr") out.publicAddr = v;
         else if (k == "region") out.region = v;
+        else if (k == "anticheat") {
+            std::string why;
+            if (!out.anticheat.LoadFile(v, &why)) return bad("anticheat: " + why);
+            out.anticheatFile = v;
+        }
         else if (k == "max_speed") { if (!ParseFloat(v, 0.0f, 1e6f, fv)) return bad("max_speed must be a number"); out.maxSpeed = fv; }
         else if (k == "rate_limit") { if (!ParseInt(v, 0, 100000, iv)) return bad("rate_limit must be a number"); out.rateLimit = iv; }
         else if (k == "kick_after") { if (!ParseInt(v, 0, 100000, iv)) return bad("kick_after must be a number"); out.kickAfter = iv; }
@@ -252,6 +258,12 @@ bool ParseDedicatedServerArgs(int argc, char** argv, DedicatedServerOptions& out
         } else if (a == "--kick-after") {
             if (!value(v) || !ParseInt(v, 0, 100000, iv)) return fail("--kick-after needs a count");
             out.kickAfter = iv;
+        } else if (a == "--anticheat") {
+            if (!value(v) || v.empty()) return fail("--anticheat needs an .okayac file");
+            std::string why;
+            AntiCheatSettings s;
+            if (!s.LoadFile(v, &why)) return fail("--anticheat: " + why);
+            out.anticheat = s; out.anticheatFile = v;
         } else if (a.rfind("--", 0) == 0) return fail("unknown option " + a);
         else if (out.scenePath.empty()) out.scenePath = a;   // a bare path = the scene
     }
@@ -463,6 +475,9 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
 
     Game::Reset();
     scene.Start();
+    // The command line's .okayac wins over a scene's AntiCheatConfig (which
+    // applied its own at Start).
+    if (!opts.anticheatFile.empty()) net->anticheat.settings = opts.anticheat;
     if (!net->StartServer(opts.port)) {
         std::fprintf(stderr, "[server] couldn't listen on UDP port %u (is it in use?)\n", (unsigned)opts.port);
         return 2;
@@ -473,6 +488,9 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
                 opts.requireAuth ? " \xC2\xB7 sign-in required" : "",
                 opts.password.empty() ? "" : " \xC2\xB7 password",
                 opts.encryption ? " \xC2\xB7 encrypted" : "");
+    if (!opts.anticheatFile.empty())
+        std::printf("[server] anti-cheat %s from %s\n", net->anticheat.settings.enabled ? "on" : "OFF (enabled false)",
+                    opts.anticheatFile.c_str());
     std::fflush(stdout);
 
     // Server browser listing: register, heartbeat the player count, unlist on stop.

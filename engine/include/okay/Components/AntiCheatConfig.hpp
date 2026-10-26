@@ -8,11 +8,19 @@
 //     variable cheat_detail = the object / prefab / key involved);
 //   * a client's RPC must pass every NetValidator in the scene and every
 //     "On Validate Rpc" graph (Event Name = the RPC, Event Value = its data,
-//     rpc_sender = the peer; a Reject Rpc node refuses it).
+//     rpc_sender = the peer; a Reject Rpc node refuses it);
+//   * OkayScript gets the same: on_cheat_detected(kind, peer, detail) and
+//     on_validate_rpc(name, data, sender) (OnCheatDetected / OnValidateRpc).
+//     A handler returning false rejects the RPC; returning nothing allows it;
+//     an error in the handler rejects it (fail closed) and is logged once.
+// Disabling or removing the component takes all of that away again (the
+// manager's previous rules and handlers come back); enabling re-applies it.
 // Only the server checks anything; on clients and offline it does nothing.
 // ---------------------------------------------------------------------------
 #include "okay/Scene/Component.hpp"
 #include "okay/Net/AntiCheat.hpp"
+#include <cstdint>
+#include <functional>
 #include <string>
 
 namespace okay {
@@ -32,11 +40,15 @@ public:
         s.enabled = true;
         s.maxSyncSpeed = 0.0f;
         s.kickAfterViolations = 5;
+        s.maxRpcsPerSecond = 30;
         return s;
     }
 
     void Start() override { Apply(); }
     void Update(float) override { if (!m_applied) Apply(); }   // the manager may appear after us
+    void OnEnable() override { if (m_startedOnce) Apply(); }
+    void OnDisable() override { Uninstall(); }
+    void OnDestroy() override { Uninstall(); }
 
     /// (Re)apply the rules to the scene's NetworkManager. False if there's no
     /// manager yet or `file` failed to load (then `settings` is used and
@@ -46,11 +58,27 @@ public:
     /// The rules in force after Apply (the file's, or `settings`).
     const AntiCheatSettings& Active() const { return m_active; }
 
+    /// True while this component's rules are the ones in force on its manager.
+    bool Installed() const;
+
 private:
     bool m_applied = false;
+    bool m_startedOnce = false;
     std::string m_error;
     AntiCheatSettings m_active;
+    // What Apply replaced on the manager, put back by Uninstall.
+    NetworkManager* m_nm = nullptr;
+    std::uint64_t m_token = 0;
+    struct Previous {
+        AntiCheatSettings settings;
+        std::function<void(const CheatReport&)> cheatHandler;
+        std::function<bool(std::uint32_t, const std::string&, const std::string&)> validateRpc;
+        std::function<void(const std::string&, bool&, bool&)> rpcRulesFor;
+        std::function<void(std::uint32_t)> onForgetPeer;
+        std::uint64_t installer = 0;
+    } m_prev;
     NetworkManager* FindManager() const;
+    void Uninstall();
 };
 
 } // namespace okay

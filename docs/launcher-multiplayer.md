@@ -250,6 +250,44 @@ The server decides; clients only ask.
 | Kick after N rejected moves in a minute | (`kickAfterViolations`) | `--kick-after N` |
 | Move a player legitimately (respawn, portal) | `net_teleport(id, x, y[, z])` | |
 | Server-owned score everyone sees | `net_set_score(id, n)`, `net_score(id)` | |
+| Turn the anti-cheat on / off, or load its rules | `net_anticheat([on])`, `net_anticheat_load("rules.okayac")` | `--anticheat FILE` (or `anticheat = FILE` in server.cfg) |
+| A player's refusals this minute | `net_violations(id)` | |
+
+These always hold, whether or not the anti-cheat is on:
+- Only a joined player can change synced variables (`SetVar`). A packet from
+  anyone else is ignored.
+- Clients can't use the engine's reserved channels, except the ones they
+  really use: `__spawn`, `__despawn`, `__xform`, `__chat` and `__rpc/…`. In
+  particular, only the host starts a match.
+- The server stamps chat with the sender's roster name, so nobody can post as
+  someone else.
+
+### Anti-cheat (opt-in)
+
+Add an **Anti-Cheat Config** component next to the Network Manager, set its
+rules in the inspector or in a `.okayac` file, or start a dedicated server
+with `--anticheat rules.okayac`. The full rule list is in
+`engine/include/okay/Net/AntiCheat.hpp`.
+
+- **RPC rate:** the component's default is at most **30 calls per second to
+  any one RPC per player** (`maxRpcsPerSecond`; 0 = off). `maxRpcBytes` caps
+  the payload size. A **Net Validator** with its own calls/s or max bytes for an
+  RPC takes the place of these defaults for that RPC.
+- **Reacting in OkayScript**, on the host:
+  - `function on_cheat_detected(kind, peer, detail)` (or `OnCheatDetected`)
+    runs for every refusal.
+  - `function on_validate_rpc(name, data, sender)` (or `OnValidateRpc`) runs
+    before each client RPC:
+    - `return false` refuses it: the RPC doesn't run, isn't relayed, and counts
+      against the sender;
+    - returning nothing allows it, so a handler that only logs blocks nothing;
+    - **an error in the handler refuses the RPC** (fail closed). The error is
+      logged once.
+- **Visual scripts** get the same through the On Cheat Detected and On Validate
+  Rpc nodes.
+- **Disabling or removing** the component, or deactivating its object, turns
+  its checks off again and puts back what was there before. Turning it back on
+  re-applies them.
 
 Every peer gets the **roster** once a second: names, scores and time
 played. Read it with `net_roster_count()`, `net_roster_id(i)`,

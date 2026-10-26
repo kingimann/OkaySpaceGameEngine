@@ -10430,6 +10430,8 @@ void DrawScriptDocs() {
         fapi("net_match_start() / net_match_end([winner ids])", "server: zero scores / end the match and save results (stats, leaderboards)");
         fapi("net_stats_top(\"wins\"|\"score\"|\"best\"|\"matches\"|\"time\", n) / net_stats_mine(stat)", "this game's leaderboard from match results");
         fapi("net_max_speed(units) / net_rate_limit(perSec)", "server: snap back too-fast moves / drop message spam");
+        fapi("net_anticheat([on]) / net_anticheat_load(path) / net_violations(id)", "server: anti-cheat on/off / load an .okayac file / a player's refusals this minute");
+        fapi("on_cheat_detected(kind, peer, detail) / on_validate_rpc(name, data, sender)", "server events (Anti-Cheat Config): return false from on_validate_rpc to refuse the RPC");
         fapi("net_disconnect()", "leave / stop the session");
         fapi("net_connected() / net_is_server() / net_is_client()", "status");
         fapi("net_id() / net_peers() / net_ping()", "peer id / peer count / RTT (ms)");
@@ -27807,6 +27809,10 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fastest a client's Network Sync object may move (0 = no check).");
             if (ImGui::DragInt("SyncVars/s##ac", &s.maxSyncVarsPerSecond, 0.2f, 0, 10000)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("SyncVar writes a client may make per second (0 = unlimited).");
+            if (ImGui::DragInt("RPCs/s##ac", &s.maxRpcsPerSecond, 0.2f, 0, 10000)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Calls a client may make per second to any one RPC (0 = unlimited). A Net Validator with its own calls/s overrides it.");
+            if (ImGui::DragInt("RPC max bytes##ac", &s.maxRpcBytes, 1.0f, 0, 1 << 20)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Longest RPC payload a client may send (0 = any). A Net Validator with its own max bytes overrides it.");
             if (ImGui::DragInt("Kick after##ac", &s.kickAfterViolations, 0.1f, 0, 1000)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Kick a client after this many refusals within a minute (0 = never).");
             if (ImGui::Checkbox("Owner-only SyncVars##ac", &s.ownerOnlySyncVars)) ed.dirty = true;

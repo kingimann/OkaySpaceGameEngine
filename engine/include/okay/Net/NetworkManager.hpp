@@ -30,6 +30,14 @@ class NetworkManager : public Behaviour {
 public:
     enum class Mode { Offline, Server, Client };
 
+    NetworkManager();
+    ~NetworkManager() override;
+    /// True while `nm` points at a NetworkManager that hasn't been destroyed —
+    /// for code that kept a pointer and must not touch a dead one.
+    static bool IsLive(const NetworkManager* nm);
+    /// Server ticks run so far (per-tick caches key off this).
+    std::uint64_t TickCount() const { return m_tickCount; }
+
     /// Begin listening for clients on the given UDP port.
     bool StartServer(std::uint16_t port);
     /// Connect to a server at host:port (host may be a name or dotted IP).
@@ -103,6 +111,7 @@ public:
     AntiCheat anticheat;
     /// Server: called for every message anti-cheat refuses.
     void SetCheatHandler(std::function<void(const CheatReport&)> f) { m_cheatHandler = std::move(f); }
+    const std::function<void(const CheatReport&)>& CheatHandler() const { return m_cheatHandler; }
 
     // ---- Scores + roster (every peer sees who's in the room) -------------
     /// Server only: set a peer's score (0 = the host). Clients can't change scores.
@@ -612,9 +621,15 @@ private:
     std::function<void(const ChatEntry&)> m_chatHandler;
 
     // Anti-cheat: refusals are reported here and kick repeat offenders.
+    std::uint64_t m_tickCount = 0;
     std::function<void(const CheatReport&)> m_cheatHandler;
     /// Server: may client `peer` send this? (False = drop it, already reported.)
     bool AntiCheatAllows(std::uint32_t peer, const std::string& channel, const std::string& data);
+    /// Server, always (anti-cheat on or off): may a client send on `channel`?
+    /// Reserved "__" channels other than the ones clients really use are
+    /// dropped (a client can't start the match), and chat is re-signed with the
+    /// sender's roster name (no posting as someone else).
+    bool ClientMessageOk(const Client& from, const std::string& channel, std::string& data) const;
     bool AntiCheatAllowsSyncVar(std::uint32_t peer, const std::string& key);
     void AntiCheatAfterRefusal(std::uint32_t peer);
 

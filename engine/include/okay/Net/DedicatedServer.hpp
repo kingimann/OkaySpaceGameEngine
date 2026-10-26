@@ -17,6 +17,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include "okay/Net/AntiCheat.hpp"
 
 namespace okay {
 
@@ -44,6 +45,10 @@ struct DedicatedServerOptions {
     float maxSpeed = 0.0f;           ///< --max-speed: units per second (0 = off)
     int   rateLimit = 0;             ///< --rate-limit: custom messages per second per player (0 = off)
     int   kickAfter = 0;             ///< --kick-after: rejected moves in a minute before a kick (0 = never)
+    /// --anticheat FILE / anticheat = FILE: the .okayac rules to enforce (loaded
+    /// while reading the options, so a bad file stops startup with its error).
+    std::string anticheatFile;
+    AntiCheatSettings anticheat;     ///< what anticheatFile holds (enabled only when one was given)
 };
 
 /// Read `--server` and its flags (plus OKAY_SERVER_* environment variables, which

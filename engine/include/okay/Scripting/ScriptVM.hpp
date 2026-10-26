@@ -82,6 +82,18 @@ public:
     /// Same, passing one argument when the handler declares a parameter — e.g. the
     /// other object's name to OnTriggerEnter(Collider other). Default: drops it.
     virtual void CallEventWith(const std::string& function, const vs::VsValue& /*arg*/) { CallEvent(function); }
+    /// Same, with several arguments (as many as the handler declares) and the
+    /// handler's return value back; a missing handler returns a default value.
+    /// If `error` is given, a script error is stored there instead of logged
+    /// (so the caller can decide, e.g. fail closed). Default: CallEventWith
+    /// with the first argument, returning nothing.
+    virtual vs::VsValue CallEventArgs(const std::string& function, const std::vector<vs::VsValue>& args,
+                                      std::string* /*error*/ = nullptr) {
+        CallEventWith(function, args.empty() ? vs::VsValue{} : args[0]);
+        return vs::VsValue{};
+    }
+    /// True if the script defines `function` (or one of its aliases).
+    virtual bool HasEvent(const std::string& /*function*/) const { return false; }
 
     /// Read back a global the script defined (for tests and gameplay glue).
     virtual vs::VsValue GetGlobal(const std::string& name) const = 0;

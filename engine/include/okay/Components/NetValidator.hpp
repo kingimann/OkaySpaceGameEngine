@@ -11,6 +11,7 @@
 #include "okay/Scene/Component.hpp"
 #include <cstdint>
 #include <string>
+#include <iterator>
 #include <unordered_map>
 
 namespace okay {
@@ -37,12 +38,25 @@ public:
         return true;
     }
 
-    void Update(float dt) override { m_time += dt; }
+    void Update(float dt) override {
+        m_time += dt;
+        // Peers that went quiet (and anyone AntiCheatConfig didn't tell us
+        // about) drop out after a while, so the map can't grow without end.
+        if ((m_sincePrune += dt) >= 10.0f) {
+            m_sincePrune = 0.0f;
+            for (auto it = m_calls.begin(); it != m_calls.end();)
+                it = m_time - it->second.start > 10.0f ? m_calls.erase(it) : std::next(it);
+        }
+    }
+    /// A peer left: drop its call counter.
+    void ForgetPeer(std::uint32_t peer) { m_calls.erase(peer); }
+    std::size_t TrackedPeers() const { return m_calls.size(); }
 
 private:
     struct Window { float start = 0.0f; int count = 0; };
     std::unordered_map<std::uint32_t, Window> m_calls;
     float m_time = 0.0f;
+    float m_sincePrune = 0.0f;
 };
 
 } // namespace okay

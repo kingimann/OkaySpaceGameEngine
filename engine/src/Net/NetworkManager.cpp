@@ -1,6 +1,8 @@
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Net/SessionTicket.hpp"
 #include <ctime>
+#include <unordered_set>
+#include <mutex>
 #include "okay/Net/Packet.hpp"
 #include "okay/Net/RelayProtocol.hpp"
 #include "okay/Net/ServerQuery.hpp"
@@ -51,6 +53,18 @@ namespace {
     net::Endpoint SlotEndpoint(std::uint32_t slot) {
         return net::Endpoint{slot, net::kRelaySlotPort};
     }
+}
+
+namespace {
+std::mutex g_liveMutex;
+std::unordered_set<const NetworkManager*>& LiveManagers() { static std::unordered_set<const NetworkManager*> s; return s; }
+} // namespace
+
+NetworkManager::NetworkManager() { std::lock_guard<std::mutex> l(g_liveMutex); LiveManagers().insert(this); }
+NetworkManager::~NetworkManager() { std::lock_guard<std::mutex> l(g_liveMutex); LiveManagers().erase(this); }
+bool NetworkManager::IsLive(const NetworkManager* nm) {
+    std::lock_guard<std::mutex> l(g_liveMutex);
+    return nm && LiveManagers().count(nm) != 0;
 }
 
 bool NetworkManager::StartServer(std::uint16_t port) {
@@ -889,6 +903,19 @@ void NetworkManager::Send(const std::string& channel, const std::string& data) {
     }
 }
 
+bool NetworkManager::ClientMessageOk(const Client& from, const std::string& channel, std::string& data) const {
+    if (channel.size() < 2 || channel[0] != '_' || channel[1] != '_') return true;   // a game channel
+    if (channel == "__chat") {
+        // "<name>\n<text>": the name is the server's, not the sender's choice.
+        const std::size_t nl = data.find('\n');
+        data = from.name + "\n" + (nl == std::string::npos ? data : data.substr(nl + 1));
+        return true;
+    }
+    if (channel == "__spawn" || channel == "__despawn" || channel == "__xform") return true;
+    if (channel.size() > 6 && channel.compare(0, 6, "__rpc/") == 0) return true;
+    return false;   // __match_start and any other reserved channel: host only
+}
+
 bool NetworkManager::AntiCheatAllows(std::uint32_t peer, const std::string& channel, const std::string& data) {
     if (!anticheat.settings.enabled) return true;
     if (anticheat.ValidateMessage(peer, channel, data)) return true;
@@ -912,6 +939,7 @@ void NetworkManager::AntiCheatAfterRefusal(std::uint32_t peer) {
 
 void NetworkManager::ServerTick(float dt) {
     m_serverTime += dt;
+    ++m_tickCount;
     if (anticheat.settings.enabled) anticheat.Tick(dt);
     // Rate limit: true if this client may send another custom message this second.
     auto rateOk = [this](Client& c) { return maxMessagesPerSecond <= 0 || ++c.msgCount <= maxMessagesPerSecond; };
@@ -1079,9 +1107,10 @@ void NetworkManager::ServerTick(float dt) {
             // A client requested a variable change; apply it and fan out to all.
             std::string key = p.ReadString();
             std::string value = p.ReadString();
-            if (anticheat.settings.enabled) {   // only joined clients, within the anti-cheat rules
+            {   // only joined clients may change shared state (and, with anti-cheat on, within its rules)
                 auto cl = m_clients.find(from);
-                if (cl == m_clients.end() || !AntiCheatAllowsSyncVar(cl->second.id, key)) continue;
+                if (cl == m_clients.end()) continue;
+                if (anticheat.settings.enabled && !AntiCheatAllowsSyncVar(cl->second.id, key)) continue;
             }
             ApplySyncVar(key, value);
             net::Packet out(SyncVar); out.Write(key); out.Write(value);
@@ -1104,7 +1133,7 @@ void NetworkManager::ServerTick(float dt) {
                 net::Packet ack(ReliableAck); ack.Write(seq);
                 SendDatagram(from, ack.Data(), ack.Size());
                 if (it->second.relSeen.insert(seq).second && rateOk(it->second) &&   // first time -> deliver
-                    AntiCheatAllows(it->second.id, channel, data))
+                    ClientMessageOk(it->second, channel, data) && AntiCheatAllows(it->second.id, channel, data))
                     Deliver(it->second.id, channel, data);
             }
         } else if (type == ReliableAck) {
@@ -1118,6 +1147,7 @@ void NetworkManager::ServerTick(float dt) {
                 std::uint32_t target = p.ReadU32();
                 std::string channel = p.ReadString();
                 std::string data    = p.ReadString();
+                if (!ClientMessageOk(it->second, channel, data)) continue;
                 if (!AntiCheatAllows(sender, channel, data)) continue;   // refused (and maybe kicked)
                 if (target == m_localId) {                // addressed to the host
                     Deliver(sender, channel, data);
@@ -1179,6 +1209,7 @@ void NetworkManager::ServerTick(float dt) {
                 p.ReadU32();                            // sender-reported id (ignored)
                 std::string channel = p.ReadString();
                 std::string data    = p.ReadString();
+                if (!ClientMessageOk(it->second, channel, data)) continue;
                 if (!AntiCheatAllows(sender, channel, data)) continue;   // not applied, not relayed
                 if (dedicated || m_localRoom == senderRoom)   // host only sees its room (a dedicated server sees all)
                     Deliver(sender, channel, data);

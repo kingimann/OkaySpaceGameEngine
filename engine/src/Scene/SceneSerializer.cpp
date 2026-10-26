@@ -739,7 +739,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         for (const auto& p : s.spawnAllowlist) { if (!allow.empty()) allow += ';'; allow += p; }
         out << "  anticheat " << (s.enabled ? 1 : 0) << " " << s.maxSyncSpeed << " " << s.maxSyncVarsPerSecond
             << " " << s.kickAfterViolations << " " << (s.ownerOnlySyncVars ? 1 : 0)
-            << " " << Quote(ac->file) << " " << Quote(allow) << "\n";
+            << " " << Quote(ac->file) << " " << Quote(allow)
+            << " " << s.maxRpcsPerSecond << " " << s.maxRpcBytes << "\n";
     }
     for (auto* nv : go->GetComponents<NetValidator>())
         out << "  netvalidator " << Quote(nv->rpc) << " " << nv->maxBytes << " " << nv->maxPerSecond
@@ -4774,6 +4775,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         if (b == std::string::npos) b = allow.size();
                         if (b > a) s.spawnAllowlist.push_back(allow.substr(a, b - a));
                         a = b + 1;
+                    }
+                    // RPC limits came later: a leading digit means they're here; an
+                    // older scene keeps the component's defaults.
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) {
+                        int rps = s.maxRpcsPerSecond, rb = s.maxRpcBytes;
+                        in >> rps >> rb;
+                        s.maxRpcsPerSecond = std::max(0, rps); s.maxRpcBytes = std::max(0, rb);
                     }
                 } else if (field == "netvalidator") {
                     auto* nv = go->AddComponent<NetValidator>();

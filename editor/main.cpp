@@ -27598,6 +27598,57 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##nps")) toRemove = ps;
         }
     }
+    if (auto* ac = dynamic_cast<AntiCheatConfig*>(curComp)) {
+        if (CompHeader("Anti-Cheat Config", ac, &toRemove)) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("Server-side checks on what clients send (needs a Network Manager). "
+                                "Refusals run On Cheat Detected in visual scripts.");
+            ImGui::PopTextWrapPos();
+            AntiCheatSettings& s = ac->settings;
+            if (ImGui::Checkbox("Enabled##ac", &s.enabled)) ed.dirty = true;
+            char fp[256]; std::snprintf(fp, sizeof(fp), "%s", ac->file.c_str());
+            if (ImGui::InputText("Rules file##ac", fp, sizeof(fp))) { ac->file = fp; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional .okayac file. When it loads it replaces the settings below.");
+            if (ImGui::DragFloat("Max speed##ac", &s.maxSyncSpeed, 0.1f, 0.0f, 1000.0f, "%.1f u/s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fastest a client's Network Sync object may move (0 = no check).");
+            if (ImGui::DragInt("SyncVars/s##ac", &s.maxSyncVarsPerSecond, 0.2f, 0, 10000)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("SyncVar writes a client may make per second (0 = unlimited).");
+            if (ImGui::DragInt("Kick after##ac", &s.kickAfterViolations, 0.1f, 0, 1000)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Kick a client after this many refusals within a minute (0 = never).");
+            if (ImGui::Checkbox("Owner-only SyncVars##ac", &s.ownerOnlySyncVars)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("\"<netId>.<name>\" SyncVars may only be written by that object's owner.");
+            ImGui::TextUnformatted("Prefabs clients may spawn:");
+            int del = -1;
+            for (int i = 0; i < (int)s.spawnAllowlist.size(); ++i) {
+                ImGui::PushID(i);
+                char p[256]; std::snprintf(p, sizeof(p), "%s", s.spawnAllowlist[i].c_str());
+                ImGui::SetNextItemWidth(-40);
+                if (ImGui::InputText("##acspawn", p, sizeof(p))) { s.spawnAllowlist[i] = p; ed.dirty = true; }
+                ImGui::SameLine(); if (ImGui::SmallButton("x")) del = i;
+                ImGui::PopID();
+            }
+            if (del >= 0) { s.spawnAllowlist.erase(s.spawnAllowlist.begin() + del); ed.dirty = true; }
+            if (ImGui::SmallButton("Add prefab##ac")) { s.spawnAllowlist.push_back("prefabs/"); ed.dirty = true; }
+            if (ImGui::SmallButton("Remove##ac")) toRemove = ac;
+        }
+    }
+    if (auto* nv = dynamic_cast<NetValidator*>(curComp)) {
+        if (CompHeader("Net Validator", nv, &toRemove)) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("A rule a client's RPC must pass on the server (needs an Anti-Cheat Config).");
+            ImGui::PopTextWrapPos();
+            char rn[64]; std::snprintf(rn, sizeof(rn), "%s", nv->rpc.c_str());
+            if (ImGui::InputText("RPC name##nv", rn, sizeof(rn))) { nv->rpc = rn; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The RPC this rule covers; * = every RPC.");
+            if (ImGui::DragInt("Max bytes##nv", &nv->maxBytes, 1.0f, 0, 65536)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Longest payload a client may send (0 = any).");
+            if (ImGui::DragFloat("Calls/s##nv", &nv->maxPerSecond, 0.1f, 0.0f, 1000.0f, "%.1f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Most calls per second per client (0 = any).");
+            if (ImGui::Checkbox("Clients may send##nv", &nv->clientsMaySend)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off = only the host may call this RPC.");
+            if (ImGui::SmallButton("Remove##nv")) toRemove = nv;
+        }
+    }
     if (auto* pm = dynamic_cast<PauseMenu*>(curComp)) {
         if (CompHeader("Pause Menu", pm, &toRemove)) {
             // The menu UI lives in the scene as editable objects (under "PauseMenu UI")
@@ -33942,6 +33993,8 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<NetworkManager>(), "Network Manager")) { go->AddComponent<NetworkManager>(); ed.dirty = true; }
             if (item(!go->GetComponent<NetworkSync>(), "Network Sync (replicate transform)")) { go->AddComponent<NetworkSync>(); ed.dirty = true; }
             if (item(!go->GetComponent<NetworkPlayerSpawner>(), "Network Player Spawner")) { go->AddComponent<NetworkPlayerSpawner>(); ed.dirty = true; }
+            if (item(!go->GetComponent<AntiCheatConfig>(), "Anti-Cheat Config")) { go->AddComponent<AntiCheatConfig>(); ed.dirty = true; }
+            if (item(true, "Net Validator (RPC rule)")) { go->AddComponent<NetValidator>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIAnimation>(), "UI Animation (fade / slide / pop / pulse)")) { go->AddComponent<UIAnimation>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIButton>(), "UI Button")) { go->AddComponent<UIButton>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIPanel>(), "UI Panel")) { go->AddComponent<UIPanel>(); ed.dirty = true; }

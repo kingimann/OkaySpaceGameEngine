@@ -114,6 +114,7 @@ bool AntiCheatSettings::Parse(const std::string& text, AntiCheatSettings& out, s
         else if (key == "maxHitRange") { if (!ParseFloat(val, s.maxHitRange)) return fail("maxHitRange needs a number >= 0"); }
         else if (key == "hitDamage") { if (!ParseFloat(val, s.hitDamage)) return fail("hitDamage needs a number >= 0"); }
         else if (key == "hitLineOfSight") { if (!ParseBool(val, s.hitLineOfSight)) return fail("hitLineOfSight needs true or false"); }
+        else if (key == "weapon") { if (val.empty()) return fail("weapon needs a name"); s.weapons.push_back(val); }
         else if (key == "serverVar") { if (val.empty()) return fail("serverVar needs a key prefix"); s.serverVars.push_back(val); }
         else if (key == "maxRpcsPerSecond") { if (!ParseInt(val, s.maxRpcsPerSecond)) return fail("maxRpcsPerSecond needs a whole number >= 0"); }
         else if (key == "maxRpcBytes") { if (!ParseInt(val, s.maxRpcBytes)) return fail("maxRpcBytes needs a whole number >= 0"); }
@@ -155,6 +156,7 @@ std::string AntiCheatSettings::ToText() const {
     if (maxHitRange != d.maxHitRange) o << "maxHitRange " << maxHitRange << "\n";
     if (hitDamage != d.hitDamage) o << "hitDamage " << hitDamage << "\n";
     if (hitLineOfSight != d.hitLineOfSight) o << "hitLineOfSight " << (hitLineOfSight ? "true" : "false") << "\n";
+    for (const auto& w : weapons) o << "weapon " << w << "\n";
     return o.str();
 }
 
@@ -277,20 +279,32 @@ bool AntiCheat::ValidateMessage(std::uint32_t peer, const std::string& channel, 
     if (channel.size() > 6 && channel.compare(0, 6, "__rpc/") == 0) {
         const std::string name = channel.substr(6);
         bool ownRate = false, ownSize = false;
-        if ((settings.maxRpcsPerSecond > 0 || settings.maxRpcBytes > 0) && rpcRulesFor) rpcRulesFor(name, ownRate, ownSize);
+        if (settings.maxRpcBytes > 0 && rpcRulesFor) rpcRulesFor(name, ownRate, ownSize);
         if (settings.maxRpcBytes > 0 && !ownSize && data.size() > (std::size_t)settings.maxRpcBytes)
             return Refuse(peer, CheatKind::RpcRejected, name + " (too long)");
-        if (settings.maxRpcsPerSecond > 0 && !ownRate) {
-            // Counted per RPC name; a client inventing names gets one shared
-            // count past the first few dozen, so it can't grow this map.
-            auto& calls = m_peers[peer].rpcCalls;
-            auto it = calls.find(name);
-            if (it == calls.end()) it = calls.size() < kMaxRpcNamesPerPeer ? calls.emplace(name, 0).first : calls.emplace("", 0).first;
-            if (++it->second > settings.maxRpcsPerSecond) return Refuse(peer, CheatKind::RpcFlood, name);
-        }
+        if (!CountRpc(peer, name)) return false;
         if (validateRpc && !validateRpc(peer, name, data)) return Refuse(peer, CheatKind::RpcRejected, name);
     }
     return true;
+}
+
+bool AntiCheat::CountRpc(std::uint32_t peer, const std::string& name) {
+    if (settings.maxRpcsPerSecond <= 0) return true;
+    bool ownRate = false, ownSize = false;
+    if (rpcRulesFor) rpcRulesFor(name, ownRate, ownSize);
+    if (ownRate) return true;
+    // Counted per RPC name; a client inventing names gets one shared count
+    // past the first few dozen, so it can't grow this map.
+    auto& calls = m_peers[peer].rpcCalls;
+    auto it = calls.find(name);
+    if (it == calls.end()) it = calls.size() < kMaxRpcNamesPerPeer ? calls.emplace(name, 0).first : calls.emplace("", 0).first;
+    if (++it->second > settings.maxRpcsPerSecond) return Refuse(peer, CheatKind::RpcFlood, name);
+    return true;
+}
+
+bool AntiCheat::KnownWeapon(const std::string& weapon) const {
+    for (const auto& w : settings.weapons) if (w == weapon) return true;
+    return coversRpc && coversRpc("hit/" + weapon);
 }
 
 bool AntiCheat::IsServerVar(const std::string& key) const {

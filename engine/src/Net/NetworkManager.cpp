@@ -67,6 +67,7 @@ namespace {
     // from every Msg type (1..16) and from a plaintext message's leading type byte.
     constexpr std::uint8_t kEncEnvelope = 0xEE;
     constexpr float kClientTimeout = 5.0f;
+    constexpr int kHitClaimsPerSecond = 20;    // a client's hit claims without the anti-cheat on
     constexpr float kReliableResend = 0.25f;   // resend an unacked message this often
 
     std::vector<std::uint8_t> BuildReliable(std::uint32_t seq, const std::string& channel,
@@ -1165,6 +1166,9 @@ void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
         anticheat.Report(shooter, CheatKind::HitRejected, why);
         AntiCheatAfterRefusal(shooter);   // (may kick: c is gone after this)
     };
+    // Without the anti-cheat's RPC limit, a fixed one: a client can't make the
+    // server raycast and rewind for a flood of claims.
+    if (!anticheat.settings.enabled && ++c.hitClaims > kHitClaimsPerSecond) { refuse("too many hit claims"); return; }
     std::vector<std::string> part;
     for (std::size_t a = 0;;) {
         const std::size_t b = data.find('|', a);
@@ -1189,6 +1193,24 @@ void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
     claim.direction = dir * (1.0f / dir.Magnitude());
     claim.damage = anticheat.settings.hitDamage;
     const AntiCheatSettings& s = anticheat.settings;
+    if (s.enabled) {
+        // Only a weapon the game knows (a Net Validator for "hit/<weapon>", or
+        // a "weapon" in the rules) may claim, so an invented name can't dodge
+        // the fire rate and ammo; and every claim counts against the RPC rate.
+        // An unknown one does nothing but isn't a violation: a game that
+        // hasn't listed its weapons yet mustn't get honest players kicked.
+        if (!anticheat.KnownWeapon(claim.weapon)) {
+            ++m_hitsRefused;
+            if (m_unknownWeapons.size() < 32 && m_unknownWeapons.insert(claim.weapon).second) {
+                std::string w = claim.weapon;
+                for (char& ch : w) if ((unsigned char)ch < 0x20 || ch == 0x7f) ch = '?';
+                OKAY_WARN("anti-cheat: refused hits with weapon \"", w, "\": add a Net Validator for hit/", w,
+                          " or \"weapon ", w, "\" to the rules");
+            }
+            return;
+        }
+        if (!anticheat.CountRpc(shooter, "hit/" + claim.weapon)) { ++m_hitsRefused; AntiCheatAfterRefusal(shooter); return; }
+    }
 
     // The shooter is alive (when its avatar has health).
     if (auto r = m_remotes.find(shooter); r != m_remotes.end() && r->second)
@@ -2103,7 +2125,7 @@ void NetworkManager::ServerTick(float dt) {
     for (auto it = m_clients.begin(); it != m_clients.end();) {
         it->second.lastSeen += dt;
         it->second.stateAge += dt;
-        if ((it->second.msgTimer += dt) >= 1.0f) { it->second.msgTimer = 0.0f; it->second.msgCount = 0; }
+        if ((it->second.msgTimer += dt) >= 1.0f) { it->second.msgTimer = 0.0f; it->second.msgCount = 0; it->second.hitClaims = 0; }
         if ((it->second.violationTimer += dt) >= 60.0f) { it->second.violationTimer = 0.0f; it->second.violations = 0; }
         if (it->second.lastSeen > kClientTimeout) {
             std::uint32_t id = it->second.id;

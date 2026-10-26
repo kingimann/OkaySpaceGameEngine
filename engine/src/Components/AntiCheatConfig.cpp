@@ -70,10 +70,14 @@ bool AntiCheatConfig::Apply() {
     // Remember what was there (unless it's our own earlier install), so
     // disabling / removing this component can put it back.
     if (!Installed()) {
+        if (m_active.enabled)
+            OKAY_INFO("anti-cheat: hit claims need a known weapon (a Net Validator for hit/<weapon>, or one of the ",
+                      m_active.weapons.size(), " weapon(s) in the rules)");
         m_prev.settings = nm->anticheat.settings;
         m_prev.cheatHandler = nm->CheatHandler();
         m_prev.validateRpc = nm->anticheat.validateRpc;
         m_prev.rpcRulesFor = nm->anticheat.rpcRulesFor;
+        m_prev.coversRpc = nm->anticheat.coversRpc;
         m_prev.onForgetPeer = nm->anticheat.onForgetPeer;
         m_prev.validateHit = nm->anticheat.validateHit;
         m_prev.installer = nm->anticheat.installer;
@@ -135,6 +139,12 @@ bool AntiCheatConfig::Apply() {
                 if (nv->maxBytes > 0) ownSize = true;
             }
     };
+    nm->anticheat.coversRpc = [sc, nm, L](const std::string& name) {
+        L->Refresh(sc, nm->TickCount());
+        for (auto* nv : L->validators)
+            if (nv->enabled && nv->Covers(name)) return true;
+        return false;
+    };
     nm->anticheat.onForgetPeer = [sc](std::uint32_t peer) {
         for (auto* nv : sc->FindObjectsOfType<NetValidator>()) nv->ForgetPeer(peer);
     };
@@ -195,6 +205,7 @@ void AntiCheatConfig::Uninstall() {
         m_nm->SetCheatHandler(m_prev.cheatHandler);
         m_nm->anticheat.validateRpc = m_prev.validateRpc;
         m_nm->anticheat.rpcRulesFor = m_prev.rpcRulesFor;
+        m_nm->anticheat.coversRpc = m_prev.coversRpc;
         m_nm->anticheat.onForgetPeer = m_prev.onForgetPeer;
         m_nm->anticheat.validateHit = m_prev.validateHit;
         m_nm->anticheat.installer = m_prev.installer;

@@ -90,6 +90,10 @@ struct AntiCheatSettings {
     float hitDamage = 10.0f;
     /// A server raycast from the shot's origin must reach the target (no shooting through walls).
     bool  hitLineOfSight = true;
+    /// Weapons clients may claim hits with, besides those an enabled Net
+    /// Validator covers ("hit/<weapon>"). With the anti-cheat on, a claim with
+    /// any other weapon does no damage.
+    std::vector<std::string> weapons;
 
     /// .okayac text: one "key value" per line, '#' comments:
     ///   enabled true | spawn <prefab path> (repeatable) | maxSyncSpeed 12
@@ -98,6 +102,7 @@ struct AntiCheatSettings {
     ///   maxRpcsPerSecond 30 | maxRpcBytes 4096 | maxClockDrift 0.05
     ///   serverVar <key prefix> (repeatable)
     ///   hitOriginTolerance 2 | hitTolerance 1 | maxHitRange 50 | hitDamage 10 | hitLineOfSight true
+    ///   weapon <name> (repeatable)
     static bool Parse(const std::string& text, AntiCheatSettings& out, std::string* error = nullptr);
     bool LoadFile(const std::string& path, std::string* error = nullptr);
     std::string ToText() const;
@@ -145,6 +150,11 @@ public:
     bool ValidateMessage(std::uint32_t peer, const std::string& channel, const std::string& data);
     /// A SyncVar write from a client. False = refuse it.
     bool ValidateSyncVar(std::uint32_t peer, const std::string& key);
+    /// One call of RPC `name` against maxRpcsPerSecond (unless a NetValidator
+    /// rules on its rate). False = over the limit (reported as an RPC flood).
+    bool CountRpc(std::uint32_t peer, const std::string& name);
+    /// May a client claim hits with this weapon (anti-cheat on)?
+    bool KnownWeapon(const std::string& weapon) const;
 
     /// Objects the server itself drives (Authority::Host on the server): clients
     /// may never send their transform / despawn them.
@@ -159,6 +169,9 @@ public:
     /// Does game code rule on this RPC's rate / size itself (a NetValidator with
     /// its own calls/s or max bytes)? Then maxRpcsPerSecond / maxRpcBytes don't apply.
     std::function<void(const std::string& rpc, bool& ownRate, bool& ownSize)> rpcRulesFor;
+    /// Does game code have a rule for this RPC (an enabled NetValidator covering
+    /// it)? A hit claim's weapon is known when "hit/<weapon>" is covered.
+    std::function<bool(const std::string& rpc)> coversRpc;
     /// Game rules for hit claims, after the server's own checks passed: false
     /// refuses the hit (reported as "hit rejected"); it may change claim.damage.
     std::function<bool(HitClaim& claim)> validateHit;

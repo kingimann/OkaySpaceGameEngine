@@ -9,17 +9,27 @@
 #include "stb_image.h"
 #include "stb_image_write.h"
 
+#include <filesystem>
+
 namespace okay {
 
 bool Image::Load(const std::string& path, std::string* error) {
     int w = 0, h = 0, channels = 0;
-    // Check the header first, so an oversized image is rejected without decoding
-    // (most stb decoders also enforce STBI_MAX_DIMENSIONS; this covers the rest).
-    if (stbi_info(path.c_str(), &w, &h, &channels) &&
-        (w <= 0 || h <= 0 || w > STBI_MAX_DIMENSIONS || h > STBI_MAX_DIMENSIONS)) {
-        if (error) *error = "image too large (" + std::to_string(w) + "x" + std::to_string(h) + ")";
-        m_w = m_h = 0; m_pixels.clear();
-        return false;
+    // stb rejects anything over STBI_MAX_DIMENSIONS on its own. Within that, a
+    // header can still claim far more pixels than the file could encode (a 40-byte
+    // TGA "16384 x 16384" decodes into 1 GB of zeros), so compare the claimed RGBA
+    // size with the file size first. 4096:1 is beyond any real compression ratio
+    // stb decodes (deflate tops out near 1032:1), and only large claims are checked.
+    if (stbi_info(path.c_str(), &w, &h, &channels)) {
+        std::error_code ec;
+        const unsigned long long fileBytes = std::filesystem::file_size(path, ec);
+        const unsigned long long rgba = (unsigned long long)w * (unsigned long long)h * 4ULL;
+        if (!ec && rgba > (64ULL << 20) && rgba / 4096ULL > fileBytes) {
+            if (error) *error = "image header claims " + std::to_string(w) + "x" + std::to_string(h) +
+                                " but the file is only " + std::to_string(fileBytes) + " bytes";
+            m_w = m_h = 0; m_pixels.clear();
+            return false;
+        }
     }
     // Force 4 channels (RGBA) so the buffer layout is always predictable.
     unsigned char* data = stbi_load(path.c_str(), &w, &h, &channels, 4);

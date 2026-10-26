@@ -239,8 +239,7 @@ inline std::vector<float> ReadView(const GltfDoc& doc, int viIdx, int byteOffset
     for (int i = 0; i < count; ++i)
         for (int c = 0; c < comps; ++c) {
             std::size_t at = (std::size_t)voff + byteOffset + (std::size_t)i * stride + (std::size_t)c * csz;
-            if (at + csz > data.size()) { out.push_back(0.0f); continue; }
-            const std::uint8_t* d = data.data() + at; float fv = 0.0f;
+            const std::uint8_t* d = data.data() + at; float fv = 0.0f;   // in range: checked above
             switch (ct) {
                 case 5126: { float t; std::memcpy(&t, d, 4); fv = t; break; }
                 case 5125: { std::uint32_t t; std::memcpy(&t, d, 4); fv = (float)t; break; }
@@ -296,14 +295,16 @@ inline std::vector<float> ReadAccessorRaw(const GltfDoc& doc, int ai, int& outCo
     // Sparse accessors (morph targets often are): a base (bufferView, or zeros
     // when there's none) with a list of replaced elements.
     if (const JVal* sp = a.Find("sparse")) {
-        // Base values: the dense part, if the accessor has one. Without one the
-        // count isn't backed by any data, so keep it to a sane size.
-        if (viIdx < 0 && count > (1 << 24)) { outCount = 0; return out; }
-        out.assign((std::size_t)count * comps, 0.0f);
+        // Base values: the dense part, if the accessor has one, which must cover
+        // the whole accessor (so its count is backed by real data). Without one
+        // the count isn't backed by anything, so keep it to a sane size.
         if (viIdx >= 0) {
             int bc = 0, bn = 0;
-            std::vector<float> dense = ReadAccessorDense(doc, a, bc, bn);
-            for (std::size_t k = 0; k < dense.size() && k < out.size(); ++k) out[k] = dense[k];
+            out = ReadAccessorDense(doc, a, bc, bn);
+            if (out.size() != (std::size_t)count * comps) { out.clear(); outCount = 0; return out; }
+        } else {
+            if (count > (1 << 24)) { outCount = 0; return out; }
+            out.assign((std::size_t)count * comps, 0.0f);
         }
         int sc = sp->Find("count") ? sp->Find("count")->Int(0) : 0;
         const JVal* ix = sp->Find("indices");
@@ -331,55 +332,61 @@ inline std::vector<float> ReadAccessorRaw(const GltfDoc& doc, int ai, int& outCo
     return ReadView(doc, viIdx, aoff, ct, comps, count, norm);
 }
 
-// Append one primitive's geometry to `mesh` (offsetting indices by the current vertex
-// count), so a mesh's primitives — or many meshes — can be merged into one Mesh.
-// Returns false (and leaves `mesh` as it was) for a malformed primitive: an
-// attribute of the wrong type (a SCALAR POSITION), an unreadable accessor, or an
-// index past the primitive's vertices.
-inline bool AppendPrimitive(const GltfDoc& doc, const JVal& prim, Mesh& mesh) {
+// One primitive's geometry, read and validated: POSITION / NORMAL VEC3,
+// TEXCOORD_0 VEC2, SCALAR indices all inside the primitive's vertices. Returns
+// false for a malformed primitive (a SCALAR POSITION, an unreadable accessor, an
+// out-of-range index). Shared by AppendPrimitive and the skinned / morph importers
+// so they all accept and skip exactly the same primitives.
+struct PrimGeom {
+    std::vector<float> pos, nor, uv, idx;
+    int pn = 0, nn = 0, tn = 0, in = 0;
+    bool indexed = false;
+};
+inline bool ReadPrimitive(const GltfDoc& doc, const JVal& prim, PrimGeom& g) {
     const JVal* attr = prim.Find("attributes");
     if (!attr) return true;
-    int base = (int)mesh.vertices.size(), pn = 0;
-    std::vector<float> pos, nor, uv, idx;
-    int pc = 0, nc = 0, nn = 0, tc = 0, tn = 0, ic = 0, in = 0;
+    int pc = 0, nc = 0, tc = 0, ic = 0;
     if (const JVal* P = attr->Find("POSITION")) {
-        pos = ReadAccessor(doc, P->Int(-1), pc, pn);
+        g.pos = ReadAccessor(doc, P->Int(-1), pc, g.pn);
         if (pc != 3) return false;
     }
     if (const JVal* N = attr->Find("NORMAL")) {
-        nor = ReadAccessor(doc, N->Int(-1), nc, nn);
+        g.nor = ReadAccessor(doc, N->Int(-1), nc, g.nn);
         if (nc != 3) return false;
     }
     if (const JVal* T = attr->Find("TEXCOORD_0")) {
-        uv = ReadAccessor(doc, T->Int(-1), tc, tn);
+        g.uv = ReadAccessor(doc, T->Int(-1), tc, g.tn);
         if (tc != 2) return false;
     }
-    const JVal* I = prim.Find("indices");
-    if (I) {
-        idx = ReadAccessor(doc, I->Int(-1), ic, in);
+    if (const JVal* I = prim.Find("indices")) {
+        g.indexed = true;
+        g.idx = ReadAccessor(doc, I->Int(-1), ic, g.in);
         if (ic != 1) return false;
-        for (float f : idx) if (!(f >= 0.0f && f < (float)pn)) return false;   // also rejects NaN
+        for (float f : g.idx) if (!(f >= 0.0f && f < (float)g.pn)) return false;   // also rejects NaN
     }
-    for (int i = 0; i < pn; ++i) mesh.vertices.push_back(Vec3{pos[i*3+0], pos[i*3+1], pos[i*3+2]});
-    for (int i = 0; i < nn; ++i) mesh.normals.push_back(Vec3{nor[i*3+0], nor[i*3+1], nor[i*3+2]});
-    for (int i = 0; i < tn; ++i) mesh.uvs.push_back(Vec2{uv[i*2+0], uv[i*2+1]});
-    if (I) {
-        for (int i = 0; i < in; ++i) mesh.triangles.push_back(base + (int)(idx[i] + 0.5f));
+    return true;
+}
+
+// Append one primitive's geometry to `mesh` (offsetting indices by the current vertex
+// count), so a mesh's primitives — or many meshes — can be merged into one Mesh.
+// Returns false (and leaves `mesh` as it was) for a malformed primitive.
+inline bool AppendPrimitive(const GltfDoc& doc, const JVal& prim, Mesh& mesh) {
+    PrimGeom g;
+    if (!ReadPrimitive(doc, prim, g)) return false;
+    const int base = (int)mesh.vertices.size();
+    for (int i = 0; i < g.pn; ++i) mesh.vertices.push_back(Vec3{g.pos[i*3+0], g.pos[i*3+1], g.pos[i*3+2]});
+    for (int i = 0; i < g.nn; ++i) mesh.normals.push_back(Vec3{g.nor[i*3+0], g.nor[i*3+1], g.nor[i*3+2]});
+    for (int i = 0; i < g.tn; ++i) mesh.uvs.push_back(Vec2{g.uv[i*2+0], g.uv[i*2+1]});
+    if (g.indexed) {
+        for (int i = 0; i < g.in; ++i) mesh.triangles.push_back(base + (int)(g.idx[i] + 0.5f));
     } else {
-        for (int i = 0; i + 2 < pn; i += 3) {
+        for (int i = 0; i + 2 < g.pn; i += 3) {
             mesh.triangles.push_back(base + i);
             mesh.triangles.push_back(base + i + 1);
             mesh.triangles.push_back(base + i + 2);
         }
     }
     return true;
-}
-
-// Whether AppendPrimitive would take this primitive (for code that must stay
-// aligned with the vertices it produced, e.g. morph targets).
-inline bool PrimitiveUsable(const GltfDoc& doc, const JVal& prim) {
-    Mesh scratch;
-    return AppendPrimitive(doc, prim, scratch);
 }
 
 // Build one glTF mesh (by index) into a Mesh.

@@ -31,7 +31,9 @@
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Vec3.hpp"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <string>
 #include <unordered_set>
 #include <vector>
 
@@ -44,7 +46,7 @@ public:
     enum class Hand { Left, Right, Both };
     enum class StyleMode { Automatic, Custom };
 
-    Hand      primaryHand  = Hand::Right;              ///< the hand a one-handed object goes in (Both = always two hands)
+    Hand      primaryHand  = Hand::Right;              ///< the hand a one-handed object goes in (Both = support hand too)
     StyleMode holdingStyle = StyleMode::Automatic;     ///< Automatic: the object's own style; Custom: always its grip points
     bool      armIK = true;                            ///< bend the arms onto the grips (off: the object rides along)
     float     transitionTime = 0.3f;                   ///< seconds the object takes to come into the hands
@@ -123,7 +125,35 @@ public:
 
     void LateUpdate(float dt) override {
         if (m_releasing) FinishRelease(false);
-        if (!m_held || !EnsureRig()) return;
+        if (m_held && EnsureRig()) Hold(dt);
+        if (m_ik) for (int l = 0; l < 2; ++l) CurlFingers(l);
+    }
+
+    void OnDestroy() override {
+        Drop();
+        FinishRelease(true);
+    }
+
+    void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying) override {
+        if (m_held && dying.count(m_held)) {
+            m_rb = nullptr; m_physics.clear();
+            Forget();
+        }
+        for (auto& p : m_physics) if (p.c && dying.count(p.c->gameObject)) p.c = nullptr;
+        if (m_rb && dying.count(m_rb->gameObject)) m_rb = nullptr;
+        for (int l = 0; l < 2; ++l) {
+            if (m_grip[l] && dying.count(m_grip[l])) m_grip[l] = nullptr;
+            if (m_hint[l] && dying.count(m_hint[l])) m_hint[l] = nullptr;
+            for (const Finger& f : m_fingers[l])
+                if (dying.count(f.t->gameObject)) { m_fingers[l].clear(); m_fingersFound[l] = false; break; }
+        }
+        if (m_ik && dying.count(m_ik->gameObject)) { m_ik = nullptr; m_savedValid = false; m_releasing = false; }
+        if (m_char && dying.count(m_char->gameObject)) m_char = nullptr;
+    }
+
+private:
+    // One frame of holding: place the object, aim the hands.
+    void Hold(float dt) {
         const Body b = BodyFrame();
         Plan p = MakePlan(b);
         if (!p.fixed) KeepInReach(b, p);
@@ -144,27 +174,6 @@ public:
         for (int l = 0; l < 2; ++l) DriveHand(l, b, p, pos, rot);
     }
 
-    void OnDestroy() override {
-        Drop();
-        FinishRelease(true);
-    }
-
-    void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying) override {
-        if (m_held && dying.count(m_held)) {
-            m_rb = nullptr; m_physics.clear();
-            Forget();
-        }
-        for (auto& p : m_physics) if (p.c && dying.count(p.c->gameObject)) p.c = nullptr;
-        if (m_rb && dying.count(m_rb->gameObject)) m_rb = nullptr;
-        for (int l = 0; l < 2; ++l) {
-            if (m_grip[l] && dying.count(m_grip[l])) m_grip[l] = nullptr;
-            if (m_hint[l] && dying.count(m_hint[l])) m_hint[l] = nullptr;
-        }
-        if (m_ik && dying.count(m_ik->gameObject)) { m_ik = nullptr; m_savedValid = false; m_releasing = false; }
-        if (m_char && dying.count(m_char->gameObject)) m_char = nullptr;
-    }
-
-private:
     // The body this frame: facing, the shoulders and how far each arm reaches.
     struct Body {
         Vec3 up{0, 1, 0}, fwd{0, 0, -1}, side{1, 0, 0}, chest{0, 0, 0};
@@ -181,6 +190,7 @@ private:
         Quat rot;
         bool use[2] = {};
         Vec3 gp[2], gf[2], gn[2];   // grip point, finger direction, palm normal
+        float curl[2] = {}, indexCurl[2] = {};   // how far the fingers (and the index finger) close
         bool fixed = false;          // at a socket: the object doesn't move to suit the arms
     };
     struct SavedCollider { Collider3D* c; bool trigger; };
@@ -201,6 +211,11 @@ private:
     bool  m_calib[2] = {};          // hand bone axes learned from the rig
     Vec3  m_fingersLocal[2], m_palmLocal[2];
     float m_palmLen[2] = {0.065f, 0.065f};
+    // Finger bones under each hand (imported rigs), curled around the grip.
+    struct Finger { Transform* t; float scale; bool index; Quat before, set; bool live; };
+    std::vector<Finger> m_fingers[2];
+    bool  m_fingersFound[2] = {};
+    float m_curl[2] = {}, m_indexCurl[2] = {};
     Vec3  m_fromPos{0, 0, 0};
     Quat  m_fromRot;
     bool  m_haveFrom = false;
@@ -330,29 +345,10 @@ private:
                 for (int l = 0; l < 2; ++l) if (g[l]->enabled) { SetGrip(p, l, *g[l], scale); p.use[l] = true; }
             }
         } else {
-            // Automatic: big or heavy = both hands on its sides in front of the
-            // belly; small = one hand under it, forearm forward.
             Vec3 c, half;
             h.LocalBounds(c, half);
             c = c * scale; half = {std::fabs(half.x * scale.x), std::fabs(half.y * scale.y), std::fabs(half.z * scale.z)};
-            p.rot = b.rot;
-            const bool two = primaryHand == Hand::Both || half.x * 2.0f > 0.3f * b.s || h.Mass() > 5.0f;
-            Vec3 centre;
-            if (two) {
-                centre = b.chest + b.up * (-0.3f * b.s) + b.fwd * (half.z + 0.15f * b.s);
-                for (int l = 0; l < 2; ++l) {
-                    const float sgn = l == 0 ? -1.0f : 1.0f;
-                    SetGripWorld(p, l, centre + b.side * (sgn * half.x), b.fwd, b.side * -sgn, centre, b.rot);
-                }
-            } else {
-                const int l = primaryHand == Hand::Left ? 0 : 1;
-                const float sgn = l == 0 ? -1.0f : 1.0f;
-                centre = b.chest + (b.side * (sgn * 0.18f) + b.up * -0.32f + b.fwd * 0.32f) * b.s + b.up * half.y;
-                SetGripWorld(p, l, centre - b.up * half.y, b.fwd, b.up, centre, b.rot);
-            }
-            p.pos = centre - p.rot * c;
-            // Re-anchor the grips on the object's origin.
-            for (int l = 0; l < 2; ++l) if (p.use[l]) p.gp[l] = p.gp[l] + c;
+            StylePlan(b, p, h.ResolvedStyle(), c, half);
         }
         if (socket) {
             p.pos = socket->Position(); p.rot = socket->Rotation();
@@ -361,8 +357,124 @@ private:
         }
         return p;
     }
+    // A named style (or Automatic's small-object carry) laid out around the body:
+    // where the object's centre goes, which way it points, where each palm
+    // touches it and how far the fingers close. `c`/`half` are the object's local
+    // bounds (scaled).
+    void StylePlan(const Body& b, Plan& p, HoldableObject::Style st, const Vec3& c, const Vec3& half) const {
+        using S = HoldableObject::Style;
+        if (st == S::Automatic && primaryHand == Hand::Both) st = S::Box;   // a small item in both hands
+        const int P = primaryHand == Hand::Left ? 0 : 1, O = 1 - P;
+        const float sp = P == 0 ? -1.0f : 1.0f;                 // the primary hand's side
+        const bool support = m_hold->supportHand || primaryHand == Hand::Both;
+        const float s = b.s;
+        const Vec3 out = b.side * sp;                          // toward the primary hand's side
+        // Long objects: the long side becomes the barrel / beam / blade.
+        int la = 0; float hl = half.x;
+        if (half.y > hl) { la = 1; hl = half.y; }
+        if (half.z > hl) { la = 2; hl = half.z; }
+        const Vec3 longLocal = la == 0 ? Vec3{1, 0, 0} : la == 1 ? Vec3{0, 1, 0} : Vec3{0, 0, -1};
+        const Vec3 refLocal = la == 1 ? Vec3{0, 0, -1} : Vec3{0, 1, 0};
+        const float hr = la == 1 ? half.z : half.y;              // along the reference (up / forward) axis
+        const float hw = la == 0 ? half.z : half.x;              // across (sideways)
+        const Quat fix = Quat::Euler(m_hold->holdRotation);       // corrects a model built another way
+        auto align = [&](const Vec3& longW, const Vec3& refW) {
+            return (Quat::LookRotation(longW, refW) * Quat::LookRotation(longLocal, refLocal).Inverse() * fix).Normalized();
+        };
+        auto grip = [&](int l, const Vec3& at, const Vec3& fingers, const Vec3& palm, const Vec3& centre,
+                        float curl, float indexCurl) {
+            SetGripWorld(p, l, at, fingers.Normalized(), palm.Normalized(), centre, p.rot);
+            p.curl[l] = curl; p.indexCurl[l] = indexCurl;
+        };
+        Vec3 centre;
+        switch (st) {
+        case S::Pistol: {
+            p.rot = align(b.fwd, b.up);
+            centre = b.chest + (out * 0.1f + b.up * -0.08f + b.fwd * 0.45f) * s;
+            const Vec3 handle = centre - b.fwd * (0.55f * hl) - b.up * (0.45f * hr);
+            grip(P, handle + out * hw, b.fwd - b.up * 0.35f, out * -1.0f, centre, 0.85f, 0.35f);
+            if (support) grip(O, handle - out * hw - b.up * (0.15f * hr), b.fwd - b.up * 0.2f, out, centre, 0.75f, 0.75f);
+            break;
+        }
+        case S::Rifle: {
+            p.rot = align(b.fwd, b.up);
+            centre = b.chest + (out * 0.12f + b.up * -0.06f) * s + b.fwd * (hl * 0.85f);
+            grip(P, centre - b.fwd * (0.4f * hl) - b.up * (0.6f * hr) + out * hw, b.fwd - b.up * 0.35f, out * -1.0f,
+                 centre, 0.85f, 0.35f);
+            grip(O, centre + b.fwd * (0.35f * hl) - b.up * hr, b.fwd + out * 0.4f, b.up, centre, 0.55f, 0.55f);
+            break;
+        }
+        case S::Flashlight: {
+            p.rot = align(b.fwd, b.up);
+            centre = b.chest + (out * 0.2f + b.up * -0.12f + b.fwd * 0.42f) * s;
+            grip(P, centre - b.fwd * (0.35f * hl) + out * hw, b.fwd, out * -1.0f, centre, 0.9f, 0.9f);
+            break;
+        }
+        case S::Sword: {
+            const Vec3 blade = (b.up * 0.87f + b.fwd * 0.5f).Normalized();
+            const Vec3 across = (b.fwd - blade * Vec3::Dot(b.fwd, blade)).Normalized();
+            p.rot = align(blade, across);
+            const Vec3 hilt = b.chest + (out * (support ? 0.1f : 0.22f) + b.up * -0.42f + b.fwd * 0.32f) * s;
+            centre = hilt + blade * (0.8f * hl);
+            grip(P, hilt + out * hw, across, out * -1.0f, centre, 1.0f, 1.0f);
+            if (support) grip(O, hilt - blade * (0.09f * s) - out * hw, across, out, centre, 1.0f, 1.0f);
+            break;
+        }
+        case S::Cup: {
+            // Upright, the handle (+X) toward the holding hand.
+            p.rot = (Quat::LookRotation(out, b.up) * Quat::LookRotation({1, 0, 0}, {0, 1, 0}).Inverse() * fix).Normalized();
+            centre = b.chest + (out * 0.2f + b.up * -0.3f + b.fwd * 0.3f) * s;
+            grip(P, centre + out * half.x, b.fwd, out * -1.0f, centre, 0.9f, 0.9f);
+            break;
+        }
+        case S::Heavy:
+        case S::Box: {
+            p.rot = (b.rot * fix).Normalized();
+            const Vec3 hb = Extents(p.rot, half, b);           // (side, up, forward) half sizes
+            const bool heavy = st == S::Heavy;
+            // As low as the arms reach: a heavy load hangs on near-straight arms.
+            const float gap = (heavy ? 0.06f : 0.15f) * s;
+            const float halfShoulders = b.arm[0] && b.arm[1] ? (b.shoulder[1] - b.shoulder[0]).Magnitude() * 0.5f : 0.22f * s;
+            const float R = 0.9f * (b.arm[0] && b.arm[1] ? std::min(b.reach[0], b.reach[1]) : 0.54f * s);
+            const float dx = std::max(0.0f, hb.x - halfShoulders), dz = hb.z + gap;
+            const float drop = std::min((heavy ? 0.55f : 0.3f) * s, std::sqrt(std::max(0.0f, R * R - dx * dx - dz * dz)));
+            centre = b.chest - b.up * drop + b.fwd * dz;
+            if (heavy) centre = centre + b.up * (0.75f * hb.y);
+            for (int l = 0; l < 2; ++l) {
+                const float sg = l == 0 ? -1.0f : 1.0f;
+                if (heavy) grip(l, centre + b.side * (sg * hb.x) - b.up * (0.75f * hb.y), b.fwd,
+                                b.side * -sg + b.up * 0.8f, centre, 0.45f, 0.45f);
+                else       grip(l, centre + b.side * (sg * hb.x), b.fwd, b.side * -sg, centre, 0.2f, 0.2f);
+            }
+            break;
+        }
+        default: {   // small and light: one hand under it, forearm forward
+            p.rot = (b.rot * fix).Normalized();
+            const Vec3 hb = Extents(p.rot, half, b);
+            centre = b.chest + (out * 0.18f + b.up * -0.32f + b.fwd * 0.32f) * s + b.up * hb.y;
+            grip(P, centre - b.up * hb.y, b.fwd, b.up, centre, 0.4f, 0.4f);
+            break;
+        }
+        }
+        p.pos = centre - p.rot * c;
+        // Re-anchor the grips on the object's origin.
+        for (int l = 0; l < 2; ++l) if (p.use[l]) p.gp[l] = p.gp[l] + c;
+    }
+    // Half sizes of a box with local half extents `half`, turned by `rot`, along
+    // the body's side / up / forward.
+    static Vec3 Extents(const Quat& rot, const Vec3& half, const Body& b) {
+        const Vec3 ax[3] = {rot * Vec3{half.x, 0, 0}, rot * Vec3{0, half.y, 0}, rot * Vec3{0, 0, half.z}};
+        Vec3 e{0, 0, 0};
+        for (const Vec3& a : ax) {
+            e.x += std::fabs(Vec3::Dot(a, b.side));
+            e.y += std::fabs(Vec3::Dot(a, b.up));
+            e.z += std::fabs(Vec3::Dot(a, b.fwd));
+        }
+        return e;
+    }
     static void SetGrip(Plan& p, int l, const HoldableObject::Grip& g, const Vec3& scale) {
         const Quat r = Quat::Euler(g.rotation);
+        p.curl[l] = p.indexCurl[l] = g.curl;
         p.gp[l] = g.position * scale;
         p.gf[l] = r * Vec3{0, 0, -1};
         p.gn[l] = r * Vec3{0, -1, 0};
@@ -423,6 +535,7 @@ private:
         const Vec3 G = pos + rot * p.gp[l];
         const Vec3 F = (rot * p.gf[l]).Normalized(), N = (rot * p.gn[l]).Normalized();
         m_gripW[l] = G;
+        m_curl[l] = p.curl[l]; m_indexCurl[l] = p.indexCurl[l];
         GameObject* g = RuntimeTarget(m_grip[l], l == 0 ? "Holding Grip L" : "Holding Grip R");
         GameObject* h = RuntimeTarget(m_hint[l], l == 0 ? "Holding Elbow L" : "Holding Elbow R");
         if (!g || !h) return;
@@ -437,6 +550,44 @@ private:
         e.positionWeight = 1.0f;
         e.rotationWeight = m_calib[l] ? 1.0f : 0.0f;
         e.pull = 0.0f;
+    }
+
+    // Close the fingers around the grip: every finger joint turns toward the palm
+    // (thumb half as far), faded with the hand's IK weight. Last frame's curl is
+    // taken off first when nothing re-posed a finger, so it never compounds.
+    void CurlFingers(int l) {
+        Transform *a, *m, *e; m_ik->LimbBones(l, a, m, e);
+        if (e && m_calib[l] && !m_fingersFound[l]) FindFingers(l, e);
+        const float w = (m_held || m_releasing) && e && m_calib[l] ? m_ik->EffectiveWeight(l) : 0.0f;
+        const Vec3 axis = e && m_calib[l] ? e->Rotation() * Vec3::Cross(m_fingersLocal[l], m_palmLocal[l]) : Vec3{0, 0, 0};
+        for (Finger& f : m_fingers[l]) {
+            const Quat r = f.t->localRotation;
+            if (f.live && std::fabs(Quat::Dot(r, f.set)) > 0.999999f) f.t->localRotation = f.before;
+            f.live = false;
+            const float k = (f.index ? m_indexCurl[l] : m_curl[l]) * f.scale * w;
+            if (k <= 1e-3f || axis.SqrMagnitude() < 1e-8f) continue;
+            f.before = f.t->localRotation;
+            f.t->SetRotation((Quat::AngleAxis(k * 70.0f, axis) * f.t->Rotation()).Normalized());
+            f.set = f.t->localRotation;
+            f.live = true;
+        }
+    }
+    void FindFingers(int l, Transform* hand) {
+        m_fingersFound[l] = true;
+        m_fingers[l].clear();
+        std::vector<Transform*> stack(hand->Children().rbegin(), hand->Children().rend());
+        while (!stack.empty()) {   // depth first, parents before children
+            Transform* t = stack.back(); stack.pop_back();
+            if (!t || !t->gameObject) continue;
+            std::string n;
+            for (char ch : t->gameObject->name) n += (char)std::tolower((unsigned char)ch);
+            auto has = [&](const char* k) { return n.find(k) != std::string::npos; };
+            if (has("thumb")) m_fingers[l].push_back({t, 0.5f, false, {}, {}, false});
+            else if (has("index")) m_fingers[l].push_back({t, 1.0f, true, {}, {}, false});
+            else if (has("finger") || has("middle") || has("ring") || has("pinky") || has("little"))
+                m_fingers[l].push_back({t, 1.0f, false, {}, {}, false});
+            for (auto it = t->Children().rbegin(); it != t->Children().rend(); ++it) stack.push_back(*it);
+        }
     }
 
     // Forget the object; the hands fade out on the goals they had, then the Full

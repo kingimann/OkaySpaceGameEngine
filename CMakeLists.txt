@@ -76,16 +76,19 @@ set(OKAY_DEFAULT_VOICE_RELAY "" CACHE STRING "Default voice relay (host[:port]) 
 if(OKAY_DEFAULT_VOICE_RELAY)
     add_compile_definitions(OKAY_DEFAULT_VOICE_RELAY="${OKAY_DEFAULT_VOICE_RELAY}")
 endif()
-# Anti-cheat (opt-in, docs/anticheat.md): the ed25519 PUBLIC keys the player and
-# launcher accept on a build's Data/manifest.json, as hex, comma-separated (e.g.
-# the release key, then the dev key). Public keys only; the private keys never
-# go near CMake. Empty = none built in (a signature is checked but not its signer).
-set(OKAY_AC_TRUSTED_KEYS "" CACHE STRING "Anti-cheat: trusted ed25519 public keys (hex, comma-separated)")
+# Anti-cheat (opt-in, docs/anticheat.md): the ed25519 PUBLIC keys accepted on a
+# build's Data/manifest.json, as hex, comma-separated (e.g. the release key, then
+# the dev key). Public keys only; the private keys never go near CMake. Empty =
+# none built in (a signature is checked but not its signer).
+#  * OKAY_AC_TRUSTED_KEYS: the launcher's, which it applies to the official game.
+#  * OKAY_AC_PLAYER_TRUSTED_KEYS: the player's. A player with keys refuses every
+#    game not signed by them, so the general runtime (which runs anyone's
+#    games) has none; set it only for a player that ships your own signed games.
+set(OKAY_AC_TRUSTED_KEYS "" CACHE STRING "Anti-cheat: the launcher's trusted ed25519 public keys (hex, comma-separated)")
+set(OKAY_AC_PLAYER_TRUSTED_KEYS "" CACHE STRING "Anti-cheat: the player's trusted ed25519 public keys (only for a player of your own signed games)")
 include(${CMAKE_SOURCE_DIR}/cmake/OkayAntiCheatKeys.cmake)
-okay_ac_check_trusted_keys("${OKAY_AC_TRUSTED_KEYS}")   # exactly 64 hex digits per key, or configure fails
-if(OKAY_AC_TRUSTED_KEYS)
-    add_compile_definitions(OKAY_AC_TRUSTED_KEYS="${OKAY_AC_TRUSTED_KEYS}")
-endif()
+okay_ac_check_trusted_keys("${OKAY_AC_TRUSTED_KEYS}")          # exactly 64 hex digits per key, or configure fails
+okay_ac_check_trusted_keys("${OKAY_AC_PLAYER_TRUSTED_KEYS}")
 # The salt of the anti-cheat hardware hash (shared/AntiCheatHardware.hpp): give your
 # deployment its own so its hashes can't be matched with another's. Not a secret.
 set(OKAY_AC_HW_SALT "" CACHE STRING "Anti-cheat: hardware hash salt (empty = the built-in default)")
@@ -123,6 +126,9 @@ endif()
 # ---- Self-updating launcher ------------------------------------------
 if(OKAY_BUILD_LAUNCHER)
     add_subdirectory(launcher)
+    if(OKAY_AC_TRUSTED_KEYS AND TARGET okayspace-launcher)
+        target_compile_definitions(okayspace-launcher PRIVATE OKAY_AC_TRUSTED_KEYS="${OKAY_AC_TRUSTED_KEYS}")
+    endif()
 endif()
 
 # ---- Feature examples -------------------------------------------------
@@ -139,6 +145,9 @@ endif()
 # The editor's "Build Game" ships this runtime, so build it alongside the editor.
 if(OKAY_BUILD_PLAYER OR OKAY_BUILD_EDITOR)
     add_subdirectory(player)
+    if(OKAY_AC_PLAYER_TRUSTED_KEYS AND TARGET okay-player)
+        target_compile_definitions(okay-player PRIVATE OKAY_AC_TRUSTED_KEYS="${OKAY_AC_PLAYER_TRUSTED_KEYS}")
+    endif()
 endif()
 
 # ---- Ship SDL2.dll beside the binaries ----

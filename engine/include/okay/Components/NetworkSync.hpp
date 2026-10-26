@@ -51,6 +51,10 @@ public:
     /// drive it). A remote proxy returns false, leaving the network to move it. With
     /// no NetworkManager in the scene (single-player) it's always true.
     bool IsLocallyOwned() const { return !m_nm || OwnedNow(); }
+    /// True when the network moves this object from a player's inputs here (a
+    /// server with authoritative movement running a client's player): local
+    /// input must not drive it, though this peer owns its transform.
+    bool NetworkDriven() const { return m_nm && !m_id.empty() && m_nm->InputDriven(m_id); }
 
     void Start() override { Register(); }
 
@@ -108,6 +112,12 @@ private:
     }
 
     bool OwnedNow() const {
+        // Server-authoritative movement decides for a player's object: the
+        // server owns it, the client that plays it doesn't.
+        if (m_nm && !m_id.empty()) {
+            const int a = m_nm->MovementAuthority(m_id);
+            if (a >= 0) return a != 0;
+        }
         switch (authority) {
             case Authority::Host:   return m_nm && m_nm->IsServer();
             case Authority::Mine:   return true;

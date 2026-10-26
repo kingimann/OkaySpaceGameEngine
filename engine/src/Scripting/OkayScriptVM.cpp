@@ -4781,6 +4781,22 @@ struct OkayScriptVM::Impl {
             if (!a.empty()) n->netTickRate = std::clamp(a[0].AsFloat(), 0.0f, 240.0f);
             return Value{n->NetTickRate() > 0.0f ? n->NetTickRate() : n->netTickRate};
         };
+        // Authoritative movement: the object this player's inputs drive
+        // (client), and the host's switch.
+        b["net_set_pawn"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = Net();
+            Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
+            if (!n || !s || a.empty()) return Value{0.0f};
+            GameObject* go = a[0].AsString().empty() ? rt.host->gameObject : s->Find(a[0].AsString());
+            n->SetPawn(go);
+            return Value{go ? 1.0f : 0.0f};
+        };
+        b["net_authoritative"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = Net();
+            if (!n) return Value{0.0f};
+            if (!a.empty()) n->authoritativeMovement = a[0].AsFloat() != 0.0f;
+            return Value{n->AuthoritativeMovement() || n->authoritativeMovement ? 1.0f : 0.0f};
+        };
         b["net_relay_ready"] = [this](std::vector<Value>&) {
             NetworkManager* n = Net(); return Value{(n && n->RelayReady()) ? 1.0f : 0.0f};
         };

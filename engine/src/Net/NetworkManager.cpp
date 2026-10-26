@@ -40,7 +40,8 @@ namespace {
         JoinHello = 24,              // client -> server: [u8 version][string clientPk], padded
         JoinKey = 25,                // server -> client: [u8 version][string serverPk][string signature]
         ClockPing = 26,              // server -> client: [u64 nonce][u32 seq][string key] (anti-cheat clock)
-        ClockPong = 27               // client -> server: [u64 nonce][u32 seq][u64 clientMs][string tag]
+        ClockPong = 27,              // client -> server: [u64 nonce][u32 seq][u64 clientMs][string tag]
+        InputCmd = 28                // client -> server: [string pawn][u8 n] n x [u32 tick][u32 seq][f32 mx my yaw pitch][u32 held][u32 pressed]
     };
     constexpr float kClockQuietLimit = 10.0f;   // no good clock answer for this long: reported
     constexpr float kClockReportEvery = 2.0f;   // one drift report per heartbeat window
@@ -298,6 +299,14 @@ void NetworkManager::Stop() {
     m_netTick = 0;
     m_tickAccum = 0.0f;
     m_hostTickRate = 0.0f;
+    m_hostAuthoritative = false;
+    m_lastAckedSeq = 0;
+    m_inputSeq = 0;
+    m_pressedAccum = 0;
+    m_heldInput = PlayerInput{};
+    m_sentInputs.clear();
+    m_pawnOwner.clear();
+    m_inputsDropped = 0;
     m_statesSent = 0;
     m_acClockMs = 0.0;
     m_gameClockMs = 0.0;
@@ -1096,6 +1105,7 @@ void NetworkManager::Kick(std::uint32_t id, const std::string& reason) {
         m_clients.erase(it);
         anticheat.ForgetPeer(id);
         m_recentCheats.erase(id);
+        for (auto po = m_pawnOwner.begin(); po != m_pawnOwner.end();) po = po->second == id ? m_pawnOwner.erase(po) : std::next(po);
         if (m_peerLeft) m_peerLeft(id);
         OKAY_INFO("net: kicked peer ", id, reason.empty() ? "" : (" (" + reason + ")"));
         return;
@@ -1214,6 +1224,8 @@ bool NetworkManager::ClientMessageOk(const Client& from, const std::string& chan
         data = from.name + "\n" + (nl == std::string::npos ? data : data.substr(nl + 1));
         return true;
     }
+    if (channel == "__xform" && m_pawnOwner.count(data.substr(0, data.find('|'))))
+        return false;   // a player the server moves: its position is the server's, never the client's
     if (channel == "__spawn" || channel == "__despawn" || channel == "__xform") return true;
     if (channel.size() > 6 && channel.compare(0, 6, "__rpc/") == 0) return true;
     return false;   // __match_start and any other reserved channel: host only
@@ -1257,10 +1269,76 @@ int NetworkManager::StepNetTick(float rate, float dt) {
     while (m_tickAccum >= step) {
         m_tickAccum -= step;
         ++m_netTick;
+        if (m_mode == Mode::Server && authoritativeMovement) ServerMovementTick(step);
+        else if (m_mode == Mode::Client && m_hostAuthoritative) ClientInputTick();
         if (m_onNetTick) m_onNetTick(m_netTick, step);
         if (++ticks >= 8) { m_tickAccum = 0.0f; break; }
     }
     return ticks;
+}
+
+void NetworkManager::SetPawn(GameObject* pawn) {
+    m_pawnId.clear();
+    if (!pawn) return;
+    if (auto* ns = pawn->GetComponent<NetworkSync>()) m_pawnId = ns->netId.empty() ? pawn->name : ns->netId;
+}
+
+int NetworkManager::MovementAuthority(const std::string& netId) const {
+    if (m_mode == Mode::Server && authoritativeMovement && m_pawnOwner.count(netId)) return 1;
+    if (m_mode == Mode::Client && m_hostAuthoritative && !m_pawnId.empty() && netId == m_pawnId) return 0;
+    return -1;
+}
+
+bool NetworkManager::InputDriven(const std::string& netId) const {
+    return m_mode == Mode::Server && authoritativeMovement && m_pawnOwner.count(netId) != 0;
+}
+
+// Each fixed tick on the server: every player moves by one input (the next
+// one it sent, or its last one again if that's late), through its controller.
+void NetworkManager::ServerMovementTick(float step) {
+    for (auto& [ep, c] : m_clients) {
+        if (c.pawn.empty()) continue;
+        auto obj = m_syncObjs.find(c.pawn);
+        if (obj == m_syncObjs.end() || !obj->second.t || !obj->second.t->gameObject) continue;
+        // A late input is covered by the last one for a few ticks (a lost
+        // packet); after that the player stands still rather than keep going.
+        PlayerInput in = c.repeats < kInputRepeats ? c.lastInput : PlayerInput{};
+        in.pressed = 0;   // a held button stays held; a press isn't repeated
+        ++c.repeats;
+        if (!c.inputs.empty()) {
+            auto next = c.inputs.begin();
+            in = next->second.second;
+            c.lastInputSeq = next->first;
+            c.inputs.erase(next);
+            c.repeats = 0;
+        }
+        c.lastInput = in;
+        if (IPlayerSim* sim = FindPlayerSim(obj->second.t->gameObject)) sim->Simulate(in, step);
+        const Vec3 at = obj->second.t->TransformPoint(Vec3(0.0f, 0.0f, 0.0f));
+        c.state.x = at.x; c.state.y = at.y; c.state.z = at.z;   // the server's word (snapshots, hit checks)
+        c.hasState = true;
+    }
+}
+
+// Each fixed tick on a client: this tick's input, numbered, with the last 3
+// again (a lost packet's input arrives with the next).
+void NetworkManager::ClientInputTick() {
+    if (m_pawnId.empty() || !m_joined) return;
+    PlayerInput in = m_heldInput;
+    in.pressed = m_pressedAccum;
+    m_pressedAccum = 0;
+    m_sentInputs.push_back({++m_inputSeq, {m_netTick, in}});
+    if (m_sentInputs.size() > 4) m_sentInputs.erase(m_sentInputs.begin());
+    net::Packet p(InputCmd);
+    p.Write(m_pawnId);
+    p.Write(std::uint8_t(m_sentInputs.size()));
+    for (const auto& [seq, ti] : m_sentInputs) {
+        const PlayerInput& x = ti.second;
+        p.Write(ti.first); p.Write(seq);
+        p.Write(x.move.x); p.Write(x.move.y); p.Write(x.yaw); p.Write(x.pitch);
+        p.Write(x.held); p.Write(x.pressed);
+    }
+    SendDatagram(m_serverEp, p.Data(), p.Size());
 }
 
 void NetworkManager::ServerTick(float dt) {
@@ -1492,9 +1570,10 @@ void NetworkManager::ServerTick(float dt) {
             // same Welcome as before, and older clients stop reading earlier.
             // bit 1 = a fixed net tick, its rate (f32) follows.
             std::uint8_t welcomeFlags = c.secure.Sequenced() ? 1 : 0;
-            if (netTickRate > 0.0f) welcomeFlags |= 2;
+            if (HostTickRate() > 0.0f) welcomeFlags |= 2;
+            if (authoritativeMovement) welcomeFlags |= 4;   // bit 2: send inputs, not positions
             if (welcomeFlags) w.Write(welcomeFlags);
-            if (welcomeFlags & 2) w.Write(netTickRate);
+            if (welcomeFlags & 2) w.Write(HostTickRate());
             // A sealed joiner already has the keys; a plaintext joiner gets them here.
             SendDatagram(from, w.Data(), w.Size(), /*allowEncrypt=*/c.sealedJoin);
             if (isNew) {
@@ -1554,6 +1633,46 @@ void NetworkManager::ServerTick(float dt) {
                 anticheat.Report(id, CheatKind::ClockDrift, detail);
                 AntiCheatAfterRefusal(id);   // (may kick: c is gone after this)
             }
+        } else if (type == InputCmd) {
+            // A player's inputs (authoritative movement): queued by number, one
+            // applied per tick (ServerMovementTick).
+            auto it = m_clients.find(from);
+            if (it == m_clients.end() || !authoritativeMovement) continue;
+            Client& c = it->second;
+            const std::string pawn = p.ReadString();
+            const std::uint8_t n = p.ReadU8();
+            if (!p.Ok() || n == 0 || n > 8) continue;
+            if (c.pawn.empty()) {
+                // Its player: one of its own SpawnOwned objects ("sp/<its id>/...").
+                const std::string prefix = "sp/" + std::to_string(c.id) + "/";
+                if (pawn.compare(0, prefix.size(), prefix) != 0 || !m_syncObjs.count(pawn) || m_pawnOwner.count(pawn)) continue;
+                c.pawn = pawn;
+                m_pawnOwner[pawn] = c.id;
+                c.lastSeen = 0.0f;
+            } else if (pawn != c.pawn) {
+                continue;
+            }
+            const float rate = HostTickRate();
+            for (std::uint8_t i = 0; i < n; ++i) {
+                const std::uint32_t tick = p.ReadU32(), seq = p.ReadU32();
+                PlayerInput in;
+                in.move.x = p.ReadF32(); in.move.y = p.ReadF32();
+                in.yaw = p.ReadF32(); in.pitch = p.ReadF32();
+                in.held = p.ReadU32(); in.pressed = p.ReadU32();
+                if (!p.Ok()) break;
+                if (seq <= c.lastInputSeq || c.inputs.count(seq)) continue;   // applied, or a repeat
+                // Commands for ticks too far ahead of or behind the server's are refused.
+                if (std::fabs((double)tick - (double)m_netTick) > rate) { ++m_inputsDropped; continue; }
+                in.Clamp();
+                c.inputs[seq] = {tick, in};
+            }
+            // The tick budget: one input a tick; a client sending faster (a speed
+            // hack) only fills the queue, and the oldest beyond it are dropped.
+            while (c.inputs.size() > kMaxQueuedInputs) {
+                c.lastInputSeq = std::max(c.lastInputSeq, c.inputs.begin()->first);
+                c.inputs.erase(c.inputs.begin());
+                ++m_inputsDropped;
+            }
         } else if (type == Ping) {
             // Echo the client's timestamp straight back so it can measure RTT.
             float stamp = p.ReadF32();
@@ -1610,6 +1729,11 @@ void NetworkManager::ServerTick(float dt) {
                 s.x = p.ReadF32(); s.y = p.ReadF32(); s.z = p.ReadF32();
                 s.glyph = static_cast<char>(p.ReadU8());
                 Client& c = it->second;
+                if (!c.pawn.empty()) {   // authoritative movement: where it is is the server's call
+                    c.state.glyph = s.glyph;
+                    c.lastSeen = 0.0f;
+                    continue;
+                }
                 c.lastSeen = 0.0f;
                 if (!std::isfinite(s.x) || !std::isfinite(s.y) || !std::isfinite(s.z)) continue;   // garbage
                 if (maxMoveSpeed > 0.0f && c.hasState) {   // too fast? keep the last good spot
@@ -1640,6 +1764,7 @@ void NetworkManager::ServerTick(float dt) {
                 m_clients.erase(it);
                 anticheat.ForgetPeer(id);
                 m_recentCheats.erase(id);
+                for (auto po = m_pawnOwner.begin(); po != m_pawnOwner.end();) po = po->second == id ? m_pawnOwner.erase(po) : std::next(po);
                 if (m_peerLeft) m_peerLeft(id);
             }
         } else if (type == Message) {
@@ -1685,6 +1810,7 @@ void NetworkManager::ServerTick(float dt) {
             it = m_clients.erase(it);
             anticheat.ForgetPeer(id);
             m_recentCheats.erase(id);
+            for (auto po = m_pawnOwner.begin(); po != m_pawnOwner.end();) po = po->second == id ? m_pawnOwner.erase(po) : std::next(po);
             if (m_peerLeft) m_peerLeft(id);
         } else {
             ++it;
@@ -1750,8 +1876,8 @@ void NetworkManager::ServerTick(float dt) {
     // makes lobbies work — separate rooms never see each other.
     // With a fixed net tick, a snapshot goes out once a tick and carries it
     // (even when nothing moved, so clients keep the tick); otherwise at snapshotRate.
-    const bool fixedTick = netTickRate > 0.0f;
-    const bool tickNow = fixedTick && StepNetTick(netTickRate, dt) > 0;
+    const bool fixedTick = HostTickRate() > 0.0f;
+    const bool tickNow = fixedTick && StepNetTick(HostTickRate(), dt) > 0;
     m_snapshotTimer += dt;
     if ((fixedTick ? tickNow : m_snapshotTimer >= m_snapshotInterval) && !m_clients.empty()) {
         m_snapshotTimer = 0.0f;
@@ -1802,6 +1928,7 @@ void NetworkManager::ServerTick(float dt) {
                 snap.Write(std::uint8_t(s.glyph));
             }
             if (fixedTick) snap.Write(m_netTick);   // trailing: older clients stop reading before it
+            if (fixedTick && authoritativeMovement) snap.Write(recipient.lastInputSeq);   // its newest input applied
             SendDatagram(recipient.endpoint, snap.Data(), snap.Size());
         }
     }
@@ -1984,6 +2111,7 @@ void NetworkManager::ClientTick(float dt) {
                 const float rate = p.ReadF32();
                 if (p.Ok() && std::isfinite(rate) && rate >= 1.0f && rate <= 240.0f) m_hostTickRate = rate;
             }
+            if (p.Ok() && (welcomeFlags & 4) && m_hostTickRate > 0.0f) m_hostAuthoritative = true;
             m_joined = true;
             m_joinRejected = false;
             OKAY_INFO("net: joined '", m_serverName, "' as peer ", m_localId);
@@ -2019,7 +2147,15 @@ void NetworkManager::ClientTick(float dt) {
             if (m_hostTickRate > 0.0f) {   // the host's tick (trailing)
                 const std::uint32_t tick = p.ReadU32();
                 // Snapshots can arrive out of order: only move forward.
-                if (p.Ok() && tick > m_netTick) { m_netTick = tick; m_tickAccum = 0.0f; }
+                // Forward only (snapshots arrive out of order), unless we're more
+                // than a second ahead of the host: then start again from its tick.
+                if (p.Ok() && (tick > m_netTick || (double)m_netTick - (double)tick > m_hostTickRate)) {
+                    m_netTick = tick; m_tickAccum = 0.0f;
+                }
+                if (m_hostAuthoritative) {   // the newest input the host applied for us
+                    const std::uint32_t acked = p.ReadU32();
+                    if (p.Ok() && acked > m_lastAckedSeq) m_lastAckedSeq = acked;
+                }
             }
         } else if (type == Message) {
             std::uint32_t sender = p.ReadU32();
@@ -2063,6 +2199,16 @@ void NetworkManager::ClientTick(float dt) {
     }
     if (m_relayLost) { Stop(); return; }   // host gone or changed, or refused (RelayError())
 
+    // Authoritative movement: sample this frame's input for the next tick's
+    // command (a press between ticks still counts).
+    if (m_hostAuthoritative && m_joined) {
+        PlayerInput f;
+        bool have = false;
+        if (m_inputSource) { f = m_inputSource(); have = true; }
+        else if (auto sync = m_syncObjs.find(m_pawnId); sync != m_syncObjs.end() && sync->second.t)
+            if (IPlayerSim* sim = FindPlayerSim(sync->second.t->gameObject)) { f = sim->ReadLocalInput(); have = true; }
+        if (have) { m_heldInput = f; m_pressedAccum |= f.pressed; }
+    }
     // Send our local state to the server: once a frame, or once a tick when
     // the host runs a fixed net tick (with our estimate of that tick).
     const bool sendNow = m_hostTickRate > 0.0f ? (m_joined && StepNetTick(m_hostTickRate, dt) > 0) : true;

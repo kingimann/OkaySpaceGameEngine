@@ -53,9 +53,11 @@ add_library(okay_engine
     src/Components/AnimControl.cpp
     src/Components/ActionList.cpp
     src/Inventory/InventoryOps.cpp
+    src/Inventory/ItemDatabase.cpp
     src/UI/InventoryInput.cpp
     src/Components/UIDocument.cpp
     src/Components/UILayoutGroup.cpp
+    src/Components/UIListView.cpp
     src/Components/UITooltip.cpp
     src/Components/UITextBind.cpp
     src/Components/UIBarBind.cpp
@@ -83,6 +85,8 @@ add_library(okay_engine
     src/Graphics/TtfFont.cpp
     src/Graphics/EmbeddedFont.cpp
     src/UI/UIRenderer.cpp
+    src/UI/UIBatcher.cpp
+    src/UI/UILayoutUpdate.cpp
     src/Render/ModelImport.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp
@@ -123,8 +127,10 @@ set_source_files_properties(src/Graphics/EmbeddedFont.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
 # The network layer signs its key exchange with #269's ed25519 (shared/AntiCheatCrypto.hpp)
 # and runs its clock heartbeat (shared/AntiCheatChecks.hpp); the dedicated server
-# files anti-cheat kicks with #270's request builder (shared/AntiCheatBackend.hpp).
-set_source_files_properties(src/Net/NetworkManager.cpp src/Net/ClockCheck.cpp src/Net/DedicatedServer.cpp PROPERTIES
+# files anti-cheat kicks with #270's request builder (shared/AntiCheatBackend.hpp);
+# the relay makes its hello cookies with HmacSha256 (shared/AntiCheatChecks.hpp).
+set_source_files_properties(src/Net/NetworkManager.cpp src/Net/ClockCheck.cpp src/Net/DedicatedServer.cpp
+                            src/Net/RelayServer.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
 
 target_compile_features(okay_engine PUBLIC cxx_std_17)

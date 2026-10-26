@@ -4,6 +4,7 @@
 #include "OfficialGame.hpp"      // shared/: SafeRelPath / ResolveInside for network prefab paths
 #include "okay/Components/NetworkPlayerSpawner.hpp"
 #include <cstdio>
+#include <cstring>
 #include <ctime>
 #include <unordered_set>
 #include <mutex>
@@ -155,6 +156,9 @@ bool NetworkManager::StartServer(std::uint16_t port) {
               " (max ", maxPlayers, ")");
     OKAY_INFO("net: clients may spawn only the ", spawnablePrefabs.size(),
               " Spawnable prefab(s) and the Player Spawner's prefab (the spawn allowlist when the anti-cheat is on)");
+    if (anticheat.settings.hitsNeedMoveCheck && maxMoveSpeed <= 0.0f && !authoritativeMovement)
+        OKAY_WARN("net: client hit claims (net_hit) are refused: they need a max move speed (net_max_speed, --max-speed) "
+                  "or authoritative movement to check where the shooter is (or hitsNeedMoveCheck false in the anti-cheat rules)");
     return true;
 }
 
@@ -174,6 +178,12 @@ void NetworkManager::InitServerState() {
         return it != m_syncObjs.end() && it->second.owned;
     };
     anticheat.exists = [this](const std::string& id) { return m_syncObjs.count(id) != 0; };
+    anticheat.claimable = [this](const std::string& id) {
+        auto it = m_syncObjs.find(id);
+        if (it == m_syncObjs.end() || !it->second.t || !it->second.t->gameObject) return false;
+        const auto* ns = it->second.t->gameObject->GetComponent<NetworkSync>();
+        return ns && ns->clientClaimable;
+    };
     anticheat.onCheat = [this](const CheatReport& r) {
         auto& recent = m_recentCheats[r.peer];   // for a kick's report
         if (recent.size() >= kRecentCheats) recent.erase(recent.begin());
@@ -243,6 +253,7 @@ bool NetworkManager::StartRelay(const std::string& relayHost, std::uint16_t rela
     m_relayCode = code;
     m_relaySlot = 0;
     m_relayHostKey = 0;
+    std::memset(m_relayCookie, 0, sizeof m_relayCookie);
     m_relayHelloTimer = 0.0f;
     m_relayError.clear();
     m_kicked = false; m_kickReason.clear();
@@ -283,6 +294,8 @@ void NetworkManager::RelayKeepAlive(float dt) {
     h.Write(net::kRelayProtocolVersion);
     h.Write(static_cast<std::uint32_t>(m_relayHostKey));          // 0 until the relay gives one
     h.Write(static_cast<std::uint32_t>(m_relayHostKey >> 32));
+    for (std::uint8_t b : m_relayCookie) h.Write(b);             // zero until the relay sends one
+    while (h.Size() < net::kRelayHelloMinBytes) h.Write(std::uint8_t(0));
     m_socket.SendTo(m_relayEp, h.Data(), h.Size());
 }
 
@@ -300,6 +313,7 @@ void NetworkManager::Stop() {
     m_relayWelcomed = false;
     m_relaySlot = 0;
     m_relayHostKey = 0;
+    std::memset(m_relayCookie, 0, sizeof m_relayCookie);
     m_relayCode.clear();
     m_relayEp = net::Endpoint{};
     m_socket.Close();
@@ -359,6 +373,7 @@ void NetworkManager::Stop() {
     anticheat.Reset();
     anticheat.serverOwns = nullptr;
     anticheat.exists = nullptr;
+    anticheat.claimable = nullptr;
     anticheat.onCheat = nullptr;
     m_recentCheats.clear();
     m_relayLost = false;
@@ -1019,6 +1034,19 @@ int NetworkManager::ReceiveFrom(void* buffer, std::size_t capacity, net::Endpoin
             m_relayWelcomed = true;
             continue;
         }
+        if (tag == net::RelayCookie) {
+            // A version-3 relay wants proof we receive at our address: hello
+            // again now with its cookie.
+            net::Packet p(b, static_cast<std::size_t>(n));
+            p.ReadU8();
+            p.ReadU8();
+            std::uint8_t c[sizeof m_relayCookie];
+            for (auto& x : c) x = p.ReadU8();
+            if (!p.Ok()) continue;
+            std::memcpy(m_relayCookie, c, sizeof c);
+            m_relayHelloTimer = 0.0f;
+            continue;
+        }
         if (tag == net::RelayRefused) {
             net::Packet p(b, static_cast<std::size_t>(n));
             p.ReadU8();
@@ -1235,8 +1263,11 @@ void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
     }
     // Fired from where the server last saw the shooter, not where it says it is.
     if (!c.hasState) { refuse("no position for the shooter yet"); return; }
-    const Vec3 at(c.state.x, c.state.y, c.state.z);
-    if ((claim.origin - at).Magnitude() > s.hitOriginTolerance) { refuse("shot from where the shooter isn't"); return; }
+    // ... which only means something when that position is checked: the
+    // server moves the shooter (authoritative movement), or maxMoveSpeed
+    // limits what it reports. Without either, the claim is refused (the
+    // server's setup, not the player's doing: no violation).
+    if (s.hitsNeedMoveCheck && c.pawn.empty() && maxMoveSpeed <= 0.0f) { ++m_hitsRefused; return; }
     // The target, where the server has it.
     auto obj = m_syncObjs.find(claim.target);
     if (obj == m_syncObjs.end() || !obj->second.t || !obj->second.t->gameObject) { refuse("no such target: " + claim.target); return; }
@@ -1251,6 +1282,17 @@ void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
         const double at = ClampRewind(viewTick, rtt);
         m_lastRewind = (float)((TickTime() - at) / (double)HostTickRate());
         rewound = RewindTo(at);
+    }
+    // The shooter's position: its pawn, where the server has it (rewound with
+    // everything else under lag compensation), else its checked report.
+    Vec3 from(c.state.x, c.state.y, c.state.z);
+    if (!c.pawn.empty())
+        if (auto p = m_syncObjs.find(c.pawn); p != m_syncObjs.end() && p->second.t)
+            from = p->second.t->TransformPoint(Vec3(0.0f, 0.0f, 0.0f));
+    if ((claim.origin - from).Magnitude() > s.hitOriginTolerance) {
+        Restore(rewound);
+        refuse("shot from where the shooter isn't");
+        return;
     }
     const std::string why = CheckHitView(claim, c.id, obj->second.t, rewound.empty() ? rtt : 1.0f / HostTickRate());
     Restore(rewound);
@@ -2095,7 +2137,10 @@ void NetworkManager::ServerTick(float dt) {
                 if (!std::isfinite(s.x) || !std::isfinite(s.y) || !std::isfinite(s.z)) continue;   // garbage
                 if (maxMoveSpeed > 0.0f && c.hasState) {   // too fast? keep the last good spot
                     const float dx = s.x - c.state.x, dy = s.y - c.state.y, dz = s.z - c.state.z;
-                    const float allowed = maxMoveSpeed * std::max(c.stateAge, m_snapshotInterval) * 1.25f + 0.25f;
+                    // At most a quarter second of travel, however long it was quiet:
+                    // going silent mustn't bank a long jump (a bigger gap is
+                    // corrected back to the last good spot).
+                    const float allowed = maxMoveSpeed * std::min(std::max(c.stateAge, m_snapshotInterval), 0.25f) * 1.25f + 0.25f;
                     if (dx * dx + dy * dy + dz * dz > allowed * allowed) {
                         ++c.violations;
                         net::Packet cp(Correct); cp.Write(c.state.x); cp.Write(c.state.y); cp.Write(c.state.z);

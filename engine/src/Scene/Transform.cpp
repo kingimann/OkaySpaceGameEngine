@@ -76,6 +76,11 @@ void Transform::SetRotation(const Quat& worldRot) {
     localRotation = (m_parent->Rotation().Conjugate() * worldRot).Normalized();
 }
 
+void Transform::NoteOrderChanged() {
+    if (gameObject)   // UI draws in hierarchy order, so caches keyed on it re-sort
+        if (Scene* sc = gameObject->scene()) sc->MarkStructureChanged();
+}
+
 bool Transform::SetParent(Transform* parent, bool worldPositionStays) {
     if (parent == m_parent) return true;
     for (Transform* t = parent; t; t = t->m_parent)

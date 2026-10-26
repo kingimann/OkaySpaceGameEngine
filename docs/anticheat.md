@@ -8,6 +8,11 @@ nothing is checked and nothing is sent differently from before.
   - spawning a prefab that isn't on the game's list;
   - writing another object's SyncVars, or flooding SyncVars;
   - moving a NetworkSync object faster than `maxSyncSpeed`.
+  - moving, or writing the variables of, a scene object nobody owns (a door,
+    a pickup): it's the server's. Tick **Players can claim it** on its
+    Network Sync (`clientClaimable`) for one any player may grab, like a
+    ball: the first to move it owns it. The server can hand any object to a
+    player with `anticheat.SetOwner(netId, peer)`.
 
   Every refusal is reported; repeat offenders are kicked.
 - **P2 (identity and transport):** clients must encrypt, every packet is
@@ -242,8 +247,14 @@ check them.
   1. the shooter isn't dead (if its avatar on the server has a Health);
   2. the weapon's fire rate and ammo, from a Net Validator for `hit/<weapon>`
      (cooldown and budget, as above);
-  3. the shot starts within `hitOriginTolerance` (2) of where the server last
-     saw the shooter, not where the shooter says it is;
+  3. the shot starts within `hitOriginTolerance` (2) of where the server has
+     the shooter, not where the shooter says it is: its pawn when the server
+     moves it (authoritative movement; where it was at the moment the shooter
+     saw, under lag compensation), else the position it last reported, which
+     a max move speed (`net_max_speed`, `--max-speed`) checks. A report may
+     move it at most a quarter second at that speed, however long the client
+     was quiet. With neither, client claims are refused, and the server says
+     so when it starts, unless `hitsNeedMoveCheck false` is in the rules;
   4. the target is in front, within `maxHitRange` (0 = any), and within
      `hitTolerance` (1) of the shot's line, plus its top speed (`maxSyncSpeed`,
      else 8 u/s) times the shooter's ping, which the anti-cheat's heartbeat

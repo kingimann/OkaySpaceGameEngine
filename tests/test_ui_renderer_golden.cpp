@@ -4,11 +4,14 @@
 // software renderer and compared pixel for pixel with tests/golden/ui/<scene>.png.
 // Those PNGs were captured from the player's own UI pass (player/main.cpp) before it
 // moved into the engine, so this pins "the engine renderer draws what the player
-// drew". A later change that alters UI pixels on purpose regenerates them with:
+// drew". Each scene is also drawn through ui2d::BatchPainter (the player's batched
+// path) and must match up to a few glyph-edge pixels. A later change that alters UI
+// pixels on purpose regenerates them with:
 //   test_ui_renderer_golden --update <dir>     (then review and commit the PNGs)
 #define SDL_MAIN_HANDLED
 #include "test_framework.hpp"
 #include "ui_golden_scenes.hpp"
+#include "okay/UI/UIBatcher.hpp"
 #include "okay/UI/UIPainterSDL.hpp"
 #include "okay/UI/UIRenderer.hpp"
 #include <SDL.h>
@@ -22,7 +25,7 @@ namespace {
 
 // Render scene `i` into `out` (RGBA). One renderer is shared by every scene, as in
 // the player, because font atlases are cached per process.
-void RenderScene(SDL_Renderer* ren, SDL_Surface* surf, int i, const std::string& tex, Image& out) {
+void RenderScene(SDL_Renderer* ren, SDL_Surface* surf, int i, const std::string& tex, Image& out, bool batched = false) {
     std::unordered_map<std::string, SDL_Texture*> cache;
     SDL_RenderSetClipRect(ren, nullptr);
     SDL_RenderSetScale(ren, 1.0f, 1.0f);
@@ -33,7 +36,13 @@ void RenderScene(SDL_Renderer* ren, SDL_Surface* surf, int i, const std::string&
         SDL_RenderClear(ren);
         SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
         ui2d::SDLPainter painter(ren, &cache, "");
-        ui2d::RenderSceneUI(scene, painter, ui_golden::kWidth, ui_golden::kHeight);
+        if (batched) {   // the player's path: everything through one atlas as triangles
+            ui2d::BatchPainter batch(painter);
+            ui2d::RenderSceneUI(scene, batch, ui_golden::kWidth, ui_golden::kHeight);
+            batch.Flush();
+        } else {
+            ui2d::RenderSceneUI(scene, painter, ui_golden::kWidth, ui_golden::kHeight);
+        }
         SDL_RenderPresent(ren);
     }
     out = Image(ui_golden::kWidth, ui_golden::kHeight);
@@ -90,6 +99,24 @@ int main(int argc, char** argv) {
         if (diff) std::cerr << "    first difference at (" << firstX << ", " << firstY << ")\n";
         CHECK(diff == 0);          // the extraction must be pixel-identical
         CHECK(drawn > 2000);       // and the scene must actually draw something
+
+        // The batched path draws the same scene as triangles from one atlas.
+        Image bat;
+        RenderScene(ren, surf, i, tex, bat, true);
+        int bdiff = 0, bmax = 0, bbig = 0;
+        const unsigned char* c = bat.Data();
+        for (int p = 0; p < bat.Width() * bat.Height(); ++p) {
+            int d = 0;
+            for (int k = 0; k < 4; ++k) d = std::max(d, std::abs((int)a[p * 4 + k] - (int)c[p * 4 + k]));
+            if (d > 0) ++bdiff;
+            if (d > 48) ++bbig;
+            bmax = std::max(bmax, d);
+        }
+        std::cout << "    batched: " << bdiff << " differing pixels, " << bbig << " differ by more than 48 (max "
+                  << bmax << ")\n";
+        // Triangles sample glyph edges a little differently from texture copies, so a
+        // few text pixels may differ; shapes, images and lines must match.
+        CHECK(bbig <= 50);
     }
     SDL_DestroyRenderer(ren);
     SDL_FreeSurface(surf);

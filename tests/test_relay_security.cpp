@@ -169,9 +169,11 @@ int main() {
     // ---- One address can't take every slot and lock everyone else out ----
     {
         RelayServer relay;
+        CHECK(relay.Start(0));   // Poll() advances the clock the hello rate refills on
         for (std::uint32_t i = 0; i < 5000; ++i) {   // one IP, many source ports, a new code each
             auto h = HelloBytes(RelayHost, "S" + std::to_string(i));
             relay.HandleDatagram(Endpoint{0x0A000001u, static_cast<std::uint16_t>(1000 + i)}, h.data(), h.size());
+            if (i % 20 == 19) relay.Poll(2.0f, 1e9f);   // within the address's hello rate
         }
         CHECK(relay.PeerCount() == RelayServer::kMaxPeersPerAddress);
         CHECK(relay.SessionCount() == RelayServer::kMaxPeersPerAddress);
@@ -186,6 +188,7 @@ int main() {
         // The flooding address frees its slots as its peers leave.
         const std::uint8_t bye = RelayBye;
         relay.HandleDatagram(Endpoint{0x0A000001u, 1000}, &bye, 1);
+        relay.Poll(2.0f, 1e9f);
         auto again = HelloBytes(RelayHost, "AGAIN");
         const Endpoint retry{0x0A000001u, 9999};
         relay.HandleDatagram(retry, again.data(), again.size());

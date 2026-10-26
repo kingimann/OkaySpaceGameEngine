@@ -176,6 +176,7 @@ int main() {
         Scene ss("Server");
         auto* srv = ss.CreateGameObject("Net")->AddComponent<NetworkManager>();
         srv->maxMessagesPerSecond = 0;
+        srv->maxMoveSpeed = 1000.0f;   // a move check, so client hit claims are judged at all
         auto* ac = ss.CreateGameObject("Rules")->AddComponent<AntiCheatConfig>();
         ac->settings.kickAfterViolations = 0;
         auto* rifle = ss.CreateGameObject("Rifle")->AddComponent<NetValidator>();

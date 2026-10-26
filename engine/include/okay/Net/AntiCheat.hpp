@@ -98,6 +98,9 @@ struct AntiCheatSettings {
     /// Validator covers ("hit/<weapon>"). With the anti-cheat on, a claim with
     /// any other weapon does no damage.
     std::vector<std::string> weapons;
+    /// Refuse client hit claims when the server can't check where the shooter
+    /// is: no maxMoveSpeed, and the server doesn't move the shooter's pawn.
+    bool  hitsNeedMoveCheck = true;
 
     /// .okayac text: one "key value" per line, '#' comments:
     ///   enabled true | spawn <prefab path> (repeatable) | maxSyncSpeed 12
@@ -107,6 +110,7 @@ struct AntiCheatSettings {
     ///   serverVar <key prefix> (repeatable)
     ///   hitOriginTolerance 2 | hitTolerance 1 | maxHitRange 50 | hitDamage 10 | hitLineOfSight true
     ///   weapon <name> (repeatable)
+    ///   hitsNeedMoveCheck true
     static bool Parse(const std::string& text, AntiCheatSettings& out, std::string* error = nullptr);
     bool LoadFile(const std::string& path, std::string* error = nullptr);
     std::string ToText() const;
@@ -166,6 +170,9 @@ public:
     /// Networked objects that exist on the server. Transforms for any other id
     /// are dropped quietly (nobody could apply them) and claim nothing.
     std::function<bool(const std::string& netId)> exists;
+    /// May a client claim this unowned object by driving it (its NetworkSync's
+    /// clientClaimable)? Without this hook, or false: the object is the server's.
+    std::function<bool(const std::string& netId)> claimable;
     /// Extra per-RPC check (e.g. per-RPC rules from game code): false refuses it.
     std::function<bool(std::uint32_t peer, const std::string& name, const std::string& data)> validateRpc;
     /// Called for every refusal.

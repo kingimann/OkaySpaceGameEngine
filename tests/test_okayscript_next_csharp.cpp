@@ -369,7 +369,7 @@ static void Foreach() {
             "        foreach (int xs in xs) { }\n"                // 8
             "    }\n"));
         CHECK(Has(d, 0, "'x' is the foreach variable, so it can't be changed", 4, 33));
-        CHECK(Has(d, 0, "foreach needs an array, not int", 5, 27));
+        CHECK(Has(d, 0, "foreach needs an array, a List or a Dictionary, not int", 5, 27));
         CHECK(Has(d, 0, "The items of xs are int but 's' is string", 6, 25));
         CHECK(Has(d, 0, "Expected 'in' here", 7, 24));
         CHECK(Has(d, 0, "'xs' is already a variable here", 8, 22));
@@ -586,6 +586,367 @@ static void Interpolation() {
     }
 }
 
+static void NullOperators() {
+    {   // ?? picks a fallback, ??= fills an empty reference once, ?. skips the rest when the object is gone
+        Scene scene("null-ops");
+        GameObject* player = scene.CreateGameObject("Player");
+        GameObject* crate = scene.CreateGameObject("Crate");
+        auto* sc = player->AddComponent<ScriptComponent>(NextScriptVM::kLanguage);
+        std::string err;
+        CHECK(sc->LoadSource(Wrap(
+            "    public string picked, after, path;\n"
+            "    public int looks, moved, len;\n"
+            "    GameObject target;\n"
+            "    GameObject Look() { looks++; return GameObject.Find(\"Crate\"); }\n"
+            "    void Start() {\n"
+            "        picked = (GameObject.Find(\"Boss\") ?? GameObject.Find(\"Nobody\") ?? GameObject.Find(\"Crate\")).name;\n"
+            "        int[] none = null;\n"
+            "        len = (none ?? new int[] { 1, 2, 3 }).Length;\n"
+            "    }\n"
+            "    void Update() {\n"
+            "        target ??= Look();\n"
+            "        target?.transform.Translate(1, 0, 0);\n"
+            "        Transform t = target?.transform;\n"
+            "        if (t != null) moved++;\n"
+            "        after = (target ?? gameObject).name;\n"
+            "    }\n"), &err));
+        if (!err.empty()) std::printf("    %s\n", err.c_str());
+        scene.Start();
+        for (int i = 0; i < 3; ++i) scene.Update(kDt);
+        CHECK(sc->VM()->GetGlobal("picked").AsString() == "Crate");
+        CHECK_NEAR(sc->VM()->GetGlobal("len").AsFloat(), 3.0f, 1e-6f);
+        CHECK_NEAR(sc->VM()->GetGlobal("looks").AsFloat(), 1.0f, 1e-6f);     // ??= only looked once
+        CHECK_NEAR(crate->transform->Position().x, 3.0f, 1e-5f);
+        CHECK_NEAR(sc->VM()->GetGlobal("moved").AsFloat(), 3.0f, 1e-6f);
+        CHECK(sc->VM()->GetGlobal("after").AsString() == "Crate");
+        // A destroyed object counts as null: ?. skips, ?? falls back, ??= looks again.
+        // (Destroy takes effect at the end of the frame, so the crate still moves once.)
+        scene.Destroy(crate);
+        scene.Update(kDt);
+        scene.Update(kDt);
+        scene.Update(kDt);
+        CHECK(sc->VM()->GetGlobal("after").AsString() == "Player");
+        CHECK_NEAR(sc->VM()->GetGlobal("moved").AsFloat(), 4.0f, 1e-6f);
+        CHECK_NEAR(sc->VM()->GetGlobal("looks").AsFloat(), 3.0f, 1e-6f);
+    }
+    {   // a ternary with a number like .5f still parses
+        CHECK(Clean(Wrap("    void Start() { bool b = true; float f = b ? .5f : 1f; Debug.Log(f); }")));
+    }
+    {   // mistakes, with line and column
+        auto d = Diags(Wrap(
+            "    void Start() {\n"                                         // 2
+            "        int n = 3;\n"                                         // 3
+            "        int m = n ?? 4;\n"                                    // 4
+            "        GameObject g = GameObject.Find(\"A\");\n"           // 5
+            "        Vector3 p = g?.transform.position;\n"                 // 6
+            "        n ??= 2;\n"                                           // 7
+            "        GameObject h = g ?? transform;\n"                     // 8
+            "        int[] xs = null;\n"                                   // 9
+            "        int k = xs?.Length;\n"                                // 10
+            "        Debug.Log(m + p + h + k);\n"                          // 11
+            "    }\n"));
+        CHECK(Has(d, 0, "?? only works on objects and arrays, which can be null: an int never is", 4, 19));
+        CHECK(Has(d, 0, "?. gives null when 'g' is null, but a Vector3 can't be null: check g != null first", 6, 22));
+        CHECK(Has(d, 0, "??= only works on objects and arrays, which can be null: an int never is", 7, 11));
+        CHECK(Has(d, 0, "is Transform but needs GameObject", 8, 29));
+        CHECK(Has(d, 0, "?. gives null when 'xs' is null, but an int can't be null: check xs != null first", 10, 19));
+        auto d2 = Diags(Wrap("    void Start() { Vector3 v = Vector3.zero; float x = v?.x; int[] a = null; a?.Length++; Debug.Log(x); }"));
+        CHECK(Has(d2, 0, "?. only works on objects and arrays, which can be null: use . here", 2, 59));
+        CHECK(Has(d2, 0, "Something reached with ?. can't be changed", 2, 87));
+        std::string chain = "null";
+        for (int i = 0; i < 100000; ++i) chain += " ?? null";
+        CHECK(Has(Diags(Wrap("    void Start() { GameObject g = " + chain + "; }")), 0, "nested too deeply"));
+    }
+}
+
+static void Classes() {
+    {   // plain classes: fields with starting values, constructors, methods, `this`, references, null
+        World w(
+            "class Node {\n"
+            "    public int value;\n"
+            "    public Node next;\n"
+            "    public Node(int v) { value = v; }\n"
+            "    public Node Prepend(int v) { Node n = new Node(v); n.next = this; return n; }\n"
+            "}\n"
+            "class Stats {\n"
+            "    public int hp = 10;\n"
+            "    public int max;\n"
+            "    public Stats(int max) { this.max = max; hp = max; }\n"
+            "    public bool Hit(int damage) { hp -= damage; return hp <= 0; }\n"
+            "    public Stats Copy() { Stats s = new Stats(max); s.hp = hp; return s; }\n"
+            "}\n"
+            "class Point {\n"
+            "    public float x, y;\n"
+            "    public Point() { }\n"
+            "    public Point(float x, float y) { this.x = x; this.y = y; }\n"
+            "}\n"
+            "class Bag { public int count; }\n"
+            "class T : Behaviour {\n"
+            "    public int sum, count, hp, copyHp, bagCount;\n"
+            "    public float px, speed;\n"
+            "    public bool firstHit, dead, missing;\n"
+            "    public string text;\n"
+            "    void SetSpeed(float speed) { this.speed = speed; }\n"
+            "    void Start() {\n"
+            "        Node head = null;\n"
+            "        for (int i = 1; i <= 3; i++) { Node n = new Node(i); n.next = head; head = n; }\n"
+            "        head = head.Prepend(4);\n"
+            "        for (Node p = head; p != null; p = p.next) { sum += p.value; count++; }\n"
+            "        Stats s = new Stats(5);\n"
+            "        firstHit = s.Hit(3);\n"
+            "        dead = s.Hit(3);\n"
+            "        Stats c = s.Copy();\n"
+            "        c.hp = 100;\n"
+            "        Stats r = s;\n"
+            "        r.hp = 7;\n"
+            "        hp = s.hp;\n"
+            "        copyHp = c.hp;\n"
+            "        Point[] ps = new Point[2];\n"
+            "        ps[0] = new Point(1.5f, 2);\n"
+            "        px = ps[0].x + new Point().x;\n"
+            "        missing = ps[1] == null;\n"
+            "        text = \"\" + s + $\" {head.next.value}\";\n"
+            "        Bag bag = (ps[1] == null ? null : new Bag()) ?? new Bag();\n"
+            "        bag.count += 2;\n"
+            "        bagCount = bag.count;\n"
+            "        SetSpeed(4);\n"
+            "    }\n"
+            "}\n");
+        CHECK(w.loaded);
+        CHECK_NEAR(w.F("sum"), 10.0f, 1e-6f);
+        CHECK_NEAR(w.F("count"), 4.0f, 1e-6f);
+        CHECK(!w.sc->VM()->GetGlobal("firstHit").AsBool());
+        CHECK(w.sc->VM()->GetGlobal("dead").AsBool());
+        CHECK_NEAR(w.F("hp"), 7.0f, 1e-6f);           // r is the same object as s
+        CHECK_NEAR(w.F("copyHp"), 100.0f, 1e-6f);     // the copy is its own object
+        CHECK_NEAR(w.F("px"), 1.5f, 1e-6f);
+        CHECK(w.sc->VM()->GetGlobal("missing").AsBool());
+        CHECK(w.S("text") == "Stats 3");
+        CHECK_NEAR(w.F("speed"), 4.0f, 1e-6f);        // this.speed is the field, not the parameter
+        CHECK_NEAR(w.F("bagCount"), 2.0f, 1e-6f);
+    }
+    {   // the example in docs/scripting.md
+        CHECK(Clean(
+            "class Item {\n"
+            "    public string name;\n"
+            "    public int count = 1;\n"
+            "    public Item(string name) { this.name = name; }\n"
+            "    public bool Use() { count--; return count <= 0; }\n"
+            "}\n"
+            "class Inventory : Behaviour {\n"
+            "    Item[] slots = new Item[4];\n"
+            "    void Start() { slots[0] = new Item(\"Potion\"); }\n"
+            "    public void UseFirst() {\n"
+            "        if (slots[0] != null && slots[0].Use()) slots[0] = null;\n"
+            "    }\n"
+            "}\n"));
+    }
+    {   // a very long chain of objects is freed without running out of stack
+        World w(
+            "class Link { public Link next; }\n"
+            "class T : Behaviour {\n"
+            "    public int made;\n"
+            "    void Start() { Link head = null; for (int i = 0; i < 300000; i++) { Link l = new Link(); l.next = head; head = l; made++; } }\n"
+            "}\n");
+        CHECK_NEAR(w.F("made"), 300000.0f, 1e-3f);
+    }
+    {   // runtime: using null is an error with its line
+        g_errs.clear();
+        World w("class Box { public int v; }\nclass T : Behaviour {\n    void Start() { Box b = null; Debug.Log(b.v); }\n}\n");
+        CHECK(ErrHas("Start() line 3: 'b' is null here"));
+        World loop("class Node { public Node next = new Node(); }\nclass T : Behaviour {\n    void Start() { Node n = new Node(); Debug.Log(n); }\n}\n");
+        CHECK(ErrHas("Making a Node makes more objects without end"));
+    }
+    {   // mistakes, with line and column
+        auto d = Diags(
+            "class Bag {\n"                                              // 1
+            "    int secret;\n"                                          // 2
+            "    void Hidden() { secret = 1; }\n"                        // 3
+            "    public int Count() { Hidden(); return secret; }\n"      // 4
+            "    public void Move() { transform.Translate(1, 0, 0); }\n" // 5
+            "    static int shared;\n"                                   // 6
+            "    public Bag(int n) { return n; }\n"                      // 7
+            "    public Bag(int a) { }\n"                                // 8
+            "}\n"                                                         // 9
+            "class Node { public int value; }\n"                         // 10
+            "class Fancy : Node { }\n"                                   // 11
+            "class Node { }\n"                                           // 12
+            "class T : Behaviour {\n"                                    // 13
+            "    T() { }\n"                                              // 14
+            "    void Start() {\n"                                       // 15
+            "        Bag b = new Bag(1);\n"                              // 16
+            "        Debug.Log(b.secret);\n"                             // 17
+            "        b.Hidden();\n"                                      // 18
+            "        Bag c = new Bag();\n"                               // 19
+            "        T t = new T();\n"                                   // 20
+            "        Node n = new Node();\n"                             // 21
+            "        Debug.Log(n.valu + b.Count());\n"                   // 22
+            "    }\n"
+            "}\n"
+            "class Other : Behaviour { }\n");                            // 25
+        CHECK(Has(d, 0, "'secret' is private to Bag: make it public to use it here", 17, 21));
+        CHECK(Has(d, 0, "'Hidden' is private to Bag: make it public to use it here", 18, 11));
+        CHECK(Has(d, 0, "'transform' only exists in the Behaviour class: Bag isn't on an object", 5, 26));
+        CHECK(Has(d, 0, "static members only work in the Behaviour class for now", 6, 16));
+        CHECK(Has(d, 0, "A constructor can't return a value", 7, 25));
+        CHECK(Has(d, 0, "Bag already has a constructor that takes 1 value", 8, 12));
+        CHECK(Has(d, 0, "Inheritance between classes isn't supported yet", 11, 15));
+        CHECK(Has(d, 0, "'Node' is declared twice", 12, 7));
+        CHECK(Has(d, 0, "A Behaviour script has no constructor: set things up in Awake() or Start()", 14, 5));
+        CHECK(Has(d, 0, "Bag has no constructor that takes 0 values", 19, 17));
+        CHECK(Has(d, 0, "Behaviour scripts are added to objects, not made with new", 20, 15));
+        CHECK(Has(d, 0, "Node has no 'valu'. Did you mean 'value'?", 22, 21));
+        CHECK(Has(d, 0, "Only one Behaviour class per script: put 'Other' in its own script", 25, 7));
+        CHECK(!Has(d, 1, "'secret' is never read"));
+    }
+}
+
+static void Collections() {
+    {   // do / while runs the body at least once
+        World w(Wrap("    public int n, tries;\n    void Start() { do { tries++; n += 3; } while (n < 10); do { tries++; } while (false); }\n"));
+        CHECK(w.loaded);
+        CHECK_NEAR(w.F("n"), 12.0f, 1e-6f);
+        CHECK_NEAR(w.F("tries"), 5.0f, 1e-6f);
+    }
+    {   // List<T>: add / insert / remove / index / sort / foreach / Count, a reference like an array
+        World w(Wrap(
+            "    public int count, sum, idx, first, removedAt, total;\n"
+            "    public bool has, removed, missing;\n"
+            "    public string text, names;\n"
+            "    void Start() {\n"
+            "        List<int> xs = new List<int>();\n"
+            "        xs.Add(5); xs.Add(1); xs.Add(9);\n"
+            "        xs.Insert(0, 7);\n"
+            "        xs[1] += 10;\n"
+            "        has = xs.Contains(9);\n"
+            "        idx = xs.IndexOf(9);\n"
+            "        removed = xs.Remove(1);\n"
+            "        missing = !xs.Remove(42);\n"
+            "        xs.Sort();\n"
+            "        first = xs[0];\n"
+            "        foreach (int x in xs) sum += x;\n"
+            "        count = xs.Count;\n"
+            "        var copy = xs;\n"
+            "        copy.RemoveAt(0);\n"
+            "        removedAt = xs.Count;\n"
+            "        text = \"\" + xs;\n"
+            "        var ns = new List<string> { \"b\", \"a\", \"c\" };\n"
+            "        ns.Sort(); ns.Reverse();\n"
+            "        foreach (var n in ns) names += n;\n"
+            "        int[] arr = ns.Count > 2 ? new List<int> { 1, 2, 3 }.ToArray() : new int[0];\n"
+            "        List<int> more = new List<int> { 4 }; more.AddRange(xs);\n"
+            "        total = arr.Length + more.Count;\n"
+            "        xs.Clear();\n"
+            "        count += xs.Count;\n"
+            "    }\n"));
+        CHECK(w.loaded);
+        CHECK(w.sc->VM()->GetGlobal("has").AsBool());
+        CHECK_NEAR(w.F("idx"), 3.0f, 1e-6f);            // [7, 15, 1, 9]
+        CHECK(w.sc->VM()->GetGlobal("removed").AsBool());
+        CHECK(w.sc->VM()->GetGlobal("missing").AsBool());
+        CHECK_NEAR(w.F("first"), 7.0f, 1e-6f);          // sorted [7, 9, 15]
+        CHECK_NEAR(w.F("sum"), 31.0f, 1e-6f);
+        CHECK_NEAR(w.F("count"), 3.0f, 1e-6f);          // 3, then Clear adds 0
+        CHECK_NEAR(w.F("removedAt"), 2.0f, 1e-6f);      // copy is the same list
+        CHECK(w.S("text") == "List<int>");
+        CHECK(w.S("names") == "cba");
+        CHECK_NEAR(w.F("total"), 3.0f + 3.0f, 1e-6f);   // [1,2,3] and [4, 9, 15]
+    }
+    {   // Dictionary<K,V>: indexer get/set, Add, ContainsKey, Remove, GetValueOrDefault, Keys/Values, foreach in insertion order
+        World w(
+            "enum Item { Sword, Shield, Potion }\n"
+            "class T : Behaviour {\n"
+            "    public int sword, potions, missing, count, keyCount;\n"
+            "    public bool has, gone, added, again;\n"
+            "    public string order = \"\", valuesText = \"\";\n"
+            "    void Start() {\n"
+            "        var bag = new Dictionary<Item, int>();\n"
+            "        bag[Item.Potion] = 2;\n"
+            "        bag.Add(Item.Sword, 1);\n"
+            "        bag[Item.Potion] += 3;\n"
+            "        added = bag.TryAdd(Item.Shield, 1);\n"
+            "        again = bag.TryAdd(Item.Shield, 9);\n"
+            "        sword = bag[Item.Sword];\n"
+            "        potions = bag[Item.Potion];\n"
+            "        has = bag.ContainsKey(Item.Shield);\n"
+            "        gone = bag.Remove(Item.Shield);\n"
+            "        missing = bag.GetValueOrDefault(Item.Shield, -1);\n"
+            "        foreach (var kv in bag) order += kv.Key + \"=\" + kv.Value + \";\";\n"
+            "        foreach (int v in bag.Values) valuesText += v;\n"
+            "        keyCount = bag.Keys.Count;\n"
+            "        count = bag.Count;\n"
+            "        Dictionary<string, GameObject> byName = new Dictionary<string, GameObject>();\n"
+            "        byName[\"me\"] = gameObject;\n"
+            "        if (byName[\"me\"] == gameObject) count += 100;\n"
+            "    }\n"
+            "}\n");
+        CHECK(w.loaded);
+        CHECK_NEAR(w.F("sword"), 1.0f, 1e-6f);
+        CHECK_NEAR(w.F("potions"), 5.0f, 1e-6f);
+        CHECK(w.sc->VM()->GetGlobal("added").AsBool());
+        CHECK(!w.sc->VM()->GetGlobal("again").AsBool());
+        CHECK(w.sc->VM()->GetGlobal("has").AsBool());
+        CHECK(w.sc->VM()->GetGlobal("gone").AsBool());
+        CHECK_NEAR(w.F("missing"), -1.0f, 1e-6f);
+        CHECK(w.S("order") == "Potion=5;Sword=1;");
+        CHECK(w.S("valuesText") == "51");
+        CHECK_NEAR(w.F("keyCount"), 2.0f, 1e-6f);
+        CHECK_NEAR(w.F("count"), 102.0f, 1e-6f);
+    }
+    {   // the same list and dictionary code gives the same results on the old runtime
+        const std::string src = Wrap(
+            "    public int count, sum, idx;\n"
+            "    public bool has;\n"
+            "    void Start() {\n"
+            "        List<int> xs = new List<int>();\n"
+            "        xs.Add(5); xs.Add(1); xs.Add(9); xs.Insert(0, 7); xs.Remove(1); xs.Sort();\n"
+            "        foreach (int x in xs) sum += x;\n"
+            "        idx = xs.IndexOf(9); count = xs.Count;\n"
+            "        Dictionary<string, int> d = new Dictionary<string, int>();\n"
+            "        d[\"a\"] = 2; d.Add(\"b\", 3);\n"
+            "        has = d.ContainsKey(\"b\");\n"
+            "        sum += d.GetValueOrDefault(\"a\", 0) + d.GetValueOrDefault(\"z\", 10);\n"
+            "    }\n");
+        World next(src), old(src, "okayscript");
+        for (const char* f : {"count", "sum", "idx"}) CHECK_NEAR(next.F(f), old.F(f), 1e-6f);
+        CHECK(next.sc->VM()->GetGlobal("has").AsBool() == old.sc->VM()->GetGlobal("has").AsBool());
+        CHECK_NEAR(next.F("sum"), 21.0f + 12.0f, 1e-6f);
+    }
+    {   // runtime errors with their line
+        g_errs.clear();
+        World a(Wrap("    void Start() { var d = new Dictionary<string, int>(); Debug.Log(d[\"hp\"]); }\n"));
+        CHECK(ErrHas("Start() line 2: The key \"hp\" isn't in this Dictionary<string, int>"));
+        World b(Wrap("    void Start() { var d = new Dictionary<string, int>(); d.Add(\"a\", 1); d.Add(\"a\", 2); }\n"));
+        CHECK(ErrHas("Start() line 2: The key \"a\" is already in this Dictionary<string, int>"));
+        World c(Wrap("    void Start() { var xs = new List<int> { 1, 2 }; foreach (var x in xs) xs.Add(x); }\n"));
+        CHECK(ErrHas("Start() line 2: The List<int> was changed during foreach"));
+        World e(Wrap("    void Start() { var xs = new List<int>(); xs.RemoveAt(0); }\n"));
+        CHECK(ErrHas("Start() line 2: Index 0 is outside the List<int> (length 0)"));
+    }
+    {   // mistakes, with line and column
+        auto d = Diags(Wrap(
+            "    void Start() {\n"                                              // 2
+            "        List<int> xs = new List<int>();\n"                         // 3
+            "        xs.Add(\"a\");\n"                                        // 4
+            "        var d = new Dictionary<float, int>();\n"                   // 5
+            "        HashSet<int> h;\n"                                          // 6
+            "        List<int, int> bad;\n"                                      // 7
+            "        xs.Push(1);\n"                                              // 8
+            "        var m = new Dictionary<string, int> { 1 };\n"              // 9
+            "        do { } while (1);\n"                                        // 10
+            "        Debug.Log(xs.Length);\n"                                    // 11
+            "    }\n"));
+        CHECK(Has(d, 0, "is string but needs int", 4, 16));
+        CHECK(Has(d, 0, "A Dictionary key must be an int, string, bool, enum or object, not float", 5, 32));
+        CHECK(Has(d, 0, "Only List<T> and Dictionary<K, V> are generic here", 6, 9));
+        CHECK(Has(d, 0, "List takes one type: List<int>", 7, 9));
+        CHECK(Has(d, 0, "List<int> has no method 'Push'", 8, 12));
+        CHECK(Has(d, 0, "Fill a Dictionary with Add or d[key] = value", 9, 17));
+        CHECK(Has(d, 0, "The while condition must be true/false, not int", 10, 23));
+        CHECK(Has(d, 0, "List<int> has no 'Length'. Did you mean 'Count'?", 11, 22));
+    }
+}
+
 static void Parity() {
     // The same C# snippet gives the same results on the old OkayScript runtime.
     const std::string src =
@@ -616,9 +977,51 @@ static void Parity() {
     // (the old runtime prints the number).
 }
 
+static void Followups() {
+    {   // each switch section has its own scope: a local from one section can't be read in another
+        auto d = Diags(Wrap(
+            "    void Start() {\n"                                                                   // 2
+            "        int n = 2; string r = \"\";\n"                                               // 3
+            "        switch (n) { case 1: string s = \"a\"; break; case 2: r = s + \"!\"; break; }\n"   // 4
+            "        Debug.Log(r);\n"
+            "    }\n"));
+        CHECK(Has(d, 0, "Unknown name 's'", 4, 65));
+    }
+    {   // a float too big for an int is a script error, not undefined behaviour
+        g_errs.clear();
+        World w(Wrap("    public float big = 1000000;\n    public int n;\n    void Start() { n = (int)(big * big * big); }\n"));
+        CHECK(ErrHas("Start() line 4: 1e+18 doesn't fit in an int"));
+        World e("enum State { Idle }\nclass T : Behaviour {\n    public float big = -1000000;\n    void Start() { State s = (State)(big * big * big); Debug.Log(s); }\n}\n");
+        CHECK(ErrHas("Start() line 4: -1e+18 doesn't fit in an int"));
+        // the Inspector can't put one into an int field either
+        World f(Wrap("    public int lives = 3;\n    void Start() { }\n"));
+        f.sc->fields["lives"] = "1e30";
+        f.sc->ApplyFieldOverrides();
+        CHECK_NEAR(f.F("lives"), 3.0f, 1e-6f);
+    }
+    {   // a long else-if chain past the nesting limit gives one error, not a cascade
+        std::string chain = "if (n == 0) n = 1;";
+        for (int i = 1; i < 400; ++i) chain += " else if (n == " + std::to_string(i) + ") n = " + std::to_string(i + 1) + ";";
+        auto d = Diags(Wrap("    void Start() { int n = 0; " + chain + " Debug.Log(n); }"));
+        CHECK_EQ(Count(d, 0), 1);
+        CHECK(Has(d, 0, "nested too deeply"));
+    }
+    {   // an enum value can't use a field; the message says so instead of "did you mean" itself
+        auto d = Diags("class T : Behaviour {\n    const int Base = 3;\n    enum E { A = Base }\n    void Start() { Debug.Log(E.A + \" \" + Base); }\n}\n");
+        CHECK(Has(d, 0, "An enum value can't use the field 'Base'", 3, 18));
+        CHECK(!Has(d, 0, "Did you mean 'Base'"));
+    }
+}
+
 static void BackCompat() {
-    // Words that are new keywords in context only stay usable as names.
-    CHECK(Clean(Wrap("    public int in_ = 1;\n    void Start() { int enumCount = 2, cases = 3; Debug.Log(enumCount + cases + in_); }\n")));
+    // switch, foreach, case, enum and in are keywords only where they start that
+    // construct, so scripts that used them as names keep working.
+    World w(Wrap(
+        "    public int enum = 1, foreach = 2;\n"
+        "    public int total;\n"
+        "    void Start() { int switch = 3, case = 4, in = 5; switch = enum + foreach + case + in; total = switch; }\n"));
+    CHECK(w.loaded);
+    CHECK_NEAR(w.F("total"), 12.0f, 1e-6f);
     // Features still to come keep their message.
     auto d = Diags(Wrap("    virtual void V() { }\n    void Start() { try { } }\n"));
     CHECK(Has(d, 0, "virtual isn't supported"));
@@ -628,9 +1031,13 @@ static void BackCompat() {
 static void Fuzz() {
     // Truncated and garbled programs never crash the compiler.
     const std::string src =
-        "enum E { A, B = 2 }\nclass T : Behaviour {\n int[] a = { 1, 2 };\n void Start() {\n"
+        "enum E { A, B = 2 }\nclass P { public int v; public P(int x) { v = x; } public P Twin() { return new P(v); } }\nclass T : Behaviour {\n int[] a = { 1, 2 };\n void Start() {\n"
         "  switch (E.A) { case E.A: foreach (var x in a) { a[x % 2] += 1; } break; default: break; }\n"
-        "  string s = $\"{a[0]:F1} {{ {$\"{E.B}\"}\";\n }\n}\n";
+        "  string s = $\"{a[0]:F1} {{ {$\"{E.B}\"}\";\n"
+        "  GameObject g = GameObject.Find(s) ?? gameObject; g?.transform.Translate(1, 0, 0); a ??= new int[1];\n"
+        "  P p = new P(3).Twin(); p.v += 1; Debug.Log(p?.Twin());\n"
+        "  var xs = new List<int> { 1, 2 }; var d = new Dictionary<string, List<int>>(); d[\"a\"] = xs;\n"
+        "  do { xs.RemoveAt(0); } while (xs.Count > 0); foreach (var kv in d) Debug.Log(kv.Key + kv.Value.Count);\n }\n}\n";
     int n = 0;
     for (std::size_t i = 0; i <= src.size(); ++i) { Diags(src.substr(0, i)); ++n; }
     for (std::size_t i = 0; i < src.size(); ++i) { std::string s = src; s.erase(i, 1); Diags(s); }
@@ -658,7 +1065,11 @@ int main() {
     Foreach();
     Statics();
     Interpolation();
+    NullOperators();
+    Classes();
+    Collections();
     Parity();
+    Followups();
     BackCompat();
     Fuzz();
     Log::sink = nullptr;

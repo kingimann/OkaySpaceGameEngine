@@ -30,9 +30,9 @@ InvResult Move(Inventory* src, int si, Inventory* dst, int di, int amount, int d
     Inventory::Slot& b = dst->slots[di];
     int moved = 0;
     if (Inventory::Empty(b)) {
-        b.item = a.item; b.count = n; a.count -= n; moved = n;
-    } else if (b.item == a.item) {
-        const long long room = dst->maxStack > 0 ? (long long)dst->maxStack - b.count : 2147483647LL - b.count;
+        b = a; b.count = n; a.count -= n; moved = n;
+    } else if (Inventory::Stackable(b, a)) {
+        const long long room = dst->StackCap(b.item) - b.count;
         moved = (int)std::min<long long>(n, room > 0 ? room : 0);
         if (moved <= 0) { TrimTail(*dst); return InvResult::No("stack full"); }
         b.count += moved; a.count -= moved;
@@ -58,7 +58,7 @@ InvResult Split(Inventory* inv, int i, int amount, int slots) {
         to = (int)inv->slots.size();
         inv->slots.push_back(Inventory::Slot{});
     }
-    inv->slots[to].item = inv->slots[i].item;
+    inv->slots[to] = inv->slots[i];   // same item and instance data
     inv->slots[to].count = amount;
     inv->slots[i].count -= amount;
     inv->NotifyChanged();
@@ -71,11 +71,11 @@ InvResult QuickMove(Inventory* inv, int from, int hotbar, int slots) {
     const int lo = (from < n) ? n : 0, hi = (from < n) ? total : std::min(n, total);
     while ((int)inv->slots.size() < hi) inv->slots.push_back(Inventory::Slot{});
     Inventory::Slot& s = inv->slots[from];
-    const long long cap = inv->maxStack > 0 ? inv->maxStack : 2147483647LL;
+    const long long cap = inv->StackCap(s.item);
     int moved = 0;
     for (int k = lo; k < hi && !Inventory::Empty(s); ++k) {   // top up matching stacks
         Inventory::Slot& d = inv->slots[k];
-        if (Inventory::Empty(d) || d.item != s.item) continue;
+        if (Inventory::Empty(d) || !Inventory::Stackable(d, s)) continue;
         const long long room = cap - d.count;
         if (room <= 0) continue;
         const int mv = (long long)s.count < room ? s.count : (int)room;
@@ -95,6 +95,21 @@ InvResult QuickMove(Inventory* inv, int from, int hotbar, int slots) {
 InvResult Transfer(Inventory* from, int i, Inventory* to) {
     if (!ValidSlot(from, i) || !to || from == to) return InvResult::No("bad slot");
     if (Inventory::Empty(from->slots[i])) return InvResult::No("empty slot");
+    if (!from->slots[i].data.Empty()) {   // a one-off item (durability, uid, values) moves whole into a free slot
+        const int limit = UsableSlots(*to);
+        int hole = -1;
+        for (int k = 0; k < (int)to->slots.size(); ++k) if (Inventory::Empty(to->slots[k])) { hole = k; break; }
+        if (hole < 0) {
+            if (limit > 0 && (int)to->slots.size() >= limit) return InvResult::No("destination full");
+            hole = (int)to->slots.size();
+            to->slots.push_back(Inventory::Slot{});
+        }
+        const int n = from->slots[i].count;
+        std::swap(to->slots[hole], from->slots[i]);
+        TrimTail(*from);
+        Notify(from, to);
+        return InvResult::Done(n);
+    }
     const std::string item = from->slots[i].item;
     const int have = from->slots[i].count;
     const int left = to->AddPartial(item, have);

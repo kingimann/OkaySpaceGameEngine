@@ -2,11 +2,14 @@
 #include <Okay.hpp>
 #include "okay/Net/PlayerInput.hpp"
 #include "okay/Components/CharacterController3D.hpp"
+#include "okay/Components/FirstPersonController.hpp"
+#include "okay/Components/ThirdPersonController.hpp"
 
 #include <chrono>
 #include <cmath>
 #include <string>
 #include <thread>
+#include <type_traits>
 
 using namespace okay;
 
@@ -53,6 +56,11 @@ struct AuthGame {
             hs.Update(1.0f / 30.0f); as.Update(1.0f / 30.0f); bs.Update(bDt);
             Nap();
         }
+    }
+    GameObject* ObjOf(Scene& s) const {
+        for (const auto& g : s.Objects())
+            if (auto* ns = g->GetComponent<NetworkSync>(); ns && ns->netId == idA) return g.get();
+        return nullptr;
     }
     Vec3 PosOf(Scene& s) const {
         for (const auto& g : s.Objects())
@@ -154,6 +162,99 @@ int main() {
         CHECK(moved > 6.0f);
         CHECK(g.host->InputsDropped() > 0);
     }
+
+    // ---- First- and third-person: Simulate reads only its input --------------------------
+    // (Local play is ReadLocalInput + Simulate every frame; the old and new controllers
+    // were run side by side over a scripted session and matched frame for frame.)
+    auto splitChecks = [](auto* c) {
+        c->lockCursor = false; c->fallResetY = 0.0f; c->driveAnimation = false;
+        c->transform->localPosition = Vec3(0.0f, 0.0f, 0.0f);
+        c->yaw = 0.0f; c->pitch = 0.0f;
+        // The look adds up through ReadLocalInput alone (a client whose host moves
+        // it reads its input every frame but doesn't run Simulate).
+        Input::FeedMouse(Vec2(0.0f, 0.0f), 0); c->ReadLocalInput();
+        PlayerInput look;
+        for (int i = 1; i <= 5; ++i) { Input::FeedMouse(Vec2(10.0f * i, 0.0f), 0); look = c->ReadLocalInput(); }
+        CHECK(std::fabs(std::fabs(look.yaw) - 50.0f * c->mouseSensitivity) < 1e-3f && look.yaw == c->yaw);
+        c->yaw = 0.0f;
+        // Keys held, but an empty command: nothing moves.
+        Input::FeedKeys({'w', 'q', Input::KeyShift});
+        c->Simulate(PlayerInput{}, 0.1f);
+        CHECK(c->transform->localPosition.z == 0.0f && c->lean() == 0.0f);
+        // The keys are what ReadLocalInput reports.
+        Input::FeedKeys({});
+        Input::FeedKeys({'w', 'q', Input::KeyShift, ' '});
+        const PlayerInput r = c->ReadLocalInput();
+        CHECK(r.move.y > 0.9f && r.Held(PlayerInput::LeanLeft) && r.Held(PlayerInput::Sprint));
+        CHECK(r.Pressed(PlayerInput::Jump) && r.Pressed(PlayerInput::Sprint) && !r.Held(PlayerInput::Crouch));
+        Input::FeedKeys({});
+        // A command: walks where its yaw faces, and the look follows the command.
+        PlayerInput in; in.move = Vec2(0.0f, 1.0f); in.yaw = 90.0f; in.pitch = 30.0f;
+        in.held = PlayerInput::LeanRight;
+        for (int i = 0; i < 10; ++i) c->Simulate(in, 0.1f);
+        const Vec3 p = c->transform->localPosition;
+        CHECK(std::fabs(std::fabs(p.x) - c->walkSpeed) < 0.05f && std::fabs(p.z) < 0.05f);
+        CHECK(c->yaw == 90.0f && c->pitch == 30.0f && c->lean() > 0.5f);
+        in.pitch = 500.0f; c->Simulate(in, 0.1f);
+        CHECK(c->pitch == c->maxPitch);                    // the controller's own limits
+        // Crouch is a press (toggle by default): held without a new press stays put.
+        PlayerInput cr; cr.held = cr.pressed = PlayerInput::Crouch;
+        c->Simulate(cr, 0.1f);
+        CHECK(c->stance() == std::remove_reference_t<decltype(*c)>::Stance::Crouch);
+        cr.pressed = 0; c->Simulate(cr, 0.1f);
+        CHECK(c->stance() == std::remove_reference_t<decltype(*c)>::Stance::Crouch);
+    };
+    {
+        Scene t("FP");
+        auto* fp = t.CreateGameObject("P")->AddComponent<FirstPersonController>();
+        t.Start();
+        CHECK(FindPlayerSim(fp->gameObject) == fp);
+        splitChecks(fp);
+    }
+    {
+        Scene t("TP");
+        auto* tp = t.CreateGameObject("P")->AddComponent<ThirdPersonController>();
+        t.Start();
+        CHECK(FindPlayerSim(tp->gameObject) == tp);
+        splitChecks(tp);
+    }
+
+    // ---- ... and they play server-authoritative: the server walks them by the commands --
+    auto authPawn = [&](const char* kind) {
+        const std::string pf = std::string("/tmp/okay_auth_") + kind + ".okayprefab";
+        {
+            Scene t("T");
+            GameObject* p = t.CreateGameObject("Pawn");
+            auto setup = [](auto* c) { c->walkSpeed = 5.0f; c->lockCursor = false; c->fallResetY = 0.0f; c->driveAnimation = false; };
+            if (kind[0] == 'f') setup(p->AddComponent<FirstPersonController>());
+            else                setup(p->AddComponent<ThirdPersonController>());
+            CHECK(SceneSerializer::SaveObjectToFile(*p, pf));
+        }
+        AuthGame g;
+        CHECK(g.Open(true, pf));
+        const Vec3 start = g.PosOf(g.hs);
+        g.inA.move = Vec2(0.0f, 1.0f); g.inA.yaw = 90.0f;
+        g.Pump(60);
+        g.inA.move = Vec2(0.0f, 0.0f);
+        g.Pump(20);
+        const Vec3 server = g.PosOf(g.hs);
+        CHECK(std::fabs(server.x - start.x) > 8.0f && std::fabs(server.x - start.x) < 10.6f);
+        CHECK(std::fabs(server.z - start.z) < 0.05f);
+        GameObject* hostPawn = g.ObjOf(g.hs);
+        IPlayerSim* sim = hostPawn ? FindPlayerSim(hostPawn) : nullptr;
+        CHECK(sim != nullptr);
+        if (auto* fp = hostPawn ? hostPawn->GetComponent<FirstPersonController>() : nullptr) CHECK(fp->yaw == 90.0f);
+        if (auto* tp = hostPawn ? hostPawn->GetComponent<ThirdPersonController>() : nullptr) CHECK(tp->yaw == 90.0f);
+        CHECK(std::fabs(g.PosOf(g.bs).x - server.x) < 0.5f);
+        // A teleport from the client moves nothing.
+        g.pawnA->transform->localPosition = Vec3(100.0f, 0.0f, 100.0f);
+        g.a->Send("__xform", g.idA + "|100 0 100 0 0 0 1");
+        g.Pump(30);
+        CHECK(std::fabs(g.PosOf(g.hs).z - server.z) < 0.01f && std::fabs(g.PosOf(g.hs).x - server.x) < 0.01f);
+        std::remove(pf.c_str());
+    };
+    authPawn("fp");
+    authPawn("tp");
 
     // ---- Off: as before, the client moves its own player ------------------------------
     {

@@ -11,6 +11,7 @@
 #include "okay/Components/CharacterIK.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Net/NetOwnership.hpp"
+#include "okay/Net/PlayerInput.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Input/Cursor.hpp"
 #include "okay/Components/StepUp.hpp"
@@ -30,7 +31,7 @@ namespace okay {
 /// attach this to the camera). If a Character component is on this object or a
 /// child, its animation is driven from movement (idle / walk / run / jump) — so
 /// your body animates for shadows / other players even in first person.
-class FirstPersonController : public Behaviour {
+class FirstPersonController : public Behaviour, public IPlayerSim {
 public:
     float walkSpeed = 4.5f;
     float runSpeed  = 8.0f;
@@ -180,33 +181,70 @@ public:
                       "(select it and Add Component > Mesh Collider 3D).");
         }
         if (Game::Paused()) return;   // frozen: no mouse-look, no cursor recapture
+        m_lookDt = dt;   // also for a client's ReadLocalInput in authoritative movement
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
         ApplyBodyVisibility();
         // Keep the cursor hidden + locked while playing (re-assert if something freed
         // it). Turn lockCursor off to author with a normal pointer / click screen UI.
         if (lockCursor && !Cursor::IsLocked()) Cursor::Capture(true);
+        Simulate(ReadLocalInput(), dt);
+    }
 
+    /// This frame's keyboard / mouse / pad, with the mouse look applied to yaw and
+    /// pitch (absolute angles). The only place the controller reads Input::.
+    PlayerInput ReadLocalInput() override {
+        PlayerInput in;
         // ---- Mouse look ----
         // Mouse-right turns right and mouse-up looks up. The camera looks down its
         // local -Z, so yaw decreases with rightward mouse movement.
         Vec2 mp = Input::MousePosition();
         bool uiBlocked = Input::UICaptured();        // a modal UI (open inventory/chest) pauses look
-        m_zoom = zoomWithRightMouse && !uiBlocked && Input::GetMouseButton(1);
+        bool zoom = !uiBlocked && Input::GetMouseButton(1);
+        in.yaw = yaw; in.pitch = pitch;
         if (m_haveMouse && !uiBlocked) {
-            float sens = mouseSensitivity * (m_zoom ? zoomSensitivity : 1.0f);
+            float sens = mouseSensitivity * (zoomWithRightMouse && zoom ? zoomSensitivity : 1.0f);
             float dx = (mp.x - m_lastMouse.x) * sens, dy = (mp.y - m_lastMouse.y) * sens;
-            m_smooth.Step(dx, dy, lookSmoothing, dt);
-            yaw   -= dx;
-            pitch += (invertY ? 1.0f : -1.0f) * dy;
-            pitch  = Mathf::Clamp(pitch, minPitch, maxPitch);
+            m_smooth.Step(dx, dy, lookSmoothing, m_lookDt);
+            in.yaw   -= dx;
+            in.pitch += (invertY ? 1.0f : -1.0f) * dy;
+            // Kept here too, so the look adds up where Simulate doesn't run every
+            // frame (a client whose host runs its movement).
+            yaw = in.yaw;
+            pitch = in.pitch = Mathf::Clamp(in.pitch, minPitch, maxPitch);
         }
         // Drop the baseline while a bag is open: the fed mouse switches between locked
         // (accumulated relative) and free (absolute) space, so without this the first
         // frame after closing computes one huge delta and snaps the camera.
         m_lastMouse = mp; m_haveMouse = !uiBlocked;
+        if (zoom) in.held |= PlayerInput::AltFire;
+
+        in.move = uiBlocked ? Vec2{0, 0} : Input::AxisWASD();   // freeze while a bag is open
+        auto key = [&](char k, std::uint32_t bit) {
+            if (!k) return;
+            if (Input::GetKey(k))     in.held |= bit;
+            if (Input::GetKeyDown(k)) in.pressed |= bit;
+        };
+        key(' ', PlayerInput::Jump);
+        key(sprintKey, PlayerInput::Sprint);
+        key(crouchKey, PlayerInput::Crouch);
+        key(proneKey, PlayerInput::Prone);
+        key(leanLeftKey, PlayerInput::LeanLeft);
+        key(leanRightKey, PlayerInput::LeanRight);
+        if (stanceGamepadButton >= 0 && Input::GetGamepadButton(stanceGamepadButton)) in.held |= PlayerInput::StanceButton;
+        return in;
+    }
+
+    /// Look, stance, lean and move by `in` for `dt` seconds (local play and a
+    /// server running this player's inputs). Reads no Input:: globals.
+    void Simulate(const PlayerInput& in, float dt) override {
+        if (!transform) return;
+        yaw   = in.yaw;
+        // Clamped when it changes (a script may park the view past the limits, as before).
+        if (in.pitch != pitch) pitch = Mathf::Clamp(in.pitch, minPitch, maxPitch);
+        m_zoom = zoomWithRightMouse && in.Held(PlayerInput::AltFire);
 
         // Lean: hold Q/E to peek; the camera rolls and shifts sideways.
-        UpdateLean(dt);
+        UpdateLean(in, dt);
         float roll = -m_lean * leanAngle;
         if (Transform* cam = FindCameraChild()) {
             transform->localRotation = Quat::Euler(0, yaw, 0);        // body turns
@@ -217,10 +255,10 @@ public:
         }
 
         // ---- Stance (crouch / prone) ----
-        UpdateStance(dt);
+        UpdateStance(in, dt);
 
         // ---- Movement: forward is where the camera looks (its -Z), flattened. ----
-        Vec2 axis = Input::UICaptured() ? Vec2{0, 0} : Input::AxisWASD();   // freeze while a bag is open
+        Vec2 axis = in.move;
         Quat flat = Quat::Euler(0, yaw, 0);
         Vec3 fwd = flat * Vec3{0, 0, -1}, right = flat * Vec3::Right;
         Vec3 dir = fwd * axis.y + right * axis.x;
@@ -228,7 +266,7 @@ public:
         bool moving = len > 0.01f;
         if (moving) { dir.x /= len; dir.z /= len; }
         // Running only stands up: you can't sprint while crouched or prone.
-        bool running = m_stance == Stance::Stand && moving && IsRunHeld();
+        bool running = m_stance == Stance::Stand && moving && IsRunHeld(in);
         float speed = m_stance == Stance::Prone  ? proneSpeed
                     : m_stance == Stance::Crouch ? crouchSpeed
                     : (running ? runSpeed : walkSpeed);
@@ -266,7 +304,7 @@ public:
         }
         m_coyote = grounded ? coyoteTime : Mathf::Max(0.0f, m_coyote - dt);
         if (!grounded && m_coyote <= 0.0f && m_jumpsUsed == 0) m_jumpsUsed = 1;  // ground jump spent
-        if (Input::GetKeyDown(' ')) m_jumpBuf = jumpBufferTime;
+        if (in.Pressed(PlayerInput::Jump)) m_jumpBuf = jumpBufferTime;
         else                        m_jumpBuf = Mathf::Max(0.0f, m_jumpBuf - dt);
 
         // Only a physics body can be airborne; a transform-only player can't fall.
@@ -413,33 +451,33 @@ private:
     }
 
     // Sprint held this frame, honouring the toggle option (tap to latch).
-    bool IsRunHeld() {
+    bool IsRunHeld(const PlayerInput& in) {
         if (!sprintKey) return false;
         if (toggleRun) {
-            if (Input::GetKeyDown(sprintKey)) m_runToggled = !m_runToggled;
+            if (in.Pressed(PlayerInput::Sprint)) m_runToggled = !m_runToggled;
             return m_runToggled;
         }
-        return Input::GetKey(sprintKey);
+        return in.Held(PlayerInput::Sprint);
     }
 
     // Resolve the stance from the keys / gamepad, then size the body for it.
     // Toggle mode remembers what you asked for, so a stand-up blocked by a low
     // ceiling happens on its own once you crawl out from under it.
-    void UpdateStance(float dt) {
+    void UpdateStance(const PlayerInput& in, float dt) {
         if (toggleStance) {
-            if (crouchKey && Input::GetKeyDown(crouchKey))
+            if (crouchKey && in.Pressed(PlayerInput::Crouch))
                 m_wantStance = (m_wantStance == Stance::Crouch) ? Stance::Stand : Stance::Crouch;
-            if (allowProne && proneKey && Input::GetKeyDown(proneKey))
+            if (allowProne && proneKey && in.Pressed(PlayerInput::Prone))
                 m_wantStance = (m_wantStance == Stance::Prone) ? Stance::Stand : Stance::Prone;
         } else {
             // Held keys win; with none held you're in the stance the gamepad last set.
-            if (allowProne && proneKey && Input::GetKey(proneKey))  { m_wantStance = Stance::Prone;  m_padWant = Stance::Stand; }
-            else if (crouchKey && Input::GetKey(crouchKey))         { m_wantStance = Stance::Crouch; m_padWant = Stance::Stand; }
-            else                                                      m_wantStance = m_padWant;
+            if (allowProne && proneKey && in.Held(PlayerInput::Prone))  { m_wantStance = Stance::Prone;  m_padWant = Stance::Stand; }
+            else if (crouchKey && in.Held(PlayerInput::Crouch))         { m_wantStance = Stance::Crouch; m_padWant = Stance::Stand; }
+            else                                                          m_wantStance = m_padWant;
         }
         // Gamepad: tap the stance button to crouch / stand up, hold it to drop prone.
         if (stanceGamepadButton >= 0) {
-            if (Input::GetGamepadButton(stanceGamepadButton)) {
+            if (in.Held(PlayerInput::StanceButton)) {
                 m_padHeld += dt;
                 if (allowProne && !m_padProned && m_padHeld >= proneHoldTime) { m_wantStance = m_padWant = Stance::Prone; m_padProned = true; }
             } else if (m_padHeld > 0.0f) {
@@ -478,10 +516,10 @@ private:
     }
 
     // Ease the lean toward Q/E input (-1 left .. +1 right).
-    void UpdateLean(float dt) {
+    void UpdateLean(const PlayerInput& in, float dt) {
         float target = 0.0f;
-        if (leanLeftKey  && Input::GetKey(leanLeftKey))  target -= 1.0f;
-        if (leanRightKey && Input::GetKey(leanRightKey)) target += 1.0f;
+        if (leanLeftKey  && in.Held(PlayerInput::LeanLeft))  target -= 1.0f;
+        if (leanRightKey && in.Held(PlayerInput::LeanRight)) target += 1.0f;
         float t = leanSpeed > 0.0f ? (1.0f - std::exp(-leanSpeed * dt)) : 1.0f;
         m_lean += (target - m_lean) * t;
     }
@@ -523,6 +561,7 @@ private:
 
     Vec2 m_lastMouse{0, 0};
     bool m_haveMouse = false;
+    float m_lookDt = 0.0f;           // this frame's dt, for the look smoothing in ReadLocalInput
     bool m_runToggled = false;
     Stance m_stance = Stance::Stand;
     Stance m_wantStance = Stance::Stand;   // what the input asks for (m_stance may wait for headroom)

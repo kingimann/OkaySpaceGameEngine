@@ -292,6 +292,9 @@ void NetworkManager::Stop() {
     m_pendingJoins.clear();
     m_secure = net::SecureChannel{};   // a new session makes new keys (a reconnect mustn't keep the old ones)
     m_joinHellos = 0;
+    m_authQueries = 0;
+    m_authDecided = false;
+    m_hostWantsAuth = false;
     m_keyed = false;
     m_legacyJoin = false;
     m_pinWarned = false;
@@ -1176,7 +1179,8 @@ void NetworkManager::ServerTick(float dt) {
             std::uint8_t flags = 0;
             if (!password.empty()) flags |= net::kQueryPassword;
             if (dedicated) flags |= net::kQueryDedicated;
-            if (m_joinCheck || m_verifyToken) flags |= net::kQueryAuth;
+            if (m_joinCheck || m_verifyToken || (anticheat.settings.enabled && !anticheat.settings.ticketKey.empty()))
+                flags |= net::kQueryAuth;   // it checks sign-ins (or session tickets): clients send their token
             if (encryption && net::SecureChannel::Available()) flags |= net::kQueryEncrypted;
             q.Write(flags);
             SendDatagram(from, q.Data(), q.Size(), /*allowEncrypt=*/false);
@@ -1584,7 +1588,28 @@ void NetworkManager::ClientTick(float dt) {
         m_joinTimer -= dt;
         const bool canSeal = encryption && net::SecureChannel::Available();
         const bool pinned = !pinnedHostKey.empty();
-        if (m_joinTimer <= 0.0f && pinned && !canSeal) {
+        // With a token to give, first ask the host whether it wants one (a
+        // server-browser query: plaintext, padded, answered by every version).
+        if (!m_authDecided && (m_authToken.empty() || authTokenToAnyHost)) m_authDecided = true;
+        if (m_joinTimer <= 0.0f && !m_authDecided) {
+            if (m_authQueries >= 4) {
+                m_authDecided = true;   // no answer: an older host; it gets no token
+                OKAY_WARN("net: ", m_serverEp.ToString(), " didn't say whether it checks sign-ins; joining without the account token");
+            } else {
+                if (m_authNonce == 0) { std::random_device rd; m_authNonce = rd() | 1u; }
+                net::Packet q(Query);
+                q.Write(std::string(net::kQueryMagic));
+                q.Write(m_authNonce);
+                std::vector<std::uint8_t> d(q.Data(), q.Data() + q.Size());
+                if (d.size() < net::kQueryMinSize) d.resize(net::kQueryMinSize, 0);
+                SendDatagram(m_serverEp, d.data(), d.size(), /*allowEncrypt=*/false);
+                ++m_authQueries;
+                m_joinTimer = 0.25f;
+            }
+        }
+        if (!m_authDecided) {
+            // still asking
+        } else if (m_joinTimer <= 0.0f && pinned && !canSeal) {
             // A pin can only be checked over the sealed join.
             if (!m_pinWarned) OKAY_ERROR("net: a pinned host key needs encryption on (and libsodium); not joining");
             m_pinWarned = true;
@@ -1610,7 +1635,8 @@ void NetworkManager::ClientTick(float dt) {
             p.Write(m_localName);
             p.Write(m_localRoom);
             p.Write(password);          // matched against the server's password
-            p.Write(m_authToken);       // identity token the server may verify
+            // The identity token the server may verify: only to a host that asked for it.
+            p.Write((authTokenToAnyHost || m_hostWantsAuth) ? m_authToken : std::string());
             {   // our encryption public key ("" if encryption is off / unavailable, or
                 // already traded in the sealed join)
                 auto pk = (encryption && !m_keyed ? m_secure.PublicKey() : std::vector<std::uint8_t>{});
@@ -1657,6 +1683,17 @@ void NetworkManager::ClientTick(float dt) {
         // Once our session is keyed the server seals everything: plaintext now
         // is someone else's (spoofing the server's address).
         if (!sealed && m_secure.Ready()) continue;
+        if (type == QueryInfo) {
+            // The host's answer to "do you check sign-ins?" (before the join).
+            if (m_authDecided || p.ReadString() != net::kQueryMagic || p.ReadU32() != m_authNonce) continue;
+            p.ReadU8(); p.ReadString(); p.ReadString(); p.ReadString(); p.ReadU32(); p.ReadU32();
+            const std::uint8_t flags = p.ReadU8();
+            if (!p.Ok()) continue;
+            m_hostWantsAuth = (flags & net::kQueryAuth) != 0;
+            m_authDecided = true;
+            m_joinTimer = 0.0f;
+            continue;
+        }
         if (type == JoinKey) {
             // Sealed join, step 1's answer: the server's key (signed, if it has
             // an identity). Step 2, the sealed Join, goes on the next tick.

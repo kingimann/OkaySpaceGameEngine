@@ -899,6 +899,10 @@ add_test(NAME net_anticheat_ph2 COMMAND test_net_anticheat_ph2)
 add_executable(test_net_anticheat_ph3 test_net_anticheat_ph3.cpp)
 target_link_libraries(test_net_anticheat_ph3 PRIVATE okay::engine)
 add_test(NAME net_anticheat_ph3 COMMAND test_net_anticheat_ph3)
+# The account token goes only to hosts that check sign-ins
+add_executable(test_net_token_policy test_net_token_policy.cpp)
+target_link_libraries(test_net_token_policy PRIVATE okay::engine)
+add_test(NAME net_token_policy COMMAND test_net_token_policy)
 
 # Anti-cheat as a game uses it: AntiCheatConfig / NetValidator components and the VS nodes
 add_executable(test_net_anticheat_components test_net_anticheat_components.cpp)

@@ -29,8 +29,7 @@ const std::unordered_map<std::string, const char*>& NotYet() {
         {"async", "async isn't supported"},
         {"await", "await isn't supported"},
         {"yield", "coroutines (yield) aren't supported yet"},
-        {"delegate", "delegates aren't supported"},
-        {"event", "events aren't supported yet"},
+        {"delegate", "delegate types aren't supported: use Func<...> or Action<...>"},
         {"partial", "partial classes aren't supported"},
         {"lock", "lock isn't supported"},
         {"goto", "goto isn't supported"},
@@ -257,8 +256,8 @@ private:
 
     void Member(ClassDecl& c) {
         std::vector<Attribute> attrs = Attributes();
-        bool isPublic = false, isConst = false, isStatic = false;
-        SrcLoc staticLoc;
+        bool isPublic = false, isConst = false, isStatic = false, isEvent = false;
+        SrcLoc staticLoc, eventLoc;
         for (;;) {
             if (Match(T::KwPublic)) { isPublic = true; continue; }
             if (Is(T::KwPrivate)) {
@@ -267,6 +266,7 @@ private:
             }
             if (Match(T::KwConst)) { isConst = true; continue; }
             if (IsWord("static")) { isStatic = true; staticLoc = Peek().loc; ++pos_; continue; }
+            if (IsWord("event") && IsTypeStart(1)) { isEvent = true; eventLoc = Peek().loc; ++pos_; continue; }
             break;
         }
         if (IsWord("enum") && Is(T::Ident, 1)) {
@@ -287,6 +287,7 @@ private:
         std::string name = Expect(T::Ident, "a name").text;
         if (Is(T::LParen)) {
             if (isConst) throw ParseError{nameLoc, "Methods can't be const"};
+            if (isEvent) throw ParseError{eventLoc, "Only fields can be events: event Action<int> Damaged;"};
             if (!attrs.empty()) Error(attrs[0].loc, "Attributes only work on fields");
             MethodDecl m;
             m.isPublic = isPublic; m.isStatic = isStatic; m.isCtor = isCtor; m.ret = type; m.name = name; m.loc = nameLoc;
@@ -313,6 +314,7 @@ private:
             FieldDecl f;
             f.attrs = std::move(attrs); attrs.clear();
             f.isPublic = isPublic; f.isConst = isConst; f.isStatic = isStatic && !isConst; f.type = type; f.name = name; f.loc = nameLoc;
+            f.isEvent = isEvent;
             if (Match(T::Assign)) f.init = Initializer();
             else if (isConst) throw ParseError{nameLoc, "A const needs a value: const " + type.name + " " + name + " = ...;"};
             c.fields.push_back(std::move(f));

@@ -1178,6 +1178,102 @@ static void Lambdas() {
     }
 }
 
+static void Events() {
+    {   // event fields, += / -= with lambdas and methods, called in the order added
+        World w(
+            "class Health {\n"
+            "    public event Action<int> Damaged;\n"
+            "    public event Action Died;\n"
+            "    public int hp = 10;\n"
+            "    public void Hit(int d) {\n"
+            "        hp -= d;\n"
+            "        Damaged?.Invoke(d);\n"
+            "        if (hp <= 0) Died?.Invoke();\n"
+            "    }\n"
+            "}\n"
+            "class T : Behaviour {\n"
+            "    public int taken, deaths, order, afterRemove, cleared;\n"
+            "    public bool same, noneLeft;\n"
+            "    void OnDamaged(int d) { taken += d; order = order * 10 + 1; }\n"
+            "    void OnDied() { deaths++; }\n"
+            "    void Start() {\n"
+            "        Health h = new Health();\n"
+            "        h.Damaged += OnDamaged;\n"
+            "        h.Damaged += d => order = order * 10 + 2;\n"
+            "        h.Died += OnDied;\n"
+            "        h.Hit(4);\n"
+            "        h.Damaged -= OnDamaged;\n"
+            "        h.Hit(6);\n"
+            "        afterRemove = taken;\n"
+            "        h.Died -= OnDied;\n"
+            "        h.Hit(1);\n"
+            "        Action a = OnDied, b = OnDied;\n"
+            "        same = a == b;\n"
+            "        Action c = a;\n"
+            "        c += b;\n"
+            "        c -= a; c -= b;\n"
+            "        noneLeft = c == null;\n"
+            "        Func<int> one = () => 1, two = () => 2;\n"
+            "        Func<int> both = one;\n"
+            "        both += two;\n"
+            "        cleared = both();\n"
+            "    }\n"
+            "}\n");
+        CHECK(w.loaded);
+        CHECK_NEAR(w.F("taken"), 4.0f, 1e-6f);
+        CHECK_NEAR(w.F("afterRemove"), 4.0f, 1e-6f);
+        CHECK_NEAR(w.F("deaths"), 1.0f, 1e-6f);
+        CHECK_NEAR(w.F("order"), 1222.0f, 1e-6f);        // 1 then 2 (first hit), 2 (second), 2 (third)
+        CHECK(w.sc->VM()->GetGlobal("same").AsBool());     // the same method of the same object
+        CHECK(w.sc->VM()->GetGlobal("noneLeft").AsBool());
+        CHECK_NEAR(w.F("cleared"), 2.0f, 1e-6f);           // a Func with two parts gives the last one's value
+    }
+    {   // a handler that removes itself while the event runs doesn't upset it; methods given to LINQ-style calls
+        World w(
+            "class Bus { public event Action Ping; public void Send() { Ping?.Invoke(); } }\n"
+            "class T : Behaviour {\n"
+            "    public int pings, alive;\n"
+            "    Bus bus = new Bus();\n"
+            "    void Once() { pings++; bus.Ping -= Once; }\n"
+            "    bool IsAlive(int hp) { return hp > 0; }\n"
+            "    void Start() {\n"
+            "        bus.Ping += Once;\n"
+            "        bus.Ping += () => pings += 10;\n"
+            "        bus.Send(); bus.Send();\n"
+            "        alive = new List<int> { 3, 0, 5 }.Count(IsAlive);\n"
+            "    }\n"
+            "}\n");
+        CHECK(w.loaded);
+        CHECK_NEAR(w.F("pings"), 21.0f, 1e-6f);
+        CHECK_NEAR(w.F("alive"), 2.0f, 1e-6f);
+    }
+    {   // mistakes, with line and column
+        auto d = Diags(
+            "class Health { public event Action<int> Damaged; public event int hp; void Fire() { Damaged(1); Damaged = null; } }\n"   // 1
+            "class T : Behaviour {\n"                                                       // 2
+            "    void OnHit() { }\n"                                                        // 3
+            "    void Start() {\n"                                                          // 4
+            "        Health h = new Health();\n"                                            // 5
+            "        h.Damaged(3);\n"                                                       // 6
+            "        h.Damaged = null;\n"                                                   // 7
+            "        var f = h.Damaged;\n"                                                  // 8
+            "        h.Damaged += OnHit;\n"                                                 // 9
+            "        Debug.Log(OnHit);\n"                                                   // 10
+            "        h.Damaged *= null;\n"                                                  // 11
+            "    }\n"
+            "    public event void Bad() { }\n"                                             // 13
+            "}\n");
+        CHECK(Has(d, 0, "An event holds functions: event Action hp; or event Action<int> hp;", 1, 67));
+        CHECK(Has(d, 0, "'Damaged' is an event of Health: outside Health it can only be added to (+=) or removed from (-=)", 6, 11));
+        CHECK(Has(d, 0, "'Damaged' is an event of Health: outside Health it can only be added to (+=) or removed from (-=)", 7, 11));
+        CHECK(Has(d, 0, "'Damaged' is an event of Health: outside Health it can only be added to (+=) or removed from (-=)", 8, 19));
+        CHECK(Has(d, 0, "OnHit() takes 0 values, not 1", 9, 22));
+        CHECK(Has(d, 0, "'OnHit' is a method: call it with OnHit()", 10, 19));
+        CHECK(Has(d, 0, "Only fields can be events: event Action<int> Damaged;", 13, 12));
+        CHECK(std::none_of(d.begin(), d.end(), [](const ScriptDiagnostic& x) { return x.line == 1 && x.message.find("Damaged") != std::string::npos; }));
+    }
+}
+
 static void Parity() {
     // The same C# snippet gives the same results on the old OkayScript runtime.
     const std::string src =
@@ -1300,6 +1396,7 @@ int main() {
     Classes();
     Collections();
     Lambdas();
+    Events();
     Parity();
     Followups();
     BackCompat();

@@ -5,6 +5,7 @@
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Physics2D.hpp"            // Collision2D (grounded detection)
 #include "okay/Components/SpriteRenderer.hpp"    // face-flipping
+#include "okay/Components/SpriteAnimator.hpp"    // idle / run / jump / fall clips
 #include "okay/Input/Input.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -84,6 +85,7 @@ public:
                 transform->Translate({target.x * dt, target.y * dt, 0.0f});
             }
             Face(axis.x);
+            Animate((Mathf::Abs(in.x) + Mathf::Abs(in.y)) > 0.01f ? "run" : "idle");
             return;
         }
 
@@ -143,6 +145,20 @@ public:
         }
         Face(axis.x);
 
+        // Sprite clips: airborne stays sticky until a ground contact (or two still
+        // frames), so the jump apex's near-zero speed doesn't flicker to idle.
+        if (rb) {
+            float vy = rb->velocity.y;
+            if (vy > 0.5f || (!grounded && vy < -0.5f)) { m_air = true; m_still = 0; }
+            else if (m_air) {
+                m_still = Mathf::Abs(vy) < 0.05f ? m_still + 1 : 0;
+                if (m_grounded || m_still >= 2) m_air = false;
+            }
+        }
+        bool moveX = Mathf::Abs(axis.x) > 0.01f;
+        if (m_air) Animate(rb && rb->velocity.y < 0.0f ? "fall" : "jump");
+        else       Animate(moveX ? "run" : "idle");
+
         // Consume this frame's contact readings; physics re-sets them from contacts.
         m_grounded = false;
         m_wallDir = 0;
@@ -160,6 +176,16 @@ private:
     float m_jumpBuf  = 0.0f;
     int   m_jumpsLeft = 0;
     bool  m_jumpWasHeld = false;
+    bool  m_air = false;       // airborne, for picking the jump / fall clip
+    int   m_still = 0;         // airborne frames with ~zero vertical speed
+
+    // Play a named clip on a sibling SpriteAnimator when it has one ("fall" falls
+    // back to "jump"). No animator / no such clip: leave the animation alone.
+    void Animate(const char* clip) {
+        auto* sa = gameObject ? gameObject->GetComponent<SpriteAnimator>() : nullptr;
+        if (!sa || sa->clips.empty()) return;
+        if (!sa->Play(clip) && std::string(clip) == "fall") sa->Play("jump");
+    }
 
     // Move `v` toward `target`. With no accel/decel set it snaps (the classic
     // behaviour); otherwise it ramps. `ctrl` scales the rate (air control).

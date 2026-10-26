@@ -1725,7 +1725,16 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  spriteanim " << an->fps << " " << (an->loop ? 1 : 0) << " "
             << (an->playing ? 1 : 0) << " " << an->frames.size();
         for (const auto& f : an->frames) out << " " << Quote(f);
-        out << " " << an->atlasColumns << " " << an->atlasRows << " " << an->atlasCount << "\n";
+        out << " " << an->atlasColumns << " " << an->atlasRows << " " << an->atlasCount;
+        if (!an->clips.empty()) {   // optional named clips (newest): n {name row fps loop nframes frames...}
+            out << " " << an->clips.size();
+            for (const auto& c : an->clips) {
+                out << " " << Quote(c.name) << " " << c.row << " " << c.fps << " " << (c.loop ? 1 : 0)
+                    << " " << c.frames.size();
+                for (const auto& f : c.frames) out << " " << Quote(f);
+            }
+        }
+        out << "\n";
     }
     if (auto* au = go->GetComponent<AudioSource>()) {
         out << "  audio " << Quote(au->clipPath) << " " << au->volume << " "
@@ -4402,6 +4411,19 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> std::ws; // optional atlas fields (3 ints)
                     if (std::isdigit(in.peek()))
                         in >> an->atlasColumns >> an->atlasRows >> an->atlasCount;
+                    in >> std::ws; // optional named clips (newest)
+                    if (std::isdigit(in.peek())) {
+                        int nc = 0; in >> nc;
+                        for (int k = 0; k < nc && in; ++k) {
+                            SpriteClip c;
+                            c.name = ReadQuoted(in);
+                            int cl = 1, nf = 0;
+                            in >> c.row >> c.fps >> cl >> nf;
+                            c.loop = (cl != 0);
+                            for (int j = 0; j < nf && in; ++j) c.frames.push_back(ReadQuoted(in));
+                            if (in) an->clips.push_back(std::move(c));
+                        }
+                    }
                 } else if (field == "audio") {
                     std::string cp = ReadQuoted(in);
                     float vol = 1.0f; int loop = 0, poa = 0;
@@ -5527,8 +5549,10 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         if (auto* im = go->GetComponent<UIImage>())         add(im->texture);
         if (auto* ri = go->GetComponent<UIRawImage>())      add(ri->texture);
         if (auto* bt = go->GetComponent<UIButton>())        add(bt->icon);
-        if (auto* an = go->GetComponent<SpriteAnimator>())
+        if (auto* an = go->GetComponent<SpriteAnimator>()) {
             for (const auto& f : an->frames) add(f);
+            for (const auto& c : an->clips) for (const auto& f : c.frames) add(f);
+        }
         if (auto* bm = go->GetComponent<BuildMode>())
             for (const auto& it : bm->palette) { add(it.prefab); add(it.icon); }
         if (auto* lt = go->GetComponent<LogicTarget>()) add(lt->spawnPrefab);

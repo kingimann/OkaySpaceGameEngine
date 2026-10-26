@@ -165,8 +165,21 @@ public:
         }
 
         // ---- Directional sprite-sheet row from the 4-way facing ----
-        if (driveAnimation) if (auto* sa = gameObject ? gameObject->GetComponent<SpriteAnimator>() : nullptr)
+        // Named "idle"/"run" clips win when present; otherwise the walk cycle holds
+        // its first frame while standing still and resumes on the move.
+        if (driveAnimation) if (auto* sa = gameObject ? gameObject->GetComponent<SpriteAnimator>() : nullptr) {
             if (sa->atlasColumns > 0 && sa->atlasRows > 1) sa->rowOverride = facing;
+            const char* clip = (moving || dashing) ? "run" : "idle";
+            if (sa->HasClip(clip)) {
+                sa->Play(clip); m_animHeld = false;
+            } else {
+                if (!moving && !dashing) {
+                    if (sa->playing) { sa->Stop(); m_animHeld = true; }
+                } else if (m_animHeld) {
+                    sa->Restart(); m_animHeld = false;
+                }
+            }
+        }
 
         // ---- Shooting ----
         if (m_fireCd > 0.0f) m_fireCd -= dt;
@@ -182,6 +195,7 @@ public:
 private:
     Vec2 m_lastDir{0, -1}, m_dashDir{0, 0}, m_knockVel{0, 0};
     float m_dashTimer = 0.0f, m_dashCd = 0.0f, m_fireCd = 0.0f, m_knockTimer = 0.0f;
+    bool  m_animHeld = false;   // we paused the sprite walk cycle for idle
 
     void Fire(Vec2 aim) {
         Scene* s = gameObject ? gameObject->scene() : nullptr;

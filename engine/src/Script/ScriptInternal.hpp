@@ -16,6 +16,7 @@
 #include "okay/Scripting/ScriptVM.hpp"   // ScriptDiagnostic
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -44,6 +45,10 @@ enum class TK : std::uint8_t {
     Any,      ///< parameter that accepts every type (Debug.Log)
     Enum,     ///< a script's enum: id = Program::enums index; an int at runtime
     Array,    ///< T[]: id = Program::arrays index (the element type)
+    Class,    ///< a plain class from the script: id = Program::classes index
+    List,     ///< List<T>: id = Program::generics index (a = T)
+    Dict,     ///< Dictionary<K, V>: id = Program::generics index (a = K, b = V)
+    Pair,     ///< KeyValuePair<K, V> (foreach over a dictionary): id as Dict
 };
 struct Type {
     TK  kind = TK::Error;
@@ -66,12 +71,36 @@ struct ObjRef {
     bool operator==(const ObjRef& o) const { return go == o.go && type == o.type; }
 };
 struct ArrayObj;
+struct ScriptObj;
+struct DictObj;
 using ArrayRef = std::shared_ptr<ArrayObj>;
-using Value = std::variant<std::monostate, bool, std::int32_t, float, std::string, Vec3, ObjRef, ArrayRef>;
-/// A T[] at runtime. Arrays are references: copies share the items.
+using ObjPtr = std::shared_ptr<ScriptObj>;
+using DictRef = std::shared_ptr<DictObj>;
+using Value = std::variant<std::monostate, bool, std::int32_t, float, std::string, Vec3, ObjRef, ArrayRef, ObjPtr, DictRef>;
+/// A T[], a List<T> or a KeyValuePair (items = key, value) at runtime. Arrays
+/// and lists are references: copies share the items.
 struct ArrayObj {
     std::vector<Value> items;
-    std::string typeName;   ///< "int[]", printed when the array itself is turned into text
+    std::string typeName;      ///< "int[]", "List<int>": printed when it's turned into text
+    std::uint32_t version = 0; ///< a list's adds and removes (foreach notices changes)
+    ~ArrayObj();
+};
+/// Orders dictionary keys (int, string, bool, enum, object references).
+struct KeyLess { bool operator()(const Value& a, const Value& b) const; };
+/// A Dictionary<K, V>: entries in the order they were added, with an index by key.
+struct DictObj {
+    std::vector<std::pair<Value, Value>> entries;
+    std::map<Value, std::size_t, KeyLess> index;   ///< key -> position in entries
+    std::string typeName;
+    std::uint32_t version = 0;
+    ~DictObj();
+};
+/// An object of one of the script's plain classes (new Node(...)): a reference, like an array.
+struct ScriptObj {
+    int cls = -1;                ///< Program::classes index
+    std::string className;       ///< printed when the object is turned into text
+    std::vector<Value> fields;
+    ~ScriptObj();                ///< frees long chains (linked lists) without deep recursion
 };
 
 std::string ValueToString(const Value& v);
@@ -144,6 +173,7 @@ enum class T : std::uint8_t {
     LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Dot, Semicolon, Colon, Question,
     Plus, Minus, Star, Slash, Percent, Not, Lt, Gt, Le, Ge, EqEq, NotEq, AndAnd, OrOr,
     Assign, PlusEq, MinusEq, StarEq, SlashEq, PercentEq, PlusPlus, MinusMinus,
+    QuestionDot, QuestionQuestion, QuestionQuestionEq,
     // keywords
     KwClass, KwPublic, KwPrivate, KwVoid, KwInt, KwFloat, KwBool, KwString, KwVar,
     KwIf, KwElse, KwWhile, KwFor, KwReturn, KwBreak, KwContinue, KwTrue, KwFalse, KwNull,
@@ -163,7 +193,7 @@ const char* TokenName(T t);
 // ---- Syntax tree -----------------------------------------------------------
 struct TypeRef {
     std::string name;     ///< "int", "float", "Vector3", "GameObject", "var", "void", ...
-    std::string generic;  ///< reserved (List<T> later)
+    std::vector<TypeRef> args;   ///< List<int>: {int}; Dictionary<string, int>: {string, int}
     int rank = 0;         ///< number of [] after the name: int[] = 1, int[][] = 2
     SrcLoc loc;
 };
@@ -179,6 +209,7 @@ enum class EK : std::uint8_t {
     NewArray,      ///< new T[n] / new T[] { ... }: typeArg = the array type, lhs = n (may be null), args = items
     Interp,        ///< $"...": args = the parts (text literals and { } values), joined as text
     Format,        ///< {value:F2} in $"...": lhs = the number, sval = "F2", ival = decimals (checked)
+    NullCond,      ///< a chain with ?. in it: lhs = the chain, null if a ?. found null; name = what was null
     ArrayLit,      ///< { a, b } after `T[] x =`: the type comes from the declaration
 };
 
@@ -191,6 +222,17 @@ enum class Bind : std::uint8_t {
     ApiProp, ApiStaticProp, ApiMethod, ApiStaticMethod, StaticType,
     VecField /*x/y/z*/, VecProp /*magnitude/normalized*/, GetComponent, Destroy, StaticField,
     EnumValue /*State.Idle: ival*/, ArrayLength,
+    CollCount /*list / dictionary .Count*/, CollMethod /*xs.Add(...): member = CollOp*/,
+    DictKeys, DictValues, PairKey, PairValue,
+    NewCollection /*new List<int>(), new Dictionary<K, V>(); args = { ... } items*/,
+    ObjField /*obj.field: slot = field*/, ObjMethod /*obj.M(): slot = method, member = class*/,
+    NewObject /*new Node(): slot = class, member = constructor (-1 = none)*/,
+};
+/// Methods of List<T> and Dictionary<K, V> (Bind::CollMethod's member).
+enum class CollOp : std::uint8_t {
+    ListAdd, ListAddRange, ListInsert, ListRemove, ListRemoveAt, ListClear, ListContains, ListIndexOf,
+    ListSort, ListReverse, ListToArray,
+    DictAdd, DictTryAdd, DictRemove, DictContainsKey, DictContainsValue, DictClear, DictGetValueOrDefault,
 };
 
 struct Expr {
@@ -217,9 +259,10 @@ struct Expr {
     bool toFloat = false;           ///< convert this (int) result to float where it's used
     int enumStr = -1;               ///< an enum (Program::enums index) used as text: print the member's name
     bool hasInit = false;           ///< NewArray: has a { ... } list
+    bool nullCond = false;          ///< Member/Call reached with ?. (its receiver may be null)
 };
 
-enum class SK : std::uint8_t { Block, Expr, Local, If, While, For, Return, Break, Continue, Switch, Foreach };
+enum class SK : std::uint8_t { Block, Expr, Local, If, While, For, Return, Break, Continue, Switch, Foreach, DoWhile };
 struct Stmt;
 using StmtPtr = std::unique_ptr<Stmt>;
 struct LocalDecl { TypeRef type; std::string name; SrcLoc loc; ExprPtr init; int slot = -1; Type resolved; bool promote = false; };
@@ -241,7 +284,7 @@ struct Stmt {
     StmtPtr then, otherwise;            ///< If
     StmtPtr init;                       ///< For init (Local or Expr stmt)
     std::vector<ExprPtr> step;          ///< For step expressions
-    StmtPtr loopBody;                   ///< While / For / Foreach
+    StmtPtr loopBody;                   ///< While / For / Foreach / DoWhile
     bool promoteReturn = false;
     std::vector<SwitchSection> sections; ///< Switch (expr = the value switched on)
     // Foreach: locals[0] is the loop variable, expr the array.
@@ -265,6 +308,7 @@ struct FieldDecl {
 struct Param { TypeRef type; std::string name; SrcLoc loc; Type resolved; };
 struct MethodDecl {
     bool isPublic = false, isStatic = false;   ///< static: can't use the object's own fields, methods or members
+    bool isCtor = false;                       ///< a plain class's constructor (name = the class)
     TypeRef ret;
     std::string name;
     SrcLoc loc;
@@ -311,6 +355,9 @@ struct Program {
     std::vector<ClassDecl> classes;
     std::vector<EnumDecl> enums;   ///< every enum in the file (top level or inside a class)
     std::vector<Type> arrays;      ///< element type of each array type (Type{Array, i})
+    /// List / Dictionary / KeyValuePair types: their type arguments.
+    struct Generic { TK kind; Type a, b; };
+    std::vector<Generic> generics;
     int component = -1;            ///< the class that is the component
     std::vector<ScriptDiagnostic> diags;
     bool ok() const;
@@ -318,6 +365,8 @@ struct Program {
     int MethodIndex(const std::string& name) const;
     /// The array type with elements of `elem` (made on first use).
     Type ArrayOf(const Type& elem);
+    /// The List<a> / Dictionary<a, b> / KeyValuePair<a, b> type (made on first use).
+    Type GenericOf(TK kind, const Type& a, const Type& b = Type{});
     /// TypeName that also knows this program's enums and arrays.
     std::string NameOf(const Type& t) const;
 };

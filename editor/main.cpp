@@ -27,6 +27,7 @@
 #include "okay/UI/OkayUI.hpp"           // demo overlay: OkayUI drawn on top of ImGui
 #include "Splash.hpp"                   // branded loading frame (no black screen at startup)
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
+#include "UIInspectorLayout.hpp"        // flex / mask / list view inspectors
 #endif
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
 #include "tinyfiledialogs.h"            // native OS open/save file dialogs (asset import)
@@ -867,6 +868,44 @@ SDL_Texture* GetThumb(const std::string& path) {
     cache[path] = tex;   // cache failures (nullptr) too, so we don't retry
     return tex;
 }
+// An item's icon (okay::ItemIconPath), or null when it has none (the name is drawn).
+static SDL_Texture* ItemThumb(const std::string& path) { return path.empty() ? nullptr : GetThumb(path); }
+
+// Item field for the inventory/recipe inspectors: a searchable combo of the project's
+// item definitions (with icons). Typing a new id is still allowed; an id with no
+// definition is flagged. Returns true when `id` changed.
+static bool ItemPicker(const char* label, std::string& id, float width = 140.0f) {
+    okay::ItemDatabase& db = okay::ItemDatabase::Get();
+    bool changed = false;
+    const okay::ItemDefinition* cur = db.Find(id);
+    const bool unknown = !id.empty() && (!cur || cur->loose);
+    std::string preview = cur && !cur->loose ? cur->DisplayName() : id;
+    if (unknown) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.6f, 0.3f, 1.0f));
+    ImGui::SetNextItemWidth(width);
+    const bool open = ImGui::BeginCombo(label, preview.c_str(), ImGuiComboFlags_HeightLarge);
+    if (unknown) ImGui::PopStyleColor();
+    if (unknown && ImGui::IsItemHovered()) ImGui::SetTooltip("\"%s\" isn't in the Item Database (it still works as a plain name).", id.c_str());
+    if (open) {
+        static char filter[64] = "";
+        if (ImGui::IsWindowAppearing()) { filter[0] = 0; ImGui::SetKeyboardFocusHere(); }
+        ImGui::InputTextWithHint("##itemflt", "Search or type an id", filter, sizeof(filter));
+        std::string f = filter; for (auto& c : f) c = (char)std::tolower((unsigned char)c);
+        auto match = [&](const okay::ItemDefinition& d) {
+            if (f.empty()) return true;
+            std::string a = d.id + " " + d.name; for (auto& c : a) c = (char)std::tolower((unsigned char)c);
+            return a.find(f) != std::string::npos;
+        };
+        for (const auto& d : db.Items()) {
+            if (d.loose || !match(d)) continue;
+            if (SDL_Texture* t = ItemThumb(okay::ItemIconPath("", d.id))) { ImGui::Image((ImTextureID)t, ImVec2(16, 16)); ImGui::SameLine(); }
+            if (ImGui::Selectable((d.DisplayName() + "##" + d.id).c_str(), d.id == id)) { id = d.id; changed = true; }
+            if (ImGui::IsItemHovered() && !d.description.empty()) ImGui::SetTooltip("%s", d.description.c_str());
+        }
+        if (filter[0] && !db.Find(filter) && ImGui::Selectable((std::string("Use \"") + filter + "\"").c_str())) { id = filter; changed = true; }
+        ImGui::EndCombo();
+    }
+    return changed;
+}
 
 // Cached albedo color of a .okaymat — a cheap material "thumbnail" for the
 // Project browser (a real render would need a preview scene). Reloads when the
@@ -1456,6 +1495,7 @@ static void NewPluginFromTemplate(EditorState& ed);
 bool g_showCrashLog = false;   // Crash Log window (view/copy okay_crashlog.txt reports)
 bool g_showSpriteEditor = false; // pixel-art Sprite Editor (paint/shape custom sprites)
 bool g_showUIThemer = false;     // UI Theme window (reusable styles applied across widgets)
+bool g_showItemDatabase = false; // Item Database window (the project's item definitions)
 bool g_focusGameOnPlay = false;  // pressing Play brings the Game tab forward
 bool g_showScriptDocs = false;   // OkayScript reference window
 bool g_showShortcuts = false;    // keyboard shortcut cheatsheet window
@@ -4177,6 +4217,7 @@ static const DockPanelDef* DockPanels(int& n) {
         {"UV Editor",     "UV Editor",                 &g_showUVEditor,      "Editors & Tools", PI_Modeling},
         {"Sprite Editor", "Sprite Editor",             &g_showSpriteEditor,  "Editors & Tools", PI_Sprite},
         {"UI Theme",      "UI Theme",                  &g_showUIThemer,      "Editors & Tools", PI_Palette},
+        {"Item Database", "Item Database",             &g_showItemDatabase,  "Editors & Tools", PI_Package},
         {"UI Editor",     "UI",                        &g_showUIEditor,      "Editors & Tools", PI_UI},
     };
     n = (int)(sizeof(k) / sizeof(k[0]));
@@ -5228,6 +5269,9 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
     if (ImGui::BeginMenu("Layout")) {
         if (ImGui::MenuItem("Scroll View"))  addUI("ScrollView",  [](GameObject* g){ g->AddComponent<UIScrollView>(); });
         if (ImGui::MenuItem("Layout Group")) addUI("Layout",      [](GameObject* g){ g->AddComponent<UILayoutGroup>(); });
+        if (ImGui::MenuItem("Flex Box"))     addUI("FlexBox",     oked::BuildUIFlexBox);
+        if (ImGui::MenuItem("Masked Panel")) addUI("Mask",        oked::BuildUIMaskedPanel);
+        if (ImGui::MenuItem("List View"))    addUI("ListView",    oked::BuildUIListView);
         ImGui::EndMenu();
     }
     // Launcher-look building blocks: each is a small ready-styled group you can
@@ -5460,6 +5504,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open a dedicated, dockable UI editing tab (flat canvas) beside the Scene view,\nso you can keep the 3D Scene and the UI layout visible at the same time.");
             ImGui::MenuItem("UI Theme", nullptr, &g_showUIThemer);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Define a reusable UI style (colors, corners, borders) and apply it to every widget at once — pick a preset or make your own, then restyle the whole UI in one click.");
+            ImGui::MenuItem("Item Database", nullptr, &g_showItemDatabase);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Define every item once (name, icon, stack size, weight, grid size, rarity, what using it does). Inventories, chests, recipes and builders all use these.");
             ImGui::EndMenu();
         }
         ImGui::Separator();
@@ -8203,6 +8249,16 @@ void DrawProject(EditorState& ed) {
             if (!fs::exists(dir / f, ce) && fs::create_directory(dir / f, ce)) ++made;
         ConsoleLog("Created " + std::to_string(made) + " standard folder(s) in " + dir.filename().string());
     };
+    auto mkItem = [&]{   // a new definition in the project's Item Database, opened for editing
+        okay::ItemDefinition d;
+        int n = 1;
+        do { d.id = "item" + std::to_string(n++); } while (okay::ItemDatabase::Get().Find(d.id));
+        d.name = "New Item";
+        okay::ItemDatabase::Get().Put(d);
+        const std::string path = ed.ItemDatabasePath();
+        if (!path.empty() && okay::ItemDatabase::Get().Save(path)) ConsoleLog("Added item \"" + d.id + "\" to " + path);
+        g_showItemDatabase = true;
+    };
     auto mkData = [&]{ fs::path p = uniquePath("NewData", ".okaydata");
         std::ofstream(p) << "# Scriptable Object: key = value fields\nname = Item\nvalue = 10\n";
         ConsoleLog("Created " + p.string()); nameOnCreate(p); };
@@ -8715,6 +8771,7 @@ void DrawProject(EditorState& ed) {
                 if (ImGui::MenuItem("Material"))   mkMaterial();
                 if (ImGui::MenuItem("Scene"))      mkScene();
                 if (ImGui::MenuItem("Data Asset")) mkData();
+                if (ImGui::MenuItem("Item")) mkItem();
                 ImGui::Separator();
                 if (ImGui::MenuItem("Prefab from Selection", nullptr, false, ed.selected() != nullptr)) SavePrefabInto(ed.selected(), dir);
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Save the selected object (and its children) here as a prefab.");
@@ -8988,6 +9045,7 @@ void DrawProject(EditorState& ed) {
             if (ImGui::MenuItem("Material"))   mkMaterial();
             if (ImGui::MenuItem("Scene"))      mkScene();
             if (ImGui::MenuItem("Data Asset")) mkData();
+            if (ImGui::MenuItem("Item")) mkItem();
             ImGui::Separator();
             if (ImGui::MenuItem("Prefab from Selection", nullptr, false, ed.selected() != nullptr)) SavePrefabInto(ed.selected(), dir);
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Save the selected object (and its children) here as a prefab.");
@@ -27733,6 +27791,16 @@ void DrawInspector(EditorState& ed) {
                     ImGui::EndCombo();
                 }
             }
+            if (sm->layer == 0 && ImGui::TreeNode("Stance changes##asm")) {
+                StanceTimes& t = sm->stanceTimes;
+                if (ImGui::DragFloat("Stand <-> crouch##asm", &t.standCrouch, 0.01f, 0.05f, 3.0f, "%.2fs")) ed.dirty = true;
+                if (ImGui::DragFloat("Crouch <-> prone##asm", &t.crouchProne, 0.01f, 0.05f, 3.0f, "%.2fs")) ed.dirty = true;
+                if (ImGui::DragFloat("Prone -> stand##asm", &t.proneStand, 0.01f, 0.05f, 4.0f, "%.2fs")) ed.dirty = true;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("How long the body takes to crouch, go prone and get up. The collider,\n"
+                                      "the camera and the speed limit follow it; the Animator gets `stance` (0..2).");
+                ImGui::TreePop();
+            }
             static const char* kCondNames[] = {"On Clip End", "Float >", "Float <", "Bool true", "Bool false", "Trigger"};
             int delState = -1;
             for (int si = 0; si < (int)sm->states.size(); ++si) {
@@ -27888,6 +27956,8 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Checkbox("Owned (this peer broadcasts)##ns", &ns->owned)) ed.dirty = true;
             if (ImGui::Checkbox("Sync animation##ns", &ns->syncAnimation)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("If this object (or a child) has a Character, replicate its animation + punches too.");
+            if (ImGui::Checkbox("Players can claim it##ns", &ns->clientClaimable)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("With an Anti-Cheat Config, an object nobody owns is the host's: no player may move it or change its variables. Tick this for objects any player may grab (a ball): the first one to move it owns it.");
             if (ImGui::SmallButton("Remove##ns")) toRemove = ns;
         }
     }
@@ -27987,6 +28057,8 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("What a hit does to the target's Health, unless On Validate Hit / on_validate_hit says otherwise.");
                 if (ImGui::Checkbox("Line of sight##ac", &s.hitLineOfSight)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("A server raycast must reach the target: no shooting through walls.");
+                if (ImGui::Checkbox("Need a move check##ac", &s.hitsNeedMoveCheck)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Refuse players' hit claims unless the server can check where the shooter is: a max move speed (net_max_speed / --max-speed), or Authoritative movement. Without either, a client could claim to fire from anywhere.");
                 ImGui::TreePop();
             }
             if (ImGui::SmallButton("Remove##ac")) toRemove = ac;
@@ -29238,6 +29310,51 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::SmallButton("Remove##fbik")) toRemove = fb;
             }
         }
+        if (auto* ph = dynamic_cast<ProceduralObjectHolding*>(curComp)) {
+            if (CompHeader("Procedural Object Holding", ph, &toRemove)) {
+                ImGui::TextDisabled("Hold objects with the hands: IK onto each object's grips.");
+                int hand = (int)ph->primaryHand;
+                if (ImGui::Combo("Primary Hand##poh", &hand, "Left\0Right\0Both\0")) { ph->primaryHand = (ProceduralObjectHolding::Hand)hand; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The hand a one-handed object goes in. Both = always two hands.");
+                int st = (int)ph->holdingStyle;
+                if (ImGui::Combo("Holding Style##poh", &st, "Automatic\0Custom\0")) { ph->holdingStyle = (ProceduralObjectHolding::StyleMode)st; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatic: each object's own style (a carry from its size and weight unless it says Custom).\nCustom: always the object's grip points.");
+                if (ImGui::Checkbox("Arm IK##poh", &ph->armIK)) ed.dirty = true;
+                if (ImGui::DragFloat("Transition (s)##poh", &ph->transitionTime, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+                if (GameObject* held = ph->Held()) ImGui::Text("Holding: %s", held->name.c_str());
+                else if (ed.isPlaying()) ImGui::TextDisabled("Holding nothing");
+                if (ImGui::SmallButton("Remove##poh")) toRemove = ph;
+            }
+        }
+        if (auto* ho = dynamic_cast<HoldableObject*>(curComp)) {
+            if (CompHeader("Holdable Object", ho, &toRemove)) {
+                ImGui::TextDisabled("A character's Procedural Object Holding can pick this up.");
+                int st = (int)ho->style;
+                if (ImGui::Combo("Style##hold", &st, "Automatic\0Custom\0")) { ho->style = (HoldableObject::Style)st; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatic: a carry from size and weight (small = one hand under it, big or heavy = both hands on its sides).\nCustom: the hands go to the grip points below.");
+                if (ImGui::DragFloat("Weight (kg)##hold", &ho->weight, 0.1f, 0.0f, 500.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = the Rigidbody's mass.");
+                if (NameField("Socket##hold", ho->socket)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hold it at this object inside the character (a holster, a back slot) instead of in front of the chest.");
+                if (ImGui::DragFloat3("Hold Offset##hold", &ho->holdOffset.x, 0.01f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Custom: where the object's origin sits from the chest (right, up, forward), metres.");
+                if (ImGui::DragFloat3("Hold Rotation##hold", &ho->holdRotation.x, 1.0f)) ed.dirty = true;
+                HoldableObject::Grip* grips[2] = {&ho->leftGrip, &ho->rightGrip};
+                for (int g = 0; g < 2; ++g) {
+                    ImGui::PushID(g);
+                    HoldableObject::Grip& gr = *grips[g];
+                    if (ImGui::Checkbox(g == 0 ? "Left Grip" : "Right Grip", &gr.enabled)) ed.dirty = true;
+                    if (gr.enabled) {
+                        if (ImGui::DragFloat3("Position##grip", &gr.position.x, 0.005f)) ed.dirty = true;
+                        if (ImGui::DragFloat3("Rotation##grip", &gr.rotation.x, 1.0f)) ed.dirty = true;
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::TextDisabled("Grip rotation 0 = palm down, fingers forward (-Z).");
+                if (GameObject* holder = ho->Holder()) ImGui::Text("Held by: %s", holder->name.c_str());
+                if (ImGui::SmallButton("Remove##hold")) toRemove = ho;
+            }
+        }
         if (auto* rm = dynamic_cast<RootMotion*>(curComp)) {
             if (CompHeader("Root Motion", rm, &toRemove)) {
                 ImGui::TextWrapped("Legacy: for an imported model, turn on Root Motion in its Model Animator instead.");
@@ -30183,12 +30300,14 @@ void DrawInspector(EditorState& ed) {
                 for (std::size_t i = 0; i < gi->items.size(); ++i) {
                     auto& it = gi->items[i];
                     ImGui::PushID((int)i);
-                    char nb[64]; std::snprintf(nb, sizeof(nb), "%s", it.name.c_str());
-                    ImGui::SetNextItemWidth(110);
-                    if (ImGui::InputText("##n", nb, sizeof(nb))) { it.name = nb; ed.dirty = true; }
+                    bool moved = false;
+                    if (ItemPicker("##n", it.name, 110)) {   // a defined item brings its size + weight
+                        if (const okay::ItemDefinition* d = okay::ItemDatabase::Get().Find(it.name))
+                            if (!d->loose) { it.w = d->gridW; it.h = d->gridH; it.weight = d->weight; moved = true; }
+                        ed.dirty = true;
+                    }
                     ImGui::SameLine(); ImGui::SetNextItemWidth(150);
                     int wh[2] = {it.w, it.h};
-                    bool moved = false;
                     if (ImGui::DragInt2("wxh##s", wh, 0.1f, 1, 12)) { it.w = wh[0]; it.h = wh[1]; moved = true; }
                     ImGui::SameLine(); ImGui::SetNextItemWidth(60);
                     if (ImGui::DragInt("##c", &it.count, 0.2f, 1, 9999)) ed.dirty = true;
@@ -30340,9 +30459,7 @@ void DrawInspector(EditorState& ed) {
                 for (std::size_t i = 0; i < cs->recipes.size(); ++i) {
                     auto& rec = cs->recipes[i];
                     ImGui::PushID((int)i);
-                    char ob[64]; std::snprintf(ob, sizeof(ob), "%s", rec.output.c_str());
-                    ImGui::SetNextItemWidth(110);
-                    if (ImGui::InputText("out##o", ob, sizeof(ob))) { rec.output = ob; ed.dirty = true; }
+                    if (ItemPicker("out##o", rec.output, 110)) ed.dirty = true;
                     ImGui::SameLine(); ImGui::SetNextItemWidth(70);
                     if (ImGui::DragInt("x##oc", &rec.outputCount, 0.1f, 1, 999)) ed.dirty = true;
                     ImGui::SameLine();
@@ -30350,9 +30467,7 @@ void DrawInspector(EditorState& ed) {
                     ImGui::Indent();
                     for (std::size_t j = 0; j < rec.inputs.size(); ++j) {
                         ImGui::PushID((int)j);
-                        char nb[64]; std::snprintf(nb, sizeof(nb), "%s", rec.inputs[j].item.c_str());
-                        ImGui::SetNextItemWidth(100);
-                        if (ImGui::InputText("##in", nb, sizeof(nb))) { rec.inputs[j].item = nb; ed.dirty = true; }
+                        if (ItemPicker("##in", rec.inputs[j].item, 100)) ed.dirty = true;
                         ImGui::SameLine(); ImGui::SetNextItemWidth(60);
                         if (ImGui::DragInt("##ic", &rec.inputs[j].count, 0.1f, 1, 999)) ed.dirty = true;
                         ImGui::SameLine();
@@ -30769,9 +30884,7 @@ void DrawInspector(EditorState& ed) {
             for (int i = 0; i < (int)c->recipes.size(); ++i) {
                 ImGui::PushID(i);
                 auto& r = c->recipes[i];
-                char it[48]; std::strncpy(it, r.item.c_str(), sizeof(it) - 1); it[sizeof(it) - 1] = '\0';
-                ImGui::SetNextItemWidth(110);
-                if (ImGui::InputText("##itm", it, sizeof(it))) { r.item = it; ed.dirty = true; }
+                if (ItemPicker("##itm", r.item, 110)) ed.dirty = true;
                 ImGui::SameLine();
                 const char* verbs[] = { "Eat", "Drink", "Heal", "Breathe", "Warm", "Damage",
                                         "Poison", "Cure", "Bandage", "TakeAntiRad", "DryOff", "Restore", "Rest" };
@@ -30983,9 +31096,7 @@ void DrawInspector(EditorState& ed) {
             for (int i = 0; i < (int)c->recipes.size(); ++i) {
                 ImGui::PushID(i);
                 auto& r = c->recipes[i];
-                char outb[40]; std::strncpy(outb, r.output.c_str(), sizeof(outb) - 1); outb[sizeof(outb) - 1] = '\0';
-                ImGui::SetNextItemWidth(110);
-                if (ImGui::InputText("##out", outb, sizeof(outb))) { r.output = outb; ed.dirty = true; }
+                if (ItemPicker("##out", r.output, 110)) ed.dirty = true;
                 ImGui::SameLine(); ImGui::SetNextItemWidth(60);
                 if (ImGui::DragInt("x##outc", &r.outputCount, 0.1f, 1, 999)) ed.dirty = true;
                 ImGui::SameLine();
@@ -30997,9 +31108,7 @@ void DrawInspector(EditorState& ed) {
                     ImGui::PushID(j);
                     auto& in = r.inputs[j];
                     ImGui::Indent(16.0f);
-                    char ib[40]; std::strncpy(ib, in.item.c_str(), sizeof(ib) - 1); ib[sizeof(ib) - 1] = '\0';
-                    ImGui::SetNextItemWidth(100);
-                    if (ImGui::InputText("##ing", ib, sizeof(ib))) { in.item = ib; ed.dirty = true; }
+                    if (ItemPicker("##ing", in.item, 100)) ed.dirty = true;
                     ImGui::SameLine(); ImGui::SetNextItemWidth(60);
                     if (ImGui::DragInt("##ingc", &in.count, 0.1f, 1, 999)) ed.dirty = true;
                     ImGui::SameLine();
@@ -32096,9 +32205,7 @@ void DrawInspector(EditorState& ed) {
             int eraseS = -1;
             for (int i = 0; i < (int)inv->slots.size(); ++i) {
                 ImGui::PushID(i);
-                char ib[64]; std::strncpy(ib, inv->slots[i].item.c_str(), sizeof(ib) - 1); ib[sizeof(ib)-1] = '\0';
-                ImGui::SetNextItemWidth(130);
-                if (ImGui::InputText("##invit", ib, sizeof(ib))) { inv->slots[i].item = ib; ed.dirty = true; }
+                if (ItemPicker("##invit", inv->slots[i].item, 130)) ed.dirty = true;
                 ImGui::SameLine(); ImGui::SetNextItemWidth(70);
                 if (ImGui::DragInt("##invn", &inv->slots[i].count, 0.2f, 0, 9999)) ed.dirty = true;
                 ImGui::SameLine();
@@ -33198,9 +33305,10 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* lg = dynamic_cast<UILayoutGroup*>(curComp)) {
         if (CompHeader("UI Layout Group", lg, &toRemove)) {
-            const char* dirs[] = {"Vertical", "Horizontal", "Grid"};
+            const char* dirs[] = {"Vertical", "Horizontal", "Grid", "Flex Row", "Flex Column"};
             int d = (int)lg->direction;
-            if (ImGui::Combo("Direction##lg", &d, dirs, 3)) { lg->direction = (UILayoutGroup::Direction)d; lg->Arrange(); ed.dirty = true; }
+            if (ImGui::Combo("Direction##lg", &d, dirs, 5)) { lg->direction = (UILayoutGroup::Direction)d; lg->Arrange(); ed.dirty = true; }
+            oked::DrawLayoutGroupFlexFields(*lg, ed);
             bool isGrid = (lg->direction == UILayoutGroup::Direction::Grid);
             if (isGrid) {
                 if (ImGui::DragInt("Columns##lg", &lg->columns, 0.1f, 1, 32)) { if (lg->columns < 1) lg->columns = 1; lg->Arrange(); ed.dirty = true; }
@@ -33223,6 +33331,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat2("Pos (px)##usv", pos, 1.0f)) { sv->position = {pos[0], pos[1]}; ed.dirty = true; }
             float sz[2] = {sv->size.x, sv->size.y};
             if (ImGui::DragFloat2("Viewport (px)##usv", sz, 1.0f, 16.0f, 8000.0f)) { sv->size = {sz[0], sz[1]}; ed.dirty = true; }
+            oked::DrawScrollViewAxisFields(*sv, ed);
             if (ImGui::Checkbox("Auto content height##usv", &sv->autoContent)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fit the scroll range to the child widgets automatically.");
             ImGui::BeginDisabled(sv->autoContent);
@@ -33236,6 +33345,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##usv")) toRemove = sv;
         }
     }
+    oked::DrawUILayoutComponentInspector(curComp, ed, &toRemove, {CompHeader, AnchorCombo});
     if (auto* pb = dynamic_cast<UIProgressBar*>(curComp)) {
         if (CompHeader("UI Progress Bar", pb, &toRemove)) {
             UIStyleBar(ed, pb);
@@ -34311,6 +34421,12 @@ void DrawInspector(EditorState& ed) {
                 ConsoleLog("Full Body IK: mapped " + std::to_string(n) + "/" + std::to_string((int)FullBodyIK::BoneCount) + " bones", n >= 11 ? 0 : 1);
                 ed.dirty = true;
             }
+            if (item(!go->GetComponent<ProceduralObjectHolding>(), "Procedural Object Holding (pick up + hold with IK hands)")) {
+                go->AddComponent<ProceduralObjectHolding>(); ed.dirty = true;
+            }
+            if (item(!go->GetComponent<HoldableObject>(), "Holdable Object (grip points, style, weight)")) {
+                go->AddComponent<HoldableObject>(); ed.dirty = true;
+            }
             if (item(true, "Tween Animation (move / scale / fade / punch / shake, no code)")) {
                 auto* ta = go->AddComponent<TweenAnimation>();
                 if (GetUIRect(go).valid) { ta->type = (int)TweenAnimation::Type::PunchScale; ta->endValue = {0.15f, 0.15f, 0.15f}; ta->duration = 0.4f; }
@@ -34540,6 +34656,9 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UITabs>(), "UI Tabs")) { go->AddComponent<UITabs>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDraggable>(), "UI Draggable")) { go->AddComponent<UIDraggable>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDropTarget>(), "UI Drop Target")) { go->AddComponent<UIDropTarget>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIMask>(), "UI Mask (clip children)")) { go->AddComponent<UIMask>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIFlexItem>(), "UI Flex Item (grow / shrink)")) { go->AddComponent<UIFlexItem>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIListView>(), "UI List View")) { oked::BuildUIListView(go); ed.dirty = true; }
             if (item(!go->GetComponent<UITextBind>(), "UI Text Bind (show a variable)")) { go->AddComponent<UITextBind>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIBarBind>(), "UI Bar Bind (var -> progress bar)")) { go->AddComponent<UIBarBind>(); ed.dirty = true; }
           } EndCat(o); }
@@ -34988,7 +35107,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             if (idx == ui->dragIndex) shown -= (ui->dragAmount > 0 ? ui->dragAmount : shown);
             if (shown > 0 && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
                 const auto& it = inv->slots[idx];
-                SDL_Texture* icon = ui->iconFolder.empty() ? nullptr : GetThumb(ui->iconFolder + it.item + ".png");
+                SDL_Texture* icon = ItemThumb(okay::ItemIconPath(ui->iconFolder, it.item));
                 if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + b + 2, p0.y + b + 2), ImVec2(p1.x - b - 2, p1.y - b - 2));
                 else if (ui->showNames) dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), it.item.substr(0, ui->nameChars < 1 ? 1 : (std::size_t)ui->nameChars).c_str());
                 if (ui->showCounts && shown > 1) {
@@ -35062,7 +35181,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 ImVec2 p1(p0.x + sz, p0.y + sz);
                 dl->AddRectFilled(p0, p1, col(ui->slotBorder), cr);
                 dl->AddRectFilled(ImVec2(p0.x + 2, p0.y + 2), ImVec2(p1.x - 2, p1.y - 2), col(ui->slotColor), cr);
-                SDL_Texture* icon = ui->iconFolder.empty() ? nullptr : GetThumb(ui->iconFolder + it.item + ".png");
+                SDL_Texture* icon = ItemThumb(okay::ItemIconPath(ui->iconFolder, it.item));
                 if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 4, p0.y + 4), ImVec2(p1.x - 4, p1.y - 4));
                 else dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), it.item.substr(0, ui->nameChars < 1 ? 1 : (std::size_t)ui->nameChars).c_str());
                 int carried = ui->dragAmount > 0 ? ui->dragAmount : it.count;
@@ -35148,7 +35267,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             rectS(lx, ly, w, h, rar ? *rar : gui->itemBorder, cr);
             if (hover) { rectF(lx, ly, w, h, gui->hoverColor, cr); rectS(lx, ly, w, h, lighten(gui->itemBorder, 0.35f), cr); }
             ImVec2 p0(canvasPos.x + lx, canvasPos.y + ly);
-            SDL_Texture* icon = gui->iconFolder.empty() ? nullptr : GetThumb(gui->iconFolder + it.name + ".png");
+            SDL_Texture* icon = ItemThumb(okay::ItemIconPath(gui->iconFolder, it.name));
             if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 6, p0.y + 6), ImVec2(p0.x + w - 6, p0.y + h - 6));
             else if (gui->showItemNames) {   // clip the name to the tile width so it never overflows the cell
                 int maxc = (int)((w - 12) / 7.0f); if (maxc < 1) maxc = 1;
@@ -35282,7 +35401,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         int hovSide = -1, hovIdx = -1;
         if (gameView) L.Pick(m.x, m.y, hovSide, hovIdx);
         auto stack = [&](const okay::Inventory::Slot& it, ImVec2 p0, ImVec2 p1) {
-            SDL_Texture* icon = ch->iconFolder.empty() ? nullptr : GetThumb(ch->iconFolder + it.item + ".png");
+            SDL_Texture* icon = ItemThumb(okay::ItemIconPath(ch->iconFolder, it.item));
             if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 4, p0.y + 4), ImVec2(p1.x - 4, p1.y - 4));
             else dl->AddText(ImVec2(p0.x + 4, p0.y + 4), col(ch->textColor), it.item.substr(0, 5).c_str());
             if (it.count > 1) { std::string c = std::to_string(it.count); ImVec2 ts = ImGui::CalcTextSize(c.c_str());
@@ -35394,6 +35513,7 @@ static void SetEditorWorldUIProjector(EditorState& ed, ImVec2 canvasSize,
             if (UIHidden(go)) return false;   // hidden canvas / inactive parent: not clickable
             return GetUIScreenRect(go, cs.x, cs.y, o, sz);
         };
+        UIWorld().clipContains = [cs](GameObject* go, const Vec2& p) { return UIClipHitTest(go, p, cs.x, cs.y); };
     }
 }
 
@@ -39651,6 +39771,114 @@ static int ApplyUITheme(EditorState& ed, const EdUITheme& t, GameObject* root) {
     return n;
 }
 
+// Item Database: the project's item definitions (<project>/items.okayitems) — a
+// searchable list, the selected definition's fields, duplicate-id warnings, Save.
+static void DrawItemDatabase(EditorState& ed) {
+    ImGui::SetNextWindowSize(ImVec2(720, 480), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Item Database", &g_showItemDatabase)) { ImGui::End(); return; }
+    okay::ItemDatabase& db = okay::ItemDatabase::Get();
+    static std::string sel;
+    static char filter[64] = "";
+    static bool dirty = false;
+    const std::string path = !db.Path().empty() ? db.Path() : ed.ItemDatabasePath();
+    if (path.empty()) ImGui::TextDisabled("Open a project to keep item definitions with it.");
+    else ImGui::TextDisabled("%s%s", path.c_str(), dirty ? "  (unsaved)" : "");
+    if (ImGui::Button("+ New Item")) {
+        okay::ItemDefinition d;
+        int n = 1;
+        do { d.id = "item" + std::to_string(n++); } while (db.Find(d.id));
+        d.name = "New Item";
+        sel = db.Put(d).id; dirty = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Save") && !path.empty()) {
+        if (db.Save(path)) { db.Load(path); dirty = false; ConsoleLog("Saved item definitions to " + path); }
+        else ConsoleLog("Couldn't save " + path, 2);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Reload") && !path.empty()) { db.Load(path); dirty = false; }
+    for (const std::string& dup : db.DuplicateIds())
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f), "Duplicate id \"%s\": every item needs its own id.", dup.c_str());
+
+    ImGui::BeginChild("##items", ImVec2(230, 0), true);
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputTextWithHint("##itemsflt", "Search", filter, sizeof(filter));
+    std::string f = filter; for (auto& c : f) c = (char)std::tolower((unsigned char)c);
+    for (const auto& d : db.Items()) {
+        std::string hay = d.id + " " + d.name + " " + d.category; for (auto& c : hay) c = (char)std::tolower((unsigned char)c);
+        if (!f.empty() && hay.find(f) == std::string::npos) continue;
+        if (SDL_Texture* t = ItemThumb(okay::ItemIconPath("", d.id))) { ImGui::Image((ImTextureID)t, ImVec2(16, 16)); ImGui::SameLine(); }
+        std::string label = d.DisplayName() + (d.loose ? "  (not defined)" : "") + "##" + d.id;
+        if (ImGui::Selectable(label.c_str(), sel == d.id)) sel = d.id;
+    }
+    ImGui::EndChild();
+    ImGui::SameLine();
+    ImGui::BeginChild("##itemdef", ImVec2(0, 0), true);
+    okay::ItemDefinition* d = db.FindMutable(sel);
+    if (!d) ImGui::TextDisabled("Select an item, or add one.");
+    else {
+        bool ch = false;
+        auto text = [&](const char* label, std::string& v, const char* tip) {
+            char b[256]; std::snprintf(b, sizeof(b), "%s", v.c_str());
+            if (ImGui::InputText(label, b, sizeof(b))) { v = b; ch = true; }
+            if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+        };
+        std::string id = d->id;
+        text("Id", id, "The stable key inventories store. Renaming it breaks saved scenes; change the Name instead.");
+        if (id != d->id && !id.empty() && !db.Find(id)) { d->id = id; sel = id; }
+        text("Name", d->name, "What players see. Rename freely.");
+        text("Description", d->description, nullptr);
+        text("Icon", d->icon, "Image path. Blank = <icon folder><id>.png.");
+        if (SDL_Texture* t = ItemThumb(okay::ItemIconPath("", d->id))) ImGui::Image((ImTextureID)t, ImVec2(48, 48));
+        if (ImGui::DragInt("Stack Size", &d->maxStack, 0.2f, 0, 100000)) ch = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Most per stack (0 = only the container's limit).");
+        if (ImGui::DragFloat("Weight", &d->weight, 0.05f, 0.0f, 10000.0f, "%.2f")) ch = true;
+        int sz[2] = {d->gridW, d->gridH};
+        if (ImGui::DragInt2("Grid Size", sz, 0.1f, 1, 12)) { d->gridW = sz[0]; d->gridH = sz[1]; ch = true; }
+        if (ImGui::DragInt("Rarity Tier", &d->rarity, 0.1f, 0, 10)) ch = true;
+        if (ImGui::Checkbox("Rarity Colour", &d->hasRarityColor)) ch = true;
+        if (d->hasRarityColor) { ImGui::SameLine(); if (ImGui::ColorEdit4("##rc", &d->rarityColor.r, ImGuiColorEditFlags_NoInputs)) ch = true; }
+        text("Category", d->category, "e.g. Food, Weapon, Material (used for sorting and filters).");
+        std::string tags;
+        for (const auto& t : d->tags) tags += (tags.empty() ? "" : ", ") + t;
+        std::string tagsEdit = tags;
+        text("Tags", tagsEdit, "Comma-separated.");
+        if (tagsEdit != tags) {
+            d->tags.clear();
+            std::stringstream ts(tagsEdit); std::string t;
+            while (std::getline(ts, t, ',')) { t.erase(0, t.find_first_not_of(' ')); t.erase(t.find_last_not_of(' ') + 1); if (!t.empty()) d->tags.push_back(t); }
+        }
+        int eq = (int)d->equip;
+        const char* slots[] = {"None", "Head", "Chest", "Legs", "Feet", "Hands", "Back", "Main Hand", "Off Hand"};
+        if (ImGui::Combo("Equip Slot", &eq, slots, IM_ARRAYSIZE(slots))) { d->equip = (okay::EquipSlot)eq; ch = true; }
+        text("Use Action", d->useAction, "What using it does: Eat, Drink, Heal, ... (blank = not usable).");
+        if (!d->useAction.empty() && ImGui::DragFloat("Use Amount", &d->useAmount, 0.5f, 0.0f, 10000.0f)) ch = true;
+        text("Drop Prefab", d->worldPrefab, ".okayprefab spawned when it's dropped in the world.");
+        if (ImGui::TreeNode("Custom Fields")) {
+            for (std::size_t i = 0; i < d->custom.size(); ++i) {
+                ImGui::PushID((int)i);
+                ImGui::SetNextItemWidth(120); text("##k", d->custom[i].first, nullptr);
+                ImGui::SameLine(); ImGui::SetNextItemWidth(160); text("##v", d->custom[i].second, nullptr);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("x")) { d->custom.erase(d->custom.begin() + i); ch = true; ImGui::PopID(); break; }
+                ImGui::PopID();
+            }
+            if (ImGui::SmallButton("+ Field")) { d->custom.push_back({"key", "value"}); ch = true; }
+            ImGui::TreePop();
+        }
+        if (d->loose) {
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Found in a scene but not defined yet.");
+            if (ImGui::Button("Define it")) { d->loose = false; ch = true; }
+        }
+        ImGui::Separator();
+        if (ImGui::Button("Delete Item")) { db.Remove(d->id); sel.clear(); d = nullptr; ch = true; }
+        if (ch && d) d->loose = false;   // editing a found-in-scene item defines it
+        if (ch) dirty = true;
+    }
+    ImGui::EndChild();
+    ImGui::End();
+}
+
 void DrawUIThemer(EditorState& ed) {
     if (!ImGui::Begin("UI Theme", &g_showUIThemer)) { ImGui::End(); return; }
     ImGui::TextDisabled("Define a reusable UI style, then apply it to every widget at once.");
@@ -41326,14 +41554,9 @@ int main(int argc, char** argv) {
             if (Cursor::IsLocked() || !Cursor::visible) Cursor::Capture(false);
         }
 
-        // Keep each scroll view's contentHeight matched to its children so the
-        // scrollbar/clip preview is right while editing and the wheel/drag work in Play.
-        for (const auto& up : ed.scene().Objects())
-            if (auto* sv = up->GetComponent<UIScrollView>())
-                if (sv->autoContent) {
-                    float ch = ScrollViewContentHeight(up.get());
-                    sv->contentHeight = ch > sv->size.y ? ch : sv->size.y;
-                }
+        // Lay out the UI every frame (scroll extents, flex boxes, list rows) so the
+        // preview is right while editing and the wheel/drag work in Play.
+        UpdateUILayouts(ed.scene());
 
         // Install the world-space UI projector to match the Game view BEFORE the
         // scene ticks, so an in-world button's Contains() hit-tests where the Game
@@ -41347,6 +41570,7 @@ int main(int argc, char** argv) {
                 if (UIHidden(go)) return false;   // hidden canvas / inactive parent: not clickable
                 return GetUIScreenRect(go, cs.x, cs.y, o, sz);
             };
+            UIWorld().clipContains = [cs](GameObject* go, const Vec2& p) { return UIClipHitTest(go, p, cs.x, cs.y); };
         }
 
 #ifdef OKAY_HAVE_OKAYUI
@@ -41863,6 +42087,7 @@ int main(int argc, char** argv) {
         }
         { OKAY_PROFILE("UI.SpriteEditor"); if (g_showSpriteEditor) DrawSpriteEditor(ed); }
         { OKAY_PROFILE("UI.UIThemer"); if (g_showUIThemer)     DrawUIThemer(ed); }
+        { OKAY_PROFILE("UI.ItemDatabase"); if (g_showItemDatabase) DrawItemDatabase(ed); }
         { OKAY_PROFILE("UI.Project"); if (g_showProject)   DrawProject(ed); }
         { OKAY_PROFILE("UI.Services"); if (g_showServices)  DrawServices(ed); }
         { OKAY_PROFILE("UI.ScriptEditor"); if (g_showScriptEditor) DrawScriptEditor(ed); }

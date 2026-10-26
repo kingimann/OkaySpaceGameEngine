@@ -156,6 +156,9 @@ bool NetworkManager::StartServer(std::uint16_t port) {
               " (max ", maxPlayers, ")");
     OKAY_INFO("net: clients may spawn only the ", spawnablePrefabs.size(),
               " Spawnable prefab(s) and the Player Spawner's prefab (the spawn allowlist when the anti-cheat is on)");
+    if (anticheat.settings.hitsNeedMoveCheck && maxMoveSpeed <= 0.0f && !authoritativeMovement)
+        OKAY_WARN("net: client hit claims (net_hit) are refused: they need a max move speed (net_max_speed, --max-speed) "
+                  "or authoritative movement to check where the shooter is (or hitsNeedMoveCheck false in the anti-cheat rules)");
     return true;
 }
 
@@ -175,6 +178,12 @@ void NetworkManager::InitServerState() {
         return it != m_syncObjs.end() && it->second.owned;
     };
     anticheat.exists = [this](const std::string& id) { return m_syncObjs.count(id) != 0; };
+    anticheat.claimable = [this](const std::string& id) {
+        auto it = m_syncObjs.find(id);
+        if (it == m_syncObjs.end() || !it->second.t || !it->second.t->gameObject) return false;
+        const auto* ns = it->second.t->gameObject->GetComponent<NetworkSync>();
+        return ns && ns->clientClaimable;
+    };
     anticheat.onCheat = [this](const CheatReport& r) {
         auto& recent = m_recentCheats[r.peer];   // for a kick's report
         if (recent.size() >= kRecentCheats) recent.erase(recent.begin());
@@ -352,6 +361,7 @@ void NetworkManager::Stop() {
     anticheat.Reset();
     anticheat.serverOwns = nullptr;
     anticheat.exists = nullptr;
+    anticheat.claimable = nullptr;
     anticheat.onCheat = nullptr;
     m_recentCheats.clear();
     m_relayLost = false;
@@ -1241,8 +1251,11 @@ void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
     }
     // Fired from where the server last saw the shooter, not where it says it is.
     if (!c.hasState) { refuse("no position for the shooter yet"); return; }
-    const Vec3 at(c.state.x, c.state.y, c.state.z);
-    if ((claim.origin - at).Magnitude() > s.hitOriginTolerance) { refuse("shot from where the shooter isn't"); return; }
+    // ... which only means something when that position is checked: the
+    // server moves the shooter (authoritative movement), or maxMoveSpeed
+    // limits what it reports. Without either, the claim is refused (the
+    // server's setup, not the player's doing: no violation).
+    if (s.hitsNeedMoveCheck && c.pawn.empty() && maxMoveSpeed <= 0.0f) { ++m_hitsRefused; return; }
     // The target, where the server has it.
     auto obj = m_syncObjs.find(claim.target);
     if (obj == m_syncObjs.end() || !obj->second.t || !obj->second.t->gameObject) { refuse("no such target: " + claim.target); return; }
@@ -1257,6 +1270,17 @@ void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
         const double at = ClampRewind(viewTick, rtt);
         m_lastRewind = (float)((TickTime() - at) / (double)HostTickRate());
         rewound = RewindTo(at);
+    }
+    // The shooter's position: its pawn, where the server has it (rewound with
+    // everything else under lag compensation), else its checked report.
+    Vec3 from(c.state.x, c.state.y, c.state.z);
+    if (!c.pawn.empty())
+        if (auto p = m_syncObjs.find(c.pawn); p != m_syncObjs.end() && p->second.t)
+            from = p->second.t->TransformPoint(Vec3(0.0f, 0.0f, 0.0f));
+    if ((claim.origin - from).Magnitude() > s.hitOriginTolerance) {
+        Restore(rewound);
+        refuse("shot from where the shooter isn't");
+        return;
     }
     const std::string why = CheckHitView(claim, c.id, obj->second.t, rewound.empty() ? rtt : 1.0f / HostTickRate());
     Restore(rewound);
@@ -2128,7 +2152,10 @@ void NetworkManager::ServerTick(float dt) {
                 if (!std::isfinite(s.x) || !std::isfinite(s.y) || !std::isfinite(s.z)) continue;   // garbage
                 if (maxMoveSpeed > 0.0f && c.hasState) {   // too fast? keep the last good spot
                     const float dx = s.x - c.state.x, dy = s.y - c.state.y, dz = s.z - c.state.z;
-                    const float allowed = maxMoveSpeed * std::max(c.stateAge, m_snapshotInterval) * 1.25f + 0.25f;
+                    // At most a quarter second of travel, however long it was quiet:
+                    // going silent mustn't bank a long jump (a bigger gap is
+                    // corrected back to the last good spot).
+                    const float allowed = maxMoveSpeed * std::min(std::max(c.stateAge, m_snapshotInterval), 0.25f) * 1.25f + 0.25f;
                     if (dx * dx + dy * dy + dz * dz > allowed * allowed) {
                         ++c.violations;
                         net::Packet cp(Correct); cp.Write(c.state.x); cp.Write(c.state.y); cp.Write(c.state.z);

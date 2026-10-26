@@ -11,8 +11,9 @@
 namespace okay {
 
 /// Bridges items to the survival components: maps item names to a survival action +
-/// amount (e.g. "apple" → Eat 30, "water" → Drink 25, "medkit" → Heal 50). Put it on
-/// the Player alongside the survival stats (and optionally an Inventory).
+/// amount (e.g. "apple" → Eat 30, "water" → Drink 25, "medkit" → Heal 50). An item
+/// with no recipe here uses its ItemDatabase definition's use action. Put it on the
+/// Player alongside the survival stats (and optionally an Inventory).
 ///
 /// Two ways to use a recipe:
 ///  - `Use(item)` — consumes one from a sibling Inventory (when `requireInventory`)
@@ -44,8 +45,14 @@ public:
     }
 
     bool Use(const std::string& item) {
+        Recipe fromDef;
         const Recipe* r = Find(item);
-        if (!r) return false;
+        if (!r) {   // the item's own definition: "use: Eat 20"
+            const ItemDefinition* d = ItemDatabase::Get().Find(item);
+            if (!d || d->useAction.empty()) return false;
+            fromDef = {item, d->useAction, d->useAmount};
+            r = &fromDef;
+        }
         Inventory* inv = nullptr;
         if (requireInventory) {
             inv = Inv();

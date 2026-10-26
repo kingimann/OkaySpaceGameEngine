@@ -15,7 +15,7 @@ namespace okay {
 /// a star to set the rating (left half = a half-star when allowHalf); read-only
 /// mode just displays a score. Fires the sibling ScriptComponent's on_change().
 /// Position/size are window pixels; stars are laid out across the width.
-class UIRating : public Behaviour {
+class UIRating final : public Behaviour {
 public:
     Vec2  position{20.0f, 20.0f};
     Vec2  size{180.0f, 32.0f};

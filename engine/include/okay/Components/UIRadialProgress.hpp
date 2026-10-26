@@ -12,7 +12,7 @@ namespace okay {
 /// dials) — the radial counterpart to UIProgressBar. Draws a ring of `thickness`
 /// pixels (or a full pie when thickness <= 0) filled clockwise from `startAngle`
 /// by `value` (0..1). Position/size are window pixels; `size` is the bounding box.
-class UIRadialProgress : public Behaviour {
+class UIRadialProgress final : public Behaviour {
 public:
     Vec2 position{20.0f, 20.0f};
     Vec2 size{96.0f, 96.0f};

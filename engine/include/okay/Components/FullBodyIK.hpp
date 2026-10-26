@@ -208,6 +208,10 @@ public:
         const float w = weight * stateWeight * m_fade.Step(ikActive, fadeTime, dt);
         m_hips.Begin(bones[Hips]); m_spine.Begin(spineBone); m_head.Begin(bones[Head]); m_lowSpine.Begin(lowSpine);
         if (w <= 0.0f) { m_hips.End(); m_spine.End(); m_head.End(); m_lowSpine.End(); return; }
+        // 0) Look-at, the chest's share: before the limbs, so the arms solve from
+        // the turned chest and hand goals are still met.
+        if (m_lookW > 0.0f && bones[Head] && spineBone && lookHeadShare < 1.0f)
+            TurnToward(spineBone, bones[Head], m_lookGoal, (1.0f - lookHeadShare) * m_lookW * w);
         // 1) Body pull: effectors beyond their limb's reach drag the hips toward them.
         if (bodyPull > 0.0f && bones[Hips]) {
             Vec3 sum{0, 0, 0}; float wsum = 0.0f;
@@ -259,12 +263,9 @@ public:
         }
         // 3) Limbs.
         for (int l = 0; l < LimbCount; ++l) SolveLimb(l, w);
-        // 4) Look-at.
-        if (m_lookW > 0.0f && bones[Head]) {
-            const Vec3 goal = m_lookGoal;
-            if (spineBone && lookHeadShare < 1.0f) TurnToward(spineBone, bones[Head], goal, (1.0f - lookHeadShare) * m_lookW * w);
-            TurnToward(bones[Head], bones[Head], goal, lookHeadShare * m_lookW * w, true);
-        }
+        // 4) Look-at: the head's share (the chest turned before the limbs).
+        if (m_lookW > 0.0f && bones[Head])
+            TurnToward(bones[Head], bones[Head], m_lookGoal, lookHeadShare * m_lookW * w, true);
         m_hips.End(); m_spine.End(); m_head.End(); m_lowSpine.End();
     }
 

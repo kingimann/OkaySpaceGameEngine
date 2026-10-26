@@ -19,7 +19,7 @@ namespace okay {
 /// Shows `placeholder` when empty, blinks a caret, and scrolls horizontally so
 /// the caret stays visible in long text. An optional numeric/password mode and
 /// a character whitelist constrain what can be entered.
-class UIInputField : public Behaviour {
+class UIInputField final : public Behaviour {
 public:
     enum class ContentType { Standard, Integer, Decimal, Password };
 

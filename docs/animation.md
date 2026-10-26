@@ -267,8 +267,9 @@ copied into the scene, and a clip of your own with the same name wins. A clip
 bound with clipIdle / clipWalk / ... plays in that state instead.
 
 A movement controller feeds the graph's parameters every frame: `speed`
-(m/s), `run`, `crouch`, `prone`, `airTime` (seconds off the ground) and
-`verticalSpeed`; the body itself sets `gaitX`, `gaitZ` (direction of travel,
+(m/s), `run`, `crouch`, `prone`, `stance` (0 stand .. 1 crouch .. 2 prone,
+easing through each stance change over the Animator's **Stance changes**
+times), `airTime` (seconds off the ground) and `verticalSpeed`; the body itself sets `gaitX`, `gaitZ` (direction of travel,
 x = right, z = forward) and `gaitSpeed`. Crossfades: 0.2 s between ground
 states, 0.1 s into the air, 0.08 s back onto the ground, where a standing
 landing plays **Land** and a moving one gives at the knees mid-stride. A blend
@@ -726,6 +727,38 @@ about 0.65 ms per frame.
 - **Set up humanoid IK** also creates a *Look IK Target*.
 - State machine states have an **IK Weight**, so IK can fade out during a roll or
   a climb and back in afterwards.
+
+## Holding objects (Procedural Object Holding)
+
+A character holds things with its hands: the hands go to the object's grips, the
+elbows bend down and out, and the object moves with the body.
+
+- Add **Procedural Object Holding** (Add Component > Animation) to the character
+  and **Holdable Object** to anything it may pick up. Without a Holdable Object
+  an object can still be picked up from a script; it gets automatic settings.
+- **Primary Hand** (Left / Right / Both) is the hand a one-handed object goes in;
+  *Both* always uses two hands.
+- **Holding Style**: *Automatic* uses each object's own style; *Custom* always
+  uses the object's grip points.
+- The object's **Style**: *Automatic* works out a carry from its size and weight
+  (small: one hand under it; wider than about 30 cm or over 5 kg: both hands on
+  its sides in front of the belly). *Custom* puts the hands on the **Left / Right
+  Grip** points (object-local position and rotation; rotation 0 = palm down,
+  fingers along -Z) and the object at **Hold Offset / Hold Rotation** from the
+  chest. A one-hand object authored for the right hand is mirrored when the
+  primary hand is the left.
+- **Socket**: hold it at a named object inside the character (a holster, a back
+  slot) instead of in front of the chest.
+- The hands never stretch: when a grip is out of reach the object comes closer
+  to the body. Picking up eases the object into the hands over *Transition*;
+  dropping hands it back to physics with the character's velocity.
+- Works on the built-in Character (it switches on the part rig so the arms have
+  bones) and on imported humanoids (bones found by name, through the Full Body IK
+  the character already has or one it adds). Looking around with a controller's
+  *IK Look* turns the chest before the hands are placed, so they stay on the grips.
+- Scripts: `hold_nearest(range)` and `hold_pickup("Crate")` return 1 when the
+  object is in the hands, `hold_drop()` lets go, `hold_object()` is the name of
+  what's held ("" when nothing).
 
 ## State machine: events, mute, history
 

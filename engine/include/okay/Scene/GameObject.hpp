@@ -175,7 +175,8 @@ T* GameObject::GetComponent() const {
     for (std::size_t i = FirstComponentToSearch<T>(m_components, transform); i < m_components.size(); ++i) {
         Component* c = m_components[i].get();
         if (typeid(*c) == typeid(T)) return static_cast<T*>(c);
-        if (T* casted = dynamic_cast<T*>(c)) return casted;
+        if constexpr (!std::is_final<T>::value)   // a final type has no subclasses to find
+            if (T* casted = dynamic_cast<T*>(c)) return casted;
     }
     return nullptr;
 }

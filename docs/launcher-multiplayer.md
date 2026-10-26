@@ -333,7 +333,7 @@ The server decides; clients only ask.
 
 | | Script (server) | Dedicated server flag |
 | --- | --- | --- |
-| Reject moves faster than N units/s and snap the player back | `net_max_speed(N)` | `--max-speed N` |
+| Reject moves faster than N units/s and snap the player back (also what lets the server check a hit's origin) | `net_max_speed(N)` | `--max-speed N` |
 | Drop a player's custom messages beyond N per second | `net_rate_limit(N)` | `--rate-limit N` |
 | Kick after N rejected moves in a minute | (`kickAfterViolations`) | `--kick-after N` |
 | Move a player legitimately (respawn, portal) | `net_teleport(id, x, y[, z])` | |

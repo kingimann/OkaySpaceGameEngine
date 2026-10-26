@@ -315,6 +315,17 @@ public:
     /// instead (units; the controller is told, so its camera doesn't glide).
     float reconcileRate = 12.0f;
     float reconcileSnap = 2.0f;
+    /// Prefabs clients may spawn on this host (Spawn / SpawnOwned / net_spawn)
+    /// when the anti-cheat is off; the scene's NetworkPlayerSpawner prefab
+    /// counts too. With the anti-cheat on, its spawn allowlist decides instead.
+    /// Paths are relative to the game folder, like every network prefab path.
+    std::vector<std::string> spawnablePrefabs;
+    /// Whether `path` may be named in a network spawn: relative, inside the game
+    /// folder (no "..", drive, UNC or device names), a .okayprefab, a regular
+    /// file and at most kMaxNetworkPrefabBytes. Every peer checks a spawn it
+    /// receives with it before opening anything.
+    static bool IsSafeNetworkPrefabPath(const std::string& path, std::string* why = nullptr);
+    static constexpr std::uintmax_t kMaxNetworkPrefabBytes = 4u * 1024u * 1024u;
     /// Client: the object this player drives (its SpawnOwned player, with a
     /// controller that implements IPlayerSim). Its inputs go to the host when
     /// the host runs authoritative movement.
@@ -916,6 +927,12 @@ private:
     /// dropped (a client can't start the match), and chat is re-signed with the
     /// sender's roster name (no posting as someone else).
     bool ClientMessageOk(const Client& from, const std::string& channel, std::string& data) const;
+    /// May this peer's __spawn be opened here (and, on the server, relayed)?
+    /// A safe path always; from a client, also one the host lets clients spawn.
+    /// Refusals are logged once per peer.
+    bool SpawnPathOk(std::uint32_t from, const std::string& path, bool fromClient) const;
+    bool ClientMaySpawn(const std::string& path) const;
+    mutable std::unordered_set<std::uint32_t> m_spawnRefusalLogged;
     bool AntiCheatAllowsSyncVar(std::uint32_t peer, const std::string& key);
     void AntiCheatAfterRefusal(std::uint32_t peer);
 

@@ -32457,6 +32457,21 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("A correction bigger than this (a respawn, a wall the client went through) snaps instead of easing, and the camera jumps with it.");
             }
 
+            ImGui::TextUnformatted("Spawnable prefabs");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The prefabs players may spawn on this host (net_spawn, Spawn Networked, a player that spawns its own pawn), relative to the game folder. The Player Spawner's prefab counts too. With an Anti-Cheat Config, its spawn allowlist decides instead.");
+            int removePf = -1;
+            for (int i = 0; i < (int)nm->spawnablePrefabs.size(); ++i) {
+                ImGui::PushID(i);
+                char pf[256]; std::snprintf(pf, sizeof(pf), "%s", nm->spawnablePrefabs[i].c_str());
+                ImGui::SetNextItemWidth(-30);
+                if (ImGui::InputText("##nmpf", pf, sizeof(pf))) { nm->spawnablePrefabs[i] = pf; ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("X##nmpf")) removePf = i;
+                ImGui::PopID();
+            }
+            if (removePf >= 0) { nm->spawnablePrefabs.erase(nm->spawnablePrefabs.begin() + removePf); ed.dirty = true; }
+            if (ImGui::SmallButton("+ Prefab##nmpf")) { nm->spawnablePrefabs.push_back("prefabs/new.okayprefab"); ed.dirty = true; }
+
             const char* mode = nm->IsServer() ? "Server" : nm->IsClient() ? "Client" : "Offline";
             ImGui::Text("Live: %s   Peers: %d / %d   Id: %u", mode, (int)nm->PeerCount(), nm->maxPlayers, nm->LocalId());
             if (nm->IsClient()) {

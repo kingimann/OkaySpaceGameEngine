@@ -98,7 +98,7 @@ int main() {
     auto sink = Log::sink;
     Log::sink = [](Log::Level, const std::string&) {};
 
-    const std::string crate = "/tmp/okay_ac2_crate.okayprefab";
+    const std::string crate = "okay_ac2_crate.okayprefab";
     { Scene t("T"); CHECK(SceneSerializer::SaveObjectToFile(*t.CreateGameObject("Crate"), crate)); }
 
     // ---- 2a. A relay-hosted game runs the anti-cheat like a direct one --------------------

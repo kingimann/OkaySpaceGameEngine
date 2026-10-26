@@ -1909,6 +1909,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             out << " " << nm->netTickRate << " " << (nm->authoritativeMovement ? 1 : 0);
         if (tunedPrediction) out << " " << nm->reconcileRate << " " << nm->reconcileSnap;
         out << "\n";
+        for (const auto& pf : nm->spawnablePrefabs) out << "  netprefab " << Quote(pf) << "\n";
     }
     if (auto* wu = go->GetComponent<WorldUI>()) {
         out << "  worldui " << Quote(wu->text) << " "
@@ -5049,6 +5050,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             if (std::isfinite(snap) && snap > 0.0f) nm->reconcileSnap = std::min(snap, 100.0f);
                         }
                     }
+                } else if (field == "netprefab") {   // one of the NetworkManager's spawnable prefabs
+                    const std::string pf = ReadQuoted(in);
+                    if (auto* nm = go->GetComponent<NetworkManager>(); nm && !pf.empty()) nm->spawnablePrefabs.push_back(pf);
                 } else if (field == "worldui") {
                     auto* wu = go->AddComponent<WorldUI>();
                     wu->text = ReadQuoted(in);

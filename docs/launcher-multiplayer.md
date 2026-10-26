@@ -356,6 +356,13 @@ These always hold, whether or not the anti-cheat is on:
   particular, only the host starts a match.
 - The server stamps chat with the sender's roster name, so nobody can post as
   someone else.
+- A network spawn must name a `.okayprefab` by a path relative to the game
+  folder: no `..`, drive letters, UNC paths, device names or links leading
+  outside it, and at most 4 MB. Every peer checks the spawns it receives and
+  ignores any other path.
+- Clients may only spawn the prefabs the host allows: the Network Manager's
+  **Spawnable prefabs** and the Player Spawner's prefab, or, with the
+  anti-cheat on, its spawn allowlist. The host may spawn any safe prefab.
 
 ### Anti-cheat (opt-in)
 

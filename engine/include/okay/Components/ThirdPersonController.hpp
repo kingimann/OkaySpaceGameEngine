@@ -110,7 +110,8 @@ public:
     float pivotDampingY  = 10.0f;
     float maxPivotLag = 0.6f;           // the pivot never trails the player by more (m); 0 = no limit
     // Orbit smoothing (seconds): eases the camera's yaw / pitch toward the mouse.
-    // 0 = raw. Movement direction always uses the raw angles.
+    // 0 = Look Smoothing's value (0 there too = raw). Movement direction always
+    // uses the raw angles.
     float orbitSmoothing = 0.0f;
     // Camera collision (spring arm): pull the camera in when a wall/floor is between
     // it and the player so it never clips through geometry. `skin` keeps the near
@@ -134,7 +135,7 @@ public:
     float yaw = 0.0f, pitch = 18.0f;    // camera orbit angles (degrees)
 
     // ---- Feel ----
-    float lookSmoothing = 0.0f;         // mouse smoothing time (s); 0 = raw input
+    float lookSmoothing = 0.0f;         // look smoothing time (s), when orbitSmoothing is 0; 0 = raw
     float sprintFovBoost = 6.0f;        // FOV widens this much while sprinting (0 = off)
     float fovLerp = 7.0f;
     // Aim (hold right mouse): over-the-shoulder close-up, the body faces where the
@@ -222,7 +223,6 @@ public:
         if (m_haveMouse && !uiBlocked) {
             float sens = mouseSensitivity * (aimWithRightMouse && aim ? aimSensitivity : 1.0f);
             float dx = (mp.x - m_lastMouse.x) * sens, dy = (mp.y - m_lastMouse.y) * sens;
-            m_smooth.Step(dx, dy, lookSmoothing, m_lookDt);
             if (std::fabs(mp.x - m_lastMouse.x) + std::fabs(mp.y - m_lastMouse.y) > 0.5f) m_mouseIdle = 0.0f;
             else m_mouseIdle += m_lookDt;
             in.yaw   += (invertX ? 1.0f : -1.0f) * dx;
@@ -505,21 +505,16 @@ public:
         m_shake *= 1.0f - EaseFactor(8.0f, dt);
 
         // The orbit angles: raw, or eased (the shortest way round for yaw) when
-        // orbitSmoothing is on. Position and rotation both use the same pair.
-        if (orbitSmoothing > 0.0f && m_haveOrbit) {
-            const float k = 1.0f - std::exp(-dt / orbitSmoothing);
-            m_orbitYaw += std::remainder(yaw - m_orbitYaw, 360.0f) * k;
-            m_orbitPitch += (pitch - m_orbitPitch) * k;
-        } else {
-            m_orbitYaw = yaw; m_orbitPitch = pitch;
-        }
-        m_haveOrbit = true;
+        // orbitSmoothing (or the older Look Smoothing) is on. Position and
+        // rotation both use the same pair.
+        m_smooth.Step(yaw, pitch, orbitSmoothing > 0.0f ? orbitSmoothing : lookSmoothing, dt);
+        const float orbitYaw = m_smooth.Yaw(), orbitPitch = m_smooth.Pitch();
 
         // Place the camera BEHIND the player (+Z of its facing at yaw 0), lifted by
         // pitch so a positive pitch looks DOWN at the player from above, around the
         // pivot with no lag of its own (so it never trails its rotation).
-        float pr = m_orbitPitch * Mathf::Deg2Rad;
-        Vec3 behind = Quat::Euler(0, m_orbitYaw, 0) * Vec3{0, 0, 1};   // horizontal, behind the facing
+        float pr = orbitPitch * Mathf::Deg2Rad;
+        Vec3 behind = Quat::Euler(0, orbitYaw, 0) * Vec3{0, 0, 1};   // horizontal, behind the facing
         float cp = Mathf::Cos(pr);
         Vec3 offset{behind.x * cp, Mathf::Sin(pr), behind.z * cp};
         Vec3 camPos = target + offset * useDistance;
@@ -528,7 +523,7 @@ public:
         // The rotation stays level (built from yaw/pitch below), so the view is a
         // parallel offset — no roll.
         if (useShoulder != 0.0f)
-            camPos = camPos + (Quat::Euler(0, m_orbitYaw, 0) * Vec3::Right) * useShoulder;
+            camPos = camPos + (Quat::Euler(0, orbitYaw, 0) * Vec3::Right) * useShoulder;
 
         // Camera collision (spring arm), from the pivot to the camera, after the
         // smoothing so the view never clips even while the follow eases.
@@ -555,7 +550,7 @@ public:
         // Build the rotation straight from yaw/pitch with NO roll component (z = 0)
         // so the horizon is always level. Regular third person does NOT move the
         // camera when leaning — the character's body leans instead (see Update).
-        cam->localRotation = Quat::Euler(-m_orbitPitch, m_orbitYaw, 0.0f);
+        cam->localRotation = Quat::Euler(-orbitPitch, orbitYaw, 0.0f);
         m_fov.Update(sc->mainCamera, m_running && m_lastSpeed > walkSpeed * 0.9f, sprintFovBoost,
                      m_aimT > 0.5f, aimFov, fovLerp, dt);
         // Full Body IK: look where the camera looks (a point well ahead of it).
@@ -668,8 +663,6 @@ private:
     float m_stanceDrop = 0.0f;        // smoothed look-target drop for crouch/prone
     FollowPivot m_pivot;              // the smoothed point the camera orbits
     SpringArm m_arm;                  // camera collision
-    float m_orbitYaw = 0.0f, m_orbitPitch = 0.0f;   // the angles the camera uses (orbitSmoothing)
-    bool m_haveOrbit = false;
     Camera* m_claimedCam = nullptr;   // the main camera last checked for a competing follow
     float m_groundContact = 0.0f;   // time-to-live of the last ground contact
     float m_coyote = 0.0f;          // remaining coyote-time window

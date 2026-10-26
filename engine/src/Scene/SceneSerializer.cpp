@@ -1494,7 +1494,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  fpfeel " << fp->lookSmoothing << " " << fp->sprintFovBoost << " " << fp->fovLerp
             << " " << (fp->zoomWithRightMouse ? 1 : 0) << " " << fp->zoomFov << " " << fp->zoomSensitivity
             << " " << fp->landDip << " " << (fp->canSlide ? 1 : 0) << " " << fp->slideSpeed << " " << fp->slideTime
-            << " " << fp->slideEyeHeight << " " << (fp->driveStateMachine ? 1 : 0) << " " << (fp->ikLook ? 1 : 0) << "\n";
+            << " " << fp->slideEyeHeight << " " << (fp->driveStateMachine ? 1 : 0) << " " << (fp->ikLook ? 1 : 0)
+            // extended: the head bob and the eye smoothing
+            << " " << (fp->headBob ? 1 : 0) << " " << fp->bobAmount << " " << fp->bobSpeed << " " << fp->bobSway
+            << " " << fp->bobRunScale << " " << fp->bobBlend << " " << fp->bobGroundGrace << " " << fp->eyeStepSmoothing << "\n";
         out << "  fpstance";
         KvOut k{out};
         k.b("prone", fp->allowProne).b("resize", fp->resizeBody)("crouchH", fp->crouchHeight)("proneH", fp->proneHeight)
@@ -4061,6 +4064,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> fp->lookSmoothing >> fp->sprintFovBoost >> fp->fovLerp >> z >> fp->zoomFov >> fp->zoomSensitivity
                            >> fp->landDip >> sl >> fp->slideSpeed >> fp->slideTime >> fp->slideEyeHeight >> sm >> ik;
                         fp->zoomWithRightMouse = z != 0; fp->canSlide = sl != 0; fp->driveStateMachine = sm != 0; fp->ikLook = ik != 0;
+                        // Optional head bob + eye smoothing block (absent in older scenes).
+                        int hb = fp->headBob ? 1 : 0;
+                        float ba = fp->bobAmount, bs = fp->bobSpeed, bw = fp->bobSway, br = fp->bobRunScale,
+                              bb = fp->bobBlend, bg = fp->bobGroundGrace, es = fp->eyeStepSmoothing;
+                        in >> std::ws;
+                        if (std::isdigit(in.peek()) && (in >> hb >> ba >> bs >> bw >> br >> bb >> bg >> es)) {
+                            fp->headBob = hb != 0; fp->bobAmount = ba; fp->bobSpeed = bs; fp->bobSway = bw;
+                            fp->bobRunScale = br; fp->bobBlend = bb; fp->bobGroundGrace = bg; fp->eyeStepSmoothing = es;
+                        }
                     }
                 } else if (field == "tpfeel") {
                     if (auto* tp = go->GetComponent<ThirdPersonController>()) {

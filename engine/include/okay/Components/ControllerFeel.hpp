@@ -8,7 +8,7 @@
 //   * FovKick   — eases a camera's field of view toward base + sprint boost, or a
 //                 zoom FOV while aiming.
 //   * Landing   — detects touchdown and how hard it was.
-//   * LookSmoother — optional mouse smoothing.
+//   * LookSmoother — optional look smoothing (of the view's angles).
 //   * FollowPivot / SpringArm / ClaimMainCamera — the orbit cameras' follow
 //                 point, wall collision, and sole ownership of the main camera.
 //   * FindInTree<T> — a component on the object or any descendant.
@@ -107,16 +107,22 @@ private:
     float m_airTime = 0.0f, m_minVy = 0.0f, m_dt = 0.016f;
 };
 
-/// Exponential smoothing for mouse deltas (0 = raw).
+/// Look smoothing: eases the angles the view shows toward the look angles
+/// (yaw the short way round), frame-rate independent, so the total turn is
+/// exactly the mouse's and uneven frame times don't weight it unevenly.
+/// `smoothing` is a time in seconds; 0 = the look angles as they are.
 struct LookSmoother {
-    void Step(float& dx, float& dy, float smoothing, float dt) {
-        if (smoothing <= 0.0f) { m_x = dx; m_y = dy; return; }
-        float t = 1.0f - std::exp(-dt / std::max(1e-4f, smoothing));
-        m_x += (dx - m_x) * t; m_y += (dy - m_y) * t;
-        dx = m_x; dy = m_y;
+    void Step(float targetYaw, float targetPitch, float smoothing, float dt) {
+        if (smoothing <= 0.0f || !m_have) { m_yaw = targetYaw; m_pitch = targetPitch; m_have = true; return; }
+        const float t = 1.0f - std::exp(-dt / std::max(1e-4f, smoothing));
+        m_yaw += std::remainder(targetYaw - m_yaw, 360.0f) * t;
+        m_pitch += (targetPitch - m_pitch) * t;
     }
+    float Yaw() const { return m_yaw; }
+    float Pitch() const { return m_pitch; }
 private:
-    float m_x = 0.0f, m_y = 0.0f;
+    float m_yaw = 0.0f, m_pitch = 0.0f;
+    bool m_have = false;
 };
 
 /// 1 - e^(-k dt): the share of the way an exponential ease covers this frame
@@ -197,7 +203,7 @@ inline void ClaimMainCamera(Camera* cam, const char* controller) {
                 live = live || (v->enabled && v->gameObject && v->gameObject->active);
             if (live) {
                 b->enabled = false;
-                OKAY_WARN(controller, " drives the main camera '", go->name, "': its Cinemachine Brain was turned "
+                OKAY_WARN(controller, " drives the main camera '", go->name, "': its camera brain was turned "
                           "off (the two would fight). Remove one of them, or give the player another camera.");
             }
         }

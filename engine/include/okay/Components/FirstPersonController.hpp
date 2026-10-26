@@ -52,8 +52,16 @@ public:
     // View bob: a subtle up/down camera sway in step with walking, so movement
     // feels grounded instead of gliding. Scales with speed; smooths out when idle.
     bool  headBob   = true;
-    float bobAmount = 0.05f;            // bob height (world units)
+    float bobAmount = 0.035f;           // bob height (world units)
     float bobSpeed  = 9.0f;             // bob cadence (≈ footstep rate)
+    float bobSway   = 0.015f;           // sideways sway (world units), at half the bob's rate
+    float bobRunScale = 0.8f;           // bob size at run speed (x the walking bob)
+    float bobBlend  = 8.0f;             // how fast the bob fades in / out as you start / stop
+    float bobGroundGrace = 0.12f;       // s the bob and landing dip still count you as grounded (stairs, slopes)
+    // Eye smoothing: when the body is lifted or dropped while you're on the
+    // ground (a step, a curb, a platform), the eye eases there instead of
+    // popping. How fast (higher = quicker; 0 = no smoothing).
+    float eyeStepSmoothing = 14.0f;
     char  sprintKey = Input::KeyShift;  // hold (or tap, if toggleRun) to run; 0 = disabled
     bool  toggleRun = false;            // tap sprint to keep running instead of holding
     bool  canJump = true;
@@ -102,7 +110,7 @@ public:
     float yaw = 0.0f, pitch = 0.0f;     // look angles (degrees)
 
     // ---- Feel ----
-    float lookSmoothing = 0.0f;         // mouse smoothing time (s); 0 = raw input
+    float lookSmoothing = 0.0f;         // look smoothing time (s): the view eases toward the look angles; 0 = raw
     float sprintFovBoost = 8.0f;        // FOV widens this much while sprinting (0 = off)
     float fovLerp = 8.0f;               // how fast the FOV eases
     bool  zoomWithRightMouse = true;    // hold right mouse to zoom / aim down sights
@@ -204,7 +212,6 @@ public:
         if (m_haveMouse && !uiBlocked) {
             float sens = mouseSensitivity * (zoomWithRightMouse && zoom ? zoomSensitivity : 1.0f);
             float dx = (mp.x - m_lastMouse.x) * sens, dy = (mp.y - m_lastMouse.y) * sens;
-            m_smooth.Step(dx, dy, lookSmoothing, m_lookDt);
             in.yaw   -= dx;
             in.pitch += (invertY ? 1.0f : -1.0f) * dy;
             // Kept here too, so the look adds up where Simulate doesn't run every
@@ -248,8 +255,7 @@ public:
         float roll = -m_lean * leanAngle;
         if (Transform* cam = FindCameraChild()) {
             transform->localRotation = Quat::Euler(0, yaw, 0);        // body turns
-            cam->localRotation       = Quat::Euler(pitch, 0, roll);  // camera tilts + leans
-            cam->localPosition.x     = m_lean * leanOffset;          // peek sideways
+            cam->localRotation       = Quat::Euler(pitch, 0, roll);  // camera tilts + leans (shifts sideways in LateUpdate)
         } else {
             transform->localRotation = Quat::Euler(pitch, yaw, roll); // no child cam: tilt self
         }
@@ -374,16 +380,19 @@ public:
                           : (moving ? speed : 0.0f);
         {
             float impact = 0.0f;
+            // Stairs and slopes flicker `grounded` for a frame or two: the bob and
+            // the landing dip see it a moment longer, so they don't twitch.
+            m_sinceGround = grounded ? 0.0f : m_sinceGround + dt;
+            const bool groundish = grounded || m_sinceGround < bobGroundGrace;
             m_landing.SetDt(dt);
-            m_landed = m_landing.Step(grounded, rb ? rb->velocity.y : 0.0f, impact);
+            m_landed = m_landing.Step(groundish, rb ? rb->velocity.y : 0.0f, impact);
             if (m_landed) {
                 m_dip = Mathf::Min(landDip, impact * 0.012f);
                 if (onLand) onLand(impact);
             }
-            m_dip += (0.0f - m_dip) * Mathf::Min(1.0f, 9.0f * dt);
-            ApplyHeadBob(dt, grounded, hSpeed);
+            m_dip *= 1.0f - EaseFactor(9.0f, dt);
+            ApplyHeadBob(dt, groundish, hSpeed);
             if (Transform* camT = FindCameraChild()) {
-                camT->localPosition.y -= m_dip;
                 m_fov.Update(camT->gameObject->GetComponent<Camera>(), running && hSpeed > walkSpeed * 0.9f,
                              sprintFovBoost, m_zoom, zoomFov, fovLerp, dt);
             }
@@ -432,6 +441,40 @@ public:
                     fb->lookEnabled = true; fb->lookTarget = nullptr;
                     fb->lookPosition = camT->Position() + (camT->Rotation() * Vec3{0, 0, -1}) * 10.0f;
                 }
+    }
+
+    /// After physics, the eye. A lift or drop of the body while on the ground (a
+    /// step, a curb, a moving platform) is eased out (eyeStepSmoothing) instead of
+    /// popping; then the camera's local position is put together once: eye
+    /// height + bob - landing dip + that step, and the lean's peek + the sway.
+    /// With Look Smoothing on, the view (body yaw, camera pitch) shows the eased
+    /// angles; movement and the input sent to a server keep the exact ones.
+    /// Camera only: Simulate never reads any of it.
+    void LateUpdate(float dt) override {
+        if (!transform || !m_haveEyeBase) return;   // the eye starts once this peer has simulated the player
+        const float y = transform->Position().y;
+        if (m_haveBodyY) {
+            const float dy = y - m_lastBodyY;
+            if (std::fabs(dy) > 1.0f) m_stepOffsetY = 0.0f;   // a teleport or respawn: no glide
+            else if (m_grounded && eyeStepSmoothing > 0.0f) {
+                // Not a jump or a fall starting (those move the body with real
+                // vertical speed; a step-up or a platform doesn't).
+                const auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
+                if (!rb || std::fabs(rb->velocity.y) < 1.0f) m_stepOffsetY -= dy;
+            }
+        }
+        m_lastBodyY = y; m_haveBodyY = true;
+        const float lim = Mathf::Max(0.0f, stepOffset) + 0.1f;
+        m_stepOffsetY = Mathf::Clamp(m_stepOffsetY, -lim, lim) * (1.0f - EaseFactor(eyeStepSmoothing, dt));
+        Transform* cam = FindCameraChild();
+        if (!cam) return;
+        cam->localPosition.y = m_eyeBase + m_bob - m_dip + m_stepOffsetY;
+        cam->localPosition.x = m_lean * leanOffset + m_sway;
+        m_smooth.Step(yaw, pitch, lookSmoothing, dt);
+        if (lookSmoothing > 0.0f) {
+            transform->localRotation = Quat::Euler(0, m_smooth.Yaw(), 0);
+            cam->localRotation = Quat::Euler(m_smooth.Pitch(), 0, -m_lean * leanAngle);
+        }
     }
 
     // Grounded detection: a roughly-vertical contact with something below the player.
@@ -534,29 +577,36 @@ private:
                      : m_slideT > 0.0f ? slideEyeHeight
                      : m_stance == Stance::Crouch ? crouchEyeHeight : standEyeHeight;
         float t = stanceLerp > 0.0f ? (1.0f - std::exp(-stanceLerp * dt)) : 1.0f;
-        m_eyeBase += (target - m_eyeBase) * t;
-        cam->localPosition.y = m_eyeBase;     // bob (if any) is layered on after movement
+        m_eyeBase += (target - m_eyeBase) * t;   // the camera is placed in LateUpdate
     }
 
-    // Layer a walking head-bob on top of the eased eye height.
+    // The walking head-bob (and sway), layered on the eye height in LateUpdate.
+    // Its size eases in and out (bobBlend) instead of switching formulas, so
+    // starting, stopping and a flickering `grounded` never jolt the view; the
+    // phase restarts from 0 once it has faded out, so the next start does too.
     void ApplyHeadBob(float dt, bool grounded, float hSpeed) {
-        Transform* cam = FindCameraChild();
-        if (!cam) return;
-        if (grounded && hSpeed > 0.3f && m_slideT <= 0.0f) {
-            float ref = Mathf::Max(0.1f, walkSpeed);
-            float prev = m_bobPhase;
+        const float ref = Mathf::Max(0.1f, walkSpeed);
+        const bool walking = grounded && hSpeed > 0.3f && m_slideT <= 0.0f;
+        float want = 0.0f;
+        if (walking && headBob) {
+            const float run = runSpeed > walkSpeed ? Mathf::Clamp((hSpeed - walkSpeed) / (runSpeed - walkSpeed), 0.0f, 1.0f) : 0.0f;
+            want = bobAmount * Mathf::Min(1.0f, hSpeed / ref) * (1.0f + (bobRunScale - 1.0f) * run);
+        }
+        m_bobAmp += (want - m_bobAmp) * EaseFactor(bobBlend, dt);
+        if (walking || m_bobAmp > 1e-4f) {
+            const float prev = m_bobPhase;
             m_bobPhase += dt * bobSpeed * Mathf::Max(0.4f, hSpeed / ref);
             // A footstep every half bob cycle (left, right, left...).
-            if (std::floor(m_bobPhase / 3.14159265f) != std::floor(prev / 3.14159265f)) {
+            if (walking && std::floor(m_bobPhase / 3.14159265f) != std::floor(prev / 3.14159265f)) {
                 ++m_steps;
                 if (onFootstep) onFootstep((m_steps & 1) != 0);
             }
-            float amp = headBob ? bobAmount * Mathf::Min(1.0f, hSpeed / ref) : 0.0f;
-            m_bob = std::sin(m_bobPhase) * amp;
         } else {
-            m_bob += (0.0f - m_bob) * Mathf::Min(1.0f, 10.0f * dt);   // ease out when idle/airborne
+            m_bobAmp = 0.0f; m_bobPhase = 0.0f;
         }
-        cam->localPosition.y = m_eyeBase + m_bob;
+        const float w = bobAmount > 1e-5f ? m_bobAmp / bobAmount : 0.0f;
+        m_bob  = std::sin(m_bobPhase) * m_bobAmp;
+        m_sway = std::cos(m_bobPhase * 0.5f) * bobSway * w;
     }
 
     Vec2 m_lastMouse{0, 0};
@@ -571,6 +621,10 @@ private:
     float m_eyeBase = 1.6f;          // eased base eye height (bob layered on top)
     bool  m_haveEyeBase = false;
     float m_bobPhase = 0.0f, m_bob = 0.0f;   // walking view-bob state
+    float m_bobAmp = 0.0f, m_sway = 0.0f;    // the bob's eased size, the sideways sway
+    float m_sinceGround = 0.0f;              // s since grounded (bobGroundGrace)
+    float m_stepOffsetY = 0.0f;              // eye smoothing: the step still being eased out
+    float m_lastBodyY = 0.0f; bool m_haveBodyY = false;
     float m_lean = 0.0f;             // eased lean amount (-1..+1)
     int   m_jumpsUsed = 0;          // jumps since last grounded (for double-jump)
     LookSmoother m_smooth;

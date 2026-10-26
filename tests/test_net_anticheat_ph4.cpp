@@ -3,6 +3,8 @@
 #include "okay/Net/DedicatedServer.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
+#include "okay/Net/Packet.hpp"
+#include "okay/Net/UdpSocket.hpp"
 
 #include <chrono>
 #include <fstream>
@@ -318,6 +320,44 @@ int main() {
         CHECK(kicks.size() == 1);
         CHECK(!kicks.empty() && kicks[0].userId == uid && kicks[0].name == "zed");
         CHECK(!kicks.empty() && kicks[0].recent.size() == 3 && kicks[0].recent.back().kind == CheatKind::ForgedTransform);
+        srv->Stop();
+    }
+
+    // ---- The round-trip pings never report a client when the clock isn't checked ---------
+    {
+        // With the anti-cheat on, the heartbeat pings every client once a second
+        // (hit claims allow for its round trip). With maxClockDrift 0, a client
+        // that never answers (an older game) is never reported for it.
+        Scene ss("Server");
+        auto* srv = ss.CreateGameObject("Net")->AddComponent<NetworkManager>();
+        srv->anticheat.settings.enabled = true;
+        srv->anticheat.settings.maxClockDrift = 0.0f;
+        srv->anticheat.settings.kickAfterViolations = 1;
+        std::vector<CheatReport> reports;
+        srv->SetCheatHandler([&](const CheatReport& r) { reports.push_back(r); });
+        CHECK(srv->StartServer(0));
+        ss.Start();
+        net::UdpSocket raw; raw.Open(); raw.Bind(0);
+        const net::Endpoint to{0x7F000001u, srv->ServerPort()};
+        auto join = [&] {   // a plain (older) Join; re-sent so it doesn't time out
+            net::Packet j(1);
+            for (int i = 0; i < 5; ++i) j.Write(std::string(i == 0 ? "old" : ""));
+            raw.SendTo(to, j.Data(), j.Size());
+        };
+        int pings = 0;
+        auto drain = [&] {
+            std::uint8_t buf[2048]; net::Endpoint from; int n;
+            while ((n = raw.RecvFrom(buf, sizeof buf, from)) > 0) pings += buf[0] == 26;   // ClockPing
+        };
+        for (int i = 0; i < 50 && srv->PlayerCount() < 2; ++i) { join(); ss.Update(0.02f); Nap(); }
+        CHECK(srv->PlayerCount() == 2);
+        for (int i = 0; i < 750; ++i) {                 // 15 s of server time, never answering
+            if (i % 25 == 0) join();
+            ss.Update(0.02f); drain(); Nap();
+        }
+        CHECK(pings >= 10);                              // it was asked ...
+        CHECK(Count(reports, CheatKind::ClockDrift) == 0);   // ... and never reported
+        CHECK(srv->PlayerCount() == 2);                  // nor kicked (kick after 1)
         srv->Stop();
     }
 

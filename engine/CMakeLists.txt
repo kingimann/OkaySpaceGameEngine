@@ -57,6 +57,7 @@ add_library(okay_engine
     src/Inventory/LootTable.cpp
     src/Inventory/InventoryPersistence.cpp
     src/Inventory/Recipe.cpp
+    src/Inventory/Equipment.cpp
     src/UI/InventoryInput.cpp
     src/Components/UIDocument.cpp
     src/Components/UILayoutGroup.cpp

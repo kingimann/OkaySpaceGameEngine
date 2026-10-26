@@ -136,6 +136,10 @@ add_test(NAME inventory_gameplay COMMAND test_inventory_gameplay)
 add_executable(test_inventory_persist_craft test_inventory_persist_craft.cpp)
 target_link_libraries(test_inventory_persist_craft PRIVATE okay::engine)
 add_test(NAME inventory_persist_craft COMMAND test_inventory_persist_craft)
+# Equipment: drag to equip, sockets, armor/defence, worn backpacks, save/load and scene carry
+add_executable(test_inventory_equipment test_inventory_equipment.cpp)
+target_link_libraries(test_inventory_equipment PRIVATE okay::engine)
+add_test(NAME inventory_equipment COMMAND test_inventory_equipment)
 
 add_executable(test_pathfinding test_pathfinding.cpp)
 target_link_libraries(test_pathfinding PRIVATE okay::engine)

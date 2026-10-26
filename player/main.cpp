@@ -589,6 +589,40 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     }
     if (ui.showPanel) panel(hx - panelPad, hy - panelPad, rowW + 2 * panelPad, sz + 2 * panelPad);
     for (int i = 0; i < n && i < total; ++i) slot(hx + i * (sz + gap), hy, i, i == ui.selected);
+    // Equipment column (worn items) beside the open backpack.
+    auto equipIcon = [&](const std::string& item, float x, float y) {
+        if (SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(ui.iconFolder, item), baseDir, cache)) {
+            int ins = (int)(ui.iconInset * uiScale); SDL_Rect d{(int)x + ins, (int)y + ins, (int)sz - 2 * ins, (int)sz - 2 * ins};
+            SDL_RenderCopy(r, icon, nullptr, &d);
+        } else {
+            std::string nm = item.substr(0, ui.nameChars < 1 ? 1 : (std::size_t)ui.nameChars);
+            float px = (sz - 8.0f) / ((float)nm.size() * (Font8x8::Width + 1)) * ui.labelScale;
+            if (px < 1.0f) px = 1.0f; if (px > sz * 0.05f) px = sz * 0.05f;
+            DrawText(r, nm, x + 4, y + 5, px, SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
+        }
+    };
+    if (L.equip && L.equipN > 0) {
+        float x0, y0, x1, y1; L.EquipXY(0, x0, y0); L.EquipXY(L.equipN - 1, x1, y1);
+        if (ui.showPanel) panel(x0 - panelPad, y0 - panelPad, sz + 2 * panelPad, (y1 - y0) + sz + 2 * panelPad);
+        for (int e = 0; e < L.equipN; ++e) {
+            float x, y; L.EquipXY(e, x, y);
+            const std::string& it = L.equip->ItemIn(e);
+            SDL_Rect outer{(int)x, (int)y, (int)sz, (int)sz};
+            FillUIShape(r, outer, shp, cr, ui.slotBorder, ui.slotBorder, false, false, 1.0f);
+            float b = ui.borderWidth < 0 ? 0 : ui.borderWidth;
+            SDL_Rect inner{(int)(x + b), (int)(y + b), (int)(sz - 2 * b), (int)(sz - 2 * b)};
+            const Color fc = it.empty() ? ui.emptySlotColor : ui.slotColor;
+            FillUIShape(r, inner, shp, cr, fc, fc, false, false, 1.0f);
+            if (!it.empty() && e != ui.equipDrag) equipIcon(it, x, y);
+            else if (it.empty()) {   // the slot's name, small, so you know what goes there
+                const std::string& nm = L.equip->slots[e].name;
+                float px = (sz - 6.0f) / ((float)(nm.size() < 4 ? 4 : nm.size()) * (Font8x8::Width + 1));
+                if (px < 1.0f) px = 1.0f;
+                DrawText(r, nm, x + 3, y + sz * 0.5f - Font8x8::Height * px * 0.5f, px,
+                         SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),110});
+            }
+        }
+    }
     // Hotbar slot numbers (1–9) in the top-left corner.
     if (ui.slotNumbers) {
         float px = sz * 0.030f * ui.labelScale; if (px < 1.0f) px = 1.0f;
@@ -638,6 +672,19 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         SDL_Rect hr{(int)sx, (int)sy, (int)sz, (int)sz};
         FillUIShape(r, hr, cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle, cr, c, c, false, false, 1.0f);
     };
+    if (L.equip && fr.equipHover >= 0) {   // equipment slot under the cursor: highlight + what's worn
+        float ex, ey; L.EquipXY(fr.equipHover, ex, ey);
+        SDL_Rect hr{(int)ex, (int)ey, (int)sz, (int)sz};
+        FillUIShape(r, hr, cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle, cr, ui.hoverColor, ui.hoverColor, false, false, 1.0f);
+        const std::string& it = L.equip->ItemIn(fr.equipHover);
+        const okay::ItemDefinition* d = it.empty() ? nullptr : okay::ItemDatabase::Get().Find(it);
+        drawTip(L.equip->slots[fr.equipHover].name + (it.empty() ? std::string() : ": " + (d ? d->DisplayName() : it)));
+    }
+    if (L.equip && ui.equipDrag >= 0 && ui.equipDrag < L.equipN) {   // a worn item following the cursor
+        const float x = mp.x - sz * 0.5f, y = mp.y - sz * 0.5f;
+        slot(x, y, -2, false);
+        equipIcon(L.equip->ItemIn(ui.equipDrag), x, y);
+    }
     // Highlight the slot under the cursor while hovering, or where a held stack will land.
     if (fr.hover >= 0) {
         hilite(fr.hover, ui.hoverColor);

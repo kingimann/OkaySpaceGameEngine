@@ -8,6 +8,8 @@
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <algorithm>
+#include <iomanip>
+#include <filesystem>
 #include <cctype>
 #include <cmath>
 #include <fstream>
@@ -820,17 +822,30 @@ void Character::AddClip(AnimClip clip) {
     if (m_activeClipName == name) m_activeClip = &m_clips[name];  // keep pointer valid on replace
 }
 
-int Character::LoadClips(const std::string& text, std::string* error) {
+int Character::LoadClips(const std::string& text, std::string* error, bool replaceExisting) {
     auto clips = AnimClip::ParseAll(text, &Character::BoneIndex, B_COUNT, error);
-    for (auto& c : clips) AddClip(std::move(c));
+    for (auto& c : clips)
+        if (replaceExisting || !HasClip(c.name)) AddClip(std::move(c));
     return (int)clips.size();
 }
 
-bool Character::LoadClipsFromFile(const std::string& path, std::string* error) {
+bool Character::LoadClipsFromFile(const std::string& path, std::string* error, bool replaceExisting) {
     std::ifstream f(path);
     if (!f) { if (error) *error = "cannot open " + path; return false; }
     std::stringstream ss; ss << f.rdbuf();
-    return LoadClips(ss.str(), error) > 0;
+    return LoadClips(ss.str(), error, replaceExisting) > 0;
+}
+
+static std::string& ClipsBaseDir() { static std::string d; return d; }
+void Character::SetAssetBaseDir(const std::string& dir) { ClipsBaseDir() = dir; }
+const std::string& Character::AssetBaseDir() { return ClipsBaseDir(); }
+
+std::string Character::ResolvedClipsFile() const {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path p(clipsFile);
+    if (clipsFile.empty() || p.is_absolute() || ClipsBaseDir().empty() || fs::exists(p, ec)) return clipsFile;
+    return (fs::path(ClipsBaseDir()) / p).string();
 }
 
 bool Character::SaveClipsToFile(const std::string& path, std::string* error) const {
@@ -909,15 +924,35 @@ std::vector<std::string> Character::ClipNames() const {
 }
 
 void Character::SyncStateClips() {
-    // No-code: when the user has bound a clip to a movement state, make that clip the
-    // active one (so YOUR animation plays instead of the built-in for that state).
-    if (clipIdle.empty() && clipWalk.empty() && clipRun.empty()) return;
     if (m_blendTreeOn) return;    // the locomotion blend tree owns the base pose
     if (m_editorPosing) return;   // editor preview owns the pose
+    // A manual clip (PlayClip / autoPlayClip) gives way to movement: a looping one
+    // stops as soon as the character starts moving or jumps (the state changes into
+    // walk/run/jump/fall while it plays), a one-shot once it has finished, so an
+    // authored flourish never freezes the player in place. A script that plays a
+    // clip while already running keeps it until the state changes. A clip flagged
+    // overrideMovement keeps the body until it's stopped explicitly.
+    const bool moving = anim == 2 || anim == 3 || anim == 5 || anim == 17 || anim == 18;
+    const bool stateChanged = m_syncAnim >= 0 && anim != m_syncAnim;
+    m_syncAnim = anim;
+    if (m_activeClip && !m_stateDriven) {
+        if (m_activeClip->overrideMovement) return;
+        const bool finished = !m_activeClip->loop && m_clipTime >= m_activeClip->Duration();
+        if (moving && (stateChanged || finished)) StopClip();
+    }
+    // No-code: when the user has bound a clip to a movement state, make that clip the
+    // active one (so YOUR animation plays instead of the built-in for that state).
     const std::string* want = nullptr;
-    if      (anim == 1 && !clipIdle.empty()) want = &clipIdle;
-    else if (anim == 2 && !clipWalk.empty()) want = &clipWalk;
-    else if (anim == 3 && !clipRun.empty())  want = &clipRun;
+    switch (anim) {
+        case 1:  want = &clipIdle; break;
+        case 2:  want = &clipWalk; break;
+        case 3:  want = &clipRun; break;
+        case 5:  want = &clipJump; break;
+        case 18: want = &clipFall; break;
+        case 6:  want = &clipCrouch; break;
+        default: break;
+    }
+    if (want && want->empty()) want = nullptr;
     if (want) {
         if (m_activeClipName != *want && m_clips.count(*want)) { PlayClip(*want); m_stateDriven = true; }
         else if (m_activeClipName == *want) m_stateDriven = true;
@@ -1426,7 +1461,7 @@ std::string Character::ToText() const {
       << anim << ' ' << animSpeed << ' '
       // Custom-clip fields last so older saves (which lack them) still parse; "-"
       // stands in for an empty value (single tokens, no embedded spaces).
-      << (clipsFile.empty() ? "-" : clipsFile) << ' '
+      << std::quoted(clipsFile.empty() ? std::string("-") : clipsFile) << ' '   // quoted: paths may have spaces
       << (autoPlayClip.empty() ? "-" : autoPlayClip) << ' '
       << (separateParts ? 1 : 0) << ' ' << (animateParts ? 1 : 0);
     // Authored animation clips (per-bone euler keyframes) so editor-made animations
@@ -1456,6 +1491,17 @@ std::string Character::ToText() const {
         o << ' ' << (c.name.empty() ? "-" : c.name) << ' ' << c.events.size();
         for (const auto& e : c.events) o << ' ' << e.time << ' ' << (e.name.empty() ? "-" : e.name);
     }
+    // Jump/fall/crouch bindings, the linked-file flag, then each clip's playback
+    // settings (trailing again, so older saves read as defaults).
+    o << ' ' << (clipJump.empty() ? "-" : clipJump)
+      << ' ' << (clipFall.empty() ? "-" : clipFall)
+      << ' ' << (clipCrouch.empty() ? "-" : clipCrouch)
+      << ' ' << (clipsLinked ? 1 : 0) << ' ' << m_clips.size();
+    for (const auto& kv : m_clips) {
+        const AnimClip& c = kv.second;
+        o << ' ' << (c.name.empty() ? "-" : c.name) << ' ' << (int)c.interp << ' ' << c.speed
+          << ' ' << c.length << ' ' << (c.overrideMovement ? 1 : 0);
+    }
     return o.str();
 }
 
@@ -1475,7 +1521,7 @@ void Character::FromText(const std::string& text) {
     hasBackpack = hbp != 0; hasCape = hc != 0;
     // Optional trailing custom-clip fields (absent in older saves -> left default).
     std::string cf, ap;
-    if (in >> cf && cf != "-") clipsFile = cf;
+    if (in >> std::quoted(cf) && cf != "-") clipsFile = cf;   // quoted, or one bare token (older saves)
     if (in >> ap && ap != "-") autoPlayClip = ap;
     int sp = 0, an = 1;
     if (in >> sp) separateParts = (sp != 0);
@@ -1520,6 +1566,26 @@ void Character::FromText(const std::string& text) {
             std::string key = (cn == "-" ? "" : cn);
             auto it = m_clips.find(key);
             if (it != m_clips.end()) it->second.events = std::move(evs);
+        }
+    }
+    // Optional trailing jump/fall/crouch bindings, linked flag and clip settings.
+    std::string sj, sf, sc;
+    if (in >> sj) clipJump = (sj == "-" ? "" : sj);
+    if (in >> sf) clipFall = (sf == "-" ? "" : sf);
+    if (in >> sc) clipCrouch = (sc == "-" ? "" : sc);
+    int lk = 0;
+    if (in >> lk) clipsLinked = (lk != 0);
+    int nm = 0;
+    if (in >> nm) {
+        for (int i = 0; i < nm; ++i) {
+            std::string cn; int ip = 0, ov = 0; float spd = 1.0f, len = 0.0f;
+            if (!(in >> cn >> ip >> spd >> len >> ov)) break;
+            auto it = m_clips.find(cn == "-" ? "" : cn);
+            if (it == m_clips.end()) continue;
+            it->second.interp = (ip == 1) ? AnimInterp::Smooth : (ip == 2) ? AnimInterp::Step : AnimInterp::Linear;
+            it->second.speed = spd > 1e-4f ? spd : 1.0f;
+            it->second.length = len > 0.0f ? len : 0.0f;
+            it->second.overrideMovement = (ov != 0);
         }
     }
     m_built = false;

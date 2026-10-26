@@ -1324,6 +1324,7 @@ int main(int argc, char** argv) {
     std::string prefsPath = saveDir + "game.okayprefs";
     Prefs::Load(prefsPath);
     DataAsset::SetBaseDir(baseDir);   // read-only .okaydata assets stay beside the game
+    Character::SetAssetBaseDir(baseDir);   // a Character's relative clips file, too
 
     Scene scene("Game");
     std::string err;

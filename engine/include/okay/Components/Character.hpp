@@ -188,9 +188,21 @@ public:
 
     // ---- No-code custom clips ----
     // Set a clips file and (optionally) a clip name and it loads + plays on Start,
-    // no scripting required. clipsFile is a path to a .okayanim text file.
+    // no scripting required. clipsFile is a path to a .okayanim text file (relative
+    // paths resolve against AssetBaseDir()). On Start the file only ADDS clips the
+    // scene doesn't already have, so edits saved with the scene win; with
+    // clipsLinked the file is the source of truth (it replaces same-named clips, and
+    // the editor's Apply re-saves it). autoPlayClip plays on Start; unless that clip
+    // is flagged overrideMovement it stops as soon as the character moves or jumps.
     std::string clipsFile;
     std::string autoPlayClip;
+    bool clipsLinked = false;
+    /// Base directory for relative clipsFile paths (the editor sets the project
+    /// folder, the player the game folder). Empty = relative to the working dir.
+    static void SetAssetBaseDir(const std::string& dir);
+    static const std::string& AssetBaseDir();
+    /// clipsFile as a path to open: as written if it exists, else under AssetBaseDir().
+    std::string ResolvedClipsFile() const;
 
     // ---- No-code state animations ----
     // Bind your AUTHORED clips to the movement states a controller drives (`anim`):
@@ -202,6 +214,9 @@ public:
     std::string clipIdle;   ///< plays in the idle state (anim == 1)
     std::string clipWalk;   ///< plays while walking   (anim == 2)
     std::string clipRun;    ///< plays while running   (anim == 3)
+    std::string clipJump;   ///< plays while jumping   (anim == 5)
+    std::string clipFall;   ///< plays while falling   (anim == 18)
+    std::string clipCrouch; ///< plays while crouching (anim == 6)
     /// True while a state binding (not a manual PlayClip) is driving the current clip.
     bool StateDriven() const { return m_stateDriven; }
 
@@ -279,8 +294,9 @@ public:
     /// Parse `clip` blocks from text and register them; returns how many loaded.
     /// `error` is set on a parse failure. Bone tokens are the short names from
     /// BoneIndex() (e.g. "r_uparm", "torso").
-    int  LoadClips(const std::string& text, std::string* error = nullptr);
-    bool LoadClipsFromFile(const std::string& path, std::string* error = nullptr);
+    /// With `replaceExisting` false, clips whose name is already registered are skipped.
+    int  LoadClips(const std::string& text, std::string* error = nullptr, bool replaceExisting = true);
+    bool LoadClipsFromFile(const std::string& path, std::string* error = nullptr, bool replaceExisting = true);
     /// Write all registered custom clips back to a .okayanim file (so in-editor
     /// keyframing can be saved to the authored format it loaded from).
     bool SaveClipsToFile(const std::string& path, std::string* error = nullptr) const;
@@ -294,6 +310,11 @@ public:
     std::vector<std::string> ClipNames() const;
     /// Is a clip with this name registered?
     bool HasClip(const std::string& name) const { return m_clips.find(name) != m_clips.end(); }
+    /// A registered clip by name (to edit a copy and AddClip it back), or null.
+    const AnimClip* FindClip(const std::string& name) const {
+        auto it = m_clips.find(name);
+        return it == m_clips.end() ? nullptr : &it->second;
+    }
     /// How many clips are registered.
     int ClipCount() const { return (int)m_clips.size(); }
     /// Length (seconds) of a registered clip, or 0 if there's no such clip.
@@ -394,7 +415,8 @@ public:
     void Apply();
     void Start() override {
         Apply();
-        if (!clipsFile.empty()) LoadClipsFromFile(clipsFile);
+        // In-scene clips win: the file only adds missing ones, unless it's linked.
+        if (!clipsFile.empty()) LoadClipsFromFile(ResolvedClipsFile(), nullptr, clipsLinked);
         if (!autoPlayClip.empty()) PlayClip(autoPlayClip);
     }
     void Update(float dt) override;
@@ -465,6 +487,7 @@ private:
     void AdvanceBlendTree(float dt);
     std::vector<Vec3> SampleBlendTree() const;   // blended pose at the current parameter
     void SyncStateClips();               // auto-play the clip bound to the current `anim` state
+    int m_syncAnim = -1;                 // `anim` at the last SyncStateClips (-1 = none yet)
     std::vector<Vec3> m_blendFrom;       // pose captured at the last clip switch (crossfade source)
     float m_blendT = 1.0f;               // crossfade weight 0..1 (1 = no blend active)
     float m_blendFromY = 0.0f;           // hip height at the last switch (eased with the crossfade)

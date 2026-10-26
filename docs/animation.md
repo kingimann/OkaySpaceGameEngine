@@ -33,6 +33,12 @@ key 0.6
 - Times are seconds; author keyframes in increasing time order. The clip's length
   is its last keyframe.
 - `loop` repeats; `once` holds the final pose.
+- Optional header words: `linear` (default), `smooth` or `step` easing, and
+  `override` (movement can't interrupt the clip, see below).
+- `speed 1.5` plays the clip faster; `length 1.2` sets a loop's length past its
+  last key, so the last key eases back into the first (a seamless loop).
+- Each bone turns along the short arc between keys (the rotations are slerped),
+  so -150° to 150° swings 60° rather than spinning the long way round.
 
 ### Bone names
 
@@ -47,7 +53,32 @@ No code — set two fields on the Character:
 - **clipsFile** → `arms.okayanim`
 - **autoPlayClip** → `wave`
 
-It loads and plays on Start.
+It loads and plays on Start. A looping clip played this way (or with `PlayClip`)
+gives way to movement: it stops as soon as the character walks, runs or jumps,
+and a `once` clip stops after it finishes if the character is moving. A clip
+marked `override` keeps playing until you stop it.
+
+Clips saved with the scene win over the file: on Start the file only adds clips
+the scene doesn't have. Tick **Linked to file** (`clipsLinked`) to make the file
+the source instead; Play then loads it over same-named clips, and the editor's
+Apply re-saves it. A relative `clipsFile` is relative to the project folder (the
+editor saves it that way); paths with spaces are fine.
+
+### Use your clip for idle, walk, run, jump, fall or crouch
+
+Set **clipIdle**, **clipWalk**, **clipRun**, **clipJump**, **clipFall** or
+**clipCrouch** to a clip's name and the character plays it in that movement state
+instead of the built-in animation. In the editor's Animation tab, **Use this clip
+for** does the same with one click. Leave a state unbound to keep the built-in.
+
+### The Animation tab
+
+Pick a clip in the **Clip** dropdown to edit it: one of the character's, a new
+one, or "Walk (from built-in)" (Idle, Walk, Run, Jump) to start from a copy of a
+built-in animation, sampled into keys you can tweak. Key Pose, deleting a key,
+bone nudges, renames and Apply all undo with Ctrl+Z. **Apply** adds the clip to
+the character without playing it; tick **Play on start (overrides movement)** to
+make it the start animation.
 
 From C++ / a script-driven flow:
 

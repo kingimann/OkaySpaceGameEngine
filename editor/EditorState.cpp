@@ -699,6 +699,7 @@ bool EditorState::Load(const std::string& path, std::string* error) {
 void EditorState::Play() {
     if (m_playing) return;
     m_snapshot = SceneSerializer::Serialize(m_scene); // remember edit state
+    Character::SetAssetBaseDir(m_projectDir);   // a Character's project-relative clips file
     Select(nullptr);   // Start()/reset may rebuild; clear m_multi too (no dangling ptrs)
     ActionList::ResetVars();   // clear visual-script variables each Play session
     vs::ForgetSceneVariables(&m_scene);   // scene / global graph variables start empty too

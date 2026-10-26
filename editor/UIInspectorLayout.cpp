@@ -37,8 +37,77 @@ void DrawScrollViewAxisFields(UIScrollView& sv, EditorState& ed) {
     }
 }
 
+namespace {
+// The size of the rect a widget is placed in: its UI parent's, else the canvas.
+Vec2 FrameParentSize(GameObject* go) {
+    if (GameObject* p = OwningUIParent(go)) return UIResolveSize(p, UICanvas::Width(), UICanvas::Height());
+    return Vec2{UICanvas::Width(), UICanvas::Height()};
+}
+
+// Switch a frame to preset `a` without moving the widget: solve position / size so
+// the resolved rect stays where it was.
+void ApplyPresetKeepRect(UIFrame& f, UIAnchor a, const Vec2& parent) {
+    Vec2 o, sz;
+    f.Resolve(f.position, f.size, parent.x, parent.y, o, sz);
+    f.ApplyPreset(a);
+    auto solve = [](float a0, float a1, float pv, float extent, float o, float s, float& pos, float& size) {
+        if (a0 == a1) { size = s; pos = o - extent * a0 + s * pv; }
+        else          { pos = o - extent * a0; size = extent * (a1 - a0) - pos - s; }
+    };
+    solve(f.anchorMin.x, f.anchorMax.x, f.pivot.x, parent.x, o.x, sz.x, f.position.x, f.size.x);
+    solve(f.anchorMin.y, f.anchorMax.y, f.pivot.y, parent.y, o.y, sz.y, f.position.y, f.size.y);
+}
+} // namespace
+
+void DrawUIFrameConvertButtons(GameObject* go, EditorState& ed) {
+    if (!go || go->GetComponent<UIFrame>()) return;
+    UIRect r = GetUIRect(go);
+    if (!r.valid || !r.sizePtr) return;
+    if (ImGui::SmallButton("Use UI Frame")) {
+        ed.PushUndo();
+        if (ConvertToUIFrame(go)) ed.dirty = true;
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Place this widget with a UI Frame (free anchors and pivot). It stays exactly where it is.");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Convert All UI")) {
+        ed.PushUndo();   // the whole scene converts as one undo step
+        if (ConvertSceneToUIFrames(ed.scene()) > 0) ed.dirty = true;
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Give every widget in the scene a UI Frame. Nothing moves; Undo reverts all of them.");
+}
+
 void DrawUILayoutComponentInspector(Component* comp, EditorState& ed, Component** toRemove,
                                     const UIInspectorHooks& hooks) {
+    if (auto* fr = dynamic_cast<UIFrame*>(comp)) {
+        if (hooks.header("UI Frame", fr, toRemove, true)) {
+            static const char* kPresets[] = {"Top-Left", "Top", "Top-Right", "Left", "Center", "Right",
+                                             "Bottom-Left", "Bottom", "Bottom-Right",
+                                             "Stretch Horizontal", "Stretch Vertical", "Stretch (Fill)"};
+            int pr = (int)fr->Preset();
+            if (ImGui::Combo("Preset##ufr", &pr, kPresets, 12)) {
+                ed.PushUndo();
+                ApplyPresetKeepRect(*fr, (UIAnchor)pr, FrameParentSize(fr->gameObject));
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Set anchors and pivot to a preset; the widget stays where it is.");
+            float amin[2] = {fr->anchorMin.x, fr->anchorMin.y}, amax[2] = {fr->anchorMax.x, fr->anchorMax.y};
+            if (ImGui::DragFloat2("Anchor Min##ufr", amin, 0.005f, 0.0f, 1.0f)) { fr->anchorMin = {amin[0], amin[1]}; ed.dirty = true; }
+            if (ImGui::DragFloat2("Anchor Max##ufr", amax, 0.005f, 0.0f, 1.0f)) { fr->anchorMax = {amax[0], amax[1]}; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fractions of the parent rect. Different min and max on an axis stretch the widget between them.");
+            float pv[2] = {fr->pivot.x, fr->pivot.y};
+            if (ImGui::DragFloat2("Pivot##ufr", pv, 0.005f, 0.0f, 1.0f)) { fr->pivot = {pv[0], pv[1]}; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The point of the widget its position places (0,0 = top-left, 0.5,0.5 = center).");
+            float pos[2] = {fr->position.x, fr->position.y}, sz[2] = {fr->size.x, fr->size.y};
+            const bool sx = fr->StretchesX(), sy = fr->StretchesY();
+            if (ImGui::DragFloat2(sx || sy ? "Position / Start Margin##ufr" : "Position##ufr", pos, 1.0f)) { fr->position = {pos[0], pos[1]}; ed.dirty = true; }
+            if (ImGui::DragFloat2(sx || sy ? "Size / End Margin##ufr" : "Size##ufr", sz, 1.0f)) { fr->size = {sz[0], sz[1]}; ed.dirty = true; }
+            if ((sx || sy) && ImGui::IsItemHovered())
+                ImGui::SetTooltip("On a stretched axis these are the margins from the two anchors.");
+        }
+        return;
+    }
     if (auto* fi = dynamic_cast<UIFlexItem*>(comp)) {
         if (hooks.header("UI Flex Item", fi, toRemove, true)) {
             if (ImGui::DragFloat("Grow##ufi", &fi->grow, 0.05f, 0.0f, 100.0f)) ed.dirty = true;

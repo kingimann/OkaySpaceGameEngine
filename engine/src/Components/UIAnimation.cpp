@@ -33,12 +33,12 @@ void UIAnimation::Apply(float dx, float dy, float scale, float alpha) {
     if (!r.valid || !r.position || !m_captured) return;
     const float W = UICanvas::Width(), H = UICanvas::Height();
     Vec2 size = m_baseSize;
-    if (r.sizePtr && !AnchorIsStretch(r.anchor)) { size = m_baseSize * scale; *r.sizePtr = size; }
+    if (r.sizePtr && !r.Stretches()) { size = m_baseSize * scale; *r.sizePtr = size; }
     Vec2 o0, s0, oX, sX, oY, sY, o1, s1;
-    ResolveAnchorRect(r.anchor, m_basePos, m_baseSize, W, H, o0, s0);
-    ResolveAnchorRect(r.anchor, m_basePos + Vec2{1.0f, 0.0f}, m_baseSize, W, H, oX, sX);
-    ResolveAnchorRect(r.anchor, m_basePos + Vec2{0.0f, 1.0f}, m_baseSize, W, H, oY, sY);
-    ResolveAnchorRect(r.anchor, m_basePos, size, W, H, o1, s1);
+    r.ResolveWith(m_basePos, m_baseSize, W, H, o0, s0);
+    r.ResolveWith(m_basePos + Vec2{1.0f, 0.0f}, m_baseSize, W, H, oX, sX);
+    r.ResolveWith(m_basePos + Vec2{0.0f, 1.0f}, m_baseSize, W, H, oY, sY);
+    r.ResolveWith(m_basePos, size, W, H, o1, s1);
     const float sx = (oX.x - o0.x) < 0.0f ? -1.0f : 1.0f, sy = (oY.y - o0.y) < 0.0f ? -1.0f : 1.0f;
     // Where the (scaled) rect must sit so its centre stays put, plus the offset.
     const float wantX = (o0.x + s0.x * 0.5f) - (o1.x + s1.x * 0.5f) + dx;

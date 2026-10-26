@@ -4,10 +4,24 @@
 // character's ProceduralObjectHolding does the holding): where each hand grips
 // it, how it is held, how heavy it is and where it sits.
 //
-//   * Automatic: the holder works out a carry from the object's size and weight
-//     (small = one hand under it, large or heavy = both hands on its sides).
-//   * Custom:    the hands go to the grip points below and the object sits at
-//     holdOffset / holdRotation in front of the chest.
+// Styles:
+//   * Automatic:  picked from the object's tag / name ("pistol", "crate"...),
+//                 then its shape and weight (long = rifle / sword / flashlight,
+//                 wide = box, very heavy = heavy, small = one hand under it).
+//   * Custom:     the hands go to the grip points below and the object sits at
+//                 holdOffset / holdRotation in front of the chest.
+//   * Pistol:     one hand on the handle, aimed forward (supportHand: the other
+//                 hand wraps the first). Rifle: stock at the shoulder, one hand on
+//                 the grip, the other under the barrel. Box: both hands on its
+//                 sides. Flashlight: one hand, pointing forward. Sword: one hand on
+//                 the hilt, blade up and forward (supportHand: two-handed). Cup:
+//                 one hand, fingers through the handle. Heavy: both hands under
+//                 its bottom edges, held low.
+//
+// Named styles read the object's long side (its biggest extent) as the barrel,
+// blade or beam; guns and lights point along local -Z (forward), a sword's blade
+// along +Y, a cup's handle along +X. holdRotation corrects a model that's built
+// another way.
 //
 // Grip points are in the object's local space. A grip's rotation orients the
 // hand: with no rotation the palm faces down (local -Y) and the fingers point
@@ -24,6 +38,9 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Math/Vec3.hpp"
 #include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <initializer_list>
 #include <string>
 #include <unordered_set>
 
@@ -31,18 +48,26 @@ namespace okay {
 
 class HoldableObject : public Component {
 public:
-    enum class Style { Automatic, Custom };
-    /// Where one hand touches the object (object-local position, rotation in degrees).
+    enum class Style { Automatic, Custom, Pistol, Rifle, Box, Flashlight, Sword, Cup, Heavy };
+    static const char* StyleName(Style s) {
+        static const char* n[] = {"Automatic", "Custom", "Pistol", "Rifle", "Box", "Flashlight", "Sword", "Cup", "Heavy"};
+        const int i = (int)s;
+        return i >= 0 && i < (int)(sizeof(n) / sizeof(n[0])) ? n[i] : "?";
+    }
+    /// Where one hand touches the object (object-local position, rotation in
+    /// degrees) and how far the fingers close around it (0 open .. 1 a fist).
     struct Grip {
-        bool enabled = false;
-        Vec3 position{0, 0, 0};
-        Vec3 rotation{0, 0, 0};
+        bool  enabled = false;
+        Vec3  position{0, 0, 0};
+        Vec3  rotation{0, 0, 0};
+        float curl = 0.6f;
     };
 
     Style style = Style::Automatic;
+    bool  supportHand = false;                ///< Pistol / Sword: the other hand helps (two-hand stance, two-handed sword)
     Grip  leftGrip, rightGrip;
     Vec3  holdOffset{0.0f, -0.25f, 0.35f};   ///< Custom: object origin from the chest (right, up, forward), metres
-    Vec3  holdRotation{0, 0, 0};              ///< Custom: object rotation relative to the body (degrees)
+    Vec3  holdRotation{0, 0, 0};              ///< Custom: object rotation relative to the body; other styles: a model fix (degrees)
     float weight = 0.0f;                      ///< kg (0 = the Rigidbody3D's mass, else 1)
     std::string socket;                       ///< hold at this object inside the character (a holster, a back slot)
 
@@ -85,6 +110,36 @@ public:
             centre = bc->offset; half = bc->size * 0.5f; return;
         }
         centre = {0, 0, 0}; half = {0.1f, 0.1f, 0.1f};
+    }
+
+    /// The style this object is held in: `style`, or for Automatic the one its
+    /// tag / name names, else what its size and weight suggest. Automatic comes
+    /// back for a small, light object (held in one hand, from underneath).
+    Style ResolvedStyle() const {
+        if (style != Style::Automatic) return style;
+        std::string n;
+        if (gameObject) for (char c : gameObject->tag + " " + gameObject->name) n += (char)std::tolower((unsigned char)c);
+        auto has = [&](std::initializer_list<const char*> ks) {
+            for (const char* k : ks) if (n.find(k) != std::string::npos) return true;
+            return false;
+        };
+        if (has({"rifle", "shotgun", "smg", "carbine", "musket"})) return Style::Rifle;
+        if (has({"pistol", "handgun", "revolver", "gun"})) return Style::Pistol;
+        if (has({"flashlight", "torch"})) return Style::Flashlight;
+        if (has({"sword", "blade", "katana", "saber", "sabre", "machete"})) return Style::Sword;
+        if (has({"cup", "mug", "coffee"})) return Style::Cup;
+        if (has({"heavy", "boulder", "anvil", "barrel"})) return Style::Heavy;
+        if (has({"box", "crate", "parcel", "package"})) return Style::Box;
+        Vec3 c, half;
+        LocalBounds(c, half);
+        if (gameObject && gameObject->transform) half = half * gameObject->transform->LossyScale();
+        float e[3] = {std::fabs(half.x) * 2.0f, std::fabs(half.y) * 2.0f, std::fabs(half.z) * 2.0f};
+        std::sort(e, e + 3);
+        const float mass = Mass();
+        if (e[2] > 2.5f * e[1] && e[2] > 0.15f) return e[2] > 0.5f ? (mass > 2.5f ? Style::Rifle : Style::Sword) : Style::Flashlight;
+        if (mass > 15.0f) return Style::Heavy;
+        if (e[2] > 0.3f || mass > 5.0f) return Style::Box;
+        return Style::Automatic;
     }
 
     void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying) override {

@@ -133,5 +133,49 @@ int main() {
         CHECK(ik.gap < 0.01f);
     }
 
+    // A one-shot fading out holds its last frame: once landing hands over to
+    // Idle, the body settles instead of the Land clip starting again under the
+    // crossfade (a second knee dip).
+    {
+        Scene js("J");
+        GameObject* g = js.CreateGameObject("Ground");
+        g->transform->localPosition = {0, -0.5f, 0};
+        g->transform->localScale = {200, 1, 200};
+        g->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+        g->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+        GameObject* p = Templates::AddHumanoidPlayer(js, {0, 0.05f, 0});
+        p->GetComponent<FootIK>()->weight = 0.0f;
+        Character* pc = p->GetComponent<Character>();
+        auto* sm = p->GetComponent<AnimStateMachine>();
+        auto pose = [&] {
+            std::vector<Vec3> out;
+            const Vec3 base = p->transform->Position();
+            for (int b = 0; b < Character::BoneCount(); ++b)
+                if (GameObject* part = pc->Part(b)) out.push_back(part->transform->Position() - base);
+            return out;
+        };
+        js.Start();
+        for (int i = 0; i < 30; ++i) { Input::FeedKeys({}); js.Update(1.0f / 60.0f); }
+        Input::FeedKeys({' '}); js.Update(1.0f / 60.0f);
+        bool landed = false;
+        int idleFrames = 0;
+        float travel = 0.0f;   // how far the parts moved over the handover's first 15 frames
+        std::vector<Vec3> prev = pose();
+        for (int i = 0; i < 150; ++i) {
+            Input::FeedKeys({}); js.Update(1.0f / 60.0f);
+            std::vector<Vec3> now = pose();
+            if (sm->Current() == "Land") landed = true;
+            if (landed && sm->Current() == "Idle" && idleFrames++ < 15) {
+                float m = 0.0f;
+                for (std::size_t k = 0; k < now.size() && k < prev.size(); ++k) m = std::fmax(m, (now[k] - prev[k]).Magnitude());
+                travel += m;
+            }
+            prev = now;
+        }
+        CHECK(landed);
+        CHECK(idleFrames > 15);
+        CHECK(travel < 0.05f);
+    }
+
     TEST_MAIN_RESULT();
 }

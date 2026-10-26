@@ -178,6 +178,11 @@ void NetworkManager::InitServerState() {
         return it != m_syncObjs.end() && it->second.owned;
     };
     anticheat.exists = [this](const std::string& id) { return m_syncObjs.count(id) != 0; };
+    anticheat.positionOf = [this](std::uint32_t peer, Vec3& at) {
+        for (const auto& [ep, c] : m_clients)
+            if (c.id == peer && c.hasState) { at = Vec3(c.state.x, c.state.y, c.state.z); return true; }
+        return false;
+    };
     anticheat.claimable = [this](const std::string& id) {
         auto it = m_syncObjs.find(id);
         if (it == m_syncObjs.end() || !it->second.t || !it->second.t->gameObject) return false;
@@ -357,6 +362,8 @@ void NetworkManager::Stop() {
     m_acClockMs = 0.0;
     m_gameClockMs = 0.0;
     m_pendingJoins.clear();
+    m_joinLimits.clear();
+    m_kickBans.clear();
     m_secure = net::SecureChannel{};   // a new session makes new keys (a reconnect mustn't keep the old ones)
     m_joinHellos = 0;
     m_authQueries = 0;
@@ -373,6 +380,7 @@ void NetworkManager::Stop() {
     anticheat.Reset();
     anticheat.serverOwns = nullptr;
     anticheat.exists = nullptr;
+    anticheat.positionOf = nullptr;
     anticheat.claimable = nullptr;
     anticheat.onCheat = nullptr;
     m_recentCheats.clear();
@@ -760,6 +768,16 @@ GameObject* NetworkManager::SpawnOwned(const std::string& prefabPath, const Vec3
     os << prefabPath << '|' << position.x << '|' << position.y << '|' << position.z << '|' << id;
     Send("__spawn", os.str());
     return g;
+}
+
+void NetworkManager::DespawnPeerObjects(std::uint32_t id) {
+    const std::string prefix = "sp/" + std::to_string(id) + "/";
+    std::vector<std::string> ids;
+    for (const auto& [netId, o] : m_syncObjs) if (netId.compare(0, prefix.size(), prefix) == 0) ids.push_back(netId);
+    for (const auto& netId : ids) {
+        DestroyLocalSync(netId);
+        Send("__despawn", netId);   // and on every client still here
+    }
 }
 
 void NetworkManager::DestroyLocalSync(const std::string& id) {
@@ -1368,8 +1386,10 @@ void NetworkManager::Kick(std::uint32_t id, const std::string& reason) {
             if (GetScene() && r->second) GetScene()->Destroy(r->second);
             m_remotes.erase(r);
         }
+        anticheat.ParkPeer(id, it->second.ident);
         m_clients.erase(it);
         anticheat.ForgetPeer(id);
+        DespawnPeerObjects(id);
         m_recentCheats.erase(id);
         for (auto po = m_pawnOwner.begin(); po != m_pawnOwner.end();) po = po->second == id ? m_pawnOwner.erase(po) : std::next(po);
         if (m_peerLeft) m_peerLeft(id);
@@ -1483,16 +1503,29 @@ void NetworkManager::Send(const std::string& channel, const std::string& data) {
 }
 
 bool NetworkManager::ClientMessageOk(const Client& from, const std::string& channel, std::string& data) const {
+    // Nothing big enough to choke every peer it's relayed to.
+    if (maxRelayedBytes > 0 && channel.size() + data.size() > (std::size_t)maxRelayedBytes) return false;
     if (channel.size() < 2 || channel[0] != '_' || channel[1] != '_') return true;   // a game channel
     if (channel == "__chat") {
-        // "<name>\n<text>": the name is the server's, not the sender's choice.
+        // "<name>\n<text>": the name is the server's, not the sender's choice;
+        // the text is cut to 512 bytes (on a UTF-8 character boundary).
         const std::size_t nl = data.find('\n');
-        data = from.name + "\n" + (nl == std::string::npos ? data : data.substr(nl + 1));
+        std::string text = nl == std::string::npos ? data : data.substr(nl + 1);
+        if (text.size() > 512) {
+            std::size_t cut = 512;
+            while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80) --cut;
+            text.resize(cut);
+        }
+        data = from.name + "\n" + text;
         return true;
     }
     if (channel == "__xform" && m_pawnOwner.count(data.substr(0, data.find('|'))))
         return false;   // a player the server moves: its position is the server's, never the client's
-    if (channel == "__spawn") return SpawnPathOk(from.id, ParseSpawnMessage(data).path, true);
+    if (channel == "__spawn") {
+        const SpawnMessage m = ParseSpawnMessage(data);
+        if (!std::isfinite(m.pos.x) || !std::isfinite(m.pos.y) || !std::isfinite(m.pos.z)) return false;
+        return SpawnPathOk(from.id, m.path, true);
+    }
     if (channel == "__despawn" || channel == "__xform") return true;
     if (channel.size() > 6 && channel.compare(0, 6, "__rpc/") == 0) return true;
     return false;   // __match_start and any other reserved channel: host only
@@ -1565,6 +1598,34 @@ bool NetworkManager::AntiCheatAllowsSyncVar(std::uint32_t peer, const std::strin
     return false;
 }
 
+bool NetworkManager::JoinBlocked(const net::Endpoint& from) const {
+    auto it = m_joinLimits.find(from.address);
+    return it != m_joinLimits.end() && m_serverTime < it->second.blockedUntil;
+}
+
+void NetworkManager::CountJoinAttempt(const net::Endpoint& from, int cost) {
+    if (m_joinLimits.size() > 4096)   // addresses long quiet go (the map can't grow without end)
+        for (auto it = m_joinLimits.begin(); it != m_joinLimits.end();)
+            it = m_serverTime - it->second.windowStart > 600.0f && m_serverTime > it->second.blockedUntil ? m_joinLimits.erase(it) : std::next(it);
+    JoinLimit& l = m_joinLimits[from.address];
+    if (m_serverTime - l.windowStart >= kJoinWindow) {
+        l.windowStart = m_serverTime; l.count = 0;
+        if (m_serverTime > l.blockedUntil + 60.0f) l.backoff = 0.0f;   // a quiet minute after a block forgives it
+    }
+    l.count += cost;
+    if (l.count > kJoinAttempts) {
+        l.backoff = l.backoff > 0.0f ? std::min(l.backoff * 2.0f, 320.0f) : 10.0f;
+        l.blockedUntil = m_serverTime + l.backoff;
+        l.count = 0; l.windowStart = m_serverTime; l.told = false;
+        OKAY_WARN("net: too many join attempts from ", from.ToString(), "; ignoring it for ", (int)l.backoff, " s");
+    }
+}
+
+float NetworkManager::KickBanLeft(const std::string& ident) const {
+    auto it = m_kickBans.find(ident);
+    return it == m_kickBans.end() ? 0.0f : std::max(0.0f, it->second.until - m_serverTime);
+}
+
 void NetworkManager::AntiCheatAfterRefusal(std::uint32_t peer) {
     const int limit = anticheat.settings.kickAfterViolations;
     if (limit > 0 && anticheat.Violations(peer) >= limit) {
@@ -1575,7 +1636,23 @@ void NetworkManager::AntiCheatAfterRefusal(std::uint32_t peer) {
             if (auto r = m_recentCheats.find(peer); r != m_recentCheats.end()) k.recent = r->second;
             m_acKickHandler(k);
         }
-        Kick(peer, "anti-cheat");   // (forgets its anti-cheat state too)
+        // Kicked: not back for a minute (account and address), doubling on
+        // each repeat up to an hour; so a kick isn't just a reconnect.
+        for (auto it = m_kickBans.begin(); it != m_kickBans.end();)
+            it = m_serverTime > it->second.until + 3600.0f ? m_kickBans.erase(it) : std::next(it);
+        for (auto& [ep, c] : m_clients) {
+            if (c.id != peer) continue;
+            std::vector<std::string> keys{c.ident};
+            const std::string addr = "a:" + std::to_string(ep.address);
+            if (addr != c.ident) keys.push_back(addr);
+            for (const auto& key : keys) {
+                KickBan& b = m_kickBans[key];
+                b.strikes = std::min(b.strikes + 1, 7);
+                b.until = m_serverTime + std::min(3600.0f, 60.0f * float(1 << (b.strikes - 1)));
+            }
+            break;
+        }
+        Kick(peer, "anti-cheat");   // (parks and forgets its anti-cheat state too)
     }
 }
 
@@ -1728,7 +1805,10 @@ void NetworkManager::ServerTick(float dt) {
     ++m_tickCount;
     if (anticheat.settings.enabled) anticheat.Tick(dt);
     // Rate limit: true if this client may send another custom message this second.
-    auto rateOk = [this](Client& c) { return maxMessagesPerSecond <= 0 || ++c.msgCount <= maxMessagesPerSecond; };
+    auto rateOk = [this](Client& c, std::size_t bytes) {
+        if (maxMessagesPerSecond > 0 && ++c.msgCount > maxMessagesPerSecond) return false;
+        return maxRelayedBytes <= 0 || (c.msgBytes += bytes) <= 4 * (std::size_t)maxRelayedBytes;
+    };
     // A full-size receive buffer: a UDP datagram can be up to ~64 KB, so a small
     // fixed buffer silently truncated any larger message (e.g. a big reliable
     // payload). Reused across ticks (thread-local) to avoid per-frame allocation.
@@ -1769,6 +1849,7 @@ void NetworkManager::ServerTick(float dt) {
             // A sealed join starts: trade keys, then the client sends its Join
             // encrypted. The hello is padded to at least the answer's size.
             if (len < kJoinHelloSize || m_clients.count(from)) continue;
+            if (JoinBlocked(from)) continue;   // too many attempts from this address: its key exchange waits
             const std::uint8_t version = p.ReadU8();
             const std::string clientPk = p.ReadString();
             if (!p.Ok() || version < kJoinVersion) continue;
@@ -1795,6 +1876,7 @@ void NetworkManager::ServerTick(float dt) {
             PendingJoin& pending = pj->second;
             const std::vector<std::uint8_t> pkBytes(clientPk.begin(), clientPk.end());
             if (pending.clientPk != pkBytes || !pending.secure.Ready()) {
+                CountJoinAttempt(from, 1);   // new keys (and a signature): an attempt
                 pending.secure = net::SecureChannel{};
                 pending.secure.GenerateKeys();
                 if (!pending.secure.Establish(pkBytes, /*asServer=*/true)) { m_pendingJoins.erase(pj); continue; }
@@ -1875,17 +1957,36 @@ void NetworkManager::ServerTick(float dt) {
             const bool acOn = anticheat.settings.enabled;
             const bool needCrypto = acOn && anticheat.settings.requireEncryption;
             if (needCrypto) encryption = true;   // the rules ask for it
+            if (!existed && JoinBlocked(from)) {
+                // Too many attempts from this address: say so once, then ignore.
+                JoinLimit& l = m_joinLimits[from.address];
+                if (!l.told) {
+                    l.told = true;
+                    net::Packet r(Reject);
+                    r.Write("too many join attempts; try again in " + std::to_string((int)std::ceil(l.blockedUntil - m_serverTime)) + " s");
+                    SendDatagram(from, r.Data(), r.Size(), /*allowEncrypt=*/viaPending);
+                }
+                continue;
+            }
             if (!existed) {
-                // Gate new joins on capacity, password and (if a verifier is set)
-                // identity; refuse politely.
+                // Gate new joins on capacity, then encryption (nothing secret is
+                // checked in the clear), then the password, then identity;
+                // refuse politely.
                 const char* why = nullptr;
-                std::string ticketWhy;
+                std::string ticketWhy, banWhy;
+                const std::string addrIdent = "a:" + std::to_string(from.address);
+                auto kickedRecently = [&](const std::string& ident) {
+                    const float left = KickBanLeft(ident);
+                    if (left <= 0.0f) return false;
+                    banWhy = "kicked by the anti-cheat; try again in " + std::to_string((int)std::ceil(left)) + " s";
+                    return true;
+                };
                 if ((int)m_clients.size() >= maxPlayers) why = "server is full";
-                else if (!password.empty() && pass != password) why = "wrong password";
                 else if (needCrypto && !viaPending)
                     // The password and ticket must not travel in the clear.
                     why = net::SecureChannel::Available() ? "encryption required (update the game)"
                                                           : "encryption required, but this server was built without libsodium";
+                else if (!password.empty() && pass != password) why = "wrong password";
                 else if (acOn && !anticheat.settings.ticketKey.empty()) {
                     // A signed session ticket names the account; it takes the
                     // place of the token verifiers. It must be for this server
@@ -1914,11 +2015,19 @@ void NetworkManager::ServerTick(float dt) {
                 }
                 else if (m_joinCheck) {
                     const int r = m_joinCheck(token, userId);
-                    if (r < 0) continue;                       // still checking: the client retries
-                    if (r == 0) why = "authentication failed";
+                    if (r == -2) why = "server busy, try again";
+                    else if (r < 0) continue;                  // still checking: the client retries
+                    else if (r == 0) why = "authentication failed";
                 }
                 else if (m_verifyToken && !m_verifyToken(token, userId)) why = "authentication failed";
+                // Kicked by the anti-cheat a moment ago: the account, or for an
+                // anonymous join the address (other signed-in players behind
+                // the same address aren't locked out).
+                if (!why && kickedRecently(userId.empty() ? addrIdent : "u:" + userId)) why = banWhy.c_str();
                 if (why) {
+                    // A refusal is an attempt; a wrong password counts double
+                    // (guessing it is what the limit is for).
+                    CountJoinAttempt(from, std::string(why) == "wrong password" ? 2 : 1);
                     net::Packet r(Reject); r.Write(std::string(why));
                     SendDatagram(from, r.Data(), r.Size(), /*allowEncrypt=*/viaPending);
                     continue;
@@ -1938,6 +2047,12 @@ void NetworkManager::ServerTick(float dt) {
                 c.room = room;
                 c.joinedAt = m_serverTime;
                 c.userId = userId;
+                // A join that got in costs this address nothing (its key
+                // exchange is given back): players behind one address still
+                // all get in, a flood that never finishes doesn't.
+                if (auto jl = m_joinLimits.find(from.address); jl != m_joinLimits.end() && jl->second.count > 0) --jl->second.count;
+                c.ident = userId.empty() ? "a:" + std::to_string(from.address) : "u:" + userId;
+                anticheat.RestorePeer(c.id, c.ident);   // what it had if it left a moment ago
                 if (viaPending) {
                     // The key exchange's session becomes the client's (numbered,
                     // with the version authenticated).
@@ -1988,9 +2103,16 @@ void NetworkManager::ServerTick(float dt) {
             // A client requested a variable change; apply it and fan out to all.
             std::string key = p.ReadString();
             std::string value = p.ReadString();
+            std::string senderRoom;
             {   // only joined clients may change shared state (and, with anti-cheat on, within its rules)
                 auto cl = m_clients.find(from);
-                if (cl == m_clients.end()) continue;
+                if (cl == m_clients.end() || !rateOk(cl->second, len)) continue;
+                senderRoom = cl->second.room;
+                // Sized like a variable, and not a key factory: a client makes
+                // at most kMaxClientVars keys of its own.
+                const bool isNew = !m_syncVars.count(key);
+                if (key.empty() || key.size() > kMaxVarKey || value.size() > kMaxVarValue ||
+                    (isNew && cl->second.varsCreated >= kMaxClientVars)) continue;
                 if (anticheat.settings.enabled && !AntiCheatAllowsSyncVar(cl->second.id, key)) {
                     // Put the sender's copy back to the server's value (it set it locally first).
                     if (m_clients.count(from)) {
@@ -2001,9 +2123,12 @@ void NetworkManager::ServerTick(float dt) {
                     continue;
                 }
             }
+            if (auto cl = m_clients.find(from); cl != m_clients.end() && !m_syncVars.count(key)) ++cl->second.varsCreated;
             ApplySyncVar(key, value);
+            // A client's write goes to its own room (the host applies every one).
             net::Packet out(SyncVar); out.Write(key); out.Write(value);
-            for (auto& [ep, c] : m_clients) SendDatagram(c.endpoint, out.Data(), out.Size());
+            for (auto& [ep, c] : m_clients)
+                if (c.room == senderRoom) SendDatagram(c.endpoint, out.Data(), out.Size());
         } else if (type == ClockPong) {
             // A client's clock, for the heartbeat (anti-cheat maxClockDrift).
             auto it = m_clients.find(from);
@@ -2089,7 +2214,7 @@ void NetworkManager::ServerTick(float dt) {
                 std::string data    = p.ReadString();
                 net::Packet ack(ReliableAck); ack.Write(seq);
                 SendDatagram(from, ack.Data(), ack.Size());
-                if (!it->second.relSeen.Accept(seq) || !rateOk(it->second)) continue;   // a repeat, or spam
+                if (!it->second.relSeen.Accept(seq) || !rateOk(it->second, len)) continue;   // a repeat, or spam
                 if (channel == "__hit") { HandleHitClaim(it->second, data); continue; }   // the server's to judge
                 if (ClientMessageOk(it->second, channel, data) && AntiCheatAllows(it->second.id, channel, data))
                     Deliver(it->second.id, channel, data);
@@ -2099,7 +2224,7 @@ void NetworkManager::ServerTick(float dt) {
             if (it != m_clients.end()) it->second.relOut.erase(p.ReadU32());
         } else if (type == DirectMessage) {
             auto it = m_clients.find(from);
-            if (it != m_clients.end() && rateOk(it->second)) {
+            if (it != m_clients.end() && rateOk(it->second, len)) {
                 std::uint32_t sender = it->second.id;
                 p.ReadU32();                              // sender-reported id (ignored)
                 std::uint32_t target = p.ReadU32();
@@ -2163,15 +2288,17 @@ void NetworkManager::ServerTick(float dt) {
                     if (GetScene() && r->second) GetScene()->Destroy(r->second);
                     m_remotes.erase(r);
                 }
+                anticheat.ParkPeer(id, it->second.ident);
                 m_clients.erase(it);
                 anticheat.ForgetPeer(id);
+                DespawnPeerObjects(id);
                 m_recentCheats.erase(id);
                 for (auto po = m_pawnOwner.begin(); po != m_pawnOwner.end();) po = po->second == id ? m_pawnOwner.erase(po) : std::next(po);
                 if (m_peerLeft) m_peerLeft(id);
             }
         } else if (type == Message) {
             auto it = m_clients.find(from);
-            if (it != m_clients.end() && rateOk(it->second)) {
+            if (it != m_clients.end() && rateOk(it->second, len)) {
                 std::uint32_t sender = it->second.id;   // endpoint is the source of truth
                 const std::string senderRoom = it->second.room;
                 p.ReadU32();                            // sender-reported id (ignored)
@@ -2201,7 +2328,7 @@ void NetworkManager::ServerTick(float dt) {
     for (auto it = m_clients.begin(); it != m_clients.end();) {
         it->second.lastSeen += dt;
         it->second.stateAge += dt;
-        if ((it->second.msgTimer += dt) >= 1.0f) { it->second.msgTimer = 0.0f; it->second.msgCount = 0; it->second.hitClaims = 0; }
+        if ((it->second.msgTimer += dt) >= 1.0f) { it->second.msgTimer = 0.0f; it->second.msgCount = 0; it->second.msgBytes = 0; it->second.hitClaims = 0; }
         if ((it->second.violationTimer += dt) >= 60.0f) { it->second.violationTimer = 0.0f; it->second.violations = 0; }
         if (it->second.lastSeen > kClientTimeout) {
             std::uint32_t id = it->second.id;
@@ -2209,8 +2336,10 @@ void NetworkManager::ServerTick(float dt) {
                 if (GetScene() && r->second) GetScene()->Destroy(r->second);
                 m_remotes.erase(r);
             }
+            anticheat.ParkPeer(id, it->second.ident);
             it = m_clients.erase(it);
             anticheat.ForgetPeer(id);
+            DespawnPeerObjects(id);
             m_recentCheats.erase(id);
             for (auto po = m_pawnOwner.begin(); po != m_pawnOwner.end();) po = po->second == id ? m_pawnOwner.erase(po) : std::next(po);
             if (m_peerLeft) m_peerLeft(id);

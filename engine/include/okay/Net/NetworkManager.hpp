@@ -105,6 +105,10 @@ public:
     /// Server: custom messages a client may send per second (0 = unlimited);
     /// extra ones are dropped (reliable ones are still acknowledged).
     int maxMessagesPerSecond = 0;
+    /// Server: the longest custom message a client may send to be applied or
+    /// relayed (channel + data, bytes; 0 = any). A client also gets four times
+    /// this in bytes per second. Chat lines are cut to 512 bytes.
+    int maxRelayedBytes = 16 * 1024;
     /// Server: kick a client after this many rejected moves within a minute (0 = never).
     int kickAfterViolations = 0;
     /// Server: move a peer's avatar (0 = the host's own) — accepted by the move
@@ -224,6 +228,7 @@ public:
     /// so they never stall the network tick. Return 1 to accept (set `outUserId`),
     /// 0 to reject, or -1 while the answer is still pending: the join is ignored
     /// for now and the client's next join retry (every half second) asks again.
+    /// -2 = too busy to check: the join is refused ("server busy, try again").
     /// Takes precedence over SetTokenVerifier when both are set.
     using JoinCheck = std::function<int(const std::string& token, std::string& outUserId)>;
     void SetJoinCheck(JoinCheck c) { m_joinCheck = std::move(c); }
@@ -620,6 +625,7 @@ private:
         std::string name;
         std::string room;
         std::string userId;   // verified identity (from the token verifier), or ""
+        std::string ident;    // who it is across reconnects: "u:<account>", else "a:<address>"
         net::SecureChannel secure;   // per-client encrypted session (if negotiated)
         std::unordered_map<std::uint32_t, PeerState> sentStates;  // last state sent (delta snapshots)
         bool hasState = false;   // true once this client has reported its position
@@ -628,6 +634,8 @@ private:
         int   violations = 0;    // rejected moves in the current minute
         float violationTimer = 0.0f;
         int   msgCount = 0;      // custom messages this second (rate limit)
+        std::size_t msgBytes = 0;   // and their bytes (4 x maxRelayedBytes a second)
+        int   varsCreated = 0;   // SyncVar keys this client made (at most kMaxClientVars)
         int   hitClaims = 0;     // hit claims this second (the limit without the anti-cheat)
         float msgTimer = 0.0f;
         float joinedAt = 0.0f;   // server clock when it joined
@@ -851,6 +859,20 @@ private:
 
     // Server-only
     float m_serverTime = 0.0f;        // seconds since the server started
+    // Server: join attempts per address (a refused Join, a new key exchange;
+    // a wrong password counts two): past kJoinAttempts in kJoinWindow seconds
+    // the address is ignored for a while, 10 s doubling to 320 s.
+    struct JoinLimit { float windowStart = 0.0f; int count = 0; float blockedUntil = -1.0f, backoff = 0.0f; bool told = false; };
+    std::unordered_map<std::uint32_t, JoinLimit> m_joinLimits;
+    static constexpr int kJoinAttempts = 5;
+    static constexpr float kJoinWindow = 10.0f;
+    bool JoinBlocked(const net::Endpoint& from) const;
+    void CountJoinAttempt(const net::Endpoint& from, int cost);
+    // Server: accounts and addresses the anti-cheat kicked, refused until `until`
+    // (m_serverTime); each repeat doubles the wait, up to an hour.
+    struct KickBan { float until = 0.0f; int strikes = 0; };
+    std::unordered_map<std::string, KickBan> m_kickBans;
+    float KickBanLeft(const std::string& ident) const;
     int   m_hostScore = 0;
     bool  m_matchOn = false, m_matchEnded = false;
     float m_matchStartAt = 0.0f, m_matchEndAt = 0.0f;
@@ -947,7 +969,12 @@ private:
     bool AntiCheatAllowsSyncVar(std::uint32_t peer, const std::string& key);
     void AntiCheatAfterRefusal(std::uint32_t peer);
 
-    // Server-authoritative synced variables
+    // Server-authoritative synced variables. What a client may write: keys up
+    // to 128 bytes, values up to 4 KB, at most kMaxClientVars new keys each.
+    static constexpr std::size_t kMaxVarKey = 128, kMaxVarValue = 4096;
+    static constexpr int kMaxClientVars = 256;
+    /// Server: a peer left: its SpawnOwned objects ("sp/<id>/...") go, everywhere.
+    void DespawnPeerObjects(std::uint32_t id);
     std::unordered_map<std::string, std::string> m_syncVars;
     void ApplySyncVar(const std::string& key, const std::string& value);
 };

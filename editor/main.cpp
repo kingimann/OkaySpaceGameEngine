@@ -27396,6 +27396,9 @@ void DrawInspector(EditorState& ed) {
             SectionHeader("Locomotion (auto idle/walk/run)");
             if (ImGui::Checkbox("Drive by movement##ma", &ma->driveByMovement)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Auto-switch clips based on how fast this object moves.");
+            if (ma->driveByMovement && ma->gameObject)
+                if (auto* sm = ma->gameObject->GetComponent<AnimStateMachine>(); sm && sm->enabled)
+                    ImGui::TextDisabled("The Animation State Machine here picks the clips, so this waits while it's enabled.");
             if (ma->driveByMovement) {
                 ImGui::SameLine();
                 if (ImGui::Checkbox("Smooth blend##ma", &ma->smoothLocomotion)) ed.dirty = true;

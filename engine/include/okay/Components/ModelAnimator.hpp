@@ -146,6 +146,10 @@ public:
                 vy = (p.y - m_lastPos.y) / dt;
             }
             m_lastPos = p; m_haveLast = true;
+            // A held clip (script / visual script Play) or an AnimStateMachine picks
+            // the clips: movement-driven selection waits (the position keeps being
+            // tracked, so it resumes without a speed spike).
+            if (m_held || StateMachineDrives()) spd = -1.0f;
         }
 
         // Air states: launch -> jump clip, past the apex -> fall clip, touchdown
@@ -182,13 +186,11 @@ public:
         if (dt > 0.0f && active >= 0 && active < (int)clips.size()) {
             float len = ClipLength(active);
             float t0 = m_clock, t1 = m_clock + dt * speed;
-            if (!clips[active].events.empty() && len > 0.0f) {
-                auto fire = [&](float a, float b) {
-                    for (const ClipEvent& ev : clips[active].events)
-                        if (ev.time > a && ev.time <= b && !ev.name.empty()) FireEvent(ev.name);
-                };
-                if (loop && !m_once && t1 > len) { fire(t0, len); fire(0.0f, std::fmod(t1, len)); }
-                else                             fire(t0, t1);
+            const bool first = m_fromStart && t1 > t0;
+            if (t1 > t0) m_fromStart = false;
+            if (!clips[active].events.empty() && len > 0.0f && t1 > t0) {
+                if (loop && !m_once && t1 > len) { FireWindow(active, t0, len, first); FireWindow(active, 0.0f, std::fmod(t1, len), true); }
+                else                             FireWindow(active, t0, t1, first);
             }
             // Root motion: what the root bone travelled this frame moves the object
             // instead (measured in world space through the bone's parent, so FBX
@@ -248,7 +250,7 @@ public:
         if (m_blend.empty() || !gameObject) return;
         Scene* sc = gameObject->scene();
         if (!sc) { m_blend.clear(); return; }
-        m_blendW = blendTime > 0.001f ? std::fmin(1.0f, m_blendW + dt / blendTime) : 1.0f;
+        m_blendW = m_fadeTime > 0.001f ? std::fmin(1.0f, m_blendW + dt / m_fadeTime) : 1.0f;
         float w = m_blendW * m_blendW * (3.0f - 2.0f * m_blendW);   // smoothstep ease
         const bool fresh = sc->StructureVersion() == m_blendVer;
         for (BlendFrom& s : m_blend) {
@@ -279,10 +281,43 @@ public:
         return (active >= 0 && active < (int)clips.size()) ? clips[active].name : none;
     }
 
-    /// Switch to a clip by name; returns false if there's no such clip.
-    bool Play(const std::string& name) {
+    /// Switch to a clip by name; returns false if there's no such clip. `blend` is
+    /// this switch's crossfade in seconds (< 0 = blendTime).
+    bool Play(const std::string& name, float blend = -1.0f) {
         for (int i = 0; i < (int)clips.size(); ++i)
-            if (clips[i].name == name) { PlayIndex(i); return true; }
+            if (clips[i].name == name) { PlayIndex(i, false, blend); return true; }
+        return false;
+    }
+
+    /// Play a clip and HOLD it (a script's or visual script's Play): movement-
+    /// driven selection (driveByMovement, air states) and a HumanoidRetarget stand
+    /// down until ReleaseHold, so the clip isn't replaced the next frame.
+    bool PlayHeld(const std::string& name) {
+        const int before = active;
+        if (!Play(name)) return false;
+        if (!m_held) m_heldReturnTo = before;
+        m_held = true;
+        return true;
+    }
+    /// End a hold: locomotion picks the clip again, or without it the clip that
+    /// played before the hold comes back.
+    void ReleaseHold() {
+        if (!m_held) return;
+        m_held = false;
+        if (!driveByMovement && m_heldReturnTo >= 0 && m_heldReturnTo != active) PlayIndex(m_heldReturnTo);
+        m_heldReturnTo = -1;
+    }
+    /// True while the model's own clip owns the pose: a held clip or a one-shot
+    /// (HumanoidRetarget yields until it ends).
+    bool ClipOverridesPose() const { return m_held || m_once; }
+
+    /// An AnimStateMachine on this object registers itself here: while it's on
+    /// the object and enabled it picks the clips, and driveByMovement waits.
+    void SetStateMachine(const Component* sm) { m_stateMachine = sm; }
+    bool StateMachineDrives() const {
+        if (!m_stateMachine || !gameObject) return false;
+        for (const auto& c : gameObject->Components())
+            if (c.get() == m_stateMachine) return c->enabled;
         return false;
     }
 
@@ -296,10 +331,6 @@ public:
         PlayIndex(i, /*once=*/true);
         return true;
     }
-
-    /// True while a PlayOnce one-shot is in flight (HumanoidRetarget yields to
-    /// the model's own clip until it finishes).
-    bool OneShotActive() const { return m_once; }
 
     /// True when a non-looping playback (a one-shot, or loop=false) has reached
     /// the end of its clip.
@@ -325,17 +356,19 @@ public:
     /// With blendTime > 0 the current pose is captured first and eased into the new
     /// clip over that many seconds (see LateUpdate). `once` plays it exactly one
     /// time and then returns to the previous clip (see PlayOnce).
-    void PlayIndex(int i, bool once = false) {
+    void PlayIndex(int i, bool once = false, float blend = -1.0f) {
         if (i < 0 || i >= (int)clips.size() || !gameObject) return;
         m_once = once;
         active = i;
+        m_fadeTime = blend >= 0.0f ? blend : blendTime;
+        m_fromStart = true;
         Scene* sc = gameObject->scene();
         if (!sc) return;
         // Capture the CURRENT pose of every node the new clip animates (a missing
         // node just stops blending).
         m_blend.clear(); m_blendW = 0.0f;
         m_blendVer = sc->StructureVersion();
-        if (blendTime > 0.001f) {
+        if (m_fadeTime > 0.001f) {
             const auto& b = Bind(i);
             for (std::size_t n = 0; n < b.size(); ++n)
                 if (Transform* t = b[n])
@@ -530,15 +563,12 @@ public:
 
         // Events: the dominant clip's markers, over this frame's phase window.
         {
-            const Clip& dom = clips[active];
             float len = active == A ? lenA : lenB;
             float e0 = prevPhase * len, e1 = m_phase * len;
-            auto fire = [&](float a2, float b2) {
-                for (const ClipEvent& ev : dom.events)
-                    if (ev.time > a2 && ev.time <= b2 && !ev.name.empty()) FireEvent(ev.name);
-            };
-            if (e1 < e0) { fire(e0, len); fire(0.0f, e1); }
-            else fire(e0, e1);
+            const bool first = m_fromStart && e1 != e0;
+            if (e1 != e0) m_fromStart = false;
+            if (e1 < e0) { FireWindow(active, e0, len, first); FireWindow(active, 0.0f, e1, true); }
+            else FireWindow(active, e0, e1, first);
         }
 
         // Drive the union of both clips' nodes directly. Nodes in only one clip
@@ -601,13 +631,11 @@ public:
             ApplyRootMotion(d, yaw, dt);
         }
         {   // events of the dominant clip over this frame's phase window
-            const Clip& dc = clips[ci[dom]];
             float L = len[dom], e0 = prevPhase * L, e1 = m_phase * L;
-            auto fire = [&](float a2, float b2) {
-                for (const ClipEvent& ev : dc.events)
-                    if (ev.time > a2 && ev.time <= b2 && !ev.name.empty()) FireEvent(ev.name);
-            };
-            if (e1 < e0) { fire(e0, L); fire(0.0f, e1); } else fire(e0, e1);
+            const bool first = m_fromStart && e1 != e0;
+            if (e1 != e0) m_fromStart = false;
+            if (e1 < e0) { FireWindow(ci[dom], e0, L, first); FireWindow(ci[dom], 0.0f, e1, true); }
+            else FireWindow(ci[dom], e0, e1, first);
         }
         std::vector<std::pair<int, float>>& ct = m_bmCT;
         ct.clear();
@@ -663,7 +691,7 @@ public:
     /// CaptureCrossfade for any number of clips (entering a 2D blend tree).
     void CaptureCrossfadeMany(const std::vector<int>& clipIdx, float seconds) {
         m_blend.clear(); m_blendW = 0.0f;
-        blendTime = seconds;
+        m_fadeTime = seconds;
         if (seconds <= 0.001f) return;
         if (gameObject && gameObject->scene()) m_blendVer = gameObject->scene()->StructureVersion();
         for (int ci : clipIdx) {
@@ -681,13 +709,13 @@ public:
 
     /// Normalized phase (0..1) of the last BlendClips call.
     float BlendPhase() const { return m_phase; }
-    void  ResetBlendPhase(float p = 0.0f) { m_phase = p; }
+    void  ResetBlendPhase(float p = 0.0f) { m_phase = p; m_fromStart = true; }
     /// Capture the current pose of every node clips A and B animate, so the next
     /// `seconds` ease from it (the same crossfade Play uses) — call when switching
     /// into a BlendClips-driven state.
     void CaptureCrossfade(int A, int B, float seconds) {
         m_blend.clear(); m_blendW = 0.0f;
-        blendTime = seconds;
+        m_fadeTime = seconds;
         if (seconds <= 0.001f) return;
         if (gameObject && gameObject->scene()) m_blendVer = gameObject->scene()->StructureVersion();
         auto grab = [&](int ci) {
@@ -1011,6 +1039,16 @@ private:
     float                    m_clock = 0.0f;  ///< playback clock for event firing
     float                    m_phase = 0.0f;  ///< shared normalized cycle for smooth locomotion
     bool                     m_once = false;        ///< current playback is a one-shot
+    bool                     m_held = false;        ///< a script holds the current clip (PlayHeld)
+    int                      m_heldReturnTo = -1;   ///< clip to return to after the hold
+    const Component*         m_stateMachine = nullptr;   ///< registered AnimStateMachine (see StateMachineDrives)
+    float                    m_fadeTime = 0.25f;    ///< the running crossfade's length (blendTime, or a transition's blend)
+    bool                     m_fromStart = true;    ///< next event window starts at a Play: an event at 0 fires too
+    // Fire clip `c`'s events with time in (a, b], or [a, b] when `fromStart`.
+    void FireWindow(int c, float a, float b, bool fromStart) {
+        for (const ClipEvent& ev : clips[(std::size_t)c].events)
+            if ((fromStart ? ev.time >= a : ev.time > a) && ev.time <= b && !ev.name.empty()) FireEvent(ev.name);
+    }
     int                      m_onceReturnTo = -1;   ///< clip to return to after the one-shot
     Vec3 m_lastPos{0, 0, 0};
     bool m_haveLast = false;

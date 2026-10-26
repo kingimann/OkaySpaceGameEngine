@@ -24,6 +24,7 @@
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/ModelAnimator.hpp"
+#include "okay/Components/AnimControl.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/BlendShapes.hpp"
 #include "okay/Components/LimbIK.hpp"
@@ -4257,32 +4258,20 @@ struct OkayScriptVM::Impl {
         // ---- Multiplayer (NetworkManager) -----------------------------
         // Start hosting / join from a script; both wire the host object as the
         // broadcast avatar and mirror remote peers as sprites.
-        // ---- Character animation (a sibling Character component) ----------
-        // play_clip/stop_clip/etc. drive a Character on this script's object, so a
-        // custom keyframe clip (see docs/animation.md) can be played from script.
-        auto charSelf = [this]() -> Character* {
-            return (rt.host && rt.host->gameObject) ? rt.host->gameObject->GetComponent<Character>() : nullptr;
-        };
-        // Imported models keep their clips on a ModelAnimator on the import ROOT, so
-        // look on this object first, then up the parents (a script often sits on the
-        // root, but can also live on a mesh part).
-        auto modelSelf = [this]() -> ModelAnimator* {
-            GameObject* g = (rt.host ? rt.host->gameObject : nullptr);
-            if (!g) return nullptr;
-            if (auto* m = g->GetComponent<ModelAnimator>()) return m;
-            for (Transform* t = g->transform ? g->transform->Parent() : nullptr; t; t = t->Parent())
-                if (t->gameObject)
-                    if (auto* m = t->gameObject->GetComponent<ModelAnimator>()) return m;
-            return nullptr;
-        };
-        b["play_clip"] = [charSelf, modelSelf](std::vector<Value>& a) {
+        // ---- Character / imported-model animation --------------------------
+        // The Character and the model's ModelAnimator are found the same way as in
+        // visual scripts (AnimControl.hpp): this object, then its children (a
+        // player whose model sits under it), then its parents (a script on a part).
+        auto selfObj = [this]() -> GameObject* { return rt.host ? rt.host->gameObject : nullptr; };
+        auto charSelf = [selfObj]() -> Character* { return FindAnimComponent<Character>(selfObj()); };
+        auto modelSelf = [selfObj]() -> ModelAnimator* { return FindAnimComponent<ModelAnimator>(selfObj()); };
+        // play_clip holds the clip (locomotion and the humanoid retarget wait) until stop_clip.
+        auto warnedNoAnimator = std::make_shared<bool>(false);
+        b["play_clip"] = [selfObj, warnedNoAnimator](std::vector<Value>& a) {
             if (a.empty()) return Value{0.0f};
-            Character* c = charSelf();
-            if (c && c->PlayClip(a[0].AsString())) return Value{1.0f};
-            ModelAnimator* m = modelSelf();       // imported model fallback
-            return Value{(m && m->Play(a[0].AsString())) ? 1.0f : 0.0f};
+            return Value{PlayClipFrom(selfObj(), a[0].AsString(), *warnedNoAnimator) ? 1.0f : 0.0f};
         };
-        b["stop_clip"] = [charSelf](std::vector<Value>&) { if (Character* c = charSelf()) c->StopClip(); return Value{}; };
+        b["stop_clip"] = [selfObj](std::vector<Value>&) { StopClipFrom(selfObj()); return Value{}; };
         b["playing_clip"] = [charSelf, modelSelf](std::vector<Value>&) {
             Character* c = charSelf();
             if (c) return Value{c->PlayingClip()};
@@ -4323,8 +4312,8 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["clear_blend_tree"] = [charSelf](std::vector<Value>&) { if (Character* c = charSelf()) c->ClearBlendTree(); return Value{}; };
-        b["clip_speed"] = [charSelf](std::vector<Value>& a) {
-            if (Character* c = charSelf(); c && !a.empty()) c->animSpeed = a[0].AsFloat();
+        b["clip_speed"] = [selfObj](std::vector<Value>& a) {
+            if (!a.empty()) SetClipSpeedFrom(selfObj(), a[0].AsFloat());
             return Value{};
         };
         // Set/get the built-in animation index (0 none,1 idle,2 walk,3 run,...).
@@ -4342,9 +4331,7 @@ struct OkayScriptVM::Impl {
             ModelAnimator* m = modelSelf();
             return Value{m ? m->Time() : 0.0f};
         };
-        b["clip_normalized"] = [charSelf](std::vector<Value>&) {
-            Character* c = charSelf(); return Value{c ? c->ClipNormalizedTime() : 0.0f};
-        };
+        b["clip_normalized"] = [selfObj](std::vector<Value>&) { return Value{ClipNormalizedFrom(selfObj())}; };
         b["clip_finished"] = [charSelf, modelSelf](std::vector<Value>&) {
             Character* c = charSelf();
             if (c) return Value{c->ClipFinished() ? 1.0f : 0.0f};
@@ -4376,16 +4363,8 @@ struct OkayScriptVM::Impl {
             return Value{(c && c->PlayClip(a[0].AsString())) ? 1.0f : 0.0f};
         };
         // Pop the next fired animation event name ("" if none) — footsteps, hit windows.
-        // ---- Animation state machine (AnimStateMachine on self or an ancestor) ----
-        auto smSelf = [this]() -> AnimStateMachine* {
-            GameObject* g = (rt.host ? rt.host->gameObject : nullptr);
-            if (!g) return nullptr;
-            if (auto* m = g->GetComponent<AnimStateMachine>()) return m;
-            for (Transform* t = g->transform ? g->transform->Parent() : nullptr; t; t = t->Parent())
-                if (t->gameObject)
-                    if (auto* m = t->gameObject->GetComponent<AnimStateMachine>()) return m;
-            return nullptr;
-        };
+        // ---- Animation state machine (found like the animators above) ----
+        auto smSelf = [selfObj]() -> AnimStateMachine* { return FindAnimComponent<AnimStateMachine>(selfObj()); };
         b["anim_set_float"] = [smSelf](std::vector<Value>& a) {
             if (AnimStateMachine* m = smSelf(); m && a.size() >= 2) m->SetFloat(a[0].AsString(), a[1].AsFloat());
             return Value{};

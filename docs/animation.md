@@ -98,10 +98,15 @@ The Inspector's **Model Animator** section holds playback settings:
 ## From a script
 
 The Character clip builtins also work on an object with a Model Animator on
-itself or an ancestor:
+itself, a child (a player whose model sits under it) or a parent. The Play Clip
+visual-script node does the same. A played clip holds: Drive By Movement and a
+Humanoid Retarget leave it alone until `stop_clip()`. With an Animation State
+Machine on the model, the state machine picks the clips and Drive By Movement
+waits.
 
 ```
-play_clip("walk")          # switch clips (crossfades over Blend seconds)
+play_clip("wave")          # switch clips (crossfades over Blend seconds) and hold it
+stop_clip()                # let movement drive again
 play_clip_once("attack")   # play once, then return to the previous clip
 name = playing_clip()      # current clip name
 ev = anim_event()          # next fired event name ("" if none)

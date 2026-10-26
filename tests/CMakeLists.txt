@@ -948,6 +948,10 @@ add_executable(test_okayscript_next test_okayscript_next.cpp)
 target_link_libraries(test_okayscript_next PRIVATE okay::engine)
 add_test(NAME okayscript_next COMMAND test_okayscript_next)
 
+add_executable(test_anim_script_control test_anim_script_control.cpp)
+target_link_libraries(test_anim_script_control PRIVATE okay::engine)
+add_test(NAME anim_script_control COMMAND test_anim_script_control)
+
 add_executable(test_okayscript_next_csharp test_okayscript_next_csharp.cpp)
 target_link_libraries(test_okayscript_next_csharp PRIVATE okay::engine)
 add_test(NAME okayscript_next_csharp COMMAND test_okayscript_next_csharp)

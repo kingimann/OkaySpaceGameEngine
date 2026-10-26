@@ -4,6 +4,7 @@
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Mat4.hpp"
 #include "okay/Components/AnimClip.hpp"
+#include <cctype>
 #include <unordered_map>
 #include <vector>
 #include <string>
@@ -290,6 +291,30 @@ public:
     bool PlayClip(const std::string& name);
     void StopClip();
     bool IsPlayingClip() const { return m_activeClip != nullptr; }
+    /// Hold a built-in animation (a script's play_clip("Wave")): it plays over
+    /// whatever the controller picks until ReleaseAnim, which restores the one
+    /// that was playing before.
+    void HoldAnim(int a) {
+        if (m_animHold == 0) m_animBeforeHold = anim;
+        m_animHold = a;
+        anim = a;
+    }
+    void ReleaseAnim() {
+        if (m_animHold == 0) return;
+        m_animHold = 0;
+        anim = m_animBeforeHold;
+    }
+    /// The built-in animation called `name` ("Wave", "thumbs up", ...; case and
+    /// spaces don't matter), or -1. Same names as the Animation list in the Inspector.
+    static int BuiltinAnimIndex(const std::string& name) {
+        static const char* const names[] = {"none", "idle", "walk", "run", "wave", "jump", "crouch", "prone",
+                                            "point", "clap", "thumbsup", "salute", "waveboth", "cheer", "sad",
+                                            "angry", "think", "crouchwalk", "fall", "hang"};
+        std::string key;
+        for (char c : name) if (c != ' ' && c != '_' && c != '-') key += (char)std::tolower((unsigned char)c);
+        for (int i = 1; i < (int)(sizeof(names) / sizeof(names[0])); ++i) if (key == names[i]) return i;
+        return -1;
+    }
     /// Names of every registered clip (for editor dropdowns), sorted.
     std::vector<std::string> ClipNames() const;
     /// Is a clip with this name registered?
@@ -416,6 +441,7 @@ private:
     float m_headPitch = 0.0f;      // eased head tilt (toward lookPitch)
     float m_bodyLean = 0.0f;       // eased body roll (toward bodyLean)
     int   m_prevAnim = 1;          // last frame's anim state (detects jump -> ground)
+    int   m_animHold = 0, m_animBeforeHold = 1;   // HoldAnim: the held built-in animation (0 = none)
     float m_gaitSpeed = -1.0f;     // smoothed ground speed the stride is laid out for (<0 = nominal)
     float m_lowerYaw = 0.0f;       // eased turn of the hips/legs toward the travel direction (deg, ±75)
     float m_travelYaw = 0.0f;      // eased travel direction the feet step along (deg, unclamped)

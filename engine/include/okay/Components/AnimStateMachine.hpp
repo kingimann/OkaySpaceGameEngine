@@ -239,12 +239,16 @@ public:
     /// How many transitions were cut short by another one (Play-mode debugging).
     int Interruptions() const { return m_interruptions; }
 
-    void Start() override { m_current.clear(); }
+    void Start() override {
+        m_current.clear();
+        if (layer == 0) if (ModelAnimator* ma = Anim()) ma->SetStateMachine(this);   // driveByMovement waits while we're enabled
+    }
     void OnDestroy() override { if (ModelAnimator* ma = Anim()) ma->RemovePostPose(this); }
 
     void Update(float dt) override {
         ModelAnimator* ma = Anim();
         if (!ma || states.empty()) return;
+        if (layer == 0) ma->SetStateMachine(this);
         m_clock += dt;
         if (layer > 0) { LayerUpdate(dt, ma); return; }
         // Enter the entry state once the ModelAnimator is alive.
@@ -586,9 +590,8 @@ private:
             ma->externalDrive = true;
         } else {
             ma->externalDrive = false;
-            ma->blendTime = blend;
             ma->loop  = st.loop;
-            ma->Play(st.clip);
+            ma->Play(st.clip, blend);   // the transition's blend, not the animator's own setting
             if (offset > 0.0f && ma->active >= 0) ma->SetTime(offset * ma->ClipLength(ma->active));
         }
         if (onStateEnter) onStateEnter(st.name);

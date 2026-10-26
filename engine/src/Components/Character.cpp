@@ -1014,6 +1014,7 @@ void Character::SyncStateClips() {
 }
 
 void Character::Update(float dt) {
+    if (m_animHold > 0) anim = m_animHold;   // a script's held animation wins over the controller's pick
     // Landing recovery: coming out of the jump pose into any grounded state plays a
     // brief knee-bend "absorb" (sin arc in PoseAt/StanceOffset) so a landing has
     // weight to it instead of the legs snapping straight the frame you touch down.

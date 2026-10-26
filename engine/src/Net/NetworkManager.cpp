@@ -178,6 +178,12 @@ void NetworkManager::InitServerState() {
         return it != m_syncObjs.end() && it->second.owned;
     };
     anticheat.exists = [this](const std::string& id) { return m_syncObjs.count(id) != 0; };
+    anticheat.claimable = [this](const std::string& id) {
+        auto it = m_syncObjs.find(id);
+        if (it == m_syncObjs.end() || !it->second.t || !it->second.t->gameObject) return false;
+        const auto* ns = it->second.t->gameObject->GetComponent<NetworkSync>();
+        return ns && ns->clientClaimable;
+    };
     anticheat.onCheat = [this](const CheatReport& r) {
         auto& recent = m_recentCheats[r.peer];   // for a kick's report
         if (recent.size() >= kRecentCheats) recent.erase(recent.begin());
@@ -354,6 +360,7 @@ void NetworkManager::Stop() {
     anticheat.Reset();
     anticheat.serverOwns = nullptr;
     anticheat.exists = nullptr;
+    anticheat.claimable = nullptr;
     anticheat.onCheat = nullptr;
     m_recentCheats.clear();
     m_relayLost = false;

@@ -814,6 +814,34 @@ timerText = $"Time {elapsed:F1}s";          // "Time 12.5s"
 label = $"{(won ? "You win" : "Try again")}: {score} points";
 ```
 
+### List and Dictionary
+
+`List<T>` grows and shrinks; `Dictionary<K, V>` looks values up by key (an int,
+string, bool, enum or object). Both are references, like arrays.
+
+```csharp
+List<GameObject> targets = new List<GameObject>();
+targets.Add(enemy);                      // Add, Insert, Remove, RemoveAt, Clear
+if (targets.Contains(enemy)) { }          // Contains, IndexOf, Count, Sort, Reverse, ToArray, AddRange
+var scores = new List<int> { 5, 9, 2 };
+scores.Sort();
+
+var stock = new Dictionary<string, int>();
+stock["potion"] = 3;                      // adds or replaces
+stock["potion"] += 1;                     // the key must already be there to read it
+if (stock.ContainsKey("sword")) { }       // Add, TryAdd, Remove, ContainsKey, ContainsValue, Clear
+int arrows = stock.GetValueOrDefault("arrow", 0);
+foreach (var kv in stock) Debug.Log($"{kv.Key}: {kv.Value}");   // in the order they were added
+```
+
+Reading a missing key, adding a key that's already there, an index outside a
+list, or changing a list or dictionary inside a `foreach` over it stops the
+callback with an error naming the line.
+
+### do / while
+
+`do { ... } while (condition);` runs the body once before it checks.
+
 ### ?? and ?.
 
 For objects and arrays, which can be null. A destroyed object counts as null

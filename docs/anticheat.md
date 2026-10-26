@@ -8,6 +8,11 @@ nothing is checked and nothing is sent differently from before.
   - spawning a prefab that isn't on the game's list;
   - writing another object's SyncVars, or flooding SyncVars;
   - moving a NetworkSync object faster than `maxSyncSpeed`.
+  - moving, or writing the variables of, a scene object nobody owns (a door,
+    a pickup): it's the server's. Tick **Players can claim it** on its
+    Network Sync (`clientClaimable`) for one any player may grab, like a
+    ball: the first to move it owns it. The server can hand any object to a
+    player with `anticheat.SetOwner(netId, peer)`.
 
   Every refusal is reported; repeat offenders are kicked.
 - **P2 (identity and transport):** clients must encrypt, every packet is

@@ -4,6 +4,7 @@
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Collider3D.hpp"
+#include "okay/Components/Stance.hpp"
 #include <cmath>
 
 namespace okay {
@@ -138,6 +139,28 @@ inline void ApplyStanceHeight(GameObject* go, StanceBody& st, float height) {
     else if (auto* k = dynamic_cast<CapsuleCollider3D*>(c)) { h = std::fmax(height, 2.0f * k->radius); k->height = h; }
     c->offset.y = st.feetY + h * 0.5f;
     st.curH = h;
+}
+/// The stance (0 stand, 1 crouch, 2 prone) the body may take when `want` is
+/// asked for while it is `cur`: rising needs headroom for the target height,
+/// and from prone a crouch will do if only that fits. `crouchFrac` /
+/// `proneFrac` are the stance heights as fractions of standing.
+inline int SettleStance(GameObject* go, StanceBody& st, int cur, int want, float crouchFrac, float proneFrac) {
+    Scene* sc = go ? go->scene() : nullptr;
+    CaptureStance(go, st);
+    if (!sc || !st.captured) return want;
+    auto height = [&](int s) { return st.standH * (s == 2 ? proneFrac : (s == 1 ? crouchFrac : 1.0f)); };
+    if (height(want) <= st.curH + 1e-3f || StanceHasRoom(*sc, go, st, height(want))) return want;
+    if (want == 0 && cur == 2 && StanceHasRoom(*sc, go, st, height(1))) return 1;
+    return cur;
+}
+/// Ease the stance level toward `stance` and size the collider for it (feet
+/// fixed; only the collider moves, never the body).
+inline void EaseStance(GameObject* go, StanceBody& st, float& level, int stance, float dt, const StanceTimes& times,
+                       bool resize, float crouchFrac, float proneFrac) {
+    level = StepStanceLevel(level, stance, dt, times);
+    if (!resize || !go) return;
+    CaptureStance(go, st);
+    ApplyStanceHeight(go, st, st.standH * StanceValue(level, 1.0f, crouchFrac, proneFrac));
 }
 
 } // namespace okay

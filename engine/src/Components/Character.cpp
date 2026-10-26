@@ -393,6 +393,13 @@ float Character::GaitPhaseAt(float t, int state) const {
     return frac(m_gaitPhase + (t - animTime) * f);
 }
 
+float Character::GaitCycleSeconds(int state) const {
+    if (state != 2 && state != 3 && state != 17) return 0.0f;
+    float f = m_gaitFreq != 0.0f ? m_gaitFreq : NominalFreq(state);   // the rate GaitPhaseAt uses
+    f = f < 0.0f ? -f : f;
+    return f > 1e-4f ? 1.0f / f : 0.0f;
+}
+
 namespace {
 struct FootState { float fwd, lift, pitch; bool planted; float u; };
 // Where one foot is at cycle phase p (0 = touchdown).

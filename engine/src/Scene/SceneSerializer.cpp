@@ -841,9 +841,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  anticheatsafety " << (s.requireEncryption ? 1 : 0) << " " << (ac->allowRuntimeToggle ? 1 : 0) << "\n";
         const AntiCheatSettings d;   // hit-claim tuning: its own line, only when changed
         if (s.hitOriginTolerance != d.hitOriginTolerance || s.hitTolerance != d.hitTolerance || s.maxHitRange != d.maxHitRange ||
-            s.hitDamage != d.hitDamage || s.hitLineOfSight != d.hitLineOfSight || s.hitsNeedMoveCheck != d.hitsNeedMoveCheck)
+            s.hitDamage != d.hitDamage || s.hitLineOfSight != d.hitLineOfSight || s.hitsNeedMoveCheck != d.hitsNeedMoveCheck ||
+            s.maxRewindRtt != d.maxRewindRtt)
             out << "  anticheathit " << s.hitOriginTolerance << " " << s.hitTolerance << " " << s.maxHitRange
-                << " " << s.hitDamage << " " << (s.hitLineOfSight ? 1 : 0) << " " << (s.hitsNeedMoveCheck ? 1 : 0) << "\n";
+                << " " << s.hitDamage << " " << (s.hitLineOfSight ? 1 : 0) << " " << (s.hitsNeedMoveCheck ? 1 : 0)
+                << " " << s.maxRewindRtt << "\n";
         for (const auto& w : s.weapons) out << "  anticheatweapon " << Quote(w) << "\n";
     }
     for (auto* nv : go->GetComponents<NetValidator>()) {
@@ -5217,10 +5219,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         ac->allowRuntimeToggle = toggle != 0;
                     }
                 } else if (field == "anticheathit") {   // follows the object's "anticheat" line
-                    float o = 2.0f, t = 1.0f, r = 0.0f, dmg = 10.0f; int los = 1, needMove = 1;
+                    float o = 2.0f, t = 1.0f, r = 0.0f, dmg = 10.0f, rewindRtt = AntiCheatSettings{}.maxRewindRtt; int los = 1, needMove = 1;
                     in >> o >> t >> r >> dmg >> los;
-                    in >> std::ws;   // the move-check requirement came later
+                    in >> std::ws;   // the move-check requirement and the round-trip cap came later
                     if (std::isdigit(in.peek())) in >> needMove;
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '.') in >> rewindRtt;
                     if (auto* ac = go->GetComponent<AntiCheatConfig>()) {
                         AntiCheatSettings& s = ac->settings;
                         auto ok = [](float v) { return std::isfinite(v) && v >= 0.0f; };
@@ -5230,6 +5234,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         if (ok(dmg)) s.hitDamage = dmg;
                         s.hitLineOfSight = los != 0;
                         s.hitsNeedMoveCheck = needMove != 0;
+                        if (ok(rewindRtt)) s.maxRewindRtt = rewindRtt;
                     }
                 } else if (field == "anticheatweapon") {   // one per known weapon, after "anticheat"
                     const std::string w = ReadQuoted(in);

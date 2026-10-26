@@ -28101,6 +28101,8 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("A server raycast must reach the target: no shooting through walls.");
                 if (ImGui::Checkbox("Need a move check##ac", &s.hitsNeedMoveCheck)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Refuse players' hit claims unless the server can check where the shooter is: a max move speed (net_max_speed / --max-speed), or Authoritative movement. Without either, a client could claim to fire from anywhere.");
+                if (ImGui::DragFloat("Max ping allowance##ac", &s.maxRewindRtt, 0.01f, 0.0f, 2.0f, "%.2f s")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The most round trip a shot is allowed for: lag compensation looks back at most 0.2 s plus this, and the target's slack is its speed x this. A player whose pings are slower still gets this much.");
                 ImGui::TreePop();
             }
             if (ImGui::SmallButton("Remove##ac")) toRemove = ac;

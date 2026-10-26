@@ -661,7 +661,11 @@ private:
         float clockTimer = 0.0f, clockQuiet = 0.0f, clockReported = 1e9f;
         // Round trip, from the heartbeat's pings (-1 until measured): how far
         // a target may have moved while this client's shot was on its way.
+        // The quickest of the last few, so answering pings late doesn't
+        // stretch it unless every one is late.
         float rtt = -1.0f;
+        float rttSamples[8] = {};
+        std::uint8_t rttCount = 0, rttNext = 0;
         std::uint64_t pingNonce = 0;
         double pingSentMs = 0.0;
     };

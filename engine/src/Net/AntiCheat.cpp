@@ -116,6 +116,7 @@ bool AntiCheatSettings::Parse(const std::string& text, AntiCheatSettings& out, s
         else if (key == "hitLineOfSight") { if (!ParseBool(val, s.hitLineOfSight)) return fail("hitLineOfSight needs true or false"); }
         else if (key == "weapon") { if (val.empty()) return fail("weapon needs a name"); s.weapons.push_back(val); }
         else if (key == "hitsNeedMoveCheck") { if (!ParseBool(val, s.hitsNeedMoveCheck)) return fail("hitsNeedMoveCheck needs true or false"); }
+        else if (key == "maxRewindRtt") { if (!ParseFloat(val, s.maxRewindRtt)) return fail("maxRewindRtt needs seconds >= 0"); }
         else if (key == "clientVar") { if (val.empty()) return fail("clientVar needs a key prefix"); s.clientVars.push_back(val); }
         else if (key == "maxSpawnsPerSecond") { if (!ParseInt(val, s.maxSpawnsPerSecond)) return fail("maxSpawnsPerSecond needs a whole number >= 0"); }
         else if (key == "maxLiveSpawnsPerPeer") { if (!ParseInt(val, s.maxLiveSpawnsPerPeer)) return fail("maxLiveSpawnsPerPeer needs a whole number >= 0"); }
@@ -170,6 +171,7 @@ std::string AntiCheatSettings::ToText() const {
     if (hitLineOfSight != d.hitLineOfSight) o << "hitLineOfSight " << (hitLineOfSight ? "true" : "false") << "\n";
     for (const auto& w : weapons) o << "weapon " << w << "\n";
     if (hitsNeedMoveCheck != d.hitsNeedMoveCheck) o << "hitsNeedMoveCheck " << (hitsNeedMoveCheck ? "true" : "false") << "\n";
+    if (maxRewindRtt != d.maxRewindRtt) o << "maxRewindRtt " << maxRewindRtt << "\n";
     return o.str();
 }
 

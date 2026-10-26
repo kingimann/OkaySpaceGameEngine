@@ -1264,7 +1264,7 @@ void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
     claim.weapon = part[1];
     claim.clientTick = static_cast<std::uint32_t>(std::strtoul(part[2].c_str(), &end, 10));
     double viewTick = -1.0;   // lag compensation: the moment the shooter saw
-    if (end && *end == ':') { viewTick = std::strtod(end + 1, nullptr); if (!std::isfinite(viewTick) || viewTick < 0.0) viewTick = -1.0; }
+    if (end && *end == ':') { viewTick = std::strtod(end + 1, nullptr); viewTick = std::isfinite(viewTick) ? std::max(0.0, viewTick) : -1.0; }
     claim.direction = dir * (1.0f / dir.Magnitude());
     claim.damage = anticheat.settings.hitDamage;
     const AntiCheatSettings& s = anticheat.settings;
@@ -1305,7 +1305,11 @@ void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
     // The target, where the server has it.
     auto obj = m_syncObjs.find(claim.target);
     if (obj == m_syncObjs.end() || !obj->second.t || !obj->second.t->gameObject) { refuse("no such target: " + claim.target); return; }
-    const float rtt = c.rtt >= 0.0f ? std::min(c.rtt, 1.0f) : 0.25f;
+    // With a fixed tick, a claim must say when the shooter looked: without
+    // it, the check would fall back to the target's speed x the ping as
+    // slack. Older clients don't say, so not a violation.
+    if (viewTick < 0.0 && HostTickRate() > 0.0f) { ++m_hitsRefused; return; }
+    const float rtt = std::min(c.rtt >= 0.0f ? c.rtt : 0.25f, std::max(0.0f, s.maxRewindRtt));
     // Lag compensation: with a fixed tick and the moment the shooter saw,
     // everything goes back to where it was then (clamped to 200 ms + its round
     // trip) for the checks below, and is put back after. The target then
@@ -2157,7 +2161,10 @@ void NetworkManager::ServerTick(float dt) {
             Client& c = it->second;
             if (nonce == c.pingNonce && c.pingNonce != 0) {   // its round trip, for hit claims
                 const float rtt = static_cast<float>((m_acClockMs - c.pingSentMs) / 1000.0);
-                c.rtt = c.rtt < 0.0f ? rtt : c.rtt * 0.75f + rtt * 0.25f;
+                c.rttSamples[c.rttNext] = rtt;
+                c.rttNext = (c.rttNext + 1) % 8;
+                if (c.rttCount < 8) ++c.rttCount;
+                c.rtt = *std::min_element(c.rttSamples, c.rttSamples + c.rttCount);
                 c.pingNonce = 0;
             }
             if (!c.clock) continue;

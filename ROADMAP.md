@@ -1,76 +1,81 @@
 # OkaySpace roadmap
 
 What is being worked on right now and what comes next. Kept current by the main
-(coordinating) Claude session; each item links its PR once one exists.
+(coordinating) Claude session; each item links its PR once one exists. Every PR
+merges once its five CI jobs are green, and a release follows.
 
-_Last updated: 2026-10-26 00:20 UTC_
+_Last updated: 2026-10-26 13:35 UTC_
 
 ## Releases
 
-| Version | State | What's in it |
+| Version | What's in it |
+|---|---|
+| 2.829.0 | Launcher: delete or remove projects from the Create page (#334); inventory: no dupes or item loss (#335); smooth third-person camera (#336); first-person camera without shake (#337) |
+| 2.828.0 | Remote players move smoothly (#330); lag-compensated hits (#331) |
+| 2.827.0 | 2D controllers driven by inputs (#327); client prediction (#329) |
+| 2.826.0 | First- and third-person controllers driven by inputs (#326) |
+| 2.825.0 | Opt-in fixed network tick (#323); server-authoritative movement (#324) |
+| 2.824.0 | Account token only to hosts that check sign-ins (#320); anti-cheat phase 4 (#321) |
+| 2.823.0 | Anti-cheat phase 3: sealed join, pinned host keys, clock heartbeat (#318) |
+| 2.822.0 | Imported-character glitch fixes (#316); anti-cheat phase 2, relay (#315) |
+| 2.821.0 | Anti-cheat phase 1 (#311) and P3/P4 (#269, #270); animation part 2 (#305, #308, #312); 2.5D crouch and prone (#313) |
+
+## Done
+
+- **Anti-cheat plan, phases 1–5.** All merged (#311 → #331). The database side
+  (`docs/sql/anticheat.sql`: reports, bans, appeals) is applied.
+- **Default player walk and run** (#301), and every controller drives the gait.
+- **Animation part 2**, items 1–18 (#299, #305, #306, #307, #308, #312).
+
+## Now
+
+| Session | Plan | Current |
 |---|---|---|
-| 2.818.0 | live in the launcher | Walk fix for the one-click humanoid (#283), visual-script and script-language fixes, robustness fixes #272–#279, security #254 |
-| 2.819.0 | building now (release workflow on main) | Shared in-game UI renderer (#282), long-expression crash fix (#287), physics dispatch crash fix (#292), network hardening (#288), Linux server build fix |
-| 2.820.0 | next | The default player's walk/run rewrite (PR1), launcher project deletion |
+| Main | Coordination, merges, releases | Merging and releasing as PRs go green |
+| QA | Camera and animation smoothing, PRs 1–6 | PR 3: step-up only on real steps (#338); PR 4: frame timing |
+| Humanoid | IK, animation and humanoid rigging, PRs 1–8 | PR 1: a visible Animator on every built-in player, with baked clips |
+| Robustness | Inventory, PRs 1–9 | PR 2: grid inventory |
 
-## Now: main session
+### Camera and animation smoothing (QA)
+1. [x] Third-person camera: smooth the pivot, not the orbit; sphere-cast spring arm that ignores triggers and the player's own parts (#336).
+2. [x] First-person camera: eye smoothing over steps, continuous head bob, angle-based look smoothing (#337).
+3. [ ] Step-up only on real steps: no hops on ramps, seams or pickups.
+4. [ ] Even frame timing in the editor and the player.
+5. [ ] Controllers update before animation; spike guard in ModelAnimator.
+6. [ ] Online: eased corrections and a clean cut on a snap.
 
-### PR1: the default player's walk and run
-Part 1 §1–2. Local, building and testing.
+### IK, animation and rigging (Humanoid)
+1. [ ] Animator component on the built-in players; procedural animation baked into clips. Takes the gait smoothing and per-pair crossfade times from the camera plan.
+2. [ ] Smooth stance changes: stand, crouch and prone, moving in any direction.
+3. [ ] IK core correctness: LimbIK, ChainIK, FootIK, FullBodyIK.
+4. [ ] Controllers: ground probe (no apex double jump), eased step-up, rotating platforms, 2D one-shot clips. After camera PR 3.
+5. [ ] One shared humanoid bone mapper that rejects non-humanoids.
+6. [ ] Rest-pose normalisation and retargeting by avatar slot.
+7. [ ] Animator graph and preview for every character; import a clip into a state.
+8. [ ] One-click humanoid import with the default library on any rig; character script API.
 
-- [x] Root cause: the stance knee was always folded (37–63° at every speed) by a constant hip drop, and "walk" at 4.5 m/s was really a jog.
-- [x] Walk and run have their own styles:
-  - **Walk:** one foot always down, heel strike, nearly straight stance leg (about 14° knee bend). Above ~0.85 m steps the cadence quickens instead.
-  - **Run:** flight phase, forefoot strike, legs that scissor behind and forward, and a harder arm pump.
-- [x] One continuous gait phase for every gait state. Walk↔run never moves the feet; the two styles blend over 0.2 s on live poses.
-- [x] Crossfades between built-in states (idle↔walk, crouch, jump, land) run on live poses, not a frozen snapshot.
-- [x] Speed is measured with last frame's dt and lightly smoothed, so the stride doesn't shimmer at variable frame rates.
-- [x] The height slider scales the body uniformly. The stride matches at any height and the parts don't shear.
-- [x] CharacterController3D, ThirdPersonShooter, TopDown, ClickToMove and NPC controllers all go through `Character::DriveLocomotion`. Every template now gets speed-matched strides, strafe/backpedal and jump/fall poses.
-- [ ] Full test suite, before/after renders, PR.
+### Inventory (Robustness)
+1. [x] Correctness: no dupes, no item loss, max stack respected (#335).
+2. [ ] Grid fixes.
+3. [ ] Wiring.
+4. [ ] One shared interaction layer.
+5. [ ] Item definitions.
+6. [ ] Gameplay features.
+7. [ ] Scripting.
+8. [ ] UI polish.
+9. [ ] Networking: server-authoritative, on the anti-cheat RPC checks.
 
-### Launcher: delete projects
-- [x] On a project card, the "…" button or a right-click opens two options:
-  - "Remove from list".
-  - "Delete project…": the folder goes to the Recycle Bin on Windows. Safety checks refuse anything that isn't a project folder, and refuse while the editor is running.
-- [ ] PR after PR1.
+## Waiting on Iman
 
-## Next: main session
-1. **PR2, the `Animator` component for the player** (part 1 §3).
-   - A locomotion state machine with these states: Idle, Walk, Run, Jump, Fall, Land, Crouch, Crouch Walk, Prone, Crawl, Hang.
-   - Each state has a clip slot, playback speed, sync to movement with a reference speed, loop, blend time and IK weight.
-   - "Walk starts at" and "Run starts at" thresholds, plus the gait knobs (stride, cadence, arm swing, lean, bounce, foot lift).
-   - Added automatically to every player and to old scenes.
-   - An inspector panel with an Edit-mode preview: pick a state, drag a speed slider.
-2. **PR3:** the Animator graph window shows and edits the player's states, and highlights the live state in Play.
-3. **PR4:** "Import from file…" brings a humanoid clip (glTF/GLB/FBX, Mixamo) into a state slot. It is converted rest-relative and stride-synced.
-4. Release 2.820.0 as these land.
-
-## Now: other sessions
-
-Each session finishes its current work, then takes its items from the part 2 player-animation spec.
-
-| Session | Current | Then (part 2 items) |
-|---|---|---|
-| UI | Rebase #285 onto main | 1 "Apply" makes a clip play forever · 2 edits revert on Play / clips-file path · 5 Animation tab (open clips, undo, start from built-in) · 6 AnimClip slerp + loop seam |
-| Humanoid | Humanoid P0 (rig generator covering 9 rigs) | 3 imported clips turn smooth after reload · 4 save every FootIK/retarget field · 7 walk plays run + feet skate · 8 false landing at jump apex · 9 retarget delta-from-rest + clip-name matching · 10 FootIK sinks feet on the retarget path · 11 RootMotion component |
-| Scripting | #281 statics fixes → #284 | 12 scripts find the model's animator + Play override · 13 AnimStateMachine vs driveByMovement · 14 clip events at t=0 |
-| QA | #291 anti-cheat review fixes; #280 → #290 | 15 remote players skate / wrong walk-run |
-| Release | #269/#270 anti-cheat fixes; sanitizer CI widening | 16 2D sprites: named clips (idle/run/jump) |
-| Robustness | Scene-record follow-ups; #276 loader gaps | 17 per-frame cache rebuilds and allocations · 18 IK polish |
-
-## Open PRs
-
-| PR | What | State |
-|---|---|---|
-| #280 → #290 | Visual script save / paste / compile fixes | #280 CI running |
-| #285 | Editor UI preview through the engine renderer | Needs a rebase onto main |
-| #281 → #284 | Typed OkayScript statics, `$"..."` strings | Two review fixes pending |
-| #291 | Anti-cheat P1 server checks | Needs work (review posted on the PR) |
-| #269 → #270 | Anti-cheat P3/P4 | Must-fix list in progress |
+- **Join tickets (anti-cheat 3e).** The `session-ticket` edge function needs a
+  signing key that Iman creates and adds to Supabase.
+- **"server_check" report kind.** A one-word addition to `anticheat.sql`.
+- **Nightly clean-up of old anti-cheat records.** Needs the pg_cron extension
+  turned on in Supabase. Until then, run `select public.ac_purge_old();` by hand.
 
 ## Later
+
+- In-game UI plan: P0 item 3 (batching, caching) and P1–P4.
 - Script language: classes; `GetComponent<MyScript>()` with a per-scene script library.
-- Anti-cheat P1/P2 components (AntiCheatConfig, NetValidator, OnCheatDetected / OnValidateRpc nodes).
-- The humanoid "import any human, press Play" plan, P1–P3.
-- In-game UI plan, P1–P4.
+- Procedural object holding (hand IK, grips, multiplayer sync).
+- Split the largest source files (editor, launcher, OkayScript VM).

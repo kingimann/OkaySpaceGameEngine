@@ -177,6 +177,7 @@ public:
         fn_ = nullptr;
         Value ret;
         try {
+            if (m.baseCall) Eval(*m.baseCall);   // the base class's constructor first
             Flow f = Run(*m.body);
             if (f == Flow::Return) ret = std::move(retVal_);
         } catch (...) { locals_ = saved; fn_ = savedFn; throw; }
@@ -655,18 +656,43 @@ private:
         }
     }
 
-    // Run `f` as code of object `o` (its fields, its class, `this`).
+    bool IsA(const ScriptObj& o, int k) const { return prog_.classes[(std::size_t)o.cls].isA[(std::size_t)k] != 0; }
+    static std::string Article(const std::string& n) { return (std::string("aeiouAEIOU").find(n[0]) != std::string::npos ? "an " : "a ") + n; }
+
+    // Run `f` as code of class `k` (the class o is, or one it extends) for object `o`.
     template <typename F>
-    Value As(const ObjPtr& o, F&& f) {
+    Value As(const ObjPtr& o, int k, F&& f) {
         std::vector<Value>* self = self_;
         const int cls = cls_;
         ObjPtr saved = std::move(this_);
-        self_ = &o->fields; cls_ = o->cls; this_ = o;
+        self_ = &o->fields; cls_ = k; this_ = o;
         auto restore = [&] { self_ = self; cls_ = cls; this_ = std::move(saved); };
         Value v;
         try { v = f(); } catch (...) { restore(); throw; }
         restore();
         return v;
+    }
+
+    // Class k's part of making `o`: its fields' starting values, then its constructor
+    // (which starts with the base class's), or the base class's part when it has none.
+    void Construct(const ObjPtr& o, int k, int ctor, std::vector<Value>& args, SrcLoc loc) {
+        const ClassDecl& c = prog_.classes[(std::size_t)k];
+        // A field that starts as `new` of its own class would come back here forever.
+        if (g_depth >= kMaxDepth) throw RuntimeError("Making a " + c.name + " makes more objects without end (a field that starts as new " + c.name + "?)", loc);
+        DepthGuard depth(c.name, loc);
+        As(o, k, [&] {
+            for (const FieldDecl& f : c.fields)
+                if (f.init) o->fields[(std::size_t)f.index] = Eval(*f.init);
+            if (ctor >= 0) CallMethod(ctor, args);
+            else if (c.baseClass >= 0) {
+                std::vector<Value> none;
+                int baseCtor = -1;   // the base's constructor that takes nothing (the checker made sure there is one, if it has any)
+                const auto& bm = prog_.classes[(std::size_t)c.baseClass].methods;
+                for (std::size_t i = 0; i < bm.size(); ++i) if (bm[i].isCtor && bm[i].params.empty()) baseCtor = (int)i;
+                Construct(o, c.baseClass, baseCtor, none, loc);
+            }
+            return Value{};
+        });
     }
 
     // new Node(...): fields at their defaults, then their starting values, then the constructor.
@@ -681,14 +707,10 @@ private:
         auto o = std::make_shared<ScriptObj>();
         o->cls = e.slot;
         o->className = k.name;
-        o->fields.reserve(k.fields.size());
-        for (const FieldDecl& f : k.fields) o->fields.push_back(DefaultFor(f.resolved));
-        As(o, [&] {
-            for (std::size_t i = 0; i < k.fields.size(); ++i)
-                if (k.fields[i].init) o->fields[i] = Eval(*k.fields[i].init);
-            if (e.member >= 0) CallMethod(e.member, args);
-            return Value{};
-        });
+        o->fields.resize((std::size_t)k.fieldCount);
+        for (int c = e.slot; c >= 0; c = prog_.classes[(std::size_t)c].baseClass)
+            for (const FieldDecl& f : prog_.classes[(std::size_t)c].fields) o->fields[(std::size_t)f.index] = DefaultFor(f.resolved);
+        Construct(o, e.slot, e.member, args, e.loc);
         return Value{std::move(o)};
     }
 
@@ -791,6 +813,12 @@ private:
             }
             case EK::Cast: {
                 Value a = Eval(*e.lhs);
+                if (e.type.kind == TK::Class) {   // (Boss)enemy: null stays null, anything else must really be one
+                    const ObjPtr* o = std::get_if<ObjPtr>(&a);
+                    if (e.slot == 1 && o && *o && !IsA(**o, e.type.id))
+                        throw RuntimeError("This " + (*o)->className + " isn't " + Article(prog_.NameOf(e.type)), e.loc);
+                    return a;
+                }
                 if (e.type.kind == TK::Int || e.type.kind == TK::Enum) {
                     if (auto* f = std::get_if<float>(&a)) {
                         if (!std::isfinite(*f)) throw RuntimeError("Can't turn this number into an int (it isn't finite)", e.loc);
@@ -808,6 +836,13 @@ private:
                 try { return Eval(*e.lhs); } catch (const NullSkip&) { return Value{}; }
             case EK::NewArray: case EK::ArrayLit: return MakeArray(e);
             case EK::Lambda: return MakeLambda(e);
+            case EK::Is: case EK::As: {
+                const Value a = Eval(*e.lhs);
+                const ObjPtr* o = std::get_if<ObjPtr>(&a);
+                const bool yes = o && *o && IsA(**o, e.slot);
+                if (e.kind == EK::Is) return Value{yes};
+                return yes ? a : Value{};
+            }
             case EK::Interp: {
                 std::string s;
                 for (auto& a : e.args) s += ValueToString(Eval(*a));
@@ -1107,12 +1142,29 @@ private:
                 for (auto& a : e.args) args.push_back(Eval(*a));
                 return Invoke(std::get<FuncRef>(f), args, e.loc);
             }
-            case Bind::ObjMethod: {
+            case Bind::ObjMethod: {   // the method the object's own class has under that name
                 ObjPtr o = std::get<ObjPtr>(Receiver(*e.object, e.nullCond));
                 std::vector<Value> args;
                 args.reserve(e.args.size());
                 for (auto& a : e.args) args.push_back(Eval(*a));
-                return As(o, [&] { return CallMethod(e.slot, args); });
+                const auto [k, m] = prog_.classes[(std::size_t)o->cls].dispatch[(std::size_t)e.slot];
+                if (m < 0) throw RuntimeError("Internal error: " + o->className + " has no " + e.name + "()", e.loc);
+                return As(o, k, [&] { return CallMethod(m, args); });
+            }
+            case Bind::BaseMethod: {
+                std::vector<Value> args;
+                args.reserve(e.args.size());
+                for (auto& a : e.args) args.push_back(Eval(*a));
+                const ObjPtr self = this_;   // a copy: As() swaps this_ out
+                return As(self, e.member, [&] { return CallMethod(e.slot, args); });
+            }
+            case Bind::BaseCtor: {
+                std::vector<Value> args;
+                args.reserve(e.args.size());
+                for (auto& a : e.args) args.push_back(Eval(*a));
+                const ObjPtr self = this_;   // a copy: As() swaps this_ out
+                Construct(self, e.slot, e.member, args, e.loc);
+                return Value{};
             }
             case Bind::ApiStaticMethod: case Bind::ApiMethod: {
                 const ApiType& t = api_.types[(std::size_t)e.slot];

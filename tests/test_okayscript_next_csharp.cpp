@@ -769,7 +769,7 @@ static void Classes() {
             "    public Bag(int a) { }\n"                                // 8
             "}\n"                                                         // 9
             "class Node { public int value; }\n"                         // 10
-            "class Fancy : Node { }\n"                                   // 11
+            "class Fancy : Node, Bag { }\n"                              // 11
             "class Node { }\n"                                           // 12
             "class T : Behaviour {\n"                                    // 13
             "    T() { }\n"                                              // 14
@@ -790,7 +790,7 @@ static void Classes() {
         CHECK(Has(d, 0, "static members only work in the Behaviour class for now", 6, 16));
         CHECK(Has(d, 0, "A constructor can't return a value", 7, 25));
         CHECK(Has(d, 0, "Bag already has a constructor that takes 1 value", 8, 12));
-        CHECK(Has(d, 0, "Inheritance between classes isn't supported yet", 11, 15));
+        CHECK(Has(d, 0, "A class extends one class, named first: Bag is a class", 11, 21));
         CHECK(Has(d, 0, "'Node' is declared twice", 12, 7));
         CHECK(Has(d, 0, "A Behaviour script has no constructor: set things up in Awake() or Start()", 14, 5));
         CHECK(Has(d, 0, "Bag has no constructor that takes 0 values", 19, 17));
@@ -1274,6 +1274,123 @@ static void Events() {
     }
 }
 
+static void Inheritance() {
+    {   // classes that extend classes, interfaces, virtual / override / abstract, base, protected, is / as / casts
+        World w(
+            "interface IDamageable { void TakeDamage(int amount); bool IsDead(); }\n"
+            "abstract class Enemy : IDamageable {\n"
+            "    protected int hp;\n"
+            "    public string kind = \"enemy\";\n"
+            "    public Enemy(int hp) { this.hp = hp; }\n"
+            "    public virtual void TakeDamage(int amount) { hp -= amount; }\n"
+            "    public bool IsDead() { return hp <= 0; }\n"
+            "    public abstract int Reward();\n"
+            "    public int Hp() { return hp; }\n"
+            "    public string Describe() { return kind + \":\" + Reward(); }\n"
+            "}\n"
+            "class Grunt : Enemy {\n"
+            "    public Grunt() : base(10) { kind = \"grunt\"; }\n"
+            "    public override int Reward() { return 5; }\n"
+            "}\n"
+            "class Boss : Enemy {\n"
+            "    int armor = 2;\n"
+            "    public Boss(int hp) : base(hp) { }\n"
+            "    public override void TakeDamage(int amount) { base.TakeDamage(amount - armor); }\n"
+            "    public override int Reward() { return 100; }\n"
+            "}\n"
+            "class Crate : IDamageable {\n"
+            "    public int hits;\n"
+            "    public void TakeDamage(int amount) { hits++; }\n"
+            "    public bool IsDead() { return hits >= 2; }\n"
+            "}\n"
+            "class T : Behaviour {\n"
+            "    public int gruntHp, bossHp, reward, dead, bosses, crateHits;\n"
+            "    public string desc;\n"
+            "    public bool notEnemy, same;\n"
+            "    void Start() {\n"
+            "        List<IDamageable> targets = new List<IDamageable> { new Grunt(), new Boss(50), new Crate() };\n"
+            "        foreach (IDamageable t in targets) t.TakeDamage(10);\n"
+            "        foreach (var t in targets) t.TakeDamage(10);\n"
+            "        Enemy g = targets[0] as Enemy;\n"
+            "        gruntHp = g.Hp();\n"
+            "        Boss b = (Boss)targets[1];\n"
+            "        bossHp = b.Hp();\n"
+            "        foreach (var t in targets) {\n"
+            "            if (t is Enemy) reward += (t as Enemy).Reward();\n"
+            "            if (t.IsDead()) dead++;\n"
+            "            if (t is Boss) bosses++;\n"
+            "        }\n"
+            "        crateHits = (targets[2] as Crate).hits;\n"
+            "        desc = g.Describe() + \",\" + b.Describe();\n"
+            "        notEnemy = targets[2] as Enemy == null;\n"
+            "        Enemy e = b;\n"
+            "        same = e == targets[1];\n"
+            "    }\n"
+            "}\n");
+        CHECK(w.loaded);
+        CHECK_NEAR(w.F("gruntHp"), -10.0f, 1e-6f);
+        CHECK_NEAR(w.F("bossHp"), 34.0f, 1e-6f);          // the override takes armor off, then runs the base method
+        CHECK_NEAR(w.F("reward"), 105.0f, 1e-6f);
+        CHECK_NEAR(w.F("dead"), 2.0f, 1e-6f);
+        CHECK_NEAR(w.F("bosses"), 1.0f, 1e-6f);
+        CHECK_NEAR(w.F("crateHits"), 2.0f, 1e-6f);
+        CHECK(w.S("desc") == "grunt:5,enemy:100");          // base code calls the object's own Reward()
+        CHECK(w.sc->VM()->GetGlobal("notEnemy").AsBool());
+        CHECK(w.sc->VM()->GetGlobal("same").AsBool());
+    }
+    {   // a cast to the wrong class is an error with its line
+        g_errs.clear();
+        World w("class A { } class B : A { } class C : A { }\nclass T : Behaviour {\n    void Start() { A a = new C(); B b = (B)a; Debug.Log(b); }\n}\n");
+        CHECK(ErrHas("Start() line 3: This C isn't a B"));
+    }
+    {   // mistakes, with line and column
+        auto d = Diags(
+            "interface IA { void Run(); }\n"   // 1
+            "class Base { public void Walk() { } public virtual int Score() { return 1; } int secret; protected int shared; }\n"   // 2
+            "class D : Base {\n"   // 3
+            "    public void Walk() { }\n"   // 4
+            "    public override string Score() { return \"\"; }\n"   // 5
+            "    public override void Fly() { }\n"   // 6
+            "    public void Use() { secret = 1; shared = 2; base.Nope(); }\n"   // 7
+            "}\n"   // 8
+            "class C : IA { }\n"   // 9
+            "abstract class A { public abstract void Go(); }\n"   // 10
+            "class B : A { }\n"   // 11
+            "class P { public P(int x) { } }\n"   // 12
+            "class Q : P { }\n"   // 13
+            "class R : P { public R() : base(\"a\") { } }\n"   // 14
+            "class K : A { public override void Go() { base.Go(); } }\n"   // 15
+            "class X : Y { }\n"   // 16
+            "class Y : X { }\n"   // 17
+            "class T : Behaviour, IA {\n"   // 18
+            "    void Start() {\n"   // 19
+            "        A a = new A();\n"   // 20
+            "        IA i = new IA();\n"   // 21
+            "        D d = new D(); C c = new C();\n"   // 22
+            "        bool x = d is C;\n"   // 23
+            "        Debug.Log(\"\" + a + i + x + c);\n"   // 24
+            "    }\n"   // 25
+            "    public void Run() { }\n"   // 26
+            "}\n"   // 27
+            );
+        CHECK(Has(d, 0, "Walk() is already in Base: to change what it does, mark it virtual there and override here", 4, 17));
+        CHECK(Has(d, 0, "An override must match what it overrides: int Score() in Base", 5, 28));
+        CHECK(Has(d, 0, "There's no virtual Fly() in what D extends, so there's nothing to override", 6, 26));
+        CHECK(Has(d, 0, "'secret' is private to Base: make it protected (or public) to use it in classes that extend it", 7, 25));
+        CHECK(Has(d, 0, "Base has no method 'Nope'", 7, 54));
+        CHECK(Has(d, 0, "C must have IA's method: public void Run()", 9, 7));
+        CHECK(Has(d, 0, "B must override A.Go()", 11, 7));
+        CHECK(Has(d, 0, "Q needs a constructor that calls base(...): P has no constructor that takes 0 values", 13, 7));
+        CHECK(Has(d, 0, "is string but needs int", 14, 33));
+        CHECK(Has(d, 0, "A.Go() is abstract: there's nothing to call", 15, 48));
+        CHECK(Has(d, 0, "X ends up extending itself", 16, 11));
+        CHECK(Has(d, 0, "A Behaviour class can't extend a class or implement interfaces yet", 18, 22));
+        CHECK(Has(d, 0, "A is abstract: make one of the classes that extend it", 20, 15));
+        CHECK(Has(d, 0, "IA is an interface: make one of the classes that implement it", 21, 16));
+        CHECK(Has(d, 0, "This D is never a C", 23, 20));
+    }
+}
+
 static void Parity() {
     // The same C# snippet gives the same results on the old OkayScript runtime.
     const std::string src =
@@ -1350,8 +1467,8 @@ static void BackCompat() {
     CHECK(w.loaded);
     CHECK_NEAR(w.F("total"), 12.0f, 1e-6f);
     // Features still to come keep their message.
-    auto d = Diags(Wrap("    virtual void V() { }\n    void Start() { try { } }\n"));
-    CHECK(Has(d, 0, "virtual isn't supported"));
+    auto d = Diags(Wrap("    readonly int r = 1;\n    void Start() { try { } }\n"));
+    CHECK(Has(d, 0, "readonly isn't supported yet"));
     CHECK(Has(d, 0, "try / catch isn't supported yet"));
 }
 
@@ -1397,6 +1514,7 @@ int main() {
     Collections();
     Lambdas();
     Events();
+    Inheritance();
     Parity();
     Followups();
     BackCompat();

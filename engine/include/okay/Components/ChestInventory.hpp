@@ -5,6 +5,7 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Components/Inventory.hpp"
 #include "okay/Components/InventoryUI.hpp"
+#include "okay/Inventory/InventoryOps.hpp"
 #include "okay/Components/InventoryPlayer.hpp"
 #include "okay/Render/Color.hpp"
 #include <string>
@@ -41,27 +42,7 @@ public:
 
     /// Move (or swap/merge) the stack in src slot `si` into dst slot `di`. Works within
     /// one grid or across the chest<->player grids (drag-and-drop, place where you want).
-    static void MoveStack(Inventory* src, int si, Inventory* dst, int di) {
-        if (!src || !dst || si < 0 || di < 0 || si >= (int)src->slots.size()) return;
-        if (src == dst && si == di) return;
-        int cap = dst->capacity > 0 ? dst->capacity : di + 1;
-        if (di >= cap) return;
-        while ((int)dst->slots.size() <= di) dst->slots.push_back(Inventory::Slot{});
-        Inventory::Slot& a = src->slots[si];
-        Inventory::Slot& b = dst->slots[di];
-        if (Inventory::Empty(a)) return;
-        if (Inventory::Empty(b)) { b = a; a = Inventory::Slot{}; }
-        else if (b.item == a.item) {                                                // merge, up to the
-            int room = dst->maxStack > 0 ? dst->maxStack - b.count : a.count;       // DESTINATION's maxStack
-            if (room <= 0) return;
-            int mv = a.count < room ? a.count : room;
-            b.count += mv; a.count -= mv;
-            if (a.count <= 0) a = Inventory::Slot{};
-        }
-        else { std::swap(a, b); }                                                   // swap
-        src->NotifyChanged();
-        if (dst != src) dst->NotifyChanged();
-    }
+    static void MoveStack(Inventory* src, int si, Inventory* dst, int di) { InventoryOps::Move(src, si, dst, di); }
 
     /// The chest's own contents (a sibling Inventory).
     Inventory* Inv() const {
@@ -106,20 +87,7 @@ public:
 
     /// Move as much of `from` slot `i` into `to` as fits; only the leftover stays in
     /// the source slot (never duplicated, never lost). False if nothing fit.
-    static bool Transfer(Inventory* from, int i, Inventory* to) {
-        if (!from || !to || from == to || i < 0 || i >= (int)from->slots.size()) return false;
-        Inventory::Slot& s = from->slots[i];
-        if (Inventory::Empty(s)) return false;
-        const std::string item = s.item;
-        const int have = s.count;
-        const int left = to->AddPartial(item, have);
-        if (left == have) return false;                       // destination full
-        Inventory::Slot& src = from->slots[i];                // (re-fetch: same inventory may have grown)
-        src.count = left;
-        if (src.count <= 0) src = Inventory::Slot{};
-        from->NotifyChanged();
-        return true;
-    }
+    static bool Transfer(Inventory* from, int i, Inventory* to) { return InventoryOps::Transfer(from, i, to).Ok(); }
 };
 
 } // namespace okay

@@ -761,6 +761,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             s.hitDamage != d.hitDamage || s.hitLineOfSight != d.hitLineOfSight)
             out << "  anticheathit " << s.hitOriginTolerance << " " << s.hitTolerance << " " << s.maxHitRange
                 << " " << s.hitDamage << " " << (s.hitLineOfSight ? 1 : 0) << "\n";
+        for (const auto& w : s.weapons) out << "  anticheatweapon " << Quote(w) << "\n";
     }
     for (auto* nv : go->GetComponents<NetValidator>()) {
         out << "  netvalidator " << Quote(nv->rpc) << " " << nv->maxBytes << " " << nv->maxPerSecond
@@ -4943,6 +4944,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         if (ok(dmg)) s.hitDamage = dmg;
                         s.hitLineOfSight = los != 0;
                     }
+                } else if (field == "anticheatweapon") {   // one per known weapon, after "anticheat"
+                    const std::string w = ReadQuoted(in);
+                    if (auto* ac = go->GetComponent<AntiCheatConfig>(); ac && !w.empty()) ac->settings.weapons.push_back(w);
                 } else if (field == "netvalidator") {
                     auto* nv = go->AddComponent<NetValidator>();
                     nv->rpc = ReadQuoted(in);

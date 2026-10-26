@@ -623,6 +623,7 @@ private:
         int   violations = 0;    // rejected moves in the current minute
         float violationTimer = 0.0f;
         int   msgCount = 0;      // custom messages this second (rate limit)
+        int   hitClaims = 0;     // hit claims this second (the limit without the anti-cheat)
         float msgTimer = 0.0f;
         float joinedAt = 0.0f;   // server clock when it joined
         int   score = 0;
@@ -725,6 +726,7 @@ private:
     std::string CheckHitView(const HitClaim& claim, std::uint32_t shooter, Transform* targetT, float slack);
     void ApplyHit(HitClaim& claim);
     int m_hitsApplied = 0, m_hitsRefused = 0;
+    std::unordered_set<std::string> m_unknownWeapons;   // weapon names refused (logged once each)
     std::function<void(const AntiCheatKick&)> m_acKickHandler;
     std::unordered_map<std::uint32_t, std::vector<CheatReport>> m_recentCheats;   // last few per peer
     static constexpr std::size_t kRecentCheats = 5;
@@ -746,6 +748,7 @@ private:
     std::string m_relayCode;          // shared session code
     std::uint32_t m_relaySlot = 0;    // our slot (set on welcome)
     std::uint64_t m_relayHostKey = 0; // host: the relay's key for our code (0 until welcomed)
+    std::uint8_t m_relayCookie[16] = {}; // the relay's cookie for our address, echoed in hellos (v3)
     bool m_relayLost = false;         // the relay ended our session this tick (Stop() follows)
     std::string m_relayError;         // why the relay session ended ("" if it didn't)
     float m_relayHelloTimer = 0.0f;   // re-hello cadence (NAT keepalive)

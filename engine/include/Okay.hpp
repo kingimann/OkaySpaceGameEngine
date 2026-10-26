@@ -185,6 +185,8 @@
 #include "okay/Components/GridInventoryUI.hpp"
 #include "okay/Components/CraftingStation.hpp"
 #include "okay/Components/ChestInventory.hpp"
+#include "okay/Inventory/InventoryOps.hpp"
+#include "okay/Inventory/InventoryInput.hpp"
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"

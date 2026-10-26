@@ -4,6 +4,7 @@
 #include "OfficialGame.hpp"      // shared/: SafeRelPath / ResolveInside for network prefab paths
 #include "okay/Components/NetworkPlayerSpawner.hpp"
 #include <cstdio>
+#include <cstring>
 #include <ctime>
 #include <unordered_set>
 #include <mutex>
@@ -67,6 +68,7 @@ namespace {
     // from every Msg type (1..16) and from a plaintext message's leading type byte.
     constexpr std::uint8_t kEncEnvelope = 0xEE;
     constexpr float kClientTimeout = 5.0f;
+    constexpr int kHitClaimsPerSecond = 20;    // a client's hit claims without the anti-cheat on
     constexpr float kReliableResend = 0.25f;   // resend an unacked message this often
 
     std::vector<std::uint8_t> BuildReliable(std::uint32_t seq, const std::string& channel,
@@ -229,6 +231,7 @@ bool NetworkManager::StartRelay(const std::string& relayHost, std::uint16_t rela
     m_relayCode = code;
     m_relaySlot = 0;
     m_relayHostKey = 0;
+    std::memset(m_relayCookie, 0, sizeof m_relayCookie);
     m_relayHelloTimer = 0.0f;
     m_relayError.clear();
     m_kicked = false; m_kickReason.clear();
@@ -269,6 +272,8 @@ void NetworkManager::RelayKeepAlive(float dt) {
     h.Write(net::kRelayProtocolVersion);
     h.Write(static_cast<std::uint32_t>(m_relayHostKey));          // 0 until the relay gives one
     h.Write(static_cast<std::uint32_t>(m_relayHostKey >> 32));
+    for (std::uint8_t b : m_relayCookie) h.Write(b);             // zero until the relay sends one
+    while (h.Size() < net::kRelayHelloMinBytes) h.Write(std::uint8_t(0));
     m_socket.SendTo(m_relayEp, h.Data(), h.Size());
 }
 
@@ -286,6 +291,7 @@ void NetworkManager::Stop() {
     m_relayWelcomed = false;
     m_relaySlot = 0;
     m_relayHostKey = 0;
+    std::memset(m_relayCookie, 0, sizeof m_relayCookie);
     m_relayCode.clear();
     m_relayEp = net::Endpoint{};
     m_socket.Close();
@@ -1005,6 +1011,19 @@ int NetworkManager::ReceiveFrom(void* buffer, std::size_t capacity, net::Endpoin
             m_relayWelcomed = true;
             continue;
         }
+        if (tag == net::RelayCookie) {
+            // A version-3 relay wants proof we receive at our address: hello
+            // again now with its cookie.
+            net::Packet p(b, static_cast<std::size_t>(n));
+            p.ReadU8();
+            p.ReadU8();
+            std::uint8_t c[sizeof m_relayCookie];
+            for (auto& x : c) x = p.ReadU8();
+            if (!p.Ok()) continue;
+            std::memcpy(m_relayCookie, c, sizeof c);
+            m_relayHelloTimer = 0.0f;
+            continue;
+        }
         if (tag == net::RelayRefused) {
             net::Packet p(b, static_cast<std::size_t>(n));
             p.ReadU8();
@@ -1165,6 +1184,9 @@ void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
         anticheat.Report(shooter, CheatKind::HitRejected, why);
         AntiCheatAfterRefusal(shooter);   // (may kick: c is gone after this)
     };
+    // Without the anti-cheat's RPC limit, a fixed one: a client can't make the
+    // server raycast and rewind for a flood of claims.
+    if (!anticheat.settings.enabled && ++c.hitClaims > kHitClaimsPerSecond) { refuse("too many hit claims"); return; }
     std::vector<std::string> part;
     for (std::size_t a = 0;;) {
         const std::size_t b = data.find('|', a);
@@ -1189,6 +1211,24 @@ void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
     claim.direction = dir * (1.0f / dir.Magnitude());
     claim.damage = anticheat.settings.hitDamage;
     const AntiCheatSettings& s = anticheat.settings;
+    if (s.enabled) {
+        // Only a weapon the game knows (a Net Validator for "hit/<weapon>", or
+        // a "weapon" in the rules) may claim, so an invented name can't dodge
+        // the fire rate and ammo; and every claim counts against the RPC rate.
+        // An unknown one does nothing but isn't a violation: a game that
+        // hasn't listed its weapons yet mustn't get honest players kicked.
+        if (!anticheat.KnownWeapon(claim.weapon)) {
+            ++m_hitsRefused;
+            if (m_unknownWeapons.size() < 32 && m_unknownWeapons.insert(claim.weapon).second) {
+                std::string w = claim.weapon;
+                for (char& ch : w) if ((unsigned char)ch < 0x20 || ch == 0x7f) ch = '?';
+                OKAY_WARN("anti-cheat: refused hits with weapon \"", w, "\": add a Net Validator for hit/", w,
+                          " or \"weapon ", w, "\" to the rules");
+            }
+            return;
+        }
+        if (!anticheat.CountRpc(shooter, "hit/" + claim.weapon)) { ++m_hitsRefused; AntiCheatAfterRefusal(shooter); return; }
+    }
 
     // The shooter is alive (when its avatar has health).
     if (auto r = m_remotes.find(shooter); r != m_remotes.end() && r->second)
@@ -2103,7 +2143,7 @@ void NetworkManager::ServerTick(float dt) {
     for (auto it = m_clients.begin(); it != m_clients.end();) {
         it->second.lastSeen += dt;
         it->second.stateAge += dt;
-        if ((it->second.msgTimer += dt) >= 1.0f) { it->second.msgTimer = 0.0f; it->second.msgCount = 0; }
+        if ((it->second.msgTimer += dt) >= 1.0f) { it->second.msgTimer = 0.0f; it->second.msgCount = 0; it->second.hitClaims = 0; }
         if ((it->second.violationTimer += dt) >= 60.0f) { it->second.violationTimer = 0.0f; it->second.violations = 0; }
         if (it->second.lastSeen > kClientTimeout) {
             std::uint32_t id = it->second.id;

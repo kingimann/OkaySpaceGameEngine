@@ -33,6 +33,7 @@
 
 #include <numeric>
 #include <algorithm>
+#include <iterator>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -18393,6 +18394,7 @@ static int        g_livePrevAnim = 1;
 static float      g_livePrevT    = 0.0f;
 static float      g_livePrevSpeed = 1.0f;
 static int        g_livePrevKeepAnim = 1;   // ch->anim restored on stop
+static std::string g_livePrevClip;          // a clip (the Character's or the default library's) instead of g_livePrevAnim
 struct LivePrevBase { GameObject* go; Vec3 p; Quat r; Vec3 s; };
 static std::vector<LivePrevBase> g_livePrevBase;   // retargeted rig bind snapshot
 
@@ -18400,6 +18402,7 @@ static void StopLivePreview(EditorState& ed) {
     if (!g_livePrevCh) return;
     Character* ch = g_livePrevCh;
     g_livePrevCh = nullptr;
+    g_livePrevClip.clear();
     bool alive = false;
     for (const auto& up : ed.scene().Objects())
         if (up && up->GetComponent<Character>() == ch) { alive = true; break; }
@@ -18422,6 +18425,34 @@ static void StopLivePreview(EditorState& ed) {
             if (auto* sm = up->GetComponent<SkinnedMesh>()) { sm->ResolveJoints(); sm->Skin(); }
         g_livePrevBase.clear();
     }
+}
+
+// Start (or retarget) the live preview on `ch` from the beginning; the caller
+// picks what plays (g_livePrevAnim, or a clip in g_livePrevClip).
+static void StartLivePreview(EditorState& ed, Character* ch) {
+    if (g_livePrevCh != ch) {
+        StopLivePreview(ed);
+        g_livePrevKeepAnim = ch->anim;
+        // A retargeted rig gets posed for real — snapshot the model
+        // subtree so Stop restores the bind pose exactly.
+        g_livePrevBase.clear();
+        if (ch->driveExternal && ch->gameObject && ch->gameObject->transform)
+            for (const auto& up2 : ed.scene().Objects()) {
+                GameObject* g2 = up2.get();
+                if (g2 && g2 != ch->gameObject && g2->transform &&
+                    g2->IsSelfOrDescendantOf(ch->gameObject))
+                    g_livePrevBase.push_back({g2, g2->transform->localPosition,
+                                              g2->transform->localRotation,
+                                              g2->transform->localScale});
+            }
+    }
+    g_livePrevCh = ch; g_livePrevT = 0.0f; g_livePrevClip.clear();
+}
+
+// A clip a Character body can play: its own, else the default humanoid library's.
+static const AnimClip* BodyClip(Character* ch, const std::string& name) {
+    const AnimClip* c = ch->FindClip(name);
+    return c ? c : HumanoidLibrary::Find(name);
 }
 
 // Character animation: pose each bone, Key the whole pose at the playhead to build a
@@ -18531,27 +18562,12 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
         ImGui::TextDisabled("Built-in animations - click one to watch it live in the Scene view:");
         for (int i = 0; i < (int)(sizeof(kLiveAnims) / sizeof(kLiveAnims[0])); ++i) {
             if (i % 4) ImGui::SameLine();
-            bool on = (g_livePrevCh == ch && g_livePrevAnim == kLiveAnims[i].id);
+            bool on = (g_livePrevCh == ch && g_livePrevClip.empty() && g_livePrevAnim == kLiveAnims[i].id);
             if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.30f, 1.0f));
             char bl[32]; std::snprintf(bl, sizeof(bl), "%s##lp%d", kLiveAnims[i].name, kLiveAnims[i].id);
             if (ImGui::Button(bl, ImVec2(88, 0))) {
-                if (g_livePrevCh != ch) {
-                    StopLivePreview(ed);
-                    g_livePrevKeepAnim = ch->anim;
-                    // A retargeted rig gets posed for real — snapshot the model
-                    // subtree so Stop restores the bind pose exactly.
-                    g_livePrevBase.clear();
-                    if (ch->driveExternal && ch->gameObject && ch->gameObject->transform)
-                        for (const auto& up2 : ed.scene().Objects()) {
-                            GameObject* g2 = up2.get();
-                            if (g2 && g2 != ch->gameObject && g2->transform &&
-                                g2->IsSelfOrDescendantOf(ch->gameObject))
-                                g_livePrevBase.push_back({g2, g2->transform->localPosition,
-                                                          g2->transform->localRotation,
-                                                          g2->transform->localScale});
-                        }
-                }
-                g_livePrevCh = ch; g_livePrevAnim = kLiveAnims[i].id; g_livePrevT = 0.0f;
+                StartLivePreview(ed, ch);
+                g_livePrevAnim = kLiveAnims[i].id;
             }
             if (on) ImGui::PopStyleColor();
         }
@@ -18662,6 +18678,7 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
         PushAnimDraftUndo(ed, key, d);
         // Replace a key at ~this time, else insert in time order.
         AnimKey k; k.time = t; k.pose = pose;
+        if (clip.hasRoot) k.root = clip.SampleRoot(t);   // keep the hips' height where the clip had it
         bool replaced = false;
         for (auto& e : clip.keys) if (std::fabs(e.time - t) < 1e-3f) { e = k; replaced = true; break; }
         if (!replaced) {
@@ -27670,6 +27687,38 @@ void DrawInspector(EditorState& ed) {
             if (!ma && !body)
                 ImGui::TextColored(ImVec4(0.95f, 0.7f, 0.4f, 1.0f),
                                    "Needs a Model Animator (import a model here) or a Character on this object.");
+            if (body && sm->layer == 0) {
+                ImGui::SameLine();
+                if (ImGui::Button("Reset to default##asm")) {
+                    ed.PushUndo();
+                    HumanoidLibrary::DefaultGraph(*sm, body);
+                    ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Replace this graph with the default humanoid one (Idle, Walk, Run, Crouch,\n"
+                                      "Prone, Jump, Fall, Land, gestures). Clips bound on the Character stay bound.");
+            }
+            // What a state shows when previewed or edited: its clip, or for a blend
+            // tree the motion nearest the middle of the tree, straight ahead.
+            auto shownClip = [](const AnimStateMachine::State& st) -> std::string {
+                if (!st.blendTree || st.motions.empty()) return st.clip;
+                std::vector<float> along;
+                for (const auto& m : st.motions) along.push_back(st.blendDims == 2 ? m.posY : m.threshold);
+                std::nth_element(along.begin(), along.begin() + along.size() / 2, along.end());
+                const float mid = along[along.size() / 2];
+                const AnimStateMachine::Motion* best = nullptr; float bd = 1e30f;
+                for (const auto& m : st.motions) {
+                    const float dx = st.blendDims == 2 ? m.threshold : 0.0f, dy = (st.blendDims == 2 ? m.posY : m.threshold) - mid;
+                    if (dx * dx + dy * dy < bd) { bd = dx * dx + dy * dy; best = &m; }
+                }
+                return best->clip;
+            };
+            std::vector<std::string> bodyClips;   // the Character's clips and the default library's
+            if (body) {
+                const std::vector<std::string> own = body->ClipNames();
+                const std::vector<std::string>& lib = HumanoidLibrary::Names();
+                std::set_union(own.begin(), own.end(), lib.begin(), lib.end(), std::back_inserter(bodyClips));
+            }
             if (ed.isPlaying())
                 ImGui::TextColored(AccentCol(1.0f), "Current state: %s",
                                    sm->Current().empty() ? "(entering)" : sm->Current().c_str());
@@ -27694,10 +27743,14 @@ void DrawInspector(EditorState& ed) {
                 ImGui::SetNextItemWidth(140);
                 if (ImGui::InputText("State##asm", nb, sizeof(nb))) { st.name = nb; ed.dirty = true; }
                 ImGui::SameLine();
-                // Clip picker (from the Model Animator's or the Character's clips).
+                // Clip picker (from the Model Animator's or the Character's clips); a
+                // blend tree is edited in the graph.
                 ImGui::SetNextItemWidth(150);
-                if ((ma || body) && ImGui::BeginCombo("##asmclip", st.clip.empty() ? "(clip)" : st.clip.c_str())) {
-                    for (const auto& cn : ma ? ma->ClipNames() : body->ClipNames())
+                if (st.blendTree) {
+                    ImGui::TextDisabled("blend tree, %d clips", (int)st.motions.size());
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open Animator Graph to edit its motions.");
+                } else if ((ma || body) && ImGui::BeginCombo("##asmclip", st.clip.empty() ? "(clip)" : st.clip.c_str())) {
+                    for (const auto& cn : ma ? ma->ClipNames() : bodyClips)
                         if (ImGui::Selectable(cn.c_str(), st.clip == cn)) { st.clip = cn; ed.dirty = true; }
                     ImGui::EndCombo();
                 }
@@ -27708,9 +27761,37 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Checkbox("loop##asm", &st.loop)) ed.dirty = true;
                 ImGui::SameLine();
                 if (ImGui::SmallButton("x##asmst")) delState = si;
+                // On a Character: watch the state's clip in the Scene view, or open
+                // a copy of it in the Animation tab (Apply there makes it this body's).
+                const std::string shown = body ? shownClip(st) : std::string();
+                if (body && BodyClip(body, shown)) {
+                    if (!ed.isPlaying()) {
+                        const bool on = g_livePrevCh == body && g_livePrevClip == shown;
+                        if (ImGui::SmallButton(on ? "Stop##asmprev" : "Preview##asmprev")) {
+                            if (on) StopLivePreview(ed);
+                            else { StartLivePreview(ed, body); g_livePrevAnim = body->anim; g_livePrevClip = shown; }
+                        }
+                        ImGui::SameLine();
+                    }
+                    if (ImGui::SmallButton("Edit clip##asm")) {
+                        const std::string key = AnimDraftKey(go);
+                        AnimDraft& d = g_animDrafts[key];
+                        PushAnimDraftUndo(ed, key, d);
+                        d.clip = *BodyClip(body, shown);
+                        d.t = 0.0f; d.playing = false; d.playOnStart = false;
+                        d.pose = d.clip.keys.empty() ? std::vector<Vec3>() : d.clip.keys.front().pose;
+                        d.pose.resize(Character::BoneCount(), Vec3{0, 0, 0});
+                        g_showAnimation = true;
+                        g_focusQueue.push_back("Animation###AnimationDock");
+                    }
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Edit %s in the Animation tab. Apply there saves it on this\n"
+                                          "Character, where it replaces the default clip of that name.", shown.c_str());
+                }
 
                 int delTr = -1;
-                for (int ti = 0; ti < (int)st.transitions.size(); ++ti) {
+                const bool showTr = ImGui::TreeNode("##asmtr", "%d transition(s)", (int)st.transitions.size());
+                for (int ti = 0; showTr && ti < (int)st.transitions.size(); ++ti) {
                     AnimStateMachine::Transition& tr = st.transitions[ti];
                     ImGui::PushID(5000 + ti);
                     ImGui::TextDisabled("  ->"); ImGui::SameLine();
@@ -27743,12 +27824,13 @@ void DrawInspector(EditorState& ed) {
                     ImGui::PopID();
                 }
                 if (delTr >= 0) { ed.PushUndo(); st.transitions.erase(st.transitions.begin() + delTr); ed.dirty = true; }
-                ImGui::TextDisabled("  ");
-                ImGui::SameLine();
-                if (ImGui::SmallButton("+ Transition##asm")) {
-                    ed.PushUndo();
-                    st.transitions.push_back({});
-                    ed.dirty = true;
+                if (showTr) {
+                    if (ImGui::SmallButton("+ Transition##asm")) {
+                        ed.PushUndo();
+                        st.transitions.push_back({});
+                        ed.dirty = true;
+                    }
+                    ImGui::TreePop();
                 }
                 ImGui::PopID();
             }
@@ -27880,6 +27962,19 @@ void DrawInspector(EditorState& ed) {
             }
             if (delVar >= 0) { s.serverVars.erase(s.serverVars.begin() + delVar); ed.dirty = true; }
             if (ImGui::SmallButton("Add server var##ac")) { s.serverVars.push_back("score"); ed.dirty = true; }
+            ImGui::TextUnformatted("Weapons clients may claim hits with:");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Claim Hit / net_hit names a weapon. A weapon a Net Validator covers (rpc hit/<weapon>, which also sets its fire rate and ammo) or one listed here may claim; any other does no damage.");
+            int delWeapon = -1;
+            for (int i = 0; i < (int)s.weapons.size(); ++i) {
+                ImGui::PushID(2000 + i);
+                char w[64]; std::snprintf(w, sizeof(w), "%s", s.weapons[i].c_str());
+                ImGui::SetNextItemWidth(-40);
+                if (ImGui::InputText("##acweapon", w, sizeof(w))) { s.weapons[i] = w; ed.dirty = true; }
+                ImGui::SameLine(); if (ImGui::SmallButton("x")) delWeapon = i;
+                ImGui::PopID();
+            }
+            if (delWeapon >= 0) { s.weapons.erase(s.weapons.begin() + delWeapon); ed.dirty = true; }
+            if (ImGui::SmallButton("Add weapon##ac")) { s.weapons.push_back("rifle"); ed.dirty = true; }
             if (ImGui::TreeNode("Hit claims##ac")) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("How the server checks Claim Hit / net_hit (with or without the anti-cheat).");
                 if (ImGui::DragFloat("Origin tolerance##ac", &s.hitOriginTolerance, 0.05f, 0.0f, 100.0f, "%.2f u")) ed.dirty = true;
@@ -34869,13 +34964,10 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         auto* ui = up ? up->GetComponent<okay::InventoryUI>() : nullptr;
         if (!ui) continue;
         okay::Inventory* inv = ui->Inv();
-        int n = ui->hotbarSlots < 1 ? 1 : ui->hotbarSlots;
-        const int total = ui->SlotCount(), bpRows = ui->BackpackRowCount();   // slots shown = the Inventory's capacity
-        // Resolution-independent scaling (matches the built player): scale by the Game
-        // canvas height vs the authored reference, so the editor preview and the build agree.
-        float uiScale = (ui->scaleToScreen && ui->referenceHeight > 1.0f) ? canvasSize.y / ui->referenceHeight : 1.0f;
-        float sz = ui->slotSize * uiScale, gap = ui->slotGap * uiScale;
-        float marginX = ui->marginX * uiScale, marginY = ui->marginY * uiScale;
+        // Layout + input shared with the built player (okay/Inventory/InventoryInput).
+        const okay::InventoryInput::HotbarLayout L = okay::InventoryInput::LayoutHotbar(*ui, canvasSize.x, canvasSize.y);
+        const int n = L.hotbar, total = L.total;
+        const float sz = L.sz;
         float cr = ui->cornerRadius;
         auto col = [&](const okay::Color& c) { return IM_COL32((int)(c.r*255),(int)(c.g*255),(int)(c.b*255),(int)(c.a*255)); };
         auto slot = [&](float x, float y, int idx, bool sel) {
@@ -34906,15 +34998,9 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 }
             }
         };
-        float rowW = n * sz + (n - 1) * gap;
-        float hx = (ui->hAlign == okay::InventoryUI::HAlign::Left)  ? marginX
-                 : (ui->hAlign == okay::InventoryUI::HAlign::Right) ? (canvasSize.x - rowW - marginX)
-                 : (canvasSize.x - rowW) * 0.5f + marginX;   // Center (default)
-        float hy = ui->anchorTop ? marginY : canvasSize.y - sz - marginY;
-        auto bpY = [&](int row) {
-            return ui->anchorTop ? hy + sz + 14.0f + row * (sz + gap)
-                                 : hy - 14.0f - (bpRows - row) * (sz + gap);
-        };
+        const float rowW = L.rowW, hx = L.hx, hy = L.hy, gap = L.gap;
+        const int bpRows = L.rows;
+        auto bpY = [&](int row) { return L.RowY(row); };
         if (ui->open && bpRows > 0) {
             if (ui->darkenWhenOpen)
                 dl->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(0, 0, 0, 150));
@@ -34961,51 +35047,16 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         // slot layout wouldn't match the game-relative mouse — running the drop there
         // (it shares the same fed mouse and consumes the mouse-up) landed items in the
         // wrong slot, ~a row off. The Game view's canvas is what the mouse is fed against.
-        if (gameView && ui->open && ui->dragItems && inv) {
-            auto slotXY = [&](int idx, float& sx, float& sy) {
-                if (idx < n) { sx = hx + idx * (sz + gap); sy = hy; }
-                else { int b = idx - n; sx = hx + (b % n) * (sz + gap); sy = bpY(b / n); }
-            };
-            const int slotCount = total;
-            // Containment-first (see the player): the slot the point is inside wins,
-            // so hovering over a slot always picks it; nearest-centre only fills gaps.
-            auto nearest = [&](float px, float py) -> int {
-                for (int idx = 0; idx < slotCount; ++idx) {
-                    float sx, sy; slotXY(idx, sx, sy);
-                    if (px >= sx && px < sx + sz && py >= sy && py < sy + sz) return idx;
-                }
-                int best = -1; float bestD = (sz + gap) * (sz + gap) * 1.1f;
-                for (int idx = 0; idx < slotCount; ++idx) {
-                    float sx, sy; slotXY(idx, sx, sy);
-                    float dx = px - (sx + sz * 0.5f), dy = py - (sy + sz * 0.5f);
-                    float d = dx * dx + dy * dy;
-                    if (d < bestD) { bestD = d; best = idx; }
-                }
-                return best;
-            };
+        if (gameView) {
             okay::Vec2 m = okay::Input::MousePosition();
-            int target = nearest(m.x, m.y);   // highlight the destination slot
-            if (target >= 0 && ui->dragIndex >= 0 && target != ui->dragIndex) {
-                float sx, sy; slotXY(target, sx, sy);
+            const okay::InventoryInput::HotbarFrame fr = okay::InventoryInput::HandleHotbar(*ui, L, m);
+            if (fr.target >= 0) {   // highlight the destination slot
+                float sx, sy; L.SlotXY(fr.target, sx, sy);
                 ImU32 hc = IM_COL32((int)(ui->selectedColor.r*255), (int)(ui->selectedColor.g*255), (int)(ui->selectedColor.b*255), 100);
                 dl->AddRectFilled(ImVec2(canvasPos.x + sx, canvasPos.y + sy),
                                   ImVec2(canvasPos.x + sx + sz, canvasPos.y + sy + sz), hc, cr);
             }
-            if (ui->dragIndex < 0) {
-                int idx = nearest(m.x, m.y);
-                bool onItem = idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty();
-                if (onItem && okay::Input::GetMouseButtonDown(0)) {
-                    if (ui->shiftQuickMove && okay::Input::GetKey(okay::Input::KeyShift)) ui->QuickMove(idx);
-                    else { ui->dragIndex = idx; ui->dragAmount = 0; }
-                } else if (onItem && ui->splitRightClick && okay::Input::GetMouseButtonDown(1) && inv->slots[idx].count > 1) {
-                    ui->dragIndex = idx; ui->dragAmount = inv->slots[idx].count / 2;   // pick up half
-                }
-            }
-            if (ui->dragIndex >= 0 && (okay::Input::GetMouseButtonUp(0) || okay::Input::GetMouseButtonUp(1))) {
-                ui->ApplyDrag(ui->dragIndex, nearest(m.x, m.y));
-                ui->dragIndex = -1; ui->dragAmount = 0;
-            }
-            if (ui->dragIndex >= 0 && ui->dragIndex < (int)inv->slots.size()) {
+            if (inv && ui->dragIndex >= 0 && ui->dragIndex < (int)inv->slots.size()) {
                 const auto& it = inv->slots[ui->dragIndex];
                 ImVec2 p0(canvasPos.x + m.x - sz * 0.5f, canvasPos.y + m.y - sz * 0.5f);
                 ImVec2 p1(p0.x + sz, p0.y + sz);
@@ -35021,7 +35072,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                     dl->AddText(ImVec2(p1.x - ts.x - 4, p1.y - ts.y - 3), col(ui->countColor), ccs.c_str());
                 }
             }
-        } else if (gameView) { ui->dragIndex = -1; ui->dragAmount = 0; }   // only the Game pass clears the drag
+        }   // the Scene pass leaves the drag state to the Game pass
         break;
     }
     // Unturned-style multi-container grid inventory preview (player grid + worn
@@ -35031,10 +35082,9 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (!gui) continue;
         okay::GridInventory* primary = gui->Inv();
         if (!primary || !primary->open) break;
-        // Honour the configured sizes (just a minimal sane floor); kept in sync with
-        // the player so drag hit-testing matches.
-        float cs = gui->cellSize < 24.0f ? 24.0f : gui->cellSize;
-        float gp = gui->gap < 0.0f ? 0.0f : gui->gap;
+        // Layout + input shared with the built player (okay/Inventory/InventoryInput).
+        const okay::InventoryInput::GridLayout GL = okay::InventoryInput::LayoutGrid(*gui, *primary, canvasSize.x, canvasSize.y);
+        const float cs = GL.cs, gp = GL.gp;
         float cr = gui->cornerRadius < 0.0f ? 0.0f : gui->cornerRadius;
         auto col = [&](const okay::Color& c) { return IM_COL32((int)(c.r*255),(int)(c.g*255),(int)(c.b*255),(int)(c.a*255)); };
         auto lighten = [&](okay::Color c, float f) { return okay::Color{c.r+(1-c.r)*f, c.g+(1-c.g)*f, c.b+(1-c.b)*f, c.a}; };
@@ -35046,43 +35096,12 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         auto shadowE = [&](float x, float y, float w, float h, float rad) {
             if (gui->dropShadows) dl->AddRectFilled(ImVec2(canvasPos.x+x+3, canvasPos.y+y+5), ImVec2(canvasPos.x+x+3+w, canvasPos.y+y+5+h), IM_COL32(0,0,0,90), rad); };
 
-        std::vector<okay::GridInventory*> equipped, nearby;
-        if (gui->multiContainer) gui->CollectContainers(equipped, nearby);
-        else equipped.push_back(primary);
-        const float labelH = gui->headerHeight < 16.0f ? 16.0f : gui->headerHeight;
-        const float vspace = gui->containerGap < 4.0f ? 4.0f : gui->containerGap;
-        const float colGap = gui->columnGap < 8.0f ? 8.0f : gui->columnGap;
-        const float pad    = gui->panelPad < 4.0f ? 4.0f : gui->panelPad;
-        const float headH  = gui->showMasterTitle ? 30.0f : 0.0f;
-        const float headGap = gui->showMasterTitle ? 18.0f : 6.0f;
-        auto colSize = [&](const std::vector<okay::GridInventory*>& L, float& cw, float& ch) {
-            cw = 0; ch = 0;
-            for (auto* g : L) { float gw = g->cols*cs + (g->cols-1)*gp; if (gw > cw) cw = gw;
-                                ch += labelH + (g->rows*cs + (g->rows-1)*gp) + vspace; }
-            if (!L.empty()) ch -= vspace;
-        };
-        float lw, lh, rw, rh; colSize(equipped, lw, lh); colSize(nearby, rw, rh);
-        bool hasNear = !nearby.empty();
-        float totalW = lw + (hasNear ? colGap + rw : 0.0f), totalH = lh > rh ? lh : rh;
-        // Local (canvas-relative) origin so the mouse hit-test matches the fed Input.
-        float startLX = (canvasSize.x - totalW) * 0.5f, startLY = (canvasSize.y - totalH) * 0.5f + 14.0f + headH + headGap;
-
-        struct EPanel { okay::GridInventory* inv; float ox, oy, gw, gh; std::string label; };
-        std::vector<EPanel> panels;
-        auto placeCol = [&](const std::vector<okay::GridInventory*>& L, float colLX, float colW) {
-            float y = startLY;
-            for (auto* g : L) {
-                float gw = g->cols*cs + (g->cols-1)*gp, gh = g->rows*cs + (g->rows-1)*gp;
-                panels.push_back({g, colLX + (colW-gw)*0.5f, y + labelH, gw, gh,
-                                  g->category.empty() ? g->title : g->category});
-                y += labelH + gh + vspace;
-            }
-        };
-        placeCol(equipped, startLX, lw);
-        if (hasNear) placeCol(nearby, startLX + lw + colGap, rw);
-        std::vector<okay::GridInventory*> live(equipped);
-        live.insert(live.end(), nearby.begin(), nearby.end());
-        gui->CheckDrag(live);   // the bag being dragged from may have gone out of range or been destroyed
+        const std::vector<okay::GridInventory*>& equipped = GL.equipped;
+        const std::vector<okay::InventoryInput::GridPanel>& panels = GL.panels;
+        const float labelH = GL.labelH, colGap = GL.colGap, pad = GL.pad, headH = GL.headH, headGap = GL.headGap;
+        const float lw = GL.lw, lh = GL.lh, rw = GL.rw, rh = GL.rh;
+        const float startLX = GL.startX, startLY = GL.startY;   // canvas-local, so the hit-test matches the fed Input
+        const bool hasNear = GL.hasNear;
 
         if (gui->darkenWhenOpen)
             dl->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(0, 0, 0, (int)(gui->backdropDim * 255.0f)));
@@ -35116,14 +35135,8 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         }
 
         okay::Vec2 m = okay::Input::MousePosition();   // canvas-local
-        int hovPanel = -1, hovCx = 0, hovCy = 0;
-        for (int pi = 0; pi < (int)panels.size(); ++pi) {
-            const EPanel& P = panels[pi];
-            int cx = (int)std::floor((m.x - P.ox) / (cs + gp)), cy = (int)std::floor((m.y - P.oy) / (cs + gp));
-            if (m.x >= P.ox && m.y >= P.oy && cx >= 0 && cy >= 0 && cx < P.inv->cols && cy < P.inv->rows) {
-                hovPanel = pi; hovCx = cx; hovCy = cy;
-            }
-        }
+        const okay::InventoryInput::GridFrame hov = okay::InventoryInput::HoverGrid(GL, m);
+        const int hovPanel = hov.panel, hovCx = hov.cx, hovCy = hov.cy;
         auto drawOne = [&](const okay::GridItem& it, float lx, float ly, bool ghost, bool hover) {
             float w = it.w * cs + (it.w - 1) * gp, h = it.h * cs + (it.h - 1) * gp;
             const okay::Color* rar = gui->RarityOf(it.name);
@@ -35151,7 +35164,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         };
 
         for (int pi = 0; pi < (int)panels.size(); ++pi) {
-            const EPanel& P = panels[pi]; okay::GridInventory* inv = P.inv;
+            const okay::InventoryInput::GridPanel& P = panels[pi]; okay::GridInventory* inv = P.inv;
             okay::Color acc = gui->Accent(P.label);
             float hy = P.oy - labelH - 2;
             rectF(P.ox - 6, hy, P.gw + 12, labelH, lighten(gui->headerColor, 0.06f), cr);
@@ -35191,7 +35204,6 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
 
         // Input — Game view ONLY (the mouse is fed against the Game canvas; the Scene
         // pass uses a different canvas size and would drop into the wrong cell).
-        if (gameView && gui->rotateKey && gui->dragInv && okay::Input::GetKeyDown(gui->rotateKey)) gui->RotateDrag();
         if (gameView && gui->showTooltips && !gui->dragInv && hovPanel >= 0) {
             okay::GridInventory* inv = panels[hovPanel].inv;
             int hov = inv->ItemAtCell(hovCx, hovCy);
@@ -35206,17 +35218,9 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 dl->AddText(ImVec2(p0.x + 6, p0.y + 5), col(gui->tooltipText), tip);
             }
         }
-        if (gameView && !gui->dragInv && okay::Input::GetMouseButtonDown(0) && hovPanel >= 0) {
-            okay::GridInventory* inv = panels[hovPanel].inv;
-            gui->BeginDrag(inv, inv->ItemAtCell(hovCx, hovCy), hovCx, hovCy);
-        }
-        if (gameView && !gui->dragInv && okay::Input::GetMouseButtonDown(1) && hovPanel >= 0) {   // right-click: split half
-            okay::GridInventory* inv = panels[hovPanel].inv;
-            int idx = inv->ItemAtCell(hovCx, hovCy);
-            if (idx >= 0) inv->Split(idx, inv->items[idx].count / 2);
-        }
-        if (gameView && gui->dragInv && okay::Input::GetMouseButtonUp(0))   // the Scene pass leaves the drag to the Game pass
-            gui->Drop(hovPanel >= 0 ? panels[hovPanel].inv : nullptr, hovCx, hovCy);
+        // Rotate (applied only on a good drop), pick up, right-click split, drop / transfer /
+        // merge. The Scene pass leaves the drag to the Game pass.
+        if (gameView) okay::InventoryInput::HandleGrid(*gui, GL, hov);
         if (gameView && gui->dragInv) {
             const okay::GridItem it = gui->HeldItem();
             float gx = m.x - gui->grabX * (cs + gp) - cs * 0.5f, gy = m.y - gui->grabY * (cs + gp) - cs * 0.5f;
@@ -35263,76 +35267,52 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     for (const auto& up : objs) {
         auto* ch = up ? up->GetComponent<okay::ChestInventory>() : nullptr;
         if (!ch || !ch->open) continue;
-        okay::Inventory* cinv = ch->Inv(); okay::Inventory* pinv = ch->PlayerInv();
-        if (!cinv) break;
+        // Layout + input shared with the built player (okay/Inventory/InventoryInput).
+        const okay::InventoryInput::ChestLayout L = okay::InventoryInput::LayoutChest(*ch, canvasSize.x, canvasSize.y);
+        if (!L.chest) break;
         auto col = [&](const okay::Color& c) { return IM_COL32((int)(c.r*255),(int)(c.g*255),(int)(c.b*255),(int)(c.a*255)); };
         float cr = ch->cornerRadius;
-        // Chest grid from the chest; player grid from the player's own InventoryUI size.
-        float cs = ch->slotSize, cg = ch->gap; int cc = ch->cols < 1 ? 1 : ch->cols;
-        okay::InventoryUI* pui = ch->PlayerUI();
-        float ps = pui ? pui->slotSize : cs, pg = pui ? pui->slotGap : cg;
-        int   pc = pui ? (pui->hotbarSlots < 1 ? 1 : pui->hotbarSlots) : cc;
-        int chestN = cinv->capacity > 0 ? cinv->capacity : (int)cinv->slots.size();
-        int playN  = pinv ? (pinv->capacity > 0 ? pinv->capacity : (int)pinv->slots.size()) : 0;
-        int chestRows = (chestN + cc - 1) / cc, playRows = playN > 0 ? (playN + pc - 1) / pc : 0;
-        float chestW = cc * cs + (cc - 1) * cg, playW = pc * ps + (pc - 1) * pg;
-        float panelW = chestW > playW ? chestW : playW;
-        float chestH = chestRows * (cs + cg), playH = playRows * (ps + pg);
-        float totalH = chestH + 30.0f + playH;
-        float lx = (canvasSize.x - panelW) * 0.5f, ly = (canvasSize.y - totalH) * 0.5f + 16.0f;
-        float chestLx = lx + (panelW - chestW) * 0.5f, playLx = lx + (panelW - playW) * 0.5f;
-        float ox = canvasPos.x + lx, oy = canvasPos.y + ly;
+        float ox = canvasPos.x + L.panelX, oy = canvasPos.y + L.topY;
         if (ch->darkenWhenOpen)
             dl->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(0, 0, 0, 150));
-        dl->AddRectFilled(ImVec2(ox - 12, oy - 34), ImVec2(ox + panelW + 12, oy + totalH + 12), col(ch->panelColor), cr + 2);
-        dl->AddRectFilled(ImVec2(ox - 12, oy - 34), ImVec2(ox + panelW + 12, oy - 8), col(ch->titleBar), cr + 2);
+        dl->AddRectFilled(ImVec2(ox - 12, oy - 34), ImVec2(ox + L.panelW + 12, oy + L.totalH + 12), col(ch->panelColor), cr + 2);
+        dl->AddRectFilled(ImVec2(ox - 12, oy - 34), ImVec2(ox + L.panelW + 12, oy - 8), col(ch->titleBar), cr + 2);
         dl->AddText(ImVec2(ox, oy - 28), col(ch->textColor), ch->title.c_str());
         okay::Vec2 m = okay::Input::MousePosition();
         int hovSide = -1, hovIdx = -1;
-        auto grid = [&](okay::Inventory* inv, float glx, float lgy, float sz, float gp, int cols, int count, int side) {
-            for (int i = 0; i < count; ++i) {
-                float lx2 = glx + (i % cols) * (sz + gp), ly2 = lgy + (i / cols) * (sz + gp);
+        if (gameView) L.Pick(m.x, m.y, hovSide, hovIdx);
+        auto stack = [&](const okay::Inventory::Slot& it, ImVec2 p0, ImVec2 p1) {
+            SDL_Texture* icon = ch->iconFolder.empty() ? nullptr : GetThumb(ch->iconFolder + it.item + ".png");
+            if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 4, p0.y + 4), ImVec2(p1.x - 4, p1.y - 4));
+            else dl->AddText(ImVec2(p0.x + 4, p0.y + 4), col(ch->textColor), it.item.substr(0, 5).c_str());
+            if (it.count > 1) { std::string c = std::to_string(it.count); ImVec2 ts = ImGui::CalcTextSize(c.c_str());
+                dl->AddText(ImVec2(p1.x - ts.x - 3, p1.y - ts.y - 2), col(ch->textColor), c.c_str()); }
+        };
+        auto grid = [&](int side) {
+            okay::Inventory* inv = L.Inv(side);
+            const float sz = L.Size(side);
+            for (int i = 0; i < L.Count(side); ++i) {
+                float lx2, ly2; L.SlotXY(side, i, lx2, ly2);
                 ImVec2 p0(canvasPos.x + lx2, canvasPos.y + ly2), p1(p0.x + sz, p0.y + sz);
                 dl->AddRectFilled(p0, p1, col(ch->slotBorder), cr);
                 dl->AddRectFilled(ImVec2(p0.x + 2, p0.y + 2), ImVec2(p1.x - 2, p1.y - 2), col(ch->slotColor), cr);
-                bool hov = gameView && m.x >= lx2 && m.x < lx2 + sz && m.y >= ly2 && m.y < ly2 + sz;
-                if (hov) { hovSide = side; hovIdx = i; dl->AddRectFilled(p0, p1, col(ch->hoverColor), cr); }
+                if (side == hovSide && i == hovIdx) dl->AddRectFilled(p0, p1, col(ch->hoverColor), cr);
                 bool dragged = (side == ch->dragSide && i == ch->dragIndex);
-                if (!dragged && inv && i < (int)inv->slots.size() && !inv->slots[i].item.empty()) {
-                    const auto& it = inv->slots[i];
-                    SDL_Texture* icon = ch->iconFolder.empty() ? nullptr : GetThumb(ch->iconFolder + it.item + ".png");
-                    if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 4, p0.y + 4), ImVec2(p1.x - 4, p1.y - 4));
-                    else dl->AddText(ImVec2(p0.x + 4, p0.y + 4), col(ch->textColor), it.item.substr(0, 5).c_str());
-                    if (it.count > 1) { std::string c = std::to_string(it.count); ImVec2 ts = ImGui::CalcTextSize(c.c_str());
-                        dl->AddText(ImVec2(p1.x - ts.x - 3, p1.y - ts.y - 2), col(ch->textColor), c.c_str()); }
-                }
+                if (!dragged && inv && i < (int)inv->slots.size() && !inv->slots[i].item.empty()) stack(inv->slots[i], p0, p1);
             }
         };
-        grid(cinv, chestLx, ly, cs, cg, cc, chestN, 0);
-        dl->AddText(ImVec2(canvasPos.x + playLx, oy + chestH + 6), col(ch->textColor), "Your inventory");
-        if (pinv) grid(pinv, playLx, ly + chestH + 24, ps, pg, pc, playN, 1);
-        auto sideInv = [&](int side) { return side == 0 ? cinv : pinv; };
-        float sz = ch->dragSide == 1 ? ps : cs;   // floating item = source grid's size
+        grid(0);
+        dl->AddText(ImVec2(canvasPos.x + L.playOx, oy + L.chestH + 6), col(ch->textColor), "Your inventory");
+        if (L.player) grid(1);
         if (gameView) {
-            if (ch->dragSide < 0 && hovIdx >= 0 && okay::Input::GetMouseButtonDown(0)) {
-                okay::Inventory* inv = sideInv(hovSide);
-                if (inv && hovIdx < (int)inv->slots.size() && !inv->slots[hovIdx].item.empty()) { ch->dragSide = hovSide; ch->dragIndex = hovIdx; }
-            }
-            if (ch->dragSide >= 0 && okay::Input::GetMouseButtonUp(0)) {
-                if (hovIdx >= 0) okay::ChestInventory::MoveStack(sideInv(ch->dragSide), ch->dragIndex, sideInv(hovSide), hovIdx);
-                ch->dragSide = -1; ch->dragIndex = -1;
-            }
-            if (ch->dragSide >= 0) {
-                okay::Inventory* inv = sideInv(ch->dragSide);
-                if (inv && ch->dragIndex < (int)inv->slots.size() && !inv->slots[ch->dragIndex].item.empty()) {
-                    const auto& it = inv->slots[ch->dragIndex];
-                    ImVec2 p0(canvasPos.x + m.x - sz * 0.5f, canvasPos.y + m.y - sz * 0.5f), p1(p0.x + sz, p0.y + sz);
-                    dl->AddRectFilled(p0, p1, col(ch->slotBorder), cr);
-                    dl->AddRectFilled(ImVec2(p0.x + 2, p0.y + 2), ImVec2(p1.x - 2, p1.y - 2), col(ch->slotColor), cr);
-                    SDL_Texture* icon = ch->iconFolder.empty() ? nullptr : GetThumb(ch->iconFolder + it.item + ".png");
-                    if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 4, p0.y + 4), ImVec2(p1.x - 4, p1.y - 4));
-                    else dl->AddText(ImVec2(p0.x + 4, p0.y + 4), col(ch->textColor), it.item.substr(0, 5).c_str());
-                } else { ch->dragSide = -1; ch->dragIndex = -1; }
+            okay::InventoryInput::HandleChest(*ch, L, m);   // lift / drop (move, swap, merge)
+            if (ch->dragSide >= 0) {   // the lifted item floats under the cursor at its source grid's size
+                const auto& it = L.Inv(ch->dragSide)->slots[ch->dragIndex];
+                const float sz = L.Size(ch->dragSide);
+                ImVec2 p0(canvasPos.x + m.x - sz * 0.5f, canvasPos.y + m.y - sz * 0.5f), p1(p0.x + sz, p0.y + sz);
+                dl->AddRectFilled(p0, p1, col(ch->slotBorder), cr);
+                dl->AddRectFilled(ImVec2(p0.x + 2, p0.y + 2), ImVec2(p1.x - 2, p1.y - 2), col(ch->slotColor), cr);
+                stack(it, p0, p1);
             }
         }
         break;
@@ -41181,8 +41161,15 @@ int main(int argc, char** argv) {
                     okay::Character* ch = g_livePrevCh;
                     g_livePrevT += pdt * g_livePrevSpeed;
                     int keep = ch->anim;
-                    ch->anim = g_livePrevAnim;
-                    ch->PreviewPose(ch->PoseAt(g_livePrevT), ch->StanceOffsetAt(g_livePrevT));
+                    const AnimClip* pc = g_livePrevClip.empty() ? nullptr : BodyClip(ch, g_livePrevClip);
+                    if (pc) {   // an Animator state's clip
+                        const float len = pc->Duration();
+                        const float t = len > 0.0f ? std::fmod(g_livePrevT * (pc->speed > 1e-4f ? pc->speed : 1.0f), len) : 0.0f;
+                        ch->PreviewPose(pc->Sample(t), pc->SampleRoot(t) * ch->height);
+                    } else {
+                        ch->anim = g_livePrevAnim;
+                        ch->PreviewPose(ch->PoseAt(g_livePrevT), ch->StanceOffsetAt(g_livePrevT));
+                    }
                     if (ch->driveExternal && ch->gameObject) {
                         // Pose the imported rig from the preview (LateUpdate reads
                         // CurrentPose + StanceOffset), then re-deform its skins.

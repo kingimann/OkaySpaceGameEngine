@@ -489,14 +489,10 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     okay::Inventory* inv = ui.Inv();
     int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
     if (W <= 0 || H <= 0) return;
-    const int n = ui.hotbarSlots < 1 ? 1 : ui.hotbarSlots;
-    const int total = ui.SlotCount(), bpRows = ui.BackpackRowCount();   // slots shown = the Inventory's capacity
-    // Resolution-independent UI: scale by the window height vs the authored reference,
-    // so the inventory keeps the same on-screen proportion in a small built-game window
-    // as it does in the (usually larger) editor Game view. "Scale With Screen Size".
-    const float uiScale = (ui.scaleToScreen && ui.referenceHeight > 1.0f) ? (float)H / ui.referenceHeight : 1.0f;
-    const float sz = ui.slotSize * uiScale, gap = ui.slotGap * uiScale;
-    const float marginX = ui.marginX * uiScale, marginY = ui.marginY * uiScale, panelPad = ui.panelPad * uiScale;
+    // Layout + input are shared with the editor Play view (okay/Inventory/InventoryInput).
+    const okay::InventoryInput::HotbarLayout L = okay::InventoryInput::LayoutHotbar(ui, (float)W, (float)H);
+    const int n = L.hotbar, total = L.total, bpRows = L.rows;
+    const float uiScale = L.scale, sz = L.sz, gap = L.gap, panelPad = ui.panelPad * uiScale;
     auto setc = [&](const Color& c, int a = -1) {
         SDL_SetRenderDrawColor(r, (Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255),
                                (Uint8)(a < 0 ? c.a * 255 : a));
@@ -547,17 +543,9 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
             }
         }
     };
-    // Layout: hotbar docked to the bottom (or top), nudged by margins; the backpack
-    // grows away from the docked edge.
-    const float rowW = n * sz + (n - 1) * gap;
-    const float hx = (ui.hAlign == InventoryUI::HAlign::Left)  ? marginX
-                   : (ui.hAlign == InventoryUI::HAlign::Right) ? (W - rowW - marginX)
-                   : (W - rowW) * 0.5f + marginX;   // Center (default)
-    const float hy = ui.anchorTop ? marginY : H - sz - marginY;
-    auto bpY = [&](int row) {
-        return ui.anchorTop ? hy + sz + 14.0f + row * (sz + gap)
-                            : hy - 14.0f - (bpRows - row) * (sz + gap);
-    };
+    // Hotbar docked to the bottom (or top); the backpack grows away from that edge.
+    const float rowW = L.rowW, hx = L.hx, hy = L.hy;
+    auto bpY = [&](int row) { return L.RowY(row); };
     auto panel = [&](float x, float y, float w, float h) {
         SDL_Rect rc{(int)x, (int)y, (int)w, (int)h};
         UIShape psh = cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle;
@@ -636,64 +624,21 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         }
     }
 
-    // Drag-and-drop (only while the backpack is open). Pick a slot under the cursor,
-    // drop it on the NEAREST slot (forgiving — gaps/imperfect aim still land cleanly).
-    if (!ui.open || !ui.dragItems) { ui.dragIndex = -1; ui.dragAmount = 0; return; }
-    auto slotXY = [&](int idx, float& sx, float& sy) {
-        if (idx < n) { sx = hx + idx * (sz + gap); sy = hy; }
-        else { int b = idx - n; sx = hx + (b % n) * (sz + gap); sy = bpY(b / n); }
-    };
-    const int slotCount = total;
-    // Which slot a point picks: the slot it's actually inside (so hovering over a
-    // slot always picks THAT slot), else — for gaps / imperfect aim — the slot whose
-    // centre is nearest, within a slot's reach. Containment wins so the cursor sitting
-    // between two rows never snaps to the row above the one it's visually over.
-    auto nearest = [&](float px, float py) -> int {
-        for (int idx = 0; idx < slotCount; ++idx) {
-            float sx, sy; slotXY(idx, sx, sy);
-            if (px >= sx && px < sx + sz && py >= sy && py < sy + sz) return idx;
-        }
-        int best = -1; float bestD = (sz + gap) * (sz + gap) * 1.1f;
-        for (int idx = 0; idx < slotCount; ++idx) {
-            float sx, sy; slotXY(idx, sx, sy);
-            float dx = px - (sx + sz * 0.5f), dy = py - (sy + sz * 0.5f);
-            float d = dx * dx + dy * dy;
-            if (d < bestD) { bestD = d; best = idx; }
-        }
-        return best;
-    };
-    okay::Vec2 mp = okay::Input::MousePosition();
+    // Drag-and-drop (only while the backpack is open): pick, split, quick-move, drop.
+    const okay::Vec2 mp = mpos;
+    const okay::InventoryInput::HotbarFrame fr = okay::InventoryInput::HandleHotbar(ui, L, mp);
+    if (!ui.open || !ui.dragItems || !inv) return;
     auto hilite = [&](int idx, const Color& c) {
-        if (idx < 0) return; float sx, sy; slotXY(idx, sx, sy);
+        if (idx < 0) return; float sx, sy; L.SlotXY(idx, sx, sy);
         SDL_Rect hr{(int)sx, (int)sy, (int)sz, (int)sz};
         FillUIShape(r, hr, cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle, cr, c, c, false, false, 1.0f);
     };
-    // Highlight the target slot: the one under the cursor while hovering, or the
-    // nearest slot the dragged item will drop into.
-    if (ui.dragIndex < 0) {
-        int hi = nearest(mp.x, mp.y);
-        hilite(hi, ui.hoverColor);
-        if (inv && hi >= 0 && hi < (int)inv->slots.size() && !inv->slots[hi].item.empty())
-            drawTip(slotLabel(inv->slots[hi]));
+    // Highlight the slot under the cursor while hovering, or where a held stack will land.
+    if (fr.hover >= 0) {
+        hilite(fr.hover, ui.hoverColor);
+        if (fr.hover < (int)inv->slots.size() && !inv->slots[fr.hover].item.empty()) drawTip(slotLabel(inv->slots[fr.hover]));
     }
-    else { int t = nearest(mp.x, mp.y);
-        if (t >= 0 && t != ui.dragIndex)
-            hilite(t, Color{ui.selectedColor.r, ui.selectedColor.g, ui.selectedColor.b, 0.40f}); }
-    if (ui.dragIndex < 0) {
-        int idx = nearest(mp.x, mp.y);
-        bool onItem = idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty();
-        if (onItem && okay::Input::GetMouseButtonDown(0)) {
-            if (ui.shiftQuickMove && okay::Input::GetKey(okay::Input::KeyShift)) ui.QuickMove(idx);
-            else { ui.dragIndex = idx; ui.dragAmount = 0; }           // drag the whole stack
-        } else if (onItem && ui.splitRightClick && okay::Input::GetMouseButtonDown(1) && inv->slots[idx].count > 1) {
-            ui.dragIndex = idx; ui.dragAmount = ui.splitHalf ? inv->slots[idx].count / 2 : 1;   // pick up half (or one)
-        }
-    }
-    // Drop when the held button is released (either button — you held one to drag).
-    if (ui.dragIndex >= 0 && (okay::Input::GetMouseButtonUp(0) || okay::Input::GetMouseButtonUp(1))) {
-        ui.ApplyDrag(ui.dragIndex, nearest(mp.x, mp.y));
-        ui.dragIndex = -1; ui.dragAmount = 0;
-    }
+    hilite(fr.target, Color{ui.selectedColor.r, ui.selectedColor.g, ui.selectedColor.b, 0.40f});
     if (ui.dragIndex >= 0 && ui.dragIndex < (int)inv->slots.size()) {
         const auto& it = inv->slots[ui.dragIndex];
         float x = mp.x - sz * 0.5f, y = mp.y - sz * 0.5f;
@@ -729,10 +674,9 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
     if (!primary || !primary->open) { ui.CancelDrag(); return; }
     int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
     if (W <= 0 || H <= 0) return;
-    // Honour the configured sizes (just a minimal sane floor); kept in sync with the
-    // editor preview so drag hit-testing matches.
-    const float cs = ui.cellSize < 24.0f ? 24.0f : ui.cellSize;
-    const float gp = ui.gap < 0.0f ? 0.0f : ui.gap;
+    // Layout + input are shared with the editor Play view (okay/Inventory/InventoryInput).
+    const okay::InventoryInput::GridLayout GL = okay::InventoryInput::LayoutGrid(ui, *primary, (float)W, (float)H);
+    const float cs = GL.cs, gp = GL.gp;
     const float cr = ui.cornerRadius < 0.0f ? 0.0f : ui.cornerRadius;
     auto setc = [&](const Color& c, int a = -1) {
         SDL_SetRenderDrawColor(r, (Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), (Uint8)(a < 0 ? c.a * 255 : a));
@@ -754,44 +698,11 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
         setc(c, a); SDL_Rect bx{(int)x, (int)y, (int)w, (int)h}; SDL_RenderDrawRect(r, &bx);
     };
 
-    // Gather the containers to show, then lay them out in (up to) two columns.
-    std::vector<okay::GridInventory*> equipped, nearby;
-    if (ui.multiContainer) ui.CollectContainers(equipped, nearby);
-    else equipped.push_back(primary);
-    const float labelH = ui.headerHeight < 16.0f ? 16.0f : ui.headerHeight;
-    const float vspace = ui.containerGap < 4.0f ? 4.0f : ui.containerGap;
-    const float colGap = ui.columnGap < 8.0f ? 8.0f : ui.columnGap;
-    const float pad    = ui.panelPad < 4.0f ? 4.0f : ui.panelPad;
-    const float headH  = ui.showMasterTitle ? 30.0f : 0.0f;
-    const float headGap = ui.showMasterTitle ? 18.0f : 6.0f;
-    auto colSize = [&](const std::vector<okay::GridInventory*>& L, float& cw, float& ch) {
-        cw = 0; ch = 0;
-        for (auto* g : L) { float gw = g->cols*cs + (g->cols-1)*gp; if (gw > cw) cw = gw;
-                            ch += labelH + (g->rows*cs + (g->rows-1)*gp) + vspace; }
-        if (!L.empty()) ch -= vspace;
-    };
-    float lw, lh, rw, rh; colSize(equipped, lw, lh); colSize(nearby, rw, rh);
-    bool hasNear = !nearby.empty();
-    float totalW = lw + (hasNear ? colGap + rw : 0.0f);
-    float totalH = lh > rh ? lh : rh;
-    float startX = (W - totalW) * 0.5f, startY = (H - totalH) * 0.5f + 14.0f + headH + headGap;
-
-    struct Panel { okay::GridInventory* inv; float ox, oy, gw, gh; std::string label; bool ground; };
-    std::vector<Panel> panels;
-    auto placeCol = [&](const std::vector<okay::GridInventory*>& L, float colX, float colW, bool ground) {
-        float y = startY;
-        for (auto* g : L) {
-            float gw = g->cols*cs + (g->cols-1)*gp, gh = g->rows*cs + (g->rows-1)*gp;
-            panels.push_back({g, colX + (colW-gw)*0.5f, y + labelH, gw, gh,
-                              g->category.empty() ? g->title : g->category, ground});
-            y += labelH + gh + vspace;
-        }
-    };
-    placeCol(equipped, startX, lw, false);
-    if (hasNear) placeCol(nearby, startX + lw + colGap, rw, true);
-    std::vector<okay::GridInventory*> live(equipped);
-    live.insert(live.end(), nearby.begin(), nearby.end());
-    ui.CheckDrag(live);   // the bag being dragged from may have gone out of range or been destroyed
+    const std::vector<okay::GridInventory*>& equipped = GL.equipped;
+    const std::vector<okay::InventoryInput::GridPanel>& panels = GL.panels;
+    const float labelH = GL.labelH, colGap = GL.colGap, pad = GL.pad, headH = GL.headH, headGap = GL.headGap;
+    const float lw = GL.lw, lh = GL.lh, rw = GL.rw, rh = GL.rh, startX = GL.startX, startY = GL.startY;
+    const bool hasNear = GL.hasNear;
 
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
     if (ui.darkenWhenOpen) { setc(Color{0, 0, 0, ui.backdropDim}); SDL_Rect full{0, 0, W, H}; SDL_RenderFillRect(r, &full); }
@@ -828,15 +739,8 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
     }
 
     okay::Vec2 mp = okay::Input::MousePosition();
-    // Which panel + cell is under the cursor?
-    int hovPanel = -1, hovCx = 0, hovCy = 0;
-    for (int pi = 0; pi < (int)panels.size(); ++pi) {
-        const Panel& P = panels[pi];
-        int cx = (int)std::floor((mp.x - P.ox) / (cs + gp)), cy = (int)std::floor((mp.y - P.oy) / (cs + gp));
-        if (mp.x >= P.ox && mp.y >= P.oy && cx >= 0 && cy >= 0 && cx < P.inv->cols && cy < P.inv->rows) {
-            hovPanel = pi; hovCx = cx; hovCy = cy;
-        }
-    }
+    const okay::InventoryInput::GridFrame hov = okay::InventoryInput::HoverGrid(GL, mp);   // panel + cell under the cursor
+    const int hovPanel = hov.panel, hovCx = hov.cx, hovCy = hov.cy;
 
     auto drawItem = [&](okay::GridInventoryUI& u, const okay::GridItem& it, float px0, float py0, bool ghost, bool hover) {
         float w = it.w * cs + (it.w - 1) * gp, h = it.h * cs + (it.h - 1) * gp;
@@ -868,7 +772,7 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
 
     // Draw every container: accent header, inset cells, drop highlight, items.
     for (int pi = 0; pi < (int)panels.size(); ++pi) {
-        const Panel& P = panels[pi]; okay::GridInventory* inv = P.inv;
+        const okay::InventoryInput::GridPanel& P = panels[pi]; okay::GridInventory* inv = P.inv;
         Color acc = ui.Accent(P.label);
         float hy = P.oy - labelH - 2;
         fillG(P.ox - 6, hy, P.gw + 12, labelH, lighten(ui.headerColor, 0.08f), darken(ui.headerColor, 0.05f), cr);
@@ -904,8 +808,6 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
         }
     }
 
-    // Rotate the held item 90° (applied only if the drop succeeds).
-    if (ui.rotateKey && ui.dragInv && okay::Input::GetKeyDown(ui.rotateKey)) ui.RotateDrag();
     // Hover tooltip.
     if (ui.showTooltips && !ui.dragInv && hovPanel >= 0) {
         okay::GridInventory* inv = panels[hovPanel].inv;
@@ -920,21 +822,8 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
             DrawText(r, tip, mp.x + 14 + tpad, mp.y + 14 + tpad, px, sc(ui.tooltipText));
         }
     }
-    // Pick up an item.
-    if (!ui.dragInv && okay::Input::GetMouseButtonDown(0) && hovPanel >= 0) {
-        okay::GridInventory* inv = panels[hovPanel].inv;
-        ui.BeginDrag(inv, inv->ItemAtCell(hovCx, hovCy), hovCx, hovCy);
-    }
-    // Right-click a stack to split half of it into the first free spot.
-    if (!ui.dragInv && okay::Input::GetMouseButtonDown(1) && hovPanel >= 0) {
-        okay::GridInventory* inv = panels[hovPanel].inv;
-        int idx = inv->ItemAtCell(hovCx, hovCy);
-        if (idx >= 0) inv->Split(idx, inv->items[idx].count / 2);
-    }
-    // Drop it — same container = move, different container = transfer (cross-bag / loot),
-    // onto a matching stack = merge.
-    if (ui.dragInv && okay::Input::GetMouseButtonUp(0))
-        ui.Drop(hovPanel >= 0 ? panels[hovPanel].inv : nullptr, hovCx, hovCy);
+    // Rotate (applied only on a good drop), pick up, right-click split, drop / transfer / merge.
+    okay::InventoryInput::HandleGrid(ui, GL, hov);
     // The lifted item floats under the cursor (with a soft drop shadow).
     if (ui.dragInv) {
         const okay::GridItem it = ui.HeldItem();
@@ -987,26 +876,11 @@ static void DrawCrafting(SDL_Renderer* r, okay::CraftingStation& cs) {
 static void DrawChest(SDL_Renderer* r, okay::ChestInventory& ch, const std::string& baseDir,
                       std::unordered_map<std::string, SDL_Texture*>& cache) {
     if (!ch.open) return;
-    okay::Inventory* cinv = ch.Inv(); okay::Inventory* pinv = ch.PlayerInv();
-    if (!cinv) return;
     int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H); if (W <= 0 || H <= 0) return;
+    // Layout + input are shared with the editor Play view (okay/Inventory/InventoryInput).
+    const okay::InventoryInput::ChestLayout L = okay::InventoryInput::LayoutChest(ch, (float)W, (float)H);
+    if (!L.chest) return;
     const float cr = ch.cornerRadius;
-    // Chest grid uses the chest's size; the player grid uses the player's OWN inventory
-    // UI size/columns — so resizing the chest doesn't resize your inventory.
-    float cs = ch.slotSize, cg = ch.gap; int cc = ch.cols < 1 ? 1 : ch.cols;
-    okay::InventoryUI* pui = ch.PlayerUI();
-    float ps = pui ? pui->slotSize : cs, pg = pui ? pui->slotGap : cg;
-    int   pc = pui ? (pui->hotbarSlots < 1 ? 1 : pui->hotbarSlots) : cc;
-    int chestN = cinv->capacity > 0 ? cinv->capacity : (int)cinv->slots.size();
-    int playN  = pinv ? (pinv->capacity > 0 ? pinv->capacity : (int)pinv->slots.size()) : 0;
-    int chestRows = (chestN + cc - 1) / cc, playRows = playN > 0 ? (playN + pc - 1) / pc : 0;
-    float chestW = cc * cs + (cc - 1) * cg, playW = pc * ps + (pc - 1) * pg;
-    float panelW = chestW > playW ? chestW : playW;
-    float chestH = chestRows * (cs + cg), playH = playRows * (ps + pg);
-    float totalH = chestH + 30.0f + playH;
-    float panelX = (W - panelW) * 0.5f, topY = (H - totalH) * 0.5f + 16.0f;
-    float chestOx = panelX + (panelW - chestW) * 0.5f, playOx = panelX + (panelW - playW) * 0.5f;
-    float chestGy = topY, playGy = topY + chestH + 24.0f;
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
     if (ch.darkenWhenOpen) { SDL_SetRenderDrawColor(r, 0, 0, 0, 150); SDL_Rect f{0, 0, W, H}; SDL_RenderFillRect(r, &f); }
     auto sc = [&](const Color& c) { return SDL_Color{(Uint8)(c.r*255),(Uint8)(c.g*255),(Uint8)(c.b*255),255}; };
@@ -1015,61 +889,42 @@ static void DrawChest(SDL_Renderer* r, okay::ChestInventory& ch, const std::stri
         FillUIShape(r, rc2, rad > 0.5f ? UIShape::Rounded : UIShape::Rectangle, rad, c, c, false, false, 1.0f);
     };
     okay::Vec2 mp = okay::Input::MousePosition();
-    fill(panelX - 12, topY - 34, panelW + 24, totalH + 46, ch.panelColor, cr + 2);
-    fill(panelX - 12, topY - 34, panelW + 24, 26, ch.titleBar, cr + 2);
-    DrawText(r, ch.title, panelX, topY - 28, 1.6f, sc(ch.textColor));
+    fill(L.panelX - 12, L.topY - 34, L.panelW + 24, L.totalH + 46, ch.panelColor, cr + 2);
+    fill(L.panelX - 12, L.topY - 34, L.panelW + 24, 26, ch.titleBar, cr + 2);
+    DrawText(r, ch.title, L.panelX, L.topY - 28, 1.6f, sc(ch.textColor));
     int hovSide = -1, hovIdx = -1;   // which grid + slot the cursor is over
-    auto grid = [&](okay::Inventory* inv, float gx, float gy, float sz, float gp, int cols, int count, int side) {
-        for (int i = 0; i < count; ++i) {
-            float x = gx + (i % cols) * (sz + gp), y = gy + (i / cols) * (sz + gp);
+    L.Pick(mp.x, mp.y, hovSide, hovIdx);
+    auto stack = [&](const okay::Inventory::Slot& it, float x, float y, float sz) {
+        SDL_Texture* icon = ch.iconFolder.empty() ? nullptr : GetTexture(r, ch.iconFolder + it.item + ".png", baseDir, cache);
+        if (icon) { SDL_Rect d{(int)x+4, (int)y+4, (int)sz-8, (int)sz-8}; SDL_RenderCopy(r, icon, nullptr, &d); }
+        else DrawText(r, it.item.substr(0, 5), x + 4, y + 5, 1.0f, sc(ch.textColor));
+        if (it.count > 1) { std::string c = std::to_string(it.count); float px = 1.2f;
+            float tw = UITextW(c, px);
+            DrawText(r, c, x + sz - tw - 3, y + sz - (Font8x8::Height + 1) * px - 2, px, SDL_Color{255,255,255,255}); }
+    };
+    auto grid = [&](int side) {
+        okay::Inventory* inv = L.Inv(side);
+        const float sz = L.Size(side);
+        for (int i = 0; i < L.Count(side); ++i) {
+            float x, y; L.SlotXY(side, i, x, y);
             fill(x, y, sz, sz, ch.slotBorder, cr);
             fill(x + 2, y + 2, sz - 4, sz - 4, ch.slotColor, cr > 2 ? cr - 2 : 0);
-            bool hov = mp.x >= x && mp.x < x + sz && mp.y >= y && mp.y < y + sz;
-            if (hov) { hovSide = side; hovIdx = i; fill(x, y, sz, sz, ch.hoverColor, cr); }
+            if (side == hovSide && i == hovIdx) fill(x, y, sz, sz, ch.hoverColor, cr);
             bool dragged = (side == ch.dragSide && i == ch.dragIndex);   // hide the lifted item
-            if (!dragged && inv && i < (int)inv->slots.size() && !inv->slots[i].item.empty()) {
-                const auto& it = inv->slots[i];
-                SDL_Texture* icon = ch.iconFolder.empty() ? nullptr : GetTexture(r, ch.iconFolder + it.item + ".png", baseDir, cache);
-                if (icon) { SDL_Rect d{(int)x+4, (int)y+4, (int)sz-8, (int)sz-8}; SDL_RenderCopy(r, icon, nullptr, &d); }
-                else DrawText(r, it.item.substr(0, 5), x + 4, y + 5, 1.0f, sc(ch.textColor));
-                if (it.count > 1) { std::string c = std::to_string(it.count); float px = 1.2f;
-                    float tw = UITextW(c, px);
-                    DrawText(r, c, x + sz - tw - 3, y + sz - (Font8x8::Height + 1) * px - 2, px, SDL_Color{255,255,255,255}); }
-            }
+            if (!dragged && inv && i < (int)inv->slots.size() && !inv->slots[i].item.empty()) stack(inv->slots[i], x, y, sz);
         }
     };
-    grid(cinv, chestOx, chestGy, cs, cg, cc, chestN, 0);
-    DrawText(r, "Your inventory", playOx, topY + chestH + 6, 1.2f, sc(ch.textColor));
-    if (pinv) grid(pinv, playOx, playGy, ps, pg, pc, playN, 1);
-    auto sideInv = [&](int side) { return side == 0 ? cinv : pinv; };
-    float sz = ch.dragSide == 1 ? ps : cs;   // floating-item size = source grid's slot size
-    // Start a drag by pressing on a non-empty slot.
-    if (ch.dragSide < 0 && hovIdx >= 0 && okay::Input::GetMouseButtonDown(0)) {
-        okay::Inventory* inv = sideInv(hovSide);
-        if (inv && hovIdx < (int)inv->slots.size() && !inv->slots[hovIdx].item.empty()) {
-            ch.dragSide = hovSide; ch.dragIndex = hovIdx;
-        }
-    }
-    // Drop onto the slot under the cursor (move / swap / merge), or cancel if outside.
-    if (ch.dragSide >= 0 && okay::Input::GetMouseButtonUp(0)) {
-        if (hovIdx >= 0) okay::ChestInventory::MoveStack(sideInv(ch.dragSide), ch.dragIndex, sideInv(hovSide), hovIdx);
-        ch.dragSide = -1; ch.dragIndex = -1;
-    }
-    // The lifted item floats under the cursor.
+    grid(0);
+    DrawText(r, "Your inventory", L.playOx, L.topY + L.chestH + 6, 1.2f, sc(ch.textColor));
+    if (L.player) grid(1);
+    okay::InventoryInput::HandleChest(ch, L, mp);   // lift / drop (move, swap, merge)
+    // The lifted item floats under the cursor, at its source grid's slot size.
     if (ch.dragSide >= 0) {
-        okay::Inventory* inv = sideInv(ch.dragSide);
-        if (inv && ch.dragIndex < (int)inv->slots.size() && !inv->slots[ch.dragIndex].item.empty()) {
-            const auto& it = inv->slots[ch.dragIndex];
-            float x = mp.x - sz * 0.5f, y = mp.y - sz * 0.5f;
-            fill(x, y, sz, sz, ch.slotBorder, cr);
-            fill(x + 2, y + 2, sz - 4, sz - 4, ch.slotColor, cr > 2 ? cr - 2 : 0);
-            SDL_Texture* icon = ch.iconFolder.empty() ? nullptr : GetTexture(r, ch.iconFolder + it.item + ".png", baseDir, cache);
-            if (icon) { SDL_Rect d{(int)x+4, (int)y+4, (int)sz-8, (int)sz-8}; SDL_RenderCopy(r, icon, nullptr, &d); }
-            else DrawText(r, it.item.substr(0, 5), x + 4, y + 5, 1.0f, sc(ch.textColor));
-            if (it.count > 1) { std::string c = std::to_string(it.count); float px = 1.2f;
-                float tw = UITextW(c, px);
-                DrawText(r, c, x + sz - tw - 3, y + sz - (Font8x8::Height + 1) * px - 2, px, SDL_Color{255,255,255,255}); }
-        } else { ch.dragSide = -1; ch.dragIndex = -1; }
+        const auto& it = L.Inv(ch.dragSide)->slots[ch.dragIndex];
+        const float sz = L.Size(ch.dragSide), x = mp.x - sz * 0.5f, y = mp.y - sz * 0.5f;
+        fill(x, y, sz, sz, ch.slotBorder, cr);
+        fill(x + 2, y + 2, sz - 4, sz - 4, ch.slotColor, cr > 2 ? cr - 2 : 0);
+        stack(it, x, y, sz);
     }
 }
 

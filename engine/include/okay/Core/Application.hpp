@@ -18,6 +18,7 @@ public:
         int   height       = 30;     // renderer height
         float targetFps    = 30.0f;  // frame pacing; <= 0 means run uncapped
         int   maxFrames    = 0;      // 0 = run until quit; >0 = stop after N frames
+        bool  smoothDt     = true;   // step by an evened-out frame time (Time::SmoothDelta)
         bool  clearScreen  = true;   // console backend clears the terminal each frame
     };
 

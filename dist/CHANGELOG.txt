@@ -1,5 +1,24 @@
 OkaySpace Game Engine — Changelog
 
+v2.824.0
+  Multiplayer and anti-cheat (opt-in unless noted)
+  - Server-only values: mark SyncVars such as score or money as server-only
+    (serverVar in the anti-cheat config, or any key starting "srv."), and
+    clients can no longer change them.
+  - Fire rate and ammo: Net Validator rules take a cooldown and a refilling
+    budget. Shots that come too fast or exceed the budget are refused and
+    reported. Games top the budget up on reload or pickup with the Server
+    Budget node or net_budget.
+  - Hits: the server checks every claimed hit. The shooter must be where the
+    server last saw them, the target must be in range, and walls block the
+    shot. Damage is applied on the server only (Health) and sent to everyone.
+    Games add their own rules with On Validate Hit / on_validate_hit.
+  - Dedicated servers can report the players anti-cheat kicks for admin
+    review (--report-kicks, rate-limited, needs sign-in). Nobody is banned
+    automatically (#321).
+  - Always on: your account token goes only to hosts that check sign-ins
+    (#320).
+
 v2.823.0
   Multiplayer and anti-cheat (encryption is opt-in)
   - With encryption on, clients exchange keys before joining, so the

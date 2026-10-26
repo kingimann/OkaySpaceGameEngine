@@ -1,4 +1,5 @@
 #include "okay/Net/UdpSocket.hpp"
+#include <atomic>
 
 #include <cstdio>
 
@@ -23,7 +24,7 @@
 namespace okay::net {
 
 namespace {
-    int g_initCount = 0;
+    std::atomic<int> g_initCount{0};   // Startup/Shutdown can be called from any thread
 
     bool WouldBlock() {
 #if defined(_WIN32)
@@ -44,21 +45,21 @@ std::string Endpoint::ToString() const {
 
 bool Startup() {
 #if defined(_WIN32)
-    if (g_initCount++ == 0) {
-        WSADATA d;
-        if (WSAStartup(MAKEWORD(2, 2), &d) != 0) { g_initCount = 0; return false; }
-    }
-#else
-    ++g_initCount;
+    // WSAStartup / WSACleanup are reference-counted (and thread-safe) by Windows
+    // itself: call them once per Startup / Shutdown.
+    WSADATA d;
+    if (WSAStartup(MAKEWORD(2, 2), &d) != 0) return false;
 #endif
+    g_initCount.fetch_add(1);
     return true;
 }
 
 void Shutdown() {
+    int c = g_initCount.load();
+    while (c > 0 && !g_initCount.compare_exchange_weak(c, c - 1)) {}
+    if (c <= 0) return;   // more Shutdowns than Startups
 #if defined(_WIN32)
-    if (g_initCount > 0 && --g_initCount == 0) WSACleanup();
-#else
-    if (g_initCount > 0) --g_initCount;
+    WSACleanup();
 #endif
 }
 

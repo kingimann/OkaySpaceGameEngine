@@ -1,5 +1,18 @@
 OkaySpace Game Engine — Changelog
 
+v2.819.0
+  Fixes
+  - Multiplayer: servers refuse oversized or forged packets instead of running
+    out of memory, and starting several network sessions at once no longer races.
+  - Physics: a collision or trigger handler that removes the other object's
+    collider no longer crashes the game.
+  - Both script languages: a very long expression (1 + 1 + ... thousands of
+    times) gives "expression is too long" instead of crashing.
+  - The Linux dedicated server builds again.
+  UI
+  - The game player draws in-game UI through one shared renderer, so built games
+    match what the editor previews (#282).
+
 v2.818.0
   Fixes
   - The "Humanoid player" walks properly again: foot IK keeps the walk's stride,

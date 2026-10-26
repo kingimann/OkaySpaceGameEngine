@@ -1078,7 +1078,9 @@ int main(int argc, char** argv) {
     SDL_SetMainReady();
     // Windows 11 / high-DPI: per-monitor-DPI-aware so the game renders at native
     // resolution instead of being bitmap-stretched (blurry) on scaled displays.
+#ifdef SDL_HINT_WINDOWS_DPI_AWARENESS   // SDL >= 2.24; the Linux server build uses an older SDL
     SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
+#endif
     // `--server`: run headless as the game's dedicated server (no window, GPU or
     // audio). See okay/Net/DedicatedServer.hpp for the flags.
     for (int i = 1; i < argc; ++i)

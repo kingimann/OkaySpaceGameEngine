@@ -691,27 +691,58 @@ int NetworkManager::ReceiveFrom(void* buffer, std::size_t capacity, net::Endpoin
 
 // Collect one fragment from `from`. Returns true (and fills `out` with the whole
 // reassembled message) only once every fragment of that message has arrived.
+// A peer we've completed a handshake with: a joined client (server side) or our
+// server (client side).
+bool NetworkManager::Handshaken(const net::Endpoint& from) const {
+    if (m_mode == Mode::Server) return m_clients.find(from) != m_clients.end();
+    if (m_mode == Mode::Client) return from == m_serverEp;
+    return false;
+}
+
 bool NetworkManager::TakeFragment(const net::Endpoint& from, const std::uint8_t* data,
                                   std::size_t size, std::vector<std::uint8_t>& out) {
     const std::size_t header = 1 + 4 + 4 + 4;
-    if (size < header) return false;
+    // Senders keep every fragment under the threshold; anything bigger is forged.
+    if (size < header || size > net::kFragmentThreshold) return false;
     net::Packet p(data, size);
     p.ReadU8();                                   // Fragment tag
     std::uint32_t id = p.ReadU32(), index = p.ReadU32(), count = p.ReadU32();
-    if (!p.Ok() || count == 0 || count > 65535 || index >= count) return false;
-    auto& asm_ = m_fragIn[from][id];
-    if (asm_.chunks.empty()) { asm_.count = count; asm_.chunks.resize(count); }
+    const bool known = Handshaken(from);
+    const std::uint32_t maxCount = known ? kMaxFragments : kStrangerMaxFragments;
+    if (!p.Ok() || count == 0 || count > maxCount || index >= count) return false;
+    auto epIt = m_fragIn.find(from);
+    if (epIt == m_fragIn.end()) {
+        if (!known) {                             // only so many strangers mid-message at once
+            std::size_t strangers = 0;
+            for (const auto& e : m_fragIn) if (!Handshaken(e.first)) ++strangers;
+            if (strangers >= kMaxStrangers) return false;
+        }
+        epIt = m_fragIn.emplace(from, std::unordered_map<std::uint32_t, FragAsm>{}).first;
+    }
+    auto& msgs = epIt->second;
+    auto mIt = msgs.find(id);
+    if (mIt == msgs.end()) {
+        if (msgs.size() >= (known ? kMaxPendingMessages : 1)) return false;
+        mIt = msgs.emplace(id, FragAsm{}).first;
+        mIt->second.count = count;
+        mIt->second.chunks.resize(count);
+    }
+    FragAsm& asm_ = mIt->second;
     if (asm_.count != count) return false;        // inconsistent — drop this stray fragment
     if (asm_.chunks[index].empty()) {             // first time we see this index
+        std::size_t held = 0;
+        for (const auto& m : msgs) held += m.second.bytes;
+        if (held + (size - header) > kMaxPendingBytes) return false;
         asm_.chunks[index].assign(data + header, data + size);
+        asm_.bytes += size - header;
         asm_.got++;
     }
     asm_.age = 0.0f;
     if (asm_.got < asm_.count) return false;
     out.clear();
     for (auto& c : asm_.chunks) out.insert(out.end(), c.begin(), c.end());
-    m_fragIn[from].erase(id);
-    if (m_fragIn[from].empty()) m_fragIn.erase(from);
+    msgs.erase(mIt);
+    if (msgs.empty()) m_fragIn.erase(epIt);
     return true;
 }
 

@@ -47,9 +47,23 @@ struct AntiCheatSettings {
     /// "<netId>.<name>" SyncVar keys may only be written by that object's owner.
     bool  ownerOnlySyncVars = true;
 
+    // ---- P2: transport ----
+    /// Only encrypted clients may join (needs libsodium on both ends; turns the
+    /// server's `encryption` on). Every packet then also carries a sequence
+    /// number, replays are refused, and plaintext game packets from joined
+    /// clients are dropped.
+    bool  requireEncryption = false;
+    /// A session ticket service's ed25519 PUBLIC key (base64url). When set, a
+    /// joining client's token must be a valid ticket (okay/Net/SessionTicket.hpp)
+    /// and the peer is bound to its account id. "" = no ticket check.
+    std::string ticketKey;
+    /// This server's id as tickets name it ("aud"); "" = accept any.
+    std::string ticketAudience;
+
     /// .okayac text: one "key value" per line, '#' comments:
     ///   enabled true | spawn <prefab path> (repeatable) | maxSyncSpeed 12
     ///   maxSyncVarsPerSecond 20 | kickAfterViolations 5 | ownerOnlySyncVars true
+    ///   requireEncryption true | ticketKey <base64url> | ticketAudience <server id>
     static bool Parse(const std::string& text, AntiCheatSettings& out, std::string* error = nullptr);
     bool LoadFile(const std::string& path, std::string* error = nullptr);
     std::string ToText() const;

@@ -1,5 +1,6 @@
 #include "okay/Net/AntiCheat.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Net/SessionTicket.hpp"
 #include <algorithm>
 #include <charconv>
 #include <cmath>
@@ -97,6 +98,14 @@ bool AntiCheatSettings::Parse(const std::string& text, AntiCheatSettings& out, s
         else if (key == "maxSyncVarsPerSecond") { if (!ParseInt(val, s.maxSyncVarsPerSecond)) return fail("maxSyncVarsPerSecond needs a whole number >= 0"); }
         else if (key == "kickAfterViolations") { if (!ParseInt(val, s.kickAfterViolations)) return fail("kickAfterViolations needs a whole number >= 0"); }
         else if (key == "ownerOnlySyncVars") { if (!ParseBool(val, s.ownerOnlySyncVars)) return fail("ownerOnlySyncVars needs true or false"); }
+        else if (key == "requireEncryption") { if (!ParseBool(val, s.requireEncryption)) return fail("requireEncryption needs true or false"); }
+        else if (key == "ticketKey") {
+            std::vector<std::uint8_t> k;
+            if (!net::SessionTicket::Base64UrlDecode(val, k) || k.size() != net::SessionTicket::kPublicKeyBytes)
+                return fail("ticketKey needs a 32-byte ed25519 public key in base64url");
+            s.ticketKey = val;
+        }
+        else if (key == "ticketAudience") { s.ticketAudience = val; }
         else return fail("unknown setting '" + key + "'");
     }
     out = std::move(s);
@@ -119,6 +128,9 @@ std::string AntiCheatSettings::ToText() const {
     o << "maxSyncVarsPerSecond " << maxSyncVarsPerSecond << "\n";
     o << "kickAfterViolations " << kickAfterViolations << "\n";
     o << "ownerOnlySyncVars " << (ownerOnlySyncVars ? "true" : "false") << "\n";
+    if (requireEncryption) o << "requireEncryption true\n";
+    if (!ticketKey.empty()) o << "ticketKey " << ticketKey << "\n";
+    if (!ticketAudience.empty()) o << "ticketAudience " << ticketAudience << "\n";
     return o.str();
 }
 

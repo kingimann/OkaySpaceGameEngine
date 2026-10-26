@@ -1,4 +1,6 @@
 #include "okay/Net/NetworkManager.hpp"
+#include "okay/Net/SessionTicket.hpp"
+#include <ctime>
 #include "okay/Net/Packet.hpp"
 #include "okay/Net/RelayProtocol.hpp"
 #include "okay/Net/ServerQuery.hpp"
@@ -930,13 +932,19 @@ void NetworkManager::ServerTick(float dt) {
             data = assembled.data(); len = assembled.size();
         }
         std::vector<std::uint8_t> decrypted;   // holds the message if it was encrypted
-        if (len >= 1 && data[0] == kEncEnvelope) {
+        const bool sealed = len >= 1 && data[0] == kEncEnvelope;
+        if (sealed) {
             net::SecureChannel* s = SessionFor(from);
-            if (!s || !s->Open(data + 1, len - 1, decrypted)) continue;  // can't open -> drop
+            if (!s || !s->Open(data + 1, len - 1, decrypted)) continue;  // can't open (or a replay) -> drop
             data = decrypted.data(); len = decrypted.size();
         }
         net::Packet p(data, len);
         std::uint8_t type = p.ReadU8();
+        // Anti-cheat P2: once encryption is required, a joined client's game
+        // traffic must be sealed; plaintext from its address is someone else's.
+        if (!sealed && anticheat.settings.enabled && anticheat.settings.requireEncryption &&
+            type != Join && type != Query && type != PlayerQuery && m_clients.count(from))
+            continue;
         if (type == Query) {
             // A server browser asking for our details (no join, no state). The
             // request is padded to at least the size of a typical answer so the
@@ -987,12 +995,31 @@ void NetworkManager::ServerTick(float dt) {
             std::string clientPk = p.ReadString();        // encryption public key (may be empty)
             bool existed = m_clients.count(from) != 0;
             std::string userId;
+            const bool acOn = anticheat.settings.enabled;
+            const bool needCrypto = acOn && anticheat.settings.requireEncryption;
+            if (needCrypto) encryption = true;   // the rules ask for it
             if (!existed) {
                 // Gate new joins on capacity, password and (if a verifier is set)
                 // identity; refuse politely.
                 const char* why = nullptr;
+                std::string ticketWhy;
                 if ((int)m_clients.size() >= maxPlayers) why = "server is full";
                 else if (!password.empty() && pass != password) why = "wrong password";
+                else if (needCrypto && (!net::SecureChannel::Available() || clientPk.size() != net::SecureChannel::kPublicKeyBytes))
+                    why = net::SecureChannel::Available() ? "encryption required (update the game)"
+                                                          : "encryption required, but this server was built without libsodium";
+                else if (acOn && !anticheat.settings.ticketKey.empty()) {
+                    // A signed session ticket names the account; it takes the
+                    // place of the token verifiers.
+                    std::vector<std::uint8_t> key;
+                    net::SessionTicket::Base64UrlDecode(anticheat.settings.ticketKey, key);
+                    net::SessionTicketClaims claims;
+                    std::string err;
+                    if (net::SessionTicket::Verify(token, key, anticheat.settings.ticketAudience,
+                                                   (std::int64_t)std::time(nullptr), claims, &err))
+                        userId = claims.userId;
+                    else { ticketWhy = "session ticket refused: " + err; why = ticketWhy.c_str(); }
+                }
                 else if (m_joinCheck) {
                     const int r = m_joinCheck(token, userId);
                     if (r < 0) continue;                       // still checking: the client retries
@@ -1020,6 +1047,9 @@ void NetworkManager::ServerTick(float dt) {
                     c.secure.GenerateKeys();
                     c.secure.Establish(std::vector<std::uint8_t>(clientPk.begin(), clientPk.end()),
                                        /*asServer=*/true);
+                    // Replay protection rides on required encryption (the Welcome
+                    // tells the client to number its packets too).
+                    if (needCrypto) c.secure.SetSequenced(true);
                 }
             }
             c.lastSeen = 0.0f;
@@ -1031,6 +1061,10 @@ void NetworkManager::ServerTick(float dt) {
                 auto pk = c.secure.PublicKey();
                 w.Write(std::string(pk.begin(), pk.end()));
             }
+            // A trailing flags byte only when there's something to say (bit 0 =
+            // number sealed packets); a server without anti-cheat P2 sends the
+            // same Welcome as before, and older clients stop reading earlier.
+            if (c.secure.Sequenced()) w.Write(std::uint8_t(1));
             SendDatagram(from, w.Data(), w.Size(), /*allowEncrypt=*/false);  // pre-handshake
             if (isNew) {
                 OKAY_INFO("net: client ", c.id, " '", c.name, "' joined from ", from.ToString());
@@ -1316,6 +1350,8 @@ void NetworkManager::ClientTick(float dt) {
             if (encryption && net::SecureChannel::Available() && !serverPk.empty() && !m_secure.Ready())
                 m_secure.Establish(std::vector<std::uint8_t>(serverPk.begin(), serverPk.end()),
                                    /*asServer=*/false);
+            const std::uint8_t welcomeFlags = p.ReadU8();   // optional: absent from older servers
+            if (p.Ok() && (welcomeFlags & 1) && m_secure.Ready()) m_secure.SetSequenced(true);
             m_joined = true;
             m_joinRejected = false;
             OKAY_INFO("net: joined '", m_serverName, "' as peer ", m_localId);

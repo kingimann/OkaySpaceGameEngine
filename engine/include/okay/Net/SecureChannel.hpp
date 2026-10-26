@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -18,6 +19,12 @@ namespace okay::net {
 /// sealed with XChaCha20-Poly1305 (crypto_aead): a random 24-byte nonce is prepended
 /// to the ciphertext, and the Poly1305 tag authenticates it, so any tampering or
 /// forgery is detected and rejected on open.
+///
+/// Replay protection (opt-in, SetSequenced): each sealed message then carries an
+/// 8-byte sequence number inside the ciphertext, and Open refuses any number it
+/// has already accepted or that is more than 64 behind the newest — so a captured
+/// packet can't be played again. Both ends must turn it on (the anti-cheat
+/// server does, through its Welcome); off, the format is exactly as before.
 ///
 /// When the engine is built WITHOUT libsodium (OKAY_HAVE_SODIUM undefined), this
 /// compiles to a stub: Available() is false and the seal/open calls fail, so the
@@ -82,12 +89,26 @@ public:
     /// True once session keys are derived and seal/open will work.
     bool Ready() const { return m_ready; }
 
+    /// Number messages and refuse replays (see the class comment).
+    void SetSequenced(bool on) { m_sequenced = on; }
+    bool Sequenced() const { return m_sequenced; }
+    /// Messages Open refused as replays / too old.
+    std::uint64_t Replays() const { return m_replays; }
+
     /// Encrypt+authenticate `plain` for the peer. Output is nonce || ciphertext.
     /// Returns false (leaving `out` empty) if the channel isn't ready.
     bool Seal(const std::uint8_t* plain, std::size_t len, std::vector<std::uint8_t>& out) const {
 #ifdef OKAY_HAVE_SODIUM
         if (!m_ready) return false;
         const std::size_t N = crypto_aead_xchacha20poly1305_ietf_NPUBBYTES;
+        std::vector<std::uint8_t> numbered;
+        if (m_sequenced) {   // seq (little-endian u64) || plain, all inside the ciphertext
+            const std::uint64_t seq = ++m_txSeq;
+            numbered.resize(8 + len);
+            for (int i = 0; i < 8; ++i) numbered[i] = static_cast<std::uint8_t>(seq >> (8 * i));
+            if (len) std::memcpy(numbered.data() + 8, plain, len);
+            plain = numbered.data(); len = numbered.size();
+        }
         out.resize(N + len + crypto_aead_xchacha20poly1305_ietf_ABYTES);
         randombytes_buf(out.data(), N);                  // fresh random nonce up front
         unsigned long long clen = 0;
@@ -115,6 +136,13 @@ public:
                 out.data(), &mlen, nullptr, data + N, len - N, nullptr, 0, data, m_rx) != 0)
             return false;                                // authentication failed -> reject
         out.resize(static_cast<std::size_t>(mlen));
+        if (m_sequenced) {
+            if (out.size() < 8) return false;
+            std::uint64_t seq = 0;
+            for (int i = 0; i < 8; ++i) seq |= static_cast<std::uint64_t>(out[i]) << (8 * i);
+            if (!AcceptSeq(seq)) { ++m_replays; out.clear(); return false; }
+            out.erase(out.begin(), out.begin() + 8);
+        }
         return true;
 #else
         (void)data; (void)len; (void)out; return false;
@@ -122,6 +150,27 @@ public:
     }
 
 private:
+    // Sliding window over the last 64 sequence numbers: bit i of m_window = we
+    // accepted (m_rxMax - i). Seq 0 is never sent.
+    bool AcceptSeq(std::uint64_t seq) const {
+        if (seq == 0) return false;
+        if (seq > m_rxMax) {
+            const std::uint64_t shift = seq - m_rxMax;
+            m_window = shift >= 64 ? 0 : (m_window << shift);
+            m_window |= 1;
+            m_rxMax = seq;
+            return true;
+        }
+        const std::uint64_t back = m_rxMax - seq;
+        if (back >= 64) return false;                    // too old to tell: refuse
+        const std::uint64_t bit = std::uint64_t(1) << back;
+        if (m_window & bit) return false;                // seen it: a replay
+        m_window |= bit;
+        return true;
+    }
+    bool m_sequenced = false;
+    mutable std::uint64_t m_txSeq = 0;
+    mutable std::uint64_t m_rxMax = 0, m_window = 0, m_replays = 0;
 #ifdef OKAY_HAVE_SODIUM
     unsigned char m_pk[crypto_kx_PUBLICKEYBYTES];
     unsigned char m_sk[crypto_kx_SECRETKEYBYTES];

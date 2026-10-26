@@ -1006,7 +1006,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << lb->weight << " " << lb->minBend << " " << lb->maxBend << " " << (lb->matchTargetRotation ? 1 : 0)
             << " " << lb->target.x << " " << lb->target.y << " " << lb->target.z
             << " " << lb->pole.x << " " << lb->pole.y << " " << lb->pole.z
-            << " " << (lb->orient ? 1 : 0) << "\n";
+            << " " << (lb->orient ? 1 : 0) << " " << (int)lb->poleMode << " " << lb->softness
+            << " " << lb->targetRotation.x << " " << lb->targetRotation.y << " " << lb->targetRotation.z
+            << " " << lb->targetRotation.w << "\n";
     }
     if (auto* ci = go->GetComponent<ChainIK>()) {
         out << "  chainik " << Quote(ci->targetName) << " " << ci->weight << " " << ci->iterations
@@ -1049,7 +1051,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* h = go->GetComponent<HoldableObject>()) {
         out << "  holdable";
         KvOut k{out};
-        k("style", (int)h->style)("weight", h->weight).str("socket", h->socket)
+        k("style", (int)h->style).b("support", h->supportHand)("weight", h->weight).str("socket", h->socket)
          ("offX", h->holdOffset.x)("offY", h->holdOffset.y)("offZ", h->holdOffset.z)
          ("rotX", h->holdRotation.x)("rotY", h->holdRotation.y)("rotZ", h->holdRotation.z);
         const HoldableObject::Grip* grips[2] = {&h->leftGrip, &h->rightGrip};
@@ -1058,14 +1060,16 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             const HoldableObject::Grip& gr = *grips[g];
             k.b((p + "On").c_str(), gr.enabled)
              ((p + "PX").c_str(), gr.position.x)((p + "PY").c_str(), gr.position.y)((p + "PZ").c_str(), gr.position.z)
-             ((p + "RX").c_str(), gr.rotation.x)((p + "RY").c_str(), gr.rotation.y)((p + "RZ").c_str(), gr.rotation.z);
+             ((p + "RX").c_str(), gr.rotation.x)((p + "RY").c_str(), gr.rotation.y)((p + "RZ").c_str(), gr.rotation.z)
+             ((p + "Curl").c_str(), gr.curl);
         }
         out << "\n";
     }
     if (auto* ph = go->GetComponent<ProceduralObjectHolding>()) {
         out << "  objholding";
         KvOut k{out};
-        k("hand", (int)ph->primaryHand)("style", (int)ph->holdingStyle).b("armIK", ph->armIK)("transition", ph->transitionTime);
+        k("hand", (int)ph->primaryHand)("style", (int)ph->holdingStyle).b("armIK", ph->armIK)("transition", ph->transitionTime)
+         .b("body", ph->bodyAdjustment)("carry", (int)ph->carryAnimations);
         out << "\n";
     }
     if (auto* rm = go->GetComponent<RootMotion>()) {
@@ -3404,10 +3408,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> lb->target.x >> lb->target.y >> lb->target.z
                        >> lb->pole.x >> lb->pole.y >> lb->pole.z;
                     lb->matchTargetRotation = (mr != 0);
-                    // Optional trailing field (newer files): orient bones toggle.
+                    // Optional trailing fields (newer files): orient bones toggle, pole mode,
+                    // softness, target rotation. Files from before the pole mode bent toward
+                    // the world direction.
                     { std::string rest; std::getline(in, rest);
-                      std::istringstream rs(rest); int o;
-                      if (rs >> o) lb->orient = (o != 0); }
+                      std::istringstream rs(rest); int o, pm;
+                      if (rs >> o) lb->orient = (o != 0);
+                      lb->poleMode = (rs >> pm) ? (LimbIK::PoleMode)std::clamp(pm, 0, 2) : LimbIK::PoleMode::World;
+                      Quat q;
+                      if (rs >> lb->softness >> q.x >> q.y >> q.z >> q.w) lb->targetRotation = q; }
                 } else if (field == "chainik") {
                     auto* ci = go->AddComponent<ChainIK>();
                     ci->targetName = ReadQuoted(in);
@@ -3442,8 +3451,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* h = go->AddComponent<HoldableObject>();
                     KvIn k(in);
                     int st = 0; k.i("style", st);
-                    h->style = st == 1 ? HoldableObject::Style::Custom : HoldableObject::Style::Automatic;
-                    k.f("weight", h->weight); k.str("socket", h->socket);
+                    h->style = st >= 0 && st <= (int)HoldableObject::Style::Heavy ? (HoldableObject::Style)st : HoldableObject::Style::Automatic;
+                    k.b("support", h->supportHand); k.f("weight", h->weight); k.str("socket", h->socket);
                     k.f("offX", h->holdOffset.x); k.f("offY", h->holdOffset.y); k.f("offZ", h->holdOffset.z);
                     k.f("rotX", h->holdRotation.x); k.f("rotY", h->holdRotation.y); k.f("rotZ", h->holdRotation.z);
                     HoldableObject::Grip* grips[2] = {&h->leftGrip, &h->rightGrip};
@@ -3453,6 +3462,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         k.b((p + "On").c_str(), gr.enabled);
                         k.f((p + "PX").c_str(), gr.position.x); k.f((p + "PY").c_str(), gr.position.y); k.f((p + "PZ").c_str(), gr.position.z);
                         k.f((p + "RX").c_str(), gr.rotation.x); k.f((p + "RY").c_str(), gr.rotation.y); k.f((p + "RZ").c_str(), gr.rotation.z);
+                        k.f((p + "Curl").c_str(), gr.curl);
                     }
                 } else if (field == "objholding") {
                     auto* ph = go->AddComponent<ProceduralObjectHolding>();
@@ -3462,6 +3472,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     : hand == 2 ? ProceduralObjectHolding::Hand::Both : ProceduralObjectHolding::Hand::Right;
                     ph->holdingStyle = st == 1 ? ProceduralObjectHolding::StyleMode::Custom : ProceduralObjectHolding::StyleMode::Automatic;
                     k.b("armIK", ph->armIK); k.f("transition", ph->transitionTime);
+                    int carry = 0; k.b("body", ph->bodyAdjustment); k.i("carry", carry);
+                    ph->carryAnimations = carry == 1 ? ProceduralObjectHolding::CarryAnim::Custom : ProceduralObjectHolding::CarryAnim::Automatic;
                 } else if (field == "fbikx") {
                     if (auto* fb = go->GetComponent<FullBodyIK>())
                         in >> fb->blendSpeed >> fb->goalSmoothing >> fb->lookSmoothing >> fb->armMinBend >> fb->legMinBend;

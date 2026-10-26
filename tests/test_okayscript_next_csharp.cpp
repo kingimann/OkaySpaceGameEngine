@@ -831,9 +831,51 @@ static void Parity() {
     // (the old runtime prints the number).
 }
 
+static void Followups() {
+    {   // each switch section has its own scope: a local from one section can't be read in another
+        auto d = Diags(Wrap(
+            "    void Start() {\n"                                                                   // 2
+            "        int n = 2; string r = \"\";\n"                                               // 3
+            "        switch (n) { case 1: string s = \"a\"; break; case 2: r = s + \"!\"; break; }\n"   // 4
+            "        Debug.Log(r);\n"
+            "    }\n"));
+        CHECK(Has(d, 0, "Unknown name 's'", 4, 65));
+    }
+    {   // a float too big for an int is a script error, not undefined behaviour
+        g_errs.clear();
+        World w(Wrap("    public float big = 1000000;\n    public int n;\n    void Start() { n = (int)(big * big * big); }\n"));
+        CHECK(ErrHas("Start() line 4: 1e+18 doesn't fit in an int"));
+        World e("enum State { Idle }\nclass T : Behaviour {\n    public float big = -1000000;\n    void Start() { State s = (State)(big * big * big); Debug.Log(s); }\n}\n");
+        CHECK(ErrHas("Start() line 4: -1e+18 doesn't fit in an int"));
+        // the Inspector can't put one into an int field either
+        World f(Wrap("    public int lives = 3;\n    void Start() { }\n"));
+        f.sc->fields["lives"] = "1e30";
+        f.sc->ApplyFieldOverrides();
+        CHECK_NEAR(f.F("lives"), 3.0f, 1e-6f);
+    }
+    {   // a long else-if chain past the nesting limit gives one error, not a cascade
+        std::string chain = "if (n == 0) n = 1;";
+        for (int i = 1; i < 400; ++i) chain += " else if (n == " + std::to_string(i) + ") n = " + std::to_string(i + 1) + ";";
+        auto d = Diags(Wrap("    void Start() { int n = 0; " + chain + " Debug.Log(n); }"));
+        CHECK_EQ(Count(d, 0), 1);
+        CHECK(Has(d, 0, "nested too deeply"));
+    }
+    {   // an enum value can't use a field; the message says so instead of "did you mean" itself
+        auto d = Diags("class T : Behaviour {\n    const int Base = 3;\n    enum E { A = Base }\n    void Start() { Debug.Log(E.A + \" \" + Base); }\n}\n");
+        CHECK(Has(d, 0, "An enum value can't use the field 'Base'", 3, 18));
+        CHECK(!Has(d, 0, "Did you mean 'Base'"));
+    }
+}
+
 static void BackCompat() {
-    // Words that are new keywords in context only stay usable as names.
-    CHECK(Clean(Wrap("    public int in_ = 1;\n    void Start() { int enumCount = 2, cases = 3; Debug.Log(enumCount + cases + in_); }\n")));
+    // switch, foreach, case, enum and in are keywords only where they start that
+    // construct, so scripts that used them as names keep working.
+    World w(Wrap(
+        "    public int enum = 1, foreach = 2;\n"
+        "    public int total;\n"
+        "    void Start() { int switch = 3, case = 4, in = 5; switch = enum + foreach + case + in; total = switch; }\n"));
+    CHECK(w.loaded);
+    CHECK_NEAR(w.F("total"), 12.0f, 1e-6f);
     // Features still to come keep their message.
     auto d = Diags(Wrap("    virtual void V() { }\n    void Start() { try { } }\n"));
     CHECK(Has(d, 0, "virtual isn't supported"));
@@ -878,6 +920,7 @@ int main() {
     NullOperators();
     Classes();
     Parity();
+    Followups();
     BackCompat();
     Fuzz();
     Log::sink = nullptr;

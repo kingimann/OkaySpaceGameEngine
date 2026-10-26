@@ -4,6 +4,7 @@
 #include "OfficialGame.hpp"      // shared/: SafeRelPath / ResolveInside for network prefab paths
 #include "okay/Components/NetworkPlayerSpawner.hpp"
 #include <cstdio>
+#include <cstring>
 #include <ctime>
 #include <unordered_set>
 #include <mutex>
@@ -230,6 +231,7 @@ bool NetworkManager::StartRelay(const std::string& relayHost, std::uint16_t rela
     m_relayCode = code;
     m_relaySlot = 0;
     m_relayHostKey = 0;
+    std::memset(m_relayCookie, 0, sizeof m_relayCookie);
     m_relayHelloTimer = 0.0f;
     m_relayError.clear();
     m_kicked = false; m_kickReason.clear();
@@ -270,6 +272,8 @@ void NetworkManager::RelayKeepAlive(float dt) {
     h.Write(net::kRelayProtocolVersion);
     h.Write(static_cast<std::uint32_t>(m_relayHostKey));          // 0 until the relay gives one
     h.Write(static_cast<std::uint32_t>(m_relayHostKey >> 32));
+    for (std::uint8_t b : m_relayCookie) h.Write(b);             // zero until the relay sends one
+    while (h.Size() < net::kRelayHelloMinBytes) h.Write(std::uint8_t(0));
     m_socket.SendTo(m_relayEp, h.Data(), h.Size());
 }
 
@@ -287,6 +291,7 @@ void NetworkManager::Stop() {
     m_relayWelcomed = false;
     m_relaySlot = 0;
     m_relayHostKey = 0;
+    std::memset(m_relayCookie, 0, sizeof m_relayCookie);
     m_relayCode.clear();
     m_relayEp = net::Endpoint{};
     m_socket.Close();
@@ -1004,6 +1009,19 @@ int NetworkManager::ReceiveFrom(void* buffer, std::size_t capacity, net::Endpoin
             }
             m_relaySlot = yourSlot;
             m_relayWelcomed = true;
+            continue;
+        }
+        if (tag == net::RelayCookie) {
+            // A version-3 relay wants proof we receive at our address: hello
+            // again now with its cookie.
+            net::Packet p(b, static_cast<std::size_t>(n));
+            p.ReadU8();
+            p.ReadU8();
+            std::uint8_t c[sizeof m_relayCookie];
+            for (auto& x : c) x = p.ReadU8();
+            if (!p.Ok()) continue;
+            std::memcpy(m_relayCookie, c, sizeof c);
+            m_relayHelloTimer = 0.0f;
             continue;
         }
         if (tag == net::RelayRefused) {

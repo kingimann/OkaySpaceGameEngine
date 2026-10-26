@@ -1,5 +1,7 @@
 #pragma once
+#include "okay/Net/RelayProtocol.hpp"
 #include "okay/Net/UdpSocket.hpp"
+#include <array>
 #include <cstdint>
 #include <random>
 #include <string>
@@ -29,7 +31,14 @@ namespace okay::net {
 ///  * when the host goes, the session's other peers are told (a welcome with
 ///    host slot 0), so a game's clients disconnect instead of waiting for
 ///    whoever hosts next;
-///  * each peer's forwarded packets and bytes per second are capped;
+///  * a new peer's version-3 hello gets only a cookie (an HMAC of its address
+///    and the minute under a per-process secret); a slot is allocated only
+///    for a hello that echoes it, so a spoofed source can't fill anyone's
+///    quota. Version-1 and -2 hellos (no cookie) are still accepted while
+///    legacy hellos are on (the default for now), and counted in the log;
+///  * hellos from unknown senders are rate limited per address;
+///  * each peer's forwarded packets and bytes per second are capped, and so is
+///    what each peer receives in total from its session;
 ///  * slots are random (not guessable), and peers, sessions and code lengths
 ///    are capped, per source address too, so one machine can't take every slot
 ///    and lock everyone else out. Drive
@@ -50,6 +59,21 @@ public:
     /// sends its state once a frame), far below a flood.
     static constexpr float kPacketsPerSecond = 1000.0f;
     static constexpr float kBytesPerSecond = 1024.0f * 1024.0f;
+    /// Bytes per second one peer (a host, above all) receives from its whole
+    /// session, with one second of it as a burst.
+    static constexpr float kInboundBytesPerSecond = 4.0f * 1024.0f * 1024.0f;
+    /// Hellos per second from one IP address that isn't a registered peer yet
+    /// (twice that as a burst). Loopback is exempt: it can't be spoofed from
+    /// outside, and a local test or LAN tool may start many peers at once.
+    static constexpr float kHellosPerSecond = 10.0f;
+    static constexpr std::size_t kMaxHelloTrackers = 65536;   ///< addresses rate-tracked at once
+
+    RelayServer();
+    /// Accept version-1 and -2 hellos, which carry no cookie (on by default:
+    /// older games and the launcher's voice calls speak them). Off, they're
+    /// refused with RelayRefusedVersion.
+    void SetLegacyHello(bool on) { m_legacyHello = on; }
+    bool LegacyHello() const { return m_legacyHello; }
 
     /// Bind the relay to a UDP port (0 picks an ephemeral one). Returns false if
     /// the platform socket can't be opened/bound.
@@ -83,6 +107,9 @@ public:
     std::uint64_t DroppedRoute() const { return m_droppedRoute; }   ///< not client<->host
     std::uint64_t DroppedRate() const { return m_droppedRate; }     ///< over a peer's caps
     std::uint64_t RefusedHellos() const { return m_refusedHellos; }
+    std::uint64_t CookiesSent() const { return m_cookiesSent; }
+    std::uint64_t LegacyHellos() const { return m_legacyHellos; }      ///< v1/v2 hellos from new senders
+    std::uint64_t DroppedHellos() const { return m_droppedHellos; }    ///< over an address's hello rate
 
 private:
     struct Peer {
@@ -94,7 +121,11 @@ private:
         float         packets = 0.0f;   // forwarding allowance (token buckets)
         float         bytes = 0.0f;
         double        refilled = 0.0;   // m_now when the buckets were last topped up
+        float         inBytes = 0.0f;   // what it may still receive from its session
+        double        inRefilled = 0.0;
     };
+    struct HelloBucket { float tokens = 0.0f; double refilled = 0.0; };
+    using Cookie = std::array<std::uint8_t, kRelayCookieBytes>;
     struct Session {
         std::uint32_t hostSlot = 0;     // 0 while no host is registered
         std::uint32_t peers = 0;        // registered peers with this code
@@ -110,6 +141,12 @@ private:
     void  HandleHello(const Endpoint& from, const std::uint8_t* data, std::size_t len);
     void  HandleData(const Endpoint& from, const std::uint8_t* data, std::size_t len);
     bool  WithinRate(Peer& peer, std::size_t len);
+    bool  WithinInbound(Peer& peer, std::size_t len);
+    bool  HelloAllowed(std::uint32_t address);
+    void  PruneHelloRate();
+    Cookie MakeCookie(const Endpoint& from, std::uint64_t minute) const;
+    bool  CookieValid(const Endpoint& from, const Cookie& c) const;
+    void  SendCookie(const Endpoint& to);
     void  ClaimHost(const Endpoint& from, Peer& peer, Session& s);
     std::uint32_t NewSlot();
     std::uint64_t NewHostKey();
@@ -122,8 +159,14 @@ private:
     std::unordered_map<std::uint32_t, Endpoint>      m_slotEp;  // slot -> real address
     std::unordered_map<std::string, Session>         m_sessions;// by code
     std::unordered_map<std::uint32_t, std::uint32_t> m_perAddress;   // IP -> registered peers
+    std::unordered_map<std::uint32_t, HelloBucket>   m_helloRate;    // IP -> hellos it may still send
+    std::string m_cookieSecret;   // random per process: cookies don't outlive a restart
+    bool m_legacyHello = true;
     double m_now = 0.0;   // seconds of Poll() time, for the rate caps
     std::uint64_t m_droppedRoute = 0, m_droppedRate = 0, m_refusedHellos = 0;
+    std::uint64_t m_cookiesSent = 0, m_legacyHellos = 0, m_droppedHellos = 0;
+    std::uint64_t m_legacyLogged = 0;   // m_legacyHellos at the last log line
+    double m_legacyLogAt = 60.0, m_helloPruneAt = 10.0;   // m_now of the next legacy count / rate prune
     float m_logBudget = 20.0f;   // join log lines allowed right now (refills 5/s), so a flood can't spam the log
     std::uint32_t m_quietJoins = 0;   // joins not logged since the last line
 };

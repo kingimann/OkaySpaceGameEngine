@@ -545,6 +545,11 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
     // The command line's .okayac wins over a scene's AntiCheatConfig (which
     // applied its own at Start).
     if (!opts.anticheatFile.empty()) net->anticheat.settings = opts.anticheat;
+    if (net->anticheat.settings.enabled && !net->anticheat.settings.ticketKey.empty() && net->anticheat.settings.ticketAudience.empty()) {
+        // Without one, a ticket for any other server would let its holder in.
+        std::fprintf(stderr, "[server] the anti-cheat rules set a ticketKey but no ticketAudience (this server's id in tickets); not starting\n");
+        return 2;
+    }
     if (!opts.hostKeySeed.empty()) net->SetHostIdentity(opts.hostKeySeed);
     if (opts.fixedTick) net->netTickRate = opts.tickRate;
     // --report-kicks: the account this machine is signed in to files them, and

@@ -3,14 +3,14 @@
 // other half; the two must agree byte for byte:
 //
 //   okt1.<payload>.<signature>        (base64url, no padding)
-//   payload   = "sub=<user id>&aud=<server id or *>&iat=<unix s>&exp=<unix s>"
+//   payload   = "sub=<user id>&aud=<server id or *>&iat=<unix s>&exp=<unix s>[&cnf=<key binding>]"
 //   signature = ed25519 over the ASCII text "okt1.<payload part>"
 //
 // Web Crypto only (no imports), so the same file runs in Supabase Edge (Deno)
 // and in Node for the tests.
 
 export const TICKET_PREFIX = "okt1.";
-export const MAX_LIFETIME_SECONDS = 24 * 3600; // the engine refuses longer
+export const MAX_LIFETIME_SECONDS = 3600; // the engine refuses longer
 
 export function base64UrlEncode(bytes: Uint8Array): string {
   let bin = "";
@@ -33,7 +33,11 @@ export interface TicketClaims {
   aud: string; // the game server id the ticket is for ("*" = any)
   iat: number; // unix seconds
   exp: number; // unix seconds
+  cnf?: string; // base64url SHA-256 of the client's session key: only that connection may use it
 }
+
+/** A key binding (cnf): base64url of 32 bytes. */
+export const KEY_BINDING = /^[A-Za-z0-9_-]{43}$/;
 
 /** The signing key from its 32-byte seed and 32-byte public key (base64url each). */
 export async function importSigningKey(seedB64: string, publicB64: string): Promise<CryptoKey> {
@@ -50,9 +54,11 @@ export async function importSigningKey(seedB64: string, publicB64: string): Prom
 
 export async function signTicket(claims: TicketClaims, key: CryptoKey): Promise<string> {
   if (!SAFE_CLAIM.test(claims.sub) || !SAFE_CLAIM.test(claims.aud)) throw new Error("ticket claims contain unsafe characters");
+  if (claims.cnf !== undefined && !KEY_BINDING.test(claims.cnf)) throw new Error("cnf must be a base64url SHA-256");
   if (!Number.isSafeInteger(claims.iat) || !Number.isSafeInteger(claims.exp)) throw new Error("ticket times must be integers");
   if (claims.exp <= claims.iat || claims.exp - claims.iat > MAX_LIFETIME_SECONDS) throw new Error("ticket lifetime is invalid");
-  const payload = `sub=${claims.sub}&aud=${claims.aud}&iat=${claims.iat}&exp=${claims.exp}`;
+  const payload = `sub=${claims.sub}&aud=${claims.aud}&iat=${claims.iat}&exp=${claims.exp}` +
+    (claims.cnf !== undefined ? `&cnf=${claims.cnf}` : "");
   const signedPart = TICKET_PREFIX + base64UrlEncode(new TextEncoder().encode(payload));
   const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, key, new TextEncoder().encode(signedPart)));
   return `${signedPart}.${base64UrlEncode(sig)}`;

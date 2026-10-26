@@ -44,7 +44,8 @@ ownerOnlySyncVars true              # "<netId>.<name>" keys are the owner's
 # P2
 requireEncryption true              # only encrypted clients; numbered packets
 ticketKey <base64url ed25519 public key>
-ticketAudience arena-1              # this server's id in tickets ("" = any)
+ticketAudience arena-1              # this server's id in tickets (required with a ticketKey)
+ticketAnyAudience false             # also accept tickets for any server (aud "*")
 # Network hardening
 maxClockDrift 0.05                  # a client's game clock may run 5% off; 0 = no check
 # Gameplay
@@ -111,15 +112,22 @@ A ticket is a short-lived pass that says *this account may join this server*.
 
 ```
 okt1.<payload>.<signature>                 (base64url, no padding)
-payload   = sub=<user id>&aud=<server id or *>&iat=<unix seconds>&exp=<unix seconds>
+payload   = sub=<user id>&aud=<server id or *>&iat=<unix seconds>&exp=<unix seconds>[&cnf=<key binding>]
 signature = ed25519 over the ASCII text "okt1.<payload part>"
 ```
 
 The server checks it with the service's **public** key (`ticketKey`):
 - the signature must match;
 - `iat` and `exp` must hold, with ±60 s of clock skew, and the lifetime can be
-  at most 24 h;
-- `aud` must be this server or `*`.
+  at most 1 h;
+- `aud` must be this server (`ticketAudience`). A server with a `ticketKey`
+  but no `ticketAudience` refuses every join and logs why; a dedicated server
+  won't start. A `*` ticket is accepted only with `ticketAnyAudience true`;
+- when the ticket has `cnf`, it must be the key binding of the connection
+  using it (see below), so a ticket can't be replayed from another client.
+
+An account is connected once: a second join with the same account replaces
+the first, which is kicked with the reason "signed in elsewhere".
 
 When the check passes, the player is bound to `sub`: `PeerUserId()` on the
 server, and `LocalUserId()` on the client. The client passes the ticket as its
@@ -134,8 +142,8 @@ The format is implemented in `engine/include/okay/Net/SessionTicket.hpp`.
 The source is in `supabase/functions/session-ticket/`:
 
 - **`index.ts`** is the Edge function. It takes
-  `POST {"aud": "<game server id>"}` with `Authorization: Bearer <player's
-  Supabase access token>`.
+  `POST {"aud": "<game server id>", "cnf": "<key binding, optional>"}` with
+  `Authorization: Bearer <player's Supabase access token>`.
   1. It checks the login with Supabase Auth (`/auth/v1/user`).
   2. It checks anti-cheat bans: `public.ac_is_banned(account, hw_hash)` from
      `docs/sql/anticheat.sql`, called with the function's own service key. A
@@ -145,8 +153,8 @@ The source is in `supabase/functions/session-ticket/`:
      account ban. Without `anticheat.sql` nobody is banned; if the lookup fails
      for any other reason the function answers `503` and issues nothing.
   3. It returns `{"ticket": "okt1…", "exp": …}`, signed for that account and
-     server. The ticket lives `OKAY_TICKET_TTL` seconds: 600 by default, at most
-     86400.
+     server, and to the connection when `cnf` was sent. The ticket lives
+     `OKAY_TICKET_TTL` seconds: 600 by default, at most 3600.
 - **`ticket.ts`** does the signing, using Web Crypto only. It must match the
   engine's `SessionTicket::Verify`. `tests/test_net_anticheat_p2.cpp` verifies
   tickets this code signed, so a change on either side that breaks the other
@@ -170,8 +178,11 @@ Nothing is deployed. To go live:
    `ticketKey <public>` and `ticketAudience <that server's id>`. The id is the
    same `aud` that clients ask for.
 5. **Fetch a ticket before joining** (still to do in the launcher or game):
-   POST to the function with the player's access token and the server id, then
-   `SetAuthToken(ticket)` on the client's NetworkManager.
+   POST to the function with the player's access token, the server id and
+   `cnf` = `NetworkManager::TicketBinding()` (base64url SHA-256 of the session
+   key the next `StartClient` / `JoinViaRelay` will use; it makes that key
+   now), then `SetAuthToken(ticket)` and start the client. A bound ticket is
+   for that one connection: a reconnect fetches a new one.
    `okayac::backend::SessionTicket` builds the request and `ParseTicket` reads
    the answer; on `banned`, refresh `ac_my_bans` so the launcher's ban banner
    shows why.

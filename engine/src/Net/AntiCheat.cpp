@@ -109,6 +109,7 @@ bool AntiCheatSettings::Parse(const std::string& text, AntiCheatSettings& out, s
             s.ticketKey = val;
         }
         else if (key == "ticketAudience") { s.ticketAudience = val; }
+        else if (key == "ticketAnyAudience") { if (!ParseBool(val, s.ticketAnyAudience)) return fail("ticketAnyAudience needs true or false"); }
         else if (key == "hitOriginTolerance") { if (!ParseFloat(val, s.hitOriginTolerance)) return fail("hitOriginTolerance needs a number >= 0"); }
         else if (key == "hitTolerance") { if (!ParseFloat(val, s.hitTolerance)) return fail("hitTolerance needs a number >= 0"); }
         else if (key == "maxHitRange") { if (!ParseFloat(val, s.maxHitRange)) return fail("maxHitRange needs a number >= 0"); }
@@ -160,6 +161,7 @@ std::string AntiCheatSettings::ToText() const {
     if (requireEncryption) o << "requireEncryption true\n";
     if (!ticketKey.empty()) o << "ticketKey " << ticketKey << "\n";
     if (!ticketAudience.empty()) o << "ticketAudience " << ticketAudience << "\n";
+    if (ticketAnyAudience) o << "ticketAnyAudience true\n";
     o << "maxRpcsPerSecond " << maxRpcsPerSecond << "\n";
     o << "maxRpcBytes " << maxRpcBytes << "\n";
     if (maxClockDrift > 0.0f) o << "maxClockDrift " << maxClockDrift << "\n";

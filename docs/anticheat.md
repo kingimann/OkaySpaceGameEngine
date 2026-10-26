@@ -119,7 +119,14 @@ The source is in `supabase/functions/session-ticket/`:
   `POST {"aud": "<game server id>"}` with `Authorization: Bearer <player's
   Supabase access token>`.
   1. It checks the login with Supabase Auth (`/auth/v1/user`).
-  2. It returns `{"ticket": "okt1…", "exp": …}`, signed for that account and
+  2. It checks anti-cheat bans: `public.ac_is_banned(account, hw_hash)` from
+     `docs/sql/anticheat.sql`, called with the function's own service key. A
+     banned account gets `403 {"error": "banned"}` and no ticket. The body may
+     also carry `"hw_hash"` (the machine hash from `shared/AntiCheatHardware.hpp`);
+     it comes from the player, so it can only find a machine ban, never hide an
+     account ban. Without `anticheat.sql` nobody is banned; if the lookup fails
+     for any other reason the function answers `503` and issues nothing.
+  3. It returns `{"ticket": "okt1…", "exp": …}`, signed for that account and
      server. The ticket lives `OKAY_TICKET_TTL` seconds: 600 by default, at most
      86400.
 - **`ticket.ts`** does the signing, using Web Crypto only. It must match the
@@ -139,13 +146,17 @@ Nothing is deployed. To go live:
    `supabase secrets set OKAY_TICKET_SEED=<seed> OKAY_TICKET_PUBLIC_KEY=<public>`.
    The seed never goes in a game build, a `.okayac` file, chat or git.
 3. **Deploy the function:** `supabase functions deploy session-ticket`.
-   `SUPABASE_URL` and `SUPABASE_ANON_KEY` come from the Edge runtime.
+   `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` come
+   from the Edge runtime. The service key stays inside the function.
 4. **Point each game server at the public key** in its rules:
    `ticketKey <public>` and `ticketAudience <that server's id>`. The id is the
    same `aud` that clients ask for.
 5. **Fetch a ticket before joining** (still to do in the launcher or game):
    POST to the function with the player's access token and the server id, then
    `SetAuthToken(ticket)` on the client's NetworkManager.
+   `okayac::backend::SessionTicket` builds the request and `ParseTicket` reads
+   the answer; on `banned`, refresh `ac_my_bans` so the launcher's ban banner
+   shows why.
 
 To rotate the key, run step 1 again, update the secrets and every server's
 `ticketKey` together, and redeploy. Tickets signed with the old key stop working
@@ -495,13 +506,17 @@ an appeal decision, and deleting a report, ban or appeal (`ac_report_delete`,
 `ac_ban_delete`, `ac_appeal_delete`). `ac_purge_old()` logs one summary line
 (`ac_purge`) instead of a line per row.
 
-Anti-cheat bans are separate from site bans (`site_bans`): this file doesn't
-block anything else on its own. For a game server that wants to keep banned
-players out, `public.ac_is_banned(user_id, hw_hash)` answers whether an
-account or machine is banned right now. Only game servers (the `service_role`
-key) and admins may call it; any other signed-in player is refused, and
-players see their own bans with `ac_my_bans`. Calling it on join is the
-network layer's job.
+Anti-cheat bans are separate from site bans (`site_bans`). They're enforced
+when a ticket is issued: the ticket service asks
+`public.ac_is_banned(user_id, hw_hash)` and signs nothing for a banned account
+or machine, so a server that requires tickets (`ticketKey`) keeps banned
+players out without ever talking to Supabase. **Never give a game server the
+`service_role` key**: it can read and change the whole database, and anyone
+running the server could take it. A server needs only the ticket service's
+public key. Besides the ticket service, only admins may call `ac_is_banned`;
+any other signed-in player is refused, and players see their own bans with
+`ac_my_bans`. A ban takes effect at the player's next ticket, so within
+`OKAY_TICKET_TTL` (10 minutes by default).
 
 Deleting an account deletes its account-only bans. A ban that also names a
 machine is kept, with `user_id` set to null, so deleting the account and

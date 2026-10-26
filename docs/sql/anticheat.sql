@@ -20,9 +20,14 @@
 -- always names one machine (never "every PC with this CPU").
 --
 -- Bans are separate from site_bans (admin.sql): an anti-cheat ban says "this
--- account / machine cheated". Game servers (the service_role key) and admins
--- can ask public.ac_is_banned(user, hw_hash) when a player joins; players see
--- only their own bans, through ac_my_bans. Nothing else is blocked by this file.
+-- account / machine cheated". They're enforced when a player asks for a session
+-- ticket: the session-ticket Edge function (supabase/functions/session-ticket)
+-- calls public.ac_is_banned(user, hw_hash) with its own service key and signs
+-- no ticket for a banned account or machine, so servers that require tickets
+-- keep banned players out. Game servers must NOT be given the service_role key:
+-- it can read and change the whole database. They need only the ticket service's
+-- public key. Admins can call ac_is_banned too; players see only their own bans,
+-- through ac_my_bans. Nothing else is blocked by this file.
 --
 -- Deleting an account deletes its account-only bans, but a ban that also names
 -- a machine stays (user_id becomes null): a cheater can't clear a machine ban
@@ -235,12 +240,13 @@ drop trigger if exists ac_bans_log_delete on public.ac_bans;
 create trigger ac_bans_log_delete after delete on public.ac_bans
   for each row execute function public.ac_log_delete();
 
--- For game servers and admins: is this account or machine banned now? (Players
--- see their own bans with ac_my_bans, not anyone's.) Admins share the
+-- For the ticket service and admins: is this account or machine banned now?
+-- (Players see their own bans with ac_my_bans, not anyone's.) Admins share the
 -- `authenticated` role with every player, so the grant can't tell them apart:
 -- the function refuses any signed-in caller who isn't an admin. A caller with
--- no auth.uid() is the service_role key (game servers) or the SQL editor; anon
--- has no execute right at all. An empty / malformed hash never matches.
+-- no auth.uid() is the service_role key (the session-ticket Edge function, never
+-- a game server) or the SQL editor; anon has no execute right at all. An empty /
+-- malformed hash never matches.
 create or replace function public.ac_is_banned(p_user uuid, p_hw_hash text default null) returns boolean
 language plpgsql stable security definer set search_path = public as $$
 begin

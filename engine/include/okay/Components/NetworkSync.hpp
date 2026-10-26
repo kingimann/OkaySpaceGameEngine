@@ -21,8 +21,19 @@
 #include "okay/Components/Character.hpp"
 #include <string>
 #include <sstream>
+#include <algorithm>
+#include <cmath>
 
 namespace okay {
+
+/// Direction of travel (world x/z velocity) relative to the way `facing` points,
+/// in degrees, + = toward its right: what Character::moveAngle wants.
+inline float MoveAngleFor(const Transform& facing, float vx, float vz) {
+    const Vec3 f = facing.Forward(), r = facing.Right();
+    const float fwd = vx * f.x + vz * f.z, side = vx * r.x + vz * r.z;
+    if (fwd == 0.0f && side == 0.0f) return 0.0f;
+    return std::atan2(side, fwd) * 57.2957795f;
+}
 
 class NetworkSync : public Behaviour {
 public:
@@ -43,7 +54,7 @@ public:
 
     void Start() override { Register(); }
 
-    void Update(float) override {
+    void Update(float dt) override {
         if (!m_nm) { Register(); return; }           // manager may appear after us
         if (!m_id.empty()) m_nm->SetSyncOwned(m_id, OwnedNow());
         // Detect the rising edge of our own punch so remotes can replay it once.
@@ -52,6 +63,7 @@ public:
             if (p && !m_wasPunching) ++m_punchSeq;
             m_wasPunching = p;
         }
+        if (m_char && syncAnimation && !OwnedNow()) DriveProxyGait(dt);
     }
 
     void OnDestroy() override {
@@ -66,6 +78,34 @@ private:
     int             m_punchSeq = 0;       // owner: bumped on each new punch
     int             m_lastPunchSeq = -1;  // remote: last punch replayed
     bool            m_wasPunching = false;
+    // Proxy gait: what the owner reported, and the smoothed speed this copy
+    // actually moves at (the interpolated position, so the feet match it).
+    float           m_ownerSpeed = -1.0f, m_ownerAngle = 0.0f;
+    bool            m_haveOwnerGait = false;
+    Vec3            m_lastPos;
+    bool            m_haveLast = false;
+    float           m_vx = 0.0f, m_vz = 0.0f;
+
+    // A remote copy's Character gets the speed it is really moving at here (the
+    // eased position), so its stride matches the ground it covers instead of
+    // playing at a nominal cadence; the direction comes from the owner when it
+    // reports one (strafe / backpedal), else from the travel direction.
+    void DriveProxyGait(float dt) {
+        if (!transform || dt <= 0.0f) return;
+        const Vec3 p = transform->Position();
+        if (!m_haveLast) { m_lastPos = p; m_haveLast = true; return; }
+        const float vx = (p.x - m_lastPos.x) / dt, vz = (p.z - m_lastPos.z) / dt;
+        m_lastPos = p;
+        const float k = std::min(1.0f, dt * 12.0f);   // ~80 ms smoothing: the eased steps jitter
+        m_vx += (vx - m_vx) * k; m_vz += (vz - m_vz) * k;
+        float speed = std::sqrt(m_vx * m_vx + m_vz * m_vz);
+        if (speed < 0.02f) speed = 0.0f;
+        // A teleport / respawn snap isn't walking.
+        if (m_haveOwnerGait && m_ownerSpeed >= 0.0f && speed > m_ownerSpeed * 3.0f + 2.0f) speed = m_ownerSpeed;
+        m_char->moveSpeed = speed;
+        const Transform& facing = m_char->transform ? *m_char->transform : *transform;
+        m_char->moveAngle = m_haveOwnerGait ? m_ownerAngle : (speed > 0.0f ? MoveAngleFor(facing, m_vx, m_vz) : 0.0f);
+    }
 
     bool OwnedNow() const {
         switch (authority) {
@@ -84,14 +124,25 @@ private:
         m_char = FindCharacter();
         if (m_char && syncAnimation) {
             Character* c = m_char; NetworkSync* self = this;
+            // "<anim> <punchSeq> [<moveSpeed> <moveAngle>]". The gait fields came
+            // later: older peers stop reading after the punch counter, and a
+            // message without them still reads here.
             m_nm->SetSyncExtra(m_id,
-                [c, self]() { return std::to_string(c->anim) + " " + std::to_string(self->m_punchSeq); },
+                [c, self]() {
+                    std::ostringstream o;
+                    o << c->anim << ' ' << self->m_punchSeq << ' ' << c->moveSpeed << ' ' << c->moveAngle;
+                    return o.str();
+                },
                 [c, self](const std::string& s) {
                     std::stringstream ss(s); int a = c->anim, seq = self->m_lastPunchSeq;
                     ss >> a >> seq;
                     c->anim = a;
                     if (self->m_lastPunchSeq >= 0 && seq != self->m_lastPunchSeq) c->Punch();
                     self->m_lastPunchSeq = seq;   // first sample just syncs the counter
+                    float sp = -1.0f, ang = 0.0f;
+                    if (ss >> sp >> ang && std::isfinite(sp) && std::isfinite(ang)) {
+                        self->m_ownerSpeed = sp; self->m_ownerAngle = ang; self->m_haveOwnerGait = true;
+                    }
                 });
         }
     }

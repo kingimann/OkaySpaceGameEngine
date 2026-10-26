@@ -3,7 +3,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/Inventory.hpp"
-#include "okay/Input/Input.hpp"
+#include "okay/Components/InventoryPlayer.hpp"
 #include "okay/Render/Color.hpp"
 #include <string>
 #include <vector>
@@ -11,16 +11,15 @@
 namespace okay {
 
 /// A simple crafting bench: a list of recipes (inputs -> output) that consume items
-/// from a sibling/owner Inventory and produce a new one. It draws its own panel (player
-/// + editor Play view) and crafts on click; open it with a key. Pair it with an
-/// Inventory and you have Minecraft/survival-style crafting with no scripting.
-class CraftingStation : public Behaviour {
+/// from a sibling Inventory, else the player's, and produce a new one. It draws its own
+/// panel (player + editor Play view) and crafts on click; walk up and press the key —
+/// only the nearest bench in `range` opens. Minecraft/survival-style crafting, no script.
+class CraftingStation : public InventoryInteractable {
 public:
     struct Ingredient { std::string item; int count = 1; };
     struct Recipe { std::vector<Ingredient> inputs; std::string output; int outputCount = 1; };
 
     std::vector<Recipe> recipes;
-    bool  open       = false;
     char  toggleKey  = 'c';
     std::string title = "Crafting";
     bool  closeWhenCrafted = false;   ///< auto-close after a successful craft
@@ -40,10 +39,15 @@ public:
     Color textColor    = Color::FromBytes(240, 240, 245, 255);
     Color hoverColor   = Color::FromBytes(255, 255, 255, 32);
 
-    /// The Inventory this station pulls from: same object, else the player root.
+    char InteractKey() const override { return toggleKey; }
+
+    /// The Inventory this station pulls from: same object, else the player's
+    /// (FindInventoryPlayer), else this object's root.
     Inventory* Inv() const {
         if (gameObject)
             if (auto* in = gameObject->GetComponent<Inventory>()) return in;
+        if (GameObject* p = FindInventoryPlayer(gameObject ? gameObject->scene() : nullptr, playerName))
+            if (auto* in = p->GetComponent<Inventory>()) return in;
         GameObject* o = Owner();
         return o ? o->GetComponent<Inventory>() : nullptr;
     }
@@ -72,10 +76,6 @@ public:
         bool ok = inv->Exchange(Inventory::SumStacks(r.inputs), {{r.output, r.outputCount < 1 ? 1 : r.outputCount}});
         if (ok && closeWhenCrafted) open = false;
         return ok;
-    }
-
-    void Update(float) override {
-        if (toggleKey && Input::GetKeyDown(toggleKey)) open = !open;
     }
 
 private:

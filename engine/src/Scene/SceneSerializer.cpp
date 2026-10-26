@@ -1232,6 +1232,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << " " << ui->panelBorderWidth << " " << (ui->showTitle ? 1 : 0);
         wc(ui->titleColor);
         out << " " << Quote(ui->backpackTitle);
+        out << " " << Quote(ui->inventoryTarget);   // appended (quote-peek guarded)
         out << "\n";
     }
     if (auto* gi = go->GetComponent<GridInventory>()) {
@@ -1276,7 +1277,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* cs = go->GetComponent<CraftingStation>()) {
         auto wc = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
-        out << "  craftingstation " << (cs->open ? 1 : 0) << " " << (int)(unsigned char)cs->toggleKey
+        out << "  craftingstation 0 " << (int)(unsigned char)cs->toggleKey   // 0: `open` is runtime state, not saved
             << " " << Quote(cs->title) << " " << (cs->closeWhenCrafted ? 1 : 0)
             << " " << cs->rowHeight << " " << cs->width << " " << cs->marginX << " " << cs->marginY
             << " " << cs->cornerRadius << " " << Quote(cs->iconFolder);
@@ -1288,16 +1289,18 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             for (const auto& in : r.inputs) out << " " << Quote(in.item) << " " << in.count;
             out << " " << Quote(r.output) << " " << r.outputCount;
         }
+        out << " " << cs->range << " " << Quote(cs->playerName);   // appended (numeric-peek guarded)
         out << "\n";
     }
     if (auto* ch = go->GetComponent<ChestInventory>()) {
         auto wc = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
-        out << "  chestinventory " << (ch->open ? 1 : 0) << " " << (int)(unsigned char)ch->openKey
+        out << "  chestinventory 0 " << (int)(unsigned char)ch->openKey   // 0: `open` is runtime state, not saved
             << " " << ch->range << " " << Quote(ch->title) << " " << ch->cols
             << " " << ch->slotSize << " " << ch->gap << " " << ch->cornerRadius
             << " " << Quote(ch->iconFolder) << " " << (ch->darkenWhenOpen ? 1 : 0);
         wc(ch->panelColor); wc(ch->titleBar); wc(ch->slotColor); wc(ch->slotBorder);
         wc(ch->textColor); wc(ch->hoverColor);
+        out << " " << Quote(ch->playerName);   // appended (quote-peek guarded)
         out << "\n";
     }
     if (auto* v2 = go->GetComponent<VehicleController2D>()) {
@@ -2321,7 +2324,7 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
     const auto& objs = scene.Objects();
     for (std::size_t i = 0; i < objs.size(); ++i) {
         GameObject* go = objs[i].get();
-        if (IsGeneratedRig(go) || IsGeneratedViewmodel(go) || IsBuildModeRuntime(go)) continue;   // a Character's part rig (and the FP viewmodel arm) is regenerated on load
+        if (go->transient || IsGeneratedRig(go) || IsGeneratedViewmodel(go) || IsBuildModeRuntime(go)) continue;   // a Character's part rig (and the FP viewmodel arm) is regenerated on load
         Transform* t = go->transform;
         out << "gameobject " << i << " " << Quote(go->name) << "\n";
         out << "  active " << (go->active ? 1 : 0) << "\n";
@@ -3723,6 +3726,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                                 in >> ui->panelBorderWidth >> st; ui->showTitle = (st != 0);
                                                 rc(ui->titleColor);
                                                 ui->backpackTitle = ReadQuoted(in);
+                                                in >> std::ws;   // optional inventory target (quoted)
+                                                if (in.peek() == '"') ui->inventoryTarget = ReadQuoted(in);
                                             }
                                         }
                                     }
@@ -3823,7 +3828,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int op = 0, tk = 'c', cw = 0;
                     in >> op >> tk; cs->title = ReadQuoted(in); in >> cw
                        >> cs->rowHeight >> cs->width >> cs->marginX >> cs->marginY >> cs->cornerRadius;
-                    cs->open = (op != 0); cs->toggleKey = (char)tk; cs->closeWhenCrafted = (cw != 0);
+                    cs->toggleKey = (char)tk; cs->closeWhenCrafted = (cw != 0);   // `op` (old saved open state) is ignored
                     cs->iconFolder = ReadQuoted(in);
                     rc(cs->panelColor); rc(cs->titleBar); rc(cs->rowColor); rc(cs->canColor);
                     rc(cs->cantColor); rc(cs->textColor); rc(cs->hoverColor);
@@ -3837,6 +3842,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         r.output = ReadQuoted(in); in >> r.outputCount;
                         cs->recipes.push_back(r);
                     }
+                    cs->range = 0.0f;   // older scenes: no range (opened from anywhere)
+                    in >> std::ws;   // optional range + player name
+                    int spk = in.peek();
+                    if (std::isdigit(spk) || spk == '-' || spk == '.') {
+                        in >> cs->range;
+                        in >> std::ws;
+                        if (in.peek() == '"') cs->playerName = ReadQuoted(in);
+                    }
                 } else if (field == "chestinventory") {
                     auto* ch = go->AddComponent<ChestInventory>();
                     auto rc = [&](Color& c) { in >> c.r >> c.g >> c.b >> c.a; };
@@ -3844,9 +3857,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> op >> ok >> ch->range; ch->title = ReadQuoted(in);
                     in >> ch->cols >> ch->slotSize >> ch->gap >> ch->cornerRadius;
                     ch->iconFolder = ReadQuoted(in); in >> dk;
-                    ch->open = (op != 0); ch->openKey = (char)ok; ch->darkenWhenOpen = (dk != 0);
+                    ch->openKey = (char)ok; ch->darkenWhenOpen = (dk != 0);   // `op` (old saved open state) is ignored
                     rc(ch->panelColor); rc(ch->titleBar); rc(ch->slotColor); rc(ch->slotBorder);
                     rc(ch->textColor); rc(ch->hoverColor);
+                    in >> std::ws;   // optional player name
+                    if (in.peek() == '"') ch->playerName = ReadQuoted(in);
                 } else if (field == "vehicle2d") {
                     auto* v2 = go->AddComponent<VehicleController2D>();
                     in >> v2->acceleration >> v2->maxSpeed >> v2->reverseSpeed >> v2->brakeForce
@@ -5707,7 +5722,7 @@ std::string SceneSerializer::SerializeObject(const GameObject& root) {
     out << "okayscene 1\n";
     for (std::size_t i = 0; i < subtree.size(); ++i) {
         GameObject* go = subtree[i];
-        if (IsGeneratedRig(go) || IsGeneratedViewmodel(go) || IsBuildModeRuntime(go)) continue;   // a Character's part rig (and the FP viewmodel arm) is regenerated on load
+        if (go->transient || IsGeneratedRig(go) || IsGeneratedViewmodel(go) || IsBuildModeRuntime(go)) continue;   // a Character's part rig (and the FP viewmodel arm) is regenerated on load
         out << "gameobject " << i << " " << Quote(go->name) << "\n";
         out << "  active " << (go->active ? 1 : 0) << "\n";
         if (!go->tag.empty()) out << "  tag " << Quote(go->tag) << "\n";

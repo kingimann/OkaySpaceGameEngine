@@ -37,6 +37,10 @@
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/UITooltip.hpp"
 #include "okay/Components/UIDraggable.hpp"
+#include "okay/Components/CraftingStation.hpp"
+#include "okay/Components/ChestInventory.hpp"
+#include "okay/Components/InventoryUI.hpp"
+#include "okay/Components/Inventory.hpp"
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/EventSystem.hpp"
 #include "okay/Components/Tilemap.hpp"
@@ -988,10 +992,11 @@ inline void MainMenu(Scene& scene) {
     quit->transform->SetParent(canvas->transform, false);
 }
 
-/// A ready-made drag-and-drop inventory: a row of slots (UIDropTarget) and a
-/// few draggable items. Each item has a UIDraggable with snapToSlot, so you can
-/// drag items between slots and they snap into place — no scripting required.
-/// A starting point for inventories, hotbars, card hands, crafting grids.
+/// A ready-made survival inventory on the real components: a 2D top-down Player
+/// (tagged "Player") carrying an Inventory, the Minecraft-style hotbar + backpack
+/// (E to open, 1-9 / wheel to pick), a loot chest (walk up, F) and a crafting bench
+/// (walk up, C) that crafts from the player's bag. A starting point for survival,
+/// RPG and crafting games — no scripting required.
 inline void Inventory(Scene& scene) {
     scene.Clear();
     scene.SetName("Inventory");
@@ -1002,54 +1007,45 @@ inline void Inventory(Scene& scene) {
     cam->main = true;
     cam->backgroundColor = Color::FromBytes(18, 20, 28);
 
+    GameObject* player = AddTopDown2DPlayer(scene, {0, 0, 0});
+    player->tag = "Player";
+    auto* bag = player->AddComponent<okay::Inventory>();
+    bag->capacity = 36;   // = the UI's 9 hotbar + 27 backpack slots
+    bag->Add("Wood", 8); bag->Add("Stone", 4); bag->Add("Torch", 2);
+
     GameObject* canvas = scene.CreateGameObject("Canvas");
     auto* cv = canvas->AddComponent<Canvas>();
     cv->screenMatch = Canvas::ScreenMatch::Expand;
     cv->scaleMode = Canvas::ScaleMode::ScaleWithScreenSize;
     scene.CreateGameObject("EventSystem")->AddComponent<EventSystem>();
+    GameObject* hud = scene.CreateGameObject("InventoryUI");
+    hud->AddComponent<InventoryUI>()->inventoryTarget = "Player";
+    hud->transform->SetParent(canvas->transform, false);
 
-    GameObject* panel = scene.CreateGameObject("Bag");
-    auto* pn = panel->AddComponent<UIPanel>();
-    pn->position = {40, 60}; pn->size = {500, 140};
-    pn->color = Color::FromBytes(30, 36, 52, 230); pn->cornerRadius = 12.0f;
-    panel->transform->SetParent(canvas->transform, false);
+    GameObject* chest = scene.CreateGameObject("Chest");
+    chest->transform->localPosition = {3.0f, 0.0f, 0.0f};
+    auto* csr = chest->AddComponent<SpriteRenderer>();
+    csr->color = Color::FromBytes(150, 100, 60);
+    auto* loot = chest->AddComponent<okay::Inventory>();
+    loot->capacity = 18;
+    loot->Add("Apple", 5); loot->Add("Iron", 6); loot->Add("Sword", 1);
+    chest->AddComponent<ChestInventory>()->title = "Chest";
 
-    GameObject* title = scene.CreateGameObject("Title");
-    auto* tr = title->AddComponent<TextRenderer>();
-    tr->text = "INVENTORY"; tr->screenSpace = true; tr->screenPos = {60, 30};
-    tr->pixelSize = 3.0f; tr->bold = true;
-    title->transform->SetParent(canvas->transform, false);
-
-    const int N = 5;
-    const Color itemColors[N] = {
-        Color::FromBytes(220, 90, 90), Color::FromBytes(90, 200, 110),
-        Color::FromBytes(90, 150, 230), Color::FromBytes(230, 200, 80),
-        Color::FromBytes(180, 120, 220)};
-    for (int i = 0; i < N; ++i) {
-        float x = 70.0f + i * 90.0f;
-        GameObject* slot = scene.CreateGameObject("Slot" + std::to_string(i));
-        auto* sp = slot->AddComponent<UIPanel>();
-        sp->position = {x, 90}; sp->size = {72, 72};
-        sp->color = Color::FromBytes(20, 24, 34, 255);
-        sp->cornerRadius = 8.0f; sp->borderWidth = 1.0f;
-        slot->AddComponent<UIDropTarget>();
-        slot->transform->SetParent(canvas->transform, false);
-    }
-    for (int i = 0; i < 3; ++i) {     // three draggable items in the first slots
-        float x = 70.0f + i * 90.0f;
-        GameObject* item = scene.CreateGameObject("Item" + std::to_string(i));
-        auto* ip = item->AddComponent<UIPanel>();
-        ip->position = {x + 6, 96}; ip->size = {60, 60};
-        ip->color = itemColors[i]; ip->cornerRadius = 8.0f;
-        auto* dg = item->AddComponent<UIDraggable>();
-        dg->snapToSlot = true; dg->returnToStart = true;
-        item->transform->SetParent(canvas->transform, false);
-    }
+    GameObject* bench = scene.CreateGameObject("Workbench");
+    bench->transform->localPosition = {-3.0f, 0.0f, 0.0f};
+    auto* bsr = bench->AddComponent<SpriteRenderer>();
+    bsr->color = Color::FromBytes(120, 150, 90);
+    auto* cs = bench->AddComponent<CraftingStation>();
+    cs->title = "Workbench";
+    cs->recipes.push_back({{{"Wood", 2}}, "Plank", 4});
+    cs->recipes.push_back({{{"Wood", 1}, {"Stone", 1}}, "Torch", 2});
+    cs->recipes.push_back({{{"Plank", 4}, {"Iron", 2}}, "Pickaxe", 1});
 
     GameObject* help = scene.CreateGameObject("Help");
     auto* ht = help->AddComponent<TextRenderer>();
-    ht->text = "Drag the colored items between the slots"; ht->screenSpace = true;
-    ht->screenPos = {60, 220}; ht->pixelSize = 1.5f;
+    ht->text = "WASD to move. E: bag. Walk to the chest and press F, to the bench and press C.";
+    ht->screenSpace = true;
+    ht->screenPos = {20, 20}; ht->pixelSize = 1.5f;
     help->transform->SetParent(canvas->transform, false);
 }
 

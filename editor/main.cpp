@@ -5812,17 +5812,26 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("World Label (3D)")) { ed.Select(ed.CreateEmpty("WorldLabel")); ed.selected()->AddComponent<WorldUI>(); ed.dirty = true; created = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("In-world UI: a label/marker that floats over a 3D point (nameplates, health bars). Shows in the Game view + built game.");
             if (ImGui::MenuItem("Inventory (Minecraft-style)")) {
+                // The items live on the player (selected or tagged "Player") so its Crafting,
+                // Consumables and StructureBuilder find them; only the UI goes under the Canvas.
+                GameObject* player = (ed.selected() && ed.selected()->tag == "Player") ? ed.selected()
+                                                                                         : ed.scene().FindWithTag("Player");
                 GameObject* root = EnsureUIRoot(ed);   // inventories are UI → live under the Canvas
                 GameObject* g = ed.CreateEmpty("Inventory");
-                auto* inv = g->AddComponent<Inventory>();
-                inv->capacity = 36;   // 9 hotbar + 27 backpack, like Minecraft
-                inv->Add("Dirt", 64); inv->Add("Stone", 64); inv->Add("Wood", 32);
-                inv->Add("Torch", 16); inv->Add("Sword", 1);
-                g->AddComponent<InventoryUI>();
+                GameObject* holder = player ? player : g;
+                auto* inv = holder->GetComponent<Inventory>();
+                if (!inv) {
+                    inv = holder->AddComponent<Inventory>();
+                    inv->capacity = 36;   // 9 hotbar + 27 backpack, like Minecraft (= the UI's slots)
+                    inv->Add("Dirt", 64); inv->Add("Stone", 64); inv->Add("Wood", 32);
+                    inv->Add("Torch", 16); inv->Add("Sword", 1);
+                }
+                auto* iu = g->AddComponent<InventoryUI>();
+                if (player) iu->inventoryTarget = player->name;
                 if (root) g->transform->SetParent(root->transform, false);
                 ed.Select(g); ed.dirty = true; created = true;
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ready hotbar + backpack (1-9 / wheel to select, E to open), with sample items. Drives off an Inventory you can fill from gameplay.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ready hotbar + backpack (1-9 / wheel to select, E to open), with sample items. The Inventory goes on the selected or \"Player\"-tagged object, so crafting and consumables there use it.");
             if (ImGui::MenuItem("Grid Inventory (DayZ/Unturned-style)")) {
                 GameObject* root = EnsureUIRoot(ed);   // UI → under the Canvas
                 GameObject* g = ed.CreateEmpty("GridInventory");
@@ -29934,6 +29943,10 @@ void DrawInspector(EditorState& ed) {
             if (!ui->Inv()) ImGui::TextColored(ImVec4(1,0.7f,0.3f,1), "Add an Inventory component to show items.");
             if (ImGui::SliderInt("Hotbar Slots##iu", &ui->hotbarSlots, 1, 9)) ed.dirty = true;
             if (ImGui::SliderInt("Backpack Rows##iu", &ui->backpackRows, 0, 6)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Used when the Inventory has no capacity; otherwise the UI shows exactly its capacity.");
+            char itb[64]; std::snprintf(itb, sizeof(itb), "%s", ui->inventoryTarget.c_str());
+            if (ImGui::InputText("Inventory Object##iu", itb, sizeof(itb))) { ui->inventoryTarget = itb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of the object holding the Inventory (e.g. Player). Blank = this object or its root.");
             if (ImGui::DragFloat("Slot Size##iu", &ui->slotSize, 0.5f, 16.0f, 128.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Slot Gap##iu", &ui->slotGap, 0.25f, 0.0f, 32.0f)) ed.dirty = true;
             char tk[2] = {ui->toggleKey, 0};
@@ -30212,6 +30225,11 @@ void DrawInspector(EditorState& ed) {
             char ok[2] = {cs->toggleKey, 0};
             if (ImGui::InputText("Open Key##cs", ok, sizeof(ok))) { if (ok[0]) cs->toggleKey = ok[0]; ed.dirty = true; }
             if (ImGui::Checkbox("Close after craft##cs", &cs->closeWhenCrafted)) ed.dirty = true;
+            if (ImGui::DragFloat("Open Range##cs", &cs->range, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How close the player must be. Only the nearest bench in range opens. 0 = any distance.");
+            char pnc[64]; std::snprintf(pnc, sizeof(pnc), "%s", cs->playerName.c_str());
+            if (ImGui::InputText("Player Object##cs", pnc, sizeof(pnc))) { cs->playerName = pnc; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Who the player is. Blank = the \"Player\"-tagged object, else the main camera's target.");
             if (ImGui::DragFloat("Width##cs", &cs->width, 0.5f, 80.0f, 800.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Row Height##cs", &cs->rowHeight, 0.25f, 14.0f, 60.0f)) ed.dirty = true;
             auto cc = [&](const char* lbl, Color& c, const char* id) {
@@ -30265,7 +30283,10 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Open Key##ch", ok, sizeof(ok))) { if (ok[0]) ch->openKey = ok[0]; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Press near the chest to open (default F). Click items to move them.");
             if (ImGui::DragFloat("Open Range##ch", &ch->range, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How close the player must be to press the key. 0 = open from anywhere (recommended if it won't open).");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How close the player must be to press the key. Only the nearest chest in range opens. 0 = any distance.");
+            char pnh[64]; std::snprintf(pnh, sizeof(pnh), "%s", ch->playerName.c_str());
+            if (ImGui::InputText("Player Object##ch", pnh, sizeof(pnh))) { ch->playerName = pnh; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Who the player is. Blank = the \"Player\"-tagged object, else the main camera's target.");
             if (ImGui::SliderInt("Columns##ch", &ch->cols, 1, 12)) ed.dirty = true;
             if (ImGui::DragFloat("Slot Size##ch", &ch->slotSize, 0.5f, 16.0f, 96.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Gap##ch", &ch->gap, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
@@ -34832,6 +34853,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (!ui) continue;
         okay::Inventory* inv = ui->Inv();
         int n = ui->hotbarSlots < 1 ? 1 : ui->hotbarSlots;
+        const int total = ui->SlotCount(), bpRows = ui->BackpackRowCount();   // slots shown = the Inventory's capacity
         // Resolution-independent scaling (matches the built player): scale by the Game
         // canvas height vs the authored reference, so the editor preview and the build agree.
         float uiScale = (ui->scaleToScreen && ui->referenceHeight > 1.0f) ? canvasSize.y / ui->referenceHeight : 1.0f;
@@ -34874,24 +34896,24 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         float hy = ui->anchorTop ? marginY : canvasSize.y - sz - marginY;
         auto bpY = [&](int row) {
             return ui->anchorTop ? hy + sz + 14.0f + row * (sz + gap)
-                                 : hy - 14.0f - (ui->backpackRows - row) * (sz + gap);
+                                 : hy - 14.0f - (bpRows - row) * (sz + gap);
         };
-        if (ui->open && ui->backpackRows > 0) {
+        if (ui->open && bpRows > 0) {
             if (ui->darkenWhenOpen)
                 dl->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(0, 0, 0, 150));
-            for (int row = 0; row < ui->backpackRows; ++row)
-                for (int c = 0; c < n; ++c)
+            for (int row = 0; row < bpRows; ++row)
+                for (int c = 0; c < n && n + row * n + c < total; ++c)
                     slot(hx + c * (sz + gap), bpY(row), n + row * n + c, false);
             // Backpack header title above the grid.
             if (ui->showTitle && !ui->backpackTitle.empty()) {
-                float t = bpY(0), bb = bpY(ui->backpackRows - 1), top = (t < bb ? t : bb);
+                float t = bpY(0), bb = bpY(bpRows - 1), top = (t < bb ? t : bb);
                 ImVec2 ts = ImGui::CalcTextSize(ui->backpackTitle.c_str());
                 dl->AddText(ImVec2(canvasPos.x + hx + rowW * 0.5f - ts.x * 0.5f,
                                    canvasPos.y + top - ts.y - 4.0f),
                             col(ui->titleColor), ui->backpackTitle.c_str());
             }
         }
-        for (int i = 0; i < n; ++i) slot(hx + i * (sz + gap), hy, i, i == ui->selected);
+        for (int i = 0; i < n && i < total; ++i) slot(hx + i * (sz + gap), hy, i, i == ui->selected);
         // Hotbar slot numbers (1–9).
         if (ui->slotNumbers)
             for (int i = 0; i < n && i < 9; ++i)
@@ -34904,8 +34926,8 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             for (int i = 0; i < n; ++i) { float sx = hx + i * (sz + gap);
                 if (m.x >= sx && m.x < sx + sz && m.y >= hy && m.y < hy + sz) { hov = i; break; } }
             if (ui->open && hov < 0)
-                for (int row = 0; row < ui->backpackRows && hov < 0; ++row)
-                    for (int c = 0; c < n; ++c) { float sx = hx + c * (sz + gap), sy = bpY(row);
+                for (int row = 0; row < bpRows && hov < 0; ++row)
+                    for (int c = 0; c < n && n + row * n + c < total; ++c) { float sx = hx + c * (sz + gap), sy = bpY(row);
                         if (m.x >= sx && m.x < sx + sz && m.y >= sy && m.y < sy + sz) { hov = n + row * n + c; break; } }
             if (hov >= 0 && hov < (int)inv->slots.size() && !inv->slots[hov].item.empty()) {
                 const auto& it = inv->slots[hov];
@@ -34927,7 +34949,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 if (idx < n) { sx = hx + idx * (sz + gap); sy = hy; }
                 else { int b = idx - n; sx = hx + (b % n) * (sz + gap); sy = bpY(b / n); }
             };
-            const int slotCount = n + ui->backpackRows * n;
+            const int slotCount = total;
             // Containment-first (see the player): the slot the point is inside wins,
             // so hovering over a slot always picks it; nearest-centre only fills gaps.
             auto nearest = [&](float px, float py) -> int {

@@ -178,7 +178,8 @@ int main() {
     {
         Scene s("cmenu");
         GameObject* p = s.CreateGameObject("Player");
-        p->AddComponent<Inventory>();
+        auto* inv = p->AddComponent<Inventory>();
+        inv->Add("wood", 3);
         auto* cr = p->AddComponent<Crafting>();
         cr->AddRecipe("torch", 1, {{"wood", 1}});
         cr->AddRecipe("axe", 1, {{"wood", 2}});
@@ -187,9 +188,11 @@ int main() {
         s.Update(1.0f / 60.0f);
         auto btns = s.FindObjectsOfType<UIButton>();
         CHECK(btns.size() == 2);
-        bool craftWired = false;
-        for (auto* b : btns) if (b->clickFunction == "Craft" && b->clickTarget == "Player") craftWired = true;
-        CHECK(craftWired);
+        // Each button crafts its recipe on this menu's Crafting (wired directly, not by object name).
+        CHECK(cm->Buttons().size() == 2);
+        if (cm->Buttons().size() == 2 && cm->Buttons()[1])
+            if (auto* b = cm->Buttons()[1]->GetComponent<UIButton>()) { b->Press(); s.Update(1.0f / 60.0f); }
+        CHECK(inv->Count("axe") == 1 && inv->Count("wood") == 1);
     }
 
     // --- Serialization: melee / spawner / craftmenu / npc health --------

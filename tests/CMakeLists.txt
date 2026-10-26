@@ -107,6 +107,11 @@ add_executable(test_prefs_misc test_prefs_misc.cpp)
 target_link_libraries(test_prefs_misc PRIVATE okay::engine)
 add_test(NAME prefs_misc COMMAND test_prefs_misc)
 
+# Inventory wiring: nearest chest/bench opens, who the player is, slots = capacity, craft buttons not saved
+add_executable(test_inventory_wiring test_inventory_wiring.cpp)
+target_link_libraries(test_inventory_wiring PRIVATE okay::engine)
+add_test(NAME inventory_wiring COMMAND test_inventory_wiring)
+
 add_executable(test_pathfinding test_pathfinding.cpp)
 target_link_libraries(test_pathfinding PRIVATE okay::engine)
 add_test(NAME pathfinding COMMAND test_pathfinding)

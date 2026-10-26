@@ -490,6 +490,7 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
     if (W <= 0 || H <= 0) return;
     const int n = ui.hotbarSlots < 1 ? 1 : ui.hotbarSlots;
+    const int total = ui.SlotCount(), bpRows = ui.BackpackRowCount();   // slots shown = the Inventory's capacity
     // Resolution-independent UI: scale by the window height vs the authored reference,
     // so the inventory keeps the same on-screen proportion in a small built-game window
     // as it does in the (usually larger) editor Game view. "Scale With Screen Size".
@@ -555,7 +556,7 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     const float hy = ui.anchorTop ? marginY : H - sz - marginY;
     auto bpY = [&](int row) {
         return ui.anchorTop ? hy + sz + 14.0f + row * (sz + gap)
-                            : hy - 14.0f - (ui.backpackRows - row) * (sz + gap);
+                            : hy - 14.0f - (bpRows - row) * (sz + gap);
     };
     auto panel = [&](float x, float y, float w, float h) {
         SDL_Rect rc{(int)x, (int)y, (int)w, (int)h};
@@ -572,16 +573,16 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         }
     };
     // Backpack (when open): darken, then the grid.
-    if (ui.open && ui.backpackRows > 0) {
+    if (ui.open && bpRows > 0) {
         if (ui.darkenWhenOpen) { setc(Color::FromBytes(0, 0, 0, 150)); SDL_Rect full{0, 0, W, H}; SDL_RenderFillRect(r, &full); }
         if (ui.showPanel) {
-            float t = bpY(0), b = bpY(ui.backpackRows - 1);
+            float t = bpY(0), b = bpY(bpRows - 1);
             float top = t < b ? t : b, bot = (t > b ? t : b) + sz, pad = panelPad;
             panel(hx - pad, top - pad, rowW + 2 * pad, (bot - top) + 2 * pad);
         }
         // Backpack header title above the grid.
         if (ui.showTitle && !ui.backpackTitle.empty()) {
-            float t = bpY(0), b = bpY(ui.backpackRows - 1);
+            float t = bpY(0), b = bpY(bpRows - 1);
             float top = (t < b ? t : b);
             float px = 2.0f * ui.labelScale * uiScale; if (px < 1.0f) px = 1.0f;
             float tw = UITextW(ui.backpackTitle, px);
@@ -589,12 +590,12 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
                      top - panelPad - (Font8x8::Height + 1) * px - 2.0f, px,
                      SDL_Color{(Uint8)(ui.titleColor.r*255),(Uint8)(ui.titleColor.g*255),(Uint8)(ui.titleColor.b*255),255});
         }
-        for (int row = 0; row < ui.backpackRows; ++row)
-            for (int c = 0; c < n; ++c)
+        for (int row = 0; row < bpRows; ++row)
+            for (int c = 0; c < n && n + row * n + c < total; ++c)
                 slot(hx + c * (sz + gap), bpY(row), n + row * n + c, false);
     }
     if (ui.showPanel) panel(hx - panelPad, hy - panelPad, rowW + 2 * panelPad, sz + 2 * panelPad);
-    for (int i = 0; i < n; ++i) slot(hx + i * (sz + gap), hy, i, i == ui.selected);
+    for (int i = 0; i < n && i < total; ++i) slot(hx + i * (sz + gap), hy, i, i == ui.selected);
     // Hotbar slot numbers (1–9) in the top-left corner.
     if (ui.slotNumbers) {
         float px = sz * 0.030f * ui.labelScale; if (px < 1.0f) px = 1.0f;
@@ -642,7 +643,7 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         if (idx < n) { sx = hx + idx * (sz + gap); sy = hy; }
         else { int b = idx - n; sx = hx + (b % n) * (sz + gap); sy = bpY(b / n); }
     };
-    const int slotCount = n + ui.backpackRows * n;
+    const int slotCount = total;
     // Which slot a point picks: the slot it's actually inside (so hovering over a
     // slot always picks THAT slot), else — for gaps / imperfect aim — the slot whose
     // centre is nearest, within a slot's reach. Containment wins so the cursor sitting
@@ -2438,7 +2439,7 @@ int main(int argc, char** argv) {
         }
         for (const auto& up : scene.Objects()) {
             auto* cs = up ? up->GetComponent<CraftingStation>() : nullptr;
-            if (!cs) continue;
+            if (!cs || !cs->open) continue;   // the open one (only the nearest opens), not just the first
             DrawCrafting(renderer, *cs);
             break;
         }

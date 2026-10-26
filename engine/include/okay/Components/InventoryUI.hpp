@@ -2,6 +2,7 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Scene/Scene.hpp"
 #include "okay/Components/Inventory.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Input/Input.hpp"
@@ -22,7 +23,7 @@ namespace okay {
 class InventoryUI : public Behaviour {
 public:
     int   hotbarSlots  = 9;       ///< slots on the bottom bar
-    int   backpackRows = 3;       ///< extra rows shown when open (backpack = rows × hotbarSlots)
+    int   backpackRows = 3;       ///< extra rows shown when open, if the Inventory has no capacity (else capacity decides)
     int   selected     = 0;       ///< selected hotbar slot
     bool  open         = false;   ///< backpack grid visible
     char  toggleKey    = 'e';     ///< open / close the backpack
@@ -109,6 +110,24 @@ public:
         return nullptr;
     }
 
+    /// Name of the object holding the Inventory this UI shows (e.g. "Player"), for a UI
+    /// that lives under a Canvas. Empty = this object, else its root (as before).
+    std::string inventoryTarget;
+
+    /// Slots shown and usable: the Inventory's capacity when it has one (hotbar first,
+    /// the backpack rows wrap the rest), else hotbar + backpackRows × hotbar.
+    int SlotCount() const {
+        const int n = hotbarSlots < 1 ? 1 : hotbarSlots;
+        Inventory* inv = Inv();
+        if (inv && inv->capacity > 0) return inv->capacity;
+        return n + (backpackRows > 0 ? backpackRows : 0) * n;
+    }
+    /// Backpack rows needed to show SlotCount() (the last row may be partly filled).
+    int BackpackRowCount() const {
+        const int n = hotbarSlots < 1 ? 1 : hotbarSlots, rest = SlotCount() - n;
+        return rest > 0 ? (rest + n - 1) / n : 0;
+    }
+
     /// Right-click split: move half of stack `from` into the first empty slot.
     bool SplitSlot(int from) {
         Inventory* inv = Inv();
@@ -116,9 +135,11 @@ public:
         Inventory::Slot& s = inv->slots[from];
         if (Inventory::Empty(s) || s.count < 2) return false;
         int move = s.count / 2;
-        int cap = inv->capacity > 0 ? inv->capacity : (hotbarSlots + backpackRows * hotbarSlots);
-        for (auto& d : inv->slots)
+        const int cap = SlotCount();
+        for (int i = 0; i < (int)inv->slots.size() && i < cap; ++i) {
+            Inventory::Slot& d = inv->slots[i];
             if (Inventory::Empty(d)) { d.item = s.item; d.count = move; s.count -= move; inv->NotifyChanged(); return true; }
+        }
         if ((int)inv->slots.size() < cap) {
             const std::string item = s.item;
             inv->slots[from].count -= move;              // (before push_back: it may reallocate)
@@ -133,8 +154,8 @@ public:
     bool QuickMove(int from) {
         Inventory* inv = Inv();
         if (!inv || from < 0 || from >= (int)inv->slots.size() || Inventory::Empty(inv->slots[from])) return false;
-        int n = hotbarSlots < 1 ? 1 : hotbarSlots, total = n + backpackRows * n;
-        int lo = (from < n) ? n : 0, hi = (from < n) ? total : n;
+        int n = hotbarSlots < 1 ? 1 : hotbarSlots, total = SlotCount();
+        int lo = (from < n) ? n : 0, hi = (from < n) ? total : std::min(n, total);
         while ((int)inv->slots.size() < hi) inv->slots.push_back(Inventory::Slot{});
         bool moved = false;
         const long long cap = inv->maxStack > 0 ? inv->maxStack : 2147483647LL;
@@ -235,8 +256,12 @@ public:
         return true;
     }
 
-    /// The Inventory this UI shows: on the same object, else on the player root.
+    /// The Inventory this UI shows: on `inventoryTarget` when set, else on the same
+    /// object, else on its root.
     Inventory* Inv() const {
+        if (!inventoryTarget.empty() && gameObject && gameObject->scene())
+            if (GameObject* t = gameObject->scene()->Find(inventoryTarget))
+                if (auto* in = t->GetComponent<Inventory>()) return in;
         if (gameObject)
             if (auto* in = gameObject->GetComponent<Inventory>()) return in;
         GameObject* o = Owner();
@@ -259,7 +284,7 @@ public:
     /// stack list, so hotbar (0..hotbar-1) and backpack slots reorder freely.
     void MoveSlot(int from, int to) {
         Inventory* inv = Inv();
-        if (!inv || from < 0 || to < 0 || from == to) return;
+        if (!inv || from < 0 || to < 0 || from == to || to >= SlotCount()) return;
         if (from >= (int)inv->slots.size()) return;
         // Grow the list so the (possibly empty) target slot exists, so you can drop an
         // item into any open slot and leave a gap behind.
@@ -285,7 +310,7 @@ public:
     /// slot, or cancelled (left on the source) if a different item sits there.
     void ApplyDrag(int from, int to) {
         Inventory* inv = Inv();
-        if (!inv || from < 0 || from >= (int)inv->slots.size() || to < 0 || from == to) return;
+        if (!inv || from < 0 || from >= (int)inv->slots.size() || to < 0 || from == to || to >= SlotCount()) return;
         if (Inventory::Empty(inv->slots[from])) return;
         int amount = dragAmount > 0 ? dragAmount : inv->slots[from].count;
         if (amount >= inv->slots[from].count) { MoveSlot(from, to); return; }   // whole stack

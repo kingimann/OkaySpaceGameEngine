@@ -5,8 +5,7 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Components/Inventory.hpp"
 #include "okay/Components/InventoryUI.hpp"
-#include "okay/Components/Camera.hpp"
-#include "okay/Input/Input.hpp"
+#include "okay/Components/InventoryPlayer.hpp"
 #include "okay/Render/Color.hpp"
 #include <string>
 
@@ -16,13 +15,12 @@ namespace okay {
 /// Inventory (fill it in the editor with the items it should hold). Walk up to it
 /// and press the open key to show a panel: the chest's items on top, your own
 /// inventory below. Click a stack to move it to the other side — take loot out, or
-/// stash items in. The player inventory is found automatically (the scene's
-/// InventoryUI). Pair it with an Inventory and you have a working chest, no script.
-class ChestInventory : public Behaviour {
+/// stash items in. The player is found with FindInventoryPlayer (playerName, the
+/// "Player" tag, the main camera's subject). Pair it with an Inventory and you have a
+/// working chest, no script. Only the nearest chest in range opens (`range`, `open`).
+class ChestInventory : public InventoryInteractable {
 public:
-    bool        open    = false;
     char        openKey = 'f';          ///< open/close when in range (default F to avoid the E backpack)
-    float       range   = 0.0f;         ///< how close the player must be (0 = open from anywhere; set >0 for proximity)
     std::string title   = "Chest";
     int         cols     = 6;           ///< chest grid columns
 
@@ -70,18 +68,27 @@ public:
         if (gameObject) if (auto* in = gameObject->GetComponent<Inventory>()) return in;
         return nullptr;
     }
-    /// The player's inventory UI (for its own slot size / columns when drawn in the chest).
-    InventoryUI* PlayerUI() const {
+    char InteractKey() const override { return openKey; }
+
+    /// The player's inventory: the Inventory on the player (FindInventoryPlayer), else
+    /// the one the scene's first InventoryUI shows.
+    Inventory* PlayerInv() const {
+        if (GameObject* p = FindInventoryPlayer(GetScene(), playerName))
+            if (auto* in = p->GetComponent<Inventory>()) return in;
         Scene* s = GetScene();
         if (!s) return nullptr;
         for (const auto& o : s->Objects())
-            if (o) if (auto* iu = o->GetComponent<InventoryUI>()) return iu;
+            if (o) if (auto* iu = o->GetComponent<InventoryUI>()) if (Inventory* in = iu->Inv()) return in;
         return nullptr;
     }
-    /// The player's inventory: the first InventoryUI's Inventory in the scene.
-    Inventory* PlayerInv() const {
-        InventoryUI* iu = PlayerUI();
-        return iu ? iu->Inv() : nullptr;
+    /// The inventory UI showing PlayerInv() (for its slot size / columns in the chest).
+    InventoryUI* PlayerUI() const {
+        Scene* s = GetScene();
+        Inventory* pinv = PlayerInv();
+        if (!s || !pinv) return nullptr;
+        for (const auto& o : s->Objects())
+            if (o) if (auto* iu = o->GetComponent<InventoryUI>()) if (iu->Inv() == pinv) return iu;
+        return nullptr;
     }
 
     /// Move the stack in chest slot `i` into the player's inventory (as much as fits).
@@ -112,27 +119,6 @@ public:
         if (src.count <= 0) src = Inventory::Slot{};
         from->NotifyChanged();
         return true;
-    }
-
-    /// Is the player within `range` of this chest? Uses the main camera's world position
-    /// as the player's location (works across the FPS/third-person templates); falls back
-    /// to "in range" if there's no camera, so the key always works.
-    bool PlayerInRange() const {
-        if (range <= 0.0f) return true;
-        Scene* s = GetScene();
-        if (!s || !gameObject || !gameObject->transform) return true;
-        Transform* camT = nullptr;
-        for (const auto& o : s->Objects())
-            if (o && o->GetComponent<Camera>() && o->transform) { camT = o->transform; break; }
-        if (!camT) return true;
-        Vec3 a = gameObject->transform->Position(), b = camT->Position();
-        float dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
-        return (dx * dx + dy * dy + dz * dz) <= range * range;
-    }
-
-    void Update(float) override {
-        if (openKey && Input::GetKeyDown(openKey) && PlayerInRange()) open = !open;
-        if (open && !PlayerInRange()) open = false;   // auto-close when you walk away
     }
 };
 

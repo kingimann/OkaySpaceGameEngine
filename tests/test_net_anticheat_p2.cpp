@@ -87,6 +87,22 @@ int main() {
         CHECK(!AntiCheatSettings::Parse("ticketKey abc\n", back, &e));
     }
 
+    // ---- Tickets from the Edge function's signer (supabase/functions/session-ticket/ticket.ts) ----
+    // Made once with that code and a throwaway key pair (only the public half is
+    // here), so the TypeScript signer and this verifier must keep agreeing.
+    {
+        std::vector<std::uint8_t> tsPk;
+        CHECK(SessionTicket::Base64UrlDecode("50hpvYHnDKFbOvGAFvdxFOKz5rCSusfPu2TPkdUlyPE", tsPk) && tsPk.size() == 32);
+        const std::int64_t iat = 1800000000;
+        SessionTicketClaims c; std::string err;
+        CHECK(SessionTicket::Verify("okt1.c3ViPTZmMWMyYTllLTBiN2QtNGMzZS05YTUxLTJkOGU3ZjYwYjRhYSZhdWQ9YXJlbmEtMSZpYXQ9MTgwMDAwMDAwMCZleHA9MTgwMDAwMDYwMA.Pde7ZpalhJOfUNHT6v0jslN8svXZdqrBWZiKb69dk49Mm2CRmJHqa6uhyX29ulefD2PPcpWrf8a5UeAPwsrtDw", tsPk, "arena-1", iat + 5, c, &err));
+        CHECK(c.userId == "6f1c2a9e-0b7d-4c3e-9a51-2d8e7f60b4aa" && c.audience == "arena-1" && c.expiresAt == iat + 600);
+        CHECK(SessionTicket::Verify("okt1.c3ViPXVzZXItYiZhdWQ9KiZpYXQ9MTgwMDAwMDAwMCZleHA9MTgwMDAwMDA2MA.LAZeykukw34CuxXjIc6hGhvKl2TAl5PuJc-NWhTui5kzg6PtMmon_WzTU9vamXNg0Sbhan5jiCsSB6kUAwtjCQ", tsPk, "arena-9", iat, c, &err) && c.userId == "user-b");   // aud "*"
+        CHECK(!SessionTicket::Verify("okt1.c3ViPTZmMWMyYTllLTBiN2QtNGMzZS05YTUxLTJkOGU3ZjYwYjRhYSZhdWQ9YXJlbmEtMSZpYXQ9MTgwMDAwMDAwMCZleHA9MTgwMDAwMDYwMA.Pde7ZpalhJOfUNHT6v0jslN8svXZdqrBWZiKb69dk49Mm2CRmJHqa6uhyX29ulefD2PPcpWrf8a5UeAPwsrtDw", tsPk, "arena-1", iat + 601 + SessionTicket::kClockSkew, c, &err));   // expired
+        CHECK(!SessionTicket::Verify("okt1.c3ViPTZmMWMyYTllLTBiN2QtNGMzZS05YTUxLTJkOGU3ZjYwYjRhYSZhdWQ9YXJlbmEtMSZpYXQ9MTgwMDAwMDAwMCZleHA9MTgwMDAwMDYwMA.Pde7ZpalhJOfUNHT6v0jslN8svXZdqrBWZiKb69dk49Mm2CRmJHqa6uhyX29ulefD2PPcpWrf8a5UeAPwsrtDw", pk, "arena-1", iat + 5, c, &err));   // another key
+        if (!err.empty() && err.find("signature") == std::string::npos) std::printf("  ts ticket: %s\n", err.c_str());
+    }
+
     // ---- Replay window --------------------------------------------------------------
     {
         net::SecureChannel cli, srv;

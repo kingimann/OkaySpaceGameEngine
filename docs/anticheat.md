@@ -83,30 +83,40 @@ The format is implemented in `engine/include/okay/Net/SessionTicket.hpp`.
 
 ### The ticket service (not deployed; you run these steps)
 
-The service is a small HTTPS endpoint, for example a Supabase Edge function:
+The source is in `supabase/functions/session-ticket/`:
 
-1. Check the caller's login (their Supabase access token).
-2. Sign `sub=<their user id>&aud=<requested server>&iat=<now>&exp=<now + 10 min>`
-   with an ed25519 **private** key, and return the ticket.
+- **`index.ts`** is the Edge function. It takes
+  `POST {"aud": "<game server id>"}` with `Authorization: Bearer <player's
+  Supabase access token>`.
+  1. It checks the login with Supabase Auth (`/auth/v1/user`).
+  2. It returns `{"ticket": "okt1…", "exp": …}`, signed for that account and
+     server. The ticket lives `OKAY_TICKET_TTL` seconds: 600 by default, at most
+     86400.
+- **`ticket.ts`** does the signing, using Web Crypto only. It must match the
+  engine's `SessionTicket::Verify`. `tests/test_net_anticheat_p2.cpp` verifies
+  tickets this code signed, so a change on either side that breaks the other
+  fails CI.
+- **`ticket_test.ts`** is its self-test. Run `deno run ticket_test.ts`, or
+  `node --experimental-strip-types ticket_test.ts`.
+- **`make_key.ts`** makes the key pair. It's for you to run.
 
-**The function's source isn't in the repo yet.** It's waiting for the owner's
-go-ahead, because it touches the Supabase project. When it's added, deploying is
-yours to do:
+Nothing is deployed. To go live:
 
-1. **Make a key pair on your own machine**, never in CI or in the repo. Any
-   ed25519 tool works, as long as the public key ends up as 32 raw bytes in
-   base64url. For example, a two-line libsodium or Deno script calling
-   `crypto_sign_keypair` / `crypto.subtle.generateKey({name: "Ed25519"})`.
-2. **Store the private key as a function secret:**
-   `supabase secrets set OKAY_TICKET_SECRET=<base64url secret>`. It never goes
-   in a game build, a `.okayac` file or git.
+1. **Make the key pair on your own machine**, never in CI or in the repo:
+   `deno run supabase/functions/session-ticket/make_key.ts`. It prints
+   `OKAY_TICKET_SEED=…` (the **private** key) and `OKAY_TICKET_PUBLIC_KEY=…`.
+2. **Store both as function secrets:**
+   `supabase secrets set OKAY_TICKET_SEED=<seed> OKAY_TICKET_PUBLIC_KEY=<public>`.
+   The seed never goes in a game build, a `.okayac` file, chat or git.
 3. **Deploy the function:** `supabase functions deploy session-ticket`.
-4. **Put the public key in the server's rules:** `ticketKey <base64url public key>`,
-   with `ticketAudience` set to the server's id.
-5. **Have the launcher or game fetch a ticket before joining**: call the function
-   with the player's access token, then pass the result to `SetAuthToken`. That's
-   still to do in the launcher.
+   `SUPABASE_URL` and `SUPABASE_ANON_KEY` come from the Edge runtime.
+4. **Point each game server at the public key** in its rules:
+   `ticketKey <public>` and `ticketAudience <that server's id>`. The id is the
+   same `aud` that clients ask for.
+5. **Fetch a ticket before joining** (still to do in the launcher or game):
+   POST to the function with the player's access token and the server id, then
+   `SetAuthToken(ticket)` on the client's NetworkManager.
 
-To rotate the key, make a new pair, update the secret and every server's
+To rotate the key, run step 1 again, update the secrets and every server's
 `ticketKey` together, and redeploy. Tickets signed with the old key stop working
 when the servers switch.

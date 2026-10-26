@@ -19,6 +19,7 @@
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/IKFade.hpp"
+#include "okay/Components/IKBones.hpp"
 #include <vector>
 #include <string>
 
@@ -51,15 +52,14 @@ public:
     Vec3  forwardAxis = Vec3::Forward;
 
     void Start() override {
+        // Names resolve inside this character first (two copies of one model
+        // share bone names), then anywhere in the scene.
         Scene* s = GetScene();
-        if (!s) return;
         if (bones.empty() && !boneNames.empty())
             for (const std::string& nm : boneNames)
-                if (GameObject* g = s->Find(nm)) bones.push_back(g->transform);
-        if (!targetObject && !targetName.empty())
-            if (GameObject* g = s->Find(targetName)) targetObject = g->transform;
-        if (!poleObject && !poleName.empty())
-            if (GameObject* g = s->Find(poleName)) poleObject = g->transform;
+                if (Transform* t = ResolveBone(s, gameObject, nm)) bones.push_back(t);
+        if (!targetObject) targetObject = ResolveBone(s, gameObject, targetName);
+        if (!poleObject) poleObject = ResolveBone(s, gameObject, poleName);
     }
 
     // Solve in LateUpdate so the correction lands AFTER every animation driver

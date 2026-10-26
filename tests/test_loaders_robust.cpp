@@ -95,6 +95,19 @@ int main() {
         for (int t : m.triangles) CHECK(t >= 0 && t < (int)m.vertices.size());
     }
 
+    {   // sparse accessor WITH a bufferView and a count far beyond it: the dense
+        // part must fit, or the whole accessor is rejected (was +600 MB, then OOM)
+        const long before = PeakRssMB();
+        Write("lr_sparse.gltf", Gltf(kTri, 36, kView +
+              "\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":20000000,\"type\":\"VEC3\","
+              "\"sparse\":{\"count\":0,\"indices\":{\"bufferView\":0,\"componentType\":5125},"
+              "\"values\":{\"bufferView\":0}}}]," + mesh));
+        bool ok = true; LoadGLTF("lr_sparse.gltf", &ok);
+        CHECK(!ok);
+        CHECK(PeakRssMB() - before < 256);
+        std::remove("lr_sparse.gltf");
+    }
+
     // ---------------- glTF node cycle ----------------
     {
         Write("lr_cycle.gltf", Gltf(kTri, 36, kView +
@@ -105,6 +118,17 @@ int main() {
         GameObject* r = ImportModelScene(s, "lr_cycle.gltf", &ok);
         CHECK(!ok);
         CHECK(r == nullptr);
+        // A node listed as a child twice (one of them a back edge): the final
+        // parents look acyclic, but applying every edge loops (was a stack overflow).
+        Write("lr_multi.gltf", Gltf(kTri, 36, kView +
+              "\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}]," + mesh +
+              ",\"nodes\":[{\"name\":\"A\",\"mesh\":0,\"children\":[1]},{\"name\":\"B\",\"children\":[0]},"
+              "{\"name\":\"C\",\"children\":[0]}]"));
+        Scene s2("m");
+        ok = true;
+        CHECK(ImportModelScene(s2, "lr_multi.gltf", &ok) == nullptr);
+        CHECK(!ok);
+        std::remove("lr_multi.gltf");
         // A well-formed tree still imports.
         Write("lr_tree.gltf", Gltf(kTri, 36, kView +
               "\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}]," + mesh +
@@ -133,6 +157,17 @@ int main() {
         CHECK(img.Width() == 0 && img.Height() == 0);
         CHECK(PeakRssMB() - before < 256);
         std::remove("lr_huge.tga");
+        // Within STBI_MAX_DIMENSIONS but far more pixels than 40 bytes can hold
+        // (was ok=1 with +2 GB).
+        std::string t2(40, '\0');
+        t2[2] = 2; t2[12] = 0; t2[13] = 0x40; t2[14] = 0; t2[15] = 0x40; t2[16] = 32;   // 16384 x 16384
+        Write("lr_huge2.tga", t2);
+        const long before2 = PeakRssMB();
+        Image img2;
+        CHECK(!img2.Load("lr_huge2.tga", &err));
+        CHECK(img2.Width() == 0);
+        CHECK(PeakRssMB() - before2 < 256);
+        std::remove("lr_huge2.tga");
         // A small valid image still loads.
         std::string ok(18 + 4 * 4, '\0');
         ok[2] = 2; ok[12] = 2; ok[14] = 2; ok[16] = 32;

@@ -29155,15 +29155,29 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawn an elbow/knee pole hint you can drag to aim the bend.");
                 float t[3] = {lb->target.x, lb->target.y, lb->target.z};
                 if (ImGui::DragFloat3("Target point##lik", t, 0.1f)) { lb->target = {t[0], t[1], t[2]}; ed.dirty = true; }
+                {
+                    int pm = (int)lb->poleMode;
+                    if (ImGui::Combo("Pole Mode##lik", &pm, "Auto (keep the bend)\0Character\0World\0")) { lb->poleMode = (LimbIK::PoleMode)pm; ed.dirty = true; }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Without a Pole object: Auto keeps the animation's own elbow/knee bend\n(a straight limb bends toward Pole Dir, turning with the character);\nCharacter bends toward Pole Dir in this object's space; World toward a fixed world direction.");
+                    float pd[3] = {lb->pole.x, lb->pole.y, lb->pole.z};
+                    if (ImGui::DragFloat3("Pole Dir##lik", pd, 0.05f)) { lb->pole = {pd[0], pd[1], pd[2]}; ed.dirty = true; }
+                }
                 ImGui::DragFloat("Weight##lik", &lb->weight, 0.01f, 0.0f, 1.0f);
                 ImGui::DragFloat("Min Bend##lik", &lb->minBend, 1.0f, 0.0f, 180.0f);
                 ImGui::DragFloat("Max Bend##lik", &lb->maxBend, 1.0f, 0.0f, 180.0f);
+                if (ImGui::DragFloat("Softness##lik", &lb->softness, 0.005f, 0.0f, 0.5f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ease the last stretch to full reach over this distance,\nso the limb doesn't snap straight as the target moves out of reach.");
                 ImGui::Checkbox("Match Target Rotation##lik", &lb->matchTargetRotation);
+                if (lb->matchTargetRotation && lb->targetName.empty()) {
+                    Vec3 e = lb->targetRotation.ToEuler();
+                    float ea[3] = {e.x, e.y, e.z};
+                    if (ImGui::DragFloat3("Target Rotation##lik", ea, 1.0f)) { lb->targetRotation = Quat::Euler({ea[0], ea[1], ea[2]}); ed.dirty = true; }
+                }
                 ImGui::Checkbox("Orient Bones##lik", &lb->orient);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Joints that aren't parented in a chain: also rotate the upper/lower\nbones toward the moved joints. A bone chain always turns.");
                 ImGui::Checkbox("IK Active##lik", &lb->ikActive); ImGui::SameLine();
                 ImGui::SetNextItemWidth(90); ImGui::DragFloat("Fade (s)##lik", &lb->fadeTime, 0.01f, 0.0f, 3.0f);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to blend IK in/out when IK Active changes (scripts: ik_enable).");
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also rotate the upper/lower bones to follow the solved joints,\nso a mesh skinned to the limb bends with it (not just the joints moving).");
                 if (ImGui::SmallButton("Remove##lik")) toRemove = lb;
             }
         }

@@ -1001,7 +1001,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << lb->weight << " " << lb->minBend << " " << lb->maxBend << " " << (lb->matchTargetRotation ? 1 : 0)
             << " " << lb->target.x << " " << lb->target.y << " " << lb->target.z
             << " " << lb->pole.x << " " << lb->pole.y << " " << lb->pole.z
-            << " " << (lb->orient ? 1 : 0) << "\n";
+            << " " << (lb->orient ? 1 : 0) << " " << (int)lb->poleMode << " " << lb->softness
+            << " " << lb->targetRotation.x << " " << lb->targetRotation.y << " " << lb->targetRotation.z
+            << " " << lb->targetRotation.w << "\n";
     }
     if (auto* ci = go->GetComponent<ChainIK>()) {
         out << "  chainik " << Quote(ci->targetName) << " " << ci->weight << " " << ci->iterations
@@ -3373,10 +3375,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> lb->target.x >> lb->target.y >> lb->target.z
                        >> lb->pole.x >> lb->pole.y >> lb->pole.z;
                     lb->matchTargetRotation = (mr != 0);
-                    // Optional trailing field (newer files): orient bones toggle.
+                    // Optional trailing fields (newer files): orient bones toggle, pole mode,
+                    // softness, target rotation. Files from before the pole mode bent toward
+                    // the world direction.
                     { std::string rest; std::getline(in, rest);
-                      std::istringstream rs(rest); int o;
-                      if (rs >> o) lb->orient = (o != 0); }
+                      std::istringstream rs(rest); int o, pm;
+                      if (rs >> o) lb->orient = (o != 0);
+                      lb->poleMode = (rs >> pm) ? (LimbIK::PoleMode)std::clamp(pm, 0, 2) : LimbIK::PoleMode::World;
+                      Quat q;
+                      if (rs >> lb->softness >> q.x >> q.y >> q.z >> q.w) lb->targetRotation = q; }
                 } else if (field == "chainik") {
                     auto* ci = go->AddComponent<ChainIK>();
                     ci->targetName = ReadQuoted(in);

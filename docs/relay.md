@@ -20,8 +20,9 @@ Run the bundled binary on any host with a reachable IP/port (a cheap VPS, a port
 you *have* forwarded, etc.):
 
 ```
-okayspace-relay              # listens on UDP 45100
-okayspace-relay 50000        # custom port
+okayspace-relay                       # listens on UDP 45100
+okayspace-relay 50000                 # custom port
+okayspace-relay --legacy-hello=off    # refuse version-1/2 hellos (see below)
 ```
 
 It prints the bound port and then forwards quietly. One relay handles many
@@ -58,8 +59,12 @@ get there changes.
 
 ## How it works
 
-- Each peer sends `RelayHello{role, code, version, hostKey}` to the relay
-  (re-sent ~1/s, which also keeps the NAT mapping open).
+- Each peer sends `RelayHello{role, code, version, hostKey, cookie}` to the
+  relay (re-sent ~1/s, which also keeps the NAT mapping open).
+- A new peer's first hello gets a `RelayCookie`: an HMAC of its address, port
+  and the current minute under a secret only the relay knows. The peer sends
+  the hello again with it, and only then is it given a slot. A cookie is good
+  for the minute it was made and the next one.
 - The relay assigns each peer a **slot** and tells it (and, for clients, the
   host's slot) in a `RelayWelcome`. The host's welcome also carries the
   session's **host key**.
@@ -88,11 +93,29 @@ The relay is on the internet, so it doesn't trust its peers:
   clients a welcome with host slot 0. A client disconnects when its host slot
   changes at all, so it's never re-pointed at a new host; `RelayError()` says
   "the host left the session".
+- **Nothing is allocated for a spoofed address.** A slot needs a hello that
+  echoes the address's cookie, which only the machine really at that address
+  receives, so a forged source can't use up someone else's per-address quota.
+  A version-3 hello is padded to 32 bytes and shorter ones are ignored, so the
+  relay never answers with more bytes than it was sent.
+- **Hellos are rate limited:** 10 a second (20 as a burst) from each address
+  that isn't a registered peer yet. Keepalive hellos from registered peers
+  don't count, and loopback is exempt.
 - **Rates are capped per peer:** 1000 packets and 1 MiB per second, with twice
-  that as a burst. A host's caps are multiplied by its client count.
-- **Versions.** Hellos and welcomes carry the relay protocol version (2 now).
+  that as a burst. A host's caps are multiplied by its client count. Each peer
+  also receives at most 4 MiB per second from its whole session, so a host's
+  clients can't add up to a flood.
+- **Versions.** Hellos and welcomes carry the relay protocol version (3 now).
   The relay refuses a version older than it supports with
   `RelayRefused{version}`.
+
+**Legacy hellos.** Version-1 and -2 hellos carry no cookie. The relay still
+accepts them while `--legacy-hello` is on (the default for now), and logs how
+many arrived each minute ("N legacy (version 1/2) hellos in the last minute").
+Once that stays at zero, run with `--legacy-hello=off`: they're refused with
+`RelayRefused{version}`. The launcher's voice calls still speak version 1, so
+they need moving to version 3 first. A version-3 game talks to a version-2 relay
+unchanged: the older relay ignores the cookie and padding.
 
 Peers without a version byte (version 1: older games, and the launcher's voice
 calls, where every member announces the host role) still work. They get the

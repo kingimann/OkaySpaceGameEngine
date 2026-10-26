@@ -14,7 +14,7 @@ namespace okay {
 /// right. Put widgets as children of the scroll view's GameObject and set
 /// `contentHeight` to the total height of that content; the mouse wheel (or a
 /// drag of the scrollbar) moves through it.
-class UIScrollView : public Behaviour {
+class UIScrollView final : public Behaviour {
 public:
     Vec2 position{20.0f, 20.0f};      // viewport top-left (pixels, from anchor)
     Vec2 size{300.0f, 200.0f};        // viewport size

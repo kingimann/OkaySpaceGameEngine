@@ -18,7 +18,7 @@ namespace okay {
 /// picking one sets `value` (the selected index) and calls the sibling
 /// ScriptComponent's on_change() handler. Position/size are window pixels
 /// (origin top-left); each open option is `size.y` tall.
-class UIDropdown : public Behaviour {
+class UIDropdown final : public Behaviour {
 public:
     Vec2 position{20.0f, 20.0f};
     Vec2 size{180.0f, 32.0f};

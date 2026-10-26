@@ -83,7 +83,7 @@ struct UITabsDraw {
 /// or fit their text, carry an icon and a badge, be disabled, and scroll when
 /// there are more than fit. Q / E (or the gamepad shoulders) and the menu-focus
 /// arrows switch tabs from the keyboard.
-class UITabs : public Behaviour {
+class UITabs final : public Behaviour {
 public:
     enum class Style  { Segmented, Underline, Folder, Pills, Vertical };
     enum class Sizing { Equal, FitText };

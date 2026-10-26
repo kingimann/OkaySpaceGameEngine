@@ -63,7 +63,7 @@ public:
             if (m_children[i] != child) continue;
             std::size_t j = (dir < 0) ? (i == 0 ? i : i - 1)
                                       : (i + 1 >= m_children.size() ? i : i + 1);
-            if (i != j) std::swap(m_children[i], m_children[j]);
+            if (i != j) { std::swap(m_children[i], m_children[j]); NoteOrderChanged(); }
             return;
         }
     }
@@ -74,6 +74,7 @@ public:
         m_children.erase(it);
         if (toFront) m_children.insert(m_children.begin(), child);
         else         m_children.push_back(child);
+        NoteOrderChanged();
     }
     /// Position `child` immediately before/after `anchor` in the child list
     /// (drag-to-reorder). Both must already be children of this transform.
@@ -83,13 +84,15 @@ public:
         if (rm == m_children.end()) return;
         m_children.erase(rm);
         auto at = std::find(m_children.begin(), m_children.end(), anchor);
-        if (at == m_children.end()) { m_children.push_back(child); return; }
+        if (at == m_children.end()) { m_children.push_back(child); NoteOrderChanged(); return; }
         if (after) ++at;
         m_children.insert(at, child);
+        NoteOrderChanged();
     }
 
 private:
     friend class GameObject;
+    void NoteOrderChanged();   // sibling order changed: the scene's structure version moves
     Transform* m_parent = nullptr;
     std::vector<Transform*> m_children;
 

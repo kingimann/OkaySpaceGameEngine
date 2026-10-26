@@ -35,7 +35,7 @@ struct RawPeer {
         relay = {0x7F000001u, relayPort};
         self = {0x7F000001u, sock.LocalPort()};
     }
-    void Hello(RelayRole role, const std::string& code, std::uint64_t withKey = 0, int ver = kRelayProtocolVersion) {
+    void Hello(RelayRole role, const std::string& code, std::uint64_t withKey = 0, int ver = 2) {
         Packet p(RelayHello); p.Write(static_cast<std::uint8_t>(role)); p.Write(code);
         if (ver >= 0) {
             p.Write(static_cast<std::uint8_t>(ver));

@@ -66,6 +66,8 @@ public:
 #endif
     }
 
+    bool HasKeys() const { return m_haveKeys; }
+
     /// This peer's public key to send to the other side (kPublicKeyBytes bytes).
     std::vector<std::uint8_t> PublicKey() const {
 #ifdef OKAY_HAVE_SODIUM

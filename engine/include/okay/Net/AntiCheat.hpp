@@ -67,8 +67,12 @@ struct AntiCheatSettings {
     /// joining client's token must be a valid ticket (okay/Net/SessionTicket.hpp)
     /// and the peer is bound to its account id. "" = no ticket check.
     std::string ticketKey;
-    /// This server's id as tickets name it ("aud"); "" = accept any.
+    /// This server's id as tickets name it ("aud"). Required with a ticketKey:
+    /// without one the server refuses joins (a dedicated server won't start).
     std::string ticketAudience;
+    /// Accept tickets issued for any server (aud "*"). Off: a ticket must name
+    /// this server.
+    bool ticketAnyAudience = false;
     /// How far a client's game clock may run off the server's, as a fraction
     /// (0.05 = 5%; 0 = no check). The server asks each client for its clock
     /// about once a second; a client that runs too fast or slow for three
@@ -98,7 +102,7 @@ struct AntiCheatSettings {
     /// .okayac text: one "key value" per line, '#' comments:
     ///   enabled true | spawn <prefab path> (repeatable) | maxSyncSpeed 12
     ///   maxSyncVarsPerSecond 20 | kickAfterViolations 5 | ownerOnlySyncVars true
-    ///   requireEncryption true | ticketKey <base64url> | ticketAudience <server id>
+    ///   requireEncryption true | ticketKey <base64url> | ticketAudience <server id> | ticketAnyAudience false
     ///   maxRpcsPerSecond 30 | maxRpcBytes 4096 | maxClockDrift 0.05
     ///   serverVar <key prefix> (repeatable)
     ///   hitOriginTolerance 2 | hitTolerance 1 | maxHitRange 50 | hitDamage 10 | hitLineOfSight true

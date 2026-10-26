@@ -88,6 +88,7 @@ bool SessionTicket::Verify(const std::string& ticket, const std::vector<std::uin
         else if (k == "aud") { c.audience = v; haveAud = true; }
         else if (k == "iat") { if (!ParseInt64(v, c.issuedAt)) return Fail(error, "malformed ticket claims"); haveIat = true; }
         else if (k == "exp") { if (!ParseInt64(v, c.expiresAt)) return Fail(error, "malformed ticket claims"); haveExp = true; }
+        else if (k == "cnf") { c.keyBinding = v; }
         // other keys: ignored (room for later claims)
         a = b + 1;
     }
@@ -109,7 +110,7 @@ std::string SessionTicket::Sign(const SessionTicketClaims& c, const std::vector<
     SecureChannel::Init();
     if (secretKey.size() != crypto_sign_SECRETKEYBYTES) return {};
     const std::string payload = "sub=" + c.userId + "&aud=" + c.audience + "&iat=" + std::to_string(c.issuedAt) +
-                                "&exp=" + std::to_string(c.expiresAt);
+                                "&exp=" + std::to_string(c.expiresAt) + (c.keyBinding.empty() ? "" : "&cnf=" + c.keyBinding);
     const std::string signedPart = kPrefix + Base64UrlEncode(std::vector<std::uint8_t>(payload.begin(), payload.end()));
     std::vector<std::uint8_t> sig(crypto_sign_BYTES);
     crypto_sign_detached(sig.data(), nullptr, reinterpret_cast<const unsigned char*>(signedPart.data()),
@@ -117,6 +118,18 @@ std::string SessionTicket::Sign(const SessionTicketClaims& c, const std::vector<
     return signedPart + "." + Base64UrlEncode(sig);
 #else
     (void)c; (void)secretKey; return {};
+#endif
+}
+
+std::string SessionTicket::KeyBinding(const std::vector<std::uint8_t>& publicKey) {
+#ifdef OKAY_HAVE_SODIUM
+    if (publicKey.empty()) return {};
+    SecureChannel::Init();
+    std::vector<std::uint8_t> h(crypto_hash_sha256_BYTES);
+    crypto_hash_sha256(h.data(), publicKey.data(), publicKey.size());
+    return Base64UrlEncode(h);
+#else
+    (void)publicKey; return {};
 #endif
 }
 

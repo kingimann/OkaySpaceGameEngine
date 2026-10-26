@@ -196,6 +196,11 @@ public:
     /// token). Set it before joining; the server can verify it to bind the peer to
     /// a real account. "" = anonymous.
     void SetAuthToken(const std::string& token) { m_authToken = token; }
+    /// Client: what to send the ticket service as "cnf" so the session ticket
+    /// it signs works only for this player's next connection: base64url SHA-256
+    /// of the key StartClient / JoinViaRelay will use (made now). Call it before
+    /// starting the client, then SetAuthToken(ticket). "" without encryption.
+    std::string TicketBinding();
     const std::string& AuthToken() const { return m_authToken; }
     /// Send the auth token to any host. Off (the default): before joining, the
     /// client asks the host whether it checks sign-ins (the server browser's
@@ -821,6 +826,9 @@ private:
     int  m_joinHellos = 0;
     bool m_keyed = false;
     bool m_legacyJoin = false;
+    net::SecureChannel m_nextSecure;   // client: keys made early for TicketBinding, used by the next session
+    void UseNextSessionKeys();
+    bool m_audienceWarned = false;     // server: "ticketKey without ticketAudience" logged
     bool m_pinWarned = false;
     // Client: asking the host whether it wants the auth token (see authTokenToAnyHost).
     int  m_authQueries = 0;

@@ -195,6 +195,19 @@ std::string NetworkManager::RelayAddress() const {
     return m_relay ? m_relayEp.ToString() : std::string();
 }
 
+std::string NetworkManager::TicketBinding() {
+    if (!encryption || !net::SecureChannel::Available()) return {};
+    if (!m_nextSecure.HasKeys()) m_nextSecure.GenerateKeys();
+    return net::SessionTicket::KeyBinding(m_nextSecure.PublicKey());
+}
+
+void NetworkManager::UseNextSessionKeys() {
+    if (!encryption || !net::SecureChannel::Available()) return;
+    if (m_nextSecure.HasKeys()) m_secure = m_nextSecure;   // the keys a ticket was bound to (TicketBinding)
+    else m_secure.GenerateKeys();
+    m_nextSecure = net::SecureChannel{};                   // used once: the next session makes new ones
+}
+
 bool NetworkManager::StartClient(const std::string& host, std::uint16_t port) {
     Stop();
     if (!net::Startup()) { OKAY_ERROR("net: startup failed"); return false; }
@@ -209,7 +222,7 @@ bool NetworkManager::StartClient(const std::string& host, std::uint16_t port) {
     m_joined = false;
     m_kicked = false; m_kickReason.clear();
     m_localUserId.clear();
-    if (encryption && net::SecureChannel::Available()) m_secure.GenerateKeys();
+    UseNextSessionKeys();
     OKAY_INFO("net: client connecting to ", m_serverEp.ToString());
     return true;
 }
@@ -241,7 +254,7 @@ bool NetworkManager::StartRelay(const std::string& relayHost, std::uint16_t rela
         m_mode = Mode::Client;
         m_joined = false;
         m_localUserId.clear();
-        if (encryption && net::SecureChannel::Available()) m_secure.GenerateKeys();
+        UseNextSessionKeys();
         OKAY_INFO("net: joining session '", code, "' via relay ", m_relayEp.ToString());
     }
     return true;
@@ -1833,15 +1846,29 @@ void NetworkManager::ServerTick(float dt) {
                                                           : "encryption required, but this server was built without libsodium";
                 else if (acOn && !anticheat.settings.ticketKey.empty()) {
                     // A signed session ticket names the account; it takes the
-                    // place of the token verifiers.
+                    // place of the token verifiers. It must be for this server
+                    // (not any: "*" only when the rules allow it) and, when it
+                    // names a session key (cnf), for this very connection.
+                    const AntiCheatSettings& s = anticheat.settings;
                     std::vector<std::uint8_t> key;
-                    net::SessionTicket::Base64UrlDecode(anticheat.settings.ticketKey, key);
+                    net::SessionTicket::Base64UrlDecode(s.ticketKey, key);
                     net::SessionTicketClaims claims;
                     std::string err;
-                    if (net::SessionTicket::Verify(token, key, anticheat.settings.ticketAudience,
-                                                   (std::int64_t)std::time(nullptr), claims, &err))
-                        userId = claims.userId;
-                    else { ticketWhy = "session ticket refused: " + err; why = ticketWhy.c_str(); }
+                    if (s.ticketAudience.empty()) {
+                        if (!m_audienceWarned) OKAY_ERROR("anti-cheat: a ticketKey needs a ticketAudience (this server's id); refusing joins");
+                        m_audienceWarned = true;
+                        why = "server misconfigured (no ticket audience)";
+                    } else if (!net::SessionTicket::Verify(token, key, s.ticketAudience, (std::int64_t)std::time(nullptr), claims, &err)) {
+                        ticketWhy = "session ticket refused: " + err; why = ticketWhy.c_str();
+                    } else if (claims.audience == "*" && !s.ticketAnyAudience) {
+                        why = "session ticket refused: ticket is for another server";
+                    } else if (!claims.keyBinding.empty()) {
+                        const std::vector<std::uint8_t> pk = viaPending ? pendingIt->second.clientPk
+                                                                        : std::vector<std::uint8_t>(clientPk.begin(), clientPk.end());
+                        if (net::SessionTicket::KeyBinding(pk) != claims.keyBinding)
+                            why = "session ticket refused: ticket is for another connection";
+                    }
+                    if (!why) userId = claims.userId;
                 }
                 else if (m_joinCheck) {
                     const int r = m_joinCheck(token, userId);
@@ -1854,6 +1881,10 @@ void NetworkManager::ServerTick(float dt) {
                     SendDatagram(from, r.Data(), r.Size(), /*allowEncrypt=*/viaPending);
                     continue;
                 }
+                // One connection per account: a new sign-in replaces the old one.
+                if (!userId.empty())
+                    for (auto& [ep, other] : m_clients)
+                        if (!(ep == from) && other.userId == userId) { Kick(other.id, "signed in elsewhere"); break; }
             }
             auto& c = m_clients[from];
             bool isNew = (c.id == 0);

@@ -6,6 +6,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
+#include "okay/Components/StanceControl.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/PlayerCollision.hpp"
 #include "okay/Components/UIAnchor.hpp"     // UICanvas::Width/Height (viewport)
@@ -76,9 +77,15 @@ public:
     /// Send the player to a world point directly (for scripts / waypoints).
     void MoveTo(const Vec3& worldPoint) { m_dest = worldPoint; m_hasDest = true; }
 
+    /// Crouch and prone from scripts (SetStance; no keys by default): a smaller,
+    /// slower body that eases between stances.
+    StanceControl stanceControl{0, 0, true};
+    void SetStance(int s) { stanceControl.Set(s); }
+
     void Start() override {
         if (footIK) AttachCharacterFootIK(gameObject);
         if (showCursor) Cursor::Capture(false);   // a point-and-click game needs the pointer
+        stanceControl.Start(gameObject);
     }
 
     void Update(float dt) override {
@@ -88,6 +95,8 @@ public:
         // previously-active FPS controller) may have captured it; you click to move.
         if (showCursor && Cursor::IsLocked()) Cursor::Capture(false);
         Scene& scene = *gameObject->scene();
+        stanceControl.ReadKeys();
+        stanceControl.Step(gameObject, dt);
 
         // ---- Set a destination from a click on the ground plane ----
         bool clicked = holdToMove ? Input::GetMouseButton(mouseButton)
@@ -132,8 +141,8 @@ public:
         float wd = std::sqrt(toW.x * toW.x + toW.z * toW.z);
         Vec3 dir = wd > 1e-4f ? Vec3{toW.x / wd, 0.0f, toW.z / wd}
                               : Vec3{to.x / dist, 0.0f, to.z / dist};
-        bool running = runKey && Input::GetKey(runKey);
-        float speed = running ? runSpeed : walkSpeed;
+        bool running = stanceControl.Stance() == 0 && runKey && Input::GetKey(runKey);
+        float speed = stanceControl.Speed(running ? runSpeed : walkSpeed);
         // Ease to a stop over the last `arriveRadius` metres so arrivals don't jolt.
         if (arriveRadius > 0.0f && dist < arriveRadius)
             speed *= Mathf::Max(0.3f, dist / arriveRadius);
@@ -270,6 +279,9 @@ private:
             lo.facing    = transform->localRotation * Vec3{0, 0, -1};
             lo.onGround  = !rb || std::fabs(rb->velocity.y) < 0.5f || rb->groundedOnTerrain;
             lo.sprint    = running;
+            lo.crouch    = stanceControl.Stance() == 1;
+            lo.prone     = stanceControl.Stance() == 2;
+            lo.stance    = stanceControl.Level();
             lo.walkSpeed = walkSpeed;
             lo.dt = dt;
             ch->DriveLocomotion(lo);

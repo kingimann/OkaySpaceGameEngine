@@ -69,6 +69,12 @@ public:
     static bool AnyKey();
     /// True only on the frame a new key was first pressed (Input.anyKeyDown).
     static bool AnyKeyDown();
+    /// The key first pressed this frame (the lowest code if several), or 0. For
+    /// "press a key to bind" fields.
+    static char FirstKeyDown();
+    /// A key code's display name, the inverse of KeyFromName: "Space", "Enter",
+    /// "Shift", "Up", "A", "7"...
+    static std::string KeyName(char key);
 
     // ---- Mouse (driven by FeedMouse from the windowed runtime) ----------
     /// Cursor position in pixels (origin top-left of the window).

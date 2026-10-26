@@ -28,6 +28,7 @@
 #include "Splash.hpp"                   // branded loading frame (no black screen at startup)
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
 #include "UIInspectorLayout.hpp"        // flex / mask / list view inspectors
+#include "UIInspectorOverlay.hpp"       // modal / context menu / keybind inspectors
 #endif
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
 #include "tinyfiledialogs.h"            // native OS open/save file dialogs (asset import)
@@ -5273,6 +5274,10 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         if (ImGui::MenuItem("Flex Box"))     addUI("FlexBox",     oked::BuildUIFlexBox);
         if (ImGui::MenuItem("Masked Panel")) addUI("Mask",        oked::BuildUIMaskedPanel);
         if (ImGui::MenuItem("List View"))    addUI("ListView",    oked::BuildUIListView);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Modal Dialog")) addUI("Dialog",      oked::BuildUIModalDialog);
+        if (ImGui::MenuItem("Context Menu Panel")) addUI("ContextPanel", oked::BuildUIContextMenu);
+        if (ImGui::MenuItem("Keybind Field")) addUI("Keybind",    oked::BuildUIKeybindField);
         ImGui::EndMenu();
     }
     // Launcher-look building blocks: each is a small ready-styled group you can
@@ -29163,15 +29168,29 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawn an elbow/knee pole hint you can drag to aim the bend.");
                 float t[3] = {lb->target.x, lb->target.y, lb->target.z};
                 if (ImGui::DragFloat3("Target point##lik", t, 0.1f)) { lb->target = {t[0], t[1], t[2]}; ed.dirty = true; }
+                {
+                    int pm = (int)lb->poleMode;
+                    if (ImGui::Combo("Pole Mode##lik", &pm, "Auto (keep the bend)\0Character\0World\0")) { lb->poleMode = (LimbIK::PoleMode)pm; ed.dirty = true; }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Without a Pole object: Auto keeps the animation's own elbow/knee bend\n(a straight limb bends toward Pole Dir, turning with the character);\nCharacter bends toward Pole Dir in this object's space; World toward a fixed world direction.");
+                    float pd[3] = {lb->pole.x, lb->pole.y, lb->pole.z};
+                    if (ImGui::DragFloat3("Pole Dir##lik", pd, 0.05f)) { lb->pole = {pd[0], pd[1], pd[2]}; ed.dirty = true; }
+                }
                 ImGui::DragFloat("Weight##lik", &lb->weight, 0.01f, 0.0f, 1.0f);
                 ImGui::DragFloat("Min Bend##lik", &lb->minBend, 1.0f, 0.0f, 180.0f);
                 ImGui::DragFloat("Max Bend##lik", &lb->maxBend, 1.0f, 0.0f, 180.0f);
+                if (ImGui::DragFloat("Softness##lik", &lb->softness, 0.005f, 0.0f, 0.5f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ease the last stretch to full reach over this distance,\nso the limb doesn't snap straight as the target moves out of reach.");
                 ImGui::Checkbox("Match Target Rotation##lik", &lb->matchTargetRotation);
+                if (lb->matchTargetRotation && lb->targetName.empty()) {
+                    Vec3 e = lb->targetRotation.ToEuler();
+                    float ea[3] = {e.x, e.y, e.z};
+                    if (ImGui::DragFloat3("Target Rotation##lik", ea, 1.0f)) { lb->targetRotation = Quat::Euler({ea[0], ea[1], ea[2]}); ed.dirty = true; }
+                }
                 ImGui::Checkbox("Orient Bones##lik", &lb->orient);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Joints that aren't parented in a chain: also rotate the upper/lower\nbones toward the moved joints. A bone chain always turns.");
                 ImGui::Checkbox("IK Active##lik", &lb->ikActive); ImGui::SameLine();
                 ImGui::SetNextItemWidth(90); ImGui::DragFloat("Fade (s)##lik", &lb->fadeTime, 0.01f, 0.0f, 3.0f);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to blend IK in/out when IK Active changes (scripts: ik_enable).");
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also rotate the upper/lower bones to follow the solved joints,\nso a mesh skinned to the limb bends with it (not just the joints moving).");
                 if (ImGui::SmallButton("Remove##lik")) toRemove = lb;
             }
         }
@@ -33370,6 +33389,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     oked::DrawUILayoutComponentInspector(curComp, ed, &toRemove, {CompHeader, AnchorCombo});
+    oked::DrawUIOverlayComponentInspector(curComp, ed, &toRemove, {CompHeader, AnchorCombo});
     if (auto* pb = dynamic_cast<UIProgressBar*>(curComp)) {
         if (CompHeader("UI Progress Bar", pb, &toRemove)) {
             UIStyleBar(ed, pb);
@@ -34684,6 +34704,9 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIMask>(), "UI Mask (clip children)")) { go->AddComponent<UIMask>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIFlexItem>(), "UI Flex Item (grow / shrink)")) { go->AddComponent<UIFlexItem>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIListView>(), "UI List View")) { oked::BuildUIListView(go); ed.dirty = true; }
+            if (item(!go->GetComponent<UIModal>(), "UI Modal (dialog)")) { go->AddComponent<UIModal>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIContextMenu>(), "UI Context Menu (right-click)")) { go->AddComponent<UIContextMenu>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIKeybindField>(), "UI Keybind Field")) { go->AddComponent<UIKeybindField>(); ed.dirty = true; }
             if (item(!go->GetComponent<UITextBind>(), "UI Text Bind (show a variable)")) { go->AddComponent<UITextBind>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIBarBind>(), "UI Bar Bind (var -> progress bar)")) { go->AddComponent<UIBarBind>(); ed.dirty = true; }
           } EndCat(o); }

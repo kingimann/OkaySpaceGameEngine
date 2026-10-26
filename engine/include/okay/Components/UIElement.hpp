@@ -26,6 +26,9 @@
 #include "okay/Components/UIListView.hpp"
 #include "okay/Components/UIMask.hpp"
 #include "okay/Components/UIFrame.hpp"
+#include "okay/Components/UIModal.hpp"
+#include "okay/Components/UIContextMenu.hpp"
+#include "okay/Components/UIKeybindField.hpp"
 #include "okay/Components/UIDraggable.hpp"   // UIDropTarget
 #include "okay/Components/UITooltip.hpp"
 #include "okay/Components/WorldUI.hpp"
@@ -140,6 +143,7 @@ inline UIRect GetUIRect(GameObject* go) {
     else if (auto* in = go->GetComponent<UIInputField>()) { r.valid = true; r.anchor = in->anchor; r.anchorPtr = &in->anchor; r.position = &in->position; r.sizePtr = &in->size; r.size = in->size; }
     else if (auto* dd = go->GetComponent<UIDropdown>())   { r.valid = true; r.anchor = dd->anchor; r.anchorPtr = &dd->anchor; r.position = &dd->position; r.sizePtr = &dd->size; r.size = dd->size; }
     else if (auto* tb = go->GetComponent<UITabs>())       { r.valid = true; r.anchor = tb->anchor; r.anchorPtr = &tb->anchor; r.position = &tb->position; r.sizePtr = &tb->size; r.size = tb->size; }
+    else if (auto* kb = go->GetComponent<UIKeybindField>()) { r.valid = true; r.anchor = kb->anchor; r.anchorPtr = &kb->anchor; r.position = &kb->position; r.sizePtr = &kb->size; r.size = kb->size; }
     else if (auto* sv = go->GetComponent<UIScrollView>()) { r.valid = true; r.anchor = sv->anchor; r.anchorPtr = &sv->anchor; r.position = &sv->position; r.sizePtr = &sv->size; r.size = sv->size; }
     else if (auto* lv = go->GetComponent<UIListView>())   { r.valid = true; r.anchor = lv->anchor; r.anchorPtr = &lv->anchor; r.position = &lv->position; r.sizePtr = &lv->size; r.size = lv->size; }
     else if (auto* fl = go->GetComponent<UILayoutGroup>(); fl && fl->IsFlex()) {   // a flex box: a real, resizable rect
@@ -192,6 +196,7 @@ inline bool IsUIFocused(GameObject* go) {
     if (auto* r = go->GetComponent<UIRating>())   return r->IsFocused();
     if (auto* d = go->GetComponent<UIDropdown>()) return d->IsFocused();
     if (auto* tb = go->GetComponent<UITabs>())    return tb->IsFocused();
+    if (auto* kb = go->GetComponent<UIKeybindField>()) return kb->IsFocused();
     return false;
 }
 
@@ -462,6 +467,9 @@ enum : int {
     K_Crosshair,
     K_FocusRing,    // keyboard/gamepad focus ring (any focused widget)
     K_Tooltip,
+    K_Keybind,      // UIKeybindField
+    K_ModalDim,     // an open UIModal's backdrop (drawn first in its raised group)
+    K_ContextMenu,  // an open UIContextMenu (drawn last, in screen pixels)
     K_Count
 };
 } // namespace uilayers
@@ -471,7 +479,8 @@ inline const char* UILayerName(int kind) {
     static const char* const kNames[uilayers::K_Count] = {
         "drop slot", "image", "panel", "drop highlight", "scroll", "progress", "radial",
         "minimap", "slider", "stepper", "rating", "toggle", "tabs", "button", "text",
-        "world ui", "dropdown", "input", "crosshair", "focus ring", "tooltip"};
+        "world ui", "dropdown", "input", "crosshair", "focus ring", "tooltip",
+        "keybind", "modal dim", "context menu"};
     return (kind >= 0 && kind < uilayers::K_Count) ? kNames[kind] : "";
 }
 
@@ -504,6 +513,9 @@ inline void UIQueueDrawItems(GameObject* g, std::size_t index, std::vector<UIDra
     if (g->GetComponent<Crosshair>())        add(K_Crosshair);
     if (IsUIFocused(g))                      add(K_FocusRing);
     if (g->GetComponent<UITooltip>())        add(K_Tooltip);
+    if (g->GetComponent<UIKeybindField>())   add(K_Keybind);
+    if (g->GetComponent<UIModal>())          add(K_ModalDim);
+    if (g->GetComponent<UIContextMenu>())    add(K_ContextMenu);
 }
 
 /// The canonical default draw layer for whatever UI widget a GameObject carries
@@ -535,6 +547,7 @@ inline int UIDefaultLayer(GameObject* go) {
     if (go->GetComponent<UIInputField>())     return K_Input;
     if (go->GetComponent<Crosshair>())        return K_Crosshair;
     if (go->GetComponent<UITooltip>())        return K_Tooltip;
+    if (go->GetComponent<UIKeybindField>())   return K_Keybind;
     if (auto* tr = go->GetComponent<TextRenderer>()) return tr->screenSpace ? K_Text : -1;
     return -1;
 }
@@ -872,6 +885,8 @@ inline bool UIClipContains(GameObject* go, const Vec2& p, float screenW, float s
 /// visible part of a widget, but not a drag in progress (a slider or scrollbar
 /// keeps tracking when the pointer leaves its scroll view).
 inline bool UIClipHitTest(GameObject* go, const Vec2& p, float screenW, float screenH) {
+    if (UIModal::Blocks(go)) return false;   // an open modal takes all input
+    if (UIContextMenu::OpenMenuAt(go, p)) return false;   // under an open menu (the menu handles its own clicks)
     if (Input::GetMouseButton(0) && !Input::GetMouseButtonDown(0)) return true;
     return UIClipContains(go, p, screenW, screenH);
 }

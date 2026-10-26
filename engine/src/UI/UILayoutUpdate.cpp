@@ -8,6 +8,7 @@ namespace okay {
 void UpdateUILayouts(Scene& scene) {
     // List views create their pooled rows (new scene objects), so collect them
     // before laying any out.
+    UIModal::RefreshOpenOrder();   // which modals are shown, newest on top
     static thread_local std::vector<UIListView*> lists;
     lists.clear();
     for (const auto& up : scene.Objects()) {

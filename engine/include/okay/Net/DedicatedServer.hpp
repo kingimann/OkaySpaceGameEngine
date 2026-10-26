@@ -122,8 +122,10 @@ public:
     AsyncTokenCheck(const AsyncTokenCheck&) = delete;
     AsyncTokenCheck& operator=(const AsyncTokenCheck&) = delete;
 
-    /// 1 = valid (outUserId set), 0 = invalid / empty token, -1 = still checking.
+    /// 1 = valid (outUserId set), 0 = invalid / empty token, -1 = still checking,
+    /// -2 = kMaxQueued checks already waiting (busy: the join is refused).
     int Check(const std::string& token, std::string& outUserId);
+    static constexpr std::size_t kMaxQueued = 64;
     /// Number of checks waiting for the worker (diagnostics / tests).
     std::size_t Pending() const;
 

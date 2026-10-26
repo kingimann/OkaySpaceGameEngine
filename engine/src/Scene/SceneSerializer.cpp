@@ -914,9 +914,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << f->weight << " " << f->footOffset << " " << (f->useRaycast ? 1 : 0) << " " << f->groundY
             << " " << (f->adjustPelvis ? 1 : 0) << " " << (f->plantDown ? 1 : 0) << " " << (f->alignToGround ? 1 : 0)
             << " " << f->minKneeBend << " " << f->maxKneeBend << " " << f->smoothing
-            << " " << (f->orient ? 1 : 0) << "\n";
-        // The rest of the tuning, key=value (older files lack it: defaults apply).
-        out << "  footikx";
+            << " " << (f->orient ? 1 : 0);
+        // The rest of the tuning, key=value at the end of the line: older builds
+        // ignore trailing tokens here, older files lack them (defaults apply).
         KvOut k{out};
         k("rayUp", f->maxRayUp)("rayDown", f->maxRayDown)("pelvisShift", f->maxPelvisShift)
          ("upX", f->footUpAxis.x)("upY", f->footUpAxis.y)("upZ", f->footUpAxis.z)
@@ -2773,6 +2773,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "modelanimcubic") {
                     auto* ma = go->GetComponent<ModelAnimator>();
                     long cnt = 0; in >> cnt;
+                    if (!in || !countOk(cnt, 1)) return bad("modelanimcubic: bad clip count");
                     for (long k = 0; k < cnt && in; ++k) {
                         long ci = -1; in >> ci;
                         if (!ma || ci < 0 || ci >= (long)ma->clips.size()) continue;
@@ -3204,15 +3205,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     { std::string rest; std::getline(in, rest);
                       std::istringstream rs(rest); float sm; int o;
                       if (rs >> sm) f->smoothing = sm;
-                      if (rs >> o)  f->orient = (o != 0); }
-                } else if (field == "footikx") {
-                    KvIn k(in);
-                    if (auto* f = go->GetComponent<FootIK>()) {
-                        k.f("rayUp", f->maxRayUp); k.f("rayDown", f->maxRayDown); k.f("pelvisShift", f->maxPelvisShift);
-                        k.f("upX", f->footUpAxis.x); k.f("upY", f->footUpAxis.y); k.f("upZ", f->footUpAxis.z);
-                        k.b("lock", f->footLock); k.f("lockSpeed", f->lockSpeed); k.f("lockHeight", f->lockHeight);
-                        k.f("lockRelease", f->lockRelease);
-                    }
+                      if (rs >> o)  f->orient = (o != 0);
+                      KvIn k(rs);
+                      k.f("rayUp", f->maxRayUp); k.f("rayDown", f->maxRayDown); k.f("pelvisShift", f->maxPelvisShift);
+                      k.f("upX", f->footUpAxis.x); k.f("upY", f->footUpAxis.y); k.f("upZ", f->footUpAxis.z);
+                      k.b("lock", f->footLock); k.f("lockSpeed", f->lockSpeed); k.f("lockHeight", f->lockHeight);
+                      k.f("lockRelease", f->lockRelease); }
                 } else if (field == "limbik") {
                     auto* lb = go->AddComponent<LimbIK>();
                     lb->upperName = ReadQuoted(in); lb->lowerName = ReadQuoted(in); lb->endName = ReadQuoted(in);

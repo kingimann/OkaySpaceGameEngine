@@ -77,6 +77,7 @@ public:
     bool FootLocked(int leg) const { return leg == 0 ? m_leg[0].locked : m_leg[1].locked; }
 
     void Start() override {
+        m_touched = 0;   // bones may be re-resolved below: forget the old ones
         Scene* s = GetScene();
         if (!s) return;
         // Bones resolve inside this character first (two copies of one model share
@@ -150,6 +151,7 @@ public:
             rightHipName = hipR;  rightKneeName = kneeR;  rightFootName = footR;
             if (!pel.empty()) pelvisName = pel;
             leftHip = leftKnee = leftFoot = nullptr;    // resolve the names on Start
+            m_touched = 0;
             rightHip = rightKnee = rightFoot = nullptr;
             pelvis = nullptr;
         }
@@ -162,6 +164,7 @@ public:
         Character* pc = gameObject->GetComponent<Character>();
         if (!pc) return;
         if (!pc->PartsBuilt()) { pc->separateParts = true; pc->BuildParts(); }
+        m_touched = 0;
         auto T = [&](int b) -> Transform* { GameObject* g = pc->Part(b); return g ? g->transform : nullptr; };
         // Bone indices (Character.cpp): hips=0; L thigh/shin/foot=9/10/11; R=12/13/14.
         if (!leftHip)  leftHip  = T(9);  if (!leftKnee)  leftKnee  = T(10); if (!leftFoot)  leftFoot  = T(11);

@@ -19030,6 +19030,7 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
                 cut.name = s_name;
                 for (const auto& nc : src.nodes) {
                     ModelAnimator::NodeClip nn; nn.node = nc.node;
+                    nn.clip.smoothKeys = nc.clip.smoothKeys;   // an imported clip stays linear
                     for (const auto& kv : nc.clip.Tracks()) {
                         bool f = false;
                         float va = nc.clip.Evaluate(kv.first, s_a, f);

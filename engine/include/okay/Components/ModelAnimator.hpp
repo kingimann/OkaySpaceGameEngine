@@ -501,6 +501,7 @@ public:
         // (unless root motion is what moves it: then the clip sets the pace).
         float clipSpd = lo + (hi - lo) * w, rate = 1.0f;
         if (!rootMotion && clipSpd > 1e-3f) rate = std::fmin(2.0f, std::fmax(0.5f, spd / clipSpd));
+        if (spd <= walkThreshold) rate = 1.0f + (rate - 1.0f) * w;   // idle plays at its own pace
         return BlendClips(dt * rate, A, B, w);
     }
 
@@ -1035,14 +1036,20 @@ private:
     bool  m_fell  = false;   // descended since leaving the ground (past any jump apex)
 
     // Something solid just under this object's origin (the feet), other than
-    // the body carrying it.
+    // the model itself or the bodies carrying it (the player's capsule
+    // contains the ray's start, wherever the player sits in the hierarchy).
     bool GroundUnderFeet() const {
         Scene* sc = gameObject ? gameObject->scene() : nullptr;
         if (!sc || !transform) return false;
-        Transform* body = transform;
-        while (body->Parent()) body = body->Parent();
         Vec3 p = transform->Position();
-        return sc->physics3D().Raycast(*sc, {p.x, p.y + 0.1f, p.z}, Vec3{0, -1, 0}, 0.25f, body->gameObject).hit;
+        for (const RaycastHit3D& h : sc->physics3D().RaycastAll(*sc, {p.x, p.y + 0.1f, p.z}, Vec3{0, -1, 0}, 0.25f,
+                                                                 nullptr, Physics3D::kAllLayers, false)) {
+            if (!h.gameObject || h.gameObject->IsSelfOrDescendantOf(gameObject)) continue;
+            bool carrier = false;
+            for (Transform* t = transform->Parent(); t && !carrier; t = t->Parent()) carrier = t->gameObject == h.gameObject;
+            if (!carrier) return true;
+        }
+        return false;
     }
 };
 

@@ -27991,6 +27991,10 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Kick a client after this many refusals within a minute (0 = never).");
             if (ImGui::Checkbox("Owner-only SyncVars##ac", &s.ownerOnlySyncVars)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("\"<netId>.<name>\" SyncVars may only be written by that object's owner.");
+            if (ImGui::Checkbox("Require encryption##ac", &s.requireEncryption)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only encrypted clients may join, and their packets are numbered (no replays). A client with encryption off turns it on when this server asks.");
+            if (ImGui::Checkbox("Allow runtime toggle##ac", &ac->allowRuntimeToggle)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Let disabling or removing this component take the rules off a running server. Off: they stay until the server stops.");
             ImGui::TextUnformatted("Prefabs clients may spawn:");
             int del = -1;
             for (int i = 0; i < (int)s.spawnAllowlist.size(); ++i) {

@@ -15,10 +15,14 @@
 //     an error in the handler rejects it (fail closed) and is logged once.
 // Disabling or removing the component takes all of that away again (the
 // manager's previous rules and handlers come back); enabling re-applies it.
+// While the manager runs as a server that's ignored unless allowRuntimeToggle
+// is set, so a stray script can't switch the checks off mid-game.
+// If `file` doesn't load, the server refuses every join until it does.
 // Only the server checks anything; on clients and offline it does nothing.
 // ---------------------------------------------------------------------------
 #include "okay/Scene/Component.hpp"
 #include "okay/Net/AntiCheat.hpp"
+#include "okay/Net/SecureChannel.hpp"
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -31,14 +35,21 @@ class AntiCheatConfig : public Behaviour {
 public:
     /// Optional .okayac file; when set and it loads, it replaces `settings`.
     std::string file;
-    /// The rules (used when `file` is empty or doesn't load). On by default:
-    /// adding the component is the opt-in.
+    /// The rules (used when `file` is empty). On by default: adding the
+    /// component is the opt-in.
     AntiCheatSettings settings = DefaultSettings();
+    /// Let disabling / removing the component take the rules off a running
+    /// server (off: they stay until the server stops).
+    bool allowRuntimeToggle = false;
+    /// Messages a client may send per second, set on the manager when it has
+    /// no limit of its own (maxMessagesPerSecond 0).
+    static constexpr int kMessagesPerSecond = 120;
 
     static AntiCheatSettings DefaultSettings() {
         AntiCheatSettings s;
         s.enabled = true;
-        s.maxSyncSpeed = 0.0f;
+        s.requireEncryption = net::SecureChannel::Available();
+        s.maxSyncSpeed = 20.0f;
         s.kickAfterViolations = 5;
         s.maxRpcsPerSecond = 30;
         s.maxHitRange = 300.0f;
@@ -48,12 +59,12 @@ public:
     void Start() override { Apply(); }
     void Update(float) override { if (!m_applied) Apply(); }   // the manager may appear after us
     void OnEnable() override { if (m_startedOnce) Apply(); }
-    void OnDisable() override { Uninstall(); }
-    void OnDestroy() override { Uninstall(); }
+    void OnDisable() override { RuntimeUninstall(); }
+    void OnDestroy() override { RuntimeUninstall(); }
 
     /// (Re)apply the rules to the scene's NetworkManager. False if there's no
-    /// manager yet or `file` failed to load (then `settings` is used and
-    /// LoadError() says why).
+    /// manager yet or `file` failed to load (then LoadError() says why and the
+    /// server refuses joins).
     bool Apply();
     const std::string& LoadError() const { return m_error; }
     /// The rules in force after Apply (the file's, or `settings`).
@@ -79,9 +90,13 @@ private:
         std::function<void(std::uint32_t)> onForgetPeer;
         std::function<bool(HitClaim&)> validateHit;
         std::uint64_t installer = 0;
+        std::string configError;
+        int maxMessagesPerSecond = 0;
     } m_prev;
+    bool m_toggleWarned = false;
     NetworkManager* FindManager() const;
     void Uninstall();
+    void RuntimeUninstall();
 };
 
 } // namespace okay

@@ -790,6 +790,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             out << " " << Quote(vars);
         }
         out << "\n";
+        out << "  anticheatsafety " << (s.requireEncryption ? 1 : 0) << " " << (ac->allowRuntimeToggle ? 1 : 0) << "\n";
         const AntiCheatSettings d;   // hit-claim tuning: its own line, only when changed
         if (s.hitOriginTolerance != d.hitOriginTolerance || s.hitTolerance != d.hitTolerance || s.maxHitRange != d.maxHitRange ||
             s.hitDamage != d.hitDamage || s.hitLineOfSight != d.hitLineOfSight || s.hitsNeedMoveCheck != d.hitsNeedMoveCheck)
@@ -4978,6 +4979,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "anticheat") {
                     auto* ac = go->AddComponent<AntiCheatConfig>();
                     AntiCheatSettings& s = ac->settings;
+                    s.requireEncryption = false;   // as before, unless an "anticheatsafety" line follows
                     int en = 1, own = 1;
                     in >> en >> s.maxSyncSpeed >> s.maxSyncVarsPerSecond >> s.kickAfterViolations >> own;
                     s.enabled = (en != 0); s.ownerOnlySyncVars = (own != 0);
@@ -5017,6 +5019,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                 a = b + 1;
                             }
                         }
+                    }
+                } else if (field == "anticheatsafety") {   // follows the object's "anticheat" line
+                    int enc = 0, toggle = 0;
+                    in >> enc >> toggle;
+                    if (auto* ac = go->GetComponent<AntiCheatConfig>()) {
+                        ac->settings.requireEncryption = enc != 0;
+                        ac->allowRuntimeToggle = toggle != 0;
                     }
                 } else if (field == "anticheathit") {   // follows the object's "anticheat" line
                     float o = 2.0f, t = 1.0f, r = 0.0f, dmg = 10.0f; int los = 1, needMove = 1;

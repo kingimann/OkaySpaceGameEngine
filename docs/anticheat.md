@@ -57,14 +57,31 @@ React in a visual script with **On Cheat Detected**:
 Check RPCs with **Net Validator** components (size, rate, host-only), or with an
 **On Validate Rpc** graph plus **Reject Rpc**.
 
+A new Anti-Cheat Config starts safe:
+- `requireEncryption` on (in builds with libsodium);
+- `maxSyncSpeed 20`, `maxRpcsPerSecond 30`, `maxHitRange 300`;
+- a Network Manager with no message limit gets `maxMessagesPerSecond 120`.
+
+Scenes saved before these defaults keep `requireEncryption` off.
+
+It also fails closed:
+- If its rules file doesn't load, the server refuses every join (*"server
+  misconfigured"*) and logs why, the same way `--anticheat` refuses to start.
+- Disabling or removing the component while the server runs leaves the rules
+  in force, unless **Allow Runtime Toggle** is on.
+
+On its first tick a server logs one line naming the protections that are off
+(anti-cheat, encryption, move check, message rate limit).
+
 ## P2: encryption required and replay protection
 
 With `requireEncryption true`:
 
 - The server turns its `encryption` on. A client that doesn't offer a key is
-  refused with *"encryption required"*, so set `encryption = true` on the client
-  too. Both ends need libsodium; a server built without it refuses every join
-  and says so.
+  refused with *"encryption required"*. A client from this version with
+  libsodium then turns its own `encryption` on and joins again, sealed; older
+  clients need `encryption = true` set. Both ends need libsodium; a server
+  built without it refuses every join and says so.
 - Every sealed packet carries an 8-byte sequence number inside the ciphertext.
   A packet already seen, or more than 64 behind the newest, is dropped. The
   server switches this on through a flag at the end of its Welcome, so an older
@@ -171,6 +188,18 @@ These hold whether or not the anti-cheat is on, unless a setting is named:
     man-in-the-middle.
   - The seed is the private key: keep it on the server, never in a game build
     or a `.okayac` file.
+- **A session cookie without encryption.** With `encryption` off, a player is
+  known only by its address. The Welcome then carries a random 64-bit cookie (a
+  trailing field older clients skip). The client puts it at the end of every
+  Leave, State, Message and SyncVar, so a spoofed Leave can't disconnect a player.
+  - Once a client has sent the cookie, the server drops those packets without
+    it. An older client never sends it and plays as before.
+  - Reliable messages, inputs and pings don't carry it. Encryption is the real
+    protection for those.
+- **Encryption that isn't built in is refused.** A host with `encryption` on in
+  a build without libsodium doesn't start: `StartServer` and `HostViaRelay`
+  fail with an error, and the dedicated server exits (`--no-encryption` runs it
+  unencrypted). A client with `encryption` on still falls back to plaintext.
 - **Reliable de-dup is a window.** Each peer remembers the newest reliable
   sequence number and the 4096 before it, instead of every number ever seen. A
   message older than that is acked but not run.
@@ -184,7 +213,8 @@ These hold whether or not the anti-cheat is on, unless a setting is named:
   - Clients without this update never answer, so turn it on only once every
     player has it.
   - The key travels with each challenge, so the HMAC only adds anything over an
-    encrypted session.
+    encrypted session. That's by design: the heartbeat catches a clock that runs
+    fast, not a client that forges its answers.
 
 #302 (P2) already covers:
 - `requireEncryption`: only encrypted clients;

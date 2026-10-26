@@ -560,6 +560,10 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
                 std::printf("[server] anti-cheat kick of %s reported for review\n", k.name.c_str());
         });
     }
+    if (opts.encryption && !net::SecureChannel::Available()) {
+        std::fprintf(stderr, "[server] encryption is on, but this server was built without libsodium (--no-encryption to run unencrypted)\n");
+        return 2;
+    }
     if (!net->StartServer(opts.port)) {
         std::fprintf(stderr, "[server] couldn't listen on UDP port %u (is it in use?)\n", (unsigned)opts.port);
         return 2;

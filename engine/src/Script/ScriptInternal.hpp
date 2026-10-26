@@ -148,6 +148,8 @@ enum class T : std::uint8_t {
     KwClass, KwPublic, KwPrivate, KwVoid, KwInt, KwFloat, KwBool, KwString, KwVar,
     KwIf, KwElse, KwWhile, KwFor, KwReturn, KwBreak, KwContinue, KwTrue, KwFalse, KwNull,
     KwNew, KwThis, KwConst,
+    // $"..." (see Lex): InterpBegin, then StringLit parts and InterpHole <tokens> [InterpFormat] InterpHoleEnd, then InterpEnd
+    InterpBegin, InterpHole, InterpFormat, InterpHoleEnd, InterpEnd,
 };
 struct Token {
     T type = T::End;
@@ -175,6 +177,8 @@ enum class EK : std::uint8_t {
     Unary, Binary, Assign, IncDec, Cast, Conditional,
     Index,         ///< a[i]: object = the array, lhs = the index
     NewArray,      ///< new T[n] / new T[] { ... }: typeArg = the array type, lhs = n (may be null), args = items
+    Interp,        ///< $"...": args = the parts (text literals and { } values), joined as text
+    Format,        ///< {value:F2} in $"...": lhs = the number, sval = "F2", ival = decimals (checked)
     ArrayLit,      ///< { a, b } after `T[] x =`: the type comes from the declaration
 };
 

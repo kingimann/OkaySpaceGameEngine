@@ -17,6 +17,8 @@ std::string ValueToString(const Value& v) {
         std::string operator()(bool b) const { return b ? "True" : "False"; }
         std::string operator()(std::int32_t i) const { return std::to_string(i); }
         std::string operator()(float f) const {
+            if (std::isnan(f)) return "NaN";   // the same on every platform, not printf's nan / -nan
+            if (std::isinf(f)) return f > 0 ? "Infinity" : "-Infinity";
             char buf[48];
             std::snprintf(buf, sizeof(buf), "%.7g", (double)f);
             return buf;
@@ -288,6 +290,19 @@ private:
             case EK::Conditional: return AsB(Eval(*e.third)) ? Eval(*e.lhs) : Eval(*e.rhs);
             case EK::Index: { Slot sl = IndexSlot(e); return sl.arr->items[sl.i]; }
             case EK::NewArray: case EK::ArrayLit: return MakeArray(e);
+            case EK::Interp: {
+                std::string s;
+                for (auto& a : e.args) s += ValueToString(Eval(*a));
+                return Value{std::move(s)};
+            }
+            case EK::Format: {
+                const Value v = Eval(*e.lhs);
+                const auto* i = std::get_if<std::int32_t>(&v);
+                if (!i && !std::isfinite(AsF(v))) return Value{ValueToString(v)};
+                char buf[96];
+                std::snprintf(buf, sizeof(buf), "%.*f", (int)e.ival, i ? (double)*i : (double)AsF(v));
+                return Value{std::string(buf)};
+            }
         }
         return Value{};
     }

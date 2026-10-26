@@ -27942,6 +27942,8 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Checkbox("Owned (this peer broadcasts)##ns", &ns->owned)) ed.dirty = true;
             if (ImGui::Checkbox("Sync animation##ns", &ns->syncAnimation)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("If this object (or a child) has a Character, replicate its animation + punches too.");
+            if (ImGui::Checkbox("Players can claim it##ns", &ns->clientClaimable)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("With an Anti-Cheat Config, an object nobody owns is the host's: no player may move it or change its variables. Tick this for objects any player may grab (a ball): the first one to move it owns it.");
             if (ImGui::SmallButton("Remove##ns")) toRemove = ns;
         }
     }

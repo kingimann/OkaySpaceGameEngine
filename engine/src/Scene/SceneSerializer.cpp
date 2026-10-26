@@ -773,7 +773,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* ns = go->GetComponent<NetworkSync>()) {
         out << "  netsync " << (int)ns->authority << " " << (ns->owned ? 1 : 0)
-            << " " << (ns->syncAnimation ? 1 : 0) << " " << Quote(ns->netId) << "\n";
+            << " " << (ns->syncAnimation ? 1 : 0) << " " << Quote(ns->netId);
+        if (ns->clientClaimable) out << " 1";   // only when set: other scenes don't change
+        out << "\n";
     }
     if (auto* ac = go->GetComponent<AntiCheatConfig>()) {
         const AntiCheatSettings& s = ac->settings;
@@ -5059,6 +5061,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> std::ws;
                     if (std::isdigit(in.peek())) { int sa = 1; in >> sa; ns->syncAnimation = (sa != 0); }
                     ns->netId = ReadQuoted(in);
+                    in >> std::ws;   // clientClaimable came later
+                    if (std::isdigit(in.peek())) { int cc = 0; in >> cc; ns->clientClaimable = cc != 0; }
                 } else if (field == "water") {
                     auto* w = go->AddComponent<Water>();
                     in >> w->size >> w->resolution >> w->waveHeight >> w->waveLength >> w->waveSpeed

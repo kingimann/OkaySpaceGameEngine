@@ -349,6 +349,7 @@ void NetworkManager::Stop() {
     m_acClockMs = 0.0;
     m_gameClockMs = 0.0;
     m_pendingJoins.clear();
+    m_joinLimits.clear();
     m_kickBans.clear();
     m_secure = net::SecureChannel{};   // a new session makes new keys (a reconnect mustn't keep the old ones)
     m_joinHellos = 0;
@@ -1588,6 +1589,29 @@ bool NetworkManager::AntiCheatAllowsSyncVar(std::uint32_t peer, const std::strin
     return false;
 }
 
+bool NetworkManager::JoinBlocked(const net::Endpoint& from) const {
+    auto it = m_joinLimits.find(from.address);
+    return it != m_joinLimits.end() && m_serverTime < it->second.blockedUntil;
+}
+
+void NetworkManager::CountJoinAttempt(const net::Endpoint& from, int cost) {
+    if (m_joinLimits.size() > 4096)   // addresses long quiet go (the map can't grow without end)
+        for (auto it = m_joinLimits.begin(); it != m_joinLimits.end();)
+            it = m_serverTime - it->second.windowStart > 600.0f && m_serverTime > it->second.blockedUntil ? m_joinLimits.erase(it) : std::next(it);
+    JoinLimit& l = m_joinLimits[from.address];
+    if (m_serverTime - l.windowStart >= kJoinWindow) {
+        l.windowStart = m_serverTime; l.count = 0;
+        if (m_serverTime > l.blockedUntil + 60.0f) l.backoff = 0.0f;   // a quiet minute after a block forgives it
+    }
+    l.count += cost;
+    if (l.count > kJoinAttempts) {
+        l.backoff = l.backoff > 0.0f ? std::min(l.backoff * 2.0f, 320.0f) : 10.0f;
+        l.blockedUntil = m_serverTime + l.backoff;
+        l.count = 0; l.windowStart = m_serverTime; l.told = false;
+        OKAY_WARN("net: too many join attempts from ", from.ToString(), "; ignoring it for ", (int)l.backoff, " s");
+    }
+}
+
 float NetworkManager::KickBanLeft(const std::string& ident) const {
     auto it = m_kickBans.find(ident);
     return it == m_kickBans.end() ? 0.0f : std::max(0.0f, it->second.until - m_serverTime);
@@ -1816,6 +1840,7 @@ void NetworkManager::ServerTick(float dt) {
             // A sealed join starts: trade keys, then the client sends its Join
             // encrypted. The hello is padded to at least the answer's size.
             if (len < kJoinHelloSize || m_clients.count(from)) continue;
+            if (JoinBlocked(from)) continue;   // too many attempts from this address: its key exchange waits
             const std::uint8_t version = p.ReadU8();
             const std::string clientPk = p.ReadString();
             if (!p.Ok() || version < kJoinVersion) continue;
@@ -1842,6 +1867,7 @@ void NetworkManager::ServerTick(float dt) {
             PendingJoin& pending = pj->second;
             const std::vector<std::uint8_t> pkBytes(clientPk.begin(), clientPk.end());
             if (pending.clientPk != pkBytes || !pending.secure.Ready()) {
+                CountJoinAttempt(from, 1);   // new keys (and a signature): an attempt
                 pending.secure = net::SecureChannel{};
                 pending.secure.GenerateKeys();
                 if (!pending.secure.Establish(pkBytes, /*asServer=*/true)) { m_pendingJoins.erase(pj); continue; }
@@ -1922,9 +1948,21 @@ void NetworkManager::ServerTick(float dt) {
             const bool acOn = anticheat.settings.enabled;
             const bool needCrypto = acOn && anticheat.settings.requireEncryption;
             if (needCrypto) encryption = true;   // the rules ask for it
+            if (!existed && JoinBlocked(from)) {
+                // Too many attempts from this address: say so once, then ignore.
+                JoinLimit& l = m_joinLimits[from.address];
+                if (!l.told) {
+                    l.told = true;
+                    net::Packet r(Reject);
+                    r.Write("too many join attempts; try again in " + std::to_string((int)std::ceil(l.blockedUntil - m_serverTime)) + " s");
+                    SendDatagram(from, r.Data(), r.Size(), /*allowEncrypt=*/viaPending);
+                }
+                continue;
+            }
             if (!existed) {
-                // Gate new joins on capacity, password and (if a verifier is set)
-                // identity; refuse politely.
+                // Gate new joins on capacity, then encryption (nothing secret is
+                // checked in the clear), then the password, then identity;
+                // refuse politely.
                 const char* why = nullptr;
                 std::string ticketWhy, banWhy;
                 const std::string addrIdent = "a:" + std::to_string(from.address);
@@ -1935,11 +1973,11 @@ void NetworkManager::ServerTick(float dt) {
                     return true;
                 };
                 if ((int)m_clients.size() >= maxPlayers) why = "server is full";
-                else if (!password.empty() && pass != password) why = "wrong password";
                 else if (needCrypto && !viaPending)
                     // The password and ticket must not travel in the clear.
                     why = net::SecureChannel::Available() ? "encryption required (update the game)"
                                                           : "encryption required, but this server was built without libsodium";
+                else if (!password.empty() && pass != password) why = "wrong password";
                 else if (acOn && !anticheat.settings.ticketKey.empty()) {
                     // A signed session ticket names the account; it takes the
                     // place of the token verifiers.
@@ -1954,8 +1992,9 @@ void NetworkManager::ServerTick(float dt) {
                 }
                 else if (m_joinCheck) {
                     const int r = m_joinCheck(token, userId);
-                    if (r < 0) continue;                       // still checking: the client retries
-                    if (r == 0) why = "authentication failed";
+                    if (r == -2) why = "server busy, try again";
+                    else if (r < 0) continue;                  // still checking: the client retries
+                    else if (r == 0) why = "authentication failed";
                 }
                 else if (m_verifyToken && !m_verifyToken(token, userId)) why = "authentication failed";
                 // Kicked by the anti-cheat a moment ago: the account, or for an
@@ -1963,6 +2002,9 @@ void NetworkManager::ServerTick(float dt) {
                 // the same address aren't locked out).
                 if (!why && kickedRecently(userId.empty() ? addrIdent : "u:" + userId)) why = banWhy.c_str();
                 if (why) {
+                    // A refusal is an attempt; a wrong password counts double
+                    // (guessing it is what the limit is for).
+                    CountJoinAttempt(from, std::string(why) == "wrong password" ? 2 : 1);
                     net::Packet r(Reject); r.Write(std::string(why));
                     SendDatagram(from, r.Data(), r.Size(), /*allowEncrypt=*/viaPending);
                     continue;
@@ -1978,6 +2020,10 @@ void NetworkManager::ServerTick(float dt) {
                 c.room = room;
                 c.joinedAt = m_serverTime;
                 c.userId = userId;
+                // A join that got in costs this address nothing (its key
+                // exchange is given back): players behind one address still
+                // all get in, a flood that never finishes doesn't.
+                if (auto jl = m_joinLimits.find(from.address); jl != m_joinLimits.end() && jl->second.count > 0) --jl->second.count;
                 c.ident = userId.empty() ? "a:" + std::to_string(from.address) : "u:" + userId;
                 anticheat.RestorePeer(c.id, c.ident);   // what it had if it left a moment ago
                 if (viaPending) {

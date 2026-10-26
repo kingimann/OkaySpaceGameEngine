@@ -4,6 +4,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Components/GridInventory.hpp"
+#include "okay/Inventory/InventoryOps.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec3.hpp"
 #include <string>
@@ -126,7 +127,7 @@ public:
     /// item only changes if the drop succeeds; either way the drag ends.
     bool Drop(GridInventory* dst, int cellX, int cellY) {
         bool ok = false;
-        if (dragInv && dst) ok = dragInv->MoveTo(dragIndex, *dst, cellX - grabX, cellY - grabY, dragRotated);
+        if (dragInv && dst) ok = InventoryOps::Move(dragInv, dragIndex, dst, cellX - grabX, cellY - grabY, dragRotated).Ok();
         CancelDrag();
         return ok;
     }

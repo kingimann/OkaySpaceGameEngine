@@ -117,6 +117,11 @@ add_executable(test_inventory_wiring test_inventory_wiring.cpp)
 target_link_libraries(test_inventory_wiring PRIVATE okay::engine)
 add_test(NAME inventory_wiring COMMAND test_inventory_wiring)
 
+# InventoryOps + InventoryInput: the one path the player and the editor Play view share
+add_executable(test_inventory_ops test_inventory_ops.cpp)
+target_link_libraries(test_inventory_ops PRIVATE okay::engine)
+add_test(NAME inventory_ops COMMAND test_inventory_ops)
+
 add_executable(test_pathfinding test_pathfinding.cpp)
 target_link_libraries(test_pathfinding PRIVATE okay::engine)
 add_test(NAME pathfinding COMMAND test_pathfinding)

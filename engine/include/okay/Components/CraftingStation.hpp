@@ -4,6 +4,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/Inventory.hpp"
 #include "okay/Components/InventoryPlayer.hpp"
+#include "okay/Inventory/InventoryOps.hpp"
 #include "okay/Render/Color.hpp"
 #include <string>
 #include <vector>
@@ -73,7 +74,7 @@ public:
         const Recipe& r = recipes[idx];
         if (!CanCraft(r, *inv)) return false;
         // Atomic: inputs are taken out only if the output then fits.
-        bool ok = inv->Exchange(Inventory::SumStacks(r.inputs), {{r.output, r.outputCount < 1 ? 1 : r.outputCount}});
+        bool ok = InventoryOps::Craft(inv, Inventory::SumStacks(r.inputs), {{r.output, r.outputCount < 1 ? 1 : r.outputCount}}).Ok();
         if (ok && closeWhenCrafted) open = false;
         return ok;
     }

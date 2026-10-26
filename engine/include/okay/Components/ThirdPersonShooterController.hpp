@@ -10,6 +10,7 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
 #include "okay/Components/ControllerFeel.hpp"
+#include "okay/Components/StanceControl.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Net/NetOwnership.hpp"
@@ -94,9 +95,16 @@ public:
 
     float yaw = 0.0f, pitch = 12.0f;
 
+    /// Crouch (Ctrl) and prone (Z): a smaller, slower body that eases between
+    /// stances, the camera following it down; SetStance from scripts. No jumping
+    /// unless standing.
+    StanceControl stanceControl;
+    void SetStance(int s) { stanceControl.Set(s); }
+
     void Start() override {
         if (lockCursor) Cursor::Capture(true);
         if (footIK) AttachCharacterFootIK(gameObject);
+        stanceControl.Start(gameObject);
     }
 
     void Update(float dt) override {
@@ -142,8 +150,11 @@ public:
         float len = std::sqrt(dir.x * dir.x + dir.z * dir.z);
         bool moving = len > 0.01f;
         if (moving) { dir.x /= len; dir.z /= len; }
-        bool running = sprintKey && Input::GetKey(sprintKey) && moving && !m_aiming;
-        float speed = (running ? runSpeed : walkSpeed) * (m_aiming ? 0.6f : 1.0f) * MoveSpeedScale(gameObject);
+        if (!uiBlocked) stanceControl.ReadKeys();
+        stanceControl.Step(gameObject, dt);
+        const bool standing = stanceControl.Stance() == 0;
+        bool running = standing && sprintKey && Input::GetKey(sprintKey) && moving && !m_aiming;
+        float speed = stanceControl.Speed(running ? runSpeed : walkSpeed) * (m_aiming ? 0.6f : 1.0f) * MoveSpeedScale(gameObject);
 
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
         m_groundContact = Mathf::Max(0.0f, m_groundContact - dt);
@@ -169,7 +180,7 @@ public:
             float dl = std::sqrt(dv.x * dv.x + dv.z * dv.z), step = rate * dt;
             if (dl > 1e-5f && dl > step) { dv.x = dv.x / dl * step; dv.z = dv.z / dl * step; }
             rb->velocity.x = cur.x + dv.x; rb->velocity.z = cur.z + dv.z;
-            if (canJump && m_jumpBuf > 0.0f) {
+            if (canJump && standing && m_jumpBuf > 0.0f) {
                 bool firstOk = (m_jumpsUsed == 0) && (grounded || m_coyote > 0.0f);
                 bool extraOk = (m_jumpsUsed >= 1) && (m_jumpsUsed < Mathf::Max(1, maxJumps));
                 if (firstOk || extraOk) {
@@ -205,6 +216,9 @@ public:
                 lo.onGround  = !rb || m_groundContact > 0.0f || onTerrain;
                 lo.jumped    = jumped;
                 lo.sprint    = running;
+                lo.crouch    = stanceControl.Stance() == 1;
+                lo.prone     = stanceControl.Stance() == 2;
+                lo.stance    = stanceControl.Level();
                 lo.walkSpeed = walkSpeed;
                 lo.dt = dt;
                 ch->DriveLocomotion(lo);
@@ -228,8 +242,11 @@ public:
 
         float dist  = Mathf::Lerp(distance, aimDistance, m_aim);
         float shldr = Mathf::Lerp(shoulderOffset, aimShoulder, m_aim);
-        // The pivot: the shoulder height above the player, smoothed (see pivotDampingXZ).
-        Vec3 head = transform->Position(); head.y += cameraHeight;
+        // The pivot: the shoulder height above the player (lower as the body
+        // crouches / goes prone), smoothed (see pivotDampingXZ).
+        const StanceControl& st = stanceControl;
+        Vec3 head = transform->Position();
+        head.y += cameraHeight * StanceValue(st.Level(), 1.0f, st.crouchHeight, st.proneHeight);
         const Vec3 target = m_pivot.Step(head, pivotDampingXZ, pivotDampingY, maxPivotLag, dt);
 
         float pr = pitch * Mathf::Deg2Rad;

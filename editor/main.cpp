@@ -24473,6 +24473,28 @@ static bool KeyBindCombo(const char* label, char& key) {
     return changed;
 }
 
+// A movement controller's crouch / prone options (StanceControl), in a fold.
+static bool StanceControlFields(StanceControl& sc, const char* id) {
+    char lbl[64];
+    std::snprintf(lbl, sizeof(lbl), "Crouch / prone##%s", id);
+    if (!ImGui::TreeNode(lbl)) return false;
+    bool ch = false;
+    auto L = [&](const char* name) { std::snprintf(lbl, sizeof(lbl), "%s##st%s", name, id); return lbl; };
+    ch |= KeyBindCombo(L("Crouch Key"), sc.crouchKey);
+    ch |= KeyBindCombo(L("Prone Key"), sc.proneKey);
+    ch |= ImGui::Checkbox(L("Toggle (vs hold)"), &sc.toggle);
+    ch |= ImGui::Checkbox(L("Allow Prone"), &sc.allowProne);
+    ch |= ImGui::Checkbox(L("Resize Body"), &sc.resizeBody);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Crouching / prone shrink the collider (fit under low things);\nstanding up waits for headroom.");
+    ch |= ImGui::DragFloat(L("Crouch Speed"), &sc.crouchSpeed, 0.05f, 0.0f, 20.0f);
+    ch |= ImGui::DragFloat(L("Prone Speed"), &sc.proneSpeed, 0.05f, 0.0f, 20.0f);
+    ch |= ImGui::SliderFloat(L("Crouch Height"), &sc.crouchHeight, 0.2f, 1.0f, "%.2f");
+    ch |= ImGui::SliderFloat(L("Prone Height"), &sc.proneHeight, 0.1f, 1.0f, "%.2f");
+    ImGui::TextDisabled("Scripts: SetStance(0 stand / 1 crouch / 2 prone).\nHow long changes take: the Animator's Stance changes.");
+    ImGui::TreePop();
+    return ch;
+}
+
 // Shared shape dropdown: lists every UIShape by its canonical name (UIShapeName)
 // so all the widget pickers stay in sync as shapes are added — no more per-widget
 // hardcoded name arrays to fall out of date. Returns true when the value changed.
@@ -29684,6 +29706,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* cc = dynamic_cast<CharacterController3D*>(curComp)) {
         if (CompHeader("Character Controller 3D", cc, &toRemove)) {
+            if (StanceControlFields(cc->stanceControl, "cc3")) ed.dirty = true;
             if (ImGui::DragFloat("Speed##cc3", &cc->speed, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Can Jump##cc3", &cc->canJump)) ed.dirty = true;
             if (cc->canJump)
@@ -30980,6 +31003,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* c = dynamic_cast<NPCController*>(curComp)) {
         if (CompHeader("NPC Controller", c, &toRemove)) {
+            if (StanceControlFields(c->stanceControl, "npc")) ed.dirty = true;
             const char* bs[] = { "Idle", "Wander", "Follow", "Flee", "Chase (attack)", "Patrol", "Guard" };
             if (ImGui::Combo("Behavior##npc", &c->behavior, bs, IM_ARRAYSIZE(bs))) ed.dirty = true;
             char tn[48]; std::strncpy(tn, c->targetName.c_str(), sizeof(tn) - 1); tn[sizeof(tn) - 1] = '\0';
@@ -31584,6 +31608,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* td = dynamic_cast<TopDownController*>(curComp)) {
         if (CompHeader("Top Down Controller", td, &toRemove)) {
+            if (StanceControlFields(td->stanceControl, "td")) ed.dirty = true;
             SectionHeader("Movement");
             if (ImGui::DragFloat("Walk Speed##td", &td->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Run Speed##td", &td->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
@@ -31925,6 +31950,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* ts = dynamic_cast<ThirdPersonShooterController*>(curComp)) {
         if (CompHeader("Third Person Shooter Controller", ts, &toRemove)) {
+            if (StanceControlFields(ts->stanceControl, "ts")) ed.dirty = true;
             SectionHeader("Movement");
             if (ImGui::DragFloat("Walk Speed##tps", &ts->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Run Speed##tps", &ts->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
@@ -31970,6 +31996,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* cm = dynamic_cast<ClickToMoveController*>(curComp)) {
         if (CompHeader("Click To Move Controller", cm, &toRemove)) {
+            if (StanceControlFields(cm->stanceControl, "cm")) ed.dirty = true;
             if (ImGui::DragFloat("Walk Speed##ctm", &cm->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Run Speed##ctm", &cm->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             int rk = cm->runKey ? cm->runKey : 0; char rkb[2] = { (char)(rk ? rk : ' '), 0 };

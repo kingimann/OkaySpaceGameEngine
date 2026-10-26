@@ -259,6 +259,27 @@ struct KvIn {
         f((b + "R").c_str(), c.r); f((b + "G").c_str(), c.g); f((b + "B").c_str(), c.b); f((b + "A").c_str(), c.a);
     }
 };
+// The crouch / prone options of a movement controller (StanceControl) and the
+// stance it was saved in: one `<rec> key=value ...` line.
+void WriteStanceControl(std::ostream& out, const char* rec, const StanceControl& sc) {
+    out << "  " << rec;
+    KvOut k{out};
+    k.key("crouchKey", sc.crouchKey).key("proneKey", sc.proneKey).b("toggle", sc.toggle).b("prone", sc.allowProne)
+     .b("resize", sc.resizeBody)("crouchSpeed", sc.crouchSpeed)("proneSpeed", sc.proneSpeed)
+     ("crouchH", sc.crouchHeight)("proneH", sc.proneHeight);
+    if (sc.Stance() != 0) k("stance", sc.Stance());   // saved crouched / prone (the collider is saved standing)
+    out << "\n";
+}
+void ReadStanceControl(std::istream& in, StanceControl* sc) {
+    KvIn k(in);
+    if (!sc) return;
+    k.key("crouchKey", sc->crouchKey); k.key("proneKey", sc->proneKey); k.b("toggle", sc->toggle);
+    k.b("prone", sc->allowProne); k.b("resize", sc->resizeBody); k.f("crouchSpeed", sc->crouchSpeed);
+    k.f("proneSpeed", sc->proneSpeed); k.f("crouchH", sc->crouchHeight); k.f("proneH", sc->proneHeight);
+    int st = 0; k.i("stance", st);
+    if (st == 1 || st == 2) sc->Restore(st);
+}
+
 
 // Read the three shared publish toggles trailing every stat_* line.
 void ReadStatTail(std::istream& in, StatComponent* c) {
@@ -1103,6 +1124,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* fpc = go->GetComponent<FirstPersonController>()) stance = &fpc->stanceBody();
     else if (auto* tpc = go->GetComponent<ThirdPersonController>()) stance = &tpc->stanceBody();
     else if (auto* p25 = go->GetComponent<Platformer25DController>()) stance = &p25->stanceBody();
+    else if (auto* c3 = go->GetComponent<CharacterController3D>()) stance = &c3->stanceControl.Body();
+    else if (auto* tps = go->GetComponent<ThirdPersonShooterController>()) stance = &tps->stanceControl.Body();
+    else if (auto* tdc = go->GetComponent<TopDownController>()) stance = &tdc->stanceControl.Body();
+    else if (auto* ctm = go->GetComponent<ClickToMoveController>()) stance = &ctm->stanceControl.Body();
+    else if (auto* npc = go->GetComponent<NPCController>()) stance = &npc->stanceControl.Body();
     const bool resized = stance && stance->captured && std::fabs(stance->curH - stance->standH) > 1e-4f;
     const float standOffY = resized ? stance->feetY + stance->standH * 0.5f : 0.0f;
     if (auto* bc = go->GetComponent<BoxCollider3D>(); bc && bc->shape() == Collider3D::Shape::Box) {
@@ -1777,6 +1803,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* ft = go->GetComponent<FollowTarget2D>()) {
         out << "  follow2d " << Quote(ft->target) << " " << ft->speed << " " << ft->stopDistance << "\n";
     }
+    // The other movement controllers' crouch / prone (after their own records, so they exist on load).
+    if (auto* c = go->GetComponent<CharacterController3D>())        WriteStanceControl(out, "cc3dstance", c->stanceControl);
+    if (auto* c = go->GetComponent<ThirdPersonShooterController>()) WriteStanceControl(out, "tpsstance", c->stanceControl);
+    if (auto* c = go->GetComponent<TopDownController>())            WriteStanceControl(out, "tdstance", c->stanceControl);
+    if (auto* c = go->GetComponent<ClickToMoveController>())        WriteStanceControl(out, "ctmstance", c->stanceControl);
+    if (auto* c = go->GetComponent<NPCController>())                WriteStanceControl(out, "npcstance", c->stanceControl);
     if (auto* sp = go->GetComponent<Spinner>()) {
         out << "  spinner " << sp->angularVelocity.x << " " << sp->angularVelocity.y
             << " " << sp->angularVelocity.z << "\n";
@@ -4466,6 +4498,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     };
                     if (field == "fpstance") load(go->GetComponent<FirstPersonController>());
                     else                     load(go->GetComponent<ThirdPersonController>());
+                } else if (field == "cc3dstance") {
+                    auto* c = go->GetComponent<CharacterController3D>(); ReadStanceControl(in, c ? &c->stanceControl : nullptr);
+                } else if (field == "tpsstance") {
+                    auto* c = go->GetComponent<ThirdPersonShooterController>(); ReadStanceControl(in, c ? &c->stanceControl : nullptr);
+                } else if (field == "tdstance") {
+                    auto* c = go->GetComponent<TopDownController>(); ReadStanceControl(in, c ? &c->stanceControl : nullptr);
+                } else if (field == "ctmstance") {
+                    auto* c = go->GetComponent<ClickToMoveController>(); ReadStanceControl(in, c ? &c->stanceControl : nullptr);
+                } else if (field == "npcstance") {
+                    auto* c = go->GetComponent<NPCController>(); ReadStanceControl(in, c ? &c->stanceControl : nullptr);
                 } else if (field == "p25ctrl") {
                     auto* pc = go->AddComponent<Platformer25DController>();
                     KvIn k(in);

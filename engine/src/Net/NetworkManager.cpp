@@ -41,7 +41,8 @@ namespace {
         JoinKey = 25,                // server -> client: [u8 version][string serverPk][string signature]
         ClockPing = 26,              // server -> client: [u64 nonce][u32 seq][string key] (anti-cheat clock)
         ClockPong = 27,              // client -> server: [u64 nonce][u32 seq][u64 clientMs][string tag]
-        InputCmd = 28                // client -> server: [string pawn][u8 n] n x [u32 tick][u32 seq][f32 mx my yaw pitch][u32 held][u32 pressed]
+        InputCmd = 28,               // client -> server: [string pawn][u8 n] n x [u32 tick][u32 seq][f32 mx my yaw pitch][u32 held][u32 pressed]
+        PawnAck = 29                 // server -> a client: [string pawn][u32 seq][f32 x y z] where its input seq left the pawn
     };
     constexpr float kClockQuietLimit = 10.0f;   // no good clock answer for this long: reported
     constexpr float kClockReportEvery = 2.0f;   // one drift report per heartbeat window
@@ -301,6 +302,16 @@ void NetworkManager::Stop() {
     m_hostTickRate = 0.0f;
     m_hostAuthoritative = false;
     m_lastAckedSeq = 0;
+    m_hostAcksPawn = false;
+    m_predicting = false;
+    m_predicted.clear();
+    m_predPending = Vec3(0.0f, 0.0f, 0.0f);
+    m_predCmd = PlayerInput{};
+    m_predPressOnce = 0;
+    m_predSeq = 0;
+    m_earlyAckSeq = 0;
+    m_lastPawnAck = 0;
+    m_predCorrections = m_predSnaps = 0;
     m_inputSeq = 0;
     m_pressedAccum = 0;
     m_heldInput = PlayerInput{};
@@ -404,6 +415,7 @@ void NetworkManager::SyncTick(float dt) {
         if (t > 1.0f) t = 1.0f;
         for (auto& [id, o] : m_syncObjs) {
             if (o.owned || !o.t || !o.hasTarget) continue;
+            if (m_predicting && id == m_pawnId) continue;   // our predicted player: reconciled by PawnAck
             o.t->localPosition = o.t->localPosition + (o.targetPos - o.t->localPosition) * t;
             o.t->localRotation = Quat::Slerp(o.t->localRotation, o.targetRot, t);
         }
@@ -1305,7 +1317,8 @@ void NetworkManager::ServerMovementTick(float step) {
         PlayerInput in = c.repeats < kInputRepeats ? c.lastInput : PlayerInput{};
         in.pressed = 0;   // a held button stays held; a press isn't repeated
         ++c.repeats;
-        if (!c.inputs.empty()) {
+        const bool fresh = !c.inputs.empty();
+        if (fresh) {
             auto next = c.inputs.begin();
             in = next->second.second;
             c.lastInputSeq = next->first;
@@ -1317,6 +1330,49 @@ void NetworkManager::ServerMovementTick(float step) {
         const Vec3 at = obj->second.t->TransformPoint(Vec3(0.0f, 0.0f, 0.0f));
         c.state.x = at.x; c.state.y = at.y; c.state.z = at.z;   // the server's word (snapshots, hit checks)
         c.hasState = true;
+        // Tell the player where this input left it, for its prediction (only
+        // for a new input: a repeat has no number of its own).
+        if (fresh) {
+            const Vec3 lp = obj->second.t->localPosition;
+            net::Packet a(PawnAck);
+            a.Write(c.pawn); a.Write(c.lastInputSeq);
+            a.Write(lp.x); a.Write(lp.y); a.Write(lp.z);
+            SendDatagram(c.endpoint, a.Data(), a.Size());
+        }
+    }
+}
+
+// Client: the host says input `seq` left the pawn at `server`. Compare with
+// where the prediction had it after that input; the difference moves the
+// prediction (and every later one) over: tiny ones are ignored, small ones
+// eased in over a few frames, large ones (a teleport, a wall the client went
+// through) snapped. Same as rewinding to the host's state and replaying the
+// newer inputs, without running the controller's side effects twice.
+void NetworkManager::Reconcile(std::uint32_t seq, const Vec3& server) {
+    if (seq <= m_lastPawnAck) return;   // old or repeated
+    if (seq == m_predSeq && m_predicting) {
+        // On a short round trip the ack for the input we're still running
+        // arrives before we've finished it: hold it until we have.
+        m_earlyAckSeq = seq; m_earlyAck = server;
+        return;
+    }
+    m_lastPawnAck = seq;
+    auto it = m_predicted.begin();
+    while (it != m_predicted.end() && it->first < seq) ++it;
+    if (it == m_predicted.end() || it->first != seq) { m_predicted.erase(m_predicted.begin(), it); return; }
+    const Vec3 d = server - it->second;
+    m_predicted.erase(m_predicted.begin(), it + 1);
+    const float len = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+    if (!std::isfinite(len) || len < kReconcileEpsilon) return;
+    ++m_predCorrections;
+    for (auto& [s2, p] : m_predicted) p = p + d;
+    auto sync = m_syncObjs.find(m_pawnId);
+    if (len > kReconcileSnap && sync != m_syncObjs.end() && sync->second.t) {
+        sync->second.t->localPosition = sync->second.t->localPosition + m_predPending + d;
+        m_predPending = Vec3(0.0f, 0.0f, 0.0f);
+        ++m_predSnaps;
+    } else {
+        m_predPending = m_predPending + d;
     }
 }
 
@@ -1328,6 +1384,21 @@ void NetworkManager::ClientInputTick() {
     in.pressed = m_pressedAccum;
     m_pressedAccum = 0;
     m_sentInputs.push_back({++m_inputSeq, {m_netTick, in}});
+    if (m_predicting) {
+        // The frames since the last tick ran the previous input: where it left
+        // the pawn, by the prediction (with the correction still being eased
+        // in), is compared with the host's ack for it. From now on the
+        // prediction runs this one.
+        if (m_predSeq != 0)
+            if (auto sync = m_syncObjs.find(m_pawnId); sync != m_syncObjs.end() && sync->second.t) {
+                m_predicted.push_back({m_predSeq, sync->second.t->localPosition + m_predPending});
+                if (m_predicted.size() > kMaxPredicted) m_predicted.erase(m_predicted.begin());
+                if (m_earlyAckSeq == m_predSeq) { m_earlyAckSeq = 0; m_predSeq = 0; Reconcile(m_predicted.back().first, m_earlyAck); }
+            }
+        m_predCmd = in;
+        m_predPressOnce = in.pressed;
+        m_predSeq = m_inputSeq;
+    }
     if (m_sentInputs.size() > 4) m_sentInputs.erase(m_sentInputs.begin());
     net::Packet p(InputCmd);
     p.Write(m_pawnId);
@@ -1571,7 +1642,7 @@ void NetworkManager::ServerTick(float dt) {
             // bit 1 = a fixed net tick, its rate (f32) follows.
             std::uint8_t welcomeFlags = c.secure.Sequenced() ? 1 : 0;
             if (HostTickRate() > 0.0f) welcomeFlags |= 2;
-            if (authoritativeMovement) welcomeFlags |= 4;   // bit 2: send inputs, not positions
+            if (authoritativeMovement) welcomeFlags |= 4 | 8;   // bit 2: send inputs, not positions; bit 3: PawnAcks (predict)
             if (welcomeFlags) w.Write(welcomeFlags);
             if (welcomeFlags & 2) w.Write(HostTickRate());
             // A sealed joiner already has the keys; a plaintext joiner gets them here.
@@ -2112,6 +2183,7 @@ void NetworkManager::ClientTick(float dt) {
                 if (p.Ok() && std::isfinite(rate) && rate >= 1.0f && rate <= 240.0f) m_hostTickRate = rate;
             }
             if (p.Ok() && (welcomeFlags & 4) && m_hostTickRate > 0.0f) m_hostAuthoritative = true;
+            m_hostAcksPawn = m_hostAuthoritative && (welcomeFlags & 8);   // an older 5b host doesn't: follow it instead
             m_joined = true;
             m_joinRejected = false;
             OKAY_INFO("net: joined '", m_serverName, "' as peer ", m_localId);
@@ -2171,6 +2243,11 @@ void NetworkManager::ClientTick(float dt) {
             const float x = p.ReadF32(), y = p.ReadF32(), z = p.ReadF32();
             if (p.Ok() && m_localAvatar) m_localAvatar->localPosition = Vec3(x, y, z);
             ++m_corrections;
+        } else if (type == PawnAck) {
+            const std::string pawn = p.ReadString();
+            const std::uint32_t seq = p.ReadU32();
+            const float x = p.ReadF32(), y = p.ReadF32(), z = p.ReadF32();
+            if (p.Ok() && m_hostAcksPawn && pawn == m_pawnId) Reconcile(seq, Vec3(x, y, z));
         } else if (type == RosterMsg) {
             const std::uint32_t n = p.ReadU32();
             std::vector<RosterEntry> list;
@@ -2201,13 +2278,34 @@ void NetworkManager::ClientTick(float dt) {
 
     // Authoritative movement: sample this frame's input for the next tick's
     // command (a press between ticks still counts).
+    m_predicting = false;
     if (m_hostAuthoritative && m_joined) {
         PlayerInput f;
         bool have = false;
+        auto sync = m_syncObjs.find(m_pawnId);
+        Transform* pawnT = sync != m_syncObjs.end() ? sync->second.t : nullptr;
+        IPlayerSim* sim = pawnT ? FindPlayerSim(pawnT->gameObject) : nullptr;
         if (m_inputSource) { f = m_inputSource(); have = true; }
-        else if (auto sync = m_syncObjs.find(m_pawnId); sync != m_syncObjs.end() && sync->second.t)
-            if (IPlayerSim* sim = FindPlayerSim(sync->second.t->gameObject)) { f = sim->ReadLocalInput(); have = true; }
+        else if (sim) { f = sim->ReadLocalInput(); have = true; }
         if (have) { m_heldInput = f; m_pressedAccum |= f.pressed; }
+        // Prediction: move our own player here, through the same Simulate the
+        // host will run, with the input we last sent (so the two move the
+        // same way: a key let go between ticks would otherwise move us a frame
+        // further than the host and pull us back), but this frame's look; then
+        // ease in what's left of any correction.
+        if (have && sim && m_hostAcksPawn) {
+            m_predicting = true;
+            PlayerInput local = m_predCmd;
+            local.yaw = f.yaw; local.pitch = f.pitch;
+            local.pressed = m_predPressOnce;   // a press counts once, as on the host
+            m_predPressOnce = 0;
+            local.Clamp();   // as the host will
+            sim->Simulate(local, dt);
+            const float k = std::min(1.0f, kReconcileRate * dt);
+            const Vec3 step = m_predPending * k;
+            pawnT->localPosition = pawnT->localPosition + step;
+            m_predPending = m_predPending - step;
+        }
     }
     // Send our local state to the server: once a frame, or once a tick when
     // the host runs a fixed net tick (with our estimate of that tick).

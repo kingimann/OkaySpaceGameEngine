@@ -289,11 +289,16 @@ players itself:
   queue of 8, and the oldest are dropped. A late input is covered by the last
   one for 3 ticks, then the player stops.
 - It runs on the fixed tick: Fixed Net Tick, or 30 Hz if that's off.
-- The player's own copy follows the host. Prediction, which moves it at once
-  and corrects it, is the next step (phase 5c). Until then you'll feel the
-  round trip, and with the first- and third-person controllers the look turns
-  the body only when the host's answer comes back (the first-person camera's
-  up/down tilt shows once prediction lands).
+- The player's own copy is **predicted**: it moves at once, through the same
+  controller the host runs, with the input it just sent (so a change of input
+  shows within one tick), while the look turns every frame. For each input the
+  host answers where it left the player, and the client compares that with
+  where its prediction had it. Differences under 2 cm are ignored, up to 2 m
+  are eased out over a few frames, larger ones (a teleport by the host, a wall
+  the client walked through) snap. Tested at 100-167 ms round trips: no
+  pull-backs while walking or stopping.
+- A client that predicts needs a host that answers (this version or newer);
+  with an older host it follows the host's position as before.
 - Off (the default), nothing changes.
 
 ## Server authority (anti-cheat basics)

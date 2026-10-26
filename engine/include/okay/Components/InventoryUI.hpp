@@ -107,8 +107,9 @@ public:
     struct RarityRule { std::string item; Color color = Color::FromBytes(255, 215, 0, 255); };
     std::vector<RarityRule> rarities;
     const Color* RarityOf(const std::string& item) const {
-        for (const auto& r : rarities) if (!r.item.empty() && r.item == item) return &r.color;
-        return nullptr;
+        for (const auto& r : rarities) if (!r.item.empty() && r.item == item) return &r.color;   // per-UI override
+        const ItemDefinition* d = ItemDatabase::Get().Find(item);
+        return (d && d->hasRarityColor) ? &d->rarityColor : nullptr;
     }
 
     /// Name of the object holding the Inventory this UI shows (e.g. "Player"), for a UI
@@ -145,7 +146,8 @@ public:
     int RarityIndex(const std::string& item) const {
         for (std::size_t i = 0; i < rarities.size(); ++i)
             if (rarities[i].item == item) return (int)i;
-        return 1 << 20;
+        const ItemDefinition* d = ItemDatabase::Get().Find(item);   // then the item's tier (higher = rarer)
+        return (1 << 20) - (d ? d->rarity : 0);
     }
 
     /// Compact the bag: merge identical stacks and pull everything to the front, so
@@ -159,17 +161,22 @@ public:
             if (Inventory::Empty(s)) continue;
             bool merged = false;
             for (auto& p : packed)
-                if (p.item == s.item && (long long)p.count + s.count <= 2147483647LL) {   // no int overflow
+                if (Inventory::Stackable(p, s) && (long long)p.count + s.count <= 2147483647LL) {   // no int overflow
                     p.count += s.count; merged = true; break;
                 }
-            if (!merged) packed.push_back(Inventory::Slot{s.item, s.count});
+            if (!merged) packed.push_back(s);
         }
-        // Re-split by maxStack: merging must never make a stack bigger than the limit.
-        if (inv->maxStack > 0) {
+        // Re-split by the stack limit: merging must never make a stack bigger than it.
+        {
             std::vector<Inventory::Slot> split;
-            for (const auto& p : packed)
-                for (int left = p.count; left > 0; left -= inv->maxStack)
-                    split.push_back(Inventory::Slot{p.item, left < inv->maxStack ? left : inv->maxStack});
+            for (const auto& p : packed) {
+                const long long cap = inv->StackCap(p.item);
+                for (long long left = p.count; left > 0; left -= cap) {
+                    Inventory::Slot part = p;
+                    part.count = (int)(left < cap ? left : cap);
+                    split.push_back(part);
+                }
+            }
             packed.swap(split);
         }
         // If the packed stacks no longer fit, keep the original layout (no loss).

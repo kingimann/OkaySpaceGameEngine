@@ -814,6 +814,66 @@ timerText = $"Time {elapsed:F1}s";          // "Time 12.5s"
 label = $"{(won ? "You win" : "Try again")}: {score} points";
 ```
 
+### ?? and ?.
+
+For objects and arrays, which can be null. A destroyed object counts as null
+here, just as it does in `== null`.
+
+- `a ?? b` is `a`, or `b` when `a` is null: a fallback target.
+- `x ??= value` sets `x` only while it's null, and only then works out `value`:
+  look something up once and keep it.
+- `a?.b` gives null (and skips the rest of the line's chain) when `a` is null.
+  The result has to be something that can be null, or a call whose result isn't
+  used; for a number or vector, check `a != null` first.
+
+```csharp
+GameObject target;
+void Update() {
+    target ??= GameObject.FindWithTag("Player");             // found once, again if it's destroyed
+    target?.transform.LookAt(transform.position);           // nothing happens while there's none
+    GameObject focus = target ?? gameObject;
+}
+```
+
+### Classes and new
+
+A script has one `Behaviour` class (the component on the object) and can have
+plain classes next to it for its own data: an inventory item, a path node, a
+wave of enemies. Make them with `new`; they're references like arrays, so
+copies share the object, and an unset one is `null`.
+
+```csharp
+class Item {
+    public string name;
+    public int count = 1;
+    public Item(string name) { this.name = name; }
+    public bool Use() { count--; return count <= 0; }
+}
+
+class Inventory : Behaviour {
+    Item[] slots = new Item[4];
+
+    void Start() { slots[0] = new Item("Potion"); }
+    public void UseFirst() {
+        if (slots[0] != null && slots[0].Use()) slots[0] = null;
+    }
+}
+```
+
+- Fields and methods are private to their class unless marked `public`.
+- A constructor is a method named after its class; a class can have several
+  that take different numbers of values. A class without one is made with
+  `new Item()`, all fields at their starting values.
+- `this` is the object itself (`this.name = name` sets the field, not the
+  parameter).
+- Plain classes aren't on an object, so `gameObject`, `transform` and
+  `GetComponent` only exist in the Behaviour class. They can't be `static` or
+  `const` yet, and classes can't extend each other yet.
+- Objects are freed as soon as nothing refers to them, except objects that
+  refer to each other in a loop (`a.next = b; b.next = a;`). Those stay in
+  memory until the game quits, so set one of the links to `null` when you're
+  done with them.
+
 ### foreach
 
 Loops over an array's items, with `var` or a type. The loop variable can't be

@@ -15,7 +15,7 @@ namespace okay {
 /// right (mute, fullscreen, "show hints"…). Clicking flips `on` and calls the
 /// sibling ScriptComponent's on_toggle() handler. Position/size are window
 /// pixels (origin top-left); `size` is the box, the label extends past it.
-class UIToggle : public Behaviour {
+class UIToggle final : public Behaviour {
 public:
     Vec2  position{20.0f, 20.0f};
     Vec2  size{28.0f, 28.0f};

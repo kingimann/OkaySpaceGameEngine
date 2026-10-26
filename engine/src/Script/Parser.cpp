@@ -5,7 +5,11 @@ namespace okay::script {
 
 namespace {
 
-struct ParseError { SrcLoc loc; std::string msg; };
+struct ParseError {
+    SrcLoc loc;
+    std::string msg;
+    bool tooDeep = false;   ///< nesting limit: the whole member is skipped, so it's reported once
+};
 
 // C# words that aren't part of OkayScript (yet). Using one is an error that says
 // so, rather than syntax that is silently skipped.
@@ -190,7 +194,8 @@ private:
         if (IsWord("static")) throw ParseError{Peek().loc, "A script class can't be static: it's a component on each object"};
         if (!Is(T::KwClass)) throw ParseError{Peek().loc, "Expected a class here: class Name : Behaviour { ... }"};
         ClassDecl c;
-        c.loc = Expect(T::KwClass, "class").loc;
+        Expect(T::KwClass, "class");
+        c.loc = Peek().loc;
         c.name = Expect(T::Ident, "the class name").text;
         if (Match(T::Colon)) {
             c.baseLoc = Peek().loc;
@@ -201,7 +206,11 @@ private:
         while (!Is(T::RBrace) && !Is(T::End)) {
             std::size_t start = pos_;
             try { Member(c); }
-            catch (const ParseError& e) { Error(e.loc, e.msg); SyncStatement(start); }
+            catch (const ParseError& e) {
+                Error(e.loc, e.msg);
+                if (e.tooDeep) pos_ = start;   // skip the whole member, not just the innermost statement
+                SyncStatement(start);
+            }
         }
         Expect(T::RBrace, "'}' to close the class");
         return c;
@@ -265,17 +274,18 @@ private:
         if (isStatic && isConst) Error(staticLoc, "A const is already shared: delete `static`");
         RejectNotYet();
         if (Is(T::KwClass)) throw ParseError{Peek().loc, "Classes inside classes aren't supported"};
-        // Constructor: Name(
-        if (Is(T::Ident) && Peek().text == c.name && Is(T::LParen, 1))
-            throw ParseError{Peek().loc, "Constructors aren't supported: set things up in Awake() or Start()"};
-        TypeRef type = Type(false);
+        // A constructor, Name(...), is a void method named after its class.
+        const bool isCtor = Is(T::Ident) && Peek().text == c.name && Is(T::LParen, 1);
+        TypeRef type;
+        if (isCtor) { type.name = "void"; type.loc = Peek().loc; }
+        else type = Type(false);
         SrcLoc nameLoc = Peek().loc;
         std::string name = Expect(T::Ident, "a name").text;
         if (Is(T::LParen)) {
             if (isConst) throw ParseError{nameLoc, "Methods can't be const"};
             if (!attrs.empty()) Error(attrs[0].loc, "Attributes only work on fields");
             MethodDecl m;
-            m.isPublic = isPublic; m.isStatic = isStatic; m.ret = type; m.name = name; m.loc = nameLoc;
+            m.isPublic = isPublic; m.isStatic = isStatic; m.isCtor = isCtor; m.ret = type; m.name = name; m.loc = nameLoc;
             Expect(T::LParen, "'('");
             if (!Is(T::RParen)) {
                 do {
@@ -317,7 +327,7 @@ private:
         while (!Is(T::RBrace) && !Is(T::End)) {
             std::size_t start = pos_;
             try { b->body.push_back(Statement()); }
-            catch (const ParseError& e) { Error(e.loc, e.msg); SyncStatement(start); }
+            catch (const ParseError& e) { if (e.tooDeep) throw; Error(e.loc, e.msg); SyncStatement(start); }
         }
         Expect(T::RBrace, "'}'");
         return b;
@@ -466,6 +476,7 @@ private:
                     sec.labels.push_back(std::move(v));
                     sec.labelLocs.push_back(l);
                 } catch (const ParseError& e) {
+                    if (e.tooDeep) throw;
                     Error(e.loc, e.msg);
                     while (!Is(T::Colon) && !Is(T::RBrace) && !Is(T::End) && pos_ >= start) ++pos_;
                     Match(T::Colon);
@@ -474,7 +485,7 @@ private:
             while (!Is(T::RBrace) && !Is(T::End) && !IsCaseLabel()) {
                 std::size_t start = pos_;
                 try { sec.body.push_back(Statement()); }
-                catch (const ParseError& e) { Error(e.loc, e.msg); SyncStatement(start); }
+                catch (const ParseError& e) { if (e.tooDeep) throw; Error(e.loc, e.msg); SyncStatement(start); }
             }
             s->sections.push_back(std::move(sec));
         }
@@ -502,7 +513,7 @@ private:
     struct NestGuard {
         int& n;
         NestGuard(int& d, SrcLoc l, const char* what = "expression") : n(d) {
-            if (++n > kMaxNesting) { --n; throw ParseError{l, std::string("This ") + what + " is nested too deeply"}; }
+            if (++n > kMaxNesting) { --n; throw ParseError{l, std::string("This ") + what + " is nested too deeply", true}; }
         }
         ~NestGuard() { --n; }
     };
@@ -511,7 +522,8 @@ private:
         NestGuard guard(nesting_, Peek().loc);
         ExprPtr lhs = Conditional();
         switch (Peek().type) {
-            case T::Assign: case T::PlusEq: case T::MinusEq: case T::StarEq: case T::SlashEq: case T::PercentEq: {
+            case T::Assign: case T::PlusEq: case T::MinusEq: case T::StarEq: case T::SlashEq: case T::PercentEq:
+            case T::QuestionQuestionEq: {
                 auto e = Make(EK::Assign, Peek().loc);
                 e->op = Peek().type; ++pos_;
                 e->lhs = std::move(lhs);
@@ -521,8 +533,19 @@ private:
             default: return lhs;
         }
     }
+    // a ?? b ?? c: below || and above ?:, grouping from the right.
+    ExprPtr Coalesce() {
+        ExprPtr lhs = Binary(0);
+        if (!Is(T::QuestionQuestion)) return lhs;
+        NestGuard guard(nesting_, Peek().loc);
+        auto e = Make(EK::Binary, Peek().loc);
+        e->op = T::QuestionQuestion; ++pos_;
+        e->lhs = std::move(lhs);
+        e->rhs = Coalesce();
+        return e;
+    }
     ExprPtr Conditional() {
-        ExprPtr c = Binary(0);
+        ExprPtr c = Coalesce();
         if (Is(T::Question)) {
             auto e = Make(EK::Conditional, Peek().loc); ++pos_;
             e->third = std::move(c);
@@ -607,8 +630,17 @@ private:
     bool IsGenericCallAhead() const { return Is(T::Lt) && Is(T::Ident, 1) && Is(T::Gt, 2) && Is(T::LParen, 3); }
     ExprPtr Postfix() {
         ExprPtr e = Primary();
+        // With ?. in the chain, the whole chain gives null when a ?. finds null.
+        SrcLoc condLoc;
+        std::string condName;
+        bool cond = false;
         for (;;) {
-            if (Is(T::Dot)) {
+            if (Is(T::Dot) || Is(T::QuestionDot)) {
+                const bool q = Is(T::QuestionDot);
+                if (q && !cond) {
+                    cond = true; condLoc = Peek().loc;
+                    condName = e->kind == EK::Name || e->kind == EK::Member || e->kind == EK::Call ? e->name : "this value";
+                }
                 ++pos_;
                 SrcLoc l = Peek().loc;
                 std::string name = Expect(T::Ident, "a member name after '.'").text;
@@ -617,10 +649,12 @@ private:
                     c->name = name; c->object = std::move(e);
                     if (IsGenericCallAhead()) { ++pos_; c->typeArg = Type(false); Expect(T::Gt, "'>'"); }
                     c->args = Args();
+                    c->nullCond = q;
                     e = std::move(c);
                 } else {
                     auto m = Make(EK::Member, l);
                     m->name = name; m->object = std::move(e);
+                    m->nullCond = q;
                     e = std::move(m);
                 }
                 continue;
@@ -643,12 +677,19 @@ private:
                 continue;
             }
             if (Is(T::PlusPlus) || Is(T::MinusMinus)) {
+                if (cond) throw ParseError{Peek().loc, "Something reached with ?. can't be changed: check for null first"};
                 auto i = Make(EK::IncDec, Peek().loc); i->op = Peek().type; ++pos_;
                 i->lhs = std::move(e);
                 e = std::move(i);
                 continue;
             }
             break;
+        }
+        if (cond) {
+            auto w = Make(EK::NullCond, condLoc);
+            w->name = condName;
+            w->lhs = std::move(e);
+            return w;
         }
         return e;
     }

@@ -12,6 +12,7 @@
 
 namespace okay {
 class TtfFont;
+class Image;
 
 namespace ui2d {
 
@@ -81,6 +82,16 @@ public:
     /// would fill (after the widget drew its fallback). Editors label it; the game
     /// ignores it.
     virtual void MissingTexture(const std::string& path, const Rect& where) { (void)path; (void)where; }
+
+    /// Batching support (see BatchPainter): upload an atlas page as one texture and
+    /// return its handle. `existing` is this page's handle from the last upload (null
+    /// the first time); update it in place, or replace it if the size changed. Page 0
+    /// samples linearly (font glyphs), page 1 nearest (images, as plain textures do).
+    /// The default returns null: no atlas support, so BatchPainter passes draws through.
+    virtual Tex UploadAtlas(const Image& page, int pageIndex, Tex existing) {
+        (void)page; (void)pageIndex; (void)existing;
+        return nullptr;
+    }
 };
 
 } // namespace ui2d

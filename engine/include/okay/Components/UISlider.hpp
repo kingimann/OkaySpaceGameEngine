@@ -16,7 +16,7 @@ namespace okay {
 /// [minValue, maxValue] (volume, sensitivity, difficulty…). Position/size are
 /// window pixels (origin top-left). While dragging it updates `value` and calls
 /// the sibling ScriptComponent's on_change() handler each frame the value moves.
-class UISlider : public Behaviour {
+class UISlider final : public Behaviour {
 public:
     Vec2  position{20.0f, 20.0f};
     Vec2  size{200.0f, 24.0f};

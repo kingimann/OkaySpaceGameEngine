@@ -11,7 +11,7 @@ namespace okay {
 /// center gap and an optional center dot — the classic FPS crosshair. An optional
 /// 1px dark outline keeps it readable over any background. `size` is the overall
 /// reticle extent in pixels (its UI rect for selection/anchoring in the editor).
-class Crosshair : public Behaviour {
+class Crosshair final : public Behaviour {
 public:
     Vec2 position{0.0f, 0.0f};                        // offset from the anchor (px)
     Vec2 size{24.0f, 24.0f};                          // overall reticle extent (px)

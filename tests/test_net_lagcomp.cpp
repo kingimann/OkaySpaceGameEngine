@@ -69,6 +69,7 @@ int main() {
     host->anticheat.settings.hitTolerance = 0.5f;
     host->anticheat.settings.maxSyncSpeed = speed;
     host->anticheat.settings.kickAfterViolations = 0;
+    host->maxMoveSpeed = 1000.0f;   // a move check, so client hit claims are judged at all
     GameObject* dummy = hs.CreateGameObject("Dummy");
     dummy->transform->localPosition = Vec3(10.0f, 0.0f, -10.0f);
     dummy->AddComponent<NetworkSync>()->netId = "dummy";

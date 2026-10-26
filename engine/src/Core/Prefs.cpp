@@ -32,7 +32,13 @@ int Prefs::GetInt(const std::string& key, int def) {
 float Prefs::GetFloat(const std::string& key, float def) {
     auto it = Store().find(key);
     if (it == Store().end()) return def;
-    try { return std::stof(it->second); } catch (...) { return def; }
+    // Read back with the same classic ("C") locale SetFloat writes with, so a
+    // program that changed the global locale can't misparse "0.75".
+    std::istringstream is(it->second);
+    is.imbue(std::locale::classic());
+    float v = 0.0f;
+    if (is >> v) return v;
+    try { return std::stof(it->second); } catch (...) { return def; }   // "inf" / "nan"
 }
 std::string Prefs::GetString(const std::string& key, const std::string& def) {
     auto it = Store().find(key);

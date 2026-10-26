@@ -97,6 +97,11 @@ add_executable(test_prefs test_prefs.cpp)
 target_link_libraries(test_prefs PRIVATE okay::engine)
 add_test(NAME prefs COMMAND test_prefs)
 
+# Inventory core correctness: no dupes, no item loss, maxStack respected
+add_executable(test_inventory_core test_inventory_core.cpp)
+target_link_libraries(test_inventory_core PRIVATE okay::engine)
+add_test(NAME inventory_core COMMAND test_inventory_core)
+
 # Robustness: Prefs escaping/precision, TweenSequence cycles, Mat4::Inverse, UB-free hashes
 add_executable(test_prefs_misc test_prefs_misc.cpp)
 target_link_libraries(test_prefs_misc PRIVATE okay::engine)

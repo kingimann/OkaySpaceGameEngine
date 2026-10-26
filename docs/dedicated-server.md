@@ -123,8 +123,14 @@ on) and a periodic status line:
   verified (`auth/v1/user`) on a background thread. The network tick never
   waits on it. The player's join retry gets the answer a moment later, and
   answers are cached for 5 minutes.
-- **Clients send their account automatically:** a signed-in player's game puts its
-  token on every `NetworkManager` in the scene before it joins.
+- **Clients send their account automatically, but only to hosts that check it:**
+  a signed-in player's game puts its token on every `NetworkManager` in the scene.
+  Before joining, the client asks the host whether it checks sign-ins (the
+  server browser's "auth" flag, which `--auth` and a `ticketKey` set) and sends
+  the token only if it does. Any other host, including one too old to answer,
+  gets the Join without it, so a game hosted by a stranger never sees your
+  account's token. `NetworkManager::authTokenToAnyHost = true` restores the old
+  behaviour.
 - Game logic in scripts runs on the server exactly as in the editor. Use
   `net_is_server()` to run authoritative logic only there.
 

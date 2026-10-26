@@ -189,6 +189,14 @@ public:
     /// a real account. "" = anonymous.
     void SetAuthToken(const std::string& token) { m_authToken = token; }
     const std::string& AuthToken() const { return m_authToken; }
+    /// Send the auth token to any host. Off (the default): before joining, the
+    /// client asks the host whether it checks sign-ins (the server browser's
+    /// "auth" flag), and sends the token only if it does, so a game hosted by
+    /// someone else never sees your account's token for nothing. A host that
+    /// doesn't answer the question (an older one) gets no token.
+    bool authTokenToAnyHost = false;
+    /// Client: whether the host said it checks sign-ins (false until it answers).
+    bool HostWantsAuth() const { return m_hostWantsAuth; }
 
     /// Server: a hook that verifies each joining client's token. Return true and set
     /// `outUserId` to accept (binding the peer to that identity); return false to
@@ -624,6 +632,11 @@ private:
     bool m_keyed = false;
     bool m_legacyJoin = false;
     bool m_pinWarned = false;
+    // Client: asking the host whether it wants the auth token (see authTokenToAnyHost).
+    int  m_authQueries = 0;
+    bool m_authDecided = false;
+    bool m_hostWantsAuth = false;
+    std::uint32_t m_authNonce = 0;
 
     // Client-only
     net::Endpoint m_serverEp{};

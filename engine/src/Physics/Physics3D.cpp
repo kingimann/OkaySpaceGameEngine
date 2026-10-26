@@ -1095,9 +1095,13 @@ bool RayCapsule(const Vec3& o, const Vec3& d, const Vec3& a, const Vec3& b, floa
 }
 
 // Does a query consider this collider? (alive, not ignored, layer, trigger rule)
+// The hierarchy a Physics3D::IgnoreHierarchy is skipping (null = none).
+thread_local const GameObject* g_ignoreTree = nullptr;
+
 bool Passes(Collider3D* c, GameObject* ignore, std::uint32_t mask, bool queryTriggers) {
     if (!Alive(c)) return false;
     if (ignore && c->gameObject == ignore) return false;
+    if (g_ignoreTree && c->gameObject && c->gameObject->IsSelfOrDescendantOf(g_ignoreTree)) return false;
     if (!queryTriggers && c->isTrigger) return false;
     return ((mask >> (c->layer & 31)) & 1u) != 0;
 }
@@ -1460,6 +1464,9 @@ std::vector<Collider3D*> Physics3D::OverlapCapsule(Scene& scene, const Vec3& a, 
                                                    GameObject* ignore) {
     return Overlap(scene, CapsuleShape(a, b, radius), layerMask, queryTriggers, ignore);
 }
+
+Physics3D::IgnoreHierarchy::IgnoreHierarchy(const GameObject* root) : m_prev(g_ignoreTree) { g_ignoreTree = root; }
+Physics3D::IgnoreHierarchy::~IgnoreHierarchy() { g_ignoreTree = m_prev; }
 
 RaycastHit3D Physics3D::SphereCast(Scene& scene, const Vec3& origin, const Vec3& direction,
                                    float radius, float maxDistance, GameObject* ignore,

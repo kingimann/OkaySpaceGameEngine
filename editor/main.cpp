@@ -1579,6 +1579,14 @@ static std::string LayerMaskToList(std::uint32_t mask) {
         if ((mask >> i) & 1u) { if (!s.empty()) s += ","; s += std::to_string(i); }
     return s;
 }
+// A layer-mask text field ("" = all layers; numbers or names, comma separated).
+static bool LayerMaskField(const char* label, std::uint32_t& mask, const char* tip) {
+    char lb[96]; std::snprintf(lb, sizeof(lb), "%s", LayerMaskToList(mask).c_str());
+    const bool changed = ImGui::InputTextWithHint(label, "all layers", lb, sizeof(lb));
+    if (changed) mask = okay::Layers::MaskFromList(lb);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+    return changed;
+}
 // Trigger filter fields for a trigger collider (2D or 3D): only react to objects
 // with a tag and/or on some collider layers. Returns true when something changed.
 template <class Col>
@@ -31150,12 +31158,24 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Zoom Speed##tp", &tp->zoomSpeed, 0.05f, 0.0f, 10.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Camera Height##tp", &tp->cameraHeight, 0.05f, 0.0f, 5.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Shoulder Offset##tp", &tp->shoulderOffset, 0.02f, -3.0f, 3.0f)) ed.dirty = true;
-            if (ImGui::DragFloat("Damping##tp", &tp->cameraDamping, 0.1f, 0.0f, 30.0f, "%.1f")) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = instant follow; higher = smoother lag");
+            if (ImGui::DragFloat("Follow Damping##tp", &tp->pivotDampingXZ, 0.1f, 0.0f, 60.0f, "%.1f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How tightly the camera's pivot (the player's head) follows sideways.\nHigher = tighter; 0 = instant. The camera always turns around the pivot\nwith no lag of its own, so the player stays centred while you orbit.");
+            if (ImGui::DragFloat("Vertical Damping##tp", &tp->pivotDampingY, 0.1f, 0.0f, 60.0f, "%.1f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How tightly the pivot follows up and down. Lower than Follow Damping\nso steps, landings and bob don't pop the view. 0 = instant.");
+            if (ImGui::DragFloat("Max Follow Lag##tp", &tp->maxPivotLag, 0.01f, 0.0f, 5.0f, "%.2f m")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The pivot never trails the player by more than this (0 = no limit).");
+            if (ImGui::DragFloat("Orbit Smoothing##tp", &tp->orbitSmoothing, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Eases the camera's turning toward the mouse (seconds). 0 = raw.");
             if (ImGui::Checkbox("Camera Collision##tp", &tp->cameraCollision)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pull the camera in so it never clips through walls/floors");
-            if (tp->cameraCollision)
+            if (tp->cameraCollision) {
                 if (ImGui::DragFloat("Collision Skin##tp", &tp->cameraCollisionSkin, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Collision Radius##tp", &tp->cameraCollisionRadius, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The camera is a sphere this big: it doesn't flicker on edges, poles and railings.\nTriggers and the player's own parts never block it.");
+                if (LayerMaskField("Collision Layers##tp", tp->cameraCollisionMask, "Collider layers that block the camera: numbers or names\nseparated by commas (0,3 or Default,Walls). Blank = all layers.")) ed.dirty = true;
+                if (ImGui::DragFloat("Collision Recover##tp", &tp->cameraCollisionRecover, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast the camera glides back out once an obstacle clears (0 = at once).");
+            }
             if (ImGui::DragFloat("Min Pitch##tp", &tp->minPitch, 0.5f, -89.0f, 0.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Max Pitch##tp", &tp->maxPitch, 0.5f, 0.0f, 89.0f)) ed.dirty = true;
 
@@ -31591,7 +31611,19 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Distance##tps", &ts->distance, 0.1f, 1.0f, 15.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Camera Height##tps", &ts->cameraHeight, 0.05f, 0.0f, 4.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Shoulder Offset##tps", &ts->shoulderOffset, 0.02f, -2.0f, 2.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Follow Damping##tps", &ts->pivotDampingXZ, 0.1f, 0.0f, 60.0f, "%.1f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How tightly the camera's pivot (the shoulder) follows sideways.\nHigher = tighter; 0 = instant.");
+            if (ImGui::DragFloat("Vertical Damping##tps", &ts->pivotDampingY, 0.1f, 0.0f, 60.0f, "%.1f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How tightly the pivot follows up and down, so steps, landings and\nplatforms don't pop the view. 0 = instant.");
+            if (ImGui::DragFloat("Max Follow Lag##tps", &ts->maxPivotLag, 0.01f, 0.0f, 5.0f, "%.2f m")) ed.dirty = true;
             if (ImGui::Checkbox("Camera Collision##tps", &ts->cameraCollision)) ed.dirty = true;
+            if (ts->cameraCollision) {
+                if (ImGui::DragFloat("Collision Skin##tps", &ts->cameraCollisionSkin, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Collision Radius##tps", &ts->cameraCollisionRadius, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The camera is a sphere this big: it doesn't flicker on edges, poles and railings.\nTriggers and the player's own parts never block it.");
+                if (LayerMaskField("Collision Layers##tps", ts->cameraCollisionMask, "Collider layers that block the camera: numbers or names\nseparated by commas (0,3 or Default,Walls). Blank = all layers.")) ed.dirty = true;
+                if (ImGui::DragFloat("Collision Recover##tps", &ts->cameraCollisionRecover, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+            }
             SectionHeader("Aim & Fire");
             if (ImGui::DragInt("Aim Button##tps", &ts->aimButton, 0.1f, 0, 4)) ed.dirty = true;
             if (ImGui::DragFloat("Aim Distance##tps", &ts->aimDistance, 0.05f, 0.5f, 10.0f)) ed.dirty = true;

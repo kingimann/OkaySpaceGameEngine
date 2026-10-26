@@ -102,12 +102,25 @@ public:
     float cameraHeight = 1.5f;          // look target height above the player origin
     float minPitch = -20.0f, maxPitch = 70.0f;
     float shoulderOffset = 0.0f;        // lateral camera offset (over-the-shoulder)
-    float cameraDamping = 15.0f;        // 0 = instant follow; higher = snappier smoothing
+    // Follow: the camera orbits a smoothed point at the player's head (the
+    // pivot), never lagging behind its own rotation, so the player stays centred
+    // while you orbit. Horizontal and vertical ease on their own: the slower
+    // vertical soaks up steps, landings and bob. Higher = tighter; 0 = instant.
+    float pivotDampingXZ = 20.0f;
+    float pivotDampingY  = 10.0f;
+    float maxPivotLag = 0.6f;           // the pivot never trails the player by more (m); 0 = no limit
+    // Orbit smoothing (seconds): eases the camera's yaw / pitch toward the mouse.
+    // 0 = raw. Movement direction always uses the raw angles.
+    float orbitSmoothing = 0.0f;
     // Camera collision (spring arm): pull the camera in when a wall/floor is between
     // it and the player so it never clips through geometry. `skin` keeps the near
-    // plane off the surface.
+    // plane off the surface. A sphere of `radius` is swept (triggers and the
+    // player's own parts never count); `mask` picks the layers that block it.
     bool  cameraCollision = true;
     float cameraCollisionSkin = 0.3f;
+    float cameraCollisionRadius = 0.2f;
+    std::uint32_t cameraCollisionMask = Physics3D::kAllLayers;
+    float cameraCollisionPullIn = 30.0f;   // how fast a hair-closer obstacle eases the camera in
     // When an obstacle clears, ease the camera back out to its full distance
     // instead of snapping (a classic spring arm). Higher = quicker recovery.
     float cameraCollisionRecover = 6.0f;
@@ -469,6 +482,7 @@ public:
         if (!sc || !sc->mainCamera) return;
         Transform* cam = sc->mainCamera->transform;
         if (!cam) return;
+        if (sc->mainCamera != m_claimedCam) { ClaimMainCamera(sc->mainCamera, "Third Person Controller"); m_claimedCam = sc->mainCamera; }
 
         // Ease the look target down when crouched / prone so the camera follows
         // the lower head position.
@@ -477,8 +491,10 @@ public:
         float lt = stanceLerp > 0.0f ? (1.0f - std::exp(-stanceLerp * dt)) : 1.0f;
         m_stanceDrop += (drop - m_stanceDrop) * lt;
 
-        Vec3 target = transform->Position();
-        target.y += cameraHeight - m_stanceDrop;
+        // The pivot: the head, smoothed (see pivotDampingXZ).
+        Vec3 head = transform->Position();
+        head.y += cameraHeight - m_stanceDrop;
+        const Vec3 target = m_pivot.Step(head, pivotDampingXZ, pivotDampingY, maxPivotLag, dt);
         // Aim blend (0 = normal orbit, 1 = over-the-shoulder aim).
         {
             float at = aimLerp > 0.0f ? (1.0f - std::exp(-aimLerp * dt)) : 1.0f;
@@ -486,74 +502,60 @@ public:
         }
         const float useDistance = distance + (aimDistance - distance) * m_aimT;
         const float useShoulder = shoulderOffset + (aimShoulder - shoulderOffset) * m_aimT;
-        m_shake += (0.0f - m_shake) * Mathf::Min(1.0f, 8.0f * dt);
+        m_shake *= 1.0f - EaseFactor(8.0f, dt);
+
+        // The orbit angles: raw, or eased (the shortest way round for yaw) when
+        // orbitSmoothing is on. Position and rotation both use the same pair.
+        if (orbitSmoothing > 0.0f && m_haveOrbit) {
+            const float k = 1.0f - std::exp(-dt / orbitSmoothing);
+            m_orbitYaw += std::remainder(yaw - m_orbitYaw, 360.0f) * k;
+            m_orbitPitch += (pitch - m_orbitPitch) * k;
+        } else {
+            m_orbitYaw = yaw; m_orbitPitch = pitch;
+        }
+        m_haveOrbit = true;
 
         // Place the camera BEHIND the player (+Z of its facing at yaw 0), lifted by
-        // pitch so a positive pitch looks DOWN at the player from above. (The old
-        // code put the camera below the target — the "inverted" view.)
-        float pr = pitch * Mathf::Deg2Rad;
-        Vec3 behind = Quat::Euler(0, yaw, 0) * Vec3{0, 0, 1};   // horizontal, behind the facing
+        // pitch so a positive pitch looks DOWN at the player from above, around the
+        // pivot with no lag of its own (so it never trails its rotation).
+        float pr = m_orbitPitch * Mathf::Deg2Rad;
+        Vec3 behind = Quat::Euler(0, m_orbitYaw, 0) * Vec3{0, 0, 1};   // horizontal, behind the facing
         float cp = Mathf::Cos(pr);
         Vec3 offset{behind.x * cp, Mathf::Sin(pr), behind.z * cp};
-        Vec3 desired = target + offset * useDistance;
+        Vec3 camPos = target + offset * useDistance;
 
         // Over-the-shoulder: shift the camera sideways along its horizontal right.
         // The rotation stays level (built from yaw/pitch below), so the view is a
         // parallel offset — no roll.
         if (useShoulder != 0.0f)
-            desired = desired + (Quat::Euler(0, yaw, 0) * Vec3::Right) * useShoulder;
+            camPos = camPos + (Quat::Euler(0, m_orbitYaw, 0) * Vec3::Right) * useShoulder;
 
-        // Smooth the follow when damping is on (frame-rate independent).
-        if (cameraDamping > 0.0f && m_haveCamPos) {
-            float t = 1.0f - std::exp(-cameraDamping * dt);
-            m_camPos = m_camPos + (desired - m_camPos) * t;
-        } else {
-            m_camPos = desired;
-        }
-        m_haveCamPos = true;
-
-        // Camera collision (spring arm): cast from the player's head to the smoothed
-        // camera position and, if anything is in the way, pull the camera in to the
-        // hit point (minus a skin). Clamping AFTER the smoothing guarantees the view
-        // never clips through walls/floors even while the follow eases. We snap IN
-        // instantly (so nothing ever clips) but ease the arm back OUT once the
-        // obstacle clears, so the camera glides rather than popping to full distance.
+        // Camera collision (spring arm), from the pivot to the camera, after the
+        // smoothing so the view never clips even while the follow eases.
         if (cameraCollision) {
-            Vec3 from = target;            // head pivot (origin + cameraHeight)
-            Vec3 d = m_camPos - from;
+            Vec3 d = camPos - target;
             float dist = d.Magnitude();
             if (dist > 1e-4f) {
                 Vec3 dn = d * (1.0f / dist);
-                float allow = dist;        // how far the arm may extend this frame
-                RaycastHit3D hit = sc->physics3D().Raycast(*sc, from, dn,
-                                                           dist + cameraCollisionSkin, gameObject);
-                if (hit.hit) allow = Mathf::Max(0.0f, hit.distance - cameraCollisionSkin);
-                if (m_springLen < 0.0f) {
-                    m_springLen = allow;   // first frame: start at the correct length (no ease-out from a stale default)
-                } else if (allow <= m_springLen) {
-                    m_springLen = allow;   // blocked: pull in immediately
-                } else {
-                    float e = cameraCollisionRecover > 0.0f
-                        ? (1.0f - std::exp(-cameraCollisionRecover * dt)) : 1.0f;
-                    m_springLen += (allow - m_springLen) * e;   // clear: glide back out
-                }
-                m_camPos = from + dn * m_springLen;
+                camPos = target + dn * m_arm.Step(*sc, gameObject, target, dn, dist, cameraCollisionRadius,
+                                                  cameraCollisionSkin, cameraCollisionMask,
+                                                  cameraCollisionPullIn, cameraCollisionRecover, dt);
             }
         }
 
-        // Never let the camera drop below the player's base. minPitch allows looking
-        // up from slightly below, which at close distance could otherwise sink the
-        // camera through the floor — from under a single-sided ground plane the floor
-        // vanishes, and grazing it reads as a glitchy edge. (target.y - cameraHeight
-        // == the player origin, so this stays correct on raised platforms too.)
+        // Never let the camera drop below the player's base (the pivot's, so it
+        // doesn't dip on a step down). minPitch allows looking up from slightly
+        // below, which at close distance could otherwise sink the camera through
+        // the floor — from under a single-sided ground plane the floor vanishes,
+        // and grazing it reads as a glitchy edge.
         float minY = target.y - cameraHeight;
-        if (m_camPos.y < minY) m_camPos.y = minY;
+        if (camPos.y < minY) camPos.y = minY;
 
-        cam->SetPosition(m_camPos - Vec3{0, m_shake, 0});
+        cam->SetPosition(camPos - Vec3{0, m_shake, 0});
         // Build the rotation straight from yaw/pitch with NO roll component (z = 0)
         // so the horizon is always level. Regular third person does NOT move the
         // camera when leaning — the character's body leans instead (see Update).
-        cam->localRotation = Quat::Euler(-pitch, yaw, 0.0f);
+        cam->localRotation = Quat::Euler(-m_orbitPitch, m_orbitYaw, 0.0f);
         m_fov.Update(sc->mainCamera, m_running && m_lastSpeed > walkSpeed * 0.9f, sprintFovBoost,
                      m_aimT > 0.5f, aimFov, fovLerp, dt);
         // Full Body IK: look where the camera looks (a point well ahead of it).
@@ -664,9 +666,11 @@ private:
     float m_padHeld = 0.0f; bool m_padProned = false;
     Stance m_padWant = Stance::Stand;   // the stance the gamepad button set (hold mode)
     float m_stanceDrop = 0.0f;        // smoothed look-target drop for crouch/prone
-    Vec3 m_camPos{0, 0, 0};
-    bool m_haveCamPos = false;
-    float m_springLen = -1.0f;      // eased spring-arm length (camera collision); <0 = uninitialized
+    FollowPivot m_pivot;              // the smoothed point the camera orbits
+    SpringArm m_arm;                  // camera collision
+    float m_orbitYaw = 0.0f, m_orbitPitch = 0.0f;   // the angles the camera uses (orbitSmoothing)
+    bool m_haveOrbit = false;
+    Camera* m_claimedCam = nullptr;   // the main camera last checked for a competing follow
     float m_groundContact = 0.0f;   // time-to-live of the last ground contact
     float m_coyote = 0.0f;          // remaining coyote-time window
     float m_jumpBuf = 0.0f;         // remaining jump-buffer window

@@ -82,6 +82,21 @@ public:
     }
 
     // ---- Scene queries -------------------------------------------------
+    /// While one of these is alive, scene queries (raycasts, sweeps, overlaps)
+    /// also skip every collider on `root` and on its children: a character's own
+    /// parts (an imported model's pieces, a held item, hitboxes) never block its
+    /// camera or its foot / step probes.
+    ///   { Physics3D::IgnoreHierarchy own(player); h = physics.SphereCast(...); }
+    class IgnoreHierarchy {
+    public:
+        explicit IgnoreHierarchy(const GameObject* root);
+        ~IgnoreHierarchy();
+        IgnoreHierarchy(const IgnoreHierarchy&) = delete;
+        IgnoreHierarchy& operator=(const IgnoreHierarchy&) = delete;
+    private:
+        const GameObject* m_prev;
+    };
+
     /// Cast a ray and return the nearest collider hit (within maxDistance).
     /// `ignore` (optional) skips a GameObject's colliders — e.g. the camera ray
     /// ignoring the player it's attached to.

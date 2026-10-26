@@ -1509,7 +1509,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             // extended (optional, back-compatible trailing fields)
             << " " << (tp->invertX ? 1 : 0) << " " << (tp->invertY ? 1 : 0)
             << " " << tp->minDistance << " " << tp->maxDistance << " " << tp->zoomSpeed
-            << " " << tp->shoulderOffset << " " << tp->cameraDamping
+            << " " << tp->shoulderOffset << " " << tp->pivotDampingXZ   // the old camera-damping slot
             << " " << tp->minPitch << " " << tp->maxPitch << " " << (int)tp->faceMode
             // extended (back-compatible trailing fields): momentum + jump feel
             << " " << tp->acceleration << " " << tp->deceleration << " " << tp->airControl
@@ -1527,7 +1527,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (int)(unsigned char)tp->leanLeftKey << " " << (int)(unsigned char)tp->leanRightKey
             << " " << tp->leanAngle << " " << tp->leanOffset << " " << tp->leanSpeed
             << " " << tp->maxJumps
-            << " " << (tp->footIK ? 1 : 0) << "\n";
+            << " " << (tp->footIK ? 1 : 0)
+            // extended: the camera follow (pivot) and the spring arm
+            << " " << tp->pivotDampingXZ << " " << tp->pivotDampingY << " " << tp->maxPivotLag
+            << " " << tp->orbitSmoothing << " " << tp->cameraCollisionRadius << " " << tp->cameraCollisionMask
+            << " " << tp->cameraCollisionPullIn << " " << tp->cameraCollisionRecover << "\n";
         out << "  tpstance";
         KvOut k{out};
         k.b("prone", tp->allowProne).b("resize", tp->resizeBody)("crouchH", tp->crouchHeight)("proneH", tp->proneHeight)
@@ -1641,7 +1645,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (int)(unsigned char)ts->leanLeftKey << " " << (int)(unsigned char)ts->leanRightKey
             << " " << ts->leanAngle << " " << ts->leanOffset << " " << ts->leanSpeed
             << " " << ts->maxJumps
-            << " " << (ts->footIK ? 1 : 0) << "\n";
+            << " " << (ts->footIK ? 1 : 0)
+            // extended: the camera follow (pivot) and the spring arm
+            << " " << ts->pivotDampingXZ << " " << ts->pivotDampingY << " " << ts->maxPivotLag
+            << " " << ts->cameraCollisionRadius << " " << ts->cameraCollisionMask
+            << " " << ts->cameraCollisionPullIn << " " << ts->cameraCollisionRecover << "\n";
     }
     if (auto* cm = go->GetComponent<ClickToMoveController>()) {
         out << "  ctmctrl " << cm->walkSpeed << " " << cm->runSpeed << " "
@@ -4116,12 +4124,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     // extended (optional): defaults preserved when absent in older scenes
                     int ix = 0, iy = 0, fmode = (int)tp->faceMode;
                     float mnd = tp->minDistance, mxd = tp->maxDistance, zs = tp->zoomSpeed,
-                          so = tp->shoulderOffset, cd = tp->cameraDamping,
+                          so = tp->shoulderOffset, cd = tp->pivotDampingXZ,
                           mnp = tp->minPitch, mxp = tp->maxPitch;
                     if (in >> ix >> iy >> mnd >> mxd >> zs >> so >> cd >> mnp >> mxp >> fmode) {
                         tp->invertX = (ix != 0); tp->invertY = (iy != 0);
                         tp->minDistance = mnd; tp->maxDistance = mxd; tp->zoomSpeed = zs;
-                        tp->shoulderOffset = so; tp->cameraDamping = cd;
+                        tp->shoulderOffset = so;
+                        // The old camera damping: now the pivot's horizontal damping
+                        // (0 = instant still means instant, vertically too).
+                        tp->pivotDampingXZ = cd;
+                        if (cd <= 0.0f) tp->pivotDampingY = 0.0f;
                         tp->minPitch = mnp; tp->maxPitch = mxp;
                         tp->faceMode = (ThirdPersonController::FaceMode)fmode;
                         // Optional momentum + jump-feel block (absent in older scenes).
@@ -4157,7 +4169,19 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                         tp->leanAngle = la; tp->leanOffset = lo; tp->leanSpeed = lsp;
                                         in >> std::ws;
                                         if (std::isdigit(in.peek())) { int mj = tp->maxJumps; in >> mj; tp->maxJumps = mj;
-                                            in >> std::ws; if (std::isdigit(in.peek())) { int fik = 0; in >> fik; tp->footIK = (fik != 0); } }
+                                            in >> std::ws; if (std::isdigit(in.peek())) { int fik = 0; in >> fik; tp->footIK = (fik != 0);
+                                                // Optional camera follow + spring arm block.
+                                                float pxz = tp->pivotDampingXZ, py = tp->pivotDampingY, lag = tp->maxPivotLag,
+                                                      os = tp->orbitSmoothing, rad = tp->cameraCollisionRadius,
+                                                      pin = tp->cameraCollisionPullIn, rec = tp->cameraCollisionRecover;
+                                                std::uint32_t mask = tp->cameraCollisionMask;
+                                                in >> std::ws;
+                                                if (std::isdigit(in.peek()) && (in >> pxz >> py >> lag >> os >> rad >> mask >> pin >> rec)) {
+                                                    tp->pivotDampingXZ = pxz; tp->pivotDampingY = py; tp->maxPivotLag = lag;
+                                                    tp->orbitSmoothing = os; tp->cameraCollisionRadius = rad; tp->cameraCollisionMask = mask;
+                                                    tp->cameraCollisionPullIn = pin; tp->cameraCollisionRecover = rec;
+                                                }
+                                            } }
                                     }
                                 }
                             }
@@ -4293,7 +4317,19 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         ts->leanAngle = la; ts->leanOffset = lo; ts->leanSpeed = lsp;
                         in >> std::ws;
                         if (std::isdigit(in.peek())) { int mj = ts->maxJumps; in >> mj; ts->maxJumps = mj;
-                            in >> std::ws; if (std::isdigit(in.peek())) { int fik = 0; in >> fik; ts->footIK = (fik != 0); } }
+                            in >> std::ws; if (std::isdigit(in.peek())) { int fik = 0; in >> fik; ts->footIK = (fik != 0);
+                                // Optional camera follow + spring arm block.
+                                float pxz = ts->pivotDampingXZ, py = ts->pivotDampingY, lag = ts->maxPivotLag,
+                                      rad = ts->cameraCollisionRadius, pin = ts->cameraCollisionPullIn,
+                                      rec = ts->cameraCollisionRecover;
+                                std::uint32_t mask = ts->cameraCollisionMask;
+                                in >> std::ws;
+                                if (std::isdigit(in.peek()) && (in >> pxz >> py >> lag >> rad >> mask >> pin >> rec)) {
+                                    ts->pivotDampingXZ = pxz; ts->pivotDampingY = py; ts->maxPivotLag = lag;
+                                    ts->cameraCollisionRadius = rad; ts->cameraCollisionMask = mask;
+                                    ts->cameraCollisionPullIn = pin; ts->cameraCollisionRecover = rec;
+                                }
+                            } }
                     }
                 } else if (field == "mover") {
                     Vec3 v; in >> v.x >> v.y >> v.z;

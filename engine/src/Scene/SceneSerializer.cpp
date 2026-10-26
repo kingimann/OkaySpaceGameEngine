@@ -1024,6 +1024,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         ikFade("chain", ci->ikActive, ci->fadeTime);
         out << " " << Quote(ci->poleName) << " " << (ci->usePole ? 1 : 0) << " " << ci->pole.x << " " << ci->pole.y
             << " " << ci->pole.z << " " << ci->maxJointBend << " " << ci->tolerance << "\n";
+        if (!ci->limits.empty()) {   // per-joint limits: swing cone, hinge and its local axis
+            out << "  chainiklimits " << ci->limits.size();
+            for (const JointLimit& l : ci->limits)
+                out << " " << l.maxSwing << " " << (l.hinge ? 1 : 0) << " " << l.axis.x << " " << l.axis.y << " " << l.axis.z;
+            out << "\n";
+        }
     }
     if (auto* fb = go->GetComponent<FullBodyIK>()) {
         out << "  fbik " << fb->weight << " " << (fb->ikActive ? 1 : 0) << " " << fb->fadeTime << " " << fb->softness
@@ -3457,6 +3463,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             ci->maxJointBend = mb; ci->tolerance = tol;
                         }
                     }
+                } else if (field == "chainiklimits") {
+                    std::size_t cnt = 0; in >> cnt;
+                    std::vector<JointLimit> lim;
+                    for (std::size_t k = 0; k < cnt && k < 4096 && in; ++k) {
+                        JointLimit l; int h = 0;
+                        if (in >> l.maxSwing >> h >> l.axis.x >> l.axis.y >> l.axis.z) { l.hinge = h != 0; lim.push_back(l); }
+                    }
+                    if (auto* ci = go->GetComponent<ChainIK>()) ci->limits = std::move(lim);
                 } else if (field == "rootmotion") {
                     auto* rm = go->AddComponent<RootMotion>();
                     rm->rootNodeName = ReadQuoted(in);

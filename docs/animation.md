@@ -203,7 +203,13 @@ animation (state machine, blending, crossfades), correcting the final pose:
   - **Match Target Rotation** without a target object uses **Target
     Rotation**.
   - A broken target (NaN) leaves the animated pose alone.
-- **Chain IK** — long chains (tails, tentacles), FABRIK/CCD.
+- **Chain IK** — long chains (tails, tentacles, spines), FABRIK/CCD. An arm or
+  leg is better served by Limb IK's exact two-bone solve.
+  - In a bone chain the bones turn to reach, root to tip, so they keep their
+    length and a Weight below 1 bends the chain part of the way.
+  - Both solvers keep to the **Pole**, the **Max Joint Bend** cap, and each
+    joint's **Limit**. A Limit is a swing cone, plus a **Hinge** so the joint
+    bends about one axis only.
 - **Foot IK** — see below.
 
 ## Foot IK on imported rigs

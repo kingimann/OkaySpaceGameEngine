@@ -29196,6 +29196,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat3("Target point##cik", t, 0.1f)) { ci->target = {t[0], t[1], t[2]}; ed.dirty = true; }
                 const char* solvers[] = {"FABRIK", "CCD"};
                 ImGui::Combo("Solver##cik", &ci->solver, solvers, 2);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("For spines, tails and tentacles. An arm or leg (two bones) is better\nserved by Limb IK's exact two-bone solve. FABRIK moves the whole chain\nevenly; CCD bends from the tip end first.");
                 ImGui::DragInt("Iterations##cik", &ci->iterations, 0.2f, 1, 50);
                 ImGui::DragFloat("Weight##cik", &ci->weight, 0.01f, 0.0f, 1.0f);
                 ImGui::Checkbox("Orient Bones##cik", &ci->orient);
@@ -29208,7 +29209,7 @@ void DrawInspector(EditorState& ed) {
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawn a pole the chain bends toward (knee / elbow / curl direction).");
                 ImGui::DragFloat("Max Joint Bend##cik", &ci->maxJointBend, 1.0f, 0.0f, 180.0f, ci->maxJointBend <= 0.0f ? "unlimited" : "%.0f deg");
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cap how sharply any joint may bend (0 = no limit). FABRIK only.");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cap how sharply any joint may bend (0 = no limit).\nPer-joint limits (below each bone) narrow it further.");
                 ImGui::Checkbox("IK Active##cik", &ci->ikActive); ImGui::SameLine();
                 ImGui::SetNextItemWidth(90); ImGui::DragFloat("Fade (s)##cik", &ci->fadeTime, 0.01f, 0.0f, 3.0f);
                 if (ed.isPlaying()) ImGui::TextDisabled("Tip error: %.3f", ci->Error());
@@ -29219,7 +29220,27 @@ void DrawInspector(EditorState& ed) {
                     char nb[64]; std::strncpy(nb, ci->boneNames[i].c_str(), sizeof(nb) - 1); nb[sizeof(nb) - 1] = '\0';
                     if (ImGui::InputText("##cb", nb, sizeof(nb))) { ci->boneNames[i] = nb; ed.dirty = true; }
                     ImGui::SameLine();
-                    if (ImGui::SmallButton("x")) { ci->boneNames.erase(ci->boneNames.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
+                    if (ImGui::SmallButton("x")) {
+                        ci->boneNames.erase(ci->boneNames.begin() + i);
+                        if (i < ci->limits.size()) ci->limits.erase(ci->limits.begin() + i);
+                        ed.dirty = true; ImGui::PopID(); break;
+                    }
+                    // A joint between two bones can be limited: a swing cone and an optional hinge.
+                    if (i > 0 && i + 1 < ci->boneNames.size() && ImGui::TreeNode("Limit##cl")) {
+                        JointLimit l = i < ci->limits.size() ? ci->limits[i] : JointLimit{};
+                        bool ch = ImGui::DragFloat("Max Swing##cl", &l.maxSwing, 1.0f, 0.0f, 180.0f, l.maxSwing >= 180.0f ? "free" : "%.0f deg");
+                        ch |= ImGui::Checkbox("Hinge##cl", &l.hinge);
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bend only about one axis of this bone (a knee, an elbow, a finger).");
+                        if (l.hinge) {
+                            float ax[3] = {l.axis.x, l.axis.y, l.axis.z};
+                            if (ImGui::DragFloat3("Axis (local)##cl", ax, 0.05f)) { l.axis = {ax[0], ax[1], ax[2]}; ch = true; }
+                        }
+                        if (ch) {
+                            if (ci->limits.size() <= i) ci->limits.resize(i + 1);
+                            ci->limits[i] = l; ed.dirty = true;
+                        }
+                        ImGui::TreePop();
+                    }
                     ImGui::PopID();
                 }
                 if (ImGui::SmallButton("+ Bone##cik")) { ci->boneNames.push_back(""); ed.dirty = true; }

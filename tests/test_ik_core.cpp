@@ -8,6 +8,8 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
 #include <cmath>
+#include <memory>
+#include <string>
 
 using namespace okay;
 
@@ -62,6 +64,104 @@ int main() {
         float v1 = f.Step(true, 0.5f, 0.25f), v2 = f.Step(true, 0.5f, 0.25f);
         CHECK_NEAR(v1, 0.5f, 1e-4f);
         CHECK_NEAR(v2, 1.0f, 1e-4f);
+    }
+    // ---- CCD keeps to the pole and the bend cap too (it used to ignore both).
+    {
+        std::vector<Vec3> j = {{0, 0, 0}, {0, 1, 0}, {0, 2, 0}, {0, 3, 0}};
+        std::vector<float> len = {1, 1, 1};
+        Vec3 pole{0, 1.5f, 5.0f};
+        ChainConstraints c; c.pole = &pole;
+        float err = SolveChainConstrained(j, len, {0, 1.5f, 0.5f}, 60, 1e-3f, c, true);
+        CHECK(err < 0.05f);
+        CHECK(j[1].z > 0.1f || j[2].z > 0.1f);                      // bent toward +Z (the pole)
+        std::vector<Vec3> k = {{0, 0, 0}, {1, 0, 0}, {2, 0, 0}, {3, 0, 0}, {4, 0, 0}};
+        std::vector<float> l4 = {1, 1, 1, 1};
+        ChainConstraints cap; cap.maxBendDeg = 45.0f;
+        SolveChainConstrained(k, l4, {0.5f, 0.5f, 0}, 60, 1e-3f, cap, true);
+        for (int i = 1; i < 4; ++i) CHECK(BendDeg(k[i - 1], k[i], k[i + 1]) <= 45.5f);
+        for (int i = 0; i < 4; ++i) CHECK_NEAR(Dist(k[i], k[i + 1]), 1.0f, 1e-3f);
+    }
+    // ---- Per-joint limits: a swing cone on one joint, hinges that bend in one plane.
+    {
+        std::vector<Vec3> j = {{0, 0, 0}, {0, 1, 0}, {0, 2, 0}, {0, 3, 0}, {0, 4, 0}};
+        std::vector<float> len = {1, 1, 1, 1};
+        std::vector<Quat> rot(5, Quat::Identity);
+        std::vector<JointLimit> lim(5);
+        lim[2].maxSwing = 20.0f;
+        ChainConstraints c; c.limits = &lim; c.rest = &j; c.restRot = &rot;
+        std::vector<Vec3> rest = j, a = j;
+        c.rest = &rest;
+        SolveChainConstrained(a, len, {1.5f, 1.0f, 0.0f}, 60, 1e-3f, c);
+        CHECK(BendDeg(a[1], a[2], a[3]) <= 20.5f);
+        for (int i = 0; i < 4; ++i) CHECK_NEAR(Dist(a[i], a[i + 1]), 1.0f, 1e-3f);
+
+        std::vector<JointLimit> hinge(5);
+        for (int i = 1; i < 4; ++i) { hinge[i].hinge = true; hinge[i].axis = {1, 0, 0}; }   // bend about X only
+        ChainConstraints h; h.limits = &hinge; h.rest = &rest; h.restRot = &rot;
+        std::vector<Vec3> b = rest;
+        SolveChainConstrained(b, len, {0.6f, 1.2f, 1.5f}, 60, 1e-3f, h);
+        for (int i = 1; i < 4; ++i) {   // each hinged bend stays across its (turned) axis
+            Vec3 axis = Quat::FromToRotation(rest[i] - rest[i - 1], b[i] - b[i - 1]) * Vec3{1, 0, 0};
+            CHECK(std::fabs(Vec3::Dot((b[i + 1] - b[i]).Normalized(), axis.Normalized())) < 0.02f);
+        }
+        for (int i = 0; i < 4; ++i) CHECK_NEAR(Dist(b[i], b[i + 1]), 1.0f, 1e-3f);
+        // A zero-length chain with the target on its root stays finite.
+        std::vector<Vec3> z = {{1, 1, 1}, {1, 1, 1}};
+        SolveFabrik(z, {0.0f}, {1, 1, 1});
+        CHECK(std::isfinite(z[1].x) && std::isfinite(z[1].y) && std::isfinite(z[1].z));
+    }
+    // ---- ChainIK on a parented bone chain: the bones turn root to tip (lengths
+    // kept, tip on target), a weight bends part of the way, a still rig doesn't
+    // drift, and a NaN target leaves the pose.
+    {
+        struct Rig { std::unique_ptr<Scene> s; std::vector<GameObject*> b; ChainIK* ci; };
+        auto build = [](Vec3 target, bool orient) {
+            Rig r;
+            r.s = std::make_unique<Scene>("chain");
+            GameObject* parent = nullptr;
+            for (int i = 0; i < 4; ++i) {
+                GameObject* g = r.s->CreateGameObject("c" + std::to_string(i));
+                if (parent) g->transform->SetParent(parent->transform, false);
+                g->transform->SetPosition({0, (float)i, 0});
+                r.b.push_back(parent = g);
+            }
+            r.ci = r.b[0]->AddComponent<ChainIK>();
+            for (auto* x : r.b) r.ci->bones.push_back(x->transform);
+            r.ci->target = target; r.ci->iterations = 30; r.ci->orient = orient;
+            r.s->Start();
+            return r;
+        };
+        auto P = [](GameObject* g) { return g->transform->Position(); };
+        for (bool orient : {false, true}) {
+            Rig r = build({1.5f, 1.5f, 0.5f}, orient);
+            r.s->Update(1.0f / 60.0f);
+            CHECK(Dist(P(r.b[3]), {1.5f, 1.5f, 0.5f}) < 0.02f);                 // tip on target, orient or not
+            for (int i = 0; i < 3; ++i) CHECK_NEAR(Dist(P(r.b[i]), P(r.b[i + 1])), 1.0f, 1e-3f);
+            const Vec3 tip = P(r.b[3]);
+            for (int i = 0; i < 30; ++i) r.s->Update(1.0f / 60.0f);
+            CHECK(Dist(P(r.b[3]), tip) < 1e-4f);                                 // no pile-up
+        }
+        Rig half = build({1.5f, 1.5f, 0.5f}, false);
+        half.ci->weight = 0.5f;
+        half.s->Update(1.0f / 60.0f);
+        for (int i = 0; i < 3; ++i) CHECK_NEAR(Dist(P(half.b[i]), P(half.b[i + 1])), 1.0f, 1e-3f);
+        CHECK(Dist(P(half.b[3]), {0, 3, 0}) > 0.3f && Dist(P(half.b[3]), {1.5f, 1.5f, 0.5f}) > 0.3f);   // part way
+        Rig bad = build({std::nanf(""), 0, 0}, false);
+        bad.s->Update(1.0f / 60.0f);
+        CHECK(Dist(P(bad.b[3]), {0, 3, 0}) < 1e-5f);
+        // Limits survive save / load.
+        Rig ser = build({1, 1, 0}, false);
+        ser.ci->limits.resize(3);
+        ser.ci->limits[1].maxSwing = 30.0f; ser.ci->limits[2].hinge = true; ser.ci->limits[2].axis = {0, 0, 1};
+        std::string text = SceneSerializer::Serialize(*ser.s);
+        Scene s2;
+        CHECK(SceneSerializer::Deserialize(s2, text));
+        ChainIK* c2 = s2.Find("c0") ? s2.Find("c0")->GetComponent<ChainIK>() : nullptr;
+        CHECK(c2 && c2->limits.size() == 3);
+        if (c2 && c2->limits.size() == 3) {
+            CHECK_NEAR(c2->limits[1].maxSwing, 30.0f, 1e-4f);
+            CHECK(c2->limits[2].hinge && std::fabs(c2->limits[2].axis.z - 1.0f) < 1e-4f);
+        }
     }
     // ---- ChainIK with a pole object via the scene.
     {

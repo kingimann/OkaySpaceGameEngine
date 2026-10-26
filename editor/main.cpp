@@ -20256,6 +20256,13 @@ static void DrawAnimatorGraph(EditorState& ed) {
         }
         if (!st.blendTree && ImGui::Checkbox("Loop##ag", &st.loop)) ed.dirty = true;
         if (ImGui::SliderFloat("IK weight##ag", &st.ikWeight, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Foot planting in this state (and Full Body IK, unless given its own weight below).");
+        {
+            bool follow = st.fullBodyIkWeight < 0.0f;
+            if (ImGui::Checkbox("Full-body IK follows##ag", &follow)) { st.fullBodyIkWeight = follow ? -1.0f : 1.0f; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: Full Body IK gets its own weight here, so a state can stop foot\nplanting while the hands keep holding (prone, crawling).");
+            if (!follow && ImGui::SliderFloat("Full-body IK weight##ag", &st.fullBodyIkWeight, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+        }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("How much Foot IK / Full Body IK apply in this state; eases over\n"
                                                       "the transition. 0 for jumps, rolls and falls (feet leave the ground).");
         {

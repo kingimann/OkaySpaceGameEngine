@@ -279,7 +279,8 @@ void DefaultGraph(AnimStateMachine& sm, const Character* body) {
             st->transitions.push_back(To("Walk", 0.2f, {Not("prone"), Speed(0.35f)}));
         }
         st->transitions.push_back(To("GetUp", 0.1f, {Not("prone")}));
-        st->ikWeight = 0.0f;   // lying on the ground: no foot planting
+        st->ikWeight = 0.0f;           // lying on the ground: no foot planting
+        st->fullBodyIkWeight = 1.0f;   // the hands keep working (holding, look-at)
     }
     // Getting up and dropping down play through; a change of mind blends out
     // of them from wherever the body is.
@@ -290,6 +291,7 @@ void DefaultGraph(AnimStateMachine& sm, const Character* body) {
     drop.transitions = {To("Crouch", 0.2f, {Not("prone"), Is("crouch")}), To("Idle", 0.2f, {Not("prone")}),
                         To("Crawl", 0.15f, {If(C::OnClipEnd, ""), Speed(0.35f)}), To("Prone", 0.15f, {If(C::OnClipEnd, "")})};
     getUp.ikWeight = drop.ikWeight = 0.0f;
+    getUp.fullBodyIkWeight = drop.fullBodyIkWeight = 1.0f;   // held objects stay in hand through the move
 
     // Air: back on the ground, land into whatever the body does (a standing
     // landing plays Land; a moving one gives at the knees mid-stride).

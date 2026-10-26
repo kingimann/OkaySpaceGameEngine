@@ -677,6 +677,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             for (const auto& tr : asm2->anyState) out << " " << tr.offset;
             out << "\n";
         }
+        // Per-state full-body IK weight, where it stops following ikWeight
+        // (a newer record; older builds skip it).
+        bool anyFb = false;
+        for (const auto& st : asm2->states) anyFb = anyFb || st.fullBodyIkWeight >= 0.0f;
+        if (anyFb) {
+            out << "  animsmfb " << asm2->states.size();
+            for (const auto& st : asm2->states) out << " " << st.fullBodyIkWeight;
+            out << "\n";
+        }
         // Muted transitions.
         bool anyMute = false;
         for (const auto& st : asm2->states) for (const auto& tr : st.transitions) anyMute = anyMute || tr.muted;
@@ -3108,6 +3117,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     for (long k = 0; k < na && in; ++k) {
                         float o = 0; in >> o;
                         if (k < (long)sm2->anyState.size()) sm2->anyState[k].offset = o;
+                    }
+                } else if (field == "animsmfb") {
+                    auto* sm2 = smFor();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n && in; ++i) {
+                        float w = -1.0f; in >> w;
+                        if (i < (long)sm2->states.size()) sm2->states[i].fullBodyIkWeight = w;
                     }
                 } else if (field == "animsmparams") {
                     auto* sm2 = smFor();

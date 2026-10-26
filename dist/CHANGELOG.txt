@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v2.827.0
+  Multiplayer (opt-in)
+  - Server-authoritative movement now covers the 2D platformer and top-down
+    controllers too; single-player feel is unchanged (#327).
+  - Client prediction: with authoritative movement on, your own player moves
+    the instant you press a key and the server's corrections are blended in -
+    tiny errors ignored, small ones eased, big ones (teleports) snapped. No
+    pull-backs while walking or stopping at 100-170 ms ping. Older hosts and
+    clients keep working as before (#329).
+
 v2.826.0
   Multiplayer (opt-in)
   - Server-authoritative movement now covers the first-person and third-person

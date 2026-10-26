@@ -20,6 +20,7 @@ add_library(okay_engine
     src/Components/SpriteRenderer.cpp
     src/Net/UdpSocket.cpp
     src/Net/AntiCheat.cpp
+    src/Net/SessionTicket.cpp
     src/Components/AntiCheatConfig.cpp
     src/Net/NetworkManager.cpp
     src/Net/RelayServer.cpp

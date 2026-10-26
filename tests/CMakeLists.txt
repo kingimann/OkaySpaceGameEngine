@@ -879,6 +879,11 @@ add_executable(test_net_anticheat_components test_net_anticheat_components.cpp)
 target_link_libraries(test_net_anticheat_components PRIVATE okay::engine)
 add_test(NAME net_anticheat_components COMMAND test_net_anticheat_components)
 
+# Anti-cheat P2: signed session tickets, replay window, encryption required
+add_executable(test_net_anticheat_p2 test_net_anticheat_p2.cpp)
+target_link_libraries(test_net_anticheat_p2 PRIVATE okay::engine)
+add_test(NAME net_anticheat_p2 COMMAND test_net_anticheat_p2)
+
 add_executable(test_match_results test_match_results.cpp)
 target_link_libraries(test_match_results PRIVATE okay::engine)
 add_test(NAME match_results COMMAND test_match_results)

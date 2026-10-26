@@ -204,6 +204,9 @@ public:
     /// True once an encrypted session is established (client: with the server;
     /// server: reported per-peer via PeerEncrypted). Handy for a HUD lock icon.
     bool Encrypted() const;
+    /// Client: the session numbers its packets and refuses replays (an
+    /// anti-cheat server that requires encryption turns this on).
+    bool ReplayProtected() const { return m_mode == Mode::Client && m_secure.Ready() && m_secure.Sequenced(); }
     /// The verified account id a peer joined with (server only); "" if anonymous.
     std::string PeerUserId(std::uint32_t id) const;
     /// This peer's own verified id once joined (client), or "" if anonymous.

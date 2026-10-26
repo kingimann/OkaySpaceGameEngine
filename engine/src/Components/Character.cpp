@@ -594,6 +594,7 @@ void Character::DriveLocomotion(const Locomotion& l) {
     // physics step), and an uneven frame rate doesn't make the stride shimmer. A
     // teleport/respawn jump restarts the measurement.
     Vec3 vel = l.velocity;
+    float vyNow = l.velocity.y;   // vertical speed right now (the window lags a takeoff)
     if (gameObject && gameObject->transform && l.dt > 1e-5f) {
         Vec3 pos = gameObject->transform->Position();
         const float al = l.ignoreAxis.Magnitude();
@@ -604,6 +605,8 @@ void Character::DriveLocomotion(const Locomotion& l) {
         m_moveClock += l.dt;
         if (m_histN > 0 && flat(pos - m_hist[m_histN - 1].p).Magnitude() > 2.0f) m_histN = 0;
         if (m_histN > 0) {
+            float last = m_moveClock - m_hist[m_histN - 1].t;
+            if (last > 1e-5f) vyNow = std::max(vyNow, (pos.y - m_hist[m_histN - 1].p.y) / last);
             Vec3 d = flat(pos - m_hist[0].p);
             float span = m_moveClock - m_hist[0].t;
             if (span > 1e-5f) vel = d * (1.0f / span);
@@ -624,7 +627,7 @@ void Character::DriveLocomotion(const Locomotion& l) {
         Vec3 o = gameObject->transform->Position();
         RaycastHit3D h = sc->physics3D().Raycast(*sc, o + Vec3{0.0f, 0.15f, 0.0f}, Vec3{0.0f, -1.0f, 0.0f}, 0.45f,
                                                  gameObject, Physics3D::kAllLayers, false);
-        ground = h.hit && vel.y < 1.0f;
+        ground = h.hit && vyNow < 1.0f;
     }
     Vec3 v{vel.x, 0.0f, vel.z};
     float hs = std::sqrt(v.x * v.x + v.z * v.z);

@@ -72,6 +72,7 @@ private:
         bool  blend = false;              ///< a blend tree (clips at one phase) or one clip
         int   clip = -1;                  ///< single clip
         float time = 0.0f;                ///< its clock (seconds of playback)
+        bool  loop = true;                ///< it loops (else it holds its last frame)
         std::vector<int>   clips;         ///< blend tree clips ...
         std::vector<float> weights;       ///< ... and their weights (sum 1)
         float phase = 0.0f;               ///< the blend's shared normalized phase

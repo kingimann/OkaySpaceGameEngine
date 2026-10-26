@@ -6,6 +6,11 @@ add_executable(test_scene test_scene.cpp)
 target_link_libraries(test_scene PRIVATE okay::engine)
 add_test(NAME scene COMMAND test_scene)
 
+# Scene::StructureVersion changes only when the hierarchy does (animation caches key on it)
+add_executable(test_structure_version test_structure_version.cpp)
+target_link_libraries(test_structure_version PRIVATE okay::engine)
+add_test(NAME structure_version COMMAND test_structure_version)
+
 add_executable(test_serialize test_serialize.cpp)
 target_link_libraries(test_serialize PRIVATE okay::engine)
 add_test(NAME serialize COMMAND test_serialize)

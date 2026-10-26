@@ -369,7 +369,7 @@ static void Foreach() {
             "        foreach (int xs in xs) { }\n"                // 8
             "    }\n"));
         CHECK(Has(d, 0, "'x' is the foreach variable, so it can't be changed", 4, 33));
-        CHECK(Has(d, 0, "foreach needs an array, not int", 5, 27));
+        CHECK(Has(d, 0, "foreach needs an array, a List or a Dictionary, not int", 5, 27));
         CHECK(Has(d, 0, "The items of xs are int but 's' is string", 6, 25));
         CHECK(Has(d, 0, "Expected 'in' here", 7, 24));
         CHECK(Has(d, 0, "'xs' is already a variable here", 8, 22));
@@ -801,6 +801,152 @@ static void Classes() {
     }
 }
 
+static void Collections() {
+    {   // do / while runs the body at least once
+        World w(Wrap("    public int n, tries;\n    void Start() { do { tries++; n += 3; } while (n < 10); do { tries++; } while (false); }\n"));
+        CHECK(w.loaded);
+        CHECK_NEAR(w.F("n"), 12.0f, 1e-6f);
+        CHECK_NEAR(w.F("tries"), 5.0f, 1e-6f);
+    }
+    {   // List<T>: add / insert / remove / index / sort / foreach / Count, a reference like an array
+        World w(Wrap(
+            "    public int count, sum, idx, first, removedAt, total;\n"
+            "    public bool has, removed, missing;\n"
+            "    public string text, names;\n"
+            "    void Start() {\n"
+            "        List<int> xs = new List<int>();\n"
+            "        xs.Add(5); xs.Add(1); xs.Add(9);\n"
+            "        xs.Insert(0, 7);\n"
+            "        xs[1] += 10;\n"
+            "        has = xs.Contains(9);\n"
+            "        idx = xs.IndexOf(9);\n"
+            "        removed = xs.Remove(1);\n"
+            "        missing = !xs.Remove(42);\n"
+            "        xs.Sort();\n"
+            "        first = xs[0];\n"
+            "        foreach (int x in xs) sum += x;\n"
+            "        count = xs.Count;\n"
+            "        var copy = xs;\n"
+            "        copy.RemoveAt(0);\n"
+            "        removedAt = xs.Count;\n"
+            "        text = \"\" + xs;\n"
+            "        var ns = new List<string> { \"b\", \"a\", \"c\" };\n"
+            "        ns.Sort(); ns.Reverse();\n"
+            "        foreach (var n in ns) names += n;\n"
+            "        int[] arr = ns.Count > 2 ? new List<int> { 1, 2, 3 }.ToArray() : new int[0];\n"
+            "        List<int> more = new List<int> { 4 }; more.AddRange(xs);\n"
+            "        total = arr.Length + more.Count;\n"
+            "        xs.Clear();\n"
+            "        count += xs.Count;\n"
+            "    }\n"));
+        CHECK(w.loaded);
+        CHECK(w.sc->VM()->GetGlobal("has").AsBool());
+        CHECK_NEAR(w.F("idx"), 3.0f, 1e-6f);            // [7, 15, 1, 9]
+        CHECK(w.sc->VM()->GetGlobal("removed").AsBool());
+        CHECK(w.sc->VM()->GetGlobal("missing").AsBool());
+        CHECK_NEAR(w.F("first"), 7.0f, 1e-6f);          // sorted [7, 9, 15]
+        CHECK_NEAR(w.F("sum"), 31.0f, 1e-6f);
+        CHECK_NEAR(w.F("count"), 3.0f, 1e-6f);          // 3, then Clear adds 0
+        CHECK_NEAR(w.F("removedAt"), 2.0f, 1e-6f);      // copy is the same list
+        CHECK(w.S("text") == "List<int>");
+        CHECK(w.S("names") == "cba");
+        CHECK_NEAR(w.F("total"), 3.0f + 3.0f, 1e-6f);   // [1,2,3] and [4, 9, 15]
+    }
+    {   // Dictionary<K,V>: indexer get/set, Add, ContainsKey, Remove, GetValueOrDefault, Keys/Values, foreach in insertion order
+        World w(
+            "enum Item { Sword, Shield, Potion }\n"
+            "class T : Behaviour {\n"
+            "    public int sword, potions, missing, count, keyCount;\n"
+            "    public bool has, gone, added, again;\n"
+            "    public string order = \"\", valuesText = \"\";\n"
+            "    void Start() {\n"
+            "        var bag = new Dictionary<Item, int>();\n"
+            "        bag[Item.Potion] = 2;\n"
+            "        bag.Add(Item.Sword, 1);\n"
+            "        bag[Item.Potion] += 3;\n"
+            "        added = bag.TryAdd(Item.Shield, 1);\n"
+            "        again = bag.TryAdd(Item.Shield, 9);\n"
+            "        sword = bag[Item.Sword];\n"
+            "        potions = bag[Item.Potion];\n"
+            "        has = bag.ContainsKey(Item.Shield);\n"
+            "        gone = bag.Remove(Item.Shield);\n"
+            "        missing = bag.GetValueOrDefault(Item.Shield, -1);\n"
+            "        foreach (var kv in bag) order += kv.Key + \"=\" + kv.Value + \";\";\n"
+            "        foreach (int v in bag.Values) valuesText += v;\n"
+            "        keyCount = bag.Keys.Count;\n"
+            "        count = bag.Count;\n"
+            "        Dictionary<string, GameObject> byName = new Dictionary<string, GameObject>();\n"
+            "        byName[\"me\"] = gameObject;\n"
+            "        if (byName[\"me\"] == gameObject) count += 100;\n"
+            "    }\n"
+            "}\n");
+        CHECK(w.loaded);
+        CHECK_NEAR(w.F("sword"), 1.0f, 1e-6f);
+        CHECK_NEAR(w.F("potions"), 5.0f, 1e-6f);
+        CHECK(w.sc->VM()->GetGlobal("added").AsBool());
+        CHECK(!w.sc->VM()->GetGlobal("again").AsBool());
+        CHECK(w.sc->VM()->GetGlobal("has").AsBool());
+        CHECK(w.sc->VM()->GetGlobal("gone").AsBool());
+        CHECK_NEAR(w.F("missing"), -1.0f, 1e-6f);
+        CHECK(w.S("order") == "Potion=5;Sword=1;");
+        CHECK(w.S("valuesText") == "51");
+        CHECK_NEAR(w.F("keyCount"), 2.0f, 1e-6f);
+        CHECK_NEAR(w.F("count"), 102.0f, 1e-6f);
+    }
+    {   // the same list and dictionary code gives the same results on the old runtime
+        const std::string src = Wrap(
+            "    public int count, sum, idx;\n"
+            "    public bool has;\n"
+            "    void Start() {\n"
+            "        List<int> xs = new List<int>();\n"
+            "        xs.Add(5); xs.Add(1); xs.Add(9); xs.Insert(0, 7); xs.Remove(1); xs.Sort();\n"
+            "        foreach (int x in xs) sum += x;\n"
+            "        idx = xs.IndexOf(9); count = xs.Count;\n"
+            "        Dictionary<string, int> d = new Dictionary<string, int>();\n"
+            "        d[\"a\"] = 2; d.Add(\"b\", 3);\n"
+            "        has = d.ContainsKey(\"b\");\n"
+            "        sum += d.GetValueOrDefault(\"a\", 0) + d.GetValueOrDefault(\"z\", 10);\n"
+            "    }\n");
+        World next(src), old(src, "okayscript");
+        for (const char* f : {"count", "sum", "idx"}) CHECK_NEAR(next.F(f), old.F(f), 1e-6f);
+        CHECK(next.sc->VM()->GetGlobal("has").AsBool() == old.sc->VM()->GetGlobal("has").AsBool());
+        CHECK_NEAR(next.F("sum"), 21.0f + 12.0f, 1e-6f);
+    }
+    {   // runtime errors with their line
+        g_errs.clear();
+        World a(Wrap("    void Start() { var d = new Dictionary<string, int>(); Debug.Log(d[\"hp\"]); }\n"));
+        CHECK(ErrHas("Start() line 2: The key \"hp\" isn't in this Dictionary<string, int>"));
+        World b(Wrap("    void Start() { var d = new Dictionary<string, int>(); d.Add(\"a\", 1); d.Add(\"a\", 2); }\n"));
+        CHECK(ErrHas("Start() line 2: The key \"a\" is already in this Dictionary<string, int>"));
+        World c(Wrap("    void Start() { var xs = new List<int> { 1, 2 }; foreach (var x in xs) xs.Add(x); }\n"));
+        CHECK(ErrHas("Start() line 2: The List<int> was changed during foreach"));
+        World e(Wrap("    void Start() { var xs = new List<int>(); xs.RemoveAt(0); }\n"));
+        CHECK(ErrHas("Start() line 2: Index 0 is outside the List<int> (length 0)"));
+    }
+    {   // mistakes, with line and column
+        auto d = Diags(Wrap(
+            "    void Start() {\n"                                              // 2
+            "        List<int> xs = new List<int>();\n"                         // 3
+            "        xs.Add(\"a\");\n"                                        // 4
+            "        var d = new Dictionary<float, int>();\n"                   // 5
+            "        HashSet<int> h;\n"                                          // 6
+            "        List<int, int> bad;\n"                                      // 7
+            "        xs.Push(1);\n"                                              // 8
+            "        var m = new Dictionary<string, int> { 1 };\n"              // 9
+            "        do { } while (1);\n"                                        // 10
+            "        Debug.Log(xs.Length);\n"                                    // 11
+            "    }\n"));
+        CHECK(Has(d, 0, "is string but needs int", 4, 16));
+        CHECK(Has(d, 0, "A Dictionary key must be an int, string, bool, enum or object, not float", 5, 32));
+        CHECK(Has(d, 0, "Only List<T> and Dictionary<K, V> are generic here", 6, 9));
+        CHECK(Has(d, 0, "List takes one type: List<int>", 7, 9));
+        CHECK(Has(d, 0, "List<int> has no method 'Push'", 8, 12));
+        CHECK(Has(d, 0, "Fill a Dictionary with Add or d[key] = value", 9, 17));
+        CHECK(Has(d, 0, "The while condition must be true/false, not int", 10, 23));
+        CHECK(Has(d, 0, "List<int> has no 'Length'. Did you mean 'Count'?", 11, 22));
+    }
+}
+
 static void Parity() {
     // The same C# snippet gives the same results on the old OkayScript runtime.
     const std::string src =
@@ -889,7 +1035,9 @@ static void Fuzz() {
         "  switch (E.A) { case E.A: foreach (var x in a) { a[x % 2] += 1; } break; default: break; }\n"
         "  string s = $\"{a[0]:F1} {{ {$\"{E.B}\"}\";\n"
         "  GameObject g = GameObject.Find(s) ?? gameObject; g?.transform.Translate(1, 0, 0); a ??= new int[1];\n"
-        "  P p = new P(3).Twin(); p.v += 1; Debug.Log(p?.Twin());\n }\n}\n";
+        "  P p = new P(3).Twin(); p.v += 1; Debug.Log(p?.Twin());\n"
+        "  var xs = new List<int> { 1, 2 }; var d = new Dictionary<string, List<int>>(); d[\"a\"] = xs;\n"
+        "  do { xs.RemoveAt(0); } while (xs.Count > 0); foreach (var kv in d) Debug.Log(kv.Key + kv.Value.Count);\n }\n}\n";
     int n = 0;
     for (std::size_t i = 0; i <= src.size(); ++i) { Diags(src.substr(0, i)); ++n; }
     for (std::size_t i = 0; i < src.size(); ++i) { std::string s = src; s.erase(i, 1); Diags(s); }
@@ -919,6 +1067,7 @@ int main() {
     Interpolation();
     NullOperators();
     Classes();
+    Collections();
     Parity();
     Followups();
     BackCompat();

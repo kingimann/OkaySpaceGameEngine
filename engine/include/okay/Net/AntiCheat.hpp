@@ -197,6 +197,16 @@ public:
     /// Called when a peer is forgotten (left, kicked, timed out), so per-peer
     /// state kept elsewhere (NetValidator) can go too.
     std::function<void(std::uint32_t peer)> onForgetPeer;
+    /// A leaving peer's state kept elsewhere (NetValidator budgets) is parked
+    /// under `ident` / taken back by the peer that rejoins as `ident`.
+    std::function<void(std::uint32_t peer, const std::string& ident)> onParkPeer, onRestorePeer;
+    /// A peer is leaving (before ForgetPeer): keep its violation count, and its
+    /// budgets elsewhere (onParkPeer), under `ident` (its account, else its
+    /// address) for kParkSeconds, so leaving and rejoining resets nothing.
+    void ParkPeer(std::uint32_t peer, const std::string& ident);
+    /// A peer joined as `ident`: it takes back what that ident left behind.
+    void RestorePeer(std::uint32_t peer, const std::string& ident);
+    static constexpr double kParkSeconds = 300.0;
     /// Who installed the handlers above (an AntiCheatConfig's token; 0 = code).
     /// Lets a component remove only what it put there.
     std::uint64_t installer = 0;
@@ -248,6 +258,8 @@ private:
     std::unordered_map<std::uint32_t, PeerInfo> m_peers;
     std::unordered_map<std::string, std::uint32_t> m_owner;   // netId -> owning peer
     std::unordered_map<std::string, Track> m_track;           // netId -> last accepted position
+    struct Parked { int violations = 0; float violationTimer = 0.0f; double at = 0.0; };
+    std::unordered_map<std::string, Parked> m_parked;         // ident -> what a peer that left had
     int m_total = 0;
     double m_clock = 0.0;
 

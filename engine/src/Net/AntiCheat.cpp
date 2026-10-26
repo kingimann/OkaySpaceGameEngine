@@ -200,7 +200,29 @@ void AntiCheat::ForgetPeer(std::uint32_t peer) {
         it = it->second.peer == peer ? m_track.erase(it) : std::next(it);
 }
 
-void AntiCheat::Reset() { m_peers.clear(); m_owner.clear(); m_track.clear(); m_total = 0; m_clock = 0.0; }
+void AntiCheat::ParkPeer(std::uint32_t peer, const std::string& ident) {
+    if (!settings.enabled || ident.empty()) return;
+    for (auto it = m_parked.begin(); it != m_parked.end();)
+        it = m_clock - it->second.at > kParkSeconds ? m_parked.erase(it) : std::next(it);
+    if (auto p = m_peers.find(peer); p != m_peers.end() && p->second.violations > 0)
+        m_parked[ident] = Parked{p->second.violations, p->second.violationTimer, m_clock};
+    if (onParkPeer) onParkPeer(peer, ident);
+}
+
+void AntiCheat::RestorePeer(std::uint32_t peer, const std::string& ident) {
+    if (!settings.enabled || ident.empty()) return;
+    if (auto it = m_parked.find(ident); it != m_parked.end()) {
+        if (m_clock - it->second.at <= kParkSeconds) {
+            PeerInfo& p = m_peers[peer];
+            p.violations = it->second.violations;
+            p.violationTimer = it->second.violationTimer;
+        }
+        m_parked.erase(it);
+    }
+    if (onRestorePeer) onRestorePeer(peer, ident);
+}
+
+void AntiCheat::Reset() { m_peers.clear(); m_owner.clear(); m_track.clear(); m_parked.clear(); m_total = 0; m_clock = 0.0; }
 
 bool AntiCheat::Refuse(std::uint32_t peer, CheatKind k, const std::string& detail) {
     const int n = ++m_peers[peer].violations;

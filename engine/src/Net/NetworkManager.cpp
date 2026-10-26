@@ -349,6 +349,7 @@ void NetworkManager::Stop() {
     m_acClockMs = 0.0;
     m_gameClockMs = 0.0;
     m_pendingJoins.clear();
+    m_kickBans.clear();
     m_secure = net::SecureChannel{};   // a new session makes new keys (a reconnect mustn't keep the old ones)
     m_joinHellos = 0;
     m_authQueries = 0;
@@ -1371,6 +1372,7 @@ void NetworkManager::Kick(std::uint32_t id, const std::string& reason) {
             if (GetScene() && r->second) GetScene()->Destroy(r->second);
             m_remotes.erase(r);
         }
+        anticheat.ParkPeer(id, it->second.ident);
         m_clients.erase(it);
         anticheat.ForgetPeer(id);
         DespawnPeerObjects(id);
@@ -1582,6 +1584,11 @@ bool NetworkManager::AntiCheatAllowsSyncVar(std::uint32_t peer, const std::strin
     return false;
 }
 
+float NetworkManager::KickBanLeft(const std::string& ident) const {
+    auto it = m_kickBans.find(ident);
+    return it == m_kickBans.end() ? 0.0f : std::max(0.0f, it->second.until - m_serverTime);
+}
+
 void NetworkManager::AntiCheatAfterRefusal(std::uint32_t peer) {
     const int limit = anticheat.settings.kickAfterViolations;
     if (limit > 0 && anticheat.Violations(peer) >= limit) {
@@ -1592,7 +1599,23 @@ void NetworkManager::AntiCheatAfterRefusal(std::uint32_t peer) {
             if (auto r = m_recentCheats.find(peer); r != m_recentCheats.end()) k.recent = r->second;
             m_acKickHandler(k);
         }
-        Kick(peer, "anti-cheat");   // (forgets its anti-cheat state too)
+        // Kicked: not back for a minute (account and address), doubling on
+        // each repeat up to an hour; so a kick isn't just a reconnect.
+        for (auto it = m_kickBans.begin(); it != m_kickBans.end();)
+            it = m_serverTime > it->second.until + 3600.0f ? m_kickBans.erase(it) : std::next(it);
+        for (auto& [ep, c] : m_clients) {
+            if (c.id != peer) continue;
+            std::vector<std::string> keys{c.ident};
+            const std::string addr = "a:" + std::to_string(ep.address);
+            if (addr != c.ident) keys.push_back(addr);
+            for (const auto& key : keys) {
+                KickBan& b = m_kickBans[key];
+                b.strikes = std::min(b.strikes + 1, 7);
+                b.until = m_serverTime + std::min(3600.0f, 60.0f * float(1 << (b.strikes - 1)));
+            }
+            break;
+        }
+        Kick(peer, "anti-cheat");   // (parks and forgets its anti-cheat state too)
     }
 }
 
@@ -1899,7 +1922,14 @@ void NetworkManager::ServerTick(float dt) {
                 // Gate new joins on capacity, password and (if a verifier is set)
                 // identity; refuse politely.
                 const char* why = nullptr;
-                std::string ticketWhy;
+                std::string ticketWhy, banWhy;
+                const std::string addrIdent = "a:" + std::to_string(from.address);
+                auto kickedRecently = [&](const std::string& ident) {
+                    const float left = KickBanLeft(ident);
+                    if (left <= 0.0f) return false;
+                    banWhy = "kicked by the anti-cheat; try again in " + std::to_string((int)std::ceil(left)) + " s";
+                    return true;
+                };
                 if ((int)m_clients.size() >= maxPlayers) why = "server is full";
                 else if (!password.empty() && pass != password) why = "wrong password";
                 else if (needCrypto && !viaPending)
@@ -1924,6 +1954,10 @@ void NetworkManager::ServerTick(float dt) {
                     if (r == 0) why = "authentication failed";
                 }
                 else if (m_verifyToken && !m_verifyToken(token, userId)) why = "authentication failed";
+                // Kicked by the anti-cheat a moment ago: the account, or for an
+                // anonymous join the address (other signed-in players behind
+                // the same address aren't locked out).
+                if (!why && kickedRecently(userId.empty() ? addrIdent : "u:" + userId)) why = banWhy.c_str();
                 if (why) {
                     net::Packet r(Reject); r.Write(std::string(why));
                     SendDatagram(from, r.Data(), r.Size(), /*allowEncrypt=*/viaPending);
@@ -1940,6 +1974,8 @@ void NetworkManager::ServerTick(float dt) {
                 c.room = room;
                 c.joinedAt = m_serverTime;
                 c.userId = userId;
+                c.ident = userId.empty() ? "a:" + std::to_string(from.address) : "u:" + userId;
+                anticheat.RestorePeer(c.id, c.ident);   // what it had if it left a moment ago
                 if (viaPending) {
                     // The key exchange's session becomes the client's (numbered,
                     // with the version authenticated).
@@ -2175,6 +2211,7 @@ void NetworkManager::ServerTick(float dt) {
                     if (GetScene() && r->second) GetScene()->Destroy(r->second);
                     m_remotes.erase(r);
                 }
+                anticheat.ParkPeer(id, it->second.ident);
                 m_clients.erase(it);
                 anticheat.ForgetPeer(id);
                 DespawnPeerObjects(id);
@@ -2222,6 +2259,7 @@ void NetworkManager::ServerTick(float dt) {
                 if (GetScene() && r->second) GetScene()->Destroy(r->second);
                 m_remotes.erase(r);
             }
+            anticheat.ParkPeer(id, it->second.ident);
             it = m_clients.erase(it);
             anticheat.ForgetPeer(id);
             DespawnPeerObjects(id);

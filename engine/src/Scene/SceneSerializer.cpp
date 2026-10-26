@@ -26,6 +26,7 @@
 #include "okay/Components/LoadingScreen.hpp"
 #include "okay/Components/InventoryUI.hpp"
 #include "okay/Components/GridInventory.hpp"
+#include "okay/Inventory/ItemDatabase.hpp"
 #include "okay/Components/GridInventoryUI.hpp"
 #include "okay/Components/CraftingStation.hpp"
 #include "okay/Components/ChestInventory.hpp"
@@ -177,6 +178,38 @@ std::string ReadQuoted(std::istream& in) {
         else out += c;
     }
     return out;
+}
+
+// An item name read from a scene, as an ItemDatabase id: legacy names / display
+// names map to their definition's id, and unknown names become loose definitions.
+std::string ItemId(const std::string& name) { return ItemDatabase::Get().Resolve(name); }
+
+// Per-instance item data (durability / uid / values), appended after a container's
+// other fields as: count, then per entry: index durability uid nvalues "k" "v"...
+template <class Get>
+void WriteInstanceData(std::ostream& out, std::size_t n, Get data) {
+    std::vector<std::size_t> idx;
+    for (std::size_t i = 0; i < n; ++i) if (!data(i).Empty()) idx.push_back(i);
+    out << " " << idx.size();
+    for (std::size_t i : idx) {
+        const ItemInstanceData& d = data(i);
+        out << " " << i << " " << d.durability << " " << d.uid << " " << d.values.size();
+        for (const auto& kv : d.values) out << " " << Quote(kv.first) << " " << Quote(kv.second);
+    }
+}
+template <class Get>
+void ReadInstanceData(std::istream& in, std::size_t n, Get data) {
+    in >> std::ws;
+    const int pk = in.peek();
+    if (!std::isdigit(pk)) return;   // older line: no instance data
+    std::size_t count = 0; in >> count;
+    for (std::size_t k = 0; k < count && in; ++k) {
+        std::size_t i = 0, nv = 0;
+        ItemInstanceData d;
+        in >> i >> d.durability >> d.uid >> nv;
+        for (std::size_t v = 0; v < nv && in; ++v) { std::string key = ReadQuoted(in); d.values.push_back({key, ReadQuoted(in)}); }
+        if (in && i < n) data(i) = d;
+    }
 }
 
 // key=value component lines (used by newer components): order-free, and keys a
@@ -1279,6 +1312,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << gi->overflow.size();
         for (const auto& it : gi->overflow)
             out << " " << Quote(it.name) << " " << it.w << " " << it.h << " " << it.count << " " << it.weight;
+        WriteInstanceData(out, gi->items.size(), [&](std::size_t i) -> const ItemInstanceData& { return gi->items[i].data; });
         out << "\n";
     }
     if (auto* gu = go->GetComponent<GridInventoryUI>()) {
@@ -1750,6 +1784,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  inventory " << inv->capacity << " " << inv->slots.size();
         for (const auto& s : inv->slots) out << " " << Quote(s.item) << " " << s.count;
         out << " " << inv->maxStack;   // appended (numeric-peek guarded on read)
+        WriteInstanceData(out, inv->slots.size(), [&](std::size_t i) -> const ItemInstanceData& { return inv->slots[i].data; });
         out << "\n";
     }
     if (auto* tm = go->GetComponent<TurnManager>()) {
@@ -3806,7 +3841,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     gi->title = ReadQuoted(in);
                     int n = 0; in >> n; gi->items.clear();
                     for (int i = 0; i < n && in; ++i) {
-                        GridItem it; it.name = ReadQuoted(in);
+                        GridItem it; it.name = ItemId(ReadQuoted(in));
                         in >> it.w >> it.h >> it.x >> it.y >> it.count >> it.weight;
                         gi->items.push_back(it);
                     }
@@ -3823,10 +3858,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             if (std::isdigit(epk) || epk == '-') {
                                 int ew = 0, no = 0; in >> ew >> gi->maxStack >> no; gi->enforceWeight = (ew != 0);
                                 for (int i = 0; i < no && in; ++i) {
-                                    GridItem it; it.name = ReadQuoted(in);
+                                    GridItem it; it.name = ItemId(ReadQuoted(in));
                                     in >> it.w >> it.h >> it.count >> it.weight;
                                     gi->overflow.push_back(it);
                                 }
+                                ReadInstanceData(in, gi->items.size(), [&](std::size_t i) -> ItemInstanceData& { return gi->items[i].data; });
                             }
                         }
                     }
@@ -3900,10 +3936,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     for (std::size_t ri = 0; ri < rn && in; ++ri) {
                         CraftingStation::Recipe r; std::size_t ic = 0; in >> ic;
                         for (std::size_t ii = 0; ii < ic && in; ++ii) {
-                            CraftingStation::Ingredient ing; ing.item = ReadQuoted(in); in >> ing.count;
+                            CraftingStation::Ingredient ing; ing.item = ItemId(ReadQuoted(in)); in >> ing.count;
                             r.inputs.push_back(ing);
                         }
-                        r.output = ReadQuoted(in); in >> r.outputCount;
+                        r.output = ItemId(ReadQuoted(in)); in >> r.outputCount;
                         cs->recipes.push_back(r);
                     }
                     cs->range = 0.0f;   // older scenes: no range (opened from anywhere)
@@ -4056,7 +4092,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     c->requireInventory = (ri != 0); c->consumeOnDrop = (cd != 0); c->destroyDroppedItem = (dd != 0);
                     for (int i = 0; i < n && in; ++i) {
                         Consumables::Recipe r;
-                        r.item = ReadQuoted(in); r.action = ReadQuoted(in); in >> r.amount;
+                        r.item = ItemId(ReadQuoted(in)); r.action = ReadQuoted(in); in >> r.amount;
                         c->recipes.push_back(r);
                     }
                 } else if (field == "daynight") {
@@ -4146,11 +4182,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int n = 0; in >> n;
                     for (int i = 0; i < n && in; ++i) {
                         Crafting::Recipe r;
-                        r.output = ReadQuoted(in); in >> r.outputCount;
+                        r.output = ItemId(ReadQuoted(in)); in >> r.outputCount;
                         int ni = 0; in >> ni;
                         for (int j = 0; j < ni && in; ++j) {
                             Crafting::Ingredient ing;
-                            ing.item = ReadQuoted(in); in >> ing.count;
+                            ing.item = ItemId(ReadQuoted(in)); in >> ing.count;
                             r.inputs.push_back(ing);
                         }
                         c->recipes.push_back(std::move(r));
@@ -4490,12 +4526,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     std::size_t count = 0; in >> inv->capacity >> count;
                     inv->slots.clear();
                     for (std::size_t k = 0; k < count && in; ++k) {
-                        Inventory::Slot s; s.item = ReadQuoted(in); in >> s.count;
+                        Inventory::Slot s; s.item = ItemId(ReadQuoted(in)); in >> s.count;
                         inv->slots.push_back(s);
                     }
                     in >> std::ws;   // optional max stack size (appended later)
                     int mpk = in.peek();
-                    if (std::isdigit(mpk) || mpk == '-') in >> inv->maxStack;
+                    if (std::isdigit(mpk) || mpk == '-') {
+                        in >> inv->maxStack;
+                        ReadInstanceData(in, inv->slots.size(), [&](std::size_t i) -> ItemInstanceData& { return inv->slots[i].data; });
+                    }
                 } else if (field == "turnmgr") {
                     auto* tm = go->AddComponent<TurnManager>();
                     int as = 1; std::size_t count = 0;
@@ -5880,6 +5919,15 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         if (auto* bm = go->GetComponent<BuildMode>())
             for (const auto& it : bm->palette) { add(it.prefab); add(it.icon); }
         if (auto* lt = go->GetComponent<LogicTarget>()) add(lt->spawnPrefab);
+    }
+    // The item database (and its icons / drop prefabs) ships with any scene that has items.
+    bool hasItems = false;
+    for (const auto& go : scene.Objects())
+        if (go->GetComponent<Inventory>() || go->GetComponent<GridInventory>()) { hasItems = true; break; }
+    const ItemDatabase& db = ItemDatabase::Get();
+    if (hasItems && !db.Path().empty()) {
+        add(db.Path());
+        for (const auto& d : db.Items()) if (!d.loose) { add(d.icon); add(d.worldPrefab); }
     }
     return out;
 }

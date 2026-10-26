@@ -53,6 +53,7 @@ add_library(okay_engine
     src/Components/AnimControl.cpp
     src/Components/ActionList.cpp
     src/Inventory/InventoryOps.cpp
+    src/Inventory/ItemDatabase.cpp
     src/UI/InventoryInput.cpp
     src/Components/UIDocument.cpp
     src/Components/UILayoutGroup.cpp

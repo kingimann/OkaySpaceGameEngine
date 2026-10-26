@@ -72,8 +72,9 @@ public:
     struct RarityRule { std::string item; Color color = Color::FromBytes(255, 215, 0, 255); };
     std::vector<RarityRule> rarities;
     const Color* RarityOf(const std::string& item) const {
-        for (const auto& r : rarities) if (!r.item.empty() && r.item == item) return &r.color;
-        return nullptr;
+        for (const auto& r : rarities) if (!r.item.empty() && r.item == item) return &r.color;   // per-UI override
+        const ItemDefinition* d = ItemDatabase::Get().Find(item);
+        return (d && d->hasRarityColor) ? &d->rarityColor : nullptr;
     }
 
     // ---- Unturned-style multi-container screen ----

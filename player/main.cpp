@@ -124,6 +124,12 @@ static SDL_Texture* GetTexture(SDL_Renderer* r, const std::string& path,
     return ui2d::LoadSDLTexture(r, path, baseDir, cache);
 }
 
+// An item's icon (okay::ItemIconPath), or null when it has none (the name is drawn).
+static SDL_Texture* IconTexture(SDL_Renderer* r, const std::string& path, const std::string& baseDir,
+                                std::unordered_map<std::string, SDL_Texture*>& cache) {
+    return path.empty() ? nullptr : GetTexture(r, path, baseDir, cache);
+}
+
 
 // Screen-space vignette (RenderSettings.vignette): darken the frame's edges toward
 // the corners. A cheap post overlay of stepped 1px border frames fading inward, so
@@ -525,8 +531,7 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         if (idx == ui.dragIndex) shown -= (ui.dragAmount > 0 ? ui.dragAmount : shown);
         if (shown > 0 && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
             const auto& it = inv->slots[idx];
-            SDL_Texture* icon = ui.iconFolder.empty() ? nullptr
-                              : GetTexture(r, ui.iconFolder + it.item + ".png", baseDir, cache);
+            SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(ui.iconFolder, it.item), baseDir, cache);
             if (icon) { int ins = (int)(ui.iconInset * uiScale); SDL_Rect d{inner.x + ins, inner.y + ins, inner.w - 2 * ins, inner.h - 2 * ins}; SDL_RenderCopy(r, icon, nullptr, &d); }
             else if (ui.showNames) {
                 std::string nm = it.item.substr(0, ui.nameChars < 1 ? 1 : (std::size_t)ui.nameChars);
@@ -644,7 +649,7 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         const auto& it = inv->slots[ui.dragIndex];
         float x = mp.x - sz * 0.5f, y = mp.y - sz * 0.5f;
         slot(x, y, -2, false);   // an empty slot frame floating under the cursor
-        SDL_Texture* icon = ui.iconFolder.empty() ? nullptr : GetTexture(r, ui.iconFolder + it.item + ".png", baseDir, cache);
+        SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(ui.iconFolder, it.item), baseDir, cache);
         if (icon) { SDL_Rect d{(int)x + 4, (int)y + 4, (int)sz - 8, (int)sz - 8}; SDL_RenderCopy(r, icon, nullptr, &d); }
         else {
             std::string nm = it.item.substr(0, ui.nameChars < 1 ? 1 : (std::size_t)ui.nameChars);
@@ -755,7 +760,7 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
         SDL_Rect box{(int)px0, (int)py0, (int)w, (int)h};
         stroke(px0, py0, w, h, rar ? *rar : u.itemBorder, ghost ? 170 : 235);
         if (hover) { fill(px0, py0, w, h, u.hoverColor, cr); stroke(px0, py0, w, h, lighten(u.itemBorder, 0.35f), 255); }
-        SDL_Texture* icon = u.iconFolder.empty() ? nullptr : GetTexture(r, u.iconFolder + it.name + ".png", baseDir, cache);
+        SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(u.iconFolder, it.name), baseDir, cache);
         if (icon) { SDL_SetTextureAlphaMod(icon, ghost ? 160 : 255); SDL_Rect d{box.x + 6, box.y + 6, box.w - 12, box.h - 12}; SDL_RenderCopy(r, icon, nullptr, &d); }
         else if (u.showItemNames) {   // clip the name to the tile width so it never overflows the cell
             float px = u.itemNameScale; int maxc = (int)((w - 12) / ((Font8x8::Width + 1) * px)); if (maxc < 1) maxc = 1;
@@ -896,7 +901,7 @@ static void DrawChest(SDL_Renderer* r, okay::ChestInventory& ch, const std::stri
     int hovSide = -1, hovIdx = -1;   // which grid + slot the cursor is over
     L.Pick(mp.x, mp.y, hovSide, hovIdx);
     auto stack = [&](const okay::Inventory::Slot& it, float x, float y, float sz) {
-        SDL_Texture* icon = ch.iconFolder.empty() ? nullptr : GetTexture(r, ch.iconFolder + it.item + ".png", baseDir, cache);
+        SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(ch.iconFolder, it.item), baseDir, cache);
         if (icon) { SDL_Rect d{(int)x+4, (int)y+4, (int)sz-8, (int)sz-8}; SDL_RenderCopy(r, icon, nullptr, &d); }
         else DrawText(r, it.item.substr(0, 5), x + 4, y + 5, 1.0f, sc(ch.textColor));
         if (it.count > 1) { std::string c = std::to_string(it.count); float px = 1.2f;
@@ -1184,6 +1189,7 @@ int main(int argc, char** argv) {
     Prefs::Load(prefsPath);
     DataAsset::SetBaseDir(baseDir);   // read-only .okaydata assets stay beside the game
     Character::SetAssetBaseDir(baseDir);   // a Character's relative clips file, too
+    ItemDatabase::Get().Load(baseDir + "items.okayitems");   // the project's item definitions (shipped by Build Game)
 
     // Anti-cheat (okayac::DecideStart). Without trusted keys built in: off unless
     // the build (anticheat=) or OKAY_ANTICHEAT turns it on (either only makes it

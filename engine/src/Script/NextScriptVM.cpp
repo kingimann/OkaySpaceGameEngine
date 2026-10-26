@@ -2,6 +2,7 @@
 #include "ScriptInternal.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Scene/GameObject.hpp"
+#include <cmath>
 #include <set>
 
 namespace okay {
@@ -137,17 +138,110 @@ void NextScriptVM::CallEvent(const std::string& function) {
     if (m.isPublic && m.params.empty() && m.lifecycle < 0) RunMethod(function);
 }
 
-vs::VsValue NextScriptVM::GetGlobal(const std::string& name) const {
-    if (!m_impl->inst) return vs::VsValue{};
-    Value v = m_impl->inst->GetField(name);
+namespace {
+// A script value as an engine value (for the engine, tests and the Inspector).
+vs::VsValue ToVs(const Value& v) {
     if (auto* b = std::get_if<bool>(&v)) return vs::VsValue{*b};
     if (auto* i = std::get_if<std::int32_t>(&v)) return vs::VsValue{(float)*i};
     if (auto* f = std::get_if<float>(&v)) return vs::VsValue{*f};
     if (auto* s = std::get_if<std::string>(&v)) return vs::VsValue{*s};
     if (auto* p = std::get_if<Vec3>(&v)) return vs::VsValue{*p};
-    // An object field (GameObject / Transform / component) is its object.
+    // An object (GameObject / Transform / component) is its object.
     if (auto* o = std::get_if<ObjRef>(&v)) return vs::VsValue::Object(o->go);
     return vs::VsValue{};
+}
+
+std::string Describe(const vs::VsValue& v) {
+    if (v.IsString()) return "text";
+    if (v.IsBool()) return "true/false";
+    if (v.IsNumber()) return "a number";
+    if (v.IsVec3()) return "a Vector3";
+    if (v.IsObject()) return "an object";
+    return "nothing";
+}
+// An engine value as a parameter of type `t`, or false (and why) if it isn't one.
+bool FromVs(const vs::VsValue& v, const Type& t, const std::string& param, Value& out, std::string& why) {
+    auto wrong = [&](const char* needs) { why = "'" + param + "' needs " + needs + ", not " + Describe(v); return false; };
+    switch (t.kind) {
+        case TK::String: if (!v.IsString()) return wrong("text"); out = Value{v.AsString()}; return true;
+        case TK::Bool: if (!v.IsBool()) return wrong("true/false"); out = Value{v.AsBool()}; return true;
+        case TK::Float: if (!v.IsNumber()) return wrong("a number"); out = Value{v.AsFloat()}; return true;
+        case TK::Int: case TK::Enum: {
+            if (!v.IsNumber()) return wrong("a whole number");
+            const double d = std::trunc((double)v.AsFloat());
+            if (!std::isfinite(d) || d < -2147483648.0 || d > 2147483647.0) return wrong("a whole number that fits an int");
+            out = Value{(std::int32_t)d};
+            return true;
+        }
+        case TK::Vector3: if (!v.IsVec3()) return wrong("a Vector3"); out = Value{v.AsVec3()}; return true;
+        case TK::Object:   // GameObject or a component: the object's id, resolved where it's used
+            if (!v.IsObject()) return wrong("an object");
+            out = v.AsObjectId() ? Value{ObjRef{v.AsObjectId(), t.id}} : Value{};
+            return true;
+        default:
+            why = "'" + param + "' can't be given by the engine (only text, numbers, true/false, Vector3 and objects)";
+            return false;
+    }
+}
+Value DefaultOf(const Type& t) {
+    switch (t.kind) {
+        case TK::Bool: return Value{false};
+        case TK::Int: case TK::Enum: return Value{std::int32_t{0}};
+        case TK::Float: return Value{0.0f};
+        case TK::String: return Value{std::string()};
+        case TK::Vector3: return Value{Vec3::Zero};
+        default: return Value{};
+    }
+}
+} // namespace
+
+void NextScriptVM::CallEventWith(const std::string& function, const vs::VsValue& arg) {
+    CallEventArgs(function, std::vector<vs::VsValue>{arg});
+}
+
+bool NextScriptVM::HasEvent(const std::string& function) const {
+    return m_impl->prog && m_impl->prog->MethodIndex(function) >= 0;
+}
+
+vs::VsValue NextScriptVM::CallEventArgs(const std::string& function, const std::vector<vs::VsValue>& given,
+                                        std::string* error) {
+    if (!m_impl->inst) return {};
+    const int idx = m_impl->prog->MethodIndex(function);
+    if (idx < 0) { CallEvent(function); return {}; }   // engine lifecycle names, or no such method
+    const MethodDecl& m = m_impl->prog->Component()->methods[(std::size_t)idx];
+    auto fail = [&](const std::string& msg) {
+        if (error) { *error = msg; return; }
+        ++m_errorCount;
+        m_lastError = msg;
+        const GameObject* self = m_impl->inst->Context().self;
+        Log::Error("Script on '", self ? self->name : std::string("?"), "', ", msg);
+    };
+    // As many values as the method takes: extra ones are dropped, missing ones are the type's default.
+    std::vector<Value> args;
+    for (std::size_t i = 0; i < m.params.size(); ++i) {
+        if (i >= given.size()) { args.push_back(DefaultOf(m.params[i].resolved)); continue; }
+        Value v;
+        std::string why;
+        if (!FromVs(given[i], m.params[i].resolved, m.params[i].name, v, why)) { fail(function + "(): " + why); return {}; }
+        args.push_back(std::move(v));
+    }
+    CallContext& c = m_impl->inst->Context();
+    if (m_host) {
+        c.self = m_host->gameObject;
+        c.component = m_host->component;
+        c.deltaTime = m_host->deltaTime;
+    }
+    try {
+        return ToVs(m_impl->inst->Call(idx, std::move(args)));
+    } catch (const RuntimeError& e) {
+        fail(function + "() line " + std::to_string(e.loc.line) + ": " + e.what());
+    }
+    return {};
+}
+
+vs::VsValue NextScriptVM::GetGlobal(const std::string& name) const {
+    if (!m_impl->inst) return vs::VsValue{};
+    return ToVs(m_impl->inst->GetField(name));
 }
 
 void NextScriptVM::SetGlobal(const std::string& name, const vs::VsValue& v) {

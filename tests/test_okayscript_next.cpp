@@ -292,6 +292,39 @@ int main() {
         w.sc->VM()->CallEvent("OnPlayPressed");
         CHECK_NEAR(w.Get("clicks").AsFloat(), 2.0f, 1e-4f);
     }
+    {   // engine code calling a method with values: each one becomes its parameter's type
+        World w(Wrap(
+            "    public string item;\n"
+            "    public int count;\n"
+            "    public float weight;\n"
+            "    public bool equipped;\n"
+            "    public string ownerName;\n"
+            "    void OnItemAdded(string name, int n, float kg, bool eq, GameObject who) {\n"
+            "        item = name; count = n; weight = kg; equipped = eq;\n"
+            "        ownerName = who == null ? \"none\" : who.name;\n"
+            "    }\n"
+            "    int Total(int a, int b) { return a + b; }\n"));
+        CHECK(w.loaded);
+        using vs::VsValue;
+        w.sc->VM()->CallEventArgs("OnItemAdded", {VsValue{std::string("Potion")}, VsValue{3.0f}, VsValue{0.5f}, VsValue{true},
+                                                  VsValue::Object(w.player->InstanceId())});
+        CHECK(w.Get("item").AsString() == "Potion");
+        CHECK_NEAR(w.Get("count").AsFloat(), 3.0f, 1e-6f);
+        CHECK_NEAR(w.Get("weight").AsFloat(), 0.5f, 1e-6f);
+        CHECK(w.Get("equipped").AsBool());
+        CHECK(w.Get("ownerName").AsString() == "Player");
+        CHECK_NEAR(w.sc->VM()->CallEventArgs("Total", {VsValue{2.0f}, VsValue{5.0f}}).AsFloat(), 7.0f, 1e-6f);   // the result comes back
+        w.sc->VM()->CallEventWith("OnItemAdded", VsValue{std::string("Sword")});   // the rest get their defaults
+        CHECK(w.Get("item").AsString() == "Sword");
+        CHECK_NEAR(w.Get("count").AsFloat(), 0.0f, 1e-6f);
+        CHECK(!w.Get("equipped").AsBool());
+        CHECK(w.Get("ownerName").AsString() == "none");
+        std::string err;
+        w.sc->VM()->CallEventArgs("Total", {VsValue{std::string("x")}}, &err);
+        CHECK(err == "Total(): 'a' needs a whole number, not text");
+        CHECK(w.sc->VM()->HasEvent("OnItemAdded"));
+        CHECK(!w.sc->VM()->HasEvent("OnItemRemoved"));
+    }
     {   // saving and loading a scene keeps the script and its language
         Scene s("save");
         auto* go = s.CreateGameObject("Hero");

@@ -33,6 +33,13 @@ public:
     void CallStart() override;
     void CallUpdate(float deltaTime) override;
     void CallEvent(const std::string& function) override;
+    /// A method called by name with values (an event raised by engine code, e.g.
+    /// OnItemAdded(string item, int count)): each value is converted to its
+    /// parameter's type; parameters without one get their default. Returns the result.
+    void CallEventWith(const std::string& function, const vs::VsValue& arg) override;
+    vs::VsValue CallEventArgs(const std::string& function, const std::vector<vs::VsValue>& args,
+                              std::string* error = nullptr) override;
+    bool HasEvent(const std::string& function) const override;
 
     vs::VsValue GetGlobal(const std::string& name) const override;
     void SetGlobal(const std::string& name, const vs::VsValue& v) override;

@@ -77,6 +77,11 @@ if(OKAY_DEFAULT_VOICE_RELAY)
     add_compile_definitions(OKAY_DEFAULT_VOICE_RELAY="${OKAY_DEFAULT_VOICE_RELAY}")
 endif()
 
+# The Dear ImGui *docking-branch* commit the editor (and the editor-model test)
+# builds against; see editor/CMakeLists.txt. Override with -DOKAY_IMGUI_TAG=<ref>.
+set(OKAY_IMGUI_TAG "036bf939b6f8d74ad76bcf926b757c56e68c54ff"
+    CACHE STRING "Dear ImGui git commit/branch to fetch (must be the docking branch)")
+
 # ---- The engine library ----------------------------------------------
 add_subdirectory(engine)
 

@@ -29,9 +29,8 @@ endif()
 # reproducible (the docking branch has DockBuilder + IMGUI_HAS_DOCK). Fetching a
 # bare branch name was non-deterministic across machines/CI, so we pin a SHA;
 # checking out a SHA needs the full history (no GIT_SHALLOW). Override with
-# -DOKAY_IMGUI_TAG=<ref> if you want a different revision.
-set(OKAY_IMGUI_TAG "036bf939b6f8d74ad76bcf926b757c56e68c54ff"
-    CACHE STRING "Dear ImGui git commit/branch to fetch (must be the docking branch)")
+# -DOKAY_IMGUI_TAG=<ref> if you want a different revision (the tag is set in the
+# top-level CMakeLists.txt, shared with the tests).
 FetchContent_Declare(imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
     GIT_TAG        ${OKAY_IMGUI_TAG})

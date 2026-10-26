@@ -13,6 +13,21 @@ class GameObject;
 
 namespace okay::vs {
 
+// ---- .okayvs text quoting (shared by the runtime, the checker and the editor) ----
+// A quoted field is "..." with \" for a quote and \\ for a backslash; '#' starts a
+// comment outside quotes. Old files (no escapes) still read the same: a quote that
+// never closes under the escape rules is read the old way.
+/// The line's tokens, comment removed. A quoted token comes back as `"` + its
+/// unescaped text + `"`.
+std::vector<std::string> TokenizeLine(const std::string& line);
+/// `s` as one quoted field.
+std::string QuoteText(const std::string& s);
+/// `s` as one field: bare when it can be, quoted when it holds a space, tab,
+/// '#' or '"' (or is empty).
+std::string QuoteIfNeeded(const std::string& s);
+/// True if `field` is exactly one quoted field; `out` gets its text.
+bool ParseQuoted(const std::string& field, std::string& out);
+
 /// Runtime state shared with executing nodes: the owning object, frame delta,
 /// and a blackboard of named variables (the graph's persistent memory).
 struct VsContext {

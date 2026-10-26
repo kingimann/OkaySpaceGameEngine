@@ -435,10 +435,8 @@ void Physics2D::Step(Scene& scene, float dt) {
                 if (imSum > 0.0f) {
                     // Positional correction.
                     Vec2 correction = c.normal * (c.penetration / imSum);
-                    // Only bodies that can move are corrected: x*0 is NaN for a NaN
-                    // correction, which would otherwise poison a static body too.
-                    if (ima > 0.0f) a->transform->localPosition -= Vec3{correction * ima};
-                    if (imb > 0.0f) b->transform->localPosition += Vec3{correction * imb};
+                    a->transform->localPosition -= Vec3{correction * ima};
+                    b->transform->localPosition += Vec3{correction * imb};
 
                     // Angular terms: lever arms from each body's center to the contact
                     // point, and inverse inertia. When rotation is locked these are 0,
@@ -471,8 +469,8 @@ void Physics2D::Step(Scene& scene, float dt) {
                         if (-velAlongNormal < 0.5f) e = 0.0f;
                         jImp = -(1.0f + e) * velAlongNormal / denom;
                         Vec2 impulse = c.normal * jImp;
-                        if (ra) { if (ima > 0.0f) ra->velocity -= impulse * ima; if (iia > 0.0f) ra->angularVelocity -= rnA * jImp * iia * Mathf::Rad2Deg; }
-                        if (rb) { if (imb > 0.0f) rb->velocity += impulse * imb; if (iib > 0.0f) rb->angularVelocity += rnB * jImp * iib * Mathf::Rad2Deg; }
+                        if (ra) { ra->velocity -= impulse * ima; ra->angularVelocity -= rnA * jImp * iia * Mathf::Rad2Deg; }
+                        if (rb) { rb->velocity += impulse * imb; rb->angularVelocity += rnB * jImp * iib * Mathf::Rad2Deg; }
                     }
                     // Coulomb friction on the tangential relative velocity at the
                     // contact point, clamped to friction x the normal impulse. With
@@ -499,8 +497,8 @@ void Physics2D::Step(Scene& scene, float dt) {
                             float maxF = mu * jImp;
                             jt = Mathf::Clamp(jt, -maxF, maxF);
                             Vec2 fimp = t * jt;
-                            if (ra) { if (ima > 0.0f) ra->velocity -= fimp * ima; if (iia > 0.0f) ra->angularVelocity -= rtA * jt * iia * Mathf::Rad2Deg; }
-                            if (rb) { if (imb > 0.0f) rb->velocity += fimp * imb; if (iib > 0.0f) rb->angularVelocity += rtB * jt * iib * Mathf::Rad2Deg; }
+                            if (ra) { ra->velocity -= fimp * ima; ra->angularVelocity -= rtA * jt * iia * Mathf::Rad2Deg; }
+                            if (rb) { rb->velocity += fimp * imb; rb->angularVelocity += rtB * jt * iib * Mathf::Rad2Deg; }
                         }
                     }
                 }
@@ -565,7 +563,7 @@ void Physics2D::Step(Scene& scene, float dt) {
             Vec2 target = pb + j->pinOffset;
             Vec2 err = target - pa;
             ta->localPosition += Vec3{err * (imA / imSum)};
-            if (tb && rbB) tb->localPosition -= Vec3{err * (imB / imSum)};
+            if (tb && rbB && imB > 0.0f) tb->localPosition -= Vec3{err * (imB / imSum)};
             ra->velocity = rbB ? rbB->velocity : Vec2::Zero;   // weld: follow B (anchor -> freeze)
             if (j->breakable && err.Magnitude() > j->breakForce) j->broken = true;
         } else if (m == Joint2D::Mode::Hinge) {
@@ -623,15 +621,15 @@ void Physics2D::Step(Scene& scene, float dt) {
                 float f = j->spring * C + j->damper * vrelN;   // restore + damp, along n (A->B)
                 Vec2 imp = n * (f * dt);
                 ra->velocity += imp * imA;
-                if (rbB) rbB->velocity -= imp * imB;
+                if (rbB && imB > 0.0f) rbB->velocity -= imp * imB;
             } else {                                    // Distance (rigid rod)
                 float jImp = -vrelN / imSum;
                 Vec2 imp = n * jImp;
                 ra->velocity -= imp * imA;
-                if (rbB) rbB->velocity += imp * imB;
+                if (rbB && imB > 0.0f) rbB->velocity += imp * imB;
                 Vec2 corr = n * C;                       // restore the rest length
                 ta->localPosition += Vec3{corr * (imA / imSum)};
-                if (tb && rbB) tb->localPosition -= Vec3{corr * (imB / imSum)};
+                if (tb && rbB && imB > 0.0f) tb->localPosition -= Vec3{corr * (imB / imSum)};
             }
             if (j->breakable && Mathf::Abs(C) > j->breakForce) j->broken = true;
         }

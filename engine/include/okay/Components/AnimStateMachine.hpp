@@ -329,7 +329,7 @@ private:
     /// Advance a layer motion and list its (clip, time) samples + weights.
     void LayerMotion(LayerPlay& lp, float dt, ModelAnimator* ma,
                      std::vector<std::pair<int, float>>& ct, std::vector<float>& w, bool advance) {
-        const State* sp = lp.st.empty() ? nullptr : FindState(lp.st);
+        const State* sp = FindState(lp.st);   // "" (no state) finds nothing
         if (!sp) return;
         const State& st = *sp;
         const float spd = StateSpeed(st);
@@ -554,7 +554,7 @@ private:
             m_lCur = LayerPlay{st.name, 0.0f, offset};
             if (!st.blendTree) { int c = ClipIndex(ma, st.clip); if (c >= 0) m_lCur.time = offset * ma->ClipLength(c); }
             m_fadeT = 0.0f; m_fadeDur = !m_lPrev.st.empty() ? blend : 0.0f;
-            if (m_lPrev.st.empty() || blend <= 0.0f) m_lPrev.st.clear();
+            if (blend <= 0.0f) m_lPrev.st.clear();
             if (onStateEnter) onStateEnter(st.name);
             if (!st.enterEvent.empty()) ma->FireEvent(st.enterEvent);
             return;

@@ -7,6 +7,7 @@
 #include "okay/Components/ModelAnimator.hpp"
 #include <cmath>
 #include <string>
+#include <vector>
 
 using namespace okay;
 
@@ -52,9 +53,15 @@ int main() {
         AnimStateMachine::State extra; extra.name = "X" + std::to_string(i); extra.clip = "idle";
         upper->states.push_back(extra);
     }
+    // Refill the freed block with look-alike states that play "wave": a layer
+    // still holding a pointer into the old storage would now read clip "wave"
+    // for B. (Without ASan that's how the dangling pointer shows: wrong pose.)
+    std::vector<AnimStateMachine::State> reuse(2);
+    for (auto& r : reuse) { r.name = "B"; r.clip = "wave"; r.loop = true; }
     for (int i = 0; i < 60; ++i) scene.Update(1.0f / 60.0f);
     CHECK(upper->Current() == "B");
     CHECK(std::isfinite(arm->transform->localPosition.x));
+    CHECK(std::fabs(arm->transform->localPosition.x - 0.0f) < 1e-3f);   // B plays "idle" (x = 0), not "wave" (x = 5)
 
     // Removing the playing state just stops the layer motion (no crash).
     upper->states.erase(upper->states.begin() + 1);

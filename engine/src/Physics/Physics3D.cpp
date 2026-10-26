@@ -468,10 +468,8 @@ void Physics3D::Step(Scene& scene, float dt) {
                 float imSum = ima + imb;
                 if (imSum > 0.0f) {
                     Vec3 correction = c.normal * (c.penetration / imSum);
-                    // Only bodies that can move are corrected: x*0 is NaN for a NaN
-                    // correction, which would otherwise poison a static body too.
-                    if (ima > 0.0f) a->transform->localPosition = a->transform->localPosition - correction * ima;
-                    if (imb > 0.0f) b->transform->localPosition = b->transform->localPosition + correction * imb;
+                    a->transform->localPosition = a->transform->localPosition - correction * ima;
+                    b->transform->localPosition = b->transform->localPosition + correction * imb;
 
                     // Angular terms: lever arms from each body's center to the contact
                     // point and inverse inertia. When rotation is locked these are 0, so
@@ -502,8 +500,8 @@ void Physics3D::Step(Scene& scene, float dt) {
                         if (-velAlongNormal < 0.5f) e = 0.0f;
                         jImp = -(1.0f + e) * velAlongNormal / denom;
                         Vec3 impulse = c.normal * jImp;
-                        if (ra) { if (ima > 0.0f) ra->velocity = ra->velocity - impulse * ima; if (iia > 0.0f) ra->angularVelocity = ra->angularVelocity - Vec3::Cross(rA, impulse) * iia; }
-                        if (rb) { if (imb > 0.0f) rb->velocity = rb->velocity + impulse * imb; if (iib > 0.0f) rb->angularVelocity = rb->angularVelocity + Vec3::Cross(rB, impulse) * iib; }
+                        if (ra) { ra->velocity = ra->velocity - impulse * ima; ra->angularVelocity = ra->angularVelocity - Vec3::Cross(rA, impulse) * iia; }
+                        if (rb) { rb->velocity = rb->velocity + impulse * imb; rb->angularVelocity = rb->angularVelocity + Vec3::Cross(rB, impulse) * iib; }
                     }
                     // Coulomb friction at the contact point, clamped to friction x the
                     // normal impulse. With gravity re-pressing each step this also gives
@@ -528,8 +526,8 @@ void Physics3D::Step(Scene& scene, float dt) {
                             float maxF = mu * jImp;
                             if (jt > maxF) jt = maxF; else if (jt < -maxF) jt = -maxF;
                             Vec3 fimp = t * jt;
-                            if (ra) { if (ima > 0.0f) ra->velocity = ra->velocity - fimp * ima; if (iia > 0.0f) ra->angularVelocity = ra->angularVelocity - Vec3::Cross(rA, fimp) * iia; }
-                            if (rb) { if (imb > 0.0f) rb->velocity = rb->velocity + fimp * imb; if (iib > 0.0f) rb->angularVelocity = rb->angularVelocity + Vec3::Cross(rB, fimp) * iib; }
+                            if (ra) { ra->velocity = ra->velocity - fimp * ima; ra->angularVelocity = ra->angularVelocity - Vec3::Cross(rA, fimp) * iia; }
+                            if (rb) { rb->velocity = rb->velocity + fimp * imb; rb->angularVelocity = rb->angularVelocity + Vec3::Cross(rB, fimp) * iib; }
                         }
                     }
                 }
@@ -884,7 +882,7 @@ void Physics3D::Step(Scene& scene, float dt) {
             Vec3 target = pb + j->pinOffset;
             Vec3 err = target - pa;
             ta->localPosition = ta->localPosition + err * (imA / imSum);
-            if (tb && rbB) tb->localPosition = tb->localPosition - err * (imB / imSum);
+            if (tb && rbB && imB > 0.0f) tb->localPosition = tb->localPosition - err * (imB / imSum);
             ra->velocity = rbB ? rbB->velocity : Vec3::Zero;   // weld: follow B (anchor -> freeze)
             if (j->breakable && std::sqrt(Vec3::Dot(err, err)) > j->breakForce) j->broken = true;
         } else if (m == Joint3D::Mode::Hinge) {
@@ -931,15 +929,15 @@ void Physics3D::Step(Scene& scene, float dt) {
                 float f = j->spring * C + j->damper * vrelN;   // restore + damp, along n (A->B)
                 Vec3 imp = n * (f * dt);
                 ra->velocity = ra->velocity + imp * imA;
-                if (rbB) rbB->velocity = rbB->velocity - imp * imB;
+                if (rbB && imB > 0.0f) rbB->velocity = rbB->velocity - imp * imB;
             } else {                                    // Distance (rigid rod)
                 float jImp = -vrelN / imSum;
                 Vec3 imp = n * jImp;
                 ra->velocity = ra->velocity - imp * imA;
-                if (rbB) rbB->velocity = rbB->velocity + imp * imB;
+                if (rbB && imB > 0.0f) rbB->velocity = rbB->velocity + imp * imB;
                 Vec3 corr = n * C;                       // restore the rest length
                 ta->localPosition = ta->localPosition + corr * (imA / imSum);
-                if (tb && rbB) tb->localPosition = tb->localPosition - corr * (imB / imSum);
+                if (tb && rbB && imB > 0.0f) tb->localPosition = tb->localPosition - corr * (imB / imSum);
             }
             if (j->breakable && std::fabs(C) > j->breakForce) j->broken = true;
         }

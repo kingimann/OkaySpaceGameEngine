@@ -186,6 +186,7 @@ public:
             compCls.interfaces.clear();
         }
         LinkClasses();
+        prog_.exceptionClass = ClassIndex("Exception");
         cls_ = &compCls;
         CheckEnums();
 
@@ -203,6 +204,7 @@ public:
         // Methods nothing calls do nothing: lifecycle methods run by name and public
         // ones can be wired to UI events, everything else must be called somewhere.
         for (ClassDecl& c : prog_.classes) {
+            if (c.builtin) continue;
             cls_ = &c;
             for (MethodDecl& m : c.methods)
                 if (!m.isCtor && m.lifecycle < 0 && !m.isPublic && !m.called && !m.isAbstract) {
@@ -230,6 +232,8 @@ private:
     bool inFieldInit_ = false;
     bool inEnumValue_ = false;   ///< checking an enum member's value (fields aren't declared yet)
     bool allowEvent_ = false;    ///< checking the target of += / -= (another class's event is allowed there)
+    int catchDepth_ = 0;         ///< inside a catch (throw; works)
+    int finallyDepth_ = 0;       ///< inside a finally (return, and break / continue to outside it, don't)
     std::vector<int> enumReady_;   ///< per enum: how many members have their value worked out
 
     // ---- Lambdas ----
@@ -243,6 +247,7 @@ private:
         Type ret;
         bool inferRet;
         int retState;
+        int catchDepth, finallyDepth;
     };
     std::vector<Outer> outer_;            ///< the code around the lambda being checked, innermost last
     LambdaDecl* lambda_ = nullptr;        ///< the lambda being checked
@@ -443,6 +448,12 @@ private:
                 }
             }
         }
+    }
+    // Exception's Message: set by its constructor, read by everyone else.
+    bool IsBuiltinField(const FieldDecl& f) {
+        for (const ClassDecl& c : prog_.classes)
+            if (c.builtin) for (const FieldDecl& g : c.fields) if (&g == &f) return true;
+        return false;
     }
     bool HasCtor(int k) { for (auto& m : Cls(k).methods) if (m.isCtor) return true; return false; }
     int CtorWith(int k, std::size_t params) {
@@ -1011,6 +1022,7 @@ private:
                 return !( !s.expr && !ContainsBreak(*s.loopBody));
             }
             case SK::Return: {
+                if (finallyDepth_ > 0) { if (s.expr) CheckExpr(*s.expr); Error(s.loc, "return can't leave a finally block"); return false; }
                 if (lambda_) return CheckLambdaReturn(s);
                 const Type& rt = method_->retType;
                 if (s.expr && method_->isCtor) { CheckExpr(*s.expr); Error(s.loc, "A constructor can't return a value"); return false; }
@@ -1025,10 +1037,21 @@ private:
                 return false;
             }
             case SK::Break:
-                if (loopDepth_ == 0 && switchDepth_ == 0) Error(s.loc, "break only works inside a loop or a switch");
+                if (loopDepth_ == 0 && switchDepth_ == 0)
+                    Error(s.loc, finallyDepth_ > 0 ? "break can't leave a finally block" : "break only works inside a loop or a switch");
                 return false;
             case SK::Continue:
-                if (loopDepth_ == 0) Error(s.loc, "continue only works inside a loop");
+                if (loopDepth_ == 0) Error(s.loc, finallyDepth_ > 0 ? "continue can't leave a finally block" : "continue only works inside a loop");
+                return false;
+            case SK::Try: return CheckTry(s);
+            case SK::Throw:
+                if (!s.expr) {
+                    if (catchDepth_ == 0) Error(s.loc, "throw; on its own only works inside a catch (it throws the caught exception again)");
+                    return false;
+                }
+                CheckExpr(*s.expr);
+                if (s.expr->type.kind != TK::Error && !(s.expr->type.kind == TK::Class && IsA(s.expr->type.id, prog_.exceptionClass)))
+                    Error(s.expr->loc, "throw needs an Exception, like throw new Exception(\"what went wrong\"), not " + TypeName(s.expr->type));
                 return false;
             case SK::Switch: return CheckSwitch(s);
             case SK::Foreach: {
@@ -1058,6 +1081,48 @@ private:
             }
         }
         return true;
+    }
+
+    // try / catch / finally: it finishes normally if the try block or a catch does
+    // (and the finally does).
+    bool CheckTry(Stmt& s) {
+        bool completes = CheckStmt(*s.then);
+        std::vector<Type> earlier;
+        const Type any{TK::Class, prog_.exceptionClass};
+        for (CatchClause& c : s.catches) {
+            Type t = any;
+            if (c.typed) {
+                t = ResolveType(c.type, false);
+                if (t.kind != TK::Error && !(t.kind == TK::Class && IsA(t.id, prog_.exceptionClass))) {
+                    Error(c.type.loc, "catch takes Exception or a class that extends it, not " + TypeName(t));
+                    t = Type{};
+                }
+            }
+            if (t.kind == TK::Class)
+                for (const Type& e : earlier)
+                    if (IsA(t.id, e.id)) {
+                        Error(c.loc, "An earlier catch already catches " + TypeName(t) + (t == e ? std::string() : " (as " + TypeName(e) + ")") + ", so this one never runs");
+                        break;
+                    }
+            if (t.kind == TK::Class) earlier.push_back(t);
+            c.resolved = t;
+            PushScope();
+            if (!c.name.empty()) c.slot = Declare(c.name, t, c.nameLoc);
+            ++catchDepth_;
+            if (CheckStmt(*c.body)) completes = true;
+            --catchDepth_;
+            PopScope();
+        }
+        if (s.finallyBody) {
+            const int loops = loopDepth_, switches = switchDepth_;
+            loopDepth_ = switchDepth_ = 0;   // break / continue can't leave it either
+            ++finallyDepth_;
+            const bool f = CheckStmt(*s.finallyBody);
+            --finallyDepth_;
+            loopDepth_ = loops; switchDepth_ = switches;
+            if (!f) completes = false;
+        }
+        return completes;
     }
 
     bool CheckLambdaReturn(Stmt& s) {
@@ -1139,6 +1204,10 @@ private:
             case SK::Break: return true;
             case SK::Block: for (auto& c : s.body) if (ContainsBreak(*c)) return true; return false;
             case SK::If: return ContainsBreak(*s.then) || (s.otherwise && ContainsBreak(*s.otherwise));
+            case SK::Try:
+                if (ContainsBreak(*s.then)) return true;
+                for (auto& c : s.catches) if (ContainsBreak(*c.body)) return true;
+                return false;
             default: return false;   // a nested loop's break is its own
         }
     }
@@ -1302,7 +1371,8 @@ private:
     Type LambdaBody(Expr& e, const std::vector<Type>& params, Type ret, bool infer) {
         LambdaDecl& L = *e.lambda;
         outer_.push_back(Outer{std::move(scopes_), std::move(captures_), lambda_, nextSlot_, maxSlot_, loopDepth_, switchDepth_,
-                               lambdaRet_, inferRet_, retState_});
+                               lambdaRet_, inferRet_, retState_, catchDepth_, finallyDepth_});
+        catchDepth_ = finallyDepth_ = 0;   // a lambda's code runs later, not inside the catch / finally around it
         scopes_.clear();
         scopes_.emplace_back();
         captures_.clear();
@@ -1349,6 +1419,7 @@ private:
         lambda_ = o.lambda;
         nextSlot_ = o.nextSlot; maxSlot_ = o.maxSlot; loopDepth_ = o.loopDepth; switchDepth_ = o.switchDepth;
         lambdaRet_ = o.ret; inferRet_ = o.inferRet; retState_ = o.retState;
+        catchDepth_ = o.catchDepth; finallyDepth_ = o.finallyDepth;
         outer_.pop_back();
         return result;
     }
@@ -2150,7 +2221,12 @@ private:
     bool Assignable(Expr& e) {
         if (e.kind == EK::Index) return true;
         switch (e.bind) {
-            case Bind::StaticField: case Bind::ObjField: return true;
+            case Bind::StaticField: return true;
+            case Bind::ObjField: {
+                FieldDecl* f = FindField(e.object->type.id, e.name);
+                if (f && IsBuiltinField(*f) && !cls_->builtin) { Error(e.loc, "'" + e.name + "' can only be read"); return false; }
+                return true;
+            }
             case Bind::Local: case Bind::Captured:
                 if (LocalVar* v = FindLocal(e.name); v && v->readOnly) {
                     Error(e.loc, "'" + e.name + "' is the foreach variable, so it can't be changed");
@@ -2161,6 +2237,7 @@ private:
             case Bind::EnumValue: Error(e.loc, "'" + e.name + "' is an enum value, so it can't change"); return false;
             case Bind::Field: {
                 FieldDecl& f = FieldAt(e.slot);
+                if (IsBuiltinField(f) && !cls_->builtin) { Error(e.loc, "'" + f.name + "' can only be read: pass it to base(...)"); return false; }
                 if (f.isConst) { Error(e.loc, "'" + f.name + "' is const, so it can't change"); return false; }
                 return true;
             }
@@ -2300,10 +2377,31 @@ void Check(Program& prog) {
                      [](const ScriptDiagnostic& a, const ScriptDiagnostic& b) { return a.line < b.line; });
 }
 
+// Classes every script has, added after the script's own (so they never move its
+// line numbers or class indexes). A script's own class of the same name wins.
+static void AddBuiltins(Program& p) {
+    if (p.classes.empty()) return;
+    for (const ClassDecl& c : p.classes) if (c.name == "Exception") return;
+    static const char* const kExceptionSource =
+        "class Exception {\n"
+        "    public string Message;\n"
+        "    public Exception() { Message = \"Exception of type 'Exception' was thrown.\"; }\n"
+        "    public Exception(string message) { Message = message; }\n"
+        "}\n";
+    Program builtins;
+    std::vector<ScriptDiagnostic> none;
+    Parse(Lex(kExceptionSource, none), builtins);
+    for (ClassDecl& c : builtins.classes) {
+        c.builtin = true;
+        p.classes.push_back(std::move(c));
+    }
+}
+
 std::shared_ptr<Program> Compile(const std::string& src) {
     auto p = std::make_shared<Program>();
     std::vector<Token> toks = Lex(src, p->diags);
     Parse(toks, *p);
+    AddBuiltins(*p);
     Check(*p);
     return p;
 }

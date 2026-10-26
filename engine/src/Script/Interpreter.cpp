@@ -130,7 +130,7 @@ thread_local int g_depth = 0;
 constexpr int kMaxDepth = 200;
 struct DepthGuard {
     DepthGuard(const std::string& what, SrcLoc loc) {
-        if (g_depth >= kMaxDepth) throw RuntimeError(what + " calls itself too deeply (endless recursion?)", loc);
+        if (g_depth >= kMaxDepth) throw RuntimeError(what + " calls itself too deeply (endless recursion?)", loc, true);
         ++g_depth;
     }
     ~DepthGuard() { --g_depth; }
@@ -272,7 +272,65 @@ private:
 
     void Step(SrcLoc loc) {
         if (++inst_.steps > inst_.stepLimit)
-            throw RuntimeError("This ran too long and was stopped (an endless loop?)", loc);
+            throw RuntimeError("This ran too long and was stopped (an endless loop?)", loc, true);
+    }
+
+    // ---- try / catch / throw ----
+    std::vector<ObjPtr> caught_;   ///< the exceptions the running catch blocks caught (for throw;)
+
+    // Exception's Message (a script's own Exception class may not have one).
+    static std::string MessageOf(const ScriptObj& ex, const Program& p) {
+        for (const FieldDecl& f : p.classes[(std::size_t)p.exceptionClass].fields)
+            if (f.name == "Message")
+                if (auto* s = std::get_if<std::string>(&ex.fields[(std::size_t)f.index])) return *s;
+        return std::string();
+    }
+    [[noreturn]] void Throw(ObjPtr ex, SrcLoc loc) {
+        const std::string text = ex->className + ": " + MessageOf(*ex, prog_);
+        throw ScriptThrow(text, loc, std::move(ex));
+    }
+    // An engine error (null, division by zero, ...) as an Exception a catch can look at.
+    ObjPtr AsException(const RuntimeError& err) {
+        if (auto* st = dynamic_cast<const ScriptThrow*>(&err)) return st->ex;
+        const ClassDecl& k = prog_.classes[(std::size_t)prog_.exceptionClass];
+        auto ex = std::make_shared<ScriptObj>();
+        ex->cls = prog_.exceptionClass;
+        ex->className = k.name;
+        ex->fields.resize((std::size_t)k.fieldCount);
+        for (const FieldDecl& f : k.fields) ex->fields[(std::size_t)f.index] = f.name == "Message" ? Value{std::string(err.what())} : DefaultFor(f.resolved);
+        return ex;
+    }
+    Flow RunTry(const Stmt& s) {
+        Flow flow = Flow::Normal;
+        std::exception_ptr pending;   // thrown again once the finally has run
+        try {
+            flow = Run(*s.then);
+        } catch (const RuntimeError& err) {
+            if (err.fatal || prog_.exceptionClass < 0) throw;   // an endless loop or recursion: nothing may catch it
+            ObjPtr ex = AsException(err);
+            const CatchClause* hit = nullptr;
+            for (const CatchClause& c : s.catches)
+                if (c.resolved.kind == TK::Class && prog_.classes[(std::size_t)ex->cls].isA[(std::size_t)c.resolved.id]) { hit = &c; break; }
+            if (!hit) pending = std::current_exception();
+            else {
+                if (hit->slot >= 0) (*locals_)[(std::size_t)hit->slot] = Value{ex};
+                caught_.push_back(ex);
+                try { flow = Run(*hit->body); }
+                catch (const RuntimeError& again) {
+                    caught_.pop_back();
+                    if (again.fatal) throw;
+                    pending = std::current_exception();
+                }
+                if (!pending) caught_.pop_back();
+            }
+        }
+        if (s.finallyBody) {
+            Value ret = retVal_;   // a return in the try block keeps its value
+            Run(*s.finallyBody);
+            retVal_ = std::move(ret);
+        }
+        if (pending) std::rethrow_exception(pending);
+        return flow;
     }
 
     Flow Run(const Stmt& s) {
@@ -320,6 +378,14 @@ private:
                 retVal_ = s.expr ? Eval(*s.expr) : Value{};
                 return Flow::Return;
             case SK::Break: return Flow::Break;
+            case SK::Try: return RunTry(s);
+            case SK::Throw: {
+                if (!s.expr) Throw(caught_.back(), s.loc);   // throw; in a catch (the checker made sure)
+                const Value v = Eval(*s.expr);
+                const ObjPtr* ex = std::get_if<ObjPtr>(&v);
+                if (!ex || !*ex) throw RuntimeError("throw got null instead of an Exception", s.loc);
+                Throw(*ex, s.loc);
+            }
             case SK::Continue: return Flow::Continue;
             case SK::Switch: {
                 // The checker made sure no section runs into the next one.
@@ -678,7 +744,7 @@ private:
     void Construct(const ObjPtr& o, int k, int ctor, std::vector<Value>& args, SrcLoc loc) {
         const ClassDecl& c = prog_.classes[(std::size_t)k];
         // A field that starts as `new` of its own class would come back here forever.
-        if (g_depth >= kMaxDepth) throw RuntimeError("Making a " + c.name + " makes more objects without end (a field that starts as new " + c.name + "?)", loc);
+        if (g_depth >= kMaxDepth) throw RuntimeError("Making a " + c.name + " makes more objects without end (a field that starts as new " + c.name + "?)", loc, true);
         DepthGuard depth(c.name, loc);
         As(o, k, [&] {
             for (const FieldDecl& f : c.fields)
@@ -702,7 +768,7 @@ private:
         for (auto& a : e.args) args.push_back(Eval(*a));
         const ClassDecl& k = prog_.classes[(std::size_t)e.slot];
         // A field that starts as `new` of its own class would recurse in here forever.
-        if (g_depth >= kMaxDepth) throw RuntimeError("Making a " + k.name + " makes more objects without end (a field that starts as new " + k.name + "?)", e.loc);
+        if (g_depth >= kMaxDepth) throw RuntimeError("Making a " + k.name + " makes more objects without end (a field that starts as new " + k.name + "?)", e.loc, true);
         DepthGuard depth(k.name, e.loc);
         auto o = std::make_shared<ScriptObj>();
         o->cls = e.slot;

@@ -136,7 +136,13 @@ std::string ValueToString(const Value& v);
 /// reported with the line it happened on.
 struct RuntimeError : std::runtime_error {
     SrcLoc loc;
-    RuntimeError(const std::string& m, SrcLoc l) : std::runtime_error(m), loc(l) {}
+    bool fatal = false;   ///< an endless loop or recursion: catch can't stop it
+    RuntimeError(const std::string& m, SrcLoc l, bool isFatal = false) : std::runtime_error(m), loc(l), fatal(isFatal) {}
+};
+/// A script's `throw`: the Exception object. Uncaught, it's reported like any runtime error.
+struct ScriptThrow : RuntimeError {
+    ObjPtr ex;
+    ScriptThrow(const std::string& m, SrcLoc l, ObjPtr e) : RuntimeError(m, l), ex(std::move(e)) {}
 };
 
 // ---- Engine bindings -------------------------------------------------------
@@ -304,7 +310,7 @@ struct Expr {
     std::unique_ptr<LambdaDecl> lambda;   ///< Lambda
 };
 
-enum class SK : std::uint8_t { Block, Expr, Local, If, While, For, Return, Break, Continue, Switch, Foreach, DoWhile };
+enum class SK : std::uint8_t { Block, Expr, Local, If, While, For, Return, Break, Continue, Switch, Foreach, DoWhile, Try, Throw };
 struct Stmt;
 using StmtPtr = std::unique_ptr<Stmt>;
 struct LocalDecl { TypeRef type; std::string name; SrcLoc loc; ExprPtr init; int slot = -1; Type resolved; bool promote = false; };
@@ -316,6 +322,17 @@ struct SwitchSection {
     SrcLoc loc, defaultLoc;
     std::vector<StmtPtr> body;
     std::vector<Value> values;          ///< checked: the labels' constant values
+};
+/// catch (T name) { ... } of a try: T and name are optional.
+struct CatchClause {
+    TypeRef type;
+    bool typed = false;
+    std::string name;
+    SrcLoc loc, nameLoc;
+    StmtPtr body;
+    // checked
+    Type resolved;                      ///< the Exception class it catches
+    int slot = -1;                      ///< the variable's local slot, -1 = none
 };
 struct Stmt {
     SK kind;
@@ -330,6 +347,9 @@ struct Stmt {
     bool promoteReturn = false;
     std::vector<SwitchSection> sections; ///< Switch (expr = the value switched on)
     // Foreach: locals[0] is the loop variable, expr the array.
+    std::vector<CatchClause> catches;   ///< Try (then = the try block)
+    StmtPtr finallyBody;                ///< Try
+    // Throw: expr = the exception (null: `throw;` again in a catch).
 };
 
 struct Attribute { std::string name; std::vector<ExprPtr> args; SrcLoc loc; };
@@ -400,6 +420,7 @@ struct ClassDecl {
     std::vector<std::string> bases;   ///< after ':': Behaviour, or a class and / or interfaces
     std::vector<SrcLoc> baseLocs;
     bool isAbstract = false, isInterface = false;
+    bool builtin = false;            ///< Exception, which every script has
     SrcLoc loc;
     std::vector<FieldDecl> fields;
     std::vector<MethodDecl> methods;
@@ -436,6 +457,7 @@ struct Program {
     std::vector<FuncSig> funcs;
     std::vector<std::string> methodNames;   ///< every method name in the file (MethodDecl::nameId)
     int component = -1;            ///< the class that is the component
+    int exceptionClass = -1;       ///< Exception (built in, or the script's own class of that name)
     std::vector<ScriptDiagnostic> diags;
     bool ok() const;
     const ClassDecl* Component() const { return component >= 0 ? &classes[(std::size_t)component] : nullptr; }

@@ -1048,6 +1048,42 @@ Boss boss = (Boss)hit[0];                      // an error with its line if it i
   `T`, or null. A cast `(T)x` stops the callback with an error if `x` isn't one.
 - The Behaviour class can't extend a class or implement interfaces yet.
 
+### try / catch and exceptions
+
+`throw` stops what's running and goes to the nearest `catch` that takes that
+kind of exception. Every script has `Exception`, with a `Message`; extend it
+for your own kinds.
+
+```csharp
+class NotEnoughGold : Exception {
+    public int missing;
+    public NotEnoughGold(int missing) : base("Need " + missing + " more gold") { this.missing = missing; }
+}
+
+public void Buy(Item item) {
+    try {
+        wallet.Pay(item.price);              // throws NotEnoughGold
+        inventory.Add(item);
+    } catch (NotEnoughGold e) {
+        ShowMessage(e.Message);
+    } finally {
+        shopOpen = true;                     // runs however the try ends
+    }
+}
+```
+
+- `catch (T e)` takes T or any class that extends it; `catch` and
+  `catch (Exception e)` take everything. The first catch that fits runs, so
+  a later one that an earlier one already covers is an error.
+- Engine errors (a null object, dividing by zero, an index outside a list)
+  can be caught as `Exception`, with the error as the `Message`. An endless
+  loop or endless recursion can't: it always stops the callback.
+- Inside a catch, `throw;` throws the same exception on.
+- `finally` runs after the try (and catch) whether they finish, return, break
+  or throw. It can't `return` itself, or `break` / `continue` out of itself.
+- An exception nothing catches stops the callback and is reported with its
+  class, message and the line that threw it.
+
 ### foreach
 
 Loops over an array's items, with `var` or a type. The loop variable can't be

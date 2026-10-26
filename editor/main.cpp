@@ -29242,7 +29242,8 @@ void DrawInspector(EditorState& ed) {
         }
         if (auto* ci = dynamic_cast<ChainIK*>(curComp)) {
             if (CompHeader("Chain IK", ci, &toRemove)) {
-                ImGui::TextDisabled("Long-chain IK (spider legs, tentacles). Bones root->tip.");
+                ImGui::TextDisabled("Long-chain IK: spines, tails, tentacles, spider legs. Bones root->tip.");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Solver: FABRIK for spines, tails and tentacles; CCD bends from the tip first.\nFor arms and legs use Limb IK (cheaper, exact two-bone solve).");
                 NameField("Target##cik", ci->targetName);
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Create##ciktgt")) {
@@ -29266,8 +29267,24 @@ void DrawInspector(EditorState& ed) {
                     ci->poleName = MakeIKHelper(ed, go, "Chain Pole", seed); ci->poleObject = nullptr;
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawn a pole the chain bends toward (knee / elbow / curl direction).");
+                if (ci->poleName.empty() && !ci->poleObject) {
+                    int pm = ci->poleMode + 1;
+                    if (ImGui::Combo("Pole Mode##cik", &pm, "World point (legacy)\0Auto (keep the bend)\0Character\0World direction\0"))
+                        { ci->poleMode = pm - 1; ed.dirty = true; }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Without a Pole object: a fixed world POINT (old scenes, ik_set_pole),\nor a bend DIRECTION - Auto keeps the animation's own bend and eases\ntoward Pole Dir as the chain straightens; Character turns with this\nobject; World is fixed.");
+                    if (ci->poleMode < 0) {
+                        ImGui::Checkbox("Use Pole Point##cik", &ci->usePole);
+                        if (ci->usePole) {
+                            float pp[3] = {ci->pole.x, ci->pole.y, ci->pole.z};
+                            if (ImGui::DragFloat3("Pole point##cik", pp, 0.1f)) { ci->pole = {pp[0], pp[1], pp[2]}; ed.dirty = true; }
+                        }
+                    } else {
+                        float pd[3] = {ci->poleDir.x, ci->poleDir.y, ci->poleDir.z};
+                        if (ImGui::DragFloat3("Pole Dir##cik", pd, 0.05f)) { ci->poleDir = {pd[0], pd[1], pd[2]}; ed.dirty = true; }
+                    }
+                }
                 ImGui::DragFloat("Max Joint Bend##cik", &ci->maxJointBend, 1.0f, 0.0f, 180.0f, ci->maxJointBend <= 0.0f ? "unlimited" : "%.0f deg");
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cap how sharply any joint may bend (0 = no limit). FABRIK only.");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cap how sharply any joint may bend (0 = no limit). A per-bone limit\nbelow replaces it for that joint.");
                 ImGui::Checkbox("IK Active##cik", &ci->ikActive); ImGui::SameLine();
                 ImGui::SetNextItemWidth(90); ImGui::DragFloat("Fade (s)##cik", &ci->fadeTime, 0.01f, 0.0f, 3.0f);
                 if (ed.isPlaying()) ImGui::TextDisabled("Tip error: %.3f", ci->Error());
@@ -29282,6 +29299,21 @@ void DrawInspector(EditorState& ed) {
                     ImGui::PopID();
                 }
                 if (ImGui::SmallButton("+ Bone##cik")) { ci->boneNames.push_back(""); ed.dirty = true; }
+                if (!ci->boneNames.empty() && ImGui::TreeNode("Joint limits##cik")) {
+                    if (ci->limits.size() != ci->boneNames.size()) { ci->limits.resize(ci->boneNames.size()); ed.dirty = true; }
+                    if (ImGui::SmallButton("Preset all: Spine##cik")) { for (auto& l : ci->limits) l = IKJointLimit::Spine(); ed.dirty = true; }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Tail (loose)##cik")) { for (auto& l : ci->limits) l = IKJointLimit::Ball(45.0f, 30.0f); ed.dirty = true; }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Clear##ciklim")) { for (auto& l : ci->limits) l = {}; ed.dirty = true; }
+                    for (std::size_t i = 0; i < ci->limits.size(); ++i) {
+                        ImGui::PushID((int)i + 1000);
+                        const std::string lbl = (ci->boneNames[i].empty() ? ("Bone " + std::to_string(i)) : ci->boneNames[i]) + "##ciklim";
+                        if (IKJointLimitUI(lbl.c_str(), ci->limits[i])) ed.dirty = true;
+                        ImGui::PopID();
+                    }
+                    ImGui::TreePop();
+                }
                 if (ImGui::SmallButton("Remove##cik")) toRemove = ci;
             }
         }

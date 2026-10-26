@@ -65,6 +65,14 @@ bool NetworkManager::StartServer(std::uint16_t port) {
     m_kicked = false; m_kickReason.clear();
     m_serverTime = 0.0f; m_hostScore = 0; m_rosterTimer = 0.0f;
     { std::random_device rd; m_querySecret = rd() | 1u; }
+    anticheat.Reset();
+    // Objects this server drives itself are the server's: no client may move them.
+    anticheat.serverOwns = [this](const std::string& id) {
+        auto it = m_syncObjs.find(id);
+        return it != m_syncObjs.end() && it->second.owned;
+    };
+    anticheat.exists = [this](const std::string& id) { return m_syncObjs.count(id) != 0; };
+    anticheat.onCheat = [this](const CheatReport& r) { if (m_cheatHandler) m_cheatHandler(r); };
     if (snapshotRate > 0.0f) m_snapshotInterval = 1.0f / snapshotRate;
     OKAY_INFO("net: server '", serverName, "' listening on UDP ", port,
               " (max ", maxPlayers, ")");
@@ -304,16 +312,13 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
     if (channel == "__spawn") {
         Scene* s = GetScene();
         if (!s) return;
-        std::stringstream ss(data);
-        std::string path; float x = 0, y = 0, z = 0; char sep;
-        std::getline(ss, path, '|');
-        ss >> x >> sep >> y >> sep >> z;
-        // Optional "|<netId>" marks a SpawnOwned object: attach a follower
-        // NetworkSync so its transform/animation track the authority that spawned it.
-        std::string netId; char bar;
-        if (ss.get(bar) && bar == '|') std::getline(ss, netId);
-        if (GameObject* g = SceneSerializer::InstantiateFromFile(*s, path)) {
-            if (g->transform) g->transform->localPosition = {x, y, z};
+        // "<path>|x|y|z[|<netId>]"; an optional netId marks a SpawnOwned object:
+        // attach a follower NetworkSync so its transform/animation track the
+        // authority that spawned it. (The same parser the anti-cheat checks with.)
+        const SpawnMessage m = ParseSpawnMessage(data);
+        const std::string& netId = m.netId;
+        if (GameObject* g = SceneSerializer::InstantiateFromFile(*s, m.path)) {
+            if (g->transform) g->transform->localPosition = m.pos;
             if (!netId.empty()) {
                 auto* ns = g->GetComponent<NetworkSync>();
                 if (!ns) ns = g->AddComponent<NetworkSync>();
@@ -771,6 +776,7 @@ void NetworkManager::Kick(std::uint32_t id, const std::string& reason) {
             m_remotes.erase(r);
         }
         m_clients.erase(it);
+        anticheat.ForgetPeer(id);
         if (m_peerLeft) m_peerLeft(id);
         OKAY_INFO("net: kicked peer ", id, reason.empty() ? "" : (" (" + reason + ")"));
         return;
@@ -881,8 +887,30 @@ void NetworkManager::Send(const std::string& channel, const std::string& data) {
     }
 }
 
+bool NetworkManager::AntiCheatAllows(std::uint32_t peer, const std::string& channel, const std::string& data) {
+    if (!anticheat.settings.enabled) return true;
+    if (anticheat.ValidateMessage(peer, channel, data)) return true;
+    AntiCheatAfterRefusal(peer);
+    return false;
+}
+
+bool NetworkManager::AntiCheatAllowsSyncVar(std::uint32_t peer, const std::string& key) {
+    if (!anticheat.settings.enabled) return true;
+    if (anticheat.ValidateSyncVar(peer, key)) return true;
+    AntiCheatAfterRefusal(peer);
+    return false;
+}
+
+void NetworkManager::AntiCheatAfterRefusal(std::uint32_t peer) {
+    const int limit = anticheat.settings.kickAfterViolations;
+    if (limit > 0 && anticheat.Violations(peer) >= limit) {
+        Kick(peer, "anti-cheat");   // (forgets its anti-cheat state too)
+    }
+}
+
 void NetworkManager::ServerTick(float dt) {
     m_serverTime += dt;
+    if (anticheat.settings.enabled) anticheat.Tick(dt);
     // Rate limit: true if this client may send another custom message this second.
     auto rateOk = [this](Client& c) { return maxMessagesPerSecond <= 0 || ++c.msgCount <= maxMessagesPerSecond; };
     // A full-size receive buffer: a UDP datagram can be up to ~64 KB, so a small
@@ -1017,6 +1045,10 @@ void NetworkManager::ServerTick(float dt) {
             // A client requested a variable change; apply it and fan out to all.
             std::string key = p.ReadString();
             std::string value = p.ReadString();
+            if (anticheat.settings.enabled) {   // only joined clients, within the anti-cheat rules
+                auto cl = m_clients.find(from);
+                if (cl == m_clients.end() || !AntiCheatAllowsSyncVar(cl->second.id, key)) continue;
+            }
             ApplySyncVar(key, value);
             net::Packet out(SyncVar); out.Write(key); out.Write(value);
             for (auto& [ep, c] : m_clients) SendDatagram(c.endpoint, out.Data(), out.Size());
@@ -1037,7 +1069,8 @@ void NetworkManager::ServerTick(float dt) {
                 std::string data    = p.ReadString();
                 net::Packet ack(ReliableAck); ack.Write(seq);
                 SendDatagram(from, ack.Data(), ack.Size());
-                if (it->second.relSeen.insert(seq).second && rateOk(it->second))   // first time -> deliver
+                if (it->second.relSeen.insert(seq).second && rateOk(it->second) &&   // first time -> deliver
+                    AntiCheatAllows(it->second.id, channel, data))
                     Deliver(it->second.id, channel, data);
             }
         } else if (type == ReliableAck) {
@@ -1051,6 +1084,7 @@ void NetworkManager::ServerTick(float dt) {
                 std::uint32_t target = p.ReadU32();
                 std::string channel = p.ReadString();
                 std::string data    = p.ReadString();
+                if (!AntiCheatAllows(sender, channel, data)) continue;   // refused (and maybe kicked)
                 if (target == m_localId) {                // addressed to the host
                     Deliver(sender, channel, data);
                 } else {                                   // route to one client
@@ -1100,6 +1134,7 @@ void NetworkManager::ServerTick(float dt) {
                     m_remotes.erase(r);
                 }
                 m_clients.erase(it);
+                anticheat.ForgetPeer(id);
                 if (m_peerLeft) m_peerLeft(id);
             }
         } else if (type == Message) {
@@ -1110,6 +1145,7 @@ void NetworkManager::ServerTick(float dt) {
                 p.ReadU32();                            // sender-reported id (ignored)
                 std::string channel = p.ReadString();
                 std::string data    = p.ReadString();
+                if (!AntiCheatAllows(sender, channel, data)) continue;   // not applied, not relayed
                 if (dedicated || m_localRoom == senderRoom)   // host only sees its room (a dedicated server sees all)
                     Deliver(sender, channel, data);
                 // Relay to every other client in the sender's room.
@@ -1137,6 +1173,7 @@ void NetworkManager::ServerTick(float dt) {
                 m_remotes.erase(r);
             }
             it = m_clients.erase(it);
+            anticheat.ForgetPeer(id);
             if (m_peerLeft) m_peerLeft(id);
         } else {
             ++it;

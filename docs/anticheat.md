@@ -285,15 +285,18 @@ check them.
 - **Kicks filed for review** (the dedicated server's `--report-kicks`, or
   `report_kicks = true` in server.cfg).
   - When the anti-cheat kicks a player who joined with a verified account, the
-    server files an `ac_reports` row for an admin to review. It's a "player"
-    report from the account the server's machine is signed in to, about the
-    kicked account, with what was caught.
+    server files an `ac_reports` row for an admin to review. It's a
+    `server_kick` report from the account the server's machine is signed in
+    to, about the kicked account, with what was caught.
   - The server prints which account that is at startup, and refuses to start
     with the flag if it isn't signed in.
   - Reports are limited to one per account per hour and 20 an hour in all,
     which is the backend's own limit. **Nothing is banned automatically.**
-  - No new SQL is needed: `anticheat.sql` already allows these rows. They are
-    marked `[server check]` in the reason.
+  - That account must be listed in `ac_report_servers`. An admin adds it once
+    per server operator: `insert into public.ac_report_servers (user_id, note)
+    values ('<account id>', 'EU 1');`. No one else may file `server_kick`
+    reports or reasons that start with `[server check]`, so a player can't
+    forge one.
   - In C++, `NetworkManager::SetAntiCheatKickHandler` gets every anti-cheat
     kick with the player's account and last refusals.
 
@@ -494,8 +497,9 @@ new key, re-sign your builds with the new one, and then drop the old one.
 
 | Table | What's in it | Who can see / change it |
 |---|---|---|
-| `ac_reports` | a player reporting another player, or a player's own game reporting what its anti-cheat found (`kind = 'client_check'`) | anyone signed in can file one (20 an hour); admins read and review |
-| `ac_bans` | an anti-cheat ban of an account and/or a machine (hardware hash), with a reason and an optional end | players see their own; admins ban, edit and lift |
+| `ac_reports` | a player reporting another player, a player's own game reporting what its anti-cheat found (`kind = 'client_check'`), or a game server reporting an anti-cheat kick (`kind = 'server_kick'`) | anyone signed in can file a player report (20 an hour); only `ac_report_servers` accounts file `server_kick` ones; admins read and review |
+| `ac_report_servers` | the accounts game servers file their kick reports with | admins only |
+| `ac_bans` | an anti-cheat ban of an account and/or a machine (hardware hash), with a reason and an optional end | players see their own; admins ban, edit and lift, but never a ban on their own account |
 | `ac_appeals` | a player's appeal against one of their bans | players file through `ac_file_appeal` (one waiting at a time, 3 per ban) and see their own; admins decide |
 
 "Admins" means `public.is_admin` from `admin.sql`, the same check the other

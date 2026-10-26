@@ -122,6 +122,11 @@ add_executable(test_inventory_ops test_inventory_ops.cpp)
 target_link_libraries(test_inventory_ops PRIVATE okay::engine)
 add_test(NAME inventory_ops COMMAND test_inventory_ops)
 
+# Item definitions: .okayitems database, legacy names, per-instance data, def-driven stack/icon/rarity/use
+add_executable(test_item_database test_item_database.cpp)
+target_link_libraries(test_item_database PRIVATE okay::engine)
+add_test(NAME item_database COMMAND test_item_database)
+
 add_executable(test_pathfinding test_pathfinding.cpp)
 target_link_libraries(test_pathfinding PRIVATE okay::engine)
 add_test(NAME pathfinding COMMAND test_pathfinding)

@@ -109,7 +109,13 @@ public:
 
     // ---- Project (a folder on disk holding the scenes + assets) ---------
     const std::string& projectDir() const { return m_projectDir; }
-    void setProjectDir(const std::string& d) { m_projectDir = d; }
+    void setProjectDir(const std::string& d) {
+        m_projectDir = d;
+        okay::ItemDatabase::Get().Clear();   // each project has its own item definitions
+        if (!d.empty()) okay::ItemDatabase::Get().Load(ItemDatabasePath());
+    }
+    /// The project's item definitions file (<project>/items.okayitems).
+    std::string ItemDatabasePath() const { return m_projectDir.empty() ? std::string() : m_projectDir + "/items.okayitems"; }
 
     // ---- Online services (built into the engine) ----------------------
     ISteamService*   steam()   { return m_steam.get(); }

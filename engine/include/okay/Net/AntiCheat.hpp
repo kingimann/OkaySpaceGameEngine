@@ -178,6 +178,9 @@ public:
     /// Networked objects that exist on the server. Transforms for any other id
     /// are dropped quietly (nobody could apply them) and claim nothing.
     std::function<bool(const std::string& netId)> exists;
+    /// May a client claim this unowned object by driving it (its NetworkSync's
+    /// clientClaimable)? Without this hook, or false: the object is the server's.
+    std::function<bool(const std::string& netId)> claimable;
     /// Extra per-RPC check (e.g. per-RPC rules from game code): false refuses it.
     std::function<bool(std::uint32_t peer, const std::string& name, const std::string& data)> validateRpc;
     /// Called for every refusal.

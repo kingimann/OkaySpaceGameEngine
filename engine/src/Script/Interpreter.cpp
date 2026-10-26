@@ -6,6 +6,7 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 
@@ -32,6 +33,7 @@ std::string ValueToString(const Value& v) {
         }
         std::string operator()(const ArrayRef& a) const { return a ? a->typeName : "null"; }
         std::string operator()(const ObjPtr& o) const { return o ? o->className : "null"; }
+        std::string operator()(const DictRef& d) const { return d ? d->typeName : "null"; }
     };
     return std::visit(V{}, v);
 }
@@ -40,23 +42,50 @@ namespace {
 // Dropping the last reference to a long chain (a linked list of 100k nodes)
 // would free it one nested destructor per link and overflow the stack, so the
 // links are moved onto a list and freed one at a time instead.
-bool HoldsRef(const Value& v) { return std::holds_alternative<ObjPtr>(v) || std::holds_alternative<ArrayRef>(v); }
-void ReleaseChain(std::vector<Value>& values) {
-    std::vector<Value> pending;
-    for (Value& v : values) if (HoldsRef(v)) pending.push_back(std::move(v));
+bool HoldsRef(const Value& v) {
+    return std::holds_alternative<ObjPtr>(v) || std::holds_alternative<ArrayRef>(v) || std::holds_alternative<DictRef>(v);
+}
+void Take(std::vector<Value>& from, std::vector<Value>& to) { for (Value& x : from) if (HoldsRef(x)) to.push_back(std::move(x)); }
+void ReleaseChain(std::vector<Value> pending) {
     while (!pending.empty()) {
         Value v = std::move(pending.back());
         pending.pop_back();
-        std::vector<Value>* inner = nullptr;
-        if (auto* o = std::get_if<ObjPtr>(&v); o && *o && o->use_count() == 1) inner = &(*o)->fields;
-        if (auto* a = std::get_if<ArrayRef>(&v); a && *a && a->use_count() == 1) inner = &(*a)->items;
-        if (inner) for (Value& x : *inner) if (HoldsRef(x)) pending.push_back(std::move(x));
+        if (auto* o = std::get_if<ObjPtr>(&v); o && *o && o->use_count() == 1) Take((*o)->fields, pending);
+        if (auto* a = std::get_if<ArrayRef>(&v); a && *a && a->use_count() == 1) Take((*a)->items, pending);
+        if (auto* d = std::get_if<DictRef>(&v); d && *d && d->use_count() == 1)
+            for (auto& kv : (*d)->entries) {
+                if (HoldsRef(kv.first)) pending.push_back(std::move(kv.first));
+                if (HoldsRef(kv.second)) pending.push_back(std::move(kv.second));
+            }
     }   // each v is freed here with nothing left inside it
 }
+std::vector<Value> Refs(std::vector<Value>& values) { std::vector<Value> r; Take(values, r); return r; }
 } // namespace
 
-ScriptObj::~ScriptObj() { ReleaseChain(fields); }
-ArrayObj::~ArrayObj() { ReleaseChain(items); }
+ScriptObj::~ScriptObj() { ReleaseChain(Refs(fields)); }
+ArrayObj::~ArrayObj() { ReleaseChain(Refs(items)); }
+DictObj::~DictObj() {
+    index.clear();   // its keys are copies; the entries hold the values that matter
+    std::vector<Value> r;
+    for (auto& kv : entries) {
+        if (HoldsRef(kv.first)) r.push_back(std::move(kv.first));
+        if (HoldsRef(kv.second)) r.push_back(std::move(kv.second));
+    }
+    ReleaseChain(std::move(r));
+}
+
+bool KeyLess::operator()(const Value& a, const Value& b) const {
+    if (a.index() != b.index()) return a.index() < b.index();
+    if (auto* r = std::get_if<ObjRef>(&a)) { const ObjRef& s = std::get<ObjRef>(b); return r->go != s.go ? r->go < s.go : r->type < s.type; }
+    if (auto* o = std::get_if<ObjPtr>(&a)) return std::less<ScriptObj*>()(o->get(), std::get<ObjPtr>(b).get());
+    if (auto* l = std::get_if<ArrayRef>(&a)) return std::less<ArrayObj*>()(l->get(), std::get<ArrayRef>(b).get());
+    if (auto* d = std::get_if<DictRef>(&a)) return std::less<DictObj*>()(d->get(), std::get<DictRef>(b).get());
+    if (auto* s = std::get_if<std::string>(&a)) return *s < std::get<std::string>(b);
+    if (auto* i = std::get_if<std::int32_t>(&a)) return *i < std::get<std::int32_t>(b);
+    if (auto* f = std::get_if<float>(&a)) return *f < std::get<float>(b);
+    if (auto* t = std::get_if<bool>(&a)) return !*t && std::get<bool>(b);
+    return false;   // null
+}
 
 namespace {
 
@@ -158,6 +187,14 @@ private:
                     Step(s.loc);
                 }
                 return Flow::Normal;
+            case SK::DoWhile:
+                do {
+                    Flow f = Run(*s.loopBody);
+                    if (f == Flow::Break) break;
+                    if (f == Flow::Return) return f;
+                    Step(s.loc);
+                } while (AsB(Eval(*s.expr)));
+                return Flow::Normal;
             case SK::For: {
                 if (s.init) Run(*s.init);
                 while (!s.expr || AsB(Eval(*s.expr))) {
@@ -194,9 +231,13 @@ private:
                 return Flow::Normal;
             }
             case SK::Foreach: {
-                const ArrayRef arr = std::get<ArrayRef>(Receiver(*s.expr));   // holds the array while looping
+                const Value c = Receiver(*s.expr);   // holds the collection while looping
                 const LocalDecl& d = s.locals[0];
+                if (auto* dict = std::get_if<DictRef>(&c)) return ForeachDict(s, **dict);
+                const ArrayRef& arr = std::get<ArrayRef>(c);
+                const std::uint32_t version = arr->version;
                 for (std::size_t i = 0; i < arr->items.size(); ++i) {
+                    if (arr->version != version) throw RuntimeError("The " + arr->typeName + " was changed during foreach", s.loc);
                     Value item = arr->items[i];
                     if (d.promote) if (auto* n = std::get_if<std::int32_t>(&item)) item = Value{(float)*n};
                     (*locals_)[(std::size_t)d.slot] = std::move(item);
@@ -211,6 +252,56 @@ private:
         return Flow::Normal;
     }
 
+    // foreach over a dictionary: each entry as a KeyValuePair (key, value).
+    Flow ForeachDict(const Stmt& s, DictObj& dict) {
+        const LocalDecl& d = s.locals[0];
+        const std::string pairName = prog_.NameOf(d.resolved);
+        const std::uint32_t version = dict.version;
+        for (std::size_t i = 0; i < dict.entries.size(); ++i) {
+            if (dict.version != version) throw RuntimeError("The " + dict.typeName + " was changed during foreach", s.loc);
+            auto kv = std::make_shared<ArrayObj>();
+            kv->typeName = pairName;
+            kv->items = {dict.entries[i].first, dict.entries[i].second};
+            (*locals_)[(std::size_t)d.slot] = Value{std::move(kv)};
+            Flow f = Run(*s.loopBody);
+            if (f == Flow::Break) break;
+            if (f == Flow::Return) return f;
+            Step(s.loc);
+        }
+        return Flow::Normal;
+    }
+
+    // How a dictionary key reads in a message.
+    static std::string KeyText(const Value& k) {
+        if (auto* str = std::get_if<std::string>(&k)) return "\"" + *str + "\"";
+        return ValueToString(k);
+    }
+    // The value stored under `key`, or a runtime error naming the key.
+    static Value* DictFind(DictObj& d, const Value& key) {
+        auto it = d.index.find(key);
+        return it == d.index.end() ? nullptr : &d.entries[it->second].second;
+    }
+    static void DictSet(DictObj& d, const Value& key, Value v) {
+        if (Value* slot = DictFind(d, key)) { *slot = std::move(v); return; }
+        d.index[key] = d.entries.size();
+        d.entries.emplace_back(key, std::move(v));
+        ++d.version;
+    }
+    static bool DictErase(DictObj& d, const Value& key) {
+        auto it = d.index.find(key);
+        if (it == d.index.end()) return false;
+        const std::size_t at = it->second;
+        d.index.erase(it);
+        d.entries.erase(d.entries.begin() + (std::ptrdiff_t)at);
+        for (auto& ix : d.index) if (ix.second > at) --ix.second;
+        ++d.version;
+        return true;
+    }
+    static RuntimeError OutsideList(std::int64_t i, const ArrayObj& a, bool isArray, SrcLoc loc) {
+        return RuntimeError("Index " + std::to_string(i) + " is outside the " + (isArray ? std::string("array") : a.typeName) +
+                            " (length " + std::to_string(a.items.size()) + ")", loc);
+    }
+
     // An array element or an object's field as a place to read or write: the
     // array and index (or the object) are worked out once, however the place is
     // then used. `keep` holds what `v` points into.
@@ -219,16 +310,113 @@ private:
     Place PlaceOf(const Expr& e) {
         if (e.kind == EK::Index) {
             Value a = Receiver(*e.object);
+            if (auto* dict = std::get_if<DictRef>(&a)) {   // d[key] must already be there to read it
+                const Value key = Eval(*e.lhs);
+                Value* v = DictFind(**dict, key);
+                if (!v) throw RuntimeError("The key " + KeyText(key) + " isn't in this " + (*dict)->typeName, e.loc);
+                return {std::move(*dict), v};
+            }
             const std::int32_t i = AsI(Eval(*e.lhs));
             ArrayRef arr = std::get<ArrayRef>(a);
-            if (i < 0 || (std::size_t)i >= arr->items.size())
-                throw RuntimeError("Index " + std::to_string(i) + " is outside the array (length " + std::to_string(arr->items.size()) + ")", e.loc);
+            if (i < 0 || (std::size_t)i >= arr->items.size()) throw OutsideList(i, *arr, e.object->type.kind == TK::Array, e.loc);
             Value* v = &arr->items[(std::size_t)i];
             return {std::move(arr), v};
         }
         ObjPtr o = std::get<ObjPtr>(Receiver(*e.object, e.nullCond));
         Value* v = &o->fields[(std::size_t)e.slot];
         return {std::move(o), v};
+    }
+
+    Value CollCall(const Expr& e) {
+        Value c = Receiver(*e.object, e.nullCond);
+        std::vector<Value> a;
+        for (auto& x : e.args) a.push_back(Eval(*x));
+        const CollOp op = (CollOp)e.member;
+        if (auto* dp = std::get_if<DictRef>(&c)) {
+            DictObj& d = **dp;
+            switch (op) {
+                case CollOp::DictAdd:
+                    if (DictFind(d, a[0])) throw RuntimeError("The key " + KeyText(a[0]) + " is already in this " + d.typeName, e.loc);
+                    DictSet(d, a[0], a[1]);
+                    return Value{};
+                case CollOp::DictTryAdd:
+                    if (DictFind(d, a[0])) return Value{false};
+                    DictSet(d, a[0], a[1]);
+                    return Value{true};
+                case CollOp::DictRemove: return Value{DictErase(d, a[0])};
+                case CollOp::DictContainsKey: return Value{DictFind(d, a[0]) != nullptr};
+                case CollOp::DictContainsValue:
+                    for (auto& kv : d.entries) if (Equal(kv.second, a[0])) return Value{true};
+                    return Value{false};
+                case CollOp::DictClear:
+                    if (!d.entries.empty()) ++d.version;
+                    d.entries.clear(); d.index.clear();
+                    return Value{};
+                case CollOp::DictGetValueOrDefault: {
+                    if (Value* v = DictFind(d, a[0])) return *v;
+                    return a.size() > 1 ? a[1] : DefaultFor(prog_.generics[(std::size_t)e.object->type.id].b);
+                }
+                default: return Value{};
+            }
+        }
+        ArrayObj& l = *std::get<ArrayRef>(c);
+        auto find = [&](const Value& v) -> std::int64_t {
+            for (std::size_t i = 0; i < l.items.size(); ++i) if (Equal(l.items[i], v)) return (std::int64_t)i;
+            return -1;
+        };
+        switch (op) {
+            case CollOp::ListAdd: l.items.push_back(a[0]); ++l.version; return Value{};
+            case CollOp::ListAddRange: {
+                const std::vector<Value> more = std::get<ArrayRef>(a[0])->items;   // a copy: xs.AddRange(xs) doubles it
+                l.items.insert(l.items.end(), more.begin(), more.end());
+                ++l.version;
+                return Value{};
+            }
+            case CollOp::ListInsert: {
+                const std::int32_t i = AsI(a[0]);
+                if (i < 0 || (std::size_t)i > l.items.size()) throw OutsideList(i, l, false, e.loc);
+                l.items.insert(l.items.begin() + i, a[1]);
+                ++l.version;
+                return Value{};
+            }
+            case CollOp::ListRemove: {
+                const std::int64_t i = find(a[0]);
+                if (i < 0) return Value{false};
+                l.items.erase(l.items.begin() + (std::ptrdiff_t)i);
+                ++l.version;
+                return Value{true};
+            }
+            case CollOp::ListRemoveAt: {
+                const std::int32_t i = AsI(a[0]);
+                if (i < 0 || (std::size_t)i >= l.items.size()) throw OutsideList(i, l, false, e.loc);
+                l.items.erase(l.items.begin() + i);
+                ++l.version;
+                return Value{};
+            }
+            case CollOp::ListClear:
+                if (!l.items.empty()) ++l.version;
+                l.items.clear();
+                return Value{};
+            case CollOp::ListContains: return Value{find(a[0]) >= 0};
+            case CollOp::ListIndexOf: return Value{(std::int32_t)find(a[0])};
+            case CollOp::ListSort:   // numbers, text or enums (the checker allows nothing else)
+                std::stable_sort(l.items.begin(), l.items.end(), [](const Value& x, const Value& y) {
+                    if (auto* s = std::get_if<std::string>(&x)) return *s < std::get<std::string>(y);
+                    if (std::holds_alternative<std::int32_t>(x) && std::holds_alternative<std::int32_t>(y))
+                        return std::get<std::int32_t>(x) < std::get<std::int32_t>(y);
+                    return AsF(x) < AsF(y);
+                });
+                ++l.version;
+                return Value{};
+            case CollOp::ListReverse: std::reverse(l.items.begin(), l.items.end()); ++l.version; return Value{};
+            case CollOp::ListToArray: {
+                auto out = std::make_shared<ArrayObj>();
+                out->typeName = prog_.NameOf(e.type);
+                out->items = l.items;
+                return Value{std::move(out)};
+            }
+            default: return Value{};
+        }
     }
 
     // Run `f` as code of object `o` (its fields, its class, `this`).
@@ -329,6 +517,17 @@ private:
             case EK::Call: return Call(e);
             case EK::New: {
                 if (e.bind == Bind::NewObject) return NewObject(e);
+                if (e.bind == Bind::NewCollection) {
+                    if (e.type.kind == TK::Dict) {
+                        auto d = std::make_shared<DictObj>();
+                        d->typeName = prog_.NameOf(e.type);
+                        return Value{std::move(d)};
+                    }
+                    auto l = std::make_shared<ArrayObj>();
+                    l->typeName = prog_.NameOf(e.type);
+                    for (auto& a : e.args) l->items.push_back(Eval(*a));
+                    return Value{std::move(l)};
+                }
                 float c[3] = {0, 0, 0};
                 for (std::size_t i = 0; i < e.args.size(); ++i) c[i] = AsF(Eval(*e.args[i]));
                 return Value{Vec3{c[0], c[1], c[2]}};
@@ -403,6 +602,20 @@ private:
                 Value a = Receiver(*e.object, e.nullCond);
                 return Value{(std::int32_t)std::get<ArrayRef>(a)->items.size()};
             }
+            case Bind::CollCount: {
+                Value c = Receiver(*e.object, e.nullCond);
+                if (auto* d = std::get_if<DictRef>(&c)) return Value{(std::int32_t)(*d)->entries.size()};
+                return Value{(std::int32_t)std::get<ArrayRef>(c)->items.size()};
+            }
+            case Bind::DictKeys: case Bind::DictValues: {   // a new List of the keys / values, in order
+                DictRef d = std::get<DictRef>(Receiver(*e.object, e.nullCond));
+                auto out = std::make_shared<ArrayObj>();
+                out->typeName = prog_.NameOf(e.type);
+                for (auto& kv : d->entries) out->items.push_back(e.bind == Bind::DictKeys ? kv.first : kv.second);
+                return Value{std::move(out)};
+            }
+            case Bind::PairKey: case Bind::PairValue:
+                return std::get<ArrayRef>(Receiver(*e.object, e.nullCond))->items[e.bind == Bind::PairKey ? 0 : 1];
             case Bind::Local: return (*locals_)[(std::size_t)e.slot];
             case Bind::Field: return (*self_)[(std::size_t)e.slot];
             case Bind::StaticField: return inst_.Statics()[(std::size_t)e.slot];
@@ -539,6 +752,13 @@ private:
     }
 
     Value Assign(const Expr& e) {
+        if (e.op == T::Assign && e.lhs->kind == EK::Index && e.lhs->object->type.kind == TK::Dict) {   // d[key] = v adds or replaces
+            DictRef d = std::get<DictRef>(Receiver(*e.lhs->object));
+            const Value key = Eval(*e.lhs->lhs);
+            Value v = Eval(*e.rhs);
+            DictSet(*d, key, v);
+            return v;
+        }
         if (e.op == T::QuestionQuestionEq) {   // the value is only worked out when the target is null
             if (IsPlace(*e.lhs)) {
                 Place pl = PlaceOf(*e.lhs);
@@ -586,6 +806,7 @@ private:
                 for (auto& a : e.args) args.push_back(Eval(*a));
                 return CallMethod(e.slot, args);
             }
+            case Bind::CollMethod: return CollCall(e);
             case Bind::ObjMethod: {
                 ObjPtr o = std::get<ObjPtr>(Receiver(*e.object, e.nullCond));
                 std::vector<Value> args;

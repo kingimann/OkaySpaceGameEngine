@@ -36,6 +36,7 @@
 #include "okay/Components/CharacterAnimBackend.hpp"
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/FullBodyIK.hpp"
+#include "okay/Components/Stance.hpp"
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -130,6 +131,9 @@ public:
     std::vector<Transition> anyState;
     /// Runtime: while set, no transition fires (a held gesture keeps its state).
     bool hold = false;
+    /// How long this body's stance changes take; the movement controllers ease the
+    /// body, its collider and the camera over them. Serialized.
+    StanceTimes stanceTimes;
 
     /// Called with the state's name when the machine enters / leaves a state.
     std::function<void(const std::string&)> onStateEnter, onStateExit;
@@ -649,5 +653,19 @@ private:
     std::vector<float> m_lW;
     mutable std::unique_ptr<CharacterAnimBackend> m_charBackend;   // the backend on a Character body
 };
+
+/// How long stance changes take on the body `go` (its own base Animator, or
+/// its model child's), or the defaults when it has none.
+inline StanceTimes StanceTimesOf(GameObject* go) {
+    if (!go) return StanceTimes{};
+    for (AnimStateMachine* sm : go->GetComponents<AnimStateMachine>())
+        if (sm->layer == 0) return sm->stanceTimes;
+    if (go->transform)
+        for (Transform* c : go->transform->Children())
+            if (c && c->gameObject)
+                for (AnimStateMachine* sm : c->gameObject->GetComponents<AnimStateMachine>())
+                    if (sm->layer == 0) return sm->stanceTimes;
+    return StanceTimes{};
+}
 
 } // namespace okay

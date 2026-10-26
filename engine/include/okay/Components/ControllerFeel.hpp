@@ -44,6 +44,7 @@ struct AnimLink {
     struct Frame {
         float speed = 0.0f, verticalSpeed = 0.0f;
         bool grounded = true, crouch = false, prone = false, sprint = false, slide = false, aim = false;
+        float stance = 0.0f;      ///< eased stance level: 0 stand .. 1 crouch .. 2 prone
         bool jumped = false, landed = false;
         Vec3 velocity{0, 0, 0};   ///< world velocity: sent as moveX / moveZ in the body's frame (2D blend trees)
     };
@@ -57,6 +58,7 @@ struct AnimLink {
         }
         if (!m_sm) return;
         if (!m_bodySpeed) m_sm->SetFloat("speed", f.speed);
+        m_sm->SetFloat("stance", f.stance);
         m_sm->SetFloat("verticalSpeed", f.verticalSpeed);
         m_sm->SetBool("grounded", f.grounded);
         m_sm->SetBool("crouch", f.crouch);

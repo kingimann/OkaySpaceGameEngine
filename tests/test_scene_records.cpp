@@ -42,6 +42,11 @@ int main() {
     CHECK(Rejects("  tilemap 1 100000 100000 0 0", "tilemap huge"));
     CHECK(Rejects("  terrain 100000 50 1 1 1 1 4 0 0 0 0", "terrain huge resolution"));
     CHECK(Rejects("  voxelterrain 4000 4000 4000 1 0 1 0 0", "voxel huge grid"));
+    // Counts / sizes chosen so the size arithmetic itself overflows.
+    CHECK(Rejects("  charbind 6148914691236517206 0 0 0 0 0", "charbind count whose 3n wraps"));
+    CHECK(Rejects("  voxelterrain 2097152 2097152 2097152 1 0 1 0 0", "voxel grid whose product overflows"));
+    CHECK(Rejects("  voxelterrain 4194304 2097152 2097152 1 0 1 0 0", "voxel grid whose product wraps to 0"));
+    CHECK(Rejects("  terrain 2147483647 50 1 1 1 1 4 0 0 0 0", "terrain resolution INT_MAX"));
 
     // ---- a well-formed scene round-trips exactly (old scenes load as before) ----
     {

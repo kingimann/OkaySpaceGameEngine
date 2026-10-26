@@ -261,25 +261,13 @@ static Mesh BuildSkinnedMesh(const gltf_detail::GltfDoc& doc, int meshIndex,
         ++primNo;
         if (onlyPrim >= 0 && primNo != onlyPrim) continue;
         const JVal* attr = prim.Find("attributes"); if (!attr) continue;
-        int base = (int)mesh.vertices.size(), pc = 0, pn = 0;
-        // Validate the primitive before taking any of it (a SCALAR POSITION, an
-        // unreadable accessor, an index past its vertices): a bad one is left out.
-        std::vector<float> pos, nor, uv, id;
-        int nc = 0, nn = 0, tc = 0, tn = 0, ic = 0, in = 0;
-        if (const JVal* P = attr->Find("POSITION")) { pos = ReadAccessor(doc, P->Int(-1), pc, pn); if (pc != 3) continue; }
-        if (const JVal* N = attr->Find("NORMAL")) { nor = ReadAccessor(doc, N->Int(-1), nc, nn); if (nc != 3) continue; }
-        if (const JVal* T = attr->Find("TEXCOORD_0")) { uv = ReadAccessor(doc, T->Int(-1), tc, tn); if (tc != 2) continue; }
-        const JVal* I = prim.Find("indices");
-        if (I) {
-            id = ReadAccessor(doc, I->Int(-1), ic, in);
-            if (ic != 1) continue;
-            bool bad = false;
-            for (float f : id) if (!(f >= 0.0f && f < (float)pn)) { bad = true; break; }
-            if (bad) continue;
-        }
-        for (int i = 0; i < pn; ++i) mesh.vertices.push_back(Vec3{pos[i*3+0], pos[i*3+1], pos[i*3+2]});
-        for (int i = 0; i < nn; ++i) mesh.normals.push_back(Vec3{nor[i*3+0], nor[i*3+1], nor[i*3+2]});
-        for (int i = 0; i < tn; ++i) mesh.uvs.push_back(Vec2{uv[i*2+0], uv[i*2+1]});
+        const int base = (int)mesh.vertices.size();
+        PrimGeom g;
+        if (!ReadPrimitive(doc, prim, g)) continue;   // malformed: left out, as AppendPrimitive does
+        const int pn = g.pn;
+        for (int i = 0; i < pn; ++i) mesh.vertices.push_back(Vec3{g.pos[i*3+0], g.pos[i*3+1], g.pos[i*3+2]});
+        for (int i = 0; i < g.nn; ++i) mesh.normals.push_back(Vec3{g.nor[i*3+0], g.nor[i*3+1], g.nor[i*3+2]});
+        for (int i = 0; i < g.tn; ++i) mesh.uvs.push_back(Vec2{g.uv[i*2+0], g.uv[i*2+1]});
         std::vector<float> jv[2], wv[2]; int jc[2] = {0, 0}, jn[2] = {0, 0}, wc[2] = {0, 0}, wn[2] = {0, 0};
         for (int set = 0; set < 2; ++set) {
             std::string js = "JOINTS_" + std::to_string(set), ws = "WEIGHTS_" + std::to_string(set);
@@ -308,8 +296,8 @@ static Mesh BuildSkinnedMesh(const gltf_detail::GltfDoc& doc, int meshIndex,
             }
             jIdx.push_back(idx); jWt.push_back(w);
         }
-        if (I) {
-            for (int i = 0; i < in; ++i) mesh.triangles.push_back(base + (int)(id[i] + 0.5f));
+        if (g.indexed) {
+            for (int i = 0; i < g.in; ++i) mesh.triangles.push_back(base + (int)(g.idx[i] + 0.5f));
         } else {
             for (int i = 0; i + 2 < pn; i += 3) {
                 mesh.triangles.push_back(base + i); mesh.triangles.push_back(base + i + 1); mesh.triangles.push_back(base + i + 2);
@@ -343,10 +331,8 @@ static void AddGltfMorphTargets(const gltf_detail::GltfDoc& doc, int meshIndex, 
     for (const JVal& prim : prims->arr) {
         ++primNo;
         if (onlyPrim >= 0 && primNo != onlyPrim) continue;
-        const JVal* attr = prim.Find("attributes");
-        const JVal* P = attr ? attr->Find("POSITION") : nullptr;
-        int pc = 0, pn = 0;
-        if (P && PrimitiveUsable(doc, prim)) ReadAccessor(doc, P->Int(-1), pc, pn);   // skipped primitives add no vertices
+        PrimGeom g;
+        const int pn = ReadPrimitive(doc, prim, g) ? g.pn : 0;   // skipped primitives add no vertices
         for (int t = 0; t < nTargets; ++t) { dp[t].resize((std::size_t)base + pn, Vec3{0, 0, 0}); dn[t].resize((std::size_t)base + pn, Vec3{0, 0, 0}); }
         if (const JVal* T = prim.Find("targets"))
             for (int t = 0; t < (int)T->arr.size() && t < nTargets; ++t) {
@@ -1087,16 +1073,18 @@ GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
     const JVal* nodes = doc.root.Find("nodes");
     int nodeCount = nodes ? (int)nodes->arr.size() : 0;
 
-    // Reject a node graph whose "children" links loop (a node under itself): the
-    // hierarchy built from it would never end. Checked on the parent each node
-    // finally gets (the last "children" entry naming it, as the import applies).
+    // The node graph must be a strict tree (glTF requires it): a node listed as a
+    // child more than once, or "children" links that loop (a node under itself),
+    // would build a hierarchy that never ends — every edge is applied below.
     {
         std::vector<int> parentOf(nodeCount, -1);
         for (int i = 0; i < nodeCount; ++i)
             if (const JVal* C = nodes->arr[i].Find("children"))
                 for (const JVal& c : C->arr) {
                     int ci = c.Int(-1);
-                    if (ci >= 0 && ci < nodeCount) parentOf[ci] = i;
+                    if (ci < 0 || ci >= nodeCount) continue;
+                    if (parentOf[ci] >= 0) { if (ok) *ok = false; return nullptr; }   // two parents
+                    parentOf[ci] = i;
                 }
         std::vector<char> state(nodeCount, 0);   // 0 unseen, 1 on the current walk, 2 known acyclic
         std::vector<int> walk;

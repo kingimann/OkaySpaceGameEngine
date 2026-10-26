@@ -88,16 +88,13 @@ public:
         if (!joints.empty() || jointNames.empty() || !gameObject) return;
         Scene* sc = gameObject->scene();
         if (!sc) return;
-        // Both walks are bounded/visited-checked so a corrupt hierarchy can't hang.
         Transform* top = transform;
-        for (int depth = 0; top && top->Parent() && depth < (1 << 16); ++depth) top = top->Parent();
+        while (top && top->Parent()) top = top->Parent();
         std::unordered_map<std::string, Transform*> local;
         if (top) {
-            std::unordered_set<Transform*> seen;
             std::vector<Transform*> stack{top};
             while (!stack.empty()) {
                 Transform* t = stack.back(); stack.pop_back();
-                if (!t || !seen.insert(t).second) continue;
                 if (t->gameObject) local.emplace(t->gameObject->name, t);
                 for (Transform* c : t->Children()) stack.push_back(c);
             }

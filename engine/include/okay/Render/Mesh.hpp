@@ -750,7 +750,7 @@ struct Mesh {
     // unchanged and backward-compatible; any other variant perturbs it.
     static float PropRand(int variant, int key, float lo, float hi) {
         if (variant == 0) return (lo + hi) * 0.5f;
-        unsigned x = (unsigned)(variant * 374761393 + key * 668265263);
+        unsigned x = (unsigned)variant * 374761393u + (unsigned)key * 668265263u;   // unsigned: no signed overflow, same bits
         x = (x ^ (x >> 13)) * 1274126177u;
         float t = (float)((x ^ (x >> 16)) & 0xffffu) / 65535.0f;
         return lo + (hi - lo) * t;

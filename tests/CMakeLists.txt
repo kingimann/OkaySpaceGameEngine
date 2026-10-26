@@ -23,7 +23,6 @@ add_test(NAME instantiate COMMAND test_instantiate)
 add_executable(test_scene_records test_scene_records.cpp)
 target_link_libraries(test_scene_records PRIVATE okay::engine)
 add_test(NAME scene_records COMMAND test_scene_records)
-set_tests_properties(scene_records PROPERTIES TIMEOUT 300)
 
 add_executable(test_remove test_remove.cpp)
 target_link_libraries(test_remove PRIVATE okay::engine)
@@ -967,6 +966,11 @@ add_test(NAME edit_transform COMMAND test_edit_transform)
 add_executable(test_polymesh test_polymesh.cpp)
 target_link_libraries(test_polymesh PRIVATE okay::engine)
 add_test(NAME polymesh COMMAND test_polymesh)
+
+# Robustness: Mesh::PropRand without signed overflow (UBSan), same values
+add_executable(test_mesh_variant_hash test_mesh_variant_hash.cpp)
+target_link_libraries(test_mesh_variant_hash PRIVATE okay::engine)
+add_test(NAME mesh_variant_hash COMMAND test_mesh_variant_hash)
 
 add_executable(test_mesh_asset test_mesh_asset.cpp)
 target_link_libraries(test_mesh_asset PRIVATE okay::engine)

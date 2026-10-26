@@ -44,13 +44,21 @@ struct AnimLink {
     struct Frame {
         float speed = 0.0f, verticalSpeed = 0.0f;
         bool grounded = true, crouch = false, prone = false, sprint = false, slide = false, aim = false;
+        float stance = 0.0f;      ///< eased stance level: 0 stand .. 1 crouch .. 2 prone
         bool jumped = false, landed = false;
         Vec3 velocity{0, 0, 0};   ///< world velocity: sent as moveX / moveZ in the body's frame (2D blend trees)
     };
     void Apply(GameObject* owner, const Frame& f) {
-        if (!m_sm || m_owner != owner) { m_owner = owner; m_sm = FindInTree<AnimStateMachine>(owner); }
+        if (!m_sm || m_owner != owner) {
+            m_owner = owner; m_sm = FindInTree<AnimStateMachine>(owner);
+            // On a Character body, DriveLocomotion feeds the speed it measured over
+            // the ground (a body pressed against a wall stands still).
+            GameObject* g = m_sm ? m_sm->gameObject : nullptr;
+            m_bodySpeed = g && g->GetComponent<Character>() && !g->GetComponent<ModelAnimator>();
+        }
         if (!m_sm) return;
-        m_sm->SetFloat("speed", f.speed);
+        if (!m_bodySpeed) m_sm->SetFloat("speed", f.speed);
+        m_sm->SetFloat("stance", f.stance);
         m_sm->SetFloat("verticalSpeed", f.verticalSpeed);
         m_sm->SetBool("grounded", f.grounded);
         m_sm->SetBool("crouch", f.crouch);
@@ -70,6 +78,7 @@ struct AnimLink {
 private:
     GameObject* m_owner = nullptr;
     AnimStateMachine* m_sm = nullptr;
+    bool m_bodySpeed = false;   // the machine plays a Character body, which feeds its own speed
 };
 
 /// Eased field of view: base (captured from the camera) + sprint boost, or a zoom FOV.

@@ -4,17 +4,24 @@
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Collider3D.hpp"
+#include <cmath>
 
 namespace okay {
+
+/// The lowest rise the controllers treat as a step (lower is a seam in the floor).
+constexpr float kMinStepHeight = 0.04f;
 
 /// Stair step-up shared by the character controllers: when a GROUNDED, moving
 /// body is blocked by a LOW obstacle (a stair, a curb), lift it onto the step
 /// instead of letting it grind against the face. Three probes decide it:
-/// a knee-height ray must hit (something is in the way), the same ray at
+/// a knee-height ray must hit a wall-like face (something is in the way; a
+/// ramp or a hill ahead is walkable ground, not a step), the same ray at
 /// step-offset height must be CLEAR (it's a step, not a wall), and a down-ray
-/// past the lip must find the step top within stepOffset of the feet.
+/// past the lip must find the step top between minStepHeight and stepOffset
+/// above the feet. Only solid colliders count (no triggers), and never the
+/// body's own parts. It lifts only: the body's own speed carries it over the lip.
 inline void TryStepUp(Scene& sc, GameObject* go, Rigidbody3D* rb, const Vec3& dir,
-                      bool grounded, bool moving, float stepOffset) {
+                      bool grounded, bool moving, float stepOffset, float minStepHeight = kMinStepHeight) {
     if (!grounded || !moving || stepOffset <= 0.0f || !rb || !go || !go->transform) return;
     Vec3 pos = go->transform->Position();
     const float reach = 0.45f;                      // capsule radius + skin
@@ -22,19 +29,23 @@ inline void TryStepUp(Scene& sc, GameObject* go, Rigidbody3D* rb, const Vec3& di
     float fl = std::sqrt(fw.x * fw.x + fw.z * fw.z);
     if (fl < 1e-4f) return;
     fw.x /= fl; fw.z /= fl;
-    RaycastHit3D low = sc.physics3D().Raycast(sc, {pos.x, pos.y + 0.05f, pos.z}, fw, reach, go);
+    Physics3D::IgnoreHierarchy own(go);
+    auto& ph = sc.physics3D();
+    RaycastHit3D low = ph.Raycast(sc, {pos.x, pos.y + 0.05f, pos.z}, fw, reach, go, Physics3D::kAllLayers, false);
     if (!low.hit) return;                           // nothing in the way
-    RaycastHit3D high = sc.physics3D().Raycast(sc, {pos.x, pos.y + stepOffset + 0.02f, pos.z},
-                                               fw, reach + 0.10f, go);
+    if (std::fabs(low.normal.y) >= 0.3f) return;    // a slope or a seam ahead, not a step's face
+    RaycastHit3D high = ph.Raycast(sc, {pos.x, pos.y + stepOffset + 0.02f, pos.z},
+                                   fw, reach + 0.10f, go, Physics3D::kAllLayers, false);
     if (high.hit) return;                           // taller than a step -> a real wall
     Vec3 overO{pos.x + fw.x * (low.distance + 0.12f), pos.y + stepOffset + 0.02f,
                pos.z + fw.z * (low.distance + 0.12f)};
-    RaycastHit3D top = sc.physics3D().Raycast(sc, overO, {0.0f, -1.0f, 0.0f}, stepOffset + 0.04f, go);
+    RaycastHit3D top = ph.Raycast(sc, overO, {0.0f, -1.0f, 0.0f}, stepOffset + 0.04f, go, Physics3D::kAllLayers, false);
     if (!top.hit) return;
     float rise = top.point.y - pos.y;
-    if (rise <= 0.01f || rise > stepOffset) return;
-    // Climb: pop the body onto the step with a small forward nudge past the lip.
-    go->transform->SetPosition({pos.x + fw.x * 0.06f, top.point.y + 0.02f, pos.z + fw.z * 0.06f});
+    if (rise < minStepHeight || rise > stepOffset) return;
+    // Climb: lift the body onto the step's height (no forward push: its own
+    // velocity takes it over the lip, at any frame rate).
+    go->transform->SetPosition({pos.x, top.point.y + 0.02f, pos.z});
     if (rb->velocity.y < 0.0f) rb->velocity.y = 0.0f;
 }
 
@@ -42,16 +53,21 @@ inline void TryStepUp(Scene& sc, GameObject* go, Rigidbody3D* rb, const Vec3& di
 /// Moving-platform support shared by the controllers: remember what the body
 /// stands on and apply the platform's frame-to-frame translation, so players
 /// RIDE elevators and moving props instead of sliding off them. Static ground
-/// has a zero delta, so tracking it costs nothing.
+/// has a zero delta, so tracking it costs nothing. Only solid, non-dynamic
+/// things are ridden: a trigger or a crate the player is pushing never is.
 struct PlatformRide { GameObject* platform = nullptr; Vec3 lastPos{0.0f, 0.0f, 0.0f}; };
 inline void RideMovingPlatform(Scene& sc, GameObject* go, PlatformRide& st, bool grounded) {
     if (!go || !go->transform) { st.platform = nullptr; return; }
     GameObject* plat = nullptr;
     if (grounded) {
         Vec3 pos = go->transform->Position();
+        Physics3D::IgnoreHierarchy own(go);
         RaycastHit3D hit = sc.physics3D().Raycast(sc, {pos.x, pos.y + 0.1f, pos.z},
-                                                  {0.0f, -1.0f, 0.0f}, 1.4f, go);
-        if (hit.hit && hit.gameObject && hit.gameObject->transform) plat = hit.gameObject;
+                                                  {0.0f, -1.0f, 0.0f}, 1.4f, go, Physics3D::kAllLayers, false);
+        if (hit.hit && hit.gameObject && hit.gameObject->transform) {
+            const auto* prb = hit.gameObject->GetComponent<Rigidbody3D>();
+            if (!prb || prb->bodyType != Rigidbody3D::BodyType::Dynamic) plat = hit.gameObject;
+        }
     }
     if (plat && plat == st.platform) {
         Vec3 cur = plat->transform->Position();

@@ -115,6 +115,7 @@ bool AntiCheatSettings::Parse(const std::string& text, AntiCheatSettings& out, s
         else if (key == "hitDamage") { if (!ParseFloat(val, s.hitDamage)) return fail("hitDamage needs a number >= 0"); }
         else if (key == "hitLineOfSight") { if (!ParseBool(val, s.hitLineOfSight)) return fail("hitLineOfSight needs true or false"); }
         else if (key == "weapon") { if (val.empty()) return fail("weapon needs a name"); s.weapons.push_back(val); }
+        else if (key == "hitsNeedMoveCheck") { if (!ParseBool(val, s.hitsNeedMoveCheck)) return fail("hitsNeedMoveCheck needs true or false"); }
         else if (key == "serverVar") { if (val.empty()) return fail("serverVar needs a key prefix"); s.serverVars.push_back(val); }
         else if (key == "maxRpcsPerSecond") { if (!ParseInt(val, s.maxRpcsPerSecond)) return fail("maxRpcsPerSecond needs a whole number >= 0"); }
         else if (key == "maxRpcBytes") { if (!ParseInt(val, s.maxRpcBytes)) return fail("maxRpcBytes needs a whole number >= 0"); }
@@ -157,6 +158,7 @@ std::string AntiCheatSettings::ToText() const {
     if (hitDamage != d.hitDamage) o << "hitDamage " << hitDamage << "\n";
     if (hitLineOfSight != d.hitLineOfSight) o << "hitLineOfSight " << (hitLineOfSight ? "true" : "false") << "\n";
     for (const auto& w : weapons) o << "weapon " << w << "\n";
+    if (hitsNeedMoveCheck != d.hitsNeedMoveCheck) o << "hitsNeedMoveCheck " << (hitsNeedMoveCheck ? "true" : "false") << "\n";
     return o.str();
 }
 
@@ -229,9 +231,10 @@ bool AntiCheat::MayDrive(std::uint32_t peer, const std::string& netId, bool clai
     if (minted >= 0) return (std::uint32_t)minted == peer;      // SpawnOwned: the id names its owner
     auto it = m_owner.find(netId);
     if (it != m_owner.end()) return it->second == peer;
-    // The first peer to drive an object that exists here (and nobody owns) owns
-    // it; an id the server doesn't have can't be claimed ahead of time.
-    if (claim && (!exists || exists(netId))) { m_owner[netId] = peer; return true; }
+    // An object nobody owns is the server's, unless it's marked claimable: then
+    // the first peer to drive it (it must exist here: an id the server doesn't
+    // have can't be claimed ahead of time) owns it.
+    if (claim && (!exists || exists(netId)) && claimable && claimable(netId)) { m_owner[netId] = peer; return true; }
     return false;
 }
 
@@ -350,10 +353,11 @@ bool AntiCheat::ValidateSyncVar(std::uint32_t peer, const std::string& key) {
         for (std::size_t cut = key.find_first_of("./"); cut != std::string::npos; cut = key.find_first_of("./", cut + 1)) {
             if (cut == 0) continue;
             const std::string netId = key.substr(0, cut);
-            bool mine = true;   // an object nobody owns yet stays writable
+            bool mine = true;   // a key prefix that isn't an object stays writable
             if (serverOwns && serverOwns(netId)) mine = false;
             else if (const long long minted = SpawnIdPeer(netId); minted >= 0) mine = (std::uint32_t)minted == peer;
             else if (auto o = m_owner.find(netId); o != m_owner.end()) mine = o->second == peer;
+            else if (exists && exists(netId)) mine = claimable && claimable(netId);   // unowned: the server's unless claimable
             if (!mine) return Refuse(peer, CheatKind::ForgedSyncVar, key);
         }
     }

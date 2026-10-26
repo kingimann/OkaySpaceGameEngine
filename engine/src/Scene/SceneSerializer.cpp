@@ -26,6 +26,7 @@
 #include "okay/Components/LoadingScreen.hpp"
 #include "okay/Components/InventoryUI.hpp"
 #include "okay/Components/GridInventory.hpp"
+#include "okay/Inventory/ItemDatabase.hpp"
 #include "okay/Components/GridInventoryUI.hpp"
 #include "okay/Components/CraftingStation.hpp"
 #include "okay/Components/ChestInventory.hpp"
@@ -77,6 +78,9 @@
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/UIScrollView.hpp"
 #include "okay/Components/UILayoutGroup.hpp"
+#include "okay/Components/UIFlexItem.hpp"
+#include "okay/Components/UIMask.hpp"
+#include "okay/Components/UIListView.hpp"
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/WorldUI.hpp"
 #include "okay/Components/WorldSpaceUI.hpp"
@@ -118,6 +122,7 @@
 #include "okay/Components/LimbIK.hpp"
 #include "okay/Components/ChainIK.hpp"
 #include "okay/Components/FullBodyIK.hpp"
+#include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Components/RootMotion.hpp"
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/Character.hpp"
@@ -176,6 +181,38 @@ std::string ReadQuoted(std::istream& in) {
         else out += c;
     }
     return out;
+}
+
+// An item name read from a scene, as an ItemDatabase id: legacy names / display
+// names map to their definition's id, and unknown names become loose definitions.
+std::string ItemId(const std::string& name) { return ItemDatabase::Get().Resolve(name); }
+
+// Per-instance item data (durability / uid / values), appended after a container's
+// other fields as: count, then per entry: index durability uid nvalues "k" "v"...
+template <class Get>
+void WriteInstanceData(std::ostream& out, std::size_t n, Get data) {
+    std::vector<std::size_t> idx;
+    for (std::size_t i = 0; i < n; ++i) if (!data(i).Empty()) idx.push_back(i);
+    out << " " << idx.size();
+    for (std::size_t i : idx) {
+        const ItemInstanceData& d = data(i);
+        out << " " << i << " " << d.durability << " " << d.uid << " " << d.values.size();
+        for (const auto& kv : d.values) out << " " << Quote(kv.first) << " " << Quote(kv.second);
+    }
+}
+template <class Get>
+void ReadInstanceData(std::istream& in, std::size_t n, Get data) {
+    in >> std::ws;
+    const int pk = in.peek();
+    if (!std::isdigit(pk)) return;   // older line: no instance data
+    std::size_t count = 0; in >> count;
+    for (std::size_t k = 0; k < count && in; ++k) {
+        std::size_t i = 0, nv = 0;
+        ItemInstanceData d;
+        in >> i >> d.durability >> d.uid >> nv;
+        for (std::size_t v = 0; v < nv && in; ++v) { std::string key = ReadQuoted(in); d.values.push_back({key, ReadQuoted(in)}); }
+        if (in && i < n) data(i) = d;
+    }
 }
 
 // key=value component lines (used by newer components): order-free, and keys a
@@ -660,6 +697,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             }
             out << "\n";
         }
+        {
+            const StanceTimes def;
+            const StanceTimes& t = asm2->stanceTimes;
+            if (t.standCrouch != def.standCrouch || t.crouchProne != def.crouchProne || t.proneStand != def.proneStand)
+                out << "  animsmstance " << t.standCrouch << " " << t.crouchProne << " " << t.proneStand << "\n";
+        }
         bool anyMatch = false;
         for (const auto& st : asm2->states) anyMatch = anyMatch || st.matchSpeed;
         if (anyMatch) {   // blend trees that keep pace with the body's speed
@@ -739,7 +782,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* ns = go->GetComponent<NetworkSync>()) {
         out << "  netsync " << (int)ns->authority << " " << (ns->owned ? 1 : 0)
-            << " " << (ns->syncAnimation ? 1 : 0) << " " << Quote(ns->netId) << "\n";
+            << " " << (ns->syncAnimation ? 1 : 0) << " " << Quote(ns->netId);
+        if (ns->clientClaimable) out << " 1";   // only when set: other scenes don't change
+        out << "\n";
     }
     if (auto* ac = go->GetComponent<AntiCheatConfig>()) {
         const AntiCheatSettings& s = ac->settings;
@@ -758,9 +803,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "\n";
         const AntiCheatSettings d;   // hit-claim tuning: its own line, only when changed
         if (s.hitOriginTolerance != d.hitOriginTolerance || s.hitTolerance != d.hitTolerance || s.maxHitRange != d.maxHitRange ||
-            s.hitDamage != d.hitDamage || s.hitLineOfSight != d.hitLineOfSight)
+            s.hitDamage != d.hitDamage || s.hitLineOfSight != d.hitLineOfSight || s.hitsNeedMoveCheck != d.hitsNeedMoveCheck)
             out << "  anticheathit " << s.hitOriginTolerance << " " << s.hitTolerance << " " << s.maxHitRange
-                << " " << s.hitDamage << " " << (s.hitLineOfSight ? 1 : 0) << "\n";
+                << " " << s.hitDamage << " " << (s.hitLineOfSight ? 1 : 0) << " " << (s.hitsNeedMoveCheck ? 1 : 0) << "\n";
         for (const auto& w : s.weapons) out << "  anticheatweapon " << Quote(w) << "\n";
     }
     for (auto* nv : go->GetComponents<NetValidator>()) {
@@ -995,6 +1040,28 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         // Easing, smoothing and joint limits (separate record: older builds skip it).
         out << "  fbikx " << fb->blendSpeed << " " << fb->goalSmoothing << " " << fb->lookSmoothing
             << " " << fb->armMinBend << " " << fb->legMinBend << "\n";
+    }
+    if (auto* h = go->GetComponent<HoldableObject>()) {
+        out << "  holdable";
+        KvOut k{out};
+        k("style", (int)h->style)("weight", h->weight).str("socket", h->socket)
+         ("offX", h->holdOffset.x)("offY", h->holdOffset.y)("offZ", h->holdOffset.z)
+         ("rotX", h->holdRotation.x)("rotY", h->holdRotation.y)("rotZ", h->holdRotation.z);
+        const HoldableObject::Grip* grips[2] = {&h->leftGrip, &h->rightGrip};
+        for (int g = 0; g < 2; ++g) {
+            const std::string p = g == 0 ? "l" : "r";
+            const HoldableObject::Grip& gr = *grips[g];
+            k.b((p + "On").c_str(), gr.enabled)
+             ((p + "PX").c_str(), gr.position.x)((p + "PY").c_str(), gr.position.y)((p + "PZ").c_str(), gr.position.z)
+             ((p + "RX").c_str(), gr.rotation.x)((p + "RY").c_str(), gr.rotation.y)((p + "RZ").c_str(), gr.rotation.z);
+        }
+        out << "\n";
+    }
+    if (auto* ph = go->GetComponent<ProceduralObjectHolding>()) {
+        out << "  objholding";
+        KvOut k{out};
+        k("hand", (int)ph->primaryHand)("style", (int)ph->holdingStyle).b("armIK", ph->armIK)("transition", ph->transitionTime);
+        out << "\n";
     }
     if (auto* rm = go->GetComponent<RootMotion>()) {
         out << "  rootmotion " << Quote(rm->rootNodeName) << " " << rm->mode
@@ -1256,6 +1323,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << gi->overflow.size();
         for (const auto& it : gi->overflow)
             out << " " << Quote(it.name) << " " << it.w << " " << it.h << " " << it.count << " " << it.weight;
+        WriteInstanceData(out, gi->items.size(), [&](std::size_t i) -> const ItemInstanceData& { return gi->items[i].data; });
         out << "\n";
     }
     if (auto* gu = go->GetComponent<GridInventoryUI>()) {
@@ -1727,6 +1795,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  inventory " << inv->capacity << " " << inv->slots.size();
         for (const auto& s : inv->slots) out << " " << Quote(s.item) << " " << s.count;
         out << " " << inv->maxStack;   // appended (numeric-peek guarded on read)
+        WriteInstanceData(out, inv->slots.size(), [&](std::size_t i) -> const ItemInstanceData& { return inv->slots[i].data; });
         out << "\n";
     }
     if (auto* tm = go->GetComponent<TurnManager>()) {
@@ -2041,13 +2110,31 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* lg = go->GetComponent<UILayoutGroup>()) {
         out << "  uilayout " << (int)lg->direction << " " << (int)lg->anchor << " "
             << lg->origin.x << " " << lg->origin.y << " " << lg->spacing << " " << lg->padding
-            << " " << lg->columns << " " << lg->spacingY << "\n";
+            << " " << lg->columns << " " << lg->spacingY
+            << " " << lg->boxSize.x << " " << lg->boxSize.y << " " << (int)lg->justify << " " << (int)lg->align
+            << " " << (lg->wrap ? 1 : 0) << "\n";   // flex fields (optional, newer)
     }
+    if (auto* fi = go->GetComponent<UIFlexItem>()) {
+        out << "  uiflexitem " << fi->grow << " " << fi->shrink << " " << fi->baseSize.x << " " << fi->baseSize.y
+            << " " << (int)fi->alignSelf << "\n";
+    }
+    if (auto* mk = go->GetComponent<UIMask>()) out << "  uimask " << (mk->showGraphic ? 1 : 0) << "\n";
     if (auto* sv = go->GetComponent<UIScrollView>()) {
         out << "  uiscroll " << sv->position.x << " " << sv->position.y << " "
             << sv->size.x << " " << sv->size.y << " " << (int)sv->anchor << " "
             << sv->contentHeight << " "
-            << sv->background.r << " " << sv->background.g << " " << sv->background.b << " " << sv->background.a << "\n";
+            << sv->background.r << " " << sv->background.g << " " << sv->background.b << " " << sv->background.a
+            << " " << (int)sv->axis << " " << sv->contentWidth << " " << (sv->autoContent ? 1 : 0) << "\n";   // optional, newer
+    }
+    if (auto* lv = go->GetComponent<UIListView>()) {
+        out << "  uilist " << lv->position.x << " " << lv->position.y << " " << lv->size.x << " " << lv->size.y
+            << " " << (int)lv->anchor << " "
+            << lv->background.r << " " << lv->background.g << " " << lv->background.b << " " << lv->background.a << " "
+            << lv->barColor.r << " " << lv->barColor.g << " " << lv->barColor.b << " " << lv->barColor.a << " "
+            << lv->itemHeight << " " << lv->spacing << " " << lv->itemCount << " " << lv->selected << " "
+            << lv->wheelSpeed << " " << lv->items.size();
+        for (const std::string& it : lv->items) out << " " << Quote(it);
+        out << "\n";
     }
     if (auto* cv = go->GetComponent<Canvas>()) {
         out << "  canvas " << (int)cv->scaleMode << " "
@@ -2945,6 +3032,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     }
                     long na = 0; in >> na;
                     for (long k = 0; k < na && in; ++k) { int m = 0; in >> m; if (k < (long)sm2->anyState.size()) sm2->anyState[k].muted = m != 0; }
+                } else if (field == "animsmstance") {
+                    StanceTimes& t = smFor()->stanceTimes;
+                    in >> t.standCrouch >> t.crouchProne >> t.proneStand;
                 } else if (field == "animsmmatch") {
                     auto* sm2 = smFor();
                     long n = 0; in >> n;
@@ -3317,6 +3407,30 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         e.hintName = ReadQuoted(in);
                         in >> e.pull;
                     }
+                } else if (field == "holdable") {
+                    auto* h = go->AddComponent<HoldableObject>();
+                    KvIn k(in);
+                    int st = 0; k.i("style", st);
+                    h->style = st == 1 ? HoldableObject::Style::Custom : HoldableObject::Style::Automatic;
+                    k.f("weight", h->weight); k.str("socket", h->socket);
+                    k.f("offX", h->holdOffset.x); k.f("offY", h->holdOffset.y); k.f("offZ", h->holdOffset.z);
+                    k.f("rotX", h->holdRotation.x); k.f("rotY", h->holdRotation.y); k.f("rotZ", h->holdRotation.z);
+                    HoldableObject::Grip* grips[2] = {&h->leftGrip, &h->rightGrip};
+                    for (int g = 0; g < 2; ++g) {
+                        const std::string p = g == 0 ? "l" : "r";
+                        HoldableObject::Grip& gr = *grips[g];
+                        k.b((p + "On").c_str(), gr.enabled);
+                        k.f((p + "PX").c_str(), gr.position.x); k.f((p + "PY").c_str(), gr.position.y); k.f((p + "PZ").c_str(), gr.position.z);
+                        k.f((p + "RX").c_str(), gr.rotation.x); k.f((p + "RY").c_str(), gr.rotation.y); k.f((p + "RZ").c_str(), gr.rotation.z);
+                    }
+                } else if (field == "objholding") {
+                    auto* ph = go->AddComponent<ProceduralObjectHolding>();
+                    KvIn k(in);
+                    int hand = 1, st = 0; k.i("hand", hand); k.i("style", st);
+                    ph->primaryHand = hand == 0 ? ProceduralObjectHolding::Hand::Left
+                                    : hand == 2 ? ProceduralObjectHolding::Hand::Both : ProceduralObjectHolding::Hand::Right;
+                    ph->holdingStyle = st == 1 ? ProceduralObjectHolding::StyleMode::Custom : ProceduralObjectHolding::StyleMode::Automatic;
+                    k.b("armIK", ph->armIK); k.f("transition", ph->transitionTime);
                 } else if (field == "fbikx") {
                     if (auto* fb = go->GetComponent<FullBodyIK>())
                         in >> fb->blendSpeed >> fb->goalSmoothing >> fb->lookSmoothing >> fb->armMinBend >> fb->legMinBend;
@@ -3759,7 +3873,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     gi->title = ReadQuoted(in);
                     int n = 0; in >> n; gi->items.clear();
                     for (int i = 0; i < n && in; ++i) {
-                        GridItem it; it.name = ReadQuoted(in);
+                        GridItem it; it.name = ItemId(ReadQuoted(in));
                         in >> it.w >> it.h >> it.x >> it.y >> it.count >> it.weight;
                         gi->items.push_back(it);
                     }
@@ -3776,10 +3890,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             if (std::isdigit(epk) || epk == '-') {
                                 int ew = 0, no = 0; in >> ew >> gi->maxStack >> no; gi->enforceWeight = (ew != 0);
                                 for (int i = 0; i < no && in; ++i) {
-                                    GridItem it; it.name = ReadQuoted(in);
+                                    GridItem it; it.name = ItemId(ReadQuoted(in));
                                     in >> it.w >> it.h >> it.count >> it.weight;
                                     gi->overflow.push_back(it);
                                 }
+                                ReadInstanceData(in, gi->items.size(), [&](std::size_t i) -> ItemInstanceData& { return gi->items[i].data; });
                             }
                         }
                     }
@@ -3853,10 +3968,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     for (std::size_t ri = 0; ri < rn && in; ++ri) {
                         CraftingStation::Recipe r; std::size_t ic = 0; in >> ic;
                         for (std::size_t ii = 0; ii < ic && in; ++ii) {
-                            CraftingStation::Ingredient ing; ing.item = ReadQuoted(in); in >> ing.count;
+                            CraftingStation::Ingredient ing; ing.item = ItemId(ReadQuoted(in)); in >> ing.count;
                             r.inputs.push_back(ing);
                         }
-                        r.output = ReadQuoted(in); in >> r.outputCount;
+                        r.output = ItemId(ReadQuoted(in)); in >> r.outputCount;
                         cs->recipes.push_back(r);
                     }
                     cs->range = 0.0f;   // older scenes: no range (opened from anywhere)
@@ -4009,7 +4124,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     c->requireInventory = (ri != 0); c->consumeOnDrop = (cd != 0); c->destroyDroppedItem = (dd != 0);
                     for (int i = 0; i < n && in; ++i) {
                         Consumables::Recipe r;
-                        r.item = ReadQuoted(in); r.action = ReadQuoted(in); in >> r.amount;
+                        r.item = ItemId(ReadQuoted(in)); r.action = ReadQuoted(in); in >> r.amount;
                         c->recipes.push_back(r);
                     }
                 } else if (field == "daynight") {
@@ -4099,11 +4214,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int n = 0; in >> n;
                     for (int i = 0; i < n && in; ++i) {
                         Crafting::Recipe r;
-                        r.output = ReadQuoted(in); in >> r.outputCount;
+                        r.output = ItemId(ReadQuoted(in)); in >> r.outputCount;
                         int ni = 0; in >> ni;
                         for (int j = 0; j < ni && in; ++j) {
                             Crafting::Ingredient ing;
-                            ing.item = ReadQuoted(in); in >> ing.count;
+                            ing.item = ItemId(ReadQuoted(in)); in >> ing.count;
                             r.inputs.push_back(ing);
                         }
                         c->recipes.push_back(std::move(r));
@@ -4443,12 +4558,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     std::size_t count = 0; in >> inv->capacity >> count;
                     inv->slots.clear();
                     for (std::size_t k = 0; k < count && in; ++k) {
-                        Inventory::Slot s; s.item = ReadQuoted(in); in >> s.count;
+                        Inventory::Slot s; s.item = ItemId(ReadQuoted(in)); in >> s.count;
                         inv->slots.push_back(s);
                     }
                     in >> std::ws;   // optional max stack size (appended later)
                     int mpk = in.peek();
-                    if (std::isdigit(mpk) || mpk == '-') in >> inv->maxStack;
+                    if (std::isdigit(mpk) || mpk == '-') {
+                        in >> inv->maxStack;
+                        ReadInstanceData(in, inv->slots.size(), [&](std::size_t i) -> ItemInstanceData& { return inv->slots[i].data; });
+                    }
                 } else if (field == "turnmgr") {
                     auto* tm = go->AddComponent<TurnManager>();
                     int as = 1; std::size_t count = 0;
@@ -4933,8 +5051,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         }
                     }
                 } else if (field == "anticheathit") {   // follows the object's "anticheat" line
-                    float o = 2.0f, t = 1.0f, r = 0.0f, dmg = 10.0f; int los = 1;
+                    float o = 2.0f, t = 1.0f, r = 0.0f, dmg = 10.0f; int los = 1, needMove = 1;
                     in >> o >> t >> r >> dmg >> los;
+                    in >> std::ws;   // the move-check requirement came later
+                    if (std::isdigit(in.peek())) in >> needMove;
                     if (auto* ac = go->GetComponent<AntiCheatConfig>()) {
                         AntiCheatSettings& s = ac->settings;
                         auto ok = [](float v) { return std::isfinite(v) && v >= 0.0f; };
@@ -4943,6 +5063,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         if (ok(r)) s.maxHitRange = r;
                         if (ok(dmg)) s.hitDamage = dmg;
                         s.hitLineOfSight = los != 0;
+                        s.hitsNeedMoveCheck = needMove != 0;
                     }
                 } else if (field == "anticheatweapon") {   // one per known weapon, after "anticheat"
                     const std::string w = ReadQuoted(in);
@@ -4970,6 +5091,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> std::ws;
                     if (std::isdigit(in.peek())) { int sa = 1; in >> sa; ns->syncAnimation = (sa != 0); }
                     ns->netId = ReadQuoted(in);
+                    in >> std::ws;   // clientClaimable came later
+                    if (std::isdigit(in.peek())) { int cc = 0; in >> cc; ns->clientClaimable = cc != 0; }
                 } else if (field == "water") {
                     auto* w = go->AddComponent<Water>();
                     in >> w->size >> w->resolution >> w->waveHeight >> w->waveLength >> w->waveSpeed
@@ -5252,13 +5375,39 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     lg->direction = (UILayoutGroup::Direction)dir; lg->anchor = (UIAnchor)an;
                     if (cols >= 1) lg->columns = cols;
                     if (sy >= 0.0f) lg->spacingY = sy;
+                    float bw = 0.0f, bh = 0.0f; int js = 0, al = 0, wr = 0;
+                    if (rs >> bw >> bh >> js >> al >> wr) {   // flex fields (newer scenes)
+                        lg->boxSize = {bw, bh};
+                        lg->justify = (UILayoutGroup::Justify)js; lg->align = (UILayoutGroup::Align)al; lg->wrap = wr != 0;
+                    }
                     lg->Arrange();
+                } else if (field == "uiflexitem") {
+                    auto* fi = go->AddComponent<UIFlexItem>();
+                    int as = 0;
+                    in >> fi->grow >> fi->shrink >> fi->baseSize.x >> fi->baseSize.y >> as;
+                    fi->alignSelf = (UIFlexItem::Align)as;
+                } else if (field == "uimask") {
+                    auto* mk = go->AddComponent<UIMask>();
+                    int sg = 1; in >> sg; mk->showGraphic = sg != 0;
+                } else if (field == "uilist") {
+                    auto* lv = go->AddComponent<UIListView>();
+                    int an = 0; std::size_t n = 0;
+                    in >> lv->position.x >> lv->position.y >> lv->size.x >> lv->size.y >> an
+                       >> lv->background.r >> lv->background.g >> lv->background.b >> lv->background.a
+                       >> lv->barColor.r >> lv->barColor.g >> lv->barColor.b >> lv->barColor.a
+                       >> lv->itemHeight >> lv->spacing >> lv->itemCount >> lv->selected >> lv->wheelSpeed >> n;
+                    lv->anchor = (UIAnchor)an;
+                    for (std::size_t i = 0; i < n && in; ++i) lv->items.push_back(ReadQuoted(in));
                 } else if (field == "uiscroll") {
                     auto* sv = go->AddComponent<UIScrollView>();
+                    std::string rest; std::getline(in, rest);   // whole line: newer files carry extra fields
+                    std::istringstream rs(rest);
                     int an = 0; Color c;
-                    in >> sv->position.x >> sv->position.y >> sv->size.x >> sv->size.y
+                    rs >> sv->position.x >> sv->position.y >> sv->size.x >> sv->size.y
                        >> an >> sv->contentHeight >> c.r >> c.g >> c.b >> c.a;
                     sv->anchor = (UIAnchor)an; sv->background = c;
+                    int ax = 0, ac = 1; float cw = 0.0f;
+                    if (rs >> ax >> cw >> ac) { sv->axis = (UIScrollView::Axis)ax; sv->contentWidth = cw; sv->autoContent = ac != 0; }
                 } else if (field == "canvas") {
                     auto* cv = go->AddComponent<Canvas>();
                     int sm = 0;
@@ -5830,6 +5979,15 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         if (auto* bm = go->GetComponent<BuildMode>())
             for (const auto& it : bm->palette) { add(it.prefab); add(it.icon); }
         if (auto* lt = go->GetComponent<LogicTarget>()) add(lt->spawnPrefab);
+    }
+    // The item database (and its icons / drop prefabs) ships with any scene that has items.
+    bool hasItems = false;
+    for (const auto& go : scene.Objects())
+        if (go->GetComponent<Inventory>() || go->GetComponent<GridInventory>()) { hasItems = true; break; }
+    const ItemDatabase& db = ItemDatabase::Get();
+    if (hasItems && !db.Path().empty()) {
+        add(db.Path());
+        for (const auto& d : db.Items()) if (!d.loose) { add(d.icon); add(d.worldPrefab); }
     }
     return out;
 }

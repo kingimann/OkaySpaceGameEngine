@@ -23,6 +23,8 @@
 #include "okay/Components/UIAnimation.hpp"
 #include "okay/Components/UIScrollView.hpp"
 #include "okay/Components/UILayoutGroup.hpp"
+#include "okay/Components/UIListView.hpp"
+#include "okay/Components/UIMask.hpp"
 #include "okay/Components/UIDraggable.hpp"   // UIDropTarget
 #include "okay/Components/UITooltip.hpp"
 #include "okay/Components/WorldUI.hpp"
@@ -98,6 +100,10 @@ inline UIRect GetUIRect(GameObject* go) {
     else if (auto* dd = go->GetComponent<UIDropdown>())   { r.valid = true; r.anchor = dd->anchor; r.anchorPtr = &dd->anchor; r.position = &dd->position; r.sizePtr = &dd->size; r.size = dd->size; }
     else if (auto* tb = go->GetComponent<UITabs>())       { r.valid = true; r.anchor = tb->anchor; r.anchorPtr = &tb->anchor; r.position = &tb->position; r.sizePtr = &tb->size; r.size = tb->size; }
     else if (auto* sv = go->GetComponent<UIScrollView>()) { r.valid = true; r.anchor = sv->anchor; r.anchorPtr = &sv->anchor; r.position = &sv->position; r.sizePtr = &sv->size; r.size = sv->size; }
+    else if (auto* lv = go->GetComponent<UIListView>())   { r.valid = true; r.anchor = lv->anchor; r.anchorPtr = &lv->anchor; r.position = &lv->position; r.sizePtr = &lv->size; r.size = lv->size; }
+    else if (auto* fl = go->GetComponent<UILayoutGroup>(); fl && fl->IsFlex()) {   // a flex box: a real, resizable rect
+        r.valid = true; r.anchor = fl->anchor; r.anchorPtr = &fl->anchor; r.position = &fl->origin; r.sizePtr = &fl->boxSize; r.size = fl->boxSize;
+    }
     else if (auto* lg = go->GetComponent<UILayoutGroup>()){ // a controller (no size): movable by its origin, not resizable
         r.valid = true; r.anchor = lg->anchor; r.anchorPtr = &lg->anchor; r.position = &lg->origin; r.sizePtr = nullptr;
         float ext = lg->ContentSize() > 24.0f ? lg->ContentSize() : 24.0f;
@@ -421,7 +427,7 @@ inline void UIQueueDrawItems(GameObject* g, std::size_t index, std::vector<UIDra
     if (g->GetComponent<UIDropTarget>())    { add(K_DropBg); add(K_DropHi); }
     if (g->GetComponent<UIImage>() || g->GetComponent<UIRawImage>()) add(K_Image);
     if (g->GetComponent<UIPanel>())          add(K_Panel);
-    if (g->GetComponent<UIScrollView>())     add(K_Scroll);
+    if (g->GetComponent<UIScrollView>() || g->GetComponent<UIListView>()) add(K_Scroll);
     if (g->GetComponent<UIProgressBar>())    add(K_Progress);
     if (g->GetComponent<UIRadialProgress>()) add(K_Radial);
     if (g->GetComponent<Minimap>())          add(K_Minimap);
@@ -455,6 +461,7 @@ inline int UIDefaultLayer(GameObject* go) {
     if (go->GetComponent<UIPanel>())          return K_Panel;
     if (go->GetComponent<Minimap>())          return K_Minimap;
     if (go->GetComponent<UIScrollView>())     return K_Scroll;
+    if (go->GetComponent<UIListView>())       return K_Scroll;
     if (go->GetComponent<UIProgressBar>())    return K_Progress;
     if (go->GetComponent<UIRadialProgress>()) return K_Radial;
     if (go->GetComponent<UISlider>())         return K_Slider;
@@ -495,6 +502,17 @@ inline UIScrollView* OwningScrollView(GameObject* go) {
     return nullptr;
 }
 
+/// How far a widget's content is scrolled: the sum of every enclosing scroll
+/// view's offset (x and y). For the renderer, whose UIResolveOrigin ignores
+/// scrolling entirely.
+inline Vec2 UIScrollTotal(GameObject* go) {
+    Vec2 off{0.0f, 0.0f};
+    for (Transform* t = (go && go->transform) ? go->transform->Parent() : nullptr; t; t = t->Parent())
+        if (t->gameObject)
+            if (auto* sv = t->gameObject->GetComponent<UIScrollView>()) off = off + sv->Offset();
+    return off;
+}
+
 /// The nearest ancestor that is itself a UI widget (so a child can be positioned
 /// RELATIVE to its parent). Scroll Views are skipped — they manage
 /// their own content offset/clip — so this is for panels/images/buttons/etc.
@@ -507,6 +525,20 @@ inline GameObject* OwningUIParent(GameObject* go) {
         if (GetUIRect(p).valid) return p;
     }
     return nullptr;
+}
+
+/// The scroll offset a widget adds on top of its UI parent's rect: the scroll
+/// views between it and its OwningUIParent (the parent's own rect already
+/// includes those above it). For GetUIScreenRect / UIDesignRect.
+inline Vec2 UIScrollBelowParent(GameObject* go) {
+    Vec2 off{0.0f, 0.0f};
+    GameObject* stop = OwningUIParent(go);
+    for (Transform* t = (go && go->transform) ? go->transform->Parent() : nullptr; t; t = t->Parent()) {
+        if (!t->gameObject) continue;
+        if (t->gameObject == stop) break;
+        if (auto* sv = t->gameObject->GetComponent<UIScrollView>()) off = off + sv->Offset();
+    }
+    return off;
 }
 
 /// A button's text child: the first active direct child carrying a screen-space
@@ -536,12 +568,12 @@ inline bool UIDesignRect(GameObject* go, float dW, float dH, Vec2& origin, Vec2&
         if (UIDesignRect(parent, dW, dH, po, ps)) {
             Vec2 local; ResolveAnchorRect(r.anchor, *r.position, r.size, ps.x, ps.y, local, size);
             origin = po + local;
-            if (UIScrollView* sv = OwningScrollView(go)) origin.y -= sv->scroll;
+            origin = origin - UIScrollBelowParent(go);
             return true;
         }
     }
     ResolveAnchorRect(r.anchor, *r.position, r.size, dW, dH, origin, size);
-    if (UIScrollView* sv = OwningScrollView(go)) origin.y -= sv->scroll;
+    origin = origin - UIScrollBelowParent(go);
     return true;
 }
 
@@ -597,14 +629,14 @@ inline bool GetUIScreenRect(GameObject* go, float screenW, float screenH,
             Vec2 local;                               // stretch anchors derive size from ps
             ResolveAnchorRect(r.anchor, scaledPos, scaledSize, ps.x, ps.y, local, size);
             origin = po + local;
-            if (UIScrollView* sv = OwningScrollView(go)) origin.y -= sv->scroll * s;
+            origin = origin - UIScrollBelowParent(go) * s;
             if (outScale) *outScale = s;
             return true;
         }
     }
     ResolveAnchorRect(r.anchor, scaledPos, scaledSize, screenW, screenH, origin, size);
     // Widgets inside a Scroll View move up as it scrolls.
-    if (UIScrollView* sv = OwningScrollView(go)) origin.y -= sv->scroll * s;
+    origin = origin - UIScrollBelowParent(go) * s;
     if (outScale) *outScale = s;
     return true;
 }
@@ -624,6 +656,22 @@ inline float ScrollViewContentHeight(GameObject* sv) {
         maxBottom = local.y + r.size.y > maxBottom ? local.y + r.size.y : maxBottom;
     }
     return maxBottom;
+}
+
+/// Total width of a Scroll View's content: the furthest right edge of its direct
+/// UI children (resolved within the viewport). 0 if it has no UI children.
+inline float ScrollViewContentWidth(GameObject* sv) {
+    UIRect svr = GetUIRect(sv);
+    if (!svr.valid || !sv || !sv->transform) return 0.0f;
+    float maxRight = 0.0f;
+    for (Transform* c : sv->transform->Children()) {
+        if (!c || !c->gameObject || !c->gameObject->active) continue;
+        UIRect r = GetUIRect(c->gameObject);
+        if (!r.valid || !r.position) continue;
+        Vec2 local = ResolveAnchor(r.anchor, *r.position, r.size, svr.size.x, svr.size.y);
+        maxRight = local.x + r.size.x > maxRight ? local.x + r.size.x : maxRight;
+    }
+    return maxRight;
 }
 
 inline Vec2 UIResolveSize(GameObject* go, float screenW, float screenH);   // fwd: origin resolves stretch parents through it
@@ -720,6 +768,52 @@ inline bool UIScreenContains(GameObject* go, const Vec2& p, float screenW, float
     Vec2 o, sz;
     if (!GetUIScreenRect(go, screenW, screenH, o, sz)) return false;
     return p.x >= o.x && p.y >= o.y && p.x <= o.x + sz.x && p.y <= o.y + sz.y;
+}
+
+/// Does this object clip its UI descendants (a scroll view, a list view or a mask)?
+inline bool UIClipsChildren(GameObject* g) {
+    return g && (g->GetComponent<UIScrollView>() || g->GetComponent<UIListView>() || g->GetComponent<UIMask>());
+}
+
+/// The rect a widget's drawing is clipped to, in the renderer's frame
+/// (UIResolveOrigin pixels at Canvas scale 1): the intersection of every clipping
+/// ancestor's rect. False when nothing clips it; an empty intersection gives a
+/// zero size (draw nothing).
+inline bool UIClipRectLogical(GameObject* go, float w, float h, Vec2& o, Vec2& sz) {
+    bool any = false;
+    float x0 = 0.0f, y0 = 0.0f, x1 = 0.0f, y1 = 0.0f;
+    for (Transform* t = (go && go->transform) ? go->transform->Parent() : nullptr; t; t = t->Parent()) {
+        GameObject* a = t->gameObject;
+        if (!UIClipsChildren(a)) continue;
+        const Vec2 ao = UIResolveOrigin(a, w, h) - UIScrollTotal(a), as = UIResolveSize(a, w, h);
+        if (!any) { x0 = ao.x; y0 = ao.y; x1 = ao.x + as.x; y1 = ao.y + as.y; any = true; continue; }
+        x0 = std::max(x0, ao.x); y0 = std::max(y0, ao.y);
+        x1 = std::min(x1, ao.x + as.x); y1 = std::min(y1, ao.y + as.y);
+    }
+    if (!any) return false;
+    o = Vec2{x0, y0};
+    sz = Vec2{std::max(0.0f, x1 - x0), std::max(0.0f, y1 - y0)};
+    return true;
+}
+
+/// Hit-test clipping: is screen point `p` inside every clipping ancestor of `go`
+/// (so a widget scrolled or masked out of view can't be clicked)? True when
+/// nothing clips it.
+inline bool UIClipContains(GameObject* go, const Vec2& p, float screenW, float screenH) {
+    for (Transform* t = (go && go->transform) ? go->transform->Parent() : nullptr; t; t = t->Parent()) {
+        GameObject* a = t->gameObject;
+        if (!UIClipsChildren(a)) continue;
+        if (!UIScreenContains(a, p, screenW, screenH)) return false;
+    }
+    return true;
+}
+
+/// The host's `UIWorld().clipContains`: clip hover, presses and releases to the
+/// visible part of a widget, but not a drag in progress (a slider or scrollbar
+/// keeps tracking when the pointer leaves its scroll view).
+inline bool UIClipHitTest(GameObject* go, const Vec2& p, float screenW, float screenH) {
+    if (Input::GetMouseButton(0) && !Input::GetMouseButtonDown(0)) return true;
+    return UIClipContains(go, p, screenW, screenH);
 }
 
 } // namespace okay

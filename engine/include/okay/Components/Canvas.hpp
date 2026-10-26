@@ -18,7 +18,7 @@ namespace okay {
 ///
 /// `sortOrder` lets multiple canvases stack (higher draws on top). The runtime
 /// and editor query ScaleFactor() to size the UI for the current view.
-class Canvas : public Behaviour {
+class Canvas final : public Behaviour {
 public:
     enum class ScaleMode { ConstantPixelSize, ScaleWithScreenSize };
 

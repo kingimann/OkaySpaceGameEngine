@@ -122,6 +122,11 @@ add_executable(test_inventory_ops test_inventory_ops.cpp)
 target_link_libraries(test_inventory_ops PRIVATE okay::engine)
 add_test(NAME inventory_ops COMMAND test_inventory_ops)
 
+# Item definitions: .okayitems database, legacy names, per-instance data, def-driven stack/icon/rarity/use
+add_executable(test_item_database test_item_database.cpp)
+target_link_libraries(test_item_database PRIVATE okay::engine)
+add_test(NAME item_database COMMAND test_item_database)
+
 add_executable(test_pathfinding test_pathfinding.cpp)
 target_link_libraries(test_pathfinding PRIVATE okay::engine)
 add_test(NAME pathfinding COMMAND test_pathfinding)
@@ -552,6 +557,15 @@ add_test(NAME ui_layer_table COMMAND test_ui_layer_table)
 add_executable(test_ui_renderer_options test_ui_renderer_options.cpp)
 target_link_libraries(test_ui_renderer_options PRIVATE okay::engine)
 add_test(NAME ui_renderer_options COMMAND test_ui_renderer_options)
+
+add_executable(test_ui_render_bench test_ui_render_bench.cpp)
+target_link_libraries(test_ui_render_bench PRIVATE okay::engine)
+target_compile_definitions(test_ui_render_bench PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME ui_render_bench COMMAND test_ui_render_bench)
+
+add_executable(test_ui_layout_containers test_ui_layout_containers.cpp)
+target_link_libraries(test_ui_layout_containers PRIVATE okay::engine)
+add_test(NAME ui_layout_containers COMMAND test_ui_layout_containers)
 
 add_executable(test_jump test_jump.cpp)
 target_link_libraries(test_jump PRIVATE okay::engine)
@@ -1164,3 +1178,9 @@ add_test(NAME net_hardening COMMAND test_net_hardening)
 add_executable(test_net_races test_net_races.cpp)
 target_link_libraries(test_net_races PRIVATE okay::engine)
 add_test(NAME net_races COMMAND test_net_races)
+
+# Procedural object holding: hands on the grips (built-in + imported rigs), reach, drop, save/load.
+add_executable(test_object_holding test_object_holding.cpp)
+target_link_libraries(test_object_holding PRIVATE okay::engine)
+target_compile_definitions(test_object_holding PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME object_holding COMMAND test_object_holding)

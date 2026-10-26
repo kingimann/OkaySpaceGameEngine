@@ -106,6 +106,7 @@ int main() {
         GameObject* lth = mk("mixamorig:LeftUpLeg", hips, {0.1f, 0, 0});
         GameObject* lsh = mk("mixamorig:LeftLeg", lth, {0, -0.45f, 0.01f});
         mk("mixamorig:LeftFoot", lsh, {0, -0.45f, -0.01f});
+        mk("mixamorig:Head", chest, {0, 0.25f, 0});
         auto* fb = root->AddComponent<FullBodyIK>();
         fb->blendSpeed = 0.0f;   // goals apply at once (easing is tested below)
         sc.Start();
@@ -124,6 +125,13 @@ int main() {
         CHECK(Dist(lh->transform->Position(), goal) < 0.01f);
         CHECK_NEAR(Dist(lua->transform->Position(), lfa->transform->Position()), 0.3f, 1e-3f);
         CHECK_NEAR(Dist(lfa->transform->Position(), lh->transform->Position()), 0.3f, 1e-3f);
+        // Looking aside turns the chest too, but before the arms solve: the hand
+        // still lands on its goal.
+        fb->lookEnabled = true; fb->lookPosition = shoulder + Vec3{3.0f, 0.5f, 2.0f}; fb->lookSmoothing = 0.0f;
+        sc.Update(1.0f / 60.0f);
+        CHECK(Dist(lh->transform->Position(), goal) < 0.01f);
+        fb->lookEnabled = false;
+        sc.Update(1.0f / 60.0f);
 
         // Far target: body pull moves the hips toward it (and stays clamped).
         Vec3 hips0 = hips->transform->Position();

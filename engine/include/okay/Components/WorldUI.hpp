@@ -12,7 +12,7 @@ namespace okay {
 /// damage numbers, quest markers and interaction prompts that float over objects.
 /// The host (player / editor) projects the point with the main camera
 /// (Camera::WorldToScreen) and draws the label, scaling it with distance.
-class WorldUI : public Behaviour {
+class WorldUI final : public Behaviour {
 public:
     std::string text = "Label";
     Color color = Color::White;                 // text color

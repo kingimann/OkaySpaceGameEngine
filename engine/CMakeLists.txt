@@ -53,9 +53,11 @@ add_library(okay_engine
     src/Components/AnimControl.cpp
     src/Components/ActionList.cpp
     src/Inventory/InventoryOps.cpp
+    src/Inventory/ItemDatabase.cpp
     src/UI/InventoryInput.cpp
     src/Components/UIDocument.cpp
     src/Components/UILayoutGroup.cpp
+    src/Components/UIListView.cpp
     src/Components/UITooltip.cpp
     src/Components/UITextBind.cpp
     src/Components/UIBarBind.cpp
@@ -83,6 +85,8 @@ add_library(okay_engine
     src/Graphics/TtfFont.cpp
     src/Graphics/EmbeddedFont.cpp
     src/UI/UIRenderer.cpp
+    src/UI/UIBatcher.cpp
+    src/UI/UILayoutUpdate.cpp
     src/Render/ModelImport.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp

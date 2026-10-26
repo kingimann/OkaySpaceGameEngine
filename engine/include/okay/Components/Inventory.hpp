@@ -2,26 +2,39 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/ScriptComponent.hpp"
+#include "okay/Inventory/ItemDatabase.hpp"
 #include <string>
 #include <vector>
 
 namespace okay {
 
 /// A simple stacked item inventory (RPG bags, hotbars, loot). Items are referenced by
-/// name and stack; a fixed number of `capacity` slots limits how many distinct stacks
-/// fit. Add/Remove fire the sibling ScriptComponent's on_inventory_changed() so UI can
+/// their ItemDatabase id and stack; a fixed number of `capacity` slots limits how many
+/// distinct stacks fit. Add/Remove fire the sibling ScriptComponent's on_inventory_changed() so UI can
 /// refresh. Pair with a Stats component for a basic RPG character.
 class Inventory : public Behaviour {
 public:
-    struct Slot { std::string item; int count = 0; };
+    struct Slot {
+        std::string item;          ///< ItemDatabase id
+        int count = 0;
+        ItemInstanceData data;     ///< durability / uid / custom values (empty for plain items)
+    };
 
     std::vector<Slot> slots;
     int capacity = 20;            // max distinct stacks
-    int maxStack = 0;             // max items per stack (0 = unlimited); Add() overflows
+    int maxStack = 0;             // container-wide cap per stack (0 = none; the item definition's stack size still applies)
 
     /// Slots may be FIXED-POSITION: an empty stack (item == "" or count <= 0) is a
     /// reusable hole, so the UI can drag an item to any slot and leave a gap behind.
     static bool Empty(const Slot& s) { return s.item.empty() || s.count <= 0; }
+    /// Can stack `b` merge into `a`? Same item and the same instance data.
+    static bool Stackable(const Slot& a, const Slot& b) { return a.item == b.item && a.data.StacksWith(b.data); }
+    /// Per-stack limit for `item` here: the smaller of maxStack and the item's own
+    /// stack size (INT_MAX when neither is set, so counts never overflow).
+    long long StackCap(const std::string& item) const {
+        const int lim = ItemDatabase::Get().StackLimit(item, maxStack);
+        return lim > 0 ? lim : 2147483647LL;
+    }
     int SlotsUsed() const { int n = 0; for (const auto& s : slots) if (!Empty(s)) ++n; return n; }
     bool IsFull() const { return SlotsUsed() >= capacity; }
 
@@ -35,11 +48,11 @@ public:
     /// How many of `n` items would fit right now (a dry run; nothing changes).
     int CanAdd(const std::string& item, int n) const {
         if (n <= 0 || item.empty()) return 0;
-        const long long cap = StackCap();
+        const long long cap = StackCap(item);
         long long need = n, fit = 0;
-        for (const auto& s : slots) {                 // room in existing stacks
+        for (const auto& s : slots) {                 // room in existing plain stacks
             if (need <= 0) break;
-            if (Empty(s) || s.item != item) continue;
+            if (Empty(s) || s.item != item || !s.data.Empty()) continue;
             long long room = cap - s.count; if (room <= 0) continue;
             long long t = need < room ? need : room; fit += t; need -= t;
         }
@@ -118,16 +131,13 @@ public:
     }
 
 private:
-    /// Per-stack limit: maxStack, or (unlimited) INT_MAX so counts never overflow.
-    long long StackCap() const { return maxStack > 0 ? maxStack : 2147483647LL; }
-
     /// Add up to `n` without notifying; returns the leftover that didn't fit.
     int AddRaw(const std::string& item, int n) {
         if (n <= 0 || item.empty()) return n < 0 ? 0 : n;
-        const long long cap = StackCap();
-        for (auto& s : slots) {                     // 1) top up existing stacks
+        const long long cap = StackCap(item);
+        for (auto& s : slots) {                     // 1) top up existing plain stacks
             if (n <= 0) break;
-            if (Empty(s) || s.item != item) continue;
+            if (Empty(s) || s.item != item || !s.data.Empty()) continue;
             long long room = cap - s.count; if (room <= 0) continue;
             int add = (long long)n < room ? n : (int)room;
             s.count += add; n -= add;
@@ -140,7 +150,7 @@ private:
                 if (IsFull()) break;
                 slots.push_back(Slot{}); dst = &slots.back();
             }
-            dst->item = item; dst->count = put; n -= put;
+            dst->item = item; dst->count = put; dst->data = ItemInstanceData{}; n -= put;
         }
         return n;
     }
@@ -151,7 +161,7 @@ private:
             if (Empty(s) || s.item != item) continue;
             int take = s.count < n ? s.count : n;
             s.count -= take; n -= take;
-            if (s.count <= 0) { s.item.clear(); s.count = 0; }
+            if (s.count <= 0) s = Slot{};
         }
         return n;
     }

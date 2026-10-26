@@ -148,7 +148,7 @@ int main() {
         auto* box = p->GetComponent<BoxCollider3D>();
         Block(s, "Low Bar", {-3.0f, 1.4f, 0.0f}, {3.0f, 1.0f, 2.0f});   // 0.9 m of room under it
         s.Start(); Step(s, {}, 30);
-        Step(s, {Input::KeyCtrl}, 1); Step(s, {}, 5);
+        Step(s, {Input::KeyCtrl}, 1); Step(s, {}, 20);               // crouches over 0.25 s
         CHECK_EQ(ch->anim, 6);                                       // crouch idle
         CHECK(box->size.y < 1.4f);
         Step(s, {'a'}, 20);

@@ -1,6 +1,7 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Inventory/ItemDatabase.hpp"
 #include <cmath>
 #include <string>
 #include <vector>
@@ -15,11 +16,12 @@ namespace okay {
 /// draws it and handles drag-and-drop. Tag several of these for separate containers
 /// (backpack / vest / crate) and drag items between them.
 struct GridItem {
-    std::string name;
+    std::string name;        ///< ItemDatabase id
     int   w = 1, h = 1;      ///< footprint in cells
     int   x = 0, y = 0;      ///< top-left cell
     int   count = 1;
-    float weight = 0.0f;     ///< per-stack weight (informational)
+    float weight = 0.0f;     ///< per-item weight
+    ItemInstanceData data;   ///< durability / uid / custom values (empty for plain items)
 };
 
 class GridInventory : public Behaviour {
@@ -34,8 +36,8 @@ public:
     /// refused instead of only turning the UI red. Scenes saved before this existed load
     /// with it off, so they behave as they did.
     bool enforceWeight = true;
-    /// Same-name, same-size items merge when one is dropped on the other, up to this
-    /// count per stack (0 = items never merge).
+    /// Same-item, same-size items merge when one is dropped on the other, up to this
+    /// count per stack and the item's own stack size (0 = items never merge).
     int maxStack = 0;
     /// Items Validate() couldn't fit in the grid (after the grid shrank, or from a bad
     /// file). Kept and saved — never deleted — and put back as soon as there's room.
@@ -95,7 +97,7 @@ public:
         std::vector<GridItem> before = items;
         int left = count, last = -1;
         for (int i = 0; i < (int)items.size() && left > 0; ++i)
-            if (CanStack(items[i], name, w, h, weight)) {
+            if (CanStack(items[i], name, w, h, weight, ItemInstanceData{})) {
                 const int n = std::min(StackRoom(items[i]), left);
                 if (n > 0) { items[i].count += n; left -= n; last = i; }
             }
@@ -111,6 +113,13 @@ public:
             left -= n;
         }
         return last;
+    }
+
+    /// Add `count` of a defined item: its size and weight come from the ItemDatabase.
+    int AddDefined(const std::string& id, int count = 1) {
+        const ItemDefinition* d = ItemDatabase::Get().Def(id);
+        if (!d) return -1;
+        return AddItem(d->id, d->gridW, d->gridH, count, d->weight);
     }
 
     /// Move item `index` to (x,y) — turned 90° when `rotated` — if it fits there; dropping
@@ -208,7 +217,7 @@ private:
         GridItem& it = items[index];
         const bool same = (&dst == this);
         const int on = dst.ItemAtCell(x, y);
-        if (on >= 0 && !(same && on == index) && dst.CanStack(dst.items[on], it.name, it.w, it.h, it.weight)) {
+        if (on >= 0 && !(same && on == index) && dst.CanStack(dst.items[on], it.name, it.w, it.h, it.weight, it.data)) {
             int n = std::min(dst.StackRoom(dst.items[on]), it.count);
             if (!same) n = std::min(n, dst.WeightRoom(it.weight, n));
             if (n <= 0) return false;
@@ -229,11 +238,14 @@ private:
         items.erase(items.begin() + index);
         return true;
     }
-    bool CanStack(const GridItem& on, const std::string& name, int w, int h, float weight) const {
-        return maxStack > 0 && on.name == name && on.weight == weight &&
+    bool CanStack(const GridItem& on, const std::string& name, int w, int h, float weight, const ItemInstanceData& data) const {
+        return maxStack > 0 && on.name == name && on.weight == weight && on.data.StacksWith(data) &&
                ((on.w == w && on.h == h) || (on.w == h && on.h == w));
     }
-    int StackRoom(const GridItem& on) const { return maxStack > on.count ? maxStack - on.count : 0; }
+    int StackRoom(const GridItem& on) const {
+        const int cap = ItemDatabase::Get().StackLimit(on.name, maxStack);
+        return cap > on.count ? cap - on.count : 0;
+    }
     /// How many of `n` items weighing `each` the enforced weight limit still lets in.
     int WeightRoom(float each, int n) const {
         if (!enforceWeight || weightLimit <= 0.0f || each <= 0.0f) return n;

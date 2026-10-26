@@ -16,7 +16,7 @@ namespace okay {
 /// picking a quantity (lives, difficulty, count…). Clicking an end button nudges
 /// `value` by `step`, clamped to [minValue, maxValue], and fires the sibling
 /// ScriptComponent's on_change() handler. Position/size are window pixels.
-class UIStepper : public Behaviour {
+class UIStepper final : public Behaviour {
 public:
     Vec2  position{20.0f, 20.0f};
     Vec2  size{160.0f, 32.0f};

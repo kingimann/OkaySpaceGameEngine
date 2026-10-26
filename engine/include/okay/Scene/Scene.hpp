@@ -70,6 +70,10 @@ public:
     /// Note a hierarchy change (an object created, destroyed or reparented), so
     /// caches keyed on StructureVersion() re-resolve.
     void MarkStructureChanged() { ++m_structureVersion; }
+    /// Bumped whenever a component is added to or removed from any object.
+    std::uint64_t ComponentVersion() const { return m_componentVersion; }
+    /// A process-unique id for this scene (never reused), for caches keyed by scene.
+    std::uint64_t Uid() const { return m_uid; }
 
     /// Layer a widget frontmost/backmost. UI draws in hierarchy order, so a parented
     /// object moves to the last/first slot among its SIBLINGS (last = on top); a root
@@ -246,6 +250,8 @@ private:
     /// object reads a frozen transform instead of freed memory.
     std::vector<std::unique_ptr<GameObject>> m_graveyard;
     std::uint64_t m_structureVersion = 1;
+    std::uint64_t m_componentVersion = 1;
+    std::uint64_t m_uid = 0;
     bool m_hasOrdered = false;   // some component has a non-zero ExecutionOrder
     std::vector<Component*>  m_pending;   // awaiting Awake/Start
     std::vector<Component*>  m_active;    // receive Update each frame

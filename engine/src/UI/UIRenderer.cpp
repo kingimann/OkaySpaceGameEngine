@@ -12,10 +12,36 @@
 namespace okay {
 namespace ui2d {
 
+namespace {
+// Collects one-pixel-tall spans and draws runs of identical rows (same x, width and
+// colour) as one rect: a rounded panel is a handful of rects instead of one per row.
+struct RowRuns {
+    Painter& ren;
+    Rect run{0, 0, 0, 0};
+    std::uint8_t rgba[4] = {0, 0, 0, 0};
+    void Add(int x, int y, int w, const std::uint8_t c[4]) {
+        if (run.h > 0 && x == run.x && w == run.w && y == run.y + run.h &&
+            c[0] == rgba[0] && c[1] == rgba[1] && c[2] == rgba[2] && c[3] == rgba[3]) {
+            ++run.h;
+            return;
+        }
+        Flush();
+        run = Rect{x, y, w, 1};
+        for (int i = 0; i < 4; ++i) rgba[i] = c[i];
+    }
+    void Flush() {
+        if (run.h <= 0) return;
+        ren.SetDrawColor(rgba[0], rgba[1], rgba[2], rgba[3]);
+        ren.FillRect(&run);
+        run.h = 0;
+    }
+};
+} // namespace
+
 // Fill a UI shape (rectangle / rounded / circle / pill) into screen rect `r`,
-// scanline by scanline so any silhouette uses one code path. Supports a linear
-// gradient (top->bottom, or left->right when `horizontal`); pass equal colors for
-// a flat fill. `op` is the canvas master opacity.
+// scanline by scanline so any silhouette uses one code path (identical rows merge
+// into one rect). Supports a linear gradient (top->bottom, or left->right when
+// `horizontal`); pass equal colors for a flat fill. `op` is the canvas master opacity.
 // `diag`: 0 = axis-aligned (obey `horizontal`); 1 = diagonal top-left->bottom-right;
 // 2 = diagonal bottom-left->top-right. Diagonals blend `top`->`bottom` across the
 // corner and, like the horizontal case, step per pixel.
@@ -27,23 +53,25 @@ void FillUIShape(Painter& ren, const Rect& r, UIShape shape, float radius,
         return Color{a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t,
                      a.b + (b.b - a.b) * t, a.a + (b.a - a.a) * t};
     };
+    auto bytes = [op](const Color& c, std::uint8_t out[4]) {
+        out[0] = (std::uint8_t)(c.r * 255); out[1] = (std::uint8_t)(c.g * 255);
+        out[2] = (std::uint8_t)(c.b * 255); out[3] = (std::uint8_t)(c.a * 255 * op);
+    };
+    RowRuns runs{ren};
+    std::uint8_t cb[4];
+    bytes(top, cb);
     for (int row = 0; row < r.h; ++row) {
         float x0, x1;
         if (!UIShapeRowSpan(shape, (float)r.w, (float)r.h, radius, row, x0, x1, cornerMask)) continue;
         if (!gradient) {
-            ren.SetDrawColor((std::uint8_t)(top.r * 255), (std::uint8_t)(top.g * 255),
-                                   (std::uint8_t)(top.b * 255), (std::uint8_t)(top.a * 255 * op));
-            Rect span{r.x + (int)x0, r.y + row, (int)(x1 - x0) + 1, 1};
-            ren.FillRect(&span);
+            runs.Add(r.x + (int)x0, r.y + row, (int)(x1 - x0) + 1, cb);
         } else if (!horizontal && diag == 0) {
             float t = r.h > 1 ? (float)row / (r.h - 1) : 0.0f;
-            Color c = lerp(top, bottom, t);
-            ren.SetDrawColor((std::uint8_t)(c.r * 255), (std::uint8_t)(c.g * 255),
-                                   (std::uint8_t)(c.b * 255), (std::uint8_t)(c.a * 255 * op));
-            Rect span{r.x + (int)x0, r.y + row, (int)(x1 - x0) + 1, 1};
-            ren.FillRect(&span);
+            bytes(lerp(top, bottom, t), cb);
+            runs.Add(r.x + (int)x0, r.y + row, (int)(x1 - x0) + 1, cb);
         } else {
             // Horizontal or diagonal gradient: step across the span pixel by pixel.
+            runs.Flush();
             int ix0 = (int)x0, ix1 = (int)x1;
             float fy = r.h > 1 ? (float)row / (r.h - 1) : 0.0f;
             for (int x = ix0; x <= ix1; ++x) {
@@ -59,6 +87,7 @@ void FillUIShape(Painter& ren, const Rect& r, UIShape shape, float radius,
             }
         }
     }
+    runs.Flush();
 }
 
 // A border ring: the outer shape minus the shape inset by `width`. Drawn over the
@@ -67,9 +96,11 @@ void FillUIShape(Painter& ren, const Rect& r, UIShape shape, float radius,
 void FillUIRing(Painter& ren, const Rect& r, UIShape shape, float radius,
                 const Color& c, int width, float op, int cornerMask) {
     if (r.w <= 0 || r.h <= 0 || width <= 0) return;
-    ren.SetDrawColor((std::uint8_t)(c.r * 255), (std::uint8_t)(c.g * 255), (std::uint8_t)(c.b * 255), (std::uint8_t)(c.a * 255 * op));
+    const std::uint8_t cb[4] = {(std::uint8_t)(c.r * 255), (std::uint8_t)(c.g * 255), (std::uint8_t)(c.b * 255),
+                                (std::uint8_t)(c.a * 255 * op)};
     const int iw = r.w - 2 * width, ih = r.h - 2 * width;
     const float innerR = radius - width > 0.0f ? radius - width : 0.0f;
+    RowRuns left{ren}, right{ren};   // a row is one span or a left and a right piece
     for (int row = 0; row < r.h; ++row) {
         float x0, x1;
         if (!UIShapeRowSpan(shape, (float)r.w, (float)r.h, radius, row, x0, x1, cornerMask)) continue;
@@ -78,15 +109,17 @@ void FillUIRing(Painter& ren, const Rect& r, UIShape shape, float radius,
         const bool inner = iw > 0 && ih > 0 && ir >= 0 && ir < ih &&
                            UIShapeRowSpan(shape, (float)iw, (float)ih, innerR, ir, ix0, ix1, cornerMask);
         if (!inner) {
-            Rect span{r.x + (int)x0, r.y + row, (int)(x1 - x0) + 1, 1};
-            ren.FillRect(&span);
+            right.Flush();
+            left.Add(r.x + (int)x0, r.y + row, (int)(x1 - x0) + 1, cb);
             continue;
         }
         const int l0 = (int)x0, l1 = width + (int)ix0;           // left piece  [l0, l1)
         const int r0 = width + (int)ix1 + 1, r1 = (int)x1 + 1;   // right piece [r0, r1)
-        if (l1 > l0) { Rect a{r.x + l0, r.y + row, l1 - l0, 1}; ren.FillRect(&a); }
-        if (r1 > r0) { Rect b{r.x + r0, r.y + row, r1 - r0, 1}; ren.FillRect(&b); }
+        if (l1 > l0) left.Add(r.x + l0, r.y + row, l1 - l0, cb); else left.Flush();
+        if (r1 > r0) right.Add(r.x + r0, r.y + row, r1 - r0, cb); else right.Flush();
     }
+    left.Flush();
+    right.Flush();
 }
 
 // Map a panel's gradient direction to FillUIShape's (horizontal, diag) params.
@@ -247,28 +280,125 @@ void DrawUIText(Painter& r, const std::string& text, float ox, float oy,
 }
 
 
+namespace {
+// What the UI pass keeps between frames for one scene, so a steady frame neither
+// walks every object nor allocates: the draw items of the objects that carry UI and
+// the hierarchy pre-order, rebuilt only when the scene's structure (objects created,
+// destroyed, reparented or reordered) or components change; plus per-frame scratch
+// for each UI object's canvas and opacity. Items keep last frame's order, so the
+// per-frame re-sort (uiDrawOrder / Canvas sortOrder can change any frame) is an
+// insertion sort over an almost-sorted list.
+struct UISlot {
+    std::size_t index = 0;    // into scene.Objects()
+    Canvas* canvas = nullptr; // owning canvas this frame
+    float opacity = 1.0f;     // canvas + UI-animation fade this frame
+};
+struct UIItem {
+    int slot = 0, kind = 0, layer = 0;
+    int canvasOrder = 0, eff = 0;   // per-frame keys
+    std::size_t pre = 0;            // hierarchy pre-order (cached)
+};
+struct UIPassCache {
+    std::uint64_t uid = 0, structure = 0, components = 0;
+    std::size_t objectCount = 0;
+    std::vector<UISlot> slots;
+    std::vector<UIItem> items;
+};
+
+UIPassCache& PassCacheFor(const Scene& scene) {
+    static UIPassCache caches[4];   // the editor can show a scene in a few views at once
+    static int next = 0;
+    for (UIPassCache& c : caches) if (c.uid == scene.Uid()) return c;
+    UIPassCache& c = caches[next];
+    next = (next + 1) % 4;
+    c.uid = scene.Uid(); c.structure = 0;   // force a rebuild
+    return c;
+}
+
+bool ItemBefore(const UIItem& a, const UIItem& b) {
+    if (a.canvasOrder != b.canvasOrder) return a.canvasOrder < b.canvasOrder;
+    if (a.eff != b.eff) return a.eff < b.eff;
+    if (a.pre != b.pre) return a.pre < b.pre;
+    return a.layer < b.layer;
+}
+
+void RebuildPassCache(UIPassCache& c, const Scene& scene) {
+    const auto& objs = scene.Objects();
+    c.structure = scene.StructureVersion();
+    c.components = scene.ComponentVersion();
+    c.objectCount = objs.size();
+    c.slots.clear(); c.items.clear();
+    std::vector<std::size_t> pre = BuildUIPreOrder(objs);
+    std::vector<UIDrawItem> queued;
+    for (std::size_t i = 0; i < objs.size(); ++i) {
+        queued.clear();
+        UIQueueDrawItems(objs[i].get(), i, queued);
+        bool any = false;
+        for (const UIDrawItem& q : queued) {
+            if (q.kind == uilayers::K_FocusRing) continue;   // queued for every UI object below
+            if (!any) { UISlot sl; sl.index = i; c.slots.push_back(sl); any = true; }
+            UIItem it; it.slot = (int)c.slots.size() - 1; it.kind = q.kind; it.layer = q.layer; it.pre = pre[i];
+            c.items.push_back(it);
+        }
+        // Focus moves without the structure changing, so every UI object carries a
+        // focus-ring item; its block draws only while the object is focused.
+        if (any) {
+            UIItem it; it.slot = (int)c.slots.size() - 1; it.kind = uilayers::K_FocusRing;
+            it.layer = uilayers::K_FocusRing; it.pre = pre[i];
+            c.items.push_back(it);
+        }
+    }
+}
+
+// Refresh the per-frame keys and canvases, then restore the draw order.
+void PreparePassFrame(UIPassCache& c, const Scene& scene) {
+    const auto& objs = scene.Objects();
+    for (UISlot& sl : c.slots) {
+        GameObject* go = objs[sl.index].get();
+        sl.canvas = OwningCanvas(go);
+        sl.opacity = UIOpacity(go);
+    }
+    for (UIItem& it : c.items) {
+        const UISlot& sl = c.slots[it.slot];
+        it.canvasOrder = sl.canvas ? sl.canvas->sortOrder : 0;
+        const int o = objs[sl.index]->uiDrawOrder;
+        it.eff = o != 0 ? o : it.layer;
+    }
+    // Stable insertion sort: same order as SortUIDrawItems, no allocation, O(n)
+    // when nothing moved since last frame.
+    for (std::size_t i = 1; i < c.items.size(); ++i) {
+        UIItem v = c.items[i];
+        std::size_t j = i;
+        while (j > 0 && ItemBefore(v, c.items[j - 1])) { c.items[j] = c.items[j - 1]; --j; }
+        c.items[j] = v;
+    }
+}
+} // namespace
+
 void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions& opt) {
-    // Scroll-view membership: offset a widget's origin by its owning Scroll
-    // View's scroll and clip drawing to the viewport, so scrollable content
-    // shows and hides correctly in the built game. Call once per UI widget
-    // right after resolving its origin; widgets outside a scroll view reset
-    // the clip to none.
+    // Scroll / mask membership: offset a widget's origin by the scroll views it
+    // sits in and clip drawing to every enclosing viewport and mask, so
+    // scrollable and masked content shows and hides correctly in the built game.
+    // Call once per UI widget right after resolving its origin; unclipped
+    // widgets reset the clip to none.
     auto enterScroll = [&](GameObject* g, Vec2& o) {
-        if (UIScrollView* psv = OwningScrollView(g)) {
-            Vec2 vp = UIResolveOrigin(psv->gameObject, (float)w, (float)h);
-            o.y -= psv->scroll;
-            Rect clip{(int)vp.x, (int)vp.y, (int)psv->size.x, (int)psv->size.y};
+        o = o - UIScrollTotal(g);
+        Vec2 co, cs;
+        if (UIClipRectLogical(g, (float)w, (float)h, co, cs)) {
+            Rect clip{(int)co.x, (int)co.y, (int)cs.x, (int)cs.y};
             p.SetClipRect(&clip);
         } else {
             p.SetClipRect(nullptr);
         }
     };
-    // Queue every widget's draw blocks from the shared layer table and sort them.
+    // The widgets' draw blocks (from the shared layer table), cached per scene and
+    // put in draw order for this frame.
     using namespace okay::uilayers;
-    std::vector<UIDrawItem> uiItems;
-    for (std::size_t _qi = 0; _qi < scene.Objects().size(); ++_qi)
-        UIQueueDrawItems(scene.Objects()[_qi].get(), _qi, uiItems);
-    uiItems = SortUIDrawItems(scene.Objects(), std::move(uiItems));
+    UIPassCache& cache = PassCacheFor(scene);
+    if (cache.structure != scene.StructureVersion() || cache.components != scene.ComponentVersion() ||
+        cache.objectCount != scene.Objects().size())
+        RebuildPassCache(cache, scene);
+    PreparePassFrame(cache, scene);
     g_uiDefaultFont = okay::SceneUIFont(scene.uiFont);   // scene-wide default for this pass ("" = the launcher font)
     okay::SetActiveUIFont(g_uiDefaultFont);              // screen-space text measures in it too
     // A "Scale With Screen Size" canvas draws at its scale factor, like the editor's
@@ -285,11 +415,16 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         w = (int)std::lround(uiFullW / sc); h = (int)std::lround(uiFullH / sc);
     };
     auto uiMouse = [&]() { Vec2 m = Input::MousePosition(); return Vec2{m.x / uiScaleCur, m.y / uiScaleCur}; };
-    for (const UIDrawItem& _it : uiItems) {
-        const auto& up = scene.Objects()[_it.index];
+    for (const UIItem& _it : cache.items) {
+        const UISlot& _slot = cache.slots[_it.slot];
+        const auto& up = scene.Objects()[_slot.index];
+        // Every UI object carries a focus-ring item; skip it outright unless focused.
+        if (_it.kind == K_FocusRing && (!up->active || !IsUIFocused(up.get()))) continue;
+        // A mask with its graphic hidden only clips: its own widget doesn't draw.
+        if (const UIMask* mk = up->GetComponent<UIMask>(); mk && !mk->showGraphic && _it.kind != K_FocusRing) continue;
         {
             float want = 1.0f;
-            Canvas* ucv = OwningCanvas(up.get());
+            Canvas* ucv = _slot.canvas;
             if (ucv && !ucv->worldSpace && !WorldUIRoot(up.get()) &&
                 ucv->scaleMode == Canvas::ScaleMode::ScaleWithScreenSize)
                 want = ucv->ScaleFactor((float)uiFullW, (float)uiFullH);
@@ -314,7 +449,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         auto* im = up->GetComponent<UIImage>();
         if (auto* ri = up->GetComponent<UIRawImage>(); ri && !im) {   // Raw Image: texture through a UV rect
             if (!ri->enabled || !up->active || UIHidden(up.get())) continue;
-            float op = UIOpacity(up.get());
+            float op = _slot.opacity;
             Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
             Vec2 isz = UIResolveSize(up.get(), (float)w, (float)h);
             enterScroll(up.get(), o);
@@ -339,7 +474,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
             continue;
         }
         if (!im || !up->active || UIHidden(up.get())) continue;
-        float op = UIOpacity(up.get());   // canvas master fade
+        float op = _slot.opacity;   // canvas master fade
         Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
         Vec2 isz = UIResolveSize(up.get(), (float)w, (float)h);   // honors stretch anchors
         enterScroll(up.get(), o);
@@ -459,7 +594,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         else if (_it.kind == K_Panel) {   // panels (backgrounds) first
         auto* pn = up->GetComponent<UIPanel>();
         if (!pn || !up->active || UIHidden(up.get())) continue;
-        float op = UIOpacity(up.get());   // canvas master fade
+        float op = _slot.opacity;   // canvas master fade
         Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
         Vec2 psz = UIResolveSize(up.get(), (float)w, (float)h);   // honors stretch anchors
         enterScroll(up.get(), o);
@@ -511,33 +646,49 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
                                (std::uint8_t)(hc.b * 255), (std::uint8_t)(hc.a * 255));
         p.FillRect(&hr);
     }
-        else if (_it.kind == K_Scroll) {   // scroll-view backgrounds + scrollbar
+        else if (_it.kind == K_Scroll) {   // scroll-view / list-view backgrounds + scrollbars
         auto* sv = up->GetComponent<UIScrollView>();
-        if (!sv || !up->active || UIHidden(up.get())) continue;
-        float op = UIOpacity(up.get());
+        auto* lv = sv ? nullptr : up->GetComponent<UIListView>();
+        if ((!sv && !lv) || !up->active || UIHidden(up.get())) continue;
+        float op = _slot.opacity;
         Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
-        Rect box{(int)o.x, (int)o.y, (int)sv->size.x, (int)sv->size.y};
-        p.SetDrawColor((std::uint8_t)(sv->background.r * 255), (std::uint8_t)(sv->background.g * 255),
-                               (std::uint8_t)(sv->background.b * 255), (std::uint8_t)(sv->background.a * 255 * op));
+        enterScroll(up.get(), o);
+        const Vec2 vs = sv ? sv->size : lv->size;
+        const Color& bg = sv ? sv->background : lv->background;
+        const Color& bar = sv ? sv->barColor : lv->barColor;
+        Rect box{(int)o.x, (int)o.y, (int)vs.x, (int)vs.y};
+        p.SetDrawColor((std::uint8_t)(bg.r * 255), (std::uint8_t)(bg.g * 255),
+                               (std::uint8_t)(bg.b * 255), (std::uint8_t)(bg.a * 255 * op));
         p.FillRect(&box);
-        if (sv->ScrollMax() > 0.0f) {                   // scrollbar track + thumb
-            int barW = 6;
-            Rect track{box.x + box.w - barW - 2, box.y + 2, barW, box.h - 4};
+        // A scrollbar: track + thumb along `len` px, the thumb `frac` of it, `t` along.
+        auto drawBar = [&](bool vertical, float frac, float t) {
+            const int barW = 6;
+            Rect track = vertical ? Rect{box.x + box.w - barW - 2, box.y + 2, barW, box.h - 4}
+                                  : Rect{box.x + 2, box.y + box.h - barW - 2, box.w - 4, barW};
             p.SetDrawColor(255, 255, 255, 30);
             p.FillRect(&track);
-            float frac = sv->size.y / (sv->contentHeight > 1.0f ? sv->contentHeight : 1.0f);
-            int thumbH = (int)(track.h * (frac < 1.0f ? frac : 1.0f));
-            int thumbY = track.y + (int)((track.h - thumbH) * sv->Fraction());
-            Rect thumb{track.x, thumbY, barW, thumbH};
-            p.SetDrawColor((std::uint8_t)(sv->barColor.r * 255), (std::uint8_t)(sv->barColor.g * 255),
-                                   (std::uint8_t)(sv->barColor.b * 255), (std::uint8_t)(sv->barColor.a * 255 * op));
+            const int len = vertical ? track.h : track.w;
+            const int thumbL = (int)(len * (frac < 1.0f ? frac : 1.0f));
+            const int at = (int)((len - thumbL) * t);
+            Rect thumb = vertical ? Rect{track.x, track.y + at, barW, thumbL} : Rect{track.x + at, track.y, thumbL, barW};
+            p.SetDrawColor((std::uint8_t)(bar.r * 255), (std::uint8_t)(bar.g * 255),
+                                   (std::uint8_t)(bar.b * 255), (std::uint8_t)(bar.a * 255 * op));
             p.FillRect(&thumb);
+        };
+        if (sv) {
+            if (sv->ScrollMax() > 0.0f)
+                drawBar(true, sv->size.y / (sv->contentHeight > 1.0f ? sv->contentHeight : 1.0f), sv->Fraction());
+            if (sv->ScrollMaxX() > 0.0f)
+                drawBar(false, sv->size.x / (sv->contentWidth > 1.0f ? sv->contentWidth : 1.0f), sv->FractionX());
+        } else if (lv->ScrollMax() > 0.0f) {
+            const float ch = lv->ContentHeight();
+            drawBar(true, lv->size.y / (ch > 1.0f ? ch : 1.0f), lv->scroll / lv->ScrollMax());
         }
     }
         else if (_it.kind == K_Progress) {   // progress bars
         auto* pb = up->GetComponent<UIProgressBar>();
         if (!pb || !up->active || UIHidden(up.get())) continue;
-        float op = UIOpacity(up.get());
+        float op = _slot.opacity;
         Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
         enterScroll(up.get(), o);
         Rect bg{(int)o.x, (int)o.y, (int)pb->size.x, (int)pb->size.y};
@@ -562,7 +713,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         else if (_it.kind == K_Radial) {   // radial / ring progress
         auto* rp = up->GetComponent<UIRadialProgress>();
         if (!rp || !up->active || UIHidden(up.get())) continue;
-        float op = UIOpacity(up.get());
+        float op = _slot.opacity;
         Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
         enterScroll(up.get(), o);
         int bw = (int)rp->size.x, bh = (int)rp->size.y;
@@ -591,7 +742,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         else if (_it.kind == K_Minimap) {   // top-down minimap panel
         auto* mm = up->GetComponent<Minimap>();
         if (!mm || !up->active || UIHidden(up.get())) continue;
-        float op = UIOpacity(up.get());
+        float op = _slot.opacity;
         Vec2 o, sz; if (!GetUIScreenRect(up.get(), (float)w, (float)h, o, sz)) continue;
         // GTA-style fullscreen pause map: re-centre + enlarge, and zoom out.
         float wpp = mm->worldPerPixel;
@@ -867,7 +1018,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         else if (_it.kind == K_Crosshair) {   // aim reticle at screen center
         auto* cr = up->GetComponent<Crosshair>();
         if (!cr || !up->active || UIHidden(up.get())) continue;
-        float op = UIOpacity(up.get());
+        float op = _slot.opacity;
         Vec2 o, sz; if (!GetUIScreenRect(up.get(), (float)w, (float)h, o, sz)) continue;
         float cx = o.x + sz.x * 0.5f, cy = o.y + sz.y * 0.5f;
         int th = (int)(cr->thickness > 1 ? cr->thickness : 1);
@@ -920,7 +1071,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         else if (_it.kind == K_Slider) {   // sliders
         auto* sl = up->GetComponent<UISlider>();
         if (!sl || !up->active || UIHidden(up.get())) continue;
-        float op = UIOpacity(up.get());
+        float op = _slot.opacity;
         Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
         enterScroll(up.get(), o);
         Rect bg{(int)o.x, (int)o.y, (int)sl->size.x, (int)sl->size.y};
@@ -956,7 +1107,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         else if (_it.kind == K_Stepper) {   // numeric steppers
         auto* st = up->GetComponent<UIStepper>();
         if (!st || !up->active || UIHidden(up.get())) continue;
-        float op = UIOpacity(up.get());
+        float op = _slot.opacity;
         Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
         enterScroll(up.get(), o);
         Rect bg{(int)o.x, (int)o.y, (int)st->size.x, (int)st->size.y};
@@ -985,7 +1136,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         else if (_it.kind == K_Rating) {   // star ratings
         auto* rt = up->GetComponent<UIRating>();
         if (!rt || !up->active || UIHidden(up.get()) || rt->count <= 0) continue;
-        float op = UIOpacity(up.get());
+        float op = _slot.opacity;
         Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
         enterScroll(up.get(), o);
         float cw = rt->CellWidth();
@@ -1014,7 +1165,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         else if (_it.kind == K_Toggle) {   // toggles (checkboxes)
         auto* tg = up->GetComponent<UIToggle>();
         if (!tg || !up->active || UIHidden(up.get())) continue;
-        float op = UIOpacity(up.get());
+        float op = _slot.opacity;
         Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
         enterScroll(up.get(), o);
         Rect box{(int)o.x, (int)o.y, (int)tg->size.x, (int)tg->size.y};
@@ -1057,7 +1208,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         else if (_it.kind == K_Tabs) {   // tab bars (segmented / underline / folder / pills / vertical)
         auto* tb = up->GetComponent<UITabs>();
         if (!tb || !up->active || UIHidden(up.get()) || tb->Count() <= 0) continue;
-        float op = UIOpacity(up.get());
+        float op = _slot.opacity;
         // Where the bar really is (inside its UI parent, stretch anchors resolved,
         // world-space projected) and its scale: the same rect its clicks are tested
         // against, so the tab under the pointer is the one that gets selected.
@@ -1108,7 +1259,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         else if (_it.kind == K_Button) {   // buttons (box, icon, label)
         auto* btn = up->GetComponent<UIButton>();
         if (!btn || !up->active || UIHidden(up.get())) continue;
-        float op = UIOpacity(up.get());
+        float op = _slot.opacity;
         Color bg = btn->DisplayColor();
         // World-aware rect + scale: a 3D button (own object / world canvas)
         // projects through the camera, so its box and label shrink with
@@ -1173,7 +1324,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         else if (_it.kind == K_Text) {   // screen-space text — on top of panels/controls
         auto* tr = up->GetComponent<TextRenderer>();
         if (!tr || !up->active || !tr->screenSpace || UIHidden(up.get())) continue;
-        float op = UIOpacity(up.get());   // canvas master fade
+        float op = _slot.opacity;   // canvas master fade
         RGBA col{(std::uint8_t)(tr->color.r * 255), (std::uint8_t)(tr->color.g * 255),
                       (std::uint8_t)(tr->color.b * 255), (std::uint8_t)(tr->color.a * 255 * op)};
         RGBA sh{(std::uint8_t)(tr->shadowColor.r * 255), (std::uint8_t)(tr->shadowColor.g * 255),
@@ -1184,7 +1335,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         // other widgets) instead of anchoring to the screen — either under a
         // world-space Canvas, or as a standalone WorldSpaceUI object (its own 3D
         // text). UIResolveOrigin/UIScaleFor are world-aware; pixelSize scales by k.
-        Canvas* tcv = OwningCanvas(up.get());
+        Canvas* tcv = _slot.canvas;
         bool tWorld = (tcv && tcv->worldSpace) || WorldUIRoot(up.get()) != nullptr;
         float ps = tr->EffectivePixelSize(), ls = tr->letterSpacing, lp = tr->lineSpacing;
         float tk = 1.0f;
@@ -1203,7 +1354,8 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         }
         Vec2 o = tWorld ? UIResolveOrigin(up.get(), (float)w, (float)h)
                         : UITextDrawOrigin(up.get(), tr, (float)w, (float)h);   // parent-relative + align
-        std::string disp = tr->DisplayText();
+        thread_local std::string dispScratch;
+        const std::string& disp = tr->DisplayText(dispScratch);
         bool it = tr->italic;
         RGBA c2{(std::uint8_t)(tr->colorBottom.r * 255), (std::uint8_t)(tr->colorBottom.g * 255),
                      (std::uint8_t)(tr->colorBottom.b * 255), (std::uint8_t)(tr->colorBottom.a * 255 * op)};
@@ -1240,7 +1392,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         if (wu->scaleWithDistance && depth > 0.001f)
             scale = Mathf::Clamp(wu->pixelSize * (wu->refDistance / depth),
                                  wu->pixelSize * wu->minScale, wu->pixelSize * wu->maxScale);
-        float op = UIOpacity(up.get());
+        float op = _slot.opacity;
         float tw = UITextW(wu->text, scale);
         float th = Font8x8::Height * scale;
         float tx = sp.x - tw * 0.5f, ty = sp.y - th * 0.5f;
@@ -1322,8 +1474,8 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         }
     }
         else if (_it.kind == K_FocusRing) {   // keyboard/gamepad focus ring
-        p.SetClipRect(nullptr);   // overlay — never scroll-clipped
         if (!up->active || !IsUIFocused(up.get())) continue;
+        p.SetClipRect(nullptr);   // overlay — never scroll-clipped
         UIRect r = GetUIRect(up.get());
         if (!r.valid || !r.position) continue;
         Vec2 o, sz;   // where the widget actually is (parents, canvases, world space)

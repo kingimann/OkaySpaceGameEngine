@@ -115,5 +115,70 @@ int main() {
         CHECK(!r->loop);
     }
 
+    // --- Named clips: Play(name) switches, current-clip query, and save/load ---
+    {
+        Scene scene("Clips");
+        GameObject* go = scene.CreateGameObject("P");
+        auto* sr = go->AddComponent<SpriteRenderer>();
+        sr->texture = "sheet.png";
+        auto* an = go->AddComponent<SpriteAnimator>();
+        an->atlasColumns = 4; an->atlasRows = 3;
+        SpriteClip idle; idle.name = "idle"; idle.row = 0; idle.fps = 10.0f;
+        SpriteClip run;  run.name = "run";   run.row = 2;  run.fps = 8.0f;
+        SpriteClip jump; jump.name = "jump"; jump.frames = {"j0.png", "j1.png"}; jump.loop = false;
+        an->clips = {idle, run, jump};
+
+        scene.Start();
+        CHECK(an->CurrentClip().empty());           // base animation until a clip plays
+        CHECK(!an->Play("nope"));
+        CHECK(an->Play("run"));
+        CHECK(an->CurrentClip() == "run");
+        CHECK(an->FrameCount() == 4);               // one atlas row
+        CHECK_NEAR(sr->uvMin.y, 2.0f / 3.0f, 0.001f);
+        for (int i = 0; i < 1000; ++i) scene.Update(0.125f);  // long run: clock wraps
+        CHECK(an->CurrentFrame() == 0);             // 1000 frames % 4
+        scene.Update(0.125f);
+        CHECK(an->CurrentFrame() == 1);
+        CHECK(an->Play("jump"));
+        CHECK(sr->texture == "j0.png");
+
+        std::string text = SceneSerializer::Serialize(scene);
+        Scene loaded("L");
+        std::string err;
+        CHECK(SceneSerializer::Deserialize(loaded, text, &err));
+        auto* ra = loaded.Find("P")->GetComponent<SpriteAnimator>();
+        CHECK(ra->clips.size() == 3);
+        CHECK(ra->clips[1].name == "run");
+        CHECK(ra->clips[1].row == 2);
+        CHECK(ra->clips[2].frames.size() == 2);
+        CHECK(!ra->clips[2].loop);
+        CHECK(ra->atlasColumns == 4);
+    }
+
+    // --- Platformer controller picks idle / run / jump from movement ---
+    {
+        Scene scene("Ctl");
+        GameObject* go = scene.CreateGameObject("Hero");
+        go->AddComponent<SpriteRenderer>();
+        auto* rb = go->AddComponent<Rigidbody2D>();
+        auto* cc = go->AddComponent<CharacterController2D>();
+        cc->mode = CharacterController2D::Mode::Platformer;
+        auto* an = go->AddComponent<SpriteAnimator>();
+        an->frames = {"base.png"};
+        SpriteClip a; a.name = "idle"; a.frames = {"idle.png"};
+        SpriteClip b; b.name = "jump"; b.frames = {"jump.png"};
+        an->clips = {a, b};
+        scene.physicsEnabled = false;
+        scene.Start();
+        scene.Update(0.016f);
+        CHECK(an->CurrentClip() == "idle");         // standing still
+        rb->velocity.y = 5.0f;                      // airborne going up
+        scene.Update(0.016f);
+        CHECK(an->CurrentClip() == "jump");
+        rb->velocity.y = -5.0f;                     // no "fall" clip -> stays on jump
+        scene.Update(0.016f);
+        CHECK(an->CurrentClip() == "jump");
+    }
+
     TEST_MAIN_RESULT();
 }

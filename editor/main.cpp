@@ -33560,6 +33560,39 @@ void DrawInspector(EditorState& ed) {
             }
             if (removeAt >= 0) { an->frames.erase(an->frames.begin() + removeAt); ed.dirty = true; }
             if (ImGui::SmallButton("Add Frame")) { an->frames.push_back("frame.png"); ed.dirty = true; }
+            ImGui::Spacing();
+            ImGui::TextDisabled("Clips (idle / run / jump / fall are picked by 2D controllers):");
+            int removeClip = -1;
+            for (std::size_t i = 0; i < an->clips.size(); ++i) {
+                SpriteClip& cl = an->clips[i];
+                ImGui::PushID(1000 + (int)i);
+                char nb[64]; std::strncpy(nb, cl.name.c_str(), sizeof(nb) - 1); nb[sizeof(nb) - 1] = '\0';
+                if (ImGui::InputText("Name##clip", nb, sizeof(nb))) { cl.name = nb; ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("X")) removeClip = (int)i;
+                if (ImGui::DragInt("Row##clip", &cl.row, 0.1f, 0, 63)) ed.dirty = true;
+                if (ImGui::DragFloat("FPS##clip", &cl.fps, 0.25f, 0.0f, 120.0f)) ed.dirty = true;
+                if (ImGui::Checkbox("Loop##clip", &cl.loop)) ed.dirty = true;
+                std::string joined;   // frames as "a.png, b.png" (empty = use the atlas row)
+                for (const auto& f : cl.frames) joined += (joined.empty() ? "" : ", ") + f;
+                char fb[512]; std::strncpy(fb, joined.c_str(), sizeof(fb) - 1); fb[sizeof(fb) - 1] = '\0';
+                if (ImGui::InputText("Frames##clip", fb, sizeof(fb))) {
+                    cl.frames.clear();
+                    std::stringstream ss(fb); std::string tok;
+                    while (std::getline(ss, tok, ',')) {
+                        tok.erase(0, tok.find_first_not_of(' '));
+                        tok.erase(tok.find_last_not_of(' ') + 1);
+                        if (!tok.empty()) cl.frames.push_back(tok);
+                    }
+                    ed.dirty = true;
+                }
+                ImGui::PopID();
+            }
+            if (removeClip >= 0) { an->clips.erase(an->clips.begin() + removeClip); ed.dirty = true; }
+            if (ImGui::SmallButton("Add Clip")) {
+                SpriteClip cl; cl.name = "clip" + std::to_string(an->clips.size()); cl.fps = an->fps;
+                an->clips.push_back(cl); ed.dirty = true;
+            }
             ImGui::SameLine();
             if (ImGui::SmallButton("Remove##anim")) toRemove = an;
         }

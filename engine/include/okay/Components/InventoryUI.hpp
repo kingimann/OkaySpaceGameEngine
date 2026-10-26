@@ -4,6 +4,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Components/Inventory.hpp"
+#include "okay/Inventory/InventoryOps.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Render/Color.hpp"
@@ -132,48 +133,11 @@ public:
     bool SplitSlot(int from) {
         Inventory* inv = Inv();
         if (!inv || from < 0 || from >= (int)inv->slots.size()) return false;
-        Inventory::Slot& s = inv->slots[from];
-        if (Inventory::Empty(s) || s.count < 2) return false;
-        int move = s.count / 2;
-        const int cap = SlotCount();
-        for (int i = 0; i < (int)inv->slots.size() && i < cap; ++i) {
-            Inventory::Slot& d = inv->slots[i];
-            if (Inventory::Empty(d)) { d.item = s.item; d.count = move; s.count -= move; inv->NotifyChanged(); return true; }
-        }
-        if ((int)inv->slots.size() < cap) {
-            const std::string item = s.item;
-            inv->slots[from].count -= move;              // (before push_back: it may reallocate)
-            inv->slots.push_back({item, move});
-            inv->NotifyChanged();
-            return true;
-        }
-        return false;
+        return InventoryOps::Split(inv, from, inv->slots[from].count / 2, SlotCount()).Ok();
     }
 
     /// Shift-move a stack between the hotbar and the backpack (whichever it isn't in).
-    bool QuickMove(int from) {
-        Inventory* inv = Inv();
-        if (!inv || from < 0 || from >= (int)inv->slots.size() || Inventory::Empty(inv->slots[from])) return false;
-        int n = hotbarSlots < 1 ? 1 : hotbarSlots, total = SlotCount();
-        int lo = (from < n) ? n : 0, hi = (from < n) ? total : std::min(n, total);
-        while ((int)inv->slots.size() < hi) inv->slots.push_back(Inventory::Slot{});
-        bool moved = false;
-        const long long cap = inv->maxStack > 0 ? inv->maxStack : 2147483647LL;
-        for (int i = lo; i < hi && !Inventory::Empty(inv->slots[from]); ++i) {   // top up matching stacks
-            Inventory::Slot& d = inv->slots[i];
-            if (Inventory::Empty(d) || d.item != inv->slots[from].item) continue;
-            long long room = cap - d.count;
-            if (room <= 0) continue;                  // full: try the next matching stack
-            int mv = (long long)inv->slots[from].count < room ? inv->slots[from].count : (int)room;
-            d.count += mv; inv->slots[from].count -= mv; moved = true;
-            if (inv->slots[from].count <= 0) inv->slots[from] = Inventory::Slot{};
-        }
-        if (!Inventory::Empty(inv->slots[from]))       // the rest goes to the first empty slot there
-            for (int i = lo; i < hi; ++i)
-                if (Inventory::Empty(inv->slots[i])) { std::swap(inv->slots[i], inv->slots[from]); moved = true; break; }
-        if (moved) inv->NotifyChanged();
-        return moved;
-    }
+    bool QuickMove(int from) { return InventoryOps::QuickMove(Inv(), from, hotbarSlots, SlotCount()).Ok(); }
 
     /// Index of `item` in the rarity rules (lower = listed earlier = treated as rarer
     /// for sorting). Returns a large number when the item has no rarity rule, so
@@ -233,14 +197,8 @@ public:
     /// Drop one of the selected hotbar item: removes it from the inventory and returns
     /// its name (empty if nothing to drop) so gameplay can spawn a world pickup.
     std::string DropSelected() {
-        Inventory* inv = Inv();
-        if (!inv || selected < 0 || selected >= (int)inv->slots.size()) return "";
-        Inventory::Slot& s = inv->slots[selected];
-        if (Inventory::Empty(s)) return "";
-        std::string item = s.item;
-        if (--s.count <= 0) { s.item.clear(); s.count = 0; }
-        inv->NotifyChanged();
-        return item;
+        const std::string item = SelectedItem();
+        return InventoryOps::Drop(Inv(), selected, 1).Ok() ? item : std::string();
     }
 
     /// The drop key: hands one of the selected item to a script's on_item_dropped(item)
@@ -279,53 +237,15 @@ public:
         return inv->slots[selected].count;
     }
 
-    /// Drag a stack from slot `from` onto slot `to`: swap, merge identical stacks, or
-    /// (dropping past the used slots) send it to the end. Operates on the Inventory's
-    /// stack list, so hotbar (0..hotbar-1) and backpack slots reorder freely.
-    void MoveSlot(int from, int to) {
-        Inventory* inv = Inv();
-        if (!inv || from < 0 || to < 0 || from == to || to >= SlotCount()) return;
-        if (from >= (int)inv->slots.size()) return;
-        // Grow the list so the (possibly empty) target slot exists, so you can drop an
-        // item into any open slot and leave a gap behind.
-        while ((int)inv->slots.size() <= to) inv->slots.push_back(Inventory::Slot{});
-        Inventory::Slot& a = inv->slots[from];
-        Inventory::Slot& b = inv->slots[to];
-        if (!Inventory::Empty(a) && !Inventory::Empty(b) && a.item == b.item) {
-            int cap = inv->maxStack;                              // merge identical stacks
-            if (cap > 0) { int room = cap - b.count; if (room < 0) room = 0;
-                int mv = a.count < room ? a.count : room; b.count += mv; a.count -= mv;
-                if (a.count <= 0) { a.item.clear(); a.count = 0; } }
-            else { b.count += a.count; a.item.clear(); a.count = 0; }
-        } else {
-            std::swap(a, b);                                      // swap (target may be empty)
-        }
-        while (!inv->slots.empty() && Inventory::Empty(inv->slots.back())) inv->slots.pop_back();
-        inv->NotifyChanged();
-    }
+    /// Drag a stack from slot `from` onto slot `to`: swap, or merge identical stacks.
+    /// Hotbar (0..hotbar-1) and backpack slots reorder freely.
+    void MoveSlot(int from, int to) { Inventory* inv = Inv(); InventoryOps::Move(inv, from, inv, to, 0, SlotCount()); }
 
     /// Drop the lifted `dragAmount` from slot `from` onto `to`. dragAmount >= the
-    /// source count (or 0) means the whole stack (swap/merge via MoveSlot); a smaller
-    /// amount is a partial split — Minecraft-style: placed into an empty/identical
-    /// slot, or cancelled (left on the source) if a different item sits there.
-    void ApplyDrag(int from, int to) {
-        Inventory* inv = Inv();
-        if (!inv || from < 0 || from >= (int)inv->slots.size() || to < 0 || from == to || to >= SlotCount()) return;
-        if (Inventory::Empty(inv->slots[from])) return;
-        int amount = dragAmount > 0 ? dragAmount : inv->slots[from].count;
-        if (amount >= inv->slots[from].count) { MoveSlot(from, to); return; }   // whole stack
-        while ((int)inv->slots.size() <= to) inv->slots.push_back(Inventory::Slot{});
-        Inventory::Slot& a = inv->slots[from];
-        Inventory::Slot& b = inv->slots[to];
-        if (Inventory::Empty(b)) { b.item = a.item; b.count = amount; a.count -= amount; }
-        else if (b.item == a.item) {
-            int cap = inv->maxStack; int room = cap > 0 ? cap - b.count : amount; if (room < 0) room = 0;
-            int mv = amount < room ? amount : room; b.count += mv; a.count -= mv;
-        }   // different item under the cursor: cancel (leave the split on the source)
-        if (a.count <= 0) { a.item.clear(); a.count = 0; }
-        while (!inv->slots.empty() && Inventory::Empty(inv->slots.back())) inv->slots.pop_back();
-        inv->NotifyChanged();
-    }
+    /// source count (or 0) means the whole stack (swap/merge); a smaller amount is a
+    /// partial split — Minecraft-style: placed into an empty/identical slot, or
+    /// cancelled (left on the source) if a different item sits there.
+    void ApplyDrag(int from, int to) { Inventory* inv = Inv(); InventoryOps::Move(inv, from, inv, to, dragAmount, SlotCount()); }
 
     void Update(float) override {
         if (selectHotkeys) {

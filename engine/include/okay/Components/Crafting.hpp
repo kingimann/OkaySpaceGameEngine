@@ -2,6 +2,7 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/Inventory.hpp"
+#include "okay/Inventory/InventoryOps.hpp"
 #include <string>
 #include <vector>
 
@@ -41,7 +42,7 @@ public:
     bool Craft(const Recipe& r) {
         Inventory* inv = Inv();
         if (!inv || r.output.empty() || !CanCraft(r)) return false;
-        return inv->Exchange(Inventory::SumStacks(r.inputs), {{r.output, r.outputCount < 1 ? 1 : r.outputCount}});
+        return InventoryOps::Craft(inv, Inventory::SumStacks(r.inputs), {{r.output, r.outputCount < 1 ? 1 : r.outputCount}}).Ok();
     }
     bool Craft(const std::string& output) { const Recipe* r = Find(output); return r && Craft(*r); }
     bool CraftIndex(int i) { return (i >= 0 && i < (int)recipes.size()) && Craft(recipes[i]); }

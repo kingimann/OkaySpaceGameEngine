@@ -178,6 +178,11 @@ void NetworkManager::InitServerState() {
         return it != m_syncObjs.end() && it->second.owned;
     };
     anticheat.exists = [this](const std::string& id) { return m_syncObjs.count(id) != 0; };
+    anticheat.positionOf = [this](std::uint32_t peer, Vec3& at) {
+        for (const auto& [ep, c] : m_clients)
+            if (c.id == peer && c.hasState) { at = Vec3(c.state.x, c.state.y, c.state.z); return true; }
+        return false;
+    };
     anticheat.claimable = [this](const std::string& id) {
         auto it = m_syncObjs.find(id);
         if (it == m_syncObjs.end() || !it->second.t || !it->second.t->gameObject) return false;
@@ -360,6 +365,7 @@ void NetworkManager::Stop() {
     anticheat.Reset();
     anticheat.serverOwns = nullptr;
     anticheat.exists = nullptr;
+    anticheat.positionOf = nullptr;
     anticheat.claimable = nullptr;
     anticheat.onCheat = nullptr;
     m_recentCheats.clear();
@@ -747,6 +753,16 @@ GameObject* NetworkManager::SpawnOwned(const std::string& prefabPath, const Vec3
     os << prefabPath << '|' << position.x << '|' << position.y << '|' << position.z << '|' << id;
     Send("__spawn", os.str());
     return g;
+}
+
+void NetworkManager::DespawnPeerObjects(std::uint32_t id) {
+    const std::string prefix = "sp/" + std::to_string(id) + "/";
+    std::vector<std::string> ids;
+    for (const auto& [netId, o] : m_syncObjs) if (netId.compare(0, prefix.size(), prefix) == 0) ids.push_back(netId);
+    for (const auto& netId : ids) {
+        DestroyLocalSync(netId);
+        Send("__despawn", netId);   // and on every client still here
+    }
 }
 
 void NetworkManager::DestroyLocalSync(const std::string& id) {
@@ -1357,6 +1373,7 @@ void NetworkManager::Kick(std::uint32_t id, const std::string& reason) {
         }
         m_clients.erase(it);
         anticheat.ForgetPeer(id);
+        DespawnPeerObjects(id);
         m_recentCheats.erase(id);
         for (auto po = m_pawnOwner.begin(); po != m_pawnOwner.end();) po = po->second == id ? m_pawnOwner.erase(po) : std::next(po);
         if (m_peerLeft) m_peerLeft(id);
@@ -1470,16 +1487,29 @@ void NetworkManager::Send(const std::string& channel, const std::string& data) {
 }
 
 bool NetworkManager::ClientMessageOk(const Client& from, const std::string& channel, std::string& data) const {
+    // Nothing big enough to choke every peer it's relayed to.
+    if (maxRelayedBytes > 0 && channel.size() + data.size() > (std::size_t)maxRelayedBytes) return false;
     if (channel.size() < 2 || channel[0] != '_' || channel[1] != '_') return true;   // a game channel
     if (channel == "__chat") {
-        // "<name>\n<text>": the name is the server's, not the sender's choice.
+        // "<name>\n<text>": the name is the server's, not the sender's choice;
+        // the text is cut to 512 bytes (on a UTF-8 character boundary).
         const std::size_t nl = data.find('\n');
-        data = from.name + "\n" + (nl == std::string::npos ? data : data.substr(nl + 1));
+        std::string text = nl == std::string::npos ? data : data.substr(nl + 1);
+        if (text.size() > 512) {
+            std::size_t cut = 512;
+            while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80) --cut;
+            text.resize(cut);
+        }
+        data = from.name + "\n" + text;
         return true;
     }
     if (channel == "__xform" && m_pawnOwner.count(data.substr(0, data.find('|'))))
         return false;   // a player the server moves: its position is the server's, never the client's
-    if (channel == "__spawn") return SpawnPathOk(from.id, ParseSpawnMessage(data).path, true);
+    if (channel == "__spawn") {
+        const SpawnMessage m = ParseSpawnMessage(data);
+        if (!std::isfinite(m.pos.x) || !std::isfinite(m.pos.y) || !std::isfinite(m.pos.z)) return false;
+        return SpawnPathOk(from.id, m.path, true);
+    }
     if (channel == "__despawn" || channel == "__xform") return true;
     if (channel.size() > 6 && channel.compare(0, 6, "__rpc/") == 0) return true;
     return false;   // __match_start and any other reserved channel: host only
@@ -1715,7 +1745,10 @@ void NetworkManager::ServerTick(float dt) {
     ++m_tickCount;
     if (anticheat.settings.enabled) anticheat.Tick(dt);
     // Rate limit: true if this client may send another custom message this second.
-    auto rateOk = [this](Client& c) { return maxMessagesPerSecond <= 0 || ++c.msgCount <= maxMessagesPerSecond; };
+    auto rateOk = [this](Client& c, std::size_t bytes) {
+        if (maxMessagesPerSecond > 0 && ++c.msgCount > maxMessagesPerSecond) return false;
+        return maxRelayedBytes <= 0 || (c.msgBytes += bytes) <= 4 * (std::size_t)maxRelayedBytes;
+    };
     // A full-size receive buffer: a UDP datagram can be up to ~64 KB, so a small
     // fixed buffer silently truncated any larger message (e.g. a big reliable
     // payload). Reused across ticks (thread-local) to avoid per-frame allocation.
@@ -1957,9 +1990,16 @@ void NetworkManager::ServerTick(float dt) {
             // A client requested a variable change; apply it and fan out to all.
             std::string key = p.ReadString();
             std::string value = p.ReadString();
+            std::string senderRoom;
             {   // only joined clients may change shared state (and, with anti-cheat on, within its rules)
                 auto cl = m_clients.find(from);
-                if (cl == m_clients.end()) continue;
+                if (cl == m_clients.end() || !rateOk(cl->second, len)) continue;
+                senderRoom = cl->second.room;
+                // Sized like a variable, and not a key factory: a client makes
+                // at most kMaxClientVars keys of its own.
+                const bool isNew = !m_syncVars.count(key);
+                if (key.empty() || key.size() > kMaxVarKey || value.size() > kMaxVarValue ||
+                    (isNew && cl->second.varsCreated >= kMaxClientVars)) continue;
                 if (anticheat.settings.enabled && !AntiCheatAllowsSyncVar(cl->second.id, key)) {
                     // Put the sender's copy back to the server's value (it set it locally first).
                     if (m_clients.count(from)) {
@@ -1970,9 +2010,12 @@ void NetworkManager::ServerTick(float dt) {
                     continue;
                 }
             }
+            if (auto cl = m_clients.find(from); cl != m_clients.end() && !m_syncVars.count(key)) ++cl->second.varsCreated;
             ApplySyncVar(key, value);
+            // A client's write goes to its own room (the host applies every one).
             net::Packet out(SyncVar); out.Write(key); out.Write(value);
-            for (auto& [ep, c] : m_clients) SendDatagram(c.endpoint, out.Data(), out.Size());
+            for (auto& [ep, c] : m_clients)
+                if (c.room == senderRoom) SendDatagram(c.endpoint, out.Data(), out.Size());
         } else if (type == ClockPong) {
             // A client's clock, for the heartbeat (anti-cheat maxClockDrift).
             auto it = m_clients.find(from);
@@ -2058,7 +2101,7 @@ void NetworkManager::ServerTick(float dt) {
                 std::string data    = p.ReadString();
                 net::Packet ack(ReliableAck); ack.Write(seq);
                 SendDatagram(from, ack.Data(), ack.Size());
-                if (!it->second.relSeen.Accept(seq) || !rateOk(it->second)) continue;   // a repeat, or spam
+                if (!it->second.relSeen.Accept(seq) || !rateOk(it->second, len)) continue;   // a repeat, or spam
                 if (channel == "__hit") { HandleHitClaim(it->second, data); continue; }   // the server's to judge
                 if (ClientMessageOk(it->second, channel, data) && AntiCheatAllows(it->second.id, channel, data))
                     Deliver(it->second.id, channel, data);
@@ -2068,7 +2111,7 @@ void NetworkManager::ServerTick(float dt) {
             if (it != m_clients.end()) it->second.relOut.erase(p.ReadU32());
         } else if (type == DirectMessage) {
             auto it = m_clients.find(from);
-            if (it != m_clients.end() && rateOk(it->second)) {
+            if (it != m_clients.end() && rateOk(it->second, len)) {
                 std::uint32_t sender = it->second.id;
                 p.ReadU32();                              // sender-reported id (ignored)
                 std::uint32_t target = p.ReadU32();
@@ -2134,13 +2177,14 @@ void NetworkManager::ServerTick(float dt) {
                 }
                 m_clients.erase(it);
                 anticheat.ForgetPeer(id);
+                DespawnPeerObjects(id);
                 m_recentCheats.erase(id);
                 for (auto po = m_pawnOwner.begin(); po != m_pawnOwner.end();) po = po->second == id ? m_pawnOwner.erase(po) : std::next(po);
                 if (m_peerLeft) m_peerLeft(id);
             }
         } else if (type == Message) {
             auto it = m_clients.find(from);
-            if (it != m_clients.end() && rateOk(it->second)) {
+            if (it != m_clients.end() && rateOk(it->second, len)) {
                 std::uint32_t sender = it->second.id;   // endpoint is the source of truth
                 const std::string senderRoom = it->second.room;
                 p.ReadU32();                            // sender-reported id (ignored)
@@ -2170,7 +2214,7 @@ void NetworkManager::ServerTick(float dt) {
     for (auto it = m_clients.begin(); it != m_clients.end();) {
         it->second.lastSeen += dt;
         it->second.stateAge += dt;
-        if ((it->second.msgTimer += dt) >= 1.0f) { it->second.msgTimer = 0.0f; it->second.msgCount = 0; it->second.hitClaims = 0; }
+        if ((it->second.msgTimer += dt) >= 1.0f) { it->second.msgTimer = 0.0f; it->second.msgCount = 0; it->second.msgBytes = 0; it->second.hitClaims = 0; }
         if ((it->second.violationTimer += dt) >= 60.0f) { it->second.violationTimer = 0.0f; it->second.violations = 0; }
         if (it->second.lastSeen > kClientTimeout) {
             std::uint32_t id = it->second.id;
@@ -2180,6 +2224,7 @@ void NetworkManager::ServerTick(float dt) {
             }
             it = m_clients.erase(it);
             anticheat.ForgetPeer(id);
+            DespawnPeerObjects(id);
             m_recentCheats.erase(id);
             for (auto po = m_pawnOwner.begin(); po != m_pawnOwner.end();) po = po->second == id ? m_pawnOwner.erase(po) : std::next(po);
             if (m_peerLeft) m_peerLeft(id);

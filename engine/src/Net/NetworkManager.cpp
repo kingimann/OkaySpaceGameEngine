@@ -125,6 +125,12 @@ bool NetworkManager::SeqWindow::Accept(std::uint32_t seq) {
     return true;
 }
 
+bool NetworkManager::SeqWindow::Seen(std::uint32_t seq) const {
+    if (!any || seq > newest) return false;
+    const std::uint32_t back = newest - seq;
+    return back >= kWidth || ((bits[back / 64] >> (back % 64)) & 1u);
+}
+
 bool NetworkManager::SetHostIdentity(const std::string& seedB64) {
     if (seedB64.empty()) { m_hostSeed.clear(); return true; }
     std::vector<std::uint8_t> seed;
@@ -1240,9 +1246,12 @@ void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
         if (!anticheat.CountRpc(shooter, "hit/" + claim.weapon)) { ++m_hitsRefused; AntiCheatAfterRefusal(shooter); return; }
     }
 
-    // The shooter is alive (when its avatar has health).
+    // The shooter is alive (when its avatar, or the pawn the server moves for it, has health).
     if (auto r = m_remotes.find(shooter); r != m_remotes.end() && r->second)
         if (auto* hs = r->second->GetComponent<HealthStat>(); hs && hs->IsDead()) { refuse("shooter is dead"); return; }
+    if (!c.pawn.empty())
+        if (auto p = m_syncObjs.find(c.pawn); p != m_syncObjs.end() && p->second.t && p->second.t->gameObject)
+            if (auto* hs = p->second.t->gameObject->GetComponent<HealthStat>(); hs && hs->IsDead()) { refuse("shooter is dead"); return; }
     // The weapon's fire rate and ammo: its Net Validator ("hit/<weapon>"), as for an RPC.
     if (anticheat.validateRpc && !anticheat.validateRpc(shooter, "hit/" + claim.weapon, data)) {
         refuse("fire rate or ammo: " + claim.weapon);
@@ -1620,6 +1629,14 @@ void NetworkManager::ServerMovementTick(float step) {
             c.lastInputSeq = next->first;
             c.inputs.erase(next);
             c.repeats = 0;
+        }
+        if (minPressInterval > 0.0f) {   // presses closer together than that are dropped
+            const std::uint32_t limited[3] = {PlayerInput::Jump, PlayerInput::Dash, PlayerInput::Fire};
+            for (int b = 0; b < 3; ++b) {
+                if (!(in.pressed & limited[b])) continue;
+                if (m_serverTime - c.lastPress[b] < minPressInterval) in.pressed &= ~limited[b];
+                else c.lastPress[b] = m_serverTime;
+            }
         }
         c.lastInput = in;
         if (IPlayerSim* sim = FindPlayerSim(obj->second.t->gameObject)) sim->Simulate(in, step);
@@ -2042,7 +2059,9 @@ void NetworkManager::ServerTick(float dt) {
                 ++m_inputsDropped;
             }
         } else if (type == Ping) {
-            // Echo the client's timestamp straight back so it can measure RTT.
+            // Echo the client's timestamp straight back so it can measure RTT
+            // (a joined client's, or one mid-join: not a stranger's).
+            if (!m_clients.count(from) && !m_pendingJoins.count(from)) continue;
             float stamp = p.ReadF32();
             net::Packet pong(Pong); pong.Write(stamp);
             SendDatagram(from, pong.Data(), pong.Size());
@@ -2056,9 +2075,11 @@ void NetworkManager::ServerTick(float dt) {
                 std::uint32_t seq = p.ReadU32();
                 std::string channel = p.ReadString();
                 std::string data    = p.ReadString();
+                // Over the rate: not acked either, so the client sends it again later.
+                if (!it->second.relSeen.Seen(seq) && !rateOk(it->second)) continue;
                 net::Packet ack(ReliableAck); ack.Write(seq);
                 SendDatagram(from, ack.Data(), ack.Size());
-                if (!it->second.relSeen.Accept(seq) || !rateOk(it->second)) continue;   // a repeat, or spam
+                if (!it->second.relSeen.Accept(seq)) continue;   // a repeat
                 if (channel == "__hit") { HandleHitClaim(it->second, data); continue; }   // the server's to judge
                 if (ClientMessageOk(it->second, channel, data) && AntiCheatAllows(it->second.id, channel, data))
                     Deliver(it->second.id, channel, data);

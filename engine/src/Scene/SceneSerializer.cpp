@@ -1033,7 +1033,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* h = go->GetComponent<HoldableObject>()) {
         out << "  holdable";
         KvOut k{out};
-        k("style", (int)h->style)("weight", h->weight).str("socket", h->socket)
+        k("style", (int)h->style).b("support", h->supportHand)("weight", h->weight).str("socket", h->socket)
          ("offX", h->holdOffset.x)("offY", h->holdOffset.y)("offZ", h->holdOffset.z)
          ("rotX", h->holdRotation.x)("rotY", h->holdRotation.y)("rotZ", h->holdRotation.z);
         const HoldableObject::Grip* grips[2] = {&h->leftGrip, &h->rightGrip};
@@ -1042,7 +1042,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             const HoldableObject::Grip& gr = *grips[g];
             k.b((p + "On").c_str(), gr.enabled)
              ((p + "PX").c_str(), gr.position.x)((p + "PY").c_str(), gr.position.y)((p + "PZ").c_str(), gr.position.z)
-             ((p + "RX").c_str(), gr.rotation.x)((p + "RY").c_str(), gr.rotation.y)((p + "RZ").c_str(), gr.rotation.z);
+             ((p + "RX").c_str(), gr.rotation.x)((p + "RY").c_str(), gr.rotation.y)((p + "RZ").c_str(), gr.rotation.z)
+             ((p + "Curl").c_str(), gr.curl);
         }
         out << "\n";
     }
@@ -3379,8 +3380,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* h = go->AddComponent<HoldableObject>();
                     KvIn k(in);
                     int st = 0; k.i("style", st);
-                    h->style = st == 1 ? HoldableObject::Style::Custom : HoldableObject::Style::Automatic;
-                    k.f("weight", h->weight); k.str("socket", h->socket);
+                    h->style = st >= 0 && st <= (int)HoldableObject::Style::Heavy ? (HoldableObject::Style)st : HoldableObject::Style::Automatic;
+                    k.b("support", h->supportHand); k.f("weight", h->weight); k.str("socket", h->socket);
                     k.f("offX", h->holdOffset.x); k.f("offY", h->holdOffset.y); k.f("offZ", h->holdOffset.z);
                     k.f("rotX", h->holdRotation.x); k.f("rotY", h->holdRotation.y); k.f("rotZ", h->holdRotation.z);
                     HoldableObject::Grip* grips[2] = {&h->leftGrip, &h->rightGrip};
@@ -3390,6 +3391,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         k.b((p + "On").c_str(), gr.enabled);
                         k.f((p + "PX").c_str(), gr.position.x); k.f((p + "PY").c_str(), gr.position.y); k.f((p + "PZ").c_str(), gr.position.z);
                         k.f((p + "RX").c_str(), gr.rotation.x); k.f((p + "RY").c_str(), gr.rotation.y); k.f((p + "RZ").c_str(), gr.rotation.z);
+                        k.f((p + "Curl").c_str(), gr.curl);
                     }
                 } else if (field == "objholding") {
                     auto* ph = go->AddComponent<ProceduralObjectHolding>();

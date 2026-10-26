@@ -259,6 +259,16 @@ fixed tick instead. 30 Hz is a good rate.
 - Off (0, the default), nothing changes. Older clients ignore the tick numbers
   and keep sending every frame.
 
+With a fixed tick, other players and their objects (anything with a Network
+Sync) are shown from an **interpolation buffer**: each state they send carries
+its tick, and your copy shows them 3 ticks in the past (100 ms at 30 Hz),
+between the two states either side of that moment. They move at the speed they
+really moved, however unevenly the packets arrive. When states come later or
+further apart than that allows (a long trip, a client's object relayed by the
+host, a low Sync Rate), the delay grows to what's needed (a step at a time,
+never past a second) and eases back when it can. Interpolation Rate 0 still
+snaps to the newest state; without a fixed tick the old easing is kept.
+
 This is the base for server-authoritative movement, prediction and lag
 compensation (anti-cheat plan phase 5), which build on it.
 

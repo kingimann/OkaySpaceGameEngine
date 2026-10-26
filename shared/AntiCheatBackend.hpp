@@ -130,12 +130,49 @@ inline bool FileReport(const std::string& reportedUid, const std::string& game, 
     return true;
 }
 
+// What leaves the machine in a client_check report: every absolute path cut
+// down to its file name. A module path ("C:\Users\<name>\AppData\...\x.dll",
+// "/home/<name>/...") would otherwise send the player's OS user name. Paths
+// relative to the game folder ("Data/x.dll") say nothing about the player and
+// stay. The local anticheat.log keeps the full paths.
+inline std::string RedactPaths(const std::string& text) {
+    std::string out, line;
+    auto absStart = [](const std::string& l) -> std::size_t {
+        for (std::size_t i = 0; i < l.size(); ++i) {
+            const bool edge = i == 0 || l[i - 1] == ' ' || l[i - 1] == '\t' || l[i - 1] == '"' || l[i - 1] == '\'' || l[i - 1] == '(';
+            if (!edge) continue;
+            if (i + 2 < l.size() && std::isalpha((unsigned char)l[i]) && l[i + 1] == ':' && (l[i + 2] == '\\' || l[i + 2] == '/')) return i;
+            if (l[i] == '\\' && i + 1 < l.size() && l[i + 1] == '\\') return i;   // \\server\share, \\?\C:\...
+            const char next = i + 1 < l.size() ? l[i + 1] : ' ';
+            if ((l[i] == '/' && next != ' ') || (l[i] == '~' && next == '/')) return i;   // /home/..., ~/...
+        }
+        return std::string::npos;
+    };
+    std::size_t pos = 0;
+    while (pos <= text.size()) {
+        const std::size_t nl = text.find('\n', pos);
+        line = text.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
+        // A path runs to the end of its line (module and file names can hold spaces).
+        if (const std::size_t a = absStart(line); a != std::string::npos) {
+            const std::size_t slash = line.find_last_of("/\\");
+            line = line.substr(0, a) + (slash != std::string::npos && slash >= a ? line.substr(slash + 1) : std::string());
+        }
+        out += line;
+        if (nl == std::string::npos) break;
+        out += '\n';
+        pos = nl + 1;
+    }
+    return out;
+}
+
 // What the player's own anti-cheat found (P3's runtime checks / integrity), sent
-// with this machine's hardware hash.
-inline bool FileClientCheck(const std::string& game, const std::string& check, const std::string& detailText,
+// with this machine's hardware hash ("" when it has none). Paths are cut down
+// to file names first (RedactPaths).
+inline bool FileClientCheck(const std::string& game, const std::string& check, const std::string& detailInput,
                             const std::string& hwHash, Request& out) {
     const std::string why = Text(check, 500);
     if (why.empty() || (!hwHash.empty() && !IsHwHash(hwHash))) return false;
+    const std::string detailText = RedactPaths(detailInput);
     out = Request{};
     out.method = "POST";
     out.path = "/rest/v1/ac_reports";

@@ -12647,10 +12647,10 @@ static void DrawAntiCheatAdmin() {
         ImGui::InputTextWithHint("##acbanwhy", "Reason (the player sees it)", banReason, sizeof(banReason));
         ImGui::SetNextItemWidth(200);
         ImGui::Combo("Length", &banDur, "Permanent\0" "1 day\0" "7 days\0" "30 days\0" "1 year\0");
-        if (!banHw.empty()) ImGui::Checkbox("Also ban this machine (salted hardware hash)", &banMachine);
+        if (acb::IsHwHash(banHw)) ImGui::Checkbox("Also ban this machine (salted hardware hash)", &banMachine);
         ImGui::Dummy(ImVec2(0, 4));
         acb::Request q; std::string err;
-        const std::string hw = banMachine ? banHw : std::string();
+        const std::string hw = banMachine && acb::IsHwHash(banHw) ? banHw : std::string();
         if (PrimaryButton("Ban", ImVec2(110, 30))) {
             const bool byName = banUid.empty();
             const std::string uname = okayofficial::Trim(banName);

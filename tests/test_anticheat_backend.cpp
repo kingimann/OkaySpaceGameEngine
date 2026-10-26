@@ -95,7 +95,7 @@ void TestPlayerRequests() {
     // A client check the player's own game filed (no reported player, with the hw hash).
     CHECK(be::FileClientCheck("Neon Drift", "module", "unexpected module loaded: C:\\x.dll", kHw, r));
     CHECK(Has(r.body, "\"kind\":\"client_check\"") && Has(r.body, "\"hw_hash\":\"" + kHw + "\"") && !Has(r.body, "\"reported\""));
-    CHECK(Has(r.body, "C:\\\\x.dll"));
+    CHECK(Has(r.body, "unexpected module loaded: x.dll") && !Has(r.body, "C:"));   // paths cut to file names
 
     r = be::MyBans(kHw);
     CHECK(r.method == "POST" && r.path == "/rest/v1/rpc/ac_my_bans" && r.body == "{\"p_hw_hash\":\"" + kHw + "\"}");
@@ -217,6 +217,64 @@ void TestParsing() {
     CHECK(Has(be::ErrorText(400, "{\"message\":\"Too many reports; try again later\"}"), "Too many reports"));
     CHECK(Has(be::ErrorText(0, ""), "reach"));
 }
+
+// Review #270.1: without a real machine id there's no hash, so one ban can't hit
+// every machine with the same CPU (macOS, Linux without /etc/machine-id).
+void TestHardwareNeedsMachineId() {
+    RUN_SUITE("no machine id, no hardware hash (and no machine ban)");
+    const std::string cpu = "GenuineIntel Intel(R) Core(TM) i7-9700K CPU @ 3.60GHz";
+    HardwareInfo a, b;
+    a.parts = {{"cpu", cpu}};
+    b.parts = {{"cpu", cpu}};
+    CHECK(HardwareHash(a, "salt").empty() && HardwareHash(b, "salt").empty());   // two Macs, same CPU: no shared hash
+    a.parts.push_back({"volume_serial", "A1B2C3D4"});
+    CHECK(HardwareHash(a, "salt").empty());
+    for (const char* id : {"", "   ", "abc123", "00000000000000000000000000000000", "ffffffff-ffff-ffff-ffff-ffffffffffff"}) {
+        HardwareInfo c;
+        c.parts = {{"machine_guid", id}, {"cpu", cpu}};
+        CHECK(HardwareHash(c, "salt").empty());
+    }
+    HardwareInfo d;
+    d.parts = {{"cpu", cpu}, {"machine_guid", "4c4c4544-0042-3510-8058-b2c04f4e3432"}};
+    CHECK(be::IsHwHash(HardwareHash(d, "salt")));
+    HardwareInfo e = d;
+    e.parts[1].second = "6f1e0bd4a1c34b0e9d2a7c5e3f8b1a90";   // another machine, same CPU
+    CHECK(HardwareHash(e, "salt") != HardwareHash(d, "salt"));
+    // This machine: a hash only when it has an id.
+    const std::string here = MachineHash();
+    CHECK(here.empty() || be::IsHwHash(here));
+    // An empty hash never makes a machine ban: account only, or nothing at all.
+    be::Request r;
+    std::string err;
+    CHECK(be::BanPlayer(kUid, HardwareHash(a, "salt"), "speedhack", 0, 0, 1000, r, &err));
+    CHECK(Has(r.body, "\"hw_hash\":null"));
+    CHECK(!be::BanPlayer("", HardwareHash(a, "salt"), "speedhack", 0, 0, 1000, r, &err));
+    CHECK(be::FileClientCheck("g", "clock", "x", HardwareHash(a, "salt"), r) && Has(r.body, "\"hw_hash\":null"));
+    CHECK(be::MyBans(HardwareHash(a, "salt")).body == "{\"p_hw_hash\":null}");
+}
+
+// Review #270.5: client_check reports don't carry the OS user name.
+void TestReportPrivacy() {
+    RUN_SUITE("client_check reports send file names, not user paths");
+    CHECK(be::RedactPaths("unexpected module loaded: C:\\Users\\John Smith\\AppData\\Local\\Temp\\hook.dll") ==
+          "unexpected module loaded: hook.dll");
+    CHECK(be::RedactPaths("unexpected module loaded: c:/users/jsmith/desktop/cheat.dll") == "unexpected module loaded: cheat.dll");
+    CHECK(be::RedactPaths("module: unexpected module loaded: \\\\?\\C:\\Users\\jsmith\\x64\\inj.dll\nclock: 7.0% faster") ==
+          "module: unexpected module loaded: inj.dll\nclock: 7.0% faster");
+    CHECK(be::RedactPaths("unexpected module loaded: /home/alice/.local/lib/libhook.so") == "unexpected module loaded: libhook.so");
+    CHECK(be::RedactPaths("loaded ~/cheats/x.so") == "loaded x.so");
+    // Game-relative paths and ordinary text stay as they are.
+    for (const char* keep : {"unexpected program file Data/x.dll", "the manifest isn't signed", "clock: 6.0% / 3 windows",
+                             "a debugger is attached to the game", ""})
+        CHECK(be::RedactPaths(keep) == keep);
+    // End to end: the request body.
+    be::Request r;
+    CHECK(be::FileClientCheck("Neon Drift", "module",
+                              "unexpected module loaded: C:\\Users\\maya.k\\AppData\\Roaming\\obs\\graphics-hook64.dll\n"
+                              "unexpected module loaded: C:\\Users\\maya.k\\Downloads\\x.dll",
+                              kHw, r));
+    CHECK(!Has(r.body, "maya") && !Has(r.body, "Users") && Has(r.body, "graphics-hook64.dll") && Has(r.body, "x.dll"));
+}
 } // namespace
 
 int main() {
@@ -225,5 +283,7 @@ int main() {
     TestPlayerRequests();
     TestAdminRequests();
     TestParsing();
+    TestHardwareNeedsMachineId();
+    TestReportPrivacy();
     TEST_MAIN_RESULT();
 }

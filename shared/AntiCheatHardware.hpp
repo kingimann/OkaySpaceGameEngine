@@ -16,9 +16,14 @@
 // changes when Windows is reinstalled, the system drive is reformatted or the
 // CPU is swapped: it's a signal for a reviewer, not proof.
 //
+// Without a usable machine_guid there's no hash at all (""): macOS, Linux with
+// no machine-id, a blanked-out id. The CPU brand and volume serial alone are
+// shared by too many machines to ban one of them.
+//
 // The salt (-DOKAY_AC_HW_SALT, default "okayspace-ac-hw/1") makes one
 // deployment's hashes unrelated to another's. It needn't be secret: the
 // machine GUID alone is 122 random bits, too many to guess from a hash.
+#include <cctype>
 #include <cstdio>
 #include <fstream>
 
@@ -63,8 +68,25 @@ inline std::string CanonicalHardware(const HardwareInfo& h) {
     return s;
 }
 
-// "" when there's nothing to go on.
+// A machine id that names one machine: present, long enough, and not a
+// placeholder of one repeated digit (an image's blanked-out id).
+inline bool UsableMachineId(const std::string& raw) {
+    const std::string id = og::Trim(raw);
+    if (id.size() < 16) return false;
+    std::string hex;
+    for (char c : id) if (std::isxdigit((unsigned char)c)) hex += (char)std::tolower((unsigned char)c);
+    return hex.size() >= 16 && hex.find_first_not_of(hex[0]) != std::string::npos;
+}
+
+// "" (no hash at all) unless there's a real machine GUID / machine-id. The
+// other parts alone (the CPU brand, a volume serial) are shared by many
+// machines: a hash of only those would make one machine ban hit every PC with
+// that CPU. No hash means no machine ban is possible for that player.
 inline std::string HardwareHash(const HardwareInfo& h, const std::string& salt) {
+    bool haveId = false;
+    for (const auto& p : h.parts)
+        haveId = haveId || (og::Lower(og::Trim(p.first)) == "machine_guid" && UsableMachineId(p.second));
+    if (!haveId) return {};
     const std::string c = CanonicalHardware(h);
     if (c.empty()) return {};
     const auto d = detail::HmacSha256("okayac-hw|" + salt, c);

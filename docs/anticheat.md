@@ -319,14 +319,25 @@ new key, re-sign your builds with the new one, and then drop the old one.
 | `ac_appeals` | a player's appeal against one of their bans | players file through `ac_file_appeal` (one waiting at a time, 3 per ban) and see their own; admins decide |
 
 "Admins" means `public.is_admin` from `admin.sql`, the same check the other
-admin tools use. Every admin action (ban, unban, report review, appeal decision)
-is written to `admin_log`.
+admin tools use. Every admin action is written to `admin_log` by triggers, so
+it's logged however it's made (launcher, SQL, PostgREST): a ban, an unban, a
+change to a ban's end, reason or lift reason (`ac_ban_edit`), a report review,
+an appeal decision, and deleting a report, ban or appeal (`ac_report_delete`,
+`ac_ban_delete`, `ac_appeal_delete`). `ac_purge_old()` logs one summary line
+(`ac_purge`) instead of a line per row.
 
 Anti-cheat bans are separate from site bans (`site_bans`): this file doesn't
 block anything else on its own. For a game server that wants to keep banned
 players out, `public.ac_is_banned(user_id, hw_hash)` answers whether an
-account or machine is banned right now. Calling it on join is the network
-layer's job.
+account or machine is banned right now. Only game servers (the `service_role`
+key) and admins may call it; any other signed-in player is refused, and
+players see their own bans with `ac_my_bans`. Calling it on join is the
+network layer's job.
+
+Deleting an account deletes its account-only bans. A ban that also names a
+machine is kept, with `user_id` set to null, so deleting the account and
+signing up again doesn't clear a machine ban: the new account still sees it
+(and can appeal it) through `ac_my_bans`, and admins still see it under Bans.
 
 #### In the launcher
 
@@ -373,6 +384,9 @@ plus `OKAY_UI_DEMO_ACVIEW` / `OKAY_UI_DEMO_ACPOPUP` / `OKAY_UI_DEMO_ACBAN` /
 - A game with anti-cheat on files a `client_check` report when its checks find
   something and the player is signed in: one report per run, sent when the game
   closes (or before it refuses to start), with this machine's hardware hash.
+  Paths in it are cut down to file names (`hook.dll`, not
+  `C:\Users\<name>\...\hook.dll`), so the report doesn't carry the player's OS
+  user name. The local `anticheat.log` keeps the full paths.
 
 #### Hardware hash
 
@@ -392,6 +406,11 @@ one `name=value` line each (any part the machine doesn't have is left out):
 | `volume_serial` | serial number of the volume Windows is on | (none) |
 | `cpu` | CPUID vendor + brand string (x86) | same |
 
+- **No machine id, no hash.** Without a real `machine_guid` (macOS, Linux
+  without a machine-id, or a blanked-out id) the hash is empty and nothing is
+  sent: the CPU brand alone is shared by many machines, and a ban on its hash
+  would hit all of them. Such a player can be banned by account only. The
+  database never matches an empty or malformed hash either.
 - The raw values are never stored or sent.
 - The salt is `-DOKAY_AC_HW_SALT=...` (default `okayspace-ac-hw/1`). Give your
   deployment its own so its hashes can't be matched against anyone else's. It
@@ -421,6 +440,12 @@ schedules it nightly (job `okay-ac-retention`). Otherwise run
 3. Optionally set `-DOKAY_AC_HW_SALT=<something unique to you>` when building
    the launcher and player.
 4. Admins (the `admin` badge) see **Admin > Anti-cheat** in the launcher.
+
+`tests/scripts/test_anticheat_sql.sh` runs `anticheat.sql` and
+`tests/sql/test_anticheat.sql` against a local, throwaway Postgres (with
+`tests/sql/supabase_stub.sql` standing in for Supabase's `auth` schema and
+roles). Point it at one with `OKAY_SQL_TEST_PGHOST` (a socket directory or
+localhost); ctest skips it otherwise. Never point it at a live database.
 
 ### Crypto
 

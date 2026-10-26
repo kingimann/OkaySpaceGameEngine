@@ -961,6 +961,12 @@ add_executable(test_anticheat_backend test_anticheat_backend.cpp)
 target_link_libraries(test_anticheat_backend PRIVATE okay::engine)
 target_include_directories(test_anticheat_backend PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME anticheat_backend COMMAND test_anticheat_backend)
+# ...and docs/sql/anticheat.sql on a LOCAL Postgres (skipped unless
+# OKAY_SQL_TEST_PGHOST names one; see the script).
+if(UNIX)
+    add_test(NAME anticheat_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_anticheat_sql.sh)
+    set_tests_properties(anticheat_sql PROPERTIES SKIP_RETURN_CODE 77)
+endif()
 
 add_executable(test_tween test_tween.cpp)
 target_link_libraries(test_tween PRIVATE okay::engine)

@@ -9,14 +9,24 @@
 --            own appeals
 --   admins   (public.is_admin) see and review every report, ban / unban
 --            accounts and machines, and accept or reject appeals; accepting an
---            appeal lifts its ban. Every admin action goes to admin_log.
+--            appeal lifts its ban. Every admin action goes to admin_log
+--            (triggers): reviews, bans, unbans, any change to a ban's until /
+--            reason / lift reason, decisions, and deleting a report, ban or
+--            appeal.
 --
 -- Hardware hashes are salted HMAC-SHA256 values made on the player's machine
 -- (shared/AntiCheatHardware.hpp): the raw hardware IDs never reach this database.
+-- A machine without a real machine id sends no hash at all, so a machine ban
+-- always names one machine (never "every PC with this CPU").
 --
 -- Bans are separate from site_bans (admin.sql): an anti-cheat ban says "this
--- account / machine cheated". Game servers can ask public.ac_is_banned(user,
--- hw_hash) when a player joins; nothing else is blocked by this file.
+-- account / machine cheated". Game servers (the service_role key) and admins
+-- can ask public.ac_is_banned(user, hw_hash) when a player joins; players see
+-- only their own bans, through ac_my_bans. Nothing else is blocked by this file.
+--
+-- Deleting an account deletes its account-only bans, but a ban that also names
+-- a machine stays (user_id becomes null): a cheater can't clear a machine ban
+-- by deleting the account and signing up again.
 --
 -- Retention: public.ac_purge_old() deletes reports and decided appeals older
 -- than 90 days, and bans that ended (lifted or expired) more than 90 days ago.
@@ -91,12 +101,38 @@ drop trigger if exists ac_reports_guard on public.ac_reports;
 create trigger ac_reports_guard before insert or update on public.ac_reports
   for each row execute function public.ac_reports_guard();
 
+-- Deletes by an admin (RLS lets no one else delete) are logged, for all three
+-- tables. Not logged: the SQL editor / pg_cron (no auth.uid()), rows that go
+-- with a deleted account (the caller isn't an admin), and ac_purge_old, which
+-- logs one summary line instead (it sets okay.ac_purge for its own transaction).
+create or replace function public.ac_log_delete() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null or not public.is_admin(auth.uid())
+     or coalesce(current_setting('okay.ac_purge', true), '') = 'on' then
+    return old;
+  end if;
+  if tg_table_name = 'ac_reports' then
+    perform public.admin_log_write('ac_report_delete', coalesce(old.reported, old.reporter),
+                                   'report #' || old.id || ': ' || old.reason);
+  elsif tg_table_name = 'ac_bans' then
+    perform public.admin_log_write('ac_ban_delete', old.user_id,
+      'ban #' || old.id || ': ' || old.reason || case when old.hw_hash is not null then ' (+ machine)' else '' end);
+  elsif tg_table_name = 'ac_appeals' then
+    perform public.admin_log_write('ac_appeal_delete', old.user_id, 'appeal #' || old.id || ' on ban #' || old.ban_id);
+  end if;
+  return old;
+end $$;
+drop trigger if exists ac_reports_log_delete on public.ac_reports;
+create trigger ac_reports_log_delete after delete on public.ac_reports
+  for each row execute function public.ac_log_delete();
+
 -- ---------------------------------------------------------------------------
 -- Bans
 -- ---------------------------------------------------------------------------
 create table if not exists public.ac_bans (
   id          bigint generated always as identity primary key,
-  user_id     uuid references auth.users on delete cascade,
+  user_id     uuid references auth.users on delete set null,   -- null: the account was deleted (machine bans stay)
   hw_hash     text check (hw_hash is null or hw_hash ~ '^[0-9a-f]{64}$'),
   reason      text not null check (char_length(reason) between 1 and 300),
   until       timestamptz,                    -- null = permanent
@@ -109,9 +145,25 @@ create table if not exists public.ac_bans (
   lift_reason text check (char_length(lift_reason) <= 300),
   check (user_id is not null or hw_hash is not null)
 );
+-- (An earlier version of this file cascaded: switch an existing table over.)
+alter table public.ac_bans drop constraint if exists ac_bans_user_id_fkey;
+alter table public.ac_bans add constraint ac_bans_user_id_fkey
+  foreign key (user_id) references auth.users on delete set null;
 create index if not exists ac_bans_user on public.ac_bans (user_id) where not lifted;
 create index if not exists ac_bans_hw   on public.ac_bans (hw_hash) where not lifted;
 alter table public.ac_bans enable row level security;
+
+-- Deleting an account: its account-only bans go with it (nothing left to ban);
+-- bans that name a machine too keep the machine (the foreign key nulls user_id).
+create or replace function public.ac_bans_user_deleted() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  delete from public.ac_bans where user_id = old.id and hw_hash is null;
+  return old;
+end $$;
+drop trigger if exists ac_bans_user_deleted on auth.users;
+create trigger ac_bans_user_deleted before delete on auth.users
+  for each row execute function public.ac_bans_user_deleted();
 
 drop policy if exists "see own bans"  on public.ac_bans;
 drop policy if exists "admins ban"    on public.ac_bans;
@@ -142,7 +194,14 @@ begin
     end if;
     return new;
   end if;
-  -- UPDATE: who and what stay; lifting is stamped once, and a lifted ban stays lifted.
+  -- UPDATE. The account was deleted (the foreign key's "set null"): only that.
+  if new.user_id is null and old.user_id is not null
+     and not exists (select 1 from auth.users u where u.id = old.user_id) then
+    new := old;
+    new.user_id := null;
+    return new;
+  end if;
+  -- Otherwise who and what stay; lifting is stamped once, and a lifted ban stays lifted.
   new.user_id := old.user_id; new.hw_hash := old.hw_hash; new.banned_by := old.banned_by;
   new.created_at := old.created_at; new.report_id := old.report_id;
   if old.lifted then
@@ -153,22 +212,48 @@ begin
       perform public.admin_log_write('ac_unban', new.user_id, 'ban #' || new.id || coalesce(': ' || nullif(new.lift_reason, ''), ''));
     end if;
   end if;
+  -- Any other change an admin makes to a ban is logged too.
+  if auth.uid() is not null and (new.until is distinct from old.until or new.reason is distinct from old.reason
+                                 or (old.lifted and new.lift_reason is distinct from old.lift_reason)) then
+    perform public.admin_log_write('ac_ban_edit', new.user_id, 'ban #' || new.id || ':'
+      || case when new.until is distinct from old.until then
+           ' until ' || coalesce(to_char(old.until at time zone 'utc', 'YYYY-MM-DD HH24:MI'), 'permanent') || ' -> '
+                     || coalesce(to_char(new.until at time zone 'utc', 'YYYY-MM-DD HH24:MI') || ' UTC', 'permanent') || ';'
+         else '' end
+      || case when new.reason is distinct from old.reason then ' reason "' || old.reason || '" -> "' || new.reason || '";' else '' end
+      || case when old.lifted and new.lift_reason is distinct from old.lift_reason then
+           ' lift reason "' || coalesce(old.lift_reason, '') || '" -> "' || coalesce(new.lift_reason, '') || '";'
+         else '' end);
+  end if;
   return new;
 end $$;
 drop trigger if exists ac_bans_guard on public.ac_bans;
 create trigger ac_bans_guard before insert or update on public.ac_bans
   for each row execute function public.ac_bans_guard();
 
--- For game servers (and anyone signed in): is this account or machine banned now?
+drop trigger if exists ac_bans_log_delete on public.ac_bans;
+create trigger ac_bans_log_delete after delete on public.ac_bans
+  for each row execute function public.ac_log_delete();
+
+-- For game servers and admins: is this account or machine banned now? (Players
+-- see their own bans with ac_my_bans, not anyone's.) Admins share the
+-- `authenticated` role with every player, so the grant can't tell them apart:
+-- the function refuses any signed-in caller who isn't an admin. A caller with
+-- no auth.uid() is the service_role key (game servers) or the SQL editor; anon
+-- has no execute right at all. An empty / malformed hash never matches.
 create or replace function public.ac_is_banned(p_user uuid, p_hw_hash text default null) returns boolean
-language sql stable security definer set search_path = public as $$
-  select exists (select 1 from public.ac_bans b
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if auth.uid() is not null and not public.is_admin(auth.uid()) then
+    raise exception 'Only admins and game servers can look up bans' using errcode = 'insufficient_privilege';
+  end if;
+  return exists (select 1 from public.ac_bans b
                  where not b.lifted and (b.until is null or b.until > now())
                    and ((p_user is not null and b.user_id = p_user)
-                        or (p_hw_hash is not null and b.hw_hash = p_hw_hash)));
-$$;
-revoke execute on function public.ac_is_banned(uuid, text) from public, anon;
-grant execute on function public.ac_is_banned(uuid, text) to authenticated;
+                        or (p_hw_hash ~ '^[0-9a-f]{64}$' and b.hw_hash = p_hw_hash)));
+end $$;
+revoke execute on function public.ac_is_banned(uuid, text) from public, anon, authenticated;
+grant execute on function public.ac_is_banned(uuid, text) to authenticated, service_role;
 
 -- ---------------------------------------------------------------------------
 -- Appeals
@@ -224,6 +309,9 @@ end $$;
 drop trigger if exists ac_appeals_guard on public.ac_appeals;
 create trigger ac_appeals_guard before update on public.ac_appeals
   for each row execute function public.ac_appeals_guard();
+drop trigger if exists ac_appeals_log_delete on public.ac_appeals;
+create trigger ac_appeals_log_delete after delete on public.ac_appeals
+  for each row execute function public.ac_log_delete();
 
 -- My bans (by account, or this machine's hash), newest first, each with its
 -- latest appeal and how many appeals are left (3 per ban). Ended bans from the
@@ -293,6 +381,7 @@ begin
   if auth.uid() is not null and not public.is_admin(auth.uid()) then
     raise exception 'Only admins purge anti-cheat data' using errcode = 'insufficient_privilege';
   end if;
+  perform set_config('okay.ac_purge', 'on', true);   -- one summary line, not a line per row
   delete from public.ac_appeals where status <> 'open' and coalesce(decided_at, created_at) < now() - interval '90 days';
   get diagnostics a = row_count;
   delete from public.ac_bans
@@ -301,6 +390,10 @@ begin
   get diagnostics b = row_count;
   delete from public.ac_reports where created_at < now() - interval '90 days';
   get diagnostics r = row_count;
+  perform set_config('okay.ac_purge', 'off', true);
+  if auth.uid() is not null then
+    perform public.admin_log_write('ac_purge', null, r || ' reports, ' || a || ' appeals, ' || b || ' bans older than 90 days');
+  end if;
   return query select r, a, b;
 end $$;
 revoke execute on function public.ac_purge_old() from public, anon;

@@ -7,6 +7,7 @@
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/StepUp.hpp"
@@ -81,7 +82,9 @@ public:
     /// The resized body; saving a scene writes the standing collider.
     const StanceBody& stanceBody() const { return m_body; }
     /// Begin in `s` (a scene saved crouched / prone loads that way). Applied in Start().
-    void RestoreStance(Stance s) { m_stance = m_wantStance = m_padWant = s; }
+    void RestoreStance(Stance s) { m_stance = m_wantStance = m_padWant = s; m_stanceLevel = (float)s; }
+    /// The body's stance as it moves between stances: 0 stand .. 1 crouch .. 2 prone.
+    float stanceLevel() const { return m_stanceLevel; }
 
     // ---- Depth layers ----
     int   layerCount = 3;               ///< LittleBigPlanet uses 3
@@ -135,6 +138,7 @@ public:
             Vec3 p = transform->Position(); p.z = LayerZ(layer);
             transform->SetPosition(p);
         }
+        m_stanceLevel = (float)m_stance;
         if (resizeBody && gameObject && m_stance != Stance::Stand) {   // restored crouched / prone
             CaptureStance(gameObject, m_body);
             ApplyStanceHeight(gameObject, m_body, StanceHeight(m_stance));
@@ -249,9 +253,9 @@ public:
         const bool padRun = padMove && Mathf::Abs(pad.x) >= stickRunThreshold;
         bool running = m_stance == Stance::Stand && ((sprintKey && Input::GetKey(sprintKey)) || padRun) && moving && !m_grabbed;
         // An analog stick walks at the speed it's pushed; keys walk at full speed.
-        float speed = (m_stance == Stance::Prone  ? proneSpeed
-                     : m_stance == Stance::Crouch ? crouchSpeed
-                     : (running ? runSpeed : walkSpeed)) * (m_grabbed ? grabPullSpeed : 1.0f);
+        // The speed cap follows the body from one stance's to the next.
+        float speed = StanceValue(m_stanceLevel, running ? runSpeed : walkSpeed, crouchSpeed, proneSpeed) *
+                      (m_grabbed ? grabPullSpeed : 1.0f);
         const float targetZ = LayerZ(layer);
 
         if (rb) {
@@ -376,6 +380,7 @@ private:
     Vec3  m_climbFrom{0, 0, 0}, m_climbTo{0, 0, 0};
     Stance m_stance = Stance::Stand;
     Stance m_wantStance = Stance::Stand;      // what the input asks for (m_stance may wait for headroom)
+    float  m_stanceLevel = 0.0f;             // the body on its way between stances (0 stand .. 2 prone)
     Stance m_padWant = Stance::Stand;         // the stance the gamepad button set (hold mode)
     StanceBody m_body;
     float m_padHeld = 0.0f; bool m_padProned = false;
@@ -407,22 +412,13 @@ private:
             }
         }
         if (!allowProne && m_wantStance == Stance::Prone) m_wantStance = Stance::Stand;
-        Stance next = m_wantStance;
-        if (resizeBody && gameObject) {
-            CaptureStance(gameObject, m_body);
-            Scene* sc = gameObject->scene();
-            // Rising needs headroom; from prone, settle for a crouch if only that fits.
-            if (sc && m_body.captured && StanceHeight(next) > m_body.curH + 1e-3f &&
-                !StanceHasRoom(*sc, gameObject, m_body, StanceHeight(next))) {
-                if (next == Stance::Stand && m_stance == Stance::Prone &&
-                    StanceHasRoom(*sc, gameObject, m_body, StanceHeight(Stance::Crouch))) next = Stance::Crouch;
-                else next = m_stance;
-            }
-            m_stance = next;
-            ApplyStanceHeight(gameObject, m_body, StanceHeight(m_stance));
-        } else {
-            m_stance = next;
-        }
+        // Rising needs headroom for the target height; then the body (and its
+        // collider) eases there over the stance change time.
+        m_stance = resizeBody && gameObject
+            ? (Stance)SettleStance(gameObject, m_body, (int)m_stance, (int)m_wantStance, crouchHeight, proneHeight)
+            : m_wantStance;
+        EaseStance(gameObject, m_body, m_stanceLevel, (int)m_stance, dt, StanceTimesOf(gameObject),
+                   resizeBody, crouchHeight, proneHeight);
     }
     /// Collider height for a stance (crouch / prone are fractions of the standing body).
     float StanceHeight(Stance s) const {
@@ -592,6 +588,7 @@ private:
         lo.ignoreAxis = {0.0f, 0.0f, 1.0f};              // layer hops aren't steps
         lo.crouch = m_stance == Stance::Crouch;
         lo.prone = m_stance == Stance::Prone;
+        lo.stance = m_stanceLevel;
         lo.sprint = running;
         lo.walkSpeed = walkSpeed;
         lo.dt = dt;

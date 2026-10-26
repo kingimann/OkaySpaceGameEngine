@@ -15,7 +15,6 @@ struct ParseError {
 // so, rather than syntax that is silently skipped.
 const std::unordered_map<std::string, const char*>& NotYet() {
     static const std::unordered_map<std::string, const char*> m = {
-        {"do", "do-while loops aren't supported yet: use while"},
         {"try", "try / catch isn't supported yet"},
         {"throw", "throw isn't supported yet"},
         {"struct", "structs aren't supported yet"},
@@ -239,7 +238,12 @@ private:
             default: throw ParseError{Peek().loc, "Expected a type (int, float, bool, string, Vector3, GameObject, ...)"};
         }
         ++pos_;
-        if (Is(T::Lt)) throw ParseError{Peek().loc, "Generic types like " + t.name + "<...> aren't supported yet"};
+        if (Is(T::Lt)) {   // List<int>, Dictionary<string, List<int>>
+            NestGuard guard(nesting_, Peek().loc, "type");
+            ++pos_;
+            do { t.args.push_back(Type(false)); } while (Match(T::Comma));
+            Expect(T::Gt, "'>'");
+        }
         for (;;) {
             if (Is(T::LBracket) && Is(T::Comma, 1))
                 throw ParseError{Peek(1).loc, "Multi-dimensional arrays (" + t.name + "[,]) aren't supported: use an array of arrays, " + t.name + "[][]"};
@@ -333,12 +337,28 @@ private:
         return b;
     }
 
+    // When a type (Name, Name<...> with nested type arguments, then any []) starts
+    // here, the offset just after it; otherwise 0.
+    std::size_t TypeEndAhead() const {
+        std::size_t o = 1;
+        if (Is(T::Lt, o)) {
+            for (int depth = 0;; ++o) {
+                if (Is(T::Lt, o)) ++depth;
+                else if (Is(T::Gt, o)) { if (--depth == 0) { ++o; break; } }
+                else if (!IsTypeStart(o) && !Is(T::Comma, o) && !Is(T::LBracket, o) && !Is(T::RBracket, o)) return 0;
+            }
+        }
+        while (Is(T::LBracket, o) && Is(T::RBracket, o + 1)) o += 2;
+        return o;
+    }
+
     bool IsLocalDeclStart() const {
         switch (Peek().type) {
             case T::KwInt: case T::KwFloat: case T::KwBool: case T::KwString: case T::KwVar: case T::KwConst: return true;
-            case T::Ident:
-                return Is(T::Ident, 1) || (Is(T::Lt, 1) && Is(T::Ident, 2) && Is(T::Gt, 3) && Is(T::Ident, 4)) ||
-                       (Is(T::LBracket, 1) && (Is(T::RBracket, 2) || Is(T::Comma, 2)));
+            case T::Ident: {
+                const std::size_t end = TypeEndAhead();
+                return (end > 0 && Is(T::Ident, end)) || (Is(T::LBracket, 1) && Is(T::Comma, 2));
+            }
             default: return false;
         }
     }
@@ -406,6 +426,17 @@ private:
             return s;
         }
         if (IsWord("switch") && Is(T::LParen, 1)) return Switch();
+        if (IsWord("do") && IsDoBodyAhead()) {   // do { ... } while (cond);
+            ++pos_;
+            auto s = std::make_unique<Stmt>(); s->kind = SK::DoWhile; s->loc = loc;
+            s->loopBody = Statement();
+            if (!Match(T::KwWhile)) throw ParseError{Peek().loc, "Expected while (...); after the do body"};
+            Expect(T::LParen, "'(' after while");
+            s->expr = Expression();
+            Expect(T::RParen, "')'");
+            Expect(T::Semicolon, "';'");
+            return s;
+        }
         if (IsWord("foreach") && Is(T::LParen, 1)) {
             ++pos_;
             auto s = std::make_unique<Stmt>(); s->kind = SK::Foreach; s->loc = loc;
@@ -442,6 +473,16 @@ private:
         return s;
     }
 
+    // `do` starts a do / while unless it's a variable called do (do = 1; do++; do.x).
+    bool IsDoBodyAhead() const {
+        switch (Peek(1).type) {
+            case T::Assign: case T::PlusEq: case T::MinusEq: case T::StarEq: case T::SlashEq: case T::PercentEq:
+            case T::PlusPlus: case T::MinusMinus: case T::Dot: case T::LBracket: case T::LParen: case T::Semicolon:
+            case T::QuestionQuestionEq: case T::QuestionDot:
+                return false;
+            default: return true;
+        }
+    }
     bool IsCaseLabel() const { return IsWord("case") || (IsWord("default") && Is(T::Colon, 1)); }
     // switch (x) { case 1: case 2: ... break; default: ... break; }
     std::unique_ptr<Stmt> Switch() {
@@ -775,7 +816,15 @@ private:
                     if (Is(T::LBrace)) { e->hasInit = true; e->args = ArrayItems(); }
                     return e;
                 }
-                e->args = Args();
+                const bool parens = Is(T::LParen);
+                if (parens) e->args = Args();
+                if (Is(T::LBrace)) {   // new List<int> { 1, 2 }
+                    if (!e->args.empty()) throw ParseError{Peek().loc, "Give either the values in ( ) or the items in { }, not both"};
+                    e->hasInit = true;
+                    e->args = ArrayItems();
+                } else if (!parens) {
+                    throw ParseError{Peek().loc, "Expected ( ) or { ... } after new " + e->typeArg.name};
+                }
                 return e;
             }
             case T::LParen: {

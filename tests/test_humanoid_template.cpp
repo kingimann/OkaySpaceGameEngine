@@ -105,6 +105,27 @@ int main() {
         CHECK(std::fabs(ik.hipsLow - anim.hipsLow) < 0.01f);
         CHECK(ik.gap < 1e-3f);
     }
+    // Walking into a wall: the body stands still, so its Animator stands too
+    // (not walking in place on the controller's wanted speed).
+    {
+        Scene ws("Wall");
+        auto box = [&](Vec3 pos, Vec3 scale) {
+            GameObject* g = ws.CreateGameObject("Block");
+            g->transform->localPosition = pos;
+            g->transform->localScale = scale;
+            g->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+            g->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+        };
+        box({0, -0.5f, 0}, {200, 1, 200});
+        box({0, 1.0f, -1.0f}, {10, 2, 0.5f});
+        GameObject* p = Templates::AddHumanoidPlayer(ws, {0, 0.05f, 0});
+        auto* sm = p->GetComponent<AnimStateMachine>();
+        ws.Start();
+        for (int i = 0; i < 180; ++i) { Input::FeedKeys({'W'}); ws.Update(1.0f / 60.0f); }
+        Input::FeedKeys({});
+        CHECK(sm != nullptr && sm->Current() == "Idle");
+        CHECK(sm != nullptr && sm->GetFloat("speed") < 0.2f);
+    }
     // Over a step the feet are moved, and the legs stay in one piece.
     {
         Walk ik = WalkOver(true, true);

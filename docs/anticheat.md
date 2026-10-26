@@ -39,6 +39,10 @@ ticketAudience arena-1              # this server's id in tickets ("" = any)
 maxClockDrift 0.05                  # a client's game clock may run 5% off; 0 = no check
 # Gameplay
 serverVar score                     # SyncVar key prefixes only the server may write (repeatable)
+clientVar player.                   # if any is set, the only SyncVar key prefixes clients may write (repeatable)
+maxSpawnsPerSecond 5                # spawns a client may make per second (0 = unlimited)
+maxLiveSpawnsPerPeer 50             # SpawnOwned objects a client may have at once (0 = unlimited)
+spawnRadius 0                       # how far from the sender a spawn may land (0 = anywhere)
 maxHitRange 60                      # hit claims: the longest shot (0 = any; the component's default is 300)
 weapon rifle                        # a weapon clients may claim hits with, besides Net Validator ones (repeatable)
 hitDamage 10                        # what a hit does, unless the game says otherwise

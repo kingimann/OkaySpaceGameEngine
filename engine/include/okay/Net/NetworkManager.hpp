@@ -105,6 +105,10 @@ public:
     /// Server: custom messages a client may send per second (0 = unlimited);
     /// extra ones are dropped (reliable ones are still acknowledged).
     int maxMessagesPerSecond = 0;
+    /// Server: the longest custom message a client may send to be applied or
+    /// relayed (channel + data, bytes; 0 = any). A client also gets four times
+    /// this in bytes per second. Chat lines are cut to 512 bytes.
+    int maxRelayedBytes = 16 * 1024;
     /// Server: kick a client after this many rejected moves within a minute (0 = never).
     int kickAfterViolations = 0;
     /// Server: move a peer's avatar (0 = the host's own) — accepted by the move
@@ -623,6 +627,8 @@ private:
         int   violations = 0;    // rejected moves in the current minute
         float violationTimer = 0.0f;
         int   msgCount = 0;      // custom messages this second (rate limit)
+        std::size_t msgBytes = 0;   // and their bytes (4 x maxRelayedBytes a second)
+        int   varsCreated = 0;   // SyncVar keys this client made (at most kMaxClientVars)
         int   hitClaims = 0;     // hit claims this second (the limit without the anti-cheat)
         float msgTimer = 0.0f;
         float joinedAt = 0.0f;   // server clock when it joined
@@ -939,7 +945,12 @@ private:
     bool AntiCheatAllowsSyncVar(std::uint32_t peer, const std::string& key);
     void AntiCheatAfterRefusal(std::uint32_t peer);
 
-    // Server-authoritative synced variables
+    // Server-authoritative synced variables. What a client may write: keys up
+    // to 128 bytes, values up to 4 KB, at most kMaxClientVars new keys each.
+    static constexpr std::size_t kMaxVarKey = 128, kMaxVarValue = 4096;
+    static constexpr int kMaxClientVars = 256;
+    /// Server: a peer left: its SpawnOwned objects ("sp/<id>/...") go, everywhere.
+    void DespawnPeerObjects(std::uint32_t id);
     std::unordered_map<std::string, std::string> m_syncVars;
     void ApplySyncVar(const std::string& key, const std::string& value);
 };

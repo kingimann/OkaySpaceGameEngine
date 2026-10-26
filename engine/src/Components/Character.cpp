@@ -1055,7 +1055,7 @@ void Character::SyncStateClips() {
     }
 }
 
-void Character::Update(float dt) {
+void Character::NoteStateChange() {
     if (m_animHold > 0) anim = m_animHold;   // a script's held animation wins over the controller's pick
     // Landing recovery: coming out of the jump pose into any grounded state plays a
     // brief knee-bend "absorb" (sin arc in PoseAt/StanceOffset) so a landing has
@@ -1082,6 +1082,10 @@ void Character::Update(float dt) {
         }
         m_prevAnim = anim;
     }
+}
+
+void Character::Update(float dt) {
+    NoteStateChange();
     if (m_landT >= 0.0f) {
         m_landT += dt / 0.28f;                       // ~0.28s dip-and-spring
         if (m_landT >= 1.0f) { m_landT = -1.0f; m_landK = 0.0f; }

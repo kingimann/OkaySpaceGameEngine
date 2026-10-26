@@ -20,6 +20,8 @@
 #include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/TopDownController.hpp"
 #include "okay/Components/NPCController.hpp"
+#include "okay/Components/Platformer25DController.hpp"
+#include "okay/Components/TopDownShooterController.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Math/Quat.hpp"
@@ -2027,6 +2029,8 @@ static bool ControllerSpeeds(GameObject* player, float& walk, float& run) {
     if (auto* c = player->GetComponent<TopDownController>())           { walk = c->walkSpeed; run = c->runSpeed; return true; }
     if (auto* c = player->GetComponent<CharacterController3D>())       { walk = c->speed;     run = c->runSpeed; return true; }
     if (auto* c = player->GetComponent<NPCController>())               { walk = c->moveSpeed; run = c->runSpeed; return true; }
+    if (auto* c = player->GetComponent<Platformer25DController>())     { walk = c->walkSpeed; run = c->runSpeed; return true; }
+    if (auto* c = player->GetComponent<TopDownShooterController>())    { walk = c->walkSpeed; run = c->runSpeed; return true; }
     return false;
 }
 
@@ -2036,6 +2040,10 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
     bool ok = false;
     GameObject* root = ImportModelScene(scene, path, &ok);
     if (!ok || !root || !root->transform) return nullptr;
+    // A swap: the previous model goes, or it stays inside the new one (frozen, or
+    // still animating on its own) and keeps the old wiring busy.
+    if (GameObject* old = FindCharacterModelRoot(scene, player); old && old != player)
+        scene.Destroy(old);
 
     // World bounds of the imported subtree (the import root sits at the origin).
     Vec3 lo{0, 0, 0}, hi{0, 0, 0};
@@ -2176,20 +2184,35 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
 
     // Foot IK, wired automatically: detect the model's leg bones by name (Mixamo
     // etc.) and plant the feet on slopes/steps with the full setup — the same
-    // out-of-the-box treatment the Humanoid template gets.
-    if (!player->GetComponent<FootIK>()) {
+    // out-of-the-box treatment the Humanoid template gets. One already on the
+    // player is re-pointed at THIS model: the Humanoid template's drives the
+    // blocky part rig (and rebuilds it, visible, when the scene loads), and after
+    // a model swap it would still be bending the old model's legs.
+    {
         FootIK probe;
+        FootIK* fik = player->GetComponent<FootIK>();
         if (probe.DetectHumanoidBones(scene, root) >= 6) {
-            auto* fik = player->AddComponent<FootIK>();
-            fik->leftHipName = probe.leftHipName;   fik->leftKneeName = probe.leftKneeName;
-            fik->leftFootName = probe.leftFootName;
-            fik->rightHipName = probe.rightHipName; fik->rightKneeName = probe.rightKneeName;
-            fik->rightFootName = probe.rightFootName;
-            fik->pelvisName = probe.pelvisName;
-            fik->useRaycast = true; fik->weight = 1.0f;
-            fik->adjustPelvis = true; fik->plantDown = true; fik->alignToGround = true;
-            fik->maxPelvisShift = 0.35f;
+            const bool fresh = !fik;
+            if (fresh) {
+                fik = player->AddComponent<FootIK>();
+                fik->useRaycast = true; fik->weight = 1.0f;
+                fik->adjustPelvis = true; fik->plantDown = true; fik->alignToGround = true;
+                fik->maxPelvisShift = 0.35f;
+            }
+            fik->DetectHumanoidBones(scene, root);
+            if (!fresh) fik->Start();   // resolve the new names now: it may be running already
+            fik->orient = true;   // turn the thigh and shin with the joints, or the skinned leg tears at the knee
+            // The sole's normal in the foot bone's own axes, off the bind pose: a
+            // Blender / glTF foot points its Y down the foot, so tilting a fixed
+            // local +Y onto the slope stood those feet on their toes.
+            for (const auto& up : scene.Objects())
+                if (up->name == fik->leftFootName && up->IsSelfOrDescendantOf(root)) {
+                    fik->footUpAxis = (up->transform->Rotation().Inverse() * Vec3::Up).Normalized();
+                    break;
+                }
             mapped += mapped.empty() ? "foot IK wired" : ", foot IK wired";
+        } else if (fik) {
+            player->RemoveComponent<FootIK>();   // no legs to plant on this model
         }
     }
 

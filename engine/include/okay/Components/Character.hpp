@@ -450,6 +450,10 @@ public:
         if (!autoPlayClip.empty()) PlayClip(autoPlayClip);
     }
     void Update(float dt) override;
+    /// Driving an imported rig: a controller that changed `anim` after our Update
+    /// starts its crossfade now, before the HumanoidRetarget reads the pose (it
+    /// showed one frame of the new state, then blended back from the old one).
+    void LateUpdate(float) override { if (driveExternal) NoteStateChange(); }
 
     std::string ToText() const;
     void FromText(const std::string& text);
@@ -528,6 +532,7 @@ private:
     void AdvanceBlendTree(float dt);
     std::vector<Vec3> SampleBlendTree() const;   // blended pose at the current parameter
     void SyncStateClips();               // auto-play the clip bound to the current `anim` state
+    void NoteStateChange();              // `anim` changed: landing dip, gait phase, crossfade
     int m_syncAnim = -1;                 // `anim` at the last SyncStateClips (-1 = none yet)
     std::vector<Vec3> m_blendFrom;       // pose captured at the last clip switch (crossfade source)
     float m_blendT = 1.0f;               // crossfade weight 0..1 (1 = no blend active)

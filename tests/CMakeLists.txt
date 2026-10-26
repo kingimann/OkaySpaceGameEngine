@@ -843,6 +843,12 @@ target_link_libraries(test_footik_drift PRIVATE okay::engine)
 target_compile_definitions(test_footik_drift PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME footik_drift COMMAND test_footik_drift)
 
+# Imported characters: template foot IK, model swap, state crossfades, uneven frames.
+add_executable(test_imported_glitches test_imported_glitches.cpp)
+target_link_libraries(test_imported_glitches PRIVATE okay::engine)
+target_compile_definitions(test_imported_glitches PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME imported_glitches COMMAND test_imported_glitches)
+
 add_executable(test_scene_defaults test_scene_defaults.cpp)
 target_link_libraries(test_scene_defaults PRIVATE okay::engine)
 add_test(NAME scene_defaults COMMAND test_scene_defaults)

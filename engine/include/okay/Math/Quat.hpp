@@ -169,7 +169,9 @@ struct Quat {
     static Quat FromToRotation(const Vec3& from, const Vec3& to) {
         Vec3 a = from.Normalized(), b = to.Normalized();
         float d = Vec3::Dot(a, b);
-        if (d >= 0.99999f) return Identity;
+        // No snap to Identity for nearly parallel vectors: the formula below is
+        // exact there, and snapping anything under ~0.26 deg left a bone an IK
+        // had turned a few millimetres off the joint it was aimed at.
         if (d <= -0.99999f) {                 // opposite: rotate 180 about any perpendicular axis
             Vec3 axis = Vec3::Cross(Vec3::Right, a);
             if (axis.SqrMagnitude() < Mathf::Epsilon) axis = Vec3::Cross(Vec3::Up, a);

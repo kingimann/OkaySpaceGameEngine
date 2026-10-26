@@ -138,14 +138,22 @@ public:
         // Locomotion speed (world XZ units/sec) + vertical speed, measured from
         // how the object moved.
         float spd = -1.0f, vy = 0.0f;
+        const float prevVy = m_lastVy;
         if (driveByMovement && dt > 0.0f && transform) {
             Vec3 p = transform->Position();
             if (m_haveLast) {
+                // What moved us since last frame was last frame's physics step:
+                // measure it over that frame's time. Over this one's, an uneven
+                // frame rate read as the speed jumping between idle and run.
+                const float span = m_lastDt > 0.0f ? m_lastDt : dt;
                 float dx = p.x - m_lastPos.x, dz = p.z - m_lastPos.z;
-                spd = std::sqrt(dx*dx + dz*dz) / dt;
-                vy = (p.y - m_lastPos.y) / dt;
+                spd = std::sqrt(dx*dx + dz*dz) / span;
+                vy = (p.y - m_lastPos.y) / span;
+                // A teleport / respawn isn't speed: keep last frame's reading.
+                if ((p - m_lastPos).SqrMagnitude() > 4.0f) { spd = m_lastSpd; vy = m_lastVy; }
+                m_lastSpd = spd; m_lastVy = vy;
             }
-            m_lastPos = p; m_haveLast = true;
+            m_lastPos = p; m_haveLast = true; m_lastDt = dt;
             // A held clip (script / visual script Play) or an AnimStateMachine picks
             // the clips: movement-driven selection waits (the position keeps being
             // tracked, so it resumes without a speed spike).
@@ -157,7 +165,9 @@ public:
         // by the capsule's vertical motion, so every controller "just works".
         if (spd >= 0.0f && (!jumpClip.empty() || !fallClip.empty())) {
             if (!m_inAir) {
-                bool launch = vy > airUpVel;
+                // Rising two frames running: a step up a curb or stair lifts the
+                // body in a single frame, which read as a jump.
+                bool launch = vy > airUpVel && prevVy > airUpVel;
                 if (vy < -airDownVel) m_airT += dt; else m_airT = 0.0f;
                 if (launch || m_airT > 0.12f) {          // brief drops (steps) don't count
                     m_inAir = true; m_airT = 0.0f; m_fell = !launch;
@@ -182,8 +192,16 @@ public:
 
         // Continuous 1D blend (idle<->walk<->run by speed): drives the bones
         // directly and replaces the discrete machinery below while it's active.
-        // A one-shot (attack etc.) or an air state suspends locomotion.
-        if (spd >= 0.0f && smoothLocomotion && !m_once && !m_inAir && SmoothBlendStep(dt, spd)) return;
+        // A one-shot (attack etc.) or an air clip suspends locomotion. (In the air
+        // with no clip for it, e.g. walking off a ledge with no fall clip, it
+        // carries on: stopping it snapped the body to a stale frame of the walk.)
+        const bool airClip = m_inAir && (CurrentName() == jumpClip || CurrentName() == fallClip);
+        if (spd >= 0.0f && smoothLocomotion && !m_once && !airClip) {
+            // Blend by the speed eased over ~0.1 s: a body stopped dead by a wall
+            // (or a respawn) snapped from the walk to the idle in one frame.
+            m_blendSpd += (spd - m_blendSpd) * (1.0f - std::exp(-dt / 0.1f));
+            if (SmoothBlendStep(dt, m_blendSpd)) return;
+        }
 
         // Fire clip events crossed by this frame's playback window. The clock
         // mirrors the node Animators' time (reset together in PlayIndex).
@@ -1068,6 +1086,9 @@ private:
     }
     int                      m_onceReturnTo = -1;   ///< clip to return to after the one-shot
     Vec3 m_lastPos{0, 0, 0};
+    float m_lastDt = 0.0f;   // the frame m_lastPos was measured in
+    float m_lastSpd = 0.0f, m_lastVy = 0.0f;   // last frame's measured speeds
+    float m_blendSpd = 0.0f;                   // the speed the locomotion blend follows (eased)
     bool m_haveLast = false;
     bool  m_inAir = false;   // air-state machine (jump/fall/land by vertical motion)
     float m_airT  = 0.0f;    // hysteresis timer for takeoff/touchdown detection

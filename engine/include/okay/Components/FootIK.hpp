@@ -154,6 +154,7 @@ public:
             m_touched = 0;
             rightHip = rightKnee = rightFoot = nullptr;
             pelvis = nullptr;
+            m_init = false;   // learn the new legs' lengths
         }
         return found;
     }
@@ -292,6 +293,25 @@ private:
         pelvis->SetPosition(animP + Vec3{0, m_pelvisOff, 0});
     }
 
+    // Which way the knee bends: the way the animation already bends it; a
+    // straight leg toward the toes (the foot's child joint), else `fallback`.
+    // A fixed axis alone folded imported characters' knees backwards: they
+    // face -Z, the opposite of this object's forward.
+    static Vec3 KneePole(const Vec3& hip, const Vec3& knee, Transform* foot, const Vec3& fallback) {
+        Vec3 f = foot->Position(), ax = f - hip;
+        float len2 = ax.SqrMagnitude();
+        if (len2 > 1e-10f) {
+            Vec3 bend = (knee - hip) - ax * (Vec3::Dot(knee - hip, ax) / len2);
+            if (bend.SqrMagnitude() > 1e-4f * len2) return bend;   // bent by over 1% of the leg
+        }
+        for (Transform* c : foot->Children()) {
+            Vec3 toe = c->Position() - f;
+            toe.y = 0.0f;
+            if (toe.SqrMagnitude() > 1e-8f) return toe;
+        }
+        return fallback;
+    }
+
     void SolveLeg(LegState& L, Transform* hip, Transform* knee, Transform* foot,
                   float upLen, float loLen, const Vec3& pole, Scene* s,
                   float ease, float dt, float floorY, bool air) {
@@ -335,8 +355,8 @@ private:
 
         Vec3 oldMid = knee->Position(), oldEnd = foot->Position();
         Vec3 mid, end;
-        SolveTwoBoneIK(hip->Position(), upLen, loLen, target, pole, mid, end,
-                       minKneeBend, maxKneeBend);
+        SolveTwoBoneIK(hip->Position(), upLen, loLen, target, KneePole(hip->Position(), oldMid, foot, pole),
+                       mid, end, minKneeBend, maxKneeBend);
         Vec3 newMid = Vec3::Lerp(oldMid, mid, EffWeight());
         Vec3 newEnd = Vec3::Lerp(oldEnd, end, EffWeight());
         // Optional: rotate the thigh (hip->knee) and shin (knee->foot) bones so a

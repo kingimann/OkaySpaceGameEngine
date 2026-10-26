@@ -879,6 +879,11 @@ add_executable(test_net_anticheat test_net_anticheat.cpp)
 target_link_libraries(test_net_anticheat PRIVATE okay::engine)
 add_test(NAME net_anticheat COMMAND test_net_anticheat)
 
+# Anti-cheat plan phase 1: always-on holes, OkayScript handlers, uninstall, RPC rate limit
+add_executable(test_net_anticheat_ph1 test_net_anticheat_ph1.cpp)
+target_link_libraries(test_net_anticheat_ph1 PRIVATE okay::engine)
+add_test(NAME net_anticheat_ph1 COMMAND test_net_anticheat_ph1)
+
 # Anti-cheat as a game uses it: AntiCheatConfig / NetValidator components and the VS nodes
 add_executable(test_net_anticheat_components test_net_anticheat_components.cpp)
 target_link_libraries(test_net_anticheat_components PRIVATE okay::engine)

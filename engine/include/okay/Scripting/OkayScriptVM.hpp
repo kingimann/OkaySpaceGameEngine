@@ -30,6 +30,9 @@ public:
     void CallUpdate(float deltaTime) override;
     void CallEvent(const std::string& function) override;
     void CallEventWith(const std::string& function, const vs::VsValue& arg) override;
+    vs::VsValue CallEventArgs(const std::string& function, const std::vector<vs::VsValue>& args,
+                              std::string* error = nullptr) override;
+    bool HasEvent(const std::string& function) const override;
     vs::VsValue GetGlobal(const std::string& name) const override;
     void SetGlobal(const std::string& name, const vs::VsValue& v) override;
 

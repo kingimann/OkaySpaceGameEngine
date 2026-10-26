@@ -46,6 +46,12 @@ struct AntiCheatSettings {
     int   kickAfterViolations = 0;
     /// "<netId>.<name>" SyncVar keys may only be written by that object's owner.
     bool  ownerOnlySyncVars = true;
+    /// Calls a client may make per second to any one RPC (0 = unlimited). A
+    /// NetValidator with its own calls/s for that RPC takes its place.
+    int   maxRpcsPerSecond = 0;
+    /// Longest RPC payload a client may send (0 = any). A NetValidator with its
+    /// own max bytes for that RPC takes its place.
+    int   maxRpcBytes = 0;
 
     // ---- P2: transport ----
     /// Only encrypted clients may join (needs libsodium on both ends; turns the
@@ -64,6 +70,7 @@ struct AntiCheatSettings {
     ///   enabled true | spawn <prefab path> (repeatable) | maxSyncSpeed 12
     ///   maxSyncVarsPerSecond 20 | kickAfterViolations 5 | ownerOnlySyncVars true
     ///   requireEncryption true | ticketKey <base64url> | ticketAudience <server id>
+    ///   maxRpcsPerSecond 30 | maxRpcBytes 4096
     static bool Parse(const std::string& text, AntiCheatSettings& out, std::string* error = nullptr);
     bool LoadFile(const std::string& path, std::string* error = nullptr);
     std::string ToText() const;
@@ -78,6 +85,7 @@ enum class CheatKind {
     SyncVarFlood,      ///< SyncVars past maxSyncVarsPerSecond
     SpeedHack,         ///< a NetworkSync object moving faster than maxSyncSpeed
     RpcRejected,       ///< a NetValidator / OnValidateRpc refused the RPC
+    RpcFlood,          ///< one RPC called more often than maxRpcsPerSecond
 };
 const char* CheatKindName(CheatKind k);
 
@@ -107,6 +115,17 @@ public:
     std::function<bool(std::uint32_t peer, const std::string& name, const std::string& data)> validateRpc;
     /// Called for every refusal.
     std::function<void(const CheatReport&)> onCheat;
+    /// Does game code rule on this RPC's rate / size itself (a NetValidator with
+    /// its own calls/s or max bytes)? Then maxRpcsPerSecond / maxRpcBytes don't apply.
+    std::function<void(const std::string& rpc, bool& ownRate, bool& ownSize)> rpcRulesFor;
+    /// Called when a peer is forgotten (left, kicked, timed out), so per-peer
+    /// state kept elsewhere (NetValidator) can go too.
+    std::function<void(std::uint32_t peer)> onForgetPeer;
+    /// Who installed the handlers above (an AntiCheatConfig's token; 0 = code).
+    /// Lets a component remove only what it put there.
+    std::uint64_t installer = 0;
+    /// Distinct RPC names counted per peer per second; more share one count.
+    static constexpr std::size_t kMaxRpcNamesPerPeer = 64;
 
     /// A legitimate jump for `netId` (a respawn): its next position isn't
     /// speed-checked against the old one.
@@ -133,6 +152,7 @@ private:
         float violationTimer = 0.0f;
         int syncVars = 0;
         float syncVarTimer = 0.0f;
+        std::unordered_map<std::string, int> rpcCalls;   // this second, per RPC name
     };
     /// Refusals logged per peer per minute; the rest are only counted.
     static constexpr int kLoggedPerMinute = 5;

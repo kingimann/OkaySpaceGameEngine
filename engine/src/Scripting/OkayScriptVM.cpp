@@ -4741,6 +4741,26 @@ struct OkayScriptVM::Impl {
             NetworkManager* n = EnsureNet(); if (n && !a.empty()) n->maxMessagesPerSecond = (int)a[0].AsFloat();
             return Value{n ? (float)n->maxMessagesPerSecond : 0.0f};
         };
+        // Server only: the anti-cheat (see okay/Net/AntiCheat.hpp). net_anticheat([on])
+        // reads / sets whether it's on; net_anticheat_load(path) applies an .okayac
+        // file from the game's folders (true if it loaded); net_violations(peer)
+        // is that peer's refusals this minute.
+        b["net_anticheat"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = EnsureNet(); if (n && !a.empty()) n->anticheat.settings.enabled = a[0].AsBool();
+            return Value{n ? n->anticheat.settings.enabled : false};
+        };
+        b["net_anticheat_load"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = EnsureNet();
+            if (!n || a.empty() || !ScriptPathOk(a[0].AsString(), "net_anticheat_load")) return Value{false};
+            AntiCheatSettings s; std::string err;
+            if (!s.LoadFile(a[0].AsString(), &err)) { Log::Error("net_anticheat_load: ", err); return Value{false}; }
+            n->anticheat.settings = s;
+            return Value{true};
+        };
+        b["net_violations"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = EnsureNet();
+            return Value{n && !a.empty() ? (float)n->anticheat.Violations((std::uint32_t)a[0].AsFloat()) : 0.0f};
+        };
         // Open the OkaySpace launcher's "Invite friends" window for this game.
         b["net_invite_friends"] = [](std::vector<Value>&) {
 #if !defined(__EMSCRIPTEN__)
@@ -7923,10 +7943,12 @@ void OkayScriptVM::CallEvent(const std::string& function) {
     CallEventWith(function, vs::VsValue{});
 }
 
-void OkayScriptVM::CallEventWith(const std::string& function, const vs::VsValue& arg) {
-    if (!m_impl->loaded) return;
-    // The requested (engine) name wins; otherwise accept an alias so
-    // scripts can name handlers in PascalCase (OnCollisionEnter, OnClick, ...).
+namespace {
+// The handler a script defines for an engine event name: the requested name
+// wins; otherwise an alias, so scripts can name handlers in PascalCase
+// (OnCollisionEnter, OnClick, ...). "" = none.
+template <class Functions>
+std::string ResolveEventHandler(const Functions& functions, const std::string& function) {
     static const std::unordered_map<std::string, std::vector<std::string>> kAliases = {
         // Physics — distinct enter/stay/exit. The legacy on_trigger/on_collision
         // are accepted as enter handlers so older scripts keep working.
@@ -7960,21 +7982,43 @@ void OkayScriptVM::CallEventWith(const std::string& function, const vs::VsValue&
         {"on_object_placed",  {"OnObjectPlaced"}},
         {"on_object_removed", {"OnObjectRemoved"}},
         {"on_logic_signal",   {"OnLogicSignal"}},
+        // Anti-cheat (AntiCheatConfig raises these on the host).
+        {"on_cheat_detected", {"OnCheatDetected"}},
+        {"on_validate_rpc",   {"OnValidateRpc"}},
     };
-    std::string fn = function;
-    if (!m_impl->rt.functions.count(fn)) {
-        auto it = kAliases.find(function);
-        if (it != kAliases.end())
-            for (const auto& alt : it->second)
-                if (m_impl->rt.functions.count(alt)) { fn = alt; break; }
+    if (functions.count(function)) return function;
+    auto it = kAliases.find(function);
+    if (it != kAliases.end())
+        for (const auto& alt : it->second)
+            if (functions.count(alt)) return alt;
+    return {};
+}
+} // namespace
+
+void OkayScriptVM::CallEventWith(const std::string& function, const vs::VsValue& arg) {
+    CallEventArgs(function, std::vector<vs::VsValue>{arg});
+}
+
+bool OkayScriptVM::HasEvent(const std::string& function) const {
+    return m_impl->loaded && !ResolveEventHandler(m_impl->rt.functions, function).empty();
+}
+
+vs::VsValue OkayScriptVM::CallEventArgs(const std::string& function, const std::vector<vs::VsValue>& given,
+                                        std::string* error) {
+    if (!m_impl->loaded) return {};
+    const std::string fn = ResolveEventHandler(m_impl->rt.functions, function);
+    if (fn.empty()) return {};
+    // Up to as many arguments as the handler declares (OnTriggerEnter(Collider
+    // other) takes one; a handler with none gets none). Call gives any it
+    // declares beyond those its usual default for the parameter's type.
+    const std::size_t want = std::min(m_impl->rt.functions[fn].params.size(), given.size());
+    std::vector<Value> args(given.begin(), given.begin() + static_cast<std::ptrdiff_t>(want));
+    try { return m_impl->rt.Call(fn, args); }
+    catch (const std::exception& e) {
+        if (error) *error = e.what();
+        else Log::Error("OkayScript ", fn.c_str(), "(): ", e.what());
     }
-    if (m_impl->rt.functions.count(fn)) {
-        // A handler that declares a parameter (OnTriggerEnter(Collider other)) gets the arg.
-        std::vector<Value> args;
-        if (!m_impl->rt.functions[fn].params.empty()) args.push_back(arg);
-        try { m_impl->rt.Call(fn, args); }
-        catch (const std::exception& e) { Log::Error("OkayScript ", fn.c_str(), "(): ", e.what()); }
-    }
+    return {};
 }
 
 vs::VsValue OkayScriptVM::GetGlobal(const std::string& name) const {

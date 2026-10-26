@@ -38,6 +38,7 @@
 #include "okay/Components/SpriteAnimator.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Net/NetworkManager.hpp"
+#include "okay/Net/SessionTicket.hpp"
 #include "okay/Platform/GameIpc.hpp"
 #include "okay/Net/ServerBrowser.hpp"
 #include "okay/Net/MatchResults.hpp"
@@ -4796,6 +4797,18 @@ struct OkayScriptVM::Impl {
         b["net_encrypt"] = [this](std::vector<Value>& a) {
             if (NetworkManager* n = Net()) { if (!a.empty()) n->encryption = (a[0].AsFloat() != 0.0f); return Value{n->encryption ? 1.0f : 0.0f}; }
             return Value{0.0f};
+        };
+        // Client: pin the host's identity key (base64url, the key a dedicated
+        // server prints for --host-key); "" removes the pin. 1 if it's well formed.
+        // A pinned client joins only that host, over the sealed join.
+        b["net_pin_host"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = Net();
+            if (!n || a.empty()) return Value{0.0f};
+            const std::string key = a[0].AsString();
+            std::vector<std::uint8_t> raw;
+            if (!key.empty() && (!net::SessionTicket::Base64UrlDecode(key, raw) || raw.size() != 32)) return Value{0.0f};
+            n->pinnedHostKey = key;
+            return Value{1.0f};
         };
         // 1 once an encrypted session is established, else 0.
         b["net_encrypted"] = [this](std::vector<Value>&) {

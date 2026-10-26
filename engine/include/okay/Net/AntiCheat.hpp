@@ -65,12 +65,19 @@ struct AntiCheatSettings {
     std::string ticketKey;
     /// This server's id as tickets name it ("aud"); "" = accept any.
     std::string ticketAudience;
+    /// How far a client's game clock may run off the server's, as a fraction
+    /// (0.05 = 5%; 0 = no check). The server asks each client for its clock
+    /// about once a second; a client that runs too fast or slow for three
+    /// 2-second windows in a row (a speed hack) is reported, and so is one that
+    /// stops answering. Clients older than this check never answer: turn it
+    /// on once every player has the update.
+    float maxClockDrift = 0.0f;
 
     /// .okayac text: one "key value" per line, '#' comments:
     ///   enabled true | spawn <prefab path> (repeatable) | maxSyncSpeed 12
     ///   maxSyncVarsPerSecond 20 | kickAfterViolations 5 | ownerOnlySyncVars true
     ///   requireEncryption true | ticketKey <base64url> | ticketAudience <server id>
-    ///   maxRpcsPerSecond 30 | maxRpcBytes 4096
+    ///   maxRpcsPerSecond 30 | maxRpcBytes 4096 | maxClockDrift 0.05
     static bool Parse(const std::string& text, AntiCheatSettings& out, std::string* error = nullptr);
     bool LoadFile(const std::string& path, std::string* error = nullptr);
     std::string ToText() const;
@@ -86,6 +93,7 @@ enum class CheatKind {
     SpeedHack,         ///< a NetworkSync object moving faster than maxSyncSpeed
     RpcRejected,       ///< a NetValidator / OnValidateRpc refused the RPC
     RpcFlood,          ///< one RPC called more often than maxRpcsPerSecond
+    ClockDrift,        ///< the client's game clock runs off the server's (a speed hack), or it won't say
 };
 const char* CheatKindName(CheatKind k);
 
@@ -144,6 +152,9 @@ public:
     void Tick(float dt);
     /// A peer left: forget its counters (and its objects' last positions).
     void ForgetPeer(std::uint32_t peer);
+    /// Report and count a refusal found outside the message checks (the
+    /// network layer's clock heartbeat). Always returns false.
+    bool Report(std::uint32_t peer, CheatKind k, const std::string& detail) { return Refuse(peer, k, detail); }
     void Reset();
 
 private:

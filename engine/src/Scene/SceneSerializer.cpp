@@ -740,7 +740,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  anticheat " << (s.enabled ? 1 : 0) << " " << s.maxSyncSpeed << " " << s.maxSyncVarsPerSecond
             << " " << s.kickAfterViolations << " " << (s.ownerOnlySyncVars ? 1 : 0)
             << " " << Quote(ac->file) << " " << Quote(allow)
-            << " " << s.maxRpcsPerSecond << " " << s.maxRpcBytes << "\n";
+            << " " << s.maxRpcsPerSecond << " " << s.maxRpcBytes;
+        if (s.maxClockDrift > 0.0f) out << " " << s.maxClockDrift;   // only when on: other scenes don't change
+        out << "\n";
     }
     for (auto* nv : go->GetComponents<NetValidator>())
         out << "  netvalidator " << Quote(nv->rpc) << " " << nv->maxBytes << " " << nv->maxPerSecond
@@ -4797,6 +4799,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         int rps = s.maxRpcsPerSecond, rb = s.maxRpcBytes;
                         in >> rps >> rb;
                         s.maxRpcsPerSecond = std::max(0, rps); s.maxRpcBytes = std::max(0, rb);
+                        in >> std::ws;   // and the clock check came after those
+                        if (std::isdigit(in.peek()) || in.peek() == '.') {
+                            float drift = s.maxClockDrift;
+                            in >> drift;
+                            s.maxClockDrift = std::isfinite(drift) ? std::clamp(drift, 0.0f, 1.0f) : 0.0f;
+                        }
                     }
                 } else if (field == "netvalidator") {
                     auto* nv = go->AddComponent<NetValidator>();

@@ -3,13 +3,16 @@
 #include "okay/Net/UdpSocket.hpp"
 #include "okay/Net/SecureChannel.hpp"
 #include "okay/Net/AntiCheat.hpp"
+#include "okay/Net/ClockCheck.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Quat.hpp"
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <unordered_map>
+#include <algorithm>
 #include <unordered_set>
 #include <vector>
 
@@ -221,6 +224,24 @@ public:
     /// Client: the session numbers its packets and refuses replays (an
     /// anti-cheat server that requires encryption turns this on).
     bool ReplayProtected() const { return m_mode == Mode::Client && m_secure.Ready() && m_secure.Sequenced(); }
+    /// Client: the join itself (name, password, token) went sealed. With
+    /// encryption on, the client first trades keys with the server (a
+    /// versioned key exchange) and sends its Join encrypted; an older server
+    /// that doesn't answer gets the plaintext Join after a few tries.
+    bool SealedJoin() const { return m_mode == Mode::Client && m_keyed; }
+
+    /// Client: pin the host's identity, the base64url ed25519 public key a
+    /// server prints from HostIdentityPublicKey(). With a pin the client joins
+    /// only a server that signs the key exchange with the matching key, and
+    /// never falls back to a plaintext join. Needs encryption on. "" = no pin.
+    std::string pinnedHostKey;
+    /// Server: the ed25519 identity seed (base64url, 32 bytes) it signs its key
+    /// exchange with, so pinned clients can tell it from an impostor. Keep it
+    /// secret (the dedicated server reads it from --host-key FILE). False for a
+    /// malformed seed; "" clears it.
+    bool SetHostIdentity(const std::string& seedB64);
+    /// The public key that goes with SetHostIdentity (base64url), or "".
+    std::string HostIdentityPublicKey() const;
     /// The verified account id a peer joined with (server only); "" if anonymous.
     std::string PeerUserId(std::uint32_t id) const;
     /// This peer's own verified id once joined (client), or "" if anonymous.
@@ -438,6 +459,18 @@ public:
 
 private:
     struct PeerState { std::uint32_t id; float x, y, z; char glyph; };
+    // Which reliable sequence numbers were already delivered: the newest one
+    // and a 4096-wide window behind it, instead of every number ever seen. A
+    // number older than the window counts as delivered (it's acked, not run
+    // twice); the sender resends unacked messages long before that.
+    struct SeqWindow {
+        static constexpr std::uint32_t kWidth = 4096;
+        std::uint32_t newest = 0;
+        bool any = false;
+        std::vector<std::uint64_t> bits = std::vector<std::uint64_t>(kWidth / 64, 0);
+        bool Accept(std::uint32_t seq);   // true the first time a seq is seen
+        void Clear() { newest = 0; any = false; std::fill(bits.begin(), bits.end(), 0); }
+    };
     struct Client {
         net::Endpoint endpoint;
         std::uint32_t id;
@@ -460,8 +493,20 @@ private:
         // Per-client reliable channel (server side).
         std::uint32_t relSeq = 0;   // next outgoing sequence to this client
         std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>> relOut; // unacked
-        std::unordered_set<std::uint32_t> relSeen;  // delivered seqs (de-dup)
+        SeqWindow relSeen;          // delivered seqs (de-dup)
+        bool sealedJoin = false;    // joined through the sealed handshake
+        // Anti-cheat clock heartbeat (maxClockDrift): the check, when to ask
+        // next, how long since a good answer, and since its last drift report.
+        std::shared_ptr<net::ClockCheck> clock;
+        float clockTimer = 0.0f, clockQuiet = 0.0f, clockReported = 1e9f;
     };
+    // Sealed-join key exchanges waiting for their Join (server side), by address.
+    struct PendingJoin {
+        net::SecureChannel secure;
+        std::vector<std::uint8_t> clientPk;
+        float age = 0.0f;
+    };
+    static constexpr std::size_t kMaxPendingJoins = 256;
 
     void ResendReliable(std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>>& out,
                         const net::Endpoint& to, float dt);
@@ -568,7 +613,17 @@ private:
     // Client-side reliable channel (to the server).
     std::uint32_t m_relSeq = 0;
     std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>> m_relOut;
-    std::unordered_set<std::uint32_t> m_relSeen;
+    SeqWindow m_relSeen;
+    double m_acClockMs = 0.0;     // server: the clock the heartbeat checks clients against
+    double m_gameClockMs = 0.0;   // client: the game clock it answers with
+    std::unordered_map<net::Endpoint, PendingJoin, net::EndpointHash> m_pendingJoins;
+    std::vector<std::uint8_t> m_hostSeed;   // server identity (ed25519 seed), empty = none
+    // Client sealed join: key hellos sent unanswered, keyed by the server's
+    // JoinKey, or given up on (an older server: the plaintext Join).
+    int  m_joinHellos = 0;
+    bool m_keyed = false;
+    bool m_legacyJoin = false;
+    bool m_pinWarned = false;
 
     // Client-only
     net::Endpoint m_serverEp{};

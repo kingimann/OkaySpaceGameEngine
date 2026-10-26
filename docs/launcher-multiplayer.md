@@ -252,6 +252,9 @@ The server decides; clients only ask.
 | Server-owned score everyone sees | `net_set_score(id, n)`, `net_score(id)` | |
 | Turn the anti-cheat on / off, or load its rules | `net_anticheat([on])`, `net_anticheat_load("rules.okayac")` | `--anticheat FILE` (or `anticheat = FILE` in server.cfg) |
 | A player's refusals this minute | `net_violations(id)` | |
+| Sign joins so players can pin this host | | `--host-key FILE` (or `host_key = FILE`) |
+| Client: join only the host with this key | `net_pin_host("key")` | |
+| Flag game clocks running too fast (speed hacks) | `maxClockDrift` in the rules | (in the `--anticheat` file) |
 
 These always hold, whether or not the anti-cheat is on:
 - Only a joined player can change synced variables (`SetVar`). A packet from

@@ -273,7 +273,7 @@ inline const char* VsNodeHelp(const char* type) {
         {"OnObjectPlaced", "Runs when a player places an object in build mode (also on undo / redo). Other Name is the object; Event Value its build id."},
         {"OnObjectRemoved","Runs when a player deletes an object in build mode (also on undo / redo). Other Name is the object."},
         {"OnLogicSignal",  "Runs when a wired door, light, spawner or event turns on or off. Event Name is its signal name; Event Value is true when on."},
-        {"OnCheatDetected","Server only: runs when anti-cheat refuses something a client sent. Event Name is what was caught (\"speed hack\", \"forged transform\", \"rpc flood\", ...); Event Value is the player's peer id; Get Var cheat_detail is the object, prefab or key involved."},
+        {"OnCheatDetected","Server only: runs when anti-cheat refuses something a client sent. Event Name is what was caught (\"speed hack\", \"forged transform\", \"rpc flood\", \"clock drift\", ...); Event Value is the player's peer id; Get Var cheat_detail is the object, prefab or key involved."},
         {"OnValidateRpc",  "Server only: runs before a client's RPC is accepted. Event Name is the RPC, Event Value its data, Get Var rpc_sender the player. Use Reject Rpc to refuse it."},
         {"RejectRpc",      "Inside On Validate Rpc: refuses the RPC being checked. It won't run or reach anyone, and counts as a cheat attempt by the sender."},
         {"EnterBuildMode", "Puts the player into build mode (needs a Build Mode component in the scene)."},

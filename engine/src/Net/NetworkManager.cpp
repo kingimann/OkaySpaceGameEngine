@@ -1,5 +1,7 @@
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Net/SessionTicket.hpp"
+#include "AntiCheatCrypto.hpp"   // shared/: ed25519 for the host identity (#269)
+#include <cstdio>
 #include <ctime>
 #include <unordered_set>
 #include <mutex>
@@ -31,8 +33,27 @@ namespace {
         Query = 17, QueryInfo = 18,  // server browser: "who are you?" without joining
         Correct = 19,                // server -> client: you're here (move rejected / teleported)
         PlayerQuery = 20, PlayerList = 21, PlayerChallenge = 22,   // server browser: who's playing
-        RosterMsg = 23               // server -> clients: everyone in the room, scores, time
+        RosterMsg = 23,              // server -> clients: everyone in the room, scores, time
+        JoinHello = 24,              // client -> server: [u8 version][string clientPk], padded
+        JoinKey = 25,                // server -> client: [u8 version][string serverPk][string signature]
+        ClockPing = 26,              // server -> client: [u64 nonce][u32 seq][string key] (anti-cheat clock)
+        ClockPong = 27               // client -> server: [u64 nonce][u32 seq][u64 clientMs][string tag]
     };
+    constexpr float kClockQuietLimit = 10.0f;   // no good clock answer for this long: reported
+    constexpr float kClockReportEvery = 2.0f;   // one drift report per heartbeat window
+    void WriteU64(net::Packet& p, std::uint64_t v) { p.Write(static_cast<std::uint32_t>(v)); p.Write(static_cast<std::uint32_t>(v >> 32)); }
+    std::uint64_t ReadU64(net::Packet& p) { const std::uint64_t lo = p.ReadU32(); return lo | (static_cast<std::uint64_t>(p.ReadU32()) << 32); }
+    // The sealed join: the client trades keys first (JoinHello / JoinKey) and
+    // sends its Join encrypted. Version 2 is the first such version (a plain
+    // Join is version 1).
+    constexpr std::uint8_t kJoinVersion = 2;
+    constexpr std::size_t kJoinHelloSize = 128;    // at least JoinKey's size: no amplification
+    constexpr int kSealedJoinTries = 4;            // unanswered hellos before the plaintext Join
+    constexpr float kPendingJoinTtl = 10.0f;
+    // What a pinned client checks the server's signature over.
+    std::string JoinKeyMessage(const std::string& serverPk, const std::string& clientPk) {
+        return "okayjoin2|" + serverPk + clientPk;
+    }
     constexpr float kFragmentTtl = 5.0f;        // drop half-assembled messages after this
     // Outer tag marking an encrypted datagram (nonce||ciphertext follows). Distinct
     // from every Msg type (1..16) and from a plaintext message's leading type byte.
@@ -65,6 +86,50 @@ NetworkManager::~NetworkManager() { std::lock_guard<std::mutex> l(g_liveMutex); 
 bool NetworkManager::IsLive(const NetworkManager* nm) {
     std::lock_guard<std::mutex> l(g_liveMutex);
     return nm && LiveManagers().count(nm) != 0;
+}
+
+bool NetworkManager::SeqWindow::Accept(std::uint32_t seq) {
+    if (!any) { any = true; newest = seq; std::fill(bits.begin(), bits.end(), 0); bits[0] = 1; return true; }
+    if (seq > newest) {
+        // Slide: what was `back` behind the newest is now `back + shift` behind.
+        const std::uint32_t shift = seq - newest;
+        if (shift >= kWidth) std::fill(bits.begin(), bits.end(), 0);
+        else {
+            const std::size_t ws = shift / 64, bs = shift % 64, n = bits.size();
+            for (std::size_t w = n; w-- > 0;) {
+                std::uint64_t v = w >= ws ? bits[w - ws] << bs : 0;
+                if (bs && w >= ws + 1) v |= bits[w - ws - 1] >> (64 - bs);
+                bits[w] = v;
+            }
+        }
+        bits[0] |= 1;
+        newest = seq;
+        return true;
+    }
+    const std::uint32_t back = newest - seq;
+    if (back >= kWidth) return false;               // older than the window: treat as delivered
+    std::uint64_t& word = bits[back / 64];
+    const std::uint64_t bit = std::uint64_t(1) << (back % 64);
+    if (word & bit) return false;
+    word |= bit;
+    return true;
+}
+
+bool NetworkManager::SetHostIdentity(const std::string& seedB64) {
+    if (seedB64.empty()) { m_hostSeed.clear(); return true; }
+    std::vector<std::uint8_t> seed;
+    if (!net::SessionTicket::Base64UrlDecode(seedB64, seed) || seed.size() != 32) return false;
+    m_hostSeed = std::move(seed);
+    return true;
+}
+
+std::string NetworkManager::HostIdentityPublicKey() const {
+    if (m_hostSeed.size() != 32) return {};
+    okayac::ed25519::Seed seed;
+    std::copy(m_hostSeed.begin(), m_hostSeed.end(), seed.begin());
+    const auto pk = okayac::ed25519::PublicKeyFromSeed(seed);
+    okayac::Wipe(seed.data(), seed.size());
+    return net::SessionTicket::Base64UrlEncode(std::vector<std::uint8_t>(pk.begin(), pk.end()));
 }
 
 bool NetworkManager::StartServer(std::uint16_t port) {
@@ -221,7 +286,15 @@ void NetworkManager::Stop() {
     m_serverName.clear();
     m_joinRejected = false;
     m_relOut.clear();
-    m_relSeen.clear();
+    m_relSeen.Clear();
+    m_acClockMs = 0.0;
+    m_gameClockMs = 0.0;
+    m_pendingJoins.clear();
+    m_secure = net::SecureChannel{};   // a new session makes new keys (a reconnect mustn't keep the old ones)
+    m_joinHellos = 0;
+    m_keyed = false;
+    m_legacyJoin = false;
+    m_pinWarned = false;
     m_relSeq = 0;
     m_roster.clear();
     m_corrections = 0;
@@ -640,7 +713,12 @@ void NetworkManager::ResendReliable(
 // {Fragment, msgId, index, count} so the receiver can reassemble in order.
 net::SecureChannel* NetworkManager::SessionFor(const net::Endpoint& ep) {
     if (m_mode == Mode::Client) return (ep == m_serverEp) ? &m_secure : nullptr;
-    if (m_mode == Mode::Server) { auto it = m_clients.find(ep); return it != m_clients.end() ? &it->second.secure : nullptr; }
+    if (m_mode == Mode::Server) {
+        auto it = m_clients.find(ep);
+        if (it != m_clients.end()) return &it->second.secure;
+        auto pj = m_pendingJoins.find(ep);   // a sealed join in progress
+        return pj != m_pendingJoins.end() ? &pj->second.secure : nullptr;
+    }
     return nullptr;
 }
 
@@ -989,6 +1067,7 @@ void NetworkManager::AntiCheatAfterRefusal(std::uint32_t peer) {
 
 void NetworkManager::ServerTick(float dt) {
     m_serverTime += dt;
+    m_acClockMs += static_cast<double>(dt) * 1000.0;
     ++m_tickCount;
     if (anticheat.settings.enabled) anticheat.Tick(dt);
     // Rate limit: true if this client may send another custom message this second.
@@ -1023,6 +1102,65 @@ void NetworkManager::ServerTick(float dt) {
         if (!sealed && anticheat.settings.enabled && anticheat.settings.requireEncryption &&
             type != Join && type != Query && type != PlayerQuery && m_clients.count(from))
             continue;
+        // And in every mode: once a peer's session is keyed, it seals everything
+        // (a plaintext Join or key hello is only a retry from before it knew).
+        if (!sealed && type != Join && type != JoinHello && type != Query && type != PlayerQuery) {
+            const net::SecureChannel* s = SessionFor(from);
+            if (s && s->Ready()) continue;
+        }
+        if (type == JoinHello) {
+            // A sealed join starts: trade keys, then the client sends its Join
+            // encrypted. The hello is padded to at least the answer's size.
+            if (len < kJoinHelloSize || m_clients.count(from)) continue;
+            const std::uint8_t version = p.ReadU8();
+            const std::string clientPk = p.ReadString();
+            if (!p.Ok() || version < kJoinVersion) continue;
+            if (anticheat.settings.enabled && anticheat.settings.requireEncryption) encryption = true;   // the rules ask for it
+            net::Packet k(JoinKey);
+            k.Write(kJoinVersion);
+            if (!encryption || !net::SecureChannel::Available() ||
+                clientPk.size() != net::SecureChannel::kPublicKeyBytes) {
+                // No encryption here: the client may join in the clear.
+                k.Write(std::string()); k.Write(std::string());
+                SendDatagram(from, k.Data(), k.Size(), /*allowEncrypt=*/false);
+                continue;
+            }
+            auto pj = m_pendingJoins.find(from);
+            if (pj == m_pendingJoins.end()) {
+                if (m_pendingJoins.size() >= kMaxPendingJoins) {
+                    // Full: the oldest exchange goes (it has had the longest).
+                    auto oldest = std::max_element(m_pendingJoins.begin(), m_pendingJoins.end(),
+                        [](const auto& a, const auto& b) { return a.second.age < b.second.age; });
+                    m_pendingJoins.erase(oldest);
+                }
+                pj = m_pendingJoins.emplace(from, PendingJoin{}).first;
+            }
+            PendingJoin& pending = pj->second;
+            const std::vector<std::uint8_t> pkBytes(clientPk.begin(), clientPk.end());
+            if (pending.clientPk != pkBytes || !pending.secure.Ready()) {
+                pending.secure = net::SecureChannel{};
+                pending.secure.GenerateKeys();
+                if (!pending.secure.Establish(pkBytes, /*asServer=*/true)) { m_pendingJoins.erase(pj); continue; }
+                pending.secure.SetSequenced(true);
+                pending.secure.SetAssociatedData({kEncEnvelope, kJoinVersion});
+                pending.clientPk = pkBytes;
+            }
+            pending.age = 0.0f;
+            const auto spk = pending.secure.PublicKey();
+            const std::string serverPk(spk.begin(), spk.end());
+            k.Write(serverPk);
+            std::string sig;
+            if (m_hostSeed.size() == 32) {
+                okayac::ed25519::Seed seed;
+                std::copy(m_hostSeed.begin(), m_hostSeed.end(), seed.begin());
+                const auto sg = okayac::ed25519::Sign(JoinKeyMessage(serverPk, clientPk), seed);
+                okayac::Wipe(seed.data(), seed.size());
+                sig.assign(sg.begin(), sg.end());
+            }
+            k.Write(sig);
+            SendDatagram(from, k.Data(), k.Size(), /*allowEncrypt=*/false);
+            continue;
+        }
         if (type == Query) {
             // A server browser asking for our details (no join, no state). The
             // request is padded to at least the size of a typical answer so the
@@ -1072,6 +1210,9 @@ void NetworkManager::ServerTick(float dt) {
             std::string token = p.ReadString();           // identity token (may be empty)
             std::string clientPk = p.ReadString();        // encryption public key (may be empty)
             bool existed = m_clients.count(from) != 0;
+            // A sealed join arrives encrypted under its key exchange's session.
+            auto pendingIt = (!existed && sealed) ? m_pendingJoins.find(from) : m_pendingJoins.end();
+            const bool viaPending = pendingIt != m_pendingJoins.end();
             std::string userId;
             const bool acOn = anticheat.settings.enabled;
             const bool needCrypto = acOn && anticheat.settings.requireEncryption;
@@ -1083,7 +1224,8 @@ void NetworkManager::ServerTick(float dt) {
                 std::string ticketWhy;
                 if ((int)m_clients.size() >= maxPlayers) why = "server is full";
                 else if (!password.empty() && pass != password) why = "wrong password";
-                else if (needCrypto && (!net::SecureChannel::Available() || clientPk.size() != net::SecureChannel::kPublicKeyBytes))
+                else if (needCrypto && !viaPending)
+                    // The password and ticket must not travel in the clear.
                     why = net::SecureChannel::Available() ? "encryption required (update the game)"
                                                           : "encryption required, but this server was built without libsodium";
                 else if (acOn && !anticheat.settings.ticketKey.empty()) {
@@ -1106,7 +1248,7 @@ void NetworkManager::ServerTick(float dt) {
                 else if (m_verifyToken && !m_verifyToken(token, userId)) why = "authentication failed";
                 if (why) {
                     net::Packet r(Reject); r.Write(std::string(why));
-                    SendDatagram(from, r.Data(), r.Size(), /*allowEncrypt=*/false);
+                    SendDatagram(from, r.Data(), r.Size(), /*allowEncrypt=*/viaPending);
                     continue;
                 }
             }
@@ -1120,8 +1262,15 @@ void NetworkManager::ServerTick(float dt) {
                 c.room = room;
                 c.joinedAt = m_serverTime;
                 c.userId = userId;
+                if (viaPending) {
+                    // The key exchange's session becomes the client's (numbered,
+                    // with the version authenticated).
+                    c.secure = pendingIt->second.secure;
+                    c.sealedJoin = true;
+                    m_pendingJoins.erase(pendingIt);
+                }
                 // Establish this client's encrypted session from its public key.
-                if (encryption && net::SecureChannel::Available() && !clientPk.empty()) {
+                else if (encryption && net::SecureChannel::Available() && !clientPk.empty()) {
                     c.secure.GenerateKeys();
                     c.secure.Establish(std::vector<std::uint8_t>(clientPk.begin(), clientPk.end()),
                                        /*asServer=*/true);
@@ -1143,7 +1292,8 @@ void NetworkManager::ServerTick(float dt) {
             // number sealed packets); a server without anti-cheat P2 sends the
             // same Welcome as before, and older clients stop reading earlier.
             if (c.secure.Sequenced()) w.Write(std::uint8_t(1));
-            SendDatagram(from, w.Data(), w.Size(), /*allowEncrypt=*/false);  // pre-handshake
+            // A sealed joiner already has the keys; a plaintext joiner gets them here.
+            SendDatagram(from, w.Data(), w.Size(), /*allowEncrypt=*/c.sealedJoin);
             if (isNew) {
                 OKAY_INFO("net: client ", c.id, " '", c.name, "' joined from ", from.ToString());
                 if (m_peerJoined) m_peerJoined(c.id, c.name);
@@ -1165,6 +1315,28 @@ void NetworkManager::ServerTick(float dt) {
             ApplySyncVar(key, value);
             net::Packet out(SyncVar); out.Write(key); out.Write(value);
             for (auto& [ep, c] : m_clients) SendDatagram(c.endpoint, out.Data(), out.Size());
+        } else if (type == ClockPong) {
+            // A client's clock, for the heartbeat (anti-cheat maxClockDrift).
+            auto it = m_clients.find(from);
+            if (it == m_clients.end() || !it->second.clock) continue;
+            const std::uint64_t nonce = ReadU64(p);
+            const std::uint32_t seq = p.ReadU32();
+            const std::uint64_t clientMs = ReadU64(p);
+            const std::string tag = p.ReadString();
+            if (!p.Ok()) continue;
+            Client& c = it->second;
+            const auto v = c.clock->Accept(nonce, seq, clientMs, tag, static_cast<std::uint64_t>(m_acClockMs));
+            if (v == net::ClockCheck::Verdict::BadResponse) continue;
+            c.clockQuiet = 0.0f;
+            if (v == net::ClockCheck::Verdict::Drift && c.clockReported >= kClockReportEvery) {
+                c.clockReported = 0.0f;
+                const double d = c.clock->LastDrift() * 100.0;
+                char detail[48];
+                std::snprintf(detail, sizeof detail, "%+.0f%%", d);
+                const std::uint32_t id = c.id;
+                anticheat.Report(id, CheatKind::ClockDrift, detail);
+                AntiCheatAfterRefusal(id);   // (may kick: c is gone after this)
+            }
         } else if (type == Ping) {
             // Echo the client's timestamp straight back so it can measure RTT.
             float stamp = p.ReadF32();
@@ -1182,7 +1354,7 @@ void NetworkManager::ServerTick(float dt) {
                 std::string data    = p.ReadString();
                 net::Packet ack(ReliableAck); ack.Write(seq);
                 SendDatagram(from, ack.Data(), ack.Size());
-                if (it->second.relSeen.insert(seq).second && rateOk(it->second) &&   // first time -> deliver
+                if (it->second.relSeen.Accept(seq) && rateOk(it->second) &&   // first time -> deliver
                     ClientMessageOk(it->second, channel, data) && AntiCheatAllows(it->second.id, channel, data))
                     Deliver(it->second.id, channel, data);
             }
@@ -1275,6 +1447,8 @@ void NetworkManager::ServerTick(float dt) {
         }
     }
     if (m_relayLost) { Stop(); return; }   // the relay refused this host (RelayError())
+    for (auto it = m_pendingJoins.begin(); it != m_pendingJoins.end();)   // key exchanges never finished
+        it = (it->second.age += dt) > kPendingJoinTtl ? m_pendingJoins.erase(it) : std::next(it);
 
     // Time out silent clients (and age the move-check / rate-limit windows).
     for (auto it = m_clients.begin(); it != m_clients.end();) {
@@ -1293,6 +1467,33 @@ void NetworkManager::ServerTick(float dt) {
             if (m_peerLeft) m_peerLeft(id);
         } else {
             ++it;
+        }
+    }
+
+    // Anti-cheat clock heartbeat: ask each client for its game clock about once
+    // a second (the answer is checked above). One that won't answer is reported
+    // too, or skipping the answer would be the way around it.
+    if (anticheat.settings.enabled && anticheat.settings.maxClockDrift > 0.0f) {
+        std::vector<std::uint32_t> quiet;
+        for (auto& [ep, c] : m_clients) {
+            if (!c.clock) c.clock = std::make_shared<net::ClockCheck>(anticheat.settings.maxClockDrift);
+            c.clockReported += dt;
+            if ((c.clockTimer -= dt) <= 0.0f) {
+                c.clockTimer = 1.0f;
+                const auto ch = c.clock->Issue(static_cast<std::uint64_t>(m_acClockMs));
+                net::Packet cp(ClockPing);
+                WriteU64(cp, ch.nonce); cp.Write(ch.seq); cp.Write(c.clock->Key());
+                SendDatagram(c.endpoint, cp.Data(), cp.Size());
+            }
+            if ((c.clockQuiet += dt) > kClockQuietLimit) {
+                c.clockQuiet = 0.0f;
+                quiet.push_back(c.id);
+            }
+        }
+        // Reported after the loop: the cheat handler (game code) may kick.
+        for (std::uint32_t id : quiet) {
+            anticheat.Report(id, CheatKind::ClockDrift, "no clock answer");
+            AntiCheatAfterRefusal(id);
         }
     }
 
@@ -1373,6 +1574,7 @@ void NetworkManager::ServerTick(float dt) {
 
 void NetworkManager::ClientTick(float dt) {
     m_clock += dt;
+    m_gameClockMs += static_cast<double>(dt) * 1000.0;
     RelayKeepAlive(dt);
     // Through a relay we don't know the host's (synthetic) endpoint until the relay
     // pairs us, so hold the join handshake until then (the recv loop below still
@@ -1380,17 +1582,43 @@ void NetworkManager::ClientTick(float dt) {
     bool awaitingRelay = m_relay && !m_relayWelcomed;
     if (!m_joined && !awaitingRelay) {
         m_joinTimer -= dt;
-        if (m_joinTimer <= 0.0f) {
+        const bool canSeal = encryption && net::SecureChannel::Available();
+        const bool pinned = !pinnedHostKey.empty();
+        if (m_joinTimer <= 0.0f && pinned && !canSeal) {
+            // A pin can only be checked over the sealed join.
+            if (!m_pinWarned) OKAY_ERROR("net: a pinned host key needs encryption on (and libsodium); not joining");
+            m_pinWarned = true;
+            m_joinTimer = 1.0f;
+        } else if (m_joinTimer <= 0.0f && canSeal && !m_keyed && !m_legacyJoin &&
+                   (pinned || m_joinHellos < kSealedJoinTries)) {
+            // Sealed join, step 1: trade keys (padded, so the answer is no bigger).
+            net::Packet h(JoinHello);
+            h.Write(kJoinVersion);
+            const auto pk = m_secure.PublicKey();
+            h.Write(std::string(pk.begin(), pk.end()));
+            std::vector<std::uint8_t> d(h.Data(), h.Data() + h.Size());
+            if (d.size() < kJoinHelloSize) d.resize(kJoinHelloSize, 0);
+            SendDatagram(m_serverEp, d.data(), d.size(), /*allowEncrypt=*/false);
+            ++m_joinHellos;
+            m_joinTimer = 0.5f;
+        } else if (m_joinTimer <= 0.0f) {
+            if (canSeal && !m_keyed && !m_legacyJoin) {
+                m_legacyJoin = true;   // an older server: it never answered the key hello
+                OKAY_WARN("net: ", m_serverEp.ToString(), " doesn't do the sealed join; joining in the clear");
+            }
             net::Packet p(Join);
             p.Write(m_localName);
             p.Write(m_localRoom);
             p.Write(password);          // matched against the server's password
             p.Write(m_authToken);       // identity token the server may verify
-            {   // our encryption public key ("" if encryption is off / unavailable)
-                auto pk = (encryption ? m_secure.PublicKey() : std::vector<std::uint8_t>{});
+            {   // our encryption public key ("" if encryption is off / unavailable, or
+                // already traded in the sealed join)
+                auto pk = (encryption && !m_keyed ? m_secure.PublicKey() : std::vector<std::uint8_t>{});
                 p.Write(std::string(pk.begin(), pk.end()));
             }
-            SendDatagram(m_serverEp, p.Data(), p.Size(), /*allowEncrypt=*/false);  // pre-handshake
+            if (m_keyed) p.Write(kJoinVersion);
+            // Step 2 of the sealed join goes encrypted; the plaintext Join is pre-handshake.
+            SendDatagram(m_serverEp, p.Data(), p.Size(), /*allowEncrypt=*/m_keyed);
             m_joinTimer = 0.5f;
         }
     } else {
@@ -1409,6 +1637,7 @@ void NetworkManager::ClientTick(float dt) {
     net::Endpoint from;
     int n;
     while ((n = ReceiveFrom(buf.data(), buf.size(), from)) > 0) {
+        if (!(from == m_serverEp)) continue;   // only our server talks to us
         const std::uint8_t* data = buf.data();
         std::size_t len = static_cast<std::size_t>(n);
         std::vector<std::uint8_t> assembled;
@@ -1417,13 +1646,58 @@ void NetworkManager::ClientTick(float dt) {
             data = assembled.data(); len = assembled.size();
         }
         std::vector<std::uint8_t> decrypted;
-        if (len >= 1 && data[0] == kEncEnvelope) {
+        const bool sealed = len >= 1 && data[0] == kEncEnvelope;
+        if (sealed) {
             net::SecureChannel* s = SessionFor(from);
             if (!s || !s->Open(data + 1, len - 1, decrypted)) continue;
             data = decrypted.data(); len = decrypted.size();
         }
         net::Packet p(data, len);
         std::uint8_t type = p.ReadU8();
+        // Once our session is keyed the server seals everything: plaintext now
+        // is someone else's (spoofing the server's address).
+        if (!sealed && m_secure.Ready()) continue;
+        if (type == JoinKey) {
+            // Sealed join, step 1's answer: the server's key (signed, if it has
+            // an identity). Step 2, the sealed Join, goes on the next tick.
+            if (m_joined || m_keyed || m_legacyJoin || !encryption) continue;
+            const std::uint8_t version = p.ReadU8();
+            const std::string serverPk = p.ReadString(), sig = p.ReadString();
+            if (!p.Ok() || version < kJoinVersion) continue;
+            if (serverPk.empty()) {
+                // The server has encryption off.
+                if (!pinnedHostKey.empty()) {
+                    if (!m_pinWarned) OKAY_ERROR("net: the server has encryption off, so its pinned key can't be checked; not joining");
+                    m_pinWarned = true;
+                    continue;
+                }
+                m_legacyJoin = true;
+                m_joinTimer = 0.0f;
+                continue;
+            }
+            const auto mine = m_secure.PublicKey();
+            if (!pinnedHostKey.empty()) {
+                std::vector<std::uint8_t> pin;
+                okayac::ed25519::PublicKey pk{};
+                okayac::ed25519::Signature sg{};
+                const bool shaped = net::SessionTicket::Base64UrlDecode(pinnedHostKey, pin) && pin.size() == pk.size() &&
+                                    sig.size() == sg.size();
+                if (shaped) { std::copy(pin.begin(), pin.end(), pk.begin()); std::copy(sig.begin(), sig.end(), sg.begin()); }
+                if (!shaped || !okayac::ed25519::Verify(JoinKeyMessage(serverPk, std::string(mine.begin(), mine.end())), sg, pk)) {
+                    // Not the pinned host (or a forgery): ignore it, the real one may still answer.
+                    if (!m_pinWarned) OKAY_WARN("net: ", m_serverEp.ToString(), " didn't prove the pinned host key; ignoring it");
+                    m_pinWarned = true;
+                    continue;
+                }
+            }
+            if (!m_secure.Establish(std::vector<std::uint8_t>(serverPk.begin(), serverPk.end()), /*asServer=*/false))
+                continue;
+            m_secure.SetSequenced(true);
+            m_secure.SetAssociatedData({kEncEnvelope, kJoinVersion});
+            m_keyed = true;
+            m_joinTimer = 0.0f;
+            continue;
+        }
         if (type == Welcome) {
             m_localId = p.ReadU32();
             m_serverName = p.ReadString();
@@ -1454,7 +1728,7 @@ void NetworkManager::ClientTick(float dt) {
             std::string data    = p.ReadString();
             net::Packet ack(ReliableAck); ack.Write(seq);
             SendDatagram(m_serverEp, ack.Data(), ack.Size());
-            if (m_relSeen.insert(seq).second) Deliver(0, channel, data);
+            if (m_relSeen.Accept(seq)) Deliver(0, channel, data);
         } else if (type == ReliableAck) {
             m_relOut.erase(p.ReadU32());
         } else if (type == Snapshot) {
@@ -1489,6 +1763,17 @@ void NetworkManager::ClientTick(float dt) {
                 list.push_back(e);
             }
             if (p.Ok()) m_roster = std::move(list);
+        } else if (type == ClockPing) {
+            // The server's clock heartbeat: answer with our game clock.
+            const std::uint64_t nonce = ReadU64(p);
+            const std::uint32_t seq = p.ReadU32();
+            const std::string key = p.ReadString();
+            if (!p.Ok() || key.empty() || key.size() > 128) continue;
+            const auto ms = static_cast<std::uint64_t>(m_gameClockMs);
+            net::Packet r(ClockPong);
+            WriteU64(r, nonce); r.Write(seq); WriteU64(r, ms);
+            r.Write(net::ClockCheck::Answer(key, nonce, seq, ms));
+            SendDatagram(m_serverEp, r.Data(), r.Size());
         } else if (type == Pong) {
             float stamp = p.ReadF32();
             m_rtt = (m_clock - stamp) * 1000.0f;   // round-trip in ms

@@ -35,6 +35,8 @@ ownerOnlySyncVars true              # "<netId>.<name>" keys are the owner's
 requireEncryption true              # only encrypted clients; numbered packets
 ticketKey <base64url ed25519 public key>
 ticketAudience arena-1              # this server's id in tickets ("" = any)
+# Network hardening
+maxClockDrift 0.05                  # a client's game clock may run 5% off; 0 = no check
 ```
 
 A game hosted through a relay (`HostViaRelay` / `net_host_relay`) runs the same
@@ -129,6 +131,63 @@ Nothing is deployed. To go live:
 To rotate the key, run step 1 again, update the secrets and every server's
 `ticketKey` together, and redeploy. Tickets signed with the old key stop working
 when the servers switch.
+
+## Network hardening
+
+These hold whether or not the anti-cheat is on, unless a setting is named:
+
+- **A client listens only to its server.** A packet from any other address is
+  dropped before it's read (a stranger's `Kicked`, say).
+- **Once a session is keyed, plaintext is someone else's.** Each end drops
+  unsealed packets from a peer it shares keys with. The only exceptions are a
+  client's Join and key hello, which can be retries sent before it got the keys,
+  and server-browser queries.
+- **The Join is sealed.** With `encryption` on, the client first sends a key
+  hello: the protocol version (2) and its public key, padded to at least the
+  size of the answer, so a spoofed hello can't make the server send more than
+  it got. The server answers with its key (`JoinKey`), and the Join, with the
+  name, password and token or ticket, goes encrypted.
+  - Sealed-join sessions number every packet (replay window) and authenticate
+    the envelope byte and protocol version as AEAD associated data.
+  - An older server never answers the hello. After 4 tries (2 s) the client
+    joins in the clear as before.
+  - A server with `encryption` off answers "no encryption", and the client
+    joins in the clear at once.
+  - With `requireEncryption`, the server refuses the plaintext Join, so a
+    ticket never travels in the clear.
+- **Pinned host keys.** A server can have an ed25519 identity:
+  `SetHostIdentity(seed)`, or `--host-key FILE` / `host_key = FILE` on the
+  dedicated server, which prints the public key at startup. It signs every key
+  exchange. A client that pins that key (`pinnedHostKey`, or
+  `net_pin_host(key)` in OkayScript) joins only a server that signs with it. A
+  pinned client never falls back to the plaintext Join, and won't join with
+  encryption off.
+  - Without a pin, the sealed join stops anyone listening, but not a
+    man-in-the-middle.
+  - The seed is the private key: keep it on the server, never in a game build
+    or a `.okayac` file.
+- **Reliable de-dup is a window.** Each peer remembers the newest reliable
+  sequence number and the 4096 before it, instead of every number ever seen. A
+  message older than that is acked but not run.
+- **The clock heartbeat** (`maxClockDrift`, needs `enabled`). The server asks
+  each client for its game clock about once a second, using #269's
+  `ClockHeartbeat` (an HMAC challenge and response), and compares it with its
+  own. A client running more than `maxClockDrift` fast or slow for three
+  2-second windows in a row is reported as **clock drift** ("+50%"), at most
+  once per window. So is a client that gives no good answer for 10 s ("no clock
+  answer"); otherwise skipping the answer would get around the check.
+  - Clients without this update never answer, so turn it on only once every
+    player has it.
+  - The key travels with each challenge, so the HMAC only adds anything over an
+    encrypted session.
+
+#302 (P2) already covers:
+- `requireEncryption`: only encrypted clients;
+- packet sequence numbers and the 64-packet replay window, behind the Welcome flag;
+- dropping plaintext from joined clients when encryption is required;
+- session tickets, and binding a player to their account id.
+
+This section adds the rest: every mode, and the Join itself.
 
 ## P3: client integrity (opt-in)
 

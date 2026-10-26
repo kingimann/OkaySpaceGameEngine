@@ -49,6 +49,11 @@ struct DedicatedServerOptions {
     /// while reading the options, so a bad file stops startup with its error).
     std::string anticheatFile;
     AntiCheatSettings anticheat;     ///< what anticheatFile holds (enabled only when one was given)
+    /// --host-key FILE / host_key = FILE: the server's identity seed (base64url,
+    /// 32 bytes, from FILE), read while parsing. Clients can pin the public key
+    /// it prints at startup (NetworkManager::pinnedHostKey).
+    std::string hostKeyFile;
+    std::string hostKeySeed;
 };
 
 /// Read `--server` and its flags (plus OKAY_SERVER_* environment variables, which

@@ -4,6 +4,8 @@
 #include "okay/Components/CharacterController3D.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/CharacterController2D.hpp"
+#include "okay/Components/TopDownController2D.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -219,6 +221,58 @@ int main() {
         splitChecks(tp);
     }
 
+    // ---- The 2D controllers: the same split ------------------------------------------
+    {
+        Scene t("CC2");
+        auto* c = t.CreateGameObject("P")->AddComponent<CharacterController2D>();
+        c->speed = 5.0f; c->runSpeed = 8.0f; c->sprintKey = 'r';
+        t.Start();
+        CHECK(FindPlayerSim(c->gameObject) == c);
+        Input::FeedKeys({});
+        Input::FeedKeys({'w', 'r', ' '});
+        c->Simulate(PlayerInput{}, 0.5f);                  // keys held, empty command
+        CHECK(c->transform->localPosition.y == 0.0f);
+        const PlayerInput r = c->ReadLocalInput();
+        CHECK(r.move.y > 0.9f && r.Held(PlayerInput::Sprint) && r.Held(PlayerInput::Jump) && r.Pressed(PlayerInput::Jump));
+        Input::FeedKeys({});
+        PlayerInput in; in.move = Vec2(1.0f, 0.0f);
+        for (int i = 0; i < 10; ++i) c->Simulate(in, 0.1f);
+        CHECK(std::fabs(c->transform->localPosition.x - 5.0f) < 1e-3f);
+        in.held = PlayerInput::Sprint;
+        for (int i = 0; i < 10; ++i) c->Simulate(in, 0.1f);
+        CHECK(std::fabs(c->transform->localPosition.x - 13.0f) < 1e-3f);
+    }
+    {
+        Scene t("TD2");
+        auto* c = t.CreateGameObject("P")->AddComponent<TopDownController2D>();
+        c->speed = 5.0f; c->dashKey = 'x'; c->dashSpeed = 16.0f; c->dashDuration = 0.2f; c->driveAnimation = false;
+        t.Start();
+        CHECK(FindPlayerSim(c->gameObject) == c);
+        Input::FeedKeys({});
+        Input::FeedKeys({'d', 'x'});
+        c->Simulate(PlayerInput{}, 0.1f);
+        CHECK(c->transform->localPosition.x == 0.0f);
+        const PlayerInput r = c->ReadLocalInput();
+        CHECK(r.move.x > 0.9f && r.Pressed(PlayerInput::Dash) && !r.Held(PlayerInput::AltFire));
+        Input::FeedKeys({});
+        PlayerInput in; in.move = Vec2(1.0f, 0.0f); in.pressed = PlayerInput::Dash;
+        c->Simulate(in, 0.1f);                              // dash: 16 u/s
+        CHECK(std::fabs(c->transform->localPosition.x - 1.6f) < 1e-3f);
+        in.pressed = 0;                                     // held dash key doesn't re-dash
+        c->Simulate(in, 0.1f); c->Simulate(in, 0.1f);
+        CHECK(std::fabs(c->transform->localPosition.x - 1.6f - 1.6f - 0.5f) < 1e-3f);
+        // Mouse facing from a command: the yaw, when it says there is an aim.
+        c->faceMode = (int)TopDownController2D::FaceMode::Mouse;
+        c->spriteForward = (int)TopDownController2D::Forward::Right;
+        PlayerInput aim; aim.yaw = 180.0f;
+        const float was = c->transform->localRotation.ToEuler().z;
+        c->Simulate(aim, 0.1f);                             // no aim: stays
+        CHECK(c->transform->localRotation.ToEuler().z == was);
+        aim.held = PlayerInput::AltFire;
+        c->Simulate(aim, 0.1f);
+        CHECK(std::fabs(std::fabs(c->transform->localRotation.ToEuler().z) - 180.0f) < 0.01f && c->facing == 2);
+    }
+
     // ---- ... and they play server-authoritative: the server walks them by the commands --
     auto authPawn = [&](const char* kind) {
         const std::string pf = std::string("/tmp/okay_auth_") + kind + ".okayprefab";
@@ -226,35 +280,49 @@ int main() {
             Scene t("T");
             GameObject* p = t.CreateGameObject("Pawn");
             auto setup = [](auto* c) { c->walkSpeed = 5.0f; c->lockCursor = false; c->fallResetY = 0.0f; c->driveAnimation = false; };
-            if (kind[0] == 'f') setup(p->AddComponent<FirstPersonController>());
-            else                setup(p->AddComponent<ThirdPersonController>());
+            const std::string k = kind;
+            if (k == "fp")      setup(p->AddComponent<FirstPersonController>());
+            else if (k == "tp") setup(p->AddComponent<ThirdPersonController>());
+            else if (k == "cc2") p->AddComponent<CharacterController2D>()->speed = 5.0f;   // top-down mode
+            else { auto* td = p->AddComponent<TopDownController2D>(); td->speed = 5.0f; td->driveAnimation = false;
+                   td->faceMode = (int)TopDownController2D::FaceMode::Mouse; td->spriteForward = (int)TopDownController2D::Forward::Right; }
             CHECK(SceneSerializer::SaveObjectToFile(*p, pf));
         }
         AuthGame g;
         CHECK(g.Open(true, pf));
+        const bool is2D = kind[2] == '2';
         const Vec3 start = g.PosOf(g.hs);
         g.inA.move = Vec2(0.0f, 1.0f); g.inA.yaw = 90.0f;
+        if (is2D) g.inA.held = PlayerInput::AltFire;          // the top-down one aims along the yaw
         g.Pump(60);
         g.inA.move = Vec2(0.0f, 0.0f);
         g.Pump(20);
         const Vec3 server = g.PosOf(g.hs);
-        CHECK(std::fabs(server.x - start.x) > 8.0f && std::fabs(server.x - start.x) < 10.6f);
-        CHECK(std::fabs(server.z - start.z) < 0.05f);
+        // 3D: forward along yaw 90 is along x. 2D: up the screen is +y.
+        const float along = is2D ? server.y - start.y : std::fabs(server.x - start.x);
+        const float across = is2D ? server.x - start.x : server.z - start.z;
+        CHECK(along > 8.0f && along < 10.6f);
+        CHECK(std::fabs(across) < 0.05f);
         GameObject* hostPawn = g.ObjOf(g.hs);
         IPlayerSim* sim = hostPawn ? FindPlayerSim(hostPawn) : nullptr;
         CHECK(sim != nullptr);
         if (auto* fp = hostPawn ? hostPawn->GetComponent<FirstPersonController>() : nullptr) CHECK(fp->yaw == 90.0f);
         if (auto* tp = hostPawn ? hostPawn->GetComponent<ThirdPersonController>() : nullptr) CHECK(tp->yaw == 90.0f);
-        CHECK(std::fabs(g.PosOf(g.bs).x - server.x) < 0.5f);
+        if (auto* td = hostPawn ? hostPawn->GetComponent<TopDownController2D>() : nullptr)
+            CHECK(std::fabs(hostPawn->transform->localRotation.ToEuler().z - 90.0f) < 0.01f && td->facing == 1);
+        CHECK(std::fabs(g.PosOf(g.bs).x - server.x) < 0.5f && std::fabs(g.PosOf(g.bs).y - server.y) < 0.5f);
         // A teleport from the client moves nothing.
         g.pawnA->transform->localPosition = Vec3(100.0f, 0.0f, 100.0f);
         g.a->Send("__xform", g.idA + "|100 0 100 0 0 0 1");
         g.Pump(30);
-        CHECK(std::fabs(g.PosOf(g.hs).z - server.z) < 0.01f && std::fabs(g.PosOf(g.hs).x - server.x) < 0.01f);
+        CHECK(std::fabs(g.PosOf(g.hs).z - server.z) < 0.01f && std::fabs(g.PosOf(g.hs).x - server.x) < 0.01f
+              && std::fabs(g.PosOf(g.hs).y - server.y) < 0.01f);
         std::remove(pf.c_str());
     };
     authPawn("fp");
     authPawn("tp");
+    authPawn("cc2");
+    authPawn("td2");
 
     // ---- Off: as before, the client moves its own player ------------------------------
     {

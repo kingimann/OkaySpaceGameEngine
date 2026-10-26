@@ -12,6 +12,7 @@
 #include <string>
 #include "okay/Input/Input.hpp"
 #include "okay/Net/NetOwnership.hpp"
+#include "okay/Net/PlayerInput.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
 
@@ -24,7 +25,7 @@ namespace okay {
 /// travel or the mouse cursor (twin-stick aim). Drives a sibling Rigidbody2D's
 /// velocity when present (so it collides), otherwise moves the Transform. Optional
 /// world bounds clamp or screen-wrap, and it drives a Character's idle/walk/run anim.
-class TopDownController2D : public Behaviour {
+class TopDownController2D : public Behaviour, public IPlayerSim {
 public:
     // ---- Movement ----
     float speed      = 5.0f;      // walk speed
@@ -88,7 +89,47 @@ public:
     void Update(float dt) override {
         if (!transform) return;
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
+        Simulate(ReadLocalInput(), dt);
+    }
 
+    /// This frame's keys / stick / mouse (the only place the controller reads
+    /// Input::): the move axis, sprint, dash (a press), fire, and with Face Mode
+    /// Mouse the aim as a yaw (degrees, atan2 of the direction; AltFire held =
+    /// there is an aim).
+    PlayerInput ReadLocalInput() override {
+        PlayerInput in;
+        in.move = Input::AxisWASD();
+        if (useGamepad) { Vec2 pad = Input::GamepadAxis();
+            if (Mathf::Abs(pad.x) + Mathf::Abs(pad.y) > 0.15f) in.move = pad; }
+        if (sprintKey && Input::GetKey(sprintKey)) in.held |= PlayerInput::Sprint;
+        if (dashKey && Input::GetKeyDown(dashKey)) in.pressed |= PlayerInput::Dash;
+        if ((fireKey && Input::GetKey(fireKey)) || (fireButton >= 0 && Input::GetMouseButton(fireButton)))
+            in.held |= PlayerInput::Fire;
+        m_haveCursor = false;
+        if ((FaceMode)faceMode == FaceMode::Mouse) {
+            m_haveCursor = CursorWorld(m_cursor);
+            const Vec2 d = m_haveCursor ? DirTo(m_cursor) : Vec2{0, 0};
+            if (d.x != 0.0f || d.y != 0.0f) { in.yaw = std::atan2(d.y, d.x) * Mathf::Rad2Deg; in.held |= PlayerInput::AltFire; }
+        }
+        m_localCmd = true;
+        return in;
+    }
+
+    /// Move, dash, face and fire by `cmd` for `dt` seconds (local play and a
+    /// server running this player's inputs). Reads no Input:: globals. Local
+    /// play aims at the cursor from where the player ends up this frame, as
+    /// before; a server aims along the command's yaw.
+    void Simulate(const PlayerInput& cmd, float dt) override {
+        if (!transform) return;
+        m_cmd = &cmd;
+        SimulateStep(dt);
+        m_cmd = nullptr;
+        m_localCmd = false;
+    }
+
+private:
+    void SimulateStep(float dt) {
+        const PlayerInput& cmd = *m_cmd;
         // ---- Knockback: ride out the impulse, ignoring input ----
         if (m_knockTimer > 0.0f) {
             m_knockTimer -= dt;
@@ -100,18 +141,16 @@ public:
         }
 
         // ---- Input ----
-        Vec2 axis = Input::AxisWASD();
-        if (useGamepad) { Vec2 pad = Input::GamepadAxis();
-            if (Mathf::Abs(pad.x) + Mathf::Abs(pad.y) > 0.15f) axis = pad; }
+        Vec2 axis = cmd.move;
         if (normalizeDiagonal) { float l = std::sqrt(axis.x * axis.x + axis.y * axis.y);
             if (l > 1.0f) { axis.x /= l; axis.y /= l; } }
         bool moving = (Mathf::Abs(axis.x) + Mathf::Abs(axis.y)) > 0.001f;
         if (moving) m_lastDir = { axis.x, axis.y };
-        bool running = sprintKey && Input::GetKey(sprintKey) && moving;
+        bool running = sprintKey && cmd.Held(PlayerInput::Sprint) && moving;
 
         // ---- Dash ----
         if (m_dashCd > 0.0f) m_dashCd -= dt;
-        if (dashKey && Input::GetKeyDown(dashKey) && m_dashTimer <= 0.0f && m_dashCd <= 0.0f
+        if (dashKey && cmd.Pressed(PlayerInput::Dash) && m_dashTimer <= 0.0f && m_dashCd <= 0.0f
             && (m_lastDir.x != 0.0f || m_lastDir.y != 0.0f)) {
             m_dashTimer = dashDuration; m_dashCd = dashCooldown;
             m_dashDir = m_lastDir;
@@ -183,7 +222,7 @@ public:
 
         // ---- Shooting ----
         if (m_fireCd > 0.0f) m_fireCd -= dt;
-        bool wantFire = (fireKey && Input::GetKey(fireKey)) || (fireButton >= 0 && Input::GetMouseButton(fireButton));
+        bool wantFire = cmd.Held(PlayerInput::Fire);
         if (wantFire && m_fireCd <= 0.0f && !projectile.empty()) {
             Vec2 aim = ((FaceMode)faceMode == FaceMode::Mouse) ? MouseDir()
                      : (moving ? Vec2{axis.x, axis.y} : m_lastDir);
@@ -192,10 +231,13 @@ public:
         }
     }
 
-private:
     Vec2 m_lastDir{0, -1}, m_dashDir{0, 0}, m_knockVel{0, 0};
     float m_dashTimer = 0.0f, m_dashCd = 0.0f, m_fireCd = 0.0f, m_knockTimer = 0.0f;
     bool  m_animHeld = false;   // we paused the sprite walk cycle for idle
+    const PlayerInput* m_cmd = nullptr;   // the command Simulate is running
+    bool  m_localCmd = false;   // it came from ReadLocalInput this frame (aim at m_cursor)
+    bool  m_haveCursor = false;
+    Vec2  m_cursor{0, 0};       // the cursor in world XY, as ReadLocalInput saw it
 
     void Fire(Vec2 aim) {
         Scene* s = gameObject ? gameObject->scene() : nullptr;
@@ -219,20 +261,31 @@ private:
     }
 
     // Cursor position in world XY, using the main (orthographic) camera — for twin-stick aim.
-    Vec2 MouseDir() const {
+    bool CursorWorld(Vec2& world) const {
         Scene* s = gameObject ? gameObject->scene() : nullptr;
         Camera* cam = s ? s->mainCamera : nullptr;
-        if (!cam || !cam->transform) return {0, 0};
+        if (!cam || !cam->transform) return false;
         float ortho = cam->EffectiveOrthoSize();
         float w = UICanvas::Width(), h = UICanvas::Height();
         float scale = h / (2.0f * ortho); if (scale < 1e-6f) scale = 1.0f;
         Vec3 cp = cam->RenderPosition();
         Vec2 mp = Input::MousePosition();
-        Vec2 world{ cp.x + (mp.x - w * 0.5f) / scale, cp.y + (h * 0.5f - mp.y) / scale };
+        world = Vec2{ cp.x + (mp.x - w * 0.5f) / scale, cp.y + (h * 0.5f - mp.y) / scale };
+        return true;
+    }
+    // Unit direction from the player to `world` (zero when on top of it).
+    Vec2 DirTo(Vec2 world) const {
         Vec3 me = transform->Position();
         Vec2 d{ world.x - me.x, world.y - me.y };
         float l = std::sqrt(d.x * d.x + d.y * d.y);
         return l > 1e-4f ? Vec2{ d.x / l, d.y / l } : Vec2{0, 0};
+    }
+    // The aim for Face Mode Mouse: the cursor (local play) or the command's yaw.
+    Vec2 MouseDir() const {
+        if (m_localCmd) return m_haveCursor ? DirTo(m_cursor) : Vec2{0, 0};
+        if (!m_cmd || !m_cmd->Held(PlayerInput::AltFire)) return {0, 0};
+        const float a = m_cmd->yaw * Mathf::Deg2Rad;
+        return Vec2{ std::cos(a), std::sin(a) };
     }
 
     void WrapToView() {

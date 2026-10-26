@@ -1748,6 +1748,7 @@ int main(int argc, char** argv) {
               if (UIHidden(go)) return false;   // hidden canvas / inactive parent: not clickable
               return GetUIScreenRect(go, (float)cw, (float)ch, o, sz);
           };
+          UIWorld().clipContains = [cw, ch](GameObject* go, const Vec2& p) { return UIClipHitTest(go, p, (float)cw, (float)ch); };
           if (Camera* wcam = scene.mainCamera) {
               UIWorld().active = true;
               UIWorld().screenW = (float)cw; UIWorld().screenH = (float)ch;
@@ -1758,14 +1759,9 @@ int main(int argc, char** argv) {
               };
           } }
 
-        // Auto-size scroll views from their children before updating, so the wheel
-        // and scrollbar use the real content extent (not a stale hand-set value).
-        for (const auto& up : scene.Objects())
-            if (auto* sv = up->GetComponent<UIScrollView>())
-                if (sv->autoContent) {
-                    float ch = ScrollViewContentHeight(up.get());
-                    sv->contentHeight = ch > sv->size.y ? ch : sv->size.y;
-                }
+        // Lay out the UI before updating (scroll extents from their children, flex
+        // boxes, list rows), so the wheel and scrollbars use the real content extent.
+        UpdateUILayouts(scene);
 
 #ifdef OKAY_HAVE_OKAYUI
         // Start the OkayUI frame BEFORE the scene updates, so scripts' ui_* builtins
@@ -2237,6 +2233,7 @@ int main(int argc, char** argv) {
                 if (UIHidden(go)) return false;   // hidden canvas / inactive parent: not clickable
                 return GetUIScreenRect(go, (float)ww, (float)hh, o, sz);
             };
+            UIWorld().clipContains = [ww, hh](GameObject* go, const Vec2& p) { return UIClipHitTest(go, p, (float)ww, (float)hh); };
         }
         ui2d::RenderSceneUI(scene, uiBatch, w, h);
         uiBatch.Flush();   // leaves no clip, scale 1

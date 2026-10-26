@@ -78,6 +78,9 @@
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/UIScrollView.hpp"
 #include "okay/Components/UILayoutGroup.hpp"
+#include "okay/Components/UIFlexItem.hpp"
+#include "okay/Components/UIMask.hpp"
+#include "okay/Components/UIListView.hpp"
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/WorldUI.hpp"
 #include "okay/Components/WorldSpaceUI.hpp"
@@ -2107,13 +2110,31 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* lg = go->GetComponent<UILayoutGroup>()) {
         out << "  uilayout " << (int)lg->direction << " " << (int)lg->anchor << " "
             << lg->origin.x << " " << lg->origin.y << " " << lg->spacing << " " << lg->padding
-            << " " << lg->columns << " " << lg->spacingY << "\n";
+            << " " << lg->columns << " " << lg->spacingY
+            << " " << lg->boxSize.x << " " << lg->boxSize.y << " " << (int)lg->justify << " " << (int)lg->align
+            << " " << (lg->wrap ? 1 : 0) << "\n";   // flex fields (optional, newer)
     }
+    if (auto* fi = go->GetComponent<UIFlexItem>()) {
+        out << "  uiflexitem " << fi->grow << " " << fi->shrink << " " << fi->baseSize.x << " " << fi->baseSize.y
+            << " " << (int)fi->alignSelf << "\n";
+    }
+    if (auto* mk = go->GetComponent<UIMask>()) out << "  uimask " << (mk->showGraphic ? 1 : 0) << "\n";
     if (auto* sv = go->GetComponent<UIScrollView>()) {
         out << "  uiscroll " << sv->position.x << " " << sv->position.y << " "
             << sv->size.x << " " << sv->size.y << " " << (int)sv->anchor << " "
             << sv->contentHeight << " "
-            << sv->background.r << " " << sv->background.g << " " << sv->background.b << " " << sv->background.a << "\n";
+            << sv->background.r << " " << sv->background.g << " " << sv->background.b << " " << sv->background.a
+            << " " << (int)sv->axis << " " << sv->contentWidth << " " << (sv->autoContent ? 1 : 0) << "\n";   // optional, newer
+    }
+    if (auto* lv = go->GetComponent<UIListView>()) {
+        out << "  uilist " << lv->position.x << " " << lv->position.y << " " << lv->size.x << " " << lv->size.y
+            << " " << (int)lv->anchor << " "
+            << lv->background.r << " " << lv->background.g << " " << lv->background.b << " " << lv->background.a << " "
+            << lv->barColor.r << " " << lv->barColor.g << " " << lv->barColor.b << " " << lv->barColor.a << " "
+            << lv->itemHeight << " " << lv->spacing << " " << lv->itemCount << " " << lv->selected << " "
+            << lv->wheelSpeed << " " << lv->items.size();
+        for (const std::string& it : lv->items) out << " " << Quote(it);
+        out << "\n";
     }
     if (auto* cv = go->GetComponent<Canvas>()) {
         out << "  canvas " << (int)cv->scaleMode << " "
@@ -5354,13 +5375,39 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     lg->direction = (UILayoutGroup::Direction)dir; lg->anchor = (UIAnchor)an;
                     if (cols >= 1) lg->columns = cols;
                     if (sy >= 0.0f) lg->spacingY = sy;
+                    float bw = 0.0f, bh = 0.0f; int js = 0, al = 0, wr = 0;
+                    if (rs >> bw >> bh >> js >> al >> wr) {   // flex fields (newer scenes)
+                        lg->boxSize = {bw, bh};
+                        lg->justify = (UILayoutGroup::Justify)js; lg->align = (UILayoutGroup::Align)al; lg->wrap = wr != 0;
+                    }
                     lg->Arrange();
+                } else if (field == "uiflexitem") {
+                    auto* fi = go->AddComponent<UIFlexItem>();
+                    int as = 0;
+                    in >> fi->grow >> fi->shrink >> fi->baseSize.x >> fi->baseSize.y >> as;
+                    fi->alignSelf = (UIFlexItem::Align)as;
+                } else if (field == "uimask") {
+                    auto* mk = go->AddComponent<UIMask>();
+                    int sg = 1; in >> sg; mk->showGraphic = sg != 0;
+                } else if (field == "uilist") {
+                    auto* lv = go->AddComponent<UIListView>();
+                    int an = 0; std::size_t n = 0;
+                    in >> lv->position.x >> lv->position.y >> lv->size.x >> lv->size.y >> an
+                       >> lv->background.r >> lv->background.g >> lv->background.b >> lv->background.a
+                       >> lv->barColor.r >> lv->barColor.g >> lv->barColor.b >> lv->barColor.a
+                       >> lv->itemHeight >> lv->spacing >> lv->itemCount >> lv->selected >> lv->wheelSpeed >> n;
+                    lv->anchor = (UIAnchor)an;
+                    for (std::size_t i = 0; i < n && in; ++i) lv->items.push_back(ReadQuoted(in));
                 } else if (field == "uiscroll") {
                     auto* sv = go->AddComponent<UIScrollView>();
+                    std::string rest; std::getline(in, rest);   // whole line: newer files carry extra fields
+                    std::istringstream rs(rest);
                     int an = 0; Color c;
-                    in >> sv->position.x >> sv->position.y >> sv->size.x >> sv->size.y
+                    rs >> sv->position.x >> sv->position.y >> sv->size.x >> sv->size.y
                        >> an >> sv->contentHeight >> c.r >> c.g >> c.b >> c.a;
                     sv->anchor = (UIAnchor)an; sv->background = c;
+                    int ax = 0, ac = 1; float cw = 0.0f;
+                    if (rs >> ax >> cw >> ac) { sv->axis = (UIScrollView::Axis)ax; sv->contentWidth = cw; sv->autoContent = ac != 0; }
                 } else if (field == "canvas") {
                     auto* cv = go->AddComponent<Canvas>();
                     int sm = 0;

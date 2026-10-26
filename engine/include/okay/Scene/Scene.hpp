@@ -67,6 +67,9 @@ public:
     /// Bumped whenever objects are created or destroyed (or the scene is cleared):
     /// components that cache GameObject/Transform pointers re-resolve when it changes.
     std::uint64_t StructureVersion() const { return m_structureVersion; }
+    /// Note a hierarchy change (an object created, destroyed or reparented), so
+    /// caches keyed on StructureVersion() re-resolve.
+    void MarkStructureChanged() { ++m_structureVersion; }
 
     /// Layer a widget frontmost/backmost. UI draws in hierarchy order, so a parented
     /// object moves to the last/first slot among its SIBLINGS (last = on top); a root

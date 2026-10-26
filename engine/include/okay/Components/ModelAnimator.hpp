@@ -229,16 +229,12 @@ public:
         CrossfadeStep(dt);
         // Layers (and anything else that poses on top of the base pose) run
         // after the base pose and its crossfade are final.
-        for (std::size_t i = 0; i < m_postPose.size(); ++i) {
-            // Only components still on this object (a removed layer must not be called).
-            bool alive = false;
-            if (gameObject)
-                for (const auto& c : gameObject->Components()) if (c.get() == m_postPose[i].owner) { alive = true; break; }
-            if (!alive) { m_postPose.erase(m_postPose.begin() + i); --i; continue; }
-            m_postPose[i].fn(dt);
-        }
+        // (Owners unregister in their OnDestroy — RemoveComponent and object
+        // destruction both call it — so every entry here is alive.)
+        for (std::size_t i = 0; i < m_postPose.size(); ++i) m_postPose[i].fn(dt);
     }
     /// Run `fn` every frame after the base pose (layers register here).
+    /// The owner must call RemovePostPose(owner) from its OnDestroy.
     void AddPostPose(const void* owner, std::function<void(float)> fn) {
         RemovePostPose(owner);
         m_postPose.push_back({owner, std::move(fn)});
@@ -579,7 +575,9 @@ public:
     /// motion is blended by the same weights; the heaviest clip fires events.
     bool BlendMany(float dt, const std::vector<int>& clipIdx, const std::vector<float>& weights) {
         if (!gameObject || !gameObject->scene()) return false;
-        std::vector<int> ci; std::vector<float> w; std::vector<float> len;
+        // Scratch kept on the component: no per-frame allocation.
+        std::vector<int>& ci = m_bmClip; std::vector<float>& w = m_bmW; std::vector<float>& len = m_bmLen;
+        ci.clear(); w.clear(); len.clear();
         float sum = 0.0f;
         for (std::size_t i = 0; i < clipIdx.size() && i < weights.size(); ++i) {
             int c = clipIdx[i];
@@ -611,7 +609,8 @@ public:
             };
             if (e1 < e0) { fire(e0, L); fire(0.0f, e1); } else fire(e0, e1);
         }
-        std::vector<std::pair<int, float>> ct;
+        std::vector<std::pair<int, float>>& ct = m_bmCT;
+        ct.clear();
         for (std::size_t i = 0; i < ci.size(); ++i) ct.push_back({ci[i], m_phase * len[i]});
         PoseWeighted(ct, w, nullptr, 1.0f);
         ApplyShapeWeights(ci[dom], m_phase * len[dom]);   // face shapes follow the heaviest clip
@@ -623,9 +622,9 @@ public:
     /// given. Base for layers and multi-clip blends.
     void PoseWeighted(const std::vector<std::pair<int, float>>& clipTimes, const std::vector<float>& weights,
                       const std::unordered_set<Transform*>* mask, float amount) {
-        struct Acc { Transform* t; Vec3 p{0, 0, 0}, s{0, 0, 0}; Quat q{0, 0, 0, 0}; Quat ref; float w = 0.0f; };
-        std::vector<Acc> acc;
-        std::unordered_map<Transform*, int> at;
+        std::vector<PwAcc>& acc = m_pwAcc;              // scratch kept on the component
+        std::unordered_map<Transform*, int>& at = m_pwAt;
+        acc.clear(); at.clear();
         for (std::size_t k = 0; k < clipTimes.size() && k < weights.size(); ++k) {
             int c = clipTimes[k].first;
             float wk = weights[k];
@@ -640,7 +639,7 @@ public:
                 else ai = it->second;
                 Vec3 p = t->localPosition, sc = t->localScale; Quat r = t->localRotation;
                 SampleNode(c, (int)n, clipTimes[k].second, p, r, sc);
-                Acc& a = acc[ai];
+                PwAcc& a = acc[ai];
                 if (a.w == 0.0f) a.ref = r;
                 if (Quat::Dot(a.ref, r) < 0.0f) r = Quat{-r.x, -r.y, -r.z, -r.w};
                 a.p = a.p + p * wk; a.s = a.s + sc * wk;
@@ -648,7 +647,7 @@ public:
                 a.w += wk;
             }
         }
-        for (Acc& a : acc) {
+        for (PwAcc& a : acc) {
             if (a.w <= 1e-6f) continue;
             float iw = 1.0f / a.w;
             Vec3 p = a.p * iw, sc = a.s * iw;
@@ -999,6 +998,13 @@ private:
     float m_lastRootYaw = 0.0f;
     struct PostPose { const void* owner; std::function<void(float)> fn; };
     std::vector<PostPose> m_postPose;
+    // Per-frame scratch for BlendMany / PoseWeighted (reused, not reallocated).
+    struct PwAcc { Transform* t; Vec3 p{0, 0, 0}, s{0, 0, 0}; Quat q{0, 0, 0, 0}; Quat ref{0, 0, 0, 1}; float w = 0.0f; };
+    std::vector<int> m_bmClip;
+    std::vector<float> m_bmW, m_bmLen;
+    std::vector<std::pair<int, float>> m_bmCT;
+    std::vector<PwAcc> m_pwAcc;
+    std::unordered_map<Transform*, int> m_pwAt;
     std::vector<BlendFrom>   m_blend;         ///< pose at the last clip switch (crossfade source)
     float                    m_blendW = 1.0f; ///< crossfade progress (1 = done)
     std::vector<std::string> m_firedEvents;   ///< event names fired since the last consume

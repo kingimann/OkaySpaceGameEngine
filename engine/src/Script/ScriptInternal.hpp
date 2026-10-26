@@ -238,6 +238,8 @@ enum class EK : std::uint8_t {
     Format,        ///< {value:F2} in $"...": lhs = the number, sval = "F2", ival = decimals (checked)
     NullCond,      ///< a chain with ?. in it: lhs = the chain, null if a ?. found null; name = what was null
     ArrayLit,      ///< { a, b } after `T[] x =`: the type comes from the declaration
+    Is,            ///< lhs is T: typeArg = T
+    As,            ///< lhs as T: typeArg = T
     Lambda,        ///< x => ..., (a, b) => { ... }: `lambda` holds the parameters and body
 };
 
@@ -256,8 +258,11 @@ enum class Bind : std::uint8_t {
     Captured /*a variable of the method around a lambda: slot = capture index*/,
     Invoke /*f(x), f.Invoke(x): object = the function*/,
     NewCollection /*new List<int>(), new Dictionary<K, V>(); args = { ... } items*/,
-    ObjField /*obj.field: slot = field*/, ObjMethod /*obj.M(): slot = method, member = class*/,
+    ObjField /*obj.field: slot = field (in the object's fields, bases first)*/,
+    ObjMethod /*obj.M(), and M() inside a plain class: slot = the method's name id, run as the object's own class has it*/,
     NewObject /*new Node(): slot = class, member = constructor (-1 = none)*/,
+    BaseMethod /*base.M(): slot = method, member = the class that has it*/,
+    BaseCtor /*: base(...) of a constructor: slot = the base class, member = its constructor (-1 = none)*/,
 };
 /// Methods of List<T> and Dictionary<K, V> (Bind::CollMethod's member).
 enum class CollOp : std::uint8_t {
@@ -331,7 +336,7 @@ struct Attribute { std::string name; std::vector<ExprPtr> args; SrcLoc loc; };
 
 struct FieldDecl {
     std::vector<Attribute> attrs;
-    bool isPublic = false, isConst = false, isStatic = false;   ///< static: one value shared by every object running the script
+    bool isPublic = false, isProtected = false, isConst = false, isStatic = false;   ///< static: one value shared by every object running the script
     bool isEvent = false;   ///< outside its class it can only be added to (+=) or removed from (-=)
     TypeRef type;
     std::string name;
@@ -339,7 +344,7 @@ struct FieldDecl {
     ExprPtr init;
     // checked
     Type resolved;
-    int index = -1;
+    int index = -1;       ///< slot in an object's fields: the classes it extends come first
     bool promote = false;
     bool read = false;
 };
@@ -359,8 +364,12 @@ struct LambdaDecl {
     int method = -1;
 };
 struct MethodDecl {
-    bool isPublic = false, isStatic = false;   ///< static: can't use the object's own fields, methods or members
+    bool isPublic = false, isProtected = false, isStatic = false;   ///< static: can't use the object's own fields, methods or members
     bool isCtor = false;                       ///< a plain class's constructor (name = the class)
+    bool isVirtual = false, isOverride = false, isAbstract = false;   ///< abstract (and interface) methods have no body
+    std::vector<ExprPtr> baseArgs;             ///< a constructor's : base(...)
+    bool hasBaseCall = false;
+    SrcLoc baseLoc;
     TypeRef ret;
     std::string name;
     SrcLoc loc;
@@ -371,6 +380,8 @@ struct MethodDecl {
     int localCount = 0;
     bool called = false;
     int lifecycle = -1;   ///< index into the lifecycle table, -1 = an ordinary method
+    int nameId = -1;      ///< Program::methodNames index (dispatch by name)
+    ExprPtr baseCall;     ///< constructor of a class that extends another: the base constructor call (Bind::BaseCtor)
 };
 struct EnumMember { std::string name; SrcLoc loc; ExprPtr value; std::int32_t v = 0; };
 struct EnumDecl {
@@ -385,10 +396,20 @@ struct EnumDecl {
 };
 
 struct ClassDecl {
-    std::string name, base;
-    SrcLoc loc, baseLoc;
+    std::string name;
+    std::vector<std::string> bases;   ///< after ':': Behaviour, or a class and / or interfaces
+    std::vector<SrcLoc> baseLocs;
+    bool isAbstract = false, isInterface = false;
+    SrcLoc loc;
     std::vector<FieldDecl> fields;
     std::vector<MethodDecl> methods;
+    // checked
+    int baseClass = -1;              ///< the class it extends
+    std::vector<int> interfaces;     ///< the interfaces it names
+    int fieldCount = 0;              ///< fields of an object of this class, the bases' included
+    std::vector<char> isA;           ///< by class index: this class is (extends or implements) that one
+    /// By method name id: the class and method an object of this class runs ({-1, -1}: none).
+    std::vector<std::pair<int, int>> dispatch;
 };
 
 /// `static` fields' values: one set shared by every object running the same
@@ -413,6 +434,7 @@ struct Program {
     /// Func / Action types: parameter types and result (void for an Action).
     struct FuncSig { std::vector<Type> params; Type ret; };
     std::vector<FuncSig> funcs;
+    std::vector<std::string> methodNames;   ///< every method name in the file (MethodDecl::nameId)
     int component = -1;            ///< the class that is the component
     std::vector<ScriptDiagnostic> diags;
     bool ok() const;

@@ -993,11 +993,60 @@ class Inventory : Behaviour {
   parameter).
 - Plain classes aren't on an object, so `gameObject`, `transform` and
   `GetComponent` only exist in the Behaviour class. They can't be `static` or
-  `const` yet, and classes can't extend each other yet.
+  `const` yet.
 - Objects are freed as soon as nothing refers to them, except objects that
   refer to each other in a loop (`a.next = b; b.next = a;`). Those stay in
   memory until the game quits, so set one of the links to `null` when you're
   done with them.
+
+### Inheritance and interfaces
+
+Plain classes can extend one class and implement any number of interfaces, so
+different enemies can share code and still each do their own thing.
+
+```csharp
+interface IDamageable { void TakeDamage(int amount); }
+
+abstract class Enemy : IDamageable {
+    protected int hp;
+    public Enemy(int hp) { this.hp = hp; }
+    public virtual void TakeDamage(int amount) { hp -= amount; }
+    public abstract int Reward();
+}
+
+class Boss : Enemy {
+    int armor = 5;
+    public Boss() : base(500) { }
+    public override void TakeDamage(int amount) { base.TakeDamage(amount - armor); }
+    public override int Reward() { return 100; }
+}
+
+class Crate : IDamageable {
+    public void TakeDamage(int amount) { Debug.Log("crack"); }
+}
+```
+
+```csharp
+List<IDamageable> hit = new List<IDamageable> { new Boss(), new Crate() };
+foreach (var t in hit) t.TakeDamage(10);      // each runs its own TakeDamage
+if (hit[0] is Enemy) total += (hit[0] as Enemy).Reward();
+Boss boss = (Boss)hit[0];                      // an error with its line if it isn't one
+```
+
+- A class names what it extends after `:`; the class first, then interfaces.
+  An interface lists methods without bodies, and every class that implements
+  it must have them, `public`.
+- To change a method in a subclass, mark it `virtual` (or `abstract`, with no
+  body) in the base class and `override` in the subclass, with the same
+  parameters and result. A subclass can't reuse a base class's method or field
+  name otherwise.
+- `base.Method()` runs the base class's version; a constructor runs the base
+  class's constructor first: `: base(...)`, or the one that takes nothing.
+- `protected` members are for the class and the classes that extend it.
+- An `abstract` class, or an interface, can't be made with `new`.
+- `x is T` is true when `x` is a `T` (and not null); `x as T` gives it as a
+  `T`, or null. A cast `(T)x` stops the callback with an error if `x` isn't one.
+- The Behaviour class can't extend a class or implement interfaces yet.
 
 ### foreach
 

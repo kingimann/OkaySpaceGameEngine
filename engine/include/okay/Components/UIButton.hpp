@@ -22,7 +22,7 @@ namespace okay {
 /// Position and size are in window pixels (origin top-left). When clicked it
 /// calls the sibling ScriptComponent's on_click() handler, and exposes hover /
 /// clicked state for the renderer and gameplay code.
-class UIButton : public Behaviour {
+class UIButton final : public Behaviour {
 public:
     Vec2 position{20.0f, 20.0f};
     Vec2 size{160.0f, 48.0f};

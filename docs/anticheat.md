@@ -231,8 +231,14 @@ check them.
   1. the shooter isn't dead (if its avatar on the server has a Health);
   2. the weapon's fire rate and ammo, from a Net Validator for `hit/<weapon>`
      (cooldown and budget, as above);
-  3. the shot starts within `hitOriginTolerance` (2) of where the server last
-     saw the shooter, not where the shooter says it is;
+  3. the shot starts within `hitOriginTolerance` (2) of where the server has
+     the shooter, not where the shooter says it is: its pawn when the server
+     moves it (authoritative movement; where it was at the moment the shooter
+     saw, under lag compensation), else the position it last reported, which
+     a max move speed (`net_max_speed`, `--max-speed`) checks. A report may
+     move it at most a quarter second at that speed, however long the client
+     was quiet. With neither, client claims are refused, and the server says
+     so when it starts, unless `hitsNeedMoveCheck false` is in the rules;
   4. the target is in front, within `maxHitRange` (0 = any), and within
      `hitTolerance` (1) of the shot's line, plus its top speed (`maxSyncSpeed`,
      else 8 u/s) times the shooter's ping, which the anti-cheat's heartbeat

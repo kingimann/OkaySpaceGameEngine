@@ -32,6 +32,7 @@
 #include "okay/Components/LookAtIK.hpp"
 #include "okay/Components/AimIK.hpp"
 #include "okay/Components/FullBodyIK.hpp"
+#include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Components/ActionList.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/ParticleSystem.hpp"
@@ -4488,6 +4489,32 @@ struct OkayScriptVM::Impl {
         b["ik_release"] = [fbik](std::vector<Value>&) {
             if (FullBodyIK* f = fbik()) { for (auto& e : f->effectors) e.enabled = false; f->lookEnabled = false; }
             return Value{};
+        };
+        // Procedural Object Holding on this object:
+        //   hold_pickup(name) / hold_nearest([range])   take an object into the hands -> 1 if held
+        //   hold_drop()                                 let go of it
+        //   hold_object()                               name of what's held ("" = nothing)
+        auto holder = [this]() -> ProceduralObjectHolding* {
+            GameObject* g = rt.host ? rt.host->gameObject : nullptr;
+            return g ? g->GetComponent<ProceduralObjectHolding>() : nullptr;
+        };
+        b["hold_pickup"] = [this, holder](std::vector<Value>& a) {
+            ProceduralObjectHolding* h = holder();
+            Scene* sc = rt.host && rt.host->gameObject ? rt.host->gameObject->scene() : nullptr;
+            GameObject* obj = (sc && !a.empty()) ? sc->Find(a[0].AsString()) : nullptr;
+            return Value{h && h->Pickup(obj) ? 1.0f : 0.0f};
+        };
+        b["hold_nearest"] = [holder](std::vector<Value>& a) {
+            ProceduralObjectHolding* h = holder();
+            return Value{h && h->PickupNearest(a.empty() ? 2.0f : a[0].AsFloat()) ? 1.0f : 0.0f};
+        };
+        b["hold_drop"] = [holder](std::vector<Value>&) {
+            if (ProceduralObjectHolding* h = holder()) h->Drop();
+            return Value{};
+        };
+        b["hold_object"] = [holder](std::vector<Value>&) {
+            ProceduralObjectHolding* h = holder();
+            return Value{h && h->Held() ? h->Held()->name : std::string()};
         };
         b["ik_set_pole"] = [this](std::vector<Value>& a) {
             Vec3 p{a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f, a.size() > 2 ? a[2].AsFloat() : 0.0f};

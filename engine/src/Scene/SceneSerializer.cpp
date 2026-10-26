@@ -121,6 +121,7 @@
 #include "okay/Components/LimbIK.hpp"
 #include "okay/Components/ChainIK.hpp"
 #include "okay/Components/FullBodyIK.hpp"
+#include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Components/RootMotion.hpp"
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/Character.hpp"
@@ -793,9 +794,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "\n";
         const AntiCheatSettings d;   // hit-claim tuning: its own line, only when changed
         if (s.hitOriginTolerance != d.hitOriginTolerance || s.hitTolerance != d.hitTolerance || s.maxHitRange != d.maxHitRange ||
-            s.hitDamage != d.hitDamage || s.hitLineOfSight != d.hitLineOfSight)
+            s.hitDamage != d.hitDamage || s.hitLineOfSight != d.hitLineOfSight || s.hitsNeedMoveCheck != d.hitsNeedMoveCheck)
             out << "  anticheathit " << s.hitOriginTolerance << " " << s.hitTolerance << " " << s.maxHitRange
-                << " " << s.hitDamage << " " << (s.hitLineOfSight ? 1 : 0) << "\n";
+                << " " << s.hitDamage << " " << (s.hitLineOfSight ? 1 : 0) << " " << (s.hitsNeedMoveCheck ? 1 : 0) << "\n";
         for (const auto& w : s.weapons) out << "  anticheatweapon " << Quote(w) << "\n";
     }
     for (auto* nv : go->GetComponents<NetValidator>()) {
@@ -1030,6 +1031,28 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         // Easing, smoothing and joint limits (separate record: older builds skip it).
         out << "  fbikx " << fb->blendSpeed << " " << fb->goalSmoothing << " " << fb->lookSmoothing
             << " " << fb->armMinBend << " " << fb->legMinBend << "\n";
+    }
+    if (auto* h = go->GetComponent<HoldableObject>()) {
+        out << "  holdable";
+        KvOut k{out};
+        k("style", (int)h->style)("weight", h->weight).str("socket", h->socket)
+         ("offX", h->holdOffset.x)("offY", h->holdOffset.y)("offZ", h->holdOffset.z)
+         ("rotX", h->holdRotation.x)("rotY", h->holdRotation.y)("rotZ", h->holdRotation.z);
+        const HoldableObject::Grip* grips[2] = {&h->leftGrip, &h->rightGrip};
+        for (int g = 0; g < 2; ++g) {
+            const std::string p = g == 0 ? "l" : "r";
+            const HoldableObject::Grip& gr = *grips[g];
+            k.b((p + "On").c_str(), gr.enabled)
+             ((p + "PX").c_str(), gr.position.x)((p + "PY").c_str(), gr.position.y)((p + "PZ").c_str(), gr.position.z)
+             ((p + "RX").c_str(), gr.rotation.x)((p + "RY").c_str(), gr.rotation.y)((p + "RZ").c_str(), gr.rotation.z);
+        }
+        out << "\n";
+    }
+    if (auto* ph = go->GetComponent<ProceduralObjectHolding>()) {
+        out << "  objholding";
+        KvOut k{out};
+        k("hand", (int)ph->primaryHand)("style", (int)ph->holdingStyle).b("armIK", ph->armIK)("transition", ph->transitionTime);
+        out << "\n";
     }
     if (auto* rm = go->GetComponent<RootMotion>()) {
         out << "  rootmotion " << Quote(rm->rootNodeName) << " " << rm->mode
@@ -3376,6 +3399,30 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         e.hintName = ReadQuoted(in);
                         in >> e.pull;
                     }
+                } else if (field == "holdable") {
+                    auto* h = go->AddComponent<HoldableObject>();
+                    KvIn k(in);
+                    int st = 0; k.i("style", st);
+                    h->style = st == 1 ? HoldableObject::Style::Custom : HoldableObject::Style::Automatic;
+                    k.f("weight", h->weight); k.str("socket", h->socket);
+                    k.f("offX", h->holdOffset.x); k.f("offY", h->holdOffset.y); k.f("offZ", h->holdOffset.z);
+                    k.f("rotX", h->holdRotation.x); k.f("rotY", h->holdRotation.y); k.f("rotZ", h->holdRotation.z);
+                    HoldableObject::Grip* grips[2] = {&h->leftGrip, &h->rightGrip};
+                    for (int g = 0; g < 2; ++g) {
+                        const std::string p = g == 0 ? "l" : "r";
+                        HoldableObject::Grip& gr = *grips[g];
+                        k.b((p + "On").c_str(), gr.enabled);
+                        k.f((p + "PX").c_str(), gr.position.x); k.f((p + "PY").c_str(), gr.position.y); k.f((p + "PZ").c_str(), gr.position.z);
+                        k.f((p + "RX").c_str(), gr.rotation.x); k.f((p + "RY").c_str(), gr.rotation.y); k.f((p + "RZ").c_str(), gr.rotation.z);
+                    }
+                } else if (field == "objholding") {
+                    auto* ph = go->AddComponent<ProceduralObjectHolding>();
+                    KvIn k(in);
+                    int hand = 1, st = 0; k.i("hand", hand); k.i("style", st);
+                    ph->primaryHand = hand == 0 ? ProceduralObjectHolding::Hand::Left
+                                    : hand == 2 ? ProceduralObjectHolding::Hand::Both : ProceduralObjectHolding::Hand::Right;
+                    ph->holdingStyle = st == 1 ? ProceduralObjectHolding::StyleMode::Custom : ProceduralObjectHolding::StyleMode::Automatic;
+                    k.b("armIK", ph->armIK); k.f("transition", ph->transitionTime);
                 } else if (field == "fbikx") {
                     if (auto* fb = go->GetComponent<FullBodyIK>())
                         in >> fb->blendSpeed >> fb->goalSmoothing >> fb->lookSmoothing >> fb->armMinBend >> fb->legMinBend;
@@ -5028,8 +5075,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         }
                     }
                 } else if (field == "anticheathit") {   // follows the object's "anticheat" line
-                    float o = 2.0f, t = 1.0f, r = 0.0f, dmg = 10.0f; int los = 1;
+                    float o = 2.0f, t = 1.0f, r = 0.0f, dmg = 10.0f; int los = 1, needMove = 1;
                     in >> o >> t >> r >> dmg >> los;
+                    in >> std::ws;   // the move-check requirement came later
+                    if (std::isdigit(in.peek())) in >> needMove;
                     if (auto* ac = go->GetComponent<AntiCheatConfig>()) {
                         AntiCheatSettings& s = ac->settings;
                         auto ok = [](float v) { return std::isfinite(v) && v >= 0.0f; };
@@ -5038,6 +5087,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         if (ok(r)) s.maxHitRange = r;
                         if (ok(dmg)) s.hitDamage = dmg;
                         s.hitLineOfSight = los != 0;
+                        s.hitsNeedMoveCheck = needMove != 0;
                     }
                 } else if (field == "anticheatweapon") {   // one per known weapon, after "anticheat"
                     const std::string w = ReadQuoted(in);

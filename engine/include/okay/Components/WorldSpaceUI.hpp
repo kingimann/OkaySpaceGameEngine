@@ -9,7 +9,7 @@ namespace okay {
 /// you place and move in the 3D world — no Canvas required. The widget's anchor and
 /// pixel offset still apply (relative to its own size, around its 3D point), so
 /// nothing about the widget is removed or converted.
-class WorldSpaceUI : public Component {
+class WorldSpaceUI final : public Component {
 public:
     float pixelsPerUnit = 100.0f;   // design px per world unit (bigger = smaller in-world)
     bool  billboard = true;         // always face the camera (else use the object's orientation)

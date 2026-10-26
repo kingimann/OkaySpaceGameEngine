@@ -105,6 +105,22 @@ public:
     void Geometry(Tex t, const Vertex* v, int nv, const int* idx, int ni) override {
         SDL_RenderGeometry(m_r, (SDL_Texture*)t, (const SDL_Vertex*)v, nv, idx, ni);
     }
+    // Atlas pages for BatchPainter: page 0 (fonts) samples linearly, page 1 (images)
+    // nearest, matching the textures above. A page that grew gets a new texture.
+    Tex UploadAtlas(const Image& page, int pageIndex, Tex existing) override {
+        SDL_Texture* tex = (SDL_Texture*)existing;
+        int w = 0, h = 0;
+        if (tex) SDL_QueryTexture(tex, nullptr, nullptr, &w, &h);
+        if (tex && (w != page.Width() || h != page.Height())) { SDL_DestroyTexture(tex); tex = nullptr; }
+        if (!tex) {
+            tex = SDL_CreateTexture(m_r, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, page.Width(), page.Height());
+            if (!tex) return nullptr;
+            SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureScaleMode(tex, pageIndex == 0 ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
+        }
+        SDL_UpdateTexture(tex, nullptr, page.Data(), page.Width() * 4);
+        return tex;
+    }
 
 private:
     SDL_Renderer* m_r;

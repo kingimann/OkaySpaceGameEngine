@@ -1,5 +1,43 @@
 OkaySpace Game Engine — Changelog
 
+v2.832.0
+  Animation
+  - Every built-in player now has a visible Animator with a default humanoid
+    graph: idle, walk, run, crouch, prone, jump, fall, land, hang and the
+    gestures, played from clips baked from the built-in motion. Walking
+    looks the same as before, the feet keep pace with the ground at any
+    speed, and old scenes get the Animator when they load (#346).
+  - The Animator inspector on a Character lists every state and what it
+    plays. Preview plays a state in the Scene view, Edit clip opens a copy
+    in the Animation tab (Apply saves it on that Character), and Reset to
+    default rebuilds the default graph (#348).
+  Inventory
+  - Moving, splitting, dropping and crafting go through one shared set of
+    inventory operations in both the editor's Play view and exported games,
+    so the two behave the same. Right-click split now honours "split half"
+    in the editor too (#349).
+  Multiplayer security
+  - Network spawns may only name safe prefabs inside the game folder, and
+    every peer checks this. With the anti-cheat off, clients may spawn only
+    the player prefab and prefabs listed under Network Manager > Host
+    settings > Spawnable prefabs. If your game lets clients spawn other
+    prefabs without the anti-cheat, list them there (#351).
+  - A client that pinned its host's key can no longer be fooled by a forged
+    unencrypted Welcome, Reject or Kicked message while joining (#352).
+  - Hit claims are rate-limited. With the anti-cheat on, a claim must name a
+    known weapon (a Net Validator for hit/<weapon>, or a "weapon" line in
+    the Anti-Cheat Config); other weapons do no damage and are logged once.
+    The default maximum hit range is now 300 m; scenes that set their own
+    keep it (#353).
+  - Relay protocol v3: the relay hands out a cookie before giving a sender a
+    slot, limits hellos per address and caps the traffic each player
+    receives, so spoofed or flooding senders can't lock others out. New
+    games still work with older relays, and older games keep working with
+    the new relay (#357).
+  Build
+  - The Windows cross-compile caches its toolchain downloads, so a slow
+    package mirror no longer fails builds (#356).
+
 v2.831.0
   Multiplayer camera
   - Online position corrections from the server now ease in smoothly at any

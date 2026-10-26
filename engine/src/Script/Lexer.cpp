@@ -67,6 +67,7 @@ const char* TokenName(T t) {
         case T::PlusEq: return "'+='"; case T::MinusEq: return "'-='"; case T::StarEq: return "'*='";
         case T::SlashEq: return "'/='"; case T::PercentEq: return "'%='"; case T::PlusPlus: return "'++'";
         case T::MinusMinus: return "'--'";
+        case T::QuestionDot: return "'?.'"; case T::QuestionQuestion: return "'??'"; case T::QuestionQuestionEq: return "'?\?='";
         case T::InterpBegin: return "$\"";
         case T::InterpHole: return "'{'";
         case T::InterpHoleEnd: return "'}'";
@@ -252,6 +253,18 @@ std::vector<Token> LexAt(const std::string& src, std::vector<ScriptDiagnostic>& 
             {"/=", T::SlashEq}, {"%=", T::PercentEq}, {"==", T::EqEq}, {"!=", T::NotEq}, {"<=", T::Le},
             {">=", T::Ge}, {"&&", T::AndAnd}, {"||", T::OrOr}};
         bool matched = false;
+        if (peek() == '?' && peek(1) == '?') {   // ?? and ??=
+            const bool eq = peek(2) == '=';
+            adv(); adv(); if (eq) adv();
+            t.type = eq ? T::QuestionQuestionEq : T::QuestionQuestion;
+            t.text = eq ? "??=" : "??";
+            matched = true;
+        } else if (two('?', '.') && !std::isdigit((unsigned char)peek(2))) {   // a ? .5f : 1 stays a ternary
+            adv(); adv();
+            t.type = T::QuestionDot; t.text = "?.";
+            matched = true;
+        }
+        if (!matched)
         for (const Op& o : ops)
             if (two(o.s[0], o.s[1])) { adv(); adv(); t.type = o.t; t.text = o.s; matched = true; break; }
         if (!matched) {

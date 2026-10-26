@@ -78,7 +78,7 @@ int main() {
     CHECK(H(cHero)->Held() == cCrate);
     pump(40);
     CHECK(H(sHero)->Held() == sCrate);
-    CHECK(srv->GetVar("srv.hold/" + heroId) == "Crate|1");
+    CHECK(srv->GetVar("srv.hold/" + heroId) == "Crate|1|0");
     CHECK(H(cHero)->Held() == cCrate);
     // The server's copy is really held: hands on, the crate in front of the hero.
     CHECK(H(sHero)->HandInUse(true) && H(sHero)->HandInUse(false));
@@ -109,6 +109,18 @@ int main() {
     pump(20);
     CHECK(H(sHost)->Held() == sBox);
     CHECK(sSpare->GetComponent<HoldableObject>()->Holder() == nullptr);
+
+    // A style change goes through the server and reaches the other peers.
+    CHECK(H(cHost)->CarryStyle() == HoldableObject::Style::Box);
+    CHECK(H(sHost)->SetStyle(HoldableObject::Style::Heavy));
+    pump(40);
+    CHECK(cBox->GetComponent<HoldableObject>()->style == HoldableObject::Style::Heavy);
+    CHECK(H(cHost)->CarryStyle() == HoldableObject::Style::Heavy);
+    CHECK(H(cHero)->SetStyle(HoldableObject::Style::Rifle));
+    pump(40);
+    CHECK(sCrate->GetComponent<HoldableObject>()->style == HoldableObject::Style::Rifle);
+    CHECK(srv->GetVar("srv.hold/" + heroId) == "Crate|1|3");
+    CHECK(!H(cHost)->SetStyle(HoldableObject::Style::Box));   // not ours
 
     // A late joiner sees both holds.
     Scene ls("Late");

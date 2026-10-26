@@ -54,6 +54,17 @@ public:
         const int i = (int)s;
         return i >= 0 && i < (int)(sizeof(n) / sizeof(n[0])) ? n[i] : "?";
     }
+    /// The style called `name` ("pistol", "Rifle"...; case doesn't matter).
+    static bool StyleFromName(const std::string& name, Style& out) {
+        std::string k;
+        for (char c : name) k += (char)std::tolower((unsigned char)c);
+        for (int i = 0; i <= (int)Style::Heavy; ++i) {
+            std::string n = StyleName((Style)i);
+            for (char& c : n) c = (char)std::tolower((unsigned char)c);
+            if (n == k) { out = (Style)i; return true; }
+        }
+        return false;
+    }
     /// Where one hand touches the object (object-local position, rotation in
     /// degrees) and how far the fingers close around it (0 open .. 1 a fist).
     struct Grip {

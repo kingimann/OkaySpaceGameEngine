@@ -97,6 +97,20 @@ A physics body: velocity, mass and forces. The object needs a Rigidbody componen
 | `GetComponent<Rigidbody>().AddTorque(torque)` | `Rigidbody.AddTorque/1` | step | torque (Vector3), Target (Object) | - | Twist it around X / Y / Z. |
 | `GetComponent<Rigidbody>().AddForceAtPosition(force, point)` | `Rigidbody.AddForceAtPosition/2` | step | force (Vector3), point (Vector3), Target (Object) | - | Push it at a world point (off-centre pushes also spin it). |
 
+## ProceduralObjectHolding
+
+Holding objects with the hands (IK onto their grips). The object needs a Procedural Object Holding component.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<ProceduralObjectHolding>().isHolding` | `ProceduralObjectHolding.isHolding` | value | Target (Object) | isHolding (Bool) | True while something is in the hands. |
+| `GetComponent<ProceduralObjectHolding>().heldObject` | `ProceduralObjectHolding.heldObject` | value | Target (Object) | heldObject (Object) | What's in the hands (null when nothing). |
+| `GetComponent<ProceduralObjectHolding>().speedMultiplier` | `ProceduralObjectHolding.speedMultiplier` | value | Target (Object) | speedMultiplier (Number) | What movement speed is multiplied by while carrying (1 = unaffected). |
+| `GetComponent<ProceduralObjectHolding>().PickUp(obj)` | `ProceduralObjectHolding.PickUp/1` | step | obj (Object), Target (Object) | Result (Bool) | Take obj into the hands; true if it's held (online the server can still refuse). |
+| `GetComponent<ProceduralObjectHolding>().PickUpNearest(range)` | `ProceduralObjectHolding.PickUpNearest/1` | step | range (Number), Target (Object) | Result (Bool) | Pick up the nearest free Holdable Object within range metres. |
+| `GetComponent<ProceduralObjectHolding>().Drop()` | `ProceduralObjectHolding.Drop/0` | step | Target (Object) | - | Let go of the held object. |
+| `GetComponent<ProceduralObjectHolding>().SetStyle(style)` | `ProceduralObjectHolding.SetStyle/1` | step | style (Text), Target (Object) | Result (Bool) | Hold it as "Automatic", "Custom", "Pistol", "Rifle", "Box", "Flashlight", "Sword", "Cup" or "Heavy". |
+
 ## Input
 
 Keyboard, mouse and gamepad.

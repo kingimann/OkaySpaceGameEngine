@@ -141,6 +141,59 @@ public:
     /// item in one hand).
     HoldableObject::Style CarryStyle() const { return m_style; }
 
+    /// Hold the object in `style` from now on (Automatic = work it out again).
+    /// Changes the held object's HoldableObject; online it goes through the
+    /// server like a pickup. False when nothing is held (or not ours online).
+    bool SetStyle(HoldableObject::Style style) {
+        if (!m_held || !m_hold) return false;
+        NetworkManager* nm = Net();
+        if (nm && !OwnsHolder(*nm)) return false;
+        m_hold->style = style;
+        Publish();
+        if (nm && nm->IsClient()) {
+            nm->RpcTo(0, kPickRpc, HolderKey() + "|" + ObjectKey(m_held) + "|" + std::to_string((int)primaryHand) + "|" +
+                                   std::to_string((int)style));
+            m_pending = 2.0f;
+        }
+        return true;
+    }
+
+    /// Make `h` a Custom object whose grip points, hold offset and rotation give
+    /// the layout its automatic style would get on a standard body (a starting
+    /// point for the grip editor: drag the grips from there).
+    static void SuggestGrips(HoldableObject& h, Hand primary = Hand::Right) {
+        Body b;
+        b.chest = {0, 1.4f, 0};
+        b.up = {0, 1, 0}; b.fwd = {0, 0, -1}; b.side = {-1, 0, 0};   // the rigs' right hand is on -X facing -Z
+        b.rot = Quat::LookRotation(b.fwd * -1.0f, b.up);
+        for (int l = 0; l < 2; ++l) {
+            b.arm[l] = true;
+            b.shoulder[l] = b.chest + b.side * (l == 0 ? -0.22f : 0.22f);
+            b.upper[l] = 0.28f; b.reach[l] = 0.54f;
+        }
+        const Vec3 scale = h.gameObject && h.gameObject->transform ? h.gameObject->transform->LossyScale() : Vec3::One;
+        Plan p;
+        h.LocalBounds(p.bc, p.bh);
+        p.bc = p.bc * scale;
+        p.bh = {std::fabs(p.bh.x * scale.x), std::fabs(p.bh.y * scale.y), std::fabs(p.bh.z * scale.z)};
+        HoldableObject::Style st = h.style;
+        if (st == HoldableObject::Style::Custom) { h.style = HoldableObject::Style::Automatic; st = h.ResolvedStyle(); }
+        else st = h.ResolvedStyle();
+        StylePlan(b, p, st, p.bc, p.bh, h, primary);
+        HoldableObject::Grip* g[2] = {&h.leftGrip, &h.rightGrip};
+        for (int l = 0; l < 2; ++l) {
+            g[l]->enabled = p.use[l];
+            if (!p.use[l]) continue;
+            g[l]->position = {p.gp[l].x / scale.x, p.gp[l].y / scale.y, p.gp[l].z / scale.z};
+            g[l]->rotation = Quat::LookRotation(p.gf[l] * -1.0f, p.gn[l] * -1.0f).ToEuler();
+            g[l]->curl = p.curl[l];
+        }
+        const Vec3 rel = p.pos - b.chest;
+        h.holdOffset = {Vec3::Dot(rel, b.side), Vec3::Dot(rel, b.up), Vec3::Dot(rel, b.fwd)};
+        h.holdRotation = (b.rot.Inverse() * p.rot).ToEuler();
+        h.style = HoldableObject::Style::Custom;
+    }
+
     /// This character's id on the network: its NetworkSync id, "peer:<n>" for a
     /// NetworkPlayerSpawner player, else its name.
     std::string HolderKey() const {
@@ -267,7 +320,8 @@ private:
     }
     std::string VarKey() const { return "srv.hold/" + HolderKey(); }
     std::string StateString() const {
-        return m_held ? ObjectKey(m_held) + "|" + std::to_string((int)primaryHand) : std::string();
+        return m_held ? ObjectKey(m_held) + "|" + std::to_string((int)primaryHand) + "|" +
+                        std::to_string(m_hold ? (int)m_hold->style : 0) : std::string();
     }
     // The server writes the shared state whenever its copy's hold changes.
     void Publish() {
@@ -314,6 +368,7 @@ private:
                 const int hand = std::atoi(d.c_str() + b + 1);
                 h->primaryHand = hand == 0 ? Hand::Left : hand == 2 ? Hand::Both : Hand::Right;
                 ok = h->PickupLocal(obj);
+                if (ok) { ApplyStyleField(obj, d, b + 1); h->Publish(); }   // (only on what it now holds)
             }
             if (!ok) nm->RpcTo(from, kRefusedRpc, key);
         });
@@ -325,6 +380,14 @@ private:
             if (from != 0 || nm->IsServer()) return;
             if (ProceduralObjectHolding* h = FindHolder(*sc, key)) { h->m_pending = 0.0f; h->ApplyState(nm->GetVar(h->VarKey())); }
         });
+    }
+    // "<hand>|<style>" from `from`: the optional style field sets the object's style.
+    static void ApplyStyleField(GameObject* obj, const std::string& d, std::size_t from) {
+        const std::size_t c = d.find('|', from);
+        auto* h = obj ? obj->GetComponent<HoldableObject>() : nullptr;
+        if (c == std::string::npos || !h) return;
+        const int st = std::atoi(d.c_str() + c + 1);
+        if (st >= 0 && st <= (int)HoldableObject::Style::Heavy) h->style = (HoldableObject::Style)st;
     }
     // Clients: hold what the server says this character holds. The owner keeps
     // its own pickup while the server answers (it is refused or confirmed).
@@ -349,6 +412,7 @@ private:
         if (a != std::string::npos) {
             const int hand = std::atoi(v.c_str() + a + 1);
             primaryHand = hand == 0 ? Hand::Left : hand == 2 ? Hand::Both : Hand::Right;
+            ApplyStyleField(obj, v, a + 1);
         }
         if (auto* h = obj->GetComponent<HoldableObject>())   // the server's word wins over a stale local hold
             if (h->m_holder && h->m_holder != gameObject)
@@ -363,8 +427,10 @@ private:
         Plan p = MakePlan(b);
         if (!p.fixed) {
             KeepInReach(b, p);
-            // (A rifle's stock belongs against the shoulder.)
-            if (bodyAdjustment && m_style != HoldableObject::Style::Rifle && KeepOutOfBody(b, p)) KeepInReach(b, p, true);
+            // (A rifle's stock belongs against the shoulder; a custom hold only
+            // moves when it would sit right inside the body.)
+            if (bodyAdjustment && m_style != HoldableObject::Style::Rifle &&
+                KeepOutOfBody(b, p, m_style == HoldableObject::Style::Custom)) KeepInReach(b, p, true);
         }
         // Ease from where it was picked up (kept relative to the body, so walking
         // during the pickup doesn't drag it) into the hold.
@@ -567,7 +633,7 @@ private:
                 for (int l = 0; l < 2; ++l) if (g[l]->enabled) { SetGrip(p, l, *g[l], scale); p.use[l] = true; }
             }
         } else {
-            StylePlan(b, p, m_style, p.bc, p.bh);
+            StylePlan(b, p, m_style, p.bc, p.bh, h, primaryHand);
         }
         if (socket) {
             p.pos = socket->Position(); p.rot = socket->Rotation();
@@ -580,12 +646,13 @@ private:
     // where the object's centre goes, which way it points, where each palm
     // touches it and how far the fingers close. `c`/`half` are the object's local
     // bounds (scaled).
-    void StylePlan(const Body& b, Plan& p, HoldableObject::Style st, const Vec3& c, const Vec3& half) const {
+    static void StylePlan(const Body& b, Plan& p, HoldableObject::Style st, const Vec3& c, const Vec3& half,
+                          const HoldableObject& hold, Hand primaryHand) {
         using S = HoldableObject::Style;
         if (st == S::Automatic && primaryHand == Hand::Both) st = S::Box;   // a small item in both hands
         const int P = primaryHand == Hand::Left ? 0 : 1, O = 1 - P;
         const float sp = P == 0 ? -1.0f : 1.0f;                 // the primary hand's side
-        const bool support = m_hold->supportHand || primaryHand == Hand::Both;
+        const bool support = hold.supportHand || primaryHand == Hand::Both;
         const float s = b.s;
         const Vec3 out = b.side * sp;                          // toward the primary hand's side
         // Long objects: the long side becomes the barrel / beam / blade.
@@ -596,7 +663,7 @@ private:
         const Vec3 refLocal = la == 1 ? Vec3{0, 0, -1} : Vec3{0, 1, 0};
         const float hr = la == 1 ? half.z : half.y;              // along the reference (up / forward) axis
         const float hw = la == 0 ? half.z : half.x;              // across (sideways)
-        const Quat fix = Quat::Euler(m_hold->holdRotation);       // corrects a model built another way
+        const Quat fix = Quat::Euler(hold.holdRotation);          // corrects a model built another way
         auto align = [&](const Vec3& longW, const Vec3& refW) {
             return (Quat::LookRotation(longW, refW) * Quat::LookRotation(longLocal, refLocal).Inverse() * fix).Normalized();
         };
@@ -739,17 +806,17 @@ private:
         }
     }
     // Keep the object out of the torso (a box from the hips to the shoulders):
-    // anything that would sink into the chest or belly is pushed out in front.
-    // Returns true when it moved.
-    static bool KeepOutOfBody(const Body& b, Plan& p) {
-        const Vec3 hb = Extents(p.rot, p.bh, b);
+    // anything that would sink into the chest or belly is pushed out in front
+    // (`centreOnly`: only when its centre is inside). Returns true when it moved.
+    static bool KeepOutOfBody(const Body& b, Plan& p, bool centreOnly) {
+        const Vec3 hb = centreOnly ? Vec3{0, 0, 0} : Extents(p.rot, p.bh, b);
         const Vec3 rel = p.pos + p.rot * p.bc - b.chest;
         const float x = Vec3::Dot(rel, b.side), y = Vec3::Dot(rel, b.up), z = Vec3::Dot(rel, b.fwd);
         const float front = 0.13f * b.s;
         const bool overlaps = std::fabs(x) - hb.x < 0.24f * b.s && y + hb.y > -0.75f * b.s && y - hb.y < 0.15f * b.s &&
                               z - hb.z < front && z + hb.z > -0.14f * b.s;
         if (!overlaps) return false;
-        p.pos = p.pos + b.fwd * (front + 0.01f * b.s - (z - hb.z));
+        p.pos = p.pos + b.fwd * (front + 0.01f * b.s - (z - (centreOnly ? Extents(p.rot, p.bh, b).z : hb.z)));
         return true;
     }
 

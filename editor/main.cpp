@@ -1515,6 +1515,9 @@ std::vector<CustomAction> g_customCond;    // reusable condition groups
 bool g_showAnimation = false;    // keyframe animation timeline for the selected object
 bool g_showAnimatorGraph = false; // visual state-machine node graph (Animator window)
 okay::NPCController* g_wpPlace = nullptr; // NPC whose patrol waypoints are being click-placed in the Scene view
+okay::HoldableObject* g_gripEdit = nullptr; // Holdable Object whose grip points are shown + dragged in the Scene view
+static int  g_gripDrag = -1;                // grip being dragged (0 left, 1 right; -1 none)
+static Vec3 g_gripDragPlane, g_gripDragNormal;   // the camera-facing plane it moves on
 bool g_showHistory   = false;    // undo/redo history panel (click a step to jump)
 // Viewport camera bookmarks: Ctrl+Alt+1..3 saves the current view, Ctrl+1..3 recalls it.
 struct CamBookmark { bool set = false; okay::Vec3 target{}; float yaw = 0, pitch = 0, dist = 10;
@@ -29371,6 +29374,17 @@ void DrawInspector(EditorState& ed) {
                     ImGui::PopID();
                 }
                 ImGui::TextDisabled("Grip rotation 0 = palm down, fingers forward (-Z).");
+                if (ImGui::Button("Add Grip Points##hold")) {
+                    ed.PushUndo();
+                    ProceduralObjectHolding::SuggestGrips(*ho);
+                    ed.dirty = true;
+                    ConsoleLog("Holdable Object: grip points added to " + go->name + " from its automatic layout (style is now Custom)");
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lay the grips out the way the object's automatic style holds it,\nthen switch to Custom so you can adjust them.");
+                ImGui::SameLine();
+                const bool editing = g_gripEdit == ho;
+                if (ImGui::Button(editing ? "Done Editing Grips##hold" : "Edit Grips in Scene##hold")) { g_gripEdit = editing ? nullptr : ho; g_gripDrag = -1; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the grips as hands in the Scene view and drag them where the hands should touch.");
                 if (GameObject* holder = ho->Holder()) ImGui::Text("Held by: %s", holder->name.c_str());
                 if (ImGui::SmallButton("Remove##hold")) toRemove = ho;
             }
@@ -38638,6 +38652,78 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
     }
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) || !vHeld) s_vSnapDragging = false;
+
+    // Grip editor: the Holdable Object's grip points as hands (L / R) in the
+    // Scene view. Drag one to move where that hand touches the object; its
+    // rotation (palm and fingers) is edited in the inspector.
+    if (g_gripEdit) {
+        bool alive = false;
+        for (const auto& up : objs) if (up && up->GetComponent<HoldableObject>() == g_gripEdit) { alive = true; break; }
+        if (!alive || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) { g_gripEdit = nullptr; g_gripDrag = -1; }
+    }
+    if (g_gripEdit && !gameView && g_gripEdit->gameObject && g_gripEdit->gameObject->transform) {
+        Transform* gt = g_gripEdit->gameObject->transform;
+        HoldableObject::Grip* grips[2] = {&g_gripEdit->leftGrip, &g_gripEdit->rightGrip};
+        const ImU32 gripCol[2] = {IM_COL32(90, 200, 255, 255), IM_COL32(255, 160, 70, 255)};
+        ImVec2 at[2]; bool atOk[2] = {false, false};
+        auto seg = [&](const Vec3& a, const Vec3& b, ImU32 c, float th) {
+            ImVec2 sa, sb;
+            if (toScreen(vp * Vec4{a, 1}, sa) && toScreen(vp * Vec4{b, 1}, sb)) dl->AddLine(sa, sb, c, th);
+        };
+        for (int g = 0; g < 2; ++g) {
+            if (!grips[g]->enabled) continue;
+            const Vec3 w = gt->TransformPoint(grips[g]->position);
+            const Quat r = gt->Rotation() * Quat::Euler(grips[g]->rotation);
+            const Vec3 f = r * Vec3{0, 0, -1}, n = r * Vec3{0, -1, 0}, sd = Vec3::Cross(f, n);
+            // The palm as a small plate, the fingers along f, the palm facing n.
+            const Vec3 c0 = w - f * 0.03f - sd * 0.04f, c1 = w - f * 0.03f + sd * 0.04f;
+            const Vec3 c2 = w + f * 0.05f + sd * 0.04f, c3 = w + f * 0.05f - sd * 0.04f;
+            seg(c0, c1, gripCol[g], 1.5f); seg(c1, c2, gripCol[g], 1.5f); seg(c2, c3, gripCol[g], 1.5f); seg(c3, c0, gripCol[g], 1.5f);
+            seg(w, w + f * 0.1f, gripCol[g], 2.0f);
+            seg(w, w + n * 0.05f, IM_COL32(240, 240, 240, 200), 1.5f);
+            if ((atOk[g] = toScreen(vp * Vec4{w, 1}, at[g]))) {
+                const bool hot = g_gripDrag == g;
+                dl->AddCircleFilled(at[g], hot ? 8.0f : 6.5f, gripCol[g]);
+                dl->AddText(ImVec2(at[g].x - 3.5f, at[g].y - 7.0f), IM_COL32(20, 20, 24, 255), g == 0 ? "L" : "R");
+            }
+        }
+        auto mouseRay = [&](Vec3& o, Vec3& d) {
+            const float nx = (io.MousePos.x - canvasPos.x) / canvasSize.x * 2.0f - 1.0f;
+            const float ny = 1.0f - (io.MousePos.y - canvasPos.y) / canvasSize.y * 2.0f;
+            const Mat4 inv = vp.Inverse();
+            o = inv.MultiplyPoint({nx, ny, -1.0f});
+            d = (inv.MultiplyPoint({nx, ny, 1.0f}) - o).Normalized();
+        };
+        if (g_gripDrag < 0 && hovered && !g_uiHandled && !g_gizmoGrab && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            float best = 10.0f;
+            for (int g = 0; g < 2; ++g) {
+                if (!atOk[g]) continue;
+                const float dx = io.MousePos.x - at[g].x, dy = io.MousePos.y - at[g].y, dd = std::sqrt(dx * dx + dy * dy);
+                if (dd < best) { best = dd; g_gripDrag = g; }
+            }
+            if (g_gripDrag >= 0) {
+                ed.PushUndo();
+                grabbedThisClick = true;
+                Vec3 o, d; mouseRay(o, d);
+                g_gripDragPlane = gt->TransformPoint(grips[g_gripDrag]->position);
+                g_gripDragNormal = d;
+            }
+        }
+        if (g_gripDrag >= 0) {
+            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) g_gripDrag = -1;
+            else {
+                Vec3 o, d; mouseRay(o, d);
+                const float den = Vec3::Dot(d, g_gripDragNormal);
+                if (std::fabs(den) > 1e-5f) {
+                    const Vec3 hit = o + d * (Vec3::Dot(g_gripDragPlane - o, g_gripDragNormal) / den);
+                    grips[g_gripDrag]->position = gt->InverseTransformPoint(hit);
+                    ed.dirty = true;
+                }
+            }
+        }
+        dl->AddText(ImVec2(canvasPos.x + 10, canvasEnd.y - 24), IM_COL32(180, 220, 255, 220),
+                    "Grip editor: drag L / R to place the hands (Esc to finish)");
+    }
 
     // Click-select (skipped when a gizmo handle was just grabbed): pick the
     // nearest mesh whose projected bounding box contains the cursor.

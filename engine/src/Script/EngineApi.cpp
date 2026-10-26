@@ -11,6 +11,7 @@
 #include "okay/Math/Mathf.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
+#include "okay/Components/ProceduralObjectHolding.hpp"
 #include <cmath>
 #include <set>
 
@@ -287,6 +288,49 @@ EngineApi Build() {
             [](const Value& s, std::vector<Value>& a, CallContext& c) { Body(s, c)->AddForceAtPosition(V(a[0]), V(a[1])); return Value{}; },
             "Push it at a world point (off-centre pushes also spin it)."));
         api.types.push_back(std::move(r));
+    }
+    // ---- Procedural Object Holding ----
+    {
+        ApiType h; h.name = "ProceduralObjectHolding"; h.isComponent = true;
+        h.doc = "Holding objects with the hands (IK onto their grips). The object needs a Procedural Object Holding component.";
+        h.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<ProceduralObjectHolding>() : nullptr; };
+        auto holder = [](const Value& s, CallContext& c) {
+            GameObject* g = Resolve(std::get<ObjRef>(s), c.loc);
+            auto* p = g->GetComponent<ProceduralObjectHolding>();
+            if (!p) throw RuntimeError("'" + g->name + "' has no Procedural Object Holding (add one in the Inspector)", c.loc);
+            return p;
+        };
+        h.props.push_back(ro("isHolding", tBool, [holder](const Value& s, CallContext& c) { return Value{holder(s, c)->IsHolding()}; },
+            "True while something is in the hands."));
+        h.props.push_back(ro("heldObject", tGO, [holder, goIdx](const Value& s, CallContext& c) { return MakeRef(holder(s, c)->Held(), goIdx); },
+            "What's in the hands (null when nothing)."));
+        h.props.push_back(ro("speedMultiplier", tFloat,
+            [holder](const Value& s, CallContext& c) { return Value{holder(s, c)->SpeedMultiplier()}; },
+            "What movement speed is multiplied by while carrying (1 = unaffected)."));
+        h.methods.push_back(method("PickUp", {tGO}, {"obj"}, tBool,
+            [holder](const Value& s, std::vector<Value>& a, CallContext& c) {
+                GameObject* o = std::holds_alternative<ObjRef>(a[0]) ? Resolve(std::get<ObjRef>(a[0]), c.loc) : nullptr;
+                return Value{holder(s, c)->Pickup(o)};
+            }, "Take obj into the hands; true if it's held (online the server can still refuse)."));
+        h.methods.push_back(method("PickUpNearest", {tFloat}, {"range"}, tBool,
+            [holder](const Value& s, std::vector<Value>& a, CallContext& c) { return Value{holder(s, c)->PickupNearest(F(a[0]))}; },
+            "Pick up the nearest free Holdable Object within range metres."));
+        h.methods.push_back(method("Drop", {}, {}, tVoid,
+            [holder](const Value& s, std::vector<Value>&, CallContext& c) { holder(s, c)->Drop(); return Value{}; },
+            "Let go of the held object."));
+        ApiMethod style = method("SetStyle", {tString}, {"style"}, tBool,
+            [holder](const Value& s, std::vector<Value>& a, CallContext& c) {
+                HoldableObject::Style st;
+                if (!HoldableObject::StyleFromName(S(a[0]), st)) throw RuntimeError("\"" + S(a[0]) + "\" isn't a holding style", c.loc);
+                return Value{holder(s, c)->SetStyle(st)};
+            }, "Hold it as \"Automatic\", \"Custom\", \"Pistol\", \"Rifle\", \"Box\", \"Flashlight\", \"Sword\", \"Cup\" or \"Heavy\".");
+        style.checkLiteral = [](int, const std::string& lit) {
+            HoldableObject::Style st;
+            return HoldableObject::StyleFromName(lit, st) ? std::string()
+                : "\"" + lit + "\" isn't a holding style. Use Automatic, Custom, Pistol, Rifle, Box, Flashlight, Sword, Cup or Heavy";
+        };
+        h.methods.push_back(style);
+        api.types.push_back(std::move(h));
     }
     // ---- Input ----
     {

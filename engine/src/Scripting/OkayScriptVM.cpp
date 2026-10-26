@@ -4495,6 +4495,7 @@ struct OkayScriptVM::Impl {
         //                                               (range defaults to the component's Pickup Range)
         //   hold_drop()                                 let go of it
         //   hold_object()                               name of what's held ("" = nothing)
+        //   hold_set_style(name) / hold_set_hand(name)  how it's held / which hand
         auto holder = [this]() -> ProceduralObjectHolding* {
             GameObject* g = rt.host ? rt.host->gameObject : nullptr;
             return g ? g->GetComponent<ProceduralObjectHolding>() : nullptr;
@@ -4511,6 +4512,22 @@ struct OkayScriptVM::Impl {
         };
         b["hold_drop"] = [holder](std::vector<Value>&) {
             if (ProceduralObjectHolding* h = holder()) h->Drop();
+            return Value{};
+        };
+        // hold_set_style("pistol" | "rifle" | "box" | ...) -> 1 if set; hold_set_hand("left" | "right" | "both")
+        b["hold_set_style"] = [holder](std::vector<Value>& a) {
+            ProceduralObjectHolding* h = holder();
+            HoldableObject::Style st;
+            return Value{h && !a.empty() && HoldableObject::StyleFromName(a[0].AsString(), st) && h->SetStyle(st) ? 1.0f : 0.0f};
+        };
+        b["hold_set_hand"] = [holder](std::vector<Value>& a) {
+            ProceduralObjectHolding* h = holder();
+            if (!h || a.empty()) return Value{};
+            std::string n = a[0].AsString();
+            for (auto& ch : n) ch = (char)std::tolower((unsigned char)ch);
+            if (n == "left") h->primaryHand = ProceduralObjectHolding::Hand::Left;
+            else if (n == "right") h->primaryHand = ProceduralObjectHolding::Hand::Right;
+            else if (n == "both") h->primaryHand = ProceduralObjectHolding::Hand::Both;
             return Value{};
         };
         b["hold_object"] = [holder](std::vector<Value>&) {

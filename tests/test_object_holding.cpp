@@ -4,6 +4,8 @@
 #include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
+#include "okay/Scripting/NextScriptVM.hpp"
+#include "okay/VisualScript/VsApi.hpp"
 #include <cmath>
 
 using namespace okay;
@@ -459,6 +461,42 @@ int main() {
         CHECK(box->transform->Position().z + 0.15f < chestZ - 0.12f);
     }
 
+    // ---- Add Grip Points: the automatic layout becomes editable Custom grips that
+    // hold the object the same way.
+    {
+        using St = HoldableObject::Style;
+        for (St st : {St::Box, St::Rifle, St::Pistol}) {
+            Scene s("Suggest");
+            Ground(s);
+            GameObject* player = Templates::BuildPlayerBody(s, {0, 0, 0}, "Player");
+            auto* hold = player->AddComponent<ProceduralObjectHolding>();
+            GameObject* obj = Crate(s, "Thing", {0, 0.3f, -0.8f},
+                                    st == St::Box ? Vec3{0.5f, 0.4f, 0.4f} : Vec3{0.06f, 0.15f, st == St::Rifle ? 0.9f : 0.25f}, 1.0f);
+            auto* h = obj->AddComponent<HoldableObject>();
+            h->style = st;
+            s.Start();
+            Step(s, 2);
+            CHECK(hold->Pickup(obj));
+            Step(s, 60);
+            const Vec3 autoL = obj->transform->InverseTransformPoint(hold->GripPoint(true));
+            const Vec3 autoR = obj->transform->InverseTransformPoint(hold->GripPoint(false));
+            const bool usedL = hold->HandInUse(true), usedR = hold->HandInUse(false);
+            ProceduralObjectHolding::SuggestGrips(*h);
+            CHECK(h->style == St::Custom);
+            CHECK(h->leftGrip.enabled == usedL && h->rightGrip.enabled == usedR);
+            Step(s, 60);
+            CHECK(hold->HandInUse(true) == usedL && hold->HandInUse(false) == usedR);
+            if (usedL) CHECK(Dist(obj->transform->InverseTransformPoint(hold->GripPoint(true)), autoL) < 0.05f);
+            if (usedR) CHECK(Dist(obj->transform->InverseTransformPoint(hold->GripPoint(false)), autoR) < 0.05f);
+            for (int l = 0; l < 2; ++l)
+                if (hold->HandInUse(l == 0)) CHECK(WristError(hold->IK(), l, ArmOf(hold->IK(), l).hand) < 0.01f);
+            // Set Style switches how it's held.
+            CHECK(hold->SetStyle(St::Box));
+            Step(s, 30);
+            CHECK(hold->CarryStyle() == St::Box && hold->HandInUse(true) && hold->HandInUse(false));
+        }
+    }
+
     // ---- Scripts: hold_nearest only takes holdable objects in range; hold_drop lets go.
     {
         Scene s("Script");
@@ -480,6 +518,61 @@ int main() {
         CHECK(hold->Held() == near);
         CHECK(vm.Load("hold_drop()\nhold_pickup(\"Far\")\n"));
         CHECK(hold->Held() == far);
+        CHECK(vm.Load("hold_set_hand(\"left\")\nlet ok = hold_set_style(\"pistol\")\nlet bad = hold_set_style(\"banana\")\n"));
+        CHECK(hold->primaryHand == ProceduralObjectHolding::Hand::Left);
+        CHECK(far->GetComponent<HoldableObject>()->style == HoldableObject::Style::Pistol);
+    }
+
+    // ---- The binding table: C#-style scripts and generated visual-script nodes.
+    {
+        Scene s("Api");
+        Ground(s);
+        GameObject* player = Templates::BuildPlayerBody(s, {0, 0, 0}, "Player");
+        auto* hold = player->AddComponent<ProceduralObjectHolding>();
+        GameObject* box = Crate(s, "Box", {0.4f, 0.2f, -0.4f}, {0.3f, 0.3f, 0.3f}, 1.0f);
+        box->AddComponent<HoldableObject>();
+        auto* sc = player->AddComponent<ScriptComponent>(NextScriptVM::kLanguage);
+        std::string err;
+        CHECK(sc->LoadSource(
+            "class Carrier : Behaviour {\n"
+            "    public bool held = false;\n"
+            "    void Start() {\n"
+            "        var h = GetComponent<ProceduralObjectHolding>();\n"
+            "        held = h.PickUpNearest(2);\n"
+            "        h.SetStyle(\"Heavy\");\n"
+            "    }\n"
+            "}\n", &err));
+        if (!err.empty()) std::cerr << "  " << err << "\n";
+        s.Start();
+        Step(s, 2);
+        CHECK(hold->Held() == box);
+        CHECK(box->GetComponent<HoldableObject>()->style == HoldableObject::Style::Heavy);
+        CHECK(sc->VM()->GetGlobal("held").AsBool());
+        // A visual script: drop, then pick up again by object.
+        auto* vsc = player->AddComponent<VisualScriptComponent>();
+        CHECK(vsc->LoadFromText(
+            "node 0 OnKey:g\n"
+            "node 1 ProceduralObjectHolding.Drop/0\n"
+            "node 2 OnKey:h\n"
+            "node 3 ProceduralObjectHolding.PickUp/1\n"
+            "node 4 ProceduralObjectHolding.isHolding\n"
+            "node 5 SetVar holding\n"
+            "default 3 0 \"Box\"\n"
+            "data 5 0 4 0\n"
+            "exec 0 0 1\n"
+            "exec 2 0 3\n"
+            "exec 3 0 5\n"
+            "entry OnKey:g 0\n"
+            "entry OnKey:h 2\n", &err));
+        Step(s, 1);
+        Input::FeedKeys({'g'}); s.Update(1.0f / 60.0f); Input::FeedKeys({}); s.Update(1.0f / 60.0f);
+        CHECK(!hold->IsHolding());
+        Input::FeedKeys({'h'}); s.Update(1.0f / 60.0f); Input::FeedKeys({}); s.Update(1.0f / 60.0f);
+        CHECK(hold->Held() == box);
+        CHECK(vsc->GetVariable("holding").AsBool());
+        // A style name the binding doesn't know is caught when the graph is checked.
+        CHECK(!vs::VsApiCheckLiteral("ProceduralObjectHolding.SetStyle/1", 0, "Banana").empty());
+        CHECK(vs::VsApiCheckLiteral("ProceduralObjectHolding.SetStyle/1", 0, "rifle").empty());
     }
 
     // ---- Save/load keeps every setting; old scenes without the records load.

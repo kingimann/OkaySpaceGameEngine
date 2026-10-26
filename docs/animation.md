@@ -799,14 +799,27 @@ elbows bend down and out, and the object moves with the body.
   NetworkPlayerSpawner peer), that the object has a Holdable Object, is free and
   is within **Pickup Range** plus a metre. Then it holds the object on its copy
   and publishes the server-only synced variable `srv.hold/<character>` =
-  `<object>|<hand>`. Every peer, late joiners included, holds the same object on
+  `<object>|<hand>|<style>`. Every peer, late joiners included, holds the same object on
   its copy of that character and works out the arms itself from the same grips
   and rules. No bones are sent. The owner holds at once. If the server refuses,
   or doesn't answer within two seconds, the owner goes back to what the server
   says. Objects are matched by their NetworkSync id, else by name.
-- Scripts: `hold_nearest([range])` and `hold_pickup("Crate")` return 1 when the
-  object is in the hands, `hold_drop()` lets go, `hold_object()` is the name of
-  what's held ("" when nothing).
+- **Grip editor:** on a Holdable Object, **Add Grip Points** lays the grips out
+  the way its automatic style holds it and switches it to *Custom*, so you
+  start from a hold that already works. **Edit Grips in Scene** shows each grip
+  as a hand in the Scene view: an L / R knob, the palm plate, the fingers' line
+  and the palm's facing. Drag a knob to where that hand should touch the object
+  (Undo works; Esc or *Done Editing Grips* ends it). Turn the hand and set its
+  **Finger Curl** in the inspector.
+- Scripts (OkayScript): `hold_nearest([range])` and `hold_pickup("Crate")` return
+  1 when the object is in the hands, `hold_drop()` lets go, `hold_object()` is
+  the name of what's held ("" when nothing), `hold_set_style("rifle")` changes
+  how it's held and `hold_set_hand("left")` picks the primary hand.
+- C#-style scripts and visual scripts: `GetComponent<ProceduralObjectHolding>()`
+  has `PickUp(obj)`, `PickUpNearest(range)`, `Drop()`, `SetStyle("Pistol")`,
+  `isHolding`, `heldObject` and `speedMultiplier`. The visual-script nodes of the
+  same names are under *ProceduralObjectHolding* (see engine_api.md). Online,
+  a style change goes through the server like a pickup.
 
 ## State machine: events, mute, history
 

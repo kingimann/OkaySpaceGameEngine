@@ -991,6 +991,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     const StanceBody* stance = nullptr;
     if (auto* fpc = go->GetComponent<FirstPersonController>()) stance = &fpc->stanceBody();
     else if (auto* tpc = go->GetComponent<ThirdPersonController>()) stance = &tpc->stanceBody();
+    else if (auto* p25 = go->GetComponent<Platformer25DController>()) stance = &p25->stanceBody();
     const bool resized = stance && stance->captured && std::fabs(stance->curH - stance->standH) > 1e-4f;
     const float standOffY = resized ? stance->feetY + stance->standH * 0.5f : 0.0f;
     if (auto* bc = go->GetComponent<BoxCollider3D>(); bc && bc->shape() == Collider3D::Shape::Box) {
@@ -1572,7 +1573,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
          .b("climb", pc->ledgeClimb)("climbTime", pc->climbTime)
          ("camDist", pc->cameraDistance)("camH", pc->cameraHeight)("camPitch", pc->cameraPitch)("lead", pc->lookAhead)
          ("camDamp", pc->cameraDamping)("vDamp", pc->verticalDamping)("speedZoom", pc->speedZoom)
-         .b("followLayer", pc->cameraFollowsLayer);
+         .b("followLayer", pc->cameraFollowsLayer)
+         .key("crouchKey", pc->crouchKey).key("proneKey", pc->proneKey).b("toggleStance", pc->toggleStance)
+         ("crouchSpeed", pc->crouchSpeed)("proneSpeed", pc->proneSpeed).b("allowProne", pc->allowProne)
+         .b("resize", pc->resizeBody)("crouchH", pc->crouchHeight)("proneH", pc->proneHeight)
+         ("stancePad", pc->stanceGamepadButton)("proneHold", pc->proneHoldTime);
+        if (pc->stance() != Platformer25DController::Stance::Stand) k("stance", (int)pc->stance());   // saved crouched / prone
         out << "\n";
     }
     if (auto* pj = go->GetComponent<Projectile3D>()) {
@@ -4200,6 +4206,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     k.f("camPitch", pc->cameraPitch); k.f("lead", pc->lookAhead); k.f("camDamp", pc->cameraDamping);
                     k.f("vDamp", pc->verticalDamping); k.f("speedZoom", pc->speedZoom);
                     k.b("followLayer", pc->cameraFollowsLayer);
+                    k.key("crouchKey", pc->crouchKey); k.key("proneKey", pc->proneKey); k.b("toggleStance", pc->toggleStance);
+                    k.f("crouchSpeed", pc->crouchSpeed); k.f("proneSpeed", pc->proneSpeed); k.b("allowProne", pc->allowProne);
+                    k.b("resize", pc->resizeBody); k.f("crouchH", pc->crouchHeight); k.f("proneH", pc->proneHeight);
+                    k.i("stancePad", pc->stanceGamepadButton); k.f("proneHold", pc->proneHoldTime);
+                    // Saved crouched / prone: start that way (the collider was saved standing).
+                    using S = Platformer25DController::Stance;
+                    int st = 0; k.i("stance", st);
+                    if (st == (int)S::Crouch || st == (int)S::Prone) pc->RestoreStance(static_cast<S>(st));
                 } else if (field == "proj3d") {
                     auto* pj = go->AddComponent<Projectile3D>();
                     KvIn k(in);

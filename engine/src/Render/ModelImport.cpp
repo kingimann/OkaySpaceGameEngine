@@ -13,6 +13,13 @@
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/HumanoidRetarget.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/ThirdPersonShooterController.hpp"
+#include "okay/Components/FirstPersonController.hpp"
+#include "okay/Components/CharacterController3D.hpp"
+#include "okay/Components/ClickToMoveController.hpp"
+#include "okay/Components/TopDownController.hpp"
+#include "okay/Components/NPCController.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Math/Quat.hpp"
@@ -20,6 +27,7 @@
 #include "ufbx.h"
 #include <filesystem>
 #include <fstream>
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cmath>
@@ -1510,19 +1518,140 @@ static float RestHipsHeight(GameObject* root, GameObject* hips) {
     Vec3 p = root->transform->LocalToWorldMatrix().Inverse().MultiplyPoint(hips->transform->Position());
     return std::fabs(p.y);
 }
+// Lower-case words of a clip name, split at separators, digits and camelCase,
+// after any "Armature|" prefix: "Armature|RunningJump_2" -> running, jump.
+static std::vector<std::string> ClipNameWords(const std::string& raw) {
+    std::size_t cut = raw.find_last_of('|');
+    std::vector<std::string> out;
+    std::string cur;
+    char prev = 0;
+    for (char c : raw.substr(cut == std::string::npos ? 0 : cut + 1)) {
+        bool alpha = std::isalpha((unsigned char)c) != 0;
+        if (!alpha || (std::isupper((unsigned char)c) && std::islower((unsigned char)prev))) {
+            if (!cur.empty()) out.push_back(cur);
+            cur.clear();
+        }
+        if (alpha) cur += (char)std::tolower((unsigned char)c);
+        prev = c;
+    }
+    if (!cur.empty()) out.push_back(cur);
+    return out;
+}
+
+// Map idle/walk/run/jump/fall/land from the clip names, where not set yet.
 static void AutoMapLocomotion(ModelAnimator* ma) {
     if (!ma) return;
-    auto low = [](std::string v) { for (auto& c : v) c = (char)std::tolower((unsigned char)c); return v; };
-    for (const auto& c : ma->clips) {
-        std::string n = low(c.name);
-        auto has = [&](const char* k) { return n.find(k) != std::string::npos; };
-        if (ma->idleClip.empty() && (has("idle") || has("stand") || has("breath"))) ma->idleClip = c.name;
-        else if (ma->walkClip.empty() && has("walk")) ma->walkClip = c.name;
-        else if (ma->runClip.empty() && (has("run") || has("sprint") || has("jog"))) ma->runClip = c.name;
-        else if (ma->jumpClip.empty() && (has("jump") || has("leap"))) ma->jumpClip = c.name;
-        else if (ma->fallClip.empty() && (has("fall") || has("air") || has("drop"))) ma->fallClip = c.name;
-        else if (ma->landClip.empty() && has("land")) ma->landClip = c.name;
+    // By whole words of the clip name, an exact name first ("Walk" before
+    // "Walk Back"): "Stairs" isn't "air", and a "Running Jump" is a jump.
+    static const std::vector<std::string> kWords[6] = {
+        {"idle", "stand", "standing", "breathing"}, {"walk", "walking"},
+        {"run", "running", "sprint", "sprinting", "jog", "jogging"},
+        {"jump", "jumping", "leap"}, {"fall", "falling", "air", "inair", "drop"}, {"land", "landing"}};
+    std::string* slot[6] = {&ma->idleClip, &ma->walkClip, &ma->runClip, &ma->jumpClip, &ma->fallClip, &ma->landClip};
+    auto is = [&](int role, const std::string& w) {
+        for (const std::string& k : kWords[role]) if (k == w) return true;
+        return false;
+    };
+    std::vector<std::vector<std::string>> words;
+    for (const auto& c : ma->clips) words.push_back(ClipNameWords(c.name));
+    std::vector<bool> used(ma->clips.size(), false);
+    for (std::size_t ci = 0; ci < ma->clips.size(); ++ci)   // clips already given a state
+        for (const std::string* sl : slot) if (*sl == ma->clips[ci].name) used[ci] = true;
+    for (int pass = 0; pass < 2; ++pass)
+        for (int role = 0; role < 6; ++role)
+            for (std::size_t ci = 0; ci < ma->clips.size() && slot[role]->empty(); ++ci) {
+                if (used[ci]) continue;
+                bool hit = false, air = false;
+                if (pass == 0) {
+                    std::string whole;
+                    for (const std::string& w : words[ci]) whole += w;
+                    hit = is(role, whole);
+                } else {
+                    for (const std::string& w : words[ci]) {
+                        hit = hit || is(role, w);
+                        air = air || is(3, w) || is(4, w) || is(5, w);
+                    }
+                }
+                if (hit && !(role < 3 && air)) { *slot[role] = ma->clips[ci].name; used[ci] = true; }
+            }
+}
+
+// One clip through the rest poses (see "Rest poses" in AddAnimationsFromFile):
+// sampled at every key time, each mapped target bone gets the local rotation
+// that puts it at (source root-space rotation) * conv; the hips also get the
+// source's travel away from its rest, scaled by `ratio` into the target's
+// parent space. Other position and scale tracks keep the target's lengths.
+static void RetargetByRest(const ModelAnimator::Clip& c, ModelAnimator::Clip& out, GameObject* src,
+                           GameObject* modelRoot, const std::vector<GameObject*>& mapped,
+                           const std::unordered_map<GameObject*, GameObject*>& srcOf,
+                           const std::unordered_map<GameObject*, Quat>& conv,
+                           GameObject* sHips, GameObject* tHips, float ratio) {
+    std::unordered_map<std::string, const AnimationClip*> track;   // source node -> its clip
+    std::vector<float> times;
+    for (const ModelAnimator::NodeClip& nc : c.nodes) {
+        track[nc.node] = &nc.clip;
+        for (const auto& kv : nc.clip.Tracks()) for (const auto& k : kv.second.Keys()) times.push_back(k.time);
     }
+    std::sort(times.begin(), times.end());
+    times.erase(std::unique(times.begin(), times.end(), [](float a, float b) { return b - a < 1e-5f; }), times.end());
+
+    float t = 0.0f;
+    std::unordered_map<GameObject*, Quat> sAnim, tAnim;
+    std::function<Quat(Transform*)> S = [&](Transform* x) -> Quat {   // source root-space, at t
+        if (!x || x == src->transform) return Quat::Identity;
+        auto f = sAnim.find(x->gameObject);
+        if (f != sAnim.end()) return f->second;
+        Vec3 p = x->localPosition, sc = x->localScale; Quat q = x->localRotation;
+        auto it = track.find(x->gameObject->name);
+        if (it != track.end()) ModelAnimator::EvalClipInto(*it->second, t, p, q, sc);
+        return sAnim[x->gameObject] = S(x->Parent()) * q;
+    };
+    std::function<Quat(Transform*)> T = [&](Transform* x) -> Quat {   // target root-space, at t
+        if (!x || x == modelRoot->transform) return Quat::Identity;
+        auto f = tAnim.find(x->gameObject);
+        if (f != tAnim.end()) return f->second;
+        auto m = srcOf.find(x->gameObject);
+        Quat r = m != srcOf.end() ? S(m->second->transform) * conv.at(x->gameObject) : T(x->Parent()) * x->localRotation;
+        return tAnim[x->gameObject] = r;
+    };
+    // Hips travel: source parent space -> root -> target parent space.
+    auto parentRot = [](GameObject* g, GameObject* root) {
+        Quat r = Quat::Identity;
+        for (Transform* x = g->transform->Parent(); x && x != root->transform; x = x->Parent()) r = x->localRotation * r;
+        return r;
+    };
+    const AnimationClip* hipsTrack = nullptr;
+    if (sHips && tHips && srcOf.count(tHips)) {
+        auto it = track.find(sHips->name);
+        if (it != track.end() && it->second->HasTrack("position.x")) hipsTrack = it->second;
+    }
+    const Quat hipsTo = (tHips ? parentRot(tHips, modelRoot).Inverse() : Quat::Identity) *
+                        (sHips ? parentRot(sHips, src) : Quat::Identity);
+
+    std::vector<AnimationClip> clips(mapped.size());
+    std::vector<Quat> prev(mapped.size());
+    for (float tm : times) {
+        t = tm; sAnim.clear(); tAnim.clear();
+        for (std::size_t i = 0; i < mapped.size(); ++i) {
+            GameObject* g = mapped[i];
+            Quat q = (T(g->transform->Parent()).Inverse() * T(g->transform)).Normalized();
+            if (tm != times.front() && Quat::Dot(prev[i], q) < 0.0f) q = Quat{-q.x, -q.y, -q.z, -q.w};
+            prev[i] = q;
+            AnimationClip& ac = clips[i];
+            ac.smoothKeys = false;
+            ac.AddKey("rotation.qx", t, q.x); ac.AddKey("rotation.qy", t, q.y);
+            ac.AddKey("rotation.qz", t, q.z); ac.AddKey("rotation.qw", t, q.w);
+        }
+        if (hipsTrack) {
+            Vec3 p = sHips->transform->localPosition, sc; Quat q;
+            ModelAnimator::EvalClipInto(*hipsTrack, t, p, q, sc);
+            Vec3 d = hipsTo * ((p - sHips->transform->localPosition) * ratio);
+            Vec3 tp = tHips->transform->localPosition + d;
+            AnimationClip& ac = clips[std::find(mapped.begin(), mapped.end(), tHips) - mapped.begin()];
+            ac.AddKey("position.x", t, tp.x); ac.AddKey("position.y", t, tp.y); ac.AddKey("position.z", t, tp.z);
+        }
+    }
+    for (std::size_t i = 0; i < mapped.size(); ++i) out.nodes.push_back({mapped[i]->name, std::move(clips[i])});
 }
 
 int AddAnimationsFromFile(Scene& scene, GameObject* modelRoot, const std::string& path, std::string* outLog) {
@@ -1557,6 +1686,54 @@ int AddAnimationsFromFile(Scene& scene, GameObject* modelRoot, const std::string
     const bool retarget = std::fabs(ratio - 1.0f) > 0.03f;
     const std::string sHipsKey = sHips ? NormBoneName(sHips->name) : std::string();
 
+    // Rest poses. When they differ (an A-pose rig, other joint axes), local
+    // rotations can't be copied: each bone instead gets the source bone's
+    // root-space rotation away from ITS rest, put on this model's rest after
+    // turning that bone to aim where the source's did (so a T-pose clip
+    // brings an A-pose rig's arms down to the same place, not 45 deg lower).
+    std::unordered_map<std::string, GameObject*> sByKey;
+    for (GameObject* g : ssub) if (g != src) sByKey.emplace(NormBoneName(g->name), g);
+    std::unordered_map<GameObject*, GameObject*> srcOf;   // target bone -> source bone
+    std::vector<GameObject*> mapped;                      // the same, in scene order
+    bool sameRest = true;
+    for (GameObject* g : tsub) {
+        auto it = g == modelRoot ? sByKey.end() : sByKey.find(NormBoneName(g->name));
+        if (it == sByKey.end()) continue;
+        srcOf[g] = it->second;
+        mapped.push_back(g);
+        if (std::fabs(Quat::Dot(g->transform->localRotation, it->second->transform->localRotation)) < 0.9998f)
+            sameRest = false;
+    }
+    auto rootRot = [](GameObject* g, GameObject* root) {
+        Quat r = Quat::Identity;
+        for (Transform* t = g->transform; t && t != root->transform; t = t->Parent()) r = t->localRotation * r;
+        return r;
+    };
+    const Mat4 sInv = src->transform->LocalToWorldMatrix().Inverse();
+    const Mat4 tInv = modelRoot->transform->LocalToWorldMatrix().Inverse();
+    std::unordered_map<GameObject*, Quat> aim;   // turns a target bone's rest to aim like the source's
+    std::function<Quat(GameObject*)> Aim = [&](GameObject* g) -> Quat {
+        auto f = aim.find(g);
+        if (f != aim.end()) return f->second;
+        Quat a = Quat::Identity;
+        Transform* pt = g->transform->Parent();
+        if (pt && srcOf.count(pt->gameObject)) a = Aim(pt->gameObject);   // a leaf follows its parent
+        for (Transform* ct : g->transform->Children()) {
+            auto c = srcOf.find(ct->gameObject);
+            if (c == srcOf.end()) continue;
+            Vec3 td = tInv.MultiplyPoint(ct->Position()) - tInv.MultiplyPoint(g->transform->Position());
+            Vec3 sd = sInv.MultiplyPoint(c->second->transform->Position()) - sInv.MultiplyPoint(srcOf[g]->transform->Position());
+            if (td.SqrMagnitude() > 1e-10f && sd.SqrMagnitude() > 1e-10f) a = Quat::FromToRotation(td.Normalized(), sd.Normalized());
+            break;
+        }
+        return aim[g] = a;
+    };
+    // Target root-space rotation = source root-space rotation * conv.
+    std::unordered_map<GameObject*, Quat> conv;
+    if (!sameRest)
+        for (const auto& pr : srcOf)
+            conv[pr.first] = rootRot(pr.second, src).Inverse() * Aim(pr.first) * rootRot(pr.first, modelRoot);
+
     int added = 0, matched = 0, total = 0;
     std::string names;
     for (const ModelAnimator::Clip& c : sma->clips) {
@@ -1569,7 +1746,10 @@ int AddAnimationsFromFile(Scene& scene, GameObject* modelRoot, const std::string
             out.name = c.name + " " + std::to_string(n);
         }
         out.events = c.events;
-        for (const ModelAnimator::NodeClip& nc : c.nodes) {
+        if (!sameRest) {   // see "Rest poses" above
+            for (const ModelAnimator::NodeClip& nc : c.nodes) { ++total; matched += (int)tName.count(NormBoneName(nc.node)); }
+            RetargetByRest(c, out, src, modelRoot, mapped, srcOf, conv, sHips, tHips, ratio);
+        } else for (const ModelAnimator::NodeClip& nc : c.nodes) {
             ++total;
             const std::string key = NormBoneName(nc.node);
             auto it = tName.find(key);
@@ -1594,7 +1774,8 @@ int AddAnimationsFromFile(Scene& scene, GameObject* modelRoot, const std::string
     if (!added) { say("None of the bones in " + BaseName(path) + " match this model's skeleton."); return 0; }
     AutoMapLocomotion(ma);
     char buf[160];
-    std::snprintf(buf, sizeof(buf), " (%d/%d bone tracks matched%s)", matched, total, retarget ? ", retargeted to this model's proportions" : "");
+    std::snprintf(buf, sizeof(buf), " (%d/%d bone tracks matched%s)", matched, total,
+                  !sameRest ? ", converted to this model's rest pose" : retarget ? ", retargeted to this model's proportions" : "");
     say("Added " + std::to_string(added) + " clip" + (added == 1 ? "" : "s") + ": " + names + buf);
     return added;
 }
@@ -1837,6 +2018,18 @@ std::string FitCharacterCollider(Scene& scene, GameObject* player, GameObject* m
     return what + buf;
 }
 
+// The walk / run speeds of the controller moving `player` (false: none known).
+static bool ControllerSpeeds(GameObject* player, float& walk, float& run) {
+    if (auto* c = player->GetComponent<ThirdPersonController>())       { walk = c->walkSpeed; run = c->runSpeed; return true; }
+    if (auto* c = player->GetComponent<ThirdPersonShooterController>()) { walk = c->walkSpeed; run = c->runSpeed; return true; }
+    if (auto* c = player->GetComponent<FirstPersonController>())       { walk = c->walkSpeed; run = c->runSpeed; return true; }
+    if (auto* c = player->GetComponent<ClickToMoveController>())       { walk = c->walkSpeed; run = c->runSpeed; return true; }
+    if (auto* c = player->GetComponent<TopDownController>())           { walk = c->walkSpeed; run = c->runSpeed; return true; }
+    if (auto* c = player->GetComponent<CharacterController3D>())       { walk = c->speed;     run = c->runSpeed; return true; }
+    if (auto* c = player->GetComponent<NPCController>())               { walk = c->moveSpeed; run = c->runSpeed; return true; }
+    return false;
+}
+
 GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
                                  const std::string& path, std::string* outLog) {
     if (!player || !player->transform) return nullptr;
@@ -1875,17 +2068,7 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
     std::string mapped;
     bool genuineIdle = false, genuineWalk = false;
     if (ma && !ma->clips.empty()) {
-        auto low = [](std::string v) { for (auto& c : v) c = (char)std::tolower((unsigned char)c); return v; };
-        for (const auto& c : ma->clips) {
-            std::string n = low(c.name);
-            auto has = [&](const char* k) { return n.find(k) != std::string::npos; };
-            if (ma->idleClip.empty() && (has("idle") || has("stand") || has("breath"))) ma->idleClip = c.name;
-            else if (ma->walkClip.empty() && has("walk")) ma->walkClip = c.name;
-            else if (ma->runClip.empty() && (has("run") || has("sprint") || has("jog"))) ma->runClip = c.name;
-            else if (ma->jumpClip.empty() && (has("jump") || has("leap"))) ma->jumpClip = c.name;
-            else if (ma->fallClip.empty() && (has("fall") || has("air") || has("drop"))) ma->fallClip = c.name;
-            else if (ma->landClip.empty() && has("land")) ma->landClip = c.name;
-        }
+        AutoMapLocomotion(ma);
         genuineIdle = !ma->idleClip.empty();
         genuineWalk = !ma->walkClip.empty();
     }
@@ -1910,6 +2093,12 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
         if (ma->walkClip.empty()) ma->walkClip = !ma->runClip.empty() ? ma->runClip : ma->idleClip;
         ma->driveByMovement = true;
         ma->smoothLocomotion = true;
+        // The blend is fully "walk" at the walk threshold and fully "run" at the
+        // run threshold: put them at the speeds this player actually moves.
+        float walk = 0.0f, run = 0.0f;
+        if (ControllerSpeeds(player, walk, run) && walk > 0.0f && run > walk) {
+            ma->walkThreshold = walk; ma->runThreshold = run;
+        }
         // The controller moves the capsule — the clips must animate in place, or
         // their baked forward travel slides the model out of the collider.
         ma->inPlace = true;

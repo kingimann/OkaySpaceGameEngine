@@ -538,6 +538,18 @@ void WriteComponents(std::ostream& out, GameObject* go) {
                 << " " << ma->rootMotionApplyTo << "\n";
         if (ma->smoothLocomotion)
             out << "  modelanimsmooth 1\n";
+        // Clips with smooth (cubic) keys; the rest are linear, as imported.
+        {
+            std::vector<std::size_t> smoothClips;
+            for (std::size_t ci = 0; ci < ma->clips.size(); ++ci)
+                for (const auto& nc : ma->clips[ci].nodes)
+                    if (nc.clip.smoothKeys) { smoothClips.push_back(ci); break; }
+            if (!smoothClips.empty()) {
+                out << "  modelanimcubic " << smoothClips.size();
+                for (std::size_t ci : smoothClips) out << " " << ci;
+                out << "\n";
+            }
+        }
         for (std::size_t ci = 0; ci < ma->clips.size(); ++ci) {
             if (ma->clips[ci].events.empty()) continue;
             out << "  modelanimevents " << ci << " " << ma->clips[ci].events.size();
@@ -903,6 +915,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (f->adjustPelvis ? 1 : 0) << " " << (f->plantDown ? 1 : 0) << " " << (f->alignToGround ? 1 : 0)
             << " " << f->minKneeBend << " " << f->maxKneeBend << " " << f->smoothing
             << " " << (f->orient ? 1 : 0) << "\n";
+        // The rest of the tuning, key=value (older files lack it: defaults apply).
+        out << "  footikx";
+        KvOut k{out};
+        k("rayUp", f->maxRayUp)("rayDown", f->maxRayDown)("pelvisShift", f->maxPelvisShift)
+         ("upX", f->footUpAxis.x)("upY", f->footUpAxis.y)("upZ", f->footUpAxis.z)
+         .b("lock", f->footLock)("lockSpeed", f->lockSpeed)("lockHeight", f->lockHeight)
+         ("lockRelease", f->lockRelease);
+        out << "\n";
     }
     if (auto* lb = go->GetComponent<LimbIK>()) {
         out << "  limbik " << Quote(lb->upperName) << " " << Quote(lb->lowerName) << " " << Quote(lb->endName)
@@ -2694,6 +2714,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         for (long n = 0; n < nodeCnt && in; ++n) {
                             ModelAnimator::NodeClip nc;
                             nc.node = ReadQuoted(in);
+                            nc.clip.smoothKeys = false;   // linear unless modelanimcubic says otherwise
                             long trackCnt = 0; in >> trackCnt;
                             if (!in || !countOk(trackCnt, 2)) return bad("modelanim: bad track count");
                             for (long tk = 0; tk < trackCnt && in; ++tk) {
@@ -2749,6 +2770,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (!ma) ma = go->AddComponent<ModelAnimator>();
                     int sm = 0; in >> sm;
                     ma->smoothLocomotion = (sm != 0);
+                } else if (field == "modelanimcubic") {
+                    auto* ma = go->GetComponent<ModelAnimator>();
+                    long cnt = 0; in >> cnt;
+                    for (long k = 0; k < cnt && in; ++k) {
+                        long ci = -1; in >> ci;
+                        if (!ma || ci < 0 || ci >= (long)ma->clips.size()) continue;
+                        for (auto& nc : ma->clips[ci].nodes) { nc.clip.smoothKeys = true; nc.clip.SetSmooth("", true); }
+                    }
                 } else if (field == "modelanimevents") {
                     auto* ma = go->GetComponent<ModelAnimator>();
                     if (!ma) ma = go->AddComponent<ModelAnimator>();
@@ -3176,6 +3205,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                       std::istringstream rs(rest); float sm; int o;
                       if (rs >> sm) f->smoothing = sm;
                       if (rs >> o)  f->orient = (o != 0); }
+                } else if (field == "footikx") {
+                    KvIn k(in);
+                    if (auto* f = go->GetComponent<FootIK>()) {
+                        k.f("rayUp", f->maxRayUp); k.f("rayDown", f->maxRayDown); k.f("pelvisShift", f->maxPelvisShift);
+                        k.f("upX", f->footUpAxis.x); k.f("upY", f->footUpAxis.y); k.f("upZ", f->footUpAxis.z);
+                        k.b("lock", f->footLock); k.f("lockSpeed", f->lockSpeed); k.f("lockHeight", f->lockHeight);
+                        k.f("lockRelease", f->lockRelease);
+                    }
                 } else if (field == "limbik") {
                     auto* lb = go->AddComponent<LimbIK>();
                     lb->upperName = ReadQuoted(in); lb->lowerName = ReadQuoted(in); lb->endName = ReadQuoted(in);

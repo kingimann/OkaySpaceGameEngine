@@ -156,15 +156,19 @@ public:
                 bool launch = vy > airUpVel;
                 if (vy < -airDownVel) m_airT += dt; else m_airT = 0.0f;
                 if (launch || m_airT > 0.12f) {          // brief drops (steps) don't count
-                    m_inAir = true; m_airT = 0.0f;
+                    m_inAir = true; m_airT = 0.0f; m_fell = !launch;
                     const std::string& c = (launch && !jumpClip.empty()) ? jumpClip : fallClip;
                     if (!c.empty()) Play(c);
                 }
             } else {
                 // Apex: a jump turns into a fall once we're heading down.
                 if (vy < -1.0f && !fallClip.empty() && CurrentName() == jumpClip) Play(fallClip);
-                // Touchdown: vertical motion dies out (the ground stops us).
-                if (std::fabs(vy) < 0.4f) m_airT += dt; else m_airT = 0.0f;
+                // Touchdown: vertical motion dies out (the ground stops us). A jump's
+                // apex also passes zero, so that counts only once we've been
+                // falling, or with ground right under the feet (landing on a ledge
+                // on the way up).
+                if (vy < -1.0f) m_fell = true;
+                if (std::fabs(vy) < 0.4f && (m_fell || GroundUnderFeet())) m_airT += dt; else m_airT = 0.0f;
                 if (m_airT > 0.06f) {
                     m_inAir = false; m_airT = 0.0f;
                     if (!landClip.empty()) PlayOnce(landClip);   // locomotion resumes after
@@ -216,9 +220,13 @@ public:
         // by blendTime, since Play goes through PlayIndex). Suspended by a
         // one-shot or while airborne (the jump/fall clip owns the body).
         if (spd < 0.0f || m_once || m_inAir) return;
+        // 10% hysteresis: a speed hovering on a threshold doesn't flicker clips.
+        const std::string cur = CurrentName();
+        const float runAt  = cur == runClip ? runThreshold * 0.9f : runThreshold;
+        const float walkAt = (cur == walkClip || cur == runClip) ? walkThreshold * 0.9f : walkThreshold;
         const std::string* want = &idleClip;
-        if (spd >= runThreshold && !runClip.empty())        want = &runClip;
-        else if (spd > walkThreshold && !walkClip.empty())  want = &walkClip;
+        if (spd >= runAt && !runClip.empty())        want = &runClip;
+        else if (spd > walkAt && !walkClip.empty())  want = &walkClip;
         if (!want->empty() && *want != CurrentName()) Play(*want);   // switch only on change
     }
 
@@ -476,16 +484,24 @@ public:
     bool SmoothBlendStep(float dt, float spd) {
         if (!gameObject || !gameObject->scene()) return false;
         // The two clips around this speed + the blend weight between them.
-        int A, B; float w;
+        int A, B; float w, lo, hi;   // lo/hi: the ground speed each clip is made for
+        // A clip's own root travel when it has one, else the threshold it's full at.
+        auto clipSpeed = [&](int ci, float thr) { float v = ClipRootSpeed(ci); return v > 1e-3f ? v : thr; };
         if (spd <= walkThreshold) {
             A = FindClip(idleClip); B = FindClip(walkClip);
             w = walkThreshold > 1e-4f ? spd / walkThreshold : 1.0f;
+            lo = 0.0f; hi = clipSpeed(B, walkThreshold);
         } else {
             A = FindClip(walkClip); B = FindClip(runClip);
             w = (spd - walkThreshold) / std::fmax(runThreshold - walkThreshold, 1e-4f);
+            lo = clipSpeed(A, walkThreshold); hi = clipSpeed(B, runThreshold);
         }
         if (w < 0.0f) w = 0.0f; if (w > 1.0f) w = 1.0f;
-        return BlendClips(dt, A, B, w);
+        // Play the steps as fast as the body actually moves, so feet don't skate
+        // (unless root motion is what moves it: then the clip sets the pace).
+        float clipSpd = lo + (hi - lo) * w, rate = 1.0f;
+        if (!rootMotion && clipSpd > 1e-3f) rate = std::fmin(2.0f, std::fmax(0.5f, spd / clipSpd));
+        return BlendClips(dt * rate, A, B, w);
     }
 
     /// Set by a driver (e.g. an AnimStateMachine blend-tree state) that poses the
@@ -1016,6 +1032,18 @@ private:
     bool m_haveLast = false;
     bool  m_inAir = false;   // air-state machine (jump/fall/land by vertical motion)
     float m_airT  = 0.0f;    // hysteresis timer for takeoff/touchdown detection
+    bool  m_fell  = false;   // descended since leaving the ground (past any jump apex)
+
+    // Something solid just under this object's origin (the feet), other than
+    // the body carrying it.
+    bool GroundUnderFeet() const {
+        Scene* sc = gameObject ? gameObject->scene() : nullptr;
+        if (!sc || !transform) return false;
+        Transform* body = transform;
+        while (body->Parent()) body = body->Parent();
+        Vec3 p = transform->Position();
+        return sc->physics3D().Raycast(*sc, {p.x, p.y + 0.1f, p.z}, Vec3{0, -1, 0}, 0.25f, body->gameObject).hit;
+    }
 };
 
 } // namespace okay

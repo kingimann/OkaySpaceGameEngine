@@ -28874,7 +28874,7 @@ void DrawInspector(EditorState& ed) {
         }
         if (auto* rm = dynamic_cast<RootMotion*>(curComp)) {
             if (CompHeader("Root Motion", rm, &toRemove)) {
-                ImGui::TextDisabled("Drive the body from the animation's root bone movement.");
+                ImGui::TextWrapped("Legacy: for an imported model, turn on Root Motion in its Model Animator instead.");
                 NameField("Root Bone##rm", rm->rootNodeName);
                 const char* modes[] = {"Anim Drives Motion", "Physics Drives Anim", "Disabled"};
                 ImGui::Combo("Mode##rm", &rm->mode, modes, 3);
@@ -33822,7 +33822,6 @@ void DrawInspector(EditorState& ed) {
                 ConsoleLog("Full Body IK: mapped " + std::to_string(n) + "/" + std::to_string((int)FullBodyIK::BoneCount) + " bones", n >= 11 ? 0 : 1);
                 ed.dirty = true;
             }
-            if (item(!go->GetComponent<RootMotion>(), "Root Motion (anim drives the body)")) { go->AddComponent<RootMotion>(); ed.dirty = true; }
             if (item(true, "Tween Animation (move / scale / fade / punch / shake, no code)")) {
                 auto* ta = go->AddComponent<TweenAnimation>();
                 if (GetUIRect(go).valid) { ta->type = (int)TweenAnimation::Type::PunchScale; ta->endValue = {0.15f, 0.15f, 0.15f}; ta->duration = 0.4f; }

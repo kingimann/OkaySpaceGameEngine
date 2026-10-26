@@ -908,6 +908,10 @@ add_test(NAME net_token_policy COMMAND test_net_token_policy)
 add_executable(test_net_anticheat_ph4 test_net_anticheat_ph4.cpp)
 target_link_libraries(test_net_anticheat_ph4 PRIVATE okay::engine)
 add_test(NAME net_anticheat_ph4 COMMAND test_net_anticheat_ph4)
+# Anti-cheat plan 5a: the opt-in fixed network tick
+add_executable(test_net_tick test_net_tick.cpp)
+target_link_libraries(test_net_tick PRIVATE okay::engine)
+add_test(NAME net_tick COMMAND test_net_tick)
 
 # Anti-cheat as a game uses it: AntiCheatConfig / NetValidator components and the VS nodes
 add_executable(test_net_anticheat_components test_net_anticheat_components.cpp)

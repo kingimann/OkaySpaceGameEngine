@@ -135,6 +135,7 @@ const char* DedicatedServerUsage() {
         "  --anticheat FILE       enforce the anti-cheat rules in FILE (.okayac)\n"
         "  --host-key FILE        sign joins with the identity seed in FILE (clients can pin it)\n"
         "  --report-kicks         file anti-cheat kicks of signed-in players for admin review\n"
+        "  --fixed-tick           run the network on a fixed tick at --tick (clients send once a tick)\n"
         "Environment: OKAY_SERVER_PORT, OKAY_SERVER_MAX_PLAYERS, OKAY_SERVER_TICK,\n"
         "OKAY_SERVER_NAME, OKAY_SERVER_PASSWORD, OKAY_SERVER_AUTH=1, OKAY_SERVER_ADVERTISE=1,\n"
         "OKAY_SERVER_PUBLIC_ADDR, OKAY_SERVER_REGION (flags win).\n";
@@ -189,6 +190,7 @@ bool LoadDedicatedServerConfig(const std::string& path, DedicatedServerOptions& 
             out.anticheatFile = v;
         }
         else if (k == "report_kicks") out.reportKicks = truthy(v);
+        else if (k == "fixed_tick") out.fixedTick = truthy(v);
         else if (k == "host_key") {
             std::string why;
             if (!LoadHostKey(v, out.hostKeySeed, why)) return bad("host_key: " + why);
@@ -316,6 +318,8 @@ bool ParseDedicatedServerArgs(int argc, char** argv, DedicatedServerOptions& out
             out.anticheat = s; out.anticheatFile = v;
         } else if (a == "--report-kicks") {
             out.reportKicks = true;
+        } else if (a == "--fixed-tick") {
+            out.fixedTick = true;
         } else if (a == "--host-key") {
             if (!value(v) || v.empty()) return fail("--host-key needs a file");
             std::string why;
@@ -536,6 +540,7 @@ int RunDedicatedServer(Scene& scene, const DedicatedServerOptions& opts) {
     // applied its own at Start).
     if (!opts.anticheatFile.empty()) net->anticheat.settings = opts.anticheat;
     if (!opts.hostKeySeed.empty()) net->SetHostIdentity(opts.hostKeySeed);
+    if (opts.fixedTick) net->netTickRate = opts.tickRate;
     // --report-kicks: the account this machine is signed in to files them, and
     // says so, so whoever reviews them knows which server sent them.
     std::shared_ptr<KickReporter> kickReporter;

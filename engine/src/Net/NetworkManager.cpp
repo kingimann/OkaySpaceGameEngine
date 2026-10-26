@@ -295,6 +295,10 @@ void NetworkManager::Stop() {
     m_joinRejected = false;
     m_relOut.clear();
     m_relSeen.Clear();
+    m_netTick = 0;
+    m_tickAccum = 0.0f;
+    m_hostTickRate = 0.0f;
+    m_statesSent = 0;
     m_acClockMs = 0.0;
     m_gameClockMs = 0.0;
     m_pendingJoins.clear();
@@ -1243,6 +1247,22 @@ void NetworkManager::AntiCheatAfterRefusal(std::uint32_t peer) {
     }
 }
 
+// Step the fixed tick by this frame's time; returns how many ticks elapsed
+// (at most 8: a long stall doesn't replay a burst of ticks).
+int NetworkManager::StepNetTick(float rate, float dt) {
+    if (rate <= 0.0f) return 0;
+    const float step = 1.0f / rate;
+    m_tickAccum += dt;
+    int ticks = 0;
+    while (m_tickAccum >= step) {
+        m_tickAccum -= step;
+        ++m_netTick;
+        if (m_onNetTick) m_onNetTick(m_netTick, step);
+        if (++ticks >= 8) { m_tickAccum = 0.0f; break; }
+    }
+    return ticks;
+}
+
 void NetworkManager::ServerTick(float dt) {
     m_serverTime += dt;
     m_acClockMs += static_cast<double>(dt) * 1000.0;
@@ -1470,7 +1490,11 @@ void NetworkManager::ServerTick(float dt) {
             // A trailing flags byte only when there's something to say (bit 0 =
             // number sealed packets); a server without anti-cheat P2 sends the
             // same Welcome as before, and older clients stop reading earlier.
-            if (c.secure.Sequenced()) w.Write(std::uint8_t(1));
+            // bit 1 = a fixed net tick, its rate (f32) follows.
+            std::uint8_t welcomeFlags = c.secure.Sequenced() ? 1 : 0;
+            if (netTickRate > 0.0f) welcomeFlags |= 2;
+            if (welcomeFlags) w.Write(welcomeFlags);
+            if (welcomeFlags & 2) w.Write(netTickRate);
             // A sealed joiner already has the keys; a plaintext joiner gets them here.
             SendDatagram(from, w.Data(), w.Size(), /*allowEncrypt=*/c.sealedJoin);
             if (isNew) {
@@ -1724,8 +1748,12 @@ void NetworkManager::ServerTick(float dt) {
     // Send each client a snapshot of just its own room: the host (id 0) if the
     // host shares that room, plus every client in the same room. This is what
     // makes lobbies work — separate rooms never see each other.
+    // With a fixed net tick, a snapshot goes out once a tick and carries it
+    // (even when nothing moved, so clients keep the tick); otherwise at snapshotRate.
+    const bool fixedTick = netTickRate > 0.0f;
+    const bool tickNow = fixedTick && StepNetTick(netTickRate, dt) > 0;
     m_snapshotTimer += dt;
-    if (m_snapshotTimer >= m_snapshotInterval && !m_clients.empty()) {
+    if ((fixedTick ? tickNow : m_snapshotTimer >= m_snapshotInterval) && !m_clients.empty()) {
         m_snapshotTimer = 0.0f;
         Vec3 lp = m_localAvatar ? m_localAvatar->localPosition : Vec3::Zero;
         for (auto& [ep, recipient] : m_clients) {
@@ -1764,7 +1792,7 @@ void NetworkManager::ServerTick(float dt) {
             };
             if (hostHere) consider(PeerState{0, lp.x, lp.y, lp.z, m_localGlyph}, true);
             for (auto& [ep2, c] : m_clients) if (c.room == room) consider(c.state, c.hasState);
-            if (include.empty()) continue;                          // nothing changed -> send nothing
+            if (include.empty() && !fixedTick) continue;            // nothing changed -> send nothing
 
             net::Packet snap(Snapshot);
             snap.Write(std::uint32_t(include.size()));
@@ -1773,6 +1801,7 @@ void NetworkManager::ServerTick(float dt) {
                 snap.Write(s.x); snap.Write(s.y); snap.Write(s.z);
                 snap.Write(std::uint8_t(s.glyph));
             }
+            if (fixedTick) snap.Write(m_netTick);   // trailing: older clients stop reading before it
             SendDatagram(recipient.endpoint, snap.Data(), snap.Size());
         }
     }
@@ -1951,6 +1980,10 @@ void NetworkManager::ClientTick(float dt) {
                                    /*asServer=*/false);
             const std::uint8_t welcomeFlags = p.ReadU8();   // optional: absent from older servers
             if (p.Ok() && (welcomeFlags & 1) && m_secure.Ready()) m_secure.SetSequenced(true);
+            if (p.Ok() && (welcomeFlags & 2)) {   // the host runs a fixed net tick
+                const float rate = p.ReadF32();
+                if (p.Ok() && std::isfinite(rate) && rate >= 1.0f && rate <= 240.0f) m_hostTickRate = rate;
+            }
             m_joined = true;
             m_joinRejected = false;
             OKAY_INFO("net: joined '", m_serverName, "' as peer ", m_localId);
@@ -1982,6 +2015,11 @@ void NetworkManager::ClientTick(float dt) {
                 s.x = p.ReadF32(); s.y = p.ReadF32(); s.z = p.ReadF32();
                 s.glyph = static_cast<char>(p.ReadU8());
                 ApplyPeer(s);
+            }
+            if (m_hostTickRate > 0.0f) {   // the host's tick (trailing)
+                const std::uint32_t tick = p.ReadU32();
+                // Snapshots can arrive out of order: only move forward.
+                if (p.Ok() && tick > m_netTick) { m_netTick = tick; m_tickAccum = 0.0f; }
             }
         } else if (type == Message) {
             std::uint32_t sender = p.ReadU32();
@@ -2025,14 +2063,18 @@ void NetworkManager::ClientTick(float dt) {
     }
     if (m_relayLost) { Stop(); return; }   // host gone or changed, or refused (RelayError())
 
-    // Send our local state to the server.
-    if (m_joined && m_localAvatar) {
+    // Send our local state to the server: once a frame, or once a tick when
+    // the host runs a fixed net tick (with our estimate of that tick).
+    const bool sendNow = m_hostTickRate > 0.0f ? (m_joined && StepNetTick(m_hostTickRate, dt) > 0) : true;
+    if (m_joined && m_localAvatar && sendNow) {
         Vec3 lp = m_localAvatar->localPosition;
         net::Packet p(State);
         p.Write(m_localId);
         p.Write(lp.x); p.Write(lp.y); p.Write(lp.z);
         p.Write(std::uint8_t(m_localGlyph));
+        if (m_hostTickRate > 0.0f) p.Write(m_netTick);   // trailing: an older host stops reading before it
         SendDatagram(m_serverEp, p.Data(), p.Size());
+        ++m_statesSent;
     }
 }
 

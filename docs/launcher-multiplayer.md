@@ -239,6 +239,29 @@ it's a server listed in the browser for that game. Reports are limited to one
 every 15 seconds per host, and players can't write stats directly. A dedicated
 server prints `match results saved` when a report lands.
 
+## Fixed network tick
+
+By default the network follows the frame rate: clients send their position
+every frame, and the host sends snapshots at its Tick Rate (`snapshotRate`).
+Set **Fixed Net Tick** on the host's Network Manager (`netTickRate`,
+`net_tick_rate(30)`, or the dedicated server's `--fixed-tick`) to run it on a
+fixed tick instead. 30 Hz is a good rate.
+
+- The host counts ticks at exactly that rate, whatever its frame rate. Every
+  snapshot carries the tick number and goes out once a tick, even when nothing
+  moved, so clients keep up.
+- The Welcome tells clients the rate. They then send their state once a tick
+  instead of once a frame, so a client running at 240 fps sends 30 a second,
+  with the tick it's on.
+- `NetTick()` / `net_tick()` is the current tick: the host's own, or on a client
+  its estimate of the host's. `OnNetTick(fn)` runs fixed-step game code on
+  every tick, on the host and on clients.
+- Off (0, the default), nothing changes. Older clients ignore the tick numbers
+  and keep sending every frame.
+
+This is the base for server-authoritative movement, prediction and lag
+compensation (anti-cheat plan phase 5), which build on it.
+
 ## Server authority (anti-cheat basics)
 
 The server decides; clients only ask.

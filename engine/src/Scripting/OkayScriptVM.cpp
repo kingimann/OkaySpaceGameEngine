@@ -4772,6 +4772,15 @@ struct OkayScriptVM::Impl {
 #endif
         };
         // 1 once the relay has paired this peer (host wired up / slot assigned).
+        // The fixed network tick (0 without one) and its rate; net_tick_rate(hz)
+        // sets the host's rate before it starts (0 = off, as before).
+        b["net_tick"] = [this](std::vector<Value>&) { NetworkManager* n = Net(); return Value{n ? (float)n->NetTick() : 0.0f}; };
+        b["net_tick_rate"] = [this](std::vector<Value>& a) {
+            NetworkManager* n = Net();
+            if (!n) return Value{0.0f};
+            if (!a.empty()) n->netTickRate = std::clamp(a[0].AsFloat(), 0.0f, 240.0f);
+            return Value{n->NetTickRate() > 0.0f ? n->NetTickRate() : n->netTickRate};
+        };
         b["net_relay_ready"] = [this](std::vector<Value>&) {
             NetworkManager* n = Net(); return Value{(n && n->RelayReady()) ? 1.0f : 0.0f};
         };

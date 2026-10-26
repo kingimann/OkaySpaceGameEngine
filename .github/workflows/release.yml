@@ -33,6 +33,19 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # The runner's Ubuntu mirror is sometimes slow enough that downloading the
+      # MinGW compiler outlasts the step timeout. Keep the downloaded packages in
+      # the Actions cache (one entry per runner image) so later runs install
+      # from it instead of the mirror.
+      - name: Note the runner image
+        run: echo "RUNNER_IMAGE=$ImageVersion" >> "$GITHUB_ENV"
+
+      - name: Restore downloaded apt packages
+        uses: actions/cache@v5
+        with:
+          path: ~/apt-cache
+          key: apt-mingw-release-${{ env.RUNNER_IMAGE }}
+
       # Ubuntu mirrors occasionally hang or crawl (one release sat here 45 min):
       # bounded attempts with apt's own timeouts, retried a few times. Only the
       # 64-bit MinGW compiler is installed (the full mingw-w64 package also pulls
@@ -40,10 +53,12 @@ jobs:
       - name: Install toolchain
         timeout-minutes: 25
         run: |
-          APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          mkdir -p ~/apt-cache/partial
+          APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Dir::Cache::archives=$HOME/apt-cache"
           for i in 1 2 3; do
             if timeout 240 sudo apt-get $APT update && \
                timeout 600 sudo apt-get $APT install -y --no-install-recommends cmake ninja-build g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev zip nsis ccache; then
+              sudo chown -R "$USER" ~/apt-cache
               exit 0
             fi
             echo "apt attempt $i failed or timed out; retrying"

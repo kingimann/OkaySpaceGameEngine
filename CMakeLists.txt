@@ -81,10 +81,9 @@ endif()
 # the release key, then the dev key). Public keys only; the private keys never
 # go near CMake. Empty = none built in (a signature is checked but not its signer).
 set(OKAY_AC_TRUSTED_KEYS "" CACHE STRING "Anti-cheat: trusted ed25519 public keys (hex, comma-separated)")
+include(${CMAKE_SOURCE_DIR}/cmake/OkayAntiCheatKeys.cmake)
+okay_ac_check_trusted_keys("${OKAY_AC_TRUSTED_KEYS}")   # exactly 64 hex digits per key, or configure fails
 if(OKAY_AC_TRUSTED_KEYS)
-    if(NOT OKAY_AC_TRUSTED_KEYS MATCHES "^[0-9a-fA-F]+(,[0-9a-fA-F]+)*$")
-        message(FATAL_ERROR "OKAY_AC_TRUSTED_KEYS must be hex public keys separated by commas")
-    endif()
     add_compile_definitions(OKAY_AC_TRUSTED_KEYS="${OKAY_AC_TRUSTED_KEYS}")
 endif()
 

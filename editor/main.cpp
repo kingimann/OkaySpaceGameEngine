@@ -3627,7 +3627,8 @@ std::string Build(EditorState& ed, const std::string& outDir,
 
     // Data/manifest.json: every shipped file's SHA-256, signed when a key is set
     // up (shared/AntiCheatIntegrity.hpp). Unsigned and unused unless anti-cheat is on.
-    const okayac::BuildManifestResult integrity = okayac::WriteBuildManifest(dir, gameName, opt.version, okayac::LoadSigningKey());
+    const okayac::BuildManifestResult integrity = okayac::WriteBuildManifest(dir, gameName, opt.version, okayac::LoadSigningKey(),
+                                                                             (okayac::Mode)opt.antiCheat);   // the mode is signed too
 
     // Total build size on disk (so the user sees a clean, accounted-for output) +
     // an optional per-file breakdown for the result popup.
@@ -15318,7 +15319,7 @@ void DrawFileDialogs(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Obfuscate the shipped scenes + config so players can't open them in a text editor to read or cheat-edit your game.\nNote: deters casual tampering, not a determined attacker (the key ships in the game).");
                 ImGui::SetNextItemWidth(160);
                 ImGui::Combo("Anti-cheat", &g_build.antiCheat, "Off\0Report\0Enforce\0");
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The game checks its files against Data/manifest.json and (Windows) watches for debuggers, injected DLLs and speedhacks.\nReport logs what it finds; Enforce also refuses to run. Client-side checks can be bypassed (docs/anticheat.md).");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", okayac::kBuildSettingsTooltip);
                 ImGui::Spacing(); SectionHeader("After the build");
                 ImGui::Checkbox("Open the output folder", &g_build.openFolderAfter);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reveal the finished build in your file browser when it's done.");

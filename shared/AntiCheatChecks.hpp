@@ -146,12 +146,15 @@ inline std::vector<std::string> LoadedModules() {
 // ---- Clock-drift heartbeat -------------------------------------------------------
 // A verifier with a clock it trusts sends challenges; the client answers each
 // with its own clock reading, tagged with a session key (HMAC-SHA256), so an
-// answer can't be forged, altered or replayed. Over a window of at least
-// minWindowMs the verifier compares how far the client's clock moved with how
-// far its own did: a speedhack moves the game's clock faster (or slower). More
-// than `tolerance` apart (5%), after allowing for the round trips, is flagged.
+// answer can't be forged, altered or replayed. For each window of windowMs the
+// verifier compares how far the client's clock moved with how far its own did:
+// a speedhack moves the game's clock faster (or slower). A window more than
+// `tolerance` (5%) off, after allowing for the round trips, is suspicious; only
+// several such windows in a row (sustain) are flagged, so a one-off step of
+// either clock is never mistaken for a speedhack.
 //
-// In the player the verifier's clock is the system time and the client's is the
+// In the player the verifier's clock is a monotonic one NTP never steps
+// (QueryUnbiasedInterruptTime, else GetTickCount64) and the client's is the
 // performance counter the game runs on (RuntimeGuard below). A multiplayer
 // server can be the verifier instead, carrying ClockChallenge / ClockResponse in
 // its own messages; that wiring belongs to the network layer.
@@ -203,10 +206,12 @@ inline ClockResponse AnswerChallenge(const ClockChallenge& c, std::uint64_t clie
 class ClockHeartbeat {
 public:
     enum class Verdict { Pending, Ok, Drift, BadResponse };
+    static constexpr std::uint64_t kDefaultWindowMs = 2000;   // one rate measurement per window
+    static constexpr int kDefaultSustain = 3;                 // windows in a row before it's drift
 
-    explicit ClockHeartbeat(std::string key, double tolerance = kClockTolerance, std::uint64_t minWindowMs = 2000,
-                            std::uint64_t maxWindowMs = 60000)
-        : key_(std::move(key)), tol_(tolerance), minWin_(minWindowMs), maxWin_(maxWindowMs) {
+    explicit ClockHeartbeat(std::string key, double tolerance = kClockTolerance, std::uint64_t windowMs = kDefaultWindowMs,
+                            int sustain = kDefaultSustain)
+        : key_(std::move(key)), tol_(tolerance), win_(windowMs), sustain_(sustain < 1 ? 1 : sustain) {
         std::random_device rd;
         rng_.seed(((std::uint64_t)rd() << 32) ^ rd());
     }
@@ -224,6 +229,12 @@ public:
         return c;
     }
 
+    // Each window of at least windowMs (verifier time) gives one rate: how far the
+    // client's clock moved against the verifier's, less 1. A window is "off" when
+    // that's beyond the tolerance plus what the round trips can explain. Only
+    // `sustain` off windows in a row, all off the same way, are drift: a one-off
+    // step of either clock (an NTP correction, a resume from sleep) lands in a
+    // single window and is never flagged.
     Verdict Accept(const ClockResponse& r, std::uint64_t nowMs) {
         auto it = std::find_if(pending_.begin(), pending_.end(),
                                [&](const Out& o) { return o.c.nonce == r.nonce && o.c.seq == r.seq; });
@@ -240,20 +251,25 @@ public:
         pending_.erase(it);
         if (!anchor_.set) { anchor_ = s; return Verdict::Pending; }
         const double dS = s.server - anchor_.server;
-        if (dS < (double)minWin_) return Verdict::Pending;
+        if (dS < (double)win_) return run_ >= sustain_ ? Verdict::Drift : Verdict::Pending;
         last_ = (s.client - anchor_.client) / dS - 1.0;
         const double allowance = (s.halfRtt + anchor_.halfRtt) / dS;
-        const bool drift = std::fabs(last_) > tol_ + allowance;
-        if (dS >= (double)maxWin_) anchor_ = s;   // slide: judge the recent past, not the whole session
-        if (drift) { ++flags_; return Verdict::Drift; }
+        anchor_ = s;   // the next window starts here
+        const int sign = std::fabs(last_) <= tol_ + allowance ? 0 : (last_ > 0 ? 1 : -1);
+        if (sign != 0 && sign == runSign_) ++run_;
+        else { run_ = sign != 0 ? 1 : 0; runSign_ = sign; }
+        if (run_ >= sustain_) {
+            if (run_ == sustain_) ++flags_;   // one flag per sustained episode
+            return Verdict::Drift;
+        }
         return Verdict::Ok;
     }
 
-    double LastDrift() const { return last_; }       // client rate / verifier rate - 1 (0.10 = 10% fast)
+    double LastDrift() const { return last_; }       // the last window: client rate / verifier rate - 1 (0.10 = 10% fast)
     int Flags() const { return flags_; }
     int BadResponses() const { return bad_; }
     std::size_t Outstanding() const { return pending_.size(); }
-    void Reset() { anchor_ = Sample{}; pending_.clear(); }
+    void Reset() { anchor_ = Sample{}; pending_.clear(); run_ = 0; runSign_ = 0; }
 
 private:
     static constexpr std::size_t kMaxOutstanding = 16;
@@ -261,12 +277,14 @@ private:
     struct Sample { double server = 0, client = 0, halfRtt = 0; bool set = false; };
     std::string key_;
     double tol_;
-    std::uint64_t minWin_, maxWin_;
+    std::uint64_t win_;
+    int sustain_;
     std::mt19937_64 rng_;
     std::uint32_t seq_ = 0;
     std::vector<Out> pending_;
     Sample anchor_;
     double last_ = 0;
+    int run_ = 0, runSign_ = 0;   // off windows in a row, and which way
     int flags_ = 0, bad_ = 0;
 };
 
@@ -285,10 +303,16 @@ inline GuardProbes SystemGuardProbes(const std::string& gameRoot, const Integrit
 #if defined(_WIN32)
     p.debugger = SystemDebuggerProbes();
     p.modules = [] { return LoadedModules(); };
+    // The reference: monotonic and never stepped by NTP or the user (unlike the
+    // wall clock). QueryUnbiasedInterruptTime is looked up at run time (older
+    // MinGW headers hide it); GetTickCount64 is the fallback.
     p.trustedMs = [] {
-        FILETIME ft;
-        GetSystemTimeAsFileTime(&ft);
-        return ((((std::uint64_t)ft.dwHighDateTime) << 32) | ft.dwLowDateTime) / 10000ull;
+        typedef BOOL(WINAPI * QuitFn)(PULONGLONG);
+        static const QuitFn quit = reinterpret_cast<QuitFn>(
+            reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "QueryUnbiasedInterruptTime")));
+        ULONGLONG t = 0;
+        if (quit && quit(&t)) return (std::uint64_t)(t / 10000ull);   // 100 ns units
+        return (std::uint64_t)GetTickCount64();
     };
     p.gameMs = [] {
         LARGE_INTEGER c, f;
@@ -370,7 +394,9 @@ private:
     GuardProbes p_;
     LogFn log_;
     std::string hbKeyStr_ = RandomKey();   // the in-process heartbeat's session key
-    ClockHeartbeat hb_{hbKeyStr_};
+    // A challenge a second, 5 s windows, 3 windows in a row (15 s) of drift
+    // before it counts: one sample never ends a game.
+    ClockHeartbeat hb_{hbKeyStr_, kClockTolerance, 5000, 3};
     bool started_ = false, quit_ = false, clockFlagged_ = false;
     std::uint64_t nextDbg_ = 0, nextMod_ = 0, nextClock_ = 0;
     std::set<std::string> seen_;

@@ -364,11 +364,242 @@ void TestKeyLoading() {
     CHECK(ParseKeyList(pkHex + ", " + std::string(64, 'a'), keys) && keys.size() == 2 && keys[0] == pk);
     CHECK(!ParseKeyList("abcd", keys));
     env["OKAY_AC_TRUSTED_KEY"] = pkHex;
-    keys = TrustedKeys(getenv, "");          // no key built in: the env var (dev) is used
+    keys = TrustedKeys(getenv, "").keys;          // no key built in: the env var (dev) is used
     CHECK(keys.size() == 1 && keys[0] == pk);
-    keys = TrustedKeys(getenv, std::string(64, 'b'));   // a key built in: the env var can't add one
+    keys = TrustedKeys(getenv, std::string(64, 'b')).keys;   // a key built in: the env var can't add one
     CHECK(keys.size() == 1 && keys[0] != pk);
     Wipe(seed.data(), seed.size()); Wipe(k.seed.data(), k.seed.size());
+}
+
+// Review #269.1: a built-in key list that doesn't parse must fail CLOSED: no
+// keys trusted, signatures required (so nothing verifies), and never the
+// OKAY_AC_TRUSTED_KEY env var (a cheater's own key).
+void TestTrustedKeysFailClosed() {
+    RUN_SUITE("a malformed built-in key list trusts nothing (no env fallback)");
+    ed25519::Seed seed = ThrowawaySeed();
+    const ed25519::PublicKey pk = ed25519::PublicKeyFromSeed(seed);
+    const std::string pkHex = ToHex(pk.data(), pk.size());
+    std::map<std::string, std::string> env = {{"OKAY_AC_TRUSTED_KEY", pkHex}};
+    auto getenv = [&](const char* k) -> const char* {
+        auto it = env.find(k);
+        return it == env.end() ? nullptr : it->second.c_str();
+    };
+    SigningKey key; key.present = true; key.seed = seed;
+    const fs::path root = MakeGame("failclosed");
+    CHECK(WriteBuildManifest(root, "My Game", "1.0.0", key).ok);   // signed by the "cheater's" key
+
+    for (const std::string& bad : {std::string(63, 'a'), std::string(65, 'a'), std::string(64, 'a') + ",", std::string("zz"),
+                                   std::string(64, 'a') + "," + std::string(10, 'b')}) {
+        const TrustedKeySet t = TrustedKeys(getenv, bad);
+        CHECK(t.required);                 // something was built in: signatures are required...
+        CHECK(t.keys.empty());             // ...and nothing (least of all the env key) is trusted
+        CHECK(!t.error.empty());
+        CHECK(!VerifyInstall(root, t).ok);
+        CHECK(!CheckLaunch(root, Mode::Report, t).result.ok);
+        CHECK(!CheckLaunch(root, Mode::Enforce, t).allow);
+    }
+    // Whitespace only = nothing built in: the dev env var still works there.
+    const TrustedKeySet dev = TrustedKeys(getenv, "  ");
+    CHECK(!dev.required || (dev.keys.size() == 1 && dev.keys[0] == pk));
+    CHECK(dev.keys.size() == 1 && dev.keys[0] == pk && VerifyInstall(root, dev).ok);
+    // A good built-in list: only those keys.
+    const TrustedKeySet good = TrustedKeys(getenv, pkHex);
+    CHECK(good.required && good.keys.size() == 1 && good.error.empty() && VerifyInstall(root, good).ok);
+    Wipe(seed.data(), seed.size()); Wipe(key.seed.data(), key.seed.size());
+}
+
+// Review #269.3: small-order public keys / R values. The identity key with
+// R = identity and S = 0 "verifies" any message under the plain equation;
+// libsodium refuses it, so must we.
+void TestSmallOrder() {
+    RUN_SUITE("small-order keys and R values are rejected, like libsodium");
+    ed25519::PublicKey ident{}; ident[0] = 1;              // y = 1: the identity point
+    ed25519::Signature sig{}; sig[0] = 1;                  // R = identity, S = 0
+    const std::string msg = "anything at all";
+    CHECK(!ed25519::portable::Verify((const std::uint8_t*)msg.data(), msg.size(), sig, ident));
+    CHECK(!ed25519::Verify(msg, sig, ident));
+    // Every encoding of a small-order point (libsodium's blocklist), with and without the sign bit.
+    const char* small[] = {
+        "0000000000000000000000000000000000000000000000000000000000000000",   // order 4
+        "0100000000000000000000000000000000000000000000000000000000000000",   // identity
+        "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",   // order 8
+        "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",   // order 8
+        "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",   // p-1 (order 2)
+        "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",   // p (non-canonical 0)
+        "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",   // p+1 (non-canonical 1)
+    };
+    for (const char* h : small) {
+        for (int sign = 0; sign < 2; ++sign) {
+            ed25519::PublicKey k = Arr<32>(h);
+            if (sign) k[31] |= 0x80;
+            CHECK(ed25519::portable::IsWeakKey(k));
+            std::vector<ed25519::PublicKey> keys;
+            CHECK(!ParseKeyList(ToHex(k.data(), k.size()), keys));   // can't be built in as trusted
+            // A signature whose R is small-order is refused too, whatever the key.
+            ed25519::Seed s = ThrowawaySeed();
+            const ed25519::PublicKey pk = ed25519::PublicKeyFromSeed(s);
+            ed25519::Signature forged{};
+            std::copy(k.begin(), k.end(), forged.begin());
+            CHECK(!ed25519::portable::Verify((const std::uint8_t*)msg.data(), msg.size(), forged, pk));
+            Wipe(s.data(), s.size());
+        }
+    }
+    // Normal keys are unaffected.
+    for (int i = 0; i < 20; ++i) {
+        ed25519::Seed s = ThrowawaySeed();
+        const ed25519::PublicKey pk = ed25519::PublicKeyFromSeed(s);
+        CHECK(!ed25519::portable::IsWeakKey(pk));
+        const ed25519::Signature sg = ed25519::Sign(msg, s);
+        CHECK(ed25519::portable::Verify((const std::uint8_t*)msg.data(), msg.size(), sg, pk));
+        std::vector<ed25519::PublicKey> keys;
+        CHECK(ParseKeyList(ToHex(pk.data(), pk.size()), keys) && keys.size() == 1);
+        Wipe(s.data(), s.size());
+    }
+}
+
+// Review #269.4: in a build with trusted keys, the mode is in the SIGNED
+// manifest; the config line can't lower it, and no valid manifest = no start.
+void TestModeInSignedManifest() {
+    RUN_SUITE("trusted builds: the signed manifest sets the mode; no manifest, no start");
+    ed25519::Seed seed = ThrowawaySeed();
+    const ed25519::PublicKey pk = ed25519::PublicKeyFromSeed(seed);
+    SigningKey key; key.present = true; key.seed = seed;
+    const TrustedKeySet trusted{pk};
+
+    const fs::path root = MakeGame("signedmode");
+    CHECK(WriteBuildManifest(root, "My Game", "1.0.0", key, Mode::Enforce).ok);
+    Integrity m;
+    CHECK(LoadIntegrity(root, m) && m.mode == Mode::Enforce && CheckSignature(m));
+    CHECK(SignedPayload(m).find("\"anticheat\": \"enforce\"") != std::string::npos);   // signed, not just stored
+
+    // Config line deleted / edited to off: still enforce.
+    StartDecision d = DecideStart(root, Mode::Off, Mode::Off, trusted);
+    CHECK(d.allow && d.mode == Mode::Enforce);
+    d = DecideStart(root, ParseMode("off"), Mode::Off, trusted);
+    CHECK(d.allow && d.mode == Mode::Enforce);
+    // The config can still make it stricter (report manifest + enforce config).
+    const fs::path r2 = MakeGame("signedmode2");
+    CHECK(WriteBuildManifest(r2, "My Game", "1.0.0", key, Mode::Report).ok);
+    CHECK(DecideStart(r2, Mode::Enforce, Mode::Off, trusted).mode == Mode::Enforce);
+    CHECK(DecideStart(r2, Mode::Off, Mode::Off, trusted).mode == Mode::Report);
+    // The real file: deleting the anticheat= line from game.okayconfig (what the
+    // player then reads as off) changes a signed file, so the game doesn't start.
+    {
+        const fs::path r5 = MakeGame("signedmode5");
+        CHECK(WriteBuildManifest(r5, "My Game", "1.0.0", key, Mode::Enforce).ok);
+        Put(r5 / "Data/game.okayconfig", "title=My Game\n");
+        const StartDecision e = DecideStart(r5, ParseMode(""), Mode::Off, trusted);
+        CHECK(!e.allow);
+        fs::remove(r5 / "Data/game.okayconfig");
+        CHECK(!DecideStart(r5, ParseMode(""), Mode::Off, trusted).allow);
+    }
+
+    // Editing the mode inside the manifest breaks the signature: refused.
+    {
+        Integrity e = m;
+        e.mode = Mode::Off;
+        Put(root / "Data/manifest.json", ToJson(e));
+        CHECK(!DecideStart(root, Mode::Off, Mode::Off, trusted).allow);
+    }
+    // Missing manifest: refused, whatever the config says.
+    fs::remove(root / "Data/manifest.json");
+    d = DecideStart(root, Mode::Off, Mode::Off, trusted);
+    CHECK(!d.allow && !d.message.empty());
+    // Unsigned manifest: refused.
+    CHECK(WriteBuildManifest(root, "My Game", "1.0.0", SigningKey{}, Mode::Enforce).ok);
+    CHECK(!DecideStart(root, Mode::Off, Mode::Off, trusted).allow);
+    // A tampered file under a valid signature: refused.
+    {
+        const fs::path r3 = MakeGame("signedmode3");
+        CHECK(WriteBuildManifest(r3, "My Game", "1.0.0", key, Mode::Off).ok);
+        CHECK(DecideStart(r3, Mode::Off, Mode::Off, trusted).allow);   // mode off, files intact: runs
+        Put(r3 / "Data/assets.pak", "changed");
+        CHECK(!DecideStart(r3, Mode::Off, Mode::Off, trusted).allow);
+        // A scene from outside the signed files can't be run either.
+        CHECK(WriteBuildManifest(r3, "My Game", "1.0.0", key, Mode::Off).ok);
+        CHECK(DecideStart(r3, Mode::Off, Mode::Off, trusted, (r3 / "Data/game.okayscene").string()).allow);
+        const fs::path cheat = TempDir("outside") / "cheat.okayscene";
+        Put(cheat, "{}");
+        CHECK(!DecideStart(r3, Mode::Off, Mode::Off, trusted, cheat.string()).allow);
+        Put(r3 / "Data/extra.okayscene", "{}");   // inside the folder but not signed
+        CHECK(!DecideStart(r3, Mode::Off, Mode::Off, trusted, (r3 / "Data/extra.okayscene").string()).allow);
+    }
+    // A required-but-malformed key set (see TestTrustedKeysFailClosed) refuses too.
+    TrustedKeySet broken; broken.required = true; broken.error = "bad";
+    CHECK(!DecideStart(r2, Mode::Off, Mode::Off, broken).allow);
+
+    // Without trusted keys nothing changes: the config sets the mode, off runs unchecked.
+    const fs::path r4 = MakeGame("untrustedmode");
+    CHECK(DecideStart(r4, Mode::Off, Mode::Off, TrustedKeySet{}).allow);
+    CHECK(!DecideStart(r4, Mode::Enforce, Mode::Off, TrustedKeySet{}).allow);   // no manifest
+    CHECK(DecideStart(r4, Mode::Report, Mode::Off, TrustedKeySet{}).allow);
+    CHECK(DecideStart(r4, Mode::Off, Mode::Report, TrustedKeySet{}).mode == Mode::Report);   // env only raises
+    // An old manifest with no mode in it reads as off.
+    Integrity old; old.game = "g"; old.version = "1"; old.files = {{"a.txt", 1, std::string(64, 'a')}};
+    Integrity back;
+    CHECK(ParseIntegrity(ToJson(old), back) && back.mode == Mode::Off && ToJson(old).find("anticheat") == std::string::npos);
+    Wipe(seed.data(), seed.size()); Wipe(key.seed.data(), key.seed.size());
+}
+
+// Review #269.5: the Build Settings tooltip warns about module false positives.
+void TestBuildTooltip() {
+    RUN_SUITE("Build Settings tooltip warns about module false positives");
+    const std::string t = kBuildSettingsTooltip;
+    for (const char* w : {"antivirus", "OBS", "RTSS", "IME", "Report"}) CHECK(t.find(w) != std::string::npos);
+}
+
+// Review #269.6: hidden-named and symlinked program files are flagged.
+void TestHiddenAndLinkedCode() {
+    RUN_SUITE("hidden or symlinked program files don't slip past the check");
+    {
+        const fs::path root = MakeGame("hiddendll");
+        CHECK(WriteBuildManifest(root, "My Game", "1.0.0", SigningKey{}).ok);
+        Put(root / ".hook.dll", "MZ hidden");
+        const VerifyResult r = VerifyInstall(root, {});
+        CHECK(!r.ok);
+        bool named = false;
+        for (const auto& p : r.problems) named = named || p.find(".hook.dll") != std::string::npos;
+        CHECK(named);
+    }
+    {
+        const fs::path root = MakeGame("hiddendir");
+        CHECK(WriteBuildManifest(root, "My Game", "1.0.0", SigningKey{}).ok);
+        Put(root / ".cache/inject.dll", "MZ");
+        CHECK(!VerifyInstall(root, {}).ok);
+    }
+    {
+        const fs::path root = MakeGame("linkeddll");
+        CHECK(WriteBuildManifest(root, "My Game", "1.0.0", SigningKey{}).ok);
+        Put(TempDir("linktarget") / "real.bin", "MZ elsewhere");
+        std::error_code ec;
+        fs::create_symlink(TempDir("linktarget2") / "missing.bin", root / "dinput8.dll", ec);   // dangling link
+        if (!ec) CHECK(!VerifyInstall(root, {}).ok);
+    }
+    {
+        const fs::path root = MakeGame("linkeddll2");
+        CHECK(WriteBuildManifest(root, "My Game", "1.0.0", SigningKey{}).ok);
+        const fs::path target = TempDir("linktarget3") / "real.bin";
+        Put(target, "MZ elsewhere");
+        std::error_code ec;
+        fs::create_symlink(target, root / "version.dll", ec);
+        if (!ec) CHECK(!VerifyInstall(root, {}).ok);
+    }
+    {
+        const fs::path root = MakeGame("linkeddir");
+        CHECK(WriteBuildManifest(root, "My Game", "1.0.0", SigningKey{}).ok);
+        const fs::path target = TempDir("linkdir");
+        Put(target / "plugin.asi", "MZ");
+        std::error_code ec;
+        fs::create_directory_symlink(target, root / "plugins", ec);
+        if (!ec) CHECK(!VerifyInstall(root, {}).ok);
+    }
+    // The launcher's own .okayofficial folder at the top stays exempt.
+    {
+        const fs::path root = MakeGame("officialstill");
+        CHECK(WriteBuildManifest(root, "My Game", "1.0.0", SigningKey{}).ok);
+        Put(root / ".okayofficial/staging/x.dll", "MZ");
+        CHECK(VerifyInstall(root, {}).ok);
+    }
 }
 
 void TestOfficialFolderIgnored() {
@@ -393,5 +624,10 @@ int main() {
     TestSignedManifest();
     TestKeyLoading();
     TestOfficialFolderIgnored();
+    TestTrustedKeysFailClosed();
+    TestSmallOrder();
+    TestModeInSignedManifest();
+    TestBuildTooltip();
+    TestHiddenAndLinkedCode();
     TEST_MAIN_RESULT();
 }

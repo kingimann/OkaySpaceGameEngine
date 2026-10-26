@@ -1328,32 +1328,40 @@ int main(int argc, char** argv) {
     Prefs::Load(prefsPath);
     DataAsset::SetBaseDir(baseDir);   // read-only .okaydata assets stay beside the game
 
-    // Anti-cheat: off unless the build (anticheat=) or OKAY_ANTICHEAT turns it on
-    // (either can only make it stricter). Then the game's files are checked
-    // against Data/manifest.json before anything loads; report mode logs what's
-    // wrong, enforce refuses to start. The runtime checks run in the frame loop.
-    const okayac::Mode acMode = dedicatedServer ? okayac::Mode::Off
-        : okayac::Stricter(okayac::ParseMode(cfg.antiCheat), okayac::ParseMode(std::getenv("OKAY_ANTICHEAT") ? std::getenv("OKAY_ANTICHEAT") : ""));
+    // Anti-cheat (okayac::DecideStart). Without trusted keys built in: off unless
+    // the build (anticheat=) or OKAY_ANTICHEAT turns it on (either only makes it
+    // stricter); then the files are checked against Data/manifest.json before
+    // anything loads; report logs, enforce refuses. With trusted keys built in
+    // (-DOKAY_AC_TRUSTED_KEYS): the game needs a valid trusted manifest to start
+    // at all, and its signed mode can't be lowered by editing game.okayconfig.
+    // The runtime checks run in the frame loop. (Dedicated servers: not checked.)
     std::string acRoot;
     { char* b = SDL_GetBasePath(); acRoot = b ? b : ""; if (b) SDL_free(b); }
     auto acLog = [&saveDir](const std::string& line) {
         SDL_Log("%s", line.c_str());
         std::ofstream(saveDir + "anticheat.log", std::ios::app) << line << "\n";
     };
-    okayac::Integrity acManifest;
-    bool acHaveManifest = false;
-    if (acMode != okayac::Mode::Off) {
-        const okayac::LaunchDecision d = okayac::CheckLaunch(std::filesystem::u8path(acRoot), acMode, okayac::TrustedKeys(), &acManifest);
-        acHaveManifest = !acManifest.files.empty();
-        acLog("[anti-cheat] " + std::string(okayac::ModeName(acMode)) + ": " + d.result.Summary());
-        for (const std::string& n : d.result.notes) acLog("[anti-cheat] note: " + n);
-        for (const std::string& p : d.result.problems) acLog("[anti-cheat] problem: " + p);
-        if (!d.allow) {
-            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, cfg.title.c_str(), d.message.c_str(), nullptr);
+    okayac::StartDecision acStart;
+    if (!dedicatedServer) {
+        const char* acEnv = std::getenv("OKAY_ANTICHEAT");
+        const std::string acScene = argc > 1 && argv[1][0] != '-' ? std::string(argv[1]) : std::string();
+        const okayac::TrustedKeySet acTrusted = okayac::TrustedKeys();
+        acStart = okayac::DecideStart(std::filesystem::u8path(acRoot), okayac::ParseMode(cfg.antiCheat),
+                                      okayac::ParseMode(acEnv ? acEnv : ""), acTrusted, acScene);
+        if (acStart.result.ran) {
+            acLog("[anti-cheat] " + std::string(okayac::ModeName(acStart.mode)) + ": " + acStart.result.Summary());
+            for (const std::string& n : acStart.result.notes) acLog("[anti-cheat] note: " + n);
+            for (const std::string& p : acStart.result.problems) acLog("[anti-cheat] problem: " + p);
+        }
+        if (!acStart.allow) {
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, cfg.title.c_str(), acStart.message.c_str(), nullptr);
             SDL_Quit();
             return 1;
         }
     }
+    const okayac::Mode acMode = acStart.mode;
+    okayac::Integrity& acManifest = acStart.manifest;
+    const bool acHaveManifest = !acManifest.files.empty();
 
     Scene scene("Game");
     std::string err;

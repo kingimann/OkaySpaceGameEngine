@@ -7,8 +7,12 @@
 // link the engine, or a -DOKAY_USE_SODIUM=OFF build) the portable code below is
 // used: a C++ port of TweetNaCl's public-domain ed25519 (Bernstein et al.),
 // checked against the RFC 8032 vectors in tests/test_anticheat_integrity.cpp on
-// every build, plus a canonical-S check so it rejects exactly what libsodium
-// rejects. Signing never needs randomness (ed25519 is deterministic), and no
+// every build. On top of TweetNaCl it makes the checks libsodium 1.0.18's
+// crypto_sign_verify_detached makes: S must be canonical (< L), R must not be a
+// small-order point, and the public key must be canonical and not small-order.
+// (A test pins the identity-key forgery TweetNaCl alone would accept.) It isn't
+// claimed to match libsodium on every malformed input beyond those checks.
+// Signing never needs randomness (ed25519 is deterministic), and no
 // key is ever made here: the owner makes them (docs/anticheat.md).
 //
 // SHA-256 for file hashes is the engine's bundled one (okayofficial::FileSha256),
@@ -330,6 +334,24 @@ inline bool ScalarCanonical(const std::uint8_t* s) {
     }
     return false;   // == L
 }
+// The encoded point has small order (8P is the identity): the 8 small-order
+// points in all their encodings, i.e. libsodium's ge25519_has_small_order
+// blocklist. An encoding that isn't a curve point isn't small-order (it fails
+// elsewhere).
+inline bool HasSmallOrder(const std::uint8_t enc[32]) {
+    gf p[4];
+    if (UnpackNeg(p, enc)) return false;          // -P: same order as P
+    for (int i = 0; i < 3; ++i) Add(p, p);        // 8P
+    std::uint8_t x[32], y[32], z[32], zero[32] = {0};
+    Pack(x, p[0]); Pack(y, p[1]); Pack(z, p[2]);
+    return Verify32(x, zero) == 0 && Verify32(y, z) == 0;   // (0 : Z : Z) is the identity
+}
+// y < p (ignoring the sign bit), as libsodium's ge25519_is_canonical.
+inline bool CanonicalPoint(const std::uint8_t s[32]) {
+    unsigned c = (s[31] & 0x7f) ^ 0x7f;
+    for (int i = 30; i > 0; --i) c |= s[i] ^ 0xffu;
+    return !(c == 0 && s[0] >= 0xed);
+}
 inline void Expand(const Seed& seed, std::uint8_t d[64]) {
     const sha512::Digest h = sha512::Hash(seed.data(), seed.size());
     std::memcpy(d, h.data(), 64);
@@ -369,8 +391,16 @@ inline Signature Sign(const std::uint8_t* m, std::size_t n, const Seed& seed) {
     return sig;
 }
 
+// A public key no signature should be accepted for: a non-canonical encoding or
+// a small-order point (the identity key "verifies" R = identity, S = 0 for any
+// message). libsodium refuses both; so do Verify and ParseKeyList.
+inline bool IsWeakKey(const PublicKey& pk) {
+    return !detail::CanonicalPoint(pk.data()) || detail::HasSmallOrder(pk.data());
+}
+
 inline bool Verify(const std::uint8_t* m, std::size_t n, const Signature& sig, const PublicKey& pk) {
     if (!detail::ScalarCanonical(sig.data() + 32)) return false;
+    if (detail::HasSmallOrder(sig.data()) || IsWeakKey(pk)) return false;
     detail::gf p[4], q[4];
     if (detail::UnpackNeg(q, pk.data())) return false;
     sha512::Digest h = sha512::Hash({{sig.data(), 32}, {pk.data(), 32}, {m, n}});

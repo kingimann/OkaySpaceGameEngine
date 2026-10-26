@@ -202,6 +202,7 @@ starts the game and shows the problem:
   "format": "okayspace-integrity/1",
   "game": "My Game",
   "version": "1.0.0",
+  "anticheat": "enforce",
   "files": [
     {"path": "Data/game.okayscene", "size": 1234, "sha256": "..."},
     {"path": "My Game.exe", "size": 5678, "sha256": "..."}
@@ -211,6 +212,9 @@ starts the game and shows the problem:
 ```
 
 - It lists every file in the build folder except hidden ones and the manifest itself.
+- `anticheat` is the game's mode from Build Settings (left out for Off). It's
+  part of the signed text, so in a build with trusted keys it can't be lowered
+  (see below).
 - `signature` is there only when a signing key is set up (see below). It covers
   the manifest's text up to `signature`, exactly as the editor writes it.
 - Files are checked with the same size + SHA-256 check (`okayofficial::Verify`)
@@ -221,7 +225,8 @@ A launch check fails when:
 
 - `Data/manifest.json` is missing or malformed;
 - a listed file is missing or changed;
-- a program file (`.exe`, `.dll`, `.asi`, ...) that the manifest doesn't list sits in the game folder (for example, a proxy `version.dll` beside the exe);
+- a program file (`.exe`, `.dll`, `.asi`, ...) that the manifest doesn't list sits in the game folder (for example, a proxy `version.dll` beside the exe), including hidden-named ones (`.hook.dll`) and ones inside hidden folders;
+- a program file is a link, or a folder is a link (its contents couldn't be checked);
 - the signature doesn't match, which means the manifest was edited;
 - the build trusts at least one key, and the manifest is unsigned or signed by a key it doesn't trust.
 
@@ -272,13 +277,28 @@ You need two ed25519 keypairs:
    cmake ... -DOKAY_AC_TRUSTED_KEYS=<release public hex>,<dev public hex>
    ```
 
+   Each key must be exactly 64 hex digits, separated by commas with no spaces;
+   anything else fails the CMake configure. Keys that no signature should verify
+   under (small-order points such as the identity) are refused too.
+
    A build with trusted keys rejects unsigned manifests and manifests signed by
-   any other key. In a build without any (the default), a signature is still
-   checked against the key it names, but that only proves the manifest wasn't
-   edited after signing, not who signed it. For local testing only, such a build
-   also accepts `OKAY_AC_TRUSTED_KEY=<public hex>` from the environment. A build
-   with keys built in ignores that variable, so a player can't point a release
-   at their own key.
+   any other key. If the built-in list somehow doesn't parse, the program trusts
+   no key at all and every check fails (it never falls back to anything else).
+   In a build without any (the default), a signature is still checked against
+   the key it names, but that only proves the manifest wasn't edited after
+   signing, not who signed it. For local testing only, such a build also accepts
+   `OKAY_AC_TRUSTED_KEY=<public hex>` from the environment. A build with keys
+   built in ignores that variable, so a player can't point a release at their
+   own key.
+
+   **A player built with trusted keys is for your own signed games.** It refuses
+   to start any game without a valid manifest signed by one of those keys, takes
+   the anti-cheat mode from that signed manifest (`game.okayconfig` and
+   `OKAY_ANTICHEAT` can only make it stricter), and only runs scenes that are
+   among the signed files. Don't ship that player as the general runtime other
+   creators build their games with: their unsigned games wouldn't start. The
+   launcher applies its trusted keys to the official game only; other library
+   games are checked by hash and against the key they name.
 
 4. Turn anti-cheat on for the game (Build Settings > Output > Anti-cheat) and,
    if you want the launcher to check too, in Settings > Behavior. Start with
@@ -292,10 +312,12 @@ new key, re-sign your builds with the new one, and then drop the old one.
 - ed25519 comes from libsodium when the build has it (`OKAY_USE_SODIUM`, which
   the engine finds through pkg-config or `OKAY_SODIUM_PREFIX` for MinGW).
   Otherwise a portable implementation in `shared/AntiCheatCrypto.hpp` is used:
-  a port of TweetNaCl's public-domain ed25519, plus the canonical-signature
-  check libsodium makes. The launcher always uses the portable code, because it
-  doesn't link the engine. Both are tested against the RFC 8032 vectors on
-  every build.
+  a port of TweetNaCl's public-domain ed25519, plus the checks libsodium 1.0.18
+  makes before verifying: S must be canonical, R must not be a small-order
+  point, and the public key must be canonical and not small-order (so the
+  identity-key forgery TweetNaCl alone accepts is refused). The launcher always
+  uses the portable code, because it doesn't link the engine. Both are tested
+  against the RFC 8032 vectors and the small-order encodings on every build.
 - SHA-256 is the engine's bundled implementation, the same one the official-game
   updater uses.
 
@@ -315,11 +337,15 @@ every few seconds:
   Report is the place to start.
 - **Clock heartbeat**: every second, a challenge (random nonce + sequence)
   is answered with the game's clock reading (the performance counter that game
-  time runs on) and tagged with HMAC-SHA256 under a per-run key. The verifier
-  compares how far the game's clock moved with how far the system clock moved
-  over a window of at least 2 s. A gap beyond 5%, after allowing for round-trip
-  time, is flagged. Common speedhacks scale the performance counter but not the
-  system time.
+  time runs on) and tagged with HMAC-SHA256 under a per-run key. The reference
+  is a monotonic clock that NTP and the user can't step
+  (`QueryUnbiasedInterruptTime`, falling back to `GetTickCount64`), not the
+  wall clock. Every 5 s window gives one rate; a window more than 5% off, after
+  allowing for round-trip time, is suspicious, and only three such windows in a
+  row (15 s of sustained drift, all the same way) are flagged. A one-off jump of
+  either clock (a time sync, a resume from sleep) lands in a single window and
+  is never flagged. Common speedhacks scale the performance counter but not the
+  interrupt-time clock.
 
   `ClockHeartbeat` / `AnswerChallenge` are transport-agnostic. A multiplayer
   server can act as the verifier and carry the challenge and response in its
@@ -332,17 +358,18 @@ every few seconds:
 Be clear-eyed about what this is.
 
 - **It's client-side.** Every check runs in a process the player controls. A
-  cheater can patch the checks out of the exe, hook the APIs they call, or edit
-  `game.okayconfig` to switch anti-cheat off. The manifest covers
-  `game.okayconfig`, but the check that would notice is the one they've just
-  disabled. Signing raises the bar for edited game files; it doesn't make the
-  client trustworthy.
+  cheater can patch the checks out of the exe or hook the APIs they call. In a
+  player without trusted keys they can also delete the `anticheat=` line from
+  `game.okayconfig` to switch it off; a player built with trusted keys takes the
+  mode from the signed manifest instead and refuses to run without one. Signing
+  raises the bar for edited game files; it doesn't make the client trustworthy.
 - **It's report-first.** Debugger and module checks produce false positives
-  (overlays, accessibility tools, antivirus DLLs, developers debugging their own
-  game). Use Report, look at what turns up, and enforce only what you're sure of.
+  (antivirus, OBS, RTSS / MSI Afterburner, IME and input-method DLLs, other
+  overlays and accessibility tools, developers debugging their own game). The
+  Build Settings tooltip says so too. Use Report, look at what turns up, and enforce only what you're sure of.
 - **The clock check is local.** In the player it compares two clocks of the same
-  machine. A tool that slows or speeds up both, or that hooks the system time
-  too, won't show up. The server-verified version is the one worth wiring in.
+  machine. A tool that slows or speeds up both, or that hooks the reference
+  clock too, won't show up. The server-verified version is the one worth wiring in.
 - **No kernel driver, no memory scanning, no obfuscation.** This won't stop a
   dedicated cheat developer.
 - **Integrity costs a hash of every file at each launch**, done by the launcher

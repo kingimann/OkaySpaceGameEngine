@@ -939,6 +939,18 @@ add_executable(test_anticheat_checks test_anticheat_checks.cpp)
 target_link_libraries(test_anticheat_checks PRIVATE okay::engine)
 target_include_directories(test_anticheat_checks PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME anticheat_checks COMMAND test_anticheat_checks)
+# -DOKAY_AC_TRUSTED_KEYS validation (cmake/OkayAntiCheatKeys.cmake): good lists pass,
+# anything but exactly 64 hex digits per key fails the configure.
+set(_okay_ac_k64 "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
+add_test(NAME anticheat_keys_ok COMMAND ${CMAKE_COMMAND} "-DKEYS=${_okay_ac_k64}" -P ${CMAKE_CURRENT_SOURCE_DIR}/anticheat_keys_check.cmake)
+add_test(NAME anticheat_keys_two_ok COMMAND ${CMAKE_COMMAND} "-DKEYS=${_okay_ac_k64},${_okay_ac_k64}" -P ${CMAKE_CURRENT_SOURCE_DIR}/anticheat_keys_check.cmake)
+string(SUBSTRING "${_okay_ac_k64}" 0 63 _okay_ac_k63)
+string(SUBSTRING "${_okay_ac_k64}" 0 62 _okay_ac_k62)
+foreach(_bad "${_okay_ac_k63}" "${_okay_ac_k64}0" "${_okay_ac_k64},${_okay_ac_k63}" "${_okay_ac_k64}," "zz${_okay_ac_k62}")
+    string(MD5 _id "${_bad}")
+    add_test(NAME anticheat_keys_bad_${_id} COMMAND ${CMAKE_COMMAND} "-DKEYS=${_bad}" -P ${CMAKE_CURRENT_SOURCE_DIR}/anticheat_keys_check.cmake)
+    set_tests_properties(anticheat_keys_bad_${_id} PROPERTIES WILL_FAIL TRUE)
+endforeach()
 
 add_executable(test_tween test_tween.cpp)
 target_link_libraries(test_tween PRIVATE okay::engine)

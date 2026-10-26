@@ -1183,10 +1183,13 @@ int g_antiCheatMode = 0;   // okayac::Mode (persisted)
 Uint32 g_toastHoldUntil = 0;   // an anti-cheat toast isn't replaced by the caller's "Playing ..."
 void Toast(const std::string& m, int kind);
 
-static bool AntiCheatAllowsLaunch(const fs::path& gameRoot, const std::string& name) {
+// `official`: the official game must be signed by a key built in with
+// -DOKAY_AC_TRUSTED_KEYS; other games (anyone's builds) are checked by hash and
+// against the key they name.
+static bool AntiCheatAllowsLaunch(const fs::path& gameRoot, const std::string& name, bool official = false) {
     const okayac::Mode mode = okayac::Mode(std::clamp(g_antiCheatMode, 0, 2));
     if (mode == okayac::Mode::Off) return true;
-    const okayac::LaunchDecision d = okayac::CheckLaunch(gameRoot, mode, okayac::TrustedKeys());
+    const okayac::LaunchDecision d = okayac::CheckLaunch(gameRoot, mode, official ? okayac::TrustedKeys() : okayac::TrustedKeySet{});
     if (d.result.ok) return true;
     std::fprintf(stderr, "[anti-cheat] %s: %s\n", name.c_str(), d.result.Summary().c_str());
     g_toastHoldUntil = SDL_GetTicks() + 6000;
@@ -14881,7 +14884,7 @@ static void PlayOfficial() {
         StartOfficialJob(true, true);
         return;
     }
-    if (!AntiCheatAllowsLaunch(OfficialDir(), name)) return;
+    if (!AntiCheatAllowsLaunch(OfficialDir(), name, true)) return;
     bool applying = false;
     OffLocked([&] { applying = g_off.job == Off_Applying; if (!applying) g_off.gameRunning = true; });
     if (applying) { Toast("One moment: an update is being installed"); return; }

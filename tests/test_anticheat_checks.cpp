@@ -57,7 +57,10 @@ void TestClockDrift() {
     {   // Network delay alone (200 ms each way of jitter-free RTT) isn't drift.
         CHECK(Sim(1.0, 400).Run(10, 1000) == V::Ok);
         CHECK(Sim(1.03, 300).Run(10, 1000) == V::Ok);
-        CHECK(Sim(1.20, 300).Run(10, 1000) == V::Drift);
+        // Each 2 s window allows for its round trips (300 ms RTT: +15%), so with
+        // that much delay only drift well past 5% + 15% is flagged.
+        CHECK(Sim(1.30, 300).Run(10, 1000) == V::Drift);
+        CHECK(Sim(1.15, 300).Run(10, 1000) == V::Ok);
     }
     {   // Too short a window to judge: still pending.
         Sim s(3.0);
@@ -215,6 +218,59 @@ void TestGuard() {
         CHECK(!quit && g.Findings().empty());
     }
 }
+// Review #269.2: a one-off step (an NTP correction, a resume from sleep) is not
+// a speedhack. Only drift sustained over several windows is flagged.
+void TestClockStepNotDrift() {
+    RUN_SUITE("a one-off clock step isn't flagged; sustained drift is");
+    using V = ClockHeartbeat::Verdict;
+    for (long step : {250L, -250L, 1500L, -1500L, 30000L}) {
+        ClockHeartbeat hb(kKey);
+        std::uint64_t server = 1000000, client = 5000;
+        bool flagged = false;
+        for (int i = 0; i < 120; ++i) {          // two minutes, a challenge a second
+            server += 1000; client += 1000;
+            if (i == 3) client = (std::uint64_t)((long long)client + step);   // the step, 3 s in
+            const ClockChallenge c = hb.Issue(server);
+            flagged = flagged || hb.Accept(AnswerChallenge(c, client, kKey), server) == V::Drift;
+        }
+        CHECK(!flagged);
+        CHECK(hb.Flags() == 0);
+    }
+    // Sustained 6% (just over the tolerance): flagged, but not on the first window.
+    {
+        ClockHeartbeat hb(kKey);
+        std::uint64_t server = 1000000; double client = 5000;
+        int firstDrift = -1;
+        for (int i = 0; i < 120 && firstDrift < 0; ++i) {
+            server += 1000; client += 1060.0;
+            const ClockChallenge c = hb.Issue(server);
+            if (hb.Accept(AnswerChallenge(c, (std::uint64_t)client, kKey), server) == V::Drift) firstDrift = i;
+        }
+        CHECK(firstDrift >= 0);
+        CHECK(firstDrift * 1000 >= (int)(ClockHeartbeat::kDefaultSustain * ClockHeartbeat::kDefaultWindowMs) - 1000);
+    }
+    // The player's guard: a step on the trusted clock alone never ends an enforced game...
+    {
+        Fake fk;
+        RuntimeGuard g(Mode::Enforce, fk.Probes());
+        bool quit = false;
+        for (int i = 0; i < 240; ++i) {
+            fk.Advance(500);
+            if (i == 6) fk.trusted += 250;   // NTP steps the reference forward
+            quit = quit || g.Tick();
+        }
+        CHECK(!quit && g.Findings().empty());
+    }
+    // ...but a sustained speedhack still does.
+    {
+        Fake fk; fk.rate = 1.3;
+        RuntimeGuard g(Mode::Enforce, fk.Probes());
+        bool quit = false;
+        for (int i = 0; i < 240 && !quit; ++i) { fk.Advance(500); quit = g.Tick(); }
+        CHECK(quit && g.Findings().back().check == "clock");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -223,5 +279,6 @@ int main() {
     TestDebugger();
     TestModules();
     TestGuard();
+    TestClockStepNotDrift();
     TEST_MAIN_RESULT();
 }

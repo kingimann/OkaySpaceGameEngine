@@ -33,6 +33,10 @@ namespace okay {
 /// your body animates for shadows / other players even in first person.
 class FirstPersonController : public Behaviour, public IPlayerSim {
 public:
+    /// Runs before the animation components (Character, ModelAnimator,
+    /// AnimStateMachine at 0, IK at 100), so they pose this frame's movement and
+    /// state changes, not last frame's.
+    int ExecutionOrder() const override { return -10; }
     float walkSpeed = 4.5f;
     float runSpeed  = 8.0f;
     float jumpForce = 6.0f;

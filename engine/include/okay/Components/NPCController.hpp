@@ -40,6 +40,10 @@ namespace okay {
 /// `npc_attack`, `npc_flee`, `npc_arrived`, `npc_died`) ActionLists can react to.
 class NPCController : public Behaviour {
 public:
+    /// Runs before the animation components (Character, ModelAnimator,
+    /// AnimStateMachine at 0, IK at 100), so they pose this frame's movement and
+    /// state changes, not last frame's.
+    int ExecutionOrder() const override { return -10; }
     enum class Behavior { Idle, Wander, Follow, Flee, Chase, Patrol, Guard };
     int   behavior = (int)Behavior::Wander;
     std::string targetName = "Player";

@@ -151,16 +151,19 @@ public:
     }
 
     void Update(float dt) override {
-        if (!interactable) { m_hover = m_pressed = m_clicked = false; EaseColor(dt); return; }
+        if (!interactable) { m_hover = m_pressed = m_clicked = m_tapArmed = false; EaseColor(dt); return; }
         Vec2 m = Input::MousePosition();
         m_hover = Contains(m);
         m_pressed = m_hover && Input::GetMouseButton(0);
         m_clicked = false;
         if (m_hover && Input::GetMouseButtonDown(0)) {       // fresh click
-            if (toggleMode) isOn = !isOn;
-            m_clicked = true;
-            m_repeat = repeatDelay;
-            Fire();
+            // A finger fires on lift instead, and not at all if it became a drag
+            // (scrolling a list of buttons mustn't press each one it starts on).
+            if (Input::PointerIsTouch() && !holdRepeat) m_tapArmed = true;
+            else Click();
+        } else if (m_tapArmed) {
+            if (Input::TouchDragging() || !Input::PointerIsTouch()) m_tapArmed = false;
+            else if (Input::GetMouseButtonUp(0)) { m_tapArmed = false; if (m_hover) Click(); }
         } else if (holdRepeat && m_pressed) {                // auto-repeat while held
             m_repeat -= dt;
             if (m_repeat <= 0.0f) { m_repeat = repeatInterval; m_clicked = true; Fire(); }
@@ -169,6 +172,12 @@ public:
     }
 
 private:
+    void Click() {
+        if (toggleMode) isOn = !isOn;
+        m_clicked = true;
+        m_repeat = repeatDelay;
+        Fire();
+    }
     void Fire() {
         // The sibling script's on_click() (back-compat / code-first buttons).
         if (gameObject)
@@ -202,6 +211,7 @@ private:
     bool m_hover = false;
     bool m_pressed = false;
     bool m_clicked = false;
+    bool m_tapArmed = false;   // a finger went down on it; fires when lifted without dragging
     bool m_focused = false;
     float m_repeat = 0.0f;
     Color m_display = Color::FromBytes(60, 90, 150);

@@ -41343,6 +41343,15 @@ int main(int argc, char** argv) {
                 Input::FeedText(e.text.text);
             if (e.type == SDL_MOUSEWHEEL && ed.isPlaying())
                 Input::FeedMouseWheel((float)e.wheel.y);
+            if (((e.type == SDL_FINGERDOWN || e.type == SDL_FINGERMOTION) && ed.isPlaying()) || e.type == SDL_FINGERUP) {
+                // Touches relative to the Game view, like the mouse; a finger must land on it
+                // (a lift always goes through so a touch never sticks after Stop).
+                const ImVec2 ds = ImGui::GetIO().DisplaySize;
+                const Vec2 p{e.tfinger.x * ds.x - g_playCanvasPos.x, e.tfinger.y * ds.y - g_playCanvasPos.y};
+                const bool onGame = p.x >= 0.0f && p.y >= 0.0f && p.x < g_playCanvasSize.x && p.y < g_playCanvasSize.y;
+                const int state = e.type == SDL_FINGERDOWN ? 0 : e.type == SDL_FINGERMOTION ? 1 : 2;
+                if (state != 0 || onGame) Input::FeedTouch((long long)e.tfinger.fingerId, state, p);
+            }
             // Feed OkayUI text fields (Test UI demo or a playing game's ui_inputtext)
             // when ImGui isn't capturing the keyboard.
             if ((g_showTestUI || ed.isPlaying()) && !ImGui::GetIO().WantTextInput) {

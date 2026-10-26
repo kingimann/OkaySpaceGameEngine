@@ -16,7 +16,7 @@ static_assert(sizeof(Rect) == sizeof(SDL_Rect) && sizeof(FRect) == sizeof(SDL_FR
               sizeof(Point) == sizeof(SDL_Point) && sizeof(FPoint) == sizeof(SDL_FPoint) &&
               sizeof(RGBA) == sizeof(SDL_Color) && sizeof(Vertex) == sizeof(SDL_Vertex),
               "ui2d types must match SDL's layout");
-static_assert(FlipH == SDL_FLIP_HORIZONTAL && FlipV == SDL_FLIP_VERTICAL, "flip flags");
+static_assert((int)FlipH == (int)SDL_FLIP_HORIZONTAL && (int)FlipV == (int)SDL_FLIP_VERTICAL, "flip flags");
 
 /// Load (and cache) a texture from an image file. Returns nullptr if the image can't
 /// be read; a null entry is cached for misses so a bad path isn't decoded every frame.

@@ -52,6 +52,7 @@ target_compile_options(okay_imgui PRIVATE -w) # silence third-party warnings
 add_executable(okay-editor main.cpp EditorState.cpp
     EditorWidgets.cpp                                                  # shared widgets (accent, icons, search field)
     ConsolePanel.cpp                                                   # ConsoleLog + Console panel
+    UIPreviewPainter.cpp                                               # engine UI renderer -> ImGui draw list
     vendor/TextEditor.cpp                                              # ImGuiColorTextEdit code widget
     ${CMAKE_SOURCE_DIR}/engine/third_party/tinyfd/tinyfiledialogs.c)  # native file dialogs
 target_compile_definitions(okay-editor PRIVATE ${OKAY_VERSION_DEFINE})

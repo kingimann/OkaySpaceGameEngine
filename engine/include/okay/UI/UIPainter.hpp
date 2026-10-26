@@ -29,8 +29,11 @@ enum : int { FlipNone = 0, FlipH = 1, FlipV = 2 };
 /// A backend texture handle (an SDL_Texture* for the SDL painter). Null = none.
 using Tex = void*;
 
-/// SDL_IntersectRect semantics: true and the overlap in `out` when the rects
-/// overlap; false (and an empty `out`) when they don't or either is empty.
+/// True and the overlap in `out` when the rects overlap; false and an empty (0x0)
+/// `out` when they don't or either is empty. Unlike SDL_IntersectRect, which can
+/// leave a negative size for disjoint rects: passed to SetClipRect that turns
+/// clipping OFF, so a widget scrolled fully out of a Scroll View drew unclipped.
+/// An empty clip rect clips everything away instead.
 inline bool IntersectRect(const Rect* a, const Rect* b, Rect* out) {
     if (a->w <= 0 || a->h <= 0 || b->w <= 0 || b->h <= 0) { out->w = out->h = 0; return false; }
     int x0 = a->x > b->x ? a->x : b->x;
@@ -73,6 +76,11 @@ public:
     virtual void CopyExF(Tex t, const Rect* src, const FRect* dst, double angle,
                          const FPoint* center, int flip) = 0;
     virtual void Geometry(Tex t, const Vertex* verts, int numVerts, const int* indices, int numIndices) = 0;
+
+    /// Told when a widget names a texture that can't be loaded, with the rect it
+    /// would fill (after the widget drew its fallback). Editors label it; the game
+    /// ignores it.
+    virtual void MissingTexture(const std::string& path, const Rect& where) { (void)path; (void)where; }
 };
 
 } // namespace ui2d

@@ -16,11 +16,23 @@ class Scene;
 
 namespace ui2d {
 
+/// How RenderSceneUI treats a scene. The defaults are the running game's.
+struct UIRenderOptions {
+    /// Live UI: widgets react to input (the minimap's click-to-place waypoint) and
+    /// show their animated state. False for an editor's edit-mode preview: no input
+    /// is acted on and animated widgets show their resting state (a toggle that is
+    /// on draws on, without waiting for its slide-in animation to run).
+    bool interactive = true;
+    /// Project WorldUI labels through the caller's UIWorld() context instead of the
+    /// scene's main camera, so an editor view with its own camera lines them up.
+    bool worldLabelsViaUIWorld = false;
+};
+
 /// Draw every screen-space UI widget of `scene` in one pass, sorted by Canvas sort
 /// order, uiDrawOrder / type layer and hierarchy (see SortUIDrawItems), on an output
 /// of `width` x `height` pixels. World-space canvases project through whatever
 /// UIWorld() context the caller installed. Leaves the painter unclipped at scale 1.
-void RenderSceneUI(Scene& scene, Painter& p, int width, int height);
+void RenderSceneUI(Scene& scene, Painter& p, int width, int height, const UIRenderOptions& opt = {});
 
 // ---- Drawing helpers --------------------------------------------------------------
 

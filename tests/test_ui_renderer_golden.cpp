@@ -53,7 +53,7 @@ int main(int argc, char** argv) {
     for (int a = 1; a + 1 < argc; ++a)
         if (std::string(argv[a]) == "--update") updateDir = argv[a + 1];
 
-    const std::string tex = "ui_golden_texture.png";
+    const std::string tex = std::string(OKAY_TEST_OUTPUT_DIR) + "/ui_golden_texture.png";
     CHECK(ui_golden::WriteTestTexture(tex));
     SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, ui_golden::kWidth, ui_golden::kHeight, 32,
                                                        SDL_PIXELFORMAT_ABGR8888);

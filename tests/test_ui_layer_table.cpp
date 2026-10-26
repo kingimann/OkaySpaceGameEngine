@@ -97,8 +97,8 @@ int main() {
     // --- No renderer keeps a private copy of the table ------------------
     {
         const std::string root = OKAY_SOURCE_DIR;
-        // The player's pass now lives in the engine renderer; the editor preview
-        // still queues its own items.
+        // The UI pass lives in the engine renderer; the player and the editor
+        // preview both call it.
         for (const char* rel : {"/player/main.cpp", "/editor/main.cpp", "/engine/src/UI/UIRenderer.cpp"}) {
             std::string src = ReadFile(root + rel);
             CHECK(!src.empty());
@@ -106,7 +106,7 @@ int main() {
             CHECK(src.find("K_DropBg =") == std::string::npos);
         }
         CHECK(ReadFile(root + "/engine/src/UI/UIRenderer.cpp").find("UIQueueDrawItems(") != std::string::npos);
-        CHECK(ReadFile(root + "/editor/main.cpp").find("UIQueueDrawItems(") != std::string::npos);
+        CHECK(ReadFile(root + "/editor/main.cpp").find("ui2d::RenderSceneUI(") != std::string::npos);
         CHECK(ReadFile(root + "/player/main.cpp").find("ui2d::RenderSceneUI(") != std::string::npos);
     }
 

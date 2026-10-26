@@ -3,6 +3,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/Inventory.hpp"
+#include "okay/Components/ScriptComponent.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Render/Color.hpp"
 #include <string>
@@ -117,8 +118,14 @@ public:
         int move = s.count / 2;
         int cap = inv->capacity > 0 ? inv->capacity : (hotbarSlots + backpackRows * hotbarSlots);
         for (auto& d : inv->slots)
-            if (Inventory::Empty(d)) { d.item = s.item; d.count = move; s.count -= move; return true; }
-        if ((int)inv->slots.size() < cap) { inv->slots.push_back({s.item, move}); s.count -= move; return true; }
+            if (Inventory::Empty(d)) { d.item = s.item; d.count = move; s.count -= move; inv->NotifyChanged(); return true; }
+        if ((int)inv->slots.size() < cap) {
+            const std::string item = s.item;
+            inv->slots[from].count -= move;              // (before push_back: it may reallocate)
+            inv->slots.push_back({item, move});
+            inv->NotifyChanged();
+            return true;
+        }
         return false;
     }
 
@@ -129,19 +136,22 @@ public:
         int n = hotbarSlots < 1 ? 1 : hotbarSlots, total = n + backpackRows * n;
         int lo = (from < n) ? n : 0, hi = (from < n) ? total : n;
         while ((int)inv->slots.size() < hi) inv->slots.push_back(Inventory::Slot{});
-        for (int i = lo; i < hi; ++i)            // merge onto a matching stack first
-            if (!Inventory::Empty(inv->slots[i]) && inv->slots[i].item == inv->slots[from].item) {
-                int cap = inv->maxStack;
-                if (cap > 0) { int room = cap - inv->slots[i].count; if (room < 0) room = 0;
-                    int mv = inv->slots[from].count < room ? inv->slots[from].count : room;
-                    inv->slots[i].count += mv; inv->slots[from].count -= mv;
-                    if (inv->slots[from].count <= 0) inv->slots[from] = Inventory::Slot{};
-                    return true; }
-                inv->slots[i].count += inv->slots[from].count; inv->slots[from] = Inventory::Slot{}; return true;
-            }
-        for (int i = lo; i < hi; ++i)            // else first empty slot in the other region
-            if (Inventory::Empty(inv->slots[i])) { std::swap(inv->slots[i], inv->slots[from]); return true; }
-        return false;
+        bool moved = false;
+        const long long cap = inv->maxStack > 0 ? inv->maxStack : 2147483647LL;
+        for (int i = lo; i < hi && !Inventory::Empty(inv->slots[from]); ++i) {   // top up matching stacks
+            Inventory::Slot& d = inv->slots[i];
+            if (Inventory::Empty(d) || d.item != inv->slots[from].item) continue;
+            long long room = cap - d.count;
+            if (room <= 0) continue;                  // full: try the next matching stack
+            int mv = (long long)inv->slots[from].count < room ? inv->slots[from].count : (int)room;
+            d.count += mv; inv->slots[from].count -= mv; moved = true;
+            if (inv->slots[from].count <= 0) inv->slots[from] = Inventory::Slot{};
+        }
+        if (!Inventory::Empty(inv->slots[from]))       // the rest goes to the first empty slot there
+            for (int i = lo; i < hi; ++i)
+                if (Inventory::Empty(inv->slots[i])) { std::swap(inv->slots[i], inv->slots[from]); moved = true; break; }
+        if (moved) inv->NotifyChanged();
+        return moved;
     }
 
     /// Index of `item` in the rarity rules (lower = listed earlier = treated as rarer
@@ -164,9 +174,23 @@ public:
             if (Inventory::Empty(s)) continue;
             bool merged = false;
             for (auto& p : packed)
-                if (p.item == s.item) { p.count += s.count; merged = true; break; }
+                if (p.item == s.item && (long long)p.count + s.count <= 2147483647LL) {   // no int overflow
+                    p.count += s.count; merged = true; break;
+                }
             if (!merged) packed.push_back(Inventory::Slot{s.item, s.count});
         }
+        // Re-split by maxStack: merging must never make a stack bigger than the limit.
+        if (inv->maxStack > 0) {
+            std::vector<Inventory::Slot> split;
+            for (const auto& p : packed)
+                for (int left = p.count; left > 0; left -= inv->maxStack)
+                    split.push_back(Inventory::Slot{p.item, left < inv->maxStack ? left : inv->maxStack});
+            packed.swap(split);
+        }
+        // If the packed stacks no longer fit, keep the original layout (no loss).
+        const std::size_t room = inv->slots.size() > (std::size_t)(inv->capacity > 0 ? inv->capacity : 0)
+                                     ? inv->slots.size() : (std::size_t)inv->capacity;
+        if (packed.size() > room) return;
         // Order the packed stacks per the chosen mode (Compact keeps gather order).
         if (sortMode == SortMode::Name)
             std::stable_sort(packed.begin(), packed.end(),
@@ -180,8 +204,9 @@ public:
                                  int ra = RarityIndex(a.item), rb = RarityIndex(b.item);
                                  if (ra != rb) return ra < rb; return a.item < b.item; });
         for (auto& s : inv->slots) s = Inventory::Slot{};     // clear, keeping slot count
-        for (std::size_t i = 0; i < packed.size() && i < inv->slots.size(); ++i)
-            inv->slots[i] = packed[i];
+        if (inv->slots.size() < packed.size()) inv->slots.resize(packed.size());
+        for (std::size_t i = 0; i < packed.size(); ++i) inv->slots[i] = packed[i];
+        inv->NotifyChanged();
     }
 
     /// Drop one of the selected hotbar item: removes it from the inventory and returns
@@ -193,7 +218,21 @@ public:
         if (Inventory::Empty(s)) return "";
         std::string item = s.item;
         if (--s.count <= 0) { s.item.clear(); s.count = 0; }
+        inv->NotifyChanged();
         return item;
+    }
+
+    /// The drop key: hands one of the selected item to a script's on_item_dropped(item)
+    /// (to spawn a pickup) and only takes it out of the bag if a script handles that
+    /// event — pressing drop never makes an item silently vanish.
+    bool DropSelectedToScript() {
+        const std::string item = SelectedItem();
+        if (item.empty() || SelectedCount() <= 0) return false;
+        IScriptVM* vm = DropHandler();
+        if (!vm) return false;
+        DropSelected();
+        vm->CallEventWith("on_item_dropped", vs::VsValue(item));
+        return true;
     }
 
     /// The Inventory this UI shows: on the same object, else on the player root.
@@ -237,6 +276,7 @@ public:
             std::swap(a, b);                                      // swap (target may be empty)
         }
         while (!inv->slots.empty() && Inventory::Empty(inv->slots.back())) inv->slots.pop_back();
+        inv->NotifyChanged();
     }
 
     /// Drop the lifted `dragAmount` from slot `from` onto `to`. dragAmount >= the
@@ -259,6 +299,7 @@ public:
         }   // different item under the cursor: cancel (leave the split on the source)
         if (a.count <= 0) { a.item.clear(); a.count = 0; }
         while (!inv->slots.empty() && Inventory::Empty(inv->slots.back())) inv->slots.pop_back();
+        inv->NotifyChanged();
     }
 
     void Update(float) override {
@@ -277,12 +318,21 @@ public:
             if (wasOpen && !open && sortOnClose) Sort();   // auto-tidy on close
         }
         if (sortKey && Input::GetKeyDown(sortKey)) Sort();
-        if (dropKey && Input::GetKeyDown(dropKey)) DropSelected();
+        if (dropKey && Input::GetKeyDown(dropKey)) DropSelectedToScript();
         if (selected < 0) selected = 0;
         if (selected >= hotbarSlots) selected = hotbarSlots - 1;
     }
 
 private:
+    /// A script that handles on_item_dropped: on this object, the inventory's, or the root.
+    IScriptVM* DropHandler() const {
+        GameObject* cands[3] = {gameObject, nullptr, Owner()};
+        if (Inventory* inv = Inv()) cands[1] = inv->gameObject;
+        for (GameObject* g : cands)
+            if (g) if (auto* sc = g->GetComponent<ScriptComponent>())
+                if (sc->VM() && sc->VM()->HasEvent("on_item_dropped")) return sc->VM();
+        return nullptr;
+    }
     GameObject* Owner() const {
         if (!gameObject || !gameObject->transform) return gameObject;
         Transform* t = gameObject->transform;

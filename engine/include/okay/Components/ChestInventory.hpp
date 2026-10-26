@@ -53,8 +53,16 @@ public:
         Inventory::Slot& b = dst->slots[di];
         if (Inventory::Empty(a)) return;
         if (Inventory::Empty(b)) { b = a; a = Inventory::Slot{}; }
-        else if (b.item == a.item) { b.count += a.count; a = Inventory::Slot{}; }   // merge
+        else if (b.item == a.item) {                                                // merge, up to the
+            int room = dst->maxStack > 0 ? dst->maxStack - b.count : a.count;       // DESTINATION's maxStack
+            if (room <= 0) return;
+            int mv = a.count < room ? a.count : room;
+            b.count += mv; a.count -= mv;
+            if (a.count <= 0) a = Inventory::Slot{};
+        }
         else { std::swap(a, b); }                                                   // swap
+        src->NotifyChanged();
+        if (dst != src) dst->NotifyChanged();
     }
 
     /// The chest's own contents (a sibling Inventory).
@@ -76,23 +84,34 @@ public:
         return iu ? iu->Inv() : nullptr;
     }
 
-    /// Move the whole stack in chest slot `i` into the player's inventory.
+    /// Move the stack in chest slot `i` into the player's inventory (as much as fits).
     bool TakeToPlayer(int i) {
         Inventory* c = Inv(); Inventory* p = PlayerInv();
         if (!c || !p || i < 0 || i >= (int)c->slots.size()) return false;
-        Inventory::Slot& s = c->slots[i];
-        if (Inventory::Empty(s)) return false;
-        if (p->Add(s.item, s.count)) { s.item.clear(); s.count = 0; return true; }
-        return false;       // player inventory full
+        return Transfer(c, i, p);
     }
-    /// Move the whole stack in player slot `i` into the chest.
+    /// Move the stack in player slot `i` into the chest (as much as fits).
     bool StashFromPlayer(int i) {
         Inventory* c = Inv(); Inventory* p = PlayerInv();
         if (!c || !p || i < 0 || i >= (int)p->slots.size()) return false;
-        Inventory::Slot& s = p->slots[i];
+        return Transfer(p, i, c);
+    }
+
+    /// Move as much of `from` slot `i` into `to` as fits; only the leftover stays in
+    /// the source slot (never duplicated, never lost). False if nothing fit.
+    static bool Transfer(Inventory* from, int i, Inventory* to) {
+        if (!from || !to || from == to || i < 0 || i >= (int)from->slots.size()) return false;
+        Inventory::Slot& s = from->slots[i];
         if (Inventory::Empty(s)) return false;
-        if (c->Add(s.item, s.count)) { s.item.clear(); s.count = 0; return true; }
-        return false;       // chest full
+        const std::string item = s.item;
+        const int have = s.count;
+        const int left = to->AddPartial(item, have);
+        if (left == have) return false;                       // destination full
+        Inventory::Slot& src = from->slots[i];                // (re-fetch: same inventory may have grown)
+        src.count = left;
+        if (src.count <= 0) src = Inventory::Slot{};
+        from->NotifyChanged();
+        return true;
     }
 
     /// Is the player within `range` of this chest? Uses the main camera's world position

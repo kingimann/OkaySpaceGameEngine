@@ -51,8 +51,8 @@ public:
     /// Does `inv` hold every ingredient of recipe `r` (and is it non-empty)?
     bool CanCraft(const Recipe& r, const Inventory& inv) const {
         if (r.inputs.empty() || r.output.empty()) return false;
-        for (const auto& in : r.inputs)
-            if (in.count > 0 && inv.Count(in.item) < in.count) return false;
+        for (const auto& in : Inventory::SumStacks(r.inputs))
+            if (inv.Count(in.item) < in.count) return false;
         return true;
     }
     bool CanCraft(int idx) const {
@@ -68,8 +68,8 @@ public:
         if (!inv || idx < 0 || idx >= (int)recipes.size()) return false;
         const Recipe& r = recipes[idx];
         if (!CanCraft(r, *inv)) return false;
-        for (const auto& in : r.inputs) inv->Remove(in.item, in.count);
-        bool ok = inv->Add(r.output, r.outputCount < 1 ? 1 : r.outputCount);
+        // Atomic: inputs are taken out only if the output then fits.
+        bool ok = inv->Exchange(Inventory::SumStacks(r.inputs), {{r.output, r.outputCount < 1 ? 1 : r.outputCount}});
         if (ok && closeWhenCrafted) open = false;
         return ok;
     }

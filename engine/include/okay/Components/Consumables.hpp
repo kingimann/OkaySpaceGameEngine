@@ -2,6 +2,7 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
+#include "okay/Scene/Transform.hpp"
 #include "okay/Components/Inventory.hpp"
 #include "okay/Components/NativeUIActions.hpp"
 #include <string>
@@ -45,12 +46,25 @@ public:
     bool Use(const std::string& item) {
         const Recipe* r = Find(item);
         if (!r) return false;
+        Inventory* inv = nullptr;
         if (requireInventory) {
-            auto* inv = gameObject ? gameObject->GetComponent<Inventory>() : nullptr;
-            if (!inv || !inv->Remove(item, 1)) return false;
+            inv = Inv();
+            if (!inv || !inv->Has(item, 1)) return false;
         }
-        InvokeNativeUIAction(gameObject, r->action, r->amount);
+        // Apply first: the item is only taken when a survival component handled the
+        // action (no matching component -> the apple stays in the bag).
+        if (!InvokeNativeUIAction(gameObject, r->action, r->amount)) return false;
+        if (inv) inv->Remove(item, 1);
         return true;
+    }
+
+    /// The Inventory items are used from: same object, else the player root.
+    Inventory* Inv() const {
+        if (!gameObject) return nullptr;
+        if (auto* in = gameObject->GetComponent<Inventory>()) return in;
+        Transform* t = gameObject->transform;
+        while (t && t->Parent()) t = t->Parent();
+        return (t && t->gameObject) ? t->gameObject->GetComponent<Inventory>() : nullptr;
     }
 
     /// Drag-drop hook: a world item `dragged` was dropped on this object. If its name

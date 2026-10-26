@@ -64,7 +64,8 @@ public:
         bool running = sprintKey && Input::GetKey(sprintKey) && moving;
         float speed = running ? runSpeed : walkSpeed;
 
-        if (auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr) {
+        auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
+        if (rb) {
             Vec3 cur{rb->velocity.x, 0.0f, rb->velocity.z};
             Vec3 dv{dir.x * speed - cur.x, 0.0f, dir.z * speed - cur.z};
             float rate = moving ? acceleration : deceleration;
@@ -85,8 +86,16 @@ public:
         }
 
         if (driveAnimation)
-            if (Character* ch = FindCharacter())
-                ch->anim = moving ? (running ? 3 : 2) : 1;
+            if (Character* ch = FindCharacter()) {
+                Character::Locomotion lo;
+                lo.velocity  = rb ? rb->velocity : (moving ? dir * speed : Vec3{0, 0, 0});
+                lo.facing    = transform->localRotation * Vec3{0, 0, -1};
+                lo.onGround  = !rb || std::fabs(rb->velocity.y) < 0.5f || rb->groundedOnTerrain;
+                lo.sprint    = running;
+                lo.walkSpeed = walkSpeed;
+                lo.dt = dt;
+                ch->DriveLocomotion(lo);
+            }
     }
 
     void LateUpdate(float dt) override {

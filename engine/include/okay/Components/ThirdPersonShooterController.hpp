@@ -143,6 +143,7 @@ public:
         if (Input::GetKeyDown(' ')) m_jumpBuf = jumpBufferTime;
         else                        m_jumpBuf = Mathf::Max(0.0f, m_jumpBuf - dt);
         bool airborne = rb ? !grounded : false;
+        bool jumped = false;
 
         if (rb) {
             Vec3 cur{rb->velocity.x, 0.0f, rb->velocity.z};
@@ -156,7 +157,7 @@ public:
                 bool extraOk = (m_jumpsUsed >= 1) && (m_jumpsUsed < Mathf::Max(1, maxJumps));
                 if (firstOk || extraOk) {
                     rb->velocity.y = jumpForce; ++m_jumpsUsed;
-                    m_jumpBuf = 0.0f; m_coyote = 0.0f; m_groundContact = 0.0f; airborne = true;
+                    m_jumpBuf = 0.0f; m_coyote = 0.0f; m_groundContact = 0.0f; airborne = true; jumped = true;
                 }
             }
         } else if (moving) {
@@ -179,7 +180,17 @@ public:
 
         if (driveAnimation)
             if (Character* ch = FindCharacter()) {
-                ch->anim = (moving ? (running ? 3 : 2) : 1);   // no jump/fall pose
+                // State and stride from what the body really does; the body faces the
+                // aim, so strafing steps sideways and backing up steps backwards.
+                Character::Locomotion lo;
+                lo.velocity  = rb ? rb->velocity : (moving ? dir * speed : Vec3{0, 0, 0});
+                lo.facing    = transform->localRotation * Vec3{0, 0, -1};
+                lo.onGround  = !rb || m_groundContact > 0.0f || onTerrain;
+                lo.jumped    = jumped;
+                lo.sprint    = running;
+                lo.walkSpeed = walkSpeed;
+                lo.dt = dt;
+                ch->DriveLocomotion(lo);
                 // The body already faces the aim yaw, so the head only tilts up/down
                 // with the pitch (12 = resting pitch, so it's level by default). If the
                 // Character is set to look at the camera/target, let it drive the head.

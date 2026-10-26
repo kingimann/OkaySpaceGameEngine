@@ -386,6 +386,8 @@ public:
     const Mesh& CustomBindMesh() const { return m_customBind; }
 
     std::vector<Vec3> PoseAt(float t) const;
+    /// The pose a built-in state (an `anim` value) has at clock time t.
+    std::vector<Vec3> PoseFor(int state, float t) const;
     /// World-space body offset for the current anim (e.g. lowering the whole body
     /// for crouch / prone, since the rig's root is otherwise pinned at hip height).
     Vec3 StanceOffset() const;
@@ -421,13 +423,22 @@ private:
     float m_airT = 0.0f;           // seconds off the ground (DriveLocomotion)
     Vec3  m_lastPos{0, 0, 0};      // last frame's position (measured ground speed)
     bool  m_havePos = false;
+    float m_prevDt = 0.0f;         // last frame's dt (the physics step that moved the body)
+    Vec3  m_measVel{0, 0, 0};      // smoothed measured horizontal velocity
+    float m_gaitPhase = 0.0f;      // the stride cycle, 0..1 (0 = left touchdown); one clock for every gait state
+    float m_gaitFreq = 0.0f;       // cycles/s the phase is advancing at (signed: < 0 backpedalling)
+    float m_runW = 0.0f;           // 0 walking style .. 1 running style (eased over ~0.2 s)
     struct Gait;                   // stride layout for one speed (Character.cpp)
     Gait GaitFor(int state, float speed) const;
     float GaitSpeed(int state) const;                  // m_gaitSpeed, or the state's natural pace
-    float NominalFreq(int state) const;                // cycles/s of animTime for a state
+    float NominalFreq(int state) const;                // cycles/s at a state's natural pace
+    float GaitPhaseAt(float t, int state) const;       // the gait phase at clock time t
+    float RunWeight(int state) const;                  // walk/run style weight for a state
     void GaitPose(std::vector<Vec3>& r, float t, int state) const;   // legs/arms/torso for walk/run/crouch-walk
+    void GaitPoseFor(std::vector<Vec3>& r, const Gait& g, float phase, float hipY) const;
     float GaitHipY(float t, int state) const;          // hip drop + bounce for the same cycle
-    void  AdvanceAnimClock(float dt);                  // animTime at the gait's real cadence
+    float GaitHipYFor(const Gait& g, float phase) const;
+    void  AdvanceAnimClock(float dt);                  // animTime + the gait phase at the real cadence
     float m_landT = -1.0f;         // landing-recovery progress 0..1 (<0 = idle)
     float m_landK = 0.0f;          // landing knee-bend envelope 0..1 (sin arc)
     float m_punchT = -1.0f;        // punch progress 0..1 (<0 = not punching)
@@ -468,7 +479,9 @@ private:
     std::vector<Vec3> m_blendFrom;       // pose captured at the last clip switch (crossfade source)
     float m_blendT = 1.0f;               // crossfade weight 0..1 (1 = no blend active)
     float m_blendFromY = 0.0f;           // hip height at the last switch (eased with the crossfade)
+    int   m_blendFromAnim = -1;          // built-in state being crossfaded from, played live (-1 = m_blendFrom)
     Vec3  RawStanceOffset(float t) const;   // StanceOffset at clock time t, without the crossfade
+    Vec3  RawStanceOffsetFor(int state, float t) const;
     Vec3  m_editorOffset{0, 0, 0};       // body offset that goes with the previewed pose
     void BeginBlend();                   // snapshot the current pose and start a crossfade
     std::vector<std::string> m_animEvents;   // event names fired since the last ConsumeAnimEvents()

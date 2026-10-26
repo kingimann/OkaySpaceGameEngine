@@ -1,5 +1,26 @@
 OkaySpace Game Engine — Changelog
 
+v2.822.0
+  Imported characters
+  - Knees bend forward when Foot IK corrects the legs (steps, slopes, landings,
+    crouching); before, they folded backwards. The thigh and shin turn with
+    the joints, so the leg mesh no longer tears at the knee.
+  - Feet on Blender / glTF rigs lie flat on the ground instead of standing on
+    their toes.
+  - The Humanoid template no longer shows the blocky body inside your model
+    after Play / Stop or reopening the scene. Setting a new character model
+    replaces the old one instead of leaving it behind.
+  - No one-frame pose flashes when crouching, jumping or stopping.
+  - Model clips: walk and run no longer swap every frame when the frame rate
+    is uneven, stepping up a curb doesn't play the jump clip, and walking off
+    a ledge or teleporting no longer snaps the pose. The 2.5D and top-down
+    shooter players get walk / run thresholds too (#316).
+  Multiplayer and anti-cheat
+  - Relay: hosts get a secret key, so nobody else can take over a game's
+    session. Players can only reach their own session, each player is
+    rate-limited, and clients are told when the host leaves. Relay-hosted
+    games get the anti-cheat checks too (#315).
+
 v2.821.0
   Animation
   - The default player walks a little slower and no longer crosses its arms

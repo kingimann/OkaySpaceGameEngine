@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.823.0
+  Multiplayer and anti-cheat (encryption is opt-in)
+  - With encryption on, clients exchange keys before joining, so the
+    password, token and ticket are never sent in plain text. Once a session
+    is keyed, both ends drop unencrypted packets.
+  - Dedicated servers can have an identity key (--host-key FILE). A client
+    pinned to it joins only that server.
+  - Clock check: a client whose clock runs too fast or too slow, or doesn't
+    answer, is reported as "clock drift".
+  - An encrypted client that reconnects no longer keeps its old session keys
+    (#318).
+
 v2.822.0
   Imported characters
   - Knees bend forward when Foot IK corrects the legs (steps, slopes, landings,

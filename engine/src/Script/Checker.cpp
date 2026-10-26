@@ -80,6 +80,7 @@ int EditDistance(const std::string& a, const std::string& b) {
 std::string Suggest(const std::string& name, const std::vector<std::string>& options) {
     std::string best; int bestD = 99;
     for (const auto& o : options) {
+        if (o == name) continue;   // never "did you mean" the very same name
         int d = EditDistance(name, o);
         if (d < bestD) { bestD = d; best = o; }
     }
@@ -148,6 +149,7 @@ private:
     std::vector<std::vector<LocalVar>> scopes_;
     int nextSlot_ = 0, maxSlot_ = 0, loopDepth_ = 0, switchDepth_ = 0;
     bool inFieldInit_ = false;
+    bool inEnumValue_ = false;   ///< checking an enum member's value (fields aren't declared yet)
     std::vector<int> enumReady_;   ///< per enum: how many members have their value worked out
 
     bool HasErrors() const { for (auto& d : prog_.diags) if (d.severity == 0) return true; return false; }
@@ -175,9 +177,9 @@ private:
                 EnumMember& m = en.members[k];
                 if (!seen.insert(m.name).second) Error(m.loc, "'" + m.name + "' is already in " + en.name);
                 if (m.value) {
-                    inFieldInit_ = true;
+                    inFieldInit_ = inEnumValue_ = true;
                     CheckExpr(*m.value);
-                    inFieldInit_ = false;
+                    inFieldInit_ = inEnumValue_ = false;
                     std::optional<Value> v;
                     const TK k2 = m.value->type.kind;
                     if (k2 == TK::Int || k2 == TK::Enum) v = Fold(*m.value);
@@ -561,8 +563,8 @@ private:
         bool haveDefault = false, anyBreak = false;
         std::vector<Value> seen;
         ++switchDepth_;
-        PushScope();
         for (SwitchSection& sec : s.sections) {
+            PushScope();   // each section's locals are its own
             if (sec.isDefault) {
                 if (haveDefault) Error(sec.defaultLoc, "A switch has only one default");
                 haveDefault = true;
@@ -589,8 +591,8 @@ private:
             if (CheckStmts(sec.body))
                 Error(sec.loc, "Control can't fall through from one case to the next: end this case with break, return or continue");
             for (auto& st : sec.body) if (ContainsBreak(*st)) anyBreak = true;
+            PopScope();
         }
-        PopScope();
         --switchDepth_;
         return !haveDefault || anyBreak;
     }
@@ -705,6 +707,13 @@ private:
     }
 
     void CheckName(Expr& e) {
+        if (inEnumValue_)
+            for (const ClassDecl& k : prog_.classes)
+                for (const FieldDecl& f : k.fields)
+                    if (f.name == e.name) {
+                        Error(e.loc, "An enum value can't use the field '" + e.name + "': write the number, or another enum value");
+                        return;
+                    }
         if (LocalVar* v = FindLocal(e.name)) {
             if (inFieldInit_) { Error(e.loc, "Unknown name '" + e.name + "'"); return; }
             v->used = true; e.bind = Bind::Local; e.slot = v->slot; e.type = v->type; return;

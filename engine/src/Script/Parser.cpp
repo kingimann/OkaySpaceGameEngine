@@ -5,7 +5,11 @@ namespace okay::script {
 
 namespace {
 
-struct ParseError { SrcLoc loc; std::string msg; };
+struct ParseError {
+    SrcLoc loc;
+    std::string msg;
+    bool tooDeep = false;   ///< nesting limit: the whole member is skipped, so it's reported once
+};
 
 // C# words that aren't part of OkayScript (yet). Using one is an error that says
 // so, rather than syntax that is silently skipped.
@@ -201,7 +205,11 @@ private:
         while (!Is(T::RBrace) && !Is(T::End)) {
             std::size_t start = pos_;
             try { Member(c); }
-            catch (const ParseError& e) { Error(e.loc, e.msg); SyncStatement(start); }
+            catch (const ParseError& e) {
+                Error(e.loc, e.msg);
+                if (e.tooDeep) pos_ = start;   // skip the whole member, not just the innermost statement
+                SyncStatement(start);
+            }
         }
         Expect(T::RBrace, "'}' to close the class");
         return c;
@@ -317,7 +325,7 @@ private:
         while (!Is(T::RBrace) && !Is(T::End)) {
             std::size_t start = pos_;
             try { b->body.push_back(Statement()); }
-            catch (const ParseError& e) { Error(e.loc, e.msg); SyncStatement(start); }
+            catch (const ParseError& e) { if (e.tooDeep) throw; Error(e.loc, e.msg); SyncStatement(start); }
         }
         Expect(T::RBrace, "'}'");
         return b;
@@ -466,6 +474,7 @@ private:
                     sec.labels.push_back(std::move(v));
                     sec.labelLocs.push_back(l);
                 } catch (const ParseError& e) {
+                    if (e.tooDeep) throw;
                     Error(e.loc, e.msg);
                     while (!Is(T::Colon) && !Is(T::RBrace) && !Is(T::End) && pos_ >= start) ++pos_;
                     Match(T::Colon);
@@ -474,7 +483,7 @@ private:
             while (!Is(T::RBrace) && !Is(T::End) && !IsCaseLabel()) {
                 std::size_t start = pos_;
                 try { sec.body.push_back(Statement()); }
-                catch (const ParseError& e) { Error(e.loc, e.msg); SyncStatement(start); }
+                catch (const ParseError& e) { if (e.tooDeep) throw; Error(e.loc, e.msg); SyncStatement(start); }
             }
             s->sections.push_back(std::move(sec));
         }
@@ -502,7 +511,7 @@ private:
     struct NestGuard {
         int& n;
         NestGuard(int& d, SrcLoc l, const char* what = "expression") : n(d) {
-            if (++n > kMaxNesting) { --n; throw ParseError{l, std::string("This ") + what + " is nested too deeply"}; }
+            if (++n > kMaxNesting) { --n; throw ParseError{l, std::string("This ") + what + " is nested too deeply", true}; }
         }
         ~NestGuard() { --n; }
     };

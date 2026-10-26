@@ -279,7 +279,9 @@ private:
                 if (e.type.kind == TK::Int || e.type.kind == TK::Enum) {
                     if (auto* f = std::get_if<float>(&a)) {
                         if (!std::isfinite(*f)) throw RuntimeError("Can't turn this number into an int (it isn't finite)", e.loc);
-                        return Value{(std::int32_t)std::trunc(*f)};
+                        const double t = std::trunc((double)*f);
+                        if (t < -2147483648.0 || t > 2147483647.0) throw RuntimeError(ValueToString(a) + " doesn't fit in an int", e.loc);
+                        return Value{(std::int32_t)t};
                     }
                     return a;
                 }
@@ -579,7 +581,12 @@ bool Instance::SetField(const std::string& name, const Value& v) {
         // Convert to the field's type; values that don't fit are refused.
         const TK k = f.resolved.kind;
         if (k == TK::Int || k == TK::Enum) {
-            if (auto* x = std::get_if<float>(&v)) { fields_[i] = Value{(std::int32_t)std::trunc(*x)}; return true; }
+            if (auto* x = std::get_if<float>(&v)) {   // a value that doesn't fit an int is refused
+                const double t = std::isfinite(*x) ? std::trunc((double)*x) : 1e300;
+                if (t < -2147483648.0 || t > 2147483647.0) return false;
+                fields_[i] = Value{(std::int32_t)t};
+                return true;
+            }
             if (std::holds_alternative<std::int32_t>(v)) { fields_[i] = v; return true; }
             return false;
         }

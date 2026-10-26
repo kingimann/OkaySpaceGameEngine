@@ -7,6 +7,14 @@
 // The Character shows the result — skins its mesh, drives its part rig, or
 // feeds a HumanoidRetarget. Owned by the AnimStateMachine, so the body has one
 // animation component.
+//
+// Clips are the Character's own, then the default humanoid library. The body's
+// movement arrives as the machine's parameters (speed, run, crouch, prone,
+// airTime, verticalSpeed from a movement controller; gaitX, gaitZ, gaitSpeed
+// every frame). `anim` keeps working: it reads the state playing (by name:
+// "Walk" is 2), and a write from outside (a script, the network, a controller
+// that sets it itself) moves the machine to that state and keeps it there until
+// a movement controller reports again.
 // ---------------------------------------------------------------------------
 #include "okay/Components/AnimBackend.hpp"
 #include "okay/Components/Character.hpp"
@@ -31,7 +39,7 @@ public:
     float ClipLength(int clip) const override;
     int   ActiveClip() const override { return m_cur.blend ? -1 : m_cur.clip; }
     bool  ClipFinished() const override;
-    void  SetSpeed(float speed) override { m_speed = speed; }
+    void  SetSpeed(float speed) override;
     void  SetLoop(bool loop) override { m_loop = loop; }
     void  SetExternalDrive(bool) override {}   // BlendClips / Play say which kind of state plays
     bool  Play(const std::string& name, float blend = -1.0f) override;
@@ -39,7 +47,9 @@ public:
     void  CaptureCrossfade(int A, int B, float seconds) override;
     void  CaptureCrossfadeMany(const std::vector<int>& clips, float seconds) override;
     float BlendPhase() const override { return m_cur.phase; }
-    void  ResetBlendPhase(float p = 0.0f) override { m_cur.phase = p; m_fromStart = true; }
+    /// A blend tree entered from another one at offset 0 carries on at the same
+    /// phase, so the feet stay in step (walk -> run -> crouch-walk).
+    void  ResetBlendPhase(float p = 0.0f) override;
     bool  BlendClips(float dt, int A, int B, float w) override;
     bool  BlendMany(float dt, const std::vector<int>& clips, const std::vector<float>& weights) override;
     void  PoseLayer(const std::vector<std::pair<int, float>>& clipTimes, const std::vector<float>& weights,
@@ -49,9 +59,12 @@ public:
     void  FireEvent(const std::string& name) override;
     void  SetStateMachine(const Component* sm) override { m_machine = sm; }
     void  Advance(float dt) override;
+    void  BeginFrame(AnimStateMachine& sm) override;
 
     bool  AnimatorPose(std::vector<Vec3>& pose, Vec3& root) override;
     bool  Live() const override;
+    void  Move(const Movement& m) override;
+    void  Gait(float x, float z, float speed) override;
 
 private:
     /// What one side of a crossfade plays.
@@ -75,9 +88,16 @@ private:
 
     GameObject* m_owner;
     const Component* m_machine = nullptr;            // the state machine playing through us
+    AnimStateMachine* m_sm = nullptr;                // the same, for its parameters and state
+    int   m_published = -1;                          // the `anim` we last wrote (-1 = none yet)
+    bool  m_forced = false;                          // an outside `anim` write holds the state ...
+    bool  m_moved = false;                           // ... until a movement controller reports again
+    bool  m_off = false;                             // `anim` 0: the body holds its own pose
+    bool  m_carry = false;                           // the tree just left, for ResetBlendPhase ...
+    float m_carryPhase = 0.0f;                       // ... and its phase
     mutable std::vector<std::string> m_names;        // Character::ClipNames, sorted
     mutable std::uint32_t m_namesVer = ~0u;
-    Playing m_cur, m_from;
+    mutable Playing m_cur, m_from;                   // (their clips are re-found when the list changes)
     bool  m_fromLive = false;                        // the fade's source still plays (else frozen)
     std::vector<Vec3> m_fromPose;
     Vec3  m_fromRoot{0, 0, 0};

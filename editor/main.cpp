@@ -5723,6 +5723,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("Character")) {
                 GameObject* g = ed.CreateEmpty("Character");
                 g->AddComponent<Character>()->Apply();
+                HumanoidLibrary::EnsureAnimator(g);
                 ed.Select(g); ed.view3D = true; ed.dirty = true; created = true;
                 ConsoleLog("Created Character");
             }
@@ -6892,6 +6893,7 @@ static void RigModelHumanoid(EditorState& ed, GameObject* go) {
     if (!ch) ch = go->AddComponent<Character>();
     ch->BindCustomMesh(merged);
     ch->Apply();
+    HumanoidLibrary::EnsureAnimator(go);
     if (auto* mr = go->GetComponent<MeshRenderer>()) {
         if (!tex.empty()) mr->texture = tex;
         mr->enabled = true;
@@ -34176,7 +34178,7 @@ void DrawInspector(EditorState& ed) {
                 if (!go->GetComponent<MeshRenderer>()) go->AddComponent<MeshRenderer>()->mesh = Mesh::Cube();
                 go->AddComponent<okay::MeshModifiers>(); ed.view3D = true; ed.dirty = true;
             }
-            if (item(!go->GetComponent<Character>(), "Character")) { go->AddComponent<Character>()->Apply(); ed.view3D = true; ed.dirty = true; }
+            if (item(!go->GetComponent<Character>(), "Character")) { go->AddComponent<Character>()->Apply(); HumanoidLibrary::EnsureAnimator(go); ed.view3D = true; ed.dirty = true; }
             if (item(!go->GetComponent<TextRenderer>(), "Text")) { go->AddComponent<TextRenderer>(); ed.dirty = true; }
             if (item(!go->GetComponent<SpriteAnimator>(), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
             if (item(!go->GetComponent<ParticleSystem>(), "Particle System")) { go->AddComponent<ParticleSystem>(); ed.dirty = true; }

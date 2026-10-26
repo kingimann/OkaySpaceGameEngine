@@ -16,6 +16,7 @@
 #include "okay/Components/CharacterController2D.hpp"
 #include "okay/Components/CharacterController3D.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Animation/HumanoidLibrary.hpp"
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/RootMotion.hpp"
 #include "okay/Components/FirstPersonController.hpp"
@@ -72,6 +73,7 @@ inline GameObject* BuildPlayerBody(Scene& scene, const Vec3& pos, const char* na
     GameObject* player = scene.CreateGameObject(name);
     player->transform->localPosition = pos;
     player->AddComponent<Character>()->Apply();
+    HumanoidLibrary::EnsureAnimator(player);
     player->AddComponent<Rigidbody3D>();
     auto* col = player->AddComponent<BoxCollider3D>();
     col->size = {0.6f, 1.8f, 0.6f};
@@ -223,6 +225,7 @@ inline GameObject* BuildHumanoidBody(Scene& scene, const Vec3& pos, const char* 
     player->transform->localPosition = pos;
     auto* pc = player->AddComponent<Character>();
     pc->Apply();
+    HumanoidLibrary::EnsureAnimator(player);
     player->AddComponent<Rigidbody3D>();
     auto* col = player->AddComponent<CapsuleCollider3D>();   // physics capsule, feet->head
     col->radius = 0.3f; col->height = 1.8f; col->offset = {0.0f, 0.9f, 0.0f};
@@ -323,6 +326,7 @@ inline void Platformer3D(Scene& scene) {
     GameObject* player = scene.CreateGameObject("Player");
     player->transform->localPosition = {0, 2, 0};
     player->AddComponent<Character>()->Apply();
+    HumanoidLibrary::EnsureAnimator(player);
     player->AddComponent<Rigidbody3D>();
     {
         auto* col = player->AddComponent<BoxCollider3D>();
@@ -369,6 +373,7 @@ inline void ThirdPerson(Scene& scene) {
     GameObject* player = scene.CreateGameObject("Player");
     player->transform->localPosition = {0, 1.0f, 0};
     player->AddComponent<Character>()->Apply();
+    HumanoidLibrary::EnsureAnimator(player);
     player->AddComponent<Rigidbody3D>();
     {
         auto* col = player->AddComponent<BoxCollider3D>();
@@ -468,6 +473,7 @@ inline void ThirdPersonShooter(Scene& scene) {
     GameObject* player = scene.CreateGameObject("Player");
     player->transform->localPosition = {0, 1.0f, 0};
     player->AddComponent<Character>()->Apply();
+    HumanoidLibrary::EnsureAnimator(player);
     player->AddComponent<Rigidbody3D>();
     {
         auto* col = player->AddComponent<BoxCollider3D>();
@@ -518,6 +524,7 @@ inline void PointAndClick(Scene& scene) {
     GameObject* player = scene.CreateGameObject("Player");
     player->transform->localPosition = {0, 1.0f, 0};
     player->AddComponent<Character>()->Apply();
+    HumanoidLibrary::EnsureAnimator(player);
     player->AddComponent<Rigidbody3D>();
     {
         auto* col = player->AddComponent<BoxCollider3D>();
@@ -571,6 +578,7 @@ inline void FPS(Scene& scene) {
     GameObject* player = scene.CreateGameObject("Player");
     player->transform->localPosition = {0, 1.0f, 0};
     player->AddComponent<Character>()->Apply();
+    HumanoidLibrary::EnsureAnimator(player);
     player->AddComponent<Rigidbody3D>();
     {
         auto* col = player->AddComponent<BoxCollider3D>();
@@ -1173,6 +1181,7 @@ inline void TerrainSandbox(Scene& scene) {
     GameObject* player = scene.CreateGameObject("Player");
     player->transform->localPosition = {0, 12, 0};   // drop in from above; it settles
     player->AddComponent<Character>()->Apply();
+    HumanoidLibrary::EnsureAnimator(player);
     player->AddComponent<Rigidbody3D>();
     {
         auto* col = player->AddComponent<BoxCollider3D>();
@@ -1247,6 +1256,7 @@ inline void VoxelSandbox(Scene& scene) {
     float surfY = 0.0f; vox->SurfaceY(0, 0, surfY);
     player->transform->localPosition = {0, surfY + 3.0f, 0};
     { auto* pc = player->AddComponent<Character>(); pc->Apply(); pc->separateParts = true; }   // part rig: the FP hand raises your real arm and hides the rest of the body from your own camera only
+    HumanoidLibrary::EnsureAnimator(player);
     player->AddComponent<Rigidbody3D>();
     {
         auto* col = player->AddComponent<BoxCollider3D>();

@@ -4,6 +4,7 @@
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Mat4.hpp"
 #include "okay/Components/AnimClip.hpp"
+#include "okay/Animation/HumanoidMotion.hpp"
 #include <cctype>
 #include <unordered_map>
 #include <vector>
@@ -80,6 +81,8 @@ public:
     //              while the chest keeps facing forward.
     float moveSpeed = -1.0f;
     float moveAngle = 0.0f;
+    /// How quickly the stride follows a change of speed (seconds to close ~63%).
+    float gaitSpeedSmoothing = 0.05f;
     /// Where the gait cycle is, 0..1 (0 = left foot touching down, 0.5 = right foot).
     float GaitPhase() const;
 
@@ -239,12 +242,26 @@ public:
         virtual bool AnimatorPose(std::vector<Vec3>& pose, Vec3& root) = 0;
         /// Still playing (its Animator is enabled and has posed the body).
         virtual bool Live() const = 0;
+        /// What a movement controller reported (DriveLocomotion, every frame):
+        /// the Animator's graph picks the state from it.
+        struct Movement {
+            float speed = 0.0f;            ///< measured ground speed (m/s)
+            bool  run = false;             ///< fast enough (or sprinting) to run
+            bool  crouch = false, prone = false;
+            float airTime = 0.0f;          ///< seconds off the ground
+            float verticalSpeed = 0.0f;    ///< m/s, + = rising
+        };
+        virtual void Move(const Movement& m) = 0;
+        /// The stride, every frame: direction of travel as a point (x = right,
+        /// z = forward, rig units/s) and the speed it plays at.
+        virtual void Gait(float x, float z, float speed) = 0;
     };
     void SetPoseSource(PoseSource* src) { m_poseSource = src; }
     PoseSource* GetPoseSource() const { return m_poseSource; }
     /// True while the Animator's pose is the one shown.
     bool AnimatorDriven() const {
-        return m_poseSource && m_poseSource->Live() && !m_editorPosing && !(m_activeClip && !m_stateDriven);
+        return m_poseSource && m_poseSource->Live() && !m_editorPosing && !(m_activeClip && !m_stateDriven) &&
+               !m_blendTreeOn;   // a script's blend tree, like its PlayClip, wins
     }
     /// Report an event an Animator clip fired: queued for ConsumeAnimEvents,
     /// sent to onAnimEvent and to every component's OnAnimationEvent.
@@ -337,6 +354,7 @@ public:
         m_animHold = a;
         anim = a;
     }
+    bool AnimHeld() const { return m_animHold > 0; }
     void ReleaseAnim() {
         if (m_animHold == 0) return;
         m_animHold = 0;
@@ -506,22 +524,17 @@ private:
     float m_airT = 0.0f;           // seconds off the ground (DriveLocomotion)
     struct MoveSample { Vec3 p; float t; };
     static constexpr int kMoveHist = 16;
-    MoveSample m_hist[kMoveHist]{};  // recent positions (measured ground speed over ~0.12 s)
+    MoveSample m_hist[kMoveHist]{};  // recent positions (measured ground speed over ~0.08 s)
+    float m_measured = 0.0f;         // last accepted ground speed (DriveLocomotion)
+    bool  m_spike = false;           // last frame's reading was set aside as a spike
     int   m_histN = 0;
     float m_moveClock = 0.0f;
     float m_gaitPhase = 0.0f;      // the stride cycle, 0..1 (0 = left touchdown); one clock for every gait state
     float m_gaitFreq = 0.0f;       // cycles/s the phase is advancing at (signed: < 0 backpedalling)
     float m_runW = 0.0f;           // 0 walking style .. 1 running style (eased over ~0.2 s)
-    struct Gait;                   // stride layout for one speed (Character.cpp)
-    Gait GaitFor(int state, float speed) const;
-    float GaitSpeed(int state) const;                  // m_gaitSpeed, or the state's natural pace
-    float NominalFreq(int state) const;                // cycles/s at a state's natural pace
     float GaitPhaseAt(float t, int state) const;       // the gait phase at clock time t
     float RunWeight(int state) const;                  // walk/run style weight for a state
-    void GaitPose(std::vector<Vec3>& r, float t, int state) const;   // legs/arms/torso for walk/run/crouch-walk
-    void GaitPoseFor(std::vector<Vec3>& r, const Gait& g, float phase, float hipY) const;
-    float GaitHipY(float t, int state) const;          // hip drop + bounce for the same cycle
-    float GaitHipYFor(const Gait& g, float phase) const;
+    HumanoidMotion::Inputs MotionInputs(int state, float t) const;   // the built-in motion's inputs
     void  AdvanceAnimClock(float dt);                  // animTime + the gait phase at the real cadence
     float m_landT = -1.0f;         // landing-recovery progress 0..1 (<0 = idle)
     float m_landK = 0.0f;          // landing knee-bend envelope 0..1 (sin arc)

@@ -10,6 +10,7 @@
 #include "okay/Components/SkinnedMesh.hpp"
 #include "okay/Components/BlendShapes.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Animation/HumanoidLibrary.hpp"
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/HumanoidRetarget.hpp"
 #include "okay/Components/Camera.hpp"
@@ -1829,6 +1830,7 @@ int EnableBuiltinAnimations(Scene& scene, GameObject* modelRoot, std::string* ou
     for (const auto& up : scene.Objects())
         if (up->IsSelfOrDescendantOf(modelRoot))
             if (auto* ma = up->GetComponent<ModelAnimator>()) { ma->autoPlay = false; ma->driveByMovement = false; }
+    HumanoidLibrary::EnsureAnimator(modelRoot);
     say("Built-in animations on '" + modelRoot->name + "' (" + std::to_string(found) + "/15 bones matched)");
     return found;
 }

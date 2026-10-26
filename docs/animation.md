@@ -152,8 +152,9 @@ d = clip_duration("walk")  # clip length in seconds
 
 For anything beyond locomotion, add an **Animator** component next to the
 Model Animator, or onto a built-in Character (Add Component > Animation). On a
-Character it plays the Character's own clips (the Animation tab's), and while
-it has states its pose replaces the built-in animation. Each **state** names a
+Character it plays the Character's own clips (the Animation tab's) and the
+default humanoid clips, and while it has states its pose replaces the built-in
+animation. Each **state** names a
 clip (with speed/loop overrides); **transitions** move between states when
 their condition passes — a clip finishing, a float parameter compared to a
 value, a bool, or a one-frame trigger — each with its own crossfade time.
@@ -249,6 +250,39 @@ is actually doing: pressed against a wall it stands instead of running in
 place, it idles the moment it stops, and the fall pose only shows after a
 real drop (a step down keeps the stride). Standing still, the character
 **fidgets**: a slow weight shift and an occasional glance to one side.
+
+### The Animator that plays it
+
+Every new Character (the player templates, GameObject > 3D > Character, Add
+Component > Character, rigging a model) comes with an **Animator** holding the
+default graph, and a scene saved before it existed gets one when it loads. Its
+states — Idle, Walk, Run, Crouch, CrouchWalk, Prone, Jump, Fall, Land, Hang
+and the gestures (Wave, Point, Clap, ThumbsUp, Salute, WaveBoth, Cheer, Sad,
+Angry, Think) — play the **default humanoid clips**, baked from the motion
+above: the walk, run and crouch-walk at several speeds in eight directions,
+each a 2D blend tree on `gaitX`/`gaitZ` that keeps pace with the ground
+(`matchSpeed`: a tree whose motions sit at their speeds of travel plays as
+fast as its speed parameter over the blended motions' speed). Every Character can play these clips by name; they aren't
+copied into the scene, and a clip of your own with the same name wins. A clip
+bound with clipIdle / clipWalk / ... plays in that state instead.
+
+A movement controller feeds the graph's parameters every frame: `speed`
+(m/s), `run`, `crouch`, `prone`, `airTime` (seconds off the ground) and
+`verticalSpeed`; the body itself sets `gaitX`, `gaitZ` (direction of travel,
+x = right, z = forward) and `gaitSpeed`. Crossfades: 0.2 s between ground
+states, 0.1 s into the air, 0.08 s back onto the ground, where a standing
+landing plays **Land** and a moving one gives at the knees mid-stride. A blend
+tree entered from another one (walk → run → crouch-walk) keeps the stride's
+phase, so the feet stay in step.
+
+`anim` keeps working: it reads the state playing (Walk = 2, Land = 1), and
+writing it (a script's `set_anim`, the network, a controller that sets it
+itself) moves the Animator to that state and keeps it there until a movement
+controller reports again. `anim` 0 hands the body back to its own pose; a
+script's held gesture (`play_clip("Wave")`) holds the state until released.
+Disable the Animator and the built-in animation plays the body as before.
+
+### Driving it yourself
 
 Driving a Character yourself (an NPC, a cutscene): set `anim` and, for the
 locomotion states, `moveSpeed` (m/s) and `moveAngle` (degrees, + = to the

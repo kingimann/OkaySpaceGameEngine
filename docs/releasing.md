@@ -137,3 +137,73 @@ also runs `scripts/publish-supabase.sh`, so both places stay in step.
 
 Launchers older than v2.794.0 only know about GitHub, so the first release that
 contains the Supabase updater must also go out through GitHub Releases.
+
+## The full release checklist
+
+This is the procedure used for every release since 2.808.0. Each release goes
+out through **both** channels: Supabase, which launchers read, and a GitHub
+Release, which is where the installer download lives.
+
+1. **Main must be green.** Wait for the `CI` workflow on main's newest commit to
+   pass. Never release from a red main.
+2. **Bump the version and the changelog** on a branch named `release/v<ver>`:
+   - `project(... VERSION x.y.z)` in `CMakeLists.txt`;
+   - a plain-language entry at the top of `dist/CHANGELOG.txt`, leading with the
+     change players will notice most.
+
+   Push the branch and open a PR. It's merged after publishing (step 6).
+3. **Build:** `SDL2_MINGW_PREFIX=... OKAY_SODIUM_MINGW_PREFIX=... scripts/build-windows-dist.sh`.
+   - The script runs `cmake --build -j` with no limit. On a small machine
+     (4 cores, 15 GB), cap it: a `cmake` wrapper earlier in `PATH` that turns `-j`
+     into `-j2`, or a `-j1` pre-build of `build-win`, avoids the compiler being
+     killed for lack of memory.
+   - Check that `build-win-dist/VERSION.txt` shows the new version and that
+     `Tools/OkayEngine.exe` is under 50 MB.
+4. **Publish to Supabase:**
+   `NOTES_FILE=notes.txt scripts/publish-supabase.sh`, with `SUPABASE_ACCESS_TOKEN`
+   (or `SUPABASE_SERVICE_KEY`) in the environment. `notes.txt` holds 3–6 short
+   "what's new" bullet lines.
+   - Verify with
+     `curl -s "<project>/storage/v1/object/public/releases/VERSION.txt?t=$(date +%s)"`.
+     The `?t=` gets past the CDN's 30 s cache.
+5. **Publish the GitHub Release:** run the `Release Windows build` workflow
+   (`.github/workflows/release.yml`) on the exact release commit.
+   - Push that commit to a branch named `release-build/v<ver>`, then dispatch
+     the workflow on that branch (Actions > Release Windows build > Run workflow,
+     or the API).
+   - Don't dispatch it on `main` once newer work has merged: it would publish
+     different code under the same version number.
+   - Pushing a `v<ver>` tag also triggers the workflow, but some cloud-session
+     proxies refuse tag pushes, so the branch route is the reliable one. The
+     workflow creates the tag itself.
+   - The workflow builds the zip and `OkaySpace-Setup.exe` and creates the
+     release and tag. Its Supabase step runs only if the repo has a
+     `SUPABASE_SERVICE_KEY` secret; re-uploading the same version is harmless.
+6. **Merge the `release/v<ver>` PR** so main carries the new version and
+   changelog.
+7. **Installer for testers:**
+   `makensis -DVERSION=<ver> -DDISTDIR=$PWD/build-win-dist -DOUTFILE=OkaySpace-Setup.exe scripts/okayspace-installer.nsi`.
+   It finds an existing install and updates it in place.
+
+**Secrets (names only, never commit values):**
+
+| Name | Where | Used by |
+| --- | --- | --- |
+| `SUPABASE_ACCESS_TOKEN` | the release machine's environment | `publish-supabase.sh` (fetches the service key) |
+| `SUPABASE_SERVICE_KEY` | environment, or a GitHub repo secret | `publish-supabase.sh`; `release.yml`'s Supabase step |
+
+**SQL:** files under `docs/sql/` are never applied as part of a release. List
+the ones that changed since the last release and apply them only when the owner
+approves.
+
+### Known issue: the Linux game server job
+
+`release.yml`'s "Build the Linux game server" job builds the player on
+`ubuntu-22.04`, whose packaged SDL2 is 2.0.20. Any SDL symbol newer than that
+breaks the job, even though the Windows release (built with SDL 2.30) succeeds.
+In 2.818.0 it was `SDL_HINT_WINDOWS_DPI_AWARENESS` (SDL 2.24+) in
+`player/main.cpp`, now wrapped in `#ifdef`.
+
+When adding SDL calls to the player, guard anything newer than 2.0.20 with
+`#ifdef` or `SDL_VERSION_ATLEAST`. To check locally, compile the player's
+sources with `-fsyntax-only` against the SDL 2.0.20 headers.

@@ -21,20 +21,28 @@ namespace okay {
 ///   * Dropdown — Enter/Space/A opens/closes; Left/Right change the selection.
 ///   * Slider   — Left/Right adjust the value by 5% (on_change()).
 ///   * Tabs     — Left/Right select the previous / next enabled tab (on_change()).
-/// Mouse interaction still works independently. Returns the widget activated
-/// this frame (button/toggle/dropdown), or nullptr.
+///   * Keybind  — Enter/Space/A starts listening for a key (focus holds while it listens).
+/// While a modal is open only the widgets inside it take focus. Mouse interaction
+/// still works independently. Returns the widget activated this frame
+/// (button/toggle/dropdown/keybind), or nullptr.
 inline GameObject* NavigateUI(Scene& scene) {
     // Collect focusable, interactable widgets and a quick type tag.
-    enum Kind { Button, Toggle, Slider, Dropdown, Tabs };
+    enum Kind { Button, Toggle, Slider, Dropdown, Tabs, Keybind };
     struct Item { GameObject* go; Kind kind; };
     std::vector<Item> items;
     for (const auto& go : scene.Objects()) {
+        if (auto* kb = go->GetComponent<UIKeybindField>(); kb && kb->IsListening())
+            return nullptr;                                  // the keys are being captured
+    }
+    for (const auto& go : scene.Objects()) {
         if (!go->active || UIHidden(go.get())) continue;   // hidden pages/menus can't take focus
+        if (UIModal::Blocks(go.get())) continue;            // behind an open modal
         if (auto* b = go->GetComponent<UIButton>())   { if (b->focusable && b->interactable) items.push_back({go.get(), Button}); continue; }
         if (auto* t = go->GetComponent<UIToggle>())   { if (t->focusable) items.push_back({go.get(), Toggle}); continue; }
         if (auto* s = go->GetComponent<UISlider>())   { if (s->focusable) items.push_back({go.get(), Slider}); continue; }
         if (auto* d = go->GetComponent<UIDropdown>()) { if (d->focusable) items.push_back({go.get(), Dropdown}); continue; }
         if (auto* tb = go->GetComponent<UITabs>())    { if (tb->focusable && tb->interactable && tb->Count() > 0) items.push_back({go.get(), Tabs}); continue; }
+        if (auto* kb = go->GetComponent<UIKeybindField>()) { if (kb->focusable && kb->interactable) items.push_back({go.get(), Keybind}); continue; }
     }
     if (items.empty()) return nullptr;
 
@@ -53,6 +61,7 @@ inline GameObject* NavigateUI(Scene& scene) {
         if (auto* s = it.go->GetComponent<UISlider>())   return s->IsFocused();
         if (auto* d = it.go->GetComponent<UIDropdown>()) return d->IsFocused();
         if (auto* tb = it.go->GetComponent<UITabs>())    return tb->IsFocused();
+        if (auto* kb = it.go->GetComponent<UIKeybindField>()) return kb->IsFocused();
         return false;
     };
     auto setFocused = [](const Item& it, bool f) {
@@ -61,6 +70,7 @@ inline GameObject* NavigateUI(Scene& scene) {
         if (auto* s = it.go->GetComponent<UISlider>())   s->SetFocused(f);
         if (auto* d = it.go->GetComponent<UIDropdown>()) d->SetFocused(f);
         if (auto* tb = it.go->GetComponent<UITabs>())    tb->SetFocused(f);
+        if (auto* kb = it.go->GetComponent<UIKeybindField>()) kb->SetFocused(f);
     };
 
     const int n = (int)items.size();
@@ -110,6 +120,9 @@ inline GameObject* NavigateUI(Scene& scene) {
             else if (left) tb->SelectPrevious();
             break;
         }
+        case Keybind:
+            if (activate) { it.go->GetComponent<UIKeybindField>()->Listen(); return it.go; }
+            break;
     }
     return nullptr;
 }

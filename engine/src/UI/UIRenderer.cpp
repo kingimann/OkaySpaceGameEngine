@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -292,6 +293,7 @@ struct UISlot {
     std::size_t index = 0;    // into scene.Objects()
     Canvas* canvas = nullptr; // owning canvas this frame
     float opacity = 1.0f;     // canvas + UI-animation fade this frame
+    int overlay = 0;          // open-order of the UIModal it is shown in this frame (0 = none)
 };
 struct UIItem {
     int slot = 0, kind = 0, layer = 0;
@@ -357,12 +359,25 @@ void PreparePassFrame(UIPassCache& c, const Scene& scene) {
         GameObject* go = objs[sl.index].get();
         sl.canvas = OwningCanvas(go);
         sl.opacity = UIOpacity(go);
+        sl.overlay = 0;
+        for (Transform* t = go->transform; t && sl.overlay == 0; t = t->Parent())
+            if (t->gameObject)
+                if (const UIModal* m = t->gameObject->GetComponent<UIModal>(); m && m->IsOpen())
+                    sl.overlay = (int)(m->OpenOrder() & 0xFFFFF);
     }
+    // Overlays: an open modal's subtree draws above all other UI, newest modal on
+    // top, its backdrop first; an open context menu draws above everything.
+    constexpr int kModalBase = 1 << 24;
     for (UIItem& it : c.items) {
         const UISlot& sl = c.slots[it.slot];
         it.canvasOrder = sl.canvas ? sl.canvas->sortOrder : 0;
         const int o = objs[sl.index]->uiDrawOrder;
         it.eff = o != 0 ? o : it.layer;
+        if (it.kind == uilayers::K_ContextMenu) it.canvasOrder = std::numeric_limits<int>::max();
+        else if (sl.overlay != 0) {
+            it.canvasOrder = kModalBase + sl.overlay;
+            if (it.kind == uilayers::K_ModalDim) it.eff = std::numeric_limits<int>::min();
+        }
     }
     // Stable insertion sort: same order as SortUIDrawItems, no allocation, O(n)
     // when nothing moved since last frame.
@@ -1484,6 +1499,73 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         const RGBA fc{120, 182, 255, 230};   // launcher accent, lightened
         MMThickLine(p, x0, y0, x1, y0, 2.0f, fc); MMThickLine(p, x1, y0, x1, y1, 2.0f, fc);
         MMThickLine(p, x1, y1, x0, y1, 2.0f, fc); MMThickLine(p, x0, y1, x0, y0, 2.0f, fc);
+    }
+        else if (_it.kind == K_ModalDim) {   // an open modal's backdrop: dims the whole screen
+        auto* md = up->GetComponent<UIModal>();
+        if (!md || !md->IsOpen() || !md->dimBackground) continue;
+        uiUseScale(1.0f);
+        p.SetClipRect(nullptr);
+        Rect all{0, 0, uiFullW, uiFullH};
+        p.SetDrawColor((std::uint8_t)(md->dimColor.r * 255), (std::uint8_t)(md->dimColor.g * 255),
+                       (std::uint8_t)(md->dimColor.b * 255), (std::uint8_t)(md->dimColor.a * 255 * _slot.opacity));
+        p.FillRect(&all);
+    }
+        else if (_it.kind == K_ContextMenu) {   // an open right-click menu, in screen pixels
+        auto* cm = up->GetComponent<UIContextMenu>();
+        if (!cm || !cm->IsOpen() || cm->items.empty()) continue;
+        uiUseScale(1.0f);
+        p.SetClipRect(nullptr);
+        const Vec2 mo = cm->Origin(), ms = cm->Size();
+        Rect box{(int)mo.x, (int)mo.y, (int)ms.x, (int)ms.y};
+        auto col = [](const Color& c) { return RGBA{(std::uint8_t)(c.r * 255), (std::uint8_t)(c.g * 255),
+                                                    (std::uint8_t)(c.b * 255), (std::uint8_t)(c.a * 255)}; };
+        const RGBA bg = col(cm->background), hv = col(cm->hoverColor), tx = col(cm->textColor), bd = col(cm->borderColor);
+        p.SetDrawColor(bg.r, bg.g, bg.b, bg.a);
+        p.FillRect(&box);
+        for (int i = 0; i < (int)cm->items.size(); ++i) {
+            const int iy = (int)(mo.y + i * cm->itemHeight);
+            if (cm->items[i] == "-") {   // separator
+                Rect sep{box.x + 6, iy + (int)(cm->itemHeight * 0.5f), box.w - 12, 1};
+                p.SetDrawColor(bd.r, bd.g, bd.b, bd.a);
+                p.FillRect(&sep);
+                continue;
+            }
+            if (i == cm->Hover()) {
+                Rect row{box.x + 2, iy + 1, box.w - 4, (int)cm->itemHeight - 2};
+                p.SetDrawColor(hv.r, hv.g, hv.b, hv.a);
+                p.FillRect(&row);
+            }
+            DrawUIText(p, cm->items[i], mo.x + 10.0f, iy + (cm->itemHeight - Font8x8::Height * cm->textSize) * 0.5f,
+                       cm->textSize, tx);
+        }
+        p.SetDrawColor(bd.r, bd.g, bd.b, bd.a);
+        p.DrawRect(&box);
+    }
+        else if (_it.kind == K_Keybind) {   // keybind fields: action name + bound key
+        auto* kb = up->GetComponent<UIKeybindField>();
+        if (!kb || !up->active || UIHidden(up.get())) continue;
+        const float op = _slot.opacity;
+        Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
+        enterScroll(up.get(), o);
+        auto col = [op](const Color& c, float k = 1.0f) {
+            return RGBA{(std::uint8_t)(c.r * 255 * k), (std::uint8_t)(c.g * 255 * k), (std::uint8_t)(c.b * 255 * k),
+                        (std::uint8_t)(c.a * 255 * op)};
+        };
+        const float shade = !kb->interactable ? 0.6f : (kb->IsHovered() ? 1.15f : 1.0f);
+        Color bgc = kb->background; bgc.r = std::min(1.0f, bgc.r * shade); bgc.g = std::min(1.0f, bgc.g * shade); bgc.b = std::min(1.0f, bgc.b * shade);
+        Rect box{(int)o.x, (int)o.y, (int)kb->size.x, (int)kb->size.y};
+        const RGBA b = col(bgc);
+        p.SetDrawColor(b.r, b.g, b.b, b.a);
+        p.FillRect(&box);
+        const float px = kb->textSize, ty = o.y + (kb->size.y - Font8x8::Height * px) * 0.5f;
+        DrawUIText(p, kb->action, o.x + 8.0f, ty, px, col(kb->textColor));
+        const std::string keyText = kb->IsListening() ? std::string("Press a key...") : "[" + kb->KeyLabel() + "]";
+        const RGBA kc = col(kb->IsListening() ? kb->listenColor : kb->keyColor);
+        DrawUIText(p, keyText, o.x + kb->size.x - 8.0f - UITextW(keyText, px), ty, px, kc);
+        if (kb->IsListening()) {
+            p.SetDrawColor(kc.r, kc.g, kc.b, kc.a);
+            p.DrawRect(&box);
+        }
     }
         else if (_it.kind == K_Tooltip) {   // tooltips (hover hints)
         p.SetClipRect(nullptr);   // overlay — never scroll-clipped

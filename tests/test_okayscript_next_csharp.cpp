@@ -532,6 +532,26 @@ static void Interpolation() {
         CHECK(w.S("d") == "yes in5");
         CHECK(w.S("e") == "say \"hi\"\tok");
     }
+    {   // numbers that aren't finite read the same in $"..." with :F as anywhere else
+        World w(Wrap(
+            "    public string a, b, c;\n"
+            "    public float zero;\n"
+            "    void Start() { float n = zero / zero; float inf = 1 / zero; a = $\"{n:F2}|{inf:F1}|{-inf:F0}\"; b = \"\" + n + \"|\" + inf; c = $\"{-inf}\"; }\n"));
+        CHECK(w.S("a") == "NaN|Infinity|-Infinity");
+        CHECK(w.S("b") == "NaN|Infinity");
+        CHECK(w.S("c") == "-Infinity");
+    }
+    {   // a line that ends inside text with a \ is unclosed text, reported on that line with a real column
+        for (const char* start : {"$\"abc\\", "\"abc\\"}) {
+            auto d = Diags(Wrap(std::string("    void Start() { string s = ") + start + "\n\"; Debug.Log(s); }\n"));
+            CHECK(Has(d, 0, "This text is never closed", 2));
+            CHECK(std::none_of(d.begin(), d.end(), [](const ScriptDiagnostic& x) {
+                return x.column < 1 || x.message.find('\n') != std::string::npos;
+            }));
+            if (Has(d, 0, "isn't an escape")) Dump(d);
+            CHECK(!Has(d, 0, "isn't an escape"));
+        }
+    }
     {   // the same text on the old runtime
         const std::string src = Wrap(
             "    public string s;\n    public int score = 7;\n"

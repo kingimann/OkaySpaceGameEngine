@@ -151,7 +151,7 @@ std::vector<Token> LexAt(const std::string& src, std::vector<ScriptDiagnostic>& 
                 const char d = peek();
                 if (lit.empty()) litLoc = {line, col};
                 if (d == '"') { adv(); closed = true; break; }
-                if (d == '\\' && i + 1 < src.size()) {
+                if (d == '\\' && i + 1 < src.size() && peek(1) != '\n') {   // a \ at the end of the line escapes nothing
                     adv();
                     const char e = adv();
                     switch (e) {
@@ -229,7 +229,7 @@ std::vector<Token> LexAt(const std::string& src, std::vector<ScriptDiagnostic>& 
                 char d = adv();
                 if (d == '"') { closed = true; break; }
                 if (d == '\n') break;
-                if (d == '\\' && i < src.size()) {
+                if (d == '\\' && i < src.size() && peek() != '\n') {   // a \ at the end of the line escapes nothing
                     char e = adv();
                     switch (e) {
                         case 'n': t.text += '\n'; break; case 't': t.text += '\t'; break;

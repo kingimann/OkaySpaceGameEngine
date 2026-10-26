@@ -206,7 +206,10 @@ public:
     // ---- Runaway protection ---------------------------------------------
     /// Most node executions one event may run (including loop bodies and chains
     /// started from it) before the event is stopped and an error reported.
-    static constexpr long kMaxStepsPerEvent = 1000000;   // node runs + data reads
+    static constexpr long kMaxStepsPerEvent = 1000000;
+    /// Most data reads (input pulls) one event may make: a separate, larger
+    /// budget, so heavy but finite graphs keep the node-run headroom they had.
+    static constexpr long kMaxReadsPerEvent = 4 * kMaxStepsPerEvent;
     /// Deepest loops / sequences may nest (each Body or output runs as a nested Run).
     static constexpr int kMaxRunDepth = 256;
     /// Deepest a data pull may nest before it is treated as a wiring cycle.
@@ -298,6 +301,7 @@ private:
     int m_execGuard = 0;     // current data-pull depth (cycle guard)
     int m_runDepth = 0;      // nested Run() calls (loop bodies, sequences)
     long m_steps = 0;        // node executions in the current event
+    long m_reads = 0;        // data reads in the current event
     bool m_abort = false;    // the current event was stopped
     std::string m_event;        // the event being run (debugger view)
     std::vector<int> m_loops;   // running loops: the function-frame depth each started at

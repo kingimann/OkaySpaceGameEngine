@@ -50,13 +50,13 @@ NodeGraph::~NodeGraph() { VsDebugger::Get().Forget(this); }
 VsValue NodeGraph::Pull(int nodeId, int outPin, VsContext& ctx) {
     VsNode* n = Node(nodeId);
     if (m_abort) return {};
-    // Data reads count toward the event's step budget (checked before each node
-    // runs, so a node never acts on half-read inputs): an exec loop pulling a
-    // long chain every step would otherwise do a million steps' worth of work
-    // each. One node whose inputs alone blow far past it is stopped here.
-    if (m_runDepth > 0 && ++m_steps > 4 * kMaxStepsPerEvent) {
-        ReportError(n, ctx, "stopped a runaway data read: more than " + std::to_string(4 * kMaxStepsPerEvent) +
-                            " node steps and data reads in one event. The rest of this event was skipped.");
+    // Data reads have their own per-event budget (kMaxReadsPerEvent, apart from
+    // the node-run one), checked in Run before each node so a node never acts
+    // on half-read inputs. One node whose inputs alone blow far past it is
+    // stopped here.
+    if (m_runDepth > 0 && ++m_reads > 4 * kMaxReadsPerEvent) {
+        ReportError(n, ctx, "stopped a runaway data read: more than " + std::to_string(4 * kMaxReadsPerEvent) +
+                            " data reads in one event. The rest of this event was skipped.");
         m_abort = true;
         return {};
     }
@@ -153,7 +153,7 @@ void NodeGraph::ReportError(const VsNode* n, VsContext& ctx, const std::string& 
 void NodeGraph::Run(int entryNode, VsContext& ctx, bool resume) {
     // One budget per event: a top-level Run starts it, loop bodies and sequence
     // outputs (nested Runs) share it, so nested loops can't freeze the game.
-    if (m_runDepth == 0) { m_steps = 0; m_abort = false; m_loops.clear(); m_loopSignal = kLoopNone; }
+    if (m_runDepth == 0) { m_steps = 0; m_reads = 0; m_abort = false; m_loops.clear(); m_loopSignal = kLoopNone; }
     // Loop bodies and Sequence outputs run as nested Runs, so a Body wired back
     // into its own loop would recurse in C++ until the stack ran out.
     if (m_runDepth >= kMaxRunDepth) {
@@ -170,7 +170,13 @@ void NodeGraph::Run(int entryNode, VsContext& ctx, bool resume) {
         if (!n) break;
         if (++m_steps > kMaxStepsPerEvent) {
             ReportError(n, ctx, "stopped a runaway loop: more than " + std::to_string(kMaxStepsPerEvent) +
-                                " node steps and data reads in one event. The rest of this event was skipped.");
+                                " node steps in one event. The rest of this event was skipped.");
+            m_abort = true;
+            break;
+        }
+        if (m_reads > kMaxReadsPerEvent) {
+            ReportError(n, ctx, "stopped a runaway loop: more than " + std::to_string(kMaxReadsPerEvent) +
+                                " data reads in one event. The rest of this event was skipped.");
             m_abort = true;
             break;
         }

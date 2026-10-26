@@ -197,6 +197,7 @@ private:
     int nextSlot_ = 0, maxSlot_ = 0, loopDepth_ = 0, switchDepth_ = 0;
     bool inFieldInit_ = false;
     bool inEnumValue_ = false;   ///< checking an enum member's value (fields aren't declared yet)
+    bool allowEvent_ = false;    ///< checking the target of += / -= (another class's event is allowed there)
     std::vector<int> enumReady_;   ///< per enum: how many members have their value worked out
 
     // ---- Lambdas ----
@@ -246,6 +247,8 @@ private:
             if (!comp && f.isStatic) Error(f.loc, "static members only work in the Behaviour class for now");
             if (!comp && f.isConst) Error(f.loc, "const only works in the Behaviour class for now");
             f.resolved = ResolveType(f.type, false);
+            if (f.isEvent && f.resolved.kind != TK::Func && f.resolved.kind != TK::Error)
+                Error(f.loc, "An event holds functions: event Action " + f.name + "; or event Action<int> " + f.name + ";");
         }
         for (std::size_t i = 0; i < c.methods.size(); ++i) {
             MethodDecl& m = c.methods[i];
@@ -498,6 +501,7 @@ private:
     }
     // Check `e` can be used as `to`; mark int->float promotion.
     void Expect(Expr& e, const Type& to, const std::string& what) {
+        if (e.kind == EK::Name && e.type.kind == TK::Lambda && to.kind == TK::Func) MethodAsLambda(e, prog_.funcs[(std::size_t)to.id].params.size());
         if (e.kind == EK::Lambda && e.type.kind == TK::Lambda) { CheckLambda(e, to, what); return; }
         if (!Convertible(e.type, to)) { Error(e.loc, ConvertError(e.type, to, what)); return; }
         if (e.type.kind == TK::Int && to.kind == TK::Float) e.toFloat = true;
@@ -582,7 +586,9 @@ private:
     }
     // Lambdas that ended up somewhere without a Func or Action type.
     void FlushLambdas() {
-        for (Expr* e : pending_) Error(e->loc, "A lambda only works where a Func or Action is expected");
+        for (Expr* e : pending_)
+            Error(e->loc, e->kind == EK::Name ? "'" + e->name + "' is a method: call it with " + e->name + "()"
+                                              : std::string("A lambda only works where a Func or Action is expected"));
         pending_.clear();
     }
 
@@ -952,6 +958,27 @@ private:
         }
     }
 
+    // OnDied as a function: the lambda ($0, ...) => OnDied($0, ...), remembering the
+    // method so that -= OnDied removes what += OnDied added.
+    void MethodAsLambda(Expr& e, std::size_t params) {
+        auto L = std::make_unique<LambdaDecl>();
+        L->method = MethodIdx(e.name);
+        auto call = std::make_unique<Expr>();
+        call->kind = EK::Call; call->loc = e.loc; call->name = e.name;
+        for (std::size_t i = 0; i < params; ++i) {
+            Param p;
+            p.name = "$" + std::to_string(i);   // not a name a script can write
+            p.loc = e.loc;
+            auto arg = std::make_unique<Expr>();
+            arg->kind = EK::Name; arg->loc = e.loc; arg->name = p.name;
+            call->args.push_back(std::move(arg));
+            L->params.push_back(std::move(p));
+        }
+        L->value = std::move(call);
+        e.kind = EK::Lambda;
+        e.lambda = std::move(L);
+    }
+
     void Unpend(Expr& e) { pending_.erase(std::remove(pending_.begin(), pending_.end(), &e), pending_.end()); }
 
     // A lambda used as `to` (a Func or Action).
@@ -979,6 +1006,7 @@ private:
             const Program::FuncSig& sig = prog_.funcs[(std::size_t)e.type.id];
             if (sig.params == params) return e.type;
         }
+        if (e.kind == EK::Name && e.type.kind == TK::Lambda) MethodAsLambda(e, params.size());
         if (e.kind != EK::Lambda || e.type.kind != TK::Lambda) {
             if (e.type.kind != TK::Error) Error(e.loc, who + " needs a lambda here, like x => x * 2");
             return Type{};
@@ -1031,7 +1059,7 @@ private:
             } else if (ret.kind == TK::Void) {
                 if (!IsStatementLike(v) && v.type.kind != TK::Error) Error(v.loc, "This lambda works out a value but an Action doesn't use it");
             } else {
-                Expect(v, ret, "This lambda's value");
+                Expect(v, ret, L.method >= 0 ? v.name + "()" : std::string("This lambda's value"));
             }
         } else {
             const bool completes = CheckBlockBody(*L.body);
@@ -1150,7 +1178,11 @@ private:
             v->used = true; e.bind = v->captured ? Bind::Captured : Bind::Local; e.slot = v->slot; e.type = v->type; return;
         }
         if (BindOwnMember(e)) return;
-        if (MethodIdx(e.name) >= 0) { Error(e.loc, "'" + e.name + "' is a method: call it with " + e.name + "()"); return; }
+        if (MethodIdx(e.name) >= 0) {   // a method used as a function (Died += OnDied): Expect turns it into one
+            e.type = Type::Of(TK::Lambda);
+            pending_.push_back(&e);
+            return;
+        }
         if (ClassIndex(e.name) >= 0) { Error(e.loc, "'" + e.name + "' is a class: make one with new " + e.name + "(...)"); return; }
         if (EnumIndex(e.name) >= 0) { Error(e.loc, "'" + e.name + "' is an enum: use one of its values, like " + e.name + "." +
                                                    (prog_.enums[(std::size_t)EnumIndex(e.name)].members.empty() ? std::string("Value")
@@ -1186,7 +1218,12 @@ private:
     template <typename L>
     std::vector<std::string> Names(const std::vector<L>& v) { std::vector<std::string> n; for (auto& x : v) n.push_back(x.name); return n; }
 
+    static std::string EventOutside(const FieldDecl& f, const ClassDecl& k) {
+        return "'" + f.name + "' is an event of " + k.name + ": outside " + k.name + " it can only be added to (+=) or removed from (-=)";
+    }
     void CheckMember(Expr& e) {
+        const bool allowEvent = allowEvent_;   // only for this member, not for what's inside it
+        allowEvent_ = false;
         int typeId = -1;
         int r = Receiver(*e.object, typeId);
         if (r < 0 || BadNullCond(e, r)) return;
@@ -1236,6 +1273,7 @@ private:
                 FieldDecl& f = k.fields[i];
                 if (f.name != e.name) continue;
                 if (!f.isPublic && &k != cls_) { Error(e.loc, "'" + e.name + "' is private to " + k.name + ": make it public to use it here"); return; }
+                if (f.isEvent && &k != cls_ && !allowEvent) { Error(e.loc, EventOutside(f, k)); return; }
                 f.read = true;
                 e.bind = Bind::ObjField; e.slot = (int)i; e.type = f.resolved;
                 return;
@@ -1433,6 +1471,7 @@ private:
                 FieldDecl& f = k.fields[i];
                 if (f.name != e.name || f.resolved.kind != TK::Func) continue;
                 if (!f.isPublic && &k != cls_) { Error(e.loc, "'" + e.name + "' is private to " + k.name + ": make it public to use it here"); return; }
+                if (f.isEvent && &k != cls_) { Error(e.loc, EventOutside(f, k)); return; }
                 f.read = true;
                 auto m = std::make_unique<Expr>();   // obj.field, its receiver already checked
                 m->kind = EK::Member; m->loc = e.loc; m->name = e.name;
@@ -1869,7 +1908,9 @@ private:
             if ((lv = FindLocal(e.lhs->name))) wasUsed = lv->used;
             else if (int fi = FieldIndex(e.lhs->name); fi >= 0) { fd = &cls_->fields[(std::size_t)fi]; wasUsed = fd->read; }
         }
+        allowEvent_ = e.op == T::PlusEq || e.op == T::MinusEq;
         CheckExpr(*e.lhs);
+        allowEvent_ = false;
         if (lv) lv->used = wasUsed;
         if (fd) fd->read = wasUsed;
         CheckExpr(*e.rhs);
@@ -1881,6 +1922,10 @@ private:
         if (e.op == T::QuestionQuestionEq) {
             if (!CanBeNull(lt)) { Error(e.loc, "??= only works on objects and arrays, which can be null: " + Article(TypeName(lt)) + " never is"); return; }
             Expect(*e.rhs, lt, "The value");
+            return;
+        }
+        if (lt.kind == TK::Func && (e.op == T::PlusEq || e.op == T::MinusEq)) {   // add or remove a function (an event's handler)
+            Expect(*e.rhs, lt, "The function");
             return;
         }
         const Type rt = e.rhs->type;

@@ -126,6 +126,8 @@ struct FuncObj {
     ObjPtr self;                           ///< made inside a plain class's method: that object
     int cls = -1;
     std::string typeName;
+    /// a += b: the functions it calls, in order (decl is null). Never nested.
+    std::vector<FuncRef> list;
 };
 
 std::string ValueToString(const Value& v);
@@ -330,6 +332,7 @@ struct Attribute { std::string name; std::vector<ExprPtr> args; SrcLoc loc; };
 struct FieldDecl {
     std::vector<Attribute> attrs;
     bool isPublic = false, isConst = false, isStatic = false;   ///< static: one value shared by every object running the script
+    bool isEvent = false;   ///< outside its class it can only be added to (+=) or removed from (-=)
     TypeRef type;
     std::string name;
     SrcLoc loc;
@@ -352,6 +355,8 @@ struct LambdaDecl {
     /// slot of the code around it (>= 0), or that code's own capture -1 - i.
     std::vector<int> captureFrom;
     bool usesSelf = false;          ///< uses the object's fields, methods or `this`
+    /// Made from a method's name (Died += OnDied): that method, so -= OnDied finds it.
+    int method = -1;
 };
 struct MethodDecl {
     bool isPublic = false, isStatic = false;   ///< static: can't use the object's own fields, methods or members

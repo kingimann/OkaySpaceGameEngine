@@ -188,6 +188,12 @@ public:
     // Call a lambda value. It runs as code of the object that made it, which may
     // be another script object running the same program.
     Value Invoke(const FuncRef& f, std::vector<Value>& args, SrcLoc loc) {
+        if (!f->list.empty()) {   // a += b: each in turn; a Func gives the last one's value
+            const std::vector<FuncRef> list = f->list;   // a handler may change the event while it runs
+            Value ret;
+            for (const FuncRef& g : list) { std::vector<Value> a = args; ret = Invoke(g, a, loc); }
+            return ret;
+        }
         if (f->alive.expired()) throw RuntimeError("This function belongs to a script that was destroyed", loc);
         if (f->inst != &inst_ || f->prog.get() != &prog_) {
             Exec other(*f->prog, f->inst->Fields(), f->inst->Context(), *f->inst);
@@ -912,6 +918,7 @@ private:
     }
 
     Value Arith(T op, const Value& a, const Value& b, const Type& type, bool pl, bool pr, SrcLoc loc) {
+        if (type.kind == TK::Func) return CombineFuncs(op, a, b);
         if (type.kind == TK::String) return Value{ValueToString(a) + ValueToString(b)};
         if (type.kind == TK::Vector3) {
             const bool av = std::holds_alternative<Vec3>(a), bv = std::holds_alternative<Vec3>(b);
@@ -954,6 +961,50 @@ private:
         }
     }
 
+    // The same function: the same lambda value, or the same method of the same
+    // object (so -= OnDied removes what += OnDied added), or the same list of them.
+    static bool SameFunc(const FuncRef& a, const FuncRef& b) {
+        if (a == b) return true;
+        if (!a || !b) return false;
+        if (!a->list.empty() || !b->list.empty()) {
+            if (a->list.size() != b->list.size()) return false;
+            for (std::size_t i = 0; i < a->list.size(); ++i) if (!SameFunc(a->list[i], b->list[i])) return false;
+            return true;
+        }
+        return a->decl->method >= 0 && a->decl->method == b->decl->method && a->cls == b->cls && a->self == b->self &&
+               a->inst == b->inst && a->prog == b->prog && !a->alive.expired();
+    }
+    static std::vector<FuncRef> Parts(const Value& v) {
+        const auto* f = std::get_if<FuncRef>(&v);
+        if (!f) return {};
+        return (*f)->list.empty() ? std::vector<FuncRef>{*f} : (*f)->list;
+    }
+    static Value FromParts(std::vector<FuncRef> parts, const std::string& typeName) {
+        if (parts.empty()) return Value{};
+        if (parts.size() == 1) return Value{std::move(parts[0])};
+        auto m = std::make_shared<FuncObj>();
+        m->typeName = typeName;
+        m->list = std::move(parts);
+        return Value{std::move(m)};
+    }
+    // a += b adds b's functions after a's; a -= b takes out the last run of b's
+    // functions in a (as in C#). Either gives a new value: copies made before don't change.
+    static Value CombineFuncs(T op, const Value& a, const Value& b) {
+        std::vector<FuncRef> pa = Parts(a);
+        const std::vector<FuncRef> pb = Parts(b);
+        const std::string name = !pa.empty() ? pa[0]->typeName : !pb.empty() ? pb[0]->typeName : std::string();
+        if (op == T::Plus) { pa.insert(pa.end(), pb.begin(), pb.end()); return FromParts(std::move(pa), name); }
+        if (pb.empty() || pb.size() > pa.size()) return a;
+        for (std::size_t at = pa.size() - pb.size() + 1; at-- > 0;) {
+            bool match = true;
+            for (std::size_t j = 0; j < pb.size() && match; ++j) match = SameFunc(pa[at + j], pb[j]);
+            if (!match) continue;
+            pa.erase(pa.begin() + (std::ptrdiff_t)at, pa.begin() + (std::ptrdiff_t)(at + pb.size()));
+            return FromParts(std::move(pa), name);
+        }
+        return a;
+    }
+
     static bool Equal(const Value& a, const Value& b) {
         if (std::holds_alternative<std::monostate>(a) || std::holds_alternative<std::monostate>(b)) {
             // null == ref: a reference to a destroyed object also counts as null.
@@ -965,6 +1016,7 @@ private:
         if (a.index() != b.index()) return AsF(a) == AsF(b);
         if (auto* r = std::get_if<ObjRef>(&a)) return *r == std::get<ObjRef>(b);
         if (auto* v = std::get_if<Vec3>(&a)) { Vec3 w = std::get<Vec3>(b); return v->x == w.x && v->y == w.y && v->z == w.z; }
+        if (auto* f = std::get_if<FuncRef>(&a)) return SameFunc(*f, std::get<FuncRef>(b));
         return a == b;
     }
 

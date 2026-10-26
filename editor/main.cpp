@@ -24320,6 +24320,13 @@ static bool ScriptAttrArg(const std::string& line, const char* attr, std::string
 // brace depth 0 (classic top-level) or 1,
 // where the left side is an identifier (optionally typed / public / attributed)
 // and not a function call. Locals inside function bodies (deeper) are ignored.
+// Events and Func / Action fields hold functions, not values to type in.
+static bool IsFunctionField(const std::vector<std::string>& toks) {
+    for (const auto& t : toks)
+        if (t == "event" || t == "Action" || t.rfind("Action<", 0) == 0 || t.rfind("Func<", 0) == 0) return true;
+    return false;
+}
+
 static std::vector<ScriptField> ParseScriptFields(const std::string& src) {
     std::vector<ScriptField> out;
     std::unordered_set<std::string> seen;
@@ -24364,7 +24371,7 @@ static std::vector<ScriptField> ParseScriptFields(const std::string& src) {
                     std::vector<std::string> toks; { std::istringstream ls(l2); std::string t; while (ls >> t) toks.push_back(t); }
                     bool hasPublic = false, hasPrivate = false;
                     for (auto& t : toks) { if (t == "public") hasPublic = true; if (t == "private" || t == "static") hasPrivate = true; }   // a static is shared, not this object's setting
-                    if (!toks.empty() && (hasPublic || hasSerialize) && !hasPrivate) {
+                    if (!toks.empty() && (hasPublic || hasSerialize) && !hasPrivate && !IsFunctionField(toks)) {
                         std::string name = toks.back();
                         bool valid = !name.empty() && (std::isalpha((unsigned char)name[0]) || name[0] == '_');
                         for (char c : name) if (!(std::isalnum((unsigned char)c) || c == '_')) valid = false;
@@ -24406,7 +24413,7 @@ static std::vector<ScriptField> ParseScriptFields(const std::string& src) {
                     std::vector<std::string> toks; { std::istringstream ls(l2); std::string t; while (ls >> t) toks.push_back(t); }
                     bool hasPublic = false, hasPrivate = false;
                     for (auto& t : toks) { if (t == "public") hasPublic = true; if (t == "private" || t == "static") hasPrivate = true; }   // a static is shared, not this object's setting
-                    if (toks.size() >= 2 && (hasPublic || hasSerialize) && !hasPrivate) {
+                    if (toks.size() >= 2 && (hasPublic || hasSerialize) && !hasPrivate && !IsFunctionField(toks)) {
                         std::string name = toks.back();
                         bool valid = !name.empty() && (std::isalpha((unsigned char)name[0]) || name[0] == '_');
                         for (char c : name) if (!(std::isalnum((unsigned char)c) || c == '_')) valid = false;

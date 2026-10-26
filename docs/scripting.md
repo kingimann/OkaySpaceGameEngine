@@ -871,6 +871,47 @@ class Menu : Behaviour {
 - A lambda made by a script that has since been destroyed stops the callback
   with an error if it's called.
 
+### Events
+
+An `event` is a field that holds functions to call when something happens.
+Other code adds a function with `+=` and takes it out with `-=`; outside its
+class that's all it can do. The class itself calls it, usually with `?.Invoke`,
+since an event nobody has added to is `null`.
+
+```csharp
+class Health {
+    public event Action<int> Damaged;
+    public event Action Died;
+    public int hp = 100;
+    public void Hit(int amount) {
+        hp -= amount;
+        Damaged?.Invoke(amount);
+        if (hp <= 0) Died?.Invoke();
+    }
+}
+
+class Player : Behaviour {
+    Health health = new Health();
+    void OnDied() { Debug.Log("Game over"); }
+    void Start() {
+        health.Died += OnDied;                         // a method's name works as a function
+        health.Damaged += amount => Debug.Log($"-{amount}");
+    }
+    void OnDestroy() { health.Died -= OnDied; }       // takes out what += OnDied added
+}
+```
+
+- The functions run in the order they were added. A `Func` event gives the
+  last one's value.
+- `+=` and `-=` work on any `Func` or `Action` variable too, not only events.
+- `-=` takes out the same function: the same method of the same object, or the
+  very same lambda value (a second `x => ...` written the same way is a
+  different lambda, so keep it in a variable if you'll remove it).
+- Adding or removing a handler while the event runs takes effect the next time
+  it's called.
+- A method's name also works where a lambda would: `targets.Where(IsAlive)`.
+- Events and `Func` / `Action` fields don't show in the Inspector.
+
 ### LINQ-style methods
 
 Lists and arrays have the usual query methods. Each gives a new `List` (or a

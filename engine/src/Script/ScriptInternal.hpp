@@ -185,7 +185,7 @@ using ExprPtr = std::unique_ptr<Expr>;
 enum class Bind : std::uint8_t {
     None, Local, Field, Method, SelfMember /*gameObject/transform/enabled*/,
     ApiProp, ApiStaticProp, ApiMethod, ApiStaticMethod, StaticType,
-    VecField /*x/y/z*/, VecProp /*magnitude/normalized*/, GetComponent, Destroy,
+    VecField /*x/y/z*/, VecProp /*magnitude/normalized*/, GetComponent, Destroy, StaticField,
     EnumValue /*State.Idle: ival*/, ArrayLength,
 };
 
@@ -247,7 +247,7 @@ struct Attribute { std::string name; std::vector<ExprPtr> args; SrcLoc loc; };
 
 struct FieldDecl {
     std::vector<Attribute> attrs;
-    bool isPublic = false, isConst = false;
+    bool isPublic = false, isConst = false, isStatic = false;   ///< static: one value shared by every object running the script
     TypeRef type;
     std::string name;
     SrcLoc loc;
@@ -260,7 +260,7 @@ struct FieldDecl {
 };
 struct Param { TypeRef type; std::string name; SrcLoc loc; Type resolved; };
 struct MethodDecl {
-    bool isPublic = false;
+    bool isPublic = false, isStatic = false;   ///< static: can't use the object's own fields, methods or members
     TypeRef ret;
     std::string name;
     SrcLoc loc;
@@ -290,6 +290,17 @@ struct ClassDecl {
     std::vector<FieldDecl> fields;
     std::vector<MethodDecl> methods;
 };
+
+/// `static` fields' values: one set shared by every object running the same
+/// script in a scene, the first of them setting the starting values.
+struct StaticStore {
+    std::vector<Value> values;   ///< by field index (instance fields' slots stay unused)
+    bool ready = false;
+};
+/// The store for scripts with this exact source in `scene` (made on first use).
+/// It lasts until the scene is cleared or destroyed (ForgetSceneStatics).
+std::shared_ptr<StaticStore> SceneStatics(const Scene* scene, const std::string& source);
+void ForgetSceneStatics(const Scene* scene);
 
 /// A checked, runnable script.
 struct Program {
@@ -327,6 +338,9 @@ public:
     Instance(std::shared_ptr<Program> prog, GameObject* self);
     /// Run the field initializers. Throws RuntimeError.
     void Init();
+    /// Share `static` fields through `store` from now on, setting their starting
+    /// values if it's new. Until then the instance has statics of its own.
+    void AttachStatics(std::shared_ptr<StaticStore> store);
     /// Call a method by index with args. Throws RuntimeError.
     Value Call(int method, std::vector<Value> args);
     bool HasMethod(const std::string& name) const { return prog_->MethodIndex(name) >= 0; }
@@ -335,12 +349,15 @@ public:
     CallContext& Context() { return ctx_; }
     const Program& program() const { return *prog_; }
     std::vector<Value>& Fields() { return fields_; }
+    std::vector<Value>& Statics() { return statics_->values; }
     /// Statements executed in the current callback (a guard against endless loops).
     std::uint64_t steps = 0;
     std::uint64_t stepLimit = 50'000'000;
 private:
+    void InitStatics();
     std::shared_ptr<Program> prog_;
     std::vector<Value> fields_;
+    std::shared_ptr<StaticStore> statics_;
     CallContext ctx_;
 };
 

@@ -307,6 +307,7 @@ private:
             }
             case Bind::Local: return (*locals_)[(std::size_t)e.slot];
             case Bind::Field: return fields_[(std::size_t)e.slot];
+            case Bind::StaticField: return inst_.Statics()[(std::size_t)e.slot];
             case Bind::SelfMember:
                 if (e.slot == 2) return Value{ctx_.component ? ctx_.component->enabled : true};
                 return SelfRef(e.slot);
@@ -332,6 +333,7 @@ private:
         switch (e.bind) {
             case Bind::Local: (*locals_)[(std::size_t)e.slot] = v; return;
             case Bind::Field: fields_[(std::size_t)e.slot] = v; return;
+            case Bind::StaticField: inst_.Statics()[(std::size_t)e.slot] = v; return;
             case Bind::SelfMember:
                 if (e.slot == 2 && ctx_.component) ctx_.component->enabled = AsB(v);
                 return;
@@ -500,7 +502,21 @@ private:
 
 } // namespace
 
-Instance::Instance(std::shared_ptr<Program> prog, GameObject* self) : prog_(std::move(prog)) {
+namespace {
+std::unordered_map<const Scene*, std::unordered_map<std::string, std::shared_ptr<StaticStore>>>& AllStatics() {
+    static std::unordered_map<const Scene*, std::unordered_map<std::string, std::shared_ptr<StaticStore>>> all;
+    return all;
+}
+} // namespace
+
+std::shared_ptr<StaticStore> SceneStatics(const Scene* scene, const std::string& source) {
+    auto& s = AllStatics()[scene][source];
+    if (!s) s = std::make_shared<StaticStore>();
+    return s;
+}
+
+Instance::Instance(std::shared_ptr<Program> prog, GameObject* self)
+    : prog_(std::move(prog)), statics_(std::make_shared<StaticStore>()) {
     ctx_.self = self;
     const ClassDecl* c = prog_->Component();
     if (c) {
@@ -515,8 +531,30 @@ void Instance::Init() {
     steps = 0;
     Exec ex(*prog_, fields_, ctx_, *this);
     for (std::size_t i = 0; i < c->fields.size(); ++i)
-        if (c->fields[i].init) fields_[i] = ex.EvalStandalone(*c->fields[i].init);
+        if (c->fields[i].init && !c->fields[i].isStatic) fields_[i] = ex.EvalStandalone(*c->fields[i].init);
+    InitStatics();
 }
+
+// Static starting values are set once per store, by the first object to use it.
+void Instance::InitStatics() {
+    if (statics_->ready) return;
+    statics_->ready = true;
+    const ClassDecl* c = prog_->Component();
+    statics_->values.clear();
+    for (const FieldDecl& f : c->fields) statics_->values.push_back(DefaultFor(f.resolved));
+    Exec ex(*prog_, fields_, ctx_, *this);
+    for (std::size_t i = 0; i < c->fields.size(); ++i)
+        if (c->fields[i].init && c->fields[i].isStatic) statics_->values[i] = ex.EvalStandalone(*c->fields[i].init);
+}
+
+void Instance::AttachStatics(std::shared_ptr<StaticStore> store) {
+    if (!prog_->Component()) return;
+    statics_ = std::move(store);
+    steps = 0;
+    InitStatics();
+}
+
+void ForgetSceneStatics(const Scene* scene) { AllStatics().erase(scene); }
 
 Value Instance::Call(int method, std::vector<Value> args) {
     steps = 0;
@@ -527,7 +565,8 @@ Value Instance::Call(int method, std::vector<Value> args) {
 Value Instance::GetField(const std::string& name) const {
     const ClassDecl* c = prog_->Component();
     if (!c) return Value{};
-    for (std::size_t i = 0; i < c->fields.size(); ++i) if (c->fields[i].name == name) return fields_[i];
+    for (std::size_t i = 0; i < c->fields.size(); ++i)
+        if (c->fields[i].name == name) return c->fields[i].isStatic ? statics_->values[i] : fields_[i];
     return Value{};
 }
 
@@ -536,7 +575,7 @@ bool Instance::SetField(const std::string& name, const Value& v) {
     if (!c) return false;
     for (std::size_t i = 0; i < c->fields.size(); ++i) {
         const FieldDecl& f = c->fields[i];
-        if (f.name != name || f.isConst) continue;
+        if (f.name != name || f.isConst || f.isStatic) continue;   // a static isn't any one object's setting
         // Convert to the field's type; values that don't fit are refused.
         const TK k = f.resolved.kind;
         if (k == TK::Int || k == TK::Enum) {

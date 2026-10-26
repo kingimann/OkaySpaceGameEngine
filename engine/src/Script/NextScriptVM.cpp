@@ -11,7 +11,10 @@ using namespace script;
 struct NextScriptVM::Impl {
     std::shared_ptr<Program> prog;
     std::unique_ptr<Instance> inst;
+    std::string source;   ///< statics are shared by the objects in a scene running this exact source
 };
+
+void NextScriptVM::ForgetSceneStatics(const Scene* scene) { script::ForgetSceneStatics(scene); }
 
 NextScriptVM::NextScriptVM() : m_impl(std::make_unique<Impl>()) {}
 NextScriptVM::~NextScriptVM() = default;
@@ -46,6 +49,7 @@ bool NextScriptVM::Load(const std::string& source, std::string* error) {
         m_impl->inst.reset();
         return false;
     }
+    m_impl->source = source;
     m_impl->prog = prog;
     m_impl->inst = std::make_unique<Instance>(prog, m_host ? m_host->gameObject : nullptr);
     try {
@@ -74,6 +78,15 @@ void NextScriptVM::Bind(ScriptHost* host) {
     if (m_impl->inst && host) {
         m_impl->inst->Context().self = host->gameObject;
         m_impl->inst->Context().component = host->component;
+        if (host->gameObject && host->gameObject->scene()) {
+            try {
+                m_impl->inst->AttachStatics(SceneStatics(host->gameObject->scene(), m_impl->source));
+            } catch (const RuntimeError& e) {
+                ++m_errorCount;
+                m_lastError = "line " + std::to_string(e.loc.line) + ": " + e.what();
+                Log::Error("Script on '", host->gameObject->name, "', static field line ", e.loc.line, ": ", e.what());
+            }
+        }
     }
 }
 

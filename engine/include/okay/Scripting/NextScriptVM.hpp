@@ -6,6 +6,8 @@
 
 namespace okay {
 
+class Scene;
+
 /// The new OkayScript: C#-style classes compiled and checked before they run
 /// (engine/src/Script). A script is a class extending Behaviour; its fields are
 /// the component's settings and the engine calls its Awake / OnEnable / Start /
@@ -34,6 +36,10 @@ public:
 
     vs::VsValue GetGlobal(const std::string& name) const override;
     void SetGlobal(const std::string& name, const vs::VsValue& v) override;
+
+    /// Drop the `static` field values of scripts in `scene`: they last one play
+    /// session (called when the scene is cleared or destroyed).
+    static void ForgetSceneStatics(const Scene* scene);
 
     /// The last runtime error ("line N: message"), empty if none.
     const std::string& LastError() const { return m_lastError; }

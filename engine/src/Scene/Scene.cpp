@@ -1,5 +1,6 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
+#include "okay/Scripting/NextScriptVM.hpp"
 #include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -24,7 +25,10 @@
 namespace okay {
 
 Scene::Scene(std::string name) : m_name(std::move(name)) {}
-Scene::~Scene() { vs::ForgetSceneVariables(this); }   // its scene variables go with it
+Scene::~Scene() {   // its scene variables and script statics go with it
+    vs::ForgetSceneVariables(this);
+    NextScriptVM::ForgetSceneStatics(this);
+}
 
 GameObject* Scene::Instantiate(const GameObject& prefab) {
     return SceneSerializer::Instantiate(*this, prefab);
@@ -47,6 +51,7 @@ GameObject* Scene::CreateGameObject(const std::string& name) {
 
 void Scene::Clear() {
     vs::ForgetSceneVariables(this);   // a fresh scene (another level loaded) starts with none
+    NextScriptVM::ForgetSceneStatics(this);   // ... and script statics start again
     m_pending.clear();
     m_active.clear();
     m_destroyQueue.clear();

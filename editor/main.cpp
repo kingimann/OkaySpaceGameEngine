@@ -24067,7 +24067,7 @@ static std::vector<ScriptField> ParseScriptFields(const std::string& src) {
                     for (char c : lhs) { if (c == '[') inb = true; else if (c == ']') inb = false; else if (!inb) l2 += c; }
                     std::vector<std::string> toks; { std::istringstream ls(l2); std::string t; while (ls >> t) toks.push_back(t); }
                     bool hasPublic = false, hasPrivate = false;
-                    for (auto& t : toks) { if (t == "public") hasPublic = true; if (t == "private") hasPrivate = true; }
+                    for (auto& t : toks) { if (t == "public") hasPublic = true; if (t == "private" || t == "static") hasPrivate = true; }   // a static is shared, not this object's setting
                     if (!toks.empty() && (hasPublic || hasSerialize) && !hasPrivate) {
                         std::string name = toks.back();
                         bool valid = !name.empty() && (std::isalpha((unsigned char)name[0]) || name[0] == '_');
@@ -24109,7 +24109,7 @@ static std::vector<ScriptField> ParseScriptFields(const std::string& src) {
                     for (char c : c2) { if (c == '[') inb = true; else if (c == ']') inb = false; else if (!inb) l2 += c; }
                     std::vector<std::string> toks; { std::istringstream ls(l2); std::string t; while (ls >> t) toks.push_back(t); }
                     bool hasPublic = false, hasPrivate = false;
-                    for (auto& t : toks) { if (t == "public") hasPublic = true; if (t == "private") hasPrivate = true; }
+                    for (auto& t : toks) { if (t == "public") hasPublic = true; if (t == "private" || t == "static") hasPrivate = true; }   // a static is shared, not this object's setting
                     if (toks.size() >= 2 && (hasPublic || hasSerialize) && !hasPrivate) {
                         std::string name = toks.back();
                         bool valid = !name.empty() && (std::isalpha((unsigned char)name[0]) || name[0] == '_');

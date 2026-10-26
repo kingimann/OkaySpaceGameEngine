@@ -773,6 +773,34 @@ array of more than a million items stops the callback with an error naming the
 line. `new[] { 1, 2 }` takes its type from the items (ints with floats make a
 `float[]`).
 
+### static fields and methods
+
+A `static` field is one value shared by every object in the scene running the
+script, such as a count of all the enemies or the next free id. Its starting
+value is set once, by the first object, and it lasts one play session: loading a
+level, or Stop then Play in the editor, starts it again. It isn't shown in the
+Inspector, because it isn't any one object's setting. A `static` method is a helper that needs no object: it can use
+static fields and other static methods, but not the object's own fields,
+`gameObject`, `transform` or `GetComponent`. Use either directly or through the
+class name.
+
+```csharp
+class Enemy : Behaviour {
+    static int alive;
+    static int nextId = 1;
+    public int id;
+
+    void Start() { alive++; id = nextId++; }
+    void OnDestroy() { alive--; if (Enemy.alive == 0) Debug.Log("wave cleared"); }
+
+    static float Remap(float v, float lo, float hi) { return (v - lo) / (hi - lo); }
+}
+```
+
+Lifecycle methods (`Start`, `Update`, ...) can't be static, since the engine calls
+them on each object, and a `const` is already shared, so it doesn't take
+`static`.
+
 ### foreach
 
 Loops over an array's items, with `var` or a type. The loop variable can't be

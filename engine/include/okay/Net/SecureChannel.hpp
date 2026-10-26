@@ -189,8 +189,8 @@ private:
     unsigned char m_sk[crypto_kx_SECRETKEYBYTES];
     unsigned char m_rx[crypto_kx_SESSIONKEYBYTES];   // key for data we receive
     unsigned char m_tx[crypto_kx_SESSIONKEYBYTES];   // key for data we send
-    bool m_haveKeys = false;
 #endif
+    bool m_haveKeys = false;   // (never set without libsodium)
     bool m_ready = false;
 };
 

@@ -111,6 +111,11 @@ public:
         std::string speedParam;     ///< float parameter that multiplies `speed` ("" = none)
         std::string enterEvent, exitEvent;   ///< animation events fired on entering / leaving ("" = none)
         float       ikWeight = 1.0f;         ///< Foot IK / Full Body IK weight in this state (base layer)
+        /// Blend trees: the motions' positions are how fast each one travels, and
+        /// the tree plays as fast as the body moves (speedParam's value, else the
+        /// blend position's distance from 0) over the blended motions' speed, so
+        /// the feet keep pace with the ground between and beyond the motions.
+        bool        matchSpeed = false;
     };
 
     // ---- Layer settings (layer 0 = the base machine) ----
@@ -123,6 +128,8 @@ public:
     /// "Any State" transitions: tested every frame from whatever state is playing,
     /// before that state's own transitions (hit reactions, death, ...).
     std::vector<Transition> anyState;
+    /// Runtime: while set, no transition fires (a held gesture keeps its state).
+    bool hold = false;
 
     /// Called with the state's name when the machine enters / leaves a state.
     std::function<void(const std::string&)> onStateEnter, onStateExit;
@@ -262,9 +269,11 @@ public:
             const State* st = FindState(entry);
             if (!st) st = &states.front();
             Enter(*st, 0.0f);
+            ma->BeginFrame(*this);
             ma->Advance(0.0f);
             return;
         }
+        ma->BeginFrame(*this);
         const State* cur = FindState(m_current);
         if (!cur) { m_current.clear(); return; }
 
@@ -293,7 +302,7 @@ public:
             idx.clear();
             for (const Motion& m : cur->motions) idx.push_back(ma->FindClip(m.clip));
             const float prevPhase = ma->BlendPhase();
-            ma->SetSpeed(spd);
+            ma->SetSpeed(spd * MatchRate(*cur, m_bWeights));
             ma->SetExternalDrive(ma->BlendMany(dt, idx, m_bWeights));
             float ph = ma->BlendPhase();
             m_normTime += (ph >= prevPhase) ? ph - prevPhase : ph + 1.0f - prevPhase;
@@ -307,7 +316,7 @@ public:
             int A = lo >= 0 ? ma->FindClip(cur->motions[lo].clip) : -1;
             int B = hi >= 0 ? ma->FindClip(cur->motions[hi].clip) : -1;
             const float prevPhase = ma->BlendPhase();
-            ma->SetSpeed(spd);
+            ma->SetSpeed(spd * MatchRate(*cur, m_bWeights));
             ma->SetExternalDrive(ma->BlendClips(dt, A, B, w));
             float ph = ma->BlendPhase();
             m_normTime += (ph >= prevPhase) ? ph - prevPhase : ph + 1.0f - prevPhase;
@@ -342,7 +351,25 @@ private:
         return m_charBackend.get();
     }
     float StateSpeed(const State& st) const {
+        if (st.blendTree && st.matchSpeed) return st.speed;   // MatchRate reads speedParam
         return st.speed * (st.speedParam.empty() ? 1.0f : GetFloat(st.speedParam));
+    }
+    /// A matchSpeed tree's playback rate for blend weights `w` (1 otherwise).
+    float MatchRate(const State& st, const std::vector<float>& w) const {
+        if (!st.matchSpeed) return 1.0f;
+        const bool two = st.blendDims == 2;
+        float want;
+        if (!st.speedParam.empty()) want = std::fabs(GetFloat(st.speedParam));
+        else {
+            const float x = GetFloat(st.blendParam), y = two ? GetFloat(st.blendParamY) : 0.0f;
+            want = std::sqrt(x * x + y * y);
+        }
+        float have = 0.0f;
+        for (std::size_t i = 0; i < st.motions.size() && i < w.size(); ++i) {
+            const float y = two ? st.motions[i].posY : 0.0f;
+            have += w[i] * std::sqrt(st.motions[i].threshold * st.motions[i].threshold + y * y);
+        }
+        return have > 1e-4f ? want / have : 1.0f;
     }
 
     // ---- Layers: their own playback, posed after the base (see LayerPose) ----
@@ -383,7 +410,8 @@ private:
         }
         if (sum <= 0.0f) return;
         cycle /= sum;
-        if (advance) lp.phase = std::fmod(lp.phase + dt * spd / std::fmax(cycle, 1e-4f), 1.0f);
+        const float rate = spd * MatchRate(st, bw);
+        if (advance) lp.phase = std::fmod(lp.phase + dt * rate / std::fmax(cycle, 1e-4f), 1.0f);
         for (std::size_t i = 0; i < st.motions.size(); ++i) {
             int c = ma->FindClip(st.motions[i].clip);
             if (c < 0 || bw[i] <= 0.0f) continue;
@@ -436,6 +464,7 @@ private:
             }
             if (m_trLeft <= 0.0f) m_trActive = false;
         }
+        if (hold) return;
         for (const Transition& tr : anyState) {
             if (tr.to == m_current && !tr.canInterruptSelf) continue;
             if (Try(tr, ma, cur)) return;

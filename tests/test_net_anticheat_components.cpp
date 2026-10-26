@@ -114,8 +114,11 @@ int main() {
         CHECK(vsc->GetVariable("cheat_detail").AsString() == "nuke");
 
         // A spawn that isn't on the file's allowlist reaches the graph too.
-        cli->Spawn("/tmp/okay_ac_not_allowed.okayprefab", Vec3::Zero);
+        const std::string notAllowed = "okay_ac_not_allowed.okayprefab";
+        { Scene t("T"); CHECK(SceneSerializer::SaveObjectToFile(*t.CreateGameObject("X"), notAllowed)); }
+        cli->Spawn(notAllowed, Vec3::Zero);
         pump(20);
+        std::remove(notAllowed.c_str());
         CHECK(vsc->GetVariable("kind").AsString() == "spawn not allowed");
         CHECK(vsc->GetVariable("n").AsFloat() == 3.0f);
 

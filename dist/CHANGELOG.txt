@@ -1,5 +1,30 @@
 OkaySpace Game Engine — Changelog
 
+v2.831.0
+  Multiplayer camera
+  - Online position corrections from the server now ease in smoothly at any
+    frame rate, and a big correction cuts cleanly instead of swooping the
+    camera across the map. The ease rate and snap distance are now settings
+    on the Network Manager (defaults unchanged) (#344).
+  Inventory
+  - Pressing the key opens only the nearest chest or crafting bench in range,
+    and that's the one shown. Range is measured from the player, not a
+    camera, so a minimap camera no longer affects it. New chests and benches
+    open within 2.5 m; old scenes keep "any distance".
+  - The inventory shows exactly as many slots as it can hold, and moves never
+    go past its capacity.
+  - Saving and loading no longer duplicates the crafting buttons, and a chest
+    saved while open reloads closed.
+  - The Crafting Menu's default key is now K so it no longer clashes with
+    the crafting bench (C). Saved scenes keep their key.
+  - The inventory preset and template now put the inventory on the player and
+    use the real inventory components (#343).
+  Animation
+  - Groundwork for a visible Animator on the built-in players: the Animator
+    (state machine) can now drive the built-in character as well as imported
+    models, and clips can carry hip movement. Nothing changes in existing
+    scenes yet (#340).
+
 v2.830.0
   Movement and camera
   - No more hops or speed surges walking up ramps and hills: stepping up now

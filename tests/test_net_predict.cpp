@@ -70,6 +70,7 @@ struct PredGame {
         host = hs.CreateGameObject("Net")->AddComponent<NetworkManager>();
         host->netTickRate = 30.0f;
         host->authoritativeMovement = true;
+        host->spawnablePrefabs = {prefab};
         host->maxMessagesPerSecond = 0;
         host->interpolationRate = 0.0f;
         if (!host->StartServer(0)) return false;
@@ -109,7 +110,7 @@ int main() {
     auto sink = Log::sink;
     Log::sink = [](Log::Level, const std::string&) {};
 
-    const std::string prefab = "/tmp/okay_predict_pawn.okayprefab";
+    const std::string prefab = "okay_predict_pawn.okayprefab";
     {
         Scene t("T");
         GameObject* p = t.CreateGameObject("Pawn");
@@ -194,7 +195,7 @@ int main() {
 
     // ---- First person: the look shows at once on the player's own copy ------------
     {
-        const std::string fpPrefab = "/tmp/okay_predict_fp.okayprefab";
+        const std::string fpPrefab = "okay_predict_fp.okayprefab";
         {
             Scene t("T");
             GameObject* p = t.CreateGameObject("Pawn");

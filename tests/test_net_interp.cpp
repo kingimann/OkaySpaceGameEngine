@@ -74,6 +74,7 @@ struct World {
     bool Open(float tickRate, float interpRate, const std::string& prefab, bool hostOwns = false, double lo = 0.03, double hi = 0.07) {
         host = hs.CreateGameObject("Net")->AddComponent<NetworkManager>();
         host->netTickRate = tickRate;
+        host->spawnablePrefabs = {prefab};
         host->maxMessagesPerSecond = 0;
         if (!host->StartServer(0)) return false;
         proxy = std::make_unique<JitterProxy>(host->ServerPort(), lo, hi);
@@ -104,7 +105,7 @@ int main() {
     auto sink = Log::sink;
     Log::sink = [](Log::Level, const std::string&) {};
 
-    const std::string prefab = "/tmp/okay_interp_obj.okayprefab";
+    const std::string prefab = "okay_interp_obj.okayprefab";
     {
         Scene t("T");
         GameObject* p = t.CreateGameObject("Box");

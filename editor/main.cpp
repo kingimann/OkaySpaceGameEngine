@@ -5765,6 +5765,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::MenuItem("Character")) {
                 GameObject* g = ed.CreateEmpty("Character");
                 g->AddComponent<Character>()->Apply();
+                HumanoidLibrary::EnsureAnimator(g);
                 ed.Select(g); ed.view3D = true; ed.dirty = true; created = true;
                 ConsoleLog("Created Character");
             }
@@ -6934,6 +6935,7 @@ static void RigModelHumanoid(EditorState& ed, GameObject* go) {
     if (!ch) ch = go->AddComponent<Character>();
     ch->BindCustomMesh(merged);
     ch->Apply();
+    HumanoidLibrary::EnsureAnimator(go);
     if (auto* mr = go->GetComponent<MeshRenderer>()) {
         if (!tex.empty()) mr->texture = tex;
         mr->enabled = true;
@@ -27932,6 +27934,19 @@ void DrawInspector(EditorState& ed) {
             }
             if (delVar >= 0) { s.serverVars.erase(s.serverVars.begin() + delVar); ed.dirty = true; }
             if (ImGui::SmallButton("Add server var##ac")) { s.serverVars.push_back("score"); ed.dirty = true; }
+            ImGui::TextUnformatted("Weapons clients may claim hits with:");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Claim Hit / net_hit names a weapon. A weapon a Net Validator covers (rpc hit/<weapon>, which also sets its fire rate and ammo) or one listed here may claim; any other does no damage.");
+            int delWeapon = -1;
+            for (int i = 0; i < (int)s.weapons.size(); ++i) {
+                ImGui::PushID(2000 + i);
+                char w[64]; std::snprintf(w, sizeof(w), "%s", s.weapons[i].c_str());
+                ImGui::SetNextItemWidth(-40);
+                if (ImGui::InputText("##acweapon", w, sizeof(w))) { s.weapons[i] = w; ed.dirty = true; }
+                ImGui::SameLine(); if (ImGui::SmallButton("x")) delWeapon = i;
+                ImGui::PopID();
+            }
+            if (delWeapon >= 0) { s.weapons.erase(s.weapons.begin() + delWeapon); ed.dirty = true; }
+            if (ImGui::SmallButton("Add weapon##ac")) { s.weapons.push_back("rifle"); ed.dirty = true; }
             if (ImGui::TreeNode("Hit claims##ac")) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("How the server checks Claim Hit / net_hit (with or without the anti-cheat).");
                 if (ImGui::DragFloat("Origin tolerance##ac", &s.hitOriginTolerance, 0.05f, 0.0f, 100.0f, "%.2f u")) ed.dirty = true;
@@ -32501,6 +32516,21 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("A correction bigger than this (a respawn, a wall the client went through) snaps instead of easing, and the camera jumps with it.");
             }
 
+            ImGui::TextUnformatted("Spawnable prefabs");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The prefabs players may spawn on this host (net_spawn, Spawn Networked, a player that spawns its own pawn), relative to the game folder. The Player Spawner's prefab counts too. With an Anti-Cheat Config, its spawn allowlist decides instead.");
+            int removePf = -1;
+            for (int i = 0; i < (int)nm->spawnablePrefabs.size(); ++i) {
+                ImGui::PushID(i);
+                char pf[256]; std::snprintf(pf, sizeof(pf), "%s", nm->spawnablePrefabs[i].c_str());
+                ImGui::SetNextItemWidth(-30);
+                if (ImGui::InputText("##nmpf", pf, sizeof(pf))) { nm->spawnablePrefabs[i] = pf; ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("X##nmpf")) removePf = i;
+                ImGui::PopID();
+            }
+            if (removePf >= 0) { nm->spawnablePrefabs.erase(nm->spawnablePrefabs.begin() + removePf); ed.dirty = true; }
+            if (ImGui::SmallButton("+ Prefab##nmpf")) { nm->spawnablePrefabs.push_back("prefabs/new.okayprefab"); ed.dirty = true; }
+
             const char* mode = nm->IsServer() ? "Server" : nm->IsClient() ? "Client" : "Offline";
             ImGui::Text("Live: %s   Peers: %d / %d   Id: %u", mode, (int)nm->PeerCount(), nm->maxPlayers, nm->LocalId());
             if (nm->IsClient()) {
@@ -34205,7 +34235,7 @@ void DrawInspector(EditorState& ed) {
                 if (!go->GetComponent<MeshRenderer>()) go->AddComponent<MeshRenderer>()->mesh = Mesh::Cube();
                 go->AddComponent<okay::MeshModifiers>(); ed.view3D = true; ed.dirty = true;
             }
-            if (item(!go->GetComponent<Character>(), "Character")) { go->AddComponent<Character>()->Apply(); ed.view3D = true; ed.dirty = true; }
+            if (item(!go->GetComponent<Character>(), "Character")) { go->AddComponent<Character>()->Apply(); HumanoidLibrary::EnsureAnimator(go); ed.view3D = true; ed.dirty = true; }
             if (item(!go->GetComponent<TextRenderer>(), "Text")) { go->AddComponent<TextRenderer>(); ed.dirty = true; }
             if (item(!go->GetComponent<SpriteAnimator>(), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
             if (item(!go->GetComponent<ParticleSystem>(), "Particle System")) { go->AddComponent<ParticleSystem>(); ed.dirty = true; }

@@ -351,11 +351,23 @@ The server decides; clients only ask.
 These always hold, whether or not the anti-cheat is on:
 - Only a joined player can change synced variables (`SetVar`). A packet from
   anyone else is ignored.
+- A client with encryption on takes the host's welcome, refusal or kick only
+  sealed under its key exchange (a pinned client always joins that way), so a
+  forged plaintext one can't skip the pin or end the join. Only a host that
+  doesn't do the sealed join (an older one, or one with encryption off) is
+  joined in the clear, and never with a pin.
 - Clients can't use the engine's reserved channels, except the ones they
   really use: `__spawn`, `__despawn`, `__xform`, `__chat` and `__rpc/…`. In
   particular, only the host starts a match.
 - The server stamps chat with the sender's roster name, so nobody can post as
   someone else.
+- A network spawn must name a `.okayprefab` by a path relative to the game
+  folder: no `..`, drive letters, UNC paths, device names or links leading
+  outside it, and at most 4 MB. Every peer checks the spawns it receives and
+  ignores any other path.
+- Clients may only spawn the prefabs the host allows: the Network Manager's
+  **Spawnable prefabs** and the Player Spawner's prefab, or, with the
+  anti-cheat on, its spawn allowlist. The host may spawn any safe prefab.
 
 ### Anti-cheat (opt-in)
 

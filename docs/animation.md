@@ -736,17 +736,39 @@ elbows bend down and out, and the object moves with the body.
 - Add **Procedural Object Holding** (Add Component > Animation) to the character
   and **Holdable Object** to anything it may pick up. Without a Holdable Object
   an object can still be picked up from a script; it gets automatic settings.
-- **Primary Hand** (Left / Right / Both) is the hand a one-handed object goes in;
-  *Both* always uses two hands.
+- **Primary Hand** (Left / Right / Both) is the hand a one-handed object goes in.
+  *Both* adds the support hand on pistols and swords and carries a small item
+  with both hands.
 - **Holding Style**: *Automatic* uses each object's own style; *Custom* always
   uses the object's grip points.
-- The object's **Style**: *Automatic* works out a carry from its size and weight
-  (small: one hand under it; wider than about 30 cm or over 5 kg: both hands on
-  its sides in front of the belly). *Custom* puts the hands on the **Left / Right
-  Grip** points (object-local position and rotation; rotation 0 = palm down,
-  fingers along -Z) and the object at **Hold Offset / Hold Rotation** from the
-  chest. A one-hand object authored for the right hand is mirrored when the
-  primary hand is the left.
+- The object's **Style**:
+  - *Pistol*: one hand on the handle, aimed forward. With **Support Hand** on, the
+    other hand wraps around the first.
+  - *Rifle*: stock at the shoulder, one hand on the grip, the other under the barrel.
+  - *Box*: both hands on its sides, as low as the arms reach.
+  - *Flashlight*: one hand, beam forward.
+  - *Sword*: one hand on the hilt, blade up and forward. *Support Hand* makes it
+    two-handed.
+  - *Cup*: one hand, fingers through the handle.
+  - *Heavy*: both hands under its bottom edges, hanging low.
+  - *Custom*: the hands go on the **Left / Right Grip** points (object-local
+    position and rotation; rotation 0 = palm down, fingers along -Z), and the
+    object sits at **Hold Offset / Hold Rotation** from the chest. A one-hand
+    object authored for the right hand is mirrored when the primary hand is the
+    left.
+  - *Automatic* picks a style from the object's tag or name ("pistol", "rifle",
+    "crate", "sword", "mug", "torch"...), then from its shape and weight: long
+    and weighty is a rifle, long and light a sword, short and long a flashlight,
+    over 15 kg heavy, wide or over 5 kg a box. Anything else small is held in
+    one hand from underneath. The inspector shows what it picked.
+- Named styles read the object's long side as the barrel, blade or beam. Guns
+  and lights point along local -Z, a sword's blade along +Y, a cup's handle
+  along +X. For a model built another way, **Hold Rotation** turns it
+  (0, 180, 0 for a gun facing backwards).
+- Fingers close around the grip on rigs that have finger bones. The amount
+  depends on the style: a fist on a sword, an open hand on a box, the index
+  finger off the trigger. A custom grip has its own **Finger Curl**. The
+  fingers open again when the object is dropped.
 - **Socket**: hold it at a named object inside the character (a holster, a back
   slot) instead of in front of the chest.
 - The hands never stretch: when a grip is out of reach the object comes closer

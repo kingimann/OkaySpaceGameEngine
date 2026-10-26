@@ -223,6 +223,7 @@ public:
     /// so they never stall the network tick. Return 1 to accept (set `outUserId`),
     /// 0 to reject, or -1 while the answer is still pending: the join is ignored
     /// for now and the client's next join retry (every half second) asks again.
+    /// -2 = too busy to check: the join is refused ("server busy, try again").
     /// Takes precedence over SetTokenVerifier when both are set.
     using JoinCheck = std::function<int(const std::string& token, std::string& outUserId)>;
     void SetJoinCheck(JoinCheck c) { m_joinCheck = std::move(c); }
@@ -850,6 +851,15 @@ private:
 
     // Server-only
     float m_serverTime = 0.0f;        // seconds since the server started
+    // Server: join attempts per address (a refused Join, a new key exchange;
+    // a wrong password counts two): past kJoinAttempts in kJoinWindow seconds
+    // the address is ignored for a while, 10 s doubling to 320 s.
+    struct JoinLimit { float windowStart = 0.0f; int count = 0; float blockedUntil = -1.0f, backoff = 0.0f; bool told = false; };
+    std::unordered_map<std::uint32_t, JoinLimit> m_joinLimits;
+    static constexpr int kJoinAttempts = 5;
+    static constexpr float kJoinWindow = 10.0f;
+    bool JoinBlocked(const net::Endpoint& from) const;
+    void CountJoinAttempt(const net::Endpoint& from, int cost);
     // Server: accounts and addresses the anti-cheat kicked, refused until `until`
     // (m_serverTime); each repeat doubles the wait, up to an hour.
     struct KickBan { float until = 0.0f; int strikes = 0; };

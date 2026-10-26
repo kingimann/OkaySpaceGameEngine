@@ -5,6 +5,7 @@
 #include "okay/Net/AntiCheat.hpp"
 #include "okay/Net/ClockCheck.hpp"
 #include "okay/Net/PlayerInput.hpp"
+#include "okay/Physics/Physics3D.hpp"   // RaycastHit3D (RewindRaycast)
 #include <map>
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Quat.hpp"
@@ -499,7 +500,22 @@ public:
     /// target's HealthStat and replicates it. On the host it's applied at once
     /// (the host is trusted), after the game's rules. Never apply damage
     /// locally on a client: the server's word comes back.
+    /// With a fixed net tick (lag compensation): the claim says which moment
+    /// the shooter saw (ViewTick), and the server checks it against where
+    /// everything was then (its pose history), not where it is now, with the
+    /// rewind clamped to 200 ms plus the shooter's round trip.
     void ClaimHit(const std::string& targetNetId, const std::string& weapon, const Vec3& origin, const Vec3& direction);
+    /// Server, lag compensation: a 3D raycast against where every synced
+    /// object was at `viewTick` (a client's ViewTick; its pose history keeps
+    /// about a second), then everything is put back. Without a fixed tick, or
+    /// on a client, an ordinary raycast. `ignore` as for Physics3D::Raycast.
+    RaycastHit3D RewindRaycast(const Vec3& origin, const Vec3& direction, float maxDistance, double viewTick,
+                               GameObject* ignore = nullptr);
+    /// Client: the moment (in host ticks, with the fraction) it shows other
+    /// players at: now minus the interpolation delay. What a hit claim carries.
+    double ViewTick() const;
+    /// Server: how far back (seconds) the last checked hit claim was rewound.
+    float LastRewind() const { return m_lastRewind; }
     /// Game rules for hit claims (server): false refuses one; it may change
     /// claim.damage. The same hook as anticheat.validateHit.
     void ValidateHit(std::function<bool(HitClaim& claim)> rule) { anticheat.validateHit = std::move(rule); }
@@ -690,6 +706,7 @@ private:
     void ClientTick(float dt);
     // A client's hit claim ("__hit"): checked, then applied or refused.
     void HandleHitClaim(Client& c, const std::string& data);
+    std::string CheckHitView(const HitClaim& claim, std::uint32_t shooter, Transform* targetT, float slack);
     void ApplyHit(HitClaim& claim);
     int m_hitsApplied = 0, m_hitsRefused = 0;
     std::function<void(const AntiCheatKick&)> m_acKickHandler;
@@ -842,6 +859,7 @@ private:
         bool  hasTarget = false;
         struct Sample { double tick; Vec3 pos; Quat rot; };
         std::vector<Sample> samples;   // the interpolation buffer (fixed tick), oldest first
+        std::vector<Sample> history;   // server: its pose each tick, ~1 s (lag compensation)
         std::function<std::string()> getExtra;            // owner packs extra state
         std::function<void(const std::string&)> setExtra; // remote applies it
     };
@@ -862,6 +880,15 @@ private:
     float TickRateInForce() const { return m_mode == Mode::Server ? HostTickRate() : (m_mode == Mode::Client ? m_hostTickRate : 0.0f); }
     double TickTime() const;                             // the tick now, with its fraction
     static void SampleAt(const SyncObj& o, double tick, Vec3& pos, Quat& rot);
+    static void PoseAt(const std::vector<SyncObj::Sample>& b, double tick, Vec3& pos, Quat& rot);
+    // Lag compensation (server).
+    static constexpr float kRewindBase = 0.2f;           // seconds of rewind allowed on top of the shooter's RTT
+    void RecordHistory();                                // each fixed tick: every synced object's pose
+    struct Rewound { Transform* t; Vec3 pos; Quat rot; };
+    std::vector<Rewound> RewindTo(double tick);          // move everything to `tick`; returns what to put back
+    static void Restore(std::vector<Rewound>& saved);
+    double ClampRewind(double viewTick, float rttSeconds) const;
+    float m_lastRewind = 0.0f;
 public:
     /// Synced objects shown from the interpolation buffer (a fixed tick in force).
     bool InterpolationBuffer() const { return TickRateInForce() > 0.0f && interpolationRate > 0.0f; }

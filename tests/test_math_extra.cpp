@@ -40,6 +40,13 @@ int main() {
         CHECK(VApprox(q * v, q2 * v, 1e-2f));
     }
 
+    // Straight up / down (gimbal lock: yaw and roll fold into one turn), with any
+    // yaw and roll: the rebuilt rotation is the same one.
+    for (Vec3 e : {Vec3{90, 30, 20}, Vec3{-90, 30, 20}, Vec3{89.95f, 120, -40}, Vec3{-89.95f, -150, 75}}) {
+        Quat q = Quat::Euler(e);
+        CHECK(Quat::Angle(q, Quat::Euler(q.ToEuler())) < 1.0f);
+    }
+
     // FromToRotation turns one direction into another.
     {
         Quat q = Quat::FromToRotation({1, 0, 0}, {0, 1, 0});

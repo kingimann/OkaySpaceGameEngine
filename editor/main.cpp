@@ -19,6 +19,7 @@
 #include "okay/Render/Culling.hpp"     // frustum culling toggle + drawn/culled counts (Stats)
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Core/Profiler.hpp"        // CPU/GPU frame profiler
+#include "okay/Animation/HumanoidLibrary.hpp"  // built-in clip names in the Animator clip slot
 #include "okay/Scene/UITemplates.hpp"    // prebuilt, droppable UI screens (UI > Prebuilt Screens)
 #include "okay/Scene/UIStyles.hpp"       // one-click looks + copy / paste style for UI components
 #include "okay/Scene/UILayoutTools.hpp"  // wrap in panel, fit to children, match size, stack
@@ -19562,7 +19563,12 @@ static std::string TransitionSummary(const AnimStateMachine::Transition& tr) {
 
 static void DrawAnimatorGraph(EditorState& ed) {
     if (!g_showAnimatorGraph) return;
-    ImGui::SetNextWindowSize(ImVec2(860, 520), ImGuiCond_FirstUseEver);
+    if (std::getenv("OKAY_UI_ANIMGRAPH")) {
+        ImGui::SetNextWindowPos(ImVec2(24, 48), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(1280, 780), ImGuiCond_Always);
+    } else {
+        ImGui::SetNextWindowSize(ImVec2(860, 520), ImGuiCond_FirstUseEver);
+    }
     if (!ImGui::Begin("Animator", &g_showAnimatorGraph)) { ImGui::End(); return; }
 
     // Resolve the machine from the selection: self, then ancestors, then
@@ -20255,17 +20261,82 @@ static void DrawAnimatorGraph(EditorState& ed) {
                 ed.dirty = true;
             }
         }
+        // Clip slot: this backend's clips, the built-in library, and any imported
+        // clips on this object or under it. The running machine plays `fallbackClip`
+        // when `clip` is not in its own library.
+        std::vector<std::string> slotNames = clipNames;
+        auto addSlot = [&](const std::string& n) {
+            if (n.empty()) return;
+            for (const auto& e : slotNames) if (e == n) return;
+            slotNames.push_back(n);
+        };
+        if (body)
+            for (const std::string& n : okay::HumanoidLibrary::Names()) addSlot(n);
+        if (smObj)
+            for (const auto& up : ed.scene().Objects()) {
+                GameObject* g = up.get();
+                if (!g || !g->IsSelfOrDescendantOf(smObj)) continue;
+                if (auto* im = g->GetComponent<ModelAnimator>())
+                    for (const std::string& n : im->ClipNames()) addSlot(n);
+            }
+        addSlot(st.clip);
+        addSlot(st.fallbackClip);
+        auto slotPlayable = [&](const std::string& n) {
+            if (n.empty()) return false;
+            if (body && okay::editor::apreview::BodyClip(body, n)) return true;
+            if (ma && ma->FindClip(n) >= 0) return true;
+            return false;
+        };
+        std::string previewMotion = okay::editor::apreview::MiddleMotion(st);
+        if (!slotPlayable(previewMotion) && slotPlayable(st.fallbackClip)) previewMotion = st.fallbackClip;
         // Live preview of this state (edit and Play). A blend tree offers its motions.
-        if (body && okay::editor::apreview::BodyClip(body, okay::editor::apreview::MiddleMotion(st))) {
+        if (body && okay::editor::apreview::BodyClip(body, previewMotion)) {
             const bool prevOn = okay::editor::apreview::ToggleCharacterState(ed.scene(), body, st, ed.isPlaying(), "agprev");
             if (prevOn) okay::editor::apreview::DrawTransport("agprev");
-        } else if (ma && ma->FindClip(okay::editor::apreview::MiddleMotion(st)) >= 0) {
+        } else if (ma && ma->FindClip(previewMotion) >= 0) {
             const bool prevOn = okay::editor::apreview::ToggleModelState(ed.scene(), ma, st, ed.isPlaying());
             if (prevOn) okay::editor::apreview::DrawTransport("agmaprev");
         }
-        if (!clipNames.empty()) {
+        auto importIntoSlot = [&](std::string& slot) {
+            if (ma) {
+                std::vector<std::string> before = ma->ClipNames();
+                AddAnimationsFromFilesUI(ed, smObj);
+                for (const auto& n : ma->ClipNames()) {
+                    bool had = false;
+                    for (const auto& b : before) if (b == n) { had = true; break; }
+                    if (!had) { slot = n; ed.dirty = true; ConsoleLog("Imported '" + n + "' into " + st.name); break; }
+                }
+            } else if (body) {
+                const char* filt[] = {"*.okayanim"};
+                if (const char* p = tinyfd_openFileDialog("Import clip into this state", "", 1, filt, "OkaySpace animation", 0)) {
+                    std::vector<std::string> before = body->ClipNames();
+                    std::string err;
+                    if (!body->LoadClipsFromFile(p, &err, /*replaceExisting=*/false)) {
+                        ConsoleLog(err.empty() ? "Import clip failed" : err, 2);
+                        return;
+                    }
+                    std::string picked;
+                    for (const auto& n : body->ClipNames()) {
+                        bool had = false;
+                        for (const auto& b : before) if (b == n) { had = true; break; }
+                        if (!had) { picked = n; break; }
+                    }
+                    if (picked.empty()) {
+                        std::ifstream fin(p);
+                        std::stringstream ss; if (fin) ss << fin.rdbuf();
+                        auto parsed = okay::AnimClip::ParseAll(ss.str(), &okay::Character::BoneIndex, okay::Character::BoneCount(), nullptr);
+                        if (!parsed.empty()) picked = parsed.front().name;
+                    }
+                    if (!picked.empty()) {
+                        slot = picked; ed.dirty = true;
+                        ConsoleLog("Imported '" + picked + "' into " + st.name);
+                    }
+                }
+            }
+        };
+        if (!slotNames.empty()) {
             if (ImGui::BeginCombo("Clip##ag", st.clip.empty() ? "(none)" : st.clip.c_str())) {
-                for (const auto& cn : clipNames)
+                for (const auto& cn : slotNames)
                     if (ImGui::Selectable(cn.c_str(), cn == st.clip)) { st.clip = cn; ed.dirty = true; }
                 ImGui::EndCombo();
             }
@@ -20273,6 +20344,22 @@ static void DrawAnimatorGraph(EditorState& ed) {
             char cb[48]; std::snprintf(cb, sizeof(cb), "%s", st.clip.c_str());
             if (ImGui::InputText("Clip##ag", cb, sizeof(cb))) { st.clip = cb; ed.dirty = true; }
         }
+        if (ImGui::BeginCombo("If missing##ag", st.fallbackClip.empty() ? "(none)" : st.fallbackClip.c_str())) {
+            if (ImGui::Selectable("(none)", st.fallbackClip.empty())) { st.fallbackClip.clear(); ed.dirty = true; }
+            for (const auto& cn : slotNames)
+                if (ImGui::Selectable(cn.c_str(), cn == st.fallbackClip)) { st.fallbackClip = cn; ed.dirty = true; }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Played when Clip is not in this Animator's library.\n"
+                              "A name that exists only on a child model's clips plays there\n"
+                              "(Humanoid Retarget yields until the state changes).");
+        if ((ma || body) && ImGui::SmallButton("Import into clip##ag")) importIntoSlot(st.clip);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Load a clip file and put its name in the Clip slot.\n"
+                              "A character takes .okayanim. An imported model takes FBX, glTF or BVH.");
+        if (ma || body) { ImGui::SameLine(); }
+        if ((ma || body) && ImGui::SmallButton("Import as fallback##ag")) importIntoSlot(st.fallbackClip);
         if (ImGui::DragFloat("Speed##ag", &st.speed, 0.02f, 0.05f, 5.0f)) ed.dirty = true;
         {
             bool useSp = !st.speedParam.empty();
@@ -42438,6 +42525,7 @@ int main(int argc, char** argv) {
             }
             if (const char* sn = std::getenv("OKAY_UI_SELECT"); sn && (s_focusFrames == 31 || s_focusFrames == 40))
                 for (const auto& up : ed.scene().Objects()) if (up->name == sn) { ed.Select(up.get()); break; }
+            if (std::getenv("OKAY_UI_ANIMGRAPH")) g_showAnimatorGraph = true;
             // OKAY_UI_UIADD=Lobby: the UI editing view with that prebuilt screen added
             // (screenshots of the UI editor and its "+ Add" menu).
             if (const char* ua = std::getenv("OKAY_UI_UIADD"); ua && s_focusFrames == 32) {

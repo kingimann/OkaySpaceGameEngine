@@ -805,6 +805,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             for (const auto& st : asm2->states) out << " " << (st.matchSpeed ? 1 : 0);
             out << "\n";
         }
+        bool anyFall = false;
+        for (const auto& st : asm2->states) anyFall = anyFall || !st.fallbackClip.empty();
+        if (anyFall) {   // per-state stand-in when the named clip is missing
+            out << "  animsmfall " << asm2->states.size();
+            for (const auto& st : asm2->states) out << " " << Quote(st.fallbackClip);
+            out << "\n";
+        }
     }
     if (auto* tr = go->GetComponent<Terrain>()) {
         out << "  terrain " << tr->resolution << " " << tr->size << " "
@@ -3355,6 +3362,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     for (long i = 0; i < n && in; ++i) {
                         float w = -1.0f; in >> w;
                         if (i < (long)sm2->states.size()) sm2->states[i].fullBodyIkWeight = w;
+                    }
+                } else if (field == "animsmfall") {
+                    auto* sm2 = smFor();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n && in; ++i) {
+                        std::string fb = ReadQuoted(in);
+                        if (sm2 && i < (long)sm2->states.size()) sm2->states[i].fallbackClip = std::move(fb);
                     }
                 } else if (field == "animsmparams") {
                     auto* sm2 = smFor();

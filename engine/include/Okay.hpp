@@ -23,6 +23,7 @@
 
 // Input
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputActions.hpp"
 #include "okay/Input/Cursor.hpp"
 
 // Rendering

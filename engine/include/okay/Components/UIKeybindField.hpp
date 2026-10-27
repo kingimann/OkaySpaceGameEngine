@@ -15,6 +15,12 @@ namespace okay {
 /// and saved to Prefs under that name, so it survives restarts. A change fires the
 /// object's script on_keybind_change(), with Prefs "ui_keybind_action" and
 /// "ui_keybind_key" (the key's name). Games read `key` (or the Prefs value).
+///
+/// With `inputAction` set it rebinds that InputActions action instead ("Jump",
+/// "Fire"): it shows the action's current binding, `gamepad` picks whether it
+/// listens for a key / mouse button or a controller button, and for a four-key
+/// direction (Move) `part` 0..3 picks the up / down / left / right key. The new
+/// binding is saved to the player's prefs; Backspace puts the action's defaults back.
 class UIKeybindField final : public Behaviour {
 public:
     Vec2  position{20.0f, 20.0f};
@@ -24,6 +30,9 @@ public:
     char  key = ' ';
     char  defaultKey = ' ';
     std::string prefKey;             // Prefs name to persist the binding under ("" = don't)
+    std::string inputAction;         // an InputActions action to rebind ("" = use `key`)
+    bool  gamepad = false;           // with inputAction: bind a controller button
+    int   part = -1;                 // with inputAction: 0..3 = one key of a four-key direction
     float textSize = 2.0f;
     Color background = Color::FromBytes(41, 46, 59);
     Color keyColor   = Color::FromBytes(66, 150, 250);
@@ -40,8 +49,12 @@ public:
     void Listen() { if (interactable) { m_listening = true; m_skipFrame = true; } }
     /// Set the binding (saves to Prefs and fires on_keybind_change when it changes).
     void Bind(char k);
-    /// The shown key text ("Space", "W", ...).
+    /// The shown key text ("Space", "W", "RT", ...).
     std::string KeyLabel() const;
+    /// What the field shows while waiting: "Press a key..." / "Press a button...".
+    const char* ListenPrompt() const { return !inputAction.empty() && gamepad ? "Press a button..." : "Press a key..."; }
+    /// Bind an InputActions binding ("key:e", "pad:rt", "mouse:right").
+    void BindAction(const std::string& binding);
 
     Vec2 ToLocal(const Vec2& p) const { return UIToLocal(gameObject, ResolveAnchor(anchor, position, size), size, p); }
     bool Contains(const Vec2& sp) const {

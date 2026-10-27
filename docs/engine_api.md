@@ -278,6 +278,7 @@ Keyboard, mouse and gamepad.
 | In a script | Node | Kind | Inputs | Gives | What it does |
 |---|---|---|---|---|---|
 | `Input.mousePosition` | `Input.mousePosition` | value | - | mousePosition (Vector3) | The cursor in screen pixels (x, y; z is 0). |
+| `Input.gamepadConnected` | `Input.gamepadConnected` | value | - | gamepadConnected (Bool) | True while a controller is plugged in. |
 | `Input.GetKey(key)` | `Input.GetKey/1` | value | key (Text) | Result (Bool) | True while the key is held. |
 | `Input.GetKeyDown(key)` | `Input.GetKeyDown/1` | value | key (Text) | Result (Bool) | True on the frame the key is pressed. |
 | `Input.GetKeyUp(key)` | `Input.GetKeyUp/1` | value | key (Text) | Result (Bool) | True on the frame the key is released. |
@@ -285,6 +286,15 @@ Keyboard, mouse and gamepad.
 | `Input.GetMouseButton(button)` | `Input.GetMouseButton/1` | value | button (Number) | Result (Bool) | True while the mouse button is held (0 left, 1 right, 2 middle). |
 | `Input.GetMouseButtonDown(button)` | `Input.GetMouseButtonDown/1` | value | button (Number) | Result (Bool) | True on the frame the mouse button is pressed. |
 | `Input.GetMouseButtonUp(button)` | `Input.GetMouseButtonUp/1` | value | button (Number) | Result (Bool) | True on the frame the mouse button is released. |
+| `Input.GetButton(action)` | `Input.GetButton/1` | value | action (Text) | Result (Bool) | True while the action is held ("Jump", "Fire"...), on keyboard, mouse or controller. |
+| `Input.GetButtonDown(action)` | `Input.GetButtonDown/1` | value | action (Text) | Result (Bool) | True on the frame the action is pressed. |
+| `Input.GetButtonUp(action)` | `Input.GetButtonUp/1` | value | action (Text) | Result (Bool) | True on the frame the action is released. |
+| `Input.GetActionValue(action)` | `Input.GetActionValue/1` | value | action (Text) | Result (Number) | How far the action is pressed, 0 to 1 (a trigger can be part way). |
+| `Input.GetActionVector(action)` | `Input.GetActionVector/1` | value | action (Text) | Result (Vector3) | A direction action ("Move", "Look") as x, y in -1..1 (y up; z is 0). |
+| `Input.Rumble(low, high, seconds)` | `Input.Rumble/3` | step | low (Number), high (Number), seconds (Number) | - | Shake the controller: low (heavy) and high (light) motor strength 0 to 1, for some seconds. |
+| `Input.RebindAction(action, binding)` | `Input.RebindAction/2` | step | action (Text), binding (Text) | Result (Bool) | Bind an action to "key:e", "mouse:right", "pad:rt"... for this player (saved). False if the binding isn't understood. |
+| `Input.DefineAction(action, binding, binding2)` | `Input.DefineAction/3` | step | action (Text), binding (Text), binding2 (Text) | - | Add a game action (or change its defaults), e.g. ("Dash", "key:q", "pad:rs"). Use "" for an unused binding. |
+| `Input.DefineDirection(action, binding, binding2)` | `Input.DefineDirection/3` | step | action (Text), binding (Text), binding2 (Text) | - | Add a direction action, e.g. ("Steer", "keys:i,k,j,l", "stick:right"). |
 
 ## Time
 

@@ -2417,7 +2417,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (int)kb->anchor << " " << Quote(kb->action) << " " << (int)(unsigned char)kb->key
             << " " << (int)(unsigned char)kb->defaultKey << " " << Quote(kb->prefKey) << " " << kb->textSize;
         c4(kb->background); c4(kb->keyColor); c4(kb->listenColor); c4(kb->textColor);
-        out << " " << (kb->interactable ? 1 : 0) << " " << (kb->focusable ? 1 : 0) << "\n";
+        out << " " << (kb->interactable ? 1 : 0) << " " << (kb->focusable ? 1 : 0)
+            << " " << Quote(kb->inputAction) << " " << (kb->gamepad ? 1 : 0) << " " << kb->part << "\n";
     }
     if (auto* fr = go->GetComponent<UIFrame>()) {
         out << "  uiframe " << fr->anchorMin.x << " " << fr->anchorMin.y << " " << fr->anchorMax.x << " " << fr->anchorMax.y
@@ -6070,6 +6071,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> kb->textSize;
                     c4(kb->background); c4(kb->keyColor); c4(kb->listenColor); c4(kb->textColor);
                     in >> inter >> foc;
+                    {   // optional (newer files): the InputActions action it rebinds
+                        std::string rest; std::getline(in, rest);
+                        std::istringstream rs(rest);
+                        int gp = 0, pt = -1;
+                        if (rs >> std::ws && rs.peek() == '"') {
+                            kb->inputAction = ReadQuoted(rs);
+                            if (rs >> gp) kb->gamepad = gp != 0;
+                            if (rs >> pt) kb->part = pt;
+                        }
+                    }
                     kb->anchor = (UIAnchor)an; kb->key = (char)k; kb->defaultKey = (char)dk;
                     kb->interactable = inter != 0; kb->focusable = foc != 0;
                 } else if (field == "uimask") {

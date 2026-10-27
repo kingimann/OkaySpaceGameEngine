@@ -279,7 +279,8 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
             {"Const", "0"}, {"GetVar", "x"}, {"SetVar", "x"}, {"AddVar", "x"}, {"HasVar", "x"},
             {"Key", "space"}, {"KeyDown", "space"}, {"KeyUp", "space"},
             {"Timer", "1"}, {"Wait", "1"}, {"Repeat", "1"}, {"DoN", "1"}, {"Chance", "0.5"}, {"Toggle", "x"}, {"Compare", ">"},
-            {"NetGetVar", "x"}, {"NetSetVar", "x"}, {"SteamGetStat", "stat"}, {"SteamSetStat", "stat"}};
+            {"NetGetVar", "x"}, {"NetSetVar", "x"}, {"NetObjRpc", "rpc"}, {"SyncVarSet", "var"}, {"SyncVarGet", "var"},
+            {"OnNetRpc", "rpc"}, {"SteamGetStat", "stat"}, {"SteamSetStat", "stat"}};
         auto it = kDefaults.find(type);
         while (args.size() < n) args.push_back(it != kDefaults.end() ? it->second : std::string());
         (void)err;
@@ -290,7 +291,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (const auto colon = type.find(':'); colon != std::string::npos && colon + 1 < type.size()) {
         const std::string base = type.substr(0, colon);
         if (base == "OnKey" || base == "OnKeyUp" || base == "OnTimer" || base == "OnEvent" || base == "OnAnimEvent" ||
-            base == "OnVarChanged" || base == "OnSceneVarChanged" || base == "OnGlobalVarChanged") {
+            base == "OnNetRpc" || base == "OnVarChanged" || base == "OnSceneVarChanged" || base == "OnGlobalVarChanged") {
             std::vector<std::string> a{type.substr(colon + 1)};
             a.insert(a.end(), args.begin(), args.end());
             return MakeNode(base, a, err);
@@ -306,9 +307,11 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         type == "OnMouseDown" || type == "OnMouseUp" || type == "OnMouseOver" ||
         type == "OnCollisionStay" || type == "OnLateUpdate" || type == "OnTriggerStay" ||
         type == "OnObjectPlaced" || type == "OnObjectRemoved" || type == "OnLogicSignal" ||
-        type == "OnCheatDetected" || type == "OnValidateRpc" || type == "OnValidateHit")
+        type == "OnCheatDetected" || type == "OnValidateRpc" || type == "OnValidateHit" ||
+        type == "OnItemAdded" || type == "OnItemRemoved" || type == "OnInventoryFull" ||
+        type == "OnItemUsed" || type == "OnEquip" || type == "OnCraft")
         return std::make_unique<EventNode>();
-    if (type == "OnEvent") return std::make_unique<CustomEventNode>();
+    if (type == "OnEvent" || type == "OnNetRpc") return std::make_unique<CustomEventNode>();
     // ---- Actions steps (the no-code library) ----
     // The editor writes the encoded steps as one quoted arg; hand-written files may
     // split them into tokens, so join everything back up first.
@@ -495,6 +498,9 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "NetDisconnect") return std::make_unique<NetDisconnectNode>();
     if (type == "NetChat")        return std::make_unique<NetChatNode>();
     if (type == "NetRpc")         { if (!need(1)) return nullptr; return std::make_unique<NetRpcNode>(args[0]); }
+    if (type == "NetObjRpc")      { if (!need(1)) return nullptr; return std::make_unique<NetObjRpcNode>(args[0]); }
+    if (type == "SyncVarSet")     { if (!need(1)) return nullptr; return std::make_unique<SyncVarSetNode>(args[0]); }
+    if (type == "SyncVarGet")     { if (!need(1)) return nullptr; return std::make_unique<SyncVarGetNode>(args[0]); }
     if (type == "NetSpawnOwned")  { if (!need(1)) return nullptr; return std::make_unique<NetSpawnOwnedNode>(args[0]); }
     if (type == "NetDespawn")     return std::make_unique<NetDespawnNode>();
     if (type == "NetReady")       return std::make_unique<NetReadyNode>();

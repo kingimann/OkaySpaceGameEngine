@@ -43,8 +43,14 @@ void DefaultGraph(AnimStateMachine& sm, const Character* body = nullptr);
 /// Time the default graph's stance changes by `sm.stanceTimes`: the crossfades
 /// between standing, crouched and prone states, and how long getting up from
 /// prone (GetUp) and dropping prone (Drop) take. States with other names are
-/// left alone.
+/// left alone. Those pairs can be interrupted from either state.
 void ApplyStanceTimes(AnimStateMachine& sm);
+/// Time the default graph's locomotion crossfades by `sm.crossfades`: idle <->
+/// walk, walk <-> run (and idle <-> run), into the air, and back onto the
+/// ground. Those pairs can be interrupted from either state. Stance changes
+/// are left to ApplyStanceTimes. A saved scene keeps the blends it was saved
+/// with until this table is edited.
+void ApplyCrossfades(AnimStateMachine& sm);
 /// The Animator of a Character body: its base state machine, added with the
 /// default graph when it has none. Null when `go` has no Character, or plays an
 /// imported model's clips (a Model Animator) instead.

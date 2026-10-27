@@ -7,6 +7,7 @@
 #include "okay/Components/Inventory.hpp"
 #include "okay/Components/InventoryPlayer.hpp"
 #include "okay/Components/MeshRenderer.hpp"
+#include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Inventory/InventoryOps.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
 #include "okay/Input/Input.hpp"
@@ -34,6 +35,9 @@ public:
     float interactRange = 2.0f;
     float magnetRadius = 0.0f;        ///< drift toward the player inside this range (0 = off)
     float magnetSpeed = 6.0f;
+    /// Pressing interactKey picks it up in the hands (ProceduralObjectHolding) instead of
+    /// putting it in the bag, when the player can hold objects. While held it isn't collected.
+    bool  holdInHands = false;
 
     void OnTriggerEnter2D(Collider2D* o) override { if (pickupOnTouch && o) GiveTo(o->gameObject); }
     void OnTriggerEnter3D(Collider3D* o) override { if (pickupOnTouch && o) GiveTo(o->gameObject); }
@@ -43,23 +47,34 @@ public:
     /// Put this item into `who`'s Inventory (on it or its root) if `who` is a collector
     /// (collectorTag). Returns how many moved; the pickup is destroyed once it's empty.
     int GiveTo(GameObject* who) {
+        if (Held()) return 0;
         if (!who || (!collectorTag.empty() && who->tag != collectorTag && who->name.find(collectorTag) == std::string::npos)) return 0;
         return Give(who);
     }
 
     void Update(float dt) override {
-        if (m_gone || !gameObject || !gameObject->transform) return;
+        if (m_gone || !gameObject || !gameObject->transform || Held()) return;
         GameObject* player = FindInventoryPlayer(gameObject->scene());
         if (!player || !player->transform) return;
         const Vec3 me = gameObject->transform->Position(), p = player->transform->Position();
         const Vec3 d = p - me;
         const float dist = d.Magnitude();
         if (autoRadius > 0.0f && dist <= autoRadius) { Give(player); return; }
-        if (interactKey && dist <= interactRange && Input::GetKeyDown(interactKey)) { Give(player); return; }
+        if (interactKey && dist <= interactRange && Input::GetKeyDown(interactKey)) {
+            auto* hands = holdInHands ? player->GetComponent<ProceduralObjectHolding>() : nullptr;
+            if (!hands || !hands->Pickup(gameObject)) Give(player);
+            return;
+        }
         if (magnetRadius > 0.0f && dist <= magnetRadius && dist > 0.05f) {
             const float step = magnetSpeed * dt;
             gameObject->transform->SetPosition(step >= dist ? p : me + d * (step / dist));
         }
+    }
+
+    /// Someone is holding it in their hands right now.
+    bool Held() const {
+        const auto* h = gameObject ? gameObject->GetComponent<HoldableObject>() : nullptr;
+        return h && h->Holder();
     }
 
     /// The Inventory on `who`, else on its root.
@@ -101,7 +116,9 @@ private:
         Inventory carried;   // move through InventoryOps: partial fit and one-off items handled once
         carried.slots.push_back(Inventory::Slot{item, count, data});
         const InvResult r = InventoryOps::Transfer(&carried, 0, inv);
+        if (r.moved < count) inv->NotifyFull(item, count - r.moved);
         if (!r.Ok()) return 0;
+        InventoryEvents::Fire(inv->gameObject, "on_item_picked_up", nullptr, {vs::VsValue(item), vs::VsValue((float)r.moved)});
         count -= r.moved;
         if (count <= 0) {
             m_gone = true;

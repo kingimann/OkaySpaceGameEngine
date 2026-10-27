@@ -2237,14 +2237,18 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
             fik->DetectHumanoidBones(scene, root);
             if (!fresh) fik->Start();   // resolve the new names now: it may be running already
             fik->orient = true;   // turn the thigh and shin with the joints, or the skinned leg tears at the knee
-            // The sole's normal in the foot bone's own axes, off the bind pose: a
+            fik->hipLimit = IKJointLimit::Hip(); fik->kneeLimit = IKJointLimit::Knee();
+            // Each sole's normal in its own foot bone's axes, off the bind pose: a
             // Blender / glTF foot points its Y down the foot, so tilting a fixed
-            // local +Y onto the slope stood those feet on their toes.
-            for (const auto& up : scene.Objects())
-                if (up->name == fik->leftFootName && up->IsSelfOrDescendantOf(root)) {
+            // local +Y onto the slope stood those feet on their toes; and a
+            // mirrored rig's right foot isn't the left one's axis.
+            for (const auto& up : scene.Objects()) {
+                if (!up->IsSelfOrDescendantOf(root)) continue;
+                if (up->name == fik->leftFootName)
                     fik->footUpAxis = (up->transform->Rotation().Inverse() * Vec3::Up).Normalized();
-                    break;
-                }
+                else if (up->name == fik->rightFootName)
+                    fik->footUpAxisR = (up->transform->Rotation().Inverse() * Vec3::Up).Normalized();
+            }
             mapped += mapped.empty() ? "foot IK wired" : ", foot IK wired";
         } else if (fik) {
             player->RemoveComponent<FootIK>();   // no legs to plant on this model

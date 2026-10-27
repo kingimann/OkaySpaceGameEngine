@@ -681,6 +681,9 @@ int main() {
             CHECK(foreMinY < handMinY - 0.04f);
             CHECK(handFar < 0.42f);
             CHECK(handFar > 0.15f);
+            // Shirt green, not the part renderer's default white.
+            CHECK(fmr->color.g > fmr->color.r + 0.05f);
+            CHECK(fmr->color.g > fmr->color.b);
         }
 
         hold->Drop();

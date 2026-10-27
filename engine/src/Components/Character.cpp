@@ -1141,8 +1141,15 @@ void PaintFpForearm(GameObject* fore, GameObject* srcPart, const Quat& armInCam)
     if (!fore) return;
     auto* mr = fore->GetComponent<MeshRenderer>();
     if (!mr) return;
+    // The body part keeps its shirt on the face colors. The renderer's own
+    // color stays white, and a white tint here drew a pale wedge.
     Color col = Color::FromBytes(60, 95, 75);
-    if (srcPart) if (auto* src = srcPart->GetComponent<MeshRenderer>()) col = src->color;
+    if (srcPart) if (auto* src = srcPart->GetComponent<MeshRenderer>()) {
+        if (!src->mesh.triColors.empty()) col = src->mesh.triColors[0];
+        else if (src->color.r + src->color.g + src->color.b > 0.04f
+                 && src->color.r + src->color.g + src->color.b < 2.9f)
+            col = src->color;
+    }
     Vec3 down = armInCam.Conjugate() * Vec3{0.0f, -1.0f, -0.16f};
     if (down.SqrMagnitude() < 1e-8f) down = Vec3{0.0f, -1.0f, 0.0f};
     down = down.Normalized();
@@ -1601,7 +1608,9 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     // Every vertex, not the single extreme. A nearer corner projects further
     // than a far one, so the shift is the tightest bound across the cube.
     const float wantNx = side * (0.72f + 0.55f * slide - 0.40f * snap + 0.04f * bobC);
-    const float wantNy = -0.90f - 0.45f * slide + 0.28f * snap + 0.055f * bobS;
+    // Low in the view, with room under the brick for the forearm to reach the
+    // bottom edge. Pinning the hand itself on the bottom hid that arm.
+    const float wantNy = -0.50f - 0.45f * slide + 0.28f * snap + 0.055f * bobS;
     float shiftX = side > 0.0f ? 1.0e9f : -1.0e9f;
     float shiftY = -1.0e9f;
     bool any = false;
@@ -1760,7 +1769,9 @@ void Character::FinishTwoHands(Camera* cam, float depth, float snap, float bobS,
     // Tilt the top toward the lens. A face square to the camera sits in shadow.
     Quat irot = Quat::Euler(-36.0f, 12.0f, 0.0f);
     if (settings) irot = Quat::Euler(settings->itemRotation) * irot;
-    Vec3 camOff{0.0f, -0.16f - 0.22f * slide + 0.08f * snap + 0.02f * bobS, -std::max(0.36f, depth + 0.02f)};
+    // Low enough to sit in the hands, high enough that the crate stays in frame
+    // while the forearms run off the bottom.
+    Vec3 camOff{0.0f, -0.10f - 0.22f * slide + 0.08f * snap + 0.02f * bobS, -std::max(0.36f, depth + 0.02f)};
     camOff.x += 0.02f * bobC;
     if (settings) camOff = camOff + settings->itemOffset;
     camOff = lag * camOff;

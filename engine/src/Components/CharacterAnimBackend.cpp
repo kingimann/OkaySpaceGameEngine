@@ -293,36 +293,50 @@ void CharacterAnimBackend::BeginFrame(AnimStateMachine& sm) {
     Character* ch = Body();
     if (!ch) return;
     const int a = ch->anim;
-    if (a != m_published) {   // written from outside: go to that state and stay
-        if (a == 0) m_off = true;
-        else {
+    // The value already sitting on the body (default idle, or the controller's
+    // pick on the frames before this machine has published) is not an outside
+    // write. Treating it as one forces a looping state and never lets go, so
+    // speed and stance stop driving locomotion.
+    const bool startup = m_published < 0;
+    if (startup || a != m_published) {
+        if (a == 0) {
+            m_off = true;
+            m_forced = false;
+        } else {
             const AnimStateMachine::State* to = nullptr;
             for (const auto& st : sm.states) if (StateNumber(st.name) == a) { to = &st; break; }
             if (to) {
                 m_off = false;
-                m_forced = true;
+                if (!startup) {
+                    m_forced = true;
+                    // A looping gesture (and a blend tree) stays until anim is written
+                    // again. A one-shot lets go when the clip finishes.
+                    m_forcedLoops = to->loop || to->blendTree;
+                }
                 if (to->name != sm.Current()) {
                     // The graph's own blend into that state, if it has one.
-                    float blend = 0.2f;
-                    const AnimStateMachine::State* cur = nullptr;
-                    for (const auto& st : sm.states) if (st.name == sm.Current()) cur = &st;
-                    bool found = false;
-                    if (cur) for (const auto& tr : cur->transitions) if (tr.to == to->name) { blend = tr.blend; found = true; break; }
-                    if (!found) for (const auto& tr : sm.anyState) if (tr.to == to->name) { blend = tr.blend; break; }
-                    sm.GoTo(to->name, m_published < 0 ? 0.0f : blend);
+                    // Startup snaps: nothing has been shown yet.
+                    float blend = 0.0f;
+                    if (!startup) {
+                        blend = 0.2f;
+                        const AnimStateMachine::State* cur = nullptr;
+                        for (const auto& st : sm.states) if (st.name == sm.Current()) cur = &st;
+                        bool found = false;
+                        if (cur) for (const auto& tr : cur->transitions) if (tr.to == to->name) { blend = tr.blend; found = true; break; }
+                        if (!found) for (const auto& tr : sm.anyState) if (tr.to == to->name) { blend = tr.blend; break; }
+                    }
+                    sm.GoTo(to->name, blend);
                 }
             }
         }
         m_published = a;
-    } else if (m_moved) {
+    } else if (m_forced && !m_forcedLoops && ClipFinished()) {
         m_forced = false;
     }
-    m_moved = false;
     sm.hold = m_forced || ch->AnimHeld();
 }
 
 void CharacterAnimBackend::Move(const Movement& m) {
-    m_moved = true;
     if (!m_sm) return;
     m_sm->SetFloat("speed", m.speed);
     m_sm->SetBool("run", m.run);
@@ -331,6 +345,9 @@ void CharacterAnimBackend::Move(const Movement& m) {
     m_sm->SetFloat("stance", m.stance);
     m_sm->SetFloat("airTime", m.airTime);
     m_sm->SetFloat("verticalSpeed", m.verticalSpeed);
+    // Declared or not: a swim clip the animator adds can transition on this.
+    // Until that clip exists the graph stays on idle / walk (airTime stays 0).
+    m_sm->SetBool("swim", m.swim);
 }
 
 void CharacterAnimBackend::Gait(float x, float z, float speed) {
@@ -338,6 +355,24 @@ void CharacterAnimBackend::Gait(float x, float z, float speed) {
     m_sm->SetFloat("gaitX", x);
     m_sm->SetFloat("gaitZ", z);
     m_sm->SetFloat("gaitSpeed", speed);
+}
+
+bool CharacterAnimBackend::AnimatorOn() const {
+    return m_machine && m_machine->enabled;
+}
+
+void CharacterAnimBackend::ResumeFrom(const std::vector<Vec3>& pose, const Vec3& root, float seconds) {
+    if (pose.empty()) return;
+    // This frame still shows the built-in pose. The next Advance eases into the clip.
+    m_fromPose = pose;
+    m_fromRoot = root;
+    m_fromLive = false;
+    m_fadeT = 0.0f;
+    m_fadeDur = seconds > 1e-3f ? seconds : 0.0f;
+    m_pose = pose;
+    m_root = root;
+    m_have = true;
+    m_final = true;
 }
 
 bool CharacterAnimBackend::Live() const {

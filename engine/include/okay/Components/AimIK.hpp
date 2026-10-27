@@ -29,7 +29,7 @@ namespace okay {
 
 class AimIK : public Component {
 public:
-    int ExecutionOrder() const override { return 100; }   // after animation
+    int ExecutionOrder() const override { return 110; }   // last: aims from the final body pose
     Transform* bone = nullptr;         ///< the bone to aim (defaults to this object's transform)
     Transform* targetObject = nullptr;
     std::string boneName;              ///< editor/serialized: resolve `bone` by object name at Start

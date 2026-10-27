@@ -25,6 +25,7 @@
 #include "okay/Components/PlayerView.hpp"
 #include "okay/Components/DeathLock.hpp"
 #include "okay/Components/DodgeAction.hpp"
+#include "okay/Components/Water.hpp"
 
 namespace okay {
 
@@ -44,6 +45,7 @@ public:
     /// AnimStateMachine at 0, IK at 100), so they pose this frame's movement and
     /// state changes, not last frame's.
     int ExecutionOrder() const override { return -10; }
+    bool IgnoresBuoyancy() const override { return true; }
     // ---- Movement ----
     float walkSpeed = 4.5f;
     float runSpeed  = 8.0f;
@@ -191,6 +193,11 @@ public:
     /// spawn point (fell off the map / through a floor with no collider).
     /// Set to 0 to disable.
     float fallResetY = -100.0f;
+    float swimSpeed = 2.2f;
+    float swimUpSpeed = 2.4f;
+    float swimDownSpeed = 2.2f;
+    bool  IsSwimming() const { return m_swimming; }
+    bool  IsInWater() const { return m_inWater; }
     /// Max step height the controller climbs automatically (stairs/curbs). 0 = off.
     float stepOffset = 0.35f;
     /// Steepest terrain slope (degrees) the player can stand on / climb; on
@@ -207,7 +214,10 @@ public:
         if (!transform) return;
         // Fell out of the world? Teleport home instead of falling forever (a
         // floor without a collider, a hole in the map). fallResetY = 0 disables.
-        if (m_haveSpawn && fallResetY != 0.0f && transform->Position().y < fallResetY) {
+        // Water holds you, so a deep lake is not a fall off the map.
+        const bool inWater = gameObject && gameObject->scene() &&
+            Water::ProbeAt(gameObject->scene(), transform->Position(), 1.8f).inWater;
+        if (m_haveSpawn && fallResetY != 0.0f && transform->Position().y < fallResetY && !inWater) {
             transform->SetPosition(m_spawn);
             if (auto* frb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr)
                 frb->velocity = Vec3{0, 0, 0};
@@ -307,12 +317,26 @@ public:
         bool moving = len > 0.01f;
         if (moving) { dir.x /= len; dir.z /= len; }
 
-        // Stance (crouch / prone) + lean (Q/E peek) + run (no sprint while crouched/prone).
-        UpdateStance(in, dt);
+        // Waist-deep water is a swim. Shallower is wading, so the shore still walks out.
+        {
+            const Water::Probe wp = Water::ProbeAt(gameObject ? gameObject->scene() : nullptr, transform->Position(), 1.8f);
+            m_inWater = wp.inWater;
+            m_waterY = wp.surfaceY;
+            m_swimming = wp.inWater && wp.feetDepth >= (m_swimming ? 0.70f : 0.95f);
+        }
+        if (m_swimming) {
+            m_wantStance = m_padWant = Stance::Stand;
+            PlayerInput dry = in;
+            dry.held &= ~(PlayerInput::Crouch | PlayerInput::Prone | PlayerInput::StanceButton);
+            dry.pressed &= ~(PlayerInput::Crouch | PlayerInput::Prone | PlayerInput::StanceButton);
+            UpdateStance(dry, dt);
+        } else {
+            UpdateStance(in, dt);
+        }
         UpdateLean(in, dt);
-        bool running = m_stance == Stance::Stand && moving && IsRunHeld(in) && !m_aim;
-        // The speed cap follows the body from one stance's to the next.
-        float speed = StanceValue(m_stanceLevel, running ? runSpeed : walkSpeed, crouchSpeed, proneSpeed);
+        bool running = !m_swimming && m_stance == Stance::Stand && moving && IsRunHeld(in) && !m_aim;
+        float speed = m_swimming ? swimSpeed
+                    : StanceValue(m_stanceLevel, running ? runSpeed : walkSpeed, crouchSpeed, proneSpeed);
         speed *= MoveSpeedScale(gameObject);   // heavy load / over-encumbered (see MoveSpeed.hpp)
 
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
@@ -333,8 +357,9 @@ public:
         // enables double (or more) jumps.
         if (m_groundContact > 0.0f || terrainGround) m_jumpsUsed = 0;
         m_grounded = grounded;
+        if (m_swimming) m_slideT = 0.0f;
         // Slide: crouch while sprinting on the ground -> a burst that decays to a crouch.
-        if (canSlide && rb && grounded && m_wasRunning && m_slideT <= 0.0f &&
+        if (!m_swimming && canSlide && rb && grounded && m_wasRunning && m_slideT <= 0.0f &&
             m_stance == Stance::Crouch && m_prevStance == Stance::Stand) {
             m_slideT = slideTime;
             m_slideDir = moving ? dir : (transform->localRotation * Vec3{0, 0, -1});
@@ -355,7 +380,7 @@ public:
             // stops have weight; reduced authority in the air.
             Vec3 tgt{dir.x * speed, 0.0f, dir.z * speed};
             Vec3 cur{rb->velocity.x, 0.0f, rb->velocity.z};
-            float rate = (moving ? acceleration : deceleration) * (grounded ? 1.0f : airControl);
+            float rate = (moving ? acceleration : deceleration) * ((grounded || m_swimming) ? 1.0f : airControl);
             Vec3 dv{tgt.x - cur.x, 0.0f, tgt.z - cur.z};
             float dl = std::sqrt(dv.x * dv.x + dv.z * dv.z);
             float step = rate * dt;
@@ -380,7 +405,7 @@ public:
                 }
             }
             // Jump: first jump needs ground/coyote; extra jumps (double-jump) up to maxJumps.
-            if (canJump && m_jumpBuf > 0.0f && m_stance == Stance::Stand) {   // no jumping while crouched/prone
+            if (!m_swimming && canJump && m_jumpBuf > 0.0f && m_stance == Stance::Stand) {   // no jumping while crouched/prone/swimming
                 bool firstOk = (m_jumpsUsed == 0) && (grounded || m_coyote > 0.0f);
                 bool extraOk = (m_jumpsUsed >= 1) && (m_jumpsUsed < Mathf::Max(1, maxJumps));
                 if (firstOk || extraOk) {
@@ -398,9 +423,27 @@ public:
             if (gameObject && gameObject->scene())
                 ResolvePlayerBody(*gameObject->scene(), gameObject);   // no clipping
         }
+        // Chest rides the surface unless Space / crouch is driving it. Once the
+        // bank is under the feet, don't pull the body back down into it.
+        if (rb && m_swimming) {
+            if (!m_heldGravity) { m_savedGravity = rb->gravityScale; m_heldGravity = true; }
+            rb->gravityScale = 0.0f;
+            const bool floorUnder = m_groundContact > 0.0f || terrainGround;
+            const bool dive = in.Held(PlayerInput::Crouch) || in.Held(PlayerInput::Prone);
+            const bool climb = in.Held(PlayerInput::Jump);
+            if (floorUnder && !dive && !climb) {
+                if (rb->velocity.y < 0.0f) rb->velocity.y = 0.0f;
+            } else {
+                SwimVertical(*rb, transform->Position().y, m_waterY,
+                             climb, dive, swimUpSpeed, swimDownSpeed, dt);
+            }
+        } else if (rb && m_heldGravity) {
+            rb->gravityScale = m_savedGravity;
+            m_heldGravity = false;
+        }
         // Slope limit: on terrain steeper than slopeLimit, cancel the uphill
         // velocity component and accelerate a downhill slide.
-        if (rb && (grounded || rb->groundedOnTerrain) && slopeLimit > 0.0f && rb->groundNormal.y < std::cos(slopeLimit * Mathf::Deg2Rad)) {
+        if (!m_swimming && rb && (grounded || rb->groundedOnTerrain) && slopeLimit > 0.0f && rb->groundNormal.y < std::cos(slopeLimit * Mathf::Deg2Rad)) {
             Vec3 n = rb->groundNormal;
             float hl = std::sqrt(n.x * n.x + n.z * n.z);
             if (hl > 1e-4f) {
@@ -411,10 +454,10 @@ public:
                 rb->velocity.z += dh.z * 18.0f * dt;
             }
         }
-        // Stairs: a grounded body blocked by a LOW obstacle steps up onto it
-        // instead of grinding against the face (stepOffset = max step height).
-        if (rb && grounded && moving && gameObject && gameObject->scene())
-            TryStepUp(*gameObject->scene(), gameObject, rb, dir, grounded, moving, stepOffset);
+        // Stairs, and the lip where a shore leaves the water. Open water has
+        // nothing for the probe to hit, so a swimmer in the deep does not step.
+        if (rb && moving && gameObject && gameObject->scene() && (grounded || m_swimming))
+            TryStepUp(*gameObject->scene(), gameObject, rb, dir, grounded || m_swimming, moving, stepOffset);
         // Moving platforms: ride whatever we stand on (elevators, movers).
         if (gameObject && gameObject->scene())
             RideMovingPlatform(*gameObject->scene(), gameObject, m_platRide, grounded);
@@ -460,8 +503,13 @@ public:
         {
             float impact = 0.0f;
             m_landing.SetDt(dt);
-            m_landed = m_landing.Step(grounded, rb ? rb->velocity.y : 0.0f, impact);
-            if (m_landed) { m_shake = Mathf::Min(landShake, impact * 0.02f); if (onLand) onLand(impact); }
+            if (m_inWater) {
+                m_landing.Reset();
+                m_landed = false;
+            } else {
+                m_landed = m_landing.Step(grounded, rb ? rb->velocity.y : 0.0f, impact);
+                if (m_landed) { m_shake = Mathf::Min(landShake, impact * 0.02f); if (onLand) onLand(impact); }
+            }
             if (grounded && hSpeed > 0.3f && m_slideT <= 0.0f) {
                 float stride = strideLength * Mathf::Max(0.6f, Mathf::Sqrt(Mathf::Max(0.1f, hSpeed / Mathf::Max(0.1f, walkSpeed))));
                 m_stepDist += hSpeed * dt;
@@ -498,12 +546,13 @@ public:
                 Character::Locomotion lo;
                 lo.velocity = rb ? rb->velocity : (moving ? dir * speed : Vec3{0, 0, 0});
                 lo.facing   = transform->localRotation * Vec3{0, 0, -1};
-                lo.onGround = !rb || m_groundContact > 0.0f || terrainGround;
-                lo.jumped   = m_jumped;
-                lo.crouch   = m_stance == Stance::Crouch;
-                lo.prone    = m_stance == Stance::Prone;
-                lo.stance   = m_stanceLevel;
-                lo.sprint   = running;
+                lo.swim     = m_swimming;
+                lo.onGround = m_swimming || !rb || m_groundContact > 0.0f || terrainGround;
+                lo.jumped   = m_swimming ? false : m_jumped;
+                lo.crouch   = m_swimming ? false : m_stance == Stance::Crouch;
+                lo.prone    = m_swimming ? false : m_stance == Stance::Prone;
+                lo.stance   = m_swimming ? 0.0f : m_stanceLevel;
+                lo.sprint   = m_swimming ? false : running;
                 lo.walkSpeed = walkSpeed;
                 lo.dt = dt;
                 ch->DriveLocomotion(lo);
@@ -537,11 +586,15 @@ public:
             }
         if (driveStateMachine) {
             AnimLink::Frame f;
-            f.speed = hSpeed; f.verticalSpeed = rb ? rb->velocity.y : 0.0f; f.grounded = grounded;
+            f.speed = hSpeed; f.verticalSpeed = rb ? rb->velocity.y : 0.0f;
+            f.grounded = m_swimming ? true : grounded;
             if (rb) f.velocity = rb->velocity;
-            f.crouch = m_stance == Stance::Crouch; f.prone = m_stance == Stance::Prone; f.stance = m_stanceLevel;
-            f.sprint = running; f.slide = m_slideT > 0.0f; f.aim = m_aim;
-            f.jumped = m_jumped; f.landed = m_landed;
+            f.crouch = m_swimming ? false : m_stance == Stance::Crouch;
+            f.prone = m_swimming ? false : m_stance == Stance::Prone;
+            f.stance = m_swimming ? 0.0f : m_stanceLevel;
+            f.sprint = m_swimming ? false : running; f.slide = m_slideT > 0.0f; f.aim = m_aim;
+            f.jumped = m_swimming ? false : m_jumped; f.landed = m_inWater ? false : m_landed;
+            f.swim = m_swimming;
             m_anim.Apply(gameObject, f);
         }
         m_jumped = false;
@@ -691,6 +744,10 @@ private:
     Landing m_landing;
     AnimLink m_anim;
     bool  m_aim = false, m_grounded = true, m_wasRunning = false, m_jumped = false, m_landed = false, m_running = false;
+    bool  m_swimming = false, m_inWater = false;
+    float m_waterY = 0.0f;
+    float m_savedGravity = 1.0f;
+    bool  m_heldGravity = false;
     float m_aimT = 0.0f, m_mouseIdle = 0.0f, m_shake = 0.0f, m_stepDist = 0.0f, m_lastSpeed = 0.0f, m_lastVy = 0.0f;
     Stance m_prevStance = Stance::Stand;
     float m_slideT = 0.0f;

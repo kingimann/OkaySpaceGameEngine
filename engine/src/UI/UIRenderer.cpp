@@ -690,7 +690,29 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
                                    (std::uint8_t)(bar.b * 255), (std::uint8_t)(bar.a * 255 * op));
             p.FillRect(&thumb);
         };
-        if (sv) {
+        if (sv && sv->barStyle != 0) {
+            // grok/ui-controls: thin, or hidden until the view is scrolling.
+            if (sv->BarVisible()) {
+                auto drawThin = [&](bool vertical, float frac, float t) {
+                    const int barW = sv->barStyle == 1 ? 3 : 4;
+                    Rect track = vertical ? Rect{box.x + box.w - barW - 2, box.y + 2, barW, box.h - 4}
+                                          : Rect{box.x + 2, box.y + box.h - barW - 2, box.w - 4, barW};
+                    p.SetDrawColor(255, 255, 255, 22);
+                    p.FillRect(&track);
+                    const int len = vertical ? track.h : track.w;
+                    const int thumbL = (int)(len * (frac < 1.0f ? frac : 1.0f));
+                    const int at = (int)((len - thumbL) * Mathf::Clamp01(t));
+                    Rect thumb = vertical ? Rect{track.x, track.y + at, barW, thumbL} : Rect{track.x + at, track.y, thumbL, barW};
+                    p.SetDrawColor((std::uint8_t)(bar.r * 255), (std::uint8_t)(bar.g * 255),
+                                           (std::uint8_t)(bar.b * 255), (std::uint8_t)(bar.a * 255 * op));
+                    p.FillRect(&thumb);
+                };
+                if (sv->ScrollMax() > 0.0f)
+                    drawThin(true, sv->size.y / (sv->contentHeight > 1.0f ? sv->contentHeight : 1.0f), sv->Fraction());
+                if (sv->ScrollMaxX() > 0.0f)
+                    drawThin(false, sv->size.x / (sv->contentWidth > 1.0f ? sv->contentWidth : 1.0f), sv->FractionX());
+            }
+        } else if (sv) {
             if (sv->ScrollMax() > 0.0f)
                 drawBar(true, sv->size.y / (sv->contentHeight > 1.0f ? sv->contentHeight : 1.0f), sv->Fraction());
             if (sv->ScrollMaxX() > 0.0f)
@@ -709,14 +731,68 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         Rect bg{(int)o.x, (int)o.y, (int)pb->size.x, (int)pb->size.y};
         FillUIShape(p, bg, pb->shape, pb->cornerRadius,
                     pb->background, pb->background, false, false, op);
-        float pfox, pfoy, pfw, pfh; pb->FillRect(pb->size.x, pb->size.y, pfox, pfoy, pfw, pfh);
-        Rect fl{(int)(o.x + pfox), (int)(o.y + pfoy), (int)pfw, (int)pfh};
         bool horiz = pb->fillDir == UIProgressBar::FillDir::LeftRight ||
                      pb->fillDir == UIProgressBar::FillDir::RightLeft;
-        FillUIShape(p, fl, pb->shape, pb->cornerRadius,
-                    pb->fill, pb->fillEnd, pb->gradientFill, horiz, op);
-        if (pb->showPercent) {
-            char pct[8]; std::snprintf(pct, sizeof(pct), "%d%%", (int)(pb->Fraction() * 100.0f + 0.5f));
+        // grok/ui-options: segments, a delayed damage trail, and a color that follows the value.
+        // All three off is the historical single fill (pixels unchanged).
+        auto paintFill = [&](float frac, const Color& c0, const Color& c1, bool grad) {
+            if (pb->segments < 2) {
+                float pfox, pfoy, pfw, pfh;
+                pb->FillRectAt(frac, pb->size.x, pb->size.y, pfox, pfoy, pfw, pfh);
+                Rect fl{(int)(o.x + pfox), (int)(o.y + pfoy), (int)pfw, (int)pfh};
+                FillUIShape(p, fl, pb->shape, pb->cornerRadius, c0, c1, grad, horiz, op);
+                return;
+            }
+            int n = pb->segments; if (n > 40) n = 40;
+            float gap = pb->segmentGap < 0.0f ? 0.0f : pb->segmentGap;
+            float span = horiz ? pb->size.x : pb->size.y;
+            float cell = (span - gap * (float)(n - 1)) / (float)n;
+            if (cell < 1.0f) cell = 1.0f;
+            const bool fromEnd = pb->fillDir == UIProgressBar::FillDir::RightLeft ||
+                                 pb->fillDir == UIProgressBar::FillDir::TopBottom;
+            for (int i = 0; i < n; ++i) {
+                float a = (float)i / (float)n, b = (float)(i + 1) / (float)n;
+                float sf = frac <= a ? 0.0f : (frac >= b ? 1.0f : (frac - a) / (b - a));
+                if (sf <= 0.0f) continue;
+                int slot = fromEnd ? (n - 1 - i) : i;
+                float along = slot * (cell + gap);
+                Rect fl;
+                if (horiz) {
+                    float fw = cell * sf;
+                    float x = pb->fillDir == UIProgressBar::FillDir::RightLeft ? (along + cell - fw) : along;
+                    fl = {(int)(o.x + x), (int)o.y, (int)fw, (int)pb->size.y};
+                } else if (pb->fillDir == UIProgressBar::FillDir::BottomTop) {
+                    float fh = cell * sf;
+                    float base = pb->size.y - along - cell;
+                    fl = {(int)o.x, (int)(o.y + base + cell - fh), (int)pb->size.x, (int)fh};
+                } else {
+                    float fh = cell * sf;
+                    fl = {(int)o.x, (int)(o.y + along), (int)pb->size.x, (int)fh};
+                }
+                if (fl.w > 0 && fl.h > 0)
+                    FillUIShape(p, fl, pb->shape, pb->cornerRadius, c0, c1, grad, horiz, op);
+            }
+        };
+        if (pb->segments < 2 && pb->trailDelay <= 0.0f && !pb->colorByValue) {
+            float pfox, pfoy, pfw, pfh; pb->FillRect(pb->size.x, pb->size.y, pfox, pfoy, pfw, pfh);
+            Rect fl{(int)(o.x + pfox), (int)(o.y + pfoy), (int)pfw, (int)pfh};
+            FillUIShape(p, fl, pb->shape, pb->cornerRadius,
+                        pb->fill, pb->fillEnd, pb->gradientFill, horiz, op);
+        } else {
+            if (pb->trailDelay > 0.0f && pb->TrailFraction() > pb->Fraction() + 0.001f)
+                paintFill(pb->TrailFraction(), pb->trailColor, pb->trailColor, false);
+            Color c0 = pb->colorByValue ? pb->ValueColor() : pb->fill;
+            Color c1 = (pb->gradientFill && !pb->colorByValue) ? pb->fillEnd : c0;
+            paintFill(pb->Fraction(), c0, c1, pb->gradientFill && !pb->colorByValue);
+        }
+        if (pb->showPercent || !pb->textFormat.empty()) {
+            char pct[48];
+            if (pb->textFormat.empty())
+                std::snprintf(pct, sizeof(pct), "%d%%", (int)(pb->Fraction() * 100.0f + 0.5f));
+            else {
+                std::string shown = pb->FormatText();
+                std::snprintf(pct, sizeof(pct), "%s", shown.c_str());
+            }
             float px = 2.0f;
             float tw = UITextW(pct, px);
             RGBA tc{(std::uint8_t)(pb->textColor.r * 255), (std::uint8_t)(pb->textColor.g * 255),
@@ -1103,13 +1179,19 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
             int kw = (int)(sl->size.y * sl->knobSize);
             kn = {(int)(o.x + sl->size.x * f) - kw / 2, (int)o.y - 2, kw, (int)sl->size.y + 4};
         }
+        // grok/ui-options: a fill gradient only when asked; otherwise the old solid fill.
         FillUIShape(p, fl, sl->trackShape, sl->cornerRadius,
-                    sl->fill, sl->fill, false, false, op);
-        // The handle: a circle when roundKnob, else a rounded tab.
-        FillUIShape(p, kn, sl->roundKnob ? UIShape::Circle : UIShape::Rounded,
+                    sl->fill, sl->fillGradient ? sl->fillEnd : sl->fill,
+                    sl->fillGradient, sl->fillGradient && !sl->vertical, op);
+        // The handle: a circle when roundKnob, else a rounded tab. knobShape overrides that.
+        UIShape ks = sl->roundKnob ? UIShape::Circle : UIShape::Rounded;
+        if (sl->knobShape >= 0 && sl->knobShape < kUIShapeCount) ks = (UIShape)sl->knobShape;
+        FillUIShape(p, kn, ks,
                     sl->cornerRadius, sl->knob, sl->knob, false, false, op);
         if (sl->showValue) {
-            char vbuf[16]; std::snprintf(vbuf, sizeof(vbuf), "%.2f", sl->value);
+            char vbuf[32];
+            if (sl->valueFormat.empty()) std::snprintf(vbuf, sizeof(vbuf), "%.2f", sl->value);
+            else std::snprintf(vbuf, sizeof(vbuf), "%s", sl->FormatValue().c_str());
             float px = 2.0f;
             RGBA tc{(std::uint8_t)(sl->textColor.r * 255), (std::uint8_t)(sl->textColor.g * 255),
                          (std::uint8_t)(sl->textColor.b * 255), (std::uint8_t)(sl->textColor.a * 255 * op)};
@@ -1290,9 +1372,10 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         }
         enterScroll(up.get(), o);
         Rect r{(int)o.x, (int)o.y, (int)bsz.x, (int)bsz.y};
-        if (btn->hoverScale != 1.0f && (btn->IsHovered() || btn->IsFocused())) {
-            int gx = (int)(bsz.x * (btn->hoverScale - 1.0f) * 0.5f);
-            int gy = (int)(bsz.y * (btn->hoverScale - 1.0f) * 0.5f);
+        float sc = btn->DisplayScale();
+        if (sc != 1.0f) {
+            int gx = (int)(bsz.x * (sc - 1.0f) * 0.5f);
+            int gy = (int)(bsz.y * (sc - 1.0f) * 0.5f);
             r.x -= gx; r.y -= gy; r.w += 2 * gx; r.h += 2 * gy;
         }
         if (btn->shadow) {                              // drop shadow behind (same shape)
@@ -1443,14 +1526,52 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         DrawUIText(p, dd->HeaderText(), o.x + 8.0f, ty, px, htc);
         if (dd->open) {
             float top = o.y + dd->size.y;
-            for (int i = 0; i < (int)dd->options.size(); ++i) {
-                Rect orow{(int)o.x, (int)(top + i * dd->size.y), (int)dd->size.x, (int)dd->size.y};
-                const Color& rc = (i == dd->HoveredOption()) ? dd->hoverColor : dd->listColor;
-                p.SetDrawColor((std::uint8_t)(rc.r * 255), (std::uint8_t)(rc.g * 255),
-                                       (std::uint8_t)(rc.b * 255), (std::uint8_t)(rc.a * 255));
-                p.FillRect(&orow);
-                DrawUIText(p, dd->options[i], o.x + 8.0f,
-                         orow.y + (dd->size.y - Font8x8::Height * px) * 0.5f, px, tc);
+            if (!dd->ListExtras()) {
+                for (int i = 0; i < (int)dd->options.size(); ++i) {
+                    Rect orow{(int)o.x, (int)(top + i * dd->size.y), (int)dd->size.x, (int)dd->size.y};
+                    const Color& rc = (i == dd->HoveredOption()) ? dd->hoverColor : dd->listColor;
+                    p.SetDrawColor((std::uint8_t)(rc.r * 255), (std::uint8_t)(rc.g * 255),
+                                           (std::uint8_t)(rc.b * 255), (std::uint8_t)(rc.a * 255));
+                    p.FillRect(&orow);
+                    DrawUIText(p, dd->options[i], o.x + 8.0f,
+                             orow.y + (dd->size.y - Font8x8::Height * px) * 0.5f, px, tc);
+                }
+            } else {
+                // grok/ui-controls: optional search row, a cap on visible rows, and a glyph per option.
+                int row = 0;
+                auto rowBox = [&](int r) {
+                    return Rect{(int)o.x, (int)(top + r * dd->size.y), (int)dd->size.x, (int)dd->size.y};
+                };
+                if (dd->searchable) {
+                    Rect orow = rowBox(row++);
+                    const Color& rc = (dd->HoveredOption() == UIDropdown::kSearchRow) ? dd->hoverColor : dd->listColor;
+                    p.SetDrawColor((std::uint8_t)(rc.r * 255), (std::uint8_t)(rc.g * 255),
+                                           (std::uint8_t)(rc.b * 255), (std::uint8_t)(rc.a * 255));
+                    p.FillRect(&orow);
+                    const std::string& q = dd->Filter();
+                    RGBA sc = q.empty() ? RGBA{150, 152, 158, 255} : tc;
+                    DrawUIText(p, q.empty() ? std::string("Search...") : q, o.x + 8.0f,
+                             orow.y + (dd->size.y - Font8x8::Height * px) * 0.5f, px, sc);
+                }
+                const int cap = dd->maxVisible > 0 ? dd->maxVisible : 1000000;
+                int shown = 0;
+                for (int i = 0; i < (int)dd->options.size() && shown < cap; ++i) {
+                    if (dd->ShownSlot(i) < 0) continue;
+                    Rect orow = rowBox(row++);
+                    ++shown;
+                    const Color& rc = (i == dd->HoveredOption()) ? dd->hoverColor : dd->listColor;
+                    p.SetDrawColor((std::uint8_t)(rc.r * 255), (std::uint8_t)(rc.g * 255),
+                                           (std::uint8_t)(rc.b * 255), (std::uint8_t)(rc.a * 255));
+                    p.FillRect(&orow);
+                    const std::string& glyph = dd->IconOf(i);
+                    float tx = o.x + 8.0f;
+                    float ty = orow.y + (dd->size.y - Font8x8::Height * px) * 0.5f;
+                    if (!glyph.empty()) {
+                        DrawUIText(p, glyph, tx, ty, px, tc);
+                        tx += UITextW(glyph, px) + 6.0f;
+                    }
+                    DrawUIText(p, dd->options[i], tx, ty, px, tc);
+                }
             }
         }
         if (!dd->interactable) { Rect dr{(int)o.x, (int)o.y, (int)dd->size.x, (int)dd->size.y};
@@ -1473,19 +1594,47 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         }
         float px = 2.0f, pad = 6.0f;
         bool empty = in->text.empty();
-        std::string full = empty ? in->placeholder : in->DisplayText();
         const Color& txc = empty ? in->placeholderColor : in->textColor;
-        // Horizontal scroll: show the tail that fits so the caret stays visible.
-        // Horizontal scroll: drop leading characters until the tail fits.
-        std::string shown = full;
-        while (shown.size() > 1 && UITextW(shown, px) > in->size.x - pad * 2) shown.erase(0, 1);
-        float ty = o.y + (in->size.y - Font8x8::Height * px) * 0.5f;
         RGBA tc{(std::uint8_t)(txc.r * 255), (std::uint8_t)(txc.g * 255), (std::uint8_t)(txc.b * 255), (std::uint8_t)(txc.a * 255)};
-        DrawUIText(p, shown, o.x + pad, ty, px, tc);
-        if (in->focused && in->CaretVisible()) {        // blinking caret after visible text
-            int cx = (int)(o.x + pad + UITextW(shown, px));
-            p.SetDrawColor(255, 255, 255, 220);
-            p.DrawLine(cx, (int)ty, cx, (int)(ty + Font8x8::Height * px));
+        if (!in->multiline) {
+            std::string full = empty ? in->placeholder : in->DisplayText();
+            // Horizontal scroll: show the tail that fits so the caret stays visible.
+            // Horizontal scroll: drop leading characters until the tail fits.
+            std::string shown = full;
+            while (shown.size() > 1 && UITextW(shown, px) > in->size.x - pad * 2) shown.erase(0, 1);
+            float ty = o.y + (in->size.y - Font8x8::Height * px) * 0.5f;
+            DrawUIText(p, shown, o.x + pad, ty, px, tc);
+            if (in->focused && in->CaretVisible()) {        // blinking caret after visible text
+                int cx = (int)(o.x + pad + UITextW(shown, px));
+                p.SetDrawColor(255, 255, 255, 220);
+                p.DrawLine(cx, (int)ty, cx, (int)(ty + Font8x8::Height * px));
+            }
+        } else {
+            // grok/ui-controls: stack lines. Enter inserted the newlines.
+            const std::string src = empty ? in->placeholder : in->DisplayText();
+            const float lineH = Font8x8::Height * px;
+            float y = o.y + pad;
+            std::string line;
+            float lastW = 0.0f, lastY = y;
+            auto emit = [&]() {
+                std::string shown = line;
+                while (shown.size() > 1 && UITextW(shown, px) > in->size.x - pad * 2) shown.erase(0, 1);
+                if (y + lineH <= o.y + in->size.y + 1.0f)
+                    DrawUIText(p, shown, o.x + pad, y, px, tc);
+                lastW = UITextW(shown, px);
+                lastY = y;
+                y += lineH;
+            };
+            for (char c : src) {
+                if (c == '\n') { emit(); line.clear(); }
+                else line.push_back(c);
+            }
+            emit();
+            if (in->focused && in->CaretVisible()) {
+                int cx = (int)(o.x + pad + lastW);
+                p.SetDrawColor(255, 255, 255, 220);
+                p.DrawLine(cx, (int)lastY, cx, (int)(lastY + lineH));
+            }
         }
     }
         else if (_it.kind == K_FocusRing) {   // keyboard/gamepad focus ring
@@ -1573,9 +1722,28 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         if (!tt || !up->active || !tt->Ready()) continue;
         Vec2 m = uiMouse();
         float px = 2.0f;
-        float tw = UITextW(tt->text, px);
+        const float ox = tt->offset.x, oy = tt->offset.y;
+        auto plain = [&](const std::string& s) {
+            std::string out;
+            for (std::size_t i = 0; i < s.size();) {
+                if (s.compare(i, 3, "<b>") == 0) { i += 3; continue; }
+                if (s.compare(i, 4, "</b>") == 0) { i += 4; continue; }
+                if (s[i] == '#' && i + 7 <= s.size()) {
+                    bool hex = true;
+                    for (int k = 1; k <= 6; ++k) {
+                        char c = s[i + k];
+                        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) { hex = false; break; }
+                    }
+                    if (hex) { i += 7; continue; }
+                }
+                out.push_back(s[i++]);
+            }
+            return out;
+        };
+        const std::string visible = tt->richText ? plain(tt->text) : tt->text;
+        float tw = UITextW(visible, px);
         float th = Font8x8::Height * px;
-        Rect box{(int)(m.x + 14), (int)(m.y + 14), (int)(tw + 12), (int)(th + 10)};
+        Rect box{(int)(m.x + ox), (int)(m.y + oy), (int)(tw + 12), (int)(th + 10)};
         p.SetDrawColor((std::uint8_t)(tt->background.r * 255), (std::uint8_t)(tt->background.g * 255),
                                (std::uint8_t)(tt->background.b * 255), (std::uint8_t)(tt->background.a * 255));
         p.FillRect(&box);
@@ -1584,7 +1752,42 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         p.DrawRect(&box);
         RGBA tc{(std::uint8_t)(tt->textColor.r * 255), (std::uint8_t)(tt->textColor.g * 255),
                      (std::uint8_t)(tt->textColor.b * 255), (std::uint8_t)(tt->textColor.a * 255)};
-        DrawUIText(p, tt->text, m.x + 20, m.y + 19, px, tc);
+        if (!tt->richText) {
+            DrawUIText(p, tt->text, m.x + ox + 6.0f, m.y + oy + 5.0f, px, tc);
+        } else {
+            auto nib = [](char c) -> int {
+                if (c >= '0' && c <= '9') return c - '0';
+                if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                return -1;
+            };
+            float x = m.x + ox + 6.0f;
+            const float y = m.y + oy + 5.0f;
+            RGBA cur = tc;
+            bool bold = false;
+            const std::string& s = tt->text;
+            for (std::size_t i = 0; i < s.size();) {
+                if (s.compare(i, 3, "<b>") == 0) { bold = true; i += 3; continue; }
+                if (s.compare(i, 4, "</b>") == 0) { bold = false; i += 4; continue; }
+                if (s[i] == '#' && i + 7 <= s.size()) {
+                    int h[6]; bool hex = true;
+                    for (int k = 0; k < 6; ++k) { h[k] = nib(s[i + 1 + k]); if (h[k] < 0) hex = false; }
+                    if (hex) {
+                        cur = RGBA{(std::uint8_t)(h[0] * 16 + h[1]), (std::uint8_t)(h[2] * 16 + h[3]),
+                                   (std::uint8_t)(h[4] * 16 + h[5]), tc.a};
+                        i += 7; continue;
+                    }
+                }
+                std::size_t j = i;
+                while (j < s.size() && s.compare(j, 3, "<b>") != 0 && s.compare(j, 4, "</b>") != 0 && s[j] != '#') ++j;
+                if (j == i) ++j;   // a '#' that is not a colour is ordinary text
+                std::string run = s.substr(i, j - i);
+                DrawUIText(p, run, x, y, px, cur);
+                if (bold) DrawUIText(p, run, x + 1.0f, y, px, cur);
+                x += UITextW(run, px);
+                i = j;
+            }
+        }
         }
     }   // end single UI draw pass
     uiUseScale(1.0f);

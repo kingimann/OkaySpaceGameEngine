@@ -4,12 +4,14 @@ What is being worked on right now and what comes next. Kept current by the main
 (coordinating) Claude session; each item links its PR once one exists. Every PR
 merges once its five CI jobs are green, and a release follows.
 
-_Last updated: 2026-10-26 20:45 UTC_
+_Last updated: 2026-10-27 13:40 UTC_
 
 ## Releases
 
 | Version | What's in it |
 |---|---|
+| 2.837.0 | IK plan PR 7: one solve order, goals that swing (#417); bind-pose recovery and held props on model swap (#416); Script Editor undo for Format/Rename/Replace All/Reload (#445); Plugins menu with several plugins (#479) |
+| 2.836.0 | Networking catch-up, rewind, snapshots and interest (#401, #403, #407, #408, #423, #427, #428); animation missing-clip and jump hold, gait crossfade (#404, #410, #419, #459); FullBodyIK restore (#414); sandbox swim, throw, and fill without zoom (#439, #443, #448); OkayScript classes, events, nullish, named args, play buffer, arrow axes (#454, #455, #456, #458, #460, #462, #465, #474); visual-script drag, pin filter, node docs (#463, #473, #475); UI themes, options, toasts, controls, HUD and color (#452, #457, #466, #470, #472, #476); Brick Breaker (#477) |
 | 2.835.0 | IK plan PRs 2d–5: own crouch/prone clips (#385), joint limits (#396), ChainIK (#398), FootIK turns bones (#412) and filtered ground probes (#413); Look At/Aim at any frame rate (#418, #433); sandbox hands (#430); Animator preview (#429); first/third-person toggle (#434); apex and step fixes (#409, #411, #436); voxel and heightmap digging (#440, #437), sandbox lake (#438); inventory 6b–7a (#367, #378, #383, #387); Scene Manager (#415); Script Editor outline (#442); NetworkObject/SyncVar/RPCs (#431), net simulator (#432), authoritative pawn and server flag (#400, #405, #406) |
 | 2.834.0 | Directional crawl, get-up/drop (#371) and crouch/prone on every controller (#375); Limb IK turns bones with a steady pole (#388, IK PR 1 #395); holding body adjustment (#389) and the prone-holding fix (#397); inventory pickups/drops, encumbrance, loot (#359); UI P1a/P1c frames, modals, gamepad + touch (#381, #386, #391); typed OkayScript lambdas + LINQ (#379); relay voice on v3 hubs (#393); anti-cheat: bans at ticket issue (#350), bound tickets (#360), SQL hardening (#392), join gating (#365), reconnect strikes (#363), limits (#368), safe defaults (#384), lag-comp cap (#376), pings/rate/press limits (#390), trusted keys (#394) |
 | 2.833.0 | Smooth stance changes (#364, IK PR 2a); fixes: walking in place at a wall (#366), one-shot replay in a fade (#380), Euler flip near straight up/down (#370); object holding PRs 1–2 (#362, #377); item definitions (#358); cached, batched UI (#361) and UI P1b layout (#374); typed OkayScript `??`/`?.`, classes, collections (#354, #369); hardening PRs 4 and 11 (#355, #372); release tags on the built commit (#373); CI cancels superseded PR runs (#382) |

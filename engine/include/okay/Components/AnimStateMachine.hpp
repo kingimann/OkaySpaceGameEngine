@@ -37,12 +37,14 @@
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/FullBodyIK.hpp"
 #include "okay/Components/Stance.hpp"
+#include "okay/Core/Log.hpp"
 #include <algorithm>
 #include <cmath>
 #include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace okay {
@@ -98,6 +100,11 @@ public:
     struct State {
         std::string name;           ///< state name (shown in editors, used by transitions)
         std::string clip;           ///< clip it plays
+        /// Played when `clip` is not in this backend's library: a same-named
+        /// imported take, or a clip imported into the slot. Empty = no stand-in.
+        /// A name that exists only on a child model's clip library is played
+        /// there (the retarget yields) instead of keeping the previous clip.
+        std::string fallbackClip;
         float       speed = 1.0f;   ///< playback speed while in this state
         bool        loop  = true;   ///< loop while in this state
         std::vector<Transition> transitions;
@@ -144,6 +151,9 @@ public:
     /// Built-in action revision already merged into this graph (see HumanoidActions).
     /// 0 = a graph from before actions. Serialized as `animsmactions`.
     int actionsRev = 0;
+    /// How long idle / walk / run and ground / air crossfades take. Serialized
+    /// when it differs from the defaults. Editing it retimes those pairs.
+    GaitCrossfades crossfades;
 
     /// Called with the state's name when the machine enters / leaves a state.
     std::function<void(const std::string&)> onStateEnter, onStateExit;
@@ -243,6 +253,17 @@ public:
         Enter(*st, blend >= 0.0f ? blend : 0.25f, offset);
         return true;
     }
+    /// Clip name `st` plays on `backend`: `clip` when that name exists there,
+    /// otherwise `fallbackClip` when that one does, otherwise `clip`.
+    static std::string ClipToPlay(AnimBackend* backend, const State& st) {
+        if (backend && (st.clip.empty() || backend->FindClip(st.clip) < 0) &&
+            !st.fallbackClip.empty() && backend->FindClip(st.fallbackClip) >= 0)
+            return st.fallbackClip;
+        return st.clip;
+    }
+    /// True while a missing character clip is standing in on a child model's
+    /// own clip library (Humanoid Retarget yields to it).
+    bool PlayingImported() const { return m_importHold != nullptr; }
     /// The IK weight currently applied (eases to the state's ikWeight).
     float IKWeight() const { return m_ikW; }
 
@@ -268,6 +289,7 @@ public:
         if (layer == 0) if (AnimBackend* ma = Anim()) ma->SetStateMachine(this);   // driveByMovement waits while we're enabled
     }
     void OnDestroy() override {
+        ReleaseImported();
         if (AnimBackend* ma = Anim()) ma->RemovePostPose(this);
         if (m_charBackend) m_charBackend->Detach();
     }
@@ -312,11 +334,12 @@ public:
         // Advance the state clock (and drive a blend tree).
         m_stateTime += dt;
         const float spd = StateSpeed(*cur);
+        if (cur->blendTree && m_importHold) ReleaseImported();
         if (cur->blendTree && cur->blendDims == 2) {
             Weights2D(cur->motions, GetFloat(cur->blendParam), GetFloat(cur->blendParamY), m_bWeights);
             std::vector<int>& idx = m_motionClips;   // reused: no per-frame allocation
             idx.clear();
-            for (const Motion& m : cur->motions) idx.push_back(ma->FindClip(m.clip));
+            for (const Motion& m : cur->motions) idx.push_back(MotionClip(ma, *cur, m.clip));
             const float prevPhase = ma->BlendPhase();
             ma->SetSpeed(spd * MatchRate(*cur, m_bWeights));
             ma->SetExternalDrive(ma->BlendMany(dt, idx, m_bWeights));
@@ -329,14 +352,26 @@ public:
             m_bWeights.assign(cur->motions.size(), 0.0f);
             if (lo >= 0) m_bWeights[lo] += 1.0f - w;
             if (hi >= 0) m_bWeights[hi] += w;
-            int A = lo >= 0 ? ma->FindClip(cur->motions[lo].clip) : -1;
-            int B = hi >= 0 ? ma->FindClip(cur->motions[hi].clip) : -1;
+            int A = lo >= 0 ? MotionClip(ma, *cur, cur->motions[lo].clip) : -1;
+            int B = hi >= 0 ? MotionClip(ma, *cur, cur->motions[hi].clip) : -1;
             const float prevPhase = ma->BlendPhase();
             ma->SetSpeed(spd * MatchRate(*cur, m_bWeights));
             ma->SetExternalDrive(ma->BlendClips(dt, A, B, w));
             float ph = ma->BlendPhase();
             m_normTime += (ph >= prevPhase) ? ph - prevPhase : ph + 1.0f - prevPhase;
+        } else if (m_missingClip) {
+            // The state's clip isn't there. Keep the pose already on screen and
+            // don't let that old clip keep running; OnClipEnd is true so the
+            // graph can leave this state.
+            ma->SetSpeed(0.0f);
+            m_normTime = 1.0f;
+        } else if (m_importHold && m_importHold->gameObject && !m_importHold->gameObject->IsDestroyed()
+                   && m_importHold->ActiveClip() >= 0) {
+            m_importHold->speed = spd;
+            const float len = m_importHold->ClipLength(m_importHold->ActiveClip());
+            m_normTime = len > 1e-5f ? m_importHold->Time() / len : m_normTime;
         } else {
+            if (m_importHold) ReleaseImported();
             ma->SetSpeed(spd);
             float len = ma->ActiveClip() >= 0 ? ma->ClipLength(ma->ActiveClip()) : 0.0f;
             m_normTime += len > 1e-5f ? dt * std::fabs(spd) / len : 0.0f;
@@ -388,6 +423,55 @@ private:
         return have > 1e-4f ? want / have : 1.0f;
     }
 
+    /// Clip index for a slot. `name` wins; `fallbackClip` stands in when that
+    /// name is missing from this backend (same library only).
+    int MotionClip(AnimBackend* ma, const State& st, const std::string& name) const {
+        if (!ma) return -1;
+        if (!name.empty()) {
+            const int c = ma->FindClip(name);
+            if (c >= 0) return c;
+        }
+        if (!st.fallbackClip.empty() && st.fallbackClip != name) return ma->FindClip(st.fallbackClip);
+        return -1;
+    }
+    /// A child (not this object) whose Model Animator has `name`.
+    ModelAnimator* ImportedWith(const std::string& name) const {
+        if (!gameObject || name.empty()) return nullptr;
+        Scene* sc = gameObject->scene();
+        if (!sc) return nullptr;
+        for (const auto& up : sc->Objects()) {
+            GameObject* g = up.get();
+            if (!g || g == gameObject || !g->IsSelfOrDescendantOf(gameObject)) continue;
+            if (auto* m = g->GetComponent<ModelAnimator>())
+                if (m->FindClip(name) >= 0) return m;
+        }
+        return nullptr;
+    }
+    void ReleaseImported() {
+        if (!m_importHold) return;
+        ModelAnimator* m = m_importHold;
+        m_importHold = nullptr;
+        if (m->gameObject && !m->gameObject->IsDestroyed()) m->ReleaseHold();
+    }
+    /// Play `clip`, or `fallbackClip`, on a child model's library. The retarget
+    /// yields while that hold lasts. False when neither name is imported.
+    bool HoldImported(const State& st, float blend) {
+        ReleaseImported();
+        ModelAnimator* m = ImportedWith(st.clip);
+        std::string name = st.clip;
+        if (!m && !st.fallbackClip.empty()) { m = ImportedWith(st.fallbackClip); name = st.fallbackClip; }
+        if (!m) return false;
+        const float keepBlend = m->blendTime;
+        m->loop = st.loop;
+        m->speed = StateSpeed(st);
+        if (blend >= 0.0f) m->blendTime = blend;
+        const bool ok = m->PlayHeld(name);
+        m->blendTime = keepBlend;
+        if (!ok) return false;
+        m_importHold = m;
+        return true;
+    }
+
     // ---- Layers: their own playback, posed after the base (see LayerPose) ----
     // The state is held by NAME and looked up each use: `states` may grow (and
     // reallocate) while a layer plays, which would leave a State* dangling.
@@ -400,7 +484,7 @@ private:
         const State& st = *sp;
         const float spd = StateSpeed(st);
         if (!st.blendTree) {
-            int c = ma->FindClip(st.clip);
+            int c = MotionClip(ma, st, st.clip);
             if (c < 0) return;
             float len = ma->ClipLength(c);
             if (advance) lp.time += dt * spd;
@@ -420,7 +504,7 @@ private:
         }
         float cycle = 0.0f, sum = 0.0f;
         for (std::size_t i = 0; i < st.motions.size(); ++i) {
-            int c = ma->FindClip(st.motions[i].clip);
+            int c = MotionClip(ma, st, st.motions[i].clip);
             if (c < 0 || bw[i] <= 0.0f) continue;
             cycle += ma->ClipLength(c) * bw[i]; sum += bw[i];
         }
@@ -429,7 +513,7 @@ private:
         const float rate = spd * MatchRate(st, bw);
         if (advance) lp.phase = std::fmod(lp.phase + dt * rate / std::fmax(cycle, 1e-4f), 1.0f);
         for (std::size_t i = 0; i < st.motions.size(); ++i) {
-            int c = ma->FindClip(st.motions[i].clip);
+            int c = MotionClip(ma, st, st.motions[i].clip);
             if (c < 0 || bw[i] <= 0.0f) continue;
             ct.push_back({c, lp.phase * ma->ClipLength(c)}); w.push_back(bw[i] / sum);
         }
@@ -446,25 +530,36 @@ private:
         if (!cur) { m_current.clear(); return; }
         m_stateTime += dt;
         m_lCT.clear(); m_lW.clear();
-        std::vector<std::pair<int, float>> ctCur, ctPrev; std::vector<float> wCur, wPrev;
-        float prevPhase = m_lCur.phase, prevTime = m_lCur.time;
-        LayerMotion(m_lCur, dt, ma, ctCur, wCur, true);
-        if (cur->blendTree) m_normTime += (m_lCur.phase >= prevPhase) ? m_lCur.phase - prevPhase : m_lCur.phase + 1.0f - prevPhase;
-        else if (!ctCur.empty()) {
+        std::vector<std::pair<int, float>> ctCur; std::vector<float> wCur;
+        // An empty clip name is a layer that plays nothing. A name that does not
+        // resolve is a missing clip: hold, and let OnClipEnd move on.
+        const bool clipMissing = !cur->blendTree && !cur->clip.empty() && MotionClip(ma, *cur, cur->clip) < 0;
+        float prevPhase = m_lCur.phase;
+        LayerMotion(m_lCur, dt, ma, ctCur, wCur, !clipMissing);
+        if (clipMissing) {
+            NoteMissingClip(*cur);
+            m_normTime = 1.0f;
+        } else if (cur->blendTree) {
+            m_normTime += (m_lCur.phase >= prevPhase) ? m_lCur.phase - prevPhase : m_lCur.phase + 1.0f - prevPhase;
+        } else if (!ctCur.empty()) {
             float len = ma->ClipLength(ctCur[0].first);
             m_normTime = len > 1e-5f ? m_lCur.time / len : 0.0f;
         }
-        (void)prevTime;
         float f = 1.0f;
-        if (!m_lPrev.st.empty() && m_fadeDur > 0.0f) {
+        // Fade from the frozen pose captured on enter. A missing clip holds that
+        // pose instead of advancing whatever was playing before.
+        if (!m_lSnap.empty() && m_fadeDur > 0.0f && !clipMissing) {
             m_fadeT += dt;
             f = std::fmin(1.0f, m_fadeT / m_fadeDur);
             f = f * f * (3.0f - 2.0f * f);
-            LayerMotion(m_lPrev, dt, ma, ctPrev, wPrev, true);
-            if (m_fadeT >= m_fadeDur) m_lPrev.st.clear();
+            if (m_fadeT >= m_fadeDur) { m_lSnap.clear(); f = 1.0f; }
         }
-        for (std::size_t i = 0; i < ctPrev.size(); ++i) { m_lCT.push_back(ctPrev[i]); m_lW.push_back(wPrev[i] * (1.0f - f)); }
-        for (std::size_t i = 0; i < ctCur.size(); ++i)  { m_lCT.push_back(ctCur[i]);  m_lW.push_back(wCur[i] * f); }
+        if (clipMissing) {
+            for (const LayerSnap& s : m_lSnap) { m_lCT.push_back({s.clip, s.time}); m_lW.push_back(s.w); }
+        } else {
+            for (const LayerSnap& s : m_lSnap) { m_lCT.push_back({s.clip, s.time}); m_lW.push_back(s.w * (1.0f - f)); }
+            for (std::size_t i = 0; i < ctCur.size(); ++i) { m_lCT.push_back(ctCur[i]); m_lW.push_back(wCur[i] * f); }
+        }
         EvaluateTransitions(dt, ma, cur);
     }
     /// Any State first, then the current state's own transitions (first match
@@ -474,7 +569,7 @@ private:
         if (m_trActive) {
             m_trLeft -= dt;
             if (const State* src = FindState(m_trFrom)) {   // the source keeps its own clock
-                int c = src->blendTree ? -1 : ma->FindClip(src->clip);
+                int c = src->blendTree ? -1 : MotionClip(ma, *src, src->clip);
                 float len = c >= 0 ? ma->ClipLength(c) : 1.0f;
                 m_trSrcNorm += len > 1e-5f ? dt * std::fabs(StateSpeed(*src)) / len : 0.0f;
             }
@@ -536,10 +631,22 @@ private:
             if (states[i].name == name) { m_findHint = i; return &states[i]; }
         return nullptr;
     }
+    /// Warn once per state whose clip isn't loaded, and remember it so OnClipEnd
+    /// is true without testing the clip still on screen.
+    void NoteMissingClip(const State& st) {
+        m_missingClip = true;
+        if (!m_missingWarned.insert(st.name).second) return;
+        OKAY_WARN("Animator: state \"", st.name, "\" has no clip \"", st.clip,
+                  "\" — holding the pose and moving on");
+    }
     bool Test(Cond c, const std::string& param, float value, AnimBackend* ma, const State* cur) const {
         switch (c) {
             case Cond::OnClipEnd:
+                // A missing clip has already ended: don't test the clip still on screen.
+                if (m_missingClip) return true;
                 // A blend tree "ends" after one full cycle; a clip when it finishes.
+                // An imported stand-in finishes on the child model, not the body.
+                if (m_importHold) return m_importHold->ClipFinished();
                 return ((cur && cur->blendTree) || layer > 0) ? m_normTime >= 1.0f : ma->ClipFinished();
             case Cond::FloatGreater: return GetFloat(param) > value;
             case Cond::FloatLess:    return GetFloat(param) < value;
@@ -608,12 +715,22 @@ private:
             m_fbW = st.fullBodyIkWeight < 0.0f ? m_ikW : std::fmin(std::fmax(st.fullBodyIkWeight, 0.0f), 1.0f);
         }
         m_bLo = m_bHi = -1; m_bW = 0.0f;
-        if (layer > 0) {   // layers crossfade from their previous state themselves
-            m_lPrev = m_lCur;
+        m_missingClip = false;
+        if (layer > 0) {   // layers crossfade from the pose on screen, frozen
+            // A second change while a fade is still running recaptures that mix,
+            // so the pose already leaving isn't thrown away.
+            m_lSnap.clear();
+            for (std::size_t i = 0; i < m_lCT.size() && i < m_lW.size(); ++i)
+                if (m_lW[i] > 1e-5f) m_lSnap.push_back(LayerSnap{m_lCT[i].first, m_lCT[i].second, m_lW[i]});
             m_lCur = LayerPlay{st.name, 0.0f, offset};
-            if (!st.blendTree) { int c = ma->FindClip(st.clip); if (c >= 0) m_lCur.time = offset * ma->ClipLength(c); }
-            m_fadeT = 0.0f; m_fadeDur = !m_lPrev.st.empty() ? blend : 0.0f;
-            if (blend <= 0.0f) m_lPrev.st.clear();
+            if (!st.blendTree) {
+                int c = MotionClip(ma, st, st.clip);
+                if (c >= 0) m_lCur.time = offset * ma->ClipLength(c);
+                else if (!st.clip.empty()) { NoteMissingClip(st); m_normTime = 1.0f; }
+            }
+            m_fadeT = 0.0f;
+            m_fadeDur = (!m_lSnap.empty() && blend > 0.0f) ? blend : 0.0f;
+            if (m_fadeDur <= 0.0f) m_lSnap.clear();
             if (onStateEnter) onStateEnter(st.name);
             if (!st.enterEvent.empty()) ma->FireEvent(st.enterEvent);
             return;
@@ -621,27 +738,48 @@ private:
         ma->SetSpeed(StateSpeed(st));
         ma->SetLoop(st.loop);
         if (st.blendTree && st.blendDims == 2) {
+            ReleaseImported();
             Weights2D(st.motions, GetFloat(st.blendParam), GetFloat(st.blendParamY), m_bWeights);
             std::vector<int> idx;
             for (std::size_t i = 0; i < st.motions.size(); ++i)
-                if (m_bWeights[i] > 0.0f) idx.push_back(ma->FindClip(st.motions[i].clip));
+                if (m_bWeights[i] > 0.0f) idx.push_back(MotionClip(ma, st, st.motions[i].clip));
             ma->CaptureCrossfadeMany(idx, blend);
             if (!st.loop) ma->RestartBlendPhase();
             else ma->ResetBlendPhase(offset);
             ma->SetExternalDrive(true);
         } else if (st.blendTree) {
+            ReleaseImported();
             // Crossfade from the current pose into the tree, which BlendClips then poses.
             int lo, hi; float w;
             PickMotions(st, GetFloat(st.blendParam), lo, hi, w);
-            ma->CaptureCrossfade(lo >= 0 ? ma->FindClip(st.motions[lo].clip) : -1,
-                                 hi >= 0 ? ma->FindClip(st.motions[hi].clip) : -1, blend);
+            ma->CaptureCrossfade(lo >= 0 ? MotionClip(ma, st, st.motions[lo].clip) : -1,
+                                 hi >= 0 ? MotionClip(ma, st, st.motions[hi].clip) : -1, blend);
+            // A one-shot tree starts at the beginning. A looping tree keeps the
+            // transition's normalized offset.
             if (!st.loop) ma->RestartBlendPhase();
             else ma->ResetBlendPhase(offset);
             ma->SetExternalDrive(true);
         } else {
             ma->SetExternalDrive(false);
-            ma->Play(st.clip, blend);   // the transition's blend, not the animator's own setting
-            if (offset > 0.0f && ma->ActiveClip() >= 0) ma->SetTime(offset * ma->ClipLength(ma->ActiveClip()));
+            // A named clip that fails to play: leave the pose already showing,
+            // stop it advancing, and let OnClipEnd move on. An empty clip name
+            // is "play nothing". fallbackClip and a child model's stand-in
+            // (imported hold) are tried before that hold.
+            // Jump holds its last frame even if a saved graph still has it
+            // flagged to loop. Fall and every other state keep their own flag.
+            ma->SetLoop(st.loop && st.name != "Jump");
+            const std::string play = ClipToPlay(ma, st);
+            if (ma->FindClip(play) >= 0) {
+                ReleaseImported();
+                if (!ma->Play(play, blend)) {
+                    if (!play.empty()) { NoteMissingClip(st); ma->SetSpeed(0.0f); }
+                } else if (offset > 0.0f && ma->ActiveClip() >= 0) {
+                    ma->SetTime(offset * ma->ClipLength(ma->ActiveClip()));
+                }
+            } else if (!HoldImported(st, blend)) {
+                if (!play.empty()) { NoteMissingClip(st); ma->SetSpeed(0.0f); }
+                else ma->Play(play, blend);
+            }
         }
         if (onStateEnter) onStateEnter(st.name);
         if (!st.enterEvent.empty()) ma->FireEvent(st.enterEvent);
@@ -663,8 +801,13 @@ private:
     std::string m_trFrom;
     Transition::Interrupt m_trRule = Transition::Interrupt::NextState;
     int   m_interruptions = 0;
-    // layer playback
-    LayerPlay m_lCur, m_lPrev;
+    // layer playback. m_lSnap is the pose on screen when this state was entered
+    // (one clip, or a fade already in progress), held still while it blends out.
+    struct LayerSnap { int clip = -1; float time = 0.0f; float w = 0.0f; };
+    LayerPlay m_lCur;
+    std::vector<LayerSnap> m_lSnap;
+    bool m_missingClip = false;                       // the current state's clip failed to play
+    std::unordered_set<std::string> m_missingWarned;  // warned once per state name
     std::vector<int> m_motionClips;           // per-frame scratch (2D blend tree clip indices)
     float m_ikWritten = -1.0f, m_fbWritten = -1.0f, m_ikRefresh = 0.0f;   // last IK weights pushed / time to the next push
     mutable std::size_t m_findHint = 0;       // FindState's last hit
@@ -673,6 +816,7 @@ private:
     std::vector<std::pair<int, float>> m_lCT;
     std::vector<float> m_lW;
     mutable std::unique_ptr<CharacterAnimBackend> m_charBackend;   // the backend on a Character body
+    ModelAnimator* m_importHold = nullptr;     // child model playing a missing clip's stand-in
 };
 
 /// How long stance changes take on the body `go` (its own base Animator, or

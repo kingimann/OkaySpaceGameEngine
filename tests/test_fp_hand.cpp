@@ -754,5 +754,92 @@ int main() {
         CHECK(differ(twoTp, lifted) > 10);
     }
 
+    // Stock First Person and Third Person templates can be tried out of the box:
+    // hands on the player, one one-handed block, one two-handed crate, E to pick
+    // up, E again or G to drop, and a screen prompt.
+    {
+        auto press = [](Scene& sc, char key) {
+            Input::FeedKeys({key});
+            sc.Update(1.0f / 60.0f);
+            Input::FeedKeys({});
+            sc.Update(1.0f / 60.0f);
+        };
+        auto checkTemplate = [&](void (*build)(Scene&), bool firstPerson) {
+            Scene sc("hold");
+            sc.physicsEnabled = false;
+            build(sc);
+            GameObject* player = sc.Find("Player");
+            GameObject* block = sc.Find("Block");
+            GameObject* crate = sc.Find("Carry Crate");
+            GameObject* label = sc.Find("Hold Prompt");
+            CHECK(player && block && crate && label);
+            if (!player || !block || !crate || !label) return;
+            CHECK(player->tag == "Player");
+            CHECK(player->GetComponent<FirstPersonHands>());
+            CHECK(player->GetComponent<ProceduralObjectHolding>());
+            CHECK(player->GetComponent<HoldPrompt>());
+            auto* pb = block->GetComponent<ItemPickup>();
+            auto* pc = crate->GetComponent<ItemPickup>();
+            auto* hb = block->GetComponent<HoldableObject>();
+            auto* hc = crate->GetComponent<HoldableObject>();
+            CHECK(pb && pb->holdInHands && pb->interactKey == 'e' && !pb->pickupOnTouch && pb->autoRadius == 0.0f);
+            CHECK(pc && pc->holdInHands && pc->interactKey == 'e' && !pc->pickupOnTouch);
+            CHECK(hb && !hb->WantsTwoHands());
+            CHECK(hc && hc->twoHanded && hc->WantsTwoHands());
+            auto* tr = label->GetComponent<TextRenderer>();
+            CHECK(tr && tr->screenSpace);
+            sc.Start();
+            sc.Update(1.0f / 60.0f);
+            CHECK(tr->text == "E to pick up");
+            CHECK(tr->background);
+            press(sc, 'e');
+            auto* hold = player->GetComponent<ProceduralObjectHolding>();
+            CHECK(hold && hold->Held() == block);
+            CHECK(tr->text == "E or G to drop");
+            if (firstPerson) {
+                auto* ch = player->GetComponent<Character>();
+                for (int i = 0; i < 48; ++i) sc.Update(1.0f / 60.0f);
+                GameObject* arm = ch->OwnerViewArm();
+                CHECK(arm && arm->active);
+                CHECK(!ch->OwnerViewArm2() || !ch->OwnerViewArm2()->active);
+            }
+            press(sc, 'g');
+            CHECK(hold && !hold->IsHolding());
+            CHECK(tr->text == "E to pick up");
+            // Stand on the crate so E takes that, not the nearer block.
+            player->transform->SetPosition(crate->transform->Position() + Vec3{0.0f, 0.0f, 0.9f});
+            block->transform->SetPosition(crate->transform->Position() + Vec3{0.0f, 0.0f, 6.0f});
+            sc.Update(1.0f / 60.0f);
+            CHECK(tr->text == "E to pick up");
+            press(sc, 'e');
+            CHECK(hold && hold->Held() == crate);
+            if (firstPerson) {
+                auto* ch = player->GetComponent<Character>();
+                for (int i = 0; i < 48; ++i) sc.Update(1.0f / 60.0f);
+                CHECK(ch->OwnerViewArm() && ch->OwnerViewArm()->active);
+                CHECK(ch->OwnerViewArm2() && ch->OwnerViewArm2()->active);
+            }
+            press(sc, 'e');
+            CHECK(hold && !hold->IsHolding());   // E again drops, and does not grab it straight back
+            CHECK(!pc->Held());
+
+            std::string text = SceneSerializer::Serialize(sc);
+            Scene back("back");
+            std::string err;
+            CHECK(SceneSerializer::Deserialize(back, text, &err));
+            GameObject* again = back.Find("Player");
+            CHECK(again && again->GetComponent<FirstPersonHands>() && again->GetComponent<ProceduralObjectHolding>());
+            auto* hp = again ? again->GetComponent<HoldPrompt>() : nullptr;
+            CHECK(hp && hp->dropKey == 'e' && hp->altDropKey == 'g');
+            GameObject* crate2 = back.Find("Carry Crate");
+            auto* pk2 = crate2 ? crate2->GetComponent<ItemPickup>() : nullptr;
+            CHECK(pk2 && pk2->holdInHands && pk2->interactKey == 'e');
+            auto* ho2 = crate2 ? crate2->GetComponent<HoldableObject>() : nullptr;
+            CHECK(ho2 && ho2->twoHanded);
+        };
+        checkTemplate(Templates::FPS, true);
+        checkTemplate(Templates::ThirdPerson, false);
+    }
+
     TEST_MAIN_RESULT();
 }

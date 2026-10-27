@@ -135,6 +135,7 @@
 #include "okay/Components/ChainIK.hpp"
 #include "okay/Components/FullBodyIK.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
+#include "okay/Components/HoldPrompt.hpp"
 #include "okay/Components/RootMotion.hpp"
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/Character.hpp"
@@ -1215,6 +1216,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         KvOut k{out};
         k("hand", (int)ph->primaryHand)("style", (int)ph->holdingStyle).b("armIK", ph->armIK)("transition", ph->transitionTime)
          .b("body", ph->bodyAdjustment)("carry", (int)ph->carryAnimations);
+        out << "\n";
+    }
+    if (auto* hp = go->GetComponent<HoldPrompt>()) {
+        out << "  holdprompt";
+        KvOut k{out};
+        k.key("drop", hp->dropKey).key("alt", hp->altDropKey).str("prompt", hp->promptObject);
         out << "\n";
     }
     if (auto* rm = go->GetComponent<RootMotion>()) {
@@ -3768,6 +3775,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     k.b("armIK", ph->armIK); k.f("transition", ph->transitionTime);
                     int carry = 0; k.b("body", ph->bodyAdjustment); k.i("carry", carry);
                     ph->carryAnimations = carry == 1 ? ProceduralObjectHolding::CarryAnim::Custom : ProceduralObjectHolding::CarryAnim::Automatic;
+                } else if (field == "holdprompt") {
+                    auto* hp = go->AddComponent<HoldPrompt>();
+                    KvIn k(in);
+                    k.key("drop", hp->dropKey); k.key("alt", hp->altDropKey); k.str("prompt", hp->promptObject);
                 } else if (field == "fbikx") {
                     if (auto* fb = go->GetComponent<FullBodyIK>())
                         in >> fb->blendSpeed >> fb->goalSmoothing >> fb->lookSmoothing >> fb->armMinBend >> fb->legMinBend;

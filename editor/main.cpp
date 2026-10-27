@@ -9,6 +9,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
 #include "FpHandsWindow.hpp"
+#include "okay/Components/HoldPrompt.hpp"
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
 #include "okay/Modeling/MeshAsset.hpp"       // .okaymesh / .obj mesh files
@@ -29523,6 +29524,19 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::SmallButton("Remove##poh")) toRemove = ph;
             }
         }
+        if (auto* hp = dynamic_cast<HoldPrompt*>(curComp)) {
+            if (CompHeader("Hold Prompt", hp, &toRemove)) {
+                ImGui::TextDisabled("E picks a hold-in-hands item up. E again, or G, puts it down.");
+                char dk[2] = {hp->dropKey, 0};
+                if (ImGui::InputText("Drop Key##hp", dk, sizeof(dk))) { hp->dropKey = dk[0]; ed.dirty = true; }
+                char ak[2] = {hp->altDropKey, 0};
+                if (ImGui::InputText("Alt Drop Key##hp", ak, sizeof(ak))) { hp->altDropKey = ak[0]; ed.dirty = true; }
+                char pn[64]; std::snprintf(pn, sizeof(pn), "%s", hp->promptObject.c_str());
+                if (ImGui::InputText("Prompt Object##hp", pn, sizeof(pn))) { hp->promptObject = pn; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("A screen-space Text named this shows \"E to pick up\" and \"E or G to drop\".");
+                if (ImGui::SmallButton("Remove##hp")) toRemove = hp;
+            }
+        }
         if (auto* ho = dynamic_cast<HoldableObject*>(curComp)) {
             if (CompHeader("Holdable Object", ho, &toRemove)) {
                 ImGui::TextDisabled("A character's Procedural Object Holding can pick this up.");
@@ -34780,6 +34794,9 @@ void DrawInspector(EditorState& ed) {
             }
             if (item(!go->GetComponent<ProceduralObjectHolding>(), "Procedural Object Holding (pick up + hold with IK hands)")) {
                 go->AddComponent<ProceduralObjectHolding>(); ed.dirty = true;
+            }
+            if (item(!go->GetComponent<HoldPrompt>(), "Hold Prompt (E to pick up, E or G to drop)")) {
+                go->AddComponent<HoldPrompt>(); ed.dirty = true;
             }
             if (item(!go->GetComponent<HoldableObject>(), "Holdable Object (grip points, style, weight)")) {
                 go->AddComponent<HoldableObject>(); ed.dirty = true;

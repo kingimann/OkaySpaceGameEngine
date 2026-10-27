@@ -39,6 +39,11 @@ public:
     /// putting it in the bag, when the player can hold objects. While held it isn't collected.
     bool  holdInHands = false;
 
+    /// The rest of this frame ignores interactKey. A drop on that same press (E again)
+    /// would otherwise put the object straight back in the hands.
+    static void BlockInteract() { InteractBlocked() = true; }
+    static void ClearInteractBlock() { InteractBlocked() = false; }
+
     void OnTriggerEnter2D(Collider2D* o) override { if (pickupOnTouch && o) GiveTo(o->gameObject); }
     void OnTriggerEnter3D(Collider3D* o) override { if (pickupOnTouch && o) GiveTo(o->gameObject); }
     void OnCollisionEnter2D(const Collision2D& c) override { if (pickupOnTouch) GiveTo(c.gameObject); }
@@ -60,9 +65,14 @@ public:
         const Vec3 d = p - me;
         const float dist = d.Magnitude();
         if (autoRadius > 0.0f && dist <= autoRadius) { Give(player); return; }
-        if (interactKey && dist <= interactRange && Input::GetKeyDown(interactKey)) {
+        if (interactKey && dist <= interactRange && Input::GetKeyDown(interactKey) && !InteractBlocked()
+            && NearestHold(player, dist)) {
             auto* hands = holdInHands ? player->GetComponent<ProceduralObjectHolding>() : nullptr;
-            if (!hands || !hands->Pickup(gameObject)) Give(player);
+            if (hands && hands->Pickup(gameObject)) {
+                BlockInteract();   // this press is used; a second prop must not take it
+                return;
+            }
+            Give(player);
             return;
         }
         if (magnetRadius > 0.0f && dist <= magnetRadius && dist > 0.05f) {
@@ -70,6 +80,8 @@ public:
             gameObject->transform->SetPosition(step >= dist ? p : me + d * (step / dist));
         }
     }
+
+    void LateUpdate(float) override { ClearInteractBlock(); }
 
     /// Someone is holding it in their hands right now.
     bool Held() const {
@@ -128,6 +140,26 @@ private:
     }
 
     bool m_gone = false;
+
+    static bool& InteractBlocked() { static bool blocked = false; return blocked; }
+
+    /// Hold-in-hands props share one key. Only the closest one in range takes it,
+    /// so two crates in front of the player don't swap on a single press.
+    /// A bag pickup (holdInHands off) is unchanged.
+    bool NearestHold(GameObject* player, float dist) const {
+        if (!holdInHands || !player || !player->transform) return true;
+        Scene* sc = gameObject->scene();
+        if (!sc) return true;
+        const Vec3 p = player->transform->Position();
+        for (auto* other : sc->FindObjectsOfType<ItemPickup>()) {
+            if (!other || other == this || !other->enabled || !other->holdInHands || !other->interactKey || other->Held()) continue;
+            GameObject* go = other->gameObject;
+            if (!go || !go->active || !go->transform) continue;
+            const float od = (go->transform->Position() - p).Magnitude();
+            if (od <= other->interactRange && od < dist) return false;
+        }
+        return true;
+    }
 };
 
 } // namespace okay

@@ -54,6 +54,11 @@
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/Flashlight.hpp"
 #include "okay/Components/Light.hpp"
+#include "okay/Components/FirstPersonHands.hpp"
+#include "okay/Components/ProceduralObjectHolding.hpp"
+#include "okay/Components/HoldableObject.hpp"
+#include "okay/Components/ItemPickup.hpp"
+#include "okay/Components/HoldPrompt.hpp"
 
 namespace okay {
 
@@ -107,6 +112,69 @@ inline PlayerView* AddViewToggle(GameObject* player, PlayerView::View view, floa
     pv->switchEase = PlayerView::SwitchEase::Smooth;
     pv->snapSwitch = false;
     return pv;
+}
+
+/// Hands, a one-handed block and a two-handed crate on a switchable player
+/// (the First Person and Third Person starters both toggle with V). E picks a
+/// prop up into the hands; E again or G drops it. The line at the bottom of the
+/// screen is the Hold Prompt text.
+inline void AddTemplateHoldables(Scene& scene, GameObject* player) {
+    if (!player) return;
+    if (player->tag.empty()) player->tag = "Player";
+    if (!player->GetComponent<FirstPersonHands>()) player->AddComponent<FirstPersonHands>();
+    if (!player->GetComponent<ProceduralObjectHolding>()) player->AddComponent<ProceduralObjectHolding>();
+    if (!player->GetComponent<HoldPrompt>()) {
+        auto* prompt = player->AddComponent<HoldPrompt>();
+        prompt->dropKey = 'e';
+        prompt->altDropKey = 'g';
+    }
+
+    auto prop = [&](const char* name, const Vec3& pos, const Vec3& scale, Color color, bool twoHanded) {
+        GameObject* g = scene.CreateGameObject(name);
+        g->transform->localPosition = pos;
+        g->transform->localScale = scale;
+        auto* mr = g->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube();
+        mr->color = color;
+        g->AddComponent<BoxCollider3D>();
+        g->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Dynamic;
+        auto* ho = g->AddComponent<HoldableObject>();
+        if (twoHanded) {
+            ho->style = HoldableObject::Style::Box;
+            ho->twoHanded = true;
+            ho->weight = 3.0f;
+        } else {
+            ho->weight = 0.3f;   // small enough to stay one hand (a "crate" name would not)
+        }
+        auto* pk = g->AddComponent<ItemPickup>();
+        pk->item = twoHanded ? "crate" : "block";
+        pk->holdInHands = true;
+        pk->interactKey = 'e';
+        pk->pickupOnTouch = false;
+        pk->autoRadius = 0.0f;
+        pk->interactRange = 3.0f;
+    };
+    // In front of the spawn (yaw 0 looks down -Z), beside each other, inside E's range.
+    prop("Block", {0.85f, 0.20f, -1.80f}, {0.28f, 0.28f, 0.28f}, Color::FromBytes(214, 140, 48), false);
+    prop("Carry Crate", {-0.95f, 0.32f, -2.15f}, {0.62f, 0.48f, 0.48f}, Color::FromBytes(176, 122, 72), true);
+
+    if (!scene.Find("Hold Prompt")) {
+        GameObject* label = scene.CreateGameObject("Hold Prompt");
+        auto* tr = label->AddComponent<TextRenderer>();
+        tr->text.clear();
+        tr->screenSpace = true;
+        tr->anchor = UIAnchor::BottomCenter;
+        tr->align = 1;
+        tr->vcenter = true;
+        tr->screenPos = {0.0f, -72.0f};
+        tr->size = {420.0f, 40.0f};
+        tr->pixelSize = 2.0f;
+        tr->color = Color::White;
+        tr->outline = true;
+        tr->shadow = true;
+        tr->background = false;
+        tr->backgroundColor = Color::FromBytes(0, 0, 0, 170);
+    }
 }
 
 /// Add a third-person player (orbit camera positioned by the controller).
@@ -408,6 +476,7 @@ inline void ThirdPerson(Scene& scene) {
     cam->projection = Camera::Projection::Perspective;
     cam->main = true;
     camObj->transform->localPosition = {0, 3, 6};
+    AddTemplateHoldables(scene, player);
 }
 
 /// A "drop-in humanoid" starter: the same third-person scene, but the player is a
@@ -617,6 +686,7 @@ inline void FPS(Scene& scene) {
     cam->main = true;
     camObj->transform->SetParent(player->transform, false);
     camObj->transform->localPosition = {0, 1.62f, 0.0f};   // eye height (body hidden in first person)
+    AddTemplateHoldables(scene, player);
 }
 
 /// A top-down starter: a follow camera and a script-driven player that walks

@@ -992,7 +992,9 @@ int main() {
         CHECK(!pv->Blending());
         CHECK(cam->ignoreObject == player);
         CHECK(ch->fpArmUp == 0.0f);                // nothing in the view until a hold
-        player->AddComponent<FirstPersonHands>()->showWhenEmpty = true;
+        auto* hands = player->GetComponent<FirstPersonHands>();
+        CHECK(hands);
+        if (hands) hands->showWhenEmpty = true;
         settle(sc, 48);                            // the copy eases in
         CHECK(ch->Part(2) && !ch->Part(2)->firstPersonViewmodel);
         CHECK(ch->Part(1) && ch->Part(1)->firstPersonViewmodel); // the shirt is drawn for this camera

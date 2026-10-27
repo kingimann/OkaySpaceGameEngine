@@ -39,6 +39,7 @@ public:
     // ---- Runtime drag state (driven by the renderer's mouse handling) ----
     int   dragSide  = -1;   ///< 0 = chest grid, 1 = player grid, -1 = not dragging
     int   dragIndex = -1;   ///< slot being dragged
+    float scroll    = 0.0f; ///< panel scroll when the chest is taller than the screen (runtime, not saved)
 
     /// Move (or swap/merge) the stack in src slot `si` into dst slot `di`. Works within
     /// one grid or across the chest<->player grids (drag-and-drop, place where you want).
@@ -50,6 +51,11 @@ public:
         return nullptr;
     }
     char InteractKey() const override { return openKey; }
+
+    void Update(float dt) override {
+        InventoryInteractable::Update(dt);
+        if (!open) scroll = 0.0f;
+    }
 
     /// The player's inventory: the Inventory on the player (FindInventoryPlayer), else
     /// the one the scene's first InventoryUI shows.

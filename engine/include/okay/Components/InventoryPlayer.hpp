@@ -7,6 +7,7 @@
 #include "okay/Components/CameraFollow.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Inventory/InventoryEvents.hpp"
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -22,29 +23,56 @@ namespace okay {
 /// A minimap or cutscene camera is never "the player": only the main camera counts.
 inline GameObject* FindInventoryPlayer(const Scene* s, const std::string& preferred = "") {
     if (!s) return nullptr;
+    // Cached until the scene's objects or components change. The stored pointer is
+    // only returned when it is still that slot of this scene, so a rebuilt scene
+    // cannot hand back a freed object. A tag-only change can be a frame stale.
+    struct Cache {
+        const Scene* scene = nullptr;
+        std::uint64_t sv = 0, cv = 0;
+        const void* bucket = nullptr;
+        std::size_t count = 0;
+        std::string preferred;
+        GameObject* result = nullptr;
+        int index = -1;
+    };
+    static Cache k;
+    const auto& objs = s->Objects();
+    const std::uint64_t sv = s->StructureVersion(), cv = s->ComponentVersion();
+    if (k.scene == s && k.sv == sv && k.cv == cv && k.bucket == objs.data() && k.count == objs.size() &&
+        k.preferred == preferred) {
+        if (!k.result) return nullptr;
+        if (k.index >= 0 && (std::size_t)k.index < objs.size() && objs[k.index].get() == k.result)
+            return k.result;
+    }
+    auto store = [&](GameObject* g) {
+        k.scene = s; k.sv = sv; k.cv = cv; k.bucket = objs.data(); k.count = objs.size();
+        k.preferred = preferred; k.result = g; k.index = -1;
+        if (g) for (std::size_t i = 0; i < objs.size(); ++i) if (objs[i].get() == g) { k.index = (int)i; break; }
+        return g;
+    };
     if (!preferred.empty())
-        if (GameObject* g = s->Find(preferred)) return g;
+        if (GameObject* g = s->Find(preferred)) return store(g);
     GameObject* tagged = nullptr;
-    for (const auto& up : s->Objects()) {
+    for (const auto& up : objs) {
         GameObject* g = up.get();
         if (!g || g->tag != "Player") continue;
-        if (g->name == "LocalPlayer") return g;   // NetworkPlayerSpawner's own player
+        if (g->name == "LocalPlayer") return store(g);   // NetworkPlayerSpawner's own player
         if (!tagged) tagged = g;
     }
-    if (tagged) return tagged;
+    if (tagged) return store(tagged);
     Camera* cam = s->mainCamera;
     GameObject* cg = cam ? cam->gameObject : nullptr;
-    if (!cg) return nullptr;
+    if (!cg) return store(nullptr);
     if (auto* f = cg->GetComponent<CameraFollow>())
         if (!f->targetName.empty())
-            if (GameObject* g = s->Find(f->targetName)) return g;
-    if (cam->ignoreObject) return cam->ignoreObject;
+            if (GameObject* g = s->Find(f->targetName)) return store(g);
+    if (cam->ignoreObject) return store(cam->ignoreObject);
     if (cg->transform && cg->transform->Parent()) {
         Transform* t = cg->transform;
         while (t->Parent()) t = t->Parent();
-        if (t->gameObject) return t->gameObject;
+        if (t->gameObject) return store(t->gameObject);
     }
-    return nullptr;
+    return store(nullptr);
 }
 
 /// Where to measure "in range" from: the player's position, else the main camera's.

@@ -7,6 +7,7 @@
 #include "okay/Inventory/InventoryOps.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec3.hpp"
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <cmath>
@@ -20,6 +21,7 @@ namespace okay {
 class GridInventoryUI : public Behaviour {
 public:
     float cellSize = 56.0f;
+    float scroll   = 0.0f;   ///< column scroll when the grid is taller than the screen (runtime, not saved)
     float gap      = 6.0f;
     std::string iconFolder = "textures/items/";   ///< <folder><item>.png icons (else the name)
     Color panelColor  = Color::FromBytes(18, 19, 26, 240);
@@ -176,12 +178,19 @@ public:
         if (primary) equipped.push_back(primary);
         Scene* sc = root ? root->scene() : nullptr;
         if (!sc || !root || !root->transform) return;
+        // The object scan is cached until the scene's structure or component set changes.
+        // Distance filtering still runs every call. A tag-only edit can be a frame stale.
+        const std::uint64_t sv = sc->StructureVersion(), cv = sc->ComponentVersion();
+        if (m_scanScene != sc || m_scanSv != sv || m_scanCv != cv) {
+            m_scanScene = sc; m_scanSv = sv; m_scanCv = cv;
+            m_scan.clear();
+            for (const auto& up : sc->Objects())
+                if (up) if (auto* gi = up->GetComponent<GridInventory>()) m_scan.push_back(gi);
+        }
         Vec3 pp = root->transform->Position();
-        for (const auto& up : sc->Objects()) {
-            GameObject* go = up.get();
-            if (!go || go == root) continue;
-            auto* gi = go->GetComponent<GridInventory>();
-            if (!gi || gi == primary) continue;
+        for (GridInventory* gi : m_scan) {
+            GameObject* go = gi ? gi->gameObject : nullptr;
+            if (!go || go == root || gi == primary) continue;
             bool worn = IsDescendant(go->transform, root->transform);
             if (worn && !gi->worldItem) {
                 equipped.push_back(gi);                 // a worn/held container (clothes, bag)
@@ -193,6 +202,9 @@ public:
     }
 
 private:
+    mutable const Scene* m_scanScene = nullptr;
+    mutable std::uint64_t m_scanSv = 0, m_scanCv = 0;
+    mutable std::vector<GridInventory*> m_scan;
     GameObject* Owner() const {
         if (!gameObject || !gameObject->transform) return gameObject;
         Transform* t = gameObject->transform;

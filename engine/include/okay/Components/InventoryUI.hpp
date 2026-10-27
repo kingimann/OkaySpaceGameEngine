@@ -34,6 +34,7 @@ public:
     bool  scrollSelect  = true;   ///< mouse wheel cycles the selection
     bool  dragItems     = true;   ///< drag items between slots while the backpack is open
     int   dragIndex     = -1;     ///< slot being dragged (runtime), or -1
+    float scroll        = 0.0f;   ///< backpack scroll while open (runtime, not saved)
     int   dragAmount    = 0;      ///< how many are lifted off the source (0 = whole stack)
     int   equipDrag     = -1;     ///< Equipment slot being dragged (runtime), or -1
 
@@ -303,7 +304,9 @@ public:
             for (int k = 0; k < hotbarSlots && k < 9; ++k)
                 if (Input::GetKeyDown((char)('1' + k))) selected = k;
         }
-        if (scrollSelect && hotbarSlots > 0) {
+        // While the backpack is open the wheel scrolls it (HandleHotbar). Closed, it
+        // still changes the selected hotbar slot.
+        if (scrollSelect && hotbarSlots > 0 && !open) {
             float w = Input::MouseWheel();
             if (w > 0.5f)      selected = (selected - 1 + hotbarSlots) % hotbarSlots;
             else if (w < -0.5f) selected = (selected + 1) % hotbarSlots;
@@ -318,6 +321,7 @@ public:
         if ((useKey && Input::GetKeyDown(useKey)) || (clickToUse && !open && Input::GetMouseButtonDown(0))) UseSelected();
         if (selected < 0) selected = 0;
         if (selected >= hotbarSlots) selected = hotbarSlots - 1;
+        if (!open) scroll = 0.0f;
     }
 
 private:

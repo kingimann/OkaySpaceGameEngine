@@ -10,8 +10,9 @@ namespace InventoryInput {
 // ---- Hotbar + backpack ----
 
 float HotbarLayout::RowY(int row) const {
-    return anchorTop ? hy + sz + 14.0f + row * (sz + gap)
-                     : hy - 14.0f - (rows - row) * (sz + gap);
+    const float y = anchorTop ? hy + sz + 14.0f + row * (sz + gap)
+                              : hy - 14.0f - (rows - row) * (sz + gap);
+    return y + bagScroll;
 }
 
 void HotbarLayout::SlotXY(int idx, float& x, float& y) const {
@@ -73,11 +74,44 @@ HotbarLayout LayoutHotbar(const InventoryUI& ui, float W, float H) {
             L.ex = L.hx - L.sz - colGap;                              // left of the bag...
             if (L.ex < 0.0f) L.ex = L.hx + L.rowW + colGap;           // ...or right when docked left
         }
+    // A backpack taller than the screen scrolls. Content that fits leaves bagScroll at 0,
+    // so a closed bag (and every existing layout test) stays put.
+    if (ui.open && L.rows > 0) {
+        const float step = L.sz + L.gap;
+        if (!L.anchorTop) {
+            const float far = L.hy - 14.0f - (float)L.rows * step;   // top of the farthest row
+            if (far < 8.0f) {
+                L.maxScroll = 8.0f - far;
+                float s = ui.scroll;
+                if (s < 0.0f) s = 0.0f;
+                if (s > L.maxScroll) s = L.maxScroll;
+                L.bagScroll = s;
+            }
+        } else {
+            const float lastBottom = L.hy + L.sz + 14.0f + (float)(L.rows - 1) * step + L.sz;
+            if (lastBottom > H - 8.0f) {
+                L.maxScroll = lastBottom - (H - 8.0f);
+                float s = ui.scroll;
+                if (s < 0.0f) s = 0.0f;
+                if (s > L.maxScroll) s = L.maxScroll;
+                L.bagScroll = -s;
+            }
+        }
+    }
     return L;
 }
 
 HotbarFrame HandleHotbar(InventoryUI& ui, const HotbarLayout& L, Vec2 mouse) {
     HotbarFrame f;
+    if (ui.open && L.maxScroll > 0.0f) {
+        const float w = Input::MouseWheel();
+        if (w > 0.01f || w < -0.01f) {
+            float s = ui.scroll - w * 36.0f;
+            if (s < 0.0f) s = 0.0f;
+            if (s > L.maxScroll) s = L.maxScroll;
+            ui.scroll = s;
+        }
+    }
     Inventory* inv = ui.Inv();
     if (!ui.open || !ui.dragItems || !inv) { ui.dragIndex = -1; ui.dragAmount = 0; ui.equipDrag = -1; return f; }
     const int eq = L.PickEquip(mouse.x, mouse.y);
@@ -146,31 +180,67 @@ ChestLayout LayoutChest(const ChestInventory& ch, float W, float H) {
     ChestLayout L;
     L.chest = ch.Inv();
     L.player = ch.PlayerInv();
-    // The chest grid uses the chest's size; the player grid uses the player's own
-    // inventory UI size/columns, so resizing the chest doesn't resize your inventory.
-    L.cs = ch.slotSize; L.cg = ch.gap; L.cc = ch.cols < 1 ? 1 : ch.cols;
+    // Same scale as the hotbar: screen height over the player's reference height
+    // (720 when that UI doesn't scale). At 720 the pixel sizes match a saved scene.
     const InventoryUI* pui = ch.PlayerUI();
-    L.ps = pui ? pui->slotSize : L.cs;
-    L.pg = pui ? pui->slotGap : L.cg;
+    float ref = 720.0f;
+    if (pui && pui->scaleToScreen && pui->referenceHeight > 1.0f) ref = pui->referenceHeight;
+    float scale = H > 1.0f ? H / ref : 1.0f;
+    if (!(scale > 0.0f)) scale = 1.0f;
+    const float cs0 = ch.slotSize, cg0 = ch.gap;
+    const float ps0 = pui ? pui->slotSize : cs0, pg0 = pui ? pui->slotGap : cg0;
+    L.cc = ch.cols < 1 ? 1 : ch.cols;
     L.pc = pui ? (pui->hotbarSlots < 1 ? 1 : pui->hotbarSlots) : L.cc;
     L.chestN = L.chest ? (L.chest->capacity > 0 ? L.chest->capacity : (int)L.chest->slots.size()) : 0;
     L.playN = L.player ? (L.player->capacity > 0 ? L.player->capacity : (int)L.player->slots.size()) : 0;
-    const int chestRows = (L.chestN + L.cc - 1) / L.cc, playRows = L.playN > 0 ? (L.playN + L.pc - 1) / L.pc : 0;
-    const float chestW = L.cc * L.cs + (L.cc - 1) * L.cg, playW = L.pc * L.ps + (L.pc - 1) * L.pg;
-    L.panelW = std::max(chestW, playW);
-    L.chestH = chestRows * (L.cs + L.cg);
-    L.totalH = L.chestH + 30.0f + playRows * (L.ps + L.pg);
+    const int chestRows = L.chestN > 0 ? (L.chestN + L.cc - 1) / L.cc : 0;
+    const int playRows = L.playN > 0 ? (L.playN + L.pc - 1) / L.pc : 0;
+    auto measure = [&](float s) {
+        L.scale = s;
+        L.cs = cs0 * s; L.cg = cg0 * s; L.ps = ps0 * s; L.pg = pg0 * s;
+        const float chestW = L.cc * L.cs + (L.cc - 1) * L.cg;
+        const float playW = L.playN > 0 ? L.pc * L.ps + (L.pc - 1) * L.pg : 0.0f;
+        L.panelW = std::max(chestW, playW);
+        L.chestH = chestRows * (L.cs + L.cg);
+        L.totalH = L.chestH + 30.0f * s + playRows * (L.ps + L.pg);
+        L.chestOx = (L.panelW - chestW) * 0.5f;   // filled in once panelX is known
+        L.playOx = (L.panelW - playW) * 0.5f;
+    };
+    measure(scale);
+    if (L.panelW > W - 24.0f && L.panelW > 1.0f) measure(scale * ((W - 24.0f) / L.panelW));
     L.panelX = (W - L.panelW) * 0.5f;
-    L.topY = (H - L.totalH) * 0.5f + 16.0f;
-    L.chestOx = L.panelX + (L.panelW - chestW) * 0.5f;
-    L.playOx = L.panelX + (L.panelW - playW) * 0.5f;
+    L.chestOx += L.panelX;
+    L.playOx += L.panelX;
+    if (L.totalH > H - 80.0f) {
+        L.scrolling = true;
+        L.maxScroll = L.totalH - (H - 80.0f);
+        float s = ch.scroll;
+        if (s < 0.0f) s = 0.0f;
+        if (s > L.maxScroll) s = L.maxScroll;
+        L.scroll = s;
+        L.topY = 40.0f - s;
+    } else {
+        L.scrolling = false;
+        L.maxScroll = 0;
+        L.scroll = 0;
+        L.topY = (H - L.totalH) * 0.5f + 16.0f * L.scale;
+    }
     L.chestGy = L.topY;
-    L.playGy = L.topY + L.chestH + 24.0f;
+    L.playGy = L.topY + L.chestH + 24.0f * L.scale;
     return L;
 }
 
 ChestFrame HandleChest(ChestInventory& ch, const ChestLayout& L, Vec2 mouse) {
     ChestFrame f;
+    if (L.scrolling) {
+        const float w = Input::MouseWheel();
+        if (w > 0.01f || w < -0.01f) {
+            float s = ch.scroll - w * 36.0f;
+            if (s < 0.0f) s = 0.0f;
+            if (s > L.maxScroll) s = L.maxScroll;
+            ch.scroll = s;
+        }
+    }
     L.Pick(mouse.x, mouse.y, f.side, f.index);
     if (ch.dragSide < 0 && f.index >= 0 && Input::GetMouseButtonDown(0)) {   // lift a stack
         Inventory* inv = L.Inv(f.side);
@@ -207,17 +277,20 @@ bool GridLayout::Pick(float px, float py, int& panel, int& cx, int& cy) const {
 
 GridLayout LayoutGrid(GridInventoryUI& ui, GridInventory& primary, float W, float H) {
     GridLayout L;
-    // Honour the configured sizes (just a minimal sane floor).
-    L.cs = ui.cellSize < 24.0f ? 24.0f : ui.cellSize;
-    L.gp = ui.gap < 0.0f ? 0.0f : ui.gap;
     if (ui.multiContainer) ui.CollectContainers(L.equipped, L.nearby);
     else L.equipped.push_back(&primary);
-    L.labelH = ui.headerHeight < 16.0f ? 16.0f : ui.headerHeight;
-    const float vspace = ui.containerGap < 4.0f ? 4.0f : ui.containerGap;
-    L.colGap = ui.columnGap < 8.0f ? 8.0f : ui.columnGap;
-    L.pad = ui.panelPad < 4.0f ? 4.0f : ui.panelPad;
-    L.headH = ui.showMasterTitle ? 30.0f : 0.0f;
-    L.headGap = ui.showMasterTitle ? 18.0f : 6.0f;
+    // Same scale as the chest: authored pixels at 720, then shrink to the safe width.
+    float scale = H > 1.0f ? H / 720.0f : 1.0f;
+    if (!(scale > 0.0f)) scale = 1.0f;
+    const float cs0 = ui.cellSize < 24.0f ? 24.0f : ui.cellSize;
+    const float gp0 = ui.gap < 0.0f ? 0.0f : ui.gap;
+    const float label0 = ui.headerHeight < 16.0f ? 16.0f : ui.headerHeight;
+    const float vspace0 = ui.containerGap < 4.0f ? 4.0f : ui.containerGap;
+    const float colGap0 = ui.columnGap < 8.0f ? 8.0f : ui.columnGap;
+    const float pad0 = ui.panelPad < 4.0f ? 4.0f : ui.panelPad;
+    const float head0 = ui.showMasterTitle ? 30.0f : 0.0f;
+    const float headGap0 = ui.showMasterTitle ? 18.0f : 6.0f;
+    float vspace = vspace0;
     auto colSize = [&](const std::vector<GridInventory*>& list, float& cw, float& ch) {
         cw = 0; ch = 0;
         for (auto* g : list) {
@@ -226,12 +299,41 @@ GridLayout LayoutGrid(GridInventoryUI& ui, GridInventory& primary, float W, floa
         }
         if (!list.empty()) ch -= vspace;
     };
-    colSize(L.equipped, L.lw, L.lh);
-    colSize(L.nearby, L.rw, L.rh);
+    auto measure = [&](float s) {
+        L.scale = s;
+        L.cs = cs0 * s; L.gp = gp0 * s; L.labelH = label0 * s;
+        L.colGap = colGap0 * s; L.pad = pad0 * s; L.headH = head0 * s; L.headGap = headGap0 * s;
+        vspace = vspace0 * s;
+        L.panels.clear();
+        colSize(L.equipped, L.lw, L.lh);
+        colSize(L.nearby, L.rw, L.rh);
+    };
+    measure(scale);
     L.hasNear = !L.nearby.empty();
-    const float totalW = L.lw + (L.hasNear ? L.colGap + L.rw : 0.0f), totalH = std::max(L.lh, L.rh);
+    float totalW = L.lw + (L.hasNear ? L.colGap + L.rw : 0.0f);
+    if (totalW > W - 24.0f && totalW > 1.0f) {
+        measure(scale * ((W - 24.0f) / totalW));
+        totalW = L.lw + (L.hasNear ? L.colGap + L.rw : 0.0f);
+    }
+    const float totalH = std::max(L.lh, L.rh);
     L.startX = (W - totalW) * 0.5f;
-    L.startY = (H - totalH) * 0.5f + 14.0f + L.headH + L.headGap;
+    const float block = totalH + L.headH + L.headGap;
+    if (block > H - 80.0f) {
+        L.scrolling = true;
+        L.maxScroll = block - (H - 80.0f);
+        float s = ui.scroll;
+        if (s < 0.0f) s = 0.0f;
+        if (s > L.maxScroll) s = L.maxScroll;
+        ui.scroll = s;
+        L.scroll = s;
+        L.startY = 40.0f - s + L.headH + L.headGap;
+    } else {
+        L.scrolling = false;
+        L.maxScroll = 0;
+        L.scroll = 0;
+        ui.scroll = 0;
+        L.startY = (H - totalH) * 0.5f + 14.0f * L.scale + L.headH + L.headGap;
+    }
     auto placeCol = [&](const std::vector<GridInventory*>& list, float colX, float colW, bool ground) {
         float y = L.startY;
         for (auto* g : list) {
@@ -256,6 +358,15 @@ GridFrame HoverGrid(const GridLayout& L, Vec2 mouse) {
 }
 
 void HandleGrid(GridInventoryUI& ui, const GridLayout& L, const GridFrame& h) {
+    if (L.maxScroll > 0.0f) {
+        const float w = Input::MouseWheel();
+        if (w > 0.01f || w < -0.01f) {
+            float s = ui.scroll - w * 36.0f;
+            if (s < 0.0f) s = 0.0f;
+            if (s > L.maxScroll) s = L.maxScroll;
+            ui.scroll = s;
+        }
+    }
     if (ui.rotateKey && ui.dragInv && Input::GetKeyDown(ui.rotateKey)) ui.RotateDrag();   // applied only on a good drop
     GridInventory* under = h.panel >= 0 ? L.panels[h.panel].inv : nullptr;
     if (!ui.dragInv && under && Input::GetMouseButtonDown(0))

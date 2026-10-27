@@ -962,12 +962,31 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
 // exactly SDL_PIXELFORMAT_ABGR8888 byte order on little-endian. Returns nullptr
 // if the image can't be loaded.
 SDL_Texture* GetThumb(const std::string& path) {
-    static std::unordered_map<std::string, SDL_Texture*> cache;
+    struct Ent { SDL_Texture* tex = nullptr; std::uint64_t mt = 0; Uint32 at = 0; bool known = false; };
+    static std::unordered_map<std::string, Ent> cache;
     auto it = cache.find(path);
-    if (it != cache.end()) return it->second;
+    const Uint32 now = SDL_GetTicks();
+    const bool proc = path.rfind("proc:", 0) == 0;
+    // Procedural thumbs don't live on disk. File thumbs are restatted every 500 ms,
+    // and a cached miss is tried again after that (an icon saved while the editor is open).
+    if (it != cache.end() && it->second.known && (proc || (Uint32)(now - it->second.at) < 500u))
+        return it->second.tex;
+    std::uint64_t mt = 0;
+    if (!proc) {
+        std::error_code ec;
+        if (std::filesystem::exists(path, ec)) {
+            const auto t = std::filesystem::last_write_time(path, ec);
+            if (!ec) mt = (std::uint64_t)t.time_since_epoch().count();
+        }
+    }
+    if (it != cache.end() && it->second.known && it->second.tex && (proc || mt == it->second.mt)) {
+        it->second.at = now;
+        return it->second.tex;
+    }
+    if (it != cache.end() && it->second.tex) SDL_DestroyTexture(it->second.tex);
     SDL_Texture* tex = nullptr;
     okay::Image img;
-    if (path.rfind("proc:", 0) == 0) img = okay::GenerateProcTexture(path);   // built-in procedural
+    if (proc) img = okay::GenerateProcTexture(path);   // built-in procedural
     else img.Load(path);
     if (g_sdlRenderer && img.Width() > 0) {
         tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
@@ -977,11 +996,35 @@ SDL_Texture* GetThumb(const std::string& path) {
             SDL_UpdateTexture(tex, nullptr, img.Pixels().data(), img.Width() * 4);
         }
     }
-    cache[path] = tex;   // cache failures (nullptr) too, so we don't retry
+    cache[path] = Ent{tex, mt, now, true};
     return tex;
 }
 // An item's icon (okay::ItemIconPath), or null when it has none (the name is drawn).
 static SDL_Texture* ItemThumb(const std::string& path) { return path.empty() ? nullptr : GetThumb(path); }
+
+// Draw an item icon, using its atlas rectangle when the definition has one.
+static void AddItemIcon(ImDrawList* dl, SDL_Texture* tex, const std::string& id, ImVec2 a, ImVec2 b) {
+    if (!dl || !tex) return;
+    const okay::ItemDefinition* d = okay::ItemDatabase::Get().Find(id);
+    int tw = 0, th = 0, x = 0, y = 0, w = 0, h = 0;
+    if (d && SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th) == 0 &&
+        okay::IconPixelRect(*d, tw, th, x, y, w, h) && tw > 0 && th > 0) {
+        dl->AddImage((ImTextureID)tex, a, b,
+                     ImVec2((float)x / (float)tw, (float)y / (float)th),
+                     ImVec2((float)(x + w) / (float)tw, (float)(y + h) / (float)th));
+    } else {
+        dl->AddImage((ImTextureID)tex, a, b);
+    }
+}
+
+// Colour tile + a display name that never splits a character, when the icon file is missing.
+static void AddItemFallback(ImDrawList* dl, const std::string& id, ImVec2 a, ImVec2 b, ImU32 textCol, int maxChars) {
+    if (!dl) return;
+    const okay::Color c = okay::IconFallbackColor(id.empty() ? std::string("?") : id);
+    dl->AddRectFilled(a, b, IM_COL32((int)(c.r * 255), (int)(c.g * 255), (int)(c.b * 255), (int)(c.a * 255)), 3.0f);
+    const std::string nm = okay::Ellipsize(okay::ItemLabel(id), b.x - a.x - 4.0f, 2.0f, maxChars < 1 ? 1 : maxChars);
+    if (!nm.empty()) dl->AddText(ImVec2(a.x + 3.0f, a.y + 3.0f), textCol, nm.c_str());
+}
 
 // Item field for the inventory/recipe inspectors: a searchable combo of the project's
 // item definitions (with icons). Typing a new id is still allowed; an id with no
@@ -36178,8 +36221,8 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             if (shown > 0 && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
                 const auto& it = inv->slots[idx];
                 SDL_Texture* icon = ItemThumb(okay::ItemIconPath(ui->iconFolder, it.item));
-                if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + b + 2, p0.y + b + 2), ImVec2(p1.x - b - 2, p1.y - b - 2));
-                else if (ui->showNames) dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), it.item.substr(0, ui->nameChars < 1 ? 1 : (std::size_t)ui->nameChars).c_str());
+                if (icon) AddItemIcon(dl, icon, it.item, ImVec2(p0.x + b + 2, p0.y + b + 2), ImVec2(p1.x - b - 2, p1.y - b - 2));
+                else AddItemFallback(dl, it.item, ImVec2(p0.x + b + 2, p0.y + b + 2), ImVec2(p1.x - b - 2, p1.y - b - 2), col(ui->textColor), ui->nameChars);
                 if (ui->showCounts && shown > 1) {
                     std::string cs = std::to_string(shown);
                     ImVec2 ts = ImGui::CalcTextSize(cs.c_str());
@@ -36193,9 +36236,12 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (ui->open && bpRows > 0) {
             if (ui->darkenWhenOpen)
                 dl->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(0, 0, 0, 150));
-            for (int row = 0; row < bpRows; ++row)
+            for (int row = 0; row < bpRows; ++row) {
+                const float ry = bpY(row);
+                if (ry + sz < 0.0f || ry > canvasSize.y) continue;
                 for (int c = 0; c < n && n + row * n + c < total; ++c)
-                    slot(hx + c * (sz + gap), bpY(row), n + row * n + c, false);
+                    slot(hx + c * (sz + gap), ry, n + row * n + c, false);
+            }
             // Backpack header title above the grid.
             if (ui->showTitle && !ui->backpackTitle.empty()) {
                 float t = bpY(0), bb = bpY(bpRows - 1), top = (t < bb ? t : bb);
@@ -36214,8 +36260,8 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             dl->AddRectFilled(ImVec2(p0.x + b, p0.y + b), ImVec2(p1.x - b, p1.y - b), col(item.empty() ? ui->emptySlotColor : ui->slotColor), cr > b ? cr - b : 0.0f);
             if (!item.empty()) {
                 if (SDL_Texture* icon = ItemThumb(okay::ItemIconPath(ui->iconFolder, item)))
-                    dl->AddImage((ImTextureID)icon, ImVec2(p0.x + b + 2, p0.y + b + 2), ImVec2(p1.x - b - 2, p1.y - b - 2));
-                else dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), item.substr(0, ui->nameChars < 1 ? 1 : (std::size_t)ui->nameChars).c_str());
+                    AddItemIcon(dl, icon, item, ImVec2(p0.x + b + 2, p0.y + b + 2), ImVec2(p1.x - b - 2, p1.y - b - 2));
+                else AddItemFallback(dl, item, ImVec2(p0.x + b + 2, p0.y + b + 2), ImVec2(p1.x - b - 2, p1.y - b - 2), col(ui->textColor), ui->nameChars);
             } else if (!label.empty()) {
                 okay::Color tc = ui->textColor; tc.a = 0.45f;
                 dl->AddText(ImVec2(p0.x + 3, p0.y + sz * 0.5f - ImGui::GetTextLineHeight() * 0.5f), col(tc), label.c_str());
@@ -36278,8 +36324,8 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 dl->AddRectFilled(p0, p1, col(ui->slotBorder), cr);
                 dl->AddRectFilled(ImVec2(p0.x + 2, p0.y + 2), ImVec2(p1.x - 2, p1.y - 2), col(ui->slotColor), cr);
                 SDL_Texture* icon = ItemThumb(okay::ItemIconPath(ui->iconFolder, it.item));
-                if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 4, p0.y + 4), ImVec2(p1.x - 4, p1.y - 4));
-                else dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), it.item.substr(0, ui->nameChars < 1 ? 1 : (std::size_t)ui->nameChars).c_str());
+                if (icon) AddItemIcon(dl, icon, it.item, ImVec2(p0.x + 4, p0.y + 4), ImVec2(p1.x - 4, p1.y - 4));
+                else AddItemFallback(dl, it.item, ImVec2(p0.x + 4, p0.y + 4), ImVec2(p1.x - 4, p1.y - 4), col(ui->textColor), ui->nameChars);
                 int carried = ui->dragAmount > 0 ? ui->dragAmount : it.count;
                 if (ui->showCounts && carried > 1) {
                     std::string ccs = std::to_string(carried);
@@ -36364,11 +36410,10 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             if (hover) { rectF(lx, ly, w, h, gui->hoverColor, cr); rectS(lx, ly, w, h, lighten(gui->itemBorder, 0.35f), cr); }
             ImVec2 p0(canvasPos.x + lx, canvasPos.y + ly);
             SDL_Texture* icon = ItemThumb(okay::ItemIconPath(gui->iconFolder, it.name));
-            if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 6, p0.y + 6), ImVec2(p0.x + w - 6, p0.y + h - 6));
-            else if (gui->showItemNames) {   // clip the name to the tile width so it never overflows the cell
+            if (icon) AddItemIcon(dl, icon, it.name, ImVec2(p0.x + 6, p0.y + 6), ImVec2(p0.x + w - 6, p0.y + h - 6));
+            else {
                 int maxc = (int)((w - 12) / 7.0f); if (maxc < 1) maxc = 1;
-                std::string nm = (int)it.name.size() > maxc ? it.name.substr(0, maxc) : it.name;
-                dl->AddText(ImVec2(p0.x + 6, p0.y + 7), col(gui->textColor), nm.c_str());
+                AddItemFallback(dl, it.name, ImVec2(p0.x + 4, p0.y + 4), ImVec2(p0.x + w - 4, p0.y + h - 4), col(gui->textColor), maxc);
             }
             if (it.count > 1) {
                 std::string cstr = std::to_string(it.count);
@@ -36390,9 +36435,18 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 ImVec2 ts = ImGui::CalcTextSize(wb);
                 dl->AddText(ImVec2(canvasPos.x + P.ox + P.gw - ts.x, canvasPos.y + hy + 4), col(inv->OverWeight() ? gui->overweightColor : gui->textColor), wb);
             }
-            for (int y = 0; y < inv->rows; ++y)
+            const float stride = cs + gp;
+            int y0 = 0, y1 = inv->rows;
+            if (stride > 0.5f) {
+                y0 = (int)((0.0f - P.oy) / stride) - 1;
+                y1 = (int)((canvasSize.y - P.oy) / stride) + 2;
+                if (y0 < 0) y0 = 0;
+                if (y1 > inv->rows) y1 = inv->rows;
+                if (y0 > y1) y0 = y1;
+            }
+            for (int y = y0; y < y1; ++y)
                 for (int x = 0; x < inv->cols; ++x) {
-                    float cxp = P.ox + x * (cs + gp), cyp = P.oy + y * (cs + gp);
+                    float cxp = P.ox + x * stride, cyp = P.oy + y * stride;
                     rectF(cxp, cyp, cs, cs, darken(gui->cellColor, 0.10f), cr);
                     rectS(cxp, cyp, cs, cs, darken(gui->cellColor, 0.32f), cr);
                 }
@@ -36413,7 +36467,10 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             for (int i = 0; i < (int)inv->items.size(); ++i) {
                 if (inv == gui->dragInv && i == gui->dragIndex) continue;
                 const auto& it = inv->items[i];
-                drawOne(it, P.ox + it.x * (cs + gp), P.oy + it.y * (cs + gp), false, i == hovered);
+                const float iy = P.oy + it.y * (cs + gp);
+                const float ih = it.h * cs + (it.h - 1) * gp;
+                if (iy + ih < 0.0f || iy > canvasSize.y) continue;
+                drawOne(it, P.ox + it.x * (cs + gp), iy, false, i == hovered);
             }
         }
 
@@ -36507,8 +36564,8 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (gameView) L.Pick(m.x, m.y, hovSide, hovIdx);
         auto stack = [&](const okay::Inventory::Slot& it, ImVec2 p0, ImVec2 p1) {
             SDL_Texture* icon = ItemThumb(okay::ItemIconPath(ch->iconFolder, it.item));
-            if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 4, p0.y + 4), ImVec2(p1.x - 4, p1.y - 4));
-            else dl->AddText(ImVec2(p0.x + 4, p0.y + 4), col(ch->textColor), it.item.substr(0, 5).c_str());
+            if (icon) AddItemIcon(dl, icon, it.item, ImVec2(p0.x + 4, p0.y + 4), ImVec2(p1.x - 4, p1.y - 4));
+            else AddItemFallback(dl, it.item, ImVec2(p0.x + 4, p0.y + 4), ImVec2(p1.x - 4, p1.y - 4), col(ch->textColor), 6);
             if (it.count > 1) { std::string c = std::to_string(it.count); ImVec2 ts = ImGui::CalcTextSize(c.c_str());
                 dl->AddText(ImVec2(p1.x - ts.x - 3, p1.y - ts.y - 2), col(ch->textColor), c.c_str()); }
         };
@@ -36517,6 +36574,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             const float sz = L.Size(side);
             for (int i = 0; i < L.Count(side); ++i) {
                 float lx2, ly2; L.SlotXY(side, i, lx2, ly2);
+                if (ly2 + sz < 0.0f || ly2 > canvasSize.y) continue;
                 ImVec2 p0(canvasPos.x + lx2, canvasPos.y + ly2), p1(p0.x + sz, p0.y + sz);
                 dl->AddRectFilled(p0, p1, col(ch->slotBorder), cr);
                 dl->AddRectFilled(ImVec2(p0.x + 2, p0.y + 2), ImVec2(p1.x - 2, p1.y - 2), col(ch->slotColor), cr);
@@ -40972,6 +41030,15 @@ static void DrawItemDatabase(EditorState& ed) {
         text("Name", d->name, "What players see. Rename freely.");
         text("Description", d->description, nullptr);
         text("Icon", d->icon, "Image path. Blank = <icon folder><id>.png.");
+        if (ImGui::Checkbox("Atlas rect", &d->hasIconRect)) ch = true;
+        if (d->hasIconRect) {
+            float uv[4] = {d->iconU, d->iconV, d->iconUW, d->iconUH};
+            if (ImGui::DragFloat4("Icon UV", uv, 0.002f, 0.0f, 1.0f)) {
+                d->iconU = uv[0]; d->iconV = uv[1]; d->iconUW = uv[2]; d->iconUH = uv[3];
+                ch = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Normalized rectangle on the icon image: u, v, width, height.");
+        }
         if (SDL_Texture* t = ItemThumb(okay::ItemIconPath("", d->id))) ImGui::Image((ImTextureID)t, ImVec2(48, 48));
         if (ImGui::DragInt("Stack Size", &d->maxStack, 0.2f, 0, 100000)) ch = true;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Most per stack (0 = only the container's limit).");
@@ -42763,16 +42830,7 @@ int main(int argc, char** argv) {
 
         // An open inventory is modal: controllers pause look/move (mirrors the player).
         {
-            bool invModal = false;
-            if (ed.isPlaying())
-                for (const auto& up : ed.scene().Objects()) {
-                    if (!up) continue;
-                    if (auto* iu = up->GetComponent<okay::InventoryUI>()) if (iu->open && iu->dragItems) { invModal = true; break; }
-                    if (auto* gi = up->GetComponent<okay::GridInventory>()) if (gi->open) { invModal = true; break; }
-                    if (auto* cs = up->GetComponent<okay::CraftingStation>()) if (cs->open) { invModal = true; break; }
-                    if (auto* ce = up->GetComponent<okay::ChestInventory>()) if (ce->open) { invModal = true; break; }
-                    if (auto* mm = up->GetComponent<okay::Minimap>()) if (mm->fullscreen) { invModal = true; break; }
-                }
+            const bool invModal = ed.isPlaying() && okay::QueryInventoryModal(ed.scene()).open;
             okay::Input::SetUICaptured(invModal);
         }
         // Pause freezes the sim (Step advances it). A PauseMenu pausing the game

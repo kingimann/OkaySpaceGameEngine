@@ -29,6 +29,8 @@ struct HotbarLayout {
     int   total = 0;             ///< slots shown (InventoryUI::SlotCount)
     int   rows = 0;              ///< backpack rows
     bool  anchorTop = false;
+    float bagScroll = 0;         ///< added to backpack rows (positive moves a bottom bag down)
+    float maxScroll = 0;         ///< how far the open backpack can scroll; 0 when it fits
 
     /// Top of backpack row `row` (rows grow away from the docked edge).
     float RowY(int row) const;
@@ -61,6 +63,9 @@ HotbarFrame HandleHotbar(InventoryUI& ui, const HotbarLayout& L, Vec2 mouse);
 // ---- Chest screen (ChestInventory: chest grid on top, the player's below) ----
 
 struct ChestLayout {
+    float scale = 1;             ///< screen height / reference height, then shrunk to the safe width
+    float scroll = 0, maxScroll = 0;
+    bool  scrolling = false;     ///< the panel is taller than the screen
     float panelX = 0, topY = 0, panelW = 0, totalH = 0, chestH = 0;
     float chestOx = 0, chestGy = 0, playOx = 0, playGy = 0;
     float cs = 0, cg = 0, ps = 0, pg = 0;   ///< chest / player slot size and gap
@@ -88,6 +93,9 @@ struct GridPanel { GridInventory* inv = nullptr; float ox = 0, oy = 0, gw = 0, g
 struct GridLayout {
     std::vector<GridInventory*> equipped, nearby;
     std::vector<GridPanel> panels;
+    float scale = 1;                            ///< screen height / 720, then shrunk to the safe width
+    float scroll = 0, maxScroll = 0;
+    bool  scrolling = false;
     float cs = 0, gp = 0;                       ///< cell size and gap
     float labelH = 0, colGap = 0, pad = 0, headH = 0, headGap = 0;
     float lw = 0, lh = 0, rw = 0, rh = 0;       ///< equipped / nearby column sizes

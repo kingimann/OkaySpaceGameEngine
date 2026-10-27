@@ -6,6 +6,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/ModelAnimator.hpp"
+#include "okay/Components/SkinnedMesh.hpp"
 #include "okay/Math/Quat.hpp"
 #include <string>
 #include <vector>
@@ -146,8 +147,28 @@ public:
             float len = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
             return len > 1e-5f ? d * (1.0f / len) : Vec3{0, 0, 0};
         };
+        // Bind pose from the skin's inverse bind, when this bone is a joint.
+        // The transform in a scene saved mid-play is the animated pose.
         Mat4 rootInv = rigRoot->transform->LocalToWorldMatrix().Inverse();
-        auto rootRelPos = [&](GameObject* g) { return rootInv.MultiplyPoint(g->transform->Position()); };
+        auto bindOf = [&](GameObject* g, Quat& local, Vec3& rootPos) -> bool {
+            if (!g || !g->transform) return false;
+            for (const auto& up : s.Objects()) {
+                if (!up || !up->IsSelfOrDescendantOf(rigRoot)) continue;
+                auto* sm = up->GetComponent<SkinnedMesh>();
+                if (!sm || !sm->transform) continue;
+                Quat lr; Vec3 lp, meshPos;
+                if (!sm->BindJoint(g->transform, lr, lp, meshPos)) continue;
+                local = lr;
+                rootPos = rootInv.MultiplyPoint(sm->transform->LocalToWorldMatrix().MultiplyPoint(meshPos));
+                return true;
+            }
+            return false;
+        };
+        auto rootRelPos = [&](GameObject* g) {
+            Quat lr; Vec3 rp;
+            if (bindOf(g, lr, rp)) return rp;
+            return rootInv.MultiplyPoint(g->transform->Position());
+        };
         std::vector<Quat> align(N, Quat::Identity);
         static const int parentOf[15] = {-1, 0, 1, 1, 3, 4, 1, 6, 7, 0, 9, 10, 0, 12, 13};
         static const int childOf[15]  = {1, 2, -1, 4, 5, -1, 7, 8, -1, 10, 11, -1, 13, 14, -1};
@@ -172,9 +193,21 @@ public:
             e.bone = b;
             e.node = node[b]->name;
             e.go = node[b];
-            e.restLocal = node[b]->transform->localRotation;
-            e.restRootRel = ChainRotation(node[b]->transform->Parent(), rigRoot) *
-                            node[b]->transform->localRotation;
+            Quat bindLocal; Vec3 bindRoot;
+            if (bindOf(node[b], bindLocal, bindRoot)) e.restLocal = bindLocal;
+            else e.restLocal = node[b]->transform->localRotation;
+            // Parents saved mid-play are animated too: accumulate each bone's
+            // bind local, and only fall back to the transform when it isn't a joint.
+            Quat chain = Quat::Identity;
+            for (Transform* t = node[b]->transform; t && t != rigRoot->transform; t = t->Parent()) {
+                Quat local = t->localRotation;
+                if (t->gameObject) {
+                    Quat bl; Vec3 rp;
+                    if (bindOf(t->gameObject, bl, rp)) local = bl;
+                }
+                chain = local * chain;
+            }
+            e.restRootRel = chain;
             e.align = align[b];
             m_map.push_back(e);
             ++m_mapped;

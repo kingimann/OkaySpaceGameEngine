@@ -618,6 +618,16 @@ void EditorState::NewSnake() {
     dirty = false;
 }
 
+void EditorState::NewBrickBreaker() {
+    NewScene();
+    m_suppressUndo = true;
+    Templates::BrickBreaker(m_scene);
+    m_suppressUndo = false;
+    view3D = false;
+    m_selected = m_scene.Find("Paddle");
+    dirty = false;
+}
+
 void EditorState::NewInventory() {
     NewScene();
     m_suppressUndo = true;

@@ -44,6 +44,18 @@ public:
     float cornerRadius = 6.0f;
     float borderWidth = 0.0f;                         // focus ring thickness (0 = none)
     Color borderColor = Color::FromBytes(66, 150, 250);  // shown while focused
+    // grok/ui-controls — off by default, so Enter still submits and blurs.
+    /// Enter inserts a newline instead of submitting. The box stacks the lines.
+    bool multiline = false;
+    void SetMultiline(bool on) { multiline = on; }
+    bool Multiline() const { return multiline; }
+    void SetMaxLength(int n) { maxLength = n < 0 ? 0 : n; }
+    void SetContentType(int t) {
+        if (t < 0) t = 0;
+        if (t > (int)ContentType::Password) t = (int)ContentType::Password;
+        contentType = (ContentType)t;
+    }
+    int ContentTypeIndex() const { return (int)contentType; }
 
     /// A screen point mapped into this widget's own frame (where it is really drawn:
     /// inside its UI parent, at the Canvas scale). See UIToLocal.
@@ -104,8 +116,11 @@ public:
         if (changed) m_blink = 0.0f;                        // keep caret solid while typing
 
         // Enter submits (and blurs); Esc cancels focus without submitting.
-        if (Input::GetKeyDown('\r') || Input::GetKeyDown('\n')) { NoteFocus(false); Submit(); }
-        else if (Input::GetKeyDown((char)27)) NoteFocus(false);
+        // A multiline field inserts a newline instead and stays focused.
+        if (Input::GetKeyDown('\r') || Input::GetKeyDown('\n')) {
+            if (!multiline) { NoteFocus(false); Submit(); }
+            else if ((int)text.size() < maxLength) { text.push_back('\n'); m_blink = 0.0f; }
+        } else if (Input::GetKeyDown((char)27)) NoteFocus(false);
 
         m_blink += dt;
         if (m_blink >= 1.1f) m_blink -= 1.1f;

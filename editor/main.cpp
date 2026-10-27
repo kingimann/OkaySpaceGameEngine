@@ -5388,6 +5388,8 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         if (ImGui::MenuItem("Radial Progress")) addUI("Radial",   [](GameObject* g){ g->AddComponent<UIRadialProgress>(); });
         if (ImGui::MenuItem("Minimap"))      addUI("Minimap",     [](GameObject* g){ g->AddComponent<Minimap>(); });
         if (ImGui::MenuItem("Crosshair"))    addUI("Crosshair",   [](GameObject* g){ g->AddComponent<Crosshair>(); });
+        if (ImGui::MenuItem("Color Picker")) addUI("ColorPicker", [](GameObject* g){ g->AddComponent<UIColorPicker>()->Rebuild(); }); // grok/ui-color
+        if (ImGui::MenuItem("Slot Grid"))    addUI("SlotGrid",   [](GameObject* g){ g->AddComponent<UISlotGrid>()->Rebuild(); }); // grok/ui-hud
         if (ImGui::MenuItem("Tooltip"))      addUI("Tooltip",     [](GameObject* g){ g->AddComponent<UIPanel>(); g->AddComponent<UITooltip>(); });
         ImGui::EndMenu();
     }
@@ -5399,6 +5401,7 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         if (ImGui::MenuItem("List View"))    addUI("ListView",    oked::BuildUIListView);
         ImGui::Separator();
         if (ImGui::MenuItem("Modal Dialog")) addUI("Dialog",      oked::BuildUIModalDialog);
+        if (ImGui::MenuItem("Toast Stack"))  addUI("Toasts",      oked::BuildUIToast);   // grok/ui-toast
         if (ImGui::MenuItem("Context Menu Panel")) addUI("ContextPanel", oked::BuildUIContextMenu);
         if (ImGui::MenuItem("Keybind Field")) addUI("Keybind",    oked::BuildUIKeybindField);
         ImGui::EndMenu();
@@ -5450,6 +5453,7 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         add("Pause Menu",           &okay::UITemplates::AddPauseMenu);
         add("Settings",             &okay::UITemplates::AddSettings);
         add("Confirm Dialog",       &okay::UITemplates::AddConfirmDialog);
+        add("UI Notify",            &okay::UITemplates::AddUINotify);   // grok/ui-toast
         if (ImGui::BeginMenu("Loading Screens")) {
             ImGui::TextDisabled("UI you can edit (bar follows `loading`)");
             add("Loading Screen",      &okay::UITemplates::AddLoadingScreen);
@@ -5482,6 +5486,7 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         add("Health Bar",           &okay::UITemplates::AddHealthBar);
         add("Dialog Box",           &okay::UITemplates::AddDialogBox);
         add("Notification",         &okay::UITemplates::AddNotificationScreen);
+        add("UI Showcase",          &okay::UITemplates::AddUIShowcase);   // grok/ui-theme
         add("Shop",                 &okay::UITemplates::AddShop);
         add("Game Over",            &okay::UITemplates::AddGameOver);
         ImGui::Separator();
@@ -5490,6 +5495,10 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         add("Scoreboard",           &okay::UITemplates::AddScoreboard);
         add("Leaderboard",          &okay::UITemplates::AddLeaderboard);
         add("Matchmaking",          &okay::UITemplates::AddMatchmaking);
+        add("UI Color",             &okay::UITemplates::AddUIColor); // grok/ui-color
+        add("UI HUD",               &okay::UITemplates::AddUIHUD); // grok/ui-hud
+        add("UI Controls",          &okay::UITemplates::AddUIControls);   // grok/ui-controls
+        add("UI Notify",            &okay::UITemplates::AddUINotify);   // grok/ui-toast
         add("UI Options",           &okay::UITemplates::AddUIOptions);   // grok/ui-options
         ImGui::EndMenu();
     }
@@ -10491,6 +10500,24 @@ void DrawScriptDocs() {
         fapi("ui_tab_value(\"n\") / ui_tab_text(\"n\") / ui_set_tab(\"n\", i)", "selected tab index / label; select a tab (fires on_change)");
         fapi("ui_set_tab_badge(\"n\", i, count) / ui_set_tab_enabled(\"n\", i, on)", "badge a tab (0 none, -1 dot) / enable or disable it");
         fapi("ui_set_progress(\"n\", v)", "set a progress bar's fill (0..1)");
+        fapi("set_swatch(\"n\", i) / swatch_value(\"n\")", "pick a color swatch / read the index"); // grok/ui-color
+        fapi("kick_spread(\"n\", px) / set_spread / set_spread_recover", "crosshair gap; recover eases it back"); // grok/ui-hud
+        fapi("set_radial(\"n\", v) / set_radial_thickness / set_radial_start", "radial fill, ring width, start angle"); // grok/ui-hud
+        fapi("set_radial_spin / set_radial_clockwise / set_radial_percent", "loader spin, direction, percent text"); // grok/ui-hud
+        fapi("set_slot(\"n\", i) / slot_value(\"n\")", "select a slot grid cell / read it"); // grok/ui-hud
+        // grok/ui-controls
+        fapi("set_dropdown_search(\"n\", on) / set_dropdown_max(\"n\", rows) / set_dropdown_icon(\"n\", i, \"glyph\")", "dropdown search, visible rows, option glyph");
+        fapi("set_scroll_inertia(\"n\", rate) / set_scroll_elastic(\"n\", on) / set_scroll_bar(\"n\", style)", "scroll glide, elastic edges, bar style 0/1/2");
+        fapi("set_tabs_closable(\"n\", on) / close_tab(\"n\", i)", "closable tabs; on_tab_close fires when one is removed");
+        fapi("set_tooltip_rich(\"n\", on) / set_tooltip_offset(\"n\", x, y) / set_tooltip_delay(\"n\", s)", "tooltip rich text, cursor offset, hover delay");
+        fapi("set_input_multiline(\"n\", on) / set_input_limit(\"n\", n) / set_input_type(\"n\", t)", "multiline, character limit, 0 standard 1 integer 2 decimal 3 password");
+        // grok/ui-toast
+        fapi("toast_push(\"Title\", \"Body\", kind)", "show a toast (0 info, 1 success, 2 warning, 3 error)");
+        fapi("set_toast_duration(seconds) / set_toast_corner(n) / set_toast_max(n)", "toast lifetime, corner and stack size");
+        fapi("toast_count()", "how many toasts are on screen");
+        fapi("modal_open() / modal_close()", "show or hide the first modal (close fires on_modal_close)");
+        fapi("set_modal_style(on) / set_modal_title(\"s\") / set_modal_message(\"s\")", "style the dialog card and its text");
+        fapi("set_modal_confirm(\"s\") / set_modal_cancel(\"s\")", "confirm and cancel button labels");
         // grok/ui-options
         fapi("ui_set_slider_step(\"n\", step) / ui_set_slider_format(\"n\", \"{v}\")", "snap spacing / value label");
         fapi("ui_set_bar_segments(\"n\", n) / ui_set_bar_trail(\"n\", seconds) / ui_set_bar_format(\"n\", \"{n}%\")", "chunks, damage trail, label");
@@ -10880,6 +10907,13 @@ static const std::vector<std::string>& ScriptCompletions() {
         // ui
         "ui_set_text","ui_get_text","ui_clicked","ui_slider_value","ui_set_slider",
         "ui_toggle_value","ui_set_progress",
+        "set_swatch","swatch_value", // grok/ui-color
+        "kick_spread","set_spread","set_spread_recover","set_radial","set_slot","slot_value", // grok/ui-hud
+
+        // grok/ui-toast
+        "toast_push","set_toast_duration","set_toast_corner","set_toast_max","toast_count",
+        "modal_open","modal_close","set_modal_style","set_modal_title","set_modal_message",
+        "set_modal_confirm","set_modal_cancel",
         // raycast
         "raycast","raycast3","overlap_circle","raycast_all3","sphere_cast3","box_cast3","overlap_box3",
     };
@@ -10980,6 +11014,20 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"ui_checkbox","ui_checkbox(\"Label\", on)"}, {"ui_slider","ui_slider(\"Label\", v, lo, hi)"},
         {"ui_progress","ui_progress(t)"}, {"ui_set_text","ui_set_text(\"n\", \"s\")"}, {"ui_get_text","ui_get_text(\"n\")"},
         {"ui_clicked","ui_clicked(\"n\")"}, {"ui_set_slider","ui_set_slider(\"n\", v)"}, {"ui_set_progress","ui_set_progress(\"n\", v)"},
+        {"set_swatch","set_swatch(\"n\", i)"}, {"swatch_value","swatch_value(\"n\")"}, // grok/ui-color
+        {"kick_spread","kick_spread(\"n\", px)"}, {"set_spread","set_spread(\"n\", px)"}, {"set_radial","set_radial(\"n\", v)"}, {"set_slot","set_slot(\"n\", i)"}, // grok/ui-hud
+        // grok/ui-controls
+        {"set_dropdown_search","set_dropdown_search(\"n\", on)"}, {"set_dropdown_max","set_dropdown_max(\"n\", rows)"},
+        {"set_scroll_inertia","set_scroll_inertia(\"n\", rate)"}, {"set_tabs_closable","set_tabs_closable(\"n\", on)"},
+        {"set_tooltip_delay","set_tooltip_delay(\"n\", seconds)"}, {"set_input_multiline","set_input_multiline(\"n\", on)"},
+        // grok/ui-toast
+        {"toast_push","toast_push(\"Title\", \"Body\", kind)"},
+        {"set_toast_duration","set_toast_duration(seconds)"}, {"set_toast_corner","set_toast_corner(n)"},
+        {"set_toast_max","set_toast_max(n)"}, {"toast_count","toast_count()"},
+        {"modal_open","modal_open()"}, {"modal_close","modal_close()"},
+        {"set_modal_style","set_modal_style(on)"}, {"set_modal_title","set_modal_title(\"s\")"},
+        {"set_modal_message","set_modal_message(\"s\")"}, {"set_modal_confirm","set_modal_confirm(\"s\")"},
+        {"set_modal_cancel","set_modal_cancel(\"s\")"},
         // networking / raycast
         {"net_send","net_send(\"msg\")"}, {"raycast","raycast(x, y, dx, dy)"}, {"raycast3","raycast3(x, y, z, dx, dy, dz)"},
         {"overlap_circle","overlap_circle(x, y, r)"},
@@ -11298,6 +11346,50 @@ static const std::string* ScriptDoc(const std::string& name) {
         {"ease_back","Ease with a slight backward overshoot."},
         {"ease_elastic","Springy elastic ease-out."},
         {"ease_bounce","Bouncing ease-out."},
+        // grok/ui-color
+        {"set_swatch","Select a swatch on a named color picker. Fires on_change when it changes."},
+        {"swatch_value","The selected swatch index on a named color picker, or -1."},
+        // grok/ui-hud
+        {"kick_spread","Push a named crosshair's ticks apart. They ease back while its recover rate is above 0."},
+        {"set_spread","Set a named crosshair's extra gap, in pixels."},
+        {"set_spread_recover","Pixels per second a named crosshair's extra gap eases back to 0. 0 keeps it."},
+        {"set_radial","Set a named radial progress fill, from 0 to 1."},
+        {"set_radial_thickness","Ring width in pixels. 0 draws a pie."},
+        {"set_radial_start","Where a named radial starts, in degrees. 0 is 12 o'clock."},
+        {"set_radial_spin","Spin a named radial as a loader."},
+        {"set_radial_clockwise","Fill a named radial clockwise."},
+        {"set_radial_percent","Show a named radial's fill as a percent."},
+        {"set_slot","Select a slot on a named slot grid. -1 clears it."},
+        {"slot_value","The selected slot on a named grid, or -1."},
+        // grok/ui-controls
+        {"set_dropdown_search","Turn a named dropdown's search row on or off."},
+        {"set_dropdown_max","Cap how many options an open dropdown shows. 0 shows all."},
+        {"set_dropdown_icon","Set the short glyph in front of one dropdown option."},
+        {"set_scroll_inertia","Wheel glide for a named scroll view. 0 scrolls immediately."},
+        {"set_scroll_elastic","Let a named scroll view pass its ends, then spring back."},
+        {"set_scroll_bar","Scrollbar style: 0 usual, 1 thin, 2 hidden until scrolling."},
+        {"set_tabs_closable","Draw an X on each tab of a named tab bar."},
+        {"close_tab","Remove one tab. Fires on_tab_close."},
+        {"set_tooltip_rich","Draw <b> and #rrggbb in a named tooltip."},
+        {"set_tooltip_offset","Move a tooltip relative to the cursor. 14, 14 is the usual spot."},
+        {"set_tooltip_delay","Seconds a named tooltip waits before it shows."},
+        {"set_input_multiline","Enter inserts a newline in a named text field."},
+        {"set_input_limit","Character limit of a named text field."},
+        {"set_input_type","0 standard, 1 integer, 2 decimal, 3 password."},
+        // grok/ui-toast
+        {"toast_push","Show a toast on the scene's UI Toast. kind: 0 info, 1 success, 2 warning, 3 error."},
+        {"set_toast_duration","How long a new toast stays up, in seconds."},
+        {"set_toast_corner","0 top-right, 1 top-left, 2 bottom-right, 3 bottom-left, 4 top-center."},
+        {"set_toast_max","How many toasts stay on screen."},
+        {"toast_count","How many toasts are on screen right now."},
+        {"modal_open","Show the first modal dialog."},
+        {"modal_close","Hide the first modal dialog. Fires on_modal_close."},
+        {"set_modal_style","Turn the dialog's card styling on or off."},
+        {"set_modal_title","Set the dialog title. Empty leaves the label already there."},
+        {"set_modal_message","Set the dialog message. Empty leaves the label already there."},
+        {"set_modal_confirm","Set the confirm button's label."},
+        {"set_modal_cancel","Set the cancel button's label."},
+        {"on_modal_close","Fires when a modal dialog closes."},
     };
     auto it = doc.find(name);
     return it == doc.end() ? nullptr : &it->second;
@@ -17086,6 +17178,8 @@ void DrawHierarchy(EditorState& ed) {
             if (ImGui::MenuItem("Radial Progress")) mkUI("Radial", [](GameObject* g){ g->AddComponent<UIRadialProgress>(); });
             if (ImGui::MenuItem("Minimap"))      mkUI("Minimap", [](GameObject* g){ g->AddComponent<Minimap>(); });
             if (ImGui::MenuItem("Crosshair"))    mkUI("Crosshair", [](GameObject* g){ g->AddComponent<Crosshair>(); });
+            if (ImGui::MenuItem("Color Picker")) mkUI("ColorPicker", [](GameObject* g){ g->AddComponent<UIColorPicker>()->Rebuild(); }); // grok/ui-color
+            if (ImGui::MenuItem("Slot Grid"))    mkUI("SlotGrid", [](GameObject* g){ g->AddComponent<UISlotGrid>()->Rebuild(); }); // grok/ui-hud
             if (ImGui::MenuItem("Input Field"))  mkUI("InputField", [](GameObject* g){ g->AddComponent<UIInputField>(); });
             if (ImGui::MenuItem("Dropdown"))     mkUI("Dropdown", [](GameObject* g){ g->AddComponent<UIDropdown>(); });
             if (ImGui::MenuItem("Tabs"))         mkUI("Tabs",    [](GameObject* g){ g->AddComponent<UITabs>(); });
@@ -24459,6 +24553,13 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
     ImGui::SetNextItemOpen(want, ImGuiCond_Always);
     if (!en) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.62f, 0.66f, 1.0f));
     bool open = ImGui::CollapsingHeader(title.c_str(), ImGuiTreeNodeFlags_AllowOverlap);
+    if (ImGui::BeginDragDropSource()) {
+        const std::string payload = std::string("component\n") + label;
+        ImGui::SetDragDropPayload("VS_INSPECTOR", payload.c_str(), payload.size() + 1);
+        ImGui::TextUnformatted(label);
+        ImGui::TextDisabled("Drop on the visual script");
+        ImGui::EndDragDropSource();
+    }
     if (!en) ImGui::PopStyleColor();
     sCompOpen[okey] = open;
     const ImVec2 hmn = ImGui::GetItemRectMin(), hmx = ImGui::GetItemRectMax();
@@ -26854,6 +26955,13 @@ void DrawInspector(EditorState& ed) {
     }
 
     bool tfOpen = ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen);
+    if (ImGui::BeginDragDropSource()) {
+        const char* payload = "component\nTransform";
+        ImGui::SetDragDropPayload("VS_INSPECTOR", payload, std::strlen(payload) + 1);
+        ImGui::TextUnformatted("Transform");
+        ImGui::TextDisabled("Drop on the visual script");
+        ImGui::EndDragDropSource();
+    }
     // Right-click the Transform header: copy the whole TRS, paste it onto another
     // object.
     {
@@ -26894,6 +27002,13 @@ void DrawInspector(EditorState& ed) {
             others([&](GameObject* g) { g->transform->localPosition = t->localPosition; });
         }
         if (act) ed.PushUndo();
+        if (ImGui::BeginDragDropSource()) {
+            const char* payload = "field\nposition";
+            ImGui::SetDragDropPayload("VS_INSPECTOR", payload, std::strlen(payload) + 1);
+            ImGui::TextUnformatted("Position");
+            ImGui::TextDisabled("Drop on the visual script");
+            ImGui::EndDragDropSource();
+        }
         Vec3& e = g_euler[go];
         // Keep the displayed euler in sync with the ACTUAL rotation: when the
         // quaternion changed outside this field (gizmo drag, script, scene load,
@@ -26910,6 +27025,13 @@ void DrawInspector(EditorState& ed) {
             others([&](GameObject* g) { g->transform->localRotation = t->localRotation; g_euler[g] = e; });
         }
         if (act) ed.PushUndo();
+        if (ImGui::BeginDragDropSource()) {
+            const char* payload = "field\nrotation";
+            ImGui::SetDragDropPayload("VS_INSPECTOR", payload, std::strlen(payload) + 1);
+            ImGui::TextUnformatted("Rotation");
+            ImGui::TextDisabled("Drop on the visual script");
+            ImGui::EndDragDropSource();
+        }
         // Cameras aren't scalable (scaling warps the view); show it read-only.
         bool isCam = go->GetComponent<Camera>() != nullptr;
         static bool s_uniformScale = false;   // linked axes: drag one, all follow
@@ -26930,6 +27052,13 @@ void DrawInspector(EditorState& ed) {
             others([&](GameObject* g) { if (!g->GetComponent<Camera>()) g->transform->localScale = t->localScale; });
         }
         if (act) ed.PushUndo();
+        if (!isCam && ImGui::BeginDragDropSource()) {
+            const char* payload = "field\nscale";
+            ImGui::SetDragDropPayload("VS_INSPECTOR", payload, std::strlen(payload) + 1);
+            ImGui::TextUnformatted("Scale");
+            ImGui::TextDisabled("Drop on the visual script");
+            ImGui::EndDragDropSource();
+        }
         if (isCam) { ImGui::EndDisabled(); ImGui::TextDisabled("(camera scale is locked)"); }
         // Quick resets.
         if (ImGui::SmallButton("Reset Pos")) { ed.PushUndo(); t->localPosition = {0, 0, 0}; ed.dirty = true; }
@@ -32217,6 +32346,79 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##pv")) toRemove = pv;
         }
     }
+    // grok/ui-theme: a saved skin. Apply bakes it; existing widgets stay put until then.
+    if (auto* th = dynamic_cast<UITheme*>(curComp)) {
+        if (CompHeader("UI Theme", th, &toRemove)) {
+            char nb[64];
+            std::snprintf(nb, sizeof(nb), "%s", th->themeName.c_str());
+            if (ImGui::InputText("Name##uitheme", nb, sizeof(nb))) { th->themeName = nb; th->preset = (int)UITheme::Preset::Custom; ed.dirty = true; }
+            {
+                const char* presets[] = {"Custom", "Dark", "Light", "Sci-fi", "Fantasy"};
+                int which = th->preset;
+                if (which < 0 || which > 4) which = 0;
+                if (ImGui::Combo("Built-in Theme##uitheme", &which, presets, 5)) {
+                    th->ApplyPreset(which);
+                    ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dark, Light, Sci-fi and Fantasy fill the colors below. Custom keeps whatever you edit. Apply writes them onto the widgets.");
+            }
+            if (ImGui::Checkbox("Apply On Start##uitheme", &th->applyOnStart)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bake this skin onto this object and its children when play starts. Off leaves the scene as it was saved.");
+            if (ImGui::Button("Apply Now##uitheme")) { th->Apply(); ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write the colors, radius, border, shadow and fade speed onto the widgets under this object.");
+            if (ImGui::DragFloat("Corner Radius##uitheme", &th->cornerRadius, 0.1f, 0.0f, 64.0f)) { th->preset = (int)UITheme::Preset::Custom; ed.dirty = true; }
+            CornerMaskEditor("uitheme", th->cornerMask, ed);
+            if (ImGui::DragFloat("Border Width##uitheme", &th->borderWidth, 0.05f, 0.0f, 8.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Gradient##uitheme", &th->gradient)) ed.dirty = true;
+            if (th->gradient) {
+                const char* dirs[] = {"Vertical", "Horizontal", "Diagonal down", "Diagonal up"};
+                if (th->gradientDir < 0 || th->gradientDir > 3) th->gradientDir = 0;
+                if (ImGui::Combo("Gradient Direction##uitheme", &th->gradientDir, dirs, 4)) ed.dirty = true;
+            }
+            if (ImGui::Checkbox("Drop Shadow##uitheme", &th->shadow)) ed.dirty = true;
+            if (th->shadow) {
+                if (ImGui::DragFloat("Shadow Softness##uitheme", &th->shadowSoftness, 0.1f, 0.0f, 48.0f)) ed.dirty = true;
+                float off[2] = {th->shadowOffset.x, th->shadowOffset.y};
+                if (ImGui::DragFloat2("Shadow Offset##uitheme", off, 0.1f)) {
+                    th->shadowOffset = {off[0], off[1]}; ed.dirty = true;
+                }
+            }
+            if (ImGui::DragFloat("Padding##uitheme", &th->padding, 0.5f, 0.0f, 64.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spacing hint for screens built from this theme. Apply does not move widgets.");
+            if (ImGui::DragFloat("Font Scale##uitheme", &th->fontScale, 0.05f, 0.5f, 8.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Text Size##uitheme", &th->textPixelSize, 0.05f, 0.5f, 8.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Transition Speed##uitheme", &th->transitionSpeed, 0.1f, 0.0f, 40.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast buttons ease between normal, hover, pressed and disabled. 0 is instant.");
+            if (ImGui::DragFloat("Hover Scale##uitheme", &th->hoverScale, 0.01f, 1.0f, 1.4f)) ed.dirty = true;
+            if (ImGui::DragFloat("Glow##uitheme", &th->glow, 0.05f, 0.0f, 16.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Outer glow width in pixels. 0 is off. This is not a blur of the scene behind the panel.");
+            if (ImGui::DragFloat("Opacity##uitheme", &th->opacity, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Top Sheen##uitheme", &th->sheen)) ed.dirty = true;
+            auto col4 = [&](const char* label, Color& c) {
+                float v[4] = {c.r, c.g, c.b, c.a};
+                if (ImGui::ColorEdit4(label, v, ImGuiColorEditFlags_AlphaBar)) {
+                    c = {v[0], v[1], v[2], v[3]}; ed.dirty = true;
+                }
+            };
+            col4("Panel##uitheme", th->panel);
+            col4("Panel Bottom##uitheme", th->panelBottom);
+            col4("Accent##uitheme", th->accent);
+            col4("Text##uitheme", th->text);
+            col4("Muted##uitheme", th->muted);
+            col4("Button##uitheme", th->button);
+            col4("Hover##uitheme", th->buttonHover);
+            col4("Pressed##uitheme", th->buttonPressed);
+            col4("Button Text##uitheme", th->buttonText);
+            col4("Disabled##uitheme", th->disabled);
+            col4("Danger##uitheme", th->danger);
+            col4("Success##uitheme", th->success);
+            col4("Border##uitheme", th->border);
+            col4("Shadow##uitheme", th->shadowCol);
+            col4("Glow##uithemeglow", th->glowColor);
+            ImGui::TextDisabled("Bakes onto panels, buttons, sliders, toggles, bars, dropdowns, fields and screen text under this object.");
+            if (ImGui::SmallButton("Remove##uitheme")) toRemove = th;
+        }
+    }
     if (auto* td = dynamic_cast<TopDownController*>(curComp)) {
         if (CompHeader("Top Down Controller", td, &toRemove)) {
             if (StanceControlFields(td->stanceControl, "td")) ed.dirty = true;
@@ -33717,6 +33919,9 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::ColorEdit4("Ring Color##uif", bc)) { in->borderColor = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
             }
             ImGui::TextDisabled("Click to focus + type at runtime; Enter calls on_submit().");
+            // grok/ui-controls
+            if (ImGui::Checkbox("Multiline##uif", &in->multiline)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Enter inserts a newline instead of submitting.");
             if (ImGui::SmallButton("Remove##uif")) toRemove = in;
         }
     }
@@ -33769,6 +33974,24 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Border##udd", b)) { dd->borderColor = {b[0],b[1],b[2],b[3]}; ed.dirty = true; }
             ImGui::TextDisabled("Click to open; picking an option calls on_change().");
             if (ImGui::Checkbox("Interactable##udd", &dd->interactable)) ed.dirty = true;
+            // grok/ui-controls
+            if (ImGui::Checkbox("Searchable##udd", &dd->searchable)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The open list starts with a row you can type in. It filters the options.");
+            if (ImGui::DragInt("Max Visible##udd", &dd->maxVisible, 0.1f, 0, 32)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How many matching options to show. 0 shows all of them.");
+            if (!dd->options.empty()) {
+                for (int i = 0; i < (int)dd->options.size(); ++i) {
+                    ImGui::PushID(1000 + i);
+                    char ib[8]; std::strncpy(ib, dd->IconOf(i).c_str(), sizeof(ib) - 1); ib[sizeof(ib) - 1] = '\0';
+                    ImGui::SetNextItemWidth(48);
+                    if (ImGui::InputText((std::string("Icon##") + std::to_string(i)).c_str(), ib, sizeof(ib))) {
+                        dd->SetOptionIcon(i, ib); ed.dirty = true;
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("%s", dd->options[i].c_str());
+                    ImGui::PopID();
+                }
+            }
             if (ImGui::SmallButton("Remove##udd")) toRemove = dd;
         }
     }
@@ -33933,6 +34156,12 @@ void DrawInspector(EditorState& ed) {
             float tc[4] = {tt->textColor.r, tt->textColor.g, tt->textColor.b, tt->textColor.a};
             if (ImGui::ColorEdit4("Text Color##utt", tc)) { tt->textColor = {tc[0],tc[1],tc[2],tc[3]}; ed.dirty = true; }
             ImGui::TextDisabled("Hover the sibling widget to show it (in Game view / built game).");
+            // grok/ui-controls — delay and follow-cursor already exist; these two are new.
+            if (ImGui::Checkbox("Rich Text##utt", &tt->richText)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Use <b>bold</b> and #rrggbb in the text.");
+            float off[2] = {tt->offset.x, tt->offset.y};
+            if (ImGui::DragFloat2("Offset##utt", off, 0.5f, -200.0f, 200.0f)) { tt->offset = {off[0], off[1]}; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pixels from the cursor. 14, 14 is the usual spot. The box follows the pointer.");
             if (ImGui::SmallButton("Remove##utt")) toRemove = tt;
         }
     }
@@ -34063,6 +34292,14 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Background##usv", c)) { sv->background = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
             AnchorCombo("Anchor##usv", sv->anchor, ed);
             ImGui::TextDisabled("Parent UI widgets to this; the wheel or scrollbar scrolls them.");
+            // grok/ui-controls
+            if (ImGui::DragFloat("Inertia##usv", &sv->inertia, 0.05f, 0.0f, 30.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = each wheel notch scrolls immediately. Higher = a shorter glide.");
+            if (ImGui::Checkbox("Elastic Edges##usv", &sv->elastic)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The content can pass the ends, then springs back.");
+            const char* bars[] = {"Bar", "Thin", "Autohide"};
+            int bs = sv->barStyle; if (bs < 0) bs = 0; if (bs > 2) bs = 2;
+            if (ImGui::Combo("Bar##usv", &bs, bars, 3)) { sv->barStyle = bs; ed.dirty = true; }
             if (ImGui::SmallButton("Remove##usv")) toRemove = sv;
         }
     }
@@ -34145,7 +34382,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Fill##urp", flc)) { rp->fill = {flc[0], flc[1], flc[2], flc[3]}; ed.dirty = true; }
             AnchorCombo("Anchor##urp", rp->anchor, ed);
             if (ImGui::Checkbox("Show Percent##urp", &rp->showPercent)) ed.dirty = true;
-            ImGui::TextDisabled("script: set_progress(0..1) on cooldowns / loaders");
+            ImGui::TextDisabled("script: set_radial(\"name\", 0..1), thickness / spin / start"); // grok/ui-hud
             if (ImGui::SmallButton("Remove##urp")) toRemove = rp;
         }
     }
@@ -34424,6 +34661,10 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Length##uch", &cr->length, 0.5f, 0.0f, 256.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Spread##uch", &cr->spread, 0.5f, 0.0f, 256.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extra gap added to every tick (aim spread).");
+            // grok/ui-hud — 0 leaves the authored spread alone.
+            if (ImGui::DragFloat("Spread Recover##uch", &cr->spreadRecover, 1.0f, 0.0f, 400.0f, "%.0f px/s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast the extra gap eases back to 0. 0 keeps the authored spread.");
+            if (ImGui::DragFloat("Spread Max##uch", &cr->spreadMax, 1.0f, 0.0f, 256.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Show Lines##uch", &cr->showLines)) ed.dirty = true;
             if (cr->showLines) {
                 if (ImGui::Checkbox("Up##uchl", &cr->lineUp)) ed.dirty = true; ImGui::SameLine();
@@ -34452,6 +34693,59 @@ void DrawInspector(EditorState& ed) {
             }
             AnchorCombo("Anchor##uch", cr->anchor, ed);
             if (ImGui::SmallButton("Remove##uch")) toRemove = cr;
+        }
+    }
+    if (auto* cp = dynamic_cast<UIColorPicker*>(curComp)) { // grok/ui-color
+        if (CompHeader("UI Color Picker", cp, &toRemove)) {
+            float pos[2] = {cp->position.x, cp->position.y};
+            if (ImGui::DragFloat2("Pos (px)##ucp", pos, 1.0f)) { cp->position = {pos[0], pos[1]}; cp->Rebuild(); ed.dirty = true; }
+            if (ImGui::DragFloat("Swatch##ucp", &cp->swatch, 1.0f, 16.0f, 128.0f)) { cp->SetSwatchSize(cp->swatch); cp->Rebuild(); ed.dirty = true; }
+            float gap = cp->gap;
+            if (ImGui::DragFloat("Gap##ucp", &gap, 0.5f, 0.0f, 48.0f)) { cp->SetGap(gap); cp->Rebuild(); ed.dirty = true; }
+            int sel = cp->value;
+            if (ImGui::DragInt("Selected##ucp", &sel, 0.1f, 0, std::max(0, cp->Count() - 1))) { cp->SetValue(sel); ed.dirty = true; }
+            AnchorCombo("Anchor##ucp", cp->anchor, ed);
+            cp->Rebuild();
+            for (int i = 0; i < cp->Count(); ++i) {
+                Color c = cp->swatches[(std::size_t)i];
+                float col[4] = {c.r, c.g, c.b, c.a};
+                ImGui::PushID(i);
+                if (ImGui::ColorEdit4("Swatch##ucp", col)) { cp->SetSwatch(i, {col[0], col[1], col[2], col[3]}); cp->Rebuild(); ed.dirty = true; }
+                ImGui::PopID();
+            }
+            ImGui::TextDisabled("script: set_swatch(\"name\", i)   event: on_change");
+            if (ImGui::SmallButton("Remove##ucp")) toRemove = cp;
+        }
+    }
+    if (auto* sg = dynamic_cast<UISlotGrid*>(curComp)) { // grok/ui-hud
+        if (CompHeader("UI Slot Grid", sg, &toRemove)) {
+            float pos[2] = {sg->position.x, sg->position.y};
+            if (ImGui::DragFloat2("Pos (px)##usg", pos, 1.0f)) { sg->position = {pos[0], pos[1]}; sg->Rebuild(); ed.dirty = true; }
+            int cols = sg->columns, rows = sg->rows;
+            if (ImGui::DragInt("Columns##usg", &cols, 0.1f, 1, 16)) { sg->SetColumns(cols); sg->Rebuild(); ed.dirty = true; }
+            if (ImGui::DragInt("Rows##usg", &rows, 0.1f, 1, 16)) { sg->SetRows(rows); sg->Rebuild(); ed.dirty = true; }
+            float cell[2] = {sg->cell.x, sg->cell.y};
+            if (ImGui::DragFloat2("Cell (px)##usg", cell, 1.0f, 8.0f, 256.0f)) { sg->SetCell(cell[0], cell[1]); sg->Rebuild(); ed.dirty = true; }
+            float gap = sg->gap;
+            if (ImGui::DragFloat("Gap##usg", &gap, 0.5f, 0.0f, 64.0f)) { sg->SetGap(gap); sg->Rebuild(); ed.dirty = true; }
+            int sel = sg->value;
+            if (ImGui::DragInt("Selected##usg", &sel, 0.1f, -1, sg->Count() - 1)) { sg->SetValue(sel); ed.dirty = true; }
+            float bc[4] = {sg->color.r, sg->color.g, sg->color.b, sg->color.a};
+            if (ImGui::ColorEdit4("Color##usg", bc)) { sg->color = {bc[0], bc[1], bc[2], bc[3]}; sg->Rebuild(); ed.dirty = true; }
+            float sc[4] = {sg->selectedColor.r, sg->selectedColor.g, sg->selectedColor.b, sg->selectedColor.a};
+            if (ImGui::ColorEdit4("Selected Color##usg", sc)) { sg->selectedColor = {sc[0], sc[1], sc[2], sc[3]}; sg->Rebuild(); ed.dirty = true; }
+            AnchorCombo("Anchor##usg", sg->anchor, ed);
+            sg->Rebuild();
+            for (int i = 0; i < sg->Count(); ++i) {
+                char buf[64];
+                std::strncpy(buf, sg->Label(i).c_str(), sizeof(buf) - 1);
+                buf[sizeof(buf) - 1] = '\0';
+                ImGui::PushID(i);
+                if (ImGui::InputText("Label##usg", buf, sizeof(buf))) { sg->SetLabel(i, buf); sg->Rebuild(); ed.dirty = true; }
+                ImGui::PopID();
+            }
+            ImGui::TextDisabled("script: set_slot(\"name\", i)   event: on_change");
+            if (ImGui::SmallButton("Remove##usg")) toRemove = sg;
         }
     }
     if (auto* sa = dynamic_cast<UISafeArea*>(curComp)) {
@@ -34787,6 +35081,9 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Badge Text##utb", btc)) { tb->badgeTextColor = {btc[0], btc[1], btc[2], btc[3]}; ed.dirty = true; }
             SectionHeader("Behavior");
             if (ImGui::Checkbox("Interactable##utb", &tb->interactable)) ed.dirty = true;
+            // grok/ui-controls — Vertical in the Style list is the side-tab layout.
+            if (ImGui::Checkbox("Closable##utb", &tb->closable)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("An X on each tab. Clicking it removes the tab and fires on_tab_close().");
             ImGui::SameLine();
             if (ImGui::Checkbox("Focusable##utb", &tb->focusable)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keyboard/gamepad menu focus: Left/Right switch tabs");
@@ -35425,6 +35722,8 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<AntiCheatConfig>(), "Anti-Cheat Config")) { go->AddComponent<AntiCheatConfig>(); ed.dirty = true; }
             if (item(true, "Net Validator (RPC rule)")) { go->AddComponent<NetValidator>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIAnimation>(), "UI Animation (fade / slide / pop / pulse)")) { go->AddComponent<UIAnimation>(); ed.dirty = true; }
+            // grok/ui-theme
+            if (item(!go->GetComponent<UITheme>(), "UI Theme (colors, radius, shadow)")) { go->AddComponent<UITheme>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIButton>(), "UI Button")) { go->AddComponent<UIButton>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIPanel>(), "UI Panel")) { go->AddComponent<UIPanel>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIImage>(), "UI Image")) { go->AddComponent<UIImage>(); ed.dirty = true; }
@@ -35435,6 +35734,8 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Minimap>(), "Minimap")) { go->AddComponent<Minimap>(); ed.dirty = true; }
             if (item(!go->GetComponent<MinimapBlip>(), "Minimap Blip")) { go->AddComponent<MinimapBlip>(); ed.dirty = true; }
             if (item(!go->GetComponent<Crosshair>(), "Crosshair")) { go->AddComponent<Crosshair>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIColorPicker>(), "UI Color Picker")) { go->AddComponent<UIColorPicker>()->Rebuild(); ed.dirty = true; } // grok/ui-color
+            if (item(!go->GetComponent<UISlotGrid>(), "UI Slot Grid")) { go->AddComponent<UISlotGrid>()->Rebuild(); ed.dirty = true; } // grok/ui-hud
             if (item(!go->GetComponent<LoadingScreen>(), "Loading Screen")) {
                 auto* ls = go->AddComponent<LoadingScreen>();
                 ls->tips = {"Tip: hold Shift to sprint.", "Tip: build a foundation first.", "Loading the world..."};
@@ -35453,6 +35754,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIFlexItem>(), "UI Flex Item (grow / shrink)")) { go->AddComponent<UIFlexItem>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIListView>(), "UI List View")) { oked::BuildUIListView(go); ed.dirty = true; }
             if (item(!go->GetComponent<UIModal>(), "UI Modal (dialog)")) { go->AddComponent<UIModal>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIToast>(), "UI Toast")) { go->AddComponent<UIToast>(); ed.dirty = true; }   // grok/ui-toast
             if (item(!go->GetComponent<UIContextMenu>(), "UI Context Menu (right-click)")) { go->AddComponent<UIContextMenu>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIKeybindField>(), "UI Keybind Field")) { go->AddComponent<UIKeybindField>(); ed.dirty = true; }
             if (item(!go->GetComponent<UITextBind>(), "UI Text Bind (show a variable)")) { go->AddComponent<UITextBind>(); ed.dirty = true; }
@@ -42772,7 +43074,12 @@ int main(int argc, char** argv) {
                     {"Loading (Minimal)", &AddLoadingMinimal}, {"Loading (Card)", &AddLoadingCard},
                     {"Loading (Splash)", &AddLoadingSplash}, {"Loading (Cinematic)", &AddLoadingCinematic},
                     {"Shop", &AddShop}, {"Confirm Dialog", &AddConfirmDialog}, {"Notification", &AddNotificationScreen},
+                    {"UI HUD", &AddUIHUD}, // grok/ui-hud
+                    {"UI Controls", &AddUIControls},   // grok/ui-controls
+                    {"UI Notify", &AddUINotify},   // grok/ui-toast
+                    {"UI Showcase", &AddUIShowcase},   // grok/ui-theme
                     {"Matchmaking", &AddMatchmaking}, {"Leaderboard", &AddLeaderboard},
+                    {"UI Color", &AddUIColor}, // grok/ui-color
                     {"UI Options", &AddUIOptions}};   // grok/ui-options
                 for (const auto& sc : kScreens)
                     if (n == sc.first) { ed.PushUndo(); ed.Select(sc.second(ed.scene())); }

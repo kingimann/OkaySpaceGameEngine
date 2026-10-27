@@ -24,6 +24,7 @@
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/PlayerView.hpp"
+#include "okay/Components/UITheme.hpp"          // grok/ui-theme
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/AnimControl.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
@@ -56,12 +57,20 @@
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/UIProgressBar.hpp"
+#include "okay/Components/UIColorPicker.hpp"   // grok/ui-color
+#include "okay/Components/UIRadialProgress.hpp"   // grok/ui-hud
+#include "okay/Components/Crosshair.hpp"          // grok/ui-hud
+#include "okay/Components/UISlotGrid.hpp"         // grok/ui-hud
+#include "okay/Components/UIToast.hpp"    // grok/ui-toast
+#include "okay/Components/UIModal.hpp"    // grok/ui-toast
 #include "okay/Components/UIElement.hpp"
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIToggle.hpp"
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/UITabs.hpp"
+#include "okay/Components/UIScrollView.hpp"   // grok/ui-controls
+#include "okay/Components/UITooltip.hpp"
 #include "okay/Components/Tilemap.hpp"
 #include "okay/Components/NPCController.hpp"
 #include "okay/Components/Spawner.hpp"
@@ -4471,6 +4480,203 @@ struct OkayScriptVM::Impl {
                 if (auto* pb = g->GetComponent<UIProgressBar>()) pb->value = a[1].AsFloat();
             return Value{};
         };
+        // grok/ui-color — pick a swatch on a named color picker (fires on_change).
+        b["set_swatch"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* cp = g->GetComponent<UIColorPicker>()) cp->SetValue((int)a[1].AsFloat());
+            return Value{};
+        };
+        b["swatch_value"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* cp = g->GetComponent<UIColorPicker>()) return Value{(float)cp->Value()};
+            return Value{-1.0f};
+        };
+        // grok/ui-hud — crosshair recovery, radial options, and the slot grid, by object name.
+        b["kick_spread"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* cr = g->GetComponent<Crosshair>()) cr->KickSpread(a[1].AsFloat());
+            return Value{};
+        };
+        b["set_spread"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* cr = g->GetComponent<Crosshair>()) cr->SetSpread(a[1].AsFloat());
+            return Value{};
+        };
+        b["set_spread_recover"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* cr = g->GetComponent<Crosshair>()) cr->SetSpreadRecover(a[1].AsFloat());
+            return Value{};
+        };
+        b["set_radial"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetValue(a[1].AsFloat());
+            return Value{};
+        };
+        b["set_radial_thickness"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetThickness(a[1].AsFloat());
+            return Value{};
+        };
+        b["set_radial_start"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetStartAngle(a[1].AsFloat());
+            return Value{};
+        };
+        b["set_radial_spin"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetSpin(a[1].AsBool());
+            return Value{};
+        };
+        b["set_radial_clockwise"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetClockwise(a[1].AsBool());
+            return Value{};
+        };
+        b["set_radial_percent"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetShowPercent(a[1].AsBool());
+            return Value{};
+        };
+        b["set_slot"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* sg = g->GetComponent<UISlotGrid>()) sg->SetValue((int)a[1].AsFloat());
+            return Value{};
+        };
+        b["slot_value"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* sg = g->GetComponent<UISlotGrid>()) return Value{(float)sg->Value()};
+            return Value{-1.0f};
+        };
+        // grok/ui-controls: the options added on top of dropdown, scroll, tabs, tooltip and text fields.
+        b["set_dropdown_search"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* dd = g->GetComponent<UIDropdown>()) dd->SetSearchable(a[1].AsBool());
+            return Value{};
+        };
+        b["set_dropdown_max"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* dd = g->GetComponent<UIDropdown>()) dd->SetMaxVisible((int)a[1].AsFloat());
+            return Value{};
+        };
+        b["set_dropdown_icon"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 3) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* dd = g->GetComponent<UIDropdown>()) dd->SetOptionIcon((int)a[1].AsFloat(), a[2].AsString());
+            return Value{};
+        };
+        b["set_scroll_inertia"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* sv = g->GetComponent<UIScrollView>()) sv->SetInertia(a[1].AsFloat());
+            return Value{};
+        };
+        b["set_scroll_elastic"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* sv = g->GetComponent<UIScrollView>()) sv->SetElastic(a[1].AsBool());
+            return Value{};
+        };
+        b["set_scroll_bar"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* sv = g->GetComponent<UIScrollView>()) sv->SetBarStyle((int)a[1].AsFloat());
+            return Value{};
+        };
+        b["set_tabs_closable"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tb = g->GetComponent<UITabs>()) tb->SetClosable(a[1].AsBool());
+            return Value{};
+        };
+        b["close_tab"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tb = g->GetComponent<UITabs>()) tb->CloseTab((int)a[1].AsFloat());
+            return Value{};
+        };
+        b["set_tooltip_rich"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tt = g->GetComponent<UITooltip>()) tt->SetRichText(a[1].AsBool());
+            return Value{};
+        };
+        b["set_tooltip_offset"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 3) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tt = g->GetComponent<UITooltip>()) tt->SetOffset(a[1].AsFloat(), a[2].AsFloat());
+            return Value{};
+        };
+        b["set_tooltip_delay"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tt = g->GetComponent<UITooltip>()) tt->SetDelay(a[1].AsFloat());
+            return Value{};
+        };
+        b["set_input_multiline"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* in = g->GetComponent<UIInputField>()) in->SetMultiline(a[1].AsBool());
+            return Value{};
+        };
+        b["set_input_limit"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* in = g->GetComponent<UIInputField>()) in->SetMaxLength((int)a[1].AsFloat());
+            return Value{};
+        };
+        b["set_input_type"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* in = g->GetComponent<UIInputField>()) in->SetContentType((int)a[1].AsFloat());
+            return Value{};
+        };
+        // grok/ui-toast. toast_push (not ui_toast, which is the immediate-mode popup).
+        auto firstToast = [sceneOf]() -> UIToast* {
+            Scene* s = sceneOf();
+            return s ? s->FindObjectOfType<UIToast>() : nullptr;
+        };
+        auto firstModal = [sceneOf]() -> UIModal* {
+            Scene* s = sceneOf();
+            return s ? s->FindObjectOfType<UIModal>() : nullptr;
+        };
+        b["toast_push"] = [firstToast](std::vector<Value>& a) {
+            if (UIToast* t = firstToast())
+                t->Push(a.size() > 0 ? a[0].AsString() : std::string{},
+                        a.size() > 1 ? a[1].AsString() : std::string{},
+                        a.size() > 2 ? (int)a[2].AsFloat() : 0);
+            return Value{};
+        };
+        b["set_toast_duration"] = [firstToast](std::vector<Value>& a) {
+            if (UIToast* t = firstToast()) t->SetDuration(a.empty() ? 4.0f : a[0].AsFloat());
+            return Value{};
+        };
+        b["set_toast_corner"] = [firstToast](std::vector<Value>& a) {
+            if (UIToast* t = firstToast()) t->SetCorner(a.empty() ? 0 : (int)a[0].AsFloat());
+            return Value{};
+        };
+        b["set_toast_max"] = [firstToast](std::vector<Value>& a) {
+            if (UIToast* t = firstToast()) t->SetMaxStack(a.empty() ? 4 : (int)a[0].AsFloat());
+            return Value{};
+        };
+        b["toast_count"] = [firstToast](std::vector<Value>&) -> Value {
+            return Value{firstToast() ? (float)firstToast()->Count() : 0.0f};
+        };
+        b["modal_open"] = [firstModal](std::vector<Value>&) {
+            if (UIModal* m = firstModal()) m->Open();
+            return Value{};
+        };
+        b["modal_close"] = [firstModal](std::vector<Value>&) {
+            if (UIModal* m = firstModal()) m->Close();
+            return Value{};
+        };
+        b["set_modal_style"] = [firstModal](std::vector<Value>& a) {
+            if (UIModal* m = firstModal()) m->SetStyleCard(a.empty() ? true : a[0].AsBool());
+            return Value{};
+        };
+        b["set_modal_title"] = [firstModal](std::vector<Value>& a) {
+            if (UIModal* m = firstModal()) m->SetTitle(a.empty() ? std::string{} : a[0].AsString());
+            return Value{};
+        };
+        b["set_modal_message"] = [firstModal](std::vector<Value>& a) {
+            if (UIModal* m = firstModal()) m->SetMessage(a.empty() ? std::string{} : a[0].AsString());
+            return Value{};
+        };
+        b["set_modal_confirm"] = [firstModal](std::vector<Value>& a) {
+            if (UIModal* m = firstModal()) m->SetConfirmText(a.empty() ? std::string{} : a[0].AsString());
+            return Value{};
+        };
+        b["set_modal_cancel"] = [firstModal](std::vector<Value>& a) {
+            if (UIModal* m = firstModal()) m->SetCancelText(a.empty() ? std::string{} : a[0].AsString());
+            return Value{};
+        };
         b["ui_set_fill"] = [sceneOf](std::vector<Value>& a) {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
                 if (auto* im = g->GetComponent<UIImage>()) im->fillAmount = a[1].AsFloat();
@@ -5041,6 +5247,38 @@ struct OkayScriptVM::Impl {
         };
         b["SetView"] = b["set_view"];
         b["GetView"] = b["get_view"];
+        // grok/ui-theme: apply_ui_theme() bakes the theme on this object (or the
+        // first in the scene). apply_ui_theme(name) picks a theme by name.
+        // apply_ui_theme(name, root) bakes it onto the named object instead.
+        b["apply_ui_theme"] = [selfObj](std::vector<Value>& a) {
+            GameObject* g = selfObj();
+            if (!g || !g->scene()) return Value{0.0f};
+            const std::string name = a.empty() ? std::string() : a[0].AsString();
+            UITheme* theme = UITheme::Find(g->scene(), name);
+            if (!theme && name.empty()) theme = g->GetComponent<UITheme>();
+            if (!theme) return Value{0.0f};
+            GameObject* root = theme->gameObject;
+            if (a.size() >= 2) {
+                if (GameObject* named = g->scene()->Find(a[1].AsString())) root = named;
+            }
+            theme->ApplyTo(root);
+            return Value{1.0f};
+        };
+        b["ApplyUITheme"] = b["apply_ui_theme"];
+        // set_ui_theme(0 custom, 1 dark, 2 light, 3 sci-fi, 4 fantasy) fills the
+        // palette and bakes it onto this theme's object.
+        b["set_ui_theme"] = [selfObj](std::vector<Value>& a) {
+            GameObject* g = selfObj();
+            if (!g || !g->scene()) return Value{0.0f};
+            const std::string name = a.size() >= 2 ? a[1].AsString() : std::string();
+            UITheme* theme = name.empty() ? g->GetComponent<UITheme>() : nullptr;
+            if (!theme) theme = UITheme::Find(g->scene(), name);
+            if (!theme) return Value{0.0f};
+            theme->ApplyPreset(a.empty() ? 1 : (int)a[0].AsFloat());
+            theme->Apply();
+            return Value{1.0f};
+        };
+        b["SetUITheme"] = b["set_ui_theme"];
         // Clip queries: timing + existence, so scripts can react to where a clip is.
         b["clip_time"] = [charSelf, modelSelf](std::vector<Value>&) {
             Character* c = charSelf();
@@ -9123,8 +9361,10 @@ const std::unordered_map<std::string, std::vector<std::string>>& EventAliases() 
         {"on_mouse_down",  {"OnMouseDown"}},
         {"on_mouse_up",    {"OnMouseUp", "OnMouseUpAsButton"}},
         {"on_click",     {"OnClick", "OnMouseClick", "OnMouseUpAsButton", "OnPointerClick"}},
+        {"on_modal_close", {"OnModalClose"}},   // grok/ui-toast
         {"on_change",    {"OnValueChanged"}},
-        {"on_submit",    {"OnSubmit"}},   // grok/ui-options: text fields already fire on_submit
+        {"on_submit",    {"OnSubmit"}},
+        {"on_tab_close", {"OnTabClose"}},
         {"on_toggle",    {"OnToggle", "OnValueChanged"}},
         {"on_drop",      {"OnDrop"}},
         {"on_receive",   {"OnReceive"}},

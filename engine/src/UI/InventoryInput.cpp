@@ -75,7 +75,8 @@ HotbarFrame HandleHotbar(InventoryUI& ui, const HotbarLayout& L, Vec2 mouse) {
     }
     // Drop when the held button is released (either button: you held one to drag).
     if (ui.dragIndex >= 0 && (Input::GetMouseButtonUp(0) || Input::GetMouseButtonUp(1))) {
-        ui.ApplyDrag(ui.dragIndex, at);
+        if (at >= 0) ui.ApplyDrag(ui.dragIndex, at);
+        else ui.DropToWorld(ui.dragIndex, ui.dragAmount);   // released away from every slot: drop it in the world
         ui.dragIndex = -1; ui.dragAmount = 0;
     }
     if (ui.dragIndex >= (int)inv->slots.size()) { ui.dragIndex = -1; ui.dragAmount = 0; }
@@ -228,6 +229,36 @@ void HandleGrid(GridInventoryUI& ui, const GridLayout& L, const GridFrame& h) {
     }
     // Drop: same container = move, another = transfer (cross-bag / loot), a matching stack = merge.
     if (ui.dragInv && Input::GetMouseButtonUp(0)) ui.Drop(under, h.cx, h.cy);
+}
+
+// ---- Crafting bench ----
+
+int CraftingLayout::Pick(float x, float y) const {
+    for (int i = 0; i < rows; ++i) {
+        const float ry = RowY(i);
+        if (x >= px + 4 && x < px + pw - 4 && y >= ry && y < ry + rowH - 2) return i;
+    }
+    return -1;
+}
+
+CraftingLayout LayoutCrafting(const CraftingStation& cs, float W, float H) {
+    CraftingLayout L;
+    L.rows = (int)cs.Recipes().size();
+    L.rowH = cs.rowHeight;
+    L.pw = cs.width;
+    L.ph = L.rows * cs.rowHeight + 8.0f;
+    L.px = (W - L.pw) * 0.5f + cs.marginX;
+    L.py = (H - L.ph) * 0.5f + cs.marginY;
+    return L;
+}
+
+int HandleCrafting(CraftingStation& cs, const CraftingLayout& L, Vec2 mouse) {
+    const int row = L.Pick(mouse.x, mouse.y);
+    if (row >= 0 && Input::GetMouseButtonDown(0)) {
+        if (Input::GetKey(Input::KeyShift)) cs.CraftMax(row);
+        else cs.Craft(row);
+    }
+    return row;
 }
 
 } // namespace InventoryInput

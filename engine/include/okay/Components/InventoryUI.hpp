@@ -5,12 +5,14 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Components/Inventory.hpp"
 #include "okay/Inventory/InventoryOps.hpp"
+#include "okay/Components/ItemPickup.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Render/Color.hpp"
 #include <string>
 #include <utility>
 #include <algorithm>
+#include <cstdlib>
 #include <vector>
 
 namespace okay {
@@ -91,12 +93,16 @@ public:
     Color numberColor    = Color::FromBytes(180, 184, 200, 255); ///< hotbar slot-number tint
     char  sortKey        = 0;       ///< press to compact + merge stacks (0 = disabled)
     /// How Sort() orders the packed stacks. Compact keeps gather-order (just closes
-    /// holes + merges); Name = A→Z; Count = biggest stacks first; Rarity = by the
-    /// order items appear in `rarities` (rarest-first), then by name.
-    enum class SortMode { Compact, Name, Count, Rarity };
+    /// holes + merges); Name = A→Z by display name; Count = biggest stacks first;
+    /// Rarity = `rarities` order then the item's tier (rarest first); Category = by the
+    /// item's category, then name; Weight = heaviest stacks first; Value = the item's
+    /// "value" custom field × count, highest first.
+    enum class SortMode { Compact, Name, Count, Rarity, Category, Weight, Value };
     SortMode sortMode    = SortMode::Compact;
     bool  sortOnClose    = false;   ///< auto-Sort() the bag when the backpack closes
     char  dropKey        = 0;       ///< press to drop one of the selected hotbar item (0 = disabled)
+    char  useKey         = 0;       ///< press to use the selected hotbar item (0 = disabled)
+    bool  clickToUse     = false;   ///< left-click uses the selected item while the backpack is closed
     bool  splitRightClick = true;   ///< right-click a stack to pick up part of it
     bool  splitHalf       = true;   ///< right-click lifts half the stack (else just one)
     bool  shiftQuickMove  = true;   ///< shift+click moves a stack hotbar↔backpack
@@ -184,9 +190,27 @@ public:
                                      ? inv->slots.size() : (std::size_t)inv->capacity;
         if (packed.size() > room) return;
         // Order the packed stacks per the chosen mode (Compact keeps gather order).
+        const ItemDatabase& db = ItemDatabase::Get();
+        auto def = [&](const std::string& id) { return db.Find(id); };
+        auto name = [&](const Inventory::Slot& x) { const ItemDefinition* d = def(x.item); return d ? d->DisplayName() : x.item; };
+        auto num = [&](const Inventory::Slot& x, bool value) {
+            const ItemDefinition* d = def(x.item);
+            if (!d) return 0.0;
+            return x.count * (value ? std::atof(d->Custom("value", "0").c_str()) : (double)d->weight);
+        };
         if (sortMode == SortMode::Name)
             std::stable_sort(packed.begin(), packed.end(),
-                             [](const Inventory::Slot& a, const Inventory::Slot& b){ return a.item < b.item; });
+                             [&](const Inventory::Slot& a, const Inventory::Slot& b){ return name(a) < name(b); });
+        else if (sortMode == SortMode::Category)
+            std::stable_sort(packed.begin(), packed.end(), [&](const Inventory::Slot& a, const Inventory::Slot& b) {
+                const ItemDefinition* da = def(a.item); const ItemDefinition* dbb = def(b.item);
+                const std::string ca = da ? da->category : std::string(), cb = dbb ? dbb->category : std::string();
+                if (ca != cb) return ca < cb;
+                return name(a) < name(b); });
+        else if (sortMode == SortMode::Weight || sortMode == SortMode::Value)
+            std::stable_sort(packed.begin(), packed.end(), [&](const Inventory::Slot& a, const Inventory::Slot& b) {
+                const bool v = sortMode == SortMode::Value;
+                return num(a, v) > num(b, v); });
         else if (sortMode == SortMode::Count)
             std::stable_sort(packed.begin(), packed.end(),
                              [](const Inventory::Slot& a, const Inventory::Slot& b){ return a.count > b.count; });
@@ -208,17 +232,36 @@ public:
         return InventoryOps::Drop(Inv(), selected, 1).Ok() ? item : std::string();
     }
 
-    /// The drop key: hands one of the selected item to a script's on_item_dropped(item)
-    /// (to spawn a pickup) and only takes it out of the bag if a script handles that
-    /// event — pressing drop never makes an item silently vanish.
-    bool DropSelectedToScript() {
-        const std::string item = SelectedItem();
-        if (item.empty() || SelectedCount() <= 0) return false;
-        IScriptVM* vm = DropHandler();
-        if (!vm) return false;
-        DropSelected();
-        vm->CallEventWith("on_item_dropped", vs::VsValue(item));
+    /// Drop `n` (0 = the whole stack) from slot `i`. A script's on_item_dropped(item)
+    /// takes it when one is listening (it spawns its own pickup); otherwise it lands in
+    /// the world in front of whoever carries this inventory as an ItemPickup, so it can
+    /// be picked up again. A dropped item is never just deleted.
+    bool DropToWorld(int i, int n = 1) {
+        Inventory* inv = Inv();
+        if (!inv || i < 0 || i >= (int)inv->slots.size() || Inventory::Empty(inv->slots[i])) return false;
+        Inventory::Slot dropped = inv->slots[i];
+        if (n > 0 && n < dropped.count) dropped.count = n;
+        if (IScriptVM* vm = DropHandler()) {
+            if (!InventoryOps::Drop(inv, i, dropped.count).Ok()) return false;
+            vm->CallEventWith("on_item_dropped", vs::VsValue(dropped.item));
+            return true;
+        }
+        GameObject* carrier = inv->gameObject;
+        Scene* sc = carrier ? carrier->scene() : nullptr;
+        if (!sc || !carrier->transform || !InventoryOps::Drop(inv, i, dropped.count).Ok()) return false;
+        const Vec3 pos = carrier->transform->Position() + carrier->transform->Forward() * 1.2f;
+        if (GameObject* g = ItemPickup::Spawn(*sc, dropped.item, dropped.count, dropped.data, pos))
+            g->GetComponent<ItemPickup>()->collectorTag = carrier->tag.empty() ? carrier->name : carrier->tag;
         return true;
+    }
+    /// The drop key: drop one of the selected hotbar item (see DropToWorld).
+    bool DropSelectedItem() { return DropToWorld(selected, 1); }
+
+    /// Use the selected hotbar item: eat/drink/heal it (Consumables) or pick its build
+    /// piece (BuildMode) — see InventoryOps::Use.
+    bool UseSelected() {
+        Inventory* inv = Inv();
+        return inv && InventoryOps::Use(inv, selected, inv->gameObject).Ok();
     }
 
     /// The Inventory this UI shows: on `inventoryTarget` when set, else on the same
@@ -270,7 +313,8 @@ public:
             if (wasOpen && !open && sortOnClose) Sort();   // auto-tidy on close
         }
         if (sortKey && Input::GetKeyDown(sortKey)) Sort();
-        if (dropKey && Input::GetKeyDown(dropKey)) DropSelectedToScript();
+        if (dropKey && Input::GetKeyDown(dropKey)) DropSelectedItem();
+        if ((useKey && Input::GetKeyDown(useKey)) || (clickToUse && !open && Input::GetMouseButtonDown(0))) UseSelected();
         if (selected < 0) selected = 0;
         if (selected >= hotbarSlots) selected = hotbarSlots - 1;
     }

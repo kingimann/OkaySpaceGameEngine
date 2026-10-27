@@ -44,7 +44,8 @@ ownerOnlySyncVars true              # "<netId>.<name>" keys are the owner's
 # P2
 requireEncryption true              # only encrypted clients; numbered packets
 ticketKey <base64url ed25519 public key>
-ticketAudience arena-1              # this server's id in tickets ("" = any)
+ticketAudience arena-1              # this server's id in tickets (required with a ticketKey)
+ticketAnyAudience false             # also accept tickets for any server (aud "*")
 # Network hardening
 maxClockDrift 0.05                  # a client's game clock may run 5% off; 0 = no check
 # Gameplay
@@ -56,6 +57,7 @@ spawnRadius 0                       # how far from the sender a spawn may land (
 maxHitRange 60                      # hit claims: the longest shot (0 = any; the component's default is 300)
 weapon rifle                        # a weapon clients may claim hits with, besides Net Validator ones (repeatable)
 hitDamage 10                        # what a hit does, unless the game says otherwise
+maxRewindRtt 0.3                    # hit claims: the most round trip (s) lag compensation allows for
 ```
 
 A game hosted through a relay (`HostViaRelay` / `net_host_relay`) runs the same
@@ -71,14 +73,31 @@ React in a visual script with **On Cheat Detected**:
 Check RPCs with **Net Validator** components (size, rate, host-only), or with an
 **On Validate Rpc** graph plus **Reject Rpc**.
 
+A new Anti-Cheat Config starts safe:
+- `requireEncryption` on (in builds with libsodium);
+- `maxSyncSpeed 20`, `maxRpcsPerSecond 30`, `maxHitRange 300`;
+- a Network Manager with no message limit gets `maxMessagesPerSecond 120`.
+
+Scenes saved before these defaults keep `requireEncryption` off.
+
+It also fails closed:
+- If its rules file doesn't load, the server refuses every join (*"server
+  misconfigured"*) and logs why, the same way `--anticheat` refuses to start.
+- Disabling or removing the component while the server runs leaves the rules
+  in force, unless **Allow Runtime Toggle** is on.
+
+On its first tick a server logs one line naming the protections that are off
+(anti-cheat, encryption, move check, message rate limit).
+
 ## P2: encryption required and replay protection
 
 With `requireEncryption true`:
 
 - The server turns its `encryption` on. A client that doesn't offer a key is
-  refused with *"encryption required"*, so set `encryption = true` on the client
-  too. Both ends need libsodium; a server built without it refuses every join
-  and says so.
+  refused with *"encryption required"*. A client from this version with
+  libsodium then turns its own `encryption` on and joins again, sealed; older
+  clients need `encryption = true` set. Both ends need libsodium; a server
+  built without it refuses every join and says so.
 - Every sealed packet carries an 8-byte sequence number inside the ciphertext.
   A packet already seen, or more than 64 behind the newest, is dropped. The
   server switches this on through a flag at the end of its Welcome, so an older
@@ -93,15 +112,22 @@ A ticket is a short-lived pass that says *this account may join this server*.
 
 ```
 okt1.<payload>.<signature>                 (base64url, no padding)
-payload   = sub=<user id>&aud=<server id or *>&iat=<unix seconds>&exp=<unix seconds>
+payload   = sub=<user id>&aud=<server id or *>&iat=<unix seconds>&exp=<unix seconds>[&cnf=<key binding>]
 signature = ed25519 over the ASCII text "okt1.<payload part>"
 ```
 
 The server checks it with the service's **public** key (`ticketKey`):
 - the signature must match;
 - `iat` and `exp` must hold, with ±60 s of clock skew, and the lifetime can be
-  at most 24 h;
-- `aud` must be this server or `*`.
+  at most 1 h;
+- `aud` must be this server (`ticketAudience`). A server with a `ticketKey`
+  but no `ticketAudience` refuses every join and logs why; a dedicated server
+  won't start. A `*` ticket is accepted only with `ticketAnyAudience true`;
+- when the ticket has `cnf`, it must be the key binding of the connection
+  using it (see below), so a ticket can't be replayed from another client.
+
+An account is connected once: a second join with the same account replaces
+the first, which is kicked with the reason "signed in elsewhere".
 
 When the check passes, the player is bound to `sub`: `PeerUserId()` on the
 server, and `LocalUserId()` on the client. The client passes the ticket as its
@@ -116,8 +142,8 @@ The format is implemented in `engine/include/okay/Net/SessionTicket.hpp`.
 The source is in `supabase/functions/session-ticket/`:
 
 - **`index.ts`** is the Edge function. It takes
-  `POST {"aud": "<game server id>"}` with `Authorization: Bearer <player's
-  Supabase access token>`.
+  `POST {"aud": "<game server id>", "cnf": "<key binding, optional>"}` with
+  `Authorization: Bearer <player's Supabase access token>`.
   1. It checks the login with Supabase Auth (`/auth/v1/user`).
   2. It checks anti-cheat bans: `public.ac_is_banned(account, hw_hash)` from
      `docs/sql/anticheat.sql`, called with the function's own service key. A
@@ -127,8 +153,8 @@ The source is in `supabase/functions/session-ticket/`:
      account ban. Without `anticheat.sql` nobody is banned; if the lookup fails
      for any other reason the function answers `503` and issues nothing.
   3. It returns `{"ticket": "okt1…", "exp": …}`, signed for that account and
-     server. The ticket lives `OKAY_TICKET_TTL` seconds: 600 by default, at most
-     86400.
+     server, and to the connection when `cnf` was sent. The ticket lives
+     `OKAY_TICKET_TTL` seconds: 600 by default, at most 3600.
 - **`ticket.ts`** does the signing, using Web Crypto only. It must match the
   engine's `SessionTicket::Verify`. `tests/test_net_anticheat_p2.cpp` verifies
   tickets this code signed, so a change on either side that breaks the other
@@ -152,8 +178,11 @@ Nothing is deployed. To go live:
    `ticketKey <public>` and `ticketAudience <that server's id>`. The id is the
    same `aud` that clients ask for.
 5. **Fetch a ticket before joining** (still to do in the launcher or game):
-   POST to the function with the player's access token and the server id, then
-   `SetAuthToken(ticket)` on the client's NetworkManager.
+   POST to the function with the player's access token, the server id and
+   `cnf` = `NetworkManager::TicketBinding()` (base64url SHA-256 of the session
+   key the next `StartClient` / `JoinViaRelay` will use; it makes that key
+   now), then `SetAuthToken(ticket)` and start the client. A bound ticket is
+   for that one connection: a reconnect fetches a new one.
    `okayac::backend::SessionTicket` builds the request and `ParseTicket` reads
    the answer; on `banned`, refresh `ac_my_bans` so the launcher's ban banner
    shows why.
@@ -196,6 +225,27 @@ These hold whether or not the anti-cheat is on, unless a setting is named:
     man-in-the-middle.
   - The seed is the private key: keep it on the server, never in a game build
     or a `.okayac` file.
+- **Pings only from players.** The server answers `Ping` only from joined
+  clients and joins in progress, so a stranger can't use it to bounce traffic.
+- **Reliable messages over the rate aren't acknowledged.** A message past
+  `maxMessagesPerSecond` is dropped without an ack, so the client sends it again
+  later instead of losing it, and a flood doesn't get its acks.
+- **Press limits** (`NetworkManager::minPressInterval`, seconds, default 0 =
+  off; authoritative movement). Two presses of Jump, Dash or Fire in a player's
+  inputs closer together than this: the second is dropped, so a client can't
+  press every tick.
+- **A session cookie without encryption.** With `encryption` off, a player is
+  known only by its address. The Welcome then carries a random 64-bit cookie (a
+  trailing field older clients skip). The client puts it at the end of every
+  Leave, State, Message and SyncVar, so a spoofed Leave can't disconnect a player.
+  - Once a client has sent the cookie, the server drops those packets without
+    it. An older client never sends it and plays as before.
+  - Reliable messages, inputs and pings don't carry it. Encryption is the real
+    protection for those.
+- **Encryption that isn't built in is refused.** A host with `encryption` on in
+  a build without libsodium doesn't start: `StartServer` and `HostViaRelay`
+  fail with an error, and the dedicated server exits (`--no-encryption` runs it
+  unencrypted). A client with `encryption` on still falls back to plaintext.
 - **Reliable de-dup is a window.** Each peer remembers the newest reliable
   sequence number and the 4096 before it, instead of every number ever seen. A
   message older than that is acked but not run.
@@ -209,7 +259,8 @@ These hold whether or not the anti-cheat is on, unless a setting is named:
   - Clients without this update never answer, so turn it on only once every
     player has it.
   - The key travels with each challenge, so the HMAC only adds anything over an
-    encrypted session.
+    encrypted session. That's by design: the heartbeat catches a clock that runs
+    fast, not a client that forges its answers.
 
 #302 (P2) already covers:
 - `requireEncryption`: only encrypted clients;
@@ -253,7 +304,8 @@ check them.
   against `maxRpcsPerSecond` unless that validator sets its own rate. With the
   anti-cheat off, a client gets 20 claims a second. Then, with or without the
   anti-cheat on:
-  1. the shooter isn't dead (if its avatar on the server has a Health);
+  1. the shooter isn't dead (if its avatar on the server, or the pawn the server
+     moves for it, has a Health);
   2. the weapon's fire rate and ammo, from a Net Validator for `hit/<weapon>`
      (cooldown and budget, as above);
   3. the shot starts within `hitOriginTolerance` (2) of where the server has
@@ -267,7 +319,8 @@ check them.
   4. the target is in front, within `maxHitRange` (0 = any), and within
      `hitTolerance` (1) of the shot's line, plus its top speed (`maxSyncSpeed`,
      else 8 u/s) times the shooter's ping, which the anti-cheat's heartbeat
-     measures (0.25 s until it does);
+     measures (the quickest of its last 8 pings; 0.25 s until it has one),
+     at most `maxRewindRtt` (0.3 s);
   5. a server raycast (3D and 2D) reaches the target, unless `hitLineOfSight
      false`: no shooting through walls;
   6. the game's own rules (the **On Validate Hit** graph event with **Reject

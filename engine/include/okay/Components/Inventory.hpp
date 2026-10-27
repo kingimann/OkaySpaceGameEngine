@@ -23,6 +23,12 @@ public:
     std::vector<Slot> slots;
     int capacity = 20;            // max distinct stacks
     int maxStack = 0;             // container-wide cap per stack (0 = none; the item definition's stack size still applies)
+    float weightLimit = 0.0f;     // carry limit from the item definitions' weights (0 = none)
+    bool  slowWhenOverWeight = false;   // controllers move at overWeightSpeed while over the limit
+    float overWeightSpeed = 0.5f;
+    /// Carry the contents into the next scene loaded with load_scene: the object with
+    /// the same name there (usually the player) gets them.
+    bool keepOnSceneLoad = false;
 
     /// Slots may be FIXED-POSITION: an empty stack (item == "" or count <= 0) is a
     /// reusable hole, so the UI can drag an item to any slot and leave a gap behind.
@@ -44,6 +50,22 @@ public:
         return total;
     }
     bool Has(const std::string& item, int n = 1) const { return Count(item) >= n; }
+
+    /// Weight carried: each stack's count × its item definition's weight.
+    float TotalWeight() const {
+        float w = 0.0f;
+        for (const auto& s : slots)
+            if (!Empty(s)) if (const ItemDefinition* d = ItemDatabase::Get().Find(s.item)) w += d->weight * s.count;
+        return w;
+    }
+    bool OverWeight() const { return weightLimit > 0.0f && TotalWeight() > weightLimit + 1e-4f; }
+    /// What a controller multiplies its speed by (1 unless slowWhenOverWeight and over).
+    float SpeedFactor() const { return slowWhenOverWeight && OverWeight() ? overWeightSpeed : 1.0f; }
+    /// SpeedFactor of the Inventory on `go` (1 when it has none) — the controllers' hook.
+    static float SpeedFactorOf(const GameObject* go) {
+        const Inventory* inv = go ? go->GetComponent<Inventory>() : nullptr;
+        return inv ? inv->SpeedFactor() : 1.0f;
+    }
 
     /// How many of `n` items would fit right now (a dry run; nothing changes).
     int CanAdd(const std::string& item, int n) const {
@@ -124,13 +146,22 @@ public:
 
     /// Fire the sibling script's on_inventory_changed(). Every mutator calls this,
     /// including the UI's drag / split / sort / chest moves.
+    /// Fires on_encumbered(true/false) too when going over / back under weightLimit.
     void NotifyChanged() {
+        const bool over = OverWeight();
+        const bool flipped = over != m_wasOver;
+        m_wasOver = over;
         if (gameObject)
             if (auto* sc = gameObject->GetComponent<ScriptComponent>())
-                if (sc->VM()) sc->VM()->CallEvent("on_inventory_changed");
+                if (sc->VM()) {
+                    sc->VM()->CallEvent("on_inventory_changed");
+                    if (flipped) sc->VM()->CallEventWith("on_encumbered", vs::VsValue(over));
+                }
     }
 
 private:
+    bool m_wasOver = false;
+
     /// Add up to `n` without notifying; returns the leftover that didn't fit.
     int AddRaw(const std::string& item, int n) {
         if (n <= 0 || item.empty()) return n < 0 ? 0 : n;

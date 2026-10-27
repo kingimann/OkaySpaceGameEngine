@@ -76,8 +76,12 @@ struct AntiCheatSettings {
     /// joining client's token must be a valid ticket (okay/Net/SessionTicket.hpp)
     /// and the peer is bound to its account id. "" = no ticket check.
     std::string ticketKey;
-    /// This server's id as tickets name it ("aud"); "" = accept any.
+    /// This server's id as tickets name it ("aud"). Required with a ticketKey:
+    /// without one the server refuses joins (a dedicated server won't start).
     std::string ticketAudience;
+    /// Accept tickets issued for any server (aud "*"). Off: a ticket must name
+    /// this server.
+    bool ticketAnyAudience = false;
     /// How far a client's game clock may run off the server's, as a fraction
     /// (0.05 = 5%; 0 = no check). The server asks each client for its clock
     /// about once a second; a client that runs too fast or slow for three
@@ -106,17 +110,20 @@ struct AntiCheatSettings {
     /// Refuse client hit claims when the server can't check where the shooter
     /// is: no maxMoveSpeed, and the server doesn't move the shooter's pawn.
     bool  hitsNeedMoveCheck = true;
+    /// The most round trip (seconds) a shot's lag compensation and target
+    /// slack allow for, however slow a client makes its pings look.
+    float maxRewindRtt = 0.3f;
 
     /// .okayac text: one "key value" per line, '#' comments:
     ///   enabled true | spawn <prefab path> (repeatable) | maxSyncSpeed 12
     ///   maxSyncVarsPerSecond 20 | kickAfterViolations 5 | ownerOnlySyncVars true
-    ///   requireEncryption true | ticketKey <base64url> | ticketAudience <server id>
+    ///   requireEncryption true | ticketKey <base64url> | ticketAudience <server id> | ticketAnyAudience false
     ///   maxRpcsPerSecond 30 | maxRpcBytes 4096 | maxClockDrift 0.05
     ///   serverVar <key prefix> (repeatable) | clientVar <key prefix> (repeatable)
     ///   maxSpawnsPerSecond 5 | maxLiveSpawnsPerPeer 50 | spawnRadius 0
     ///   hitOriginTolerance 2 | hitTolerance 1 | maxHitRange 50 | hitDamage 10 | hitLineOfSight true
     ///   weapon <name> (repeatable)
-    ///   hitsNeedMoveCheck true
+    ///   hitsNeedMoveCheck true | maxRewindRtt 0.3
     static bool Parse(const std::string& text, AntiCheatSettings& out, std::string* error = nullptr);
     bool LoadFile(const std::string& path, std::string* error = nullptr);
     std::string ToText() const;
@@ -210,6 +217,9 @@ public:
     /// Who installed the handlers above (an AntiCheatConfig's token; 0 = code).
     /// Lets a component remove only what it put there.
     std::uint64_t installer = 0;
+    /// Non-empty: the rules didn't load (an AntiCheatConfig's .okayac), so the
+    /// server refuses every join rather than run without them. Says why.
+    std::string configError;
     /// Distinct RPC names counted per peer per second; more share one count.
     static constexpr std::size_t kMaxRpcNamesPerPeer = 64;
 

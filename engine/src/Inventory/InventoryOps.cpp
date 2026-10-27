@@ -1,4 +1,6 @@
 #include "okay/Inventory/InventoryOps.hpp"
+#include "okay/Components/BuildMode.hpp"
+#include "okay/Components/Consumables.hpp"
 #include <algorithm>
 #include <utility>
 
@@ -129,6 +131,25 @@ InvResult Drop(Inventory* inv, int i, int n) {
     if (s.count <= 0) s = Inventory::Slot{};
     inv->NotifyChanged();
     return InvResult::Done(take);
+}
+
+InvResult Use(Inventory* inv, int i, GameObject* user) {
+    if (!ValidSlot(inv, i) || Inventory::Empty(inv->slots[i]) || !user) return InvResult::No("nothing to use");
+    const std::string item = inv->slots[i].item;
+    GameObject* root = user;
+    while (root->transform && root->transform->Parent() && root->transform->Parent()->gameObject) root = root->transform->Parent()->gameObject;
+    for (GameObject* g : {user, root}) {
+        auto* c = g->GetComponent<Consumables>();
+        if (c && c->Inv() == inv && c->Use(item)) return InvResult::Done(1);
+    }
+    const ItemDefinition* def = ItemDatabase::Get().Find(item);
+    for (GameObject* g : {user, root})
+        if (auto* bm = g->GetComponent<BuildMode>())
+            for (int k = 0; k < (int)bm->palette.size(); ++k) {
+                const std::string& n = bm->palette[k].name;
+                if (n == item || (def && n == def->name)) { bm->SetActive(true); bm->SelectSlot(k); return InvResult::Done(0); }
+            }
+    return InvResult::No("nothing uses it");
 }
 
 InvResult Craft(Inventory* inv, const std::vector<Inventory::Stack>& take, const std::vector<Inventory::Stack>& give) {

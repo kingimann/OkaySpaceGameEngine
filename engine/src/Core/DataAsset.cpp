@@ -70,6 +70,7 @@ bool DataAsset::Load(const std::string& path) {
 }
 
 void DataAsset::SetBaseDir(const std::string& dir) { g_baseDir = dir; }
+const std::string& DataAsset::BaseDir() { return g_baseDir; }
 
 DataAsset& DataAsset::Cached(const std::string& path) {
     auto it = g_cache.find(path);

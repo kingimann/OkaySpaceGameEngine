@@ -8,6 +8,7 @@
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
+#include "okay/Components/StanceControl.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"   // DamageHealthOn
 #include "okay/Net/NetOwnership.hpp"                  // IsLocallyControlled (MP-safe AI)
 #include "okay/Math/Quat.hpp"
@@ -135,7 +136,13 @@ public:
         }
     }
 
+    /// Crouch and prone from scripts (SetStance): a smaller, slower body that
+    /// eases between stances (sneaking guards, a wounded NPC down on the ground).
+    StanceControl stanceControl{0, 0, true};
+    void SetStance(int s) { stanceControl.Set(s); }
+
     void Start() override {
+        stanceControl.Start(gameObject);
         health = maxHealth; m_dead = false; m_provoked = false;
         if (transform) m_home = transform->Position();
         m_seed = (uint32_t)(std::fabs(m_home.x) * 73856093.0f + std::fabs(m_home.z) * 19349663.0f) + 1u;
@@ -151,6 +158,7 @@ public:
         if (m_atkTimer > 0.0f) m_atkTimer -= dt;
         if (m_windup  > 0.0f) m_windup  -= dt;
         if (m_wait    > 0.0f) m_wait    -= dt;
+        stanceControl.Step(gameObject, dt);
 
         GameObject* tgt = Target();
         Vec3 tp = tgt ? TP(tgt) : pos;
@@ -270,6 +278,7 @@ public:
         }
 
         // ---- Steering + movement ------------------------------------------
+        speed = stanceControl.Speed(speed);   // crouched / prone: slower, eased between stances
         Vec3 dir = move ? Dir(pos, goal) : Vec3{0, 0, 0};
         if (move && separationRadius > 0.0f) dir = Steer(dir, pos);
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
@@ -394,6 +403,9 @@ private:
             lo.facing    = transform->localRotation * Vec3{0, 0, -1};
             lo.onGround  = !rb || std::fabs(rb->velocity.y) < 0.5f || rb->groundedOnTerrain;
             lo.sprint    = move && speed >= runSpeed - 0.01f;
+            lo.crouch    = stanceControl.Stance() == 1;
+            lo.prone     = stanceControl.Stance() == 2;
+            lo.stance    = stanceControl.Level();
             lo.walkSpeed = moveSpeed;
             lo.dt = dt;
             ch->DriveLocomotion(lo);

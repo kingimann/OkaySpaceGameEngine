@@ -63,9 +63,15 @@ public:
         if (interactable) {
             Vec2 m = Input::MousePosition();
             m_hover = Contains(m);
-            if (m_hover && Input::GetMouseButtonDown(0)) Toggle();
+            if (m_hover && Input::GetMouseButtonDown(0)) {
+                if (Input::PointerIsTouch()) m_tapArmed = true;   // a finger flips it on lift, unless it drags
+                else Toggle();
+            } else if (m_tapArmed) {
+                if (Input::TouchDragging() || !Input::PointerIsTouch()) m_tapArmed = false;
+                else if (Input::GetMouseButtonUp(0)) { m_tapArmed = false; if (m_hover) Toggle(); }
+            }
         } else {
-            m_hover = false;
+            m_hover = m_tapArmed = false;
         }
         float target = on ? 1.0f : 0.0f;          // ease the knob toward its state
         if (animSpeed <= 0.0f) { m_anim = target; return; }
@@ -78,6 +84,7 @@ public:
 
 private:
     bool m_hover = false;
+    bool m_tapArmed = false;   // a finger went down on it; flips when lifted without dragging
     bool m_focused = false;
     float m_anim = 0.0f;
 };

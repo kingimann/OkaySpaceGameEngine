@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Components/Inventory.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -102,6 +103,9 @@ public:
     const StanceBody& stanceBody() const { return m_body; }
     /// Begin in `s` (a scene saved while crouched / prone loads that way, so a
     /// player saved under low cover isn't stood up inside it). Applied in Start().
+    /// Ask for a stance from a script / an NPC / a cutscene (as if pressed): kept
+    /// until changed, so a stand-up blocked by a low ceiling happens once there's room.
+    void SetStance(Stance s) { m_wantStance = m_padWant = s; }
     void RestoreStance(Stance s) { m_stance = m_wantStance = m_padWant = m_prevStance = s; m_stanceLevel = (float)s; }
     /// The body's stance as it moves between stances: 0 stand .. 1 crouch .. 2 prone.
     float stanceLevel() const { return m_stanceLevel; }
@@ -285,7 +289,7 @@ public:
         bool running = m_stance == Stance::Stand && moving && IsRunHeld(in);
         // The speed cap follows the body from one stance's to the next.
         float speed = StanceValue(m_stanceLevel, running ? runSpeed : walkSpeed, crouchSpeed, proneSpeed);
-        speed *= MoveSpeedScale(gameObject);   // carrying a heavy load
+        speed *= MoveSpeedScale(gameObject);   // heavy load / over-encumbered (see MoveSpeed.hpp)
 
         // Ease the child camera to the stance's eye height.
         ApplyEyeHeight(dt);

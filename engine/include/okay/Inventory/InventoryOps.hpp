@@ -50,6 +50,11 @@ InvResult Transfer(Inventory* from, int i, Inventory* to);
 /// Take `n` out of slot `i` (dropped into the world by the caller).
 InvResult Drop(Inventory* inv, int i, int n = 1);
 
+/// Use the item in slot `i` as `user` (who carries the inventory): eat/drink/heal it
+/// through a Consumables on the user (its recipe, else the item definition's use
+/// action), or pick the matching piece in the user's BuildMode palette.
+InvResult Use(Inventory* inv, int i, GameObject* user);
+
 /// Atomically remove `take` and add `give` (crafting).
 InvResult Craft(Inventory* inv, const std::vector<Inventory::Stack>& take, const std::vector<Inventory::Stack>& give);
 

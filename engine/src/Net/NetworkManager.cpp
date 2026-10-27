@@ -68,6 +68,9 @@ namespace {
     // from every Msg type (1..16) and from a plaintext message's leading type byte.
     constexpr std::uint8_t kEncEnvelope = 0xEE;
     constexpr float kClientTimeout = 5.0f;
+    // The start of the refusal an encryption-only host sends a plaintext join;
+    // a client that can encrypt joins again, sealed.
+    constexpr const char* kNeedsEncryption = "encryption required (update the game)";
     constexpr int kHitClaimsPerSecond = 20;    // a client's hit claims without the anti-cheat on
     constexpr float kReliableResend = 0.25f;   // resend an unacked message this often
 
@@ -125,6 +128,12 @@ bool NetworkManager::SeqWindow::Accept(std::uint32_t seq) {
     return true;
 }
 
+bool NetworkManager::SeqWindow::Seen(std::uint32_t seq) const {
+    if (!any || seq > newest) return false;
+    const std::uint32_t back = newest - seq;
+    return back >= kWidth || ((bits[back / 64] >> (back % 64)) & 1u);
+}
+
 bool NetworkManager::SetHostIdentity(const std::string& seedB64) {
     if (seedB64.empty()) { m_hostSeed.clear(); return true; }
     std::vector<std::uint8_t> seed;
@@ -142,8 +151,17 @@ std::string NetworkManager::HostIdentityPublicKey() const {
     return net::SessionTicket::Base64UrlEncode(std::vector<std::uint8_t>(pk.begin(), pk.end()));
 }
 
+// Encryption asked for but not built in: no host rather than a quietly
+// unencrypted one.
+static bool EncryptionBuiltIn(bool wanted) {
+    if (!wanted || net::SecureChannel::Available()) return true;
+    OKAY_ERROR("net: encryption is on, but this build has no libsodium: not hosting (turn encryption off to host unencrypted)");
+    return false;
+}
+
 bool NetworkManager::StartServer(std::uint16_t port) {
     Stop();
+    if (!EncryptionBuiltIn(encryption)) return false;
     if (!net::Startup()) { OKAY_ERROR("net: startup failed"); return false; }
     m_netStarted = true;
     if (!m_socket.Open() || !m_socket.Bind(port)) {
@@ -170,6 +188,7 @@ void NetworkManager::InitServerState() {
     m_localId = 0;
     m_kicked = false; m_kickReason.clear();
     m_serverTime = 0.0f; m_hostScore = 0; m_rosterTimer = 0.0f;
+    m_protectionsLogged = false;
     { std::random_device rd; m_querySecret = rd() | 1u; }
     anticheat.Reset();
     // Objects this server drives itself are the server's: no client may move them.
@@ -210,6 +229,19 @@ std::string NetworkManager::RelayAddress() const {
     return m_relay ? m_relayEp.ToString() : std::string();
 }
 
+std::string NetworkManager::TicketBinding() {
+    if (!encryption || !net::SecureChannel::Available()) return {};
+    if (!m_nextSecure.HasKeys()) m_nextSecure.GenerateKeys();
+    return net::SessionTicket::KeyBinding(m_nextSecure.PublicKey());
+}
+
+void NetworkManager::UseNextSessionKeys() {
+    if (!encryption || !net::SecureChannel::Available()) return;
+    if (m_nextSecure.HasKeys()) m_secure = m_nextSecure;   // the keys a ticket was bound to (TicketBinding)
+    else m_secure.GenerateKeys();
+    m_nextSecure = net::SecureChannel{};                   // used once: the next session makes new ones
+}
+
 bool NetworkManager::StartClient(const std::string& host, std::uint16_t port) {
     Stop();
     if (!net::Startup()) { OKAY_ERROR("net: startup failed"); return false; }
@@ -224,7 +256,7 @@ bool NetworkManager::StartClient(const std::string& host, std::uint16_t port) {
     m_joined = false;
     m_kicked = false; m_kickReason.clear();
     m_localUserId.clear();
-    if (encryption && net::SecureChannel::Available()) m_secure.GenerateKeys();
+    UseNextSessionKeys();
     OKAY_INFO("net: client connecting to ", m_serverEp.ToString());
     return true;
 }
@@ -232,6 +264,7 @@ bool NetworkManager::StartClient(const std::string& host, std::uint16_t port) {
 bool NetworkManager::StartRelay(const std::string& relayHost, std::uint16_t relayPort,
                                 const std::string& code, bool asHost) {
     Stop();
+    if (asHost && !EncryptionBuiltIn(encryption)) return false;
     if (!net::Startup()) { OKAY_ERROR("net: startup failed"); return false; }
     m_netStarted = true;
     if (!m_socket.Open()) { OKAY_ERROR("net: failed to open relay socket"); Stop(); return false; }
@@ -257,7 +290,7 @@ bool NetworkManager::StartRelay(const std::string& relayHost, std::uint16_t rela
         m_mode = Mode::Client;
         m_joined = false;
         m_localUserId.clear();
-        if (encryption && net::SecureChannel::Available()) m_secure.GenerateKeys();
+        UseNextSessionKeys();
         OKAY_INFO("net: joining session '", code, "' via relay ", m_relayEp.ToString());
     }
     return true;
@@ -295,6 +328,7 @@ void NetworkManager::Stop() {
     if (m_mode == Mode::Client && m_joined && m_socket.IsOpen()) {
         net::Packet p(Leave);
         p.Write(m_localId);
+        if (m_sessionCookie) WriteU64(p, m_sessionCookie);
         SendDatagram(m_serverEp, p.Data(), p.Size());
     }
     if (m_relay && m_socket.IsOpen()) {            // free our slot on the relay
@@ -327,6 +361,7 @@ void NetworkManager::Stop() {
     m_hostTickRate = 0.0f;
     m_hostAuthoritative = false;
     m_lastAckedSeq = 0;
+    m_sessionCookie = 0;
     m_hostAcksPawn = false;
     m_predicting = false;
     m_predicted.clear();
@@ -420,6 +455,7 @@ void NetworkManager::RegisterSync(const std::string& id, Transform* t, bool owne
     SyncObj o; o.t = t; o.owned = owned;
     if (t) { o.targetPos = t->localPosition; o.targetRot = t->localRotation; }
     m_syncObjs[id] = o;
+    if (t) NoteSpawnedPawn(id, t->gameObject);
 }
 
 void NetworkManager::UnregisterSync(const std::string& id) { m_syncObjs.erase(id); }
@@ -566,6 +602,18 @@ double NetworkManager::ClampRewind(double viewTick, float rttSeconds) const {
     return std::max(now - most, std::min(now, viewTick));
 }
 
+// The cookie at the end of a plaintext client's Leave / State / Message /
+// SyncVar. A client that has sent it once must always send it; one that never
+// has (an older client) is still believed.
+bool NetworkManager::CookieOk(Client& c, net::Packet& p) const {
+    if (c.cookie == 0) return true;
+    const std::uint64_t got = ReadU64(p);
+    if (!p.Ok()) return !c.cookieSeen;
+    if (got != c.cookie) return false;
+    c.cookieSeen = true;
+    return true;
+}
+
 RaycastHit3D NetworkManager::RewindRaycast(const Vec3& origin, const Vec3& direction, float maxDistance,
                                            double viewTick, GameObject* ignore) {
     Scene* sc = GetScene();
@@ -617,6 +665,9 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
                 auto* ns = g->GetComponent<NetworkSync>();
                 if (!ns) ns = g->AddComponent<NetworkSync>();
                 ns->netId = netId; ns->authority = NetworkSync::Authority::Manual; ns->owned = false;
+                // Claim before this object's NetworkSync starts, so a transform the
+                // client sends in the same breath as the spawn is already too late.
+                NoteSpawnedPawn(netId, g);
             }
         }
         return;
@@ -876,6 +927,7 @@ void NetworkManager::SetVar(const std::string& key, const std::string& value) {
         for (auto& [ep, c] : m_clients) SendDatagram(c.endpoint, p.Data(), p.Size());
     } else if (m_mode == Mode::Client && m_joined) {
         net::Packet p(SyncVar); p.Write(key); p.Write(value);
+        if (m_sessionCookie) WriteU64(p, m_sessionCookie);
         SendDatagram(m_serverEp, p.Data(), p.Size());
     }
 }
@@ -1235,7 +1287,7 @@ void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
     claim.weapon = part[1];
     claim.clientTick = static_cast<std::uint32_t>(std::strtoul(part[2].c_str(), &end, 10));
     double viewTick = -1.0;   // lag compensation: the moment the shooter saw
-    if (end && *end == ':') { viewTick = std::strtod(end + 1, nullptr); if (!std::isfinite(viewTick) || viewTick < 0.0) viewTick = -1.0; }
+    if (end && *end == ':') { viewTick = std::strtod(end + 1, nullptr); viewTick = std::isfinite(viewTick) ? std::max(0.0, viewTick) : -1.0; }
     claim.direction = dir * (1.0f / dir.Magnitude());
     claim.damage = anticheat.settings.hitDamage;
     const AntiCheatSettings& s = anticheat.settings;
@@ -1258,9 +1310,12 @@ void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
         if (!anticheat.CountRpc(shooter, "hit/" + claim.weapon)) { ++m_hitsRefused; AntiCheatAfterRefusal(shooter); return; }
     }
 
-    // The shooter is alive (when its avatar has health).
+    // The shooter is alive (when its avatar, or the pawn the server moves for it, has health).
     if (auto r = m_remotes.find(shooter); r != m_remotes.end() && r->second)
         if (auto* hs = r->second->GetComponent<HealthStat>(); hs && hs->IsDead()) { refuse("shooter is dead"); return; }
+    if (!c.pawn.empty())
+        if (auto p = m_syncObjs.find(c.pawn); p != m_syncObjs.end() && p->second.t && p->second.t->gameObject)
+            if (auto* hs = p->second.t->gameObject->GetComponent<HealthStat>(); hs && hs->IsDead()) { refuse("shooter is dead"); return; }
     // The weapon's fire rate and ammo: its Net Validator ("hit/<weapon>"), as for an RPC.
     if (anticheat.validateRpc && !anticheat.validateRpc(shooter, "hit/" + claim.weapon, data)) {
         refuse("fire rate or ammo: " + claim.weapon);
@@ -1276,7 +1331,11 @@ void NetworkManager::HandleHitClaim(Client& c, const std::string& data) {
     // The target, where the server has it.
     auto obj = m_syncObjs.find(claim.target);
     if (obj == m_syncObjs.end() || !obj->second.t || !obj->second.t->gameObject) { refuse("no such target: " + claim.target); return; }
-    const float rtt = c.rtt >= 0.0f ? std::min(c.rtt, 1.0f) : 0.25f;
+    // With a fixed tick, a claim must say when the shooter looked: without
+    // it, the check would fall back to the target's speed x the ping as
+    // slack. Older clients don't say, so not a violation.
+    if (viewTick < 0.0 && HostTickRate() > 0.0f) { ++m_hitsRefused; return; }
+    const float rtt = std::min(c.rtt >= 0.0f ? c.rtt : 0.25f, std::max(0.0f, s.maxRewindRtt));
     // Lag compensation: with a fixed tick and the moment the shooter saw,
     // everything goes back to where it was then (clamped to 200 ms + its round
     // trip) for the checks below, and is put back after. The target then
@@ -1485,6 +1544,7 @@ void NetworkManager::Send(const std::string& channel, const std::string& data) {
         p.Write(m_localId);
         p.Write(channel);
         p.Write(data);
+        if (m_sessionCookie) WriteU64(p, m_sessionCookie);
         SendDatagram(m_serverEp, p.Data(), p.Size());
     }
 }
@@ -1506,7 +1566,7 @@ bool NetworkManager::ClientMessageOk(const Client& from, const std::string& chan
         data = from.name + "\n" + text;
         return true;
     }
-    if (channel == "__xform" && m_pawnOwner.count(data.substr(0, data.find('|'))))
+    if (channel == "__xform" && !ClientMaySendXform(from, data.substr(0, data.find('|'))))
         return false;   // a player the server moves: its position is the server's, never the client's
     if (channel == "__spawn") {
         const SpawnMessage m = ParseSpawnMessage(data);
@@ -1678,6 +1738,76 @@ bool NetworkManager::InputDriven(const std::string& netId) const {
     return m_mode == Mode::Server && authoritativeMovement && m_pawnOwner.count(netId) != 0;
 }
 
+namespace {
+// A movement controller on this object or anything under it (a player prefab
+// sometimes parents the body to an empty root).
+IPlayerSim* FindSimInTree(GameObject* go) {
+    if (!go) return nullptr;
+    if (IPlayerSim* s = FindPlayerSim(go)) return s;
+    if (!go->transform) return nullptr;
+    for (Transform* c : go->transform->Children())
+        if (c) if (IPlayerSim* s = FindSimInTree(c->gameObject)) return s;
+    return nullptr;
+}
+} // namespace
+
+GameObject* NetworkManager::ObjectByNetId(const std::string& id) const {
+    if (auto it = m_syncObjs.find(id); it != m_syncObjs.end() && it->second.t)
+        return it->second.t->gameObject;
+    Scene* sc = GetScene();
+    if (!sc) return nullptr;
+    for (const auto& go : sc->Objects()) {
+        if (!go) continue;
+        if (auto* ns = go->GetComponent<NetworkSync>()) {
+            const std::string& nid = ns->netId.empty() ? go->name : ns->netId;
+            if (nid == id) return go.get();
+        }
+    }
+    return nullptr;
+}
+
+// The pawn is whichever object the server says, not whichever one the client
+// names in an InputCmd. The first controller-carrying spawn under sp/<id>/ wins;
+// a later InputCmd can still claim a different one, but only while this is empty.
+void NetworkManager::NoteSpawnedPawn(const std::string& netId, GameObject* go) {
+    if (m_mode != Mode::Server || !authoritativeMovement || netId.empty() || !go) return;
+    if (netId.compare(0, 3, "sp/") != 0) return;
+    const std::size_t slash = netId.find('/', 3);
+    if (slash == std::string::npos || slash == 3) return;
+    std::uint32_t cid = 0;
+    for (std::size_t i = 3; i < slash; ++i) {
+        if (netId[i] < '0' || netId[i] > '9') return;
+        cid = cid * 10u + static_cast<std::uint32_t>(netId[i] - '0');
+    }
+    if (!FindSimInTree(go)) return;
+    if (m_pawnOwner.count(netId)) return;
+    for (auto& [ep, c] : m_clients) {
+        if (c.id != cid) continue;
+        if (!c.pawn.empty()) return;   // a live pawn stays until it's released
+        c.pawn = netId;
+        m_pawnOwner[netId] = c.id;
+        c.lastSeen = 0.0f;
+        return;
+    }
+}
+
+bool NetworkManager::ClientMaySendXform(const Client& from, const std::string& id) const {
+    if (!authoritativeMovement) return true;
+    if (id.empty() || m_pawnOwner.count(id)) return false;
+    const std::string prefix = "sp/" + std::to_string(from.id) + "/";
+    if (id.compare(0, prefix.size(), prefix) != 0) return true;   // not one of its spawns
+    // Until this client has a pawn, a controller object it spawned is not trusted
+    // (it may be the player, and it may not be claimed yet). Props and projectiles
+    // have no movement controller, so they keep today's transforms. Once a pawn is
+    // live, only that pawn is refused — m_pawnOwner above — and a second owned
+    // object is left alone.
+    if (!from.pawn.empty()) return true;
+    if (GameObject* go = ObjectByNetId(id))
+        return FindSimInTree(go) == nullptr;
+    // Not in the world yet: don't relay a transform we can't classify.
+    return false;
+}
+
 // Each fixed tick on the server: every player moves by one input (the next
 // one it sent, or its last one again if that's late), through its controller.
 void NetworkManager::ServerMovementTick(float step) {
@@ -1698,8 +1828,16 @@ void NetworkManager::ServerMovementTick(float step) {
             c.inputs.erase(next);
             c.repeats = 0;
         }
+        if (minPressInterval > 0.0f) {   // presses closer together than that are dropped
+            const std::uint32_t limited[3] = {PlayerInput::Jump, PlayerInput::Dash, PlayerInput::Fire};
+            for (int b = 0; b < 3; ++b) {
+                if (!(in.pressed & limited[b])) continue;
+                if (m_serverTime - c.lastPress[b] < minPressInterval) in.pressed &= ~limited[b];
+                else c.lastPress[b] = m_serverTime;
+            }
+        }
         c.lastInput = in;
-        if (IPlayerSim* sim = FindPlayerSim(obj->second.t->gameObject)) sim->Simulate(in, step);
+        if (IPlayerSim* sim = FindSimInTree(obj->second.t->gameObject)) sim->Simulate(in, step);
         const Vec3 at = obj->second.t->TransformPoint(Vec3(0.0f, 0.0f, 0.0f));
         c.state.x = at.x; c.state.y = at.y; c.state.z = at.z;   // the server's word (snapshots, hit checks)
         c.hasState = true;
@@ -1787,6 +1925,16 @@ void NetworkManager::ClientInputTick() {
 }
 
 void NetworkManager::ServerTick(float dt) {
+    if (!m_protectionsLogged) {   // on the first tick: the scene's AntiCheatConfig has applied by then
+        m_protectionsLogged = true;
+        std::string off;
+        auto add = [&off](const char* what) { off += off.empty() ? what : std::string(", ") + what; };
+        if (!anticheat.settings.enabled) add("anti-cheat");
+        if (!encryption && !(anticheat.settings.enabled && anticheat.settings.requireEncryption)) add("encryption (players are known by address and a session cookie)");
+        if (maxMoveSpeed <= 0.0f && !authoritativeMovement) add("move check");
+        if (maxMessagesPerSecond <= 0) add("message rate limit");
+        if (!off.empty()) OKAY_WARN("net: protections off: ", off);
+    }
     m_serverTime += dt;
     m_acClockMs += static_cast<double>(dt) * 1000.0;
     ++m_tickCount;
@@ -1943,7 +2091,7 @@ void NetworkManager::ServerTick(float dt) {
             std::string userId;
             const bool acOn = anticheat.settings.enabled;
             const bool needCrypto = acOn && anticheat.settings.requireEncryption;
-            if (needCrypto) encryption = true;   // the rules ask for it
+            if (needCrypto && net::SecureChannel::Available()) encryption = true;   // the rules ask for it
             if (!existed && JoinBlocked(from)) {
                 // Too many attempts from this address: say so once, then ignore.
                 JoinLimit& l = m_joinLimits[from.address];
@@ -1968,23 +2116,38 @@ void NetworkManager::ServerTick(float dt) {
                     banWhy = "kicked by the anti-cheat; try again in " + std::to_string((int)std::ceil(left)) + " s";
                     return true;
                 };
-                if ((int)m_clients.size() >= maxPlayers) why = "server is full";
+                if (!anticheat.configError.empty()) why = "server misconfigured (its anti-cheat rules didn't load)";
+                else if ((int)m_clients.size() >= maxPlayers) why = "server is full";
                 else if (needCrypto && !viaPending)
                     // The password and ticket must not travel in the clear.
-                    why = net::SecureChannel::Available() ? "encryption required (update the game)"
+                    why = net::SecureChannel::Available() ? kNeedsEncryption
                                                           : "encryption required, but this server was built without libsodium";
                 else if (!password.empty() && pass != password) why = "wrong password";
                 else if (acOn && !anticheat.settings.ticketKey.empty()) {
                     // A signed session ticket names the account; it takes the
-                    // place of the token verifiers.
+                    // place of the token verifiers. It must be for this server
+                    // (not any: "*" only when the rules allow it) and, when it
+                    // names a session key (cnf), for this very connection.
+                    const AntiCheatSettings& s = anticheat.settings;
                     std::vector<std::uint8_t> key;
-                    net::SessionTicket::Base64UrlDecode(anticheat.settings.ticketKey, key);
+                    net::SessionTicket::Base64UrlDecode(s.ticketKey, key);
                     net::SessionTicketClaims claims;
                     std::string err;
-                    if (net::SessionTicket::Verify(token, key, anticheat.settings.ticketAudience,
-                                                   (std::int64_t)std::time(nullptr), claims, &err))
-                        userId = claims.userId;
-                    else { ticketWhy = "session ticket refused: " + err; why = ticketWhy.c_str(); }
+                    if (s.ticketAudience.empty()) {
+                        if (!m_audienceWarned) OKAY_ERROR("anti-cheat: a ticketKey needs a ticketAudience (this server's id); refusing joins");
+                        m_audienceWarned = true;
+                        why = "server misconfigured (no ticket audience)";
+                    } else if (!net::SessionTicket::Verify(token, key, s.ticketAudience, (std::int64_t)std::time(nullptr), claims, &err)) {
+                        ticketWhy = "session ticket refused: " + err; why = ticketWhy.c_str();
+                    } else if (claims.audience == "*" && !s.ticketAnyAudience) {
+                        why = "session ticket refused: ticket is for another server";
+                    } else if (!claims.keyBinding.empty()) {
+                        const std::vector<std::uint8_t> pk = viaPending ? pendingIt->second.clientPk
+                                                                        : std::vector<std::uint8_t>(clientPk.begin(), clientPk.end());
+                        if (net::SessionTicket::KeyBinding(pk) != claims.keyBinding)
+                            why = "session ticket refused: ticket is for another connection";
+                    }
+                    if (!why) userId = claims.userId;
                 }
                 else if (m_joinCheck) {
                     const int r = m_joinCheck(token, userId);
@@ -2005,6 +2168,10 @@ void NetworkManager::ServerTick(float dt) {
                     SendDatagram(from, r.Data(), r.Size(), /*allowEncrypt=*/viaPending);
                     continue;
                 }
+                // One connection per account: a new sign-in replaces the old one.
+                if (!userId.empty())
+                    for (auto& [ep, other] : m_clients)
+                        if (!(ep == from) && other.userId == userId) { Kick(other.id, "signed in elsewhere"); break; }
             }
             auto& c = m_clients[from];
             bool isNew = (c.id == 0);
@@ -2039,6 +2206,10 @@ void NetworkManager::ServerTick(float dt) {
                     if (needCrypto) c.secure.SetSequenced(true);
                 }
             }
+            if (isNew && !c.secure.Ready()) {
+                std::random_device rd;
+                c.cookie = ((static_cast<std::uint64_t>(rd()) << 32) ^ rd()) | 1u;
+            }
             c.lastSeen = 0.0f;
             net::Packet w(Welcome);
             w.Write(c.id);
@@ -2055,8 +2226,10 @@ void NetworkManager::ServerTick(float dt) {
             std::uint8_t welcomeFlags = c.secure.Sequenced() ? 1 : 0;
             if (HostTickRate() > 0.0f) welcomeFlags |= 2;
             if (authoritativeMovement) welcomeFlags |= 4 | 8;   // bit 2: send inputs, not positions; bit 3: PawnAcks (predict)
+            if (c.cookie) welcomeFlags |= 16;                    // bit 4: a session cookie (u64) follows
             if (welcomeFlags) w.Write(welcomeFlags);
             if (welcomeFlags & 2) w.Write(HostTickRate());
+            if (welcomeFlags & 16) WriteU64(w, c.cookie);
             // A sealed joiner already has the keys; a plaintext joiner gets them here.
             SendDatagram(from, w.Data(), w.Size(), /*allowEncrypt=*/c.sealedJoin);
             if (isNew) {
@@ -2075,7 +2248,7 @@ void NetworkManager::ServerTick(float dt) {
             std::string senderRoom;
             {   // only joined clients may change shared state (and, with anti-cheat on, within its rules)
                 auto cl = m_clients.find(from);
-                if (cl == m_clients.end() || !rateOk(cl->second, len)) continue;
+                if (cl == m_clients.end() || !CookieOk(cl->second, p) || !rateOk(cl->second, len)) continue;
                 senderRoom = cl->second.room;
                 // Sized like a variable, and not a key factory: a client makes
                 // at most kMaxClientVars keys of its own.
@@ -2110,7 +2283,10 @@ void NetworkManager::ServerTick(float dt) {
             Client& c = it->second;
             if (nonce == c.pingNonce && c.pingNonce != 0) {   // its round trip, for hit claims
                 const float rtt = static_cast<float>((m_acClockMs - c.pingSentMs) / 1000.0);
-                c.rtt = c.rtt < 0.0f ? rtt : c.rtt * 0.75f + rtt * 0.25f;
+                c.rttSamples[c.rttNext] = rtt;
+                c.rttNext = (c.rttNext + 1) % 8;
+                if (c.rttCount < 8) ++c.rttCount;
+                c.rtt = *std::min_element(c.rttSamples, c.rttSamples + c.rttCount);
                 c.pingNonce = 0;
             }
             if (!c.clock) continue;
@@ -2167,7 +2343,9 @@ void NetworkManager::ServerTick(float dt) {
                 ++m_inputsDropped;
             }
         } else if (type == Ping) {
-            // Echo the client's timestamp straight back so it can measure RTT.
+            // Echo the client's timestamp straight back so it can measure RTT
+            // (a joined client's, or one mid-join: not a stranger's).
+            if (!m_clients.count(from) && !m_pendingJoins.count(from)) continue;
             float stamp = p.ReadF32();
             net::Packet pong(Pong); pong.Write(stamp);
             SendDatagram(from, pong.Data(), pong.Size());
@@ -2181,9 +2359,11 @@ void NetworkManager::ServerTick(float dt) {
                 std::uint32_t seq = p.ReadU32();
                 std::string channel = p.ReadString();
                 std::string data    = p.ReadString();
+                // Over the rate: not acked either, so the client sends it again later.
+                if (!it->second.relSeen.Seen(seq) && !rateOk(it->second, len)) continue;
                 net::Packet ack(ReliableAck); ack.Write(seq);
                 SendDatagram(from, ack.Data(), ack.Size());
-                if (!it->second.relSeen.Accept(seq) || !rateOk(it->second, len)) continue;   // a repeat, or spam
+                if (!it->second.relSeen.Accept(seq)) continue;   // a repeat (the rate was charged before the ack)
                 if (channel == "__hit") { HandleHitClaim(it->second, data); continue; }   // the server's to judge
                 if (ClientMessageOk(it->second, channel, data) && AntiCheatAllows(it->second.id, channel, data))
                     Deliver(it->second.id, channel, data);
@@ -2222,7 +2402,9 @@ void NetworkManager::ServerTick(float dt) {
                 s.x = p.ReadF32(); s.y = p.ReadF32(); s.z = p.ReadF32();
                 s.glyph = static_cast<char>(p.ReadU8());
                 Client& c = it->second;
-                if (!c.pawn.empty()) {   // authoritative movement: where it is is the server's call
+                if (p.Remaining() == 4 || p.Remaining() == 12) p.ReadU32();   // its net tick
+                if (!CookieOk(c, p)) continue;
+                if (authoritativeMovement) {   // where a player is is the server's call, claimed or not
                     c.state.glyph = s.glyph;
                     c.lastSeen = 0.0f;
                     continue;
@@ -2251,7 +2433,8 @@ void NetworkManager::ServerTick(float dt) {
             }
         } else if (type == Leave) {
             auto it = m_clients.find(from);
-            if (it != m_clients.end()) {
+            p.ReadU32();   // sender-reported id (ignored)
+            if (it != m_clients.end() && CookieOk(it->second, p)) {
                 std::uint32_t id = it->second.id;
                 if (auto r = m_remotes.find(id); r != m_remotes.end()) {
                     if (GetScene() && r->second) GetScene()->Destroy(r->second);
@@ -2273,6 +2456,7 @@ void NetworkManager::ServerTick(float dt) {
                 p.ReadU32();                            // sender-reported id (ignored)
                 std::string channel = p.ReadString();
                 std::string data    = p.ReadString();
+                if (!CookieOk(it->second, p)) continue;
                 if (channel == "__hit") { HandleHitClaim(it->second, data); continue; }   // never relayed
                 if (!ClientMessageOk(it->second, channel, data)) continue;
                 if (!AntiCheatAllows(sender, channel, data)) continue;   // not applied, not relayed
@@ -2621,6 +2805,10 @@ void NetworkManager::ClientTick(float dt) {
                 const float rate = p.ReadF32();
                 if (p.Ok() && std::isfinite(rate) && rate >= 1.0f && rate <= 240.0f) m_hostTickRate = rate;
             }
+            if (p.Ok() && (welcomeFlags & 16)) {   // an unencrypted session's cookie, for what we send
+                const std::uint64_t cookie = ReadU64(p);
+                if (p.Ok()) m_sessionCookie = cookie;
+            }
             if (p.Ok() && (welcomeFlags & 4) && m_hostTickRate > 0.0f) m_hostAuthoritative = true;
             m_hostAcksPawn = m_hostAuthoritative && (welcomeFlags & 8);   // an older 5b host doesn't: follow it instead
             m_joined = true;
@@ -2628,6 +2816,14 @@ void NetworkManager::ClientTick(float dt) {
             OKAY_INFO("net: joined '", m_serverName, "' as peer ", m_localId);
         } else if (type == Reject) {
             std::string why = p.ReadString();
+            if (!m_joined && !encryption && net::SecureChannel::Available() && why.rfind(kNeedsEncryption, 0) == 0) {
+                // The host only takes encrypted players: join again, sealed.
+                encryption = true;
+                m_secure.GenerateKeys();
+                m_joinTimer = 0.0f;
+                OKAY_INFO("net: ", m_serverEp.ToString(), " requires encryption; joining encrypted");
+                continue;
+            }
             m_joinRejected = true;
             m_joinTimer = 1e9f;      // stop retrying
             OKAY_WARN("net: join refused: ", why);
@@ -2757,6 +2953,7 @@ void NetworkManager::ClientTick(float dt) {
         p.Write(lp.x); p.Write(lp.y); p.Write(lp.z);
         p.Write(std::uint8_t(m_localGlyph));
         if (m_hostTickRate > 0.0f) p.Write(m_netTick);   // trailing: an older host stops reading before it
+        if (m_sessionCookie) WriteU64(p, m_sessionCookie);
         SendDatagram(m_serverEp, p.Data(), p.Size());
         ++m_statesSent;
     }

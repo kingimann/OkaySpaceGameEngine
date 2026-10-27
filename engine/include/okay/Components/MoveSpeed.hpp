@@ -1,7 +1,8 @@
 #pragma once
 // ---------------------------------------------------------------------------
 // MoveSpeedScale — what everything on a body multiplies its movement speed by:
-// carrying a heavy load (ProceduralObjectHolding::SpeedMultiplier). The player
+// carrying a heavy load (ProceduralObjectHolding::SpeedMultiplier) and an
+// over-encumbered inventory (Inventory::SpeedFactorOf). The player
 // controllers multiply their walk / run / crouch / prone speed by it where they
 // pick the speed (inside Simulate for the ones that run server-side), so a
 // server and a predicting client move the body at the same speed. One helper
@@ -9,6 +10,7 @@
 // ---------------------------------------------------------------------------
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
+#include "okay/Components/Inventory.hpp"
 
 namespace okay {
 
@@ -17,6 +19,7 @@ inline float MoveSpeedScale(const GameObject* body) {
     float k = 1.0f;
     if (body)
         if (auto* h = body->GetComponent<ProceduralObjectHolding>()) k *= h->SpeedMultiplier();
+    k *= Inventory::SpeedFactorOf(body);   // over-encumbered (opt-in on the Inventory)
     return k;
 }
 

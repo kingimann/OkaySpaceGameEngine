@@ -127,6 +127,16 @@ add_executable(test_item_database test_item_database.cpp)
 target_link_libraries(test_item_database PRIVATE okay::engine)
 add_test(NAME item_database COMMAND test_item_database)
 
+# Inventory gameplay: pickups/drops, using the held item, encumbrance, loot tables
+add_executable(test_inventory_gameplay test_inventory_gameplay.cpp)
+target_link_libraries(test_inventory_gameplay PRIVATE okay::engine)
+add_test(NAME inventory_gameplay COMMAND test_inventory_gameplay)
+
+# Inventories across scenes + save/load, one crafting system (books, craft time, benches, unlocks), def-based sorting
+add_executable(test_inventory_persist_craft test_inventory_persist_craft.cpp)
+target_link_libraries(test_inventory_persist_craft PRIVATE okay::engine)
+add_test(NAME inventory_persist_craft COMMAND test_inventory_persist_craft)
+
 add_executable(test_pathfinding test_pathfinding.cpp)
 target_link_libraries(test_pathfinding PRIVATE okay::engine)
 add_test(NAME pathfinding COMMAND test_pathfinding)
@@ -576,6 +586,10 @@ add_test(NAME ui_frame COMMAND test_ui_frame)
 add_executable(test_ui_overlays test_ui_overlays.cpp)
 target_link_libraries(test_ui_overlays PRIVATE okay::engine)
 add_test(NAME ui_overlays COMMAND test_ui_overlays)
+
+add_executable(test_ui_nav_touch test_ui_nav_touch.cpp)
+target_link_libraries(test_ui_nav_touch PRIVATE okay::engine)
+add_test(NAME ui_nav_touch COMMAND test_ui_nav_touch)
 
 add_executable(test_jump test_jump.cpp)
 target_link_libraries(test_jump PRIVATE okay::engine)

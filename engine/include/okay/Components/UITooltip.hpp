@@ -18,6 +18,16 @@ public:
     Color background = Color::FromBytes(38, 42, 51, 250);
     Color textColor  = Color::White;
     Color borderColor = Color::FromBytes(255, 255, 255, 28);
+    // grok/ui-controls — defaults match the renderer’s old cursor offset and plain text.
+    /// Draw `<b>` and `#rrggbb` in `text`. Off = the text is drawn as-is.
+    bool richText = false;
+    /// Pixels from the cursor to the box. {14, 14} is the historical position.
+    Vec2 offset{14.0f, 14.0f};
+    void SetRichText(bool on) { richText = on; }
+    void SetOffset(float x, float y) { offset = {x, y}; }
+    void SetDelay(float seconds) { delay = seconds < 0.0f ? 0.0f : seconds; }
+    bool RichText() const { return richText; }
+    float Delay() const { return delay; }
 
     /// True once the pointer has hovered the sibling widget for `delay` seconds.
     bool Ready() const { return m_hover >= delay && m_inside; }

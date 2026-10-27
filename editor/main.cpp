@@ -5478,6 +5478,7 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         add("Scoreboard",           &okay::UITemplates::AddScoreboard);
         add("Leaderboard",          &okay::UITemplates::AddLeaderboard);
         add("Matchmaking",          &okay::UITemplates::AddMatchmaking);
+        add("UI Controls",          &okay::UITemplates::AddUIControls);   // grok/ui-controls
         add("UI Options",           &okay::UITemplates::AddUIOptions);   // grok/ui-options
         ImGui::EndMenu();
     }
@@ -10479,6 +10480,12 @@ void DrawScriptDocs() {
         fapi("ui_tab_value(\"n\") / ui_tab_text(\"n\") / ui_set_tab(\"n\", i)", "selected tab index / label; select a tab (fires on_change)");
         fapi("ui_set_tab_badge(\"n\", i, count) / ui_set_tab_enabled(\"n\", i, on)", "badge a tab (0 none, -1 dot) / enable or disable it");
         fapi("ui_set_progress(\"n\", v)", "set a progress bar's fill (0..1)");
+        // grok/ui-controls
+        fapi("set_dropdown_search(\"n\", on) / set_dropdown_max(\"n\", rows) / set_dropdown_icon(\"n\", i, \"glyph\")", "dropdown search, visible rows, option glyph");
+        fapi("set_scroll_inertia(\"n\", rate) / set_scroll_elastic(\"n\", on) / set_scroll_bar(\"n\", style)", "scroll glide, elastic edges, bar style 0/1/2");
+        fapi("set_tabs_closable(\"n\", on) / close_tab(\"n\", i)", "closable tabs; on_tab_close fires when one is removed");
+        fapi("set_tooltip_rich(\"n\", on) / set_tooltip_offset(\"n\", x, y) / set_tooltip_delay(\"n\", s)", "tooltip rich text, cursor offset, hover delay");
+        fapi("set_input_multiline(\"n\", on) / set_input_limit(\"n\", n) / set_input_type(\"n\", t)", "multiline, character limit, 0 standard 1 integer 2 decimal 3 password");
         // grok/ui-toast
         fapi("toast_push(\"Title\", \"Body\", kind)", "show a toast (0 info, 1 success, 2 warning, 3 error)");
         fapi("set_toast_duration(seconds) / set_toast_corner(n) / set_toast_max(n)", "toast lifetime, corner and stack size");
@@ -10979,6 +10986,10 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"ui_checkbox","ui_checkbox(\"Label\", on)"}, {"ui_slider","ui_slider(\"Label\", v, lo, hi)"},
         {"ui_progress","ui_progress(t)"}, {"ui_set_text","ui_set_text(\"n\", \"s\")"}, {"ui_get_text","ui_get_text(\"n\")"},
         {"ui_clicked","ui_clicked(\"n\")"}, {"ui_set_slider","ui_set_slider(\"n\", v)"}, {"ui_set_progress","ui_set_progress(\"n\", v)"},
+        // grok/ui-controls
+        {"set_dropdown_search","set_dropdown_search(\"n\", on)"}, {"set_dropdown_max","set_dropdown_max(\"n\", rows)"},
+        {"set_scroll_inertia","set_scroll_inertia(\"n\", rate)"}, {"set_tabs_closable","set_tabs_closable(\"n\", on)"},
+        {"set_tooltip_delay","set_tooltip_delay(\"n\", seconds)"}, {"set_input_multiline","set_input_multiline(\"n\", on)"},
         // grok/ui-toast
         {"toast_push","toast_push(\"Title\", \"Body\", kind)"},
         {"set_toast_duration","set_toast_duration(seconds)"}, {"set_toast_corner","set_toast_corner(n)"},
@@ -11305,6 +11316,21 @@ static const std::string* ScriptDoc(const std::string& name) {
         {"ease_back","Ease with a slight backward overshoot."},
         {"ease_elastic","Springy elastic ease-out."},
         {"ease_bounce","Bouncing ease-out."},
+        // grok/ui-controls
+        {"set_dropdown_search","Turn a named dropdown's search row on or off."},
+        {"set_dropdown_max","Cap how many options an open dropdown shows. 0 shows all."},
+        {"set_dropdown_icon","Set the short glyph in front of one dropdown option."},
+        {"set_scroll_inertia","Wheel glide for a named scroll view. 0 scrolls immediately."},
+        {"set_scroll_elastic","Let a named scroll view pass its ends, then spring back."},
+        {"set_scroll_bar","Scrollbar style: 0 usual, 1 thin, 2 hidden until scrolling."},
+        {"set_tabs_closable","Draw an X on each tab of a named tab bar."},
+        {"close_tab","Remove one tab. Fires on_tab_close."},
+        {"set_tooltip_rich","Draw <b> and #rrggbb in a named tooltip."},
+        {"set_tooltip_offset","Move a tooltip relative to the cursor. 14, 14 is the usual spot."},
+        {"set_tooltip_delay","Seconds a named tooltip waits before it shows."},
+        {"set_input_multiline","Enter inserts a newline in a named text field."},
+        {"set_input_limit","Character limit of a named text field."},
+        {"set_input_type","0 standard, 1 integer, 2 decimal, 3 password."},
         // grok/ui-toast
         {"toast_push","Show a toast on the scene's UI Toast. kind: 0 info, 1 success, 2 warning, 3 error."},
         {"set_toast_duration","How long a new toast stays up, in seconds."},
@@ -33696,6 +33722,9 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::ColorEdit4("Ring Color##uif", bc)) { in->borderColor = {bc[0], bc[1], bc[2], bc[3]}; ed.dirty = true; }
             }
             ImGui::TextDisabled("Click to focus + type at runtime; Enter calls on_submit().");
+            // grok/ui-controls
+            if (ImGui::Checkbox("Multiline##uif", &in->multiline)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Enter inserts a newline instead of submitting.");
             if (ImGui::SmallButton("Remove##uif")) toRemove = in;
         }
     }
@@ -33748,6 +33777,24 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Border##udd", b)) { dd->borderColor = {b[0],b[1],b[2],b[3]}; ed.dirty = true; }
             ImGui::TextDisabled("Click to open; picking an option calls on_change().");
             if (ImGui::Checkbox("Interactable##udd", &dd->interactable)) ed.dirty = true;
+            // grok/ui-controls
+            if (ImGui::Checkbox("Searchable##udd", &dd->searchable)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The open list starts with a row you can type in. It filters the options.");
+            if (ImGui::DragInt("Max Visible##udd", &dd->maxVisible, 0.1f, 0, 32)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How many matching options to show. 0 shows all of them.");
+            if (!dd->options.empty()) {
+                for (int i = 0; i < (int)dd->options.size(); ++i) {
+                    ImGui::PushID(1000 + i);
+                    char ib[8]; std::strncpy(ib, dd->IconOf(i).c_str(), sizeof(ib) - 1); ib[sizeof(ib) - 1] = '\0';
+                    ImGui::SetNextItemWidth(48);
+                    if (ImGui::InputText((std::string("Icon##") + std::to_string(i)).c_str(), ib, sizeof(ib))) {
+                        dd->SetOptionIcon(i, ib); ed.dirty = true;
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("%s", dd->options[i].c_str());
+                    ImGui::PopID();
+                }
+            }
             if (ImGui::SmallButton("Remove##udd")) toRemove = dd;
         }
     }
@@ -33912,6 +33959,12 @@ void DrawInspector(EditorState& ed) {
             float tc[4] = {tt->textColor.r, tt->textColor.g, tt->textColor.b, tt->textColor.a};
             if (ImGui::ColorEdit4("Text Color##utt", tc)) { tt->textColor = {tc[0],tc[1],tc[2],tc[3]}; ed.dirty = true; }
             ImGui::TextDisabled("Hover the sibling widget to show it (in Game view / built game).");
+            // grok/ui-controls — delay and follow-cursor already exist; these two are new.
+            if (ImGui::Checkbox("Rich Text##utt", &tt->richText)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Use <b>bold</b> and #rrggbb in the text.");
+            float off[2] = {tt->offset.x, tt->offset.y};
+            if (ImGui::DragFloat2("Offset##utt", off, 0.5f, -200.0f, 200.0f)) { tt->offset = {off[0], off[1]}; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pixels from the cursor. 14, 14 is the usual spot. The box follows the pointer.");
             if (ImGui::SmallButton("Remove##utt")) toRemove = tt;
         }
     }
@@ -34042,6 +34095,14 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Background##usv", c)) { sv->background = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
             AnchorCombo("Anchor##usv", sv->anchor, ed);
             ImGui::TextDisabled("Parent UI widgets to this; the wheel or scrollbar scrolls them.");
+            // grok/ui-controls
+            if (ImGui::DragFloat("Inertia##usv", &sv->inertia, 0.05f, 0.0f, 30.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = each wheel notch scrolls immediately. Higher = a shorter glide.");
+            if (ImGui::Checkbox("Elastic Edges##usv", &sv->elastic)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The content can pass the ends, then springs back.");
+            const char* bars[] = {"Bar", "Thin", "Autohide"};
+            int bs = sv->barStyle; if (bs < 0) bs = 0; if (bs > 2) bs = 2;
+            if (ImGui::Combo("Bar##usv", &bs, bars, 3)) { sv->barStyle = bs; ed.dirty = true; }
             if (ImGui::SmallButton("Remove##usv")) toRemove = sv;
         }
     }
@@ -34766,6 +34827,9 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Badge Text##utb", btc)) { tb->badgeTextColor = {btc[0], btc[1], btc[2], btc[3]}; ed.dirty = true; }
             SectionHeader("Behavior");
             if (ImGui::Checkbox("Interactable##utb", &tb->interactable)) ed.dirty = true;
+            // grok/ui-controls — Vertical in the Style list is the side-tab layout.
+            if (ImGui::Checkbox("Closable##utb", &tb->closable)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("An X on each tab. Clicking it removes the tab and fires on_tab_close().");
             ImGui::SameLine();
             if (ImGui::Checkbox("Focusable##utb", &tb->focusable)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keyboard/gamepad menu focus: Left/Right switch tabs");
@@ -42760,6 +42824,7 @@ int main(int argc, char** argv) {
                     {"Loading (Minimal)", &AddLoadingMinimal}, {"Loading (Card)", &AddLoadingCard},
                     {"Loading (Splash)", &AddLoadingSplash}, {"Loading (Cinematic)", &AddLoadingCinematic},
                     {"Shop", &AddShop}, {"Confirm Dialog", &AddConfirmDialog}, {"Notification", &AddNotificationScreen},
+                    {"UI Controls", &AddUIControls},   // grok/ui-controls
                     {"UI Notify", &AddUINotify},   // grok/ui-toast
                     {"UI Showcase", &AddUIShowcase},   // grok/ui-theme
                     {"Matchmaking", &AddMatchmaking}, {"Leaderboard", &AddLeaderboard},

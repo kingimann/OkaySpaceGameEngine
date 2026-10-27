@@ -39,6 +39,7 @@ struct UITabsLayout {
         float badgeX = 0, badgeY = 0, badgeW = 0, badgeH = 0;   // badgeW 0 = no badge
         std::string badgeText;                      // "" = a plain dot
         float badgePx = 0;                          // badge number font pixel size
+        float closeX = 0, closeY = 0, closeW = 0, closeH = 0;   // closeW 0 = no close box
         bool  visible = true;                       // false when scrolled out of view
     };
     std::vector<Tab> tabs;
@@ -113,6 +114,11 @@ public:
     UIShape shape = UIShape::Pill;
     float cornerRadius = 8.0f;
     bool  interactable = true;
+    // grok/ui-controls — off by default, so tabs have no close box and layout is unchanged.
+    /// Draw an X on each tab. Clicking it removes that tab and fires on_tab_close.
+    bool closable = false;
+    void SetClosable(bool on) { closable = on; }
+    bool Closable() const { return closable; }
 
     // ---- Look & layout -----------------------------------------------------------
     Style  style  = Style::Segmented;
@@ -224,6 +230,7 @@ public:
             const float badgePart = badgeW[i] > 0.0f ? badgeW[i] + 4.0f * k : 0.0f;
             len[i] = vert ? std::max(std::max(textH, iconW[i]), badgeH[i]) + pad
                           : pad * 2.0f + iconPart + textW(tabs[i], L.textPx) + badgePart;
+            if (closable) len[i] += 20.0f * k;   // room for the X; Equal sizing overwrites this
         }
         const float minLen = minTabSize * k;
         if (sizing == Sizing::Equal) {
@@ -274,7 +281,8 @@ public:
             // tabs keep only a small edge margin (padding is for fitting the text), so
             // a label that used to fit its segment still shows in full.
             const float edge = (sizing == Sizing::Equal && !vert) ? std::min(pad, 4.0f * k) : pad;
-            const float avail = t.w - edge * 2.0f - iconPart - badgePart;
+            const float gutter = closable ? 20.0f * k : 0.0f;
+            const float avail = t.w - edge * 2.0f - iconPart - badgePart - gutter;
             t.label = FitLabel(tabs[i], avail, L.textPx, textW);
             t.textW = t.label.empty() ? 0.0f : textW(t.label, L.textPx);
             // Horizontal tabs centre their content; vertical ones read left-aligned.
@@ -294,6 +302,12 @@ public:
                 t.badgeY = (BadgeOf(i) < 0 && !vert) ? t.textY - 3.0f * k
                                                       : t.y + (t.h - badgeH[i]) * 0.5f;
             }
+            if (closable) {
+                const float cs = std::min(16.0f * k, t.h * 0.55f);
+                t.closeW = t.closeH = cs;
+                t.closeX = t.x + t.w - 8.0f * k - cs;
+                t.closeY = t.y + (t.h - cs) * 0.5f;
+            }
         }
 
         // The selection indicator, between two tabs while it slides.
@@ -309,7 +323,7 @@ public:
     }
 
     /// Hit-test results besides a tab index.
-    static constexpr int kNoHit = -1, kPrevArrow = -2, kNextArrow = -3;
+    static constexpr int kNoHit = -1, kPrevArrow = -2, kNextArrow = -3, kClose = -100;
 
     /// What a bar-local point lands on: a tab index, kPrevArrow / kNextArrow, or
     /// kNoHit (outside, in a gap, or on a tab scrolled out of view).
@@ -325,6 +339,7 @@ public:
         }
         for (int i = 0; i < (int)L.tabs.size(); ++i) {
             const UITabsLayout::Tab& t = L.tabs[i];
+            if (t.closeW > 0.0f && in(t.closeX, t.closeY, t.closeW, t.closeH)) return kClose - i;
             if (in(t.x, t.y, t.w, t.h)) return i;
         }
         return kNoHit;
@@ -432,6 +447,17 @@ public:
                 UITabsDraw d; d.kind = UITabsDraw::Kind::Text;
                 d.x = t.textX; d.y = t.textY + dy; d.w = t.textW; d.h = Font8x8::Height * L.textPx;
                 d.px = L.textPx; d.color = Color{base.r, base.g, base.b, base.a * dim}; d.text = t.label;
+                out.push_back(std::move(d));
+            }
+            if (closable && t.closeW > 0.0f) {
+                const std::string mark = "x";
+                const float xw = measure ? measure(mark, L.textPx) : MeasureText(mark, L.textPx);
+                const Color& base = on ? selectedTextColor : textColor;
+                UITabsDraw d; d.kind = UITabsDraw::Kind::Text;
+                d.x = t.closeX + (t.closeW - xw) * 0.5f;
+                d.y = t.closeY + (t.closeH - Font8x8::Height * L.textPx) * 0.5f;
+                d.w = xw; d.h = Font8x8::Height * L.textPx; d.px = L.textPx;
+                d.color = Color{base.r, base.g, base.b, base.a * dim}; d.text = mark;
                 out.push_back(std::move(d));
             }
             if (t.badgeW > 0.0f) {
@@ -570,6 +596,24 @@ public:
     bool SelectNext()     { return Step(+1); }
     bool SelectPrevious() { return Step(-1); }
 
+    /// Remove tab `index` and fire on_tab_close. The selected index stays on the same
+    /// tab when one before it closes, and clamps when the selected tab itself closes.
+    void CloseTab(int index) {
+        if (index < 0 || index >= Count()) return;
+        auto drop = [&](auto& v) { if (index < (int)v.size()) v.erase(v.begin() + index); };
+        tabs.erase(tabs.begin() + index);
+        drop(pages); drop(icons); drop(badges); drop(disabled);
+        if (Count() <= 0) value = 0;
+        else if (value > index) --value;
+        else if (value >= Count()) value = Count() - 1;
+        m_revealed = -1;
+        ApplyPages();
+        m_appliedValue = value;
+        if (gameObject)
+            if (auto* sc = gameObject->GetComponent<ScriptComponent>())
+                if (sc->VM()) sc->VM()->CallEvent("on_tab_close");
+    }
+
     bool IsHovered() const { return m_hover; }
     /// The tab under the pointer (-1 = none / disabled) and the tab held down.
     int HoveredTab() const { return m_hoverTab; }
@@ -630,7 +674,8 @@ public:
         }
         if (m_hover && Input::GetMouseButtonDown(0)) {
             const float page = (L.vertical ? L.viewH : L.viewW) * 0.6f / k;
-            if (hit == kPrevArrow)      m_scroll -= page;
+            if (closable && hit <= kClose) CloseTab(-hit - 100);
+            else if (hit == kPrevArrow) m_scroll -= page;
             else if (hit == kNextArrow) m_scroll += page;
             else if (L.overflow) {
                 // Overflowing: a press may be the start of a drag-scroll, so the tab

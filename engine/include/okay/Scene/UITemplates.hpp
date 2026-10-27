@@ -18,6 +18,11 @@
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIToggle.hpp"
 #include "okay/Components/UIDropdown.hpp"
+#include "okay/Components/UIScrollView.hpp"    // grok/ui-controls
+#include "okay/Components/UITabs.hpp"
+#include "okay/Components/UITooltip.hpp"
+#include "okay/Components/UIInputField.hpp"
+#include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/UITheme.hpp"
 #include "okay/Components/UIImage.hpp"
@@ -747,6 +752,86 @@ inline GameObject* AddLeaderboard(Scene& scene) {
         Text(scene, row, "Name", names[i], UIAnchor::TopLeft, {90, 0}, {200, 48}, 16.0f);
         Text(scene, row, "Points", std::to_string(pts[i]), UIAnchor::TopRight, {-14, 0}, {120, 48}, 16.0f, slate::Text(), 2, true);
     }
+    return root;
+}
+
+// grok/ui-controls — one screen that shows the options added on top of the widgets
+// that already existed: dropdown search and glyphs, scroll glide and elastic edges,
+// closable tabs and a side tab bar, a rich tooltip, and the text-field modes.
+inline GameObject* AddUIControls(Scene& scene) {
+    using namespace detail;
+    GameObject* canvas = EnsureCanvas(scene);
+    GameObject* root = Group(scene, canvas, "UI Controls");
+    Caption(scene, root, "Caption", "UI CONTROLS", UIAnchor::TopLeft, {32, 16}, 400);
+    Text(scene, root, "Title", "Search, scroll, tabs, tooltip, fields", UIAnchor::TopLeft, {32, 32}, {700, 22}, 16.0f, slate::Dim());
+
+    GameObject* pick = Child(scene, root, "Pick");
+    auto* dd = pick->AddComponent<UIDropdown>();
+    dd->anchor = UIAnchor::TopLeft; dd->position = {32, 64}; dd->size = {260, 36};
+    dd->options = {"Sword", "Shield", "Potion", "Bow", "Staff", "Ring"};
+    dd->optionIcons = {"+", "#", "*", ">", "=", "o"};
+    dd->searchable = true; dd->maxVisible = 4; dd->value = 0;
+    dd->color = slate::Field(); dd->listColor = slate::Card(); dd->hoverColor = slate::FieldHover();
+    dd->textColor = slate::Text();
+    pick->AddComponent<ScriptComponent>()->LoadSource(
+        "function on_change() { ui_set_text(\"Status\", \"picked\"); }\n");
+    Text(scene, root, "PickLabel", "Search + icons, 4 rows", UIAnchor::TopLeft, {32, 104}, {260, 18}, 13.0f, slate::Dim());
+
+    GameObject* list = Child(scene, root, "List");
+    auto* sv = list->AddComponent<UIScrollView>();
+    sv->anchor = UIAnchor::TopLeft; sv->position = {320, 64}; sv->size = {280, 200};
+    sv->background = slate::Panel(); sv->inertia = 4.5f; sv->elastic = true; sv->barStyle = 1;
+    sv->autoContent = true;
+    const char* rows[] = {"Beacon", "Cinder", "Drift", "Ember", "Flare", "Gale", "Harbor"};
+    for (int i = 0; i < 7; ++i) {
+        GameObject* row = Panel(scene, list, (std::string("Row") + std::to_string(i + 1)).c_str(), UIAnchor::TopLeft,
+                                {8, 8.0f + i * 64.0f}, {248, 56}, i == 0 ? slate::Accent() : slate::Card(), 8.0f);
+        Text(scene, row, "Name", rows[i], UIAnchor::TopLeft, {12, 8}, {220, 40}, 18.0f,
+             i == 0 ? Color::White : slate::Text(), 0, true);
+    }
+    Text(scene, root, "ListLabel", "Inertia + elastic", UIAnchor::TopLeft, {320, 272}, {280, 18}, 13.0f, slate::Dim());
+
+    GameObject* files = Child(scene, root, "Files");
+    auto* tabs = files->AddComponent<UITabs>();
+    tabs->anchor = UIAnchor::TopLeft; tabs->position = {630, 64}; tabs->size = {610, 42};
+    tabs->tabs = {"Alpha", "Beta", "Gamma", "Delta"};
+    tabs->closable = true; tabs->style = UITabs::Style::Segmented; tabs->shape = UIShape::Rounded;
+    tabs->selected = slate::Accent(); tabs->background = slate::Card(); tabs->textColor = slate::Dim();
+    files->AddComponent<ScriptComponent>()->LoadSource(
+        "function on_tab_close() { ui_set_text(\"Status\", \"closed\"); }\n");
+
+    GameObject* side = Child(scene, root, "Side");
+    auto* vt = side->AddComponent<UITabs>();
+    vt->anchor = UIAnchor::TopLeft; vt->position = {630, 124}; vt->size = {180, 240};
+    vt->tabs = {"Map", "Quests", "Gear", "Stats"};
+    vt->style = UITabs::Style::Vertical; vt->shape = UIShape::Rounded; vt->spacing = 4.0f;
+    vt->selected = slate::Accent(); vt->background = slate::Card(); vt->textColor = slate::Dim();
+    vt->selectedTextColor = Color::White;
+
+    GameObject* hint = Button(scene, root, "Hint", "Hover me", UIAnchor::TopLeft, {840, 140}, {220, 52}, ButtonKind::Secondary);
+    auto* tip = hint->AddComponent<UITooltip>();
+    tip->text = "Hold <b>Shift</b> to #48c480sprint";
+    tip->richText = true; tip->delay = 0.35f; tip->offset = {14.0f, 14.0f};
+    tip->background = slate::Card(); tip->textColor = slate::Text(); tip->borderColor = slate::Accent();
+    Text(scene, root, "HintLabel", "Tooltip waits, then follows", UIAnchor::TopLeft, {840, 200}, {280, 18}, 13.0f, slate::Dim());
+    Text(scene, root, "Status", "ready", UIAnchor::TopLeft, {840, 228}, {360, 28}, 18.0f, slate::Text(), 0, true);
+
+    auto field = [&](const char* name, const char* placeholder, Vec2 pos, Vec2 size, UIInputField::ContentType type, int limit, bool multi) {
+        GameObject* g = Child(scene, root, name);
+        auto* in = g->AddComponent<UIInputField>();
+        in->anchor = UIAnchor::TopLeft; in->position = pos; in->size = size;
+        in->placeholder = placeholder; in->contentType = type; in->maxLength = limit; in->multiline = multi;
+        in->color = slate::Field(); in->focusColor = slate::FieldHover(); in->textColor = slate::Text();
+        in->placeholderColor = slate::Dim(); in->borderWidth = 1.0f;
+        return g;
+    };
+    GameObject* password = field("Password", "password", {32, 300}, {260, 40}, UIInputField::ContentType::Password, 24, false);
+    password->AddComponent<ScriptComponent>()->LoadSource(
+        "function on_submit() { ui_set_text(\"Status\", \"sent\"); }\n");
+    field("Limit", "max 6", {32, 352}, {260, 40}, UIInputField::ContentType::Standard, 6, false);
+    field("Number", "digits", {32, 404}, {260, 40}, UIInputField::ContentType::Integer, 8, false);
+    field("Notes", "Enter adds a line", {32, 456}, {260, 96}, UIInputField::ContentType::Standard, 80, true);
+    Text(scene, root, "FieldLabel", "Password, 6 letters, numbers, multiline", UIAnchor::TopLeft, {32, 560}, {320, 18}, 13.0f, slate::Dim());
     return root;
 }
 

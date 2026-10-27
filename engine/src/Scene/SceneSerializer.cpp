@@ -1089,6 +1089,22 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << ci->boneNames.size();
         for (const std::string& n : ci->boneNames) out << " " << Quote(n);
         out << "\n";
+        // Pole mode/direction and per-joint limits (a newer record).
+        bool anyLim = false;
+        for (const auto& l : ci->limits) anyLim = anyLim || l.Active();
+        if (ci->poleMode >= 0 || anyLim) {
+            out << "  chainx2 " << ci->poleMode
+                << " " << ci->poleDir.x << " " << ci->poleDir.y << " " << ci->poleDir.z
+                << " " << (anyLim ? ci->limits.size() : 0);
+            if (anyLim) for (const auto& l : ci->limits) {
+                out << " " << (int)l.type << " " << l.swingMax << " " << l.hingeMin << " " << l.hingeMax
+                    << " " << l.twistMin << " " << l.twistMax << " " << (l.autoAxes ? 1 : 0);
+                if (!l.autoAxes)
+                    out << " " << l.twistAxis.x << " " << l.twistAxis.y << " " << l.twistAxis.z
+                        << " " << l.hingeAxis.x << " " << l.hingeAxis.y << " " << l.hingeAxis.z;
+            }
+            out << "\n";
+        }
     }
     // IK fade + ChainIK constraints (separate records so older builds still load).
     auto ikFade = [&](const char* kind, bool active, float fade) {
@@ -1828,7 +1844,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             // extended: the camera follow (pivot) and the spring arm
             << " " << ts->pivotDampingXZ << " " << ts->pivotDampingY << " " << ts->maxPivotLag
             << " " << ts->cameraCollisionRadius << " " << ts->cameraCollisionMask
-            << " " << ts->cameraCollisionPullIn << " " << ts->cameraCollisionRecover << "\n";
+            << " " << ts->cameraCollisionPullIn << " " << ts->cameraCollisionRecover
+            << " " << ts->stepOffset << "\n";
     }
     if (auto* cm = go->GetComponent<ClickToMoveController>()) {
         out << "  ctmctrl " << cm->walkSpeed << " " << cm->runSpeed << " "
@@ -3594,6 +3611,23 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ci->orient = (orient != 0);
                     std::size_t bn = 0; in >> bn;
                     for (std::size_t k = 0; k < bn && in; ++k) ci->boneNames.push_back(ReadQuoted(in));
+                } else if (field == "chainx2") {
+                    // Newer ChainIK data: pole mode/direction + per-joint limits.
+                    if (auto* ci = go->GetComponent<ChainIK>()) {
+                        std::size_t nl = 0;
+                        in >> ci->poleMode >> ci->poleDir.x >> ci->poleDir.y >> ci->poleDir.z >> nl;
+                        ci->limits.assign(nl, {});
+                        for (std::size_t k = 0; k < nl && in; ++k) {
+                            IKJointLimit& l = ci->limits[k];
+                            int ty = 0, aa = 1;
+                            in >> ty >> l.swingMax >> l.hingeMin >> l.hingeMax >> l.twistMin >> l.twistMax >> aa;
+                            l.type = (IKJointLimit::Type)std::clamp(ty, 0, 2);
+                            l.autoAxes = aa != 0;
+                            if (!l.autoAxes)
+                                in >> l.twistAxis.x >> l.twistAxis.y >> l.twistAxis.z
+                                   >> l.hingeAxis.x >> l.hingeAxis.y >> l.hingeAxis.z;
+                        }
+                    }
                 } else if (field == "fbik") {
                     auto* fb = go->AddComponent<FullBodyIK>();
                     int act = 1, am = 1, le = 0;
@@ -4741,6 +4775,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     ts->pivotDampingXZ = pxz; ts->pivotDampingY = py; ts->maxPivotLag = lag;
                                     ts->cameraCollisionRadius = rad; ts->cameraCollisionMask = mask;
                                     ts->cameraCollisionPullIn = pin; ts->cameraCollisionRecover = rec;
+                                    // Optional trailing step height (older scenes keep 0.35).
+                                    float so = ts->stepOffset;
+                                    in >> std::ws;
+                                    if ((std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') && (in >> so))
+                                        ts->stepOffset = so;
                                 }
                             } }
                     }

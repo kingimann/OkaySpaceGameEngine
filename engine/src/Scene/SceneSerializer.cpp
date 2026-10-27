@@ -596,6 +596,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         if (!ma->jumpClip.empty() || !ma->fallClip.empty() || !ma->landClip.empty())
             out << "  modelanimair " << Quote(ma->jumpClip) << " " << Quote(ma->fallClip)
                 << " " << Quote(ma->landClip) << " " << ma->airUpVel << " " << ma->airDownVel << "\n";
+        // Stance clips (crouch / prone / get up) — optional record.
+        if (!ma->crouchClip.empty() || !ma->crouchWalkClip.empty() || !ma->proneClip.empty() ||
+            !ma->crawlClip.empty() || !ma->getUpClip.empty())
+            out << "  modelanimstance " << Quote(ma->crouchClip) << " " << Quote(ma->crouchWalkClip)
+                << " " << Quote(ma->proneClip) << " " << Quote(ma->crawlClip) << " " << Quote(ma->getUpClip) << "\n";
         // Crossfade + clip events — separate optional records (older scenes lack them).
         out << "  modelanimblend " << ma->blendTime << "\n";
         if (ma->rootMotion || ma->rootMotionY || !ma->rootMotionNode.empty() || ma->rootMotionRotation || ma->rootMotionApplyTo)
@@ -2995,6 +3000,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ma->fallClip = ReadQuoted(in);
                     ma->landClip = ReadQuoted(in);
                     in >> ma->airUpVel >> ma->airDownVel;
+                } else if (field == "modelanimstance") {
+                    auto* ma = go->GetComponent<ModelAnimator>();
+                    if (!ma) ma = go->AddComponent<ModelAnimator>();
+                    ma->crouchClip     = ReadQuoted(in);
+                    ma->crouchWalkClip = ReadQuoted(in);
+                    ma->proneClip      = ReadQuoted(in);
+                    ma->crawlClip      = ReadQuoted(in);
+                    ma->getUpClip      = ReadQuoted(in);
                 } else if (field == "modelanimblend") {
                     auto* ma = go->GetComponent<ModelAnimator>();
                     if (!ma) ma = go->AddComponent<ModelAnimator>();

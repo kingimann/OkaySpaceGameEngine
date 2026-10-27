@@ -19236,6 +19236,8 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
             if (ma->idleClip == oldName) ma->idleClip = nb;
             if (ma->walkClip == oldName) ma->walkClip = nb;
             if (ma->runClip  == oldName) ma->runClip  = nb;
+            for (std::string* c : {&ma->crouchClip, &ma->crouchWalkClip, &ma->proneClip, &ma->crawlClip, &ma->getUpClip})
+                if (*c == oldName) *c = nb;
             ed.dirty = true;
         }
         if (ImGui::IsItemActivated()) ed.PushUndo();
@@ -27760,6 +27762,15 @@ void DrawInspector(EditorState& ed) {
                 clipCombo("Fall clip##ma", ma->fallClip);
                 clipCombo("Land clip##ma", ma->landClip);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Air states from the capsule's vertical motion: launching plays Jump,\npast the apex Fall loops, touchdown plays Land once. Works with any\ncontroller; leave a slot on (none) to skip that state.");
+                if (ImGui::TreeNode("Crouch / prone clips##ma")) {
+                    clipCombo("Crouch clip##ma", ma->crouchClip);
+                    clipCombo("Crouch walk clip##ma", ma->crouchWalkClip);
+                    clipCombo("Prone clip##ma", ma->proneClip);
+                    clipCombo("Crawl clip##ma", ma->crawlClip);
+                    clipCombo("Get up clip##ma", ma->getUpClip);
+                    ImGui::TextDisabled("Follow the player controller's crouch / prone. Getting up\nfrom prone plays Get up once; (none) keeps the standing clips.");
+                    ImGui::TreePop();
+                }
                 if (ImGui::Checkbox("Animate in place##ma", &ma->inPlace)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Strip the clips' baked forward travel so the CONTROLLER moves the\nbody and the clip only cycles the limbs. Fixes a walking model sliding\naway from its collider and snapping back every loop. On automatically\nfor models set as a player's character.");
             }

@@ -454,10 +454,12 @@ void Character::DriveLocomotion(const Locomotion& l) {
     if (l.jumped) m_airT = 1.0f;                               // leave the ground pose at once
     const float runAt = l.walkSpeed * (anim == 3 ? 1.05f : 1.15f);
     const bool run = hs > runAt || (l.sprint && hs > l.walkSpeed * 0.9f);
+    m_stanceTarget = l.prone ? 2 : (l.crouch ? 1 : 0);
+    m_stanceLevel = l.stance >= 0.0f ? l.stance : (float)m_stanceTarget;
     if (m_poseSource && m_poseSource->Live()) {   // the Animator's graph picks the state from these
         PoseSource::Movement m;
         m.speed = hs; m.run = run; m.crouch = l.crouch; m.prone = l.prone;
-        m.stance = l.stance >= 0.0f ? l.stance : (l.prone ? 2.0f : (l.crouch ? 1.0f : 0.0f));
+        m.stance = m_stanceLevel;
         m.airTime = m_airT; m.verticalSpeed = l.velocity.y;
         m_poseSource->Move(m);
         return;

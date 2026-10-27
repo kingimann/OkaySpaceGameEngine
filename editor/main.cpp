@@ -5473,6 +5473,7 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         add("Scoreboard",           &okay::UITemplates::AddScoreboard);
         add("Leaderboard",          &okay::UITemplates::AddLeaderboard);
         add("Matchmaking",          &okay::UITemplates::AddMatchmaking);
+        add("UI Options",           &okay::UITemplates::AddUIOptions);   // grok/ui-options
         ImGui::EndMenu();
     }
 }
@@ -10473,6 +10474,10 @@ void DrawScriptDocs() {
         fapi("ui_tab_value(\"n\") / ui_tab_text(\"n\") / ui_set_tab(\"n\", i)", "selected tab index / label; select a tab (fires on_change)");
         fapi("ui_set_tab_badge(\"n\", i, count) / ui_set_tab_enabled(\"n\", i, on)", "badge a tab (0 none, -1 dot) / enable or disable it");
         fapi("ui_set_progress(\"n\", v)", "set a progress bar's fill (0..1)");
+        // grok/ui-options
+        fapi("ui_set_slider_step(\"n\", step) / ui_set_slider_format(\"n\", \"{v}\")", "snap spacing / value label");
+        fapi("ui_set_bar_segments(\"n\", n) / ui_set_bar_trail(\"n\", seconds) / ui_set_bar_format(\"n\", \"{n}%\")", "chunks, damage trail, label");
+        fapi("ui_set_button_ease(\"n\", ease, seconds)", "0 linear, 1 smooth, 2 ease-out, 3 ease-in");
         fapi("ui_set_fill(\"n\", v)", "set a filled UI Image's amount (cooldowns/health)");
     }
 
@@ -11050,6 +11055,11 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"to_num","to_num(s)"}, {"to_str","to_str(v)"}, {"format","format(\"{} {}\", a, b)"},
         // ui widgets
         {"set_slider","set_slider(v)"}, {"set_toggle","set_toggle(on)"}, {"set_progress","set_progress(t)"},
+        // grok/ui-options
+        {"set_slider_step","set_slider_step(step)"}, {"set_slider_format","set_slider_format(\"{v}\")"},
+        {"set_bar_segments","set_bar_segments(n)"}, {"set_bar_trail","set_bar_trail(seconds)"},
+        {"set_bar_format","set_bar_format(\"{n}%\")"}, {"set_button_ease","set_button_ease(ease, seconds)"},
+        {"ui_set_slider_step","ui_set_slider_step(\"n\", step)"}, {"ui_set_button_ease","ui_set_button_ease(\"n\", ease, seconds)"},
         {"set_tab","set_tab(i)"}, {"set_tab_badge","set_tab_badge(i, count)"}, {"set_tab_enabled","set_tab_enabled(i, on)"},
         {"ui_set_tab","ui_set_tab(\"n\", i)"}, {"ui_set_tab_badge","ui_set_tab_badge(\"n\", i, count)"},
         {"ui_set_tab_enabled","ui_set_tab_enabled(\"n\", i, on)"}, {"ui_tab_value","ui_tab_value(\"n\")"},
@@ -33263,6 +33273,19 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::DragFloat("Transition Speed##uib", &btn->transitionSpeed, 0.2f, 0.0f, 30.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smooth color fade on hover/press (0 = instant)");
+            // grok/ui-options: ease, a duration in seconds, and an optional focus color.
+            {
+                const char* eases[] = {"Linear", "Smooth", "Ease Out", "Ease In"};
+                int ez = btn->transitionEase; if (ez < 0 || ez > 3) ez = 0;
+                if (ImGui::Combo("Ease##uib", &ez, eases, 4)) { btn->transitionEase = ez; ed.dirty = true; }
+                if (ImGui::DragFloat("Transition Time##uib", &btn->transitionDuration, 0.01f, 0.0f, 3.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to reach the state color and scale. 0 uses Transition Speed.");
+                if (ImGui::Checkbox("Own Focus Color##uib", &btn->separateFocus)) ed.dirty = true;
+                if (btn->separateFocus) {
+                    float fc[4] = {btn->focusColor.r, btn->focusColor.g, btn->focusColor.b, btn->focusColor.a};
+                    if (ImGui::ColorEdit4("Focus Color##uib", fc)) { btn->focusColor = {fc[0], fc[1], fc[2], fc[3]}; ed.dirty = true; }
+                }
+            }
             if (ImGui::DragFloat("Press Offset##uib", &btn->pressOffset, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
             char ic[256]; std::strncpy(ic, btn->icon.c_str(), sizeof(ic) - 1); ic[sizeof(ic)-1] = '\0';
             if (ImGui::InputText("Icon##uib", ic, sizeof(ic))) { btn->icon = ic; ed.dirty = true; }
@@ -33749,6 +33772,29 @@ void DrawInspector(EditorState& ed) {
             const char* fds[] = {"Left -> Right", "Right -> Left", "Bottom -> Top", "Top -> Bottom"};
             int fd = (int)pb->fillDir;
             if (ImGui::Combo("Fill Dir##upb", &fd, fds, 4)) { pb->fillDir = (UIProgressBar::FillDir)fd; ed.dirty = true; }
+            // grok/ui-options: chunks, a delayed damage trail, color by value, and a text format.
+            if (ImGui::DragInt("Segments##upb", &pb->segments, 0.1f, 0, 40)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 or 1 = one solid bar. 2 or more = separate chunks.");
+            if (pb->segments >= 2)
+                if (ImGui::DragFloat("Segment Gap##upb", &pb->segmentGap, 0.1f, 0.0f, 32.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Damage Trail##upb", &pb->trailDelay, 0.01f, 0.0f, 3.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds for the trail to catch a drop. 0 = off.");
+            if (pb->trailDelay > 0.0f) {
+                float trc[4] = {pb->trailColor.r, pb->trailColor.g, pb->trailColor.b, pb->trailColor.a};
+                if (ImGui::ColorEdit4("Trail Color##upb", trc)) { pb->trailColor = {trc[0], trc[1], trc[2], trc[3]}; ed.dirty = true; }
+            }
+            if (ImGui::Checkbox("Color By Value##upb", &pb->colorByValue)) ed.dirty = true;
+            if (pb->colorByValue) {
+                float lo[4] = {pb->lowColor.r, pb->lowColor.g, pb->lowColor.b, pb->lowColor.a};
+                float hi[4] = {pb->highColor.r, pb->highColor.g, pb->highColor.b, pb->highColor.a};
+                if (ImGui::ColorEdit4("Low Color##upb", lo)) { pb->lowColor = {lo[0], lo[1], lo[2], lo[3]}; ed.dirty = true; }
+                if (ImGui::ColorEdit4("High Color##upb", hi)) { pb->highColor = {hi[0], hi[1], hi[2], hi[3]}; ed.dirty = true; }
+            }
+            {
+                char fmt[64]; std::strncpy(fmt, pb->textFormat.c_str(), sizeof(fmt) - 1); fmt[sizeof(fmt) - 1] = '\0';
+                if (ImGui::InputText("Text Format##upb", fmt, sizeof(fmt))) { pb->textFormat = fmt; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("{n} = percent, {v} = 0..1. Empty keeps the percent readout.");
+            }
             if (ImGui::SmallButton("Remove##upb")) toRemove = pb;
         }
     }
@@ -34230,6 +34276,37 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Interactable##usl", &sl->interactable)) ed.dirty = true;
             ImGui::SameLine();
             if (ImGui::Checkbox("Vertical##usl", &sl->vertical)) ed.dirty = true;
+            // grok/ui-options: step, a value format, a fill gradient, and a handle shape.
+            if (ImGui::DragFloat("Step##usl", &sl->step, 0.01f, 0.0f, 1000.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap spacing from Min. 0 = continuous.");
+            {
+                char fmt[64]; std::strncpy(fmt, sl->valueFormat.c_str(), sizeof(fmt) - 1); fmt[sizeof(fmt) - 1] = '\0';
+                if (ImGui::InputText("Value Format##usl", fmt, sizeof(fmt))) { sl->valueFormat = fmt; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("{v} is the number, for example \"{v}%\". Empty prints two decimals.");
+            }
+            if (ImGui::Checkbox("Fill Gradient##usl", &sl->fillGradient)) ed.dirty = true;
+            if (sl->fillGradient) {
+                float fe[4] = {sl->fillEnd.r, sl->fillEnd.g, sl->fillEnd.b, sl->fillEnd.a};
+                if (ImGui::ColorEdit4("Fill End##usl", fe)) { sl->fillEnd = {fe[0], fe[1], fe[2], fe[3]}; ed.dirty = true; }
+            }
+            {
+                const char* handles[] = {"From Round Knob", "Circle", "Rounded", "Square", "Pill", "Diamond"};
+                int hi = 0;
+                if (sl->knobShape == (int)UIShape::Circle) hi = 1;
+                else if (sl->knobShape == (int)UIShape::Rounded) hi = 2;
+                else if (sl->knobShape == (int)UIShape::Rectangle) hi = 3;
+                else if (sl->knobShape == (int)UIShape::Pill) hi = 4;
+                else if (sl->knobShape == (int)UIShape::Diamond) hi = 5;
+                if (ImGui::Combo("Handle##usl", &hi, handles, 6)) {
+                    if (hi == 0) sl->knobShape = -1;
+                    else if (hi == 1) { sl->knobShape = (int)UIShape::Circle; sl->roundKnob = true; }
+                    else if (hi == 2) { sl->knobShape = (int)UIShape::Rounded; sl->roundKnob = false; }
+                    else if (hi == 3) sl->knobShape = (int)UIShape::Rectangle;
+                    else if (hi == 4) sl->knobShape = (int)UIShape::Pill;
+                    else sl->knobShape = (int)UIShape::Diamond;
+                    ed.dirty = true;
+                }
+            }
             if (ImGui::SmallButton("Remove##usl")) toRemove = sl;
         }
     }
@@ -42374,7 +42451,8 @@ int main(int argc, char** argv) {
                     {"Loading (Minimal)", &AddLoadingMinimal}, {"Loading (Card)", &AddLoadingCard},
                     {"Loading (Splash)", &AddLoadingSplash}, {"Loading (Cinematic)", &AddLoadingCinematic},
                     {"Shop", &AddShop}, {"Confirm Dialog", &AddConfirmDialog}, {"Notification", &AddNotificationScreen},
-                    {"Matchmaking", &AddMatchmaking}, {"Leaderboard", &AddLeaderboard}};
+                    {"Matchmaking", &AddMatchmaking}, {"Leaderboard", &AddLeaderboard},
+                    {"UI Options", &AddUIOptions}};   // grok/ui-options
                 for (const auto& sc : kScreens)
                     if (n == sc.first) { ed.PushUndo(); ed.Select(sc.second(ed.scene())); }
             }

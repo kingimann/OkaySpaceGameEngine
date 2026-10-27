@@ -106,6 +106,34 @@ Switches one player between first person and third person. The object needs a Pl
 | `GetComponent<PlayerView>().SetView(view)` | `PlayerView.SetView/1` | step | view (Number), Target (Object) | - | Ease to a view: 0 first person (camera at the eyes), 1 third person (over the shoulder). |
 | `GetComponent<PlayerView>().GetView()` | `PlayerView.GetView/0` | value | Target (Object) | Result (Number) | The view asked for: 0 first person, 1 third person. The camera may still be on its way there. |
 
+## UIToast
+
+A stack of toast notifications. The object needs a UI Toast.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIToast>().Push(title, body, kind)` | `UIToast.Push/3` | step | title (Text), body (Text), kind (Number), Target (Object) | - | Show a toast. kind: 0 info, 1 success, 2 warning, 3 error. |
+| `GetComponent<UIToast>().SetDuration(seconds)` | `UIToast.SetDuration/1` | step | seconds (Number), Target (Object) | - | How long a new toast stays up, in seconds. |
+| `GetComponent<UIToast>().SetCorner(corner)` | `UIToast.SetCorner/1` | step | corner (Number), Target (Object) | - | Where the stack sits: 0 top-right, 1 top-left, 2 bottom-right, 3 bottom-left, 4 top-center. |
+| `GetComponent<UIToast>().SetMaxStack(count)` | `UIToast.SetMaxStack/1` | step | count (Number), Target (Object) | - | How many toasts stay on screen. The oldest one drops off past this. |
+| `GetComponent<UIToast>().Count()` | `UIToast.Count/0` | value | Target (Object) | Result (Number) | How many toasts are on screen right now. |
+
+## UIModal
+
+A modal dialog. Style Card restyles the Card, Title, Message, Confirm and Cancel inside it.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIModal>().Open()` | `UIModal.Open/0` | step | Target (Object) | - | Show the dialog. |
+| `GetComponent<UIModal>().Close()` | `UIModal.Close/0` | step | Target (Object) | - | Hide the dialog. Fires on_modal_close. |
+| `GetComponent<UIModal>().SetStyleCard(on)` | `UIModal.SetStyleCard/1` | step | on (Bool), Target (Object) | - | Turn the card styling on or off. Off leaves the dialog as it was authored. |
+| `GetComponent<UIModal>().SetCardRadius(radius)` | `UIModal.SetCardRadius/1` | step | radius (Number), Target (Object) | - | Corner radius of the card named Card, in pixels. |
+| `GetComponent<UIModal>().SetTitle(text)` | `UIModal.SetTitle/1` | step | text (Text), Target (Object) | - | Title text. Empty leaves whatever the Title label already says. |
+| `GetComponent<UIModal>().SetMessage(text)` | `UIModal.SetMessage/1` | step | text (Text), Target (Object) | - | Body text. Empty leaves whatever the Message label already says. |
+| `GetComponent<UIModal>().SetConfirmText(text)` | `UIModal.SetConfirmText/1` | step | text (Text), Target (Object) | - | Confirm button label. Empty leaves the button's own label. |
+| `GetComponent<UIModal>().SetCancelText(text)` | `UIModal.SetCancelText/1` | step | text (Text), Target (Object) | - | Cancel button label. Empty leaves the button's own label. |
+| `GetComponent<UIModal>().IsOpen()` | `UIModal.IsOpen/0` | value | Target (Object) | Result (Bool) | True while the dialog is shown. |
+
 ## Input
 
 Keyboard, mouse and gamepad.

@@ -5331,6 +5331,7 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         if (ImGui::MenuItem("List View"))    addUI("ListView",    oked::BuildUIListView);
         ImGui::Separator();
         if (ImGui::MenuItem("Modal Dialog")) addUI("Dialog",      oked::BuildUIModalDialog);
+        if (ImGui::MenuItem("Toast Stack"))  addUI("Toasts",      oked::BuildUIToast);   // grok/ui-toast
         if (ImGui::MenuItem("Context Menu Panel")) addUI("ContextPanel", oked::BuildUIContextMenu);
         if (ImGui::MenuItem("Keybind Field")) addUI("Keybind",    oked::BuildUIKeybindField);
         ImGui::EndMenu();
@@ -5382,6 +5383,7 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         add("Pause Menu",           &okay::UITemplates::AddPauseMenu);
         add("Settings",             &okay::UITemplates::AddSettings);
         add("Confirm Dialog",       &okay::UITemplates::AddConfirmDialog);
+        add("UI Notify",            &okay::UITemplates::AddUINotify);   // grok/ui-toast
         if (ImGui::BeginMenu("Loading Screens")) {
             ImGui::TextDisabled("UI you can edit (bar follows `loading`)");
             add("Loading Screen",      &okay::UITemplates::AddLoadingScreen);
@@ -10421,6 +10423,13 @@ void DrawScriptDocs() {
         fapi("ui_tab_value(\"n\") / ui_tab_text(\"n\") / ui_set_tab(\"n\", i)", "selected tab index / label; select a tab (fires on_change)");
         fapi("ui_set_tab_badge(\"n\", i, count) / ui_set_tab_enabled(\"n\", i, on)", "badge a tab (0 none, -1 dot) / enable or disable it");
         fapi("ui_set_progress(\"n\", v)", "set a progress bar's fill (0..1)");
+        // grok/ui-toast
+        fapi("toast_push(\"Title\", \"Body\", kind)", "show a toast (0 info, 1 success, 2 warning, 3 error)");
+        fapi("set_toast_duration(seconds) / set_toast_corner(n) / set_toast_max(n)", "toast lifetime, corner and stack size");
+        fapi("toast_count()", "how many toasts are on screen");
+        fapi("modal_open() / modal_close()", "show or hide the first modal (close fires on_modal_close)");
+        fapi("set_modal_style(on) / set_modal_title(\"s\") / set_modal_message(\"s\")", "style the dialog card and its text");
+        fapi("set_modal_confirm(\"s\") / set_modal_cancel(\"s\")", "confirm and cancel button labels");
         fapi("ui_set_fill(\"n\", v)", "set a filled UI Image's amount (cooldowns/health)");
     }
 
@@ -10805,6 +10814,10 @@ static const std::vector<std::string>& ScriptCompletions() {
         // ui
         "ui_set_text","ui_get_text","ui_clicked","ui_slider_value","ui_set_slider",
         "ui_toggle_value","ui_set_progress",
+        // grok/ui-toast
+        "toast_push","set_toast_duration","set_toast_corner","set_toast_max","toast_count",
+        "modal_open","modal_close","set_modal_style","set_modal_title","set_modal_message",
+        "set_modal_confirm","set_modal_cancel",
         // raycast
         "raycast","raycast3","overlap_circle","raycast_all3","sphere_cast3","box_cast3","overlap_box3",
     };
@@ -10905,6 +10918,14 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"ui_checkbox","ui_checkbox(\"Label\", on)"}, {"ui_slider","ui_slider(\"Label\", v, lo, hi)"},
         {"ui_progress","ui_progress(t)"}, {"ui_set_text","ui_set_text(\"n\", \"s\")"}, {"ui_get_text","ui_get_text(\"n\")"},
         {"ui_clicked","ui_clicked(\"n\")"}, {"ui_set_slider","ui_set_slider(\"n\", v)"}, {"ui_set_progress","ui_set_progress(\"n\", v)"},
+        // grok/ui-toast
+        {"toast_push","toast_push(\"Title\", \"Body\", kind)"},
+        {"set_toast_duration","set_toast_duration(seconds)"}, {"set_toast_corner","set_toast_corner(n)"},
+        {"set_toast_max","set_toast_max(n)"}, {"toast_count","toast_count()"},
+        {"modal_open","modal_open()"}, {"modal_close","modal_close()"},
+        {"set_modal_style","set_modal_style(on)"}, {"set_modal_title","set_modal_title(\"s\")"},
+        {"set_modal_message","set_modal_message(\"s\")"}, {"set_modal_confirm","set_modal_confirm(\"s\")"},
+        {"set_modal_cancel","set_modal_cancel(\"s\")"},
         // networking / raycast
         {"net_send","net_send(\"msg\")"}, {"raycast","raycast(x, y, dx, dy)"}, {"raycast3","raycast3(x, y, z, dx, dy, dz)"},
         {"overlap_circle","overlap_circle(x, y, r)"},
@@ -11218,6 +11239,20 @@ static const std::string* ScriptDoc(const std::string& name) {
         {"ease_back","Ease with a slight backward overshoot."},
         {"ease_elastic","Springy elastic ease-out."},
         {"ease_bounce","Bouncing ease-out."},
+        // grok/ui-toast
+        {"toast_push","Show a toast on the scene's UI Toast. kind: 0 info, 1 success, 2 warning, 3 error."},
+        {"set_toast_duration","How long a new toast stays up, in seconds."},
+        {"set_toast_corner","0 top-right, 1 top-left, 2 bottom-right, 3 bottom-left, 4 top-center."},
+        {"set_toast_max","How many toasts stay on screen."},
+        {"toast_count","How many toasts are on screen right now."},
+        {"modal_open","Show the first modal dialog."},
+        {"modal_close","Hide the first modal dialog. Fires on_modal_close."},
+        {"set_modal_style","Turn the dialog's card styling on or off."},
+        {"set_modal_title","Set the dialog title. Empty leaves the label already there."},
+        {"set_modal_message","Set the dialog message. Empty leaves the label already there."},
+        {"set_modal_confirm","Set the confirm button's label."},
+        {"set_modal_cancel","Set the cancel button's label."},
+        {"on_modal_close","Fires when a modal dialog closes."},
     };
     auto it = doc.find(name);
     return it == doc.end() ? nullptr : &it->second;
@@ -35013,6 +35048,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIFlexItem>(), "UI Flex Item (grow / shrink)")) { go->AddComponent<UIFlexItem>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIListView>(), "UI List View")) { oked::BuildUIListView(go); ed.dirty = true; }
             if (item(!go->GetComponent<UIModal>(), "UI Modal (dialog)")) { go->AddComponent<UIModal>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIToast>(), "UI Toast")) { go->AddComponent<UIToast>(); ed.dirty = true; }   // grok/ui-toast
             if (item(!go->GetComponent<UIContextMenu>(), "UI Context Menu (right-click)")) { go->AddComponent<UIContextMenu>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIKeybindField>(), "UI Keybind Field")) { go->AddComponent<UIKeybindField>(); ed.dirty = true; }
             if (item(!go->GetComponent<UITextBind>(), "UI Text Bind (show a variable)")) { go->AddComponent<UITextBind>(); ed.dirty = true; }
@@ -42337,6 +42373,7 @@ int main(int argc, char** argv) {
                     {"Loading (Minimal)", &AddLoadingMinimal}, {"Loading (Card)", &AddLoadingCard},
                     {"Loading (Splash)", &AddLoadingSplash}, {"Loading (Cinematic)", &AddLoadingCinematic},
                     {"Shop", &AddShop}, {"Confirm Dialog", &AddConfirmDialog}, {"Notification", &AddNotificationScreen},
+                    {"UI Notify", &AddUINotify},   // grok/ui-toast
                     {"Matchmaking", &AddMatchmaking}, {"Leaderboard", &AddLeaderboard}};
                 for (const auto& sc : kScreens)
                     if (n == sc.first) { ed.PushUndo(); ed.Select(sc.second(ed.scene())); }

@@ -12,6 +12,8 @@
 #include "okay/Math/Quat.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Components/PlayerView.hpp"
+#include "okay/Components/UIToast.hpp"    // grok/ui-toast
+#include "okay/Components/UIModal.hpp"    // grok/ui-toast
 #include <cmath>
 #include <set>
 
@@ -312,6 +314,102 @@ EngineApi Build() {
         get.pure = true;
         pv.methods.push_back(std::move(get));
         api.types.push_back(std::move(pv));
+    }
+    // ---- UIToast / UIModal (grok/ui-toast). Visual-script nodes come from these types. ----
+    {
+        auto asBool = [](const Value& v) {
+            if (auto* b = std::get_if<bool>(&v)) return *b;
+            return F(v) != 0.0f;
+        };
+        ApiType tt; tt.name = "UIToast"; tt.isComponent = true;
+        tt.doc = "A stack of toast notifications. The object needs a UI Toast.";
+        tt.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIToast>() : nullptr; };
+        auto toastOf = [](const Value& self, CallContext& c) -> UIToast* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* t = g->GetComponent<UIToast>();
+            if (!t) throw RuntimeError("'" + g->name + "' has no UI Toast (add one in the Inspector)", c.loc);
+            return t;
+        };
+        tt.methods.push_back(method("Push", {tString, tString, tInt}, {"title", "body", "kind"}, tVoid,
+            [toastOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                toastOf(s, c)->Push(S(a[0]), S(a[1]), I(a[2]));
+                return Value{};
+            }, "Show a toast. kind: 0 info, 1 success, 2 warning, 3 error."));
+        tt.methods.push_back(method("SetDuration", {tFloat}, {"seconds"}, tVoid,
+            [toastOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                toastOf(s, c)->SetDuration(F(a[0]));
+                return Value{};
+            }, "How long a new toast stays up, in seconds."));
+        tt.methods.push_back(method("SetCorner", {tInt}, {"corner"}, tVoid,
+            [toastOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                toastOf(s, c)->SetCorner(I(a[0]));
+                return Value{};
+            }, "Where the stack sits: 0 top-right, 1 top-left, 2 bottom-right, 3 bottom-left, 4 top-center."));
+        tt.methods.push_back(method("SetMaxStack", {tInt}, {"count"}, tVoid,
+            [toastOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                toastOf(s, c)->SetMaxStack(I(a[0]));
+                return Value{};
+            }, "How many toasts stay on screen. The oldest one drops off past this."));
+        ApiMethod count = method("Count", {}, {}, tInt,
+            [toastOf](const Value& s, std::vector<Value>&, CallContext& c) {
+                return Value{(std::int32_t)toastOf(s, c)->Count()};
+            }, "How many toasts are on screen right now.");
+        count.pure = true;
+        tt.methods.push_back(std::move(count));
+        api.types.push_back(std::move(tt));
+
+        ApiType md; md.name = "UIModal"; md.isComponent = true;
+        md.doc = "A modal dialog. Style Card restyles the Card, Title, Message, Confirm and Cancel inside it.";
+        md.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIModal>() : nullptr; };
+        auto modalOf = [](const Value& self, CallContext& c) -> UIModal* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* m = g->GetComponent<UIModal>();
+            if (!m) throw RuntimeError("'" + g->name + "' has no UI Modal (add one in the Inspector)", c.loc);
+            return m;
+        };
+        md.methods.push_back(method("Open", {}, {}, tVoid,
+            [modalOf](const Value& s, std::vector<Value>&, CallContext& c) { modalOf(s, c)->Open(); return Value{}; },
+            "Show the dialog."));
+        md.methods.push_back(method("Close", {}, {}, tVoid,
+            [modalOf](const Value& s, std::vector<Value>&, CallContext& c) { modalOf(s, c)->Close(); return Value{}; },
+            "Hide the dialog. Fires on_modal_close."));
+        md.methods.push_back(method("SetStyleCard", {tBool}, {"on"}, tVoid,
+            [modalOf, asBool](const Value& s, std::vector<Value>& a, CallContext& c) {
+                modalOf(s, c)->SetStyleCard(asBool(a[0]));
+                return Value{};
+            }, "Turn the card styling on or off. Off leaves the dialog as it was authored."));
+        md.methods.push_back(method("SetCardRadius", {tFloat}, {"radius"}, tVoid,
+            [modalOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                modalOf(s, c)->SetCardRadius(F(a[0]));
+                return Value{};
+            }, "Corner radius of the card named Card, in pixels."));
+        md.methods.push_back(method("SetTitle", {tString}, {"text"}, tVoid,
+            [modalOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                modalOf(s, c)->SetTitle(S(a[0]));
+                return Value{};
+            }, "Title text. Empty leaves whatever the Title label already says."));
+        md.methods.push_back(method("SetMessage", {tString}, {"text"}, tVoid,
+            [modalOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                modalOf(s, c)->SetMessage(S(a[0]));
+                return Value{};
+            }, "Body text. Empty leaves whatever the Message label already says."));
+        md.methods.push_back(method("SetConfirmText", {tString}, {"text"}, tVoid,
+            [modalOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                modalOf(s, c)->SetConfirmText(S(a[0]));
+                return Value{};
+            }, "Confirm button label. Empty leaves the button's own label."));
+        md.methods.push_back(method("SetCancelText", {tString}, {"text"}, tVoid,
+            [modalOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                modalOf(s, c)->SetCancelText(S(a[0]));
+                return Value{};
+            }, "Cancel button label. Empty leaves the button's own label."));
+        ApiMethod open = method("IsOpen", {}, {}, tBool,
+            [modalOf](const Value& s, std::vector<Value>&, CallContext& c) {
+                return Value{modalOf(s, c)->IsOpen()};
+            }, "True while the dialog is shown.");
+        open.pure = true;
+        md.methods.push_back(std::move(open));
+        api.types.push_back(std::move(md));
     }
     // ---- Input ----
     {

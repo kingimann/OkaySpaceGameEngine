@@ -24,6 +24,9 @@
 #include "okay/Components/UIBarBind.hpp"    // health bar follows a variable
 #include "okay/Components/UITextBind.hpp"   // score/text follows a variable
 #include "okay/Components/TextRenderer.hpp"
+#include "okay/Components/ScriptComponent.hpp"
+#include "okay/Components/UIModal.hpp"     // grok/ui-toast
+#include "okay/Components/UIToast.hpp"     // grok/ui-toast
 #include "okay/Components/UIAnchor.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Scene/UILayoutTools.hpp"   // AvoidOverlap: HUD pieces don't land on each other
@@ -735,6 +738,77 @@ inline GameObject* AddLeaderboard(Scene& scene) {
         Text(scene, row, "Name", names[i], UIAnchor::TopLeft, {90, 0}, {200, 48}, 16.0f);
         Text(scene, row, "Points", std::to_string(pts[i]), UIAnchor::TopRight, {-14, 0}, {120, 48}, 16.0f, slate::Text(), 2, true);
     }
+    return root;
+}
+
+// grok/ui-toast: a styled confirm plus a live toast stack. The root IS the modal,
+// so the dim sits behind the card, the trigger buttons and the toasts, and those
+// stay clickable. The static Confirm Dialog screen is left as it was.
+inline GameObject* AddUINotify(Scene& scene) {
+    using namespace detail;
+    GameObject* canvas = EnsureCanvas(scene);
+    GameObject* root = Group(scene, canvas, "UI Notify");
+    auto* md = root->AddComponent<UIModal>();
+    md->dimBackground = true;
+    md->closeOnCancel = false;
+    md->closeOnClickOutside = false;
+    md->styleCard = true;
+    md->cardRadius = 18.0f;
+    md->cardColor = Color::FromBytes(72, 52, 28);
+    md->titleColor = Color::FromBytes(255, 220, 140);
+    md->bodyColor = Color::FromBytes(236, 220, 190);
+    md->confirmColor = Color::FromBytes(214, 146, 52);
+    md->cancelColor = Color::FromBytes(84, 64, 46);
+    md->titleText = "Leave this run?";
+    md->bodyText = "The round keeps your score. You can jump back in from the lobby.";
+    md->confirmText = "Accept";
+    md->cancelText = "Not now";
+
+    Text(scene, root, "Hint", "Click a button. Toasts stack in the corner.",
+         UIAnchor::TopLeft, {36, 28}, {520, 22}, 15.0f, Color::FromBytes(210, 214, 224));
+
+    GameObject* card = Panel(scene, root, "Card", UIAnchor::Center, {0, 0}, {520, 240}, slate::Panel(), 12.0f, true);
+    Text(scene, card, "Title", "Dialog", UIAnchor::TopLeft, {28, 22}, {464, 32}, 22.0f, slate::Text(), 0, true);
+    auto* msg = Text(scene, card, "Message", "Authored message.",
+                     UIAnchor::TopLeft, {28, 64}, {464, 72}, 15.0f, slate::Dim())->GetComponent<TextRenderer>();
+    msg->wrap = true; msg->vcenter = false;
+    GameObject* cancel = Button(scene, card, "CancelButton", "Cancel", UIAnchor::BottomRight, {-180, -24}, {140, 44}, ButtonKind::Secondary);
+    GameObject* confirm = Button(scene, card, "ConfirmButton", "Confirm", UIAnchor::BottomRight, {-28, -24}, {140, 44}, ButtonKind::Danger);
+
+    auto bind = [](GameObject* g, const char* src) {
+        if (!g) return;
+        auto* sc = g->AddComponent<ScriptComponent>("okayscript");
+        std::string err;
+        sc->LoadSource(src, &err);
+    };
+    bind(Button(scene, root, "InfoButton", "Info", UIAnchor::TopLeft, {380, 520}, {140, 48}),
+         "function on_click() { toast_push(\"Info\", \"A note from the showcase.\", 0); }");
+    bind(Button(scene, root, "SavedButton", "Saved", UIAnchor::TopLeft, {540, 520}, {140, 48}, ButtonKind::Secondary),
+         "function on_click() { toast_push(\"Saved\", \"Your progress was stored.\", 1); }");
+    auto* saved = scene.Find("SavedButton");
+    if (saved) if (auto* b = saved->GetComponent<UIButton>()) {
+        b->color = slate::Success();
+        b->hoverColor = Color::FromBytes(96, 214, 150);
+        b->pressedColor = Color::FromBytes(52, 160, 104);
+        b->textColor = Color::White;
+        b->hoverTextColor = Color::White;
+        b->borderWidth = 0.0f;
+    }
+    bind(Button(scene, root, "ErrorButton", "Error", UIAnchor::TopLeft, {700, 520}, {140, 48}, ButtonKind::Danger),
+         "function on_click() { toast_push(\"Error\", \"That action did not finish.\", 3); }");
+    bind(confirm, "function on_click() { toast_push(\"Confirmed\", \"The dialog accepted.\", 2); }");
+    bind(cancel, "function on_click() { toast_push(\"Cancelled\", \"Nothing was changed.\", 0); }");
+
+    GameObject* host = Group(scene, root, "Toasts");
+    auto* toast = host->AddComponent<UIToast>();
+    toast->corner = 0;
+    toast->duration = 6.0f;
+    toast->maxStack = 4;
+    toast->showIcon = true;
+    bind(host, "var clicks = 0; function on_click() { clicks = clicks + 1; }");
+    bind(root, "var closed = 0; function OnModalClose() { closed = 1; }");
+
+    md->SetStyleCard(true);   // paint the card now, before the first Update
     return root;
 }
 

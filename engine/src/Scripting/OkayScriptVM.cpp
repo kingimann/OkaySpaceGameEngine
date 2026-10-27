@@ -56,6 +56,8 @@
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/UIProgressBar.hpp"
+#include "okay/Components/UIToast.hpp"    // grok/ui-toast
+#include "okay/Components/UIModal.hpp"    // grok/ui-toast
 #include "okay/Components/UIElement.hpp"
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIToggle.hpp"
@@ -3855,6 +3857,65 @@ struct OkayScriptVM::Impl {
         b["ui_set_progress"] = [sceneOf](std::vector<Value>& a) {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
                 if (auto* pb = g->GetComponent<UIProgressBar>()) pb->value = a[1].AsFloat();
+            return Value{};
+        };
+        // grok/ui-toast. toast_push (not ui_toast, which is the immediate-mode popup).
+        auto firstToast = [sceneOf]() -> UIToast* {
+            Scene* s = sceneOf();
+            return s ? s->FindObjectOfType<UIToast>() : nullptr;
+        };
+        auto firstModal = [sceneOf]() -> UIModal* {
+            Scene* s = sceneOf();
+            return s ? s->FindObjectOfType<UIModal>() : nullptr;
+        };
+        b["toast_push"] = [firstToast](std::vector<Value>& a) {
+            if (UIToast* t = firstToast())
+                t->Push(a.size() > 0 ? a[0].AsString() : std::string{},
+                        a.size() > 1 ? a[1].AsString() : std::string{},
+                        a.size() > 2 ? (int)a[2].AsFloat() : 0);
+            return Value{};
+        };
+        b["set_toast_duration"] = [firstToast](std::vector<Value>& a) {
+            if (UIToast* t = firstToast()) t->SetDuration(a.empty() ? 4.0f : a[0].AsFloat());
+            return Value{};
+        };
+        b["set_toast_corner"] = [firstToast](std::vector<Value>& a) {
+            if (UIToast* t = firstToast()) t->SetCorner(a.empty() ? 0 : (int)a[0].AsFloat());
+            return Value{};
+        };
+        b["set_toast_max"] = [firstToast](std::vector<Value>& a) {
+            if (UIToast* t = firstToast()) t->SetMaxStack(a.empty() ? 4 : (int)a[0].AsFloat());
+            return Value{};
+        };
+        b["toast_count"] = [firstToast](std::vector<Value>&) -> Value {
+            return Value{firstToast() ? (float)firstToast()->Count() : 0.0f};
+        };
+        b["modal_open"] = [firstModal](std::vector<Value>&) {
+            if (UIModal* m = firstModal()) m->Open();
+            return Value{};
+        };
+        b["modal_close"] = [firstModal](std::vector<Value>&) {
+            if (UIModal* m = firstModal()) m->Close();
+            return Value{};
+        };
+        b["set_modal_style"] = [firstModal](std::vector<Value>& a) {
+            if (UIModal* m = firstModal()) m->SetStyleCard(a.empty() ? true : a[0].AsBool());
+            return Value{};
+        };
+        b["set_modal_title"] = [firstModal](std::vector<Value>& a) {
+            if (UIModal* m = firstModal()) m->SetTitle(a.empty() ? std::string{} : a[0].AsString());
+            return Value{};
+        };
+        b["set_modal_message"] = [firstModal](std::vector<Value>& a) {
+            if (UIModal* m = firstModal()) m->SetMessage(a.empty() ? std::string{} : a[0].AsString());
+            return Value{};
+        };
+        b["set_modal_confirm"] = [firstModal](std::vector<Value>& a) {
+            if (UIModal* m = firstModal()) m->SetConfirmText(a.empty() ? std::string{} : a[0].AsString());
+            return Value{};
+        };
+        b["set_modal_cancel"] = [firstModal](std::vector<Value>& a) {
+            if (UIModal* m = firstModal()) m->SetCancelText(a.empty() ? std::string{} : a[0].AsString());
             return Value{};
         };
         b["ui_set_fill"] = [sceneOf](std::vector<Value>& a) {
@@ -8396,6 +8457,7 @@ std::string ResolveEventHandler(const Functions& functions, const std::string& f
         {"on_mouse_down",  {"OnMouseDown"}},
         {"on_mouse_up",    {"OnMouseUp", "OnMouseUpAsButton"}},
         {"on_click",     {"OnClick", "OnMouseClick", "OnMouseUpAsButton", "OnPointerClick"}},
+        {"on_modal_close", {"OnModalClose"}},   // grok/ui-toast
         {"on_change",    {"OnValueChanged"}},
         {"on_toggle",    {"OnToggle", "OnValueChanged"}},
         {"on_drop",      {"OnDrop"}},

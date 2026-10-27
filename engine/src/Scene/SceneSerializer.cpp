@@ -281,6 +281,29 @@ struct KvIn {
         f((b + "R").c_str(), c.r); f((b + "G").c_str(), c.g); f((b + "B").c_str(), c.b); f((b + "A").c_str(), c.a);
     }
 };
+// A joint limit as `<p>T= <p>S= ...` keys (nothing when it's None).
+void WriteLimitKv(KvOut& k, const std::string& p, const IKJointLimit& l) {
+    if (!l.Active()) return;
+    k((p + "T").c_str(), (int)l.type)((p + "S").c_str(), l.swingMax)
+     ((p + "H0").c_str(), l.hingeMin)((p + "H1").c_str(), l.hingeMax)
+     ((p + "W0").c_str(), l.twistMin)((p + "W1").c_str(), l.twistMax);
+    if (!l.autoAxes)
+        k((p + "TX").c_str(), l.twistAxis.x)((p + "TY").c_str(), l.twistAxis.y)((p + "TZ").c_str(), l.twistAxis.z)
+         ((p + "HX").c_str(), l.hingeAxis.x)((p + "HY").c_str(), l.hingeAxis.y)((p + "HZ").c_str(), l.hingeAxis.z);
+}
+void ReadLimitKv(const KvIn& k, const std::string& p, IKJointLimit& l) {
+    int ty = 0; k.i((p + "T").c_str(), ty);
+    if (ty <= 0) return;
+    l.type = (IKJointLimit::Type)std::clamp(ty, 0, 2);
+    k.f((p + "S").c_str(), l.swingMax);
+    k.f((p + "H0").c_str(), l.hingeMin); k.f((p + "H1").c_str(), l.hingeMax);
+    k.f((p + "W0").c_str(), l.twistMin); k.f((p + "W1").c_str(), l.twistMax);
+    if (k.find((p + "TX").c_str())) {
+        l.autoAxes = false;
+        k.f((p + "TX").c_str(), l.twistAxis.x); k.f((p + "TY").c_str(), l.twistAxis.y); k.f((p + "TZ").c_str(), l.twistAxis.z);
+        k.f((p + "HX").c_str(), l.hingeAxis.x); k.f((p + "HY").c_str(), l.hingeAxis.y); k.f((p + "HZ").c_str(), l.hingeAxis.z);
+    }
+}
 // The crouch / prone options of a movement controller (StanceControl) and the
 // stance it was saved in: one `<rec> key=value ...` line.
 void WriteStanceControl(std::ostream& out, const char* rec, const StanceControl& sc) {
@@ -1061,17 +1084,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
          ("upRX", f->footUpAxisR.x)("upRY", f->footUpAxisR.y)("upRZ", f->footUpAxisR.z)
          ("om", 1)   // orient is saved after its migration: keep it as written
          ("mask", f->groundMask);
-        auto lim = [&k](const char* p, const IKJointLimit& l) {
-            if (!l.Active()) return;
-            const std::string b = p;
-            k((b + "T").c_str(), (int)l.type)((b + "S").c_str(), l.swingMax)
-             ((b + "H0").c_str(), l.hingeMin)((b + "H1").c_str(), l.hingeMax)
-             ((b + "W0").c_str(), l.twistMin)((b + "W1").c_str(), l.twistMax);
-            if (!l.autoAxes)
-                k((b + "TX").c_str(), l.twistAxis.x)((b + "TY").c_str(), l.twistAxis.y)((b + "TZ").c_str(), l.twistAxis.z)
-                 ((b + "HX").c_str(), l.hingeAxis.x)((b + "HY").c_str(), l.hingeAxis.y)((b + "HZ").c_str(), l.hingeAxis.z);
-        };
-        lim("hl", f->hipLimit); lim("kl", f->kneeLimit);
+        WriteLimitKv(k, "hl", f->hipLimit); WriteLimitKv(k, "kl", f->kneeLimit);
         out << "\n";
     }
     if (auto* lb = go->GetComponent<LimbIK>()) {
@@ -1148,7 +1161,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "\n";
         // Easing, smoothing and joint limits (separate record: older builds skip it).
         out << "  fbikx " << fb->blendSpeed << " " << fb->goalSmoothing << " " << fb->lookSmoothing
-            << " " << fb->armMinBend << " " << fb->legMinBend << "\n";
+            << " " << fb->armMinBend << " " << fb->legMinBend;
+        // Per-limb joint limits (e<limb>u / e<limb>l keys), only when set.
+        KvOut k{out};
+        for (int l = 0; l < FullBodyIK::LimbCount; ++l) {
+            const std::string p = "e" + std::to_string(l);
+            WriteLimitKv(k, p + "u", fb->effectors[l].upperLimit);
+            WriteLimitKv(k, p + "l", fb->effectors[l].lowerLimit);
+        }
+        out << "\n";
     }
     if (auto* h = go->GetComponent<HoldableObject>()) {
         out << "  holdable";
@@ -3563,21 +3584,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                       // Files from before orient's migration loaded a Character's
                       // part rig with it off; Start() turns it on there.
                       if (!k.find("om") && !f->orient) f->orientMigrate = true;
-                      auto lim = [&k](const char* p, IKJointLimit& l) {
-                          const std::string b = p;
-                          int ty = 0; k.i((b + "T").c_str(), ty);
-                          if (ty <= 0) return;
-                          l.type = (IKJointLimit::Type)std::clamp(ty, 0, 2);
-                          k.f((b + "S").c_str(), l.swingMax);
-                          k.f((b + "H0").c_str(), l.hingeMin); k.f((b + "H1").c_str(), l.hingeMax);
-                          k.f((b + "W0").c_str(), l.twistMin); k.f((b + "W1").c_str(), l.twistMax);
-                          if (k.find((b + "TX").c_str())) {
-                              l.autoAxes = false;
-                              k.f((b + "TX").c_str(), l.twistAxis.x); k.f((b + "TY").c_str(), l.twistAxis.y); k.f((b + "TZ").c_str(), l.twistAxis.z);
-                              k.f((b + "HX").c_str(), l.hingeAxis.x); k.f((b + "HY").c_str(), l.hingeAxis.y); k.f((b + "HZ").c_str(), l.hingeAxis.z);
-                          }
-                      };
-                      lim("hl", f->hipLimit); lim("kl", f->kneeLimit); }
+                      ReadLimitKv(k, "hl", f->hipLimit); ReadLimitKv(k, "kl", f->kneeLimit); }
                 } else if (field == "limbik") {
                     auto* lb = go->AddComponent<LimbIK>();
                     lb->upperName = ReadQuoted(in); lb->lowerName = ReadQuoted(in); lb->endName = ReadQuoted(in);
@@ -3693,8 +3700,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int carry = 0; k.b("body", ph->bodyAdjustment); k.i("carry", carry);
                     ph->carryAnimations = carry == 1 ? ProceduralObjectHolding::CarryAnim::Custom : ProceduralObjectHolding::CarryAnim::Automatic;
                 } else if (field == "fbikx") {
-                    if (auto* fb = go->GetComponent<FullBodyIK>())
+                    if (auto* fb = go->GetComponent<FullBodyIK>()) {
                         in >> fb->blendSpeed >> fb->goalSmoothing >> fb->lookSmoothing >> fb->armMinBend >> fb->legMinBend;
+                        KvIn k(in);
+                        for (int l = 0; l < FullBodyIK::LimbCount; ++l) {
+                            const std::string p = "e" + std::to_string(l);
+                            ReadLimitKv(k, p + "u", fb->effectors[l].upperLimit);
+                            ReadLimitKv(k, p + "l", fb->effectors[l].lowerLimit);
+                        }
+                    }
                 } else if (field == "ikx") {
                     std::string kind; int act = 1; float fade = 0.0f;
                     in >> kind >> act >> fade;

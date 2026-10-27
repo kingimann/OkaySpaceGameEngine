@@ -25,6 +25,7 @@ add_library(okay_engine
     src/Components/AntiCheatConfig.cpp
     src/Components/NetworkObject.cpp
     src/Net/NetworkManager.cpp
+    src/Net/NetSim.cpp
     src/Net/RelayServer.cpp
     src/Net/DedicatedServer.cpp
     src/Net/ServerQuery.cpp
@@ -74,6 +75,7 @@ add_library(okay_engine
     src/Components/Terrain.cpp
     src/Components/VoxelTerrain.cpp
     src/Components/Character.cpp
+    src/Components/PlayerView.cpp
     src/Components/CharacterAnimBackend.cpp
     src/Animation/HumanoidMotion.cpp
     src/Animation/HumanoidLibrary.cpp

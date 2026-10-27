@@ -16,6 +16,7 @@
 #include "okay/Components/CharacterController3D.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/PlayerView.hpp"
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/BlockBuilder.hpp"
@@ -1788,6 +1789,17 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << tp->landShake << " " << tp->strideLength << " " << (tp->canSlide ? 1 : 0)
             << " " << tp->slideSpeed << " " << tp->slideTime << " " << (tp->driveStateMachine ? 1 : 0)
             << " " << (tp->ikLook ? 1 : 0) << "\n";
+    }
+    // Player view toggle (grok/view-toggle). Its own record, so older scenes skip it.
+    // Fields: allow, view (0 first / 1 third), key, pad, blend, ex ey ez, dist, shoulder.
+    if (auto* pv = go->GetComponent<PlayerView>()) {
+        out << "  playerview";
+        KvOut k{out};
+        k.b("allow", pv->allowToggle)("view", (int)pv->defaultView).key("key", pv->toggleKey)
+         ("pad", pv->toggleGamepadButton)("blend", pv->blendTime)
+         ("ex", pv->eyeOffset.x)("ey", pv->eyeOffset.y)("ez", pv->eyeOffset.z)
+         ("dist", pv->thirdPersonDistance)("shoulder", pv->shoulderOffset);
+        out << "\n";
     }
     if (auto* td = go->GetComponent<TopDownController>()) {
         out << "  tdctrl " << td->walkSpeed << " " << td->runSpeed << " "
@@ -4570,6 +4582,20 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         tp->aimWithRightMouse = a != 0; tp->autoRecenter = rc != 0; tp->canSlide = sl != 0;
                         tp->driveStateMachine = sm != 0; tp->ikLook = ik != 0;
                     }
+                } else if (field == "playerview") {
+                    // grok/view-toggle. key=value record; missing keys keep the defaults.
+                    auto* pv = go->AddComponent<PlayerView>();
+                    KvIn k(in);
+                    k.b("allow", pv->allowToggle);
+                    int view = (int)pv->defaultView;
+                    k.i("view", view);
+                    pv->defaultView = (view == 0) ? PlayerView::View::First : PlayerView::View::Third;
+                    k.key("key", pv->toggleKey);
+                    k.i("pad", pv->toggleGamepadButton);
+                    k.f("blend", pv->blendTime);
+                    k.f("ex", pv->eyeOffset.x); k.f("ey", pv->eyeOffset.y); k.f("ez", pv->eyeOffset.z);
+                    k.f("dist", pv->thirdPersonDistance);
+                    k.f("shoulder", pv->shoulderOffset);
                 } else if (field == "fpctrl") {
                     float ws = 4.5f, rs = 8, jf = 6, ms = 0.15f; int cj = 1, da = 1, iy = 0;
                     in >> ws >> rs >> jf >> ms >> cj >> da;

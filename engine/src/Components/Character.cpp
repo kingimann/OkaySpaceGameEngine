@@ -93,6 +93,12 @@ bool NeckLocalVert(const Vec3& v) {
     return std::fabs(v.x) <= 0.085f && std::fabs(v.z) <= 0.085f
         && v.y >= 0.395f && v.y <= 0.505f;
 }
+
+// The flat top of the shirt, the cut the head sits on. It leaves with the
+// neck so the owner's camera never sees a stump once the head is skipped.
+bool CollarCapVert(const Vec3& v) {
+    return v.y >= 0.43f;
+}
 }
 
 Mesh Character::BuildRig(std::vector<int>& bone) const {
@@ -945,21 +951,8 @@ void Character::PresentMesh() {
         pose[B_RFORE]  = pose[B_RFORE]  + (fore - pose[B_RFORE])  * arc;
     }
     Skin(m, m_bone, pose);
-    // First-person view: collapse the head (and the small neck box on the torso)
-    // onto the neck joint so the owner's eyes don't see the inside of the skull.
-    // The chest, arms and legs stay, which is what you see looking down.
-    if (hideOwnHead && m_bone.size() == m.vertices.size()) {
-        const Vec3 sink{0.0f, 1.48f, 0.0f};
-        for (std::size_t i = 0; i < m.vertices.size(); ++i) {
-            bool head = m_bone[i] == B_HEAD;
-            bool neck = false;
-            if (!head && m_bone[i] == B_TORSO && i < m_restPos.size()) {
-                const Vec3& r = m_restPos[i];
-                neck = r.y > 1.445f && r.y < 1.56f && std::fabs(r.x) < 0.11f && std::fabs(r.z) < 0.11f;
-            }
-            if (head || neck) m.vertices[i] = sink;
-        }
-    }
+    // The head is never sunk or scaled away. A first-person camera skips the
+    // head part (and the neck) and leaves the mesh here for every other view.
     Vec3 so = StanceOffset();
     FaceMinusZ(m);
     for (Vec3& v : m.vertices) { v = v * height; v += so; }   // face -Z + stance drop (see Apply)
@@ -1143,8 +1136,11 @@ void Character::SplitNeckFromTorso() {
         int i0 = src.triangles[f * 3], i1 = src.triangles[f * 3 + 1], i2 = src.triangles[f * 3 + 2];
         const bool ok = i0 >= 0 && i1 >= 0 && i2 >= 0
             && i0 < (int)src.vertices.size() && i1 < (int)src.vertices.size() && i2 < (int)src.vertices.size();
-        const bool neckFace = ok && NeckLocalVert(src.vertices[i0]) && NeckLocalVert(src.vertices[i1])
+        const bool neckBox = ok && NeckLocalVert(src.vertices[i0]) && NeckLocalVert(src.vertices[i1])
             && NeckLocalVert(src.vertices[i2]);
+        const bool cap = ok && CollarCapVert(src.vertices[i0]) && CollarCapVert(src.vertices[i1])
+            && CollarCapVert(src.vertices[i2]);
+        const bool neckFace = neckBox || cap;
         Mesh& dst = neckFace ? neck : keep;
         if (!ok) continue;
         for (int idx : {i0, i1, i2}) {
@@ -1174,7 +1170,10 @@ void Character::ApplyOwnerVisibility(bool firstPerson) {
         if (!p) continue;
         p->active = true;
         p->firstPersonViewmodel = firstPerson && ShowsToOwnerCamera(i);
-        if (auto* mr = p->GetComponent<MeshRenderer>()) mr->doubleSided = false;
+        if (auto* mr = p->GetComponent<MeshRenderer>()) {
+            mr->doubleSided = false;
+            if (i == B_HEAD) mr->castShadows = true;
+        }
     }
     GameObject* torso = Part(B_TORSO);
     if (!torso || !torso->transform) return;

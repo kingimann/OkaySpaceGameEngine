@@ -540,7 +540,7 @@ public:
             float h = 1.0f;
             Character* ch = FindCharacter();
             if (ch && ch->height > 0.0f) h = ch->height;
-            cam->localPosition.z = -(0.17f + down * 0.18f) * h;
+            cam->localPosition.z = -(0.20f + down * 0.18f) * h;
             cam->localPosition.y += down * 0.20f * h;
             if (ch && transform) {
                 const Vec3 cleared = ch->ClearFirstPersonEye(cam->Position());

@@ -119,5 +119,95 @@ int main() {
         }
     }
 
+    // The owner's camera skips the head. Another camera still sees it, and the
+    // head's shadow is part of that picture. The neck goes with the head.
+    {
+        ShadowMapResolution() = 256;
+        ShadowCascades() = 1;
+        Scene sc("own");
+        sc.physicsEnabled = false;
+        GameObject* light = sc.CreateGameObject("Directional Light");
+        light->AddComponent<Light>();
+        light->transform->localRotation = Quat::Euler({50, -30, 0});
+        GameObject* ground = sc.CreateGameObject("Ground");
+        ground->transform->localPosition = {0, -0.5f, 0};
+        ground->transform->localScale = {12, 1, 12};
+        auto* gmr = ground->AddComponent<MeshRenderer>();
+        gmr->mesh = Mesh::Cube();
+        gmr->color = Color::FromBytes(180, 180, 180);
+        GameObject* player = sc.CreateGameObject("Player");
+        player->transform->localPosition = {0, 0, 0};
+        auto* ch = player->AddComponent<Character>();
+        ch->Apply();
+        auto* fp = player->AddComponent<FirstPersonController>();
+        fp->lookSmoothing = 0.0f; fp->headBob = false;
+        GameObject* eye = sc.CreateGameObject("Eye");
+        auto* owner = eye->AddComponent<Camera>();
+        eye->transform->SetParent(player->transform, false);
+        eye->transform->localPosition = {0, 1.6f, 0};
+        auto* pv = player->AddComponent<PlayerView>();
+        pv->allowToggle = true; pv->defaultView = PlayerView::View::First; pv->blendTime = 0.05f;
+        sc.Start();
+        Input::FeedKeys({});
+        for (int i = 0; i < 10; ++i) sc.Update(1.0f / 60.0f);
+
+        CHECK(ch->PartsBuilt());
+        CHECK(!ch->hideOwnHead);
+        GameObject* head = ch->Part(2);
+        CHECK(head && head->active && !head->firstPersonViewmodel);
+        CHECK(head->transform && (head->transform->localScale - Vec3::One).Magnitude() < 1e-3f);
+        auto* hmr = head->GetComponent<MeshRenderer>();
+        CHECK(hmr && hmr->enabled && hmr->castShadows && !hmr->mesh.vertices.empty());
+        const Vec3 rel = eye->transform->Position() - player->transform->Position();
+        CHECK(rel.z < -0.18f);
+        CHECK(owner->ignoreObject == player);
+
+        auto shot = [&](Camera* cam, int W, int H) {
+            ApplySceneLight(sc);
+            const float aspect = (float)W / (float)H;
+            Mat4 vp = cam->ProjectionMatrix(aspect) * cam->ViewMatrix();
+            Raster work; std::vector<std::uint32_t> out;
+            const std::uint32_t* px = RenderMeshesSS(work, out, sc, vp, cam->transform->Position(), W, H, 1, cam->ignoreObject);
+            std::vector<std::uint32_t> copy(px, px + W * H);
+            return copy;
+        };
+        auto differ = [](const std::vector<std::uint32_t>& a, const std::vector<std::uint32_t>& b) {
+            int n = 0;
+            for (std::size_t i = 0; i < a.size(); ++i) if (a[i] != b[i]) ++n;
+            return n;
+        };
+        const int W = 160, H = 90;
+        auto ownA = shot(owner, W, H);
+        hmr->enabled = false;
+        auto ownB = shot(owner, W, H);
+        hmr->enabled = true;
+        CHECK(differ(ownA, ownB) == 0);   // the owner's lens does not see the head
+
+        GameObject* side = sc.CreateGameObject("Side");
+        auto* sideCam = side->AddComponent<Camera>();
+        sideCam->main = false;
+        sideCam->nearClip = 0.05f;
+        side->transform->SetPosition({2.4f, 1.4f, 0.2f});
+        side->transform->SetRotation(Quat::LookRotation(side->transform->Position() - Vec3{0, 1.3f, 0}));
+        auto sideA = shot(sideCam, W, H);
+        hmr->enabled = false;
+        auto sideB = shot(sideCam, W, H);
+        hmr->enabled = true;
+        CHECK(differ(sideA, sideB) > 40);   // another camera still draws the head
+
+        // Per-pixel shading is what samples the shadow map. The head's shadow
+        // changes that picture while the head mesh itself stays drawn.
+        PerPixelLighting() = true;
+        side->transform->SetPosition({3.2f, 1.6f, 2.4f});
+        side->transform->SetRotation(Quat::LookRotation(side->transform->Position() - Vec3{0, 0.6f, 0}));
+        hmr->castShadows = true;
+        auto shA = shot(sideCam, W, H);
+        hmr->castShadows = false;
+        auto shB = shot(sideCam, W, H);
+        hmr->castShadows = true;
+        PerPixelLighting() = false;
+        CHECK(differ(shA, shB) > 0);
+    }
+
     TEST_MAIN_RESULT();
 }

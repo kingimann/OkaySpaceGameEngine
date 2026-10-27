@@ -826,14 +826,17 @@ elbows bend down and out, and the object moves with the body.
   that happens to have them. A run (sprint, or fast enough to use the run
   style) keeps those hands out of the first-person view. Walking, idling and
   holding still show the block. The held object stays on its grip.
-- The owner's first-person camera does not draw the head or the neck. Both
-  stay in the scene, so they still cast shadows and any other camera still
-  sees them. The eye sits just in front of the face and moves forward and up
-  as you look down, with a close near plane. The body is drawn from the
-  outside only, so looking down shows that body or the ground, not the cavity.
-  Switching into that view from third person (the V toggle on the orbit
-  controller) uses the same eye, the same hidden head and neck, and the same
-  arm. Switching back restores the near plane and shows the whole body again.
+- The owner's first-person camera does not draw the head or the neck. The
+  head is not scaled away and not deleted from the mesh: it stays active, so
+  it still casts a shadow and any other camera still sees it. The neck and
+  the flat collar under it are skipped with the head, and the eye sits just
+  in front of the face (further forward and up as you look down) so that
+  collar is behind the lens. The body is drawn from the outside only, so
+  looking down shows that body or the ground, not the cavity. The head stays
+  visible through the switch and is skipped only once the lens is in front of
+  the face, which is what a First Person project and a Third Person project
+  toggled with V both do. Switching back restores the near plane and shows
+  the whole body again.
 - **Socket**: hold it at a named object inside the character (a holster, a back
   slot) instead of in front of the chest.
 - The hands never stretch: when a grip is out of reach the object comes closer

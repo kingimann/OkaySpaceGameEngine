@@ -3,6 +3,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/FirstPersonController.hpp"
+#include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/FirstPersonHand.hpp"
 #include "okay/Components/Stance.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
@@ -51,6 +52,15 @@ bool HandOwnsArm(GameObject* go, Camera* cam) {
     return cam && cam->gameObject && cam->gameObject->GetComponent<FirstPersonHand>();
 }
 
+// The lens is in front of the face (player -Z is forward). The head stays
+// drawn until then: skipping it while this camera is still looking at the
+// body is what leaves a neck where the head was.
+bool LensPastFace(GameObject* go, Camera* cam) {
+    if (!go || !go->transform || !cam || !cam->transform) return false;
+    const Vec3 local = go->transform->InverseTransformPoint(cam->transform->Position());
+    return local.z < -0.16f;
+}
+
 // First-person pitch is positive looking up. A third-person orbit is the opposite.
 float LookUpDegrees(GameObject* go) {
     if (!go) return 0.0f;
@@ -72,7 +82,7 @@ Pose FirstFromThird(const ThirdPersonController& tp, const Vec3& eyeOffset) {
     float h = 1.0f;
     Character* ch = tp.gameObject ? tp.gameObject->GetComponent<Character>() : nullptr;
     if (ch && ch->height > 0.0f) h = ch->height;
-    const float fwd = (0.17f + down * 0.18f) * h;
+    const float fwd = (0.20f + down * 0.18f) * h;
     const float lift = down * 0.20f * h;
     Pose p;
     p.position = tp.transform->Position() + yawQ * Vec3{
@@ -218,18 +228,16 @@ void PlayerView::Update(float dt) {
 
 void PlayerView::ApplyHead() {
     if (!gameObject) return;
-    // Hide the head once the camera is well on its way to the eyes, so it is
-    // gone before the near plane meets it, and back as soon as we leave.
-    const bool fp = Driving() && FirstAmount() > 0.35f;
+    // The rig is built on the way in. The head is skipped only once the lens
+    // is in front of the face, so a blend still shows the whole character.
     Character* ch = gameObject->GetComponent<Character>();
     Camera* cam = ViewCamera(gameObject);
-    // A part rig can hide the head and neck from this camera only. The baked
-    // mesh cannot, so build the rig on the way into first person.
-    if (ch && fp && !ch->driveExternal && !ch->PartsBuilt()) {
+    if (ch && Driving() && FirstAmount() > 0.35f && !ch->driveExternal && !ch->PartsBuilt()) {
         ch->separateParts = true;
         ch->BuildParts();
     }
     const bool rig = ch && ch->PartsBuilt();
+    const bool fp = Driving() && FirstAmount() > 0.35f && LensPastFace(gameObject, cam);
     if (fp) {
         if (rig) {
             ch->hideOwnHead = false;
@@ -245,16 +253,21 @@ void PlayerView::ApplyHead() {
                 ch->fpArmUp = ch->HideFirstPersonHands() ? 0.0f : 1.0f;
                 ch->fpPitch = LookUpDegrees(gameObject);
             }
-            if (GameObject* head = ch->Part(HumanoidMotion::B_HEAD))
+            if (GameObject* head = ch->Part(HumanoidMotion::B_HEAD)) {
+                head->active = true;
                 if (head->transform) head->transform->localScale = Vec3::One;
-        } else if (ch) {
-            ch->hideOwnHead = true;
+                if (auto* mr = head->GetComponent<MeshRenderer>()) mr->castShadows = true;
+            }
         }
         if (cam) {
-            cam->ignoreObject = rig ? gameObject : nullptr;
+            // No rig: skip the whole body rather than deleting the head from
+            // the shared mesh. Other cameras still draw that mesh.
+            cam->ignoreObject = gameObject;
             // 0.3 m is the depth of the chest, so the default plane cuts it open.
-            // Remember the plane so third person can have it back.
-            if (m_savedNear < 0.0f) m_savedNear = cam->nearClip;
+            // The controller may already have pulled the plane in. Remember the
+            // wider plane third person had, not that pulled-in value.
+            if (m_savedNear < 0.0f)
+                m_savedNear = cam->nearClip > 0.06f ? cam->nearClip : 0.3f;
             if (cam->nearClip > 0.06f) cam->nearClip = 0.04f;
         }
         m_fpApplied = true;
@@ -342,9 +355,10 @@ void PlayerView::PlaceCamera(float dt) {
 
 void PlayerView::LateUpdate(float dt) {
     if (!Driving()) return;
-    // Head flags for a separated rig are applied after the rig is posed.
-    ApplyHead();
+    // Place the lens first. The head is skipped only once that lens is in
+    // front of the face, which PlaceCamera has just done.
     PlaceCamera(dt);
+    ApplyHead();
 }
 
 } // namespace okay

@@ -128,10 +128,9 @@ public:
     // 0 (lowered, empty-handed) .. 1 (raised, holding). fpRaise / fpElbow let the
     // FirstPersonHand inspector tune where the hand sits.
     bool  firstPersonArm = false;
-    /// Runtime only (not saved): the view toggle shrinks this character's head
-    /// and neck in the baked mesh so a first-person camera at the eyes doesn't
-    /// clip them, while the body stays visible looking down. A separated rig
-    /// hides the head part from the owner's camera instead.
+    /// Runtime only (not saved). Kept so older scenes load. It does not remove
+    /// the head: a first-person camera skips the head and neck parts, and the
+    /// mesh itself stays whole for shadows and every other camera.
     bool  hideOwnHead = false;
     float fpArmUp = 1.0f;
     float fpRaise = -96.0f;   // raised upper-arm forward angle

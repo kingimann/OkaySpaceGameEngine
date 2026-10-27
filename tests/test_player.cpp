@@ -245,6 +245,8 @@ int main() {
         CHECK(!pv->Blending());
         CHECK(ch->PartsBuilt());
         CHECK(ch->Part(2) && ch->Part(2)->active && !ch->Part(2)->firstPersonViewmodel);   // head stays for everyone else
+        CHECK(ch->Part(2)->transform && (ch->Part(2)->transform->localScale - Vec3::One).Magnitude() < 1e-3f);
+        if (auto* hmr = ch->Part(2)->GetComponent<MeshRenderer>()) CHECK(hmr->castShadows && hmr->enabled);
         CHECK(!ch->hideOwnHead);
         CHECK(ch->firstPersonArm);                            // same arm a native first-person hand raises
         CHECK(ch->fpArmBase == 3);
@@ -252,7 +254,7 @@ int main() {
         CHECK(cam->GetComponent<Camera>()->nearClip < 0.06f);
         const Vec3 arrived = cam->transform->Position() - p->transform->Position();
         CHECK_NEAR(arrived.y, 1.6f, 0.08f);                   // eye socket, not the orbit look-at
-        CHECK(arrived.z < -0.10f);
+        CHECK(arrived.z < -0.18f);                            // in front of the face, collar behind the lens
 
         pv->SetView(1);
         for (int i = 0; i < 10; ++i) { Input::FeedKeys({}); sc.Update(1.0f / 60.0f); }
@@ -309,14 +311,17 @@ int main() {
             CHECK(ch->fpArmBase == 3);
             CHECK(ch->fpArmUp == 1.0f);
             CHECK(ch->Part(2) && ch->Part(2)->active && !ch->Part(2)->firstPersonViewmodel);
+            CHECK(ch->Part(2)->transform && (ch->Part(2)->transform->localScale - Vec3::One).Magnitude() < 1e-3f);
+            if (auto* hmr = ch->Part(2)->GetComponent<MeshRenderer>()) CHECK(hmr->castShadows);
             GameObject* neck = neckOf();
             CHECK(neck && neck->active && !neck->firstPersonViewmodel);
+            if (neck) if (auto* nmr = neck->GetComponent<MeshRenderer>()) CHECK(nmr->castShadows);
             CHECK(ch->Part(1) && ch->Part(1)->firstPersonViewmodel);
             CHECK(camera->ignoreObject == p);
             CHECK(camera->nearClip < 0.06f);
             Vec3 eye = cam->transform->Position() - p->transform->Position();
             CHECK_NEAR(eye.y, 1.6f, 0.08f);
-            CHECK(eye.z < -0.10f);
+            CHECK(eye.z < -0.18f);
 
             tp->pitch = 80.0f;   // looking down: the eye steps forward and up, out of the chest
             for (int i = 0; i < 5; ++i) { Input::FeedKeys({}); sc.Update(1.0f / 60.0f); }
@@ -356,6 +361,33 @@ int main() {
         Input::FeedKeys({});
     }
 
+    // --- Halfway to the eyes the head is still drawn. It is skipped only in front of the face. ---
+    {
+        Scene sc("half"); sc.physicsEnabled = false;
+        GameObject* cam = sc.CreateGameObject("Camera");
+        auto* camera = cam->AddComponent<Camera>();
+        GameObject* p = sc.CreateGameObject("Player");
+        auto* ch = p->AddComponent<Character>(); ch->Apply();
+        auto* tp = p->AddComponent<ThirdPersonController>();
+        tp->yaw = 0.0f; tp->pitch = 0.0f; tp->distance = 5.0f; tp->cameraHeight = 1.5f;
+        tp->pivotDampingXZ = tp->pivotDampingY = 0.0f; tp->orbitSmoothing = 0.0f; tp->lookSmoothing = 0.0f;
+        tp->autoRecenter = false;
+        auto* pv = p->AddComponent<PlayerView>();
+        pv->allowToggle = true; pv->defaultView = PlayerView::View::Third;
+        pv->thirdPersonDistance = -1.0f; pv->shoulderOffset = 0.0f; pv->blendTime = 0.50f;
+        sc.Start();
+        Input::FeedKeys({}); sc.Update(1.0f / 60.0f);
+        pv->SetView(0);
+        for (int i = 0; i < 15; ++i) { Input::FeedKeys({}); sc.Update(1.0f / 60.0f); } // past the rig build, not yet at the face
+        CHECK(pv->Blending());
+        const Vec3 rel = cam->transform->Position() - p->transform->Position();
+        CHECK(rel.z > -0.16f);
+        CHECK(camera->ignoreObject == nullptr);
+        CHECK(ch->PartsBuilt());
+        CHECK(ch->Part(2) && ch->Part(2)->active && !ch->Part(2)->firstPersonViewmodel);
+        Input::FeedKeys({});
+    }
+
     // --- First person on its own camera, then out to an orbit ---
     {
         Scene sc("fpblend"); sc.physicsEnabled = false;
@@ -382,7 +414,7 @@ int main() {
         Input::FeedKeys({});
     }
 
-    // --- Shrinking the head drops the skull out of the mesh ---
+    // --- The head is not deleted from the mesh, even if the old flag is set ---
     {
         Scene sc("head"); sc.physicsEnabled = false;
         GameObject* p = sc.CreateGameObject("P");
@@ -399,9 +431,8 @@ int main() {
         const float shown = maxY();
         ch->hideOwnHead = true;
         sc.Update(1.0f / 60.0f);
-        const float hidden = maxY();
-        CHECK(shown > hidden + 0.08f);
-        CHECK(hidden < 1.65f);
+        CHECK_NEAR(maxY(), shown, 0.02f);   // the skull stays; the camera skips it instead
+        CHECK(shown > 1.7f);
     }
 
     // --- playerview save record round-trips ---

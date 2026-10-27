@@ -689,11 +689,15 @@ void Character::FireClipEvents(float from, float to) {
 void Character::AdvanceClip(float dt) {
     if (!m_activeClip) return;
     float from = m_clipTime;
-    m_clipTime += dt * animSpeed * m_activeClip->speed;   // per-clip playback rate
-    FireClipEvents(from, m_clipTime);             // events on the raw (pre-wrap) timeline
     float dur = m_activeClip->Duration();
+    // The jump binding holds its last frame while the body is still in that
+    // state. A looping takeoff clip used to replay for the whole jump.
+    const bool holdJump = m_stateDriven && !clipJump.empty() && m_activeClipName == clipJump;
+    const float add = dt * animSpeed * m_activeClip->speed;
+    m_clipTime = (holdJump && dur > 0.0f) ? std::min(from + add, dur) : from + add;
+    FireClipEvents(from, m_clipTime);             // events on the raw (pre-wrap) timeline
     if (dur > 0.0f) {
-        if (m_activeClip->loop) m_clipTime = std::fmod(m_clipTime, dur);
+        if (m_activeClip->loop && !holdJump) m_clipTime = std::fmod(m_clipTime, dur);
         else if (m_clipTime > dur) m_clipTime = dur;
     }
 }
@@ -1086,9 +1090,24 @@ bool Character::AdoptParts(GameObject* rig) {
 }
 
 void Character::RememberPartRest() {
+    const std::vector<Bone> sk = Skeleton();
     m_partRest.assign(m_parts.size(), Vec3{0.0f, 0.0f, 0.0f});
-    for (std::size_t i = 0; i < m_parts.size(); ++i)
-        if (m_parts[i] && m_parts[i]->transform) m_partRest[i] = m_parts[i]->transform->localPosition;
+    for (std::size_t i = 0; i < m_parts.size(); ++i) {
+        if (!m_parts[i] || !m_parts[i]->transform) continue;
+        const Vec3 live = m_parts[i]->transform->localPosition;
+        Vec3 bind = live;
+        if ((int)i < B_COUNT && (int)i < (int)sk.size()) {
+            const int par = sk[i].parent;
+            const Vec3 pj = par >= 0 ? sk[par].joint : Vec3{0.0f, 0.0f, 0.0f};
+            bind = sk[i].joint - pj;
+        }
+        // A scene saved mid-play stores the animated bone. The joint offset of
+        // the rig is the skeleton's rest, not a foot planted on a step. A part
+        // still sitting at its rest rotation keeps an edit-mode position tweak.
+        const Quat& q = m_parts[i]->transform->localRotation;
+        const bool posed = std::fabs(q.w) < 0.9995f;
+        m_partRest[i] = posed ? bind : live;
+    }
 }
 
 void Character::RemoveParts() {

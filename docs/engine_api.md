@@ -106,6 +106,135 @@ Switches one player between first person and third person. The object needs a Pl
 | `GetComponent<PlayerView>().SetView(view)` | `PlayerView.SetView/1` | step | view (Number), Target (Object) | - | Ease to a view: 0 first person (camera at the eyes), 1 third person (over the shoulder). |
 | `GetComponent<PlayerView>().GetView()` | `PlayerView.GetView/0` | value | Target (Object) | Result (Number) | The view asked for: 0 first person, 1 third person. The camera may still be on its way there. |
 
+## UIColorPicker
+
+A row of color swatches. The chosen swatch is the current color.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIColorPicker>().SetValue(index)` | `UIColorPicker.SetValue/1` | step | index (Number), Target (Object) | - | Select a swatch by index. The chip shows that color. |
+| `GetComponent<UIColorPicker>().Value()` | `UIColorPicker.Value/0` | value | Target (Object) | Result (Number) | The selected swatch, or -1. |
+## Crosshair
+
+An aim reticle. SpreadRecover pulls an extra gap back to 0; 0 keeps the authored spread.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<Crosshair>().SetSpread(pixels)` | `Crosshair.SetSpread/1` | step | pixels (Number), Target (Object) | - | Set the extra gap around the ticks, in pixels. |
+| `GetComponent<Crosshair>().SetSpreadRecover(pixelsPerSecond)` | `Crosshair.SetSpreadRecover/1` | step | pixelsPerSecond (Number), Target (Object) | - | How fast the extra gap eases back to 0. 0 leaves the spread where it is. |
+| `GetComponent<Crosshair>().KickSpread(pixels)` | `Crosshair.KickSpread/1` | step | pixels (Number), Target (Object) | - | Push the ticks apart. They ease back while spread recover is above 0. |
+| `GetComponent<Crosshair>().Spread()` | `Crosshair.Spread/0` | value | Target (Object) | Result (Number) | The extra gap around the ticks, in pixels. |
+
+## UIRadialProgress
+
+A ring or pie. Thickness 0 is a pie. Spin turns the arc into a loader.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIRadialProgress>().SetValue(value)` | `UIRadialProgress.SetValue/1` | step | value (Number), Target (Object) | - | Fill fraction from 0 to 1. |
+| `GetComponent<UIRadialProgress>().SetThickness(pixels)` | `UIRadialProgress.SetThickness/1` | step | pixels (Number), Target (Object) | - | Ring width in pixels. 0 draws a pie. |
+| `GetComponent<UIRadialProgress>().SetStartAngle(degrees)` | `UIRadialProgress.SetStartAngle/1` | step | degrees (Number), Target (Object) | - | Where the arc starts. 0 is 12 o'clock. |
+| `GetComponent<UIRadialProgress>().SetClockwise(on)` | `UIRadialProgress.SetClockwise/1` | step | on (Bool), Target (Object) | - | Fill clockwise when on. |
+| `GetComponent<UIRadialProgress>().SetSpin(on)` | `UIRadialProgress.SetSpin/1` | step | on (Bool), Target (Object) | - | Spin the arc as a loader. |
+| `GetComponent<UIRadialProgress>().SetShowPercent(on)` | `UIRadialProgress.SetShowPercent/1` | step | on (Bool), Target (Object) | - | Draw the fill as a percent in the middle. |
+
+## UISlotGrid
+
+A grid of buttons. Selecting one fires on_change. It does not know about inventory.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UISlotGrid>().SetValue(index)` | `UISlotGrid.SetValue/1` | step | index (Number), Target (Object) | - | Select a slot by index. -1 clears the selection. |
+| `GetComponent<UISlotGrid>().SetColumns(columns)` | `UISlotGrid.SetColumns/1` | step | columns (Number), Target (Object) | - | How many slots across (1 to 16). |
+| `GetComponent<UISlotGrid>().SetRows(rows)` | `UISlotGrid.SetRows/1` | step | rows (Number), Target (Object) | - | How many slots down (1 to 16). |
+| `GetComponent<UISlotGrid>().Value()` | `UISlotGrid.Value/0` | value | Target (Object) | Result (Number) | The selected slot, or -1. |
+## UIDropdown
+
+A dropdown. Search, a row cap and per-option glyphs are optional.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIDropdown>().SetSearchable(on)` | `UIDropdown.SetSearchable/1` | step | on (Bool), Target (Object) | - | Show a search row that filters the options while the list is open. |
+| `GetComponent<UIDropdown>().SetMaxVisible(rows)` | `UIDropdown.SetMaxVisible/1` | step | rows (Number), Target (Object) | - | How many matching options the open list shows. 0 shows every match. |
+| `GetComponent<UIDropdown>().SetOptionIcon(index, glyph)` | `UIDropdown.SetOptionIcon/2` | step | index (Number), glyph (Text), Target (Object) | - | A short glyph drawn in front of one option. |
+| `GetComponent<UIDropdown>().Searchable()` | `UIDropdown.Searchable/0` | value | Target (Object) | Result (Bool) | True when the open list has a search row. |
+
+## UIScrollView
+
+A scroll view. Inertia, elastic edges and the bar style are optional.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIScrollView>().SetInertia(rate)` | `UIScrollView.SetInertia/1` | step | rate (Number), Target (Object) | - | Wheel glide. 0 scrolls one notch immediately. Higher stops the glide sooner. |
+| `GetComponent<UIScrollView>().SetElastic(on)` | `UIScrollView.SetElastic/1` | step | on (Bool), Target (Object) | - | Let the content pass the ends, then spring back. |
+| `GetComponent<UIScrollView>().SetBarStyle(style)` | `UIScrollView.SetBarStyle/1` | step | style (Number), Target (Object) | - | Scrollbar: 0 the usual bar, 1 thin, 2 hidden until the view is scrolling. |
+
+## UITabs
+
+A tab bar. Closable tabs fire on_tab_close. Vertical is a style.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UITabs>().SetClosable(on)` | `UITabs.SetClosable/1` | step | on (Bool), Target (Object) | - | Draw an X on each tab. Clicking it removes that tab. |
+| `GetComponent<UITabs>().CloseTab(index)` | `UITabs.CloseTab/1` | step | index (Number), Target (Object) | - | Remove one tab and fire on_tab_close. |
+| `GetComponent<UITabs>().Count()` | `UITabs.Count/0` | value | Target (Object) | Result (Number) | How many tabs are left. |
+
+## UITooltip
+
+A hover tooltip. It already waits and follows the cursor. Rich text and the offset are optional.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UITooltip>().SetRichText(on)` | `UITooltip.SetRichText/1` | step | on (Bool), Target (Object) | - | Draw <b> and #rrggbb in the tooltip text. |
+| `GetComponent<UITooltip>().SetOffset(x, y)` | `UITooltip.SetOffset/2` | step | x (Number), y (Number), Target (Object) | - | Pixels from the cursor to the box. 14, 14 is the usual spot. |
+| `GetComponent<UITooltip>().SetDelay(seconds)` | `UITooltip.SetDelay/1` | step | seconds (Number), Target (Object) | - | How long the pointer must hover before the tooltip shows. |
+
+## UIInputField
+
+A text field. Password, a character limit and integer or decimal mode already exist. Multiline is optional.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIInputField>().SetMultiline(on)` | `UIInputField.SetMultiline/1` | step | on (Bool), Target (Object) | - | Enter inserts a newline instead of submitting. |
+| `GetComponent<UIInputField>().SetMaxLength(length)` | `UIInputField.SetMaxLength/1` | step | length (Number), Target (Object) | - | The most characters the field accepts. |
+| `GetComponent<UIInputField>().SetContentType(type)` | `UIInputField.SetContentType/1` | step | type (Number), Target (Object) | - | 0 standard, 1 integer, 2 decimal, 3 password. |
+## UIToast
+
+A stack of toast notifications. The object needs a UI Toast.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIToast>().Push(title, body, kind)` | `UIToast.Push/3` | step | title (Text), body (Text), kind (Number), Target (Object) | - | Show a toast. kind: 0 info, 1 success, 2 warning, 3 error. |
+| `GetComponent<UIToast>().SetDuration(seconds)` | `UIToast.SetDuration/1` | step | seconds (Number), Target (Object) | - | How long a new toast stays up, in seconds. |
+| `GetComponent<UIToast>().SetCorner(corner)` | `UIToast.SetCorner/1` | step | corner (Number), Target (Object) | - | Where the stack sits: 0 top-right, 1 top-left, 2 bottom-right, 3 bottom-left, 4 top-center. |
+| `GetComponent<UIToast>().SetMaxStack(count)` | `UIToast.SetMaxStack/1` | step | count (Number), Target (Object) | - | How many toasts stay on screen. The oldest one drops off past this. |
+| `GetComponent<UIToast>().Count()` | `UIToast.Count/0` | value | Target (Object) | Result (Number) | How many toasts are on screen right now. |
+
+## UIModal
+
+A modal dialog. Style Card restyles the Card, Title, Message, Confirm and Cancel inside it.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIModal>().Open()` | `UIModal.Open/0` | step | Target (Object) | - | Show the dialog. |
+| `GetComponent<UIModal>().Close()` | `UIModal.Close/0` | step | Target (Object) | - | Hide the dialog. Fires on_modal_close. |
+| `GetComponent<UIModal>().SetStyleCard(on)` | `UIModal.SetStyleCard/1` | step | on (Bool), Target (Object) | - | Turn the card styling on or off. Off leaves the dialog as it was authored. |
+| `GetComponent<UIModal>().SetCardRadius(radius)` | `UIModal.SetCardRadius/1` | step | radius (Number), Target (Object) | - | Corner radius of the card named Card, in pixels. |
+| `GetComponent<UIModal>().SetTitle(text)` | `UIModal.SetTitle/1` | step | text (Text), Target (Object) | - | Title text. Empty leaves whatever the Title label already says. |
+| `GetComponent<UIModal>().SetMessage(text)` | `UIModal.SetMessage/1` | step | text (Text), Target (Object) | - | Body text. Empty leaves whatever the Message label already says. |
+| `GetComponent<UIModal>().SetConfirmText(text)` | `UIModal.SetConfirmText/1` | step | text (Text), Target (Object) | - | Confirm button label. Empty leaves the button's own label. |
+| `GetComponent<UIModal>().SetCancelText(text)` | `UIModal.SetCancelText/1` | step | text (Text), Target (Object) | - | Cancel button label. Empty leaves the button's own label. |
+| `GetComponent<UIModal>().IsOpen()` | `UIModal.IsOpen/0` | value | Target (Object) | Result (Bool) | True while the dialog is shown. |
+## UITheme
+
+A saved skin for panels, buttons, sliders and the rest of the UI kit. The object needs a UI Theme.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UITheme>().SetPreset(preset)` | `UITheme.SetPreset/1` | step | preset (Number), Target (Object) | - | Switch to a built-in look and bake it: 0 custom, 1 dark, 2 light, 3 sci-fi, 4 fantasy. |
+| `GetComponent<UITheme>().Apply()` | `UITheme.Apply/0` | step | Target (Object) | - | Bake this skin onto this object and its children. Widgets keep their positions. |
+| `GetComponent<UITheme>().ApplyTo(objectName)` | `UITheme.ApplyTo/1` | step | objectName (Text), Target (Object) | - | Bake this skin onto the named object and its children. |
+
 ## UISlider
 
 A draggable value. The object needs a UI Slider. on_change fires when the value moves.

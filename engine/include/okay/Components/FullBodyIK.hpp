@@ -34,6 +34,8 @@
 #include "okay/Math/IKMath.hpp"
 #include "okay/Math/JointLimit.hpp"
 #include "okay/Components/IKRestore.hpp"
+#include "okay/Components/IKBones.hpp"
+#include "okay/Components/FootIK.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cstring>
@@ -45,7 +47,7 @@ namespace okay {
 
 class FullBodyIK : public Component {
 public:
-    int ExecutionOrder() const override { return 100; }   // after animation
+    int ExecutionOrder() const override { return 100; }   // after FootIK (85) and holding (90), before limb IK (105)
     enum BoneId {
         Hips, Spine, Chest, Neck, Head,
         LUpperArm, LForeArm, LHand, RUpperArm, RForeArm, RHand,
@@ -73,6 +75,9 @@ public:
         /// Swing/twist limits on the upper (shoulder/hip) and lower (elbow/knee)
         /// bone, measured from the rest pose (JointLimit.hpp). None = unlimited.
         IKJointLimit upperLimit, lowerLimit;
+        /// Seconds to swing over when the goal switches (another target object,
+        /// object <-> point) or jumps; measured on the character, so moving it never trails.
+        float       targetBlendTime = 0.15f;
     };
     enum Limb { LeftHand, RightHand, LeftFoot, RightFoot, LimbCount };
     Effector effectors[LimbCount];
@@ -201,8 +206,11 @@ public:
             m_effW[l] += (want - m_effW[l]) * k;
             if (std::fabs(want - m_effW[l]) < 1e-3f) m_effW[l] = want;
             // A broken goal (NaN, infinity) sits this frame out; the limb keeps its animated pose.
-            const Vec3 g = Goal(e);
-            m_goalOk[l] = Finite(g);
+            const Vec3 raw = Goal(e);
+            m_goalOk[l] = Finite(raw);
+            // A goal that isn't in play starts fresh when it comes in (the weight fade eases that).
+            if (!e.enabled && m_effW[l] <= 1e-4f) m_blend[l].Reset();
+            const Vec3 g = m_goalOk[l] ? m_blend[l].Step(raw, (std::uintptr_t)e.target, e.targetBlendTime, dt, CharacterSpace()) : raw;
             if (!m_goalOk[l]) continue;
             if (!m_goalValid[l] || gk >= 1.0f || m_effW[l] <= 1e-4f) m_goal[l] = g;
             else m_goal[l] = m_goal[l] + (g - m_goal[l]) * gk;
@@ -247,8 +255,12 @@ public:
                 const float m = off.Magnitude();
                 if (m > maxBodyOffset && m > 1e-6f) off = off * (maxBodyOffset / m);
                 if (m > 1e-6f && Finite(off)) {
-                    m_restore.Touch(bones[Hips]);
+                    // A FootIK on this character planted the feet already: the hip
+                    // move goes on its books and it re-plants the legs (no foot slide).
+                    FootIK* feet = Feet();
+                    (feet ? feet->Restorer() : m_restore).Touch(bones[Hips]);
                     bones[Hips]->SetPosition(bones[Hips]->Position() + off);
+                    if (feet) feet->ResolveLegs();
                 }
             }
         }
@@ -315,6 +327,17 @@ private:
     static int Depth(Transform* t) { int d = 0; for (; t; t = t->Parent()) ++d; return d; }
 
     bool Active(int l) const { return m_effW[l] > 0.0f && m_goalOk[l] && m_goalValid[l]; }
+
+    const Transform* CharacterSpace() const {
+        const Transform* r = CharacterRootOf(transform);
+        return r ? r : transform;
+    }
+    /// The running FootIK on this character (on this object, else its character root).
+    FootIK* Feet() const {
+        FootIK* f = gameObject ? gameObject->GetComponent<FootIK>() : nullptr;
+        if (!f) if (const Transform* r = CharacterRootOf(transform)) if (r->gameObject) f = r->gameObject->GetComponent<FootIK>();
+        return f && f->enabled && f->gameObject && f->gameObject->active && f->EffWeight() > 0.0f ? f : nullptr;
+    }
 
     void SolveLimb(int l, float w) {
         const Effector& e = effectors[l];
@@ -384,6 +407,7 @@ private:
 
     IKRestore m_restore;
     IKPole m_pole[LimbCount];
+    IKGoalBlend m_blend[LimbCount];           ///< eases a switched or jumping goal
     IKJointFrame m_frame[LimbCount][2];       ///< upper / lower rest frames for the limits
     IKFade m_fade;
     float m_effW[LimbCount] = {};             ///< eased effector weights

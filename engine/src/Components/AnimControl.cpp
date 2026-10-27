@@ -2,6 +2,7 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Core/Log.hpp"
+#include <cmath>
 
 namespace okay {
 
@@ -32,6 +33,10 @@ void StopClipFrom(GameObject* from) {
 }
 
 void SetClipSpeedFrom(GameObject* from, float speed) {
+    // A script can hand in NaN. Playback only runs forward, up to 10x.
+    if (!std::isfinite(speed)) return;
+    if (speed < 0.0f) speed = 0.0f;
+    if (speed > 10.0f) speed = 10.0f;
     if (Character* c = FindAnimComponent<Character>(from)) c->animSpeed = speed;
     if (ModelAnimator* m = FindAnimComponent<ModelAnimator>(from)) m->speed = speed;
 }

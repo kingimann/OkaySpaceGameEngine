@@ -17,6 +17,13 @@ in the Script Editor. Saving the file reloads the plugin immediately.
 **Plugins > Plugin Manager...** lists every plugin with its errors, lets you turn
 one off, and opens its folder.
 
+The Plugins menu lists this project's plugins first, then plugins that apply to
+every project, each group alphabetical. Two plugins with the same name show the
+file name as well. A plugin that failed to load is marked "(error)"; click it
+to open the script, and hover for the error. **Turned off** lists plugins you
+disabled and turns one back on. A plugin with both a panel and `on_menu()` gets
+a submenu (Panel / Run) instead of only toggling the panel. Panel shows a check while the window is open.
+
 ## Anatomy
 
 ```c
@@ -47,7 +54,7 @@ Header comments (at the very top):
 | --- | --- |
 | `start()` | once after the plugin loads (and after each reload) |
 | `on_gui()` | every frame while its panel is open |
-| `on_menu()` | when its Plugins-menu entry is clicked (plugins without a panel) |
+| `on_menu()` | when its Plugins-menu entry is clicked. If the plugin also has a panel, the entry is a submenu and **Run** calls this |
 | `on_selection()` | when the selection changes |
 | `on_tick()` | every editor frame (keep it cheap) |
 

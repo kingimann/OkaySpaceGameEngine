@@ -15,6 +15,7 @@
 #include "okay/Math/Quat.hpp"
 #include "okay/Scene/Transform.hpp"
 #include <cmath>
+#include <cstdint>
 
 namespace okay {
 
@@ -102,6 +103,39 @@ struct IKPole {
 private:
     Vec3 m_last = Vec3::Zero;
     bool m_hasLast = false;
+};
+
+/// Eases a goal across a jump instead of snapping. When its source changes (a
+/// new target object, target object <-> point) or it jumps farther than kJump in
+/// one frame, the solve moves from the last solved goal to the new one over
+/// `time` seconds. Kept in `space`'s frame (the character), so the character
+/// itself moving or teleporting never trails. time <= 0 passes the goal through.
+struct IKGoalBlend {
+    static constexpr float kJump = 0.3f;
+
+    Vec3 Step(const Vec3& goal, std::uintptr_t source, float time, float dt, const Transform* space) {
+        const Vec3 g = space ? space->InverseTransformPoint(goal) : goal;
+        if (!Finite(g)) return goal;
+        if (m_has && time > 0.0f && (source != m_source || (g - m_goal).Magnitude() > kJump)) {
+            m_from = m_out; m_t = 0.0f; m_blending = true;
+        }
+        m_source = source; m_goal = g; m_has = true;
+        m_out = g;
+        if (m_blending && time > 0.0f && dt > 0.0f) {
+            m_t += dt / time;
+            if (m_t < 1.0f) m_out = Vec3::Lerp(m_from, g, m_t * m_t * (3.0f - 2.0f * m_t));
+            else m_blending = false;
+        } else if (time <= 0.0f) m_blending = false;
+        return space ? space->TransformPoint(m_out) : m_out;
+    }
+    /// Forget the last goal (the solver stopped; the next goal starts fresh).
+    void Reset() { m_has = false; m_blending = false; }
+
+private:
+    Vec3 m_goal, m_from, m_out;
+    std::uintptr_t m_source = 0;
+    float m_t = 0.0f;
+    bool m_has = false, m_blending = false;
 };
 
 } // namespace okay

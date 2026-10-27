@@ -54,6 +54,7 @@
 #include <unordered_set>
 #include <cctype>
 #include <vector>
+#include "ScriptText.hpp"   // the Script Editor's token view of a script: outline / go-to-definition
 
 // ----------------------------------------------------------------------------
 // OkayScript semantic lint — Rider-style "yellow" inspections, no execution.
@@ -308,6 +309,37 @@ static int RunSelfTest() {
         auto w6 = AnalyzeScriptWarnings("spinn(90)\n", known, maxA);
         check(w6.size() == 1 && w6[0].bad == "spinn" && w6[0].fix == "spin",
               "lint: quick-fix payload");
+    }
+    // Script Editor outline: every declaration form the VM accepts, nothing else.
+    {
+        const char* src =
+            "# don't touch\n"
+            "var functionCount = 0\n"
+            "update(dt) {\n"
+            "  if (x) { foo() }\n"
+            "  helper(1)\n"
+            "}\n"
+            "public class Gun : MonoBehaviour {\n"
+            "  [Header(\"x\")] public int ammo = 3;\n"
+            "  public void Fire() { var s = \"function bad() {\"; }\n"
+            "  private IEnumerator Blink() { yield return null; }\n"
+            "  List<int> Get() => list;\n"
+            "  public Gun() { }\n"
+            "}\n"
+            "enum Mode { A, B }\n"
+            "function legacy(a) {\n"
+            "}\n"
+            "/* void Nope() { } */\n"
+            "static int F() { return 1 }\n"
+            "classic = 1\n"
+            "on_key_move(5)\n"
+            "Dictionary<string, int> Map(int a, float b)\n{\n}\n";
+        const std::vector<std::pair<int, std::string>> want = {
+            {3, "f  update"}, {7, "C  Gun"}, {9, "f  Fire"}, {10, "f  Blink"}, {11, "f  Get"}, {12, "f  Gun"},
+            {14, "E  Mode"}, {15, "f  legacy"}, {18, "f  F"}, {21, "f  Map"}};
+        const auto got = scripttext::Outline(src);
+        check(got == want, "outline: functions, methods and types, no calls / comments / strings");
+        if (got != want) for (const auto& e : got) std::cerr << "    got " << e.first << " " << e.second << "\n";
     }
 
     std::cout << (failures == 0 ? "editor selftest: OK\n" : "editor selftest: FAILED\n");
@@ -11966,38 +11998,10 @@ static std::vector<std::pair<int, std::string>> FindReferences(const std::string
     return out;
 }
 
+// Functions and types for the Outline, F12 / Ctrl+Click, Search Everywhere and
+// the sticky header (see ScriptText.hpp for what counts).
 static std::vector<std::pair<int, std::string>> ScriptOutline(const std::string& src) {
-    std::vector<std::pair<int, std::string>> out;
-    auto isW = [](char c){ return std::isalnum((unsigned char)c) || c == '_'; };
-    auto consider = [&](const std::string& raw, int lineNo) {
-        auto a = raw.find_first_not_of(" \t"); if (a == std::string::npos) return;
-        std::string t = raw.substr(a);
-        auto after = [&](const char* kw) -> std::string {
-            std::string k = kw; if (t.rfind(k, 0) != 0) return "";
-            std::size_t p = k.size(); while (p < t.size() && (t[p]==' '||t[p]=='\t')) ++p;
-            std::string n; while (p < t.size() && isW(t[p])) n += t[p++]; return n;
-        };
-        if (std::string n = after("function"); !n.empty()) { out.push_back({lineNo, "f  " + n}); return; }
-        if (t.rfind("public class", 0) == 0) {
-            std::size_t p = 12; while (p < t.size() && (t[p]==' '||t[p]=='\t')) ++p;
-            std::string n; while (p < t.size() && isW(t[p])) n += t[p++];
-            if (!n.empty()) out.push_back({lineNo, "C  " + n}); return;
-        }
-        if (std::string n = after("class"); !n.empty()) { out.push_back({lineNo, "C  " + n}); return; }
-        // method form:  <type> Name(   (skip control keywords / calls)
-        std::size_t p = 0; auto skip = [&]{ while (p < t.size() && (t[p]==' '||t[p]=='\t')) ++p; };
-        skip(); std::string w1; while (p < t.size() && isW(t[p])) w1 += t[p++];
-        skip(); std::string w2; while (p < t.size() && isW(t[p])) w2 += t[p++];
-        skip();
-        static const char* skipW[] = {"return","new","if","for","while","switch","else","var","do"};
-        for (const char* s : skipW) if (w1 == s) return;
-        if (!w1.empty() && !w2.empty() && p < t.size() && t[p] == '(')
-            out.push_back({lineNo, "f  " + w2});
-    };
-    std::string ln; int n = 1;
-    for (char c : src) { if (c == '\n') { consider(ln, n); ln.clear(); ++n; } else if (c != '\r') ln.push_back(c); }
-    consider(ln, n);
-    return out;
+    return scripttext::Outline(src);
 }
 
 // Script Editor "New Script": a fresh .okay in Assets/Scripts, opened right away -

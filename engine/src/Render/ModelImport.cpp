@@ -1970,21 +1970,35 @@ bool ModelBounds(Scene& scene, GameObject* root, Vec3& lo, Vec3& hi) {
 
 GameObject* FindCharacterModelRoot(Scene& scene, GameObject* player) {
     if (!player || !player->transform) return nullptr;
-    auto hasModel = [&](GameObject* root) {
+    // How much `root` looks like the character model, or -1 when it isn't one.
+    // A held hat is often the first mesh child; a skinned rig or a real
+    // hierarchy outranks that prop so a model swap removes the old model.
+    auto scoreModel = [&](GameObject* root) {
+        int score = 0, nodes = 0;
+        bool mesh = false;
         for (const auto& up : scene.Objects()) {
             GameObject* g = up.get();
             if (!g || !g->IsSelfOrDescendantOf(root)) continue;
-            if (g->GetComponent<Camera>()) return false;
-            if (g->GetComponent<SkinnedMesh>() || g->GetComponent<ModelAnimator>()) return true;
-            if (g != player) if (auto* mr = g->GetComponent<MeshRenderer>(); mr && !mr->mesh.vertices.empty()) return true;
+            if (g->GetComponent<Camera>()) return -1;
+            ++nodes;
+            if (g->GetComponent<SkinnedMesh>()) score += 100;
+            if (g->GetComponent<ModelAnimator>()) score += 40;
+            if (g != player) if (auto* mr = g->GetComponent<MeshRenderer>(); mr && !mr->mesh.vertices.empty()) mesh = true;
         }
-        return false;
+        if (!mesh && score == 0) return -1;
+        if (mesh) score += 1;
+        if (nodes > 1) score += std::min(nodes, 30);   // a rig beats a single prop
+        return score;
     };
+    GameObject* best = nullptr;
+    int bestScore = -1;
     for (Transform* c : player->transform->Children()) {
         GameObject* g = c ? c->gameObject : nullptr;
         if (!g || g->name == "Rig" || !g->active) continue;
-        if (hasModel(g)) return g;
+        const int sc = scoreModel(g);
+        if (sc > bestScore) { bestScore = sc; best = g; }
     }
+    if (best) return best;
     // A controller put straight onto an imported model: the player IS the model.
     if (!player->GetComponent<Character>())
         for (const auto& up : scene.Objects())

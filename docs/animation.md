@@ -305,12 +305,19 @@ Disable the Animator and the built-in animation plays the body as before.
 
 In the Inspector the Animator lists its states, what each plays (a clip, or a
 blend tree's clip count) and its transitions (folded; click to open). On a
-Character each state also has **Preview** (plays its clip live in the Scene
-view in edit mode; a blend tree shows its middle, straight-ahead motion) and
-**Edit clip** (opens a copy in the Animation tab: Apply there saves it on this
-Character, where it replaces the default clip of the same name). **Open
-Animator Graph** edits the graph; **Reset to default** puts the default graph
-back (Undo restores yours).
+Character each state also has **Preview** (plays that clip live in the Scene
+view, in edit mode and in Play) and **Edit clip** (opens a copy in the
+Animation tab: Apply there saves it on this Character, where it replaces the
+default clip of the same name). While a preview is running, a transport under
+the row pauses, scrubs, sets a preview speed (it starts at the state's speed
+and is not written back) and loops. A blend tree previews one motion from a
+dropdown, starting at the middle, straight-ahead clip. The same Preview sits
+on the selected state in the Animator graph, on each clip in the Character's
+clip list, and on a Model Animator's clip. Closing the Animation window does
+not stop it. It stops when you press Stop, start another preview, delete the
+target or change scene, select something that isn't the target, its children
+or its parents, or toggle Play/Stop. **Open Animator Graph** edits the graph;
+**Reset to default** puts the default graph back (Undo restores yours).
 
 ### Driving it yourself
 
@@ -344,18 +351,29 @@ For models that ALREADY have a skeleton + clips (Mixamo, Meshy GLB/FBX),
 you don't need this — import keeps their real rig and animations; drop
 them on a player (below) or drive them with the Model Animator.
 
-## One-click animation preview (edit mode)
+## One-click animation preview
 
-Select any character with the **Animation window** open and click a
-built-in animation button — **Idle, Walk, Run, Jump, Crouch, Prone, Wave,
-Point, Clap, Thumbs Up, Salute, Wave Both, Cheer, Sad, Angry, Think, Crouch
-Walk, Fall, Hang** —
-to watch it play **live in the Scene view without pressing Play**. Works
-on the blocky character, an auto-rigged model, and a retargeted imported
-model (the swapped Mixamo character waves right in the scene). A **Speed**
-slider and **Stop Preview** sit under the grid, and **Set as start
-animation** makes the previewed state the one the character starts with
-in Play mode. Stopping restores the exact pose you had.
+Select a player and press **Preview** on a state in the Animator inspector
+(or on the selected state in the Animator graph). It plays in the Scene
+view with the Animation window closed, and it also plays during Play —
+while the preview is on it overrides the running Animator, including while
+the game is paused. Scrub the time (that pauses playback), change the
+speed, or turn looping off to hold the last frame. A blend tree has a
+motion dropdown instead of mixing several clips; the running machine does
+that mix. Stopping, selecting something else, or pressing Play/Stop puts
+the pose back exactly, and does not mark the scene dirty.
+
+The Animation window's built-in grid still previews **Idle, Walk, Run,
+Jump, Crouch, Prone, Wave, Point, Clap, Thumbs Up, Salute, Wave Both,
+Cheer, Sad, Angry, Think, Crouch Walk, Fall, Hang** live in the Scene
+view. That grid keeps playing if you close the window; selecting a
+different object stops it. A **Speed** slider and **Stop Preview** sit
+under the grid, and **Set as start animation** makes the previewed state
+the one the character starts with in Play mode.
+
+It works on the blocky character, a separated part rig, an auto-rigged
+model, and a retargeted imported model. A Model Animator with no Character
+has its own **Preview** on the selected clip.
 
 When a character also has imported clips (a swapped model), the Animation
 window shows **two tabs — Character and Imported Clips** — so both the
@@ -498,6 +516,12 @@ and transitions. Beyond single conditions:
   clip (0.9 = 90%). With the *Always* condition it fires purely on time: an attack
   returning to locomotion when it's nearly done.
 - **Any State** — transitions checked from every state first (hit reactions, death).
+- **If missing** — when the state's clip is not in this Animator's library, play
+  the fallback clip instead. A name that exists only on a child model's imported
+  clips plays there (Humanoid Retarget yields until the state changes).
+  **Import into clip** / **Import as fallback** load a file into that slot
+  (`.okayanim` on a character, FBX / glTF / BVH on an imported model). The Clip
+  list also includes the built-in library and those imported takes.
 
 Scripts: `anim_set_float`, `anim_set_bool`, `anim_trigger`, `anim_state()`,
 `anim_prev_state()`, `anim_state_time()`, `anim_normalized_time()`.

@@ -1,5 +1,6 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Animation/HumanoidMotion.hpp"
+#include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -102,6 +103,8 @@ Mesh Character::BuildRig(std::vector<int>& bone) const {
         int up = s < 0 ? B_LUPARM : B_RUPARM, fo = s < 0 ? B_LFORE : B_RFORE, ha = s < 0 ? B_LHAND : B_RHAND;
         box({s * 0.27f, 1.30f, 0}, {0.13f, 0.34f, 0.18f}, upperArmCol, up);
         box({s * 0.27f, 0.99f, 0}, {0.12f, 0.32f, 0.16f}, foreArmCol, fo);
+        // One brick on the hand bone, the block this rig used before the palm,
+        // thumb and finger boxes. No finger bones: the hand is still l_hand / r_hand.
         box({s * 0.27f, 0.80f, 0.02f}, {0.12f, 0.12f, 0.17f}, handCol, ha);
         int th = s < 0 ? B_LTHIGH : B_RTHIGH, sh = s < 0 ? B_LSHIN : B_RSHIN, ft = s < 0 ? B_LFOOT : B_RFOOT;
         box({s * 0.105f, 0.74f, 0}, {0.18f, 0.42f, 0.20f}, pants, th);
@@ -336,20 +339,28 @@ float Character::RunWeight(int state) const {
 // always covers exactly the ground the body moved, and a state change never moves it.
 void Character::AdvanceAnimClock(float dt) {
     const bool gait = (anim == 2 || anim == 3 || anim == 17);
-    float target = -1.0f;
-    if (moveSpeed >= 0.0f) {
-        float sc = height > 1e-3f ? height : 1.0f;   // a bigger body takes proportionally longer strides
+    // Rig units per second from the reported ground speed (m/s). A bigger body
+    // takes proportionally longer strides.
+    auto toRig = [&](float metres) {
+        float sc = height > 1e-3f ? height : 1.0f;
         if (gameObject && gameObject->transform) {
             Vec3 ls = gameObject->transform->LossyScale();
             float s = 0.5f * (std::fabs(ls.x) + std::fabs(ls.z));
             if (s > 1e-3f) sc *= s;
         }
-        target = moveSpeed / sc;
+        return metres / sc;
+    };
+    if (m_gaitFromDrive) {
+        // DriveLocomotion already smoothed the metres/second. Don't smooth again.
+        m_gaitFromDrive = false;
+        m_gaitSpeed = moveSpeed < 0.0f ? -1.0f : toRig(moveSpeed);
+    } else {
+        float target = moveSpeed >= 0.0f ? toRig(moveSpeed) : -1.0f;
+        if (target < 0.0f)           m_gaitSpeed = -1.0f;
+        else if (m_gaitSpeed < 0.0f) m_gaitSpeed = target;
+        else                         m_gaitSpeed += (target - m_gaitSpeed) *
+                                                    (gaitSpeedSmoothing > 1e-4f ? 1.0f - std::exp(-dt / gaitSpeedSmoothing) : 1.0f);
     }
-    if (target < 0.0f)          m_gaitSpeed = -1.0f;
-    else if (m_gaitSpeed < 0.0f) m_gaitSpeed = target;
-    else                         m_gaitSpeed += (target - m_gaitSpeed) *
-                                                (gaitSpeedSmoothing > 1e-4f ? 1.0f - std::exp(-dt / gaitSpeedSmoothing) : 1.0f);
 
     // Travel direction relative to the facing: the hips and legs turn toward it
     // (up to 75°, the chest stays forward); pointing behind, they step backwards.
@@ -389,14 +400,15 @@ void Character::AdvanceAnimClock(float dt) {
 void Character::DriveLocomotion(const Locomotion& l) {
     // Measure what the body really did: a controller sets the velocity it WANTS
     // before physics runs, so pressed against a wall the velocity still says
-    // "moving" while the body stands still. The position change is the truth. It
-    // is taken over the last ~0.08 s of frames, so it doesn't matter whether the
-    // move landed this frame (a controller moving the transform) or last frame (a
-    // physics step), and an uneven frame rate doesn't make the stride shimmer. A
+    // "moving" while the body stands still. The position change since the previous
+    // sample is the truth, so it doesn't matter whether the move landed this frame
+    // (a controller moving the transform) or last frame (a physics step). A
     // teleport/respawn jump restarts the measurement, and a one-frame spike (a
     // hitch, a depenetration push) is set aside unless the next frame agrees.
+    // The accepted speed is smoothed once, below — not averaged over a window
+    // and then smoothed again.
     Vec3 vel = l.velocity;
-    float vyNow = l.velocity.y;   // vertical speed right now (the window lags a takeoff)
+    float vyNow = l.velocity.y;   // vertical speed right now
     if (gameObject && gameObject->transform && l.dt > 1e-5f) {
         Vec3 pos = gameObject->transform->Position();
         const float al = l.ignoreAxis.Magnitude();
@@ -405,21 +417,16 @@ void Character::DriveLocomotion(const Locomotion& l) {
             return d;
         };
         m_moveClock += l.dt;
-        if (m_histN > 0 && flat(pos - m_hist[m_histN - 1].p).Magnitude() > 2.0f) m_histN = 0;
         if (m_histN > 0) {
-            float last = m_moveClock - m_hist[m_histN - 1].t;
-            if (last > 1e-5f) vyNow = std::max(vyNow, (pos.y - m_hist[m_histN - 1].p.y) / last);
             Vec3 d = flat(pos - m_hist[0].p);
-            float span = m_moveClock - m_hist[0].t;
-            if (span > 1e-5f) vel = d * (1.0f / span);
+            if (d.Magnitude() > 2.0f) m_histN = 0;   // a teleport: don't treat it as a stride
+            else if (l.dt > 1e-5f) {
+                vyNow = std::max(vyNow, (pos.y - m_hist[0].p.y) / l.dt);
+                vel = d * (1.0f / l.dt);
+            }
         }
-        // Keep one sample at least 0.08 s old (the window's start) and the newer ones.
-        while (m_histN > 1 && m_moveClock - m_hist[1].t >= 0.08f) {
-            for (int i = 1; i < m_histN; ++i) m_hist[i - 1] = m_hist[i];
-            --m_histN;
-        }
-        if (m_histN == kMoveHist) { for (int i = 1; i < m_histN; ++i) m_hist[i - 1] = m_hist[i]; --m_histN; }
-        m_hist[m_histN++] = {pos, m_moveClock};
+        m_hist[0] = {pos, m_moveClock};
+        m_histN = 1;
     }
     // On the ground: a fresh contact, or solid ground just under the feet (contact
     // callbacks stop for a body at rest, and stepping off a curb shouldn't count).
@@ -442,7 +449,17 @@ void Character::DriveLocomotion(const Locomotion& l) {
         m_spike = false;
         m_measured = hs;
     }
-    moveSpeed = hs;
+    // One smooth, in metres/second. AdvanceAnimClock turns this into the stride
+    // rate without smoothing it a second time.
+    // The stride eases toward this frame's speed. Idle / walk / run still follow
+    // the speed itself (with the hysteresis below), so a sprint changes state on
+    // the frame it happens.
+    if (moveSpeed < 0.0f) moveSpeed = hs;
+    else if (l.dt > 1e-5f) {
+        const float a = gaitSpeedSmoothing > 1e-4f ? 1.0f - std::exp(-l.dt / gaitSpeedSmoothing) : 1.0f;
+        moveSpeed += (hs - moveSpeed) * a;
+    }
+    m_gaitFromDrive = true;
     Vec3 f{l.facing.x, 0.0f, l.facing.z};
     float fl = std::sqrt(f.x * f.x + f.z * f.z);
     if (fl > 1e-4f && hs > 0.05f) {
@@ -450,23 +467,28 @@ void Character::DriveLocomotion(const Locomotion& l) {
         Vec3 right{-f.z, 0.0f, f.x};                          // the body's right
         moveAngle = std::atan2(v.x * right.x + v.z * right.z, v.x * f.x + v.z * f.z) * kRad2Deg;
     }
+    if (l.swim) ground = true;                                 // water is holding the body
     m_airT = (ground && !l.jumped) ? 0.0f : m_airT + l.dt;
     if (l.jumped) m_airT = 1.0f;                               // leave the ground pose at once
+    if (l.swim) m_airT = 0.0f;
+    m_swimming = l.swim;
     const float runAt = l.walkSpeed * (anim == 3 ? 1.05f : 1.15f);
     const bool run = hs > runAt || (l.sprint && hs > l.walkSpeed * 0.9f);
     m_stanceTarget = l.prone ? 2 : (l.crouch ? 1 : 0);
     m_stanceLevel = l.stance >= 0.0f ? l.stance : (float)m_stanceTarget;
     if (m_poseSource && m_poseSource->Live()) {   // the Animator's graph picks the state from these
         PoseSource::Movement m;
-        m.speed = hs; m.run = run; m.crouch = l.crouch; m.prone = l.prone;
-        m.stance = m_stanceLevel;
+        m.speed = hs; m.run = l.swim ? false : run; m.crouch = l.swim ? false : l.crouch; m.prone = l.swim ? false : l.prone;
+        m.stance = l.swim ? 0.0f : m_stanceLevel;
         m.airTime = m_airT; m.verticalSpeed = l.velocity.y;
+        m.swim = l.swim;
         m_poseSource->Move(m);
         return;
     }
     const bool wasMoving = anim == 2 || anim == 3 || anim == 17;
     const bool moving = hs > (wasMoving ? 0.2f : 0.35f);       // hysteresis: no idle/walk flicker
-    if (l.prone)                   anim = 7;
+    if (l.swim)                    anim = moving ? 2 : 1;   // no swim clip yet: paddle with the walk, tread with the idle
+    else if (l.prone)              anim = 7;
     else if (l.jumped)             anim = 5;
     else if (m_airT > 0.12f)       anim = l.velocity.y > 0.4f ? 5 : 18;   // short drops keep the stride
     else if (l.crouch)             anim = moving ? 17 : 6;
@@ -642,6 +664,7 @@ void Character::BeginBlend() {
     m_blendFromY = RawStanceOffset(animTime).y;
     m_blendFromAnim = -1;
     m_blendT = 0.0f;
+    m_blendDur = blendTime;
 }
 
 void Character::FireClipEvents(float from, float to) {
@@ -666,11 +689,15 @@ void Character::FireClipEvents(float from, float to) {
 void Character::AdvanceClip(float dt) {
     if (!m_activeClip) return;
     float from = m_clipTime;
-    m_clipTime += dt * animSpeed * m_activeClip->speed;   // per-clip playback rate
-    FireClipEvents(from, m_clipTime);             // events on the raw (pre-wrap) timeline
     float dur = m_activeClip->Duration();
+    // The jump binding holds its last frame while the body is still in that
+    // state. A looping takeoff clip used to replay for the whole jump.
+    const bool holdJump = m_stateDriven && !clipJump.empty() && m_activeClipName == clipJump;
+    const float add = dt * animSpeed * m_activeClip->speed;
+    m_clipTime = (holdJump && dur > 0.0f) ? std::min(from + add, dur) : from + add;
+    FireClipEvents(from, m_clipTime);             // events on the raw (pre-wrap) timeline
     if (dur > 0.0f) {
-        if (m_activeClip->loop) m_clipTime = std::fmod(m_clipTime, dur);
+        if (m_activeClip->loop && !holdJump) m_clipTime = std::fmod(m_clipTime, dur);
         else if (m_clipTime > dur) m_clipTime = dur;
     }
 }
@@ -732,26 +759,77 @@ void Character::NoteStateChange() {
     // weight to it instead of the legs snapping straight the frame you touch down.
     if (anim != m_prevAnim) {
         if ((m_prevAnim == 5 || m_prevAnim == 18) && (anim == 1 || anim == 2 || anim == 3)) m_landT = 0.0f;
+        // Crossfade between the built-in animations. The Animator's table times
+        // each pair (idle <-> walk longer than a clip switch, walk <-> run included,
+        // air <-> ground each way). A blend already on screen is captured first,
+        // before the stride phase is touched, so reversing mid-way continues from
+        // that pose instead of the state we left.
+        const bool reversing = m_blendT < 1.0f;
+        if (!m_activeClip && !m_blendTreeOn && !m_editorPosing && m_prevAnim != 0 && anim != 0) {
+            const float secs = CrossfadeSeconds(m_prevAnim, anim);
+            if (secs <= 1e-4f) { m_blendT = 1.0f; m_blendFromAnim = -1; }
+            else {
+                CaptureLeavingPose();
+                m_blendT = 0.0f;
+                m_blendDur = secs;
+            }
+        }
         auto isGait = [](int a) { return a == 2 || a == 3 || a == 17; };
-        if (isGait(anim) && !isGait(m_prevAnim)) {
+        if (!reversing && isGait(anim) && !isGait(m_prevAnim)) {
             // Stepping off: a landing comes down on the left foot (phase 0); from a
             // stand, start with the left foot planted under the hips and the right
-            // one swinging through.
+            // one swinging through. A blend already playing keeps its phase.
             m_runW = anim == 3 ? 1.0f : 0.0f;
             m_gaitPhase = (m_prevAnim == 5 || m_prevAnim == 18) ? 0.0f
                         : HumanoidMotion::StartPhase(anim, m_gaitSpeed);
         }
-        // Crossfade between the built-in animations (idle -> walk -> crouch ...) from
-        // the state we're leaving, still playing live, so neither side freezes. Walk
-        // <-> run needs none: the stride is continuous and its style blends itself.
-        bool walkRun = (anim == 2 || anim == 3) && (m_prevAnim == 2 || m_prevAnim == 3);
-        if (!m_activeClip && !m_blendTreeOn && !m_editorPosing && blendTime > 1e-4f &&
-            m_prevAnim != 0 && anim != 0 && !walkRun) {
-            m_blendFromAnim = m_prevAnim;
-            m_blendT = 0.0f;
-        }
         m_prevAnim = anim;
     }
+}
+
+float Character::CrossfadeSeconds(int from, int to) const {
+    GaitCrossfades g;
+    StanceTimes st;
+    if (gameObject)
+        for (AnimStateMachine* sm : gameObject->GetComponents<AnimStateMachine>())
+            if (sm->layer == 0) { g = sm->crossfades; st = sm->stanceTimes; break; }
+    auto air = [](int a) { return a == 5 || a == 18; };
+    auto stand = [](int a) { return a == 1 || a == 2 || a == 3; };
+    auto crouch = [](int a) { return a == 6 || a == 17; };
+    auto prone = [](int a) { return a == 7; };
+    if (air(from) && to != 0 && !air(to)) return g.airGround;
+    if (from != 0 && !air(from) && air(to)) return g.groundAir;
+    if ((from == 2 && to == 3) || (from == 3 && to == 2)) return g.walkRun;
+    if ((from == 1 && to == 2) || (from == 2 && to == 1)) return g.idleWalk;
+    if ((from == 1 && to == 3) || (from == 3 && to == 1)) return g.walkRun;
+    if ((stand(from) && crouch(to)) || (crouch(from) && stand(to))) return st.standCrouch;
+    if ((crouch(from) && prone(to)) || (prone(from) && crouch(to))) return st.crouchProne;
+    if (prone(from) && stand(to)) return st.proneStand;
+    if (stand(from) && prone(to)) return st.standCrouch + st.crouchProne;
+    return blendTime;
+}
+
+void Character::CaptureLeavingPose() {
+    // `anim` is already the state being entered. Sample the one on screen, whose
+    // walk/run style follows m_runW only while it is the live state.
+    const int entered = anim;
+    anim = m_prevAnim;
+    std::vector<Vec3> shown = PoseFor(m_prevAnim, animTime);
+    const float toY = RawStanceOffset(animTime).y;
+    if (m_blendT < 1.0f) {
+        std::vector<Vec3> from = m_blendFromAnim >= 0 ? PoseFor(m_blendFromAnim, animTime) : m_blendFrom;
+        const float u = std::min(std::max(m_blendT, 0.0f), 1.0f);
+        const float w = u * u * (3.0f - 2.0f * u);
+        if (from.size() == shown.size())
+            for (std::size_t i = 0; i < shown.size(); ++i) shown[i] = from[i] + (shown[i] - from[i]) * w;
+        const float fromY = m_blendFromAnim >= 0 ? RawStanceOffsetFor(m_blendFromAnim, animTime).y : m_blendFromY;
+        m_blendFromY = fromY + (toY - fromY) * w;
+        m_blendFrom = std::move(shown);
+        m_blendFromAnim = -1;
+    } else {
+        m_blendFromAnim = m_prevAnim;
+    }
+    anim = entered;
 }
 
 void Character::Update(float dt) {
@@ -764,7 +842,8 @@ void Character::Update(float dt) {
     SyncStateClips();
     // Advance any in-progress crossfade (covers every render path below).
     if (m_blendT < 1.0f) {
-        m_blendT += (blendTime > 1e-4f ? dt / blendTime : 1.0f);
+        const float dur = m_blendDur > 1e-4f ? m_blendDur : blendTime;
+        m_blendT += dur > 1e-4f ? dt / dur : 1.0f;
         if (m_blendT > 1.0f) m_blendT = 1.0f;
     }
     AdvanceLayer(dt);   // tick the partial-body layer clip (if any), every path below uses it
@@ -813,7 +892,10 @@ void Character::Update(float dt) {
             m_headPitch += (lookPitch - m_headPitch) * k;
             m_bodyLean  += (bodyLean  - m_bodyLean)  * k;
             // (An Animator's pose is shown in LateUpdate.)
-            if (!AnimatorDriven() && (animateParts || m_editorPosing || m_activeClip)) DriveParts();   // preview / clip still drive
+            if (!AnimatorDriven() && (animateParts || m_editorPosing || m_activeClip)) {
+                EaseFirstPersonArm(dt);
+                DriveParts();   // preview / clip still drive
+            }
             return;
         }
     }
@@ -883,9 +965,25 @@ void Character::Update(float dt) {
     if (!AnimatorDriven()) PresentMesh();   // an Animator's pose is shown in LateUpdate
 }
 
-void Character::LateUpdate(float) {
+void Character::LateUpdate(float dt) {
+    // Turning the Animator component back on does not restart it, so the stale
+    // clip would pop on. The first time we see it stays instant (play start).
+    // This runs after every Update, so it doesn't matter which component ticked first.
+    if (m_poseSource) {
+        const bool on = m_poseSource->AnimatorOn();
+        if (!m_animSeen) { m_animSeen = true; m_animOn = on; }
+        else if (on && !m_animOn) m_resumeAnim = true;
+        m_animOn = on;
+    } else m_animSeen = false;
+    if (m_resumeAnim && m_poseSource) {
+        Vec3 root = RawStanceOffset(animTime);
+        if (height > 1e-3f) root = root * (1.0f / height);
+        m_poseSource->ResumeFrom(PoseAt(animTime), root, CrossfadeSeconds(1, 2));
+        m_resumeAnim = false;
+    }
     if (driveExternal) { NoteStateChange(); return; }   // the HumanoidRetarget shows it
     if (!AnimatorDriven()) return;
+    EaseFirstPersonArm(dt);
     if (separateParts && m_partsBuilt) { if (animateParts) DriveParts(); }
     else PresentMesh();
 }
@@ -916,6 +1014,21 @@ void Character::PresentMesh() {
         pose[B_RFORE]  = pose[B_RFORE]  + (fore - pose[B_RFORE])  * arc;
     }
     Skin(m, m_bone, pose);
+    // First-person view: collapse the head (and the small neck box on the torso)
+    // onto the neck joint so the owner's eyes don't see the inside of the skull.
+    // The chest, arms and legs stay, which is what you see looking down.
+    if (hideOwnHead && m_bone.size() == m.vertices.size()) {
+        const Vec3 sink{0.0f, 1.48f, 0.0f};
+        for (std::size_t i = 0; i < m.vertices.size(); ++i) {
+            bool head = m_bone[i] == B_HEAD;
+            bool neck = false;
+            if (!head && m_bone[i] == B_TORSO && i < m_restPos.size()) {
+                const Vec3& r = m_restPos[i];
+                neck = r.y > 1.445f && r.y < 1.56f && std::fabs(r.x) < 0.11f && std::fabs(r.z) < 0.11f;
+            }
+            if (head || neck) m.vertices[i] = sink;
+        }
+    }
     Vec3 so = StanceOffset();
     for (Vec3& v : m.vertices) { v = Vec3{-v.x, v.y, -v.z} * height; v += so; }   // face -Z + stance drop (see Apply)
     m.normals.clear();
@@ -995,7 +1108,11 @@ void Character::RemoveParts() {
 void Character::EditorPreviewTick() {
     if (separateParts) {
         if (!m_partsBuilt) BuildParts();
-        if (m_partsBuilt) DriveParts();      // push the (preview/rest) pose onto the rig
+        if (m_partsBuilt) {
+            m_fpShown = (firstPersonArm && fpArmBase >= 0)
+                ? (fpArmUp < 0.0f ? 0.0f : (fpArmUp > 1.0f ? 1.0f : fpArmUp)) : 0.0f;
+            DriveParts();      // push the (preview/rest) pose onto the rig
+        }
         return;
     }
     // Single mesh: rebuild from the previewed pose so the editor shows it live.
@@ -1206,6 +1323,15 @@ std::uint32_t Character::UpperBodyMask() {
 }
 std::vector<Vec3> Character::CurrentPose() const { return CurrentSourcePose(); }
 
+void Character::EaseFirstPersonArm(float dt) {
+    const float want = (firstPersonArm && fpArmBase >= 0)
+        ? (fpArmUp < 0.0f ? 0.0f : (fpArmUp > 1.0f ? 1.0f : fpArmUp)) : 0.0f;
+    if (dt <= 0.0f) { m_fpShown = want; return; }
+    const float k = 1.0f - std::exp(-dt * 10.0f);   // most of the way there in ~0.25 s
+    m_fpShown += (want - m_fpShown) * k;
+    if (std::fabs(m_fpShown - want) < 0.001f) m_fpShown = want;
+}
+
 void Character::DriveParts() {
     if (!m_partsBuilt) return;
     std::vector<Vec3> pose = CurrentSourcePose();
@@ -1221,17 +1347,23 @@ void Character::DriveParts() {
         if (fpSteady || !fpArmBob) { pose[B_HIPS] = {0.0f, 0.0f, 0.0f}; pose[B_TORSO] = {0.0f, 0.0f, 0.0f}; }
         // Raise the arm; subtract the camera pitch so the arm follows the view up/down
         // (the rig's 180° flip maps the bone's local X to a world rotation such that
-        // subtracting pitch tilts the arm the same way the camera tilts).
-        pose[fpb]     = {fpRaise - fpPitch, 0.0f, 0.0f};   // upper arm: into frame + follow look
-        pose[fpb + 1] = {fpElbow, 0.0f, 0.0f};             // forearm bend (hand height)
-        pose[fpb + 2] = {0.0f, 0.0f, 0.0f};
+        // subtracting pitch tilts the arm the same way the camera tilts). Positive
+        // fpElbow is a bend: this skeleton folds the elbow on -X, and +X hyperextends
+        // the wrist. m_fpShown eases the three bones off the animated pose.
+        const float w = m_fpShown < 0.0f ? 0.0f : (m_fpShown > 1.0f ? 1.0f : m_fpShown);
+        const Vec3 raised{fpRaise - fpPitch, 0.0f, 0.0f};
+        const Vec3 elbow{-fpElbow, 0.0f, 0.0f};
+        pose[fpb]     = pose[fpb]     + (raised - pose[fpb])     * w;
+        pose[fpb + 1] = pose[fpb + 1] + (elbow  - pose[fpb + 1]) * w;
+        pose[fpb + 2] = pose[fpb + 2] * (1.0f - w);
     }
     // Punch swings the VISIBLE arm: the first-person arm if we're in first person,
-    // otherwise the right arm. Forward (-Z, the body's facing) so it lands in front.
+    // otherwise the right arm. Forward (-X on a hanging bone) so it lands in front.
+    // The forearm stays bent (-X); +X at the peak used to flip the wrist back.
     int pb = (fpb >= 0) ? fpb : B_RUPARM;
     if (m_punchT >= 0.0f && m_punchT < 1.0f && pb + 1 < (int)pose.size()) {
         float arc = std::sin(m_punchT * 3.14159265f);
-        Vec3 up = {-110.0f, 0.0f, 8.0f}, fore = {18.0f, 0.0f, 0.0f};
+        Vec3 up = {-110.0f, 0.0f, 8.0f}, fore = {-18.0f, 0.0f, 0.0f};
         pose[pb]     = pose[pb]     + (up   - pose[pb])     * arc;
         pose[pb + 1] = pose[pb + 1] + (fore - pose[pb + 1]) * arc;
     }
@@ -1318,6 +1450,8 @@ std::string Character::ToText() const {
         o << ' ' << (c.name.empty() ? "-" : c.name) << ' ' << c.keys.size();
         for (const auto& k : c.keys) o << ' ' << k.root.x << ' ' << k.root.y << ' ' << k.root.z;
     }
+    // How fast the stride follows the ground (trailing, so older saves keep the default).
+    o << ' ' << gaitSpeedSmoothing;
     return o.str();
 }
 
@@ -1419,6 +1553,8 @@ void Character::FromText(const std::string& text) {
             if (clip && in) clip->hasRoot = true;
         }
     }
+    float gs = gaitSpeedSmoothing;
+    if (in >> gs) gaitSpeedSmoothing = gs > 0.0f ? gs : 0.0f;
     m_built = false;
 }
 

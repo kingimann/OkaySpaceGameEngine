@@ -21,6 +21,7 @@
 #include "okay/Components/RootMotion.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/PlayerView.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
 #include "okay/Components/TopDownShooterController.hpp"
@@ -95,10 +96,23 @@ inline GameObject* EnsureMainCamera(Scene& scene) {
     return camObj;
 }
 
+/// GTA-style view switch (V / gamepad Back) on a first- or third-person player.
+/// Shoulder 0 and an inherited distance leave that controller's camera where it
+/// was; the scene starters pass a shoulder so the orbit sits over the shoulder.
+inline PlayerView* AddViewToggle(GameObject* player, PlayerView::View view, float shoulder = 0.0f) {
+    auto* pv = player->AddComponent<PlayerView>();
+    pv->allowToggle = true;
+    pv->defaultView = view;
+    pv->shoulderOffset = shoulder;
+    pv->thirdPersonDistance = -1.0f;
+    return pv;
+}
+
 /// Add a third-person player (orbit camera positioned by the controller).
 inline GameObject* AddThirdPersonPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
     GameObject* player = BuildPlayerBody(scene, pos, "Player");
     player->AddComponent<ThirdPersonController>();
+    AddViewToggle(player, PlayerView::View::Third);
     EnsureMainCamera(scene);
     return player;
 }
@@ -107,6 +121,7 @@ inline GameObject* AddThirdPersonPlayer(Scene& scene, const Vec3& pos = {0, 1, 0
 inline GameObject* AddFirstPersonPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
     GameObject* player = BuildPlayerBody(scene, pos, "Player");
     player->AddComponent<FirstPersonController>();
+    AddViewToggle(player, PlayerView::View::First);
     GameObject* camObj = scene.CreateGameObject("Player Camera");
     auto* cam = camObj->AddComponent<Camera>();
     cam->projection = Camera::Projection::Perspective;
@@ -384,6 +399,7 @@ inline void ThirdPerson(Scene& scene) {
         col->offset = {0.0f, 0.9f, 0.0f};   // wrap the body feet->head
     }
     player->AddComponent<ThirdPersonController>();
+    AddViewToggle(player, PlayerView::View::Third, 0.45f);   // V switches to the eyes
 
     // The controller positions this camera behind the player each frame.
     GameObject* camObj = scene.CreateGameObject("Main Camera");
@@ -590,6 +606,7 @@ inline void FPS(Scene& scene) {
                                             // so lift the box to wrap feet->head
     }
     player->AddComponent<FirstPersonController>();
+    AddViewToggle(player, PlayerView::View::First, 0.45f);   // V switches to over the shoulder
 
     // Camera mounted on the player at eye height, just in front of the face so you
     // don't see the inside of your own head.
@@ -1148,6 +1165,119 @@ function update(d) {
         "function update(d) { set_text(\"Score: \" + prefs_get(\"score\")); }\n");
 }
 
+/// A complete, playable Brick Breaker. The paddle is OkayScript (A/D), the ball
+/// is OkayScript (walls, paddle, and brick hits), and each brick is a trigger
+/// the ball removes by name. A HUD reads the shared score. Misses reset the
+/// ball; clearing the wall wins. Uses only OkayScript + components.
+inline void BrickBreaker(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Brick Breaker");
+
+    GameObject* camObj = scene.CreateGameObject("MainCamera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Orthographic;
+    cam->orthographicSize = 7.0f;
+    cam->main = true;
+    cam->backgroundColor = Color::FromBytes(16, 18, 28);
+
+    GameObject* paddle = scene.CreateGameObject("Paddle");
+    paddle->transform->localPosition = {0.0f, -5.2f, 0.0f};
+    auto* psr = paddle->AddComponent<SpriteRenderer>();
+    psr->color = Color::FromBytes(90, 170, 240);
+    psr->size = {2.4f, 0.32f};
+    psr->sortOrder = 1;
+    paddle->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+        "function update(d) {\n"
+        "  var x = pos_x() + axis_x() * 9 * d;\n"
+        "  if (x < -6.2) { x = -6.2; }\n"
+        "  if (x > 6.2) { x = 6.2; }\n"
+        "  set_x(x);\n"
+        "}\n");
+
+    // 3 rows x 6 columns. The ball script's prefs "bricks" starts at 18 to match.
+    const Color rowColor[] = {
+        Color::FromBytes(230, 90, 90),
+        Color::FromBytes(240, 180, 70),
+        Color::FromBytes(80, 190, 130),
+    };
+    for (int row = 0; row < 3; ++row) {
+        for (int col = 0; col < 6; ++col) {
+            const int n = row * 6 + col;
+            GameObject* brick = scene.CreateGameObject("Brick" + std::to_string(n));
+            brick->transform->localPosition = {-5.0f + col * 2.0f, 2.0f + row * 1.15f, 0.0f};
+            auto* sr = brick->AddComponent<SpriteRenderer>();
+            sr->color = rowColor[row];
+            sr->size = {1.7f, 0.62f};
+            auto* box = brick->AddComponent<BoxCollider2D>();
+            box->size = {1.7f, 0.62f};
+            box->isTrigger = true;
+        }
+    }
+
+    GameObject* ball = scene.CreateGameObject("Ball");
+    ball->transform->localPosition = {0.0f, -3.6f, 0.0f};
+    auto* bsr = ball->AddComponent<SpriteRenderer>();
+    bsr->color = Color::White;
+    bsr->size = {0.34f, 0.34f};
+    bsr->sortOrder = 2;
+    auto* bcol = ball->AddComponent<BoxCollider2D>();
+    bcol->size = {0.34f, 0.34f};
+    ball->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+        "var vx = 2.4;\n"
+        "var vy = 6.4;\n"
+        "var bounced = 0;\n"
+        "function start() {\n"
+        "  prefs_set(\"score\", 0);\n"
+        "  prefs_set(\"bricks\", 18);\n"
+        "}\n"
+        "function update(d) {\n"
+        "  bounced = 0;\n"
+        "  if (prefs_get(\"bricks\") <= 0) { return; }\n"
+        "  var x = pos_x() + vx * d;\n"
+        "  var y = pos_y() + vy * d;\n"
+        "  if (x < -7.2) { x = -7.2; if (vx < 0) { vx = 0 - vx; } }\n"
+        "  if (x > 7.2) { x = 7.2; if (vx > 0) { vx = 0 - vx; } }\n"
+        "  if (y > 6.2) { y = 6.2; if (vy > 0) { vy = 0 - vy; } }\n"
+        "  if (y < -6.4) { x = 0; y = -3.6; vx = 2.4; vy = 6.4; }\n"
+        "  var px = obj_x(\"Paddle\");\n"
+        "  var py = obj_y(\"Paddle\");\n"
+        "  if (vy < 0 && y <= py + 0.5 && y >= py - 0.2 && x >= px - 1.4 && x <= px + 1.4) {\n"
+        "    vy = 0 - vy;\n"
+        "    vx = vx + (x - px) * 2.5;\n"
+        "    y = py + 0.55;\n"
+        "  }\n"
+        "  set_pos(x, y);\n"
+        "}\n"
+        "function on_trigger(other) {\n"
+        "  if (bounced == 1) { return; }\n"
+        "  bounced = 1;\n"
+        "  var dx = pos_x() - obj_x(other);\n"
+        "  var dy = pos_y() - obj_y(other);\n"
+        "  if (dx < 0) { dx = 0 - dx; }\n"
+        "  if (dy < 0) { dy = 0 - dy; }\n"
+        "  if (dy >= dx) { vy = 0 - vy; } else { vx = 0 - vx; }\n"
+        "  prefs_set(\"score\", prefs_get(\"score\") + 1);\n"
+        "  prefs_set(\"bricks\", prefs_get(\"bricks\") - 1);\n"
+        "  destroy_obj(other);\n"
+        "}\n");
+
+    GameObject* hud = scene.CreateGameObject("HUD");
+    auto* tr = hud->AddComponent<TextRenderer>();
+    tr->screenSpace = true; tr->screenPos = {12, 12}; tr->pixelSize = 3.0f;
+    tr->text = "Score: 0";
+    hud->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+        "function update(d) {\n"
+        "  var left = prefs_get(\"bricks\");\n"
+        "  if (left <= 0) { set_text(\"Cleared!  Score: \" + prefs_get(\"score\")); }\n"
+        "  else { set_text(\"Score: \" + prefs_get(\"score\")); }\n"
+        "}\n");
+
+    GameObject* help = scene.CreateGameObject("Help");
+    auto* ht = help->AddComponent<TextRenderer>();
+    ht->text = "A / D move the paddle. Clear the bricks.";
+    ht->screenSpace = true; ht->screenPos = {12, 48}; ht->pixelSize = 2.0f;
+}
+
 /// A terrain-digging sandbox: a procedurally generated, eroded hilly terrain you
 /// can walk on (first-person) and reshape live in Play with a TerrainDigger — hold
 /// the mouse to carve craters, with a ring marker showing where you're digging.
@@ -1191,7 +1321,10 @@ inline void TerrainSandbox(Scene& scene) {
         col->size = {0.6f, 1.8f, 0.6f};
         col->offset = {0.0f, 0.9f, 0.0f};
     }
-    player->AddComponent<FirstPersonController>();
+    // Right mouse raises terrain (TerrainDigger). Aim-down-sights zoom uses that
+    // same button, and it pulled the view in while building up ground.
+    auto* fp = player->AddComponent<FirstPersonController>();
+    fp->zoomWithRightMouse = false;
 
     GameObject* camObj = scene.CreateGameObject("FPS Camera");
     auto* cam = camObj->AddComponent<Camera>();
@@ -1246,12 +1379,50 @@ inline void VoxelSandbox(Scene& scene) {
     auto* dig = ground->AddComponent<VoxelDigger>();
     dig->radius = 3.0f; dig->strength = 10.0f;   // left = dig, right = add (defaults)
 
-    // A lake of animated water sitting in the low ground.
+    // A lake in the low ground. 0.32 * SizeY is below every hill this Generate
+    // builds (surface = SizeY * 0.55 ± amplitude), so the water used to sit
+    // inside solid terrain and never showed. Use the real surface instead:
+    // low enough that valleys flood, high enough that the peaks stay dry.
+    float minSurf = 1.0e9f, maxSurf = -1.0e9f;
+    const float sample = 4.0f;
+    for (float z = -vox->HalfZ(); z <= vox->HalfZ(); z += sample)
+        for (float x = -vox->HalfX(); x <= vox->HalfX(); x += sample) {
+            float y = 0.0f;
+            if (!vox->SurfaceY(x, z, y)) continue;
+            if (y < minSurf) minSurf = y;
+            if (y > maxSurf) maxSurf = y;
+        }
+    const float waterY = (minSurf < maxSurf) ? minSurf + (maxSurf - minSurf) * 0.22f
+                                              : vox->SizeY() * 0.5f;
     GameObject* lake = scene.CreateGameObject("Water");
-    lake->transform->localPosition = {0, vox->SizeY() * 0.32f, 0};
+    lake->transform->localPosition = {0, waterY, 0};
     auto* water = lake->AddComponent<Water>();
     water->size = vox->HalfX() * 2.4f;
+    water->depth = 6.0f;            // deeper than the valleys, so the volume reaches the floor
+    water->fluidDensity = 1.0f;     // a 1 m cube of mass 1 is neutral
     water->Apply();
+
+    // One light crate and one heavy stone, dropped in the deepest sampled pool
+    // so the crate floats and the stone sinks instead of landing on a hill.
+    float poolX = 0.0f, poolZ = 0.0f, poolBed = 1.0e9f;
+    for (float z = -vox->HalfZ(); z <= vox->HalfZ(); z += sample)
+        for (float x = -vox->HalfX(); x <= vox->HalfX(); x += sample) {
+            float y = 0.0f;
+            if (!vox->SurfaceY(x, z, y)) continue;
+            if (y < poolBed) { poolBed = y; poolX = x; poolZ = z; }
+        }
+    auto buoy = [&](const char* name, Vec3 pos, float scale, Color color, float mass) {
+        GameObject* o = scene.CreateGameObject(name);
+        o->transform->localPosition = pos;
+        o->transform->localScale = {scale, scale, scale};
+        auto* mr = o->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube();
+        mr->color = color;
+        o->AddComponent<BoxCollider3D>();
+        o->AddComponent<Rigidbody3D>()->mass = mass;
+    };
+    buoy("Float Crate", {poolX + 1.6f, waterY + 1.5f, poolZ}, 0.8f, Color::FromBytes(196, 150, 90), 0.25f);
+    buoy("Sink Stone", {poolX - 1.6f, waterY + 1.5f, poolZ + 0.8f}, 0.7f, Color::FromBytes(80, 82, 90), 8.0f);
 
     // First-person player. Spawned above a solid column so it drops onto the
     // surface (voxel collision in Physics3D catches it).
@@ -1266,7 +1437,10 @@ inline void VoxelSandbox(Scene& scene) {
         col->size = {0.6f, 1.8f, 0.6f};
         col->offset = {0.0f, 0.9f, 0.0f};
     }
-    player->AddComponent<FirstPersonController>();
+    // Right mouse fills terrain (VoxelDigger). The controller's aim-down-sights
+    // zoom is the same button, and it pulled the view from 60° to 40° while placing.
+    auto* fp = player->AddComponent<FirstPersonController>();
+    fp->zoomWithRightMouse = false;
     player->AddComponent<ProceduralObjectHolding>();   // G / middle mouse / pad X: pick up, hold to throw
 
     // Something to pick up and throw, a step in front of the spawn.
@@ -1293,7 +1467,7 @@ inline void VoxelSandbox(Scene& scene) {
 
     GameObject* help = scene.CreateGameObject("Help");
     auto* ht = help->AddComponent<TextRenderer>();
-    ht->text = "WASD + mouse   Dig: LMB   Fill: RMB   Jump: Space   Throw: hold G   Light: F   Pause: Esc";
+    ht->text = "WASD + mouse   Dig: LMB   Fill: RMB   Jump / swim up: Space   Swim down: Ctrl   Throw: hold G   Light: F   Pause: Esc";
     ht->screenSpace = true; ht->screenPos = {12, 12}; ht->pixelSize = 2.0f;
 
     scene.CreateGameObject("Pause Menu")->AddComponent<PauseMenu>();

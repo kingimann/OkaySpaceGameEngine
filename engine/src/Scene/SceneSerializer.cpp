@@ -16,6 +16,7 @@
 #include "okay/Components/CharacterController3D.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/PlayerView.hpp"
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/BlockBuilder.hpp"
@@ -114,6 +115,7 @@
 #include "okay/Components/Flashlight.hpp"
 #include "okay/Components/FirstPersonHand.hpp"
 #include "okay/Components/NetworkSync.hpp"
+#include "okay/Components/NetworkObject.hpp"
 #include "okay/Components/AntiCheatConfig.hpp"
 #include "okay/Components/NetValidator.hpp"
 #include <cmath>
@@ -273,6 +275,7 @@ struct KvIn {
     const std::string* find(const char* k) const { auto it = m.find(k); return it == m.end() ? nullptr : &it->second; }
     void f(const char* k, float& v) const { if (auto* s = find(k)) v = std::strtof(s->c_str(), nullptr); }
     void i(const char* k, int& v) const { if (auto* s = find(k)) v = std::atoi(s->c_str()); }
+    void u(const char* k, std::uint32_t& v) const { if (auto* s = find(k)) v = (std::uint32_t)std::strtoul(s->c_str(), nullptr, 10); }
     void b(const char* k, bool& v) const { if (auto* s = find(k)) v = std::atoi(s->c_str()) != 0; }
     void key(const char* k, char& v) const { if (auto* s = find(k)) v = (char)std::atoi(s->c_str()); }
     void str(const char* k, std::string& v) const { if (auto* s = find(k)) v = *s; }
@@ -281,6 +284,29 @@ struct KvIn {
         f((b + "R").c_str(), c.r); f((b + "G").c_str(), c.g); f((b + "B").c_str(), c.b); f((b + "A").c_str(), c.a);
     }
 };
+// A joint limit as `<p>T= <p>S= ...` keys (nothing when it's None).
+void WriteLimitKv(KvOut& k, const std::string& p, const IKJointLimit& l) {
+    if (!l.Active()) return;
+    k((p + "T").c_str(), (int)l.type)((p + "S").c_str(), l.swingMax)
+     ((p + "H0").c_str(), l.hingeMin)((p + "H1").c_str(), l.hingeMax)
+     ((p + "W0").c_str(), l.twistMin)((p + "W1").c_str(), l.twistMax);
+    if (!l.autoAxes)
+        k((p + "TX").c_str(), l.twistAxis.x)((p + "TY").c_str(), l.twistAxis.y)((p + "TZ").c_str(), l.twistAxis.z)
+         ((p + "HX").c_str(), l.hingeAxis.x)((p + "HY").c_str(), l.hingeAxis.y)((p + "HZ").c_str(), l.hingeAxis.z);
+}
+void ReadLimitKv(const KvIn& k, const std::string& p, IKJointLimit& l) {
+    int ty = 0; k.i((p + "T").c_str(), ty);
+    if (ty <= 0) return;
+    l.type = (IKJointLimit::Type)std::clamp(ty, 0, 2);
+    k.f((p + "S").c_str(), l.swingMax);
+    k.f((p + "H0").c_str(), l.hingeMin); k.f((p + "H1").c_str(), l.hingeMax);
+    k.f((p + "W0").c_str(), l.twistMin); k.f((p + "W1").c_str(), l.twistMax);
+    if (k.find((p + "TX").c_str())) {
+        l.autoAxes = false;
+        k.f((p + "TX").c_str(), l.twistAxis.x); k.f((p + "TY").c_str(), l.twistAxis.y); k.f((p + "TZ").c_str(), l.twistAxis.z);
+        k.f((p + "HX").c_str(), l.hingeAxis.x); k.f((p + "HY").c_str(), l.hingeAxis.y); k.f((p + "HZ").c_str(), l.hingeAxis.z);
+    }
+}
 // The crouch / prone options of a movement controller (StanceControl) and the
 // stance it was saved in: one `<rec> key=value ...` line.
 void WriteStanceControl(std::ostream& out, const char* rec, const StanceControl& sc) {
@@ -765,11 +791,25 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             if (t.standCrouch != def.standCrouch || t.crouchProne != def.crouchProne || t.proneStand != def.proneStand)
                 out << "  animsmstance " << t.standCrouch << " " << t.crouchProne << " " << t.proneStand << "\n";
         }
+        {
+            const GaitCrossfades def;
+            const GaitCrossfades& t = asm2->crossfades;
+            if (t.idleWalk != def.idleWalk || t.walkRun != def.walkRun ||
+                t.groundAir != def.groundAir || t.airGround != def.airGround)
+                out << "  animsmxfade " << t.idleWalk << " " << t.walkRun << " " << t.groundAir << " " << t.airGround << "\n";
+        }
         bool anyMatch = false;
         for (const auto& st : asm2->states) anyMatch = anyMatch || st.matchSpeed;
         if (anyMatch) {   // blend trees that keep pace with the body's speed
             out << "  animsmmatch " << asm2->states.size();
             for (const auto& st : asm2->states) out << " " << (st.matchSpeed ? 1 : 0);
+            out << "\n";
+        }
+        bool anyFall = false;
+        for (const auto& st : asm2->states) anyFall = anyFall || !st.fallbackClip.empty();
+        if (anyFall) {   // per-state stand-in when the named clip is missing
+            out << "  animsmfall " << asm2->states.size();
+            for (const auto& st : asm2->states) out << " " << Quote(st.fallbackClip);
             out << "\n";
         }
     }
@@ -848,6 +888,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         if (ns->clientClaimable) out << " 1";   // only when set: other scenes don't change
         out << "\n";
     }
+    // netobject / nettransform / syncvar are their own records. An older engine
+    // refuses a scene that contains them; scenes without these components are unchanged.
+    if (auto* no = go->GetComponent<NetworkObject>()) {
+        out << "  netobject " << (int)no->authority << " " << (no->owned ? 1 : 0)
+            << " " << Quote(no->netId) << "\n";
+    }
+    if (go->GetComponent<NetworkTransform>()) out << "  nettransform\n";
+    for (auto* sv : go->GetComponents<SyncVar>())
+        out << "  syncvar " << Quote(sv->name) << " " << Quote(sv->value) << "\n";
     if (auto* ac = go->GetComponent<AntiCheatConfig>()) {
         const AntiCheatSettings& s = ac->settings;
         std::string allow;
@@ -886,6 +935,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << w->color.r << " " << w->color.g << " " << w->color.b
             << " " << w->opacity << " " << w->reflectivity << " " << w->specular
             << " " << w->shininess << " " << w->flow.x << " " << w->flow.y
+            << " " << w->depth << " " << w->fluidDensity << " " << w->linearDrag
             << " " << Quote(w->texture) << "\n";
     }
     if (auto* ws = go->GetComponent<WorldStreamer>()) {
@@ -1059,18 +1109,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
          .b("lock", f->footLock)("lockSpeed", f->lockSpeed)("lockHeight", f->lockHeight)
          ("lockRelease", f->lockRelease)
          ("upRX", f->footUpAxisR.x)("upRY", f->footUpAxisR.y)("upRZ", f->footUpAxisR.z)
-         ("om", 1);   // orient is saved after its migration: keep it as written
-        auto lim = [&k](const char* p, const IKJointLimit& l) {
-            if (!l.Active()) return;
-            const std::string b = p;
-            k((b + "T").c_str(), (int)l.type)((b + "S").c_str(), l.swingMax)
-             ((b + "H0").c_str(), l.hingeMin)((b + "H1").c_str(), l.hingeMax)
-             ((b + "W0").c_str(), l.twistMin)((b + "W1").c_str(), l.twistMax);
-            if (!l.autoAxes)
-                k((b + "TX").c_str(), l.twistAxis.x)((b + "TY").c_str(), l.twistAxis.y)((b + "TZ").c_str(), l.twistAxis.z)
-                 ((b + "HX").c_str(), l.hingeAxis.x)((b + "HY").c_str(), l.hingeAxis.y)((b + "HZ").c_str(), l.hingeAxis.z);
-        };
-        lim("hl", f->hipLimit); lim("kl", f->kneeLimit);
+         ("om", 1)   // orient is saved after its migration: keep it as written
+         ("mask", f->groundMask);
+        WriteLimitKv(k, "hl", f->hipLimit); WriteLimitKv(k, "kl", f->kneeLimit);
         out << "\n";
     }
     if (auto* lb = go->GetComponent<LimbIK>()) {
@@ -1147,7 +1188,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "\n";
         // Easing, smoothing and joint limits (separate record: older builds skip it).
         out << "  fbikx " << fb->blendSpeed << " " << fb->goalSmoothing << " " << fb->lookSmoothing
-            << " " << fb->armMinBend << " " << fb->legMinBend << "\n";
+            << " " << fb->armMinBend << " " << fb->legMinBend;
+        // Per-limb joint limits (e<limb>u / e<limb>l keys), only when set.
+        KvOut k{out};
+        for (int l = 0; l < FullBodyIK::LimbCount; ++l) {
+            const std::string p = "e" + std::to_string(l);
+            WriteLimitKv(k, p + "u", fb->effectors[l].upperLimit);
+            WriteLimitKv(k, p + "l", fb->effectors[l].lowerLimit);
+        }
+        out << "\n";
     }
     if (auto* h = go->GetComponent<HoldableObject>()) {
         out << "  holdable";
@@ -1758,6 +1807,17 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << tp->slideSpeed << " " << tp->slideTime << " " << (tp->driveStateMachine ? 1 : 0)
             << " " << (tp->ikLook ? 1 : 0) << "\n";
     }
+    // Player view toggle (grok/view-toggle). Its own record, so older scenes skip it.
+    // Fields: allow, view (0 first / 1 third), key, pad, blend, ex ey ez, dist, shoulder.
+    if (auto* pv = go->GetComponent<PlayerView>()) {
+        out << "  playerview";
+        KvOut k{out};
+        k.b("allow", pv->allowToggle)("view", (int)pv->defaultView).key("key", pv->toggleKey)
+         ("pad", pv->toggleGamepadButton)("blend", pv->blendTime)
+         ("ex", pv->eyeOffset.x)("ey", pv->eyeOffset.y)("ez", pv->eyeOffset.z)
+         ("dist", pv->thirdPersonDistance)("shoulder", pv->shoulderOffset);
+        out << "\n";
+    }
     if (auto* td = go->GetComponent<TopDownController>()) {
         out << "  tdctrl " << td->walkSpeed << " " << td->runSpeed << " "
             << (td->sprintKey ? td->sprintKey : '-') << " "
@@ -2119,7 +2179,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             // extended: assigned OnClick action (target object + public function)
             << " " << Quote(btn->clickTarget) << " " << Quote(btn->clickFunction)
             << " " << btn->clickArg
-            << " " << Quote(btn->fontPath) << "\n";   // optional TTF label font (newest)
+            << " " << Quote(btn->fontPath)   // optional TTF label font
+            // grok/ui-options: ease, duration, optional focus color (trailing, older scenes omit it)
+            << " " << btn->transitionEase << " " << btn->transitionDuration
+            << " " << (btn->separateFocus ? 1 : 0) << " "
+            << btn->focusColor.r << " " << btn->focusColor.g << " "
+            << btn->focusColor.b << " " << btn->focusColor.a << "\n";
     }
     if (auto* pn = go->GetComponent<UIPanel>()) {
         out << "  uipanel " << pn->position.x << " " << pn->position.y << " "
@@ -2362,7 +2427,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (int)pb->fillDir
             // extended (back-compatible trailing fields): shape + gradient fill
             << " " << (int)pb->shape << " " << (pb->gradientFill ? 1 : 0) << " "
-            << pb->fillEnd.r << " " << pb->fillEnd.g << " " << pb->fillEnd.b << " " << pb->fillEnd.a << "\n";
+            << pb->fillEnd.r << " " << pb->fillEnd.g << " " << pb->fillEnd.b << " " << pb->fillEnd.a
+            // grok/ui-options: segments, damage trail, color-by-value, text format
+            << " " << pb->segments << " " << pb->segmentGap << " " << pb->trailDelay << " "
+            << pb->trailColor.r << " " << pb->trailColor.g << " " << pb->trailColor.b << " " << pb->trailColor.a
+            << " " << (pb->colorByValue ? 1 : 0) << " "
+            << pb->lowColor.r << " " << pb->lowColor.g << " " << pb->lowColor.b << " " << pb->lowColor.a << " "
+            << pb->highColor.r << " " << pb->highColor.g << " " << pb->highColor.b << " " << pb->highColor.a
+            << " " << Quote(pb->textFormat) << "\n";
     }
     if (auto* rp = go->GetComponent<UIRadialProgress>()) {
         out << "  uiradial " << rp->position.x << " " << rp->position.y << " "
@@ -2504,7 +2576,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (sl->interactable ? 1 : 0)
             << " " << (sl->vertical ? 1 : 0)
             // extended (back-compatible trailing fields): track shape + round knob
-            << " " << (int)sl->trackShape << " " << (sl->roundKnob ? 1 : 0) << "\n";
+            << " " << (int)sl->trackShape << " " << (sl->roundKnob ? 1 : 0)
+            // grok/ui-options: step, fill gradient, handle shape, value format
+            << " " << sl->step << " " << (sl->fillGradient ? 1 : 0) << " "
+            << sl->fillEnd.r << " " << sl->fillEnd.g << " " << sl->fillEnd.b << " " << sl->fillEnd.a
+            << " " << sl->knobShape << " " << Quote(sl->valueFormat) << "\n";
     }
     if (auto* st = go->GetComponent<UIStepper>()) {
         out << "  uistepper " << st->position.x << " " << st->position.y << " "
@@ -3241,6 +3317,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "animsmstance") {
                     StanceTimes& t = smFor()->stanceTimes;
                     in >> t.standCrouch >> t.crouchProne >> t.proneStand;
+                } else if (field == "animsmxfade") {
+                    GaitCrossfades& t = smFor()->crossfades;
+                    in >> t.idleWalk >> t.walkRun >> t.groundAir >> t.airGround;
                 } else if (field == "animsmmatch") {
                     auto* sm2 = smFor();
                     long n = 0; in >> n;
@@ -3285,6 +3364,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     for (long i = 0; i < n && in; ++i) {
                         float w = -1.0f; in >> w;
                         if (i < (long)sm2->states.size()) sm2->states[i].fullBodyIkWeight = w;
+                    }
+                } else if (field == "animsmfall") {
+                    auto* sm2 = smFor();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n && in; ++i) {
+                        std::string fb = ReadQuoted(in);
+                        if (sm2 && i < (long)sm2->states.size()) sm2->states[i].fallbackClip = std::move(fb);
                     }
                 } else if (field == "animsmparams") {
                     auto* sm2 = smFor();
@@ -3581,24 +3667,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                       // which reads that foot's own rest pose (a mirrored rig's right
                       // sole isn't the left one's axis).
                       k.f("upRX", f->footUpAxisR.x); k.f("upRY", f->footUpAxisR.y); k.f("upRZ", f->footUpAxisR.z);
+                      k.u("mask", f->groundMask);
                       // Files from before orient's migration loaded a Character's
                       // part rig with it off; Start() turns it on there.
                       if (!k.find("om") && !f->orient) f->orientMigrate = true;
-                      auto lim = [&k](const char* p, IKJointLimit& l) {
-                          const std::string b = p;
-                          int ty = 0; k.i((b + "T").c_str(), ty);
-                          if (ty <= 0) return;
-                          l.type = (IKJointLimit::Type)std::clamp(ty, 0, 2);
-                          k.f((b + "S").c_str(), l.swingMax);
-                          k.f((b + "H0").c_str(), l.hingeMin); k.f((b + "H1").c_str(), l.hingeMax);
-                          k.f((b + "W0").c_str(), l.twistMin); k.f((b + "W1").c_str(), l.twistMax);
-                          if (k.find((b + "TX").c_str())) {
-                              l.autoAxes = false;
-                              k.f((b + "TX").c_str(), l.twistAxis.x); k.f((b + "TY").c_str(), l.twistAxis.y); k.f((b + "TZ").c_str(), l.twistAxis.z);
-                              k.f((b + "HX").c_str(), l.hingeAxis.x); k.f((b + "HY").c_str(), l.hingeAxis.y); k.f((b + "HZ").c_str(), l.hingeAxis.z);
-                          }
-                      };
-                      lim("hl", f->hipLimit); lim("kl", f->kneeLimit); }
+                      ReadLimitKv(k, "hl", f->hipLimit); ReadLimitKv(k, "kl", f->kneeLimit); }
                 } else if (field == "limbik") {
                     auto* lb = go->AddComponent<LimbIK>();
                     lb->upperName = ReadQuoted(in); lb->lowerName = ReadQuoted(in); lb->endName = ReadQuoted(in);
@@ -3718,8 +3791,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     k.key("throwKey", ph->throwKey); k.i("throwMouse", ph->throwMouseButton); k.i("throwPad", ph->throwGamepadButton);
                     k.f("charge", ph->throwChargeTime); k.f("tmin", ph->throwMinSpeed); k.f("tmax", ph->throwMaxSpeed); k.f("reach", ph->pickupRange);
                 } else if (field == "fbikx") {
-                    if (auto* fb = go->GetComponent<FullBodyIK>())
+                    if (auto* fb = go->GetComponent<FullBodyIK>()) {
                         in >> fb->blendSpeed >> fb->goalSmoothing >> fb->lookSmoothing >> fb->armMinBend >> fb->legMinBend;
+                        KvIn k(in);
+                        for (int l = 0; l < FullBodyIK::LimbCount; ++l) {
+                            const std::string p = "e" + std::to_string(l);
+                            ReadLimitKv(k, p + "u", fb->effectors[l].upperLimit);
+                            ReadLimitKv(k, p + "l", fb->effectors[l].lowerLimit);
+                        }
+                    }
                 } else if (field == "ikx") {
                     std::string kind; int act = 1; float fade = 0.0f;
                     in >> kind >> act >> fade;
@@ -4549,6 +4629,20 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         tp->aimWithRightMouse = a != 0; tp->autoRecenter = rc != 0; tp->canSlide = sl != 0;
                         tp->driveStateMachine = sm != 0; tp->ikLook = ik != 0;
                     }
+                } else if (field == "playerview") {
+                    // grok/view-toggle. key=value record; missing keys keep the defaults.
+                    auto* pv = go->AddComponent<PlayerView>();
+                    KvIn k(in);
+                    k.b("allow", pv->allowToggle);
+                    int view = (int)pv->defaultView;
+                    k.i("view", view);
+                    pv->defaultView = (view == 0) ? PlayerView::View::First : PlayerView::View::Third;
+                    k.key("key", pv->toggleKey);
+                    k.i("pad", pv->toggleGamepadButton);
+                    k.f("blend", pv->blendTime);
+                    k.f("ex", pv->eyeOffset.x); k.f("ey", pv->eyeOffset.y); k.f("ez", pv->eyeOffset.z);
+                    k.f("dist", pv->thirdPersonDistance);
+                    k.f("shoulder", pv->shoulderOffset);
                 } else if (field == "fpctrl") {
                     float ws = 4.5f, rs = 8, jf = 6, ms = 0.15f; int cj = 1, da = 1, iy = 0;
                     in >> ws >> rs >> jf >> ms >> cj >> da;
@@ -5196,8 +5290,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     btn->clickTarget = ReadQuoted(in); btn->clickFunction = ReadQuoted(in);
                                     in >> std::ws; // optional OnClick argument (added later)
                                     if (std::isdigit(in.peek()) || in.peek() == '.' || in.peek() == '-') in >> btn->clickArg;
-                                    in >> std::ws; // optional TTF label font (newest)
+                                    in >> std::ws; // optional TTF label font
                                     if (in.peek() == '"') btn->fontPath = ReadQuoted(in);
+                                    in >> std::ws; // grok/ui-options: ease, duration, focus color
+                                    if (std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') {
+                                        int ez = 0, sf = 0; Color fc;
+                                        in >> ez >> btn->transitionDuration >> sf
+                                           >> fc.r >> fc.g >> fc.b >> fc.a;
+                                        btn->transitionEase = ez; btn->separateFocus = (sf != 0);
+                                        btn->focusColor = fc;
+                                    }
                                 }
                             }
                         }
@@ -5474,12 +5576,36 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ns->netId = ReadQuoted(in);
                     in >> std::ws;   // clientClaimable came later
                     if (std::isdigit(in.peek())) { int cc = 0; in >> cc; ns->clientClaimable = cc != 0; }
+                } else if (field == "netobject") {
+                    auto* no = go->AddComponent<NetworkObject>();
+                    int au = 0, ow = 1; in >> au >> ow;
+                    no->authority = (NetworkObject::Authority)au; no->owned = (ow != 0);
+                    no->netId = ReadQuoted(in);
+                } else if (field == "nettransform") {
+                    go->AddComponent<NetworkTransform>();
+                } else if (field == "syncvar") {
+                    auto* sv = go->AddComponent<SyncVar>();
+                    sv->name = ReadQuoted(in);
+                    sv->value = ReadQuoted(in);
                 } else if (field == "water") {
                     auto* w = go->AddComponent<Water>();
                     in >> w->size >> w->resolution >> w->waveHeight >> w->waveLength >> w->waveSpeed
                        >> w->color.r >> w->color.g >> w->color.b >> w->opacity
                        >> w->reflectivity >> w->specular >> w->shininess >> w->flow.x >> w->flow.y;
                     w->color.a = w->opacity;
+                    // depth, density and drag came later. A quote means an older water
+                    // line (visual plane only, depth stays 0).
+                    auto numeric = [](std::istream& in) {
+                        in >> std::ws;
+                        const int c = in.peek();
+                        return c == '-' || c == '+' || c == '.' || std::isdigit(c);
+                    };
+                    if (numeric(in)) in >> w->depth;
+                    if (numeric(in)) in >> w->fluidDensity;
+                    if (numeric(in)) in >> w->linearDrag;
+                    if (!std::isfinite(w->depth) || w->depth < 0.0f) w->depth = 0.0f;
+                    if (!std::isfinite(w->fluidDensity) || w->fluidDensity < 0.0f) w->fluidDensity = 1.0f;
+                    if (!std::isfinite(w->linearDrag) || w->linearDrag < 0.0f) w->linearDrag = 4.0f;
                     w->texture = ReadQuoted(in);
                     w->Apply();
                 } else if (field == "worldstreamer") {
@@ -5877,6 +6003,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             int sp = 0, gf = 0; Color fe;
                             in >> sp >> gf >> fe.r >> fe.g >> fe.b >> fe.a;
                             pb->shape = (UIShape)sp; pb->gradientFill = (gf != 0); pb->fillEnd = fe;
+                            in >> std::ws; // grok/ui-options: segments, trail, color-by-value, text
+                            if (std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') {
+                                int seg = 0, cb = 0; Color tc, lo, hi;
+                                in >> seg >> pb->segmentGap >> pb->trailDelay
+                                   >> tc.r >> tc.g >> tc.b >> tc.a >> cb
+                                   >> lo.r >> lo.g >> lo.b >> lo.a
+                                   >> hi.r >> hi.g >> hi.b >> hi.a;
+                                pb->segments = seg; pb->trailColor = tc;
+                                pb->colorByValue = (cb != 0); pb->lowColor = lo; pb->highColor = hi;
+                                in >> std::ws;
+                                if (in.peek() == '"') pb->textFormat = ReadQuoted(in);
+                            }
                         }
                     }
                 } else if (field == "uiradial") {
@@ -6116,6 +6254,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         if (std::isdigit(in.peek())) {
                             int ts = 0, rk = 0; in >> ts >> rk;
                             sl->trackShape = (UIShape)ts; sl->roundKnob = (rk != 0);
+                            in >> std::ws; // grok/ui-options: step, gradient, handle, format
+                            if (std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') {
+                                int fg = 0, ks = -1; Color fe;
+                                in >> sl->step >> fg >> fe.r >> fe.g >> fe.b >> fe.a >> ks;
+                                sl->fillGradient = (fg != 0); sl->fillEnd = fe; sl->knobShape = ks;
+                                in >> std::ws;
+                                if (in.peek() == '"') sl->valueFormat = ReadQuoted(in);
+                            }
                         }
                     }
                 } else if (field == "uistepper") {

@@ -57,7 +57,11 @@ public:
     /// Resize the field (clears it to all-air).
     void  Resize(int X, int Y, int Z);
     float Get(int x, int y, int z) const { return InBounds(x, y, z) ? density[Index(x, y, z)] : -1.0f; }
-    void  Set(int x, int y, int z, float v) { if (InBounds(x, y, z)) density[Index(x, y, z)] = v; }
+    void  Set(int x, int y, int z, float v) {
+        if (!InBounds(x, y, z)) return;
+        density[Index(x, y, z)] = v;
+        TouchCell(x, y, z);
+    }
 
     // ---- Generation ----------------------------------------------------
     /// Fill a landscape: a noisy ground surface at `surfaceFrac` of the height,
@@ -84,6 +88,12 @@ public:
     /// two local-space corners — sharp rectangular digs (rooms, corridors, trenches),
     /// unlike the round sphere brush. Returns true if any voxel actually changed.
     bool DigBox(const Vec3& localMin, const Vec3& localMax, float amount);
+
+    /// Bottom grid rows digging cannot open. The field ends at local y = 0, so
+    /// carving that layer is a hole out of the world and the player falls through.
+    /// 1 keeps a solid floor. 0 is the old behaviour (a dig can open the bottom).
+    /// Not stored in the scene file — loaded volumes use this default.
+    int floorLayers = 1;
 
     /// Delete disconnected solid "crumbs": label connected components of solid voxels
     /// (6-connectivity, solid = density > iso) and clear every component with fewer
@@ -125,6 +135,45 @@ public:
     Vec3  GridToLocal(int x, int y, int z) const {
         return Vec3{x * voxelSize - HalfX(), y * voxelSize, z * voxelSize - HalfZ()};
     }
+
+private:
+    struct McChunk { Mesh mesh; };
+    static constexpr int kChunk = 16;
+    int mcNx_ = -1, mcNy_ = -1, mcNz_ = -1;
+    float mcVox_ = -1.0f;
+    unsigned mcStamp_ = 0;
+    std::vector<McChunk> mcChunks_;
+    bool mcAllDirty_ = true;
+    // Inclusive cube-origin range that must be remeshed. Empty when dirty1 < dirty0.
+    int dirty0_[3] = {0, 0, 0};
+    int dirty1_[3] = {-1, -1, -1};
+
+    /// A density write at this cell changes every cube that uses it as a corner.
+    void TouchCell(int x, int y, int z) {
+        if (mcAllDirty_) return;
+        const int a0 = x - 1, b0 = y - 1, c0 = z - 1;
+        const int a1 = x, b1 = y, c1 = z;
+        if (dirty1_[0] < dirty0_[0]) {
+            dirty0_[0] = a0; dirty0_[1] = b0; dirty0_[2] = c0;
+            dirty1_[0] = a1; dirty1_[1] = b1; dirty1_[2] = c1;
+        } else {
+            if (a0 < dirty0_[0]) dirty0_[0] = a0;
+            if (b0 < dirty0_[1]) dirty0_[1] = b0;
+            if (c0 < dirty0_[2]) dirty0_[2] = c0;
+            if (a1 > dirty1_[0]) dirty1_[0] = a1;
+            if (b1 > dirty1_[1]) dirty1_[1] = b1;
+            if (c1 > dirty1_[2]) dirty1_[2] = c1;
+        }
+    }
+    void TouchBox(int x0, int y0, int z0, int x1, int y1, int z1) {
+        if (x0 > x1 || y0 > y1 || z0 > z1) return;
+        TouchCell(x0, y0, z0);
+        TouchCell(x1, y1, z1);
+    }
+    /// Fill air in the protected bottom rows so the volume has a floor.
+    bool SealFloor();
+    unsigned MeshStamp() const;
+    void AppendCubes(Mesh& m, int x0, int y0, int z0, int x1, int y1, int z1) const;
 };
 
 } // namespace okay

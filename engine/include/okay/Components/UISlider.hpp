@@ -9,6 +9,8 @@
 #include "okay/Math/Vec2.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Input/Input.hpp"
+#include <cstdio>
+#include <string>
 
 namespace okay {
 
@@ -38,15 +40,54 @@ public:
     bool  wholeNumbers = false;                      // snap the value to integers
     bool  vertical = false;                          // drag/fill bottom->top
     Color textColor = Color::White;
+    // grok/ui-options: extra controls. Defaults keep the old drag and the old draw.
+    float step = 0.0f;                               // 0 = continuous; >0 snaps to this spacing
+    std::string valueFormat;                        // empty = "%.2f"; "{v}" is the number
+    bool  fillGradient = false;
+    Color fillEnd = Color::FromBytes(120, 210, 255);
+    int   knobShape = -1;                           // -1 = roundKnob decides; else a UIShape
 
     /// 0..1 position of the handle along the track (for rendering).
     float Fraction() const {
         float span = maxValue - minValue;
         return span > 0.0f ? Mathf::Clamp01((value - minValue) / span) : 0.0f;
     }
-    void SetValue(float v) {
+    /// Clamp, then snap to `step` and whole numbers. `step` 0 leaves the value continuous.
+    float Snap(float v) const {
         float nv = Mathf::Clamp(v, minValue, maxValue);
+        if (step > 0.0f) {
+            nv = minValue + Mathf::Round((nv - minValue) / step) * step;
+            nv = Mathf::Clamp(nv, minValue, maxValue);
+        }
         if (wholeNumbers) nv = Mathf::Round(nv);
+        return nv;
+    }
+    /// The readout next to the track. An empty format is the historical "%.2f".
+    std::string FormatValue() const {
+        char num[32];
+        const char* spec = (wholeNumbers || step >= 1.0f) ? "%.0f" : "%.2f";
+        std::snprintf(num, sizeof(num), spec, value);
+        if (valueFormat.empty()) {
+            std::snprintf(num, sizeof(num), "%.2f", value);
+            return num;
+        }
+        std::string out;
+        out.reserve(valueFormat.size() + 8);
+        for (std::size_t i = 0; i < valueFormat.size(); ++i) {
+            if (valueFormat[i] == '{' && i + 2 < valueFormat.size() &&
+                valueFormat[i + 1] == 'v' && valueFormat[i + 2] == '}') {
+                out += num;
+                i += 2;
+                continue;
+            }
+            out += valueFormat[i];
+        }
+        return out;
+    }
+    void SetStep(float s) { step = s < 0.0f ? 0.0f : s; }
+    void SetFormat(const std::string& f) { valueFormat = f; }
+    void SetValue(float v) {
+        float nv = Snap(v);
         if (nv == value) return;
         value = nv;
         if (gameObject)
@@ -81,8 +122,7 @@ public:
             // Horizontal: left->right. Vertical: bottom->top (natural for volume).
             float frac = vertical ? Mathf::Clamp01((o.y + size.y - lm.y) / size.y)
                                   : Mathf::Clamp01((lm.x - o.x) / size.x);
-            float nv = minValue + frac * (maxValue - minValue);
-            if (wholeNumbers) nv = Mathf::Round(nv);
+            float nv = Snap(minValue + frac * (maxValue - minValue));
             if (nv != value) {
                 value = nv;
                 if (gameObject)

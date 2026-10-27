@@ -315,6 +315,10 @@ inline const std::vector<VsDef>& Registry() {
         {"NetStartMatch",  "Start Match",    CAT_NET, true, {""}, {}, {}, 0, nullptr},
         {"NetMatchStarted","Match Started",  CAT_NET, false, {}, {}, {"Bool"}, 0, nullptr},
         {"NetAllReady",    "All Ready",      CAT_NET, false, {}, {}, {"Bool"}, 0, nullptr},
+        {"NetObjRpc",      "Call Object RPC", CAT_NET, true, {""}, {"Data"}, {}, 1, "rpc name"},
+        {"SyncVarSet",     "Set Sync Var",   CAT_NET, true, {""}, {"Value"}, {}, 1, "name"},
+        {"SyncVarGet",     "Get Sync Var",   CAT_NET, false, {}, {}, {"Value"}, 1, "name"},
+        {"OnNetRpc",       "On Object RPC",  CAT_NET, false, {""}, {}, {"Value"}, 1, "rpc name"},
         {"SteamName",      "Steam Name",     CAT_NET, false, {}, {}, {"Name"}, 0, nullptr},
         {"SteamIsUnlocked","Achievement Unlocked", CAT_NET, false, {}, {}, {"Bool"}, 1, "achievement id"},
         {"SteamUnlock",    "Unlock Achievement",   CAT_NET, true, {""}, {}, {}, 1, "achievement id"},
@@ -354,6 +358,13 @@ inline const std::vector<VsDef>& Registry() {
         {"OnObjectPlaced",  "On Object Placed", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnObjectRemoved", "On Object Removed",CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnLogicSignal",   "On Logic Signal",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        // Inventory (Event Name = the item / slot / recipe, Event Value = the count / item).
+        {"OnItemAdded", "On Item Added", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnItemRemoved", "On Item Removed", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnInventoryFull", "On Inventory Full", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnItemUsed", "On Item Used", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnEquip", "On Equip", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnCraft", "On Craft", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         // Anti-cheat (server; needs an Anti-Cheat Config in the scene).
         {"OnCheatDetected", "On Cheat Detected",CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnValidateRpc",   "On Validate Rpc",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
@@ -603,12 +614,15 @@ inline std::string VsEntryName(const std::string& type, const std::string& arg) 
         type == "OnTriggerStay" ||
         type == "OnFixedUpdate" || type == "OnDestroy" || type == "OnEnable" || type == "OnDisable" ||
         type == "OnObjectPlaced" || type == "OnObjectRemoved" || type == "OnLogicSignal" ||
-        type == "OnCheatDetected" || type == "OnValidateRpc" || type == "OnValidateHit") return type;
+        type == "OnCheatDetected" || type == "OnValidateRpc" || type == "OnValidateHit" ||
+        type == "OnItemAdded" || type == "OnItemRemoved" || type == "OnInventoryFull" ||
+        type == "OnItemUsed" || type == "OnEquip" || type == "OnCraft") return type;
     if (type == "OnAnimEvent") return arg.empty() ? std::string("OnAnimEvent") : "OnAnimEvent:" + tok(arg, "");
     if (type == "OnKey")   return "OnKey:" + tok(arg, "space");
     if (type == "OnKeyUp") return "OnKeyUp:" + tok(arg, "space");
     if (type == "OnTimer") return "OnTimer:" + tok(arg, "1");
     if (type == "OnEvent") return "OnEvent:" + tok(arg, "Event");
+    if (type == "OnNetRpc") return "OnNetRpc:" + tok(arg, "rpc");
     if (type == "OnVarChanged" || type == "OnSceneVarChanged" || type == "OnGlobalVarChanged") return type + ":" + tok(arg, "x");
     return {};
 }
@@ -629,7 +643,8 @@ struct VsEditGraph {
         // Sensible starting values for nodes that need a name / number.
         static const std::map<std::string, std::string> kArg = {
             {"Compare", ">"}, {"Timer", "1"}, {"Const", "0"}, {"OnKey", "space"}, {"OnKeyUp", "space"},
-            {"OnTimer", "1"}, {"OnEvent", "Event"}, {"SendEvent", "Event"}, {"BroadcastEvent", "Event"},
+            {"OnTimer", "1"}, {"OnEvent", "Event"}, {"OnNetRpc", "rpc"}, {"SendEvent", "Event"}, {"BroadcastEvent", "Event"},
+            {"NetObjRpc", "rpc"}, {"SyncVarSet", "var"}, {"SyncVarGet", "var"},
             {"SetObjectVar", "hp"}, {"GetObjectVar", "hp"}, {"SaveValue", "score"}, {"LoadValue", "score"},
             {"Format", "Score: {0}"}, {"FindWithTag", "Player"}, {"CountWithTag", "Enemy"}, {"FindObject", "Player"},
             {"NearestWithTag", "Enemy"}, {"Teleport", "self"},
@@ -1120,6 +1135,8 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
     if (t == "NetPeers")      return "net_peers()";
     if (t == "NetId")         return "net_id()";
     if (t == "NetGetVar")     return "net_get(" + q(lit("x")) + ")";
+    if (t == "SyncVarGet")    return "net_syncvar_get(" + q(lit("var")) + ")";
+    if (t == "OnNetRpc")      return "value";
     if (t == "NetMatchStarted") return "net_match_started()";
     if (t == "NetAllReady")   return "net_all_ready()";
     if (t == "SteamName")     return "steam_name()";
@@ -1296,6 +1313,8 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="NetSetVar")     out += ind + "net_set(" + q(arg("x")) + ", str(" + in(0, "\"\"") + "))\n";
     else if (t=="NetChat")       out += ind + "net_chat(" + in(0, "\"\"") + ")\n";
     else if (t=="NetRpc")        out += ind + "net_rpc(" + q(arg("")) + ", str(" + in(0, "\"\"") + "))\n";
+    else if (t=="NetObjRpc")     out += ind + "net_obj_rpc(" + q(arg("rpc")) + ", str(" + in(0, "\"\"") + "))\n";
+    else if (t=="SyncVarSet")    out += ind + "net_syncvar_set(" + q(arg("var")) + ", str(" + in(0, "\"\"") + "))\n";
     else if (t=="NetSpawnOwned") out += ind + "net_spawn_owned(" + q(arg("")) + ", transform.position.x, transform.position.y, transform.position.z)\n";
     else if (t=="NetDespawn")    out += ind + "net_despawn(" + in(0, "\"\"") + ")\n";
     else if (t=="NetReady")      out += ind + "net_ready(" + in(0, "true") + ")\n";
@@ -1508,7 +1527,14 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
         {"OnDestroy",       "void OnDestroy()"},
         {"OnObjectPlaced",  "void OnObjectPlaced(string name)"},    // name = the placed object's name
         {"OnObjectRemoved", "void OnObjectRemoved(string name)"},
-        {"OnLogicSignal",   "void OnLogicSignal(string name)"}};
+        {"OnLogicSignal",   "void OnLogicSignal(string name)"},
+        // Inventory: the Event Name / Event Value nodes read these parameters.
+        {"OnItemAdded", "void OnItemAdded(string event_name, float value)"},
+        {"OnItemRemoved", "void OnItemRemoved(string event_name, float value)"},
+        {"OnInventoryFull", "void OnInventoryFull(string event_name, float value)"},
+        {"OnItemUsed", "void OnItemUsed(string event_name)"},
+        {"OnEquip", "void OnEquip(string event_name, string value)"},
+        {"OnCraft", "void OnCraft(string event_name)"}};
     // Events sharing a handler (On Click + On Mouse Down) go into one method.
     std::set<std::string> doneSig;
     for (const auto& ev : kEvents) {
@@ -1528,6 +1554,16 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
         for (auto* n : ofType("OnEvent")) byName[sanitize(n->arg)].push_back(n);
         for (auto& kv : byName) {
             open("void OnEvent_" + kv.first + "(value)");
+            for (auto* n : kv.second) chain(n->id, "        ");
+            out += "    }\n";
+        }
+    }
+    // Object RPCs: one OnNetRpc_<name>(value) per name (net_obj_rpc delivers it).
+    {
+        std::map<std::string, std::vector<const VsEditNode*>> byName;
+        for (auto* n : ofType("OnNetRpc")) byName[sanitize(n->arg)].push_back(n);
+        for (auto& kv : byName) {
+            open("void OnNetRpc_" + kv.first + "(value)");
             for (auto* n : kv.second) chain(n->id, "        ");
             out += "    }\n";
         }
@@ -1777,10 +1813,19 @@ inline std::set<int> VsPasteText(VsEditGraph& g, const std::string& text, float 
     return made;
 }
 
-// Can a node of type `d` take a wire from the pending pin?
-inline bool VsCompatible(const VsDef& d, bool exec, bool fromOutput) {
+// Can a node of type `d` take a wire from the pending pin? A data pin also has
+// to be a type that pin can feed (Number into a Vector3 input stays hidden).
+inline bool VsCompatible(const VsDef& d, bool exec, bool fromOutput,
+                         okay::vs::PinType pin = okay::vs::PinType::Any) {
     if (exec) return fromOutput ? d.execIn : !d.execOut.empty();
-    return fromOutput ? !d.dataIn.empty() : !d.dataOut.empty();
+    if (fromOutput) {
+        for (int i = 0; i < (int)d.dataIn.size(); ++i)
+            if (okay::vs::PinCompatible(pin, okay::vs::InputType(d.type, i))) return true;
+        return false;
+    }
+    for (int i = 0; i < (int)d.dataOut.size(); ++i)
+        if (okay::vs::PinCompatible(okay::vs::OutputType(d.type, i, ""), pin)) return true;
+    return false;
 }
 
 // ---- The editor window -----------------------------------------------------
@@ -2890,7 +2935,13 @@ inline void Draw(EditorState& ed, bool* open) {
     ImGui::SetNextWindowSize(ImVec2(640, 470), ImGuiCond_Always);
     if (ImGui::BeginPopup("##vspalette")) {
         static const char* catNames[CAT_COUNT] = {"Events","Flow","Variables","Math","Logic","Input","Transform","Actions","Data","Multiplayer & Steam","Engine API"};
-        auto fits = [&](const VsDef& d) { return !st.linkPending || VsCompatible(d, st.linkExec, st.linkFromOutput); };
+        okay::vs::PinType dragged = okay::vs::PinType::Any;
+        if (st.linkPending && !st.linkExec)
+            dragged = st.linkFromOutput ? VsOutPinType(g, st.linkNode, st.linkPin)
+                                         : VsInPinType(g, st.linkNode, st.linkPin);
+        auto fits = [&](const VsDef& d) {
+            return !st.linkPending || VsCompatible(d, st.linkExec, st.linkFromOutput, dragged);
+        };
         auto lower = [](std::string x) { for (char& ch : x) ch = (char)std::tolower((unsigned char)ch); return x; };
         auto bright = [](ImU32 c) {   // the category colour, lifted so a dot reads on the dark list
             ImVec4 v = ImGui::ColorConvertU32ToFloat4(c);
@@ -2968,7 +3019,10 @@ inline void Draw(EditorState& ed, bool* open) {
         static int s_kb = 0;
         static char search[64] = "";
         if (ImGui::IsWindowAppearing()) { search[0] = '\0'; s_kb = 0; ImGui::SetKeyboardFocusHere(); }
-        if (st.linkPending) ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Only nodes that fit the dragged pin are shown");
+        if (st.linkPending && st.linkExec)
+            ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Only nodes that fit this flow pin are shown");
+        else if (st.linkPending)
+            ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Only nodes that fit a %s pin are shown", okay::vs::PinTypeName(dragged));
         ImGui::SetNextItemWidth(-FLT_MIN);
         if (ImGui::InputTextWithHint("##vssearch", "Search nodes and actions...  (Up / Down, Enter to add)", search, sizeof search))
             s_kb = 0;
@@ -2997,7 +3051,14 @@ inline void Draw(EditorState& ed, bool* open) {
             }
             if (j == needle.size()) return 100 + sc;
             hits.clear();
-            const std::string extra = lower(e.cat + " " + (e.def ? e.def->type : "") + " " + (e.step ? e.step->op : "") + " " + e.desc);
+            std::string pins;
+            if (e.def) {
+                for (int i = 0; i < (int)e.def->dataIn.size(); ++i)
+                    pins += std::string(okay::vs::PinTypeName(okay::vs::InputType(e.def->type, i))) + " ";
+                for (int i = 0; i < (int)e.def->dataOut.size(); ++i)
+                    pins += std::string(okay::vs::PinTypeName(okay::vs::OutputType(e.def->type, i, ""))) + " ";
+            }
+            const std::string extra = lower(e.cat + " " + (e.def ? e.def->type : "") + " " + (e.step ? e.step->op : "") + " " + e.desc + " " + pins);
             return extra.find(needle) != std::string::npos ? 40 : 0;
         };
 

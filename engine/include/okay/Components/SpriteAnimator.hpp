@@ -96,6 +96,9 @@ public:
     void Restart() { m_time = 0.0f; m_frame = 0; playing = true; Apply(); }
     /// Hold the first frame (e.g. a walk cycle while standing still).
     void Stop() { m_time = 0.0f; m_frame = 0; playing = false; Apply(); }
+    /// While set, the current clip plays once and holds its last frame (a jump
+    /// that lasts longer than the clip). Cleared by the next clip that should cycle.
+    void SetHoldAtEnd(bool hold) { m_hold = hold; }
 
 private:
     const SpriteClip* Clip() const {
@@ -107,7 +110,7 @@ private:
         return -1;
     }
     float Fps() const  { const SpriteClip* c = Clip(); return c ? c->fps : fps; }
-    bool  Loop() const { const SpriteClip* c = Clip(); return c ? c->loop : loop; }
+    bool Loop() const { if (m_hold) return false; const SpriteClip* c = Clip(); return c ? c->loop : loop; }
 
     void Apply() {
         if (!gameObject) return;
@@ -134,6 +137,7 @@ private:
     float m_time = 0.0f;
     int   m_frame = 0;
     int   m_clip = -1;   // index into clips; -1 = the base frames / atlas
+    bool  m_hold = false;
 };
 
 } // namespace okay

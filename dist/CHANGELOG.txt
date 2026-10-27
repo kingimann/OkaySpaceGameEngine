@@ -7,6 +7,9 @@ v2.837.0
     of snapping (#417).
   - Dropping a model onto a character recovers its bind pose, and a held prop
     stays in the hand when the model is swapped (#416).
+  Scripting
+  - Fixed: a script that ran the same += or -= twice (in a loop, or every
+    frame) crashed, and += on transform.position or this.hp did nothing (#490).
   Editor
   - Script Editor: Ctrl+Z undoes Format, Rename, Replace All and Reload, and
     the view stays where it was (#445).

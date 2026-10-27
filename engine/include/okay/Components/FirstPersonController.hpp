@@ -20,6 +20,8 @@
 #include "okay/Components/ControllerFeel.hpp"
 #include "okay/Components/PlayerView.hpp"
 #include "okay/Components/DeathLock.hpp"
+#include "okay/Animation/HumanoidActions.hpp"
+#include "okay/Components/Traversal.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
 
@@ -133,6 +135,10 @@ public:
 
     // ---- Slide (sprint, then crouch) ----
     bool  canSlide = true;
+    // ---- Vault / mantle / ledge (off until a game opts in; vault() still probes) ----
+    bool  canVault = false;
+    bool  canMantle = false;
+    bool  canLedgeGrab = false;
     float slideSpeed = 10.5f;           // burst speed at the start of a slide
     float slideTime  = 0.75f;           // seconds until it settles into a crouch
     float slideEyeHeight = 0.9f;
@@ -204,7 +210,7 @@ public:
         if (Game::Paused()) return;   // frozen: no mouse-look, no cursor recapture
         m_lookDt = dt;   // also for a client's ReadLocalInput in authoritative movement
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
-        if (DeathLocksInput(gameObject)) { StopDeadSlide(gameObject); return; }
+        if (DeathLocksInput(gameObject)) { StopDeadSlide(gameObject); AbortTraverse(gameObject); return; }
         ApplyBodyVisibility();
         // Keep the cursor hidden + locked while playing (re-assert if something freed
         // it). Turn lockCursor off to author with a normal pointer / click screen UI.
@@ -410,6 +416,16 @@ public:
         // Moving platforms: ride whatever we stand on (elevators, movers).
         if (gameObject && gameObject->scene())
             RideMovingPlatform(*gameObject->scene(), gameObject, m_platRide, grounded);
+
+        // Vault / mantle / ledge. Flags default off. The probe uses the move
+        // direction, which was already chosen above — no key is read here.
+        if (gameObject && (canVault || canMantle || canLedgeGrab)) {
+            const Vec3 face = moving ? dir : fwd;
+            const bool airborne = !grounded;
+            if ((moving && (canVault || canMantle)) || (airborne && canLedgeGrab))
+                HumanoidActions::TryTraverse(gameObject, face, airborne, canVault, canMantle, canLedgeGrab);
+        }
+        if (gameObject) TickTraverse(gameObject, dt);
 
         // ---- View bob (footstep sway), landing dip, FOV ----
         float hSpeed = rb ? std::sqrt(rb->velocity.x * rb->velocity.x + rb->velocity.z * rb->velocity.z)

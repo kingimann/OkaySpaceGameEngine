@@ -24,6 +24,8 @@
 #include "okay/Components/PlayerCamera.hpp"
 #include "okay/Components/PlayerView.hpp"
 #include "okay/Components/DeathLock.hpp"
+#include "okay/Animation/HumanoidActions.hpp"
+#include "okay/Components/Traversal.hpp"
 
 namespace okay {
 
@@ -170,6 +172,10 @@ public:
 
     // ---- Slide (sprint, then crouch) ----
     bool  canSlide = true;
+    // ---- Vault / mantle / ledge (off until a game opts in; vault() still probes) ----
+    bool  canVault = false;
+    bool  canMantle = false;
+    bool  canLedgeGrab = false;
     float slideSpeed = 10.0f;
     float slideTime  = 0.75f;
 
@@ -216,7 +222,7 @@ public:
         if (Game::Paused()) return;   // frozen while the pause menu is up
         m_lookDt = dt;   // also for a client's ReadLocalInput in authoritative movement
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
-        if (DeathLocksInput(gameObject)) { StopDeadSlide(gameObject); return; }
+        if (DeathLocksInput(gameObject)) { StopDeadSlide(gameObject); AbortTraverse(gameObject); return; }
         // Optionally hide + lock the cursor while playing (re-assert if freed).
         if (lockCursor && !Cursor::IsLocked()) Cursor::Capture(true);
         Simulate(ReadLocalInput(), dt);
@@ -415,6 +421,16 @@ public:
         // Moving platforms: ride whatever we stand on (elevators, movers).
         if (gameObject && gameObject->scene())
             RideMovingPlatform(*gameObject->scene(), gameObject, m_platRide, grounded);
+
+        // Vault / mantle / ledge. Flags default off. Probe along the wish
+        // direction; the body has not turned yet this frame.
+        if (gameObject && (canVault || canMantle || canLedgeGrab)) {
+            const Vec3 face = moving ? dir : fwd;
+            const bool airborne = !grounded;
+            if ((moving && (canVault || canMantle)) || (airborne && canLedgeGrab))
+                HumanoidActions::TryTraverse(gameObject, face, airborne, canVault, canMantle, canLedgeGrab);
+        }
+        if (gameObject) TickTraverse(gameObject, dt);
 
         // ---- Turn the body (smoothly) ----
         // The character mesh faces -Z (engine camera/controller convention).

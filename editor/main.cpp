@@ -10559,6 +10559,7 @@ void DrawScriptDocs() {
         fapi("play_clip(\"name\") / stop_clip()", "play a loaded clip / return to built-in");
         fapi("play_action(\"Death\" [, blend]) / is_in_action() / action_time()", "go to a built-in action state (0 if it is missing)");
         fapi("die([\"forward\"|\"back\"|\"left\"|\"right\"]) / die(x, y, z) / revive() / is_dead()", "death anim; x,y,z is where the hit came from");
+        fapi("vault() / mantle() / ledge_grab() / climb_up() / let_go() / is_hanging() / shimmy(v)", "vault, mantle, or hang; flags on the controller default off");
         fapi("play_clip_once(\"name\")", "play a clip once (attack/jump), then return to the previous one");
         fapi("playing_clip() / is_playing_clip()", "active clip name / is one playing");
         fapi("set_anim(n) / get_anim()", "built-in animation index (1 idle, 2 walk, 3 run, ...)");
@@ -10944,6 +10945,8 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"play_clip","play_clip(\"clip\")"}, {"play_clip_once","play_clip_once(\"clip\")"},
         {"play_action","play_action(\"Death\" [, blend])"}, {"is_in_action","is_in_action()"},
         {"action_time","action_time()"}, {"die","die([\"back\"])"}, {"revive","revive()"}, {"is_dead","is_dead()"},
+        {"vault","vault()"}, {"mantle","mantle()"}, {"ledge_grab","ledge_grab()"},
+        {"climb_up","climb_up()"}, {"let_go","let_go()"}, {"is_hanging","is_hanging()"}, {"shimmy","shimmy(-1..1)"},
         {"stop_clip","stop_clip()"}, {"is_playing_clip","is_playing_clip()"},
         {"play_layer","play_layer(\"clip\", \"part\")"}, {"stop_layer","stop_layer()"}, {"anim_event","anim_event(\"name\")"},
         {"play_sound","play_sound(\"name\")"}, {"set_volume","set_volume(v)"},
@@ -17414,6 +17417,7 @@ static const ActionOpInfo kCondOps[] = {
     {"is_moving",  "Is Moving",            "[min speed]",                "Passes if this object's Rigidbody is moving faster than the threshold.", "World"},
     {"is_in_action","Is In Action",       "",                           "Passes while a built-in action (Death, and later dive, sit, ...) is playing.", "Character"},
     {"is_dead",    "Is Dead",             "",                           "Passes while Health says this body is dead, or the Animator `dead` flag is set.", "Character"},
+    {"is_hanging", "Is Hanging",           "",                           "Passes while a ledge grab, hang, or shimmy is playing.", "Character"},
     {"tag_count_lt","Fewer Tagged Than",   "tag count",                  "Passes if fewer than N active objects have this tag (e.g. wave cleared).", "World"},
     {"tag_count_gt","More Tagged Than",    "tag count",                  "Passes if more than N active objects have this tag.",          "World"},
     {"array_has",  "Array Contains",       "array value",                "Passes if the named array contains the value.",                "Arrays"},
@@ -17521,6 +17525,12 @@ static const ActionOpInfo kInstrOps[] = {
     {"play_action", "Play Action",        "action [blend]",       "Go to a built-in action (Death, Death_F, ...). Blend is seconds.", "Character"},
     {"die",         "Die",                "forward|back|left|right", "Play Death. A direction, or x y z for where the hit came from.", "Character"},
     {"revive",      "Revive",             "",                     "Clear dead and get up. A Health stat respawns.",          "Character"},
+    {"vault",       "Vault",              "",                     "Probe ahead and vault a thin obstacle. Ignores Can Vault.", "Character"},
+    {"mantle",      "Mantle",             "",                     "Probe ahead and mantle a low or high ledge. Ignores Can Mantle.", "Character"},
+    {"ledge_grab",  "Ledge Grab",         "",                     "In the air, catch a high ledge and hang.",               "Character"},
+    {"climb_up",    "Climb Up",           "",                     "Climb from a hang onto the lip the grab remembered.",     "Character"},
+    {"let_go",      "Let Go",             "",                     "Drop from a hang. Does not teleport.",                   "Character"},
+    {"shimmy",      "Shimmy",             "-1..1",                "While hanging, lean along the lip.",                     "Character"},
     {"stop_clip",   "Stop Anim Clip",     "",                     "Return the Character to its built-in / state animation.", "Character"},
     {"play_layer",  "Play Anim Layer",    "clip  arms|upper|bone","Overlay a clip on part of the body (e.g. wave with the arms while walking).", "Character"},
     {"stop_layer",  "Stop Anim Layer",    "",                     "Clear the partial-body animation layer.",                 "Character"},
@@ -18399,7 +18409,8 @@ static const char* ActionOpRequires(const std::string& op) {
     if (op=="play_sound"||op=="set_volume") return "an Audio Source on this object";
     if (op=="play_anim"||op=="stop_anim"||op=="set_anim"||op=="play_clip"||op=="stop_clip"||
         op=="play_layer"||op=="stop_layer"||op=="clip_speed"||op=="anim_event"||
-        op=="play_action"||op=="die"||op=="revive"||op=="is_in_action"||op=="is_dead")
+        op=="play_action"||op=="die"||op=="revive"||op=="is_in_action"||op=="is_dead"||
+        op=="vault"||op=="mantle"||op=="ledge_grab"||op=="climb_up"||op=="let_go"||op=="shimmy"||op=="is_hanging")
         return "a Character / Animator on this object";
     if (op=="emit"||op=="particles_on") return "a Particle System on this object";
     if (op=="set_text") return "a Text Renderer on this object";
@@ -31663,6 +31674,13 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat("Slide Time##fp", &fp->slideTime, 0.01f, 0.05f, 3.0f, "%.2f s")) ed.dirty = true;
                 if (ImGui::DragFloat("Slide Eye Height##fp", &fp->slideEyeHeight, 0.01f, 0.1f, 2.0f)) ed.dirty = true;
             }
+            SectionHeader("Traversal");
+            if (ImGui::Checkbox("Can Vault##fp", &fp->canVault)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Walk into a thin obstacle and vault it. Off by default.\nvault() still probes when this is off.");
+            if (ImGui::Checkbox("Can Mantle##fp", &fp->canMantle)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Walk into a low or high ledge and climb it. Off by default.");
+            if (ImGui::Checkbox("Can Ledge Grab##fp", &fp->canLedgeGrab)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In the air, catch a high ledge and hang. Off by default.\nHands-on-ledge IK is not wired.");
             SectionHeader("Animation & IK");
             if (ImGui::Checkbox("Drive State Machine##fp", &fp->driveStateMachine)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets speed, verticalSpeed, grounded, crouch, prone, sprint, slide, aim\nand fires jump / land triggers on an Animator state machine on the player.");
@@ -31833,6 +31851,13 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat("Slide Speed##tp", &tp->slideSpeed, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
                 if (ImGui::DragFloat("Slide Time##tp", &tp->slideTime, 0.01f, 0.05f, 3.0f, "%.2f s")) ed.dirty = true;
             }
+            SectionHeader("Traversal");
+            if (ImGui::Checkbox("Can Vault##tp", &tp->canVault)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Walk into a thin obstacle and vault it. Off by default.\nvault() still probes when this is off.");
+            if (ImGui::Checkbox("Can Mantle##tp", &tp->canMantle)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Walk into a low or high ledge and climb it. Off by default.");
+            if (ImGui::Checkbox("Can Ledge Grab##tp", &tp->canLedgeGrab)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In the air, catch a high ledge and hang. Off by default.\nHands-on-ledge IK is not wired.");
             SectionHeader("Animation & IK");
             if (ImGui::Checkbox("Drive State Machine##tp", &tp->driveStateMachine)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets speed, verticalSpeed, grounded, crouch, prone, sprint, slide, aim\nand fires jump / land triggers on an Animator state machine on the player.");

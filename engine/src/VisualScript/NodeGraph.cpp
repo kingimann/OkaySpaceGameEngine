@@ -677,6 +677,13 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "IsInAction")     return std::make_unique<IsInActionNode>();
     if (type == "Die")            return std::make_unique<DieNode>(argOr("forward"));
     if (type == "Revive")         return std::make_unique<ReviveNode>();
+    if (type == "Vault")          return std::make_unique<VaultNode>();
+    if (type == "Mantle")         return std::make_unique<MantleNode>();
+    if (type == "LedgeGrab")      return std::make_unique<LedgeGrabNode>();
+    if (type == "ClimbUp")        return std::make_unique<ClimbUpNode>();
+    if (type == "LetGo")          return std::make_unique<LetGoNode>();
+    if (type == "IsHanging")      return std::make_unique<IsHangingNode>();
+    if (type == "Shimmy")         return std::make_unique<ShimmyNode>();
     if (type == "SetTimeScale")   return std::make_unique<SetTimeScaleNode>();
     if (type == "SetBlendShape")  return std::make_unique<BlendShapeNode>(argOr(""), true);
     if (type == "GetBlendShape")  return std::make_unique<BlendShapeNode>(argOr(""), false);

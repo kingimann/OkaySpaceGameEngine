@@ -4444,6 +4444,30 @@ struct OkayScriptVM::Impl {
         b["is_dead"] = [selfObj](std::vector<Value>&) {
             return Value{HumanoidActions::IsDead(selfObj()) ? 1.0f : 0.0f};
         };
+        // Vault / mantle / ledge. These probe even when the controller flags are off.
+        b["vault"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::RequestVault(selfObj()) ? 1.0f : 0.0f};
+        };
+        b["mantle"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::RequestMantle(selfObj()) ? 1.0f : 0.0f};
+        };
+        b["ledge_grab"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::RequestLedgeGrab(selfObj()) ? 1.0f : 0.0f};
+        };
+        b["climb_up"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::RequestClimbUp(selfObj()) ? 1.0f : 0.0f};
+        };
+        b["let_go"] = [selfObj](std::vector<Value>&) {
+            HumanoidActions::RequestLetGo(selfObj());
+            return Value{};
+        };
+        b["is_hanging"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::IsHanging(selfObj()) ? 1.0f : 0.0f};
+        };
+        b["shimmy"] = [selfObj](std::vector<Value>& a) {
+            HumanoidActions::SetShimmy(selfObj(), a.empty() ? 0.0f : a[0].AsFloat());
+            return Value{};
+        };
         // ---- Blend shapes (morph targets) on this object and everything under it ----
         //   blend_shape("Smile", 0.8)   set a shape's weight 0..1 on every mesh that has it
         //   blend_shape_get("Smile")    read it back (0 if no mesh has it)

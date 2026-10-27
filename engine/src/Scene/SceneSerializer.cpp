@@ -1734,7 +1734,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << fp->slideEyeHeight << " " << (fp->driveStateMachine ? 1 : 0) << " " << (fp->ikLook ? 1 : 0)
             // extended: the head bob and the eye smoothing
             << " " << (fp->headBob ? 1 : 0) << " " << fp->bobAmount << " " << fp->bobSpeed << " " << fp->bobSway
-            << " " << fp->bobRunScale << " " << fp->bobBlend << " " << fp->bobGroundGrace << " " << fp->eyeStepSmoothing << "\n";
+            << " " << fp->bobRunScale << " " << fp->bobBlend << " " << fp->bobGroundGrace << " " << fp->eyeStepSmoothing
+            // Traversal flags. Older loaders do not skip these trailing ints.
+            << " " << (fp->canVault ? 1 : 0) << " " << (fp->canMantle ? 1 : 0) << " " << (fp->canLedgeGrab ? 1 : 0) << "\n";
         out << "  fpstance";
         KvOut k{out};
         k.b("prone", fp->allowProne).b("resize", fp->resizeBody)("crouchH", fp->crouchHeight)("proneH", fp->proneHeight)
@@ -1786,7 +1788,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (tp->autoRecenter ? 1 : 0) << " " << tp->recenterDelay << " " << tp->recenterSpeed
             << " " << tp->landShake << " " << tp->strideLength << " " << (tp->canSlide ? 1 : 0)
             << " " << tp->slideSpeed << " " << tp->slideTime << " " << (tp->driveStateMachine ? 1 : 0)
-            << " " << (tp->ikLook ? 1 : 0) << "\n";
+            << " " << (tp->ikLook ? 1 : 0)
+            // Traversal flags. Older loaders do not skip these trailing ints.
+            << " " << (tp->canVault ? 1 : 0) << " " << (tp->canMantle ? 1 : 0) << " " << (tp->canLedgeGrab ? 1 : 0) << "\n";
     }
     // Player view toggle (grok/view-toggle). Its own record, so older scenes skip it.
     // Fields: allow, view (0 first / 1 third), key, pad, blend, ex ey ez, dist, shoulder.
@@ -4600,6 +4604,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             fp->headBob = hb != 0; fp->bobAmount = ba; fp->bobSpeed = bs; fp->bobSway = bw;
                             fp->bobRunScale = br; fp->bobBlend = bb; fp->bobGroundGrace = bg; fp->eyeStepSmoothing = es;
                         }
+                        int cv = 0, cm = 0, cl = 0;
+                        in >> std::ws;
+                        if (std::isdigit(static_cast<unsigned char>(in.peek())) && (in >> cv >> cm >> cl)) {
+                            fp->canVault = cv != 0; fp->canMantle = cm != 0; fp->canLedgeGrab = cl != 0;
+                        }
                     }
                 } else if (field == "tpfeel") {
                     if (auto* tp = go->GetComponent<ThirdPersonController>()) {
@@ -4609,6 +4618,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                            >> tp->landShake >> tp->strideLength >> sl >> tp->slideSpeed >> tp->slideTime >> sm >> ik;
                         tp->aimWithRightMouse = a != 0; tp->autoRecenter = rc != 0; tp->canSlide = sl != 0;
                         tp->driveStateMachine = sm != 0; tp->ikLook = ik != 0;
+                        int cv = 0, cm = 0, cl = 0;
+                        in >> std::ws;
+                        if (std::isdigit(static_cast<unsigned char>(in.peek())) && (in >> cv >> cm >> cl)) {
+                            tp->canVault = cv != 0; tp->canMantle = cm != 0; tp->canLedgeGrab = cl != 0;
+                        }
                     }
                 } else if (field == "playerview") {
                     // grok/view-toggle. key=value record; missing keys keep the defaults.

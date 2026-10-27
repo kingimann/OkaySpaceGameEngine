@@ -16,10 +16,10 @@ class GameObject;
 
 namespace HumanoidActions {
 
-/// How far the built-in action set has got. Death is 1. A saved graph records
+/// How far the built-in action set has got. Death is 1, vault / mantle / ledge is 2. A saved graph records
 /// the revision it already has, so a later action is added once and a state the
 /// user deleted is not put back when the next action lands.
-constexpr int kActionsRev = 1;
+constexpr int kActionsRev = 2;
 
 /// One authored pose. Degrees, hip height in rig units, rootOffset.x/z a visual
 /// lean only (y is unused; hipY is the root height).
@@ -42,7 +42,7 @@ struct DeadShape {
 void Bake(std::vector<HumanoidLibrary::Entry>& out);
 /// Append this revision's states, params and Any-State transitions. Safe to
 /// call again: a state that already exists is left as the user edited it.
-void AddStates(AnimStateMachine& sm, const Character* body);
+void AddStates(AnimStateMachine& sm, const Character* body, bool force = false);
 /// Stance-timed blends for action transitions (called from ApplyStanceTimes).
 void ApplyTimes(AnimStateMachine& sm);
 /// Saved default graphs (Idle/Walk/Run/Jump) gain any action whose revision is
@@ -75,6 +75,19 @@ void RequestRevive(GameObject* go);
 void ReviveAnim(GameObject* go);
 /// HealthStat::IsDead when that component is present, otherwise the `dead` param.
 bool IsDead(GameObject* go);
+
+/// Probe in front of the body. The controller flags default off; these still run.
+bool RequestVault(GameObject* go);
+bool RequestMantle(GameObject* go);
+bool RequestLedgeGrab(GameObject* go);
+bool RequestClimbUp(GameObject* go);
+void RequestLetGo(GameObject* go);
+bool IsHanging(GameObject* go);
+/// Animator `hanging` only. The 2.5D platformer already moves the body.
+void SetHanging(GameObject* go, bool on);
+void SetShimmy(GameObject* go, float v);
+/// One probe along `fwd`. A false flag skips that kind. No-op while hanging or already moving.
+bool TryTraverse(GameObject* go, const Vec3& fwd, bool airborne, bool vault, bool mantle, bool ledge);
 
 /// True once the body is in DeadHold (or Death has played out).
 bool DeathPoseSettled(GameObject* go);

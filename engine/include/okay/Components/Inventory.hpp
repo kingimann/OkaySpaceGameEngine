@@ -29,6 +29,8 @@ public:
     /// Carry the contents into the next scene loaded with load_scene: the object with
     /// the same name there (usually the player) gets them.
     bool keepOnSceneLoad = false;
+    /// Runtime: weight worn in a sibling Equipment, counted toward weightLimit (not saved).
+    float wornWeight = 0.0f;
 
     /// Slots may be FIXED-POSITION: an empty stack (item == "" or count <= 0) is a
     /// reusable hole, so the UI can drag an item to any slot and leave a gap behind.
@@ -53,7 +55,7 @@ public:
 
     /// Weight carried: each stack's count × its item definition's weight.
     float TotalWeight() const {
-        float w = 0.0f;
+        float w = wornWeight;
         for (const auto& s : slots)
             if (!Empty(s)) if (const ItemDefinition* d = ItemDatabase::Get().Find(s.item)) w += d->weight * s.count;
         return w;

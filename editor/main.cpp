@@ -27902,6 +27902,19 @@ void DrawInspector(EditorState& ed) {
                 if (changed) { HumanoidLibrary::ApplyStanceTimes(*sm); ed.dirty = true; }
                 ImGui::TreePop();
             }
+            if (sm->layer == 0 && ImGui::TreeNode("Gait crossfades##asm")) {
+                GaitCrossfades& t = sm->crossfades;
+                bool changed = ImGui::DragFloat("Idle <-> walk##xf", &t.idleWalk, 0.01f, 0.0f, 2.0f, "%.2fs");
+                changed |= ImGui::DragFloat("Walk <-> run##xf", &t.walkRun, 0.01f, 0.0f, 2.0f, "%.2fs");
+                changed |= ImGui::DragFloat("Ground -> air##xf", &t.groundAir, 0.01f, 0.0f, 2.0f, "%.2fs");
+                changed |= ImGui::DragFloat("Air -> ground##xf", &t.airGround, 0.01f, 0.0f, 2.0f, "%.2fs");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("How long idle, walk and run crossfade, and how long a jump or landing\n"
+                                      "takes. Either direction can interrupt the blend. Stance changes stay\n"
+                                      "on the times above. 0 = instant.");
+                if (changed) { HumanoidLibrary::ApplyCrossfades(*sm); ed.dirty = true; }
+                ImGui::TreePop();
+            }
             static const char* kCondNames[] = {"On Clip End", "Float >", "Float <", "Bool true", "Bool false", "Trigger"};
             int delState = -1;
             for (int si = 0; si < (int)sm->states.size(); ++si) {

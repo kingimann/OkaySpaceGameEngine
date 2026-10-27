@@ -138,6 +138,9 @@ public:
     /// How long this body's stance changes take; the movement controllers ease the
     /// body, its collider and the camera over them. Serialized.
     StanceTimes stanceTimes;
+    /// How long idle / walk / run and ground / air crossfades take. Serialized
+    /// when it differs from the defaults. Editing it retimes those pairs.
+    GaitCrossfades crossfades;
 
     /// Called with the state's name when the machine enters / leaves a state.
     std::function<void(const std::string&)> onStateEnter, onStateExit;

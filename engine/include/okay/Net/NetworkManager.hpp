@@ -5,6 +5,7 @@
 #include "okay/Net/AntiCheat.hpp"
 #include "okay/Net/ClockCheck.hpp"
 #include "okay/Net/PlayerInput.hpp"
+#include "okay/Net/NetDelta.hpp"
 #include "okay/Net/NetChannels.hpp"
 #include "okay/Physics/Physics3D.hpp"   // RaycastHit3D (RewindRaycast)
 #include <map>
@@ -486,6 +487,10 @@ public:
     /// True if a transform is currently registered under `id`.
     bool HasSync(const std::string& id) const { return m_syncObjs.count(id) != 0; }
     float syncRate = 15.0f;   ///< networked-transform broadcasts per second (0 = every frame)
+    /// Owned transforms go out as a quantized binary delta from the last
+    /// snapshot the receiver acknowledged. The text "__xform" path stays for
+    /// an explicit Send() and for when this is off.
+    bool binarySnapshots = true;
 
     // ---- Reliable messaging (guaranteed delivery + de-dup over UDP) ----
     /// Like Send(), but resent until the other end acknowledges it and de-duped
@@ -683,6 +688,10 @@ private:
         std::uint32_t relSeq = 0;   // next outgoing sequence to this client
         std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>> relOut; // unacked
         SeqWindow relSeen;          // delivered seqs (de-dup)
+        // Binary snapshots: what we have acked to this client, and what it has
+        // acked to us. Independent of relSeq and of the avatar snapshot.
+        net::SnapOut snapOut;
+        net::SnapIn snapIn;
         // Per-channel reliable-ordered link with this client, plus the filter
         // for unreliable-sequenced packets it sends. Independent of relSeq.
         net::ChannelEnd pipes;
@@ -856,6 +865,13 @@ private:
     std::uint32_t m_relSeq = 0;
     std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>> m_relOut;
     SeqWindow m_relSeen;
+    // Client: binary snapshots to and from the server. Server uses the per-client
+    // links above; m_relaySnap holds poses a client owns so the host can fold
+    // them into everyone else's snapshot.
+    net::SnapOut m_snapUp;
+    net::SnapIn m_snapDown;
+    struct RelayPose { net::QPose pose; std::string extra; std::string room; };
+    std::unordered_map<std::string, RelayPose> m_relaySnap;
     // Client: ordered and sequenced link to the server. Server-originated
     // sequenced numbers live in m_seqOrigin so every client sees one sequence
     // per channel. Stop() clears both. Not the movement or hit-claim stream.
@@ -1003,6 +1019,15 @@ private:
     float m_syncTimer = 0.0f;
     std::uint32_t m_spawnCounter = 0;     // unique-id source for SpawnOwned
     void SyncTick(float dt);
+    void ApplyRemoteXform(const std::string& id, const Vec3& p, const Quat& q, double tick,
+                          const std::string& extra, bool hasExtra);
+    void BroadcastBinarySnapshots(double tick);
+    void SendSnap(net::SnapOut& out, const net::DeltaBase& current, double tick,
+                  const net::Endpoint& to, std::uint64_t cookie);
+    void NoteSnapAck(net::SnapOut& out, std::uint32_t id);
+    /// `sender` is set when a client uploaded the snapshot. Null when the server sent it.
+    void OnSnapDelta(net::SnapIn& in, const std::uint8_t* data, std::size_t size,
+                     const net::Endpoint& ackTo, Client* sender);
     // The interpolation buffer (fixed tick).
     static constexpr double kInterpTicks = 3.0;          // how far in the past synced objects are shown, at least
     static constexpr double kInterpRecover = 0.02;       // ticks per tick the need eases back once the network allows

@@ -109,6 +109,7 @@ int main() {
         mk("mixamorig:Head", chest, {0, 0.25f, 0});
         auto* fb = root->AddComponent<FullBodyIK>();
         fb->blendSpeed = 0.0f;   // goals apply at once (easing is tested below)
+        for (auto& e : fb->effectors) e.targetBlendTime = 0.0f;
         sc.Start();
         CHECK(fb->bones[FullBodyIK::Hips] == hips->transform);
         CHECK(fb->bones[FullBodyIK::Chest] == chest->transform);

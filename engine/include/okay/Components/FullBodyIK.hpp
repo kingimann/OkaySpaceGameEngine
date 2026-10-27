@@ -207,6 +207,8 @@ public:
             // A broken goal (NaN, infinity) sits this frame out; the limb keeps its animated pose.
             const Vec3 raw = Goal(e);
             m_goalOk[l] = Finite(raw);
+            // A goal that isn't in play starts fresh when it comes in (the weight fade eases that).
+            if (!e.enabled && m_effW[l] <= 1e-4f) m_blend[l].Reset();
             const Vec3 g = m_goalOk[l] ? m_blend[l].Step(raw, (std::uintptr_t)e.target, e.targetBlendTime, dt, CharacterSpace()) : raw;
             if (!m_goalOk[l]) continue;
             if (!m_goalValid[l] || gk >= 1.0f || m_effW[l] <= 1e-4f) m_goal[l] = g;

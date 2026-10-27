@@ -12,8 +12,10 @@
 //   * SyncVar writes to "<netId>.<name>" / "<netId>/<name>" keys of an object it
 //     doesn't own, and SyncVars past a per-second rate;
 //   * NetworkSync objects moving faster than maxSyncSpeed (speed hacks).
-// Each refusal is reported (NetworkManager::SetCheatHandler) and counts as a
-// violation; a peer with too many is kicked.
+//   * moving or writing a scene object nobody owns, unless it is claimable.
+//     That one is refused and logged once, and does not count as a violation.
+// Every other refusal is reported (NetworkManager::SetCheatHandler) and counts
+// as a violation; a peer with too many is kicked.
 //
 // It is a small layer NetworkManager calls from its receive path, so the wire
 // format and the behaviour with anti-cheat off are exactly as before.
@@ -23,6 +25,7 @@
 #include <functional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace okay {
@@ -38,6 +41,12 @@ struct AntiCheatSettings {
     bool  enabled = false;
     /// Prefab paths clients may __spawn / SpawnOwned. Empty = clients may spawn nothing.
     std::vector<std::string> spawnAllowlist;
+    /// Spawns a client may make per second (0 = unlimited).
+    int   maxSpawnsPerSecond = 5;
+    /// SpawnOwned objects a client may have at once (0 = unlimited).
+    int   maxLiveSpawnsPerPeer = 50;
+    /// How far from the sender a spawn may be placed (0 = anywhere).
+    float spawnRadius = 0.0f;
     /// Fastest a client's NetworkSync object may move, units / second (0 = no check).
     float maxSyncSpeed = 0.0f;
     /// SyncVar writes a client may make per second (0 = unlimited).
@@ -50,6 +59,9 @@ struct AntiCheatSettings {
     /// client writing a key that starts with one is refused (forged syncvar)
     /// and told the server's value. "srv." keys are always server-only.
     std::vector<std::string> serverVars;
+    /// When any is set, clients may only write SyncVar keys starting with one
+    /// of these ("player.", "chat."); every other key is the server's.
+    std::vector<std::string> clientVars;
     /// Calls a client may make per second to any one RPC (0 = unlimited). A
     /// NetValidator with its own calls/s for that RPC takes its place.
     int   maxRpcsPerSecond = 0;
@@ -67,8 +79,12 @@ struct AntiCheatSettings {
     /// joining client's token must be a valid ticket (okay/Net/SessionTicket.hpp)
     /// and the peer is bound to its account id. "" = no ticket check.
     std::string ticketKey;
-    /// This server's id as tickets name it ("aud"); "" = accept any.
+    /// This server's id as tickets name it ("aud"). Required with a ticketKey:
+    /// without one the server refuses joins (a dedicated server won't start).
     std::string ticketAudience;
+    /// Accept tickets issued for any server (aud "*"). Off: a ticket must name
+    /// this server.
+    bool ticketAnyAudience = false;
     /// How far a client's game clock may run off the server's, as a fraction
     /// (0.05 = 5%; 0 = no check). The server asks each client for its clock
     /// about once a second; a client that runs too fast or slow for three
@@ -97,16 +113,20 @@ struct AntiCheatSettings {
     /// Refuse client hit claims when the server can't check where the shooter
     /// is: no maxMoveSpeed, and the server doesn't move the shooter's pawn.
     bool  hitsNeedMoveCheck = true;
+    /// The most round trip (seconds) a shot's lag compensation and target
+    /// slack allow for, however slow a client makes its pings look.
+    float maxRewindRtt = 0.3f;
 
     /// .okayac text: one "key value" per line, '#' comments:
     ///   enabled true | spawn <prefab path> (repeatable) | maxSyncSpeed 12
     ///   maxSyncVarsPerSecond 20 | kickAfterViolations 5 | ownerOnlySyncVars true
-    ///   requireEncryption true | ticketKey <base64url> | ticketAudience <server id>
+    ///   requireEncryption true | ticketKey <base64url> | ticketAudience <server id> | ticketAnyAudience false
     ///   maxRpcsPerSecond 30 | maxRpcBytes 4096 | maxClockDrift 0.05
-    ///   serverVar <key prefix> (repeatable)
+    ///   serverVar <key prefix> (repeatable) | clientVar <key prefix> (repeatable)
+    ///   maxSpawnsPerSecond 5 | maxLiveSpawnsPerPeer 50 | spawnRadius 0
     ///   hitOriginTolerance 2 | hitTolerance 1 | maxHitRange 50 | hitDamage 10 | hitLineOfSight true
     ///   weapon <name> (repeatable)
-    ///   hitsNeedMoveCheck true
+    ///   hitsNeedMoveCheck true | maxRewindRtt 0.3
     static bool Parse(const std::string& text, AntiCheatSettings& out, std::string* error = nullptr);
     bool LoadFile(const std::string& path, std::string* error = nullptr);
     std::string ToText() const;
@@ -124,6 +144,7 @@ enum class CheatKind {
     RpcFlood,          ///< one RPC called more often than maxRpcsPerSecond
     ClockDrift,        ///< the client's game clock runs off the server's (a speed hack), or it won't say
     HitRejected,       ///< a __hit claim the server's own view doesn't back (detail says why)
+    UnclaimedObject,   ///< an existing object nobody owns and players can't claim (refused, not a kick)
 };
 const char* CheatKindName(CheatKind k);
 
@@ -163,6 +184,8 @@ public:
     /// Objects the server itself drives (Authority::Host on the server): clients
     /// may never send their transform / despawn them.
     std::function<bool(const std::string& netId)> serverOwns;
+    /// Where a peer is on the server (for spawnRadius); false if not known.
+    std::function<bool(std::uint32_t peer, Vec3& at)> positionOf;
     /// Networked objects that exist on the server. Transforms for any other id
     /// are dropped quietly (nobody could apply them) and claim nothing.
     std::function<bool(const std::string& netId)> exists;
@@ -185,9 +208,22 @@ public:
     /// Called when a peer is forgotten (left, kicked, timed out), so per-peer
     /// state kept elsewhere (NetValidator) can go too.
     std::function<void(std::uint32_t peer)> onForgetPeer;
+    /// A leaving peer's state kept elsewhere (NetValidator budgets) is parked
+    /// under `ident` / taken back by the peer that rejoins as `ident`.
+    std::function<void(std::uint32_t peer, const std::string& ident)> onParkPeer, onRestorePeer;
+    /// A peer is leaving (before ForgetPeer): keep its violation count, and its
+    /// budgets elsewhere (onParkPeer), under `ident` (its account, else its
+    /// address) for kParkSeconds, so leaving and rejoining resets nothing.
+    void ParkPeer(std::uint32_t peer, const std::string& ident);
+    /// A peer joined as `ident`: it takes back what that ident left behind.
+    void RestorePeer(std::uint32_t peer, const std::string& ident);
+    static constexpr double kParkSeconds = 300.0;
     /// Who installed the handlers above (an AntiCheatConfig's token; 0 = code).
     /// Lets a component remove only what it put there.
     std::uint64_t installer = 0;
+    /// Non-empty: the rules didn't load (an AntiCheatConfig's .okayac), so the
+    /// server refuses every join rather than run without them. Says why.
+    std::string configError;
     /// Distinct RPC names counted per peer per second; more share one count.
     static constexpr std::size_t kMaxRpcNamesPerPeer = 64;
 
@@ -199,8 +235,11 @@ public:
     void SetOwner(const std::string& netId, std::uint32_t peer) { m_owner[netId] = peer; }
     /// Refusals from `peer` in the current minute.
     int Violations(std::uint32_t peer) const;
-    /// Total refusals since the server started (all peers).
+    /// Total refusals since the server started (all peers), including writes to
+    /// objects that aren't claimable (those are not violations).
     int TotalReports() const { return m_total; }
+    /// Writes refused only because an existing object isn't claimable.
+    int UnclaimedWrites() const { return m_unclaimed; }
     /// Objects whose movement is being tracked (for tests / stats).
     std::size_t TrackedObjects() const { return m_track.size(); }
     /// Advance the anti-cheat clock (a double: it stays exact for months of
@@ -222,6 +261,7 @@ private:
         int violations = 0;
         float violationTimer = 0.0f;
         int syncVars = 0;
+        int spawns = 0;   // this second
         float syncVarTimer = 0.0f;
         std::unordered_map<std::string, int> rpcCalls;   // this second, per RPC name
     };
@@ -235,10 +275,19 @@ private:
     std::unordered_map<std::uint32_t, PeerInfo> m_peers;
     std::unordered_map<std::string, std::uint32_t> m_owner;   // netId -> owning peer
     std::unordered_map<std::string, Track> m_track;           // netId -> last accepted position
+    struct Parked { int violations = 0; float violationTimer = 0.0f; double at = 0.0; };
+    std::unordered_map<std::string, Parked> m_parked;         // ident -> what a peer that left had
     int m_total = 0;
+    int m_unclaimed = 0;
     double m_clock = 0.0;
+    std::unordered_set<std::string> m_unclaimedLogged;   // object ids already named this session
 
     bool Refuse(std::uint32_t peer, CheatKind k, const std::string& detail);
+    /// An existing object nobody owns, that players may not claim. Not a
+    /// server-driven object and not another peer's.
+    bool UnownedUnclaimable(const std::string& netId) const;
+    /// Refuse that write, log the object once, report it, and do not count a violation.
+    bool NoteUnclaimed(std::uint32_t peer, const std::string& netId);
     /// True if `peer` may drive `netId` (claiming it if nobody has).
     bool MayDrive(std::uint32_t peer, const std::string& netId, bool claim);
     bool SpawnAllowed(const std::string& path) const;

@@ -69,6 +69,12 @@ public:
     static bool AnyKey();
     /// True only on the frame a new key was first pressed (Input.anyKeyDown).
     static bool AnyKeyDown();
+    /// The key first pressed this frame (the lowest code if several), or 0. For
+    /// "press a key to bind" fields.
+    static char FirstKeyDown();
+    /// A key code's display name, the inverse of KeyFromName: "Space", "Enter",
+    /// "Shift", "Up", "A", "7"...
+    static std::string KeyName(char key);
 
     // ---- Mouse (driven by FeedMouse from the windowed runtime) ----------
     /// Cursor position in pixels (origin top-left of the window).
@@ -112,8 +118,8 @@ public:
     static const std::string& TypedText();
     /// Append OS-decoded typed text for this frame (windowed runtime / tests).
     static void FeedText(const std::string& utf8);
-    /// Clear the per-frame typed text AND mouse-wheel delta — call once at the
-    /// start of each frame, before polling events.
+    /// Clear the per-frame typed text and mouse-wheel delta, and drop lifted touches —
+    /// call once at the start of each frame, before polling events.
     static void ClearTypedText();
 
     // ---- Mouse wheel (driven by FeedMouseWheel from the windowed runtime) -----
@@ -121,6 +127,31 @@ public:
     static float MouseWheel();
     /// Add to this frame's wheel delta (from the OS scroll event).
     static void FeedMouseWheel(float delta);
+
+    // ---- Touch (driven by FeedTouch from the windowed runtime's finger events) ----
+    /// One finger on the screen. `position` and `start` are in the same pixels as
+    /// MousePosition(); `delta` is this frame's movement.
+    struct Touch {
+        enum class Phase { Began, Moved, Stationary, Ended };
+        long long id = 0;
+        Vec2  position;
+        Vec2  start;
+        Vec2  delta;
+        Phase phase = Phase::Began;
+    };
+    /// Fingers touching the screen this frame (a lifted finger stays one frame, Ended).
+    static int TouchCount();
+    /// The i-th touch, 0 <= i < TouchCount().
+    static const Touch& GetTouch(int index);
+    /// True while the pointer is driven by a finger (a touch is down or just ended).
+    /// The OS also turns the first finger into the left mouse button.
+    static bool PointerIsTouch();
+    /// True once a finger has moved more than `kTouchDragPixels` from where it went
+    /// down: it is a drag (scrolling), not a tap, so buttons under it don't fire.
+    static bool TouchDragging();
+    static constexpr float kTouchDragPixels = 10.0f;
+    /// Report a finger event: `state` 0 = down, 1 = moved, 2 = up.
+    static void FeedTouch(long long id, int state, const Vec2& position);
 
     // ---- UI capture (modal panels: inventories, menus) ----
     /// True while a modal UI (an open inventory, a menu) owns the pointer — player
@@ -150,6 +181,7 @@ private:
 
     static std::string s_typedText;
     static float       s_mouseWheel;
+    static std::vector<Touch> s_touches;
     static bool        s_uiCaptured;
 };
 

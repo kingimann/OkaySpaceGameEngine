@@ -174,14 +174,15 @@ int main() {
                 std::this_thread::sleep_for(std::chrono::milliseconds(2));
             }
         };
-        for (int i = 0; i < 300 && !(good.nm->Joined() && plain.nm->JoinRejected() && forged.nm->JoinRejected() &&
+        for (int i = 0; i < 300 && !(good.nm->Joined() && plain.nm->Joined() && forged.nm->JoinRejected() &&
                                      expired.nm->JoinRejected()); ++i) pump(1);
         CHECK(good.nm->Joined());
         CHECK(good.nm->Encrypted());
         CHECK(good.nm->ReplayProtected());
         CHECK(good.nm->LocalUserId() == "user-a");                 // bound to the ticket's account
         CHECK(srv->PeerUserId(good.nm->LocalId()) == "user-a");
-        CHECK(plain.nm->JoinRejected() && !plain.nm->Joined());     // no encryption: refused
+        // No encryption: its plaintext Join is refused, so it turns encryption on and joins sealed.
+        CHECK(plain.nm->Joined() && plain.nm->Encrypted() && plain.nm->encryption);
         CHECK(forged.nm->JoinRejected() && !forged.nm->Joined());   // signed by someone else
         CHECK(expired.nm->JoinRejected() && !expired.nm->Joined());
         // Sequenced, encrypted traffic still flows both ways.

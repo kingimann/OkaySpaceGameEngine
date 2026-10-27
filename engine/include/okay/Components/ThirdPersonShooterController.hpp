@@ -5,16 +5,19 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
+#include "okay/Components/MoveSpeed.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
 #include "okay/Components/ControllerFeel.hpp"
+#include "okay/Components/StanceControl.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Input/Cursor.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Components/StepUp.hpp"
 #include <cmath>
 
 namespace okay {
@@ -43,6 +46,7 @@ public:
     bool  driveAnimation = true;
     bool  footIK = false;                // plant the Character's feet on the ground
     float acceleration = 60.0f, deceleration = 55.0f, airControl = 0.4f;
+    float stepOffset = 0.35f;            // max stair / curb height (0 = no step-up)
     float coyoteTime = 0.12f, jumpBufferTime = 0.12f;
     float turnSpeed = 18.0f;             // body snaps to the aim direction
 
@@ -93,9 +97,16 @@ public:
 
     float yaw = 0.0f, pitch = 12.0f;
 
+    /// Crouch (Ctrl) and prone (Z): a smaller, slower body that eases between
+    /// stances, the camera following it down; SetStance from scripts. No jumping
+    /// unless standing.
+    StanceControl stanceControl;
+    void SetStance(int s) { stanceControl.Set(s); }
+
     void Start() override {
         if (lockCursor) Cursor::Capture(true);
         if (footIK) AttachCharacterFootIK(gameObject);
+        stanceControl.Start(gameObject);
     }
 
     void Update(float dt) override {
@@ -141,8 +152,11 @@ public:
         float len = std::sqrt(dir.x * dir.x + dir.z * dir.z);
         bool moving = len > 0.01f;
         if (moving) { dir.x /= len; dir.z /= len; }
-        bool running = sprintKey && Input::GetKey(sprintKey) && moving && !m_aiming;
-        float speed = (running ? runSpeed : walkSpeed) * (m_aiming ? 0.6f : 1.0f);
+        if (!uiBlocked) stanceControl.ReadKeys();
+        stanceControl.Step(gameObject, dt);
+        const bool standing = stanceControl.Stance() == 0;
+        bool running = standing && sprintKey && Input::GetKey(sprintKey) && moving && !m_aiming;
+        float speed = stanceControl.Speed(running ? runSpeed : walkSpeed) * (m_aiming ? 0.6f : 1.0f) * MoveSpeedScale(gameObject);
 
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
         m_groundContact = Mathf::Max(0.0f, m_groundContact - dt);
@@ -150,7 +164,10 @@ public:
         // rigidbody's terrain-grounded flag as ground — otherwise jumps never refill on
         // terrain and only the first jump ever works (matches First/ThirdPerson controllers).
         bool onTerrain = rb && rb->groundedOnTerrain;
-        bool grounded = (rb && Mathf::Abs(rb->velocity.y) < 0.5f) || m_groundContact > 0.0f || onTerrain;
+        // Contact or terrain. |vy| < 0.5 is not ground once we've left it: the
+        // apex of a jump passes through that band and used to read as landed.
+        bool contact = m_groundContact > 0.0f || onTerrain;
+        bool grounded = rb ? ResolveGrounded(m_ground, contact, rb->velocity.y) : contact;
         // Jump count refills only on a real ground contact (no endless jumping at the
         // apex); maxJumps enables double jumps.
         if (m_groundContact > 0.0f || onTerrain) m_jumpsUsed = 0;
@@ -168,17 +185,24 @@ public:
             float dl = std::sqrt(dv.x * dv.x + dv.z * dv.z), step = rate * dt;
             if (dl > 1e-5f && dl > step) { dv.x = dv.x / dl * step; dv.z = dv.z / dl * step; }
             rb->velocity.x = cur.x + dv.x; rb->velocity.z = cur.z + dv.z;
-            if (canJump && m_jumpBuf > 0.0f) {
+            if (canJump && standing && m_jumpBuf > 0.0f) {
                 bool firstOk = (m_jumpsUsed == 0) && (grounded || m_coyote > 0.0f);
                 bool extraOk = (m_jumpsUsed >= 1) && (m_jumpsUsed < Mathf::Max(1, maxJumps));
                 if (firstOk || extraOk) {
                     rb->velocity.y = jumpForce; ++m_jumpsUsed;
-                    m_jumpBuf = 0.0f; m_coyote = 0.0f; m_groundContact = 0.0f; airborne = true; jumped = true;
+                    m_jumpBuf = 0.0f; m_coyote = 0.0f; m_groundContact = 0.0f;
+                    m_ground.left = true; m_ground.fell = false;
+                    grounded = false; airborne = true; jumped = true;
                 }
             }
         } else if (moving) {
             transform->Translate(dir * (speed * dt));
         }
+        // Stairs: a grounded body blocked by a low face steps up onto it
+        // instead of stopping (stepOffset = max step height). The camera
+        // already orbits the smoothed shoulder pivot, so the lift eases.
+        if (rb && grounded && moving && gameObject && gameObject->scene())
+            TryStepUp(*gameObject->scene(), gameObject, rb, dir, grounded, moving, stepOffset);
 
         // Body always faces the camera/aim direction (shooter).
         Quat want = Quat::Euler(0, yaw, 0);
@@ -204,6 +228,9 @@ public:
                 lo.onGround  = !rb || m_groundContact > 0.0f || onTerrain;
                 lo.jumped    = jumped;
                 lo.sprint    = running;
+                lo.crouch    = stanceControl.Stance() == 1;
+                lo.prone     = stanceControl.Stance() == 2;
+                lo.stance    = stanceControl.Level();
                 lo.walkSpeed = walkSpeed;
                 lo.dt = dt;
                 ch->DriveLocomotion(lo);
@@ -227,8 +254,11 @@ public:
 
         float dist  = Mathf::Lerp(distance, aimDistance, m_aim);
         float shldr = Mathf::Lerp(shoulderOffset, aimShoulder, m_aim);
-        // The pivot: the shoulder height above the player, smoothed (see pivotDampingXZ).
-        Vec3 head = transform->Position(); head.y += cameraHeight;
+        // The pivot: the shoulder height above the player (lower as the body
+        // crouches / goes prone), smoothed (see pivotDampingXZ).
+        const StanceControl& st = stanceControl;
+        Vec3 head = transform->Position();
+        head.y += cameraHeight * StanceValue(st.Level(), 1.0f, st.crouchHeight, st.proneHeight);
         const Vec3 target = m_pivot.Step(head, pivotDampingXZ, pivotDampingY, maxPivotLag, dt);
 
         float pr = pitch * Mathf::Deg2Rad;
@@ -293,6 +323,7 @@ private:
     Camera* m_claimedCam = nullptr; // the main camera last checked for a competing follow
     float m_lean = 0.0f;            // eased lean (-1..+1)
     int   m_jumpsUsed = 0;         // jumps since last grounded (for double-jump)
+    GroundLatch m_ground;         // apex of a jump is not ground
     float m_fireCooldown = 0.0f;
     float m_groundContact = 0.0f, m_coyote = 0.0f, m_jumpBuf = 0.0f;
 };

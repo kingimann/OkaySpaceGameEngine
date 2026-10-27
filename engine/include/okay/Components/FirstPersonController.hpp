@@ -7,6 +7,7 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/PlayerCollision.hpp"
+#include "okay/Components/MoveSpeed.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
@@ -102,6 +103,9 @@ public:
     const StanceBody& stanceBody() const { return m_body; }
     /// Begin in `s` (a scene saved while crouched / prone loads that way, so a
     /// player saved under low cover isn't stood up inside it). Applied in Start().
+    /// Ask for a stance from a script / an NPC / a cutscene (as if pressed): kept
+    /// until changed, so a stand-up blocked by a low ceiling happens once there's room.
+    void SetStance(Stance s) { m_wantStance = m_padWant = s; }
     void RestoreStance(Stance s) { m_stance = m_wantStance = m_padWant = m_prevStance = s; m_stanceLevel = (float)s; }
     /// The body's stance as it moves between stances: 0 stand .. 1 crouch .. 2 prone.
     float stanceLevel() const { return m_stanceLevel; }
@@ -285,25 +289,27 @@ public:
         bool running = m_stance == Stance::Stand && moving && IsRunHeld(in);
         // The speed cap follows the body from one stance's to the next.
         float speed = StanceValue(m_stanceLevel, running ? runSpeed : walkSpeed, crouchSpeed, proneSpeed);
-        speed *= Inventory::SpeedFactorOf(gameObject);   // over-encumbered (opt-in on the Inventory)
+        speed *= MoveSpeedScale(gameObject);   // heavy load / over-encumbered (see MoveSpeed.hpp)
 
         // Ease the child camera to the stance's eye height.
         ApplyEyeHeight(dt);
 
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
 
-        // Grounded: resting (low vertical speed) — reliable across any ground setup —
-        // OR a fresh ground contact. Coyote time + jump buffer make jumping forgiving.
+        // Grounded from a real contact (or terrain). Near-zero vertical speed still
+        // counts until the body has left the ground — a resting body whose contact
+        // callbacks have gone quiet can jump — but not at the apex of a jump, which
+        // used to read as ground (coyote, accel, the animator, the eye).
         m_groundContact = Mathf::Max(0.0f, m_groundContact - dt);
         // Heightmap terrain has no collider, so it never fires collision callbacks;
         // Physics3D flags resting-on-terrain on the body instead. Treat it as a real
         // ground contact so the jump counter refills (otherwise you get exactly one
         // jump on terrain, then never again).
         bool terrainGround = rb && rb->groundedOnTerrain;
-        bool grounded = (rb && Mathf::Abs(rb->velocity.y) < 0.5f) || m_groundContact > 0.0f || terrainGround;
-        // The jump COUNT is what stops endless jumping: it refills only on a real
-        // ground contact, so the brief zero-velocity at the jump apex can't hand you
-        // another jump. maxJumps allows double (or more) jumps.
+        bool contact = m_groundContact > 0.0f || terrainGround;
+        bool grounded = rb ? ResolveGrounded(m_ground, contact, rb->velocity.y) : contact;
+        // The jump COUNT refills only on a real ground contact. maxJumps allows
+        // double (or more) jumps.
         if (m_groundContact > 0.0f || terrainGround) m_jumpsUsed = 0;
         m_grounded = grounded;
         // Slide: crouching while sprinting on the ground launches a slide that
@@ -360,7 +366,8 @@ public:
                     m_jumped = true;
                     if (onJump) onJump();
                     m_jumpBuf = 0.0f; m_coyote = 0.0f; m_groundContact = 0.0f;
-                    grounded = false; airborne = true;
+                    m_ground.left = true; m_ground.fell = false;
+                    grounded = false; airborne = true; m_grounded = false;
                 }
             }
         } else if (moving) {
@@ -458,8 +465,9 @@ public:
     }
 
     /// After physics, the eye. A lift or drop of the body while on the ground (a
-    /// step, a curb, a moving platform) is eased out (eyeStepSmoothing) instead of
-    /// popping; then the camera's local position is put together once: eye
+    /// step or a curb) is eased out (eyeStepSmoothing) instead of popping. Motion
+    /// taken from a ridden platform is not eased — the eye stays locked to the
+    /// body on a lift. Then the camera's local position is put together once: eye
     /// height + bob - landing dip + that step, and the lean's peek + the sway.
     /// With Look Smoothing on, the view (body yaw, camera pitch) shows the eased
     /// angles; movement and the input sent to a server keep the exact ones.
@@ -469,8 +477,12 @@ public:
         const float y = transform->Position().y;
         if (m_haveBodyY) {
             // A correction from the host (online prediction) is eased out like a
-            // step, in the air too: it isn't the player's own motion.
-            const float dy = y - m_lastBodyY - m_correctionY;
+            // step, in the air too: it isn't the player's own motion. Motion
+            // inherited from a ridden platform is not a step either — easing it
+            // left the eye drifting above and below a fast lift.
+            const float rideY = m_platRide.applied.y;
+            m_platRide.applied = Vec3{0.0f, 0.0f, 0.0f};
+            const float dy = y - m_lastBodyY - m_correctionY - rideY;
             if (std::fabs(dy) > 1.0f) m_stepOffsetY = 0.0f;   // a teleport or respawn: no glide
             else {
                 if (eyeStepSmoothing > 0.0f) m_stepOffsetY -= m_correctionY;
@@ -502,6 +514,7 @@ public:
 
 private:
     PlatformRide m_platRide;   // moving-platform tracking
+    GroundLatch  m_ground;     // apex of a jump is not ground
 
     Vec3 m_spawn{0, 0, 0}; bool m_haveSpawn = false;   // fall-reset home position
 

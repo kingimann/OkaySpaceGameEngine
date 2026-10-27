@@ -277,7 +277,8 @@ compensation (anti-cheat plan phase 5), which build on it.
 By default each client moves its own player and sends the position, which the
 host can only speed-check. Tick **Authoritative movement** on the host's Network
 Manager (`authoritativeMovement`, `net_authoritative(1)`) to have the host move
-players itself:
+players itself. A dedicated server can do the same with `--authoritative` or
+`authoritative = true` in server.cfg, without editing the scene:
 
 - Each client names the object its inputs drive: its own SpawnOwned player
   (`SetPawn(obj)`, `net_set_pawn("Player")`). The object needs a controller that
@@ -320,8 +321,10 @@ claim against where everything was *then*: the target on the shot's line,
 nothing solid in between. So a shot at what you saw counts, even though the
 target has moved on by the time the claim arrives; one aimed at where the
 target is now (but wasn't seen) doesn't. The host rewinds no further than
-200 ms plus that player's round trip, so claiming to have seen something long
-ago doesn't work. Game code on the host can do the same with
+200 ms plus that player's round trip (the quickest of its last 8 pings, at
+most the anti-cheat's `maxRewindRtt`, 0.3 s), so claiming to have seen
+something long ago, or answering pings late, doesn't work. A claim without
+the moment it saw (an older client) is refused. Game code on the host can do the same with
 `NetworkManager::RewindRaycast(origin, direction, maxDistance, viewTick)`.
 
 Without a fixed tick, claims are checked against where things are now, with
@@ -337,6 +340,7 @@ The server decides; clients only ask.
 | Drop a player's custom messages beyond N per second | `net_rate_limit(N)` | `--rate-limit N` |
 | Kick after N rejected moves in a minute | (`kickAfterViolations`) | `--kick-after N` |
 | Move a player legitimately (respawn, portal) | `net_teleport(id, x, y[, z])` | |
+| Server moves players from their inputs | `net_authoritative(1)` | `--authoritative` (or `authoritative = true` in server.cfg) |
 | Server-owned score everyone sees | `net_set_score(id, n)`, `net_score(id)` | |
 | Turn the anti-cheat on / off, or load its rules | `net_anticheat([on])`, `net_anticheat_load("rules.okayac")` | `--anticheat FILE` (or `anticheat = FILE` in server.cfg) |
 | A player's refusals this minute | `net_violations(id)` | |
@@ -360,7 +364,21 @@ These always hold, whether or not the anti-cheat is on:
   really use: `__spawn`, `__despawn`, `__xform`, `__chat` and `__rpc/…`. In
   particular, only the host starts a match.
 - The server stamps chat with the sender's roster name, so nobody can post as
-  someone else.
+  someone else, and cuts a chat line to 512 bytes.
+- A join is checked for room, then encryption (when the server requires it),
+  then the password, then the sign-in: nothing secret is checked in the
+  clear. One address gets 5 join attempts in 10 s (a refused join or a new
+  key exchange; a wrong password counts two; a join that gets in costs
+  nothing), then it's ignored for 10 s, doubling up to 5 minutes. A dedicated
+  server checks at most 64 new sign-ins at a time and tells the rest it's
+  busy.
+- A client's message is applied and relayed only up to the Network Manager's
+  `maxRelayedBytes` (16 KB), and a client gets four times that in bytes a
+  second. A client's SyncVar has a key of at most 128 bytes and a value of
+  at most 4 KB, a client can create at most 256 keys, and its writes reach
+  its own room only.
+- A spawn must be at a real position, and a player's SpawnOwned objects go
+  when it leaves.
 - A network spawn must name a `.okayprefab` by a path relative to the game
   folder: no `..`, drive letters, UNC paths, device names or links leading
   outside it, and at most 4 MB. Every peer checks the spawns it receives and

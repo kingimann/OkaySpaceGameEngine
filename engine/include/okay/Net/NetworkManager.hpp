@@ -23,6 +23,7 @@ namespace okay {
 
 class Transform;
 class GameObject;
+namespace net { class Packet; }
 
 /// Authoritative-relay multiplayer over UDP. One peer runs as the server; the
 /// rest connect as clients. Each peer owns a "local avatar" Transform whose
@@ -103,10 +104,19 @@ public:
     /// its last good position. Use ServerTeleport() for legit jumps (respawns).
     float maxMoveSpeed = 0.0f;
     /// Server: custom messages a client may send per second (0 = unlimited);
-    /// extra ones are dropped (reliable ones are still acknowledged).
+    /// extra ones are dropped (reliable ones aren't acknowledged, so they come
+    /// again later).
     int maxMessagesPerSecond = 0;
+    /// Server: the longest custom message a client may send to be applied or
+    /// relayed (channel + data, bytes; 0 = any). A client also gets four times
+    /// this in bytes per second. Chat lines are cut to 512 bytes.
+    int maxRelayedBytes = 16 * 1024;
     /// Server: kick a client after this many rejected moves within a minute (0 = never).
     int kickAfterViolations = 0;
+    /// Server, authoritative movement: the shortest time between two presses of
+    /// Jump, Dash or Fire in a player's inputs (seconds; 0 = off). A quicker
+    /// press is dropped, so a client can't press every tick.
+    float minPressInterval = 0.0f;
     /// Server: move a peer's avatar (0 = the host's own) — accepted by the move
     /// check and pushed to that client.
     void ServerTeleport(std::uint32_t id, const Vec3& pos);
@@ -196,6 +206,11 @@ public:
     /// token). Set it before joining; the server can verify it to bind the peer to
     /// a real account. "" = anonymous.
     void SetAuthToken(const std::string& token) { m_authToken = token; }
+    /// Client: what to send the ticket service as "cnf" so the session ticket
+    /// it signs works only for this player's next connection: base64url SHA-256
+    /// of the key StartClient / JoinViaRelay will use (made now). Call it before
+    /// starting the client, then SetAuthToken(ticket). "" without encryption.
+    std::string TicketBinding();
     const std::string& AuthToken() const { return m_authToken; }
     /// Send the auth token to any host. Off (the default): before joining, the
     /// client asks the host whether it checks sign-ins (the server browser's
@@ -219,6 +234,7 @@ public:
     /// so they never stall the network tick. Return 1 to accept (set `outUserId`),
     /// 0 to reject, or -1 while the answer is still pending: the join is ignored
     /// for now and the client's next join retry (every half second) asks again.
+    /// -2 = too busy to check: the join is refused ("server busy, try again").
     /// Takes precedence over SetTokenVerifier when both are set.
     using JoinCheck = std::function<int(const std::string& token, std::string& outUserId)>;
     void SetJoinCheck(JoinCheck c) { m_joinCheck = std::move(c); }
@@ -231,8 +247,9 @@ public:
     /// Encrypt traffic. When true (and the engine is built with libsodium), peers
     /// exchange public keys during the join handshake and all post-handshake
     /// datagrams are sealed with XChaCha20-Poly1305 (confidentiality + integrity).
-    /// Set it on BOTH ends before host/join. If either end lacks encryption support,
-    /// the session falls back to plaintext, so it's safe to leave on. Default off.
+    /// Set it on BOTH ends before host/join. A client without encryption support
+    /// falls back to plaintext; a host without it refuses to start (no quietly
+    /// unencrypted server). Default off.
     bool encryption = false;
     /// True once an encrypted session is established (client: with the server;
     /// server: reported per-peer via PeerEncrypted). Handy for a HUD lock icon.
@@ -302,13 +319,19 @@ public:
     /// then send their inputs, not positions: each tick, a client's InputCmd
     /// (move, look, buttons, numbered, the last 3 repeated against loss) drives
     /// its player on the server through the controller's Simulate (IPlayerSim),
-    /// and the server alone decides where it is. Positions and __xform from the
-    /// client for that player are ignored. Runs on the fixed tick (netTickRate,
-    /// 30 Hz if that's 0). The client predicts its own player: every frame it
-    /// runs the same Simulate with the input it last sent (so an input shows
-    /// within a tick) and this frame's look, and reconciles with the position
-    /// the host acks for each input: tiny differences are ignored, small ones
-    /// eased out, large ones snapped.
+    /// and the server alone decides where it is. The server claims that player
+    /// itself — the first object the client spawns under `sp/<its id>/` that
+    /// carries a movement controller — so a client that never calls SetPawn
+    /// still can't move it by sending positions. Until a pawn is claimed, State
+    /// positions and __xform for those controller objects are dropped. An
+    /// InputCmd may claim a different object under the client's prefix only
+    /// while it has no live pawn. Other owned objects (props, projectiles) are
+    /// unchanged. Runs on the fixed tick (netTickRate, 30 Hz if that's 0). The
+    /// client predicts its own player: every frame it runs the same Simulate
+    /// with the input it last sent (so an input shows within a tick) and this
+    /// frame's look, and reconciles with the position the host acks for each
+    /// input: tiny differences are ignored, small ones eased out, large ones
+    /// snapped.
     bool authoritativeMovement = false;
     /// Client prediction: how fast a correction from the host is eased out (per
     /// second, frame-rate independent), and the size above which it snaps
@@ -605,6 +628,7 @@ private:
         bool any = false;
         std::vector<std::uint64_t> bits = std::vector<std::uint64_t>(kWidth / 64, 0);
         bool Accept(std::uint32_t seq);   // true the first time a seq is seen
+        bool Seen(std::uint32_t seq) const;   // Accept would say no (nothing changes)
         void Clear() { newest = 0; any = false; std::fill(bits.begin(), bits.end(), 0); }
     };
     struct Client {
@@ -615,6 +639,7 @@ private:
         std::string name;
         std::string room;
         std::string userId;   // verified identity (from the token verifier), or ""
+        std::string ident;    // who it is across reconnects: "u:<account>", else "a:<address>"
         net::SecureChannel secure;   // per-client encrypted session (if negotiated)
         std::unordered_map<std::uint32_t, PeerState> sentStates;  // last state sent (delta snapshots)
         bool hasState = false;   // true once this client has reported its position
@@ -623,6 +648,8 @@ private:
         int   violations = 0;    // rejected moves in the current minute
         float violationTimer = 0.0f;
         int   msgCount = 0;      // custom messages this second (rate limit)
+        std::size_t msgBytes = 0;   // and their bytes (4 x maxRelayedBytes a second)
+        int   varsCreated = 0;   // SyncVar keys this client made (at most kMaxClientVars)
         int   hitClaims = 0;     // hit claims this second (the limit without the anti-cheat)
         float msgTimer = 0.0f;
         float joinedAt = 0.0f;   // server clock when it joined
@@ -637,16 +664,26 @@ private:
         std::string pawn;
         std::map<std::uint32_t, std::pair<std::uint32_t, PlayerInput>> inputs;   // seq -> (tick, input)
         std::uint32_t lastInputSeq = 0;
+        float lastPress[3] = {-1e9f, -1e9f, -1e9f};   // server time of its last Jump, Dash, Fire press (minPressInterval)
         PlayerInput lastInput;
         int repeats = 0;            // ticks the last input stood in for a late one
         bool sealedJoin = false;    // joined through the sealed handshake
+        // Without encryption a client is only its address: the cookie its
+        // Welcome gave it proves a Leave / State / Message / SyncVar is its
+        // own. Required once it has sent one (an older client never does).
+        std::uint64_t cookie = 0;
+        bool cookieSeen = false;
         // Anti-cheat clock heartbeat (maxClockDrift): the check, when to ask
         // next, how long since a good answer, and since its last drift report.
         std::shared_ptr<net::ClockCheck> clock;
         float clockTimer = 0.0f, clockQuiet = 0.0f, clockReported = 1e9f;
         // Round trip, from the heartbeat's pings (-1 until measured): how far
         // a target may have moved while this client's shot was on its way.
+        // The quickest of the last few, so answering pings late doesn't
+        // stretch it unless every one is late.
         float rtt = -1.0f;
+        float rttSamples[8] = {};
+        std::uint8_t rttCount = 0, rttNext = 0;
         std::uint64_t pingNonce = 0;
         double pingSentMs = 0.0;
     };
@@ -786,6 +823,13 @@ private:
     // Authoritative movement.
     void ServerMovementTick(float step);   // each fixed tick: run each player one input
     void ClientInputTick();                // each fixed tick: send this tick's input
+    /// Server, authoritative movement: the first controller-carrying object this
+    /// client spawned (`sp/<id>/...`) is its pawn, without waiting for an InputCmd.
+    void NoteSpawnedPawn(const std::string& netId, GameObject* go);
+    /// Server: may this client relay an __xform for `id`? A claimed pawn, or a
+    /// controller object it spawned before claiming one, may not.
+    bool ClientMaySendXform(const Client& from, const std::string& id) const;
+    GameObject* ObjectByNetId(const std::string& id) const;
     static constexpr std::size_t kMaxQueuedInputs = 8;   // the tick budget: older ones are dropped
     static constexpr int kInputRepeats = 3;              // late-input cover before the player stops
     std::string m_pawnId;                  // client: the object this player drives
@@ -796,6 +840,8 @@ private:
     std::vector<std::pair<std::uint32_t, std::pair<std::uint32_t, PlayerInput>>> m_sentInputs;   // seq -> (tick, input), last 4
     bool m_hostAuthoritative = false;      // client: the host announced it
     std::uint32_t m_lastAckedSeq = 0;
+    std::uint64_t m_sessionCookie = 0;
+    bool m_protectionsLogged = false;    // server: the "protections off" line, once per start   // client: the host's cookie for an unencrypted session (0 = none)
     // Prediction (client).
     static constexpr float kReconcileEpsilon = 0.02f;   // ignore smaller differences (units)
     static constexpr std::size_t kMaxPredicted = 128;
@@ -822,6 +868,9 @@ private:
     int  m_joinHellos = 0;
     bool m_keyed = false;
     bool m_legacyJoin = false;
+    net::SecureChannel m_nextSecure;   // client: keys made early for TicketBinding, used by the next session
+    void UseNextSessionKeys();
+    bool m_audienceWarned = false;     // server: "ticketKey without ticketAudience" logged
     bool m_pinWarned = false;
     // Client: asking the host whether it wants the auth token (see authTokenToAnyHost).
     int  m_authQueries = 0;
@@ -843,6 +892,20 @@ private:
 
     // Server-only
     float m_serverTime = 0.0f;        // seconds since the server started
+    // Server: join attempts per address (a refused Join, a new key exchange;
+    // a wrong password counts two): past kJoinAttempts in kJoinWindow seconds
+    // the address is ignored for a while, 10 s doubling to 320 s.
+    struct JoinLimit { float windowStart = 0.0f; int count = 0; float blockedUntil = -1.0f, backoff = 0.0f; bool told = false; };
+    std::unordered_map<std::uint32_t, JoinLimit> m_joinLimits;
+    static constexpr int kJoinAttempts = 5;
+    static constexpr float kJoinWindow = 10.0f;
+    bool JoinBlocked(const net::Endpoint& from) const;
+    void CountJoinAttempt(const net::Endpoint& from, int cost);
+    // Server: accounts and addresses the anti-cheat kicked, refused until `until`
+    // (m_serverTime); each repeat doubles the wait, up to an hour.
+    struct KickBan { float until = 0.0f; int strikes = 0; };
+    std::unordered_map<std::string, KickBan> m_kickBans;
+    float KickBanLeft(const std::string& ident) const;
     int   m_hostScore = 0;
     bool  m_matchOn = false, m_matchEnded = false;
     float m_matchStartAt = 0.0f, m_matchEndAt = 0.0f;
@@ -905,6 +968,7 @@ private:
     std::vector<Rewound> RewindTo(double tick);          // move everything to `tick`; returns what to put back
     static void Restore(std::vector<Rewound>& saved);
     double ClampRewind(double viewTick, float rttSeconds) const;
+    bool CookieOk(Client& c, net::Packet& p) const;
     float m_lastRewind = 0.0f;
 public:
     /// Synced objects shown from the interpolation buffer (a fixed tick in force).
@@ -939,7 +1003,12 @@ private:
     bool AntiCheatAllowsSyncVar(std::uint32_t peer, const std::string& key);
     void AntiCheatAfterRefusal(std::uint32_t peer);
 
-    // Server-authoritative synced variables
+    // Server-authoritative synced variables. What a client may write: keys up
+    // to 128 bytes, values up to 4 KB, at most kMaxClientVars new keys each.
+    static constexpr std::size_t kMaxVarKey = 128, kMaxVarValue = 4096;
+    static constexpr int kMaxClientVars = 256;
+    /// Server: a peer left: its SpawnOwned objects ("sp/<id>/...") go, everywhere.
+    void DespawnPeerObjects(std::uint32_t id);
     std::unordered_map<std::string, std::string> m_syncVars;
     void ApplySyncVar(const std::string& key, const std::string& value);
 };

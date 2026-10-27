@@ -66,6 +66,10 @@ struct DedicatedServerOptions {
     /// tickRate (NetworkManager::netTickRate): snapshots carry the tick and
     /// clients send once a tick. Off: as before.
     bool fixedTick = false;
+    /// --authoritative / authoritative = true: the server moves players from
+    /// their inputs (NetworkManager::authoritativeMovement). Off: the scene's
+    /// own setting is left as it is.
+    bool authoritative = false;
 };
 
 /// What --report-kicks files: an ac_reports "player" row from the server's
@@ -122,8 +126,10 @@ public:
     AsyncTokenCheck(const AsyncTokenCheck&) = delete;
     AsyncTokenCheck& operator=(const AsyncTokenCheck&) = delete;
 
-    /// 1 = valid (outUserId set), 0 = invalid / empty token, -1 = still checking.
+    /// 1 = valid (outUserId set), 0 = invalid / empty token, -1 = still checking,
+    /// -2 = kMaxQueued checks already waiting (busy: the join is refused).
     int Check(const std::string& token, std::string& outUserId);
+    static constexpr std::size_t kMaxQueued = 64;
     /// Number of checks waiting for the worker (diagnostics / tests).
     std::size_t Pending() const;
 

@@ -3,6 +3,7 @@
 #include "okay/Components/UIAnchor.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
+#include "okay/Components/UITouchScroll.hpp"
 #include <functional>
 #include <string>
 #include <vector>
@@ -26,7 +27,7 @@ class GameObject;
 /// Clicking a row that carries a button selects it: `selected` changes and the
 /// list's script gets on_list_select() with Prefs "ui_list_selected".
 /// Pool rows are runtime-only (never saved). Rows are laid out top to bottom,
-/// `itemHeight` tall with `spacing` between them.
+/// `itemHeight` tall with `spacing` between them; the wheel or a finger drag scrolls it.
 class UIListView final : public Behaviour {
 public:
     Vec2 position{20.0f, 20.0f};
@@ -63,6 +64,7 @@ public:
     GameObject* Template() const;
 
 private:
+    UITouchScroll m_touch;   // finger drag-scrolling
     void Bind(GameObject* row, int index);
     std::vector<GameObject*> m_rows;
     std::vector<int> m_rowIndex;        // entry each pooled row shows (-1 = none)

@@ -22,7 +22,7 @@ struct Inputs {
     float speed = -1.0f;     ///< ground speed (rig units/s); < 0 = not reported: the state's natural pace
     float phase = 0.0f;      ///< stride cycle 0..1 (0 = left foot touching down): gaits and the crawl
     float runW = 0.0f;       ///< walk (0) .. run (1) style, for walk and run
-    float travelYaw = 0.0f;  ///< direction the feet step along, relative to the facing (deg)
+    float travelYaw = 0.0f;  ///< direction the feet step (or the crawl goes) along, relative to the facing (deg)
     float lowerYaw = 0.0f;   ///< how far the hips and legs turn toward it (deg)
     float landK = 0.0f;      ///< landing-absorb envelope 0..1 (knees give after a landing)
 };
@@ -45,6 +45,10 @@ float StartPhase(int state, float speed);
 /// 0.12·landK and both legs re-solve so the feet stay where they were, the
 /// chest dips and the arms go out. Returns the hips' height change (rig units).
 float AbsorbLanding(std::vector<Vec3>& pose, float landK);
+/// The poses between lying prone and standing (getting up, dropping down):
+/// 0 = on hands and knees, 1 = kneeling on the right knee. Returns the hips'
+/// height offset for it (rig units, like HipY).
+float KneelPose(int which, std::vector<Vec3>& out);
 
 } // namespace HumanoidMotion
 } // namespace okay

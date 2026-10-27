@@ -9,8 +9,9 @@
 
 namespace okay {
 
-/// The lowest rise the controllers treat as a step (lower is a seam in the floor).
-constexpr float kMinStepHeight = 0.04f;
+/// The lowest rise the controllers treat as a step. Anything under half a
+/// centimetre is a seam in the floor; a door sill or a rug lip is a step.
+constexpr float kMinStepHeight = 0.005f;
 
 /// Near-zero vertical speed is not ground on its own: the apex of a jump passes
 /// through it. A real contact (or terrain) is ground. The speed heuristic still
@@ -31,7 +32,7 @@ inline bool ResolveGrounded(GroundLatch& g, bool contact, float vy) {
 /// Stair step-up shared by the character controllers: when a GROUNDED, moving
 /// body is blocked by a LOW obstacle (a stair, a curb), lift it onto the step
 /// instead of letting it grind against the face. Three probes decide it:
-/// a knee-height ray must hit a wall-like face (something is in the way; a
+/// a ray just off the floor must hit a wall-like face (something is in the way; a
 /// ramp or a hill ahead is walkable ground, not a step), the same ray at
 /// step-offset height must be CLEAR (it's a step, not a wall), and a down-ray
 /// past the lip must find the step top between minStepHeight and stepOffset
@@ -48,7 +49,9 @@ inline void TryStepUp(Scene& sc, GameObject* go, Rigidbody3D* rb, const Vec3& di
     fw.x /= fl; fw.z /= fl;
     Physics3D::IgnoreHierarchy own(go);
     auto& ph = sc.physics3D();
-    RaycastHit3D low = ph.Raycast(sc, {pos.x, pos.y + 0.05f, pos.z}, fw, reach, go, Physics3D::kAllLayers, false);
+    // Low enough to meet a 1 cm sill. A walkable slope still has a steep
+    // normal and is rejected below; a rise under kMinStepHeight is a seam.
+    RaycastHit3D low = ph.Raycast(sc, {pos.x, pos.y + 0.005f, pos.z}, fw, reach, go, Physics3D::kAllLayers, false);
     if (!low.hit) return;                           // nothing in the way
     if (std::fabs(low.normal.y) >= 0.3f) return;    // a slope or a seam ahead, not a step's face
     RaycastHit3D high = ph.Raycast(sc, {pos.x, pos.y + stepOffset + 0.02f, pos.z},

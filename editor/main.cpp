@@ -41903,10 +41903,10 @@ int main(int argc, char** argv) {
             if (ks[SDL_SCANCODE_BACKSPACE]) down.push_back((char)8); // text editing
             if (ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_KP_ENTER]) down.push_back('\r');
             if (ks[SDL_SCANCODE_ESCAPE]) down.push_back((char)27);
-            if (ks[SDL_SCANCODE_UP])    down.push_back('w'); // arrows -> WASD
-            if (ks[SDL_SCANCODE_LEFT])  down.push_back('a');
-            if (ks[SDL_SCANCODE_DOWN])  down.push_back('s');
-            if (ks[SDL_SCANCODE_RIGHT]) down.push_back('d');
+            if (ks[SDL_SCANCODE_UP])    { down.push_back('w'); down.push_back(Input::KeyUp); }
+            if (ks[SDL_SCANCODE_LEFT])  { down.push_back('a'); down.push_back(Input::KeyLeft); }
+            if (ks[SDL_SCANCODE_DOWN])  { down.push_back('s'); down.push_back(Input::KeyDown); }
+            if (ks[SDL_SCANCODE_RIGHT]) { down.push_back('d'); down.push_back(Input::KeyRight); }
 
             Vec2 padAxis; unsigned padMask = 0;
             if (g_pad) {

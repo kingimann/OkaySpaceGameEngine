@@ -305,7 +305,7 @@ Disable the Animator and the built-in animation plays the body as before.
 
 ## Actions
 
-Built-in actions (death, and later dive, sit, hits, and the rest) are clips baked
+Built-in actions (death and swim, and later dive, sit, hits, and the rest) are clips baked
 by `HumanoidActions` and states on the default Animator. They are not new
 `Character::anim` numbers. A scene saved with the default graph (it has Idle,
 Walk, Run and Jump) gains each action once. A state you renamed or deleted stays
@@ -337,6 +337,18 @@ Script: `play_action("Death" [, blend])` (0 if that state is missing),
 `play_action`, which also falls back to `play_clip` (and logs once) when the
 name is not a state or a blend-tree motion. Visual scripts: Play Action, Is In
 Action, Die, Revive.
+
+Swim clips: looping `Swim_Tread` and `Swim_Fwd`, both on the prone pose so the
+body stays low in the water. Tread sculls the arms out and back in. The forward
+stroke reaches further and pulls, with a small visual root pulse that returns
+to zero at the loop so the mesh does not drift. `Swim` is a 1D tree on
+`swimSpeed` (0 tread, about 1.5 the stroke). Foot and full-body IK are off.
+The state is not interruptible, so jump and fall cannot cut a stroke; its own
+`die` edge still reaches Death. Any State enters Swim when `swimming` is true
+(that edge is first, so it wins over jump and fall) with interruption None, so
+the state being left cannot cancel the blend. `swimming` false goes to Idle.
+`anim_set_bool("swimming", 1)` and `play_action("Swim")` both enter it. There
+is no water volume in this set: movement stays on the controllers.
 
 In the Inspector the Animator lists its states, what each plays (a clip, or a
 blend tree's clip count) and its transitions (folded; click to open). On a

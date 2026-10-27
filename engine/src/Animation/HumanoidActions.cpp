@@ -204,12 +204,71 @@ void BakeDeath(std::vector<HumanoidLibrary::Entry>& out) {
     AddClip(out, BakeAction("DeadHold_R", {right}, true, {}));
 }
 
+// Prone base, so the body stays low. The first and last keys match: a loop that
+// does not pop. hipY stays near the prone height. rootOffset is visual only.
+void BakeSwim(std::vector<HumanoidLibrary::Entry>& out) {
+    const KeyPose prone = FromState(7);
+
+    KeyPose treadOut = prone;
+    treadOut.bones[B::B_HEAD].x = -40.0f;
+    treadOut.bones[B::B_LUPARM] = {-130.0f, 10.0f, 55.0f};
+    treadOut.bones[B::B_RUPARM] = {-130.0f, -10.0f, -55.0f};
+    treadOut.bones[B::B_LFORE].x = -18.0f;
+    treadOut.bones[B::B_RFORE].x = -18.0f;
+    treadOut.bones[B::B_LTHIGH].x = 8.0f;
+    treadOut.bones[B::B_RTHIGH].x = 8.0f;
+    treadOut.bones[B::B_LSHIN].x = 18.0f;
+    treadOut.bones[B::B_RSHIN].x = 18.0f;
+    treadOut.hipY = -0.74f;
+
+    KeyPose treadIn = prone;
+    treadIn.bones[B::B_HEAD].x = -36.0f;
+    treadIn.bones[B::B_LUPARM] = {-78.0f, -8.0f, 20.0f};
+    treadIn.bones[B::B_RUPARM] = {-78.0f, 8.0f, -20.0f};
+    treadIn.bones[B::B_LFORE].x = -62.0f;
+    treadIn.bones[B::B_RFORE].x = -62.0f;
+    treadIn.bones[B::B_LTHIGH].x = 22.0f;
+    treadIn.bones[B::B_RTHIGH].x = 22.0f;
+    treadIn.bones[B::B_LSHIN].x = 40.0f;
+    treadIn.bones[B::B_RSHIN].x = 40.0f;
+    treadIn.hipY = -0.70f;
+
+    const std::vector<std::pair<float, const char*>> treadEv = {{0.55f, "stroke"}};
+    AddClip(out, BakeAction("Swim_Tread", {At(treadOut, 0.0f), At(treadIn, 0.55f), At(treadOut, 1.10f)}, true, treadEv));
+
+    KeyPose reach = prone;
+    reach.bones[B::B_HEAD].x = -28.0f;
+    reach.bones[B::B_TORSO].x = 6.0f;
+    reach.bones[B::B_LUPARM] = {-172.0f, 0.0f, 14.0f};
+    reach.bones[B::B_RUPARM] = {-172.0f, 0.0f, -14.0f};
+    reach.bones[B::B_LFORE].x = -6.0f;
+    reach.bones[B::B_RFORE].x = -6.0f;
+    reach.hipY = -0.76f;
+
+    KeyPose pull = prone;
+    pull.bones[B::B_HEAD].x = -32.0f;
+    pull.bones[B::B_TORSO].x = 4.0f;
+    pull.bones[B::B_LUPARM] = {-96.0f, 0.0f, 8.0f};
+    pull.bones[B::B_RUPARM] = {-96.0f, 0.0f, -8.0f};
+    pull.bones[B::B_LFORE].x = -48.0f;
+    pull.bones[B::B_RFORE].x = -48.0f;
+    pull.bones[B::B_LTHIGH].x = 16.0f;
+    pull.bones[B::B_RTHIGH].x = 10.0f;
+    pull.bones[B::B_LSHIN].x = 24.0f;
+    pull.bones[B::B_RSHIN].x = 16.0f;
+    pull.hipY = -0.73f;
+    pull.rootOffset = {0.0f, 0.0f, 0.05f};
+
+    const std::vector<std::pair<float, const char*>> fwdEv = {{0.40f, "stroke"}};
+    AddClip(out, BakeAction("Swim_Fwd", {At(reach, 0.0f), At(pull, 0.40f), At(reach, 0.80f)}, true, fwdEv));
+}
+
 struct ActionSpec {
     const char* name;
     int rev;
 };
 
-const ActionSpec kStates[] = {{"Death", 1}, {"DeadHold", 1}};
+const ActionSpec kStates[] = {{"Death", 1}, {"DeadHold", 1}, {"Swim", 2}};
 
 SM::State* FindMutable(SM& sm, const std::string& name) {
     for (SM::State& s : sm.states) if (s.name == name) return &s;
@@ -303,6 +362,43 @@ SM::State MakeHoldState() {
     return s;
 }
 
+SM::State MakeSwimState() {
+    SM::State s;
+    s.name = "Swim";
+    s.blendTree = true;
+    s.blendDims = 1;
+    s.blendParam = "swimSpeed";
+    s.loop = true;
+    s.ikWeight = 0.0f;
+    s.fullBodyIkWeight = 0.0f;
+    // Locked so jump and fall (Any State, and this state is not prone) cannot
+    // cut a stroke. Death is an edge on the state itself.
+    s.interruptible = false;
+    s.motions = {MotionAt("Swim_Tread", 0.0f), MotionAt("Swim_Fwd", 1.5f)};
+    return s;
+}
+
+void WireSwim(SM::State& swim, const SM& sm) {
+    swim.transitions.clear();
+    if (HasState(sm, "Death")) {
+        SM::Transition die;
+        die.to = "Death";
+        die.cond = C::Trigger;
+        die.param = "die";
+        die.blend = 0.2f;
+        die.interruption = SM::Transition::Interrupt::None;
+        swim.transitions.push_back(die);
+    }
+    if (HasState(sm, "Idle")) {
+        SM::Transition out;
+        out.to = "Idle";
+        out.cond = C::BoolFalse;
+        out.param = "swimming";
+        out.blend = 0.35f;
+        swim.transitions.push_back(out);
+    }
+}
+
 bool IsKnownAction(const std::string& name) {
     for (const ActionSpec& s : kStates) if (name == s.name) return true;
     return false;
@@ -310,6 +406,15 @@ bool IsKnownAction(const std::string& name) {
 
 bool IsDeathLabel(const std::string& name) {
     return name == "Death" || name == "DeadHold" || name.rfind("Death_", 0) == 0 || name.rfind("DeadHold_", 0) == 0;
+}
+
+bool IsSwimLabel(const std::string& name) {
+    return name == "Swim" || name.rfind("Swim_", 0) == 0;
+}
+
+void LatchSwim(SM& sm, float speed) {
+    sm.SetBool("swimming", true);
+    if (speed >= 0.0f) sm.SetFloat("swimSpeed", speed);
 }
 
 int DirOfClip(const std::string& name) {
@@ -357,25 +462,33 @@ void LatchDeath(SM& sm, int dir) {
 
 } // namespace
 
-void Bake(std::vector<HumanoidLibrary::Entry>& out) { BakeDeath(out); }
+void Bake(std::vector<HumanoidLibrary::Entry>& out) {
+    BakeDeath(out);
+    BakeSwim(out);
+}
 
 void ApplyTimes(AnimStateMachine& sm) {
     const StanceTimes& t = sm.stanceTimes;
     for (SM::State& st : sm.states) {
-        if (st.name != "Death" && st.name != "DeadHold") continue;
+        if (st.name != "Death" && st.name != "DeadHold" && st.name != "Swim") continue;
         for (SM::Transition& tr : st.transitions) {
             if (tr.to == "DeadHold") tr.blend = t.crouchProne;          // ends on the ground
             else if (tr.to == "GetUp" || tr.to == "Idle") tr.blend = t.proneStand;
         }
     }
-    for (SM::Transition& tr : sm.anyState)
+    for (SM::Transition& tr : sm.anyState) {
         if (tr.to == "Death") tr.blend = t.standCrouch;
+        else if (tr.to == "Swim") tr.blend = t.crouchProne;
+    }
 }
 
-void AddStates(AnimStateMachine& sm, const Character* body) {
+void AddStates(AnimStateMachine& sm, const Character* body, bool force) {
     (void)body;
-    const bool freshDeath = !HasState(sm, "Death");
-    const bool freshHold = !HasState(sm, "DeadHold");
+    const int had = sm.actionsRev;
+    const bool deathDue = force || had < 1;
+    const bool swimDue = force || had < 2;
+    const bool freshDeath = deathDue && !HasState(sm, "Death");
+    const bool freshHold = deathDue && !HasState(sm, "DeadHold");
     float col = 40.0f;
     if (const SM::State* existing = FindMutable(sm, "Death")) col = existing->nx;
     else if (const SM::State* existing = FindMutable(sm, "DeadHold")) col = existing->nx;
@@ -416,6 +529,31 @@ void AddStates(AnimStateMachine& sm, const Character* body) {
             sm.anyState.push_back(std::move(die));
         }
     }
+    const bool freshSwim = swimDue && !HasState(sm, "Swim");
+    if (freshSwim) {
+        float scol = 40.0f;
+        for (const SM::State& o : sm.states) scol = std::max(scol, o.nx);
+        scol += 220.0f;
+        SM::State swim = MakeSwimState();
+        swim.nx = scol;
+        swim.ny = 40.0f;
+        sm.states.push_back(std::move(swim));
+        if (SM::State* s = FindMutable(sm, "Swim")) WireSwim(*s, sm);
+        EnsureParam(sm, "swimSpeed", 0);
+        EnsureParam(sm, "swimming", 1);
+        if (!HasAny(sm, "Swim", "swimming")) {
+            SM::Transition go;
+            go.to = "Swim";
+            go.cond = C::BoolTrue;
+            go.param = "swimming";
+            go.blend = 0.25f;
+            // None so Walk cannot cancel the blend. Swim itself is not
+            // interruptible, so only its die / leave edges run after that.
+            go.interruption = SM::Transition::Interrupt::None;
+            // Before jump and fall, so a body already in the air still enters.
+            sm.anyState.insert(sm.anyState.begin(), std::move(go));
+        }
+    }
     if (sm.actionsRev < kActionsRev) sm.actionsRev = kActionsRev;
     ApplyTimes(sm);
 }
@@ -425,14 +563,15 @@ void MergeMissing(AnimStateMachine& sm, const Character* body, bool force) {
     if (!force && !looksDefault) return;
     if (!force && sm.actionsRev >= kActionsRev) return;
     // AddStates only creates states that are absent, which is the whole merge.
-    AddStates(sm, body);
+    AddStates(sm, body, force);
 }
 
 const std::vector<std::string>& ActionNames() {
     static const std::vector<std::string> names = {
         "Death", "DeadHold",
         "Death_F", "Death_B", "Death_L", "Death_R",
-        "DeadHold_F", "DeadHold_B", "DeadHold_L", "DeadHold_R"};
+        "DeadHold_F", "DeadHold_B", "DeadHold_L", "DeadHold_R",
+        "Swim", "Swim_Tread", "Swim_Fwd"};
     return names;
 }
 
@@ -465,6 +604,8 @@ bool Play(GameObject* go, const std::string& name, float blend) {
                 const int d = DirOfClip(name);
                 LatchDeath(*sm, d >= 0 ? d : (int)std::lround(sm->GetFloat("deathDir")));
             }
+            if (IsSwimLabel(name))
+                LatchSwim(*sm, name == "Swim_Fwd" ? 1.5f : (name == "Swim" ? -1.0f : 0.0f));
             if (sm->GoTo(name, blend)) return true;
         }
         for (const SM::State& st : sm->states) {
@@ -472,6 +613,7 @@ bool Play(GameObject* go, const std::string& name, float blend) {
                 if (m.clip != name) continue;
                 if (!st.blendParam.empty()) sm->SetFloat(st.blendParam, m.threshold);
                 if (IsDeathLabel(name) || IsDeathLabel(st.name)) LatchDeath(*sm, (int)std::lround(m.threshold));
+                if (IsSwimLabel(name) || st.name == "Swim") LatchSwim(*sm, m.threshold);
                 if (sm->GoTo(st.name, blend)) return true;
             }
         }
@@ -536,6 +678,20 @@ void RequestRevive(GameObject* go) {
         if (hp->IsDead()) { hp->Revive(); return; }
     }
     ReviveAnim(go);
+}
+
+void SetSwimming(GameObject* go, bool on, float speed) {
+    if (SM* sm = BaseMachine(go)) {
+        sm->SetBool("swimming", on);
+        if (on && speed >= 0.0f) sm->SetFloat("swimSpeed", speed);
+    }
+}
+
+bool IsSwimming(GameObject* go) {
+    SM* sm = BaseMachine(go);
+    if (!sm) return false;
+    if (sm->GetBool("swimming")) return true;
+    return sm->Current() == "Swim";
 }
 
 bool IsDead(GameObject* go) {

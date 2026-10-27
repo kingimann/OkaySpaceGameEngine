@@ -1,7 +1,7 @@
 #pragma once
 // ---------------------------------------------------------------------------
-// HumanoidActions — built-in action clips (death, and later dive, sit, hit,
-// roll, vault, swim, emotes) baked the same way as HumanoidLibrary, plus the
+// HumanoidActions — built-in action clips (death and swim, and later dive, sit,
+// hit, roll, vault, emotes) baked the same way as HumanoidLibrary, plus the
 // states, params and Any-State transitions they add to the default Animator.
 // Gameplay displacement stays on the controllers. Clip root tracks are visual.
 // ---------------------------------------------------------------------------
@@ -16,10 +16,10 @@ class GameObject;
 
 namespace HumanoidActions {
 
-/// How far the built-in action set has got. Death is 1. A saved graph records
-/// the revision it already has, so a later action is added once and a state the
-/// user deleted is not put back when the next action lands.
-constexpr int kActionsRev = 1;
+/// How far the built-in action set has got. Death is 1, swim is 2. A saved
+/// graph records the revision it already has, so a later action is added once
+/// and a state the user deleted is not put back when the next action lands.
+constexpr int kActionsRev = 2;
 
 /// One authored pose. Degrees, hip height in rig units, rootOffset.x/z a visual
 /// lean only (y is unused; hipY is the root height).
@@ -42,7 +42,9 @@ struct DeadShape {
 void Bake(std::vector<HumanoidLibrary::Entry>& out);
 /// Append this revision's states, params and Any-State transitions. Safe to
 /// call again: a state that already exists is left as the user edited it.
-void AddStates(AnimStateMachine& sm, const Character* body);
+/// `force` fills anything missing (the inspector button) and still does not
+/// overwrite a state. Otherwise only actions newer than `sm.actionsRev` are added.
+void AddStates(AnimStateMachine& sm, const Character* body, bool force = false);
 /// Stance-timed blends for action transitions (called from ApplyStanceTimes).
 void ApplyTimes(AnimStateMachine& sm);
 /// Saved default graphs (Idle/Walk/Run/Jump) gain any action whose revision is
@@ -75,6 +77,13 @@ void RequestRevive(GameObject* go);
 void ReviveAnim(GameObject* go);
 /// HealthStat::IsDead when that component is present, otherwise the `dead` param.
 bool IsDead(GameObject* go);
+
+/// Sets `swimming` (and `swimSpeed` when `speed` >= 0). The default graph enters
+/// Swim while the bool is true and leaves for Idle when it is false. 0 treads,
+/// about 1.5 plays the forward stroke. No water volume: a later controller sets this.
+void SetSwimming(GameObject* go, bool on, float speed = -1.0f);
+/// True while `swimming` is set, or the base machine is in Swim.
+bool IsSwimming(GameObject* go);
 
 /// True once the body is in DeadHold (or Death has played out).
 bool DeathPoseSettled(GameObject* go);

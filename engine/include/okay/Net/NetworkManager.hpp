@@ -386,8 +386,11 @@ public:
 
     /// The server's friendly name (clients learn it from the join handshake).
     const std::string& ServerName() const { return m_serverName; }
-    /// True on a client if the last join was refused (server full / bad password).
+    /// True on a client if the last join was refused (server full / bad password /
+    /// the pinned host key didn't match).
     bool JoinRejected() const { return m_joinRejected; }
+    /// Why JoinRejected() is set ("" when it isn't).
+    const std::string& JoinRejectReason() const { return m_joinRejectReason; }
 
     /// On scene Start: act on `autoStart` (host or join) so multiplayer needs no
     /// script — add the component, pick Host/Join in the Inspector, press Play.
@@ -814,7 +817,8 @@ private:
     bool m_ready = false;        // this peer's ready flag
     bool m_matchStarted = false; // set when StartMatch reaches this peer's room
     std::string m_serverName;    // client: the server's friendly name
-    bool m_joinRejected = false; // client: server refused us (full / password)
+    bool m_joinRejected = false; // client: server refused us (full / password / pin)
+    std::string m_joinRejectReason;
     bool m_kicked = false;       // client: kicked by the server
     std::string m_kickReason;
     // Client-side reliable channel (to the server).

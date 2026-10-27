@@ -32800,7 +32800,12 @@ void DrawInspector(EditorState& ed) {
             ImGui::Text("Live: %s   Peers: %d / %d   Id: %u", mode, (int)nm->PeerCount(), nm->maxPlayers, nm->LocalId());
             if (nm->IsClient()) {
                 ImGui::Text("Server: %s   Ping: %.0f ms", nm->ServerName().c_str(), nm->RttMs());
-                if (nm->JoinRejected()) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f,0.45f,0.42f,1)); ImGui::TextUnformatted("Join refused (full / wrong password)"); ImGui::PopStyleColor(); }
+                if (nm->JoinRejected()) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f,0.45f,0.42f,1));
+                    const std::string& why = nm->JoinRejectReason();
+                    ImGui::TextUnformatted(why.empty() ? "Join refused (full / wrong password)" : ("Join refused: " + why).c_str());
+                    ImGui::PopStyleColor();
+                }
             }
             ImGui::TextDisabled("Add this, pick Host/Join, press Play — no code needed.");
             if (ImGui::SmallButton("Remove##nm")) toRemove = nm;

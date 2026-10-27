@@ -355,6 +355,7 @@ void NetworkManager::Stop() {
     m_matchStarted = false;
     m_serverName.clear();
     m_joinRejected = false;
+    m_joinRejectReason.clear();
     m_relOut.clear();
     m_relSeen.Clear();
     m_netTick = 0;
@@ -569,6 +570,32 @@ void NetworkManager::PoseAt(const std::vector<SyncObj::Sample>& b, double tick, 
     pos = b.back().pos; rot = b.back().rot;
 }
 
+namespace {
+// "__xform" after the id: "px py pz qx qy qz qw", an optional tick, then an
+// optional "|extra". All 7 pose floats must parse and be finite, and the
+// quaternion must have a length, before it is stored as a unit quaternion.
+bool ParseXformPose(const std::string& data, std::string& id, Vec3& p, Quat& q,
+                    std::string& extra, double& tick) {
+    const auto bar = data.find('|');
+    if (bar == std::string::npos) return false;
+    id = data.substr(0, bar);
+    std::string rest = data.substr(bar + 1);
+    extra.clear();
+    const auto bar2 = rest.find('|');
+    if (bar2 != std::string::npos) { extra = rest.substr(bar2 + 1); rest.resize(bar2); }
+    std::stringstream ss(rest);
+    if (!(ss >> p.x >> p.y >> p.z >> q.x >> q.y >> q.z >> q.w)) return false;
+    if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) return false;
+    if (!std::isfinite(q.x) || !std::isfinite(q.y) || !std::isfinite(q.z) || !std::isfinite(q.w)) return false;
+    const float len = q.Magnitude();
+    if (!(len > 1e-6f)) return false;
+    q.x /= len; q.y /= len; q.z /= len; q.w /= len;
+    tick = -1.0;
+    if (!(ss >> tick) || !std::isfinite(tick)) tick = -1.0;
+    return true;
+}
+} // namespace
+
 // ---- Lag compensation (server) ------------------------------------------------
 
 void NetworkManager::RecordHistory() {
@@ -698,19 +725,12 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
     if (channel == "__xform") {
         std::string::size_type bar = data.find('|');
         if (bar != std::string::npos) {
-            std::string id = data.substr(0, bar);
+            std::string id, extra;
+            Vec3 p; Quat q; double tick = -1.0;
+            if (!ParseXformPose(data, id, p, q, extra, tick)) return;
             auto it = m_syncObjs.find(id);
             if (it != m_syncObjs.end() && !it->second.owned) {
-                // "<floats>[|<extra>]" — the optional extra payload follows a second '|'.
-                std::string rest = data.substr(bar + 1);
-                std::string extra;
-                std::string::size_type bar2 = rest.find('|');
-                if (bar2 != std::string::npos) { extra = rest.substr(bar2 + 1); rest.resize(bar2); }
-                std::stringstream ss(rest);
-                Vec3 p; Quat q;
-                ss >> p.x >> p.y >> p.z >> q.x >> q.y >> q.z >> q.w;
-                double tick = -1.0;
-                if (!(ss >> tick) || !std::isfinite(tick)) tick = -1.0;   // an older sender: stamp it on arrival
+                const bool hasExtra = data.find('|', bar + 1) != std::string::npos;
                 it->second.targetPos = p;
                 it->second.targetRot = q;
                 if (TickRateInForce() > 0.0f) {
@@ -741,7 +761,7 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
                     it->second.t->localRotation = q;
                 }
                 it->second.hasTarget = true;
-                if (it->second.setExtra && bar2 != std::string::npos) it->second.setExtra(extra);
+                if (it->second.setExtra && hasExtra) it->second.setExtra(extra);
             }
         }
         return;
@@ -1573,14 +1593,19 @@ bool NetworkManager::ClientMessageOk(const Client& from, const std::string& chan
         data = from.name + "\n" + text;
         return true;
     }
-    if (channel == "__xform" && !ClientMaySendXform(from, data.substr(0, data.find('|'))))
-        return false;   // a player the server moves: its position is the server's, never the client's
+    if (channel == "__xform") {
+        // A player the server moves: its position is the server's, never the client's.
+        if (!ClientMaySendXform(from, data.substr(0, data.find('|')))) return false;
+        // The same pose check as Deliver: a bad sample is not relayed.
+        std::string id, extra; Vec3 p; Quat q; double tick = -1.0;
+        return ParseXformPose(data, id, p, q, extra, tick);
+    }
     if (channel == "__spawn") {
         const SpawnMessage m = ParseSpawnMessage(data);
         if (!std::isfinite(m.pos.x) || !std::isfinite(m.pos.y) || !std::isfinite(m.pos.z)) return false;
         return SpawnPathOk(from.id, m.path, true);
     }
-    if (channel == "__despawn" || channel == "__xform") return true;
+    if (channel == "__despawn") return true;
     if (channel.size() > 6 && channel.compare(0, 6, "__rpc/") == 0) return true;
     return false;   // __match_start and any other reserved channel: host only
 }
@@ -2877,6 +2902,9 @@ void NetworkManager::ClientTick(float dt) {
                 if (!pinnedHostKey.empty()) {
                     if (!m_pinWarned) OKAY_ERROR("net: the server has encryption off, so its pinned key can't be checked; not joining");
                     m_pinWarned = true;
+                    m_joinRejected = true;
+                    m_joinRejectReason = "the server has encryption off, so its pinned key can't be checked";
+                    m_joinTimer = 1e9f;   // stop retrying
                     continue;
                 }
                 m_legacyJoin = true;
@@ -2892,9 +2920,12 @@ void NetworkManager::ClientTick(float dt) {
                                     sig.size() == sg.size();
                 if (shaped) { std::copy(pin.begin(), pin.end(), pk.begin()); std::copy(sig.begin(), sig.end(), sg.begin()); }
                 if (!shaped || !okayac::ed25519::Verify(JoinKeyMessage(serverPk, std::string(mine.begin(), mine.end())), sg, pk)) {
-                    // Not the pinned host (or a forgery): ignore it, the real one may still answer.
-                    if (!m_pinWarned) OKAY_WARN("net: ", m_serverEp.ToString(), " didn't prove the pinned host key; ignoring it");
+                    // Not the pinned host. Stop: waiting forever looks like a hang.
+                    if (!m_pinWarned) OKAY_WARN("net: ", m_serverEp.ToString(), " didn't prove the pinned host key");
                     m_pinWarned = true;
+                    m_joinRejected = true;
+                    m_joinRejectReason = "server identity doesn't match the pinned key";
+                    m_joinTimer = 1e9f;
                     continue;
                 }
             }
@@ -2930,6 +2961,7 @@ void NetworkManager::ClientTick(float dt) {
             m_hostAcksPawn = m_hostAuthoritative && (welcomeFlags & 8);   // an older 5b host doesn't: follow it instead
             m_joined = true;
             m_joinRejected = false;
+            m_joinRejectReason.clear();
             OKAY_INFO("net: joined '", m_serverName, "' as peer ", m_localId);
         } else if (type == Reject) {
             std::string why = p.ReadString();
@@ -2942,6 +2974,7 @@ void NetworkManager::ClientTick(float dt) {
                 continue;
             }
             m_joinRejected = true;
+            m_joinRejectReason = why;
             m_joinTimer = 1e9f;      // stop retrying
             OKAY_WARN("net: join refused: ", why);
         } else if (type == Kicked) {
@@ -2974,7 +3007,12 @@ void NetworkManager::ClientTick(float dt) {
                 // Forward only (snapshots arrive out of order), unless we're more
                 // than a second ahead of the host: then start again from its tick.
                 if (p.Ok() && (tick > m_netTick || (double)m_netTick - (double)tick > m_hostTickRate)) {
-                    m_netTick = tick; m_tickAccum = 0.0f;
+                    // Moving forward keeps the fraction of the tick already
+                    // accumulated, so a snapshot doesn't reset the send phase.
+                    // More than a second ahead of the host: start again from its tick.
+                    const bool resync = (double)m_netTick - (double)tick > (double)m_hostTickRate;
+                    m_netTick = tick;
+                    if (resync) m_tickAccum = 0.0f;
                 }
                 if (m_hostAuthoritative) {   // the newest input the host applied for us
                     const std::uint32_t acked = p.ReadU32();

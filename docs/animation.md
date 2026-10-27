@@ -563,6 +563,12 @@ and transitions. Beyond single conditions:
   clip (0.9 = 90%). With the *Always* condition it fires purely on time: an attack
   returning to locomotion when it's nearly done.
 - **Any State** — transitions checked from every state first (hit reactions, death).
+- **If missing** — when the state's clip is not in this Animator's library, play
+  the fallback clip instead. A name that exists only on a child model's imported
+  clips plays there (Humanoid Retarget yields until the state changes).
+  **Import into clip** / **Import as fallback** load a file into that slot
+  (`.okayanim` on a character, FBX / glTF / BVH on an imported model). The Clip
+  list also includes the built-in library and those imported takes.
 
 Scripts: `anim_set_float`, `anim_set_bool`, `anim_trigger`, `anim_state()`,
 `anim_prev_state()`, `anim_state_time()`, `anim_normalized_time()`.

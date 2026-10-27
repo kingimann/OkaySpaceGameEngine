@@ -205,14 +205,24 @@ private:
     int   m_jumpsLeft = 0;
     bool  m_jumpWasHeld = false;
     bool  m_air = false;       // airborne, for picking the jump / fall clip
+    std::string m_anim;        // clip requested last frame (don't restart it)
     int   m_still = 0;         // airborne frames with ~zero vertical speed
 
     // Play a named clip on a sibling SpriteAnimator when it has one ("fall" falls
     // back to "jump"). No animator / no such clip: leave the animation alone.
+    // The same clip is requested every frame while airborne; asking Play again
+    // restarted a finished one-shot from frame 0 each frame. A jump holds its
+    // last frame instead of cycling for as long as the body is in the air.
     void Animate(const char* clip) {
         auto* sa = gameObject ? gameObject->GetComponent<SpriteAnimator>() : nullptr;
         if (!sa || sa->clips.empty()) return;
-        if (!sa->Play(clip) && std::string(clip) == "fall") sa->Play("jump");
+        const char* use = clip;
+        if (!sa->HasClip(use) && std::string(use) == "fall") use = "jump";
+        if (!sa->HasClip(use)) return;
+        if (m_anim == use) return;
+        m_anim = use;
+        sa->Play(use);
+        sa->SetHoldAtEnd(std::string(use) == "jump");
     }
 
     // Move `v` toward `target`. With no accel/decel set it snaps (the classic

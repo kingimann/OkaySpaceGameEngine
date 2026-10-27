@@ -12,6 +12,21 @@
 #include "okay/Math/Quat.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Components/PlayerView.hpp"
+#include "okay/Components/UIColorPicker.hpp"   // grok/ui-color
+#include "okay/Components/Crosshair.hpp"          // grok/ui-hud
+#include "okay/Components/UIRadialProgress.hpp"   // grok/ui-hud
+#include "okay/Components/UISlotGrid.hpp"         // grok/ui-hud
+#include "okay/Components/UIDropdown.hpp"      // grok/ui-controls
+#include "okay/Components/UIScrollView.hpp"
+#include "okay/Components/UITabs.hpp"
+#include "okay/Components/UITooltip.hpp"
+#include "okay/Components/UIInputField.hpp"
+#include "okay/Components/UIToast.hpp"    // grok/ui-toast
+#include "okay/Components/UIModal.hpp"    // grok/ui-toast
+#include "okay/Components/UITheme.hpp"          // grok/ui-theme
+#include "okay/Components/UISlider.hpp"
+#include "okay/Components/UIProgressBar.hpp"
+#include "okay/Components/UIButton.hpp"
 #include <cmath>
 #include <set>
 
@@ -312,6 +327,421 @@ EngineApi Build() {
         get.pure = true;
         pv.methods.push_back(std::move(get));
         api.types.push_back(std::move(pv));
+    }
+    // ---- grok/ui-color ----
+    {
+        ApiType cp; cp.name = "UIColorPicker"; cp.isComponent = true;
+        cp.doc = "A row of color swatches. The chosen swatch is the current color.";
+        cp.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIColorPicker>() : nullptr; };
+        auto of = [](const Value& self, CallContext& c) -> UIColorPicker* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* p = g->GetComponent<UIColorPicker>();
+            if (!p) throw RuntimeError("'" + g->name + "' has no Color Picker (add one in the Inspector)", c.loc);
+            return p;
+        };
+        cp.methods.push_back(method("SetValue", {tInt}, {"index"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetValue(I(a[0])); return Value{}; },
+            "Select a swatch by index. The chip shows that color."));
+        ApiMethod val = method("Value", {}, {}, tInt,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{(std::int32_t)of(s, c)->Value()}; },
+            "The selected swatch, or -1.");
+        val.pure = true;
+        cp.methods.push_back(std::move(val));
+        api.types.push_back(std::move(cp));
+    }
+    // ---- grok/ui-hud: crosshair recovery, radial options, slot grid ----
+    {
+        auto need = [](auto* comp, GameObject* g, CallContext& c, const char* what) {
+            if (!comp) throw RuntimeError("'" + g->name + "' has no " + std::string(what) + " (add one in the Inspector)", c.loc);
+            return comp;
+        };
+        {
+            ApiType ch; ch.name = "Crosshair"; ch.isComponent = true;
+            ch.doc = "An aim reticle. SpreadRecover pulls an extra gap back to 0; 0 keeps the authored spread.";
+            ch.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<Crosshair>() : nullptr; };
+            auto of = [need](const Value& self, CallContext& c) -> Crosshair* {
+                GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+                return need(g->GetComponent<Crosshair>(), g, c, "Crosshair");
+            };
+            ch.methods.push_back(method("SetSpread", {tFloat}, {"pixels"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetSpread(F(a[0])); return Value{}; },
+                "Set the extra gap around the ticks, in pixels."));
+            ch.methods.push_back(method("SetSpreadRecover", {tFloat}, {"pixelsPerSecond"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetSpreadRecover(F(a[0])); return Value{}; },
+                "How fast the extra gap eases back to 0. 0 leaves the spread where it is."));
+            ch.methods.push_back(method("KickSpread", {tFloat}, {"pixels"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->KickSpread(F(a[0])); return Value{}; },
+                "Push the ticks apart. They ease back while spread recover is above 0."));
+            ApiMethod spread = method("Spread", {}, {}, tFloat,
+                [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->Spread()}; },
+                "The extra gap around the ticks, in pixels.");
+            spread.pure = true;
+            ch.methods.push_back(std::move(spread));
+            api.types.push_back(std::move(ch));
+        }
+        {
+            ApiType rp; rp.name = "UIRadialProgress"; rp.isComponent = true;
+            rp.doc = "A ring or pie. Thickness 0 is a pie. Spin turns the arc into a loader.";
+            rp.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIRadialProgress>() : nullptr; };
+            auto of = [need](const Value& self, CallContext& c) -> UIRadialProgress* {
+                GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+                return need(g->GetComponent<UIRadialProgress>(), g, c, "Radial Progress");
+            };
+            auto flag = [](const Value& v) {
+                if (auto* b = std::get_if<bool>(&v)) return *b;
+                return F(v) != 0.0f;
+            };
+            rp.methods.push_back(method("SetValue", {tFloat}, {"value"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetValue(F(a[0])); return Value{}; },
+                "Fill fraction from 0 to 1."));
+            rp.methods.push_back(method("SetThickness", {tFloat}, {"pixels"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetThickness(F(a[0])); return Value{}; },
+                "Ring width in pixels. 0 draws a pie."));
+            rp.methods.push_back(method("SetStartAngle", {tFloat}, {"degrees"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetStartAngle(F(a[0])); return Value{}; },
+                "Where the arc starts. 0 is 12 o'clock."));
+            rp.methods.push_back(method("SetClockwise", {tBool}, {"on"}, tVoid,
+                [of, flag](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetClockwise(flag(a[0])); return Value{}; },
+                "Fill clockwise when on."));
+            rp.methods.push_back(method("SetSpin", {tBool}, {"on"}, tVoid,
+                [of, flag](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetSpin(flag(a[0])); return Value{}; },
+                "Spin the arc as a loader."));
+            rp.methods.push_back(method("SetShowPercent", {tBool}, {"on"}, tVoid,
+                [of, flag](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetShowPercent(flag(a[0])); return Value{}; },
+                "Draw the fill as a percent in the middle."));
+            api.types.push_back(std::move(rp));
+        }
+        {
+            ApiType sg; sg.name = "UISlotGrid"; sg.isComponent = true;
+            sg.doc = "A grid of buttons. Selecting one fires on_change. It does not know about inventory.";
+            sg.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UISlotGrid>() : nullptr; };
+            auto of = [need](const Value& self, CallContext& c) -> UISlotGrid* {
+                GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+                return need(g->GetComponent<UISlotGrid>(), g, c, "Slot Grid");
+            };
+            sg.methods.push_back(method("SetValue", {tInt}, {"index"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetValue(I(a[0])); return Value{}; },
+                "Select a slot by index. -1 clears the selection."));
+            sg.methods.push_back(method("SetColumns", {tInt}, {"columns"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetColumns(I(a[0])); of(s, c)->Rebuild(); return Value{}; },
+                "How many slots across (1 to 16)."));
+            sg.methods.push_back(method("SetRows", {tInt}, {"rows"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetRows(I(a[0])); of(s, c)->Rebuild(); return Value{}; },
+                "How many slots down (1 to 16)."));
+            ApiMethod val = method("Value", {}, {}, tInt,
+                [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{(std::int32_t)of(s, c)->Value()}; },
+                "The selected slot, or -1.");
+            val.pure = true;
+            sg.methods.push_back(std::move(val));
+            api.types.push_back(std::move(sg));
+        }
+    }
+    // ---- grok/ui-controls: visual-script nodes for the new widget options. ----
+    {
+        auto need = [](auto* c, const char* what, CallContext& ctx) {
+            if (!c) throw RuntimeError(std::string("This object has no ") + what, ctx.loc);
+            return c;
+        };
+        {
+            ApiType dd; dd.name = "UIDropdown"; dd.isComponent = true;
+            dd.doc = "A dropdown. Search, a row cap and per-option glyphs are optional.";
+            dd.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIDropdown>() : nullptr; };
+            auto of = [need](const Value& self, CallContext& c) {
+                return need(Resolve(std::get<ObjRef>(self), c.loc)->GetComponent<UIDropdown>(), "UI Dropdown", c);
+            };
+            dd.methods.push_back(method("SetSearchable", {tBool}, {"on"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetSearchable(std::get<bool>(a[0])); return Value{}; },
+                "Show a search row that filters the options while the list is open."));
+            dd.methods.push_back(method("SetMaxVisible", {tInt}, {"rows"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetMaxVisible(I(a[0])); return Value{}; },
+                "How many matching options the open list shows. 0 shows every match."));
+            dd.methods.push_back(method("SetOptionIcon", {tInt, tString}, {"index", "glyph"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetOptionIcon(I(a[0]), S(a[0 + 1])); return Value{}; },
+                "A short glyph drawn in front of one option."));
+            ApiMethod q = method("Searchable", {}, {}, tBool,
+                [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->Searchable()}; },
+                "True when the open list has a search row.");
+            q.pure = true; dd.methods.push_back(std::move(q));
+            api.types.push_back(std::move(dd));
+        }
+        {
+            ApiType sv; sv.name = "UIScrollView"; sv.isComponent = true;
+            sv.doc = "A scroll view. Inertia, elastic edges and the bar style are optional.";
+            sv.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIScrollView>() : nullptr; };
+            auto of = [need](const Value& self, CallContext& c) {
+                return need(Resolve(std::get<ObjRef>(self), c.loc)->GetComponent<UIScrollView>(), "UI Scroll View", c);
+            };
+            sv.methods.push_back(method("SetInertia", {tFloat}, {"rate"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetInertia(F(a[0])); return Value{}; },
+                "Wheel glide. 0 scrolls one notch immediately. Higher stops the glide sooner."));
+            sv.methods.push_back(method("SetElastic", {tBool}, {"on"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetElastic(std::get<bool>(a[0])); return Value{}; },
+                "Let the content pass the ends, then spring back."));
+            sv.methods.push_back(method("SetBarStyle", {tInt}, {"style"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetBarStyle(I(a[0])); return Value{}; },
+                "Scrollbar: 0 the usual bar, 1 thin, 2 hidden until the view is scrolling."));
+            api.types.push_back(std::move(sv));
+        }
+        {
+            ApiType tb; tb.name = "UITabs"; tb.isComponent = true;
+            tb.doc = "A tab bar. Closable tabs fire on_tab_close. Vertical is a style.";
+            tb.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UITabs>() : nullptr; };
+            auto of = [need](const Value& self, CallContext& c) {
+                return need(Resolve(std::get<ObjRef>(self), c.loc)->GetComponent<UITabs>(), "UI Tabs", c);
+            };
+            tb.methods.push_back(method("SetClosable", {tBool}, {"on"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetClosable(std::get<bool>(a[0])); return Value{}; },
+                "Draw an X on each tab. Clicking it removes that tab."));
+            tb.methods.push_back(method("CloseTab", {tInt}, {"index"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->CloseTab(I(a[0])); return Value{}; },
+                "Remove one tab and fire on_tab_close."));
+            ApiMethod n = method("Count", {}, {}, tInt,
+                [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{(std::int32_t)of(s, c)->Count()}; },
+                "How many tabs are left.");
+            n.pure = true; tb.methods.push_back(std::move(n));
+            api.types.push_back(std::move(tb));
+        }
+        {
+            ApiType tt; tt.name = "UITooltip"; tt.isComponent = true;
+            tt.doc = "A hover tooltip. It already waits and follows the cursor. Rich text and the offset are optional.";
+            tt.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UITooltip>() : nullptr; };
+            auto of = [need](const Value& self, CallContext& c) {
+                return need(Resolve(std::get<ObjRef>(self), c.loc)->GetComponent<UITooltip>(), "UI Tooltip", c);
+            };
+            tt.methods.push_back(method("SetRichText", {tBool}, {"on"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetRichText(std::get<bool>(a[0])); return Value{}; },
+                "Draw <b> and #rrggbb in the tooltip text."));
+            tt.methods.push_back(method("SetOffset", {tFloat, tFloat}, {"x", "y"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetOffset(F(a[0]), F(a[1])); return Value{}; },
+                "Pixels from the cursor to the box. 14, 14 is the usual spot."));
+            tt.methods.push_back(method("SetDelay", {tFloat}, {"seconds"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetDelay(F(a[0])); return Value{}; },
+                "How long the pointer must hover before the tooltip shows."));
+            api.types.push_back(std::move(tt));
+        }
+        {
+            ApiType inf; inf.name = "UIInputField"; inf.isComponent = true;
+            inf.doc = "A text field. Password, a character limit and integer or decimal mode already exist. Multiline is optional.";
+            inf.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIInputField>() : nullptr; };
+            auto of = [need](const Value& self, CallContext& c) {
+                return need(Resolve(std::get<ObjRef>(self), c.loc)->GetComponent<UIInputField>(), "UI Input Field", c);
+            };
+            inf.methods.push_back(method("SetMultiline", {tBool}, {"on"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetMultiline(std::get<bool>(a[0])); return Value{}; },
+                "Enter inserts a newline instead of submitting."));
+            inf.methods.push_back(method("SetMaxLength", {tInt}, {"length"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetMaxLength(I(a[0])); return Value{}; },
+                "The most characters the field accepts."));
+            inf.methods.push_back(method("SetContentType", {tInt}, {"type"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetContentType(I(a[0])); return Value{}; },
+                "0 standard, 1 integer, 2 decimal, 3 password."));
+            api.types.push_back(std::move(inf));
+        }
+    }
+    // ---- UIToast / UIModal (grok/ui-toast). Visual-script nodes come from these types. ----
+    {
+        auto asBool = [](const Value& v) {
+            if (auto* b = std::get_if<bool>(&v)) return *b;
+            return F(v) != 0.0f;
+        };
+        ApiType tt; tt.name = "UIToast"; tt.isComponent = true;
+        tt.doc = "A stack of toast notifications. The object needs a UI Toast.";
+        tt.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIToast>() : nullptr; };
+        auto toastOf = [](const Value& self, CallContext& c) -> UIToast* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* t = g->GetComponent<UIToast>();
+            if (!t) throw RuntimeError("'" + g->name + "' has no UI Toast (add one in the Inspector)", c.loc);
+            return t;
+        };
+        tt.methods.push_back(method("Push", {tString, tString, tInt}, {"title", "body", "kind"}, tVoid,
+            [toastOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                toastOf(s, c)->Push(S(a[0]), S(a[1]), I(a[2]));
+                return Value{};
+            }, "Show a toast. kind: 0 info, 1 success, 2 warning, 3 error."));
+        tt.methods.push_back(method("SetDuration", {tFloat}, {"seconds"}, tVoid,
+            [toastOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                toastOf(s, c)->SetDuration(F(a[0]));
+                return Value{};
+            }, "How long a new toast stays up, in seconds."));
+        tt.methods.push_back(method("SetCorner", {tInt}, {"corner"}, tVoid,
+            [toastOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                toastOf(s, c)->SetCorner(I(a[0]));
+                return Value{};
+            }, "Where the stack sits: 0 top-right, 1 top-left, 2 bottom-right, 3 bottom-left, 4 top-center."));
+        tt.methods.push_back(method("SetMaxStack", {tInt}, {"count"}, tVoid,
+            [toastOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                toastOf(s, c)->SetMaxStack(I(a[0]));
+                return Value{};
+            }, "How many toasts stay on screen. The oldest one drops off past this."));
+        ApiMethod count = method("Count", {}, {}, tInt,
+            [toastOf](const Value& s, std::vector<Value>&, CallContext& c) {
+                return Value{(std::int32_t)toastOf(s, c)->Count()};
+            }, "How many toasts are on screen right now.");
+        count.pure = true;
+        tt.methods.push_back(std::move(count));
+        api.types.push_back(std::move(tt));
+
+        ApiType md; md.name = "UIModal"; md.isComponent = true;
+        md.doc = "A modal dialog. Style Card restyles the Card, Title, Message, Confirm and Cancel inside it.";
+        md.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIModal>() : nullptr; };
+        auto modalOf = [](const Value& self, CallContext& c) -> UIModal* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* m = g->GetComponent<UIModal>();
+            if (!m) throw RuntimeError("'" + g->name + "' has no UI Modal (add one in the Inspector)", c.loc);
+            return m;
+        };
+        md.methods.push_back(method("Open", {}, {}, tVoid,
+            [modalOf](const Value& s, std::vector<Value>&, CallContext& c) { modalOf(s, c)->Open(); return Value{}; },
+            "Show the dialog."));
+        md.methods.push_back(method("Close", {}, {}, tVoid,
+            [modalOf](const Value& s, std::vector<Value>&, CallContext& c) { modalOf(s, c)->Close(); return Value{}; },
+            "Hide the dialog. Fires on_modal_close."));
+        md.methods.push_back(method("SetStyleCard", {tBool}, {"on"}, tVoid,
+            [modalOf, asBool](const Value& s, std::vector<Value>& a, CallContext& c) {
+                modalOf(s, c)->SetStyleCard(asBool(a[0]));
+                return Value{};
+            }, "Turn the card styling on or off. Off leaves the dialog as it was authored."));
+        md.methods.push_back(method("SetCardRadius", {tFloat}, {"radius"}, tVoid,
+            [modalOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                modalOf(s, c)->SetCardRadius(F(a[0]));
+                return Value{};
+            }, "Corner radius of the card named Card, in pixels."));
+        md.methods.push_back(method("SetTitle", {tString}, {"text"}, tVoid,
+            [modalOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                modalOf(s, c)->SetTitle(S(a[0]));
+                return Value{};
+            }, "Title text. Empty leaves whatever the Title label already says."));
+        md.methods.push_back(method("SetMessage", {tString}, {"text"}, tVoid,
+            [modalOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                modalOf(s, c)->SetMessage(S(a[0]));
+                return Value{};
+            }, "Body text. Empty leaves whatever the Message label already says."));
+        md.methods.push_back(method("SetConfirmText", {tString}, {"text"}, tVoid,
+            [modalOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                modalOf(s, c)->SetConfirmText(S(a[0]));
+                return Value{};
+            }, "Confirm button label. Empty leaves the button's own label."));
+        md.methods.push_back(method("SetCancelText", {tString}, {"text"}, tVoid,
+            [modalOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                modalOf(s, c)->SetCancelText(S(a[0]));
+                return Value{};
+            }, "Cancel button label. Empty leaves the button's own label."));
+        ApiMethod open = method("IsOpen", {}, {}, tBool,
+            [modalOf](const Value& s, std::vector<Value>&, CallContext& c) {
+                return Value{modalOf(s, c)->IsOpen()};
+            }, "True while the dialog is shown.");
+        open.pure = true;
+        md.methods.push_back(std::move(open));
+        api.types.push_back(std::move(md));
+    }
+    // ---- UITheme (grok/ui-theme). Visual-script nodes come from this type. ----
+    {
+        ApiType th; th.name = "UITheme"; th.isComponent = true;
+        th.doc = "A saved skin for panels, buttons, sliders and the rest of the UI kit. The object needs a UI Theme.";
+        th.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UITheme>() : nullptr; };
+        auto themeOf = [](const Value& self, CallContext& c) -> UITheme* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* t = g->GetComponent<UITheme>();
+            if (!t) throw RuntimeError("'" + g->name + "' has no UI Theme (add one in the Inspector)", c.loc);
+            return t;
+        };
+        th.methods.push_back(method("SetPreset", {tInt}, {"preset"}, tVoid,
+            [themeOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                UITheme* t = themeOf(s, c);
+                t->ApplyPreset(I(a[0]));
+                t->Apply();
+                return Value{};
+            }, "Switch to a built-in look and bake it: 0 custom, 1 dark, 2 light, 3 sci-fi, 4 fantasy."));
+        th.methods.push_back(method("Apply", {}, {}, tVoid,
+            [themeOf](const Value& s, std::vector<Value>&, CallContext& c) {
+                themeOf(s, c)->Apply();
+                return Value{};
+            }, "Bake this skin onto this object and its children. Widgets keep their positions."));
+        th.methods.push_back(method("ApplyTo", {tString}, {"objectName"}, tVoid,
+            [themeOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                UITheme* t = themeOf(s, c);
+                GameObject* root = t->gameObject;
+                if (t->gameObject && t->gameObject->scene())
+                    if (GameObject* named = t->gameObject->scene()->Find(S(a[0]))) root = named;
+                t->ApplyTo(root);
+                return Value{};
+            }, "Bake this skin onto the named object and its children."));
+        api.types.push_back(std::move(th));
+    }
+    // ---- UI widgets (grok/ui-options). Visual-script nodes come from these types.
+    // Value changes still raise on_change / OnValueChanged; clicks raise on_click / OnClick.
+    {
+        ApiType sl; sl.name = "UISlider"; sl.isComponent = true;
+        sl.doc = "A draggable value. The object needs a UI Slider. on_change fires when the value moves.";
+        sl.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UISlider>() : nullptr; };
+        auto of = [](const Value& self, CallContext& c) -> UISlider* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* w = g->GetComponent<UISlider>();
+            if (!w) throw RuntimeError("'" + g->name + "' has no UI Slider", c.loc);
+            return w;
+        };
+        sl.methods.push_back(method("SetValue", {tFloat}, {"value"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetValue(F(a[0])); return Value{}; },
+            "Set the value (snaps to the step). Fires OnValueChanged when it changes."));
+        sl.methods.push_back(method("SetStep", {tFloat}, {"step"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetStep(F(a[0])); return Value{}; },
+            "Snap spacing. 0 keeps the slider continuous."));
+        sl.methods.push_back(method("SetFormat", {tString}, {"format"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetFormat(S(a[0])); return Value{}; },
+            "Value label. \"{v}\" is the number. Empty keeps two decimals."));
+        ApiMethod gv = method("GetValue", {}, {}, tFloat,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->value}; },
+            "The current value.");
+        gv.pure = true;
+        sl.methods.push_back(std::move(gv));
+        api.types.push_back(std::move(sl));
+    }
+    {
+        ApiType pb; pb.name = "UIProgressBar"; pb.isComponent = true;
+        pb.doc = "A fill bar (health, loading). The object needs a UI Progress Bar.";
+        pb.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIProgressBar>() : nullptr; };
+        auto of = [](const Value& self, CallContext& c) -> UIProgressBar* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* w = g->GetComponent<UIProgressBar>();
+            if (!w) throw RuntimeError("'" + g->name + "' has no UI Progress Bar", c.loc);
+            return w;
+        };
+        pb.methods.push_back(method("SetValue", {tFloat}, {"value"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetValue(F(a[0])); return Value{}; },
+            "Fill amount, 0 to 1. A damage trail eases down when Trail is set."));
+        pb.methods.push_back(method("SetSegments", {tInt}, {"count"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetSegments(I(a[0])); return Value{}; },
+            "Chunk count. 0 or 1 is one solid bar."));
+        pb.methods.push_back(method("SetTrail", {tFloat}, {"seconds"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetTrail(F(a[0])); return Value{}; },
+            "Seconds for the damage trail to catch a drop. 0 hides it."));
+        pb.methods.push_back(method("SetTextFormat", {tString}, {"format"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetTextFormat(S(a[0])); return Value{}; },
+            "Label on the bar. \"{n}\" is the percent, \"{v}\" is 0..1."));
+        api.types.push_back(std::move(pb));
+    }
+    {
+        ApiType bt; bt.name = "UIButton"; bt.isComponent = true;
+        bt.doc = "A clickable button. The object needs a UI Button. on_click fires when it is pressed.";
+        bt.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIButton>() : nullptr; };
+        auto of = [](const Value& self, CallContext& c) -> UIButton* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* w = g->GetComponent<UIButton>();
+            if (!w) throw RuntimeError("'" + g->name + "' has no UI Button", c.loc);
+            return w;
+        };
+        bt.methods.push_back(method("SetEase", {tInt, tFloat}, {"ease", "seconds"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) {
+                of(s, c)->SetEase(I(a[0]), F(a[1])); return Value{};
+            }, "Hover/press ease: 0 linear, 1 smooth, 2 ease-out, 3 ease-in, and how many seconds it takes."));
+        bt.methods.push_back(method("SetInteractable", {tBool}, {"on"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) {
+                of(s, c)->SetInteractable(std::get<bool>(a[0])); return Value{};
+            }, "False greys the button out and ignores clicks."));
+        bt.methods.push_back(method("Press", {}, {}, tVoid,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { of(s, c)->Press(); return Value{}; },
+            "Click the button. Fires OnClick."));
+        api.types.push_back(std::move(bt));
     }
     // ---- Input ----
     {

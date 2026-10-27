@@ -25,6 +25,24 @@ public:
     bool  showLines = true;                           // the 4 ticks
     bool  lineUp = true, lineDown = true, lineLeft = true, lineRight = true; // per-tick (T-style: Up off)
     float spread = 0.0f;                              // extra gap added to every tick (aim spread, px)
+    // grok/ui-hud — 0 leaves spread exactly as authored. Higher pulls it back toward 0 (px/sec).
+    float spreadRecover = 0.0f;
+    float spreadMax = 64.0f;
+    void SetSpread(float px) { spread = px < 0.0f ? 0.0f : px; }
+    void SetSpreadRecover(float pxPerSec) { spreadRecover = pxPerSec < 0.0f ? 0.0f : pxPerSec; }
+    float Spread() const { return spread; }
+    /// Push the ticks apart. They ease back while spreadRecover is above 0.
+    void KickSpread(float px) {
+        spread += px;
+        if (spread < 0.0f) spread = 0.0f;
+        if (spread > spreadMax) spread = spreadMax;
+    }
+
+    void Update(float dt) override {
+        if (spreadRecover <= 0.0f || spread <= 0.0f) return;
+        spread -= spreadRecover * dt;
+        if (spread < 0.0f) spread = 0.0f;
+    }
 
     bool  dot = false;
     float dotSize = 4.0f;

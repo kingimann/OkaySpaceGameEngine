@@ -44,6 +44,7 @@ struct AnimLink {
     struct Frame {
         float speed = 0.0f, verticalSpeed = 0.0f;
         bool grounded = true, crouch = false, prone = false, sprint = false, slide = false, aim = false;
+        bool swim = false;        ///< in a swim. The graph ignores it until a swim state exists.
         float stance = 0.0f;      ///< eased stance level: 0 stand .. 1 crouch .. 2 prone
         bool jumped = false, landed = false, dived = false;
         Vec3 velocity{0, 0, 0};   ///< world velocity: sent as moveX / moveZ in the body's frame (2D blend trees)
@@ -66,6 +67,7 @@ struct AnimLink {
         m_sm->SetBool("sprint", f.sprint);
         m_sm->SetBool("slide", f.slide);
         m_sm->SetBool("aim", f.aim);
+        m_sm->SetBool("swim", f.swim);
         if (owner && owner->transform) {
             Vec3 local = owner->transform->InverseTransformDirection(f.velocity);
             m_sm->SetFloat("moveX", local.x);
@@ -112,6 +114,8 @@ struct Landing {
         return landed;
     }
     void SetDt(float dt) { m_dt = dt; }
+    /// Forget a fall. Used in water, so climbing out doesn't count the swim as a landing.
+    void Reset() { m_wasGrounded = true; m_airTime = 0.0f; m_minVy = 0.0f; }
 private:
     bool m_wasGrounded = true;
     float m_airTime = 0.0f, m_minVy = 0.0f, m_dt = 0.016f;

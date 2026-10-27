@@ -121,11 +121,9 @@ Mesh Character::BuildRig(std::vector<int>& bone) const {
         int up = s < 0 ? B_LUPARM : B_RUPARM, fo = s < 0 ? B_LFORE : B_RFORE, ha = s < 0 ? B_LHAND : B_RHAND;
         box({s * 0.27f, 1.30f, 0}, {0.13f, 0.34f, 0.18f}, upperArmCol, up);
         box({s * 0.27f, 0.99f, 0}, {0.12f, 0.32f, 0.16f}, foreArmCol, fo);
-        // One plain block at the wrist, offset out of the sleeve so the first-person
-        // arm shows a palm instead of the forearm end. No thumb and no finger
-        // segments. It ends about where a grip is placed, so it meets a held
-        // object instead of stabbing through it.
-        box({s * 0.34f, 0.80f, 0.05f}, {0.11f, 0.10f, 0.11f}, handCol, ha);
+        // One brick on the hand bone, the block this rig used before the palm,
+        // thumb and finger boxes. No finger bones: the hand is still l_hand / r_hand.
+        box({s * 0.27f, 0.80f, 0.02f}, {0.12f, 0.12f, 0.17f}, handCol, ha);
         int th = s < 0 ? B_LTHIGH : B_RTHIGH, sh = s < 0 ? B_LSHIN : B_RSHIN, ft = s < 0 ? B_LFOOT : B_RFOOT;
         box({s * 0.105f, 0.74f, 0}, {0.18f, 0.42f, 0.20f}, pants, th);
         box({s * 0.105f, 0.34f, 0}, {0.16f, 0.44f, 0.18f}, shinCol, sh);

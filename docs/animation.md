@@ -821,9 +821,10 @@ elbows bend down and out, and the object moves with the body.
   and lights point along local -Z, a sword's blade along +Y, a cup's handle
   along +X. For a model built another way, **Hold Rotation** turns it
   (0, 180, 0 for a gun facing backwards).
-- Hands are a plain block: no finger bones and no finger geometry. Holding
-  aims the palm at the grip. Finger joints are not posed, including on a rig
-  that happens to have them. A run (sprint, or fast enough to use the run
+- Hands are the single block the rig had before the finger mesh: one 12×12×17 cm
+  box on the hand bone, and no finger bones. Holding aims that hand at the grip.
+  Finger joints are not posed, including on a rig that happens to have them. A run
+  (sprint, or fast enough to use the run
   style) keeps those hands out of the first-person view. Walking, idling and
   holding still show the block. The held object stays on its grip.
 - The owner's first-person camera does not draw the head or the neck. The

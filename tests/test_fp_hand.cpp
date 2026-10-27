@@ -1,5 +1,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include <algorithm>
+#include <cstring>
 
 using namespace okay;
 
@@ -51,14 +53,30 @@ int main() {
         // No spawned arm object (no "second arm"), and the baked mesh stays hidden.
         CHECK(scene.Find("FP_Arm") == nullptr);
         CHECK(player->GetComponent<MeshRenderer>() && !player->GetComponent<MeshRenderer>()->enabled);
-        // The hand part is one block. A palm plus a thumb and finger segments
-        // was five cubes (40 vertices) on this bone.
+        // The hand is the one brick from before the finger mesh (commit 6585c7c1,
+        // #430): eight corners, centred on the wrist. A palm, thumb and three
+        // finger boxes was five cubes (40 vertices) on this same bone.
+        CHECK(Character::BoneCount() == 15);
+        for (int i = 0; i < Character::BoneCount(); ++i) {
+            const char* name = Character::BoneName(i);
+            CHECK(name && !std::strstr(name, "finger") && !std::strstr(name, "thumb"));
+        }
         std::vector<int> bone;
-        ch->BuildRig(bone);
+        Mesh rig = ch->BuildRig(bone);
         int handVerts = 0;
         const int hand = Character::BoneIndex("l_hand");
-        for (int b : bone) if (b == hand) ++handVerts;
+        Vec3 mn{1e9f, 1e9f, 1e9f}, mx{-1e9f, -1e9f, -1e9f};
+        for (int i = 0; i < (int)bone.size() && i < (int)rig.vertices.size(); ++i) {
+            if (bone[i] != hand) continue;
+            ++handVerts;
+            const Vec3& v = rig.vertices[i];
+            mn.x = std::min(mn.x, v.x); mn.y = std::min(mn.y, v.y); mn.z = std::min(mn.z, v.z);
+            mx.x = std::max(mx.x, v.x); mx.y = std::max(mx.y, v.y); mx.z = std::max(mx.z, v.z);
+        }
         CHECK(handVerts == 8);
+        CHECK_NEAR(mn.x, -0.33f, 1e-3f); CHECK_NEAR(mx.x, -0.21f, 1e-3f);
+        CHECK_NEAR(mn.y,  0.74f, 1e-3f); CHECK_NEAR(mx.y,  0.86f, 1e-3f);
+        CHECK_NEAR(mn.z, -0.065f, 1e-3f); CHECK_NEAR(mx.z, 0.105f, 1e-3f);
 
         // Running takes the hands off the owner's screen. Walking leaves them up.
         auto* fpc = player->GetComponent<FirstPersonController>();

@@ -10,6 +10,7 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
 #include "okay/Components/ControllerFeel.hpp"
+#include "okay/Components/DeathLock.hpp"
 #include "okay/Components/StanceControl.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Input/Input.hpp"
@@ -113,6 +114,7 @@ public:
         if (!transform) return;
         if (Game::Paused()) return;   // frozen while the pause menu is up
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
+        if (DeathLocksInput(gameObject)) return;
         if (lockCursor && Cursor::lockState == Cursor::LockMode::None) Cursor::Capture(true);
 
         // ---- Mouse look ----

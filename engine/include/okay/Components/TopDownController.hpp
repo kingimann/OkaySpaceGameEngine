@@ -8,6 +8,7 @@
 #include "okay/Components/MoveSpeed.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/DeathLock.hpp"
 #include "okay/Components/CharacterIK.hpp"
 #include "okay/Components/StanceControl.hpp"
 #include "okay/Input/Input.hpp"
@@ -65,6 +66,7 @@ public:
     void Update(float dt) override {
         if (!transform) return;
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
+        if (DeathLocksInput(gameObject)) return;
 
         Vec2 axis = Input::AxisWASD();
         Vec2 pad  = Input::GamepadAxis();

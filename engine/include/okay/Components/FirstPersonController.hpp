@@ -19,6 +19,7 @@
 #include "okay/Components/StepUp.hpp"
 #include "okay/Components/ControllerFeel.hpp"
 #include "okay/Components/PlayerView.hpp"
+#include "okay/Components/DeathLock.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
 
@@ -203,6 +204,7 @@ public:
         if (Game::Paused()) return;   // frozen: no mouse-look, no cursor recapture
         m_lookDt = dt;   // also for a client's ReadLocalInput in authoritative movement
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
+        if (DeathLocksInput(gameObject)) return;
         ApplyBodyVisibility();
         // Keep the cursor hidden + locked while playing (re-assert if something freed
         // it). Turn lockCursor off to author with a normal pointer / click screen UI.

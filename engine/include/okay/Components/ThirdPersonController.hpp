@@ -23,6 +23,7 @@
 #include "okay/Components/ControllerFeel.hpp"
 #include "okay/Components/PlayerCamera.hpp"
 #include "okay/Components/PlayerView.hpp"
+#include "okay/Components/DeathLock.hpp"
 
 namespace okay {
 
@@ -215,6 +216,7 @@ public:
         if (Game::Paused()) return;   // frozen while the pause menu is up
         m_lookDt = dt;   // also for a client's ReadLocalInput in authoritative movement
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
+        if (DeathLocksInput(gameObject)) return;
         // Optionally hide + lock the cursor while playing (re-assert if freed).
         if (lockCursor && !Cursor::IsLocked()) Cursor::Capture(true);
         Simulate(ReadLocalInput(), dt);

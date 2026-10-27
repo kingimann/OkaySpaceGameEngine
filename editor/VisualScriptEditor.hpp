@@ -10,6 +10,7 @@
 #include "okay/Components/ActionList.hpp"
 #include "okay/VisualScript/ActionGraph.hpp"
 #include "okay/VisualScript/VsTypes.hpp"
+#include "okay/Animation/HumanoidActions.hpp"
 #include "okay/VisualScript/VsApi.hpp"
 #include "okay/VisualScript/VsDebug.hpp"
 #include "VisualScriptNodeHelp.hpp"
@@ -287,6 +288,10 @@ inline const std::vector<VsDef>& Registry() {
         // --- Actions ---
         {"SetColor",      "Set Color",      CAT_ACTION, true, {""}, {"R","G","B","A"}, {}, 0, nullptr},
         {"PlayClip",      "Play Clip",      CAT_ACTION, true, {""}, {}, {}, 1, "clip name"},
+        {"PlayAction",    "Play Action",    CAT_ACTION, true, {""}, {"Blend"}, {}, 1, "action"},
+        {"IsInAction",    "Is In Action",   CAT_DATA, false, {}, {}, {"In Action"}, 0, nullptr},
+        {"Die",           "Die",            CAT_ACTION, true, {""}, {}, {}, 1, "forward / back / left / right"},
+        {"Revive",        "Revive",         CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         {"SetTimeScale",  "Set Time Scale", CAT_ACTION, true, {""}, {"Scale"}, {}, 0, nullptr},
         {"SetBlendShape", "Set Blend Shape",CAT_ACTION, true, {""}, {"Weight"}, {}, 1, "shape name"},
         {"GetBlendShape", "Blend Shape",    CAT_DATA,  false, {}, {}, {"Weight"}, 1, "shape name"},
@@ -1073,6 +1078,7 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
     if (t == "MouseButton")    return "mouse_held(" + VsNum(lit("0"), "0") + ")";
     if (t == "MouseButtonDown")return "mouse_down(" + VsNum(lit("0"), "0") + ")";
     if (t == "AnimState")      return "anim_state()";
+    if (t == "IsInAction")     return "is_in_action()";
     // Third wave.
     const std::string id = std::to_string(nodeId);
     if (t == "ForLoop")    return "_i" + id;
@@ -1299,6 +1305,9 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="SetRotation3")  out += ind + "set_rot3(" + in(0)+", "+in(1)+", "+in(2)+")\n";
     else if (t=="SetColor")      out += ind + "set_color(" + in(0,"1")+", "+in(1,"1")+", "+in(2,"1")+", "+in(3,"1")+")\n";
     else if (t=="PlayClip")      out += ind + "play_clip(" + q(arg("")) + ")\n";
+    else if (t=="PlayAction")    out += ind + "play_action(" + q(arg("Death")) + ", " + in(0, "0.2") + ")\n";
+    else if (t=="Die")           out += ind + "die(" + q(arg("forward")) + ")\n";
+    else if (t=="Revive")        out += ind + "revive()\n";
     else if (t=="SetTimeScale")  out += ind + "set_timescale(" + in(0, "1") + ")\n";
     else if (t=="SetBlendShape") out += ind + "blend_shape(" + q(arg("")) + ", " + in(0, "1") + ")\n";
     else if (t=="NetHost")       out += ind + "net_host(" + VsNum(arg("45000"), "45000") + ")\n";
@@ -2655,6 +2664,24 @@ inline void Draw(EditorState& ed, bool* open) {
                 }
             } else if (IsKeyNode(n.type)) {
                 if (KeyPicker(n.arg, NODE_W - PAD * 2)) g.dirty = true;
+            } else if (n.type == "PlayAction") {
+                const auto& names = okay::HumanoidActions::ActionNames();
+                const char* preview = n.arg.empty() ? "(action)" : n.arg.c_str();
+                if (ImGui::BeginCombo("##act", preview)) {
+                    for (const auto& nm : names)
+                        if (ImGui::Selectable(nm.c_str(), n.arg == nm)) { n.arg = nm; g.dirty = true; }
+                    if (!n.arg.empty()) {
+                        bool known = false;
+                        for (const auto& nm : names) if (nm == n.arg) known = true;
+                        if (!known && ImGui::Selectable(n.arg.c_str(), true)) { /* keep a saved name */ }
+                    }
+                    ImGui::EndCombo();
+                }
+            } else if (n.type == "Die") {
+                const char* dirs[] = {"forward", "back", "left", "right"};
+                int cur = 0;
+                for (int i = 0; i < 4; ++i) if (n.arg == dirs[i]) cur = i;
+                if (ImGui::Combo("##diedir", &cur, dirs, 4)) { n.arg = dirs[cur]; g.dirty = true; }
             } else if (n.type == "MouseButton" || n.type == "MouseButtonDown") {
                 const char* btns[] = {"Left button", "Right button", "Middle button"};
                 int b = std::atoi(n.arg.c_str());

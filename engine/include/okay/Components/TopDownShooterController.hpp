@@ -13,6 +13,7 @@
 #include "okay/Components/Projectile3D.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
+#include "okay/Components/DeathLock.hpp"
 #include "okay/Components/UIAnchor.hpp"     // UICanvas::Width/Height (viewport)
 #include "okay/Input/Input.hpp"
 #include "okay/Input/Cursor.hpp"
@@ -155,6 +156,7 @@ public:
         if (!transform || !gameObject) return;
         if (Game::Paused()) return;
         if (!IsLocallyControlled(gameObject)) return;
+        if (DeathLocksInput(gameObject)) return;
         const bool uiBlocked = Input::UICaptured();
 
         // ---- Move input ----

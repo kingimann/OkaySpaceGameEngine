@@ -1,5 +1,6 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Animation/HumanoidLibrary.hpp"
+#include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Modeling/MeshAsset.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -775,6 +776,23 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             for (const auto& st : asm2->states) out << " " << (st.matchSpeed ? 1 : 0);
             out << "\n";
         }
+        if (asm2->actionsRev > 0)
+            out << "  animsmactions " << asm2->actionsRev << "\n";
+        bool anyLock = false;
+        for (const auto& st : asm2->states) anyLock = anyLock || !st.interruptible;
+        if (anyLock) {
+            out << "  animsmnoint " << asm2->states.size();
+            for (const auto& st : asm2->states) out << " " << (st.interruptible ? 1 : 0);
+            out << "\n";
+        }
+        bool anyAnyInt = false;
+        for (const auto& tr : asm2->anyState)
+            anyAnyInt = anyAnyInt || tr.interruption != AnimStateMachine::Transition::Interrupt::NextState;
+        if (anyAnyInt) {
+            out << "  animsmanyint " << asm2->anyState.size();
+            for (const auto& tr : asm2->anyState) out << " " << (int)tr.interruption;
+            out << "\n";
+        }
     }
     if (auto* tr = go->GetComponent<Terrain>()) {
         out << "  terrain " << tr->resolution << " " << tr->size << " "
@@ -1546,7 +1564,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << " " << c->resistance << " " << c->minDamage << " " << (c->godMode ? 1 : 0)
             << " " << c->invincibleTime << " " << c->overhealMax << " " << c->overhealDecay
             << " " << (c->destroyOnDeath ? 1 : 0) << " " << (c->respawn ? 1 : 0)
-            << " " << c->respawnDelay << " " << c->lives << "\n";
+            << " " << c->respawnDelay << " " << c->lives
+            << " " << (c->playDeathAnim ? 1 : 0) << "\n";
     }
     if (auto* c = go->GetComponent<HungerStat>()) {
         out << "  stat_hunger " << c->maxHunger << " " << c->drainPerSecond << " "
@@ -3270,6 +3289,25 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         int f = 0; in >> f;
                         if (i < (long)sm2->states.size()) sm2->states[i].matchSpeed = f != 0;
                     }
+                } else if (field == "animsmactions") {
+                    int rev = 0; in >> rev;
+                    smFor()->actionsRev = rev;
+                } else if (field == "animsmnoint") {
+                    auto* sm2 = smFor();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n && in; ++i) {
+                        int f = 1; in >> f;
+                        if (i < (long)sm2->states.size()) sm2->states[i].interruptible = f != 0;
+                    }
+                } else if (field == "animsmanyint") {
+                    auto* sm2 = smFor();
+                    long n = 0; in >> n;
+                    for (long k = 0; k < n && in; ++k) {
+                        int m = 0; in >> m;
+                        if (m < 0 || m > 4) m = 0;
+                        if (k < (long)sm2->anyState.size())
+                            sm2->anyState[k].interruption = (AnimStateMachine::Transition::Interrupt)m;
+                    }
                 } else if (field == "animsmint") {
                     auto* sm2 = smFor();
                     long n = 0; in >> n;
@@ -4342,6 +4380,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> c->resistance >> c->minDamage >> gd >> c->invincibleTime
                            >> c->overhealMax >> c->overhealDecay >> dod >> rs >> c->respawnDelay >> c->lives;
                         c->godMode = (gd != 0); c->destroyOnDeath = (dod != 0); c->respawn = (rs != 0);
+                    }
+                    in >> std::ws;   // optional: play the death animation (defaults on)
+                    if (std::isdigit(in.peek())) {
+                        int pda = 1; in >> pda; c->playDeathAnim = (pda != 0);
                     }
                 } else if (field == "stat_hunger") {
                     auto* c = go->AddComponent<HungerStat>();
@@ -6334,6 +6376,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
     // itself: give it the Animator that plays it now (its state clips carried over).
     if (version < 2)
         for (auto& [idx, go] : byIndex) { (void)idx; HumanoidLibrary::EnsureAnimator(go); }
+    // Default graphs saved before a built-in action existed gain that action once.
+    for (auto& [idx, go] : byIndex) {
+        (void)idx;
+        Character* body = go->GetComponent<Character>();
+        if (!body) continue;
+        for (AnimStateMachine* sm : go->GetComponents<AnimStateMachine>())
+            if (sm && sm->layer == 0) HumanoidActions::MergeMissing(*sm, body, false);
+    }
     // Make each loaded UIFrame the source of truth for its widget's fields now, so
     // a script that writes those fields in its Start moves the frame.
     for (auto& [idx, go] : byIndex) { (void)idx; if (go->GetComponent<UIFrame>()) GetUIRect(go); }

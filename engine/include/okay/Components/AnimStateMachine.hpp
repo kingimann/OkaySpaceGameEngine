@@ -121,6 +121,9 @@ public:
         /// blend position's distance from 0) over the blended motions' speed, so
         /// the feet keep pace with the ground between and beyond the motions.
         bool        matchSpeed = false;
+        /// False locks the state: Any State (jump, fall, a later action) cannot
+        /// cut it short. Death uses this. Its own transitions still run.
+        bool        interruptible = true;
     };
 
     // ---- Layer settings (layer 0 = the base machine) ----
@@ -138,6 +141,9 @@ public:
     /// How long this body's stance changes take; the movement controllers ease the
     /// body, its collider and the camera over them. Serialized.
     StanceTimes stanceTimes;
+    /// Built-in action revision already merged into this graph (see HumanoidActions).
+    /// 0 = a graph from before actions. Serialized as `animsmactions`.
+    int actionsRev = 0;
 
     /// Called with the state's name when the machine enters / leaves a state.
     std::function<void(const std::string&)> onStateEnter, onStateExit;
@@ -475,9 +481,13 @@ private:
             if (m_trLeft <= 0.0f) m_trActive = false;
         }
         if (hold) return;
-        for (const Transition& tr : anyState) {
-            if (tr.to == m_current && !tr.canInterruptSelf) continue;
-            if (Try(tr, ma, cur)) return;
+        // A locked state (death) ignores Any State. Jump, fall and later actions
+        // cannot leave it; its own transitions (clip end, revive) still run below.
+        if (!cur || cur->interruptible) {
+            for (const Transition& tr : anyState) {
+                if (tr.to == m_current && !tr.canInterruptSelf) continue;
+                if (Try(tr, ma, cur)) return;
+            }
         }
         if (!m_trActive) {
             for (const Transition& tr : cur->transitions)

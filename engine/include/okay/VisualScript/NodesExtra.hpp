@@ -18,6 +18,7 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/AnimControl.hpp"
+#include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Components/BlendShapes.hpp"
 #include "okay/Input/Input.hpp"
 #include <cmath>
@@ -481,6 +482,38 @@ struct SetColorNode : VsNode {
 // Play a clip by name the same way a script's play_clip does (AnimControl.hpp):
 // a Character's clip, the imported model's clip or a built-in animation, held
 // until a script's stop_clip.
+struct PlayActionNode : VsNode {
+    std::string action;
+    explicit PlayActionNode(std::string a) : action(std::move(a)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        const float blend = In(0, g, ctx, VsValue{0.2f}).AsFloat();
+        HumanoidActions::Play(ctx.gameObject, action, blend);
+        return 0;
+    }
+};
+struct IsInActionNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        return HumanoidActions::IsInAction(ctx.gameObject) ? 1.0f : 0.0f;
+    }
+};
+struct DieNode : VsNode {
+    std::string dir;
+    explicit DieNode(std::string d) : dir(std::move(d)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        const int d = HumanoidActions::DirFromName(dir.empty() ? "forward" : dir);
+        HumanoidActions::RequestDeath(ctx.gameObject, d, nullptr);
+        return 0;
+    }
+};
+struct ReviveNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        HumanoidActions::RequestRevive(ctx.gameObject);
+        return 0;
+    }
+};
 struct PlayClipNode : VsNode {
     std::string clip;
     bool warned = false;   // "no animator" is logged once per node

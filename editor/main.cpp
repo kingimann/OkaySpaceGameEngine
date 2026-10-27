@@ -7600,6 +7600,7 @@ struct EditorPlugin {
     std::string path, name, description, error;
     bool user = false;          // from <editor>/plugins (all projects) vs the project
     bool window = false;        // declares @window (or defines on_gui)
+    bool hasMenu = false;       // defines on_menu() — a one-shot command
     bool open = false;          // its window is showing
     bool enabled = true;
     std::filesystem::file_time_type mtime{};
@@ -7747,7 +7748,7 @@ static void LoadPlugin(EditorPlugin& p) {
     namespace fs = std::filesystem;
     std::error_code ec;
     p.mtime = fs::last_write_time(p.path, ec);
-    p.error.clear(); p.vm.reset(); p.window = false;
+    p.error.clear(); p.vm.reset(); p.window = false; p.hasMenu = false;
     p.name = fs::path(p.path).stem().string(); p.description.clear();
     std::string src = extide::ReadFile(p.path);
     // Header metadata from leading // comments.
@@ -7776,6 +7777,7 @@ static void LoadPlugin(EditorPlugin& p) {
     p.vm->Bind(&p.host);
     std::string err;
     if (!p.vm->Load(src, &err)) { p.error = err.empty() ? "failed to load" : err; p.vm.reset(); ConsoleLog("Plugin '" + p.name + "': " + p.error, 2); return; }
+    p.hasMenu = p.vm->HasEvent("on_menu");
     p.vm->CallStart();
 }
 // Rescan both plugin folders: add new files, drop deleted ones, reload edited ones.
@@ -7866,9 +7868,19 @@ static void NewPluginFromTemplate(EditorState& ed) {
     ConsoleLog("Created plugin " + p.string());
 }
 // Per frame: watch for changes, fire on_tick / on_selection, draw plugin windows.
-static void TickPlugins(EditorState& ed) {
+static void EnsurePluginPrefs() {
     static bool prefs = false;
     if (!prefs) { LoadPluginPrefs(); prefs = true; }
+}
+static void SetPluginEnabled(EditorPlugin& p, bool on) {
+    p.enabled = on;
+    if (on) g_pluginsDisabled.erase(p.path);
+    else { g_pluginsDisabled.insert(p.path); p.open = false; }
+    SavePluginPrefs();
+    LoadPlugin(p);
+}
+static void TickPlugins(EditorState& ed) {
+    EnsurePluginPrefs();
     static Uint32 nextScan = 0;
     if (g_pluginsProject != ed.projectDir() || SDL_GetTicks() >= nextScan) { ScanPlugins(ed); nextScan = SDL_GetTicks() + 1000; }
     g_pluginEd = &ed;
@@ -7900,23 +7912,138 @@ static void TickPlugins(EditorState& ed) {
         ImGui::End();
     }
 }
+static void PluginMenuTip(const EditorPlugin& p) {
+    if (!ImGui::IsItemHovered()) return;
+    if (!p.error.empty() && !p.description.empty()) ImGui::SetTooltip("%s\n%s", p.description.c_str(), p.error.c_str());
+    else if (!p.error.empty()) ImGui::SetTooltip("%s", p.error.c_str());
+    else if (!p.description.empty()) ImGui::SetTooltip("%s", p.description.c_str());
+}
+static bool PluginMenuMatch(const EditorPlugin& p, const char* filter) {
+    if (!filter || !filter[0]) return true;
+    auto fold = [](std::string s) {
+        for (char& c : s) c = (char)std::tolower((unsigned char)c);
+        return s;
+    };
+    const std::string f = fold(filter);
+    auto has = [&](const std::string& s) { return fold(s).find(f) != std::string::npos; };
+    return has(p.name) || has(p.description) || has(std::filesystem::path(p.path).stem().string());
+}
+static void RevealPluginDir(const std::string& dir) {
+    if (dir.empty()) return;
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    extide::RevealInFiles(dir);
+}
 static void DrawPluginsMenu(EditorState& ed) {
     if (!ImGui::BeginMenu("Plugins")) return;
-    int shown = 0;
-    for (auto& up : g_plugins) {
-        EditorPlugin& p = *up;
-        if (!p.enabled) continue;
-        ++shown;
-        if (!p.vm) { ImGui::BeginDisabled(); ImGui::MenuItem((p.name + "  (error)").c_str()); ImGui::EndDisabled(); continue; }
-        if (p.window) { if (ImGui::MenuItem(p.name.c_str(), nullptr, p.open)) p.open = !p.open; }
-        else if (ImGui::MenuItem(p.name.c_str())) { g_pluginEd = &ed; p.vm->CallEvent("on_menu"); }
-        if (!p.description.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", p.description.c_str());
+    // The menu bar runs before the per-frame scan, so the first open of a
+    // session (and the first open after switching projects) would otherwise
+    // list nothing until the next frame.
+    EnsurePluginPrefs();
+    if (g_pluginsProject != ed.projectDir()) ScanPlugins(ed);
+
+    static char filter[64] = "";
+    if (ImGui::IsWindowAppearing()) filter[0] = '\0';
+    const bool many = g_plugins.size() > 8;
+    if (many) {
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::InputTextWithHint("##pluginfilter", "Filter", filter, sizeof(filter));
+        ImGui::Separator();
     }
-    if (!shown) ImGui::TextDisabled("No plugins yet");
+
+    int projectN = 0, userN = 0, enabledN = 0, liveN = 0, disabledN = 0;
+    for (const auto& up : g_plugins) {
+        if (!up->enabled) { ++disabledN; continue; }
+        ++liveN;
+        if (!PluginMenuMatch(*up, filter)) continue;
+        ++enabledN;
+        if (up->user) ++userN; else ++projectN;
+    }
+    const bool grouped = projectN > 0 && userN > 0;
+    bool drewGroup = false;
+
+    auto drawOne = [&](EditorPlugin& p, const std::string& label) {
+        if (!p.vm) {
+            // Click opens the script; the tooltip is the load error.
+            if (ImGui::MenuItem((label + "  (error)").c_str())) OpenScriptFileInEditorAt(p.path, 1);
+            PluginMenuTip(p);
+            return;
+        }
+        if (p.window && p.hasMenu) {
+            if (ImGui::BeginMenu(label.c_str())) {
+                if (ImGui::MenuItem("Panel", nullptr, p.open)) p.open = !p.open;
+                if (ImGui::MenuItem("Run")) { g_pluginEd = &ed; p.vm->CallEvent("on_menu"); }
+                if (ImGui::MenuItem("Edit Script")) OpenScriptFileInEditorAt(p.path, 1);
+                ImGui::EndMenu();
+            }
+            PluginMenuTip(p);
+            return;
+        }
+        if (p.window) {
+            if (ImGui::MenuItem(label.c_str(), nullptr, p.open)) p.open = !p.open;
+        } else if (ImGui::MenuItem(label.c_str())) {
+            g_pluginEd = &ed;
+            p.vm->CallEvent("on_menu");
+        }
+        PluginMenuTip(p);
+    };
+    auto drawGroup = [&](const char* heading, bool userGroup) {
+        std::vector<EditorPlugin*> items;
+        for (auto& up : g_plugins) {
+            if (!up->enabled || up->user != userGroup || !PluginMenuMatch(*up, filter)) continue;
+            items.push_back(up.get());
+        }
+        if (items.empty()) return;
+        if (grouped) {
+            if (drewGroup) ImGui::Separator();
+            ImGui::TextDisabled("%s", heading);
+        }
+        drewGroup = true;
+        std::sort(items.begin(), items.end(), [](const EditorPlugin* a, const EditorPlugin* b) {
+            auto fold = [](std::string s) { for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; };
+            return fold(a->name) < fold(b->name);
+        });
+        for (EditorPlugin* p : items) {
+            int same = 0;
+            for (EditorPlugin* q : items) if (q->name == p->name) ++same;
+            std::string label = p->name;
+            if (same > 1) label += " (" + std::filesystem::path(p->path).stem().string() + ")";
+            drawOne(*p, label);
+        }
+    };
+    drawGroup("This project", false);
+    drawGroup("All projects", true);
+
+    if (liveN == 0 && disabledN == 0) ImGui::TextDisabled("No plugins yet");
+    else if (liveN == 0) ImGui::TextDisabled("Every plugin is turned off");
+    else if (enabledN == 0) ImGui::TextDisabled("Nothing matches.");
+
+    if (disabledN > 0 && enabledN > 0) ImGui::Separator();
+    if (disabledN > 0 && ImGui::BeginMenu("Turned off")) {
+        std::vector<EditorPlugin*> off;
+        for (auto& up : g_plugins) if (!up->enabled) off.push_back(up.get());
+        std::sort(off.begin(), off.end(), [](const EditorPlugin* a, const EditorPlugin* b) {
+            auto fold = [](std::string s) { for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; };
+            return fold(a->name) < fold(b->name);
+        });
+        for (EditorPlugin* p : off) {
+            std::string label = p->name + (p->user ? "  (all projects)" : "");
+            if (ImGui::MenuItem(label.c_str())) SetPluginEnabled(*p, true);
+            PluginMenuTip(*p);
+        }
+        ImGui::EndMenu();
+    }
+
     ImGui::Separator();
     if (ImGui::MenuItem("New Plugin...")) NewPluginFromTemplate(ed);
     if (ImGui::MenuItem("Plugin Manager...")) g_showPluginManager = true;
     if (ImGui::MenuItem("Reload All")) ScanPlugins(ed, true);
+    if (ImGui::BeginMenu("Open Folder")) {
+        const std::string proj = PluginProjectDir(ed);
+        if (ImGui::MenuItem("Project Plugins", nullptr, false, !proj.empty())) RevealPluginDir(proj);
+        if (ImGui::MenuItem("Editor Plugins")) RevealPluginDir(PluginUserDir());
+        ImGui::EndMenu();
+    }
     ImGui::EndMenu();
 }
 static void DrawPluginManager(EditorState& ed) {
@@ -7950,12 +8077,7 @@ static void DrawPluginManager(EditorState& ed) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
             bool en = p.enabled;
-            if (ImGui::Checkbox("##en", &en)) {
-                p.enabled = en;
-                if (en) g_pluginsDisabled.erase(p.path); else { g_pluginsDisabled.insert(p.path); p.open = false; }
-                SavePluginPrefs();
-                LoadPlugin(p);
-            }
+            if (ImGui::Checkbox("##en", &en)) SetPluginEnabled(p, en);
             ImGui::TableNextColumn();
             ImGui::TextUnformatted(p.name.c_str());
             if (!p.error.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.42f, 1.0f), "%s", p.error.c_str());
@@ -12571,7 +12693,7 @@ void DrawScriptEditor(EditorState& ed) {
         if (g_sePaletteReq) { g_sePaletteReq = false; s_palReq = true; }
         if (rqReload) {
             std::string src = extide::ReadFile(sc->Path());
-            SetCodeBuffer(sc, src);
+            if (src.empty()) SetCodeBuffer(sc, src); else caret.replaceAll = src;   // undoable
             std::string e; sc->LoadSource(src, &e);
             g_scriptSaved[sc] = src;
             std::error_code mec; s_extMtime[sc] = std::filesystem::last_write_time(sc->Path(), mec);
@@ -13171,7 +13293,7 @@ void DrawScriptEditor(EditorState& ed) {
                 int n = 0;
                 for (std::size_t p = text.find(from); p != std::string::npos && !from.empty();
                      p = text.find(from, p + to.size())) { text.replace(p, from.size(), to); ++n; }
-                if (n > 0) { SetCodeBuffer(sc, text); ed.dirty = true; }
+                if (n > 0) caret.replaceAll = text;
                 ConsoleLog("Replaced " + std::to_string(n) + " occurrence" + (n == 1 ? "" : "s"));
             }
             ImGui::SameLine();
@@ -13193,7 +13315,7 @@ void DrawScriptEditor(EditorState& ed) {
                 {"Run (compile & execute)", [&]{ bool ok = sc->LoadSource(buf.data(), &s_error); if (ok) s_error.clear(); ed.dirty = true; }},
                 {"Save", [&]{ std::string p = filePath(); if (extide::WriteFile(p, buf.data())) { sc->SetPath(p); g_scriptSaved[sc] = buf.data(); } ed.dirty = true; }},
                 {"Format Document", [&]{ caret.replaceAll = FormatOkayScript(buf.data()); ed.dirty = true; }},
-                {"Reload from disk", [&]{ if (!sc->Path().empty()) { std::string s = extide::ReadFile(sc->Path()); SetCodeBuffer(sc, s); std::string e; sc->LoadSource(s, &e); g_scriptSaved[sc] = s; } }},
+                {"Reload from disk", [&]{ if (!sc->Path().empty()) { std::string s = extide::ReadFile(sc->Path()); if (s.empty()) SetCodeBuffer(sc, s); else caret.replaceAll = s; std::string e; sc->LoadSource(s, &e); g_scriptSaved[sc] = s; } }},
                 {"Toggle Syntax Highlight", [&]{ s_highlight = !s_highlight; }},
                 {"Toggle Minimap", [&]{ s_minimap = !s_minimap; }},
                 {"Find in Files (Ctrl+Shift+F)", [&]{ g_showFindInFiles = true; g_fifFocus = true; }},
@@ -13260,12 +13382,6 @@ void DrawScriptEditor(EditorState& ed) {
         TextEditor& te = CodeEditorFor(sc);
         te.SetColorizerEnable(s_highlight);   // toolbar "Syntax" checkbox
 
-        // Pending whole-buffer replace (Format / Rename / quick-fix): apply to the
-        // shared buffer first so the sync below pushes it into the widget.
-        if (!caret.replaceAll.empty()) {
-            SetCodeBuffer(sc, caret.replaceAll); caret.replaceAll.clear(); ed.dirty = true;
-        }
-
         // Sync widget <-> CodeBuffer. g_teHash is the text both sides last agreed on:
         // if buf changed underneath us (format, live-sync, first open, language switch)
         // push it into the widget; after Render we pull the widget's edits back out.
@@ -13274,6 +13390,21 @@ void DrawScriptEditor(EditorState& ed) {
         {
             auto it = g_teHash.find(sc);
             if (it == g_teHash.end() || it->second != bufHash) { te.SetText(buf.data()); g_teHash[sc] = bufHash; }
+        }
+        // Pending whole-buffer replace (Format / Rename / Replace All / Reload): one
+        // undoable edit in the widget, so Ctrl+Z takes it back and the view stays put
+        // (pushing it through SetText would clear the undo history and scroll to the top).
+        if (!caret.replaceAll.empty()) {
+            const TextEditor::Coordinates cur = te.GetCursorPosition();
+            te.SelectAll();
+            te.InsertTextUndoable(caret.replaceAll);
+            const int lines = te.GetTotalLines();
+            const int line = std::min(cur.mLine, lines - 1);
+            te.SetCursorPosition(TextEditor::Coordinates(line, std::min(cur.mColumn, te.LineLength(line))));
+            caret.replaceAll.clear();
+            std::string t = te.GetText(); if (!t.empty() && t.back() == '\n') t.pop_back();
+            SetCodeBuffer(sc, t); g_teHash[sc] = std::hash<std::string>{}(std::string(buf.data()));
+            ed.dirty = true;
         }
 
         // Snippet / template insert at the caret. Done before Render (which clears the
@@ -29627,6 +29758,8 @@ void DrawInspector(EditorState& ed) {
                 ImGui::DragFloat("Weight##lik", &lb->weight, 0.01f, 0.0f, 1.0f);
                 ImGui::DragFloat("Min Bend##lik", &lb->minBend, 1.0f, 0.0f, 180.0f);
                 ImGui::DragFloat("Max Bend##lik", &lb->maxBend, 1.0f, 0.0f, 180.0f);
+                if (ImGui::DragFloat("Target Blend (s)##lik", &lb->targetBlendTime, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to swing over when the goal switches to another target\nor jumps (0 = snap). Moving the character never trails.");
                 if (IKJointLimitUI("Upper limit##lik", lb->upperLimit)) ed.dirty = true;
                 if (IKJointLimitUI("Lower limit##lik", lb->lowerLimit)) ed.dirty = true;
                 if (lb->upperLimit.Active() || lb->lowerLimit.Active())
@@ -29690,6 +29823,8 @@ void DrawInspector(EditorState& ed) {
                         if (ImGui::DragFloat3("Pole Dir##cik", pd, 0.05f)) { ci->poleDir = {pd[0], pd[1], pd[2]}; ed.dirty = true; }
                     }
                 }
+                if (ImGui::DragFloat("Target Blend (s)##cik", &ci->targetBlendTime, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to swing over when the goal switches to another target\nor jumps (0 = snap). Moving the character never trails.");
                 ImGui::DragFloat("Max Joint Bend##cik", &ci->maxJointBend, 1.0f, 0.0f, 180.0f, ci->maxJointBend <= 0.0f ? "unlimited" : "%.0f deg");
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cap how sharply any joint may bend (0 = no limit). A per-bone limit\nbelow replaces it for that joint.");
                 ImGui::Checkbox("IK Active##cik", &ci->ikActive); ImGui::SameLine();
@@ -29795,6 +29930,8 @@ void DrawInspector(EditorState& ed) {
                         if (e.targetName.empty() && ImGui::DragFloat3("Point##fe", pp, 0.05f)) { e.position = {pp[0], pp[1], pp[2]}; ed.dirty = true; }
                         ImGui::DragFloat("Position Weight##fe", &e.positionWeight, 0.01f, 0.0f, 1.0f);
                         ImGui::DragFloat("Rotation Weight##fe", &e.rotationWeight, 0.01f, 0.0f, 1.0f);
+                        if (ImGui::DragFloat("Target Blend (s)##fe", &e.targetBlendTime, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to swing over when the goal switches to another target\nor jumps (0 = snap). Moving the character never trails.");
                         ImGui::DragFloat("Body Pull##fe", &e.pull, 0.01f, 0.0f, 1.0f);
                         const bool leg = l >= FullBodyIK::LeftFoot;
                         if (IKJointLimitUI(leg ? "Hip limit##fe" : "Shoulder limit##fe", e.upperLimit)) ed.dirty = true;

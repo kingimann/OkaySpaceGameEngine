@@ -396,7 +396,7 @@ public:
         // Only a physics body can be airborne; a transform-only player can't fall.
         bool airborne = rb ? !grounded : false;
         if (rb) {
-            const bool plant = grounded || m_swimming;
+            const bool plant = grounded;
             const float auth = plant ? 1.0f : airControl;
             const float accel = (running ? acceleration : walkAcceleration) * auth;
             StepPlanarVelocity(rb->velocity.x, rb->velocity.z,

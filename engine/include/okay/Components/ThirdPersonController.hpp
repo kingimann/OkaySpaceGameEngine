@@ -388,7 +388,7 @@ public:
         if (rb) {
             // One step toward the wish. Steering kills the old heading on its own
             // rate, so a sprint can turn without a second smoother on the input.
-            const bool plant = grounded || m_swimming;
+            const bool plant = grounded;
             const float auth = plant ? 1.0f : airControl;
             const float accel = (running ? acceleration : walkAcceleration) * auth;
             StepPlanarVelocity(rb->velocity.x, rb->velocity.z,

@@ -1813,10 +1813,19 @@ inline std::set<int> VsPasteText(VsEditGraph& g, const std::string& text, float 
     return made;
 }
 
-// Can a node of type `d` take a wire from the pending pin?
-inline bool VsCompatible(const VsDef& d, bool exec, bool fromOutput) {
+// Can a node of type `d` take a wire from the pending pin? A data pin also has
+// to be a type that pin can feed (Number into a Vector3 input stays hidden).
+inline bool VsCompatible(const VsDef& d, bool exec, bool fromOutput,
+                         okay::vs::PinType pin = okay::vs::PinType::Any) {
     if (exec) return fromOutput ? d.execIn : !d.execOut.empty();
-    return fromOutput ? !d.dataIn.empty() : !d.dataOut.empty();
+    if (fromOutput) {
+        for (int i = 0; i < (int)d.dataIn.size(); ++i)
+            if (okay::vs::PinCompatible(pin, okay::vs::InputType(d.type, i))) return true;
+        return false;
+    }
+    for (int i = 0; i < (int)d.dataOut.size(); ++i)
+        if (okay::vs::PinCompatible(okay::vs::OutputType(d.type, i, ""), pin)) return true;
+    return false;
 }
 
 // ---- The editor window -----------------------------------------------------
@@ -2926,7 +2935,13 @@ inline void Draw(EditorState& ed, bool* open) {
     ImGui::SetNextWindowSize(ImVec2(640, 470), ImGuiCond_Always);
     if (ImGui::BeginPopup("##vspalette")) {
         static const char* catNames[CAT_COUNT] = {"Events","Flow","Variables","Math","Logic","Input","Transform","Actions","Data","Multiplayer & Steam","Engine API"};
-        auto fits = [&](const VsDef& d) { return !st.linkPending || VsCompatible(d, st.linkExec, st.linkFromOutput); };
+        okay::vs::PinType dragged = okay::vs::PinType::Any;
+        if (st.linkPending && !st.linkExec)
+            dragged = st.linkFromOutput ? VsOutPinType(g, st.linkNode, st.linkPin)
+                                         : VsInPinType(g, st.linkNode, st.linkPin);
+        auto fits = [&](const VsDef& d) {
+            return !st.linkPending || VsCompatible(d, st.linkExec, st.linkFromOutput, dragged);
+        };
         auto lower = [](std::string x) { for (char& ch : x) ch = (char)std::tolower((unsigned char)ch); return x; };
         auto bright = [](ImU32 c) {   // the category colour, lifted so a dot reads on the dark list
             ImVec4 v = ImGui::ColorConvertU32ToFloat4(c);
@@ -3004,7 +3019,10 @@ inline void Draw(EditorState& ed, bool* open) {
         static int s_kb = 0;
         static char search[64] = "";
         if (ImGui::IsWindowAppearing()) { search[0] = '\0'; s_kb = 0; ImGui::SetKeyboardFocusHere(); }
-        if (st.linkPending) ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Only nodes that fit the dragged pin are shown");
+        if (st.linkPending && st.linkExec)
+            ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Only nodes that fit this flow pin are shown");
+        else if (st.linkPending)
+            ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Only nodes that fit a %s pin are shown", okay::vs::PinTypeName(dragged));
         ImGui::SetNextItemWidth(-FLT_MIN);
         if (ImGui::InputTextWithHint("##vssearch", "Search nodes and actions...  (Up / Down, Enter to add)", search, sizeof search))
             s_kb = 0;
@@ -3033,7 +3051,14 @@ inline void Draw(EditorState& ed, bool* open) {
             }
             if (j == needle.size()) return 100 + sc;
             hits.clear();
-            const std::string extra = lower(e.cat + " " + (e.def ? e.def->type : "") + " " + (e.step ? e.step->op : "") + " " + e.desc);
+            std::string pins;
+            if (e.def) {
+                for (int i = 0; i < (int)e.def->dataIn.size(); ++i)
+                    pins += std::string(okay::vs::PinTypeName(okay::vs::InputType(e.def->type, i))) + " ";
+                for (int i = 0; i < (int)e.def->dataOut.size(); ++i)
+                    pins += std::string(okay::vs::PinTypeName(okay::vs::OutputType(e.def->type, i, ""))) + " ";
+            }
+            const std::string extra = lower(e.cat + " " + (e.def ? e.def->type : "") + " " + (e.step ? e.step->op : "") + " " + e.desc + " " + pins);
             return extra.find(needle) != std::string::npos ? 40 : 0;
         };
 

@@ -54,6 +54,8 @@
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/Flashlight.hpp"
 #include "okay/Components/Light.hpp"
+#include "okay/Components/HoldableObject.hpp"
+#include "okay/Components/ProceduralObjectHolding.hpp"
 
 namespace okay {
 
@@ -1439,6 +1441,20 @@ inline void VoxelSandbox(Scene& scene) {
     // zoom is the same button, and it pulled the view from 60° to 40° while placing.
     auto* fp = player->AddComponent<FirstPersonController>();
     fp->zoomWithRightMouse = false;
+    player->AddComponent<ProceduralObjectHolding>();   // G / middle mouse / pad X: pick up, hold to throw
+
+    // Something to pick up and throw, a step in front of the spawn.
+    {
+        GameObject* crate = scene.CreateGameObject("Crate");
+        crate->transform->localPosition = {0.7f, surfY + 0.6f, -0.9f};
+        crate->transform->localScale = {0.45f, 0.45f, 0.45f};
+        auto* mr = crate->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube();
+        mr->color = Color::FromBytes(176, 112, 64);
+        crate->AddComponent<BoxCollider3D>();
+        crate->AddComponent<Rigidbody3D>();
+        crate->AddComponent<HoldableObject>();
+    }
 
     GameObject* camObj = scene.CreateGameObject("FPS Camera");
     auto* cam = camObj->AddComponent<Camera>();
@@ -1451,7 +1467,7 @@ inline void VoxelSandbox(Scene& scene) {
 
     GameObject* help = scene.CreateGameObject("Help");
     auto* ht = help->AddComponent<TextRenderer>();
-    ht->text = "WASD + mouse   Dig: LMB   Fill: RMB   Jump / swim up: Space   Swim down: Ctrl   Light: F   Pause: Esc";
+    ht->text = "WASD + mouse   Dig: LMB   Fill: RMB   Jump / swim up: Space   Swim down: Ctrl   Throw: hold G   Light: F   Pause: Esc";
     ht->screenSpace = true; ht->screenPos = {12, 12}; ht->pixelSize = 2.0f;
 
     scene.CreateGameObject("Pause Menu")->AddComponent<PauseMenu>();

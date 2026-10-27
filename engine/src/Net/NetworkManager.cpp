@@ -361,6 +361,9 @@ void NetworkManager::Stop() {
     m_joinRejectReason.clear();
     m_relOut.clear();
     m_relSeen.Clear();
+    m_snapUp.Clear();
+    m_snapDown.Clear();
+    m_relaySnap.clear();
     m_toServer.Clear();
     m_seqOrigin.Clear();
     m_netTick = 0;
@@ -483,6 +486,199 @@ void NetworkManager::SetSyncExtra(const std::string& id, std::function<std::stri
     it->second.setExtra = std::move(set);
 }
 
+void NetworkManager::ApplyRemoteXform(const std::string& id, const Vec3& p, const Quat& q, double tick,
+                                      const std::string& extra, bool hasExtra) {
+    auto it = m_syncObjs.find(id);
+    if (it == m_syncObjs.end() || it->second.owned) return;
+    it->second.targetPos = p;
+    it->second.targetRot = q;
+    if (TickRateInForce() > 0.0f) {
+        auto& buf = it->second.samples;
+        const double now = m_smoothTick;
+        // A sender's clock that's far off ours (or none) is stamped with when
+        // it arrived instead.
+        if (tick < 0.0 || std::fabs(tick - now) > 2.0 * TickRateInForce()) tick = now;
+        auto at = buf.end();
+        while (at != buf.begin() && (at - 1)->tick > tick) --at;
+        const bool newest = at == buf.end();
+        const double gap = (newest && !buf.empty()) ? tick - buf.back().tick : 0.0;
+        if (at == buf.begin() || (at - 1)->tick < tick) buf.insert(at, SyncObj::Sample{tick, p, q});
+        if (buf.size() > kMaxSamples) buf.erase(buf.begin());
+        if (newest) {
+            const double need = std::min((now - tick) + gap + 1.0, (double)TickRateInForce());
+            if (need > m_interpNeed) m_interpNeed = need;
+        }
+    }
+    // Snap on the first sample so a freshly seen object doesn't slide in.
+    if (!it->second.hasTarget && it->second.t) {
+        it->second.t->localPosition = p;
+        it->second.t->localRotation = q;
+    }
+    it->second.hasTarget = true;
+    if (it->second.setExtra && hasExtra) it->second.setExtra(extra);
+}
+
+void NetworkManager::SendSnap(net::SnapOut& out, const net::DeltaBase& current, double tick,
+                              const net::Endpoint& to, std::uint64_t cookie) {
+    auto stamp = [&](std::vector<std::uint8_t>& bytes) {
+        if (!cookie) return;
+        const std::uint32_t lo = static_cast<std::uint32_t>(cookie);
+        const std::uint32_t hi = static_cast<std::uint32_t>(cookie >> 32);
+        bytes.push_back(static_cast<std::uint8_t>(lo));
+        bytes.push_back(static_cast<std::uint8_t>(lo >> 8));
+        bytes.push_back(static_cast<std::uint8_t>(lo >> 16));
+        bytes.push_back(static_cast<std::uint8_t>(lo >> 24));
+        bytes.push_back(static_cast<std::uint8_t>(hi));
+        bytes.push_back(static_cast<std::uint8_t>(hi >> 8));
+        bytes.push_back(static_cast<std::uint8_t>(hi >> 16));
+        bytes.push_back(static_cast<std::uint8_t>(hi >> 24));
+    };
+    if (net::SameBase(out.acked, current)) {
+        if (out.waiting && !out.bytes.empty()) SendDatagram(to, out.bytes.data(), out.bytes.size());
+        return;
+    }
+    const std::uint32_t id = out.next++;
+    auto blob = net::EncodeSnapshot(out.acked, current, id, tick);
+    if (blob.empty()) { --out.next; return; }
+    stamp(blob);
+    out.pending = current;
+    out.pending.id = id;
+    out.bytes = std::move(blob);
+    out.waiting = true;
+    SendDatagram(to, out.bytes.data(), out.bytes.size());
+}
+
+void NetworkManager::NoteSnapAck(net::SnapOut& out, std::uint32_t id) {
+    if (out.waiting && id == out.pending.id) {
+        out.acked = out.pending;
+        out.waiting = false;
+    }
+}
+
+void NetworkManager::CullInterest(net::DeltaBase& mine, const Client& c) const {
+    if (interestRadius <= 0.0f) return;
+    // Same hold as the avatar snapshot: no position yet, so send no objects.
+    if (!c.hasState) { mine.pose.clear(); mine.extra.clear(); return; }
+    const float cell = interestRadius;
+    const float r2 = cell * cell;
+    const int cx = static_cast<int>(std::floor(c.state.x / cell));
+    const int cy = static_cast<int>(std::floor(c.state.y / cell));
+    const int cz = static_cast<int>(std::floor(c.state.z / cell));
+    for (auto it = mine.pose.begin(); it != mine.pose.end();) {
+        Vec3 p; Quat q;
+        net::DequantizePose(it->second, p, q);
+        const int ox = static_cast<int>(std::floor(p.x / cell));
+        const int oy = static_cast<int>(std::floor(p.y / cell));
+        const int oz = static_cast<int>(std::floor(p.z / cell));
+        const int cheb = std::max(std::abs(ox - cx), std::max(std::abs(oy - cy), std::abs(oz - cz)));
+        const float dx = p.x - c.state.x, dy = p.y - c.state.y, dz = p.z - c.state.z;
+        if (cheb > 1 || dx * dx + dy * dy + dz * dz > r2) {
+            mine.extra.erase(it->first);
+            it = mine.pose.erase(it);
+        } else ++it;
+    }
+}
+
+
+void NetworkManager::BroadcastBinarySnapshots(double tick) {
+    net::DeltaBase owned;
+    for (auto& [id, o] : m_syncObjs) {
+        if (!o.owned || !o.t || id.empty() || id.size() > 64) continue;
+        owned.pose[id] = net::QuantizePose(o.t->localPosition, o.t->localRotation);
+        if (o.getExtra) {
+            std::string extra = o.getExtra();
+            if (!extra.empty()) owned.extra[id] = std::move(extra);
+        }
+    }
+    if (m_mode == Mode::Server) {
+        for (auto it = m_relaySnap.begin(); it != m_relaySnap.end();)
+            it = m_syncObjs.count(it->first) ? std::next(it) : m_relaySnap.erase(it);
+        for (auto& [ep, c] : m_clients) {
+            if (c.room != m_localRoom) continue;
+            net::DeltaBase mine = owned;
+            for (const auto& [id, rel] : m_relaySnap) {
+                if (rel.room != c.room || mine.pose.count(id)) continue;
+                mine.pose[id] = rel.pose;
+                if (!rel.extra.empty()) mine.extra[id] = rel.extra;
+            }
+            CullInterest(mine, c);
+            SendSnap(c.snapOut, mine, tick, c.endpoint, 0);
+        }
+    } else if (m_mode == Mode::Client && m_joined) {
+        SendSnap(m_snapUp, owned, tick, m_serverEp, m_sessionCookie);
+    }
+}
+
+void NetworkManager::OnSnapDelta(net::SnapIn& in, const std::uint8_t* data, std::size_t size,
+                                 const net::Endpoint& ackTo, Client* sender) {
+    std::uint32_t baselineId = 0, snapId = 0;
+    if (!net::PeekSnapshot(data, size, baselineId, snapId)) return;
+    auto ack = [&](std::uint32_t id) {
+        if (!id) return;
+        auto bytes = net::EncodeSnapAck(id);
+        // A client acks the server with the session cookie. The server's ack does not.
+        if (!sender && m_sessionCookie) {
+            const std::uint32_t lo = static_cast<std::uint32_t>(m_sessionCookie);
+            const std::uint32_t hi = static_cast<std::uint32_t>(m_sessionCookie >> 32);
+            bytes.push_back(static_cast<std::uint8_t>(lo));
+            bytes.push_back(static_cast<std::uint8_t>(lo >> 8));
+            bytes.push_back(static_cast<std::uint8_t>(lo >> 16));
+            bytes.push_back(static_cast<std::uint8_t>(lo >> 24));
+            bytes.push_back(static_cast<std::uint8_t>(hi));
+            bytes.push_back(static_cast<std::uint8_t>(hi >> 8));
+            bytes.push_back(static_cast<std::uint8_t>(hi >> 16));
+            bytes.push_back(static_cast<std::uint8_t>(hi >> 24));
+        }
+        SendDatagram(ackTo, bytes.data(), bytes.size());
+    };
+    // The cookie, if any, sits after a well-formed snapshot. Checked by the caller
+    // before we get here when the packet came from a client.
+    if (in.haveLatest && baselineId == in.latestId && baselineId != in.have.id) {
+        in.have = in.latest;
+    }
+    if (baselineId != in.have.id) {
+        if (in.haveLatest) ack(in.latestId);
+        return;
+    }
+    if (in.haveLatest && static_cast<std::int32_t>(snapId - in.latestId) <= 0) {
+        ack(in.latestId);
+        return;
+    }
+    double tick = -1.0;
+    std::vector<net::SnapChange> changes;
+    if (!net::DecodeSnapshot(data, size, in.have, baselineId, snapId, tick, changes)) return;
+    const net::Endpoint fromEp = sender ? sender->endpoint : net::Endpoint{};
+    bool refused = false;
+    net::DeltaBase merged = in.have;
+    merged.id = snapId;
+    for (const net::SnapChange& c : changes) {
+        Vec3 p; Quat q;
+        net::DequantizePose(c.pose, p, q);
+        if (sender) {
+            if (!ClientMaySendXform(*sender, c.id)) { refused = true; continue; }
+            std::ostringstream os;
+            os << c.id << '|' << p.x << ' ' << p.y << ' ' << p.z << ' '
+               << q.x << ' ' << q.y << ' ' << q.z << ' ' << q.w;
+            const std::string wire = os.str();
+            if (!AntiCheatAllows(sender->id, "__xform", wire)) {
+                refused = true;
+                if (m_clients.find(fromEp) == m_clients.end()) return;   // a kick erased it
+                continue;
+            }
+        }
+        merged.pose[c.id] = c.pose;
+        if (c.hasExtra) merged.extra[c.id] = c.extra;
+        else if (auto old = in.have.extra.find(c.id); old != in.have.extra.end()) merged.extra[c.id] = old->second;
+        ApplyRemoteXform(c.id, p, q, tick, c.extra, c.hasExtra);
+        if (sender) m_relaySnap[c.id] = RelayPose{c.pose, c.hasExtra ? c.extra : merged.extra[c.id], sender->room};
+    }
+    if (refused) return;
+    in.latest = std::move(merged);
+    in.latestId = snapId;
+    in.haveLatest = true;
+    ack(snapId);
+}
+
 void NetworkManager::SyncTick(float dt) {
     if (m_syncObjs.empty()) return;
     // Move non-owned objects toward their last received state every frame: ease at
@@ -524,6 +720,10 @@ void NetworkManager::SyncTick(float dt) {
     m_syncTimer += dt;
     if (m_syncTimer < interval) return;
     m_syncTimer = 0.0f;
+    if (binarySnapshots) {
+        BroadcastBinarySnapshots(TickRateInForce() > 0.0f ? m_smoothTick : -1.0);
+        return;
+    }
     for (auto& [id, o] : m_syncObjs) {
         if (!o.owned || !o.t) continue;
         const Vec3& p = o.t->localPosition;
@@ -747,37 +947,7 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
             auto it = m_syncObjs.find(id);
             if (it != m_syncObjs.end() && !it->second.owned) {
                 const bool hasExtra = data.find('|', bar + 1) != std::string::npos;
-                it->second.targetPos = p;
-                it->second.targetRot = q;
-                if (TickRateInForce() > 0.0f) {
-                    auto& buf = it->second.samples;
-                    const double now = m_smoothTick;
-                    // A sender's clock that's far off ours (or none) is stamped
-                    // with when it arrived instead.
-                    if (tick < 0.0 || std::fabs(tick - now) > 2.0 * TickRateInForce()) tick = now;
-                    // Kept in tick order (datagrams can arrive out of order).
-                    auto at = buf.end();
-                    while (at != buf.begin() && (at - 1)->tick > tick) --at;
-                    const bool newest = at == buf.end();
-                    const double gap = (newest && !buf.empty()) ? tick - buf.back().tick : 0.0;
-                    if (at == buf.begin() || (at - 1)->tick < tick) buf.insert(at, SyncObj::Sample{tick, p, q});
-                    if (buf.size() > kMaxSamples) buf.erase(buf.begin());
-                    // Show far enough back that the next state is (nearly) always
-                    // here in time: how late this one came, plus the gap to the one
-                    // after it. Rises at once, eases back down (SyncTick).
-                    if (newest) {
-                        const double need = std::min((now - tick) + gap + 1.0, (double)TickRateInForce());
-                        if (need > m_interpNeed) m_interpNeed = need;
-                    }
-                }
-                // Snap on the first sample so a freshly seen object doesn't slide
-                // in from wherever it happened to spawn.
-                if (!it->second.hasTarget && it->second.t) {
-                    it->second.t->localPosition = p;
-                    it->second.t->localRotation = q;
-                }
-                it->second.hasTarget = true;
-                if (it->second.setExtra && hasExtra) it->second.setExtra(extra);
+                ApplyRemoteXform(id, p, q, tick, extra, hasExtra);
             }
         }
         return;
@@ -2690,6 +2860,22 @@ void NetworkManager::ServerTick(float dt) {
         } else if (type == ReliableAck) {
             auto it = m_clients.find(from);
             if (it != m_clients.end()) it->second.relOut.erase(p.ReadU32());
+        } else if (type == net::kSnapDelta || type == net::kSnapAck) {
+            auto it = m_clients.find(from);
+            if (it == m_clients.end() || !rateOk(it->second, len)) continue;
+            std::size_t body = len;
+            if (it->second.cookie) {
+                if (len < 8) continue;
+                net::Packet ck(data + len - 8, 8);
+                if (!CookieOk(it->second, ck)) continue;
+                body = len - 8;
+            }
+            if (type == net::kSnapAck) {
+                std::uint32_t id = 0;
+                if (net::DecodeSnapAck(data, body, id)) NoteSnapAck(it->second.snapOut, id);
+            } else {
+                OnSnapDelta(it->second.snapIn, data, body, from, &it->second);
+            }
         } else if (type == net::kChanRel || type == net::kChanRelAck || type == net::kChanSeq) {
             auto it = m_clients.find(from);
             if (it == m_clients.end()) continue;
@@ -3185,6 +3371,11 @@ void NetworkManager::ClientTick(float dt) {
             if (m_relSeen.Accept(seq)) Deliver(0, channel, data);
         } else if (type == ReliableAck) {
             m_relOut.erase(p.ReadU32());
+        } else if (type == net::kSnapDelta) {
+            OnSnapDelta(m_snapDown, data, len, m_serverEp, nullptr);
+        } else if (type == net::kSnapAck) {
+            std::uint32_t id = 0;
+            if (net::DecodeSnapAck(data, len, id)) NoteSnapAck(m_snapUp, id);
         } else if (type == net::kChanRel) {
             OnOrdered(m_toServer, m_serverEp, 0, nullptr, p, len);
         } else if (type == net::kChanRelAck) {

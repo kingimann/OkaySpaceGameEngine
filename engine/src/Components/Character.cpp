@@ -689,11 +689,15 @@ void Character::FireClipEvents(float from, float to) {
 void Character::AdvanceClip(float dt) {
     if (!m_activeClip) return;
     float from = m_clipTime;
-    m_clipTime += dt * animSpeed * m_activeClip->speed;   // per-clip playback rate
-    FireClipEvents(from, m_clipTime);             // events on the raw (pre-wrap) timeline
     float dur = m_activeClip->Duration();
+    // The jump binding holds its last frame while the body is still in that
+    // state. A looping takeoff clip used to replay for the whole jump.
+    const bool holdJump = m_stateDriven && !clipJump.empty() && m_activeClipName == clipJump;
+    const float add = dt * animSpeed * m_activeClip->speed;
+    m_clipTime = (holdJump && dur > 0.0f) ? std::min(from + add, dur) : from + add;
+    FireClipEvents(from, m_clipTime);             // events on the raw (pre-wrap) timeline
     if (dur > 0.0f) {
-        if (m_activeClip->loop) m_clipTime = std::fmod(m_clipTime, dur);
+        if (m_activeClip->loop && !holdJump) m_clipTime = std::fmod(m_clipTime, dur);
         else if (m_clipTime > dur) m_clipTime = dur;
     }
 }

@@ -319,13 +319,19 @@ public:
     /// then send their inputs, not positions: each tick, a client's InputCmd
     /// (move, look, buttons, numbered, the last 3 repeated against loss) drives
     /// its player on the server through the controller's Simulate (IPlayerSim),
-    /// and the server alone decides where it is. Positions and __xform from the
-    /// client for that player are ignored. Runs on the fixed tick (netTickRate,
-    /// 30 Hz if that's 0). The client predicts its own player: every frame it
-    /// runs the same Simulate with the input it last sent (so an input shows
-    /// within a tick) and this frame's look, and reconciles with the position
-    /// the host acks for each input: tiny differences are ignored, small ones
-    /// eased out, large ones snapped.
+    /// and the server alone decides where it is. The server claims that player
+    /// itself — the first object the client spawns under `sp/<its id>/` that
+    /// carries a movement controller — so a client that never calls SetPawn
+    /// still can't move it by sending positions. Until a pawn is claimed, State
+    /// positions and __xform for those controller objects are dropped. An
+    /// InputCmd may claim a different object under the client's prefix only
+    /// while it has no live pawn. Other owned objects (props, projectiles) are
+    /// unchanged. Runs on the fixed tick (netTickRate, 30 Hz if that's 0). The
+    /// client predicts its own player: every frame it runs the same Simulate
+    /// with the input it last sent (so an input shows within a tick) and this
+    /// frame's look, and reconciles with the position the host acks for each
+    /// input: tiny differences are ignored, small ones eased out, large ones
+    /// snapped.
     bool authoritativeMovement = false;
     /// Client prediction: how fast a correction from the host is eased out (per
     /// second, frame-rate independent), and the size above which it snaps
@@ -817,6 +823,13 @@ private:
     // Authoritative movement.
     void ServerMovementTick(float step);   // each fixed tick: run each player one input
     void ClientInputTick();                // each fixed tick: send this tick's input
+    /// Server, authoritative movement: the first controller-carrying object this
+    /// client spawned (`sp/<id>/...`) is its pawn, without waiting for an InputCmd.
+    void NoteSpawnedPawn(const std::string& netId, GameObject* go);
+    /// Server: may this client relay an __xform for `id`? A claimed pawn, or a
+    /// controller object it spawned before claiming one, may not.
+    bool ClientMaySendXform(const Client& from, const std::string& id) const;
+    GameObject* ObjectByNetId(const std::string& id) const;
     static constexpr std::size_t kMaxQueuedInputs = 8;   // the tick budget: older ones are dropped
     static constexpr int kInputRepeats = 3;              // late-input cover before the player stops
     std::string m_pawnId;                  // client: the object this player drives

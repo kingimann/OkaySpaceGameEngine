@@ -455,6 +455,7 @@ void NetworkManager::RegisterSync(const std::string& id, Transform* t, bool owne
     SyncObj o; o.t = t; o.owned = owned;
     if (t) { o.targetPos = t->localPosition; o.targetRot = t->localRotation; }
     m_syncObjs[id] = o;
+    if (t) NoteSpawnedPawn(id, t->gameObject);
 }
 
 void NetworkManager::UnregisterSync(const std::string& id) { m_syncObjs.erase(id); }
@@ -664,6 +665,9 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
                 auto* ns = g->GetComponent<NetworkSync>();
                 if (!ns) ns = g->AddComponent<NetworkSync>();
                 ns->netId = netId; ns->authority = NetworkSync::Authority::Manual; ns->owned = false;
+                // Claim before this object's NetworkSync starts, so a transform the
+                // client sends in the same breath as the spawn is already too late.
+                NoteSpawnedPawn(netId, g);
             }
         }
         return;
@@ -1562,7 +1566,7 @@ bool NetworkManager::ClientMessageOk(const Client& from, const std::string& chan
         data = from.name + "\n" + text;
         return true;
     }
-    if (channel == "__xform" && m_pawnOwner.count(data.substr(0, data.find('|'))))
+    if (channel == "__xform" && !ClientMaySendXform(from, data.substr(0, data.find('|'))))
         return false;   // a player the server moves: its position is the server's, never the client's
     if (channel == "__spawn") {
         const SpawnMessage m = ParseSpawnMessage(data);
@@ -1734,6 +1738,76 @@ bool NetworkManager::InputDriven(const std::string& netId) const {
     return m_mode == Mode::Server && authoritativeMovement && m_pawnOwner.count(netId) != 0;
 }
 
+namespace {
+// A movement controller on this object or anything under it (a player prefab
+// sometimes parents the body to an empty root).
+IPlayerSim* FindSimInTree(GameObject* go) {
+    if (!go) return nullptr;
+    if (IPlayerSim* s = FindPlayerSim(go)) return s;
+    if (!go->transform) return nullptr;
+    for (Transform* c : go->transform->Children())
+        if (c) if (IPlayerSim* s = FindSimInTree(c->gameObject)) return s;
+    return nullptr;
+}
+} // namespace
+
+GameObject* NetworkManager::ObjectByNetId(const std::string& id) const {
+    if (auto it = m_syncObjs.find(id); it != m_syncObjs.end() && it->second.t)
+        return it->second.t->gameObject;
+    Scene* sc = GetScene();
+    if (!sc) return nullptr;
+    for (const auto& go : sc->Objects()) {
+        if (!go) continue;
+        if (auto* ns = go->GetComponent<NetworkSync>()) {
+            const std::string& nid = ns->netId.empty() ? go->name : ns->netId;
+            if (nid == id) return go.get();
+        }
+    }
+    return nullptr;
+}
+
+// The pawn is whichever object the server says, not whichever one the client
+// names in an InputCmd. The first controller-carrying spawn under sp/<id>/ wins;
+// a later InputCmd can still claim a different one, but only while this is empty.
+void NetworkManager::NoteSpawnedPawn(const std::string& netId, GameObject* go) {
+    if (m_mode != Mode::Server || !authoritativeMovement || netId.empty() || !go) return;
+    if (netId.compare(0, 3, "sp/") != 0) return;
+    const std::size_t slash = netId.find('/', 3);
+    if (slash == std::string::npos || slash == 3) return;
+    std::uint32_t cid = 0;
+    for (std::size_t i = 3; i < slash; ++i) {
+        if (netId[i] < '0' || netId[i] > '9') return;
+        cid = cid * 10u + static_cast<std::uint32_t>(netId[i] - '0');
+    }
+    if (!FindSimInTree(go)) return;
+    if (m_pawnOwner.count(netId)) return;
+    for (auto& [ep, c] : m_clients) {
+        if (c.id != cid) continue;
+        if (!c.pawn.empty()) return;   // a live pawn stays until it's released
+        c.pawn = netId;
+        m_pawnOwner[netId] = c.id;
+        c.lastSeen = 0.0f;
+        return;
+    }
+}
+
+bool NetworkManager::ClientMaySendXform(const Client& from, const std::string& id) const {
+    if (!authoritativeMovement) return true;
+    if (id.empty() || m_pawnOwner.count(id)) return false;
+    const std::string prefix = "sp/" + std::to_string(from.id) + "/";
+    if (id.compare(0, prefix.size(), prefix) != 0) return true;   // not one of its spawns
+    // Until this client has a pawn, a controller object it spawned is not trusted
+    // (it may be the player, and it may not be claimed yet). Props and projectiles
+    // have no movement controller, so they keep today's transforms. Once a pawn is
+    // live, only that pawn is refused — m_pawnOwner above — and a second owned
+    // object is left alone.
+    if (!from.pawn.empty()) return true;
+    if (GameObject* go = ObjectByNetId(id))
+        return FindSimInTree(go) == nullptr;
+    // Not in the world yet: don't relay a transform we can't classify.
+    return false;
+}
+
 // Each fixed tick on the server: every player moves by one input (the next
 // one it sent, or its last one again if that's late), through its controller.
 void NetworkManager::ServerMovementTick(float step) {
@@ -1763,7 +1837,7 @@ void NetworkManager::ServerMovementTick(float step) {
             }
         }
         c.lastInput = in;
-        if (IPlayerSim* sim = FindPlayerSim(obj->second.t->gameObject)) sim->Simulate(in, step);
+        if (IPlayerSim* sim = FindSimInTree(obj->second.t->gameObject)) sim->Simulate(in, step);
         const Vec3 at = obj->second.t->TransformPoint(Vec3(0.0f, 0.0f, 0.0f));
         c.state.x = at.x; c.state.y = at.y; c.state.z = at.z;   // the server's word (snapshots, hit checks)
         c.hasState = true;
@@ -2330,7 +2404,7 @@ void NetworkManager::ServerTick(float dt) {
                 Client& c = it->second;
                 if (p.Remaining() == 4 || p.Remaining() == 12) p.ReadU32();   // its net tick
                 if (!CookieOk(c, p)) continue;
-                if (!c.pawn.empty()) {   // authoritative movement: where it is is the server's call
+                if (authoritativeMovement) {   // where a player is is the server's call, claimed or not
                     c.state.glyph = s.glyph;
                     c.lastSeen = 0.0f;
                     continue;

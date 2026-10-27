@@ -11,6 +11,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Components/Inventory.hpp"
+#include "okay/Animation/HumanoidActions.hpp"
 
 namespace okay {
 
@@ -20,6 +21,7 @@ inline float MoveSpeedScale(const GameObject* body) {
     if (body)
         if (auto* h = body->GetComponent<ProceduralObjectHolding>()) k *= h->SpeedMultiplier();
     k *= Inventory::SpeedFactorOf(body);   // over-encumbered (opt-in on the Inventory)
+    k *= HumanoidActions::StaggerScale(body);   // heavy hit, default 1
     return k;
 }
 

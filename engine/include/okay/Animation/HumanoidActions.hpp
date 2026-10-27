@@ -16,10 +16,10 @@ class GameObject;
 
 namespace HumanoidActions {
 
-/// How far the built-in action set has got. Death is 1. A saved graph records
-/// the revision it already has, so a later action is added once and a state the
-/// user deleted is not put back when the next action lands.
-constexpr int kActionsRev = 1;
+/// How far the built-in action set has got. Death is 1, hit reactions are 2.
+/// A saved graph records the revision it already has, so a later action is added
+/// once and a state the user deleted is not put back when the next action lands.
+constexpr int kActionsRev = 2;
 
 /// One authored pose. Degrees, hip height in rig units, rootOffset.x/z a visual
 /// lean only (y is unused; hipY is the root height).
@@ -42,7 +42,8 @@ struct DeadShape {
 void Bake(std::vector<HumanoidLibrary::Entry>& out);
 /// Append this revision's states, params and Any-State transitions. Safe to
 /// call again: a state that already exists is left as the user edited it.
-void AddStates(AnimStateMachine& sm, const Character* body);
+/// `force` fills anything missing and still never overwrites a state.
+void AddStates(AnimStateMachine& sm, const Character* body, bool force = false);
 /// Stance-timed blends for action transitions (called from ApplyStanceTimes).
 void ApplyTimes(AnimStateMachine& sm);
 /// Saved default graphs (Idle/Walk/Run/Jump) gain any action whose revision is
@@ -75,6 +76,16 @@ void RequestRevive(GameObject* go);
 void ReviveAnim(GameObject* go);
 /// HealthStat::IsDead when that component is present, otherwise the `dead` param.
 bool IsDead(GameObject* go);
+
+/// 0 forward, 1 back, 2 left, 3 right: where the hit came from.
+int HitDirFromWorld(GameObject* go, const Vec3& fromWorld);
+/// Flinch. `dir` is 0 forward, 1 back, 2 left, 3 right (where the hit came from).
+/// Light hits play on the torso layer. Heavy, crouch and prone play on the base
+/// layer. Refuses a second hit within 0.1s. Does not leave the `hit` trigger set.
+bool HitReact(GameObject* go, int dir, bool heavy = false);
+/// 1 except during a heavy / crouch / prone hit, when it is the Animator's
+/// `staggerScale` (itself 1 until a game sets it lower).
+float StaggerScale(const GameObject* go);
 
 /// True once the body is in DeadHold (or Death has played out).
 bool DeathPoseSettled(GameObject* go);

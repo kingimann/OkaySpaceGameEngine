@@ -102,6 +102,7 @@ public:
     float respawnDelay = 3.0f;
     int   lives = 0;               // respawns allowed (0 = unlimited)
     bool  playDeathAnim = true;   // play Death and stay active until it settles
+    bool  playHitAnim = false;    // light flinch when Damage was given a source. Off so games don't change.
 
     bool  dead = false, lowHealth = false;
 
@@ -166,6 +167,8 @@ public:
         m_timer = regenDelay;
         m_iframes = invincibleTime;
         if (health <= 0.0f) OnDeath();
+        else if (playHitAnim && hasLastHit)
+            HumanoidActions::HitReact(gameObject, HumanoidActions::HitDirFromWorld(gameObject, lastHitFrom), false);
         Publish();
     }
     void Heal(float a) {

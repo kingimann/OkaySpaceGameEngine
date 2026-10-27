@@ -1218,6 +1218,17 @@ void ActionList::Update(float dt) {
             HumanoidActions::RequestDeath(gameObject, dir, hit);
         }
         else if (op == "revive") HumanoidActions::RequestRevive(gameObject);
+        else if (op == "hit_react") {
+            int dir = 0; bool heavy = false;
+            if (it.args.size() >= 3) {
+                dir = HumanoidActions::HitDirFromWorld(gameObject, Vec3{Num(it, 0), Num(it, 1), Num(it, 2)});
+                if (it.args.size() >= 4) heavy = Num(it, 3) != 0.0f;
+            } else if (!it.args.empty()) {
+                dir = HumanoidActions::DirFromName(Str(it, 0));
+                if (it.args.size() >= 2) heavy = Num(it, 1) != 0.0f;
+            }
+            HumanoidActions::HitReact(gameObject, dir, heavy);
+        }
         else if (op == "set_cam") {
             if (scene && scene->mainCamera) {
                 Transform* ct = scene->mainCamera->gameObject->transform;

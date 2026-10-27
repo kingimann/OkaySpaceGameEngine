@@ -10559,6 +10559,7 @@ void DrawScriptDocs() {
         fapi("play_clip(\"name\") / stop_clip()", "play a loaded clip / return to built-in");
         fapi("play_action(\"Death\" [, blend]) / is_in_action() / action_time()", "go to a built-in action state (0 if it is missing)");
         fapi("die([\"forward\"|\"back\"|\"left\"|\"right\"]) / die(x, y, z) / revive() / is_dead()", "death anim; x,y,z is where the hit came from");
+        fapi("hit_react(\"forward\"|\"back\"|\"left\"|\"right\" [, heavy]) / hit_react(x, y, z [, heavy])", "flinch from where the hit came from; heavy is a full-body stumble");
         fapi("play_clip_once(\"name\")", "play a clip once (attack/jump), then return to the previous one");
         fapi("playing_clip() / is_playing_clip()", "active clip name / is one playing");
         fapi("set_anim(n) / get_anim()", "built-in animation index (1 idle, 2 walk, 3 run, ...)");
@@ -10944,6 +10945,7 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"play_clip","play_clip(\"clip\")"}, {"play_clip_once","play_clip_once(\"clip\")"},
         {"play_action","play_action(\"Death\" [, blend])"}, {"is_in_action","is_in_action()"},
         {"action_time","action_time()"}, {"die","die([\"back\"])"}, {"revive","revive()"}, {"is_dead","is_dead()"},
+        {"hit_react","hit_react(\"back\" [, 1])"},
         {"stop_clip","stop_clip()"}, {"is_playing_clip","is_playing_clip()"},
         {"play_layer","play_layer(\"clip\", \"part\")"}, {"stop_layer","stop_layer()"}, {"anim_event","anim_event(\"name\")"},
         {"play_sound","play_sound(\"name\")"}, {"set_volume","set_volume(v)"},
@@ -17521,6 +17523,7 @@ static const ActionOpInfo kInstrOps[] = {
     {"play_action", "Play Action",        "action [blend]",       "Go to a built-in action (Death, Death_F, ...). Blend is seconds.", "Character"},
     {"die",         "Die",                "forward|back|left|right", "Play Death. A direction, or x y z for where the hit came from.", "Character"},
     {"revive",      "Revive",             "",                     "Clear dead and get up. A Health stat respawns.",          "Character"},
+    {"hit_react",   "Hit React",          "forward|back|left|right [heavy]", "Flinch from where the hit came from. heavy = 1 is a full-body stumble.", "Character"},
     {"stop_clip",   "Stop Anim Clip",     "",                     "Return the Character to its built-in / state animation.", "Character"},
     {"play_layer",  "Play Anim Layer",    "clip  arms|upper|bone","Overlay a clip on part of the body (e.g. wave with the arms while walking).", "Character"},
     {"stop_layer",  "Stop Anim Layer",    "",                     "Clear the partial-body animation layer.",                 "Character"},
@@ -18399,7 +18402,7 @@ static const char* ActionOpRequires(const std::string& op) {
     if (op=="play_sound"||op=="set_volume") return "an Audio Source on this object";
     if (op=="play_anim"||op=="stop_anim"||op=="set_anim"||op=="play_clip"||op=="stop_clip"||
         op=="play_layer"||op=="stop_layer"||op=="clip_speed"||op=="anim_event"||
-        op=="play_action"||op=="die"||op=="revive"||op=="is_in_action"||op=="is_dead")
+        op=="play_action"||op=="die"||op=="revive"||op=="is_in_action"||op=="is_dead"||op=="hit_react")
         return "a Character / Animator on this object";
     if (op=="emit"||op=="particles_on") return "a Particle System on this object";
     if (op=="set_text") return "a Text Renderer on this object";
@@ -30928,6 +30931,10 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::TreeNodeEx("Death / Respawn##sth")) {
                 if (ImGui::Checkbox("Play Death Anim##sth", &c->playDeathAnim)) ed.dirty = true;
+                if (ImGui::Checkbox("Play Hit Anim##sth", &c->playHitAnim)) ed.dirty = true;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Off by default. When on, Damage that knows where the hit came from\n"
+                                      "plays a light upper-body flinch. Heavy stumbles are hit_react(dir, true).");
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("On death, play Death in the direction of the last hit and keep the\n"
                                       "body active until it settles, then shrink the capsule to crouch height.");

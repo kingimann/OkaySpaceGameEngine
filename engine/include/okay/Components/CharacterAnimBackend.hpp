@@ -14,7 +14,10 @@
 // every frame). `anim` keeps working: it reads the state playing (by name:
 // "Walk" is 2), and a write from outside (a script, the network, a controller
 // that sets it itself) moves the machine to that state and keeps it there until
-// a movement controller reports again.
+// `anim` is written again, including 0. A one-shot (non-looping, not a blend
+// tree) also lets go when its clip finishes. A looping gesture stays the whole
+// time, even while the body moves. A controller that writes `anim` itself still
+// changes state, because that write is a new value.
 // ---------------------------------------------------------------------------
 #include "okay/Components/AnimBackend.hpp"
 #include "okay/Components/Character.hpp"
@@ -91,8 +94,8 @@ private:
     const Component* m_machine = nullptr;            // the state machine playing through us
     AnimStateMachine* m_sm = nullptr;                // the same, for its parameters and state
     int   m_published = -1;                          // the `anim` we last wrote (-1 = none yet)
-    bool  m_forced = false;                          // an outside `anim` write holds the state ...
-    bool  m_moved = false;                           // ... until a movement controller reports again
+    bool  m_forced = false;                          // an outside `anim` write holds the state until anim changes
+    bool  m_forcedLoops = false;                     // that state loops or is a blend tree: it does not end with the clip
     bool  m_off = false;                             // `anim` 0: the body holds its own pose
     bool  m_carry = false;                           // the tree just left, for ResetBlendPhase ...
     float m_carryPhase = 0.0f;                       // ... and its phase

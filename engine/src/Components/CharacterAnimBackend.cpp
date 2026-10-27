@@ -280,13 +280,18 @@ void CharacterAnimBackend::BeginFrame(AnimStateMachine& sm) {
     if (!ch) return;
     const int a = ch->anim;
     if (a != m_published) {   // written from outside: go to that state and stay
-        if (a == 0) m_off = true;
-        else {
+        if (a == 0) {
+            m_off = true;
+            m_forced = false;
+        } else {
             const AnimStateMachine::State* to = nullptr;
             for (const auto& st : sm.states) if (StateNumber(st.name) == a) { to = &st; break; }
             if (to) {
                 m_off = false;
                 m_forced = true;
+                // A looping gesture (and a blend tree) stays until anim is written
+                // again. A one-shot lets go when the clip finishes.
+                m_forcedLoops = to->loop || to->blendTree;
                 if (to->name != sm.Current()) {
                     // The graph's own blend into that state, if it has one.
                     float blend = 0.2f;
@@ -300,15 +305,13 @@ void CharacterAnimBackend::BeginFrame(AnimStateMachine& sm) {
             }
         }
         m_published = a;
-    } else if (m_moved) {
+    } else if (m_forced && !m_forcedLoops && ClipFinished()) {
         m_forced = false;
     }
-    m_moved = false;
     sm.hold = m_forced || ch->AnimHeld();
 }
 
 void CharacterAnimBackend::Move(const Movement& m) {
-    m_moved = true;
     if (!m_sm) return;
     m_sm->SetFloat("speed", m.speed);
     m_sm->SetBool("run", m.run);

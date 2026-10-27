@@ -2141,7 +2141,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             // extended: assigned OnClick action (target object + public function)
             << " " << Quote(btn->clickTarget) << " " << Quote(btn->clickFunction)
             << " " << btn->clickArg
-            << " " << Quote(btn->fontPath) << "\n";   // optional TTF label font (newest)
+            << " " << Quote(btn->fontPath)   // optional TTF label font
+            // grok/ui-options: ease, duration, optional focus color (trailing, older scenes omit it)
+            << " " << btn->transitionEase << " " << btn->transitionDuration
+            << " " << (btn->separateFocus ? 1 : 0) << " "
+            << btn->focusColor.r << " " << btn->focusColor.g << " "
+            << btn->focusColor.b << " " << btn->focusColor.a << "\n";
     }
     if (auto* pn = go->GetComponent<UIPanel>()) {
         out << "  uipanel " << pn->position.x << " " << pn->position.y << " "
@@ -2384,7 +2389,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (int)pb->fillDir
             // extended (back-compatible trailing fields): shape + gradient fill
             << " " << (int)pb->shape << " " << (pb->gradientFill ? 1 : 0) << " "
-            << pb->fillEnd.r << " " << pb->fillEnd.g << " " << pb->fillEnd.b << " " << pb->fillEnd.a << "\n";
+            << pb->fillEnd.r << " " << pb->fillEnd.g << " " << pb->fillEnd.b << " " << pb->fillEnd.a
+            // grok/ui-options: segments, damage trail, color-by-value, text format
+            << " " << pb->segments << " " << pb->segmentGap << " " << pb->trailDelay << " "
+            << pb->trailColor.r << " " << pb->trailColor.g << " " << pb->trailColor.b << " " << pb->trailColor.a
+            << " " << (pb->colorByValue ? 1 : 0) << " "
+            << pb->lowColor.r << " " << pb->lowColor.g << " " << pb->lowColor.b << " " << pb->lowColor.a << " "
+            << pb->highColor.r << " " << pb->highColor.g << " " << pb->highColor.b << " " << pb->highColor.a
+            << " " << Quote(pb->textFormat) << "\n";
     }
     if (auto* rp = go->GetComponent<UIRadialProgress>()) {
         out << "  uiradial " << rp->position.x << " " << rp->position.y << " "
@@ -2526,7 +2538,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (sl->interactable ? 1 : 0)
             << " " << (sl->vertical ? 1 : 0)
             // extended (back-compatible trailing fields): track shape + round knob
-            << " " << (int)sl->trackShape << " " << (sl->roundKnob ? 1 : 0) << "\n";
+            << " " << (int)sl->trackShape << " " << (sl->roundKnob ? 1 : 0)
+            // grok/ui-options: step, fill gradient, handle shape, value format
+            << " " << sl->step << " " << (sl->fillGradient ? 1 : 0) << " "
+            << sl->fillEnd.r << " " << sl->fillEnd.g << " " << sl->fillEnd.b << " " << sl->fillEnd.a
+            << " " << sl->knobShape << " " << Quote(sl->valueFormat) << "\n";
     }
     if (auto* st = go->GetComponent<UIStepper>()) {
         out << "  uistepper " << st->position.x << " " << st->position.y << " "
@@ -5229,8 +5245,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     btn->clickTarget = ReadQuoted(in); btn->clickFunction = ReadQuoted(in);
                                     in >> std::ws; // optional OnClick argument (added later)
                                     if (std::isdigit(in.peek()) || in.peek() == '.' || in.peek() == '-') in >> btn->clickArg;
-                                    in >> std::ws; // optional TTF label font (newest)
+                                    in >> std::ws; // optional TTF label font
                                     if (in.peek() == '"') btn->fontPath = ReadQuoted(in);
+                                    in >> std::ws; // grok/ui-options: ease, duration, focus color
+                                    if (std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') {
+                                        int ez = 0, sf = 0; Color fc;
+                                        in >> ez >> btn->transitionDuration >> sf
+                                           >> fc.r >> fc.g >> fc.b >> fc.a;
+                                        btn->transitionEase = ez; btn->separateFocus = (sf != 0);
+                                        btn->focusColor = fc;
+                                    }
                                 }
                             }
                         }
@@ -5921,6 +5945,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             int sp = 0, gf = 0; Color fe;
                             in >> sp >> gf >> fe.r >> fe.g >> fe.b >> fe.a;
                             pb->shape = (UIShape)sp; pb->gradientFill = (gf != 0); pb->fillEnd = fe;
+                            in >> std::ws; // grok/ui-options: segments, trail, color-by-value, text
+                            if (std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') {
+                                int seg = 0, cb = 0; Color tc, lo, hi;
+                                in >> seg >> pb->segmentGap >> pb->trailDelay
+                                   >> tc.r >> tc.g >> tc.b >> tc.a >> cb
+                                   >> lo.r >> lo.g >> lo.b >> lo.a
+                                   >> hi.r >> hi.g >> hi.b >> hi.a;
+                                pb->segments = seg; pb->trailColor = tc;
+                                pb->colorByValue = (cb != 0); pb->lowColor = lo; pb->highColor = hi;
+                                in >> std::ws;
+                                if (in.peek() == '"') pb->textFormat = ReadQuoted(in);
+                            }
                         }
                     }
                 } else if (field == "uiradial") {
@@ -6160,6 +6196,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         if (std::isdigit(in.peek())) {
                             int ts = 0, rk = 0; in >> ts >> rk;
                             sl->trackShape = (UIShape)ts; sl->roundKnob = (rk != 0);
+                            in >> std::ws; // grok/ui-options: step, gradient, handle, format
+                            if (std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') {
+                                int fg = 0, ks = -1; Color fe;
+                                in >> sl->step >> fg >> fe.r >> fe.g >> fe.b >> fe.a >> ks;
+                                sl->fillGradient = (fg != 0); sl->fillEnd = fe; sl->knobShape = ks;
+                                in >> std::ws;
+                                if (in.peek() == '"') sl->valueFormat = ReadQuoted(in);
+                            }
                         }
                     }
                 } else if (field == "uistepper") {

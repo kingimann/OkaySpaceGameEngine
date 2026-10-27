@@ -3925,6 +3925,79 @@ struct OkayScriptVM::Impl {
                     sl->SetValue(a.empty() ? 0.0f : a[0].AsFloat());
             return Value{};
         };
+        // grok/ui-options: the main new slider / bar / button controls. Events stay
+        // on_change (OnValueChanged), on_click (OnClick) and on_submit (OnSubmit).
+        b["set_slider_step"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* sl = g->GetComponent<UISlider>())
+                    sl->step = a.empty() ? 0.0f : a[0].AsFloat();
+            return Value{};
+        };
+        b["set_slider_format"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* sl = g->GetComponent<UISlider>())
+                    sl->valueFormat = a.empty() ? std::string{} : a[0].AsString();
+            return Value{};
+        };
+        b["ui_set_slider_step"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* sl = g->GetComponent<UISlider>()) sl->step = a[1].AsFloat();
+            return Value{};
+        };
+        b["ui_set_slider_format"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* sl = g->GetComponent<UISlider>()) sl->valueFormat = a[1].AsString();
+            return Value{};
+        };
+        b["set_bar_segments"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* pb = g->GetComponent<UIProgressBar>())
+                    pb->segments = a.empty() ? 0 : (int)a[0].AsFloat();
+            return Value{};
+        };
+        b["set_bar_trail"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* pb = g->GetComponent<UIProgressBar>())
+                    pb->trailDelay = a.empty() ? 0.0f : a[0].AsFloat();
+            return Value{};
+        };
+        b["set_bar_format"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* pb = g->GetComponent<UIProgressBar>())
+                    pb->textFormat = a.empty() ? std::string{} : a[0].AsString();
+            return Value{};
+        };
+        b["ui_set_bar_segments"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* pb = g->GetComponent<UIProgressBar>()) pb->segments = (int)a[1].AsFloat();
+            return Value{};
+        };
+        b["ui_set_bar_trail"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* pb = g->GetComponent<UIProgressBar>()) pb->trailDelay = a[1].AsFloat();
+            return Value{};
+        };
+        b["ui_set_bar_format"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* pb = g->GetComponent<UIProgressBar>()) pb->textFormat = a[1].AsString();
+            return Value{};
+        };
+        b["set_button_ease"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* bt = g->GetComponent<UIButton>()) {
+                    bt->transitionEase = a.empty() ? 0 : (int)a[0].AsFloat();
+                    if (a.size() >= 2) bt->transitionDuration = a[1].AsFloat();
+                }
+            return Value{};
+        };
+        b["ui_set_button_ease"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* bt = g->GetComponent<UIButton>()) {
+                    bt->transitionEase = (int)a[1].AsFloat();
+                    if (a.size() >= 3) bt->transitionDuration = a[2].AsFloat();
+                }
+            return Value{};
+        };
         b["toggle_on"] = [go](std::vector<Value>&) -> Value {
             if (GameObject* g = go())
                 if (auto* tg = g->GetComponent<UIToggle>()) return Value{tg->on};
@@ -8397,6 +8470,7 @@ std::string ResolveEventHandler(const Functions& functions, const std::string& f
         {"on_mouse_up",    {"OnMouseUp", "OnMouseUpAsButton"}},
         {"on_click",     {"OnClick", "OnMouseClick", "OnMouseUpAsButton", "OnPointerClick"}},
         {"on_change",    {"OnValueChanged"}},
+        {"on_submit",    {"OnSubmit"}},   // grok/ui-options: text fields already fire on_submit
         {"on_toggle",    {"OnToggle", "OnValueChanged"}},
         {"on_drop",      {"OnDrop"}},
         {"on_receive",   {"OnReceive"}},

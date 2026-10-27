@@ -188,6 +188,7 @@ public:
         return -1;
     }
 
+    void Update(float) override { m_restore.Restore(); }   // before the animator blends (see IKRestore.hpp)
     void LateUpdate(float dt) override {
         // Corrections are layered on this frame's animated pose: last frame's writes
         // come off first wherever nothing re-posed the bone since (no animation on it).

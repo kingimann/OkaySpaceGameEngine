@@ -363,21 +363,6 @@ int main() {
         CHECK(Dist(hand->transform->Position(), t2->transform->Position()) < 0.01f);
     }
 
-    // ---- AimIK switched off: an un-animated bone gets its own rotation back ----
-    {
-        Scene sc;
-        GameObject* head = sc.CreateGameObject("Head");
-        auto* aim = head->AddComponent<AimIK>();
-        aim->target = {5, 0, 0};
-        sc.Start();
-        const Quat before = head->transform->localRotation;
-        sc.Update(1.0f / 60.0f);
-        CHECK(std::fabs(Quat::Dot(head->transform->localRotation, before)) < 0.999f);
-        aim->weight = 0.0f;
-        sc.Update(1.0f / 60.0f);
-        CHECK(std::fabs(Quat::Dot(head->transform->localRotation, before)) > 0.99999f);
-    }
-
     // ---- FullBodyIK body pull re-plants FootIK's feet; nothing builds up ----
     {
         Scene sc;

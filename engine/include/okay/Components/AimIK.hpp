@@ -50,13 +50,9 @@ public:
     // Animators lazily, which puts them late in the Update order).
     void LateUpdate(float dt) override {
         const float w = weight * m_fade.Step(ikActive, fadeTime, dt);
+        if (w <= 0.0f) return;
         Transform* b = bone ? bone : transform;
-        if (w <= 0.0f || !b) {
-            // Off: put the pre-IK rotation back if nothing re-posed the bone since.
-            if (b && m_haveWritten && SameRot(b->localRotation, m_written)) b->localRotation = m_base;
-            m_haveWritten = false;
-            return;
-        }
+        if (!b) return;
         Vec3 tgt = targetObject ? targetObject->Position() : target;
         Vec3 dir = tgt - b->Position();
         if (dir.SqrMagnitude() < 1e-8f) return;

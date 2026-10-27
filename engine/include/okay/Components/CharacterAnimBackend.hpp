@@ -12,12 +12,15 @@
 // movement arrives as the machine's parameters (speed, run, crouch, prone,
 // airTime, verticalSpeed from a movement controller; gaitX, gaitZ, gaitSpeed
 // every frame). `anim` keeps working: it reads the state playing (by name:
-// "Walk" is 2), and a write from outside (a script, the network, a controller
-// that sets it itself) moves the machine to that state and keeps it there until
-// `anim` is written again, including 0. A one-shot (non-looping, not a blend
-// tree) also lets go when its clip finishes. A looping gesture stays the whole
-// time, even while the body moves. A controller that writes `anim` itself still
-// changes state, because that write is a new value.
+// "Walk" is 2). The value already on the body when the machine starts (the
+// default idle, or a controller's first pick before anything has been
+// published) is not a hold, so locomotion keeps driving. A later write from
+// outside (a script, the network, a controller that sets it itself) moves the
+// machine to that state and keeps it there until `anim` is written again,
+// including 0. A one-shot (non-looping, not a blend tree) also lets go when
+// its clip finishes. A looping gesture stays the whole time, even while the
+// body moves. A controller that writes `anim` itself still changes state,
+// because that write is a new value.
 // ---------------------------------------------------------------------------
 #include "okay/Components/AnimBackend.hpp"
 #include "okay/Components/Character.hpp"
@@ -93,8 +96,8 @@ private:
     GameObject* m_owner;
     const Component* m_machine = nullptr;            // the state machine playing through us
     AnimStateMachine* m_sm = nullptr;                // the same, for its parameters and state
-    int   m_published = -1;                          // the `anim` we last wrote (-1 = none yet)
-    bool  m_forced = false;                          // an outside `anim` write holds the state until anim changes
+    int   m_published = -1;                          // the `anim` we last wrote (-1 = not yet; the starting value is not a hold)
+    bool  m_forced = false;                          // a later outside `anim` write holds the state until anim changes
     bool  m_forcedLoops = false;                     // that state loops or is a blend tree: it does not end with the clip
     bool  m_off = false;                             // `anim` 0: the body holds its own pose
     bool  m_carry = false;                           // the tree just left, for ResetBlendPhase ...

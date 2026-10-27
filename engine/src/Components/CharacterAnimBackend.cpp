@@ -279,36 +279,50 @@ void CharacterAnimBackend::BeginFrame(AnimStateMachine& sm) {
     Character* ch = Body();
     if (!ch) return;
     const int a = ch->anim;
-    if (a != m_published) {   // written from outside: go to that state and stay
-        if (a == 0) m_off = true;
-        else {
+    // The value already sitting on the body (default idle, or the controller's
+    // pick on the frames before this machine has published) is not an outside
+    // write. Treating it as one forces a looping state and never lets go, so
+    // speed and stance stop driving locomotion.
+    const bool startup = m_published < 0;
+    if (startup || a != m_published) {
+        if (a == 0) {
+            m_off = true;
+            m_forced = false;
+        } else {
             const AnimStateMachine::State* to = nullptr;
             for (const auto& st : sm.states) if (StateNumber(st.name) == a) { to = &st; break; }
             if (to) {
                 m_off = false;
-                m_forced = true;
+                if (!startup) {
+                    m_forced = true;
+                    // A looping gesture (and a blend tree) stays until anim is written
+                    // again. A one-shot lets go when the clip finishes.
+                    m_forcedLoops = to->loop || to->blendTree;
+                }
                 if (to->name != sm.Current()) {
                     // The graph's own blend into that state, if it has one.
-                    float blend = 0.2f;
-                    const AnimStateMachine::State* cur = nullptr;
-                    for (const auto& st : sm.states) if (st.name == sm.Current()) cur = &st;
-                    bool found = false;
-                    if (cur) for (const auto& tr : cur->transitions) if (tr.to == to->name) { blend = tr.blend; found = true; break; }
-                    if (!found) for (const auto& tr : sm.anyState) if (tr.to == to->name) { blend = tr.blend; break; }
-                    sm.GoTo(to->name, m_published < 0 ? 0.0f : blend);
+                    // Startup snaps: nothing has been shown yet.
+                    float blend = 0.0f;
+                    if (!startup) {
+                        blend = 0.2f;
+                        const AnimStateMachine::State* cur = nullptr;
+                        for (const auto& st : sm.states) if (st.name == sm.Current()) cur = &st;
+                        bool found = false;
+                        if (cur) for (const auto& tr : cur->transitions) if (tr.to == to->name) { blend = tr.blend; found = true; break; }
+                        if (!found) for (const auto& tr : sm.anyState) if (tr.to == to->name) { blend = tr.blend; break; }
+                    }
+                    sm.GoTo(to->name, blend);
                 }
             }
         }
         m_published = a;
-    } else if (m_moved) {
+    } else if (m_forced && !m_forcedLoops && ClipFinished()) {
         m_forced = false;
     }
-    m_moved = false;
     sm.hold = m_forced || ch->AnimHeld();
 }
 
 void CharacterAnimBackend::Move(const Movement& m) {
-    m_moved = true;
     if (!m_sm) return;
     m_sm->SetFloat("speed", m.speed);
     m_sm->SetBool("run", m.run);

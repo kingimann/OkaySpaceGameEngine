@@ -32518,7 +32518,17 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* a = dynamic_cast<AudioSource*>(curComp)) {
         if (CompHeader("Audio Source", a, &toRemove)) {
-            ImGui::DragFloat("Volume", &a->volume, 0.01f, 0.0f, 1.0f);
+            if (ImGui::DragFloat("Volume", &a->volume, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Pitch##audio", &a->pitch, 0.01f, 0.1f, 3.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Speed and pitch together: 2 is an octave up and twice as fast");
+            if (ImGui::SliderFloat("Pan##audio", &a->pan, -1.0f, 1.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("-1 left, 0 centre, 1 right (adds to the 3D pan)");
+            {
+                int g = (int)a->group;
+                const char* groups[] = {"SFX", "Music", "UI", "Voice"};
+                if (ImGui::Combo("Group##audio", &g, groups, IM_ARRAYSIZE(groups))) { a->group = (AudioGroup)g; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mixer group: its volume and mute apply on top of the master");
+            }
             ImGui::Checkbox("Loop", &a->loop);
             ImGui::SameLine();
             ImGui::Checkbox("Play On Awake", &a->playOnAwake);
@@ -32562,6 +32572,12 @@ void DrawInspector(EditorState& ed) {
             if (a->spatial) {
                 if (ImGui::DragFloat("Min Distance##audio", &a->minDistance, 0.1f, 0.0f, 1000.0f)) ed.dirty = true;
                 if (ImGui::DragFloat("Max Distance##audio", &a->maxDistance, 0.1f, 0.0f, 5000.0f)) ed.dirty = true;
+                int r = (int)a->rolloff;
+                const char* rolls[] = {"Linear", "Inverse", "Logarithmic"};
+                if (ImGui::Combo("Rolloff##audio", &r, rolls, IM_ARRAYSIZE(rolls))) { a->rolloff = (AudioRolloff)r; ed.dirty = true; }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Linear: straight fade. Inverse: like real sound, loud up close.\n"
+                                      "Logarithmic: loud up close with a long quiet tail.");
             }
             if (ImGui::SmallButton("Remove##audio")) toRemove = a;
         }
@@ -41704,11 +41720,13 @@ int main(int argc, char** argv) {
     for (int i = 0; i < SDL_NumJoysticks(); ++i)
         if (SDL_IsGameController(i)) { g_pad = SDL_GameControllerOpen(i); if (g_pad) break; }
 
-    // Open a mono float audio device (queue mode); audio is optional.
+    // Open a stereo float audio device (queue mode); audio is optional. Take
+    // whatever rate and channel count the device gives us.
     SDL_AudioSpec want{}, have{};
-    want.freq = 44100; want.format = AUDIO_F32SYS; want.channels = 1; want.samples = 1024;
-    SDL_AudioDeviceID audioDev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
-    if (audioDev) SDL_PauseAudioDevice(audioDev, 0);
+    want.freq = 44100; want.format = AUDIO_F32SYS; want.channels = 2; want.samples = 1024;
+    SDL_AudioDeviceID audioDev = SDL_OpenAudioDevice(nullptr, 0, &want, &have,
+        SDL_AUDIO_ALLOW_FREQUENCY_CHANGE | SDL_AUDIO_ALLOW_CHANNELS_CHANGE);
+    if (audioDev) { AudioMixer::sampleRate = have.freq; SDL_PauseAudioDevice(audioDev, 0); }
 
     // Create the window HIDDEN so the OS never composites a black, uninitialized
     // rectangle during the window + renderer setup. We paint the first splash
@@ -42423,18 +42441,25 @@ int main(int argc, char** argv) {
             }
         }
 
-        // Pump audio while playing (mono float, queued).
+        // Pump audio while playing (stereo float, queued). Top the queue up to a
+        // fixed ~70 ms rather than rendering dt worth, which drifts against the
+        // sound card and crackles.
         if (audioDev) {
             if (ed.isPlaying()) {
-                int n = (int)(dt * 44100.0f);
-                if (n > 8192) n = 8192;
+                const int ch = have.channels >= 2 ? 2 : 1;
+                const int target = have.freq / 14;
+                const int queued = (int)(SDL_GetQueuedAudioSize(audioDev) / (sizeof(float) * ch));
+                const int n = std::min(target - queued, 8192);
                 if (n > 0) {
                     // Listener = the scene's main camera (for 3D/spatial sources).
-                    if (Camera* mc = SceneCamera(ed.scene()))
-                        AudioMixer::SetListener(mc->gameObject->transform->Position());
-                    std::vector<float> ab(n);
-                    AudioMixer::Render(ed.scene(), ab.data(), n);
-                    SDL_QueueAudio(audioDev, ab.data(), (Uint32)(n * sizeof(float)));
+                    if (Camera* mc = SceneCamera(ed.scene())) {
+                        Transform* lt = mc->gameObject->transform;
+                        AudioMixer::SetListener(lt->Position(), lt->Right());
+                    }
+                    std::vector<float> st((size_t)n * 2);
+                    AudioMixer::RenderStereo(ed.scene(), st.data(), n);
+                    if (ch == 1) for (int i = 0; i < n; ++i) st[i] = 0.5f * (st[2 * i] + st[2 * i + 1]);
+                    SDL_QueueAudio(audioDev, st.data(), (Uint32)((size_t)n * ch * sizeof(float)));
                 }
             } else {
                 SDL_ClearQueuedAudio(audioDev);

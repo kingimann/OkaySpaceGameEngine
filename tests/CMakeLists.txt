@@ -42,6 +42,10 @@ add_executable(test_audio test_audio.cpp)
 target_link_libraries(test_audio PRIVATE okay::engine)
 add_test(NAME audio COMMAND test_audio)
 
+add_executable(test_audio_mixer test_audio_mixer.cpp)
+target_link_libraries(test_audio_mixer PRIVATE okay::engine)
+add_test(NAME audio_mixer COMMAND test_audio_mixer)
+
 add_executable(test_layers test_layers.cpp)
 target_link_libraries(test_layers PRIVATE okay::engine)
 add_test(NAME physics_layers COMMAND test_layers)

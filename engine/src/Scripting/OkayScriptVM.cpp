@@ -4094,9 +4094,14 @@ struct OkayScriptVM::Impl {
                     sr->flipY = a.empty() ? true : a[0].AsBool();
             return Value{};
         };
-        b["play_sound"] = [go](std::vector<Value>&) {
+        b["play_sound"] = [go](std::vector<Value>& a) {
+            // play_sound() restarts the source; play_sound(volume) plays its clip
+            // as a one-shot instead, so quick repeats overlap.
             if (GameObject* g = go())
-                if (auto* au = g->GetComponent<AudioSource>()) au->Play();
+                if (auto* au = g->GetComponent<AudioSource>()) {
+                    if (a.empty()) au->Play();
+                    else au->PlayOneShot(a[0].AsFloat());
+                }
             return Value{};
         };
         b["set_progress"] = [go](std::vector<Value>& a) {
@@ -4393,6 +4398,25 @@ struct OkayScriptVM::Impl {
         b["set_volume"] = [](std::vector<Value>& a) { AudioMixer::masterVolume = a.empty() ? 1.0f : a[0].AsFloat(); return Value{}; };
         b["volume"]     = [](std::vector<Value>&) { return Value{AudioMixer::masterVolume}; };
         b["mute"]       = [](std::vector<Value>& a) { AudioMixer::muted = a.empty() ? true : a[0].AsBool(); return Value{}; };
+        // Mixer groups ("music", "sfx", "ui", "voice"): their own volume and mute.
+        b["set_group_volume"] = [](std::vector<Value>& a) {
+            AudioGroup g;
+            if (a.size() >= 2 && AudioMixer::GroupFromName(a[0].AsString().c_str(), g))
+                AudioMixer::groupVolume[(int)g] = Mathf::Clamp(a[1].AsFloat(), 0.0f, 1.0f);
+            return Value{};
+        };
+        b["group_volume"] = [](std::vector<Value>& a) {
+            AudioGroup g;
+            if (!a.empty() && AudioMixer::GroupFromName(a[0].AsString().c_str(), g))
+                return Value{AudioMixer::groupVolume[(int)g]};
+            return Value{0.0f};
+        };
+        b["mute_group"] = [](std::vector<Value>& a) {
+            AudioGroup g;
+            if (!a.empty() && AudioMixer::GroupFromName(a[0].AsString().c_str(), g))
+                AudioMixer::groupMuted[(int)g] = a.size() < 2 || a[1].AsBool();
+            return Value{};
+        };
         // Physics queries: raycast_hit(ox, oy, dx, dy [, maxDist]) returns 1 if
         // the ray hits a collider, and overlap(x, y) returns 1 if a collider
         // contains that point. Great for shooting, ground checks, line-of-sight.
@@ -8354,8 +8378,12 @@ struct OkayScriptVM::Impl {
             }
             if (auto* rb = g->GetComponent<Rigidbody3D>(); rb && t == "Rigidbody")
                 if (p == "velocity" || p == "linearVelocity") return Value{rb->velocity};
-            if (auto* au = g->GetComponent<AudioSource>(); au && t == "AudioSource")
+            if (auto* au = g->GetComponent<AudioSource>(); au && t == "AudioSource") {
                 if (p == "volume") return Value{au->volume};
+                if (p == "pitch") return Value{au->pitch};
+                if (p == "pan") return Value{au->pan};
+                if (p == "isPlaying") return Value{au->IsPlaying()};
+            }
             if (auto* o = g->GetComponent<NetworkObject>(); o && t == "NetworkObject") {
                 if (p == "netId") return Value{o->netId};
                 if (p == "owned" || p == "isOwned") return Value{o->IsLocallyOwned()};
@@ -8391,7 +8419,11 @@ struct OkayScriptVM::Impl {
             }
             if (t == "Rigidbody") if (auto* rb = g->GetComponent<Rigidbody3D>())
                 if (p == "velocity" || p == "linearVelocity") rb->velocity = v.AsVec3();
-            if (t == "AudioSource") if (auto* au = g->GetComponent<AudioSource>()) if (p == "volume") au->volume = v.AsFloat();
+            if (t == "AudioSource") if (auto* au = g->GetComponent<AudioSource>()) {
+                if (p == "volume") au->volume = v.AsFloat();
+                if (p == "pitch") au->pitch = v.AsFloat();
+                if (p == "pan") au->pan = v.AsFloat();
+            }
             if (t == "NetworkObject") if (auto* o = g->GetComponent<NetworkObject>()) {
                 if (p == "netId") o->netId = v.AsString();
                 if (p == "owned") o->SetOwned(v.AsBool());
@@ -8431,6 +8463,9 @@ struct OkayScriptVM::Impl {
             if (t == "AudioSource") if (auto* au = g->GetComponent<AudioSource>()) {
                 if (m == "Play") au->Play();
                 if (m == "Stop") au->Stop();
+                if (m == "Pause") au->Pause();
+                if (m == "Resume") au->Resume();
+                if (m == "PlayOneShot") au->PlayOneShot(rest.empty() ? 1.0f : arg(0).AsFloat());
                 return Value{};
             }
             if (t == "NetworkObject") if (auto* o = g->GetComponent<NetworkObject>()) {

@@ -2117,7 +2117,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* au = go->GetComponent<AudioSource>()) {
         out << "  audio " << Quote(au->clipPath) << " " << au->volume << " "
             << (au->loop ? 1 : 0) << " " << (au->playOnAwake ? 1 : 0) << " "
-            << (au->spatial ? 1 : 0) << " " << au->minDistance << " " << au->maxDistance << "\n";
+            << (au->spatial ? 1 : 0) << " " << au->minDistance << " " << au->maxDistance << " "
+            << au->pitch << " " << au->pan << " " << (int)au->group << " " << (int)au->rolloff << "\n";
     }
     if (auto* anim = go->GetComponent<Animator>()) {
         out << "  animator " << anim->speed << " " << (anim->playing ? 1 : 0) << " "
@@ -5187,6 +5188,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (std::isdigit(in.peek())) {
                         int sp = 0; in >> sp >> au->minDistance >> au->maxDistance;
                         au->spatial = (sp != 0);
+                        // optional mixer fields: pitch pan group rolloff
+                        in >> std::ws;
+                        if (std::isdigit(in.peek()) || in.peek() == '.') {
+                            int grp = 0, ro = 0;
+                            in >> au->pitch >> au->pan >> grp >> ro;
+                            if (grp >= 0 && grp < (int)AudioGroup::Count) au->group = (AudioGroup)grp;
+                            if (ro >= 0 && ro <= (int)AudioRolloff::Logarithmic) au->rolloff = (AudioRolloff)ro;
+                        }
                     }
                 } else if (field == "animator") {
                     float speed = 1.0f; int playing = 1, loop = 1, tc = 0;

@@ -57,6 +57,9 @@
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/UIProgressBar.hpp"
+#include "okay/Components/UIRadialProgress.hpp"   // grok/ui-hud
+#include "okay/Components/Crosshair.hpp"          // grok/ui-hud
+#include "okay/Components/UISlotGrid.hpp"         // grok/ui-hud
 #include "okay/Components/UIToast.hpp"    // grok/ui-toast
 #include "okay/Components/UIModal.hpp"    // grok/ui-toast
 #include "okay/Components/UIElement.hpp"
@@ -4475,6 +4478,62 @@ struct OkayScriptVM::Impl {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
                 if (auto* pb = g->GetComponent<UIProgressBar>()) pb->value = a[1].AsFloat();
             return Value{};
+        };
+        // grok/ui-hud — crosshair recovery, radial options, and the slot grid, by object name.
+        b["kick_spread"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* cr = g->GetComponent<Crosshair>()) cr->KickSpread(a[1].AsFloat());
+            return Value{};
+        };
+        b["set_spread"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* cr = g->GetComponent<Crosshair>()) cr->SetSpread(a[1].AsFloat());
+            return Value{};
+        };
+        b["set_spread_recover"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* cr = g->GetComponent<Crosshair>()) cr->SetSpreadRecover(a[1].AsFloat());
+            return Value{};
+        };
+        b["set_radial"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetValue(a[1].AsFloat());
+            return Value{};
+        };
+        b["set_radial_thickness"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetThickness(a[1].AsFloat());
+            return Value{};
+        };
+        b["set_radial_start"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetStartAngle(a[1].AsFloat());
+            return Value{};
+        };
+        b["set_radial_spin"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetSpin(a[1].AsBool());
+            return Value{};
+        };
+        b["set_radial_clockwise"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetClockwise(a[1].AsBool());
+            return Value{};
+        };
+        b["set_radial_percent"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* rp = g->GetComponent<UIRadialProgress>()) rp->SetShowPercent(a[1].AsBool());
+            return Value{};
+        };
+        b["set_slot"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* sg = g->GetComponent<UISlotGrid>()) sg->SetValue((int)a[1].AsFloat());
+            return Value{};
+        };
+        b["slot_value"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* sg = g->GetComponent<UISlotGrid>()) return Value{(float)sg->Value()};
+            return Value{-1.0f};
         };
         // grok/ui-controls: the options added on top of dropdown, scroll, tabs, tooltip and text fields.
         b["set_dropdown_search"] = [sceneOf](std::vector<Value>& a) {

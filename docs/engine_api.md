@@ -106,6 +106,40 @@ Switches one player between first person and third person. The object needs a Pl
 | `GetComponent<PlayerView>().SetView(view)` | `PlayerView.SetView/1` | step | view (Number), Target (Object) | - | Ease to a view: 0 first person (camera at the eyes), 1 third person (over the shoulder). |
 | `GetComponent<PlayerView>().GetView()` | `PlayerView.GetView/0` | value | Target (Object) | Result (Number) | The view asked for: 0 first person, 1 third person. The camera may still be on its way there. |
 
+## Crosshair
+
+An aim reticle. SpreadRecover pulls an extra gap back to 0; 0 keeps the authored spread.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<Crosshair>().SetSpread(pixels)` | `Crosshair.SetSpread/1` | step | pixels (Number), Target (Object) | - | Set the extra gap around the ticks, in pixels. |
+| `GetComponent<Crosshair>().SetSpreadRecover(pixelsPerSecond)` | `Crosshair.SetSpreadRecover/1` | step | pixelsPerSecond (Number), Target (Object) | - | How fast the extra gap eases back to 0. 0 leaves the spread where it is. |
+| `GetComponent<Crosshair>().KickSpread(pixels)` | `Crosshair.KickSpread/1` | step | pixels (Number), Target (Object) | - | Push the ticks apart. They ease back while spread recover is above 0. |
+| `GetComponent<Crosshair>().Spread()` | `Crosshair.Spread/0` | value | Target (Object) | Result (Number) | The extra gap around the ticks, in pixels. |
+
+## UIRadialProgress
+
+A ring or pie. Thickness 0 is a pie. Spin turns the arc into a loader.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIRadialProgress>().SetValue(value)` | `UIRadialProgress.SetValue/1` | step | value (Number), Target (Object) | - | Fill fraction from 0 to 1. |
+| `GetComponent<UIRadialProgress>().SetThickness(pixels)` | `UIRadialProgress.SetThickness/1` | step | pixels (Number), Target (Object) | - | Ring width in pixels. 0 draws a pie. |
+| `GetComponent<UIRadialProgress>().SetStartAngle(degrees)` | `UIRadialProgress.SetStartAngle/1` | step | degrees (Number), Target (Object) | - | Where the arc starts. 0 is 12 o'clock. |
+| `GetComponent<UIRadialProgress>().SetClockwise(on)` | `UIRadialProgress.SetClockwise/1` | step | on (Bool), Target (Object) | - | Fill clockwise when on. |
+| `GetComponent<UIRadialProgress>().SetSpin(on)` | `UIRadialProgress.SetSpin/1` | step | on (Bool), Target (Object) | - | Spin the arc as a loader. |
+| `GetComponent<UIRadialProgress>().SetShowPercent(on)` | `UIRadialProgress.SetShowPercent/1` | step | on (Bool), Target (Object) | - | Draw the fill as a percent in the middle. |
+
+## UISlotGrid
+
+A grid of buttons. Selecting one fires on_change. It does not know about inventory.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UISlotGrid>().SetValue(index)` | `UISlotGrid.SetValue/1` | step | index (Number), Target (Object) | - | Select a slot by index. -1 clears the selection. |
+| `GetComponent<UISlotGrid>().SetColumns(columns)` | `UISlotGrid.SetColumns/1` | step | columns (Number), Target (Object) | - | How many slots across (1 to 16). |
+| `GetComponent<UISlotGrid>().SetRows(rows)` | `UISlotGrid.SetRows/1` | step | rows (Number), Target (Object) | - | How many slots down (1 to 16). |
+| `GetComponent<UISlotGrid>().Value()` | `UISlotGrid.Value/0` | value | Target (Object) | Result (Number) | The selected slot, or -1. |
 ## UIDropdown
 
 A dropdown. Search, a row cap and per-option glyphs are optional.

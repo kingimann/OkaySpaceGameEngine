@@ -5373,6 +5373,7 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         if (ImGui::MenuItem("Radial Progress")) addUI("Radial",   [](GameObject* g){ g->AddComponent<UIRadialProgress>(); });
         if (ImGui::MenuItem("Minimap"))      addUI("Minimap",     [](GameObject* g){ g->AddComponent<Minimap>(); });
         if (ImGui::MenuItem("Crosshair"))    addUI("Crosshair",   [](GameObject* g){ g->AddComponent<Crosshair>(); });
+        if (ImGui::MenuItem("Slot Grid"))    addUI("SlotGrid",   [](GameObject* g){ g->AddComponent<UISlotGrid>()->Rebuild(); }); // grok/ui-hud
         if (ImGui::MenuItem("Tooltip"))      addUI("Tooltip",     [](GameObject* g){ g->AddComponent<UIPanel>(); g->AddComponent<UITooltip>(); });
         ImGui::EndMenu();
     }
@@ -5478,7 +5479,9 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         add("Scoreboard",           &okay::UITemplates::AddScoreboard);
         add("Leaderboard",          &okay::UITemplates::AddLeaderboard);
         add("Matchmaking",          &okay::UITemplates::AddMatchmaking);
+        add("UI HUD",               &okay::UITemplates::AddUIHUD); // grok/ui-hud
         add("UI Controls",          &okay::UITemplates::AddUIControls);   // grok/ui-controls
+        add("UI Notify",            &okay::UITemplates::AddUINotify);   // grok/ui-toast
         add("UI Options",           &okay::UITemplates::AddUIOptions);   // grok/ui-options
         ImGui::EndMenu();
     }
@@ -10480,6 +10483,10 @@ void DrawScriptDocs() {
         fapi("ui_tab_value(\"n\") / ui_tab_text(\"n\") / ui_set_tab(\"n\", i)", "selected tab index / label; select a tab (fires on_change)");
         fapi("ui_set_tab_badge(\"n\", i, count) / ui_set_tab_enabled(\"n\", i, on)", "badge a tab (0 none, -1 dot) / enable or disable it");
         fapi("ui_set_progress(\"n\", v)", "set a progress bar's fill (0..1)");
+        fapi("kick_spread(\"n\", px) / set_spread / set_spread_recover", "crosshair gap; recover eases it back"); // grok/ui-hud
+        fapi("set_radial(\"n\", v) / set_radial_thickness / set_radial_start", "radial fill, ring width, start angle"); // grok/ui-hud
+        fapi("set_radial_spin / set_radial_clockwise / set_radial_percent", "loader spin, direction, percent text"); // grok/ui-hud
+        fapi("set_slot(\"n\", i) / slot_value(\"n\")", "select a slot grid cell / read it"); // grok/ui-hud
         // grok/ui-controls
         fapi("set_dropdown_search(\"n\", on) / set_dropdown_max(\"n\", rows) / set_dropdown_icon(\"n\", i, \"glyph\")", "dropdown search, visible rows, option glyph");
         fapi("set_scroll_inertia(\"n\", rate) / set_scroll_elastic(\"n\", on) / set_scroll_bar(\"n\", style)", "scroll glide, elastic edges, bar style 0/1/2");
@@ -10882,6 +10889,8 @@ static const std::vector<std::string>& ScriptCompletions() {
         // ui
         "ui_set_text","ui_get_text","ui_clicked","ui_slider_value","ui_set_slider",
         "ui_toggle_value","ui_set_progress",
+        "kick_spread","set_spread","set_spread_recover","set_radial","set_slot","slot_value", // grok/ui-hud
+
         // grok/ui-toast
         "toast_push","set_toast_duration","set_toast_corner","set_toast_max","toast_count",
         "modal_open","modal_close","set_modal_style","set_modal_title","set_modal_message",
@@ -10986,6 +10995,7 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"ui_checkbox","ui_checkbox(\"Label\", on)"}, {"ui_slider","ui_slider(\"Label\", v, lo, hi)"},
         {"ui_progress","ui_progress(t)"}, {"ui_set_text","ui_set_text(\"n\", \"s\")"}, {"ui_get_text","ui_get_text(\"n\")"},
         {"ui_clicked","ui_clicked(\"n\")"}, {"ui_set_slider","ui_set_slider(\"n\", v)"}, {"ui_set_progress","ui_set_progress(\"n\", v)"},
+        {"kick_spread","kick_spread(\"n\", px)"}, {"set_spread","set_spread(\"n\", px)"}, {"set_radial","set_radial(\"n\", v)"}, {"set_slot","set_slot(\"n\", i)"}, // grok/ui-hud
         // grok/ui-controls
         {"set_dropdown_search","set_dropdown_search(\"n\", on)"}, {"set_dropdown_max","set_dropdown_max(\"n\", rows)"},
         {"set_scroll_inertia","set_scroll_inertia(\"n\", rate)"}, {"set_tabs_closable","set_tabs_closable(\"n\", on)"},
@@ -11316,6 +11326,18 @@ static const std::string* ScriptDoc(const std::string& name) {
         {"ease_back","Ease with a slight backward overshoot."},
         {"ease_elastic","Springy elastic ease-out."},
         {"ease_bounce","Bouncing ease-out."},
+        // grok/ui-hud
+        {"kick_spread","Push a named crosshair's ticks apart. They ease back while its recover rate is above 0."},
+        {"set_spread","Set a named crosshair's extra gap, in pixels."},
+        {"set_spread_recover","Pixels per second a named crosshair's extra gap eases back to 0. 0 keeps it."},
+        {"set_radial","Set a named radial progress fill, from 0 to 1."},
+        {"set_radial_thickness","Ring width in pixels. 0 draws a pie."},
+        {"set_radial_start","Where a named radial starts, in degrees. 0 is 12 o'clock."},
+        {"set_radial_spin","Spin a named radial as a loader."},
+        {"set_radial_clockwise","Fill a named radial clockwise."},
+        {"set_radial_percent","Show a named radial's fill as a percent."},
+        {"set_slot","Select a slot on a named slot grid. -1 clears it."},
+        {"slot_value","The selected slot on a named grid, or -1."},
         // grok/ui-controls
         {"set_dropdown_search","Turn a named dropdown's search row on or off."},
         {"set_dropdown_max","Cap how many options an open dropdown shows. 0 shows all."},
@@ -17133,6 +17155,7 @@ void DrawHierarchy(EditorState& ed) {
             if (ImGui::MenuItem("Radial Progress")) mkUI("Radial", [](GameObject* g){ g->AddComponent<UIRadialProgress>(); });
             if (ImGui::MenuItem("Minimap"))      mkUI("Minimap", [](GameObject* g){ g->AddComponent<Minimap>(); });
             if (ImGui::MenuItem("Crosshair"))    mkUI("Crosshair", [](GameObject* g){ g->AddComponent<Crosshair>(); });
+            if (ImGui::MenuItem("Slot Grid"))    mkUI("SlotGrid", [](GameObject* g){ g->AddComponent<UISlotGrid>()->Rebuild(); }); // grok/ui-hud
             if (ImGui::MenuItem("Input Field"))  mkUI("InputField", [](GameObject* g){ g->AddComponent<UIInputField>(); });
             if (ImGui::MenuItem("Dropdown"))     mkUI("Dropdown", [](GameObject* g){ g->AddComponent<UIDropdown>(); });
             if (ImGui::MenuItem("Tabs"))         mkUI("Tabs",    [](GameObject* g){ g->AddComponent<UITabs>(); });
@@ -34185,7 +34208,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::ColorEdit4("Fill##urp", flc)) { rp->fill = {flc[0], flc[1], flc[2], flc[3]}; ed.dirty = true; }
             AnchorCombo("Anchor##urp", rp->anchor, ed);
             if (ImGui::Checkbox("Show Percent##urp", &rp->showPercent)) ed.dirty = true;
-            ImGui::TextDisabled("script: set_progress(0..1) on cooldowns / loaders");
+            ImGui::TextDisabled("script: set_radial(\"name\", 0..1), thickness / spin / start"); // grok/ui-hud
             if (ImGui::SmallButton("Remove##urp")) toRemove = rp;
         }
     }
@@ -34464,6 +34487,10 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Length##uch", &cr->length, 0.5f, 0.0f, 256.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Spread##uch", &cr->spread, 0.5f, 0.0f, 256.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extra gap added to every tick (aim spread).");
+            // grok/ui-hud — 0 leaves the authored spread alone.
+            if (ImGui::DragFloat("Spread Recover##uch", &cr->spreadRecover, 1.0f, 0.0f, 400.0f, "%.0f px/s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast the extra gap eases back to 0. 0 keeps the authored spread.");
+            if (ImGui::DragFloat("Spread Max##uch", &cr->spreadMax, 1.0f, 0.0f, 256.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Show Lines##uch", &cr->showLines)) ed.dirty = true;
             if (cr->showLines) {
                 if (ImGui::Checkbox("Up##uchl", &cr->lineUp)) ed.dirty = true; ImGui::SameLine();
@@ -34492,6 +34519,37 @@ void DrawInspector(EditorState& ed) {
             }
             AnchorCombo("Anchor##uch", cr->anchor, ed);
             if (ImGui::SmallButton("Remove##uch")) toRemove = cr;
+        }
+    }
+    if (auto* sg = dynamic_cast<UISlotGrid*>(curComp)) { // grok/ui-hud
+        if (CompHeader("UI Slot Grid", sg, &toRemove)) {
+            float pos[2] = {sg->position.x, sg->position.y};
+            if (ImGui::DragFloat2("Pos (px)##usg", pos, 1.0f)) { sg->position = {pos[0], pos[1]}; sg->Rebuild(); ed.dirty = true; }
+            int cols = sg->columns, rows = sg->rows;
+            if (ImGui::DragInt("Columns##usg", &cols, 0.1f, 1, 16)) { sg->SetColumns(cols); sg->Rebuild(); ed.dirty = true; }
+            if (ImGui::DragInt("Rows##usg", &rows, 0.1f, 1, 16)) { sg->SetRows(rows); sg->Rebuild(); ed.dirty = true; }
+            float cell[2] = {sg->cell.x, sg->cell.y};
+            if (ImGui::DragFloat2("Cell (px)##usg", cell, 1.0f, 8.0f, 256.0f)) { sg->SetCell(cell[0], cell[1]); sg->Rebuild(); ed.dirty = true; }
+            float gap = sg->gap;
+            if (ImGui::DragFloat("Gap##usg", &gap, 0.5f, 0.0f, 64.0f)) { sg->SetGap(gap); sg->Rebuild(); ed.dirty = true; }
+            int sel = sg->value;
+            if (ImGui::DragInt("Selected##usg", &sel, 0.1f, -1, sg->Count() - 1)) { sg->SetValue(sel); ed.dirty = true; }
+            float bc[4] = {sg->color.r, sg->color.g, sg->color.b, sg->color.a};
+            if (ImGui::ColorEdit4("Color##usg", bc)) { sg->color = {bc[0], bc[1], bc[2], bc[3]}; sg->Rebuild(); ed.dirty = true; }
+            float sc[4] = {sg->selectedColor.r, sg->selectedColor.g, sg->selectedColor.b, sg->selectedColor.a};
+            if (ImGui::ColorEdit4("Selected Color##usg", sc)) { sg->selectedColor = {sc[0], sc[1], sc[2], sc[3]}; sg->Rebuild(); ed.dirty = true; }
+            AnchorCombo("Anchor##usg", sg->anchor, ed);
+            sg->Rebuild();
+            for (int i = 0; i < sg->Count(); ++i) {
+                char buf[64];
+                std::strncpy(buf, sg->Label(i).c_str(), sizeof(buf) - 1);
+                buf[sizeof(buf) - 1] = '\0';
+                ImGui::PushID(i);
+                if (ImGui::InputText("Label##usg", buf, sizeof(buf))) { sg->SetLabel(i, buf); sg->Rebuild(); ed.dirty = true; }
+                ImGui::PopID();
+            }
+            ImGui::TextDisabled("script: set_slot(\"name\", i)   event: on_change");
+            if (ImGui::SmallButton("Remove##usg")) toRemove = sg;
         }
     }
     if (auto* sa = dynamic_cast<UISafeArea*>(curComp)) {
@@ -35480,6 +35538,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Minimap>(), "Minimap")) { go->AddComponent<Minimap>(); ed.dirty = true; }
             if (item(!go->GetComponent<MinimapBlip>(), "Minimap Blip")) { go->AddComponent<MinimapBlip>(); ed.dirty = true; }
             if (item(!go->GetComponent<Crosshair>(), "Crosshair")) { go->AddComponent<Crosshair>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UISlotGrid>(), "UI Slot Grid")) { go->AddComponent<UISlotGrid>()->Rebuild(); ed.dirty = true; } // grok/ui-hud
             if (item(!go->GetComponent<LoadingScreen>(), "Loading Screen")) {
                 auto* ls = go->AddComponent<LoadingScreen>();
                 ls->tips = {"Tip: hold Shift to sprint.", "Tip: build a foundation first.", "Loading the world..."};
@@ -42824,6 +42883,7 @@ int main(int argc, char** argv) {
                     {"Loading (Minimal)", &AddLoadingMinimal}, {"Loading (Card)", &AddLoadingCard},
                     {"Loading (Splash)", &AddLoadingSplash}, {"Loading (Cinematic)", &AddLoadingCinematic},
                     {"Shop", &AddShop}, {"Confirm Dialog", &AddConfirmDialog}, {"Notification", &AddNotificationScreen},
+                    {"UI HUD", &AddUIHUD}, // grok/ui-hud
                     {"UI Controls", &AddUIControls},   // grok/ui-controls
                     {"UI Notify", &AddUINotify},   // grok/ui-toast
                     {"UI Showcase", &AddUIShowcase},   // grok/ui-theme

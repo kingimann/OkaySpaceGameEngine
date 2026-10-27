@@ -1206,7 +1206,10 @@ inline void TerrainSandbox(Scene& scene) {
         col->size = {0.6f, 1.8f, 0.6f};
         col->offset = {0.0f, 0.9f, 0.0f};
     }
-    player->AddComponent<FirstPersonController>();
+    // Right mouse raises terrain (TerrainDigger). Aim-down-sights zoom uses that
+    // same button, and it pulled the view in while building up ground.
+    auto* fp = player->AddComponent<FirstPersonController>();
+    fp->zoomWithRightMouse = false;
 
     GameObject* camObj = scene.CreateGameObject("FPS Camera");
     auto* cam = camObj->AddComponent<Camera>();

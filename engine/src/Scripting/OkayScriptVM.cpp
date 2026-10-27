@@ -24,6 +24,7 @@
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/PlayerView.hpp"
+#include "okay/Components/UITheme.hpp"          // grok/ui-theme
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/AnimControl.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
@@ -4354,6 +4355,24 @@ struct OkayScriptVM::Impl {
         };
         b["SetView"] = b["set_view"];
         b["GetView"] = b["get_view"];
+        // grok/ui-theme: apply_ui_theme() bakes the theme on this object (or the
+        // first in the scene). apply_ui_theme(name) picks a theme by name.
+        // apply_ui_theme(name, root) bakes it onto the named object instead.
+        b["apply_ui_theme"] = [selfObj](std::vector<Value>& a) {
+            GameObject* g = selfObj();
+            if (!g || !g->scene()) return Value{0.0f};
+            const std::string name = a.empty() ? std::string() : a[0].AsString();
+            UITheme* theme = UITheme::Find(g->scene(), name);
+            if (!theme && name.empty()) theme = g->GetComponent<UITheme>();
+            if (!theme) return Value{0.0f};
+            GameObject* root = theme->gameObject;
+            if (a.size() >= 2) {
+                if (GameObject* named = g->scene()->Find(a[1].AsString())) root = named;
+            }
+            theme->ApplyTo(root);
+            return Value{1.0f};
+        };
+        b["ApplyUITheme"] = b["apply_ui_theme"];
         // Clip queries: timing + existence, so scripts can react to where a clip is.
         b["clip_time"] = [charSelf, modelSelf](std::vector<Value>&) {
             Character* c = charSelf();

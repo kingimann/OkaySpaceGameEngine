@@ -7576,6 +7576,7 @@ struct EditorPlugin {
     std::string path, name, description, error;
     bool user = false;          // from <editor>/plugins (all projects) vs the project
     bool window = false;        // declares @window (or defines on_gui)
+    bool hasMenu = false;       // defines on_menu() — a one-shot command
     bool open = false;          // its window is showing
     bool enabled = true;
     std::filesystem::file_time_type mtime{};
@@ -7723,7 +7724,7 @@ static void LoadPlugin(EditorPlugin& p) {
     namespace fs = std::filesystem;
     std::error_code ec;
     p.mtime = fs::last_write_time(p.path, ec);
-    p.error.clear(); p.vm.reset(); p.window = false;
+    p.error.clear(); p.vm.reset(); p.window = false; p.hasMenu = false;
     p.name = fs::path(p.path).stem().string(); p.description.clear();
     std::string src = extide::ReadFile(p.path);
     // Header metadata from leading // comments.
@@ -7752,6 +7753,7 @@ static void LoadPlugin(EditorPlugin& p) {
     p.vm->Bind(&p.host);
     std::string err;
     if (!p.vm->Load(src, &err)) { p.error = err.empty() ? "failed to load" : err; p.vm.reset(); ConsoleLog("Plugin '" + p.name + "': " + p.error, 2); return; }
+    p.hasMenu = p.vm->HasEvent("on_menu");
     p.vm->CallStart();
 }
 // Rescan both plugin folders: add new files, drop deleted ones, reload edited ones.
@@ -7842,9 +7844,19 @@ static void NewPluginFromTemplate(EditorState& ed) {
     ConsoleLog("Created plugin " + p.string());
 }
 // Per frame: watch for changes, fire on_tick / on_selection, draw plugin windows.
-static void TickPlugins(EditorState& ed) {
+static void EnsurePluginPrefs() {
     static bool prefs = false;
     if (!prefs) { LoadPluginPrefs(); prefs = true; }
+}
+static void SetPluginEnabled(EditorPlugin& p, bool on) {
+    p.enabled = on;
+    if (on) g_pluginsDisabled.erase(p.path);
+    else { g_pluginsDisabled.insert(p.path); p.open = false; }
+    SavePluginPrefs();
+    LoadPlugin(p);
+}
+static void TickPlugins(EditorState& ed) {
+    EnsurePluginPrefs();
     static Uint32 nextScan = 0;
     if (g_pluginsProject != ed.projectDir() || SDL_GetTicks() >= nextScan) { ScanPlugins(ed); nextScan = SDL_GetTicks() + 1000; }
     g_pluginEd = &ed;
@@ -7876,23 +7888,138 @@ static void TickPlugins(EditorState& ed) {
         ImGui::End();
     }
 }
+static void PluginMenuTip(const EditorPlugin& p) {
+    if (!ImGui::IsItemHovered()) return;
+    if (!p.error.empty() && !p.description.empty()) ImGui::SetTooltip("%s\n%s", p.description.c_str(), p.error.c_str());
+    else if (!p.error.empty()) ImGui::SetTooltip("%s", p.error.c_str());
+    else if (!p.description.empty()) ImGui::SetTooltip("%s", p.description.c_str());
+}
+static bool PluginMenuMatch(const EditorPlugin& p, const char* filter) {
+    if (!filter || !filter[0]) return true;
+    auto fold = [](std::string s) {
+        for (char& c : s) c = (char)std::tolower((unsigned char)c);
+        return s;
+    };
+    const std::string f = fold(filter);
+    auto has = [&](const std::string& s) { return fold(s).find(f) != std::string::npos; };
+    return has(p.name) || has(p.description) || has(std::filesystem::path(p.path).stem().string());
+}
+static void RevealPluginDir(const std::string& dir) {
+    if (dir.empty()) return;
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    extide::RevealInFiles(dir);
+}
 static void DrawPluginsMenu(EditorState& ed) {
     if (!ImGui::BeginMenu("Plugins")) return;
-    int shown = 0;
-    for (auto& up : g_plugins) {
-        EditorPlugin& p = *up;
-        if (!p.enabled) continue;
-        ++shown;
-        if (!p.vm) { ImGui::BeginDisabled(); ImGui::MenuItem((p.name + "  (error)").c_str()); ImGui::EndDisabled(); continue; }
-        if (p.window) { if (ImGui::MenuItem(p.name.c_str(), nullptr, p.open)) p.open = !p.open; }
-        else if (ImGui::MenuItem(p.name.c_str())) { g_pluginEd = &ed; p.vm->CallEvent("on_menu"); }
-        if (!p.description.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", p.description.c_str());
+    // The menu bar runs before the per-frame scan, so the first open of a
+    // session (and the first open after switching projects) would otherwise
+    // list nothing until the next frame.
+    EnsurePluginPrefs();
+    if (g_pluginsProject != ed.projectDir()) ScanPlugins(ed);
+
+    static char filter[64] = "";
+    if (ImGui::IsWindowAppearing()) filter[0] = '\0';
+    const bool many = g_plugins.size() > 8;
+    if (many) {
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::InputTextWithHint("##pluginfilter", "Filter", filter, sizeof(filter));
+        ImGui::Separator();
     }
-    if (!shown) ImGui::TextDisabled("No plugins yet");
+
+    int projectN = 0, userN = 0, enabledN = 0, liveN = 0, disabledN = 0;
+    for (const auto& up : g_plugins) {
+        if (!up->enabled) { ++disabledN; continue; }
+        ++liveN;
+        if (!PluginMenuMatch(*up, filter)) continue;
+        ++enabledN;
+        if (up->user) ++userN; else ++projectN;
+    }
+    const bool grouped = projectN > 0 && userN > 0;
+    bool drewGroup = false;
+
+    auto drawOne = [&](EditorPlugin& p, const std::string& label) {
+        if (!p.vm) {
+            // Click opens the script; the tooltip is the load error.
+            if (ImGui::MenuItem((label + "  (error)").c_str())) OpenScriptFileInEditorAt(p.path, 1);
+            PluginMenuTip(p);
+            return;
+        }
+        if (p.window && p.hasMenu) {
+            if (ImGui::BeginMenu(label.c_str())) {
+                if (ImGui::MenuItem("Panel", nullptr, p.open)) p.open = !p.open;
+                if (ImGui::MenuItem("Run")) { g_pluginEd = &ed; p.vm->CallEvent("on_menu"); }
+                if (ImGui::MenuItem("Edit Script")) OpenScriptFileInEditorAt(p.path, 1);
+                ImGui::EndMenu();
+            }
+            PluginMenuTip(p);
+            return;
+        }
+        if (p.window) {
+            if (ImGui::MenuItem(label.c_str(), nullptr, p.open)) p.open = !p.open;
+        } else if (ImGui::MenuItem(label.c_str())) {
+            g_pluginEd = &ed;
+            p.vm->CallEvent("on_menu");
+        }
+        PluginMenuTip(p);
+    };
+    auto drawGroup = [&](const char* heading, bool userGroup) {
+        std::vector<EditorPlugin*> items;
+        for (auto& up : g_plugins) {
+            if (!up->enabled || up->user != userGroup || !PluginMenuMatch(*up, filter)) continue;
+            items.push_back(up.get());
+        }
+        if (items.empty()) return;
+        if (grouped) {
+            if (drewGroup) ImGui::Separator();
+            ImGui::TextDisabled("%s", heading);
+        }
+        drewGroup = true;
+        std::sort(items.begin(), items.end(), [](const EditorPlugin* a, const EditorPlugin* b) {
+            auto fold = [](std::string s) { for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; };
+            return fold(a->name) < fold(b->name);
+        });
+        for (EditorPlugin* p : items) {
+            int same = 0;
+            for (EditorPlugin* q : items) if (q->name == p->name) ++same;
+            std::string label = p->name;
+            if (same > 1) label += " (" + std::filesystem::path(p->path).stem().string() + ")";
+            drawOne(*p, label);
+        }
+    };
+    drawGroup("This project", false);
+    drawGroup("All projects", true);
+
+    if (liveN == 0 && disabledN == 0) ImGui::TextDisabled("No plugins yet");
+    else if (liveN == 0) ImGui::TextDisabled("Every plugin is turned off");
+    else if (enabledN == 0) ImGui::TextDisabled("Nothing matches.");
+
+    if (disabledN > 0 && enabledN > 0) ImGui::Separator();
+    if (disabledN > 0 && ImGui::BeginMenu("Turned off")) {
+        std::vector<EditorPlugin*> off;
+        for (auto& up : g_plugins) if (!up->enabled) off.push_back(up.get());
+        std::sort(off.begin(), off.end(), [](const EditorPlugin* a, const EditorPlugin* b) {
+            auto fold = [](std::string s) { for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; };
+            return fold(a->name) < fold(b->name);
+        });
+        for (EditorPlugin* p : off) {
+            std::string label = p->name + (p->user ? "  (all projects)" : "");
+            if (ImGui::MenuItem(label.c_str())) SetPluginEnabled(*p, true);
+            PluginMenuTip(*p);
+        }
+        ImGui::EndMenu();
+    }
+
     ImGui::Separator();
     if (ImGui::MenuItem("New Plugin...")) NewPluginFromTemplate(ed);
     if (ImGui::MenuItem("Plugin Manager...")) g_showPluginManager = true;
     if (ImGui::MenuItem("Reload All")) ScanPlugins(ed, true);
+    if (ImGui::BeginMenu("Open Folder")) {
+        const std::string proj = PluginProjectDir(ed);
+        if (ImGui::MenuItem("Project Plugins", nullptr, false, !proj.empty())) RevealPluginDir(proj);
+        if (ImGui::MenuItem("Editor Plugins")) RevealPluginDir(PluginUserDir());
+        ImGui::EndMenu();
+    }
     ImGui::EndMenu();
 }
 static void DrawPluginManager(EditorState& ed) {
@@ -7926,12 +8053,7 @@ static void DrawPluginManager(EditorState& ed) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
             bool en = p.enabled;
-            if (ImGui::Checkbox("##en", &en)) {
-                p.enabled = en;
-                if (en) g_pluginsDisabled.erase(p.path); else { g_pluginsDisabled.insert(p.path); p.open = false; }
-                SavePluginPrefs();
-                LoadPlugin(p);
-            }
+            if (ImGui::Checkbox("##en", &en)) SetPluginEnabled(p, en);
             ImGui::TableNextColumn();
             ImGui::TextUnformatted(p.name.c_str());
             if (!p.error.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.42f, 1.0f), "%s", p.error.c_str());

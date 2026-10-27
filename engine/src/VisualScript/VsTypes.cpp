@@ -191,6 +191,7 @@ const Row kRows[] = {
         {"IsSitting", false, "", "B"},
         {"Interact", true, "", ""},
         {"SeatPrompt", false, "", "T"},
+        {"HitReact", true, "B", ""},
         {"SetTimeScale", true, "N", ""},
         {"SetBlendShape", true, "N", ""},
         {"GetBlendShape", false, "", "N"},

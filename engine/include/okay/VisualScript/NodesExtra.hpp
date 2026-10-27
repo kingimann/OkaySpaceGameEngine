@@ -516,6 +516,17 @@ struct DiveNode : VsNode {
         return 0;
     }
 };
+struct HitReactNode : VsNode {
+    std::string dir;
+    explicit HitReactNode(std::string d) : dir(std::move(d)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        const int d = HumanoidActions::DirFromName(dir.empty() ? "forward" : dir);
+        const bool heavy = In(0, g, ctx, VsValue{0.0f}).AsFloat() != 0.0f;
+        HumanoidActions::HitReact(ctx.gameObject, d, heavy);
+        return 0;
+    }
+};
 struct ReviveNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph&, VsContext& ctx) override {

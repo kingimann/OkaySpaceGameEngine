@@ -1620,7 +1620,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << c->invincibleTime << " " << c->overhealMax << " " << c->overhealDecay
             << " " << (c->destroyOnDeath ? 1 : 0) << " " << (c->respawn ? 1 : 0)
             << " " << c->respawnDelay << " " << c->lives
-            << " " << (c->playDeathAnim ? 1 : 0) << "\n";
+            << " " << (c->playDeathAnim ? 1 : 0) << " " << (c->playHitAnim ? 1 : 0) << "\n";
     }
     if (auto* c = go->GetComponent<Seat>()) {
         out << "  seat " << c->seatHeight << " "
@@ -4549,6 +4549,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     in >> std::ws;   // optional: play the death animation (defaults on)
                     if (std::isdigit(in.peek())) {
                         int pda = 1; in >> pda; c->playDeathAnim = (pda != 0);
+                    }
+                    in >> std::ws;   // optional: light hit flinch (defaults off)
+                    if (std::isdigit(in.peek())) {
+                        int pha = 0; in >> pha; c->playHitAnim = (pha != 0);
                     }
                 } else if (field == "seat") {
                     auto* c = go->AddComponent<Seat>();

@@ -330,6 +330,28 @@ their input while `Health` says the body is dead. `Damage` does not know where a
 hit came from; `Damage(amount, fromWorld)` and `die(x, y, z)` do, and the body
 falls away from that point. With no direction, it falls forward.
 
+Hit clips: `Hit_F`, `Hit_B`, `Hit_L`, `Hit_R` (about 0.35s, upper body) and
+`Hit_Heavy_F`, `Hit_Heavy_B` (about 0.8s, full body), plus `Hit_Crouch` and
+`Hit_Prone`. Light hits play on a torso layer (`maskBone` Torso) so the legs
+keep walking. That layer rests on `Off` at weight 0; the enter callback that
+raises the weight is not saved, and it is put back whenever the built-in
+actions are merged. Heavy, crouch and prone hits play on the base layer and
+return to Idle, Crouch or Prone. They are interruptible, so death can cut
+them. The Any-State `hit` blend uses interruption None and may re-enter itself
+(`canInterruptSelf`), but `hit_react` refuses a second hit within 0.1s and
+does not leave the trigger set. `hitDir` is 0 forward, 1 back, 2 left, 3
+right — where the hit came from, the opposite of the death fall. A heavy side
+uses the front or back stumble (only those two heavy clips exist). While a
+heavy, crouch or prone hit is playing, movement speed is multiplied by the
+Animator float `staggerScale`, which is 1 until a game sets it lower.
+
+`Health` plays a light flinch only when **Play Hit Anim** is on (off by
+default, so existing games do not change) and `Damage` was given a source.
+A killing blow plays death instead.
+
+Script: `hit_react("forward"|"back"|"left"|"right" [, heavy])`,
+`hit_react(x, y, z [, heavy])`. Visual script: Hit React (Heavy pin).
+
 Script: `play_action("Death" [, blend])` (0 if that state is missing),
 `is_in_action()`, `action_time()`, `die(["forward"|"back"|"left"|"right"])`,
 `die(x, y, z)`, `revive()`, `is_dead()`. `on_action_end` is the anim event

@@ -19,7 +19,7 @@ namespace HumanoidActions {
 /// How far the built-in action set has got. Death is 1, dolphin dive is 2. A
 /// saved graph records the revision it already has, so a later action is added
 /// once and a state the user deleted is not put back when the next action lands.
-constexpr int kActionsRev = 3;
+constexpr int kActionsRev = 4;
 
 /// One authored pose. Degrees, hip height in rig units, rootOffset.x/z a visual
 /// lean only (y is unused; hipY is the root height).
@@ -100,6 +100,16 @@ bool IsSitting(GameObject* go);
 void Interact(GameObject* go);
 /// Prompt of the nearest in-range Seat, or empty.
 std::string SeatPrompt(GameObject* go);
+
+/// 0 forward, 1 back, 2 left, 3 right: where the hit came from.
+int HitDirFromWorld(GameObject* go, const Vec3& fromWorld);
+/// Flinch. `dir` is 0 forward, 1 back, 2 left, 3 right (where the hit came from).
+/// Light hits play on the torso layer. Heavy, crouch and prone play on the base
+/// layer. Refuses a second hit within 0.1s. Does not leave the `hit` trigger set.
+bool HitReact(GameObject* go, int dir, bool heavy = false);
+/// 1 except during a heavy / crouch / prone hit, when it is the Animator's
+/// `staggerScale` (itself 1 until a game sets it lower).
+float StaggerScale(const GameObject* go);
 
 /// True once the body is in DeadHold (or Death has played out).
 bool DeathPoseSettled(GameObject* go);

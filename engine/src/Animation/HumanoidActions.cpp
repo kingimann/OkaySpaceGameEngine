@@ -11,6 +11,7 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Core/Time.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
@@ -20,6 +21,7 @@
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <unordered_map>
 
 namespace okay {
 namespace HumanoidActions {
@@ -274,12 +276,48 @@ void BakeDive(std::vector<HumanoidLibrary::Entry>& out) {
     AddClip(out, BakeAction("DiveLand", {At(absorb, 0.0f), At(chest, 0.12f), At(prone, 0.28f)}, false, landEv));
 }
 
+void BakeHits(std::vector<HumanoidLibrary::Entry>& out) {
+    const KeyPose idle = FromState(1);
+    const KeyPose crouch = FromState(6);
+    const KeyPose prone = FromState(7);
+    auto flinch = [](KeyPose base, float torsoX, float torsoZ, float headX) {
+        base.bones[B::B_TORSO].x += torsoX;
+        base.bones[B::B_TORSO].z += torsoZ;
+        base.bones[B::B_HEAD].x += headX;
+        base.bones[B::B_LUPARM].z += 18.0f;
+        base.bones[B::B_RUPARM].z -= 18.0f;
+        return base;
+    };
+    const std::vector<std::pair<float, const char*>> lightEv = {{0.35f, "action_end"}};
+    AddClip(out, BakeAction("Hit_F", {At(idle, 0.0f), At(flinch(idle, 22.0f, 0.0f, -14.0f), 0.12f), At(idle, 0.35f)}, false, lightEv));
+    AddClip(out, BakeAction("Hit_B", {At(idle, 0.0f), At(flinch(idle, -18.0f, 0.0f, 12.0f), 0.12f), At(idle, 0.35f)}, false, lightEv));
+    AddClip(out, BakeAction("Hit_L", {At(idle, 0.0f), At(flinch(idle, 6.0f, 20.0f, 0.0f), 0.12f), At(idle, 0.35f)}, false, lightEv));
+    AddClip(out, BakeAction("Hit_R", {At(idle, 0.0f), At(flinch(idle, 6.0f, -20.0f, 0.0f), 0.12f), At(idle, 0.35f)}, false, lightEv));
+
+    KeyPose heavyF = flinch(idle, 28.0f, 0.0f, -16.0f);
+    heavyF.bones[B::B_HIPS].x = 12.0f;
+    heavyF.bones[B::B_LTHIGH].x = 22.0f;
+    heavyF.bones[B::B_RTHIGH].x = -10.0f;
+    heavyF.hipY = -0.08f;
+    heavyF.rootOffset = {0.0f, 0.0f, 0.06f};
+    KeyPose heavyB = flinch(idle, -24.0f, 0.0f, 14.0f);
+    heavyB.bones[B::B_HIPS].x = -10.0f;
+    heavyB.hipY = -0.06f;
+    heavyB.rootOffset = {0.0f, 0.0f, -0.05f};
+    const std::vector<std::pair<float, const char*>> heavyEv = {{0.80f, "action_end"}};
+    AddClip(out, BakeAction("Hit_Heavy_F", {At(idle, 0.0f), At(heavyF, 0.18f), At(heavyF, 0.42f), At(idle, 0.80f)}, false, heavyEv));
+    AddClip(out, BakeAction("Hit_Heavy_B", {At(idle, 0.0f), At(heavyB, 0.18f), At(heavyB, 0.42f), At(idle, 0.80f)}, false, heavyEv));
+    AddClip(out, BakeAction("Hit_Crouch", {At(crouch, 0.0f), At(flinch(crouch, 16.0f, 0.0f, -8.0f), 0.14f), At(crouch, 0.40f)}, false, {{0.40f, "action_end"}}));
+    AddClip(out, BakeAction("Hit_Prone", {At(prone, 0.0f), At(flinch(prone, 8.0f, 6.0f, -4.0f), 0.12f), At(prone, 0.36f)}, false, {{0.36f, "action_end"}}));
+    AddClip(out, BakeAction("Hit_Off", {idle}, true, {}));
+}
+
 struct ActionSpec {
     const char* name;
     int rev;
 };
 
-const ActionSpec kStates[] = {{"Death", 1}, {"DeadHold", 1}, {"Dive", 2}, {"DiveLand", 2}, {"SitDown", 3}, {"Sit", 3}, {"StandUp", 3}};
+const ActionSpec kStates[] = {{"Death", 1}, {"DeadHold", 1}, {"Dive", 2}, {"DiveLand", 2}, {"SitDown", 3}, {"Sit", 3}, {"StandUp", 3}, {"Hit", 4}, {"HitHeavy", 4}, {"Hit_Crouch", 4}, {"Hit_Prone", 4}};
 
 SM::State* FindMutable(SM& sm, const std::string& name) {
     for (SM::State& s : sm.states) if (s.name == name) return &s;
@@ -481,6 +519,7 @@ void Bake(std::vector<HumanoidLibrary::Entry>& out) {
     BakeDeath(out);
     BakeDive(out);
     BakeSit(out);
+    BakeHits(out);
 }
 
 void ApplyTimes(AnimStateMachine& sm) {
@@ -496,7 +535,8 @@ void ApplyTimes(AnimStateMachine& sm) {
         }
     }
     for (SM::Transition& tr : sm.anyState)
-        if (tr.to == "Death") tr.blend = t.standCrouch;
+        if (tr.to == "Death" || tr.to == "HitHeavy" || tr.to == "Hit_Crouch" || tr.to == "Hit_Prone")
+            tr.blend = t.standCrouch;
 }
 
 SM::Condition Cond(C c, const char* param, float value = 0.0f) {
@@ -616,11 +656,76 @@ SM::State MakeSitTree(const char* name, bool loop) {
     return s;
 }
 
+SM::Motion HitClip(const char* clip, float threshold) {
+    SM::Motion m;
+    m.clip = clip;
+    m.threshold = threshold;
+    return m;
+}
+
+void WireClipEnd(SM::State& st, const char* to) {
+    st.transitions.clear();
+    if (!to) return;
+    SM::Transition done;
+    done.to = to;
+    done.cond = C::OnClipEnd;
+    done.hasExitTime = true;
+    done.exitTime = 1.0f;
+    done.blend = 0.1f;
+    st.transitions.push_back(done);
+}
+
+SM::Condition CondOf(C cond, const char* param) {
+    SM::Condition c;
+    c.cond = cond;
+    c.param = param;
+    return c;
+}
+
+void HitEntry(SM& sm, const char* to, std::vector<SM::Condition> extra) {
+    if (HasAny(sm, to, "hit") || !HasState(sm, to)) return;
+    SM::Transition go;
+    go.to = to;
+    go.cond = C::Trigger;
+    go.param = "hit";
+    go.blend = 0.1f;
+    go.canInterruptSelf = true;
+    go.interruption = SM::Transition::Interrupt::None;
+    go.extra = std::move(extra);
+    sm.anyState.push_back(std::move(go));
+}
+
+AnimStateMachine* EnsureHitLayer(AnimStateMachine& base) {
+    if (!base.gameObject) return nullptr;
+    for (AnimStateMachine* sm : base.gameObject->GetComponents<AnimStateMachine>())
+        if (sm->layer > 0 && sm->maskBone == "Torso") return sm;
+    AnimStateMachine* layer = base.gameObject->AddComponent<AnimStateMachine>();
+    layer->layer = 1;
+    for (AnimStateMachine* sm : base.gameObject->GetComponents<AnimStateMachine>())
+        if (sm != layer && sm->layer >= layer->layer) layer->layer = sm->layer + 1;
+    layer->maskBone = "Torso";
+    layer->layerWeight = 0.0f;
+    return layer;
+}
+
+void BindHitLayer(AnimStateMachine& base) {
+    if (!base.gameObject) return;
+    for (AnimStateMachine* sm : base.gameObject->GetComponents<AnimStateMachine>()) {
+        if (sm->layer <= 0 || sm->maskBone != "Torso") continue;
+        if (!HasState(*sm, "Hit") && !HasState(*sm, "Off")) continue;
+        sm->onStateEnter = [sm](const std::string& name) {
+            sm->layerWeight = (name == "Off") ? 0.0f : 1.0f;
+        };
+        if (sm->Current().empty() || sm->Current() == "Off") sm->layerWeight = 0.0f;
+    }
+}
+
 void AddStates(AnimStateMachine& sm, const Character* body, bool force) {
     const int had = sm.actionsRev;
     const bool deathDue = force || had < 1;
     const bool diveDue = force || had < 2;
     const bool sitDue = force || had < 3;
+    const bool hitDue = force || had < 4;
     const bool freshDeath = deathDue && !HasState(sm, "Death");
     const bool freshHold = deathDue && !HasState(sm, "DeadHold");
     float col = 40.0f;
@@ -748,11 +853,105 @@ void AddStates(AnimStateMachine& sm, const Character* body, bool force) {
             sm.anyState.push_back(std::move(go));
         }
     }
+    if (hitDue) {
+        const bool freshHeavy = !HasState(sm, "HitHeavy");
+        const bool freshCrouch = !HasState(sm, "Hit_Crouch");
+        const bool freshProne = !HasState(sm, "Hit_Prone");
+        float col = 40.0f;
+        for (const SM::State& o : sm.states) col = std::max(col, o.nx);
+        col += 220.0f;
+        if (freshHeavy) {
+            SM::State s;
+            s.name = "HitHeavy";
+            s.blendTree = true;
+            s.blendDims = 1;
+            s.blendParam = "hitDir";
+            s.loop = false;
+            s.ikWeight = 0.0f;
+            s.fullBodyIkWeight = 0.0f;
+            s.interruptible = true;
+            s.motions = {HitClip("Hit_Heavy_F", 0.0f), HitClip("Hit_Heavy_B", 1.0f)};
+            s.nx = col; s.ny = 40.0f;
+            sm.states.push_back(std::move(s));
+        }
+        if (freshCrouch) {
+            SM::State s;
+            s.name = "Hit_Crouch";
+            s.clip = "Hit_Crouch";
+            s.loop = false;
+            s.ikWeight = 0.0f;
+            s.interruptible = true;
+            s.nx = col; s.ny = 130.0f;
+            sm.states.push_back(std::move(s));
+        }
+        if (freshProne) {
+            SM::State s;
+            s.name = "Hit_Prone";
+            s.clip = "Hit_Prone";
+            s.loop = false;
+            s.ikWeight = 0.0f;
+            s.interruptible = true;
+            s.nx = col; s.ny = 220.0f;
+            sm.states.push_back(std::move(s));
+        }
+        if (freshHeavy) if (SM::State* s = FindMutable(sm, "HitHeavy"))
+            WireClipEnd(*s, HasState(sm, "Idle") ? "Idle" : nullptr);
+        if (freshCrouch) if (SM::State* s = FindMutable(sm, "Hit_Crouch"))
+            WireClipEnd(*s, HasState(sm, "Crouch") ? "Crouch" : (HasState(sm, "Idle") ? "Idle" : nullptr));
+        if (freshProne) if (SM::State* s = FindMutable(sm, "Hit_Prone"))
+            WireClipEnd(*s, HasState(sm, "Prone") ? "Prone" : (HasState(sm, "Idle") ? "Idle" : nullptr));
+        EnsureParam(sm, "hit", 2);
+        EnsureParam(sm, "hitDir", 0);
+        EnsureParam(sm, "hitHeavy", 1);
+        bool haveScale = false;
+        for (const SM::Param& p : sm.params) if (p.name == "staggerScale") haveScale = true;
+        if (!haveScale) {
+            sm.params.push_back({"staggerScale", 0});
+            sm.SetFloat("staggerScale", 1.0f);
+        }
+        // Prone and crouch before the standing heavy edge, so the first match wins.
+        HitEntry(sm, "Hit_Prone", {CondOf(C::BoolTrue, "prone")});
+        HitEntry(sm, "Hit_Crouch", {CondOf(C::BoolTrue, "crouch"), CondOf(C::BoolFalse, "prone")});
+        HitEntry(sm, "HitHeavy", {CondOf(C::BoolTrue, "hitHeavy"), CondOf(C::BoolFalse, "crouch"), CondOf(C::BoolFalse, "prone")});
+
+        if (AnimStateMachine* layer = EnsureHitLayer(sm)) {
+            const bool freshOff = !HasState(*layer, "Off");
+            const bool freshHit = !HasState(*layer, "Hit");
+            if (freshOff) {
+                SM::State off;
+                off.name = "Off";
+                off.clip = "Hit_Off";
+                off.loop = true;
+                off.nx = 40.0f; off.ny = 40.0f;
+                layer->states.push_back(std::move(off));
+                if (layer->entry.empty()) layer->entry = "Off";
+            }
+            if (freshHit) {
+                SM::State s;
+                s.name = "Hit";
+                s.blendTree = true;
+                s.blendDims = 1;
+                s.blendParam = "hitDir";
+                s.loop = false;
+                s.interruptible = true;
+                s.motions = {HitClip("Hit_F", 0.0f), HitClip("Hit_B", 1.0f), HitClip("Hit_L", 2.0f), HitClip("Hit_R", 3.0f)};
+                s.nx = 40.0f; s.ny = 140.0f;
+                layer->states.push_back(std::move(s));
+            }
+            if (freshHit) if (SM::State* s = FindMutable(*layer, "Hit"))
+                WireClipEnd(*s, HasState(*layer, "Off") ? "Off" : nullptr);
+            HitEntry(*layer, "Hit", {CondOf(C::BoolFalse, "hitHeavy"), CondOf(C::BoolFalse, "crouch"), CondOf(C::BoolFalse, "prone")});
+            BindHitLayer(sm);
+        }
+    }
     if (sm.actionsRev < kActionsRev) sm.actionsRev = kActionsRev;
     ApplyTimes(sm);
+    BindHitLayer(sm);
 }
 
 void MergeMissing(AnimStateMachine& sm, const Character* body, bool force) {
+    // The layer callback is not saved. Put it back even when the graph is current.
+    BindHitLayer(sm);
     const bool looksDefault = HasState(sm, "Idle") && HasState(sm, "Walk") && HasState(sm, "Run") && HasState(sm, "Jump");
     if (!force && !looksDefault) return;
     if (!force && sm.actionsRev >= kActionsRev) return;
@@ -766,13 +965,18 @@ const std::vector<std::string>& ActionNames() {
         "Death_F", "Death_B", "Death_L", "Death_R",
         "DeadHold_F", "DeadHold_B", "DeadHold_L", "DeadHold_R",
         "Dive", "DiveLand",
-        "SitDown", "Sit", "StandUp", "SitDown_Chair", "Sit_Chair", "StandUp_Chair", "SitDown_Ground", "Sit_Ground", "Sit_Ground_Knees", "StandUp_Ground"};
+        "SitDown", "Sit", "StandUp", "SitDown_Chair", "Sit_Chair", "StandUp_Chair", "SitDown_Ground", "Sit_Ground", "Sit_Ground_Knees", "StandUp_Ground",
+        "Hit", "HitHeavy", "Hit_Crouch", "Hit_Prone", "Hit_F", "Hit_B", "Hit_L", "Hit_R", "Hit_Heavy_F", "Hit_Heavy_B", "Hit_Off"};
     return names;
 }
 
 bool IsInAction(GameObject* go) {
     SM* sm = BaseMachine(go);
-    return sm && IsKnownAction(sm->Current());
+    if (sm && IsKnownAction(sm->Current())) return true;
+    if (!go) return false;
+    for (AnimStateMachine* layer : go->GetComponents<AnimStateMachine>())
+        if (layer->layer > 0 && layer->Current() == "Hit") return true;
+    return false;
 }
 
 float ActionTime(GameObject* go) {
@@ -862,6 +1066,19 @@ bool Play(GameObject* go, const std::string& name, float blend) {
                 if (IsDeathLabel(name) || IsDeathLabel(st.name)) LatchDeath(*sm, (int)std::lround(m.threshold));
                 if (sm->GoTo(st.name, blend)) return true;
             }
+        }
+        for (AnimStateMachine* layer : go->GetComponents<AnimStateMachine>()) {
+            if (layer->layer <= 0) continue;
+            if (HasState(*layer, name.c_str()) && layer->GoTo(name, blend)) {
+                layer->layerWeight = 1.0f;
+                return true;
+            }
+            for (const SM::State& st : layer->states)
+                for (const SM::Motion& m : st.motions) {
+                    if (m.clip != name) continue;
+                    if (!st.blendParam.empty()) layer->SetFloat(st.blendParam, m.threshold);
+                    if (layer->GoTo(st.name, blend)) { layer->layerWeight = 1.0f; return true; }
+                }
         }
     }
     static bool warned = false;
@@ -1027,6 +1244,56 @@ void Interact(GameObject* go) {
 std::string SeatPrompt(GameObject* go) {
     if (Seat* s = NearestSeat(go)) return s->prompt;
     return {};
+}
+
+int HitDirFromWorld(GameObject* go, const Vec3& fromWorld) {
+    // Death falls away from the hit. A flinch faces the hit, so swap the axis.
+    static const int kOpp[] = {1, 0, 3, 2};
+    return kOpp[DirFromWorld(go, fromWorld)];
+}
+
+bool HitReact(GameObject* go, int dir, bool heavy) {
+    if (!go || IsDead(go)) return false;
+    if (dir < 0) dir = 0;
+    if (dir > 3) dir = 3;
+    static std::unordered_map<const GameObject*, float> last;
+    const float now = Time::ElapsedTime();
+    if (auto it = last.find(go); it != last.end() && now - it->second < 0.1f) return false;
+    if (last.size() > 512) last.clear();
+    last[go] = now;
+
+    SM* sm = BaseMachine(go);
+    const bool prone = sm && sm->GetBool("prone");
+    const bool crouch = sm && sm->GetBool("crouch") && !prone;
+    if (sm) {
+        sm->SetFloat("hitDir", (float)dir);
+        sm->SetBool("hitHeavy", heavy && !crouch && !prone);
+    }
+    auto goBase = [&](const char* state) {
+        return sm && HasState(*sm, state) && sm->GoTo(state, 0.12f);
+    };
+    if (prone && goBase("Hit_Prone")) return true;
+    if (crouch && goBase("Hit_Crouch")) return true;
+    if (heavy && goBase("HitHeavy")) return true;
+    if (sm && sm->gameObject) {
+        for (AnimStateMachine* layer : sm->gameObject->GetComponents<AnimStateMachine>()) {
+            if (layer->layer <= 0 || layer->maskBone != "Torso" || !HasState(*layer, "Hit")) continue;
+            layer->layerWeight = 1.0f;
+            if (layer->GoTo("Hit", 0.08f)) return true;
+        }
+    }
+    static const char* kLight[] = {"Hit_F", "Hit_B", "Hit_L", "Hit_R"};
+    static const char* kHeavy[] = {"Hit_Heavy_F", "Hit_Heavy_B", "Hit_Heavy_F", "Hit_Heavy_B"};
+    return Play(go, heavy ? kHeavy[dir] : kLight[dir], 0.1f);
+}
+
+float StaggerScale(const GameObject* go) {
+    const SM* sm = BaseMachine(const_cast<GameObject*>(go));
+    if (!sm) return 1.0f;
+    const std::string c = sm->Current();
+    if (c != "HitHeavy" && c != "Hit_Crouch" && c != "Hit_Prone") return 1.0f;
+    const float s = sm->GetFloat("staggerScale");
+    return s > 0.0f ? s : 1.0f;
 }
 
 bool DeathPoseSettled(GameObject* go) {

@@ -5501,6 +5501,24 @@ struct OkayScriptVM::Impl {
         b["seat_prompt"] = [selfObj](std::vector<Value>&) {
             return Value{HumanoidActions::SeatPrompt(selfObj())};
         };
+        // hit_react("back") light, hit_react("left", 1) heavy, or hit_react(x, y, z [, heavy]).
+        b["hit_react"] = [selfObj](std::vector<Value>& a) {
+            GameObject* go = selfObj();
+            int dir = 0;
+            bool heavy = false;
+            if (a.size() >= 3 && a[0].IsNumber()) {
+                dir = HumanoidActions::HitDirFromWorld(go, Vec3{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()});
+                if (a.size() >= 4) heavy = a[3].AsFloat() != 0.0f;
+            } else if (!a.empty() && a[0].IsVec3()) {
+                dir = HumanoidActions::HitDirFromWorld(go, a[0].AsVec3());
+                if (a.size() >= 2) heavy = a[1].AsFloat() != 0.0f;
+            } else {
+                if (!a.empty() && a[0].IsString()) dir = HumanoidActions::DirFromName(a[0].AsString());
+                else if (!a.empty() && a[0].IsNumber()) dir = (int)a[0].AsFloat();
+                if (a.size() >= 2) heavy = a[1].AsFloat() != 0.0f;
+            }
+            return Value{HumanoidActions::HitReact(go, dir, heavy) ? 1.0f : 0.0f};
+        };
         // ---- Blend shapes (morph targets) on this object and everything under it ----
         //   blend_shape("Smile", 0.8)   set a shape's weight 0..1 on every mesh that has it
         //   blend_shape_get("Smile")    read it back (0 if no mesh has it)

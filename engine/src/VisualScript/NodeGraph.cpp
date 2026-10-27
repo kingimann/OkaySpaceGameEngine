@@ -683,6 +683,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "IsSitting")      return std::make_unique<IsSittingNode>();
     if (type == "Interact")       return std::make_unique<InteractNode>();
     if (type == "SeatPrompt")     return std::make_unique<SeatPromptNode>();
+    if (type == "HitReact")       return std::make_unique<HitReactNode>(argOr("forward"));
     if (type == "SetTimeScale")   return std::make_unique<SetTimeScaleNode>();
     if (type == "SetBlendShape")  return std::make_unique<BlendShapeNode>(argOr(""), true);
     if (type == "GetBlendShape")  return std::make_unique<BlendShapeNode>(argOr(""), false);

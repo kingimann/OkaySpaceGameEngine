@@ -332,6 +332,7 @@ void DefaultGraph(AnimStateMachine& sm, const Character* body) {
         sm.states[i].nx = 40.0f + 220.0f * (float)col;
         sm.states[i].ny = 40.0f + 90.0f * (float)((int)i - kColStart[col]);
     }
+    sm.actionsRev = 0;   // a rebuilt default graph takes every action
     HumanoidActions::AddStates(sm, body);
 
     // A clip bound to a movement state on the body plays in its place.

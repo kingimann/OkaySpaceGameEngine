@@ -11,6 +11,7 @@
 #include "okay/Components/CharacterIK.hpp"
 #include "okay/Components/ControllerFeel.hpp"
 #include "okay/Components/DeathLock.hpp"
+#include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Components/StanceControl.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Input/Input.hpp"
@@ -130,6 +131,15 @@ public:
         // Drop the baseline while a bag is open (locked/free mouse space switch) so the
         // camera doesn't snap on the first frame after the panel closes.
         m_lastMouse = mp; m_haveMouse = !uiBlocked;
+
+        // Look already applied. The orbit is LateUpdate. Move or jump stands up.
+        if (HumanoidActions::IsSitting(gameObject)) {
+            Vec2 axis = uiBlocked ? Vec2{0, 0} : Input::AxisWASD();
+            const bool wantMove = axis.x * axis.x + axis.y * axis.y > 1e-4f;
+            if (wantMove || (!uiBlocked && Input::GetKeyDown(' ')))
+                HumanoidActions::RequestStandUp(gameObject);
+            return;
+        }
 
         // ---- Aim blend (right mouse) ----
         m_aiming = !uiBlocked && Input::GetMouseButton(aimButton);

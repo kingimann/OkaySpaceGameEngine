@@ -19,8 +19,10 @@
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/AnimControl.hpp"
 #include "okay/Animation/HumanoidActions.hpp"
+#include "okay/Components/Seat.hpp"
 #include "okay/Components/BlendShapes.hpp"
 #include "okay/Input/Input.hpp"
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -512,6 +514,53 @@ struct ReviveNode : VsNode {
     int Exec(NodeGraph&, VsContext& ctx) override {
         HumanoidActions::RequestRevive(ctx.gameObject);
         return 0;
+    }
+};
+// arg: a Seat's name, or ground / knees / chair. Empty sits on a flat floor.
+struct SitNode : VsNode {
+    std::string which;
+    explicit SitNode(std::string w) : which(std::move(w)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        if (!ctx.gameObject) return 0;
+        GameObject* seat = nullptr;
+        int type = 1;
+        if (!which.empty()) {
+            seat = VsFindObject(ctx, which);
+            if (!seat || !seat->GetComponent<Seat>()) {
+                seat = nullptr;
+                std::string k = which;
+                for (char& c : k) c = (char)std::tolower((unsigned char)c);
+                if (k == "chair" || k == "bench") type = 0;
+                else if (k == "knees") type = 2;
+            }
+        }
+        HumanoidActions::RequestSit(ctx.gameObject, seat, type);
+        return 0;
+    }
+};
+struct StandUpNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        HumanoidActions::RequestStandUp(ctx.gameObject);
+        return 0;
+    }
+};
+struct IsSittingNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        return HumanoidActions::IsSitting(ctx.gameObject) ? 1.0f : 0.0f;
+    }
+};
+struct InteractNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        HumanoidActions::Interact(ctx.gameObject);
+        return 0;
+    }
+};
+struct SeatPromptNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        return HumanoidActions::SeatPrompt(ctx.gameObject);
     }
 };
 struct PlayClipNode : VsNode {

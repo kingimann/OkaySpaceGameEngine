@@ -193,16 +193,37 @@ float PlayerView::EasedThird() const {
 
 bool PlayerView::CameraNearEyes(Camera* cam) const {
     if (!gameObject || !gameObject->transform || !cam || !cam->transform) return false;
-    const Vec3 local = gameObject->transform->InverseTransformPoint(cam->transform->Position());
-    float eyeY = 1.6f;
-    if (auto* tp = gameObject->GetComponent<ThirdPersonController>())
-        eyeY = StanceValue(tp->stanceLevel(), 1.6f, 1.2f, 0.4f);
-    else if (auto* fp = gameObject->GetComponent<FirstPersonController>())
-        eyeY = StanceValue(fp->stanceLevel(), fp->standEyeHeight, fp->crouchEyeHeight, fp->proneEyeHeight);
-    const Vec3 eye{eyeOffset.x, eyeY + eyeOffset.y, -0.20f + eyeOffset.z};
-    // In front of the face and close to the socket. The orbit sits behind the
-    // body, so this is false until the lens has actually arrived.
-    return local.z < -0.08f && (local - eye).Magnitude() < 0.85f;
+    // The blend is a straight slide from the orbit to the eyes, and that line
+    // goes through the skull. Hide the head once the lens is within about one
+    // head of it, whether the lens is still behind the hair or already in
+    // front of the face. A walk brings the back of the head up to the lens
+    // before the old "in front of the face" test ever fired.
+    Vec3 head = gameObject->transform->TransformPoint(Vec3{eyeOffset.x, 1.62f, 0.0f});
+    float size = 0.32f;
+    if (Character* ch = gameObject->GetComponent<Character>()) {
+        if (GameObject* part = ch->Part(HumanoidMotion::B_HEAD)) {
+            if (part->transform) head = part->transform->Position();
+            if (auto* mr = part->GetComponent<MeshRenderer>()) {
+                Vec3 lo, hi;
+                mr->mesh.Bounds(lo, hi);
+                Vec3 ext = hi - lo;
+                if (part->transform) {
+                    const Vec3 sc = part->transform->LossyScale();
+                    ext.x = std::fabs(ext.x * sc.x);
+                    ext.y = std::fabs(ext.y * sc.y);
+                    ext.z = std::fabs(ext.z * sc.z);
+                }
+                const float m = std::max(ext.x, std::max(ext.y, ext.z));
+                if (m > 0.05f) size = m;
+            }
+        }
+    }
+    const float dist = (cam->transform->Position() - head).Magnitude();
+    // Half the head, plus one head-size of clearance, plus a little so the
+    // third-person near plane (0.3 m) cannot slice the shell open. Never
+    // closer than 0.90 m: a walk brings the back of the head up until it
+    // fills the lens, which is still outside that one-head clearance.
+    return dist < std::max(size * 1.5f + 0.12f, 0.90f);
 }
 
 void PlayerView::PullCameraIn(Camera* cam, const Vec3& eye, Vec3& want) const {
@@ -381,10 +402,10 @@ void PlayerView::ApplyHead() {
     } else if (ch) {
         ch->SetViewmodelBlend(Driving() ? into : -1.0f);
     }
-    // Head and neck drop out only once the lens is at the eyes, and come back
-    // the moment it pulls away. The target view does not matter: a reverse
-    // mid-blend follows the camera, so the head is never missing on the way
-    // out and never missing while the lens is still inside it.
+    // Head and neck drop out of this camera once the lens is within a head of
+    // the skull, and come back the moment it pulls away. The mesh stays active
+    // and keeps casting shadows, so every other camera still sees the head.
+    // The target view does not matter: a reverse mid-blend follows the camera.
     if (near) {
         if (rig) {
             ch->hideOwnHead = false;
@@ -495,8 +516,8 @@ void PlayerView::PlaceCamera(float dt) {
 
 void PlayerView::LateUpdate(float dt) {
     if (!Driving()) return;
-    // Place the lens first. The head is skipped only once that lens is in
-    // front of the face, which PlaceCamera has just done.
+    // Place the lens first. The head is skipped once that lens is within a
+    // head of the skull, which PlaceCamera has just done.
     PlaceCamera(dt);
     ApplyHead();
     // The lens is in its final spot for this frame. The arm copy has to be

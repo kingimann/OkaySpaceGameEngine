@@ -173,6 +173,8 @@ public:
     /// the raised-arm copy is up, the real arms are not — the owner sees the
     /// copy, and every other camera sees the real arms on the animation. A run
     /// drops both. A hold keeps the real hands, because that pose is the grip.
+    /// Empty hands draw no copy: the real arms would be stubs with no hands,
+    /// so they stay off this camera too and the torso reads as a solid shoulder.
     /// The neck is not a bone — it is a child of the torso, and the owner
     /// camera skips that child on its own.
     bool ShowsToOwnerCamera(int bone) const {
@@ -182,6 +184,7 @@ public:
             // The owner sees the viewmodel, including while a hold puts the
             // item in that hand. The real arms stay on the animation.
             if (firstPersonArm && fpArmBase >= 0 && m_fpShown > 0.05f) return false;
+            if (firstPersonArm && fpArmUp <= 0.05f) return false;
             return true;
         }
         return true;

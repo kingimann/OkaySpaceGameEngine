@@ -26519,7 +26519,7 @@ void DrawInspector(EditorState& ed) {
     Component* toRemove = nullptr; // removed after drawing (avoids dangling use)
     // Fields fill the panel minus a label column that grows with it (labels sit on
     // the right): a narrow Inspector keeps labels readable instead of clipping them.
-    const float inspLabelW = std::clamp(ImGui::GetContentRegionAvail().x * 0.42f, 96.0f, 170.0f);
+    const float inspLabelW = std::clamp(ImGui::GetContentRegionAvail().x * 0.46f, 128.0f, 190.0f);
     ImGui::PushItemWidth(-inspLabelW);
 
     // UI layout card for any screen-space widget:
@@ -28018,7 +28018,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* fh = dynamic_cast<FirstPersonHand*>(curComp)) {
-        if (CompHeader("First Person Hand", fh, &toRemove)) {
+        if (CompHeader("Hand (legacy)", fh, &toRemove)) {
             ImGui::TextDisabled("Shows your character's OWN arm in first person. Your body is\n"
                                 "hidden from your camera only (others see all of it) and never\n"
                                 "duplicated. Click to punch.");
@@ -28045,7 +28045,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* fhs = dynamic_cast<FirstPersonHands*>(curComp)) {
-        if (CompHeader("First Person Hands", fhs, &toRemove)) {
+        if (CompHeader("FP Hands", fhs, &toRemove)) {
             DrawFpHandsBody(ed, fhs);
             if (ImGui::SmallButton("Remove##fphs")) toRemove = fhs;
         }
@@ -34737,6 +34737,8 @@ void DrawInspector(EditorState& ed) {
                 s_acRecent.erase(std::remove(s_acRecent.begin(), s_acRecent.end(), std::string(label)), s_acRecent.end());
                 s_acRecent.insert(s_acRecent.begin(), label);
                 if (s_acRecent.size() > 10) s_acRecent.resize(10);
+                // The row lives in a child, so Selectable does not close the popup.
+                ImGui::CloseCurrentPopup();
             }
             return clicked;
         };
@@ -34762,7 +34764,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<VoxelDigger>(), "Voxel Digger")) { go->AddComponent<VoxelDigger>(); ed.dirty = true; }
             if (item(!go->GetComponent<Water>(), "Water")) { go->AddComponent<Water>()->Apply(); ed.view3D = true; ed.dirty = true; }
             if (item(!go->GetComponent<Flashlight>(), "Flashlight")) { go->AddComponent<Flashlight>(); ed.dirty = true; }
-            if (item(!go->GetComponent<FirstPersonHand>(), "First Person Hand")) { go->AddComponent<FirstPersonHand>(); ed.view3D = true; ed.dirty = true; }
+            if (item(!go->GetComponent<FirstPersonHand>(), "Hand (legacy)")) { go->AddComponent<FirstPersonHand>(); ed.view3D = true; ed.dirty = true; }
             if (item(!go->GetComponent<FirstPersonHands>(), "First Person Hands")) { go->AddComponent<FirstPersonHands>(); ed.view3D = true; ed.dirty = true; }
             if (item(!go->GetComponent<PauseMenu>(), "Pause Menu")) { go->AddComponent<PauseMenu>()->EnsureBuilt(); ed.dirty = true; }
             if (item(!go->GetComponent<WorldStreamer>(), "World Streamer (partition)")) { go->AddComponent<WorldStreamer>(); ed.dirty = true; }
@@ -41921,6 +41923,10 @@ int main(int argc, char** argv) {
         // in the standalone player ("can't move" was because the editor never fed
         // input during Play). Gated on !WantTextInput so typing in a field (script
         // editor, name box) doesn't also drive the game.
+        // The look baseline. Capture switches from canvas pixels to a virtual
+        // cursor; the lock's warp is not a look, or Play opens pitched at the sky.
+        static bool s_playLookLocked = false;
+        static Vec2 s_playLookAnchor{0, 0};
         if (ed.isPlaying() && !io.WantTextInput) {
             const Uint8* ks = SDL_GetKeyboardState(nullptr);
             std::vector<char> down;
@@ -41997,14 +42003,24 @@ int main(int argc, char** argv) {
             static Vec2 s_gameVMouse{0, 0};
             if (capture) {
                 SDL_SetRelativeMouseMode(SDL_TRUE);
-                int dxp, dyp; Uint32 rmb = SDL_GetRelativeMouseState(&dxp, &dyp);
-                s_gameVMouse.x += (float)dxp; s_gameVMouse.y += (float)dyp;   // accumulate look motion
+                int dxp = 0, dyp = 0;
+                Uint32 rmb = SDL_GetRelativeMouseState(&dxp, &dyp);
+                if (!s_playLookLocked) {
+                    // First locked frame: throw away the warp and stay on the
+                    // canvas sample the controller already took as its baseline.
+                    s_gameVMouse = s_playLookAnchor;
+                    s_playLookLocked = true;
+                } else {
+                    s_gameVMouse.x += (float)dxp;
+                    s_gameVMouse.y += (float)dyp;
+                }
                 unsigned mask = 0;
                 if (rmb & SDL_BUTTON(SDL_BUTTON_LEFT))   mask |= 1u << 0;
                 if (rmb & SDL_BUTTON(SDL_BUTTON_RIGHT))  mask |= 1u << 1;
                 if (rmb & SDL_BUTTON(SDL_BUTTON_MIDDLE)) mask |= 1u << 2;
                 Input::FeedMouse(s_gameVMouse, mask);
             } else {
+                s_playLookLocked = false;
                 SDL_SetRelativeMouseMode(SDL_FALSE);
                 // Mouse, relative to the Game/Scene canvas so UI buttons hit-test
                 // against the same coordinates the preview draws with.
@@ -42028,9 +42044,11 @@ int main(int argc, char** argv) {
                     if (ImGui::IsMouseClicked(kButtons[b])) s_heldFromGame[b] = overGame;
                     if (s_heldFromGame[b]) mask |= 1u << b;
                 }
+                s_playLookAnchor = {rx, ry};
                 Input::FeedMouse(Vec2{rx, ry}, mask);
             }
         } else if (!ed.isPlaying()) {
+            s_playLookLocked = false;
             Input::FeedKeys({}); // release everything in edit mode
             // Keep the Capture mouse choice for the next Play; just free the pointer and
             // forget the last run's cursor lock.

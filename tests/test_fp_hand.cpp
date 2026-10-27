@@ -841,5 +841,49 @@ int main() {
         checkTemplate(Templates::ThirdPerson, false);
     }
 
+    // Play starts level. First person looks at the horizon. Third person rests
+    // on the slight downward orbit, not pitched up at the sky.
+    {
+        auto forwardY = [](Camera* cam) {
+            Vec3 f = cam->transform->Rotation() * Vec3{0.0f, 0.0f, -1.0f};
+            return f.y;
+        };
+        {
+            Scene sc("start-fp");
+            Templates::FPS(sc);
+            sc.Start();
+            Input::FeedMouse({400.0f, 300.0f}, 0);
+            for (int i = 0; i < 8; ++i) {
+                Input::FeedMouse({400.0f, 300.0f}, 0);
+                sc.Update(1.0f / 60.0f);
+            }
+            Camera* cam = sc.mainCamera;
+            CHECK(cam && cam->transform);
+            auto* fp = sc.Find("Player")->GetComponent<FirstPersonController>();
+            CHECK(fp && std::fabs(fp->pitch) < 0.01f);
+            CHECK(forwardY(cam) > -0.08f);
+            CHECK(forwardY(cam) < 0.08f);
+            const Vec3 eye = sc.Find("Player")->transform->InverseTransformPoint(cam->transform->Position());
+            CHECK(eye.z < -0.15f);   // in front of the face, not inside the head
+        }
+        {
+            Scene sc("start-tp");
+            Templates::ThirdPerson(sc);
+            sc.Start();
+            Input::FeedMouse({400.0f, 300.0f}, 0);
+            for (int i = 0; i < 8; ++i) {
+                Input::FeedMouse({400.0f, 300.0f}, 0);
+                sc.Update(1.0f / 60.0f);
+            }
+            Camera* cam = sc.mainCamera;
+            CHECK(cam && cam->transform);
+            auto* tp = sc.Find("Player")->GetComponent<ThirdPersonController>();
+            CHECK(tp && std::fabs(tp->pitch - 18.0f) < 0.5f);
+            const float y = forwardY(cam);
+            CHECK(y < -0.05f);   // the resting orbit looks slightly down
+            CHECK(y > -0.45f);   // and not up at the sky, and not at the feet
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

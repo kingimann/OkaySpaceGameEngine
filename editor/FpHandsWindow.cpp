@@ -4,6 +4,8 @@
 #include "okay/Components/ProceduralObjectHolding.hpp"
 #include "imgui.h"
 #include <SDL.h>
+#include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -46,7 +48,7 @@ bool Col(const char* label, Color& c) {
 
 void HandSection(const char* title, const char* id, FirstPersonHands::HandSide& s, bool& dirty) {
     ImGui::PushID(id);
-    if (ImGui::CollapsingHeader(title, ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::CollapsingHeader(title)) {
         if (ImGui::Checkbox("Enabled", &s.enabled)) dirty = true;
         if (Vec("Position", s.position, 0.005f)) dirty = true;
         if (Vec("Rotation", s.rotation, 0.5f)) dirty = true;
@@ -125,7 +127,7 @@ void DrawFpHandsBody(EditorState& ed, FirstPersonHands* h) {
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Play mode restores the scene when you press Stop. Apply copies these values back.");
 
-    Section("Player View (first person)");
+    Section("Player View");
     if (ImGui::Checkbox("Show when empty", &h->showWhenEmpty)) dirty = true;
     if (ImGui::Checkbox("Show while running", &h->showWhileRunning)) dirty = true;
     const char* modes[] = {"One hand (right)", "One hand (left)", "Two hands"};
@@ -137,19 +139,23 @@ void DrawFpHandsBody(EditorState& ed, FirstPersonHands* h) {
     ImGui::TextDisabled("A two-handed item uses both hands even if the mode is one hand.");
     if (ImGui::DragFloat("Bob amount", &h->bobAmount, 0.01f, 0.0f, 3.0f)) dirty = true;
     if (ImGui::DragFloat("Sway amount", &h->swayAmount, 0.01f, 0.0f, 3.0f)) dirty = true;
-    if (ImGui::DragFloat("Punch swing amount", &h->punchAmount, 0.01f, 0.0f, 3.0f)) dirty = true;
-    if (ImGui::DragFloat("Hand field of view", &h->handFov, 0.2f, 0.0f, 120.0f)) dirty = true;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 uses the camera. A smaller value draws the hands larger.");
-    if (Vec("Held item offset", h->itemOffset, 0.005f)) dirty = true;
-    if (Vec("Held item rotation", h->itemRotation, 0.5f)) dirty = true;
-    if (ImGui::DragFloat("Held item scale", &h->itemScale, 0.01f, 0.1f, 3.0f)) dirty = true;
-    HandSection("Right hand", "rh", h->right, dirty);
+    if (ImGui::DragFloat("Punch", &h->punchAmount, 0.01f, 0.0f, 3.0f)) dirty = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Punch swing amount.");
+    if (ImGui::DragFloat("Hand FOV", &h->handFov, 0.2f, 0.0f, 120.0f)) dirty = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hand field of view. 0 uses the camera. A smaller value draws the hands larger.");
+    if (Vec("Item offset", h->itemOffset, 0.005f)) dirty = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Held item offset.");
+    if (Vec("Item rotation", h->itemRotation, 0.5f)) dirty = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Held item rotation.");
+    if (ImGui::DragFloat("Item scale", &h->itemScale, 0.01f, 0.1f, 3.0f)) dirty = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Held item scale.");
     HandSection("Left hand", "lh", h->left, dirty);
+    HandSection("Right hand", "rh", h->right, dirty);
     if (ImGui::SmallButton("Reset##player")) { h->ResetPlayerView(); dirty = true; }
     ImGui::SameLine();
     ImGui::TextDisabled("Player view");
 
-    Section("Others View (third person)");
+    Section("Others View");
     ImGui::TextWrapped("Where the held item sits on the full body, and where each hand grips it. "
                        "The arms follow the item.");
     if (Vec("Item offset", h->othersItemOffset, 0.005f)) dirty = true;
@@ -168,9 +174,54 @@ void DrawFpHandsBody(EditorState& ed, FirstPersonHands* h) {
     if (dirty) ed.dirty = true;
 }
 
+int MixFloat(int s, float f) {
+    std::uint32_t b = 0;
+    std::memcpy(&b, &f, sizeof(b));
+    return (int)((std::uint32_t)s * 16777619u ^ b);
+}
+int MixVec(int s, const Vec3& v) { s = MixFloat(s, v.x); s = MixFloat(s, v.y); return MixFloat(s, v.z); }
+int MixGrip(int s, const HoldableObject::Grip& g) {
+    s = s * 33 + (g.enabled ? 1 : 0);
+    s = MixVec(s, g.position);
+    return MixVec(s, g.rotation);
+}
+int MixHand(int s, const FirstPersonHands::HandSide& h) {
+    s = s * 33 + (h.enabled ? 1 : 0);
+    s = s * 33 + (h.useColour ? 1 : 0);
+    s = s * 33 + (h.sleeve ? 1 : 0);
+    s = MixVec(s, h.position);
+    s = MixVec(s, h.rotation);
+    s = MixFloat(s, h.uniformScale);
+    s = MixVec(s, h.scale);
+    s = MixVec(s, h.size);
+    s = MixFloat(s, h.colour.r); s = MixFloat(s, h.colour.g); s = MixFloat(s, h.colour.b);
+    s = MixFloat(s, h.sleeveLength);
+    s = MixFloat(s, h.sleeveColour.r); s = MixFloat(s, h.sleeveColour.g); return MixFloat(s, h.sleeveColour.b);
+}
+int PreviewSig(const FirstPersonHands& h, int example, const HoldableObject* item) {
+    int s = example * 17 + (int)h.holdMode;
+    s = s * 33 + (h.showWhenEmpty ? 1 : 0);
+    s = s * 33 + (h.showWhileRunning ? 1 : 0);
+    s = MixFloat(s, h.bobAmount);
+    s = MixFloat(s, h.swayAmount);
+    s = MixFloat(s, h.punchAmount);
+    s = MixFloat(s, h.handFov);
+    s = MixFloat(s, h.itemScale);
+    s = MixVec(s, h.itemOffset);
+    s = MixVec(s, h.itemRotation);
+    s = MixVec(s, h.othersItemOffset);
+    s = MixVec(s, h.othersItemRotation);
+    s = MixFloat(s, h.othersArmLift);
+    s = MixFloat(s, h.othersArmForward);
+    s = MixHand(s, h.right);
+    s = MixHand(s, h.left);
+    if (item) { s = MixGrip(s, item->leftGrip); s = MixGrip(s, item->rightGrip); }
+    return s;
+}
+
 void DrawFpHandsPreviewWindow(EditorState& ed) {
     if (!g_open) return;
-    ImGui::SetNextWindowSize(ImVec2(920.0f, 560.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(860.0f, 460.0f), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("First Person Hands", &g_open)) { ImGui::End(); return; }
     FirstPersonHands* live = FindHands(ed);
     if (!live) {
@@ -179,50 +230,53 @@ void DrawFpHandsPreviewWindow(EditorState& ed) {
         return;
     }
     const char* items[] = {"One-handed block", "Two-handed crate", "Empty hands"};
-    if (ImGui::Combo("Preview item", &g_example, items, 3)) g_preview.SetExample(g_example);
-    ImGui::SameLine();
-    ImGui::TextDisabled(ed.isPlaying() ? "Play" : "Edit");
+    ImGui::SetNextItemWidth(220.0f);
+    const bool picked = ImGui::Combo("Preview item", &g_example, items, 3);
 
-    g_preview.CopyFrom(*live);
-    g_preview.SetExample(g_example);
-    if (HoldableObject* held = HeldItem(live))
-        if (HoldableObject* example = g_preview.ExampleItem())
-            if (held != example) {
-                example->leftGrip = held->leftGrip;
-                example->rightGrip = held->rightGrip;
-            }
-    g_preview.Step(1);
-    // The first frames ease the hand in. Catch up once when the window opens.
-    static int warmedFor = -1;
-    if (warmedFor != g_example) {
-        g_preview.Step(36);
-        warmedFor = g_example;
+    HoldableObject* held = HeldItem(live);
+    const int sig = PreviewSig(*live, g_example, held);
+    static int cachedSig = 0x7fffffff;
+    static int texW = 0, texH = 0;
+    // Small software frames. Rebuilt only when the example or a setting changes,
+    // so an open preview does not re-render the character every editor frame.
+    const int W = 200, H = 132;
+    const bool dirty = picked || sig != cachedSig || !g_playerTex || texW != W || texH != H;
+    if (dirty) {
+        g_preview.CopyFrom(*live);
+        g_preview.SetExample(g_example);
+        if (held)
+            if (HoldableObject* example = g_preview.ExampleItem())
+                if (held != example) {
+                    example->leftGrip = held->leftGrip;
+                    example->rightGrip = held->rightGrip;
+                }
+        g_preview.Step(48);
+        auto player = g_preview.Render(true, W, H);
+        auto other = g_preview.Render(false, W, H);
+        if (oked::g_sdlRenderer) {
+            auto up = [&](SDL_Texture*& slot, const std::vector<std::uint32_t>& px) {
+                if (slot && (texW != W || texH != H)) { SDL_DestroyTexture(slot); slot = nullptr; }
+                if (!slot) {
+                    slot = SDL_CreateTexture(oked::g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
+                                             SDL_TEXTUREACCESS_STATIC, W, H);
+                    if (slot) SDL_SetTextureBlendMode(slot, SDL_BLENDMODE_NONE);
+                }
+                if (slot) SDL_UpdateTexture(slot, nullptr, px.data(), W * 4);
+                return slot;
+            };
+            up(g_playerTex, player);
+            up(g_otherTex, other);
+            texW = W; texH = H;
+        }
+        cachedSig = sig;
     }
-
-    const int W = 420, H = 280;
-    auto player = g_preview.Render(true, W, H);
-    auto other = g_preview.Render(false, W, H);
-    // Each upload shares g_texW, so size both the same and upload independently.
-    SDL_Texture* pt = nullptr;
-    SDL_Texture* ot = nullptr;
-    if (oked::g_sdlRenderer) {
-        auto up = [&](SDL_Texture*& slot, const std::vector<std::uint32_t>& px) {
-            if (!slot) {
-                slot = SDL_CreateTexture(oked::g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, W, H);
-                if (slot) SDL_SetTextureBlendMode(slot, SDL_BLENDMODE_NONE);
-            }
-            if (slot) SDL_UpdateTexture(slot, nullptr, px.data(), W * 4);
-            return slot;
-        };
-        pt = up(g_playerTex, player);
-        ot = up(g_otherTex, other);
-    }
+    const ImVec2 shown(400.0f, 264.0f);
     ImGui::Columns(2, "fphandsviews", false);
     ImGui::TextUnformatted("Player view (first person)");
-    if (pt) ImGui::Image((ImTextureID)pt, ImVec2((float)W, (float)H));
+    if (g_playerTex) ImGui::Image((ImTextureID)g_playerTex, shown);
     ImGui::NextColumn();
     ImGui::TextUnformatted("Others view (third person)");
-    if (ot) ImGui::Image((ImTextureID)ot, ImVec2((float)W, (float)H));
+    if (g_otherTex) ImGui::Image((ImTextureID)g_otherTex, shown);
     ImGui::Columns(1);
     ImGui::TextDisabled("Both views follow the Inspector. Change a value and they update.");
     ImGui::End();

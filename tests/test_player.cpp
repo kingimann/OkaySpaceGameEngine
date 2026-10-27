@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <vector>
@@ -371,7 +372,7 @@ int main() {
         Input::FeedKeys({});
     }
 
-    // --- Halfway to the eyes the head is still drawn. It is skipped only in front of the face. ---
+    // --- Halfway to the eyes the head is still drawn. It drops out once the lens is within a head of the skull. ---
     {
         Scene sc("half"); sc.physicsEnabled = false;
         GameObject* cam = sc.CreateGameObject("Camera");
@@ -1081,8 +1082,11 @@ int main() {
             settle(sc, 2);
             if (pv->GetView() == 1) {
                 const Vec3 rel = player->transform->InverseTransformPoint(cam->transform->Position());
-                const bool nearEyes = rel.z < -0.08f;
-                if (nearEyes) CHECK(cam->ignoreObject == player);
+                Vec3 headAt{0.0f, 1.62f, 0.0f};
+                if (ch->Part(2) && ch->Part(2)->transform)
+                    headAt = player->transform->InverseTransformPoint(ch->Part(2)->transform->Position());
+                const bool nearHead = (rel - headAt).Magnitude() < 1.05f;
+                if (nearHead) CHECK(cam->ignoreObject == player);
                 else CHECK(cam->ignoreObject == nullptr);
                 CHECK(ch->Part(2) && ch->Part(2)->active);
                 CHECK(std::isfinite(tp->pitch));
@@ -1099,6 +1103,204 @@ int main() {
         CHECK(partDiff(ch->Part(2)) > 40);             // the head is in the third-person frame
         CHECK(cam->ignoreObject == nullptr);
         CHECK_NEAR(cam->nearClip, 0.3f, 1e-3f);
+    }
+
+    // --- Every blend frame: the owner's camera never sees the inside of the head.
+    //     Standing and walking, fixed 1/60 steps. Shadows stay on the mesh. ---
+    {
+        auto pass = [](bool walking) {
+            Scene sc(walking ? "blend-walk" : "blend-stand");
+            sc.physicsEnabled = false;
+            GameObject* light = sc.CreateGameObject("Directional Light");
+            light->AddComponent<Light>();
+            light->transform->localRotation = Quat::Euler({50, -30, 0});
+            GameObject* ground = sc.CreateGameObject("Ground");
+            ground->transform->localPosition = {0, -0.5f, 0};
+            ground->transform->localScale = {16, 1, 16};
+            auto* gmr = ground->AddComponent<MeshRenderer>();
+            gmr->mesh = Mesh::Cube();
+            gmr->color = Color::FromBytes(140, 150, 140);
+            GameObject* camGo = sc.CreateGameObject("Camera");
+            auto* cam = camGo->AddComponent<Camera>();
+            cam->nearClip = 0.3f;
+            GameObject* player = sc.CreateGameObject("Player");
+            auto* ch = player->AddComponent<Character>();
+            ch->Apply();
+            auto* tp = player->AddComponent<ThirdPersonController>();
+            tp->yaw = 0.0f; tp->pitch = 18.0f; tp->distance = 4.5f; tp->cameraHeight = 1.5f;
+            tp->pivotDampingXZ = tp->pivotDampingY = 0.0f;
+            tp->orbitSmoothing = 0.0f; tp->lookSmoothing = 0.0f;
+            tp->autoRecenter = false; tp->driveAnimation = false;
+            tp->cameraCollision = false;
+            auto* pv = player->AddComponent<PlayerView>();
+            pv->allowToggle = true; pv->defaultView = PlayerView::View::Third;
+            pv->blendTime = 0.30f; pv->shoulderOffset = 0.45f; pv->thirdPersonDistance = -1.0f;
+            pv->switchEase = PlayerView::SwitchEase::Smooth;
+            sc.Start();
+            Input::FeedKeys({});
+            sc.Update(1.0f / 60.0f);
+            if (walking) {
+                ch->anim = 2;
+                ch->moveSpeed = 1.6f;
+                for (int i = 0; i < 20; ++i) sc.Update(1.0f / 60.0f);
+            }
+            pv->SetView(0);
+            GameObject* sideGo = sc.CreateGameObject("Side");
+            auto* side = sideGo->AddComponent<Camera>();
+            side->main = false;
+            side->nearClip = 0.05f;
+
+            auto neckOf = [&]() -> GameObject* {
+                GameObject* torso = ch->Part(1);
+                if (!torso || !torso->transform) return nullptr;
+                for (Transform* c : torso->transform->Children())
+                    if (c && c->gameObject && c->gameObject->name == "Neck") return c->gameObject;
+                return nullptr;
+            };
+            auto differ = [](const std::vector<std::uint32_t>& a, const std::vector<std::uint32_t>& b) {
+                int n = 0;
+                for (std::size_t i = 0; i < a.size(); ++i) if (a[i] != b[i]) ++n;
+                return n;
+            };
+            const int W = 160, H = 90;
+            auto grab = [&](Camera* which, const GameObject* ignore) {
+                ApplySceneLight(sc);
+                Mat4 vp = which->ProjectionMatrix((float)W / (float)H) * which->ViewMatrix();
+                Raster work; std::vector<std::uint32_t> out;
+                const std::uint32_t* px = RenderMeshesSS(work, out, sc, vp, which->transform->Position(),
+                                                         W, H, 1, ignore);
+                return std::vector<std::uint32_t>(px, px + W * H);
+            };
+            auto partPx = [&](GameObject* part, Camera* which, const GameObject* ignore) {
+                if (!part) return 0;
+                auto* mr = part->GetComponent<MeshRenderer>();
+                if (!mr) return 0;
+                auto a = grab(which, ignore);
+                const bool en = mr->enabled;
+                mr->enabled = false;
+                auto b = grab(which, ignore);
+                mr->enabled = en;
+                return differ(a, b);
+            };
+
+            bool sawHidden = false;
+            bool sawInsideSlot = false;
+            for (int frame = 0; frame < 40; ++frame) {
+                Input::FeedKeys({});
+                sc.Update(1.0f / 60.0f);
+                GameObject* head = ch->Part(2);
+                GameObject* neck = neckOf();
+                CHECK(head && head->active && head->transform);
+                CHECK(neck && neck->active);
+                auto* hmr = head->GetComponent<MeshRenderer>();
+                auto* nmr = neck->GetComponent<MeshRenderer>();
+                CHECK(hmr && hmr->castShadows && hmr->enabled);
+                CHECK(nmr && nmr->castShadows && nmr->enabled);
+
+                Vec3 lo, hi;
+                hmr->mesh.Bounds(lo, hi);
+                const Vec3 local = head->transform->InverseTransformPoint(cam->transform->Position());
+                const bool inside = local.x > lo.x && local.x < hi.x && local.y > lo.y && local.y < hi.y
+                    && local.z > lo.z && local.z < hi.z;
+                const Vec3 ext = hi - lo;
+                const float size = std::max(ext.x, std::max(ext.y, ext.z));
+                const float dist = (cam->transform->Position() - head->transform->Position()).Magnitude();
+                const float radius = 0.5f * std::sqrt(ext.x * ext.x + ext.y * ext.y + ext.z * ext.z);
+                const bool clips = dist < radius + cam->nearClip + 0.02f;
+                const int headPx = partPx(head, cam, cam->ignoreObject);
+                const int neckPx = partPx(neck, cam, cam->ignoreObject);
+                if (inside || clips) {
+                    CHECK(headPx == 0);
+                    CHECK(neckPx == 0);
+                    sawInsideSlot = true;
+                }
+                if (dist < std::max(size * 1.5f + 0.12f, 0.90f)) {
+                    CHECK(cam->ignoreObject == player);
+                    CHECK(head->HiddenFromCamera(player));
+                    CHECK(neck->HiddenFromCamera(player));
+                    CHECK(headPx == 0);
+                    CHECK(neckPx == 0);
+                    sawHidden = true;
+                }
+            }
+            CHECK(sawHidden);
+            CHECK(sawInsideSlot);
+            CHECK(!pv->Blending());
+            // Another camera still draws the head while the owner is at the eyes.
+            const Vec3 headAt = ch->Part(2)->transform->Position();
+            sideGo->transform->SetPosition(headAt + Vec3{1.2f, 0.2f, 0.8f});
+            sideGo->transform->SetRotation(Quat::LookRotation(sideGo->transform->Position() - headAt));
+            CHECK(partPx(ch->Part(2), side, nullptr) > 40);
+            CHECK(ch->Part(2)->GetComponent<MeshRenderer>()->castShadows);
+        };
+        pass(false);
+        pass(true);
+    }
+
+    // --- Looking down in first person with empty hands: no stubby arm ends. ---
+    {
+        Scene sc("lookdown");
+        sc.physicsEnabled = false;
+        GameObject* light = sc.CreateGameObject("Directional Light");
+        light->AddComponent<Light>();
+        light->transform->localRotation = Quat::Euler({50, -30, 0});
+        GameObject* ground = sc.CreateGameObject("Ground");
+        ground->transform->localPosition = {0, -0.5f, 0};
+        ground->transform->localScale = {12, 1, 12};
+        ground->AddComponent<MeshRenderer>()->mesh = Mesh::Cube();
+        GameObject* camGo = sc.CreateGameObject("Camera");
+        auto* cam = camGo->AddComponent<Camera>();
+        GameObject* player = sc.CreateGameObject("Player");
+        auto* ch = player->AddComponent<Character>();
+        ch->Apply();
+        player->AddComponent<FirstPersonHands>();   // showWhenEmpty stays false
+        auto* tp = player->AddComponent<ThirdPersonController>();
+        tp->yaw = 0.0f; tp->pitch = 0.0f; tp->distance = 4.5f; tp->cameraHeight = 1.5f;
+        tp->pivotDampingXZ = tp->pivotDampingY = 0.0f;
+        tp->orbitSmoothing = 0.0f; tp->lookSmoothing = 0.0f;
+        tp->autoRecenter = false; tp->driveAnimation = false; tp->cameraCollision = false;
+        auto* pv = player->AddComponent<PlayerView>();
+        pv->allowToggle = true; pv->defaultView = PlayerView::View::Third;
+        pv->blendTime = 0.05f; pv->shoulderOffset = 0.0f; pv->thirdPersonDistance = -1.0f;
+        sc.Start();
+        Input::FeedKeys({});
+        sc.Update(1.0f / 60.0f);
+        pv->SetView(0);
+        for (int i = 0; i < 20; ++i) sc.Update(1.0f / 60.0f);
+        CHECK(!pv->Blending());
+        tp->pitch = 80.0f;   // orbit pitch is positive looking down
+        for (int i = 0; i < 6; ++i) sc.Update(1.0f / 60.0f);
+        CHECK(ch->fpArmUp == 0.0f);
+        CHECK(cam->ignoreObject == player);
+        const Vec3 at = player->transform->InverseTransformPoint(camGo->transform->Position());
+        CHECK(at.z < -0.28f);
+        CHECK(at.y > 1.70f);
+        CHECK(std::fabs(tp->pitch - 80.0f) < 0.01f);
+        auto px = [&](GameObject* part) {
+            const int W = 160, H = 90;
+            auto grab = [&]() {
+                ApplySceneLight(sc);
+                Mat4 vp = cam->ProjectionMatrix((float)W / (float)H) * cam->ViewMatrix();
+                Raster work; std::vector<std::uint32_t> out;
+                const std::uint32_t* p = RenderMeshesSS(work, out, sc, vp, camGo->transform->Position(),
+                                                        W, H, 1, cam->ignoreObject);
+                return std::vector<std::uint32_t>(p, p + W * H);
+            };
+            auto a = grab();
+            auto* mr = part->GetComponent<MeshRenderer>();
+            const bool en = mr->enabled;
+            mr->enabled = false;
+            auto b = grab();
+            mr->enabled = en;
+            int n = 0;
+            for (std::size_t i = 0; i < a.size(); ++i) if (a[i] != b[i]) ++n;
+            return n;
+        };
+        CHECK(px(ch->Part(1)) > 20);     // the shirt is the solid shoulder
+        for (int b : {3, 4, 5, 6, 7, 8}) // both arms, forearms and hands
+            CHECK(px(ch->Part(b)) == 0);
+        CHECK(px(ch->Part(2)) == 0);     // and not the head
+        Input::FeedKeys({});
     }
 
     TEST_MAIN_RESULT();

@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/Scene/Scene.hpp"
+#include <cmath>
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/Camera.hpp"
@@ -470,12 +471,16 @@ inline void ThirdPerson(Scene& scene) {
     player->AddComponent<ThirdPersonController>();
     AddViewToggle(player, PlayerView::View::Third, 0.45f);   // V switches to the eyes
 
-    // The controller positions this camera behind the player each frame.
+    // Resting over-the-shoulder orbit (pitch 18 looks slightly down, shoulder
+    // 0.45). The controller writes the same pose on the first frame; starting
+    // here keeps Play from opening on the old high, level camera.
     GameObject* camObj = scene.CreateGameObject("Main Camera");
     auto* cam = camObj->AddComponent<Camera>();
     cam->projection = Camera::Projection::Perspective;
     cam->main = true;
-    camObj->transform->localPosition = {0, 3, 6};
+    const float rest = 18.0f * 0.0174532925f;
+    camObj->transform->localPosition = {0.45f, 1.0f + 1.5f + std::sin(rest) * 5.0f, std::cos(rest) * 5.0f};
+    camObj->transform->localRotation = Quat::Euler(-18.0f, 0.0f, 0.0f);
     AddTemplateHoldables(scene, player);
 }
 
@@ -678,14 +683,15 @@ inline void FPS(Scene& scene) {
     player->AddComponent<FirstPersonController>();
     AddViewToggle(player, PlayerView::View::First, 0.45f);   // V switches to over the shoulder
 
-    // Camera mounted on the player at eye height, just in front of the face so you
-    // don't see the inside of your own head.
+    // Camera at the standing eye, just in front of the face, looking level.
+    // The controller keeps this pose; it is not pitched up at Play.
     GameObject* camObj = scene.CreateGameObject("FPS Camera");
     auto* cam = camObj->AddComponent<Camera>();
     cam->projection = Camera::Projection::Perspective;
     cam->main = true;
     camObj->transform->SetParent(player->transform, false);
-    camObj->transform->localPosition = {0, 1.62f, 0.0f};   // eye height (body hidden in first person)
+    camObj->transform->localPosition = {0.0f, 1.6f, -0.20f};
+    camObj->transform->localRotation = Quat::Identity;
     AddTemplateHoldables(scene, player);
 }
 

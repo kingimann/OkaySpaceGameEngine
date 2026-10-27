@@ -983,6 +983,7 @@ int main() {
             if (auto* c = o->GetComponent<Camera>()) if (c->main) cam = c;
         }
         auto* pv = player->GetComponent<PlayerView>();
+        auto* fp = player->GetComponent<FirstPersonController>();
         pv->blendTime = 2.0f;                         // a long ease must not delay the restore
         sc.Start();
         settle(sc, 5);
@@ -1000,8 +1001,12 @@ int main() {
         CHECK(ch->Part(2) && !ch->Part(2)->firstPersonViewmodel);
         CHECK(ch->Part(1) && ch->Part(1)->firstPersonViewmodel); // the shirt is drawn for this camera
         tp->driveAnimation = false;
+        if (fp) fp->driveAnimation = false;
         ch->anim = 1;
-        tp->pitch = 80.0f;                         // steep look down, where the shirt enters the frame
+        // The shared path looks with the eye controller. Its pitch is positive
+        // looking up, so a steep look down is negative.
+        if (fp) fp->pitch = -80.0f;
+        else tp->pitch = 80.0f;
         settle(sc, 8);
         const Vec3 eye = player->transform->InverseTransformPoint(cam->transform->Position());
         CHECK(eye.z < -0.30f);                     // in front of the chest, not inside the shirt
@@ -1053,6 +1058,7 @@ int main() {
         CHECK(partDiff(ch->Part(3)) == 0);
         CHECK(!ownerHand->active || partDiff(ownerHand) == 0);
         ch->anim = 1;
+        if (fp) fp->pitch = 0.0f;
         tp->pitch = restPitch;                         // level again: a small hand, not the whole right third
         settle(sc, 8);
         CHECK(ownerHand->active);

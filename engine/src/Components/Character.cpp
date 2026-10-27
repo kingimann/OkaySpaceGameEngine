@@ -1292,7 +1292,7 @@ void Character::RefreshOwnerArm() {
     PoseOwnerArm(CurrentSourcePose());
 }
 
-void Character::ApplyFirstPersonHandDrive(bool showLeftArm) {
+void Character::ApplyFirstPersonHandDrive(bool showLeftArm, bool showWhileRunning) {
     FirstPersonHands* h = FirstPersonHands::FindOn(gameObject);
     if (h && !h->enabled) h = nullptr;
     int primary = showLeftArm ? B_RUPARM : B_LUPARM;
@@ -1321,7 +1321,10 @@ void Character::ApplyFirstPersonHandDrive(bool showLeftArm) {
         }
     }
     const bool run = HideFirstPersonHands();
-    const bool show = (holding || (h && h->showWhenEmpty)) && (!run || (h && h->showWhileRunning));
+    // The panel wins when it is on the player. A legacy hand has no panel, so
+    // its own Show While Running is the only way a sprint keeps a held item.
+    const bool allowRun = h ? h->showWhileRunning : showWhileRunning;
+    const bool show = (holding || (h && h->showWhenEmpty)) && (!run || allowRun);
     fpArmBase = primary;
     fpArmUp = show ? 1.0f : 0.0f;
     m_fpSecond = two;
@@ -1344,11 +1347,22 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
         SetOwnerArmActive(false);
         DeactivateOwnerArm2();
         if (m_ownerItem) m_ownerItem->active = false;
-        // Dropping the copy while this camera still ignores the player would
-        // show the real item inside the head. A run keeps that skip. Leaving
-        // first person (or having no copy) gives the real grip back.
+        // A sprint keeps the real item out of this camera even when the copy
+        // never rose. Leaving first person, or dropping the copy while walking,
+        // gives the real grip back.
         const bool release = !on || (fpViewWeight >= 0.0f && !HideFirstPersonHands());
         if (release) clearHeld();
+        else if (gameObject) {
+            auto* hold = gameObject->GetComponent<ProceduralObjectHolding>();
+            GameObject* held = (hold && hold->IsHolding()) ? hold->Held() : nullptr;
+            if (held && !held->IsDestroyed()) {
+                if (m_fpHiddenHeld && m_fpHiddenHeld != held && !m_fpHiddenHeld->IsDestroyed()
+                    && m_fpHiddenHeld->ownerCameraSkip == gameObject)
+                    m_fpHiddenHeld->ownerCameraSkip = nullptr;
+                held->ownerCameraSkip = OwnerHideTarget() ? OwnerHideTarget() : gameObject;
+                m_fpHiddenHeld = held;
+            }
+        }
         return;
     }
     EnsureOwnerArm(base);

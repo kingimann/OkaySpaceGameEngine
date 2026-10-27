@@ -247,7 +247,8 @@ public:
     /// Hide the copy unless this character is holding something. FirstPersonHands
     /// on the player can show empty hands, pick the hand, and keep them while running.
     /// `showLeftArm` is the fallback when that component is absent.
-    void ApplyFirstPersonHandDrive(bool showLeftArm);
+    /// `showWhileRunning` is the same fallback for a legacy First Person Hand.
+    void ApplyFirstPersonHandDrive(bool showLeftArm, bool showWhileRunning = false);
     /// Place that copy for the camera as it stands right now. The view and the
     /// first-person controller call this after they have moved the lens.
     void RefreshOwnerArm();

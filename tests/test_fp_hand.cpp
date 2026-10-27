@@ -186,25 +186,29 @@ int main() {
         for (int i = 0; i < 3; ++i) scene.Update(0.016f);
         CHECK(player->GetComponent<ProceduralObjectHolding>() == nullptr);
         player->AddComponent<ProceduralObjectHolding>()->Pickup(item);
+        player->GetComponent<FirstPersonController>()->driveAnimation = false;
         ch->anim = 3;
-        fh->Update(0.016f);
-        CHECK(!ch->firstPersonArm);
+        for (int i = 0; i < 4; ++i) scene.Update(0.016f);
+        CHECK(ch->fpArmUp <= 0.05f);
         CHECK(ch->Part(3) && !ch->Part(3)->firstPersonViewmodel);
         CHECK(ch->Part(4) && !ch->Part(4)->firstPersonViewmodel);
         CHECK(ch->Part(5) && !ch->Part(5)->firstPersonViewmodel);
         CHECK(item->ownerCameraSkip == player);
 
         fh->showWhileRunning = true;
-        fh->Update(0.016f);
-        CHECK(ch->firstPersonArm);
-        CHECK(ch->Part(3) && ch->Part(3)->firstPersonViewmodel);
-        CHECK(item->ownerCameraSkip == nullptr);
+        for (int i = 0; i < 4; ++i) scene.Update(0.016f);
+        CHECK(ch->fpArmUp > 0.5f);
+        CHECK(ch->Part(3) && !ch->Part(3)->firstPersonViewmodel);
+        CHECK(item->ownerCameraSkip == player);
 
         ch->anim = 2;
         fh->showWhileRunning = false;
-        fh->Update(0.016f);
-        CHECK(ch->firstPersonArm);
-        CHECK(ch->Part(3) && ch->Part(3)->firstPersonViewmodel);
+        // Walk and run share a style blend. The copy stays down until that
+        // blend has left the run, about a fifth of a second from a full sprint.
+        for (int i = 0; i < 20; ++i) scene.Update(0.016f);
+        CHECK(ch->fpArmUp > 0.5f);
+        CHECK(ch->Part(3) && !ch->Part(3)->firstPersonViewmodel);
+        CHECK(item->ownerCameraSkip == player);
     }
 
     // Serialization round-trips the settings.

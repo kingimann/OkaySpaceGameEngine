@@ -465,7 +465,11 @@ int main() {
             item->AddComponent<MeshRenderer>()->mesh = Mesh::Cube();
             item->AddComponent<BoxCollider3D>();
             item->AddComponent<Rigidbody3D>();
-            p->AddComponent<ProceduralObjectHolding>()->Pickup(item);
+            // The template already holds with one component. A second one would
+            // take the pickup while the hands still read the empty first.
+            auto* hold = p->GetComponent<ProceduralObjectHolding>();
+            if (!hold) hold = p->AddComponent<ProceduralObjectHolding>();
+            hold->Pickup(item);
             return item;
         };
         GameObject* itemA = giveItem(fps, a);

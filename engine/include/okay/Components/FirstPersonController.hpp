@@ -591,7 +591,9 @@ public:
             if (ch && ch->height > 0.0f) h = ch->height;
             cam->localPosition.z = -(0.20f + down * 0.18f) * h;
             cam->localPosition.y += down * 0.20f * h;
-            if (ch && transform) {
+            // A level look keeps the stance eye height. The push is only for a
+            // look down, which would otherwise sit inside the chest.
+            if (down > 0.0f && ch && transform) {
                 const Vec3 cleared = ch->ClearFirstPersonEye(cam->Position());
                 cam->localPosition = transform->InverseTransformPoint(cleared);
             }

@@ -90,7 +90,7 @@ private:
             // is on. That decision lives in ApplyFirstPersonHandDrive.
             c->ApplyOwnerVisibility(true);
             c->firstPersonArm = true;
-            c->ApplyFirstPersonHandDrive(showLeftArm);
+            c->ApplyFirstPersonHandDrive(showLeftArm, showWhileRunning);
             c->fpArmBob = bobbing;
             c->fpSteady = steadyArm;
             c->fpRaise  = armRaise;    // manual tuning

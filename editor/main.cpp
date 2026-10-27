@@ -19537,7 +19537,12 @@ static std::string TransitionSummary(const AnimStateMachine::Transition& tr) {
 
 static void DrawAnimatorGraph(EditorState& ed) {
     if (!g_showAnimatorGraph) return;
-    ImGui::SetNextWindowSize(ImVec2(860, 520), ImGuiCond_FirstUseEver);
+    if (std::getenv("OKAY_UI_ANIMGRAPH")) {
+        ImGui::SetNextWindowPos(ImVec2(24, 48), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(1280, 780), ImGuiCond_Always);
+    } else {
+        ImGui::SetNextWindowSize(ImVec2(860, 520), ImGuiCond_FirstUseEver);
+    }
     if (!ImGui::Begin("Animator", &g_showAnimatorGraph)) { ImGui::End(); return; }
 
     // Resolve the machine from the selection: self, then ancestors, then
@@ -42406,7 +42411,7 @@ int main(int argc, char** argv) {
             }
             if (const char* sn = std::getenv("OKAY_UI_SELECT"); sn && (s_focusFrames == 31 || s_focusFrames == 40))
                 for (const auto& up : ed.scene().Objects()) if (up->name == sn) { ed.Select(up.get()); break; }
-            if (std::getenv("OKAY_UI_ANIMGRAPH") && s_focusFrames == 36) g_showAnimatorGraph = true;
+            if (std::getenv("OKAY_UI_ANIMGRAPH")) g_showAnimatorGraph = true;
             // OKAY_UI_UIADD=Lobby: the UI editing view with that prebuilt screen added
             // (screenshots of the UI editor and its "+ Add" menu).
             if (const char* ua = std::getenv("OKAY_UI_UIADD"); ua && s_focusFrames == 32) {

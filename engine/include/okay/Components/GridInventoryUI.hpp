@@ -91,6 +91,7 @@ public:
     int   dragIndex = -1;     ///< item being dragged within dragInv, or -1
     int   grabX = 0, grabY = 0;   ///< grabbed cell offset within the item
     bool  dragRotated = false;    ///< the held item is turned 90°; applied only by a successful drop
+    float scroll = 0;             ///< pixels the columns are scrolled when they don't fit (not saved)
 
     /// The held item, if the drag still points at a live item in one of `live` (the
     /// containers on screen this frame). A drag whose container went away (out of range,
@@ -177,11 +178,21 @@ public:
         Scene* sc = root ? root->scene() : nullptr;
         if (!sc || !root || !root->transform) return;
         Vec3 pp = root->transform->Position();
-        for (const auto& up : sc->Objects()) {
-            GameObject* go = up.get();
-            if (!go || go == root) continue;
-            auto* gi = go->GetComponent<GridInventory>();
-            if (!gi || gi == primary) continue;
+        struct Cache {
+            const Scene* scene = nullptr;
+            std::uint64_t ver = 0, comp = 0;
+            std::vector<GridInventory*> grids;
+        };
+        static Cache cache;
+        if (cache.scene != sc || cache.ver != sc->StructureVersion() || cache.comp != sc->ComponentVersion()) {
+            cache.scene = sc; cache.ver = sc->StructureVersion(); cache.comp = sc->ComponentVersion();
+            cache.grids.clear();
+            for (const auto& up : sc->Objects())
+                if (up) if (auto* g = up->GetComponent<GridInventory>()) cache.grids.push_back(g);
+        }
+        for (GridInventory* gi : cache.grids) {
+            GameObject* go = gi->gameObject;
+            if (!go || go == root || gi == primary) continue;
             bool worn = IsDescendant(go->transform, root->transform);
             if (worn && !gi->worldItem) {
                 equipped.push_back(gi);                 // a worn/held container (clothes, bag)

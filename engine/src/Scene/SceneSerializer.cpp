@@ -29,6 +29,7 @@
 #include "okay/Components/InventoryUI.hpp"
 #include "okay/Components/GridInventory.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
+#include "okay/Core/Log.hpp"
 #include "okay/Inventory/Recipe.hpp"
 #include "okay/Components/GridInventoryUI.hpp"
 #include "okay/Components/CraftingStation.hpp"
@@ -161,6 +162,9 @@
 #include <filesystem>
 #include <sstream>
 #include <type_traits>
+#include <cerrno>
+#include <cmath>
+#include <cstdlib>
 #include <unordered_map>
 #include <vector>
 
@@ -201,6 +205,46 @@ std::string ReadQuoted(std::istream& in) {
 // An item name read from a scene, as an ItemDatabase id: legacy names / display
 // names map to their definition's id, and unknown names become loose definitions.
 std::string ItemId(const std::string& name) { return ItemDatabase::Get().Resolve(name); }
+
+// Read the next number without letting an overflow set failbit (that used to
+// stop the rest of the object's components from loading). A quoted field is
+// left for the caller.
+int ReadSceneInt(std::istream& in, int fallback, long long lo, long long hi, const char* what) {
+    in >> std::ws;
+    if (!in || in.peek() == '"') return fallback;
+    std::string tok;
+    if (!(in >> tok) || tok.empty()) return fallback;
+    char* end = nullptr;
+    errno = 0;
+    long long v = std::strtoll(tok.c_str(), &end, 10);
+    if (!end || end == tok.c_str() || *end != '\0') {
+        OKAY_WARN("scene: bad ", what, " \"", tok, "\"");
+        return fallback;
+    }
+    if (v < lo || v > hi) {
+        const long long c = v < lo ? lo : hi;
+        OKAY_WARN("scene: ", what, " ", tok, " clamped to ", c);
+        v = c;
+    }
+    return (int)v;
+}
+float ReadSceneFloat(std::istream& in, float fallback, const char* what) {
+    in >> std::ws;
+    if (!in || in.peek() == '"') return fallback;
+    std::string tok;
+    if (!(in >> tok) || tok.empty()) return fallback;
+    char* end = nullptr;
+    const double v = std::strtod(tok.c_str(), &end);
+    if (!end || end == tok.c_str() || *end != '\0' || !std::isfinite(v)) {
+        OKAY_WARN("scene: bad ", what, " \"", tok, "\"");
+        return fallback;
+    }
+    if (v < 0.0) {
+        OKAY_WARN("scene: negative ", what, " ", tok, " set to 0");
+        return 0.0f;
+    }
+    return (float)v;
+}
 
 // Per-instance item data (durability / uid / values), appended after a container's
 // other fields as: count, then per entry: index durability uid nvalues "k" "v"...
@@ -4313,7 +4357,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int n = 0; in >> n; gi->items.clear();
                     for (int i = 0; i < n && in; ++i) {
                         GridItem it; it.name = ItemId(ReadQuoted(in));
-                        in >> it.w >> it.h >> it.x >> it.y >> it.count >> it.weight;
+                        in >> it.w >> it.h >> it.x >> it.y;
+                        it.count = ReadSceneInt(in, 1, -2000000000LL, 1000000LL, "grid count");
+                        it.weight = ReadSceneFloat(in, 0.0f, "grid weight");
+                        if (it.count < 1) {
+                            OKAY_WARN("scene: grid item \"", it.name, "\" had count ", it.count, "; keeping 1");
+                            it.count = 1;
+                        }
                         gi->items.push_back(it);
                     }
                     in >> std::ws;   // optional weight limit (appended later)
@@ -4330,7 +4380,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                 int ew = 0, no = 0; in >> ew >> gi->maxStack >> no; gi->enforceWeight = (ew != 0);
                                 for (int i = 0; i < no && in; ++i) {
                                     GridItem it; it.name = ItemId(ReadQuoted(in));
-                                    in >> it.w >> it.h >> it.count >> it.weight;
+                                    in >> it.w >> it.h;
+                                    it.count = ReadSceneInt(in, 1, -2000000000LL, 1000000LL, "grid count");
+                                    it.weight = ReadSceneFloat(in, 0.0f, "grid weight");
+                                    if (it.count < 1) it.count = 1;
                                     gi->overflow.push_back(it);
                                 }
                                 ReadInstanceData(in, gi->items.size(), [&](std::size_t i) -> ItemInstanceData& { return gi->items[i].data; });
@@ -5073,10 +5126,17 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> st->strength >> st->defense >> st->intelligence >> st->agility;
                 } else if (field == "inventory") {
                     auto* inv = go->AddComponent<Inventory>();
-                    std::size_t count = 0; in >> inv->capacity >> count;
+                    inv->capacity = ReadSceneInt(in, 0, 0, 1000000, "inventory capacity");   // 0 = unlimited
+                    const int count = ReadSceneInt(in, 0, 0, 100000, "inventory slots");
                     inv->slots.clear();
-                    for (std::size_t k = 0; k < count && in; ++k) {
-                        Inventory::Slot s; s.item = ItemId(ReadQuoted(in)); in >> s.count;
+                    for (int k = 0; k < count && in; ++k) {
+                        Inventory::Slot s; s.item = ItemId(ReadQuoted(in));
+                        const int n = ReadSceneInt(in, 0, -2000000000LL, 1000000LL, "item count");
+                        if (n < 1) {
+                            if (!s.item.empty())
+                                OKAY_WARN("scene: dropping empty stack \"", s.item, "\" (count ", n, ")");
+                            s = Inventory::Slot{};
+                        } else s.count = n;
                         inv->slots.push_back(s);
                     }
                     in >> std::ws;   // optional max stack size (appended later)

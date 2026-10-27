@@ -438,6 +438,9 @@ int main(int argc, char** argv) {
 #include "AppIcon.hpp"
 #include "OkayTheme.hpp"   // shared Slate palette (launcher + editor)
 #include "imgui.h"
+#include "misc/cpp/imgui_stdlib.h"
+#include "misc/cpp/imgui_stdlib.cpp"
+#include "okay/Inventory/InventoryModal.hpp"
 #include "AnimatorPreview.hpp"          // inspector / graph live preview (not the Animation window's)
 #include "imgui_internal.h" // DockBuilder for the default layout
 #include "EditorTabs.hpp"   // panel tabs: saved layouts, presets, Ctrl+Tab order
@@ -963,8 +966,19 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
 // if the image can't be loaded.
 SDL_Texture* GetThumb(const std::string& path) {
     static std::unordered_map<std::string, SDL_Texture*> cache;
+    static std::unordered_map<std::string, std::pair<long long, std::uint32_t>> meta;
+    const std::uint32_t now = SDL_GetTicks();
+    long long mt = 0;
+    if (path.rfind("proc:", 0) != 0) {
+        std::error_code ec;
+        mt = std::filesystem::exists(path, ec)
+            ? (long long)std::filesystem::last_write_time(path, ec).time_since_epoch().count() : -1;
+    }
     auto it = cache.find(path);
-    if (it != cache.end()) return it->second;
+    auto mit = meta.find(path);
+    if (it != cache.end() && mit != meta.end() && now - mit->second.second < 500 && mit->second.first == mt)
+        return it->second;
+    if (it != cache.end() && it->second) SDL_DestroyTexture(it->second);
     SDL_Texture* tex = nullptr;
     okay::Image img;
     if (path.rfind("proc:", 0) == 0) img = okay::GenerateProcTexture(path);   // built-in procedural
@@ -977,7 +991,8 @@ SDL_Texture* GetThumb(const std::string& path) {
             SDL_UpdateTexture(tex, nullptr, img.Pixels().data(), img.Width() * 4);
         }
     }
-    cache[path] = tex;   // cache failures (nullptr) too, so we don't retry
+    cache[path] = tex;   // a miss is remembered briefly; a changed file loads again
+    meta[path] = {mt, now};
     return tex;
 }
 // An item's icon (okay::ItemIconPath), or null when it has none (the name is drawn).
@@ -998,9 +1013,9 @@ static bool ItemPicker(const char* label, std::string& id, float width = 140.0f)
     if (unknown) ImGui::PopStyleColor();
     if (unknown && ImGui::IsItemHovered()) ImGui::SetTooltip("\"%s\" isn't in the Item Database (it still works as a plain name).", id.c_str());
     if (open) {
-        static char filter[64] = "";
-        if (ImGui::IsWindowAppearing()) { filter[0] = 0; ImGui::SetKeyboardFocusHere(); }
-        ImGui::InputTextWithHint("##itemflt", "Search or type an id", filter, sizeof(filter));
+        static std::string filter;
+        if (ImGui::IsWindowAppearing()) { filter.clear(); ImGui::SetKeyboardFocusHere(); }
+        ImGui::InputTextWithHint("##itemflt", "Search or type an id", &filter);
         std::string f = filter; for (auto& c : f) c = (char)std::tolower((unsigned char)c);
         auto match = [&](const okay::ItemDefinition& d) {
             if (f.empty()) return true;
@@ -1013,7 +1028,7 @@ static bool ItemPicker(const char* label, std::string& id, float width = 140.0f)
             if (ImGui::Selectable((d.DisplayName() + "##" + d.id).c_str(), d.id == id)) { id = d.id; changed = true; }
             if (ImGui::IsItemHovered() && !d.description.empty()) ImGui::SetTooltip("%s", d.description.c_str());
         }
-        if (filter[0] && !db.Find(filter) && ImGui::Selectable((std::string("Use \"") + filter + "\"").c_str())) { id = filter; changed = true; }
+        if (!filter.empty() && !db.Find(filter) && ImGui::Selectable((std::string("Use \"") + filter + "\"").c_str())) { id = filter; changed = true; }
         ImGui::EndCombo();
     }
     return changed;
@@ -30824,103 +30839,148 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Hotbar + backpack drawn from a sibling/owner Inventory.");
             if (!ui->Inv()) ImGui::TextColored(ImVec4(1,0.7f,0.3f,1), "Add an Inventory component to show items.");
             if (ImGui::SliderInt("Hotbar Slots##iu", &ui->hotbarSlots, 1, 9)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::SliderInt("Backpack Rows##iu", &ui->backpackRows, 0, 6)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Used when the Inventory has no capacity; otherwise the UI shows exactly its capacity.");
             char itb[64]; std::snprintf(itb, sizeof(itb), "%s", ui->inventoryTarget.c_str());
             if (ImGui::InputText("Inventory Object##iu", itb, sizeof(itb))) { ui->inventoryTarget = itb; ed.dirty = true; }
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of the object holding the Inventory (e.g. Player). Blank = this object or its root.");
             if (ImGui::DragFloat("Slot Size##iu", &ui->slotSize, 0.5f, 16.0f, 128.0f)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::DragFloat("Slot Gap##iu", &ui->slotGap, 0.25f, 0.0f, 32.0f)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             char tk[2] = {ui->toggleKey, 0};
             if (ImGui::InputText("Open Key##iu", tk, sizeof(tk))) { if (tk[0]) ui->toggleKey = tk[0]; ed.dirty = true; }
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Key to open/close the backpack (default E).");
             if (ImGui::Checkbox("1-9 select##iu", &ui->selectHotkeys)) ed.dirty = true; ImGui::SameLine();
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::Checkbox("Wheel select##iu", &ui->scrollSelect)) ed.dirty = true; ImGui::SameLine();
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::Checkbox("Drag items##iu", &ui->dragItems)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drag stacks between slots while the backpack is open (swap / merge).");
             if (ImGui::Checkbox("Darken when open##iu", &ui->darkenWhenOpen)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             char icf[128]; std::snprintf(icf, sizeof(icf), "%s", ui->iconFolder.c_str());
             if (ImGui::InputText("Icon Folder##iu", icf, sizeof(icf))) { ui->iconFolder = icf; ed.dirty = true; }
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Looks for <folder><item-name>.png per slot; falls back to the item name.");
             auto cc = [&](const char* lbl, Color& c, const char* id) {
                 float v[4] = {c.r, c.g, c.b, c.a};
                 if (ImGui::ColorEdit4((std::string(lbl) + "##" + id).c_str(), v)) { c = {v[0], v[1], v[2], v[3]}; ed.dirty = true; }
+                if (ImGui::IsItemActivated()) ed.PushUndo();
             };
             cc("Slot", ui->slotColor, "iuc1"); cc("Border", ui->slotBorder, "iuc2");
             cc("Selected", ui->selectedColor, "iuc3"); cc("Text", ui->textColor, "iuc4");
             cc("Count", ui->countColor, "iuc5");
             if (ImGui::TreeNodeEx("Layout / Style##iu", ImGuiTreeNodeFlags_DefaultOpen)) {
                 if (ImGui::Checkbox("Scale with screen##iu", &ui->scaleToScreen)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keep the same on-screen size at any resolution (fixes 'too big in the build'). Sizes below are authored for the Reference Height.");
                 if (ui->scaleToScreen && ImGui::DragFloat("Reference Height##iu", &ui->referenceHeight, 1.0f, 120.0f, 4320.0f)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::Checkbox("Anchor to top##iu", &ui->anchorTop)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::DragFloat("Margin X##iu", &ui->marginX, 0.5f, -2000.0f, 2000.0f)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::DragFloat("Edge Margin##iu", &ui->marginY, 0.5f, 0.0f, 2000.0f)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::DragFloat("Corner Radius##iu", &ui->cornerRadius, 0.25f, 0.0f, 40.0f)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::DragFloat("Border Width##iu", &ui->borderWidth, 0.1f, 0.0f, 12.0f)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::DragFloat("Icon Inset##iu", &ui->iconInset, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::DragFloat("Label Scale##iu", &ui->labelScale, 0.02f, 0.2f, 4.0f)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::SliderInt("Name Chars##iu", &ui->nameChars, 1, 12)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::Checkbox("Show counts##iu", &ui->showCounts)) ed.dirty = true; ImGui::SameLine();
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::Checkbox("Show names##iu", &ui->showNames)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::Checkbox("Background panel##iu", &ui->showPanel)) ed.dirty = true; ImGui::SameLine();
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::Checkbox("Held item name##iu", &ui->showSelectedName)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the selected item's name above the hotbar (Minecraft-style).");
                 if (ui->showPanel && ImGui::DragFloat("Panel Padding##iu", &ui->panelPad, 0.25f, 0.0f, 40.0f)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 float pc[4] = {ui->panelColor.r, ui->panelColor.g, ui->panelColor.b, ui->panelColor.a};
                 if (ImGui::ColorEdit4("Panel Color##iu", pc)) { ui->panelColor = {pc[0], pc[1], pc[2], pc[3]}; ed.dirty = true; }
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 float hc[4] = {ui->hoverColor.r, ui->hoverColor.g, ui->hoverColor.b, ui->hoverColor.a};
                 if (ImGui::ColorEdit4("Hover Color##iu", hc)) { ui->hoverColor = {hc[0], hc[1], hc[2], hc[3]}; ed.dirty = true; }
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 // --- New style options ---
                 const char* aligns[] = {"Left", "Center", "Right"};
                 int ha = (int)ui->hAlign;
                 if (ImGui::Combo("Hotbar Align##iu", &ha, aligns, 3)) { ui->hAlign = (InventoryUI::HAlign)ha; ed.dirty = true; }
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dock the hotbar left/centre/right (still nudged by Margin X).");
                 if (ImGui::DragFloat("Selected Pop##iu", &ui->selectedScale, 0.01f, 0.5f, 2.0f)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Grow the selected hotbar slot (1 = no pop).");
                 cc("Empty Slot", ui->emptySlotColor, "iue1");
                 cc("Hotbar Slot", ui->hotbarColor, "iuh1");
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Separate fill for hotbar slots vs the backpack (Slot color).");
                 cc("Panel Border", ui->panelBorder, "iupb");
                 if (ImGui::DragFloat("Panel Border W##iu", &ui->panelBorderWidth, 0.1f, 0.0f, 12.0f)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::Checkbox("Backpack title##iu", &ui->showTitle)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ui->showTitle) {
                     char bt[64]; std::strncpy(bt, ui->backpackTitle.c_str(), sizeof(bt) - 1); bt[sizeof(bt) - 1] = '\0';
                     if (ImGui::InputText("Title Text##iu", bt, sizeof(bt))) { ui->backpackTitle = bt; ed.dirty = true; }
+                    if (ImGui::IsItemActivated()) ed.PushUndo();
                     cc("Title Color", ui->titleColor, "iutc");
                 }
                 ImGui::TreePop();
             }
             if (ImGui::TreeNodeEx("Features##iu", ImGuiTreeNodeFlags_DefaultOpen)) {
                 if (ImGui::Checkbox("Tooltips##iu", &ui->showTooltips)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hover a slot to see the item's name + count.");
                 ImGui::SameLine();
                 if (ImGui::Checkbox("Slot numbers##iu", &ui->slotNumbers)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw 1–9 in the corner of each hotbar slot.");
                 char sk[2] = {ui->sortKey, 0};
                 if (ImGui::InputText("Sort Key##iu", sk, sizeof(sk))) { ui->sortKey = sk[0]; ed.dirty = true; }
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Press to compact + merge stacks (blank = off).");
                 const char* sortModes[] = {"Compact", "Name", "Count", "Rarity", "Category", "Weight", "Value"};
                 int smi = (int)ui->sortMode;
                 if (ImGui::Combo("Sort Mode##iu", &smi, sortModes, IM_ARRAYSIZE(sortModes))) { ui->sortMode = (InventoryUI::SortMode)smi; ed.dirty = true; }
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("How the Sort key orders stacks: keep gather order, A-Z, biggest first, or by rarity list.");
                 ImGui::SameLine();
                 if (ImGui::Checkbox("Sort on close##iu", &ui->sortOnClose)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Auto-tidy the bag whenever the backpack closes.");
                 char dk[2] = {ui->dropKey, 0};
                 if (ImGui::InputText("Drop Key##iu", dk, sizeof(dk))) { ui->dropKey = dk[0]; ed.dirty = true; }
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drops one of the held item into the world as a pickup (or to a script's on_item_dropped). Dragging a stack off the slots drops it too.");
                 char uk[2] = {ui->useKey, 0};
                 if (ImGui::InputText("Use Key##iu", uk, sizeof(uk))) { ui->useKey = uk[0]; ed.dirty = true; }
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Uses the held item: eats/drinks/heals it (Consumables or its definition) or picks its build piece.");
                 if (ImGui::Checkbox("Click to Use##iu", &ui->clickToUse)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::Checkbox("Right-click split##iu", &ui->splitRightClick)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Right-click a stack to pick up part of it, then drop it where you want.");
                 ImGui::SameLine();
                 if (ImGui::Checkbox("Split half##iu", &ui->splitHalf)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Right-click lifts half the stack (off = just one item).");
                 ImGui::SameLine();
                 if (ImGui::Checkbox("Shift quick-move##iu", &ui->shiftQuickMove)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Shift+click moves a stack between the hotbar and backpack.");
                 cc("Tooltip BG", ui->tooltipColor, "iutt0");
                 cc("Tooltip Text", ui->tooltipText, "iutt1");
@@ -30929,17 +30989,20 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::TreeNode("Rarity colours##iu")) {
                     for (std::size_t i = 0; i < ui->rarities.size(); ++i) {
                         ImGui::PushID((int)i);
-                        char nb[64]; std::snprintf(nb, sizeof(nb), "%s", ui->rarities[i].item.c_str());
-                        ImGui::SetNextItemWidth(120);
-                        if (ImGui::InputText("##rn", nb, sizeof(nb))) { ui->rarities[i].item = nb; ed.dirty = true; }
+                        ImGui::SetNextItemWidth(160);
+                        if (ImGui::InputText("##rn", &ui->rarities[i].item)) ed.dirty = true;
+                        if (ImGui::IsItemActivated()) ed.PushUndo();
                         ImGui::SameLine(); float rv[4] = {ui->rarities[i].color.r, ui->rarities[i].color.g, ui->rarities[i].color.b, ui->rarities[i].color.a};
                         ImGui::SetNextItemWidth(150);
                         if (ImGui::ColorEdit4("##rc", rv, ImGuiColorEditFlags_NoInputs)) { ui->rarities[i].color = {rv[0], rv[1], rv[2], rv[3]}; ed.dirty = true; }
+                        if (ImGui::IsItemActivated()) ed.PushUndo();
                         ImGui::SameLine();
                         if (ImGui::SmallButton("x")) { ui->rarities.erase(ui->rarities.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
+                        if (ImGui::IsItemActivated()) ed.PushUndo();
                         ImGui::PopID();
                     }
                     if (ImGui::SmallButton("+ Add rarity##iu")) { ui->rarities.push_back({}); ed.dirty = true; }
+                    if (ImGui::IsItemActivated()) ed.PushUndo();
                     ImGui::TreePop();
                 }
                 ImGui::TreePop();
@@ -30952,21 +31015,31 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Multi-cell items in a grid; drag to rearrange in Play.");
             char tb[96]; std::snprintf(tb, sizeof(tb), "%s", gi->title.c_str());
             if (ImGui::InputText("Title##gi", tb, sizeof(tb))) { gi->title = tb; ed.dirty = true; }
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::SliderInt("Columns##gi", &gi->cols, 1, 16)) { gi->Validate(); ed.dirty = true; }
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::SliderInt("Rows##gi", &gi->rows, 1, 12)) { gi->Validate(); ed.dirty = true; }
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             char ok[2] = {gi->toggleKey, 0};
             if (ImGui::InputText("Open Key##gi", ok, sizeof(ok))) { if (ok[0]) gi->toggleKey = ok[0]; ed.dirty = true; }
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             char cab[48]; std::snprintf(cab, sizeof(cab), "%s", gi->category.c_str());
             if (ImGui::InputText("Category##gi", cab, sizeof(cab))) { gi->category = cab; ed.dirty = true; }
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Label shown above this container in the Unturned screen (Shirt, Vest, Backpack...). Blank = use Title.");
             if (ImGui::Checkbox("Ground / Nearby container##gi", &gi->worldItem)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("A lootable world container — appears in the player's 'Nearby' column when in range. Leave off for worn/held bags (child of the player).");
             if (ImGui::DragFloat("Weight Limit##gi", &gi->weightLimit, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Max carry weight (0 = unlimited). The UI turns red when over.");
             if (ImGui::Checkbox("Enforce Weight Limit##gi", &gi->enforceWeight)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Refuse adds and drags that would go over the weight limit (off = the limit is only shown).");
             if (ImGui::DragInt("Max Stack##gi", &gi->maxStack, 0.2f, 0, 9999)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::Checkbox("Keep On Scene Load##gi", &gi->keepOnSceneLoad)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Carry these items into the next scene (load_scene): the object with the same name there gets them.");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Same-name items merge when dropped on each other, up to this many (0 = never). Right-click a stack in Play to split it.");
             ImGui::Text("Total weight: %.1f%s", gi->TotalWeight(), gi->OverWeight() ? "  (OVER!)" : "");
@@ -30979,27 +31052,33 @@ void DrawInspector(EditorState& ed) {
                         if (const okay::ItemDefinition* d = okay::ItemDatabase::Get().Find(it.name))
                             if (!d->loose) { it.w = d->gridW; it.h = d->gridH; it.weight = d->weight; moved = true; }
                         ed.dirty = true;
+                        if (ImGui::IsItemActivated()) ed.PushUndo();
                     }
                     ImGui::SameLine(); ImGui::SetNextItemWidth(150);
                     int wh[2] = {it.w, it.h};
                     if (ImGui::DragInt2("wxh##s", wh, 0.1f, 1, 12)) { it.w = wh[0]; it.h = wh[1]; moved = true; }
                     ImGui::SameLine(); ImGui::SetNextItemWidth(60);
                     if (ImGui::DragInt("##c", &it.count, 0.2f, 1, 9999)) ed.dirty = true;
+                    if (ImGui::IsItemActivated()) ed.PushUndo();
                     ImGui::SetNextItemWidth(110); ImGui::Indent(110);
                     int xy[2] = {it.x, it.y};
                     if (ImGui::DragInt2("x,y##p", xy, 0.1f, 0, 63)) { it.x = xy[0]; it.y = xy[1]; moved = true; }
                     ImGui::SameLine(); ImGui::SetNextItemWidth(60);
                     if (ImGui::DragFloat("kg##w", &it.weight, 0.05f, 0.0f, 10000.0f, "%.2f")) ed.dirty = true;
+                    if (ImGui::IsItemActivated()) ed.PushUndo();
                     ImGui::Unindent(110);
                     ImGui::SameLine();
                     if (ImGui::SmallButton("x")) { gi->items.erase(gi->items.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
+                    if (ImGui::IsItemActivated()) ed.PushUndo();
                     ImGui::PopID();
                     if (moved) { gi->Validate(); ed.dirty = true; break; }   // indices may have changed
+                    if (ImGui::IsItemActivated()) ed.PushUndo();
                 }
                 static const GridInventory* fullBag = nullptr;   // the bag "+ Add item" last found full
                 if (ImGui::SmallButton("+ Add item##gi")) {
                     fullBag = gi->AddItem("Item", 1, 1, 1, 0.5f) < 0 ? gi : nullptr;
                     ed.dirty = true;
+                    if (ImGui::IsItemActivated()) ed.PushUndo();
                 }
                 if (fullBag == gi) { ImGui::SameLine(); ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "No room (grid or weight limit full)"); }
                 ImGui::TreePop();
@@ -31016,23 +31095,33 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Grid Inventory UI", gu, &toRemove)) {
             if (!gu->Inv()) ImGui::TextColored(ImVec4(1,0.7f,0.3f,1), "Add a Grid Inventory component to show items.");
             if (ImGui::Checkbox("Unturned layout (worn bags + nearby)##gu", &gu->multiContainer)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the player's grid + every child clothing/bag's grid, plus nearby ground containers, in one screen with cross-bag drag. Off = just this object's grid.");
             if (gu->multiContainer) {
                 if (ImGui::DragFloat("Nearby Range##gu", &gu->nearbyRange, 0.25f, 0.0f, 50.0f, "%.1f m")) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("World distance within which ground containers (Grid Inventory > Ground/Nearby) show up in the right column.");
                 char ntb[48]; std::snprintf(ntb, sizeof(ntb), "%s", gu->nearbyTitle.c_str());
                 if (ImGui::InputText("Nearby Title##gu", ntb, sizeof(ntb))) { gu->nearbyTitle = ntb; ed.dirty = true; }
+                if (ImGui::IsItemActivated()) ed.PushUndo();
             }
             if (ImGui::DragFloat("Cell Size##gu", &gu->cellSize, 0.5f, 20.0f, 160.0f)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::DragFloat("Gap##gu", &gu->gap, 0.1f, 0.0f, 24.0f)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::DragFloat("Corner Radius##gu", &gu->cornerRadius, 0.25f, 0.0f, 32.0f)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::Checkbox("Darken when open##gu", &gu->darkenWhenOpen)) ed.dirty = true; ImGui::SameLine();
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::Checkbox("Show weight##gu", &gu->showWeight)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             char icf[128]; std::snprintf(icf, sizeof(icf), "%s", gu->iconFolder.c_str());
             if (ImGui::InputText("Icon Folder##gu", icf, sizeof(icf))) { gu->iconFolder = icf; ed.dirty = true; }
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             auto cc = [&](const char* lbl, Color& c, const char* id) {
                 float v[4] = {c.r, c.g, c.b, c.a};
                 if (ImGui::ColorEdit4((std::string(lbl) + "##" + id).c_str(), v)) { c = {v[0], v[1], v[2], v[3]}; ed.dirty = true; }
+                if (ImGui::IsItemActivated()) ed.PushUndo();
             };
             cc("Panel", gu->panelColor, "guc0"); cc("Cell", gu->cellColor, "guc1");
             cc("Item", gu->itemColor, "guc2"); cc("Border", gu->itemBorder, "guc3");
@@ -31041,29 +31130,43 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::TreeNodeEx("Layout & Style##gu", ImGuiTreeNodeFlags_DefaultOpen)) {
                 ImGui::TextDisabled("Spacing (pixels)");
                 if (ImGui::DragFloat("Header Height##gu", &gu->headerHeight, 0.5f, 12.0f, 60.0f)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::DragFloat("Panel Padding##gu", &gu->panelPad, 0.5f, 2.0f, 60.0f)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::DragFloat("Container Gap##gu", &gu->containerGap, 0.5f, 0.0f, 80.0f)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::DragFloat("Column Gap##gu", &gu->columnGap, 0.5f, 4.0f, 200.0f)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Space between the worn-bags column and the Nearby column.");
                 ImGui::Separator();
                 ImGui::TextDisabled("Title & toggles");
                 if (ImGui::Checkbox("Master title##gu", &gu->showMasterTitle)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (gu->showMasterTitle) {
                     char mt[48]; std::snprintf(mt, sizeof(mt), "%s", gu->masterTitle.c_str());
                     if (ImGui::InputText("Title Text##gu", mt, sizeof(mt))) { gu->masterTitle = mt; ed.dirty = true; }
+                    if (ImGui::IsItemActivated()) ed.PushUndo();
                     if (ImGui::DragFloat("Title Scale##gu", &gu->titleScale, 0.02f, 0.5f, 5.0f)) ed.dirty = true;
+                    if (ImGui::IsItemActivated()) ed.PushUndo();
                 }
                 if (ImGui::Checkbox("Item names##gu", &gu->showItemNames)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw each item's name on its tile (off = icon/colour only).");
                 if (gu->showItemNames) {
                     if (ImGui::DragFloat("Item Name Scale##gu", &gu->itemNameScale, 0.02f, 0.5f, 4.0f)) ed.dirty = true;
+                    if (ImGui::IsItemActivated()) ed.PushUndo();
                 }
                 if (ImGui::SliderFloat("Backdrop Dim##gu", &gu->backdropDim, 0.0f, 1.0f)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("How dark the screen behind the inventory is when open.");
                 if (ImGui::Checkbox("Gradients##gu", &gu->useGradients)) ed.dirty = true; ImGui::SameLine();
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::Checkbox("Drop shadows##gu", &gu->dropShadows)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::Checkbox("Accent bars##gu", &gu->accentBars)) ed.dirty = true; ImGui::SameLine();
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::Checkbox("Auto accent colour##gu", &gu->autoAccent)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("On: each bag/item gets a distinct colour from its name. Off: use the fixed Accent colour.");
                 ImGui::Separator();
                 ImGui::TextDisabled("Colours");
@@ -31078,9 +31181,11 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::TreeNodeEx("Features##gu", ImGuiTreeNodeFlags_DefaultOpen)) {
                 if (ImGui::Checkbox("Tooltips##gu", &gu->showTooltips)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hover an item to see its name, size and weight.");
                 char rk[2] = {gu->rotateKey, 0};
                 if (ImGui::InputText("Rotate Key##gu", rk, sizeof(rk))) { gu->rotateKey = rk[0]; ed.dirty = true; }
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("While dragging an item, rotate it 90° (blank = off).");
                 cc("Tooltip BG", gu->tooltipColor, "gutt0");
                 cc("Tooltip Text", gu->tooltipText, "gutt1");
@@ -31088,17 +31193,20 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::TreeNode("Rarity colours##gu")) {
                     for (std::size_t i = 0; i < gu->rarities.size(); ++i) {
                         ImGui::PushID((int)i);
-                        char nb[64]; std::snprintf(nb, sizeof(nb), "%s", gu->rarities[i].item.c_str());
-                        ImGui::SetNextItemWidth(120);
-                        if (ImGui::InputText("##rn", nb, sizeof(nb))) { gu->rarities[i].item = nb; ed.dirty = true; }
+                        ImGui::SetNextItemWidth(160);
+                        if (ImGui::InputText("##rn", &gu->rarities[i].item)) ed.dirty = true;
+                        if (ImGui::IsItemActivated()) ed.PushUndo();
                         ImGui::SameLine(); float rv[4] = {gu->rarities[i].color.r, gu->rarities[i].color.g, gu->rarities[i].color.b, gu->rarities[i].color.a};
                         ImGui::SetNextItemWidth(150);
                         if (ImGui::ColorEdit4("##rc", rv, ImGuiColorEditFlags_NoInputs)) { gu->rarities[i].color = {rv[0], rv[1], rv[2], rv[3]}; ed.dirty = true; }
+                        if (ImGui::IsItemActivated()) ed.PushUndo();
                         ImGui::SameLine();
                         if (ImGui::SmallButton("x")) { gu->rarities.erase(gu->rarities.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
+                        if (ImGui::IsItemActivated()) ed.PushUndo();
                         ImGui::PopID();
                     }
                     if (ImGui::SmallButton("+ Add rarity##gu")) { gu->rarities.push_back({}); ed.dirty = true; }
+                    if (ImGui::IsItemActivated()) ed.PushUndo();
                     ImGui::TreePop();
                 }
                 ImGui::TreePop();
@@ -31112,25 +31220,35 @@ void DrawInspector(EditorState& ed) {
             if (!cs->Inv()) ImGui::TextColored(ImVec4(1,0.7f,0.3f,1), "Add an Inventory component to craft from.");
             char tb[96]; std::snprintf(tb, sizeof(tb), "%s", cs->title.c_str());
             if (ImGui::InputText("Title##cs", tb, sizeof(tb))) { cs->title = tb; ed.dirty = true; }
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             char ok[2] = {cs->toggleKey, 0};
             if (ImGui::InputText("Open Key##cs", ok, sizeof(ok))) { if (ok[0]) cs->toggleKey = ok[0]; ed.dirty = true; }
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::Checkbox("Close after craft##cs", &cs->closeWhenCrafted)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::DragFloat("Open Range##cs", &cs->range, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How close the player must be. Only the nearest bench in range opens. 0 = any distance.");
             char pnc[64]; std::snprintf(pnc, sizeof(pnc), "%s", cs->playerName.c_str());
             if (ImGui::InputText("Player Object##cs", pnc, sizeof(pnc))) { cs->playerName = pnc; ed.dirty = true; }
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Who the player is. Blank = the \"Player\"-tagged object, else the main camera's target.");
             char rbs[256]; std::snprintf(rbs, sizeof(rbs), "%s", cs->recipeBook.c_str());
             if (ImGui::InputText("Recipe Book##cs", rbs, sizeof(rbs))) { cs->recipeBook = rbs; ed.dirty = true; }
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional .okayrecipes file: its recipes for this bench's tag show here too.");
             char tg[48]; std::snprintf(tg, sizeof(tg), "%s", cs->stationTag.c_str());
             if (ImGui::InputText("Station Tag##cs", tg, sizeof(tg))) { cs->stationTag = tg; ed.dirty = true; }
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("What kind of bench this is (workbench, forge...). Recipes needing this tag craft here.");
             if (ImGui::DragFloat("Width##cs", &cs->width, 0.5f, 80.0f, 800.0f)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::DragFloat("Row Height##cs", &cs->rowHeight, 0.25f, 14.0f, 60.0f)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             auto cc = [&](const char* lbl, Color& c, const char* id) {
                 float v[4] = {c.r, c.g, c.b, c.a};
                 if (ImGui::ColorEdit4((std::string(lbl) + "##" + id).c_str(), v)) { c = {v[0], v[1], v[2], v[3]}; ed.dirty = true; }
+                if (ImGui::IsItemActivated()) ed.PushUndo();
             };
             cc("Panel", cs->panelColor, "csc0"); cc("Title Bar", cs->titleBar, "csc1");
             cc("Craftable", cs->canColor, "csc2"); cc("Missing", cs->cantColor, "csc3");
@@ -31140,27 +31258,36 @@ void DrawInspector(EditorState& ed) {
                     auto& rec = cs->recipes[i];
                     ImGui::PushID((int)i);
                     if (ItemPicker("out##o", rec.output, 110)) ed.dirty = true;
+                    if (ImGui::IsItemActivated()) ed.PushUndo();
                     ImGui::SameLine(); ImGui::SetNextItemWidth(70);
                     if (ImGui::DragInt("x##oc", &rec.outputCount, 0.1f, 1, 999)) ed.dirty = true;
+                    if (ImGui::IsItemActivated()) ed.PushUndo();
                     ImGui::SameLine();
                     if (ImGui::SmallButton("del")) { cs->recipes.erase(cs->recipes.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
+                    if (ImGui::IsItemActivated()) ed.PushUndo();
                     ImGui::Indent();
                     for (std::size_t j = 0; j < rec.inputs.size(); ++j) {
                         ImGui::PushID((int)j);
                         if (ItemPicker("##in", rec.inputs[j].item, 100)) ed.dirty = true;
+                        if (ImGui::IsItemActivated()) ed.PushUndo();
                         ImGui::SameLine(); ImGui::SetNextItemWidth(60);
                         if (ImGui::DragInt("##ic", &rec.inputs[j].count, 0.1f, 1, 999)) ed.dirty = true;
+                        if (ImGui::IsItemActivated()) ed.PushUndo();
                         ImGui::SameLine();
                         if (ImGui::SmallButton("x")) { rec.inputs.erase(rec.inputs.begin() + j); ed.dirty = true; ImGui::PopID(); break; }
+                        if (ImGui::IsItemActivated()) ed.PushUndo();
                         ImGui::PopID();
                     }
                     if (ImGui::SmallButton("+ ingredient")) { rec.inputs.push_back({}); ed.dirty = true; }
+                    if (ImGui::IsItemActivated()) ed.PushUndo();
                     if (RecipeExtrasUI(rec)) ed.dirty = true;
+                    if (ImGui::IsItemActivated()) ed.PushUndo();
                     ImGui::Unindent();
                     ImGui::Separator();
                     ImGui::PopID();
                 }
                 if (ImGui::SmallButton("+ Add recipe##cs")) { cs->recipes.push_back({}); ed.dirty = true; }
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 ImGui::TreePop();
             }
             if (ImGui::SmallButton("Remove##cs")) toRemove = cs;
@@ -31237,24 +31364,35 @@ void DrawInspector(EditorState& ed) {
             if (!ch->Inv()) ImGui::TextColored(ImVec4(1,0.7f,0.3f,1), "Add an Inventory component for the chest's items.");
             char tb[96]; std::snprintf(tb, sizeof(tb), "%s", ch->title.c_str());
             if (ImGui::InputText("Title##ch", tb, sizeof(tb))) { ch->title = tb; ed.dirty = true; }
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             char ok[2] = {ch->openKey, 0};
             if (ImGui::InputText("Open Key##ch", ok, sizeof(ok))) { if (ok[0]) ch->openKey = ok[0]; ed.dirty = true; }
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Press near the chest to open (default F). Click items to move them.");
             if (ImGui::DragFloat("Open Range##ch", &ch->range, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How close the player must be to press the key. Only the nearest chest in range opens. 0 = any distance.");
             char pnh[64]; std::snprintf(pnh, sizeof(pnh), "%s", ch->playerName.c_str());
             if (ImGui::InputText("Player Object##ch", pnh, sizeof(pnh))) { ch->playerName = pnh; ed.dirty = true; }
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Who the player is. Blank = the \"Player\"-tagged object, else the main camera's target.");
             if (ImGui::SliderInt("Columns##ch", &ch->cols, 1, 12)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::DragFloat("Slot Size##ch", &ch->slotSize, 0.5f, 16.0f, 96.0f)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::DragFloat("Gap##ch", &ch->gap, 0.1f, 0.0f, 16.0f)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::DragFloat("Corner Radius##ch", &ch->cornerRadius, 0.25f, 0.0f, 24.0f)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::Checkbox("Darken when open##ch", &ch->darkenWhenOpen)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             char icf[128]; std::snprintf(icf, sizeof(icf), "%s", ch->iconFolder.c_str());
             if (ImGui::InputText("Icon Folder##ch", icf, sizeof(icf))) { ch->iconFolder = icf; ed.dirty = true; }
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             auto cc = [&](const char* lbl, Color& c, const char* id) {
                 float v[4] = {c.r, c.g, c.b, c.a};
                 if (ImGui::ColorEdit4((std::string(lbl) + "##" + id).c_str(), v)) { c = {v[0], v[1], v[2], v[3]}; ed.dirty = true; }
+                if (ImGui::IsItemActivated()) ed.PushUndo();
             };
             cc("Panel", ch->panelColor, "chc0"); cc("Title Bar", ch->titleBar, "chc1");
             cc("Slot", ch->slotColor, "chc2"); cc("Border", ch->slotBorder, "chc3");
@@ -31621,30 +31759,38 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Consumables (items -> stats)", c, &toRemove)) {
             ImGui::TextDisabled("Maps item names to a survival effect (Eat/Drink/Heal/...).");
             if (ImGui::Checkbox("Require Inventory##cons", &c->requireInventory)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Use() removes the item from a sibling Inventory first.");
             if (ImGui::Checkbox("Consume on Drop##cons", &c->consumeOnDrop)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (c->consumeOnDrop)
                 if (ImGui::Checkbox("Destroy Dropped Item##cons", &c->destroyDroppedItem)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
             ImGui::Separator();
             int removeAt = -1;
             for (int i = 0; i < (int)c->recipes.size(); ++i) {
                 ImGui::PushID(i);
                 auto& r = c->recipes[i];
                 if (ItemPicker("##itm", r.item, 110)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 ImGui::SameLine();
                 const char* verbs[] = { "Eat", "Drink", "Heal", "Breathe", "Warm", "Damage",
                                         "Poison", "Cure", "Bandage", "TakeAntiRad", "DryOff", "Restore", "Rest" };
                 int vi = 0; for (int k = 0; k < IM_ARRAYSIZE(verbs); ++k) if (r.action == verbs[k]) vi = k;
                 ImGui::SetNextItemWidth(100);
                 if (ImGui::Combo("##act", &vi, verbs, IM_ARRAYSIZE(verbs))) { r.action = verbs[vi]; ed.dirty = true; }
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 ImGui::SameLine(); ImGui::SetNextItemWidth(70);
                 if (ImGui::DragFloat("##amt", &r.amount, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 ImGui::SameLine();
                 if (ImGui::SmallButton("X")) removeAt = i;
                 ImGui::PopID();
             }
             if (removeAt >= 0) { c->recipes.erase(c->recipes.begin() + removeAt); ed.dirty = true; }
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::SmallButton("+ Recipe##cons")) { c->AddRecipe("item", "Eat", 25.0f); ed.dirty = true; }
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             ImGui::TextDisabled("Use(item) from a hotbar/script, or drop a matching item here.");
             if (ImGui::SmallButton("Remove##cons")) toRemove = c;
         }
@@ -31839,16 +31985,18 @@ void DrawInspector(EditorState& ed) {
     if (auto* c = dynamic_cast<Crafting*>(curComp)) {
         if (CompHeader("Crafting", c, &toRemove)) {
             ImGui::TextDisabled("Recipes consume Inventory items to make an output.");
-            char rb[256]; std::snprintf(rb, sizeof(rb), "%s", c->recipeBook.c_str());
-            if (ImGui::InputText("Recipe Book##cr", rb, sizeof(rb))) { c->recipeBook = rb; ed.dirty = true; }
+            if (ImGui::InputText("Recipe Book##cr", &c->recipeBook)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional .okayrecipes file: its recipes are added to the ones below.");
             int removeAt = -1;
             for (int i = 0; i < (int)c->recipes.size(); ++i) {
                 ImGui::PushID(i);
                 auto& r = c->recipes[i];
                 if (ItemPicker("##out", r.output, 110)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 ImGui::SameLine(); ImGui::SetNextItemWidth(60);
                 if (ImGui::DragInt("x##outc", &r.outputCount, 0.1f, 1, 999)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 ImGui::SameLine();
                 if (c->Inv()) ImGui::TextDisabled(c->CanCraft(r) ? "(ready)" : "(missing)");
                 ImGui::SameLine();
@@ -31859,23 +32007,30 @@ void DrawInspector(EditorState& ed) {
                     auto& in = r.inputs[j];
                     ImGui::Indent(16.0f);
                     if (ItemPicker("##ing", in.item, 100)) ed.dirty = true;
+                    if (ImGui::IsItemActivated()) ed.PushUndo();
                     ImGui::SameLine(); ImGui::SetNextItemWidth(60);
                     if (ImGui::DragInt("##ingc", &in.count, 0.1f, 1, 999)) ed.dirty = true;
+                    if (ImGui::IsItemActivated()) ed.PushUndo();
                     ImGui::SameLine();
                     if (ImGui::SmallButton("x##rmi")) rmIng = j;
                     ImGui::Unindent(16.0f);
                     ImGui::PopID();
                 }
                 if (rmIng >= 0) { r.inputs.erase(r.inputs.begin() + rmIng); ed.dirty = true; }
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 ImGui::Indent(16.0f);
                 if (ImGui::SmallButton("+ ingredient")) { r.inputs.push_back({"item", 1}); ed.dirty = true; }
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (RecipeExtrasUI(r)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 ImGui::Unindent(16.0f);
                 ImGui::Separator();
                 ImGui::PopID();
             }
             if (removeAt >= 0) { c->recipes.erase(c->recipes.begin() + removeAt); ed.dirty = true; }
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::SmallButton("+ Recipe##craft")) { c->AddRecipe("output", 1, {{"item", 1}}); ed.dirty = true; }
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (!go->GetComponent<Inventory>())
                 ImGui::TextDisabled("Add an Inventory component for crafting to draw from.");
             ImGui::TextDisabled("Craft(name)/CraftIndex from a menu button (On Click 'Craft', Amount=index).");
@@ -33066,31 +33221,41 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* inv = dynamic_cast<Inventory*>(curComp)) {
         if (CompHeader("Inventory", inv, &toRemove)) {
-            if (ImGui::DragInt("Capacity##inv", &inv->capacity, 0.2f, 1, 999)) ed.dirty = true;
+            if (ImGui::DragInt("Capacity##inv", &inv->capacity, 0.2f, 0, 999)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 is unlimited.");
             if (ImGui::DragInt("Max Stack##inv", &inv->maxStack, 0.2f, 0, 9999)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Max items per stack (0 = unlimited). Add()/pickups and merges split past this, like Minecraft's 64.");
             if (ImGui::DragFloat("Weight Limit##inv", &inv->weightLimit, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Carry limit from the item definitions' weights (0 = none). Scripts get on_encumbered(true/false).");
             if (inv->weightLimit > 0.0f) {
                 if (ImGui::Checkbox("Slow When Over##inv", &inv->slowWhenOverWeight)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 if (inv->slowWhenOverWeight && ImGui::SliderFloat("Over-weight Speed##inv", &inv->overWeightSpeed, 0.1f, 1.0f)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 ImGui::Text("Weight: %.1f / %.1f%s", inv->TotalWeight(), inv->weightLimit, inv->OverWeight() ? "  (over)" : "");
             }
             if (ImGui::Checkbox("Keep On Scene Load##inv", &inv->keepOnSceneLoad)) ed.dirty = true;
+            if (ImGui::IsItemActivated()) ed.PushUndo();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Carry these items into the next scene (load_scene): the object with the same name there gets them.");
-            ImGui::Text("Slots: %d / %d", inv->SlotsUsed(), inv->capacity);
+            if (inv->capacity > 0) ImGui::Text("Slots: %d / %d", inv->SlotsUsed(), inv->capacity);
+            else ImGui::Text("Slots: %d / unlimited", inv->SlotsUsed());
             int eraseS = -1;
             for (int i = 0; i < (int)inv->slots.size(); ++i) {
                 ImGui::PushID(i);
                 if (ItemPicker("##invit", inv->slots[i].item, 130)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 ImGui::SameLine(); ImGui::SetNextItemWidth(70);
                 if (ImGui::DragInt("##invn", &inv->slots[i].count, 0.2f, 0, 9999)) ed.dirty = true;
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 ImGui::SameLine();
                 if (ImGui::SmallButton("X")) eraseS = i;
                 ImGui::PopID();
             }
-            if (eraseS >= 0) { inv->slots.erase(inv->slots.begin() + eraseS); ed.dirty = true; }
-            if (ImGui::SmallButton("Add Item##inv") && !inv->IsFull()) { inv->slots.push_back({"Item", 1}); ed.dirty = true; }
+            if (eraseS >= 0) { ed.PushUndo(); inv->slots.erase(inv->slots.begin() + eraseS); ed.dirty = true; }
+            if (ImGui::SmallButton("Add Item##inv") && !inv->IsFull()) { ed.PushUndo(); inv->slots.push_back({"Item", 1}); ed.dirty = true; }
             if (ImGui::SmallButton("Remove##inv")) toRemove = inv;
         }
     }
@@ -36179,7 +36344,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 const auto& it = inv->slots[idx];
                 SDL_Texture* icon = ItemThumb(okay::ItemIconPath(ui->iconFolder, it.item));
                 if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + b + 2, p0.y + b + 2), ImVec2(p1.x - b - 2, p1.y - b - 2));
-                else if (ui->showNames) dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), it.item.substr(0, ui->nameChars < 1 ? 1 : (std::size_t)ui->nameChars).c_str());
+                else if (ui->showNames) dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), okay::Utf8Prefix(it.item, ui->nameChars).c_str());
                 if (ui->showCounts && shown > 1) {
                     std::string cs = std::to_string(shown);
                     ImVec2 ts = ImGui::CalcTextSize(cs.c_str());
@@ -36215,7 +36380,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             if (!item.empty()) {
                 if (SDL_Texture* icon = ItemThumb(okay::ItemIconPath(ui->iconFolder, item)))
                     dl->AddImage((ImTextureID)icon, ImVec2(p0.x + b + 2, p0.y + b + 2), ImVec2(p1.x - b - 2, p1.y - b - 2));
-                else dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), item.substr(0, ui->nameChars < 1 ? 1 : (std::size_t)ui->nameChars).c_str());
+                else dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), okay::Utf8Prefix(item, ui->nameChars).c_str());
             } else if (!label.empty()) {
                 okay::Color tc = ui->textColor; tc.a = 0.45f;
                 dl->AddText(ImVec2(p0.x + 3, p0.y + sz * 0.5f - ImGui::GetTextLineHeight() * 0.5f), col(tc), label.c_str());
@@ -36279,7 +36444,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 dl->AddRectFilled(ImVec2(p0.x + 2, p0.y + 2), ImVec2(p1.x - 2, p1.y - 2), col(ui->slotColor), cr);
                 SDL_Texture* icon = ItemThumb(okay::ItemIconPath(ui->iconFolder, it.item));
                 if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 4, p0.y + 4), ImVec2(p1.x - 4, p1.y - 4));
-                else dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), it.item.substr(0, ui->nameChars < 1 ? 1 : (std::size_t)ui->nameChars).c_str());
+                else dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), okay::Utf8Prefix(it.item, ui->nameChars).c_str());
                 int carried = ui->dragAmount > 0 ? ui->dragAmount : it.count;
                 if (ui->showCounts && carried > 1) {
                     std::string ccs = std::to_string(carried);
@@ -40942,6 +41107,8 @@ static void DrawItemDatabase(EditorState& ed) {
     if (ImGui::Button("Reload") && !path.empty()) { db.Load(path); dirty = false; }
     for (const std::string& dup : db.DuplicateIds())
         ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f), "Duplicate id \"%s\": every item needs its own id.", dup.c_str());
+    for (const std::string& clash : db.CaseConflicts())
+        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.35f, 1.0f), "These ids match once case is ignored: %s. Pick one.", clash.c_str());
 
     ImGui::BeginChild("##items", ImVec2(230, 0), true);
     ImGui::SetNextItemWidth(-1);
@@ -42644,15 +42811,7 @@ int main(int argc, char** argv) {
             Input::FeedGamepad(padAxis, padMask);
 
             // A modal inventory/crafting/chest releases capture so you can click it.
-            bool gameModal = false;
-            for (const auto& up : ed.scene().Objects()) {
-                if (!up) continue;
-                if (auto* iu = up->GetComponent<InventoryUI>()) if (iu->open && iu->dragItems) gameModal = true;
-                if (auto* gi = up->GetComponent<GridInventory>()) if (gi->open) gameModal = true;
-                if (auto* cs = up->GetComponent<CraftingStation>()) if (cs->open) gameModal = true;
-                if (auto* ce = up->GetComponent<ChestInventory>()) if (ce->open) gameModal = true;
-                if (auto* mm = up->GetComponent<Minimap>()) if (mm->fullscreen) gameModal = true;
-            }
+            const bool gameModal = okay::QueryInventoryModal(ed.scene()).open;
             // Esc frees the cursor, even when the game itself locked it; a click on the
             // Game view takes it back.
             const Uint8* ks2 = SDL_GetKeyboardState(nullptr);

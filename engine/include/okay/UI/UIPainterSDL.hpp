@@ -6,6 +6,8 @@
 #include "okay/Graphics/Image.hpp"
 #include "okay/Graphics/TtfFont.hpp"
 #include <SDL.h>
+#include <cstdint>
+#include <filesystem>
 #include <string>
 #include <unordered_map>
 
@@ -18,16 +20,37 @@ static_assert(sizeof(Rect) == sizeof(SDL_Rect) && sizeof(FRect) == sizeof(SDL_FR
               "ui2d types must match SDL's layout");
 static_assert((int)FlipH == (int)SDL_FLIP_HORIZONTAL && (int)FlipV == (int)SDL_FLIP_VERTICAL, "flip flags");
 
-/// Load (and cache) a texture from an image file. Returns nullptr if the image can't
-/// be read; a null entry is cached for misses so a bad path isn't decoded every frame.
+inline long long IconFileMtime(const std::string& path) {
+    std::error_code ec;
+    const auto t = std::filesystem::last_write_time(path, ec);
+    return ec ? -1 : (long long)t.time_since_epoch().count();
+}
+
+/// Load (and cache) a texture from an image file. A miss is remembered, but only for
+/// half a second, and a file whose modification time changed is loaded again, so
+/// replacing an icon shows up the next time the inventory draws.
 inline SDL_Texture* LoadSDLTexture(SDL_Renderer* r, const std::string& path, const std::string& baseDir,
                                    std::unordered_map<std::string, SDL_Texture*>& cache) {
     if (path.empty()) return nullptr;
+    struct Meta { long long mtime; std::uint32_t checked; };
+    static std::unordered_map<std::string, Meta> meta;
+    const std::uint32_t now = SDL_GetTicks();
     auto it = cache.find(path);
-    if (it != cache.end()) return it->second;
+    auto mit = meta.find(path);
+    if (it != cache.end() && mit != meta.end() && now - mit->second.checked < 500)
+        return it->second;
+    const std::string alt = baseDir.empty() ? std::string() : baseDir + path;
+    long long mt = IconFileMtime(path);
+    if (mt < 0 && !alt.empty()) mt = IconFileMtime(alt);
+    if (it != cache.end() && mit != meta.end() && mit->second.mtime == mt && (it->second || mt < 0)) {
+        mit->second.checked = now;
+        return it->second;
+    }
+    if (it != cache.end() && it->second) SDL_DestroyTexture(it->second);
     Image img;
-    if (!img.Load(path) && !img.Load(baseDir + path)) {
-        cache[path] = nullptr;   // remember the miss
+    if (!img.Load(path) && (alt.empty() || !img.Load(alt))) {
+        cache[path] = nullptr;
+        meta[path] = {mt, now};
         return nullptr;
     }
     SDL_Texture* tex = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888,
@@ -37,6 +60,7 @@ inline SDL_Texture* LoadSDLTexture(SDL_Renderer* r, const std::string& path, con
         SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
     }
     cache[path] = tex;
+    meta[path] = {mt, now};
     return tex;
 }
 

@@ -55,7 +55,8 @@ public:
         return lim > 0 ? lim : 2147483647LL;
     }
     int SlotsUsed() const { int n = 0; for (const auto& s : slots) if (!Empty(s)) ++n; return n; }
-    bool IsFull() const { return SlotsUsed() >= capacity; }
+    /// `capacity <= 0` is unlimited. A saved 0 used to mean "full" here and "unlimited" in the UI.
+    bool IsFull() const { return capacity > 0 && SlotsUsed() >= capacity; }
 
     int Count(const std::string& item) const {
         int total = 0;   // sum across stacks (an item may span several once maxStack splits it)
@@ -95,7 +96,7 @@ public:
         for (const auto& s : slots) if (Empty(s)) ++holes;
         while (need > 0) {                            // then holes, then new slots up to capacity
             if (holes > 0) --holes;
-            else if (used >= capacity) break;
+            else if (capacity > 0 && used >= capacity) break;
             ++used;
             long long put = need < cap ? need : cap; fit += put; need -= put;
         }

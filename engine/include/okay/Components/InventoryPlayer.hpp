@@ -7,6 +7,8 @@
 #include "okay/Components/CameraFollow.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Inventory/InventoryEvents.hpp"
+#include "okay/Net/NetOwnership.hpp"
+#include "okay/Components/UIInputField.hpp"
 #include <string>
 #include <vector>
 
@@ -22,29 +24,47 @@ namespace okay {
 /// A minimap or cutscene camera is never "the player": only the main camera counts.
 inline GameObject* FindInventoryPlayer(const Scene* s, const std::string& preferred = "") {
     if (!s) return nullptr;
+    struct Cache {
+        const Scene* scene = nullptr;
+        std::uint64_t ver = 0;
+        std::uint64_t comp = 0;
+        std::string preferred;
+        GameObject* player = nullptr;
+    };
+    static Cache cache;
+    if (cache.scene == s && cache.ver == s->StructureVersion() && cache.comp == s->ComponentVersion()
+        && cache.preferred == preferred)
+        return cache.player;
+    GameObject* found = nullptr;
     if (!preferred.empty())
-        if (GameObject* g = s->Find(preferred)) return g;
-    GameObject* tagged = nullptr;
-    for (const auto& up : s->Objects()) {
-        GameObject* g = up.get();
-        if (!g || g->tag != "Player") continue;
-        if (g->name == "LocalPlayer") return g;   // NetworkPlayerSpawner's own player
-        if (!tagged) tagged = g;
+        if (GameObject* g = s->Find(preferred)) found = g;
+    if (!found) {
+        GameObject* tagged = nullptr;
+        for (const auto& up : s->Objects()) {
+            GameObject* g = up.get();
+            if (!g || g->tag != "Player") continue;
+            if (g->name == "LocalPlayer") { found = g; break; }   // NetworkPlayerSpawner's own player
+            if (!tagged) tagged = g;
+        }
+        if (!found) found = tagged;
     }
-    if (tagged) return tagged;
-    Camera* cam = s->mainCamera;
-    GameObject* cg = cam ? cam->gameObject : nullptr;
-    if (!cg) return nullptr;
-    if (auto* f = cg->GetComponent<CameraFollow>())
-        if (!f->targetName.empty())
-            if (GameObject* g = s->Find(f->targetName)) return g;
-    if (cam->ignoreObject) return cam->ignoreObject;
-    if (cg->transform && cg->transform->Parent()) {
-        Transform* t = cg->transform;
-        while (t->Parent()) t = t->Parent();
-        if (t->gameObject) return t->gameObject;
+    if (!found) {
+        Camera* cam = s->mainCamera;
+        GameObject* cg = cam ? cam->gameObject : nullptr;
+        if (cg) {
+            if (auto* f = cg->GetComponent<CameraFollow>())
+                if (!f->targetName.empty())
+                    if (GameObject* g = s->Find(f->targetName)) found = g;
+            if (!found && cam->ignoreObject) found = cam->ignoreObject;
+            if (!found && cg->transform && cg->transform->Parent()) {
+                Transform* t = cg->transform;
+                while (t->Parent()) t = t->Parent();
+                if (t->gameObject) found = t->gameObject;
+            }
+        }
     }
-    return nullptr;
+    cache = {s, s->StructureVersion(), s->ComponentVersion(), preferred, found};
+    return found;
 }
 
 /// Where to measure "in range" from: the player's position, else the main camera's.
@@ -103,8 +123,9 @@ public:
     }
 
     void Update(float) override {
+        if (!IsLocallyControlled(gameObject)) return;   // a remote pawn's copy ignores this keyboard
         const char key = InteractKey();
-        if (key && Input::GetKeyDown(key)) {
+        if (key && !UIInputField::AnyFocused() && Input::GetKeyDown(key)) {
             // Every instance makes the same choice, whatever order they update in.
             open = (Nearest(gameObject ? gameObject->scene() : nullptr, key) == this) ? !open : false;
         }

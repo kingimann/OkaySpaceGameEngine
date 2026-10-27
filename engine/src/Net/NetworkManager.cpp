@@ -648,12 +648,20 @@ bool NetworkManager::CookieOk(Client& c, net::Packet& p) const {
 }
 
 RaycastHit3D NetworkManager::RewindRaycast(const Vec3& origin, const Vec3& direction, float maxDistance,
-                                           double viewTick, GameObject* ignore) {
+                                           double viewTick, GameObject* ignore, std::uint32_t shooter) {
     Scene* sc = GetScene();
     if (!sc) return RaycastHit3D{};
     if (m_mode != Mode::Server || HostTickRate() <= 0.0f)
         return sc->physics3D().Raycast(*sc, origin, direction, maxDistance, ignore);
-    const double at = std::max(TickTime() - (double)HostTickRate(), std::min(TickTime(), std::isfinite(viewTick) ? viewTick : TickTime()));
+    // Same window as a hit claim. No shooter: 200 ms, not the history's second.
+    float rtt = 0.0f;
+    if (shooter != 0)
+        for (const auto& [ep, c] : m_clients)
+            if (c.id == shooter) {
+                rtt = std::min(c.rtt >= 0.0f ? c.rtt : 0.25f, std::max(0.0f, anticheat.settings.maxRewindRtt));
+                break;
+            }
+    const double at = ClampRewind(viewTick, rtt);
     std::vector<Rewound> saved = RewindTo(at);
     RaycastHit3D hit = sc->physics3D().Raycast(*sc, origin, direction, maxDistance, ignore);
     Restore(saved);

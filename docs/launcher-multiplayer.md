@@ -323,8 +323,9 @@ target is now (but wasn't seen) doesn't. The host rewinds no further than
 200 ms plus that player's round trip (the quickest of its last 8 pings, at
 most the anti-cheat's `maxRewindRtt`, 0.3 s), so claiming to have seen
 something long ago, or answering pings late, doesn't work. A claim without
-the moment it saw (an older client) is refused. Game code on the host can do the same with
-`NetworkManager::RewindRaycast(origin, direction, maxDistance, viewTick)`.
+the moment it saw (an older client) is refused. Game code on the host uses the
+same limit with `NetworkManager::RewindRaycast(origin, direction, maxDistance, viewTick, ignore, shooter)`:
+200 ms when no shooter is passed, or 200 ms plus that client's round trip.
 
 Without a fixed tick, claims are checked against where things are now, with
 the target's top speed times the shooter's ping as slack, as before.

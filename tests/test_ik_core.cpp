@@ -232,5 +232,89 @@ int main() {
         CHECK(Quat::Angle(ch0, chest->transform->localRotation) > 1.0f);
         (void)handRest;
     }
+    // ---- FullBodyIK: corrections never build up on an un-animated rig ----
+    {
+        struct Rig { Scene sc; FullBodyIK* fb = nullptr; Transform *ua = nullptr, *fa = nullptr, *hand = nullptr; };
+        auto build = [](Rig& r) {
+            GameObject* root = r.sc.CreateGameObject("Rig");
+            auto mk = [&](const char* n, GameObject* parent, Vec3 local) {
+                GameObject* o = r.sc.CreateGameObject(n);
+                o->transform->SetParent(parent->transform, false);
+                o->transform->localPosition = local;
+                return o;
+            };
+            GameObject* hips = mk("mixamorig:Hips", root, {0, 1, 0});
+            GameObject* chest = mk("mixamorig:Spine2", mk("mixamorig:Spine", hips, {0, 0.2f, 0}), {0, 0.3f, 0});
+            GameObject* lua = mk("mixamorig:LeftArm", chest, {0.2f, 0.1f, 0});
+            GameObject* lfa = mk("mixamorig:LeftForeArm", lua, {0.3f, 0, 0.02f});
+            GameObject* lh = mk("mixamorig:LeftHand", lfa, {0.3f, 0, -0.02f});
+            r.fb = root->AddComponent<FullBodyIK>();
+            r.fb->blendSpeed = 0.0f; r.fb->softness = 0.0f; r.fb->bodyPull = 0.0f; r.fb->spineReach = 0.0f;
+            r.ua = lua->transform; r.fa = lfa->transform; r.hand = lh->transform;
+            r.sc.Start();
+        };
+        Rig r; build(r);
+        const Vec3 rest = r.hand->Position();
+        const Quat restUa = r.ua->localRotation, restFa = r.fa->localRotation;
+        auto& e = r.fb->effectors[FullBodyIK::LeftHand];
+        const Vec3 goal = r.ua->Position() + Vec3{0.25f, -0.3f, 0.2f};
+        e.enabled = true; e.position = goal;
+
+        // Half weight stays half, frame after frame (no creep to the full solve).
+        r.fb->weight = 0.5f;
+        r.sc.Update(1.0f / 60.0f);
+        const Vec3 half = r.hand->Position();
+        CHECK(Dist(half, rest) > 0.05f);
+        CHECK(Dist(half, goal) > 0.05f);
+        for (int i = 0; i < 60; ++i) r.sc.Update(1.0f / 60.0f);
+        CHECK(Dist(r.hand->Position(), half) < 1e-4f);
+        // A bone chain turns, it isn't stretched.
+        CHECK_NEAR(Dist(r.ua->Position(), r.fa->Position()), Dist(Vec3{0, 0, 0}, Vec3{0.3f, 0, 0.02f}), 1e-4f);
+        CHECK_NEAR(Dist(r.fa->Position(), r.hand->Position()), Dist(Vec3{0, 0, 0}, Vec3{0.3f, 0, -0.02f}), 1e-4f);
+
+        // Goal released: the arm is back on its own pose the same frame.
+        e.enabled = false;
+        r.sc.Update(1.0f / 60.0f);
+        CHECK(Dist(r.hand->Position(), rest) < 1e-4f);
+        CHECK(std::fabs(Quat::Dot(r.ua->localRotation, restUa)) > 0.99999f);
+        CHECK(std::fabs(Quat::Dot(r.fa->localRotation, restFa)) > 0.99999f);
+
+        // A broken goal (NaN) leaves the arm on its pose; nothing goes NaN.
+        e.enabled = true; r.fb->weight = 1.0f;
+        e.position = Vec3{std::nanf(""), 0, 0};
+        for (int i = 0; i < 3; ++i) r.sc.Update(1.0f / 60.0f);
+        CHECK(Finite(r.hand->Position()));
+        CHECK(Dist(r.hand->Position(), rest) < 1e-4f);
+        e.position = goal;
+        r.sc.Update(1.0f / 60.0f);
+        CHECK(Dist(r.hand->Position(), goal) < 0.01f);
+
+        // Goal smoothing looks the same at 30 and 144 fps.
+        Rig a, b; build(a); build(b);
+        for (Rig* x : {&a, &b}) {
+            x->fb->goalSmoothing = 4.0f;
+            auto& ex = x->fb->effectors[FullBodyIK::LeftHand];
+            ex.enabled = true; ex.position = x->ua->Position() + Vec3{0.3f, -0.2f, 0.25f};
+            x->sc.Update(1.0f / 60.0f);
+            ex.position = x->ua->Position() + Vec3{0.1f, -0.4f, 0.3f};
+        }
+        for (int i = 0; i < 15; ++i) a.sc.Update(1.0f / 30.0f);
+        for (int i = 0; i < 72; ++i) b.sc.Update(1.0f / 144.0f);
+        CHECK(Dist(a.hand->Position(), b.hand->Position()) < 2e-3f);
+
+        // Per-limb joint limits save and load.
+        r.fb->effectors[FullBodyIK::RightFoot].lowerLimit = IKJointLimit::Knee();
+        Scene loaded;
+        CHECK(SceneSerializer::Deserialize(loaded, SceneSerializer::Serialize(r.sc)));
+        GameObject* lr = loaded.Find("Rig");
+        FullBodyIK* lf = lr ? lr->GetComponent<FullBodyIK>() : nullptr;
+        CHECK(lf != nullptr);
+        if (lf) {
+            CHECK(lf->effectors[FullBodyIK::RightFoot].lowerLimit.type == IKJointLimit::Type::Hinge);
+            CHECK(!lf->effectors[FullBodyIK::RightFoot].upperLimit.Active());
+            CHECK(!lf->effectors[FullBodyIK::LeftHand].lowerLimit.Active());
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

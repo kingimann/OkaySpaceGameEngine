@@ -29466,6 +29466,9 @@ void DrawInspector(EditorState& ed) {
                         ImGui::DragFloat("Position Weight##fe", &e.positionWeight, 0.01f, 0.0f, 1.0f);
                         ImGui::DragFloat("Rotation Weight##fe", &e.rotationWeight, 0.01f, 0.0f, 1.0f);
                         ImGui::DragFloat("Body Pull##fe", &e.pull, 0.01f, 0.0f, 1.0f);
+                        const bool leg = l >= FullBodyIK::LeftFoot;
+                        if (IKJointLimitUI(leg ? "Hip limit##fe" : "Shoulder limit##fe", e.upperLimit)) ed.dirty = true;
+                        if (IKJointLimitUI(leg ? "Knee limit##fe" : "Elbow limit##fe", e.lowerLimit)) ed.dirty = true;
                         ImGui::TreePop();
                     }
                     ImGui::PopID();

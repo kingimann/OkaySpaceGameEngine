@@ -29,22 +29,6 @@ inline bool ResolveGrounded(GroundLatch& g, bool contact, float vy) {
     return contact || (std::fabs(vy) < 0.5f && !g.left);
 }
 
-/// Near-zero vertical speed is not ground on its own: the apex of a jump passes
-/// through it. A real contact (or terrain) is ground. The speed heuristic still
-/// counts until the body has left the ground, so a resting body with no fresh
-/// contact can still jump. A jump, or a real fall, sticks until a contact or
-/// until the body has fallen and then settled.
-struct GroundLatch {
-    bool left = false;   ///< jumped or fell; the |vy| heuristic is off
-    bool fell = false;   ///< vy has been a real fall since leaving
-};
-inline bool ResolveGrounded(GroundLatch& g, bool contact, float vy) {
-    if (contact) { g.left = false; g.fell = false; }
-    else if (vy < -0.5f) { g.left = true; g.fell = true; }
-    else if (g.left && g.fell && std::fabs(vy) < 0.5f) { g.left = false; g.fell = false; }
-    return contact || (std::fabs(vy) < 0.5f && !g.left);
-}
-
 /// Stair step-up shared by the character controllers: when a GROUNDED, moving
 /// body is blocked by a LOW obstacle (a stair, a curb), lift it onto the step
 /// instead of letting it grind against the face. Three probes decide it:

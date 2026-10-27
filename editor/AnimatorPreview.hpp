@@ -277,7 +277,9 @@ inline bool StartCharacterClip(Scene& sc, Character* ch, const std::string& clip
 
 inline bool StartCharacterState(Scene& sc, Character* ch, const AnimStateMachine::State& st, bool inPlay) {
     if (!ch || !ch->gameObject) return false;
-    const std::string clip = MiddleMotion(st);
+    std::string clip = MiddleMotion(st);
+    if (!BodyClip(ch, clip) && !st.fallbackClip.empty() && BodyClip(ch, st.fallbackClip))
+        clip = st.fallbackClip;
     if (!BodyClip(ch, clip)) return false;
     const bool loop = st.blendTree || st.loop;
     Begin(sc, ch->gameObject, Kind::State, st.name, loop, st.speed, inPlay);
@@ -303,7 +305,9 @@ inline bool StartModel(Scene& sc, ModelAnimator* ma, const std::string& clip, fl
 
 inline bool StartModelState(Scene& sc, ModelAnimator* ma, const AnimStateMachine::State& st, bool inPlay) {
     if (!ma) return false;
-    const std::string clip = MiddleMotion(st);
+    std::string clip = MiddleMotion(st);
+    if (ma->FindClip(clip) < 0 && !st.fallbackClip.empty() && ma->FindClip(st.fallbackClip) >= 0)
+        clip = st.fallbackClip;
     const bool loop = st.blendTree || st.loop;
     if (!StartModel(sc, ma, clip, st.speed, loop, inPlay)) return false;
     Preview& p = Cur();

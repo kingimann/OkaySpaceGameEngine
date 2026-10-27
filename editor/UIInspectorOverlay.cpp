@@ -53,6 +53,40 @@ void DrawUIOverlayComponentInspector(Component* comp, EditorState& ed, Component
             if (ImGui::Checkbox("Click Outside Closes##umd", &md->closeOnClickOutside)) ed.dirty = true;
             ImGui::TextDisabled("While shown, only widgets inside this object take input.");
             ImGui::TextDisabled("Buttons: On Click -> this object, Open / Close.");
+            // grok/ui-toast
+            ImGui::Separator();
+            if (ImGui::Checkbox("Style Card##umd", &md->styleCard)) ed.dirty = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Restyle children named Card, Title, Message, ConfirmButton and CancelButton.");
+            if (md->styleCard) {
+                if (ImGui::DragFloat("Card Radius##umd", &md->cardRadius, 0.2f, 0.0f, 80.0f)) ed.dirty = true;
+                EditColor("Card##umd", md->cardColor, ed);
+                EditColor("Title Color##umd", md->titleColor, ed);
+                EditColor("Body Color##umd", md->bodyColor, ed);
+                EditColor("Confirm Color##umd", md->confirmColor, ed);
+                EditColor("Cancel Color##umd", md->cancelColor, ed);
+                EditText("Title Text##umd", md->titleText, ed);
+                EditText("Message Text##umd", md->bodyText, ed);
+                EditText("Confirm Label##umd", md->confirmText, ed);
+                EditText("Cancel Label##umd", md->cancelText, ed);
+                ImGui::TextDisabled("Empty text leaves the label that was already on the widget.");
+            }
+        }
+        return;
+    }
+    if (auto* toast = dynamic_cast<UIToast*>(comp)) {
+        if (hooks.header("UI Toast", toast, toRemove, true)) {
+            const char* corners[] = {"Top Right", "Top Left", "Bottom Right", "Bottom Left", "Top Center"};
+            if (ImGui::Combo("Corner##toast", &toast->corner, corners, 5)) ed.dirty = true;
+            if (ImGui::DragFloat("Duration##toast", &toast->duration, 0.05f, 0.05f, 60.0f)) ed.dirty = true;
+            if (ImGui::DragInt("Max Stack##toast", &toast->maxStack, 0.1f, 1, 12)) ed.dirty = true;
+            if (ImGui::DragFloat("Margin##toast", &toast->margin, 0.5f, 0.0f, 400.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Gap##toast", &toast->gap, 0.25f, 0.0f, 80.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Width##toast", &toast->width, 1.0f, 80.0f, 800.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Height##toast", &toast->height, 0.5f, 32.0f, 240.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Show Icon##toast", &toast->showIcon)) ed.dirty = true;
+            ImGui::TextDisabled("toast_push(title, body, kind). Kind 0 info, 1 success, 2 warning, 3 error.");
+            ImGui::TextDisabled("A click dismisses that toast and fires on_click on this object.");
         }
         return;
     }
@@ -117,6 +151,7 @@ void BuildUIModalDialog(GameObject* g) {
     b->clickTarget = g->name; b->clickFunction = "Close";   // closes this dialog, no script needed
 }
 
+void BuildUIToast(GameObject* g) { g->AddComponent<UIToast>(); }   // grok/ui-toast
 void BuildUIKeybindField(GameObject* g) { g->AddComponent<UIKeybindField>(); }
 
 void BuildUIContextMenu(GameObject* g) {

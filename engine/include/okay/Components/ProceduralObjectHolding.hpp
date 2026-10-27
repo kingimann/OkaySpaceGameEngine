@@ -15,18 +15,23 @@
 // (bones found by name). Grips come from the object's HoldableObject (one is
 // added with automatic settings if the object has none).
 //
-// Dropping hands the object back to physics and the hands ease back to the
-// animation.
+// Dropping hands the object back to physics (it keeps the holder's velocity) and
+// the hands ease back to the animation. Throwing is separate: hold the throw
+// input to charge, release to launch the object along the camera aim, strength
+// scaled by that charge plus the holder's velocity.
 // ---------------------------------------------------------------------------
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
+#include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
 #include "okay/Components/FullBodyIK.hpp"
 #include "okay/Components/HoldableObject.hpp"
+#include "okay/Core/Game.hpp"
+#include "okay/Input/Input.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Math/Quat.hpp"
@@ -55,6 +60,20 @@ public:
     bool      bodyAdjustment = true;                   ///< heavy / big loads: lean back, walk slower, kept off the body
     CarryAnim carryAnimations = CarryAnim::Automatic;  ///< Automatic: the built-in lean; Custom: your Animator's carry
                                                        ///< states, driven by the holding / carryStyle / carryWeight params
+
+    // Throw. Hold the key, mouse button or pad button to charge; releasing launches
+    // the object. Drop() is unchanged (it only lets go, at the holder's velocity).
+    char  throwKey = 'g';            ///< hold to charge, release to throw (0 = no key)
+    int   throwMouseButton = 2;      ///< mouse button that throws (-1 = none; 0 left, 1 right, 2 middle)
+    int   throwGamepadButton = 2;    ///< pad button (0=A 1=B 2=X 3=Y ...; -1 = none)
+    float throwChargeTime = 0.75f;   ///< seconds held to reach full strength
+    float throwMinSpeed = 4.0f;      ///< launch speed (m/s) with no charge, along the aim
+    float throwMaxSpeed = 16.0f;     ///< launch speed (m/s) at full charge
+    float pickupRange = 2.0f;        ///< with empty hands, pressing the throw input picks up the nearest object this close
+
+    /// 0..1 while the throw input is held, else 0.
+    float ThrowCharge() const { return m_charge; }
+    bool  IsChargingThrow() const { return m_charging; }
 
     /// Take `obj` into the hands. Refused when it's already held (by anyone), is
     /// this character or part of it, or is null. Holding something else drops it.
@@ -117,6 +136,34 @@ public:
         Forget();
     }
 
+    /// Launch the held object along the camera aim (the camera's -Z; the body's
+    /// forward if there is no camera). `charge01` < 0 uses the charge built by
+    /// holding the throw input. Speed is minSpeed + charge * (maxSpeed - minSpeed),
+    /// added to the holder's velocity. A kinematic body becomes dynamic so it can
+    /// fly; a static body is let go the way Drop() would. Returns false when
+    /// nothing is held.
+    bool Throw(float charge01 = -1.0f) {
+        if (!m_held || m_held->IsDestroyed()) return false;
+        const float c = charge01 < 0.0f ? m_charge : std::clamp(charge01, 0.0f, 1.0f);
+        const float lo = std::min(throwMinSpeed, throwMaxSpeed);
+        const float hi = std::max(throwMinSpeed, throwMaxSpeed);
+        const Vec3 vel = HolderVelocity() + AimDirection() * (lo + c * (hi - lo));
+        if (m_rb) {
+            if (m_rbType == Rigidbody3D::BodyType::Static) m_rb->bodyType = m_rbType;
+            else m_rb->bodyType = Rigidbody3D::BodyType::Dynamic;
+            if (m_rb->bodyType == Rigidbody3D::BodyType::Dynamic) {
+                m_rb->velocity = vel;
+                m_rb->angularVelocity = Vec3::Zero;
+                m_rb->continuousCollision = true;   // a fast throw shouldn't tunnel a wall
+                m_rb->WakeUp();
+            }
+        }
+        for (auto& p : m_physics) if (p.c) p.c->isTrigger = p.trigger;
+        if (m_hold && m_hold->m_holder == gameObject) m_hold->m_holder = nullptr;
+        Forget();
+        return true;
+    }
+
     GameObject* Held() const { return m_held; }
     bool IsHolding() const { return m_held != nullptr; }
     /// Whether hand `left`/right is on the object this frame.
@@ -135,6 +182,26 @@ public:
     HoldableObject::Style CarryStyle() const { return m_style; }
 
     void Start() override { EnsureRig(); }
+
+    // Charge while the throw input is held; release launches. With empty hands the
+    // same press picks up the nearest object, so a tap takes it and holding on
+    // throws. Paused time and a modal UI (an open inventory) don't charge or throw.
+    void Update(float dt) override {
+        if (dt <= 0.0f || Input::UICaptured() || Game::Paused()) return;
+        if (!m_held) {
+            m_charging = false;
+            m_charge = 0.0f;
+            if (ThrowPressed()) PickupNearest(pickupRange);
+            return;
+        }
+        if (ThrowHeld()) {
+            m_charging = true;
+            const float dur = throwChargeTime > 1e-3f ? throwChargeTime : 1e-3f;
+            m_charge = std::min(1.0f, m_charge + dt / dur);
+        } else if (m_charging) {
+            Throw(m_charge);
+        }
+    }
 
     void LateUpdate(float dt) override {
         if (m_releasing) FinishRelease(false);
@@ -243,6 +310,42 @@ private:
     Quat  m_fromRot;
     bool  m_haveFrom = false;
     float m_t = 1.0f;
+    float m_charge = 0.0f;          ///< 0..1 throw charge while the input is held
+    bool  m_charging = false;
+
+    bool ThrowHeld() const {
+        if (throwKey && Input::GetKey(throwKey)) return true;
+        if (throwMouseButton >= 0 && Input::GetMouseButton(throwMouseButton)) return true;
+        if (throwGamepadButton >= 0 && Input::GetGamepadButton(throwGamepadButton)) return true;
+        return false;
+    }
+    bool ThrowPressed() const {
+        if (throwKey && Input::GetKeyDown(throwKey)) return true;
+        if (throwMouseButton >= 0 && Input::GetMouseButtonDown(throwMouseButton)) return true;
+        if (throwGamepadButton >= 0 && Input::GetGamepadButtonDown(throwGamepadButton)) return true;
+        return false;
+    }
+    Vec3 HolderVelocity() const {
+        if (auto* own = BodyRigidbody()) return own->velocity;
+        return Vec3::Zero;
+    }
+    /// Where a throw goes: the main camera's aim (local -Z), else the body's forward.
+    Vec3 AimDirection() const {
+        Scene* sc = gameObject ? gameObject->scene() : nullptr;
+        Camera* cam = sc ? sc->mainCamera : nullptr;
+        if ((!cam || !cam->transform) && sc)
+            for (auto* c : sc->FindObjectsOfType<Camera>())
+                if (c && c->enabled && c->transform && c->main) { cam = c; break; }
+        if (cam && cam->transform) {
+            Vec3 d = cam->transform->Rotation() * Vec3{0, 0, -1};
+            if (d.SqrMagnitude() > 1e-8f) return d.Normalized();
+        }
+        if (Transform* bt = BodyTransform()) {
+            Vec3 d = bt->Rotation() * Vec3{0, 0, -1};
+            if (d.SqrMagnitude() > 1e-8f) return d.Normalized();
+        }
+        return {0, 0, -1};
+    }
 
     Transform* BodyTransform() const { return m_char && m_char->transform ? m_char->transform : transform; }
     Rigidbody3D* BodyRigidbody() const {
@@ -680,6 +783,7 @@ private:
     void Forget() {
         m_held = nullptr; m_hold = nullptr; m_rb = nullptr; m_physics.clear();
         m_use[0] = m_use[1] = false;
+        m_charge = 0.0f; m_charging = false;
         if (m_ik) { m_ik->effectors[0].enabled = false; m_ik->effectors[1].enabled = false; }
         m_releasing = m_savedValid;
     }

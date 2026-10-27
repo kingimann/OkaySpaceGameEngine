@@ -75,6 +75,11 @@ public:
     /// Color-transition speed (units/sec) for hover/press; 0 = instant (the
     /// ColorTween). The renderer should use DisplayColor().
     float transitionSpeed = 0.0f;
+    // grok/ui-options: easing. Duration 0 and ease 0 keep the old instant (or speed) path.
+    int   transitionEase = 0;          // 0 linear, 1 smooth, 2 ease-out, 3 ease-in
+    float transitionDuration = 0.0f;   // seconds to reach the state color; 0 = use transitionSpeed
+    bool  separateFocus = false;       // when set, keyboard focus uses focusColor instead of hover
+    Color focusColor = Color::FromBytes(92, 166, 252);
     /// Toggle button: a click flips `isOn` and the button stays in its pressed
     /// color while on (radio/check style). on_click() still fires each click.
     bool toggleMode = false;
@@ -100,6 +105,11 @@ public:
 
     /// Activate as if clicked (keyboard/gamepad). Fires on_click and reports
     /// WasClicked() for this frame.
+    void SetEase(int ease, float seconds) {
+        transitionEase = ease;
+        transitionDuration = seconds < 0.0f ? 0.0f : seconds;
+    }
+    void SetInteractable(bool on) { interactable = on; }
     void Press() {
         if (!interactable) return;
         if (toggleMode) isOn = !isOn;
@@ -115,12 +125,21 @@ public:
     Color CurrentColor() const {
         if (!interactable)            return disabledColor;
         if (m_pressed || (toggleMode && isOn)) return pressedColor;
+        if (separateFocus && m_focused && !m_hover) return focusColor;
         if (m_hover || m_focused)     return hoverColor;
         return color;
     }
     /// The color the renderer should draw: smoothly eased toward CurrentColor()
-    /// when transitionSpeed > 0, else the state color directly.
-    Color DisplayColor() const { return transitionSpeed > 0.0f ? m_display : CurrentColor(); }
+    /// when a transition is set, else the state color directly.
+    Color DisplayColor() const {
+        return (transitionSpeed > 0.0f || transitionDuration > 0.0f) ? m_display : CurrentColor();
+    }
+    /// Scale the renderer should apply. Defaults match the old instant hover grow.
+    float DisplayScale() const {
+        if (transitionDuration <= 0.0f && transitionEase == 0)
+            return (hoverScale != 1.0f && (m_hover || m_focused)) ? hoverScale : 1.0f;
+        return m_scale;
+    }
     /// Text color for the current state (hover/focus uses hoverTextColor).
     Color CurrentTextColor() const { return (m_hover || m_focused) ? hoverTextColor : textColor; }
     /// Downward push for the label/icon while pressed (or toggled on), in px.
@@ -200,12 +219,19 @@ private:
     }
     void EaseColor(float dt) {
         Color t = CurrentColor();
-        if (transitionSpeed <= 0.0f) { m_display = t; return; }
-        float k = transitionSpeed * dt; if (k > 1.0f) k = 1.0f;
+        float targetScale = (interactable && (m_hover || m_focused)) ? hoverScale : 1.0f;
+        const bool timed = transitionDuration > 0.0f || transitionSpeed > 0.0f;
+        if (!timed) { m_display = t; m_scale = targetScale; return; }
+        float k = transitionDuration > 0.0f ? dt / transitionDuration : transitionSpeed * dt;
+        if (k > 1.0f) k = 1.0f;
+        if (transitionEase == 1) k = k * k * (3.0f - 2.0f * k);
+        else if (transitionEase == 2) k = 1.0f - (1.0f - k) * (1.0f - k);
+        else if (transitionEase == 3) k = k * k;
         m_display.r += (t.r - m_display.r) * k;
         m_display.g += (t.g - m_display.g) * k;
         m_display.b += (t.b - m_display.b) * k;
         m_display.a += (t.a - m_display.a) * k;
+        m_scale += (targetScale - m_scale) * k;
     }
 
     bool m_hover = false;
@@ -214,6 +240,7 @@ private:
     bool m_tapArmed = false;   // a finger went down on it; fires when lifted without dragging
     bool m_focused = false;
     float m_repeat = 0.0f;
+    float m_scale = 1.0f;
     Color m_display = Color::FromBytes(60, 90, 150);
 };
 

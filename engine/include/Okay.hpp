@@ -136,6 +136,7 @@
 #include "okay/Components/UIMask.hpp"
 #include "okay/Components/UIFrame.hpp"
 #include "okay/Components/UIModal.hpp"
+#include "okay/Components/UIToast.hpp"   // grok/ui-toast
 #include "okay/Components/UIContextMenu.hpp"
 #include "okay/Components/UIKeybindField.hpp"
 #include "okay/Components/UIListView.hpp"
@@ -143,6 +144,7 @@
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/UITooltip.hpp"
+#include "okay/Components/UITheme.hpp"          // grok/ui-theme
 #include "okay/Components/UITextBind.hpp"
 #include "okay/Components/UIBarBind.hpp"
 #include "okay/Components/UIDraggable.hpp"

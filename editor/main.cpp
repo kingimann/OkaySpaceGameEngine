@@ -1118,6 +1118,7 @@ static void SetupHumanoidIK(EditorState& ed, GameObject* root) {
     int legs = foot->DetectHumanoidBones(ed.scene(), root);
     foot->orient = true; foot->alignToGround = true; foot->footLock = true;
     foot->adjustPelvis = !foot->pelvisName.empty();
+    foot->hipLimit = IKJointLimit::Hip(); foot->kneeLimit = IKJointLimit::Knee();
     auto* fb = root->GetComponent<FullBodyIK>();
     if (!fb) fb = root->AddComponent<FullBodyIK>();
     int mapped = fb->MapBones(true);
@@ -29146,8 +29147,17 @@ void DrawInspector(EditorState& ed) {
                 ImGui::Checkbox("Plant Down##fik", &f->plantDown);
                 ImGui::Checkbox("Align To Slope##fik", &f->alignToGround); ImGui::SameLine();
                 ImGui::Checkbox("Orient Bones##fik", &f->orient);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also rotate the thigh/shin bones to follow the planted knee/foot,\nso leg meshes bend with the joints (not just the joints moving).");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Joints that aren't parented in a chain: also rotate the thigh/shin\nbones toward the moved knee/foot. A parented leg always turns.");
+                if (f->alignToGround) {
+                    float ul[3] = {f->footUpAxis.x, f->footUpAxis.y, f->footUpAxis.z};
+                    float ur[3] = {f->footUpAxisR.x, f->footUpAxisR.y, f->footUpAxisR.z};
+                    if (ImGui::DragFloat3("Sole Up L##fik", ul, 0.05f)) { f->footUpAxis = {ul[0], ul[1], ul[2]}; ed.dirty = true; }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The foot bone's local sole normal. Left at (0,1,0), it's read\nfrom that foot's own rest pose, so mirrored rigs just work.");
+                    if (ImGui::DragFloat3("Sole Up R##fik", ur, 0.05f)) { f->footUpAxisR = {ur[0], ur[1], ur[2]}; ed.dirty = true; }
+                }
                 ImGui::DragFloat("Max Knee Bend##fik", &f->maxKneeBend, 1.0f, 0.0f, 180.0f);
+                if (IKJointLimitUI("Hip limit##fik", f->hipLimit)) ed.dirty = true;
+                if (IKJointLimitUI("Knee limit##fik", f->kneeLimit)) ed.dirty = true;
                 ImGui::DragFloat("Smoothing##fik", &f->smoothing, 0.5f, 0.0f, 40.0f);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast corrections ease in/out (per second).\nStops feet popping at step edges. 0 = instant.");
                 if (ImGui::SmallButton("Remove##fik")) toRemove = f;

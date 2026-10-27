@@ -212,6 +212,7 @@ inline void WireCharacterIK(GameObject* player, Character* pc) {
     fik->adjustPelvis = true; fik->plantDown = true; fik->alignToGround = true;
     fik->orient = true;   // turn the thigh and shin parts with the joints, or they come apart
     fik->maxPelvisShift = 0.35f;
+    fik->hipLimit = IKJointLimit::Hip(); fik->kneeLimit = IKJointLimit::Knee();
     auto* rm = player->AddComponent<RootMotion>();
     rm->rootNode = T(0);
     rm->mode = (int)RootMotion::Mode::Disabled;

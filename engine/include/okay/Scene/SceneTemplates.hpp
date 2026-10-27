@@ -1272,7 +1272,7 @@ inline void VoxelSandbox(Scene& scene) {
     // Something to pick up and throw, a step in front of the spawn.
     {
         GameObject* crate = scene.CreateGameObject("Crate");
-        crate->transform->localPosition = {1.4f, surfY + 0.55f, -1.6f};
+        crate->transform->localPosition = {0.7f, surfY + 0.6f, -0.9f};
         crate->transform->localScale = {0.45f, 0.45f, 0.45f};
         auto* mr = crate->AddComponent<MeshRenderer>();
         mr->mesh = Mesh::Cube();

@@ -12,6 +12,11 @@
 #include "okay/Math/Quat.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Components/PlayerView.hpp"
+#include "okay/Components/UIDropdown.hpp"      // grok/ui-controls
+#include "okay/Components/UIScrollView.hpp"
+#include "okay/Components/UITabs.hpp"
+#include "okay/Components/UITooltip.hpp"
+#include "okay/Components/UIInputField.hpp"
 #include <cmath>
 #include <set>
 
@@ -312,6 +317,108 @@ EngineApi Build() {
         get.pure = true;
         pv.methods.push_back(std::move(get));
         api.types.push_back(std::move(pv));
+    }
+    // ---- grok/ui-controls: visual-script nodes for the new widget options. ----
+    {
+        auto need = [](auto* c, const char* what, CallContext& ctx) {
+            if (!c) throw RuntimeError(std::string("This object has no ") + what, ctx.loc);
+            return c;
+        };
+        {
+            ApiType dd; dd.name = "UIDropdown"; dd.isComponent = true;
+            dd.doc = "A dropdown. Search, a row cap and per-option glyphs are optional.";
+            dd.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIDropdown>() : nullptr; };
+            auto of = [need](const Value& self, CallContext& c) {
+                return need(Resolve(std::get<ObjRef>(self), c.loc)->GetComponent<UIDropdown>(), "UI Dropdown", c);
+            };
+            dd.methods.push_back(method("SetSearchable", {tBool}, {"on"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetSearchable(std::get<bool>(a[0])); return Value{}; },
+                "Show a search row that filters the options while the list is open."));
+            dd.methods.push_back(method("SetMaxVisible", {tInt}, {"rows"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetMaxVisible(I(a[0])); return Value{}; },
+                "How many matching options the open list shows. 0 shows every match."));
+            dd.methods.push_back(method("SetOptionIcon", {tInt, tString}, {"index", "glyph"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetOptionIcon(I(a[0]), S(a[0 + 1])); return Value{}; },
+                "A short glyph drawn in front of one option."));
+            ApiMethod q = method("Searchable", {}, {}, tBool,
+                [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->Searchable()}; },
+                "True when the open list has a search row.");
+            q.pure = true; dd.methods.push_back(std::move(q));
+            api.types.push_back(std::move(dd));
+        }
+        {
+            ApiType sv; sv.name = "UIScrollView"; sv.isComponent = true;
+            sv.doc = "A scroll view. Inertia, elastic edges and the bar style are optional.";
+            sv.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIScrollView>() : nullptr; };
+            auto of = [need](const Value& self, CallContext& c) {
+                return need(Resolve(std::get<ObjRef>(self), c.loc)->GetComponent<UIScrollView>(), "UI Scroll View", c);
+            };
+            sv.methods.push_back(method("SetInertia", {tFloat}, {"rate"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetInertia(F(a[0])); return Value{}; },
+                "Wheel glide. 0 scrolls one notch immediately. Higher stops the glide sooner."));
+            sv.methods.push_back(method("SetElastic", {tBool}, {"on"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetElastic(std::get<bool>(a[0])); return Value{}; },
+                "Let the content pass the ends, then spring back."));
+            sv.methods.push_back(method("SetBarStyle", {tInt}, {"style"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetBarStyle(I(a[0])); return Value{}; },
+                "Scrollbar: 0 the usual bar, 1 thin, 2 hidden until the view is scrolling."));
+            api.types.push_back(std::move(sv));
+        }
+        {
+            ApiType tb; tb.name = "UITabs"; tb.isComponent = true;
+            tb.doc = "A tab bar. Closable tabs fire on_tab_close. Vertical is a style.";
+            tb.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UITabs>() : nullptr; };
+            auto of = [need](const Value& self, CallContext& c) {
+                return need(Resolve(std::get<ObjRef>(self), c.loc)->GetComponent<UITabs>(), "UI Tabs", c);
+            };
+            tb.methods.push_back(method("SetClosable", {tBool}, {"on"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetClosable(std::get<bool>(a[0])); return Value{}; },
+                "Draw an X on each tab. Clicking it removes that tab."));
+            tb.methods.push_back(method("CloseTab", {tInt}, {"index"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->CloseTab(I(a[0])); return Value{}; },
+                "Remove one tab and fire on_tab_close."));
+            ApiMethod n = method("Count", {}, {}, tInt,
+                [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{(std::int32_t)of(s, c)->Count()}; },
+                "How many tabs are left.");
+            n.pure = true; tb.methods.push_back(std::move(n));
+            api.types.push_back(std::move(tb));
+        }
+        {
+            ApiType tt; tt.name = "UITooltip"; tt.isComponent = true;
+            tt.doc = "A hover tooltip. It already waits and follows the cursor. Rich text and the offset are optional.";
+            tt.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UITooltip>() : nullptr; };
+            auto of = [need](const Value& self, CallContext& c) {
+                return need(Resolve(std::get<ObjRef>(self), c.loc)->GetComponent<UITooltip>(), "UI Tooltip", c);
+            };
+            tt.methods.push_back(method("SetRichText", {tBool}, {"on"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetRichText(std::get<bool>(a[0])); return Value{}; },
+                "Draw <b> and #rrggbb in the tooltip text."));
+            tt.methods.push_back(method("SetOffset", {tFloat, tFloat}, {"x", "y"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetOffset(F(a[0]), F(a[1])); return Value{}; },
+                "Pixels from the cursor to the box. 14, 14 is the usual spot."));
+            tt.methods.push_back(method("SetDelay", {tFloat}, {"seconds"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetDelay(F(a[0])); return Value{}; },
+                "How long the pointer must hover before the tooltip shows."));
+            api.types.push_back(std::move(tt));
+        }
+        {
+            ApiType inf; inf.name = "UIInputField"; inf.isComponent = true;
+            inf.doc = "A text field. Password, a character limit and integer or decimal mode already exist. Multiline is optional.";
+            inf.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIInputField>() : nullptr; };
+            auto of = [need](const Value& self, CallContext& c) {
+                return need(Resolve(std::get<ObjRef>(self), c.loc)->GetComponent<UIInputField>(), "UI Input Field", c);
+            };
+            inf.methods.push_back(method("SetMultiline", {tBool}, {"on"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetMultiline(std::get<bool>(a[0])); return Value{}; },
+                "Enter inserts a newline instead of submitting."));
+            inf.methods.push_back(method("SetMaxLength", {tInt}, {"length"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetMaxLength(I(a[0])); return Value{}; },
+                "The most characters the field accepts."));
+            inf.methods.push_back(method("SetContentType", {tInt}, {"type"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetContentType(I(a[0])); return Value{}; },
+                "0 standard, 1 integer, 2 decimal, 3 password."));
+            api.types.push_back(std::move(inf));
+        }
     }
     // ---- Input ----
     {

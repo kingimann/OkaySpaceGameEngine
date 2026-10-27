@@ -62,6 +62,8 @@
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/UITabs.hpp"
+#include "okay/Components/UIScrollView.hpp"   // grok/ui-controls
+#include "okay/Components/UITooltip.hpp"
 #include "okay/Components/Tilemap.hpp"
 #include "okay/Components/NPCController.hpp"
 #include "okay/Components/Spawner.hpp"
@@ -3855,6 +3857,77 @@ struct OkayScriptVM::Impl {
         b["ui_set_progress"] = [sceneOf](std::vector<Value>& a) {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
                 if (auto* pb = g->GetComponent<UIProgressBar>()) pb->value = a[1].AsFloat();
+            return Value{};
+        };
+        // grok/ui-controls: the options added on top of dropdown, scroll, tabs, tooltip and text fields.
+        b["set_dropdown_search"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* dd = g->GetComponent<UIDropdown>()) dd->SetSearchable(a[1].AsBool());
+            return Value{};
+        };
+        b["set_dropdown_max"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* dd = g->GetComponent<UIDropdown>()) dd->SetMaxVisible((int)a[1].AsFloat());
+            return Value{};
+        };
+        b["set_dropdown_icon"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 3) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* dd = g->GetComponent<UIDropdown>()) dd->SetOptionIcon((int)a[1].AsFloat(), a[2].AsString());
+            return Value{};
+        };
+        b["set_scroll_inertia"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* sv = g->GetComponent<UIScrollView>()) sv->SetInertia(a[1].AsFloat());
+            return Value{};
+        };
+        b["set_scroll_elastic"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* sv = g->GetComponent<UIScrollView>()) sv->SetElastic(a[1].AsBool());
+            return Value{};
+        };
+        b["set_scroll_bar"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* sv = g->GetComponent<UIScrollView>()) sv->SetBarStyle((int)a[1].AsFloat());
+            return Value{};
+        };
+        b["set_tabs_closable"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tb = g->GetComponent<UITabs>()) tb->SetClosable(a[1].AsBool());
+            return Value{};
+        };
+        b["close_tab"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tb = g->GetComponent<UITabs>()) tb->CloseTab((int)a[1].AsFloat());
+            return Value{};
+        };
+        b["set_tooltip_rich"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tt = g->GetComponent<UITooltip>()) tt->SetRichText(a[1].AsBool());
+            return Value{};
+        };
+        b["set_tooltip_offset"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 3) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tt = g->GetComponent<UITooltip>()) tt->SetOffset(a[1].AsFloat(), a[2].AsFloat());
+            return Value{};
+        };
+        b["set_tooltip_delay"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* tt = g->GetComponent<UITooltip>()) tt->SetDelay(a[1].AsFloat());
+            return Value{};
+        };
+        b["set_input_multiline"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* in = g->GetComponent<UIInputField>()) in->SetMultiline(a[1].AsBool());
+            return Value{};
+        };
+        b["set_input_limit"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* in = g->GetComponent<UIInputField>()) in->SetMaxLength((int)a[1].AsFloat());
+            return Value{};
+        };
+        b["set_input_type"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* in = g->GetComponent<UIInputField>()) in->SetContentType((int)a[1].AsFloat());
             return Value{};
         };
         b["ui_set_fill"] = [sceneOf](std::vector<Value>& a) {
@@ -8397,6 +8470,8 @@ std::string ResolveEventHandler(const Functions& functions, const std::string& f
         {"on_mouse_up",    {"OnMouseUp", "OnMouseUpAsButton"}},
         {"on_click",     {"OnClick", "OnMouseClick", "OnMouseUpAsButton", "OnPointerClick"}},
         {"on_change",    {"OnValueChanged"}},
+        {"on_submit",    {"OnSubmit"}},                 // grok/ui-controls
+        {"on_tab_close", {"OnTabClose"}},               // grok/ui-controls
         {"on_toggle",    {"OnToggle", "OnValueChanged"}},
         {"on_drop",      {"OnDrop"}},
         {"on_receive",   {"OnReceive"}},

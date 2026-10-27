@@ -2200,7 +2200,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << (int)in->contentType
             // extended (back-compatible trailing fields): shape + corner + focus ring
             << " " << (int)in->shape << " " << in->cornerRadius << " " << in->borderWidth << " "
-            << in->borderColor.r << " " << in->borderColor.g << " " << in->borderColor.b << " " << in->borderColor.a << "\n";
+            << in->borderColor.r << " " << in->borderColor.g << " " << in->borderColor.b << " " << in->borderColor.a
+            << " " << (in->multiline ? 1 : 0) << "\n";   // grok/ui-controls
     }
     if (auto* tb = go->GetComponent<UITabs>()) {
         out << "  uitabs " << tb->position.x << " " << tb->position.y << " "
@@ -2231,7 +2232,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         for (int b : tb->badges) out << " " << b;
         out << " " << tb->disabled.size();
         for (bool d : tb->disabled) out << " " << (d ? 1 : 0);
-        out << "\n";
+        out << " " << (tb->closable ? 1 : 0) << "\n";   // grok/ui-controls
     }
     if (auto* dd = go->GetComponent<UIDropdown>()) {
         out << "  uidropdown " << dd->position.x << " " << dd->position.y << " "
@@ -2245,7 +2246,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << dd->options.size();
         for (const auto& opt : dd->options) out << " " << Quote(opt);
         out << " " << (dd->interactable ? 1 : 0) << " " << Quote(dd->placeholder)
-            << " " << (int)dd->shape << " " << dd->cornerRadius << "\n";   // extended (back-compatible)
+            << " " << (int)dd->shape << " " << dd->cornerRadius
+            << " " << (dd->searchable ? 1 : 0) << " " << dd->maxVisible << " " << dd->optionIcons.size();
+        for (const auto& ic : dd->optionIcons) out << " " << Quote(ic);   // grok/ui-controls
+        out << "\n";
     }
     if (auto* tb = go->GetComponent<UITextBind>()) {
         out << "  uibind " << Quote(tb->format) << "\n";
@@ -2284,7 +2288,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  uitooltip " << Quote(tt->text) << " " << tt->delay << " "
             << tt->background.r << " " << tt->background.g << " " << tt->background.b << " " << tt->background.a << " "
             << tt->textColor.r << " " << tt->textColor.g << " " << tt->textColor.b << " " << tt->textColor.a << " "
-            << tt->borderColor.r << " " << tt->borderColor.g << " " << tt->borderColor.b << " " << tt->borderColor.a << "\n";
+            << tt->borderColor.r << " " << tt->borderColor.g << " " << tt->borderColor.b << " " << tt->borderColor.a
+            << " " << (tt->richText ? 1 : 0) << " " << tt->offset.x << " " << tt->offset.y << "\n";   // grok/ui-controls
     }
     if (auto* ua = go->GetComponent<UIAnimation>()) {
         out << "  uianim " << (int)ua->intro << " " << (int)ua->loop << " " << (int)ua->outro << " "
@@ -2344,7 +2349,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << sv->size.x << " " << sv->size.y << " " << (int)sv->anchor << " "
             << sv->contentHeight << " "
             << sv->background.r << " " << sv->background.g << " " << sv->background.b << " " << sv->background.a
-            << " " << (int)sv->axis << " " << sv->contentWidth << " " << (sv->autoContent ? 1 : 0) << "\n";   // optional, newer
+            << " " << (int)sv->axis << " " << sv->contentWidth << " " << (sv->autoContent ? 1 : 0)
+            << " " << sv->inertia << " " << (sv->elastic ? 1 : 0) << " " << sv->barStyle << "\n";   // grok/ui-controls
     }
     if (auto* lv = go->GetComponent<UIListView>()) {
         out << "  uilist " << lv->position.x << " " << lv->position.y << " " << lv->size.x << " " << lv->size.y
@@ -5646,6 +5652,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> sp >> inp->cornerRadius >> inp->borderWidth >> bc.r >> bc.g >> bc.b >> bc.a;
                         inp->shape = (UIShape)sp; inp->borderColor = bc;
                     }
+                    in >> std::ws; // grok/ui-controls: optional multiline
+                    if (std::isdigit(in.peek())) { int ml = 0; in >> ml; inp->multiline = (ml != 0); }
                 } else if (field == "uitabs") {
                     auto* tb = go->AddComponent<UITabs>();
                     int an = 0, sp = 0, it = 1; std::size_t count = 0;
@@ -5687,6 +5695,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         for (std::size_t k = 0; k < bn && in; ++k) { int b = 0; in >> b; tb->badges.push_back(b); }
                         in >> dn; tb->disabled.clear();
                         for (std::size_t k = 0; k < dn && in; ++k) { int d = 0; in >> d; tb->disabled.push_back(d != 0); }
+                        in >> std::ws; // grok/ui-controls: optional closable
+                        if (std::isdigit(in.peek())) { int cl = 0; in >> cl; tb->closable = (cl != 0); }
                     } else {
                         // Saved before tab keys / tab focus existed: keep Q/E, the gamepad
                         // shoulders and A/D doing whatever the game already uses them for.
@@ -5712,6 +5722,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (in.peek() == '"') dd->placeholder = ReadQuoted(in);
                     in >> std::ws; // optional shape + corner radius (added later)
                     if (std::isdigit(in.peek())) { int sp = 0; in >> sp >> dd->cornerRadius; dd->shape = (UIShape)sp; }
+                    in >> std::ws; // grok/ui-controls: optional search, row cap, glyphs
+                    if (std::isdigit(in.peek())) {
+                        int se = 0; std::size_t ic = 0;
+                        in >> se >> dd->maxVisible >> ic;
+                        dd->searchable = (se != 0);
+                        dd->optionIcons.clear();
+                        for (std::size_t k = 0; k < ic && in; ++k) dd->optionIcons.push_back(ReadQuoted(in));
+                    }
                 } else if (field == "uibind") {
                     auto* tb = go->AddComponent<UITextBind>();
                     tb->format = ReadQuoted(in);
@@ -5790,6 +5808,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> tc.r >> tc.g >> tc.b >> tc.a
                        >> bc.r >> bc.g >> bc.b >> bc.a;
                     tt->background = bg; tt->textColor = tc; tt->borderColor = bc;
+                    in >> std::ws; // grok/ui-controls: optional rich text + cursor offset
+                    if (std::isdigit(in.peek())) {
+                        int rich = 0; in >> rich >> tt->offset.x >> tt->offset.y;
+                        tt->richText = (rich != 0);
+                    }
                 } else if (field == "uilayout") {
                     auto* lg = go->AddComponent<UILayoutGroup>();
                     std::string rest; std::getline(in, rest);   // whole line: newer files carry extra fields
@@ -5867,6 +5890,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     sv->anchor = (UIAnchor)an; sv->background = c;
                     int ax = 0, ac = 1; float cw = 0.0f;
                     if (rs >> ax >> cw >> ac) { sv->axis = (UIScrollView::Axis)ax; sv->contentWidth = cw; sv->autoContent = ac != 0; }
+                    float ine = 0.0f; int el = 0, bs = 0;   // grok/ui-controls
+                    if (rs >> ine >> el >> bs) { sv->inertia = ine; sv->elastic = el != 0; sv->barStyle = bs; }
                 } else if (field == "canvas") {
                     auto* cv = go->AddComponent<Canvas>();
                     int sm = 0;

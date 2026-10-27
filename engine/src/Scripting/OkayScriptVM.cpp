@@ -4492,7 +4492,10 @@ struct OkayScriptVM::Impl {
         };
         // Procedural Object Holding on this object:
         //   hold_pickup(name) / hold_nearest([range])   take an object into the hands -> 1 if held
-        //   hold_drop()                                 let go of it
+        //   hold_drop()                                 let go of it (keeps the holder's velocity)
+        //   hold_throw([charge])                        launch it along the camera aim; charge is 0..1
+        //                                               (omit it to use the charge built by holding the key)
+        //   hold_charge()                               that charge right now, 0..1
         //   hold_object()                               name of what's held ("" = nothing)
         auto holder = [this]() -> ProceduralObjectHolding* {
             GameObject* g = rt.host ? rt.host->gameObject : nullptr;
@@ -4511,6 +4514,15 @@ struct OkayScriptVM::Impl {
         b["hold_drop"] = [holder](std::vector<Value>&) {
             if (ProceduralObjectHolding* h = holder()) h->Drop();
             return Value{};
+        };
+        b["hold_throw"] = [holder](std::vector<Value>& a) {
+            ProceduralObjectHolding* h = holder();
+            const float charge = a.empty() ? -1.0f : a[0].AsFloat();
+            return Value{h && h->Throw(charge) ? 1.0f : 0.0f};
+        };
+        b["hold_charge"] = [holder](std::vector<Value>&) {
+            ProceduralObjectHolding* h = holder();
+            return Value{h ? h->ThrowCharge() : 0.0f};
         };
         b["hold_object"] = [holder](std::vector<Value>&) {
             ProceduralObjectHolding* h = holder();

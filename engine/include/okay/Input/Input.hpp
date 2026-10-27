@@ -17,10 +17,17 @@ public:
     // with letters, digits or space.
     static constexpr char KeyShift = 16;
     static constexpr char KeyCtrl  = 17;
+    // Arrow keys, distinct from WASD. AxisWASD counts either. The player and
+    // the editor feed both, so a script that asks for "up" or for W agrees.
+    static constexpr char KeyUp    = 1;
+    static constexpr char KeyDown  = 2;
+    static constexpr char KeyLeft  = 3;
+    static constexpr char KeyRight = 4;
 
     /// Map a friendly key NAME to the char code this layer uses ("space",
     /// "enter", "shift", "up", "a", "7"...). A single character is taken as-is
-    /// (lowercased); arrows fold onto WASD exactly as the runtimes feed them.
+    /// (lowercased). Arrows are KeyUp / KeyDown / KeyLeft / KeyRight; the
+    /// player and editor also report them as WASD, and AxisWASD counts both.
     /// Unknown multi-char names fall back to their first letter. Shared by
     /// OkayScript's key("...") builtins and the visual-script key nodes.
     static char KeyFromName(const std::string& s) {
@@ -30,10 +37,10 @@ public:
         std::string k; k.reserve(s.size());
         for (char c : s) k += lower1(c);
         if (k == "space")                    return ' ';
-        if (k == "up")                       return 'w';   // arrows are fed as WASD
-        if (k == "down")                     return 's';
-        if (k == "left")                     return 'a';
-        if (k == "right")                    return 'd';
+        if (k == "up")                       return KeyUp;
+        if (k == "down")                     return KeyDown;
+        if (k == "left")                     return KeyLeft;
+        if (k == "right")                    return KeyRight;
         if (k == "enter" || k == "return")   return '\r';
         if (k == "escape" || k == "esc")     return (char)27;
         if (k == "backspace")                return (char)8;

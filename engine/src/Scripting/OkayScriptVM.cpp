@@ -236,7 +236,7 @@ struct JsonReader {
 enum class Tok {
     End, Number, String, InterpString, Ident,
     Var, If, Else, While, For, In, Function, Return, True, False, Break, Continue,
-    Question, Colon,
+    Question, Colon, QuestionQuestion, QuestionQuestionEq, QuestionDot,
     Plus, Minus, Star, Slash, Percent,
     Assign, PlusEq, MinusEq, StarEq, SlashEq, Inc, Dec,
     Eq, Ne, Lt, Gt, Le, Ge, Not, And, Or,
@@ -251,12 +251,14 @@ struct Token {
     double number = 0.0;
     int line = 0;
     bool suffix = false;   ///< a number written with a C# suffix (5f, 2d)
+    int column = 0;        ///< 1-based column where this token starts
 };
 
 struct ScriptError : std::runtime_error {
     using std::runtime_error::runtime_error;
     int line = 0;                                  // source line (0 = unknown)
-    ScriptError(const std::string& msg, int ln) : std::runtime_error(msg), line(ln) {}
+    int column = 0;                                // 1-based column (0 = unknown)
+    ScriptError(const std::string& msg, int ln, int col = 0) : std::runtime_error(msg), line(ln), column(col) {}
 };
 
 class Lexer {
@@ -268,28 +270,33 @@ public:
         while (!AtEnd()) {
             SkipTrivia();
             if (AtEnd()) break;
+            const int line = m_line, col = m_col;
             char c = Peek();
-            if (std::isdigit((unsigned char)c) || (c == '.' && std::isdigit((unsigned char)Peek(1))))
-                out.push_back(Number());
-            else if (std::isalpha((unsigned char)c) || c == '_')
-                out.push_back(Ident());
-            else if (c == '"')
-                out.push_back(String());
-            else if (c == '\'')
-                out.push_back(CharLiteral());
-            else if (c == '$' && Peek(1) == '"')
-                out.push_back(InterpString());
-            else
-                out.push_back(Operator());
+            Token t = (std::isdigit((unsigned char)c) || (c == '.' && std::isdigit((unsigned char)Peek(1)))) ? Number()
+                    : (std::isalpha((unsigned char)c) || c == '_') ? Ident()
+                    : c == '"' ? String()
+                    : c == '\'' ? CharLiteral()
+                    : (c == '$' && Peek(1) == '"') ? InterpString()
+                    : Operator();
+            t.line = line;
+            t.column = col;
+            out.push_back(std::move(t));
         }
-        out.push_back({Tok::End, "", 0, m_line});
+        Token end{Tok::End, "", 0, m_line};
+        end.column = m_col;
+        out.push_back(std::move(end));
         return out;
     }
 
 private:
     bool AtEnd() const { return m_pos >= m_src.size(); }
     char Peek(int o = 0) const { return (m_pos + o < m_src.size()) ? m_src[m_pos + o] : '\0'; }
-    char Advance() { char c = m_src[m_pos++]; if (c == '\n') ++m_line; return c; }
+    char Advance() {
+        char c = m_src[m_pos++];
+        if (c == '\n') { ++m_line; m_col = 1; }
+        else if (c != '\r') ++m_col;
+        return c;
+    }
 
     void SkipTrivia() {
         while (!AtEnd()) {
@@ -319,6 +326,7 @@ private:
     }
 
     Token String() {
+        const int sl = m_line, sc = m_col;
         Advance(); // opening quote
         std::string s;
         while (!AtEnd() && Peek() != '"') {
@@ -331,13 +339,14 @@ private:
             }
             s += c;
         }
-        if (AtEnd()) throw ScriptError("unterminated string");
+        if (AtEnd()) throw ScriptError("unterminated string", sl, sc);
         Advance(); // closing quote
         return {Tok::String, s, 0, m_line};
     }
 
     // C# char literal 'x' (or '\n') — a one-character string.
     Token CharLiteral() {
+        const int sl = m_line, sc = m_col;
         Advance();   // opening quote
         std::string s;
         while (!AtEnd() && Peek() != '\'' && Peek() != '\n') {
@@ -348,7 +357,7 @@ private:
             }
             s += c;
         }
-        if (AtEnd() || Peek() != '\'') throw ScriptError("unterminated character literal", m_line);
+        if (AtEnd() || Peek() != '\'') throw ScriptError("unterminated character literal", sl, sc);
         Advance();   // closing quote
         return {Tok::String, s, 0, m_line};
     }
@@ -356,6 +365,7 @@ private:
     // C#-style interpolated string: $"Score: {score}". The raw inner text (with
     // {expr} markers preserved) is stored; the parser splits and compiles it.
     Token InterpString() {
+        const int sl = m_line, sc = m_col;
         Advance(); // '$'
         Advance(); // opening quote
         std::string s;
@@ -369,7 +379,7 @@ private:
             }
             s += c;
         }
-        if (AtEnd()) throw ScriptError("unterminated string");
+        if (AtEnd()) throw ScriptError("unterminated string", sl, sc);
         Advance(); // closing quote
         return {Tok::InterpString, s, 0, m_line};
     }
@@ -397,6 +407,7 @@ private:
     }
 
     Token Operator() {
+        const int sl = m_line, sc = m_col;
         char c = Advance();
         auto two = [&](char n, Tok t) { if (Peek() == n) { Advance(); return Token{t, "", 0, m_line}; } return Token{Tok::End, "", 0, m_line}; };
         switch (c) {
@@ -414,7 +425,14 @@ private:
             case '}': return {Tok::RBrace, "", 0, m_line};
             case '[': return {Tok::LBracket, "", 0, m_line};
             case ']': return {Tok::RBracket, "", 0, m_line};
-            case '?': return {Tok::Question, "", 0, m_line};
+            case '?':
+                if (Peek() == '?') {
+                    Advance();
+                    if (Peek() == '=') { Advance(); return {Tok::QuestionQuestionEq, "", 0, m_line}; }
+                    return {Tok::QuestionQuestion, "", 0, m_line};
+                }
+                if (Peek() == '.') { Advance(); return {Tok::QuestionDot, "", 0, m_line}; }
+                return {Tok::Question, "", 0, m_line};
             case ':': return {Tok::Colon, "", 0, m_line};
             case ',': return {Tok::Comma, "", 0, m_line};
             case ';': return {Tok::Semicolon, "", 0, m_line};
@@ -427,12 +445,13 @@ private:
             case '&': if (Peek() == '&') { Advance(); return {Tok::And, "", 0, m_line}; } return {Tok::BitAnd, "", 0, m_line};
             case '|': if (Peek() == '|') { Advance(); return {Tok::Or, "", 0, m_line}; } return {Tok::BitOr, "", 0, m_line};
         }
-        throw ScriptError(std::string("unexpected character '") + c + "'", m_line);
+        throw ScriptError(std::string("unexpected character '") + c + "'", sl, sc);
     }
 
     const std::string& m_src;
     std::size_t m_pos = 0;
     int m_line = 1;
+    int m_col = 1;
 };
 
 // ===================== AST =====================
@@ -468,6 +487,17 @@ inline const char* KindName(unsigned char k) {
     switch (k & 0x0F) { case KInt: return "an int"; case KFloat: return "a float"; case KBool: return "a bool";
                         case KString: return "a string"; default: return "a variable"; }
 }
+// This VM spells null as the number 0 (an unset variable, a missed Find or
+// GetComponent, the name `null`). A real object name, a bool, a vector, or any
+// other number is present. A destroyed object reference (instance id) is null too.
+inline bool IsNullish(const Value& v) {
+    if (v.IsBool() || v.IsString() || v.IsVec3()) return false;
+    if (v.IsObject()) return v.AsObjectId() == 0 || !vs::VsObjectAlive(v.AsObjectId());
+    if (v.IsArray()) return !v.AsArray();
+    if (v.IsMap()) return !v.AsMap();
+    return v.IsNumber() && v.AsFloat() == 0.0f;
+}
+
 inline const char* ValueKindName(const Value& v) {
     if (v.IsString()) return "text";
     if (v.IsBool()) return "true/false";
@@ -532,6 +562,7 @@ inline std::shared_ptr<Environment> SharedStatics(const std::string& source) {
 struct FunctionDecl {
     std::vector<std::string> params;
     std::vector<unsigned char> paramKinds;   ///< `int dmg` converts / checks its argument
+    std::vector<ExprPtr> defaults;           ///< null unless the parameter was written `a = expr`
     std::vector<StmtPtr> body;
     unsigned char returnKind = 0;            ///< `int Score()` converts what it returns
 };
@@ -596,6 +627,7 @@ struct Runtime {
     struct Coroutine {
         int id = 0;
         std::string fn; std::vector<Value> args;
+        std::vector<std::string> argNames;   ///< parallel to args; empty = positional
         std::thread th;
         std::mutex m; std::condition_variable cv;
         bool coTurn = false, started = false, done = false, abort = false;
@@ -620,7 +652,7 @@ struct Runtime {
             co->started = true;
             co->th = std::thread([this, co] {
                 { std::unique_lock<std::mutex> lk(co->m); co->cv.wait(lk, [co] { return co->coTurn; }); }
-                try { if (!co->abort) Call(co->fn, co->args); }
+                try { if (!co->abort) Call(co->fn, co->args, co->argNames.empty() ? nullptr : &co->argNames); }
                 catch (const CoroutineAbort&) {}
                 catch (const std::exception& e) { Log::Error("OkayScript coroutine ", co->fn, "(): ", e.what()); }
                 catch (...) { Log::Error("OkayScript coroutine ", co->fn, "(): error"); }
@@ -648,10 +680,13 @@ struct Runtime {
         co->cv.wait(lk, [co] { return co->coTurn; });
         if (co->abort) throw CoroutineAbort{};
     }
-    int StartCoroutine(const std::string& fn, std::vector<Value> args) {
+    // Names from the call that started a coroutine (StartCoroutine(Blink(delay: 0.2))).
+    // Set only while that builtin runs, on the caller's thread.
+    const std::vector<std::string>* activeArgNames = nullptr;
+    int StartCoroutine(const std::string& fn, std::vector<Value> args, std::vector<std::string> argNames = {}) {
         if (!functions.count(fn)) throw ScriptError("StartCoroutine: no function named '" + fn + "'");
         auto co = std::make_unique<Coroutine>();
-        co->id = nextCoId++; co->fn = fn; co->args = std::move(args);
+        co->id = nextCoId++; co->fn = fn; co->args = std::move(args); co->argNames = std::move(argNames);
         Coroutine* raw = co.get();
         coroutines.push_back(std::move(co));
         Resume(raw);   // runs until its first yield
@@ -791,7 +826,7 @@ struct Runtime {
         return SelfField(n) != nullptr;
     }
 
-    Value Call(const std::string& name, std::vector<Value>& args);
+    Value Call(const std::string& name, std::vector<Value>& args, const std::vector<std::string>* names = nullptr);
     Value InvokeDecl(const FunctionDecl& fn, const std::string& label, std::vector<Value>& args);
     Value MakeInstance(const std::string& type, std::vector<Value>& args);
     Value GetMember(const Value& inst, const std::string& name, bool external);
@@ -804,10 +839,14 @@ struct Runtime {
     // C# lambdas (x => x * 2, (a, b) => { ... }): a lambda value is {"__lambda": id};
     // calling it runs its body in a new frame on top of the current scopes, so it
     // sees the locals of the code that called it (fine for ForEach/Find/Where...).
-    struct LambdaBody { const std::vector<std::string>* params; const std::vector<StmtPtr>* body; };
+    struct LambdaBody {
+        const std::vector<std::string>* params;
+        const std::vector<StmtPtr>* body;
+        const std::vector<ExprPtr>* defaults = nullptr;
+    };
     std::unordered_map<int, LambdaBody> lambdas;
     static bool IsLambda(const Value& v) { auto m = v.AsMap(); return m && m->count("__lambda"); }
-    Value CallLambda(const Value& f, std::vector<Value>& args);
+    Value CallLambda(const Value& f, std::vector<Value>& args, const std::vector<std::string>* names = nullptr);
 
     // dotted property read/write (transform.position.x, Time.timeScale,
     // gameObject.name, ...). GetDotted sets `ok` when it recognized the name;
@@ -884,6 +923,28 @@ struct LogicalExpr : Expr {
 };
 
 bool ValuesEqual(const Value& a, const Value& b);
+// a ?? b: a, or b when a is null. b is not worked out when a is present.
+struct CoalesceExpr : Expr {
+    ExprPtr l, r;
+    CoalesceExpr(ExprPtr a, ExprPtr b) : l(std::move(a)), r(std::move(b)) {}
+    Value Eval(Runtime& rt) override {
+        Value lv = l->Eval(rt);
+        return IsNullish(lv) ? r->Eval(rt) : lv;
+    }
+};
+
+// x ??= value: set x only while it is null, and only then work out value.
+struct NullishAssignExpr : Expr {
+    std::string n; ExprPtr value;
+    NullishAssignExpr(std::string s, ExprPtr e) : n(std::move(s)), value(std::move(e)) {}
+    Value Eval(Runtime& rt) override {
+        Value cur = rt.Get(n);
+        if (!IsNullish(cur)) return cur;
+        Value v = value->Eval(rt);
+        rt.Assign(n, v);
+        return v;
+    }
+};
 
 struct BinaryExpr : Expr {
     Tok op; ExprPtr l, r;
@@ -1139,10 +1200,11 @@ inline bool IsComponentRef(const Value& v) {
 }
 // expr.member  — a property read on any expression's value.
 struct MemberExpr : Expr {
-    ExprPtr obj; std::string name;
-    MemberExpr(ExprPtr o, std::string n) : obj(std::move(o)), name(std::move(n)) {}
+    ExprPtr obj; std::string name; bool safe = false;
+    MemberExpr(ExprPtr o, std::string n, bool s = false) : obj(std::move(o)), name(std::move(n)), safe(s) {}
     Value Eval(Runtime& rt) override {
         Value v = obj->Eval(rt), out;
+        if (safe && IsNullish(v)) return Value{};
         if (IsClassInstance(v)) return rt.GetMember(v, name, true);
         if (IsComponentRef(v)) { std::vector<Value> a{Value{v.AsString().substr(1)}, Value{name}}; return rt.Call("__get_component", a); }
         if (ValueProperty(v, name, out)) return out;
@@ -1184,10 +1246,11 @@ struct CastExpr : Expr {
 };
 // expr.Method(args)  — a C#-style method on a value (string, list, dictionary, number).
 struct MethodCallExpr : Expr {
-    ExprPtr obj; std::string name; std::vector<ExprPtr> args;
-    MethodCallExpr(ExprPtr o, std::string n) : obj(std::move(o)), name(std::move(n)) {}
+    ExprPtr obj; std::string name; std::vector<ExprPtr> args; bool safe = false;
+    MethodCallExpr(ExprPtr o, std::string n, bool s = false) : obj(std::move(o)), name(std::move(n)), safe(s) {}
     Value Eval(Runtime& rt) override {
         Value v = obj->Eval(rt), out;
+        if (safe && IsNullish(v)) return Value{};
         std::vector<Value> vals; vals.reserve(args.size());
         for (auto& a : args) vals.push_back(a->Eval(rt));
         if (IsClassInstance(v)) return rt.CallMethod(v, name, vals, true);
@@ -1216,12 +1279,20 @@ struct NewExpr : Expr {
 
 struct CallExpr : Expr {
     std::string name; std::vector<ExprPtr> args;
+    std::vector<std::string> argNames;   ///< parallel to args; empty string = positional
     explicit CallExpr(std::string n) : name(std::move(n)) {}
     Value Eval(Runtime& rt) override {
         std::vector<Value> vals;
+        std::vector<std::string> names;
         vals.reserve(args.size());
-        for (auto& a : args) vals.push_back(a->Eval(rt));
-        return rt.Call(name, vals);
+        bool anyNamed = false;
+        for (std::size_t i = 0; i < args.size(); ++i) {
+            std::string nm = i < argNames.size() ? argNames[i] : std::string();
+            if (!nm.empty()) anyNamed = true;
+            names.push_back(std::move(nm));
+            vals.push_back(args[i]->Eval(rt));
+        }
+        return rt.Call(name, vals, anyNamed ? &names : nullptr);
     }
 };
 
@@ -1245,10 +1316,11 @@ struct ArrayExpr : Expr {
 
 // Read an element: arr[index] for arrays, or map["key"] for dictionaries.
 struct IndexExpr : Expr {
-    ExprPtr arr, index;
-    IndexExpr(ExprPtr a, ExprPtr i) : arr(std::move(a)), index(std::move(i)) {}
+    ExprPtr arr, index; bool safe = false;
+    IndexExpr(ExprPtr a, ExprPtr i, bool s = false) : arr(std::move(a)), index(std::move(i)), safe(s) {}
     Value Eval(Runtime& rt) override {
         Value a = arr->Eval(rt);
+        if (safe && IsNullish(a)) return Value{};
         if (IsClassInstance(a)) return rt.GetMember(a, index->Eval(rt).AsString(), true);
         if (auto v = a.AsArray()) {
             int i = (int)index->Eval(rt).AsFloat();
@@ -1488,9 +1560,10 @@ struct ForEachStmt : Stmt {
 struct LambdaExpr : Expr {
     int id = 0;
     std::vector<std::string> params;
+    std::vector<ExprPtr> defaults;   ///< null unless that parameter was written `a = expr`
     std::vector<StmtPtr> body;
     Value Eval(Runtime& r) override {
-        r.lambdas[id] = Runtime::LambdaBody{&params, &body};
+        r.lambdas[id] = Runtime::LambdaBody{&params, &body, &defaults};
         Value v = Value::MakeMap(); (*v.AsMap())["__lambda"] = Value{(float)id};
         return v;
     }
@@ -1654,9 +1727,50 @@ Value Runtime::MakeInstance(const std::string& type, std::vector<Value>& args) {
     return inst;
 }
 
-Value Runtime::Call(const std::string& name, std::vector<Value>& args) {
+namespace {
+bool AnyNamed(const std::vector<std::string>* names) {
+    if (!names) return false;
+    for (const std::string& n : *names) if (!n.empty()) return true;
+    return false;
+}
+// Lay call arguments onto parameter slots. Extra positional arguments are ignored,
+// matching calls that already passed more values than a function reads.
+void PlaceArgs(const std::vector<std::string>& params, const std::vector<Value>& args,
+               const std::vector<std::string>* names, std::vector<char>& present,
+               std::vector<Value>& slot, const std::string& what) {
+    present.assign(params.size(), 0);
+    slot.assign(params.size(), Value{});
+    bool sawNamed = false;
+    std::size_t next = 0;
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        const std::string nm = (names && i < names->size()) ? (*names)[i] : std::string();
+        if (nm.empty()) {
+            if (sawNamed) throw ScriptError(what + ": a value without a name can't follow a named one");
+            if (next >= params.size()) continue;
+            slot[next] = args[i]; present[next] = 1; ++next;
+        } else {
+            sawNamed = true;
+            std::size_t idx = params.size();
+            for (std::size_t p = 0; p < params.size(); ++p) if (params[p] == nm) { idx = p; break; }
+            if (idx == params.size()) throw ScriptError(what + " has no parameter '" + nm + "'");
+            if (present[idx]) throw ScriptError(what + ": '" + nm + "' was given twice");
+            slot[idx] = args[i]; present[idx] = 1;
+        }
+    }
+}
+} // namespace
+
+Value Runtime::Call(const std::string& name, std::vector<Value>& args, const std::vector<std::string>* names) {
     auto b = builtins.find(name);
-    if (b != builtins.end()) return b->second(args);
+    if (b != builtins.end()) {
+        if (AnyNamed(names) && name != "StartCoroutine")
+            throw ScriptError("'" + name + "' doesn't take named arguments");
+        const std::vector<std::string>* prev = activeArgNames;
+        activeArgNames = names;
+        Value v = b->second(args);
+        activeArgNames = prev;
+        return v;
+    }
 
     // Inside a method, a bare call prefers that class's own method.
     if (HasMethod(name)) return CallMethod(self, name, args, false);
@@ -1692,14 +1806,45 @@ Value Runtime::Call(const std::string& name, std::vector<Value>& args) {
             if (ok && CallValueMethod(obj, method, args, out, &inv)) return out;
         }
         // A variable holding a lambda: Action onHit = () => ...; onHit();
-        if (Has(name) && IsLambda(Get(name))) return CallLambda(Get(name), args);
+        if (Has(name) && IsLambda(Get(name))) return CallLambda(Get(name), args, names);
         throw ScriptError("call to undefined function '" + name + "'");
     }
 
-    return InvokeDecl(f->second, name + "()", args);
+    CallDepthGuard depthGuard(name + "()");
+    const FunctionDecl& fn = f->second;
+    std::vector<char> present;
+    std::vector<Value> slot;
+    PlaceArgs(fn.params, args, names, present, slot, name + "()");
+    scopes.push_back(Environment{});
+    for (std::size_t i = 0; i < fn.params.size(); ++i) {
+        const unsigned char k = i < fn.paramKinds.size() ? fn.paramKinds[i] : 0;
+        Value v;
+        try {
+            if (present[i]) v = slot[i];
+            else if (i < fn.defaults.size() && fn.defaults[i]) v = fn.defaults[i]->Eval(*this);
+            else v = k ? DefaultForKind(k) : Value{};
+            if (!k) Define(fn.params[i], v);
+            else DefineTyped(fn.params[i], v, k);
+        } catch (...) { scopes.pop_back(); throw; }
+    }
+
+    Value ret;
+    try {
+        for (auto& s : fn.body) s->Exec(*this);
+    } catch (ReturnSignal& rs) {
+        ret = rs.value;
+    } catch (BreakSignal&) {       // stray break/continue (no enclosing loop):
+    } catch (ContinueSignal&) {    // end the function rather than escaping it.
+    } catch (...) {
+        scopes.pop_back();
+        throw;
+    }
+    scopes.pop_back();
+    if (fn.returnKind & 0x0F) return CoerceToKind(fn.returnKind, ret, name + "()");
+    return ret;
 }
 
-Value Runtime::CallLambda(const Value& f, std::vector<Value>& args) {
+Value Runtime::CallLambda(const Value& f, std::vector<Value>& args, const std::vector<std::string>* names) {
     auto m = f.AsMap();
     if (!m) throw ScriptError("not a function");
     auto it = m->find("__lambda");
@@ -1707,9 +1852,21 @@ Value Runtime::CallLambda(const Value& f, std::vector<Value>& args) {
     auto lb = lambdas.find((int)it->second.AsFloat());
     if (lb == lambdas.end()) throw ScriptError("lambda is no longer available");
     CallDepthGuard depthGuard("a lambda");
-    scopes.push_back(Environment{});
     const auto& ps = *lb->second.params;
-    for (std::size_t i = 0; i < ps.size(); ++i) Define(ps[i], i < args.size() ? args[i] : Value{});
+    const std::vector<ExprPtr>* defs = lb->second.defaults;
+    std::vector<char> present;
+    std::vector<Value> slot;
+    PlaceArgs(ps, args, names, present, slot, "lambda");
+    scopes.push_back(Environment{});
+    for (std::size_t i = 0; i < ps.size(); ++i) {
+        try {
+            Value v;
+            if (present[i]) v = slot[i];
+            else if (defs && i < defs->size() && (*defs)[i]) v = (*defs)[i]->Eval(*this);
+            else v = Value{};
+            Define(ps[i], v);
+        } catch (...) { scopes.pop_back(); throw; }
+    }
     Value ret;
     try { for (auto& st : *lb->second.body) st->Exec(*this); }
     catch (ReturnSignal& rs) { ret = rs.value; }
@@ -1988,8 +2145,8 @@ public:
     std::vector<ScriptDiagnostic> NoEffectWarnings() const {
         std::vector<ScriptDiagnostic> w;
         std::set<std::pair<int, std::string>> seen;
-        auto add = [&](int line, const std::string& key, const std::string& msg) {
-            if (seen.insert({line, key}).second) w.push_back({line, msg, 1});
+        auto add = [&](int line, int col, const std::string& key, const std::string& msg) {
+            if (seen.insert({line, key}).second) w.push_back({line, msg, 1, col});
         };
         static const std::unordered_map<std::string, const char*> kMods = {
             {"virtual",   "`virtual` does nothing: scripts don't inherit from each other. Delete it."},
@@ -2012,27 +2169,29 @@ public:
             const Token& t = m_toks[i];
             const Token& nx = m_toks[i + 1];
             if (t.type == Tok::Number && t.suffix) {
-                add(t.line, "suffix", "`" + t.text + "f`: the letter after the number does nothing (every number is "
+                add(t.line, t.column, "suffix", "`" + t.text + "f`: the letter after the number does nothing (every number is "
                                       "already a decimal). Write " + t.text + ".");
                 continue;
             }
             if (t.type != Tok::Ident) continue;
             if (t.text == "using" && nx.type == Tok::Ident)
-                add(t.line, "using", "`using` does nothing: everything is already available. Delete this line.");
+                add(t.line, t.column, "using", "`using` does nothing: everything is already available. Delete this line.");
             else if (t.text == "namespace" && nx.type == Tok::Ident)
-                add(t.line, "namespace", "`namespace` does nothing. Delete it (and its braces); keep what's inside.");
+                add(t.line, t.column, "namespace", "`namespace` does nothing. Delete it (and its braces); keep what's inside.");
             else if ((t.text == "class" || t.text == "struct") && nx.type == Tok::Ident) {
                 const std::size_t after = SkipTypeSuffix(i + 2);
                 if (m_toks[after].type == Tok::Colon)
-                    add(t.line, "class", "The class wrapper and `: " + m_toks[after + 1].text + "` do nothing: the fields "
+                    add(t.line, t.column, "class", "The class wrapper and `: " + m_toks[after + 1].text + "` do nothing: the fields "
                                          "and methods in this file are the component. Delete the `class " + nx.text +
                                          "` line and its braces.");
+                // A plain `class Name { }` is a real script class. Only `: Base`
+                // is still the old component wrapper, warned about above.
             } else if (nx.type == Tok::Ident) {
                 auto m = kMods.find(t.text);
-                if (m != kMods.end()) add(t.line, t.text, m->second);
+                if (m != kMods.end()) add(t.line, t.column, t.text, m->second);
             }
             if (kNeverCalled.count(t.text) && nx.type == Tok::LParen && i > 0 && m_toks[i - 1].type == Tok::Ident)
-                add(t.line, "never", "`" + t.text + "()` is never called by the engine, so this code won't run.");
+                add(t.line, t.column, "never", "`" + t.text + "()` is never called by the engine, so this code won't run.");
         }
         return w;
     }
@@ -2046,7 +2205,7 @@ public:
             try {
                 ParseMember(top, funcs);
             } catch (const ScriptError& e) {
-                diags.push_back({ e.line, e.what() });
+                diags.push_back({ e.line, e.what(), 0, e.column });
                 if (diags.size() >= 100) break;          // stop runaway cascades
                 Synchronize(before);
             }
@@ -2176,7 +2335,7 @@ private:
     bool Check(Tok t) const { return Peek().type == t; }
     bool Match(Tok t) { if (Check(t)) { ++m_pos; return true; } return false; }
     const Token& Expect(Tok t, const char* msg) {
-        if (!Check(t)) throw ScriptError(std::string("parse error: expected ") + msg, Peek().line);
+        if (!Check(t)) throw ScriptError(std::string("parse error: expected ") + msg, Peek().line, Peek().column);
         return m_toks[m_pos++];
     }
 
@@ -2278,9 +2437,15 @@ private:
                 // `dt`, `float dt`, `List<int> xs`, `ref int n` — the last identifier is the name.
                 const unsigned char pk = (unsigned char)(DeclKindAhead() & 0x0F);
                 std::string p = ConsumeIdentRun("parameter");
-                if (Match(Tok::Assign)) ParseExpression();   // C# default value (ignored)
+                ExprPtr def;
+                if (Match(Tok::Assign)) def = ParseExpression();   // `void Heal(int hp, int bonus = 2)`
+                else if (!decl.defaults.empty() && decl.defaults.back())
+                    throw ScriptError("parameter '" + p + "' needs a default too (ones with defaults come last)", Peek().line);
+                for (const std::string& prev : decl.params)
+                    if (prev == p) throw ScriptError("parameter '" + p + "' is already in this function", Peek().line);
                 decl.params.push_back(p);
                 decl.paramKinds.push_back(pk);
+                decl.defaults.push_back(std::move(def));
             } while (Match(Tok::Comma));
         }
         Expect(Tok::RParen, "')'");
@@ -2325,19 +2490,19 @@ private:
     }
     // Catch the obvious mistakes while typing: `int lives = "three";`,
     // `string name = 5;`, `int half = 0.5;` (becomes 0).
-    void CheckLiteralInit(unsigned char kind, const std::string& name, Expr* init, int line) {
+    void CheckLiteralInit(unsigned char kind, const std::string& name, Expr* init, int line, int column) {
         const unsigned char t = kind & 0x0F;
         if (!t || !init) return;
         const bool isStr = dynamic_cast<StringExpr*>(init) || dynamic_cast<InterpStringExpr*>(init);
         auto* num = dynamic_cast<NumberExpr*>(init);
         const bool isBool = dynamic_cast<BoolExpr*>(init) != nullptr;
         if ((t == KInt || t == KFloat || t == KBool) && isStr)
-            m_semantic.push_back({line, "'" + name + "' is " + KindName(kind) + ", so it can't hold text"});
+            m_semantic.push_back({line, "'" + name + "' is " + KindName(kind) + ", so it can't hold text", 0, column});
         else if (t == KString && (num || isBool))
-            m_semantic.push_back({line, "'" + name + "' is a string: write the value in quotes"});
+            m_semantic.push_back({line, "'" + name + "' is a string: write the value in quotes", 0, column});
         else if (t == KInt && num && num->v != (double)(long long)num->v)
             m_semantic.push_back({line, "'" + name + "' is an int, so " + Fmt(num->v) + " becomes " +
-                                        Fmt((double)(long long)num->v) + ". Use float for decimals", 1});
+                                        Fmt((double)(long long)num->v) + ". Use float for decimals", 1, column});
     }
     static std::string Fmt(double v) { std::ostringstream o; o << v; return o.str(); }
 
@@ -2440,14 +2605,16 @@ private:
                 std::string fname = ConsumeIdentRun("field name");
                 SkipAutoPropertyBody();
                 ExprPtr init;
-                if (Match(Tok::Assign)) init = ParseExpression();
-                CheckLiteralInit(kind, fname, init.get(), declLine);
+                int initCol = Peek().column;
+                if (Match(Tok::Assign)) { initCol = Peek().column; init = ParseExpression(); }
+                CheckLiteralInit(kind, fname, init.get(), declLine, initCol);
                 addField(std::move(fname), kind, isPublic, std::move(init));
                 while (Match(Tok::Comma)) {
                     std::string n2 = Expect(Tok::Ident, "field name").text;
                     ExprPtr i2;
-                    if (Match(Tok::Assign)) i2 = ParseExpression();
-                    CheckLiteralInit(kind, n2, i2.get(), declLine);
+                    int col2 = Peek().column;
+                    if (Match(Tok::Assign)) { col2 = Peek().column; i2 = ParseExpression(); }
+                    CheckLiteralInit(kind, n2, i2.get(), declLine, col2);
                     addField(std::move(n2), kind, isPublic, std::move(i2));
                 }
                 Match(Tok::Semicolon);
@@ -2527,7 +2694,7 @@ private:
             auto st = std::make_unique<DoWhileStmt>();
             st->body = ParseBlock();
             if (!(Check(Tok::While) || (Check(Tok::Ident) && Peek().text == "while")))
-                throw ScriptError("parse error: expected 'while' after do-block", Peek().line);
+                throw ScriptError("parse error: expected 'while' after do-block", Peek().line, Peek().column);
             ++m_pos;   // 'while'
             Expect(Tok::LParen, "'('");
             st->cond = ParseExpression();
@@ -2550,7 +2717,7 @@ private:
                 } else if (Check(Tok::Ident) && Peek().text == "default") {
                     ++m_pos; c.isDefault = true; Expect(Tok::Colon, "':'");
                 } else {
-                    throw ScriptError("parse error: expected 'case' or 'default' in switch", Peek().line);
+                    throw ScriptError("parse error: expected 'case' or 'default' in switch", Peek().line, Peek().column);
                 }
                 while (!Check(Tok::RBrace) && !Check(Tok::End) &&
                        !(Check(Tok::Ident) && (Peek().text == "case" || Peek().text == "default")))
@@ -2569,16 +2736,18 @@ private:
             std::string name = ConsumeIdentRun("variable name");
             SkipAutoPropertyBody();   // public int Lives { get; set; } = 3;
             ExprPtr init;
-            if (Match(Tok::Assign)) init = ParseExpression();
-            CheckLiteralInit(kind, name, init.get(), declLine);
+            int initCol = Peek().column;
+            if (Match(Tok::Assign)) { initCol = Peek().column; init = ParseExpression(); }
+            CheckLiteralInit(kind, name, init.get(), declLine, initCol);
             if (!Check(Tok::Comma)) { Match(Tok::Semicolon); return std::make_unique<VarDeclStmt>(name, std::move(init), kind); }
             auto multi = std::make_unique<MultiStmt>();   // int a = 1, b = 2;
             multi->list.push_back(std::make_unique<VarDeclStmt>(name, std::move(init), kind));
             while (Match(Tok::Comma)) {
                 std::string n2 = Expect(Tok::Ident, "variable name").text;
                 ExprPtr i2;
-                if (Match(Tok::Assign)) i2 = ParseExpression();
-                CheckLiteralInit(kind, n2, i2.get(), declLine);
+                int col2 = Peek().column;
+                if (Match(Tok::Assign)) { col2 = Peek().column; i2 = ParseExpression(); }
+                CheckLiteralInit(kind, n2, i2.get(), declLine, col2);
                 multi->list.push_back(std::make_unique<VarDeclStmt>(n2, std::move(i2), kind));
             }
             Match(Tok::Semicolon);
@@ -2642,11 +2811,11 @@ private:
         }
         if (Match(Tok::Return)) {
             ExprPtr e;
-            const int retLine = Prev().line;
+            const int retLine = Prev().line, retCol = Prev().column;
             if (!Check(Tok::Semicolon) && !Check(Tok::RBrace)) e = ParseExpression();
             if (e && m_inVoid)
                 m_semantic.push_back({retLine, m_fnName + "() is void, so it can't return a value. "
-                                               "Give it a return type (int, float, bool or string) or just write `return;`"});
+                                               "Give it a return type (int, float, bool or string) or just write `return;`", 0, retCol});
             Match(Tok::Semicolon);
             return std::make_unique<ReturnStmt>(std::move(e));
         }
@@ -2671,7 +2840,7 @@ private:
 
     // Ternary: cond ? a : b (lower precedence than assignment's RHS).
     ExprPtr ParseTernary() {
-        ExprPtr c = ParseOr();
+        ExprPtr c = ParseCoalesce();
         if (Match(Tok::Question)) {
             ExprPtr a = ParseAssignment();
             Expect(Tok::Colon, "':'");
@@ -2684,9 +2853,14 @@ private:
     bool IsLambdaAhead() const {
         if (Check(Tok::Ident) && m_toks[m_pos + 1].type == Tok::Arrow) return true;
         if (!Check(Tok::LParen)) return false;
-        std::size_t i = m_pos + 1;
-        while (m_toks[i].type == Tok::Ident || m_toks[i].type == Tok::Comma) ++i;
-        return m_toks[i].type == Tok::RParen && m_toks[i + 1].type == Tok::Arrow;
+        int depth = 0;
+        for (std::size_t i = m_pos; i < m_toks.size(); ++i) {
+            if (m_toks[i].type == Tok::LParen) ++depth;
+            else if (m_toks[i].type == Tok::RParen) {
+                if (--depth == 0) return i + 1 < m_toks.size() && m_toks[i + 1].type == Tok::Arrow;
+            }
+        }
+        return false;
     }
     ExprPtr ParseLambda() {
         static int s_nextLambda = 1;
@@ -2695,8 +2869,15 @@ private:
         if (Check(Tok::Ident)) lam->params.push_back(m_toks[m_pos++].text);
         else {
             Expect(Tok::LParen, "'('");
+            bool sawDefault = false;
             while (!Check(Tok::RParen)) {
-                lam->params.push_back(ConsumeIdentRun("parameter"));
+                std::string p = ConsumeIdentRun("parameter");
+                ExprPtr def;
+                if (Match(Tok::Assign)) { def = ParseExpression(); sawDefault = true; }
+                else if (sawDefault)
+                    throw ScriptError("parameter '" + p + "' needs a default too (ones with defaults come last)", Peek().line);
+                lam->params.push_back(std::move(p));
+                lam->defaults.push_back(std::move(def));
                 if (!Match(Tok::Comma)) break;
             }
             Expect(Tok::RParen, "')'");
@@ -2711,6 +2892,11 @@ private:
     ExprPtr ParseAssignment() {
         if (IsLambdaAhead()) return ParseLambda();
         ExprPtr left = ParseTernary();
+        if (Match(Tok::QuestionQuestionEq)) {
+            if (auto* var = dynamic_cast<VarExpr*>(left.get()))
+                return std::make_unique<NullishAssignExpr>(var->n, ParseAssignment());
+            throw ScriptError("invalid ??=", Peek().line);
+        }
         if (Match(Tok::Assign)) {
             ExprPtr value = ParseAssignment();
             if (auto* var = dynamic_cast<VarExpr*>(left.get()))
@@ -2730,7 +2916,7 @@ private:
                 delete ix;
                 return out;
             }
-            throw ScriptError("invalid assignment target");
+            throw ScriptError("invalid assignment target", Peek().line, Peek().column);
         }
         // Compound assignment: x += e  desugars to  x = x + e. Also works on an
         // element target: arr[i] += e / map["k"] += e.
@@ -2753,7 +2939,7 @@ private:
                 delete ix;
                 return out;
             }
-            throw ScriptError("invalid assignment target");
+            throw ScriptError("invalid assignment target", Peek().line, Peek().column);
         }
         // Postfix increment/decrement: x++  ->  x = x + 1  (also x--). Works on an
         // element target too: arr[i]++ / map["k"]--.
@@ -2772,7 +2958,7 @@ private:
                 delete ix;
                 return out;
             }
-            throw ScriptError("invalid increment target");
+            throw ScriptError("invalid increment target", Peek().line, Peek().column);
         }
         return left;
     }
@@ -2781,7 +2967,16 @@ private:
     static constexpr int kMaxOperators = 1000;
     void CountOperator() {
         if (++m_operators > kMaxOperators)
-            throw ScriptError("parse error: expression is too long (more than " + std::to_string(kMaxOperators) + " operators)", Peek().line);
+            throw ScriptError("parse error: expression is too long (more than " + std::to_string(kMaxOperators) + " operators)", Peek().line, Peek().column);
+    }
+    // a ?? b ?? c groups to the right, below || and above ?:.
+    ExprPtr ParseCoalesce() {
+        ExprPtr l = ParseOr();
+        if (Match(Tok::QuestionQuestion)) {
+            CountOperator();
+            l = std::make_unique<CoalesceExpr>(std::move(l), ParseCoalesce());
+        }
+        return l;
     }
     ExprPtr ParseOr() {
         auto l = ParseAnd();
@@ -2831,7 +3026,7 @@ private:
     ExprPtr ParseUnary() {
         // Every nested expression ('(', '-', '!', ...) comes through here: cap the
         // depth so thousands of them are a parse error, not a stack overflow.
-        if (m_nesting >= 256) throw ScriptError("parse error: expression nested too deeply", Peek().line);
+        if (m_nesting >= 256) throw ScriptError("parse error: expression nested too deeply", Peek().line, Peek().column);
         struct NestGuard { int& n; explicit NestGuard(int& d) : n(d) { ++n; } ~NestGuard() { --n; } } guard(m_nesting);
         if (Check(Tok::Minus) || Check(Tok::Not)) { Tok op = Peek().type; ++m_pos; return std::make_unique<UnaryExpr>(op, ParseUnary()); }
         // Prefix ++x / --x  ->  x = x + 1 / x = x - 1.
@@ -2839,7 +3034,7 @@ private:
             Tok bin = Peek().type == Tok::Inc ? Tok::Plus : Tok::Minus; ++m_pos;
             ExprPtr target = ParseUnary();
             auto* var = dynamic_cast<VarExpr*>(target.get());
-            if (!var) throw ScriptError("invalid increment target");
+            if (!var) throw ScriptError("invalid increment target", Peek().line, Peek().column);
             std::string name = var->n;
             auto combined = std::make_unique<BinaryExpr>(
                 bin, std::make_unique<VarExpr>(name), std::make_unique<NumberExpr>(1.0));
@@ -2848,34 +3043,40 @@ private:
         return ParsePostfix();
     }
     // Postfix indexing: base[i][j]...
+    // One `.name` or `.name(args)` step. `safe` skips the step when the receiver is null.
+    ExprPtr ParseMemberStep(ExprPtr e, bool safe) {
+        std::string path = Expect(Tok::Ident, "member name").text;
+        std::vector<std::string> parts;
+        for (std::size_t a = 0, b; a <= path.size(); a = b + 1) {
+            b = path.find('.', a); if (b == std::string::npos) b = path.size();
+            parts.push_back(path.substr(a, b - a));
+        }
+        for (std::size_t k = 0; k + 1 < parts.size(); ++k)
+            e = std::make_unique<MemberExpr>(std::move(e), parts[k], safe);
+        if (Match(Tok::LParen)) {
+            auto call = std::make_unique<MethodCallExpr>(std::move(e), parts.back(), safe);
+            if (!Check(Tok::RParen)) {
+                do { call->args.push_back(ParseExpression()); } while (Match(Tok::Comma));
+            }
+            Expect(Tok::RParen, "')'");
+            return call;
+        }
+        return std::make_unique<MemberExpr>(std::move(e), parts.back(), safe);
+    }
     ExprPtr ParsePostfix() {
         ExprPtr e = ParsePrimary();
+        // After `?.`, the rest of this chain is skipped when a step is null.
+        bool safe = false;
         for (;;) {
             if (Match(Tok::LBracket)) {
                 ExprPtr idx = ParseExpression();
                 Expect(Tok::RBracket, "']'");
-                e = std::make_unique<IndexExpr>(std::move(e), std::move(idx));
+                e = std::make_unique<IndexExpr>(std::move(e), std::move(idx), safe);
+            } else if (Match(Tok::QuestionDot)) {
+                safe = true;
+                e = ParseMemberStep(std::move(e), true);
             } else if (Match(Tok::Dot)) {
-                // Member access on any expression: (a - b).magnitude, xs[0].ToString(),
-                // GetName().ToUpper(). The lexer may glue a dotted run ("position.x").
-                std::string path = Expect(Tok::Ident, "member name").text;
-                std::vector<std::string> parts;
-                for (std::size_t a = 0, b; a <= path.size(); a = b + 1) {
-                    b = path.find('.', a); if (b == std::string::npos) b = path.size();
-                    parts.push_back(path.substr(a, b - a));
-                }
-                for (std::size_t k = 0; k + 1 < parts.size(); ++k)
-                    e = std::make_unique<MemberExpr>(std::move(e), parts[k]);
-                if (Match(Tok::LParen)) {
-                    auto call = std::make_unique<MethodCallExpr>(std::move(e), parts.back());
-                    if (!Check(Tok::RParen)) {
-                        do { call->args.push_back(ParseExpression()); } while (Match(Tok::Comma));
-                    }
-                    Expect(Tok::RParen, "')'");
-                    e = std::move(call);
-                } else {
-                    e = std::make_unique<MemberExpr>(std::move(e), parts.back());
-                }
+                e = ParseMemberStep(std::move(e), safe);
             } else break;
         }
         return e;
@@ -2974,6 +3175,20 @@ private:
         return node;
     }
 
+    // `Heal(5)` or `Heal(bonus: 4, hp: 1)`. A name is a bare identifier followed by ':'.
+    void ParseCallArguments(std::vector<ExprPtr>& args, std::vector<std::string>& names) {
+        if (Check(Tok::RParen)) return;
+        do {
+            std::string nm;
+            if (Check(Tok::Ident) && m_pos + 1 < m_toks.size() && m_toks[m_pos + 1].type == Tok::Colon) {
+                nm = m_toks[m_pos].text;
+                m_pos += 2;
+            }
+            names.push_back(std::move(nm));
+            args.push_back(ParseExpression());
+        } while (Match(Tok::Comma));
+    }
+
     ExprPtr ParsePrimary() {
         if (Match(Tok::Number)) return std::make_unique<NumberExpr>(Prev().number);
         if (Match(Tok::String)) return std::make_unique<StringExpr>(Prev().text);
@@ -3027,16 +3242,19 @@ private:
             }
             if (Match(Tok::LParen)) {
                 auto call = std::make_unique<CallExpr>(name);
-                if (!Check(Tok::RParen)) {
-                    do { call->args.push_back(ParseExpression()); } while (Match(Tok::Comma));
-                }
+                ParseCallArguments(call->args, call->argNames);
                 Expect(Tok::RParen, "')'");
                 // StartCoroutine(Blink(0.2f)) names the routine instead of calling it now.
+                // Named arguments inside it (`Blink(delay: 0.2)`) travel with the values.
                 if ((name == "StartCoroutine" || name == "StopCoroutine") && call->args.size() == 1)
                     if (auto* inner = dynamic_cast<CallExpr*>(call->args[0].get())) {
                         auto co = std::make_unique<CallExpr>(name);
                         co->args.push_back(std::make_unique<StringExpr>(inner->name));
-                        for (auto& a : inner->args) co->args.push_back(std::move(a));
+                        co->argNames.push_back("");
+                        for (std::size_t i = 0; i < inner->args.size(); ++i) {
+                            co->args.push_back(std::move(inner->args[i]));
+                            co->argNames.push_back(i < inner->argNames.size() ? inner->argNames[i] : "");
+                        }
                         return co;
                     }
                 return call;
@@ -3045,7 +3263,7 @@ private:
                 return std::make_unique<NumberExpr>(it->second);   // State.Run -> 1
             return std::make_unique<VarExpr>(name);
         }
-        throw ScriptError("parse error: unexpected token", Peek().line);
+        throw ScriptError("parse error: unexpected token", Peek().line, Peek().column);
     }
 
     std::vector<Token> m_toks;
@@ -4275,6 +4493,79 @@ struct OkayScriptVM::Impl {
                     sl->SetValue(a.empty() ? 0.0f : a[0].AsFloat());
             return Value{};
         };
+        // grok/ui-options: the main new slider / bar / button controls. Events stay
+        // on_change (OnValueChanged), on_click (OnClick) and on_submit (OnSubmit).
+        b["set_slider_step"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* sl = g->GetComponent<UISlider>())
+                    sl->step = a.empty() ? 0.0f : a[0].AsFloat();
+            return Value{};
+        };
+        b["set_slider_format"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* sl = g->GetComponent<UISlider>())
+                    sl->valueFormat = a.empty() ? std::string{} : a[0].AsString();
+            return Value{};
+        };
+        b["ui_set_slider_step"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* sl = g->GetComponent<UISlider>()) sl->step = a[1].AsFloat();
+            return Value{};
+        };
+        b["ui_set_slider_format"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* sl = g->GetComponent<UISlider>()) sl->valueFormat = a[1].AsString();
+            return Value{};
+        };
+        b["set_bar_segments"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* pb = g->GetComponent<UIProgressBar>())
+                    pb->segments = a.empty() ? 0 : (int)a[0].AsFloat();
+            return Value{};
+        };
+        b["set_bar_trail"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* pb = g->GetComponent<UIProgressBar>())
+                    pb->trailDelay = a.empty() ? 0.0f : a[0].AsFloat();
+            return Value{};
+        };
+        b["set_bar_format"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* pb = g->GetComponent<UIProgressBar>())
+                    pb->textFormat = a.empty() ? std::string{} : a[0].AsString();
+            return Value{};
+        };
+        b["ui_set_bar_segments"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* pb = g->GetComponent<UIProgressBar>()) pb->segments = (int)a[1].AsFloat();
+            return Value{};
+        };
+        b["ui_set_bar_trail"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* pb = g->GetComponent<UIProgressBar>()) pb->trailDelay = a[1].AsFloat();
+            return Value{};
+        };
+        b["ui_set_bar_format"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* pb = g->GetComponent<UIProgressBar>()) pb->textFormat = a[1].AsString();
+            return Value{};
+        };
+        b["set_button_ease"] = [go](std::vector<Value>& a) {
+            if (GameObject* g = go())
+                if (auto* bt = g->GetComponent<UIButton>()) {
+                    bt->transitionEase = a.empty() ? 0 : (int)a[0].AsFloat();
+                    if (a.size() >= 2) bt->transitionDuration = a[1].AsFloat();
+                }
+            return Value{};
+        };
+        b["ui_set_button_ease"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* bt = g->GetComponent<UIButton>()) {
+                    bt->transitionEase = (int)a[1].AsFloat();
+                    if (a.size() >= 3) bt->transitionDuration = a[2].AsFloat();
+                }
+            return Value{};
+        };
         b["toggle_on"] = [go](std::vector<Value>&) -> Value {
             if (GameObject* g = go())
                 if (auto* tg = g->GetComponent<UIToggle>()) return Value{tg->on};
@@ -4869,7 +5160,10 @@ struct OkayScriptVM::Impl {
         };
         // Procedural Object Holding on this object:
         //   hold_pickup(name) / hold_nearest([range])   take an object into the hands -> 1 if held
-        //   hold_drop()                                 let go of it
+        //   hold_drop()                                 let go of it (keeps the holder's velocity)
+        //   hold_throw([charge])                        launch it along the camera aim; charge is 0..1
+        //                                               (omit it to use the charge built by holding the key)
+        //   hold_charge()                               that charge right now, 0..1
         //   hold_object()                               name of what's held ("" = nothing)
         auto holder = [this]() -> ProceduralObjectHolding* {
             GameObject* g = rt.host ? rt.host->gameObject : nullptr;
@@ -4888,6 +5182,15 @@ struct OkayScriptVM::Impl {
         b["hold_drop"] = [holder](std::vector<Value>&) {
             if (ProceduralObjectHolding* h = holder()) h->Drop();
             return Value{};
+        };
+        b["hold_throw"] = [holder](std::vector<Value>& a) {
+            ProceduralObjectHolding* h = holder();
+            const float charge = a.empty() ? -1.0f : a[0].AsFloat();
+            return Value{h && h->Throw(charge) ? 1.0f : 0.0f};
+        };
+        b["hold_charge"] = [holder](std::vector<Value>&) {
+            ProceduralObjectHolding* h = holder();
+            return Value{h ? h->ThrowCharge() : 0.0f};
         };
         b["hold_object"] = [holder](std::vector<Value>&) {
             ProceduralObjectHolding* h = holder();
@@ -8289,7 +8592,10 @@ struct OkayScriptVM::Impl {
         b["StartCoroutine"] = [this](std::vector<Value>& a) {
             if (a.empty()) return Value{};
             std::vector<Value> args(a.begin() + 1, a.end());
-            int id = rt.StartCoroutine(a[0].AsString(), std::move(args));
+            std::vector<std::string> names;
+            if (rt.activeArgNames && rt.activeArgNames->size() > 1)
+                names.assign(rt.activeArgNames->begin() + 1, rt.activeArgNames->end());
+            int id = rt.StartCoroutine(a[0].AsString(), std::move(args), std::move(names));
             Value v = Value::MakeMap(); (*v.AsMap())["__co"] = Value{(float)id}; return v;
         };
         b["StopCoroutine"] = [this](std::vector<Value>& a) {
@@ -8574,8 +8880,12 @@ bool OkayScriptVM::Load(const std::string& source, std::string* error) {
         m_impl->loaded = true; return true;
     } catch (const ScriptError& e) {
         // Prefix the source line when known, so editors can show a diagnostic.
-        std::string msg = e.line > 0 ? "line " + std::to_string(e.line) + ": " + e.what()
-                                     : std::string(e.what());
+        std::string msg = e.what();
+        if (e.line > 0) {
+            std::string where = "line " + std::to_string(e.line);
+            if (e.column > 0) where += ", column " + std::to_string(e.column);
+            msg = where + ": " + msg;
+        }
         if (error) *error = msg;
         Log::Error("OkayScript: ", msg);
         m_impl->loaded = false;
@@ -8611,8 +8921,15 @@ bool OkayScriptVM::Validate(const std::string& source, std::string* error) {
         parser.ParseProgram(throwaway);
         return true;
     } catch (const ScriptError& e) {
-        if (error) *error = e.line > 0 ? "line " + std::to_string(e.line) + ": " + e.what()
-                                       : std::string(e.what());
+        if (error) {
+            std::string msg = e.what();
+            if (e.line > 0) {
+                std::string where = "line " + std::to_string(e.line);
+                if (e.column > 0) where += ", column " + std::to_string(e.column);
+                msg = where + ": " + msg;
+            }
+            *error = msg;
+        }
         return false;
     } catch (const std::exception& e) {
         if (error) *error = e.what();
@@ -8630,7 +8947,7 @@ std::vector<ScriptDiagnostic> OkayScriptVM::ValidateAll(const std::string& sourc
         Parser parser(lex.Scan());
         diags = parser.ParseProgramRecovering();
     } catch (const ScriptError& e) {
-        diags.push_back({ e.line, e.what() });
+        diags.push_back({ e.line, e.what(), 0, e.column });
     } catch (const std::exception& e) {
         diags.push_back({ 0, e.what() });
     }
@@ -8751,6 +9068,7 @@ std::string ResolveEventHandler(const Functions& functions, const std::string& f
         {"on_mouse_up",    {"OnMouseUp", "OnMouseUpAsButton"}},
         {"on_click",     {"OnClick", "OnMouseClick", "OnMouseUpAsButton", "OnPointerClick"}},
         {"on_change",    {"OnValueChanged"}},
+        {"on_submit",    {"OnSubmit"}},   // grok/ui-options: text fields already fire on_submit
         {"on_toggle",    {"OnToggle", "OnValueChanged"}},
         {"on_drop",      {"OnDrop"}},
         {"on_receive",   {"OnReceive"}},

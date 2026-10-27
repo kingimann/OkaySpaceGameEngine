@@ -1263,7 +1263,10 @@ inline void VoxelSandbox(Scene& scene) {
         col->size = {0.6f, 1.8f, 0.6f};
         col->offset = {0.0f, 0.9f, 0.0f};
     }
-    player->AddComponent<FirstPersonController>();
+    // Right mouse fills terrain (VoxelDigger). The controller's aim-down-sights
+    // zoom is the same button, and it pulled the view from 60° to 40° while placing.
+    auto* fp = player->AddComponent<FirstPersonController>();
+    fp->zoomWithRightMouse = false;
 
     GameObject* camObj = scene.CreateGameObject("FPS Camera");
     auto* cam = camObj->AddComponent<Camera>();

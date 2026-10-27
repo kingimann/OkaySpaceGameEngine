@@ -193,6 +193,7 @@ int main() {
         GameObject* lh  = mk("LeftHand", lfa, {0.3f, 0, 0});
         auto* fb = root->AddComponent<FullBodyIK>();
         fb->softness = 0.0f; fb->bodyPull = 0.0f; fb->spineReach = 0.0f;
+        for (auto& ef : fb->effectors) ef.targetBlendTime = 0.0f;   // weight easing only (goal blending is tested below)
         sc.Start();
         const Vec3 shoulder = lua->transform->Position();
         const Vec3 handRest = lh->transform->Position();

@@ -898,6 +898,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << w->color.r << " " << w->color.g << " " << w->color.b
             << " " << w->opacity << " " << w->reflectivity << " " << w->specular
             << " " << w->shininess << " " << w->flow.x << " " << w->flow.y
+            << " " << w->depth << " " << w->fluidDensity << " " << w->linearDrag
             << " " << Quote(w->texture) << "\n";
     }
     if (auto* ws = go->GetComponent<WorldStreamer>()) {
@@ -5524,6 +5525,19 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> w->color.r >> w->color.g >> w->color.b >> w->opacity
                        >> w->reflectivity >> w->specular >> w->shininess >> w->flow.x >> w->flow.y;
                     w->color.a = w->opacity;
+                    // depth, density and drag came later. A quote means an older water
+                    // line (visual plane only, depth stays 0).
+                    auto numeric = [](std::istream& in) {
+                        in >> std::ws;
+                        const int c = in.peek();
+                        return c == '-' || c == '+' || c == '.' || std::isdigit(c);
+                    };
+                    if (numeric(in)) in >> w->depth;
+                    if (numeric(in)) in >> w->fluidDensity;
+                    if (numeric(in)) in >> w->linearDrag;
+                    if (!std::isfinite(w->depth) || w->depth < 0.0f) w->depth = 0.0f;
+                    if (!std::isfinite(w->fluidDensity) || w->fluidDensity < 0.0f) w->fluidDensity = 1.0f;
+                    if (!std::isfinite(w->linearDrag) || w->linearDrag < 0.0f) w->linearDrag = 4.0f;
                     w->texture = ReadQuoted(in);
                     w->Apply();
                 } else if (field == "worldstreamer") {

@@ -27549,6 +27549,11 @@ void DrawInspector(EditorState& ed) {
             float c[4] = {w->color.r, w->color.g, w->color.b, w->opacity};
             if (ImGui::ColorEdit4("Color##wat", c)) { w->color = {c[0],c[1],c[2],c[3]}; w->opacity = c[3]; w->Apply(); ed.dirty = true; }
             if (ImGui::DragFloat("Size##wat", &w->size, 1.0f, 1.0f, 1000000.0f)) { w->Apply(); ed.dirty = true; }
+            if (ImGui::DragFloat("Depth##wat", &w->depth, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Metres below the surface. 0 is a visual plane.\nDeeper than the waist, the player swims. Props float or sink by density.");
+            if (ImGui::DragFloat("Density##wat", &w->fluidDensity, 0.01f, 0.0f, 20.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mass per cubic metre. A 1 m cube of this mass floats halfway.");
+            if (ImGui::DragFloat("Drag##wat", &w->linearDrag, 0.05f, 0.0f, 20.0f)) ed.dirty = true;
             if (ImGui::SliderInt("Detail##wat", &w->resolution, 4, 128)) { w->Apply(); ed.dirty = true; }
             SectionHeader("Waves");
             if (ImGui::DragFloat("Height##wat", &w->waveHeight, 0.01f, 0.0f, 5.0f)) ed.dirty = true;

@@ -317,6 +317,9 @@ void CharacterAnimBackend::Move(const Movement& m) {
     m_sm->SetFloat("stance", m.stance);
     m_sm->SetFloat("airTime", m.airTime);
     m_sm->SetFloat("verticalSpeed", m.verticalSpeed);
+    // Declared or not: a swim clip the animator adds can transition on this.
+    // Until that clip exists the graph stays on idle / walk (airTime stays 0).
+    m_sm->SetBool("swim", m.swim);
 }
 
 void CharacterAnimBackend::Gait(float x, float z, float speed) {

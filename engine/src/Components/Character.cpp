@@ -458,23 +458,28 @@ void Character::DriveLocomotion(const Locomotion& l) {
         Vec3 right{-f.z, 0.0f, f.x};                          // the body's right
         moveAngle = std::atan2(v.x * right.x + v.z * right.z, v.x * f.x + v.z * f.z) * kRad2Deg;
     }
+    if (l.swim) ground = true;                                 // water is holding the body
     m_airT = (ground && !l.jumped) ? 0.0f : m_airT + l.dt;
     if (l.jumped) m_airT = 1.0f;                               // leave the ground pose at once
+    if (l.swim) m_airT = 0.0f;
+    m_swimming = l.swim;
     const float runAt = l.walkSpeed * (anim == 3 ? 1.05f : 1.15f);
     const bool run = hs > runAt || (l.sprint && hs > l.walkSpeed * 0.9f);
     m_stanceTarget = l.prone ? 2 : (l.crouch ? 1 : 0);
     m_stanceLevel = l.stance >= 0.0f ? l.stance : (float)m_stanceTarget;
     if (m_poseSource && m_poseSource->Live()) {   // the Animator's graph picks the state from these
         PoseSource::Movement m;
-        m.speed = hs; m.run = run; m.crouch = l.crouch; m.prone = l.prone;
-        m.stance = m_stanceLevel;
+        m.speed = hs; m.run = l.swim ? false : run; m.crouch = l.swim ? false : l.crouch; m.prone = l.swim ? false : l.prone;
+        m.stance = l.swim ? 0.0f : m_stanceLevel;
         m.airTime = m_airT; m.verticalSpeed = l.velocity.y;
+        m.swim = l.swim;
         m_poseSource->Move(m);
         return;
     }
     const bool wasMoving = anim == 2 || anim == 3 || anim == 17;
     const bool moving = hs > (wasMoving ? 0.2f : 0.35f);       // hysteresis: no idle/walk flicker
-    if (l.prone)                   anim = 7;
+    if (l.swim)                    anim = moving ? 2 : 1;   // no swim clip yet: paddle with the walk, tread with the idle
+    else if (l.prone)              anim = 7;
     else if (l.jumped)             anim = 5;
     else if (m_airT > 0.12f)       anim = l.velocity.y > 0.4f ? 5 : 18;   // short drops keep the stride
     else if (l.crouch)             anim = moving ? 17 : 6;

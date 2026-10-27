@@ -104,7 +104,8 @@ public:
     /// its last good position. Use ServerTeleport() for legit jumps (respawns).
     float maxMoveSpeed = 0.0f;
     /// Server: custom messages a client may send per second (0 = unlimited);
-    /// extra ones are dropped (reliable ones are still acknowledged).
+    /// extra ones are dropped (reliable ones aren't acknowledged, so they come
+    /// again later).
     int maxMessagesPerSecond = 0;
     /// Server: the longest custom message a client may send to be applied or
     /// relayed (channel + data, bytes; 0 = any). A client also gets four times
@@ -112,6 +113,10 @@ public:
     int maxRelayedBytes = 16 * 1024;
     /// Server: kick a client after this many rejected moves within a minute (0 = never).
     int kickAfterViolations = 0;
+    /// Server, authoritative movement: the shortest time between two presses of
+    /// Jump, Dash or Fire in a player's inputs (seconds; 0 = off). A quicker
+    /// press is dropped, so a client can't press every tick.
+    float minPressInterval = 0.0f;
     /// Server: move a peer's avatar (0 = the host's own) — accepted by the move
     /// check and pushed to that client.
     void ServerTeleport(std::uint32_t id, const Vec3& pos);
@@ -617,6 +622,7 @@ private:
         bool any = false;
         std::vector<std::uint64_t> bits = std::vector<std::uint64_t>(kWidth / 64, 0);
         bool Accept(std::uint32_t seq);   // true the first time a seq is seen
+        bool Seen(std::uint32_t seq) const;   // Accept would say no (nothing changes)
         void Clear() { newest = 0; any = false; std::fill(bits.begin(), bits.end(), 0); }
     };
     struct Client {
@@ -652,6 +658,7 @@ private:
         std::string pawn;
         std::map<std::uint32_t, std::pair<std::uint32_t, PlayerInput>> inputs;   // seq -> (tick, input)
         std::uint32_t lastInputSeq = 0;
+        float lastPress[3] = {-1e9f, -1e9f, -1e9f};   // server time of its last Jump, Dash, Fire press (minPressInterval)
         PlayerInput lastInput;
         int repeats = 0;            // ticks the last input stood in for a late one
         bool sealedJoin = false;    // joined through the sealed handshake

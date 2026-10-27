@@ -225,6 +225,15 @@ These hold whether or not the anti-cheat is on, unless a setting is named:
     man-in-the-middle.
   - The seed is the private key: keep it on the server, never in a game build
     or a `.okayac` file.
+- **Pings only from players.** The server answers `Ping` only from joined
+  clients and joins in progress, so a stranger can't use it to bounce traffic.
+- **Reliable messages over the rate aren't acknowledged.** A message past
+  `maxMessagesPerSecond` is dropped without an ack, so the client sends it again
+  later instead of losing it, and a flood doesn't get its acks.
+- **Press limits** (`NetworkManager::minPressInterval`, seconds, default 0 =
+  off; authoritative movement). Two presses of Jump, Dash or Fire in a player's
+  inputs closer together than this: the second is dropped, so a client can't
+  press every tick.
 - **A session cookie without encryption.** With `encryption` off, a player is
   known only by its address. The Welcome then carries a random 64-bit cookie (a
   trailing field older clients skip). The client puts it at the end of every
@@ -295,7 +304,8 @@ check them.
   against `maxRpcsPerSecond` unless that validator sets its own rate. With the
   anti-cheat off, a client gets 20 claims a second. Then, with or without the
   anti-cheat on:
-  1. the shooter isn't dead (if its avatar on the server has a Health);
+  1. the shooter isn't dead (if its avatar on the server, or the pawn the server
+     moves for it, has a Health);
   2. the weapon's fire rate and ammo, from a Net Validator for `hit/<weapon>`
      (cooldown and budget, as above);
   3. the shot starts within `hitOriginTolerance` (2) of where the server has

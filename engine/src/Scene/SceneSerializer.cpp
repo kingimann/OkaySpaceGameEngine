@@ -1067,7 +1067,19 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << lb->pole.x << " " << lb->pole.y << " " << lb->pole.z
             << " " << (lb->orient ? 1 : 0) << " " << (int)lb->poleMode << " " << lb->softness
             << " " << lb->targetRotation.x << " " << lb->targetRotation.y << " " << lb->targetRotation.z
-            << " " << lb->targetRotation.w << "\n";
+            << " " << lb->targetRotation.w;
+        // Optional joint limits as trailing key=value (older builds skip them).
+        auto lim = [&out](const char* p, const IKJointLimit& l) {
+            if (!l.Active()) return;
+            out << ' ' << p << "T=" << (int)l.type << ' ' << p << "S=" << l.swingMax
+                << ' ' << p << "H0=" << l.hingeMin << ' ' << p << "H1=" << l.hingeMax
+                << ' ' << p << "W0=" << l.twistMin << ' ' << p << "W1=" << l.twistMax;
+            if (!l.autoAxes)
+                out << ' ' << p << "TX=" << l.twistAxis.x << ' ' << p << "TY=" << l.twistAxis.y << ' ' << p << "TZ=" << l.twistAxis.z
+                    << ' ' << p << "HX=" << l.hingeAxis.x << ' ' << p << "HY=" << l.hingeAxis.y << ' ' << p << "HZ=" << l.hingeAxis.z;
+        };
+        lim("ul", lb->upperLimit); lim("ll", lb->lowerLimit);
+        out << "\n";
     }
     if (auto* ci = go->GetComponent<ChainIK>()) {
         out << "  chainik " << Quote(ci->targetName) << " " << ci->weight << " " << ci->iterations
@@ -3529,7 +3541,29 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                       if (rs >> o) lb->orient = (o != 0);
                       lb->poleMode = (rs >> pm) ? (LimbIK::PoleMode)std::clamp(pm, 0, 2) : LimbIK::PoleMode::World;
                       Quat q;
-                      if (rs >> lb->softness >> q.x >> q.y >> q.z >> q.w) lb->targetRotation = q; }
+                      if (rs >> lb->softness >> q.x >> q.y >> q.z >> q.w) lb->targetRotation = q;
+                      // Newer still: joint limits as trailing key=value.
+                      std::string tok;
+                      while (rs >> tok) {
+                          auto eq = tok.find('=');
+                          if (eq == std::string::npos) continue;
+                          const std::string k = tok.substr(0, eq);
+                          const float v = std::strtof(tok.c_str() + eq + 1, nullptr);
+                          IKJointLimit& l = k.compare(0, 2, "ul") == 0 ? lb->upperLimit : lb->lowerLimit;
+                          const std::string f = k.substr(2);
+                          if      (f == "T")  l.type = (IKJointLimit::Type)std::clamp((int)v, 0, 2);
+                          else if (f == "S")  l.swingMax = v;
+                          else if (f == "H0") l.hingeMin = v;
+                          else if (f == "H1") l.hingeMax = v;
+                          else if (f == "W0") l.twistMin = v;
+                          else if (f == "W1") l.twistMax = v;
+                          else if (f == "TX") { l.twistAxis.x = v; l.autoAxes = false; }
+                          else if (f == "TY") l.twistAxis.y = v;
+                          else if (f == "TZ") l.twistAxis.z = v;
+                          else if (f == "HX") l.hingeAxis.x = v;
+                          else if (f == "HY") l.hingeAxis.y = v;
+                          else if (f == "HZ") l.hingeAxis.z = v;
+                      } }
                 } else if (field == "chainik") {
                     auto* ci = go->AddComponent<ChainIK>();
                     ci->targetName = ReadQuoted(in);

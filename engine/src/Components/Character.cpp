@@ -1088,6 +1088,9 @@ void Character::EnsureOwnerArm(int base) {
     auto* handMr = made[2]->GetComponent<MeshRenderer>();
     handMr->mesh.normals.clear();
     handMr->castShadows = false;
+    // The key light sits in front of the lens, so the face you see is in shadow.
+    // A warm lift keeps that face skin-coloured; the shade on each side stays.
+    handMr->emissive = Color::FromBytes(82, 58, 46);
     // Under the player, not the camera. A first-person-only object is drawn
     // only for the camera that is hiding its owner, and only when it is still
     // inside that owner's subtree. Parenting it to the camera would hide it
@@ -1273,9 +1276,9 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
                 dst->color = src->color;
                 dst->castShadows = false;
                 dst->mesh.normals.clear();
-                // Sit the prop on the inner end of the hand brick (local +Z).
-                // It is a little smaller than that end, and only overlaps it
-                // enough to read as gripped.
+                // The prop sits in the palm (local +Y), a little toward the inner
+                // end. It is smaller than the hand, and overlaps the palm just
+                // enough to read as held.
                 auto* handMr = m_ownerHand->GetComponent<MeshRenderer>();
                 Vec3 hmn = handMr && !handMr->mesh.vertices.empty() ? handMr->mesh.vertices[0] : Vec3{-0.06f, -0.06f, -0.08f};
                 Vec3 hmx = hmn;
@@ -1285,28 +1288,28 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
                         hmx.x = std::max(hmx.x, v.x); hmx.y = std::max(hmx.y, v.y); hmx.z = std::max(hmx.z, v.z);
                     }
                 const Vec3 handExt = hmx - hmn;
-                const float handCross = std::max(handExt.x, handExt.y);
+                const float palm = std::min(handExt.x, handExt.z);
                 Vec3 mn = src->mesh.vertices[0], mx = mn;
                 for (const Vec3& v : src->mesh.vertices) {
                     mn.x = std::min(mn.x, v.x); mn.y = std::min(mn.y, v.y); mn.z = std::min(mn.z, v.z);
                     mx.x = std::max(mx.x, v.x); mx.y = std::max(mx.y, v.y); mx.z = std::max(mx.z, v.z);
                 }
                 const float maxExt = std::max(mx.x - mn.x, std::max(mx.y - mn.y, mx.z - mn.z));
-                const float uni = maxExt > 1e-4f ? (0.85f * handCross / maxExt) : 1.0f;
-                const Quat irot = Quat::Euler(8.0f, -side * 16.0f, 6.0f);
+                const float uni = maxExt > 1e-4f ? (0.72f * palm / maxExt) : 1.0f;
+                const Quat irot = Quat::Euler(-16.0f, -side * 18.0f, side * 8.0f);
                 Vec3 center{0.0f, 0.0f, 0.0f};
-                float minZ = 1.0e9f;
+                float minY = 1.0e9f;
                 const float invN = 1.0f / (float)src->mesh.vertices.size();
                 for (const Vec3& v : src->mesh.vertices) {
                     const Vec3 p = irot * (v * uni);
                     center = center + p * invN;
-                    minZ = std::min(minZ, p.z);
+                    minY = std::min(minY, p.y);
                 }
-                const float bite = 0.22f * handExt.z;
+                const float bite = 0.18f * handExt.y;
                 m_ownerItem->transform->localScale = Vec3{uni, uni, uni};
                 m_ownerItem->transform->localRotation = irot;
                 m_ownerItem->transform->localPosition =
-                    Vec3{-center.x, -center.y + 0.08f * handCross, hmx.z - bite - minZ};
+                    Vec3{-center.x, hmx.y - bite - minY, -center.z + 0.12f * handExt.z};
                 m_ownerItem->active = true;
                 showItem = true;
             }

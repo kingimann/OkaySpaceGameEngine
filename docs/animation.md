@@ -835,7 +835,7 @@ elbows bend down and out, and the object moves with the body.
   The pose is in the camera, so looking down keeps it in that corner instead
   of pushing it into the lens. Walking bobs and sways it. A mouse turn lags it
   slightly. A punch swings it toward the middle. A hold puts a copy of the
-  item on the inner end of that brick, in front of the hand; everyone
+  item in the palm of that brick; everyone
   else still sees the real hands on the grip. A
   run eases the copy off the corner and a stop eases it back. The real arm
   bones stay on the animation,

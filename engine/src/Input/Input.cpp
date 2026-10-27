@@ -221,6 +221,10 @@ std::string Input::KeyName(char key) {
         case '\t':     return "Tab";
         case KeyShift: return "Shift";
         case KeyCtrl:  return "Ctrl";
+        case KeyUp:    return "Up";
+        case KeyDown:  return "Down";
+        case KeyLeft:  return "Left";
+        case KeyRight: return "Right";
         default: break;
     }
     if (key >= 'a' && key <= 'z') return std::string(1, (char)(key - 'a' + 'A'));
@@ -245,10 +249,14 @@ bool Input::GetKeyUp(char key) {
 
 Vec2 Input::AxisWASD() {
     Vec2 axis;
-    if (GetKey('d')) axis.x += 1.0f;
-    if (GetKey('a')) axis.x -= 1.0f;
-    if (GetKey('w')) axis.y += 1.0f;
-    if (GetKey('s')) axis.y -= 1.0f;
+    if (GetKey('d') || GetKey(KeyRight)) axis.x += 1.0f;
+    if (GetKey('a') || GetKey(KeyLeft))  axis.x -= 1.0f;
+    if (GetKey('w') || GetKey(KeyUp))    axis.y += 1.0f;
+    if (GetKey('s') || GetKey(KeyDown))  axis.y -= 1.0f;
+    if (axis.x > 1.0f) axis.x = 1.0f;
+    if (axis.x < -1.0f) axis.x = -1.0f;
+    if (axis.y > 1.0f) axis.y = 1.0f;
+    if (axis.y < -1.0f) axis.y = -1.0f;
     return axis;
 }
 

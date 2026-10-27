@@ -125,8 +125,9 @@ struct BoneMap {
     std::vector<GameObject*> spine;   ///< every spine / chest link from the hips up, shallowest first
     GameObject* neck = nullptr;
     int  found = 0;                   ///< how many of the 15 bones matched by name
+    bool consistent = true;           ///< nothing found contradicts a humanoid (it may be incomplete)
     bool legsOk = false;              ///< both legs are thigh -> shin -> foot chains, below the hips
-    bool humanoid = false;            ///< a two-legged, two-armed humanoid (see the header)
+    bool humanoid = false;            ///< a complete two-legged, two-armed humanoid (see the header)
     std::string why;                  ///< why it isn't a humanoid ("" when it is)
 
     GameObject* Get(int b) const { return (b >= 0 && b < BoneCount) ? bone[b] : nullptr; }
@@ -197,44 +198,51 @@ inline BoneMap MapHumanoidBones(GameObject* root) {
         });
     }
 
-    auto fail = [&](const char* why) { m.why = why; return m; };
+    // Contradictions (a shape no humanoid has) make the map unusable; missing
+    // parts only make it incomplete (an arms-only rig still gets Full Body IK).
     GameObject* const* B = m.bone;
-    // Legs: thigh -> shin -> foot on each side, two separate chains.
-    for (int s = 0; s < 2; ++s) {
-        const int t = s ? RThigh : LThigh;
-        if (!B[t] || !B[t + 1] || !B[t + 2]) return fail("it doesn't have two legs (thigh, shin and foot on each side)");
-        if (!Under(B[t + 1], B[t]) || !Under(B[t + 2], B[t + 1]))
-            return fail("its leg bones aren't chains (shin under thigh, foot under shin)");
-    }
-    if (Under(B[RThigh], B[LThigh]) || Under(B[LThigh], B[RThigh])) return fail("its left and right legs are one chain");
-    if (fourLegged) return fail("it looks four-legged (front / hind legs)");
-    // Up: from the hips toward the head (or the chest); the feet hang the other way.
-    if (B[Hips] && (B[Head] || B[Torso])) {
+    auto bad = [&](const char* why) { if (m.consistent) { m.consistent = false; m.why = why; } };
+    auto chain = [&](int a, int b, int c) {   // each present bone under the one before it
+        GameObject* up = B[a];
+        for (int x : {b, c}) {
+            if (!B[x]) continue;
+            if (up && !Under(B[x], up)) return false;
+            up = B[x];
+        }
+        return true;
+    };
+    // Legs: thigh -> shin -> foot on each side, two separate chains, below the hips.
+    if (!chain(LThigh, LShin, LFoot) || !chain(RThigh, RShin, RFoot))
+        bad("its leg bones aren't chains (shin under thigh, foot under shin)");
+    if (Under(B[RThigh], B[LThigh]) || Under(B[LThigh], B[RThigh])) bad("its left and right legs are one chain");
+    if (fourLegged) bad("it looks four-legged (front / hind legs)");
+    if (B[Hips] && (B[Head] || B[Torso]) && (B[LFoot] || B[RFoot])) {   // up: from the hips toward the head
         const Vec3 hips = Pos(B[Hips]);
         const Vec3 up = Pos(B[Head] ? B[Head] : B[Torso]) - hips;
-        const Vec3 feet = (Pos(B[LFoot]) + Pos(B[RFoot])) * 0.5f - hips;
-        if (Dot(up, up) > 1e-10f && Dot(feet, up) >= 0.0f) return fail("its feet aren't below its hips");
+        const Vec3 feet = (B[LFoot] && B[RFoot] ? (Pos(B[LFoot]) + Pos(B[RFoot])) * 0.5f : Pos(B[LFoot] ? B[LFoot] : B[RFoot])) - hips;
+        if (Dot(up, up) > 1e-10f && Dot(feet, up) >= 0.0f) bad("its feet aren't below its hips");
     }
-    m.legsOk = true;
-
-    // The rest of a humanoid: hips, a torso or head, and two arms.
-    if (!B[Hips]) return fail("it has no hips / pelvis bone");
-    if (!B[Torso] && !B[Head]) return fail("it has no spine or head");
-    for (int s = 0; s < 2; ++s) {
-        const int u = s ? RUpperArm : LUpperArm;
-        if (!B[u]) return fail("it doesn't have two arms");
-        if ((B[u + 1] && !Under(B[u + 1], B[u])) || (B[u + 2] && !Under(B[u + 2], B[u + 1] ? B[u + 1] : B[u])))
-            return fail("its arm bones aren't chains (forearm under upper arm, hand under forearm)");
+    const bool legsWhole = m.LegBones() == 6;
+    m.legsOk = m.consistent && legsWhole;
+    // Arms: upper arm -> forearm -> hand, never part of a leg.
+    if (!chain(LUpperArm, LForeArm, LHand) || !chain(RUpperArm, RForeArm, RHand))
+        bad("its arm bones aren't chains (forearm under upper arm, hand under forearm)");
+    for (int u : {LUpperArm, RUpperArm})
         for (int l = LThigh; l <= RFoot; ++l)
-            if (Under(B[u], B[l]) || Under(B[l], B[u])) return fail("its arms and legs are one chain");
-    }
+            if (Under(B[u], B[l]) || Under(B[l], B[u])) bad("its arms and legs are one chain");
     // Left and right agree: the left arm is on the same side as the left leg.
-    {
+    if (B[LThigh] && B[RThigh] && B[LUpperArm] && B[RUpperArm]) {
         const Vec3 legs = Pos(B[LThigh]) - Pos(B[RThigh]);
         const Vec3 arms = Pos(B[LUpperArm]) - Pos(B[RUpperArm]);
         if (Dot(legs, legs) > 1e-10f && Dot(arms, arms) > 1e-10f && Dot(legs, arms) <= 0.0f)
-            return fail("its left and right sides don't agree between the arms and the legs");
+            bad("its left and right sides don't agree between the arms and the legs");
     }
+    if (!m.consistent) return m;
+    // Complete: hips, a torso or head, two legs and two arms.
+    if (!legsWhole) { m.why = "it doesn't have two legs (thigh, shin and foot on each side)"; return m; }
+    if (!B[Hips]) { m.why = "it has no hips / pelvis bone"; return m; }
+    if (!B[Torso] && !B[Head]) { m.why = "it has no spine or head"; return m; }
+    if (!B[LUpperArm] || !B[RUpperArm]) { m.why = "it doesn't have two arms"; return m; }
     m.humanoid = true;
     return m;
 }

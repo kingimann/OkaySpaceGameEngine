@@ -137,13 +137,14 @@ public:
 
     /// Find the bones under this object with the shared humanoid mapper
     /// (Animation/HumanoidBones.hpp). Keeps already-assigned bones unless
-    /// `overwrite`. Maps nothing on a rig that isn't a humanoid (MapProblem()
-    /// says why). Returns how many bones are mapped afterwards.
+    /// `overwrite`. An incomplete rig (one arm, no legs) maps what it has; one
+    /// whose shape isn't a humanoid's maps nothing (MapProblem() says why).
+    /// Returns how many bones are mapped afterwards.
     int MapBones(bool overwrite) {
         if (!gameObject || !gameObject->transform) return 0;
         const humanoid::BoneMap m = humanoid::MapHumanoidBones(gameObject);
-        m_mapWhy = m.why;
-        if (m.humanoid) {
+        m_mapWhy = m.consistent ? std::string() : m.why;
+        if (m.consistent) {
             GameObject* want[BoneCount] = {};
             want[Hips] = m.bone[humanoid::Hips];
             want[Head] = m.bone[humanoid::Head];
@@ -166,7 +167,7 @@ public:
         for (Transform* b : bones) if (b) ++n;
         return n;
     }
-    /// Why the last MapBones found no humanoid ("" when it did).
+    /// Why the last MapBones turned the rig away ("" when it didn't).
     const std::string& MapProblem() const { return m_mapWhy; }
 
     /// An object by name inside this character (else anywhere in the scene).
@@ -407,7 +408,7 @@ private:
     }
 
     IKRestore m_restore;
-    std::string m_mapWhy;   // why the last MapBones found no humanoid
+    std::string m_mapWhy;   // why the last MapBones turned the rig away
     IKPole m_pole[LimbCount];
     IKGoalBlend m_blend[LimbCount];           ///< eases a switched or jumping goal
     IKJointFrame m_frame[LimbCount][2];       ///< upper / lower rest frames for the limits

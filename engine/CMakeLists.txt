@@ -25,6 +25,8 @@ add_library(okay_engine
     src/Components/AntiCheatConfig.cpp
     src/Components/NetworkObject.cpp
     src/Net/NetworkManager.cpp
+    src/Net/NetDelta.cpp
+    src/Net/NetChannels.cpp
     src/Net/NetSim.cpp
     src/Net/RelayServer.cpp
     src/Net/DedicatedServer.cpp

@@ -13,6 +13,9 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Components/PlayerView.hpp"
 #include "okay/Components/UITheme.hpp"          // grok/ui-theme
+#include "okay/Components/UISlider.hpp"
+#include "okay/Components/UIProgressBar.hpp"
+#include "okay/Components/UIButton.hpp"
 #include <cmath>
 #include <set>
 
@@ -347,6 +350,81 @@ EngineApi Build() {
                 return Value{};
             }, "Bake this skin onto the named object and its children."));
         api.types.push_back(std::move(th));
+    }
+    // ---- UI widgets (grok/ui-options). Visual-script nodes come from these types.
+    // Value changes still raise on_change / OnValueChanged; clicks raise on_click / OnClick.
+    {
+        ApiType sl; sl.name = "UISlider"; sl.isComponent = true;
+        sl.doc = "A draggable value. The object needs a UI Slider. on_change fires when the value moves.";
+        sl.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UISlider>() : nullptr; };
+        auto of = [](const Value& self, CallContext& c) -> UISlider* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* w = g->GetComponent<UISlider>();
+            if (!w) throw RuntimeError("'" + g->name + "' has no UI Slider", c.loc);
+            return w;
+        };
+        sl.methods.push_back(method("SetValue", {tFloat}, {"value"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetValue(F(a[0])); return Value{}; },
+            "Set the value (snaps to the step). Fires OnValueChanged when it changes."));
+        sl.methods.push_back(method("SetStep", {tFloat}, {"step"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetStep(F(a[0])); return Value{}; },
+            "Snap spacing. 0 keeps the slider continuous."));
+        sl.methods.push_back(method("SetFormat", {tString}, {"format"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetFormat(S(a[0])); return Value{}; },
+            "Value label. \"{v}\" is the number. Empty keeps two decimals."));
+        ApiMethod gv = method("GetValue", {}, {}, tFloat,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->value}; },
+            "The current value.");
+        gv.pure = true;
+        sl.methods.push_back(std::move(gv));
+        api.types.push_back(std::move(sl));
+    }
+    {
+        ApiType pb; pb.name = "UIProgressBar"; pb.isComponent = true;
+        pb.doc = "A fill bar (health, loading). The object needs a UI Progress Bar.";
+        pb.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIProgressBar>() : nullptr; };
+        auto of = [](const Value& self, CallContext& c) -> UIProgressBar* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* w = g->GetComponent<UIProgressBar>();
+            if (!w) throw RuntimeError("'" + g->name + "' has no UI Progress Bar", c.loc);
+            return w;
+        };
+        pb.methods.push_back(method("SetValue", {tFloat}, {"value"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetValue(F(a[0])); return Value{}; },
+            "Fill amount, 0 to 1. A damage trail eases down when Trail is set."));
+        pb.methods.push_back(method("SetSegments", {tInt}, {"count"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetSegments(I(a[0])); return Value{}; },
+            "Chunk count. 0 or 1 is one solid bar."));
+        pb.methods.push_back(method("SetTrail", {tFloat}, {"seconds"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetTrail(F(a[0])); return Value{}; },
+            "Seconds for the damage trail to catch a drop. 0 hides it."));
+        pb.methods.push_back(method("SetTextFormat", {tString}, {"format"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetTextFormat(S(a[0])); return Value{}; },
+            "Label on the bar. \"{n}\" is the percent, \"{v}\" is 0..1."));
+        api.types.push_back(std::move(pb));
+    }
+    {
+        ApiType bt; bt.name = "UIButton"; bt.isComponent = true;
+        bt.doc = "A clickable button. The object needs a UI Button. on_click fires when it is pressed.";
+        bt.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIButton>() : nullptr; };
+        auto of = [](const Value& self, CallContext& c) -> UIButton* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* w = g->GetComponent<UIButton>();
+            if (!w) throw RuntimeError("'" + g->name + "' has no UI Button", c.loc);
+            return w;
+        };
+        bt.methods.push_back(method("SetEase", {tInt, tFloat}, {"ease", "seconds"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) {
+                of(s, c)->SetEase(I(a[0]), F(a[1])); return Value{};
+            }, "Hover/press ease: 0 linear, 1 smooth, 2 ease-out, 3 ease-in, and how many seconds it takes."));
+        bt.methods.push_back(method("SetInteractable", {tBool}, {"on"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) {
+                of(s, c)->SetInteractable(std::get<bool>(a[0])); return Value{};
+            }, "False greys the button out and ignores clicks."));
+        bt.methods.push_back(method("Press", {}, {}, tVoid,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { of(s, c)->Press(); return Value{}; },
+            "Click the button. Fires OnClick."));
+        api.types.push_back(std::move(bt));
     }
     // ---- Input ----
     {

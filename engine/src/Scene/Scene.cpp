@@ -7,6 +7,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
+#include "okay/Components/ActionList.hpp"   // per-scene variable pools follow this scene
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/UIAnchor.hpp"        // UICanvas::Width/Height (viewport)
@@ -33,6 +34,7 @@ Scene::Scene(std::string name) : m_name(std::move(name)) {
 Scene::~Scene() {   // its scene variables and script statics go with it
     vs::ForgetSceneVariables(this);
     NextScriptVM::ForgetSceneStatics(this);
+    ActionList::ForgetScene(this);
 }
 
 GameObject* Scene::Instantiate(const GameObject& prefab) {
@@ -57,6 +59,7 @@ GameObject* Scene::CreateGameObject(const std::string& name) {
 void Scene::Clear() {
     vs::ForgetSceneVariables(this);   // a fresh scene (another level loaded) starts with none
     NextScriptVM::ForgetSceneStatics(this);   // ... and script statics start again
+    ActionList::ForgetScene(this);    // action-list variables too — they belong to this scene
     m_pending.clear();
     m_active.clear();
     m_destroyQueue.clear();
@@ -123,10 +126,12 @@ void Scene::FlushPending() {
 }
 
 void Scene::Start() {
+    ActionList::UseScene(this);
     FlushPending();
 }
 
 void Scene::Update(float deltaTime) {
+    ActionList::UseScene(this);
     FlushPending(); // adopt anything created since last frame
     // Drop any components removed last frame (their slots were nulled).
     m_active.erase(std::remove(m_active.begin(), m_active.end(), nullptr), m_active.end());
@@ -289,6 +294,7 @@ void Scene::DispatchPointer() {
 }
 
 void Scene::Render(IRenderer& renderer) {
+    ActionList::UseScene(this);
     Color clear = mainCamera ? mainCamera->backgroundColor : Color::Black;
     renderer.BeginFrame(clear);
 

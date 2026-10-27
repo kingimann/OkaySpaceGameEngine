@@ -144,6 +144,7 @@
 #include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/Minimap.hpp"
 #include "okay/Components/Crosshair.hpp"
+#include "okay/Components/UIColorPicker.hpp"   // grok/ui-color
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIStepper.hpp"
 #include "okay/Components/UIRating.hpp"
@@ -2480,6 +2481,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (cr->lineLeft ? 1 : 0) << " " << (cr->lineRight ? 1 : 0) << " " << cr->spread
             << " " << (cr->circle ? 1 : 0) << " " << cr->circleRadius << " " << cr->circleThickness
             << " " << cr->circleColor.r << " " << cr->circleColor.g << " " << cr->circleColor.b << " " << cr->circleColor.a;
+        out << "\n";
+    }
+    if (auto* cp = go->GetComponent<UIColorPicker>()) { // grok/ui-color
+        out << "  uicolorpicker " << cp->position.x << " " << cp->position.y << " " << (int)cp->anchor << " "
+            << cp->swatch << " " << cp->gap << " " << cp->value << " " << cp->swatches.size();
+        for (const Color& c : cp->swatches)
+            out << " " << c.r << " " << c.g << " " << c.b << " " << c.a;
         out << "\n";
     }
     if (auto* sa = go->GetComponent<UISafeArea>())
@@ -6082,6 +6090,17 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         cr->lineUp = (lu != 0); cr->lineDown = (ld != 0);
                         cr->lineLeft = (ll != 0); cr->lineRight = (lr != 0);
                         cr->circle = (ci != 0); cr->circleColor = qc;
+                    }
+                } else if (field == "uicolorpicker") { // grok/ui-color
+                    auto* cp = go->AddComponent<UIColorPicker>();
+                    int an = 0; std::size_t n = 0;
+                    in >> cp->position.x >> cp->position.y >> an >> cp->swatch >> cp->gap >> cp->value >> n;
+                    cp->anchor = (UIAnchor)an;
+                    cp->swatches.clear();
+                    for (std::size_t i = 0; i < n && in; ++i) {
+                        Color c;
+                        in >> c.r >> c.g >> c.b >> c.a;
+                        cp->swatches.push_back(c);
                     }
                 } else if (field == "uisafearea") {
                     auto* sa = go->AddComponent<UISafeArea>();

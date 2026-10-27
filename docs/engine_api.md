@@ -106,6 +106,15 @@ Switches one player between first person and third person. The object needs a Pl
 | `GetComponent<PlayerView>().SetView(view)` | `PlayerView.SetView/1` | step | view (Number), Target (Object) | - | Ease to a view: 0 first person (camera at the eyes), 1 third person (over the shoulder). |
 | `GetComponent<PlayerView>().GetView()` | `PlayerView.GetView/0` | value | Target (Object) | Result (Number) | The view asked for: 0 first person, 1 third person. The camera may still be on its way there. |
 
+## UIColorPicker
+
+A row of color swatches. The chosen swatch is the current color.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIColorPicker>().SetValue(index)` | `UIColorPicker.SetValue/1` | step | index (Number), Target (Object) | - | Select a swatch by index. The chip shows that color. |
+| `GetComponent<UIColorPicker>().Value()` | `UIColorPicker.Value/0` | value | Target (Object) | Result (Number) | The selected swatch, or -1. |
+
 ## Input
 
 Keyboard, mouse and gamepad.

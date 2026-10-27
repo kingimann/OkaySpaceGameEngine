@@ -1,5 +1,6 @@
 #include "okay/Inventory/InventoryInput.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputActions.hpp"
 #include "okay/Inventory/InventoryOps.hpp"
 #include <algorithm>
 #include <cmath>
@@ -10,8 +11,9 @@ namespace InventoryInput {
 // ---- Hotbar + backpack ----
 
 float HotbarLayout::RowY(int row) const {
-    return anchorTop ? hy + sz + 14.0f + row * (sz + gap)
-                     : hy - 14.0f - (rows - row) * (sz + gap);
+    const float y = anchorTop ? hy + sz + 14.0f + row * (sz + gap)
+                              : hy - 14.0f - (rows - row) * (sz + gap);
+    return y + bagScroll;
 }
 
 void HotbarLayout::SlotXY(int idx, float& x, float& y) const {
@@ -66,6 +68,18 @@ HotbarLayout LayoutHotbar(const InventoryUI& ui, float W, float H) {
          : (ui.hAlign == InventoryUI::HAlign::Right) ? (W - L.rowW - marginX)
          : (W - L.rowW) * 0.5f + marginX;
     L.hy = ui.anchorTop ? marginY : H - L.sz - marginY;
+    if (ui.open && L.rows > 0) {
+        const float far = L.RowY(L.rows - 1);   // bagScroll is still 0
+        float maxS = 0.0f;
+        if (!L.anchorTop) {
+            if (far < 8.0f) maxS = 8.0f - far;
+            L.bagScroll = std::min(std::max(0.0f, ui.scroll), maxS);
+        } else {
+            const float bot = far + L.sz;
+            if (bot > H - 8.0f) maxS = bot - (H - 8.0f);
+            L.bagScroll = -std::min(std::max(0.0f, ui.scroll), maxS);
+        }
+    }
     if (ui.open && ui.Inv())
         if ((L.equip = Equipment::Of(ui.Inv()->gameObject))) {
             L.equipN = (int)L.equip->slots.size();
@@ -256,7 +270,8 @@ GridFrame HoverGrid(const GridLayout& L, Vec2 mouse) {
 }
 
 void HandleGrid(GridInventoryUI& ui, const GridLayout& L, const GridFrame& h) {
-    if (ui.rotateKey && ui.dragInv && Input::GetKeyDown(ui.rotateKey)) ui.RotateDrag();   // applied only on a good drop
+    if (ui.rotateKey && ui.dragInv && InputActions::Allows(GameAction::GridRotate) && Input::GetKeyDown(ui.rotateKey))
+        ui.RotateDrag();   // applied only on a good drop
     GridInventory* under = h.panel >= 0 ? L.panels[h.panel].inv : nullptr;
     if (!ui.dragInv && under && Input::GetMouseButtonDown(0))
         ui.BeginDrag(under, under->ItemAtCell(h.cx, h.cy), h.cx, h.cy);

@@ -2,6 +2,7 @@
 // creation save / load (BuildCreation). See docs/build_mode.md.
 #include "okay/Components/BuildMode.hpp"
 #include "okay/Components/LogicLinks.hpp"
+#include "okay/Input/InputArbiter.hpp"
 #include "okay/Components/Buildable.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Camera.hpp"
@@ -243,6 +244,8 @@ int LogicSource::CountOccupants() const {
     return (int)seen.size();
 }
 
+bool LogicSource::CanPress() const { return kind == Kind::Button && AimedAt(); }
+
 void LogicSource::Update(float dt) {
     if (!gameObject || !ScriptsRun(gameObject)) return;
     if (!m_init) {
@@ -258,7 +261,13 @@ void LogicSource::Update(float dt) {
             // The pad's X also turns pieces in build mode, so it only presses outside it.
             const bool pad = pressPadButton >= 0 && Input::GetGamepadButtonDown(pressPadButton) &&
                              !(s && AnyBuildModeActive(*s));
-            if ((key || pad) && AimedAt()) Press();
+            if ((key || pad) && AimedAt()) {
+                // The shared use key (E) also opens a nearer chest. This button
+                // only takes it when it is the closest thing you can use.
+                const char shared = s ? InputArbiter::SharedInteractKey(s) : 0;
+                const bool sharedEdge = key && pressKey == shared;
+                if (!sharedEdge || InputArbiter::BestInteract(s).target == this) Press();
+            }
             if (!toggle && m_out) { m_timer -= dt; if (m_timer <= 0.0f) m_out = false; }
             break;
         }

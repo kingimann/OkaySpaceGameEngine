@@ -6,6 +6,8 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/CameraFollow.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputActions.hpp"
+#include "okay/Input/InputArbiter.hpp"
 #include "okay/Inventory/InventoryEvents.hpp"
 #include <string>
 #include <vector>
@@ -103,10 +105,19 @@ public:
     }
 
     void Update(float) override {
+        Scene* s = gameObject ? gameObject->scene() : nullptr;
         const char key = InteractKey();
-        if (key && Input::GetKeyDown(key)) {
+        const char shared = InputArbiter::SharedInteractKey(s);
+        // The component's own key (F on a chest, C on a bench). The shared use
+        // key is handled below so it isn't applied twice when they match.
+        if (key && key != shared && InputActions::Allows(GameAction::Interact) && Input::GetKeyDown(key)) {
             // Every instance makes the same choice, whatever order they update in.
-            open = (Nearest(gameObject ? gameObject->scene() : nullptr, key) == this) ? !open : false;
+            open = (Nearest(s, key) == this) ? !open : false;
+        }
+        if (InputArbiter::SharedInteractDown(s)) {
+            const InteractChoice choice = InputArbiter::BestInteract(s);
+            if (choice.kind == InteractChoice::Kind::Container)
+                open = (choice.target == this) ? !open : false;
         }
         if (open && !PlayerInRange()) open = false;   // auto-close when you walk away
         if (open != m_wasOpen) {   // on_chest_opened / on_chest_closed(name), to the chest and the player

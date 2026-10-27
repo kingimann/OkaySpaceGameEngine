@@ -33,6 +33,7 @@
 #include "okay/Components/GridInventoryUI.hpp"
 #include "okay/Components/CraftingStation.hpp"
 #include "okay/Components/ChestInventory.hpp"
+#include "okay/Components/Interactor.hpp"
 #include "okay/Components/ItemPickup.hpp"
 #include "okay/Components/LootSource.hpp"
 #include "okay/Components/Equipment.hpp"
@@ -1553,6 +1554,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         wc(ch->textColor); wc(ch->hoverColor);
         out << " " << Quote(ch->playerName);   // appended (quote-peek guarded)
         out << "\n";
+    }
+    if (auto* ia = go->GetComponent<Interactor>()) {
+        out << "  interactor " << (int)(unsigned char)ia->key << " " << ia->padButton << "\n";
     }
     if (auto* v2 = go->GetComponent<VehicleController2D>()) {
         out << "  vehicle2d " << v2->acceleration << " " << v2->maxSpeed << " " << v2->reverseSpeed
@@ -4432,6 +4436,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     rc(ch->textColor); rc(ch->hoverColor);
                     in >> std::ws;   // optional player name
                     if (in.peek() == '"') ch->playerName = ReadQuoted(in);
+                } else if (field == "interactor") {
+                    auto* ia = go->AddComponent<Interactor>();
+                    int k = 0, p = -2;
+                    in >> k >> p;
+                    ia->key = (char)k;
+                    ia->padButton = p;
                 } else if (field == "vehicle2d") {
                     auto* v2 = go->AddComponent<VehicleController2D>();
                     in >> v2->acceleration >> v2->maxSpeed >> v2->reverseSpeed >> v2->brakeForce

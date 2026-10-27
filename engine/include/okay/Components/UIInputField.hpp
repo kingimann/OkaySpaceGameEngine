@@ -36,6 +36,9 @@ public:
     ContentType contentType = ContentType::Standard;
     char passwordChar = '*';
     bool focused = false;
+
+    /// True while any field is taking keystrokes, so a bag hotkey does not also fire.
+    static bool AnyFocused() { return FocusedCount() > 0; }
     // Silhouette + corners and an optional focus ring (clean form-field styling).
     UIShape shape = UIShape::Rounded;
     float cornerRadius = 6.0f;
@@ -90,10 +93,13 @@ public:
                 if (sc->VM()) sc->VM()->CallEvent("on_submit");
     }
 
+    void OnDestroy() override { NoteFocus(false); }
+
     void Update(float dt) override {
+        Reconcile();   // a script may have written `focused` directly
         if (Input::GetMouseButtonDown(0)) {
             bool was = focused;
-            focused = Contains(Input::MousePosition());
+            NoteFocus(Contains(Input::MousePosition()));
             if (focused && !was) m_blink = 0.0f;            // solid caret on focus
         }
         if (!focused) return;
@@ -113,9 +119,9 @@ public:
         // Enter submits (and blurs); Esc cancels focus without submitting.
         // A multiline field inserts a newline instead and stays focused.
         if (Input::GetKeyDown('\r') || Input::GetKeyDown('\n')) {
-            if (!multiline) { focused = false; Submit(); }
+            if (!multiline) { NoteFocus(false); Submit(); }
             else if ((int)text.size() < maxLength) { text.push_back('\n'); m_blink = 0.0f; }
-        } else if (Input::GetKeyDown((char)27)) focused = false;
+        } else if (Input::GetKeyDown((char)27)) NoteFocus(false);
 
         m_blink += dt;
         if (m_blink >= 1.1f) m_blink -= 1.1f;
@@ -123,6 +129,16 @@ public:
 
 private:
     float m_blink = 0.0f;
+    bool  m_counted = false;     ///< `focused` as the shared counter last saw it
+
+    static int& FocusedCount() { static int n = 0; return n; }
+    void NoteFocus(bool now) {
+        if (m_counted && FocusedCount() > 0) --FocusedCount();
+        focused = now;
+        m_counted = now;
+        if (m_counted) ++FocusedCount();
+    }
+    void Reconcile() { if (focused != m_counted) NoteFocus(focused); }
 };
 
 } // namespace okay

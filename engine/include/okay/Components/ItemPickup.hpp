@@ -11,6 +11,8 @@
 #include "okay/Inventory/InventoryOps.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputArbiter.hpp"
+#include "okay/Input/InputActions.hpp"
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Render/Mesh.hpp"
@@ -60,9 +62,19 @@ public:
         const Vec3 d = p - me;
         const float dist = d.Magnitude();
         if (autoRadius > 0.0f && dist <= autoRadius) { Give(player); return; }
-        if (interactKey && dist <= interactRange && Input::GetKeyDown(interactKey)) {
+        auto take = [&]() {
             auto* hands = holdInHands ? player->GetComponent<ProceduralObjectHolding>() : nullptr;
             if (!hands || !hands->Pickup(gameObject)) Give(player);
+        };
+        const char shared = InputArbiter::SharedInteractKey(gameObject->scene());
+        if (interactKey && interactKey != shared && dist <= interactRange && Input::GetKeyDown(interactKey)
+            && InputActions::Allows(GameAction::Interact)) {
+            take();
+            return;
+        }
+        if (dist <= interactRange && InputArbiter::SharedInteractDown(gameObject->scene())
+            && InputArbiter::BestInteract(gameObject->scene()).target == this) {
+            take();
             return;
         }
         if (magnetRadius > 0.0f && dist <= magnetRadius && dist > 0.05f) {

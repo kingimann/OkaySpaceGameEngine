@@ -29,6 +29,7 @@ struct HotbarLayout {
     int   total = 0;             ///< slots shown (InventoryUI::SlotCount)
     int   rows = 0;              ///< backpack rows
     bool  anchorTop = false;
+    float bagScroll = 0.0f;  ///< backpack rows only; shifts them back on screen
 
     /// Top of backpack row `row` (rows grow away from the docked edge).
     float RowY(int row) const;

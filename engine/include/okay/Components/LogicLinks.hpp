@@ -56,6 +56,8 @@ public:
     bool Output() const { return m_out; }
     /// Press the button (toggle flips; momentary turns on for holdTime).
     void Press();
+    /// True when this is a button the crosshair is on, inside pressReach.
+    bool CanPress() const;
     /// Force the output (scripts). Plates / zones recompute it next frame.
     void SetOutput(bool on);
     /// Things in the plate / zone box last frame.

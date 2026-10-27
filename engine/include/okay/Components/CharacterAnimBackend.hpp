@@ -65,6 +65,8 @@ public:
     bool  Live() const override;
     void  Move(const Movement& m) override;
     void  Gait(float x, float z, float speed) override;
+    bool  AnimatorOn() const override;
+    void  ResumeFrom(const std::vector<Vec3>& pose, const Vec3& root, float seconds) override;
 
 private:
     /// What one side of a crossfade plays.

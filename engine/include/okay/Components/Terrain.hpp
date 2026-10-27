@@ -132,6 +132,13 @@ public:
     /// gully / weather a patch right under the cursor. `amount` scales the effect.
     void ErodeAt(float localX, float localZ, float radius, float amount);
 
+    /// How far below the lowest height (sampled on the first brush stroke after a
+    /// generate, flatten, import, or other whole-map edit) a dig may carve.
+    /// A held dig stops at that floor instead of lowering the heightmap without
+    /// limit and dropping the player out of the world. Negative disables it.
+    /// Not stored in the scene file — the default applies to loaded terrains.
+    float digDepth = 48.0f;
+
     /// Surface normal at a local XZ point, from the height gradient (bilinear).
     /// Used by physics for slope-aware terrain collision and by tools.
     Vec3 NormalAt(float localX, float localZ) const;
@@ -147,6 +154,15 @@ public:
     void Apply();
 
     void Start() override { Apply(); }
+
+private:
+    float floorY_ = 0.0f;
+    bool  floorCaptured_ = false;
+    /// Drop the remembered floor so the next brush samples the map as it is now.
+    void ForgetFloor();
+    /// Remember a floor from the current lowest height, once per edit session.
+    void CaptureFloor();
+    void ClampFloor(float& h) const;
 };
 
 } // namespace okay

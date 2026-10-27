@@ -5,6 +5,7 @@
 #include "okay/Net/AntiCheat.hpp"
 #include "okay/Net/ClockCheck.hpp"
 #include "okay/Net/PlayerInput.hpp"
+#include "okay/Net/NetChannels.hpp"
 #include "okay/Physics/Physics3D.hpp"   // RaycastHit3D (RewindRaycast)
 #include <map>
 #include "okay/Math/Vec3.hpp"
@@ -492,6 +493,17 @@ public:
     /// Reliable message to a single peer id (server routes; 0 = the host).
     void SendReliableTo(std::uint32_t targetId, const std::string& channel, const std::string& data);
 
+    /// Reliable and ordered on one named channel. Each channel has its own
+    /// sequence, so a gap on one name does not hold up another. Resent until
+    /// the other side's cumulative ack covers it. Separate from SendReliable,
+    /// and not used for movement or hit claims.
+    void SendOrdered(const std::string& channel, const std::string& data);
+    void SendOrderedTo(std::uint32_t targetId, const std::string& channel, const std::string& data);
+    /// Unreliable, but only the newest packet on this channel is applied. An
+    /// older or repeated one is dropped. A broadcast is relayed like Send().
+    void SendSequenced(const std::string& channel, const std::string& data);
+    void SendSequencedTo(std::uint32_t targetId, const std::string& channel, const std::string& data);
+
     // ---- Remote procedure calls (named events) -------------------------
     /// A first-class RPC: every peer that registered a handler for `name` runs it
     /// with the sender id + payload. Built on the message system but dispatched by
@@ -665,6 +677,9 @@ private:
         std::uint32_t relSeq = 0;   // next outgoing sequence to this client
         std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>> relOut; // unacked
         SeqWindow relSeen;          // delivered seqs (de-dup)
+        // Per-channel reliable-ordered link with this client, plus the filter
+        // for unreliable-sequenced packets it sends. Independent of relSeq.
+        net::ChannelEnd pipes;
         // Authoritative movement: the player object its inputs drive, the
         // inputs waiting (by seq), the newest applied, and the last one (repeated
         // when an input is late).
@@ -704,6 +719,12 @@ private:
 
     void ResendReliable(std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>>& out,
                         const net::Endpoint& to, float dt);
+    bool AllowMessage(Client& c, std::size_t bytes);
+    void OnOrdered(net::ChannelEnd& link, const net::Endpoint& ackTo, std::uint32_t fromId,
+                   Client* sender, net::Packet& p, std::size_t len);
+    void OnOrderedAck(net::ChannelEnd& link, net::Packet& p);
+    void OnSequencedFromClient(Client& from, net::Packet& p, std::size_t len);
+    void OnSequencedFromServer(net::Packet& p);
 
     // Datagram fragmentation: SendDatagram splits an oversized message into
     // MTU-sized pieces; TakeFragment reassembles them on the far side; PruneFragments
@@ -818,6 +839,11 @@ private:
     std::uint32_t m_relSeq = 0;
     std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>> m_relOut;
     SeqWindow m_relSeen;
+    // Client: ordered and sequenced link to the server. Server-originated
+    // sequenced numbers live in m_seqOrigin so every client sees one sequence
+    // per channel. Stop() clears both. Not the movement or hit-claim stream.
+    net::ChannelEnd m_toServer;
+    net::SequencedTx m_seqOrigin;
     // Fixed net tick (netTickRate): the tick count, the time not yet stepped,
     // the rate the host announced (client), and the tick hook.
     std::uint32_t m_netTick = 0;

@@ -7,6 +7,7 @@
 
 namespace okay {
 
+class Scene;
 class Collider2D;
 struct Collision2D;
 class Collider3D;
@@ -130,20 +131,30 @@ public:
     std::string ToText() const;
     void FromText(const std::string& text);
 
-    /// Shared variables for set_var / var_eq across all action lists. Cleared
-    /// between scenes via Reset().
+    /// Number variables for set_var / var_eq. Every action list in the scene that
+    /// is running shares one pool; a second live scene has its own. With no scene
+    /// running, this is the process-wide pool (tests and tools that have no Scene).
+    /// The first time a scene runs it copies whichever pool is current, so a value
+    /// set before Start is visible, then later writes stay in that scene.
+    /// ResetVars() clears every pool. Scene::Clear and the scene destructor drop
+    /// that scene's pools.
     static std::unordered_map<std::string, float>& Vars();
-    // Read a variable by name: the shared visual-script pool first, then a saved
+    // Read a variable by name: the current scene's pool first, then a saved
     // (Prefs) value — so stats/prefs published under a name are readable as variables.
     static float GetVar(const std::string& key);
-    // Shared float arrays (array_push/get/... ops). Cleared with Vars on Reset.
+    // Float arrays (array_push/get/... ops). Same scene / process split as Vars.
     static std::unordered_map<std::string, std::vector<float>>& Arrays();
-    // Shared maps/dictionaries (string key -> float value). Cleared on Reset.
+    // Maps/dictionaries (string key -> float value). Same scene / process split as Vars.
     static std::unordered_map<std::string, std::unordered_map<std::string, float>>& Maps();
-    // Shared text variables (str_set/str_eq/... ops). Cleared on Reset. Displayed by
-    // a UITextBind {key} the same as numbers, so names/dialogue can go on screen.
+    // Text variables (str_set/str_eq/... ops). Same scene / process split as Vars.
+    // Displayed by a UITextBind {key} the same as numbers, so names/dialogue can go on screen.
     static std::unordered_map<std::string, std::string>& StrVars();
     static void ResetVars();
+    /// Make `scene` the pool Vars/Arrays/Maps/StrVars read and write. Null uses the
+    /// process-wide pools. Scene::Start/Update/Render call this.
+    static void UseScene(const Scene* scene);
+    /// Drop `scene`'s pools (also the cooldown memory for its conditions).
+    static void ForgetScene(const Scene* scene);
 
     // ---- Step debugging (driven from the editor's Flow Graph) --------------
     // When paused, running lists execute only StepBudget() instructions, then hold

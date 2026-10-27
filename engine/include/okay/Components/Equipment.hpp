@@ -4,6 +4,7 @@
 #include "okay/Inventory/InventoryOps.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -40,6 +41,8 @@ public:
 
     std::vector<Slot> slots = DefaultSlots();
     bool showOnCharacter = true;   ///< attach the items' prefabs to the character
+    /// C++ hooks (slot name, item); scripts get on_equip / on_unequip, visual scripts On Equip.
+    std::function<void(const std::string& slot, const std::string& item)> onEquip, onUnequip;
     /// Carry what's worn into the next scene loaded with load_scene (like the Inventory flag).
     bool keepOnSceneLoad = false;
 

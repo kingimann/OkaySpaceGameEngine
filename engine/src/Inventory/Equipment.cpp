@@ -7,6 +7,7 @@
 #include "okay/Components/Stats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalStats.hpp"
+#include "okay/Inventory/InventoryEvents.hpp"
 #include "okay/Inventory/InventoryPersistence.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
@@ -306,8 +307,10 @@ void Equipment::ApplyBonuses(float armor, int defense, float weight) {
 
 void Equipment::Fire(const char* ev, int slot, const std::string& item) {
     if (!gameObject || slot < 0 || slot >= (int)slots.size()) return;
-    if (auto* sc = gameObject->GetComponent<ScriptComponent>())
-        if (sc->VM()) sc->VM()->CallEventArgs(ev, {vs::VsValue(slots[slot].name), vs::VsValue(item)});
+    const bool on = std::string(ev) == "on_equip";
+    if (on && onEquip) onEquip(slots[slot].name, item);
+    if (!on && onUnequip) onUnequip(slots[slot].name, item);
+    InventoryEvents::Fire(gameObject, ev, on ? "OnEquip" : nullptr, {vs::VsValue(slots[slot].name), vs::VsValue(item)});
 }
 
 } // namespace okay

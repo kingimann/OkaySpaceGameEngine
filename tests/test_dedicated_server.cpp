@@ -155,6 +155,7 @@ int main() {
         Scene server("Arena");
         DedicatedServerOptions o;
         o.port = 47391; o.tickRate = 50.0f; o.maxRuntime = 3.0f; o.statusEvery = 0.0f; o.name = "Test Arena";
+        o.encryption = okay::net::SecureChannel::Available();   // without libsodium the server won't start encrypted
         std::atomic<int> rc{-1};
         std::thread run([&] { rc = RunDedicatedServer(server, o); });   // adds a NetworkManager itself
 

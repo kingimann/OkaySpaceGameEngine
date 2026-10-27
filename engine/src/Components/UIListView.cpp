@@ -120,13 +120,21 @@ void UIListView::Layout() {
     m_dirty = false;
 }
 
-void UIListView::Update(float) {
-    // Wheel scroll over the list; a click on a row's button selects that entry.
+void UIListView::Update(float dt) {
+    // Wheel or finger-drag scroll over the list; a click on a row's button selects that entry.
     Vec2 o = ResolveAnchor(anchor, position, size);
-    Vec2 m = UIToLocal(gameObject, o, size, Input::MousePosition());
+    auto local = [&](const Vec2& sp) { return UIToLocal(gameObject, o, size, sp); };
+    auto inside = [&](const Vec2& p) { return p.x >= o.x && p.y >= o.y && p.x <= o.x + size.x && p.y <= o.y + size.y; };
     const float wheel = Input::MouseWheel();
-    if (wheel != 0.0f && m.x >= o.x && m.y >= o.y && m.x <= o.x + size.x && m.y <= o.y + size.y)
+    if (wheel != 0.0f && inside(local(Input::MousePosition())))
         SetScroll(scroll - wheel * wheelSpeed);
+    m_touch.scrollX = false;   // lists scroll vertically
+    const Vec2 d = m_touch.Step(dt, [&](const Vec2& sp) { return inside(local(sp)); }, local);
+    if (d.y != 0.0f) {
+        const float before = scroll;
+        SetScroll(scroll + d.y);
+        if (!m_touch.tracking && scroll == before) m_touch.Stop();   // hit the end
+    }
     for (std::size_t k = 0; k < m_rows.size(); ++k) {
         GameObject* row = m_rows[k];
         if (!row || row->IsDestroyed() || !row->active || m_rowIndex[k] < 0) continue;

@@ -23,6 +23,7 @@ unsigned Input::s_padPrevious = 0;
 unsigned Input::s_mousePrevious = 0;
 std::string Input::s_typedText;
 float Input::s_mouseWheel = 0.0f;
+std::vector<Input::Touch> Input::s_touches;
 bool Input::s_uiCaptured = false;
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -120,7 +121,44 @@ void Input::FeedGamepad(const Vec2& axis, unsigned buttonMask) {
 }
 const std::string& Input::TypedText() { return s_typedText; }
 void Input::FeedText(const std::string& utf8) { s_typedText += utf8; }
-void Input::ClearTypedText() { s_typedText.clear(); s_mouseWheel = 0.0f; }
+void Input::ClearTypedText() {
+    s_typedText.clear();
+    s_mouseWheel = 0.0f;
+    std::size_t n = 0;
+    for (auto& t : s_touches) {
+        if (t.phase == Touch::Phase::Ended) continue;
+        t.phase = Touch::Phase::Stationary;
+        t.delta = {0.0f, 0.0f};
+        s_touches[n++] = t;
+    }
+    s_touches.resize(n);
+}
+
+int Input::TouchCount() { return (int)s_touches.size(); }
+const Input::Touch& Input::GetTouch(int index) { return s_touches[(std::size_t)index]; }
+bool Input::PointerIsTouch() { return !s_touches.empty(); }
+bool Input::TouchDragging() {
+    for (const auto& t : s_touches) {
+        const float dx = t.position.x - t.start.x, dy = t.position.y - t.start.y;
+        if (dx * dx + dy * dy > kTouchDragPixels * kTouchDragPixels) return true;
+    }
+    return false;
+}
+
+void Input::FeedTouch(long long id, int state, const Vec2& position) {
+    Touch* t = nullptr;
+    for (auto& e : s_touches) if (e.id == id) t = &e;
+    if (state == 0) {
+        if (!t) { s_touches.push_back({}); t = &s_touches.back(); }
+        *t = Touch{id, position, position, {0.0f, 0.0f}, Touch::Phase::Began};
+        return;
+    }
+    if (!t) return;
+    t->delta = {t->delta.x + position.x - t->position.x, t->delta.y + position.y - t->position.y};
+    t->position = position;
+    if (state == 2) t->phase = Touch::Phase::Ended;
+    else if (t->phase != Touch::Phase::Began) t->phase = Touch::Phase::Moved;
+}
 
 float Input::MouseWheel() { return s_mouseWheel; }
 void Input::FeedMouseWheel(float delta) { s_mouseWheel += delta; }
@@ -160,6 +198,33 @@ bool Input::GetKey(char key) {
     key = static_cast<char>(std::tolower(static_cast<unsigned char>(key)));
     auto it = s_current.find(key);
     return it != s_current.end() && it->second;
+}
+
+char Input::FirstKeyDown() {
+    char best = 0;
+    for (const auto& kv : s_current) {
+        if (!kv.second) continue;
+        auto it = s_previous.find(kv.first);
+        if (it != s_previous.end() && it->second) continue;
+        if (best == 0 || (unsigned char)kv.first < (unsigned char)best) best = kv.first;
+    }
+    return best;
+}
+
+std::string Input::KeyName(char key) {
+    switch (key) {
+        case 0:        return "None";
+        case ' ':      return "Space";
+        case '\r':     case '\n': return "Enter";
+        case 27:       return "Escape";
+        case '\b':     return "Backspace";
+        case '\t':     return "Tab";
+        case KeyShift: return "Shift";
+        case KeyCtrl:  return "Ctrl";
+        default: break;
+    }
+    if (key >= 'a' && key <= 'z') return std::string(1, (char)(key - 'a' + 'A'));
+    return std::string(1, key);
 }
 
 bool Input::GetKeyDown(char key) {

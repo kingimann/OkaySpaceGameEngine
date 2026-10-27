@@ -19,7 +19,7 @@ out="$work/game"
 (cd "$here" && "$editor" --build-game vs_export.okayscene "$out" --name VsExport)
 
 # Run from elsewhere, so the game can only use what the export embedded.
-(cd "$work" && "$out/VsExport" --server --run-for 20 --status 0 --port 45190 --log "$work/run.log") || {
+(cd "$work" && "$out/VsExport" --server --no-encryption --run-for 20 --status 0 --port 45190 --log "$work/run.log") || {
     echo "the exported game exited with an error"; cat "$work/run.log"; exit 1; }
 
 sed -n 's/^.*\(EXPORT .*\)$/\1/p' "$work/run.log" | tr -d '\r' > "$work/actual.txt"

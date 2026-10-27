@@ -66,6 +66,8 @@ public:
 #endif
     }
 
+    bool HasKeys() const { return m_haveKeys; }
+
     /// This peer's public key to send to the other side (kPublicKeyBytes bytes).
     std::vector<std::uint8_t> PublicKey() const {
 #ifdef OKAY_HAVE_SODIUM
@@ -187,8 +189,8 @@ private:
     unsigned char m_sk[crypto_kx_SECRETKEYBYTES];
     unsigned char m_rx[crypto_kx_SESSIONKEYBYTES];   // key for data we receive
     unsigned char m_tx[crypto_kx_SESSIONKEYBYTES];   // key for data we send
-    bool m_haveKeys = false;
 #endif
+    bool m_haveKeys = false;   // (never set without libsodium)
     bool m_ready = false;
 };
 

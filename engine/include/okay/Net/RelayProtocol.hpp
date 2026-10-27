@@ -52,7 +52,12 @@ inline constexpr std::uint8_t kRelayMinProtocolVersion = 1;
 /// the session and is given its host key; everyone else joins as a client and
 /// is wired to that host. While the session lives, another host hello for the
 /// code is refused unless it carries that key.
-enum RelayRole : std::uint8_t { RelayHost = 0, RelayClient = 1 };
+enum RelayRole : std::uint8_t { RelayHost = 0, RelayClient = 1, RelayHub = 2 };
+/// RelayHub (version 3, the launcher's voice calls): every member announces it.
+/// The first one in hosts, as with RelayHost, but the session is never
+/// protected by a host key: when the hub leaves, the next hub hello takes over
+/// (version 1's hand-over, now behind a cookie). A hub hello can't take a
+/// protected game session, and a game host can't join a hub session that has a hub.
 
 /// Synthetic Endpoint port marker: in relay mode a peer is addressed by its slot
 /// id carried in Endpoint::address, with this constant in the port so the value

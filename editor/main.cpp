@@ -28,6 +28,7 @@
 #include "Splash.hpp"                   // branded loading frame (no black screen at startup)
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
 #include "UIInspectorLayout.hpp"        // flex / mask / list view inspectors
+#include "UIInspectorOverlay.hpp"       // modal / context menu / keybind inspectors
 #endif
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
 #include "tinyfiledialogs.h"            // native OS open/save file dialogs (asset import)
@@ -5251,6 +5252,7 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         // Spawn centered (on screen, or in the panel it went into) so it's visible.
         UIRect r = GetUIRect(g);
         if (r.valid && r.anchorPtr && r.position) { *r.anchorPtr = UIAnchor::Center; *r.position = {0, 0}; }
+        ConvertToUIFrame(g);   // new widgets are placed by a UI Frame
         ed.Select(g); ed.dirty = true; created = true;
     };
     if (ImGui::BeginMenu("Basic")) {
@@ -5290,6 +5292,10 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         if (ImGui::MenuItem("Flex Box"))     addUI("FlexBox",     oked::BuildUIFlexBox);
         if (ImGui::MenuItem("Masked Panel")) addUI("Mask",        oked::BuildUIMaskedPanel);
         if (ImGui::MenuItem("List View"))    addUI("ListView",    oked::BuildUIListView);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Modal Dialog")) addUI("Dialog",      oked::BuildUIModalDialog);
+        if (ImGui::MenuItem("Context Menu Panel")) addUI("ContextPanel", oked::BuildUIContextMenu);
+        if (ImGui::MenuItem("Keybind Field")) addUI("Keybind",    oked::BuildUIKeybindField);
         ImGui::EndMenu();
     }
     // Launcher-look building blocks: each is a small ready-styled group you can
@@ -19248,6 +19254,8 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
             if (ma->idleClip == oldName) ma->idleClip = nb;
             if (ma->walkClip == oldName) ma->walkClip = nb;
             if (ma->runClip  == oldName) ma->runClip  = nb;
+            for (std::string* c : {&ma->crouchClip, &ma->crouchWalkClip, &ma->proneClip, &ma->crawlClip, &ma->getUpClip})
+                if (*c == oldName) *c = nb;
             ed.dirty = true;
         }
         if (ImGui::IsItemActivated()) ed.PushUndo();
@@ -20268,6 +20276,13 @@ static void DrawAnimatorGraph(EditorState& ed) {
         }
         if (!st.blendTree && ImGui::Checkbox("Loop##ag", &st.loop)) ed.dirty = true;
         if (ImGui::SliderFloat("IK weight##ag", &st.ikWeight, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Foot planting in this state (and Full Body IK, unless given its own weight below).");
+        {
+            bool follow = st.fullBodyIkWeight < 0.0f;
+            if (ImGui::Checkbox("Full-body IK follows##ag", &follow)) { st.fullBodyIkWeight = follow ? -1.0f : 1.0f; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: Full Body IK gets its own weight here, so a state can stop foot\nplanting while the hands keep holding (prone, crawling).");
+            if (!follow && ImGui::SliderFloat("Full-body IK weight##ag", &st.fullBodyIkWeight, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+        }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("How much Foot IK / Full Body IK apply in this state; eases over\n"
                                                       "the transition. 0 for jumps, rolls and falls (feet leave the ground).");
         {
@@ -23889,6 +23904,50 @@ static std::string MakeIKHelper(EditorState& ed, GameObject* owner,
     return g->name;
 }
 
+// Inspector widget for one IK joint limit, shared by every IK inspector that
+// grows limits: type, the angle ranges the type uses, auto axes and a humanoid
+// preset menu. Returns true when anything changed.
+static bool IKJointLimitUI(const char* label, IKJointLimit& l) {
+    bool ch = false;
+    ImGui::PushID(label);
+    int ty = (int)l.type;
+    ImGui::SetNextItemWidth(150);
+    if (ImGui::Combo(label, &ty, "None\0Hinge (elbow / knee)\0Ball (shoulder / hip)\0")) { l.type = (IKJointLimit::Type)ty; ch = true; }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Preset")) ImGui::OpenPopup("ikjlpreset");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Humanoid presets: sensible angles for each joint.");
+    if (ImGui::BeginPopup("ikjlpreset")) {
+        struct { const char* n; IKJointLimit v; } ps[] = {
+            {"Elbow", IKJointLimit::Elbow()}, {"Knee", IKJointLimit::Knee()},
+            {"Shoulder", IKJointLimit::Shoulder()}, {"Hip", IKJointLimit::Hip()},
+            {"Spine", IKJointLimit::Spine()}, {"Neck", IKJointLimit::Neck()}};
+        for (auto& p : ps) if (ImGui::MenuItem(p.n)) { l = p.v; ch = true; }
+        ImGui::EndPopup();
+    }
+    if (l.type != IKJointLimit::Type::None) {
+        ImGui::Indent();
+        if (l.type == IKJointLimit::Type::Ball)
+            ch |= ImGui::DragFloat("Swing (deg)", &l.swingMax, 1.0f, 0.0f, 180.0f);
+        if (l.type == IKJointLimit::Type::Hinge) {
+            float b[2] = {l.hingeMin, l.hingeMax};
+            if (ImGui::DragFloat2("Bend min/max", b, 1.0f, -180.0f, 180.0f)) { l.hingeMin = b[0]; l.hingeMax = b[1]; ch = true; }
+        }
+        float t[2] = {l.twistMin, l.twistMax};
+        if (ImGui::DragFloat2("Twist min/max", t, 1.0f, -180.0f, 180.0f)) { l.twistMin = t[0]; l.twistMax = t[1]; ch = true; }
+        ch |= ImGui::Checkbox("Auto axes (from the rig)", &l.autoAxes);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Twist axis = toward the child bone; hinge axis = the rest bend plane.\nPer bone, so the same numbers work on both sides of a mirrored rig.");
+        if (!l.autoAxes) {
+            float tw[3] = {l.twistAxis.x, l.twistAxis.y, l.twistAxis.z};
+            float hg[3] = {l.hingeAxis.x, l.hingeAxis.y, l.hingeAxis.z};
+            if (ImGui::DragFloat3("Twist axis", tw, 0.05f)) { l.twistAxis = {tw[0], tw[1], tw[2]}; ch = true; }
+            if (ImGui::DragFloat3("Hinge axis", hg, 0.05f)) { l.hingeAxis = {hg[0], hg[1], hg[2]}; ch = true; }
+        }
+        ImGui::Unindent();
+    }
+    ImGui::PopID();
+    return ch;
+}
+
 // If an asset is dropped on the previous widget, set `field` to its path.
 static bool AcceptAssetPathField(std::string& field) {
     bool changed = false;
@@ -24476,6 +24535,28 @@ static bool KeyBindCombo(const char* label, char& key) {
         ImGui::EndCombo();
     }
     return changed;
+}
+
+// A movement controller's crouch / prone options (StanceControl), in a fold.
+static bool StanceControlFields(StanceControl& sc, const char* id) {
+    char lbl[64];
+    std::snprintf(lbl, sizeof(lbl), "Crouch / prone##%s", id);
+    if (!ImGui::TreeNode(lbl)) return false;
+    bool ch = false;
+    auto L = [&](const char* name) { std::snprintf(lbl, sizeof(lbl), "%s##st%s", name, id); return lbl; };
+    ch |= KeyBindCombo(L("Crouch Key"), sc.crouchKey);
+    ch |= KeyBindCombo(L("Prone Key"), sc.proneKey);
+    ch |= ImGui::Checkbox(L("Toggle (vs hold)"), &sc.toggle);
+    ch |= ImGui::Checkbox(L("Allow Prone"), &sc.allowProne);
+    ch |= ImGui::Checkbox(L("Resize Body"), &sc.resizeBody);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Crouching / prone shrink the collider (fit under low things);\nstanding up waits for headroom.");
+    ch |= ImGui::DragFloat(L("Crouch Speed"), &sc.crouchSpeed, 0.05f, 0.0f, 20.0f);
+    ch |= ImGui::DragFloat(L("Prone Speed"), &sc.proneSpeed, 0.05f, 0.0f, 20.0f);
+    ch |= ImGui::SliderFloat(L("Crouch Height"), &sc.crouchHeight, 0.2f, 1.0f, "%.2f");
+    ch |= ImGui::SliderFloat(L("Prone Height"), &sc.proneHeight, 0.1f, 1.0f, "%.2f");
+    ImGui::TextDisabled("Scripts: SetStance(0 stand / 1 crouch / 2 prone).\nHow long changes take: the Animator's Stance changes.");
+    ImGui::TreePop();
+    return ch;
 }
 
 // Shared shape dropdown: lists every UIShape by its canonical name (UIShapeName)
@@ -26597,6 +26678,7 @@ void DrawInspector(EditorState& ed) {
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Resize this to wrap its child widgets (16 px padding); the children stay put on screen");
             }
+            oked::DrawUIFrameConvertButtons(go, ed);
             ImGui::EndGroup();
         }
         ImGui::EndChild();
@@ -27742,6 +27824,15 @@ void DrawInspector(EditorState& ed) {
                 clipCombo("Fall clip##ma", ma->fallClip);
                 clipCombo("Land clip##ma", ma->landClip);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Air states from the capsule's vertical motion: launching plays Jump,\npast the apex Fall loops, touchdown plays Land once. Works with any\ncontroller; leave a slot on (none) to skip that state.");
+                if (ImGui::TreeNode("Crouch / prone clips##ma")) {
+                    clipCombo("Crouch clip##ma", ma->crouchClip);
+                    clipCombo("Crouch walk clip##ma", ma->crouchWalkClip);
+                    clipCombo("Prone clip##ma", ma->proneClip);
+                    clipCombo("Crawl clip##ma", ma->crawlClip);
+                    clipCombo("Get up clip##ma", ma->getUpClip);
+                    ImGui::TextDisabled("Follow the player controller's crouch / prone. Getting up\nfrom prone plays Get up once; (none) keeps the standing clips.");
+                    ImGui::TreePop();
+                }
                 if (ImGui::Checkbox("Animate in place##ma", &ma->inPlace)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Strip the clips' baked forward travel so the CONTROLLER moves the\nbody and the clip only cycles the limbs. Fixes a walking model sliding\naway from its collider and snapping back every loop. On automatically\nfor models set as a player's character.");
             }
@@ -27811,12 +27902,14 @@ void DrawInspector(EditorState& ed) {
             }
             if (sm->layer == 0 && ImGui::TreeNode("Stance changes##asm")) {
                 StanceTimes& t = sm->stanceTimes;
-                if (ImGui::DragFloat("Stand <-> crouch##asm", &t.standCrouch, 0.01f, 0.05f, 3.0f, "%.2fs")) ed.dirty = true;
-                if (ImGui::DragFloat("Crouch <-> prone##asm", &t.crouchProne, 0.01f, 0.05f, 3.0f, "%.2fs")) ed.dirty = true;
-                if (ImGui::DragFloat("Prone -> stand##asm", &t.proneStand, 0.01f, 0.05f, 4.0f, "%.2fs")) ed.dirty = true;
+                bool changed = ImGui::DragFloat("Stand <-> crouch##asm", &t.standCrouch, 0.01f, 0.05f, 3.0f, "%.2fs");
+                changed |= ImGui::DragFloat("Crouch <-> prone##asm", &t.crouchProne, 0.01f, 0.05f, 3.0f, "%.2fs");
+                changed |= ImGui::DragFloat("Prone -> stand##asm", &t.proneStand, 0.01f, 0.05f, 4.0f, "%.2fs");
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("How long the body takes to crouch, go prone and get up. The collider,\n"
-                                      "the camera and the speed limit follow it; the Animator gets `stance` (0..2).");
+                                      "the camera, the speed limit and the default graph's blends follow it;\n"
+                                      "the Animator gets `stance` (0..2).");
+                if (changed) { HumanoidLibrary::ApplyStanceTimes(*sm); ed.dirty = true; }
                 ImGui::TreePop();
             }
             static const char* kCondNames[] = {"On Clip End", "Float >", "Float <", "Bool true", "Bool false", "Trigger"};
@@ -28025,6 +28118,10 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Kick a client after this many refusals within a minute (0 = never).");
             if (ImGui::Checkbox("Owner-only SyncVars##ac", &s.ownerOnlySyncVars)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("\"<netId>.<name>\" SyncVars may only be written by that object's owner.");
+            if (ImGui::Checkbox("Require encryption##ac", &s.requireEncryption)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only encrypted clients may join, and their packets are numbered (no replays). A client with encryption off turns it on when this server asks.");
+            if (ImGui::Checkbox("Allow runtime toggle##ac", &ac->allowRuntimeToggle)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Let disabling or removing this component take the rules off a running server. Off: they stay until the server stops.");
             ImGui::TextUnformatted("Prefabs clients may spawn:");
             int del = -1;
             for (int i = 0; i < (int)s.spawnAllowlist.size(); ++i) {
@@ -28077,6 +28174,8 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("A server raycast must reach the target: no shooting through walls.");
                 if (ImGui::Checkbox("Need a move check##ac", &s.hitsNeedMoveCheck)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Refuse players' hit claims unless the server can check where the shooter is: a max move speed (net_max_speed / --max-speed), or Authoritative movement. Without either, a client could claim to fire from anywhere.");
+                if (ImGui::DragFloat("Max ping allowance##ac", &s.maxRewindRtt, 0.01f, 0.0f, 2.0f, "%.2f s")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The most round trip a shot is allowed for: lag compensation looks back at most 0.2 s plus this, and the target's slack is its speed x this. A player whose pings are slower still gets this much.");
                 ImGui::TreePop();
             }
             if (ImGui::SmallButton("Remove##ac")) toRemove = ac;
@@ -29173,15 +29272,33 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawn an elbow/knee pole hint you can drag to aim the bend.");
                 float t[3] = {lb->target.x, lb->target.y, lb->target.z};
                 if (ImGui::DragFloat3("Target point##lik", t, 0.1f)) { lb->target = {t[0], t[1], t[2]}; ed.dirty = true; }
+                {
+                    int pm = (int)lb->poleMode;
+                    if (ImGui::Combo("Pole Mode##lik", &pm, "Auto (keep the bend)\0Character\0World\0")) { lb->poleMode = (LimbIK::PoleMode)pm; ed.dirty = true; }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Without a Pole object: Auto keeps the animation's own elbow/knee bend\n(a straight limb bends toward Pole Dir, turning with the character);\nCharacter bends toward Pole Dir in this object's space; World toward a fixed world direction.");
+                    float pd[3] = {lb->pole.x, lb->pole.y, lb->pole.z};
+                    if (ImGui::DragFloat3("Pole Dir##lik", pd, 0.05f)) { lb->pole = {pd[0], pd[1], pd[2]}; ed.dirty = true; }
+                }
                 ImGui::DragFloat("Weight##lik", &lb->weight, 0.01f, 0.0f, 1.0f);
                 ImGui::DragFloat("Min Bend##lik", &lb->minBend, 1.0f, 0.0f, 180.0f);
                 ImGui::DragFloat("Max Bend##lik", &lb->maxBend, 1.0f, 0.0f, 180.0f);
+                if (IKJointLimitUI("Upper limit##lik", lb->upperLimit)) ed.dirty = true;
+                if (IKJointLimitUI("Lower limit##lik", lb->lowerLimit)) ed.dirty = true;
+                if (lb->upperLimit.Active() || lb->lowerLimit.Active())
+                    ImGui::TextDisabled("Limits clamp from each bone's rest pose. A Hinge on the lower\nbone only stops twist (Min/Max Bend decide the reach).");
+                if (ImGui::DragFloat("Softness##lik", &lb->softness, 0.005f, 0.0f, 0.5f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ease the last stretch to full reach over this distance,\nso the limb doesn't snap straight as the target moves out of reach.");
                 ImGui::Checkbox("Match Target Rotation##lik", &lb->matchTargetRotation);
+                if (lb->matchTargetRotation && lb->targetName.empty()) {
+                    Vec3 e = lb->targetRotation.ToEuler();
+                    float ea[3] = {e.x, e.y, e.z};
+                    if (ImGui::DragFloat3("Target Rotation##lik", ea, 1.0f)) { lb->targetRotation = Quat::Euler({ea[0], ea[1], ea[2]}); ed.dirty = true; }
+                }
                 ImGui::Checkbox("Orient Bones##lik", &lb->orient);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Joints that aren't parented in a chain: also rotate the upper/lower\nbones toward the moved joints. A bone chain always turns.");
                 ImGui::Checkbox("IK Active##lik", &lb->ikActive); ImGui::SameLine();
                 ImGui::SetNextItemWidth(90); ImGui::DragFloat("Fade (s)##lik", &lb->fadeTime, 0.01f, 0.0f, 3.0f);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to blend IK in/out when IK Active changes (scripts: ik_enable).");
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also rotate the upper/lower bones to follow the solved joints,\nso a mesh skinned to the limb bends with it (not just the joints moving).");
                 if (ImGui::SmallButton("Remove##lik")) toRemove = lb;
             }
         }
@@ -29339,7 +29456,15 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatic: each object's own style (a carry from its size and weight unless it says Custom).\nCustom: always the object's grip points.");
                 if (ImGui::Checkbox("Arm IK##poh", &ph->armIK)) ed.dirty = true;
                 if (ImGui::DragFloat("Transition (s)##poh", &ph->transitionTime, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
-                if (GameObject* held = ph->Held()) ImGui::Text("Holding: %s", held->name.c_str());
+                if (ImGui::Checkbox("Body Adjustment##poh", &ph->bodyAdjustment)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Heavy or big loads: lean back, walk slower, kept off the body.");
+                int ca = (int)ph->carryAnimations;
+                if (ImGui::Combo("Carry Animations##poh", &ca, "Automatic\0Custom\0")) { ph->carryAnimations = (ProceduralObjectHolding::CarryAnim)ca; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatic: the built-in lean against heavy loads.\nCustom: your Animator's own carry states, driven by its parameters\n'holding' (bool), 'carryStyle' (int) and 'carryWeight' (kg).");
+                if (GameObject* held = ph->Held()) {
+                    ImGui::Text("Holding: %s (%s)", held->name.c_str(), ph->CarryStyle() == HoldableObject::Style::Automatic ? "small item" : HoldableObject::StyleName(ph->CarryStyle()));
+                    ImGui::Text("Heaviness %.2f, speed x%.2f", ph->Heaviness(), ph->SpeedMultiplier());
+                }
                 else if (ed.isPlaying()) ImGui::TextDisabled("Holding nothing");
                 if (ImGui::SmallButton("Remove##poh")) toRemove = ph;
             }
@@ -29664,6 +29789,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* cc = dynamic_cast<CharacterController3D*>(curComp)) {
         if (CompHeader("Character Controller 3D", cc, &toRemove)) {
+            if (StanceControlFields(cc->stanceControl, "cc3")) ed.dirty = true;
             if (ImGui::DragFloat("Speed##cc3", &cc->speed, 0.1f, 0.0f, 200.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Can Jump##cc3", &cc->canJump)) ed.dirty = true;
             if (cc->canJump)
@@ -31036,6 +31162,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* c = dynamic_cast<NPCController*>(curComp)) {
         if (CompHeader("NPC Controller", c, &toRemove)) {
+            if (StanceControlFields(c->stanceControl, "npc")) ed.dirty = true;
             const char* bs[] = { "Idle", "Wander", "Follow", "Flee", "Chase (attack)", "Patrol", "Guard" };
             if (ImGui::Combo("Behavior##npc", &c->behavior, bs, IM_ARRAYSIZE(bs))) ed.dirty = true;
             char tn[48]; std::strncpy(tn, c->targetName.c_str(), sizeof(tn) - 1); tn[sizeof(tn) - 1] = '\0';
@@ -31644,6 +31771,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* td = dynamic_cast<TopDownController*>(curComp)) {
         if (CompHeader("Top Down Controller", td, &toRemove)) {
+            if (StanceControlFields(td->stanceControl, "td")) ed.dirty = true;
             SectionHeader("Movement");
             if (ImGui::DragFloat("Walk Speed##td", &td->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Run Speed##td", &td->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
@@ -31985,6 +32113,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* ts = dynamic_cast<ThirdPersonShooterController*>(curComp)) {
         if (CompHeader("Third Person Shooter Controller", ts, &toRemove)) {
+            if (StanceControlFields(ts->stanceControl, "ts")) ed.dirty = true;
             SectionHeader("Movement");
             if (ImGui::DragFloat("Walk Speed##tps", &ts->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Run Speed##tps", &ts->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
@@ -32030,6 +32159,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* cm = dynamic_cast<ClickToMoveController*>(curComp)) {
         if (CompHeader("Click To Move Controller", cm, &toRemove)) {
+            if (StanceControlFields(cm->stanceControl, "cm")) ed.dirty = true;
             if (ImGui::DragFloat("Walk Speed##ctm", &cm->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Run Speed##ctm", &cm->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             int rk = cm->runKey ? cm->runKey : 0; char rkb[2] = { (char)(rk ? rk : ' '), 0 };
@@ -33461,6 +33591,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     oked::DrawUILayoutComponentInspector(curComp, ed, &toRemove, {CompHeader, AnchorCombo});
+    oked::DrawUIOverlayComponentInspector(curComp, ed, &toRemove, {CompHeader, AnchorCombo});
     if (auto* pb = dynamic_cast<UIProgressBar*>(curComp)) {
         if (CompHeader("UI Progress Bar", pb, &toRemove)) {
             UIStyleBar(ed, pb);
@@ -34778,9 +34909,13 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UITabs>(), "UI Tabs")) { go->AddComponent<UITabs>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDraggable>(), "UI Draggable")) { go->AddComponent<UIDraggable>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDropTarget>(), "UI Drop Target")) { go->AddComponent<UIDropTarget>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIFrame>() && GetUIRect(go).sizePtr, "UI Frame (anchors + pivot)")) { ConvertToUIFrame(go); ed.dirty = true; }
             if (item(!go->GetComponent<UIMask>(), "UI Mask (clip children)")) { go->AddComponent<UIMask>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIFlexItem>(), "UI Flex Item (grow / shrink)")) { go->AddComponent<UIFlexItem>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIListView>(), "UI List View")) { oked::BuildUIListView(go); ed.dirty = true; }
+            if (item(!go->GetComponent<UIModal>(), "UI Modal (dialog)")) { go->AddComponent<UIModal>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIContextMenu>(), "UI Context Menu (right-click)")) { go->AddComponent<UIContextMenu>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIKeybindField>(), "UI Keybind Field")) { go->AddComponent<UIKeybindField>(); ed.dirty = true; }
             if (item(!go->GetComponent<UITextBind>(), "UI Text Bind (show a variable)")) { go->AddComponent<UITextBind>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIBarBind>(), "UI Bar Bind (var -> progress bar)")) { go->AddComponent<UIBarBind>(); ed.dirty = true; }
           } EndCat(o); }
@@ -35153,7 +35288,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             // Stretch anchors (index 9..11) have no single 3×3 pip — clamp the marker
             // index into range so we never read past the 9-element pip array (OOB crash).
             int ai = (int)r.anchor;
-            bool stretchAnchor = okay::AnchorIsStretch(r.anchor);
+            bool stretchAnchor = r.Stretches();
             int markAi = (ai >= 0 && ai < 9) ? ai : 4;   // Center as a stand-in for stretch
             ImVec2 ra, rb; UIAnchorRefRect(ed.selected(), canvasPos, canvasSize, ra, rb);
             ImVec2 pips[9]; UIAnchorPips(ra, rb, pips);
@@ -35996,7 +36131,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                         Vec2 po, ps;
                         if (GetUIScreenRect(par, canvasSize.x, canvasSize.y, po, ps)) { frameOrigin = po; frameSize = ps; }
                     }
-                    Vec2 term = ResolveAnchor(r.anchor, Vec2{0.0f, 0.0f}, newScreen, frameSize.x, frameSize.y);
+                    Vec2 term = r.OriginWith(Vec2{0.0f, 0.0f}, newScreen, frameSize.x, frameSize.y);
                     // Grid-snap only on axes that didn't lock onto a guide.
                     auto gsnap = [&](float v, bool guided) { return (g_snap && !guided) ? Mathf::Round(v / grid) * grid : v; };
                     float oldW = r.sizePtr->x, oldH = r.sizePtr->y;   // for proportional child scale
@@ -36996,6 +37131,44 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     jointDot(u); jointDot(m); jointDot(e);
                     Vec3 tgt; marker(scenePos(lb->targetName, tgt) ? tgt : lb->target, kTgtCol, 7.0f);
                     Vec3 pol; if (scenePos(lb->poleName, pol)) { marker(pol, kPoleCol, 5.0f); line(m, pol, kPoleCol, 1.0f); }
+                    // Joint-limit gizmos: the shoulder/hip swing cone and the
+                    // elbow/knee bend arc, drawn from the current bone directions.
+                    const ImU32 kLimCol = IM_COL32(250, 220, 90, 220);
+                    const float ub = ((m - u)).Magnitude(), lo = ((e - m)).Magnitude();
+                    if (lb->upperLimit.type == IKJointLimit::Type::Ball && ub > 1e-4f) {
+                        const Vec3 d = (m - u) * (1.0f / ub);
+                        Vec3 side = Vec3::Cross(d, Vec3::Up);
+                        if (side.SqrMagnitude() < 1e-6f) side = Vec3::Cross(d, Vec3::Right);
+                        side = side.Normalized();
+                        const Vec3 up2 = Vec3::Cross(d, side);
+                        const float sw = lb->upperLimit.swingMax * 0.01745329f, len = ub * 0.5f;
+                        const float r = len * std::sin(sw), h = len * std::cos(sw);
+                        Vec3 prev2; const int N = 24;
+                        for (int s2 = 0; s2 <= N; ++s2) {
+                            const float a2 = 6.2831853f * s2 / N;
+                            const Vec3 p2 = u + d * h + (side * std::cos(a2) + up2 * std::sin(a2)) * r;
+                            if (s2) line(prev2, p2, kLimCol, 1.0f);
+                            if (s2 % 6 == 0) line(u, p2, kLimCol, 1.0f);
+                            prev2 = p2;
+                        }
+                    }
+                    if (lb->lowerLimit.type == IKJointLimit::Type::Hinge && ub > 1e-4f && lo > 1e-4f) {
+                        // Bend 0 = straight on: sweep the allowed bend range in the
+                        // limb's current bend plane.
+                        const Vec3 straight = (m - u) * (1.0f / ub);
+                        Vec3 ax = Vec3::Cross(m - u, e - m);
+                        if (ax.SqrMagnitude() > 1e-8f) {
+                            ax = ax.Normalized();
+                            const float r = lo * 0.35f; Vec3 prev2; const int N = 20;
+                            for (int s2 = 0; s2 <= N; ++s2) {
+                                const float deg = lb->lowerLimit.hingeMin + (lb->lowerLimit.hingeMax - lb->lowerLimit.hingeMin) * s2 / N;
+                                const Vec3 p2 = m + (Quat::AngleAxis(deg, ax) * straight) * r;
+                                if (s2) line(prev2, p2, kLimCol, 1.0f); else line(m, p2, kLimCol, 1.0f);
+                                prev2 = p2;
+                            }
+                            line(m, prev2, kLimCol, 1.0f);
+                        }
+                    }
                 }
                 if (auto* ci = up->GetComponent<ChainIK>()) {
                     chain(ci->boneNames);
@@ -41500,6 +41673,15 @@ int main(int argc, char** argv) {
                 Input::FeedText(e.text.text);
             if (e.type == SDL_MOUSEWHEEL && ed.isPlaying())
                 Input::FeedMouseWheel((float)e.wheel.y);
+            if (((e.type == SDL_FINGERDOWN || e.type == SDL_FINGERMOTION) && ed.isPlaying()) || e.type == SDL_FINGERUP) {
+                // Touches relative to the Game view, like the mouse; a finger must land on it
+                // (a lift always goes through so a touch never sticks after Stop).
+                const ImVec2 ds = ImGui::GetIO().DisplaySize;
+                const Vec2 p{e.tfinger.x * ds.x - g_playCanvasPos.x, e.tfinger.y * ds.y - g_playCanvasPos.y};
+                const bool onGame = p.x >= 0.0f && p.y >= 0.0f && p.x < g_playCanvasSize.x && p.y < g_playCanvasSize.y;
+                const int state = e.type == SDL_FINGERDOWN ? 0 : e.type == SDL_FINGERMOTION ? 1 : 2;
+                if (state != 0 || onGame) Input::FeedTouch((long long)e.tfinger.fingerId, state, p);
+            }
             // Feed OkayUI text fields (Test UI demo or a playing game's ui_inputtext)
             // when ImGui isn't capturing the keyboard.
             if ((g_showTestUI || ed.isPlaying()) && !ImGui::GetIO().WantTextInput) {

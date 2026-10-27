@@ -8,6 +8,7 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/PlayerCollision.hpp"
+#include "okay/Components/MoveSpeed.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
@@ -75,6 +76,9 @@ public:
     const StanceBody& stanceBody() const { return m_body; }
     /// Begin in `s` (a scene saved while crouched / prone loads that way, so a
     /// player saved under low cover isn't stood up inside it). Applied in Start().
+    /// Ask for a stance from a script / an NPC / a cutscene (as if pressed): kept
+    /// until changed, so a stand-up blocked by a low ceiling happens once there's room.
+    void SetStance(Stance s) { m_wantStance = m_padWant = s; }
     void RestoreStance(Stance s) { m_stance = m_wantStance = m_padWant = m_prevStance = s; m_stanceLevel = (float)s; }
     /// The body's stance as it moves between stances: 0 stand .. 1 crouch .. 2 prone.
     float stanceLevel() const { return m_stanceLevel; }
@@ -289,7 +293,7 @@ public:
         bool running = m_stance == Stance::Stand && moving && IsRunHeld(in) && !m_aim;
         // The speed cap follows the body from one stance's to the next.
         float speed = StanceValue(m_stanceLevel, running ? runSpeed : walkSpeed, crouchSpeed, proneSpeed);
-        speed *= Inventory::SpeedFactorOf(gameObject);   // over-encumbered (opt-in on the Inventory)
+        speed *= MoveSpeedScale(gameObject);   // heavy load / over-encumbered (see MoveSpeed.hpp)
 
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
 
@@ -421,11 +425,17 @@ public:
                 m_stepDist += hSpeed * dt;
                 if (m_stepDist >= stride) { m_stepDist -= stride; ++m_steps; if (onFootstep) onFootstep((m_steps & 1) != 0); }
             }
-            if (autoRecenter && moving && !m_aim && m_mouseIdle > recenterDelay) {
+            // Only when the travel is forward-ish: the input is camera-relative,
+            // so chasing the body on a pure strafe or backpedal re-aims the input
+            // every frame and the camera spins forever. Scaling by the forward
+            // share settles the camera in behind a forward run, drifts gently on
+            // a diagonal, and leaves a strafe alone.
+            const float fwdShare = moving ? Mathf::Max(0.0f, Vec3::Dot(dir, fwd)) : 0.0f;
+            if (autoRecenter && moving && !m_aim && m_mouseIdle > recenterDelay && fwdShare > 0.2f) {
                 Vec3 f = transform->localRotation * Vec3{0, 0, -1};
                 float bodyYaw = Mathf::Atan2(-f.x, -f.z) * Mathf::Rad2Deg;
                 float d = std::fmod(bodyYaw - yaw + 540.0f, 360.0f) - 180.0f;
-                yaw += d * (1.0f - std::exp(-recenterSpeed * dt));
+                yaw += d * (1.0f - std::exp(-recenterSpeed * dt)) * fwdShare * fwdShare;
             }
         }
         m_wasRunning = running && hSpeed > walkSpeed * 0.8f;

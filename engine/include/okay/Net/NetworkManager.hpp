@@ -567,11 +567,14 @@ public:
     /// rewind clamped to 200 ms plus the shooter's round trip.
     void ClaimHit(const std::string& targetNetId, const std::string& weapon, const Vec3& origin, const Vec3& direction);
     /// Server, lag compensation: a 3D raycast against where every synced
-    /// object was at `viewTick` (a client's ViewTick; its pose history keeps
-    /// about a second), then everything is put back. Without a fixed tick, or
-    /// on a client, an ordinary raycast. `ignore` as for Physics3D::Raycast.
+    /// object was at `viewTick` (a client's ViewTick), then everything is put
+    /// back. The rewind uses the same limit as a hit claim: 200 ms, plus
+    /// `shooter`'s round trip when that client id is given (capped by the
+    /// anti-cheat's maxRewindRtt). With no shooter, 200 ms. Pose history is
+    /// still kept for about a second. Without a fixed tick, or on a client,
+    /// an ordinary raycast. `ignore` as for Physics3D::Raycast.
     RaycastHit3D RewindRaycast(const Vec3& origin, const Vec3& direction, float maxDistance, double viewTick,
-                               GameObject* ignore = nullptr);
+                               GameObject* ignore = nullptr, std::uint32_t shooter = 0);
     /// Client: the moment (in host ticks, with the fraction) it shows other
     /// players at: now minus the interpolation delay. What a hit claim carries.
     double ViewTick() const;

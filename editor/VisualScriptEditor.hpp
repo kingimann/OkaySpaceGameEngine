@@ -315,6 +315,10 @@ inline const std::vector<VsDef>& Registry() {
         {"NetStartMatch",  "Start Match",    CAT_NET, true, {""}, {}, {}, 0, nullptr},
         {"NetMatchStarted","Match Started",  CAT_NET, false, {}, {}, {"Bool"}, 0, nullptr},
         {"NetAllReady",    "All Ready",      CAT_NET, false, {}, {}, {"Bool"}, 0, nullptr},
+        {"NetObjRpc",      "Call Object RPC", CAT_NET, true, {""}, {"Data"}, {}, 1, "rpc name"},
+        {"SyncVarSet",     "Set Sync Var",   CAT_NET, true, {""}, {"Value"}, {}, 1, "name"},
+        {"SyncVarGet",     "Get Sync Var",   CAT_NET, false, {}, {}, {"Value"}, 1, "name"},
+        {"OnNetRpc",       "On Object RPC",  CAT_NET, false, {""}, {}, {"Value"}, 1, "rpc name"},
         {"SteamName",      "Steam Name",     CAT_NET, false, {}, {}, {"Name"}, 0, nullptr},
         {"SteamIsUnlocked","Achievement Unlocked", CAT_NET, false, {}, {}, {"Bool"}, 1, "achievement id"},
         {"SteamUnlock",    "Unlock Achievement",   CAT_NET, true, {""}, {}, {}, 1, "achievement id"},
@@ -609,6 +613,7 @@ inline std::string VsEntryName(const std::string& type, const std::string& arg) 
     if (type == "OnKeyUp") return "OnKeyUp:" + tok(arg, "space");
     if (type == "OnTimer") return "OnTimer:" + tok(arg, "1");
     if (type == "OnEvent") return "OnEvent:" + tok(arg, "Event");
+    if (type == "OnNetRpc") return "OnNetRpc:" + tok(arg, "rpc");
     if (type == "OnVarChanged" || type == "OnSceneVarChanged" || type == "OnGlobalVarChanged") return type + ":" + tok(arg, "x");
     return {};
 }
@@ -629,7 +634,8 @@ struct VsEditGraph {
         // Sensible starting values for nodes that need a name / number.
         static const std::map<std::string, std::string> kArg = {
             {"Compare", ">"}, {"Timer", "1"}, {"Const", "0"}, {"OnKey", "space"}, {"OnKeyUp", "space"},
-            {"OnTimer", "1"}, {"OnEvent", "Event"}, {"SendEvent", "Event"}, {"BroadcastEvent", "Event"},
+            {"OnTimer", "1"}, {"OnEvent", "Event"}, {"OnNetRpc", "rpc"}, {"SendEvent", "Event"}, {"BroadcastEvent", "Event"},
+            {"NetObjRpc", "rpc"}, {"SyncVarSet", "var"}, {"SyncVarGet", "var"},
             {"SetObjectVar", "hp"}, {"GetObjectVar", "hp"}, {"SaveValue", "score"}, {"LoadValue", "score"},
             {"Format", "Score: {0}"}, {"FindWithTag", "Player"}, {"CountWithTag", "Enemy"}, {"FindObject", "Player"},
             {"NearestWithTag", "Enemy"}, {"Teleport", "self"},
@@ -1120,6 +1126,8 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
     if (t == "NetPeers")      return "net_peers()";
     if (t == "NetId")         return "net_id()";
     if (t == "NetGetVar")     return "net_get(" + q(lit("x")) + ")";
+    if (t == "SyncVarGet")    return "net_syncvar_get(" + q(lit("var")) + ")";
+    if (t == "OnNetRpc")      return "value";
     if (t == "NetMatchStarted") return "net_match_started()";
     if (t == "NetAllReady")   return "net_all_ready()";
     if (t == "SteamName")     return "steam_name()";
@@ -1296,6 +1304,8 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="NetSetVar")     out += ind + "net_set(" + q(arg("x")) + ", str(" + in(0, "\"\"") + "))\n";
     else if (t=="NetChat")       out += ind + "net_chat(" + in(0, "\"\"") + ")\n";
     else if (t=="NetRpc")        out += ind + "net_rpc(" + q(arg("")) + ", str(" + in(0, "\"\"") + "))\n";
+    else if (t=="NetObjRpc")     out += ind + "net_obj_rpc(" + q(arg("rpc")) + ", str(" + in(0, "\"\"") + "))\n";
+    else if (t=="SyncVarSet")    out += ind + "net_syncvar_set(" + q(arg("var")) + ", str(" + in(0, "\"\"") + "))\n";
     else if (t=="NetSpawnOwned") out += ind + "net_spawn_owned(" + q(arg("")) + ", transform.position.x, transform.position.y, transform.position.z)\n";
     else if (t=="NetDespawn")    out += ind + "net_despawn(" + in(0, "\"\"") + ")\n";
     else if (t=="NetReady")      out += ind + "net_ready(" + in(0, "true") + ")\n";
@@ -1528,6 +1538,16 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
         for (auto* n : ofType("OnEvent")) byName[sanitize(n->arg)].push_back(n);
         for (auto& kv : byName) {
             open("void OnEvent_" + kv.first + "(value)");
+            for (auto* n : kv.second) chain(n->id, "        ");
+            out += "    }\n";
+        }
+    }
+    // Object RPCs: one OnNetRpc_<name>(value) per name (net_obj_rpc delivers it).
+    {
+        std::map<std::string, std::vector<const VsEditNode*>> byName;
+        for (auto* n : ofType("OnNetRpc")) byName[sanitize(n->arg)].push_back(n);
+        for (auto& kv : byName) {
+            open("void OnNetRpc_" + kv.first + "(value)");
             for (auto* n : kv.second) chain(n->id, "        ");
             out += "    }\n";
         }

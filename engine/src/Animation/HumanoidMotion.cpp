@@ -8,7 +8,9 @@ namespace HumanoidMotion {
 // display flip. On a bone hanging DOWN (thigh, shin, upper arm, forearm) +X swings
 // its far end BACKWARD; on a bone pointing UP (torso, head) +X tips it FORWARD. So
 // a knee or elbow bends naturally with shin +X / forearm -X, and +X on a foot
-// points the toes down. Leg: hip joint 0.92 above the soles, knee 0.55, ankle 0.12.
+// points the toes down. Upper-arm Z is not a mirror: +Z pulls the LEFT arm in
+// toward the ribs and spreads the RIGHT arm out. Leg: hip joint 0.92 above the
+// soles, knee 0.55, ankle 0.12.
 namespace {
 constexpr float kThigh = 0.37f, kShin = 0.43f, kHipToAnkle = 0.80f, kAnkleH = 0.12f;
 constexpr float kPi = 3.14159265f, kRad2Deg = 57.2957795f;
@@ -204,8 +206,11 @@ void GaitPoseFor(std::vector<Vec3>& r, const Gait& g, float ph, float hipY, cons
     else            { armA = clampf(10.0f + 5.0f * v, 10.0f, 30.0f); elbow = clampf(8.0f + 4.0f * v, 8.0f, 25.0f); }
     float lArm = armA * sl, rArm = armA * sr;
     float base = g.crouch ? -18.0f : 0.0f;                 // crouched: hands carried in front
-    r[B_LUPARM] = {base + lArm, 0.0f,  6.0f};
-    r[B_RUPARM] = {base + rArm, 0.0f, -6.0f};
+    // Arms hang a little out from the ribs. +Z on the left arm is inward, so the
+    // spread is -Z on the left and +Z on the right (the opposite crosses the hands
+    // into the hips).
+    r[B_LUPARM] = {base + lArm, 0.0f, -8.0f};
+    r[B_RUPARM] = {base + rArm, 0.0f,  8.0f};
     r[B_LFORE]  = {-(elbow + 0.45f * std::fmax(0.0f, -lArm)), 0.0f, 0.0f};
     r[B_RFORE]  = {-(elbow + 0.45f * std::fmax(0.0f, -rArm)), 0.0f, 0.0f};
 
@@ -269,7 +274,7 @@ float AbsorbLanding(std::vector<Vec3>& r, float landK) {
     resolve(r[B_LTHIGH], r[B_LSHIN], r[B_LFOOT]);
     resolve(r[B_RTHIGH], r[B_RSHIN], r[B_RFOOT]);
     r[B_TORSO].x  += 9.0f * landK;
-    r[B_LUPARM].z += 10.0f * landK;   r[B_RUPARM].z -= 10.0f * landK;
+    r[B_LUPARM].z -= 10.0f * landK;   r[B_RUPARM].z += 10.0f * landK;   // out, not into the ribs
     return -drop;
 }
 
@@ -282,7 +287,7 @@ float KneelPose(int which, std::vector<Vec3>& r) {
         r[B_LTHIGH] = {-60, 0, -4};      r[B_RTHIGH] = {-60, 0, 4};    // straight down in the world
         r[B_LSHIN]  = {90, 0, 0};        r[B_RSHIN]  = {90, 0, 0};     // shins flat behind
         r[B_LFOOT]  = {-30, 0, 0};       r[B_RFOOT]  = {-30, 0, 0};
-        r[B_LUPARM] = {-70, 0, 6};       r[B_RUPARM] = {-70, 0, -6};   // arms straight down onto the hands
+        r[B_LUPARM] = {-70, 0, -8};      r[B_RUPARM] = {-70, 0, 8};    // arms down, hands outside the knees
         return 0.42f - (kHipToAnkle + kAnkleH);
     }
     // Kneeling on the right knee, the left foot planted ahead, a hand on that knee.
@@ -318,8 +323,12 @@ void Pose(int state, float t, const Inputs& in, std::vector<Vec3>& out) {
     if (state == 1) {                       // idle
         float s = std::sin(t * 1.8f);
         r[B_TORSO] = {1.5f * s, 0, 0};
-        r[B_LUPARM] = {0, 0, 4 + 1.5f * s};
-        r[B_RUPARM] = {0, 0, -4 - 1.5f * s};
+        // Relaxed hang: a little forward, elbows softly bent, hands clear of the
+        // thighs. The breathe narrows them slightly and never pulls them into the hip.
+        r[B_LUPARM] = {-6.0f, 0, -10.0f + 1.2f * s};
+        r[B_RUPARM] = {-6.0f, 0,  10.0f - 1.2f * s};
+        r[B_LFORE]  = {-22.0f, 0, 0};
+        r[B_RFORE]  = {-22.0f, 0, 0};
         // Idle fidgets: a slow side-to-side weight shift (hips roll one way, the
         // torso counter-rolls to stay balanced) plus an occasional glance to one
         // side — alternating sides each ~9s cycle — so a standing character reads
@@ -337,14 +346,15 @@ void Pose(int state, float t, const Inputs& in, std::vector<Vec3>& out) {
     } else if (state == 2 || state == 3) {   // walk / run: a stride laid out from the real ground speed
         GaitPose(r, state, in);
     } else if (state == 4) {                // wave
-        r[B_RUPARM] = {0, 0, -150};
-        r[B_RFORE]  = {0, 0, -15 + 28 * std::sin(t * 8.0f)};
-        r[B_LUPARM] = {0, 0, 6};
+        r[B_RUPARM] = {0, 0, 125};                                 // up and out on the body's right
+        r[B_RFORE]  = {-8, 0, 22 * std::sin(t * 8.0f)};
+        r[B_LUPARM] = {-6, 0, -8};
+        r[B_LFORE]  = {-18, 0, 0};
     } else if (state == 5) {                // jump: lead knee driven up, trail leg pushing off, arms swing up
         LegIK( 0.26f, 0.42f, 0.0f, 10.0f, r[B_LTHIGH], r[B_LSHIN], r[B_LFOOT]);   // lead leg tucked
         LegIK(-0.16f, 0.72f, 0.0f, 35.0f, r[B_RTHIGH], r[B_RSHIN], r[B_RFOOT]);   // trail leg, toes pointed
-        r[B_RUPARM] = {-48, 0, -10};   r[B_RFORE] = {-62, 0, 0};    // opposite arm drives forward-up, elbow bent
-        r[B_LUPARM] = {28, 0, 12};     r[B_LFORE] = {-18, 0, 0};    // the other swings back
+        r[B_RUPARM] = {-48, 0, 8};     r[B_RFORE] = {-62, 0, 0};    // opposite arm drives forward-up, elbow bent
+        r[B_LUPARM] = {28, 0, -8};     r[B_LFORE] = {-18, 0, 0};    // the other swings back, clear of the hip
         r[B_TORSO]  = {6, 4, 0};
         r[B_HEAD]   = {-6, 0, 0};
     } else if (state == 18) {               // fall: legs reach down for the landing, arms out for balance
@@ -368,7 +378,7 @@ void Pose(int state, float t, const Inputs& in, std::vector<Vec3>& out) {
         LegIK( 0.04f, down, -0.03f, 0.0f, r[B_RTHIGH], r[B_RSHIN], r[B_RFOOT]);   // one foot a little behind
         r[B_TORSO]  = {28 + 1.5f * s, 0, 0};
         r[B_HEAD]   = {-20, 0, 0};                           // eyes forward, not at the floor
-        r[B_LUPARM] = {-20, 0, 8};   r[B_RUPARM] = {-20, 0, -8};   // hands carried in front
+        r[B_LUPARM] = {-20, 0, -12}; r[B_RUPARM] = {-20, 0, 12};   // hands in front, outside the knees
         r[B_LFORE]  = {-32, 0, 0};   r[B_RFORE]  = {-32, 0, 0};
     } else if (state == 17) {               // crouch-walk: the same crouch, stepping heel-to-toe
         GaitPose(r, 17, in);
@@ -400,62 +410,68 @@ void Pose(int state, float t, const Inputs& in, std::vector<Vec3>& out) {
             // bends toward the travel and the knee on that side draws up higher.
             const float side = std::sin(in.travelYaw * (kPi / 180.0f));
             const float toR = std::fmax(0.0f, side), toL = std::fmax(0.0f, -side);
-            r[B_LUPARM].z += 28.0f * toL - 10.0f * toR;
-            r[B_RUPARM].z -= 28.0f * toR - 10.0f * toL;
+            r[B_LUPARM].z -= 28.0f * toL - 10.0f * toR;   // travel-side arm reaches out
+            r[B_RUPARM].z += 28.0f * toR - 10.0f * toL;
             r[B_TORSO].z  += 10.0f * (toL - toR);
             r[B_LTHIGH].z -= 14.0f * toL;  r[B_RTHIGH].z += 14.0f * toR;
         }
     }
     // ---- Hand gestures (8-12) and emotions (13-16) -----------------------------
-    // The rig is blocky with no face, so "emotions" read through body language
-    // (posture, head tilt, bounce). +X on an upper arm swings it forward, +X on a
-    // forearm bends the elbow up, +Z spreads the LEFT arm out (−Z the right);
-    // arm Z is kept well under 90° so the hands never cross in front.
+    // The rig is blocky with no face, so these read through posture. On a hanging
+    // arm -X reaches forward (and up, once it passes horizontal) and +X reaches
+    // backward. A forearm bends with -X; +X hyperextends the elbow. +Z on the left
+    // arm moves that hand inward and +Z on the right arm moves it outward.
     else if (state == 8) {                  // point forward (right arm)
-        r[B_RUPARM] = {88, 0, -8};         // raise to horizontal, pointing ahead
-        r[B_RFORE]  = {2, 0, 0};           // arm straight
-        r[B_LUPARM] = {0, 0, 4};           // left arm rests
+        r[B_RUPARM] = {-88, 0, 8};         // horizontal, ahead and slightly out
+        r[B_RFORE]  = {-4, 0, 0};
+        r[B_LUPARM] = {-6, 0, -8};         // left arm rests
+        r[B_LFORE]  = {-18, 0, 0};
         r[B_TORSO]  = {0, -6, 0};          // slight turn into the point
     } else if (state == 9) {                // clap (hands meet in front, repeating)
         float c = 18.0f * (0.5f + 0.5f * std::sin(t * 7.0f));   // 0..18 open/close
-        r[B_LUPARM] = {62, 0, -22 + c};    r[B_RUPARM] = {62, 0, 22 - c};
-        r[B_LFORE]  = {46, 0, 18};         r[B_RFORE]  = {46, 0, -18};
+        r[B_LUPARM] = {-50, 0, 30 - c};    r[B_RUPARM] = {-50, 0, -30 + c};
+        r[B_LFORE]  = {-46, 0, 0};         r[B_RFORE]  = {-46, 0, 0};
         r[B_HEAD]   = {-4, 0, 0};
-    } else if (state == 10) {               // thumbs up (right fist up at the side)
-        r[B_RUPARM] = {6, 0, -18};
-        r[B_RFORE]  = {128, 0, -6};        // forearm up, fist by the chest
-        r[B_LUPARM] = {0, 0, 4};
+    } else if (state == 10) {               // thumbs up (right fist up beside the chest)
+        r[B_RUPARM] = {-12, 0, 22};
+        r[B_RFORE]  = {-130, 0, 0};
+        r[B_LUPARM] = {-6, 0, -8};
+        r[B_LFORE]  = {-18, 0, 0};
     } else if (state == 11) {               // salute (right hand to the brow)
-        r[B_RUPARM] = {26, 0, -74};        // upper arm out to the side
-        r[B_RFORE]  = {128, 0, -28};       // forearm folded up to the forehead
+        r[B_RUPARM] = {-110, 0, -5};
+        r[B_RFORE]  = {-105, 0, -35};      // folded in onto the forehead
+        r[B_LUPARM] = {-6, 0, -8};
+        r[B_LFORE]  = {-18, 0, 0};
         r[B_HEAD]   = {-6, 0, 0};
         r[B_TORSO]  = {-2, 0, 0};          // stand tall
     } else if (state == 12) {               // wave-both / surrender-style open hands
         float s2 = std::sin(t * 6.0f);
-        r[B_LUPARM] = {0, 0, 120};         r[B_RUPARM] = {0, 0, -120};   // both arms up & out
-        r[B_LFORE]  = {0, 0, 20 + 14 * s2}; r[B_RFORE] = {0, 0, -20 - 14 * s2};
-    } else if (state == 13) {               // happy / cheer (arms up, bouncing)
+        r[B_LUPARM] = {-8, 0, -125};       r[B_RUPARM] = {-8, 0, 125};   // both arms up and out
+        r[B_LFORE]  = {-8, 0, 16 * s2};    r[B_RFORE]  = {-8, 0, -16 * s2};
+    } else if (state == 13) {               // happy / cheer (arms up in a V, bouncing)
         float b = std::sin(t * 6.0f);
-        r[B_LUPARM] = {-14, 0, 82};        r[B_RUPARM] = {-14, 0, -82};  // raised in a V
-        r[B_LFORE]  = {18, 0, 0};          r[B_RFORE]  = {18, 0, 0};
+        r[B_LUPARM] = {-30, 0, -75};       r[B_RUPARM] = {-30, 0, 75};
+        r[B_LFORE]  = {-15, 0, 0};         r[B_RFORE]  = {-15, 0, 0};
         r[B_HEAD]   = {-12, 0, 0};         // chin up, upbeat
         r[B_TORSO]  = {-4 + 2.0f * b, 0, 0};
     } else if (state == 14) {               // sad / dejected (slumped, head down)
         float b = std::sin(t * 1.4f);
         r[B_TORSO]  = {20 + 1.0f * b, 0, 0};   // slump forward
         r[B_HEAD]   = {26, 0, 0};              // look down
-        r[B_LUPARM] = {12, 0, 2};          r[B_RUPARM] = {12, 0, -2};    // arms hang limp, slightly fwd
+        r[B_LUPARM] = {-10, 0, -6};        r[B_RUPARM] = {-10, 0, 6};    // arms hang limp, slightly forward
+        r[B_LFORE]  = {-8, 0, 0};          r[B_RFORE]  = {-8, 0, 0};
     } else if (state == 15) {               // angry (lean in, fists up)
         float b = std::sin(t * 5.0f);
         r[B_TORSO]  = {14, 1.5f * b, 0};       // hunch + small aggressive sway
         r[B_HEAD]   = {12, 0, 0};              // head down/forward (glaring)
-        r[B_LUPARM] = {28, 0, -14};        r[B_RUPARM] = {28, 0, 14};    // elbows in
-        r[B_LFORE]  = {72, 0, 0};          r[B_RFORE]  = {72, 0, 0};     // fists up
+        r[B_LUPARM] = {-22, 0, -10};       r[B_RUPARM] = {-22, 0, 10};   // fists in front of the chest
+        r[B_LFORE]  = {-85, 0, 0};         r[B_RFORE]  = {-85, 0, 0};
     } else if (state == 16) {               // think / idle-curious (hand near chin)
-        r[B_RUPARM] = {30, 0, -26};
-        r[B_RFORE]  = {118, 0, -10};       // hand up to the chin
+        r[B_RUPARM] = {-60, 0, 0};
+        r[B_RFORE]  = {-125, 0, -25};
         r[B_HEAD]   = {-4, 14, 0};         // slight quizzical tilt
-        r[B_LUPARM] = {6, 0, 6};
+        r[B_LUPARM] = {-6, 0, -8};
+        r[B_LFORE]  = {-18, 0, 0};
     }
 
     // Landing recovery: a brief knee-bend absorb right after a jump lands — hips
@@ -467,10 +483,10 @@ void Pose(int state, float t, const Inputs& in, std::vector<Vec3>& out) {
         LegIK(0.03f, down, 0.0f, 0.0f, r[B_LTHIGH], r[B_LSHIN], r[B_LFOOT]);
         LegIK(0.03f, down, 0.0f, 0.0f, r[B_RTHIGH], r[B_RSHIN], r[B_RFOOT]);
         r[B_TORSO].x  += 12.0f * lk;
-        r[B_LUPARM].z += 14.0f * lk;   r[B_RUPARM].z -= 14.0f * lk;   // arms out for balance
+        r[B_LUPARM].z -= 14.0f * lk;   r[B_RUPARM].z += 14.0f * lk;   // arms out for balance
     }
     if (in.landK > 0.0f && (state == 2 || state == 3)) {
-        r[B_LUPARM].z += 10.0f * in.landK;   r[B_RUPARM].z -= 10.0f * in.landK;
+        r[B_LUPARM].z -= 10.0f * in.landK;   r[B_RUPARM].z += 10.0f * in.landK;
     }
 }
 

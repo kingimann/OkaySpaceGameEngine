@@ -45,6 +45,8 @@ public:
         if (!targetObject) targetObject = ResolveBone(s, gameObject, targetName);
     }
 
+    void Update(float) override { m_restore.Restore(); }   // before the animator blends (see IKRestore.hpp)
+
     // Solve in LateUpdate so the correction lands AFTER every animation driver
     // has posed the bones this frame (imported rigs create their per-node
     // Animators lazily, which puts them late in the Update order).

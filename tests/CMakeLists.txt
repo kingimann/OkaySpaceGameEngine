@@ -140,6 +140,10 @@ add_test(NAME inventory_persist_craft COMMAND test_inventory_persist_craft)
 add_executable(test_inventory_equipment test_inventory_equipment.cpp)
 target_link_libraries(test_inventory_equipment PRIVATE okay::engine)
 add_test(NAME inventory_equipment COMMAND test_inventory_equipment)
+# Equipment / pickups with Procedural Object Holding: main hand in the hands, hold-in-hands pickups
+add_executable(test_inventory_holding test_inventory_holding.cpp)
+target_link_libraries(test_inventory_holding PRIVATE okay::engine)
+add_test(NAME inventory_holding COMMAND test_inventory_holding)
 
 add_executable(test_pathfinding test_pathfinding.cpp)
 target_link_libraries(test_pathfinding PRIVATE okay::engine)

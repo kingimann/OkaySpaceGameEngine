@@ -504,6 +504,9 @@ Scripts: `anim_set_float`, `anim_set_bool`, `anim_trigger`, `anim_state()`,
 
 ## IK
 
+The full guide (solve order, poles, joint limits, target blending, Foot IK and
+Full Body IK settings, troubleshooting) is in [ik.md](ik.md).
+
 | Component | Use |
 | --- | --- |
 | Full Body IK | Hands, feet and head reach goals on any humanoid rig; bones auto-map. Out-of-reach goals pull the hips and bend the spine; soft reach stops limbs snapping straight. |

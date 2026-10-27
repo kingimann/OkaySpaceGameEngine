@@ -4,8 +4,9 @@
 // ignores the player subtree, so other cameras and shadows still see the whole
 // character. The shirt and the legs are flagged as the viewmodel. The head and
 // the neck stay active but unflagged, so only this camera skips them. The hand
-// is a copy that only this camera draws: one chunky cube in the lower right,
-// no sleeve. A held item sits on that cube. The real arm bones stay on the
+// is a copy of the character's own hand brick that only this camera draws,
+// in the lower right, with no sleeve. A held item sits on the inner end of
+// that brick. The real arm bones stay on the
 // animation, so another camera never sees that pose.
 //
 // Needs a Character; if it isn't a separated part rig yet, the hand builds the rig

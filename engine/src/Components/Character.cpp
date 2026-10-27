@@ -1038,23 +1038,11 @@ void Character::ReleaseOwnerArm() {
 }
 
 namespace {
-// The owner's first-person view is the hand only: one skin cube, no sleeve.
-// Scale stays inside the range the player tests allow. Local +Z is the inner
-// face (toward screen centre), where a held item sits. Local +Y is the top.
-constexpr float kFpHandScale = 0.50f;
-constexpr float kFpHandHalf  = 0.12f;
-
-Mesh FaceBox(const Vec3& mn, const Vec3& mx, const Color& col) {
-    Mesh m;
-    Mesh::AppendBox(m, mn, mx);
-    m.triColors.assign(m.TriangleCount(), col);
-    m.normals.clear();
-    return m;
-}
-
-Color FaceColor(const Mesh& m, const Color& fallback) {
-    return m.triColors.empty() ? fallback : m.triColors[0];
-}
+// The owner's first-person view is the character's own hand brick, not a
+// made-up cube and not the sleeve. Scale stays inside the range the player
+// tests allow. The brick's local +Y is up (the lit face) and local +Z is the
+// long axis, pointed toward screen centre, where a held item sits.
+constexpr float kFpHandScale = 0.55f;
 }
 
 void Character::EnsureOwnerArm(int base) {
@@ -1088,10 +1076,9 @@ void Character::EnsureOwnerArm(int base) {
     made[1]->transform->SetParent(made[0]->transform, false);
     made[2]->transform->SetParent(made[1]->transform, false);
     for (int i = 0; i < 3; ++i) made[i]->transient = true;
-    // One cube. The arm and the forearm stay in the hierarchy (the hand is
-    // their grandchild) but they draw nothing: no sleeve, no wrist stub.
-    const Color handCol = FaceColor(mesh[2]->mesh, Color::FromBytes(220, 176, 150));
-    const float h = kFpHandHalf;
+    // The hand keeps the body's brick (one block, skin or glove). The arm and
+    // the forearm stay in the hierarchy so the hand is still their grandchild,
+    // but they draw nothing.
     auto* armMr = made[0]->GetComponent<MeshRenderer>();
     armMr->mesh = Mesh{};
     armMr->enabled = false;
@@ -1099,7 +1086,7 @@ void Character::EnsureOwnerArm(int base) {
     foreMr->mesh = Mesh{};
     foreMr->enabled = false;
     auto* handMr = made[2]->GetComponent<MeshRenderer>();
-    handMr->mesh = FaceBox({-h, -h, -h}, {h, h, h}, handCol);
+    handMr->mesh.normals.clear();
     handMr->castShadows = false;
     // Under the player, not the camera. A first-person-only object is drawn
     // only for the camera that is hiding its owner, and only when it is still
@@ -1197,11 +1184,11 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     const float tanV = std::tan(std::max(0.15f, vFov * 0.5f));
     const float tanH = tanV * aspect;
     const float near = std::max(cam->nearClip, 0.04f);
-    const float depth = std::max(0.52f, near + 0.36f);
+    const float depth = std::max(0.46f, near + 0.32f);
 
-    // One cube, angled so the top and the inner face both show. Local +Z is
-    // inward (toward screen centre), and that face is where the item sits.
-    // Local +Y is the top. There is no sleeve.
+    // The body's hand brick. Local +Z (its long axis) points inward. Local +Y,
+    // the broad face, points back at the lens and up so it takes the light.
+    // No sleeve.
     float snap = 0.0f;
     if (m_punchT >= 0.0f && m_punchT < 1.0f) {
         if (m_punchT < 0.32f) snap = std::sin(m_punchT / 0.32f * 1.5707963f);
@@ -1215,15 +1202,18 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
         bobS = std::sin(m_gaitPhase * 6.2831853f);
         bobC = std::cos(m_gaitPhase * 6.2831853f);
     }
-    Vec3 inward{-side * 0.55f, 0.48f, 0.38f};
-    inward.y += 0.08f * bobS;
+    // Long axis toward screen centre. The broad face is turned up toward the
+    // key light and only a little back at the lens: a face square to the lens
+    // is in shadow, because the light sits in front of the camera.
+    Vec3 inward{-side * 0.92f, -0.02f, -0.08f};
+    inward.y += 0.10f * bobS;
     if (snap > 0.0f) {
-        const Vec3 aim{-side * 0.22f, 0.78f, 0.46f};
+        const Vec3 aim{-side * 0.18f, 0.88f, 0.12f};
         inward = inward + (aim - inward) * snap;
     }
-    if (inward.SqrMagnitude() < 1e-8f) inward = Vec3{-side, 0.4f, 0.4f};
+    if (inward.SqrMagnitude() < 1e-8f) inward = Vec3{-side, 0.2f, 0.1f};
     inward = inward.Normalized();
-    Vec3 topHint{-side * 0.06f, 0.62f, 0.78f};
+    Vec3 topHint{side * 0.04f, 0.86f, 0.40f};
     Vec3 top = topHint - inward * Vec3::Dot(topHint, inward);
     if (top.SqrMagnitude() < 1e-6f) top = Vec3{0.0f, 1.0f, 0.0f};
     top = top.Normalized();
@@ -1282,19 +1272,28 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
                 dst->mesh = src->mesh;
                 dst->color = src->color;
                 dst->castShadows = false;
-                // Longest side about the cube's edge. The inner face is local +Z.
-                // The item's nearest point overlaps that face a little, so it
-                // reads as gripped, and the rest sticks out toward the centre.
+                dst->mesh.normals.clear();
+                // Sit the prop on the inner end of the hand brick (local +Z).
+                // It is a little smaller than that end, and only overlaps it
+                // enough to read as gripped.
+                auto* handMr = m_ownerHand->GetComponent<MeshRenderer>();
+                Vec3 hmn = handMr && !handMr->mesh.vertices.empty() ? handMr->mesh.vertices[0] : Vec3{-0.06f, -0.06f, -0.08f};
+                Vec3 hmx = hmn;
+                if (handMr)
+                    for (const Vec3& v : handMr->mesh.vertices) {
+                        hmn.x = std::min(hmn.x, v.x); hmn.y = std::min(hmn.y, v.y); hmn.z = std::min(hmn.z, v.z);
+                        hmx.x = std::max(hmx.x, v.x); hmx.y = std::max(hmx.y, v.y); hmx.z = std::max(hmx.z, v.z);
+                    }
+                const Vec3 handExt = hmx - hmn;
+                const float handCross = std::max(handExt.x, handExt.y);
                 Vec3 mn = src->mesh.vertices[0], mx = mn;
                 for (const Vec3& v : src->mesh.vertices) {
                     mn.x = std::min(mn.x, v.x); mn.y = std::min(mn.y, v.y); mn.z = std::min(mn.z, v.z);
                     mx.x = std::max(mx.x, v.x); mx.y = std::max(mx.y, v.y); mx.z = std::max(mx.z, v.z);
                 }
-                const Vec3 ext = mx - mn;
-                const float maxExt = std::max(ext.x, std::max(ext.y, ext.z));
-                const float edge = kFpHandHalf * 2.0f;
-                const float uni = maxExt > 1e-4f ? (0.92f * edge / maxExt) : 1.0f;
-                const Quat irot = Quat::Euler(18.0f, -side * 28.0f, 10.0f);
+                const float maxExt = std::max(mx.x - mn.x, std::max(mx.y - mn.y, mx.z - mn.z));
+                const float uni = maxExt > 1e-4f ? (0.85f * handCross / maxExt) : 1.0f;
+                const Quat irot = Quat::Euler(8.0f, -side * 16.0f, 6.0f);
                 Vec3 center{0.0f, 0.0f, 0.0f};
                 float minZ = 1.0e9f;
                 const float invN = 1.0f / (float)src->mesh.vertices.size();
@@ -1303,11 +1302,11 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
                     center = center + p * invN;
                     minZ = std::min(minZ, p.z);
                 }
-                const float bite = 0.16f * edge;
+                const float bite = 0.22f * handExt.z;
                 m_ownerItem->transform->localScale = Vec3{uni, uni, uni};
                 m_ownerItem->transform->localRotation = irot;
                 m_ownerItem->transform->localPosition =
-                    Vec3{-center.x, -center.y + 0.10f * edge, kFpHandHalf - bite - minZ};
+                    Vec3{-center.x, -center.y + 0.08f * handCross, hmx.z - bite - minZ};
                 m_ownerItem->active = true;
                 showItem = true;
             }
@@ -1317,8 +1316,8 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     Vec3 camOff = cam->transform->Rotation().Conjugate() * (m_ownerArm->transform->Position() - cam->transform->Position());
     // Every vertex, not the single extreme. A nearer corner projects further
     // than a far one, so the shift is the tightest bound across the cube.
-    const float wantNx = side * (0.74f + 0.75f * slide - 0.28f * snap + 0.03f * bobC);
-    const float wantNy = -0.64f - 0.55f * slide + 0.20f * snap + 0.05f * bobS;
+    const float wantNx = side * (0.78f + 0.55f * slide - 0.40f * snap + 0.04f * bobC);
+    const float wantNy = -0.72f - 0.45f * slide + 0.28f * snap + 0.055f * bobS;
     float shiftX = side > 0.0f ? 1.0e9f : -1.0e9f;
     float shiftY = -1.0e9f;
     bool any = false;

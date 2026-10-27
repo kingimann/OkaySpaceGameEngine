@@ -827,14 +827,15 @@ elbows bend down and out, and the object moves with the body.
   (sprint, or fast enough to use the run
   style) keeps those hands out of the first-person view. Walking, idling and
   holding still show the block. The held object stays on its grip.
-- The first-person hand is a copy on the owner's camera only. It is one
-  skin-coloured cube in the lower right, fully on screen, with no sleeve and
-  no wrist cuff. It is angled so the top and the inner face both show, and it
+- The first-person hand is a copy of the character's own hand brick on the
+  owner's camera only. It is that one block in the lower right, fully on
+  screen, with no sleeve. It is angled so the top and the inner end both show,
+  and it
   stays past the near plane. It does not cast a shadow.
   The pose is in the camera, so looking down keeps it in that corner instead
   of pushing it into the lens. Walking bobs and sways it. A mouse turn lags it
   slightly. A punch swings it toward the middle. A hold puts a copy of the
-  item on the inner face of that cube, mostly in front of the hand; everyone
+  item on the inner end of that brick, in front of the hand; everyone
   else still sees the real hands on the grip. A
   run eases the copy off the corner and a stop eases it back. The real arm
   bones stay on the animation,

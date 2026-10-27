@@ -1686,11 +1686,11 @@ int main(int argc, char** argv) {
         if (ks[SDL_SCANCODE_BACKSPACE]) down.push_back((char)8);
         if (ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_KP_ENTER]) down.push_back('\r');
         if (ks[SDL_SCANCODE_ESCAPE]) down.push_back((char)27);
-        // Map arrow keys onto WASD so arrow-key movement just works.
-        if (ks[SDL_SCANCODE_UP])    down.push_back('w');
-        if (ks[SDL_SCANCODE_LEFT])  down.push_back('a');
-        if (ks[SDL_SCANCODE_DOWN])  down.push_back('s');
-        if (ks[SDL_SCANCODE_RIGHT]) down.push_back('d');
+        // Arrows count as themselves and as WASD, so axis_x/axis_y and key("w") agree.
+        if (ks[SDL_SCANCODE_UP])    { down.push_back('w'); down.push_back(Input::KeyUp); }
+        if (ks[SDL_SCANCODE_LEFT])  { down.push_back('a'); down.push_back(Input::KeyLeft); }
+        if (ks[SDL_SCANCODE_DOWN])  { down.push_back('s'); down.push_back(Input::KeyDown); }
+        if (ks[SDL_SCANCODE_RIGHT]) { down.push_back('d'); down.push_back(Input::KeyRight); }
 
         // Read the gamepad (first connected controller).
         Vec2 padAxis; unsigned padMask = 0;

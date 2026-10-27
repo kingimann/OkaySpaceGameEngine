@@ -341,6 +341,26 @@ static int RunSelfTest() {
         check(got == want, "outline: functions, methods and types, no calls / comments / strings");
         if (got != want) for (const auto& e : got) std::cerr << "    got " << e.first << " " << e.second << "\n";
     }
+    // Script Editor: what is code. Rename / Find References / Format read this.
+    {
+        const std::string src =
+            "# don't use hp here\n"            // 1: comment (apostrophe doesn't open a string)
+            "var hp = 3 /* hp { */\n"          // 2: one use; the comment's hp and { aren't code
+            "print($\"HP {hp} of {max(hp, 9)}\")\n"   // 3: two uses inside interpolation holes
+            "say(\"hp\") // hp\n"              // 4: string and comment: no uses
+            "hp2 = hp + 1\n";                  // 5: hp2 isn't hp; one use
+        const auto hits = scripttext::FindIdent(src, "hp");
+        std::vector<int> lines; for (const auto& h : hits) lines.push_back(h.second);
+        check(lines == std::vector<int>({2, 3, 3, 5}), "code mask: uses of hp only in code and $\"{}\" holes");
+        const std::vector<char> m = scripttext::CodeMask(src);
+        const std::size_t brace = src.find("{ */");
+        check(brace != std::string::npos && !m[brace], "code mask: '{' in a block comment isn't code");
+        const std::size_t hole = src.find("{hp}");
+        check(!m[hole] && m[hole + 1] && !m[hole + 3], "code mask: hole braces aren't code, its contents are");
+        check(scripttext::CodeMask("x = '{'\n")[5] == 0, "code mask: char literal isn't code");
+        check(scripttext::IsValidNewName("health2") && !scripttext::IsValidNewName("2hp") &&
+              !scripttext::IsValidNewName("var") && !scripttext::IsValidNewName("a b"), "rename: new name validated");
+    }
 
     std::cout << (failures == 0 ? "editor selftest: OK\n" : "editor selftest: FAILED\n");
     return failures == 0 ? 0 : 1;
@@ -11840,6 +11860,8 @@ static const TextEditor::LanguageDefinition& OkayScriptLangDef() {
         d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
             "[$@]?\\\"(\\\\.|[^\\\"])*\\\"", TextEditor::PaletteIndex::String));
         d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
+            "#.*", TextEditor::PaletteIndex::Comment));   // '#' line comments (after strings, so "#fff" stays a string)
+        d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
             "'(\\\\.|[^'\\\\])'", TextEditor::PaletteIndex::CharLiteral));
         d.mTokenRegexStrings.push_back(std::make_pair<std::string, TextEditor::PaletteIndex>(
             "[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?[fF]?", TextEditor::PaletteIndex::Number));
@@ -11887,105 +11909,61 @@ static bool ScriptTabDirty(okay::ScriptComponent* t) {
 // Re-indent OkayScript by brace depth (4 spaces / level), a basic "Format
 // Document". Braces inside strings and // line comments are ignored.
 static std::string FormatOkayScript(const std::string& src) {
-    std::vector<std::string> lines; std::string cur;
-    for (char c : src) { if (c == '\n') { lines.push_back(cur); cur.clear(); } else if (c != '\r') cur.push_back(c); }
-    lines.push_back(cur);
+    // Re-indent by brace depth, counting only braces that are code: a '{' in a
+    // comment, a string or around an $"…{x}…" hole doesn't shift the rest.
+    const std::vector<char> code = scripttext::CodeMask(src);
     std::string out; int depth = 0;
-    for (const std::string& raw : lines) {
-        auto a = raw.find_first_not_of(" \t");
-        auto b = raw.find_last_not_of(" \t");
-        std::string t = (a == std::string::npos) ? "" : raw.substr(a, b - a + 1);
-        int net = 0, leadClose = 0; bool sawOther = false, inStr = false, comment = false; char q = 0;
-        for (std::size_t i = 0; i < t.size(); ++i) {
-            char c = t[i];
-            if (comment) break;
-            if (inStr) { if (c == '\\') { ++i; continue; } if (c == q) inStr = false; continue; }
-            if (c == '"' || c == '\'') { inStr = true; q = c; continue; }
-            if (c == '/' && i + 1 < t.size() && t[i + 1] == '/') break;
-            if (c == '{') { ++net; sawOther = true; }
-            else if (c == '}') { --net; if (!sawOther) ++leadClose; }
-            else if (c != ' ' && c != '\t') sawOther = true;
+    for (std::size_t ls = 0; ls <= src.size();) {
+        std::size_t le = src.find('\n', ls);
+        if (le == std::string::npos) le = src.size();
+        std::size_t a = ls, b = le;
+        while (a < b && (src[a] == ' ' || src[a] == '\t')) ++a;
+        while (b > a && (src[b - 1] == ' ' || src[b - 1] == '\t' || src[b - 1] == '\r')) --b;
+        int net = 0, leadClose = 0; bool sawOther = false;
+        for (std::size_t i = a; i < b; ++i) {
+            if (!code[i]) { sawOther = true; continue; }
+            if (src[i] == '{') { ++net; sawOther = true; }
+            else if (src[i] == '}') { --net; if (!sawOther) ++leadClose; }
+            else if (src[i] != ' ' && src[i] != '\t') sawOther = true;
         }
         int indent = depth - leadClose; if (indent < 0) indent = 0;
-        if (!t.empty()) out.append((std::size_t)indent * 4, ' ');
-        out += t; out += '\n';
+        if (b > a) out.append((std::size_t)indent * 4, ' ');
+        out.append(src, a, b - a);
         depth += net; if (depth < 0) depth = 0;
+        if (le == src.size()) break;
+        out += '\n';
+        ls = le + 1;
     }
-    if (!out.empty() && out.back() == '\n') out.pop_back();
     return out;
 }
 
-// Functions/classes in a script, for the Outline jump menu: {1-based line, label}.
-// Rename every whole-word occurrence of identifier `from` to `to`, skipping string
-// literals and // line comments so only real code symbols change. Basic file-scoped
-// rename (OkayScript has no cross-file symbols).
+// Rename every use of identifier `from` in code to `to`: comments and strings
+// keep their text, uses inside $"…{from}…" holes are renamed (file-scoped:
+// OkayScript has no cross-file symbols).
 static std::string RenameIdentifier(const std::string& src, const std::string& from,
                                     const std::string& to) {
-    if (from.empty()) return src;
-    auto isW = [](char c){ return std::isalnum((unsigned char)c) || c == '_'; };
     std::string out; out.reserve(src.size() + 16);
-    for (std::size_t i = 0; i < src.size();) {
-        char c = src[i];
-        if (c == '"' || c == '\'') {                     // string literal — copy verbatim
-            char q = c; out += c; ++i;
-            while (i < src.size()) {
-                if (src[i] == '\\' && i + 1 < src.size()) { out += src[i]; out += src[i + 1]; i += 2; continue; }
-                out += src[i]; if (src[i] == q) { ++i; break; } ++i;
-            }
-            continue;
-        }
-        if (c == '/' && i + 1 < src.size() && src[i + 1] == '/') {   // line comment — copy verbatim
-            while (i < src.size() && src[i] != '\n') out += src[i++];
-            continue;
-        }
-        if (isW(c) && (i == 0 || !isW(src[i - 1]))) {     // an identifier token
-            std::size_t j = i; while (j < src.size() && isW(src[j])) ++j;
-            std::string word = src.substr(i, j - i);
-            out += (word == from) ? to : word;
-            i = j; continue;
-        }
-        out += c; ++i;
+    std::size_t last = 0;
+    for (const auto& hit : scripttext::FindIdent(src, from)) {
+        out.append(src, last, hit.first - last);
+        out += to;
+        last = hit.first + from.size();
     }
+    out.append(src, last, std::string::npos);
     return out;
 }
 
-// Every whole-word occurrence of `sym` in `src` (skipping strings and // comments),
-// as {1-based line, trimmed line text} — for Find All References.
+// Every use of `sym` in code, as {1-based line, trimmed line text} — for Find
+// All References.
 static std::vector<std::pair<int, std::string>> FindReferences(const std::string& src,
                                                                const std::string& sym) {
     std::vector<std::pair<int, std::string>> out;
-    if (sym.empty()) return out;
-    auto isW = [](char c){ return std::isalnum((unsigned char)c) || c == '_'; };
-    int line = 1;
-    for (std::size_t i = 0; i < src.size();) {
-        char c = src[i];
-        if (c == '\n') { ++line; ++i; continue; }
-        if (c == '"' || c == '\'') {                     // skip string literal
-            char q = c; ++i;
-            while (i < src.size()) {
-                if (src[i] == '\\' && i + 1 < src.size()) { i += 2; continue; }
-                if (src[i] == '\n') ++line;
-                if (src[i] == q) { ++i; break; }
-                ++i;
-            }
-            continue;
-        }
-        if (c == '/' && i + 1 < src.size() && src[i + 1] == '/') {   // skip line comment
-            while (i < src.size() && src[i] != '\n') ++i;
-            continue;
-        }
-        if (isW(c) && (i == 0 || !isW(src[i - 1]))) {
-            std::size_t j = i; while (j < src.size() && isW(src[j])) ++j;
-            if (src.compare(i, j - i, sym) == 0 && (j - i) == sym.size()) {
-                std::size_t ls = i; while (ls > 0 && src[ls - 1] != '\n') --ls;
-                std::size_t le = i; while (le < src.size() && src[le] != '\n') ++le;
-                std::string t = src.substr(ls, le - ls);
-                auto a = t.find_first_not_of(" \t"); if (a != std::string::npos) t = t.substr(a);
-                out.push_back({line, t});
-            }
-            i = j; continue;
-        }
-        ++i;
+    for (const auto& hit : scripttext::FindIdent(src, sym)) {
+        std::size_t ls = hit.first; while (ls > 0 && src[ls - 1] != '\n') --ls;
+        std::size_t le = hit.first; while (le < src.size() && src[le] != '\n') ++le;
+        std::string t = src.substr(ls, le - ls);
+        auto a = t.find_first_not_of(" \t"); if (a != std::string::npos) t = t.substr(a);
+        out.push_back({hit.second, t});
     }
     return out;
 }
@@ -12875,7 +12853,12 @@ void DrawScriptEditor(EditorState& ed) {
             bool go = ImGui::InputText("##rn", s_renameTo, sizeof(s_renameTo),
                                        ImGuiInputTextFlags_EnterReturnsTrue);
             ImGui::SameLine();
-            if ((ImGui::Button("Rename##do") || go) && s_renameTo[0] && s_renameFrom != s_renameTo) {
+            const bool nameOk = scripttext::IsValidNewName(s_renameTo);
+            ImGui::BeginDisabled(!nameOk);
+            const bool clicked = ImGui::Button("Rename##do");
+            ImGui::EndDisabled();
+            if (!nameOk && s_renameTo[0]) ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.35f, 1), "Not a valid name (letters, digits, _; not a keyword).");
+            if ((clicked || go) && nameOk && s_renameFrom != s_renameTo) {
                 caret.replaceAll = RenameIdentifier(buf.data(), s_renameFrom, s_renameTo); ed.dirty = true;
                 ConsoleLog("Renamed " + s_renameFrom + " -> " + std::string(s_renameTo));
                 ImGui::CloseCurrentPopup();
@@ -13935,22 +13918,22 @@ void DrawScriptEditor(EditorState& ed) {
             if (acKey != s_acKey) { g_acIndex = 0; s_acKey = acKey; g_acDismiss = false; }
             if (acKeyEsc) g_acDismiss = true;
             g_acCount = 0;
-            // NEVER pop suggestions inside a comment or string literal — scanning
-            // the caret's line is enough for both ("//", Lua "--", quotes). The
-            // popup steals Tab/Enter, so popping on comments broke plain typing.
+            // NEVER pop suggestions inside a comment or string literal. The popup
+            // steals Tab/Enter, so popping on comments broke plain typing.
             bool inCommentOrString = false;
-            {
+            if (sc->Language() == "lua") {                     // Lua: scan the caret's line ("--", quotes)
                 int ls2 = p; while (ls2 > 0 && t[ls2 - 1] != '\n') --ls2;
                 bool inStr = false; char q = 0;
-                bool isLua = sc->Language() == "lua";
                 for (int k = ls2; k < p && !inCommentOrString; ++k) {
                     char c = t[k];
                     if (inStr) { if (c == q && (k == 0 || t[k - 1] != '\\')) inStr = false; continue; }
                     if (c == '"' || c == '\'') { inStr = true; q = c; continue; }
-                    if (c == '/' && k + 1 < p && t[k + 1] == '/') inCommentOrString = true;
-                    if (isLua && c == '-' && k + 1 < p && t[k + 1] == '-') inCommentOrString = true;
+                    if (c == '-' && k + 1 < p && t[k + 1] == '-') inCommentOrString = true;
                 }
                 if (inStr) inCommentOrString = true;
+            } else if (p > 0) {                                // OkayScript: the language's own rules
+                const std::vector<char> code = scripttext::CodeMask(std::string(t, (std::size_t)p));
+                inCommentOrString = !code[(std::size_t)p - 1] && t[p - 1] != '\n';
             }
             // Only pop while actually TYPING: clicking the caret into an existing
             // word (reading/navigating) shouldn't open a popup that grabs keys.

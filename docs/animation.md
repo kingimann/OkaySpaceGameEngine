@@ -872,12 +872,19 @@ elbows bend down and out, and the object moves with the body.
   the shirt's lid stays on the body so that view is a solid surface. One
   plain hand stays in the lower right while standing, walking, and looking
   down: one cube, not the full arm. A run eases both arms
-  off the owner's camera. The head stays visible through the switch into first
-  person and is skipped only once the lens is in front of the face. Pressing
-  V back shows the head and the neck on that same frame, without waiting for
-  the ease, including when V is tapped quickly. The orbit pitch returns to the
-  third-person angle you started with, so a look down does not come back as a
-  top-down camera. The near plane comes back with it. The first-person
+  off the owner's camera.   Switching view (V, on the first-person template and the third-person one)
+  eases the camera between the orbit and the eyes over **Switch Blend Time**
+  (0.30 seconds) with **Easing** (Smooth by default; also Linear, Ease In,
+  Ease Out). **Snap** jumps in one frame. The slide stops at a wall. The head
+  and the neck stay until the lens is near the eyes, and they come back as
+  soon as it pulls away, including when V is reversed halfway. The body does
+  not vanish and does not drop into a bind pose for that frame. Walk, run,
+  crouch, prone, lean and the current action keep their phase. A held item
+  moves from the grip to the first-person placement over the same blend, and
+  the hands ease in and out with it. A look that third person cannot hold
+  eases back to the orbit pitch you started with, so a look down does not
+  come back as a top-down camera. The near plane comes back with the head.
+  Another camera still sees the whole character. The first-person
   controller does not put the hide back, and the editor Game view does not
   invent one while the game is playing.
 - **Socket**: hold it at a named object inside the character (a holster, a back

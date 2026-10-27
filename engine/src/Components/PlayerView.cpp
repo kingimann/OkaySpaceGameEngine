@@ -98,14 +98,11 @@ Pose FirstFromThird(const ThirdPersonController& tp, const Vec3& eyeOffset) {
 
 void PlayerView::SetView(int view) {
     const View next = (view == 0) ? View::First : View::Third;
-    const bool toThird = next == View::Third && m_target != View::Third;
     m_target = next;
     m_scripted = true;
     if (!m_live) m_blend = (m_target == View::Third) ? 1.0f : 0.0f;
-    // A look down in first person is far past the orbit's window. Coming back
-    // at that angle is a top-down camera, so the orbit returns to the pitch
-    // third person started with.
-    if (toThird) ApplyRestPitch();
+    if (snapSwitch) m_blend = (m_target == View::Third) ? 1.0f : 0.0f;
+    NoteIllegalPitch();
 }
 
 int PlayerView::GetView() const {
@@ -116,7 +113,8 @@ int PlayerView::GetView() const {
 void PlayerView::Toggle() {
     if (!m_live && !m_armed) ArmDefault();
     m_target = (m_target == View::First) ? View::Third : View::First;
-    if (m_target == View::Third) ApplyRestPitch();
+    if (snapSwitch) m_blend = (m_target == View::Third) ? 1.0f : 0.0f;
+    NoteIllegalPitch();
 }
 
 void PlayerView::RememberRestPitch() {
@@ -126,11 +124,103 @@ void PlayerView::RememberRestPitch() {
     m_haveRestPitch = true;
 }
 
-void PlayerView::ApplyRestPitch() {
-    if (!gameObject) return;
+void PlayerView::NoteIllegalPitch() {
+    // Called when the target changes, before the controller clamps. An angle
+    // the orbit cannot hold is remembered so the clamp stays open while it
+    // eases home. A legal angle is not marked, and leaving third person drops it.
+    if (!gameObject || m_target != View::Third) {
+        if (m_target != View::Third) m_pitchHoming = false;
+        return;
+    }
     RememberRestPitch();
-    if (auto* tp = gameObject->GetComponent<ThirdPersonController>()) tp->pitch = m_restPitch;
-    else if (auto* fp = gameObject->GetComponent<FirstPersonController>()) fp->pitch = m_restPitch;
+    float pitch = 0.0f, lo = -20.0f, hi = 70.0f;
+    if (auto* tp = gameObject->GetComponent<ThirdPersonController>()) {
+        pitch = tp->pitch; lo = tp->minPitch; hi = tp->maxPitch;
+    } else if (auto* fp = gameObject->GetComponent<FirstPersonController>()) {
+        pitch = fp->pitch; lo = -70.0f; hi = 20.0f;
+    } else return;
+    if (pitch < lo || pitch > hi) {
+        if (!m_pitchHoming) m_homeFrom = pitch;
+        m_pitchHoming = true;
+    }
+}
+
+void PlayerView::EasePitchHome(float dt) {
+    // A look that third person cannot hold (a first-person look down) eases all
+    // the way back to the orbit pitch over the same blend. Stopping at the
+    // window edge would leave a top-down camera. A pitch that was already a
+    // legal orbit angle is left alone, and a reverse clears the correction.
+    if (!Driving() || m_target != View::Third || !gameObject) {
+        m_pitchHoming = false;
+        return;
+    }
+    RememberRestPitch();
+    float* pitch = nullptr;
+    if (auto* tp = gameObject->GetComponent<ThirdPersonController>()) pitch = &tp->pitch;
+    else if (auto* fp = gameObject->GetComponent<FirstPersonController>()) pitch = &fp->pitch;
+    if (!pitch) { m_pitchHoming = false; return; }
+    NoteIllegalPitch();
+    if (!m_pitchHoming) return;
+    const float goal = m_restPitch;
+    if (std::fabs(*pitch - goal) < 0.05f || snapSwitch || blendTime <= 1e-3f || !Blending()) {
+        *pitch = goal;
+        m_pitchHoming = false;
+        return;
+    }
+    const float span = std::max(0.05f, std::fabs(m_homeFrom - goal));
+    const float step = span / std::max(0.05f, blendTime) * std::max(0.0f, dt);
+    float d = goal - *pitch;
+    if (d > step) d = step;
+    if (d < -step) d = -step;
+    *pitch += d;
+}
+
+float PlayerView::Ease01(float u) const {
+    if (u < 0.0f) u = 0.0f;
+    if (u > 1.0f) u = 1.0f;
+    switch (switchEase) {
+        case SwitchEase::Smooth: return u * u * (3.0f - 2.0f * u);
+        case SwitchEase::In:     return u * u;
+        case SwitchEase::Out:    return 1.0f - (1.0f - u) * (1.0f - u);
+        case SwitchEase::Linear:
+        default:                 return u;
+    }
+}
+
+float PlayerView::EasedThird() const {
+    return Ease01(m_blend);
+}
+
+bool PlayerView::CameraNearEyes(Camera* cam) const {
+    if (!gameObject || !gameObject->transform || !cam || !cam->transform) return false;
+    const Vec3 local = gameObject->transform->InverseTransformPoint(cam->transform->Position());
+    float eyeY = 1.6f;
+    if (auto* tp = gameObject->GetComponent<ThirdPersonController>())
+        eyeY = StanceValue(tp->stanceLevel(), 1.6f, 1.2f, 0.4f);
+    else if (auto* fp = gameObject->GetComponent<FirstPersonController>())
+        eyeY = StanceValue(fp->stanceLevel(), fp->standEyeHeight, fp->crouchEyeHeight, fp->proneEyeHeight);
+    const Vec3 eye{eyeOffset.x, eyeY + eyeOffset.y, -0.20f + eyeOffset.z};
+    // In front of the face and close to the socket. The orbit sits behind the
+    // body, so this is false until the lens has actually arrived.
+    return local.z < -0.08f && (local - eye).Magnitude() < 0.85f;
+}
+
+void PlayerView::PullCameraIn(Camera* cam, const Vec3& eye, Vec3& want) const {
+    if (!cam || !gameObject) return;
+    Scene* sc = gameObject->scene();
+    if (!sc || !sc->physicsEnabled) return;
+    Vec3 delta = want - eye;
+    const float dist = delta.Magnitude();
+    if (dist < 0.05f) return;
+    const Vec3 dir = delta * (1.0f / dist);
+    const float radius = 0.18f;
+    const float skin = 0.12f;
+    Physics3D::IgnoreHierarchy own(gameObject);
+    const RaycastHit3D hit = sc->physics3D().SphereCast(
+        *sc, eye, dir, radius, dist + skin, gameObject, Physics3D::kAllLayers, false);
+    if (!hit.hit) return;
+    const float allow = std::max(0.05f, hit.distance - skin);
+    if (allow < dist) want = eye + dir * allow;
 }
 
 bool PlayerView::Blending() const {
@@ -147,7 +237,8 @@ void PlayerView::ArmDefault() {
 
 void PlayerView::StepBlend(float dt) {
     const float goal = (m_target == View::Third) ? 1.0f : 0.0f;
-    const float speed = blendTime <= 1e-3f ? 1.0e6f : (1.0f / blendTime);
+    if (snapSwitch || blendTime <= 1e-3f) { m_blend = goal; return; }
+    const float speed = 1.0f / blendTime;
     const float step = speed * std::max(0.0f, dt);
     if (m_blend < goal) m_blend = std::min(goal, m_blend + step);
     else                m_blend = std::max(goal, m_blend - step);
@@ -168,12 +259,21 @@ void PlayerView::DestLimits(bool thirdController, float nativeMin, float nativeM
 
 void PlayerView::LookLimits(bool thirdController, float nativeMin, float nativeMax, float& lo, float& hi) const {
     lo = nativeMin; hi = nativeMax;
-    if (!Driving()) return;
-    float dlo, dhi;
-    DestLimits(thirdController, nativeMin, nativeMax, dlo, dhi);
-    if (!Blending()) { lo = dlo; hi = dhi; return; }
-    lo = std::min(lo, dlo);
-    hi = std::max(hi, dhi);
+    if (Driving()) {
+        float dlo, dhi;
+        DestLimits(thirdController, nativeMin, nativeMax, dlo, dhi);
+        if (!Blending()) { lo = dlo; hi = dhi; }
+        else {
+            lo = std::min(lo, dlo);
+            hi = std::max(hi, dhi);
+        }
+    }
+    // Hold the window open around an angle that is easing home. Clamping it to
+    // the orbit edge first would freeze a look-down as a top-down camera.
+    if (m_pitchHoming) {
+        lo = std::min(lo, std::min(m_homeFrom, m_restPitch));
+        hi = std::max(hi, std::max(m_homeFrom, m_restPitch));
+    }
 }
 
 void PlayerView::ConformPitch(float& pitch, bool thirdController, float nativeMin, float nativeMax, float dt) {
@@ -244,39 +344,51 @@ void PlayerView::Update(float dt) {
         return;
     }
     StepBlend(dt);
+    EasePitchHome(dt);
     ApplyHead();
 }
 
 void PlayerView::ApplyHead() {
     if (!gameObject) return;
-    // The rig is built on the way in. The head is skipped only once the lens
-    // is in front of the face, so a blend still shows the whole character.
     Character* ch = gameObject->GetComponent<Character>();
     Camera* cam = ViewCamera(gameObject);
-    if (ch && Driving() && TargetFirst() && FirstAmount() > 0.35f && !ch->driveExternal && !ch->PartsBuilt()) {
+    const float into = Driving() ? FirstAmount() : 0.0f;
+    const bool near = Driving() && CameraNearEyes(cam);
+    // Build the rig on the way in, and pose it this frame. Waiting until the
+    // lens arrives, or leaving the new parts at the bind pose, is the frame
+    // where the body vanishes or stands in a T.
+    if (ch && Driving() && (TargetFirst() || near) && !ch->driveExternal && !ch->PartsBuilt()) {
         ch->separateParts = true;
         ch->BuildParts();
+        ch->PoseBuiltParts();
     }
     const bool rig = ch && ch->PartsBuilt();
-    // Leaving first person shows the head again on this frame, even if the
-    // camera is still easing out and even if V was tapped through the blend.
-    // Waiting on the ease is what left the head missing for the whole return.
-    const bool wantFirst = Driving() && TargetFirst();
-    const bool fp = wantFirst && FirstAmount() > 0.35f && LensPastFace(gameObject, cam);
-    if (fp) {
+    const bool ownArm = HandOwnsArm(gameObject, cam);
+    if (ch && !ownArm) {
+        if (Driving() && into > 0.001f) {
+            ch->firstPersonArm = true;
+            ch->fpArmBob = true;
+            ch->fpSteady = false;
+            ch->ApplyFirstPersonHandDrive(false);
+            ch->fpPitch = LookUpDegrees(gameObject);
+            ch->SetViewmodelBlend(into);
+        } else {
+            ch->SetViewmodelBlend(Driving() ? 0.0f : -1.0f);
+            ch->firstPersonArm = false;
+            ch->fpArmBase = -1;
+            ch->fpPitch = 0.0f;
+        }
+    } else if (ch) {
+        ch->SetViewmodelBlend(Driving() ? into : -1.0f);
+    }
+    // Head and neck drop out only once the lens is at the eyes, and come back
+    // the moment it pulls away. The target view does not matter: a reverse
+    // mid-blend follows the camera, so the head is never missing on the way
+    // out and never missing while the lens is still inside it.
+    if (near) {
         if (rig) {
             ch->hideOwnHead = false;
             ch->ApplyOwnerVisibility(true);
-            // Same arm a native first-person hand uses: one plain hand in view,
-            // and both arms dropped while a run would swing them into the camera.
-            // A FirstPersonHand on this player already writes these each frame.
-            if (!HandOwnsArm(gameObject, cam)) {
-                ch->firstPersonArm = true;
-                ch->fpArmBob = true;
-                ch->fpSteady = false;
-                ch->ApplyFirstPersonHandDrive(false);
-                ch->fpPitch = LookUpDegrees(gameObject);
-            }
             if (GameObject* head = ch->Part(HumanoidMotion::B_HEAD)) {
                 head->active = true;
                 if (head->transform) head->transform->localScale = Vec3::One;
@@ -284,16 +396,10 @@ void PlayerView::ApplyHead() {
             }
         }
         if (cam) {
-            // No rig: skip the whole body rather than deleting the head from
-            // the shared mesh. Other cameras still draw that mesh. Show Body
-            // leaves the body in this camera too.
             bool hideFromOwner = true;
             if (auto* fpc = gameObject->GetComponent<FirstPersonController>())
                 hideFromOwner = !fpc->showBody;
             cam->ignoreObject = hideFromOwner ? gameObject : nullptr;
-            // 0.3 m is the depth of the chest, so the default plane cuts it open.
-            // The controller may already have pulled the plane in. Remember the
-            // wider plane third person had, not that pulled-in value.
             if (hideFromOwner) {
                 if (m_savedNear < 0.0f)
                     m_savedNear = cam->nearClip > 0.06f ? cam->nearClip : 0.3f;
@@ -303,19 +409,19 @@ void PlayerView::ApplyHead() {
         m_fpApplied = true;
         return;
     }
-    // Third person again: the whole body, the animated arms, and the old near plane.
-    if (ch) {
-        ch->hideOwnHead = false;
-        if (rig) ch->ApplyOwnerVisibility(false);
-        if (!HandOwnsArm(gameObject, cam)) {
-            ch->firstPersonArm = false;
-            ch->fpArmBase = -1;
-            ch->fpPitch = 0.0f;
-            ch->fpArmUp = 1.0f;
-        }
-    }
+    if (ch) ch->hideOwnHead = false;
+    // Not at the eyes yet. The body stays drawn. While the copy is easing in,
+    // point this camera at the viewmodel anchor so the hands and the held copy
+    // are visible without skipping the head.
+    const bool copy = ch && ch->OwnerCopyVisible();
+    if (ch && rig && !copy) ch->ApplyOwnerVisibility(false);
     if (cam) {
-        cam->ignoreObject = nullptr;
+        if (copy) {
+            if (GameObject* anchor = ch->EnsureViewAnchor())
+                cam->ignoreObject = anchor;
+        } else {
+            cam->ignoreObject = nullptr;
+        }
         if (m_savedNear >= 0.0f) {
             cam->nearClip = m_savedNear;
             m_savedNear = -1.0f;
@@ -378,8 +484,12 @@ void PlayerView::PlaceCamera(float dt) {
         }
     }
 
-    const float t = Mathf::Clamp(m_blend, 0.0f, 1.0f);
-    cam->transform->SetPosition(Vec3::Lerp(fp.position, tp.position, t));
+    const float t = EasedThird();
+    Vec3 pos = Vec3::Lerp(fp.position, tp.position, t);
+    // The straight slide can cut a wall the orbit arm would have stopped at.
+    // Sweep from the eyes and keep the lens on the near side of whatever it hits.
+    PullCameraIn(cam, fp.position, pos);
+    cam->transform->SetPosition(pos);
     cam->transform->SetRotation(Quat::Slerp(fp.rotation, tp.rotation, t));
 }
 

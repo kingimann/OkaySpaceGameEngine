@@ -83,6 +83,10 @@ int main() {
         CHECK(p != nullptr);
         CHECK(p->GetComponent<ThirdPersonController>() != nullptr);
         CHECK(p->GetComponent<Character>() != nullptr);
+        CHECK(p->GetComponent<PlayerView>() != nullptr);
+        CHECK_NEAR(p->GetComponent<PlayerView>()->blendTime, 0.30f, 1e-4f);
+        CHECK(p->GetComponent<PlayerView>()->switchEase == PlayerView::SwitchEase::Smooth);
+        CHECK(!p->GetComponent<PlayerView>()->snapSwitch);
         CHECK(p->GetComponent<Rigidbody3D>() != nullptr);
         CHECK(p->GetComponent<BoxCollider3D>() != nullptr);
         // A camera exists in the scene (created since there was none).
@@ -92,6 +96,9 @@ int main() {
         Scene sc("fp");
         GameObject* p = Templates::AddFirstPersonPlayer(sc);
         CHECK(p && p->GetComponent<FirstPersonController>() != nullptr);
+        CHECK(p->GetComponent<PlayerView>() != nullptr);
+        CHECK_NEAR(p->GetComponent<PlayerView>()->blendTime, 0.30f, 1e-4f);
+        CHECK(!p->GetComponent<PlayerView>()->snapSwitch);
         // The camera is a child of the player (eye-mounted).
         GameObject* camChild = sc.Find("Player Camera");
         CHECK(camChild && camChild->transform->Parent() == p->transform);
@@ -465,7 +472,321 @@ int main() {
             CHECK_NEAR(p2->eyeOffset.z, 0.02f, 1e-4f);
             CHECK_NEAR(p2->thirdPersonDistance, 3.5f, 1e-4f);
             CHECK_NEAR(p2->shoulderOffset, 0.4f, 1e-4f);
+            CHECK(p2->switchEase == PlayerView::SwitchEase::Smooth);   // missing key keeps the default
+            CHECK(!p2->snapSwitch);
         }
+    }
+    {
+        Scene s("pv-ease");
+        auto* pv = s.CreateGameObject("P")->AddComponent<PlayerView>();
+        pv->switchEase = PlayerView::SwitchEase::In;
+        pv->snapSwitch = true;
+        pv->blendTime = 0.0f;
+        Scene s2("pv-ease2");
+        CHECK(SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s)));
+        auto* p2 = s2.Find("P") ? s2.Find("P")->GetComponent<PlayerView>() : nullptr;
+        CHECK(p2 != nullptr);
+        if (p2) {
+            CHECK(p2->switchEase == PlayerView::SwitchEase::In);
+            CHECK(p2->snapSwitch);
+            CHECK_NEAR(p2->blendTime, 0.0f, 1e-4f);
+        }
+    }
+
+    // --- The blend eases, can snap, and does not pop the head on the way out ---
+    {
+        Scene sc("ease"); sc.physicsEnabled = false;
+        GameObject* cam = sc.CreateGameObject("Camera");
+        auto* camera = cam->AddComponent<Camera>();
+        GameObject* p = sc.CreateGameObject("Player");
+        auto* ch = p->AddComponent<Character>(); ch->Apply();
+        auto* tp = p->AddComponent<ThirdPersonController>();
+        tp->yaw = 0.0f; tp->pitch = 0.0f; tp->distance = 5.0f; tp->cameraHeight = 1.5f;
+        tp->pivotDampingXZ = tp->pivotDampingY = 0.0f; tp->orbitSmoothing = 0.0f; tp->lookSmoothing = 0.0f;
+        tp->autoRecenter = false;
+        auto* pv = p->AddComponent<PlayerView>();
+        pv->allowToggle = true; pv->defaultView = PlayerView::View::Third;
+        pv->thirdPersonDistance = -1.0f; pv->shoulderOffset = 0.0f; pv->blendTime = 0.35f;
+        pv->switchEase = PlayerView::SwitchEase::Smooth;
+        sc.Start();
+        Input::FeedKeys({}); sc.Update(1.0f / 60.0f);
+        const float farDist = (cam->transform->Position() - Vec3{0, 1.5f, 0}).Magnitude();
+        pv->SetView(0);
+        for (int i = 0; i < 3; ++i) { Input::FeedKeys({}); sc.Update(1.0f / 60.0f); }
+        const float eased = (cam->transform->Position() - Vec3{0, 1.5f, 0}).Magnitude();
+        CHECK(farDist - eased < 0.45f);     // smoothstep has barely left the orbit
+        CHECK(farDist - eased > 0.02f);     // and it did leave
+        for (int i = 0; i < 40; ++i) { Input::FeedKeys({}); sc.Update(1.0f / 60.0f); }
+        CHECK(!pv->Blending());
+        CHECK(camera->ignoreObject == p);
+
+        pv->SetView(1);
+        Input::FeedKeys({}); sc.Update(1.0f / 60.0f);   // one frame: the lens is still at the eyes
+        CHECK(pv->Blending());
+        CHECK(camera->ignoreObject == p);               // head stays hidden until the camera pulls out
+        CHECK(ch->Part(2) && ch->Part(2)->active);
+        CHECK(ch->Part(2)->HiddenFromCamera(p));
+        for (int i = 0; i < 40; ++i) { Input::FeedKeys({}); sc.Update(1.0f / 60.0f); }
+        CHECK(!pv->Blending());
+        CHECK(camera->ignoreObject == nullptr);
+        CHECK(ch->Part(2) && !ch->Part(2)->HiddenFromCamera(nullptr));
+
+        pv->snapSwitch = true;
+        pv->SetView(0);
+        Input::FeedKeys({}); sc.Update(1.0f / 60.0f);
+        CHECK(!pv->Blending());
+        CHECK((cam->transform->Position() - Vec3{0, 1.5f, 0}).Magnitude() < 0.45f);
+        CHECK(camera->ignoreObject == p);
+        pv->SetView(1);
+        Input::FeedKeys({}); sc.Update(1.0f / 60.0f);
+        CHECK(!pv->Blending());
+        CHECK_NEAR((cam->transform->Position() - Vec3{0, 1.5f, 0}).Magnitude(), 5.0f, 0.45f);
+        CHECK(camera->ignoreObject == nullptr);
+        pv->snapSwitch = false;
+        Input::FeedKeys({});
+    }
+
+    // --- A look third person cannot hold eases home. A legal orbit pitch stays. ---
+    {
+        Scene sc("pitch"); sc.physicsEnabled = false;
+        GameObject* cam = sc.CreateGameObject("Camera");
+        cam->AddComponent<Camera>();
+        GameObject* p = sc.CreateGameObject("Player");
+        p->AddComponent<Character>()->Apply();
+        auto* tp = p->AddComponent<ThirdPersonController>();
+        tp->yaw = 0.0f; tp->pitch = 0.0f; tp->distance = 5.0f; tp->cameraHeight = 1.5f;
+        tp->pivotDampingXZ = tp->pivotDampingY = 0.0f; tp->orbitSmoothing = 0.0f; tp->lookSmoothing = 0.0f;
+        tp->autoRecenter = false;
+        auto* pv = p->AddComponent<PlayerView>();
+        pv->allowToggle = true; pv->defaultView = PlayerView::View::Third;
+        pv->blendTime = 0.30f; pv->shoulderOffset = 0.0f; pv->thirdPersonDistance = -1.0f;
+        sc.Start();
+        Input::FeedKeys({}); sc.Update(1.0f / 60.0f);
+        pv->SetView(0);
+        for (int i = 0; i < 30; ++i) { Input::FeedKeys({}); sc.Update(1.0f / 60.0f); }
+        tp->pitch = 80.0f;
+        pv->SetView(1);
+        float prev = tp->pitch; bool snapped = false;
+        for (int i = 0; i < 40; ++i) {
+            Input::FeedKeys({}); sc.Update(1.0f / 60.0f);
+            if (std::fabs(tp->pitch - prev) > 20.0f) snapped = true;
+            prev = tp->pitch;
+        }
+        CHECK(!snapped);
+        CHECK_NEAR(tp->pitch, 0.0f, 0.5f);
+        tp->pitch = 30.0f;
+        pv->SetView(0);
+        for (int i = 0; i < 30; ++i) { Input::FeedKeys({}); sc.Update(1.0f / 60.0f); }
+        pv->SetView(1);
+        for (int i = 0; i < 30; ++i) { Input::FeedKeys({}); sc.Update(1.0f / 60.0f); }
+        CHECK_NEAR(tp->pitch, 30.0f, 0.5f);
+        Input::FeedKeys({});
+    }
+
+    // --- Locomotion, crouch, prone and lean carry across the switch ---
+    {
+        Scene sc("carry"); sc.physicsEnabled = false;
+        GameObject* cam = sc.CreateGameObject("Camera");
+        cam->AddComponent<Camera>();
+        GameObject* p = sc.CreateGameObject("Player");
+        auto* ch = p->AddComponent<Character>(); ch->Apply();
+        auto* tp = p->AddComponent<ThirdPersonController>();
+        tp->yaw = 0.0f; tp->pitch = 0.0f; tp->distance = 5.0f; tp->cameraHeight = 1.5f;
+        tp->pivotDampingXZ = tp->pivotDampingY = 0.0f; tp->orbitSmoothing = 0.0f; tp->lookSmoothing = 0.0f;
+        tp->autoRecenter = false; tp->driveAnimation = false;
+        auto* pv = p->AddComponent<PlayerView>();
+        pv->allowToggle = true; pv->defaultView = PlayerView::View::Third;
+        pv->blendTime = 0.30f; pv->shoulderOffset = 0.0f; pv->thirdPersonDistance = -1.0f;
+        sc.Start();
+        Input::FeedKeys({});
+        ch->anim = 1; ch->bodyLean = 14.0f; ch->lookYaw = 22.0f;
+        sc.Update(1.0f / 60.0f);
+        auto across = [&](int state) {
+            ch->anim = state;
+            ch->moveSpeed = (state == 2 || state == 3 || state == 17) ? 1.6f : 0.0f;
+            for (int i = 0; i < 20; ++i) sc.Update(1.0f / 60.0f);
+            const float phase0 = ch->GaitPhase();
+            const float time0 = ch->animTime;
+            pv->SetView(0);
+            float prev = phase0; bool phaseJump = false;
+            for (int i = 0; i < 20; ++i) {
+                sc.Update(1.0f / 60.0f);
+                float d = ch->GaitPhase() - prev;
+                if (d > 0.5f) d -= 1.0f;
+                if (d < -0.5f) d += 1.0f;
+                if (std::fabs(d) > 0.2f) phaseJump = true;
+                prev = ch->GaitPhase();
+            }
+            CHECK(ch->anim == state);
+            CHECK(!phaseJump);
+            CHECK(ch->animTime + 0.02f >= time0);
+            CHECK_NEAR(ch->bodyLean, 14.0f, 1e-3f);
+            CHECK_NEAR(ch->lookYaw, 22.0f, 1e-3f);
+            pv->SetView(1);
+            for (int i = 0; i < 25; ++i) sc.Update(1.0f / 60.0f);
+            CHECK(ch->anim == state);
+            CHECK(!pv->Blending());
+        };
+        across(1);
+        across(2);
+        across(3);
+        across(6);
+        across(7);
+        across(17);
+        Input::FeedKeys({});
+    }
+
+    // --- A held item slides between the grip and the first-person placement ---
+    {
+        auto holdBlend = [](bool two) {
+            Scene sc(two ? "hold2" : "hold1"); sc.physicsEnabled = false;
+            GameObject* cam = sc.CreateGameObject("Camera");
+            cam->AddComponent<Camera>();
+            GameObject* watch = sc.CreateGameObject("Watcher");
+            auto* other = watch->AddComponent<Camera>();
+            other->main = false;
+            GameObject* p = sc.CreateGameObject("Player");
+            auto* ch = p->AddComponent<Character>(); ch->Apply();
+            auto* tp = p->AddComponent<ThirdPersonController>();
+            tp->yaw = 0.0f; tp->pitch = 0.0f; tp->distance = 5.0f; tp->cameraHeight = 1.5f;
+            tp->pivotDampingXZ = tp->pivotDampingY = 0.0f; tp->orbitSmoothing = 0.0f; tp->lookSmoothing = 0.0f;
+            tp->autoRecenter = false; tp->driveAnimation = false;
+            ch->anim = two ? 1 : 2;
+            ch->moveSpeed = two ? 0.0f : 1.4f;
+            auto* pv = p->AddComponent<PlayerView>();
+            pv->allowToggle = true; pv->defaultView = PlayerView::View::Third;
+            pv->blendTime = 0.30f; pv->shoulderOffset = 0.0f; pv->thirdPersonDistance = -1.0f;
+            p->AddComponent<ProceduralObjectHolding>();
+            GameObject* item = sc.CreateGameObject(two ? "Crate" : "Block");
+            item->transform->localPosition = {0.4f, 1.0f, -0.6f};
+            item->transform->localScale = two ? Vec3{0.45f, 0.35f, 0.45f} : Vec3{0.18f, 0.18f, 0.18f};
+            auto* mr = item->AddComponent<MeshRenderer>();
+            mr->mesh = Mesh::Cube(1.0f);
+            auto* ho = item->AddComponent<HoldableObject>();
+            if (two) { ho->style = HoldableObject::Style::Box; ho->twoHanded = true; }
+            sc.Start();
+            Input::FeedKeys({});
+            auto* hold = p->GetComponent<ProceduralObjectHolding>();
+            CHECK(hold->Pickup(item));
+            for (int i = 0; i < 45; ++i) sc.Update(1.0f / 60.0f);
+            CHECK(hold->IsHolding());
+            const float phase0 = ch->GaitPhase();
+            pv->SetView(0);
+            Vec3 prev = item->transform->Position();
+            bool jumped = false;
+            for (int i = 0; i < 25; ++i) {
+                sc.Update(1.0f / 60.0f);
+                GameObject* copy = sc.Find("FP_OwnerItem");
+                const Vec3 shown = (copy && copy->active && copy->transform)
+                    ? copy->transform->Position() : item->transform->Position();
+                if ((shown - prev).Magnitude() > 0.35f) jumped = true;
+                prev = shown;
+                CHECK((item->transform->Position() - p->transform->Position()).Magnitude() < 2.2f);
+                CHECK(ch->Part(2) && !ch->Part(2)->HiddenFromCamera(nullptr));
+                if (copy && copy->active) CHECK(copy->HiddenFromCamera(nullptr));
+                (void)other;
+            }
+            CHECK(!jumped);
+            CHECK(ch->anim == (two ? 1 : 2));
+            if (!two) {
+                float d = ch->GaitPhase() - phase0;
+                if (d > 0.5f) d -= 1.0f;
+                if (d < -0.5f) d += 1.0f;
+                CHECK(std::fabs(d) < 0.45f);
+                CHECK(std::fabs(d) > 0.01f);
+            }
+            for (int i = 0; i < 20; ++i) sc.Update(1.0f / 60.0f);
+            CHECK(!pv->Blending());
+            GameObject* copy = sc.Find("FP_OwnerItem");
+            CHECK(copy && copy->active);
+            CHECK(cam->GetComponent<Camera>()->ignoreObject == p);
+            pv->SetView(1);
+            prev = copy->transform->Position();
+            jumped = false;
+            for (int i = 0; i < 25; ++i) {
+                sc.Update(1.0f / 60.0f);
+                GameObject* c2 = sc.Find("FP_OwnerItem");
+                const Vec3 shown = (c2 && c2->active && c2->transform)
+                    ? c2->transform->Position() : item->transform->Position();
+                if ((shown - prev).Magnitude() > 0.35f) jumped = true;
+                prev = shown;
+            }
+            CHECK(!jumped);
+            Input::FeedKeys({});
+        };
+        holdBlend(false);
+        holdBlend(true);
+    }
+
+    // --- V every frame reverses cleanly and settles on the last request ---
+    {
+        Scene sc("spam"); sc.physicsEnabled = false;
+        GameObject* cam = sc.CreateGameObject("Camera");
+        cam->AddComponent<Camera>();
+        GameObject* p = sc.CreateGameObject("Player");
+        auto* ch = p->AddComponent<Character>(); ch->Apply();
+        auto* tp = p->AddComponent<ThirdPersonController>();
+        tp->yaw = 0.0f; tp->pitch = 0.0f; tp->distance = 5.0f; tp->cameraHeight = 1.5f;
+        tp->pivotDampingXZ = tp->pivotDampingY = 0.0f; tp->orbitSmoothing = 0.0f; tp->lookSmoothing = 0.0f;
+        tp->autoRecenter = false;
+        auto* pv = p->AddComponent<PlayerView>();
+        pv->allowToggle = true; pv->defaultView = PlayerView::View::Third;
+        pv->blendTime = 0.30f; pv->shoulderOffset = 0.0f; pv->thirdPersonDistance = -1.0f;
+        sc.Start();
+        Input::FeedKeys({}); sc.Update(1.0f / 60.0f);
+        for (int i = 0; i < 40; ++i) {
+            pv->Toggle();
+            Input::FeedKeys({});
+            sc.Update(1.0f / 60.0f);
+            const Vec3 at = cam->transform->Position();
+            CHECK(std::isfinite(at.x) && std::isfinite(at.y) && std::isfinite(at.z));
+            if (ch->Part(2)) CHECK(ch->Part(2)->active);
+        }
+        CHECK(pv->GetView() == 1);   // started in third; 40 flips lands on third
+        for (int i = 0; i < 30; ++i) { Input::FeedKeys({}); sc.Update(1.0f / 60.0f); }
+        CHECK(!pv->Blending());
+        CHECK(pv->GetView() == 1);
+        CHECK(cam->GetComponent<Camera>()->ignoreObject == nullptr);
+        CHECK_NEAR((cam->transform->Position() - Vec3{0, 1.5f, 0}).Magnitude(), 5.0f, 0.5f);
+        if (ch->Part(2)) CHECK(ch->Part(2)->active && !ch->Part(2)->HiddenFromCamera(nullptr));
+        Input::FeedKeys({});
+    }
+
+    // --- The blend does not travel through a wall that sits across the slide ---
+    {
+        Scene sc("blendwall");
+        GameObject* p = sc.CreateGameObject("Player");
+        p->AddComponent<Character>()->Apply();
+        auto* fp = p->AddComponent<FirstPersonController>();
+        fp->lookSmoothing = 0.0f; fp->yaw = 0.0f; fp->pitch = 0.0f;
+        GameObject* camObj = sc.CreateGameObject("Eye");
+        camObj->AddComponent<Camera>();
+        camObj->transform->SetParent(p->transform, false);
+        camObj->transform->localPosition = {0, 1.6f, -0.2f};
+        auto* pv = p->AddComponent<PlayerView>();
+        pv->allowToggle = true; pv->defaultView = PlayerView::View::First;
+        pv->thirdPersonDistance = 4.5f; pv->shoulderOffset = 0.0f; pv->blendTime = 0.30f;
+        sc.Start();
+        Input::FeedKeys({});
+        for (int i = 0; i < 3; ++i) sc.Update(1.0f / 60.0f);
+        pv->SetView(1);
+        for (int i = 0; i < 30; ++i) sc.Update(1.0f / 60.0f);
+        const float openZ = p->transform->InverseTransformPoint(camObj->transform->Position()).z;
+        CHECK(openZ > 1.0f);   // nothing in the way: the orbit is behind the body
+        pv->SetView(0);
+        for (int i = 0; i < 30; ++i) sc.Update(1.0f / 60.0f);
+        GameObject* wall = sc.CreateGameObject("Wall");
+        wall->transform->localPosition = {0, 1.6f, -0.05f};
+        wall->AddComponent<BoxCollider3D>()->size = {2.0f, 2.0f, 0.08f};
+        pv->SetView(1);
+        bool crossed = false;
+        for (int i = 0; i < 40; ++i) {
+            sc.Update(1.0f / 60.0f);
+            const float z = p->transform->InverseTransformPoint(camObj->transform->Position()).z;
+            if (z > 0.05f) crossed = true;
+        }
+        CHECK(!crossed);
+        Input::FeedKeys({});
     }
 
     // --- OkayScript set_view / get_view ---
@@ -643,10 +964,10 @@ int main() {
         checkThird(sc, player, cam, ch, 200);
     }
 
-    // Third Person template, the playtest: looking down must not draw the shirt,
-    // the plain hand shows unless the body is running, the orbit pitch returns
-    // to the angle play started at, and the head comes back the frame V leaves
-    // first person — not after the ease, and not after a few quick taps.
+    // Third Person template, the playtest: looking down must not draw the inside
+    // of the shirt, the plain hand shows unless the body is running, and the
+    // orbit pitch eases back to the angle play started at. The head stays
+    // hidden while the lens is still at the eyes and comes back once it pulls out.
     {
         Scene sc("playtest"); sc.physicsEnabled = false;
         Templates::ThirdPerson(sc);
@@ -737,28 +1058,33 @@ int main() {
             CHECK(handPx > 15);
             CHECK(handPx < 2500);
         }
-        // Back to third person. The head is drawn again before the ease moves.
+        // Back toward third person. One frame has not left the eyes, so the
+        // head stays hidden and the pitch has only begun to ease home.
         pressV(sc);
         CHECK(pv->GetView() == 1);
         CHECK(pv->Blending());
-        CHECK_NEAR(tp->pitch, restPitch, 0.01f);
-        CHECK(cam->ignoreObject == nullptr);
-        CHECK(ch->Part(2) && ch->Part(2)->active && !ch->Part(2)->firstPersonViewmodel);
-        CHECK(ch->Part(1) && !ch->Part(1)->firstPersonViewmodel); // ignore is clear, so the flag is off too
+        CHECK_NEAR(tp->pitch, restPitch, 0.01f);   // the look was put back before the switch
+        CHECK(cam->ignoreObject == player);
+        CHECK(ch->Part(2) && ch->Part(2)->active && ch->Part(2)->HiddenFromCamera(player));
+        CHECK(ch->Part(1) && ch->Part(1)->active);
         GameObject* neck = nullptr;
         if (ch->Part(1) && ch->Part(1)->transform)
             for (Transform* c : ch->Part(1)->transform->Children())
                 if (c && c->gameObject && c->gameObject->name == "Neck") neck = c->gameObject;
-        CHECK(neck && neck->active && !neck->firstPersonViewmodel);
-        // Four quick taps, starting from this return. Each time the target is
-        // third person the head is already restored, still inside the long ease.
+        CHECK(neck && neck->active && neck->HiddenFromCamera(player));
+        // Four quick taps. While the lens is still at the eyes the head stays
+        // hidden; once it has pulled out the head is drawn again.
         for (int tap = 0; tap < 4; ++tap) {
             pressV(sc);
             settle(sc, 2);
             if (pv->GetView() == 1) {
-                CHECK(cam->ignoreObject == nullptr);
-                CHECK(ch->Part(2) && !ch->Part(2)->firstPersonViewmodel);
-                CHECK_NEAR(tp->pitch, restPitch, 0.01f);
+                const Vec3 rel = player->transform->InverseTransformPoint(cam->transform->Position());
+                const bool nearEyes = rel.z < -0.08f;
+                if (nearEyes) CHECK(cam->ignoreObject == player);
+                else CHECK(cam->ignoreObject == nullptr);
+                CHECK(ch->Part(2) && ch->Part(2)->active);
+                CHECK(std::isfinite(tp->pitch));
+                CHECK(tp->pitch <= 80.0f + 0.01f);
             }
         }
         pv->SetView(1);

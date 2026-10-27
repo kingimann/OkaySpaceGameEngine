@@ -31851,8 +31851,19 @@ void DrawInspector(EditorState& ed) {
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gamepad button that switches view. Back is the right-stick stand-in (the engine has no stick-click id).");
             }
-            if (ImGui::DragFloat("Blend Time##pv", &pv->blendTime, 0.01f, 0.0f, 3.0f, "%.2f s")) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How long a full switch takes. Reversing starts from wherever the camera is.");
+            if (ImGui::DragFloat("Switch Blend Time##pv", &pv->blendTime, 0.01f, 0.0f, 3.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How long a full switch takes. Reversing starts from wherever the camera is. Zero snaps.");
+            {
+                int ease = (int)pv->switchEase;
+                const char* eases[] = {"Linear", "Smooth", "Ease In", "Ease Out"};
+                if (ImGui::Combo("Easing##pv", &ease, eases, 4)) {
+                    pv->switchEase = (PlayerView::SwitchEase)ease;
+                    ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How the camera, the hands and a held item move between the eyes and the orbit.");
+            }
+            if (ImGui::Checkbox("Snap##pv", &pv->snapSwitch)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Jump between first and third person in one frame.");
             {
                 float eye[3] = {pv->eyeOffset.x, pv->eyeOffset.y, pv->eyeOffset.z};
                 if (ImGui::DragFloat3("Eye Offset##pv", eye, 0.01f)) {

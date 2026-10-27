@@ -1807,6 +1807,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         KvOut k{out};
         k.b("allow", pv->allowToggle)("view", (int)pv->defaultView).key("key", pv->toggleKey)
          ("pad", pv->toggleGamepadButton)("blend", pv->blendTime)
+         ("ease", (int)pv->switchEase).b("snap", pv->snapSwitch)
          ("ex", pv->eyeOffset.x)("ey", pv->eyeOffset.y)("ez", pv->eyeOffset.z)
          ("dist", pv->thirdPersonDistance)("shoulder", pv->shoulderOffset);
         out << "\n";
@@ -4610,6 +4611,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     k.key("key", pv->toggleKey);
                     k.i("pad", pv->toggleGamepadButton);
                     k.f("blend", pv->blendTime);
+                    int ease = (int)pv->switchEase;
+                    k.i("ease", ease);
+                    if (ease < 0) ease = 0;
+                    if (ease > 3) ease = 3;
+                    pv->switchEase = (PlayerView::SwitchEase)ease;
+                    k.b("snap", pv->snapSwitch);
                     k.f("ex", pv->eyeOffset.x); k.f("ey", pv->eyeOffset.y); k.f("ez", pv->eyeOffset.z);
                     k.f("dist", pv->thirdPersonDistance);
                     k.f("shoulder", pv->shoulderOffset);

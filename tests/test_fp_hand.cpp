@@ -115,7 +115,10 @@ int main() {
             // A small copy on the player, in front of the near plane. Not the old
             // full-size bone cranked to fpRaise.
             GameObject* arm = ch->OwnerViewArm();
-            CHECK(arm->transform->Parent() == player->transform);
+            Transform* armParent = arm->transform->Parent();
+            CHECK(armParent == player->transform
+                || (armParent && armParent->gameObject && armParent->gameObject->name == "FP_ViewAnchor"
+                    && armParent->Parent() == player->transform));
             CHECK(arm->transform->localScale.x > 0.25f);
             CHECK(arm->transform->localScale.x < 0.85f);
             float minAhead = 1.0e9f;
@@ -458,7 +461,10 @@ int main() {
                 if (tp->pitch > -1.0f && tp->pitch < 1.0f && ch->OwnerViewArm() && ch->OwnerViewArm()->active) {
                     const Quat raised = Quat::Euler(ch->fpRaise - ch->fpPitch, 0.0f, 0.0f);
                     CHECK(Quat::Angle(ch->Part(3)->transform->localRotation, raised) > 40.0f);
-                    CHECK(ch->OwnerViewArm()->transform->Parent() == player->transform);
+                    Transform* armParent = ch->OwnerViewArm()->transform->Parent();
+                    CHECK(armParent == player->transform
+                        || (armParent && armParent->gameObject && armParent->gameObject->name == "FP_ViewAnchor"
+                            && armParent->Parent() == player->transform));
                     CHECK(ch->OwnerViewArm()->transform->localScale.x > 0.25f);
                     CHECK(ch->OwnerViewArm()->transform->localScale.x < 0.85f);
                 }

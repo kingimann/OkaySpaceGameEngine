@@ -1167,10 +1167,14 @@ void Character::EnsureOwnerArm(int base) {
     handMr->emissive = Color::FromBytes(82, 58, 46);
     // Under the player, not the camera. A first-person-only object is drawn
     // only for the camera that is hiding its owner, and only when it is still
-    // inside that owner's subtree. Parenting it to the camera would hide it
-    // from the owner too.
-    if (gameObject && gameObject->transform)
+    // inside that owner's subtree. The anchor is that subtree, so a blend can
+    // draw the copy without hiding the body. Parenting it to the camera would
+    // hide it from the owner too.
+    if (GameObject* anchor = EnsureViewAnchor()) {
+        if (anchor->transform) made[0]->transform->SetParent(anchor->transform, false);
+    } else if (gameObject && gameObject->transform) {
         made[0]->transform->SetParent(gameObject->transform, false);
+    }
     m_ownerArm = made[0];
     m_ownerFore = made[1];
     m_ownerHand = made[2];
@@ -1218,8 +1222,11 @@ void Character::EnsureOwnerArm2(int base) {
     handMr->mesh.normals.clear();
     handMr->castShadows = false;
     handMr->emissive = Color::FromBytes(82, 58, 46);
-    if (gameObject && gameObject->transform)
+    if (GameObject* anchor = EnsureViewAnchor()) {
+        if (anchor->transform) made[0]->transform->SetParent(anchor->transform, false);
+    } else if (gameObject && gameObject->transform) {
         made[0]->transform->SetParent(gameObject->transform, false);
+    }
     m_ownerArm2 = made[0];
     m_ownerFore2 = made[1];
     m_ownerHand2 = made[2];
@@ -1240,7 +1247,11 @@ Camera* OwnerCamera(GameObject* player) {
         if (!o || !o->active) continue;
         Camera* cam = o->GetComponent<Camera>();
         if (!cam || !cam->enabled || !cam->transform || !o->active) continue;
-        if (cam->ignoreObject == player) ignoring = cam;
+        if (GameObject* ig = cam->ignoreObject) {
+            // The player (head hidden) or the viewmodel anchor (body still drawn).
+            if (ig == player || (ig->name == "FP_ViewAnchor" && ig->IsSelfOrDescendantOf(player)))
+                ignoring = cam;
+        }
         if (!child && o.get() != player && o->IsSelfOrDescendantOf(player)) child = cam;
     }
     if (ignoring) return ignoring;
@@ -1298,17 +1309,27 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
         if (m_ownerItem) m_ownerItem->active = false;
     };
     // A run eases the copy off the corner (m_fpShown). It is not popped off.
-    if (!on || m_fpShown < 0.08f) {
+    // A view blend uses a lower cutoff so the copy can sit on the grip at the
+    // start of the ease instead of appearing later in the corner.
+    const float hideAt = fpViewWeight >= 0.0f ? 0.02f : 0.08f;
+    if (!on || m_fpShown < hideAt) {
         SetOwnerArmActive(false);
         DeactivateOwnerArm2();
         if (m_ownerItem) m_ownerItem->active = false;
-        if (!on) clearHeld();
+        // Dropping the copy while this camera still ignores the player would
+        // show the real item inside the head. A run keeps that skip. Leaving
+        // first person (or having no copy) gives the real grip back.
+        const bool release = !on || (fpViewWeight >= 0.0f && !HideFirstPersonHands());
+        if (release) clearHeld();
         return;
     }
     EnsureOwnerArm(base);
     if (!m_ownerArm || !m_ownerFore || !m_ownerHand || !m_ownerArm->transform) return;
-    if (gameObject && gameObject->transform && m_ownerArm->transform->Parent() != gameObject->transform)
-        m_ownerArm->transform->SetParent(gameObject->transform, false);
+    Transform* armParent = nullptr;
+    if (GameObject* anchor = EnsureViewAnchor()) armParent = anchor->transform;
+    else if (gameObject) armParent = gameObject->transform;
+    if (armParent && m_ownerArm->transform->Parent() != armParent)
+        m_ownerArm->transform->SetParent(armParent, false);
     Camera* cam = OwnerCamera(gameObject);
     if (!cam || !cam->transform || !gameObject || !gameObject->transform) {
         SetOwnerArmActive(false);
@@ -1421,7 +1442,7 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
         if (m_fpHiddenHeld && m_fpHiddenHeld != held && !m_fpHiddenHeld->IsDestroyed()
             && m_fpHiddenHeld->ownerCameraSkip == gameObject)
             m_fpHiddenHeld->ownerCameraSkip = nullptr;
-        held->ownerCameraSkip = gameObject;
+        held->ownerCameraSkip = OwnerHideTarget() ? OwnerHideTarget() : gameObject;
         m_fpHiddenHeld = held;
         if (!m_ownerItem || m_ownerItem->IsDestroyed()) {
             m_ownerItem = nullptr;
@@ -1558,6 +1579,7 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     if (m_ownerItem && !showItem) m_ownerItem->active = false;
     if (m_fpSecond) FinishTwoHands(cam, depth, snap, bobS, bobC);
     else DeactivateOwnerArm2();
+    BlendHeldTowardGrip();
 }
 
 void Character::FinishTwoHands(Camera* cam, float depth, float snap, float bobS, float bobC) {
@@ -1670,7 +1692,7 @@ void Character::FinishTwoHands(Camera* cam, float depth, float snap, float bobS,
     // Lift the camera-facing side so a crate does not read as a black slab.
     dst->emissive = Color{src->color.r * 0.22f, src->color.g * 0.22f, src->color.b * 0.22f, 1.0f};
     m_ownerItem->active = true;
-    held->ownerCameraSkip = gameObject;
+    held->ownerCameraSkip = OwnerHideTarget() ? OwnerHideTarget() : gameObject;
     m_fpHiddenHeld = held;
 
     Vec3 imn{1.0e9f, 1.0e9f, 1.0e9f}, imx{-1.0e9f, -1.0e9f, -1.0e9f};
@@ -1731,6 +1753,9 @@ void Character::RememberPartRest() {
 void Character::RemoveParts() {
     ReleaseOwnerArm();   // the copy hangs off the player, not the rig, so the rig's destroy would miss it
     ReleaseOwnerArm2();
+    if (m_viewAnchor && !m_viewAnchor->IsDestroyed())
+        if (Scene* s = GetScene()) s->Destroy(m_viewAnchor);
+    m_viewAnchor = nullptr;
     if (GameObject* rig = FindRig())
         if (Scene* s = GetScene()) s->Destroy(rig);   // takes its children with it, copy included
     m_rigRoot = nullptr;
@@ -2057,10 +2082,78 @@ std::uint32_t Character::UpperBodyMask() {
 }
 std::vector<Vec3> Character::CurrentPose() const { return CurrentSourcePose(); }
 
+void Character::PoseBuiltParts() {
+    if (m_partsBuilt && animateParts) DriveParts();
+}
+
+void Character::SetViewmodelBlend(float weight) {
+    fpViewWeight = weight;
+    if (weight < 0.0f) return;
+    float arm = 0.0f;
+    if (firstPersonArm && fpArmBase >= 0)
+        arm = fpArmUp < 0.0f ? 0.0f : (fpArmUp > 1.0f ? 1.0f : fpArmUp);
+    if (weight > 1.0f) weight = 1.0f;
+    m_fpShown = arm * weight;
+}
+
+GameObject* Character::EnsureViewAnchor() {
+    if (m_viewAnchor && m_viewAnchor->IsDestroyed()) m_viewAnchor = nullptr;
+    if (m_viewAnchor) return m_viewAnchor;
+    Scene* s = GetScene();
+    if (!s || !gameObject || !gameObject->transform) return nullptr;
+    m_viewAnchor = s->CreateGameObject("FP_ViewAnchor");
+    m_viewAnchor->transient = true;
+    m_viewAnchor->transform->SetParent(gameObject->transform, false);
+    m_viewAnchor->transform->localPosition = Vec3::Zero;
+    m_viewAnchor->transform->localRotation = Quat::Identity;
+    m_viewAnchor->transform->localScale = Vec3::One;
+    return m_viewAnchor;
+}
+
+GameObject* Character::OwnerHideTarget() const {
+    Camera* cam = OwnerCamera(gameObject);
+    if (!cam || !cam->ignoreObject) return nullptr;
+    GameObject* ig = cam->ignoreObject;
+    if (ig == gameObject) return ig;
+    if (m_viewAnchor && ig == m_viewAnchor) return ig;
+    return nullptr;
+}
+
+void Character::BlendHeldTowardGrip() {
+    // The copy is already in the first-person placement. While the blend is
+    // open, slide that world pose back toward the real grip so the item the
+    // owner sees does not teleport. At either end the caller shows only one.
+    if (fpViewWeight < 0.0f || m_fpShown >= 0.999f) return;
+    if (!m_ownerItem || !m_ownerItem->active || !m_ownerItem->transform) return;
+    if (!m_fpHiddenHeld || m_fpHiddenHeld->IsDestroyed() || !m_fpHiddenHeld->transform) return;
+    const float w = m_fpShown < 0.0f ? 0.0f : m_fpShown;
+    const Vec3 fpPos = m_ownerItem->transform->Position();
+    const Quat fpRot = m_ownerItem->transform->Rotation();
+    const Vec3 fpScale = m_ownerItem->transform->LossyScale();
+    const Vec3 gripPos = m_fpHiddenHeld->transform->Position();
+    const Quat gripRot = m_fpHiddenHeld->transform->Rotation();
+    const Vec3 gripScale = m_fpHiddenHeld->transform->LossyScale();
+    Transform* parent = nullptr;
+    if (GameObject* anchor = EnsureViewAnchor()) parent = anchor->transform;
+    else if (gameObject) parent = gameObject->transform;
+    if (parent) m_ownerItem->transform->SetParent(parent, true);
+    m_ownerItem->transform->SetPosition(Vec3::Lerp(gripPos, fpPos, w));
+    m_ownerItem->transform->SetRotation(Quat::Slerp(gripRot, fpRot, w));
+    const Vec3 parentScale = parent ? parent->LossyScale() : Vec3::One;
+    const Vec3 scl = Vec3::Lerp(gripScale, fpScale, w);
+    auto div = [](float world, float by) { return std::fabs(by) < 1e-5f ? world : world / by; };
+    m_ownerItem->transform->localScale = Vec3{div(scl.x, parentScale.x), div(scl.y, parentScale.y), div(scl.z, parentScale.z)};
+}
+
 void Character::EaseFirstPersonArm(float dt) {
     if (dt > 0.0f) m_fpDt = dt;
     const float want = (firstPersonArm && fpArmBase >= 0)
         ? (fpArmUp < 0.0f ? 0.0f : (fpArmUp > 1.0f ? 1.0f : fpArmUp)) : 0.0f;
+    if (fpViewWeight >= 0.0f) {
+        float w = fpViewWeight > 1.0f ? 1.0f : fpViewWeight;
+        m_fpShown = want * w;
+        return;
+    }
     if (dt <= 0.0f) { m_fpShown = want; return; }
     const float k = 1.0f - std::exp(-dt * 8.0f);   // most of the way there in ~0.3 s
     m_fpShown += (want - m_fpShown) * k;

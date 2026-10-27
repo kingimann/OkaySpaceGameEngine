@@ -130,6 +130,9 @@ public:
     // stay on the animation. fpArmUp eases 0 (copy hidden) .. 1 (copy shown).
     // Nothing here is replicated.
     bool  firstPersonArm = false;
+    /// 0 at the orbit, 1 at the eyes, while a Player View blend owns the viewmodel.
+    /// Negative: the copy eases on its own timer (a run, a punch, no view toggle).
+    float fpViewWeight = -1.0f;
     /// Runtime only (not saved). Kept so older scenes load. It does not remove
     /// the head: a first-person camera skips the head and neck parts, and the
     /// mesh itself stays whole for shadows and every other camera.
@@ -208,6 +211,19 @@ public:
     /// new ones at Play. Call from the editor's "Separate Into Parts" so the parts are
     /// in the scene to customize, not spawned when you press Play.
     void BuildParts();
+    /// Pose the part rig from the animation that is already playing. A view switch
+    /// calls this the frame the rig is built, so that frame is not a bind pose.
+    void PoseBuiltParts();
+    /// `weight` < 0 releases the viewmodel to its own ease. 0..1 follows the
+    /// camera blend (0 hidden at the orbit, 1 the first-person placement).
+    void SetViewmodelBlend(float weight);
+    /// Empty child the owner's viewmodel hangs from. A blend can point the
+    /// camera at it so the copy draws without hiding the body.
+    GameObject* EnsureViewAnchor();
+    /// True once the copy is far enough along the blend to be worth drawing.
+    bool OwnerCopyVisible() const {
+        return firstPersonArm && fpArmBase >= 0 && m_fpShown > 0.02f;
+    }
     /// Tear the rig back down (destroy the "Rig" child) and show the baked mesh again.
     void RemoveParts();
     /// Edit-time: ensure the rig exists and push the current/preview pose onto it, so
@@ -612,6 +628,8 @@ private:
     float m_fpShown = 0.0f;        // eased 0..1 raise of the first-person arm (tracks fpArmUp)
     void BuildFpArm(const Mesh& full);   // extract the arm bones into m_fpArm
     void EaseFirstPersonArm(float dt);
+    void BlendHeldTowardGrip();
+    GameObject* OwnerHideTarget() const;
     bool m_partsBuilt = false;
     GameObject* m_rigRoot = nullptr;
     std::vector<GameObject*> m_parts;    // one object per bone (B_COUNT)
@@ -621,6 +639,7 @@ private:
     GameObject* m_ownerHand = nullptr;
     GameObject* m_ownerItem = nullptr;   // viewmodel copy of a held prop
     GameObject* m_fpHiddenHeld = nullptr;
+    GameObject* m_viewAnchor = nullptr;  // FP_ViewAnchor, parent of the owner copies
     int m_ownerArmBase = -2;
     GameObject* m_ownerArm2 = nullptr;   // the other hand, two-handed holds only
     GameObject* m_ownerFore2 = nullptr;

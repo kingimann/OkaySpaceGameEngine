@@ -17,15 +17,19 @@ class PlayerView : public Behaviour {
 public:
     enum class View { First = 0, Third = 1 };
 
-    /// Runs after the controllers (order -10) have placed their own camera, and
-    /// before IK (100), so a blend overwrites the view the player actually sees.
-    int ExecutionOrder() const override { return 40; }
+    /// After the controllers (-10) and the object hold (90), before IK (100).
+    /// The camera blend then sees the grip the item is already in this frame.
+    int ExecutionOrder() const override { return 95; }
 
     bool  allowToggle = false;          ///< V / gamepad switches view. Off: controller is unchanged.
     View  defaultView = View::Third;    ///< view a fresh play starts in
     char  toggleKey = 'v';              ///< 0 = no key
     int   toggleGamepadButton = 4;      ///< Back. -1 = none. (No separate stick-click id.)
-    float blendTime = 0.35f;            ///< seconds for a full switch; a reverse starts from here
+    enum class SwitchEase { Linear = 0, Smooth = 1, In = 2, Out = 3 };
+
+    float blendTime = 0.30f;            ///< seconds for a full switch; a reverse starts from here
+    SwitchEase switchEase = SwitchEase::Smooth;
+    bool  snapSwitch = false;          ///< true: the camera jumps, no blend
     Vec3  eyeOffset{0, 0, 0};           ///< added at the eyes (local: +X right, +Y up, +Z back)
     float thirdPersonDistance = -1.0f;  ///< orbit distance while this view is driving; < 0 = the controller's own
     float shoulderOffset = 0.0f;        ///< over-the-shoulder shift while this view is driving
@@ -34,6 +38,8 @@ public:
     void SetView(int view);
     int  GetView() const;
     void Toggle();
+    /// 0 at the eyes, 1 at the orbit, after easing. The raw blend is what the timer advances.
+    float EasedThird() const;
 
     /// The controller should run its normal camera. False when the toggle is off
     /// and no script has called SetView.
@@ -41,8 +47,8 @@ public:
     /// True while the camera is between the two views.
     bool Blending() const;
     /// 0 at the eyes, 1 at the orbit. Controllers fade bob and landing shake with this.
-    float ThirdAmount() const { return m_blend; }
-    float FirstAmount() const { return 1.0f - m_blend; }
+    float ThirdAmount() const { return EasedThird(); }
+    float FirstAmount() const { return 1.0f - EasedThird(); }
     bool  TargetFirst() const { return m_target == View::First; }
 
     /// Mouse-look limits for this frame, in the controller's own pitch convention.
@@ -77,11 +83,17 @@ private:
     bool  m_fpApplied = false;   ///< this view has put the body into the first-person setup
     float m_restPitch = 18.0f;   ///< third-person pitch before first person widened the look
     bool  m_haveRestPitch = false;
+    bool  m_pitchHoming = false; ///< an illegal orbit pitch is easing back to m_restPitch
+    float m_homeFrom = 0.0f;     ///< pitch where that ease started, so the clamp can hold it
 
     void ArmDefault();
     void StepBlend(float dt);
     void RememberRestPitch();
-    void ApplyRestPitch();
+    void NoteIllegalPitch();
+    void EasePitchHome(float dt);
+    float Ease01(float u) const;
+    bool  CameraNearEyes(Camera* cam) const;
+    void  PullCameraIn(Camera* cam, const Vec3& eye, Vec3& want) const;
     void DestLimits(bool thirdController, float nativeMin, float nativeMax, float& lo, float& hi) const;
     void ApplyHead();
     void PlaceCamera(float dt);

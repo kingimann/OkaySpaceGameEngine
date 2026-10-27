@@ -103,6 +103,9 @@ inline PlayerView* AddViewToggle(GameObject* player, PlayerView::View view, floa
     pv->defaultView = view;
     pv->shoulderOffset = shoulder;
     pv->thirdPersonDistance = -1.0f;
+    pv->blendTime = 0.30f;
+    pv->switchEase = PlayerView::SwitchEase::Smooth;
+    pv->snapSwitch = false;
     return pv;
 }
 

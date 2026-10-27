@@ -103,7 +103,7 @@ Switches one player between first person and third person. The object needs a Pl
 
 | In a script | Node | Kind | Inputs | Gives | What it does |
 |---|---|---|---|---|---|
-| `GetComponent<PlayerView>().SetView(view)` | `PlayerView.SetView/1` | step | view (Number), Target (Object) | - | Ease to a view: 0 first person (camera at the eyes), 1 third person (over the shoulder). |
+| `GetComponent<PlayerView>().SetView(view)` | `PlayerView.SetView/1` | step | view (Number), Target (Object) | - | Ease to a view over Switch Blend Time: 0 first person (camera at the eyes), 1 third person (over the shoulder). Snap jumps. |
 | `GetComponent<PlayerView>().GetView()` | `PlayerView.GetView/0` | value | Target (Object) | Result (Number) | The view asked for: 0 first person, 1 third person. The camera may still be on its way there. |
 
 ## Input

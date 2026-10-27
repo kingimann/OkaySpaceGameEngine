@@ -124,6 +124,67 @@ InvResult Transfer(Inventory* from, int i, Inventory* to) {
     return left > 0 ? InvResult::Part(have - left, "destination full") : InvResult::Done(have);
 }
 
+int TransferAll(Inventory* from, Inventory* to) {
+    if (!from || !to || from == to) return 0;
+    int moved = 0;
+    for (int i = 0; i < (int)from->slots.size(); ++i) {
+        if (Inventory::Empty(from->slots[i])) continue;
+        InvResult r = Transfer(from, i, to);
+        if (r.Ok()) moved += r.moved;
+    }
+    return moved;
+}
+
+int TransferMatching(Inventory* from, Inventory* to) {
+    if (!from || !to || from == to) return 0;
+    int moved = 0;
+    for (int i = 0; i < (int)from->slots.size(); ++i) {
+        if (Inventory::Empty(from->slots[i])) continue;
+        if (to->Count(from->slots[i].item) <= 0) continue;
+        InvResult r = Transfer(from, i, to);
+        if (r.Ok()) moved += r.moved;
+    }
+    return moved;
+}
+
+bool SortByName(Inventory* inv) {
+    if (!inv) return false;
+    std::vector<Inventory::Slot> packed;
+    for (const auto& s : inv->slots) {
+        if (Inventory::Empty(s)) continue;
+        bool merged = false;
+        for (auto& p : packed)
+            if (Inventory::Stackable(p, s) && (long long)p.count + s.count <= 2147483647LL) {
+                p.count += s.count; merged = true; break;
+            }
+        if (!merged) packed.push_back(s);
+    }
+    std::vector<Inventory::Slot> split;
+    for (const auto& p : packed) {
+        const long long cap = inv->StackCap(p.item);
+        for (long long left = p.count; left > 0; left -= cap) {
+            Inventory::Slot part = p;
+            part.count = (int)(left < cap ? left : cap);
+            split.push_back(part);
+        }
+    }
+    const std::size_t cap = inv->capacity > 0 ? (std::size_t)inv->capacity : 0;
+    const std::size_t room = inv->slots.size() > cap ? inv->slots.size() : cap;
+    if (split.size() > room) return false;
+    const ItemDatabase& db = ItemDatabase::Get();
+    std::stable_sort(split.begin(), split.end(), [&](const Inventory::Slot& a, const Inventory::Slot& b) {
+        const ItemDefinition* da = db.Find(a.item), *dbb = db.Find(b.item);
+        const std::string& na = da ? da->DisplayName() : a.item;
+        const std::string& nb = dbb ? dbb->DisplayName() : b.item;
+        return na < nb;
+    });
+    const std::size_t keep = std::max(inv->slots.size(), split.size());
+    inv->slots.assign(keep, Inventory::Slot{});
+    for (std::size_t i = 0; i < split.size(); ++i) inv->slots[i] = split[i];
+    inv->NotifyChanged();
+    return true;
+}
+
 InvResult Drop(Inventory* inv, int i, int n) {
     if (!ValidSlot(inv, i) || Inventory::Empty(inv->slots[i]) || n < 1) return InvResult::No("empty slot");
     Inventory::Slot& s = inv->slots[i];

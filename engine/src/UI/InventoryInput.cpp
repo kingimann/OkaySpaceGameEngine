@@ -130,6 +130,7 @@ void ChestLayout::SlotXY(int side, int i, float& x, float& y) const {
 }
 
 bool ChestLayout::Pick(float px, float py, int& side, int& idx) const {
+    if (scrolling && (py < viewY || py >= viewY + viewH)) { side = -1; idx = -1; return false; }
     for (int sd = 0; sd < 2; ++sd) {
         if (sd == 1 && !player) continue;
         const float s = Size(sd);
@@ -142,7 +143,15 @@ bool ChestLayout::Pick(float px, float py, int& side, int& idx) const {
     return false;
 }
 
-ChestLayout LayoutChest(const ChestInventory& ch, float W, float H) {
+int ChestLayout::HitButton(float px, float py) const {
+    auto in = [&](const ClickRect& b) { return b.w > 0 && px >= b.x && px < b.x + b.w && py >= b.y && py < b.y + b.h; };
+    if (in(takeAll)) return 0;
+    if (in(stash)) return 1;
+    if (in(sort)) return 2;
+    return -1;
+}
+
+ChestLayout LayoutChest(ChestInventory& ch, float W, float H) {
     ChestLayout L;
     L.chest = ch.Inv();
     L.player = ch.PlayerInv();
@@ -166,11 +175,48 @@ ChestLayout LayoutChest(const ChestInventory& ch, float W, float H) {
     L.playOx = L.panelX + (L.panelW - playW) * 0.5f;
     L.chestGy = L.topY;
     L.playGy = L.topY + L.chestH + 24.0f;
+    const float chrome = 50.0f;
+    const float avail = std::max(120.0f, H - 36.0f);
+    if (L.totalH + chrome > avail && avail > chrome) {
+        L.scrolling = true;
+        L.viewH = avail - chrome;
+        L.viewY = 40.0f;
+        L.topY = L.viewY;
+        L.chestGy = L.topY;
+        L.playGy = L.topY + L.chestH + 24.0f;
+        const float maxScroll = std::max(0.0f, L.totalH - L.viewH);
+        const float wheel = Input::MouseWheel();
+        if (wheel > 0.5f) ch.scroll -= 48.0f;
+        else if (wheel < -0.5f) ch.scroll += 48.0f;
+        if (ch.scroll < 0.0f) ch.scroll = 0.0f;
+        if (ch.scroll > maxScroll) ch.scroll = maxScroll;
+        L.chestGy -= ch.scroll;
+        L.playGy -= ch.scroll;
+        L.drawH = L.viewH + chrome;
+    } else {
+        ch.scroll = 0.0f;
+        L.drawH = L.totalH + 46.0f;
+    }
+    const float bw = 62.0f, bh = 16.0f, by = L.topY - 30.0f;
+    const float right = L.panelX + L.panelW - 8.0f;
+    L.sort    = {right - bw, by, bw, bh};
+    L.stash   = {right - bw * 2 - 4, by, bw, bh};
+    L.takeAll = {right - bw * 3 - 8, by, bw, bh};
     return L;
 }
 
 ChestFrame HandleChest(ChestInventory& ch, const ChestLayout& L, Vec2 mouse) {
     ChestFrame f;
+    if (Input::GetMouseButtonDown(0)) {
+        const int b = L.HitButton(mouse.x, mouse.y);
+        if (b >= 0) {
+            if (b == 0) ch.TakeAll();
+            else if (b == 1) ch.StashMatching();
+            else ch.SortContents();
+            ch.dragSide = -1; ch.dragIndex = -1;
+            return f;
+        }
+    }
     L.Pick(mouse.x, mouse.y, f.side, f.index);
     if (ch.dragSide < 0 && f.index >= 0 && Input::GetMouseButtonDown(0)) {   // lift a stack
         Inventory* inv = L.Inv(f.side);
@@ -236,8 +282,13 @@ GridLayout LayoutGrid(GridInventoryUI& ui, GridInventory& primary, float W, floa
         float y = L.startY;
         for (auto* g : list) {
             const float gw = g->cols * L.cs + (g->cols - 1) * L.gp, gh = g->rows * L.cs + (g->rows - 1) * L.gp;
-            L.panels.push_back({g, colX + (colW - gw) * 0.5f, y + L.labelH, gw, gh,
-                                g->category.empty() ? g->title : g->category, ground});
+            GridPanel p{g, colX + (colW - gw) * 0.5f, y + L.labelH, gw, gh,
+                        g->category.empty() ? g->title : g->category, ground};
+            if (ground) {   // "Take all" sits in the container's header, right side
+                p.actW = 66.0f; p.actH = L.labelH - 2.0f;
+                p.actX = p.ox + gw - p.actW; p.actY = p.oy - L.labelH;
+            }
+            L.panels.push_back(p);
             y += L.labelH + gh + vspace;
         }
     };
@@ -255,9 +306,61 @@ GridFrame HoverGrid(const GridLayout& L, Vec2 mouse) {
     return f;
 }
 
+namespace {
+/// Drop grid item `index` into the first container in `dests` that can hold it
+/// (a matching stack, else the first free spot, rotated if that's the only way).
+bool AutoPlace(GridInventory& src, int index, const std::vector<GridInventory*>& dests) {
+    if (index < 0 || index >= (int)src.items.size()) return false;
+    const GridItem& it = src.items[index];
+    for (GridInventory* d : dests) {
+        if (!d || d == &src) continue;
+        for (const GridItem& o : d->items)
+            if (o.name == it.name && src.MoveTo(index, *d, o.x, o.y, false)) return true;
+        int x = 0, y = 0;
+        if (d->FindSpot(it.w, it.h, x, y) && src.MoveTo(index, *d, x, y, false)) return true;
+        if (it.w != it.h && d->FindSpot(it.h, it.w, x, y) && src.MoveTo(index, *d, x, y, true)) return true;
+    }
+    return false;
+}
+void TakeAllInto(GridInventory& src, const std::vector<GridInventory*>& dests) {
+    for (int guard = 0; guard < 512 && !src.items.empty(); ++guard) {
+        const int before = (int)src.items.size();
+        if (!AutoPlace(src, (int)src.items.size() - 1, dests)) {
+            bool any = false;
+            for (int i = (int)src.items.size() - 2; i >= 0 && !any; --i) any = AutoPlace(src, i, dests);
+            if (!any || (int)src.items.size() == before) break;
+        }
+    }
+}
+} // namespace
+
 void HandleGrid(GridInventoryUI& ui, const GridLayout& L, const GridFrame& h) {
     if (ui.rotateKey && ui.dragInv && Input::GetKeyDown(ui.rotateKey)) ui.RotateDrag();   // applied only on a good drop
     GridInventory* under = h.panel >= 0 ? L.panels[h.panel].inv : nullptr;
+    if (!ui.dragInv && Input::GetMouseButtonDown(0)) {
+        for (const GridPanel& P : L.panels) {
+            if (!P.ground || P.actW <= 0 || !P.inv) continue;
+            if (Input::MousePosition().x >= P.actX && Input::MousePosition().x < P.actX + P.actW &&
+                Input::MousePosition().y >= P.actY && Input::MousePosition().y < P.actY + P.actH) {
+                TakeAllInto(*P.inv, L.equipped);
+                return;
+            }
+        }
+    }
+    // Shift-click sends the item to the other column (bag <-> nearby) without a drag.
+    if (!ui.dragInv && under && Input::GetMouseButtonDown(0) && Input::GetKey(Input::KeyShift)) {
+        const int idx = under->ItemAtCell(h.cx, h.cy);
+        if (idx >= 0) {
+            const bool fromGround = h.panel >= 0 && L.panels[h.panel].ground;
+            AutoPlace(*under, idx, fromGround ? L.equipped : L.nearby);
+            if (!fromGround && L.nearby.empty()) {
+                std::vector<GridInventory*> others;
+                for (GridInventory* g : L.equipped) if (g != under) others.push_back(g);
+                AutoPlace(*under, idx, others);
+            }
+        }
+        return;
+    }
     if (!ui.dragInv && under && Input::GetMouseButtonDown(0))
         ui.BeginDrag(under, under->ItemAtCell(h.cx, h.cy), h.cx, h.cy);
     if (!ui.dragInv && under && Input::GetMouseButtonDown(1)) {   // right-click: split half off

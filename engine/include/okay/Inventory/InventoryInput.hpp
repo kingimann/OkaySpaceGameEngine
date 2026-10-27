@@ -60,6 +60,8 @@ HotbarFrame HandleHotbar(InventoryUI& ui, const HotbarLayout& L, Vec2 mouse);
 
 // ---- Chest screen (ChestInventory: chest grid on top, the player's below) ----
 
+struct ClickRect { float x = 0, y = 0, w = 0, h = 0; };
+
 struct ChestLayout {
     float panelX = 0, topY = 0, panelW = 0, totalH = 0, chestH = 0;
     float chestOx = 0, chestGy = 0, playOx = 0, playGy = 0;
@@ -68,14 +70,21 @@ struct ChestLayout {
     int   chestN = 0, playN = 0;            ///< slots shown
     Inventory* chest = nullptr;
     Inventory* player = nullptr;
+    /// When the grids are taller than the screen, slots scroll inside this window.
+    bool  scrolling = false;
+    float viewY = 0, viewH = 0;
+    float drawH = 0;                        ///< panel body height to draw (includes the title)
+    ClickRect takeAll, stash, sort;         ///< title-bar buttons
 
     float Size(int side) const { return side == 1 ? ps : cs; }
     int   Count(int side) const { return side == 1 ? playN : chestN; }
     Inventory* Inv(int side) const { return side == 1 ? player : chest; }
     void SlotXY(int side, int i, float& x, float& y) const;
     bool Pick(float px, float py, int& side, int& idx) const;
+    /// Title-bar button under a point: 0 take all, 1 stash matching, 2 sort, or -1.
+    int HitButton(float px, float py) const;
 };
-ChestLayout LayoutChest(const ChestInventory& ch, float W, float H);
+ChestLayout LayoutChest(ChestInventory& ch, float W, float H);
 
 struct ChestFrame { int side = -1; int index = -1; };
 /// Press on a stack to lift it, release on a slot to move / swap / merge it.
@@ -83,7 +92,13 @@ ChestFrame HandleChest(ChestInventory& ch, const ChestLayout& L, Vec2 mouse);
 
 // ---- Grid bags (GridInventoryUI: equipped column + Nearby column) ----
 
-struct GridPanel { GridInventory* inv = nullptr; float ox = 0, oy = 0, gw = 0, gh = 0; std::string label; bool ground = false; };
+struct GridPanel {
+    GridInventory* inv = nullptr;
+    float ox = 0, oy = 0, gw = 0, gh = 0;
+    std::string label;
+    bool ground = false;
+    float actX = 0, actY = 0, actW = 0, actH = 0;   ///< "Take all" hit rect (nearby containers)
+};
 
 struct GridLayout {
     std::vector<GridInventory*> equipped, nearby;

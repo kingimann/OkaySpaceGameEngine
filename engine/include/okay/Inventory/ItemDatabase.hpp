@@ -56,6 +56,11 @@ struct ItemDefinition {
     std::string useAction;          ///< e.g. "Eat", "Drink", "Heal" (empty = not usable)
     float useAmount = 0.0f;
     std::string worldPrefab;        ///< what dropping it spawns (.okayprefab)
+    /// Optional sprite-sheet icon. `atlas` is the sheet path; the UV rect is in 0..1.
+    /// Empty atlas = a whole-image icon (the `icon` path, or <folder><id>.png).
+    std::string atlas;
+    float au0 = 0, av0 = 0, au1 = 1, av1 = 1;
+    bool hasAtlas = false;
     std::vector<std::pair<std::string, std::string>> custom;   ///< game-specific fields
     std::vector<std::string> legacyNames;   ///< old item names that load as this id
     bool loose = false;             ///< made automatically for an unknown name (not saved)
@@ -109,5 +114,14 @@ private:
 /// The icon to draw for `item`: its definition's icon, else <folder><id>.png, else ""
 /// (no folder and no icon = draw the name instead).
 std::string ItemIconPath(const std::string& folder, const std::string& item);
+
+/// Where to sample an item's icon. `atlas` means `path` is a sheet and the UV rect
+/// (0..1) is the cell; otherwise the whole image is used.
+struct ItemIconRef {
+    std::string path;
+    float u0 = 0, v0 = 0, u1 = 1, v1 = 1;
+    bool atlas = false;
+};
+ItemIconRef ItemIconOf(const std::string& folder, const std::string& item);
 
 } // namespace okay

@@ -45,9 +45,20 @@ bool ItemDefinition::HasTag(const std::string& tag) const {
 }
 
 std::string ItemIconPath(const std::string& folder, const std::string& item) {
-    if (const ItemDefinition* d = ItemDatabase::Get().Find(item))
-        if (!d->icon.empty()) return d->icon;
-    return folder.empty() ? std::string() : folder + item + ".png";
+    return ItemIconOf(folder, item).path;
+}
+
+ItemIconRef ItemIconOf(const std::string& folder, const std::string& item) {
+    ItemIconRef r;
+    if (const ItemDefinition* d = ItemDatabase::Get().Find(item)) {
+        if (d->hasAtlas && !d->atlas.empty()) {
+            r.path = d->atlas; r.u0 = d->au0; r.v0 = d->av0; r.u1 = d->au1; r.v1 = d->av1; r.atlas = true;
+            return r;
+        }
+        if (!d->icon.empty()) { r.path = d->icon; return r; }
+    }
+    if (!folder.empty() && !item.empty()) r.path = folder + item + ".png";
+    return r;
 }
 
 ItemDatabase& ItemDatabase::Get() {
@@ -113,6 +124,13 @@ bool ItemDatabase::LoadText(const std::string& text, std::string* err) {
         else if (key == "equip")       d.equip = EquipSlotFromName(ReadQuoted(ls));
         else if (key == "use")         { d.useAction = ReadQuoted(ls); ls >> d.useAmount; }
         else if (key == "prefab")      d.worldPrefab = ReadQuoted(ls);
+        else if (key == "atlas") {
+            d.atlas = ReadQuoted(ls);
+            float u0, v0, u1, v1;
+            if ((ls >> u0 >> v0 >> u1 >> v1) && !d.atlas.empty()) {
+                d.au0 = u0; d.av0 = v0; d.au1 = u1; d.av1 = v1; d.hasAtlas = true;
+            }
+        }
         else if (key == "custom")      { std::string k = ReadQuoted(ls); d.custom.push_back({k, ReadQuoted(ls)}); }
         else if (key == "legacy")      d.legacyNames.push_back(ReadQuoted(ls));
     }
@@ -149,6 +167,8 @@ std::string ItemDatabase::Serialize() const {
         if (d.equip != EquipSlot::None) o << "  equip " << EquipSlotName(d.equip) << "\n";
         if (!d.useAction.empty())   o << "  use " << Quote(d.useAction) << " " << d.useAmount << "\n";
         if (!d.worldPrefab.empty()) o << "  prefab " << Quote(d.worldPrefab) << "\n";
+        if (d.hasAtlas && !d.atlas.empty())
+            o << "  atlas " << Quote(d.atlas) << " " << d.au0 << " " << d.av0 << " " << d.au1 << " " << d.av1 << "\n";
         for (const auto& kv : d.custom) o << "  custom " << Quote(kv.first) << " " << Quote(kv.second) << "\n";
         for (const auto& n : d.legacyNames) o << "  legacy " << Quote(n) << "\n";
         o << "end\n";

@@ -47,6 +47,14 @@ InvResult QuickMove(Inventory* inv, int from, int hotbar, int slots = 0);
 /// Move as much of `from` slot `i` into `to` as fits (chest take / stash).
 InvResult Transfer(Inventory* from, int i, Inventory* to);
 
+/// Move every stack from `from` into `to`, as much as fits. Returns how many items moved.
+int TransferAll(Inventory* from, Inventory* to);
+/// Move stacks from `from` whose item `to` already holds (quick-stack). Returns items moved.
+int TransferMatching(Inventory* from, Inventory* to);
+/// Compact, re-split by maxStack, and order by display name. Does nothing (and returns
+/// false) when the packed stacks would not fit, so a sort never drops items.
+bool SortByName(Inventory* inv);
+
 /// Take `n` out of slot `i` (dropped into the world by the caller).
 InvResult Drop(Inventory* inv, int i, int n = 1);
 

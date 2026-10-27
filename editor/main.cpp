@@ -28069,6 +28069,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("If this object (or a child) has a Character, replicate its animation + punches too.");
             if (ImGui::Checkbox("Players can claim it##ns", &ns->clientClaimable)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("With an Anti-Cheat Config, an object nobody owns is the host's: no player may move it or change its variables. Tick this for objects any player may grab (a ball): the first one to move it owns it.");
+            if (ns->authority == NetworkSync::Authority::Manual && !ns->clientClaimable)
+                ImGui::TextDisabled("Anti-cheat on: players can't move this or write its variables until \"Players can claim it\" is on.");
             if (ImGui::SmallButton("Remove##ns")) toRemove = ns;
         }
     }

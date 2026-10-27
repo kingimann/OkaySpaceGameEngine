@@ -771,8 +771,22 @@ inline void WriteShowcaseTextures() {
 inline GameObject* AddUIShowcase(Scene& scene) {
     using namespace detail;
     WriteShowcaseTextures();
-    const float W = 1880.0f, H = 620.0f, colW = 360.0f, colH = 560.0f;
+    // Wider than a 1280x720 canvas on purpose. Scale With Screen Size + Expand
+    // fits every column on the game view (a 1280 canvas clips Sci-fi and Fantasy).
+    // A scene that already has a canvas keeps it; the showcase gets its own.
+    const float W = 1880.0f, H = 640.0f, colW = 360.0f, colH = 560.0f;
+    const bool freshCanvas = scene.FindObjectOfType<Canvas>() == nullptr;
     GameObject* canvas = EnsureCanvas(scene);
+    if (!freshCanvas) {
+        canvas = scene.CreateGameObject("UI Showcase Canvas");
+        auto* cv = canvas->AddComponent<Canvas>();
+        cv->scaleMode = Canvas::ScaleMode::ScaleWithScreenSize;
+        cv->screenMatch = Canvas::ScreenMatch::Expand;
+        cv->referenceResolution = {W, H};
+        cv->sortOrder = 50;
+    } else if (Canvas* cv = canvas->GetComponent<Canvas>()) {
+        cv->referenceResolution = {W, H};
+    }
     GameObject* root = Group(scene, canvas, "UI Showcase");
 
     GameObject* bg = Child(scene, root, "Backdrop");
@@ -854,9 +868,10 @@ inline GameObject* AddUIShowcase(Scene& scene) {
 
         GameObject* scroller = Child(scene, card, "Log");
         auto* sv = scroller->AddComponent<UIScrollView>();
-        sv->position = {12.0f, 334.0f}; sv->size = {220.0f, 64.0f};
+        sv->position = {12.0f, 334.0f}; sv->size = {220.0f, 48.0f};
         Text(scene, scroller, "LineA", "Quest log", UIAnchor::TopLeft, {8.0f, 6.0f}, {180.0f, 18.0f}, 13.0f, Color::White);
-        Text(scene, scroller, "LineB", "More below", UIAnchor::TopLeft, {8.0f, 40.0f}, {180.0f, 18.0f}, 13.0f, Color::White);
+        Text(scene, scroller, "LineB", "More below", UIAnchor::TopLeft, {8.0f, 28.0f}, {180.0f, 18.0f}, 13.0f, Color::White);
+        Text(scene, scroller, "LineC", "Still going", UIAnchor::TopLeft, {8.0f, 72.0f}, {180.0f, 18.0f}, 13.0f, Color::White);
 
         GameObject* ring = Child(scene, card, "Cooldown");
         auto* rad = ring->AddComponent<UIRadialProgress>();

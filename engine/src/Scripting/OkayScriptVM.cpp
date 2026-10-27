@@ -251,12 +251,14 @@ struct Token {
     double number = 0.0;
     int line = 0;
     bool suffix = false;   ///< a number written with a C# suffix (5f, 2d)
+    int column = 0;        ///< 1-based column where this token starts
 };
 
 struct ScriptError : std::runtime_error {
     using std::runtime_error::runtime_error;
     int line = 0;                                  // source line (0 = unknown)
-    ScriptError(const std::string& msg, int ln) : std::runtime_error(msg), line(ln) {}
+    int column = 0;                                // 1-based column (0 = unknown)
+    ScriptError(const std::string& msg, int ln, int col = 0) : std::runtime_error(msg), line(ln), column(col) {}
 };
 
 class Lexer {
@@ -268,28 +270,33 @@ public:
         while (!AtEnd()) {
             SkipTrivia();
             if (AtEnd()) break;
+            const int line = m_line, col = m_col;
             char c = Peek();
-            if (std::isdigit((unsigned char)c) || (c == '.' && std::isdigit((unsigned char)Peek(1))))
-                out.push_back(Number());
-            else if (std::isalpha((unsigned char)c) || c == '_')
-                out.push_back(Ident());
-            else if (c == '"')
-                out.push_back(String());
-            else if (c == '\'')
-                out.push_back(CharLiteral());
-            else if (c == '$' && Peek(1) == '"')
-                out.push_back(InterpString());
-            else
-                out.push_back(Operator());
+            Token t = (std::isdigit((unsigned char)c) || (c == '.' && std::isdigit((unsigned char)Peek(1)))) ? Number()
+                    : (std::isalpha((unsigned char)c) || c == '_') ? Ident()
+                    : c == '"' ? String()
+                    : c == '\'' ? CharLiteral()
+                    : (c == '$' && Peek(1) == '"') ? InterpString()
+                    : Operator();
+            t.line = line;
+            t.column = col;
+            out.push_back(std::move(t));
         }
-        out.push_back({Tok::End, "", 0, m_line});
+        Token end{Tok::End, "", 0, m_line};
+        end.column = m_col;
+        out.push_back(std::move(end));
         return out;
     }
 
 private:
     bool AtEnd() const { return m_pos >= m_src.size(); }
     char Peek(int o = 0) const { return (m_pos + o < m_src.size()) ? m_src[m_pos + o] : '\0'; }
-    char Advance() { char c = m_src[m_pos++]; if (c == '\n') ++m_line; return c; }
+    char Advance() {
+        char c = m_src[m_pos++];
+        if (c == '\n') { ++m_line; m_col = 1; }
+        else if (c != '\r') ++m_col;
+        return c;
+    }
 
     void SkipTrivia() {
         while (!AtEnd()) {
@@ -319,6 +326,7 @@ private:
     }
 
     Token String() {
+        const int sl = m_line, sc = m_col;
         Advance(); // opening quote
         std::string s;
         while (!AtEnd() && Peek() != '"') {
@@ -331,13 +339,14 @@ private:
             }
             s += c;
         }
-        if (AtEnd()) throw ScriptError("unterminated string");
+        if (AtEnd()) throw ScriptError("unterminated string", sl, sc);
         Advance(); // closing quote
         return {Tok::String, s, 0, m_line};
     }
 
     // C# char literal 'x' (or '\n') — a one-character string.
     Token CharLiteral() {
+        const int sl = m_line, sc = m_col;
         Advance();   // opening quote
         std::string s;
         while (!AtEnd() && Peek() != '\'' && Peek() != '\n') {
@@ -348,7 +357,7 @@ private:
             }
             s += c;
         }
-        if (AtEnd() || Peek() != '\'') throw ScriptError("unterminated character literal", m_line);
+        if (AtEnd() || Peek() != '\'') throw ScriptError("unterminated character literal", sl, sc);
         Advance();   // closing quote
         return {Tok::String, s, 0, m_line};
     }
@@ -356,6 +365,7 @@ private:
     // C#-style interpolated string: $"Score: {score}". The raw inner text (with
     // {expr} markers preserved) is stored; the parser splits and compiles it.
     Token InterpString() {
+        const int sl = m_line, sc = m_col;
         Advance(); // '$'
         Advance(); // opening quote
         std::string s;
@@ -369,7 +379,7 @@ private:
             }
             s += c;
         }
-        if (AtEnd()) throw ScriptError("unterminated string");
+        if (AtEnd()) throw ScriptError("unterminated string", sl, sc);
         Advance(); // closing quote
         return {Tok::InterpString, s, 0, m_line};
     }
@@ -396,6 +406,7 @@ private:
     }
 
     Token Operator() {
+        const int sl = m_line, sc = m_col;
         char c = Advance();
         auto two = [&](char n, Tok t) { if (Peek() == n) { Advance(); return Token{t, "", 0, m_line}; } return Token{Tok::End, "", 0, m_line}; };
         switch (c) {
@@ -433,12 +444,13 @@ private:
             case '&': if (Peek() == '&') { Advance(); return {Tok::And, "", 0, m_line}; } return {Tok::BitAnd, "", 0, m_line};
             case '|': if (Peek() == '|') { Advance(); return {Tok::Or, "", 0, m_line}; } return {Tok::BitOr, "", 0, m_line};
         }
-        throw ScriptError(std::string("unexpected character '") + c + "'", m_line);
+        throw ScriptError(std::string("unexpected character '") + c + "'", sl, sc);
     }
 
     const std::string& m_src;
     std::size_t m_pos = 0;
     int m_line = 1;
+    int m_col = 1;
 };
 
 // ===================== AST =====================
@@ -1796,8 +1808,8 @@ public:
     std::vector<ScriptDiagnostic> NoEffectWarnings() const {
         std::vector<ScriptDiagnostic> w;
         std::set<std::pair<int, std::string>> seen;
-        auto add = [&](int line, const std::string& key, const std::string& msg) {
-            if (seen.insert({line, key}).second) w.push_back({line, msg, 1});
+        auto add = [&](int line, int col, const std::string& key, const std::string& msg) {
+            if (seen.insert({line, key}).second) w.push_back({line, msg, 1, col});
         };
         static const std::unordered_map<std::string, const char*> kMods = {
             {"virtual",   "`virtual` does nothing: scripts don't inherit from each other. Delete it."},
@@ -1820,30 +1832,30 @@ public:
             const Token& t = m_toks[i];
             const Token& nx = m_toks[i + 1];
             if (t.type == Tok::Number && t.suffix) {
-                add(t.line, "suffix", "`" + t.text + "f`: the letter after the number does nothing (every number is "
+                add(t.line, t.column, "suffix", "`" + t.text + "f`: the letter after the number does nothing (every number is "
                                       "already a decimal). Write " + t.text + ".");
                 continue;
             }
             if (t.type != Tok::Ident) continue;
             if (t.text == "using" && nx.type == Tok::Ident)
-                add(t.line, "using", "`using` does nothing: everything is already available. Delete this line.");
+                add(t.line, t.column, "using", "`using` does nothing: everything is already available. Delete this line.");
             else if (t.text == "namespace" && nx.type == Tok::Ident)
-                add(t.line, "namespace", "`namespace` does nothing. Delete it (and its braces); keep what's inside.");
+                add(t.line, t.column, "namespace", "`namespace` does nothing. Delete it (and its braces); keep what's inside.");
             else if ((t.text == "class" || t.text == "struct") && nx.type == Tok::Ident) {
                 const std::size_t after = SkipTypeSuffix(i + 2);
                 if (m_toks[after].type == Tok::Colon)
-                    add(t.line, "class", "The class wrapper and `: " + m_toks[after + 1].text + "` do nothing: the fields "
+                    add(t.line, t.column, "class", "The class wrapper and `: " + m_toks[after + 1].text + "` do nothing: the fields "
                                          "and methods in this file are the component. Delete the `class " + nx.text +
                                          "` line and its braces.");
                 else
-                    add(t.line, "class", "The class wrapper does nothing: the fields and methods in this file are the "
+                    add(t.line, t.column, "class", "The class wrapper does nothing: the fields and methods in this file are the "
                                          "component. Delete the `class " + nx.text + "` line and its braces.");
             } else if (nx.type == Tok::Ident) {
                 auto m = kMods.find(t.text);
-                if (m != kMods.end()) add(t.line, t.text, m->second);
+                if (m != kMods.end()) add(t.line, t.column, t.text, m->second);
             }
             if (kNeverCalled.count(t.text) && nx.type == Tok::LParen && i > 0 && m_toks[i - 1].type == Tok::Ident)
-                add(t.line, "never", "`" + t.text + "()` is never called by the engine, so this code won't run.");
+                add(t.line, t.column, "never", "`" + t.text + "()` is never called by the engine, so this code won't run.");
         }
         return w;
     }
@@ -1857,7 +1869,7 @@ public:
             try {
                 ParseMember(top, funcs);
             } catch (const ScriptError& e) {
-                diags.push_back({ e.line, e.what() });
+                diags.push_back({ e.line, e.what(), 0, e.column });
                 if (diags.size() >= 100) break;          // stop runaway cascades
                 Synchronize(before);
             }
@@ -1976,7 +1988,7 @@ private:
     bool Check(Tok t) const { return Peek().type == t; }
     bool Match(Tok t) { if (Check(t)) { ++m_pos; return true; } return false; }
     const Token& Expect(Tok t, const char* msg) {
-        if (!Check(t)) throw ScriptError(std::string("parse error: expected ") + msg, Peek().line);
+        if (!Check(t)) throw ScriptError(std::string("parse error: expected ") + msg, Peek().line, Peek().column);
         return m_toks[m_pos++];
     }
 
@@ -2125,19 +2137,19 @@ private:
     }
     // Catch the obvious mistakes while typing: `int lives = "three";`,
     // `string name = 5;`, `int half = 0.5;` (becomes 0).
-    void CheckLiteralInit(unsigned char kind, const std::string& name, Expr* init, int line) {
+    void CheckLiteralInit(unsigned char kind, const std::string& name, Expr* init, int line, int column) {
         const unsigned char t = kind & 0x0F;
         if (!t || !init) return;
         const bool isStr = dynamic_cast<StringExpr*>(init) || dynamic_cast<InterpStringExpr*>(init);
         auto* num = dynamic_cast<NumberExpr*>(init);
         const bool isBool = dynamic_cast<BoolExpr*>(init) != nullptr;
         if ((t == KInt || t == KFloat || t == KBool) && isStr)
-            m_semantic.push_back({line, "'" + name + "' is " + KindName(kind) + ", so it can't hold text"});
+            m_semantic.push_back({line, "'" + name + "' is " + KindName(kind) + ", so it can't hold text", 0, column});
         else if (t == KString && (num || isBool))
-            m_semantic.push_back({line, "'" + name + "' is a string: write the value in quotes"});
+            m_semantic.push_back({line, "'" + name + "' is a string: write the value in quotes", 0, column});
         else if (t == KInt && num && num->v != (double)(long long)num->v)
             m_semantic.push_back({line, "'" + name + "' is an int, so " + Fmt(num->v) + " becomes " +
-                                        Fmt((double)(long long)num->v) + ". Use float for decimals", 1});
+                                        Fmt((double)(long long)num->v) + ". Use float for decimals", 1, column});
     }
     static std::string Fmt(double v) { std::ostringstream o; o << v; return o.str(); }
 
@@ -2233,7 +2245,7 @@ private:
             auto st = std::make_unique<DoWhileStmt>();
             st->body = ParseBlock();
             if (!(Check(Tok::While) || (Check(Tok::Ident) && Peek().text == "while")))
-                throw ScriptError("parse error: expected 'while' after do-block", Peek().line);
+                throw ScriptError("parse error: expected 'while' after do-block", Peek().line, Peek().column);
             ++m_pos;   // 'while'
             Expect(Tok::LParen, "'('");
             st->cond = ParseExpression();
@@ -2256,7 +2268,7 @@ private:
                 } else if (Check(Tok::Ident) && Peek().text == "default") {
                     ++m_pos; c.isDefault = true; Expect(Tok::Colon, "':'");
                 } else {
-                    throw ScriptError("parse error: expected 'case' or 'default' in switch", Peek().line);
+                    throw ScriptError("parse error: expected 'case' or 'default' in switch", Peek().line, Peek().column);
                 }
                 while (!Check(Tok::RBrace) && !Check(Tok::End) &&
                        !(Check(Tok::Ident) && (Peek().text == "case" || Peek().text == "default")))
@@ -2275,16 +2287,18 @@ private:
             std::string name = ConsumeIdentRun("variable name");
             SkipAutoPropertyBody();   // public int Lives { get; set; } = 3;
             ExprPtr init;
-            if (Match(Tok::Assign)) init = ParseExpression();
-            CheckLiteralInit(kind, name, init.get(), declLine);
+            int initCol = Peek().column;
+            if (Match(Tok::Assign)) { initCol = Peek().column; init = ParseExpression(); }
+            CheckLiteralInit(kind, name, init.get(), declLine, initCol);
             if (!Check(Tok::Comma)) { Match(Tok::Semicolon); return std::make_unique<VarDeclStmt>(name, std::move(init), kind); }
             auto multi = std::make_unique<MultiStmt>();   // int a = 1, b = 2;
             multi->list.push_back(std::make_unique<VarDeclStmt>(name, std::move(init), kind));
             while (Match(Tok::Comma)) {
                 std::string n2 = Expect(Tok::Ident, "variable name").text;
                 ExprPtr i2;
-                if (Match(Tok::Assign)) i2 = ParseExpression();
-                CheckLiteralInit(kind, n2, i2.get(), declLine);
+                int col2 = Peek().column;
+                if (Match(Tok::Assign)) { col2 = Peek().column; i2 = ParseExpression(); }
+                CheckLiteralInit(kind, n2, i2.get(), declLine, col2);
                 multi->list.push_back(std::make_unique<VarDeclStmt>(n2, std::move(i2), kind));
             }
             Match(Tok::Semicolon);
@@ -2348,11 +2362,11 @@ private:
         }
         if (Match(Tok::Return)) {
             ExprPtr e;
-            const int retLine = Prev().line;
+            const int retLine = Prev().line, retCol = Prev().column;
             if (!Check(Tok::Semicolon) && !Check(Tok::RBrace)) e = ParseExpression();
             if (e && m_inVoid)
                 m_semantic.push_back({retLine, m_fnName + "() is void, so it can't return a value. "
-                                               "Give it a return type (int, float, bool or string) or just write `return;`"});
+                                               "Give it a return type (int, float, bool or string) or just write `return;`", 0, retCol});
             Match(Tok::Semicolon);
             return std::make_unique<ReturnStmt>(std::move(e));
         }
@@ -2441,7 +2455,7 @@ private:
                 delete ix;
                 return out;
             }
-            throw ScriptError("invalid assignment target");
+            throw ScriptError("invalid assignment target", Peek().line, Peek().column);
         }
         // Compound assignment: x += e  desugars to  x = x + e. Also works on an
         // element target: arr[i] += e / map["k"] += e.
@@ -2464,7 +2478,7 @@ private:
                 delete ix;
                 return out;
             }
-            throw ScriptError("invalid assignment target");
+            throw ScriptError("invalid assignment target", Peek().line, Peek().column);
         }
         // Postfix increment/decrement: x++  ->  x = x + 1  (also x--). Works on an
         // element target too: arr[i]++ / map["k"]--.
@@ -2483,7 +2497,7 @@ private:
                 delete ix;
                 return out;
             }
-            throw ScriptError("invalid increment target");
+            throw ScriptError("invalid increment target", Peek().line, Peek().column);
         }
         return left;
     }
@@ -2492,7 +2506,7 @@ private:
     static constexpr int kMaxOperators = 1000;
     void CountOperator() {
         if (++m_operators > kMaxOperators)
-            throw ScriptError("parse error: expression is too long (more than " + std::to_string(kMaxOperators) + " operators)", Peek().line);
+            throw ScriptError("parse error: expression is too long (more than " + std::to_string(kMaxOperators) + " operators)", Peek().line, Peek().column);
     }
     // a ?? b ?? c groups to the right, below || and above ?:.
     ExprPtr ParseCoalesce() {
@@ -2551,7 +2565,7 @@ private:
     ExprPtr ParseUnary() {
         // Every nested expression ('(', '-', '!', ...) comes through here: cap the
         // depth so thousands of them are a parse error, not a stack overflow.
-        if (m_nesting >= 256) throw ScriptError("parse error: expression nested too deeply", Peek().line);
+        if (m_nesting >= 256) throw ScriptError("parse error: expression nested too deeply", Peek().line, Peek().column);
         struct NestGuard { int& n; explicit NestGuard(int& d) : n(d) { ++n; } ~NestGuard() { --n; } } guard(m_nesting);
         if (Check(Tok::Minus) || Check(Tok::Not)) { Tok op = Peek().type; ++m_pos; return std::make_unique<UnaryExpr>(op, ParseUnary()); }
         // Prefix ++x / --x  ->  x = x + 1 / x = x - 1.
@@ -2559,7 +2573,7 @@ private:
             Tok bin = Peek().type == Tok::Inc ? Tok::Plus : Tok::Minus; ++m_pos;
             ExprPtr target = ParseUnary();
             auto* var = dynamic_cast<VarExpr*>(target.get());
-            if (!var) throw ScriptError("invalid increment target");
+            if (!var) throw ScriptError("invalid increment target", Peek().line, Peek().column);
             std::string name = var->n;
             auto combined = std::make_unique<BinaryExpr>(
                 bin, std::make_unique<VarExpr>(name), std::make_unique<NumberExpr>(1.0));
@@ -2761,7 +2775,7 @@ private:
                 return std::make_unique<NumberExpr>(it->second);   // State.Run -> 1
             return std::make_unique<VarExpr>(name);
         }
-        throw ScriptError("parse error: unexpected token", Peek().line);
+        throw ScriptError("parse error: unexpected token", Peek().line, Peek().column);
     }
 
     std::vector<Token> m_toks;
@@ -8357,8 +8371,12 @@ bool OkayScriptVM::Load(const std::string& source, std::string* error) {
         m_impl->loaded = true; return true;
     } catch (const ScriptError& e) {
         // Prefix the source line when known, so editors can show a diagnostic.
-        std::string msg = e.line > 0 ? "line " + std::to_string(e.line) + ": " + e.what()
-                                     : std::string(e.what());
+        std::string msg = e.what();
+        if (e.line > 0) {
+            std::string where = "line " + std::to_string(e.line);
+            if (e.column > 0) where += ", column " + std::to_string(e.column);
+            msg = where + ": " + msg;
+        }
         if (error) *error = msg;
         Log::Error("OkayScript: ", msg);
         m_impl->loaded = false;
@@ -8394,8 +8412,15 @@ bool OkayScriptVM::Validate(const std::string& source, std::string* error) {
         parser.ParseProgram(throwaway);
         return true;
     } catch (const ScriptError& e) {
-        if (error) *error = e.line > 0 ? "line " + std::to_string(e.line) + ": " + e.what()
-                                       : std::string(e.what());
+        if (error) {
+            std::string msg = e.what();
+            if (e.line > 0) {
+                std::string where = "line " + std::to_string(e.line);
+                if (e.column > 0) where += ", column " + std::to_string(e.column);
+                msg = where + ": " + msg;
+            }
+            *error = msg;
+        }
         return false;
     } catch (const std::exception& e) {
         if (error) *error = e.what();
@@ -8413,7 +8438,7 @@ std::vector<ScriptDiagnostic> OkayScriptVM::ValidateAll(const std::string& sourc
         Parser parser(lex.Scan());
         diags = parser.ParseProgramRecovering();
     } catch (const ScriptError& e) {
-        diags.push_back({ e.line, e.what() });
+        diags.push_back({ e.line, e.what(), 0, e.column });
     } catch (const std::exception& e) {
         diags.push_back({ 0, e.what() });
     }

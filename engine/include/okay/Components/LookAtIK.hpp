@@ -6,6 +6,12 @@
 // clamped so it eases in and never snaps the neck past a believable limit.
 //
 // Assign `chain` root-to-tip and either `target` (world point) or `targetObject`.
+//
+// Smoothing lives on the component (a world look direction per bone), not in the
+// bone. An animated bone is a fresh pose every frame, so easing the bone's own
+// rotation would shrink with the frame time and never arrive. The direction
+// eases with 1-exp(-smoothing*dt); each frame the animated pose turns toward
+// that direction and `weight` blends the turn.
 // ---------------------------------------------------------------------------
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -15,7 +21,9 @@
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Math/IKFade.hpp"
+#include "okay/Math/IKMath.hpp"
 #include "okay/Components/IKBones.hpp"
+#include "okay/Components/IKRestore.hpp"
 #include <cmath>
 #include <vector>
 #include <string>
@@ -35,9 +43,9 @@ public:
     bool  ikActive = true;             ///< switch IK on/off; the change eases over fadeTime
     float fadeTime = 0.0f;             ///< seconds to blend IK in/out (0 = instant)
     float maxAngle = 80.0f;            ///< max turn per bone (degrees), keeps it natural
-    /// Ease speed (per second) toward the look target: heads swing smoothly to a
-    /// new target instead of snapping the frame it changes. 0 = instant (old
-    /// behavior). ~10 reads like a natural head turn.
+    /// Ease speed (per second) of the look direction toward the target. The bone
+    /// still reaches the target at any frame rate; only the swing takes time.
+    /// 0 = instant. ~10 reads like a natural head turn.
     float smoothing = 10.0f;
 
     void Start() override {
@@ -50,42 +58,83 @@ public:
         if (!targetObject) targetObject = ResolveBone(s, gameObject, targetName);
     }
 
+    void Update(float) override { m_restore.Restore(); }   // before the animator blends (see IKRestore.hpp)
+
     // Solve in LateUpdate so the correction lands AFTER every animation driver
     // has posed the bones this frame (imported rigs create their per-node
     // Animators lazily, which puts them late in the Update order).
     void LateUpdate(float dt) override {
+        // Last frame's writes come off first, so a still bone (and a rotation-only
+        // clip) shows the animated pose before this solve. Weight 0 leaves it there.
+        m_restore.Restore();
         const float w = weight * m_fade.Step(ikActive, fadeTime, dt);
-        if (w <= 0.0f || chain.empty()) return;
-        Vec3 tgt = targetObject ? targetObject->Position() : target;
-        // Bone rotations persist between frames, so applying `ease` of the way per
-        // frame converges on the target — a smooth swing instead of a snap when
-        // the target (or targetObject) jumps.
-        float ease = smoothing > 0.0f ? (1.0f - std::exp(-smoothing * dt)) : 1.0f;
-        // Root-to-tip: each bone aims its forward at the target. Processing in order
-        // means later bones see the positions their parents just moved them to.
-        if (m_base.size() != chain.size()) { m_base.assign(chain.size(), Quat::Identity); m_written.assign(chain.size(), Quat{0, 0, 0, 0}); }
+        if (w <= 0.0f || chain.empty()) { ForgetAim(); return; }
+
+        if (m_smooth.size() != chain.size()) { m_smooth.assign(chain.size(), {}); m_haveTgt = false; }
+
+        const Vec3 tgt = targetObject ? targetObject->Position() : target;
+        if (!Finite(tgt)) return;
+        const Vec3 tgtChar = InCharacter(tgt);
+        const bool tgtJump = m_haveTgt && Jumped(tgtChar, m_tgtChar);
+        const float ease = smoothing > 0.0f ? (1.0f - std::exp(-smoothing * dt)) : 1.0f;
+
+        // Root-to-tip: each bone aims its forward at the target. Later bones see
+        // the positions their parents just moved them to.
         for (std::size_t i = 0; i < chain.size(); ++i) {
             Transform* b = chain[i];
             if (!b) continue;
-            // maxAngle limits each bone's TOTAL turn from its pre-IK pose (this
-            // frame's animated pose, or the pose IK took over from), not the step.
-            if (!SameRot(b->localRotation, m_written[i])) m_base[i] = b->localRotation;
-            Vec3 dir = tgt - b->Position();
-            if (dir.SqrMagnitude() < 1e-8f) continue;
-            dir = dir.Normalized();
-            const Quat baseW = (b->Parent() ? b->Parent()->Rotation() : Quat::Identity) * m_base[i];
-            Vec3 fwd = (baseW * forwardAxis).Normalized();
-            Quat desired = (Quat::FromToRotation(fwd, dir) * baseW).Normalized();
-            const float total = Quat::Angle(baseW, desired);
-            if (total > maxAngle && total > 1e-4f) desired = Quat::Slerp(baseW, desired, maxAngle / total);
-            b->SetRotation(Quat::Slerp(b->Rotation(), desired, w * ease));
-            m_written[i] = b->localRotation;
+            Smooth& s = m_smooth[i];
+            if (s.bone != b) { s = {}; s.bone = b; }
+
+            const Vec3 raw = tgt - b->Position();
+            if (!Finite(raw) || raw.SqrMagnitude() < 1e-8f) continue;
+            const Vec3 goal = SafeNormalize(raw, Vec3::Forward);
+            const Vec3 boneChar = InCharacter(b->Position());
+            const bool snap = !s.have || smoothing <= 0.0f || tgtJump || (s.have && Jumped(boneChar, s.boneChar));
+            s.dir = snap ? goal : SafeNormalize(Vec3::LerpUnclamped(s.dir, goal, ease), goal);
+            s.have = true;
+            s.boneChar = boneChar;
+
+            const Quat animated = b->Rotation();
+            const Vec3 fwd = SafeNormalize(animated * forwardAxis, Vec3::Forward);
+            Quat desired = (Quat::FromToRotation(fwd, s.dir) * animated).Normalized();
+            if (!Finite(desired)) continue;
+            const float total = Quat::Angle(animated, desired);
+            if (total > maxAngle && total > 1e-4f) desired = Quat::Slerp(animated, desired, maxAngle / total);
+            m_restore.Touch(b);
+            BlendWorldRotation(b, animated, desired, w);
         }
+        m_tgtChar = tgtChar;
+        m_haveTgt = true;
+        m_restore.Commit();
     }
 private:
-    static bool SameRot(const Quat& a, const Quat& b) { return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w; }
+    /// A goal or bone that leaps this far in one frame (character space, metres
+    /// squared) is a teleport: snap the look instead of trailing across the map.
+    static constexpr float kSnapDist2 = 4.0f;
+
+    struct Smooth {
+        Transform* bone = nullptr;
+        Vec3 dir = Vec3::Forward;
+        Vec3 boneChar = Vec3::Zero;
+        bool have = false;
+    };
+
+    Vec3 InCharacter(const Vec3& world) const {
+        if (!transform) return world;
+        return transform->Rotation().Inverse() * (world - transform->Position());
+    }
+    static bool Jumped(const Vec3& now, const Vec3& prev) {
+        const Vec3 d = now - prev;
+        return !Finite(d) || d.SqrMagnitude() > kSnapDist2;
+    }
+    void ForgetAim() { m_smooth.clear(); m_haveTgt = false; }
+
     IKFade m_fade;
-    std::vector<Quat> m_base, m_written;   // per bone: pre-IK local rotation / what IK last wrote
+    IKRestore m_restore;
+    std::vector<Smooth> m_smooth;
+    Vec3 m_tgtChar = Vec3::Zero;
+    bool m_haveTgt = false;
 };
 
 } // namespace okay

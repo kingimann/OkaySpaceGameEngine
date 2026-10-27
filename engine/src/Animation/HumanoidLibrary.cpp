@@ -321,6 +321,7 @@ void DefaultGraph(AnimStateMachine& sm, const Character* body) {
     sm.anyState = {To("Jump", 0.1f, {If(C::FloatGreater, "airTime", 0.12f), If(C::FloatGreater, "verticalSpeed", 0.4f), Not("prone")}),
                    To("Fall", 0.1f, {If(C::FloatGreater, "airTime", 0.12f), If(C::FloatLess, "verticalSpeed", 0.4f), Not("prone")})};
 
+    ApplyCrossfades(sm);
     ApplyStanceTimes(sm);
 
     // Graph layout: standing, crouched, prone and getting up/down, air, gestures.
@@ -364,8 +365,41 @@ void ApplyStanceTimes(AnimStateMachine& sm) {
             else if (to == 0)     tr.blend = t.proneStand;                     // prone -> stand (on the move)
             else if (from == 0)   tr.blend = t.standCrouch + t.crouchProne;    // stand -> prone (on the move)
             else                  tr.blend = t.crouchProne;                    // crouch <-> prone
+            // Either state can cut the blend short, so a change of mind mid-way
+            // eases back instead of waiting the transition out.
+            tr.interruption = SM::Transition::Interrupt::NextThenCurrent;
         }
     }
+}
+
+void ApplyCrossfades(AnimStateMachine& sm) {
+    const GaitCrossfades& x = sm.crossfades;
+    auto loc = [](const std::string& n) { return n == "Idle" || n == "Walk" || n == "Run"; };
+    auto air = [](const std::string& n) { return n == "Jump" || n == "Fall"; };
+    using I = SM::Transition::Interrupt;
+    auto arm = [&](SM::Transition& tr, float blend) {
+        tr.blend = blend;
+        tr.interruption = I::NextThenCurrent;
+    };
+    for (SM::State& st : sm.states) {
+        for (SM::Transition& tr : st.transitions) {
+            if (loc(st.name) && loc(tr.to)) {
+                const bool run = st.name == "Run" || tr.to == "Run";
+                const bool walk = st.name == "Walk" || tr.to == "Walk";
+                if (run && walk) arm(tr, x.walkRun);          // walk <-> run
+                else if (run)    arm(tr, x.walkRun);          // idle <-> run
+                else             arm(tr, x.idleWalk);         // idle <-> walk
+            } else if (air(st.name) && (loc(tr.to) || tr.to == "Land")) {
+                arm(tr, x.airGround);
+            } else if (st.name == "Land" && loc(tr.to)) {
+                arm(tr, tr.to == "Run" ? x.walkRun : x.idleWalk);
+            }
+        }
+    }
+    // Into the air. The target's own transitions already bring it back down, so
+    // the source's ground transitions must not yank the jump short.
+    for (SM::Transition& tr : sm.anyState)
+        if (tr.to == "Jump" || tr.to == "Fall") tr.blend = x.groundAir;
 }
 
 AnimStateMachine* EnsureAnimator(GameObject* go) {

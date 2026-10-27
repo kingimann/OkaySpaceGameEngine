@@ -31807,6 +31807,47 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##tp")) toRemove = tp;
         }
     }
+    // grok/view-toggle: one player, first person or third, switched at play.
+    if (auto* pv = dynamic_cast<PlayerView*>(curComp)) {
+        if (CompHeader("Player View", pv, &toRemove)) {
+            if (ImGui::Checkbox("Allow Toggle##pv", &pv->allowToggle)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("V (or the gamepad button) switches first and third person. Off leaves the controller's camera alone.");
+            {
+                int view = (pv->defaultView == PlayerView::View::First) ? 0 : 1;
+                const char* views[] = {"First person", "Third person"};
+                if (ImGui::Combo("Default View##pv", &view, views, 2)) {
+                    pv->defaultView = view == 0 ? PlayerView::View::First : PlayerView::View::Third;
+                    ed.dirty = true;
+                }
+            }
+            if (KeyBindCombo("Toggle Key##pv", pv->toggleKey)) ed.dirty = true;
+            {
+                const char* padBtns[] = {"None","A","B","X","Y","Back","Start","L","R","D-pad Up","D-pad Down","D-pad Left","D-pad Right"};
+                int sel = pv->toggleGamepadButton + 1;
+                if (sel < 0 || sel > 12) sel = 0;
+                ImGui::SetNextItemWidth(130);
+                if (ImGui::Combo("Toggle Pad Button##pv", &sel, padBtns, IM_ARRAYSIZE(padBtns))) {
+                    pv->toggleGamepadButton = sel - 1; ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gamepad button that switches view. Back is the right-stick stand-in (the engine has no stick-click id).");
+            }
+            if (ImGui::DragFloat("Blend Time##pv", &pv->blendTime, 0.01f, 0.0f, 3.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How long a full switch takes. Reversing starts from wherever the camera is.");
+            {
+                float eye[3] = {pv->eyeOffset.x, pv->eyeOffset.y, pv->eyeOffset.z};
+                if (ImGui::DragFloat3("Eye Offset##pv", eye, 0.01f)) {
+                    pv->eyeOffset = {eye[0], eye[1], eye[2]}; ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Added at the eyes. +X right, +Y up, +Z back.");
+            }
+            if (ImGui::DragFloat("Third Person Distance##pv", &pv->thirdPersonDistance, 0.05f, -1.0f, 40.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Orbit distance while this view is driving. -1 uses the controller's own distance.");
+            if (ImGui::DragFloat("Shoulder Offset##pv", &pv->shoulderOffset, 0.01f, -3.0f, 3.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Over-the-shoulder shift while this view is driving.");
+            ImGui::TextDisabled("Sits on a First Person or Third Person controller. V eases between the eyes and the orbit.");
+            if (ImGui::SmallButton("Remove##pv")) toRemove = pv;
+        }
+    }
     if (auto* td = dynamic_cast<TopDownController*>(curComp)) {
         if (CompHeader("Top Down Controller", td, &toRemove)) {
             if (StanceControlFields(td->stanceControl, "td")) ed.dirty = true;
@@ -34816,6 +34857,15 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<CharacterController3D>(), "Character Controller 3D")) { ed.PushUndo(); go->AddComponent<CharacterController3D>(); SetupControllerBody(ed, go); ed.dirty = true; }
             if (item(!go->GetComponent<FirstPersonController>(), "First Person Controller")) { ed.PushUndo(); go->AddComponent<FirstPersonController>(); SetupControllerBody(ed, go); ed.dirty = true; }
             if (item(!go->GetComponent<ThirdPersonController>(), "Third Person Controller")) { ed.PushUndo(); go->AddComponent<ThirdPersonController>(); SetupControllerBody(ed, go); ed.dirty = true; }
+            // grok/view-toggle
+            if (item(!go->GetComponent<PlayerView>(), "Player View (first / third toggle)")) {
+                ed.PushUndo();
+                auto* pv = go->AddComponent<PlayerView>();
+                pv->allowToggle = true;
+                if (go->GetComponent<FirstPersonController>() && !go->GetComponent<ThirdPersonController>())
+                    pv->defaultView = PlayerView::View::First;
+                ed.dirty = true;
+            }
             if (item(!go->GetComponent<TopDownController>(), "Top Down Controller (3D)")) { ed.PushUndo(); go->AddComponent<TopDownController>(); SetupControllerBody(ed, go); ed.dirty = true; }
             if (item(!go->GetComponent<TopDownShooterController>(), "Top Down Shooter Controller (3D)")) { ed.PushUndo(); go->AddComponent<TopDownShooterController>(); SetupControllerBody(ed, go); ed.dirty = true; }
             if (item(!go->GetComponent<Platformer25DController>(), "2.5D Platformer Controller (LittleBigPlanet)")) { ed.PushUndo(); go->AddComponent<Platformer25DController>()->frontLayerZ = go->transform->Position().z; SetupControllerBody(ed, go); ed.dirty = true; }

@@ -1,5 +1,58 @@
 OkaySpace Game Engine — Changelog
 
+v2.834.0
+  Animation and characters
+  - Crawling goes four ways, and lying down and getting up play real
+    get-up and drop moves instead of snapping; stance crossfades follow
+    the Animator's stance times (#371).
+  - Crouch and prone work on every movement controller: first and third
+    person, top-down, click-to-move and the shooter (#375).
+  - Limb IK turns the arm or leg bones instead of moving joints, so a
+    skinned mesh bends with it, blends smoothly by weight, and the elbow or
+    knee no longer flips as the limb straightens (#388, #395).
+  - Two copies of the same imported character each find their own bones
+    for IK, instead of the second grabbing the first's (#395).
+  - Holding: the body leans and adjusts for what it carries, and a heavy
+    load slows the player down (#389).
+  - Fixed: a held object no longer drops out of the hands when the
+    character goes prone, crawls, gets up or drops down (#397).
+  Inventory
+  - World pickups and drops, using the item in your hand, encumbrance
+    (an over-full bag slows you down, opt-in) and loot tables (#359).
+  In-game UI
+  - Free anchors and pivot on every UI element (UIFrame), with old layouts
+    converted automatically (#381).
+  - A modal stack, context menus and a key-binding field (#386).
+  - Two-way gamepad navigation and touch input (#391).
+  Scripting
+  - Typed OkayScript gains lambdas, Func / Action and LINQ-style list
+    methods (#379).
+  Multiplayer and voice
+  - Voice calls work on the new relay hub, and the relay caps sessions per
+    address (#393).
+  Multiplayer security (anti-cheat)
+  - Bans keep players out: a banned account or machine gets no session
+    ticket, so no ticket-checking server lets it in (#350).
+  - Tickets are bound to one server, one session and one connection, so a
+    stolen ticket can't be replayed elsewhere (#360).
+  - The anti-cheat SQL: nobody can lift their own ban, and only listed
+    server accounts can file server kicks (#392). Apply docs/sql/anticheat.sql
+    and redeploy the session-ticket function to use these.
+  - Joins check encryption first, then the password and sign-in, with
+    per-address attempt limits that back off up to 5 minutes (#365).
+  - Budgets and strikes survive a reconnect, and a kicked player waits out a
+    growing cooldown before rejoining (#363).
+  - SyncVar, message and spawn size limits per client (#368).
+  - Safer defaults: a broken anti-cheat config refuses joins instead of
+    running open, and a plaintext session cookie stops spoofed leaves when
+    encryption is off (#384).
+  - Lag compensation can't be stretched by a client faking a long round
+    trip (#376).
+  - Pings only from players, over-rate messages left unacknowledged, press
+    limits, and dead pawns can't shoot (#390).
+  - Trusted anti-cheat keys ship in the launcher only; the release warns
+    when built without them (#394).
+
 v2.833.0
   Animation and characters
   - Stance changes are smooth: going between standing, crouching and prone

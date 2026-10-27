@@ -651,6 +651,37 @@ int main() {
         CHECK(!ch->OwnerViewArm2() || !ch->OwnerViewArm2()->active);
         GameObject* item = scene.Find("FP_OwnerItem");
         CHECK(item && item->active && item->firstPersonOnly);
+        // The hold sits close to the lens, and a forearm runs down from the wrist
+        // so the hand is not a brick floating in the middle of the view.
+        {
+            GameObject* fore = nullptr;
+            GameObject* hand = nullptr;
+            if (ch->OwnerViewArm() && ch->OwnerViewArm()->transform)
+                for (Transform* c : ch->OwnerViewArm()->transform->Children()) {
+                    if (!c || !c->gameObject) continue;
+                    if (c->gameObject->name == "FP_OwnerFore") fore = c->gameObject;
+                    for (Transform* h : c->Children())
+                        if (h && h->gameObject && h->gameObject->name == "FP_OwnerHand") hand = h->gameObject;
+                }
+            auto* fmr = fore ? fore->GetComponent<MeshRenderer>() : nullptr;
+            CHECK(fore && fore->active && fmr && fmr->enabled && fmr->mesh.vertices.size() >= 8);
+            auto* hmr = hand ? hand->GetComponent<MeshRenderer>() : nullptr;
+            CHECK(hand && hmr && !hmr->mesh.vertices.empty());
+            float handMinY = 1.0e9f, foreMinY = 1.0e9f, handFar = 0.0f;
+            auto measure = [&](GameObject* g, float& minY, float* far) {
+                auto* mr = g->GetComponent<MeshRenderer>();
+                for (const Vec3& v : mr->mesh.vertices) {
+                    const Vec3 local = cam->transform->InverseTransformPoint(g->transform->TransformPoint(v));
+                    minY = std::min(minY, local.y);
+                    if (far) *far = std::max(*far, -local.z);
+                }
+            };
+            measure(hand, handMinY, &handFar);
+            measure(fore, foreMinY, nullptr);
+            CHECK(foreMinY < handMinY - 0.04f);
+            CHECK(handFar < 0.42f);
+            CHECK(handFar > 0.15f);
+        }
 
         hold->Drop();
         GameObject* crate = scene.CreateGameObject("Crate");
@@ -677,6 +708,11 @@ int main() {
                         if (hnd && hnd->gameObject && hnd->gameObject->name == "FP_OwnerHand2")
                             hand2 = hnd->gameObject;
         CHECK(hand2 && hand2->active);
+        if (item && item->transform) {
+            const float ahead = -(cam->transform->InverseTransformPoint(item->transform->Position()).z);
+            CHECK(ahead < 0.50f);
+            CHECK(ahead > 0.20f);
+        }
 
         ch->anim = 3;
         player->GetComponent<FirstPersonController>()->driveAnimation = false;

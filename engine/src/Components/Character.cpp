@@ -1134,6 +1134,38 @@ void PaintFpSleeve(GameObject* fore, const FirstPersonHands::HandSide* side) {
                          side->sleeveColour.b * 0.37f, 1.0f};
 }
 
+// The real forearm, not the optional sleeve. It runs from the wrist down the
+// view and off the bottom edge, so a held hand is an arm rather than a brick
+// floating in front of the lens. `armInCam` is the arm's rotation in camera space.
+void PaintFpForearm(GameObject* fore, GameObject* srcPart, const Quat& armInCam) {
+    if (!fore) return;
+    auto* mr = fore->GetComponent<MeshRenderer>();
+    if (!mr) return;
+    Color col = Color::FromBytes(60, 95, 75);
+    if (srcPart) if (auto* src = srcPart->GetComponent<MeshRenderer>()) col = src->color;
+    Vec3 down = armInCam.Conjugate() * Vec3{0.0f, -1.0f, -0.16f};
+    if (down.SqrMagnitude() < 1e-8f) down = Vec3{0.0f, -1.0f, 0.0f};
+    down = down.Normalized();
+    Vec3 hint = armInCam.Conjugate() * Vec3{0.0f, 0.0f, -1.0f};
+    Vec3 side = hint - down * Vec3::Dot(hint, down);
+    if (side.SqrMagnitude() < 1e-6f) side = Vec3{1.0f, 0.0f, 0.0f};
+    side = side.Normalized();
+    Vec3 up = Vec3::Cross(side, down).Normalized();
+    const float rad = 0.07f;
+    const float start = 0.02f;
+    const float length = 0.62f;
+    Mesh m;
+    Mesh::AppendBox(m, {-rad, start, -rad}, {rad, start + length, rad});
+    for (Vec3& v : m.vertices) v = side * v.x + down * v.y + up * v.z;
+    mr->mesh = std::move(m);
+    mr->mesh.normals.clear();
+    mr->enabled = true;
+    mr->castShadows = false;
+    mr->doubleSided = false;
+    mr->color = col;
+    mr->emissive = Color{col.r * 0.55f, col.g * 0.55f, col.b * 0.55f, 1.0f};
+}
+
 Vec3 FpHandScale(const FirstPersonHands::HandSide* side) {
     if (!side) return Vec3::One;
     return Vec3{side->scale.x * side->size.x, side->scale.y * side->size.y, side->scale.z * side->size.z}
@@ -1178,9 +1210,9 @@ void Character::EnsureOwnerArm(int base) {
     made[1]->transform->SetParent(made[0]->transform, false);
     made[2]->transform->SetParent(made[1]->transform, false);
     for (int i = 0; i < 3; ++i) made[i]->transient = true;
-    // The hand keeps the body's brick (one block, skin or glove). The arm and
-    // the forearm stay in the hierarchy so the hand is still their grandchild,
-    // but they draw nothing.
+    // The hand keeps the body's brick (one block, skin or glove). The upper arm
+    // stays in the hierarchy and draws nothing. The forearm is filled in while
+    // a hold is up, so the hand has an arm under it.
     auto* armMr = made[0]->GetComponent<MeshRenderer>();
     armMr->mesh = Mesh{};
     armMr->enabled = false;
@@ -1410,7 +1442,8 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     const float tanV = std::tan(std::max(0.15f, vFov * 0.5f));
     const float tanH = tanV * aspect;
     const float near = std::max(cam->nearClip, 0.04f);
-    const float depth = std::max(0.46f, near + 0.32f);
+    // Close enough that the hand reads as yours. Farther than this it floats.
+    const float depth = std::max(0.30f, near + 0.14f);
 
     // The body's hand brick. Local +Z (its long axis) points inward. Local +Y,
     // the broad face, points back at the lens and up so it takes the light.
@@ -1567,8 +1600,8 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     Vec3 camOff = cam->transform->Rotation().Conjugate() * (m_ownerArm->transform->Position() - cam->transform->Position());
     // Every vertex, not the single extreme. A nearer corner projects further
     // than a far one, so the shift is the tightest bound across the cube.
-    const float wantNx = side * (0.78f + 0.55f * slide - 0.40f * snap + 0.04f * bobC);
-    const float wantNy = -0.72f - 0.45f * slide + 0.28f * snap + 0.055f * bobS;
+    const float wantNx = side * (0.72f + 0.55f * slide - 0.40f * snap + 0.04f * bobC);
+    const float wantNy = -0.90f - 0.45f * slide + 0.28f * snap + 0.055f * bobS;
     float shiftX = side > 0.0f ? 1.0e9f : -1.0e9f;
     float shiftY = -1.0e9f;
     bool any = false;
@@ -1616,6 +1649,10 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     if (minAhead < keep) {
         const Vec3 fwd = basis * Vec3{0.0f, 0.0f, -1.0f};
         m_ownerArm->transform->SetPosition(m_ownerArm->transform->Position() + fwd * (keep - minAhead));
+    }
+    if (!(fpSide && fpSide->sleeve) && m_ownerFore) {
+        GameObject* forePart = (base + 1 < (int)m_parts.size()) ? m_parts[base + 1] : nullptr;
+        PaintFpForearm(m_ownerFore, forePart, lag * camSpace);
     }
     SetOwnerArmActive(true);
     if (m_ownerItem && !showItem) m_ownerItem->active = false;
@@ -1718,12 +1755,12 @@ void Character::FinishTwoHands(Camera* cam, float depth, float snap, float bobS,
     const Vec3 ext{mx.x - mn.x, mx.y - mn.y, mx.z - mn.z};
     const float worldLong = std::max(std::fabs(lossy.x * ext.x),
                             std::max(std::fabs(lossy.y * ext.y), std::fabs(lossy.z * ext.z)));
-    Vec3 scl = worldLong > 1e-4f ? lossy * (0.26f / worldLong) : Vec3{0.26f, 0.26f, 0.26f};
+    Vec3 scl = worldLong > 1e-4f ? lossy * (0.20f / worldLong) : Vec3{0.20f, 0.20f, 0.20f};
     if (settings && settings->itemScale > 0.0f) scl = scl * settings->itemScale;
     // Tilt the top toward the lens. A face square to the camera sits in shadow.
     Quat irot = Quat::Euler(-36.0f, 12.0f, 0.0f);
     if (settings) irot = Quat::Euler(settings->itemRotation) * irot;
-    Vec3 camOff{0.0f, -0.04f - 0.22f * slide + 0.08f * snap + 0.02f * bobS, -std::max(0.58f, depth + 0.06f)};
+    Vec3 camOff{0.0f, -0.16f - 0.22f * slide + 0.08f * snap + 0.02f * bobS, -std::max(0.36f, depth + 0.02f)};
     camOff.x += 0.02f * bobC;
     if (settings) camOff = camOff + settings->itemOffset;
     camOff = lag * camOff;
@@ -1776,6 +1813,13 @@ void Character::FinishTwoHands(Camera* cam, float depth, float snap, float bobS,
         arm->transform->SetRotation(rot);
         arm->transform->SetPosition(pos);
         arm->active = true;
+        if (!(side && side->sleeve) && hand && hand->transform && hand->transform->Parent()
+            && hand->transform->Parent()->gameObject) {
+            const int part = isLeft ? B_RUPARM : B_LUPARM;
+            GameObject* forePart = (part + 1 < (int)m_parts.size()) ? m_parts[part + 1] : nullptr;
+            PaintFpForearm(hand->transform->Parent()->gameObject, forePart,
+                           cam->transform->Rotation().Conjugate() * rot);
+        }
         (void)snap;
     };
     placeHand(m_ownerArm, m_ownerHand, false, right);

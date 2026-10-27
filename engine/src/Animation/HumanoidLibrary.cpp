@@ -336,13 +336,15 @@ void DefaultGraph(AnimStateMachine& sm, const Character* body) {
         sm.states[i].nx = 40.0f + 220.0f * (float)col;
         sm.states[i].ny = 40.0f + 90.0f * (float)((int)i - kColStart[col]);
     }
+    sm.actionsRev = 0;   // a rebuilt default graph takes every action, including ones already merged
     HumanoidActions::AddStates(sm, body);
 
     // A clip bound to a movement state on the body plays in its place.
     if (!body) return;
     const std::pair<const char*, const std::string*> bound[] = {
         {"Idle", &body->clipIdle}, {"Walk", &body->clipWalk}, {"Run", &body->clipRun},
-        {"Jump", &body->clipJump}, {"Fall", &body->clipFall}, {"Crouch", &body->clipCrouch}};
+        {"Jump", &body->clipJump}, {"Fall", &body->clipFall}, {"Crouch", &body->clipCrouch},
+        {"Dive", &body->clipDive}};
     for (const auto& b : bound) {
         if (b.second->empty()) continue;
         for (SM::State& s : sm.states)

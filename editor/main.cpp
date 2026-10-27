@@ -10868,6 +10868,7 @@ void DrawScriptDocs() {
         fapi("play_clip(\"name\") / stop_clip()", "play a loaded clip / return to built-in");
         fapi("play_action(\"Death\" [, blend]) / is_in_action() / action_time()", "go to a built-in action state (0 if it is missing)");
         fapi("die([\"forward\"|\"back\"|\"left\"|\"right\"]) / die(x, y, z) / revive() / is_dead()", "death anim; x,y,z is where the hit came from");
+        fapi("dive() / can_dive()", "dolphin dive while sprinting on the ground; 1 if a dive can start");
         fapi("play_clip_once(\"name\")", "play a clip once (attack/jump), then return to the previous one");
         fapi("playing_clip() / is_playing_clip()", "active clip name / is one playing");
         fapi("set_anim(n) / get_anim()", "built-in animation index (1 idle, 2 walk, 3 run, ...)");
@@ -11275,6 +11276,7 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"play_clip","play_clip(\"clip\")"}, {"play_clip_once","play_clip_once(\"clip\")"},
         {"play_action","play_action(\"Death\" [, blend])"}, {"is_in_action","is_in_action()"},
         {"action_time","action_time()"}, {"die","die([\"back\"])"}, {"revive","revive()"}, {"is_dead","is_dead()"},
+        {"dive","dive()"}, {"can_dive","can_dive()"},
         {"stop_clip","stop_clip()"}, {"is_playing_clip","is_playing_clip()"},
         {"play_layer","play_layer(\"clip\", \"part\")"}, {"stop_layer","stop_layer()"}, {"anim_event","anim_event(\"name\")"},
         {"play_sound","play_sound(\"name\")"}, {"set_volume","set_volume(v)"},
@@ -17822,6 +17824,7 @@ static const ActionOpInfo kCondOps[] = {
     {"is_moving",  "Is Moving",            "[min speed]",                "Passes if this object's Rigidbody is moving faster than the threshold.", "World"},
     {"is_in_action","Is In Action",       "",                           "Passes while a built-in action (Death, and later dive, sit, ...) is playing.", "Character"},
     {"is_dead",    "Is Dead",             "",                           "Passes while Health says this body is dead, or the Animator `dead` flag is set.", "Character"},
+    {"can_dive",   "Can Dive",            "",                           "Passes when this body can dolphin-dive (sprinting, on the ground, not already diving).", "Character"},
     {"tag_count_lt","Fewer Tagged Than",   "tag count",                  "Passes if fewer than N active objects have this tag (e.g. wave cleared).", "World"},
     {"tag_count_gt","More Tagged Than",    "tag count",                  "Passes if more than N active objects have this tag.",          "World"},
     {"array_has",  "Array Contains",       "array value",                "Passes if the named array contains the value.",                "Arrays"},
@@ -17929,6 +17932,7 @@ static const ActionOpInfo kInstrOps[] = {
     {"play_action", "Play Action",        "action [blend]",       "Go to a built-in action (Death, Death_F, ...). Blend is seconds.", "Character"},
     {"die",         "Die",                "forward|back|left|right", "Play Death. A direction, or x y z for where the hit came from.", "Character"},
     {"revive",      "Revive",             "",                     "Clear dead and get up. A Health stat respawns.",          "Character"},
+    {"dive",        "Dive",               "",                     "Dolphin dive: forward launch while sprinting, then prone.", "Character"},
     {"stop_clip",   "Stop Anim Clip",     "",                     "Return the Character to its built-in / state animation.", "Character"},
     {"play_layer",  "Play Anim Layer",    "clip  arms|upper|bone","Overlay a clip on part of the body (e.g. wave with the arms while walking).", "Character"},
     {"stop_layer",  "Stop Anim Layer",    "",                     "Clear the partial-body animation layer.",                 "Character"},
@@ -18807,7 +18811,8 @@ static const char* ActionOpRequires(const std::string& op) {
     if (op=="play_sound"||op=="set_volume") return "an Audio Source on this object";
     if (op=="play_anim"||op=="stop_anim"||op=="set_anim"||op=="play_clip"||op=="stop_clip"||
         op=="play_layer"||op=="stop_layer"||op=="clip_speed"||op=="anim_event"||
-        op=="play_action"||op=="die"||op=="revive"||op=="is_in_action"||op=="is_dead")
+        op=="play_action"||op=="die"||op=="revive"||op=="is_in_action"||op=="is_dead"||
+        op=="dive"||op=="can_dive")
         return "a Character / Animator on this object";
     if (op=="emit"||op=="particles_on") return "a Particle System on this object";
     if (op=="set_text") return "a Text Renderer on this object";
@@ -19223,8 +19228,9 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
         ImGui::TextDisabled("Use this clip for (click again to unbind):");
         struct Slot { const char* label; std::string* field; };
         Slot slots[] = {{"Idle", &ch->clipIdle}, {"Walk", &ch->clipWalk}, {"Run", &ch->clipRun},
-                        {"Jump", &ch->clipJump}, {"Fall", &ch->clipFall}, {"Crouch", &ch->clipCrouch}};
-        for (int i = 0; i < 6; ++i) {
+                        {"Jump", &ch->clipJump}, {"Fall", &ch->clipFall}, {"Crouch", &ch->clipCrouch},
+                        {"Dive", &ch->clipDive}};
+        for (int i = 0; i < 7; ++i) {
             if (i) ImGui::SameLine();
             const bool on = !clip.name.empty() && *slots[i].field == clip.name;
             if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.30f, 1.0f));
@@ -32189,6 +32195,12 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat("Slide Time##fp", &fp->slideTime, 0.01f, 0.05f, 3.0f, "%.2f s")) ed.dirty = true;
                 if (ImGui::DragFloat("Slide Eye Height##fp", &fp->slideEyeHeight, 0.01f, 0.1f, 2.0f)) ed.dirty = true;
             }
+            if (ImGui::Checkbox("Dive On Prone While Sprinting##fp", &fp->diveOnProneWhileSprinting)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sprint, then press prone: launch forward and land flat.\nCrouch-to-slide is unchanged. Off: prone works as before.");
+            if (fp->diveOnProneWhileSprinting) {
+                if (ImGui::DragFloat("Dive Hop##fp", &fp->diveHop, 0.01f, 0.0f, 1.5f, "%.2f m")) ed.dirty = true;
+                if (ImGui::DragFloat("Dive Slide Time##fp", &fp->diveSlideTime, 0.01f, 0.05f, 2.0f, "%.2f s")) ed.dirty = true;
+            }
             SectionHeader("Animation & IK");
             if (ImGui::Checkbox("Drive State Machine##fp", &fp->driveStateMachine)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets speed, verticalSpeed, grounded, crouch, prone, sprint, slide, aim\nand fires jump / land triggers on an Animator state machine on the player.");
@@ -32358,6 +32370,12 @@ void DrawInspector(EditorState& ed) {
             if (tp->canSlide) {
                 if (ImGui::DragFloat("Slide Speed##tp", &tp->slideSpeed, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
                 if (ImGui::DragFloat("Slide Time##tp", &tp->slideTime, 0.01f, 0.05f, 3.0f, "%.2f s")) ed.dirty = true;
+            }
+            if (ImGui::Checkbox("Dive On Prone While Sprinting##tp", &tp->diveOnProneWhileSprinting)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sprint, then press prone: launch forward and land flat.\nCrouch-to-slide is unchanged.");
+            if (tp->diveOnProneWhileSprinting) {
+                if (ImGui::DragFloat("Dive Hop##tp", &tp->diveHop, 0.01f, 0.0f, 1.5f, "%.2f m")) ed.dirty = true;
+                if (ImGui::DragFloat("Dive Slide Time##tp", &tp->diveSlideTime, 0.01f, 0.05f, 2.0f, "%.2f s")) ed.dirty = true;
             }
             SectionHeader("Animation & IK");
             if (ImGui::Checkbox("Drive State Machine##tp", &tp->driveStateMachine)) ed.dirty = true;
@@ -32827,6 +32845,11 @@ void DrawInspector(EditorState& ed) {
     if (auto* ts = dynamic_cast<ThirdPersonShooterController*>(curComp)) {
         if (CompHeader("Third Person Shooter Controller", ts, &toRemove)) {
             if (StanceControlFields(ts->stanceControl, "ts")) ed.dirty = true;
+            if (ImGui::Checkbox("Dive On Prone While Sprinting##tps", &ts->stanceControl.diveOnProne)) ed.dirty = true;
+            if (ts->stanceControl.diveOnProne) {
+                if (ImGui::DragFloat("Dive Hop##tps", &ts->stanceControl.diveHop, 0.01f, 0.0f, 1.5f, "%.2f m")) ed.dirty = true;
+                if (ImGui::DragFloat("Dive Slide Time##tps", &ts->stanceControl.diveSlideTime, 0.01f, 0.05f, 2.0f, "%.2f s")) ed.dirty = true;
+            }
             SectionHeader("Movement");
             if (ImGui::DragFloat("Walk Speed##tps", &ts->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Run Speed##tps", &ts->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;

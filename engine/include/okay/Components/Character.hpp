@@ -235,6 +235,7 @@ public:
     std::string clipJump;   ///< plays while jumping   (anim == 5)
     std::string clipFall;   ///< plays while falling   (anim == 18)
     std::string clipCrouch; ///< plays while crouching (anim == 6)
+    std::string clipDive;   ///< plays for the dolphin dive (Animator state Dive) when set
     /// True while a state binding (not a manual PlayClip) is driving the current clip.
     bool StateDriven() const { return m_stateDriven; }
 

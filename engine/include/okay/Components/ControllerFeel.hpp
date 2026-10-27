@@ -46,7 +46,7 @@ struct AnimLink {
         bool grounded = true, crouch = false, prone = false, sprint = false, slide = false, aim = false;
         bool swim = false;        ///< in a swim. The graph ignores it until a swim state exists.
         float stance = 0.0f;      ///< eased stance level: 0 stand .. 1 crouch .. 2 prone
-        bool jumped = false, landed = false;
+        bool jumped = false, landed = false, dived = false;
         Vec3 velocity{0, 0, 0};   ///< world velocity: sent as moveX / moveZ in the body's frame (2D blend trees)
     };
     void Apply(GameObject* owner, const Frame& f) {
@@ -75,6 +75,7 @@ struct AnimLink {
         }
         if (f.jumped) m_sm->SetTrigger("jump");
         if (f.landed) m_sm->SetTrigger("land");
+        if (f.dived)  m_sm->SetTrigger("dived");
     }
     AnimStateMachine* machine() const { return m_sm; }
 private:

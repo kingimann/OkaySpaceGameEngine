@@ -185,6 +185,7 @@ const Row kRows[] = {
         {"IsInAction", false, "", "B"},
         {"Die", true, "", ""},
         {"Revive", true, "", ""},
+        {"Dive", true, "", ""},
         {"SetTimeScale", true, "N", ""},
         {"SetBlendShape", true, "N", ""},
         {"GetBlendShape", false, "", "N"},

@@ -6,7 +6,10 @@
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Physics/Collider3D.hpp"
+#include "okay/Physics/Physics3D.hpp"
+#include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Scene/GameObject.hpp"
+#include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
 #include <algorithm>
 #include <cmath>
@@ -204,12 +207,73 @@ void BakeDeath(std::vector<HumanoidLibrary::Entry>& out) {
     AddClip(out, BakeAction("DeadHold_R", {right}, true, {}));
 }
 
+void BakeDive(std::vector<HumanoidLibrary::Entry>& out) {
+    const KeyPose run = FromState(3);
+    const KeyPose prone = FromState(7);
+
+    KeyPose plant = run;
+    plant.bones[B::B_HIPS].x += 22.0f;
+    plant.bones[B::B_TORSO].x += 16.0f;
+    plant.bones[B::B_LTHIGH].x += 26.0f;
+    plant.bones[B::B_RTHIGH].x += 18.0f;
+    plant.bones[B::B_LSHIN].x += 28.0f;
+    plant.bones[B::B_RSHIN].x += 22.0f;
+    plant.bones[B::B_LUPARM] = {24.0f, 0.0f, 28.0f};
+    plant.bones[B::B_RUPARM] = {24.0f, 0.0f, -28.0f};
+    plant.hipY = -0.10f;
+
+    KeyPose launch = run;
+    launch.bones[B::B_HIPS].x = 50.0f;
+    launch.bones[B::B_TORSO].x = 20.0f;
+    launch.bones[B::B_HEAD].x = -14.0f;
+    launch.bones[B::B_LUPARM] = {-78.0f, 0.0f, 16.0f};
+    launch.bones[B::B_RUPARM] = {-78.0f, 0.0f, -16.0f};
+    launch.bones[B::B_LFORE].x = -14.0f;
+    launch.bones[B::B_RFORE].x = -14.0f;
+    launch.bones[B::B_LTHIGH].x = -16.0f;
+    launch.bones[B::B_RTHIGH].x = -8.0f;
+    launch.hipY = -0.02f;
+    launch.rootOffset = {0.0f, 0.0f, 0.05f};
+
+    KeyPose flight = prone;
+    flight.bones[B::B_HIPS].x = 76.0f;
+    flight.bones[B::B_TORSO].x = 10.0f;
+    flight.bones[B::B_HEAD].x = -16.0f;
+    flight.bones[B::B_LUPARM] = {-148.0f, 0.0f, 10.0f};
+    flight.bones[B::B_RUPARM] = {-148.0f, 0.0f, -10.0f};
+    flight.bones[B::B_LFORE].x = -6.0f;
+    flight.bones[B::B_RFORE].x = -6.0f;
+    flight.bones[B::B_LTHIGH].x = 14.0f;
+    flight.bones[B::B_RTHIGH].x = 20.0f;
+    flight.hipY = -0.26f;
+
+    KeyPose chest = prone;
+    chest.bones[B::B_HIPS].x = 84.0f;
+    chest.bones[B::B_LUPARM] = {-128.0f, 0.0f, 18.0f};
+    chest.bones[B::B_RUPARM] = {-128.0f, 0.0f, -18.0f};
+    chest.bones[B::B_LFORE].x = -22.0f;
+    chest.bones[B::B_RFORE].x = -22.0f;
+    chest.hipY = -0.58f;
+
+    // Ends on the prone pose the crawl and get-up already use.
+    const std::vector<std::pair<float, const char*>> ev = {
+        {0.18f, "takeoff"}, {0.50f, "impact"}, {0.70f, "action_end"}};
+    AddClip(out, BakeAction("Dive", {
+        At(run, 0.0f), At(plant, 0.12f), At(launch, 0.22f), At(flight, 0.40f),
+        At(chest, 0.55f), At(prone, 0.70f)}, false, ev));
+
+    KeyPose absorb = flight;
+    absorb.hipY = -0.40f;
+    const std::vector<std::pair<float, const char*>> landEv = {{0.08f, "impact"}, {0.28f, "action_end"}};
+    AddClip(out, BakeAction("DiveLand", {At(absorb, 0.0f), At(chest, 0.12f), At(prone, 0.28f)}, false, landEv));
+}
+
 struct ActionSpec {
     const char* name;
     int rev;
 };
 
-const ActionSpec kStates[] = {{"Death", 1}, {"DeadHold", 1}};
+const ActionSpec kStates[] = {{"Death", 1}, {"DeadHold", 1}, {"Dive", 2}, {"DiveLand", 2}};
 
 SM::State* FindMutable(SM& sm, const std::string& name) {
     for (SM::State& s : sm.states) if (s.name == name) return &s;
@@ -357,25 +421,85 @@ void LatchDeath(SM& sm, int dir) {
 
 } // namespace
 
-void Bake(std::vector<HumanoidLibrary::Entry>& out) { BakeDeath(out); }
+void Bake(std::vector<HumanoidLibrary::Entry>& out) {
+    BakeDeath(out);
+    BakeDive(out);
+}
 
 void ApplyTimes(AnimStateMachine& sm) {
     const StanceTimes& t = sm.stanceTimes;
     for (SM::State& st : sm.states) {
-        if (st.name != "Death" && st.name != "DeadHold") continue;
+        if (st.name != "Death" && st.name != "DeadHold" && st.name != "Dive" && st.name != "DiveLand") continue;
         for (SM::Transition& tr : st.transitions) {
             if (tr.to == "DeadHold") tr.blend = t.crouchProne;          // ends on the ground
             else if (tr.to == "GetUp" || tr.to == "Idle") tr.blend = t.proneStand;
+            else if (tr.to == "Prone" || tr.to == "Crawl" || tr.to == "Crouch" || tr.to == "DiveLand")
+                tr.blend = t.crouchProne;
         }
     }
     for (SM::Transition& tr : sm.anyState)
         if (tr.to == "Death") tr.blend = t.standCrouch;
 }
 
-void AddStates(AnimStateMachine& sm, const Character* body) {
-    (void)body;
-    const bool freshDeath = !HasState(sm, "Death");
-    const bool freshHold = !HasState(sm, "DeadHold");
+SM::Condition Cond(C c, const char* param, float value = 0.0f) {
+    SM::Condition x;
+    x.cond = c;
+    x.param = param ? param : "";
+    x.value = value;
+    return x;
+}
+
+void AddEdge(SM::State& st, const SM& sm, const char* to, C cond, const char* param,
+             std::vector<SM::Condition> extra, bool exitTime) {
+    if (!HasState(sm, to)) return;
+    SM::Transition t;
+    t.to = to;
+    t.cond = cond;
+    t.param = param ? param : "";
+    t.extra = std::move(extra);
+    t.hasExitTime = exitTime;
+    t.exitTime = 1.0f;
+    t.blend = 0.2f;
+    st.transitions.push_back(std::move(t));
+}
+
+void WireDive(SM::State& dive, const SM& sm) {
+    dive.transitions.clear();
+    // Die wins over "wait for the clip". Anything else is locked out (not interruptible).
+    AddEdge(dive, sm, "Death", C::Trigger, "die", {}, false);
+    AddEdge(dive, sm, "DiveLand", C::OnClipEnd, "", {Cond(C::BoolFalse, "grounded")}, true);
+    AddEdge(dive, sm, "Crawl", C::OnClipEnd, "", {Cond(C::BoolTrue, "grounded"), Cond(C::FloatGreater, "speed", 0.35f)}, true);
+    AddEdge(dive, sm, "Prone", C::OnClipEnd, "", {Cond(C::BoolTrue, "grounded")}, true);
+    if (!HasState(sm, "Prone"))
+        AddEdge(dive, sm, "Crouch", C::OnClipEnd, "", {}, true);
+}
+
+void WireDiveLand(SM::State& land, const SM& sm) {
+    land.transitions.clear();
+    AddEdge(land, sm, "Death", C::Trigger, "die", {}, false);
+    AddEdge(land, sm, "Crawl", C::BoolTrue, "grounded", {Cond(C::FloatGreater, "speed", 0.35f)}, false);
+    AddEdge(land, sm, "Prone", C::BoolTrue, "grounded", {}, false);
+    if (!HasState(sm, "Prone"))
+        AddEdge(land, sm, "Crouch", C::BoolTrue, "grounded", {}, false);
+}
+
+SM::State MakeDiveState(const char* name, const char* clip, bool loop) {
+    SM::State s;
+    s.name = name;
+    s.clip = clip;
+    s.loop = loop;
+    s.ikWeight = 0.0f;
+    s.fullBodyIkWeight = 0.0f;
+    s.interruptible = false;
+    return s;
+}
+
+void AddStates(AnimStateMachine& sm, const Character* body, bool force) {
+    const int had = sm.actionsRev;
+    const bool deathDue = force || had < 1;
+    const bool diveDue = force || had < 2;
+    const bool freshDeath = deathDue && !HasState(sm, "Death");
+    const bool freshHold = deathDue && !HasState(sm, "DeadHold");
     float col = 40.0f;
     if (const SM::State* existing = FindMutable(sm, "Death")) col = existing->nx;
     else if (const SM::State* existing = FindMutable(sm, "DeadHold")) col = existing->nx;
@@ -399,6 +523,47 @@ void AddStates(AnimStateMachine& sm, const Character* body) {
     // the user's edges.
     if (freshDeath) if (SM::State* s = FindMutable(sm, "Death")) WireDeath(*s, sm);
     if (freshHold) if (SM::State* s = FindMutable(sm, "DeadHold")) WireHold(*s, sm);
+    const bool freshDive = diveDue && !HasState(sm, "Dive");
+    const bool freshLand = diveDue && !HasState(sm, "DiveLand");
+    if (freshDive || freshLand) {
+        float col = 40.0f;
+        for (const SM::State& o : sm.states) col = std::max(col, o.nx);
+        col += 220.0f;
+        if (freshDive) {
+            SM::State dive = MakeDiveState("Dive", "Dive", false);
+            if (body && !body->clipDive.empty()) dive.clip = body->clipDive;
+            dive.nx = col;
+            dive.ny = 40.0f;
+            sm.states.push_back(std::move(dive));
+        }
+        if (freshLand) {
+            SM::State land = MakeDiveState("DiveLand", "DiveLand", false);
+            land.nx = col;
+            land.ny = 130.0f;
+            sm.states.push_back(std::move(land));
+        }
+        if (freshDive) if (SM::State* s = FindMutable(sm, "Dive")) WireDive(*s, sm);
+        if (freshLand) if (SM::State* s = FindMutable(sm, "DiveLand")) WireDiveLand(*s, sm);
+        EnsureParam(sm, "dive", 2);
+        EnsureParam(sm, "grounded", 1);
+        EnsureParam(sm, "sprint", 1);
+        EnsureParam(sm, "run", 1);
+        auto anyDive = [&](const char* flag) {
+            if (!HasState(sm, "Dive")) return;
+            SM::Transition go;
+            go.to = "Dive";
+            go.cond = C::Trigger;
+            go.param = "dive";
+            go.blend = 0.12f;
+            go.extra = {Cond(C::BoolTrue, flag), Cond(C::BoolTrue, "grounded")};
+            // None so the state being left cannot cancel the blend. Dive itself
+            // is not interruptible, so only its own die edge can cut it short.
+            go.interruption = SM::Transition::Interrupt::None;
+            sm.anyState.push_back(std::move(go));
+        };
+        // sprint OR run, and grounded. Extras are ANDed, so this is two edges.
+        if (!HasAny(sm, "Dive", "dive")) { anyDive("sprint"); anyDive("run"); }
+    }
     if (freshDeath || freshHold) {
         EnsureParam(sm, "deathDir", 0);
         EnsureParam(sm, "dead", 1);
@@ -425,14 +590,15 @@ void MergeMissing(AnimStateMachine& sm, const Character* body, bool force) {
     if (!force && !looksDefault) return;
     if (!force && sm.actionsRev >= kActionsRev) return;
     // AddStates only creates states that are absent, which is the whole merge.
-    AddStates(sm, body);
+    AddStates(sm, body, force);
 }
 
 const std::vector<std::string>& ActionNames() {
     static const std::vector<std::string> names = {
         "Death", "DeadHold",
         "Death_F", "Death_B", "Death_L", "Death_R",
-        "DeadHold_F", "DeadHold_B", "DeadHold_L", "DeadHold_R"};
+        "DeadHold_F", "DeadHold_B", "DeadHold_L", "DeadHold_R",
+        "Dive", "DiveLand"};
     return names;
 }
 
@@ -443,6 +609,59 @@ bool IsInAction(GameObject* go) {
 
 float ActionTime(GameObject* go) {
     return IsInAction(go) ? BaseMachine(go)->StateTime() : 0.0f;
+}
+
+bool IsDead(GameObject* go);
+
+bool CanDive(GameObject* go) {
+    if (!go || IsDead(go)) return false;
+    SM* sm = BaseMachine(go);
+    if (sm) {
+        const std::string cur = sm->Current();
+        if (cur == "Dive" || cur == "DiveLand") return false;
+    }
+    bool grounded = sm && sm->GetBool("grounded");
+    Rigidbody3D* rb = go->GetComponent<Rigidbody3D>();
+    if (rb && rb->groundedOnTerrain) grounded = true;
+    if (!grounded && go->transform && go->scene()) {
+        const Vec3 o = go->transform->Position();
+        const RaycastHit3D h = go->scene()->physics3D().Raycast(
+            *go->scene(), o + Vec3{0.0f, 0.2f, 0.0f}, Vec3{0.0f, -1.0f, 0.0f}, 0.45f,
+            go, Physics3D::kAllLayers, false);
+        grounded = h.hit && (!rb || rb->velocity.y < 1.5f);
+    }
+    if (!grounded) return false;
+    if (sm && (sm->GetBool("sprint") || sm->GetBool("run") || sm->GetFloat("speed") > 3.0f)) return true;
+    if (rb) {
+        const float hs = std::sqrt(rb->velocity.x * rb->velocity.x + rb->velocity.z * rb->velocity.z);
+        if (hs > 3.0f) return true;
+    }
+    return false;
+}
+
+void RequestDive(GameObject* go) {
+    if (!CanDive(go)) return;
+    SM* sm = BaseMachine(go);
+    if (!sm) return;
+    sm->SetBool("divePending", true);
+    sm->SetBool("grounded", true);
+    sm->SetBool("sprint", true);
+    if (HasState(*sm, "Dive") && sm->Current() != "Dive") sm->GoTo("Dive", 0.12f);
+}
+
+bool BeginDive(GameObject* go) {
+    SM* sm = BaseMachine(go);
+    if (!sm || !HasState(*sm, "Dive")) return false;
+    sm->SetTrigger("dived");
+    if (sm->Current() == "Dive") return true;
+    return sm->GoTo("Dive", 0.12f);
+}
+
+bool TakeDivePending(GameObject* go) {
+    SM* sm = BaseMachine(go);
+    if (!sm || !sm->GetBool("divePending")) return false;
+    sm->SetBool("divePending", false);
+    return true;
 }
 
 int DirFromName(const std::string& name) {
@@ -465,6 +684,7 @@ bool Play(GameObject* go, const std::string& name, float blend) {
                 const int d = DirOfClip(name);
                 LatchDeath(*sm, d >= 0 ? d : (int)std::lround(sm->GetFloat("deathDir")));
             }
+            if (name == "Dive") sm->SetBool("divePending", true);
             if (sm->GoTo(name, blend)) return true;
         }
         for (const SM::State& st : sm->states) {

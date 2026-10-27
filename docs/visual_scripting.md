@@ -336,7 +336,10 @@ Every N Times.
 ## Flow Graph editor: working faster
 
 - **Drag a wire into empty space** and the node palette opens, filtered to nodes
-  that fit; the node you pick is wired to that pin.
+  whose pin type can take that wire (a Number does not offer a Vector3-only
+  input). The bar names the type. The search box also matches pin types, so
+  typing `object` or `number` finds those nodes. The node you pick is wired to
+  that pin.
 - **Box select** by dragging on empty canvas; Ctrl/Shift+click adds to the
   selection; dragging any selected node moves the whole selection.
 - **Ctrl+C / Ctrl+V / Ctrl+D** copy, paste (at the mouse) and duplicate;

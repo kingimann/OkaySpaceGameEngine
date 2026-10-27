@@ -88,6 +88,7 @@
 #include "okay/Components/Flashlight.hpp"
 #include "okay/Components/FirstPersonHand.hpp"
 #include "okay/Components/NetworkSync.hpp"
+#include "okay/Components/NetworkObject.hpp"
 #include "okay/Components/AntiCheatConfig.hpp"
 #include "okay/Components/NetValidator.hpp"
 #include "okay/Components/NetworkAvatarMotion.hpp"

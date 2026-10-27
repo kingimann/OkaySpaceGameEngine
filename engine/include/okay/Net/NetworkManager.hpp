@@ -511,6 +511,13 @@ public:
     }
     /// Remove a previously registered RPC handler.
     void ClearRpc(const std::string& name) { m_rpcHandlers.erase(name); }
+    /// Runs for every arriving RPC, after the named handler (and also when
+    /// none is registered). NetworkObject uses it to route "<netId>/<name>"
+    /// onto the matching object. Cleared by Stop().
+    void SetRpcObserver(std::function<void(const std::string& name, std::uint32_t from, const std::string& data)> f) {
+        m_rpcObserver = std::move(f);
+    }
+    bool HasRpcObserver() const { return static_cast<bool>(m_rpcObserver); }
 
     // ---- Chat ----------------------------------------------------------
     /// One chat line: who said it (peer id + the name they joined with) and the text.
@@ -981,6 +988,7 @@ private:
 
     // First-class RPC handlers (by name) + chat log/handler.
     std::unordered_map<std::string, std::function<void(std::uint32_t, const std::string&)>> m_rpcHandlers;
+    std::function<void(const std::string&, std::uint32_t, const std::string&)> m_rpcObserver;
     std::vector<ChatEntry> m_chatLog;
     std::function<void(const ChatEntry&)> m_chatHandler;
 

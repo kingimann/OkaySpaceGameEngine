@@ -114,6 +114,7 @@
 #include "okay/Components/Flashlight.hpp"
 #include "okay/Components/FirstPersonHand.hpp"
 #include "okay/Components/NetworkSync.hpp"
+#include "okay/Components/NetworkObject.hpp"
 #include "okay/Components/AntiCheatConfig.hpp"
 #include "okay/Components/NetValidator.hpp"
 #include <cmath>
@@ -848,6 +849,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         if (ns->clientClaimable) out << " 1";   // only when set: other scenes don't change
         out << "\n";
     }
+    // netobject / nettransform / syncvar are their own records. An older engine
+    // refuses a scene that contains them; scenes without these components are unchanged.
+    if (auto* no = go->GetComponent<NetworkObject>()) {
+        out << "  netobject " << (int)no->authority << " " << (no->owned ? 1 : 0)
+            << " " << Quote(no->netId) << "\n";
+    }
+    if (go->GetComponent<NetworkTransform>()) out << "  nettransform\n";
+    for (auto* sv : go->GetComponents<SyncVar>())
+        out << "  syncvar " << Quote(sv->name) << " " << Quote(sv->value) << "\n";
     if (auto* ac = go->GetComponent<AntiCheatConfig>()) {
         const AntiCheatSettings& s = ac->settings;
         std::string allow;
@@ -5433,6 +5443,17 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ns->netId = ReadQuoted(in);
                     in >> std::ws;   // clientClaimable came later
                     if (std::isdigit(in.peek())) { int cc = 0; in >> cc; ns->clientClaimable = cc != 0; }
+                } else if (field == "netobject") {
+                    auto* no = go->AddComponent<NetworkObject>();
+                    int au = 0, ow = 1; in >> au >> ow;
+                    no->authority = (NetworkObject::Authority)au; no->owned = (ow != 0);
+                    no->netId = ReadQuoted(in);
+                } else if (field == "nettransform") {
+                    go->AddComponent<NetworkTransform>();
+                } else if (field == "syncvar") {
+                    auto* sv = go->AddComponent<SyncVar>();
+                    sv->name = ReadQuoted(in);
+                    sv->value = ReadQuoted(in);
                 } else if (field == "water") {
                     auto* w = go->AddComponent<Water>();
                     in >> w->size >> w->resolution >> w->waveHeight >> w->waveLength >> w->waveSpeed

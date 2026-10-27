@@ -316,5 +316,114 @@ int main() {
         }
     }
 
+    // ---- Solve order: feet, holding, body, limbs, then aim/look ----
+    {
+        Scene sc;
+        GameObject* g = sc.CreateGameObject("Order");
+        const int foot = g->AddComponent<FootIK>()->ExecutionOrder();
+        const int hold = g->AddComponent<ProceduralObjectHolding>()->ExecutionOrder();
+        const int body = g->AddComponent<FullBodyIK>()->ExecutionOrder();
+        const int limb = g->AddComponent<LimbIK>()->ExecutionOrder();
+        const int look = g->AddComponent<LookAtIK>()->ExecutionOrder();
+        CHECK(foot < hold && hold < body && body < limb && limb < look);
+        CHECK(g->AddComponent<ChainIK>()->ExecutionOrder() == limb);
+        CHECK(g->AddComponent<AimIK>()->ExecutionOrder() == look);
+    }
+
+    // ---- LimbIK: a switched target swings over targetBlendTime; a teleport doesn't trail ----
+    {
+        Scene sc;
+        GameObject* body = sc.CreateGameObject("Body");
+        auto mk = [&](const char* n, GameObject* parent, Vec3 local) {
+            GameObject* o = sc.CreateGameObject(n);
+            o->transform->SetParent(parent->transform, false);
+            o->transform->localPosition = local;
+            return o;
+        };
+        GameObject* sh = mk("Shoulder", body, {0.2f, 1.5f, 0});
+        GameObject* el = mk("Elbow", sh, {0.3f, 0, -0.05f});
+        GameObject* hand = mk("Hand", el, {0.3f, 0, 0.05f});
+        GameObject* t1 = mk("T1", body, {0.6f, 1.3f, 0});
+        GameObject* t2 = mk("T2", body, {0.5f, 1.6f, 0.35f});
+        auto* ik = body->AddComponent<LimbIK>();
+        ik->upper = sh->transform; ik->lower = el->transform; ik->end = hand->transform;
+        ik->targetObject = t1->transform;
+        sc.Start();
+        CHECK_NEAR(ik->targetBlendTime, 0.15f, 1e-6f);
+        sc.Update(1.0f / 60.0f);
+        CHECK(Dist(hand->transform->Position(), t1->transform->Position()) < 0.01f);   // first goal: no blend
+        ik->targetObject = t2->transform;
+        sc.Update(1.0f / 60.0f);
+        CHECK(Dist(hand->transform->Position(), t2->transform->Position()) > 0.1f);    // swinging over
+        for (int i = 0; i < 12; ++i) sc.Update(1.0f / 60.0f);
+        CHECK(Dist(hand->transform->Position(), t2->transform->Position()) < 0.01f);   // there after ~0.2 s
+        body->transform->SetPosition({10, 0, 5});                                      // respawn: no trail
+        sc.Update(1.0f / 60.0f);
+        CHECK(Dist(hand->transform->Position(), t2->transform->Position()) < 0.01f);
+    }
+
+    // ---- AimIK switched off: an un-animated bone gets its own rotation back ----
+    {
+        Scene sc;
+        GameObject* head = sc.CreateGameObject("Head");
+        auto* aim = head->AddComponent<AimIK>();
+        aim->target = {5, 0, 0};
+        sc.Start();
+        const Quat before = head->transform->localRotation;
+        sc.Update(1.0f / 60.0f);
+        CHECK(std::fabs(Quat::Dot(head->transform->localRotation, before)) < 0.999f);
+        aim->weight = 0.0f;
+        sc.Update(1.0f / 60.0f);
+        CHECK(std::fabs(Quat::Dot(head->transform->localRotation, before)) > 0.99999f);
+    }
+
+    // ---- FullBodyIK body pull re-plants FootIK's feet; nothing builds up ----
+    {
+        Scene sc;
+        GameObject* root = sc.CreateGameObject("Rig");
+        auto mk = [&](const char* n, GameObject* parent, Vec3 local) {
+            GameObject* o = sc.CreateGameObject(n);
+            o->transform->SetParent(parent->transform, false);
+            o->transform->localPosition = local;
+            return o;
+        };
+        GameObject* hips = mk("mixamorig:Hips", root, {0, 1, 0});
+        GameObject* chest = mk("mixamorig:Spine2", mk("mixamorig:Spine", hips, {0, 0.2f, 0}), {0, 0.3f, 0});
+        GameObject* lua = mk("mixamorig:LeftArm", chest, {0.2f, 0.1f, 0});
+        mk("mixamorig:LeftHand", mk("mixamorig:LeftForeArm", lua, {0.3f, 0, 0.02f}), {0.3f, 0, -0.02f});
+        GameObject* leg[2][3];
+        for (int i = 0; i < 2; ++i) {
+            const float x = i == 0 ? 0.1f : -0.1f;
+            leg[i][0] = mk(i == 0 ? "mixamorig:LeftUpLeg" : "mixamorig:RightUpLeg", hips, {x, 0, 0});
+            leg[i][1] = mk(i == 0 ? "mixamorig:LeftLeg" : "mixamorig:RightLeg", leg[i][0], {0, -0.42f, 0.1f});
+            leg[i][2] = mk(i == 0 ? "mixamorig:LeftFoot" : "mixamorig:RightFoot", leg[i][1], {0, -0.42f, -0.1f});
+        }
+        auto* feet = root->AddComponent<FootIK>();
+        feet->leftHip = leg[0][0]->transform;  feet->leftKnee = leg[0][1]->transform;  feet->leftFoot = leg[0][2]->transform;
+        feet->rightHip = leg[1][0]->transform; feet->rightKnee = leg[1][1]->transform; feet->rightFoot = leg[1][2]->transform;
+        feet->adjustPelvis = false; feet->footLock = false; feet->alignToGround = false;
+        auto* fb = root->AddComponent<FullBodyIK>();
+        fb->blendSpeed = 0.0f; fb->softness = 0.0f; fb->spineReach = 0.0f;
+        fb->bodyPull = 1.0f; fb->maxBodyOffset = 0.15f;
+        auto& eh = fb->effectors[FullBodyIK::LeftHand];
+        eh.enabled = true; eh.position = {3, 1.6f, 0};
+        sc.Start();
+        const Vec3 hips0 = hips->transform->Position();
+        const Vec3 foot0[2] = {leg[0][2]->transform->Position(), leg[1][2]->transform->Position()};
+        for (int f = 0; f < 30; ++f) sc.Update(1.0f / 60.0f);
+        const Vec3 moved = hips->transform->Position() - hips0;
+        CHECK(moved.x > 0.1f);
+        CHECK(moved.Magnitude() <= 0.1501f);                   // clamped, and not compounding frame on frame
+        for (int i = 0; i < 2; ++i) {
+            CHECK(Dist(leg[i][2]->transform->Position(), foot0[i]) < 2e-3f);   // feet stayed planted
+            CHECK_NEAR(Dist(leg[i][0]->transform->Position(), leg[i][1]->transform->Position()),
+                       Dist(Vec3{0, 0, 0}, Vec3{0, -0.42f, 0.1f}), 1e-4f);    // turned, not stretched
+        }
+        // Without a FootIK the feet ride along with the hips (the old behaviour).
+        feet->weight = 0.0f;
+        sc.Update(1.0f / 60.0f);
+        CHECK(Dist(leg[0][2]->transform->Position(), foot0[0] + moved) < 2e-3f);
+    }
+
     TEST_MAIN_RESULT();
 }

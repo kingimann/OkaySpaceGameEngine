@@ -24,7 +24,7 @@ namespace okay {
 
 class LookAtIK : public Component {
 public:
-    int ExecutionOrder() const override { return 100; }   // after animation
+    int ExecutionOrder() const override { return 110; }   // last: looks from the final body pose
     std::vector<Transform*> chain;     ///< bones root..tip (e.g. spine, neck, head)
     Transform* targetObject = nullptr; ///< look at this object (overrides `target`)
     std::vector<std::string> chainNames; ///< editor/serialized: resolve `chain` by object names
@@ -55,7 +55,13 @@ public:
     // Animators lazily, which puts them late in the Update order).
     void LateUpdate(float dt) override {
         const float w = weight * m_fade.Step(ikActive, fadeTime, dt);
-        if (w <= 0.0f || chain.empty()) return;
+        if (w <= 0.0f || chain.empty()) {
+            // Off: put each pre-IK rotation back where nothing re-posed the bone since.
+            for (std::size_t i = 0; i < chain.size() && i < m_written.size(); ++i)
+                if (chain[i] && SameRot(chain[i]->localRotation, m_written[i])) chain[i]->localRotation = m_base[i];
+            m_written.assign(m_written.size(), Quat{0, 0, 0, 0});
+            return;
+        }
         Vec3 tgt = targetObject ? targetObject->Position() : target;
         // Bone rotations persist between frames, so applying `ease` of the way per
         // frame converges on the target — a smooth swing instead of a snap when

@@ -33,7 +33,7 @@ namespace okay {
 
 class ChainIK : public Component {
 public:
-    int ExecutionOrder() const override { return 100; }   // after animation
+    int ExecutionOrder() const override { return 105; }   // after the body solvers (FootIK 85, FullBodyIK 100)
     enum class Solver { FABRIK, CCD };
 
     std::vector<Transform*> bones;     ///< root..tip
@@ -67,6 +67,9 @@ public:
     /// position path still reads it (point each bone's forward down the chain).
     bool  orient = false;
     Vec3  forwardAxis = Vec3::Forward;
+    /// Seconds to swing over when the goal switches (another target object, object
+    /// <-> point) or jumps; measured on the character, so moving it never trails.
+    float targetBlendTime = 0.15f;
 
     void Start() override {
         // Names resolve inside this character first (two copies of one model
@@ -87,8 +90,8 @@ public:
         m_restore.Restore();
         const int n = static_cast<int>(bones.size());
         const float w = weight * m_fade.Step(ikActive, fadeTime, dt);
-        if (w <= 0.0f || n < 2) return;
-        for (Transform* b : bones) if (!b) return;
+        if (w <= 0.0f || n < 2) { m_goal.Reset(); return; }
+        for (Transform* b : bones) if (!b) { m_goal.Reset(); return; }
 
         // Lengths live each frame: a height slider, a rescale or a swapped
         // model never leaves the solve on stale bones.
@@ -100,7 +103,9 @@ public:
             if (!Finite(p[i])) return;   // a broken pose: leave the animated frame
         }
         for (int i = 0; i < n - 1; ++i) total += len[i] = (p[i + 1] - p[i]).Magnitude();
-        const Vec3 tgt = targetObject ? targetObject->Position() : target;
+        const Transform* space = CharacterRootOf(transform);
+        const Vec3 tgt = m_goal.Step(targetObject ? targetObject->Position() : target, (std::uintptr_t)targetObject,
+                                     targetBlendTime, dt, space ? space : transform);
         if (!Finite(tgt) || !(total > 1e-6f)) return;
 
         // The pole as FABRIK's world point: an object or the legacy point as
@@ -183,6 +188,7 @@ public:
 
 private:
     IKFade m_fade;
+    IKGoalBlend m_goal;
     IKRestore m_restore;
     IKPole m_pole;
     std::vector<IKJointFrame> m_frames;   ///< rest frames the limits measure from

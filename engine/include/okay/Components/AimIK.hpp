@@ -21,7 +21,7 @@ namespace okay {
 
 class AimIK : public Component {
 public:
-    int ExecutionOrder() const override { return 100; }   // after animation
+    int ExecutionOrder() const override { return 110; }   // last: aims from the final body pose
     Transform* bone = nullptr;         ///< the bone to aim (defaults to this object's transform)
     Transform* targetObject = nullptr;
     std::string boneName;              ///< editor/serialized: resolve `bone` by object name at Start
@@ -50,9 +50,13 @@ public:
     // Animators lazily, which puts them late in the Update order).
     void LateUpdate(float dt) override {
         const float w = weight * m_fade.Step(ikActive, fadeTime, dt);
-        if (w <= 0.0f) return;
         Transform* b = bone ? bone : transform;
-        if (!b) return;
+        if (w <= 0.0f || !b) {
+            // Off: put the pre-IK rotation back if nothing re-posed the bone since.
+            if (b && m_haveWritten && SameRot(b->localRotation, m_written)) b->localRotation = m_base;
+            m_haveWritten = false;
+            return;
+        }
         Vec3 tgt = targetObject ? targetObject->Position() : target;
         Vec3 dir = tgt - b->Position();
         if (dir.SqrMagnitude() < 1e-8f) return;

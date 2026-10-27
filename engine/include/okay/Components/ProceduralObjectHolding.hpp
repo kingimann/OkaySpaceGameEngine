@@ -42,7 +42,7 @@ namespace okay {
 
 class ProceduralObjectHolding : public Component {
 public:
-    int ExecutionOrder() const override { return 90; }   // after animation, before the IK solve (100)
+    int ExecutionOrder() const override { return 90; }   // after animation and FootIK (85), before FullBodyIK (100)
 
     enum class Hand { Left, Right, Both };
     enum class StyleMode { Automatic, Custom };

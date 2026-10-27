@@ -15787,7 +15787,7 @@ void DrawProjectGate(EditorState& ed) {
                                   "Third Person Shooter", "Platformer", "2.5D Platformer", "Top-Down",
                                   "Top-Down Shooter", "Point & Click",
                                   "Vehicle (3D)", "Vehicle (2D)", "Sandbox", "Multiplayer", "Coin Collector",
-                                  "Snake", "Main Menu", "Inventory", "Humanoid"};
+                                  "Snake", "Brick Breaker", "Main Menu", "Inventory", "Humanoid"};
     if (!loc[0]) {   // default: the Projects folder beside the editor (the launcher's default too)
         std::string base;
         if (char* b = SDL_GetBasePath()) { base = b; SDL_free(b); }
@@ -15909,6 +15909,7 @@ void DrawNewProjectPopup(EditorState& ed) {
         {"2.5D Platformer",      &EditorState::NewPlatformer25D},
         {"Coin Collector",       &EditorState::NewCoinCollector},
         {"Snake",                &EditorState::NewSnake},
+        {"Brick Breaker",        &EditorState::NewBrickBreaker},
         {"Main Menu",            &EditorState::NewMainMenu},
         {"Inventory",            &EditorState::NewInventory},
         {"Multiplayer",          &EditorState::NewMultiplayer},

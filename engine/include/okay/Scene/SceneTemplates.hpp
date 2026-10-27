@@ -1163,6 +1163,119 @@ function update(d) {
         "function update(d) { set_text(\"Score: \" + prefs_get(\"score\")); }\n");
 }
 
+/// A complete, playable Brick Breaker. The paddle is OkayScript (A/D), the ball
+/// is OkayScript (walls, paddle, and brick hits), and each brick is a trigger
+/// the ball removes by name. A HUD reads the shared score. Misses reset the
+/// ball; clearing the wall wins. Uses only OkayScript + components.
+inline void BrickBreaker(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Brick Breaker");
+
+    GameObject* camObj = scene.CreateGameObject("MainCamera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Orthographic;
+    cam->orthographicSize = 7.0f;
+    cam->main = true;
+    cam->backgroundColor = Color::FromBytes(16, 18, 28);
+
+    GameObject* paddle = scene.CreateGameObject("Paddle");
+    paddle->transform->localPosition = {0.0f, -5.2f, 0.0f};
+    auto* psr = paddle->AddComponent<SpriteRenderer>();
+    psr->color = Color::FromBytes(90, 170, 240);
+    psr->size = {2.4f, 0.32f};
+    psr->sortOrder = 1;
+    paddle->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+        "function update(d) {\n"
+        "  var x = pos_x() + axis_x() * 9 * d;\n"
+        "  if (x < -6.2) { x = -6.2; }\n"
+        "  if (x > 6.2) { x = 6.2; }\n"
+        "  set_x(x);\n"
+        "}\n");
+
+    // 3 rows x 6 columns. The ball script's prefs "bricks" starts at 18 to match.
+    const Color rowColor[] = {
+        Color::FromBytes(230, 90, 90),
+        Color::FromBytes(240, 180, 70),
+        Color::FromBytes(80, 190, 130),
+    };
+    for (int row = 0; row < 3; ++row) {
+        for (int col = 0; col < 6; ++col) {
+            const int n = row * 6 + col;
+            GameObject* brick = scene.CreateGameObject("Brick" + std::to_string(n));
+            brick->transform->localPosition = {-5.0f + col * 2.0f, 2.0f + row * 1.15f, 0.0f};
+            auto* sr = brick->AddComponent<SpriteRenderer>();
+            sr->color = rowColor[row];
+            sr->size = {1.7f, 0.62f};
+            auto* box = brick->AddComponent<BoxCollider2D>();
+            box->size = {1.7f, 0.62f};
+            box->isTrigger = true;
+        }
+    }
+
+    GameObject* ball = scene.CreateGameObject("Ball");
+    ball->transform->localPosition = {0.0f, -3.6f, 0.0f};
+    auto* bsr = ball->AddComponent<SpriteRenderer>();
+    bsr->color = Color::White;
+    bsr->size = {0.34f, 0.34f};
+    bsr->sortOrder = 2;
+    auto* bcol = ball->AddComponent<BoxCollider2D>();
+    bcol->size = {0.34f, 0.34f};
+    ball->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+        "var vx = 2.4;\n"
+        "var vy = 6.4;\n"
+        "var bounced = 0;\n"
+        "function start() {\n"
+        "  prefs_set(\"score\", 0);\n"
+        "  prefs_set(\"bricks\", 18);\n"
+        "}\n"
+        "function update(d) {\n"
+        "  bounced = 0;\n"
+        "  if (prefs_get(\"bricks\") <= 0) { return; }\n"
+        "  var x = pos_x() + vx * d;\n"
+        "  var y = pos_y() + vy * d;\n"
+        "  if (x < -7.2) { x = -7.2; if (vx < 0) { vx = 0 - vx; } }\n"
+        "  if (x > 7.2) { x = 7.2; if (vx > 0) { vx = 0 - vx; } }\n"
+        "  if (y > 6.2) { y = 6.2; if (vy > 0) { vy = 0 - vy; } }\n"
+        "  if (y < -6.4) { x = 0; y = -3.6; vx = 2.4; vy = 6.4; }\n"
+        "  var px = obj_x(\"Paddle\");\n"
+        "  var py = obj_y(\"Paddle\");\n"
+        "  if (vy < 0 && y <= py + 0.5 && y >= py - 0.2 && x >= px - 1.4 && x <= px + 1.4) {\n"
+        "    vy = 0 - vy;\n"
+        "    vx = vx + (x - px) * 2.5;\n"
+        "    y = py + 0.55;\n"
+        "  }\n"
+        "  set_pos(x, y);\n"
+        "}\n"
+        "function on_trigger(other) {\n"
+        "  if (bounced == 1) { return; }\n"
+        "  bounced = 1;\n"
+        "  var dx = pos_x() - obj_x(other);\n"
+        "  var dy = pos_y() - obj_y(other);\n"
+        "  if (dx < 0) { dx = 0 - dx; }\n"
+        "  if (dy < 0) { dy = 0 - dy; }\n"
+        "  if (dy >= dx) { vy = 0 - vy; } else { vx = 0 - vx; }\n"
+        "  prefs_set(\"score\", prefs_get(\"score\") + 1);\n"
+        "  prefs_set(\"bricks\", prefs_get(\"bricks\") - 1);\n"
+        "  destroy_obj(other);\n"
+        "}\n");
+
+    GameObject* hud = scene.CreateGameObject("HUD");
+    auto* tr = hud->AddComponent<TextRenderer>();
+    tr->screenSpace = true; tr->screenPos = {12, 12}; tr->pixelSize = 3.0f;
+    tr->text = "Score: 0";
+    hud->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+        "function update(d) {\n"
+        "  var left = prefs_get(\"bricks\");\n"
+        "  if (left <= 0) { set_text(\"Cleared!  Score: \" + prefs_get(\"score\")); }\n"
+        "  else { set_text(\"Score: \" + prefs_get(\"score\")); }\n"
+        "}\n");
+
+    GameObject* help = scene.CreateGameObject("Help");
+    auto* ht = help->AddComponent<TextRenderer>();
+    ht->text = "A / D move the paddle. Clear the bricks.";
+    ht->screenSpace = true; ht->screenPos = {12, 48}; ht->pixelSize = 2.0f;
+}
+
 /// A terrain-digging sandbox: a procedurally generated, eroded hilly terrain you
 /// can walk on (first-person) and reshape live in Play with a TerrainDigger — hold
 /// the mouse to carve craters, with a ring marker showing where you're digging.

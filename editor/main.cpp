@@ -347,6 +347,8 @@ int main(int argc, char** argv) {
 #include "VisualScriptEditor.hpp"  // node-based visual script editor (okay::editor::vsed) — global scope
 #include "EditorWidgets.hpp"       // accent, category tints, toolbar icons, icon/search buttons
 #include "ConsolePanel.hpp"        // ConsoleLog + the Console panel
+#include "SceneManagerPanel.hpp"   // Scene Manager window + build-list bridge
+#include "NetSimPanel.hpp"         // net simulator + per-object traffic
 #include "UIPreviewPainter.hpp"    // the engine UI renderer drawn into ImGui (UI preview)
 #include "okay/UI/UIRenderer.hpp"
 #include "MainShared.hpp"          // main.cpp functions the split-out panels call
@@ -1015,7 +1017,7 @@ static SDL_Texture* GetPrefabThumb(const std::string& path) {
 // Rendered thumbnail for a .okayscene: load the whole scene into a throwaway
 // Scene, frame ALL of its objects, snapshot once. Cached until the file
 // changes; oversized scene files are skipped rather than stalling the browser.
-static SDL_Texture* GetSceneThumb(const std::string& path) {
+SDL_Texture* GetSceneThumb(const std::string& path) {
     struct Entry { SDL_Texture* tex; std::filesystem::file_time_type mtime; };
     static std::unordered_map<std::string, Entry> cache;
     std::error_code ec;
@@ -4220,7 +4222,8 @@ static const DockPanelDef* DockPanels(int& n) {
         {"Console",       "Console###Console",         &g_showConsole,       "Panels", PI_Console},
         {"Game",          "Game",                      &g_showGame,          "Panels", PI_Game},
         {"Services",      "Services",                  &g_showServices,      "Panels", PI_Services},
-        {"Scenes",        "Scenes",                    &g_showScenes,        "Panels", PI_Scenes},
+        {"Scene Manager", "Scene Manager###Scenes",    &g_showScenes,        "Panels", PI_Scenes},
+        {"Net",           "Net###Net",                 &g_showNet,           "Panels", PI_Stats},
         {"Save Manager",  "Save Manager",              &g_showSaveManager,   "Panels", PI_Save},
         {"Variables",     "Variables",                 &g_showVarWatch,      "Panels", PI_Variables},
         {"History",       "History",                   &g_showHistory,       "Panels", PI_History},
@@ -5398,6 +5401,7 @@ static void StopModelScenePreview(EditorState& ed);
 static void StopLivePreview(EditorState& ed);
 
 void DrawMenuAndToolbar(EditorState& ed) {
+    SceneBuildSync(ed);
     // play tint: while the game runs, darken the editor chrome a
     // touch so edit vs play is unmistakable at a glance. Only the custom dark
     // theme (its palette constants are known); reset exactly on stop.
@@ -5497,7 +5501,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
             ImGui::MenuItem("Game", nullptr, &g_showGame);
             ImGui::Separator();
             ImGui::MenuItem("Services", nullptr, &g_showServices);
-            ImGui::MenuItem("Scenes", nullptr, &g_showScenes);
+            ImGui::MenuItem("Scene Manager", nullptr, &g_showScenes);
+            ImGui::MenuItem("Net", nullptr, &g_showNet);
             ImGui::MenuItem("Save Manager", nullptr, &g_showSaveManager);
             ImGui::MenuItem("Variables (watch)", nullptr, &g_showVarWatch);
             ImGui::Separator();
@@ -9952,73 +9957,20 @@ void DrawSceneSettings(EditorState& ed) {
     ImGui::End();
 }
 
-// The Scene Manager panel: the project's scenes.
-// Lists the .okayscene files in the project, opens them, and manages a build
-// order with a startup scene the player loads first. The build list is fed into
-// the engine SceneManager so scripts can load_scene_index / load_next_scene.
-void DrawScenes(EditorState& ed) {
-    if (!ImGui::Begin("Scenes", &g_showScenes)) { ImGui::End(); return; }
-    namespace fs = std::filesystem;
-    std::error_code ec;
-    fs::path dir = ed.projectDir().empty() ? fs::absolute(".", ec)
-                                           : fs::path(ed.projectDir()) / "Assets";
-    ImGui::TextDisabled("%s", dir.string().c_str());
-
-    // Rescan the folder for scene files (cheap; refresh button forces it).
-    static std::vector<std::string> scenes;
-    static std::string lastDir;
-    auto rescan = [&]() {
-        scenes.clear();
-        if (fs::exists(dir, ec))
-            for (auto& e : fs::recursive_directory_iterator(dir, ec)) {
-                if (e.is_regular_file() && e.path().extension() == ".okayscene")
-                    scenes.push_back(e.path().string());
-            }
-        std::sort(scenes.begin(), scenes.end());
-        // Mirror into the engine SceneManager build list.
-        SceneManager::ClearScenes();
-        for (auto& s : scenes) SceneManager::AddScene(s);
-        lastDir = dir.string();
-    };
-    if (lastDir != dir.string()) rescan();
-    if (ImGui::Button("Refresh")) rescan();
-    ImGui::SameLine();
-    if (ImGui::Button("Save Current As...")) g_showSaveAs = true;
-    ImGui::Separator();
-
-    if (scenes.empty()) ImGui::TextDisabled("No .okayscene files in the project yet.");
-    for (int i = 0; i < (int)scenes.size(); ++i) {
-        const std::string& path = scenes[i];
-        std::string name = fs::path(path).stem().string();
-        bool isCurrent = (path == ed.path());
-        ImGui::PushID(i);
-        ImGui::Text("%d", i);                 // build index
-        ImGui::SameLine();
-        // Rendered scene preview (same cached snapshot the Project browser uses).
-        const float th = 34.0f;
-        if (SDL_Texture* stx = GetSceneThumb(path)) {
-            ImGui::Image((ImTextureID)stx, ImVec2(th, th));
-            ImGui::SameLine();
-        }
-        if (ImGui::Selectable(name.c_str(), isCurrent,
-                              ImGuiSelectableFlags_AllowDoubleClick, ImVec2(0, th))) {
-            if (ImGui::IsMouseDoubleClicked(0)) {
-                std::string err;
-                if (ed.Load(path, &err)) ConsoleLog("Opened " + name);
-                else ConsoleLog("Open failed: " + err);
-            }
-        }
-        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 70);
-        if (ImGui::SmallButton("Open")) {
-            std::string err;
-            if (ed.Load(path, &err)) ConsoleLog("Opened " + name);
-            else ConsoleLog("Open failed: " + err);
-        }
-        ImGui::PopID();
-    }
-    ImGui::Separator();
-    ImGui::TextDisabled("double-click to open; the build order is the index shown");
-    ImGui::End();
+// Live "Scenes In Build" list. The Scene Manager window edits this, and Build
+// Settings reads the same vector, so both stay on one order and one start scene.
+std::vector<SceneBuildEntry> SceneBuildSnapshot() {
+    std::vector<SceneBuildEntry> out;
+    out.reserve(g_build.scenes.size());
+    for (const BuildScene& s : g_build.scenes) out.push_back(SceneBuildEntry{s.path, s.on});
+    return out;
+}
+void SceneBuildApply(EditorState&, const std::vector<SceneBuildEntry>& entries) {
+    g_build.scenes.clear();
+    g_build.scenes.reserve(entries.size());
+    for (const SceneBuildEntry& e : entries) g_build.scenes.push_back(BuildScene{e.path, e.on});
+    if (g_buildProfileSel >= 0 && g_buildProfileSel < (int)g_buildProfiles.size())
+        g_buildProfiles[g_buildProfileSel].settings.scenes = g_build.scenes;
 }
 
 // A dedicated code/graph editor panel (separate from the Inspector), with
@@ -31867,6 +31819,47 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##tp")) toRemove = tp;
         }
     }
+    // grok/view-toggle: one player, first person or third, switched at play.
+    if (auto* pv = dynamic_cast<PlayerView*>(curComp)) {
+        if (CompHeader("Player View", pv, &toRemove)) {
+            if (ImGui::Checkbox("Allow Toggle##pv", &pv->allowToggle)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("V (or the gamepad button) switches first and third person. Off leaves the controller's camera alone.");
+            {
+                int view = (pv->defaultView == PlayerView::View::First) ? 0 : 1;
+                const char* views[] = {"First person", "Third person"};
+                if (ImGui::Combo("Default View##pv", &view, views, 2)) {
+                    pv->defaultView = view == 0 ? PlayerView::View::First : PlayerView::View::Third;
+                    ed.dirty = true;
+                }
+            }
+            if (KeyBindCombo("Toggle Key##pv", pv->toggleKey)) ed.dirty = true;
+            {
+                const char* padBtns[] = {"None","A","B","X","Y","Back","Start","L","R","D-pad Up","D-pad Down","D-pad Left","D-pad Right"};
+                int sel = pv->toggleGamepadButton + 1;
+                if (sel < 0 || sel > 12) sel = 0;
+                ImGui::SetNextItemWidth(130);
+                if (ImGui::Combo("Toggle Pad Button##pv", &sel, padBtns, IM_ARRAYSIZE(padBtns))) {
+                    pv->toggleGamepadButton = sel - 1; ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gamepad button that switches view. Back is the right-stick stand-in (the engine has no stick-click id).");
+            }
+            if (ImGui::DragFloat("Blend Time##pv", &pv->blendTime, 0.01f, 0.0f, 3.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How long a full switch takes. Reversing starts from wherever the camera is.");
+            {
+                float eye[3] = {pv->eyeOffset.x, pv->eyeOffset.y, pv->eyeOffset.z};
+                if (ImGui::DragFloat3("Eye Offset##pv", eye, 0.01f)) {
+                    pv->eyeOffset = {eye[0], eye[1], eye[2]}; ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Added at the eyes. +X right, +Y up, +Z back.");
+            }
+            if (ImGui::DragFloat("Third Person Distance##pv", &pv->thirdPersonDistance, 0.05f, -1.0f, 40.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Orbit distance while this view is driving. -1 uses the controller's own distance.");
+            if (ImGui::DragFloat("Shoulder Offset##pv", &pv->shoulderOffset, 0.01f, -3.0f, 3.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Over-the-shoulder shift while this view is driving.");
+            ImGui::TextDisabled("Sits on a First Person or Third Person controller. V eases between the eyes and the orbit.");
+            if (ImGui::SmallButton("Remove##pv")) toRemove = pv;
+        }
+    }
     if (auto* td = dynamic_cast<TopDownController*>(curComp)) {
         if (CompHeader("Top Down Controller", td, &toRemove)) {
             if (StanceControlFields(td->stanceControl, "td")) ed.dirty = true;
@@ -34876,6 +34869,15 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<CharacterController3D>(), "Character Controller 3D")) { ed.PushUndo(); go->AddComponent<CharacterController3D>(); SetupControllerBody(ed, go); ed.dirty = true; }
             if (item(!go->GetComponent<FirstPersonController>(), "First Person Controller")) { ed.PushUndo(); go->AddComponent<FirstPersonController>(); SetupControllerBody(ed, go); ed.dirty = true; }
             if (item(!go->GetComponent<ThirdPersonController>(), "Third Person Controller")) { ed.PushUndo(); go->AddComponent<ThirdPersonController>(); SetupControllerBody(ed, go); ed.dirty = true; }
+            // grok/view-toggle
+            if (item(!go->GetComponent<PlayerView>(), "Player View (first / third toggle)")) {
+                ed.PushUndo();
+                auto* pv = go->AddComponent<PlayerView>();
+                pv->allowToggle = true;
+                if (go->GetComponent<FirstPersonController>() && !go->GetComponent<ThirdPersonController>())
+                    pv->defaultView = PlayerView::View::First;
+                ed.dirty = true;
+            }
             if (item(!go->GetComponent<TopDownController>(), "Top Down Controller (3D)")) { ed.PushUndo(); go->AddComponent<TopDownController>(); SetupControllerBody(ed, go); ed.dirty = true; }
             if (item(!go->GetComponent<TopDownShooterController>(), "Top Down Shooter Controller (3D)")) { ed.PushUndo(); go->AddComponent<TopDownShooterController>(); SetupControllerBody(ed, go); ed.dirty = true; }
             if (item(!go->GetComponent<Platformer25DController>(), "2.5D Platformer Controller (LittleBigPlanet)")) { ed.PushUndo(); go->AddComponent<Platformer25DController>()->frontLayerZ = go->transform->Position().z; SetupControllerBody(ed, go); ed.dirty = true; }
@@ -42569,7 +42571,8 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.Stats"); if (g_showStats)     DrawStats(ed); }
         { OKAY_PROFILE("UI.SceneSettings"); if (g_showSceneSettings) DrawSceneSettings(ed); }
         { OKAY_PROFILE("UI.SaveManager"); if (g_showSaveManager) DrawSaveManager(ed); }
-        { OKAY_PROFILE("UI.Scenes"); if (g_showScenes)    DrawScenes(ed); }
+        { OKAY_PROFILE("UI.Scenes"); if (g_showScenes)    DrawSceneManager(ed); }
+        { OKAY_PROFILE("UI.Net"); if (g_showNet) DrawNetPanel(&g_showNet); }
         DrawPanelTabsExtras();   // tab icons, overflow lists, side tabs, Ctrl+Tab, right-click tab menu
         {   // UI Safe Area containers keep clear of the emulated phone's notch / home bar
             auto& f = okay::UISafeInsets();

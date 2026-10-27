@@ -11,6 +11,7 @@
 #include "okay/Math/Mathf.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
+#include "okay/Components/PlayerView.hpp"
 #include <cmath>
 #include <set>
 
@@ -287,6 +288,30 @@ EngineApi Build() {
             [](const Value& s, std::vector<Value>& a, CallContext& c) { Body(s, c)->AddForceAtPosition(V(a[0]), V(a[1])); return Value{}; },
             "Push it at a world point (off-centre pushes also spin it)."));
         api.types.push_back(std::move(r));
+    }
+    // ---- PlayerView (grok/view-toggle). Visual-script nodes come from this type. ----
+    {
+        ApiType pv; pv.name = "PlayerView"; pv.isComponent = true;
+        pv.doc = "Switches one player between first person and third person. The object needs a Player View.";
+        pv.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<PlayerView>() : nullptr; };
+        auto viewOf = [](const Value& self, CallContext& c) -> PlayerView* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* v = g->GetComponent<PlayerView>();
+            if (!v) throw RuntimeError("'" + g->name + "' has no Player View (add one in the Inspector)", c.loc);
+            return v;
+        };
+        pv.methods.push_back(method("SetView", {tInt}, {"view"}, tVoid,
+            [viewOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                viewOf(s, c)->SetView(I(a[0]));
+                return Value{};
+            }, "Ease to a view: 0 first person (camera at the eyes), 1 third person (over the shoulder)."));
+        ApiMethod get = method("GetView", {}, {}, tInt,
+            [viewOf](const Value& s, std::vector<Value>&, CallContext& c) {
+                return Value{(std::int32_t)viewOf(s, c)->GetView()};
+            }, "The view asked for: 0 first person, 1 third person. The camera may still be on its way there.");
+        get.pure = true;
+        pv.methods.push_back(std::move(get));
+        api.types.push_back(std::move(pv));
     }
     // ---- Input ----
     {

@@ -928,6 +928,21 @@ void Character::PresentMesh() {
         pose[B_RFORE]  = pose[B_RFORE]  + (fore - pose[B_RFORE])  * arc;
     }
     Skin(m, m_bone, pose);
+    // First-person view: collapse the head (and the small neck box on the torso)
+    // onto the neck joint so the owner's eyes don't see the inside of the skull.
+    // The chest, arms and legs stay, which is what you see looking down.
+    if (hideOwnHead && m_bone.size() == m.vertices.size()) {
+        const Vec3 sink{0.0f, 1.48f, 0.0f};
+        for (std::size_t i = 0; i < m.vertices.size(); ++i) {
+            bool head = m_bone[i] == B_HEAD;
+            bool neck = false;
+            if (!head && m_bone[i] == B_TORSO && i < m_restPos.size()) {
+                const Vec3& r = m_restPos[i];
+                neck = r.y > 1.445f && r.y < 1.56f && std::fabs(r.x) < 0.11f && std::fabs(r.z) < 0.11f;
+            }
+            if (head || neck) m.vertices[i] = sink;
+        }
+    }
     Vec3 so = StanceOffset();
     for (Vec3& v : m.vertices) { v = Vec3{-v.x, v.y, -v.z} * height; v += so; }   // face -Z + stance drop (see Apply)
     m.normals.clear();

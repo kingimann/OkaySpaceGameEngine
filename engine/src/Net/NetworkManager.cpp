@@ -1,4 +1,5 @@
 #include "okay/Net/NetworkManager.hpp"
+#include "okay/Net/NetSim.hpp"
 #include "okay/Net/SessionTicket.hpp"
 #include "AntiCheatCrypto.hpp"   // shared/: ed25519 for the host identity (#269)
 #include "OfficialGame.hpp"      // shared/: SafeRelPath / ResolveInside for network prefab paths
@@ -343,6 +344,7 @@ void NetworkManager::Stop() {
     m_relayCode.clear();
     m_relayEp = net::Endpoint{};
     m_socket.Close();
+    net::ResetSimulator();
     if (m_netStarted) { net::Shutdown(); m_netStarted = false; }
     m_clients.clear();
     m_remotes.clear();
@@ -635,6 +637,8 @@ double NetworkManager::ViewTick() const {
 }
 
 void NetworkManager::Update(float dt) {
+    net::PumpSimulator(m_socket);
+    net::ProfileAdvance(dt);
     if (m_mode == Mode::Server) ServerTick(dt);
     else if (m_mode == Mode::Client) ClientTick(dt);
     InterpolateRemotes(dt);
@@ -643,6 +647,7 @@ void NetworkManager::Update(float dt) {
 
 void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
                              const std::string& data) {
+    net::NoteObject(net::ObjectKey(channel, data), channel.size() + data.size(), true);
     // The reserved "__spawn" channel instantiates a prefab on this peer instead
     // of surfacing as a user message (replicated object creation).
     if (channel == "__match_start") {   // lobby: the match has begun for this room
@@ -924,6 +929,7 @@ std::string NetworkManager::GetVar(const std::string& key) const {
 }
 
 void NetworkManager::SetVar(const std::string& key, const std::string& value) {
+    net::NoteObject(key, key.size() + value.size(), false);
     ApplySyncVar(key, value);                 // optimistic / offline local apply
     if (m_mode == Mode::Server) {
         net::Packet p(SyncVar); p.Write(key); p.Write(value);
@@ -943,10 +949,12 @@ void NetworkManager::SendTo(std::uint32_t targetId, const std::string& channel,
             if (c.id == targetId) {
                 net::Packet p(Message);
                 p.Write(m_localId); p.Write(channel); p.Write(data);
+                net::NoteObject(net::ObjectKey(channel, data), channel.size() + data.size(), false);
                 SendDatagram(c.endpoint, p.Data(), p.Size());
                 return;
             }
     } else if (m_mode == Mode::Client && m_joined) {
+        net::NoteObject(net::ObjectKey(channel, data), channel.size() + data.size(), false);
         net::Packet p(DirectMessage);
         p.Write(m_localId); p.Write(targetId); p.Write(channel); p.Write(data);
         SendDatagram(m_serverEp, p.Data(), p.Size());
@@ -961,6 +969,7 @@ void NetworkManager::SendReliableTo(std::uint32_t targetId, const std::string& c
                 std::uint32_t seq = c.relSeq++;
                 auto bytes = BuildReliable(seq, channel, data);
                 c.relOut[seq] = {bytes, 0.0f};
+                net::NoteObject(net::ObjectKey(channel, data), channel.size() + data.size(), false);
                 SendDatagram(c.endpoint, bytes.data(), bytes.size());
                 return;
             }
@@ -969,6 +978,7 @@ void NetworkManager::SendReliableTo(std::uint32_t targetId, const std::string& c
         std::uint32_t seq = m_relSeq++;
         auto bytes = BuildReliable(seq, channel, data);
         m_relOut[seq] = {bytes, 0.0f};
+        net::NoteObject(net::ObjectKey(channel, data), channel.size() + data.size(), false);
         SendDatagram(m_serverEp, bytes.data(), bytes.size());
     }
 }
@@ -1045,12 +1055,19 @@ void NetworkManager::SendDatagram(const net::Endpoint& to, const std::uint8_t* d
 // wraps it in a RelayData frame addressed by the peer's slot (carried in `to`'s
 // address) and sends it to the relay, which forwards it on.
 void NetworkManager::Transmit(const net::Endpoint& to, const std::uint8_t* data, std::size_t size) {
-    if (!m_relay) { m_socket.SendTo(to, data, size); return; }
+    if (!m_relay) {
+        if (!net::HoldDatagram(m_socket, to, data, size)) {
+            if (m_socket.SendTo(to, data, size)) net::NoteWire(size, false);
+        }
+        return;
+    }
     net::Packet h(net::RelayData);
     h.Write(to.address);                       // destination slot
     std::vector<std::uint8_t> dg(h.Data(), h.Data() + h.Size());
     dg.insert(dg.end(), data, data + size);
-    m_socket.SendTo(m_relayEp, dg.data(), dg.size());
+    if (!net::HoldDatagram(m_socket, m_relayEp, dg.data(), dg.size())) {
+        if (m_socket.SendTo(m_relayEp, dg.data(), dg.size())) net::NoteWire(dg.size(), false);
+    }
 }
 
 // One physical datagram in. Direct mode is a pass-through. Relay mode peels the
@@ -1059,7 +1076,7 @@ void NetworkManager::Transmit(const net::Endpoint& to, const std::uint8_t* data,
 // application payload to return (or nothing is pending).
 int NetworkManager::ReceiveFrom(void* buffer, std::size_t capacity, net::Endpoint& from) {
     for (;;) {
-        int n = m_socket.RecvFrom(buffer, capacity, from);
+        int n = net::TakeDatagram(m_socket, buffer, capacity, from);
         if (n <= 0 || !m_relay) return n;
         if (!(from == m_relayEp)) continue;          // only the relay should reach us
         auto* b = static_cast<std::uint8_t*>(buffer);
@@ -1535,6 +1552,7 @@ void NetworkManager::Send(const std::string& channel, const std::string& data) {
     if (m_mode == Mode::Server) {
         // Server originates a message: stamp it with our id (0) and fan out to
         // the clients in the host's room.
+        net::NoteObject(net::ObjectKey(channel, data), channel.size() + data.size(), false);
         net::Packet p(Message);
         p.Write(m_localId);
         p.Write(channel);
@@ -1543,6 +1561,7 @@ void NetworkManager::Send(const std::string& channel, const std::string& data) {
             if (c.room == m_localRoom)
                 SendDatagram(c.endpoint, p.Data(), p.Size());
     } else if (m_mode == Mode::Client && m_joined) {
+        net::NoteObject(net::ObjectKey(channel, data), channel.size() + data.size(), false);
         net::Packet p(Message);
         p.Write(m_localId);
         p.Write(channel);
@@ -2269,6 +2288,7 @@ void NetworkManager::ServerTick(float dt) {
                 }
             }
             if (auto cl = m_clients.find(from); cl != m_clients.end() && !m_syncVars.count(key)) ++cl->second.varsCreated;
+            net::NoteObject(key, key.size() + value.size(), true);
             ApplySyncVar(key, value);
             // A client's write goes to its own room (the host applies every one).
             net::Packet out(SyncVar); out.Write(key); out.Write(value);
@@ -2875,6 +2895,7 @@ void NetworkManager::ClientTick(float dt) {
         } else if (type == SyncVar) {
             std::string key = p.ReadString();
             std::string value = p.ReadString();
+            net::NoteObject(key, key.size() + value.size(), true);
             ApplySyncVar(key, value);
         } else if (type == Correct) {
             // The server rejected a move (or teleported us): go where it says.

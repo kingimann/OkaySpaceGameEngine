@@ -627,7 +627,9 @@ private:
             ma->SetExternalDrive(true);
         } else {
             ma->SetExternalDrive(false);
-            ma->SetLoop(st.loop);
+            // Jump holds its last frame even if a saved graph still has it
+            // flagged to loop. Fall and every other state keep their own flag.
+            ma->SetLoop(st.loop && st.name != "Jump");
             ma->Play(st.clip, blend);   // the transition's blend, not the animator's own setting
             if (offset > 0.0f && ma->ActiveClip() >= 0) ma->SetTime(offset * ma->ClipLength(ma->ActiveClip()));
         }

@@ -216,22 +216,27 @@ public:
             float t0 = m_clock, t1 = m_clock + dt * speed;
             const bool first = m_fromStart && t1 > t0;
             if (t1 > t0) m_fromStart = false;
+            // A jump clip holds its last frame when the body is still in the air.
+            // Fall keeps looping (it's a cycle). Wrapping the jump replayed the
+            // takeoff for as long as the jump lasted.
+            const bool holdJump = m_inAir && !m_once && !jumpClip.empty() && CurrentName() == jumpClip;
+            const bool wrap = loop && !m_once && !holdJump;
             if (!clips[active].events.empty() && len > 0.0f && t1 > t0) {
-                if (loop && !m_once && t1 > len) { FireWindow(active, t0, len, first); FireWindow(active, 0.0f, std::fmod(t1, len), true); }
-                else                             FireWindow(active, t0, t1, first);
+                if (wrap && t1 > len) { FireWindow(active, t0, len, first); FireWindow(active, 0.0f, std::fmod(t1, len), true); }
+                else                  FireWindow(active, t0, (holdJump && t1 > len) ? len : t1, first);
             }
             // Root motion: what the root bone travelled this frame moves the object
             // instead (measured in world space through the bone's parent, so FBX
             // armature scales and rotated armatures come out right).
             if (rootMotion && len > 0.0f) {
-                const bool wrapLoop = loop && !m_once;
+                const bool wrapLoop = wrap;
                 float e0 = wrapLoop ? std::fmod(std::fmod(t0, len) + len, len) : std::fmin(t0, len);
                 float e1 = wrapLoop ? std::fmod(std::fmod(t1, len) + len, len) : std::fmin(t1, len);
                 Vec3 d; float yaw = 0.0f;
                 RootDelta(active, e0, e1, len, d, yaw);   // none (idle clip): a zero move stops a rigidbody
                 ApplyRootMotion(d, yaw, dt);
             }
-            m_clock = len > 0.0f ? ((loop && !m_once) ? std::fmod(t1, len) : std::fmin(t1, len)) : t1;
+            m_clock = len > 0.0f ? (wrap ? std::fmod(t1, len) : std::fmin(t1, len)) : t1;
             ApplyPose(active, m_clock);
             // A finished one-shot returns to the clip that was playing before it
             // (crossfaded like any switch).

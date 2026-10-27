@@ -20,6 +20,7 @@
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/Physics2D.hpp"
+#include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Core/Log.hpp"
@@ -1769,6 +1770,10 @@ void NetworkManager::ReleasePawn(const std::string& id) {
         c.lastInputSeq = 0;
         c.lastInput = PlayerInput{};
         c.repeats = 0;
+        c.inputCredit = 0;
+        c.droppedPressed = 0;
+        c.droppedN = 0;
+        c.haveRepeatPose = false;
         break;
     }
 }
@@ -1868,48 +1873,90 @@ bool NetworkManager::ClientMaySendXform(const Client& from, const std::string& i
     return false;
 }
 
-// Each fixed tick on the server: every player moves by one input (the next
-// one it sent, or its last one again if that's late), through its controller.
+// Each fixed tick on the server. One queued input is applied (or the last one
+// again, for a few ticks, when none has arrived). A hitch delivers several at
+// once: while the queue is deeper than kTargetQueuedInputs and this client was
+// actually late (inputCredit, earned only while the queue was empty), a second
+// input is applied the same tick, so the depth falls back within a few ticks.
+// A client that keeps the queue full never earns credit, and never more than
+// two inputs are applied, so sending faster than the tick still only fills the
+// queue.
+//
+// Repeats are not an extra step. The pose from before the streak is put back
+// when a real input arrives, and that input is the movement for this tick.
 void NetworkManager::ServerMovementTick(float step) {
     for (auto& [ep, c] : m_clients) {
         if (c.pawn.empty()) continue;
         auto obj = m_syncObjs.find(c.pawn);
         if (obj == m_syncObjs.end() || !obj->second.t || !obj->second.t->gameObject) continue;
-        // A late input is covered by the last one for a few ticks (a lost
-        // packet); after that the player stands still rather than keep going.
-        PlayerInput in = c.repeats < kInputRepeats ? c.lastInput : PlayerInput{};
-        in.pressed = 0;   // a held button stays held; a press isn't repeated
-        ++c.repeats;
-        const bool fresh = !c.inputs.empty();
-        if (fresh) {
+        Transform* tr = obj->second.t;
+        GameObject* go = tr->gameObject;
+        auto saveRepeat = [&]() {
+            c.repeatPos = tr->localPosition;
+            c.repeatVel = Vec3(0.0f, 0.0f, 0.0f);
+            if (auto* rb = go->GetComponent<Rigidbody3D>()) c.repeatVel = rb->velocity;
+            c.haveRepeatPose = true;
+        };
+        auto restoreRepeat = [&]() {
+            if (!c.haveRepeatPose) return;
+            tr->localPosition = c.repeatPos;
+            if (auto* rb = go->GetComponent<Rigidbody3D>()) rb->velocity = c.repeatVel;
+            c.haveRepeatPose = false;
+            c.repeats = 0;
+        };
+        auto publish = [&]() {
+            const Vec3 at = tr->TransformPoint(Vec3(0.0f, 0.0f, 0.0f));
+            c.state.x = at.x; c.state.y = at.y; c.state.z = at.z;
+            c.hasState = true;
+        };
+        if (c.inputs.empty()) {
+            // A late input is covered by the last one for a few ticks (a lost
+            // packet); after that the player stands still rather than keep going.
+            if (!c.haveRepeatPose) saveRepeat();
+            PlayerInput in = c.repeats < kInputRepeats ? c.lastInput : PlayerInput{};
+            in.pressed = 0;   // a held button stays held; a press isn't repeated
+            ++c.repeats;
+            c.inputCredit = std::min(c.inputCredit + 1, static_cast<int>(kMaxQueuedInputs));
+            c.lastInput = in;
+            if (IPlayerSim* sim = FindSimInTree(go)) sim->Simulate(in, step);
+            publish();
+            continue;
+        }
+        // Shallow again: the earlier gap is paid. A full queue from here on is
+        // a client sending faster than the tick, not one catching up.
+        if (static_cast<int>(c.inputs.size()) <= kTargetQueuedInputs) c.inputCredit = 0;
+        if (c.repeats > 0) restoreRepeat();
+        int budget = 1;
+        if (static_cast<int>(c.inputs.size()) > kTargetQueuedInputs && c.inputCredit > 0) {
+            budget = 2;
+            --c.inputCredit;
+        }
+        for (int n = 0; n < budget && !c.inputs.empty(); ++n) {
             auto next = c.inputs.begin();
-            in = next->second.second;
-            c.lastInputSeq = next->first;
+            PlayerInput in = next->second.second;
+            if (c.droppedPressed) { in.pressed |= c.droppedPressed; c.droppedPressed = 0; }
+            c.lastInputSeq = std::max(c.lastInputSeq, next->first);
             c.inputs.erase(next);
             c.repeats = 0;
-        }
-        if (minPressInterval > 0.0f) {   // presses closer together than that are dropped
-            const std::uint32_t limited[3] = {PlayerInput::Jump, PlayerInput::Dash, PlayerInput::Fire};
-            for (int b = 0; b < 3; ++b) {
-                if (!(in.pressed & limited[b])) continue;
-                if (m_serverTime - c.lastPress[b] < minPressInterval) in.pressed &= ~limited[b];
-                else c.lastPress[b] = m_serverTime;
+            c.haveRepeatPose = false;
+            if (minPressInterval > 0.0f) {   // presses closer together than that are dropped
+                const std::uint32_t limited[3] = {PlayerInput::Jump, PlayerInput::Dash, PlayerInput::Fire};
+                for (int b = 0; b < 3; ++b) {
+                    if (!(in.pressed & limited[b])) continue;
+                    if (m_serverTime - c.lastPress[b] < minPressInterval) in.pressed &= ~limited[b];
+                    else c.lastPress[b] = m_serverTime;
+                }
             }
-        }
-        c.lastInput = in;
-        if (IPlayerSim* sim = FindSimInTree(obj->second.t->gameObject)) sim->Simulate(in, step);
-        const Vec3 at = obj->second.t->TransformPoint(Vec3(0.0f, 0.0f, 0.0f));
-        c.state.x = at.x; c.state.y = at.y; c.state.z = at.z;   // the server's word (snapshots, hit checks)
-        c.hasState = true;
-        // Tell the player where this input left it, for its prediction (only
-        // for a new input: a repeat has no number of its own).
-        if (fresh) {
-            const Vec3 lp = obj->second.t->localPosition;
+            c.lastInput = in;
+            if (IPlayerSim* sim = FindSimInTree(go)) sim->Simulate(in, step);
+            // One ack per seq, at the pose that input left. Prediction compares each.
+            const Vec3 lp = tr->localPosition;
             net::Packet a(PawnAck);
             a.Write(c.pawn); a.Write(c.lastInputSeq);
             a.Write(lp.x); a.Write(lp.y); a.Write(lp.z);
             SendDatagram(c.endpoint, a.Data(), a.Size());
         }
+        publish();
     }
 }
 
@@ -2363,8 +2410,8 @@ void NetworkManager::ServerTick(float dt) {
                 AntiCheatAfterRefusal(id);   // (may kick: c is gone after this)
             }
         } else if (type == InputCmd) {
-            // A player's inputs (authoritative movement): queued by number, one
-            // applied per tick (ServerMovementTick).
+            // A player's inputs (authoritative movement): queued by number.
+            // ServerMovementTick applies one a tick, or two while a hitch drains.
             auto it = m_clients.find(from);
             if (it == m_clients.end() || !authoritativeMovement) continue;
             Client& c = it->second;
@@ -2389,17 +2436,27 @@ void NetworkManager::ServerTick(float dt) {
                 in.yaw = p.ReadF32(); in.pitch = p.ReadF32();
                 in.held = p.ReadU32(); in.pressed = p.ReadU32();
                 if (!p.Ok()) break;
-                if (seq <= c.lastInputSeq || c.inputs.count(seq)) continue;   // applied, or a repeat
+                bool seenDrop = false;
+                for (std::uint8_t d = 0; d < c.droppedN; ++d) if (c.droppedSeq[d] == seq) { seenDrop = true; break; }
+                if (seq <= c.lastInputSeq || c.inputs.count(seq) || seenDrop) continue;   // applied, queued, or a dropped newest
                 // Commands for ticks too far ahead of or behind the server's are refused.
                 if (std::fabs((double)tick - (double)m_netTick) > rate) { ++m_inputsDropped; continue; }
                 in.Clamp();
                 c.inputs[seq] = {tick, in};
             }
-            // The tick budget: one input a tick; a client sending faster (a speed
-            // hack) only fills the queue, and the oldest beyond it are dropped.
+            // Past the budget, drop the newest input, not the oldest unapplied one
+            // (that one may be a jump still waiting). Its press is kept and applied
+            // with the next input that does run; the seq is remembered so the
+            // client's resend of it doesn't run twice.
             while (c.inputs.size() > kMaxQueuedInputs) {
-                c.lastInputSeq = std::max(c.lastInputSeq, c.inputs.begin()->first);
-                c.inputs.erase(c.inputs.begin());
+                auto last = std::prev(c.inputs.end());
+                c.droppedPressed |= last->second.second.pressed;
+                if (c.droppedN < 8) c.droppedSeq[c.droppedN++] = last->first;
+                else {
+                    for (int d = 1; d < 8; ++d) c.droppedSeq[d - 1] = c.droppedSeq[d];
+                    c.droppedSeq[7] = last->first;
+                }
+                c.inputs.erase(last);
                 ++m_inputsDropped;
             }
         } else if (type == Ping) {

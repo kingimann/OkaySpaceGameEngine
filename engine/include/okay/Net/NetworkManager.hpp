@@ -663,10 +663,20 @@ private:
         // when an input is late).
         std::string pawn;
         std::map<std::uint32_t, std::pair<std::uint32_t, PlayerInput>> inputs;   // seq -> (tick, input)
-        std::uint32_t lastInputSeq = 0;
+        std::uint32_t lastInputSeq = 0;   // highest seq actually applied (acks and snapshots)
         float lastPress[3] = {-1e9f, -1e9f, -1e9f};   // server time of its last Jump, Dash, Fire press (minPressInterval)
         PlayerInput lastInput;
         int repeats = 0;            // ticks the last input stood in for a late one
+        // Empty ticks earn one credit, capped. Spent one at a time to apply a
+        // second queued input after a hitch. Zeroed once the queue is shallow,
+        // so a client that keeps it full never buys a second step.
+        int inputCredit = 0;
+        std::uint32_t droppedPressed = 0;   // presses from inputs dropped as newest
+        std::uint32_t droppedSeq[8] = {};   // those seqs, so a resend isn't applied twice
+        std::uint8_t droppedN = 0;
+        Vec3 repeatPos{};           // pose before the current repeat streak
+        Vec3 repeatVel{};
+        bool haveRepeatPose = false;
         bool sealedJoin = false;    // joined through the sealed handshake
         // Without encryption a client is only its address: the cookie its
         // Welcome gave it proves a Leave / State / Message / SyncVar is its
@@ -821,7 +831,7 @@ private:
     int StepNetTick(float rate, float dt);   // ticks that elapsed this frame (fires OnNetTick)
     float HostTickRate() const { return netTickRate > 0.0f ? netTickRate : (authoritativeMovement ? 30.0f : 0.0f); }
     // Authoritative movement.
-    void ServerMovementTick(float step);   // each fixed tick: run each player one input
+    void ServerMovementTick(float step);   // each fixed tick: one input, or two while catching up
     void ClientInputTick();                // each fixed tick: send this tick's input
     /// Server, authoritative movement: the first controller-carrying object this
     /// client spawned (`sp/<id>/...`) is its pawn, without waiting for an InputCmd.
@@ -835,7 +845,8 @@ private:
     void ReleasePawn(const std::string& id);
     void ResetPawnPrediction();   // client: prediction history for the pawn
     void ClearLocalPawn();        // client: pawn id, prediction, and the input stream
-    static constexpr std::size_t kMaxQueuedInputs = 8;   // the tick budget: older ones are dropped
+    static constexpr std::size_t kMaxQueuedInputs = 8;   // past this, the newest input is dropped (its press is kept)
+    static constexpr int kTargetQueuedInputs = 2;        // deeper than this, a client that was late may apply one extra
     static constexpr int kInputRepeats = 3;              // late-input cover before the player stops
     std::string m_pawnId;                  // client: the object this player drives
     std::function<PlayerInput()> m_inputSource;

@@ -1,5 +1,116 @@
 OkaySpace Game Engine — Changelog
 
+v2.835.0
+  Animation and characters
+  - Imported humanoids play their own crouch and prone clips, so the head
+    no longer pokes through low ceilings (#385).
+  - Joint limits (hinge, ball and twist) on IK bones, editable in the
+    inspector (#396).
+  - Chain IK turns its bones instead of stretching them, respecting each
+    joint's limits (#398).
+  - Foot IK turns the leg bones, so skinned legs bend at the knee, and it
+    follows leg-length changes and each foot's own sole (#412).
+  - Foot IK ground checks ignore the character itself, held items and
+    triggers, and cost less (#413).
+  - Look At and Aim IK reach their target at any frame rate, and blend
+    cleanly with the animator (#418, #433).
+  - The sandbox character's hands sit at his sides, gestures point the right
+    way, and the first-person arm no longer snaps up (#430).
+  - The Animator inspector's preview plays with the Animation window
+    closed (#429).
+  Movement and camera
+  - Switch between first and third person while playing: V on the keyboard
+    or Back on a gamepad, with a smooth camera move (#434).
+  - Fixed: double jumps at the top of a jump, infinite jumps in 2D, and the
+    first-person view bobbing on a moving lift (#409).
+  - The shooter climbs stairs, door sills of 1–4 cm count as steps (#411),
+    and steps whose tread sits above the floor can be climbed (#436).
+  World and sandbox
+  - Voxel digging leaves a floor you can't fall through and only rebuilds
+    the part you dug, so it's faster (#440).
+  - Heightmap digging stops at a floor, only edits under the brush, and
+    aims correctly on moved or scaled terrain (#437).
+  - The sandbox lake sits in the valleys instead of under the hills (#438).
+  Inventory
+  - Keep your bag between scenes, one recipe system with timed crafting,
+    and more sort modes (#367).
+  - Equipment slots, sockets, armor and defence, and backpacks you wear
+    (#378).
+  - Items equipped in the main hand are held in the character's hands, and
+    pickups can go straight to the hands (#383).
+  - Inventory events, inv_* OkayScript calls, and give / take / has item
+    actions (#387).
+  Editor
+  - Scene Manager window: open, create, rename, duplicate and delete scenes
+    and set the build order (View > Panels > Scene Manager) (#415).
+  - Script Editor: the outline, F12 and Ctrl+Click find every function and
+    type in a script (#442).
+  Multiplayer
+  - NetworkObject, NetworkTransform, SyncVar and per-object RPCs for C++,
+    OkayScript and visual script (#431).
+  - A network simulator (latency, jitter, loss, duplication) and a
+    per-object traffic panel in the editor (#432).
+  - Server-authoritative movement claims each player's character on the
+    server (#400), dedicated servers take --authoritative or
+    `authoritative = true` in server.cfg (#406), and writing to an unowned
+    scene object is refused without kicking the player (#405).
+
+v2.834.0
+  Animation and characters
+  - Crawling goes four ways, and lying down and getting up play real
+    get-up and drop moves instead of snapping; stance crossfades follow
+    the Animator's stance times (#371).
+  - Crouch and prone work on every movement controller: first and third
+    person, top-down, click-to-move and the shooter (#375).
+  - Limb IK turns the arm or leg bones instead of moving joints, so a
+    skinned mesh bends with it, blends smoothly by weight, and the elbow or
+    knee no longer flips as the limb straightens (#388, #395).
+  - Two copies of the same imported character each find their own bones
+    for IK, instead of the second grabbing the first's (#395).
+  - Holding: the body leans and adjusts for what it carries, and a heavy
+    load slows the player down (#389).
+  - Fixed: a held object no longer drops out of the hands when the
+    character goes prone, crawls, gets up or drops down (#397).
+  - Fixed: with Auto-recenter Camera on, strafing or backing up no longer
+    spins the third-person camera; it still settles in behind a forward
+    run (#399).
+  Inventory
+  - World pickups and drops, using the item in your hand, encumbrance
+    (an over-full bag slows you down, opt-in) and loot tables (#359).
+  In-game UI
+  - Free anchors and pivot on every UI element (UIFrame), with old layouts
+    converted automatically (#381).
+  - A modal stack, context menus and a key-binding field (#386).
+  - Two-way gamepad navigation and touch input (#391).
+  Scripting
+  - Typed OkayScript gains lambdas, Func / Action and LINQ-style list
+    methods (#379).
+  Multiplayer and voice
+  - Voice calls work on the new relay hub, and the relay caps sessions per
+    address (#393).
+  Multiplayer security (anti-cheat)
+  - Bans keep players out: a banned account or machine gets no session
+    ticket, so no ticket-checking server lets it in (#350).
+  - Tickets are bound to one server, one session and one connection, so a
+    stolen ticket can't be replayed elsewhere (#360).
+  - The anti-cheat SQL: nobody can lift their own ban, and only listed
+    server accounts can file server kicks (#392). Apply docs/sql/anticheat.sql
+    and redeploy the session-ticket function to use these.
+  - Joins check encryption first, then the password and sign-in, with
+    per-address attempt limits that back off up to 5 minutes (#365).
+  - Budgets and strikes survive a reconnect, and a kicked player waits out a
+    growing cooldown before rejoining (#363).
+  - SyncVar, message and spawn size limits per client (#368).
+  - Safer defaults: a broken anti-cheat config refuses joins instead of
+    running open, and a plaintext session cookie stops spoofed leaves when
+    encryption is off (#384).
+  - Lag compensation can't be stretched by a client faking a long round
+    trip (#376).
+  - Pings only from players, over-rate messages left unacknowledged, press
+    limits, and dead pawns can't shoot (#390).
+  - Trusted anti-cheat keys ship in the launcher only; the release warns
+    when built without them (#394).
+
 v2.833.0
   Animation and characters
   - Stance changes are smooth: going between standing, crouching and prone

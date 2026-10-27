@@ -1541,7 +1541,8 @@ static std::vector<std::string> ClipNameWords(const std::string& raw) {
     return out;
 }
 
-// Map idle/walk/run/jump/fall/land from the clip names, where not set yet.
+// Map idle/walk/run/jump/fall/land and the crouch / prone clips from the clip
+// names, where not set yet.
 static void AutoMapLocomotion(ModelAnimator* ma) {
     if (!ma) return;
     // By whole words of the clip name, an exact name first ("Walk" before
@@ -1551,15 +1552,32 @@ static void AutoMapLocomotion(ModelAnimator* ma) {
         {"run", "running", "sprint", "sprinting", "jog", "jogging"},
         {"jump", "jumping", "leap"}, {"fall", "falling", "air", "inair", "drop"}, {"land", "landing"}};
     std::string* slot[6] = {&ma->idleClip, &ma->walkClip, &ma->runClip, &ma->jumpClip, &ma->fallClip, &ma->landClip};
+    std::string* stanceSlot[5] = {&ma->crouchClip, &ma->crouchWalkClip, &ma->proneClip, &ma->crawlClip, &ma->getUpClip};
     auto is = [&](int role, const std::string& w) {
         for (const std::string& k : kWords[role]) if (k == w) return true;
+        return false;
+    };
+    auto any = [](const std::vector<std::string>& ws, std::initializer_list<const char*> ks) {
+        for (const std::string& w : ws) for (const char* k : ks) if (w == k) return true;
         return false;
     };
     std::vector<std::vector<std::string>> words;
     for (const auto& c : ma->clips) words.push_back(ClipNameWords(c.name));
     std::vector<bool> used(ma->clips.size(), false);
-    for (std::size_t ci = 0; ci < ma->clips.size(); ++ci)   // clips already given a state
+    for (std::size_t ci = 0; ci < ma->clips.size(); ++ci) {   // clips already given a state
         for (const std::string* sl : slot) if (*sl == ma->clips[ci].name) used[ci] = true;
+        for (const std::string* sl : stanceSlot) if (*sl == ma->clips[ci].name) used[ci] = true;
+    }
+    // Crouch / prone clips, and changes between stances ("Crouch To Stand", "Get Up").
+    auto crouchy = [&](std::size_t ci) { return any(words[ci], {"crouch", "crouched", "crouching", "sneak", "sneaking", "squat", "squatting"}); };
+    auto proney  = [&](std::size_t ci) { return any(words[ci], {"prone", "lying", "crawl", "crawling"}); };
+    auto change  = [&](std::size_t ci) { return any(words[ci], {"to", "up", "down"}); };
+    auto moving  = [&](std::size_t ci) { return any(words[ci], {"walk", "walking", "move", "moving", "forward", "run", "running"}); };
+    auto crawl   = [&](std::size_t ci) { return any(words[ci], {"crawl", "crawling"}); };
+    auto getUp   = [&](std::size_t ci) {
+        return (any(words[ci], {"up"}) && any(words[ci], {"get", "getting", "stand", "standing"})) ||
+               (proney(ci) && any(words[ci], {"to"}) && any(words[ci], {"stand", "standing", "idle"}));
+    };
     for (int pass = 0; pass < 2; ++pass)
         for (int role = 0; role < 6; ++role)
             for (std::size_t ci = 0; ci < ma->clips.size() && slot[role]->empty(); ++ci) {
@@ -1575,8 +1593,19 @@ static void AutoMapLocomotion(ModelAnimator* ma) {
                         air = air || is(3, w) || is(4, w) || is(5, w);
                     }
                 }
-                if (hit && !(role < 3 && air)) { *slot[role] = ma->clips[ci].name; used[ci] = true; }
+                // A crouch walk, a drop to prone or a get-up is a stance clip (below).
+                const bool stance = crouchy(ci) || proney(ci) || getUp(ci);
+                if (hit && !stance && !(role < 3 && air)) { *slot[role] = ma->clips[ci].name; used[ci] = true; }
             }
+    const std::function<bool(std::size_t)> roles[5] = {
+        [&](std::size_t ci) { return crouchy(ci) && !change(ci) && !moving(ci) && !any(words[ci], {"sneak", "sneaking"}); },
+        [&](std::size_t ci) { return crouchy(ci) && !change(ci) && (moving(ci) || any(words[ci], {"sneak", "sneaking"})); },
+        [&](std::size_t ci) { return proney(ci) && !change(ci) && !crawl(ci) && !moving(ci); },
+        [&](std::size_t ci) { return (crawl(ci) || (proney(ci) && moving(ci))) && !change(ci); },
+        getUp};
+    for (int role = 0; role < 5; ++role)
+        for (std::size_t ci = 0; ci < ma->clips.size() && stanceSlot[role]->empty(); ++ci)
+            if (!used[ci] && roles[role](ci)) { *stanceSlot[role] = ma->clips[ci].name; used[ci] = true; }
 }
 
 // One clip through the rest poses (see "Rest poses" in AddAnimationsFromFile):
@@ -2114,6 +2143,10 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
         ma->inPlace = true;
         mapped = "idle='" + ma->idleClip + "' walk='" + ma->walkClip + "'" +
                  (ma->runClip.empty() ? "" : " run='" + ma->runClip + "'");
+        for (const auto& [label, clip] : {std::pair<const char*, const std::string*>{"crouch", &ma->crouchClip},
+                                          {"crouch walk", &ma->crouchWalkClip}, {"prone", &ma->proneClip},
+                                          {"crawl", &ma->crawlClip}, {"get up", &ma->getUpClip}})
+            if (!clip->empty()) mapped += std::string(" ") + label + "='" + *clip + "'";
 
         // Re-ground and re-center on the ANIMATED pose. Some rigs' clips sit at
         // a constant offset from the bind pose (glTF CesiumMan-style skeleton
@@ -2204,14 +2237,18 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
             fik->DetectHumanoidBones(scene, root);
             if (!fresh) fik->Start();   // resolve the new names now: it may be running already
             fik->orient = true;   // turn the thigh and shin with the joints, or the skinned leg tears at the knee
-            // The sole's normal in the foot bone's own axes, off the bind pose: a
+            fik->hipLimit = IKJointLimit::Hip(); fik->kneeLimit = IKJointLimit::Knee();
+            // Each sole's normal in its own foot bone's axes, off the bind pose: a
             // Blender / glTF foot points its Y down the foot, so tilting a fixed
-            // local +Y onto the slope stood those feet on their toes.
-            for (const auto& up : scene.Objects())
-                if (up->name == fik->leftFootName && up->IsSelfOrDescendantOf(root)) {
+            // local +Y onto the slope stood those feet on their toes; and a
+            // mirrored rig's right foot isn't the left one's axis.
+            for (const auto& up : scene.Objects()) {
+                if (!up->IsSelfOrDescendantOf(root)) continue;
+                if (up->name == fik->leftFootName)
                     fik->footUpAxis = (up->transform->Rotation().Inverse() * Vec3::Up).Normalized();
-                    break;
-                }
+                else if (up->name == fik->rightFootName)
+                    fik->footUpAxisR = (up->transform->Rotation().Inverse() * Vec3::Up).Normalized();
+            }
             mapped += mapped.empty() ? "foot IK wired" : ", foot IK wired";
         } else if (fik) {
             player->RemoveComponent<FootIK>();   // no legs to plant on this model

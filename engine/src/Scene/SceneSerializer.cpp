@@ -16,6 +16,7 @@
 #include "okay/Components/CharacterController3D.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/PlayerView.hpp"
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/BlockBuilder.hpp"
@@ -27,11 +28,13 @@
 #include "okay/Components/InventoryUI.hpp"
 #include "okay/Components/GridInventory.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
+#include "okay/Inventory/Recipe.hpp"
 #include "okay/Components/GridInventoryUI.hpp"
 #include "okay/Components/CraftingStation.hpp"
 #include "okay/Components/ChestInventory.hpp"
 #include "okay/Components/ItemPickup.hpp"
 #include "okay/Components/LootSource.hpp"
+#include "okay/Components/Equipment.hpp"
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"
@@ -112,6 +115,7 @@
 #include "okay/Components/Flashlight.hpp"
 #include "okay/Components/FirstPersonHand.hpp"
 #include "okay/Components/NetworkSync.hpp"
+#include "okay/Components/NetworkObject.hpp"
 #include "okay/Components/AntiCheatConfig.hpp"
 #include "okay/Components/NetValidator.hpp"
 #include <cmath>
@@ -222,6 +226,24 @@ void ReadInstanceData(std::istream& in, std::size_t n, Get data) {
     }
 }
 
+// A recipe list's newer fields (craft time, bench tag, unlock flag, byproducts),
+// appended after the older fields: one entry per recipe, in order.
+void WriteRecipeExtras(std::ostream& out, const std::vector<Recipe>& rs) {
+    for (const auto& r : rs) {
+        out << " " << r.craftTime << " " << Quote(r.station) << " " << Quote(r.unlockFlag) << " " << r.byproducts.size();
+        for (const auto& b : r.byproducts) out << " " << Quote(b.item) << " " << b.count;
+    }
+}
+void ReadRecipeExtras(std::istream& in, std::vector<Recipe>& rs) {
+    for (auto& r : rs) {
+        std::size_t nb = 0;
+        in >> r.craftTime; r.station = ReadQuoted(in); r.unlockFlag = ReadQuoted(in); in >> nb;
+        if (!in) return;
+        if (!(r.craftTime >= 0.0f)) r.craftTime = 0.0f;
+        for (std::size_t k = 0; k < nb && in; ++k) { Ingredient b; b.item = ItemId(ReadQuoted(in)); in >> b.count; r.byproducts.push_back(b); }
+    }
+}
+
 // key=value component lines (used by newer components): order-free, and keys a
 // build doesn't know are skipped, so fields can be added without breaking saves.
 struct KvOut {
@@ -253,6 +275,7 @@ struct KvIn {
     const std::string* find(const char* k) const { auto it = m.find(k); return it == m.end() ? nullptr : &it->second; }
     void f(const char* k, float& v) const { if (auto* s = find(k)) v = std::strtof(s->c_str(), nullptr); }
     void i(const char* k, int& v) const { if (auto* s = find(k)) v = std::atoi(s->c_str()); }
+    void u(const char* k, std::uint32_t& v) const { if (auto* s = find(k)) v = (std::uint32_t)std::strtoul(s->c_str(), nullptr, 10); }
     void b(const char* k, bool& v) const { if (auto* s = find(k)) v = std::atoi(s->c_str()) != 0; }
     void key(const char* k, char& v) const { if (auto* s = find(k)) v = (char)std::atoi(s->c_str()); }
     void str(const char* k, std::string& v) const { if (auto* s = find(k)) v = *s; }
@@ -261,6 +284,29 @@ struct KvIn {
         f((b + "R").c_str(), c.r); f((b + "G").c_str(), c.g); f((b + "B").c_str(), c.b); f((b + "A").c_str(), c.a);
     }
 };
+// A joint limit as `<p>T= <p>S= ...` keys (nothing when it's None).
+void WriteLimitKv(KvOut& k, const std::string& p, const IKJointLimit& l) {
+    if (!l.Active()) return;
+    k((p + "T").c_str(), (int)l.type)((p + "S").c_str(), l.swingMax)
+     ((p + "H0").c_str(), l.hingeMin)((p + "H1").c_str(), l.hingeMax)
+     ((p + "W0").c_str(), l.twistMin)((p + "W1").c_str(), l.twistMax);
+    if (!l.autoAxes)
+        k((p + "TX").c_str(), l.twistAxis.x)((p + "TY").c_str(), l.twistAxis.y)((p + "TZ").c_str(), l.twistAxis.z)
+         ((p + "HX").c_str(), l.hingeAxis.x)((p + "HY").c_str(), l.hingeAxis.y)((p + "HZ").c_str(), l.hingeAxis.z);
+}
+void ReadLimitKv(const KvIn& k, const std::string& p, IKJointLimit& l) {
+    int ty = 0; k.i((p + "T").c_str(), ty);
+    if (ty <= 0) return;
+    l.type = (IKJointLimit::Type)std::clamp(ty, 0, 2);
+    k.f((p + "S").c_str(), l.swingMax);
+    k.f((p + "H0").c_str(), l.hingeMin); k.f((p + "H1").c_str(), l.hingeMax);
+    k.f((p + "W0").c_str(), l.twistMin); k.f((p + "W1").c_str(), l.twistMax);
+    if (k.find((p + "TX").c_str())) {
+        l.autoAxes = false;
+        k.f((p + "TX").c_str(), l.twistAxis.x); k.f((p + "TY").c_str(), l.twistAxis.y); k.f((p + "TZ").c_str(), l.twistAxis.z);
+        k.f((p + "HX").c_str(), l.hingeAxis.x); k.f((p + "HY").c_str(), l.hingeAxis.y); k.f((p + "HZ").c_str(), l.hingeAxis.z);
+    }
+}
 // The crouch / prone options of a movement controller (StanceControl) and the
 // stance it was saved in: one `<rec> key=value ...` line.
 void WriteStanceControl(std::ostream& out, const char* rec, const StanceControl& sc) {
@@ -596,6 +642,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         if (!ma->jumpClip.empty() || !ma->fallClip.empty() || !ma->landClip.empty())
             out << "  modelanimair " << Quote(ma->jumpClip) << " " << Quote(ma->fallClip)
                 << " " << Quote(ma->landClip) << " " << ma->airUpVel << " " << ma->airDownVel << "\n";
+        // Stance clips (crouch / prone / get up) — optional record.
+        if (!ma->crouchClip.empty() || !ma->crouchWalkClip.empty() || !ma->proneClip.empty() ||
+            !ma->crawlClip.empty() || !ma->getUpClip.empty())
+            out << "  modelanimstance " << Quote(ma->crouchClip) << " " << Quote(ma->crouchWalkClip)
+                << " " << Quote(ma->proneClip) << " " << Quote(ma->crawlClip) << " " << Quote(ma->getUpClip) << "\n";
         // Crossfade + clip events — separate optional records (older scenes lack them).
         out << "  modelanimblend " << ma->blendTime << "\n";
         if (ma->rootMotion || ma->rootMotionY || !ma->rootMotionNode.empty() || ma->rootMotionRotation || ma->rootMotionApplyTo)
@@ -740,11 +791,25 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             if (t.standCrouch != def.standCrouch || t.crouchProne != def.crouchProne || t.proneStand != def.proneStand)
                 out << "  animsmstance " << t.standCrouch << " " << t.crouchProne << " " << t.proneStand << "\n";
         }
+        {
+            const GaitCrossfades def;
+            const GaitCrossfades& t = asm2->crossfades;
+            if (t.idleWalk != def.idleWalk || t.walkRun != def.walkRun ||
+                t.groundAir != def.groundAir || t.airGround != def.airGround)
+                out << "  animsmxfade " << t.idleWalk << " " << t.walkRun << " " << t.groundAir << " " << t.airGround << "\n";
+        }
         bool anyMatch = false;
         for (const auto& st : asm2->states) anyMatch = anyMatch || st.matchSpeed;
         if (anyMatch) {   // blend trees that keep pace with the body's speed
             out << "  animsmmatch " << asm2->states.size();
             for (const auto& st : asm2->states) out << " " << (st.matchSpeed ? 1 : 0);
+            out << "\n";
+        }
+        bool anyFall = false;
+        for (const auto& st : asm2->states) anyFall = anyFall || !st.fallbackClip.empty();
+        if (anyFall) {   // per-state stand-in when the named clip is missing
+            out << "  animsmfall " << asm2->states.size();
+            for (const auto& st : asm2->states) out << " " << Quote(st.fallbackClip);
             out << "\n";
         }
     }
@@ -823,6 +888,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         if (ns->clientClaimable) out << " 1";   // only when set: other scenes don't change
         out << "\n";
     }
+    // netobject / nettransform / syncvar are their own records. An older engine
+    // refuses a scene that contains them; scenes without these components are unchanged.
+    if (auto* no = go->GetComponent<NetworkObject>()) {
+        out << "  netobject " << (int)no->authority << " " << (no->owned ? 1 : 0)
+            << " " << Quote(no->netId) << "\n";
+    }
+    if (go->GetComponent<NetworkTransform>()) out << "  nettransform\n";
+    for (auto* sv : go->GetComponents<SyncVar>())
+        out << "  syncvar " << Quote(sv->name) << " " << Quote(sv->value) << "\n";
     if (auto* ac = go->GetComponent<AntiCheatConfig>()) {
         const AntiCheatSettings& s = ac->settings;
         std::string allow;
@@ -861,6 +935,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << w->color.r << " " << w->color.g << " " << w->color.b
             << " " << w->opacity << " " << w->reflectivity << " " << w->specular
             << " " << w->shininess << " " << w->flow.x << " " << w->flow.y
+            << " " << w->depth << " " << w->fluidDensity << " " << w->linearDrag
             << " " << Quote(w->texture) << "\n";
     }
     if (auto* ws = go->GetComponent<WorldStreamer>()) {
@@ -1032,7 +1107,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         k("rayUp", f->maxRayUp)("rayDown", f->maxRayDown)("pelvisShift", f->maxPelvisShift)
          ("upX", f->footUpAxis.x)("upY", f->footUpAxis.y)("upZ", f->footUpAxis.z)
          .b("lock", f->footLock)("lockSpeed", f->lockSpeed)("lockHeight", f->lockHeight)
-         ("lockRelease", f->lockRelease);
+         ("lockRelease", f->lockRelease)
+         ("upRX", f->footUpAxisR.x)("upRY", f->footUpAxisR.y)("upRZ", f->footUpAxisR.z)
+         ("om", 1)   // orient is saved after its migration: keep it as written
+         ("mask", f->groundMask);
+        WriteLimitKv(k, "hl", f->hipLimit); WriteLimitKv(k, "kl", f->kneeLimit);
         out << "\n";
     }
     if (auto* lb = go->GetComponent<LimbIK>()) {
@@ -1043,7 +1122,19 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << lb->pole.x << " " << lb->pole.y << " " << lb->pole.z
             << " " << (lb->orient ? 1 : 0) << " " << (int)lb->poleMode << " " << lb->softness
             << " " << lb->targetRotation.x << " " << lb->targetRotation.y << " " << lb->targetRotation.z
-            << " " << lb->targetRotation.w << "\n";
+            << " " << lb->targetRotation.w;
+        // Optional joint limits as trailing key=value (older builds skip them).
+        auto lim = [&out](const char* p, const IKJointLimit& l) {
+            if (!l.Active()) return;
+            out << ' ' << p << "T=" << (int)l.type << ' ' << p << "S=" << l.swingMax
+                << ' ' << p << "H0=" << l.hingeMin << ' ' << p << "H1=" << l.hingeMax
+                << ' ' << p << "W0=" << l.twistMin << ' ' << p << "W1=" << l.twistMax;
+            if (!l.autoAxes)
+                out << ' ' << p << "TX=" << l.twistAxis.x << ' ' << p << "TY=" << l.twistAxis.y << ' ' << p << "TZ=" << l.twistAxis.z
+                    << ' ' << p << "HX=" << l.hingeAxis.x << ' ' << p << "HY=" << l.hingeAxis.y << ' ' << p << "HZ=" << l.hingeAxis.z;
+        };
+        lim("ul", lb->upperLimit); lim("ll", lb->lowerLimit);
+        out << "\n";
     }
     if (auto* ci = go->GetComponent<ChainIK>()) {
         out << "  chainik " << Quote(ci->targetName) << " " << ci->weight << " " << ci->iterations
@@ -1052,6 +1143,22 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << ci->boneNames.size();
         for (const std::string& n : ci->boneNames) out << " " << Quote(n);
         out << "\n";
+        // Pole mode/direction and per-joint limits (a newer record).
+        bool anyLim = false;
+        for (const auto& l : ci->limits) anyLim = anyLim || l.Active();
+        if (ci->poleMode >= 0 || anyLim) {
+            out << "  chainx2 " << ci->poleMode
+                << " " << ci->poleDir.x << " " << ci->poleDir.y << " " << ci->poleDir.z
+                << " " << (anyLim ? ci->limits.size() : 0);
+            if (anyLim) for (const auto& l : ci->limits) {
+                out << " " << (int)l.type << " " << l.swingMax << " " << l.hingeMin << " " << l.hingeMax
+                    << " " << l.twistMin << " " << l.twistMax << " " << (l.autoAxes ? 1 : 0);
+                if (!l.autoAxes)
+                    out << " " << l.twistAxis.x << " " << l.twistAxis.y << " " << l.twistAxis.z
+                        << " " << l.hingeAxis.x << " " << l.hingeAxis.y << " " << l.hingeAxis.z;
+            }
+            out << "\n";
+        }
     }
     // IK fade + ChainIK constraints (separate records so older builds still load).
     auto ikFade = [&](const char* kind, bool active, float fade) {
@@ -1081,7 +1188,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "\n";
         // Easing, smoothing and joint limits (separate record: older builds skip it).
         out << "  fbikx " << fb->blendSpeed << " " << fb->goalSmoothing << " " << fb->lookSmoothing
-            << " " << fb->armMinBend << " " << fb->legMinBend << "\n";
+            << " " << fb->armMinBend << " " << fb->legMinBend;
+        // Per-limb joint limits (e<limb>u / e<limb>l keys), only when set.
+        KvOut k{out};
+        for (int l = 0; l < FullBodyIK::LimbCount; ++l) {
+            const std::string p = "e" + std::to_string(l);
+            WriteLimitKv(k, p + "u", fb->effectors[l].upperLimit);
+            WriteLimitKv(k, p + "l", fb->effectors[l].lowerLimit);
+        }
+        out << "\n";
     }
     if (auto* h = go->GetComponent<HoldableObject>()) {
         out << "  holdable";
@@ -1374,6 +1489,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         for (const auto& it : gi->overflow)
             out << " " << Quote(it.name) << " " << it.w << " " << it.h << " " << it.count << " " << it.weight;
         WriteInstanceData(out, gi->items.size(), [&](std::size_t i) -> const ItemInstanceData& { return gi->items[i].data; });
+        out << " " << (gi->keepOnSceneLoad ? 1 : 0);   // appended (numeric-peek guarded)
         out << "\n";
     }
     if (auto* gu = go->GetComponent<GridInventoryUI>()) {
@@ -1417,6 +1533,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             out << " " << Quote(r.output) << " " << r.outputCount;
         }
         out << " " << cs->range << " " << Quote(cs->playerName);   // appended (numeric-peek guarded)
+        out << " " << Quote(cs->recipeBook) << " " << Quote(cs->stationTag);   // appended (quote-peek guarded)
+        WriteRecipeExtras(out, cs->recipes);
         out << "\n";
     }
     if (auto* ch = go->GetComponent<ChestInventory>()) {
@@ -1601,6 +1719,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             out << " " << Quote(r.output) << " " << r.outputCount << " " << r.inputs.size();
             for (const auto& in : r.inputs) out << " " << Quote(in.item) << " " << in.count;
         }
+        out << " " << Quote(c->recipeBook);   // appended (quote-peek guarded)
+        WriteRecipeExtras(out, c->recipes);
         out << "\n";
     }
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
@@ -1684,6 +1804,17 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << tp->landShake << " " << tp->strideLength << " " << (tp->canSlide ? 1 : 0)
             << " " << tp->slideSpeed << " " << tp->slideTime << " " << (tp->driveStateMachine ? 1 : 0)
             << " " << (tp->ikLook ? 1 : 0) << "\n";
+    }
+    // Player view toggle (grok/view-toggle). Its own record, so older scenes skip it.
+    // Fields: allow, view (0 first / 1 third), key, pad, blend, ex ey ez, dist, shoulder.
+    if (auto* pv = go->GetComponent<PlayerView>()) {
+        out << "  playerview";
+        KvOut k{out};
+        k.b("allow", pv->allowToggle)("view", (int)pv->defaultView).key("key", pv->toggleKey)
+         ("pad", pv->toggleGamepadButton)("blend", pv->blendTime)
+         ("ex", pv->eyeOffset.x)("ey", pv->eyeOffset.y)("ez", pv->eyeOffset.z)
+         ("dist", pv->thirdPersonDistance)("shoulder", pv->shoulderOffset);
+        out << "\n";
     }
     if (auto* td = go->GetComponent<TopDownController>()) {
         out << "  tdctrl " << td->walkSpeed << " " << td->runSpeed << " "
@@ -1786,7 +1917,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             // extended: the camera follow (pivot) and the spring arm
             << " " << ts->pivotDampingXZ << " " << ts->pivotDampingY << " " << ts->maxPivotLag
             << " " << ts->cameraCollisionRadius << " " << ts->cameraCollisionMask
-            << " " << ts->cameraCollisionPullIn << " " << ts->cameraCollisionRecover << "\n";
+            << " " << ts->cameraCollisionPullIn << " " << ts->cameraCollisionRecover
+            << " " << ts->stepOffset << "\n";
     }
     if (auto* cm = go->GetComponent<ClickToMoveController>()) {
         out << "  ctmctrl " << cm->walkSpeed << " " << cm->runSpeed << " "
@@ -1852,7 +1984,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         for (const auto& s : inv->slots) out << " " << Quote(s.item) << " " << s.count;
         out << " " << inv->maxStack;   // appended (numeric-peek guarded on read)
         WriteInstanceData(out, inv->slots.size(), [&](std::size_t i) -> const ItemInstanceData& { return inv->slots[i].data; });
-        out << " " << inv->weightLimit << " " << (inv->slowWhenOverWeight ? 1 : 0) << " " << inv->overWeightSpeed;   // appended (guarded)
+        out << " " << inv->weightLimit << " " << (inv->slowWhenOverWeight ? 1 : 0) << " " << inv->overWeightSpeed   // appended (guarded)
+            << " " << (inv->keepOnSceneLoad ? 1 : 0);
         out << "\n";
     }
     if (auto* pk = go->GetComponent<ItemPickup>()) {
@@ -1860,12 +1993,32 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         KvOut k{out};
         k.str("item", pk->item)("count", pk->count).str("tag", pk->collectorTag).b("touch", pk->pickupOnTouch)
          ("auto", pk->autoRadius).key("key", pk->interactKey)("range", pk->interactRange)
-         ("magnet", pk->magnetRadius)("magnetSpeed", pk->magnetSpeed);
+         ("magnet", pk->magnetRadius)("magnetSpeed", pk->magnetSpeed).b("hold", pk->holdInHands);
         if (!pk->data.Empty()) {
             k("dur", pk->data.durability)("uid", pk->data.uid)("vals", pk->data.values.size());
             for (std::size_t v = 0; v < pk->data.values.size(); ++v) {
                 const std::string n = std::to_string(v);
                 k.str(("k" + n).c_str(), pk->data.values[v].first).str(("v" + n).c_str(), pk->data.values[v].second);
+            }
+        }
+        out << "\n";
+    }
+    if (auto* eq = go->GetComponent<Equipment>()) {
+        // One line: the flags, then per slot sN* keys (name, accepted type, socket, item and
+        // its instance data, a worn bag's contents included).
+        out << "  equipment";
+        KvOut k{out};
+        k.b("show", eq->showOnCharacter).b("keep", eq->keepOnSceneLoad)("n", eq->slots.size());
+        for (std::size_t i = 0; i < eq->slots.size(); ++i) {
+            const auto& s = eq->slots[i];
+            const std::string p = "s" + std::to_string(i);
+            k.str((p + "name").c_str(), s.name)((p + "acc").c_str(), (int)s.accepts).str((p + "sock").c_str(), s.socket);
+            if (s.item.empty()) continue;
+            const ItemInstanceData d = eq->CurrentData((int)i);
+            k.str((p + "item").c_str(), s.item)((p + "dur").c_str(), d.durability)((p + "uid").c_str(), d.uid)((p + "vals").c_str(), d.values.size());
+            for (std::size_t v = 0; v < d.values.size(); ++v) {
+                const std::string n = std::to_string(v);
+                k.str((p + "k" + n).c_str(), d.values[v].first).str((p + "v" + n).c_str(), d.values[v].second);
             }
         }
         out << "\n";
@@ -2024,7 +2177,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             // extended: assigned OnClick action (target object + public function)
             << " " << Quote(btn->clickTarget) << " " << Quote(btn->clickFunction)
             << " " << btn->clickArg
-            << " " << Quote(btn->fontPath) << "\n";   // optional TTF label font (newest)
+            << " " << Quote(btn->fontPath)   // optional TTF label font
+            // grok/ui-options: ease, duration, optional focus color (trailing, older scenes omit it)
+            << " " << btn->transitionEase << " " << btn->transitionDuration
+            << " " << (btn->separateFocus ? 1 : 0) << " "
+            << btn->focusColor.r << " " << btn->focusColor.g << " "
+            << btn->focusColor.b << " " << btn->focusColor.a << "\n";
     }
     if (auto* pn = go->GetComponent<UIPanel>()) {
         out << "  uipanel " << pn->position.x << " " << pn->position.y << " "
@@ -2267,7 +2425,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (int)pb->fillDir
             // extended (back-compatible trailing fields): shape + gradient fill
             << " " << (int)pb->shape << " " << (pb->gradientFill ? 1 : 0) << " "
-            << pb->fillEnd.r << " " << pb->fillEnd.g << " " << pb->fillEnd.b << " " << pb->fillEnd.a << "\n";
+            << pb->fillEnd.r << " " << pb->fillEnd.g << " " << pb->fillEnd.b << " " << pb->fillEnd.a
+            // grok/ui-options: segments, damage trail, color-by-value, text format
+            << " " << pb->segments << " " << pb->segmentGap << " " << pb->trailDelay << " "
+            << pb->trailColor.r << " " << pb->trailColor.g << " " << pb->trailColor.b << " " << pb->trailColor.a
+            << " " << (pb->colorByValue ? 1 : 0) << " "
+            << pb->lowColor.r << " " << pb->lowColor.g << " " << pb->lowColor.b << " " << pb->lowColor.a << " "
+            << pb->highColor.r << " " << pb->highColor.g << " " << pb->highColor.b << " " << pb->highColor.a
+            << " " << Quote(pb->textFormat) << "\n";
     }
     if (auto* rp = go->GetComponent<UIRadialProgress>()) {
         out << "  uiradial " << rp->position.x << " " << rp->position.y << " "
@@ -2409,7 +2574,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (sl->interactable ? 1 : 0)
             << " " << (sl->vertical ? 1 : 0)
             // extended (back-compatible trailing fields): track shape + round knob
-            << " " << (int)sl->trackShape << " " << (sl->roundKnob ? 1 : 0) << "\n";
+            << " " << (int)sl->trackShape << " " << (sl->roundKnob ? 1 : 0)
+            // grok/ui-options: step, fill gradient, handle shape, value format
+            << " " << sl->step << " " << (sl->fillGradient ? 1 : 0) << " "
+            << sl->fillEnd.r << " " << sl->fillEnd.g << " " << sl->fillEnd.b << " " << sl->fillEnd.a
+            << " " << sl->knobShape << " " << Quote(sl->valueFormat) << "\n";
     }
     if (auto* st = go->GetComponent<UIStepper>()) {
         out << "  uistepper " << st->position.x << " " << st->position.y << " "
@@ -2995,6 +3164,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ma->fallClip = ReadQuoted(in);
                     ma->landClip = ReadQuoted(in);
                     in >> ma->airUpVel >> ma->airDownVel;
+                } else if (field == "modelanimstance") {
+                    auto* ma = go->GetComponent<ModelAnimator>();
+                    if (!ma) ma = go->AddComponent<ModelAnimator>();
+                    ma->crouchClip     = ReadQuoted(in);
+                    ma->crouchWalkClip = ReadQuoted(in);
+                    ma->proneClip      = ReadQuoted(in);
+                    ma->crawlClip      = ReadQuoted(in);
+                    ma->getUpClip      = ReadQuoted(in);
                 } else if (field == "modelanimblend") {
                     auto* ma = go->GetComponent<ModelAnimator>();
                     if (!ma) ma = go->AddComponent<ModelAnimator>();
@@ -3138,6 +3315,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "animsmstance") {
                     StanceTimes& t = smFor()->stanceTimes;
                     in >> t.standCrouch >> t.crouchProne >> t.proneStand;
+                } else if (field == "animsmxfade") {
+                    GaitCrossfades& t = smFor()->crossfades;
+                    in >> t.idleWalk >> t.walkRun >> t.groundAir >> t.airGround;
                 } else if (field == "animsmmatch") {
                     auto* sm2 = smFor();
                     long n = 0; in >> n;
@@ -3182,6 +3362,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     for (long i = 0; i < n && in; ++i) {
                         float w = -1.0f; in >> w;
                         if (i < (long)sm2->states.size()) sm2->states[i].fullBodyIkWeight = w;
+                    }
+                } else if (field == "animsmfall") {
+                    auto* sm2 = smFor();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n && in; ++i) {
+                        std::string fb = ReadQuoted(in);
+                        if (sm2 && i < (long)sm2->states.size()) sm2->states[i].fallbackClip = std::move(fb);
                     }
                 } else if (field == "animsmparams") {
                     auto* sm2 = smFor();
@@ -3473,7 +3660,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                       k.f("rayUp", f->maxRayUp); k.f("rayDown", f->maxRayDown); k.f("pelvisShift", f->maxPelvisShift);
                       k.f("upX", f->footUpAxis.x); k.f("upY", f->footUpAxis.y); k.f("upZ", f->footUpAxis.z);
                       k.b("lock", f->footLock); k.f("lockSpeed", f->lockSpeed); k.f("lockHeight", f->lockHeight);
-                      k.f("lockRelease", f->lockRelease); }
+                      k.f("lockRelease", f->lockRelease);
+                      // The right sole's axis: files from before it leave it at Up,
+                      // which reads that foot's own rest pose (a mirrored rig's right
+                      // sole isn't the left one's axis).
+                      k.f("upRX", f->footUpAxisR.x); k.f("upRY", f->footUpAxisR.y); k.f("upRZ", f->footUpAxisR.z);
+                      k.u("mask", f->groundMask);
+                      // Files from before orient's migration loaded a Character's
+                      // part rig with it off; Start() turns it on there.
+                      if (!k.find("om") && !f->orient) f->orientMigrate = true;
+                      ReadLimitKv(k, "hl", f->hipLimit); ReadLimitKv(k, "kl", f->kneeLimit); }
                 } else if (field == "limbik") {
                     auto* lb = go->AddComponent<LimbIK>();
                     lb->upperName = ReadQuoted(in); lb->lowerName = ReadQuoted(in); lb->endName = ReadQuoted(in);
@@ -3491,7 +3687,29 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                       if (rs >> o) lb->orient = (o != 0);
                       lb->poleMode = (rs >> pm) ? (LimbIK::PoleMode)std::clamp(pm, 0, 2) : LimbIK::PoleMode::World;
                       Quat q;
-                      if (rs >> lb->softness >> q.x >> q.y >> q.z >> q.w) lb->targetRotation = q; }
+                      if (rs >> lb->softness >> q.x >> q.y >> q.z >> q.w) lb->targetRotation = q;
+                      // Newer still: joint limits as trailing key=value.
+                      std::string tok;
+                      while (rs >> tok) {
+                          auto eq = tok.find('=');
+                          if (eq == std::string::npos) continue;
+                          const std::string k = tok.substr(0, eq);
+                          const float v = std::strtof(tok.c_str() + eq + 1, nullptr);
+                          IKJointLimit& l = k.compare(0, 2, "ul") == 0 ? lb->upperLimit : lb->lowerLimit;
+                          const std::string f = k.substr(2);
+                          if      (f == "T")  l.type = (IKJointLimit::Type)std::clamp((int)v, 0, 2);
+                          else if (f == "S")  l.swingMax = v;
+                          else if (f == "H0") l.hingeMin = v;
+                          else if (f == "H1") l.hingeMax = v;
+                          else if (f == "W0") l.twistMin = v;
+                          else if (f == "W1") l.twistMax = v;
+                          else if (f == "TX") { l.twistAxis.x = v; l.autoAxes = false; }
+                          else if (f == "TY") l.twistAxis.y = v;
+                          else if (f == "TZ") l.twistAxis.z = v;
+                          else if (f == "HX") l.hingeAxis.x = v;
+                          else if (f == "HY") l.hingeAxis.y = v;
+                          else if (f == "HZ") l.hingeAxis.z = v;
+                      } }
                 } else if (field == "chainik") {
                     auto* ci = go->AddComponent<ChainIK>();
                     ci->targetName = ReadQuoted(in);
@@ -3501,6 +3719,23 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ci->orient = (orient != 0);
                     std::size_t bn = 0; in >> bn;
                     for (std::size_t k = 0; k < bn && in; ++k) ci->boneNames.push_back(ReadQuoted(in));
+                } else if (field == "chainx2") {
+                    // Newer ChainIK data: pole mode/direction + per-joint limits.
+                    if (auto* ci = go->GetComponent<ChainIK>()) {
+                        std::size_t nl = 0;
+                        in >> ci->poleMode >> ci->poleDir.x >> ci->poleDir.y >> ci->poleDir.z >> nl;
+                        ci->limits.assign(nl, {});
+                        for (std::size_t k = 0; k < nl && in; ++k) {
+                            IKJointLimit& l = ci->limits[k];
+                            int ty = 0, aa = 1;
+                            in >> ty >> l.swingMax >> l.hingeMin >> l.hingeMax >> l.twistMin >> l.twistMax >> aa;
+                            l.type = (IKJointLimit::Type)std::clamp(ty, 0, 2);
+                            l.autoAxes = aa != 0;
+                            if (!l.autoAxes)
+                                in >> l.twistAxis.x >> l.twistAxis.y >> l.twistAxis.z
+                                   >> l.hingeAxis.x >> l.hingeAxis.y >> l.hingeAxis.z;
+                        }
+                    }
                 } else if (field == "fbik") {
                     auto* fb = go->AddComponent<FullBodyIK>();
                     int act = 1, am = 1, le = 0;
@@ -3550,8 +3785,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int carry = 0; k.b("body", ph->bodyAdjustment); k.i("carry", carry);
                     ph->carryAnimations = carry == 1 ? ProceduralObjectHolding::CarryAnim::Custom : ProceduralObjectHolding::CarryAnim::Automatic;
                 } else if (field == "fbikx") {
-                    if (auto* fb = go->GetComponent<FullBodyIK>())
+                    if (auto* fb = go->GetComponent<FullBodyIK>()) {
                         in >> fb->blendSpeed >> fb->goalSmoothing >> fb->lookSmoothing >> fb->armMinBend >> fb->legMinBend;
+                        KvIn k(in);
+                        for (int l = 0; l < FullBodyIK::LimbCount; ++l) {
+                            const std::string p = "e" + std::to_string(l);
+                            ReadLimitKv(k, p + "u", fb->effectors[l].upperLimit);
+                            ReadLimitKv(k, p + "l", fb->effectors[l].lowerLimit);
+                        }
+                    }
                 } else if (field == "ikx") {
                     std::string kind; int act = 1; float fade = 0.0f;
                     in >> kind >> act >> fade;
@@ -3962,7 +4204,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                         if (std::isdigit(pk6) || pk6 == '-' || pk6 == '.') {
                                             int sm = 0, soc = 0, dk = 0;
                                             in >> sm >> soc >> dk;
-                                            ui->sortMode = (InventoryUI::SortMode)sm;
+                                            ui->sortMode = (InventoryUI::SortMode)std::max(0, std::min(sm, (int)InventoryUI::SortMode::Value));
                                             ui->sortOnClose = (soc != 0);
                                             ui->dropKey = (char)dk;
                                             in >> std::ws;   // optional style block (align/pop/colours/border/title)
@@ -4017,6 +4259,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     gi->overflow.push_back(it);
                                 }
                                 ReadInstanceData(in, gi->items.size(), [&](std::size_t i) -> ItemInstanceData& { return gi->items[i].data; });
+                                in >> std::ws;   // optional keep-on-scene-load
+                                if (std::isdigit(in.peek())) { int keep = 0; in >> keep; gi->keepOnSceneLoad = (keep != 0); }
                             }
                         }
                     }
@@ -4102,7 +4346,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (std::isdigit(spk) || spk == '-' || spk == '.') {
                         in >> cs->range;
                         in >> std::ws;
-                        if (in.peek() == '"') cs->playerName = ReadQuoted(in);
+                        if (in.peek() == '"') {
+                            cs->playerName = ReadQuoted(in);
+                            in >> std::ws;   // optional recipe book + station tag + recipe extras
+                            if (in.peek() == '"') {
+                                cs->recipeBook = ReadQuoted(in); cs->stationTag = ReadQuoted(in);
+                                ReadRecipeExtras(in, cs->recipes);
+                            }
+                        }
                     }
                 } else if (field == "chestinventory") {
                     auto* ch = go->AddComponent<ChestInventory>();
@@ -4345,6 +4596,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         }
                         c->recipes.push_back(std::move(r));
                     }
+                    in >> std::ws;   // optional recipe book + recipe extras
+                    if (in.peek() == '"') { c->recipeBook = ReadQuoted(in); ReadRecipeExtras(in, c->recipes); }
                 } else if (field == "fpfeel") {
                     if (auto* fp = go->GetComponent<FirstPersonController>()) {
                         int z = 1, sl = 1, sm = 1, ik = 1;
@@ -4370,6 +4623,20 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         tp->aimWithRightMouse = a != 0; tp->autoRecenter = rc != 0; tp->canSlide = sl != 0;
                         tp->driveStateMachine = sm != 0; tp->ikLook = ik != 0;
                     }
+                } else if (field == "playerview") {
+                    // grok/view-toggle. key=value record; missing keys keep the defaults.
+                    auto* pv = go->AddComponent<PlayerView>();
+                    KvIn k(in);
+                    k.b("allow", pv->allowToggle);
+                    int view = (int)pv->defaultView;
+                    k.i("view", view);
+                    pv->defaultView = (view == 0) ? PlayerView::View::First : PlayerView::View::Third;
+                    k.key("key", pv->toggleKey);
+                    k.i("pad", pv->toggleGamepadButton);
+                    k.f("blend", pv->blendTime);
+                    k.f("ex", pv->eyeOffset.x); k.f("ey", pv->eyeOffset.y); k.f("ez", pv->eyeOffset.z);
+                    k.f("dist", pv->thirdPersonDistance);
+                    k.f("shoulder", pv->shoulderOffset);
                 } else if (field == "fpctrl") {
                     float ws = 4.5f, rs = 8, jf = 6, ms = 0.15f; int cj = 1, da = 1, iy = 0;
                     in >> ws >> rs >> jf >> ms >> cj >> da;
@@ -4637,6 +4904,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     ts->pivotDampingXZ = pxz; ts->pivotDampingY = py; ts->maxPivotLag = lag;
                                     ts->cameraCollisionRadius = rad; ts->cameraCollisionMask = mask;
                                     ts->cameraCollisionPullIn = pin; ts->cameraCollisionRecover = rec;
+                                    // Optional trailing step height (older scenes keep 0.35).
+                                    float so = ts->stepOffset;
+                                    in >> std::ws;
+                                    if ((std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') && (in >> so))
+                                        ts->stepOffset = so;
                                 }
                             } }
                     }
@@ -4704,6 +4976,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             int slow = 0;
                             in >> inv->weightLimit >> slow >> inv->overWeightSpeed;
                             inv->slowWhenOverWeight = (slow != 0);
+                            in >> std::ws;   // optional keep-on-scene-load
+                            if (std::isdigit(in.peek())) { int keep = 0; in >> keep; inv->keepOnSceneLoad = (keep != 0); }
                         }
                     }
                 } else if (field == "lootsource") {
@@ -4712,12 +4986,36 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int w = 0;
                     k.str("table", ls->table); k.i("when", w); k.f("refill", ls->refill); k.i("seed", ls->seed);
                     ls->when = (LootSource::When)std::max(0, std::min(w, 2));
+                } else if (field == "equipment") {
+                    auto* eq = go->AddComponent<Equipment>();
+                    KvIn k(in);
+                    k.b("show", eq->showOnCharacter); k.b("keep", eq->keepOnSceneLoad);
+                    int n = -1; k.i("n", n);
+                    if (n >= 0) eq->slots.assign((std::size_t)std::min(n, 64), Equipment::Slot{});
+                    for (int i = 0; i < (int)eq->slots.size(); ++i) {
+                        auto& s = eq->slots[i];
+                        const std::string p = "s" + std::to_string(i);
+                        int acc = 0;
+                        k.str((p + "name").c_str(), s.name); k.i((p + "acc").c_str(), acc); k.str((p + "sock").c_str(), s.socket);
+                        s.accepts = (EquipSlot)std::max(0, std::min(acc, (int)EquipSlot::OffHand));
+                        k.str((p + "item").c_str(), s.item);
+                        if (s.item.empty()) continue;
+                        s.item = ItemId(s.item);
+                        k.f((p + "dur").c_str(), s.data.durability);
+                        if (const std::string* u = k.find((p + "uid").c_str())) s.data.uid = std::strtoull(u->c_str(), nullptr, 10);
+                        int nv = 0; k.i((p + "vals").c_str(), nv);
+                        for (int v = 0; v < nv && v < 256; ++v) {
+                            std::string key, val;
+                            k.str((p + "k" + std::to_string(v)).c_str(), key); k.str((p + "v" + std::to_string(v)).c_str(), val);
+                            s.data.values.push_back({key, val});
+                        }
+                    }
                 } else if (field == "itempickup") {
                     auto* pk = go->AddComponent<ItemPickup>();
                     KvIn k(in);
                     k.str("item", pk->item); k.i("count", pk->count); k.str("tag", pk->collectorTag); k.b("touch", pk->pickupOnTouch);
                     k.f("auto", pk->autoRadius); k.key("key", pk->interactKey); k.f("range", pk->interactRange);
-                    k.f("magnet", pk->magnetRadius); k.f("magnetSpeed", pk->magnetSpeed);
+                    k.f("magnet", pk->magnetRadius); k.f("magnetSpeed", pk->magnetSpeed); k.b("hold", pk->holdInHands);
                     pk->item = ItemId(pk->item);
                     k.f("dur", pk->data.durability);
                     if (const std::string* u = k.find("uid")) pk->data.uid = std::strtoull(u->c_str(), nullptr, 10);
@@ -4986,8 +5284,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     btn->clickTarget = ReadQuoted(in); btn->clickFunction = ReadQuoted(in);
                                     in >> std::ws; // optional OnClick argument (added later)
                                     if (std::isdigit(in.peek()) || in.peek() == '.' || in.peek() == '-') in >> btn->clickArg;
-                                    in >> std::ws; // optional TTF label font (newest)
+                                    in >> std::ws; // optional TTF label font
                                     if (in.peek() == '"') btn->fontPath = ReadQuoted(in);
+                                    in >> std::ws; // grok/ui-options: ease, duration, focus color
+                                    if (std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') {
+                                        int ez = 0, sf = 0; Color fc;
+                                        in >> ez >> btn->transitionDuration >> sf
+                                           >> fc.r >> fc.g >> fc.b >> fc.a;
+                                        btn->transitionEase = ez; btn->separateFocus = (sf != 0);
+                                        btn->focusColor = fc;
+                                    }
                                 }
                             }
                         }
@@ -5264,12 +5570,36 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ns->netId = ReadQuoted(in);
                     in >> std::ws;   // clientClaimable came later
                     if (std::isdigit(in.peek())) { int cc = 0; in >> cc; ns->clientClaimable = cc != 0; }
+                } else if (field == "netobject") {
+                    auto* no = go->AddComponent<NetworkObject>();
+                    int au = 0, ow = 1; in >> au >> ow;
+                    no->authority = (NetworkObject::Authority)au; no->owned = (ow != 0);
+                    no->netId = ReadQuoted(in);
+                } else if (field == "nettransform") {
+                    go->AddComponent<NetworkTransform>();
+                } else if (field == "syncvar") {
+                    auto* sv = go->AddComponent<SyncVar>();
+                    sv->name = ReadQuoted(in);
+                    sv->value = ReadQuoted(in);
                 } else if (field == "water") {
                     auto* w = go->AddComponent<Water>();
                     in >> w->size >> w->resolution >> w->waveHeight >> w->waveLength >> w->waveSpeed
                        >> w->color.r >> w->color.g >> w->color.b >> w->opacity
                        >> w->reflectivity >> w->specular >> w->shininess >> w->flow.x >> w->flow.y;
                     w->color.a = w->opacity;
+                    // depth, density and drag came later. A quote means an older water
+                    // line (visual plane only, depth stays 0).
+                    auto numeric = [](std::istream& in) {
+                        in >> std::ws;
+                        const int c = in.peek();
+                        return c == '-' || c == '+' || c == '.' || std::isdigit(c);
+                    };
+                    if (numeric(in)) in >> w->depth;
+                    if (numeric(in)) in >> w->fluidDensity;
+                    if (numeric(in)) in >> w->linearDrag;
+                    if (!std::isfinite(w->depth) || w->depth < 0.0f) w->depth = 0.0f;
+                    if (!std::isfinite(w->fluidDensity) || w->fluidDensity < 0.0f) w->fluidDensity = 1.0f;
+                    if (!std::isfinite(w->linearDrag) || w->linearDrag < 0.0f) w->linearDrag = 4.0f;
                     w->texture = ReadQuoted(in);
                     w->Apply();
                 } else if (field == "worldstreamer") {
@@ -5667,6 +5997,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             int sp = 0, gf = 0; Color fe;
                             in >> sp >> gf >> fe.r >> fe.g >> fe.b >> fe.a;
                             pb->shape = (UIShape)sp; pb->gradientFill = (gf != 0); pb->fillEnd = fe;
+                            in >> std::ws; // grok/ui-options: segments, trail, color-by-value, text
+                            if (std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') {
+                                int seg = 0, cb = 0; Color tc, lo, hi;
+                                in >> seg >> pb->segmentGap >> pb->trailDelay
+                                   >> tc.r >> tc.g >> tc.b >> tc.a >> cb
+                                   >> lo.r >> lo.g >> lo.b >> lo.a
+                                   >> hi.r >> hi.g >> hi.b >> hi.a;
+                                pb->segments = seg; pb->trailColor = tc;
+                                pb->colorByValue = (cb != 0); pb->lowColor = lo; pb->highColor = hi;
+                                in >> std::ws;
+                                if (in.peek() == '"') pb->textFormat = ReadQuoted(in);
+                            }
                         }
                     }
                 } else if (field == "uiradial") {
@@ -5906,6 +6248,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         if (std::isdigit(in.peek())) {
                             int ts = 0, rk = 0; in >> ts >> rk;
                             sl->trackShape = (UIShape)ts; sl->roundKnob = (rk != 0);
+                            in >> std::ws; // grok/ui-options: step, gradient, handle, format
+                            if (std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') {
+                                int fg = 0, ks = -1; Color fe;
+                                in >> sl->step >> fg >> fe.r >> fe.g >> fe.b >> fe.a >> ks;
+                                sl->fillGradient = (fg != 0); sl->fillEnd = fe; sl->knobShape = ks;
+                                in >> std::ws;
+                                if (in.peek() == '"') sl->valueFormat = ReadQuoted(in);
+                            }
                         }
                     }
                 } else if (field == "uistepper") {
@@ -6192,11 +6542,11 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
     // The item database (and its icons / drop prefabs) ships with any scene that has items.
     bool hasItems = false;
     for (const auto& go : scene.Objects())
-        if (go->GetComponent<Inventory>() || go->GetComponent<GridInventory>() || go->GetComponent<ItemPickup>() || go->GetComponent<LootSource>()) { hasItems = true; break; }
+        if (go->GetComponent<Inventory>() || go->GetComponent<GridInventory>() || go->GetComponent<ItemPickup>() || go->GetComponent<LootSource>() || go->GetComponent<Equipment>()) { hasItems = true; break; }
     const ItemDatabase& db = ItemDatabase::Get();
     if (hasItems && !db.Path().empty()) {
         add(db.Path());
-        for (const auto& d : db.Items()) if (!d.loose) { add(d.icon); add(d.worldPrefab); }
+        for (const auto& d : db.Items()) if (!d.loose) { add(d.icon); add(d.worldPrefab); add(d.Custom("equipPrefab")); }
     }
     return out;
 }

@@ -9,18 +9,38 @@
 
 namespace okay {
 
-/// The lowest rise the controllers treat as a step (lower is a seam in the floor).
-constexpr float kMinStepHeight = 0.04f;
+/// The lowest rise the controllers treat as a step. Anything under half a
+/// centimetre is a seam in the floor; a door sill or a rug lip is a step.
+constexpr float kMinStepHeight = 0.005f;
+
+/// Near-zero vertical speed is not ground on its own: the apex of a jump passes
+/// through it. A real contact (or terrain) is ground. The speed heuristic still
+/// counts until the body has left the ground, so a resting body with no fresh
+/// contact can still jump. A jump, or a real fall, sticks until a contact or
+/// until the body has fallen and then settled.
+struct GroundLatch {
+    bool left = false;   ///< jumped or fell; the |vy| heuristic is off
+    bool fell = false;   ///< vy has been a real fall since leaving
+};
+inline bool ResolveGrounded(GroundLatch& g, bool contact, float vy) {
+    if (contact) { g.left = false; g.fell = false; }
+    else if (vy < -0.5f) { g.left = true; g.fell = true; }
+    else if (g.left && g.fell && std::fabs(vy) < 0.5f) { g.left = false; g.fell = false; }
+    return contact || (std::fabs(vy) < 0.5f && !g.left);
+}
 
 /// Stair step-up shared by the character controllers: when a GROUNDED, moving
 /// body is blocked by a LOW obstacle (a stair, a curb), lift it onto the step
 /// instead of letting it grind against the face. Three probes decide it:
-/// a knee-height ray must hit a wall-like face (something is in the way; a
-/// ramp or a hill ahead is walkable ground, not a step), the same ray at
+/// some ray in the step band must hit a wall-like face (something is in the way;
+/// a ramp or a hill ahead is walkable ground, not a step), the ray at
 /// step-offset height must be CLEAR (it's a step, not a wall), and a down-ray
 /// past the lip must find the step top between minStepHeight and stepOffset
-/// above the feet. Only solid colliders count (no triggers), and never the
-/// body's own parts. It lifts only: the body's own speed carries it over the lip.
+/// above the feet. The face probe covers the whole band, not only 5 mm off the
+/// floor: a tread that sits a couple of centimetres up (a slab, a curb with a
+/// gap) never crosses that one ray, so the body used to stop dead against it.
+/// Only solid colliders count (no triggers), and never the body's own parts.
+/// It lifts only: the body's own speed carries it over the lip.
 inline void TryStepUp(Scene& sc, GameObject* go, Rigidbody3D* rb, const Vec3& dir,
                       bool grounded, bool moving, float stepOffset, float minStepHeight = kMinStepHeight) {
     if (!grounded || !moving || stepOffset <= 0.0f || !rb || !go || !go->transform) return;
@@ -32,9 +52,27 @@ inline void TryStepUp(Scene& sc, GameObject* go, Rigidbody3D* rb, const Vec3& di
     fw.x /= fl; fw.z /= fl;
     Physics3D::IgnoreHierarchy own(go);
     auto& ph = sc.physics3D();
-    RaycastHit3D low = ph.Raycast(sc, {pos.x, pos.y + 0.05f, pos.z}, fw, reach, go, Physics3D::kAllLayers, false);
-    if (!low.hit) return;                           // nothing in the way
-    if (std::fabs(low.normal.y) >= 0.3f) return;    // a slope or a seam ahead, not a step's face
+    // The face can sit anywhere in the step band. One ray at 5 mm misses a tread
+    // that doesn't reach the floor, and the body then stops against it forever.
+    // A slope met at foot level is walked, not climbed.
+    RaycastHit3D low{};
+    bool foundFace = false;
+    const float band = std::max(0.0f, stepOffset - kMinStepHeight);
+    constexpr int kFaceSamples = 5;
+    for (int i = 0; i < kFaceSamples; ++i) {
+        float h = kMinStepHeight + band * (float)i / (float)(kFaceSamples - 1);
+        if (h > stepOffset - 0.01f) h = std::max(kMinStepHeight, stepOffset - 0.01f);
+        RaycastHit3D hit = ph.Raycast(sc, {pos.x, pos.y + h, pos.z}, fw, reach, go, Physics3D::kAllLayers, false);
+        if (!hit.hit) continue;
+        if (std::fabs(hit.normal.y) >= 0.3f) {
+            if (i == 0) return;                     // the floor ahead is a slope
+            continue;
+        }
+        low = hit;
+        foundFace = true;
+        break;
+    }
+    if (!foundFace) return;                         // nothing in the way
     RaycastHit3D high = ph.Raycast(sc, {pos.x, pos.y + stepOffset + 0.02f, pos.z},
                                    fw, reach + 0.10f, go, Physics3D::kAllLayers, false);
     if (high.hit) return;                           // taller than a step -> a real wall
@@ -56,8 +94,13 @@ inline void TryStepUp(Scene& sc, GameObject* go, Rigidbody3D* rb, const Vec3& di
 /// RIDE elevators and moving props instead of sliding off them. Static ground
 /// has a zero delta, so tracking it costs nothing. Only solid, non-dynamic
 /// things are ridden: a trigger or a crate the player is pushing never is.
-struct PlatformRide { GameObject* platform = nullptr; Vec3 lastPos{0.0f, 0.0f, 0.0f}; };
+struct PlatformRide {
+    GameObject* platform = nullptr;
+    Vec3 lastPos{0.0f, 0.0f, 0.0f};
+    Vec3 applied{0.0f, 0.0f, 0.0f};   ///< translation added to the rider this call
+};
 inline void RideMovingPlatform(Scene& sc, GameObject* go, PlatformRide& st, bool grounded) {
+    st.applied = {0.0f, 0.0f, 0.0f};
     if (!go || !go->transform) { st.platform = nullptr; return; }
     GameObject* plat = nullptr;
     if (grounded) {
@@ -73,8 +116,10 @@ inline void RideMovingPlatform(Scene& sc, GameObject* go, PlatformRide& st, bool
     if (plat && plat == st.platform) {
         Vec3 cur = plat->transform->Position();
         Vec3 d{cur.x - st.lastPos.x, cur.y - st.lastPos.y, cur.z - st.lastPos.z};
-        if (d.x != 0.0f || d.y != 0.0f || d.z != 0.0f)
+        if (d.x != 0.0f || d.y != 0.0f || d.z != 0.0f) {
             go->transform->SetPosition(go->transform->Position() + d);
+            st.applied = d;
+        }
         st.lastPos = cur;
     } else if (plat) {
         st.platform = plat;

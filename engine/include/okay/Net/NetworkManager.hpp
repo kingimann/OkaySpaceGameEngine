@@ -5,6 +5,7 @@
 #include "okay/Net/AntiCheat.hpp"
 #include "okay/Net/ClockCheck.hpp"
 #include "okay/Net/PlayerInput.hpp"
+#include "okay/Net/NetChannels.hpp"
 #include "okay/Physics/Physics3D.hpp"   // RaycastHit3D (RewindRaycast)
 #include <map>
 #include "okay/Math/Vec3.hpp"
@@ -319,13 +320,19 @@ public:
     /// then send their inputs, not positions: each tick, a client's InputCmd
     /// (move, look, buttons, numbered, the last 3 repeated against loss) drives
     /// its player on the server through the controller's Simulate (IPlayerSim),
-    /// and the server alone decides where it is. Positions and __xform from the
-    /// client for that player are ignored. Runs on the fixed tick (netTickRate,
-    /// 30 Hz if that's 0). The client predicts its own player: every frame it
-    /// runs the same Simulate with the input it last sent (so an input shows
-    /// within a tick) and this frame's look, and reconciles with the position
-    /// the host acks for each input: tiny differences are ignored, small ones
-    /// eased out, large ones snapped.
+    /// and the server alone decides where it is. The server claims that player
+    /// itself — the first object the client spawns under `sp/<its id>/` that
+    /// carries a movement controller — so a client that never calls SetPawn
+    /// still can't move it by sending positions. Until a pawn is claimed, State
+    /// positions and __xform for those controller objects are dropped. An
+    /// InputCmd may claim a different object under the client's prefix only
+    /// while it has no live pawn. Other owned objects (props, projectiles) are
+    /// unchanged. Runs on the fixed tick (netTickRate, 30 Hz if that's 0). The
+    /// client predicts its own player: every frame it runs the same Simulate
+    /// with the input it last sent (so an input shows within a tick) and this
+    /// frame's look, and reconciles with the position the host acks for each
+    /// input: tiny differences are ignored, small ones eased out, large ones
+    /// snapped.
     bool authoritativeMovement = false;
     /// Client prediction: how fast a correction from the host is eased out (per
     /// second, frame-rate independent), and the size above which it snaps
@@ -380,8 +387,11 @@ public:
 
     /// The server's friendly name (clients learn it from the join handshake).
     const std::string& ServerName() const { return m_serverName; }
-    /// True on a client if the last join was refused (server full / bad password).
+    /// True on a client if the last join was refused (server full / bad password /
+    /// the pinned host key didn't match).
     bool JoinRejected() const { return m_joinRejected; }
+    /// Why JoinRejected() is set ("" when it isn't).
+    const std::string& JoinRejectReason() const { return m_joinRejectReason; }
 
     /// On scene Start: act on `autoStart` (host or join) so multiplayer needs no
     /// script — add the component, pick Host/Join in the Inspector, press Play.
@@ -486,6 +496,17 @@ public:
     /// Reliable message to a single peer id (server routes; 0 = the host).
     void SendReliableTo(std::uint32_t targetId, const std::string& channel, const std::string& data);
 
+    /// Reliable and ordered on one named channel. Each channel has its own
+    /// sequence, so a gap on one name does not hold up another. Resent until
+    /// the other side's cumulative ack covers it. Separate from SendReliable,
+    /// and not used for movement or hit claims.
+    void SendOrdered(const std::string& channel, const std::string& data);
+    void SendOrderedTo(std::uint32_t targetId, const std::string& channel, const std::string& data);
+    /// Unreliable, but only the newest packet on this channel is applied. An
+    /// older or repeated one is dropped. A broadcast is relayed like Send().
+    void SendSequenced(const std::string& channel, const std::string& data);
+    void SendSequencedTo(std::uint32_t targetId, const std::string& channel, const std::string& data);
+
     // ---- Remote procedure calls (named events) -------------------------
     /// A first-class RPC: every peer that registered a handler for `name` runs it
     /// with the sender id + payload. Built on the message system but dispatched by
@@ -505,6 +526,13 @@ public:
     }
     /// Remove a previously registered RPC handler.
     void ClearRpc(const std::string& name) { m_rpcHandlers.erase(name); }
+    /// Runs for every arriving RPC, after the named handler (and also when
+    /// none is registered). NetworkObject uses it to route "<netId>/<name>"
+    /// onto the matching object. Cleared by Stop().
+    void SetRpcObserver(std::function<void(const std::string& name, std::uint32_t from, const std::string& data)> f) {
+        m_rpcObserver = std::move(f);
+    }
+    bool HasRpcObserver() const { return static_cast<bool>(m_rpcObserver); }
 
     // ---- Chat ----------------------------------------------------------
     /// One chat line: who said it (peer id + the name they joined with) and the text.
@@ -539,11 +567,14 @@ public:
     /// rewind clamped to 200 ms plus the shooter's round trip.
     void ClaimHit(const std::string& targetNetId, const std::string& weapon, const Vec3& origin, const Vec3& direction);
     /// Server, lag compensation: a 3D raycast against where every synced
-    /// object was at `viewTick` (a client's ViewTick; its pose history keeps
-    /// about a second), then everything is put back. Without a fixed tick, or
-    /// on a client, an ordinary raycast. `ignore` as for Physics3D::Raycast.
+    /// object was at `viewTick` (a client's ViewTick), then everything is put
+    /// back. The rewind uses the same limit as a hit claim: 200 ms, plus
+    /// `shooter`'s round trip when that client id is given (capped by the
+    /// anti-cheat's maxRewindRtt). With no shooter, 200 ms. Pose history is
+    /// still kept for about a second. Without a fixed tick, or on a client,
+    /// an ordinary raycast. `ignore` as for Physics3D::Raycast.
     RaycastHit3D RewindRaycast(const Vec3& origin, const Vec3& direction, float maxDistance, double viewTick,
-                               GameObject* ignore = nullptr);
+                               GameObject* ignore = nullptr, std::uint32_t shooter = 0);
     /// Client: the moment (in host ticks, with the fraction) it shows other
     /// players at: now minus the interpolation delay. What a hit claim carries.
     double ViewTick() const;
@@ -652,15 +683,28 @@ private:
         std::uint32_t relSeq = 0;   // next outgoing sequence to this client
         std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>> relOut; // unacked
         SeqWindow relSeen;          // delivered seqs (de-dup)
+        // Per-channel reliable-ordered link with this client, plus the filter
+        // for unreliable-sequenced packets it sends. Independent of relSeq.
+        net::ChannelEnd pipes;
         // Authoritative movement: the player object its inputs drive, the
         // inputs waiting (by seq), the newest applied, and the last one (repeated
         // when an input is late).
         std::string pawn;
         std::map<std::uint32_t, std::pair<std::uint32_t, PlayerInput>> inputs;   // seq -> (tick, input)
-        std::uint32_t lastInputSeq = 0;
+        std::uint32_t lastInputSeq = 0;   // highest seq actually applied (acks and snapshots)
         float lastPress[3] = {-1e9f, -1e9f, -1e9f};   // server time of its last Jump, Dash, Fire press (minPressInterval)
         PlayerInput lastInput;
         int repeats = 0;            // ticks the last input stood in for a late one
+        // Empty ticks earn one credit, capped. Spent one at a time to apply a
+        // second queued input after a hitch. Zeroed once the queue is shallow,
+        // so a client that keeps it full never buys a second step.
+        int inputCredit = 0;
+        std::uint32_t droppedPressed = 0;   // presses from inputs dropped as newest
+        std::uint32_t droppedSeq[8] = {};   // those seqs, so a resend isn't applied twice
+        std::uint8_t droppedN = 0;
+        Vec3 repeatPos{};           // pose before the current repeat streak
+        Vec3 repeatVel{};
+        bool haveRepeatPose = false;
         bool sealedJoin = false;    // joined through the sealed handshake
         // Without encryption a client is only its address: the cookie its
         // Welcome gave it proves a Leave / State / Message / SyncVar is its
@@ -691,6 +735,12 @@ private:
 
     void ResendReliable(std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>>& out,
                         const net::Endpoint& to, float dt);
+    bool AllowMessage(Client& c, std::size_t bytes);
+    void OnOrdered(net::ChannelEnd& link, const net::Endpoint& ackTo, std::uint32_t fromId,
+                   Client* sender, net::Packet& p, std::size_t len);
+    void OnOrderedAck(net::ChannelEnd& link, net::Packet& p);
+    void OnSequencedFromClient(Client& from, net::Packet& p, std::size_t len);
+    void OnSequencedFromServer(net::Packet& p);
 
     // Datagram fragmentation: SendDatagram splits an oversized message into
     // MTU-sized pieces; TakeFragment reassembles them on the far side; PruneFragments
@@ -798,13 +848,19 @@ private:
     bool m_ready = false;        // this peer's ready flag
     bool m_matchStarted = false; // set when StartMatch reaches this peer's room
     std::string m_serverName;    // client: the server's friendly name
-    bool m_joinRejected = false; // client: server refused us (full / password)
+    bool m_joinRejected = false; // client: server refused us (full / password / pin)
+    std::string m_joinRejectReason;
     bool m_kicked = false;       // client: kicked by the server
     std::string m_kickReason;
     // Client-side reliable channel (to the server).
     std::uint32_t m_relSeq = 0;
     std::unordered_map<std::uint32_t, std::pair<std::vector<std::uint8_t>, float>> m_relOut;
     SeqWindow m_relSeen;
+    // Client: ordered and sequenced link to the server. Server-originated
+    // sequenced numbers live in m_seqOrigin so every client sees one sequence
+    // per channel. Stop() clears both. Not the movement or hit-claim stream.
+    net::ChannelEnd m_toServer;
+    net::SequencedTx m_seqOrigin;
     // Fixed net tick (netTickRate): the tick count, the time not yet stepped,
     // the rate the host announced (client), and the tick hook.
     std::uint32_t m_netTick = 0;
@@ -815,9 +871,22 @@ private:
     int StepNetTick(float rate, float dt);   // ticks that elapsed this frame (fires OnNetTick)
     float HostTickRate() const { return netTickRate > 0.0f ? netTickRate : (authoritativeMovement ? 30.0f : 0.0f); }
     // Authoritative movement.
-    void ServerMovementTick(float step);   // each fixed tick: run each player one input
+    void ServerMovementTick(float step);   // each fixed tick: one input, or two while catching up
     void ClientInputTick();                // each fixed tick: send this tick's input
-    static constexpr std::size_t kMaxQueuedInputs = 8;   // the tick budget: older ones are dropped
+    /// Server, authoritative movement: the first controller-carrying object this
+    /// client spawned (`sp/<id>/...`) is its pawn, without waiting for an InputCmd.
+    void NoteSpawnedPawn(const std::string& netId, GameObject* go);
+    /// Server: may this client relay an __xform for `id`? A claimed pawn, or a
+    /// controller object it spawned before claiming one, may not.
+    bool ClientMaySendXform(const Client& from, const std::string& id) const;
+    GameObject* ObjectByNetId(const std::string& id) const;
+    /// The pawn object went away (despawn or scene destroy): drop the claim so
+    /// the next one can be claimed, and forget its lag-comp history.
+    void ReleasePawn(const std::string& id);
+    void ResetPawnPrediction();   // client: prediction history for the pawn
+    void ClearLocalPawn();        // client: pawn id, prediction, and the input stream
+    static constexpr std::size_t kMaxQueuedInputs = 8;   // past this, the newest input is dropped (its press is kept)
+    static constexpr int kTargetQueuedInputs = 2;        // deeper than this, a client that was late may apply one extra
     static constexpr int kInputRepeats = 3;              // late-input cover before the player stops
     std::string m_pawnId;                  // client: the object this player drives
     std::function<PlayerInput()> m_inputSource;
@@ -968,6 +1037,7 @@ private:
 
     // First-class RPC handlers (by name) + chat log/handler.
     std::unordered_map<std::string, std::function<void(std::uint32_t, const std::string&)>> m_rpcHandlers;
+    std::function<void(const std::string&, std::uint32_t, const std::string&)> m_rpcObserver;
     std::vector<ChatEntry> m_chatLog;
     std::function<void(const ChatEntry&)> m_chatHandler;
 

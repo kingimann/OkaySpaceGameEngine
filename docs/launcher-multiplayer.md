@@ -277,7 +277,8 @@ compensation (anti-cheat plan phase 5), which build on it.
 By default each client moves its own player and sends the position, which the
 host can only speed-check. Tick **Authoritative movement** on the host's Network
 Manager (`authoritativeMovement`, `net_authoritative(1)`) to have the host move
-players itself:
+players itself. A dedicated server can do the same with `--authoritative` or
+`authoritative = true` in server.cfg, without editing the scene:
 
 - Each client names the object its inputs drive: its own SpawnOwned player
   (`SetPawn(obj)`, `net_set_pawn("Player")`). The object needs a controller that
@@ -323,8 +324,9 @@ target is now (but wasn't seen) doesn't. The host rewinds no further than
 200 ms plus that player's round trip (the quickest of its last 8 pings, at
 most the anti-cheat's `maxRewindRtt`, 0.3 s), so claiming to have seen
 something long ago, or answering pings late, doesn't work. A claim without
-the moment it saw (an older client) is refused. Game code on the host can do the same with
-`NetworkManager::RewindRaycast(origin, direction, maxDistance, viewTick)`.
+the moment it saw (an older client) is refused. Game code on the host uses the
+same limit with `NetworkManager::RewindRaycast(origin, direction, maxDistance, viewTick, ignore, shooter)`:
+200 ms when no shooter is passed, or 200 ms plus that client's round trip.
 
 Without a fixed tick, claims are checked against where things are now, with
 the target's top speed times the shooter's ping as slack, as before.
@@ -339,6 +341,7 @@ The server decides; clients only ask.
 | Drop a player's custom messages beyond N per second | `net_rate_limit(N)` | `--rate-limit N` |
 | Kick after N rejected moves in a minute | (`kickAfterViolations`) | `--kick-after N` |
 | Move a player legitimately (respawn, portal) | `net_teleport(id, x, y[, z])` | |
+| Server moves players from their inputs | `net_authoritative(1)` | `--authoritative` (or `authoritative = true` in server.cfg) |
 | Server-owned score everyone sees | `net_set_score(id, n)`, `net_score(id)` | |
 | Turn the anti-cheat on / off, or load its rules | `net_anticheat([on])`, `net_anticheat_load("rules.okayac")` | `--anticheat FILE` (or `anticheat = FILE` in server.cfg) |
 | A player's refusals this minute | `net_violations(id)` | |

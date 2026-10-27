@@ -9,10 +9,49 @@
 
 namespace okay {
 
+namespace {
+
+// Cells the brush can touch, padded by one so rounding can't skip a sample the
+// old whole-grid walk would have edited. Callers still reject d > radius.
+void BrushSpan(const Terrain& t, float localX, float localZ, float radius,
+               int& x0, int& z0, int& x1, int& z1) {
+    const int dim = t.Dim();
+    const float cell = t.CellSize();
+    const float half = t.size * 0.5f;
+    if (dim <= 0) { x0 = z0 = 0; x1 = z1 = -1; return; }
+    if (!(cell > 1e-8f)) { x0 = z0 = 0; x1 = z1 = dim - 1; return; }
+    x0 = (int)std::floor((localX - radius + half) / cell) - 1;
+    x1 = (int)std::ceil ((localX + radius + half) / cell) + 1;
+    z0 = (int)std::floor((localZ - radius + half) / cell) - 1;
+    z1 = (int)std::ceil ((localZ + radius + half) / cell) + 1;
+    if (x0 < 0) x0 = 0;
+    if (z0 < 0) z0 = 0;
+    if (x1 >= dim) x1 = dim - 1;
+    if (z1 >= dim) z1 = dim - 1;
+}
+
+} // namespace
+
+void Terrain::ForgetFloor() { floorCaptured_ = false; }
+
+void Terrain::CaptureFloor() {
+    if (digDepth < 0.0f || floorCaptured_) return;
+    float lo = 0.0f, hi = 0.0f;
+    HeightRange(lo, hi);
+    floorY_ = lo - digDepth;
+    floorCaptured_ = true;
+}
+
+void Terrain::ClampFloor(float& h) const {
+    if (digDepth < 0.0f || !floorCaptured_) return;
+    if (h < floorY_) h = floorY_;
+}
+
 void Terrain::Resize(int res) {
     if (res < 1) res = 1;
     resolution = res;
     heights.assign((std::size_t)Dim() * Dim(), 0.0f);
+    ForgetFloor();
 }
 
 float Terrain::GetHeight(int x, int z) const {
@@ -27,6 +66,7 @@ void Terrain::SetHeight(int x, int z, float h) {
 
 void Terrain::Flatten(float h) {
     for (auto& v : heights) v = h;
+    ForgetFloor();
 }
 
 void Terrain::Smooth() {
@@ -43,11 +83,13 @@ void Terrain::Smooth() {
             out[(std::size_t)z * Dim() + x] = n ? sum / n : GetHeight(x, z);
         }
     heights.swap(out);
+    ForgetFloor();
 }
 
 void Terrain::Randomize(float amount, unsigned seed) {
     Random rng(seed);
     for (auto& v : heights) v += rng.Range(-amount, amount);
+    ForgetFloor();
 }
 
 void Terrain::Hills(int count, float maxHeight, unsigned seed) {
@@ -65,6 +107,7 @@ void Terrain::Hills(int count, float maxHeight, unsigned seed) {
                 heights[(std::size_t)z * Dim() + x] += h * falloff;
             }
     }
+    ForgetFloor();
 }
 
 // --- Fractal value noise (Perlin-like): smooth, tileable-ish hills in [0,1]. ---
@@ -116,6 +159,7 @@ static void DomainWarp(float& x, float& z, unsigned seed, float amount) {
 }
 
 void Terrain::Generate(int type, float amplitude, float frequency, int octaves, unsigned seed) {
+    ForgetFloor();
     if (octaves < 1) octaves = 1;
     const int dim = Dim();
     const float cx = (dim - 1) * 0.5f, cz = (dim - 1) * 0.5f;
@@ -180,28 +224,38 @@ float Terrain::BrushWeight(float dist, float radius, float hardness) {
 }
 
 void Terrain::RaiseAt(float localX, float localZ, float radius, float delta, float hardness) {
-    float cell = CellSize();
-    float half = size * 0.5f;
-    for (int z = 0; z < Dim(); ++z)
-        for (int x = 0; x < Dim(); ++x) {
+    CaptureFloor();
+    int x0, z0, x1, z1;
+    BrushSpan(*this, localX, localZ, radius, x0, z0, x1, z1);
+    const float cell = CellSize();
+    const float half = size * 0.5f;
+    const int dim = Dim();
+    for (int z = z0; z <= z1; ++z)
+        for (int x = x0; x <= x1; ++x) {
             float vx = x * cell - half, vz = z * cell - half;
             float dx = vx - localX, dz = vz - localZ;
             float d = std::sqrt(dx * dx + dz * dz);
             if (d > radius) continue;
-            heights[(std::size_t)z * Dim() + x] += delta * BrushWeight(d, radius, hardness);
+            float& h = heights[(std::size_t)z * dim + x];
+            h += delta * BrushWeight(d, radius, hardness);
+            ClampFloor(h);
         }
 }
 
 void Terrain::SmoothAt(float localX, float localZ, float radius, float amount, float hardness) {
-    float cell = CellSize(), half = size * 0.5f;
+    CaptureFloor();
+    int x0, z0, x1, z1;
+    BrushSpan(*this, localX, localZ, radius, x0, z0, x1, z1);
+    const float cell = CellSize(), half = size * 0.5f;
+    const int dim = Dim();
     std::vector<float> src = heights;   // read from a snapshot so it relaxes evenly
     auto at = [&](int x, int z) {
         if (x < 0) x = 0; if (z < 0) z = 0;
-        if (x >= Dim()) x = Dim() - 1; if (z >= Dim()) z = Dim() - 1;
-        return src[(std::size_t)z * Dim() + x];
+        if (x >= dim) x = dim - 1; if (z >= dim) z = dim - 1;
+        return src[(std::size_t)z * dim + x];
     };
-    for (int z = 0; z < Dim(); ++z)
-        for (int x = 0; x < Dim(); ++x) {
+    for (int z = z0; z <= z1; ++z)
+        for (int x = x0; x <= x1; ++x) {
             float vx = x * cell - half, vz = z * cell - half;
             float dx = vx - localX, dz = vz - localZ;
             float d = std::sqrt(dx * dx + dz * dz);
@@ -210,40 +264,53 @@ void Terrain::SmoothAt(float localX, float localZ, float radius, float amount, f
             float avg = (at(x, z) + at(x - 1, z) + at(x + 1, z) + at(x, z - 1) + at(x, z + 1)
                        + at(x - 1, z - 1) + at(x + 1, z - 1) + at(x - 1, z + 1) + at(x + 1, z + 1)) * (1.0f / 9.0f);
             float falloff = BrushWeight(d, radius, hardness) * amount;
-            float& h = heights[(std::size_t)z * Dim() + x];
+            float& h = heights[(std::size_t)z * dim + x];
             h += (avg - h) * falloff;
+            ClampFloor(h);
         }
 }
 
 void Terrain::FlattenAt(float localX, float localZ, float radius, float target, float amount, float hardness) {
-    float cell = CellSize(), half = size * 0.5f;
-    for (int z = 0; z < Dim(); ++z)
-        for (int x = 0; x < Dim(); ++x) {
+    CaptureFloor();
+    int x0, z0, x1, z1;
+    BrushSpan(*this, localX, localZ, radius, x0, z0, x1, z1);
+    const float cell = CellSize(), half = size * 0.5f;
+    const int dim = Dim();
+    for (int z = z0; z <= z1; ++z)
+        for (int x = x0; x <= x1; ++x) {
             float vx = x * cell - half, vz = z * cell - half;
             float dx = vx - localX, dz = vz - localZ;
             float d = std::sqrt(dx * dx + dz * dz);
             if (d > radius) continue;
             float falloff = BrushWeight(d, radius, hardness) * amount;
-            float& h = heights[(std::size_t)z * Dim() + x];
+            float& h = heights[(std::size_t)z * dim + x];
             h += (target - h) * falloff;
+            ClampFloor(h);
         }
 }
 
 void Terrain::NoiseAt(float localX, float localZ, float radius, float amount, unsigned seed, float hardness) {
-    float cell = CellSize(), half = size * 0.5f;
-    for (int z = 0; z < Dim(); ++z)
-        for (int x = 0; x < Dim(); ++x) {
+    CaptureFloor();
+    int x0, z0, x1, z1;
+    BrushSpan(*this, localX, localZ, radius, x0, z0, x1, z1);
+    const float cell = CellSize(), half = size * 0.5f;
+    const int dim = Dim();
+    for (int z = z0; z <= z1; ++z)
+        for (int x = x0; x <= x1; ++x) {
             float vx = x * cell - half, vz = z * cell - half;
             float dx = vx - localX, dz = vz - localZ;
             float d = std::sqrt(dx * dx + dz * dz);
             if (d > radius) continue;
             // Fractal bump centred on zero so it adds texture without a net rise.
             float n = Fractal((float)x * 0.35f, (float)z * 0.35f, 3, seed) - 0.5f;
-            heights[(std::size_t)z * Dim() + x] += n * 2.0f * amount * BrushWeight(d, radius, hardness);
+            float& h = heights[(std::size_t)z * dim + x];
+            h += n * 2.0f * amount * BrushWeight(d, radius, hardness);
+            ClampFloor(h);
         }
 }
 
 void Terrain::ErodeAt(float localX, float localZ, float radius, float amount) {
+    CaptureFloor();
     // A localized hydraulic pass: scatter droplets that start inside the brush so
     // only the patch under the cursor gets weathered.
     const int dim = Dim();
@@ -300,6 +367,10 @@ void Terrain::ErodeAt(float localX, float localZ, float radius, float amount) {
             water *= 0.98f; px = nx; pz = nz;
         }
     }
+    // Droplets can wander, so clamp the whole map — a channel must not punch
+    // through the dig floor.
+    if (digDepth >= 0.0f && floorCaptured_)
+        for (float& h : heights) if (h < floorY_) h = floorY_;
 }
 
 Vec3 Terrain::NormalAt(float localX, float localZ) const {
@@ -313,6 +384,7 @@ Vec3 Terrain::NormalAt(float localX, float localZ) const {
 }
 
 void Terrain::Erode(int droplets, float strength, unsigned seed) {
+    ForgetFloor();
     const int dim = Dim();
     if (dim < 3 || droplets <= 0) return;
     if (strength < 0.0f) strength = 0.0f;
@@ -399,6 +471,7 @@ void Terrain::Erode(int droplets, float strength, unsigned seed) {
 }
 
 void Terrain::ThermalErode(int iterations, float talus, float strength) {
+    ForgetFloor();
     const int dim = Dim();
     if (dim < 3 || iterations <= 0) return;
     if (strength < 0.0f) strength = 0.0f; if (strength > 1.0f) strength = 1.0f;
@@ -444,6 +517,7 @@ void Terrain::HeightRange(float& lo, float& hi) const {
 }
 
 void Terrain::Terrace(int steps) {
+    ForgetFloor();
     if (steps < 2 || heights.empty()) return;
     float lo, hi; HeightRange(lo, hi);
     float range = hi - lo;
@@ -463,6 +537,7 @@ float Terrain::SlopeAt(float localX, float localZ) const {
 }
 
 void Terrain::Normalize(float lowY, float highY) {
+    ForgetFloor();
     if (heights.empty()) return;
     float lo, hi; HeightRange(lo, hi);
     float range = hi - lo;
@@ -472,6 +547,7 @@ void Terrain::Normalize(float lowY, float highY) {
 }
 
 void Terrain::Invert() {
+    ForgetFloor();
     if (heights.empty()) return;
     float lo, hi; HeightRange(lo, hi);
     float mid = (lo + hi) * 0.5f;
@@ -504,6 +580,7 @@ bool Terrain::ImportHeightmap(const std::string& path, float lowY, float highY) 
             float g = (c.r + c.g + c.b) * (1.0f / 3.0f); // luminance (grayscale heightmap)
             heights[(std::size_t)z * dim + x] = lowY + g * (highY - lowY);
         }
+    ForgetFloor();
     return true;
 }
 

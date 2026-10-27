@@ -62,6 +62,8 @@ region = "EU"
 max_speed = 12         # anti-cheat basics, 0 = off
 rate_limit = 30
 kick_after = 6
+fixed_tick = 1         # snapshots carry the tick; clients send once a tick
+authoritative = 1      # the server moves players from their inputs
 ```
 
 The server reads `server.cfg` from:
@@ -97,6 +99,7 @@ okay-player --server --scene arena.okayscene --port 45000 --max-players 16 --aut
 | `--region TEXT` | region shown in the browser |
 | `--max-speed N`, `--rate-limit N`, `--kick-after N` | anti-cheat basics (see [launcher-multiplayer.md](launcher-multiplayer.md)) |
 | `--fixed-tick` | run the network on a fixed tick at `--tick`: snapshots carry the tick number and clients send their state once a tick instead of once a frame ([launcher-multiplayer.md](launcher-multiplayer.md#fixed-network-tick)) |
+| `--authoritative` | the server moves players from their inputs, even if the scene doesn't (same as `authoritative = true` in server.cfg). The startup line says `tick 30 Hz (fixed), authoritative movement` when both are on |
 | `--report-kicks` | file every anti-cheat kick of a signed-in player for admin review, as this machine's signed-in account; nothing is banned automatically ([anticheat.md](anticheat.md#gameplay-validation)) |
 | `--host-key FILE` | sign the join key exchange with the ed25519 seed in FILE (base64url); prints the public key clients can pin ([anticheat.md](anticheat.md#network-hardening)) |
 | `--config PATH` | read settings from this file instead of the default `server.cfg` |
@@ -111,7 +114,7 @@ It logs one line per join/leave (with the verified account id when `--auth` is
 on) and a periodic status line:
 
 ```
-[server] "EU 1" listening on UDP 45000 · up to 16 players · 30 Hz · sign-in required · encrypted
+[server] "EU 1" listening on UDP 45000 · up to 16 players · tick 30 Hz (fixed), authoritative movement · sign-in required · encrypted
 [server] + maya joined (id 1, account 6f94…) · 1 online
 [server] 1/16 players · up 5m 00s · tick 0.42 ms avg
 ```

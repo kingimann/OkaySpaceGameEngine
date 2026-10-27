@@ -1,6 +1,8 @@
 #include "okay/Inventory/InventoryOps.hpp"
 #include "okay/Components/BuildMode.hpp"
 #include "okay/Components/Consumables.hpp"
+#include "okay/Components/Equipment.hpp"
+#include "okay/Inventory/InventoryEvents.hpp"
 #include <algorithm>
 #include <utility>
 
@@ -133,7 +135,7 @@ InvResult Drop(Inventory* inv, int i, int n) {
     return InvResult::Done(take);
 }
 
-InvResult Use(Inventory* inv, int i, GameObject* user) {
+static InvResult UseItem(Inventory* inv, int i, GameObject* user) {
     if (!ValidSlot(inv, i) || Inventory::Empty(inv->slots[i]) || !user) return InvResult::No("nothing to use");
     const std::string item = inv->slots[i].item;
     GameObject* root = user;
@@ -149,7 +151,16 @@ InvResult Use(Inventory* inv, int i, GameObject* user) {
                 const std::string& n = bm->palette[k].name;
                 if (n == item || (def && n == def->name)) { bm->SetActive(true); bm->SelectSlot(k); return InvResult::Done(0); }
             }
+    if (def && def->equip != EquipSlot::None)   // wearable / weapon: put it on (main hand for a weapon)
+        if (Equipment* eq = Equipment::Of(user)) return eq->EquipFrom(*inv, i);
     return InvResult::No("nothing uses it");
+}
+
+InvResult Use(Inventory* inv, int i, GameObject* user) {
+    const std::string item = ValidSlot(inv, i) ? inv->slots[i].item : std::string();
+    const InvResult r = UseItem(inv, i, user);
+    if (r.Ok()) InventoryEvents::Fire(inv->gameObject, "on_item_used", "OnItemUsed", {vs::VsValue(item)});
+    return r;
 }
 
 InvResult Craft(Inventory* inv, const std::vector<Inventory::Stack>& take, const std::vector<Inventory::Stack>& give) {

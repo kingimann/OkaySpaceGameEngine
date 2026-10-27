@@ -132,6 +132,23 @@ add_executable(test_inventory_gameplay test_inventory_gameplay.cpp)
 target_link_libraries(test_inventory_gameplay PRIVATE okay::engine)
 add_test(NAME inventory_gameplay COMMAND test_inventory_gameplay)
 
+# Inventories across scenes + save/load, one crafting system (books, craft time, benches, unlocks), def-based sorting
+add_executable(test_inventory_persist_craft test_inventory_persist_craft.cpp)
+target_link_libraries(test_inventory_persist_craft PRIVATE okay::engine)
+add_test(NAME inventory_persist_craft COMMAND test_inventory_persist_craft)
+# Equipment: drag to equip, sockets, armor/defence, worn backpacks, save/load and scene carry
+add_executable(test_inventory_equipment test_inventory_equipment.cpp)
+target_link_libraries(test_inventory_equipment PRIVATE okay::engine)
+add_test(NAME inventory_equipment COMMAND test_inventory_equipment)
+# Equipment / pickups with Procedural Object Holding: main hand in the hands, hold-in-hands pickups
+add_executable(test_inventory_holding test_inventory_holding.cpp)
+target_link_libraries(test_inventory_holding PRIVATE okay::engine)
+add_test(NAME inventory_holding COMMAND test_inventory_holding)
+# Inventory scripting: inv_* calls, events to scripts / visual scripts / C++, ActionList give / take / has_item
+add_executable(test_inventory_script test_inventory_script.cpp)
+target_link_libraries(test_inventory_script PRIVATE okay::engine)
+add_test(NAME inventory_script COMMAND test_inventory_script)
+
 add_executable(test_pathfinding test_pathfinding.cpp)
 target_link_libraries(test_pathfinding PRIVATE okay::engine)
 add_test(NAME pathfinding COMMAND test_pathfinding)

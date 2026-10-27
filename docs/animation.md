@@ -832,13 +832,19 @@ elbows bend down and out, and the object moves with the body.
   the flat collar under it are skipped with the head, and the eye sits just
   in front of the face (further forward and up as you look down) so that
   collar is behind the lens. The body is drawn from the outside only, so
-  looking down shows that body or the ground, not the cavity. The head stays
-  visible through the switch and is skipped only once the lens is in front of
-  the face, which is what a First Person project and a Third Person project
-  toggled with V both do. Switching back restores the near plane and shows
-  the whole body again, including after a switch in the middle of the ease
-  and after tapping V. The first-person controller does not put that hide
-  back, and the editor Game view does not invent one while the game is playing.
+  looking down shows the shirt from the outside, the hips, the legs, or the
+  ground, not the inside of the cloth and not a crate through it. The eye sits
+  in front of the chest and steps further forward and up as you look down, and
+  the shirt's lid stays on the body so that view is a solid surface. One
+  plain hand stays in view while standing or walking. A run takes both arms
+  off the owner's camera. The head stays visible through the switch into first
+  person and is skipped only once the lens is in front of the face. Pressing
+  V back shows the head and the neck on that same frame, without waiting for
+  the ease, including when V is tapped quickly. The orbit pitch returns to the
+  third-person angle you started with, so a look down does not come back as a
+  top-down camera. The near plane comes back with it. The first-person
+  controller does not put the hide back, and the editor Game view does not
+  invent one while the game is playing.
 - **Socket**: hold it at a named object inside the character (a holster, a back
   slot) instead of in front of the chest.
 - The hands never stretch: when a grip is out of reach the object comes closer

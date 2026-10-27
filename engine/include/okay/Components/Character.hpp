@@ -159,9 +159,11 @@ public:
         return RunWeight(anim) > 0.35f;
     }
 
-    /// What the owner's first-person camera may draw. The head is never in
-    /// that view. Both arms drop out while a run hides the hands. The neck is
-    /// not a bone — it is a child of the torso, and the owner camera skips it.
+    /// What the owner's first-person camera may draw. The head is never in that
+    /// view. The shirt is: the eye sits in front of it, and the lid has to be
+    /// there or a look down sees through the open top. Both arms drop out while
+    /// a run hides the hands. The neck is not a bone — it is a child of the
+    /// torso, and the owner camera skips that child on its own.
     bool ShowsToOwnerCamera(int bone) const {
         if (bone == HumanoidMotion::B_HEAD) return false;
         if (HideFirstPersonHands()

@@ -97,9 +97,15 @@ Pose FirstFromThird(const ThirdPersonController& tp, const Vec3& eyeOffset) {
 } // namespace
 
 void PlayerView::SetView(int view) {
-    m_target = (view == 0) ? View::First : View::Third;
+    const View next = (view == 0) ? View::First : View::Third;
+    const bool toThird = next == View::Third && m_target != View::Third;
+    m_target = next;
     m_scripted = true;
     if (!m_live) m_blend = (m_target == View::Third) ? 1.0f : 0.0f;
+    // A look down in first person is far past the orbit's window. Coming back
+    // at that angle is a top-down camera, so the orbit returns to the pitch
+    // third person started with.
+    if (toThird) ApplyRestPitch();
 }
 
 int PlayerView::GetView() const {
@@ -110,6 +116,21 @@ int PlayerView::GetView() const {
 void PlayerView::Toggle() {
     if (!m_live && !m_armed) ArmDefault();
     m_target = (m_target == View::First) ? View::Third : View::First;
+    if (m_target == View::Third) ApplyRestPitch();
+}
+
+void PlayerView::RememberRestPitch() {
+    if (m_haveRestPitch || !gameObject) return;
+    if (auto* tp = gameObject->GetComponent<ThirdPersonController>()) m_restPitch = tp->pitch;
+    else if (auto* fp = gameObject->GetComponent<FirstPersonController>()) m_restPitch = fp->pitch;
+    m_haveRestPitch = true;
+}
+
+void PlayerView::ApplyRestPitch() {
+    if (!gameObject) return;
+    RememberRestPitch();
+    if (auto* tp = gameObject->GetComponent<ThirdPersonController>()) tp->pitch = m_restPitch;
+    else if (auto* fp = gameObject->GetComponent<FirstPersonController>()) fp->pitch = m_restPitch;
 }
 
 bool PlayerView::Blending() const {
@@ -232,12 +253,16 @@ void PlayerView::ApplyHead() {
     // is in front of the face, so a blend still shows the whole character.
     Character* ch = gameObject->GetComponent<Character>();
     Camera* cam = ViewCamera(gameObject);
-    if (ch && Driving() && FirstAmount() > 0.35f && !ch->driveExternal && !ch->PartsBuilt()) {
+    if (ch && Driving() && TargetFirst() && FirstAmount() > 0.35f && !ch->driveExternal && !ch->PartsBuilt()) {
         ch->separateParts = true;
         ch->BuildParts();
     }
     const bool rig = ch && ch->PartsBuilt();
-    const bool fp = Driving() && FirstAmount() > 0.35f && LensPastFace(gameObject, cam);
+    // Leaving first person shows the head again on this frame, even if the
+    // camera is still easing out and even if V was tapped through the blend.
+    // Waiting on the ease is what left the head missing for the whole return.
+    const bool wantFirst = Driving() && TargetFirst();
+    const bool fp = wantFirst && FirstAmount() > 0.35f && LensPastFace(gameObject, cam);
     if (fp) {
         if (rig) {
             ch->hideOwnHead = false;

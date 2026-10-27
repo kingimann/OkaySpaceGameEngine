@@ -88,16 +88,11 @@ void FaceMinusZ(Mesh& m) {
 
 // The neck is a small box skinned to the torso, so it cannot be hidden on its
 // own while it still lives in the torso mesh. In torso-joint space it sits
-// just above the collar.
+// just above the collar. Only that box moves off the shirt: the shirt's own
+// lid stays, or a look down stares through the open top at whatever is inside.
 bool NeckLocalVert(const Vec3& v) {
     return std::fabs(v.x) <= 0.085f && std::fabs(v.z) <= 0.085f
         && v.y >= 0.395f && v.y <= 0.505f;
-}
-
-// The flat top of the shirt, the cut the head sits on. It leaves with the
-// neck so the owner's camera never sees a stump once the head is skipped.
-bool CollarCapVert(const Vec3& v) {
-    return v.y >= 0.43f;
 }
 }
 
@@ -1136,11 +1131,8 @@ void Character::SplitNeckFromTorso() {
         int i0 = src.triangles[f * 3], i1 = src.triangles[f * 3 + 1], i2 = src.triangles[f * 3 + 2];
         const bool ok = i0 >= 0 && i1 >= 0 && i2 >= 0
             && i0 < (int)src.vertices.size() && i1 < (int)src.vertices.size() && i2 < (int)src.vertices.size();
-        const bool neckBox = ok && NeckLocalVert(src.vertices[i0]) && NeckLocalVert(src.vertices[i1])
+        const bool neckFace = ok && NeckLocalVert(src.vertices[i0]) && NeckLocalVert(src.vertices[i1])
             && NeckLocalVert(src.vertices[i2]);
-        const bool cap = ok && CollarCapVert(src.vertices[i0]) && CollarCapVert(src.vertices[i1])
-            && CollarCapVert(src.vertices[i2]);
-        const bool neckFace = neckBox || cap;
         Mesh& dst = neckFace ? neck : keep;
         if (!ok) continue;
         for (int idx : {i0, i1, i2}) {

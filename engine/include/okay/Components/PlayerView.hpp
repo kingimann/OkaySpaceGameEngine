@@ -57,7 +57,7 @@ public:
     static PlayerView* FindForScript(GameObject* self, bool create);
 
     void Awake() override { ArmDefault(); }
-    void Start() override { ArmDefault(); m_live = true; }
+    void Start() override { ArmDefault(); m_live = true; RememberRestPitch(); }
     void Update(float dt) override;
     void LateUpdate(float dt) override;
 
@@ -75,9 +75,13 @@ private:
     float m_shake = 0.0f;
     float m_savedNear = -1.0f;   ///< camera near plane before first person pulled it in; < 0 = not held
     bool  m_fpApplied = false;   ///< this view has put the body into the first-person setup
+    float m_restPitch = 18.0f;   ///< third-person pitch before first person widened the look
+    bool  m_haveRestPitch = false;
 
     void ArmDefault();
     void StepBlend(float dt);
+    void RememberRestPitch();
+    void ApplyRestPitch();
     void DestLimits(bool thirdController, float nativeMin, float nativeMax, float& lo, float& hi) const;
     void ApplyHead();
     void PlaceCamera(float dt);

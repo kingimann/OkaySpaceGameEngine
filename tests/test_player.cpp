@@ -319,7 +319,7 @@ int main() {
             GameObject* neck = neckOf();
             CHECK(neck && neck->active && !neck->firstPersonViewmodel);
             if (neck) if (auto* nmr = neck->GetComponent<MeshRenderer>()) CHECK(nmr->castShadows);
-            CHECK(ch->Part(1) && ch->Part(1)->firstPersonViewmodel);
+            CHECK(ch->Part(1) && ch->Part(1)->active && ch->Part(1)->firstPersonViewmodel); // shirt lid stays in this camera
             CHECK(camera->ignoreObject == p);
             CHECK(camera->nearClip < 0.06f);
             Vec3 eye = cam->transform->Position() - p->transform->Position();
@@ -342,7 +342,7 @@ int main() {
             CHECK(ch->Part(3) && !ch->Part(3)->firstPersonViewmodel);
             CHECK(ch->Part(5) && !ch->Part(5)->firstPersonViewmodel);
             CHECK(ch->Part(6) && !ch->Part(6)->firstPersonViewmodel);
-            CHECK(ch->Part(1) && ch->Part(1)->firstPersonViewmodel);
+            CHECK(ch->Part(1) && ch->Part(1)->active && ch->Part(1)->firstPersonViewmodel);
             ch->anim = 1;
             tp->driveAnimation = true;
             sc.Update(1.0f / 60.0f);
@@ -641,6 +641,116 @@ int main() {
         player->GetComponent<PlayerView>()->SetView(1);
         settle(sc, 40);
         checkThird(sc, player, cam, ch, 200);
+    }
+
+    // Third Person template, the playtest: looking down must not draw the shirt,
+    // the plain hand shows unless the body is running, the orbit pitch returns
+    // to the angle play started at, and the head comes back the frame V leaves
+    // first person — not after the ease, and not after a few quick taps.
+    {
+        Scene sc("playtest"); sc.physicsEnabled = false;
+        Templates::ThirdPerson(sc);
+        GameObject* player = nullptr; Camera* cam = nullptr; Character* ch = nullptr;
+        ThirdPersonController* tp = nullptr;
+        for (auto& o : sc.Objects()) {
+            if (o->name == "Player") {
+                player = o.get();
+                ch = o->GetComponent<Character>();
+                tp = o->GetComponent<ThirdPersonController>();
+            }
+            if (auto* c = o->GetComponent<Camera>()) if (c->main) cam = c;
+        }
+        auto* pv = player->GetComponent<PlayerView>();
+        pv->blendTime = 2.0f;                         // a long ease must not delay the restore
+        sc.Start();
+        settle(sc, 5);
+        const float restPitch = tp->pitch;
+        CHECK_NEAR(restPitch, 18.0f, 0.01f);
+        pv->SetView(0);
+        settle(sc, 150);                               // arrive at the eyes despite the long blend
+        CHECK(!pv->Blending());
+        CHECK(cam->ignoreObject == player);
+        CHECK(ch->Part(2) && !ch->Part(2)->firstPersonViewmodel);
+        CHECK(ch->Part(1) && ch->Part(1)->firstPersonViewmodel); // the shirt is drawn for this camera
+        tp->driveAnimation = false;
+        ch->anim = 1;
+        tp->pitch = 80.0f;                         // steep look down, where the shirt enters the frame
+        settle(sc, 8);
+        const Vec3 eye = player->transform->InverseTransformPoint(cam->transform->Position());
+        CHECK(eye.z < -0.30f);                     // in front of the chest, not inside the shirt
+        CHECK(eye.y > 1.70f);
+        auto partDiff = [&](GameObject* part) {
+            const int W = 160, H = 90;
+            auto grab = [&]() {
+                ApplySceneLight(sc);
+                Mat4 vp = cam->ProjectionMatrix((float)W / (float)H) * cam->ViewMatrix();
+                Raster work; std::vector<std::uint32_t> out;
+                const std::uint32_t* px = RenderMeshesSS(work, out, sc, vp, cam->transform->Position(),
+                                                         W, H, 1, cam->ignoreObject);
+                return std::vector<std::uint32_t>(px, px + W * H);
+            };
+            auto a = grab();
+            auto* mr = part->GetComponent<MeshRenderer>();
+            bool en = mr->enabled;
+            mr->enabled = false;
+            auto b = grab();
+            mr->enabled = en;
+            int n = 0;
+            for (std::size_t i = 0; i < a.size(); ++i) if (a[i] != b[i]) ++n;
+            return n;
+        };
+        CHECK(partDiff(ch->Part(1)) > 40);             // the shirt is drawn, not an open hole
+        CHECK(partDiff(ch->Part(5)) > 40);             // the plain hand is
+        // A block inside the chest must not show through the cloth.
+        GameObject* marker = sc.CreateGameObject("ChestMarker");
+        marker->transform->localPosition = player->transform->Position() + Vec3{0.0f, 1.25f, 0.0f};
+        marker->transform->localScale = {0.12f, 0.12f, 0.12f};
+        auto* mmr = marker->AddComponent<MeshRenderer>();
+        mmr->mesh = Mesh::Cube();
+        mmr->color = Color::FromBytes(255, 0, 255);
+        CHECK(partDiff(marker) == 0);
+        ch->anim = 3;
+        sc.Update(1.0f / 60.0f);
+        CHECK(ch->HideFirstPersonHands());
+        CHECK(partDiff(ch->Part(5)) == 0);             // a run keeps the hand off the screen
+        CHECK(partDiff(ch->Part(3)) == 0);
+        ch->anim = 1;
+        sc.Update(1.0f / 60.0f);
+        CHECK(partDiff(ch->Part(5)) > 40);
+        // Back to third person. The head is drawn again before the ease moves.
+        pressV(sc);
+        CHECK(pv->GetView() == 1);
+        CHECK(pv->Blending());
+        CHECK_NEAR(tp->pitch, restPitch, 0.01f);
+        CHECK(cam->ignoreObject == nullptr);
+        CHECK(ch->Part(2) && ch->Part(2)->active && !ch->Part(2)->firstPersonViewmodel);
+        CHECK(ch->Part(1) && !ch->Part(1)->firstPersonViewmodel); // ignore is clear, so the flag is off too
+        GameObject* neck = nullptr;
+        if (ch->Part(1) && ch->Part(1)->transform)
+            for (Transform* c : ch->Part(1)->transform->Children())
+                if (c && c->gameObject && c->gameObject->name == "Neck") neck = c->gameObject;
+        CHECK(neck && neck->active && !neck->firstPersonViewmodel);
+        // Four quick taps, starting from this return. Each time the target is
+        // third person the head is already restored, still inside the long ease.
+        for (int tap = 0; tap < 4; ++tap) {
+            pressV(sc);
+            settle(sc, 2);
+            if (pv->GetView() == 1) {
+                CHECK(cam->ignoreObject == nullptr);
+                CHECK(ch->Part(2) && !ch->Part(2)->firstPersonViewmodel);
+                CHECK_NEAR(tp->pitch, restPitch, 0.01f);
+            }
+        }
+        pv->SetView(1);
+        settle(sc, 150);
+        CHECK(!pv->Blending());
+        CHECK_NEAR(tp->pitch, restPitch, 0.01f);
+        const Vec3 rel = player->transform->InverseTransformPoint(cam->transform->Position());
+        CHECK(rel.z > 2.0f);                           // behind the body, not a top-down perch
+        CHECK(rel.y < 4.5f);
+        CHECK(partDiff(ch->Part(2)) > 40);             // the head is in the third-person frame
+        CHECK(cam->ignoreObject == nullptr);
+        CHECK_NEAR(cam->nearClip, 0.3f, 1e-3f);
     }
 
     TEST_MAIN_RESULT();

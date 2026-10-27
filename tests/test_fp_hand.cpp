@@ -33,9 +33,10 @@ int main() {
         CHECK(ch->Part(4) && ch->Part(4)->firstPersonViewmodel);
         CHECK(ch->Part(5) && ch->Part(5)->firstPersonViewmodel);
         // The head stays active (shadows, other cameras) but this camera skips it.
-        // The torso and the other arm are drawn, solid, so looking down is not a cavity.
+        // The shirt stays in this camera: its lid is what a look down sees, and
+        // without it the open top shows the world inside the chest.
         CHECK(ch->Part(2) && ch->Part(2)->active && !ch->Part(2)->firstPersonViewmodel);  // head
-        CHECK(ch->Part(1) && ch->Part(1)->active && ch->Part(1)->firstPersonViewmodel);   // torso
+        CHECK(ch->Part(1) && ch->Part(1)->active && ch->Part(1)->firstPersonViewmodel);   // shirt
         CHECK(ch->Part(6) && ch->Part(6)->firstPersonViewmodel);                          // other arm
         GameObject* neck = nullptr;
         if (ch->Part(1) && ch->Part(1)->transform)
@@ -69,7 +70,7 @@ int main() {
         CHECK(ch->Part(3) && !ch->Part(3)->firstPersonViewmodel);
         CHECK(ch->Part(5) && !ch->Part(5)->firstPersonViewmodel);
         CHECK(ch->Part(6) && !ch->Part(6)->firstPersonViewmodel);   // both arms, not just the raised one
-        CHECK(ch->Part(1) && ch->Part(1)->active && ch->Part(1)->firstPersonViewmodel);
+        CHECK(ch->Part(1) && ch->Part(1)->active && ch->Part(1)->firstPersonViewmodel);  // shirt stays while the arms drop
         CHECK(ch->Part(2) && ch->Part(2)->active && !ch->Part(2)->firstPersonViewmodel);
         ch->anim = 2;
         for (int i = 0; i < 30; ++i) scene.Update(0.016f);   // the run style eases out over ~0.2 s

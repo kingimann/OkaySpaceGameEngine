@@ -1056,7 +1056,20 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         k("rayUp", f->maxRayUp)("rayDown", f->maxRayDown)("pelvisShift", f->maxPelvisShift)
          ("upX", f->footUpAxis.x)("upY", f->footUpAxis.y)("upZ", f->footUpAxis.z)
          .b("lock", f->footLock)("lockSpeed", f->lockSpeed)("lockHeight", f->lockHeight)
-         ("lockRelease", f->lockRelease);
+         ("lockRelease", f->lockRelease)
+         ("upRX", f->footUpAxisR.x)("upRY", f->footUpAxisR.y)("upRZ", f->footUpAxisR.z)
+         ("om", 1);   // orient is saved after its migration: keep it as written
+        auto lim = [&k](const char* p, const IKJointLimit& l) {
+            if (!l.Active()) return;
+            const std::string b = p;
+            k((b + "T").c_str(), (int)l.type)((b + "S").c_str(), l.swingMax)
+             ((b + "H0").c_str(), l.hingeMin)((b + "H1").c_str(), l.hingeMax)
+             ((b + "W0").c_str(), l.twistMin)((b + "W1").c_str(), l.twistMax);
+            if (!l.autoAxes)
+                k((b + "TX").c_str(), l.twistAxis.x)((b + "TY").c_str(), l.twistAxis.y)((b + "TZ").c_str(), l.twistAxis.z)
+                 ((b + "HX").c_str(), l.hingeAxis.x)((b + "HY").c_str(), l.hingeAxis.y)((b + "HZ").c_str(), l.hingeAxis.z);
+        };
+        lim("hl", f->hipLimit); lim("kl", f->kneeLimit);
         out << "\n";
     }
     if (auto* lb = go->GetComponent<LimbIK>()) {
@@ -3539,7 +3552,29 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                       k.f("rayUp", f->maxRayUp); k.f("rayDown", f->maxRayDown); k.f("pelvisShift", f->maxPelvisShift);
                       k.f("upX", f->footUpAxis.x); k.f("upY", f->footUpAxis.y); k.f("upZ", f->footUpAxis.z);
                       k.b("lock", f->footLock); k.f("lockSpeed", f->lockSpeed); k.f("lockHeight", f->lockHeight);
-                      k.f("lockRelease", f->lockRelease); }
+                      k.f("lockRelease", f->lockRelease);
+                      // The right sole's axis: files from before it leave it at Up,
+                      // which reads that foot's own rest pose (a mirrored rig's right
+                      // sole isn't the left one's axis).
+                      k.f("upRX", f->footUpAxisR.x); k.f("upRY", f->footUpAxisR.y); k.f("upRZ", f->footUpAxisR.z);
+                      // Files from before orient's migration loaded a Character's
+                      // part rig with it off; Start() turns it on there.
+                      if (!k.find("om") && !f->orient) f->orientMigrate = true;
+                      auto lim = [&k](const char* p, IKJointLimit& l) {
+                          const std::string b = p;
+                          int ty = 0; k.i((b + "T").c_str(), ty);
+                          if (ty <= 0) return;
+                          l.type = (IKJointLimit::Type)std::clamp(ty, 0, 2);
+                          k.f((b + "S").c_str(), l.swingMax);
+                          k.f((b + "H0").c_str(), l.hingeMin); k.f((b + "H1").c_str(), l.hingeMax);
+                          k.f((b + "W0").c_str(), l.twistMin); k.f((b + "W1").c_str(), l.twistMax);
+                          if (k.find((b + "TX").c_str())) {
+                              l.autoAxes = false;
+                              k.f((b + "TX").c_str(), l.twistAxis.x); k.f((b + "TY").c_str(), l.twistAxis.y); k.f((b + "TZ").c_str(), l.twistAxis.z);
+                              k.f((b + "HX").c_str(), l.hingeAxis.x); k.f((b + "HY").c_str(), l.hingeAxis.y); k.f((b + "HZ").c_str(), l.hingeAxis.z);
+                          }
+                      };
+                      lim("hl", f->hipLimit); lim("kl", f->kneeLimit); }
                 } else if (field == "limbik") {
                     auto* lb = go->AddComponent<LimbIK>();
                     lb->upperName = ReadQuoted(in); lb->lowerName = ReadQuoted(in); lb->endName = ReadQuoted(in);

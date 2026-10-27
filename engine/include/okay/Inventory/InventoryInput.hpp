@@ -1,5 +1,7 @@
 #pragma once
 #include "okay/Components/ChestInventory.hpp"
+#include "okay/Components/CraftingStation.hpp"
+#include "okay/Components/Equipment.hpp"
 #include "okay/Components/GridInventory.hpp"
 #include "okay/Components/GridInventoryUI.hpp"
 #include "okay/Components/InventoryUI.hpp"
@@ -35,13 +37,25 @@ struct HotbarLayout {
     /// The slot a point picks: the one it's inside, else (for gaps / imperfect aim) the
     /// nearest centre within a slot's reach, else -1.
     int Pick(float px, float py) const;
+
+    /// Equipment column beside the backpack (while it's open and the carrier has an
+    /// Equipment): one slot per equipment slot, aligned with the hotbar's edge.
+    Equipment* equip = nullptr;
+    int   equipN = 0;
+    float ex = 0;                ///< column left
+    void EquipXY(int i, float& x, float& y) const;
+    /// Equipment slot under a point (exact hit only), or -1.
+    int PickEquip(float px, float py) const;
 };
 HotbarLayout LayoutHotbar(const InventoryUI& ui, float W, float H);
 
-struct HotbarFrame { int hover = -1; int target = -1; };
+struct HotbarFrame { int hover = -1; int target = -1; int equipHover = -1; };
 /// Pick up (left = whole stack, right = half/one), shift-click quick move, drop on
 /// release. Clears the drag when the backpack is closed. `hover` is the slot under the
 /// mouse while not dragging; `target` the slot a held stack would drop into.
+/// With an equipment column: releasing a bag stack on an equipment slot equips it,
+/// and dragging a worn item onto the bag (or anywhere off the column) unequips it.
+/// `equipHover` is the equipment slot under the mouse.
 HotbarFrame HandleHotbar(InventoryUI& ui, const HotbarLayout& L, Vec2 mouse);
 
 // ---- Chest screen (ChestInventory: chest grid on top, the player's below) ----
@@ -90,6 +104,20 @@ struct GridFrame { int panel = -1, cx = 0, cy = 0; };
 GridFrame HoverGrid(const GridLayout& L, Vec2 mouse);
 /// Rotate key, pick up, right-click split, drop (move / transfer / merge).
 void HandleGrid(GridInventoryUI& ui, const GridLayout& L, const GridFrame& hover);
+
+// ---- Crafting bench (CraftingStation) ----
+
+struct CraftingLayout {
+    float px = 0, py = 0, pw = 0, ph = 0, rowH = 0;
+    int   rows = 0;
+    float RowY(int i) const { return py + i * rowH + 4.0f; }
+    /// Recipe row under a point, or -1.
+    int Pick(float x, float y) const;
+};
+CraftingLayout LayoutCrafting(const CraftingStation& cs, float W, float H);
+/// Click a row to craft one, shift-click to craft as many as you can afford. Returns
+/// the hovered row (-1 none).
+int HandleCrafting(CraftingStation& cs, const CraftingLayout& L, Vec2 mouse);
 
 } // namespace InventoryInput
 } // namespace okay

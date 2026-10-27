@@ -42,6 +42,9 @@ public:
     /// Items Validate() couldn't fit in the grid (after the grid shrank, or from a bad
     /// file). Kept and saved — never deleted — and put back as soon as there's room.
     std::vector<GridItem> overflow;
+    /// Carry the contents into the next scene loaded with load_scene: the object with
+    /// the same name there (usually the player) gets them.
+    bool keepOnSceneLoad = false;
 
     /// Unturned-style role of this container, shown as the label above its grid in the
     /// multi-container screen ("Shirt", "Pants", "Vest", "Backpack", "Hands", ...). When

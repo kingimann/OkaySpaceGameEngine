@@ -52,7 +52,8 @@ InvResult Drop(Inventory* inv, int i, int n = 1);
 
 /// Use the item in slot `i` as `user` (who carries the inventory): eat/drink/heal it
 /// through a Consumables on the user (its recipe, else the item definition's use
-/// action), or pick the matching piece in the user's BuildMode palette.
+/// action), pick the matching piece in the user's BuildMode palette, or equip it
+/// through the user's Equipment when its definition has an equip slot.
 InvResult Use(Inventory* inv, int i, GameObject* user);
 
 /// Atomically remove `take` and add `give` (crafting).

@@ -107,6 +107,10 @@ public:
     /// while dropping — and report speed + direction so the stride matches the ground.
     /// The first- and third-person and 2.5D controllers call this every frame.
     void DriveLocomotion(const Locomotion& l);
+    /// The stance the last DriveLocomotion reported (0 stand, 1 crouch, 2 prone)
+    /// and its eased level: an imported model's own clips follow it.
+    int   StanceTarget() const { return m_stanceTarget; }
+    float StanceLevel() const { return m_stanceLevel; }
 
     // ---- Punch / swing (a quick right-arm arc layered over the current anim) ----
     // Trigger a one-shot punch with Punch(); the right arm swings forward and back
@@ -524,6 +528,8 @@ private:
     float m_travelYaw = 0.0f;      // eased travel direction the feet step along (deg, unclamped)
     float m_gaitDir = 1.0f;        // +1 stepping forward, -1 stepping backward (backpedal)
     float m_airT = 0.0f;           // seconds off the ground (DriveLocomotion)
+    int   m_stanceTarget = 0;      // the stance DriveLocomotion last reported ...
+    float m_stanceLevel = 0.0f;    // ... and its eased level
     struct MoveSample { Vec3 p; float t; };
     static constexpr int kMoveHist = 16;
     MoveSample m_hist[kMoveHist]{};  // recent positions (measured ground speed over ~0.08 s)

@@ -36,6 +36,7 @@
 #include <cmath>
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #ifdef OKAY_HAVE_ASSIMP
@@ -1736,6 +1737,34 @@ int AddAnimationsFromFile(Scene& scene, GameObject* modelRoot, const std::string
         if (std::fabs(Quat::Dot(g->transform->localRotation, it->second->transform->localRotation)) < 0.9998f)
             sameRest = false;
     }
+    // Avatar slots: when the names don't line up (a Mixamo clip on a mannequin
+    // rig), a humanoid's bones pair up by what they are instead: hips with hips,
+    // left forearm with left forearm, the spine chains link for link from the
+    // hips (the shorter chain's extra links keep their rest), the necks. Only
+    // when both skeletons are humanoids (Animation/HumanoidBones.hpp), and
+    // always through the rest poses below: different rigs, different rests.
+    int bySlot = 0;
+    {
+        const humanoid::BoneMap tm = humanoid::MapHumanoidBones(modelRoot), sm = humanoid::MapHumanoidBones(src);
+        if (tm.humanoid && sm.humanoid) {
+            std::unordered_set<GameObject*> taken;
+            for (const auto& kv : srcOf) taken.insert(kv.second);
+            auto link = [&](GameObject* t, GameObject* sb) {
+                if (!t || !sb || t == modelRoot || srcOf.count(t) || taken.count(sb)) return;
+                srcOf[t] = sb; taken.insert(sb); ++bySlot;
+            };
+            for (int b = 0; b < humanoid::BoneCount; ++b) if (b != humanoid::Torso) link(tm.bone[b], sm.bone[b]);
+            for (std::size_t i = 0; i < tm.spine.size() && i < sm.spine.size(); ++i) link(tm.spine[i], sm.spine[i]);
+            link(tm.neck, sm.neck);
+            if (!tHips) tHips = tm.bone[humanoid::Hips];
+            if (!sHips) sHips = sm.bone[humanoid::Hips];
+        }
+        if (bySlot) {
+            sameRest = false;
+            mapped.clear();   // scene order again
+            for (GameObject* g : tsub) if (srcOf.count(g)) mapped.push_back(g);
+        }
+    }
     auto rootRot = [](GameObject* g, GameObject* root) {
         Quat r = Quat::Identity;
         for (Transform* t = g->transform; t && t != root->transform; t = t->Parent()) r = t->localRotation * r;
@@ -1766,6 +1795,8 @@ int AddAnimationsFromFile(Scene& scene, GameObject* modelRoot, const std::string
         for (const auto& pr : srcOf)
             conv[pr.first] = rootRot(pr.second, src).Inverse() * Aim(pr.first) * rootRot(pr.first, modelRoot);
 
+    std::unordered_set<std::string> srcNames;   // source bones that drive a bone of this model
+    for (const auto& kv : srcOf) srcNames.insert(kv.second->name);
     int added = 0, matched = 0, total = 0;
     std::string names;
     for (const ModelAnimator::Clip& c : sma->clips) {
@@ -1779,7 +1810,7 @@ int AddAnimationsFromFile(Scene& scene, GameObject* modelRoot, const std::string
         }
         out.events = c.events;
         if (!sameRest) {   // see "Rest poses" above
-            for (const ModelAnimator::NodeClip& nc : c.nodes) { ++total; matched += (int)tName.count(NormBoneName(nc.node)); }
+            for (const ModelAnimator::NodeClip& nc : c.nodes) { ++total; matched += (int)srcNames.count(nc.node); }
             RetargetByRest(c, out, src, modelRoot, mapped, srcOf, conv, sHips, tHips, ratio);
         } else for (const ModelAnimator::NodeClip& nc : c.nodes) {
             ++total;
@@ -1805,8 +1836,9 @@ int AddAnimationsFromFile(Scene& scene, GameObject* modelRoot, const std::string
     }
     if (!added) { say("None of the bones in " + BaseName(path) + " match this model's skeleton."); return 0; }
     AutoMapLocomotion(ma);
-    char buf[160];
+    char buf[200];
     std::snprintf(buf, sizeof(buf), " (%d/%d bone tracks matched%s)", matched, total,
+                  bySlot ? ", paired by humanoid bone and converted to this model's rest pose" :
                   !sameRest ? ", converted to this model's rest pose" : retarget ? ", retargeted to this model's proportions" : "");
     say("Added " + std::to_string(added) + " clip" + (added == 1 ? "" : "s") + ": " + names + buf);
     return added;

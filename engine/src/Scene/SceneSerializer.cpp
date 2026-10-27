@@ -1785,14 +1785,18 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* th = go->GetComponent<UITheme>()) {
         out << "  uitheme";
         KvOut k{out};
-        k.str("name", th->themeName).b("apply", th->applyOnStart)
-         ("corner", th->cornerRadius)("border", th->borderWidth).b("shadow", th->shadow)
+        k.str("name", th->themeName).b("apply", th->applyOnStart)("preset", th->preset)
+         ("corner", th->cornerRadius)("mask", th->cornerMask)("border", th->borderWidth).b("shadow", th->shadow)
          ("soft", th->shadowSoftness)("ox", th->shadowOffset.x)("oy", th->shadowOffset.y)
          ("pad", th->padding)("font", th->fontScale)("tpx", th->textPixelSize)("trans", th->transitionSpeed)
-         .col("panel", th->panel).col("accent", th->accent).col("text", th->text).col("muted", th->muted)
+         ("hscale", th->hoverScale)("glow", th->glow)("opa", th->opacity)
+         .b("grad", th->gradient)("gdir", th->gradientDir).b("sheen", th->sheen)
+         .col("panel", th->panel).col("pbot", th->panelBottom).col("accent", th->accent)
+         .col("text", th->text).col("muted", th->muted)
          .col("button", th->button).col("hover", th->buttonHover).col("press", th->buttonPressed)
+         .col("btext", th->buttonText)
          .col("off", th->disabled).col("danger", th->danger).col("ok", th->success)
-         .col("edge", th->border).col("sh", th->shadowCol);
+         .col("edge", th->border).col("sh", th->shadowCol).col("glowc", th->glowColor);
         out << "\n";
     }
     if (auto* td = go->GetComponent<TopDownController>()) {
@@ -4603,7 +4607,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     KvIn k(in);
                     k.str("name", th->themeName);
                     k.b("apply", th->applyOnStart);
+                    k.i("preset", th->preset);
                     k.f("corner", th->cornerRadius);
+                    k.i("mask", th->cornerMask);
                     k.f("border", th->borderWidth);
                     k.b("shadow", th->shadow);
                     k.f("soft", th->shadowSoftness);
@@ -4613,18 +4619,27 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     k.f("font", th->fontScale);
                     k.f("tpx", th->textPixelSize);
                     k.f("trans", th->transitionSpeed);
+                    k.f("hscale", th->hoverScale);
+                    k.f("glow", th->glow);
+                    k.f("opa", th->opacity);
+                    k.b("grad", th->gradient);
+                    k.i("gdir", th->gradientDir);
+                    k.b("sheen", th->sheen);
                     k.col("panel", th->panel);
+                    k.col("pbot", th->panelBottom);
                     k.col("accent", th->accent);
                     k.col("text", th->text);
                     k.col("muted", th->muted);
                     k.col("button", th->button);
                     k.col("hover", th->buttonHover);
                     k.col("press", th->buttonPressed);
+                    k.col("btext", th->buttonText);
                     k.col("off", th->disabled);
                     k.col("danger", th->danger);
                     k.col("ok", th->success);
                     k.col("edge", th->border);
                     k.col("sh", th->shadowCol);
+                    k.col("glowc", th->glowColor);
                 } else if (field == "fpctrl") {
                     float ws = 4.5f, rs = 8, jf = 6, ms = 0.15f; int cj = 1, da = 1, iy = 0;
                     in >> ws >> rs >> jf >> ms >> cj >> da;

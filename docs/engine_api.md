@@ -112,6 +112,7 @@ A saved skin for panels, buttons, sliders and the rest of the UI kit. The object
 
 | In a script | Node | Kind | Inputs | Gives | What it does |
 |---|---|---|---|---|---|
+| `GetComponent<UITheme>().SetPreset(preset)` | `UITheme.SetPreset/1` | step | preset (Number), Target (Object) | - | Switch to a built-in look and bake it: 0 custom, 1 dark, 2 light, 3 sci-fi, 4 fantasy. |
 | `GetComponent<UITheme>().Apply()` | `UITheme.Apply/0` | step | Target (Object) | - | Bake this skin onto this object and its children. Widgets keep their positions. |
 | `GetComponent<UITheme>().ApplyTo(objectName)` | `UITheme.ApplyTo/1` | step | objectName (Text), Target (Object) | - | Bake this skin onto the named object and its children. |
 

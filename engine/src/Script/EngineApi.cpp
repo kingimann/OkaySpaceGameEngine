@@ -325,6 +325,13 @@ EngineApi Build() {
             if (!t) throw RuntimeError("'" + g->name + "' has no UI Theme (add one in the Inspector)", c.loc);
             return t;
         };
+        th.methods.push_back(method("SetPreset", {tInt}, {"preset"}, tVoid,
+            [themeOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                UITheme* t = themeOf(s, c);
+                t->ApplyPreset(I(a[0]));
+                t->Apply();
+                return Value{};
+            }, "Switch to a built-in look and bake it: 0 custom, 1 dark, 2 light, 3 sci-fi, 4 fantasy."));
         th.methods.push_back(method("Apply", {}, {}, tVoid,
             [themeOf](const Value& s, std::vector<Value>&, CallContext& c) {
                 themeOf(s, c)->Apply();

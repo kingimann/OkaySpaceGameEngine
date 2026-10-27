@@ -1,16 +1,15 @@
 #pragma once
-// A saved, reusable skin for the runtime UI kit (grok/ui-theme).
+// A saved skin for the runtime UI kit (grok/ui-theme).
 //
-// Colors, corner radius, border, drop shadow, padding, font size and the
-// hover/press fade speed live on this component and round-trip through the
-// scene file. Apply() bakes them onto the widgets already in the tree
-// (panels, buttons, sliders, toggles, bars, dropdowns, fields, tabs, text).
-// It does not move anything and it does not change widget defaults, so a
-// scene that never calls Apply looks exactly as it did.
+// Four built-in looks (Dark, Light, Sci-fi, Fantasy) plus a custom palette.
+// Apply() bakes colors, a gradient, per-corner radius, border, soft shadow,
+// outer glow, opacity, and text outline onto the widgets under this object.
+// It does not move them, and it does not run unless you ask (applyOnStart is
+// off, or you press Apply / call the script). Existing scenes stay as they are.
 //
-// applyOnStart is off unless you turn it on. Existing scenes are left alone.
-// Nine-slice backgrounds stay on UIImage (already in the kit); this theme
-// does not add a second drawing path.
+// Nine-slice frames stay on UIImage. A real blur of the scene behind a panel
+// is not available: the UI painter cannot read the framebuffer back. The glow
+// and the soft shadow are the depth the renderer already draws.
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -25,7 +24,11 @@
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/UITabs.hpp"
 #include "okay/Components/UIScrollView.hpp"
+#include "okay/Components/UIImage.hpp"
+#include "okay/Components/UITooltip.hpp"
 #include "okay/Components/TextRenderer.hpp"
+#include "okay/Components/Minimap.hpp"
+#include "okay/Components/Crosshair.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/UI/UIShape.hpp"
@@ -35,47 +38,77 @@ namespace okay {
 
 class UITheme final : public Behaviour {
 public:
-    std::string themeName = "Studio";
-    /// Bake this skin when play starts. Off by default so dropping a theme
-    /// into an old scene does not restyle it.
+    enum class Preset { Custom = 0, Dark = 1, Light = 2, SciFi = 3, Fantasy = 4 };
+
+    std::string themeName = "Dark";
+    /// Bake this skin when play starts. Off by default so a theme dropped into
+    /// an old scene does not restyle it.
     bool applyOnStart = false;
+    int  preset = (int)Preset::Dark;
 
-    Color panel         = Color::FromBytes(34, 40, 56, 248);
-    Color accent        = Color::FromBytes(96, 176, 255);
-    Color text          = Color::FromBytes(246, 248, 252);
-    Color muted         = Color::FromBytes(164, 174, 192);
-    Color button        = Color::FromBytes(78, 148, 246);
-    Color buttonHover   = Color::FromBytes(122, 182, 255);
-    Color buttonPressed = Color::FromBytes(48, 108, 206);
-    Color disabled      = Color::FromBytes(54, 60, 76);
-    Color danger        = Color::FromBytes(230, 96, 96);
-    Color success       = Color::FromBytes(78, 200, 146);
-    Color border        = Color::FromBytes(255, 255, 255, 42);
-    Color shadowCol     = Color::FromBytes(0, 0, 0, 150);
+    Color panel         = Color::FromBytes(22, 26, 38, 250);
+    Color panelBottom   = Color::FromBytes(10, 12, 20, 250);
+    Color accent        = Color::FromBytes(90, 170, 255);
+    Color text          = Color::FromBytes(240, 244, 250);
+    Color muted         = Color::FromBytes(150, 162, 184);
+    Color button        = Color::FromBytes(64, 132, 240);
+    Color buttonHover   = Color::FromBytes(110, 170, 255);
+    Color buttonPressed = Color::FromBytes(36, 96, 200);
+    Color buttonText    = Color::White;
+    Color disabled      = Color::FromBytes(48, 54, 70);
+    Color danger        = Color::FromBytes(226, 84, 84);
+    Color success       = Color::FromBytes(64, 196, 140);
+    Color border        = Color::FromBytes(255, 255, 255, 48);
+    Color shadowCol     = Color::FromBytes(0, 0, 0, 160);
+    Color glowColor     = Color::FromBytes(90, 170, 255, 0);
 
-    float cornerRadius = 14.0f;
+    float cornerRadius = 16.0f;
+    int   cornerMask = UICornerAll;
     float borderWidth = 1.0f;
+    bool  gradient = true;
+    int   gradientDir = (int)UIPanel::GradientDir::Vertical;
     bool  shadow = true;
-    float shadowSoftness = 14.0f;
-    Vec2  shadowOffset{0.0f, 8.0f};
-    /// Layout hint for screens built from this theme (pixels). Apply does not
-    /// move widgets; builders and scripts read it.
-    float padding = 20.0f;
-    float fontScale = 2.0f;          // UIButton label multiplier
-    float textPixelSize = 2.0f;      // TextRenderer size when a screen label is still at the world default
-    float transitionSpeed = 12.0f;   // button color units/sec; 0 would be instant
+    float shadowSoftness = 18.0f;
+    Vec2  shadowOffset{0.0f, 10.0f};
+    float glow = 0.0f;
+    bool  sheen = true;
+    float opacity = 1.0f;
+    float padding = 16.0f;
+    float fontScale = 2.0f;
+    float textPixelSize = 2.0f;
+    float transitionSpeed = 12.0f;
+    float hoverScale = 1.04f;
 
     void Start() override {
         if (applyOnStart) Apply();
     }
 
-    /// Bake onto this object and everything under it.
+    /// Fill the palette from a built-in look. Custom leaves the fields alone.
+    void ApplyPreset(int which) {
+        preset = which;
+        themeName = PresetName(which);
+        if (which == (int)Preset::Light)    LightPalette();
+        else if (which == (int)Preset::SciFi)   SciFiPalette();
+        else if (which == (int)Preset::Fantasy) FantasyPalette();
+        else if (which == (int)Preset::Dark)    DarkPalette();
+    }
+
+    static const char* PresetName(int which) {
+        switch (which) {
+            case (int)Preset::Light:   return "Light";
+            case (int)Preset::SciFi:   return "Sci-fi";
+            case (int)Preset::Fantasy: return "Fantasy";
+            case (int)Preset::Custom:  return "Custom";
+            default:                   return "Dark";
+        }
+    }
+
     void Apply() {
         if (gameObject) ApplyTo(gameObject);
     }
 
     /// Bake onto `root` and its descendants. Objects named "Swatch…" keep the
-    /// fill they were given (demo chips for hover / pressed / disabled).
+    /// fill they were given (the hover / pressed / disabled chips).
     void ApplyTo(GameObject* root) const {
         if (!root) return;
         ApplyOne(root);
@@ -84,7 +117,6 @@ public:
             if (c && c->gameObject) ApplyTo(c->gameObject);
     }
 
-    /// The theme called `name`, or the first theme in the scene when `name` is empty.
     static UITheme* Find(Scene* scene, const std::string& name) {
         if (!scene) return nullptr;
         UITheme* first = nullptr;
@@ -101,128 +133,252 @@ private:
     static Color Mul(Color c, float s) {
         return Color(c.r * s, c.g * s, c.b * s, c.a);
     }
+    static Color WithAlpha(Color c, float a) {
+        c.a *= a;
+        return c;
+    }
     static bool KeepFill(const GameObject* go) {
         return go && go->name.rfind("Swatch", 0) == 0;
+    }
+    static bool SwatchChild(const GameObject* go) {
+        if (!go || !go->transform || !go->transform->Parent() || !go->transform->Parent()->gameObject)
+            return false;
+        return go->transform->Parent()->gameObject->name.rfind("Swatch", 0) == 0;
+    }
+
+    void DarkPalette() {
+        panel = Color::FromBytes(22, 26, 38, 250);
+        panelBottom = Color::FromBytes(8, 10, 18, 250);
+        accent = Color::FromBytes(90, 170, 255);
+        text = Color::FromBytes(240, 244, 250);
+        muted = Color::FromBytes(150, 162, 184);
+        button = Color::FromBytes(64, 132, 240);
+        buttonHover = Color::FromBytes(120, 176, 255);
+        buttonPressed = Color::FromBytes(32, 90, 196);
+        buttonText = Color::White;
+        disabled = Color::FromBytes(46, 52, 68);
+        danger = Color::FromBytes(226, 84, 84);
+        success = Color::FromBytes(64, 196, 140);
+        border = Color::FromBytes(255, 255, 255, 46);
+        shadowCol = Color::FromBytes(0, 0, 0, 170);
+        glowColor = Color::FromBytes(80, 150, 255, 0);
+        cornerRadius = 16.0f; cornerMask = UICornerAll; borderWidth = 1.0f;
+        gradient = true; gradientDir = (int)UIPanel::GradientDir::Vertical;
+        shadow = true; shadowSoftness = 18.0f; shadowOffset = {0.0f, 10.0f};
+        glow = 0.0f; sheen = true; opacity = 1.0f;
+        transitionSpeed = 12.0f; hoverScale = 1.04f; fontScale = 2.0f;
+    }
+    void LightPalette() {
+        panel = Color::FromBytes(250, 246, 238, 252);
+        panelBottom = Color::FromBytes(226, 216, 200, 252);
+        accent = Color::FromBytes(28, 74, 158);
+        text = Color::FromBytes(42, 34, 28);
+        muted = Color::FromBytes(112, 98, 86);
+        button = Color::FromBytes(28, 74, 158);
+        buttonHover = Color::FromBytes(46, 102, 196);
+        buttonPressed = Color::FromBytes(16, 48, 112);
+        buttonText = Color::White;
+        disabled = Color::FromBytes(176, 168, 156);
+        danger = Color::FromBytes(168, 42, 42);
+        success = Color::FromBytes(28, 128, 78);
+        border = Color::FromBytes(90, 64, 36, 70);
+        shadowCol = Color::FromBytes(90, 60, 30, 70);
+        glowColor = Color::FromBytes(255, 255, 255, 0);
+        cornerRadius = 12.0f; cornerMask = UICornerAll; borderWidth = 1.0f;
+        gradient = true; gradientDir = (int)UIPanel::GradientDir::Vertical;
+        shadow = true; shadowSoftness = 16.0f; shadowOffset = {0.0f, 8.0f};
+        glow = 0.0f; sheen = false; opacity = 1.0f;
+        transitionSpeed = 12.0f; hoverScale = 1.03f; fontScale = 2.0f;
+    }
+    void SciFiPalette() {
+        panel = Color::FromBytes(6, 12, 20, 236);
+        panelBottom = Color::FromBytes(4, 36, 52, 236);
+        accent = Color::FromBytes(0, 229, 255);
+        text = Color::FromBytes(214, 255, 248);
+        muted = Color::FromBytes(86, 168, 176);
+        button = Color::FromBytes(4, 20, 32);
+        buttonHover = Color::FromBytes(0, 78, 96);
+        buttonPressed = Color::FromBytes(0, 36, 48);
+        buttonText = Color::FromBytes(0, 240, 255);
+        disabled = Color::FromBytes(18, 28, 34);
+        danger = Color::FromBytes(255, 64, 128);
+        success = Color::FromBytes(150, 255, 80);
+        border = Color::FromBytes(0, 220, 240, 200);
+        shadowCol = Color::FromBytes(0, 0, 0, 200);
+        glowColor = Color::FromBytes(0, 229, 255, 170);
+        cornerRadius = 4.0f; cornerMask = UICornerTL | UICornerTR; borderWidth = 1.0f;
+        gradient = true; gradientDir = (int)UIPanel::GradientDir::Vertical;
+        shadow = true; shadowSoftness = 10.0f; shadowOffset = {0.0f, 4.0f};
+        glow = 2.0f; sheen = true; opacity = 1.0f;
+        transitionSpeed = 14.0f; hoverScale = 1.05f; fontScale = 2.0f;
+    }
+    void FantasyPalette() {
+        panel = Color::FromBytes(236, 198, 142, 252);
+        panelBottom = Color::FromBytes(168, 104, 52, 252);
+        accent = Color::FromBytes(196, 142, 42);
+        text = Color::FromBytes(58, 30, 14);
+        muted = Color::FromBytes(110, 68, 36);
+        button = Color::FromBytes(122, 28, 32);
+        buttonHover = Color::FromBytes(158, 44, 46);
+        buttonPressed = Color::FromBytes(84, 16, 20);
+        buttonText = Color::FromBytes(255, 236, 210);
+        disabled = Color::FromBytes(120, 84, 52);
+        danger = Color::FromBytes(140, 24, 24);
+        success = Color::FromBytes(36, 100, 48);
+        border = Color::FromBytes(112, 64, 18, 220);
+        shadowCol = Color::FromBytes(60, 28, 8, 130);
+        glowColor = Color::FromBytes(255, 210, 110, 150);
+        cornerRadius = 18.0f; cornerMask = UICornerAll; borderWidth = 2.0f;
+        gradient = true; gradientDir = (int)UIPanel::GradientDir::Vertical;
+        shadow = true; shadowSoftness = 14.0f; shadowOffset = {0.0f, 8.0f};
+        glow = 1.5f; sheen = true; opacity = 1.0f;
+        transitionSpeed = 10.0f; hoverScale = 1.04f; fontScale = 2.0f;
     }
 
     void ApplyOne(GameObject* go) const {
         if (!go || KeepFill(go)) {
-            // A swatch still wants crisp text; the fill stays as authored.
-            if (go) StyleText(go->GetComponent<TextRenderer>());
+            if (go) StyleText(go);
             return;
         }
+        const float a = opacity < 0.0f ? 0.0f : (opacity > 1.0f ? 1.0f : opacity);
         if (auto* p = go->GetComponent<UIPanel>()) {
             const bool hairline = p->size.y > 0.0f && p->size.y <= 3.0f;
             if (!hairline && p->shape != UIShape::Circle) {
-                p->color = panel;
+                p->color = WithAlpha(panel, a);
+                p->colorBottom = WithAlpha(panelBottom, a);
+                p->useGradient = gradient;
+                p->gradientDir = (UIPanel::GradientDir)gradientDir;
+                p->gradientHorizontal = p->gradientDir == UIPanel::GradientDir::Horizontal;
                 p->shape = UIShape::Rounded;
                 p->cornerRadius = cornerRadius;
+                p->cornerMask = cornerMask;
                 p->borderWidth = borderWidth;
                 p->borderColor = border;
                 p->shadow = shadow;
                 p->shadowColor = shadowCol;
                 p->shadowOffset = shadowOffset;
                 p->shadowSoftness = shadowSoftness;
+                p->outlineWidth = glow;
+                p->outlineColor = glowColor;
+                p->topHighlight = sheen;
+                p->highlightColor = Color(1.0f, 1.0f, 1.0f, sheen ? 0.16f : 0.0f);
             }
         }
         if (auto* b = go->GetComponent<UIButton>()) {
-            b->color = button;
+            b->color = WithAlpha(button, a);
             b->hoverColor = buttonHover;
             b->pressedColor = buttonPressed;
             b->disabledColor = disabled;
-            b->textColor = text;
-            b->hoverTextColor = text;
+            b->textColor = buttonText;
+            b->hoverTextColor = buttonText;
             b->shape = UIShape::Rounded;
-            b->cornerRadius = cornerRadius;
+            b->cornerRadius = cornerRadius * 0.75f;
             b->borderWidth = borderWidth;
             b->borderColor = border;
             b->shadow = shadow;
             b->shadowColor = shadowCol;
-            b->shadowOffset = Vec2{0.0f, shadowOffset.y * 0.5f};
-            b->shadowSoftness = shadowSoftness * 0.55f;
+            b->shadowOffset = Vec2{0.0f, shadowOffset.y * 0.45f};
+            b->shadowSoftness = shadowSoftness * 0.5f;
             b->fontScale = fontScale;
             b->transitionSpeed = transitionSpeed;
+            b->hoverScale = hoverScale;
         }
         if (auto* sl = go->GetComponent<UISlider>()) {
-            sl->background = Mul(panel, 0.72f);
-            sl->background.a = 1.0f;
+            sl->background = Mul(panel, 0.55f); sl->background.a = 1.0f;
             sl->fill = accent;
-            sl->knob = text;
+            sl->knob = buttonText;
             sl->textColor = text;
             sl->trackShape = UIShape::Pill;
             sl->cornerRadius = cornerRadius;
             sl->roundKnob = true;
+            sl->showValue = true;
         }
         if (auto* tg = go->GetComponent<UIToggle>()) {
-            tg->boxColor = Mul(panel, 0.7f);
-            tg->boxColor.a = 1.0f;
+            tg->boxColor = Mul(panel, 0.62f); tg->boxColor.a = 1.0f;
             tg->checkColor = accent;
-            tg->knobColor = text;
+            tg->knobColor = buttonText;
             tg->textColor = text;
-            if (tg->cornerRadius < 6.0f) tg->cornerRadius = 6.0f;
+            if (tg->cornerRadius < 8.0f) tg->cornerRadius = 8.0f;
         }
         if (auto* bar = go->GetComponent<UIProgressBar>()) {
-            bar->background = Mul(panel, 0.72f);
-            bar->background.a = 1.0f;
+            bar->background = Mul(panel, 0.55f); bar->background.a = 1.0f;
             bar->fill = success;
+            bar->fillEnd = accent;
+            bar->gradientFill = true;
             bar->textColor = text;
             bar->shape = UIShape::Pill;
             bar->cornerRadius = cornerRadius;
+            bar->showPercent = true;
         }
         if (auto* rad = go->GetComponent<UIRadialProgress>()) {
-            rad->background = Mul(panel, 0.65f);
-            rad->background.a = 1.0f;
+            rad->background = Mul(panel, 0.5f); rad->background.a = 1.0f;
             rad->fill = accent;
             rad->textColor = text;
         }
         if (auto* dd = go->GetComponent<UIDropdown>()) {
-            dd->color = Mul(panel, 0.78f);
-            dd->color.a = 1.0f;
+            dd->color = Mul(panel, 0.72f); dd->color.a = 1.0f;
             dd->hoverColor = buttonHover;
             dd->listColor = panel;
             dd->textColor = text;
             dd->borderColor = border;
             dd->shape = UIShape::Rounded;
-            dd->cornerRadius = cornerRadius * 0.7f;
+            dd->cornerRadius = cornerRadius * 0.6f;
         }
         if (auto* field = go->GetComponent<UIInputField>()) {
-            field->color = Mul(panel, 0.7f);
-            field->color.a = 1.0f;
-            field->focusColor = Mul(panel, 0.9f);
-            field->focusColor.a = 1.0f;
+            field->color = Mul(panel, 0.6f); field->color.a = 1.0f;
+            field->focusColor = Mul(panel, 0.85f); field->focusColor.a = 1.0f;
             field->textColor = text;
             field->placeholderColor = muted;
             field->shape = UIShape::Rounded;
-            field->cornerRadius = cornerRadius * 0.7f;
+            field->cornerRadius = cornerRadius * 0.55f;
             field->borderWidth = borderWidth > 0.0f ? borderWidth : 1.0f;
             field->borderColor = accent;
         }
         if (auto* tabs = go->GetComponent<UITabs>()) {
-            tabs->background = Mul(panel, 0.85f);
+            tabs->background = Mul(panel, 0.78f);
             tabs->selected = accent;
             tabs->textColor = muted;
-            tabs->selectedTextColor = text;
+            tabs->selectedTextColor = buttonText;
             tabs->hoverColor = Color(1.0f, 1.0f, 1.0f, 0.14f);
-            tabs->cornerRadius = cornerRadius * 0.6f;
+            tabs->cornerRadius = cornerRadius * 0.55f;
         }
         if (auto* sv = go->GetComponent<UIScrollView>()) {
-            sv->background = panel;
-            Color bar = border;
-            bar.a = 0.55f;
+            sv->background = WithAlpha(panel, a * 0.92f);
+            Color bar = border; bar.a = 0.7f;
             sv->barColor = bar;
         }
-        StyleText(go->GetComponent<TextRenderer>());
+        if (auto* im = go->GetComponent<UIImage>()) {
+            if (go->name == "Slice") im->color = accent;
+        }
+        if (auto* tip = go->GetComponent<UITooltip>()) {
+            tip->background = panel;
+            tip->textColor = text;
+            tip->borderColor = border;
+        }
+        if (auto* map = go->GetComponent<Minimap>()) {
+            map->background = WithAlpha(panel, 0.92f);
+            map->border = accent;
+            map->targetColor = accent;
+        }
+        if (auto* ch = go->GetComponent<Crosshair>()) {
+            ch->color = accent;
+            ch->dotColor = buttonText;
+            ch->circleColor = accent;
+        }
+        StyleText(go);
     }
 
-    void StyleText(TextRenderer* tr) const {
+    void StyleText(GameObject* go) const {
+        auto* tr = go->GetComponent<TextRenderer>();
         if (!tr || !tr->screenSpace) return;
+        const bool sw = SwatchChild(go);
+        if (!sw) tr->color = text;
+        const bool lightInk = (sw ? tr->color : text).r + (sw ? tr->color : text).g + (sw ? tr->color : text).b > 1.7f;
         tr->shadow = true;
-        tr->shadowColor = Color::FromBytes(0, 0, 0, 210);
-        tr->shadowOffset = {1.0f, 1.0f};
         tr->outline = true;
-        tr->outlineColor = Color::FromBytes(0, 0, 0, 230);
-        // A screen label left at the world-space default (0.1) is a speck.
-        // Authored sizes (the usual 2+) stay put.
+        tr->outlineColor = lightInk ? Color(0.0f, 0.0f, 0.0f, 0.90f) : Color(1.0f, 0.98f, 0.92f, 0.80f);
+        tr->shadowColor = tr->outlineColor;
+        tr->shadowOffset = {1.0f, 1.0f};
         if (tr->pixelSize > 0.0f && tr->pixelSize < 0.5f) tr->pixelSize = textPixelSize;
     }
 };

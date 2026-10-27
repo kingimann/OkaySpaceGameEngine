@@ -20,6 +20,12 @@
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/UITheme.hpp"
+#include "okay/Components/UIImage.hpp"
+#include "okay/Components/UIScrollView.hpp"
+#include "okay/Components/UITooltip.hpp"
+#include "okay/Components/Minimap.hpp"
+#include "okay/Components/Crosshair.hpp"
+#include "okay/Graphics/Image.hpp"
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/UIAnimation.hpp"
@@ -740,11 +746,32 @@ inline GameObject* AddLeaderboard(Scene& scene) {
     return root;
 }
 
-// Side-by-side kit: the left card is every common widget at its C++ default,
-// the right card is the same widgets after UITheme::Apply. Nothing here changes
-// those defaults. Create > UI > UI Showcase.
+// A white 9-slice frame and a plus icon, so the showcase can show image frames
+// and icon+label buttons without shipping a texture.
+inline void WriteShowcaseTextures() {
+    Image slice(48, 48);
+    for (int y = 0; y < 48; ++y)
+        for (int x = 0; x < 48; ++x) {
+            const bool edge = x < 10 || y < 10 || x >= 38 || y >= 38;
+            slice.SetPixel(x, y, edge ? Color::White : Color(1.0f, 1.0f, 1.0f, 0.22f));
+        }
+    slice.SavePNG("/tmp/okay_ui_slice.png");
+    Image icon(16, 16);
+    for (int y = 0; y < 16; ++y)
+        for (int x = 0; x < 16; ++x) {
+            const bool on = (x >= 6 && x <= 9) || (y >= 6 && y <= 9);
+            if (on) icon.SetPixel(x, y, Color::White);
+        }
+    icon.SavePNG("/tmp/okay_ui_icon.png");
+}
+
+// Before (component defaults) plus Dark, Light, Sci-fi and Fantasy. Each card
+// holds the same widgets. Themes bake on play; defaults are not changed.
+// Create > UI > UI Showcase.
 inline GameObject* AddUIShowcase(Scene& scene) {
     using namespace detail;
+    WriteShowcaseTextures();
+    const float W = 1880.0f, H = 620.0f, colW = 360.0f, colH = 560.0f;
     GameObject* canvas = EnsureCanvas(scene);
     GameObject* root = Group(scene, canvas, "UI Showcase");
 
@@ -752,103 +779,129 @@ inline GameObject* AddUIShowcase(Scene& scene) {
     auto* backdrop = bg->AddComponent<UIPanel>();
     backdrop->anchor = UIAnchor::TopLeft;
     backdrop->position = {0.0f, 0.0f};
-    backdrop->size = {1280.0f, 720.0f};
+    backdrop->size = {W, H};
     backdrop->shape = UIShape::Rectangle;
     backdrop->cornerRadius = 0.0f;
-    backdrop->color = Color::FromBytes(12, 14, 20, 255);
+    backdrop->color = Color::FromBytes(10, 12, 16, 255);
 
-    Text(scene, root, "Title", "In-game UI", UIAnchor::TopLeft, {40.0f, 18.0f}, {640.0f, 36.0f},
-         28.0f, Color::White, 0, true);
+    Text(scene, root, "Title", "UI themes", UIAnchor::TopLeft, {16.0f, 8.0f}, {700.0f, 28.0f},
+         22.0f, Color::White, 0, true);
 
-    auto column = [&](const char* name, Vec2 pos, bool themed) {
+    auto column = [&](const char* name, float x, int preset) {
+        const bool themed = preset >= 0;
         GameObject* card = Child(scene, root, name);
         auto* panel = card->AddComponent<UIPanel>();
         panel->anchor = UIAnchor::TopLeft;
-        panel->position = pos;
-        panel->size = {580.0f, 600.0f};
+        panel->position = {x, 42.0f};
+        panel->size = {colW, colH};
         UITheme* theme = nullptr;
         if (themed) {
             theme = card->AddComponent<UITheme>();
             theme->applyOnStart = true;
+            theme->ApplyPreset(preset);
         }
-        const char* heading = themed ? "After" : "Before";
-        const char* sub = themed ? "Theme applied  -  shadow, border, ease" : "Component defaults";
-        Text(scene, card, "Heading", heading, UIAnchor::TopLeft, {24.0f, 16.0f}, {360.0f, 32.0f},
-             26.0f, Color::White, 0, true);
-        Text(scene, card, "Sub", sub, UIAnchor::TopLeft, {24.0f, 48.0f}, {400.0f, 22.0f},
-             14.0f, Color::FromBytes(170, 176, 190));
+        const char* sub = themed ? "Gradient, glow, shadow, ease" : "Component defaults";
+        Text(scene, card, "Heading", name, UIAnchor::TopLeft, {12.0f, 8.0f}, {220.0f, 26.0f},
+             20.0f, Color::White, 0, true);
+        Text(scene, card, "Sub", sub, UIAnchor::TopLeft, {12.0f, 32.0f}, {330.0f, 16.0f},
+             12.0f, Color::FromBytes(170, 176, 190));
 
         GameObject* play = Child(scene, card, "Continue");
         auto* b0 = play->AddComponent<UIButton>();
-        b0->label = "Continue"; b0->position = {24.0f, 86.0f}; b0->size = {168.0f, 46.0f};
+        b0->label = "Continue"; b0->position = {12.0f, 54.0f}; b0->size = {168.0f, 34.0f};
+        if (themed) { b0->icon = "/tmp/okay_ui_icon.png"; b0->iconSize = 14.0f; }
+        auto* tip = play->AddComponent<UITooltip>();
+        tip->text = "Starts the run"; tip->delay = 0.35f;
 
         GameObject* locked = Child(scene, card, "Locked");
         auto* b1 = locked->AddComponent<UIButton>();
-        b1->label = "Locked"; b1->position = {208.0f, 86.0f}; b1->size = {140.0f, 46.0f};
+        b1->label = "Locked"; b1->position = {188.0f, 54.0f}; b1->size = {150.0f, 34.0f};
         b1->interactable = false;
 
         GameObject* slider = Child(scene, card, "Volume");
         auto* sl = slider->AddComponent<UISlider>();
-        sl->position = {24.0f, 154.0f}; sl->size = {280.0f, 28.0f}; sl->value = 0.62f;
+        sl->position = {12.0f, 98.0f}; sl->size = {250.0f, 22.0f}; sl->value = 0.62f;
 
         GameObject* toggle = Child(scene, card, "Music");
         auto* tg = toggle->AddComponent<UIToggle>();
-        tg->position = {24.0f, 202.0f}; tg->label = "Music"; tg->on = true;
+        tg->position = {12.0f, 128.0f}; tg->label = "Music"; tg->on = true;
+        if (themed) { tg->style = UIToggle::Style::Switch; tg->size = {52.0f, 26.0f}; }
 
         GameObject* barGo = Child(scene, card, "Health");
         auto* bar = barGo->AddComponent<UIProgressBar>();
-        bar->position = {24.0f, 250.0f}; bar->size = {280.0f, 22.0f}; bar->value = 0.72f;
+        bar->position = {12.0f, 164.0f}; bar->size = {250.0f, 18.0f}; bar->value = 0.72f;
 
         GameObject* drop = Child(scene, card, "Quality");
         auto* dd = drop->AddComponent<UIDropdown>();
-        dd->position = {24.0f, 290.0f}; dd->size = {240.0f, 36.0f};
+        dd->position = {12.0f, 192.0f}; dd->size = {210.0f, 30.0f};
         dd->options = {"Low", "Medium", "High"}; dd->value = 1;
 
         GameObject* field = Child(scene, card, "NameField");
         auto* input = field->AddComponent<UIInputField>();
-        input->position = {24.0f, 344.0f}; input->size = {280.0f, 40.0f};
+        input->position = {12.0f, 230.0f}; input->size = {250.0f, 32.0f};
         input->text = "Player"; input->placeholder = "Name";
 
-        Text(scene, card, "Score", "Score  1,280", UIAnchor::TopLeft, {24.0f, 400.0f}, {240.0f, 28.0f},
-             18.0f, Color::White, 0, true);
+        GameObject* tabsGo = Child(scene, card, "Tabs");
+        auto* tabs = tabsGo->AddComponent<UITabs>();
+        tabs->position = {12.0f, 270.0f}; tabs->size = {330.0f, 32.0f};
+        tabs->tabs = {"Play", "Map", "Bag"}; tabs->value = 0;
+        if (preset == (int)UITheme::Preset::Light)   tabs->style = UITabs::Style::Pills;
+        if (preset == (int)UITheme::Preset::SciFi)   tabs->style = UITabs::Style::Underline;
+        if (preset == (int)UITheme::Preset::Fantasy) tabs->style = UITabs::Style::Folder;
+
+        Text(scene, card, "Score", "Score  1,280", UIAnchor::TopLeft, {12.0f, 308.0f}, {200.0f, 22.0f},
+             16.0f, Color::White, 0, true);
+
+        GameObject* scroller = Child(scene, card, "Log");
+        auto* sv = scroller->AddComponent<UIScrollView>();
+        sv->position = {12.0f, 334.0f}; sv->size = {220.0f, 64.0f};
+        Text(scene, scroller, "LineA", "Quest log", UIAnchor::TopLeft, {8.0f, 6.0f}, {180.0f, 18.0f}, 13.0f, Color::White);
+        Text(scene, scroller, "LineB", "More below", UIAnchor::TopLeft, {8.0f, 40.0f}, {180.0f, 18.0f}, 13.0f, Color::White);
 
         GameObject* ring = Child(scene, card, "Cooldown");
         auto* rad = ring->AddComponent<UIRadialProgress>();
-        rad->position = {360.0f, 86.0f}; rad->size = {88.0f, 88.0f}; rad->value = 0.7f; rad->thickness = 10.0f;
+        rad->position = {12.0f, 408.0f}; rad->size = {48.0f, 48.0f}; rad->value = 0.7f; rad->thickness = 6.0f;
+
+        GameObject* slice = Child(scene, card, "Slice");
+        auto* im = slice->AddComponent<UIImage>();
+        im->texture = "/tmp/okay_ui_slice.png"; im->nineSlice = true; im->border = 10.0f;
+        im->position = {70.0f, 414.0f}; im->size = {120.0f, 36.0f}; im->color = Color::White;
+
+        GameObject* cross = Child(scene, card, "Reticle");
+        auto* ch = cross->AddComponent<Crosshair>();
+        ch->anchor = UIAnchor::TopLeft; ch->position = {206.0f, 418.0f}; ch->size = {28.0f, 28.0f};
+        ch->length = 8.0f; ch->gap = 3.0f; ch->dot = true;
+
+        GameObject* mapGo = Child(scene, card, "Map");
+        auto* map = mapGo->AddComponent<Minimap>();
+        map->anchor = UIAnchor::TopLeft; map->position = {248.0f, 406.0f}; map->size = {56.0f, 56.0f};
+        map->circular = true; map->borderWidth = 2.0f;
 
         if (theme) {
-            GameObject* s0 = Child(scene, card, "SwatchNormal");
-            auto* p0 = s0->AddComponent<UIPanel>();
-            p0->position = {24.0f, 456.0f}; p0->size = {120.0f, 40.0f}; p0->color = theme->button;
-            p0->shape = UIShape::Rounded; p0->cornerRadius = 10.0f;
-            Text(scene, s0, "Label", "Normal", UIAnchor::TopLeft, {0.0f, 0.0f}, {120.0f, 40.0f}, 13.0f, Color::White, 1);
-
-            GameObject* s1 = Child(scene, card, "SwatchHover");
-            auto* p1 = s1->AddComponent<UIPanel>();
-            p1->position = {156.0f, 456.0f}; p1->size = {120.0f, 40.0f}; p1->color = theme->buttonHover;
-            p1->shape = UIShape::Rounded; p1->cornerRadius = 10.0f;
-            Text(scene, s1, "Label", "Hover", UIAnchor::TopLeft, {0.0f, 0.0f}, {120.0f, 40.0f}, 13.0f, Color::White, 1);
-
-            GameObject* s2 = Child(scene, card, "SwatchPressed");
-            auto* p2 = s2->AddComponent<UIPanel>();
-            p2->position = {288.0f, 456.0f}; p2->size = {120.0f, 40.0f}; p2->color = theme->buttonPressed;
-            p2->shape = UIShape::Rounded; p2->cornerRadius = 10.0f;
-            Text(scene, s2, "Label", "Pressed", UIAnchor::TopLeft, {0.0f, 0.0f}, {120.0f, 40.0f}, 13.0f, Color::White, 1);
-
-            GameObject* s3 = Child(scene, card, "SwatchDisabled");
-            auto* p3 = s3->AddComponent<UIPanel>();
-            p3->position = {420.0f, 456.0f}; p3->size = {120.0f, 40.0f}; p3->color = theme->disabled;
-            p3->shape = UIShape::Rounded; p3->cornerRadius = 10.0f;
-            Text(scene, s3, "Label", "Disabled", UIAnchor::TopLeft, {0.0f, 0.0f}, {120.0f, 40.0f}, 13.0f, Color::White, 1);
-
-            Text(scene, card, "States", "State colors ease when transition speed is above 0.",
-                 UIAnchor::TopLeft, {24.0f, 512.0f}, {520.0f, 22.0f}, 13.0f, Color::FromBytes(170, 176, 190));
+            auto chip = [&](const char* chipName, float cx, Color col, const char* label) {
+                GameObject* s = Child(scene, card, chipName);
+                auto* sp = s->AddComponent<UIPanel>();
+                sp->position = {cx, 468.0f}; sp->size = {80.0f, 28.0f}; sp->color = col;
+                sp->shape = UIShape::Rounded; sp->cornerRadius = 8.0f;
+                const float lum = col.r * 0.3f + col.g * 0.59f + col.b * 0.11f;
+                Color ink = lum > 0.62f ? Color(0.12f, 0.08f, 0.05f, 1.0f) : Color::White;
+                Text(scene, s, "Label", label, UIAnchor::TopLeft, {0.0f, 0.0f}, {80.0f, 28.0f}, 12.0f, ink, 1);
+            };
+            chip("SwatchNormal", 12.0f, theme->button, "Rest");
+            chip("SwatchHover", 96.0f, theme->buttonHover, "Hover");
+            chip("SwatchPressed", 180.0f, theme->buttonPressed, "Down");
+            chip("SwatchDisabled", 264.0f, theme->disabled, "Off");
+            Text(scene, card, "States", "Hover, press and disabled ease in.",
+                 UIAnchor::TopLeft, {12.0f, 504.0f}, {330.0f, 16.0f}, 12.0f, Color::FromBytes(170, 176, 190));
             theme->Apply();
         }
     };
 
-    column("Before", {40.0f, 68.0f}, false);
-    column("After", {660.0f, 68.0f}, true);
+    column("Before", 16.0f, -1);
+    column("Dark", 388.0f, (int)UITheme::Preset::Dark);
+    column("Light", 760.0f, (int)UITheme::Preset::Light);
+    column("Sci-fi", 1132.0f, (int)UITheme::Preset::SciFi);
+    column("Fantasy", 1504.0f, (int)UITheme::Preset::Fantasy);
     return root;
 }
 

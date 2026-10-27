@@ -4373,6 +4373,20 @@ struct OkayScriptVM::Impl {
             return Value{1.0f};
         };
         b["ApplyUITheme"] = b["apply_ui_theme"];
+        // set_ui_theme(0 custom, 1 dark, 2 light, 3 sci-fi, 4 fantasy) fills the
+        // palette and bakes it onto this theme's object.
+        b["set_ui_theme"] = [selfObj](std::vector<Value>& a) {
+            GameObject* g = selfObj();
+            if (!g || !g->scene()) return Value{0.0f};
+            const std::string name = a.size() >= 2 ? a[1].AsString() : std::string();
+            UITheme* theme = name.empty() ? g->GetComponent<UITheme>() : nullptr;
+            if (!theme) theme = UITheme::Find(g->scene(), name);
+            if (!theme) return Value{0.0f};
+            theme->ApplyPreset(a.empty() ? 1 : (int)a[0].AsFloat());
+            theme->Apply();
+            return Value{1.0f};
+        };
+        b["SetUITheme"] = b["set_ui_theme"];
         // Clip queries: timing + existence, so scripts can react to where a clip is.
         b["clip_time"] = [charSelf, modelSelf](std::vector<Value>&) {
             Character* c = charSelf();

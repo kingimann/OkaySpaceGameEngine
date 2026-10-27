@@ -32546,28 +32546,28 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("##audiowav", cb, sizeof(cb))) { a->clipPath = cb; ed.dirty = true; }
             if (AcceptAssetPathField(a->clipPath)) ed.dirty = true;   // drop from Project
             ImGui::SameLine(0, 4);
-            // Browse for a WAV and load it immediately so Play previews it in-editor.
+            // Browse for an audio file and load it now so Play previews it in-editor.
             if (ImGui::Button("...##audiobrowse")) {
-                const char* wavFilt[1] = {"*.wav"};
-                if (const char* p = tinyfd_openFileDialog("Choose a WAV file", "", 1, wavFilt, "WAV audio", 0)) {
+                const char* audioFilt[3] = {"*.wav", "*.ogg", "*.mp3"};
+                if (const char* p = tinyfd_openFileDialog("Choose an audio file", "", 3, audioFilt, "Audio (WAV, OGG, MP3)", 0)) {
                     a->clipPath = p; ed.dirty = true;
                     std::string werr;
-                    if (a->clip.LoadWAV(p, &werr)) ConsoleLog("Loaded " + std::string(p));
-                    else ConsoleLog("WAV load failed: " + werr, 2);
+                    if (a->clip.Load(p, &werr)) ConsoleLog("Loaded " + std::string(p));
+                    else ConsoleLog("Audio load failed: " + werr, 2);
                 }
             }
             ImGui::SameLine(0, 4);
-            ImGui::TextUnformatted("WAV File");
+            ImGui::TextUnformatted("Audio File");
             if (!a->clipPath.empty()) {
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Load##audiowavload")) {   // preview a typed/dropped path
                     std::string werr;
-                    if (a->clip.LoadWAV(a->clipPath, &werr)) ConsoleLog("Loaded " + a->clipPath);
-                    else ConsoleLog("WAV load failed: " + werr, 2);
+                    if (a->clip.Load(a->clipPath, &werr)) ConsoleLog("Loaded " + a->clipPath);
+                    else ConsoleLog("Audio load failed: " + werr, 2);
                 }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Load this WAV now so Play previews it in the editor");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Load this file now to hear it with the Play button here");
             }
-            ImGui::TextDisabled("WAV path also loads in the built game; %.2fs clip", a->clip.Duration());
+            ImGui::TextDisabled("WAV, OGG or MP3; loads on Play and in the built game; %.2fs clip", a->clip.Duration());
             if (ImGui::Checkbox("3D (spatial)", &a->spatial)) ed.dirty = true;
             if (a->spatial) {
                 if (ImGui::DragFloat("Min Distance##audio", &a->minDistance, 0.1f, 0.0f, 1000.0f)) ed.dirty = true;

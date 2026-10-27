@@ -230,6 +230,7 @@
 #include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
 #include "okay/Audio/AudioMixer.hpp"
+#include "okay/Audio/AudioLoad.hpp"
 
 // Multiplayer networking
 #include "okay/Net/Packet.hpp"

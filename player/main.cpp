@@ -1481,14 +1481,8 @@ int main(int argc, char** argv) {
     SDL_Texture* mesh3DTex = nullptr;
     int mesh3DW = 0, mesh3DH = 0;
 
-    // Load any WAV clips referenced by AudioSources, resampled to the mix rate.
-    for (const auto& up : scene.Objects()) {
-        auto* au = up->GetComponent<AudioSource>();
-        if (!au || au->clipPath.empty()) continue;
-        AudioClip wav;
-        if (wav.LoadWAV(au->clipPath) || wav.LoadWAV(baseDir + au->clipPath))
-            au->clip = wav.Resampled(AudioMixer::sampleRate);
-    }
+    // Load the audio files (WAV, OGG, MP3) AudioSources name, resampled to the mix rate.
+    LoadSceneAudio(scene, baseDir, AudioMixer::sampleRate);
 
     // Load any .OBJ models referenced by MeshRenderers (resolve next to the exe).
     for (const auto& up : scene.Objects()) {

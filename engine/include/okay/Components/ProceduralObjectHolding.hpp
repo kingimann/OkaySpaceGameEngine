@@ -27,6 +27,7 @@
 #include "okay/Components/CharacterIK.hpp"
 #include "okay/Components/FullBodyIK.hpp"
 #include "okay/Components/HoldableObject.hpp"
+#include "okay/Components/FirstPersonHands.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Math/Quat.hpp"
@@ -375,6 +376,16 @@ private:
             p.fixed = true;
             if (!custom) p.use[0] = p.use[1] = false;   // resting in a holster / on the back
         }
+        // Others-view nudge. The arms follow the object, so this is also how
+        // the full-body pose is raised or brought in. Grip points stay on the item.
+        if (!p.fixed)
+            if (FirstPersonHands* hands = gameObject ? gameObject->GetComponent<FirstPersonHands>() : nullptr)
+                if (hands->enabled) {
+                    p.pos = p.pos + b.side * hands->othersItemOffset.x + b.up * hands->othersItemOffset.y
+                          + b.fwd * hands->othersItemOffset.z;
+                    p.pos = p.pos + b.up * hands->othersArmLift + b.fwd * hands->othersArmForward;
+                    p.rot = (p.rot * Quat::Euler(hands->othersItemRotation)).Normalized();
+                }
         return p;
     }
     // A named style (or Automatic's small-object carry) laid out around the body:

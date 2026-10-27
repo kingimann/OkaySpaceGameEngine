@@ -114,6 +114,7 @@
 #include "okay/Components/Water.hpp"
 #include "okay/Components/Flashlight.hpp"
 #include "okay/Components/FirstPersonHand.hpp"
+#include "okay/Components/FirstPersonHands.hpp"
 #include "okay/Components/NetworkSync.hpp"
 #include "okay/Components/NetworkObject.hpp"
 #include "okay/Components/AntiCheatConfig.hpp"
@@ -352,7 +353,9 @@ static bool IsGeneratedRig(GameObject* go) {
 static bool IsGeneratedViewmodel(GameObject* go) {
     if (!go) return false;
     // The owner's arm copy is spawned beside the rig and rebuilt every run.
-    if (go->name == "FP_OwnerArm" || go->name == "FP_OwnerFore" || go->name == "FP_OwnerHand")
+    if (go->name == "FP_OwnerArm" || go->name == "FP_OwnerFore" || go->name == "FP_OwnerHand"
+        || go->name == "FP_OwnerArm2" || go->name == "FP_OwnerFore2" || go->name == "FP_OwnerHand2"
+        || go->name == "FP_OwnerItem")
         return true;
     if (go->name != "FP_Arm" || !go->transform) return false;
     Transform* par = go->transform->Parent();
@@ -843,6 +846,30 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (fh->followPitch ? 1 : 0) << " " << (fh->bobbing ? 1 : 0)
             << " " << (fh->steadyArm ? 1 : 0) << " " << fh->armRaise << " " << fh->armElbow << "\n";
     }
+    if (auto* hh = go->GetComponent<FirstPersonHands>()) {
+        auto side = [&](const FirstPersonHands::HandSide& s) {
+            out << " " << (s.enabled ? 1 : 0)
+                << " " << s.position.x << " " << s.position.y << " " << s.position.z
+                << " " << s.rotation.x << " " << s.rotation.y << " " << s.rotation.z
+                << " " << s.uniformScale
+                << " " << s.scale.x << " " << s.scale.y << " " << s.scale.z
+                << " " << s.size.x << " " << s.size.y << " " << s.size.z
+                << " " << (s.useColour ? 1 : 0)
+                << " " << s.colour.r << " " << s.colour.g << " " << s.colour.b
+                << " " << (s.sleeve ? 1 : 0) << " " << s.sleeveLength
+                << " " << s.sleeveColour.r << " " << s.sleeveColour.g << " " << s.sleeveColour.b;
+        };
+        out << "  fphands " << (hh->showWhenEmpty ? 1 : 0) << " " << (hh->showWhileRunning ? 1 : 0)
+            << " " << hh->bobAmount << " " << hh->swayAmount << " " << hh->punchAmount << " " << hh->handFov
+            << " " << hh->itemOffset.x << " " << hh->itemOffset.y << " " << hh->itemOffset.z
+            << " " << hh->itemRotation.x << " " << hh->itemRotation.y << " " << hh->itemRotation.z
+            << " " << hh->itemScale << " " << (int)hh->holdMode;
+        side(hh->right);
+        side(hh->left);
+        out << " " << hh->othersItemOffset.x << " " << hh->othersItemOffset.y << " " << hh->othersItemOffset.z
+            << " " << hh->othersItemRotation.x << " " << hh->othersItemRotation.y << " " << hh->othersItemRotation.z
+            << " " << hh->othersArmLift << " " << hh->othersArmForward << "\n";
+    }
     if (auto* ps = go->GetComponent<NetworkPlayerSpawner>()) {
         out << "  npspawner " << Quote(ps->playerTemplate) << " " << Quote(ps->prefabFile)
             << " " << ps->spawnPoint.x << " " << ps->spawnPoint.y << " " << ps->spawnPoint.z
@@ -1169,7 +1196,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* h = go->GetComponent<HoldableObject>()) {
         out << "  holdable";
         KvOut k{out};
-        k("style", (int)h->style).b("support", h->supportHand)("weight", h->weight).str("socket", h->socket)
+        k("style", (int)h->style).b("support", h->supportHand).b("two", h->twoHanded)("weight", h->weight).str("socket", h->socket)
          ("offX", h->holdOffset.x)("offY", h->holdOffset.y)("offZ", h->holdOffset.z)
          ("rotX", h->holdRotation.x)("rotY", h->holdRotation.y)("rotZ", h->holdRotation.z);
         const HoldableObject::Grip* grips[2] = {&h->leftGrip, &h->rightGrip};
@@ -3718,7 +3745,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     KvIn k(in);
                     int st = 0; k.i("style", st);
                     h->style = st >= 0 && st <= (int)HoldableObject::Style::Heavy ? (HoldableObject::Style)st : HoldableObject::Style::Automatic;
-                    k.b("support", h->supportHand); k.f("weight", h->weight); k.str("socket", h->socket);
+                    k.b("support", h->supportHand); k.b("two", h->twoHanded); k.f("weight", h->weight); k.str("socket", h->socket);
                     k.f("offX", h->holdOffset.x); k.f("offY", h->holdOffset.y); k.f("offZ", h->holdOffset.z);
                     k.f("rotX", h->holdRotation.x); k.f("rotY", h->holdRotation.y); k.f("rotZ", h->holdRotation.z);
                     HoldableObject::Grip* grips[2] = {&h->leftGrip, &h->rightGrip};
@@ -5406,6 +5433,35 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (v.size() >= 4) fh->steadyArm   = (v[3] != 0.0f);
                     if (v.size() >= 5) fh->armRaise    = v[4];
                     if (v.size() >= 6) fh->armElbow    = v[5];
+                } else if (field == "fphands") {
+                    auto* hh = go->AddComponent<FirstPersonHands>();
+                    auto side = [&](FirstPersonHands::HandSide& s, std::istringstream& rs) {
+                        int en = 1, col = 0, sl = 0;
+                        rs >> en >> s.position.x >> s.position.y >> s.position.z
+                           >> s.rotation.x >> s.rotation.y >> s.rotation.z >> s.uniformScale
+                           >> s.scale.x >> s.scale.y >> s.scale.z
+                           >> s.size.x >> s.size.y >> s.size.z >> col
+                           >> s.colour.r >> s.colour.g >> s.colour.b >> sl >> s.sleeveLength
+                           >> s.sleeveColour.r >> s.sleeveColour.g >> s.sleeveColour.b;
+                        s.enabled = en != 0; s.useColour = col != 0; s.sleeve = sl != 0;
+                    };
+                    int empty = 0, run = 0, mode = 0;
+                    in >> empty >> run >> hh->bobAmount >> hh->swayAmount >> hh->punchAmount >> hh->handFov
+                       >> hh->itemOffset.x >> hh->itemOffset.y >> hh->itemOffset.z
+                       >> hh->itemRotation.x >> hh->itemRotation.y >> hh->itemRotation.z
+                       >> hh->itemScale >> mode;
+                    hh->showWhenEmpty = empty != 0;
+                    hh->showWhileRunning = run != 0;
+                    hh->holdMode = mode == 1 ? FirstPersonHands::HoldMode::Left
+                                 : mode == 2 ? FirstPersonHands::HoldMode::Two
+                                             : FirstPersonHands::HoldMode::Right;
+                    std::string rest; std::getline(in, rest);
+                    std::istringstream rs(rest);
+                    side(hh->right, rs);
+                    side(hh->left, rs);
+                    rs >> hh->othersItemOffset.x >> hh->othersItemOffset.y >> hh->othersItemOffset.z
+                       >> hh->othersItemRotation.x >> hh->othersItemRotation.y >> hh->othersItemRotation.z
+                       >> hh->othersArmLift >> hh->othersArmForward;
                 } else if (field == "npspawner") {
                     auto* ps = go->AddComponent<NetworkPlayerSpawner>();
                     ps->playerTemplate = ReadQuoted(in);

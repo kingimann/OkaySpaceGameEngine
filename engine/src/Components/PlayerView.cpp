@@ -272,10 +272,9 @@ void PlayerView::ApplyHead() {
             // A FirstPersonHand on this player already writes these each frame.
             if (!HandOwnsArm(gameObject, cam)) {
                 ch->firstPersonArm = true;
-                ch->fpArmBase = 3;
                 ch->fpArmBob = true;
                 ch->fpSteady = false;
-                ch->fpArmUp = ch->HideFirstPersonHands() ? 0.0f : 1.0f;
+                ch->ApplyFirstPersonHandDrive(false);
                 ch->fpPitch = LookUpDegrees(gameObject);
             }
             if (GameObject* head = ch->Part(HumanoidMotion::B_HEAD)) {

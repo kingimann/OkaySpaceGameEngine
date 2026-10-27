@@ -8,6 +8,7 @@
 // window — used in CI where there's no display.
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
+#include "FpHandsWindow.hpp"
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
 #include "okay/Modeling/MeshAsset.hpp"       // .okaymesh / .obj mesh files
@@ -28042,6 +28043,12 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##fh")) toRemove = fh;
         }
     }
+    if (auto* fhs = dynamic_cast<FirstPersonHands*>(curComp)) {
+        if (CompHeader("First Person Hands", fhs, &toRemove)) {
+            DrawFpHandsBody(ed, fhs);
+            if (ImGui::SmallButton("Remove##fphs")) toRemove = fhs;
+        }
+    }
     if (auto* ns = dynamic_cast<NetworkSync*>(curComp)) {
         if (CompHeader("Network Sync", ns, &toRemove)) {
             ImGui::TextDisabled("Replicates this object's position + rotation to every peer. Needs a Network Manager in the scene.");
@@ -29528,6 +29535,8 @@ void DrawInspector(EditorState& ed) {
                 }
                 if (ImGui::Checkbox("Support Hand##hold", &ho->supportHand)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pistol: the other hand wraps the first. Sword: held in two hands.");
+                if (ImGui::Checkbox("Two Handed##hold", &ho->twoHanded)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("First person draws both hands on this item. Rifle, Box and Heavy do that already, and so do two enabled grips.");
                 if (ImGui::DragFloat("Weight (kg)##hold", &ho->weight, 0.1f, 0.0f, 500.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = the Rigidbody's mass.");
                 if (NameField("Socket##hold", ho->socket)) ed.dirty = true;
@@ -34729,6 +34738,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Water>(), "Water")) { go->AddComponent<Water>()->Apply(); ed.view3D = true; ed.dirty = true; }
             if (item(!go->GetComponent<Flashlight>(), "Flashlight")) { go->AddComponent<Flashlight>(); ed.dirty = true; }
             if (item(!go->GetComponent<FirstPersonHand>(), "First Person Hand")) { go->AddComponent<FirstPersonHand>(); ed.view3D = true; ed.dirty = true; }
+            if (item(!go->GetComponent<FirstPersonHands>(), "First Person Hands")) { go->AddComponent<FirstPersonHands>(); ed.view3D = true; ed.dirty = true; }
             if (item(!go->GetComponent<PauseMenu>(), "Pause Menu")) { go->AddComponent<PauseMenu>()->EnsureBuilt(); ed.dirty = true; }
             if (item(!go->GetComponent<WorldStreamer>(), "World Streamer (partition)")) { go->AddComponent<WorldStreamer>(); ed.dirty = true; }
             if (item(!go->GetComponent<Destructible>(), "Destructible (Chaos)")) { go->AddComponent<Destructible>(); ed.dirty = true; }
@@ -42521,6 +42531,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.GameView"); if (g_showGame)      DrawGameView(ed); }
         { OKAY_PROFILE("UI.Profiler"); if (g_showProfiler)  DrawProfiler(ed); }
         { OKAY_PROFILE("UI.Inspector"); if (g_showInspector) DrawInspector(ed); }
+        DrawFpHandsPreviewWindow(ed);
         { OKAY_PROFILE("UI.Console"); if (g_showConsole)   DrawConsole(); }
         { OKAY_PROFILE("UI.CrashLog"); if (g_showCrashLog)  DrawCrashLog(); }
         { OKAY_PROFILE("UI.AssetManager"); if (g_showAssetManager) DrawAssetManager(ed); }

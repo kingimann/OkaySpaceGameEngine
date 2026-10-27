@@ -1,5 +1,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include "okay/Components/FpHandsPreview.hpp"
+#include "okay/Scripting/OkayScriptVM.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -19,6 +21,7 @@ int main() {
         GameObject* player = scene.CreateGameObject("Player");
         auto* ch = player->AddComponent<Character>(); ch->Apply();   // not separated yet
         player->AddComponent<FirstPersonController>();
+        player->AddComponent<FirstPersonHands>()->showWhenEmpty = true;   // this scene still checks the raised hand
 
         GameObject* cam = scene.CreateGameObject("Eye");
         cam->transform->SetParent(player->transform, false);
@@ -147,6 +150,9 @@ int main() {
         GameObject* player = scene.CreateGameObject("Player");
         player->AddComponent<Character>()->Apply();
         player->AddComponent<FirstPersonController>();
+        auto* hands = player->AddComponent<FirstPersonHands>();
+        hands->showWhenEmpty = true;
+        hands->holdMode = FirstPersonHands::HoldMode::Left;
         GameObject* cam = scene.CreateGameObject("Eye");
         cam->transform->SetParent(player->transform, false);
         cam->AddComponent<Camera>();
@@ -203,6 +209,7 @@ int main() {
         player->transform->localPosition = {0, 0, 0};
         auto* ch = player->AddComponent<Character>();
         ch->Apply();
+        player->AddComponent<FirstPersonHands>()->showWhenEmpty = true;
         auto* fp = player->AddComponent<FirstPersonController>();
         fp->lookSmoothing = 0.0f; fp->headBob = false;
         GameObject* eye = sc.CreateGameObject("Eye");
@@ -383,6 +390,7 @@ int main() {
         player->transform->localPosition = {0, 1, 0};
         auto* ch = player->AddComponent<Character>();
         ch->Apply();
+        player->AddComponent<FirstPersonHands>()->showWhenEmpty = true;
         ch->separateParts = true;
         auto* tp = player->AddComponent<ThirdPersonController>();
         tp->driveAnimation = false;
@@ -549,6 +557,195 @@ int main() {
             CHECK(maxY - minY > 0.008f);   // the up/down bob is still there
         }
         Log::sink = std::move(prev);
+    }
+
+    auto armActive = [](Character* ch) {
+        GameObject* arm = ch ? ch->OwnerViewArm() : nullptr;
+        return arm && arm->active;
+    };
+
+    // Empty hands draw nothing. Holding a block draws one hand. A crate draws both.
+    {
+        Scene scene("empty");
+        GameObject* player = scene.CreateGameObject("Player");
+        auto* ch = player->AddComponent<Character>(); ch->Apply();
+        player->AddComponent<FirstPersonController>();
+        GameObject* cam = scene.CreateGameObject("Eye");
+        cam->transform->SetParent(player->transform, false);
+        cam->transform->localPosition = {0, 1.62f, 0};
+        cam->AddComponent<Camera>();
+        cam->AddComponent<FirstPersonHand>();
+        scene.Start();
+        for (int i = 0; i < 8; ++i) scene.Update(1.0f / 60.0f);
+        CHECK(ch->fpArmUp == 0.0f);
+        CHECK(!armActive(ch));
+
+        auto* hands = player->AddComponent<FirstPersonHands>();
+        for (int i = 0; i < 6; ++i) scene.Update(1.0f / 60.0f);
+        CHECK(!armActive(ch));
+        hands->showWhenEmpty = true;                 // a live edit, the way the inspector writes it
+        for (int i = 0; i < 48; ++i) scene.Update(1.0f / 60.0f);
+        CHECK(ch->fpArmUp == 1.0f);
+        CHECK(armActive(ch));
+        CHECK(!ch->OwnerViewArm2() || !ch->OwnerViewArm2()->active);
+
+        hands->showWhenEmpty = false;
+        auto* hold = player->AddComponent<ProceduralObjectHolding>();
+        GameObject* block = scene.CreateGameObject("Block");
+        block->transform->localPosition = {0.2f, 1.0f, -0.5f};
+        block->transform->localScale = {0.12f, 0.12f, 0.12f};
+        auto* bmr = block->AddComponent<MeshRenderer>();
+        bmr->mesh = Mesh::Cube();
+        bmr->color = Color::FromBytes(210, 120, 40);
+        block->AddComponent<HoldableObject>()->weight = 0.3f;
+        CHECK(hold->Pickup(block));
+        for (int i = 0; i < 48; ++i) scene.Update(1.0f / 60.0f);
+        CHECK(armActive(ch));
+        CHECK(!ch->OwnerViewArm2() || !ch->OwnerViewArm2()->active);
+        GameObject* item = scene.Find("FP_OwnerItem");
+        CHECK(item && item->active && item->firstPersonOnly);
+
+        hold->Drop();
+        GameObject* crate = scene.CreateGameObject("Crate");
+        crate->transform->localPosition = {0.2f, 1.0f, -0.8f};
+        crate->transform->localScale = {0.5f, 0.35f, 0.35f};
+        auto* cmr = crate->AddComponent<MeshRenderer>();
+        cmr->mesh = Mesh::Cube();
+        cmr->color = Color::FromBytes(170, 120, 60);
+        auto* cho = crate->AddComponent<HoldableObject>();
+        cho->twoHanded = true;
+        cho->style = HoldableObject::Style::Box;
+        cho->leftGrip.enabled = true; cho->leftGrip.position = {-0.4f, 0, 0};
+        cho->rightGrip.enabled = true; cho->rightGrip.position = {0.4f, 0, 0};
+        CHECK(cho->WantsTwoHands());
+        CHECK(hold->Pickup(crate));
+        for (int i = 0; i < 48; ++i) scene.Update(1.0f / 60.0f);
+        CHECK(armActive(ch));
+        CHECK(ch->OwnerViewArm2() && ch->OwnerViewArm2()->active && ch->OwnerViewArm2()->firstPersonOnly);
+        GameObject* hand2 = nullptr;
+        if (ch->OwnerViewArm2()->transform)
+            for (Transform* fore : ch->OwnerViewArm2()->transform->Children())
+                if (fore)
+                    for (Transform* hnd : fore->Children())
+                        if (hnd && hnd->gameObject && hnd->gameObject->name == "FP_OwnerHand2")
+                            hand2 = hnd->gameObject;
+        CHECK(hand2 && hand2->active);
+
+        ch->anim = 3;
+        player->GetComponent<FirstPersonController>()->driveAnimation = false;
+        for (int i = 0; i < 48; ++i) scene.Update(1.0f / 60.0f);
+        CHECK(!armActive(ch));
+        CHECK(!ch->OwnerViewArm2()->active);
+        hands->showWhileRunning = true;
+        for (int i = 0; i < 48; ++i) scene.Update(1.0f / 60.0f);
+        CHECK(ch->fpArmUp == 1.0f);
+        CHECK(armActive(ch));
+        CHECK(ch->OwnerViewArm2()->active);
+    }
+
+    // The panel round-trips, and a script can read and write the same fields.
+    {
+        Scene a("Save");
+        GameObject* go = a.CreateGameObject("Player");
+        auto* h = go->AddComponent<FirstPersonHands>();
+        h->showWhenEmpty = true;
+        h->showWhileRunning = true;
+        h->bobAmount = 0.4f;
+        h->holdMode = FirstPersonHands::HoldMode::Two;
+        h->handFov = 48.0f;
+        h->right.position = {0.1f, -0.2f, 0.05f};
+        h->right.sleeve = true;
+        h->right.sleeveLength = 0.4f;
+        h->left.enabled = false;
+        h->othersArmLift = 0.15f;
+        h->othersItemOffset = {0.02f, 0.1f, 0.2f};
+        std::string text = SceneSerializer::Serialize(a);
+        Scene b("Load");
+        CHECK(SceneSerializer::Deserialize(b, text));
+        auto* lf = b.Find("Player") ? b.Find("Player")->GetComponent<FirstPersonHands>() : nullptr;
+        CHECK(lf);
+        if (lf) {
+            CHECK(lf->showWhenEmpty && lf->showWhileRunning);
+            CHECK_NEAR(lf->bobAmount, 0.4f, 1e-4f);
+            CHECK(lf->holdMode == FirstPersonHands::HoldMode::Two);
+            CHECK_NEAR(lf->handFov, 48.0f, 1e-3f);
+            CHECK_NEAR(lf->right.position.x, 0.1f, 1e-4f);
+            CHECK(lf->right.sleeve);
+            CHECK_NEAR(lf->right.sleeveLength, 0.4f, 1e-4f);
+            CHECK(!lf->left.enabled);
+            CHECK_NEAR(lf->othersArmLift, 0.15f, 1e-4f);
+            CHECK_NEAR(lf->othersItemOffset.z, 0.2f, 1e-4f);
+        }
+
+        Scene s("Script");
+        GameObject* player = s.CreateGameObject("Player");
+        OkayScriptVM vm;
+        ScriptHost host;
+        host.gameObject = player;
+        host.transform = player->transform;
+        vm.Bind(&host);
+        CHECK(vm.Load(
+            "AddComponent(\"FirstPersonHands\")\n"
+            "let h = GetComponent(\"FirstPersonHands\")\n"
+            "h.showWhenEmpty = true\n"
+            "h.bobAmount = 0.25\n"
+            "h.holdMode = 1\n"
+            "h.rightPosition = vec3(0.1, -0.2, 0.3)\n"
+            "h.ResetPlayerView()\n"));
+        auto* got = player->GetComponent<FirstPersonHands>();
+        CHECK(got);
+        if (got) {
+            CHECK(!got->showWhenEmpty);          // ResetPlayerView put it back
+            CHECK(got->holdMode == FirstPersonHands::HoldMode::Right);
+            CHECK_NEAR(got->bobAmount, 1.0f, 1e-4f);
+        }
+        CHECK(vm.Load(
+            "let h = GetComponent(\"FirstPersonHands\")\n"
+            "h.othersArmLift = 0.2\n"
+            "h.leftSleeve = true\n"));
+        if (got) {
+            CHECK_NEAR(got->othersArmLift, 0.2f, 1e-4f);
+            CHECK(got->left.sleeve);
+            CHECK_NEAR(got->right.position.x, 0.0f, 1e-4f);
+        }
+    }
+
+    // The preview draws the owner's camera and a front view, and the two example
+    // items do not look the same.
+    {
+        FpHandsPreview preview;
+        FirstPersonHands src;
+        preview.CopyFrom(src);
+        preview.SetExample(0);
+        preview.Step(40);
+        auto oneFp = preview.Render(true, 160, 90);
+        auto oneTp = preview.Render(false, 160, 90);
+        auto differ = [](const std::vector<std::uint32_t>& a, const std::vector<std::uint32_t>& b) {
+            int n = 0;
+            std::size_t m = a.size() < b.size() ? a.size() : b.size();
+            for (std::size_t i = 0; i < m; ++i) if (a[i] != b[i]) ++n;
+            return n;
+        };
+        auto ink = [](const std::vector<std::uint32_t>& a) {
+            int n = 0;
+            for (std::uint32_t p : a) if (p != 0xFFC8AA8Cu) ++n;
+            return n;
+        };
+        CHECK(ink(oneFp) > 30);
+        CHECK(ink(oneTp) > 30);
+        CHECK(differ(oneFp, oneTp) > 40);
+        preview.SetExample(1);
+        preview.Step(24);
+        auto twoFp = preview.Render(true, 160, 90);
+        auto twoTp = preview.Render(false, 160, 90);
+        CHECK(ink(twoFp) > 30);
+        CHECK(differ(oneFp, twoFp) > 20);
+        CHECK(differ(oneTp, twoTp) > 20);
+        src.othersArmLift = 0.35f;
+        preview.CopyFrom(src);
+        preview.Step(8);
+        auto lifted = preview.Render(false, 160, 90);
+        CHECK(differ(twoTp, lifted) > 10);
     }
 
     TEST_MAIN_RESULT();

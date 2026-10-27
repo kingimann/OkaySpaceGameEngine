@@ -107,6 +107,7 @@
 #include "okay/Components/AimIK.hpp"
 #include "okay/Components/LimbIK.hpp"
 #include "okay/Components/HoldableObject.hpp"
+#include "okay/Components/FirstPersonHands.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Components/MoveSpeed.hpp"
 #include "okay/Render/Material.hpp"

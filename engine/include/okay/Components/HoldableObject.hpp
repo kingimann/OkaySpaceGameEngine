@@ -66,6 +66,7 @@ public:
 
     Style style = Style::Automatic;
     bool  supportHand = false;                ///< Pistol / Sword: the other hand helps (two-hand stance, two-handed sword)
+    bool  twoHanded = false;                  ///< force both hands even when the shape would be one hand
     Grip  leftGrip, rightGrip;
     Vec3  holdOffset{0.0f, -0.25f, 0.35f};   ///< Custom: object origin from the chest (right, up, forward), metres
     Vec3  holdRotation{0, 0, 0};              ///< Custom: object rotation relative to the body; other styles: a model fix (degrees)
@@ -141,6 +142,17 @@ public:
         if (mass > 15.0f) return Style::Heavy;
         if (e[2] > 0.3f || mass > 5.0f) return Style::Box;
         return Style::Automatic;
+    }
+
+    /// Both hands on this object: the flag, both grip points, a rifle / box /
+    /// heavy style, or a pistol / sword with the support hand on.
+    bool WantsTwoHands() const {
+        if (twoHanded) return true;
+        if (leftGrip.enabled && rightGrip.enabled) return true;
+        const Style s = ResolvedStyle();
+        if (s == Style::Rifle || s == Style::Box || s == Style::Heavy) return true;
+        if (supportHand && (s == Style::Pistol || s == Style::Sword)) return true;
+        return false;
     }
 
     void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying) override {

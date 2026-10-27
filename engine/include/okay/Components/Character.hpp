@@ -123,13 +123,11 @@ public:
 
     // ---- First-person arm (driven by FirstPersonHand / PlayerView) ----
     // firstPersonArm shows a COPY of the character's hand brick on the owner's
-    // camera only, in the lower-right corner, angled in so the top face shows,
-    // past the near plane. No sleeve. It does not cast a shadow. The pose
-    // lives in the camera, so a look down keeps it in that corner instead of
-    // pushing it into the lens. A run eases it off the corner and a stop eases
-    // it back. The real arm bones stay on the animation, so another camera and
-    // another player see the ordinary body. fpArmUp eases 0 (copy hidden) .. 1
-    // (copy shown). fpRaise nudges the hand up from the natural hang (-96).
+    // camera only. Nothing is drawn until the player is holding an item, unless
+    // FirstPersonHands asks for empty hands. A hold can show one hand or both.
+    // The pose lives in the camera, so a look down keeps it in the corner. A run
+    // eases it off unless FirstPersonHands says otherwise. The real arm bones
+    // stay on the animation. fpArmUp eases 0 (copy hidden) .. 1 (copy shown).
     // Nothing here is replicated.
     bool  firstPersonArm = false;
     /// Runtime only (not saved). Kept so older scenes load. It does not remove
@@ -220,6 +218,12 @@ public:
     /// The owner's first-person arm copy (the upper arm). Only the camera that
     /// hides this player draws it. Null until first person has built it.
     GameObject* OwnerViewArm() const { return m_ownerArm; }
+    /// The other hand's copy, when a two-handed hold (or hold mode) shows both.
+    GameObject* OwnerViewArm2() const { return m_ownerArm2; }
+    /// Hide the copy unless this character is holding something. FirstPersonHands
+    /// on the player can show empty hands, pick the hand, and keep them while running.
+    /// `showLeftArm` is the fallback when that component is absent.
+    void ApplyFirstPersonHandDrive(bool showLeftArm);
     /// Place that copy for the camera as it stands right now. The view and the
     /// first-person controller call this after they have moved the lens.
     void RefreshOwnerArm();
@@ -618,14 +622,23 @@ private:
     GameObject* m_ownerItem = nullptr;   // viewmodel copy of a held prop
     GameObject* m_fpHiddenHeld = nullptr;
     int m_ownerArmBase = -2;
+    GameObject* m_ownerArm2 = nullptr;   // the other hand, two-handed holds only
+    GameObject* m_ownerFore2 = nullptr;
+    GameObject* m_ownerHand2 = nullptr;
+    int m_ownerArmBase2 = -2;
+    bool m_fpSecond = false;
     float m_fpDt = 0.016f;
     float m_fpPrevYaw = 0.0f, m_fpPrevPitch = 0.0f;
     float m_fpTrailYaw = 0.0f, m_fpTrailPitch = 0.0f;
     bool  m_fpTrailInit = false;
     void RememberPartRest();
     void ReleaseOwnerArm();
+    void ReleaseOwnerArm2();
     void EnsureOwnerArm(int base);
+    void EnsureOwnerArm2(int base);
+    void DeactivateOwnerArm2();
     void PoseOwnerArm(const std::vector<Vec3>& animPose);
+    void FinishTwoHands(class Camera* cam, float depth, float snap, float bobS, float bobC);
     void SetOwnerArmActive(bool on);
     GameObject* FindRig() const;         // an existing "Rig" child, or null
     bool AdoptParts(GameObject* rig);    // reuse an existing rig instead of rebuilding

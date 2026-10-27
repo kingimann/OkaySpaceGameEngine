@@ -312,7 +312,7 @@ int main() {
             CHECK(ch->PartsBuilt());
             CHECK(ch->firstPersonArm);
             CHECK(ch->fpArmBase == 3);
-            CHECK(ch->fpArmUp == 1.0f);
+            CHECK(ch->fpArmUp == 0.0f);   // empty hands draw nothing until a hold or Show When Empty
             CHECK(ch->Part(2) && ch->Part(2)->active && !ch->Part(2)->firstPersonViewmodel);
             CHECK(ch->Part(2)->transform && (ch->Part(2)->transform->localScale - Vec3::One).Magnitude() < 1e-3f);
             if (auto* hmr = ch->Part(2)->GetComponent<MeshRenderer>()) CHECK(hmr->castShadows);
@@ -670,6 +670,9 @@ int main() {
         settle(sc, 150);                               // arrive at the eyes despite the long blend
         CHECK(!pv->Blending());
         CHECK(cam->ignoreObject == player);
+        CHECK(ch->fpArmUp == 0.0f);                // nothing in the view until a hold
+        player->AddComponent<FirstPersonHands>()->showWhenEmpty = true;
+        settle(sc, 48);                            // the copy eases in
         CHECK(ch->Part(2) && !ch->Part(2)->firstPersonViewmodel);
         CHECK(ch->Part(1) && ch->Part(1)->firstPersonViewmodel); // the shirt is drawn for this camera
         tp->driveAnimation = false;

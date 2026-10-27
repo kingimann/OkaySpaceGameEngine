@@ -825,20 +825,34 @@ elbows bend down and out, and the object moves with the body.
   box on the hand bone, and no finger bones. Holding aims that hand at the grip.
   Finger joints are not posed, including on a rig that happens to have them. A run
   (sprint, or fast enough to use the run
-  style) keeps those hands out of the first-person view. Walking, idling and
-  holding still show the block. The held object stays on its grip.
-- The first-person hand is a copy of the character's own hand brick on the
-  owner's camera only. It is that one block in the lower right, fully on
-  screen, with no sleeve. It is angled so the top and the inner end both show,
-  and it
-  stays past the near plane. It does not cast a shadow.
+  style) keeps those hands out of the first-person view unless **Show While Running**
+  is on. The held object stays on its grip.
+- First person draws no hand until the player is holding an item. **First Person
+  Hands** (on the player) is the panel for that view and for what everyone else
+  sees. **Show When Empty** draws the hands with nothing in them. **Hold mode**
+  is one hand on the right, one hand on the left, or both. A two-handed item
+  (its **Two Handed** flag, both grip points, or a rifle, box, or heavy style,
+  or a pistol or sword with the support hand) uses both hands anyway, at that
+  item's grip points. Each hand has its own position, rotation, scale, size,
+  colour, and an optional sleeve. Bob, sway, punch, the hand field of view, and
+  the held item's offset, rotation, and scale are shared. **Others View** moves
+  the real held object (side / up / forward, plus a lift and a reach) so the
+  arms on the full body follow, and edits the item's grip points. **Reset**
+  clears one section. **Apply** copies Play-mode edits back when Stop reloads
+  the scene. **Open Preview** shows the owner's camera and a front view of the
+  same character, in Edit mode and in Play, and can switch between a one-handed
+  block, a two-handed crate, and empty hands.
+- While a hand is up, it is a copy of the character's own hand brick on the
+  owner's camera only, in the lower corner, fully on screen. The sleeve is off
+  unless that hand turns it on. The brick is angled so the top and the inner
+  end both show, and it stays past the near plane. It does not cast a shadow.
   The pose is in the camera, so looking down keeps it in that corner instead
   of pushing it into the lens. Walking bobs and sways it. A mouse turn lags it
-  slightly. A punch swings it toward the middle. A hold puts a copy of the
-  item in the palm of that brick; everyone
-  else still sees the real hands on the grip. A
-  run eases the copy off the corner and a stop eases it back. The real arm
-  bones stay on the animation,
+  slightly. A punch swings it toward the middle. A one-handed hold puts a copy
+  of the item in the palm (or on that hand's grip, when the grip is enabled).
+  A two-handed hold puts the item in front and a hand on each grip. Everyone
+  else still sees the real hands on the body. A run eases the copy off the
+  corner and a stop eases it back. The real arm bones stay on the animation,
   so another camera and another player see the blocky hands on the idle, the
   walk, the run, a crouch and a prone, including while this player looks down.
   That look does not pitch the shared bones. None of the first-person pose is

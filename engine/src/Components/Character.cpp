@@ -2,6 +2,8 @@
 #include "okay/Animation/HumanoidMotion.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
+#include "okay/Components/FirstPersonHands.hpp"
+#include "okay/Components/HoldableObject.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -1031,10 +1033,26 @@ void Character::ReleaseOwnerArm() {
         m_fpHiddenHeld->ownerCameraSkip = nullptr;
     m_fpHiddenHeld = nullptr;
     SetOwnerArmActive(false);
-    if (m_ownerItem) m_ownerItem->active = false;
-    if (m_ownerArm) if (Scene* s = GetScene()) s->Destroy(m_ownerArm);
-    m_ownerArm = m_ownerFore = m_ownerHand = m_ownerItem = nullptr;
+    if (m_ownerItem && !m_ownerItem->IsDestroyed())
+        if (Scene* s = GetScene()) s->Destroy(m_ownerItem);
+    m_ownerItem = nullptr;
+    if (m_ownerArm && !m_ownerArm->IsDestroyed())
+        if (Scene* s = GetScene()) s->Destroy(m_ownerArm);
+    m_ownerArm = m_ownerFore = m_ownerHand = nullptr;
     m_ownerArmBase = -2;
+}
+
+void Character::ReleaseOwnerArm2() {
+    if (m_ownerArm2 && !m_ownerArm2->IsDestroyed())
+        if (Scene* s = GetScene()) s->Destroy(m_ownerArm2);
+    m_ownerArm2 = m_ownerFore2 = m_ownerHand2 = nullptr;
+    m_ownerArmBase2 = -2;
+}
+
+void Character::DeactivateOwnerArm2() {
+    if (m_ownerArm2) m_ownerArm2->active = false;
+    if (m_ownerFore2) m_ownerFore2->active = false;
+    if (m_ownerHand2) m_ownerHand2->active = false;
 }
 
 namespace {
@@ -1043,6 +1061,62 @@ namespace {
 // tests allow. The brick's local +Y is up (the lit face) and local +Z is the
 // long axis, pointed toward screen centre, where a held item sits.
 constexpr float kFpHandScale = 0.55f;
+
+void PaintFpHand(GameObject* hand, GameObject* srcPart, const FirstPersonHands::HandSide* side) {
+    if (!hand) return;
+    auto* mr = hand->GetComponent<MeshRenderer>();
+    auto* src = srcPart ? srcPart->GetComponent<MeshRenderer>() : nullptr;
+    if (!mr || !src) return;
+    mr->mesh = src->mesh;
+    mr->mesh.normals.clear();
+    mr->color = src->color;
+    mr->castShadows = false;
+    mr->enabled = true;
+    if (side && side->useColour) {
+        mr->color = side->colour;
+        const int faces = (int)mr->mesh.triangles.size() / 3;
+        mr->mesh.triColors.assign((std::size_t)std::max(0, faces), side->colour);
+        mr->emissive = Color{side->colour.r * 0.37f, side->colour.g * 0.37f, side->colour.b * 0.37f, 1.0f};
+    } else {
+        mr->emissive = Color::FromBytes(82, 58, 46);
+    }
+}
+
+void PaintFpSleeve(GameObject* fore, const FirstPersonHands::HandSide* side) {
+    if (!fore) return;
+    auto* mr = fore->GetComponent<MeshRenderer>();
+    if (!mr) return;
+    if (!side || !side->sleeve) {
+        mr->mesh = Mesh{};
+        mr->enabled = false;
+        return;
+    }
+    float L = side->sleeveLength;
+    if (L < 0.04f) L = 0.04f;
+    if (L > 0.8f) L = 0.8f;
+    Mesh m;
+    Mesh::AppendBox(m, {-0.055f, -0.055f, -0.02f - L}, {0.055f, 0.055f, -0.02f});
+    mr->mesh = std::move(m);
+    mr->mesh.normals.clear();
+    mr->enabled = true;
+    mr->castShadows = false;
+    mr->doubleSided = false;
+    mr->color = side->sleeveColour;
+    mr->emissive = Color{side->sleeveColour.r * 0.37f, side->sleeveColour.g * 0.37f,
+                         side->sleeveColour.b * 0.37f, 1.0f};
+}
+
+Vec3 FpHandScale(const FirstPersonHands::HandSide* side) {
+    if (!side) return Vec3::One;
+    return Vec3{side->scale.x * side->size.x, side->scale.y * side->size.y, side->scale.z * side->size.z}
+         * side->uniformScale;
+}
+
+float FpFovScale(const FirstPersonHands* hands, const Camera* cam) {
+    if (!hands || !cam || hands->handFov <= 1.0f || cam->fieldOfView <= 1.0f) return 1.0f;
+    return std::tan(cam->fieldOfView * Mathf::Deg2Rad * 0.5f)
+         / std::tan(hands->handFov * Mathf::Deg2Rad * 0.5f);
+}
 }
 
 void Character::EnsureOwnerArm(int base) {
@@ -1103,6 +1177,55 @@ void Character::EnsureOwnerArm(int base) {
     m_ownerArmBase = base;
 }
 
+void Character::EnsureOwnerArm2(int base) {
+    if (m_ownerArm2 && m_ownerArm2->IsDestroyed()) {
+        m_ownerArm2 = m_ownerFore2 = m_ownerHand2 = nullptr;
+        m_ownerArmBase2 = -2;
+    }
+    if (m_ownerArm2 && m_ownerFore2 && m_ownerHand2 && m_ownerArmBase2 == base) return;
+    ReleaseOwnerArm2();
+    Scene* s = GetScene();
+    if (!s || base < 0 || base + 2 >= (int)m_parts.size()) return;
+    GameObject* src[3] = {m_parts[base], m_parts[base + 1], m_parts[base + 2]};
+    MeshRenderer* mesh[3] = {};
+    for (int i = 0; i < 3; ++i) {
+        if (!src[i]) return;
+        mesh[i] = src[i]->GetComponent<MeshRenderer>();
+        if (!mesh[i] || mesh[i]->mesh.vertices.empty()) return;
+    }
+    const char* names[3] = {"FP_OwnerArm2", "FP_OwnerFore2", "FP_OwnerHand2"};
+    GameObject* made[3] = {};
+    for (int i = 0; i < 3; ++i) {
+        made[i] = s->CreateGameObject(names[i]);
+        auto* mr = made[i]->AddComponent<MeshRenderer>();
+        mr->mesh = mesh[i]->mesh;
+        mr->doubleSided = false;
+        mr->castShadows = false;
+        made[i]->firstPersonOnly = true;
+        made[i]->firstPersonViewmodel = true;
+        made[i]->active = false;
+    }
+    made[1]->transform->SetParent(made[0]->transform, false);
+    made[2]->transform->SetParent(made[1]->transform, false);
+    for (int i = 0; i < 3; ++i) made[i]->transient = true;
+    auto* armMr = made[0]->GetComponent<MeshRenderer>();
+    armMr->mesh = Mesh{};
+    armMr->enabled = false;
+    auto* foreMr = made[1]->GetComponent<MeshRenderer>();
+    foreMr->mesh = Mesh{};
+    foreMr->enabled = false;
+    auto* handMr = made[2]->GetComponent<MeshRenderer>();
+    handMr->mesh.normals.clear();
+    handMr->castShadows = false;
+    handMr->emissive = Color::FromBytes(82, 58, 46);
+    if (gameObject && gameObject->transform)
+        made[0]->transform->SetParent(gameObject->transform, false);
+    m_ownerArm2 = made[0];
+    m_ownerFore2 = made[1];
+    m_ownerHand2 = made[2];
+    m_ownerArmBase2 = base;
+}
+
 namespace {
 // The camera that is allowed to draw this player's first-person-only arm.
 // Prefer the one already hiding the player; otherwise the camera mounted on
@@ -1130,6 +1253,41 @@ void Character::RefreshOwnerArm() {
     PoseOwnerArm(CurrentSourcePose());
 }
 
+void Character::ApplyFirstPersonHandDrive(bool showLeftArm) {
+    FirstPersonHands* h = FirstPersonHands::FindOn(gameObject);
+    if (h && !h->enabled) h = nullptr;
+    int primary = showLeftArm ? B_RUPARM : B_LUPARM;
+    bool two = false;
+    if (h) {
+        primary = h->holdMode == FirstPersonHands::HoldMode::Left ? B_RUPARM : B_LUPARM;
+        two = h->holdMode == FirstPersonHands::HoldMode::Two;
+        if (!h->right.enabled && h->left.enabled) { primary = B_RUPARM; two = false; }
+        else if (h->right.enabled && !h->left.enabled) { primary = B_LUPARM; two = false; }
+        else if (!h->right.enabled && !h->left.enabled) {
+            fpArmBase = primary;
+            fpArmUp = 0.0f;
+            m_fpSecond = false;
+            return;
+        }
+    }
+    bool holding = HandsOnAHold();
+    if (holding) {
+        auto* ph = gameObject->GetComponent<ProceduralObjectHolding>();
+        GameObject* held = ph ? ph->Held() : nullptr;
+        auto* ho = held ? held->GetComponent<HoldableObject>() : nullptr;
+        if (ho && ho->WantsTwoHands()) {
+            const bool rightOn = !h || h->right.enabled;
+            const bool leftOn = !h || h->left.enabled;
+            if (rightOn && leftOn) { two = true; primary = B_LUPARM; }
+        }
+    }
+    const bool run = HideFirstPersonHands();
+    const bool show = (holding || (h && h->showWhenEmpty)) && (!run || (h && h->showWhileRunning));
+    fpArmBase = primary;
+    fpArmUp = show ? 1.0f : 0.0f;
+    m_fpSecond = two;
+}
+
 void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     const int base = fpArmBase;
     const bool on = firstPersonArm && base >= 0 && base + 2 < (int)m_parts.size();
@@ -1142,6 +1300,7 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     // A run eases the copy off the corner (m_fpShown). It is not popped off.
     if (!on || m_fpShown < 0.08f) {
         SetOwnerArmActive(false);
+        DeactivateOwnerArm2();
         if (m_ownerItem) m_ownerItem->active = false;
         if (!on) clearHeld();
         return;
@@ -1153,6 +1312,7 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     Camera* cam = OwnerCamera(gameObject);
     if (!cam || !cam->transform || !gameObject || !gameObject->transform) {
         SetOwnerArmActive(false);
+        DeactivateOwnerArm2();
         return;
     }
     const Quat playerRot = gameObject->transform->Rotation();
@@ -1205,6 +1365,15 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
         bobS = std::sin(m_gaitPhase * 6.2831853f);
         bobC = std::cos(m_gaitPhase * 6.2831853f);
     }
+    FirstPersonHands* fpHands = FirstPersonHands::FindOn(gameObject);
+    if (fpHands && !fpHands->enabled) fpHands = nullptr;
+    const FirstPersonHands::HandSide* fpSide = nullptr;
+    if (fpHands) {
+        bobS *= fpHands->bobAmount;
+        bobC *= fpHands->bobAmount;
+        snap *= fpHands->punchAmount;
+        fpSide = base >= B_RUPARM ? &fpHands->left : &fpHands->right;
+    }
     // Long axis toward screen centre. The broad face is turned up toward the
     // key light and only a little back at the lens: a face square to the lens
     // is in shadow, because the light sits in front of the camera.
@@ -1222,13 +1391,19 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     top = top.Normalized();
     Quat camSpace = Quat::LookRotation(inward, top);
     camSpace = Quat::Euler(1.6f * bobS, -side * 2.2f * bobC, side * 1.1f * bobS) * camSpace;
+    if (fpSide && !m_fpSecond) camSpace = Quat::Euler(fpSide->rotation) * camSpace;
     m_ownerFore->transform->localPosition = Vec3::Zero;
     m_ownerFore->transform->localRotation = Quat::Identity;
     m_ownerFore->transform->localScale = Vec3::One;
     m_ownerHand->transform->localPosition = Vec3::Zero;
     m_ownerHand->transform->localRotation = Quat::Identity;
-    m_ownerHand->transform->localScale = Vec3::One;
-    m_ownerArm->transform->localScale = Vec3{kFpHandScale, kFpHandScale, kFpHandScale};
+    m_ownerHand->transform->localScale = (!m_fpSecond) ? FpHandScale(fpSide) : Vec3::One;
+    if (!m_fpSecond && base + 2 < (int)m_parts.size()) {
+        PaintFpHand(m_ownerHand, m_parts[base + 2], fpSide);
+        PaintFpSleeve(m_ownerFore, fpSide);
+    }
+    const float fovScale = FpFovScale(fpHands, cam);
+    m_ownerArm->transform->localScale = Vec3{kFpHandScale * fovScale, kFpHandScale * fovScale, kFpHandScale * fovScale};
     // Measure in the camera, then correct. One shift is not enough: a nearer
     // corner projects further out than the vertex that was extreme before the move.
     m_ownerArm->transform->SetRotation(cam->transform->Rotation() * camSpace);
@@ -1295,8 +1470,10 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
                     mx.x = std::max(mx.x, v.x); mx.y = std::max(mx.y, v.y); mx.z = std::max(mx.z, v.z);
                 }
                 const float maxExt = std::max(mx.x - mn.x, std::max(mx.y - mn.y, mx.z - mn.z));
-                const float uni = maxExt > 1e-4f ? (0.72f * palm / maxExt) : 1.0f;
-                const Quat irot = Quat::Euler(-16.0f, -side * 18.0f, side * 8.0f);
+                float uni = maxExt > 1e-4f ? (0.72f * palm / maxExt) : 1.0f;
+                if (fpHands && fpHands->itemScale > 0.0f) uni *= fpHands->itemScale;
+                Quat irot = Quat::Euler(-16.0f, -side * 18.0f, side * 8.0f);
+                if (fpHands) irot = Quat::Euler(fpHands->itemRotation) * irot;
                 Vec3 center{0.0f, 0.0f, 0.0f};
                 float minY = 1.0e9f;
                 const float invN = 1.0f / (float)src->mesh.vertices.size();
@@ -1306,10 +1483,18 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
                     minY = std::min(minY, p.y);
                 }
                 const float bite = 0.18f * handExt.y;
+                Vec3 place{-center.x, hmx.y - bite - minY, -center.z + 0.12f * handExt.z};
+                if (auto* ho = held->GetComponent<HoldableObject>()) {
+                    const HoldableObject::Grip& grip = base >= B_RUPARM ? ho->leftGrip : ho->rightGrip;
+                    if (grip.enabled) {
+                        const Vec3 palmPoint{0.0f, hmx.y - bite, 0.12f * handExt.z};
+                        place = palmPoint - irot * (grip.position * uni);
+                    }
+                }
+                if (fpHands) place = place + fpHands->itemOffset;
                 m_ownerItem->transform->localScale = Vec3{uni, uni, uni};
                 m_ownerItem->transform->localRotation = irot;
-                m_ownerItem->transform->localPosition =
-                    Vec3{-center.x, hmx.y - bite - minY, -center.z + 0.12f * handExt.z};
+                m_ownerItem->transform->localPosition = place;
                 m_ownerItem->active = true;
                 showItem = true;
             }
@@ -1340,8 +1525,11 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     };
     bound(m_ownerHand);
     if (showItem) bound(m_ownerItem);
+    if (fpSide && fpSide->sleeve && !m_fpSecond) bound(m_ownerFore);
     if (any) { camOff.x += shiftX; camOff.y += shiftY; }
-    const Quat lag = Quat::Euler(m_fpTrailPitch, m_fpTrailYaw, 0.0f);
+    if (fpSide && !m_fpSecond) camOff = camOff + fpSide->position;
+    const float sway = fpHands ? fpHands->swayAmount : 1.0f;
+    const Quat lag = Quat::Euler(m_fpTrailPitch * sway, m_fpTrailYaw * sway, 0.0f);
     camOff = lag * camOff;
     m_ownerArm->transform->SetPosition(cam->transform->Position() + cam->transform->Rotation() * camOff);
     m_ownerArm->transform->SetRotation(cam->transform->Rotation() * lag * camSpace);
@@ -1360,6 +1548,7 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     };
     consider(m_ownerArm);
     consider(m_ownerHand);
+    if (fpSide && fpSide->sleeve && !m_fpSecond) consider(m_ownerFore);
     if (showItem) consider(m_ownerItem);
     if (minAhead < keep) {
         const Vec3 fwd = basis * Vec3{0.0f, 0.0f, -1.0f};
@@ -1367,6 +1556,170 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     }
     SetOwnerArmActive(true);
     if (m_ownerItem && !showItem) m_ownerItem->active = false;
+    if (m_fpSecond) FinishTwoHands(cam, depth, snap, bobS, bobC);
+    else DeactivateOwnerArm2();
+}
+
+void Character::FinishTwoHands(Camera* cam, float depth, float snap, float bobS, float bobC) {
+    if (!cam || !cam->transform || !m_ownerArm || !m_ownerHand || !gameObject || !gameObject->transform) {
+        DeactivateOwnerArm2();
+        return;
+    }
+    const int baseR = B_LUPARM;
+    const int baseL = B_RUPARM;
+    if (m_ownerArmBase != baseR) EnsureOwnerArm(baseR);
+    EnsureOwnerArm2(baseL);
+    if (!m_ownerArm || !m_ownerHand || !m_ownerArm2 || !m_ownerHand2 || !m_ownerArm->transform || !m_ownerArm2->transform) {
+        DeactivateOwnerArm2();
+        return;
+    }
+    FirstPersonHands* settings = FirstPersonHands::FindOn(gameObject);
+    if (settings && !settings->enabled) settings = nullptr;
+    const FirstPersonHands::HandSide* right = settings ? &settings->right : nullptr;
+    const FirstPersonHands::HandSide* left = settings ? &settings->left : nullptr;
+    const float fovScale = FpFovScale(settings, cam);
+    const Vec3 root{kFpHandScale * fovScale, kFpHandScale * fovScale, kFpHandScale * fovScale};
+    auto prep = [&](GameObject* arm, GameObject* fore, GameObject* hand, int base, const FirstPersonHands::HandSide* side) {
+        if (arm && arm->transform) arm->transform->localScale = root;
+        if (fore && fore->transform) {
+            fore->transform->localPosition = Vec3::Zero;
+            fore->transform->localRotation = Quat::Identity;
+            fore->transform->localScale = Vec3::One;
+        }
+        if (hand && hand->transform) {
+            hand->transform->localPosition = Vec3::Zero;
+            hand->transform->localRotation = Quat::Identity;
+            hand->transform->localScale = FpHandScale(side);
+        }
+        if (base + 2 < (int)m_parts.size()) PaintFpHand(hand, m_parts[base + 2], side);
+        PaintFpSleeve(fore, side);
+    };
+    prep(m_ownerArm, m_ownerFore, m_ownerHand, baseR, right);
+    prep(m_ownerArm2, m_ownerFore2, m_ownerHand2, baseL, left);
+
+    ProceduralObjectHolding* ph = gameObject->GetComponent<ProceduralObjectHolding>();
+    GameObject* held = (ph && ph->IsHolding()) ? ph->Held() : nullptr;
+    const bool have = held && held->transform && !held->IsDestroyed() && m_ownerItem && m_ownerItem->transform;
+    const float sway = settings ? settings->swayAmount : 1.0f;
+    const Quat lag = Quat::Euler(m_fpTrailPitch * sway, m_fpTrailYaw * sway, 0.0f);
+    const float slide = 1.0f - m_fpShown;
+
+    if (!have) {
+        if (m_ownerItem) m_ownerItem->active = false;
+        Vec3 off = cam->transform->Rotation().Conjugate() * (m_ownerArm->transform->Position() - cam->transform->Position());
+        if (right) off = off + right->position;
+        m_ownerArm->transform->SetPosition(cam->transform->Position() + cam->transform->Rotation() * off);
+        if (right) m_ownerArm->transform->SetRotation(m_ownerArm->transform->Rotation() * Quat::Euler(right->rotation));
+        Vec3 leftOff{-off.x, off.y, off.z};
+        if (left) leftOff = leftOff + left->position;
+        const Quat rel = cam->transform->Rotation().Conjugate() * m_ownerArm->transform->Rotation();
+        Vec3 e = rel.ToEuler();
+        e.y = -e.y;
+        e.z = -e.z;
+        if (left) e = e + left->rotation;
+        m_ownerArm2->transform->SetPosition(cam->transform->Position() + cam->transform->Rotation() * leftOff);
+        m_ownerArm2->transform->SetRotation(cam->transform->Rotation() * Quat::Euler(e));
+        m_ownerArm2->active = true;
+        if (m_ownerFore2) m_ownerFore2->active = true;
+        if (m_ownerHand2) m_ownerHand2->active = true;
+        SetOwnerArmActive(true);
+        return;
+    }
+
+    MeshRenderer* src = held->GetComponent<MeshRenderer>();
+    if (!src)
+        for (Transform* c : held->transform->Children())
+            if (c && c->gameObject)
+                if (MeshRenderer* m = c->gameObject->GetComponent<MeshRenderer>()) { src = m; break; }
+    auto* dst = m_ownerItem->GetComponent<MeshRenderer>();
+    if (!src || !dst || src->mesh.vertices.empty()) {
+        m_ownerItem->active = false;
+        DeactivateOwnerArm2();
+        return;
+    }
+    dst->mesh = src->mesh;
+    dst->color = src->color;
+    dst->castShadows = false;
+    dst->mesh.normals.clear();
+    Vec3 mn = src->mesh.vertices[0], mx = mn;
+    for (const Vec3& v : src->mesh.vertices) {
+        mn.x = std::min(mn.x, v.x); mn.y = std::min(mn.y, v.y); mn.z = std::min(mn.z, v.z);
+        mx.x = std::max(mx.x, v.x); mx.y = std::max(mx.y, v.y); mx.z = std::max(mx.z, v.z);
+    }
+    const Vec3 centre = (mn + mx) * 0.5f;
+    const Vec3 half = (mx - mn) * 0.5f;
+    // The copy uses the prop's own proportions, fitted so the long side is a
+    // held object in front of the lens rather than a wall. itemScale still applies.
+    const Vec3 lossy = held->transform->LossyScale();
+    const Vec3 ext{mx.x - mn.x, mx.y - mn.y, mx.z - mn.z};
+    const float worldLong = std::max(std::fabs(lossy.x * ext.x),
+                            std::max(std::fabs(lossy.y * ext.y), std::fabs(lossy.z * ext.z)));
+    Vec3 scl = worldLong > 1e-4f ? lossy * (0.26f / worldLong) : Vec3{0.26f, 0.26f, 0.26f};
+    if (settings && settings->itemScale > 0.0f) scl = scl * settings->itemScale;
+    // Tilt the top toward the lens. A face square to the camera sits in shadow.
+    Quat irot = Quat::Euler(-36.0f, 12.0f, 0.0f);
+    if (settings) irot = Quat::Euler(settings->itemRotation) * irot;
+    Vec3 camOff{0.0f, -0.04f - 0.22f * slide + 0.08f * snap + 0.02f * bobS, -std::max(0.58f, depth + 0.06f)};
+    camOff.x += 0.02f * bobC;
+    if (settings) camOff = camOff + settings->itemOffset;
+    camOff = lag * camOff;
+    m_ownerItem->transform->SetParent(gameObject->transform, false);
+    m_ownerItem->transform->localScale = scl;
+    m_ownerItem->transform->SetRotation(cam->transform->Rotation() * lag * irot);
+    m_ownerItem->transform->SetPosition(cam->transform->Position() + cam->transform->Rotation() * camOff);
+    // Lift the camera-facing side so a crate does not read as a black slab.
+    dst->emissive = Color{src->color.r * 0.22f, src->color.g * 0.22f, src->color.b * 0.22f, 1.0f};
+    m_ownerItem->active = true;
+    held->ownerCameraSkip = gameObject;
+    m_fpHiddenHeld = held;
+
+    Vec3 imn{1.0e9f, 1.0e9f, 1.0e9f}, imx{-1.0e9f, -1.0e9f, -1.0e9f};
+    for (const Vec3& v : dst->mesh.vertices) {
+        const Vec3 c = cam->transform->InverseTransformPoint(m_ownerItem->transform->TransformPoint(v));
+        imn.x = std::min(imn.x, c.x); imn.y = std::min(imn.y, c.y); imn.z = std::min(imn.z, c.z);
+        imx.x = std::max(imx.x, c.x); imx.y = std::max(imx.y, c.y); imx.z = std::max(imx.z, c.z);
+    }
+    auto* ho = held->GetComponent<HoldableObject>();
+    auto placeHand = [&](GameObject* arm, GameObject* hand, bool isLeft, const FirstPersonHands::HandSide* side) {
+        // Grip height comes from the item. The hand itself sits on the near
+        // left or right edge, outside the prop, broad face back at the lens.
+        float gripY = 0.0f;
+        if (ho) {
+            const HoldableObject::Grip& g = isLeft ? ho->leftGrip : ho->rightGrip;
+            const Vec3 gripLocal = g.enabled ? g.position : (centre + Vec3{isLeft ? -half.x : half.x, 0.0f, 0.0f});
+            const Vec3 gripCam = cam->transform->InverseTransformPoint(m_ownerItem->transform->TransformPoint(gripLocal));
+            gripY = gripCam.y;
+        }
+        if (gripY < imn.y) gripY = imn.y;
+        if (gripY > imx.y) gripY = imx.y;
+        float radius = 0.05f * root.x;
+        if (hand) if (auto* mr = hand->GetComponent<MeshRenderer>()) if (!mr->mesh.vertices.empty()) {
+            float e = 0.0f;
+            for (const Vec3& v : mr->mesh.vertices) e = std::max(e, std::max(std::fabs(v.x), std::max(std::fabs(v.y), std::fabs(v.z))));
+            const float sy = hand->transform ? std::fabs(hand->transform->localScale.y) : 1.0f;
+            radius = e * sy * root.x;
+        }
+        const float x = isLeft ? (imn.x - radius * 0.65f) : (imx.x + radius * 0.65f);
+        const float z = imx.z - 0.01f;   // the near face; camera looks down -Z
+        Vec3 pos = cam->transform->TransformPoint(Vec3{x, gripY, z});
+        const Vec3 inward = (cam->transform->Rotation() * Vec3{isLeft ? 0.85f : -0.85f, 0.0f, -0.25f}).Normalized();
+        const Vec3 face = (cam->transform->Rotation() * Vec3{isLeft ? -0.2f : 0.2f, 0.78f, 0.50f}).Normalized();
+        Quat rot = Quat::LookRotation(inward, face);
+        if (side) {
+            rot = rot * Quat::Euler(side->rotation);
+            pos = pos + cam->transform->Rotation() * side->position;
+        }
+        arm->transform->SetRotation(rot);
+        arm->transform->SetPosition(pos);
+        arm->active = true;
+        (void)snap;
+    };
+    placeHand(m_ownerArm, m_ownerHand, false, right);
+    placeHand(m_ownerArm2, m_ownerHand2, true, left);
+    if (m_ownerFore) m_ownerFore->active = true;
+    if (m_ownerHand) m_ownerHand->active = true;
+    if (m_ownerFore2) m_ownerFore2->active = true;
+    if (m_ownerHand2) m_ownerHand2->active = true;
 }
 
 void Character::RememberPartRest() {
@@ -1377,6 +1730,7 @@ void Character::RememberPartRest() {
 
 void Character::RemoveParts() {
     ReleaseOwnerArm();   // the copy hangs off the player, not the rig, so the rig's destroy would miss it
+    ReleaseOwnerArm2();
     if (GameObject* rig = FindRig())
         if (Scene* s = GetScene()) s->Destroy(rig);   // takes its children with it, copy included
     m_rigRoot = nullptr;

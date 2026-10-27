@@ -63,10 +63,9 @@ private:
             // The rig's 180° facing flip puts the body's screen-right arm on the L-named
             // bones (3-5). That is the arm raised into the view. The rest of the body
             // (except head and neck) is drawn too, solid, for when you look down.
-            int a0 = showLeftArm ? 6 : 3;
             c->ApplyOwnerVisibility(true);
-            c->fpArmUp = c->HideFirstPersonHands() ? 0.0f : 1.0f;
-            c->firstPersonArm = true; c->fpArmBase = a0;   // raise it + aim the punch here
+            c->firstPersonArm = true;
+            c->ApplyFirstPersonHandDrive(showLeftArm);   // empty until a hold, unless FirstPersonHands says so
             c->fpArmBob = bobbing;
             c->fpSteady = steadyArm;
             c->fpRaise  = armRaise;    // manual tuning

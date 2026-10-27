@@ -75,6 +75,24 @@ std::vector<Character::Bone> Character::Skeleton() const {
 
 namespace {
 Color mul(Color c, float f) { return Color(c.r * f, c.g * f, c.b * f, 1.0f); }
+
+// The block body is modelled facing +Z. Cameras and movement look down -Z, so
+// the baked mesh is mirrored onto -Z. That mirror reverses winding; swapping
+// each triangle puts the faces back outward, and a single-sided draw then
+// shows the shell instead of the cavity.
+void FaceMinusZ(Mesh& m) {
+    for (Vec3& v : m.vertices) v = Vec3{-v.x, v.y, -v.z};
+    for (std::size_t i = 0; i + 2 < m.triangles.size(); i += 3)
+        std::swap(m.triangles[i + 1], m.triangles[i + 2]);
+}
+
+// The neck is a small box skinned to the torso, so it cannot be hidden on its
+// own while it still lives in the torso mesh. In torso-joint space it sits
+// just above the collar.
+bool NeckLocalVert(const Vec3& v) {
+    return std::fabs(v.x) <= 0.085f && std::fabs(v.z) <= 0.085f
+        && v.y >= 0.395f && v.y <= 0.505f;
+}
 }
 
 Mesh Character::BuildRig(std::vector<int>& bone) const {
@@ -572,10 +590,11 @@ void Character::Apply() {
     // is what stops the walk looking backwards (moonwalk). StanceOffset lowers the
     // whole body for crouch / prone (the rig's root is otherwise pinned at the hip).
     Vec3 so = StanceOffset();
-    for (Vec3& v : m.vertices) { v = Vec3{-v.x, v.y, -v.z} * height; v += so; }
+    FaceMinusZ(m);
+    for (Vec3& v : m.vertices) { v = v * height; v += so; }
     m.normals.clear();                     // boxy -> flat shading
     mr->mesh = std::move(m);
-    mr->doubleSided = true;
+    mr->doubleSided = false;               // outward faces only: no view into the cavity
 }
 
 void Character::AddClip(AnimClip clip) {
@@ -832,8 +851,9 @@ void Character::Update(float dt) {
             Mesh m = m_rest;
             std::vector<Vec3> pose = m_editorPose; pose.resize(B_COUNT, Vec3{0, 0, 0});
             Skin(m, m_bone, pose);
-            for (Vec3& v : m.vertices) { v = Vec3{-v.x, v.y, -v.z} * height; v += m_editorOffset; }
-            m.normals.clear(); mr->mesh = std::move(m); mr->doubleSided = true;
+            FaceMinusZ(m);
+            for (Vec3& v : m.vertices) { v = v * height; v += m_editorOffset; }
+            m.normals.clear(); mr->mesh = std::move(m); mr->doubleSided = false;
         }
         return;
     }
@@ -846,10 +866,11 @@ void Character::Update(float dt) {
         EnsureRest();
         Mesh m = m_rest;
         Skin(m, m_bone, CurrentSourcePose());   // crossfade-aware (blends into the clip)
-        for (Vec3& v : m.vertices) { v = Vec3{-v.x, v.y, -v.z} * height; }  // face -Z (see Apply)
+        FaceMinusZ(m);
+        for (Vec3& v : m.vertices) v = v * height;  // face -Z (see Apply)
         m.normals.clear();
         mr->mesh = std::move(m);
-        mr->doubleSided = true;
+        mr->doubleSided = false;
         return;
     }
     // Advance the punch arc even when posing manually, so a punch always plays.
@@ -940,11 +961,12 @@ void Character::PresentMesh() {
         }
     }
     Vec3 so = StanceOffset();
-    for (Vec3& v : m.vertices) { v = Vec3{-v.x, v.y, -v.z} * height; v += so; }   // face -Z + stance drop (see Apply)
+    FaceMinusZ(m);
+    for (Vec3& v : m.vertices) { v = v * height; v += so; }   // face -Z + stance drop (see Apply)
     m.normals.clear();
     if (firstPersonArm) { BuildFpArm(m); m_fpArmReady = true; } else m_fpArmReady = false;
     mr->mesh = std::move(m);
-    mr->doubleSided = true;
+    mr->doubleSided = false;
 }
 
 // Copy just the arm bones out of the fully-skinned body mesh (per-face colours kept),
@@ -996,6 +1018,9 @@ bool Character::AdoptParts(GameObject* rig) {
     if (auto* mr = gameObject->GetComponent<MeshRenderer>()) mr->enabled = false;
     RememberPartRest();
     m_partsBuilt = true;
+    for (GameObject* p : m_parts)
+        if (p) if (auto* pmr = p->GetComponent<MeshRenderer>()) pmr->doubleSided = false;
+    SplitNeckFromTorso();
     return true;
 }
 
@@ -1032,8 +1057,9 @@ void Character::EditorPreviewTick() {
     Mesh m = m_rest;
     Skin(m, m_bone, CurrentSourcePose());
     Vec3 so = StanceOffset();
-    for (Vec3& v : m.vertices) { v = Vec3{-v.x, v.y, -v.z} * height; v += so; }
-    m.normals.clear(); mr->mesh = std::move(m); mr->doubleSided = true;
+    FaceMinusZ(m);
+    for (Vec3& v : m.vertices) { v = v * height; v += so; }
+    m.normals.clear(); mr->mesh = std::move(m); mr->doubleSided = false;
 }
 
 void Character::BuildParts() {
@@ -1081,7 +1107,9 @@ void Character::BuildParts() {
         if (part.vertices.empty()) continue;
         GameObject* po = s->CreateGameObject(BoneName(bi));
         auto* mr = po->AddComponent<MeshRenderer>();
-        mr->mesh = std::move(part); mr->doubleSided = true;
+        // Outward winding (the rig's 180° yaw keeps it). Single-sided, so a
+        // camera that pitches down sees the shell and not the open inside.
+        mr->mesh = std::move(part); mr->doubleSided = false;
         m_parts[bi] = po;
     }
     // Parent per the skeleton so rotating a bone moves its children (real rig).
@@ -1096,6 +1124,99 @@ void Character::BuildParts() {
     if (auto* mr = gameObject->GetComponent<MeshRenderer>()) mr->enabled = false;   // hide the baked mesh
     RememberPartRest();
     m_partsBuilt = true;
+    SplitNeckFromTorso();
+}
+
+void Character::SplitNeckFromTorso() {
+    GameObject* torso = Part(B_TORSO);
+    if (!torso || !torso->transform) return;
+    for (Transform* c : torso->transform->Children())
+        if (c && c->gameObject && c->gameObject->name == "Neck") return;
+    auto* mr = torso->GetComponent<MeshRenderer>();
+    Scene* s = GetScene();
+    if (!mr || !s) return;
+    Mesh& src = mr->mesh;
+    const bool cols = src.HasFaceColors();
+    Mesh neck, keep;
+    const int faces = (int)src.triangles.size() / 3;
+    for (int f = 0; f < faces; ++f) {
+        int i0 = src.triangles[f * 3], i1 = src.triangles[f * 3 + 1], i2 = src.triangles[f * 3 + 2];
+        const bool ok = i0 >= 0 && i1 >= 0 && i2 >= 0
+            && i0 < (int)src.vertices.size() && i1 < (int)src.vertices.size() && i2 < (int)src.vertices.size();
+        const bool neckFace = ok && NeckLocalVert(src.vertices[i0]) && NeckLocalVert(src.vertices[i1])
+            && NeckLocalVert(src.vertices[i2]);
+        Mesh& dst = neckFace ? neck : keep;
+        if (!ok) continue;
+        for (int idx : {i0, i1, i2}) {
+            dst.triangles.push_back((int)dst.vertices.size());
+            dst.vertices.push_back(src.vertices[idx]);
+        }
+        if (cols && f < (int)src.triColors.size()) dst.triColors.push_back(src.triColors[f]);
+    }
+    if (neck.vertices.empty()) return;
+    mr->mesh = std::move(keep);
+    mr->doubleSided = false;
+    GameObject* n = s->CreateGameObject("Neck");
+    auto* nm = n->AddComponent<MeshRenderer>();
+    nm->mesh = std::move(neck);
+    nm->doubleSided = false;
+    nm->castShadows = true;
+    n->transform->SetParent(torso->transform, false);
+    n->transform->localPosition = Vec3{0.0f, 0.0f, 0.0f};
+    n->active = true;
+    n->firstPersonViewmodel = false;
+}
+
+void Character::ApplyOwnerVisibility(bool firstPerson) {
+    if (!m_partsBuilt) return;
+    for (int i = 0; i < B_COUNT && i < (int)m_parts.size(); ++i) {
+        GameObject* p = m_parts[i];
+        if (!p) continue;
+        p->active = true;
+        p->firstPersonViewmodel = firstPerson && ShowsToOwnerCamera(i);
+        if (auto* mr = p->GetComponent<MeshRenderer>()) mr->doubleSided = false;
+    }
+    GameObject* torso = Part(B_TORSO);
+    if (!torso || !torso->transform) return;
+    for (Transform* c : torso->transform->Children()) {
+        if (!c || !c->gameObject || c->gameObject->name != "Neck") continue;
+        c->gameObject->active = true;
+        c->gameObject->firstPersonViewmodel = false;
+        if (auto* mr = c->gameObject->GetComponent<MeshRenderer>()) {
+            mr->doubleSided = false;
+            mr->castShadows = true;
+        }
+    }
+}
+
+Vec3 Character::ClearFirstPersonEye(Vec3 eye) const {
+    if (!m_partsBuilt || !gameObject || !gameObject->transform) return eye;
+    const Vec3 fwd = gameObject->transform->Rotation() * Vec3{0.0f, 0.0f, -1.0f};
+    const Vec3 up  = gameObject->transform->Rotation() * Vec3{0.0f, 1.0f, 0.0f};
+    auto inside = [&](const Vec3& at) {
+        for (int b = 0; b < B_COUNT && b < (int)m_parts.size(); ++b) {
+            if (b == B_HEAD || (b >= B_LUPARM && b <= B_RHAND)) continue;
+            GameObject* part = m_parts[b];
+            if (!part || !part->transform) continue;
+            auto* mr = part->GetComponent<MeshRenderer>();
+            if (!mr || mr->mesh.vertices.empty()) continue;
+            Vec3 lo, hi;
+            mr->mesh.Bounds(lo, hi);
+            const Vec3 local = part->transform->InverseTransformPoint(at);
+            if (local.x > lo.x && local.x < hi.x && local.y > lo.y && local.y < hi.y
+                && local.z > lo.z && local.z < hi.z)
+                return true;
+        }
+        return false;
+    };
+    bool moved = false;
+    for (int step = 0; step < 12 && inside(eye); ++step) {
+        eye = eye + fwd * 0.05f + up * 0.04f;
+        moved = true;
+    }
+    // Stop a little clear of the shell so the near plane does not slice it.
+    if (moved) eye = eye + fwd * 0.04f + up * 0.03f;
+    return eye;
 }
 
 std::vector<Vec3> Character::CurrentSourcePose() const {
@@ -1261,14 +1382,9 @@ void Character::DriveParts() {
         // fpElbow is a bend: this skeleton folds the elbow on -X, and +X hyperextends
         // the wrist. m_fpShown eases the three bones off the animated pose.
         const float w = m_fpShown < 0.0f ? 0.0f : (m_fpShown > 1.0f ? 1.0f : m_fpShown);
-        // Crouch hunches the chest and prone lays the hips flat. Either swing
-        // carries the only arm the owner can see around behind the sleeve.
-        // The body is hidden, so drop that pitch. Hip height still follows
-        // the stance, and the arm stays next to the lowered eye.
-        if (w > 0.0f && (int)pose.size() > B_TORSO) {
-            pose[B_HIPS].x *= (1.0f - w);
-            pose[B_TORSO].x *= (1.0f - w);
-        }
+        // The chest and the hips keep the crouch hunch and the prone lay.
+        // The owner can see that body, so flattening it would stand the mesh
+        // up around a camera that has already dropped into it.
         const Vec3 raised{fpRaise - fpPitch, 0.0f, 0.0f};
         const Vec3 elbow{-fpElbow, 0.0f, 0.0f};
         pose[fpb]     = pose[fpb]     + (raised - pose[fpb])     * w;
@@ -1294,19 +1410,8 @@ void Character::DriveParts() {
         }
     if (m_rigRoot && m_rigRoot->transform) {
         Vec3 so = StanceOffset();
-        // The crouch eye drops further than the crouch hips. The body is hidden,
-        // so drop the viewmodel arm with the eye or it rides up out of the view.
-        if (fpb >= 0 && m_fpShown > 0.5f && !fpSteady && gameObject && gameObject->transform)
-            for (Transform* c : gameObject->transform->Children()) {
-                if (!c || !c->gameObject || !c->gameObject->GetComponent<Camera>()) continue;
-                const float eye = c->localPosition.y;
-                if (eye < 0.35f) break;
-                if (eye > m_fpEyeRest) m_fpEyeRest = eye;
-                so.y = eye - m_fpEyeRest;
-                break;
-            }
         // A steady first-person arm ignores the crouch/prone height drop so it stays in
-        // view (the owner only sees the arm, so the body's true height is irrelevant).
+        // view. The body the owner sees otherwise keeps that drop.
         float y = (firstPersonArm && fpSteady) ? 0.0f : so.y;
         m_rigRoot->transform->localPosition = Vec3{0.0f, y, 0.0f};
         m_rigRoot->transform->localScale = Vec3{height, height, height};

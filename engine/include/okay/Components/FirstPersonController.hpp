@@ -186,8 +186,9 @@ public:
         if (Transform* camT = FindCameraChild())
             if (auto* cam = camT->gameObject->GetComponent<Camera>()) {
                 cam->ignoreObject = showBody ? nullptr : gameObject;
-                // Default 0.3 m clips the chest and the viewmodel shoulder.
-                if (!showBody && cam->nearClip > 0.15f) cam->nearClip = 0.08f;
+                // 0.3 m slices the chest open. The eye sits just outside the
+                // body, so a close plane shows the shell instead of a cutaway.
+                if (!showBody && cam->nearClip > 0.06f) cam->nearClip = 0.04f;
             }
     }
 
@@ -529,6 +530,22 @@ public:
         if (lookSmoothing > 0.0f) {
             transform->localRotation = Quat::Euler(0, m_smooth.Yaw(), 0);
             cam->localRotation = Quat::Euler(m_smooth.Pitch(), 0, -m_lean * leanAngle);
+        }
+        // Sit the eye just in front of the face, and ease it further forward and
+        // up as the look goes down, so the pitch doesn't carry it into the chest.
+        // A last push leaves any part the owner can see (torso, hips, legs).
+        {
+            const float shown = lookSmoothing > 0.0f ? m_smooth.Pitch() : pitch;
+            const float down = shown < 0.0f ? std::min(-shown, 85.0f) / 85.0f : 0.0f;
+            float h = 1.0f;
+            Character* ch = FindCharacter();
+            if (ch && ch->height > 0.0f) h = ch->height;
+            cam->localPosition.z = -(0.17f + down * 0.18f) * h;
+            cam->localPosition.y += down * 0.20f * h;
+            if (ch && transform) {
+                const Vec3 cleared = ch->ClearFirstPersonEye(cam->Position());
+                cam->localPosition = transform->InverseTransformPoint(cleared);
+            }
         }
     }
 

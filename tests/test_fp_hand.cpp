@@ -32,11 +32,20 @@ int main() {
         CHECK(ch->Part(3) && ch->Part(3)->active && ch->Part(3)->firstPersonViewmodel);
         CHECK(ch->Part(4) && ch->Part(4)->firstPersonViewmodel);
         CHECK(ch->Part(5) && ch->Part(5)->firstPersonViewmodel);
-        // Other parts stay active but are NOT flagged, so the owner's camera culls them.
+        // The head stays active (shadows, other cameras) but this camera skips it.
+        // The torso and the other arm are drawn, solid, so looking down is not a cavity.
         CHECK(ch->Part(2) && ch->Part(2)->active && !ch->Part(2)->firstPersonViewmodel);  // head
-        CHECK(ch->Part(1) && ch->Part(1)->active && !ch->Part(1)->firstPersonViewmodel);  // torso
-        CHECK(ch->Part(6) && !ch->Part(6)->firstPersonViewmodel);                          // other arm
-        // Body hidden from the OWNER only: the camera ignores the player subtree.
+        CHECK(ch->Part(1) && ch->Part(1)->active && ch->Part(1)->firstPersonViewmodel);   // torso
+        CHECK(ch->Part(6) && ch->Part(6)->firstPersonViewmodel);                          // other arm
+        GameObject* neck = nullptr;
+        if (ch->Part(1) && ch->Part(1)->transform)
+            for (Transform* c : ch->Part(1)->transform->Children())
+                if (c && c->gameObject && c->gameObject->name == "Neck") neck = c->gameObject;
+        CHECK(neck && neck->active && !neck->firstPersonViewmodel);
+        if (ch->Part(1))
+            if (auto* tmr = ch->Part(1)->GetComponent<MeshRenderer>()) CHECK(!tmr->doubleSided);
+        CHECK(camera->nearClip < 0.06f);
+        // Body hidden from the OWNER only where it is not the viewmodel: the camera ignores the player subtree.
         CHECK(camera->ignoreObject == player);
         // No spawned arm object (no "second arm"), and the baked mesh stays hidden.
         CHECK(scene.Find("FP_Arm") == nullptr);
@@ -59,7 +68,9 @@ int main() {
         CHECK(ch->fpArmUp == 0.0f);
         CHECK(ch->Part(3) && !ch->Part(3)->firstPersonViewmodel);
         CHECK(ch->Part(5) && !ch->Part(5)->firstPersonViewmodel);
-        CHECK(ch->Part(1) && ch->Part(1)->active);   // the body is still there for everyone else
+        CHECK(ch->Part(6) && !ch->Part(6)->firstPersonViewmodel);   // both arms, not just the raised one
+        CHECK(ch->Part(1) && ch->Part(1)->active && ch->Part(1)->firstPersonViewmodel);
+        CHECK(ch->Part(2) && ch->Part(2)->active && !ch->Part(2)->firstPersonViewmodel);
         ch->anim = 2;
         for (int i = 0; i < 30; ++i) scene.Update(0.016f);   // the run style eases out over ~0.2 s
         CHECK(!ch->HideFirstPersonHands());
@@ -80,9 +91,10 @@ int main() {
         scene.Start();
         for (int i = 0; i < 3; ++i) scene.Update(0.016f);
         auto* ch = player->GetComponent<Character>();
-        CHECK(ch->fpArmBase == 6);                       // the other (screen-left) arm
+        CHECK(ch->fpArmBase == 6);                       // the raised (screen-left) arm
         CHECK(ch->Part(6) && ch->Part(6)->firstPersonViewmodel);
-        CHECK(ch->Part(3) && !ch->Part(3)->firstPersonViewmodel);
+        CHECK(ch->Part(3) && ch->Part(3)->firstPersonViewmodel);   // the other arm is still the body
+        CHECK(ch->Part(2) && !ch->Part(2)->firstPersonViewmodel);  // head stays off this camera
     }
 
     // Serialization round-trips the settings.

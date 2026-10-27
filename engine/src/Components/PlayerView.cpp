@@ -49,11 +49,21 @@ Pose FirstFromThird(const ThirdPersonController& tp, const Vec3& eyeOffset) {
     const float eyeY = tp.cameraHeight - drop + eyeOffset.y;
     const Quat yawQ = Quat::Euler(0, tp.yaw, 0);
     const float roll = -tp.lean() * tp.leanAngle;
+    // Third-person pitch is positive looking down. The eye starts just in front
+    // of the face and moves further forward and up as that pitch increases.
+    float down = tp.pitch > 0.0f ? std::min(tp.pitch, 85.0f) / 85.0f : 0.0f;
+    float h = 1.0f;
+    Character* ch = tp.gameObject ? tp.gameObject->GetComponent<Character>() : nullptr;
+    if (ch && ch->height > 0.0f) h = ch->height;
+    const float fwd = (0.17f + down * 0.18f) * h;
+    const float lift = down * 0.20f * h;
     Pose p;
-    p.position = tp.transform->Position() + yawQ * Vec3{eyeOffset.x + tp.lean() * tp.leanOffset, eyeY, eyeOffset.z};
-    // Third-person pitch is positive looking down; the eye pitch is the opposite,
-    // so the look direction doesn't jump when the camera reaches the head.
+    p.position = tp.transform->Position() + yawQ * Vec3{
+        eyeOffset.x + tp.lean() * tp.leanOffset, eyeY + lift, eyeOffset.z - fwd};
+    // The eye pitch is the opposite of the orbit pitch, so the look direction
+    // doesn't jump when the camera reaches the head.
     p.rotation = yawQ * Quat::Euler(-tp.pitch, 0, roll);
+    if (ch) p.position = ch->ClearFirstPersonEye(p.position);
     return p;
 }
 
@@ -178,9 +188,7 @@ void PlayerView::Update(float dt) {
     if (!Driving()) {
         if (Character* ch = gameObject ? gameObject->GetComponent<Character>() : nullptr) {
             ch->hideOwnHead = false;
-            if (ch->PartsBuilt())
-                for (int i = 0; i < Character::BoneCount(); ++i)
-                    if (GameObject* part = ch->Part(i)) part->firstPersonViewmodel = false;
+            if (ch->PartsBuilt()) ch->ApplyOwnerVisibility(false);
         }
         return;
     }
@@ -195,33 +203,30 @@ void PlayerView::ApplyHead() {
     const bool fp = FirstAmount() > 0.35f;
     Character* ch = gameObject->GetComponent<Character>();
     Camera* cam = ViewCamera(gameObject);
+    // A part rig can hide the head and neck from this camera only. The baked
+    // mesh cannot, so build the rig on the way into first person.
+    if (ch && fp && !ch->driveExternal && !ch->PartsBuilt()) {
+        ch->separateParts = true;
+        ch->BuildParts();
+    }
     if (ch && ch->PartsBuilt()) {
         ch->hideOwnHead = false;
         if (cam) {
             cam->ignoreObject = fp ? gameObject : nullptr;
-            // The shoulder sits about 0.3 m from the eye, which is the default
-            // near plane, so the arm (and the chest when you look down) is sliced.
-            if (fp && cam->nearClip > 0.15f) cam->nearClip = 0.08f;
+            // 0.3 m is the depth of the chest, so the default plane cuts it open.
+            if (fp && cam->nearClip > 0.06f) cam->nearClip = 0.04f;
         }
-        // Only the raised arm stays visible. Flagging every other part drew the
-        // torso and legs inside the head. A run keeps even that arm off screen.
-        const int arm = ch->fpArmBase >= 0 ? ch->fpArmBase : HumanoidMotion::B_LUPARM;
-        const bool showArm = fp && !ch->HideFirstPersonHands();
-        for (int i = 0; i < Character::BoneCount(); ++i) {
-            GameObject* part = ch->Part(i);
-            if (!part) continue;
-            part->firstPersonViewmodel = showArm && i >= arm && i <= arm + 2;
-            if (i == HumanoidMotion::B_HEAD && part->transform) part->transform->localScale = Vec3::One;
-        }
+        ch->ApplyOwnerVisibility(fp);
+        if (GameObject* head = ch->Part(HumanoidMotion::B_HEAD))
+            if (head->transform) head->transform->localScale = Vec3::One;
         return;
     }
     if (ch) ch->hideOwnHead = fp;
-    // The single mesh stays visible (head vertices are shrunk). Third person
-    // sees the whole body too; the controller's "hide body" only applies when
-    // this toggle is off.
+    // No rig (a custom model that refused one): shrink the head in the shared
+    // mesh. Third person sees that too; the part rig above does not have to.
     if (cam) {
         cam->ignoreObject = nullptr;
-        if (fp && cam->nearClip > 0.15f) cam->nearClip = 0.08f;
+        if (fp && cam->nearClip > 0.06f) cam->nearClip = 0.04f;
     }
 }
 

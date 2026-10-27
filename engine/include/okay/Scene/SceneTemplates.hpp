@@ -1290,7 +1290,7 @@ inline void VoxelSandbox(Scene& scene) {
     GameObject* player = scene.CreateGameObject("Player");
     float surfY = 0.0f; vox->SurfaceY(0, 0, surfY);
     player->transform->localPosition = {0, surfY + 3.0f, 0};
-    { auto* pc = player->AddComponent<Character>(); pc->Apply(); pc->separateParts = true; }   // part rig: the FP hand raises your real arm and hides the rest of the body from your own camera only
+    { auto* pc = player->AddComponent<Character>(); pc->Apply(); pc->separateParts = true; }   // part rig: the owner's camera skips the head and neck; the body stays solid
     HumanoidLibrary::EnsureAnimator(player);
     player->AddComponent<Rigidbody3D>();
     {

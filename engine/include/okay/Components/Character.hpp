@@ -160,6 +160,17 @@ public:
         return RunWeight(anim) > 0.35f;
     }
 
+    /// What the owner's first-person camera may draw. The head is never in
+    /// that view. Both arms drop out while a run hides the hands. The neck is
+    /// not a bone — it is a child of the torso, and the owner camera skips it.
+    bool ShowsToOwnerCamera(int bone) const {
+        if (bone == HumanoidMotion::B_HEAD) return false;
+        if (HideFirstPersonHands()
+            && bone >= HumanoidMotion::B_LUPARM && bone <= HumanoidMotion::B_RHAND)
+            return false;
+        return true;
+    }
+
     // ---- External rig (retargeting) ----
     /// Compute the animation pose but render NOTHING — no baked mesh, no part
     /// rig. A HumanoidRetarget component next to this Character reads
@@ -172,8 +183,9 @@ public:
     // GameObjects (one per bone: Hips, Torso, Head, arms, legs) you can select,
     // recolour, attach things to (a sword in the Hand), and animate part-by-part.
     // The built-in animations still play (they drive the part transforms) unless you
-    // turn `animateParts` off to author your own. The first-person hand just hides
-    // the non-arm parts. Call BuildParts() (or the editor's "Separate Into Parts").
+    // turn `animateParts` off to author your own. The owner's first-person camera
+    // skips the head and the neck and draws the rest from the outside.
+    // Call BuildParts() (or the editor's "Separate Into Parts").
     bool separateParts = false;   ///< serialized: rebuild the part rig on load
     bool animateParts  = true;    ///< let the built-in animation drive the parts
     /// Create the part rig as REAL child objects (a "Rig" node with one object per
@@ -190,6 +202,16 @@ public:
     void EditorPreviewTick();
     bool PartsBuilt() const { return m_partsBuilt; }
     GameObject* Part(int bone) const { return (bone >= 0 && bone < (int)m_parts.size()) ? m_parts[bone] : nullptr; }
+    /// Flag the rig for one camera. `firstPerson` draws every part the owner
+    /// should see and leaves the head and neck active but unflagged, so this
+    /// camera skips them while shadows and every other camera still get them.
+    void ApplyOwnerVisibility(bool firstPerson);
+    /// Pull the neck box out of the torso mesh into a child named "Neck", once.
+    void SplitNeckFromTorso();
+    /// If `eye` (world space) sits inside a body part the owner can see, step it
+    /// forward and up until it is outside. Head, neck and arms are not walls:
+    /// the first two are hidden from this camera and the arms sit near the view.
+    Vec3 ClearFirstPersonEye(Vec3 eye) const;
 
     // ---- Animation authoring (the editor's Animation window uses these) ----
     std::vector<Vec3> CurrentPose() const;  ///< the pose being shown right now (per-bone euler)
@@ -563,7 +585,6 @@ private:
     Mesh m_fpArm;                  // first-person arm-only mesh (rebuilt each frame)
     bool m_fpArmReady = false;
     float m_fpShown = 0.0f;        // eased 0..1 raise of the first-person arm (tracks fpArmUp)
-    float m_fpEyeRest = 0.0f;      // standing eye height, so a crouch can drop the viewmodel with the camera
     void BuildFpArm(const Mesh& full);   // extract the arm bones into m_fpArm
     void EaseFirstPersonArm(float dt);
     bool m_partsBuilt = false;

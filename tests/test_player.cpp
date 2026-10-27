@@ -232,7 +232,9 @@ int main() {
             Input::FeedKeys({});
             sc.Update(1.0f / 60.0f);
             const float d = (cam->transform->Position() - head).Magnitude();
-            if (d > prev + 0.05f || (prev - d) > 0.55f) smooth = false;   // toward the eyes, no snap
+            // The eye settles a little in front of the head centre, so the last
+            // step can move away from this reference. A snap is still a fail.
+            if ((d > prev + 0.05f && prev > 0.40f) || (prev - d) > 0.55f) smooth = false;
             prev = d;
             if (i == 8) mid = d;
         }
@@ -241,7 +243,9 @@ int main() {
         CHECK((cam->transform->Position() - head).Magnitude() < 0.45f);   // arrived at the eyes
         CHECK(pv->GetView() == 0);
         CHECK(!pv->Blending());
-        CHECK(ch->hideOwnHead);                           // own head is out of the near plane
+        CHECK(ch->PartsBuilt());
+        CHECK(ch->Part(2) && ch->Part(2)->active && !ch->Part(2)->firstPersonViewmodel);   // head stays for everyone else
+        CHECK(!ch->hideOwnHead);
 
         pv->SetView(1);
         for (int i = 0; i < 10; ++i) { Input::FeedKeys({}); sc.Update(1.0f / 60.0f); }

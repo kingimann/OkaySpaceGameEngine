@@ -1,12 +1,10 @@
 #pragma once
 // ---------------------------------------------------------------------------
-// FirstPersonHand — shows your character's OWN real arm in first person, the way
-// Minecraft/Unturned do it: the body is hidden from YOUR camera only (the camera
-// ignores the player subtree, so other cameras / remote players still see your whole
-// character), and the right arm is flagged as the first-person viewmodel so it keeps
-// rendering for you. It's literally your character's customised arm — its shape, skin,
-// sleeve and glove — raised into view. Nothing is spawned and nothing is duplicated,
-// so there is never a "second arm" or a "second character".
+// FirstPersonHand — shows your character's OWN body in first person. The camera
+// ignores the player subtree, so other cameras and shadows still see the whole
+// character, and the parts you should see (torso, legs, the raised arm) are flagged
+// as the first-person viewmodel. The head and the neck stay active but unflagged,
+// so only this camera skips them. Nothing is spawned and nothing is duplicated.
 //
 // Needs a Character; if it isn't a separated part rig yet, the hand builds the rig
 // (that's what carries the real arm geometry). Click swings the arm (the real
@@ -49,10 +47,9 @@ public:
     void OnDestroy() override { ClearArm(); }
 
 private:
-    // Raise the character's own real arm and hide the rest of the body from the OWNER's
-    // camera. The body is hidden by the camera ignore (subtree-aware) + the baked mesh
-    // staying disabled — never deactivated, never duplicated. The arm parts are flagged
-    // firstPersonViewmodel so they render for the owner even inside the ignored subtree.
+    // Show the body to the owner, except the head and the neck. Those stay
+    // active so they cast shadows and other cameras still see them; this camera
+    // skips them because they are not the viewmodel. A run also drops both arms.
     void Apply() {
         Character* c = FindCharacter();
         if (!c) return;
@@ -60,28 +57,19 @@ private:
         if (!c->PartsBuilt()) c->BuildParts();
         if (c->PartsBuilt()) {
             // The rig's 180° facing flip puts the body's screen-right arm on the L-named
-            // bones (3-5). Flag that arm; everything else stays active (so remote views
-            // are unaffected) but is culled from the owner's camera.
+            // bones (3-5). That is the arm raised into the view. The rest of the body
+            // (except head and neck) is drawn too, solid, for when you look down.
             int a0 = showLeftArm ? 6 : 3;
-            // Running swings the arms into the view. Leave them unflagged so the
-            // owner's camera (which ignores the body) does not draw them. The
-            // hold still poses the wrists; only the meshes stay off screen.
-            const bool showArm = !c->HideFirstPersonHands();
-            for (int bi = 0; bi < 15; ++bi)
-                if (GameObject* p = c->Part(bi)) {
-                    p->active = true;
-                    p->firstPersonViewmodel = showArm && (bi >= a0 && bi <= a0 + 2);
-                }
-            c->fpArmUp = showArm ? 1.0f : 0.0f;   // ease the raise down while running
+            c->ApplyOwnerVisibility(true);
+            c->fpArmUp = c->HideFirstPersonHands() ? 0.0f : 1.0f;
             c->firstPersonArm = true; c->fpArmBase = a0;   // raise it + aim the punch here
             c->fpArmBob = bobbing;
             c->fpSteady = steadyArm;
             c->fpRaise  = armRaise;    // manual tuning
             c->fpElbow  = armElbow;
-            // The shoulder sits ~0.30 m from the eye, which is the default near
-            // plane, so the upper arm is sliced off. A viewmodel needs a closer plane.
+            // The chest is about 0.3 m deep. The default near plane slices it.
             if (Camera* cam = gameObject ? gameObject->GetComponent<Camera>() : nullptr)
-                if (cam->nearClip > 0.2f) cam->nearClip = 0.08f;
+                if (cam->nearClip > 0.06f) cam->nearClip = 0.04f;
         }
         if (auto* fpc = FindController()) {
             c->fpPitch = followPitch ? fpc->pitch : 0.0f;   // arm follows the camera up/down
@@ -93,9 +81,7 @@ private:
     void ClearArm() {
         if (Character* c = FindCharacter()) {
             c->firstPersonArm = false; c->fpArmBase = -1;
-            if (c->PartsBuilt())
-                for (int bi = 0; bi < 15; ++bi)
-                    if (GameObject* p = c->Part(bi)) { p->active = true; p->firstPersonViewmodel = false; }
+            if (c->PartsBuilt()) c->ApplyOwnerVisibility(false);
         }
     }
     Character* FindCharacter() const {

@@ -826,6 +826,11 @@ elbows bend down and out, and the object moves with the body.
   that happens to have them. A run (sprint, or fast enough to use the run
   style) keeps those hands out of the first-person view. Walking, idling and
   holding still show the block. The held object stays on its grip.
+- The owner's first-person camera does not draw the head or the neck. Both
+  stay in the scene, so they still cast shadows and any other camera still
+  sees them. The eye sits just in front of the face and moves forward and up
+  as you look down, with a close near plane. The body is drawn from the
+  outside only, so looking down shows that body or the ground, not the cavity.
 - **Socket**: hold it at a named object inside the character (a holster, a back
   slot) instead of in front of the chest.
 - The hands never stretch: when a grip is out of reach the object comes closer

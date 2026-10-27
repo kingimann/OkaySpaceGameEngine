@@ -1799,7 +1799,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << fp->bobRunScale << " " << fp->bobBlend << " " << fp->bobGroundGrace << " " << fp->eyeStepSmoothing
             << " " << (fp->dodge.canDodge ? 1 : 0) << " " << (int)(unsigned char)fp->dodge.key
             << " " << fp->dodge.impulse << " " << fp->dodge.duration << " " << fp->dodge.cooldown
-            << " " << fp->dodge.stamina << " " << (fp->dodge.iFrames ? 1 : 0) << "\n";
+            << " " << fp->dodge.stamina << " " << (fp->dodge.iFrames ? 1 : 0)
+            // Traversal flags. Older loaders do not skip these trailing ints.
+            << " " << (fp->canVault ? 1 : 0) << " " << (fp->canMantle ? 1 : 0) << " " << (fp->canLedgeGrab ? 1 : 0) << "\n";
         out << "  fpstance";
         KvOut k{out};
         k.b("prone", fp->allowProne).b("resize", fp->resizeBody)("crouchH", fp->crouchHeight)("proneH", fp->proneHeight)
@@ -1856,7 +1858,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (tp->ikLook ? 1 : 0)
             << " " << (tp->dodge.canDodge ? 1 : 0) << " " << (int)(unsigned char)tp->dodge.key
             << " " << tp->dodge.impulse << " " << tp->dodge.duration << " " << tp->dodge.cooldown
-            << " " << tp->dodge.stamina << " " << (tp->dodge.iFrames ? 1 : 0) << "\n";
+            << " " << tp->dodge.stamina << " " << (tp->dodge.iFrames ? 1 : 0)
+            // Traversal flags. Older loaders do not skip these trailing ints.
+            << " " << (tp->canVault ? 1 : 0) << " " << (tp->canMantle ? 1 : 0) << " " << (tp->canLedgeGrab ? 1 : 0) << "\n";
     }
     // Player view toggle (grok/view-toggle). Its own record, so older scenes skip it.
     // Fields: allow, view (0 first / 1 third), key, pad, blend, ex ey ez, dist, shoulder.
@@ -4790,6 +4794,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                >> fp->dodge.stamina >> ifr;
                             fp->dodge.canDodge = on != 0; fp->dodge.key = (char)key; fp->dodge.iFrames = ifr != 0;
                         }
+                        int cv = 0, cm = 0, cl = 0;
+                        in >> std::ws;
+                        if (std::isdigit(static_cast<unsigned char>(in.peek())) && (in >> cv >> cm >> cl)) {
+                            fp->canVault = cv != 0; fp->canMantle = cm != 0; fp->canLedgeGrab = cl != 0;
+                        }
                     }
                 } else if (field == "tpfeel") {
                     if (auto* tp = go->GetComponent<ThirdPersonController>()) {
@@ -4805,6 +4814,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             in >> on >> key >> tp->dodge.impulse >> tp->dodge.duration >> tp->dodge.cooldown
                                >> tp->dodge.stamina >> ifr;
                             tp->dodge.canDodge = on != 0; tp->dodge.key = (char)key; tp->dodge.iFrames = ifr != 0;
+                        }
+                        int cv = 0, cm = 0, cl = 0;
+                        in >> std::ws;
+                        if (std::isdigit(static_cast<unsigned char>(in.peek())) && (in >> cv >> cm >> cl)) {
+                            tp->canVault = cv != 0; tp->canMantle = cm != 0; tp->canLedgeGrab = cl != 0;
                         }
                     }
                 } else if (field == "playerview") {

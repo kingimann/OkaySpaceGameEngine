@@ -366,6 +366,23 @@ or into Run when still sprinting and not crouched.
 Script: `roll(["forward"|"back"|"left"|"right"])`, `dodge(...)`. Visual
 scripts: Roll, Dodge.
 
+Vault, mantle and ledge clips: `Vault`, `Mantle_Low`, `Mantle_High`, `LedgeGrab`
+(into the existing Hang pose), `Hang_Shimmy_L`, `Hang_Shimmy_R`, `ClimbUp`, `LetGo`.
+States `Vault`, `MantleLow`, `MantleHigh`, `LedgeGrab`, `ClimbUp` and `LetGo` play
+once and are not interruptible, so Fall cannot cut the blend; each still has its
+own `die` edge. `HangShimmy` is a 1D tree on `shimmy` (-1 left, +1 right) and
+returns to Hang when the float is near 0. Hang keeps the transitions it already
+had and gains `hanging` false → Fall. IK weight is 0. Hands-on-ledge Limb IK is
+not wired. The move itself is a short curve: the body's colliders turn off and
+gravity is 0 until it ends. A ledge leaves the body hanging (gravity stays 0)
+and remembers the lip for `climb_up()`. `let_go()` drops without teleporting.
+`canVault`, `canMantle` and `canLedgeGrab` on the first- and third-person
+controllers default off, so walking into a wall does nothing until a game opts
+in. `vault()` and `mantle()` still probe. The 2.5D platformer keeps its own
+ledge motion and only sets the `hanging` bool. These flags are trailing ints on
+`fpfeel` and `tpfeel`; a build from before this change will not load a scene
+that saved them.
+
 Script: `play_action("Death" [, blend])` (0 if that state is missing),
 `is_in_action()`, `action_time()`, `die(["forward"|"back"|"left"|"right"])`,
 `die(x, y, z)`, `revive()`, `is_dead()`. `on_action_end` is the anim event

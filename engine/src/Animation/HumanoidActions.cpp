@@ -13,6 +13,7 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/Traversal.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Physics/Collider3D.hpp"
@@ -365,7 +366,7 @@ struct ActionSpec {
     int rev;
 };
 
-const ActionSpec kStates[] = {{"Death", 1}, {"DeadHold", 1}, {"Dive", 2}, {"DiveLand", 2}, {"SitDown", 3}, {"Sit", 3}, {"StandUp", 3}, {"Hit", 4}, {"HitHeavy", 4}, {"Hit_Crouch", 4}, {"Hit_Prone", 4}, {"Roll", 5}, {"Dodge", 5}, {"Slide", 5}, {"SlideEnd", 5}};
+const ActionSpec kStates[] = {{"Death", 1}, {"DeadHold", 1}, {"Dive", 2}, {"DiveLand", 2}, {"SitDown", 3}, {"Sit", 3}, {"StandUp", 3}, {"Hit", 4}, {"HitHeavy", 4}, {"Hit_Crouch", 4}, {"Hit_Prone", 4}, {"Roll", 5}, {"Dodge", 5}, {"Slide", 5}, {"SlideEnd", 5}, {"Vault", 6}, {"MantleLow", 6}, {"MantleHigh", 6}, {"LedgeGrab", 6}, {"HangShimmy", 6}, {"ClimbUp", 6}, {"LetGo", 6}};
 
 SM::State* FindMutable(SM& sm, const std::string& name) {
     for (SM::State& s : sm.states) if (s.name == name) return &s;
@@ -563,12 +564,43 @@ void LatchDeath(SM& sm, int dir) {
 
 } // namespace
 
+void BakeVault(std::vector<HumanoidLibrary::Entry>& out) {
+    const KeyPose idle = FromState(1);
+    const KeyPose hang = FromState(19);
+    auto plant = [](KeyPose k, float hip) {
+        k.bones[B::B_LUPARM] = {-140.0f, -20.0f, 16.0f};
+        k.bones[B::B_RUPARM] = {-140.0f, 20.0f, -16.0f};
+        k.bones[B::B_LFORE].x = -20.0f;
+        k.bones[B::B_RFORE].x = -20.0f;
+        k.bones[B::B_TORSO].x = 20.0f;
+        k.hipY = hip;
+        return k;
+    };
+    KeyPose over = plant(idle, 0.15f);
+    over.bones[B::B_LTHIGH].x = 50.0f;
+    over.bones[B::B_RTHIGH].x = 20.0f;
+    AddClip(out, BakeAction("Vault", {At(idle, 0.0f), At(plant(idle, 0.05f), 0.18f), At(over, 0.36f), At(idle, 0.60f)}, false, {{0.60f, "action_end"}}));
+    AddClip(out, BakeAction("Mantle_Low", {At(idle, 0.0f), At(plant(idle, 0.1f), 0.2f), At(idle, 0.5f)}, false, {{0.50f, "action_end"}}));
+    KeyPose high = plant(idle, 0.35f);
+    high.bones[B::B_LTHIGH].x = 70.0f;
+    high.bones[B::B_RTHIGH].x = 70.0f;
+    AddClip(out, BakeAction("Mantle_High", {At(idle, 0.0f), At(high, 0.3f), At(plant(idle, 0.2f), 0.55f), At(idle, 0.8f)}, false, {{0.80f, "action_end"}}));
+    AddClip(out, BakeAction("LedgeGrab", {At(idle, 0.0f), At(hang, 0.35f)}, false, {{0.35f, "action_end"}}));
+    KeyPose shimL = hang; shimL.bones[B::B_HIPS].z = 8.0f; shimL.bones[B::B_TORSO].z = 10.0f;
+    KeyPose shimR = hang; shimR.bones[B::B_HIPS].z = -8.0f; shimR.bones[B::B_TORSO].z = -10.0f;
+    AddClip(out, BakeAction("Hang_Shimmy_L", {At(hang, 0.0f), At(shimL, 0.25f), At(hang, 0.5f)}, true, {}));
+    AddClip(out, BakeAction("Hang_Shimmy_R", {At(hang, 0.0f), At(shimR, 0.25f), At(hang, 0.5f)}, true, {}));
+    AddClip(out, BakeAction("ClimbUp", {At(hang, 0.0f), At(plant(idle, 0.2f), 0.35f), At(idle, 0.7f)}, false, {{0.70f, "action_end"}}));
+    AddClip(out, BakeAction("LetGo", {At(hang, 0.0f), At(idle, 0.3f)}, false, {{0.30f, "action_end"}}));
+}
+
 void Bake(std::vector<HumanoidLibrary::Entry>& out) {
     BakeDeath(out);
     BakeDive(out);
     BakeSit(out);
     BakeHits(out);
     BakeRoll(out);
+    BakeVault(out);
 }
 
 void ApplyTimes(AnimStateMachine& sm) {
@@ -780,6 +812,28 @@ void EndAt(SM::State& st, const char* to) {
     st.transitions.push_back(done);
 }
 
+void AddOneShot(SM& sm, const char* name, const char* clip, float col, float ny, const char* to) {
+    if (HasState(sm, name)) return;
+    SM::State s;
+    s.name = name; s.clip = clip; s.loop = false; s.ikWeight = 0.0f;
+    // Fall / Jump Any-State would cut a vault the moment the body leaves the
+    // ground. Own edges still run, including die.
+    s.interruptible = false;
+    s.nx = col; s.ny = ny;
+    if (HasState(sm, "Death")) {
+        SM::Transition die;
+        die.to = "Death"; die.cond = C::Trigger; die.param = "die"; die.blend = 0.12f;
+        die.interruption = SM::Transition::Interrupt::None;
+        s.transitions.push_back(die);
+    }
+    if (to) {
+        SM::Transition done;
+        done.to = to; done.cond = C::OnClipEnd; done.hasExitTime = true; done.exitTime = 1.0f; done.blend = 0.15f;
+        s.transitions.push_back(done);
+    }
+    sm.states.push_back(std::move(s));
+}
+
 void AddStates(AnimStateMachine& sm, const Character* body, bool force) {
     const int had = sm.actionsRev;
     const bool deathDue = force || had < 1;
@@ -787,6 +841,7 @@ void AddStates(AnimStateMachine& sm, const Character* body, bool force) {
     const bool sitDue = force || had < 3;
     const bool hitDue = force || had < 4;
     const bool rollDue = force || had < 5;
+    const bool vaultDue = force || had < 6;
     const bool freshDeath = deathDue && !HasState(sm, "Death");
     const bool freshHold = deathDue && !HasState(sm, "DeadHold");
     float col = 40.0f;
@@ -1074,6 +1129,87 @@ void AddStates(AnimStateMachine& sm, const Character* body, bool force) {
         entry("Dodge", "dodge", C::Trigger);
         entry("Slide", "slide", C::BoolTrue);
     }
+    if (vaultDue) {
+        float col = 40.0f;
+        for (const SM::State& o : sm.states) col = std::max(col, o.nx);
+        col += 220.0f;
+        const char* home = HasState(sm, "Idle") ? "Idle" : nullptr;
+        const char* drop = HasState(sm, "Fall") ? "Fall" : home;
+        AddOneShot(sm, "Vault", "Vault", col, 40.0f, home);
+        AddOneShot(sm, "MantleLow", "Mantle_Low", col, 130.0f, home);
+        AddOneShot(sm, "MantleHigh", "Mantle_High", col, 220.0f, home);
+        AddOneShot(sm, "LedgeGrab", "LedgeGrab", col, 310.0f, HasState(sm, "Hang") ? "Hang" : home);
+        AddOneShot(sm, "ClimbUp", "ClimbUp", col, 400.0f, home);
+        AddOneShot(sm, "LetGo", "LetGo", col, 490.0f, drop);
+        if (!HasState(sm, "HangShimmy")) {
+            SM::State s;
+            s.name = "HangShimmy"; s.blendTree = true; s.blendDims = 1; s.blendParam = "shimmy";
+            s.loop = true; s.ikWeight = 0.0f; s.interruptible = false;
+            SM::Motion l; l.clip = "Hang_Shimmy_L"; l.threshold = -1.0f;
+            SM::Motion r; r.clip = "Hang_Shimmy_R"; r.threshold = 1.0f;
+            s.motions = {l, r};
+            s.nx = col; s.ny = 580.0f;
+            SM::Transition back;
+            back.to = HasState(sm, "Hang") ? "Hang" : (home ? home : "");
+            if (HasState(sm, "Death")) {
+                SM::Transition die;
+                die.to = "Death"; die.cond = C::Trigger; die.param = "die"; die.blend = 0.12f;
+                die.interruption = SM::Transition::Interrupt::None;
+                s.transitions.push_back(die);
+            }
+            if (!back.to.empty()) {
+                back.cond = C::FloatLess; back.param = "shimmy"; back.value = 0.2f;
+                SM::Condition neg; neg.cond = C::FloatGreater; neg.param = "shimmy"; neg.value = -0.2f;
+                back.extra.push_back(neg);
+                s.transitions.push_back(back);
+            }
+            sm.states.push_back(std::move(s));
+        }
+        if (SM::State* hang = FindMutable(sm, "Hang")) {
+            bool has = false;
+            for (const SM::Transition& t : hang->transitions) if (t.param == "hanging") has = true;
+            if (!has && drop) {
+                SM::Transition rel;
+                rel.to = drop; rel.cond = C::BoolFalse; rel.param = "hanging"; rel.blend = 0.12f;
+                hang->transitions.push_back(rel);
+                // Fall's Any-State would yo-yo with `hanging` while the feet are off the floor.
+                hang->interruptible = false;
+                bool hasDie = false;
+                for (const SM::Transition& t : hang->transitions) if (t.param == "die") hasDie = true;
+                if (!hasDie && HasState(sm, "Death")) {
+                    SM::Transition die;
+                    die.to = "Death"; die.cond = C::Trigger; die.param = "die"; die.blend = 0.12f;
+                    die.interruption = SM::Transition::Interrupt::None;
+                    hang->transitions.insert(hang->transitions.begin(), die);
+                }
+            }
+        }
+        EnsureParam(sm, "vault", 2);
+        EnsureParam(sm, "mantle", 2);
+        EnsureParam(sm, "ledgeGrab", 2);
+        EnsureParam(sm, "climbUp", 2);
+        EnsureParam(sm, "letGo", 2);
+        EnsureParam(sm, "hanging", 1);
+        EnsureParam(sm, "shimmy", 0);
+        auto trig = [&](const char* to, const char* param) {
+            if (HasAny(sm, to, param) || !HasState(sm, to)) return;
+            SM::Transition go;
+            go.to = to; go.cond = C::Trigger; go.param = param; go.blend = 0.12f;
+            go.interruption = SM::Transition::Interrupt::None;
+            sm.anyState.push_back(std::move(go));
+        };
+        trig("Vault", "vault");
+        trig("MantleLow", "mantle");
+        trig("LedgeGrab", "ledgeGrab");
+        trig("ClimbUp", "climbUp");
+        trig("LetGo", "letGo");
+        if (!HasAny(sm, "Hang", "hanging") && HasState(sm, "Hang")) {
+            SM::Transition go;
+            go.to = "Hang"; go.cond = C::BoolTrue; go.param = "hanging"; go.blend = 0.12f;
+            go.interruption = SM::Transition::Interrupt::None;
+            sm.anyState.push_back(std::move(go));
+        }
+    }
     if (sm.actionsRev < kActionsRev) sm.actionsRev = kActionsRev;
     ApplyTimes(sm);
     BindHitLayer(sm);
@@ -1097,7 +1233,8 @@ const std::vector<std::string>& ActionNames() {
         "Dive", "DiveLand",
         "SitDown", "Sit", "StandUp", "SitDown_Chair", "Sit_Chair", "StandUp_Chair", "SitDown_Ground", "Sit_Ground", "Sit_Ground_Knees", "StandUp_Ground",
         "Hit", "HitHeavy", "Hit_Crouch", "Hit_Prone", "Hit_F", "Hit_B", "Hit_L", "Hit_R", "Hit_Heavy_F", "Hit_Heavy_B", "Hit_Off",
-        "Roll", "Dodge", "Slide", "SlideEnd", "Roll_F", "Dodge_L", "Dodge_R", "Dodge_B"};
+        "Roll", "Dodge", "Slide", "SlideEnd", "Roll_F", "Dodge_L", "Dodge_R", "Dodge_B",
+        "Vault", "MantleLow", "MantleHigh", "LedgeGrab", "HangShimmy", "ClimbUp", "LetGo", "Mantle_Low", "Mantle_High", "Hang_Shimmy_L", "Hang_Shimmy_R"};
     return names;
 }
 
@@ -1473,6 +1610,138 @@ bool RequestDodge(GameObject* go, int dir) {
         if (!DodgeBurst(go, move, world)) return false;
     }
     return RequestRoll(go, dir);
+}
+
+namespace {
+
+Vec3 BodyForward(GameObject* go) {
+    if (!go || !go->transform) return Vec3{0.0f, 0.0f, -1.0f};
+    return go->transform->TransformDirection(Vec3{0.0f, 0.0f, -1.0f});
+}
+
+bool BodyAirborne(GameObject* go) {
+    if (!go || !go->transform) return false;
+    auto* rb = go->GetComponent<Rigidbody3D>();
+    if (rb && rb->groundedOnTerrain) return false;
+    if (go->scene()) {
+        const Vec3 o = go->transform->Position() + Vec3{0.0f, 0.08f, 0.0f};
+        const RaycastHit3D h = go->scene()->physics3D().Raycast(
+            *go->scene(), o, Vec3{0.0f, -1.0f, 0.0f}, 0.22f, go, Physics3D::kAllLayers, false);
+        if (h.hit && h.normal.y > 0.5f) return false;
+    }
+    return true;
+}
+
+bool PlayNamed(GameObject* go, const char* state, const char* clip) {
+    if (SM* sm = BaseMachine(go)) {
+        if (HasState(*sm, state) && sm->GoTo(state, 0.12f)) return true;
+    }
+    return Play(go, clip, 0.12f);
+}
+
+bool StartFromProbe(GameObject* go, const TraverseProbe& p) {
+    if (!go || p.kind == TraverseKind::None || IsDead(go) || TraverseBusy(go)) return false;
+    const char* state = "Vault";
+    const char* clip = "Vault";
+    if (p.kind == TraverseKind::MantleLow) { state = "MantleLow"; clip = "Mantle_Low"; }
+    else if (p.kind == TraverseKind::MantleHigh) { state = "MantleHigh"; clip = "Mantle_High"; }
+    else if (p.kind == TraverseKind::Ledge) { state = "LedgeGrab"; clip = "LedgeGrab"; }
+    if (p.kind == TraverseKind::Ledge) SetHanging(go, true);
+    PlayNamed(go, state, clip);
+    BeginTraverse(go, p);
+    if (p.kind == TraverseKind::Ledge) {
+        auto it = TraverseJobs().find(go);
+        if (it != TraverseJobs().end()) { it->second.rememberLip = true; it->second.lip = p.lip; }
+    }
+    return true;
+}
+
+} // namespace
+
+bool RequestVault(GameObject* go) {
+    if (!go || IsDead(go) || TraverseBusy(go)) return false;
+    const TraverseProbe p = ProbeTraverse(go, BodyForward(go), BodyAirborne(go));
+    if (p.kind != TraverseKind::Vault) return false;
+    return StartFromProbe(go, p);
+}
+
+bool RequestMantle(GameObject* go) {
+    if (!go || IsDead(go) || TraverseBusy(go)) return false;
+    const TraverseProbe p = ProbeTraverse(go, BodyForward(go), BodyAirborne(go));
+    if (p.kind != TraverseKind::MantleLow && p.kind != TraverseKind::MantleHigh) return false;
+    return StartFromProbe(go, p);
+}
+
+bool RequestLedgeGrab(GameObject* go) {
+    if (!go || IsDead(go) || TraverseBusy(go) || !BodyAirborne(go)) return false;
+    const TraverseProbe p = ProbeTraverse(go, BodyForward(go), true);
+    if (p.kind != TraverseKind::Ledge) return false;
+    return StartFromProbe(go, p);
+}
+
+bool RequestClimbUp(GameObject* go) {
+    if (!go || IsDead(go)) return false;
+    AbortTraverse(go);
+    SetHanging(go, false);
+    const bool played = PlayNamed(go, "ClimbUp", "ClimbUp");
+    auto it = HangPoints().find(go);
+    if (it != HangPoints().end() && go->transform) {
+        TraverseProbe p;
+        p.kind = TraverseKind::MantleHigh;
+        p.from = go->transform->Position();
+        p.to = it->second;
+        p.lip = it->second;
+        p.duration = 0.7f;
+        HangPoints().erase(it);
+        BeginTraverse(go, p);
+    } else {
+        RestoreHangGravity(go);
+    }
+    return played;
+}
+
+void RequestLetGo(GameObject* go) {
+    if (!go) return;
+    AbortTraverse(go);
+    SetHanging(go, false);
+    PlayNamed(go, "LetGo", "LetGo");
+    HangPoints().erase(go);
+    RestoreHangGravity(go);
+}
+
+bool IsHanging(GameObject* go) {
+    SM* sm = BaseMachine(go);
+    if (!sm) return false;
+    if (sm->GetBool("hanging")) return true;
+    const std::string& c = sm->Current();
+    return c == "Hang" || c == "LedgeGrab" || c == "HangShimmy";
+}
+
+void SetHanging(GameObject* go, bool on) {
+    if (SM* sm = BaseMachine(go)) sm->SetBool("hanging", on);
+}
+
+void SetShimmy(GameObject* go, float v) {
+    if (v > 1.0f) v = 1.0f;
+    if (v < -1.0f) v = -1.0f;
+    SM* sm = BaseMachine(go);
+    if (!sm) return;
+    sm->SetFloat("shimmy", v);
+    if (std::fabs(v) <= 0.3f) return;
+    if (!sm->GetBool("hanging") && sm->Current() != "Hang" && sm->Current() != "HangShimmy") return;
+    if (sm->Current() == "HangShimmy") return;
+    if (HasState(*sm, "HangShimmy")) sm->GoTo("HangShimmy", 0.1f);
+}
+
+bool TryTraverse(GameObject* go, const Vec3& fwd, bool airborne, bool vault, bool mantle, bool ledge) {
+    if (!go || IsDead(go) || TraverseBusy(go) || IsHanging(go)) return false;
+    if (!vault && !mantle && !ledge) return false;
+    const TraverseProbe p = ProbeTraverse(go, fwd, airborne);
+    if (p.kind == TraverseKind::Vault && !vault) return false;
+    if ((p.kind == TraverseKind::MantleLow || p.kind == TraverseKind::MantleHigh) && !mantle) return false;
+    if (p.kind == TraverseKind::Ledge && (!ledge || !airborne)) return false;
+    if (p.kind == TraverseKind::None) return false;
+    return StartFromProbe(go, p);
 }
 
 bool DeathPoseSettled(GameObject* go) {

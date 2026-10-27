@@ -599,6 +599,38 @@ struct SeatPromptNode : VsNode {
         return HumanoidActions::SeatPrompt(ctx.gameObject);
     }
 };
+struct VaultNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override { HumanoidActions::RequestVault(ctx.gameObject); return 0; }
+};
+struct MantleNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override { HumanoidActions::RequestMantle(ctx.gameObject); return 0; }
+};
+struct LedgeGrabNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override { HumanoidActions::RequestLedgeGrab(ctx.gameObject); return 0; }
+};
+struct ClimbUpNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override { HumanoidActions::RequestClimbUp(ctx.gameObject); return 0; }
+};
+struct LetGoNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override { HumanoidActions::RequestLetGo(ctx.gameObject); return 0; }
+};
+struct IsHangingNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        return HumanoidActions::IsHanging(ctx.gameObject) ? 1.0f : 0.0f;
+    }
+};
+struct ShimmyNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        HumanoidActions::SetShimmy(ctx.gameObject, In(0, g, ctx, VsValue{0.0f}).AsFloat());
+        return 0;
+    }
+};
 struct PlayClipNode : VsNode {
     std::string clip;
     bool warned = false;   // "no animator" is logged once per node

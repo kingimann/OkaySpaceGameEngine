@@ -686,6 +686,13 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "HitReact")       return std::make_unique<HitReactNode>(argOr("forward"));
     if (type == "Roll")           return std::make_unique<RollNode>(argOr("forward"));
     if (type == "Dodge")          return std::make_unique<DodgeNode>(argOr("forward"));
+    if (type == "Vault")          return std::make_unique<VaultNode>();
+    if (type == "Mantle")         return std::make_unique<MantleNode>();
+    if (type == "LedgeGrab")      return std::make_unique<LedgeGrabNode>();
+    if (type == "ClimbUp")        return std::make_unique<ClimbUpNode>();
+    if (type == "LetGo")          return std::make_unique<LetGoNode>();
+    if (type == "IsHanging")      return std::make_unique<IsHangingNode>();
+    if (type == "Shimmy")         return std::make_unique<ShimmyNode>();
     if (type == "SetTimeScale")   return std::make_unique<SetTimeScaleNode>();
     if (type == "SetBlendShape")  return std::make_unique<BlendShapeNode>(argOr(""), true);
     if (type == "GetBlendShape")  return std::make_unique<BlendShapeNode>(argOr(""), false);

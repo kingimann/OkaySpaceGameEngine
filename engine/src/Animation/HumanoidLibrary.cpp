@@ -340,6 +340,7 @@ void DefaultGraph(AnimStateMachine& sm, const Character* body) {
     sm.actionsRev = 0;   // a rebuilt default graph takes every action
     sm.actionsRev = 0;   // a rebuilt default graph takes every action
     sm.actionsRev = 0;   // a rebuilt default graph takes every action
+    sm.actionsRev = 0;   // a rebuilt default graph takes every action
     HumanoidActions::AddStates(sm, body);
 
     // A clip bound to a movement state on the body plays in its place.

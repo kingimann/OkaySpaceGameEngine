@@ -19,7 +19,7 @@ namespace HumanoidActions {
 /// How far the built-in action set has got. Death is 1, dolphin dive is 2. A
 /// saved graph records the revision it already has, so a later action is added
 /// once and a state the user deleted is not put back when the next action lands.
-constexpr int kActionsRev = 5;
+constexpr int kActionsRev = 6;
 
 /// One authored pose. Degrees, hip height in rig units, rootOffset.x/z a visual
 /// lean only (y is unused; hipY is the root height).
@@ -119,6 +119,19 @@ bool RequestDodge(GameObject* go, int dir);
 /// Bodies whose current dodge asked for i-frames. Empty unless that option is on.
 void SetDodgeIFrames(GameObject* go, bool on);
 bool DodgeIFrames(const GameObject* go);
+
+/// Probe in front of the body. The controller flags default off; these still run.
+bool RequestVault(GameObject* go);
+bool RequestMantle(GameObject* go);
+bool RequestLedgeGrab(GameObject* go);
+bool RequestClimbUp(GameObject* go);
+void RequestLetGo(GameObject* go);
+bool IsHanging(GameObject* go);
+/// Animator `hanging` only. The 2.5D platformer already moves the body.
+void SetHanging(GameObject* go, bool on);
+void SetShimmy(GameObject* go, float v);
+/// One probe along `fwd`. A false flag skips that kind. No-op while hanging or already moving.
+bool TryTraverse(GameObject* go, const Vec3& fwd, bool airborne, bool vault, bool mantle, bool ledge);
 
 /// True once the body is in DeadHold (or Death has played out).
 bool DeathPoseSettled(GameObject* go);

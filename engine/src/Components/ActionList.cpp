@@ -663,6 +663,7 @@ bool ActionList::EvalConditions(const std::vector<Item>& conds) {
         else if (op == "is_dead") ok = HumanoidActions::IsDead(gameObject);
         else if (op == "can_dive") ok = HumanoidActions::CanDive(gameObject);
         else if (op == "is_sitting") ok = HumanoidActions::IsSitting(gameObject);
+        else if (op == "is_hanging") ok = HumanoidActions::IsHanging(gameObject);
         else if (op == "is_active")ok = gameObject && gameObject->active;
         else if (op == "has_item") {      // item [count] [object]: the inventory holds at least count
             Inventory* inv = ItemInv(c, gameObject, GetScene());
@@ -1319,6 +1320,12 @@ void ActionList::Update(float dt) {
             HumanoidActions::RequestRoll(gameObject, it.args.empty() ? 0 : HumanoidActions::DirFromName(Str(it, 0)));
         else if (op == "dodge")
             HumanoidActions::RequestDodge(gameObject, it.args.empty() ? 0 : HumanoidActions::DirFromName(Str(it, 0)));
+        else if (op == "vault") HumanoidActions::RequestVault(gameObject);
+        else if (op == "mantle") HumanoidActions::RequestMantle(gameObject);
+        else if (op == "ledge_grab") HumanoidActions::RequestLedgeGrab(gameObject);
+        else if (op == "climb_up") HumanoidActions::RequestClimbUp(gameObject);
+        else if (op == "let_go") HumanoidActions::RequestLetGo(gameObject);
+        else if (op == "shimmy") HumanoidActions::SetShimmy(gameObject, Num(it, 0));
         else if (op == "set_cam") {
             if (scene && scene->mainCamera) {
                 Transform* ct = scene->mainCamera->gameObject->transform;

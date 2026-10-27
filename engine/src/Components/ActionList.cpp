@@ -55,10 +55,41 @@
 
 namespace okay {
 
-std::unordered_map<std::string, float>& ActionList::Vars() {
-    static std::unordered_map<std::string, float> v;
-    return v;
+namespace {
+
+// One scene's action-list memory. The process-wide pool is the fallback used
+// when no scene is current (a test that only calls Vars(), the editor before Play).
+struct ActionPools {
+    std::unordered_map<std::string, float> vars;
+    std::unordered_map<std::string, std::vector<float>> arrays;
+    std::unordered_map<std::string, std::unordered_map<std::string, float>> maps;
+    std::unordered_map<std::string, std::string> strs;
+    // `cooldown` condition state: the next time each condition item may pass again.
+    // Keyed by the item's address — runtime-only, cleared with the variable pools.
+    std::unordered_map<const void*, float> cooldowns;
+};
+
+struct PoolStore {
+    ActionPools global;
+    std::unordered_map<const Scene*, ActionPools> scenes;
+    const Scene* current = nullptr;
+};
+
+PoolStore& Store() {
+    static PoolStore s;
+    return s;
 }
+
+ActionPools& Active() {
+    PoolStore& st = Store();
+    if (!st.current) return st.global;
+    auto it = st.scenes.find(st.current);
+    return it != st.scenes.end() ? it->second : st.global;
+}
+
+} // namespace
+
+std::unordered_map<std::string, float>& ActionList::Vars() { return Active().vars; }
 float ActionList::GetVar(const std::string& key) {
     auto& v = Vars();
     auto it = v.find(key);
@@ -66,29 +97,56 @@ float ActionList::GetVar(const std::string& key) {
     return Prefs::Has(key) ? Prefs::GetFloat(key, 0.0f) : 0.0f;   // fall back to a saved/published value
 }
 
-std::unordered_map<std::string, std::vector<float>>& ActionList::Arrays() {
-    static std::unordered_map<std::string, std::vector<float>> a;
-    return a;
-}
+std::unordered_map<std::string, std::vector<float>>& ActionList::Arrays() { return Active().arrays; }
 
 std::unordered_map<std::string, std::unordered_map<std::string, float>>& ActionList::Maps() {
-    static std::unordered_map<std::string, std::unordered_map<std::string, float>> m;
-    return m;
+    return Active().maps;
 }
 
-std::unordered_map<std::string, std::string>& ActionList::StrVars() {
-    static std::unordered_map<std::string, std::string> s;
-    return s;
+std::unordered_map<std::string, std::string>& ActionList::StrVars() { return Active().strs; }
+
+void ActionList::UseScene(const Scene* scene) {
+    PoolStore& st = Store();
+    if (!scene) { st.current = nullptr; return; }
+    if (!st.scenes.count(scene)) {
+        // Start from the pools already in use, so a value written before this
+        // scene runs (or left by the scene that was just current) is visible.
+        // The copy is independent: later writes do not cross back.
+        ActionPools fresh;
+        if (st.current && st.current != scene) {
+            auto src = st.scenes.find(st.current);
+            fresh = (src != st.scenes.end()) ? src->second : st.global;
+        } else if (st.current != scene) {
+            fresh = st.global;
+        }
+        fresh.cooldowns.clear();
+        st.scenes.emplace(scene, std::move(fresh));
+    }
+    st.current = scene;
 }
 
-// `cooldown` condition state: the next time each condition item may pass again.
-// Keyed by the item's address — runtime-only, cleared with the variable pools.
-static std::unordered_map<const void*, float> g_condCooldowns;
+void ActionList::ForgetScene(const Scene* scene) {
+    if (!scene) return;
+    PoolStore& st = Store();
+    st.scenes.erase(scene);
+    if (st.current == scene) st.current = nullptr;
+}
 
 void ActionList::ResetVars() {
-    Vars().clear(); Arrays().clear(); Maps().clear(); StrVars().clear();
-    g_condCooldowns.clear();
+    PoolStore& st = Store();
+    st.global = ActionPools{};
+    st.scenes.clear();
+    st.current = nullptr;
 }
+
+namespace {
+
+void BindOwner(GameObject* go) {
+    if (!go) return;
+    if (Scene* s = go->scene()) ActionList::UseScene(s);
+}
+
+} // namespace
 
 bool& ActionList::DebugPaused() { static bool p = false; return p; }
 int&  ActionList::StepBudget()  { static int  b = 0;     return b; }
@@ -510,6 +568,7 @@ void ActionList::SeedVariable(const VarDecl& v) {
 }
 
 void ActionList::Start() {
+    BindOwner(gameObject);
     if (!ScriptsRun(gameObject)) { m_startDeferred = true; return; }
     m_startDeferred = false;
     // Seed declared variables into the shared pools before anything runs, so they
@@ -519,6 +578,7 @@ void ActionList::Start() {
 }
 
 bool ActionList::EvalConditions(const std::vector<Item>& conds) {
+    BindOwner(gameObject);
     for (const Item& c : conds) {
         const std::string& op = c.op;
         bool ok = true;
@@ -538,7 +598,7 @@ bool ActionList::EvalConditions(const std::vector<Item>& conds) {
         else if (op == "chance")   ok = Random::Shared().Range(0.0f, 1.0f) < Num(c, 0);
         else if (op == "cooldown") {   // pass at most once every N seconds (attack rate, pickups)
             float now = Time::ElapsedTime();
-            float& nxt = g_condCooldowns[(const void*)&c];
+            float& nxt = Active().cooldowns[(const void*)&c];
             if (now >= nxt) { nxt = now + Num(c, 0); ok = true; } else ok = false;
         }
         else if (op == "var_eq")   ok = Mathf::Approximately(GetVar(Str(c, 0)), Num(c, 1));
@@ -646,6 +706,7 @@ void ActionList::Fire() { FireHandler(conditions, instructions, m_fired, once); 
 // Begin running one handler's instructions (if idle and its gate passes). Only one
 // handler runs at a time; the others latch/poll again once it finishes.
 bool ActionList::FireHandler(std::vector<Item>& conds, std::vector<Item>& ins, bool& fired, bool onceFlag) {
+    BindOwner(gameObject);
     if (m_running) return false;
     if (onceFlag && fired) return false;
     if (!EvalConditions(conds)) return false;
@@ -656,6 +717,7 @@ bool ActionList::FireHandler(std::vector<Item>& conds, std::vector<Item>& ins, b
 }
 
 void ActionList::Update(float dt) {
+    BindOwner(gameObject);
     if (!ScriptsRun(gameObject)) return;
     if (m_startDeferred) Start();
     // ---- Triggers ----
@@ -1652,6 +1714,7 @@ void ActionList::Update(float dt) {
 }
 
 void ActionList::LateUpdate(float /*dt*/) {
+    BindOwner(gameObject);
     // OnLateUpdate handlers start here (after every object's Update); their instructions
     // then run on the next Update tick like any other started handler.
     if (m_running) return;

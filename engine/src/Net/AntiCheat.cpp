@@ -24,6 +24,7 @@ const char* CheatKindName(CheatKind k) {
         case CheatKind::RpcFlood:        return "rpc flood";
         case CheatKind::ClockDrift:      return "clock drift";
         case CheatKind::HitRejected:     return "hit rejected";
+        case CheatKind::UnclaimedObject: return "unclaimed object";
     }
     return "cheat";
 }
@@ -226,7 +227,31 @@ void AntiCheat::RestorePeer(std::uint32_t peer, const std::string& ident) {
     if (onRestorePeer) onRestorePeer(peer, ident);
 }
 
-void AntiCheat::Reset() { m_peers.clear(); m_owner.clear(); m_track.clear(); m_parked.clear(); m_total = 0; m_clock = 0.0; }
+void AntiCheat::Reset() {
+    m_peers.clear(); m_owner.clear(); m_track.clear(); m_parked.clear();
+    m_unclaimedLogged.clear();
+    m_total = 0; m_unclaimed = 0; m_clock = 0.0;
+}
+
+bool AntiCheat::UnownedUnclaimable(const std::string& netId) const {
+    if (serverOwns && serverOwns(netId)) return false;          // the server drives it
+    if (SpawnIdPeer(netId) >= 0) return false;                  // a player's spawn
+    if (m_owner.count(netId)) return false;                     // someone already owns it
+    if (!exists || !exists(netId)) return false;                // not in the world
+    if (claimable && claimable(netId)) return false;            // a player may take it
+    return true;
+}
+
+bool AntiCheat::NoteUnclaimed(std::uint32_t peer, const std::string& netId) {
+    ++m_total;
+    ++m_unclaimed;
+    if (m_unclaimedLogged.insert(netId).second)
+        OKAY_WARN("anti-cheat: \"", netId, "\" is a scene object nobody owns, so players can't move it or write its variables. "
+                  "Turn on \"Players can claim it\" (clientClaimable) on its Network Sync if they should. "
+                  "Refused from peer ", peer, "; not counted toward a kick.");
+    if (onCheat) onCheat(CheatReport{peer, CheatKind::UnclaimedObject, netId});
+    return false;
+}
 
 bool AntiCheat::Refuse(std::uint32_t peer, CheatKind k, const std::string& detail) {
     const int n = ++m_peers[peer].violations;
@@ -298,7 +323,10 @@ bool AntiCheat::ValidateMessage(std::uint32_t peer, const std::string& channel, 
         // Nobody can apply a transform for an object the server doesn't have, so
         // it's dropped without counting and leaves no state behind.
         if (exists && !exists(id)) return false;
-        if (!MayDrive(peer, id, /*claim=*/true)) return Refuse(peer, CheatKind::ForgedTransform, id);
+        if (!MayDrive(peer, id, /*claim=*/true)) {
+            if (UnownedUnclaimable(id)) return NoteUnclaimed(peer, id);
+            return Refuse(peer, CheatKind::ForgedTransform, id);
+        }
         if (settings.maxSyncSpeed > 0.0f) {
             std::istringstream ss(data.substr(bar + 1));
             Vec3 p; ss >> p.x >> p.y >> p.z;
@@ -390,7 +418,10 @@ bool AntiCheat::ValidateSyncVar(std::uint32_t peer, const std::string& key) {
             else if (const long long minted = SpawnIdPeer(netId); minted >= 0) mine = (std::uint32_t)minted == peer;
             else if (auto o = m_owner.find(netId); o != m_owner.end()) mine = o->second == peer;
             else if (exists && exists(netId)) mine = claimable && claimable(netId);   // unowned: the server's unless claimable
-            if (!mine) return Refuse(peer, CheatKind::ForgedSyncVar, key);
+            if (!mine) {
+                if (UnownedUnclaimable(netId)) return NoteUnclaimed(peer, netId);
+                return Refuse(peer, CheatKind::ForgedSyncVar, key);
+            }
         }
     }
     return true;

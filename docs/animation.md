@@ -827,17 +827,22 @@ elbows bend down and out, and the object moves with the body.
   (sprint, or fast enough to use the run
   style) keeps those hands out of the first-person view. Walking, idling and
   holding still show the block. The held object stays on its grip.
-- The first-person arm is a small copy in the lower right of the owner's
-  camera, sitting past the near plane. Only that camera draws it, and it does
-  not cast a shadow. Looking down takes it off the screen. The real arm bones
-  stay on the animation, so another camera and another player see the blocky
-  hands on the idle, the walk, the run, a crouch and a prone, including while
-  this player looks down. That look does not pitch the shared bones. A hold
-  keeps the real hands, because the grip is the pose everyone should see. None
-  of the first-person pose is in the network message. A remote copy of the
-  player does not keep the view toggle, so a key press on this machine cannot
-  hide someone else's body. The run bob moves the eye up and down only; it
-  does not sway sideways or roll the horizon.
+- The first-person arm is a copy on the owner's camera only. The sleeve
+  enters from the lower-right corner and the forearm and the single-cube hand
+  angle up and inward, about a quarter to a third of the screen tall, past
+  the near plane. It does not cast a shadow. The pose is in the camera, so
+  looking down keeps it in that corner instead of pushing it into the lens.
+  Walking bobs and sways it. A mouse turn lags it slightly. A punch swings it
+  toward the middle. A hold puts a copy of the item in that hand; everyone
+  else still sees the real hands on the grip. A run eases the copy off the
+  corner and a stop eases it back. The real arm bones stay on the animation,
+  so another camera and another player see the blocky hands on the idle, the
+  walk, the run, a crouch and a prone, including while this player looks down.
+  That look does not pitch the shared bones. None of the first-person pose is
+  in the network message. A remote copy of the player does not keep the view
+  toggle, so a key press on this machine cannot hide someone else's body. The
+  run bob moves the eye up and down only; it does not sway sideways or roll
+  the horizon.
 - The owner's first-person camera does not draw the head or the neck. The
   head is not scaled away and not deleted from the mesh: it stays active, so
   it still casts a shadow and any other camera still sees it. The neck is
@@ -848,8 +853,8 @@ elbows bend down and out, and the object moves with the body.
   ground, not the inside of the cloth and not a crate through it. The eye sits
   in front of the chest and steps further forward and up as you look down, and
   the shirt's lid stays on the body so that view is a solid surface. One
-  plain hand stays small, in the lower right, while standing or walking, and
-  it is not drawn while looking down. A run takes both arms
+  plain hand stays in the lower right while standing, walking, and looking
+  down. A run eases both arms
   off the owner's camera. The head stays visible through the switch into first
   person and is skipped only once the lens is in front of the face. Pressing
   V back shows the head and the neck on that same frame, without waiting for

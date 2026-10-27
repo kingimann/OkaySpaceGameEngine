@@ -1027,9 +1027,13 @@ void Character::SetOwnerArmActive(bool on) {
 }
 
 void Character::ReleaseOwnerArm() {
+    if (m_fpHiddenHeld && !m_fpHiddenHeld->IsDestroyed() && m_fpHiddenHeld->ownerCameraSkip == gameObject)
+        m_fpHiddenHeld->ownerCameraSkip = nullptr;
+    m_fpHiddenHeld = nullptr;
     SetOwnerArmActive(false);
+    if (m_ownerItem) m_ownerItem->active = false;
     if (m_ownerArm) if (Scene* s = GetScene()) s->Destroy(m_ownerArm);
-    m_ownerArm = m_ownerFore = m_ownerHand = nullptr;
+    m_ownerArm = m_ownerFore = m_ownerHand = m_ownerItem = nullptr;
     m_ownerArmBase = -2;
 }
 
@@ -1106,10 +1110,17 @@ void Character::RefreshOwnerArm() {
 void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     const int base = fpArmBase;
     const bool on = firstPersonArm && base >= 0 && base + 2 < (int)m_parts.size();
-    // A run hides the hands. A hold uses the real hands, which already carry
-    // the grip. Either way the copy stays out of every camera.
-    if (!on || HideFirstPersonHands() || HandsOnAHold()) {
+    auto clearHeld = [&]() {
+        if (m_fpHiddenHeld && !m_fpHiddenHeld->IsDestroyed() && m_fpHiddenHeld->ownerCameraSkip == gameObject)
+            m_fpHiddenHeld->ownerCameraSkip = nullptr;
+        m_fpHiddenHeld = nullptr;
+        if (m_ownerItem) m_ownerItem->active = false;
+    };
+    // A run eases the copy off the corner (m_fpShown). It is not popped off.
+    if (!on || m_fpShown < 0.08f) {
         SetOwnerArmActive(false);
+        if (m_ownerItem) m_ownerItem->active = false;
+        if (!on) clearHeld();
         return;
     }
     EnsureOwnerArm(base);
@@ -1121,51 +1132,125 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
         SetOwnerArmActive(false);
         return;
     }
-    // Positive pitch looks up. Past a moderate look down the arm would sit
-    // in front of the ground, so it leaves the frame instead.
     const Quat playerRot = gameObject->transform->Rotation();
     const Quat camRot = cam->transform->Rotation();
     const Quat camLocal = (playerRot.Conjugate() * camRot).Normalized();
     const Vec3 camEuler = camLocal.ToEuler();
     const float viewPitch = camEuler.x;
-    if (viewPitch < -36.0f) {
-        SetOwnerArmActive(false);
-        return;
-    }
-    const float h = height > 1e-3f ? height : 1.0f;
-    // The rig's 180° yaw is what makes these unflipped part meshes face the
-    // lens. Default fpRaise (-96) used to crank the full-size bone into the
-    // camera; that value now means the natural hang, and the slider nudges it.
-    const float hang = -42.0f + (fpRaise + 96.0f) * 0.25f;
+    // followPitch writes fpPitch from the lens. A manual pitch stays put.
     const bool follow = std::fabs(fpPitch - viewPitch) < 8.0f;
     const Quat basis = follow ? camRot : (playerRot * Quat::Euler(fpPitch, camEuler.y, camEuler.z));
-    Quat armRot = basis * Quat::Euler(0.0f, 180.0f, 0.0f) * Quat::Euler(hang, 0.0f, 0.0f);
-    if (m_punchT >= 0.0f && m_punchT < 1.0f) {
-        const float arc = std::sin(m_punchT * 3.14159265f);
-        armRot = armRot * Quat::Euler(-75.0f * arc, 0.0f, 0.0f);
+
+    // Mouse look lags: the arm swings a little against the turn, then catches up.
+    // The camera itself is not moved.
+    const Vec3 camWorld = camRot.ToEuler();
+    if (!m_fpTrailInit) {
+        m_fpPrevYaw = camWorld.y; m_fpPrevPitch = camWorld.x; m_fpTrailInit = true;
     }
-    // Screen-right for the L-named bones (the rig's yaw puts them there).
+    const float dy = Mathf::DeltaAngle(m_fpPrevYaw, camWorld.y);
+    const float dp = camWorld.x - m_fpPrevPitch;
+    m_fpPrevYaw = camWorld.y; m_fpPrevPitch = camWorld.x;
+    const float dt = m_fpDt > 1e-4f ? m_fpDt : 0.016f;
+    const float decay = std::exp(-dt * 9.0f);
+    // Against the turn: a look to the right leaves the arm on the left for a
+    // moment (it was already there in the world), then it catches the corner.
+    m_fpTrailYaw = Mathf::Clamp(m_fpTrailYaw * decay + dy * 0.55f, -14.0f, 14.0f);
+    m_fpTrailPitch = Mathf::Clamp(m_fpTrailPitch * decay - dp * 0.45f, -12.0f, 12.0f);
+
+    // Screen right for the L-named bones (the rig's yaw puts them there).
     const float side = base >= B_RUPARM ? -1.0f : 1.0f;
-    // Shoulder high enough that the hanging hand lands in the lower right,
-    // still on screen, instead of dropping out through the bottom edge.
-    Vec3 shoulder{side * 0.30f * h, -0.18f * h, -0.46f * h};
-    // Up and down only. A sideways or rolling bob is what tilts the horizon
-    // while the sleeve is on screen, and the camera bob itself no longer rolls.
-    if (fpArmBob && !fpSteady)
-        shoulder.y += std::sin(m_gaitPhase * 6.2831853f) * 0.012f * h;
-    const float s = 0.40f * h;
-    m_ownerArm->transform->SetRotation(armRot);
-    m_ownerArm->transform->SetPosition(cam->transform->Position() + basis * shoulder);
+    const float aspect = cam->viewportAspect > 0.05f ? cam->viewportAspect : (16.0f / 9.0f);
+    const float vFov = cam->VerticalFovDegrees(aspect) * Mathf::Deg2Rad;
+    const float tanV = std::tan(std::max(0.15f, vFov * 0.5f));
+    const float tanH = tanV * aspect;
+    const float near = std::max(cam->nearClip, 0.04f);
+    const float depth = std::max(0.52f, near + 0.36f);
+
+    // Up and inward. fpRaise -96 is this angle; the slider steepens it.
+    const float nudge = (fpRaise + 96.0f) / 96.0f;
+    float snap = 0.0f;
+    if (m_punchT >= 0.0f && m_punchT < 1.0f) {
+        if (m_punchT < 0.32f) snap = std::sin(m_punchT / 0.32f * 1.5707963f);
+        else snap = std::sin((1.0f - (m_punchT - 0.32f) / 0.68f) * 1.5707963f);
+    }
+    const float slide = 1.0f - m_fpShown;
+    const bool stepping = anim == 2 || anim == 7 || anim == 17
+        || (anim == 6 && std::fabs(m_gaitSpeed) > 0.2f);
+    float bobS = 0.0f, bobC = 0.0f;
+    if (fpArmBob && !fpSteady && stepping) {
+        bobS = std::sin(m_gaitPhase * 6.2831853f);
+        bobC = std::cos(m_gaitPhase * 6.2831853f);
+    }
+    Vec3 dir{-side * (0.82f - nudge * 0.08f), 0.55f + nudge * 0.10f, 0.0f};
+    dir.x += -side * 0.05f * bobC;
+    dir.y += 0.07f * bobS;
+    if (snap > 0.0f) {
+        const Vec3 aim{-side * 0.28f, 0.85f, 0.0f};
+        dir = dir + (aim - dir) * snap;
+    }
+    if (dir.SqrMagnitude() < 1e-8f) dir = Vec3{-side, 1.0f, 0.0f};
+    dir = dir.Normalized();
+    Vec3 face{0.0f, 0.0f, 1.0f};
+    face = face - dir * Vec3::Dot(face, dir);
+    if (face.SqrMagnitude() < 1e-6f) face = Vec3{0.0f, 1.0f, 0.0f};
+    face = face.Normalized();
+    // Yaw 180 keeps the part meshes' outward winding toward the lens.
+    // Local -Y runs from the shoulder out to the hand.
+    const Quat camSpace = Quat::LookRotation(face, -dir) * Quat::Euler(0.0f, 180.0f, 0.0f);
+    // Big enough that the forearm and the hand clear the corner. The sleeve,
+    // not the hand, is what crosses the edge.
+    const float s = 0.38f;
+    m_ownerArm->transform->SetRotation(basis * camSpace);
+    m_ownerArm->transform->SetPosition(cam->transform->Position() + basis * Vec3{0.0f, 0.0f, -depth});
     m_ownerArm->transform->localScale = Vec3{s, s, s};
     m_ownerFore->transform->localScale = Vec3::One;
     m_ownerHand->transform->localScale = Vec3::One;
     m_ownerFore->transform->localPosition = base + 1 < (int)m_partRest.size() ? m_partRest[base + 1] : Vec3{0, 0, 0};
-    m_ownerFore->transform->localRotation = Quat::Euler(-fpElbow, 0.0f, 0.0f);
+    m_ownerFore->transform->localRotation = Quat::Euler(-fpElbow * 0.35f, 0.0f, 0.0f);
     m_ownerHand->transform->localPosition = base + 2 < (int)m_partRest.size() ? m_partRest[base + 2] : Vec3{0, 0, 0};
     m_ownerHand->transform->localRotation = Quat::Identity;
-    // The sleeve used to cross the near plane and dither. Push the whole copy
-    // along the look until every vertex is well in front of it.
-    const float keep = 0.18f;
+
+    // Shift in the view plane until the sleeve vertex nearest the lower
+    // corner sits just outside it. The same NDC corner holds at every aspect,
+    // because the shift is in camera space through this frame's frustum.
+    {
+        // Rightmost and lowest sleeve vertices, separately. One shift plants
+        // both on the corner even when the box is thicker than it is square.
+        bool any = false;
+        float rightNx = 0.0f, rightNz = depth, rightX = 0.0f;
+        float botNy = 0.0f, botNz = depth, botY = 0.0f;
+        auto extremes = [&](GameObject* g) {
+            if (!g) return;
+            auto* mr = g->GetComponent<MeshRenderer>();
+            if (!mr) return;
+            for (const Vec3& v : mr->mesh.vertices) {
+                const Vec3 c = cam->transform->InverseTransformPoint(g->transform->TransformPoint(v));
+                const float nz = std::max(0.05f, -c.z);
+                const float nx = c.x / (tanH * nz);
+                const float ny = c.y / (tanV * nz);
+                if (!any || side * nx > side * rightNx) { rightNx = nx; rightNz = nz; rightX = c.x; }
+                if (!any || ny < botNy) { botNy = ny; botNz = nz; botY = c.y; }
+                any = true;
+            }
+        };
+        extremes(m_ownerArm);
+        // A punch swings the planted corner toward the middle. A run slides
+        // it off. Walk bob lifts and sways it. A little past the edge, so the
+        // front faces still touch when a back corner is the extreme.
+        const float wantNx = side * (1.08f + 0.50f * slide - 0.28f * snap + 0.035f * bobC);
+        const float wantNy = -1.08f - 0.50f * slide + 0.18f * snap + 0.045f * bobS;
+        const float dx = wantNx * tanH * rightNz - rightX;
+        const float dy = wantNy * tanV * botNz - botY;
+        const Quat lag = Quat::Euler(m_fpTrailPitch, m_fpTrailYaw, 0.0f);
+        Vec3 camOff = cam->transform->Rotation().Conjugate() * (m_ownerArm->transform->Position() - cam->transform->Position());
+        camOff = camOff + Vec3{dx, dy, 0.0f};
+        camOff = lag * camOff;
+        m_ownerArm->transform->SetPosition(cam->transform->Position() + cam->transform->Rotation() * camOff);
+        m_ownerArm->transform->SetRotation(cam->transform->Rotation() * lag * camSpace);
+    }
+
+    // Nothing may cross the near plane. Push along the look, away from the lens.
+    const float keep = std::max(0.18f, near + 0.12f);
     float minAhead = 1.0e9f;
     auto consider = [&](GameObject* g) {
         if (!g || !g->transform) return;
@@ -1180,10 +1265,74 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     consider(m_ownerFore);
     consider(m_ownerHand);
     if (minAhead < keep) {
-        const Vec3 fwd = camRot * Vec3{0.0f, 0.0f, -1.0f};
+        const Vec3 fwd = basis * Vec3{0.0f, 0.0f, -1.0f};
         m_ownerArm->transform->SetPosition(m_ownerArm->transform->Position() + fwd * (keep - minAhead));
     }
     SetOwnerArmActive(true);
+
+    // A hold stays on the real hands for everyone else. This camera sees a
+    // copy of the prop on the viewmodel hand, and skips the real one.
+    ProceduralObjectHolding* hold = gameObject->GetComponent<ProceduralObjectHolding>();
+    GameObject* held = (hold && hold->IsHolding()) ? hold->Held() : nullptr;
+    if (!held || !held->transform || held->IsDestroyed()) {
+        clearHeld();
+        return;
+    }
+    if (m_fpHiddenHeld && m_fpHiddenHeld != held && !m_fpHiddenHeld->IsDestroyed()
+        && m_fpHiddenHeld->ownerCameraSkip == gameObject)
+        m_fpHiddenHeld->ownerCameraSkip = nullptr;
+    held->ownerCameraSkip = gameObject;
+    m_fpHiddenHeld = held;
+    if (!m_ownerItem || m_ownerItem->IsDestroyed()) {
+        m_ownerItem = nullptr;
+        if (Scene* sc = GetScene()) {
+            m_ownerItem = sc->CreateGameObject("FP_OwnerItem");
+            auto* mr = m_ownerItem->AddComponent<MeshRenderer>();
+            mr->castShadows = false;
+            mr->doubleSided = false;
+            m_ownerItem->firstPersonOnly = true;
+            m_ownerItem->firstPersonViewmodel = true;
+            m_ownerItem->transient = true;
+            m_ownerItem->active = false;
+        }
+    }
+    if (!m_ownerItem || !m_ownerItem->transform) return;
+    m_ownerItem->transform->SetParent(m_ownerHand->transform, false);
+    MeshRenderer* src = held->GetComponent<MeshRenderer>();
+    if (!src)
+        for (Transform* c : held->transform->Children())
+            if (c && c->gameObject)
+                if (MeshRenderer* m = c->gameObject->GetComponent<MeshRenderer>()) { src = m; break; }
+    auto* dst = m_ownerItem->GetComponent<MeshRenderer>();
+    if (!src || !dst || src->mesh.vertices.empty()) { m_ownerItem->active = false; return; }
+    dst->mesh = src->mesh;
+    dst->color = src->color;
+    dst->castShadows = false;
+    GameObject* realHand = base + 2 < (int)m_parts.size() ? m_parts[base + 2] : nullptr;
+    if (realHand && realHand->transform) {
+        // The real grip, in that hand's space. The viewmodel hand is a
+        // different pose, so a long offset (the prop still at the chest, or
+        // held across the body) would float it away from this hand. A short
+        // one sits on the palm and is kept. Anything longer is pulled onto
+        // the end of this hand, still turned the way the real hold is.
+        Vec3 raw = realHand->transform->InverseTransformPoint(held->transform->Position());
+        const float mag = raw.Magnitude();
+        // Local -Y runs out to the fingers. A grip already on that end is
+        // kept. One that sits back toward the sleeve, or across the body, is
+        // put on the end of this hand instead.
+        if (mag < 1e-5f || mag > 0.22f || raw.y > -0.04f)
+            raw = Vec3{0.0f, -0.15f, 0.03f};
+        m_ownerItem->transform->localPosition = raw;
+        m_ownerItem->transform->localRotation = (realHand->transform->Rotation().Conjugate() * held->transform->Rotation()).Normalized();
+        const Vec3 hs = realHand->transform->LossyScale();
+        const Vec3 os = held->transform->LossyScale();
+        auto safe = [](float a, float b) { return std::fabs(b) > 1e-4f ? a / b : 1.0f; };
+        Vec3 sc{safe(os.x, hs.x), safe(os.y, hs.y), safe(os.z, hs.z)};
+        const float big = std::max(std::fabs(sc.x), std::max(std::fabs(sc.y), std::fabs(sc.z)));
+        if (big > 0.42f) sc = sc * (0.42f / big);
+        m_ownerItem->transform->localScale = sc;
+    }
+    m_ownerItem->active = true;
 }
 
 void Character::RememberPartRest() {
@@ -1521,10 +1670,11 @@ std::uint32_t Character::UpperBodyMask() {
 std::vector<Vec3> Character::CurrentPose() const { return CurrentSourcePose(); }
 
 void Character::EaseFirstPersonArm(float dt) {
+    if (dt > 0.0f) m_fpDt = dt;
     const float want = (firstPersonArm && fpArmBase >= 0)
         ? (fpArmUp < 0.0f ? 0.0f : (fpArmUp > 1.0f ? 1.0f : fpArmUp)) : 0.0f;
     if (dt <= 0.0f) { m_fpShown = want; return; }
-    const float k = 1.0f - std::exp(-dt * 10.0f);   // most of the way there in ~0.25 s
+    const float k = 1.0f - std::exp(-dt * 8.0f);   // most of the way there in ~0.3 s
     m_fpShown += (want - m_fpShown) * k;
     if (std::fabs(m_fpShown - want) < 0.001f) m_fpShown = want;
 }

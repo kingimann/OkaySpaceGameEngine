@@ -122,12 +122,14 @@ public:
     bool  Punching() const { return m_punchT >= 0.0f && m_punchT < 1.0f; }
 
     // ---- First-person arm (driven by FirstPersonHand / PlayerView) ----
-    // firstPersonArm shows a small COPY of one arm in the lower right of the
-    // owner's camera, past the near plane. The copy is drawn only by that
-    // camera and does not cast a shadow. Looking down takes it off the screen.
-    // The real arm bones stay on the animation, so another camera and another
-    // player see the ordinary body. fpArmUp eases 0 (copy hidden) .. 1 (copy
-    // shown). fpRaise nudges how high it hangs; -96 is the natural hang.
+    // firstPersonArm shows a COPY of one arm on the owner's camera only: the
+    // sleeve enters from the lower-right corner and the forearm and hand angle
+    // up and inward, past the near plane. It does not cast a shadow. The pose
+    // lives in the camera, so a look down keeps it in that corner instead of
+    // pushing it into the lens. A run eases it off the corner and a stop eases
+    // it back. The real arm bones stay on the animation, so another camera and
+    // another player see the ordinary body. fpArmUp eases 0 (copy hidden) .. 1
+    // (copy shown). fpRaise nudges the hand up from the natural hang (-96).
     // Nothing here is replicated.
     bool  firstPersonArm = false;
     /// Runtime only (not saved). Kept so older scenes load. It does not remove
@@ -135,7 +137,7 @@ public:
     /// mesh itself stays whole for shadows and every other camera.
     bool  hideOwnHead = false;
     float fpArmUp = 1.0f;
-    float fpRaise = -96.0f;   // -96 = natural lower-right hang; the slider nudges it
+    float fpRaise = -96.0f;   // -96 = natural corner hang; the slider nudges the hand up
     float fpElbow = 16.0f;    // elbow bend in degrees (positive folds the forearm; 0 = straight)
     /// Which 3-bone arm the owner's copy is taken from (the base bone index,
     /// e.g. 3 = the +X / screen-right arm). -1 = none. Set by FirstPersonHand.
@@ -176,7 +178,9 @@ public:
         if (bone == HumanoidMotion::B_HEAD) return false;
         if (bone >= HumanoidMotion::B_LUPARM && bone <= HumanoidMotion::B_RHAND) {
             if (HideFirstPersonHands()) return false;
-            if (firstPersonArm && fpArmBase >= 0 && !HandsOnAHold()) return false;
+            // The owner sees the viewmodel, including while a hold puts the
+            // item in that hand. The real arms stay on the animation.
+            if (firstPersonArm && fpArmBase >= 0 && m_fpShown > 0.05f) return false;
             return true;
         }
         return true;
@@ -611,7 +615,13 @@ private:
     GameObject* m_ownerArm = nullptr;    // raised-arm copy, owner camera only
     GameObject* m_ownerFore = nullptr;
     GameObject* m_ownerHand = nullptr;
+    GameObject* m_ownerItem = nullptr;   // viewmodel copy of a held prop
+    GameObject* m_fpHiddenHeld = nullptr;
     int m_ownerArmBase = -2;
+    float m_fpDt = 0.016f;
+    float m_fpPrevYaw = 0.0f, m_fpPrevPitch = 0.0f;
+    float m_fpTrailYaw = 0.0f, m_fpTrailPitch = 0.0f;
+    bool  m_fpTrailInit = false;
     void RememberPartRest();
     void ReleaseOwnerArm();
     void EnsureOwnerArm(int base);

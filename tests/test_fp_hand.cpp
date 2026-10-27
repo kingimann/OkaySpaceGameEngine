@@ -95,7 +95,9 @@ int main() {
         CHECK(ch->Part(3) && !ch->Part(3)->firstPersonViewmodel);
         CHECK(ch->Part(5) && !ch->Part(5)->firstPersonViewmodel);
         CHECK(ch->Part(6) && !ch->Part(6)->firstPersonViewmodel);   // both arms, not just the raised one
-        CHECK(ch->OwnerViewArm() && !ch->OwnerViewArm()->active);   // the copy is down too
+        CHECK(ch->OwnerViewArm());   // a run eases the copy off; one frame has not finished that
+        for (int i = 0; i < 45; ++i) scene.Update(0.016f);
+        CHECK(ch->OwnerViewArm() && !ch->OwnerViewArm()->active);   // the copy is down once the ease finishes
         CHECK(ch->Part(1) && ch->Part(1)->active && ch->Part(1)->firstPersonViewmodel);  // shirt stays while the arms drop
         CHECK(ch->Part(2) && ch->Part(2)->active && !ch->Part(2)->firstPersonViewmodel);
         ch->anim = 2;
@@ -111,8 +113,8 @@ int main() {
             // full-size bone cranked to fpRaise.
             GameObject* arm = ch->OwnerViewArm();
             CHECK(arm->transform->Parent() == player->transform);
-            CHECK(arm->transform->localScale.x > 0.15f);
-            CHECK(arm->transform->localScale.x < 0.60f);
+            CHECK(arm->transform->localScale.x > 0.25f);
+            CHECK(arm->transform->localScale.x < 0.85f);
             float minAhead = 1.0e9f;
             auto walk = [&](auto&& self, GameObject* g) -> void {
                 if (!g || !g->active || !g->transform) return;
@@ -347,7 +349,8 @@ int main() {
         poseFromSide(6);
         poseFromSide(7);
         poseFromSide(3);
-        CHECK(ch->OwnerViewArm() && !ch->OwnerViewArm()->active);   // a run puts the copy away
+        for (int i = 0; i < 45; ++i) sc.Update(1.0f / 60.0f);
+        CHECK(ch->OwnerViewArm() && !ch->OwnerViewArm()->active);   // a run eases the copy away
 
         // Per-pixel shading is what samples the shadow map. The head's shadow
         // changes that picture while the head mesh itself stays drawn.
@@ -448,8 +451,8 @@ int main() {
                     const Quat raised = Quat::Euler(ch->fpRaise - ch->fpPitch, 0.0f, 0.0f);
                     CHECK(Quat::Angle(ch->Part(3)->transform->localRotation, raised) > 40.0f);
                     CHECK(ch->OwnerViewArm()->transform->Parent() == player->transform);
-                    CHECK(ch->OwnerViewArm()->transform->localScale.x > 0.15f);
-                    CHECK(ch->OwnerViewArm()->transform->localScale.x < 0.60f);
+                    CHECK(ch->OwnerViewArm()->transform->localScale.x > 0.25f);
+                    CHECK(ch->OwnerViewArm()->transform->localScale.x < 0.85f);
                 }
             }
             if (ch->OwnerViewArm() && ch->OwnerViewArm()->active)
@@ -468,7 +471,7 @@ int main() {
             tp->pitch = 80.0f;
             pump(8);
             CHECK(Quat::Angle(ch->Part(3)->transform->localRotation, realLevel) < 3.0f);
-            CHECK(ch->OwnerViewArm() && !ch->OwnerViewArm()->active);   // a look down takes the copy off the screen
+            CHECK(ch->OwnerViewArm() && ch->OwnerViewArm()->active);   // a look down keeps the copy in the corner
             CHECK(Quat::Angle(gh->Part(3)->transform->localRotation, ghostLevel) < 8.0f);
             (void)copyLevel;
         }

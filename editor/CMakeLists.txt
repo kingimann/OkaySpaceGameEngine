@@ -52,6 +52,7 @@ target_compile_options(okay_imgui PRIVATE -w) # silence third-party warnings
 add_executable(okay-editor main.cpp EditorState.cpp
     EditorWidgets.cpp                                                  # shared widgets (accent, icons, search field)
     ConsolePanel.cpp                                                   # ConsoleLog + Console panel
+    SceneManagerPanel.cpp                                              # Scene Manager window
     UIInspectorLayout.cpp                                              # flex / mask / list view inspectors
     UIInspectorOverlay.cpp                                             # modal / context menu / keybind inspectors
     UIPreviewPainter.cpp                                               # engine UI renderer -> ImGui draw list

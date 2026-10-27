@@ -29612,6 +29612,8 @@ void DrawInspector(EditorState& ed) {
                 ImGui::DragFloat("Weight##lik", &lb->weight, 0.01f, 0.0f, 1.0f);
                 ImGui::DragFloat("Min Bend##lik", &lb->minBend, 1.0f, 0.0f, 180.0f);
                 ImGui::DragFloat("Max Bend##lik", &lb->maxBend, 1.0f, 0.0f, 180.0f);
+                if (ImGui::DragFloat("Target Blend (s)##lik", &lb->targetBlendTime, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to swing over when the goal switches to another target\nor jumps (0 = snap). Moving the character never trails.");
                 if (IKJointLimitUI("Upper limit##lik", lb->upperLimit)) ed.dirty = true;
                 if (IKJointLimitUI("Lower limit##lik", lb->lowerLimit)) ed.dirty = true;
                 if (lb->upperLimit.Active() || lb->lowerLimit.Active())
@@ -29675,6 +29677,8 @@ void DrawInspector(EditorState& ed) {
                         if (ImGui::DragFloat3("Pole Dir##cik", pd, 0.05f)) { ci->poleDir = {pd[0], pd[1], pd[2]}; ed.dirty = true; }
                     }
                 }
+                if (ImGui::DragFloat("Target Blend (s)##cik", &ci->targetBlendTime, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to swing over when the goal switches to another target\nor jumps (0 = snap). Moving the character never trails.");
                 ImGui::DragFloat("Max Joint Bend##cik", &ci->maxJointBend, 1.0f, 0.0f, 180.0f, ci->maxJointBend <= 0.0f ? "unlimited" : "%.0f deg");
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cap how sharply any joint may bend (0 = no limit). A per-bone limit\nbelow replaces it for that joint.");
                 ImGui::Checkbox("IK Active##cik", &ci->ikActive); ImGui::SameLine();
@@ -29780,6 +29784,8 @@ void DrawInspector(EditorState& ed) {
                         if (e.targetName.empty() && ImGui::DragFloat3("Point##fe", pp, 0.05f)) { e.position = {pp[0], pp[1], pp[2]}; ed.dirty = true; }
                         ImGui::DragFloat("Position Weight##fe", &e.positionWeight, 0.01f, 0.0f, 1.0f);
                         ImGui::DragFloat("Rotation Weight##fe", &e.rotationWeight, 0.01f, 0.0f, 1.0f);
+                        if (ImGui::DragFloat("Target Blend (s)##fe", &e.targetBlendTime, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to swing over when the goal switches to another target\nor jumps (0 = snap). Moving the character never trails.");
                         ImGui::DragFloat("Body Pull##fe", &e.pull, 0.01f, 0.0f, 1.0f);
                         const bool leg = l >= FullBodyIK::LeftFoot;
                         if (IKJointLimitUI(leg ? "Hip limit##fe" : "Shoulder limit##fe", e.upperLimit)) ed.dirty = true;

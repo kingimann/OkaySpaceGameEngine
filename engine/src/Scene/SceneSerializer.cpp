@@ -1138,6 +1138,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
                     << ' ' << p << "HX=" << l.hingeAxis.x << ' ' << p << "HY=" << l.hingeAxis.y << ' ' << p << "HZ=" << l.hingeAxis.z;
         };
         lim("ul", lb->upperLimit); lim("ll", lb->lowerLimit);
+        if (lb->targetBlendTime != 0.0f) out << " tb=" << lb->targetBlendTime;
         out << "\n";
     }
     if (auto* ci = go->GetComponent<ChainIK>()) {
@@ -1150,7 +1151,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         // Pole mode/direction and per-joint limits (a newer record).
         bool anyLim = false;
         for (const auto& l : ci->limits) anyLim = anyLim || l.Active();
-        if (ci->poleMode >= 0 || anyLim) {
+        if (ci->poleMode >= 0 || anyLim || ci->targetBlendTime != 0.0f) {
             out << "  chainx2 " << ci->poleMode
                 << " " << ci->poleDir.x << " " << ci->poleDir.y << " " << ci->poleDir.z
                 << " " << (anyLim ? ci->limits.size() : 0);
@@ -1161,6 +1162,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
                     out << " " << l.twistAxis.x << " " << l.twistAxis.y << " " << l.twistAxis.z
                         << " " << l.hingeAxis.x << " " << l.hingeAxis.y << " " << l.hingeAxis.z;
             }
+            if (ci->targetBlendTime != 0.0f) out << " tb=" << ci->targetBlendTime;
             out << "\n";
         }
     }
@@ -1199,6 +1201,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             const std::string p = "e" + std::to_string(l);
             WriteLimitKv(k, p + "u", fb->effectors[l].upperLimit);
             WriteLimitKv(k, p + "l", fb->effectors[l].lowerLimit);
+            if (fb->effectors[l].targetBlendTime != 0.0f) k((p + "b").c_str(), fb->effectors[l].targetBlendTime);
         }
         out << "\n";
     }
@@ -3733,6 +3736,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                       ReadLimitKv(k, "hl", f->hipLimit); ReadLimitKv(k, "kl", f->kneeLimit); }
                 } else if (field == "limbik") {
                     auto* lb = go->AddComponent<LimbIK>();
+                    lb->targetBlendTime = 0.0f;   // files from before it snapped to a new goal
                     lb->upperName = ReadQuoted(in); lb->lowerName = ReadQuoted(in); lb->endName = ReadQuoted(in);
                     lb->targetName = ReadQuoted(in); lb->poleName = ReadQuoted(in);
                     int mr = 0;
@@ -3756,6 +3760,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                           if (eq == std::string::npos) continue;
                           const std::string k = tok.substr(0, eq);
                           const float v = std::strtof(tok.c_str() + eq + 1, nullptr);
+                          if (k == "tb") { lb->targetBlendTime = v; continue; }
                           IKJointLimit& l = k.compare(0, 2, "ul") == 0 ? lb->upperLimit : lb->lowerLimit;
                           const std::string f = k.substr(2);
                           if      (f == "T")  l.type = (IKJointLimit::Type)std::clamp((int)v, 0, 2);
@@ -3773,6 +3778,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                       } }
                 } else if (field == "chainik") {
                     auto* ci = go->AddComponent<ChainIK>();
+                    ci->targetBlendTime = 0.0f;   // files from before it snapped to a new goal
                     ci->targetName = ReadQuoted(in);
                     int orient = 0;
                     in >> ci->weight >> ci->iterations >> ci->solver >> orient
@@ -3796,9 +3802,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                 in >> l.twistAxis.x >> l.twistAxis.y >> l.twistAxis.z
                                    >> l.hingeAxis.x >> l.hingeAxis.y >> l.hingeAxis.z;
                         }
+                        KvIn k(in);
+                        k.f("tb", ci->targetBlendTime);
                     }
                 } else if (field == "fbik") {
                     auto* fb = go->AddComponent<FullBodyIK>();
+                    for (auto& e : fb->effectors) e.targetBlendTime = 0.0f;   // files from before it snapped to a new goal
                     int act = 1, am = 1, le = 0;
                     in >> fb->weight >> act >> fb->fadeTime >> fb->softness >> fb->bodyPull >> fb->maxBodyOffset
                        >> fb->spineReach >> fb->maxSpineAngle >> am >> le;
@@ -3857,6 +3866,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             const std::string p = "e" + std::to_string(l);
                             ReadLimitKv(k, p + "u", fb->effectors[l].upperLimit);
                             ReadLimitKv(k, p + "l", fb->effectors[l].lowerLimit);
+                            k.f((p + "b").c_str(), fb->effectors[l].targetBlendTime);
                         }
                     }
                 } else if (field == "ikx") {

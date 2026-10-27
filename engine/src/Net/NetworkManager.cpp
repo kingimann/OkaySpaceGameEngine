@@ -463,7 +463,10 @@ void NetworkManager::RegisterSync(const std::string& id, Transform* t, bool owne
     if (t) NoteSpawnedPawn(id, t->gameObject);
 }
 
-void NetworkManager::UnregisterSync(const std::string& id) { m_syncObjs.erase(id); }
+void NetworkManager::UnregisterSync(const std::string& id) {
+    ReleasePawn(id);   // scene destroy: the component is going, and so is the claim
+    m_syncObjs.erase(id);
+}
 
 void NetworkManager::SetSyncOwned(const std::string& id, bool owned) {
     auto it = m_syncObjs.find(id);
@@ -575,7 +578,9 @@ void NetworkManager::PoseAt(const std::vector<SyncObj::Sample>& b, double tick, 
 void NetworkManager::RecordHistory() {
     const std::size_t keep = (std::size_t)std::ceil(HostTickRate()) + 2;   // ~1 s
     for (auto& [id, o] : m_syncObjs) {
-        if (!o.t) continue;
+        // A despawned pawn is released (and its history cleared) before the sync
+        // entry is erased. An entry whose object is already gone is not a target.
+        if (!o.t || !o.t->gameObject) { o.history.clear(); continue; }
         o.history.push_back(SyncObj::Sample{(double)m_netTick, o.t->localPosition, o.t->localRotation});
         if (o.history.size() > keep) o.history.erase(o.history.begin(), o.history.end() - (std::ptrdiff_t)keep);
     }
@@ -829,6 +834,7 @@ void NetworkManager::DespawnPeerObjects(std::uint32_t id) {
 }
 
 void NetworkManager::DestroyLocalSync(const std::string& id) {
+    ReleasePawn(id);   // before the sync entry (and its history) goes
     auto it = m_syncObjs.find(id);
     if (it != m_syncObjs.end()) {
         GameObject* go = it->second.t ? it->second.t->gameObject : nullptr;
@@ -1890,10 +1896,64 @@ int NetworkManager::StepNetTick(float rate, float dt) {
     return ticks;
 }
 
-void NetworkManager::SetPawn(GameObject* pawn) {
+void NetworkManager::ResetPawnPrediction() {
+    m_predicted.clear();
+    m_predPending = Vec3(0.0f, 0.0f, 0.0f);
+    m_predSeq = 0;
+    m_earlyAckSeq = 0;
+    m_earlyAck = Vec3(0.0f, 0.0f, 0.0f);
+    m_lastPawnAck = 0;
+    m_predPressOnce = 0;
+    m_predicting = false;
+}
+
+void NetworkManager::ClearLocalPawn() {
+    ResetPawnPrediction();
     m_pawnId.clear();
-    if (!pawn) return;
-    if (auto* ns = pawn->GetComponent<NetworkSync>()) m_pawnId = ns->netId.empty() ? pawn->name : ns->netId;
+    m_lastAckedSeq = 0;
+    m_sentInputs.clear();
+    m_inputSeq = 0;          // the server forgot lastInputSeq; the next claim starts at 1
+    m_pressedAccum = 0;
+    m_heldInput = PlayerInput{};
+    m_predCmd = PlayerInput{};
+}
+
+// Local despawn, a relayed __despawn, or the object's own OnDestroy. The claim
+// has to die with the object or the next pawn is refused (pawn != c.pawn) and
+// never acked.
+void NetworkManager::ReleasePawn(const std::string& id) {
+    if (id.empty()) return;
+    if (id == m_pawnId) ClearLocalPawn();
+    if (auto it = m_syncObjs.find(id); it != m_syncObjs.end()) it->second.history.clear();
+    auto own = m_pawnOwner.find(id);
+    if (own == m_pawnOwner.end()) return;
+    const std::uint32_t peer = own->second;
+    m_pawnOwner.erase(own);
+    if (m_mode != Mode::Server) return;
+    for (auto& [ep, c] : m_clients) {
+        if (c.id != peer || c.pawn != id) continue;
+        c.pawn.clear();
+        c.inputs.clear();
+        c.lastInputSeq = 0;
+        c.lastInput = PlayerInput{};
+        c.repeats = 0;
+        break;
+    }
+}
+
+void NetworkManager::SetPawn(GameObject* pawn) {
+    std::string id;
+    if (pawn)
+        if (auto* ns = pawn->GetComponent<NetworkSync>())
+            id = ns->netId.empty() ? pawn->name : ns->netId;
+    if (id == m_pawnId) return;
+    // A different object: don't reconcile the previous pawn's acks against it.
+    // The sequence counter stays, unless a despawn already cleared it — the
+    // server only forgets lastInputSeq when the old pawn is destroyed.
+    ResetPawnPrediction();
+    m_sentInputs.clear();
+    m_lastAckedSeq = 0;
+    m_pawnId = id;
 }
 
 int NetworkManager::MovementAuthority(const std::string& netId) const {

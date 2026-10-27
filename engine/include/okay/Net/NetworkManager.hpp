@@ -863,6 +863,11 @@ private:
     /// controller object it spawned before claiming one, may not.
     bool ClientMaySendXform(const Client& from, const std::string& id) const;
     GameObject* ObjectByNetId(const std::string& id) const;
+    /// The pawn object went away (despawn or scene destroy): drop the claim so
+    /// the next one can be claimed, and forget its lag-comp history.
+    void ReleasePawn(const std::string& id);
+    void ResetPawnPrediction();   // client: prediction history for the pawn
+    void ClearLocalPawn();        // client: pawn id, prediction, and the input stream
     static constexpr std::size_t kMaxQueuedInputs = 8;   // the tick budget: older ones are dropped
     static constexpr int kInputRepeats = 3;              // late-input cover before the player stops
     std::string m_pawnId;                  // client: the object this player drives

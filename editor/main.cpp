@@ -69,6 +69,7 @@ struct ScriptLint {
     // Machine-applicable quick-fix (empty = none): replace whole-word `bad` with
     // `fix` on `line` — powers the editor's click-to-fix gutter action.
     std::string bad, fix;
+    int column = 0;   ///< 1-based, 0 = the whole line
 };
 
 static std::vector<ScriptLint> AnalyzeScriptWarnings(
@@ -10724,6 +10725,7 @@ struct ScriptCaret {
     int  line = 1, col = 1, pos = 0;   // out: caret position (1-based line/col)
     int  selLen = 0;                   // out: selected character count
     int  gotoLine = 0;                 // in: jump to this 1-based line (0 = none)
+    int  gotoCol = 0;                  // in: 1-based column for gotoLine (0 = start of line)
     int  gotoPos = -1;                 // in: move caret to this byte offset (find-next)
     int  gotoSelLen = 0;               // in: select this many chars from gotoPos
     bool toggleComment = false;        // in: toggle "// " on the selected lines
@@ -12235,14 +12237,16 @@ void DrawScriptEditor(EditorState& ed) {
         std::vector<int>& navFwd  = s_navFwd[sc];
         // A jump that should be undoable via Back: records the current line, clears the
         // forward stack (a new branch), then moves the caret.
-        auto jumpTo = [&](int line) {
+        auto jumpTo = [&](int line, int col = 1) {
             if (line < 1) line = 1;
             if (caret.line >= 1 && caret.line != line) {
                 if (navBack.empty() || navBack.back() != caret.line) navBack.push_back(caret.line);
                 if (navBack.size() > 100) navBack.erase(navBack.begin());
                 navFwd.clear();
             }
-            caret.gotoLine = line; s_scrollToLine = line;
+            caret.gotoLine = line;
+            caret.gotoCol = col > 0 ? col : 1;
+            s_scrollToLine = line;
         };
         // Bookmarks (Rider): toggle by clicking the line-number gutter; markers show in
         // the gutter + minimap; the "Marks" list jumps between them. Keyed per script.
@@ -13188,10 +13192,14 @@ void DrawScriptEditor(EditorState& ed) {
                     static okay::NextScriptVM s_nextCheck;
                     for (auto& d : s_nextCheck.ValidateAll(buf.data())) {
                         if (d.severity == 0) s_diags.push_back(d);
-                        else s_warns.push_back({d.line, d.message});
+                        else s_warns.push_back({d.line, d.message, {}, {}, d.column});
                     }
-                    if (!s_diags.empty())
-                        s_error = (s_diags[0].line > 0 ? "line " + std::to_string(s_diags[0].line) + ": " : std::string()) + s_diags[0].message;
+                    if (!s_diags.empty()) {
+                        const auto& d0 = s_diags[0];
+                        s_error = d0.line > 0 ? "line " + std::to_string(d0.line) +
+                            (d0.column > 0 ? ", column " + std::to_string(d0.column) : std::string()) + ": " : std::string();
+                        s_error += d0.message;
+                    }
                 } else if (sc->Language() == "okayscript") {
                     static std::unique_ptr<okay::IScriptVM> s_checkVM = okay::CreateScriptVM("okayscript");
                     // Errors (won't run) stay in s_diags; "does nothing" / "probably not what you
@@ -13200,11 +13208,14 @@ void DrawScriptEditor(EditorState& ed) {
                     if (s_checkVM)
                         for (auto& d : s_checkVM->ValidateAll(buf.data())) {
                             if (d.severity == 0) s_diags.push_back(d);
-                            else vmWarns.push_back({d.line, d.message});
+                            else vmWarns.push_back({d.line, d.message, {}, {}, d.column});
                         }
                     if (!s_diags.empty()) {
                         s_warns = vmWarns;
-                        s_error = (s_diags[0].line > 0 ? "line " + std::to_string(s_diags[0].line) + ": " : std::string()) + s_diags[0].message;
+                        const auto& d0 = s_diags[0];
+                        s_error = d0.line > 0 ? "line " + std::to_string(d0.line) +
+                            (d0.column > 0 ? ", column " + std::to_string(d0.column) : std::string()) + ": " : std::string();
+                        s_error += d0.message;
                     } else {
                         // Every builtin + its max argument count (from the signature table;
                         // a signature with "..." takes any number).
@@ -13249,8 +13260,10 @@ void DrawScriptEditor(EditorState& ed) {
         // Apply a pending jump (go-to-line box / Outline / F12 / find / nav / Marks).
         if (caret.gotoLine > 0) {
             int ln = caret.gotoLine - 1; if (ln < 0) ln = 0;
-            te.SetCursorPosition(TextEditor::Coordinates(ln, 0));
+            int col = caret.gotoCol > 0 ? caret.gotoCol - 1 : 0;
+            te.SetCursorPosition(TextEditor::Coordinates(ln, col));
             caret.gotoLine = 0;
+            caret.gotoCol = 0;
         }
         if (caret.gotoPos >= 0) {
             const char* t = buf.data(); int ln = 0, col = 0;
@@ -13786,6 +13799,37 @@ void DrawScriptEditor(EditorState& ed) {
                 };
                 for (const auto& d : s_diags) inlineMsg(d.line, d.message, IM_COL32(240, 110, 110, 165), false);
                 for (const auto& w : s_warns) inlineMsg(w.line, w.msg, IM_COL32(230, 195, 90, 150), !w.fix.empty());
+            }
+            // Squiggle under the token the diagnostic names, when it has a column.
+            {
+                const char* src = buf.data();
+                auto mark = [&](int probLine, int column, ImU32 col) {
+                    if (probLine <= 0 || column <= 0 || !src) return;
+                    int ln = 1;
+                    const char* p = src;
+                    while (*p && ln < probLine) { if (*p++ == '\n') ++ln; }
+                    if (ln != probLine) return;
+                    int c = 1;
+                    while (*p && *p != '\n' && c < column) { ++p; ++c; }
+                    const char* start = p;
+                    while (*p && *p != '\n' && *p != ' ' && *p != '\t' && *p != ';' &&
+                           *p != ')' && *p != ',' && *p != '{' && *p != '}') ++p;
+                    int nch = (int)(p - start);
+                    if (nch < 1) nch = 1;
+                    if (nch > 32) nch = 32;
+                    float y = corg.y + probLine * rowH - 2.0f;
+                    if (y < teMin.y - rowH || y > teMax.y + rowH) return;
+                    float x = textX + (column - 1) * chW;
+                    float x1 = x + nch * chW;
+                    bool up = true;
+                    for (float px = x; px + 2.0f <= x1 + 0.1f; px += 2.0f) {
+                        fdl->AddLine(ImVec2(px, y + (up ? -1.0f : 1.0f)),
+                                     ImVec2(px + 2.0f, y + (up ? 1.0f : -1.0f)), col, 1.15f);
+                        up = !up;
+                    }
+                };
+                for (const auto& d : s_diags) mark(d.line, d.column, IM_COL32(240, 80, 80, 230));
+                for (const auto& w : s_warns) mark(w.line, w.column, IM_COL32(230, 190, 70, 230));
             }
             // Changed-line bars vs the last saved version (blue bar, red deletion wedge).
             if (ScriptTabDirty(sc)) {
@@ -14503,7 +14547,10 @@ void DrawScriptEditor(EditorState& ed) {
                     for (int ln : lines) if (ln < cur) target = ln;
                     if (target < 0) target = lines.back();
                 }
-                jumpTo(target);
+                int col = 1;
+                for (const auto& d : s_diags) if (d.line == target && d.column > 0) { col = d.column; break; }
+                if (col == 1) for (const auto& w : s_warns) if (w.line == target && w.column > 0) { col = w.column; break; }
+                jumpTo(target, col);
             }
         }
         // Problems panel: a collapsible list of every error and warning; each row
@@ -14524,7 +14571,10 @@ void DrawScriptEditor(EditorState& ed) {
                 for (std::size_t i = 0; i < s_diags.size(); ++i) {
                     const auto& d = s_diags[i];
                     char row[400];
-                    if (d.line > 0)
+                    if (d.line > 0 && d.column > 0)
+                        std::snprintf(row, sizeof(row), "x  line %d, column %d:  %s##p%zu",
+                                      d.line, d.column, d.message.c_str(), i);
+                    else if (d.line > 0)
                         std::snprintf(row, sizeof(row), "x  line %d:  %s##p%zu",
                                       d.line, d.message.c_str(), i);
                     else
@@ -14532,17 +14582,21 @@ void DrawScriptEditor(EditorState& ed) {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.55f, 0.55f, 1.0f));
                     bool clicked = ImGui::Selectable(row);
                     ImGui::PopStyleColor();
-                    if (clicked && d.line > 0) { jumpTo(d.line); }
+                    if (clicked && d.line > 0) { jumpTo(d.line, d.column > 0 ? d.column : 1); }
                 }
                 for (std::size_t i = 0; i < s_warns.size(); ++i) {
                     const auto& w = s_warns[i];
                     char row[400];
-                    std::snprintf(row, sizeof(row), "!  line %d:  %s##w%zu",
-                                  w.line, w.msg.c_str(), i);
+                    if (w.column > 0)
+                        std::snprintf(row, sizeof(row), "!  line %d, column %d:  %s##w%zu",
+                                      w.line, w.column, w.msg.c_str(), i);
+                    else
+                        std::snprintf(row, sizeof(row), "!  line %d:  %s##w%zu",
+                                      w.line, w.msg.c_str(), i);
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.92f, 0.78f, 0.35f, 1.0f));
                     bool clicked = ImGui::Selectable(row);
                     ImGui::PopStyleColor();
-                    if (clicked && w.line > 0) { jumpTo(w.line); }
+                    if (clicked && w.line > 0) { jumpTo(w.line, w.column > 0 ? w.column : 1); }
                 }
             }
             ImGui::EndChild();

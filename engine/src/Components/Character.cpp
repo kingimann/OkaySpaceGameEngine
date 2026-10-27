@@ -358,6 +358,22 @@ float Character::RunWeight(int state) const {
     return state == 3 ? 1.0f : 0.0f;
 }
 
+bool Character::SprintingPose() const {
+    if (anim == 3) return true;
+    // The walk cruise sits near m_runW 0.3. Stay hidden only while the pose is
+    // still mostly a run, so a fast walk shows its arms and a sprint doesn't
+    // pop them back for the first frames of the blend.
+    return anim == 2 && m_runW > 0.55f;
+}
+
+void Character::SetHeldHiddenFromOwner(bool hide) {
+    if (!gameObject) return;
+    auto* hold = gameObject->GetComponent<ProceduralObjectHolding>();
+    if (!hold) return;
+    if (GameObject* item = hold->Held())
+        item->ownerCameraSkip = hide ? gameObject : nullptr;
+}
+
 // Advance the built-in animation clocks. The gait phase runs at the cadence the
 // reported ground speed calls for (backwards when the body backpedals), so a stride
 // always covers exactly the ground the body moved, and a state change never moves it.
@@ -390,7 +406,10 @@ void Character::AdvanceAnimClock(float dt) {
     m_lowerYaw  += (clampf(yaw, -75.0f, 75.0f) - m_lowerYaw) * ek;   // how far the hips turn
 
     // Walk <-> run blends the two styles over ~0.2 s on the live poses.
-    float wantRun = anim == 3 ? 1.0f : 0.0f;
+    // DriveLocomotion sets the target from speed, so the threshold is a blend
+    // and not a second crossfade on top of this one.
+    float wantRun = m_haveRunWant ? m_runWant : (anim == 3 ? 1.0f : 0.0f);
+    m_haveRunWant = false;
     float step = dt / 0.2f;
     m_runW = m_runW < wantRun ? std::fmin(wantRun, m_runW + step) : std::fmax(wantRun, m_runW - step);
 
@@ -481,6 +500,15 @@ void Character::DriveLocomotion(const Locomotion& l) {
     if (l.jumped) m_airT = 1.0f;                               // leave the ground pose at once
     const float runAt = l.walkSpeed * (anim == 3 ? 1.05f : 1.15f);
     const bool run = hs > runAt || (l.sprint && hs > l.walkSpeed * 0.9f);
+    {
+        const float rs = l.runSpeed > 0.1f ? l.runSpeed : 8.0f;
+        const float lo = std::max(0.4f, l.walkSpeed * 0.65f);
+        const float hi = std::max(lo + 0.75f, rs);
+        float style = hs <= lo ? 0.0f : std::min(1.0f, (hs - lo) / (hi - lo));
+        if (run) style = 1.0f;
+        m_runWant = style;
+        m_haveRunWant = true;
+    }
     m_stanceTarget = l.prone ? 2 : (l.crouch ? 1 : 0);
     m_stanceLevel = l.stance >= 0.0f ? l.stance : (float)m_stanceTarget;
     if (m_poseSource && m_poseSource->Live()) {   // the Animator's graph picks the state from these

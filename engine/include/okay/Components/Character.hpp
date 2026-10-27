@@ -85,6 +85,10 @@ public:
     float gaitSpeedSmoothing = 0.05f;
     /// Where the gait cycle is, 0..1 (0 = left foot touching down, 0.5 = right foot).
     float GaitPhase() const;
+    /// True while the body is in the run pose, including the short blend back to a walk.
+    bool SprintingPose() const;
+    /// Hide or show the held item on the owner's camera only. Others still see it.
+    void SetHeldHiddenFromOwner(bool hide);
 
     /// What a movement controller knows about the body this frame.
     struct Locomotion {
@@ -96,6 +100,7 @@ public:
         float stance = -1.0f;      ///< the eased stance level, 0 stand .. 1 crouch .. 2 prone (< 0 = from crouch / prone)
         bool  sprint = false;      ///< the run input is held
         float walkSpeed = 4.5f;    ///< the controller's walk speed (run/walk split)
+        float runSpeed = 8.0f;     ///< the controller's run speed (walk/run style blend)
         float dt = 0.0f;
         /// Movement along this axis isn't walking (2.5D: the hop between depth
         /// layers slides along Z); zero = count every direction.
@@ -619,6 +624,8 @@ private:
     float m_gaitPhase = 0.0f;      // the stride cycle, 0..1 (0 = left touchdown); one clock for every gait state
     float m_gaitFreq = 0.0f;       // cycles/s the phase is advancing at (signed: < 0 backpedalling)
     float m_runW = 0.0f;           // 0 walking style .. 1 running style (eased over ~0.2 s)
+    float m_runWant = 0.0f;        // the style DriveLocomotion asked for this step
+    bool  m_haveRunWant = false;
     float GaitPhaseAt(float t, int state) const;       // the gait phase at clock time t
     float RunWeight(int state) const;                  // walk/run style weight for a state
     HumanoidMotion::Inputs MotionInputs(int state, float t) const;   // the built-in motion's inputs

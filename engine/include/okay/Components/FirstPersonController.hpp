@@ -45,9 +45,11 @@ public:
     float jumpForce = 6.0f;
     // Momentum: ramp horizontal velocity toward the target (units/s^2) for weighty
     // starts/stops, with reduced authority in the air.
-    float acceleration = 60.0f;
-    float deceleration = 55.0f;
-    float airControl   = 0.40f;
+    float walkAcceleration = 64.0f;  ///< accel while walking (m/s^2). Run uses `acceleration`.
+    float acceleration = 130.0f;     ///< accel while running (m/s^2)
+    float deceleration = 90.0f;
+    float steerRate = 260.0f;        ///< how fast a turn drops the old heading (m/s^2)
+    float airControl   = 0.78f;
     // Forgiving jump timing: coyote time (jump just after a ledge) + jump buffer
     // (press just before landing).
     float coyoteTime    = 0.12f;
@@ -357,13 +359,12 @@ public:
         // Only a physics body can be airborne; a transform-only player can't fall.
         bool airborne = rb ? !grounded : false;
         if (rb) {
-            Vec3 cur{rb->velocity.x, 0.0f, rb->velocity.z};
-            Vec3 dv{dir.x * speed - cur.x, 0.0f, dir.z * speed - cur.z};
-            float rate = (moving ? acceleration : deceleration) * (grounded ? 1.0f : airControl);
-            float dl = std::sqrt(dv.x * dv.x + dv.z * dv.z), step = rate * dt;
-            if (dl > 1e-5f && dl > step) { dv.x = dv.x / dl * step; dv.z = dv.z / dl * step; }
-            rb->velocity.x = cur.x + dv.x;
-            rb->velocity.z = cur.z + dv.z;
+            const bool plant = grounded || m_swimming;
+            const float auth = plant ? 1.0f : airControl;
+            const float accel = (running ? acceleration : walkAcceleration) * auth;
+            StepPlanarVelocity(rb->velocity.x, rb->velocity.z,
+                               moving ? dir.x * speed : 0.0f, moving ? dir.z * speed : 0.0f,
+                               moving, plant, accel, deceleration * auth, steerRate * auth, dt);
             if (m_slideT > 0.0f && grounded) {
                 // Slide velocity: a burst that eases down to crouch speed.
                 float k = Mathf::Clamp(m_slideT / Mathf::Max(0.01f, slideTime), 0.0f, 1.0f);
@@ -461,6 +462,7 @@ public:
                 lo.stance   = m_stanceLevel;
                 lo.sprint   = running;
                 lo.walkSpeed = walkSpeed;
+                lo.runSpeed = runSpeed;
                 lo.dt = dt;
                 ch->DriveLocomotion(lo);
                 // The body turns with yaw, so the head only needs to tilt with the
@@ -674,7 +676,12 @@ private:
         m_bobAmp += (want - m_bobAmp) * EaseFactor(bobBlend, dt);
         if (walking || m_bobAmp > 1e-4f) {
             const float prev = m_bobPhase;
-            m_bobPhase += dt * bobSpeed * Mathf::Max(0.4f, hSpeed / ref);
+            float cadence = bobSpeed * Mathf::Max(0.4f, hSpeed / ref);
+            if (Character* ch = FindCharacter()) {
+                const float cyc = ch->GaitCycleSeconds(ch->anim);
+                if (cyc > 0.05f) cadence = 6.2831853f / cyc;   // one bob cycle per stride, in step with the feet
+            }
+            m_bobPhase += dt * cadence;
             // A footstep every half bob cycle (left, right, left...).
             if (walking && std::floor(m_bobPhase / 3.14159265f) != std::floor(prev / 3.14159265f)) {
                 ++m_steps;

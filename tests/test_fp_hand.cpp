@@ -170,6 +170,43 @@ int main() {
         CHECK(ch->Part(2) && !ch->Part(2)->firstPersonViewmodel);  // head stays off this camera
     }
 
+    // A sprint drops the raised arm (and a held item) out of the local view.
+    {
+        Scene scene("Run");
+        GameObject* player = scene.CreateGameObject("Player");
+        auto* ch = player->AddComponent<Character>(); ch->Apply();
+        player->AddComponent<FirstPersonController>();
+        GameObject* cam = scene.CreateGameObject("Eye");
+        cam->transform->SetParent(player->transform, false);
+        cam->AddComponent<Camera>();
+        auto* fh = cam->AddComponent<FirstPersonHand>();
+        GameObject* item = scene.CreateGameObject("Crate");
+        item->transform->localPosition = {0.4f, 1.0f, -0.4f};
+        scene.Start();
+        for (int i = 0; i < 3; ++i) scene.Update(0.016f);
+        CHECK(player->GetComponent<ProceduralObjectHolding>() == nullptr);
+        player->AddComponent<ProceduralObjectHolding>()->Pickup(item);
+        ch->anim = 3;
+        fh->Update(0.016f);
+        CHECK(!ch->firstPersonArm);
+        CHECK(ch->Part(3) && !ch->Part(3)->firstPersonViewmodel);
+        CHECK(ch->Part(4) && !ch->Part(4)->firstPersonViewmodel);
+        CHECK(ch->Part(5) && !ch->Part(5)->firstPersonViewmodel);
+        CHECK(item->ownerCameraSkip == player);
+
+        fh->showWhileRunning = true;
+        fh->Update(0.016f);
+        CHECK(ch->firstPersonArm);
+        CHECK(ch->Part(3) && ch->Part(3)->firstPersonViewmodel);
+        CHECK(item->ownerCameraSkip == nullptr);
+
+        ch->anim = 2;
+        fh->showWhileRunning = false;
+        fh->Update(0.016f);
+        CHECK(ch->firstPersonArm);
+        CHECK(ch->Part(3) && ch->Part(3)->firstPersonViewmodel);
+    }
+
     // Serialization round-trips the settings.
     {
         Scene a("A");

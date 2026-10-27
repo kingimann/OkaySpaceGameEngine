@@ -92,12 +92,14 @@ public:
     float leanOffset = 0.5f;            // sideways camera shift while leaning (units)
     float leanSpeed  = 10.0f;           // how fast the lean eases in/out
     float lean() const { return m_lean; }
-    float turnSpeed = 12.0f;            // how fast the body turns toward movement
+    float turnSpeed = 24.0f;            // how fast the body turns toward movement (1/s)
     // Momentum: instead of snapping velocity, ramp toward the target so starts/stops
     // feel weighty (units/s^2). Higher = snappier; very high ~= the old instant feel.
-    float acceleration = 60.0f;
-    float deceleration = 55.0f;
-    float airControl   = 0.40f;         // accel multiplier while airborne (0..1)
+    float walkAcceleration = 64.0f;     ///< accel while walking (m/s^2). Run uses `acceleration`.
+    float acceleration = 130.0f;        ///< accel while running (m/s^2)
+    float deceleration = 90.0f;
+    float steerRate = 260.0f;           ///< how fast a turn drops the old heading (m/s^2)
+    float airControl   = 0.78f;         // authority multiplier while airborne (0..1)
     // Forgiving jump timing (platformer-grade): coyote time lets you jump just after
     // walking off a ledge; jump buffer remembers a press made just before landing.
     float coyoteTime     = 0.12f;
@@ -346,17 +348,14 @@ public:
         // gravity) is always grounded for animation purposes.
         bool airborne = rb ? !grounded : false;
         if (rb) {
-            // Momentum: ease the horizontal velocity toward the target so starts and
-            // stops have weight; reduced authority in the air.
-            Vec3 tgt{dir.x * speed, 0.0f, dir.z * speed};
-            Vec3 cur{rb->velocity.x, 0.0f, rb->velocity.z};
-            float rate = (moving ? acceleration : deceleration) * (grounded ? 1.0f : airControl);
-            Vec3 dv{tgt.x - cur.x, 0.0f, tgt.z - cur.z};
-            float dl = std::sqrt(dv.x * dv.x + dv.z * dv.z);
-            float step = rate * dt;
-            if (dl > 1e-5f && dl > step) { dv.x = dv.x / dl * step; dv.z = dv.z / dl * step; }
-            rb->velocity.x = cur.x + dv.x;
-            rb->velocity.z = cur.z + dv.z;
+            // One step toward the wish. Steering kills the old heading on its own
+            // rate, so a sprint can turn without a second smoother on the input.
+            const bool plant = grounded || m_swimming;
+            const float auth = plant ? 1.0f : airControl;
+            const float accel = (running ? acceleration : walkAcceleration) * auth;
+            StepPlanarVelocity(rb->velocity.x, rb->velocity.z,
+                               moving ? dir.x * speed : 0.0f, moving ? dir.z * speed : 0.0f,
+                               moving, plant, accel, deceleration * auth, steerRate * auth, dt);
             if (m_slideT > 0.0f && grounded) {
                 float k = Mathf::Clamp(m_slideT / Mathf::Max(0.01f, slideTime), 0.0f, 1.0f);
                 float sp = crouchSpeed + (slideSpeed - crouchSpeed) * k * k;
@@ -491,6 +490,7 @@ public:
                 lo.stance   = m_stanceLevel;
                 lo.sprint   = running;
                 lo.walkSpeed = walkSpeed;
+                lo.runSpeed = runSpeed;
                 lo.dt = dt;
                 ch->DriveLocomotion(lo);
                 // The head turns to keep looking where the camera points (relative to

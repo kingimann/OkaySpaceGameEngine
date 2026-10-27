@@ -845,7 +845,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  fphand " << fh->attackButton << " " << (fh->holdToSwing ? 1 : 0)
             << " " << (fh->showLeftArm ? 1 : 0)
             << " " << (fh->followPitch ? 1 : 0) << " " << (fh->bobbing ? 1 : 0)
-            << " " << (fh->steadyArm ? 1 : 0) << " " << fh->armRaise << " " << fh->armElbow << "\n";
+            << " " << (fh->steadyArm ? 1 : 0) << " " << fh->armRaise << " " << fh->armElbow
+            << " " << (fh->showWhileRunning ? 1 : 0) << "\n";
     }
     if (auto* hh = go->GetComponent<FirstPersonHands>()) {
         auto side = [&](const FirstPersonHands::HandSide& s) {
@@ -1757,7 +1758,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  fpstance";
         KvOut k{out};
         k.b("prone", fp->allowProne).b("resize", fp->resizeBody)("crouchH", fp->crouchHeight)("proneH", fp->proneHeight)
-         ("pad", fp->stanceGamepadButton)("hold", fp->proneHoldTime);
+         ("pad", fp->stanceGamepadButton)("hold", fp->proneHoldTime)
+         ("walkA", fp->walkAcceleration)("steer", fp->steerRate);
         if (fp->stance() != std::remove_pointer_t<decltype(fp)>::Stance::Stand) k("stance", (int)fp->stance());   // saved crouched / prone
         out << "\n";
     }
@@ -1794,7 +1796,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  tpstance";
         KvOut k{out};
         k.b("prone", tp->allowProne).b("resize", tp->resizeBody)("crouchH", tp->crouchHeight)("proneH", tp->proneHeight)
-         ("pad", tp->stanceGamepadButton)("hold", tp->proneHoldTime);
+         ("pad", tp->stanceGamepadButton)("hold", tp->proneHoldTime)
+         ("walkA", tp->walkAcceleration)("steer", tp->steerRate);
         if (tp->stance() != std::remove_pointer_t<decltype(tp)>::Stance::Stand) k("stance", (int)tp->stance());   // saved crouched / prone
         out << "\n";
     }
@@ -1921,7 +1924,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << ts->pivotDampingXZ << " " << ts->pivotDampingY << " " << ts->maxPivotLag
             << " " << ts->cameraCollisionRadius << " " << ts->cameraCollisionMask
             << " " << ts->cameraCollisionPullIn << " " << ts->cameraCollisionRecover
-            << " " << ts->stepOffset << "\n";
+            << " " << ts->stepOffset
+            << " " << ts->walkAcceleration << " " << ts->steerRate << "\n";
     }
     if (auto* cm = go->GetComponent<ClickToMoveController>()) {
         out << "  ctmctrl " << cm->walkSpeed << " " << cm->runSpeed << " "
@@ -4783,6 +4787,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         if (!c) return;
                         k.b("prone", c->allowProne); k.b("resize", c->resizeBody); k.f("crouchH", c->crouchHeight);
                         k.f("proneH", c->proneHeight); k.i("pad", c->stanceGamepadButton); k.f("hold", c->proneHoldTime);
+                        k.f("walkA", c->walkAcceleration); k.f("steer", c->steerRate);
                         // Saved crouched / prone: start that way (the collider was saved standing).
                         int st = 0; k.i("stance", st);
                         using S = typename std::remove_pointer_t<decltype(c)>::Stance;
@@ -4901,8 +4906,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     // Optional trailing step height (older scenes keep 0.35).
                                     float so = ts->stepOffset;
                                     in >> std::ws;
-                                    if ((std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') && (in >> so))
+                                    if ((std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') && (in >> so)) {
                                         ts->stepOffset = so;
+                                        float wa = ts->walkAcceleration, st = ts->steerRate;
+                                        in >> std::ws;
+                                        if ((std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') && (in >> wa >> st)) {
+                                            ts->walkAcceleration = wa; ts->steerRate = st;
+                                        }
+                                    }
                                 }
                             } }
                     }
@@ -5451,6 +5462,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (v.size() >= 4) fh->steadyArm   = (v[3] != 0.0f);
                     if (v.size() >= 5) fh->armRaise    = v[4];
                     if (v.size() >= 6) fh->armElbow    = v[5];
+                    if (v.size() >= 7) fh->showWhileRunning = (v[6] != 0.0f);
                 } else if (field == "fphands") {
                     auto* hh = go->AddComponent<FirstPersonHands>();
                     auto side = [&](FirstPersonHands::HandSide& s, std::istringstream& rs) {

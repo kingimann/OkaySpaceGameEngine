@@ -20,6 +20,7 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/FirstPersonController.hpp"
+#include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Core/Game.hpp"
 
@@ -33,6 +34,7 @@ public:
     bool  followPitch  = true;   ///< arm tilts up/down with the camera look (Minecraft-style)
     bool  bobbing      = true;   ///< let the walk/run cycle bob the arm (off = rock-steady)
     bool  steadyArm    = false;  ///< fully decouple from the body: ignore lean / crouch / prone
+    bool  showWhileRunning = false; ///< keep the arm (and a held item) in view while sprinting
     float armRaise     = -96.0f; ///< manual: upper-arm angle (how high the hand sits)
     float armElbow     = 16.0f;  ///< manual: forearm bend (hand closeness/height)
 
@@ -63,9 +65,11 @@ private:
             // The rig's 180° facing flip puts the body's screen-right arm on the L-named
             // bones (3-5). That is the arm raised into the view. The rest of the body
             // (except head and neck) is drawn too, solid, for when you look down.
+            // Empty hands draw nothing; a sprint hides them unless Show While Running
+            // is on. That decision lives in ApplyFirstPersonHandDrive.
             c->ApplyOwnerVisibility(true);
             c->firstPersonArm = true;
-            c->ApplyFirstPersonHandDrive(showLeftArm);   // empty until a hold, unless FirstPersonHands says so
+            c->ApplyFirstPersonHandDrive(showLeftArm);
             c->fpArmBob = bobbing;
             c->fpSteady = steadyArm;
             c->fpRaise  = armRaise;    // manual tuning

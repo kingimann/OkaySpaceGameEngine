@@ -28034,6 +28034,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Bobbing##fh", &fh->bobbing)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("A small up-and-down bob on the viewmodel arm. It does not roll, and it does not move the shared body.");
             if (ImGui::Checkbox("Steady arm (ignore lean/crouch/prone)##fh", &fh->steadyArm)) ed.dirty = true;
+            if (ImGui::Checkbox("Show While Running##fh", &fh->showWhileRunning)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: the arm, sleeve and held item leave the local view while sprinting. Others still see them.");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fully decouple the arm from the body so it stays put in view no matter what the body does (lean, crouch, prone).");
             SectionHeader("Manual adjust");
             if (ImGui::DragFloat("Raise##fh", &fh->armRaise, 0.5f, -180.0f, 180.0f, "%.0f deg")) ed.dirty = true;
@@ -31545,17 +31547,20 @@ void DrawInspector(EditorState& ed) {
                     switch (which) {
                         case 0:   // Tactical: weighty mil-sim movement
                             F.walkSpeed = 3.2f; F.runSpeed = 5.5f; F.jumpForce = 4.5f;
-                            F.acceleration = 30.0f; F.deceleration = 35.0f; F.airControl = 0.15f;
+                            F.walkAcceleration = 22.0f; F.acceleration = 30.0f; F.steerRate = 90.0f;
+                            F.deceleration = 35.0f; F.airControl = 0.15f;
                             F.coyoteTime = 0.05f; F.jumpBufferTime = 0.08f;
                             break;
                         case 1:   // Arcade: snappy fast shooter
                             F.walkSpeed = 5.5f; F.runSpeed = 9.0f; F.jumpForce = 6.5f;
-                            F.acceleration = 90.0f; F.deceleration = 100.0f; F.airControl = 0.6f;
+                            F.walkAcceleration = 70.0f; F.acceleration = 90.0f; F.steerRate = 280.0f;
+                            F.deceleration = 100.0f; F.airControl = 0.6f;
                             F.coyoteTime = 0.12f; F.jumpBufferTime = 0.12f;
                             break;
                         case 2:   // Floaty: big forgiving jumps, drifty air
                             F.walkSpeed = 4.0f; F.runSpeed = 7.0f; F.jumpForce = 9.0f;
-                            F.acceleration = 40.0f; F.deceleration = 25.0f; F.airControl = 0.8f;
+                            F.walkAcceleration = 28.0f; F.acceleration = 40.0f; F.steerRate = 80.0f;
+                            F.deceleration = 25.0f; F.airControl = 0.8f;
                             F.coyoteTime = 0.15f; F.jumpBufferTime = 0.15f;
                             break;
                     }
@@ -31572,8 +31577,11 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Walk Speed##fp", &fp->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Run Speed##fp", &fp->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Jump Force##fp", &fp->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
-            if (ImGui::DragFloat("Acceleration##fp", &fp->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
-            if (ImGui::DragFloat("Deceleration##fp", &fp->deceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Walk Accel##fp", &fp->walkAcceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Run Accel##fp", &fp->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Decel##fp", &fp->deceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Turn Rate##fp", &fp->steerRate, 1.0f, 1.0f, 600.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast a turn drops the old heading. The mouse still aims directly.");
             if (ImGui::DragFloat("Air Control##fp", &fp->airControl, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Coyote Time##fp", &fp->coyoteTime, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
             if (ImGui::DragFloat("Jump Buffer##fp", &fp->jumpBufferTime, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
@@ -31644,7 +31652,8 @@ void DrawInspector(EditorState& ed) {
             SectionHeader("Head Bob");
             if (ImGui::Checkbox("Head Bob##fp", &fp->headBob)) ed.dirty = true;
             if (fp->headBob) {
-                if (ImGui::DragFloat("Bob Amount##fp", &fp->bobAmount, 0.001f, 0.0f, 0.3f, "%.3f m")) ed.dirty = true;
+                if (ImGui::DragFloat("Bob##fp", &fp->bobAmount, 0.001f, 0.0f, 0.3f, "%.3f m")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Camera bob height. At a walk it follows the footstep cycle.");
                 if (ImGui::DragFloat("Bob Speed##fp", &fp->bobSpeed, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bob cadence at walking speed (it speeds up with you).");
                 ImGui::TextDisabled("Up and down only. The stride does not sway or roll the view.");
@@ -31683,17 +31692,20 @@ void DrawInspector(EditorState& ed) {
                     switch (which) {
                         case 0:   // Grounded: weighty adventure movement
                             T.walkSpeed = 3.0f; T.runSpeed = 5.5f; T.jumpForce = 5.0f;
-                            T.acceleration = 30.0f; T.deceleration = 35.0f; T.airControl = 0.2f;
+                            T.walkAcceleration = 22.0f; T.acceleration = 30.0f; T.steerRate = 90.0f; T.turnSpeed = 10.0f;
+                            T.deceleration = 35.0f; T.airControl = 0.2f;
                             T.coyoteTime = 0.08f;
                             break;
                         case 1:   // Arcade: snappy platform-runner
                             T.walkSpeed = 5.0f; T.runSpeed = 8.5f; T.jumpForce = 7.0f;
-                            T.acceleration = 90.0f; T.deceleration = 100.0f; T.airControl = 0.7f;
+                            T.walkAcceleration = 70.0f; T.acceleration = 90.0f; T.steerRate = 280.0f; T.turnSpeed = 30.0f;
+                            T.deceleration = 100.0f; T.airControl = 0.7f;
                             T.coyoteTime = 0.12f;
                             break;
                         case 2:   // Floaty: big airy jumps
                             T.walkSpeed = 4.0f; T.runSpeed = 7.0f; T.jumpForce = 9.5f;
-                            T.acceleration = 40.0f; T.deceleration = 25.0f; T.airControl = 0.85f;
+                            T.walkAcceleration = 28.0f; T.acceleration = 40.0f; T.steerRate = 80.0f; T.turnSpeed = 12.0f;
+                            T.deceleration = 25.0f; T.airControl = 0.85f;
                             T.coyoteTime = 0.15f;
                             break;
                     }
@@ -31710,10 +31722,14 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Walk Speed##tp", &tp->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Run Speed##tp", &tp->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Jump Force##tp", &tp->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
-            if (ImGui::DragFloat("Turn Speed##tp", &tp->turnSpeed, 0.1f, 0.0f, 40.0f)) ed.dirty = true;
-            if (ImGui::DragFloat("Acceleration##tp", &tp->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Turn Rate##tp", &tp->turnSpeed, 0.1f, 0.0f, 40.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast the body rotates toward the way it is moving.");
+            if (ImGui::DragFloat("Walk Accel##tp", &tp->walkAcceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Run Accel##tp", &tp->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Higher = snappier starts; very high ~= instant (no momentum)");
-            if (ImGui::DragFloat("Deceleration##tp", &tp->deceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Decel##tp", &tp->deceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Steer##tp", &tp->steerRate, 1.0f, 1.0f, 600.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast a turn drops the old velocity heading.");
             if (ImGui::DragFloat("Air Control##tp", &tp->airControl, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Coyote Time##tp", &tp->coyoteTime, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Grace window to still jump just after leaving a ledge");
@@ -32244,7 +32260,11 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Jump Force##tps", &ts->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragInt("Max Jumps##tps", &ts->maxJumps, 0.1f, 1, 5)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("1 = single, 2 = double jump, ...");
-            if (ImGui::DragFloat("Acceleration##tps", &ts->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Walk Accel##tps", &ts->walkAcceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Run Accel##tps", &ts->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Decel##tps", &ts->deceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Turn Rate##tps", &ts->turnSpeed, 0.1f, 0.0f, 60.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Steer##tps", &ts->steerRate, 1.0f, 1.0f, 600.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Air Control##tps", &ts->airControl, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Foot IK##tps", &ts->footIK)) ed.dirty = true;
             SectionHeader("Look / Camera");

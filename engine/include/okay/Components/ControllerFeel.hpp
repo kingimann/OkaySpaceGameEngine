@@ -23,6 +23,7 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Scene/Scene.hpp"
+#include <algorithm>
 #include <cstdint>
 #include <cmath>
 #include <functional>
@@ -193,6 +194,59 @@ struct SpringArm {
 private:
     float m_len = -1.0f;
 };
+
+/// Grounded stops stay at full deceleration until 2.2 m/s, then ease out
+/// (time constant 0.10 s). The last 0.12 m/s uses the full rate so the body
+/// actually reaches rest. Airborne stops are unchanged.
+inline float StopSettleRate(float rate, bool stopping, float speed) {
+    if (!stopping || speed >= 2.2f || speed < 0.12f) return rate;
+    const float eased = speed / 0.10f;
+    return eased < rate ? eased : rate;
+}
+
+/// One horizontal step toward `wish`. `accel` changes speed along the wish,
+/// `steer` removes the part of the velocity that isn't the wish, so a turn
+/// does not keep the old heading. Stopping uses `decel` and StopSettleRate.
+/// The caller passes already-scaled rates (air control included). Nothing
+/// here eases the input a second time.
+inline void StepPlanarVelocity(float& vx, float& vz, float wishX, float wishZ,
+                               bool moving, bool groundedStop, float accel, float decel,
+                               float steer, float dt) {
+    const float curX = vx, curZ = vz;
+    const float speed = std::sqrt(curX * curX + curZ * curZ);
+    if (!moving) {
+        const float rate = StopSettleRate(decel, groundedStop, speed);
+        const float step = rate * dt;
+        if (speed <= step || speed < 1e-4f) { vx = 0.0f; vz = 0.0f; return; }
+        const float k = (speed - step) / speed;
+        vx = curX * k; vz = curZ * k;
+        return;
+    }
+    const float wish = std::sqrt(wishX * wishX + wishZ * wishZ);
+    if (wish < 1e-5f) return;
+    const float dx = wishX / wish, dz = wishZ / wish;
+    float along = curX * dx + curZ * dz;
+    float sx = curX - dx * along, sz = curZ - dz * along;
+    float side = std::sqrt(sx * sx + sz * sz);
+    if (along < 0.0f) {
+        const float kill = std::min(-along, std::max(0.0f, steer) * dt);
+        along += kill;
+    }
+    const float gap = wish - along;
+    const float span = std::max(0.35f, wish * 0.28f);
+    const float ease = std::max(0.45f, std::min(1.0f, std::fabs(gap) / span));
+    const float step = std::max(0.0f, accel) * ease * dt;
+    if (gap > step) along += step;
+    else if (gap < -step) along -= step;
+    else along = wish;
+    const float brake = std::max(0.0f, steer) * dt;
+    if (side > brake && side > 1e-5f) {
+        const float k = (side - brake) / side;
+        sx *= k; sz *= k;
+    } else { sx = 0.0f; sz = 0.0f; }
+    vx = dx * along + sx;
+    vz = dz * along + sz;
+}
 
 /// An orbit controller places the main camera itself. A CameraFollow on that
 /// camera, or a virtual-camera brain with a live virtual camera, would fight it

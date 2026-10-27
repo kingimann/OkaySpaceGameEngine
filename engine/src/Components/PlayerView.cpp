@@ -2,6 +2,7 @@
 #include "okay/Components/PlayerCamera.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/ControllerFeel.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/FirstPersonHand.hpp"

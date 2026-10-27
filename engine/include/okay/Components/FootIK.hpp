@@ -190,6 +190,7 @@ public:
     // written it. Imported rigs create their per-node Animators lazily (at Play
     // start), which lands them after FootIK in the Update order — solving in
     // Update let those Animators clobber the correction the same frame.
+    void Update(float) override { m_restore.Restore(); }   // before the animator blends (see IKRestore.hpp)
     void LateUpdate(float dt) override {
         m_restore.Restore();   // last frame's corrections off before anything reads the pose
         if (EffWeight() <= 0.0f) return;

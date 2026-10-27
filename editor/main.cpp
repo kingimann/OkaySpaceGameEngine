@@ -19536,7 +19536,12 @@ static std::string TransitionSummary(const AnimStateMachine::Transition& tr) {
 
 static void DrawAnimatorGraph(EditorState& ed) {
     if (!g_showAnimatorGraph) return;
-    ImGui::SetNextWindowSize(ImVec2(860, 520), ImGuiCond_FirstUseEver);
+    if (std::getenv("OKAY_UI_ANIMGRAPH")) {
+        ImGui::SetNextWindowPos(ImVec2(24, 48), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(1280, 780), ImGuiCond_Always);
+    } else {
+        ImGui::SetNextWindowSize(ImVec2(860, 520), ImGuiCond_FirstUseEver);
+    }
     if (!ImGui::Begin("Animator", &g_showAnimatorGraph)) { ImGui::End(); return; }
 
     // Resolve the machine from the selection: self, then ancestors, then
@@ -20256,12 +20261,87 @@ static void DrawAnimatorGraph(EditorState& ed) {
         }
         if (!st.blendTree && ImGui::Checkbox("Loop##ag", &st.loop)) ed.dirty = true;
         if (ImGui::SliderFloat("IK weight##ag", &st.ikWeight, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Foot planting in this state (and Full Body IK, unless given its own weight below).");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Foot planting in this state (and Full Body IK, unless given its own weight below).\n"
+                                                      "A curve below multiplies this over the clip.");
+        auto drawIkCurve = [&](const char* id, std::vector<AnimStateMachine::State::IkKey>& keys, const char* tip) {
+            ImGui::PushID(id);
+            if (keys.empty()) {
+                if (ImGui::SmallButton("Add curve")) {
+                    keys.push_back({0.0f, 1.0f});
+                    keys.push_back({1.0f, 1.0f});
+                    ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+            } else {
+                const float mw = ImGui::GetContentRegionAvail().x, mh = 64.0f;
+                const ImVec2 mo = ImGui::GetCursorScreenPos();
+                ImGui::InvisibleButton("##plot", ImVec2(mw, mh));
+                ImDrawList* pdl = ImGui::GetWindowDrawList();
+                pdl->AddRectFilled(mo, ImVec2(mo.x + mw, mo.y + mh), ImGui::GetColorU32(ImGuiCol_FrameBg), 3.0f);
+                auto toP = [&](float t, float w) { return ImVec2(mo.x + t * mw, mo.y + (1.0f - w) * mh); };
+                auto fromP = [&](ImVec2 p) {
+                    float t = mw > 1.0f ? (p.x - mo.x) / mw : 0.0f;
+                    float w = mh > 1.0f ? 1.0f - (p.y - mo.y) / mh : 0.0f;
+                    return ImVec2(std::min(std::max(t, 0.0f), 1.0f), std::min(std::max(w, 0.0f), 1.0f));
+                };
+                std::vector<ImVec2> pts;
+                for (const auto& k : keys) pts.push_back(toP(k.t, k.w));
+                if ((int)pts.size() >= 2)
+                    pdl->AddPolyline(pts.data(), (int)pts.size(), ImGui::GetColorU32(ImGuiCol_PlotLines), ImDrawFlags_None, 2.0f);
+                if (ed.isPlaying() && sm->Current() == st.name) {
+                    float u = sm->NormalizedTime(); u -= std::floor(u); if (u < 0.0f) u += 1.0f;
+                    const float x = mo.x + u * mw;
+                    pdl->AddLine(ImVec2(x, mo.y), ImVec2(x, mo.y + mh), ImGui::GetColorU32(ImGuiCol_PlotHistogram));
+                }
+                static int s_drag = -1;
+                static std::vector<AnimStateMachine::State::IkKey>* s_owner = nullptr;
+                const ImVec2 mp = ImGui::GetIO().MousePos;
+                int hit = -1; float best = 9.0f;
+                for (int i = 0; i < (int)keys.size(); ++i) {
+                    const ImVec2 p = toP(keys[i].t, keys[i].w);
+                    const float d = std::hypot(p.x - mp.x, p.y - mp.y);
+                    if (d < best) { best = d; hit = i; }
+                }
+                if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && hit >= 0) {
+                    keys.erase(keys.begin() + hit); ed.dirty = true;
+                    if (s_owner == &keys) { s_drag = -1; s_owner = nullptr; }
+                } else if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+                    if (hit < 0) {
+                        const ImVec2 tw = fromP(mp);
+                        keys.push_back({tw.x, tw.y});
+                        std::stable_sort(keys.begin(), keys.end(), [](const auto& a, const auto& b) { return a.t < b.t; });
+                        hit = 0;
+                        for (int i = 0; i < (int)keys.size(); ++i) if (keys[i].t == tw.x && keys[i].w == tw.y) { hit = i; break; }
+                        ed.dirty = true;
+                    }
+                    s_drag = hit; s_owner = &keys;
+                }
+                if (s_owner == &keys && s_drag >= 0 && s_drag < (int)keys.size() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                    const ImVec2 tw = fromP(mp);
+                    keys[s_drag].t = tw.x; keys[s_drag].w = tw.y;
+                    const float t = tw.x, w = tw.y;
+                    std::stable_sort(keys.begin(), keys.end(), [](const auto& a, const auto& b) { return a.t < b.t; });
+                    s_drag = 0;
+                    for (int i = 0; i < (int)keys.size(); ++i) if (keys[i].t == t && keys[i].w == w) { s_drag = i; break; }
+                    ed.dirty = true;
+                }
+                if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) { s_drag = -1; s_owner = nullptr; }
+                for (int i = 0; i < (int)keys.size(); ++i) {
+                    const ImVec2 p = toP(keys[i].t, keys[i].w);
+                    pdl->AddCircleFilled(p, 4.0f, ImGui::GetColorU32(i == s_drag && s_owner == &keys ? ImGuiCol_PlotHistogramHovered : ImGuiCol_PlotLinesHovered));
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nClick to add a key, drag to move, right-click to remove.", tip);
+                if (ImGui::SmallButton("Clear curve")) { keys.clear(); ed.dirty = true; }
+            }
+            ImGui::PopID();
+        };
+        drawIkCurve("foot", st.ikCurve, "Foot IK weight over this clip (0 at the bottom, 1 at the top),\nmultiplied by the IK weight slider. Empty = that constant.");
         {
             bool follow = st.fullBodyIkWeight < 0.0f;
             if (ImGui::Checkbox("Full-body IK follows##ag", &follow)) { st.fullBodyIkWeight = follow ? -1.0f : 1.0f; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: Full Body IK gets its own weight here, so a state can stop foot\nplanting while the hands keep holding (prone, crawling).");
             if (!follow && ImGui::SliderFloat("Full-body IK weight##ag", &st.fullBodyIkWeight, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+            if (!follow) drawIkCurve("body", st.fullBodyIkCurve, "Full Body IK weight over this clip, multiplied by its slider.\nEmpty = the constant. Foot IK keeps its own curve.");
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("How much Foot IK / Full Body IK apply in this state; eases over\n"
                                                       "the transition. 0 for jumps, rolls and falls (feet leave the ground).");
@@ -42324,6 +42404,7 @@ int main(int argc, char** argv) {
             }
             if (const char* sn = std::getenv("OKAY_UI_SELECT"); sn && (s_focusFrames == 31 || s_focusFrames == 40))
                 for (const auto& up : ed.scene().Objects()) if (up->name == sn) { ed.Select(up.get()); break; }
+            if (std::getenv("OKAY_UI_ANIMGRAPH")) g_showAnimatorGraph = true;
             // OKAY_UI_UIADD=Lobby: the UI editing view with that prebuilt screen added
             // (screenshots of the UI editor and its "+ Add" menu).
             if (const char* ua = std::getenv("OKAY_UI_UIADD"); ua && s_focusFrames == 32) {
@@ -42461,6 +42542,7 @@ int main(int argc, char** argv) {
                             auto names = mx->ClipNames();
                             asmx->params = {{"speed", 0}, {"jump", 2}, {"grounded", 1}};
                             SM::State idle; idle.name = "Idle"; idle.clip = names[0]; idle.nx = 20; idle.ny = 130;
+                            idle.ikCurve = {{0.0f, 1.0f}, {0.45f, 0.2f}, {1.0f, 1.0f}};
                             SM::State move; move.name = "Locomotion"; move.blendTree = true; move.blendParam = "speed";
                             move.motions = {{names[0], 0.0f}, {names[1], 1.5f}, {names[2], 5.0f}}; move.nx = 300; move.ny = 130;
                             SM::State jump; jump.name = "Jump"; jump.clip = names[2]; jump.loop = false; jump.nx = 300; jump.ny = 10;

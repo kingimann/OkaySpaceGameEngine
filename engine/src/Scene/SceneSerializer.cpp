@@ -737,6 +737,20 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             for (const auto& st : asm2->states) out << " " << st.fullBodyIkWeight;
             out << "\n";
         }
+        // Per-state IK weight curves (foot, then full-body). Written only when
+        // a state has keys, so older scenes and older builds stay unchanged.
+        bool anyIkC = false;
+        for (const auto& st : asm2->states) anyIkC = anyIkC || !st.ikCurve.empty() || !st.fullBodyIkCurve.empty();
+        if (anyIkC) {
+            out << "  animsmikc " << asm2->states.size();
+            for (const auto& st : asm2->states) {
+                out << " " << st.ikCurve.size();
+                for (const auto& k : st.ikCurve) out << " " << k.t << " " << k.w;
+                out << " " << st.fullBodyIkCurve.size();
+                for (const auto& k : st.fullBodyIkCurve) out << " " << k.t << " " << k.w;
+            }
+            out << "\n";
+        }
         // Muted transitions.
         bool anyMute = false;
         for (const auto& st : asm2->states) for (const auto& tr : st.transitions) anyMute = anyMute || tr.muted;
@@ -3307,6 +3321,26 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     for (long i = 0; i < n && in; ++i) {
                         float w = -1.0f; in >> w;
                         if (i < (long)sm2->states.size()) sm2->states[i].fullBodyIkWeight = w;
+                    }
+                } else if (field == "animsmikc") {
+                    auto* sm2 = smFor();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n && in; ++i) {
+                        long nk = 0; in >> nk;
+                        std::vector<AnimStateMachine::State::IkKey> foot, body;
+                        for (long k = 0; k < nk && in; ++k) {
+                            AnimStateMachine::State::IkKey key; in >> key.t >> key.w;
+                            foot.push_back(key);
+                        }
+                        long nb = 0; in >> nb;
+                        for (long k = 0; k < nb && in; ++k) {
+                            AnimStateMachine::State::IkKey key; in >> key.t >> key.w;
+                            body.push_back(key);
+                        }
+                        if (sm2 && i < (long)sm2->states.size()) {
+                            sm2->states[i].ikCurve = std::move(foot);
+                            sm2->states[i].fullBodyIkCurve = std::move(body);
+                        }
                     }
                 } else if (field == "animsmparams") {
                     auto* sm2 = smFor();

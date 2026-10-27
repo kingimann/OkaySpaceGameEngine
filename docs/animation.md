@@ -516,6 +516,12 @@ and transitions. Beyond single conditions:
   clip (0.9 = 90%). With the *Always* condition it fires purely on time: an attack
   returning to locomotion when it's nearly done.
 - **Any State** — transitions checked from every state first (hit reactions, death).
+- **IK weight curve** — under a state's IK weight, **Add curve** shapes foot planting
+  over the clip (click to add a key, drag to move it, right-click to remove it).
+  The curve is multiplied by the IK weight slider. Full Body IK can have its own
+  curve when it does not follow the foot weight. Foot IK and Full Body IK read
+  the sampled weight; their solvers are unchanged. `SampleIkCurve` evaluates a
+  curve the same way.
 
 Scripts: `anim_set_float`, `anim_set_bool`, `anim_trigger`, `anim_state()`,
 `anim_prev_state()`, `anim_state_time()`, `anim_normalized_time()`.
@@ -531,7 +537,8 @@ Scripts: `anim_set_float`, `anim_set_bool`, `anim_trigger`, `anim_state()`,
 | Look-At IK / Aim IK | Head/spine tracking; point a bone (gun, torch) at a target. |
 
 Every IK component has **IK Active** and **Fade** so switching IK on or off blends
-instead of popping. Scripts: `ik_enable(on)`, `ik_set_weight(w)`,
+instead of popping. The Animator's per-state IK weight (and its curve over the
+clip) is what those components read as their state weight. Scripts: `ik_enable(on)`, `ik_set_weight(w)`,
 `ik_set_target(x, y, z)`, `ik_set_pole(x, y, z)`, and for Full Body IK
 `ik_hand("left", x, y, z [, weight])`, `ik_foot(...)`, `ik_look(x, y, z)`,
 `ik_release()`.

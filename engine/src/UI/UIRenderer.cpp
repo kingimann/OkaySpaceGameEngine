@@ -731,14 +731,68 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         Rect bg{(int)o.x, (int)o.y, (int)pb->size.x, (int)pb->size.y};
         FillUIShape(p, bg, pb->shape, pb->cornerRadius,
                     pb->background, pb->background, false, false, op);
-        float pfox, pfoy, pfw, pfh; pb->FillRect(pb->size.x, pb->size.y, pfox, pfoy, pfw, pfh);
-        Rect fl{(int)(o.x + pfox), (int)(o.y + pfoy), (int)pfw, (int)pfh};
         bool horiz = pb->fillDir == UIProgressBar::FillDir::LeftRight ||
                      pb->fillDir == UIProgressBar::FillDir::RightLeft;
-        FillUIShape(p, fl, pb->shape, pb->cornerRadius,
-                    pb->fill, pb->fillEnd, pb->gradientFill, horiz, op);
-        if (pb->showPercent) {
-            char pct[8]; std::snprintf(pct, sizeof(pct), "%d%%", (int)(pb->Fraction() * 100.0f + 0.5f));
+        // grok/ui-options: segments, a delayed damage trail, and a color that follows the value.
+        // All three off is the historical single fill (pixels unchanged).
+        auto paintFill = [&](float frac, const Color& c0, const Color& c1, bool grad) {
+            if (pb->segments < 2) {
+                float pfox, pfoy, pfw, pfh;
+                pb->FillRectAt(frac, pb->size.x, pb->size.y, pfox, pfoy, pfw, pfh);
+                Rect fl{(int)(o.x + pfox), (int)(o.y + pfoy), (int)pfw, (int)pfh};
+                FillUIShape(p, fl, pb->shape, pb->cornerRadius, c0, c1, grad, horiz, op);
+                return;
+            }
+            int n = pb->segments; if (n > 40) n = 40;
+            float gap = pb->segmentGap < 0.0f ? 0.0f : pb->segmentGap;
+            float span = horiz ? pb->size.x : pb->size.y;
+            float cell = (span - gap * (float)(n - 1)) / (float)n;
+            if (cell < 1.0f) cell = 1.0f;
+            const bool fromEnd = pb->fillDir == UIProgressBar::FillDir::RightLeft ||
+                                 pb->fillDir == UIProgressBar::FillDir::TopBottom;
+            for (int i = 0; i < n; ++i) {
+                float a = (float)i / (float)n, b = (float)(i + 1) / (float)n;
+                float sf = frac <= a ? 0.0f : (frac >= b ? 1.0f : (frac - a) / (b - a));
+                if (sf <= 0.0f) continue;
+                int slot = fromEnd ? (n - 1 - i) : i;
+                float along = slot * (cell + gap);
+                Rect fl;
+                if (horiz) {
+                    float fw = cell * sf;
+                    float x = pb->fillDir == UIProgressBar::FillDir::RightLeft ? (along + cell - fw) : along;
+                    fl = {(int)(o.x + x), (int)o.y, (int)fw, (int)pb->size.y};
+                } else if (pb->fillDir == UIProgressBar::FillDir::BottomTop) {
+                    float fh = cell * sf;
+                    float base = pb->size.y - along - cell;
+                    fl = {(int)o.x, (int)(o.y + base + cell - fh), (int)pb->size.x, (int)fh};
+                } else {
+                    float fh = cell * sf;
+                    fl = {(int)o.x, (int)(o.y + along), (int)pb->size.x, (int)fh};
+                }
+                if (fl.w > 0 && fl.h > 0)
+                    FillUIShape(p, fl, pb->shape, pb->cornerRadius, c0, c1, grad, horiz, op);
+            }
+        };
+        if (pb->segments < 2 && pb->trailDelay <= 0.0f && !pb->colorByValue) {
+            float pfox, pfoy, pfw, pfh; pb->FillRect(pb->size.x, pb->size.y, pfox, pfoy, pfw, pfh);
+            Rect fl{(int)(o.x + pfox), (int)(o.y + pfoy), (int)pfw, (int)pfh};
+            FillUIShape(p, fl, pb->shape, pb->cornerRadius,
+                        pb->fill, pb->fillEnd, pb->gradientFill, horiz, op);
+        } else {
+            if (pb->trailDelay > 0.0f && pb->TrailFraction() > pb->Fraction() + 0.001f)
+                paintFill(pb->TrailFraction(), pb->trailColor, pb->trailColor, false);
+            Color c0 = pb->colorByValue ? pb->ValueColor() : pb->fill;
+            Color c1 = (pb->gradientFill && !pb->colorByValue) ? pb->fillEnd : c0;
+            paintFill(pb->Fraction(), c0, c1, pb->gradientFill && !pb->colorByValue);
+        }
+        if (pb->showPercent || !pb->textFormat.empty()) {
+            char pct[48];
+            if (pb->textFormat.empty())
+                std::snprintf(pct, sizeof(pct), "%d%%", (int)(pb->Fraction() * 100.0f + 0.5f));
+            else {
+                std::string shown = pb->FormatText();
+                std::snprintf(pct, sizeof(pct), "%s", shown.c_str());
+            }
             float px = 2.0f;
             float tw = UITextW(pct, px);
             RGBA tc{(std::uint8_t)(pb->textColor.r * 255), (std::uint8_t)(pb->textColor.g * 255),
@@ -1125,13 +1179,19 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
             int kw = (int)(sl->size.y * sl->knobSize);
             kn = {(int)(o.x + sl->size.x * f) - kw / 2, (int)o.y - 2, kw, (int)sl->size.y + 4};
         }
+        // grok/ui-options: a fill gradient only when asked; otherwise the old solid fill.
         FillUIShape(p, fl, sl->trackShape, sl->cornerRadius,
-                    sl->fill, sl->fill, false, false, op);
-        // The handle: a circle when roundKnob, else a rounded tab.
-        FillUIShape(p, kn, sl->roundKnob ? UIShape::Circle : UIShape::Rounded,
+                    sl->fill, sl->fillGradient ? sl->fillEnd : sl->fill,
+                    sl->fillGradient, sl->fillGradient && !sl->vertical, op);
+        // The handle: a circle when roundKnob, else a rounded tab. knobShape overrides that.
+        UIShape ks = sl->roundKnob ? UIShape::Circle : UIShape::Rounded;
+        if (sl->knobShape >= 0 && sl->knobShape < kUIShapeCount) ks = (UIShape)sl->knobShape;
+        FillUIShape(p, kn, ks,
                     sl->cornerRadius, sl->knob, sl->knob, false, false, op);
         if (sl->showValue) {
-            char vbuf[16]; std::snprintf(vbuf, sizeof(vbuf), "%.2f", sl->value);
+            char vbuf[32];
+            if (sl->valueFormat.empty()) std::snprintf(vbuf, sizeof(vbuf), "%.2f", sl->value);
+            else std::snprintf(vbuf, sizeof(vbuf), "%s", sl->FormatValue().c_str());
             float px = 2.0f;
             RGBA tc{(std::uint8_t)(sl->textColor.r * 255), (std::uint8_t)(sl->textColor.g * 255),
                          (std::uint8_t)(sl->textColor.b * 255), (std::uint8_t)(sl->textColor.a * 255 * op)};
@@ -1312,9 +1372,10 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         }
         enterScroll(up.get(), o);
         Rect r{(int)o.x, (int)o.y, (int)bsz.x, (int)bsz.y};
-        if (btn->hoverScale != 1.0f && (btn->IsHovered() || btn->IsFocused())) {
-            int gx = (int)(bsz.x * (btn->hoverScale - 1.0f) * 0.5f);
-            int gy = (int)(bsz.y * (btn->hoverScale - 1.0f) * 0.5f);
+        float sc = btn->DisplayScale();
+        if (sc != 1.0f) {
+            int gx = (int)(bsz.x * (sc - 1.0f) * 0.5f);
+            int gy = (int)(bsz.y * (sc - 1.0f) * 0.5f);
             r.x -= gx; r.y -= gy; r.w += 2 * gx; r.h += 2 * gy;
         }
         if (btn->shadow) {                              // drop shadow behind (same shape)

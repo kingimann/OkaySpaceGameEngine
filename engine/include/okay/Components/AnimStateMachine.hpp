@@ -125,8 +125,15 @@ public:
 
     // ---- Layer settings (layer 0 = the base machine) ----
     int         layer = 0;
-    float       layerWeight = 1.0f;   ///< 0..1 how much this layer overrides the base pose
+    float       layerWeight = 1.0f;   ///< 0..1 how strongly this layer mixes in
     std::string maskBone;             ///< bone whose subtree this layer drives ("" = whole model)
+    /// More mask roots, each with the bones under it. Together with `maskBone`
+    /// this is the avatar mask (upper body plus the head, arms only, ...).
+    std::vector<std::string> maskBones;
+    /// Add the layer onto the base pose instead of replacing the masked bones.
+    /// Character clips are offsets from rest, so this is a recoil or aim layer.
+    /// Imported clips add their change from the clip's first frame.
+    bool        additive = false;
 
     std::vector<State> states;
     std::string entry;              ///< starting state ("" = first state)
@@ -515,7 +522,8 @@ private:
     void LayerPose() {
         AnimBackend* ma = Anim();
         if (!ma || m_lCT.empty() || layerWeight <= 0.0f) return;
-        ma->PoseLayer(m_lCT, m_lW, maskBone, std::fmin(layerWeight, 1.0f));
+        ma->PoseLayer(m_lCT, m_lW, maskBone, std::fmin(layerWeight, 1.0f), additive,
+                      maskBones.empty() ? nullptr : &maskBones);
     }
     // Looked up by name every frame (states may be edited at runtime); the last
     // hit is tried first, so the usual case is one string compare.

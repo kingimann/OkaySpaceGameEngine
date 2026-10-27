@@ -205,5 +205,46 @@ int main() {
         if (c2) CHECK_NEAR(c2->size.y, 3.0f, 1e-5f);
     }
 
+    // ---- Ray queries reuse the collider list until the scene changes ----
+    {
+        Scene s("rayCache");
+        GameObject* a = s.CreateGameObject("A");
+        a->AddComponent<SphereCollider3D>()->radius = 0.5f;
+        s.Start(); s.Update(0.0f);
+        Physics3D& p = s.physics3D();
+        CHECK(p.Raycast(s, {0, 5, 0}, {0, -1, 0}, 10.0f).gameObject == a);
+        // A collider added after a query is seen by the next one.
+        GameObject* b = s.CreateGameObject("B");
+        b->transform->localPosition = {0, 2, 0};
+        auto* bc = b->AddComponent<SphereCollider3D>();
+        bc->radius = 0.5f;
+        CHECK(p.Raycast(s, {0, 5, 0}, {0, -1, 0}, 10.0f).gameObject == b);
+        CHECK(p.RaycastAll(s, {0, 5, 0}, {0, -1, 0}, 10.0f).size() == 2);
+        // ... and a removed one is gone (no stale pointer in the cache).
+        b->RemoveComponent(bc);
+        CHECK(p.Raycast(s, {0, 5, 0}, {0, -1, 0}, 10.0f).gameObject == a);
+        // Rays that pass beside a collider, or stop short of it, miss it.
+        CHECK(!p.Raycast(s, {0.6f, 5, 0}, {0, -1, 0}, 10.0f).hit);
+        CHECK(!p.Raycast(s, {0, 5, 0}, {0, -1, 0}, 4.4f).hit);
+        CHECK(p.Raycast(s, {0, 5, 0}, {0, -1, 0}, 4.6f).hit);
+        // A ray starting inside a collider still hits it.
+        CHECK(p.Raycast(s, {0, 0, 0}, {0, -1, 0}, 10.0f).gameObject == a);
+        // Destroyed objects leave the list.
+        s.Destroy(a); s.Update(0.0f);
+        CHECK(!p.Raycast(s, {0, 5, 0}, {0, -1, 0}, 10.0f).hit);
+    }
+
+    // ---- FootIK's ground layers round-trip ----
+    {
+        Scene s("footMask");
+        GameObject* o = s.CreateGameObject("Legs");
+        o->AddComponent<FootIK>()->groundMask = (1u << 0) | (1u << 5);
+        Scene s2("footMask2");
+        CHECK(SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s)));
+        FootIK* f2 = s2.Find("Legs") ? s2.Find("Legs")->GetComponent<FootIK>() : nullptr;
+        CHECK(f2 != nullptr);
+        if (f2) CHECK(f2->groundMask == ((1u << 0) | (1u << 5)));
+    }
+
     TEST_MAIN_RESULT();
 }

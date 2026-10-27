@@ -58,6 +58,9 @@ public:
     float groundY    = 0.0f;   ///< fallback ground height when not raycasting
     float maxRayUp   = 0.6f;   ///< how far above the foot to start the ray
     float maxRayDown = 0.8f;   ///< how far below the foot the ground may be
+    /// Collider layers the feet stand on. The character's own colliders and
+    /// triggers never count as ground.
+    std::uint32_t groundMask = Physics3D::kAllLayers;
 
     // ---- Pelvis adjustment (plant on uneven ground) ----
     Transform* pelvis = nullptr;   ///< the hips/root bone to shift
@@ -251,8 +254,10 @@ private:
         if (outNormal) *outNormal = Vec3::Up;
         if (useRaycast && s) {
             Vec3 origin{foot.x, foot.y + maxRayUp, foot.z};
+            const Transform* root = CharacterRootOf(transform);
+            Physics3D::IgnoreHierarchy own(root ? root->gameObject : gameObject);
             RaycastHit3D hit = s->physics3D().Raycast(*s, origin, Vec3{0, -1, 0},
-                                                      maxRayUp + maxRayDown, gameObject);
+                                                      maxRayUp + maxRayDown, gameObject, groundMask, false);
             if (hit.hit && Finite(hit.point)) {
                 if (outNormal) *outNormal = Finite(hit.normal) ? hit.normal : Vec3::Up;
                 return hit.point.y;

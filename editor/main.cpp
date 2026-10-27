@@ -29192,6 +29192,7 @@ void DrawInspector(EditorState& ed) {
                 ImGui::DragFloat("Foot Offset##fik", &f->footOffset, 0.005f, 0.0f, 1.0f);
                 ImGui::Checkbox("Raycast Ground##fik", &f->useRaycast);
                 if (!f->useRaycast) ImGui::DragFloat("Ground Y##fik", &f->groundY, 0.05f);
+                else LayerMaskField("Ground Layers##fik", f->groundMask, "Collider layers the feet stand on: numbers or names\nseparated by commas (0,3 or Default,Ground). Blank = all layers.\nThe character's own colliders and triggers never count.");
                 ImGui::Checkbox("Adjust Pelvis##fik", &f->adjustPelvis); ImGui::SameLine();
                 ImGui::Checkbox("Plant Down##fik", &f->plantDown);
                 ImGui::Checkbox("Align To Slope##fik", &f->alignToGround); ImGui::SameLine();

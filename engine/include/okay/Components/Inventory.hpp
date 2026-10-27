@@ -2,7 +2,10 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/ScriptComponent.hpp"
+#include "okay/Inventory/InventoryEvents.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
+#include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -31,6 +34,14 @@ public:
     bool keepOnSceneLoad = false;
     /// Runtime: weight worn in a sibling Equipment, counted toward weightLimit (not saved).
     float wornWeight = 0.0f;
+
+    /// C++ hooks: how many of an item came in / went out (by any route: Add, a drag, a
+    /// chest move, crafting, ...), and what didn't fit when an add ran out of room. The
+    /// same events reach this object's scripts (on_item_added / on_item_removed /
+    /// on_inventory_full) and visual scripts (On Item Added / Removed / Inventory Full).
+    std::function<void(const std::string& item, int count)> onItemAdded, onItemRemoved, onInventoryFull;
+
+    void Start() override { if (!m_counted) Recount(m_counts); }
 
     /// Slots may be FIXED-POSITION: an empty stack (item == "" or count <= 0) is a
     /// reusable hole, so the UI can drag an item to any slot and leave a gap behind.
@@ -96,13 +107,16 @@ public:
     int AddPartial(const std::string& item, int n) {
         int leftover = AddRaw(item, n);
         if (leftover != n) NotifyChanged();
+        if (leftover > 0) NotifyFull(item, leftover);
         return leftover < 0 ? 0 : leftover;
     }
 
     /// Add `n` of an item — all or nothing: if they don't all fit, nothing changes
     /// and it returns false. (AddPartial adds what fits and reports the rest.)
     bool Add(const std::string& item, int n = 1) {
-        if (n <= 0 || item.empty() || CanAdd(item, n) < n) return false;
+        if (n <= 0 || item.empty()) return false;
+        const int fits = CanAdd(item, n);
+        if (fits < n) { NotifyFull(item, n - fits); return false; }
         AddRaw(item, n);
         NotifyChanged();
         return true;
@@ -148,21 +162,55 @@ public:
 
     /// Fire the sibling script's on_inventory_changed(). Every mutator calls this,
     /// including the UI's drag / split / sort / chest moves.
-    /// Fires on_encumbered(true/false) too when going over / back under weightLimit.
+    /// Fires on_encumbered(true/false) too when going over / back under weightLimit,
+    /// and on_item_added / on_item_removed for every item whose total changed.
     void NotifyChanged() {
         const bool over = OverWeight();
         const bool flipped = over != m_wasOver;
         m_wasOver = over;
+        // What changed since the last notify (moves inside the bag change nothing).
+        std::map<std::string, long long> now;
+        Recount(now);
+        std::vector<std::pair<std::string, long long>> delta;
+        for (const auto& kv : now) {
+            auto it = m_counts.find(kv.first);
+            const long long was = it == m_counts.end() ? 0 : it->second;
+            if (kv.second != was) delta.push_back({kv.first, kv.second - was});
+        }
+        for (const auto& kv : m_counts) if (!now.count(kv.first)) delta.push_back({kv.first, -kv.second});
+        m_counts.swap(now);   // before firing: a handler may change the inventory again
         if (gameObject)
             if (auto* sc = gameObject->GetComponent<ScriptComponent>())
                 if (sc->VM()) {
                     sc->VM()->CallEvent("on_inventory_changed");
                     if (flipped) sc->VM()->CallEventWith("on_encumbered", vs::VsValue(over));
                 }
+        for (const auto& d : delta) {
+            const int n = (int)(d.second > 0 ? d.second : -d.second);
+            if (d.second > 0) { if (onItemAdded) onItemAdded(d.first, n); }
+            else if (onItemRemoved) onItemRemoved(d.first, n);
+            InventoryEvents::Fire(gameObject, d.second > 0 ? "on_item_added" : "on_item_removed",
+                                  d.second > 0 ? "OnItemAdded" : "OnItemRemoved", {vs::VsValue(d.first), vs::VsValue((float)n)});
+        }
+    }
+
+    /// Report that `leftover` of `item` didn't fit (on_inventory_full). Add / AddPartial
+    /// call it; so do moves into this inventory that only partly fit (pickups, chests).
+    void NotifyFull(const std::string& item, int leftover) {
+        if (onInventoryFull) onInventoryFull(item, leftover);
+        InventoryEvents::Fire(gameObject, "on_inventory_full", "OnInventoryFull", {vs::VsValue(item), vs::VsValue((float)leftover)});
     }
 
 private:
     bool m_wasOver = false;
+    bool m_counted = false;
+    std::map<std::string, long long> m_counts;   // item totals at the last notify
+
+    void Recount(std::map<std::string, long long>& out) {
+        out.clear();
+        for (const auto& s : slots) if (!Empty(s)) out[s.item] += s.count;
+        m_counted = true;
+    }
 
     /// Add up to `n` without notifying; returns the leftover that didn't fit.
     int AddRaw(const std::string& item, int n) {

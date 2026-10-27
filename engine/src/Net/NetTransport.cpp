@@ -35,6 +35,12 @@ public:
     void SendReliable(const std::string& channel, const std::string& data) override {
         if (m_nm) m_nm->SendReliable(channel, data);
     }
+    void SendOrdered(const std::string& channel, const std::string& data) override {
+        if (m_nm) m_nm->SendOrdered(channel, data);
+    }
+    void SendSequenced(const std::string& channel, const std::string& data) override {
+        if (m_nm) m_nm->SendSequenced(channel, data);
+    }
     void Rpc(const std::string& name, const std::string& data) override {
         if (m_nm) m_nm->Rpc(name, data);
     }

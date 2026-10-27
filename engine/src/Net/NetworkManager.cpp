@@ -1,4 +1,5 @@
 #include "okay/Net/NetworkManager.hpp"
+#include "okay/Net/NetSim.hpp"
 #include "okay/Net/SessionTicket.hpp"
 #include "AntiCheatCrypto.hpp"   // shared/: ed25519 for the host identity (#269)
 #include "OfficialGame.hpp"      // shared/: SafeRelPath / ResolveInside for network prefab paths
@@ -343,11 +344,13 @@ void NetworkManager::Stop() {
     m_relayCode.clear();
     m_relayEp = net::Endpoint{};
     m_socket.Close();
+    net::ResetSimulator();
     if (m_netStarted) { net::Shutdown(); m_netStarted = false; }
     m_clients.clear();
     m_remotes.clear();
     m_remoteTarget.clear();
     m_inbox.clear();
+    m_rpcObserver = nullptr;
     m_syncVars.clear();
     m_rtt = 0.0f;
     m_ready = false;
@@ -356,6 +359,8 @@ void NetworkManager::Stop() {
     m_joinRejected = false;
     m_relOut.clear();
     m_relSeen.Clear();
+    m_toServer.Clear();
+    m_seqOrigin.Clear();
     m_netTick = 0;
     m_tickAccum = 0.0f;
     m_hostTickRate = 0.0f;
@@ -639,6 +644,8 @@ double NetworkManager::ViewTick() const {
 }
 
 void NetworkManager::Update(float dt) {
+    net::PumpSimulator(m_socket);
+    net::ProfileAdvance(dt);
     if (m_mode == Mode::Server) ServerTick(dt);
     else if (m_mode == Mode::Client) ClientTick(dt);
     InterpolateRemotes(dt);
@@ -647,6 +654,7 @@ void NetworkManager::Update(float dt) {
 
 void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
                              const std::string& data) {
+    net::NoteObject(net::ObjectKey(channel, data), channel.size() + data.size(), true);
     // The reserved "__spawn" channel instantiates a prefab on this peer instead
     // of surfacing as a user message (replicated object creation).
     if (channel == "__match_start") {   // lobby: the match has begun for this room
@@ -748,8 +756,10 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
     // First-class RPC: "__rpc/<name>" dispatches by name to a registered handler
     // (with the sender id + payload) instead of surfacing as a raw message.
     if (channel.size() > 6 && channel.compare(0, 6, "__rpc/") == 0) {
-        auto it = m_rpcHandlers.find(channel.substr(6));
+        const std::string rpcName = channel.substr(6);
+        auto it = m_rpcHandlers.find(rpcName);
         if (it != m_rpcHandlers.end() && it->second) it->second(from, data);
+        if (m_rpcObserver) m_rpcObserver(rpcName, from, data);
         return;
     }
     // Chat: "__chat" carries "<name>\n<text>"; logged + handed to the chat handler.
@@ -927,6 +937,7 @@ std::string NetworkManager::GetVar(const std::string& key) const {
 }
 
 void NetworkManager::SetVar(const std::string& key, const std::string& value) {
+    net::NoteObject(key, key.size() + value.size(), false);
     ApplySyncVar(key, value);                 // optimistic / offline local apply
     if (m_mode == Mode::Server) {
         net::Packet p(SyncVar); p.Write(key); p.Write(value);
@@ -946,10 +957,12 @@ void NetworkManager::SendTo(std::uint32_t targetId, const std::string& channel,
             if (c.id == targetId) {
                 net::Packet p(Message);
                 p.Write(m_localId); p.Write(channel); p.Write(data);
+                net::NoteObject(net::ObjectKey(channel, data), channel.size() + data.size(), false);
                 SendDatagram(c.endpoint, p.Data(), p.Size());
                 return;
             }
     } else if (m_mode == Mode::Client && m_joined) {
+        net::NoteObject(net::ObjectKey(channel, data), channel.size() + data.size(), false);
         net::Packet p(DirectMessage);
         p.Write(m_localId); p.Write(targetId); p.Write(channel); p.Write(data);
         SendDatagram(m_serverEp, p.Data(), p.Size());
@@ -964,6 +977,7 @@ void NetworkManager::SendReliableTo(std::uint32_t targetId, const std::string& c
                 std::uint32_t seq = c.relSeq++;
                 auto bytes = BuildReliable(seq, channel, data);
                 c.relOut[seq] = {bytes, 0.0f};
+                net::NoteObject(net::ObjectKey(channel, data), channel.size() + data.size(), false);
                 SendDatagram(c.endpoint, bytes.data(), bytes.size());
                 return;
             }
@@ -972,6 +986,7 @@ void NetworkManager::SendReliableTo(std::uint32_t targetId, const std::string& c
         std::uint32_t seq = m_relSeq++;
         auto bytes = BuildReliable(seq, channel, data);
         m_relOut[seq] = {bytes, 0.0f};
+        net::NoteObject(net::ObjectKey(channel, data), channel.size() + data.size(), false);
         SendDatagram(m_serverEp, bytes.data(), bytes.size());
     }
 }
@@ -982,6 +997,150 @@ void NetworkManager::SendReliable(const std::string& channel, const std::string&
     } else {
         SendReliableTo(0, channel, data);
     }
+}
+
+void NetworkManager::SendOrderedTo(std::uint32_t targetId, const std::string& channel,
+                                   const std::string& data) {
+    if (m_mode == Mode::Server) {
+        for (auto& [ep, c] : m_clients)
+            if (c.id == targetId) {
+                auto bytes = c.pipes.ordered.Push(channel, data, 0);
+                if (!bytes.empty()) SendDatagram(c.endpoint, bytes.data(), bytes.size());
+                return;
+            }
+    } else if (m_mode == Mode::Client && m_joined && targetId == 0) {
+        auto bytes = m_toServer.ordered.Push(channel, data, m_sessionCookie);
+        if (!bytes.empty()) SendDatagram(m_serverEp, bytes.data(), bytes.size());
+    }
+}
+
+void NetworkManager::SendOrdered(const std::string& channel, const std::string& data) {
+    if (m_mode == Mode::Server) {
+        for (auto& [ep, c] : m_clients) SendOrderedTo(c.id, channel, data);
+    } else {
+        SendOrderedTo(0, channel, data);
+    }
+}
+
+void NetworkManager::SendSequencedTo(std::uint32_t targetId, const std::string& channel,
+                                     const std::string& data) {
+    if (!net::ChannelNameOk(channel) || data.size() > net::kChannelPayloadMax) return;
+    if (m_mode == Mode::Server) {
+        const std::uint32_t seq = m_seqOrigin.Next(channel);
+        if (!seq) return;
+        auto bytes = net::BuildChanSeq(m_localId, seq, targetId, channel, data, 0);
+        for (auto& [ep, c] : m_clients)
+            if (c.id == targetId) {
+                SendDatagram(c.endpoint, bytes.data(), bytes.size());
+                return;
+            }
+    } else if (m_mode == Mode::Client && m_joined) {
+        // The server routes a directed packet (target 0 is the host), same as SendTo.
+        const std::uint32_t seq = m_toServer.sequencedTx.Next(channel);
+        if (!seq) return;
+        auto bytes = net::BuildChanSeq(m_localId, seq, targetId, channel, data, m_sessionCookie);
+        SendDatagram(m_serverEp, bytes.data(), bytes.size());
+    }
+}
+
+void NetworkManager::SendSequenced(const std::string& channel, const std::string& data) {
+    if (!net::ChannelNameOk(channel) || data.size() > net::kChannelPayloadMax) return;
+    if (m_mode == Mode::Server) {
+        const std::uint32_t seq = m_seqOrigin.Next(channel);
+        if (!seq) return;
+        auto bytes = net::BuildChanSeq(m_localId, seq, net::kChanBroadcast, channel, data, 0);
+        for (auto& [ep, c] : m_clients)
+            if (c.room == m_localRoom)
+                SendDatagram(c.endpoint, bytes.data(), bytes.size());
+    } else if (m_mode == Mode::Client && m_joined) {
+        const std::uint32_t seq = m_toServer.sequencedTx.Next(channel);
+        if (!seq) return;
+        auto bytes = net::BuildChanSeq(m_localId, seq, net::kChanBroadcast, channel, data, m_sessionCookie);
+        SendDatagram(m_serverEp, bytes.data(), bytes.size());
+    }
+}
+
+bool NetworkManager::AllowMessage(Client& c, std::size_t bytes) {
+    if (maxMessagesPerSecond > 0 && ++c.msgCount > maxMessagesPerSecond) return false;
+    return maxRelayedBytes <= 0 || (c.msgBytes += bytes) <= 4 * (std::size_t)maxRelayedBytes;
+}
+
+void NetworkManager::OnOrdered(net::ChannelEnd& link, const net::Endpoint& ackTo, std::uint32_t fromId,
+                               Client* sender, net::Packet& p, std::size_t len) {
+    const std::uint32_t seq = p.ReadU32();
+    std::string channel = p.ReadString();
+    std::string data = p.ReadString();
+    if (!p.Ok() || !net::ChannelNameOk(channel)) return;
+    if (sender && !CookieOk(*sender, p)) return;
+    const bool seen = link.ordered.Seen(channel, seq);
+    if (sender && !seen && !AllowMessage(*sender, len)) return;
+    bool deliver = sender == nullptr;
+    if (sender && !seen) {
+        if (channel == "__hit") {
+            HandleHitClaim(*sender, data);
+        } else {
+            deliver = ClientMessageOk(*sender, channel, data) && AntiCheatAllows(sender->id, channel, data);
+        }
+    }
+    std::vector<net::ChanMsg> got;
+    std::uint32_t ack = 0;
+    if (!link.ordered.Receive(channel, seq, std::move(data), deliver, fromId, got, ack)) return;
+    if (ack) {
+        auto bytes = net::BuildChanRelAck(channel, ack);
+        SendDatagram(ackTo, bytes.data(), bytes.size());
+    }
+    for (const net::ChanMsg& m : got) Deliver(m.from, m.channel, m.data);
+}
+
+void NetworkManager::OnOrderedAck(net::ChannelEnd& link, net::Packet& p) {
+    const std::string channel = p.ReadString();
+    const std::uint32_t ack = p.ReadU32();
+    if (!p.Ok() || !net::ChannelNameOk(channel)) return;
+    link.ordered.Ack(channel, ack);
+}
+
+void NetworkManager::OnSequencedFromClient(Client& from, net::Packet& p, std::size_t len) {
+    p.ReadU32();   // sender-reported id (the endpoint is the source of truth)
+    const std::uint32_t seq = p.ReadU32();
+    const std::uint32_t target = p.ReadU32();
+    std::string channel = p.ReadString();
+    std::string data = p.ReadString();
+    if (!p.Ok() || !net::ChannelNameOk(channel)) return;
+    if (!CookieOk(from, p)) return;
+    if (!from.pipes.sequencedRx.IsStale(from.id, channel, seq) && !AllowMessage(from, len)) return;
+    if (!from.pipes.sequencedRx.Accept(from.id, channel, seq)) return;
+    if (channel == "__hit") { HandleHitClaim(from, data); return; }
+    if (!ClientMessageOk(from, channel, data)) return;
+    if (!AntiCheatAllows(from.id, channel, data)) return;
+    const std::uint32_t sender = from.id;
+    const bool toHost = target == net::kChanBroadcast || target == m_localId;
+    if (toHost && (dedicated || m_localRoom == from.room)) Deliver(sender, channel, data);
+    if (target == net::kChanBroadcast) {
+        auto bytes = net::BuildChanSeq(sender, seq, net::kChanBroadcast, channel, data, 0);
+        for (auto& [ep, c] : m_clients)
+            if (c.id != sender && c.room == from.room)
+                SendDatagram(c.endpoint, bytes.data(), bytes.size());
+    } else if (target != m_localId) {
+        auto bytes = net::BuildChanSeq(sender, seq, target, channel, data, 0);
+        for (auto& [ep, c] : m_clients)
+            if (c.id == target) {
+                SendDatagram(c.endpoint, bytes.data(), bytes.size());
+                break;
+            }
+    }
+}
+
+void NetworkManager::OnSequencedFromServer(net::Packet& p) {
+    const std::uint32_t sender = p.ReadU32();
+    const std::uint32_t seq = p.ReadU32();
+    const std::uint32_t target = p.ReadU32();
+    const std::string channel = p.ReadString();
+    const std::string data = p.ReadString();
+    if (!p.Ok() || !net::ChannelNameOk(channel)) return;
+    if (sender == m_localId) return;
+    if (target != net::kChanBroadcast && target != m_localId) return;
+    if (!m_toServer.sequencedRx.Accept(sender, channel, seq)) return;
+    Deliver(sender, channel, data);
 }
 
 void NetworkManager::ResendReliable(
@@ -1048,12 +1207,19 @@ void NetworkManager::SendDatagram(const net::Endpoint& to, const std::uint8_t* d
 // wraps it in a RelayData frame addressed by the peer's slot (carried in `to`'s
 // address) and sends it to the relay, which forwards it on.
 void NetworkManager::Transmit(const net::Endpoint& to, const std::uint8_t* data, std::size_t size) {
-    if (!m_relay) { m_socket.SendTo(to, data, size); return; }
+    if (!m_relay) {
+        if (!net::HoldDatagram(m_socket, to, data, size)) {
+            if (m_socket.SendTo(to, data, size)) net::NoteWire(size, false);
+        }
+        return;
+    }
     net::Packet h(net::RelayData);
     h.Write(to.address);                       // destination slot
     std::vector<std::uint8_t> dg(h.Data(), h.Data() + h.Size());
     dg.insert(dg.end(), data, data + size);
-    m_socket.SendTo(m_relayEp, dg.data(), dg.size());
+    if (!net::HoldDatagram(m_socket, m_relayEp, dg.data(), dg.size())) {
+        if (m_socket.SendTo(m_relayEp, dg.data(), dg.size())) net::NoteWire(dg.size(), false);
+    }
 }
 
 // One physical datagram in. Direct mode is a pass-through. Relay mode peels the
@@ -1062,7 +1228,7 @@ void NetworkManager::Transmit(const net::Endpoint& to, const std::uint8_t* data,
 // application payload to return (or nothing is pending).
 int NetworkManager::ReceiveFrom(void* buffer, std::size_t capacity, net::Endpoint& from) {
     for (;;) {
-        int n = m_socket.RecvFrom(buffer, capacity, from);
+        int n = net::TakeDatagram(m_socket, buffer, capacity, from);
         if (n <= 0 || !m_relay) return n;
         if (!(from == m_relayEp)) continue;          // only the relay should reach us
         auto* b = static_cast<std::uint8_t*>(buffer);
@@ -1538,6 +1704,7 @@ void NetworkManager::Send(const std::string& channel, const std::string& data) {
     if (m_mode == Mode::Server) {
         // Server originates a message: stamp it with our id (0) and fan out to
         // the clients in the host's room.
+        net::NoteObject(net::ObjectKey(channel, data), channel.size() + data.size(), false);
         net::Packet p(Message);
         p.Write(m_localId);
         p.Write(channel);
@@ -1546,6 +1713,7 @@ void NetworkManager::Send(const std::string& channel, const std::string& data) {
             if (c.room == m_localRoom)
                 SendDatagram(c.endpoint, p.Data(), p.Size());
     } else if (m_mode == Mode::Client && m_joined) {
+        net::NoteObject(net::ObjectKey(channel, data), channel.size() + data.size(), false);
         net::Packet p(Message);
         p.Write(m_localId);
         p.Write(channel);
@@ -2326,6 +2494,7 @@ void NetworkManager::ServerTick(float dt) {
                 }
             }
             if (auto cl = m_clients.find(from); cl != m_clients.end() && !m_syncVars.count(key)) ++cl->second.varsCreated;
+            net::NoteObject(key, key.size() + value.size(), true);
             ApplySyncVar(key, value);
             // A client's write goes to its own room (the host applies every one).
             net::Packet out(SyncVar); out.Write(key); out.Write(value);
@@ -2431,6 +2600,12 @@ void NetworkManager::ServerTick(float dt) {
         } else if (type == ReliableAck) {
             auto it = m_clients.find(from);
             if (it != m_clients.end()) it->second.relOut.erase(p.ReadU32());
+        } else if (type == net::kChanRel || type == net::kChanRelAck || type == net::kChanSeq) {
+            auto it = m_clients.find(from);
+            if (it == m_clients.end()) continue;
+            if (type == net::kChanRel) OnOrdered(it->second.pipes, from, it->second.id, &it->second, p, len);
+            else if (type == net::kChanRelAck) OnOrderedAck(it->second.pipes, p);
+            else OnSequencedFromClient(it->second, p, len);
         } else if (type == DirectMessage) {
             auto it = m_clients.find(from);
             if (it != m_clients.end() && rateOk(it->second, len)) {
@@ -2679,7 +2854,12 @@ void NetworkManager::ServerTick(float dt) {
     }
 
     // Resend any unacked reliable messages to each client.
-    for (auto& [ep, c] : m_clients) ResendReliable(c.relOut, c.endpoint, dt);
+    for (auto& [ep, c] : m_clients) {
+        ResendReliable(c.relOut, c.endpoint, dt);
+        std::vector<std::vector<std::uint8_t>> due;
+        c.pipes.ordered.CollectResend(dt, due);
+        for (const auto& bytes : due) SendDatagram(c.endpoint, bytes.data(), bytes.size());
+    }
 }
 
 void NetworkManager::ClientTick(float dt) {
@@ -2763,6 +2943,11 @@ void NetworkManager::ClientTick(float dt) {
             m_pingTimer = 1.0f;
         }
         ResendReliable(m_relOut, m_serverEp, dt);   // keep retrying unacked messages
+        {
+            std::vector<std::vector<std::uint8_t>> due;
+            m_toServer.ordered.CollectResend(dt, due);
+            for (const auto& bytes : due) SendDatagram(m_serverEp, bytes.data(), bytes.size());
+        }
     }
 
     PruneFragments(dt);
@@ -2902,6 +3087,12 @@ void NetworkManager::ClientTick(float dt) {
             if (m_relSeen.Accept(seq)) Deliver(0, channel, data);
         } else if (type == ReliableAck) {
             m_relOut.erase(p.ReadU32());
+        } else if (type == net::kChanRel) {
+            OnOrdered(m_toServer, m_serverEp, 0, nullptr, p, len);
+        } else if (type == net::kChanRelAck) {
+            OnOrderedAck(m_toServer, p);
+        } else if (type == net::kChanSeq) {
+            OnSequencedFromServer(p);
         } else if (type == Snapshot) {
             std::uint32_t count = p.ReadU32();
             for (std::uint32_t i = 0; i < count && p.Ok(); ++i) {
@@ -2932,6 +3123,7 @@ void NetworkManager::ClientTick(float dt) {
         } else if (type == SyncVar) {
             std::string key = p.ReadString();
             std::string value = p.ReadString();
+            net::NoteObject(key, key.size() + value.size(), true);
             ApplySyncVar(key, value);
         } else if (type == Correct) {
             // The server rejected a move (or teleported us): go where it says.

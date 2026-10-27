@@ -11,6 +11,7 @@ namespace okay {
 
 class Scene;
 class Collider3D;
+class Terrain;
 class Rigidbody3D;
 class GameObject;
 
@@ -181,6 +182,15 @@ private:
     /// Continuous collision for one fast body: sweep it along this step's motion
     /// and stop it at the first solid it would otherwise pass through.
     void SweepBody(Scene& scene, Rigidbody3D* rb, float dt);
+    /// The colliders and terrains ray queries test, gathered once and reused
+    /// until the scene's objects or components change (not per ray).
+    struct QueryCache {
+        std::uint64_t scene = 0, structure = 0, components = 0;
+        std::vector<Collider3D*> colliders;
+        std::vector<Terrain*> terrains;
+    };
+    QueryCache m_query;
+    const QueryCache& QueryLists(Scene& scene);
 };
 
 } // namespace okay

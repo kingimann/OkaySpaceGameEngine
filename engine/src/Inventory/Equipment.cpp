@@ -1,11 +1,13 @@
 #include "okay/Components/Equipment.hpp"
 #include "okay/Components/GridInventory.hpp"
 #include "okay/Components/ItemPickup.hpp"
+#include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/Sockets.hpp"
 #include "okay/Components/Stats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalStats.hpp"
+#include "okay/Inventory/InventoryEvents.hpp"
 #include "okay/Inventory/InventoryPersistence.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
@@ -242,10 +244,15 @@ void Equipment::Show(int i) {
     GameObject* go = SceneSerializer::InstantiateFromFile(*scene, prefab);
     if (!go || !go->transform) return;
     MakeDisplayOnly(go);
-    GameObject* at = FindSocket(gameObject, s.socket.empty() ? DefaultSocket(s.accepts) : s.socket);
-    go->transform->SetParent((at ? at : gameObject)->transform, false);
-    go->transform->localPosition = Vec3::Zero;
-    go->transform->localRotation = Quat::Identity;
+    // The main hand goes to the character's hands when it can hold objects (grips + arm
+    // IK); otherwise, or if it won't take it, the item sits at the slot's socket.
+    auto* holding = s.accepts == EquipSlot::MainHand ? gameObject->GetComponent<ProceduralObjectHolding>() : nullptr;
+    if (!holding || !holding->Pickup(go)) {
+        GameObject* at = FindSocket(gameObject, s.socket.empty() ? DefaultSocket(s.accepts) : s.socket);
+        go->transform->SetParent((at ? at : gameObject)->transform, false);
+        go->transform->localPosition = Vec3::Zero;
+        go->transform->localRotation = Quat::Identity;
+    }
     // A worn bag: it's the player's container now, filled from the item's saved contents.
     if (auto* g = go->GetComponent<GridInventory>()) {
         g->worldItem = false;
@@ -263,6 +270,8 @@ void Equipment::Hide(int i) {
     if (GameObject* go = Shown(i)) {
         if (go->GetComponent<GridInventory>() && !s.item.empty() && s.shownItem == s.item)
             s.data = CurrentData(i);   // keep a worn bag's contents with the item
+        if (auto* holding = gameObject ? gameObject->GetComponent<ProceduralObjectHolding>() : nullptr)
+            if (holding->Held() == go) holding->Drop();   // let go before it's removed
         if (Scene* sc = go->scene()) sc->Destroy(go);
     }
     s.shown = 0;
@@ -298,8 +307,10 @@ void Equipment::ApplyBonuses(float armor, int defense, float weight) {
 
 void Equipment::Fire(const char* ev, int slot, const std::string& item) {
     if (!gameObject || slot < 0 || slot >= (int)slots.size()) return;
-    if (auto* sc = gameObject->GetComponent<ScriptComponent>())
-        if (sc->VM()) sc->VM()->CallEventArgs(ev, {vs::VsValue(slots[slot].name), vs::VsValue(item)});
+    const bool on = std::string(ev) == "on_equip";
+    if (on && onEquip) onEquip(slots[slot].name, item);
+    if (!on && onUnequip) onUnequip(slots[slot].name, item);
+    InventoryEvents::Fire(gameObject, ev, on ? "OnEquip" : nullptr, {vs::VsValue(slots[slot].name), vs::VsValue(item)});
 }
 
 } // namespace okay

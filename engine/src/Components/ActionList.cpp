@@ -601,6 +601,7 @@ bool ActionList::EvalConditions(const std::vector<Item>& conds) {
         else if (op == "has_tag")  ok = gameObject && gameObject->tag == Str(c, 0);
         else if (op == "is_in_action") ok = HumanoidActions::IsInAction(gameObject);
         else if (op == "is_dead") ok = HumanoidActions::IsDead(gameObject);
+        else if (op == "can_dive") ok = HumanoidActions::CanDive(gameObject);
         else if (op == "is_active")ok = gameObject && gameObject->active;
         else if (op == "has_item") {      // item [count] [object]: the inventory holds at least count
             Inventory* inv = ItemInv(c, gameObject, GetScene());
@@ -1218,6 +1219,7 @@ void ActionList::Update(float dt) {
             HumanoidActions::RequestDeath(gameObject, dir, hit);
         }
         else if (op == "revive") HumanoidActions::RequestRevive(gameObject);
+        else if (op == "dive") HumanoidActions::RequestDive(gameObject);
         else if (op == "set_cam") {
             if (scene && scene->mainCamera) {
                 Transform* ct = scene->mainCamera->gameObject->transform;

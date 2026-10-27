@@ -1364,6 +1364,7 @@ std::string Character::ToText() const {
         o << ' ' << (c.name.empty() ? "-" : c.name) << ' ' << c.keys.size();
         for (const auto& k : c.keys) o << ' ' << k.root.x << ' ' << k.root.y << ' ' << k.root.z;
     }
+    o << ' ' << (clipDive.empty() ? "-" : clipDive);
     return o.str();
 }
 
@@ -1465,6 +1466,9 @@ void Character::FromText(const std::string& text) {
             if (clip && in) clip->hasRoot = true;
         }
     }
+    // Optional trailing dive binding (absent in older saves).
+    std::string sdive;
+    if (in >> sdive) clipDive = (sdive == "-" ? "" : sdive);
     m_built = false;
 }
 

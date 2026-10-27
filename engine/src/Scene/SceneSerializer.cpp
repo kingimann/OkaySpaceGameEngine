@@ -292,7 +292,8 @@ void WriteStanceControl(std::ostream& out, const char* rec, const StanceControl&
     KvOut k{out};
     k.key("crouchKey", sc.crouchKey).key("proneKey", sc.proneKey).b("toggle", sc.toggle).b("prone", sc.allowProne)
      .b("resize", sc.resizeBody)("crouchSpeed", sc.crouchSpeed)("proneSpeed", sc.proneSpeed)
-     ("crouchH", sc.crouchHeight)("proneH", sc.proneHeight);
+     ("crouchH", sc.crouchHeight)("proneH", sc.proneHeight)
+     .b("dive", sc.diveOnProne)("diveHop", sc.diveHop)("diveSlide", sc.diveSlideTime);
     if (sc.Stance() != 0) k("stance", sc.Stance());   // saved crouched / prone (the collider is saved standing)
     out << "\n";
 }
@@ -302,6 +303,7 @@ void ReadStanceControl(std::istream& in, StanceControl* sc) {
     k.key("crouchKey", sc->crouchKey); k.key("proneKey", sc->proneKey); k.b("toggle", sc->toggle);
     k.b("prone", sc->allowProne); k.b("resize", sc->resizeBody); k.f("crouchSpeed", sc->crouchSpeed);
     k.f("proneSpeed", sc->proneSpeed); k.f("crouchH", sc->crouchHeight); k.f("proneH", sc->proneHeight);
+    k.b("dive", sc->diveOnProne); k.f("diveHop", sc->diveHop); k.f("diveSlide", sc->diveSlideTime);
     int st = 0; k.i("stance", st);
     if (st == 1 || st == 2) sc->Restore(st);
 }
@@ -1738,7 +1740,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  fpstance";
         KvOut k{out};
         k.b("prone", fp->allowProne).b("resize", fp->resizeBody)("crouchH", fp->crouchHeight)("proneH", fp->proneHeight)
-         ("pad", fp->stanceGamepadButton)("hold", fp->proneHoldTime);
+         ("pad", fp->stanceGamepadButton)("hold", fp->proneHoldTime)
+         .b("dive", fp->diveOnProneWhileSprinting)("diveHop", fp->diveHop)("diveSlide", fp->diveSlideTime);
         if (fp->stance() != std::remove_pointer_t<decltype(fp)>::Stance::Stand) k("stance", (int)fp->stance());   // saved crouched / prone
         out << "\n";
     }
@@ -1775,7 +1778,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  tpstance";
         KvOut k{out};
         k.b("prone", tp->allowProne).b("resize", tp->resizeBody)("crouchH", tp->crouchHeight)("proneH", tp->proneHeight)
-         ("pad", tp->stanceGamepadButton)("hold", tp->proneHoldTime);
+         ("pad", tp->stanceGamepadButton)("hold", tp->proneHoldTime)
+         .b("dive", tp->diveOnProneWhileSprinting)("diveHop", tp->diveHop)("diveSlide", tp->diveSlideTime);
         if (tp->stance() != std::remove_pointer_t<decltype(tp)>::Stance::Stand) k("stance", (int)tp->stance());   // saved crouched / prone
         out << "\n";
     }
@@ -4776,6 +4780,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         if (!c) return;
                         k.b("prone", c->allowProne); k.b("resize", c->resizeBody); k.f("crouchH", c->crouchHeight);
                         k.f("proneH", c->proneHeight); k.i("pad", c->stanceGamepadButton); k.f("hold", c->proneHoldTime);
+                        k.b("dive", c->diveOnProneWhileSprinting); k.f("diveHop", c->diveHop); k.f("diveSlide", c->diveSlideTime);
                         // Saved crouched / prone: start that way (the collider was saved standing).
                         int st = 0; k.i("stance", st);
                         using S = typename std::remove_pointer_t<decltype(c)>::Stance;

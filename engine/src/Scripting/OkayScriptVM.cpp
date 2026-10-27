@@ -4444,6 +4444,13 @@ struct OkayScriptVM::Impl {
         b["is_dead"] = [selfObj](std::vector<Value>&) {
             return Value{HumanoidActions::IsDead(selfObj()) ? 1.0f : 0.0f};
         };
+        b["dive"] = [selfObj](std::vector<Value>&) {
+            HumanoidActions::RequestDive(selfObj());
+            return Value{};
+        };
+        b["can_dive"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::CanDive(selfObj()) ? 1.0f : 0.0f};
+        };
         // ---- Blend shapes (morph targets) on this object and everything under it ----
         //   blend_shape("Smile", 0.8)   set a shape's weight 0..1 on every mesh that has it
         //   blend_shape_get("Smile")    read it back (0 if no mesh has it)

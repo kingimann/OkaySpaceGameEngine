@@ -338,6 +338,18 @@ Script: `play_action("Death" [, blend])` (0 if that state is missing),
 name is not a state or a blend-tree motion. Visual scripts: Play Action, Is In
 Action, Die, Revive.
 
+Dolphin dive (`Dive`, about 0.7s, then `DiveLand` if still in the air) is the
+second built-in action. Sprint, then press prone (first person, third person,
+and the third-person shooter; **Dive on prone while sprinting**, default on).
+That is separate from crouch-to-slide, which is unchanged. The launch is the
+current speed × 1.15, capped, plus a 0.25 m hop, with air steering off. The
+body eases down to the prone capsule while it flies and glides into prone on
+landing. A wall close in front keeps the crouch height and does not launch.
+`die` is the only thing that interrupts it. Script: `dive()`, `can_dive()`.
+Visual script: Dive. Animators also get a `dived` trigger. A Character can
+bind `clipDive` the same way as `clipJump`; a model with no Animator clip of
+that name still gets the movement.
+
 In the Inspector the Animator lists its states, what each plays (a clip, or a
 blend tree's clip count) and its transitions (folded; click to open). On a
 Character each state also has **Preview** (plays that clip live in the Scene

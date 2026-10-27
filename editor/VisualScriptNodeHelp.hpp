@@ -266,6 +266,7 @@ inline const char* VsNodeHelp(const char* type) {
         {"IsInAction",     "True while a built-in action state is playing."},
         {"Die",            "Kills this object (Health) and plays Death. Direction: forward, back, left or right."},
         {"Revive",         "Respawns a dead Health stat, or clears the Animator's dead flag so the body gets up."},
+        {"Dive",           "Dolphin dive: sprinting and on the ground, launch forward and land prone."},
         {"AnimTrigger",    "Fires a trigger on this object's Animator (e.g. Jump, Attack)."},
         {"AnimSetFloat",   "Sets a number parameter on this object's Animator (e.g. Speed)."},
         {"AnimSetBool",    "Sets a true/false parameter on this object's Animator (e.g. Grounded)."},

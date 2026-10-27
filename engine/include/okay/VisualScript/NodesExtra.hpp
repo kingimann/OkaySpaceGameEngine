@@ -507,6 +507,13 @@ struct DieNode : VsNode {
         return 0;
     }
 };
+struct DiveNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        HumanoidActions::RequestDive(ctx.gameObject);
+        return 0;
+    }
+};
 struct ReviveNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph&, VsContext& ctx) override {

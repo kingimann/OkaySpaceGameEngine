@@ -16,10 +16,10 @@ class GameObject;
 
 namespace HumanoidActions {
 
-/// How far the built-in action set has got. Death is 1. A saved graph records
-/// the revision it already has, so a later action is added once and a state the
-/// user deleted is not put back when the next action lands.
-constexpr int kActionsRev = 1;
+/// How far the built-in action set has got. Death is 1, dolphin dive is 2. A
+/// saved graph records the revision it already has, so a later action is added
+/// once and a state the user deleted is not put back when the next action lands.
+constexpr int kActionsRev = 2;
 
 /// One authored pose. Degrees, hip height in rig units, rootOffset.x/z a visual
 /// lean only (y is unused; hipY is the root height).
@@ -42,7 +42,9 @@ struct DeadShape {
 void Bake(std::vector<HumanoidLibrary::Entry>& out);
 /// Append this revision's states, params and Any-State transitions. Safe to
 /// call again: a state that already exists is left as the user edited it.
-void AddStates(AnimStateMachine& sm, const Character* body);
+/// `force` fills anything missing (the inspector button) and still does not
+/// overwrite a state. Otherwise only actions newer than `sm.actionsRev` are added.
+void AddStates(AnimStateMachine& sm, const Character* body, bool force = false);
 /// Stance-timed blends for action transitions (called from ApplyStanceTimes).
 void ApplyTimes(AnimStateMachine& sm);
 /// Saved default graphs (Idle/Walk/Run/Jump) gain any action whose revision is
@@ -75,6 +77,17 @@ void RequestRevive(GameObject* go);
 void ReviveAnim(GameObject* go);
 /// HealthStat::IsDead when that component is present, otherwise the `dead` param.
 bool IsDead(GameObject* go);
+
+/// True when a dive can start: alive, not already diving, on the ground, and
+/// moving fast (sprint / run / speed). `dive()` uses this.
+bool CanDive(GameObject* go);
+/// Play Dive and ask the movement controller for the launch. No-op when CanDive
+/// is false. Does not leave the `dive` trigger latched.
+void RequestDive(GameObject* go);
+/// Go to the Dive state (controllers call this when the launch starts).
+bool BeginDive(GameObject* go);
+/// True once, if RequestDive asked a controller to launch. Clears the flag.
+bool TakeDivePending(GameObject* go);
 
 /// True once the body is in DeadHold (or Death has played out).
 bool DeathPoseSettled(GameObject* go);

@@ -24,6 +24,7 @@
 #include "okay/Components/PlayerCamera.hpp"
 #include "okay/Components/PlayerView.hpp"
 #include "okay/Components/DeathLock.hpp"
+#include "okay/Components/DiveAction.hpp"
 
 namespace okay {
 
@@ -172,6 +173,11 @@ public:
     bool  canSlide = true;
     float slideSpeed = 10.0f;
     float slideTime  = 0.75f;
+
+    // ---- Dolphin dive (sprint, then prone). Does not change slide-on-crouch. ----
+    bool  diveOnProneWhileSprinting = true;
+    float diveHop = 0.25f;
+    float diveSlideTime = 0.45f;
 
     // ---- Hooks ----
     bool  driveStateMachine = true;     // feed an AnimStateMachine speed/grounded/crouch/aim/... + jump/land triggers
@@ -395,6 +401,27 @@ public:
             if (gameObject && gameObject->scene())
                 ResolvePlayerBody(*gameObject->scene(), gameObject);   // no clipping
         }
+        bool dived = false;
+        {
+            const float hsNow = rb ? std::sqrt(rb->velocity.x * rb->velocity.x + rb->velocity.z * rb->velocity.z) : 0.0f;
+            DiveTune tune;
+            tune.enabled = diveOnProneWhileSprinting;
+            tune.hop = diveHop;
+            tune.slideTime = diveSlideTime;
+            tune.proneSpeed = proneSpeed;
+            tune.crouchFrac = crouchHeight;
+            tune.proneFrac = proneHeight;
+            tune.resize = resizeBody;
+            tune.speedCap = runSpeed * 1.5f;
+            const DiveOut d = TickDive(gameObject, rb, m_dive, m_body, tune, grounded, m_wasRunning,
+                                       (int)m_wantStance, fwd, hsNow, dt);
+            if (d.pose.drive) {
+                m_stance = (Stance)d.pose.stance;
+                m_wantStance = m_padWant = (Stance)d.pose.stance;
+                m_stanceLevel = d.pose.level;
+            }
+            if (d.started) { dived = true; m_slideT = 0.0f; }
+        }
         // Slope limit: on terrain steeper than slopeLimit, cancel the uphill
         // velocity component and accelerate a downhill slide.
         if (rb && (grounded || rb->groundedOnTerrain) && slopeLimit > 0.0f && rb->groundNormal.y < std::cos(slopeLimit * Mathf::Deg2Rad)) {
@@ -529,7 +556,7 @@ public:
             if (rb) f.velocity = rb->velocity;
             f.crouch = m_stance == Stance::Crouch; f.prone = m_stance == Stance::Prone; f.stance = m_stanceLevel;
             f.sprint = running; f.slide = m_slideT > 0.0f; f.aim = m_aim;
-            f.jumped = m_jumped; f.landed = m_landed;
+            f.jumped = m_jumped; f.landed = m_landed; f.dived = dived;
             m_anim.Apply(gameObject, f);
         }
         m_jumped = false;
@@ -682,6 +709,7 @@ private:
     float m_aimT = 0.0f, m_mouseIdle = 0.0f, m_shake = 0.0f, m_stepDist = 0.0f, m_lastSpeed = 0.0f, m_lastVy = 0.0f;
     Stance m_prevStance = Stance::Stand;
     float m_slideT = 0.0f;
+    DiveMotion m_dive;
     Vec3  m_slideDir{0, 0, -1};
     int   m_steps = 0;
 

@@ -1813,6 +1813,35 @@ inline std::set<int> VsPasteText(VsEditGraph& g, const std::string& text, float 
     return made;
 }
 
+// A component or field dragged out of the Inspector. Payload is
+// "component\nSprite Renderer" or "field\nposition". Drops a node that reads
+// or writes that thing. An unknown name becomes a Const labelled with it.
+inline void VsPlaceInspectorDrop(VsEditGraph& g, VsEditState& st, float wx, float wy, const char* raw) {
+    std::string s = raw ? raw : "";
+    const auto nl = s.find('\n');
+    const std::string kind = nl == std::string::npos ? std::string("component") : s.substr(0, nl);
+    const std::string name = nl == std::string::npos ? s : s.substr(nl + 1);
+    const char* type = "Const";
+    std::string arg = name;
+    auto is = [&](const char* a) { return name == a; };
+    if (kind == "field") {
+        if (is("position") || is("localPosition")) { type = "GetPosition"; arg.clear(); }
+        else if (is("scale") || is("localScale")) { type = "GetScale"; arg.clear(); }
+        else if (is("rotation") || is("eulerAngles") || is("localEulerAngles")) { type = "GetRotation"; arg.clear(); }
+        else if (is("color")) { type = "SetColor"; arg.clear(); }
+    } else {
+        if (is("Transform") || is("Camera") || is("Light")) { type = "GetPosition"; arg.clear(); }
+        else if (is("Sprite Renderer") || is("Mesh Renderer") || is("Text Renderer")) { type = "SetColor"; arg.clear(); }
+        else if (is("Rigidbody2D") || is("Rigidbody3D")) { type = "SetVelocity"; arg.clear(); }
+        else if (is("Audio Source")) { type = "PlaySound"; arg.clear(); }
+    }
+    const int nid = g.add(type, wx, wy);
+    if (VsEditNode* nn = g.find(nid)) nn->arg = arg;
+    st.selected = nid;
+    st.sel = {nid};
+    g.dirty = true;
+}
+
 // Can a node of type `d` take a wire from the pending pin?
 inline bool VsCompatible(const VsDef& d, bool exec, bool fromOutput) {
     if (exec) return fromOutput ? d.execIn : !d.execOut.empty();
@@ -2168,6 +2197,15 @@ inline void Draw(EditorState& ed, bool* open) {
     ImGui::InvisibleButton("vscbg", ImVec2(canvasMax.x - canvasMin.x, canvasMax.y - canvasMin.y),
                            ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     bool canvasHovered = ImGui::IsItemHovered();
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("VS_INSPECTOR")) {
+            const float kL = 1.4f;
+            const float wx = (io.MousePos.x - canvasMin.x - st.pan.x) / (st.zoom * kL);
+            const float wy = (io.MousePos.y - canvasMin.y - st.pan.y) / (st.zoom * kL);
+            VsPlaceInspectorDrop(g, st, wx, wy, (const char*)p->Data);
+        }
+        ImGui::EndDragDropTarget();
+    }
     const bool bgClicked = ImGui::IsItemActivated() && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
     const bool canvasWindowHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
 

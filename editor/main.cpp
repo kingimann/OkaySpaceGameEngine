@@ -24276,6 +24276,13 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
     ImGui::SetNextItemOpen(want, ImGuiCond_Always);
     if (!en) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.62f, 0.66f, 1.0f));
     bool open = ImGui::CollapsingHeader(title.c_str(), ImGuiTreeNodeFlags_AllowOverlap);
+    if (ImGui::BeginDragDropSource()) {
+        const std::string payload = std::string("component\n") + label;
+        ImGui::SetDragDropPayload("VS_INSPECTOR", payload.c_str(), payload.size() + 1);
+        ImGui::TextUnformatted(label);
+        ImGui::TextDisabled("Drop on the visual script");
+        ImGui::EndDragDropSource();
+    }
     if (!en) ImGui::PopStyleColor();
     sCompOpen[okey] = open;
     const ImVec2 hmn = ImGui::GetItemRectMin(), hmx = ImGui::GetItemRectMax();
@@ -26671,6 +26678,13 @@ void DrawInspector(EditorState& ed) {
     }
 
     bool tfOpen = ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen);
+    if (ImGui::BeginDragDropSource()) {
+        const char* payload = "component\nTransform";
+        ImGui::SetDragDropPayload("VS_INSPECTOR", payload, std::strlen(payload) + 1);
+        ImGui::TextUnformatted("Transform");
+        ImGui::TextDisabled("Drop on the visual script");
+        ImGui::EndDragDropSource();
+    }
     // Right-click the Transform header: copy the whole TRS, paste it onto another
     // object.
     {
@@ -26711,6 +26725,13 @@ void DrawInspector(EditorState& ed) {
             others([&](GameObject* g) { g->transform->localPosition = t->localPosition; });
         }
         if (act) ed.PushUndo();
+        if (ImGui::BeginDragDropSource()) {
+            const char* payload = "field\nposition";
+            ImGui::SetDragDropPayload("VS_INSPECTOR", payload, std::strlen(payload) + 1);
+            ImGui::TextUnformatted("Position");
+            ImGui::TextDisabled("Drop on the visual script");
+            ImGui::EndDragDropSource();
+        }
         Vec3& e = g_euler[go];
         // Keep the displayed euler in sync with the ACTUAL rotation: when the
         // quaternion changed outside this field (gizmo drag, script, scene load,
@@ -26727,6 +26748,13 @@ void DrawInspector(EditorState& ed) {
             others([&](GameObject* g) { g->transform->localRotation = t->localRotation; g_euler[g] = e; });
         }
         if (act) ed.PushUndo();
+        if (ImGui::BeginDragDropSource()) {
+            const char* payload = "field\nrotation";
+            ImGui::SetDragDropPayload("VS_INSPECTOR", payload, std::strlen(payload) + 1);
+            ImGui::TextUnformatted("Rotation");
+            ImGui::TextDisabled("Drop on the visual script");
+            ImGui::EndDragDropSource();
+        }
         // Cameras aren't scalable (scaling warps the view); show it read-only.
         bool isCam = go->GetComponent<Camera>() != nullptr;
         static bool s_uniformScale = false;   // linked axes: drag one, all follow
@@ -26747,6 +26775,13 @@ void DrawInspector(EditorState& ed) {
             others([&](GameObject* g) { if (!g->GetComponent<Camera>()) g->transform->localScale = t->localScale; });
         }
         if (act) ed.PushUndo();
+        if (!isCam && ImGui::BeginDragDropSource()) {
+            const char* payload = "field\nscale";
+            ImGui::SetDragDropPayload("VS_INSPECTOR", payload, std::strlen(payload) + 1);
+            ImGui::TextUnformatted("Scale");
+            ImGui::TextDisabled("Drop on the visual script");
+            ImGui::EndDragDropSource();
+        }
         if (isCam) { ImGui::EndDisabled(); ImGui::TextDisabled("(camera scale is locked)"); }
         // Quick resets.
         if (ImGui::SmallButton("Reset Pos")) { ed.PushUndo(); t->localPosition = {0, 0, 0}; ed.dirty = true; }

@@ -334,6 +334,11 @@ Every N Times.
 
 ## Flow Graph editor: working faster
 
+- **Drag a component header, or Position / Rotation / Scale, from the Inspector
+  onto the graph.** Transform, Camera and Light drop a Get Position node.
+  Sprite, Mesh and Text drop Set Color. A rigidbody drops Set Velocity. Audio
+  drops Play Sound. Position, Rotation and Scale drop the matching getter.
+  Anything else drops a Const labelled with that name.
 - **Drag a wire into empty space** and the node palette opens, filtered to nodes
   that fit; the node you pick is wired to that pin.
 - **Box select** by dragging on empty canvas; Ctrl/Shift+click adds to the

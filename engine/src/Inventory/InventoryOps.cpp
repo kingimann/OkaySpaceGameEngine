@@ -1,6 +1,7 @@
 #include "okay/Inventory/InventoryOps.hpp"
 #include "okay/Components/BuildMode.hpp"
 #include "okay/Components/Consumables.hpp"
+#include "okay/Components/Equipment.hpp"
 #include <algorithm>
 #include <utility>
 
@@ -149,6 +150,8 @@ InvResult Use(Inventory* inv, int i, GameObject* user) {
                 const std::string& n = bm->palette[k].name;
                 if (n == item || (def && n == def->name)) { bm->SetActive(true); bm->SelectSlot(k); return InvResult::Done(0); }
             }
+    if (def && def->equip != EquipSlot::None)   // wearable / weapon: put it on (main hand for a weapon)
+        if (Equipment* eq = Equipment::Of(user)) return eq->EquipFrom(*inv, i);
     return InvResult::No("nothing uses it");
 }
 

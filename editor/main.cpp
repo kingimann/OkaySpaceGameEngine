@@ -28070,6 +28070,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("If this object (or a child) has a Character, replicate its animation + punches too.");
             if (ImGui::Checkbox("Players can claim it##ns", &ns->clientClaimable)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("With an Anti-Cheat Config, an object nobody owns is the host's: no player may move it or change its variables. Tick this for objects any player may grab (a ball): the first one to move it owns it.");
+            if (ns->authority == NetworkSync::Authority::Manual && !ns->clientClaimable)
+                ImGui::TextDisabled("Anti-cheat on: players can't move this or write its variables until \"Players can claim it\" is on.");
             if (ImGui::SmallButton("Remove##ns")) toRemove = ns;
         }
     }
@@ -30694,6 +30696,39 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TreePop();
             }
             if (ImGui::SmallButton("Remove##cs")) toRemove = cs;
+        }
+    }
+    if (auto* eq = dynamic_cast<Equipment*>(curComp)) {
+        if (CompHeader("Equipment", eq, &toRemove)) {
+            ImGui::TextDisabled("Worn / held items. Drag an item from the bag onto a slot in Play.");
+            if (ImGui::Checkbox("Show On Character##eq", &eq->showOnCharacter)) ed.dirty = true;
+            if (ImGui::Checkbox("Keep On Scene Load##eq", &eq->keepOnSceneLoad)) ed.dirty = true;
+            int removeAt = -1;
+            for (int i = 0; i < (int)eq->slots.size(); ++i) {
+                auto& s = eq->slots[i];
+                ImGui::PushID(i);
+                ImGui::Separator();
+                char nb[64]; std::snprintf(nb, sizeof(nb), "%s", s.name.c_str());
+                if (ImGui::InputText("Slot", nb, sizeof(nb))) { s.name = nb; ed.dirty = true; }
+                int acc = (int)s.accepts;
+                if (ImGui::BeginCombo("Accepts", acc == 0 ? "Anything equippable" : okay::EquipSlotName(s.accepts))) {
+                    for (int k = 0; k <= (int)okay::EquipSlot::OffHand; ++k)
+                        if (ImGui::Selectable(k == 0 ? "Anything equippable" : okay::EquipSlotName((okay::EquipSlot)k), k == acc)) {
+                            s.accepts = (okay::EquipSlot)k; ed.dirty = true;
+                        }
+                    ImGui::EndCombo();
+                }
+                char sb[64]; std::snprintf(sb, sizeof(sb), "%s", s.socket.c_str());
+                if (ImGui::InputTextWithHint("Socket", Equipment::DefaultSocket(s.accepts), sb, sizeof(sb))) { s.socket = sb; ed.dirty = true; }
+                if (ItemPicker("Worn Item", s.item, 160)) ed.dirty = true;
+                if (!s.item.empty() && !eq->Accepts(i, s.item))
+                    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "This item's equip slot doesn't match.");
+                if (ImGui::SmallButton("Remove Slot")) removeAt = i;
+                ImGui::PopID();
+            }
+            if (removeAt >= 0) { eq->slots.erase(eq->slots.begin() + removeAt); ed.dirty = true; }
+            if (ImGui::SmallButton("Add Slot##eq")) { Equipment::Slot s; s.name = "Slot"; eq->slots.push_back(s); ed.dirty = true; }
+            ImGui::TextDisabled("Item custom fields: armor, defense, equipPrefab.");
         }
     }
     if (auto* pk = dynamic_cast<ItemPickup*>(curComp)) {
@@ -34876,6 +34911,7 @@ void DrawInspector(EditorState& ed) {
                 ed.dirty = true;
             }
             if (item(!go->GetComponent<LootSource>(), "Loot Source")) { go->AddComponent<LootSource>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Equipment>(), "Equipment")) { go->AddComponent<Equipment>(); ed.dirty = true; }
             if (item(!go->GetComponent<ChestInventory>(), "Chest / Container")) {
                 go->AddComponent<ChestInventory>();
                 if (!go->GetComponent<Inventory>()) {        // chest needs an Inventory for its loot
@@ -35405,6 +35441,26 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             }
         }
         for (int i = 0; i < n && i < total; ++i) slot(hx + i * (sz + gap), hy, i, i == ui->selected);
+        // Equipment column (worn items) beside the open backpack, as in the player.
+        auto equipBox = [&](float x, float y, const std::string& item, const std::string& label) {
+            ImVec2 p0(canvasPos.x + x, canvasPos.y + y), p1(p0.x + sz, p0.y + sz);
+            dl->AddRectFilled(p0, p1, col(ui->slotBorder), cr);
+            float b = ui->borderWidth < 0 ? 0 : ui->borderWidth;
+            dl->AddRectFilled(ImVec2(p0.x + b, p0.y + b), ImVec2(p1.x - b, p1.y - b), col(item.empty() ? ui->emptySlotColor : ui->slotColor), cr > b ? cr - b : 0.0f);
+            if (!item.empty()) {
+                if (SDL_Texture* icon = ItemThumb(okay::ItemIconPath(ui->iconFolder, item)))
+                    dl->AddImage((ImTextureID)icon, ImVec2(p0.x + b + 2, p0.y + b + 2), ImVec2(p1.x - b - 2, p1.y - b - 2));
+                else dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), item.substr(0, ui->nameChars < 1 ? 1 : (std::size_t)ui->nameChars).c_str());
+            } else if (!label.empty()) {
+                okay::Color tc = ui->textColor; tc.a = 0.45f;
+                dl->AddText(ImVec2(p0.x + 3, p0.y + sz * 0.5f - ImGui::GetTextLineHeight() * 0.5f), col(tc), label.c_str());
+            }
+        };
+        if (L.equip)
+            for (int e = 0; e < L.equipN; ++e) {
+                float x, y; L.EquipXY(e, x, y);
+                equipBox(x, y, e == ui->equipDrag ? std::string() : L.equip->ItemIn(e), L.equip->slots[e].name);
+            }
         // Hotbar slot numbers (1–9).
         if (ui->slotNumbers)
             for (int i = 0; i < n && i < 9; ++i)
@@ -35438,6 +35494,12 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (gameView) {
             okay::Vec2 m = okay::Input::MousePosition();
             const okay::InventoryInput::HotbarFrame fr = okay::InventoryInput::HandleHotbar(*ui, L, m);
+            if (L.equip && fr.equipHover >= 0) {   // equipment slot under the cursor
+                float ex, ey; L.EquipXY(fr.equipHover, ex, ey);
+                dl->AddRectFilled(ImVec2(canvasPos.x + ex, canvasPos.y + ey), ImVec2(canvasPos.x + ex + sz, canvasPos.y + ey + sz), col(ui->hoverColor), cr);
+            }
+            if (L.equip && ui->equipDrag >= 0 && ui->equipDrag < L.equipN)   // a worn item following the cursor
+                equipBox(m.x - sz * 0.5f, m.y - sz * 0.5f, L.equip->ItemIn(ui->equipDrag), std::string());
             if (fr.target >= 0) {   // highlight the destination slot
                 float sx, sy; L.SlotXY(fr.target, sx, sy);
                 ImU32 hc = IM_COL32((int)(ui->selectedColor.r*255), (int)(ui->selectedColor.g*255), (int)(ui->selectedColor.b*255), 100);

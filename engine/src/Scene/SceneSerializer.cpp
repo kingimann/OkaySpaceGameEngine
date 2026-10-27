@@ -16,6 +16,7 @@
 #include "okay/Components/CharacterController3D.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/PlayerView.hpp"
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/BlockBuilder.hpp"
@@ -114,6 +115,7 @@
 #include "okay/Components/Flashlight.hpp"
 #include "okay/Components/FirstPersonHand.hpp"
 #include "okay/Components/NetworkSync.hpp"
+#include "okay/Components/NetworkObject.hpp"
 #include "okay/Components/AntiCheatConfig.hpp"
 #include "okay/Components/NetValidator.hpp"
 #include <cmath>
@@ -273,6 +275,7 @@ struct KvIn {
     const std::string* find(const char* k) const { auto it = m.find(k); return it == m.end() ? nullptr : &it->second; }
     void f(const char* k, float& v) const { if (auto* s = find(k)) v = std::strtof(s->c_str(), nullptr); }
     void i(const char* k, int& v) const { if (auto* s = find(k)) v = std::atoi(s->c_str()); }
+    void u(const char* k, std::uint32_t& v) const { if (auto* s = find(k)) v = (std::uint32_t)std::strtoul(s->c_str(), nullptr, 10); }
     void b(const char* k, bool& v) const { if (auto* s = find(k)) v = std::atoi(s->c_str()) != 0; }
     void key(const char* k, char& v) const { if (auto* s = find(k)) v = (char)std::atoi(s->c_str()); }
     void str(const char* k, std::string& v) const { if (auto* s = find(k)) v = *s; }
@@ -848,6 +851,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         if (ns->clientClaimable) out << " 1";   // only when set: other scenes don't change
         out << "\n";
     }
+    // netobject / nettransform / syncvar are their own records. An older engine
+    // refuses a scene that contains them; scenes without these components are unchanged.
+    if (auto* no = go->GetComponent<NetworkObject>()) {
+        out << "  netobject " << (int)no->authority << " " << (no->owned ? 1 : 0)
+            << " " << Quote(no->netId) << "\n";
+    }
+    if (go->GetComponent<NetworkTransform>()) out << "  nettransform\n";
+    for (auto* sv : go->GetComponents<SyncVar>())
+        out << "  syncvar " << Quote(sv->name) << " " << Quote(sv->value) << "\n";
     if (auto* ac = go->GetComponent<AntiCheatConfig>()) {
         const AntiCheatSettings& s = ac->settings;
         std::string allow;
@@ -1059,7 +1071,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
          .b("lock", f->footLock)("lockSpeed", f->lockSpeed)("lockHeight", f->lockHeight)
          ("lockRelease", f->lockRelease)
          ("upRX", f->footUpAxisR.x)("upRY", f->footUpAxisR.y)("upRZ", f->footUpAxisR.z)
-         ("om", 1);   // orient is saved after its migration: keep it as written
+         ("om", 1)   // orient is saved after its migration: keep it as written
+         ("mask", f->groundMask);
         auto lim = [&k](const char* p, const IKJointLimit& l) {
             if (!l.Active()) return;
             const std::string b = p;
@@ -1755,6 +1768,17 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << tp->landShake << " " << tp->strideLength << " " << (tp->canSlide ? 1 : 0)
             << " " << tp->slideSpeed << " " << tp->slideTime << " " << (tp->driveStateMachine ? 1 : 0)
             << " " << (tp->ikLook ? 1 : 0) << "\n";
+    }
+    // Player view toggle (grok/view-toggle). Its own record, so older scenes skip it.
+    // Fields: allow, view (0 first / 1 third), key, pad, blend, ex ey ez, dist, shoulder.
+    if (auto* pv = go->GetComponent<PlayerView>()) {
+        out << "  playerview";
+        KvOut k{out};
+        k.b("allow", pv->allowToggle)("view", (int)pv->defaultView).key("key", pv->toggleKey)
+         ("pad", pv->toggleGamepadButton)("blend", pv->blendTime)
+         ("ex", pv->eyeOffset.x)("ey", pv->eyeOffset.y)("ez", pv->eyeOffset.z)
+         ("dist", pv->thirdPersonDistance)("shoulder", pv->shoulderOffset);
+        out << "\n";
     }
     if (auto* td = go->GetComponent<TopDownController>()) {
         out << "  tdctrl " << td->walkSpeed << " " << td->runSpeed << " "
@@ -3579,6 +3603,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                       // which reads that foot's own rest pose (a mirrored rig's right
                       // sole isn't the left one's axis).
                       k.f("upRX", f->footUpAxisR.x); k.f("upRY", f->footUpAxisR.y); k.f("upRZ", f->footUpAxisR.z);
+                      k.u("mask", f->groundMask);
                       // Files from before orient's migration loaded a Character's
                       // part rig with it off; Start() turns it on there.
                       if (!k.find("om") && !f->orient) f->orientMigrate = true;
@@ -4543,6 +4568,20 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         tp->aimWithRightMouse = a != 0; tp->autoRecenter = rc != 0; tp->canSlide = sl != 0;
                         tp->driveStateMachine = sm != 0; tp->ikLook = ik != 0;
                     }
+                } else if (field == "playerview") {
+                    // grok/view-toggle. key=value record; missing keys keep the defaults.
+                    auto* pv = go->AddComponent<PlayerView>();
+                    KvIn k(in);
+                    k.b("allow", pv->allowToggle);
+                    int view = (int)pv->defaultView;
+                    k.i("view", view);
+                    pv->defaultView = (view == 0) ? PlayerView::View::First : PlayerView::View::Third;
+                    k.key("key", pv->toggleKey);
+                    k.i("pad", pv->toggleGamepadButton);
+                    k.f("blend", pv->blendTime);
+                    k.f("ex", pv->eyeOffset.x); k.f("ey", pv->eyeOffset.y); k.f("ez", pv->eyeOffset.z);
+                    k.f("dist", pv->thirdPersonDistance);
+                    k.f("shoulder", pv->shoulderOffset);
                 } else if (field == "fpctrl") {
                     float ws = 4.5f, rs = 8, jf = 6, ms = 0.15f; int cj = 1, da = 1, iy = 0;
                     in >> ws >> rs >> jf >> ms >> cj >> da;
@@ -5468,6 +5507,17 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ns->netId = ReadQuoted(in);
                     in >> std::ws;   // clientClaimable came later
                     if (std::isdigit(in.peek())) { int cc = 0; in >> cc; ns->clientClaimable = cc != 0; }
+                } else if (field == "netobject") {
+                    auto* no = go->AddComponent<NetworkObject>();
+                    int au = 0, ow = 1; in >> au >> ow;
+                    no->authority = (NetworkObject::Authority)au; no->owned = (ow != 0);
+                    no->netId = ReadQuoted(in);
+                } else if (field == "nettransform") {
+                    go->AddComponent<NetworkTransform>();
+                } else if (field == "syncvar") {
+                    auto* sv = go->AddComponent<SyncVar>();
+                    sv->name = ReadQuoted(in);
+                    sv->value = ReadQuoted(in);
                 } else if (field == "water") {
                     auto* w = go->AddComponent<Water>();
                     in >> w->size >> w->resolution >> w->waveHeight >> w->waveLength >> w->waveSpeed

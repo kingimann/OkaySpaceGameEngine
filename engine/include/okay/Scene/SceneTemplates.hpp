@@ -21,6 +21,7 @@
 #include "okay/Components/RootMotion.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/PlayerView.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
 #include "okay/Components/TopDownShooterController.hpp"
@@ -93,10 +94,23 @@ inline GameObject* EnsureMainCamera(Scene& scene) {
     return camObj;
 }
 
+/// GTA-style view switch (V / gamepad Back) on a first- or third-person player.
+/// Shoulder 0 and an inherited distance leave that controller's camera where it
+/// was; the scene starters pass a shoulder so the orbit sits over the shoulder.
+inline PlayerView* AddViewToggle(GameObject* player, PlayerView::View view, float shoulder = 0.0f) {
+    auto* pv = player->AddComponent<PlayerView>();
+    pv->allowToggle = true;
+    pv->defaultView = view;
+    pv->shoulderOffset = shoulder;
+    pv->thirdPersonDistance = -1.0f;
+    return pv;
+}
+
 /// Add a third-person player (orbit camera positioned by the controller).
 inline GameObject* AddThirdPersonPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
     GameObject* player = BuildPlayerBody(scene, pos, "Player");
     player->AddComponent<ThirdPersonController>();
+    AddViewToggle(player, PlayerView::View::Third);
     EnsureMainCamera(scene);
     return player;
 }
@@ -105,6 +119,7 @@ inline GameObject* AddThirdPersonPlayer(Scene& scene, const Vec3& pos = {0, 1, 0
 inline GameObject* AddFirstPersonPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
     GameObject* player = BuildPlayerBody(scene, pos, "Player");
     player->AddComponent<FirstPersonController>();
+    AddViewToggle(player, PlayerView::View::First);
     GameObject* camObj = scene.CreateGameObject("Player Camera");
     auto* cam = camObj->AddComponent<Camera>();
     cam->projection = Camera::Projection::Perspective;
@@ -382,6 +397,7 @@ inline void ThirdPerson(Scene& scene) {
         col->offset = {0.0f, 0.9f, 0.0f};   // wrap the body feet->head
     }
     player->AddComponent<ThirdPersonController>();
+    AddViewToggle(player, PlayerView::View::Third, 0.45f);   // V switches to the eyes
 
     // The controller positions this camera behind the player each frame.
     GameObject* camObj = scene.CreateGameObject("Main Camera");
@@ -588,6 +604,7 @@ inline void FPS(Scene& scene) {
                                             // so lift the box to wrap feet->head
     }
     player->AddComponent<FirstPersonController>();
+    AddViewToggle(player, PlayerView::View::First, 0.45f);   // V switches to over the shoulder
 
     // Camera mounted on the player at eye height, just in front of the face so you
     // don't see the inside of your own head.
@@ -1189,7 +1206,10 @@ inline void TerrainSandbox(Scene& scene) {
         col->size = {0.6f, 1.8f, 0.6f};
         col->offset = {0.0f, 0.9f, 0.0f};
     }
-    player->AddComponent<FirstPersonController>();
+    // Right mouse raises terrain (TerrainDigger). Aim-down-sights zoom uses that
+    // same button, and it pulled the view in while building up ground.
+    auto* fp = player->AddComponent<FirstPersonController>();
+    fp->zoomWithRightMouse = false;
 
     GameObject* camObj = scene.CreateGameObject("FPS Camera");
     auto* cam = camObj->AddComponent<Camera>();
@@ -1244,9 +1264,23 @@ inline void VoxelSandbox(Scene& scene) {
     auto* dig = ground->AddComponent<VoxelDigger>();
     dig->radius = 3.0f; dig->strength = 10.0f;   // left = dig, right = add (defaults)
 
-    // A lake of animated water sitting in the low ground.
+    // A lake in the low ground. 0.32 * SizeY is below every hill this Generate
+    // builds (surface = SizeY * 0.55 ± amplitude), so the water used to sit
+    // inside solid terrain and never showed. Use the real surface instead:
+    // low enough that valleys flood, high enough that the peaks stay dry.
+    float minSurf = 1.0e9f, maxSurf = -1.0e9f;
+    const float sample = 4.0f;
+    for (float z = -vox->HalfZ(); z <= vox->HalfZ(); z += sample)
+        for (float x = -vox->HalfX(); x <= vox->HalfX(); x += sample) {
+            float y = 0.0f;
+            if (!vox->SurfaceY(x, z, y)) continue;
+            if (y < minSurf) minSurf = y;
+            if (y > maxSurf) maxSurf = y;
+        }
+    const float waterY = (minSurf < maxSurf) ? minSurf + (maxSurf - minSurf) * 0.22f
+                                              : vox->SizeY() * 0.5f;
     GameObject* lake = scene.CreateGameObject("Water");
-    lake->transform->localPosition = {0, vox->SizeY() * 0.32f, 0};
+    lake->transform->localPosition = {0, waterY, 0};
     auto* water = lake->AddComponent<Water>();
     water->size = vox->HalfX() * 2.4f;
     water->Apply();

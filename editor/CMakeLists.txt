@@ -53,6 +53,7 @@ add_executable(okay-editor main.cpp EditorState.cpp
     EditorWidgets.cpp                                                  # shared widgets (accent, icons, search field)
     ConsolePanel.cpp                                                   # ConsoleLog + Console panel
     SceneManagerPanel.cpp                                              # Scene Manager window
+    NetSimPanel.cpp                                                    # net simulator + traffic panel
     UIInspectorLayout.cpp                                              # flex / mask / list view inspectors
     UIInspectorOverlay.cpp                                             # modal / context menu / keybind inspectors
     UIPreviewPainter.cpp                                               # engine UI renderer -> ImGui draw list

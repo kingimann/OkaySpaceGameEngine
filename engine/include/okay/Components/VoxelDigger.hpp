@@ -6,10 +6,13 @@
 #include "okay/Components/VoxelTerrain.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/AudioSource.hpp"
+#include "okay/Components/ParticleSystem.hpp"
 #include "okay/Render/Mesh.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Core/Game.hpp"
 #include <cmath>
+#include <algorithm>
 
 namespace okay {
 
@@ -74,9 +77,9 @@ public:
     }
 
     void Update(float dt) override {
-        if (Game::Paused()) { HideBrush(); return; }   // no aim marker / digging while paused
+        if (Game::Paused()) { HideBrush(); DigSound(false); return; }   // no aim marker / digging while paused
         VoxelTerrain* vox = FindVoxel();
-        if (!vox) { HideBrush(); return; }
+        if (!vox) { HideBrush(); DigSound(false); return; }
         Vec3 local;
         bool aiming = AimAtVoxel(vox, local);
         if (showBrush && aiming) ShowBrushAt(*vox, local);
@@ -104,22 +107,40 @@ public:
                                       (secondary && !primary) ? -amt : amt);   // 2nd button fills
             }
             else                        changed = vox->SmoothAt(local, radius, std::min(1.0f, amt));
-            if (changed) vox->Apply();   // re-skin only when something actually moved
-        } else if (m_wasActing) {
-            // Just released: sweep up any floating crumbs the dig left behind, then
-            // re-skin once. (Done on release, not every frame, so it stays cheap.)
-            if (removeFloaters > 1 && vox->RemoveFloaters(removeFloaters) > 0) vox->Apply();
+            if (changed) {
+                vox->Apply();   // re-skin only when something actually moved
+                if (vox->gameObject && vox->gameObject->transform) {
+                    Vec3 vp = vox->gameObject->transform->Position();
+                    KickDebris({vp.x + local.x, vp.y + local.y, vp.z + local.z});
+                }
+            }
+            DigSound(true);
+        } else {
+            if (m_wasActing) {
+                // Just released: sweep up any floating crumbs the dig left behind, then
+                // re-skin once. (Done on release, not every frame, so it stays cheap.)
+                if (removeFloaters > 1 && vox->RemoveFloaters(removeFloaters) > 0) vox->Apply();
+            }
+            DigSound(false);
         }
         m_wasActing = acting;
     }
 
     void OnDestroy() override {
-        if (brush_) { if (Scene* s = GetScene()) s->Destroy(brush_); brush_ = nullptr; }
+        if (Scene* s = GetScene()) {
+            if (brush_) s->Destroy(brush_);
+            if (debris_) s->Destroy(debris_);
+        }
+        brush_ = nullptr;
+        debris_ = nullptr;
     }
 
 private:
     GameObject* brush_ = nullptr;
+    GameObject* debris_ = nullptr;
     bool m_wasActing = false;   ///< were we digging last frame? (to clean up crumbs on release)
+    bool soundHeld_ = false;
+    bool soundStarted_ = false;
 
     void ShowBrushAt(VoxelTerrain& vox, const Vec3& local) {
         Scene* s = GetScene();
@@ -148,6 +169,57 @@ private:
         mr->color = brushColor;
         brush_ = b;
         return b;
+    }
+
+    void KickDebris(const Vec3& world) {
+        Scene* s = GetScene();
+        if (!s) return;
+        if (!debris_) {
+            debris_ = s->CreateGameObject("VoxelDebris");
+            if (!debris_) return;
+            debris_->tag = "VoxelDebris";
+            auto* ps = debris_->AddComponent<ParticleSystem>();
+            ps->playing = false;
+            ps->emissionRate = 0.0f;
+            ps->maxParticles = 48;
+            ps->startLifetime = 0.45f;
+            ps->startLifetimeRandom = 0.12f;
+            ps->startSize = 0.14f;
+            ps->startSizeRandom = 0.06f;
+            ps->startVelocity = {0.0f, 2.2f, 0.0f};
+            ps->shape = ParticleSystem::Shape::Sphere;
+            ps->gravity = {0.0f, -12.0f, 0.0f};
+            ps->startColor = Color::FromBytes(130, 104, 78);
+            ps->fadeOverLife = true;
+            ps->sizeOverLife = true;
+            ps->endSize = 0.04f;
+        }
+        if (!debris_->transform) return;
+        debris_->active = true;
+        debris_->transform->localPosition = world;
+        if (auto* ps = debris_->GetComponent<ParticleSystem>()) {
+            ps->shapeRadius = std::max(0.2f, radius * 0.3f);
+            ps->Emit(4);
+        }
+    }
+
+    /// Dig sound hook: an AudioSource on this object plays while the button is
+    /// held on the surface and stops on release. No clip is bundled.
+    void DigSound(bool acting) {
+        AudioSource* au = gameObject ? gameObject->GetComponent<AudioSource>() : nullptr;
+        if (!au) { soundHeld_ = false; return; }
+        if (acting) {
+            if (!soundHeld_) {
+                soundStarted_ = !au->IsPlaying();
+                if (soundStarted_) au->Play();
+                soundHeld_ = true;
+            } else if (soundStarted_ && !au->IsPlaying()) {
+                au->Play();
+            }
+        } else if (soundHeld_) {
+            if (soundStarted_) au->Stop();
+            soundHeld_ = false;
+        }
     }
 };
 

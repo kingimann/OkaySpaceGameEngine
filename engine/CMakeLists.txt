@@ -23,7 +23,9 @@ add_library(okay_engine
     src/Net/SessionTicket.cpp
     src/Net/ClockCheck.cpp
     src/Components/AntiCheatConfig.cpp
+    src/Components/NetworkObject.cpp
     src/Net/NetworkManager.cpp
+    src/Net/NetSim.cpp
     src/Net/RelayServer.cpp
     src/Net/DedicatedServer.cpp
     src/Net/ServerQuery.cpp
@@ -58,6 +60,7 @@ add_library(okay_engine
     src/Inventory/InventoryPersistence.cpp
     src/Inventory/Recipe.cpp
     src/Inventory/Equipment.cpp
+    src/Inventory/InventoryEvents.cpp
     src/UI/InventoryInput.cpp
     src/Components/UIDocument.cpp
     src/Components/UILayoutGroup.cpp
@@ -73,6 +76,7 @@ add_library(okay_engine
     src/Components/Terrain.cpp
     src/Components/VoxelTerrain.cpp
     src/Components/Character.cpp
+    src/Components/PlayerView.cpp
     src/Components/CharacterAnimBackend.cpp
     src/Animation/HumanoidMotion.cpp
     src/Animation/HumanoidLibrary.cpp

@@ -213,6 +213,43 @@ static std::vector<ScriptLint> AnalyzeScriptWarnings(
     return out;
 }
 
+// Editable text buffers for script components, keyed by pointer. Lives above
+// the GUI split so Play (and --selftest) can compile what is on screen.
+std::unordered_map<void*, std::vector<char>> g_codeBuf;
+const char* PeekCodeBuffer(void* key) {
+    auto it = g_codeBuf.find(key);
+    return it == g_codeBuf.end() ? nullptr : it->second.data();
+}
+std::vector<char>& CodeBuffer(void* key, const std::string& initial) {
+    auto it = g_codeBuf.find(key);
+    if (it == g_codeBuf.end()) {
+        std::vector<char> b(65536, 0);
+        std::strncpy(b.data(), initial.c_str(), b.size() - 1);
+        it = g_codeBuf.emplace(key, std::move(b)).first;
+    }
+    return it->second;
+}
+void SetCodeBuffer(void* key, const std::string& text) {
+    auto& b = g_codeBuf[key];
+    if (b.size() < 65536) b.assign(65536, 0); else std::fill(b.begin(), b.end(), 0);
+    std::strncpy(b.data(), text.c_str(), b.size() - 1);
+}
+
+// Play runs the scene as it is. An open script tab can be ahead of that, so
+// copy each live buffer into its component and compile it first.
+static void CompileOpenScriptBuffers(okay::Scene& scene) {
+    for (auto& up : scene.Objects()) {
+        if (!up) continue;
+        for (auto* sc : up->GetComponents<okay::ScriptComponent>()) {
+            const char* live = PeekCodeBuffer(sc);
+            if (!live || sc->Source() == live) continue;
+            std::string err;
+            if (!sc->LoadSource(live, &err))
+                okay::Log::Error("Script compile error on ", up->name, ": ", err);
+        }
+    }
+}
+
 // ----------------------------------------------------------------------------
 // Headless self-test: verifies the editor's model logic with no GUI.
 // ----------------------------------------------------------------------------
@@ -240,6 +277,23 @@ static int RunSelfTest() {
     GameObject* loaded = ed2.scene().Find("Hero");
     check(loaded != nullptr, "loaded object present");
     if (loaded) check(loaded->transform->localPosition == Vec3(5, 6, 0), "position preserved");
+
+    // Play compiles the open script buffer, not the last time someone hit Run.
+    {
+        EditorState ped;
+        GameObject* mover = ped.scene().CreateGameObject("Mover");
+        auto* sc = mover->AddComponent<ScriptComponent>("okayscript");
+        std::string serr;
+        check(sc->LoadSource("update(dt) { set_pos(1, 0); }\n", &serr), "old script loads");
+        SetCodeBuffer(sc, "update(dt) { set_pos(9, 0); }\n");
+        CompileOpenScriptBuffers(ped.scene());
+        ped.Play();
+        ped.Tick(1.0f / 60.0f);
+        GameObject* played = ped.scene().Find("Mover");
+        check(played && std::fabs(played->transform->localPosition.x - 9.0f) < 0.01f,
+              "play compiled the open script buffer");
+        ped.Stop();
+    }
 
     // Play / stop restores edit state (move during play is reverted).
     ed.Play();
@@ -3146,29 +3200,6 @@ static float SegDistPx(ImVec2 p, ImVec2 a, ImVec2 b) {
 
 // Per-object editor-only Euler-angle cache (degrees) for the inspector.
 std::unordered_map<GameObject*, Vec3> g_euler;
-
-// Editable text buffers for script/visual-script components, keyed by pointer.
-std::unordered_map<void*, std::vector<char>> g_codeBuf;
-// Peek the live edit buffer for a key (e.g. a ScriptComponent) without creating
-// one — lets the inspector read the code being typed, not just the last compile.
-const char* PeekCodeBuffer(void* key) {
-    auto it = g_codeBuf.find(key);
-    return it == g_codeBuf.end() ? nullptr : it->second.data();
-}
-std::vector<char>& CodeBuffer(void* key, const std::string& initial) {
-    auto it = g_codeBuf.find(key);
-    if (it == g_codeBuf.end()) {
-        std::vector<char> b(65536, 0);
-        std::strncpy(b.data(), initial.c_str(), b.size() - 1);
-        it = g_codeBuf.emplace(key, std::move(b)).first;
-    }
-    return it->second;
-}
-void SetCodeBuffer(void* key, const std::string& text) {
-    auto& b = g_codeBuf[key];
-    if (b.size() < 65536) b.assign(65536, 0); else std::fill(b.begin(), b.end(), 0);
-    std::strncpy(b.data(), text.c_str(), b.size() - 1);
-}
 
 // Attach a script asset to an object: a .okay text script becomes a Script
 // component, a .okayvs node graph a Visual Script. Every drop target and menu
@@ -6146,6 +6177,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (g_clearConsoleOnPlay) ConsoleClear();
             StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed);   // previews must not override Play
             okay::editor::apreview::Stop(ed.scene());   // before the snapshot, so Play doesn't save the preview pose
+            CompileOpenScriptBuffers(ed.scene());
             ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
             g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
         } else {
@@ -14691,6 +14723,7 @@ void HandleShortcuts(EditorState& ed) {
             if (g_clearConsoleOnPlay) ConsoleClear();
             StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed);   // previews must not override Play
             okay::editor::apreview::Stop(ed.scene());
+            CompileOpenScriptBuffers(ed.scene());
             ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
             g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
         }

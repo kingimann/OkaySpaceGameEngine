@@ -12,8 +12,10 @@
 //   * SyncVar writes to "<netId>.<name>" / "<netId>/<name>" keys of an object it
 //     doesn't own, and SyncVars past a per-second rate;
 //   * NetworkSync objects moving faster than maxSyncSpeed (speed hacks).
-// Each refusal is reported (NetworkManager::SetCheatHandler) and counts as a
-// violation; a peer with too many is kicked.
+//   * moving or writing a scene object nobody owns, unless it is claimable.
+//     That one is refused and logged once, and does not count as a violation.
+// Every other refusal is reported (NetworkManager::SetCheatHandler) and counts
+// as a violation; a peer with too many is kicked.
 //
 // It is a small layer NetworkManager calls from its receive path, so the wire
 // format and the behaviour with anti-cheat off are exactly as before.
@@ -23,6 +25,7 @@
 #include <functional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace okay {
@@ -141,6 +144,7 @@ enum class CheatKind {
     RpcFlood,          ///< one RPC called more often than maxRpcsPerSecond
     ClockDrift,        ///< the client's game clock runs off the server's (a speed hack), or it won't say
     HitRejected,       ///< a __hit claim the server's own view doesn't back (detail says why)
+    UnclaimedObject,   ///< an existing object nobody owns and players can't claim (refused, not a kick)
 };
 const char* CheatKindName(CheatKind k);
 
@@ -231,8 +235,11 @@ public:
     void SetOwner(const std::string& netId, std::uint32_t peer) { m_owner[netId] = peer; }
     /// Refusals from `peer` in the current minute.
     int Violations(std::uint32_t peer) const;
-    /// Total refusals since the server started (all peers).
+    /// Total refusals since the server started (all peers), including writes to
+    /// objects that aren't claimable (those are not violations).
     int TotalReports() const { return m_total; }
+    /// Writes refused only because an existing object isn't claimable.
+    int UnclaimedWrites() const { return m_unclaimed; }
     /// Objects whose movement is being tracked (for tests / stats).
     std::size_t TrackedObjects() const { return m_track.size(); }
     /// Advance the anti-cheat clock (a double: it stays exact for months of
@@ -271,9 +278,16 @@ private:
     struct Parked { int violations = 0; float violationTimer = 0.0f; double at = 0.0; };
     std::unordered_map<std::string, Parked> m_parked;         // ident -> what a peer that left had
     int m_total = 0;
+    int m_unclaimed = 0;
     double m_clock = 0.0;
+    std::unordered_set<std::string> m_unclaimedLogged;   // object ids already named this session
 
     bool Refuse(std::uint32_t peer, CheatKind k, const std::string& detail);
+    /// An existing object nobody owns, that players may not claim. Not a
+    /// server-driven object and not another peer's.
+    bool UnownedUnclaimable(const std::string& netId) const;
+    /// Refuse that write, log the object once, report it, and do not count a violation.
+    bool NoteUnclaimed(std::uint32_t peer, const std::string& netId);
     /// True if `peer` may drive `netId` (claiming it if nobody has).
     bool MayDrive(std::uint32_t peer, const std::string& netId, bool claim);
     bool SpawnAllowed(const std::string& path) const;

@@ -12,6 +12,7 @@
 #include "okay/Math/Quat.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Components/PlayerView.hpp"
+#include "okay/Components/UITheme.hpp"          // grok/ui-theme
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UIButton.hpp"
@@ -315,6 +316,40 @@ EngineApi Build() {
         get.pure = true;
         pv.methods.push_back(std::move(get));
         api.types.push_back(std::move(pv));
+    }
+    // ---- UITheme (grok/ui-theme). Visual-script nodes come from this type. ----
+    {
+        ApiType th; th.name = "UITheme"; th.isComponent = true;
+        th.doc = "A saved skin for panels, buttons, sliders and the rest of the UI kit. The object needs a UI Theme.";
+        th.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UITheme>() : nullptr; };
+        auto themeOf = [](const Value& self, CallContext& c) -> UITheme* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* t = g->GetComponent<UITheme>();
+            if (!t) throw RuntimeError("'" + g->name + "' has no UI Theme (add one in the Inspector)", c.loc);
+            return t;
+        };
+        th.methods.push_back(method("SetPreset", {tInt}, {"preset"}, tVoid,
+            [themeOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                UITheme* t = themeOf(s, c);
+                t->ApplyPreset(I(a[0]));
+                t->Apply();
+                return Value{};
+            }, "Switch to a built-in look and bake it: 0 custom, 1 dark, 2 light, 3 sci-fi, 4 fantasy."));
+        th.methods.push_back(method("Apply", {}, {}, tVoid,
+            [themeOf](const Value& s, std::vector<Value>&, CallContext& c) {
+                themeOf(s, c)->Apply();
+                return Value{};
+            }, "Bake this skin onto this object and its children. Widgets keep their positions."));
+        th.methods.push_back(method("ApplyTo", {tString}, {"objectName"}, tVoid,
+            [themeOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                UITheme* t = themeOf(s, c);
+                GameObject* root = t->gameObject;
+                if (t->gameObject && t->gameObject->scene())
+                    if (GameObject* named = t->gameObject->scene()->Find(S(a[0]))) root = named;
+                t->ApplyTo(root);
+                return Value{};
+            }, "Bake this skin onto the named object and its children."));
+        api.types.push_back(std::move(th));
     }
     // ---- UI widgets (grok/ui-options). Visual-script nodes come from these types.
     // Value changes still raise on_change / OnValueChanged; clicks raise on_click / OnClick.

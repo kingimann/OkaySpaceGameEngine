@@ -5467,6 +5467,7 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         add("Health Bar",           &okay::UITemplates::AddHealthBar);
         add("Dialog Box",           &okay::UITemplates::AddDialogBox);
         add("Notification",         &okay::UITemplates::AddNotificationScreen);
+        add("UI Showcase",          &okay::UITemplates::AddUIShowcase);   // grok/ui-theme
         add("Shop",                 &okay::UITemplates::AddShop);
         add("Game Over",            &okay::UITemplates::AddGameOver);
         ImGui::Separator();
@@ -32097,6 +32098,79 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##pv")) toRemove = pv;
         }
     }
+    // grok/ui-theme: a saved skin. Apply bakes it; existing widgets stay put until then.
+    if (auto* th = dynamic_cast<UITheme*>(curComp)) {
+        if (CompHeader("UI Theme", th, &toRemove)) {
+            char nb[64];
+            std::snprintf(nb, sizeof(nb), "%s", th->themeName.c_str());
+            if (ImGui::InputText("Name##uitheme", nb, sizeof(nb))) { th->themeName = nb; th->preset = (int)UITheme::Preset::Custom; ed.dirty = true; }
+            {
+                const char* presets[] = {"Custom", "Dark", "Light", "Sci-fi", "Fantasy"};
+                int which = th->preset;
+                if (which < 0 || which > 4) which = 0;
+                if (ImGui::Combo("Built-in Theme##uitheme", &which, presets, 5)) {
+                    th->ApplyPreset(which);
+                    ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dark, Light, Sci-fi and Fantasy fill the colors below. Custom keeps whatever you edit. Apply writes them onto the widgets.");
+            }
+            if (ImGui::Checkbox("Apply On Start##uitheme", &th->applyOnStart)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bake this skin onto this object and its children when play starts. Off leaves the scene as it was saved.");
+            if (ImGui::Button("Apply Now##uitheme")) { th->Apply(); ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write the colors, radius, border, shadow and fade speed onto the widgets under this object.");
+            if (ImGui::DragFloat("Corner Radius##uitheme", &th->cornerRadius, 0.1f, 0.0f, 64.0f)) { th->preset = (int)UITheme::Preset::Custom; ed.dirty = true; }
+            CornerMaskEditor("uitheme", th->cornerMask, ed);
+            if (ImGui::DragFloat("Border Width##uitheme", &th->borderWidth, 0.05f, 0.0f, 8.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Gradient##uitheme", &th->gradient)) ed.dirty = true;
+            if (th->gradient) {
+                const char* dirs[] = {"Vertical", "Horizontal", "Diagonal down", "Diagonal up"};
+                if (th->gradientDir < 0 || th->gradientDir > 3) th->gradientDir = 0;
+                if (ImGui::Combo("Gradient Direction##uitheme", &th->gradientDir, dirs, 4)) ed.dirty = true;
+            }
+            if (ImGui::Checkbox("Drop Shadow##uitheme", &th->shadow)) ed.dirty = true;
+            if (th->shadow) {
+                if (ImGui::DragFloat("Shadow Softness##uitheme", &th->shadowSoftness, 0.1f, 0.0f, 48.0f)) ed.dirty = true;
+                float off[2] = {th->shadowOffset.x, th->shadowOffset.y};
+                if (ImGui::DragFloat2("Shadow Offset##uitheme", off, 0.1f)) {
+                    th->shadowOffset = {off[0], off[1]}; ed.dirty = true;
+                }
+            }
+            if (ImGui::DragFloat("Padding##uitheme", &th->padding, 0.5f, 0.0f, 64.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spacing hint for screens built from this theme. Apply does not move widgets.");
+            if (ImGui::DragFloat("Font Scale##uitheme", &th->fontScale, 0.05f, 0.5f, 8.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Text Size##uitheme", &th->textPixelSize, 0.05f, 0.5f, 8.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Transition Speed##uitheme", &th->transitionSpeed, 0.1f, 0.0f, 40.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast buttons ease between normal, hover, pressed and disabled. 0 is instant.");
+            if (ImGui::DragFloat("Hover Scale##uitheme", &th->hoverScale, 0.01f, 1.0f, 1.4f)) ed.dirty = true;
+            if (ImGui::DragFloat("Glow##uitheme", &th->glow, 0.05f, 0.0f, 16.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Outer glow width in pixels. 0 is off. This is not a blur of the scene behind the panel.");
+            if (ImGui::DragFloat("Opacity##uitheme", &th->opacity, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Top Sheen##uitheme", &th->sheen)) ed.dirty = true;
+            auto col4 = [&](const char* label, Color& c) {
+                float v[4] = {c.r, c.g, c.b, c.a};
+                if (ImGui::ColorEdit4(label, v, ImGuiColorEditFlags_AlphaBar)) {
+                    c = {v[0], v[1], v[2], v[3]}; ed.dirty = true;
+                }
+            };
+            col4("Panel##uitheme", th->panel);
+            col4("Panel Bottom##uitheme", th->panelBottom);
+            col4("Accent##uitheme", th->accent);
+            col4("Text##uitheme", th->text);
+            col4("Muted##uitheme", th->muted);
+            col4("Button##uitheme", th->button);
+            col4("Hover##uitheme", th->buttonHover);
+            col4("Pressed##uitheme", th->buttonPressed);
+            col4("Button Text##uitheme", th->buttonText);
+            col4("Disabled##uitheme", th->disabled);
+            col4("Danger##uitheme", th->danger);
+            col4("Success##uitheme", th->success);
+            col4("Border##uitheme", th->border);
+            col4("Shadow##uitheme", th->shadowCol);
+            col4("Glow##uithemeglow", th->glowColor);
+            ImGui::TextDisabled("Bakes onto panels, buttons, sliders, toggles, bars, dropdowns, fields and screen text under this object.");
+            if (ImGui::SmallButton("Remove##uitheme")) toRemove = th;
+        }
+    }
     if (auto* td = dynamic_cast<TopDownController*>(curComp)) {
         if (CompHeader("Top Down Controller", td, &toRemove)) {
             if (StanceControlFields(td->stanceControl, "td")) ed.dirty = true;
@@ -35295,6 +35369,8 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<AntiCheatConfig>(), "Anti-Cheat Config")) { go->AddComponent<AntiCheatConfig>(); ed.dirty = true; }
             if (item(true, "Net Validator (RPC rule)")) { go->AddComponent<NetValidator>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIAnimation>(), "UI Animation (fade / slide / pop / pulse)")) { go->AddComponent<UIAnimation>(); ed.dirty = true; }
+            // grok/ui-theme
+            if (item(!go->GetComponent<UITheme>(), "UI Theme (colors, radius, shadow)")) { go->AddComponent<UITheme>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIButton>(), "UI Button")) { go->AddComponent<UIButton>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIPanel>(), "UI Panel")) { go->AddComponent<UIPanel>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIImage>(), "UI Image")) { go->AddComponent<UIImage>(); ed.dirty = true; }
@@ -42648,6 +42724,7 @@ int main(int argc, char** argv) {
                     {"Loading (Minimal)", &AddLoadingMinimal}, {"Loading (Card)", &AddLoadingCard},
                     {"Loading (Splash)", &AddLoadingSplash}, {"Loading (Cinematic)", &AddLoadingCinematic},
                     {"Shop", &AddShop}, {"Confirm Dialog", &AddConfirmDialog}, {"Notification", &AddNotificationScreen},
+                    {"UI Showcase", &AddUIShowcase},   // grok/ui-theme
                     {"Matchmaking", &AddMatchmaking}, {"Leaderboard", &AddLeaderboard},
                     {"UI Options", &AddUIOptions}};   // grok/ui-options
                 for (const auto& sc : kScreens)

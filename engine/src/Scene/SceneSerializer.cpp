@@ -17,6 +17,7 @@
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/PlayerView.hpp"
+#include "okay/Components/UITheme.hpp"          // grok/ui-theme
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/BlockBuilder.hpp"
@@ -1816,6 +1817,24 @@ void WriteComponents(std::ostream& out, GameObject* go) {
          ("pad", pv->toggleGamepadButton)("blend", pv->blendTime)
          ("ex", pv->eyeOffset.x)("ey", pv->eyeOffset.y)("ez", pv->eyeOffset.z)
          ("dist", pv->thirdPersonDistance)("shoulder", pv->shoulderOffset);
+        out << "\n";
+    }
+    // grok/ui-theme. Own record so older scenes skip it. apply=1 bakes on play.
+    if (auto* th = go->GetComponent<UITheme>()) {
+        out << "  uitheme";
+        KvOut k{out};
+        k.str("name", th->themeName).b("apply", th->applyOnStart)("preset", th->preset)
+         ("corner", th->cornerRadius)("mask", th->cornerMask)("border", th->borderWidth).b("shadow", th->shadow)
+         ("soft", th->shadowSoftness)("ox", th->shadowOffset.x)("oy", th->shadowOffset.y)
+         ("pad", th->padding)("font", th->fontScale)("tpx", th->textPixelSize)("trans", th->transitionSpeed)
+         ("hscale", th->hoverScale)("glow", th->glow)("opa", th->opacity)
+         .b("grad", th->gradient)("gdir", th->gradientDir).b("sheen", th->sheen)
+         .col("panel", th->panel).col("pbot", th->panelBottom).col("accent", th->accent)
+         .col("text", th->text).col("muted", th->muted)
+         .col("button", th->button).col("hover", th->buttonHover).col("press", th->buttonPressed)
+         .col("btext", th->buttonText)
+         .col("off", th->disabled).col("danger", th->danger).col("ok", th->success)
+         .col("edge", th->border).col("sh", th->shadowCol).col("glowc", th->glowColor);
         out << "\n";
     }
     if (auto* td = go->GetComponent<TopDownController>()) {
@@ -4643,6 +4662,45 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     k.f("ex", pv->eyeOffset.x); k.f("ey", pv->eyeOffset.y); k.f("ez", pv->eyeOffset.z);
                     k.f("dist", pv->thirdPersonDistance);
                     k.f("shoulder", pv->shoulderOffset);
+                } else if (field == "uitheme") {
+                    // grok/ui-theme. Missing keys keep the Studio defaults.
+                    auto* th = go->AddComponent<UITheme>();
+                    KvIn k(in);
+                    k.str("name", th->themeName);
+                    k.b("apply", th->applyOnStart);
+                    k.i("preset", th->preset);
+                    k.f("corner", th->cornerRadius);
+                    k.i("mask", th->cornerMask);
+                    k.f("border", th->borderWidth);
+                    k.b("shadow", th->shadow);
+                    k.f("soft", th->shadowSoftness);
+                    k.f("ox", th->shadowOffset.x);
+                    k.f("oy", th->shadowOffset.y);
+                    k.f("pad", th->padding);
+                    k.f("font", th->fontScale);
+                    k.f("tpx", th->textPixelSize);
+                    k.f("trans", th->transitionSpeed);
+                    k.f("hscale", th->hoverScale);
+                    k.f("glow", th->glow);
+                    k.f("opa", th->opacity);
+                    k.b("grad", th->gradient);
+                    k.i("gdir", th->gradientDir);
+                    k.b("sheen", th->sheen);
+                    k.col("panel", th->panel);
+                    k.col("pbot", th->panelBottom);
+                    k.col("accent", th->accent);
+                    k.col("text", th->text);
+                    k.col("muted", th->muted);
+                    k.col("button", th->button);
+                    k.col("hover", th->buttonHover);
+                    k.col("press", th->buttonPressed);
+                    k.col("btext", th->buttonText);
+                    k.col("off", th->disabled);
+                    k.col("danger", th->danger);
+                    k.col("ok", th->success);
+                    k.col("edge", th->border);
+                    k.col("sh", th->shadowCol);
+                    k.col("glowc", th->glowColor);
                 } else if (field == "fpctrl") {
                     float ws = 4.5f, rs = 8, jf = 6, ms = 0.15f; int cj = 1, da = 1, iy = 0;
                     in >> ws >> rs >> jf >> ms >> cj >> da;

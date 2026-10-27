@@ -4520,7 +4520,7 @@ struct OkayScriptVM::Impl {
             Vec3 p{a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f, a.size() > 2 ? a[2].AsFloat() : 0.0f};
             if (GameObject* g = rt.host ? rt.host->gameObject : nullptr) {
                 if (auto* l = g->GetComponent<LimbIK>())  { l->poleObject = nullptr; l->poleMode = LimbIK::PoleMode::World; l->pole = p - (l->upper ? l->upper->Position() : Vec3{0, 0, 0}); }
-                if (auto* c = g->GetComponent<ChainIK>()) { c->poleObject = nullptr; c->usePole = true; c->pole = p; }
+                if (auto* c = g->GetComponent<ChainIK>()) { c->poleObject = nullptr; c->poleMode = -1; c->usePole = true; c->pole = p; }
             }
             return Value{};
         };

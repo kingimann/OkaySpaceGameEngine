@@ -18,6 +18,7 @@ public:
     int   xp = 0, xpToNext = 100;
     // Attributes (used by TakeDamage and your own formulas).
     int   strength = 10, defense = 5, intelligence = 5, agility = 5;
+    int   equipDefense = 0;   ///< runtime: added by worn Equipment (not saved)
 
     bool IsDead() const { return health <= 0.0f; }
     float HealthFraction() const { return maxHealth > 0 ? Mathf::Clamp01(health / maxHealth) : 0.0f; }
@@ -27,7 +28,7 @@ public:
     /// the moment health reaches 0.
     void TakeDamage(float amount) {
         if (IsDead()) return;
-        float dmg = Mathf::Max(1.0f, amount - (float)defense);
+        float dmg = Mathf::Max(1.0f, amount - (float)(defense + equipDefense));
         health = Mathf::Max(0.0f, health - dmg);
         if (health <= 0.0f) Event("on_death");
     }

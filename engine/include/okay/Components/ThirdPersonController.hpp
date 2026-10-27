@@ -297,14 +297,17 @@ public:
 
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
 
-        // Grounded: resting on something (low vertical speed) — the reliable signal
-        // that works regardless of how the ground is set up — OR a fresh ground
-        // contact. Coyote time + a jump buffer make jumping forgiving.
+        // Grounded from a real contact (or terrain). A quiet vertical speed still
+        // counts until the body has left the ground, so coyote and the jump buffer
+        // stay forgiving, but the apex of a jump does not.
         m_groundContact = Mathf::Max(0.0f, m_groundContact - dt);
         // Heightmap terrain has no collider (no collision callbacks); Physics3D flags
         // resting-on-terrain on the body so terrain counts as ground for jumping.
         bool terrainGround = rb && rb->groundedOnTerrain;
-        bool grounded = (rb && Mathf::Abs(rb->velocity.y) < 0.5f) || m_groundContact > 0.0f || terrainGround;
+        // Contact or terrain. |vy| < 0.5 is not ground once we've left it: the
+        // apex of a jump passes through that band and used to read as landed.
+        bool contact = m_groundContact > 0.0f || terrainGround;
+        bool grounded = rb ? ResolveGrounded(m_ground, contact, rb->velocity.y) : contact;
         // Jump count refills only on a real ground contact, so the zero-velocity at
         // the jump apex can't grant another jump (no more endless jumping). maxJumps
         // enables double (or more) jumps.
@@ -366,7 +369,8 @@ public:
                     m_jumped = true;
                     if (onJump) onJump();
                     m_jumpBuf = 0.0f; m_coyote = 0.0f; m_groundContact = 0.0f;
-                    grounded = false; airborne = true;
+                    m_ground.left = true; m_ground.fell = false;
+                    grounded = false; airborne = true; m_grounded = false;
                 }
             }
         } else if (moving) {
@@ -591,6 +595,7 @@ public:
 
 private:
     PlatformRide m_platRide;   // moving-platform tracking
+    GroundLatch  m_ground;     // apex of a jump is not ground
 
     Vec3 m_spawn{0, 0, 0}; bool m_haveSpawn = false;   // fall-reset home position
 

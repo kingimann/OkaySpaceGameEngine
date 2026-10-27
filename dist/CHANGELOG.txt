@@ -16,6 +16,9 @@ v2.834.0
     load slows the player down (#389).
   - Fixed: a held object no longer drops out of the hands when the
     character goes prone, crawls, gets up or drops down (#397).
+  - Fixed: with Auto-recenter Camera on, strafing or backing up no longer
+    spins the third-person camera; it still settles in behind a forward
+    run (#399).
   Inventory
   - World pickups and drops, using the item in your hand, encumbrance
     (an over-full bag slows you down, opt-in) and loot tables (#359).

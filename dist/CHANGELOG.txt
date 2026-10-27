@@ -1,5 +1,38 @@
 OkaySpace Game Engine — Changelog
 
+v2.836.0
+  Animation and characters
+  - Full Body IK undoes its own changes before the animation plays, turns
+    the limb bones, and eases at the same speed at any frame rate (#414).
+  - Walking and running speed is smoothed once, and idle, walk, run and air
+    each have their own crossfade time on the Animator (#419).
+  - A state can name a fallback clip for when its own clip is missing (#459).
+  Movement and world
+  - Swim in the sandbox lake: waist-deep you swim, Space goes up and Ctrl
+    goes down; light props float and heavy ones sink (#448).
+  - The sandbox view no longer zooms while filling terrain with the right
+    mouse button (#439).
+  - axis_x and axis_y count the arrow keys as well as W, A, S and D (#454).
+  Scripting
+  - OkayScript gets ??, ?. and ??= (#456), and default and named arguments
+    (#465).
+  - Play compiles the script open in the editor, so unsaved edits run (#455).
+  - Script errors name the line and column (#460).
+  - Each scene has its own action-list variables (#462).
+  - Script Editor: Rename, Find References, Format and autocomplete skip
+    comments and strings the way the language does (#444).
+  - A scripting deep-dive report with known bugs and a fix order (#453).
+  Visual scripting
+  - Dropping a wire on empty canvas only offers nodes that can take it (#473).
+  - Every palette node is documented (#463).
+  In-game UI
+  - Slider, health bar and button options in the Inspector and from script
+    (#457).
+  Templates
+  - A playable Brick Breaker example game written in OkayScript (#477).
+  Multiplayer
+  - Reliable ordered channels and unreliable-sequenced delivery (#423).
+
 v2.835.0
   Animation and characters
   - Imported humanoids play their own crouch and prone clips, so the head

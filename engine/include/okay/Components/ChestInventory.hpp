@@ -7,6 +7,7 @@
 #include "okay/Components/InventoryUI.hpp"
 #include "okay/Inventory/InventoryOps.hpp"
 #include "okay/Components/InventoryPlayer.hpp"
+#include "okay/Components/NetworkObject.hpp"
 #include "okay/Render/Color.hpp"
 #include <string>
 
@@ -58,8 +59,13 @@ public:
             if (auto* in = p->GetComponent<Inventory>()) return in;
         Scene* s = GetScene();
         if (!s) return nullptr;
-        for (const auto& o : s->Objects())
-            if (o) if (auto* iu = o->GetComponent<InventoryUI>()) if (Inventory* in = iu->Inv()) return in;
+        for (const auto& o : s->Objects()) {
+            if (!o) continue;
+            if (o->name.rfind("Peer", 0) == 0) continue;   // another player's stand-in
+            if (auto* net = o->GetComponent<NetworkObject>())
+                if (net->Id().rfind("sp/", 0) == 0) continue;   // a remote pawn, not this screen's bag
+            if (auto* iu = o->GetComponent<InventoryUI>()) if (Inventory* in = iu->Inv()) return in;
+        }
         return nullptr;
     }
     /// The inventory UI showing PlayerInv() (for its slot size / columns in the chest).

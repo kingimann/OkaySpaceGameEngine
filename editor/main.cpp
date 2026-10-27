@@ -30982,6 +30982,22 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##ch")) toRemove = ch;
         }
     }
+    if (auto* ni = dynamic_cast<NetInventory*>(curComp)) {
+        if (CompHeader("Net Inventory", ni, &toRemove)) {
+            ImGui::TextDisabled("Host owns this bag or chest. Clients send requests; they don't write the contents.");
+            if (ImGui::DragFloat("Range##ni", &ni->range, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How close someone must be to take from a chest (0 = any distance).");
+            if (ImGui::DragInt("Requests / sec##ni", &ni->maxPerSecond, 0.2f, 0, 200)) ed.dirty = true;
+            if (ImGui::DragInt("Cheat threshold##ni", &ni->cheatThreshold, 0.1f, 1, 100)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Invalid requests before On Cheat Detected, with detail \"inventory\".");
+            if (ImGui::DragInt("Max request bytes##ni", &ni->maxRequestBytes, 1.0f, 32, 4096)) ed.dirty = true;
+            if (ImGui::Checkbox("Hide until opened##ni", &ni->hideUntilOpen)) ed.dirty = true;
+            char sd[256]; std::snprintf(sd, sizeof(sd), "%s", ni->saveDir.c_str());
+            if (ImGui::InputText("Host save folder##ni", sd, sizeof(sd))) { ni->saveDir = sd; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional folder for the host's copy of a signed-in player's bag. Empty = memory only, until the host quits.");
+            if (ImGui::SmallButton("Remove##ni")) toRemove = ni;
+        }
+    }
     if (auto* sv = dynamic_cast<SurvivalStats*>(curComp)) {
         if (CompHeader("Survival Stats (native)", sv, &toRemove)) {
             ImGui::TextDisabled("Hunger/thirst/oxygen/cold damage health directly.");
@@ -35224,6 +35240,7 @@ void DrawInspector(EditorState& ed) {
             }
             if (item(!go->GetComponent<LootSource>(), "Loot Source")) { go->AddComponent<LootSource>(); ed.dirty = true; }
             if (item(!go->GetComponent<Equipment>(), "Equipment")) { go->AddComponent<Equipment>(); ed.dirty = true; }
+            if (item(!go->GetComponent<NetInventory>(), "Net Inventory (host-owned)")) { go->AddComponent<NetInventory>(); ed.dirty = true; }
             if (item(!go->GetComponent<ChestInventory>(), "Chest / Container")) {
                 go->AddComponent<ChestInventory>();
                 if (!go->GetComponent<Inventory>()) {        // chest needs an Inventory for its loot

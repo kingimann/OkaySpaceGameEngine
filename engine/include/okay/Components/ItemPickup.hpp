@@ -5,6 +5,7 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/Inventory.hpp"
+#include "okay/Components/NetInventory.hpp"
 #include "okay/Components/InventoryPlayer.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
@@ -111,6 +112,7 @@ public:
 private:
     int Give(GameObject* who) {
         if (m_gone || !who || who == gameObject || item.empty() || count <= 0) return 0;
+        if (NetInventory::DeferPickup(this, who)) return 0;   // the host grants it; the first request wins
         Inventory* inv = InventoryOf(who);
         if (!inv) return 0;
         Inventory carried;   // move through InventoryOps: partial fit and one-off items handled once

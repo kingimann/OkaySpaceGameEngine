@@ -7,6 +7,7 @@
 #include "okay/Components/Stats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalStats.hpp"
+#include "okay/Components/NetInventory.hpp"
 #include "okay/Inventory/InventoryEvents.hpp"
 #include "okay/Inventory/InventoryPersistence.hpp"
 #include "okay/Physics/Collider3D.hpp"
@@ -157,6 +158,7 @@ InvResult Equipment::EquipFrom(Inventory& inv, int from, int to) {
     inv.NotifyChanged();
     if (!old.empty()) Fire("on_unequip", to, old);
     Fire("on_equip", to, item);
+    NetInventory::NoticeEquip(&inv, from, to, true);
     return InvResult::Done(1);
 }
 
@@ -171,6 +173,7 @@ InvResult Equipment::Unequip(int slot, Inventory& inv, int into) {
     Refresh();
     inv.NotifyChanged();
     Fire("on_unequip", slot, item);
+    NetInventory::NoticeUnequip(&inv, slot, true);
     return InvResult::Done(1);
 }
 

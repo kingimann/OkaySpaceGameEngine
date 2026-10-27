@@ -32,6 +32,7 @@
 #include "okay/Components/GridInventoryUI.hpp"
 #include "okay/Components/CraftingStation.hpp"
 #include "okay/Components/ChestInventory.hpp"
+#include "okay/Components/NetInventory.hpp"
 #include "okay/Components/ItemPickup.hpp"
 #include "okay/Components/LootSource.hpp"
 #include "okay/Components/Equipment.hpp"
@@ -1547,6 +1548,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         wc(ch->textColor); wc(ch->hoverColor);
         out << " " << Quote(ch->playerName);   // appended (quote-peek guarded)
         out << "\n";
+    }
+    if (auto* ni = go->GetComponent<NetInventory>()) {
+        // New record. Old scenes have no line, so they still load.
+        out << "  netinventory " << ni->range << " " << ni->maxPerSecond << " " << ni->cheatThreshold
+            << " " << ni->maxRequestBytes << " " << (ni->hideUntilOpen ? 1 : 0) << " " << Quote(ni->saveDir) << "\n";
     }
     if (auto* v2 = go->GetComponent<VehicleController2D>()) {
         out << "  vehicle2d " << v2->acceleration << " " << v2->maxSpeed << " " << v2->reverseSpeed
@@ -4367,6 +4373,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     rc(ch->textColor); rc(ch->hoverColor);
                     in >> std::ws;   // optional player name
                     if (in.peek() == '"') ch->playerName = ReadQuoted(in);
+                } else if (field == "netinventory") {
+                    auto* ni = go->AddComponent<NetInventory>();
+                    int hide = 1;
+                    in >> ni->range >> ni->maxPerSecond >> ni->cheatThreshold >> ni->maxRequestBytes >> hide;
+                    ni->hideUntilOpen = (hide != 0);
+                    in >> std::ws;
+                    if (in.peek() == '"') ni->saveDir = ReadQuoted(in);
                 } else if (field == "vehicle2d") {
                     auto* v2 = go->AddComponent<VehicleController2D>();
                     in >> v2->acceleration >> v2->maxSpeed >> v2->reverseSpeed >> v2->brakeForce

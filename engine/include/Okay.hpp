@@ -205,6 +205,7 @@
 #include "okay/Inventory/LootTable.hpp"
 #include "okay/Inventory/InventoryInput.hpp"
 #include "okay/Inventory/InventoryPersistence.hpp"
+#include "okay/Components/NetInventory.hpp"
 #include "okay/Inventory/Recipe.hpp"
 #include "okay/Components/Equipment.hpp"
 #include "okay/Components/Sockets.hpp"

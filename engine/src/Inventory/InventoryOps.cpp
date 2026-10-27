@@ -1,4 +1,5 @@
 #include "okay/Inventory/InventoryOps.hpp"
+#include "okay/Components/NetInventory.hpp"
 #include "okay/Components/BuildMode.hpp"
 #include "okay/Components/Consumables.hpp"
 #include "okay/Components/Equipment.hpp"
@@ -47,7 +48,9 @@ InvResult Move(Inventory* src, int si, Inventory* dst, int di, int amount, int d
     if (a.count <= 0) a = Inventory::Slot{};
     TrimTail(*src); TrimTail(*dst);
     Notify(src, dst);
-    return moved < n ? InvResult::Part(moved, "stack full") : InvResult::Done(moved);
+    const InvResult r = moved < n ? InvResult::Part(moved, "stack full") : InvResult::Done(moved);
+    NetInventory::NoticeMove(src, si, dst, di, amount, r.Ok());
+    return r;
 }
 
 InvResult Split(Inventory* inv, int i, int amount, int slots) {
@@ -66,6 +69,7 @@ InvResult Split(Inventory* inv, int i, int amount, int slots) {
     inv->slots[to].count = amount;
     inv->slots[i].count -= amount;
     inv->NotifyChanged();
+    NetInventory::NoticeSplit(inv, i, amount, true);
     return InvResult::Done(amount);
 }
 
@@ -93,7 +97,9 @@ InvResult QuickMove(Inventory* inv, int from, int hotbar, int slots) {
     TrimTail(*inv);
     if (moved <= 0) return InvResult::No("no room on the other side");
     inv->NotifyChanged();
-    return rest ? InvResult::Part(moved, "no room for the rest") : InvResult::Done(moved);
+    const InvResult r = rest ? InvResult::Part(moved, "no room for the rest") : InvResult::Done(moved);
+    NetInventory::NoticeQuick(inv, from, hotbar, r.Ok());
+    return r;
 }
 
 InvResult Transfer(Inventory* from, int i, Inventory* to) {
@@ -112,6 +118,7 @@ InvResult Transfer(Inventory* from, int i, Inventory* to) {
         std::swap(to->slots[hole], from->slots[i]);
         TrimTail(*from);
         Notify(from, to);
+        NetInventory::NoticeTransfer(from, i, to, true);
         return InvResult::Done(n);
     }
     const std::string item = from->slots[i].item;
@@ -122,7 +129,9 @@ InvResult Transfer(Inventory* from, int i, Inventory* to) {
     src.count = left;
     if (src.count <= 0) src = Inventory::Slot{};
     from->NotifyChanged();
-    return left > 0 ? InvResult::Part(have - left, "destination full") : InvResult::Done(have);
+    const InvResult r = left > 0 ? InvResult::Part(have - left, "destination full") : InvResult::Done(have);
+    NetInventory::NoticeTransfer(from, i, to, r.Ok());
+    return r;
 }
 
 InvResult Drop(Inventory* inv, int i, int n) {
@@ -132,6 +141,7 @@ InvResult Drop(Inventory* inv, int i, int n) {
     s.count -= take;
     if (s.count <= 0) s = Inventory::Slot{};
     inv->NotifyChanged();
+    NetInventory::NoticeDrop(inv, i, take, true);
     return InvResult::Done(take);
 }
 
@@ -158,8 +168,12 @@ static InvResult UseItem(Inventory* inv, int i, GameObject* user) {
 
 InvResult Use(Inventory* inv, int i, GameObject* user) {
     const std::string item = ValidSlot(inv, i) ? inv->slots[i].item : std::string();
+    const ItemDefinition* def = item.empty() ? nullptr : ItemDatabase::Get().Find(item);
     const InvResult r = UseItem(inv, i, user);
-    if (r.Ok()) InventoryEvents::Fire(inv->gameObject, "on_item_used", "OnItemUsed", {vs::VsValue(item)});
+    if (r.Ok()) {
+        InventoryEvents::Fire(inv->gameObject, "on_item_used", "OnItemUsed", {vs::VsValue(item)});
+        if (!def || def->equip == EquipSlot::None) NetInventory::NoticeUse(inv, i, true);
+    }
     return r;
 }
 
@@ -177,13 +191,17 @@ InvResult Move(GridInventory* src, int index, GridInventory* dst, int x, int y, 
     const int before = src->items[index].count;
     const std::size_t srcCount = src->items.size();
     if (!src->MoveTo(index, *dst, x, y, rotated)) return InvResult::No("doesn't fit there");
-    if (src->items.size() < srcCount) return InvResult::Done(before);   // moved out / merged away
-    const int left = src->items[index].count;
-    return left < before ? InvResult::Part(before - left, "stack full") : InvResult::Done(before);
+    const InvResult r = src->items.size() < srcCount
+        ? InvResult::Done(before)   // moved out / merged away
+        : (src->items[index].count < before ? InvResult::Part(before - src->items[index].count, "stack full")
+                                            : InvResult::Done(before));
+    NetInventory::NoticeGridMove(src, index, dst, x, y, rotated, r.Ok());
+    return r;
 }
 
 InvResult Split(GridInventory* inv, int index, int n) {
     if (!inv || inv->Split(index, n) < 0) return InvResult::No("no room to split");
+    NetInventory::NoticeGridSplit(inv, index, n, true);
     return InvResult::Done(n);
 }
 

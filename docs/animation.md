@@ -836,7 +836,9 @@ elbows bend down and out, and the object moves with the body.
   visible through the switch and is skipped only once the lens is in front of
   the face, which is what a First Person project and a Third Person project
   toggled with V both do. Switching back restores the near plane and shows
-  the whole body again.
+  the whole body again, including after a switch in the middle of the ease
+  and after tapping V. The first-person controller does not put that hide
+  back, and the editor Game view does not invent one while the game is playing.
 - **Socket**: hold it at a named object inside the character (a holster, a back
   slot) instead of in front of the chest.
 - The hands never stretch: when a grip is out of reach the object comes closer

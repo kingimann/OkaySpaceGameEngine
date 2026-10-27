@@ -261,14 +261,20 @@ void PlayerView::ApplyHead() {
         }
         if (cam) {
             // No rig: skip the whole body rather than deleting the head from
-            // the shared mesh. Other cameras still draw that mesh.
-            cam->ignoreObject = gameObject;
+            // the shared mesh. Other cameras still draw that mesh. Show Body
+            // leaves the body in this camera too.
+            bool hideFromOwner = true;
+            if (auto* fpc = gameObject->GetComponent<FirstPersonController>())
+                hideFromOwner = !fpc->showBody;
+            cam->ignoreObject = hideFromOwner ? gameObject : nullptr;
             // 0.3 m is the depth of the chest, so the default plane cuts it open.
             // The controller may already have pulled the plane in. Remember the
             // wider plane third person had, not that pulled-in value.
-            if (m_savedNear < 0.0f)
-                m_savedNear = cam->nearClip > 0.06f ? cam->nearClip : 0.3f;
-            if (cam->nearClip > 0.06f) cam->nearClip = 0.04f;
+            if (hideFromOwner) {
+                if (m_savedNear < 0.0f)
+                    m_savedNear = cam->nearClip > 0.06f ? cam->nearClip : 0.3f;
+                if (cam->nearClip > 0.06f) cam->nearClip = 0.04f;
+            }
         }
         m_fpApplied = true;
         return;

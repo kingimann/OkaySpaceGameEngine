@@ -37470,16 +37470,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     const GameObject* viewIgnore = nullptr;
     if (gameView) {
         if (Camera* gc = SceneCamera(ed.scene())) {
-            viewIgnore = gc->ignoreObject;   // set at runtime by the controller (Play)
-            // In edit mode the controller hasn't run yet, so the Game preview would
-            // still show the body. Derive it: a first-person camera's owner (parent)
-            // with "Show Body" off should be ignored, matching how Play looks.
-            if (!viewIgnore && gc->transform && gc->transform->Parent() &&
-                gc->transform->Parent()->gameObject) {
-                GameObject* owner = gc->transform->Parent()->gameObject;
-                if (auto* fpc = owner->GetComponent<FirstPersonController>())
-                    if (!fpc->showBody) viewIgnore = owner;
-            }
+            // While playing, trust ignoreObject. Guessing a hide from Show Body
+            // during play made a third-person toggle erase the whole character.
+            viewIgnore = GameViewBodyIgnore(gc, ed.isPlaying());
         }
     }
     // Render the 3D view at the display's TRUE physical pixel resolution. On a

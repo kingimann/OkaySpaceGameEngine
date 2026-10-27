@@ -1,5 +1,8 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include <cmath>
+#include <functional>
+#include <vector>
 
 using namespace okay;
 
@@ -493,6 +496,151 @@ int main() {
         empty.Start();
         CHECK_NEAR(loneSc->VM()->GetGlobal("ok").AsFloat(), 0.0f, 0.001f);
         CHECK_NEAR(loneSc->VM()->GetGlobal("v").AsFloat(), -1.0f, 0.001f);
+    }
+
+    // Switching to first person and back must leave the whole character in the
+    // third-person camera. The hide is a camera flag; it is put back, including
+    // when V is tapped in the middle of the ease. The edit-mode guess that hides
+    // a first-person body must not run while playing, or the Game view skips the
+    // player after the flag has been cleared.
+    {
+        Scene edit("edit-hide"); edit.physicsEnabled = false;
+        GameObject* owner = edit.CreateGameObject("Player");
+        owner->AddComponent<FirstPersonController>()->showBody = false;
+        GameObject* camGo = edit.CreateGameObject("Cam");
+        camGo->transform->SetParent(owner->transform, false);
+        auto* editCam = camGo->AddComponent<Camera>();
+        CHECK(GameViewBodyIgnore(editCam, false) == owner);
+        CHECK(GameViewBodyIgnore(editCam, true) == nullptr);
+        editCam->ignoreObject = owner;
+        CHECK(GameViewBodyIgnore(editCam, true) == owner);
+    }
+    auto characterPixels = [](Scene& sc, Camera* cam, GameObject* player) {
+        const int W = 160, H = 90;
+        auto grab = [&]() {
+            ApplySceneLight(sc);
+            Mat4 vp = cam->ProjectionMatrix((float)W / (float)H) * cam->ViewMatrix();
+            Raster work; std::vector<std::uint32_t> out;
+            const std::uint32_t* px = RenderMeshesSS(work, out, sc, vp, cam->transform->Position(), W, H, 1,
+                                                     GameViewBodyIgnore(cam, true));
+            Image img(W, H);
+            for (int i = 0; i < W * H; ++i) {
+                std::uint32_t p = px[i];
+                unsigned r = p & 255u, g = (p >> 8) & 255u, b = (p >> 16) & 255u, a = (p >> 24) & 255u;
+                if (a == 0) { r = 166; g = 206; b = 235; }
+                img.SetPixel(i % W, i / W, Color(r / 255.f, g / 255.f, b / 255.f, 1.f));
+            }
+            return img;
+        };
+        auto differ = [](const Image& a, const Image& b) {
+            int n = 0;
+            for (int y = 0; y < a.Height(); ++y)
+                for (int x = 0; x < a.Width(); ++x) {
+                    Color ca = a.GetPixel(x, y), cb = b.GetPixel(x, y);
+                    if (std::fabs(ca.r - cb.r) + std::fabs(ca.g - cb.g) + std::fabs(ca.b - cb.b) > 0.04f) ++n;
+                }
+            return n;
+        };
+        Image on = grab();
+        std::vector<MeshRenderer*> off;
+        std::function<void(GameObject*)> hide = [&](GameObject* go) {
+            if (!go) return;
+            if (auto* mr = go->GetComponent<MeshRenderer>())
+                if (mr->enabled) { mr->enabled = false; off.push_back(mr); }
+            if (!go->transform) return;
+            for (Transform* c : go->transform->Children())
+                if (c && c->gameObject && !c->gameObject->GetComponent<Camera>()) hide(c->gameObject);
+        };
+        hide(player);
+        Image gone = grab();
+        for (MeshRenderer* mr : off) mr->enabled = true;
+        return differ(on, gone);
+    };
+    auto pressV = [](Scene& sc) {
+        Input::FeedKeys({});
+        sc.Update(1.0f / 60.0f);
+        Input::FeedKeys({'v'});
+        sc.Update(1.0f / 60.0f);
+        Input::FeedKeys({});
+    };
+    auto settle = [](Scene& sc, int n) {
+        Input::FeedKeys({});
+        for (int i = 0; i < n; ++i) sc.Update(1.0f / 60.0f);
+    };
+    auto checkThird = [&](Scene& sc, GameObject* player, Camera* cam, Character* ch, int before) {
+        auto* pv = player->GetComponent<PlayerView>();
+        CHECK(pv && !pv->TargetFirst() && !pv->Blending());
+        CHECK(cam->ignoreObject == nullptr);
+        CHECK_NEAR(cam->nearClip, 0.3f, 1e-3f);
+        CHECK(ch->PartsBuilt());
+        CHECK(!ch->firstPersonArm);
+        CHECK(!ch->hideOwnHead);
+        auto* root = player->GetComponent<MeshRenderer>();
+        CHECK(root && !root->enabled);                 // the rig draws the body; the baked mesh stays off
+        GameObject* head = ch->Part(2);
+        CHECK(head && head->active && !head->firstPersonViewmodel);
+        CHECK(head->transform && (head->transform->localScale - Vec3::One).Magnitude() < 1e-3f);
+        if (auto* hmr = head->GetComponent<MeshRenderer>()) CHECK(hmr->castShadows && hmr->enabled);
+        int px = characterPixels(sc, cam, player);
+        CHECK(px > before / 2);                        // the whole character, not an empty orbit
+        CHECK(px > 80);
+        settle(sc, 30);                                // the controller must not put the hide back
+        CHECK(cam->ignoreObject == nullptr);
+        CHECK_NEAR(cam->nearClip, 0.3f, 1e-3f);
+        CHECK(characterPixels(sc, cam, player) > 80);
+    };
+    {
+        Scene sc("tp-round"); sc.physicsEnabled = false;
+        Templates::ThirdPerson(sc);
+        GameObject* player = nullptr; Camera* cam = nullptr; Character* ch = nullptr;
+        for (auto& o : sc.Objects()) {
+            if (o->name == "Player") { player = o.get(); ch = o->GetComponent<Character>(); }
+            if (auto* c = o->GetComponent<Camera>()) if (c->main) cam = c;
+        }
+        sc.Start();
+        settle(sc, 5);
+        const int before = characterPixels(sc, cam, player);
+        CHECK(before > 80);
+        for (int trip = 0; trip < 5; ++trip) {
+            pressV(sc); settle(sc, 40);               // into the eyes
+            pressV(sc); settle(sc, 40);               // back to the orbit
+            checkThird(sc, player, cam, ch, before);
+        }
+        for (int i = 0; i < 8; ++i) { pressV(sc); settle(sc, 2); }   // tap V through the ease
+        player->GetComponent<PlayerView>()->SetView(0);
+        settle(sc, 6);
+        player->GetComponent<PlayerView>()->SetView(1);
+        settle(sc, 4);
+        player->GetComponent<PlayerView>()->SetView(0);
+        settle(sc, 3);
+        player->GetComponent<PlayerView>()->SetView(1);
+        settle(sc, 40);
+        checkThird(sc, player, cam, ch, before);
+    }
+    {
+        Scene sc("fp-round"); sc.physicsEnabled = false;
+        Templates::FPS(sc);
+        GameObject* player = nullptr; Camera* cam = nullptr; Character* ch = nullptr;
+        for (auto& o : sc.Objects()) {
+            if (o->name == "Player") { player = o.get(); ch = o->GetComponent<Character>(); }
+            if (auto* c = o->GetComponent<Camera>()) if (c->main) cam = c;
+        }
+        sc.Start();
+        settle(sc, 5);
+        CHECK(cam->ignoreObject == player);            // native first person still hides the owner
+        for (int trip = 0; trip < 5; ++trip) {
+            pressV(sc); settle(sc, 40);               // over the shoulder
+            checkThird(sc, player, cam, ch, 200);
+            pressV(sc); settle(sc, 40);               // back to the eyes
+            CHECK(cam->ignoreObject == player);
+            CHECK(cam->nearClip < 0.06f);
+        }
+        for (int i = 0; i < 8; ++i) { pressV(sc); settle(sc, 2); }
+        player->GetComponent<PlayerView>()->SetView(0);
+        settle(sc, 6);
+        player->GetComponent<PlayerView>()->SetView(1);
+        settle(sc, 40);
+        checkThird(sc, player, cam, ch, 200);
     }
 
     TEST_MAIN_RESULT();

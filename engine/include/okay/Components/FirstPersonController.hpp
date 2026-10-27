@@ -183,6 +183,13 @@ public:
                 auto* ch = gameObject->GetComponent<Character>();
                 mr->enabled = !(ch && (ch->separateParts || !ch->enabled || ch->driveExternal));
             }
+        // A driving view toggle owns this camera's hide and near plane, and
+        // puts both back on the way out. Writing them here as well pulled the
+        // near plane back in every frame after the restore, so third person
+        // kept the first-person lens.
+        if (gameObject)
+            if (auto* view = gameObject->GetComponent<PlayerView>())
+                if (view->Driving()) return;
         if (Transform* camT = FindCameraChild())
             if (auto* cam = camT->gameObject->GetComponent<Camera>()) {
                 cam->ignoreObject = showBody ? nullptr : gameObject;
@@ -721,5 +728,22 @@ private:
         return nullptr;
     }
 };
+
+/// What the editor Game view should skip. While playing, the controller and the
+/// view toggle write `ignoreObject` themselves and a switch back to third person
+/// clears it. Inventing a hide from "Show Body is off" after that clear skips the
+/// whole player: the baked mesh is already off and the parts are not viewmodels,
+/// so the character vanishes. That guess is only for the edit-mode preview,
+/// before any controller has run.
+inline const GameObject* GameViewBodyIgnore(const Camera* cam, bool playing) {
+    if (!cam) return nullptr;
+    if (cam->ignoreObject || playing) return cam->ignoreObject;
+    if (cam->transform && cam->transform->Parent() && cam->transform->Parent()->gameObject) {
+        GameObject* owner = cam->transform->Parent()->gameObject;
+        if (auto* fpc = owner->GetComponent<FirstPersonController>())
+            if (!fpc->showBody) return owner;
+    }
+    return nullptr;
+}
 
 } // namespace okay

@@ -5,7 +5,7 @@
 // character. The shirt and the legs are flagged as the viewmodel. The head and
 // the neck stay active but unflagged, so only this camera skips them. The hand
 // is a copy that only this camera draws: one chunky cube in the lower right,
-// with a short wrist cuff. The real arm bones stay on the
+// no sleeve. A held item sits on that cube. The real arm bones stay on the
 // animation, so another camera never sees that pose.
 //
 // Needs a Character; if it isn't a separated part rig yet, the hand builds the rig

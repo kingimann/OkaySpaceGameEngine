@@ -122,9 +122,9 @@ public:
     bool  Punching() const { return m_punchT >= 0.0f && m_punchT < 1.0f; }
 
     // ---- First-person arm (driven by FirstPersonHand / PlayerView) ----
-    // firstPersonArm shows a COPY of one arm on the owner's camera only: the
-    // sleeve enters from the lower-right corner and the forearm and hand angle
-    // up and inward, past the near plane. It does not cast a shadow. The pose
+    // firstPersonArm shows a COPY of the hand on the owner's camera only: one
+    // cube in the lower-right corner, angled in so the top face shows, past
+    // the near plane. No sleeve. It does not cast a shadow. The pose
     // lives in the camera, so a look down keeps it in that corner instead of
     // pushing it into the lens. A run eases it off the corner and a stop eases
     // it back. The real arm bones stay on the animation, so another camera and

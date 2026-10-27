@@ -1038,12 +1038,11 @@ void Character::ReleaseOwnerArm() {
 }
 
 namespace {
-// The owner's first-person hand is one cube, not the body's long arm. Scale
-// stays inside the range the player tests allow. The wrist cuff is a short
-// shirt stub on local -Z (the corner side). Local +Z points inward.
+// The owner's first-person view is the hand only: one skin cube, no sleeve.
+// Scale stays inside the range the player tests allow. Local +Z is the inner
+// face (toward screen centre), where a held item sits. Local +Y is the top.
 constexpr float kFpHandScale = 0.50f;
-constexpr float kFpHandHalf  = 0.175f;
-constexpr float kFpStub      = 0.06f;
+constexpr float kFpHandHalf  = 0.12f;
 
 Mesh FaceBox(const Vec3& mn, const Vec3& mx, const Color& col) {
     Mesh m;
@@ -1089,17 +1088,16 @@ void Character::EnsureOwnerArm(int base) {
     made[1]->transform->SetParent(made[0]->transform, false);
     made[2]->transform->SetParent(made[1]->transform, false);
     for (int i = 0; i < 3; ++i) made[i]->transient = true;
-    // The copy is only the hand. The upper-arm mesh was the long sleeve; it
-    // stays an empty root so the forearm and the hand keep their places.
-    const Color sleeveCol = FaceColor(mesh[1]->mesh, Color::FromBytes(60, 95, 75));
-    const Color handCol   = FaceColor(mesh[2]->mesh, Color::FromBytes(220, 176, 150));
+    // One cube. The arm and the forearm stay in the hierarchy (the hand is
+    // their grandchild) but they draw nothing: no sleeve, no wrist stub.
+    const Color handCol = FaceColor(mesh[2]->mesh, Color::FromBytes(220, 176, 150));
     const float h = kFpHandHalf;
     auto* armMr = made[0]->GetComponent<MeshRenderer>();
     armMr->mesh = Mesh{};
     armMr->enabled = false;
     auto* foreMr = made[1]->GetComponent<MeshRenderer>();
-    foreMr->mesh = FaceBox({-h, -h, -h - kFpStub}, {h, h, -h + 0.01f}, sleeveCol);
-    foreMr->castShadows = false;
+    foreMr->mesh = Mesh{};
+    foreMr->enabled = false;
     auto* handMr = made[2]->GetComponent<MeshRenderer>();
     handMr->mesh = FaceBox({-h, -h, -h}, {h, h, h}, handCol);
     handMr->castShadows = false;
@@ -1202,8 +1200,8 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     const float depth = std::max(0.52f, near + 0.36f);
 
     // One cube, angled so the top and the inner face both show. Local +Z is
-    // inward (toward screen centre). Local +Y is the top. The wrist cuff is
-    // the short -Z stub built with the mesh.
+    // inward (toward screen centre), and that face is where the item sits.
+    // Local +Y is the top. There is no sleeve.
     float snap = 0.0f;
     if (m_punchT >= 0.0f && m_punchT < 1.0f) {
         if (m_punchT < 0.32f) snap = std::sin(m_punchT / 0.32f * 1.5707963f);
@@ -1217,7 +1215,7 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
         bobS = std::sin(m_gaitPhase * 6.2831853f);
         bobC = std::cos(m_gaitPhase * 6.2831853f);
     }
-    Vec3 inward{-side * 0.78f, 0.36f, 0.30f};
+    Vec3 inward{-side * 0.55f, 0.48f, 0.38f};
     inward.y += 0.08f * bobS;
     if (snap > 0.0f) {
         const Vec3 aim{-side * 0.22f, 0.78f, 0.46f};
@@ -1242,11 +1240,85 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     // corner projects further out than the vertex that was extreme before the move.
     m_ownerArm->transform->SetRotation(cam->transform->Rotation() * camSpace);
     m_ownerArm->transform->SetPosition(cam->transform->Position() + cam->transform->Rotation() * Vec3{side * 0.16f, -0.08f, -depth});
+
+    // A hold stays on the real hands for everyone else. This camera sees a
+    // copy of the prop on the inner face of the cube, and skips the real one.
+    // Placed before the screen pin so the item cannot stick off the corner.
+    bool showItem = false;
+    ProceduralObjectHolding* hold = gameObject->GetComponent<ProceduralObjectHolding>();
+    GameObject* held = (hold && hold->IsHolding()) ? hold->Held() : nullptr;
+    if (!held || !held->transform || held->IsDestroyed()) {
+        clearHeld();
+    } else {
+        if (m_fpHiddenHeld && m_fpHiddenHeld != held && !m_fpHiddenHeld->IsDestroyed()
+            && m_fpHiddenHeld->ownerCameraSkip == gameObject)
+            m_fpHiddenHeld->ownerCameraSkip = nullptr;
+        held->ownerCameraSkip = gameObject;
+        m_fpHiddenHeld = held;
+        if (!m_ownerItem || m_ownerItem->IsDestroyed()) {
+            m_ownerItem = nullptr;
+            if (Scene* sc = GetScene()) {
+                m_ownerItem = sc->CreateGameObject("FP_OwnerItem");
+                auto* mr = m_ownerItem->AddComponent<MeshRenderer>();
+                mr->castShadows = false;
+                mr->doubleSided = false;
+                m_ownerItem->firstPersonOnly = true;
+                m_ownerItem->firstPersonViewmodel = true;
+                m_ownerItem->transient = true;
+                m_ownerItem->active = false;
+            }
+        }
+        if (m_ownerItem && m_ownerItem->transform) {
+            m_ownerItem->transform->SetParent(m_ownerHand->transform, false);
+            MeshRenderer* src = held->GetComponent<MeshRenderer>();
+            if (!src)
+                for (Transform* c : held->transform->Children())
+                    if (c && c->gameObject)
+                        if (MeshRenderer* m = c->gameObject->GetComponent<MeshRenderer>()) { src = m; break; }
+            auto* dst = m_ownerItem->GetComponent<MeshRenderer>();
+            if (!src || !dst || src->mesh.vertices.empty()) {
+                m_ownerItem->active = false;
+            } else {
+                dst->mesh = src->mesh;
+                dst->color = src->color;
+                dst->castShadows = false;
+                // Longest side about the cube's edge. The inner face is local +Z.
+                // The item's nearest point overlaps that face a little, so it
+                // reads as gripped, and the rest sticks out toward the centre.
+                Vec3 mn = src->mesh.vertices[0], mx = mn;
+                for (const Vec3& v : src->mesh.vertices) {
+                    mn.x = std::min(mn.x, v.x); mn.y = std::min(mn.y, v.y); mn.z = std::min(mn.z, v.z);
+                    mx.x = std::max(mx.x, v.x); mx.y = std::max(mx.y, v.y); mx.z = std::max(mx.z, v.z);
+                }
+                const Vec3 ext = mx - mn;
+                const float maxExt = std::max(ext.x, std::max(ext.y, ext.z));
+                const float edge = kFpHandHalf * 2.0f;
+                const float uni = maxExt > 1e-4f ? (0.92f * edge / maxExt) : 1.0f;
+                const Quat irot = Quat::Euler(18.0f, -side * 28.0f, 10.0f);
+                Vec3 center{0.0f, 0.0f, 0.0f};
+                float minZ = 1.0e9f;
+                const float invN = 1.0f / (float)src->mesh.vertices.size();
+                for (const Vec3& v : src->mesh.vertices) {
+                    const Vec3 p = irot * (v * uni);
+                    center = center + p * invN;
+                    minZ = std::min(minZ, p.z);
+                }
+                const float bite = 0.16f * edge;
+                m_ownerItem->transform->localScale = Vec3{uni, uni, uni};
+                m_ownerItem->transform->localRotation = irot;
+                m_ownerItem->transform->localPosition =
+                    Vec3{-center.x, -center.y + 0.10f * edge, kFpHandHalf - bite - minZ};
+                m_ownerItem->active = true;
+                showItem = true;
+            }
+        }
+    }
+
     Vec3 camOff = cam->transform->Rotation().Conjugate() * (m_ownerArm->transform->Position() - cam->transform->Position());
     // Every vertex, not the single extreme. A nearer corner projects further
     // than a far one, so the shift is the tightest bound across the cube.
-    const float wantNx = side * (0.82f + 0.75f * slide - 0.26f * snap + 0.03f * bobC);
-    const float wantNy = -0.70f - 0.55f * slide + 0.18f * snap + 0.045f * bobS;
+    const float wantNx = side * (0.74f + 0.75f * slide - 0.28f * snap + 0.03f * bobC);
+    const float wantNy = -0.64f - 0.55f * slide + 0.20f * snap + 0.05f * bobS;
     float shiftX = side > 0.0f ? 1.0e9f : -1.0e9f;
     float shiftY = -1.0e9f;
     bool any = false;
@@ -1264,8 +1336,8 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
             any = true;
         }
     };
-    bound(m_ownerFore);
     bound(m_ownerHand);
+    if (showItem) bound(m_ownerItem);
     if (any) { camOff.x += shiftX; camOff.y += shiftY; }
     const Quat lag = Quat::Euler(m_fpTrailPitch, m_fpTrailYaw, 0.0f);
     camOff = lag * camOff;
@@ -1285,76 +1357,14 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
         }
     };
     consider(m_ownerArm);
-    consider(m_ownerFore);
     consider(m_ownerHand);
+    if (showItem) consider(m_ownerItem);
     if (minAhead < keep) {
         const Vec3 fwd = basis * Vec3{0.0f, 0.0f, -1.0f};
         m_ownerArm->transform->SetPosition(m_ownerArm->transform->Position() + fwd * (keep - minAhead));
     }
     SetOwnerArmActive(true);
-
-    // A hold stays on the real hands for everyone else. This camera sees a
-    // copy of the prop on the viewmodel hand, and skips the real one.
-    ProceduralObjectHolding* hold = gameObject->GetComponent<ProceduralObjectHolding>();
-    GameObject* held = (hold && hold->IsHolding()) ? hold->Held() : nullptr;
-    if (!held || !held->transform || held->IsDestroyed()) {
-        clearHeld();
-        return;
-    }
-    if (m_fpHiddenHeld && m_fpHiddenHeld != held && !m_fpHiddenHeld->IsDestroyed()
-        && m_fpHiddenHeld->ownerCameraSkip == gameObject)
-        m_fpHiddenHeld->ownerCameraSkip = nullptr;
-    held->ownerCameraSkip = gameObject;
-    m_fpHiddenHeld = held;
-    if (!m_ownerItem || m_ownerItem->IsDestroyed()) {
-        m_ownerItem = nullptr;
-        if (Scene* sc = GetScene()) {
-            m_ownerItem = sc->CreateGameObject("FP_OwnerItem");
-            auto* mr = m_ownerItem->AddComponent<MeshRenderer>();
-            mr->castShadows = false;
-            mr->doubleSided = false;
-            m_ownerItem->firstPersonOnly = true;
-            m_ownerItem->firstPersonViewmodel = true;
-            m_ownerItem->transient = true;
-            m_ownerItem->active = false;
-        }
-    }
-    if (!m_ownerItem || !m_ownerItem->transform) return;
-    m_ownerItem->transform->SetParent(m_ownerHand->transform, false);
-    MeshRenderer* src = held->GetComponent<MeshRenderer>();
-    if (!src)
-        for (Transform* c : held->transform->Children())
-            if (c && c->gameObject)
-                if (MeshRenderer* m = c->gameObject->GetComponent<MeshRenderer>()) { src = m; break; }
-    auto* dst = m_ownerItem->GetComponent<MeshRenderer>();
-    if (!src || !dst || src->mesh.vertices.empty()) { m_ownerItem->active = false; return; }
-    dst->mesh = src->mesh;
-    dst->color = src->color;
-    dst->castShadows = false;
-    {
-        // The viewmodel cube's local +Z is the inner face. Scale the prop so
-        // its longest side is about three quarters of that cube, and sit it
-        // on that face. The real grip is a different pose and would float.
-        Vec3 mn = src->mesh.vertices[0], mx = mn;
-        for (const Vec3& v : src->mesh.vertices) {
-            mn.x = std::min(mn.x, v.x); mn.y = std::min(mn.y, v.y); mn.z = std::min(mn.z, v.z);
-            mx.x = std::max(mx.x, v.x); mx.y = std::max(mx.y, v.y); mx.z = std::max(mx.z, v.z);
-        }
-        const Vec3 ext = mx - mn;
-        const float maxExt = std::max(ext.x, std::max(ext.y, ext.z));
-        const float cube = kFpHandHalf * 2.0f;
-        const float uni = maxExt > 1e-4f ? (0.78f * cube / maxExt) : 1.0f;
-        const Quat irot = Quat::Euler(12.0f, -side * 18.0f, 6.0f);
-        Vec3 center{0.0f, 0.0f, 0.0f};
-        const float invN = 1.0f / (float)src->mesh.vertices.size();
-        for (const Vec3& v : src->mesh.vertices) center = center + (irot * (v * uni)) * invN;
-        m_ownerItem->transform->localScale = Vec3{uni, uni, uni};
-        m_ownerItem->transform->localRotation = irot;
-        // The prop's middle sits on the inner face, so about half of it is in
-        // the cube and the rest sticks out toward screen centre.
-        m_ownerItem->transform->localPosition = Vec3{-center.x, -center.y + 0.02f, kFpHandHalf - center.z};
-    }
-    m_ownerItem->active = true;
+    if (m_ownerItem && !showItem) m_ownerItem->active = false;
 }
 
 void Character::RememberPartRest() {

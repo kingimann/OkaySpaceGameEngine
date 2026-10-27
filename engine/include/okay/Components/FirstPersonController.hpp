@@ -204,7 +204,7 @@ public:
         if (Game::Paused()) return;   // frozen: no mouse-look, no cursor recapture
         m_lookDt = dt;   // also for a client's ReadLocalInput in authoritative movement
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
-        if (DeathLocksInput(gameObject)) return;
+        if (DeathLocksInput(gameObject)) { StopDeadSlide(gameObject); return; }
         ApplyBodyVisibility();
         // Keep the cursor hidden + locked while playing (re-assert if something freed
         // it). Turn lockCursor off to author with a normal pointer / click screen UI.

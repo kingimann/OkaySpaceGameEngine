@@ -200,7 +200,7 @@ private:
             // Stay active (inert) so Update keeps ticking the respawn timer; a
             // deactivated object gets no Update. Hide visuals via the `died` message.
         } else if (m_deathPlayed) {
-            m_waitDeath = true;   // hide or destroy once the body has settled
+            m_waitDeath = true;   // shrink the capsule once the pose settles; stay in DeadHold
         } else if (destroyOnDeath && gameObject && gameObject->scene()) {
             gameObject->scene()->Destroy(gameObject);
         } else if (gameObject) {
@@ -213,8 +213,9 @@ private:
         HumanoidActions::ShrinkDeadBody(gameObject, m_deathShape);
         if (!m_waitDeath) return;
         m_waitDeath = false;
+        // The settled DeadHold stays visible and revive can get up. DeathLocksInput
+        // holds the body. A body with no death clip still deactivates in OnDeath.
         if (destroyOnDeath && gameObject && gameObject->scene()) gameObject->scene()->Destroy(gameObject);
-        else if (gameObject) gameObject->active = false;
     }
     void Respawn() {
         dead = false; health = maxHealth; m_timer = 0.0f; m_iframes = 0.0f; m_respawnTimer = 0.0f;

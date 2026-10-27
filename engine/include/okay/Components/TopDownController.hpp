@@ -66,7 +66,7 @@ public:
     void Update(float dt) override {
         if (!transform) return;
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
-        if (DeathLocksInput(gameObject)) return;
+        if (DeathLocksInput(gameObject)) { StopDeadSlide(gameObject); return; }
 
         Vec2 axis = Input::AxisWASD();
         Vec2 pad  = Input::GamepadAxis();

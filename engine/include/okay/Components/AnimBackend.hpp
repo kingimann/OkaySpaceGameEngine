@@ -46,6 +46,9 @@ public:
     /// The blend trees' shared normalized phase (0..1).
     virtual float BlendPhase() const = 0;
     virtual void  ResetBlendPhase(float p = 0.0f) = 0;
+    /// One-shots start at phase 0. Looping trees keep ResetBlendPhase, which may
+    /// carry the previous cycle so the feet stay in step.
+    virtual void  RestartBlendPhase() { ResetBlendPhase(0.0f); }
     /// Pose a mix of clips A and B (w = weight of B) at one shared phase, or of
     /// any number of clips by `weights`. False if none of the clips exists.
     virtual bool  BlendClips(float dt, int A, int B, float w) = 0;

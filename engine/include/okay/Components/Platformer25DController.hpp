@@ -180,7 +180,7 @@ public:
         if (!transform || !gameObject) return;
         if (Game::Paused()) return;
         if (!IsLocallyControlled(gameObject)) return;
-        if (DeathLocksInput(gameObject)) return;
+        if (DeathLocksInput(gameObject)) { StopDeadSlide(gameObject); return; }
         Scene* sc = gameObject->scene();
         const bool ui = Input::UICaptured();
         auto* rb = gameObject->GetComponent<Rigidbody3D>();

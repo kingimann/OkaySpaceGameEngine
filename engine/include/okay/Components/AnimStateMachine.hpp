@@ -619,13 +619,15 @@ private:
             return;
         }
         ma->SetSpeed(StateSpeed(st));
+        ma->SetLoop(st.loop);
         if (st.blendTree && st.blendDims == 2) {
             Weights2D(st.motions, GetFloat(st.blendParam), GetFloat(st.blendParamY), m_bWeights);
             std::vector<int> idx;
             for (std::size_t i = 0; i < st.motions.size(); ++i)
                 if (m_bWeights[i] > 0.0f) idx.push_back(ma->FindClip(st.motions[i].clip));
             ma->CaptureCrossfadeMany(idx, blend);
-            ma->ResetBlendPhase(offset);
+            if (!st.loop) ma->RestartBlendPhase();
+            else ma->ResetBlendPhase(offset);
             ma->SetExternalDrive(true);
         } else if (st.blendTree) {
             // Crossfade from the current pose into the tree, which BlendClips then poses.
@@ -633,11 +635,11 @@ private:
             PickMotions(st, GetFloat(st.blendParam), lo, hi, w);
             ma->CaptureCrossfade(lo >= 0 ? ma->FindClip(st.motions[lo].clip) : -1,
                                  hi >= 0 ? ma->FindClip(st.motions[hi].clip) : -1, blend);
-            ma->ResetBlendPhase(offset);
+            if (!st.loop) ma->RestartBlendPhase();
+            else ma->ResetBlendPhase(offset);
             ma->SetExternalDrive(true);
         } else {
             ma->SetExternalDrive(false);
-            ma->SetLoop(st.loop);
             ma->Play(st.clip, blend);   // the transition's blend, not the animator's own setting
             if (offset > 0.0f && ma->ActiveClip() >= 0) ma->SetTime(offset * ma->ClipLength(ma->ActiveClip()));
         }

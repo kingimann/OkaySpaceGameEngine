@@ -156,7 +156,7 @@ public:
         if (!transform || !gameObject) return;
         if (Game::Paused()) return;
         if (!IsLocallyControlled(gameObject)) return;
-        if (DeathLocksInput(gameObject)) return;
+        if (DeathLocksInput(gameObject)) { StopDeadSlide(gameObject); return; }
         const bool uiBlocked = Input::UICaptured();
 
         // ---- Move input ----

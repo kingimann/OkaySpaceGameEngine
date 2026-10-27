@@ -6,6 +6,9 @@
 #include "okay/Graphics/Image.hpp"
 #include "okay/Graphics/TtfFont.hpp"
 #include <SDL.h>
+#include <cstdint>
+#include <deque>
+#include <filesystem>
 #include <string>
 #include <unordered_map>
 
@@ -18,25 +21,75 @@ static_assert(sizeof(Rect) == sizeof(SDL_Rect) && sizeof(FRect) == sizeof(SDL_FR
               "ui2d types must match SDL's layout");
 static_assert((int)FlipH == (int)SDL_FLIP_HORIZONTAL && (int)FlipV == (int)SDL_FLIP_VERTICAL, "flip flags");
 
-/// Load (and cache) a texture from an image file. Returns nullptr if the image can't
-/// be read; a null entry is cached for misses so a bad path isn't decoded every frame.
+/// Load (and cache) a texture from an image file. A miss is remembered, but only for
+/// 500 ms, and a file whose modification time changed is decoded again. `lruCap` > 0
+/// drops the oldest entries of THIS cache (the player icon cache); 0 keeps every entry.
 inline SDL_Texture* LoadSDLTexture(SDL_Renderer* r, const std::string& path, const std::string& baseDir,
-                                   std::unordered_map<std::string, SDL_Texture*>& cache) {
-    if (path.empty()) return nullptr;
+                                   std::unordered_map<std::string, SDL_Texture*>& cache,
+                                   int lruCap = 0) {
+    if (path.empty() || !r) return nullptr;
+    struct Rec { std::uint64_t mtime = 0; Uint32 checked = 0; bool known = false; };
+    static std::unordered_map<const void*, std::unordered_map<std::string, Rec>> meta;
+    static std::unordered_map<const void*, std::deque<std::string>> order;
+    const void* key = &cache;
+    Rec& rec = meta[key][path];
     auto it = cache.find(path);
-    if (it != cache.end()) return it->second;
-    Image img;
-    if (!img.Load(path) && !img.Load(baseDir + path)) {
-        cache[path] = nullptr;   // remember the miss
-        return nullptr;
+    const Uint32 now = SDL_GetTicks();
+    if (it != cache.end() && rec.known && (Uint32)(now - rec.checked) < 500u) {
+        if (lruCap > 0) {
+            auto& ord = order[key];
+            for (auto i = ord.begin(); i != ord.end(); ++i) if (*i == path) { ord.erase(i); break; }
+            ord.push_back(path);
+        }
+        return it->second;
     }
-    SDL_Texture* tex = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888,
-                                         SDL_TEXTUREACCESS_STATIC, img.Width(), img.Height());
-    if (tex) {
-        SDL_UpdateTexture(tex, nullptr, img.Data(), img.Width() * 4);
-        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+    const bool proc = path.rfind("proc:", 0) == 0;
+    std::uint64_t mt = 0;
+    if (!proc) {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        fs::path which = path;
+        if (!fs::exists(which, ec)) which = fs::path(baseDir) / path;
+        if (fs::exists(which, ec)) {
+            const auto t = fs::last_write_time(which, ec);
+            if (!ec) mt = (std::uint64_t)t.time_since_epoch().count();
+        }
+    }
+    if (it != cache.end() && rec.known && it->second && (proc || mt == rec.mtime)) {
+        rec.checked = now;
+        return it->second;
+    }
+    if (it != cache.end() && it->second) SDL_DestroyTexture(it->second);
+    Image img;
+    SDL_Texture* tex = nullptr;
+    if (img.Load(path) || img.Load(baseDir + path)) {
+        tex = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888,
+                                SDL_TEXTUREACCESS_STATIC, img.Width(), img.Height());
+        if (tex) {
+            SDL_UpdateTexture(tex, nullptr, img.Data(), img.Width() * 4);
+            SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+        }
     }
     cache[path] = tex;
+    rec.mtime = mt;
+    rec.checked = now;
+    rec.known = true;
+    if (lruCap > 0) {
+        auto& ord = order[key];
+        for (auto i = ord.begin(); i != ord.end(); ++i) if (*i == path) { ord.erase(i); break; }
+        ord.push_back(path);
+        int guard = (int)ord.size() + 2;
+        while ((int)cache.size() > lruCap && !ord.empty() && guard-- > 0) {
+            std::string old = std::move(ord.front());
+            ord.pop_front();
+            if (old == path) { ord.push_back(std::move(old)); continue; }
+            auto gone = cache.find(old);
+            if (gone == cache.end()) continue;
+            if (gone->second) SDL_DestroyTexture(gone->second);
+            cache.erase(gone);
+            meta[key].erase(old);
+        }
+    }
     return tex;
 }
 

@@ -4,6 +4,7 @@
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Inventory/InventoryEvents.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <string>
@@ -34,6 +35,8 @@ public:
     bool keepOnSceneLoad = false;
     /// Runtime: weight worn in a sibling Equipment, counted toward weightLimit (not saved).
     float wornWeight = 0.0f;
+    /// Bumped by every slot change. Runtime only — not part of the scene file.
+    std::uint32_t revision = 0;
 
     /// C++ hooks: how many of an item came in / went out (by any route: Add, a drag, a
     /// chest move, crafting, ...), and what didn't fit when an add ran out of room. The
@@ -165,6 +168,7 @@ public:
     /// Fires on_encumbered(true/false) too when going over / back under weightLimit,
     /// and on_item_added / on_item_removed for every item whose total changed.
     void NotifyChanged() {
+        ++revision;
         const bool over = OverWeight();
         const bool flipped = over != m_wasOver;
         m_wasOver = over;

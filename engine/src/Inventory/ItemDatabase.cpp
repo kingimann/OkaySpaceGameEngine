@@ -100,6 +100,7 @@ bool ItemDatabase::LoadText(const std::string& text, std::string* err) {
         if      (key == "name")        d.name = ReadQuoted(ls);
         else if (key == "description") d.description = ReadQuoted(ls);
         else if (key == "icon")        d.icon = ReadQuoted(ls);
+        else if (key == "iconrect")    { ls >> d.iconU >> d.iconV >> d.iconUW >> d.iconUH; d.hasIconRect = true; }
         else if (key == "stack")       ls >> d.maxStack;
         else if (key == "weight")      ls >> d.weight;
         else if (key == "size")        ls >> d.gridW >> d.gridH;
@@ -121,6 +122,16 @@ bool ItemDatabase::LoadText(const std::string& text, std::string* err) {
         if (!(d.weight >= 0.0f)) d.weight = 0.0f;
         d.gridW = std::max(1, std::min(d.gridW, 64));
         d.gridH = std::max(1, std::min(d.gridH, 64));
+        if (d.hasIconRect) {
+            if (!(d.iconU >= 0.0f)) d.iconU = 0.0f;
+            if (!(d.iconV >= 0.0f)) d.iconV = 0.0f;
+            if (!(d.iconUW > 0.0f)) d.iconUW = 1.0f;
+            if (!(d.iconUH > 0.0f)) d.iconUH = 1.0f;
+            if (d.iconU > 1.0f) d.iconU = 1.0f;
+            if (d.iconV > 1.0f) d.iconV = 1.0f;
+            if (d.iconU + d.iconUW > 1.0f) d.iconUW = 1.0f - d.iconU;
+            if (d.iconV + d.iconUH > 1.0f) d.iconUH = 1.0f - d.iconV;
+        }
     }
     items.erase(std::remove_if(items.begin(), items.end(), [](const ItemDefinition& d) { return d.id.empty(); }), items.end());
     m_items.swap(items);
@@ -136,6 +147,8 @@ std::string ItemDatabase::Serialize() const {
         if (!d.name.empty())        o << "  name " << Quote(d.name) << "\n";
         if (!d.description.empty()) o << "  description " << Quote(d.description) << "\n";
         if (!d.icon.empty())        o << "  icon " << Quote(d.icon) << "\n";
+        if (d.hasIconRect)
+            o << "  iconrect " << d.iconU << " " << d.iconV << " " << d.iconUW << " " << d.iconUH << "\n";
         if (d.maxStack > 0)         o << "  stack " << d.maxStack << "\n";
         if (d.weight > 0.0f)        o << "  weight " << d.weight << "\n";
         if (d.gridW != 1 || d.gridH != 1) o << "  size " << d.gridW << " " << d.gridH << "\n";

@@ -44,6 +44,8 @@ struct ItemDefinition {
     std::string name;               ///< display name (rename freely; scenes keep working)
     std::string description;
     std::string icon;               ///< image path (empty = the UI's <iconFolder><id>.png)
+    bool  hasIconRect = false;      ///< icon is a rectangle of an atlas (normalized UVs)
+    float iconU = 0, iconV = 0, iconUW = 1, iconUH = 1;
     int   maxStack = 0;             ///< per-stack limit (0 = only the container's limit)
     float weight = 0.0f;            ///< per item
     int   gridW = 1, gridH = 1;     ///< footprint in a grid bag

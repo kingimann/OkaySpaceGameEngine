@@ -3,6 +3,7 @@
 #include "okay/Input/Input.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
 #include <cmath>
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -29,6 +30,7 @@ public:
     int  cols = 8, rows = 6;
     std::vector<GridItem> items;
     bool open = false;
+    std::uint32_t revision = 0;   ///< bumped by every successful mutation (runtime, not saved)
     char toggleKey = 'i';
     std::string title = "Inventory";
     float weightLimit = 0.0f;     ///< max carry weight (0 = unlimited); shown by the UI
@@ -115,6 +117,7 @@ public:
             last = (int)items.size() - 1;
             left -= n;
         }
+        Touch();
         return last;
     }
 
@@ -149,11 +152,12 @@ public:
         part.count = n;
         items[index].count -= n;
         items.push_back(part);
+        Touch();
         return (int)items.size() - 1;
     }
 
     void RemoveAt(int index) {
-        if (index >= 0 && index < (int)items.size()) items.erase(items.begin() + index);
+        if (index >= 0 && index < (int)items.size()) { items.erase(items.begin() + index); Touch(); }
     }
 
     /// Rotate item `index` 90° (swap its w/h) if the rotated footprint still fits at
@@ -163,6 +167,7 @@ public:
         GridItem& it = items[index];
         if (!CanPlace(it.x, it.y, it.h, it.w, index)) return false;
         std::swap(it.w, it.h);
+        Touch();
         return true;
     }
 
@@ -215,6 +220,7 @@ public:
     }
 
 private:
+    void Touch() { ++revision; }
     bool Move(int index, GridInventory& dst, int x, int y, bool rotated, bool apply) {
         if (index < 0 || index >= (int)items.size()) return false;
         GridItem& it = items[index];
@@ -228,6 +234,8 @@ private:
             dst.items[on].count += n;
             it.count -= n;
             if (it.count <= 0) items.erase(items.begin() + index);
+            Touch();
+            if (!same) dst.Touch();
             return true;
         }
         const int w = rotated ? it.h : it.w, h = rotated ? it.w : it.h;
@@ -236,9 +244,11 @@ private:
         if (!apply) return true;
         GridItem moved = it;
         moved.x = x; moved.y = y; moved.w = w; moved.h = h;
-        if (same) { it = moved; return true; }
+        if (same) { it = moved; Touch(); return true; }
         dst.items.push_back(moved);
         items.erase(items.begin() + index);
+        Touch();
+        dst.Touch();
         return true;
     }
     bool CanStack(const GridItem& on, const std::string& name, int w, int h, float weight, const ItemInstanceData& data) const {

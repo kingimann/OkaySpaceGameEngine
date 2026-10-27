@@ -124,10 +124,43 @@ static SDL_Texture* GetTexture(SDL_Renderer* r, const std::string& path,
     return ui2d::LoadSDLTexture(r, path, baseDir, cache);
 }
 
-// An item's icon (okay::ItemIconPath), or null when it has none (the name is drawn).
+// An item's icon, from its own cache (so a full world-texture cache is never evicted
+// to make room). At 1.5× and above, a sibling `name@2x.ext` is tried first.
 static SDL_Texture* IconTexture(SDL_Renderer* r, const std::string& path, const std::string& baseDir,
-                                std::unordered_map<std::string, SDL_Texture*>& cache) {
-    return path.empty() ? nullptr : GetTexture(r, path, baseDir, cache);
+                                std::unordered_map<std::string, SDL_Texture*>& /*world*/,
+                                float scale = 1.0f) {
+    if (path.empty()) return nullptr;
+    static std::unordered_map<std::string, SDL_Texture*> icons;
+    if (scale >= 1.5f) {
+        SDL_Texture* hi = ui2d::LoadSDLTexture(r, okay::HiDpiIconPath(path), baseDir, icons, 176);
+        if (hi) return hi;
+    }
+    return ui2d::LoadSDLTexture(r, path, baseDir, icons, 176);
+}
+
+// Copy `tex`, or the item's atlas rectangle when the definition has one.
+static void BlitIcon(SDL_Renderer* r, SDL_Texture* tex, const std::string& id, const SDL_Rect& dst) {
+    if (!tex) return;
+    const okay::ItemDefinition* d = okay::ItemDatabase::Get().Find(id);
+    int tw = 0, th = 0, x = 0, y = 0, w = 0, h = 0;
+    if (d && SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th) == 0 && okay::IconPixelRect(*d, tw, th, x, y, w, h)) {
+        SDL_Rect src{x, y, w, h};
+        SDL_RenderCopy(r, tex, &src, &dst);
+    } else {
+        SDL_RenderCopy(r, tex, nullptr, &dst);
+    }
+}
+
+// Colour tile + a display name that never splits a character, when the icon file is missing.
+static void DrawMissingIcon(SDL_Renderer* r, const std::string& id, float x, float y, float w, float h, int maxChars) {
+    const okay::Color c = okay::IconFallbackColor(id.empty() ? std::string("?") : id);
+    SDL_SetRenderDrawColor(r, (Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), (Uint8)(c.a * 255));
+    SDL_Rect rc{(int)x, (int)y, (int)(w < 1.0f ? 1.0f : w), (int)(h < 1.0f ? 1.0f : h)};
+    SDL_RenderFillRect(r, &rc);
+    float px = h * 0.22f; if (px < 1.0f) px = 1.0f; if (px > 3.0f) px = 3.0f;
+    const std::string nm = okay::Ellipsize(okay::ItemLabel(id), w - 6.0f, px, maxChars < 1 ? 1 : maxChars);
+    if (!nm.empty())
+        DrawText(r, nm, x + 3.0f, y + (h - (Font8x8::Height + 1) * px) * 0.5f, px, SDL_Color{255, 255, 255, 230});
 }
 
 
@@ -536,15 +569,9 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         if (idx == ui.dragIndex) shown -= (ui.dragAmount > 0 ? ui.dragAmount : shown);
         if (shown > 0 && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
             const auto& it = inv->slots[idx];
-            SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(ui.iconFolder, it.item), baseDir, cache);
-            if (icon) { int ins = (int)(ui.iconInset * uiScale); SDL_Rect d{inner.x + ins, inner.y + ins, inner.w - 2 * ins, inner.h - 2 * ins}; SDL_RenderCopy(r, icon, nullptr, &d); }
-            else if (ui.showNames) {
-                std::string nm = it.item.substr(0, ui.nameChars < 1 ? 1 : (std::size_t)ui.nameChars);
-                float px = (S - 8.0f) / ((float)nm.size() * (Font8x8::Width + 1)) * ui.labelScale;
-                if (px < 1.0f) px = 1.0f; if (px > S * 0.05f) px = S * 0.05f;   // fit the slot
-                DrawText(r, nm, X + 4, Y + 5, px,
-                         SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
-            }
+            SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(ui.iconFolder, it.item), baseDir, cache, uiScale);
+            if (icon) { int ins = (int)(ui.iconInset * uiScale); SDL_Rect d{inner.x + ins, inner.y + ins, inner.w - 2 * ins, inner.h - 2 * ins}; BlitIcon(r, icon, it.item, d); }
+            else DrawMissingIcon(r, it.item, X + 4, Y + 4, S - 8, S - 8, ui.nameChars);
             if (ui.showCounts && shown > 1) {
                 std::string cs = std::to_string(shown);
                 float px = S * 0.038f * ui.labelScale; if (px < 1.0f) px = 1.0f;
@@ -589,23 +616,21 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
                      top - panelPad - (Font8x8::Height + 1) * px - 2.0f, px,
                      SDL_Color{(Uint8)(ui.titleColor.r*255),(Uint8)(ui.titleColor.g*255),(Uint8)(ui.titleColor.b*255),255});
         }
-        for (int row = 0; row < bpRows; ++row)
+        for (int row = 0; row < bpRows; ++row) {
+            const float ry = bpY(row);
+            if (ry + sz < 0.0f || ry > (float)H) continue;   // only rows on screen
             for (int c = 0; c < n && n + row * n + c < total; ++c)
-                slot(hx + c * (sz + gap), bpY(row), n + row * n + c, false);
+                slot(hx + c * (sz + gap), ry, n + row * n + c, false);
+        }
     }
     if (ui.showPanel) panel(hx - panelPad, hy - panelPad, rowW + 2 * panelPad, sz + 2 * panelPad);
     for (int i = 0; i < n && i < total; ++i) slot(hx + i * (sz + gap), hy, i, i == ui.selected);
     // Equipment column (worn items) beside the open backpack.
     auto equipIcon = [&](const std::string& item, float x, float y) {
-        if (SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(ui.iconFolder, item), baseDir, cache)) {
+        if (SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(ui.iconFolder, item), baseDir, cache, uiScale)) {
             int ins = (int)(ui.iconInset * uiScale); SDL_Rect d{(int)x + ins, (int)y + ins, (int)sz - 2 * ins, (int)sz - 2 * ins};
-            SDL_RenderCopy(r, icon, nullptr, &d);
-        } else {
-            std::string nm = item.substr(0, ui.nameChars < 1 ? 1 : (std::size_t)ui.nameChars);
-            float px = (sz - 8.0f) / ((float)nm.size() * (Font8x8::Width + 1)) * ui.labelScale;
-            if (px < 1.0f) px = 1.0f; if (px > sz * 0.05f) px = sz * 0.05f;
-            DrawText(r, nm, x + 4, y + 5, px, SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
-        }
+            BlitIcon(r, icon, item, d);
+        } else DrawMissingIcon(r, item, x + 4, y + 4, sz - 8, sz - 8, ui.nameChars);
     };
     if (L.equip && L.equipN > 0) {
         float x0, y0, x1, y1; L.EquipXY(0, x0, y0); L.EquipXY(L.equipN - 1, x1, y1);
@@ -648,7 +673,7 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
                  SDL_Color{(Uint8)(ui.tooltipText.r*255),(Uint8)(ui.tooltipText.g*255),(Uint8)(ui.tooltipText.b*255),255});
     };
     auto slotLabel = [&](const Inventory::Slot& it) {
-        return it.item + (it.count > 1 ? " x" + std::to_string(it.count) : std::string());
+        return okay::ItemLabel(it.item) + (it.count > 1 ? " x" + std::to_string(it.count) : std::string());
     };
     // Hotbar tooltip on hover (shown even when the backpack is closed).
     if (inv && ui.showTooltips && !ui.open && ui.dragIndex < 0)
@@ -659,7 +684,7 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         }
     // Minecraft-style held-item name above (or below) the hotbar.
     if (ui.showSelectedName) {
-        std::string nm = ui.SelectedItem();
+            std::string nm = okay::ItemLabel(ui.SelectedItem());
         if (!nm.empty()) {
             float px = 2.0f * ui.labelScale * uiScale; if (px < 1.0f) px = 1.0f;
             float tw = UITextW(nm, px);
@@ -701,15 +726,9 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         const auto& it = inv->slots[ui.dragIndex];
         float x = mp.x - sz * 0.5f, y = mp.y - sz * 0.5f;
         slot(x, y, -2, false);   // an empty slot frame floating under the cursor
-        SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(ui.iconFolder, it.item), baseDir, cache);
-        if (icon) { SDL_Rect d{(int)x + 4, (int)y + 4, (int)sz - 8, (int)sz - 8}; SDL_RenderCopy(r, icon, nullptr, &d); }
-        else {
-            std::string nm = it.item.substr(0, ui.nameChars < 1 ? 1 : (std::size_t)ui.nameChars);
-            float px = (sz - 8.0f) / ((float)nm.size() * (Font8x8::Width + 1)) * ui.labelScale;
-            if (px < 1.0f) px = 1.0f; if (px > sz * 0.05f) px = sz * 0.05f;
-            DrawText(r, nm, x + 4, y + 5, px,
-                     SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
-        }
+        SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(ui.iconFolder, it.item), baseDir, cache, uiScale);
+        if (icon) { SDL_Rect d{(int)x + 4, (int)y + 4, (int)sz - 8, (int)sz - 8}; BlitIcon(r, icon, it.item, d); }
+        else DrawMissingIcon(r, it.item, x + 4, y + 4, sz - 8, sz - 8, ui.nameChars);
         // The carried count (the split amount, or the whole stack).
         int carried = ui.dragAmount > 0 ? ui.dragAmount : it.count;
         if (ui.showCounts && carried > 1) {
@@ -812,12 +831,11 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
         SDL_Rect box{(int)px0, (int)py0, (int)w, (int)h};
         stroke(px0, py0, w, h, rar ? *rar : u.itemBorder, ghost ? 170 : 235);
         if (hover) { fill(px0, py0, w, h, u.hoverColor, cr); stroke(px0, py0, w, h, lighten(u.itemBorder, 0.35f), 255); }
-        SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(u.iconFolder, it.name), baseDir, cache);
-        if (icon) { SDL_SetTextureAlphaMod(icon, ghost ? 160 : 255); SDL_Rect d{box.x + 6, box.y + 6, box.w - 12, box.h - 12}; SDL_RenderCopy(r, icon, nullptr, &d); }
-        else if (u.showItemNames) {   // clip the name to the tile width so it never overflows the cell
+        SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(u.iconFolder, it.name), baseDir, cache, GL.scale);
+        if (icon) { SDL_SetTextureAlphaMod(icon, ghost ? 160 : 255); SDL_Rect d{box.x + 6, box.y + 6, box.w - 12, box.h - 12}; BlitIcon(r, icon, it.name, d); }
+        else {
             float px = u.itemNameScale; int maxc = (int)((w - 12) / ((Font8x8::Width + 1) * px)); if (maxc < 1) maxc = 1;
-            std::string nm = (int)it.name.size() > maxc ? it.name.substr(0, maxc) : it.name;
-            DrawText(r, nm, box.x + 6, box.y + 7, px, sc(u.textColor));
+            DrawMissingIcon(r, it.name, px0 + 4, py0 + 4, w - 8, h - 8, maxc);
         }
         if (it.count > 1) {
             std::string cstr = std::to_string(it.count); float px = 1.3f;
@@ -841,9 +859,18 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
             float px = 1.2f, tw = UITextW(wb, px);
             DrawText(r, wb, P.ox + P.gw - tw, hy + 6, px, sc(inv->OverWeight() ? ui.overweightColor : ui.textColor));
         }
-        for (int y = 0; y < inv->rows; ++y)
+        const float stride = cs + gp;
+        int y0 = 0, y1 = inv->rows;
+        if (stride > 0.5f) {
+            y0 = (int)((0.0f - P.oy) / stride) - 1;
+            y1 = (int)(((float)H - P.oy) / stride) + 2;
+            if (y0 < 0) y0 = 0;
+            if (y1 > inv->rows) y1 = inv->rows;
+            if (y0 > y1) y0 = y1;
+        }
+        for (int y = y0; y < y1; ++y)
             for (int x = 0; x < inv->cols; ++x) {
-                float cxp = P.ox + x * (cs + gp), cyp = P.oy + y * (cs + gp);
+                float cxp = P.ox + x * (cs + gp), cyp = P.oy + y * stride;
                 fillG(cxp, cyp, cs, cs, darken(ui.cellColor, 0.04f), darken(ui.cellColor, 0.18f), cr);
                 stroke(cxp, cyp, cs, cs, darken(ui.cellColor, 0.32f), 130);
             }
@@ -862,7 +889,10 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
         for (int i = 0; i < (int)inv->items.size(); ++i) {
             if (inv == ui.dragInv && i == ui.dragIndex) continue;
             const auto& it = inv->items[i];
-            drawItem(ui, it, P.ox + it.x * (cs + gp), P.oy + it.y * (cs + gp), false, i == hovered);
+            const float iy = P.oy + it.y * (cs + gp);
+            const float ih = it.h * cs + (it.h - 1) * gp;
+            if (iy + ih < 0.0f || iy > (float)H) continue;
+            drawItem(ui, it, P.ox + it.x * (cs + gp), iy, false, i == hovered);
         }
     }
 
@@ -873,7 +903,7 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
         if (hov >= 0) {
             const auto& it = inv->items[hov];
             char tip[96];
-            std::snprintf(tip, sizeof(tip), "%s  %dx%d%s  %.1fkg", it.name.c_str(), it.w, it.h,
+            std::snprintf(tip, sizeof(tip), "%s  %dx%d%s  %.1fkg", okay::ItemLabel(it.name).c_str(), it.w, it.h,
                           it.count > 1 ? ("  x" + std::to_string(it.count)).c_str() : "", it.weight * it.count);
             float px = 1.4f, tw = UITextW(tip, px), tpad = 6.0f;
             fill(mp.x + 14, mp.y + 14, tw + tpad * 2, Font8x8::Height * px + tpad * 2, ui.tooltipColor, 4.0f);
@@ -964,9 +994,9 @@ static void DrawChest(SDL_Renderer* r, okay::ChestInventory& ch, const std::stri
     int hovSide = -1, hovIdx = -1;   // which grid + slot the cursor is over
     L.Pick(mp.x, mp.y, hovSide, hovIdx);
     auto stack = [&](const okay::Inventory::Slot& it, float x, float y, float sz) {
-        SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(ch.iconFolder, it.item), baseDir, cache);
-        if (icon) { SDL_Rect d{(int)x+4, (int)y+4, (int)sz-8, (int)sz-8}; SDL_RenderCopy(r, icon, nullptr, &d); }
-        else DrawText(r, it.item.substr(0, 5), x + 4, y + 5, 1.0f, sc(ch.textColor));
+        SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(ch.iconFolder, it.item), baseDir, cache, L.scale);
+        if (icon) { SDL_Rect d{(int)x+4, (int)y+4, (int)sz-8, (int)sz-8}; BlitIcon(r, icon, it.item, d); }
+        else DrawMissingIcon(r, it.item, x + 4, y + 4, sz - 8, sz - 8, 6);
         if (it.count > 1) { std::string c = std::to_string(it.count); float px = 1.2f;
             float tw = UITextW(c, px);
             DrawText(r, c, x + sz - tw - 3, y + sz - (Font8x8::Height + 1) * px - 2, px, SDL_Color{255,255,255,255}); }
@@ -976,6 +1006,7 @@ static void DrawChest(SDL_Renderer* r, okay::ChestInventory& ch, const std::stri
         const float sz = L.Size(side);
         for (int i = 0; i < L.Count(side); ++i) {
             float x, y; L.SlotXY(side, i, x, y);
+            if (y + sz < 0.0f || y > (float)H) continue;
             fill(x, y, sz, sz, ch.slotBorder, cr);
             fill(x + 2, y + 2, sz - 4, sz - 4, ch.slotColor, cr > 2 ? cr - 2 : 0);
             if (side == hovSide && i == hovIdx) fill(x, y, sz, sz, ch.hoverColor, cr);
@@ -1726,21 +1757,9 @@ int main(int argc, char** argv) {
 
         // An open inventory is modal: free the cursor (even in FPS/locked mode) so you
         // can point at and drag items, and show it — just like Minecraft/DayZ.
-        bool invModal = false, itemDragging = false;
-        for (const auto& up : scene.Objects()) {
-            if (!up) continue;
-            if (auto* iu = up->GetComponent<InventoryUI>()) {
-                if (iu->open && iu->dragItems) invModal = true;
-                if (iu->dragIndex >= 0) itemDragging = true;
-            }
-            if (auto* gi = up->GetComponent<GridInventory>()) { if (gi->open) invModal = true; }
-            if (auto* gu = up->GetComponent<GridInventoryUI>()) { if (gu->dragIndex >= 0) itemDragging = true; }
-            if (auto* cs = up->GetComponent<CraftingStation>()) { if (cs->open) invModal = true; }
-            if (auto* ce = up->GetComponent<ChestInventory>()) { if (ce->open) invModal = true; }
-            // The fullscreen pause-map is modal too: free + show the cursor so it can be
-            // clicked to drop a waypoint (GTA-style), and pause look/move.
-            if (auto* mm = up->GetComponent<Minimap>()) { if (mm->fullscreen) invModal = true; }
-        }
+        // The component lists are cached until the scene's structure changes.
+        const okay::InventoryModal modal = okay::QueryInventoryModal(scene);
+        const bool invModal = modal.open, itemDragging = modal.dragging;
         Input::SetUICaptured(invModal);   // controllers pause look/move while a bag is open
 
         // Apply the game's requested cursor state.
@@ -2366,6 +2385,8 @@ int main(int argc, char** argv) {
         SDL_StartTextInput();   // keep text flowing for OkayUI text fields
 #endif
         // Minecraft-style inventory hotbar / backpack (under the loading screen).
+        // The scene UI font covers these labels, including Japanese and Arabic names.
+        ui2d::SetUIDefaultFont(okay::SceneUIFont(scene.uiFont));
         for (const auto& up : scene.Objects()) {
             auto* ui = up ? up->GetComponent<InventoryUI>() : nullptr;
             if (!ui) continue;
@@ -2390,6 +2411,7 @@ int main(int argc, char** argv) {
             DrawChest(renderer, *ce, baseDir, textureCache);
             break;
         }
+        ui2d::SetUIDefaultFont(nullptr);
         // Loading-screen overlay: drawn on top of everything (and the UI) when active.
         for (const auto& up : scene.Objects()) {
             auto* ls = up ? up->GetComponent<LoadingScreen>() : nullptr;

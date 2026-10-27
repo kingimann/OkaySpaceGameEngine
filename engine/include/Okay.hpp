@@ -208,6 +208,8 @@
 #include "okay/Inventory/ItemDatabase.hpp"
 #include "okay/Inventory/LootTable.hpp"
 #include "okay/Inventory/InventoryInput.hpp"
+#include "okay/Inventory/InventoryPresent.hpp"
+#include "okay/Inventory/InventoryQuery.hpp"
 #include "okay/Inventory/InventoryPersistence.hpp"
 #include "okay/Inventory/Recipe.hpp"
 #include "okay/Components/Equipment.hpp"

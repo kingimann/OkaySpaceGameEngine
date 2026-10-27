@@ -96,6 +96,8 @@ public:
     std::deque<ItemDefinition>& Items() { return m_items; }
     /// Ids used by more than one definition (shown as a warning in the editor).
     std::vector<std::string> DuplicateIds() const;
+    /// Ids that match another id once case is ignored ("Wood" and "wood").
+    std::vector<std::string> CaseConflicts() const;
 
     /// The per-stack limit for `item` in a container whose own limit is `container`
     /// (0 = unlimited): the smaller of the two non-zero limits.
@@ -109,5 +111,25 @@ private:
 /// The icon to draw for `item`: its definition's icon, else <folder><id>.png, else ""
 /// (no folder and no icon = draw the name instead).
 std::string ItemIconPath(const std::string& folder, const std::string& item);
+
+/// The first `maxChars` Unicode characters of `s`, never splitting a UTF-8 sequence.
+inline std::string Utf8Prefix(const std::string& s, int maxChars) {
+    if (maxChars < 1) maxChars = 1;
+    std::size_t i = 0;
+    int chars = 0;
+    while (i < s.size() && chars < maxChars) {
+        const unsigned char c = (unsigned char)s[i];
+        std::size_t n = 1;
+        if ((c & 0x80) == 0) n = 1;
+        else if ((c & 0xE0) == 0xC0) n = 2;
+        else if ((c & 0xF0) == 0xE0) n = 3;
+        else if ((c & 0xF8) == 0xF0) n = 4;
+        else { ++i; continue; }
+        if (i + n > s.size()) break;
+        i += n;
+        ++chars;
+    }
+    return s.substr(0, i);
+}
 
 } // namespace okay

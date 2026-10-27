@@ -68,6 +68,8 @@ struct ChestLayout {
     int   chestN = 0, playN = 0;            ///< slots shown
     Inventory* chest = nullptr;
     Inventory* player = nullptr;
+    float scroll = 0, maxScroll = 0;
+    bool  scrolling = false;
 
     float Size(int side) const { return side == 1 ? ps : cs; }
     int   Count(int side) const { return side == 1 ? playN : chestN; }
@@ -93,6 +95,8 @@ struct GridLayout {
     float lw = 0, lh = 0, rw = 0, rh = 0;       ///< equipped / nearby column sizes
     float startX = 0, startY = 0;
     bool  hasNear = false;
+    float scroll = 0, maxScroll = 0;
+    bool  scrolling = false;
 
     /// Panel + cell under a point; false if none.
     bool Pick(float px, float py, int& panel, int& cx, int& cy) const;

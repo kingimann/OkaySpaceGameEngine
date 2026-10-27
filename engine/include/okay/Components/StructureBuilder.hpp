@@ -7,7 +7,10 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Crosshair.hpp"
 #include "okay/Components/Inventory.hpp"
+#include "okay/Components/ItemPickup.hpp"
 #include "okay/Components/BuildPiece.hpp"
+#include "okay/Components/UIInputField.hpp"
+#include "okay/Net/NetOwnership.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Input/Input.hpp"
@@ -90,6 +93,12 @@ public:
         const float r = reach + CameraGap(origin);
 
         if (showCrosshair && !crosshairChecked_) { crosshairChecked_ = true; EnsureCrosshair(*s); }
+
+        // An open bag, a text field, or a remote pawn must not place, demolish, or spend items.
+        if (!IsLocallyControlled(gameObject) || Input::UICaptured() || UIInputField::AnyFocused()) {
+            if (preview_) preview_->active = false;
+            return;
+        }
 
         if (pieceHotkeys) {
             if (Input::GetKeyDown('1')) piece = Piece::Foundation;
@@ -193,7 +202,13 @@ public:
 
     GameObject* PlacePiece(Scene& s, const Placement& p) {
         if (!p.valid) return nullptr;
-        if (requireResources) { Inventory* inv = Inv(); if (!inv || !inv->Remove(TierMaterial(0), TierCost(0))) return nullptr; }
+        if (requireResources) {
+            Inventory* inv = Inv();
+            const std::string mat = TierMaterial(0);
+            const int cost = TierCost(0);
+            if (!inv || !inv->Has(mat, cost)) return nullptr;   // Remove would otherwise keep a short stack
+            inv->Remove(mat, cost);
+        }
 
         const char* names[] = {"Foundation", "FoundationTri", "Wall", "Doorway", "Window", "Floor", "Pillar", "Ramp"};
         GameObject* g = s.CreateGameObject(names[(int)p.piece]);
@@ -235,7 +250,11 @@ public:
                 auto* bp = g->GetComponent<BuildPiece>();
                 std::string mat = bp ? bp->material : TierMaterial(0);
                 int back = bp ? (int)(bp->cost * refundFraction) : (int)(TierCost(0) * refundFraction);
-                if (back > 0) inv->AddPartial(mat, back);   // refund what fits (Add is all-or-nothing)
+                if (back > 0) {
+                    const int left = inv->AddPartial(mat, back);   // refund what fits
+                    if (left > 0 && g->transform)
+                        ItemPickup::Spawn(s, mat, left, {}, g->transform->Position());   // the rest stays in the world
+                }
             }
         }
         s.Destroy(g);
@@ -251,7 +270,13 @@ public:
         auto* bp = g->GetComponent<BuildPiece>();
         if (!bp || bp->tier >= 2) return nullptr;
         int nt = bp->tier + 1;
-        if (requireResources) { Inventory* inv = Inv(); if (!inv || !inv->Remove(TierMaterial(nt), TierCost(nt))) return nullptr; }
+        if (requireResources) {
+            Inventory* inv = Inv();
+            const std::string mat = TierMaterial(nt);
+            const int cost = TierCost(nt);
+            if (!inv || !inv->Has(mat, cost)) return nullptr;
+            inv->Remove(mat, cost);
+        }
         bp->tier = nt; bp->material = TierMaterial(nt); bp->cost = TierCost(nt);
         bp->maxHealth = bp->health = TierHealth(nt);
         RecolorPiece(g, TierColor(nt));
@@ -268,7 +293,11 @@ public:
         if (!bp || bp->FullHealth() || bp->maxHealth <= 0.0f) return nullptr;
         float missing = 1.0f - bp->health / bp->maxHealth;
         int rcost = std::max(1, (int)std::ceil(bp->cost * missing));
-        if (requireResources) { Inventory* inv = Inv(); if (!inv || !inv->Remove(bp->material, rcost)) return nullptr; }
+        if (requireResources) {
+            Inventory* inv = Inv();
+            if (!inv || !inv->Has(bp->material, rcost)) return nullptr;
+            inv->Remove(bp->material, rcost);
+        }
         bp->health = bp->maxHealth;
         return g;
     }

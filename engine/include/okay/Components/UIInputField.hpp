@@ -36,6 +36,9 @@ public:
     ContentType contentType = ContentType::Standard;
     char passwordChar = '*';
     bool focused = false;
+
+    /// True while any field is taking keystrokes, so a bag hotkey does not also fire.
+    static bool AnyFocused() { return FocusedCount() > 0; }
     // Silhouette + corners and an optional focus ring (clean form-field styling).
     UIShape shape = UIShape::Rounded;
     float cornerRadius = 6.0f;
@@ -78,10 +81,12 @@ public:
                 if (sc->VM()) sc->VM()->CallEvent("on_submit");
     }
 
+    void OnDestroy() override { NoteFocus(false); }
+
     void Update(float dt) override {
         if (Input::GetMouseButtonDown(0)) {
             bool was = focused;
-            focused = Contains(Input::MousePosition());
+            NoteFocus(Contains(Input::MousePosition()));
             if (focused && !was) m_blink = 0.0f;            // solid caret on focus
         }
         if (!focused) return;
@@ -99,8 +104,8 @@ public:
         if (changed) m_blink = 0.0f;                        // keep caret solid while typing
 
         // Enter submits (and blurs); Esc cancels focus without submitting.
-        if (Input::GetKeyDown('\r') || Input::GetKeyDown('\n')) { focused = false; Submit(); }
-        else if (Input::GetKeyDown((char)27)) focused = false;
+        if (Input::GetKeyDown('\r') || Input::GetKeyDown('\n')) { NoteFocus(false); Submit(); }
+        else if (Input::GetKeyDown((char)27)) NoteFocus(false);
 
         m_blink += dt;
         if (m_blink >= 1.1f) m_blink -= 1.1f;
@@ -108,6 +113,14 @@ public:
 
 private:
     float m_blink = 0.0f;
+
+    static int& FocusedCount() { static int n = 0; return n; }
+    void NoteFocus(bool now) {
+        if (now == focused) return;
+        if (focused && FocusedCount() > 0) --FocusedCount();
+        focused = now;
+        if (focused) ++FocusedCount();
+    }
 };
 
 } // namespace okay

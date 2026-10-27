@@ -8,6 +8,8 @@
 #include "okay/Components/ItemPickup.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Net/NetOwnership.hpp"
+#include "okay/Components/UIInputField.hpp"
 #include "okay/Render/Color.hpp"
 #include <string>
 #include <utility>
@@ -129,7 +131,9 @@ public:
         const int n = hotbarSlots < 1 ? 1 : hotbarSlots;
         Inventory* inv = Inv();
         if (inv && inv->capacity > 0) return inv->capacity;
-        return n + (backpackRows > 0 ? backpackRows : 0) * n;
+        const int shown = n + (backpackRows > 0 ? backpackRows : 0) * n;
+        if (inv && (int)inv->slots.size() > shown) return (int)inv->slots.size();   // capacity 0 = unlimited
+        return shown;
     }
     /// Backpack rows needed to show SlotCount() (the last row may be partly filled).
     int BackpackRowCount() const {
@@ -299,11 +303,15 @@ public:
     void ApplyDrag(int from, int to) { Inventory* inv = Inv(); InventoryOps::Move(inv, from, inv, to, dragAmount, SlotCount()); }
 
     void Update(float) override {
+        if (!IsLocallyControlled(gameObject)) return;   // a remote pawn's bag ignores this keyboard
+        if (UIInputField::AnyFocused()) return;         // typing in chat must not change the hotbar
         if (selectHotkeys) {
             for (int k = 0; k < hotbarSlots && k < 9; ++k)
                 if (Input::GetKeyDown((char)('1' + k))) selected = k;
         }
-        if (scrollSelect && hotbarSlots > 0) {
+        // The wheel selects a hotbar slot only while the backpack is open. Closed, the
+        // camera (and a scrolling chest) keep it.
+        if (scrollSelect && open && hotbarSlots > 0) {
             float w = Input::MouseWheel();
             if (w > 0.5f)      selected = (selected - 1 + hotbarSlots) % hotbarSlots;
             else if (w < -0.5f) selected = (selected + 1) % hotbarSlots;

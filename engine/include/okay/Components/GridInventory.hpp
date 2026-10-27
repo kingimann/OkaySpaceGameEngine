@@ -1,6 +1,8 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Net/NetOwnership.hpp"
+#include "okay/Components/UIInputField.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
 #include <cmath>
 #include <string>
@@ -211,6 +213,8 @@ public:
     }
 
     void Update(float) override {
+        if (!IsLocallyControlled(gameObject)) return;
+        if (UIInputField::AnyFocused()) return;
         if (toggleKey && Input::GetKeyDown(toggleKey)) open = !open;
     }
 

@@ -9,6 +9,7 @@
 #include <SDL.h>
 
 #include <Okay.hpp>
+#include "okay/Inventory/InventoryModal.hpp"
 #include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Net/DedicatedServer.hpp"
 #if !defined(_WIN32)
@@ -539,7 +540,7 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
             SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(ui.iconFolder, it.item), baseDir, cache);
             if (icon) { int ins = (int)(ui.iconInset * uiScale); SDL_Rect d{inner.x + ins, inner.y + ins, inner.w - 2 * ins, inner.h - 2 * ins}; SDL_RenderCopy(r, icon, nullptr, &d); }
             else if (ui.showNames) {
-                std::string nm = it.item.substr(0, ui.nameChars < 1 ? 1 : (std::size_t)ui.nameChars);
+                std::string nm = okay::Utf8Prefix(it.item, ui.nameChars);
                 float px = (S - 8.0f) / ((float)nm.size() * (Font8x8::Width + 1)) * ui.labelScale;
                 if (px < 1.0f) px = 1.0f; if (px > S * 0.05f) px = S * 0.05f;   // fit the slot
                 DrawText(r, nm, X + 4, Y + 5, px,
@@ -601,7 +602,7 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
             int ins = (int)(ui.iconInset * uiScale); SDL_Rect d{(int)x + ins, (int)y + ins, (int)sz - 2 * ins, (int)sz - 2 * ins};
             SDL_RenderCopy(r, icon, nullptr, &d);
         } else {
-            std::string nm = item.substr(0, ui.nameChars < 1 ? 1 : (std::size_t)ui.nameChars);
+            std::string nm = okay::Utf8Prefix(item, ui.nameChars);
             float px = (sz - 8.0f) / ((float)nm.size() * (Font8x8::Width + 1)) * ui.labelScale;
             if (px < 1.0f) px = 1.0f; if (px > sz * 0.05f) px = sz * 0.05f;
             DrawText(r, nm, x + 4, y + 5, px, SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
@@ -704,7 +705,7 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(ui.iconFolder, it.item), baseDir, cache);
         if (icon) { SDL_Rect d{(int)x + 4, (int)y + 4, (int)sz - 8, (int)sz - 8}; SDL_RenderCopy(r, icon, nullptr, &d); }
         else {
-            std::string nm = it.item.substr(0, ui.nameChars < 1 ? 1 : (std::size_t)ui.nameChars);
+            std::string nm = okay::Utf8Prefix(it.item, ui.nameChars);
             float px = (sz - 8.0f) / ((float)nm.size() * (Font8x8::Width + 1)) * ui.labelScale;
             if (px < 1.0f) px = 1.0f; if (px > sz * 0.05f) px = sz * 0.05f;
             DrawText(r, nm, x + 4, y + 5, px,
@@ -729,7 +730,7 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
 static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const std::string& baseDir,
                               std::unordered_map<std::string, SDL_Texture*>& cache) {
     okay::GridInventory* primary = ui.Inv();
-    if (!primary || !primary->open) { ui.CancelDrag(); return; }
+    if (!primary || !primary->open) { ui.CancelDrag(); ui.scroll = 0; return; }
     int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
     if (W <= 0 || H <= 0) return;
     // Layout + input are shared with the editor Play view (okay/Inventory/InventoryInput).
@@ -816,7 +817,7 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
         if (icon) { SDL_SetTextureAlphaMod(icon, ghost ? 160 : 255); SDL_Rect d{box.x + 6, box.y + 6, box.w - 12, box.h - 12}; SDL_RenderCopy(r, icon, nullptr, &d); }
         else if (u.showItemNames) {   // clip the name to the tile width so it never overflows the cell
             float px = u.itemNameScale; int maxc = (int)((w - 12) / ((Font8x8::Width + 1) * px)); if (maxc < 1) maxc = 1;
-            std::string nm = (int)it.name.size() > maxc ? it.name.substr(0, maxc) : it.name;
+            std::string nm = okay::Utf8Prefix(it.name, maxc);
             DrawText(r, nm, box.x + 6, box.y + 7, px, sc(u.textColor));
         }
         if (it.count > 1) {
@@ -966,7 +967,7 @@ static void DrawChest(SDL_Renderer* r, okay::ChestInventory& ch, const std::stri
     auto stack = [&](const okay::Inventory::Slot& it, float x, float y, float sz) {
         SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(ch.iconFolder, it.item), baseDir, cache);
         if (icon) { SDL_Rect d{(int)x+4, (int)y+4, (int)sz-8, (int)sz-8}; SDL_RenderCopy(r, icon, nullptr, &d); }
-        else DrawText(r, it.item.substr(0, 5), x + 4, y + 5, 1.0f, sc(ch.textColor));
+        else DrawText(r, okay::Utf8Prefix(it.item, 5), x + 4, y + 5, 1.0f, sc(ch.textColor));
         if (it.count > 1) { std::string c = std::to_string(it.count); float px = 1.2f;
             float tw = UITextW(c, px);
             DrawText(r, c, x + sz - tw - 3, y + sz - (Font8x8::Height + 1) * px - 2, px, SDL_Color{255,255,255,255}); }
@@ -1726,21 +1727,8 @@ int main(int argc, char** argv) {
 
         // An open inventory is modal: free the cursor (even in FPS/locked mode) so you
         // can point at and drag items, and show it — just like Minecraft/DayZ.
-        bool invModal = false, itemDragging = false;
-        for (const auto& up : scene.Objects()) {
-            if (!up) continue;
-            if (auto* iu = up->GetComponent<InventoryUI>()) {
-                if (iu->open && iu->dragItems) invModal = true;
-                if (iu->dragIndex >= 0) itemDragging = true;
-            }
-            if (auto* gi = up->GetComponent<GridInventory>()) { if (gi->open) invModal = true; }
-            if (auto* gu = up->GetComponent<GridInventoryUI>()) { if (gu->dragIndex >= 0) itemDragging = true; }
-            if (auto* cs = up->GetComponent<CraftingStation>()) { if (cs->open) invModal = true; }
-            if (auto* ce = up->GetComponent<ChestInventory>()) { if (ce->open) invModal = true; }
-            // The fullscreen pause-map is modal too: free + show the cursor so it can be
-            // clicked to drop a waypoint (GTA-style), and pause look/move.
-            if (auto* mm = up->GetComponent<Minimap>()) { if (mm->fullscreen) invModal = true; }
-        }
+        const okay::InventoryModalState modal = okay::QueryInventoryModal(scene);
+        bool invModal = modal.open, itemDragging = modal.dragging;
         Input::SetUICaptured(invModal);   // controllers pause look/move while a bag is open
 
         // Apply the game's requested cursor state.
@@ -2366,6 +2354,7 @@ int main(int argc, char** argv) {
         SDL_StartTextInput();   // keep text flowing for OkayUI text fields
 #endif
         // Minecraft-style inventory hotbar / backpack (under the loading screen).
+        ui2d::SetUIDefaultFont(okay::SceneUIFont(scene.uiFont));   // non-English names use the scene font
         for (const auto& up : scene.Objects()) {
             auto* ui = up ? up->GetComponent<InventoryUI>() : nullptr;
             if (!ui) continue;
@@ -2390,6 +2379,7 @@ int main(int argc, char** argv) {
             DrawChest(renderer, *ce, baseDir, textureCache);
             break;
         }
+        ui2d::SetUIDefaultFont(nullptr);
         // Loading-screen overlay: drawn on top of everything (and the UI) when active.
         for (const auto& up : scene.Objects()) {
             auto* ls = up ? up->GetComponent<LoadingScreen>() : nullptr;

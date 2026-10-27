@@ -7,6 +7,7 @@
 #include "okay/Components/InventoryUI.hpp"
 #include "okay/Inventory/InventoryOps.hpp"
 #include "okay/Components/InventoryPlayer.hpp"
+#include "okay/Components/NetworkObject.hpp"
 #include "okay/Render/Color.hpp"
 #include <string>
 
@@ -39,6 +40,7 @@ public:
     // ---- Runtime drag state (driven by the renderer's mouse handling) ----
     int   dragSide  = -1;   ///< 0 = chest grid, 1 = player grid, -1 = not dragging
     int   dragIndex = -1;   ///< slot being dragged
+    float scroll = 0;       ///< pixels the grids are scrolled when they don't fit (not saved)
 
     /// Move (or swap/merge) the stack in src slot `si` into dst slot `di`. Works within
     /// one grid or across the chest<->player grids (drag-and-drop, place where you want).
@@ -58,8 +60,13 @@ public:
             if (auto* in = p->GetComponent<Inventory>()) return in;
         Scene* s = GetScene();
         if (!s) return nullptr;
-        for (const auto& o : s->Objects())
-            if (o) if (auto* iu = o->GetComponent<InventoryUI>()) if (Inventory* in = iu->Inv()) return in;
+        for (const auto& o : s->Objects()) {
+            if (!o) continue;
+            if (o->name.rfind("Peer", 0) == 0) continue;   // another player's stand-in
+            if (auto* net = o->GetComponent<NetworkObject>())
+                if (net->Id().rfind("sp/", 0) == 0) continue;   // a remote pawn, not this screen's bag
+            if (auto* iu = o->GetComponent<InventoryUI>()) if (Inventory* in = iu->Inv()) return in;
+        }
         return nullptr;
     }
     /// The inventory UI showing PlayerInv() (for its slot size / columns in the chest).
@@ -88,6 +95,12 @@ public:
     /// Move as much of `from` slot `i` into `to` as fits; only the leftover stays in
     /// the source slot (never duplicated, never lost). False if nothing fit.
     static bool Transfer(Inventory* from, int i, Inventory* to) { return InventoryOps::Transfer(from, i, to).Ok(); }
+
+    void Update(float dt) override {
+        const bool was = open;
+        InventoryInteractable::Update(dt);
+        if (was && !open) { dragSide = -1; dragIndex = -1; scroll = 0; }   // a close mid-drag must not linger
+    }
 };
 
 } // namespace okay

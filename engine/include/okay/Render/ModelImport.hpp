@@ -64,7 +64,7 @@ ModelReport AnalyzeModel(Scene& scene, GameObject* root);
 /// `outLog` says why).
 int EnableBuiltinAnimations(Scene& scene, GameObject* modelRoot, std::string* outLog = nullptr);
 /// How many of the 15 humanoid bones a model's skeleton has (0 = not a humanoid rig).
-int CountHumanoidBones(Scene& scene, GameObject* modelRoot);
+int CountHumanoidBones(Scene& scene, GameObject* modelRoot, std::string* why = nullptr);
 
 /// World-space bounds of every mesh under `root` as currently posed (skinned
 /// meshes deformed from their joints, whatever the renderer's skinning mode).

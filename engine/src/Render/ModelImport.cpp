@@ -1812,17 +1812,10 @@ int AddAnimationsFromFile(Scene& scene, GameObject* modelRoot, const std::string
     return added;
 }
 
-int CountHumanoidBones(Scene& scene, GameObject* modelRoot) {
-    if (!modelRoot) return 0;
-    int n = 0, sc = 0;
-    std::vector<bool> seen(15, false);
-    for (const auto& up : scene.Objects()) {
-        GameObject* g = up.get();
-        if (!g || g == modelRoot || !g->IsSelfOrDescendantOf(modelRoot)) continue;
-        int b = HumanoidRetarget::ClassifyBone(g->name, sc);
-        if (b >= 0 && b < 15 && !seen[b]) { seen[b] = true; ++n; }
-    }
-    return n;
+int CountHumanoidBones(Scene&, GameObject* modelRoot, std::string* why) {
+    const humanoid::BoneMap m = humanoid::MapHumanoidBones(modelRoot);
+    if (!m.humanoid) { if (why) *why = m.why; return 0; }
+    return m.found;
 }
 
 int EnableBuiltinAnimations(Scene& scene, GameObject* modelRoot, std::string* outLog) {
@@ -1833,10 +1826,12 @@ int EnableBuiltinAnimations(Scene& scene, GameObject* modelRoot, std::string* ou
         say("'" + modelRoot->name + "' is a single merged mesh with no skeleton - use Rig Model (Humanoid) instead.");
         return 0;
     }
-    const int bones = CountHumanoidBones(scene, modelRoot);
+    std::string why;
+    const int bones = CountHumanoidBones(scene, modelRoot, &why);
     if (bones < 8) {
-        say("'" + modelRoot->name + "' doesn't look like a humanoid skeleton (" + std::to_string(bones) +
-            "/15 bones recognised). Rig Model (Humanoid) can bind its mesh to the built-in skeleton instead.");
+        say("'" + modelRoot->name + "' isn't a humanoid skeleton" +
+            (why.empty() ? " (" + std::to_string(bones) + "/15 bones recognised)" : ": " + why) +
+            ". Rig Model (Humanoid) can bind its mesh to the built-in skeleton instead.");
         return bones;
     }
     auto* ch = modelRoot->GetComponent<Character>();

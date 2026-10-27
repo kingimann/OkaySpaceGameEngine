@@ -82,6 +82,7 @@ public:
     float moveSpeed = -1.0f;
     float moveAngle = 0.0f;
     /// How quickly the stride follows a change of speed (seconds to close ~63%).
+    /// The measured ground speed is smoothed once, by this. Serialized.
     float gaitSpeedSmoothing = 0.05f;
     /// Where the gait cycle is, 0..1 (0 = left foot touching down, 0.5 = right foot).
     float GaitPhase() const;
@@ -97,6 +98,7 @@ public:
         bool  sprint = false;      ///< the run input is held
         float walkSpeed = 4.5f;    ///< the controller's walk speed (run/walk split)
         float dt = 0.0f;
+        bool  swim = false;        ///< supported by water. No swim clip yet: idle or walk stands in.
         /// Movement along this axis isn't walking (2.5D: the hop between depth
         /// layers slides along Z); zero = count every direction.
         Vec3  ignoreAxis{0, 0, 0};
@@ -111,6 +113,8 @@ public:
     /// and its eased level: an imported model's own clips follow it.
     int   StanceTarget() const { return m_stanceTarget; }
     float StanceLevel() const { return m_stanceLevel; }
+    /// True while the last DriveLocomotion said the body was swimming.
+    bool  Swimming() const { return m_swimming; }
 
     // ---- Punch / swing (a quick right-arm arc layered over the current anim) ----
     // Trigger a one-shot punch with Punch(); the right arm swings forward and back
@@ -234,9 +238,8 @@ public:
     /// True while a state binding (not a manual PlayClip) is driving the current clip.
     bool StateDriven() const { return m_stateDriven; }
 
-    /// Crossfade time (seconds) when switching clips — the character eases from its
-    /// current pose into the new clip instead of snapping. So idle↔walk↔run (and any
-    /// PlayClip) blend smoothly. 0 = instant. Serialized.
+    /// Crossfade time (seconds) for a clip switch, and for a built-in state change
+    /// the Animator's crossfade table doesn't name. 0 = instant. Serialized.
     float blendTime = 0.15f;
     /// True while a crossfade is in progress (0..1 weight not yet at 1).
     bool Blending() const { return m_blendT < 1.0f; }
@@ -261,11 +264,20 @@ public:
             float stance = 0.0f;           ///< eased stance level, 0 stand .. 1 crouch .. 2 prone
             float airTime = 0.0f;          ///< seconds off the ground
             float verticalSpeed = 0.0f;    ///< m/s, + = rising
+            bool  swim = false;            ///< water is holding the body. The graph's "swim" bool.
         };
         virtual void Move(const Movement& m) = 0;
         /// The stride, every frame: direction of travel as a point (x = right,
         /// z = forward, rig units/s) and the speed it plays at.
         virtual void Gait(float x, float z, float speed) = 0;
+        /// The Animator component is switched on. False before it has attached,
+        /// and while its component is disabled.
+        virtual bool AnimatorOn() const { return false; }
+        /// The Animator was turned back on. Show `pose` (body offset `root`, in
+        /// rig units) this frame, then ease into the clip over `seconds`.
+        virtual void ResumeFrom(const std::vector<Vec3>& pose, const Vec3& root, float seconds) {
+            (void)pose; (void)root; (void)seconds;
+        }
     };
     void SetPoseSource(PoseSource* src) { m_poseSource = src; }
     PoseSource* GetPoseSource() const { return m_poseSource; }
@@ -533,15 +545,17 @@ private:
     float m_travelYaw = 0.0f;      // eased travel direction the feet step along (deg, unclamped)
     float m_gaitDir = 1.0f;        // +1 stepping forward, -1 stepping backward (backpedal)
     float m_airT = 0.0f;           // seconds off the ground (DriveLocomotion)
+    bool  m_swimming = false;      // the last DriveLocomotion was a swim
     int   m_stanceTarget = 0;      // the stance DriveLocomotion last reported ...
     float m_stanceLevel = 0.0f;    // ... and its eased level
     struct MoveSample { Vec3 p; float t; };
     static constexpr int kMoveHist = 16;
-    MoveSample m_hist[kMoveHist]{};  // recent positions (measured ground speed over ~0.08 s)
+    MoveSample m_hist[kMoveHist]{};  // the previous position (one sample; a teleport restarts it)
     float m_measured = 0.0f;         // last accepted ground speed (DriveLocomotion)
     bool  m_spike = false;           // last frame's reading was set aside as a spike
     int   m_histN = 0;
     float m_moveClock = 0.0f;
+    bool  m_gaitFromDrive = false;   // DriveLocomotion already smoothed the speed this step
     float m_gaitPhase = 0.0f;      // the stride cycle, 0..1 (0 = left touchdown); one clock for every gait state
     float m_gaitFreq = 0.0f;       // cycles/s the phase is advancing at (signed: < 0 backpedalling)
     float m_runW = 0.0f;           // 0 walking style .. 1 running style (eased over ~0.2 s)
@@ -590,11 +604,17 @@ private:
     std::vector<Vec3> SampleBlendTree() const;   // blended pose at the current parameter
     void SyncStateClips();               // auto-play the clip bound to the current `anim` state
     void NoteStateChange();              // `anim` changed: landing dip, gait phase, crossfade
+    float CrossfadeSeconds(int from, int to) const;   // the Animator's table, else the defaults
+    void CaptureLeavingPose();           // freeze the pose on screen, for a blend that reverses
     int m_syncAnim = -1;                 // `anim` at the last SyncStateClips (-1 = none yet)
     std::vector<Vec3> m_blendFrom;       // pose captured at the last clip switch (crossfade source)
     float m_blendT = 1.0f;               // crossfade weight 0..1 (1 = no blend active)
+    float m_blendDur = 0.15f;            // seconds the current crossfade takes
     float m_blendFromY = 0.0f;           // hip height at the last switch (eased with the crossfade)
     int   m_blendFromAnim = -1;          // built-in state being crossfaded from, played live (-1 = m_blendFrom)
+    bool  m_animSeen = false;            // the Animator has been observed once (play start stays instant)
+    bool  m_animOn = false;              // it was on last frame
+    bool  m_resumeAnim = false;          // turned back on: ease in from the built-in pose
     Vec3  RawStanceOffset(float t) const;   // StanceOffset at clock time t, without the crossfade
     Vec3  RawStanceOffsetFor(int state, float t) const;
     Vec3  m_editorOffset{0, 0, 0};       // body offset that goes with the previewed pose

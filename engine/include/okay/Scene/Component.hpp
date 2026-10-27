@@ -82,6 +82,10 @@ public:
     /// pose after every animation driver, crossfade and layer has written it.
     virtual int ExecutionOrder() const { return 0; }
 
+    /// Player motors return true: a water volume does not also push them.
+    /// Swimming is the controller's job.
+    virtual bool IgnoresBuoyancy() const { return false; }
+
     Scene* GetScene() const;
 
 private:

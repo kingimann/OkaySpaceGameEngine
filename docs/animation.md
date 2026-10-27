@@ -827,12 +827,21 @@ elbows bend down and out, and the object moves with the body.
   (sprint, or fast enough to use the run
   style) keeps those hands out of the first-person view. Walking, idling and
   holding still show the block. The held object stays on its grip.
+- The raised first-person arm is a copy. Only the owner's camera draws it,
+  and it does not cast a shadow. The real arm bones stay on the animation, so
+  another camera and another player see the blocky hands on the idle, the
+  walk, the run, a crouch and a prone, including while this player looks down.
+  That look pitches the copy, not the shared bones. A hold keeps the real
+  hands, because the grip is the pose everyone should see. None of the
+  first-person pose is in the network message. A remote copy of the player
+  does not keep the view toggle, so a key press on this machine cannot hide
+  someone else's body.
 - The owner's first-person camera does not draw the head or the neck. The
   head is not scaled away and not deleted from the mesh: it stays active, so
-  it still casts a shadow and any other camera still sees it. The neck and
-  the flat collar under it are skipped with the head, and the eye sits just
-  in front of the face (further forward and up as you look down) so that
-  collar is behind the lens. The body is drawn from the outside only, so
+  it still casts a shadow and any other camera still sees it. The neck is
+  skipped with the head. The shirt's lid stays on the body. The eye sits just
+  in front of the face (further forward and up as you look down) so the neck
+  is behind the lens. The body is drawn from the outside only, so
   looking down shows the shirt from the outside, the hips, the legs, or the
   ground, not the inside of the cloth and not a crate through it. The eye sits
   in front of the chest and steps further forward and up as you look down, and

@@ -699,8 +699,17 @@ int main() {
             for (std::size_t i = 0; i < a.size(); ++i) if (a[i] != b[i]) ++n;
             return n;
         };
+        GameObject* ownerHand = nullptr;
+        if (GameObject* arm = ch->OwnerViewArm())
+            if (arm->transform)
+                for (Transform* fore : arm->transform->Children())
+                    if (fore)
+                        for (Transform* h : fore->Children())
+                            if (h && h->gameObject && h->gameObject->name == "FP_OwnerHand")
+                                ownerHand = h->gameObject;
         CHECK(partDiff(ch->Part(1)) > 40);             // the shirt is drawn, not an open hole
-        CHECK(partDiff(ch->Part(5)) > 40);             // the plain hand is
+        CHECK(ownerHand && partDiff(ownerHand) > 40); // the plain hand is the owner's copy
+        CHECK(partDiff(ch->Part(5)) == 0);            // the real hand is not in this camera
         // A block inside the chest must not show through the cloth.
         GameObject* marker = sc.CreateGameObject("ChestMarker");
         marker->transform->localPosition = player->transform->Position() + Vec3{0.0f, 1.25f, 0.0f};
@@ -712,11 +721,12 @@ int main() {
         ch->anim = 3;
         sc.Update(1.0f / 60.0f);
         CHECK(ch->HideFirstPersonHands());
-        CHECK(partDiff(ch->Part(5)) == 0);             // a run keeps the hand off the screen
+        CHECK(partDiff(ch->Part(5)) == 0);             // a run keeps the real hand off the screen
         CHECK(partDiff(ch->Part(3)) == 0);
+        CHECK(!ownerHand->active || partDiff(ownerHand) == 0);
         ch->anim = 1;
         sc.Update(1.0f / 60.0f);
-        CHECK(partDiff(ch->Part(5)) > 40);
+        CHECK(partDiff(ownerHand) > 40);
         // Back to third person. The head is drawn again before the ease moves.
         pressV(sc);
         CHECK(pv->GetView() == 1);

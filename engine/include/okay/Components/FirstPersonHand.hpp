@@ -2,13 +2,15 @@
 // ---------------------------------------------------------------------------
 // FirstPersonHand — shows your character's OWN body in first person. The camera
 // ignores the player subtree, so other cameras and shadows still see the whole
-// character, and the parts you should see (torso, legs, the raised arm) are flagged
-// as the first-person viewmodel. The head and the neck stay active but unflagged,
-// so only this camera skips them. Nothing is spawned and nothing is duplicated.
+// character. The shirt and the legs are flagged as the viewmodel. The head and
+// the neck stay active but unflagged, so only this camera skips them. The raised
+// arm is a copy that only this camera draws; the real arm bones stay on the
+// animation, so another camera never sees the raised pose.
 //
 // Needs a Character; if it isn't a separated part rig yet, the hand builds the rig
 // (that's what carries the real arm geometry). Click swings the arm (the real
-// Character::Punch, so others see the hit). Put this on the FPS camera (or the player).
+// Character::Punch on the right arm, so others see the hit, and the copy swings
+// too). Put this on the FPS camera (or the player).
 // ---------------------------------------------------------------------------
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"

@@ -1,6 +1,7 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Animation/HumanoidMotion.hpp"
 #include "okay/Components/MeshRenderer.hpp"
+#include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -1010,6 +1011,107 @@ bool Character::AdoptParts(GameObject* rig) {
     return true;
 }
 
+bool Character::HandsOnAHold() const {
+    if (!gameObject) return false;
+    auto* hold = gameObject->GetComponent<ProceduralObjectHolding>();
+    return hold && hold->IsHolding();
+}
+
+void Character::SetOwnerArmActive(bool on) {
+    if (m_ownerArm) m_ownerArm->active = on;
+    if (m_ownerFore) m_ownerFore->active = on;
+    if (m_ownerHand) m_ownerHand->active = on;
+}
+
+void Character::ReleaseOwnerArm() {
+    SetOwnerArmActive(false);
+    if (m_ownerArm) if (Scene* s = GetScene()) s->Destroy(m_ownerArm);
+    m_ownerArm = m_ownerFore = m_ownerHand = nullptr;
+    m_ownerArmBase = -2;
+}
+
+void Character::EnsureOwnerArm(int base) {
+    if (m_ownerArm && m_ownerArm->IsDestroyed()) {
+        m_ownerArm = m_ownerFore = m_ownerHand = nullptr;
+        m_ownerArmBase = -2;
+    }
+    if (m_ownerArm && m_ownerFore && m_ownerHand && m_ownerArmBase == base) return;
+    ReleaseOwnerArm();
+    Scene* s = GetScene();
+    if (!s || base < 0 || base + 2 >= (int)m_parts.size()) return;
+    GameObject* src[3] = {m_parts[base], m_parts[base + 1], m_parts[base + 2]};
+    MeshRenderer* mesh[3] = {};
+    for (int i = 0; i < 3; ++i) {
+        if (!src[i]) return;
+        mesh[i] = src[i]->GetComponent<MeshRenderer>();
+        if (!mesh[i] || mesh[i]->mesh.vertices.empty()) return;
+    }
+    const char* names[3] = {"FP_OwnerArm", "FP_OwnerFore", "FP_OwnerHand"};
+    GameObject* made[3] = {};
+    for (int i = 0; i < 3; ++i) {
+        made[i] = s->CreateGameObject(names[i]);
+        auto* mr = made[i]->AddComponent<MeshRenderer>();
+        mr->mesh = mesh[i]->mesh;
+        mr->doubleSided = false;
+        mr->castShadows = false;
+        made[i]->firstPersonOnly = true;
+        made[i]->firstPersonViewmodel = true;
+        made[i]->active = false;
+    }
+    made[1]->transform->SetParent(made[0]->transform, false);
+    made[2]->transform->SetParent(made[1]->transform, false);
+    if (src[0]->transform && src[0]->transform->Parent())
+        made[0]->transform->SetParent(src[0]->transform->Parent(), false);
+    m_ownerArm = made[0];
+    m_ownerFore = made[1];
+    m_ownerHand = made[2];
+    m_ownerArmBase = base;
+}
+
+void Character::PoseOwnerArm(const std::vector<Vec3>& pose) {
+    const int base = fpArmBase;
+    const bool on = firstPersonArm && base >= 0 && base + 2 < (int)pose.size()
+        && base + 2 < (int)m_parts.size();
+    // A run hides the hands. A hold uses the real hands, which already carry
+    // the grip. Either way the copy stays out of every camera.
+    if (!on || HideFirstPersonHands() || HandsOnAHold()) {
+        SetOwnerArmActive(false);
+        return;
+    }
+    EnsureOwnerArm(base);
+    if (!m_ownerArm || !m_ownerFore || !m_ownerHand || !m_ownerArm->transform) return;
+    const float w = m_fpShown < 0.0f ? 0.0f : (m_fpShown > 1.0f ? 1.0f : m_fpShown);
+    Vec3 up = pose[base];
+    Vec3 fo = pose[base + 1];
+    Vec3 ha = pose[base + 2];
+    const Vec3 raised{fpRaise - fpPitch, 0.0f, 0.0f};
+    const Vec3 elbow{-fpElbow, 0.0f, 0.0f};
+    up = up + (raised - up) * w;
+    fo = fo + (elbow - fo) * w;
+    ha = ha * (1.0f - w);
+    if (m_punchT >= 0.0f && m_punchT < 1.0f) {
+        const float arc = std::sin(m_punchT * 3.14159265f);
+        const Vec3 punchUp{-110.0f, 0.0f, 8.0f};
+        const Vec3 punchFore{-18.0f, 0.0f, 0.0f};
+        up = up + (punchUp - up) * arc;
+        fo = fo + (punchFore - fo) * arc;
+    }
+    const bool steady = fpSteady || !fpArmBob;
+    if (steady && m_rigRoot && m_rigRoot->transform && base < (int)m_partRest.size()) {
+        m_ownerArm->transform->SetParent(m_rigRoot->transform, false);
+        m_ownerArm->transform->localPosition = m_partRest[B_HIPS] + m_partRest[B_TORSO] + m_partRest[base];
+    } else if (m_parts[base] && m_parts[base]->transform && m_parts[base]->transform->Parent()) {
+        m_ownerArm->transform->SetParent(m_parts[base]->transform->Parent(), false);
+        m_ownerArm->transform->localPosition = base < (int)m_partRest.size() ? m_partRest[base] : Vec3{0, 0, 0};
+    }
+    m_ownerArm->transform->localRotation = Quat::Euler(up);
+    m_ownerFore->transform->localPosition = base + 1 < (int)m_partRest.size() ? m_partRest[base + 1] : Vec3{0, 0, 0};
+    m_ownerFore->transform->localRotation = Quat::Euler(fo);
+    m_ownerHand->transform->localPosition = base + 2 < (int)m_partRest.size() ? m_partRest[base + 2] : Vec3{0, 0, 0};
+    m_ownerHand->transform->localRotation = Quat::Euler(ha);
+    SetOwnerArmActive(true);
+}
+
 void Character::RememberPartRest() {
     m_partRest.assign(m_parts.size(), Vec3{0.0f, 0.0f, 0.0f});
     for (std::size_t i = 0; i < m_parts.size(); ++i)
@@ -1017,8 +1119,10 @@ void Character::RememberPartRest() {
 }
 
 void Character::RemoveParts() {
+    m_ownerArm = m_ownerFore = m_ownerHand = nullptr;
+    m_ownerArmBase = -2;
     if (GameObject* rig = FindRig())
-        if (Scene* s = GetScene()) s->Destroy(rig);   // takes its children with it
+        if (Scene* s = GetScene()) s->Destroy(rig);   // takes its children with it, copy included
     m_rigRoot = nullptr;
     m_parts.clear();
     m_partRest.clear();
@@ -1355,56 +1459,29 @@ void Character::EaseFirstPersonArm(float dt) {
 void Character::DriveParts() {
     if (!m_partsBuilt) return;
     std::vector<Vec3> pose = CurrentSourcePose();
-    // First-person: raise the visible arm into the lower corner of the view like a
-    // Minecraft hand (overriding the walk pose for those three bones).
-    int fpb = (firstPersonArm && fpArmBase >= 0 && fpArmBase + 2 < (int)pose.size()) ? fpArmBase : -1;
-    if (fpb >= 0) {
-        // The arm hangs off the hips/torso, which also carry the walk bob and the
-        // crouch/prone pose. We can only steady the arm by zeroing those SHARED bones,
-        // which would distort the BODY if it's visible — so we do it ONLY for the opt-in
-        // "Steady arm" / "no bob" cases (meant for first person, where the body is culled
-        // from the owner's own camera). The body's own crouch/prone pose is left intact.
-        if (fpSteady || !fpArmBob) { pose[B_HIPS] = {0.0f, 0.0f, 0.0f}; pose[B_TORSO] = {0.0f, 0.0f, 0.0f}; }
-        // Raise the arm; subtract the camera pitch so the arm follows the view up/down
-        // (the rig's 180° flip maps the bone's local X to a world rotation such that
-        // subtracting pitch tilts the arm the same way the camera tilts). Positive
-        // fpElbow is a bend: this skeleton folds the elbow on -X, and +X hyperextends
-        // the wrist. m_fpShown eases the three bones off the animated pose.
-        const float w = m_fpShown < 0.0f ? 0.0f : (m_fpShown > 1.0f ? 1.0f : m_fpShown);
-        // The chest and the hips keep the crouch hunch and the prone lay.
-        // The owner can see that body, so flattening it would stand the mesh
-        // up around a camera that has already dropped into it.
-        const Vec3 raised{fpRaise - fpPitch, 0.0f, 0.0f};
-        const Vec3 elbow{-fpElbow, 0.0f, 0.0f};
-        pose[fpb]     = pose[fpb]     + (raised - pose[fpb])     * w;
-        pose[fpb + 1] = pose[fpb + 1] + (elbow  - pose[fpb + 1]) * w;
-        pose[fpb + 2] = pose[fpb + 2] * (1.0f - w);
-    }
-    // Punch swings the VISIBLE arm: the first-person arm if we're in first person,
-    // otherwise the right arm. Forward (-X on a hanging bone) so it lands in front.
-    // The forearm stays bent (-X); +X at the peak used to flip the wrist back.
-    int pb = (fpb >= 0) ? fpb : B_RUPARM;
-    if (m_punchT >= 0.0f && m_punchT < 1.0f && pb + 1 < (int)pose.size()) {
+    // The punch stays on the real right arm, the swing third person and every
+    // other machine already play. The owner's copy swings separately, below.
+    std::vector<Vec3> shown = pose;
+    if (m_punchT >= 0.0f && m_punchT < 1.0f && B_RUPARM + 1 < (int)shown.size()) {
         float arc = std::sin(m_punchT * 3.14159265f);
         Vec3 up = {-110.0f, 0.0f, 8.0f}, fore = {-18.0f, 0.0f, 0.0f};
-        pose[pb]     = pose[pb]     + (up   - pose[pb])     * arc;
-        pose[pb + 1] = pose[pb + 1] + (fore - pose[pb + 1]) * arc;
+        shown[B_RUPARM]     = shown[B_RUPARM]     + (up   - shown[B_RUPARM])     * arc;
+        shown[B_RUPARM + 1] = shown[B_RUPARM + 1] + (fore - shown[B_RUPARM + 1]) * arc;
     }
     // The whole pose is rewritten every frame, joint offsets included: IK that moved
     // a joint last frame (foot IK on a step) starts again from the animation.
-    for (int bi = 0; bi < B_COUNT && bi < (int)pose.size(); ++bi)
+    // First person does not rewrite these bones. A look pitch lives on the copy.
+    for (int bi = 0; bi < B_COUNT && bi < (int)shown.size(); ++bi)
         if (m_parts[bi] && m_parts[bi]->transform) {
-            m_parts[bi]->transform->localRotation = Quat::Euler(pose[bi]);
+            m_parts[bi]->transform->localRotation = Quat::Euler(shown[bi]);
             if (bi < (int)m_partRest.size()) m_parts[bi]->transform->localPosition = m_partRest[bi];
         }
     if (m_rigRoot && m_rigRoot->transform) {
         Vec3 so = StanceOffset();
-        // A steady first-person arm ignores the crouch/prone height drop so it stays in
-        // view. The body the owner sees otherwise keeps that drop.
-        float y = (firstPersonArm && fpSteady) ? 0.0f : so.y;
-        m_rigRoot->transform->localPosition = Vec3{0.0f, y, 0.0f};
+        m_rigRoot->transform->localPosition = Vec3{0.0f, so.y, 0.0f};
         m_rigRoot->transform->localScale = Vec3{height, height, height};
     }
+    PoseOwnerArm(pose);
 }
 
 std::string Character::ToText() const {

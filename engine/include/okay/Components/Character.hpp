@@ -121,12 +121,12 @@ public:
     void  Punch() { if (m_punchT < 0.0f || m_punchT >= 1.0f) m_punchT = 0.0f; }
     bool  Punching() const { return m_punchT >= 0.0f && m_punchT < 1.0f; }
 
-    // ---- First-person arm (driven by FirstPersonHand) ----
-    // When firstPersonArm is on, the body is frozen (so walking never brings your
-    // torso/legs into view) and your own arm is raised into the first-person camera —
-    // it's literally your character's arm, not a separate viewmodel. fpArmUp eases
-    // 0 (lowered, empty-handed) .. 1 (raised, holding). fpRaise / fpElbow let the
-    // FirstPersonHand inspector tune where the hand sits.
+    // ---- First-person arm (driven by FirstPersonHand / PlayerView) ----
+    // firstPersonArm raises a COPY of one arm into the owner's camera. The copy
+    // is drawn only by that camera and does not cast a shadow. The real arm
+    // bones stay on the animation, so another camera and another player see the
+    // ordinary body. fpArmUp eases 0 (copy hidden) .. 1 (copy raised). fpRaise /
+    // fpElbow place the copy. Nothing here is replicated.
     bool  firstPersonArm = false;
     /// Runtime only (not saved). Kept so older scenes load. It does not remove
     /// the head: a first-person camera skips the head and neck parts, and the
@@ -135,21 +135,24 @@ public:
     float fpArmUp = 1.0f;
     float fpRaise = -96.0f;   // raised upper-arm forward angle
     float fpElbow = 16.0f;    // elbow bend in degrees (positive folds the forearm; 0 = straight)
-    /// Which 3-bone arm the first-person view raises into frame (the base bone index,
-    /// e.g. 3 = the +X / screen-right arm). -1 = none. Set by FirstPersonHand; the
-    /// separated-rig DriveParts poses these bones up like a Minecraft hand and routes
-    /// the punch onto them so the VISIBLE arm is the one that swings. Not serialized.
+    /// Which 3-bone arm the owner's copy is taken from (the base bone index,
+    /// e.g. 3 = the +X / screen-right arm). -1 = none. Set by FirstPersonHand.
+    /// The copy is posed from these bones. The bones themselves are not. Not serialized.
     int   fpArmBase = -1;
-    /// Camera pitch (degrees) fed in by FirstPersonHand so the first-person arm tilts
-    /// up/down with your view (Minecraft-style). 0 = level. Not serialized.
+    /// Camera pitch (degrees) fed in so the owner's arm copy tilts with the view.
+    /// 0 = level. Applied only to the copy. Not serialized.
     float fpPitch = 0.0f;
     /// Let the walk/run cycle bob the first-person arm (the arm inherits the body's
     /// sway). Turn off for a rock-steady arm. Set by FirstPersonHand. Not serialized.
     bool  fpArmBob = true;
-    /// Fully decouple the first-person arm from the body: ignore lean, crouch and prone
-    /// (zero the hips/torso the arm hangs from and skip the stance height drop) so the
-    /// arm stays put in view no matter what the body does. Set by FirstPersonHand.
+    /// Keep the owner's arm copy off the hips and torso, so a crouch or a lean
+    /// does not drag it. The shared hips and torso are never zeroed for this.
+    /// Set by FirstPersonHand.
     bool  fpSteady = false;
+
+    /// True while this character is holding an object, so the real hands (the
+    /// ones the hold poses) stay the hands everyone sees, including the owner.
+    bool HandsOnAHold() const;
 
     /// A run pumps the arms up into the owner's camera. Sprint and the run
     /// style (including the blend into it) keep the first-person hands off
@@ -159,16 +162,21 @@ public:
         return RunWeight(anim) > 0.35f;
     }
 
-    /// What the owner's first-person camera may draw. The head is never in that
-    /// view. The shirt is: the eye sits in front of it, and the lid has to be
-    /// there or a look down sees through the open top. Both arms drop out while
-    /// a run hides the hands. The neck is not a bone — it is a child of the
-    /// torso, and the owner camera skips that child on its own.
+    /// What the owner's first-person camera may draw of the REAL rig. The head
+    /// is never in that view. The shirt is: the eye sits in front of it, and
+    /// the lid has to be there or a look down sees through the open top. While
+    /// the raised-arm copy is up, the real arms are not — the owner sees the
+    /// copy, and every other camera sees the real arms on the animation. A run
+    /// drops both. A hold keeps the real hands, because that pose is the grip.
+    /// The neck is not a bone — it is a child of the torso, and the owner
+    /// camera skips that child on its own.
     bool ShowsToOwnerCamera(int bone) const {
         if (bone == HumanoidMotion::B_HEAD) return false;
-        if (HideFirstPersonHands()
-            && bone >= HumanoidMotion::B_LUPARM && bone <= HumanoidMotion::B_RHAND)
-            return false;
+        if (bone >= HumanoidMotion::B_LUPARM && bone <= HumanoidMotion::B_RHAND) {
+            if (HideFirstPersonHands()) return false;
+            if (firstPersonArm && fpArmBase >= 0 && !HandsOnAHold()) return false;
+            return true;
+        }
         return true;
     }
 
@@ -203,6 +211,9 @@ public:
     void EditorPreviewTick();
     bool PartsBuilt() const { return m_partsBuilt; }
     GameObject* Part(int bone) const { return (bone >= 0 && bone < (int)m_parts.size()) ? m_parts[bone] : nullptr; }
+    /// The owner's raised-arm copy (the upper arm). Only the camera that hides
+    /// this player draws it. Null until first person has built it.
+    GameObject* OwnerViewArm() const { return m_ownerArm; }
     /// Flag the rig for one camera. `firstPerson` draws every part the owner
     /// should see and leaves the head and neck active but unflagged, so this
     /// camera skips them while shadows and every other camera still get them.
@@ -592,7 +603,15 @@ private:
     GameObject* m_rigRoot = nullptr;
     std::vector<GameObject*> m_parts;    // one object per bone (B_COUNT)
     std::vector<Vec3> m_partRest;        // each part's joint offset from its parent
+    GameObject* m_ownerArm = nullptr;    // raised-arm copy, owner camera only
+    GameObject* m_ownerFore = nullptr;
+    GameObject* m_ownerHand = nullptr;
+    int m_ownerArmBase = -2;
     void RememberPartRest();
+    void ReleaseOwnerArm();
+    void EnsureOwnerArm(int base);
+    void PoseOwnerArm(const std::vector<Vec3>& animPose);
+    void SetOwnerArmActive(bool on);
     GameObject* FindRig() const;         // an existing "Rig" child, or null
     bool AdoptParts(GameObject* rig);    // reuse an existing rig instead of rebuilding
     void DriveParts();                   // pose the part transforms from the animation

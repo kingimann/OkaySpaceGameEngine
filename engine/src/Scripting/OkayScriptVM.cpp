@@ -752,6 +752,15 @@ struct Runtime {
     // SetDotted returns true when it handled the assignment.
     Value GetDotted(const std::string& name, bool& ok);
     bool  SetDotted(const std::string& name, const Value& v);
+
+    // `OnClick += handler` listeners. Fired by the engine event (CallEvent) and
+    // by raise(). A listener is a lambda value or {"__fn": "FunctionName"}.
+    struct Sub { std::string name; Value fn; };
+    std::vector<Sub> subs;
+    void AddSub(const std::string& event, const Value& fn);
+    void RemoveSub(const std::string& event, const Value& fn);
+    void FireSubs(const std::string& event, std::vector<Value>& args);
+    bool HasSub(const std::string& event) const;
 };
 
 // ---- Expressions ----
@@ -1388,6 +1397,39 @@ struct LambdaExpr : Expr {
         r.lambdas[id] = Runtime::LambdaBody{&params, &body};
         Value v = Value::MakeMap(); (*v.AsMap())["__lambda"] = Value{(float)id};
         return v;
+    }
+};
+// `OnClick += fn` / `OnHurt += (n) => ...` subscribes. A number on the right
+// stays ordinary compound assignment (`score += 1`), so both share `+=` / `-=`.
+struct EventOrCompoundExpr : Expr {
+    std::string name;
+    ExprPtr rhs;
+    bool remove;
+    Tok bin;
+    EventOrCompoundExpr(std::string n, ExprPtr r, bool rem, Tok b)
+        : name(std::move(n)), rhs(std::move(r)), remove(rem), bin(b) {}
+    Value Eval(Runtime& rt) override {
+        auto take = [&](const Value& fn) {
+            if (remove) rt.RemoveSub(name, fn);
+            else rt.AddSub(name, fn);
+            return fn;
+        };
+        if (auto* v = dynamic_cast<VarExpr*>(rhs.get())) {
+            if (rt.Has(v->n) && Runtime::IsLambda(rt.Get(v->n)))
+                return take(rt.Get(v->n));
+            if (!rt.Has(v->n) && rt.functions.count(v->n)) {
+                Value fn = Value::MakeMap();
+                (*fn.AsMap())["__fn"] = Value{v->n};
+                return take(fn);
+            }
+        } else if (dynamic_cast<LambdaExpr*>(rhs.get())) {
+            return take(rhs->Eval(rt));
+        }
+        auto combined = std::make_unique<BinaryExpr>(
+            bin, std::make_unique<VarExpr>(name), std::move(rhs));
+        Value sum = combined->Eval(rt);
+        rt.Assign(name, sum);
+        return sum;
     }
 };
 // yield return <wait>;  — inside a coroutine: hand control back to the game loop.
@@ -2404,6 +2446,10 @@ private:
             ExprPtr value = ParseAssignment();
             if (auto* var = dynamic_cast<VarExpr*>(left.get())) {
                 std::string name = var->n;
+                // += / -= on a name may subscribe a function. A number still adds.
+                if (t == Tok::PlusEq || t == Tok::MinusEq)
+                    return std::make_unique<EventOrCompoundExpr>(
+                        name, std::move(value), t == Tok::MinusEq, bin);
                 auto combined = std::make_unique<BinaryExpr>(
                     bin, std::make_unique<VarExpr>(name), std::move(value));
                 return std::make_unique<AssignExpr>(name, std::move(combined));
@@ -6924,6 +6970,19 @@ struct OkayScriptVM::Impl {
             deliverEvent(evTarget(a[0].AsString()), a[1].AsString(), a.size() > 2 ? a[2] : Value{});
             return Value{};
         };
+        // raise("OnHurt", 3) runs this script's += listeners for that name, and a
+        // function of the same name when there is one.
+        b["raise"] = [this](std::vector<Value>& a) {
+            if (a.empty()) return Value{};
+            std::vector<Value> args;
+            if (a.size() > 1) args.push_back(a[1]);
+            const std::string ev = a[0].AsString();
+            try {
+                if (rt.functions.count(ev)) rt.Call(ev, args);
+                rt.FireSubs(ev, args);
+            } catch (const std::exception& e) { Log::Error("OkayScript raise: ", e.what()); }
+            return Value{};
+        };
         // run_action("move 1 0 0") / check_action("var_gt hp 0"): one step of the
         // no-code Actions library, run on this object (what a graph's Action /
         // Condition node exports to).
@@ -8198,6 +8257,7 @@ bool OkayScriptVM::Load(const std::string& source, std::string* error) {
         m_impl->rt.StopCoroutines("");
         m_impl->rt.pendingDestroy.clear();
         m_impl->rt.functions.clear();
+        m_impl->rt.subs.clear();
         m_impl->rt.statics = SharedStatics(source);
         m_impl->topLevel = parser.ParseProgram(m_impl->rt.functions);
         // Bare mode: no functions defined -> the top-level statements ARE the update
@@ -8360,11 +8420,7 @@ void OkayScriptVM::CallEvent(const std::string& function) {
 }
 
 namespace {
-// The handler a script defines for an engine event name: the requested name
-// wins; otherwise an alias, so scripts can name handlers in PascalCase
-// (OnCollisionEnter, OnClick, ...). "" = none.
-template <class Functions>
-std::string ResolveEventHandler(const Functions& functions, const std::string& function) {
+const std::unordered_map<std::string, std::vector<std::string>>& EventAliases() {
     static const std::unordered_map<std::string, std::vector<std::string>> kAliases = {
         // Inventory events (C#-style handler names work too).
         {"on_item_added",       {"OnItemAdded"}},
@@ -8416,6 +8472,15 @@ std::string ResolveEventHandler(const Functions& functions, const std::string& f
         {"on_validate_rpc",   {"OnValidateRpc"}},
         {"on_validate_hit",   {"OnValidateHit"}},
     };
+    return kAliases;
+}
+
+// The handler a script defines for an engine event name: the requested name
+// wins; otherwise an alias, so scripts can name handlers in PascalCase
+// (OnCollisionEnter, OnClick, ...). "" = none.
+template <class Functions>
+std::string ResolveEventHandler(const Functions& functions, const std::string& function) {
+    const auto& kAliases = EventAliases();
     if (functions.count(function)) return function;
     auto it = kAliases.find(function);
     if (it != kAliases.end())
@@ -8423,32 +8488,100 @@ std::string ResolveEventHandler(const Functions& functions, const std::string& f
             if (functions.count(alt)) return alt;
     return {};
 }
+
+// "OnClick" and "on_click" are the same event. A name that isn't in the table
+// (OnHurt, OnEvent_Hit) stays as written.
+std::string CanonEvent(const std::string& name) {
+    const auto& kAliases = EventAliases();
+    if (kAliases.count(name)) return name;
+    for (const auto& kv : kAliases)
+        for (const auto& alt : kv.second)
+            if (alt == name) return kv.first;
+    return name;
+}
+
+bool SameListener(const Value& a, const Value& b) {
+    auto ma = a.AsMap(), mb = b.AsMap();
+    if (!ma || !mb) return false;
+    if (ma->count("__lambda") && mb->count("__lambda"))
+        return (*ma)["__lambda"].AsFloat() == (*mb)["__lambda"].AsFloat();
+    if (ma->count("__fn") && mb->count("__fn"))
+        return (*ma)["__fn"].AsString() == (*mb)["__fn"].AsString();
+    return false;
+}
 } // namespace
+
+void Runtime::AddSub(const std::string& event, const Value& fn) {
+    subs.push_back(Sub{event, fn});
+}
+
+void Runtime::RemoveSub(const std::string& event, const Value& fn) {
+    const std::string canon = CanonEvent(event);
+    for (auto it = subs.begin(); it != subs.end(); ++it) {
+        if (CanonEvent(it->name) == canon && SameListener(it->fn, fn)) {
+            subs.erase(it);
+            return;
+        }
+    }
+}
+
+bool Runtime::HasSub(const std::string& event) const {
+    const std::string canon = CanonEvent(event);
+    for (const auto& s : subs)
+        if (CanonEvent(s.name) == canon) return true;
+    return false;
+}
+
+void Runtime::FireSubs(const std::string& event, std::vector<Value>& args) {
+    const std::string canon = CanonEvent(event);
+    const std::vector<Sub> snap = subs;
+    for (const Sub& s : snap) {
+        if (CanonEvent(s.name) != canon) continue;
+        auto m = s.fn.AsMap();
+        if (!m) continue;
+        if (m->count("__fn")) {
+            const std::string fn = (*m)["__fn"].AsString();
+            if (functions.count(fn)) Call(fn, args);
+            continue;
+        }
+        if (IsLambda(s.fn)) CallLambda(s.fn, args);
+    }
+}
 
 void OkayScriptVM::CallEventWith(const std::string& function, const vs::VsValue& arg) {
     CallEventArgs(function, std::vector<vs::VsValue>{arg});
 }
 
 bool OkayScriptVM::HasEvent(const std::string& function) const {
-    return m_impl->loaded && !ResolveEventHandler(m_impl->rt.functions, function).empty();
+    return m_impl->loaded &&
+           (!ResolveEventHandler(m_impl->rt.functions, function).empty() || m_impl->rt.HasSub(function));
 }
 
 vs::VsValue OkayScriptVM::CallEventArgs(const std::string& function, const std::vector<vs::VsValue>& given,
                                         std::string* error) {
     if (!m_impl->loaded) return {};
+    std::vector<Value> all(given.begin(), given.end());
     const std::string fn = ResolveEventHandler(m_impl->rt.functions, function);
-    if (fn.empty()) return {};
-    // Up to as many arguments as the handler declares (OnTriggerEnter(Collider
-    // other) takes one; a handler with none gets none). Call gives any it
-    // declares beyond those its usual default for the parameter's type.
-    const std::size_t want = std::min(m_impl->rt.functions[fn].params.size(), given.size());
-    std::vector<Value> args(given.begin(), given.begin() + static_cast<std::ptrdiff_t>(want));
-    try { return m_impl->rt.Call(fn, args); }
-    catch (const std::exception& e) {
-        if (error) *error = e.what();
-        else Log::Error("OkayScript ", fn.c_str(), "(): ", e.what());
+    vs::VsValue ret;
+    if (!fn.empty()) {
+        // Up to as many arguments as the handler declares (OnTriggerEnter(Collider
+        // other) takes one; a handler with none gets none). Call gives any it
+        // declares beyond those its usual default for the parameter's type.
+        const std::size_t want = std::min(m_impl->rt.functions[fn].params.size(), all.size());
+        std::vector<Value> args(all.begin(), all.begin() + static_cast<std::ptrdiff_t>(want));
+        try { ret = m_impl->rt.Call(fn, args); }
+        catch (const std::exception& e) {
+            if (error) *error = e.what();
+            else Log::Error("OkayScript ", fn.c_str(), "(): ", e.what());
+        }
     }
-    return {};
+    // Listeners added with += run as well, including when no function is defined.
+    try { m_impl->rt.FireSubs(function, all); }
+    catch (const std::exception& e) {
+        if (error && error->empty()) *error = e.what();
+        else if (!error) Log::Error("OkayScript ", function.c_str(), " listener: ", e.what());
+    }
+    return ret;
 }
 
 vs::VsValue OkayScriptVM::GetGlobal(const std::string& name) const {

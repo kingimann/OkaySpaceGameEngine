@@ -256,6 +256,22 @@ sprite (or 2D collider) bounds under the cursor, using the main camera.
 The older `on_trigger()` and `on_collision()` names still work — they're treated
 as the *enter* handlers.
 
+Subscribe without replacing the function. `+=` adds a listener and `-=` removes
+one. The right-hand side is a function name or a lambda. A number on the right
+is still ordinary math (`score += 1`). `OnClick` and `on_click` are the same
+event. `raise("OnHurt", 3)` runs the listeners on this script (and a function
+named `OnHurt`, if there is one).
+
+```
+function AddBonus(n) { print("BONUS " + n); }
+function start() {
+    OnHurt += (n) => { print("HURT " + n); };
+    OnHurt += AddBonus;
+    raise("OnHurt", 3);    // HURT 3, then BONUS 3
+    OnHurt -= AddBonus;
+}
+```
+
 Inside a collision or trigger handler these describe the touch:
 
 | Value | Meaning |

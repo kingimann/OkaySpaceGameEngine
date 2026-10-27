@@ -750,7 +750,9 @@ private:
             // stop it advancing, and let OnClipEnd move on. An empty clip name
             // is "play nothing". fallbackClip and a child model's stand-in
             // (imported hold) are tried before that hold.
-            ma->SetLoop(st.loop);
+            // Jump holds its last frame even if a saved graph still has it
+            // flagged to loop. Fall and every other state keep their own flag.
+            ma->SetLoop(st.loop && st.name != "Jump");
             const std::string play = ClipToPlay(ma, st);
             if (ma->FindClip(play) >= 0) {
                 ReleaseImported();

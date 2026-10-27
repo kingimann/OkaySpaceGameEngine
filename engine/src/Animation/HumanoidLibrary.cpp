@@ -295,7 +295,8 @@ void DefaultGraph(AnimStateMachine& sm, const Character* body) {
 
     // Air: back on the ground, land into whatever the body does (a standing
     // landing plays Land; a moving one gives at the knees mid-stride).
-    SM::State jump = Clip("Jump", "Jump"), fall = Clip("Fall", "Fall"), hang = Clip("Hang", "Hang");
+    // Jump holds its last frame (a jump outlasts the clip). Fall loops.
+    SM::State jump = Clip("Jump", "Jump", false), fall = Clip("Fall", "Fall"), hang = Clip("Hang", "Hang");
     for (SM::State* s : {&jump, &fall}) {
         StandOff(s->transitions, {OnGround()}, 0.08f, false);
         s->transitions.push_back(To("Land", 0.08f, {OnGround()}));

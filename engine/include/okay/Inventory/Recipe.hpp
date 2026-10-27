@@ -75,6 +75,10 @@ public:
     float Progress() const;
     /// How many times `inv` can afford `r` right now.
     static int Affordable(const Inventory& inv, const Recipe& r);
+    /// Craft events on the inventory's object: on_craft(recipe) / On Craft when one is
+    /// made, on_craft_failed(recipe, reason) when nothing could be.
+    static void Crafted(const Inventory& inv, const Recipe& r);
+    static void Failed(const Inventory& inv, const Recipe& r, const char* reason);
 
 private:
     static void Give(Inventory& inv, const std::vector<Inventory::Stack>& stacks, Scene* scene, const Vec3& dropPos);

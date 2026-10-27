@@ -50,9 +50,14 @@ public:
     /// doesn't fit) or, with craft time, queued. Returns false if none was crafted.
     bool Craft(const Recipe& r, int times = 1) {
         Inventory* inv = Inv();
-        return inv && CanCraft(r) && m_queue.Craft(*inv, r, times) > 0;
+        if (!inv) return false;
+        if (!CanCraft(r)) {
+            CraftQueue::Failed(*inv, r, !r.Unlocked() ? "not unlocked" : !AtStation(r) ? "needs a station" : "missing ingredients");
+            return false;
+        }
+        return m_queue.Craft(*inv, r, times) > 0;
     }
-    bool Craft(const std::string& output) { Recipe r; return Find(output, r) && Craft(r); }
+    bool Craft(const std::string& output, int times = 1) { Recipe r; return Find(output, r) && Craft(r, times); }
     bool CraftIndex(int i) { auto all = AllRecipes(); return i >= 0 && i < (int)all.size() && Craft(all[i]); }
     /// Craft as many as the inventory can afford.
     bool CraftMax(const Recipe& r) { Inventory* inv = Inv(); return inv && Craft(r, CraftQueue::Affordable(*inv, r)); }

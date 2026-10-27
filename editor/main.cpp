@@ -29697,6 +29697,20 @@ void DrawInspector(EditorState& ed) {
                 int ca = (int)ph->carryAnimations;
                 if (ImGui::Combo("Carry Animations##poh", &ca, "Automatic\0Custom\0")) { ph->carryAnimations = (ProceduralObjectHolding::CarryAnim)ca; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatic: the built-in lean against heavy loads.\nCustom: your Animator's own carry states, driven by its parameters\n'holding' (bool), 'carryStyle' (int) and 'carryWeight' (kg).");
+                SectionHeader("Throw");
+                char tkb[2] = {ph->throwKey, 0};
+                if (ImGui::InputText("Throw Key##poh", tkb, sizeof(tkb))) { ph->throwKey = tkb[0]; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hold to charge, release to throw along the camera aim.\nWith empty hands, pressing it picks up the nearest object. Blank = no key.\nDrop is separate (scripts: hold_drop).");
+                const char* mbtns[] = {"Left Mouse", "Right Mouse", "Middle Mouse", "None"};
+                int tbi = (ph->throwMouseButton < 0 || ph->throwMouseButton > 2) ? 3 : ph->throwMouseButton;
+                if (ImGui::Combo("Throw Mouse##poh", &tbi, mbtns, 4)) { ph->throwMouseButton = (tbi == 3) ? -1 : tbi; ed.dirty = true; }
+                if (ImGui::DragInt("Throw Pad Button##poh", &ph->throwGamepadButton, 0.1f, -1, 11)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("0=A 1=B 2=X 3=Y 4=Back 5=Start 6=L 7=R. -1 = none.");
+                if (ImGui::DragFloat("Charge Time##poh", &ph->throwChargeTime, 0.01f, 0.05f, 3.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Min Speed##poh", &ph->throwMinSpeed, 0.1f, 0.0f, 40.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Max Speed##poh", &ph->throwMaxSpeed, 0.1f, 0.0f, 60.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Pickup Range##poh", &ph->pickupRange, 0.05f, 0.0f, 8.0f)) ed.dirty = true;
+                if (ed.isPlaying()) ImGui::Text("Charge %.0f%%", ph->ThrowCharge() * 100.0f);
                 if (GameObject* held = ph->Held()) {
                     ImGui::Text("Holding: %s (%s)", held->name.c_str(), ph->CarryStyle() == HoldableObject::Style::Automatic ? "small item" : HoldableObject::StyleName(ph->CarryStyle()));
                     ImGui::Text("Heaviness %.2f, speed x%.2f", ph->Heaviness(), ph->SpeedMultiplier());

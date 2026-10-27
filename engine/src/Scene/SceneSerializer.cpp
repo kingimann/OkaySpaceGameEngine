@@ -1219,7 +1219,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  objholding";
         KvOut k{out};
         k("hand", (int)ph->primaryHand)("style", (int)ph->holdingStyle).b("armIK", ph->armIK)("transition", ph->transitionTime)
-         .b("body", ph->bodyAdjustment)("carry", (int)ph->carryAnimations);
+         .b("body", ph->bodyAdjustment)("carry", (int)ph->carryAnimations)
+         .key("throwKey", ph->throwKey)("throwMouse", ph->throwMouseButton)("throwPad", ph->throwGamepadButton)
+         ("charge", ph->throwChargeTime)("tmin", ph->throwMinSpeed)("tmax", ph->throwMaxSpeed)("reach", ph->pickupRange);
         out << "\n";
     }
     if (auto* rm = go->GetComponent<RootMotion>()) {
@@ -3784,6 +3786,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     k.b("armIK", ph->armIK); k.f("transition", ph->transitionTime);
                     int carry = 0; k.b("body", ph->bodyAdjustment); k.i("carry", carry);
                     ph->carryAnimations = carry == 1 ? ProceduralObjectHolding::CarryAnim::Custom : ProceduralObjectHolding::CarryAnim::Automatic;
+                    // Throw bindings came later. Missing keys keep the defaults, so an
+                    // older objholding line still loads.
+                    k.key("throwKey", ph->throwKey); k.i("throwMouse", ph->throwMouseButton); k.i("throwPad", ph->throwGamepadButton);
+                    k.f("charge", ph->throwChargeTime); k.f("tmin", ph->throwMinSpeed); k.f("tmax", ph->throwMaxSpeed); k.f("reach", ph->pickupRange);
                 } else if (field == "fbikx") {
                     if (auto* fb = go->GetComponent<FullBodyIK>()) {
                         in >> fb->blendSpeed >> fb->goalSmoothing >> fb->lookSmoothing >> fb->armMinBend >> fb->legMinBend;

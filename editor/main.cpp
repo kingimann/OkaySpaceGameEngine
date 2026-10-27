@@ -19536,7 +19536,12 @@ static std::string TransitionSummary(const AnimStateMachine::Transition& tr) {
 
 static void DrawAnimatorGraph(EditorState& ed) {
     if (!g_showAnimatorGraph) return;
-    ImGui::SetNextWindowSize(ImVec2(860, 520), ImGuiCond_FirstUseEver);
+    if (std::getenv("OKAY_UI_ANIMGRAPH")) {
+        ImGui::SetNextWindowPos(ImVec2(24, 48), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(1280, 780), ImGuiCond_Always);
+    } else {
+        ImGui::SetNextWindowSize(ImVec2(860, 520), ImGuiCond_FirstUseEver);
+    }
     if (!ImGui::Begin("Animator", &g_showAnimatorGraph)) { ImGui::End(); return; }
 
     // Resolve the machine from the selection: self, then ancestors, then
@@ -20255,6 +20260,22 @@ static void DrawAnimatorGraph(EditorState& ed) {
             if (useSp) { ImGui::SameLine(); ImGui::SetNextItemWidth(-1); paramPicker("##agspp", st.speedParam, 0); }
         }
         if (!st.blendTree && ImGui::Checkbox("Loop##ag", &st.loop)) ed.dirty = true;
+        if (ImGui::Checkbox("Mirror##ag", &st.mirror)) ed.dirty = true;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Play this state on the other side: left and right swap.\n"
+                              "Author one wave or punch and mirror it for the other hand.");
+        {
+            static const char* kRoot[] = {"Inherit", "Off", "On"};
+            int rm = st.rootMotion < 0 ? 0 : (st.rootMotion == 0 ? 1 : 2);
+            ImGui::SetNextItemWidth(120);
+            if (ImGui::Combo("Root motion##ag", &rm, kRoot, 3)) {
+                st.rootMotion = rm == 0 ? -1 : (rm == 1 ? 0 : 1);
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Inherit uses the Model Animator's own root-motion toggle.\n"
+                                  "Off strips this state's root travel. On turns it on for this state only.");
+        }
         if (ImGui::SliderFloat("IK weight##ag", &st.ikWeight, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Foot planting in this state (and Full Body IK, unless given its own weight below).");
         {
@@ -42324,6 +42345,7 @@ int main(int argc, char** argv) {
             }
             if (const char* sn = std::getenv("OKAY_UI_SELECT"); sn && (s_focusFrames == 31 || s_focusFrames == 40))
                 for (const auto& up : ed.scene().Objects()) if (up->name == sn) { ed.Select(up.get()); break; }
+            if (std::getenv("OKAY_UI_ANIMGRAPH")) g_showAnimatorGraph = true;
             // OKAY_UI_UIADD=Lobby: the UI editing view with that prebuilt screen added
             // (screenshots of the UI editor and its "+ Add" menu).
             if (const char* ua = std::getenv("OKAY_UI_UIADD"); ua && s_focusFrames == 32) {

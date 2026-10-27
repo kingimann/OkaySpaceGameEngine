@@ -71,6 +71,10 @@ public:
     /// whose body has its own idea of the state (the Character's `anim`) syncs
     /// the machine with it here.
     virtual void  BeginFrame(AnimStateMachine& sm) { (void)sm; }
+    /// Mirror the pose this backend is about to show (a state played on the other side).
+    virtual void  SetMirror(bool) {}
+    /// Per-state root motion: -1 leaves the component's own toggle, 0 off, 1 on.
+    virtual void  SetRootMotion(int) {}
 };
 
 } // namespace okay

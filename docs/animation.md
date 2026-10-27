@@ -516,6 +516,10 @@ and transitions. Beyond single conditions:
   clip (0.9 = 90%). With the *Always* condition it fires purely on time: an attack
   returning to locomotion when it's nearly done.
 - **Any State** — transitions checked from every state first (hit reactions, death).
+- **Mirror** — the state plays with left and right swapped, so one authored side
+  covers the other. It applies to a single clip, a blend tree, and a layer
+  (the layer mirrors only its own overlay). **Root motion** per state is Inherit
+  (the Model Animator's toggle), Off, or On. A layer does not change root motion.
 
 Scripts: `anim_set_float`, `anim_set_bool`, `anim_trigger`, `anim_state()`,
 `anim_prev_state()`, `anim_state_time()`, `anim_normalized_time()`.

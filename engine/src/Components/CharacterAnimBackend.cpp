@@ -260,6 +260,11 @@ void CharacterAnimBackend::Advance(float dt) {
             root = fromRoot + (root - fromRoot) * u;
         }
     }
+    if (m_mirror && !pose.empty()) {
+        Character::MirrorPose(pose);
+        root.x = -root.x;
+    }
+    if (m_rootMotion == 0) root = Vec3{0, 0, 0};
     m_have = !pose.empty();
     m_pose = std::move(pose); m_root = root;
     m_final = false; m_dt = dt;
@@ -361,6 +366,10 @@ void CharacterAnimBackend::PoseLayer(const std::vector<std::pair<int, float>>& c
         MixIn(lp, lr, total, c->Sample(t), c->SampleRoot(t), weights[k]);
     }
     if (lp.empty()) return;
+    if (m_mirror) {
+        Character::MirrorPose(lp);
+        lr.x = -lr.x;
+    }
     const float u = std::fmin(amount, 1.0f);
     for (std::size_t b = 0; b < m_pose.size() && b < lp.size() && b < in.size(); ++b)
         if (in[b]) m_pose[b] = AnimClip::BlendEuler(m_pose[b], lp[b], u);

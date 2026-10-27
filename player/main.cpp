@@ -309,7 +309,12 @@ static void DrawServerBrowserWindow(okay::Scene& scene, SDL_Window* window) {
     };
     if (joining) {   // close once we're in; say why if refused
         if (joining->Joined()) { sb.windowOpen = false; joining = nullptr; return; }
-        if (joining->JoinRejected()) { status = "Couldn't join: the server is full or the password is wrong."; joining = nullptr; }
+        if (joining->JoinRejected()) {
+            const std::string& why = joining->JoinRejectReason();
+            status = why.empty() ? "Couldn't join: the server is full or the password is wrong."
+                                 : "Couldn't join: " + why;
+            joining = nullptr;
+        }
     }
 
     int ww = 960, wh = 600; SDL_GetWindowSize(window, &ww, &wh);

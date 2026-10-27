@@ -184,8 +184,11 @@ public:
                 mr->enabled = !(ch && (ch->separateParts || !ch->enabled || ch->driveExternal));
             }
         if (Transform* camT = FindCameraChild())
-            if (auto* cam = camT->gameObject->GetComponent<Camera>())
+            if (auto* cam = camT->gameObject->GetComponent<Camera>()) {
                 cam->ignoreObject = showBody ? nullptr : gameObject;
+                // Default 0.3 m clips the chest and the viewmodel shoulder.
+                if (!showBody && cam->nearClip > 0.15f) cam->nearClip = 0.08f;
+            }
     }
 
     void Update(float dt) override {

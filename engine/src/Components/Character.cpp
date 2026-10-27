@@ -102,15 +102,11 @@ Mesh Character::BuildRig(std::vector<int>& bone) const {
         int up = s < 0 ? B_LUPARM : B_RUPARM, fo = s < 0 ? B_LFORE : B_RFORE, ha = s < 0 ? B_LHAND : B_RHAND;
         box({s * 0.27f, 1.30f, 0}, {0.13f, 0.34f, 0.18f}, upperArmCol, up);
         box({s * 0.27f, 0.99f, 0}, {0.12f, 0.32f, 0.16f}, foreArmCol, fo);
-        // Palm just under the wrist, thumb on +Z, fingers curled toward the body
-        // (-s in X). The fingertips stop about 6 cm from the wrist, which is where
-        // a held object's grip is placed, so they wrap it instead of stabbing
-        // through. The thumb sits below the sleeve rather than inside it.
-        box({s * 0.304f, 0.828f, 0.000f}, {0.040f, 0.052f, 0.076f}, handCol, ha);
-        box({s * 0.316f, 0.808f, 0.048f}, {0.022f, 0.024f, 0.028f}, handCol, ha);
-        box({s * 0.296f, 0.814f, 0.000f}, {0.028f, 0.018f, 0.050f}, handCol, ha);
-        box({s * 0.286f, 0.808f, 0.000f}, {0.024f, 0.014f, 0.040f}, handCol, ha);
-        box({s * 0.280f, 0.806f, 0.000f}, {0.018f, 0.012f, 0.030f}, handCol, ha);
+        // One plain block at the wrist, offset out of the sleeve so the first-person
+        // arm shows a palm instead of the forearm end. No thumb and no finger
+        // segments. It ends about where a grip is placed, so it meets a held
+        // object instead of stabbing through it.
+        box({s * 0.34f, 0.80f, 0.05f}, {0.11f, 0.10f, 0.11f}, handCol, ha);
         int th = s < 0 ? B_LTHIGH : B_RTHIGH, sh = s < 0 ? B_LSHIN : B_RSHIN, ft = s < 0 ? B_LFOOT : B_RFOOT;
         box({s * 0.105f, 0.74f, 0}, {0.18f, 0.42f, 0.20f}, pants, th);
         box({s * 0.105f, 0.34f, 0}, {0.16f, 0.44f, 0.18f}, shinCol, sh);
@@ -1265,6 +1261,14 @@ void Character::DriveParts() {
         // fpElbow is a bend: this skeleton folds the elbow on -X, and +X hyperextends
         // the wrist. m_fpShown eases the three bones off the animated pose.
         const float w = m_fpShown < 0.0f ? 0.0f : (m_fpShown > 1.0f ? 1.0f : m_fpShown);
+        // Crouch hunches the chest and prone lays the hips flat. Either swing
+        // carries the only arm the owner can see around behind the sleeve.
+        // The body is hidden, so drop that pitch. Hip height still follows
+        // the stance, and the arm stays next to the lowered eye.
+        if (w > 0.0f && (int)pose.size() > B_TORSO) {
+            pose[B_HIPS].x *= (1.0f - w);
+            pose[B_TORSO].x *= (1.0f - w);
+        }
         const Vec3 raised{fpRaise - fpPitch, 0.0f, 0.0f};
         const Vec3 elbow{-fpElbow, 0.0f, 0.0f};
         pose[fpb]     = pose[fpb]     + (raised - pose[fpb])     * w;
@@ -1290,6 +1294,17 @@ void Character::DriveParts() {
         }
     if (m_rigRoot && m_rigRoot->transform) {
         Vec3 so = StanceOffset();
+        // The crouch eye drops further than the crouch hips. The body is hidden,
+        // so drop the viewmodel arm with the eye or it rides up out of the view.
+        if (fpb >= 0 && m_fpShown > 0.5f && !fpSteady && gameObject && gameObject->transform)
+            for (Transform* c : gameObject->transform->Children()) {
+                if (!c || !c->gameObject || !c->gameObject->GetComponent<Camera>()) continue;
+                const float eye = c->localPosition.y;
+                if (eye < 0.35f) break;
+                if (eye > m_fpEyeRest) m_fpEyeRest = eye;
+                so.y = eye - m_fpEyeRest;
+                break;
+            }
         // A steady first-person arm ignores the crouch/prone height drop so it stays in
         // view (the owner only sees the arm, so the body's true height is irrelevant).
         float y = (firstPersonArm && fpSteady) ? 0.0f : so.y;

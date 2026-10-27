@@ -139,7 +139,6 @@ public:
     void LateUpdate(float dt) override {
         if (m_releasing) FinishRelease(false);
         if (m_held && EnsureRig()) Hold(dt);
-        if (m_ik) for (int l = 0; l < 2; ++l) CurlFingers(l);
         AdjustBody(dt);
     }
 
@@ -158,8 +157,6 @@ public:
         for (int l = 0; l < 2; ++l) {
             if (m_grip[l] && dying.count(m_grip[l])) m_grip[l] = nullptr;
             if (m_hint[l] && dying.count(m_hint[l])) m_hint[l] = nullptr;
-            for (const Finger& f : m_fingers[l])
-                if (dying.count(f.t->gameObject)) { m_fingers[l].clear(); m_fingersFound[l] = false; break; }
         }
         if (m_ik && dying.count(m_ik->gameObject)) { m_ik = nullptr; m_savedValid = false; m_releasing = false; }
         if (m_char && dying.count(m_char->gameObject)) m_char = nullptr;
@@ -228,13 +225,8 @@ private:
     bool  m_use[2] = {};
     Vec3  m_gripW[2];
     bool  m_calib[2] = {};          // hand bone axes learned from the rig
-    Vec3  m_fingersLocal[2], m_palmLocal[2];
+    Vec3  m_fingersLocal[2], m_palmLocal[2];   // which way the hand points, and the palm
     float m_palmLen[2] = {0.065f, 0.065f};
-    // Finger bones under each hand (imported rigs), curled around the grip.
-    struct Finger { Transform* t; float scale; bool index; Quat before, set; bool live; };
-    std::vector<Finger> m_fingers[2];
-    bool  m_fingersFound[2] = {};
-    float m_curl[2] = {}, m_indexCurl[2] = {};
     HoldableObject::Style m_style = HoldableObject::Style::Automatic;
     float m_heavy = 0.0f;           // Heaviness() of the held object
     float m_lean = 0.0f;            // eased weight of the lean-back layer
@@ -313,8 +305,8 @@ private:
         return b;
     }
 
-    // Learn which way the hand bone's fingers and palm point (rigs disagree on
-    // bone axes): fingers continue the forearm, the palm faces the body.
+    // Learn which way the hand points and which way the palm faces (rigs disagree
+    // on bone axes). The point continues the forearm; the palm faces the body.
     void Calibrate(int l, Transform* fore, Transform* hand, const Body& b) {
         Vec3 f = hand->Position() - fore->Position();
         const float len = f.Magnitude();
@@ -579,7 +571,6 @@ private:
         const Vec3 G = pos + rot * p.gp[l];
         const Vec3 F = (rot * p.gf[l]).Normalized(), N = (rot * p.gn[l]).Normalized();
         m_gripW[l] = G;
-        m_curl[l] = p.curl[l]; m_indexCurl[l] = p.indexCurl[l];
         GameObject* g = RuntimeTarget(m_grip[l], l == 0 ? "Holding Grip L" : "Holding Grip R");
         GameObject* h = RuntimeTarget(m_hint[l], l == 0 ? "Holding Elbow L" : "Holding Elbow R");
         if (!g || !h) return;
@@ -594,44 +585,6 @@ private:
         e.positionWeight = 1.0f;
         e.rotationWeight = m_calib[l] ? 1.0f : 0.0f;
         e.pull = 0.0f;
-    }
-
-    // Close the fingers around the grip: every finger joint turns toward the palm
-    // (thumb half as far), faded with the hand's IK weight. Last frame's curl is
-    // taken off first when nothing re-posed a finger, so it never compounds.
-    void CurlFingers(int l) {
-        Transform *a, *m, *e; m_ik->LimbBones(l, a, m, e);
-        if (e && m_calib[l] && !m_fingersFound[l]) FindFingers(l, e);
-        const float w = (m_held || m_releasing) && e && m_calib[l] ? m_ik->EffectiveWeight(l) : 0.0f;
-        const Vec3 axis = e && m_calib[l] ? e->Rotation() * Vec3::Cross(m_fingersLocal[l], m_palmLocal[l]) : Vec3{0, 0, 0};
-        for (Finger& f : m_fingers[l]) {
-            const Quat r = f.t->localRotation;
-            if (f.live && std::fabs(Quat::Dot(r, f.set)) > 0.999999f) f.t->localRotation = f.before;
-            f.live = false;
-            const float k = (f.index ? m_indexCurl[l] : m_curl[l]) * f.scale * w;
-            if (k <= 1e-3f || axis.SqrMagnitude() < 1e-8f) continue;
-            f.before = f.t->localRotation;
-            f.t->SetRotation((Quat::AngleAxis(k * 70.0f, axis) * f.t->Rotation()).Normalized());
-            f.set = f.t->localRotation;
-            f.live = true;
-        }
-    }
-    void FindFingers(int l, Transform* hand) {
-        m_fingersFound[l] = true;
-        m_fingers[l].clear();
-        std::vector<Transform*> stack(hand->Children().rbegin(), hand->Children().rend());
-        while (!stack.empty()) {   // depth first, parents before children
-            Transform* t = stack.back(); stack.pop_back();
-            if (!t || !t->gameObject) continue;
-            std::string n;
-            for (char ch : t->gameObject->name) n += (char)std::tolower((unsigned char)ch);
-            auto has = [&](const char* k) { return n.find(k) != std::string::npos; };
-            if (has("thumb")) m_fingers[l].push_back({t, 0.5f, false, {}, {}, false});
-            else if (has("index")) m_fingers[l].push_back({t, 1.0f, true, {}, {}, false});
-            else if (has("finger") || has("middle") || has("ring") || has("pinky") || has("little"))
-                m_fingers[l].push_back({t, 1.0f, false, {}, {}, false});
-            for (auto it = t->Children().rbegin(); it != t->Children().rend(); ++it) stack.push_back(*it);
-        }
     }
 
     // Body adjustment through the character's animation: the Animator gets the

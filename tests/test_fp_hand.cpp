@@ -41,6 +41,14 @@ int main() {
         // No spawned arm object (no "second arm"), and the baked mesh stays hidden.
         CHECK(scene.Find("FP_Arm") == nullptr);
         CHECK(player->GetComponent<MeshRenderer>() && !player->GetComponent<MeshRenderer>()->enabled);
+        // The hand part is one block. A palm plus a thumb and finger segments
+        // was five cubes (40 vertices) on this bone.
+        std::vector<int> bone;
+        ch->BuildRig(bone);
+        int handVerts = 0;
+        const int hand = Character::BoneIndex("l_hand");
+        for (int b : bone) if (b == hand) ++handVerts;
+        CHECK(handVerts == 8);
     }
 
     // Left-arm option.

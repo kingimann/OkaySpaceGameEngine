@@ -197,13 +197,20 @@ void PlayerView::ApplyHead() {
     Camera* cam = ViewCamera(gameObject);
     if (ch && ch->PartsBuilt()) {
         ch->hideOwnHead = false;
-        if (cam) cam->ignoreObject = fp ? gameObject : nullptr;
+        if (cam) {
+            cam->ignoreObject = fp ? gameObject : nullptr;
+            // The shoulder sits about 0.3 m from the eye, which is the default
+            // near plane, so the arm (and the chest when you look down) is sliced.
+            if (fp && cam->nearClip > 0.15f) cam->nearClip = 0.08f;
+        }
+        // Only the raised arm stays visible. Flagging every other part drew the
+        // torso and legs inside the head.
+        const int arm = ch->fpArmBase >= 0 ? ch->fpArmBase : HumanoidMotion::B_LUPARM;
         for (int i = 0; i < Character::BoneCount(); ++i) {
             GameObject* part = ch->Part(i);
             if (!part) continue;
-            const bool head = i == HumanoidMotion::B_HEAD;
-            part->firstPersonViewmodel = fp && !head;
-            if (head && part->transform) part->transform->localScale = Vec3::One;
+            part->firstPersonViewmodel = fp && i >= arm && i <= arm + 2;
+            if (i == HumanoidMotion::B_HEAD && part->transform) part->transform->localScale = Vec3::One;
         }
         return;
     }
@@ -211,7 +218,10 @@ void PlayerView::ApplyHead() {
     // The single mesh stays visible (head vertices are shrunk). Third person
     // sees the whole body too; the controller's "hide body" only applies when
     // this toggle is off.
-    if (cam) cam->ignoreObject = nullptr;
+    if (cam) {
+        cam->ignoreObject = nullptr;
+        if (fp && cam->nearClip > 0.15f) cam->nearClip = 0.08f;
+    }
 }
 
 void PlayerView::PlaceCamera(float dt) {

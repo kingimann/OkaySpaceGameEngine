@@ -555,6 +555,7 @@ private:
     Mesh m_fpArm;                  // first-person arm-only mesh (rebuilt each frame)
     bool m_fpArmReady = false;
     float m_fpShown = 0.0f;        // eased 0..1 raise of the first-person arm (tracks fpArmUp)
+    float m_fpEyeRest = 0.0f;      // standing eye height, so a crouch can drop the viewmodel with the camera
     void BuildFpArm(const Mesh& full);   // extract the arm bones into m_fpArm
     void EaseFirstPersonArm(float dt);
     bool m_partsBuilt = false;

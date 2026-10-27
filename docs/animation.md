@@ -805,10 +805,10 @@ elbows bend down and out, and the object moves with the body.
   - *Flashlight*: one hand, beam forward.
   - *Sword*: one hand on the hilt, blade up and forward. *Support Hand* makes it
     two-handed.
-  - *Cup*: one hand, fingers through the handle.
+  - *Cup*: one hand on the handle.
   - *Heavy*: both hands under its bottom edges, hanging low.
   - *Custom*: the hands go on the **Left / Right Grip** points (object-local
-    position and rotation; rotation 0 = palm down, fingers along -Z), and the
+    position and rotation; rotation 0 = palm down, the hand along -Z), and the
     object sits at **Hold Offset / Hold Rotation** from the chest. A one-hand
     object authored for the right hand is mirrored when the primary hand is the
     left.
@@ -821,10 +821,9 @@ elbows bend down and out, and the object moves with the body.
   and lights point along local -Z, a sword's blade along +Y, a cup's handle
   along +X. For a model built another way, **Hold Rotation** turns it
   (0, 180, 0 for a gun facing backwards).
-- Fingers close around the grip on rigs that have finger bones. The amount
-  depends on the style: a fist on a sword, an open hand on a box, the index
-  finger off the trigger. A custom grip has its own **Finger Curl**. The
-  fingers open again when the object is dropped.
+- Hands are a plain block: no finger bones and no finger geometry. Holding
+  aims the palm at the grip. Finger joints are not posed, including on a rig
+  that happens to have them.
 - **Socket**: hold it at a named object inside the character (a holster, a back
   slot) instead of in front of the chest.
 - The hands never stretch: when a grip is out of reach the object comes closer

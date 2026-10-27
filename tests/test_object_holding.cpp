@@ -278,8 +278,9 @@ int main() {
         CHECK(WristError(hold->IK(), 1, a.hand) < 0.01f);
     }
 
-    // ---- A rig with finger bones (no Character; bones found by name): fingers
-    // close around a sword's hilt and open again after the drop.
+    // ---- A rig that still has finger bones (no Character; bones found by
+    // name). The wrist reaches the hilt. The finger joints are not posed:
+    // they stay at rest while the sword is held and after it is dropped.
     {
         Scene s("Fingers");
         GameObject* root = s.CreateGameObject("Rig");
@@ -315,8 +316,8 @@ int main() {
         Step(s, 90);
         CHECK(hold->HandInUse(false));
         CHECK(WristError(hold->IK(), 1, hand) < 0.01f);
-        const float closed = Dist(tip->Position(), hand->Position());
-        CHECK(closed < open0 * 0.85f);
+        CHECK_NEAR(Dist(tip->Position(), hand->Position()), open0, 1e-3f);
+        CHECK(std::fabs(Quat::Dot(tip->localRotation, rest)) > 0.99999f);
         hold->Drop();
         Step(s, 90);
         CHECK_NEAR(Dist(tip->Position(), hand->Position()), open0, 1e-3f);

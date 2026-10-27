@@ -29544,11 +29544,12 @@ void DrawInspector(EditorState& ed) {
                     if (gr.enabled) {
                         if (ImGui::DragFloat3("Position##grip", &gr.position.x, 0.005f)) ed.dirty = true;
                         if (ImGui::DragFloat3("Rotation##grip", &gr.rotation.x, 1.0f)) ed.dirty = true;
-                        if (ImGui::SliderFloat("Finger Curl##grip", &gr.curl, 0.0f, 1.0f)) ed.dirty = true;
+                        // Hands have no fingers. `curl` stays on the grip so saved
+                        // scenes still load; it is not applied to any bone.
                     }
                     ImGui::PopID();
                 }
-                ImGui::TextDisabled("Grip rotation 0 = palm down, fingers forward (-Z).");
+                ImGui::TextDisabled("Grip rotation 0 = palm down, the hand points along -Z.");
                 if (GameObject* holder = ho->Holder()) ImGui::Text("Held by: %s", holder->name.c_str());
                 if (ImGui::SmallButton("Remove##hold")) toRemove = ho;
             }

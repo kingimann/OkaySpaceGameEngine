@@ -15,7 +15,7 @@
 //                 the grip, the other under the barrel. Box: both hands on its
 //                 sides. Flashlight: one hand, pointing forward. Sword: one hand on
 //                 the hilt, blade up and forward (supportHand: two-handed). Cup:
-//                 one hand, fingers through the handle. Heavy: both hands under
+//                 one hand on the handle. Heavy: both hands under
 //                 its bottom edges, held low.
 //
 // Named styles read the object's long side (its biggest extent) as the barrel,
@@ -24,7 +24,7 @@
 // another way.
 //
 // Grip points are in the object's local space. A grip's rotation orients the
-// hand: with no rotation the palm faces down (local -Y) and the fingers point
+// hand: with no rotation the palm faces down (local -Y) and the hand points
 // along local -Z (forward), like a hand laid flat on top of the object. A
 // one-handed object authored for one hand is mirrored onto the other hand when
 // the holder's primary hand is the other one.
@@ -55,7 +55,8 @@ public:
         return i >= 0 && i < (int)(sizeof(n) / sizeof(n[0])) ? n[i] : "?";
     }
     /// Where one hand touches the object (object-local position, rotation in
-    /// degrees) and how far the fingers close around it (0 open .. 1 a fist).
+    /// degrees). `curl` is kept so older scenes still load; hands have no fingers,
+    /// so it is not applied.
     struct Grip {
         bool  enabled = false;
         Vec3  position{0, 0, 0};

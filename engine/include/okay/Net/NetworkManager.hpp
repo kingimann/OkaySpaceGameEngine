@@ -177,10 +177,12 @@ public:
     /// packet timing. interpolationRate 0 still snaps.
     float interpolationRate = 12.0f;
 
-    /// Spatial interest management: a client is only sent peers within this many
-    /// world units of its own avatar (0 = no culling — send everyone in the room).
-    /// Trims bandwidth in large worlds; an out-of-range peer simply stops updating
-    /// on that client until it comes back into range.
+    /// Spatial interest management: a client is only sent peers, and owned
+    /// objects in the binary snapshot, within this many world units of its own
+    /// avatar (0 = no culling — send everyone in the room). Objects are gathered
+    /// from a grid whose cell is this radius (the client's cell and its
+    /// neighbours) and then kept only inside the sphere. An out-of-range object
+    /// stops updating on that client until it comes back.
     float interestRadius = 0.0f;
 
     /// Round-trip time to the server in milliseconds (clients only; 0 until the
@@ -1022,6 +1024,7 @@ private:
     void ApplyRemoteXform(const std::string& id, const Vec3& p, const Quat& q, double tick,
                           const std::string& extra, bool hasExtra);
     void BroadcastBinarySnapshots(double tick);
+    void CullInterest(net::DeltaBase& mine, const Client& c) const;
     void SendSnap(net::SnapOut& out, const net::DeltaBase& current, double tick,
                   const net::Endpoint& to, std::uint64_t cookie);
     void NoteSnapAck(net::SnapOut& out, std::uint32_t id);

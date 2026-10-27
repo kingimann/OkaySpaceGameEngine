@@ -555,6 +555,31 @@ void NetworkManager::NoteSnapAck(net::SnapOut& out, std::uint32_t id) {
     }
 }
 
+void NetworkManager::CullInterest(net::DeltaBase& mine, const Client& c) const {
+    if (interestRadius <= 0.0f) return;
+    // Same hold as the avatar snapshot: no position yet, so send no objects.
+    if (!c.hasState) { mine.pose.clear(); mine.extra.clear(); return; }
+    const float cell = interestRadius;
+    const float r2 = cell * cell;
+    const int cx = static_cast<int>(std::floor(c.state.x / cell));
+    const int cy = static_cast<int>(std::floor(c.state.y / cell));
+    const int cz = static_cast<int>(std::floor(c.state.z / cell));
+    for (auto it = mine.pose.begin(); it != mine.pose.end();) {
+        Vec3 p; Quat q;
+        net::DequantizePose(it->second, p, q);
+        const int ox = static_cast<int>(std::floor(p.x / cell));
+        const int oy = static_cast<int>(std::floor(p.y / cell));
+        const int oz = static_cast<int>(std::floor(p.z / cell));
+        const int cheb = std::max(std::abs(ox - cx), std::max(std::abs(oy - cy), std::abs(oz - cz)));
+        const float dx = p.x - c.state.x, dy = p.y - c.state.y, dz = p.z - c.state.z;
+        if (cheb > 1 || dx * dx + dy * dy + dz * dz > r2) {
+            mine.extra.erase(it->first);
+            it = mine.pose.erase(it);
+        } else ++it;
+    }
+}
+
+
 void NetworkManager::BroadcastBinarySnapshots(double tick) {
     net::DeltaBase owned;
     for (auto& [id, o] : m_syncObjs) {
@@ -576,6 +601,7 @@ void NetworkManager::BroadcastBinarySnapshots(double tick) {
                 mine.pose[id] = rel.pose;
                 if (!rel.extra.empty()) mine.extra[id] = rel.extra;
             }
+            CullInterest(mine, c);
             SendSnap(c.snapOut, mine, tick, c.endpoint, 0);
         }
     } else if (m_mode == Mode::Client && m_joined) {

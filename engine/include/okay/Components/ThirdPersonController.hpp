@@ -425,11 +425,17 @@ public:
                 m_stepDist += hSpeed * dt;
                 if (m_stepDist >= stride) { m_stepDist -= stride; ++m_steps; if (onFootstep) onFootstep((m_steps & 1) != 0); }
             }
-            if (autoRecenter && moving && !m_aim && m_mouseIdle > recenterDelay) {
+            // Only when the travel is forward-ish: the input is camera-relative,
+            // so chasing the body on a pure strafe or backpedal re-aims the input
+            // every frame and the camera spins forever. Scaling by the forward
+            // share settles the camera in behind a forward run, drifts gently on
+            // a diagonal, and leaves a strafe alone.
+            const float fwdShare = moving ? Mathf::Max(0.0f, Vec3::Dot(dir, fwd)) : 0.0f;
+            if (autoRecenter && moving && !m_aim && m_mouseIdle > recenterDelay && fwdShare > 0.2f) {
                 Vec3 f = transform->localRotation * Vec3{0, 0, -1};
                 float bodyYaw = Mathf::Atan2(-f.x, -f.z) * Mathf::Rad2Deg;
                 float d = std::fmod(bodyYaw - yaw + 540.0f, 360.0f) - 180.0f;
-                yaw += d * (1.0f - std::exp(-recenterSpeed * dt));
+                yaw += d * (1.0f - std::exp(-recenterSpeed * dt)) * fwdShare * fwdShare;
             }
         }
         m_wasRunning = running && hSpeed > walkSpeed * 0.8f;

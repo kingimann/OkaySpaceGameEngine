@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.837.0
+  Animation and characters
+  - IK runs in one fixed order each frame (feet, then body, then limbs, then
+    look and aim), and IK goals that jump to a new target swing over instead
+    of snapping (#417).
+  - Dropping a model onto a character recovers its bind pose, and a held prop
+    stays in the hand when the model is swapped (#416).
+  Editor
+  - Script Editor: Ctrl+Z undoes Format, Rename, Replace All and Reload, and
+    the view stays where it was (#445).
+  - The Plugins menu stays usable with more than one plugin installed (#479).
+
 v2.836.0
   How to try it
   - Open the editor, pick the Third Person template, and press the green

@@ -677,6 +677,8 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "IsInAction")     return std::make_unique<IsInActionNode>();
     if (type == "Die")            return std::make_unique<DieNode>(argOr("forward"));
     if (type == "Revive")         return std::make_unique<ReviveNode>();
+    if (type == "Roll")           return std::make_unique<RollNode>(argOr("forward"));
+    if (type == "Dodge")          return std::make_unique<DodgeNode>(argOr("forward"));
     if (type == "SetTimeScale")   return std::make_unique<SetTimeScaleNode>();
     if (type == "SetBlendShape")  return std::make_unique<BlendShapeNode>(argOr(""), true);
     if (type == "GetBlendShape")  return std::make_unique<BlendShapeNode>(argOr(""), false);

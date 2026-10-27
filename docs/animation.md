@@ -330,6 +330,20 @@ their input while `Health` says the body is dead. `Damage` does not know where a
 hit came from; `Damage(amount, fromWorld)` and `die(x, y, z)` do, and the body
 falls away from that point. With no direction, it falls forward.
 
+Roll and dodge clips: `Roll_F`, `Dodge_L`, `Dodge_R`, `Dodge_B`. `roll(dir)` only
+plays the clip (`dir` 0 is the forward roll, anything else is that dodge).
+`dodge(dir)` plays it and, on a first- or third-person controller, bursts that
+way. The burst spends stamina when a Stamina stat is on the body, then waits
+out a cooldown. **Can Dodge** and the dodge key are off, so holding a key does
+nothing until a game turns them on. **I-Frames** are off: Health still applies
+damage during a dodge unless that box is on. The existing slide burst (sprint,
+then crouch) is unchanged. While that slide is on, the Animator bool `slide`
+plays `Slide` (feet first, looping) and leaves through `SlideEnd` into Crouch,
+or into Run when still sprinting and not crouched.
+
+Script: `roll(["forward"|"back"|"left"|"right"])`, `dodge(...)`. Visual
+scripts: Roll, Dodge.
+
 Script: `play_action("Death" [, blend])` (0 if that state is missing),
 `is_in_action()`, `action_time()`, `die(["forward"|"back"|"left"|"right"])`,
 `die(x, y, z)`, `revive()`, `is_dead()`. `on_action_end` is the anim event

@@ -159,6 +159,7 @@ public:
 
     void ApplyDamage(float amount) {
         if (dead || godMode || m_iframes > 0.0f || amount <= 0.0f) return;
+        if (HumanoidActions::DodgeIFrames(gameObject)) return;
         float dmg = Mathf::Max(0.0f, amount - (armor + equipArmor));
         dmg *= (1.0f - Mathf::Clamp01(resistance));
         if (dmg < minDamage) dmg = Mathf::Min(minDamage, amount);   // mitigation never fully nullifies a hit
@@ -364,6 +365,13 @@ public:
     bool TryJump() {
         if (stamina < jumpCost) return false;
         stamina -= jumpCost; m_timer = regenDelay; Publish();
+        return true;
+    }
+    /// Spend `cost` stamina, or refuse when there isn't enough. 0 always succeeds.
+    bool TrySpend(float cost) {
+        if (cost <= 0.0f) return true;
+        if (stamina < cost) return false;
+        stamina -= cost; m_timer = regenDelay; Publish();
         return true;
     }
     void SetSprinting(bool on) { sprinting = on; }

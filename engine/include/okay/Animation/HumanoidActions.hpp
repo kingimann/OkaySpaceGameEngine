@@ -16,10 +16,10 @@ class GameObject;
 
 namespace HumanoidActions {
 
-/// How far the built-in action set has got. Death is 1. A saved graph records
-/// the revision it already has, so a later action is added once and a state the
-/// user deleted is not put back when the next action lands.
-constexpr int kActionsRev = 1;
+/// How far the built-in action set has got. Death is 1, roll / dodge / slide
+/// clips are 2. A saved graph records the revision it already has, so a later
+/// action is added once and a state the user deleted is not put back.
+constexpr int kActionsRev = 2;
 
 /// One authored pose. Degrees, hip height in rig units, rootOffset.x/z a visual
 /// lean only (y is unused; hipY is the root height).
@@ -42,7 +42,7 @@ struct DeadShape {
 void Bake(std::vector<HumanoidLibrary::Entry>& out);
 /// Append this revision's states, params and Any-State transitions. Safe to
 /// call again: a state that already exists is left as the user edited it.
-void AddStates(AnimStateMachine& sm, const Character* body);
+void AddStates(AnimStateMachine& sm, const Character* body, bool force = false);
 /// Stance-timed blends for action transitions (called from ApplyStanceTimes).
 void ApplyTimes(AnimStateMachine& sm);
 /// Saved default graphs (Idle/Walk/Run/Jump) gain any action whose revision is
@@ -75,6 +75,15 @@ void RequestRevive(GameObject* go);
 void ReviveAnim(GameObject* go);
 /// HealthStat::IsDead when that component is present, otherwise the `dead` param.
 bool IsDead(GameObject* go);
+
+/// Play the roll / dodge clip. `dir` 0 forward (Roll_F), 1 back, 2 left, 3 right.
+/// No impulse. Dodge() is this plus the controller burst.
+bool RequestRoll(GameObject* go, int dir = 0);
+/// Clip plus a dodge burst when this body has a first- or third-person controller.
+bool RequestDodge(GameObject* go, int dir);
+/// Bodies whose current dodge asked for i-frames. Empty unless that option is on.
+void SetDodgeIFrames(GameObject* go, bool on);
+bool DodgeIFrames(const GameObject* go);
 
 /// True once the body is in DeadHold (or Death has played out).
 bool DeathPoseSettled(GameObject* go);

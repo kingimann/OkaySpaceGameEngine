@@ -103,15 +103,9 @@ Mesh Character::BuildRig(std::vector<int>& bone) const {
         int up = s < 0 ? B_LUPARM : B_RUPARM, fo = s < 0 ? B_LFORE : B_RFORE, ha = s < 0 ? B_LHAND : B_RHAND;
         box({s * 0.27f, 1.30f, 0}, {0.13f, 0.34f, 0.18f}, upperArmCol, up);
         box({s * 0.27f, 0.99f, 0}, {0.12f, 0.32f, 0.16f}, foreArmCol, fo);
-        // Palm just under the wrist, thumb on +Z, fingers curled toward the body
-        // (-s in X). The fingertips stop about 6 cm from the wrist, which is where
-        // a held object's grip is placed, so they wrap it instead of stabbing
-        // through. The thumb sits below the sleeve rather than inside it.
-        box({s * 0.304f, 0.828f, 0.000f}, {0.040f, 0.052f, 0.076f}, handCol, ha);
-        box({s * 0.316f, 0.808f, 0.048f}, {0.022f, 0.024f, 0.028f}, handCol, ha);
-        box({s * 0.296f, 0.814f, 0.000f}, {0.028f, 0.018f, 0.050f}, handCol, ha);
-        box({s * 0.286f, 0.808f, 0.000f}, {0.024f, 0.014f, 0.040f}, handCol, ha);
-        box({s * 0.280f, 0.806f, 0.000f}, {0.018f, 0.012f, 0.030f}, handCol, ha);
+        // One brick on the hand bone, the block this rig used before the palm,
+        // thumb and finger boxes. No finger bones: the hand is still l_hand / r_hand.
+        box({s * 0.27f, 0.80f, 0.02f}, {0.12f, 0.12f, 0.17f}, handCol, ha);
         int th = s < 0 ? B_LTHIGH : B_RTHIGH, sh = s < 0 ? B_LSHIN : B_RSHIN, ft = s < 0 ? B_LFOOT : B_RFOOT;
         box({s * 0.105f, 0.74f, 0}, {0.18f, 0.42f, 0.20f}, pants, th);
         box({s * 0.105f, 0.34f, 0}, {0.16f, 0.44f, 0.18f}, shinCol, sh);

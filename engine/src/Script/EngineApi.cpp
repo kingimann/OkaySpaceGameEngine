@@ -12,6 +12,9 @@
 #include "okay/Math/Quat.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Components/PlayerView.hpp"
+#include "okay/Components/Crosshair.hpp"          // grok/ui-hud
+#include "okay/Components/UIRadialProgress.hpp"   // grok/ui-hud
+#include "okay/Components/UISlotGrid.hpp"         // grok/ui-hud
 #include <cmath>
 #include <set>
 
@@ -312,6 +315,93 @@ EngineApi Build() {
         get.pure = true;
         pv.methods.push_back(std::move(get));
         api.types.push_back(std::move(pv));
+    }
+    // ---- grok/ui-hud: crosshair recovery, radial options, slot grid ----
+    {
+        auto need = [](auto* comp, GameObject* g, CallContext& c, const char* what) {
+            if (!comp) throw RuntimeError("'" + g->name + "' has no " + std::string(what) + " (add one in the Inspector)", c.loc);
+            return comp;
+        };
+        {
+            ApiType ch; ch.name = "Crosshair"; ch.isComponent = true;
+            ch.doc = "An aim reticle. SpreadRecover pulls an extra gap back to 0; 0 keeps the authored spread.";
+            ch.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<Crosshair>() : nullptr; };
+            auto of = [need](const Value& self, CallContext& c) -> Crosshair* {
+                GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+                return need(g->GetComponent<Crosshair>(), g, c, "Crosshair");
+            };
+            ch.methods.push_back(method("SetSpread", {tFloat}, {"pixels"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetSpread(F(a[0])); return Value{}; },
+                "Set the extra gap around the ticks, in pixels."));
+            ch.methods.push_back(method("SetSpreadRecover", {tFloat}, {"pixelsPerSecond"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetSpreadRecover(F(a[0])); return Value{}; },
+                "How fast the extra gap eases back to 0. 0 leaves the spread where it is."));
+            ch.methods.push_back(method("KickSpread", {tFloat}, {"pixels"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->KickSpread(F(a[0])); return Value{}; },
+                "Push the ticks apart. They ease back while spread recover is above 0."));
+            ApiMethod spread = method("Spread", {}, {}, tFloat,
+                [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->Spread()}; },
+                "The extra gap around the ticks, in pixels.");
+            spread.pure = true;
+            ch.methods.push_back(std::move(spread));
+            api.types.push_back(std::move(ch));
+        }
+        {
+            ApiType rp; rp.name = "UIRadialProgress"; rp.isComponent = true;
+            rp.doc = "A ring or pie. Thickness 0 is a pie. Spin turns the arc into a loader.";
+            rp.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIRadialProgress>() : nullptr; };
+            auto of = [need](const Value& self, CallContext& c) -> UIRadialProgress* {
+                GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+                return need(g->GetComponent<UIRadialProgress>(), g, c, "Radial Progress");
+            };
+            auto flag = [](const Value& v) {
+                if (auto* b = std::get_if<bool>(&v)) return *b;
+                return F(v) != 0.0f;
+            };
+            rp.methods.push_back(method("SetValue", {tFloat}, {"value"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetValue(F(a[0])); return Value{}; },
+                "Fill fraction from 0 to 1."));
+            rp.methods.push_back(method("SetThickness", {tFloat}, {"pixels"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetThickness(F(a[0])); return Value{}; },
+                "Ring width in pixels. 0 draws a pie."));
+            rp.methods.push_back(method("SetStartAngle", {tFloat}, {"degrees"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetStartAngle(F(a[0])); return Value{}; },
+                "Where the arc starts. 0 is 12 o'clock."));
+            rp.methods.push_back(method("SetClockwise", {tBool}, {"on"}, tVoid,
+                [of, flag](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetClockwise(flag(a[0])); return Value{}; },
+                "Fill clockwise when on."));
+            rp.methods.push_back(method("SetSpin", {tBool}, {"on"}, tVoid,
+                [of, flag](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetSpin(flag(a[0])); return Value{}; },
+                "Spin the arc as a loader."));
+            rp.methods.push_back(method("SetShowPercent", {tBool}, {"on"}, tVoid,
+                [of, flag](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetShowPercent(flag(a[0])); return Value{}; },
+                "Draw the fill as a percent in the middle."));
+            api.types.push_back(std::move(rp));
+        }
+        {
+            ApiType sg; sg.name = "UISlotGrid"; sg.isComponent = true;
+            sg.doc = "A grid of buttons. Selecting one fires on_change. It does not know about inventory.";
+            sg.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UISlotGrid>() : nullptr; };
+            auto of = [need](const Value& self, CallContext& c) -> UISlotGrid* {
+                GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+                return need(g->GetComponent<UISlotGrid>(), g, c, "Slot Grid");
+            };
+            sg.methods.push_back(method("SetValue", {tInt}, {"index"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetValue(I(a[0])); return Value{}; },
+                "Select a slot by index. -1 clears the selection."));
+            sg.methods.push_back(method("SetColumns", {tInt}, {"columns"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetColumns(I(a[0])); of(s, c)->Rebuild(); return Value{}; },
+                "How many slots across (1 to 16)."));
+            sg.methods.push_back(method("SetRows", {tInt}, {"rows"}, tVoid,
+                [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetRows(I(a[0])); of(s, c)->Rebuild(); return Value{}; },
+                "How many slots down (1 to 16)."));
+            ApiMethod val = method("Value", {}, {}, tInt,
+                [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{(std::int32_t)of(s, c)->Value()}; },
+                "The selected slot, or -1.");
+            val.pure = true;
+            sg.methods.push_back(std::move(val));
+            api.types.push_back(std::move(sg));
+        }
     }
     // ---- Input ----
     {

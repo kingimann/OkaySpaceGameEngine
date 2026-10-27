@@ -144,6 +144,7 @@
 #include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/Minimap.hpp"
 #include "okay/Components/Crosshair.hpp"
+#include "okay/Components/UISlotGrid.hpp"   // grok/ui-hud
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIStepper.hpp"
 #include "okay/Components/UIRating.hpp"
@@ -2479,7 +2480,19 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << " " << (cr->lineUp ? 1 : 0) << " " << (cr->lineDown ? 1 : 0)
             << " " << (cr->lineLeft ? 1 : 0) << " " << (cr->lineRight ? 1 : 0) << " " << cr->spread
             << " " << (cr->circle ? 1 : 0) << " " << cr->circleRadius << " " << cr->circleThickness
-            << " " << cr->circleColor.r << " " << cr->circleColor.g << " " << cr->circleColor.b << " " << cr->circleColor.a;
+            << " " << cr->circleColor.r << " " << cr->circleColor.g << " " << cr->circleColor.b << " " << cr->circleColor.a
+            << " " << cr->spreadRecover << " " << cr->spreadMax;   // grok/ui-hud
+        out << "\n";
+    }
+    if (auto* sg = go->GetComponent<UISlotGrid>()) {
+        out << "  uislotgrid " << sg->position.x << " " << sg->position.y << " " << (int)sg->anchor << " "
+            << sg->columns << " " << sg->rows << " " << sg->cell.x << " " << sg->cell.y << " " << sg->gap << " "
+            << sg->value << " "
+            << sg->color.r << " " << sg->color.g << " " << sg->color.b << " " << sg->color.a << " "
+            << sg->selectedColor.r << " " << sg->selectedColor.g << " " << sg->selectedColor.b << " " << sg->selectedColor.a << " "
+            << sg->hoverColor.r << " " << sg->hoverColor.g << " " << sg->hoverColor.b << " " << sg->hoverColor.a << " "
+            << sg->labels.size();
+        for (const auto& lb : sg->labels) out << " " << Quote(lb);
         out << "\n";
     }
     if (auto* sa = go->GetComponent<UISafeArea>())
@@ -6083,6 +6096,24 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         cr->lineLeft = (ll != 0); cr->lineRight = (lr != 0);
                         cr->circle = (ci != 0); cr->circleColor = qc;
                     }
+                    in >> std::ws; // grok/ui-hud: optional spread recovery
+                    int rpk = in.peek();
+                    if (std::isdigit(rpk) || rpk == '-' || rpk == '.')
+                        in >> cr->spreadRecover >> cr->spreadMax;
+                } else if (field == "uislotgrid") {
+                    auto* sg = go->AddComponent<UISlotGrid>();
+                    int an = 0; std::size_t n = 0;
+                    in >> sg->position.x >> sg->position.y >> an >> sg->columns >> sg->rows
+                       >> sg->cell.x >> sg->cell.y >> sg->gap >> sg->value
+                       >> sg->color.r >> sg->color.g >> sg->color.b >> sg->color.a
+                       >> sg->selectedColor.r >> sg->selectedColor.g >> sg->selectedColor.b >> sg->selectedColor.a
+                       >> sg->hoverColor.r >> sg->hoverColor.g >> sg->hoverColor.b >> sg->hoverColor.a
+                       >> n;
+                    sg->anchor = (UIAnchor)an;
+                    sg->labels.clear();
+                    for (std::size_t i = 0; i < n && in; ++i) sg->labels.push_back(ReadQuoted(in));
+                    // Children are parented after every object exists. Update builds any slot
+                    // that wasn't saved; calling Rebuild here would duplicate them.
                 } else if (field == "uisafearea") {
                     auto* sa = go->AddComponent<UISafeArea>();
                     int l = 1, t = 1, r = 1, b = 1, en = 1;

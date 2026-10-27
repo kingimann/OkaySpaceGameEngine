@@ -20,6 +20,9 @@
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UIRadialProgress.hpp"
+#include "okay/Components/Crosshair.hpp"       // grok/ui-hud
+#include "okay/Components/UISlotGrid.hpp"      // grok/ui-hud
+#include "okay/Components/ScriptComponent.hpp" // grok/ui-hud
 #include "okay/Components/UIAnimation.hpp"
 #include "okay/Components/UIBarBind.hpp"    // health bar follows a variable
 #include "okay/Components/UITextBind.hpp"   // score/text follows a variable
@@ -735,6 +738,102 @@ inline GameObject* AddLeaderboard(Scene& scene) {
         Text(scene, row, "Name", names[i], UIAnchor::TopLeft, {90, 0}, {200, 48}, 16.0f);
         Text(scene, row, "Points", std::to_string(pts[i]), UIAnchor::TopRight, {-14, 0}, {120, 48}, 16.0f, slate::Text(), 2, true);
     }
+    return root;
+}
+
+// grok/ui-hud — crosshair styles, radial options, and a generic slot grid.
+// Fits the 1280x720 game view. Not part of the template test table.
+inline GameObject* AddUIHUD(Scene& scene) {
+    using namespace detail;
+    GameObject* canvas = EnsureCanvas(scene);
+    GameObject* root = Group(scene, canvas, "UI HUD");
+    Panel(scene, root, "Backdrop", UIAnchor::TopLeft, {0, 0}, {1280, 720}, slate::Backdrop(), 0.0f);
+
+    Caption(scene, root, "ReticleHead", "RETICLES", UIAnchor::TopLeft, {36, 22}, 240);
+    auto mark = [&](const char* name, float x, bool up, bool lines, bool dot, bool ring, float spread, float recover) {
+        GameObject* g = Child(scene, root, name);
+        auto* c = g->AddComponent<Crosshair>();
+        c->anchor = UIAnchor::TopLeft;
+        c->position = {x, 58};
+        c->size = {88, 88};
+        c->thickness = 3.0f;
+        c->gap = 7.0f;
+        c->length = 16.0f;
+        c->color = Color::White;
+        c->lineUp = up;
+        c->showLines = lines;
+        c->dot = dot;
+        c->dotSize = 8.0f;
+        c->dotColor = Color::FromBytes(120, 210, 255);
+        c->circle = ring;
+        c->circleRadius = 30.0f;
+        c->circleThickness = 2.0f;
+        c->circleColor = Color::White;
+        c->spread = spread;
+        c->spreadRecover = recover;
+        c->spreadMax = 48.0f;
+        Caption(scene, root, (std::string(name) + "Cap").c_str(), name, UIAnchor::TopLeft, {x, 150}, 88, slate::Dim());
+    };
+    mark("Lines", 36, true, true, false, false, 0, 0);
+    mark("Tee", 150, false, true, false, false, 0, 0);
+    mark("Dot", 264, true, false, true, false, 0, 0);
+    mark("Circle", 378, true, true, false, true, 0, 0);
+    mark("Dynamic", 492, true, true, true, false, 22, 80);
+
+    GameObject* kick = Button(scene, root, "Kick", "Kick spread", UIAnchor::TopLeft, {640, 70}, {200, 44}, ButtonKind::Primary);
+    kick->AddComponent<ScriptComponent>()->LoadSource(
+        "function on_click() {\n"
+        "  kick_spread(\"Dynamic\", 24);\n"
+        "  ui_set_text(\"Status\", \"kicked\");\n"
+        "}\n");
+    GameObject* fill = Button(scene, root, "Fill", "Fill ring", UIAnchor::TopLeft, {640, 126}, {200, 44}, ButtonKind::Secondary);
+    fill->AddComponent<ScriptComponent>()->LoadSource(
+        "function on_click() {\n"
+        "  set_radial(\"Ring\", 0.95);\n"
+        "  set_radial_percent(\"Ring\", 1);\n"
+        "  ui_set_text(\"Status\", \"radial\");\n"
+        "}\n");
+    Text(scene, root, "Status", "ready", UIAnchor::TopLeft, {860, 86}, {380, 40}, 22.0f, slate::Text(), 0, true);
+
+    Caption(scene, root, "RadialHead", "RADIAL", UIAnchor::TopLeft, {36, 196}, 240);
+    auto dial = [&](const char* name, float x, float value, float thick, bool clockwise, bool spin, bool percent) {
+        GameObject* g = Child(scene, root, name);
+        auto* r = g->AddComponent<UIRadialProgress>();
+        r->anchor = UIAnchor::TopLeft;
+        r->position = {x, 228};
+        r->size = {120, 120};
+        r->SetValue(value);
+        r->SetThickness(thick);
+        r->SetClockwise(clockwise);
+        r->SetSpin(spin);
+        r->SetShowPercent(percent);
+        r->background = Color::FromBytes(46, 51, 64);
+        r->fill = spin ? slate::Accent() : slate::Success();
+        Caption(scene, root, (std::string(name) + "Cap").c_str(), name, UIAnchor::TopLeft, {x, 354}, 120, slate::Dim());
+    };
+    dial("Ring", 36, 0.72f, 16.0f, true, false, true);
+    dial("Pie", 190, 0.45f, 0.0f, false, false, false);
+    dial("Spinner", 344, 0.22f, 12.0f, true, true, false);
+
+    Caption(scene, root, "SlotHead", "SLOTS", UIAnchor::TopLeft, {36, 392}, 240);
+    GameObject* slots = Child(scene, root, "Slots");
+    auto* grid = slots->AddComponent<UISlotGrid>();
+    grid->anchor = UIAnchor::TopLeft;
+    grid->position = {36, 424};
+    grid->SetColumns(4);
+    grid->SetRows(2);
+    grid->SetCell(76, 76);
+    grid->SetGap(10);
+    const char* labels[] = {"Helm", "Pack", "Med", "Key", "Map", "Ammo", "Coin", "Gem"};
+    for (int i = 0; i < 8; ++i) grid->SetLabel(i, labels[i]);
+    grid->SetValue(0);
+    grid->Rebuild();
+    slots->AddComponent<ScriptComponent>()->LoadSource(
+        "function on_change() {\n"
+        "  ui_set_text(\"Status\", \"slot\");\n"
+        "}\n");
+    Text(scene, root, "SlotHint", "Click a slot. The accent one is selected.",
+         UIAnchor::TopLeft, {400, 450}, {420, 28}, 16.0f, slate::Dim());
     return root;
 }
 

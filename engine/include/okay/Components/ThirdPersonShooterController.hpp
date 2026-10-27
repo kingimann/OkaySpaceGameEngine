@@ -46,6 +46,7 @@ public:
     bool  driveAnimation = true;
     bool  footIK = false;                // plant the Character's feet on the ground
     float acceleration = 60.0f, deceleration = 55.0f, airControl = 0.4f;
+    float stepOffset = 0.35f;            // max stair / curb height (0 = no step-up)
     float coyoteTime = 0.12f, jumpBufferTime = 0.12f;
     float turnSpeed = 18.0f;             // body snaps to the aim direction
 
@@ -197,6 +198,11 @@ public:
         } else if (moving) {
             transform->Translate(dir * (speed * dt));
         }
+        // Stairs: a grounded body blocked by a low face steps up onto it
+        // instead of stopping (stepOffset = max step height). The camera
+        // already orbits the smoothed shoulder pivot, so the lift eases.
+        if (rb && grounded && moving && gameObject && gameObject->scene())
+            TryStepUp(*gameObject->scene(), gameObject, rb, dir, grounded, moving, stepOffset);
 
         // Body always faces the camera/aim direction (shooter).
         Quat want = Quat::Euler(0, yaw, 0);

@@ -12,9 +12,12 @@ nothing is checked and nothing is sent differently from before.
     a pickup): it's the server's. Tick **Players can claim it** on its
     Network Sync (`clientClaimable`) for one any player may grab, like a
     ball: the first to move it owns it. The server can hand any object to a
-    player with `anticheat.SetOwner(netId, peer)`.
+    player with `anticheat.SetOwner(netId, peer)`. Writing one that merely
+    isn't claimable is still refused and named once in the log. It does not
+    count toward the kick, so an older scene with a shared ball doesn't kick
+    the players pushing it.
 
-  Every refusal is reported; repeat offenders are kicked. A kicked account
+  Every other refusal is reported; repeat offenders are kicked. A kicked account
   can't join again for a minute, doubling with each repeat up to an hour, and
   neither can anonymous players from its address (other signed-in players
   there still can). A player who leaves or is kicked keeps its refusal count and its

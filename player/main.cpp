@@ -590,6 +590,40 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     }
     if (ui.showPanel) panel(hx - panelPad, hy - panelPad, rowW + 2 * panelPad, sz + 2 * panelPad);
     for (int i = 0; i < n && i < total; ++i) slot(hx + i * (sz + gap), hy, i, i == ui.selected);
+    // Equipment column (worn items) beside the open backpack.
+    auto equipIcon = [&](const std::string& item, float x, float y) {
+        if (SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(ui.iconFolder, item), baseDir, cache)) {
+            int ins = (int)(ui.iconInset * uiScale); SDL_Rect d{(int)x + ins, (int)y + ins, (int)sz - 2 * ins, (int)sz - 2 * ins};
+            SDL_RenderCopy(r, icon, nullptr, &d);
+        } else {
+            std::string nm = item.substr(0, ui.nameChars < 1 ? 1 : (std::size_t)ui.nameChars);
+            float px = (sz - 8.0f) / ((float)nm.size() * (Font8x8::Width + 1)) * ui.labelScale;
+            if (px < 1.0f) px = 1.0f; if (px > sz * 0.05f) px = sz * 0.05f;
+            DrawText(r, nm, x + 4, y + 5, px, SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
+        }
+    };
+    if (L.equip && L.equipN > 0) {
+        float x0, y0, x1, y1; L.EquipXY(0, x0, y0); L.EquipXY(L.equipN - 1, x1, y1);
+        if (ui.showPanel) panel(x0 - panelPad, y0 - panelPad, sz + 2 * panelPad, (y1 - y0) + sz + 2 * panelPad);
+        for (int e = 0; e < L.equipN; ++e) {
+            float x, y; L.EquipXY(e, x, y);
+            const std::string& it = L.equip->ItemIn(e);
+            SDL_Rect outer{(int)x, (int)y, (int)sz, (int)sz};
+            FillUIShape(r, outer, shp, cr, ui.slotBorder, ui.slotBorder, false, false, 1.0f);
+            float b = ui.borderWidth < 0 ? 0 : ui.borderWidth;
+            SDL_Rect inner{(int)(x + b), (int)(y + b), (int)(sz - 2 * b), (int)(sz - 2 * b)};
+            const Color fc = it.empty() ? ui.emptySlotColor : ui.slotColor;
+            FillUIShape(r, inner, shp, cr, fc, fc, false, false, 1.0f);
+            if (!it.empty() && e != ui.equipDrag) equipIcon(it, x, y);
+            else if (it.empty()) {   // the slot's name, small, so you know what goes there
+                const std::string& nm = L.equip->slots[e].name;
+                float px = (sz - 6.0f) / ((float)(nm.size() < 4 ? 4 : nm.size()) * (Font8x8::Width + 1));
+                if (px < 1.0f) px = 1.0f;
+                DrawText(r, nm, x + 3, y + sz * 0.5f - Font8x8::Height * px * 0.5f, px,
+                         SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),110});
+            }
+        }
+    }
     // Hotbar slot numbers (1–9) in the top-left corner.
     if (ui.slotNumbers) {
         float px = sz * 0.030f * ui.labelScale; if (px < 1.0f) px = 1.0f;
@@ -639,6 +673,19 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         SDL_Rect hr{(int)sx, (int)sy, (int)sz, (int)sz};
         FillUIShape(r, hr, cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle, cr, c, c, false, false, 1.0f);
     };
+    if (L.equip && fr.equipHover >= 0) {   // equipment slot under the cursor: highlight + what's worn
+        float ex, ey; L.EquipXY(fr.equipHover, ex, ey);
+        SDL_Rect hr{(int)ex, (int)ey, (int)sz, (int)sz};
+        FillUIShape(r, hr, cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle, cr, ui.hoverColor, ui.hoverColor, false, false, 1.0f);
+        const std::string& it = L.equip->ItemIn(fr.equipHover);
+        const okay::ItemDefinition* d = it.empty() ? nullptr : okay::ItemDatabase::Get().Find(it);
+        drawTip(L.equip->slots[fr.equipHover].name + (it.empty() ? std::string() : ": " + (d ? d->DisplayName() : it)));
+    }
+    if (L.equip && ui.equipDrag >= 0 && ui.equipDrag < L.equipN) {   // a worn item following the cursor
+        const float x = mp.x - sz * 0.5f, y = mp.y - sz * 0.5f;
+        slot(x, y, -2, false);
+        equipIcon(L.equip->ItemIn(ui.equipDrag), x, y);
+    }
     // Highlight the slot under the cursor while hovering, or where a held stack will land.
     if (fr.hover >= 0) {
         hilite(fr.hover, ui.hoverColor);
@@ -853,27 +900,38 @@ static void DrawCrafting(SDL_Renderer* r, okay::CraftingStation& cs) {
         FillUIShape(r, rc2, rad > 0.5f ? UIShape::Rounded : UIShape::Rectangle, rad, c, c, false, false, 1.0f);
     };
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-    int n = (int)cs.recipes.size();
-    float pw = cs.width, ph = n * cs.rowHeight + 8.0f;
-    float px = (W - pw) * 0.5f + cs.marginX, py = (H - ph) * 0.5f + cs.marginY;
-    fill(px, py - 26, pw, ph + 26, cs.panelColor, cr + 2);
+    // Layout + input are shared with the editor Play view (okay/Inventory/InventoryInput).
+    const okay::InventoryInput::CraftingLayout L = okay::InventoryInput::LayoutCrafting(cs, (float)W, (float)H);
+    const float px = L.px, py = L.py, pw = L.pw, ph = L.ph;
+    const auto recipes = cs.Recipes();
+    const bool busy = !cs.Queue().Jobs().empty();
+    fill(px, py - 26, pw, ph + 26 + (busy ? 16.0f : 0.0f), cs.panelColor, cr + 2);
     fill(px, py - 26, pw, 24, cs.titleBar, cr + 2);
     DrawText(r, cs.title, px + 8, py - 20, 1.6f, sc(cs.textColor));
-    okay::Vec2 mp = okay::Input::MousePosition();
-    for (int i = 0; i < n; ++i) {
-        const auto& rec = cs.recipes[i];
-        float ry = py + i * cs.rowHeight + 4.0f;
-        bool can = inv && cs.CanCraft(rec, *inv);
-        bool hover = mp.x >= px + 4 && mp.x < px + pw - 4 && mp.y >= ry && mp.y < ry + cs.rowHeight - 2;
+    auto label = [](const std::string& item) {
+        const okay::ItemDefinition* d = okay::ItemDatabase::Get().Find(item);
+        return d ? d->DisplayName() : item;
+    };
+    const int hover = okay::InventoryInput::HandleCrafting(cs, L, okay::Input::MousePosition());   // click: craft one, shift: max
+    for (int i = 0; i < L.rows && i < (int)recipes.size(); ++i) {
+        const auto& rec = recipes[i];
+        const float ry = L.RowY(i);
+        const bool can = inv && cs.CanCraft(rec, *inv);
         fill(px + 4, ry, pw - 8, cs.rowHeight - 2, can ? cs.canColor : cs.cantColor, cr);
-        if (hover) fill(px + 4, ry, pw - 8, cs.rowHeight - 2, cs.hoverColor, cr);
-        std::string out = rec.output + (rec.outputCount > 1 ? " x" + std::to_string(rec.outputCount) : std::string());
+        if (i == hover) fill(px + 4, ry, pw - 8, cs.rowHeight - 2, cs.hoverColor, cr);
+        std::string out = label(rec.output) + (rec.outputCount > 1 ? " x" + std::to_string(rec.outputCount) : std::string());
         DrawText(r, out, px + 10, ry + 4, 1.4f, sc(cs.textColor));
         std::string ins;
-        for (std::size_t k = 0; k < rec.inputs.size(); ++k) { if (k) ins += ", "; ins += std::to_string(rec.inputs[k].count) + " " + rec.inputs[k].item; }
+        for (std::size_t k = 0; k < rec.inputs.size(); ++k) { if (k) ins += ", "; ins += std::to_string(rec.inputs[k].count) + " " + label(rec.inputs[k].item); }
         float tw = UITextW(ins, 1.0f);
         DrawText(r, ins, px + pw - 10 - tw, ry + 6, 1.0f, sc(cs.textColor));
-        if (hover && can && okay::Input::GetMouseButtonDown(0)) cs.Craft(i);
+    }
+    if (busy) {   // the queue: progress of the item being made, and how many are waiting
+        const float by = py + ph + 2.0f;
+        fill(px + 6, by, pw - 12, 8, cs.cantColor, 3);
+        fill(px + 6, by, (pw - 12) * cs.Queue().Progress(), 8, cs.canColor, 3);
+        const int waiting = (int)cs.Queue().Jobs().size();
+        if (waiting > 1) DrawText(r, "x" + std::to_string(waiting), px + pw - 30, by - 1, 1.0f, sc(cs.textColor));
     }
 }
 

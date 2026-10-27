@@ -16,6 +16,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/Camera.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Core/Game.hpp"
@@ -72,6 +73,10 @@ private:
             c->fpSteady = steadyArm;
             c->fpRaise  = armRaise;    // manual tuning
             c->fpElbow  = armElbow;
+            // The shoulder sits ~0.30 m from the eye, which is the default near
+            // plane, so the upper arm is sliced off. A viewmodel needs a closer plane.
+            if (Camera* cam = gameObject ? gameObject->GetComponent<Camera>() : nullptr)
+                if (cam->nearClip > 0.2f) cam->nearClip = 0.08f;
         }
         if (auto* fpc = FindController()) {
             c->fpPitch = followPitch ? fpc->pitch : 0.0f;   // arm follows the camera up/down

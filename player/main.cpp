@@ -365,7 +365,12 @@ static void DrawServerBrowserWindow(okay::Scene& scene, SDL_Window* window) {
     };
     if (joining) {   // close once we're in; say why if refused
         if (joining->Joined()) { sb.windowOpen = false; joining = nullptr; return; }
-        if (joining->JoinRejected()) { status = "Couldn't join: the server is full or the password is wrong."; joining = nullptr; }
+        if (joining->JoinRejected()) {
+            const std::string& why = joining->JoinRejectReason();
+            status = why.empty() ? "Couldn't join: the server is full or the password is wrong."
+                                 : "Couldn't join: " + why;
+            joining = nullptr;
+        }
     }
 
     int ww = 960, wh = 600; SDL_GetWindowSize(window, &ww, &wh);
@@ -1763,11 +1768,11 @@ int main(int argc, char** argv) {
         if (ks[SDL_SCANCODE_BACKSPACE]) down.push_back((char)8);
         if (ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_KP_ENTER]) down.push_back('\r');
         if (ks[SDL_SCANCODE_ESCAPE]) down.push_back((char)27);
-        // Map arrow keys onto WASD so arrow-key movement just works.
-        if (ks[SDL_SCANCODE_UP])    down.push_back('w');
-        if (ks[SDL_SCANCODE_LEFT])  down.push_back('a');
-        if (ks[SDL_SCANCODE_DOWN])  down.push_back('s');
-        if (ks[SDL_SCANCODE_RIGHT]) down.push_back('d');
+        // Arrows count as themselves and as WASD, so axis_x/axis_y and key("w") agree.
+        if (ks[SDL_SCANCODE_UP])    { down.push_back('w'); down.push_back(Input::KeyUp); }
+        if (ks[SDL_SCANCODE_LEFT])  { down.push_back('a'); down.push_back(Input::KeyLeft); }
+        if (ks[SDL_SCANCODE_DOWN])  { down.push_back('s'); down.push_back(Input::KeyDown); }
+        if (ks[SDL_SCANCODE_RIGHT]) { down.push_back('d'); down.push_back(Input::KeyRight); }
 
         // Read the gamepad (first connected controller).
         Vec2 padAxis; unsigned padMask = 0;

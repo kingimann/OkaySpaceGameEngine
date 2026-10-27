@@ -1,13 +1,19 @@
 # OkaySpaceGameEngine
 
-A small, **modern C++ (C++17) game engine**. It uses a familiar
+A **modern C++ (C++17) game engine** with a desktop editor, a game player for
+Windows, the web and mobile, and a launcher. It uses a familiar
 entity–component model — a scene full of `GameObject`s, each composed of
 `Component`s, with scripts that hook into an `Awake` / `Start` / `Update`
-lifecycle — and implements it from scratch with zero third-party dependencies.
+lifecycle — implemented from scratch.
 
-It ships with a **console (ASCII) renderer**, so the whole engine builds and
-runs anywhere, including headless servers and CI, while keeping the renderer
-behind an interface so a real GPU backend (OpenGL/Vulkan) can be dropped in.
+- **Engine core** — no required dependencies beyond a C++17 compiler and
+  threads. A few small libraries are vendored in `engine/third_party`
+  (stb image loading, ufbx FBX import, tinyfiledialogs, an 8×8 bitmap font).
+  Optional: libsodium (packet encryption, on by default), Lua, Assimp, Steamworks.
+- **Editor** — Dear ImGui (docking) + SDL2 + OpenGL (`-DOKAY_BUILD_EDITOR=ON`).
+  **Player** — SDL2 only, OpenGL or D3D11 (`-DOKAY_BUILD_PLAYER=ON`).
+- **Console (ASCII) renderer** — the engine also renders to a terminal, so it
+  builds and runs headless (servers, CI). The sandbox demo below uses it:
 
 ```
 +----------------------------------------------------------------------+

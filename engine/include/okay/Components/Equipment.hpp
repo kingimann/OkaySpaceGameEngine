@@ -4,6 +4,7 @@
 #include "okay/Inventory/InventoryOps.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -17,6 +18,8 @@ class GameObject;
 ///  - The item's prefab (custom field "equipPrefab", else its world prefab) is shown on
 ///    the character at the slot's socket (FindSocket: a named child, a Character bone,
 ///    or a ModelAnimator node), without physics. It is runtime-only and never saved.
+///    A Main Hand item goes into the character's hands instead when it has a
+///    ProceduralObjectHolding (ProceduralObjectHolding::Pickup; Drop when it comes off).
 ///  - The definitions' custom "armor" fields add to HealthStat / SurvivalStats armor and
 ///    "defense" to Stats defense, and worn items' weight still counts toward the
 ///    Inventory's encumbrance, all as runtime values removed when the item comes off.
@@ -38,6 +41,8 @@ public:
 
     std::vector<Slot> slots = DefaultSlots();
     bool showOnCharacter = true;   ///< attach the items' prefabs to the character
+    /// C++ hooks (slot name, item); scripts get on_equip / on_unequip, visual scripts On Equip.
+    std::function<void(const std::string& slot, const std::string& item)> onEquip, onUnequip;
     /// Carry what's worn into the next scene loaded with load_scene (like the Inventory flag).
     bool keepOnSceneLoad = false;
 

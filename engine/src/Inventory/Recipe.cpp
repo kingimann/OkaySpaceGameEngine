@@ -2,6 +2,7 @@
 #include "okay/Components/ActionList.hpp"
 #include "okay/Components/ItemPickup.hpp"
 #include "okay/Core/DataAsset.hpp"
+#include "okay/Inventory/InventoryEvents.hpp"
 #include "okay/Inventory/InventoryOps.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -137,12 +138,22 @@ int CraftQueue::Craft(Inventory& inv, const Recipe& r, int times) {
     for (; done < times && done < 9999; ++done) {
         if (r.craftTime <= 0.0f) {   // instant, atomic (inputs only go if the outputs fit)
             if (!InventoryOps::Craft(&inv, take, r.Outputs()).Ok()) break;
+            Crafted(inv, r);
         } else {                     // queued: take the inputs now
             if (Affordable(inv, r) < 1 || !inv.Exchange(take, {})) break;
             m_jobs.push_back({r, r.craftTime});
         }
     }
+    if (done == 0) Failed(inv, r, Affordable(inv, r) < 1 ? "missing ingredients" : "no room for the result");
     return done;
+}
+
+void CraftQueue::Crafted(const Inventory& inv, const Recipe& r) {
+    InventoryEvents::Fire(inv.gameObject, "on_craft", "OnCraft", {vs::VsValue(r.output)});
+}
+
+void CraftQueue::Failed(const Inventory& inv, const Recipe& r, const char* reason) {
+    InventoryEvents::Fire(inv.gameObject, "on_craft_failed", nullptr, {vs::VsValue(r.output), vs::VsValue(std::string(reason))});
 }
 
 void CraftQueue::Update(float dt, Inventory& inv, Scene* scene, const Vec3& dropPos) {
@@ -152,7 +163,9 @@ void CraftQueue::Update(float dt, Inventory& inv, Scene* scene, const Vec3& drop
         j.left -= step; dt -= step;
         if (j.left > 0.0f) break;
         Give(inv, j.recipe.Outputs(), scene, dropPos);
+        const Recipe done = j.recipe;
         m_jobs.pop_front();
+        Crafted(inv, done);
     }
 }
 

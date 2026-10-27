@@ -235,7 +235,7 @@ public:
         return InventoryOps::Drop(Inv(), selected, 1).Ok() ? item : std::string();
     }
 
-    /// Drop `n` (0 = the whole stack) from slot `i`. A script's on_item_dropped(item)
+    /// Drop `n` (0 = the whole stack) from slot `i`. A script's on_item_dropped(item, count)
     /// takes it when one is listening (it spawns its own pickup); otherwise it lands in
     /// the world in front of whoever carries this inventory as an ItemPickup, so it can
     /// be picked up again. A dropped item is never just deleted.
@@ -246,7 +246,7 @@ public:
         if (n > 0 && n < dropped.count) dropped.count = n;
         if (IScriptVM* vm = DropHandler()) {
             if (!InventoryOps::Drop(inv, i, dropped.count).Ok()) return false;
-            vm->CallEventWith("on_item_dropped", vs::VsValue(dropped.item));
+            vm->CallEventArgs("on_item_dropped", {vs::VsValue(dropped.item), vs::VsValue((float)dropped.count)});
             return true;
         }
         GameObject* carrier = inv->gameObject;

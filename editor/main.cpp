@@ -10748,7 +10748,7 @@ static const std::vector<std::string>& ScriptCompletions() {
         "try","catch","throw",
         // types + modifiers that do something
         "void","int","float","bool","string","static","const","readonly",
-        "enum","yield","null","this","default",
+        "enum","yield","null","this","default","??","?.","??=",
         "IEnumerator","WaitForSeconds","StartCoroutine","StopCoroutine","StopAllCoroutines",
         "GetComponent","Instantiate","Destroy","Invoke","InvokeRepeating","CancelInvoke","CompareTag",
         "List","Dictionary","KeyValuePair","Rigidbody2D","Rigidbody","SpriteRenderer","Animator",

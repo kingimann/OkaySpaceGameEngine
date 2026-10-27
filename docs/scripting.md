@@ -81,7 +81,7 @@ IEnumerator Hop()
 | `var x = ...;` | A variable that can hold anything. Vector3, List, Dictionary and other types also hold anything of their kind. |
 | `const` / `readonly` | Can't change after it's set: assigning again is an error. |
 | `static int alive;` | One value shared by every object running this script (for example a count of all enemies). |
-| `void Hit(int dmg)` | Typed parameters convert their argument (`Hit(7.9)` gets 7). `int Score()` converts what it returns. A `void` function can't return a value. |
+| `void Hit(int dmg, int bonus = 2)` | Typed parameters convert their argument (`Hit(7.9)` gets 7). A parameter can have a default, and those come last: `Hit(5)` uses 2 for `bonus`. Call with names: `Hit(bonus: 4, dmg: 1)`. `int Score()` converts what it returns. A `void` function can't return a value. |
 | `IEnumerator Blink()` + `yield return ...` | A coroutine: runs across frames, pausing at each `yield`. Start it with `StartCoroutine(Blink())`. |
 | `enum State { Idle, Run }` | Named values: `State.Run`, `switch (state)`. |
 
@@ -114,7 +114,7 @@ each one with a warning saying what to delete:
 | Collections | `List<T>`, `Dictionary<K,V>`, arrays `int[]` (`new int[3]`, `new[] {1, 2}`, `{1, 2, 3}`), `int a = 1, b = 2;` |
 | Expressions | casts `(int)x`, `$"interpolated {strings}"`, `?:`, `%=`, bitwise `& \| ^`, `++x`, Vector3 maths (`v + w`, `v * 2`, `-v`, `v / 2`), `(a - b).normalized` |
 | Methods on values | strings: `ToUpper`, `ToLower`, `Contains`, `StartsWith`, `EndsWith`, `IndexOf`, `Substring`, `Replace`, `Split`, `Trim`, `PadLeft`...; numbers: `ToString("F2")`; lists: `Add`, `Remove`, `RemoveAt`, `Insert`, `Contains`, `IndexOf`, `Clear`, `Sort`, `Reverse`, `Count`; dictionaries: `Add`, `ContainsKey`, `Remove`, `Keys`, `Values`, `GetValueOrDefault`, `foreach (var kv in d)` |
-| Lambdas | `x => x * 2`, `(a, b) => { ... }` with `ForEach`, `Where`, `Select`, `Find`, `FindIndex`, `Any`, `All`, `Count`, `RemoveAll`, `OrderBy`, `Sum`, `Max`, `Sort((a, b) => a - b)` |
+| Lambdas | `x => x * 2`, `(a, b) => { ... }`, and defaults `(x = 3) => x + 1`, with `ForEach`, `Where`, `Select`, `Find`, `FindIndex`, `Any`, `All`, `Count`, `RemoveAll`, `OrderBy`, `Sum`, `Max`, `Sort((a, b) => a - b)` |
 | Coroutines | `StartCoroutine(Routine(args))`, `yield return null`, `yield return new WaitForSeconds(t)`, `yield return StartCoroutine(Other())`, `yield break`, `StopCoroutine`, `StopAllCoroutines` |
 | Components | `GetComponent<T>()` returns a usable reference: `Rigidbody2D`/`Rigidbody` (`velocity`, `AddForce`, `MovePosition`, `gravityScale`), `SpriteRenderer`/`Renderer` (`color`, `enabled`, `flipX`), `Text` (`text`, `color`), `Animator` (`SetTrigger`, `SetBool`, `SetFloat`, `Play`), `AudioSource` (`Play`, `Stop`, `volume`) |
 | Engine API | `transform.Translate/Rotate/LookAt`, `eulerAngles`/`localEulerAngles`, `Vector3.*` (constants, `Distance`, `Lerp`, `MoveTowards`, `Cross`, `Dot`...), `Mathf.*` (incl. `RoundToInt`, `FloorToInt`), `Random.Range`, `Input.GetKey/GetKeyDown/GetAxis/GetAxisRaw/GetMouseButton`, `Time.time/deltaTime/frameCount`, `Debug.Log/LogWarning/LogError`, `GameObject.Find/FindWithTag`, `Instantiate(prefab, pos, rot)`, `Destroy(obj, delay)`, `Invoke`, `InvokeRepeating`, `CancelInvoke`, `string.Join/IsNullOrEmpty`, `int.Parse` |
@@ -229,6 +229,8 @@ What's supported:
   - `break` and `continue` inside loops
 - **Ternary:** `cond ? a : b`
 - **Functions:** `function name(a, b) { return a + b; }`
+  A later parameter can have a default (`function heal(hp, bonus = 2)`), and a
+  call can name them (`heal(bonus: 4, hp: 1)`). Lambdas too: `(x = 3) => x + 1`.
 - **Arrays:** `var a = [1, 2, 3];` — index with `a[0]`, assign `a[1] = 9`,
   append with `a[count(a)] = x` or `push(a, x)`, remove with `pop(a)`, length
   via `count(a)`. Arrays are shared by reference. Make an empty one with

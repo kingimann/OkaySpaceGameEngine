@@ -390,6 +390,23 @@ idle/walk/run resumes. It works with every controller, no wiring. In
 in-place mode the jump clip's own root rise is stripped too, so the
 controller's jump arc isn't doubled.
 
+## Crouch and prone for imported characters
+
+The Model Animator also follows the player's crouch and prone. It has a slot
+for each stance clip under **Crouch / prone clips**: **Crouch** and **Crouch
+walk**, **Prone** and **Crawl**, and **Get up** (played once when the player
+rises from prone). When you set a character model, clips are mapped by name:
+- *Crouch Idle* fills Crouch;
+- *Crouched Walking* or *Sneak* fills Crouch walk;
+- *Prone Idle* fills Prone;
+- *Crawling* fills Crawl;
+- *Getting Up* or *Stand Up* fills Get up.
+
+Clips that move between stances, like *Standing To Crouched*, aren't
+mapped as idle or walk. Locomotion switches to the stance's clips (still and
+moving, blended by speed), crossfaded over the stance change times. A
+stance with no clips of its own keeps the standing clips.
+
 ## Built-in animations on imported rigs (retargeting)
 
 A model you drop on a player often ships with few or NO usable clips — a
@@ -447,6 +464,7 @@ Any imported model can BE your playable character — no rigging setup:
   recognizable (Mixamo and common naming): full plant setup — pelvis
   adjust, plant-down, slope align, smoothing — with zero clicks.
 - Jump/Fall/Land clips are mapped by name into the air states (above).
+- Crouch / prone / crawl / get-up clips are mapped by name too (above).
 
 Controllers also carry a **Fall Reset Y** safety net (default -100): fall
 off the map or through a floor with no collider and the player teleports

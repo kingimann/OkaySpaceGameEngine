@@ -81,6 +81,7 @@ public:
 
     // ---- Damage mitigation ----
     float armor = 0.0f;            // flat reduction subtracted first
+    float equipArmor = 0.0f;       // runtime: added by worn Equipment (not saved)
     float resistance = 0.0f;       // 0..1 fraction of the remaining damage ignored
     float minDamage = 0.0f;        // a hit always deals at least this (caps mitigation)
     bool  godMode = false;         // ignore all damage
@@ -132,7 +133,7 @@ public:
     }
     void Damage(float amount) {
         if (dead || godMode || m_iframes > 0.0f || amount <= 0.0f) return;
-        float dmg = Mathf::Max(0.0f, amount - armor);
+        float dmg = Mathf::Max(0.0f, amount - (armor + equipArmor));
         dmg *= (1.0f - Mathf::Clamp01(resistance));
         if (dmg < minDamage) dmg = Mathf::Min(minDamage, amount);   // mitigation never fully nullifies a hit
         health -= dmg;

@@ -36,6 +36,19 @@ int HotbarLayout::Pick(float px, float py) const {
     return best;
 }
 
+void HotbarLayout::EquipXY(int i, float& x, float& y) const {
+    x = ex;
+    y = anchorTop ? hy + i * (sz + gap) : hy + sz - (equipN - i) * (sz + gap) + gap;
+}
+
+int HotbarLayout::PickEquip(float px, float py) const {
+    for (int i = 0; i < equipN; ++i) {
+        float x, y; EquipXY(i, x, y);
+        if (px >= x && px < x + sz && py >= y && py < y + sz) return i;
+    }
+    return -1;
+}
+
 HotbarLayout LayoutHotbar(const InventoryUI& ui, float W, float H) {
     HotbarLayout L;
     L.hotbar = ui.hotbarSlots < 1 ? 1 : ui.hotbarSlots;
@@ -53,14 +66,37 @@ HotbarLayout LayoutHotbar(const InventoryUI& ui, float W, float H) {
          : (ui.hAlign == InventoryUI::HAlign::Right) ? (W - L.rowW - marginX)
          : (W - L.rowW) * 0.5f + marginX;
     L.hy = ui.anchorTop ? marginY : H - L.sz - marginY;
+    if (ui.open && ui.Inv())
+        if ((L.equip = Equipment::Of(ui.Inv()->gameObject))) {
+            L.equipN = (int)L.equip->slots.size();
+            const float colGap = L.gap * 3.0f + ui.panelPad * 2.0f * L.scale;
+            L.ex = L.hx - L.sz - colGap;                              // left of the bag...
+            if (L.ex < 0.0f) L.ex = L.hx + L.rowW + colGap;           // ...or right when docked left
+        }
     return L;
 }
 
 HotbarFrame HandleHotbar(InventoryUI& ui, const HotbarLayout& L, Vec2 mouse) {
     HotbarFrame f;
     Inventory* inv = ui.Inv();
-    if (!ui.open || !ui.dragItems || !inv) { ui.dragIndex = -1; ui.dragAmount = 0; return f; }
-    const int at = L.Pick(mouse.x, mouse.y);
+    if (!ui.open || !ui.dragItems || !inv) { ui.dragIndex = -1; ui.dragAmount = 0; ui.equipDrag = -1; return f; }
+    const int eq = L.PickEquip(mouse.x, mouse.y);
+    const int at = eq >= 0 ? -1 : L.Pick(mouse.x, mouse.y);   // the equipment column wins over a near bag slot
+    f.equipHover = eq;
+    // A worn item being dragged: drop it in the bag (on a slot, or anywhere off the column).
+    if (ui.equipDrag >= 0) {
+        if (!L.equip || ui.equipDrag >= L.equipN) { ui.equipDrag = -1; return f; }
+        if (at >= 0) f.target = at;
+        if (Input::GetMouseButtonUp(0)) {
+            if (eq != ui.equipDrag) L.equip->Unequip(ui.equipDrag, *inv, at);
+            ui.equipDrag = -1;
+        }
+        return f;
+    }
+    if (ui.dragIndex < 0 && eq >= 0 && L.equip && !L.equip->ItemIn(eq).empty() && Input::GetMouseButtonDown(0)) {
+        ui.equipDrag = eq;
+        return f;
+    }
     if (ui.dragIndex < 0) f.hover = at;
     else if (at != ui.dragIndex) f.target = at;
     if (ui.dragIndex < 0) {
@@ -75,7 +111,8 @@ HotbarFrame HandleHotbar(InventoryUI& ui, const HotbarLayout& L, Vec2 mouse) {
     }
     // Drop when the held button is released (either button: you held one to drag).
     if (ui.dragIndex >= 0 && (Input::GetMouseButtonUp(0) || Input::GetMouseButtonUp(1))) {
-        if (at >= 0) ui.ApplyDrag(ui.dragIndex, at);
+        if (eq >= 0 && L.equip) L.equip->EquipFrom(*inv, ui.dragIndex, eq);   // rejected if the slot doesn't take it
+        else if (at >= 0) ui.ApplyDrag(ui.dragIndex, at);
         else ui.DropToWorld(ui.dragIndex, ui.dragAmount);   // released away from every slot: drop it in the world
         ui.dragIndex = -1; ui.dragAmount = 0;
     }
@@ -229,6 +266,36 @@ void HandleGrid(GridInventoryUI& ui, const GridLayout& L, const GridFrame& h) {
     }
     // Drop: same container = move, another = transfer (cross-bag / loot), a matching stack = merge.
     if (ui.dragInv && Input::GetMouseButtonUp(0)) ui.Drop(under, h.cx, h.cy);
+}
+
+// ---- Crafting bench ----
+
+int CraftingLayout::Pick(float x, float y) const {
+    for (int i = 0; i < rows; ++i) {
+        const float ry = RowY(i);
+        if (x >= px + 4 && x < px + pw - 4 && y >= ry && y < ry + rowH - 2) return i;
+    }
+    return -1;
+}
+
+CraftingLayout LayoutCrafting(const CraftingStation& cs, float W, float H) {
+    CraftingLayout L;
+    L.rows = (int)cs.Recipes().size();
+    L.rowH = cs.rowHeight;
+    L.pw = cs.width;
+    L.ph = L.rows * cs.rowHeight + 8.0f;
+    L.px = (W - L.pw) * 0.5f + cs.marginX;
+    L.py = (H - L.ph) * 0.5f + cs.marginY;
+    return L;
+}
+
+int HandleCrafting(CraftingStation& cs, const CraftingLayout& L, Vec2 mouse) {
+    const int row = L.Pick(mouse.x, mouse.y);
+    if (row >= 0 && Input::GetMouseButtonDown(0)) {
+        if (Input::GetKey(Input::KeyShift)) cs.CraftMax(row);
+        else cs.Craft(row);
+    }
+    return row;
 }
 
 } // namespace InventoryInput

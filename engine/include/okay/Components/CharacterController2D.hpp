@@ -6,6 +6,7 @@
 #include "okay/Physics/Physics2D.hpp"            // Collision2D (grounded detection)
 #include "okay/Components/SpriteRenderer.hpp"    // face-flipping
 #include "okay/Components/SpriteAnimator.hpp"    // idle / run / jump / fall clips
+#include "okay/Components/StepUp.hpp"            // GroundLatch (apex is not ground)
 #include "okay/Input/Input.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Net/PlayerInput.hpp"
@@ -112,10 +113,12 @@ public:
         }
 
         // ---- Platformer ----
-        // Grounded from real contacts, OR (fallback when no ground collider is set
-        // up) a near-zero vertical speed — the classic heuristic, so a jump still
-        // works in the simplest setups.
-        bool grounded = m_grounded || (rb && Mathf::Abs(rb->velocity.y) < 0.5f);
+        // Real contacts refill the jump. A near-zero vertical speed still counts
+        // as ground until the body has left it (so a scene with no floor collider
+        // can jump once), but not at the apex of a jump already taken — that
+        // speed crosses zero on the way down and used to refill maxJumps forever.
+        bool grounded = m_grounded;
+        if (rb) grounded = ResolveGrounded(m_ground, m_grounded, rb->velocity.y);
 
         // Coyote + jump-buffer timers.
         if (grounded) { m_coyote = coyoteTime; m_jumpsLeft = maxJumps; }
@@ -139,10 +142,12 @@ public:
                     rb->velocity.y = wallJumpForce;
                     rb->velocity.x = -(float)m_wallDir * wallJumpPush;
                     m_jumpBuf = 0.0f; m_coyote = 0.0f; m_jumpsLeft = maxJumps - 1;
+                    m_ground.left = true; m_ground.fell = false; grounded = false;
                 } else if (canCoyote || m_jumpsLeft > 0) {
                     rb->velocity.y = jumpForce;
                     m_jumpsLeft = (canCoyote ? maxJumps : m_jumpsLeft) - 1;
                     m_jumpBuf = 0.0f; m_coyote = 0.0f; m_grounded = false;
+                    m_ground.left = true; m_ground.fell = false; grounded = false;
                 }
             }
             // Wall slide: holding toward the wall while falling slows the descent.
@@ -193,6 +198,7 @@ public:
 
 private:
     bool  m_grounded = false;
+    GroundLatch m_ground;      // apex of a jump does not refill jumps
     int   m_wallDir  = 0;      // -1 wall on the left, +1 on the right, 0 none (this frame)
     float m_coyote   = 0.0f;
     float m_jumpBuf  = 0.0f;

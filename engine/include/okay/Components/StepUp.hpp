@@ -12,6 +12,22 @@ namespace okay {
 /// The lowest rise the controllers treat as a step (lower is a seam in the floor).
 constexpr float kMinStepHeight = 0.04f;
 
+/// Near-zero vertical speed is not ground on its own: the apex of a jump passes
+/// through it. A real contact (or terrain) is ground. The speed heuristic still
+/// counts until the body has left the ground, so a resting body with no fresh
+/// contact can still jump. A jump, or a real fall, sticks until a contact or
+/// until the body has fallen and then settled.
+struct GroundLatch {
+    bool left = false;   ///< jumped or fell; the |vy| heuristic is off
+    bool fell = false;   ///< vy has been a real fall since leaving
+};
+inline bool ResolveGrounded(GroundLatch& g, bool contact, float vy) {
+    if (contact) { g.left = false; g.fell = false; }
+    else if (vy < -0.5f) { g.left = true; g.fell = true; }
+    else if (g.left && g.fell && std::fabs(vy) < 0.5f) { g.left = false; g.fell = false; }
+    return contact || (std::fabs(vy) < 0.5f && !g.left);
+}
+
 /// Stair step-up shared by the character controllers: when a GROUNDED, moving
 /// body is blocked by a LOW obstacle (a stair, a curb), lift it onto the step
 /// instead of letting it grind against the face. Three probes decide it:
@@ -56,8 +72,13 @@ inline void TryStepUp(Scene& sc, GameObject* go, Rigidbody3D* rb, const Vec3& di
 /// RIDE elevators and moving props instead of sliding off them. Static ground
 /// has a zero delta, so tracking it costs nothing. Only solid, non-dynamic
 /// things are ridden: a trigger or a crate the player is pushing never is.
-struct PlatformRide { GameObject* platform = nullptr; Vec3 lastPos{0.0f, 0.0f, 0.0f}; };
+struct PlatformRide {
+    GameObject* platform = nullptr;
+    Vec3 lastPos{0.0f, 0.0f, 0.0f};
+    Vec3 applied{0.0f, 0.0f, 0.0f};   ///< translation added to the rider this call
+};
 inline void RideMovingPlatform(Scene& sc, GameObject* go, PlatformRide& st, bool grounded) {
+    st.applied = {0.0f, 0.0f, 0.0f};
     if (!go || !go->transform) { st.platform = nullptr; return; }
     GameObject* plat = nullptr;
     if (grounded) {
@@ -73,8 +94,10 @@ inline void RideMovingPlatform(Scene& sc, GameObject* go, PlatformRide& st, bool
     if (plat && plat == st.platform) {
         Vec3 cur = plat->transform->Position();
         Vec3 d{cur.x - st.lastPos.x, cur.y - st.lastPos.y, cur.z - st.lastPos.z};
-        if (d.x != 0.0f || d.y != 0.0f || d.z != 0.0f)
+        if (d.x != 0.0f || d.y != 0.0f || d.z != 0.0f) {
             go->transform->SetPosition(go->transform->Position() + d);
+            st.applied = d;
+        }
         st.lastPos = cur;
     } else if (plat) {
         st.platform = plat;

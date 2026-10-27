@@ -17,6 +17,7 @@
 #include "okay/Core/Game.hpp"
 #include "okay/Input/Cursor.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Components/StepUp.hpp"
 #include <cmath>
 
 namespace okay {
@@ -162,7 +163,10 @@ public:
         // rigidbody's terrain-grounded flag as ground — otherwise jumps never refill on
         // terrain and only the first jump ever works (matches First/ThirdPerson controllers).
         bool onTerrain = rb && rb->groundedOnTerrain;
-        bool grounded = (rb && Mathf::Abs(rb->velocity.y) < 0.5f) || m_groundContact > 0.0f || onTerrain;
+        // Contact or terrain. |vy| < 0.5 is not ground once we've left it: the
+        // apex of a jump passes through that band and used to read as landed.
+        bool contact = m_groundContact > 0.0f || onTerrain;
+        bool grounded = rb ? ResolveGrounded(m_ground, contact, rb->velocity.y) : contact;
         // Jump count refills only on a real ground contact (no endless jumping at the
         // apex); maxJumps enables double jumps.
         if (m_groundContact > 0.0f || onTerrain) m_jumpsUsed = 0;
@@ -185,7 +189,9 @@ public:
                 bool extraOk = (m_jumpsUsed >= 1) && (m_jumpsUsed < Mathf::Max(1, maxJumps));
                 if (firstOk || extraOk) {
                     rb->velocity.y = jumpForce; ++m_jumpsUsed;
-                    m_jumpBuf = 0.0f; m_coyote = 0.0f; m_groundContact = 0.0f; airborne = true; jumped = true;
+                    m_jumpBuf = 0.0f; m_coyote = 0.0f; m_groundContact = 0.0f;
+                    m_ground.left = true; m_ground.fell = false;
+                    grounded = false; airborne = true; jumped = true;
                 }
             }
         } else if (moving) {
@@ -311,6 +317,7 @@ private:
     Camera* m_claimedCam = nullptr; // the main camera last checked for a competing follow
     float m_lean = 0.0f;            // eased lean (-1..+1)
     int   m_jumpsUsed = 0;         // jumps since last grounded (for double-jump)
+    GroundLatch m_ground;         // apex of a jump is not ground
     float m_fireCooldown = 0.0f;
     float m_groundContact = 0.0f, m_coyote = 0.0f, m_jumpBuf = 0.0f;
 };

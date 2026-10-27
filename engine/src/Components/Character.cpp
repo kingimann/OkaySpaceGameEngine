@@ -102,7 +102,15 @@ Mesh Character::BuildRig(std::vector<int>& bone) const {
         int up = s < 0 ? B_LUPARM : B_RUPARM, fo = s < 0 ? B_LFORE : B_RFORE, ha = s < 0 ? B_LHAND : B_RHAND;
         box({s * 0.27f, 1.30f, 0}, {0.13f, 0.34f, 0.18f}, upperArmCol, up);
         box({s * 0.27f, 0.99f, 0}, {0.12f, 0.32f, 0.16f}, foreArmCol, fo);
-        box({s * 0.27f, 0.80f, 0.02f}, {0.12f, 0.12f, 0.17f}, handCol, ha);
+        // Palm just under the wrist, thumb on +Z, fingers curled toward the body
+        // (-s in X). The fingertips stop about 6 cm from the wrist, which is where
+        // a held object's grip is placed, so they wrap it instead of stabbing
+        // through. The thumb sits below the sleeve rather than inside it.
+        box({s * 0.304f, 0.828f, 0.000f}, {0.040f, 0.052f, 0.076f}, handCol, ha);
+        box({s * 0.316f, 0.808f, 0.048f}, {0.022f, 0.024f, 0.028f}, handCol, ha);
+        box({s * 0.296f, 0.814f, 0.000f}, {0.028f, 0.018f, 0.050f}, handCol, ha);
+        box({s * 0.286f, 0.808f, 0.000f}, {0.024f, 0.014f, 0.040f}, handCol, ha);
+        box({s * 0.280f, 0.806f, 0.000f}, {0.018f, 0.012f, 0.030f}, handCol, ha);
         int th = s < 0 ? B_LTHIGH : B_RTHIGH, sh = s < 0 ? B_LSHIN : B_RSHIN, ft = s < 0 ? B_LFOOT : B_RFOOT;
         box({s * 0.105f, 0.74f, 0}, {0.18f, 0.42f, 0.20f}, pants, th);
         box({s * 0.105f, 0.34f, 0}, {0.16f, 0.44f, 0.18f}, shinCol, sh);
@@ -813,7 +821,10 @@ void Character::Update(float dt) {
             m_headPitch += (lookPitch - m_headPitch) * k;
             m_bodyLean  += (bodyLean  - m_bodyLean)  * k;
             // (An Animator's pose is shown in LateUpdate.)
-            if (!AnimatorDriven() && (animateParts || m_editorPosing || m_activeClip)) DriveParts();   // preview / clip still drive
+            if (!AnimatorDriven() && (animateParts || m_editorPosing || m_activeClip)) {
+                EaseFirstPersonArm(dt);
+                DriveParts();   // preview / clip still drive
+            }
             return;
         }
     }
@@ -883,9 +894,10 @@ void Character::Update(float dt) {
     if (!AnimatorDriven()) PresentMesh();   // an Animator's pose is shown in LateUpdate
 }
 
-void Character::LateUpdate(float) {
+void Character::LateUpdate(float dt) {
     if (driveExternal) { NoteStateChange(); return; }   // the HumanoidRetarget shows it
     if (!AnimatorDriven()) return;
+    EaseFirstPersonArm(dt);
     if (separateParts && m_partsBuilt) { if (animateParts) DriveParts(); }
     else PresentMesh();
 }
@@ -916,6 +928,21 @@ void Character::PresentMesh() {
         pose[B_RFORE]  = pose[B_RFORE]  + (fore - pose[B_RFORE])  * arc;
     }
     Skin(m, m_bone, pose);
+    // First-person view: collapse the head (and the small neck box on the torso)
+    // onto the neck joint so the owner's eyes don't see the inside of the skull.
+    // The chest, arms and legs stay, which is what you see looking down.
+    if (hideOwnHead && m_bone.size() == m.vertices.size()) {
+        const Vec3 sink{0.0f, 1.48f, 0.0f};
+        for (std::size_t i = 0; i < m.vertices.size(); ++i) {
+            bool head = m_bone[i] == B_HEAD;
+            bool neck = false;
+            if (!head && m_bone[i] == B_TORSO && i < m_restPos.size()) {
+                const Vec3& r = m_restPos[i];
+                neck = r.y > 1.445f && r.y < 1.56f && std::fabs(r.x) < 0.11f && std::fabs(r.z) < 0.11f;
+            }
+            if (head || neck) m.vertices[i] = sink;
+        }
+    }
     Vec3 so = StanceOffset();
     for (Vec3& v : m.vertices) { v = Vec3{-v.x, v.y, -v.z} * height; v += so; }   // face -Z + stance drop (see Apply)
     m.normals.clear();
@@ -995,7 +1022,11 @@ void Character::RemoveParts() {
 void Character::EditorPreviewTick() {
     if (separateParts) {
         if (!m_partsBuilt) BuildParts();
-        if (m_partsBuilt) DriveParts();      // push the (preview/rest) pose onto the rig
+        if (m_partsBuilt) {
+            m_fpShown = (firstPersonArm && fpArmBase >= 0)
+                ? (fpArmUp < 0.0f ? 0.0f : (fpArmUp > 1.0f ? 1.0f : fpArmUp)) : 0.0f;
+            DriveParts();      // push the (preview/rest) pose onto the rig
+        }
         return;
     }
     // Single mesh: rebuild from the previewed pose so the editor shows it live.
@@ -1206,6 +1237,15 @@ std::uint32_t Character::UpperBodyMask() {
 }
 std::vector<Vec3> Character::CurrentPose() const { return CurrentSourcePose(); }
 
+void Character::EaseFirstPersonArm(float dt) {
+    const float want = (firstPersonArm && fpArmBase >= 0)
+        ? (fpArmUp < 0.0f ? 0.0f : (fpArmUp > 1.0f ? 1.0f : fpArmUp)) : 0.0f;
+    if (dt <= 0.0f) { m_fpShown = want; return; }
+    const float k = 1.0f - std::exp(-dt * 10.0f);   // most of the way there in ~0.25 s
+    m_fpShown += (want - m_fpShown) * k;
+    if (std::fabs(m_fpShown - want) < 0.001f) m_fpShown = want;
+}
+
 void Character::DriveParts() {
     if (!m_partsBuilt) return;
     std::vector<Vec3> pose = CurrentSourcePose();
@@ -1221,17 +1261,23 @@ void Character::DriveParts() {
         if (fpSteady || !fpArmBob) { pose[B_HIPS] = {0.0f, 0.0f, 0.0f}; pose[B_TORSO] = {0.0f, 0.0f, 0.0f}; }
         // Raise the arm; subtract the camera pitch so the arm follows the view up/down
         // (the rig's 180° flip maps the bone's local X to a world rotation such that
-        // subtracting pitch tilts the arm the same way the camera tilts).
-        pose[fpb]     = {fpRaise - fpPitch, 0.0f, 0.0f};   // upper arm: into frame + follow look
-        pose[fpb + 1] = {fpElbow, 0.0f, 0.0f};             // forearm bend (hand height)
-        pose[fpb + 2] = {0.0f, 0.0f, 0.0f};
+        // subtracting pitch tilts the arm the same way the camera tilts). Positive
+        // fpElbow is a bend: this skeleton folds the elbow on -X, and +X hyperextends
+        // the wrist. m_fpShown eases the three bones off the animated pose.
+        const float w = m_fpShown < 0.0f ? 0.0f : (m_fpShown > 1.0f ? 1.0f : m_fpShown);
+        const Vec3 raised{fpRaise - fpPitch, 0.0f, 0.0f};
+        const Vec3 elbow{-fpElbow, 0.0f, 0.0f};
+        pose[fpb]     = pose[fpb]     + (raised - pose[fpb])     * w;
+        pose[fpb + 1] = pose[fpb + 1] + (elbow  - pose[fpb + 1]) * w;
+        pose[fpb + 2] = pose[fpb + 2] * (1.0f - w);
     }
     // Punch swings the VISIBLE arm: the first-person arm if we're in first person,
-    // otherwise the right arm. Forward (-Z, the body's facing) so it lands in front.
+    // otherwise the right arm. Forward (-X on a hanging bone) so it lands in front.
+    // The forearm stays bent (-X); +X at the peak used to flip the wrist back.
     int pb = (fpb >= 0) ? fpb : B_RUPARM;
     if (m_punchT >= 0.0f && m_punchT < 1.0f && pb + 1 < (int)pose.size()) {
         float arc = std::sin(m_punchT * 3.14159265f);
-        Vec3 up = {-110.0f, 0.0f, 8.0f}, fore = {18.0f, 0.0f, 0.0f};
+        Vec3 up = {-110.0f, 0.0f, 8.0f}, fore = {-18.0f, 0.0f, 0.0f};
         pose[pb]     = pose[pb]     + (up   - pose[pb])     * arc;
         pose[pb + 1] = pose[pb + 1] + (fore - pose[pb + 1]) * arc;
     }

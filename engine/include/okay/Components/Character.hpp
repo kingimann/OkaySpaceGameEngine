@@ -128,9 +128,14 @@ public:
     // 0 (lowered, empty-handed) .. 1 (raised, holding). fpRaise / fpElbow let the
     // FirstPersonHand inspector tune where the hand sits.
     bool  firstPersonArm = false;
+    /// Runtime only (not saved): the view toggle shrinks this character's head
+    /// and neck in the baked mesh so a first-person camera at the eyes doesn't
+    /// clip them, while the body stays visible looking down. A separated rig
+    /// hides the head part from the owner's camera instead.
+    bool  hideOwnHead = false;
     float fpArmUp = 1.0f;
     float fpRaise = -96.0f;   // raised upper-arm forward angle
-    float fpElbow = 16.0f;    // raised forearm angle (hand closeness/height)
+    float fpElbow = 16.0f;    // elbow bend in degrees (positive folds the forearm; 0 = straight)
     /// Which 3-bone arm the first-person view raises into frame (the base bone index,
     /// e.g. 3 = the +X / screen-right arm). -1 = none. Set by FirstPersonHand; the
     /// separated-rig DriveParts poses these bones up like a Minecraft hand and routes
@@ -549,7 +554,9 @@ private:
     float m_punchT = -1.0f;        // punch progress 0..1 (<0 = not punching)
     Mesh m_fpArm;                  // first-person arm-only mesh (rebuilt each frame)
     bool m_fpArmReady = false;
+    float m_fpShown = 0.0f;        // eased 0..1 raise of the first-person arm (tracks fpArmUp)
     void BuildFpArm(const Mesh& full);   // extract the arm bones into m_fpArm
+    void EaseFirstPersonArm(float dt);
     bool m_partsBuilt = false;
     GameObject* m_rigRoot = nullptr;
     std::vector<GameObject*> m_parts;    // one object per bone (B_COUNT)

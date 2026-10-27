@@ -182,6 +182,7 @@ public:
             Vec3 cur{rb->velocity.x, 0.0f, rb->velocity.z};
             Vec3 dv{dir.x * speed - cur.x, 0.0f, dir.z * speed - cur.z};
             float rate = (moving ? acceleration : deceleration) * (grounded ? 1.0f : airControl);
+            if (!moving) rate = StopSettleRate(rate, grounded, std::sqrt(cur.x * cur.x + cur.z * cur.z));
             float dl = std::sqrt(dv.x * dv.x + dv.z * dv.z), step = rate * dt;
             if (dl > 1e-5f && dl > step) { dv.x = dv.x / dl * step; dv.z = dv.z / dl * step; }
             rb->velocity.x = cur.x + dv.x; rb->velocity.z = cur.z + dv.z;

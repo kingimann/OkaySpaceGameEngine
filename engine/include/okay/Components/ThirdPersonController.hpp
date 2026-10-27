@@ -376,6 +376,7 @@ public:
             Vec3 tgt{dir.x * speed, 0.0f, dir.z * speed};
             Vec3 cur{rb->velocity.x, 0.0f, rb->velocity.z};
             float rate = (moving ? acceleration : deceleration) * ((grounded || m_swimming) ? 1.0f : airControl);
+            if (!moving) rate = StopSettleRate(rate, grounded || m_swimming, std::sqrt(cur.x * cur.x + cur.z * cur.z));
             Vec3 dv{tgt.x - cur.x, 0.0f, tgt.z - cur.z};
             float dl = std::sqrt(dv.x * dv.x + dv.z * dv.z);
             float step = rate * dt;

@@ -19,7 +19,7 @@ namespace HumanoidActions {
 /// How far the built-in action set has got. Death is 1, dolphin dive is 2. A
 /// saved graph records the revision it already has, so a later action is added
 /// once and a state the user deleted is not put back when the next action lands.
-constexpr int kActionsRev = 7;
+constexpr int kActionsRev = 8;
 
 /// One authored pose. Degrees, hip height in rig units, rootOffset.x/z a visual
 /// lean only (y is unused; hipY is the root height).
@@ -139,6 +139,13 @@ bool TryTraverse(GameObject* go, const Vec3& fwd, bool airborne, bool vault, boo
 void SetSwimming(GameObject* go, bool on, float speed = -1.0f);
 /// True while `swimming` is set, or the base machine is in Swim.
 bool IsSwimming(GameObject* go);
+
+/// Play a one-shot emote: 0 nod, 1 head shake, 2 shrug. The clip plays out into
+/// Idle. Walking or running leaves it early. Sets `emoteId`.
+bool PlayEmote(GameObject* go, int which);
+/// "nod", "shake" / "headshake", "shrug" (also Emote_Nod and 0..2). Unknown names
+/// do not play.
+bool PlayEmote(GameObject* go, const std::string& name);
 
 /// True once the body is in DeadHold (or Death has played out).
 bool DeathPoseSettled(GameObject* go);

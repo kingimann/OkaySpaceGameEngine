@@ -305,7 +305,7 @@ Disable the Animator and the built-in animation plays the body as before.
 
 ## Actions
 
-Built-in actions (death and swim, and later dive, sit, hits, and the rest) are clips baked
+Built-in actions (death, dive, sitting, hits, roll / dodge / slide, vault and ledge, swim, and emotes) are clips baked
 by `HumanoidActions` and states on the default Animator. They are not new
 `Character::anim` numbers. A scene saved with the default graph (it has Idle,
 Walk, Run and Jump) gains each action once. A state you renamed or deleted stays
@@ -438,6 +438,13 @@ The state is not interruptible, so jump and fall cannot cut a stroke; its own
 the state being left cannot cancel the blend. `swimming` false goes to Idle.
 `anim_set_bool("swimming", 1)` and `play_action("Swim")` both enter it. There
 is no water volume in this set: movement stays on the controllers.
+
+Emote clips: one-shot `Emote_Nod`, `Emote_Shake` and `Emote_Shrug`, each starting
+and ending on the idle pose. These are not the looping Wave / Cheer gestures,
+which hold until the body moves. An emote plays out and goes to Idle. Speed
+above a walk leaves it for Walk or Run. Jump, fall and death can still cut it.
+Any State enters one when `emote` fires and `emoteId` is 0 (nod), 1 (shake) or
+2 (shrug). `play_action("Emote_Nod")` goes there directly.
 
 In the Inspector the Animator lists its states, what each plays (a clip, or a
 blend tree's clip count) and its transitions (folded; click to open). On a

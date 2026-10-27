@@ -405,6 +405,7 @@ void Scene::FlushDestroyed() {
                 break;
             }
     }
+    ++m_structureVersion;   // again after the free: a query from OnDestroy may have cached the dying components
     }
     if (m_graveyard.size() > 20000) m_graveyard.erase(m_graveyard.begin(), m_graveyard.begin() + 10000);   // bullets etc.: oldest shells go
 }

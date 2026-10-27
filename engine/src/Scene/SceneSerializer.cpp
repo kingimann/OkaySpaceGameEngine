@@ -274,6 +274,7 @@ struct KvIn {
     const std::string* find(const char* k) const { auto it = m.find(k); return it == m.end() ? nullptr : &it->second; }
     void f(const char* k, float& v) const { if (auto* s = find(k)) v = std::strtof(s->c_str(), nullptr); }
     void i(const char* k, int& v) const { if (auto* s = find(k)) v = std::atoi(s->c_str()); }
+    void u(const char* k, std::uint32_t& v) const { if (auto* s = find(k)) v = (std::uint32_t)std::strtoul(s->c_str(), nullptr, 10); }
     void b(const char* k, bool& v) const { if (auto* s = find(k)) v = std::atoi(s->c_str()) != 0; }
     void key(const char* k, char& v) const { if (auto* s = find(k)) v = (char)std::atoi(s->c_str()); }
     void str(const char* k, std::string& v) const { if (auto* s = find(k)) v = *s; }
@@ -1069,7 +1070,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
          .b("lock", f->footLock)("lockSpeed", f->lockSpeed)("lockHeight", f->lockHeight)
          ("lockRelease", f->lockRelease)
          ("upRX", f->footUpAxisR.x)("upRY", f->footUpAxisR.y)("upRZ", f->footUpAxisR.z)
-         ("om", 1);   // orient is saved after its migration: keep it as written
+         ("om", 1)   // orient is saved after its migration: keep it as written
+         ("mask", f->groundMask);
         auto lim = [&k](const char* p, const IKJointLimit& l) {
             if (!l.Active()) return;
             const std::string b = p;
@@ -3589,6 +3591,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                       // which reads that foot's own rest pose (a mirrored rig's right
                       // sole isn't the left one's axis).
                       k.f("upRX", f->footUpAxisR.x); k.f("upRY", f->footUpAxisR.y); k.f("upRZ", f->footUpAxisR.z);
+                      k.u("mask", f->groundMask);
                       // Files from before orient's migration loaded a Character's
                       // part rig with it off; Start() turns it on there.
                       if (!k.find("om") && !f->orient) f->orientMigrate = true;

@@ -348,6 +348,7 @@ void NetworkManager::Stop() {
     m_remotes.clear();
     m_remoteTarget.clear();
     m_inbox.clear();
+    m_rpcObserver = nullptr;
     m_syncVars.clear();
     m_rtt = 0.0f;
     m_ready = false;
@@ -743,8 +744,10 @@ void NetworkManager::Deliver(std::uint32_t from, const std::string& channel,
     // First-class RPC: "__rpc/<name>" dispatches by name to a registered handler
     // (with the sender id + payload) instead of surfacing as a raw message.
     if (channel.size() > 6 && channel.compare(0, 6, "__rpc/") == 0) {
-        auto it = m_rpcHandlers.find(channel.substr(6));
+        const std::string rpcName = channel.substr(6);
+        auto it = m_rpcHandlers.find(rpcName);
         if (it != m_rpcHandlers.end() && it->second) it->second(from, data);
+        if (m_rpcObserver) m_rpcObserver(rpcName, from, data);
         return;
     }
     // Chat: "__chat" carries "<name>\n<text>"; logged + handed to the chat handler.

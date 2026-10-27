@@ -1,7 +1,7 @@
 #pragma once
 // ---------------------------------------------------------------------------
-// HumanoidActions — built-in action clips (death, and later dive, sit, hit,
-// roll, vault, swim, emotes) baked the same way as HumanoidLibrary, plus the
+// HumanoidActions — built-in action clips (death and swim, and later dive, sit,
+// hit, roll, vault, emotes) baked the same way as HumanoidLibrary, plus the
 // states, params and Any-State transitions they add to the default Animator.
 // Gameplay displacement stays on the controllers. Clip root tracks are visual.
 // ---------------------------------------------------------------------------
@@ -19,7 +19,7 @@ namespace HumanoidActions {
 /// How far the built-in action set has got. Death is 1, dolphin dive is 2. A
 /// saved graph records the revision it already has, so a later action is added
 /// once and a state the user deleted is not put back when the next action lands.
-constexpr int kActionsRev = 6;
+constexpr int kActionsRev = 7;
 
 /// One authored pose. Degrees, hip height in rig units, rootOffset.x/z a visual
 /// lean only (y is unused; hipY is the root height).
@@ -132,6 +132,13 @@ void SetHanging(GameObject* go, bool on);
 void SetShimmy(GameObject* go, float v);
 /// One probe along `fwd`. A false flag skips that kind. No-op while hanging or already moving.
 bool TryTraverse(GameObject* go, const Vec3& fwd, bool airborne, bool vault, bool mantle, bool ledge);
+
+/// Sets `swimming` (and `swimSpeed` when `speed` >= 0). The default graph enters
+/// Swim while the bool is true and leaves for Idle when it is false. 0 treads,
+/// about 1.5 plays the forward stroke. No water volume: a later controller sets this.
+void SetSwimming(GameObject* go, bool on, float speed = -1.0f);
+/// True while `swimming` is set, or the base machine is in Swim.
+bool IsSwimming(GameObject* go);
 
 /// True once the body is in DeadHold (or Death has played out).
 bool DeathPoseSettled(GameObject* go);

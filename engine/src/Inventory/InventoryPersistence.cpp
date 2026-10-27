@@ -1,4 +1,5 @@
 #include "okay/Inventory/InventoryPersistence.hpp"
+#include "okay/Components/Equipment.hpp"
 #include "okay/Components/GridInventory.hpp"
 #include "okay/Components/Inventory.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -12,10 +13,24 @@ namespace InventoryPersistence {
 
 namespace {
 struct Carried {
-    bool hasInv = false, hasGrid = false;
+    bool hasInv = false, hasGrid = false, hasEquip = false;
     std::vector<Inventory::Slot> slots;
     std::vector<GridItem> items, overflow;
+    std::vector<Inventory::Slot> worn;   // per Equipment slot (count 1 = worn)
 };
+// What `e` wears, one entry per slot, with worn bags' contents.
+std::vector<Inventory::Slot> Worn(const Equipment& e) {
+    std::vector<Inventory::Slot> w(e.slots.size());
+    for (std::size_t i = 0; i < e.slots.size(); ++i)
+        if (!e.slots[i].item.empty()) w[i] = Inventory::Slot{e.slots[i].item, 1, e.CurrentData((int)i)};
+    return w;
+}
+void Wear(Equipment& e, const std::vector<Inventory::Slot>& w) {
+    for (std::size_t i = 0; i < e.slots.size(); ++i) {
+        const bool has = i < w.size() && !Inventory::Empty(w[i]);
+        e.Restore((int)i, has ? w[i].item : std::string(), has ? w[i].data : ItemInstanceData{});
+    }
+}
 std::map<std::string, Carried>& Pending() { static std::map<std::string, Carried> p; return p; }
 
 std::string Quote(const std::string& s) {
@@ -62,7 +77,8 @@ void BeforeSceneLoad(Scene& oldScene) {
         Carried c;
         if (auto* inv = go->GetComponent<Inventory>()) if (inv->keepOnSceneLoad) { c.hasInv = true; c.slots = inv->slots; }
         if (auto* g = go->GetComponent<GridInventory>()) if (g->keepOnSceneLoad) { c.hasGrid = true; c.items = g->items; c.overflow = g->overflow; }
-        if (c.hasInv || c.hasGrid) Pending()[go->name] = c;
+        if (auto* e = go->GetComponent<Equipment>()) if (e->keepOnSceneLoad) { c.hasEquip = true; c.worn = Worn(*e); }
+        if (c.hasInv || c.hasGrid || c.hasEquip) Pending()[go->name] = c;
     }
 }
 
@@ -74,6 +90,7 @@ void AfterSceneLoad(Scene& newScene) {
         if (kv.second.hasGrid) if (auto* g = go->GetComponent<GridInventory>()) {
             g->items = kv.second.items; g->overflow = kv.second.overflow; g->Validate();
         }
+        if (kv.second.hasEquip) if (auto* e = go->GetComponent<Equipment>()) Wear(*e, kv.second.worn);
     }
     Pending().clear();
 }
@@ -94,6 +111,14 @@ std::string SerializeObject(const GameObject& go) {
         for (const auto& it : g->items) WriteGridItem(o, "item", it);
         for (const auto& it : g->overflow) WriteGridItem(o, "overflow", it);
     }
+    if (auto* e = go.GetComponent<Equipment>()) {
+        o << "equipment " << e->slots.size() << "\n";
+        for (const auto& s : Worn(*e)) {
+            o << "worn " << Quote(s.item) << " " << s.count;
+            WriteData(o, s.data);
+            o << "\n";
+        }
+    }
     return o.str();
 }
 
@@ -105,8 +130,10 @@ bool LoadObjectText(GameObject& go, const std::string& text) {
     Inventory* inv = go.GetComponent<Inventory>();
     GridInventory* g = go.GetComponent<GridInventory>();
     std::vector<Inventory::Slot> slots;
+    Equipment* e = go.GetComponent<Equipment>();
     std::vector<GridItem> items, overflow;
-    bool sawInv = false, sawGrid = false;
+    std::vector<Inventory::Slot> worn;
+    bool sawInv = false, sawGrid = false, sawEquip = false;
     std::string line;
     while (std::getline(in, line)) {
         std::istringstream ls(line);
@@ -122,11 +149,21 @@ bool LoadObjectText(GameObject& go, const std::string& text) {
             if (s.count <= 0) s = Inventory::Slot{};
             slots.push_back(s);
         }
+        else if (key == "equipment") sawEquip = true;
+        else if (key == "worn") {
+            Inventory::Slot s;
+            s.item = ItemDatabase::Get().Resolve(ReadQuoted(ls));
+            ls >> s.count;
+            ReadData(ls, s.data);
+            if (s.count <= 0 || s.item.empty()) s = Inventory::Slot{};
+            worn.push_back(s);
+        }
         else if (key == "item") items.push_back(ReadGridItem(ls));
         else if (key == "overflow") overflow.push_back(ReadGridItem(ls));
     }
     if (sawInv && inv) { inv->slots = slots; inv->NotifyChanged(); }
     if (sawGrid && g) { g->items = items; g->overflow = overflow; g->Validate(); }
+    if (sawEquip && e) Wear(*e, worn);
     return true;
 }
 

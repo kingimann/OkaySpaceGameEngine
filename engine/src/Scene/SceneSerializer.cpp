@@ -33,6 +33,7 @@
 #include "okay/Components/ChestInventory.hpp"
 #include "okay/Components/ItemPickup.hpp"
 #include "okay/Components/LootSource.hpp"
+#include "okay/Components/Equipment.hpp"
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"
@@ -1856,7 +1857,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             // extended: the camera follow (pivot) and the spring arm
             << " " << ts->pivotDampingXZ << " " << ts->pivotDampingY << " " << ts->maxPivotLag
             << " " << ts->cameraCollisionRadius << " " << ts->cameraCollisionMask
-            << " " << ts->cameraCollisionPullIn << " " << ts->cameraCollisionRecover << "\n";
+            << " " << ts->cameraCollisionPullIn << " " << ts->cameraCollisionRecover
+            << " " << ts->stepOffset << "\n";
     }
     if (auto* cm = go->GetComponent<ClickToMoveController>()) {
         out << "  ctmctrl " << cm->walkSpeed << " " << cm->runSpeed << " "
@@ -1937,6 +1939,26 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             for (std::size_t v = 0; v < pk->data.values.size(); ++v) {
                 const std::string n = std::to_string(v);
                 k.str(("k" + n).c_str(), pk->data.values[v].first).str(("v" + n).c_str(), pk->data.values[v].second);
+            }
+        }
+        out << "\n";
+    }
+    if (auto* eq = go->GetComponent<Equipment>()) {
+        // One line: the flags, then per slot sN* keys (name, accepted type, socket, item and
+        // its instance data, a worn bag's contents included).
+        out << "  equipment";
+        KvOut k{out};
+        k.b("show", eq->showOnCharacter).b("keep", eq->keepOnSceneLoad)("n", eq->slots.size());
+        for (std::size_t i = 0; i < eq->slots.size(); ++i) {
+            const auto& s = eq->slots[i];
+            const std::string p = "s" + std::to_string(i);
+            k.str((p + "name").c_str(), s.name)((p + "acc").c_str(), (int)s.accepts).str((p + "sock").c_str(), s.socket);
+            if (s.item.empty()) continue;
+            const ItemInstanceData d = eq->CurrentData((int)i);
+            k.str((p + "item").c_str(), s.item)((p + "dur").c_str(), d.durability)((p + "uid").c_str(), d.uid)((p + "vals").c_str(), d.values.size());
+            for (std::size_t v = 0; v < d.values.size(); ++v) {
+                const std::string n = std::to_string(v);
+                k.str((p + "k" + n).c_str(), d.values[v].first).str((p + "v" + n).c_str(), d.values[v].second);
             }
         }
         out << "\n";
@@ -4788,6 +4810,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     ts->pivotDampingXZ = pxz; ts->pivotDampingY = py; ts->maxPivotLag = lag;
                                     ts->cameraCollisionRadius = rad; ts->cameraCollisionMask = mask;
                                     ts->cameraCollisionPullIn = pin; ts->cameraCollisionRecover = rec;
+                                    // Optional trailing step height (older scenes keep 0.35).
+                                    float so = ts->stepOffset;
+                                    in >> std::ws;
+                                    if ((std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') && (in >> so))
+                                        ts->stepOffset = so;
                                 }
                             } }
                     }
@@ -4865,6 +4892,30 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int w = 0;
                     k.str("table", ls->table); k.i("when", w); k.f("refill", ls->refill); k.i("seed", ls->seed);
                     ls->when = (LootSource::When)std::max(0, std::min(w, 2));
+                } else if (field == "equipment") {
+                    auto* eq = go->AddComponent<Equipment>();
+                    KvIn k(in);
+                    k.b("show", eq->showOnCharacter); k.b("keep", eq->keepOnSceneLoad);
+                    int n = -1; k.i("n", n);
+                    if (n >= 0) eq->slots.assign((std::size_t)std::min(n, 64), Equipment::Slot{});
+                    for (int i = 0; i < (int)eq->slots.size(); ++i) {
+                        auto& s = eq->slots[i];
+                        const std::string p = "s" + std::to_string(i);
+                        int acc = 0;
+                        k.str((p + "name").c_str(), s.name); k.i((p + "acc").c_str(), acc); k.str((p + "sock").c_str(), s.socket);
+                        s.accepts = (EquipSlot)std::max(0, std::min(acc, (int)EquipSlot::OffHand));
+                        k.str((p + "item").c_str(), s.item);
+                        if (s.item.empty()) continue;
+                        s.item = ItemId(s.item);
+                        k.f((p + "dur").c_str(), s.data.durability);
+                        if (const std::string* u = k.find((p + "uid").c_str())) s.data.uid = std::strtoull(u->c_str(), nullptr, 10);
+                        int nv = 0; k.i((p + "vals").c_str(), nv);
+                        for (int v = 0; v < nv && v < 256; ++v) {
+                            std::string key, val;
+                            k.str((p + "k" + std::to_string(v)).c_str(), key); k.str((p + "v" + std::to_string(v)).c_str(), val);
+                            s.data.values.push_back({key, val});
+                        }
+                    }
                 } else if (field == "itempickup") {
                     auto* pk = go->AddComponent<ItemPickup>();
                     KvIn k(in);
@@ -6345,11 +6396,11 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
     // The item database (and its icons / drop prefabs) ships with any scene that has items.
     bool hasItems = false;
     for (const auto& go : scene.Objects())
-        if (go->GetComponent<Inventory>() || go->GetComponent<GridInventory>() || go->GetComponent<ItemPickup>() || go->GetComponent<LootSource>()) { hasItems = true; break; }
+        if (go->GetComponent<Inventory>() || go->GetComponent<GridInventory>() || go->GetComponent<ItemPickup>() || go->GetComponent<LootSource>() || go->GetComponent<Equipment>()) { hasItems = true; break; }
     const ItemDatabase& db = ItemDatabase::Get();
     if (hasItems && !db.Path().empty()) {
         add(db.Path());
-        for (const auto& d : db.Items()) if (!d.loose) { add(d.icon); add(d.worldPrefab); }
+        for (const auto& d : db.Items()) if (!d.loose) { add(d.icon); add(d.worldPrefab); add(d.Custom("equipPrefab")); }
     }
     return out;
 }

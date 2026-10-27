@@ -347,6 +347,7 @@ int main(int argc, char** argv) {
 #include "EditorWidgets.hpp"       // accent, category tints, toolbar icons, icon/search buttons
 #include "ConsolePanel.hpp"        // ConsoleLog + the Console panel
 #include "SceneManagerPanel.hpp"   // Scene Manager window + build-list bridge
+#include "NetSimPanel.hpp"         // net simulator + per-object traffic
 #include "UIPreviewPainter.hpp"    // the engine UI renderer drawn into ImGui (UI preview)
 #include "okay/UI/UIRenderer.hpp"
 #include "MainShared.hpp"          // main.cpp functions the split-out panels call
@@ -4220,6 +4221,7 @@ static const DockPanelDef* DockPanels(int& n) {
         {"Game",          "Game",                      &g_showGame,          "Panels", PI_Game},
         {"Services",      "Services",                  &g_showServices,      "Panels", PI_Services},
         {"Scene Manager", "Scene Manager###Scenes",    &g_showScenes,        "Panels", PI_Scenes},
+        {"Net",           "Net###Net",                 &g_showNet,           "Panels", PI_Stats},
         {"Save Manager",  "Save Manager",              &g_showSaveManager,   "Panels", PI_Save},
         {"Variables",     "Variables",                 &g_showVarWatch,      "Panels", PI_Variables},
         {"History",       "History",                   &g_showHistory,       "Panels", PI_History},
@@ -5498,6 +5500,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             ImGui::Separator();
             ImGui::MenuItem("Services", nullptr, &g_showServices);
             ImGui::MenuItem("Scene Manager", nullptr, &g_showScenes);
+            ImGui::MenuItem("Net", nullptr, &g_showNet);
             ImGui::MenuItem("Save Manager", nullptr, &g_showSaveManager);
             ImGui::MenuItem("Variables (watch)", nullptr, &g_showVarWatch);
             ImGui::Separator();
@@ -42428,6 +42431,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.SceneSettings"); if (g_showSceneSettings) DrawSceneSettings(ed); }
         { OKAY_PROFILE("UI.SaveManager"); if (g_showSaveManager) DrawSaveManager(ed); }
         { OKAY_PROFILE("UI.Scenes"); if (g_showScenes)    DrawSceneManager(ed); }
+        { OKAY_PROFILE("UI.Net"); if (g_showNet) DrawNetPanel(&g_showNet); }
         DrawPanelTabsExtras();   // tab icons, overflow lists, side tabs, Ctrl+Tab, right-click tab menu
         {   // UI Safe Area containers keep clear of the emulated phone's notch / home bar
             auto& f = okay::UISafeInsets();

@@ -24,6 +24,7 @@ add_library(okay_engine
     src/Net/ClockCheck.cpp
     src/Components/AntiCheatConfig.cpp
     src/Net/NetworkManager.cpp
+    src/Net/NetSim.cpp
     src/Net/RelayServer.cpp
     src/Net/DedicatedServer.cpp
     src/Net/ServerQuery.cpp

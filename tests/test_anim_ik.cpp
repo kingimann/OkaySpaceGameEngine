@@ -442,6 +442,9 @@ int main() {
         // Drop the fields that came after `orient`.
         std::size_t at = text.find("  limbik "), eol = text.find('\n', at);
         std::string line = text.substr(at, eol - at);
+        // Newer key=value fields (target blend, limits) first, then the positional ones.
+        while (line.substr(line.find_last_of(' ') + 1).find('=') != std::string::npos)
+            line = line.substr(0, line.find_last_of(' '));
         for (int k = 0; k < 6; ++k) line = line.substr(0, line.find_last_of(' '));
         Scene s3("s3");
         CHECK(SceneSerializer::Deserialize(s3, text.substr(0, at) + line + text.substr(eol)));

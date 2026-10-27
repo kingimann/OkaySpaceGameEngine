@@ -1037,6 +1037,27 @@ void Character::ReleaseOwnerArm() {
     m_ownerArmBase = -2;
 }
 
+namespace {
+// The owner's first-person hand is one cube, not the body's long arm. Scale
+// stays inside the range the player tests allow. The wrist cuff is a short
+// shirt stub on local -Z (the corner side). Local +Z points inward.
+constexpr float kFpHandScale = 0.50f;
+constexpr float kFpHandHalf  = 0.175f;
+constexpr float kFpStub      = 0.06f;
+
+Mesh FaceBox(const Vec3& mn, const Vec3& mx, const Color& col) {
+    Mesh m;
+    Mesh::AppendBox(m, mn, mx);
+    m.triColors.assign(m.TriangleCount(), col);
+    m.normals.clear();
+    return m;
+}
+
+Color FaceColor(const Mesh& m, const Color& fallback) {
+    return m.triColors.empty() ? fallback : m.triColors[0];
+}
+}
+
 void Character::EnsureOwnerArm(int base) {
     if (m_ownerArm && m_ownerArm->IsDestroyed()) {
         m_ownerArm = m_ownerFore = m_ownerHand = nullptr;
@@ -1068,6 +1089,20 @@ void Character::EnsureOwnerArm(int base) {
     made[1]->transform->SetParent(made[0]->transform, false);
     made[2]->transform->SetParent(made[1]->transform, false);
     for (int i = 0; i < 3; ++i) made[i]->transient = true;
+    // The copy is only the hand. The upper-arm mesh was the long sleeve; it
+    // stays an empty root so the forearm and the hand keep their places.
+    const Color sleeveCol = FaceColor(mesh[1]->mesh, Color::FromBytes(60, 95, 75));
+    const Color handCol   = FaceColor(mesh[2]->mesh, Color::FromBytes(220, 176, 150));
+    const float h = kFpHandHalf;
+    auto* armMr = made[0]->GetComponent<MeshRenderer>();
+    armMr->mesh = Mesh{};
+    armMr->enabled = false;
+    auto* foreMr = made[1]->GetComponent<MeshRenderer>();
+    foreMr->mesh = FaceBox({-h, -h, -h - kFpStub}, {h, h, -h + 0.01f}, sleeveCol);
+    foreMr->castShadows = false;
+    auto* handMr = made[2]->GetComponent<MeshRenderer>();
+    handMr->mesh = FaceBox({-h, -h, -h}, {h, h, h}, handCol);
+    handMr->castShadows = false;
     // Under the player, not the camera. A first-person-only object is drawn
     // only for the camera that is hiding its owner, and only when it is still
     // inside that owner's subtree. Parenting it to the camera would hide it
@@ -1166,8 +1201,9 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     const float near = std::max(cam->nearClip, 0.04f);
     const float depth = std::max(0.52f, near + 0.36f);
 
-    // Up and inward. fpRaise -96 is this angle; the slider steepens it.
-    const float nudge = (fpRaise + 96.0f) / 96.0f;
+    // One cube, angled so the top and the inner face both show. Local +Z is
+    // inward (toward screen centre). Local +Y is the top. The wrist cuff is
+    // the short -Z stub built with the mesh.
     float snap = 0.0f;
     if (m_punchT >= 0.0f && m_punchT < 1.0f) {
         if (m_punchT < 0.32f) snap = std::sin(m_punchT / 0.32f * 1.5707963f);
@@ -1181,73 +1217,60 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
         bobS = std::sin(m_gaitPhase * 6.2831853f);
         bobC = std::cos(m_gaitPhase * 6.2831853f);
     }
-    Vec3 dir{-side * (0.82f - nudge * 0.08f), 0.55f + nudge * 0.10f, 0.0f};
-    dir.x += -side * 0.05f * bobC;
-    dir.y += 0.07f * bobS;
+    Vec3 inward{-side * 0.78f, 0.36f, 0.30f};
+    inward.y += 0.08f * bobS;
     if (snap > 0.0f) {
-        const Vec3 aim{-side * 0.28f, 0.85f, 0.0f};
-        dir = dir + (aim - dir) * snap;
+        const Vec3 aim{-side * 0.22f, 0.78f, 0.46f};
+        inward = inward + (aim - inward) * snap;
     }
-    if (dir.SqrMagnitude() < 1e-8f) dir = Vec3{-side, 1.0f, 0.0f};
-    dir = dir.Normalized();
-    Vec3 face{0.0f, 0.0f, 1.0f};
-    face = face - dir * Vec3::Dot(face, dir);
-    if (face.SqrMagnitude() < 1e-6f) face = Vec3{0.0f, 1.0f, 0.0f};
-    face = face.Normalized();
-    // Yaw 180 keeps the part meshes' outward winding toward the lens.
-    // Local -Y runs from the shoulder out to the hand.
-    const Quat camSpace = Quat::LookRotation(face, -dir) * Quat::Euler(0.0f, 180.0f, 0.0f);
-    // Big enough that the forearm and the hand clear the corner. The sleeve,
-    // not the hand, is what crosses the edge.
-    const float s = 0.38f;
-    m_ownerArm->transform->SetRotation(basis * camSpace);
-    m_ownerArm->transform->SetPosition(cam->transform->Position() + basis * Vec3{0.0f, 0.0f, -depth});
-    m_ownerArm->transform->localScale = Vec3{s, s, s};
+    if (inward.SqrMagnitude() < 1e-8f) inward = Vec3{-side, 0.4f, 0.4f};
+    inward = inward.Normalized();
+    Vec3 topHint{-side * 0.06f, 0.62f, 0.78f};
+    Vec3 top = topHint - inward * Vec3::Dot(topHint, inward);
+    if (top.SqrMagnitude() < 1e-6f) top = Vec3{0.0f, 1.0f, 0.0f};
+    top = top.Normalized();
+    Quat camSpace = Quat::LookRotation(inward, top);
+    camSpace = Quat::Euler(1.6f * bobS, -side * 2.2f * bobC, side * 1.1f * bobS) * camSpace;
+    m_ownerFore->transform->localPosition = Vec3::Zero;
+    m_ownerFore->transform->localRotation = Quat::Identity;
     m_ownerFore->transform->localScale = Vec3::One;
-    m_ownerHand->transform->localScale = Vec3::One;
-    m_ownerFore->transform->localPosition = base + 1 < (int)m_partRest.size() ? m_partRest[base + 1] : Vec3{0, 0, 0};
-    m_ownerFore->transform->localRotation = Quat::Euler(-fpElbow * 0.35f, 0.0f, 0.0f);
-    m_ownerHand->transform->localPosition = base + 2 < (int)m_partRest.size() ? m_partRest[base + 2] : Vec3{0, 0, 0};
+    m_ownerHand->transform->localPosition = Vec3::Zero;
     m_ownerHand->transform->localRotation = Quat::Identity;
-
-    // Shift in the view plane until the sleeve vertex nearest the lower
-    // corner sits just outside it. The same NDC corner holds at every aspect,
-    // because the shift is in camera space through this frame's frustum.
-    {
-        // Rightmost and lowest sleeve vertices, separately. One shift plants
-        // both on the corner even when the box is thicker than it is square.
-        bool any = false;
-        float rightNx = 0.0f, rightNz = depth, rightX = 0.0f;
-        float botNy = 0.0f, botNz = depth, botY = 0.0f;
-        auto extremes = [&](GameObject* g) {
-            if (!g) return;
-            auto* mr = g->GetComponent<MeshRenderer>();
-            if (!mr) return;
-            for (const Vec3& v : mr->mesh.vertices) {
-                const Vec3 c = cam->transform->InverseTransformPoint(g->transform->TransformPoint(v));
-                const float nz = std::max(0.05f, -c.z);
-                const float nx = c.x / (tanH * nz);
-                const float ny = c.y / (tanV * nz);
-                if (!any || side * nx > side * rightNx) { rightNx = nx; rightNz = nz; rightX = c.x; }
-                if (!any || ny < botNy) { botNy = ny; botNz = nz; botY = c.y; }
-                any = true;
-            }
-        };
-        extremes(m_ownerArm);
-        // A punch swings the planted corner toward the middle. A run slides
-        // it off. Walk bob lifts and sways it. A little past the edge, so the
-        // front faces still touch when a back corner is the extreme.
-        const float wantNx = side * (1.08f + 0.50f * slide - 0.28f * snap + 0.035f * bobC);
-        const float wantNy = -1.08f - 0.50f * slide + 0.18f * snap + 0.045f * bobS;
-        const float dx = wantNx * tanH * rightNz - rightX;
-        const float dy = wantNy * tanV * botNz - botY;
-        const Quat lag = Quat::Euler(m_fpTrailPitch, m_fpTrailYaw, 0.0f);
-        Vec3 camOff = cam->transform->Rotation().Conjugate() * (m_ownerArm->transform->Position() - cam->transform->Position());
-        camOff = camOff + Vec3{dx, dy, 0.0f};
-        camOff = lag * camOff;
-        m_ownerArm->transform->SetPosition(cam->transform->Position() + cam->transform->Rotation() * camOff);
-        m_ownerArm->transform->SetRotation(cam->transform->Rotation() * lag * camSpace);
-    }
+    m_ownerHand->transform->localScale = Vec3::One;
+    m_ownerArm->transform->localScale = Vec3{kFpHandScale, kFpHandScale, kFpHandScale};
+    // Measure in the camera, then correct. One shift is not enough: a nearer
+    // corner projects further out than the vertex that was extreme before the move.
+    m_ownerArm->transform->SetRotation(cam->transform->Rotation() * camSpace);
+    m_ownerArm->transform->SetPosition(cam->transform->Position() + cam->transform->Rotation() * Vec3{side * 0.16f, -0.08f, -depth});
+    Vec3 camOff = cam->transform->Rotation().Conjugate() * (m_ownerArm->transform->Position() - cam->transform->Position());
+    // Every vertex, not the single extreme. A nearer corner projects further
+    // than a far one, so the shift is the tightest bound across the cube.
+    const float wantNx = side * (0.82f + 0.75f * slide - 0.26f * snap + 0.03f * bobC);
+    const float wantNy = -0.70f - 0.55f * slide + 0.18f * snap + 0.045f * bobS;
+    float shiftX = side > 0.0f ? 1.0e9f : -1.0e9f;
+    float shiftY = -1.0e9f;
+    bool any = false;
+    auto bound = [&](GameObject* g) {
+        if (!g) return;
+        auto* mr = g->GetComponent<MeshRenderer>();
+        if (!mr || !mr->enabled) return;
+        for (const Vec3& v : mr->mesh.vertices) {
+            const Vec3 c = cam->transform->InverseTransformPoint(g->transform->TransformPoint(v));
+            const float nz = std::max(0.05f, -c.z);
+            const float limX = wantNx * tanH * nz - c.x;
+            const float limY = wantNy * tanV * nz - c.y;
+            shiftX = side > 0.0f ? std::min(shiftX, limX) : std::max(shiftX, limX);
+            shiftY = std::max(shiftY, limY);
+            any = true;
+        }
+    };
+    bound(m_ownerFore);
+    bound(m_ownerHand);
+    if (any) { camOff.x += shiftX; camOff.y += shiftY; }
+    const Quat lag = Quat::Euler(m_fpTrailPitch, m_fpTrailYaw, 0.0f);
+    camOff = lag * camOff;
+    m_ownerArm->transform->SetPosition(cam->transform->Position() + cam->transform->Rotation() * camOff);
+    m_ownerArm->transform->SetRotation(cam->transform->Rotation() * lag * camSpace);
 
     // Nothing may cross the near plane. Push along the look, away from the lens.
     const float keep = std::max(0.18f, near + 0.12f);
@@ -1308,29 +1331,28 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     dst->mesh = src->mesh;
     dst->color = src->color;
     dst->castShadows = false;
-    GameObject* realHand = base + 2 < (int)m_parts.size() ? m_parts[base + 2] : nullptr;
-    if (realHand && realHand->transform) {
-        // The real grip, in that hand's space. The viewmodel hand is a
-        // different pose, so a long offset (the prop still at the chest, or
-        // held across the body) would float it away from this hand. A short
-        // one sits on the palm and is kept. Anything longer is pulled onto
-        // the end of this hand, still turned the way the real hold is.
-        Vec3 raw = realHand->transform->InverseTransformPoint(held->transform->Position());
-        const float mag = raw.Magnitude();
-        // Local -Y runs out to the fingers. A grip already on that end is
-        // kept. One that sits back toward the sleeve, or across the body, is
-        // put on the end of this hand instead.
-        if (mag < 1e-5f || mag > 0.22f || raw.y > -0.04f)
-            raw = Vec3{0.0f, -0.15f, 0.03f};
-        m_ownerItem->transform->localPosition = raw;
-        m_ownerItem->transform->localRotation = (realHand->transform->Rotation().Conjugate() * held->transform->Rotation()).Normalized();
-        const Vec3 hs = realHand->transform->LossyScale();
-        const Vec3 os = held->transform->LossyScale();
-        auto safe = [](float a, float b) { return std::fabs(b) > 1e-4f ? a / b : 1.0f; };
-        Vec3 sc{safe(os.x, hs.x), safe(os.y, hs.y), safe(os.z, hs.z)};
-        const float big = std::max(std::fabs(sc.x), std::max(std::fabs(sc.y), std::fabs(sc.z)));
-        if (big > 0.42f) sc = sc * (0.42f / big);
-        m_ownerItem->transform->localScale = sc;
+    {
+        // The viewmodel cube's local +Z is the inner face. Scale the prop so
+        // its longest side is about three quarters of that cube, and sit it
+        // on that face. The real grip is a different pose and would float.
+        Vec3 mn = src->mesh.vertices[0], mx = mn;
+        for (const Vec3& v : src->mesh.vertices) {
+            mn.x = std::min(mn.x, v.x); mn.y = std::min(mn.y, v.y); mn.z = std::min(mn.z, v.z);
+            mx.x = std::max(mx.x, v.x); mx.y = std::max(mx.y, v.y); mx.z = std::max(mx.z, v.z);
+        }
+        const Vec3 ext = mx - mn;
+        const float maxExt = std::max(ext.x, std::max(ext.y, ext.z));
+        const float cube = kFpHandHalf * 2.0f;
+        const float uni = maxExt > 1e-4f ? (0.78f * cube / maxExt) : 1.0f;
+        const Quat irot = Quat::Euler(12.0f, -side * 18.0f, 6.0f);
+        Vec3 center{0.0f, 0.0f, 0.0f};
+        const float invN = 1.0f / (float)src->mesh.vertices.size();
+        for (const Vec3& v : src->mesh.vertices) center = center + (irot * (v * uni)) * invN;
+        m_ownerItem->transform->localScale = Vec3{uni, uni, uni};
+        m_ownerItem->transform->localRotation = irot;
+        // The prop's middle sits on the inner face, so about half of it is in
+        // the cube and the rest sticks out toward screen centre.
+        m_ownerItem->transform->localPosition = Vec3{-center.x, -center.y + 0.02f, kFpHandHalf - center.z};
     }
     m_ownerItem->active = true;
 }

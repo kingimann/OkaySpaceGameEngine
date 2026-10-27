@@ -827,15 +827,16 @@ elbows bend down and out, and the object moves with the body.
   (sprint, or fast enough to use the run
   style) keeps those hands out of the first-person view. Walking, idling and
   holding still show the block. The held object stays on its grip.
-- The first-person arm is a copy on the owner's camera only. The sleeve
-  enters from the lower-right corner and the forearm and the single-cube hand
-  angle up and inward, about a quarter to a third of the screen tall, past
-  the near plane. It does not cast a shadow. The pose is in the camera, so
-  looking down keeps it in that corner instead of pushing it into the lens.
-  Walking bobs and sways it. A mouse turn lags it slightly. A punch swings it
-  toward the middle. A hold puts a copy of the item in that hand; everyone
-  else still sees the real hands on the grip. A run eases the copy off the
-  corner and a stop eases it back. The real arm bones stay on the animation,
+- The first-person hand is a copy on the owner's camera only. It is one
+  skin-coloured cube in the lower right, fully on screen, with a short shirt
+  cuff at the wrist and no long sleeve. It is angled so the top and the inner
+  face both show, and it stays past the near plane. It does not cast a shadow.
+  The pose is in the camera, so looking down keeps it in that corner instead
+  of pushing it into the lens. Walking bobs and sways it. A mouse turn lags it
+  slightly. A punch swings it toward the middle. A hold puts a copy of the
+  item on that cube; everyone else still sees the real hands on the grip. A
+  run eases the copy off the corner and a stop eases it back. The real arm
+  bones stay on the animation,
   so another camera and another player see the blocky hands on the idle, the
   walk, the run, a crouch and a prone, including while this player looks down.
   That look does not pitch the shared bones. None of the first-person pose is
@@ -854,7 +855,7 @@ elbows bend down and out, and the object moves with the body.
   in front of the chest and steps further forward and up as you look down, and
   the shirt's lid stays on the body so that view is a solid surface. One
   plain hand stays in the lower right while standing, walking, and looking
-  down. A run eases both arms
+  down: one cube, not the full arm. A run eases both arms
   off the owner's camera. The head stays visible through the switch into first
   person and is skipped only once the lens is in front of the face. Pressing
   V back shows the head and the neck on that same frame, without waiting for

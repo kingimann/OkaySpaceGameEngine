@@ -18,6 +18,7 @@
 #include "okay/Input/Cursor.hpp"
 #include "okay/Components/StepUp.hpp"
 #include "okay/Components/ControllerFeel.hpp"
+#include "okay/Components/PlayerView.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
 
@@ -227,8 +228,12 @@ public:
             in.pitch += (invertY ? 1.0f : -1.0f) * dy;
             // Kept here too, so the look adds up where Simulate doesn't run every
             // frame (a client whose host runs its movement).
+            float lo = minPitch, hi = maxPitch;
+            if (gameObject)
+                if (auto* view = gameObject->GetComponent<PlayerView>())
+                    view->LookLimits(false, minPitch, maxPitch, lo, hi);
             yaw = in.yaw;
-            pitch = in.pitch = Mathf::Clamp(in.pitch, minPitch, maxPitch);
+            pitch = in.pitch = Mathf::Clamp(in.pitch, lo, hi);
         }
         // Drop the baseline while a bag is open: the fed mouse switches between locked
         // (accumulated relative) and free (absolute) space, so without this the first
@@ -261,7 +266,16 @@ public:
         if (!transform) return;
         yaw   = in.yaw;
         // Clamped when it changes (a script may park the view past the limits, as before).
-        if (in.pitch != pitch) pitch = Mathf::Clamp(in.pitch, minPitch, maxPitch);
+        {
+            float lo = minPitch, hi = maxPitch;
+            if (gameObject)
+                if (auto* view = gameObject->GetComponent<PlayerView>())
+                    view->LookLimits(false, minPitch, maxPitch, lo, hi);
+            if (in.pitch != pitch) pitch = Mathf::Clamp(in.pitch, lo, hi);
+            if (gameObject)
+                if (auto* view = gameObject->GetComponent<PlayerView>())
+                    view->ConformPitch(pitch, false, minPitch, maxPitch, dt);
+        }
         m_zoom = zoomWithRightMouse && in.Held(PlayerInput::AltFire);
 
         // Lean: hold Q/E to peek; the camera rolls and shifts sideways.
@@ -499,8 +513,15 @@ public:
         m_stepOffsetY = Mathf::Clamp(m_stepOffsetY, -lim, lim) * (1.0f - EaseFactor(eyeStepSmoothing, dt));
         Transform* cam = FindCameraChild();
         if (!cam) return;
-        cam->localPosition.y = m_eyeBase + m_bob - m_dip + m_stepOffsetY;
-        cam->localPosition.x = m_lean * leanOffset + m_sway;
+        // While a view blend is leaving the eyes, fade the bob and the landing dip
+        // so the slide back doesn't carry the step sway with it. Settled first
+        // person (and a controller with the toggle off) keeps the full bob.
+        float bobW = 1.0f;
+        if (gameObject)
+            if (auto* view = gameObject->GetComponent<PlayerView>(); view && view->Driving())
+                bobW = view->FirstAmount();
+        cam->localPosition.y = m_eyeBase + (m_bob - m_dip) * bobW + m_stepOffsetY;
+        cam->localPosition.x = m_lean * leanOffset + m_sway * bobW;
         m_smooth.Step(yaw, pitch, lookSmoothing, dt);
         if (lookSmoothing > 0.0f) {
             transform->localRotation = Quat::Euler(0, m_smooth.Yaw(), 0);

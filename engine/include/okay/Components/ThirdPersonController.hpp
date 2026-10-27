@@ -21,6 +21,8 @@
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
 #include "okay/Components/ControllerFeel.hpp"
+#include "okay/Components/PlayerCamera.hpp"
+#include "okay/Components/PlayerView.hpp"
 
 namespace okay {
 
@@ -240,8 +242,12 @@ public:
             in.pitch += (invertY ? -1.0f : 1.0f) * dy;
             // Kept here too, so the look adds up where Simulate doesn't run every
             // frame (a client whose host runs its movement).
+            float lo = minPitch, hi = maxPitch;
+            if (gameObject)
+                if (auto* view = gameObject->GetComponent<PlayerView>())
+                    view->LookLimits(true, minPitch, maxPitch, lo, hi);
             yaw = in.yaw;
-            pitch = in.pitch = Mathf::Clamp(in.pitch, minPitch, maxPitch);
+            pitch = in.pitch = Mathf::Clamp(in.pitch, lo, hi);
         }
         // Drop the baseline while a bag is open (locked/free mouse space switch) so the
         // camera doesn't snap on the first frame after the panel closes.
@@ -277,7 +283,16 @@ public:
         if (!transform) return;
         yaw = in.yaw;
         // Clamped when it changes (a script may park the view past the limits, as before).
-        if (in.pitch != pitch) pitch = Mathf::Clamp(in.pitch, minPitch, maxPitch);
+        {
+            float lo = minPitch, hi = maxPitch;
+            if (gameObject)
+                if (auto* view = gameObject->GetComponent<PlayerView>())
+                    view->LookLimits(true, minPitch, maxPitch, lo, hi);
+            if (in.pitch != pitch) pitch = Mathf::Clamp(in.pitch, lo, hi);
+            if (gameObject)
+                if (auto* view = gameObject->GetComponent<PlayerView>())
+                    view->ConformPitch(pitch, true, minPitch, maxPitch, dt);
+        }
         m_aim = aimWithRightMouse && in.Held(PlayerInput::AltFire);
         Vec2 axis = in.move;
         Quat flat = Quat::Euler(0, yaw, 0);
@@ -403,7 +418,12 @@ public:
         // The character mesh faces -Z (engine camera/controller convention).
         Quat want;
         bool turn = false;
-        if (faceMode == FaceMode::Camera || m_aim) {
+        bool faceLook = faceMode == FaceMode::Camera || m_aim;
+        // In first person the body has to face the eyes, or a strafe looks out the side of the head.
+        if (gameObject)
+            if (auto* view = gameObject->GetComponent<PlayerView>())
+                if (view->Driving() && view->FirstAmount() > 0.25f) faceLook = true;
+        if (faceLook) {
             want = Quat::Euler(0, yaw, 0);   // mesh -Z aligns with the camera's forward
             turn = true;
         } else if (moving) {
@@ -412,7 +432,11 @@ public:
             turn = true;
         }
         if (turn) {
-            float t = 1.0f - std::exp(-turnSpeed * dt);
+            float ts = turnSpeed;
+            if (gameObject)
+                if (auto* view = gameObject->GetComponent<PlayerView>())
+                    if (view->Driving() && view->FirstAmount() > 0.25f) ts = Mathf::Max(ts, 16.0f);
+            float t = 1.0f - std::exp(-ts * dt);
             transform->localRotation = Quat::Slerp(transform->localRotation, want, t);
         }
 
@@ -435,7 +459,13 @@ public:
             // share settles the camera in behind a forward run, drifts gently on
             // a diagonal, and leaves a strafe alone.
             const float fwdShare = moving ? Mathf::Max(0.0f, Vec3::Dot(dir, fwd)) : 0.0f;
-            if (autoRecenter && moving && !m_aim && m_mouseIdle > recenterDelay && fwdShare > 0.2f) {
+            // First person keeps the look where the player put it. Third person,
+            // including while the toggle is off, still recenters (#399).
+            bool holdRecenter = false;
+            if (gameObject)
+                if (auto* view = gameObject->GetComponent<PlayerView>())
+                    holdRecenter = view->Driving() && view->TargetFirst();
+            if (autoRecenter && !holdRecenter && moving && !m_aim && m_mouseIdle > recenterDelay && fwdShare > 0.2f) {
                 Vec3 f = transform->localRotation * Vec3{0, 0, -1};
                 float bodyYaw = Mathf::Atan2(-f.x, -f.z) * Mathf::Rad2Deg;
                 float d = std::fmod(bodyYaw - yaw + 540.0f, 360.0f) - 180.0f;
@@ -511,72 +541,27 @@ public:
         if (!cam) return;
         if (sc->mainCamera != m_claimedCam) { ClaimMainCamera(sc->mainCamera, "Third Person Controller"); m_claimedCam = sc->mainCamera; }
 
-        // Lower the look target with the body as it crouches / goes prone, so the
-        // camera follows the head down.
-        float drop = StanceValue(m_stanceLevel, 0.0f, crouchHeightDrop, proneHeightDrop);
-        float lt = stanceLerp > 0.0f ? (1.0f - std::exp(-stanceLerp * dt)) : 1.0f;
-        m_stanceDrop += (drop - m_stanceDrop) * lt;
-
-        // The pivot: the head, smoothed (see pivotDampingXZ).
-        Vec3 head = transform->Position();
-        head.y += cameraHeight - m_stanceDrop;
-        const Vec3 target = m_pivot.Step(head, pivotDampingXZ, pivotDampingY, maxPivotLag, dt);
-        // Aim blend (0 = normal orbit, 1 = over-the-shoulder aim).
-        {
-            float at = aimLerp > 0.0f ? (1.0f - std::exp(-aimLerp * dt)) : 1.0f;
-            m_aimT += ((m_aim ? 1.0f : 0.0f) - m_aimT) * at;
+        // The orbit (pivot, aim, spring arm). Player View calls the same function
+        // when a first-person controller needs a third-person camera.
+        float baseDist = distance, baseShoulder = shoulderOffset;
+        bool applyShake = true;
+        if (auto* view = gameObject->GetComponent<PlayerView>(); view && view->Driving()) {
+            if (view->thirdPersonDistance >= 0.0f) baseDist = view->thirdPersonDistance;
+            baseShoulder = view->shoulderOffset;
+            if (view->Blending()) applyShake = false;   // the blend itself doesn't shake
         }
-        const float useDistance = distance + (aimDistance - distance) * m_aimT;
-        const float useShoulder = shoulderOffset + (aimShoulder - shoulderOffset) * m_aimT;
-        m_shake *= 1.0f - EaseFactor(8.0f, dt);
-
-        // The orbit angles: raw, or eased (the shortest way round for yaw) when
-        // orbitSmoothing (or the older Look Smoothing) is on. Position and
-        // rotation both use the same pair.
-        m_smooth.Step(yaw, pitch, orbitSmoothing > 0.0f ? orbitSmoothing : lookSmoothing, dt);
-        const float orbitYaw = m_smooth.Yaw(), orbitPitch = m_smooth.Pitch();
-
-        // Place the camera BEHIND the player (+Z of its facing at yaw 0), lifted by
-        // pitch so a positive pitch looks DOWN at the player from above, around the
-        // pivot with no lag of its own (so it never trails its rotation).
-        float pr = orbitPitch * Mathf::Deg2Rad;
-        Vec3 behind = Quat::Euler(0, orbitYaw, 0) * Vec3{0, 0, 1};   // horizontal, behind the facing
-        float cp = Mathf::Cos(pr);
-        Vec3 offset{behind.x * cp, Mathf::Sin(pr), behind.z * cp};
-        Vec3 camPos = target + offset * useDistance;
-
-        // Over-the-shoulder: shift the camera sideways along its horizontal right.
-        // The rotation stays level (built from yaw/pitch below), so the view is a
-        // parallel offset — no roll.
-        if (useShoulder != 0.0f)
-            camPos = camPos + (Quat::Euler(0, orbitYaw, 0) * Vec3::Right) * useShoulder;
-
-        // Camera collision (spring arm), from the pivot to the camera, after the
-        // smoothing so the view never clips even while the follow eases.
-        if (cameraCollision) {
-            Vec3 d = camPos - target;
-            float dist = d.Magnitude();
-            if (dist > 1e-4f) {
-                Vec3 dn = d * (1.0f / dist);
-                camPos = target + dn * m_arm.Step(*sc, gameObject, target, dn, dist, cameraCollisionRadius,
-                                                  cameraCollisionSkin, cameraCollisionMask,
-                                                  cameraCollisionPullIn, cameraCollisionRecover, dt);
-            }
-        }
-
-        // Never let the camera drop below the player's base (the pivot's, so it
-        // doesn't dip on a step down). minPitch allows looking up from slightly
-        // below, which at close distance could otherwise sink the camera through
-        // the floor — from under a single-sided ground plane the floor vanishes,
-        // and grazing it reads as a glitchy edge.
-        float minY = target.y - cameraHeight;
-        if (camPos.y < minY) camPos.y = minY;
-
-        cam->SetPosition(camPos - Vec3{0, m_shake, 0});
-        // Build the rotation straight from yaw/pitch with NO roll component (z = 0)
-        // so the horizon is always level. Regular third person does NOT move the
-        // camera when leaning — the character's body leans instead (see Update).
-        cam->localRotation = Quat::Euler(-orbitPitch, orbitYaw, 0.0f);
+        const OrbitPose orbit = PlaceThirdPersonOrbit(
+            transform, gameObject, sc, yaw, pitch,
+            baseDist, aimDistance, baseShoulder, aimShoulder,
+            cameraHeight, m_stanceLevel, crouchHeightDrop, proneHeightDrop, stanceLerp,
+            m_stanceDrop, m_aim, aimLerp, m_aimT, m_shake,
+            m_smooth, orbitSmoothing > 0.0f ? orbitSmoothing : lookSmoothing,
+            m_pivot, pivotDampingXZ, pivotDampingY, maxPivotLag,
+            cameraCollision, m_arm, cameraCollisionRadius, cameraCollisionSkin, cameraCollisionMask,
+            cameraCollisionPullIn, cameraCollisionRecover, applyShake, dt);
+        cam->SetPosition(orbit.position);
+        // No roll: the horizon stays level. Leaning turns the body, not this camera.
+        cam->localRotation = orbit.rotation;
         m_fov.Update(sc->mainCamera, m_running && m_lastSpeed > walkSpeed * 0.9f, sprintFovBoost,
                      m_aimT > 0.5f, aimFov, fovLerp, dt);
         // Full Body IK: look where the camera looks (a point well ahead of it).

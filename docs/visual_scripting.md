@@ -335,6 +335,11 @@ Every N Times.
 
 ## Flow Graph editor: working faster
 
+- **Drag a component header, or Position / Rotation / Scale, from the Inspector
+  onto the graph.** Transform, Camera and Light drop a Get Position node.
+  Sprite, Mesh and Text drop Set Color. A rigidbody drops Set Velocity. Audio
+  drops Play Sound. Position, Rotation and Scale drop the matching getter.
+  Anything else drops a Const labelled with that name.
 - **Drag a wire into empty space** and the node palette opens, filtered to nodes
   whose pin type can take that wire (a Number does not offer a Vector3-only
   input). The bar names the type. The search box also matches pin types, so

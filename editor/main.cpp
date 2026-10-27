@@ -346,6 +346,7 @@ int main(int argc, char** argv) {
 #include "VisualScriptEditor.hpp"  // node-based visual script editor (okay::editor::vsed) — global scope
 #include "EditorWidgets.hpp"       // accent, category tints, toolbar icons, icon/search buttons
 #include "ConsolePanel.hpp"        // ConsoleLog + the Console panel
+#include "SceneManagerPanel.hpp"   // Scene Manager window + build-list bridge
 #include "UIPreviewPainter.hpp"    // the engine UI renderer drawn into ImGui (UI preview)
 #include "okay/UI/UIRenderer.hpp"
 #include "MainShared.hpp"          // main.cpp functions the split-out panels call
@@ -1014,7 +1015,7 @@ static SDL_Texture* GetPrefabThumb(const std::string& path) {
 // Rendered thumbnail for a .okayscene: load the whole scene into a throwaway
 // Scene, frame ALL of its objects, snapshot once. Cached until the file
 // changes; oversized scene files are skipped rather than stalling the browser.
-static SDL_Texture* GetSceneThumb(const std::string& path) {
+SDL_Texture* GetSceneThumb(const std::string& path) {
     struct Entry { SDL_Texture* tex; std::filesystem::file_time_type mtime; };
     static std::unordered_map<std::string, Entry> cache;
     std::error_code ec;
@@ -1117,6 +1118,7 @@ static void SetupHumanoidIK(EditorState& ed, GameObject* root) {
     int legs = foot->DetectHumanoidBones(ed.scene(), root);
     foot->orient = true; foot->alignToGround = true; foot->footLock = true;
     foot->adjustPelvis = !foot->pelvisName.empty();
+    foot->hipLimit = IKJointLimit::Hip(); foot->kneeLimit = IKJointLimit::Knee();
     auto* fb = root->GetComponent<FullBodyIK>();
     if (!fb) fb = root->AddComponent<FullBodyIK>();
     int mapped = fb->MapBones(true);
@@ -4218,7 +4220,7 @@ static const DockPanelDef* DockPanels(int& n) {
         {"Console",       "Console###Console",         &g_showConsole,       "Panels", PI_Console},
         {"Game",          "Game",                      &g_showGame,          "Panels", PI_Game},
         {"Services",      "Services",                  &g_showServices,      "Panels", PI_Services},
-        {"Scenes",        "Scenes",                    &g_showScenes,        "Panels", PI_Scenes},
+        {"Scene Manager", "Scene Manager###Scenes",    &g_showScenes,        "Panels", PI_Scenes},
         {"Save Manager",  "Save Manager",              &g_showSaveManager,   "Panels", PI_Save},
         {"Variables",     "Variables",                 &g_showVarWatch,      "Panels", PI_Variables},
         {"History",       "History",                   &g_showHistory,       "Panels", PI_History},
@@ -5396,6 +5398,7 @@ static void StopModelScenePreview(EditorState& ed);
 static void StopLivePreview(EditorState& ed);
 
 void DrawMenuAndToolbar(EditorState& ed) {
+    SceneBuildSync(ed);
     // play tint: while the game runs, darken the editor chrome a
     // touch so edit vs play is unmistakable at a glance. Only the custom dark
     // theme (its palette constants are known); reset exactly on stop.
@@ -5495,7 +5498,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             ImGui::MenuItem("Game", nullptr, &g_showGame);
             ImGui::Separator();
             ImGui::MenuItem("Services", nullptr, &g_showServices);
-            ImGui::MenuItem("Scenes", nullptr, &g_showScenes);
+            ImGui::MenuItem("Scene Manager", nullptr, &g_showScenes);
             ImGui::MenuItem("Save Manager", nullptr, &g_showSaveManager);
             ImGui::MenuItem("Variables (watch)", nullptr, &g_showVarWatch);
             ImGui::Separator();
@@ -9946,73 +9949,20 @@ void DrawSceneSettings(EditorState& ed) {
     ImGui::End();
 }
 
-// The Scene Manager panel: the project's scenes.
-// Lists the .okayscene files in the project, opens them, and manages a build
-// order with a startup scene the player loads first. The build list is fed into
-// the engine SceneManager so scripts can load_scene_index / load_next_scene.
-void DrawScenes(EditorState& ed) {
-    if (!ImGui::Begin("Scenes", &g_showScenes)) { ImGui::End(); return; }
-    namespace fs = std::filesystem;
-    std::error_code ec;
-    fs::path dir = ed.projectDir().empty() ? fs::absolute(".", ec)
-                                           : fs::path(ed.projectDir()) / "Assets";
-    ImGui::TextDisabled("%s", dir.string().c_str());
-
-    // Rescan the folder for scene files (cheap; refresh button forces it).
-    static std::vector<std::string> scenes;
-    static std::string lastDir;
-    auto rescan = [&]() {
-        scenes.clear();
-        if (fs::exists(dir, ec))
-            for (auto& e : fs::recursive_directory_iterator(dir, ec)) {
-                if (e.is_regular_file() && e.path().extension() == ".okayscene")
-                    scenes.push_back(e.path().string());
-            }
-        std::sort(scenes.begin(), scenes.end());
-        // Mirror into the engine SceneManager build list.
-        SceneManager::ClearScenes();
-        for (auto& s : scenes) SceneManager::AddScene(s);
-        lastDir = dir.string();
-    };
-    if (lastDir != dir.string()) rescan();
-    if (ImGui::Button("Refresh")) rescan();
-    ImGui::SameLine();
-    if (ImGui::Button("Save Current As...")) g_showSaveAs = true;
-    ImGui::Separator();
-
-    if (scenes.empty()) ImGui::TextDisabled("No .okayscene files in the project yet.");
-    for (int i = 0; i < (int)scenes.size(); ++i) {
-        const std::string& path = scenes[i];
-        std::string name = fs::path(path).stem().string();
-        bool isCurrent = (path == ed.path());
-        ImGui::PushID(i);
-        ImGui::Text("%d", i);                 // build index
-        ImGui::SameLine();
-        // Rendered scene preview (same cached snapshot the Project browser uses).
-        const float th = 34.0f;
-        if (SDL_Texture* stx = GetSceneThumb(path)) {
-            ImGui::Image((ImTextureID)stx, ImVec2(th, th));
-            ImGui::SameLine();
-        }
-        if (ImGui::Selectable(name.c_str(), isCurrent,
-                              ImGuiSelectableFlags_AllowDoubleClick, ImVec2(0, th))) {
-            if (ImGui::IsMouseDoubleClicked(0)) {
-                std::string err;
-                if (ed.Load(path, &err)) ConsoleLog("Opened " + name);
-                else ConsoleLog("Open failed: " + err);
-            }
-        }
-        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 70);
-        if (ImGui::SmallButton("Open")) {
-            std::string err;
-            if (ed.Load(path, &err)) ConsoleLog("Opened " + name);
-            else ConsoleLog("Open failed: " + err);
-        }
-        ImGui::PopID();
-    }
-    ImGui::Separator();
-    ImGui::TextDisabled("double-click to open; the build order is the index shown");
-    ImGui::End();
+// Live "Scenes In Build" list. The Scene Manager window edits this, and Build
+// Settings reads the same vector, so both stay on one order and one start scene.
+std::vector<SceneBuildEntry> SceneBuildSnapshot() {
+    std::vector<SceneBuildEntry> out;
+    out.reserve(g_build.scenes.size());
+    for (const BuildScene& s : g_build.scenes) out.push_back(SceneBuildEntry{s.path, s.on});
+    return out;
+}
+void SceneBuildApply(EditorState&, const std::vector<SceneBuildEntry>& entries) {
+    g_build.scenes.clear();
+    g_build.scenes.reserve(entries.size());
+    for (const SceneBuildEntry& e : entries) g_build.scenes.push_back(BuildScene{e.path, e.on});
+    if (g_buildProfileSel >= 0 && g_buildProfileSel < (int)g_buildProfiles.size())
+        g_buildProfiles[g_buildProfileSel].settings.scenes = g_build.scenes;
 }
 
 // A dedicated code/graph editor panel (separate from the Inspector), with
@@ -29201,8 +29151,17 @@ void DrawInspector(EditorState& ed) {
                 ImGui::Checkbox("Plant Down##fik", &f->plantDown);
                 ImGui::Checkbox("Align To Slope##fik", &f->alignToGround); ImGui::SameLine();
                 ImGui::Checkbox("Orient Bones##fik", &f->orient);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also rotate the thigh/shin bones to follow the planted knee/foot,\nso leg meshes bend with the joints (not just the joints moving).");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Joints that aren't parented in a chain: also rotate the thigh/shin\nbones toward the moved knee/foot. A parented leg always turns.");
+                if (f->alignToGround) {
+                    float ul[3] = {f->footUpAxis.x, f->footUpAxis.y, f->footUpAxis.z};
+                    float ur[3] = {f->footUpAxisR.x, f->footUpAxisR.y, f->footUpAxisR.z};
+                    if (ImGui::DragFloat3("Sole Up L##fik", ul, 0.05f)) { f->footUpAxis = {ul[0], ul[1], ul[2]}; ed.dirty = true; }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The foot bone's local sole normal. Left at (0,1,0), it's read\nfrom that foot's own rest pose, so mirrored rigs just work.");
+                    if (ImGui::DragFloat3("Sole Up R##fik", ur, 0.05f)) { f->footUpAxisR = {ur[0], ur[1], ur[2]}; ed.dirty = true; }
+                }
                 ImGui::DragFloat("Max Knee Bend##fik", &f->maxKneeBend, 1.0f, 0.0f, 180.0f);
+                if (IKJointLimitUI("Hip limit##fik", f->hipLimit)) ed.dirty = true;
+                if (IKJointLimitUI("Knee limit##fik", f->kneeLimit)) ed.dirty = true;
                 ImGui::DragFloat("Smoothing##fik", &f->smoothing, 0.5f, 0.0f, 40.0f);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast corrections ease in/out (per second).\nStops feet popping at step edges. 0 = instant.");
                 if (ImGui::SmallButton("Remove##fik")) toRemove = f;
@@ -42484,7 +42443,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.Stats"); if (g_showStats)     DrawStats(ed); }
         { OKAY_PROFILE("UI.SceneSettings"); if (g_showSceneSettings) DrawSceneSettings(ed); }
         { OKAY_PROFILE("UI.SaveManager"); if (g_showSaveManager) DrawSaveManager(ed); }
-        { OKAY_PROFILE("UI.Scenes"); if (g_showScenes)    DrawScenes(ed); }
+        { OKAY_PROFILE("UI.Scenes"); if (g_showScenes)    DrawSceneManager(ed); }
         DrawPanelTabsExtras();   // tab icons, overflow lists, side tabs, Ctrl+Tab, right-click tab menu
         {   // UI Safe Area containers keep clear of the emulated phone's notch / home bar
             auto& f = okay::UISafeInsets();

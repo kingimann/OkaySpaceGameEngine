@@ -13,6 +13,8 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputActions.hpp"
+#include "okay/Input/InputArbiter.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Net/PlayerInput.hpp"
 #include "okay/Core/Game.hpp"
@@ -262,7 +264,8 @@ public:
         // Drop the baseline while a bag is open (locked/free mouse space switch) so the
         // camera doesn't snap on the first frame after the panel closes.
         m_lastMouse = mp; m_haveMouse = !uiBlocked;
-        float wheel = uiBlocked ? 0.0f : Input::MouseWheel();
+        float wheel = InputArbiter::WheelFor(gameObject ? gameObject->scene() : nullptr) == WheelOwner::Gameplay
+                    ? Input::MouseWheel() : 0.0f;
         if (wheel != 0.0f) distance = Mathf::Clamp(distance - wheel * zoomSpeed, minDistance, maxDistance);
         if (aim) in.held |= PlayerInput::AltFire;
 
@@ -272,6 +275,10 @@ public:
         if (Mathf::Abs(pad.x) + Mathf::Abs(pad.y) > 0.15f) in.move = pad;   // left stick overrides
         auto key = [&](char k, std::uint32_t bit) {
             if (!k) return;
+            const bool lean = bit == PlayerInput::LeanLeft || bit == PlayerInput::LeanRight;
+            if (lean && (InputActions::BlocksGameplay()
+                         || InputArbiter::SuppressLean(gameObject ? gameObject->scene() : nullptr, k)))
+                return;
             if (Input::GetKey(k))     in.held |= bit;
             if (Input::GetKeyDown(k)) in.pressed |= bit;
         };

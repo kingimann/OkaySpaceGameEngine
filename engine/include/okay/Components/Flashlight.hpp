@@ -6,6 +6,8 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Light.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputArbiter.hpp"
+#include "okay/Input/InputActions.hpp"
 #include <vector>
 
 namespace okay {
@@ -30,7 +32,9 @@ public:
 
     void Update(float) override {
         if (!m_light) { EnsureLight(); }
-        if (toggleKey && Input::GetKeyDown(toggleKey)) { on = !on; Sync(); }
+        Scene* sc = GetScene();
+        const bool taken = toggleKey && InputArbiter::KeyOwnedByWorld(sc, toggleKey);
+        if (toggleKey && !taken && !InputActions::BlocksAll() && Input::GetKeyDown(toggleKey)) { on = !on; Sync(); }
         Sync();
     }
 

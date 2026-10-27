@@ -30819,6 +30819,18 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##ls")) toRemove = ls;
         }
     }
+    if (auto* ia = dynamic_cast<Interactor*>(curComp)) {
+        if (CompHeader("Interactor (use key)", ia, &toRemove)) {
+            ImGui::TextDisabled("E (or the key below) uses the nearest chest, bench, pickup, or aimed button.");
+            char ik[2] = {ia->key, 0};
+            if (ImGui::InputText("Use Key##ia", ik, sizeof(ik))) { ia->key = ik[0]; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Blank keeps E. This is the shared use key, not a second copy of each chest's own key.");
+            if (ImGui::DragInt("Gamepad Button##ia", &ia->padButton, 0.1f, -2, 11)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("-2 = X (default). -1 = no gamepad button. 0=A 1=B 2=X 3=Y.");
+            const std::string clash = okay::InputArbiter::KeyConflictSummary(ia->gameObject);
+            if (!clash.empty()) ImGui::TextColored(ImVec4(1, 0.75f, 0.3f, 1), "%s", clash.c_str());
+        }
+    }
     if (auto* ui = dynamic_cast<InventoryUI*>(curComp)) {
         if (CompHeader("Inventory UI (Minecraft-style)", ui, &toRemove)) {
             ImGui::TextDisabled("Hotbar + backpack drawn from a sibling/owner Inventory.");
@@ -30833,9 +30845,15 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Slot Gap##iu", &ui->slotGap, 0.25f, 0.0f, 32.0f)) ed.dirty = true;
             char tk[2] = {ui->toggleKey, 0};
             if (ImGui::InputText("Open Key##iu", tk, sizeof(tk))) { if (tk[0]) ui->toggleKey = tk[0]; ed.dirty = true; }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Key to open/close the backpack (default E).");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Key to open/close the backpack (default E). Near a chest, that key uses the chest instead.");
+            {
+                const std::string clash = okay::InputArbiter::KeyConflictSummary(ui->gameObject);
+                if (!clash.empty()) ImGui::TextColored(ImVec4(1, 0.75f, 0.3f, 1), "%s", clash.c_str());
+            }
             if (ImGui::Checkbox("1-9 select##iu", &ui->selectHotkeys)) ed.dirty = true; ImGui::SameLine();
-            if (ImGui::Checkbox("Wheel select##iu", &ui->scrollSelect)) ed.dirty = true; ImGui::SameLine();
+            if (ImGui::Checkbox("Wheel select##iu", &ui->scrollSelect)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("While the backpack is closed, the wheel changes the hotbar slot and the camera does not zoom. Turn this off to give the wheel back to the camera.");
+            ImGui::SameLine();
             if (ImGui::Checkbox("Drag items##iu", &ui->dragItems)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drag stacks between slots while the backpack is open (swap / merge).");
             if (ImGui::Checkbox("Darken when open##iu", &ui->darkenWhenOpen)) ed.dirty = true;
@@ -35672,6 +35690,7 @@ void DrawInspector(EditorState& ed) {
             }
             if (item(!go->GetComponent<LootSource>(), "Loot Source")) { go->AddComponent<LootSource>(); ed.dirty = true; }
             if (item(!go->GetComponent<Equipment>(), "Equipment")) { go->AddComponent<Equipment>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Interactor>(), "Interactor (use key)")) { go->AddComponent<Interactor>(); ed.dirty = true; }
             if (item(!go->GetComponent<ChestInventory>(), "Chest / Container")) {
                 go->AddComponent<ChestInventory>();
                 if (!go->GetComponent<Inventory>()) {        // chest needs an Inventory for its loot
@@ -36147,6 +36166,16 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (g_uiGuideY >= 0.0f)
             dl->AddLine(ImVec2(canvasPos.x, canvasPos.y + g_uiGuideY),
                         ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + g_uiGuideY), kSnapBlue, 1.5f);
+    }
+    // "E — Open Chest" in the game view when something nearby takes the use key.
+    if (ed.isPlaying()) {
+        const auto choice = okay::InputArbiter::BestInteract(&ed.scene());
+        if (!choice.prompt.empty() && !okay::InputActions::BlocksAll() && !okay::Input::UICaptured()) {
+            const ImVec2 sz = ImGui::CalcTextSize(choice.prompt.c_str());
+            dl->AddText(ImVec2(canvasPos.x + canvasSize.x * 0.5f - sz.x * 0.5f,
+                               canvasPos.y + canvasSize.y * 0.62f),
+                        IM_COL32(240, 240, 245, 255), choice.prompt.c_str());
+        }
     }
     // Minecraft-style inventory hotbar / backpack preview (mirrors the player).
     for (const auto& up : objs) {
@@ -42774,6 +42803,11 @@ int main(int argc, char** argv) {
                     if (auto* mm = up->GetComponent<okay::Minimap>()) if (mm->fullscreen) { invModal = true; break; }
                 }
             okay::Input::SetUICaptured(invModal);
+            okay::InputContext ctx = okay::InputContext::Gameplay;
+            if (okay::Game::Paused()) ctx = okay::InputContext::Paused;
+            else if (okay::UIInputField::AnyFocused()) ctx = okay::InputContext::TextInput;
+            else if (invModal) ctx = okay::InputContext::InventoryOpen;
+            okay::InputActions::SetContext(ctx);
         }
         // Pause freezes the sim (Step advances it). A PauseMenu pausing the game
         // (Game::Paused) also freezes gameplay — tick with dt=0 so the menu's UI

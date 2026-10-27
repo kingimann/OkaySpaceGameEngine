@@ -16,6 +16,7 @@
 #include "okay/Physics/Physics3D.hpp"        // camera-ray picking for 3D mouse events
 #include "okay/Physics/ColliderFit.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputArbiter.hpp"
 #include "okay/Render/Renderer.hpp"
 #include "okay/Core/Profiler.hpp"
 #include "okay/Net/NetTransport.hpp"   // per-frame pump for non-native transports
@@ -131,6 +132,7 @@ void Scene::Start() {
 }
 
 void Scene::Update(float deltaTime) {
+    InputArbiter::BeginFrame(this);
     ActionList::UseScene(this);
     FlushPending(); // adopt anything created since last frame
     // Drop any components removed last frame (their slots were nulled).

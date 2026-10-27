@@ -12,6 +12,8 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputActions.hpp"
+#include "okay/Input/InputArbiter.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Net/PlayerInput.hpp"
 #include "okay/Core/Game.hpp"
@@ -254,6 +256,10 @@ public:
         in.move = uiBlocked ? Vec2{0, 0} : Input::AxisWASD();   // freeze while a bag is open
         auto key = [&](char k, std::uint32_t bit) {
             if (!k) return;
+            const bool lean = bit == PlayerInput::LeanLeft || bit == PlayerInput::LeanRight;
+            if (lean && (InputActions::BlocksGameplay()
+                         || InputArbiter::SuppressLean(gameObject ? gameObject->scene() : nullptr, k)))
+                return;
             if (Input::GetKey(k))     in.held |= bit;
             if (Input::GetKeyDown(k)) in.pressed |= bit;
         };

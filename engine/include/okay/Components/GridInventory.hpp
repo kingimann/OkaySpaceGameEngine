@@ -1,6 +1,7 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputActions.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
 #include <cmath>
 #include <string>
@@ -211,7 +212,7 @@ public:
     }
 
     void Update(float) override {
-        if (toggleKey && Input::GetKeyDown(toggleKey)) open = !open;
+        if (toggleKey && InputActions::Allows(GameAction::InventoryToggle) && Input::GetKeyDown(toggleKey)) open = !open;
     }
 
 private:

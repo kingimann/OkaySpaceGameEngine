@@ -1742,6 +1742,13 @@ int main(int argc, char** argv) {
             if (auto* mm = up->GetComponent<Minimap>()) { if (mm->fullscreen) invModal = true; }
         }
         Input::SetUICaptured(invModal);   // controllers pause look/move while a bag is open
+        {
+            okay::InputContext ctx = okay::InputContext::Gameplay;
+            if (okay::Game::Paused()) ctx = okay::InputContext::Paused;
+            else if (okay::UIInputField::AnyFocused()) ctx = okay::InputContext::TextInput;
+            else if (invModal) ctx = okay::InputContext::InventoryOpen;
+            okay::InputActions::SetContext(ctx);
+        }
 
         // Apply the game's requested cursor state.
         static Vec2 s_virtualMouse{0, 0};
@@ -2365,6 +2372,17 @@ int main(int argc, char** argv) {
         OkayUI::EndFrame(renderer);
         SDL_StartTextInput();   // keep text flowing for OkayUI text fields
 #endif
+        // "E — Open Chest" when something nearby will take the use key.
+        {
+            const auto choice = okay::InputArbiter::BestInteract(&scene);
+            if (!choice.prompt.empty() && !invModal && !okay::InputActions::BlocksAll()) {
+                int pw = 0, ph = 0; SDL_GetRendererOutputSize(renderer, &pw, &ph);
+                const float px = 2.0f;
+                const float tw = UITextW(choice.prompt, px);
+                DrawText(renderer, choice.prompt, pw * 0.5f - tw * 0.5f, ph * 0.62f, px,
+                         SDL_Color{240, 240, 245, 255});
+            }
+        }
         // Minecraft-style inventory hotbar / backpack (under the loading screen).
         for (const auto& up : scene.Objects()) {
             auto* ui = up ? up->GetComponent<InventoryUI>() : nullptr;

@@ -5,6 +5,8 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/NPCController.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputActions.hpp"
+#include "okay/Input/InputArbiter.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include <cmath>
 
@@ -28,8 +30,12 @@ public:
     void Update(float dt) override {
         if (m_timer > 0.0f) m_timer -= dt;
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: don't read local input
-        bool pressed = (attackKey && Input::GetKeyDown(attackKey)) ||
-                       (useMouse && Input::GetMouseButtonDown(0));
+        Scene* sc = gameObject ? gameObject->scene() : nullptr;
+        const bool blocked = InputActions::BlocksGameplay() || InputArbiter::BagOpen(sc);
+        const bool key = attackKey && !blocked && Input::GetKeyDown(attackKey)
+                      && !InputArbiter::KeyOwnedByWorld(sc, attackKey);
+        const bool mouse = useMouse && !blocked && Input::GetMouseButtonDown(0);
+        bool pressed = key || mouse;
         if (!pressed || m_timer > 0.0f || !transform) return;
         m_timer = cooldown;
         Swing();

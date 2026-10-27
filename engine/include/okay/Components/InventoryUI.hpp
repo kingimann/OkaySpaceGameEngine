@@ -8,6 +8,8 @@
 #include "okay/Components/ItemPickup.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputActions.hpp"
+#include "okay/Input/InputArbiter.hpp"
 #include "okay/Render/Color.hpp"
 #include <string>
 #include <utility>
@@ -34,6 +36,7 @@ public:
     bool  scrollSelect  = true;   ///< mouse wheel cycles the selection
     bool  dragItems     = true;   ///< drag items between slots while the backpack is open
     int   dragIndex     = -1;     ///< slot being dragged (runtime), or -1
+    float scroll        = 0.0f;   ///< backpack scroll, pixels (runtime, not saved)
     int   dragAmount    = 0;      ///< how many are lifted off the source (0 = whole stack)
     int   equipDrag     = -1;     ///< Equipment slot being dragged (runtime), or -1
 
@@ -299,23 +302,51 @@ public:
     void ApplyDrag(int from, int to) { Inventory* inv = Inv(); InventoryOps::Move(inv, from, inv, to, dragAmount, SlotCount()); }
 
     void Update(float) override {
-        if (selectHotkeys) {
+        Scene* s = gameObject ? gameObject->scene() : nullptr;
+        const bool allow = InputActions::Allows(GameAction::InventoryToggle);
+        if (allow && selectHotkeys) {
             for (int k = 0; k < hotbarSlots && k < 9; ++k)
                 if (Input::GetKeyDown((char)('1' + k))) selected = k;
         }
-        if (scrollSelect && hotbarSlots > 0) {
+        const WheelOwner wheel = InputArbiter::WheelFor(s);
+        if (allow && scrollSelect && !open && wheel == WheelOwner::Hotbar && hotbarSlots > 0) {
             float w = Input::MouseWheel();
-            if (w > 0.5f)      selected = (selected - 1 + hotbarSlots) % hotbarSlots;
+            if (w > 0.5f)       selected = (selected - 1 + hotbarSlots) % hotbarSlots;
             else if (w < -0.5f) selected = (selected + 1) % hotbarSlots;
         }
-        if (toggleKey && Input::GetKeyDown(toggleKey)) {
+        if (allow && open && wheel == WheelOwner::Bag) {
+            const float w = Input::MouseWheel();
+            if (w != 0.0f) scroll = std::max(0.0f, scroll - w * 36.0f);
+        }
+        // Gamepad: Y opens the bag. While it is open, LB/RB and d-pad left/right
+        // move the selection and B drops one of the selected stack.
+        if (allow && InputActions::Pressed(GameAction::InventoryToggle, 0)) {
             bool wasOpen = open;
             open = !open;
-            if (wasOpen && !open && sortOnClose) Sort();   // auto-tidy on close
+            if (!open) scroll = 0.0f;
+            if (wasOpen && !open && sortOnClose) Sort();
         }
-        if (sortKey && Input::GetKeyDown(sortKey)) Sort();
-        if (dropKey && Input::GetKeyDown(dropKey)) DropSelectedItem();
-        if ((useKey && Input::GetKeyDown(useKey)) || (clickToUse && !open && Input::GetMouseButtonDown(0))) UseSelected();
+        if (allow && open && hotbarSlots > 0) {
+            const bool prev = Input::GetGamepadButtonDown(InputActions::Default(GameAction::HotbarPrev).pad)
+                           || Input::GetGamepadButtonDown(10);
+            const bool next = Input::GetGamepadButtonDown(InputActions::Default(GameAction::HotbarNext).pad)
+                           || Input::GetGamepadButtonDown(11);
+            if (prev) selected = (selected - 1 + hotbarSlots) % hotbarSlots;
+            if (next) selected = (selected + 1) % hotbarSlots;
+        }
+        if (allow && toggleKey && Input::GetKeyDown(toggleKey)) {
+            const bool worldOwns = toggleKey == InputArbiter::SharedInteractKey(s)
+                                && InputArbiter::BestInteract(s).kind != InteractChoice::Kind::None;
+            if (!worldOwns) {
+                bool wasOpen = open;
+                open = !open;
+                if (!open) scroll = 0.0f;
+                if (wasOpen && !open && sortOnClose) Sort();   // auto-tidy on close
+            }
+        }
+        if (allow && sortKey && Input::GetKeyDown(sortKey)) Sort();
+        if (allow && (InputActions::Pressed(GameAction::Drop, dropKey))) DropSelectedItem();
+        if (allow && ((useKey && Input::GetKeyDown(useKey)) || (clickToUse && !open && Input::GetMouseButtonDown(0) && !Input::UICaptured()))) UseSelected();
         if (selected < 0) selected = 0;
         if (selected >= hotbarSlots) selected = hotbarSlots - 1;
     }

@@ -15,6 +15,8 @@
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/UIAnchor.hpp"     // UICanvas::Width/Height (viewport)
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputActions.hpp"
+#include "okay/Input/InputArbiter.hpp"
 #include "okay/Input/Cursor.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Core/Game.hpp"
@@ -155,7 +157,7 @@ public:
         if (!transform || !gameObject) return;
         if (Game::Paused()) return;
         if (!IsLocallyControlled(gameObject)) return;
-        const bool uiBlocked = Input::UICaptured();
+        const bool uiBlocked = InputActions::BlocksGameplay() || InputArbiter::BagOpen(gameObject ? gameObject->scene() : nullptr);
 
         // ---- Move input ----
         Vec2 axis = uiBlocked ? Vec2{0, 0} : Input::AxisWASD();
@@ -279,7 +281,7 @@ public:
         if (!IsLocallyControlled(gameObject)) return;
         Transform* cam = sc->mainCamera->transform;
 
-        if (wheelZoom && !Input::UICaptured()) {
+        if (wheelZoom && InputArbiter::WheelFor(gameObject ? gameObject->scene() : nullptr) == WheelOwner::Gameplay) {
             float w = Input::MouseWheel();
             if (w != 0.0f) cameraDistance = Mathf::Clamp(cameraDistance - w * 1.2f, minDistance, maxDistance);
         }

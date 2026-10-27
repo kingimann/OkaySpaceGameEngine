@@ -6,6 +6,8 @@
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/UIAnchor.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputActions.hpp"
+#include "okay/Input/InputArbiter.hpp"
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -32,7 +34,11 @@ public:
     void Update(float) override {
         auto* craft = gameObject ? gameObject->GetComponent<Crafting>() : nullptr;
         if (Signature(craft) != m_signature) Rebuild();
-        if (toggleKey && Input::GetKeyDown(toggleKey)) { open = !open; ApplyVisible(); }
+        if (toggleKey && InputActions::Allows(GameAction::CraftToggle) && Input::GetKeyDown(toggleKey)
+            && !(gameObject && gameObject->scene() && toggleKey == InputArbiter::SharedInteractKey(gameObject->scene())
+                 && InputArbiter::BestInteract(gameObject->scene()).kind != InteractChoice::Kind::None)) {
+            open = !open; ApplyVisible();
+        }
         if (craft)
             for (int i = 0; i < (int)m_buttons.size(); ++i)
                 if (m_buttons[i])

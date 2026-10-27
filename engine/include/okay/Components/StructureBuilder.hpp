@@ -11,6 +11,8 @@
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputActions.hpp"
+#include "okay/Input/InputArbiter.hpp"
 #include "okay/Render/Mesh.hpp"
 #include "okay/Math/Quat.hpp"
 #include <cmath>
@@ -91,7 +93,8 @@ public:
 
         if (showCrosshair && !crosshairChecked_) { crosshairChecked_ = true; EnsureCrosshair(*s); }
 
-        if (pieceHotkeys) {
+        const bool blockWorld = InputActions::BlocksGameplay() || InputArbiter::BagOpen(s);
+        if (!blockWorld && pieceHotkeys && !InputArbiter::HotbarOwnsNumberKeys(s)) {
             if (Input::GetKeyDown('1')) piece = Piece::Foundation;
             if (Input::GetKeyDown('2')) piece = Piece::FoundationTri;
             if (Input::GetKeyDown('3')) piece = Piece::Wall;
@@ -101,16 +104,18 @@ public:
             if (Input::GetKeyDown('7')) piece = Piece::Pillar;
             if (Input::GetKeyDown('8')) piece = Piece::Ramp;
         }
-        if (rotateKey  && Input::GetKeyDown(rotateKey))  rotSteps = (rotSteps + 1) & 3;
-        if (upgradeKey && Input::GetKeyDown(upgradeKey)) Upgrade(*s, origin, dir, r);
-        if (repairKey  && Input::GetKeyDown(repairKey))  Repair(*s, origin, dir, r);
+        if (!blockWorld && rotateKey && Input::GetKeyDown(rotateKey) && !InputArbiter::GridDragOwnsRotate(s, rotateKey))
+            rotSteps = (rotSteps + 1) & 3;
+        if (!blockWorld && upgradeKey && Input::GetKeyDown(upgradeKey)) Upgrade(*s, origin, dir, r);
+        if (!blockWorld && repairKey && Input::GetKeyDown(repairKey) && !InputArbiter::KeyOwnedByWorld(s, repairKey))
+            Repair(*s, origin, dir, r);
 
         Placement p = Resolve(*s, origin, dir, r);
         if (showPreview) UpdatePreview(*s, p);
         else if (preview_) preview_->active = false;
 
-        if (Input::GetMouseButtonDown(placeButton) && p.valid) PlacePiece(*s, p);
-        else if (Input::GetMouseButtonDown(removeButton))      Demolish(*s, origin, dir, r);
+        if (!blockWorld && Input::GetMouseButtonDown(placeButton) && p.valid) PlacePiece(*s, p);
+        else if (!blockWorld && Input::GetMouseButtonDown(removeButton))      Demolish(*s, origin, dir, r);
     }
 
     /// Resolve where the current piece snaps along a ray (camera-independent → testable).

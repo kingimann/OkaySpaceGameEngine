@@ -12,6 +12,7 @@
 #include "okay/Physics/PlayerCollision.hpp"
 #include "okay/Components/UIAnchor.hpp"     // UICanvas::Width/Height (viewport)
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputArbiter.hpp"
 #include "okay/Input/Cursor.hpp"
 #include "okay/AI/NavGrid3D.hpp"
 #include "okay/Net/NetOwnership.hpp"
@@ -188,7 +189,8 @@ public:
         } else m_haveDrag = false;
         if (rotateLeftKey  && Input::GetKey(rotateLeftKey))  cameraYaw -= keyRotateSpeed * dt;
         if (rotateRightKey && Input::GetKey(rotateRightKey)) cameraYaw += keyRotateSpeed * dt;
-        float wheel = Input::MouseWheel();
+        float wheel = InputArbiter::WheelFor(gameObject ? gameObject->scene() : nullptr) == WheelOwner::Gameplay
+                    ? Input::MouseWheel() : 0.0f;
         if (wheel != 0.0f) cameraDistance = Mathf::Clamp(cameraDistance - wheel, minDistance, maxDistance);
         cameraPitch = Mathf::Clamp(cameraPitch, minPitch, maxPitch);
 

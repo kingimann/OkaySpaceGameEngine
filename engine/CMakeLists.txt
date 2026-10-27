@@ -6,6 +6,7 @@ add_library(okay_engine
     src/Core/Prefs.cpp
     src/Core/DataAsset.cpp
     src/Input/Input.cpp
+    src/Input/InputArbiter.cpp
     src/Render/ConsoleRenderer.cpp
     src/Render/GLRenderer.cpp
     src/Render/D3D11Renderer.cpp

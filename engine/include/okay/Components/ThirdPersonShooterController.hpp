@@ -13,6 +13,8 @@
 #include "okay/Components/StanceControl.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputActions.hpp"
+#include "okay/Input/InputArbiter.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Input/Cursor.hpp"
@@ -119,7 +121,7 @@ public:
         // Mouse-right orbits right, mouse-up looks up — same convention as the
         // first/third-person controllers (yaw decreases as the mouse moves right).
         Vec2 mp = Input::MousePosition();
-        bool uiBlocked = Input::UICaptured();        // a modal UI (open inventory/chest) pauses look
+        bool uiBlocked = InputActions::BlocksGameplay() || InputArbiter::BagOpen(gameObject ? gameObject->scene() : nullptr);
         if (m_haveMouse && !uiBlocked) {
             yaw   -= (mp.x - m_lastMouse.x) * mouseSensitivity;
             pitch += (invertY ? -1.0f : 1.0f) * (mp.y - m_lastMouse.y) * mouseSensitivity;
@@ -212,8 +214,11 @@ public:
         // Lean (Q/E) eases toward the held direction.
         {
             float target = 0.0f;
-            if (leanLeftKey  && Input::GetKey(leanLeftKey))  target -= 1.0f;
-            if (leanRightKey && Input::GetKey(leanRightKey)) target += 1.0f;
+            Scene* scn = gameObject ? gameObject->scene() : nullptr;
+            if (leanLeftKey && Input::GetKey(leanLeftKey) && !InputArbiter::SuppressLean(scn, leanLeftKey))
+                target -= 1.0f;
+            if (leanRightKey && Input::GetKey(leanRightKey) && !InputArbiter::SuppressLean(scn, leanRightKey))
+                target += 1.0f;
             float lt = leanSpeed > 0.0f ? (1.0f - std::exp(-leanSpeed * dt)) : 1.0f;
             m_lean += (target - m_lean) * lt;
         }

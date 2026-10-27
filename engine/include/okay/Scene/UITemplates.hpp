@@ -18,6 +18,14 @@
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIToggle.hpp"
 #include "okay/Components/UIDropdown.hpp"
+#include "okay/Components/UIInputField.hpp"
+#include "okay/Components/UITheme.hpp"
+#include "okay/Components/UIImage.hpp"
+#include "okay/Components/UIScrollView.hpp"
+#include "okay/Components/UITooltip.hpp"
+#include "okay/Components/Minimap.hpp"
+#include "okay/Components/Crosshair.hpp"
+#include "okay/Graphics/Image.hpp"
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/UIAnimation.hpp"
@@ -30,6 +38,7 @@
 #include "okay/Components/UIAnchor.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Scene/UILayoutTools.hpp"   // AvoidOverlap: HUD pieces don't land on each other
+#include "okay/Graphics/Image.hpp"
 #include <cctype>
 #include <string>
 
@@ -809,6 +818,294 @@ inline GameObject* AddUINotify(Scene& scene) {
     bind(root, "var closed = 0; function OnModalClose() { closed = 1; }");
 
     md->SetStyleCard(true);   // paint the card now, before the first Update
+    return root;
+}
+
+// A white 9-slice frame and a plus icon, so the showcase can show image frames
+// and icon+label buttons without shipping a texture.
+inline void WriteShowcaseTextures() {
+    Image slice(48, 48);
+    for (int y = 0; y < 48; ++y)
+        for (int x = 0; x < 48; ++x) {
+            const bool edge = x < 10 || y < 10 || x >= 38 || y >= 38;
+            slice.SetPixel(x, y, edge ? Color::White : Color(1.0f, 1.0f, 1.0f, 0.22f));
+        }
+    slice.SavePNG("/tmp/okay_ui_slice.png");
+    Image icon(16, 16);
+    for (int y = 0; y < 16; ++y)
+        for (int x = 0; x < 16; ++x) {
+            const bool on = (x >= 6 && x <= 9) || (y >= 6 && y <= 9);
+            if (on) icon.SetPixel(x, y, Color::White);
+        }
+    icon.SavePNG("/tmp/okay_ui_icon.png");
+}
+
+// Before (component defaults) plus Dark, Light, Sci-fi and Fantasy. Each card
+// holds the same widgets. Themes bake on play; defaults are not changed.
+// Create > UI > UI Showcase.
+inline GameObject* AddUIShowcase(Scene& scene) {
+    using namespace detail;
+    WriteShowcaseTextures();
+    // Wider than a 1280x720 canvas on purpose. Scale With Screen Size + Expand
+    // fits every column on the game view (a 1280 canvas clips Sci-fi and Fantasy).
+    // A scene that already has a canvas keeps it; the showcase gets its own.
+    const float W = 1880.0f, H = 640.0f, colW = 360.0f, colH = 560.0f;
+    const bool freshCanvas = scene.FindObjectOfType<Canvas>() == nullptr;
+    GameObject* canvas = EnsureCanvas(scene);
+    if (!freshCanvas) {
+        canvas = scene.CreateGameObject("UI Showcase Canvas");
+        auto* cv = canvas->AddComponent<Canvas>();
+        cv->scaleMode = Canvas::ScaleMode::ScaleWithScreenSize;
+        cv->screenMatch = Canvas::ScreenMatch::Expand;
+        cv->referenceResolution = {W, H};
+        cv->sortOrder = 50;
+    } else if (Canvas* cv = canvas->GetComponent<Canvas>()) {
+        cv->referenceResolution = {W, H};
+    }
+    GameObject* root = Group(scene, canvas, "UI Showcase");
+
+    GameObject* bg = Child(scene, root, "Backdrop");
+    auto* backdrop = bg->AddComponent<UIPanel>();
+    backdrop->anchor = UIAnchor::TopLeft;
+    backdrop->position = {0.0f, 0.0f};
+    backdrop->size = {W, H};
+    backdrop->shape = UIShape::Rectangle;
+    backdrop->cornerRadius = 0.0f;
+    backdrop->color = Color::FromBytes(10, 12, 16, 255);
+
+    Text(scene, root, "Title", "UI themes", UIAnchor::TopLeft, {16.0f, 8.0f}, {700.0f, 28.0f},
+         22.0f, Color::White, 0, true);
+
+    auto column = [&](const char* name, float x, int preset) {
+        const bool themed = preset >= 0;
+        GameObject* card = Child(scene, root, name);
+        auto* panel = card->AddComponent<UIPanel>();
+        panel->anchor = UIAnchor::TopLeft;
+        panel->position = {x, 42.0f};
+        panel->size = {colW, colH};
+        UITheme* theme = nullptr;
+        if (themed) {
+            theme = card->AddComponent<UITheme>();
+            theme->applyOnStart = true;
+            theme->ApplyPreset(preset);
+        }
+        const char* sub = themed ? "Gradient, glow, shadow, ease" : "Component defaults";
+        Text(scene, card, "Heading", name, UIAnchor::TopLeft, {12.0f, 8.0f}, {220.0f, 26.0f},
+             20.0f, Color::White, 0, true);
+        Text(scene, card, "Sub", sub, UIAnchor::TopLeft, {12.0f, 32.0f}, {330.0f, 16.0f},
+             12.0f, Color::FromBytes(170, 176, 190));
+
+        GameObject* play = Child(scene, card, "Continue");
+        auto* b0 = play->AddComponent<UIButton>();
+        b0->label = "Continue"; b0->position = {12.0f, 54.0f}; b0->size = {168.0f, 34.0f};
+        if (themed) { b0->icon = "/tmp/okay_ui_icon.png"; b0->iconSize = 14.0f; }
+        auto* tip = play->AddComponent<UITooltip>();
+        tip->text = "Starts the run"; tip->delay = 0.35f;
+
+        GameObject* locked = Child(scene, card, "Locked");
+        auto* b1 = locked->AddComponent<UIButton>();
+        b1->label = "Locked"; b1->position = {188.0f, 54.0f}; b1->size = {150.0f, 34.0f};
+        b1->interactable = false;
+
+        GameObject* slider = Child(scene, card, "Volume");
+        auto* sl = slider->AddComponent<UISlider>();
+        sl->position = {12.0f, 98.0f}; sl->size = {250.0f, 22.0f}; sl->value = 0.62f;
+
+        GameObject* toggle = Child(scene, card, "Music");
+        auto* tg = toggle->AddComponent<UIToggle>();
+        tg->position = {12.0f, 128.0f}; tg->label = "Music"; tg->on = true;
+        if (themed) { tg->style = UIToggle::Style::Switch; tg->size = {52.0f, 26.0f}; }
+
+        GameObject* barGo = Child(scene, card, "Health");
+        auto* bar = barGo->AddComponent<UIProgressBar>();
+        bar->position = {12.0f, 164.0f}; bar->size = {250.0f, 18.0f}; bar->value = 0.72f;
+
+        GameObject* drop = Child(scene, card, "Quality");
+        auto* dd = drop->AddComponent<UIDropdown>();
+        dd->position = {12.0f, 192.0f}; dd->size = {210.0f, 30.0f};
+        dd->options = {"Low", "Medium", "High"}; dd->value = 1;
+
+        GameObject* field = Child(scene, card, "NameField");
+        auto* input = field->AddComponent<UIInputField>();
+        input->position = {12.0f, 230.0f}; input->size = {250.0f, 32.0f};
+        input->text = "Player"; input->placeholder = "Name";
+
+        GameObject* tabsGo = Child(scene, card, "Tabs");
+        auto* tabs = tabsGo->AddComponent<UITabs>();
+        tabs->position = {12.0f, 270.0f}; tabs->size = {330.0f, 32.0f};
+        tabs->tabs = {"Play", "Map", "Bag"}; tabs->value = 0;
+        if (preset == (int)UITheme::Preset::Light)   tabs->style = UITabs::Style::Pills;
+        if (preset == (int)UITheme::Preset::SciFi)   tabs->style = UITabs::Style::Underline;
+        if (preset == (int)UITheme::Preset::Fantasy) tabs->style = UITabs::Style::Folder;
+
+        Text(scene, card, "Score", "Score  1,280", UIAnchor::TopLeft, {12.0f, 308.0f}, {200.0f, 22.0f},
+             16.0f, Color::White, 0, true);
+
+        GameObject* scroller = Child(scene, card, "Log");
+        auto* sv = scroller->AddComponent<UIScrollView>();
+        sv->position = {12.0f, 334.0f}; sv->size = {220.0f, 48.0f};
+        Text(scene, scroller, "LineA", "Quest log", UIAnchor::TopLeft, {8.0f, 6.0f}, {180.0f, 18.0f}, 13.0f, Color::White);
+        Text(scene, scroller, "LineB", "More below", UIAnchor::TopLeft, {8.0f, 28.0f}, {180.0f, 18.0f}, 13.0f, Color::White);
+        Text(scene, scroller, "LineC", "Still going", UIAnchor::TopLeft, {8.0f, 72.0f}, {180.0f, 18.0f}, 13.0f, Color::White);
+
+        GameObject* ring = Child(scene, card, "Cooldown");
+        auto* rad = ring->AddComponent<UIRadialProgress>();
+        rad->position = {12.0f, 408.0f}; rad->size = {48.0f, 48.0f}; rad->value = 0.7f; rad->thickness = 6.0f;
+
+        GameObject* slice = Child(scene, card, "Slice");
+        auto* im = slice->AddComponent<UIImage>();
+        im->texture = "/tmp/okay_ui_slice.png"; im->nineSlice = true; im->border = 10.0f;
+        im->position = {70.0f, 414.0f}; im->size = {120.0f, 36.0f}; im->color = Color::White;
+
+        GameObject* cross = Child(scene, card, "Reticle");
+        auto* ch = cross->AddComponent<Crosshair>();
+        ch->anchor = UIAnchor::TopLeft; ch->position = {206.0f, 418.0f}; ch->size = {28.0f, 28.0f};
+        ch->length = 8.0f; ch->gap = 3.0f; ch->dot = true;
+
+        GameObject* mapGo = Child(scene, card, "Map");
+        auto* map = mapGo->AddComponent<Minimap>();
+        map->anchor = UIAnchor::TopLeft; map->position = {248.0f, 406.0f}; map->size = {56.0f, 56.0f};
+        map->circular = true; map->borderWidth = 2.0f;
+
+        if (theme) {
+            auto chip = [&](const char* chipName, float cx, Color col, const char* label) {
+                GameObject* s = Child(scene, card, chipName);
+                auto* sp = s->AddComponent<UIPanel>();
+                sp->position = {cx, 468.0f}; sp->size = {80.0f, 28.0f}; sp->color = col;
+                sp->shape = UIShape::Rounded; sp->cornerRadius = 8.0f;
+                const float lum = col.r * 0.3f + col.g * 0.59f + col.b * 0.11f;
+                Color ink = lum > 0.62f ? Color(0.12f, 0.08f, 0.05f, 1.0f) : Color::White;
+                Text(scene, s, "Label", label, UIAnchor::TopLeft, {0.0f, 0.0f}, {80.0f, 28.0f}, 12.0f, ink, 1);
+            };
+            chip("SwatchNormal", 12.0f, theme->button, "Rest");
+            chip("SwatchHover", 96.0f, theme->buttonHover, "Hover");
+            chip("SwatchPressed", 180.0f, theme->buttonPressed, "Down");
+            chip("SwatchDisabled", 264.0f, theme->disabled, "Off");
+            Text(scene, card, "States", "Hover, press and disabled ease in.",
+                 UIAnchor::TopLeft, {12.0f, 504.0f}, {330.0f, 16.0f}, 12.0f, Color::FromBytes(170, 176, 190));
+            theme->Apply();
+        }
+    };
+
+    column("Before", 16.0f, -1);
+    column("Dark", 388.0f, (int)UITheme::Preset::Dark);
+    column("Light", 760.0f, (int)UITheme::Preset::Light);
+    column("Sci-fi", 1132.0f, (int)UITheme::Preset::SciFi);
+    column("Fantasy", 1504.0f, (int)UITheme::Preset::Fantasy);
+    return root;
+}
+
+// grok/ui-options: every new slider, health-bar and button control, on one screen
+// that fits a 1280x720 game view. Themes stay on the UI Showcase (#452).
+inline GameObject* AddUIOptions(Scene& scene) {
+    using namespace detail;
+    {
+        Image icon(16, 16);
+        icon.Fill(Color::FromBytes(255, 255, 255));
+        for (int y = 3; y < 13; ++y)
+            for (int x = 4; x < 12; ++x)
+                if (x < 7 || y < 8) icon.SetPixel(x, y, Color::FromBytes(66, 150, 250));
+        icon.SavePNG("/tmp/okay_ui_opt_icon.png");
+    }
+    GameObject* canvas = EnsureCanvas(scene);
+    GameObject* root = Panel(scene, canvas, "UI Options", UIAnchor::Center, {0, 0}, {1200, 640}, slate::Panel(), 16.0f, true);
+    Caption(scene, root, "Caption", "WIDGET OPTIONS", UIAnchor::TopLeft, {28, 18}, 400);
+    Text(scene, root, "Title", "Slider, health, button", UIAnchor::TopLeft, {28, 34}, {700, 28}, 22.0f, slate::Text(), 0, true);
+
+    auto column = [&](const char* name, float x, const char* title) {
+        GameObject* card = Panel(scene, root, name, UIAnchor::TopLeft, {x, 78}, {370, 530}, slate::Card(), 12.0f);
+        Text(scene, card, "Heading", title, UIAnchor::TopLeft, {16, 12}, {330, 24}, 16.0f, slate::Text(), 0, true);
+        return card;
+    };
+
+    GameObject* slCard = column("SliderCard", 24.0f, "Slider");
+    Text(scene, slCard, "StepLabel", "Step 1, label {v}, gradient fill", UIAnchor::TopLeft, {16, 46}, {330, 18}, 13.0f, slate::Dim());
+    {
+        GameObject* g = Child(scene, slCard, "StepSlider");
+        auto* sl = g->AddComponent<UISlider>();
+        sl->anchor = UIAnchor::TopLeft; sl->position = {16, 72}; sl->size = {250, 22};
+        sl->minValue = 0.0f; sl->maxValue = 10.0f; sl->step = 1.0f; sl->value = 4.0f;
+        sl->wholeNumbers = true; sl->showValue = true; sl->valueFormat = "{v}";
+        sl->fillGradient = true; sl->fillEnd = Color::FromBytes(120, 220, 255);
+        sl->background = slate::Field(); sl->fill = slate::Accent();
+    }
+    Text(scene, slCard, "VertLabel", "Vertical, diamond handle", UIAnchor::TopLeft, {16, 112}, {200, 18}, 13.0f, slate::Dim());
+    {
+        GameObject* g = Child(scene, slCard, "VertSlider");
+        auto* sl = g->AddComponent<UISlider>();
+        sl->anchor = UIAnchor::TopLeft; sl->position = {16, 138}; sl->size = {28, 150};
+        sl->vertical = true; sl->value = 0.65f; sl->knobShape = (int)UIShape::Diamond;
+        sl->background = slate::Field(); sl->fill = slate::Success(); sl->knob = Color::White;
+    }
+    Text(scene, slCard, "SqLabel", "Square handle", UIAnchor::TopLeft, {70, 150}, {220, 18}, 13.0f, slate::Dim());
+    {
+        GameObject* g = Child(scene, slCard, "SquareSlider");
+        auto* sl = g->AddComponent<UISlider>();
+        sl->anchor = UIAnchor::TopLeft; sl->position = {70, 178}; sl->size = {250, 22};
+        sl->value = 0.40f; sl->knobShape = (int)UIShape::Rectangle; sl->roundKnob = false;
+        sl->showValue = true; sl->fillGradient = true; sl->fillEnd = Color::FromBytes(240, 180, 70);
+        sl->background = slate::Field(); sl->fill = Color::FromBytes(240, 140, 70);
+    }
+
+    GameObject* hpCard = column("HealthCard", 414.0f, "Health");
+    Text(scene, hpCard, "SegLabel", "10 segments, damage trail, {n}%", UIAnchor::TopLeft, {16, 46}, {330, 18}, 13.0f, slate::Dim());
+    {
+        GameObject* g = Child(scene, hpCard, "Health");
+        auto* pb = g->AddComponent<UIProgressBar>();
+        pb->anchor = UIAnchor::TopLeft; pb->position = {16, 72}; pb->size = {330, 26};
+        pb->value = 0.72f; pb->segments = 10; pb->segmentGap = 3.0f; pb->trailDelay = 0.55f;
+        pb->showPercent = true; pb->textFormat = "{n}%";
+        pb->background = slate::Field(); pb->fill = slate::Success();
+        pb->trailColor = Color::FromBytes(226, 120, 70);
+    }
+    {
+        GameObject* g = Button(scene, hpCard, "Hit", "Hit", UIAnchor::TopLeft, {16, 108}, {96, 32}, ButtonKind::Danger);
+        g->GetComponent<UIButton>()->fontScale = 1.6f;
+        auto* sc = g->AddComponent<ScriptComponent>();
+        sc->LoadSource("function on_click() { ui_set_progress(\"Health\", 0.35); }\n");
+    }
+    Text(scene, hpCard, "HeatLabel", "Color by value (low to high)", UIAnchor::TopLeft, {16, 152}, {330, 18}, 13.0f, slate::Dim());
+    {
+        GameObject* g = Child(scene, hpCard, "Heat");
+        auto* pb = g->AddComponent<UIProgressBar>();
+        pb->anchor = UIAnchor::TopLeft; pb->position = {16, 176}; pb->size = {330, 26};
+        pb->value = 0.35f; pb->colorByValue = true; pb->showPercent = true; pb->textFormat = "{n}";
+        pb->background = slate::Field();
+        pb->lowColor = slate::Danger(); pb->highColor = slate::Success();
+    }
+    Text(scene, hpCard, "UpLabel", "Fills upward, 6 segments", UIAnchor::TopLeft, {16, 216}, {240, 18}, 13.0f, slate::Dim());
+    {
+        GameObject* g = Child(scene, hpCard, "Mana");
+        auto* pb = g->AddComponent<UIProgressBar>();
+        pb->anchor = UIAnchor::TopLeft; pb->position = {16, 242}; pb->size = {36, 160};
+        pb->value = 0.55f; pb->segments = 6; pb->segmentGap = 4.0f;
+        pb->fillDir = UIProgressBar::FillDir::BottomTop;
+        pb->background = slate::Field(); pb->fill = slate::Accent();
+    }
+
+    GameObject* btCard = column("ButtonCard", 804.0f, "Button");
+    Text(scene, btCard, "EaseLabel", "Icon + label, smooth 0.2s", UIAnchor::TopLeft, {16, 46}, {330, 18}, 13.0f, slate::Dim());
+    {
+        GameObject* g = Button(scene, btCard, "Launch", "Launch", UIAnchor::TopLeft, {16, 76}, {220, 48}, ButtonKind::Primary);
+        auto* b = g->GetComponent<UIButton>();
+        b->icon = "/tmp/okay_ui_opt_icon.png"; b->iconSize = 22.0f;
+        b->hoverScale = 1.08f; b->transitionEase = 1; b->transitionDuration = 0.20f; b->transitionSpeed = 6.0f;
+        b->shadow = true;
+    }
+    Text(scene, btCard, "LockLabel", "Disabled", UIAnchor::TopLeft, {16, 140}, {200, 18}, 13.0f, slate::Dim());
+    {
+        GameObject* g = Button(scene, btCard, "Locked", "Locked", UIAnchor::TopLeft, {16, 164}, {220, 48}, ButtonKind::Secondary);
+        g->GetComponent<UIButton>()->interactable = false;
+    }
+    Text(scene, btCard, "FocusLabel", "Ease-out, own focus color", UIAnchor::TopLeft, {16, 228}, {330, 18}, 13.0f, slate::Dim());
+    {
+        GameObject* g = Button(scene, btCard, "Focus", "Focus", UIAnchor::TopLeft, {16, 254}, {220, 48}, ButtonKind::Secondary);
+        auto* b = g->GetComponent<UIButton>();
+        b->separateFocus = true; b->focusColor = Color::FromBytes(240, 180, 70);
+        b->hoverScale = 1.06f; b->transitionEase = 2; b->transitionDuration = 0.25f; b->transitionSpeed = 6.0f;
+    }
+    Text(scene, root, "Hint", "Drag a slider. Drop the health bar and the orange trail catches up.",
+         UIAnchor::BottomLeft, {28, -16}, {900, 20}, 13.0f, slate::Dim());
     return root;
 }
 

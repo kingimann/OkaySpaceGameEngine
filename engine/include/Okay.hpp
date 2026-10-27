@@ -143,6 +143,7 @@
 #include "okay/Components/UIInputField.hpp"
 #include "okay/Components/UIDropdown.hpp"
 #include "okay/Components/UITooltip.hpp"
+#include "okay/Components/UITheme.hpp"          // grok/ui-theme
 #include "okay/Components/UITextBind.hpp"
 #include "okay/Components/UIBarBind.hpp"
 #include "okay/Components/UIDraggable.hpp"

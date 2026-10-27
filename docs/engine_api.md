@@ -133,6 +133,47 @@ A modal dialog. Style Card restyles the Card, Title, Message, Confirm and Cancel
 | `GetComponent<UIModal>().SetConfirmText(text)` | `UIModal.SetConfirmText/1` | step | text (Text), Target (Object) | - | Confirm button label. Empty leaves the button's own label. |
 | `GetComponent<UIModal>().SetCancelText(text)` | `UIModal.SetCancelText/1` | step | text (Text), Target (Object) | - | Cancel button label. Empty leaves the button's own label. |
 | `GetComponent<UIModal>().IsOpen()` | `UIModal.IsOpen/0` | value | Target (Object) | Result (Bool) | True while the dialog is shown. |
+## UITheme
+
+A saved skin for panels, buttons, sliders and the rest of the UI kit. The object needs a UI Theme.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UITheme>().SetPreset(preset)` | `UITheme.SetPreset/1` | step | preset (Number), Target (Object) | - | Switch to a built-in look and bake it: 0 custom, 1 dark, 2 light, 3 sci-fi, 4 fantasy. |
+| `GetComponent<UITheme>().Apply()` | `UITheme.Apply/0` | step | Target (Object) | - | Bake this skin onto this object and its children. Widgets keep their positions. |
+| `GetComponent<UITheme>().ApplyTo(objectName)` | `UITheme.ApplyTo/1` | step | objectName (Text), Target (Object) | - | Bake this skin onto the named object and its children. |
+
+## UISlider
+
+A draggable value. The object needs a UI Slider. on_change fires when the value moves.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UISlider>().SetValue(value)` | `UISlider.SetValue/1` | step | value (Number), Target (Object) | - | Set the value (snaps to the step). Fires OnValueChanged when it changes. |
+| `GetComponent<UISlider>().SetStep(step)` | `UISlider.SetStep/1` | step | step (Number), Target (Object) | - | Snap spacing. 0 keeps the slider continuous. |
+| `GetComponent<UISlider>().SetFormat(format)` | `UISlider.SetFormat/1` | step | format (Text), Target (Object) | - | Value label. "{v}" is the number. Empty keeps two decimals. |
+| `GetComponent<UISlider>().GetValue()` | `UISlider.GetValue/0` | value | Target (Object) | Result (Number) | The current value. |
+
+## UIProgressBar
+
+A fill bar (health, loading). The object needs a UI Progress Bar.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIProgressBar>().SetValue(value)` | `UIProgressBar.SetValue/1` | step | value (Number), Target (Object) | - | Fill amount, 0 to 1. A damage trail eases down when Trail is set. |
+| `GetComponent<UIProgressBar>().SetSegments(count)` | `UIProgressBar.SetSegments/1` | step | count (Number), Target (Object) | - | Chunk count. 0 or 1 is one solid bar. |
+| `GetComponent<UIProgressBar>().SetTrail(seconds)` | `UIProgressBar.SetTrail/1` | step | seconds (Number), Target (Object) | - | Seconds for the damage trail to catch a drop. 0 hides it. |
+| `GetComponent<UIProgressBar>().SetTextFormat(format)` | `UIProgressBar.SetTextFormat/1` | step | format (Text), Target (Object) | - | Label on the bar. "{n}" is the percent, "{v}" is 0..1. |
+
+## UIButton
+
+A clickable button. The object needs a UI Button. on_click fires when it is pressed.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<UIButton>().SetEase(ease, seconds)` | `UIButton.SetEase/2` | step | ease (Number), seconds (Number), Target (Object) | - | Hover/press ease: 0 linear, 1 smooth, 2 ease-out, 3 ease-in, and how many seconds it takes. |
+| `GetComponent<UIButton>().SetInteractable(on)` | `UIButton.SetInteractable/1` | step | on (Bool), Target (Object) | - | False greys the button out and ignores clicks. |
+| `GetComponent<UIButton>().Press()` | `UIButton.Press/0` | step | Target (Object) | - | Click the button. Fires OnClick. |
 
 ## Input
 

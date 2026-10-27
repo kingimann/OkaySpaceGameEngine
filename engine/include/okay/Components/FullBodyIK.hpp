@@ -18,8 +18,10 @@
 // Bones are found automatically from common rig names (Mixamo "mixamorig:LeftArm",
 // Blender-style "UpperArm.L", "thigh_l", the built-in Character parts "L Hand"...)
 // under this object, or assigned by name. Bones are ROTATED (so a skinned mesh
-// bends with them); rigs whose joints aren't parented are positioned as well.
-// Solve happens in LateUpdate, after every animation driver.
+// bends with them, and every bone keeps its length); rigs whose joints aren't
+// parented are positioned as well. Solve happens in LateUpdate, after every
+// animation driver. Each frame starts from the animated pose: what this solver
+// wrote last frame is taken back off first (IKRestore), so nothing builds up.
 // ---------------------------------------------------------------------------
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -29,6 +31,9 @@
 #include "okay/Math/IKFade.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Quat.hpp"
+#include "okay/Math/IKMath.hpp"
+#include "okay/Math/JointLimit.hpp"
+#include "okay/Components/IKRestore.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cstring>
@@ -65,6 +70,9 @@ public:
         Transform*  hint = nullptr;          ///< elbow/knee bend toward this (else keep the animated bend)
         std::string hintName;
         float       pull = 1.0f;             ///< how much this effector may drag the body
+        /// Swing/twist limits on the upper (shoulder/hip) and lower (elbow/knee)
+        /// bone, measured from the rest pose (JointLimit.hpp). None = unlimited.
+        IKJointLimit upperLimit, lowerLimit;
     };
     enum Limb { LeftHand, RightHand, LeftFoot, RightFoot, LimbCount };
     Effector effectors[LimbCount];
@@ -84,7 +92,7 @@ public:
     float spineReach = 0.4f;         ///< 0..1: chest bend toward hand goals still out of reach
     float maxSpineAngle = 35.0f;     ///< degrees
     float blendSpeed = 8.0f;         ///< how fast goals fade in/out when enabled/disabled or reweighted (per second, 0 = instant)
-    float goalSmoothing = 0.0f;      ///< follow moving goals smoothly (per second, 0 = exact)
+    float goalSmoothing = 0.0f;      ///< follow moving goals smoothly (ease rate per second, 0 = exact)
     float armMinBend = 20.0f;        ///< elbows: the tightest fold allowed (interior angle, degrees)
     float legMinBend = 25.0f;        ///< knees: likewise
 
@@ -97,7 +105,7 @@ public:
     float       lookHeadShare = 0.7f;     ///< the head turns this share, the chest the rest
     float       maxLookAngle = 70.0f;
     Vec3        headForward{0, 0, 1};     ///< the head bone's local forward axis
-    float       lookSmoothing = 10.0f;    ///< head swings toward a new look point (per second, 0 = snap)
+    float       lookSmoothing = 10.0f;    ///< head swings toward a new look point (ease rate per second, 0 = snap)
 
     /// Weight an effector is applied with right now (eases toward its target weight).
     float EffectiveWeight(int l) const { return (l >= 0 && l < LimbCount) ? m_effW[l] : 0.0f; }
@@ -118,6 +126,7 @@ public:
         auto R = [&](Transform*& t, const std::string& n) { if (!t && !n.empty()) if (GameObject* g = FindUnder(n)) t = g->transform; };
         for (auto& e : effectors) { R(e.target, e.targetName); R(e.hint, e.hintName); }
         R(lookTarget, lookTargetName);
+        for (IKPole& p : m_pole) p.Reset();
     }
 
     /// Find bones by common rig names under this object. Keeps already-assigned
@@ -174,43 +183,49 @@ public:
         return -1;
     }
 
+    void Update(float) override { m_restore.Restore(); }   // before the animator blends (see IKRestore.hpp)
     void LateUpdate(float dt) override {
-        // Corrections are layered on this frame's animated pose. If nothing re-posed a
-        // bone since our last solve (no animation on it), take last frame's correction
-        // off first so it doesn't compound frame after frame.
+        // Corrections are layered on this frame's animated pose: last frame's writes
+        // come off first wherever nothing re-posed the bone since (no animation on it).
+        m_restore.Restore();
         Transform* spineBone = bones[Chest] ? bones[Chest] : bones[Spine];
         Transform* lowSpine = (bones[Chest] && bones[Spine]) ? bones[Spine] : nullptr;   // shares the chest bend
-        m_hips.Undo(); m_spine.Undo(); m_head.Undo(); m_lowSpine.Undo();
         // Per-goal weights ease toward their targets: switching a goal on/off (or a
-        // script reaching then releasing) fades instead of popping.
-        const float k = blendSpeed > 0.0f ? 1.0f - std::exp(-blendSpeed * dt) : 1.0f;   // frame-rate independent ease
-        const float gk = goalSmoothing > 0.0f ? std::min(1.0f, goalSmoothing * dt) : 1.0f;
+        // script reaching then releasing) fades instead of popping. All easing is
+        // frame-rate independent: the same numbers look the same at 30 and 144 fps.
+        auto ease = [dt](float rate) { return rate > 0.0f ? 1.0f - std::exp(-rate * dt) : 1.0f; };
+        const float k = ease(blendSpeed), gk = ease(goalSmoothing), lk = ease(lookSmoothing);
         for (int l = 0; l < LimbCount; ++l) {
             const Effector& e = effectors[l];
             const float want = e.enabled ? e.positionWeight : 0.0f;
             m_effW[l] += (want - m_effW[l]) * k;
             if (std::fabs(want - m_effW[l]) < 1e-3f) m_effW[l] = want;
+            // A broken goal (NaN, infinity) sits this frame out; the limb keeps its animated pose.
             const Vec3 g = Goal(e);
+            m_goalOk[l] = Finite(g);
+            if (!m_goalOk[l]) continue;
             if (!m_goalValid[l] || gk >= 1.0f || m_effW[l] <= 1e-4f) m_goal[l] = g;
             else m_goal[l] = m_goal[l] + (g - m_goal[l]) * gk;
             m_goalValid[l] = true;
         }
+        bool lookOk = false;
         {
             const float want = lookEnabled ? lookWeight : 0.0f;
             m_lookW += (want - m_lookW) * k;
             if (std::fabs(want - m_lookW) < 1e-3f) m_lookW = want;
             const Vec3 g = lookTarget ? lookTarget->Position() : lookPosition;
-            const float lk = lookSmoothing > 0.0f ? std::min(1.0f, lookSmoothing * dt) : 1.0f;
-            if (!m_lookValid || m_lookW <= 1e-4f) m_lookGoal = g;
-            else m_lookGoal = m_lookGoal + (g - m_lookGoal) * lk;
-            m_lookValid = true;
+            if (Finite(g)) {
+                if (!m_lookValid || m_lookW <= 1e-4f) m_lookGoal = g;
+                else m_lookGoal = m_lookGoal + (g - m_lookGoal) * lk;
+                m_lookValid = lookOk = true;
+            }
         }
         const float w = weight * stateWeight * m_fade.Step(ikActive, fadeTime, dt);
-        m_hips.Begin(bones[Hips]); m_spine.Begin(spineBone); m_head.Begin(bones[Head]); m_lowSpine.Begin(lowSpine);
-        if (w <= 0.0f) { m_hips.End(); m_spine.End(); m_head.End(); m_lowSpine.End(); return; }
+        if (!(w > 0.0f)) return;
+        const bool look = lookOk && m_lookW > 0.0f;
         // 0) Look-at, the chest's share: before the limbs, so the arms solve from
         // the turned chest and hand goals are still met.
-        if (m_lookW > 0.0f && bones[Head] && spineBone && lookHeadShare < 1.0f)
+        if (look && bones[Head] && spineBone && lookHeadShare < 1.0f)
             TurnToward(spineBone, bones[Head], m_lookGoal, (1.0f - lookHeadShare) * m_lookW * w);
         // 1) Body pull: effectors beyond their limb's reach drag the hips toward them.
         if (bodyPull > 0.0f && bones[Hips]) {
@@ -218,7 +233,7 @@ public:
             for (int l = 0; l < LimbCount; ++l) {
                 const Effector& e = effectors[l];
                 Transform *a, *b, *c; LimbBones(l, a, b, c);
-                if (m_effW[l] <= 0.0f || !a || !b || !c) continue;
+                if (!Active(l) || !a || !b || !c) continue;
                 const float reach = LimbLength(l) * 0.995f;
                 const Vec3 goal = m_goal[l], d = goal - a->Position();
                 const float dist = d.Magnitude();
@@ -231,7 +246,10 @@ public:
                 Vec3 off = sum * (bodyPull * w / std::max(1.0f, wsum));
                 const float m = off.Magnitude();
                 if (m > maxBodyOffset && m > 1e-6f) off = off * (maxBodyOffset / m);
-                if (m > 1e-6f) bones[Hips]->SetPosition(bones[Hips]->Position() + off);
+                if (m > 1e-6f && Finite(off)) {
+                    m_restore.Touch(bones[Hips]);
+                    bones[Hips]->SetPosition(bones[Hips]->Position() + off);
+                }
             }
         }
         // 2) Spine reach: bend the chest toward hand goals still out of reach.
@@ -240,7 +258,7 @@ public:
         if (spineReach > 0.0f && spineBone) {
             for (int l = LeftHand; l <= RightHand; ++l) {
                 Transform *a, *b, *c; LimbBones(l, a, b, c);
-                if (m_effW[l] <= 0.0f || !a) continue;
+                if (!Active(l) || !a) continue;
                 const Vec3 goal = m_goal[l];
                 const float reach = LimbLength(l);
                 const float dist = (goal - a->Position()).Magnitude();
@@ -257,6 +275,7 @@ public:
                     float t = spineReach * w * m_effW[l] * std::min(1.0f, (dist - reach) / std::max(reach, 1e-3f) * 2.0f) / (float)nParts;
                     const float cap = maxSpineAngle / (float)nParts;
                     if (ang * t > cap && ang > 1e-4f) t = cap / ang;
+                    m_restore.Touch(sb);
                     sb->SetRotation((Quat::Slerp(Quat::Identity, q, t) * sb->Rotation()).Normalized());
                 }
             }
@@ -264,9 +283,9 @@ public:
         // 3) Limbs.
         for (int l = 0; l < LimbCount; ++l) SolveLimb(l, w);
         // 4) Look-at: the head's share (the chest turned before the limbs).
-        if (m_lookW > 0.0f && bones[Head])
+        if (look && bones[Head])
             TurnToward(bones[Head], bones[Head], m_lookGoal, lookHeadShare * m_lookW * w, true);
-        m_hips.End(); m_spine.End(); m_head.End(); m_lowSpine.End();
+        m_restore.Commit();
     }
 
     /// World goal of an effector (its target object, else its position).
@@ -295,45 +314,60 @@ private:
     }
     static int Depth(Transform* t) { int d = 0; for (; t; t = t->Parent()) ++d; return d; }
 
+    bool Active(int l) const { return m_effW[l] > 0.0f && m_goalOk[l] && m_goalValid[l]; }
+
     void SolveLimb(int l, float w) {
         const Effector& e = effectors[l];
         Transform *a, *b, *c; LimbBones(l, a, b, c);
-        if (m_effW[l] <= 0.0f || !a || !b || !c) return;
+        if (!Active(l) || !a || !b || !c) return;
         const float pw = m_effW[l] * w;
         if (pw > 0.0f) {
             const Vec3 root = a->Position(), oldMid = b->Position(), oldEnd = c->Position();
             const float up = (oldMid - root).Magnitude(), lo = (oldEnd - oldMid).Magnitude();
-            if (up < 1e-5f || lo < 1e-5f) return;
-            // Bend direction: the hint, else keep the animated bend (the current mid
-            // joint's offset from the root->end line), else a sensible default.
-            Vec3 pole = e.hint ? e.hint->Position() - root : oldMid - root;
-            const Vec3 axis = oldEnd - root;
-            if (!e.hint && axis.SqrMagnitude() > 1e-8f) {
-                Vec3 ax = axis.Normalized();
-                Vec3 perp = pole - ax * Vec3::Dot(pole, ax);
-                if (perp.SqrMagnitude() < 1e-6f) pole = (l >= LeftFoot) ? Vec3{0, 0, 1} : Vec3{0, 0, -1};
-            }
+            if (up < 1e-5f || lo < 1e-5f || !Finite(root) || !Finite(oldMid) || !Finite(oldEnd)) return;
+            // Bend direction: toward the hint, else keep the animated bend, easing to
+            // a character-space default (knees forward, elbows back) as the limb straightens.
+            const Vec3 fallback = l >= LeftFoot ? Vec3{0, 0, 1} : Vec3{0, 0, -1};
+            const Vec3 pole = m_pole[l].Direction(root, oldMid, oldEnd, transform ? transform->Rotation() : Quat::Identity,
+                                                   e.hint ? IKPoleMode::Object : IKPoleMode::Auto, fallback, e.hint);
             // Partial weight blends the GOAL (from where the animation put the hand),
-            // then solves exactly — blending joint positions would stretch the bones.
+            // then solves exactly. Each frame starts from the animated pose, so half
+            // weight stays half.
             Vec3 mid, end;
             const float minBend = l >= LeftFoot ? legMinBend : armMinBend;
             const Vec3 goal = pw >= 1.0f ? m_goal[l] : Vec3::Lerp(oldEnd, m_goal[l], pw);
             SolveTwoBoneIKSoft(root, up, lo, goal, pole, softness * (up + lo), mid, end, std::max(0.0f, minBend), 180.0f);
-            const Vec3 newMid = mid, newEnd = end;
-            // Rotate the bones (a skinned mesh follows), then pin positions for rigs
-            // whose joints aren't children of each other.
-            Vec3 o1 = oldMid - root, n1 = newMid - root;
-            if (o1.SqrMagnitude() > 1e-10f && n1.SqrMagnitude() > 1e-10f)
-                a->SetRotation((Quat::FromToRotation(o1.Normalized(), n1.Normalized()) * a->Rotation()).Normalized());
-            Vec3 curMid = b->Position(), curEnd = c->Position();
-            Vec3 o2 = curEnd - curMid, n2 = newEnd - newMid;
-            if (o2.SqrMagnitude() > 1e-10f && n2.SqrMagnitude() > 1e-10f)
-                b->SetRotation((Quat::FromToRotation(o2.Normalized(), n2.Normalized()) * b->Rotation()).Normalized());
-            if ((b->Position() - newMid).SqrMagnitude() > 1e-6f) b->SetPosition(newMid);
-            if ((c->Position() - newEnd).SqrMagnitude() > 1e-6f) c->SetPosition(newEnd);
+            if (!Finite(mid) || !Finite(end)) return;
+            m_restore.Touch(a); m_restore.Touch(b); m_restore.Touch(c);
+            const bool limited = e.upperLimit.Active() || e.lowerLimit.Active();
+            if (limited) CaptureLimitFrames(l, a, b, c, root, oldMid, oldEnd, mid, end);
+            // Turn the bones (a skinned mesh follows): the upper toward the solved
+            // mid joint, then the lower, as turned by its parent, toward the solved end.
+            a->SetRotation(AimBone(a, oldMid, mid));
+            if (e.upperLimit.Active()) a->localRotation = ApplyLimit(a->localRotation, m_frame[l][0], e.upperLimit);
+            b->SetRotation(AimBone(b, c->Position(), end));
+            if (e.lowerLimit.Active())
+                b->localRotation = ApplyLimit(b->localRotation, m_frame[l][1], e.lowerLimit,
+                                              e.lowerLimit.type == IKJointLimit::Type::Hinge);
+            // A bone chain keeps its lengths; joints that aren't parented are placed.
+            if (!IsUnder(b, a)) b->SetPosition(mid);
+            if (!IsUnder(c, b)) c->SetPosition(end);
         }
-        if (e.target && e.rotationWeight > 0.0f && e.positionWeight > 1e-4f)
+        if (e.target && e.rotationWeight > 0.0f && e.positionWeight > 1e-4f && Finite(e.target->Rotation())) {
+            m_restore.Touch(c);
             c->SetRotation(Quat::Slerp(c->Rotation(), e.target->Rotation(), e.rotationWeight * w * std::min(1.0f, m_effW[l] / e.positionWeight)));
+        }
+    }
+    /// The rest frames the joint limits measure from, captured when the bones (re)resolve.
+    void CaptureLimitFrames(int l, Transform* a, Transform* b, Transform* c, const Vec3& root, const Vec3& oldMid,
+                            const Vec3& oldEnd, const Vec3& mid, const Vec3& end) {
+        IKJointFrame& fu = m_frame[l][0]; IKJointFrame& fl = m_frame[l][1];
+        if (!fu.CapturedFor(a)) fu.Capture(a, b, c);
+        if (!fl.CapturedFor(b)) fl.Capture(b, c, nullptr);
+        if (!fu.hasHinge) fu.SetHingeFromBend(root, oldMid, oldEnd);
+        if (!fl.hasHinge) fl.SetHingeFromBend(root, oldMid, oldEnd);
+        if (!fu.hasHinge) fu.SetHingeFromBend(root, mid, end);
+        if (!fl.hasHinge) fl.SetHingeFromBend(root, mid, end);
     }
     // Rotate `bone` so `aimFrom`'s forward turns toward `goal` by fraction t, clamped.
     void TurnToward(Transform* bone, Transform* aimFrom, const Vec3& goal, float t, bool clamp = false) {
@@ -344,29 +378,18 @@ private:
         Quat q = Quat::FromToRotation(fwd, to.Normalized());
         float ang = Quat::Angle(Quat::Identity, q);
         if (clamp && ang * t > maxLookAngle && ang > 1e-4f) t = maxLookAngle / ang;
+        m_restore.Touch(bone);
         bone->SetRotation((Quat::Slerp(Quat::Identity, q, std::min(t, 1.0f)) * bone->Rotation()).Normalized());
     }
 
-    // Remembers a bone's pose before/after our correction, to undo it next frame
-    // when no animation re-posed the bone in between.
-    struct Snap {
-        Transform* t = nullptr;
-        Vec3 pb, pa; Quat rb, ra; bool valid = false;
-        void Begin(Transform* b) { t = b; if (t) { pb = t->Position(); rb = t->Rotation(); } }
-        void End() { if (t) { pa = t->Position(); ra = t->Rotation(); valid = true; } else valid = false; }
-        void Undo() {
-            if (!valid || !t) return;
-            const Quat r = t->Rotation();
-            const bool same = (t->Position() - pa).SqrMagnitude() < 1e-10f &&
-                              std::fabs(r.x * ra.x + r.y * ra.y + r.z * ra.z + r.w * ra.w) > 0.999999f;
-            if (same) { t->SetRotation(rb); t->SetPosition(pb); }
-        }
-    };
-    Snap m_hips, m_spine, m_head, m_lowSpine;
+    IKRestore m_restore;
+    IKPole m_pole[LimbCount];
+    IKJointFrame m_frame[LimbCount][2];       ///< upper / lower rest frames for the limits
     IKFade m_fade;
     float m_effW[LimbCount] = {};             ///< eased effector weights
     Vec3  m_goal[LimbCount];                  ///< smoothed goals
     bool  m_goalValid[LimbCount] = {};
+    bool  m_goalOk[LimbCount] = {};           ///< this frame's goal is a real point
     float m_lookW = 0.0f;
     Vec3  m_lookGoal{0, 0, 0};
     bool  m_lookValid = false;

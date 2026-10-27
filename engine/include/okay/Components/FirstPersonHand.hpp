@@ -63,11 +63,16 @@ private:
             // bones (3-5). Flag that arm; everything else stays active (so remote views
             // are unaffected) but is culled from the owner's camera.
             int a0 = showLeftArm ? 6 : 3;
+            // Running swings the arms into the view. Leave them unflagged so the
+            // owner's camera (which ignores the body) does not draw them. The
+            // hold still poses the wrists; only the meshes stay off screen.
+            const bool showArm = !c->HideFirstPersonHands();
             for (int bi = 0; bi < 15; ++bi)
                 if (GameObject* p = c->Part(bi)) {
                     p->active = true;
-                    p->firstPersonViewmodel = (bi >= a0 && bi <= a0 + 2);
+                    p->firstPersonViewmodel = showArm && (bi >= a0 && bi <= a0 + 2);
                 }
+            c->fpArmUp = showArm ? 1.0f : 0.0f;   // ease the raise down while running
             c->firstPersonArm = true; c->fpArmBase = a0;   // raise it + aim the punch here
             c->fpArmBob = bobbing;
             c->fpSteady = steadyArm;

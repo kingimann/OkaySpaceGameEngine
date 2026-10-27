@@ -152,6 +152,14 @@ public:
     /// arm stays put in view no matter what the body does. Set by FirstPersonHand.
     bool  fpSteady = false;
 
+    /// A run pumps the arms up into the owner's camera. Sprint and the run
+    /// style (including the blend into it) keep the first-person hands off
+    /// screen. Walk, idle and a raised hold do not.
+    bool HideFirstPersonHands() const {
+        if (anim == 3) return true;
+        return RunWeight(anim) > 0.35f;
+    }
+
     // ---- External rig (retargeting) ----
     /// Compute the animation pose but render NOTHING — no baked mesh, no part
     /// rig. A HumanoidRetarget component next to this Character reads

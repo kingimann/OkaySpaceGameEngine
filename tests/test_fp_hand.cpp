@@ -49,6 +49,22 @@ int main() {
         const int hand = Character::BoneIndex("l_hand");
         for (int b : bone) if (b == hand) ++handVerts;
         CHECK(handVerts == 8);
+
+        // Running takes the hands off the owner's screen. Walking leaves them up.
+        auto* fpc = player->GetComponent<FirstPersonController>();
+        fpc->driveAnimation = false;   // keep the anim we set; the body is standing still
+        ch->anim = 3;
+        scene.Update(0.016f);
+        CHECK(ch->HideFirstPersonHands());
+        CHECK(ch->fpArmUp == 0.0f);
+        CHECK(ch->Part(3) && !ch->Part(3)->firstPersonViewmodel);
+        CHECK(ch->Part(5) && !ch->Part(5)->firstPersonViewmodel);
+        CHECK(ch->Part(1) && ch->Part(1)->active);   // the body is still there for everyone else
+        ch->anim = 2;
+        for (int i = 0; i < 30; ++i) scene.Update(0.016f);   // the run style eases out over ~0.2 s
+        CHECK(!ch->HideFirstPersonHands());
+        CHECK(ch->fpArmUp == 1.0f);
+        CHECK(ch->Part(5) && ch->Part(5)->firstPersonViewmodel);
     }
 
     // Left-arm option.

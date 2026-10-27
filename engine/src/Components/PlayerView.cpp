@@ -204,12 +204,13 @@ void PlayerView::ApplyHead() {
             if (fp && cam->nearClip > 0.15f) cam->nearClip = 0.08f;
         }
         // Only the raised arm stays visible. Flagging every other part drew the
-        // torso and legs inside the head.
+        // torso and legs inside the head. A run keeps even that arm off screen.
         const int arm = ch->fpArmBase >= 0 ? ch->fpArmBase : HumanoidMotion::B_LUPARM;
+        const bool showArm = fp && !ch->HideFirstPersonHands();
         for (int i = 0; i < Character::BoneCount(); ++i) {
             GameObject* part = ch->Part(i);
             if (!part) continue;
-            part->firstPersonViewmodel = fp && i >= arm && i <= arm + 2;
+            part->firstPersonViewmodel = showArm && i >= arm && i <= arm + 2;
             if (i == HumanoidMotion::B_HEAD && part->transform) part->transform->localScale = Vec3::One;
         }
         return;

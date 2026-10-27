@@ -823,7 +823,9 @@ elbows bend down and out, and the object moves with the body.
   (0, 180, 0 for a gun facing backwards).
 - Hands are a plain block: no finger bones and no finger geometry. Holding
   aims the palm at the grip. Finger joints are not posed, including on a rig
-  that happens to have them.
+  that happens to have them. A run (sprint, or fast enough to use the run
+  style) keeps those hands out of the first-person view. Walking, idling and
+  holding still show the block. The held object stays on its grip.
 - **Socket**: hold it at a named object inside the character (a holster, a back
   slot) instead of in front of the chest.
 - The hands never stretch: when a grip is out of reach the object comes closer

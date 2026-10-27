@@ -12409,7 +12409,7 @@ void DrawScriptEditor(EditorState& ed) {
         if (g_sePaletteReq) { g_sePaletteReq = false; s_palReq = true; }
         if (rqReload) {
             std::string src = extide::ReadFile(sc->Path());
-            SetCodeBuffer(sc, src);
+            if (src.empty()) SetCodeBuffer(sc, src); else caret.replaceAll = src;   // undoable
             std::string e; sc->LoadSource(src, &e);
             g_scriptSaved[sc] = src;
             std::error_code mec; s_extMtime[sc] = std::filesystem::last_write_time(sc->Path(), mec);
@@ -13009,7 +13009,7 @@ void DrawScriptEditor(EditorState& ed) {
                 int n = 0;
                 for (std::size_t p = text.find(from); p != std::string::npos && !from.empty();
                      p = text.find(from, p + to.size())) { text.replace(p, from.size(), to); ++n; }
-                if (n > 0) { SetCodeBuffer(sc, text); ed.dirty = true; }
+                if (n > 0) caret.replaceAll = text;
                 ConsoleLog("Replaced " + std::to_string(n) + " occurrence" + (n == 1 ? "" : "s"));
             }
             ImGui::SameLine();
@@ -13031,7 +13031,7 @@ void DrawScriptEditor(EditorState& ed) {
                 {"Run (compile & execute)", [&]{ bool ok = sc->LoadSource(buf.data(), &s_error); if (ok) s_error.clear(); ed.dirty = true; }},
                 {"Save", [&]{ std::string p = filePath(); if (extide::WriteFile(p, buf.data())) { sc->SetPath(p); g_scriptSaved[sc] = buf.data(); } ed.dirty = true; }},
                 {"Format Document", [&]{ caret.replaceAll = FormatOkayScript(buf.data()); ed.dirty = true; }},
-                {"Reload from disk", [&]{ if (!sc->Path().empty()) { std::string s = extide::ReadFile(sc->Path()); SetCodeBuffer(sc, s); std::string e; sc->LoadSource(s, &e); g_scriptSaved[sc] = s; } }},
+                {"Reload from disk", [&]{ if (!sc->Path().empty()) { std::string s = extide::ReadFile(sc->Path()); if (s.empty()) SetCodeBuffer(sc, s); else caret.replaceAll = s; std::string e; sc->LoadSource(s, &e); g_scriptSaved[sc] = s; } }},
                 {"Toggle Syntax Highlight", [&]{ s_highlight = !s_highlight; }},
                 {"Toggle Minimap", [&]{ s_minimap = !s_minimap; }},
                 {"Find in Files (Ctrl+Shift+F)", [&]{ g_showFindInFiles = true; g_fifFocus = true; }},
@@ -13098,12 +13098,6 @@ void DrawScriptEditor(EditorState& ed) {
         TextEditor& te = CodeEditorFor(sc);
         te.SetColorizerEnable(s_highlight);   // toolbar "Syntax" checkbox
 
-        // Pending whole-buffer replace (Format / Rename / quick-fix): apply to the
-        // shared buffer first so the sync below pushes it into the widget.
-        if (!caret.replaceAll.empty()) {
-            SetCodeBuffer(sc, caret.replaceAll); caret.replaceAll.clear(); ed.dirty = true;
-        }
-
         // Sync widget <-> CodeBuffer. g_teHash is the text both sides last agreed on:
         // if buf changed underneath us (format, live-sync, first open, language switch)
         // push it into the widget; after Render we pull the widget's edits back out.
@@ -13112,6 +13106,21 @@ void DrawScriptEditor(EditorState& ed) {
         {
             auto it = g_teHash.find(sc);
             if (it == g_teHash.end() || it->second != bufHash) { te.SetText(buf.data()); g_teHash[sc] = bufHash; }
+        }
+        // Pending whole-buffer replace (Format / Rename / Replace All / Reload): one
+        // undoable edit in the widget, so Ctrl+Z takes it back and the view stays put
+        // (pushing it through SetText would clear the undo history and scroll to the top).
+        if (!caret.replaceAll.empty()) {
+            const TextEditor::Coordinates cur = te.GetCursorPosition();
+            te.SelectAll();
+            te.InsertTextUndoable(caret.replaceAll);
+            const int lines = te.GetTotalLines();
+            const int line = std::min(cur.mLine, lines - 1);
+            te.SetCursorPosition(TextEditor::Coordinates(line, std::min(cur.mColumn, te.LineLength(line))));
+            caret.replaceAll.clear();
+            std::string t = te.GetText(); if (!t.empty() && t.back() == '\n') t.pop_back();
+            SetCodeBuffer(sc, t); g_teHash[sc] = std::hash<std::string>{}(std::string(buf.data()));
+            ed.dirty = true;
         }
 
         // Snippet / template insert at the caret. Done before Render (which clears the

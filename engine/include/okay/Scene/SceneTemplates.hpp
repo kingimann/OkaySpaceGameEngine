@@ -21,6 +21,7 @@
 #include "okay/Components/RootMotion.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/PlayerView.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
 #include "okay/Components/TopDownShooterController.hpp"
@@ -93,10 +94,23 @@ inline GameObject* EnsureMainCamera(Scene& scene) {
     return camObj;
 }
 
+/// GTA-style view switch (V / gamepad Back) on a first- or third-person player.
+/// Shoulder 0 and an inherited distance leave that controller's camera where it
+/// was; the scene starters pass a shoulder so the orbit sits over the shoulder.
+inline PlayerView* AddViewToggle(GameObject* player, PlayerView::View view, float shoulder = 0.0f) {
+    auto* pv = player->AddComponent<PlayerView>();
+    pv->allowToggle = true;
+    pv->defaultView = view;
+    pv->shoulderOffset = shoulder;
+    pv->thirdPersonDistance = -1.0f;
+    return pv;
+}
+
 /// Add a third-person player (orbit camera positioned by the controller).
 inline GameObject* AddThirdPersonPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
     GameObject* player = BuildPlayerBody(scene, pos, "Player");
     player->AddComponent<ThirdPersonController>();
+    AddViewToggle(player, PlayerView::View::Third);
     EnsureMainCamera(scene);
     return player;
 }
@@ -105,6 +119,7 @@ inline GameObject* AddThirdPersonPlayer(Scene& scene, const Vec3& pos = {0, 1, 0
 inline GameObject* AddFirstPersonPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
     GameObject* player = BuildPlayerBody(scene, pos, "Player");
     player->AddComponent<FirstPersonController>();
+    AddViewToggle(player, PlayerView::View::First);
     GameObject* camObj = scene.CreateGameObject("Player Camera");
     auto* cam = camObj->AddComponent<Camera>();
     cam->projection = Camera::Projection::Perspective;
@@ -382,6 +397,7 @@ inline void ThirdPerson(Scene& scene) {
         col->offset = {0.0f, 0.9f, 0.0f};   // wrap the body feet->head
     }
     player->AddComponent<ThirdPersonController>();
+    AddViewToggle(player, PlayerView::View::Third, 0.45f);   // V switches to the eyes
 
     // The controller positions this camera behind the player each frame.
     GameObject* camObj = scene.CreateGameObject("Main Camera");
@@ -588,6 +604,7 @@ inline void FPS(Scene& scene) {
                                             // so lift the box to wrap feet->head
     }
     player->AddComponent<FirstPersonController>();
+    AddViewToggle(player, PlayerView::View::First, 0.45f);   // V switches to over the shoulder
 
     // Camera mounted on the player at eye height, just in front of the face so you
     // don't see the inside of your own head.

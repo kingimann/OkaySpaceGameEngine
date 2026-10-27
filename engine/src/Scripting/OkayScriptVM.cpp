@@ -23,6 +23,7 @@
 #include "okay/Render/Lighting.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/PlayerView.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/AnimControl.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
@@ -4327,6 +4328,22 @@ struct OkayScriptVM::Impl {
         b["get_anim"] = [charSelf](std::vector<Value>&) {
             Character* c = charSelf(); return Value{c ? (float)c->anim : 0.0f};
         };
+        // grok/view-toggle: set_view(0 first / 1 third) eases the camera; get_view()
+        // is the view asked for (0 / 1), or -1 when this object has no player view.
+        b["set_view"] = [selfObj](std::vector<Value>& a) {
+            GameObject* g = selfObj();
+            PlayerView* v = g ? PlayerView::FindForScript(g, true) : nullptr;
+            if (!v) return Value{0.0f};
+            v->SetView(a.empty() ? 1 : (int)a[0].AsFloat());
+            return Value{1.0f};
+        };
+        b["get_view"] = [selfObj](std::vector<Value>&) {
+            GameObject* g = selfObj();
+            PlayerView* v = g ? PlayerView::FindForScript(g, false) : nullptr;
+            return Value{v ? (float)v->GetView() : -1.0f};
+        };
+        b["SetView"] = b["set_view"];
+        b["GetView"] = b["get_view"];
         // Clip queries: timing + existence, so scripts can react to where a clip is.
         b["clip_time"] = [charSelf, modelSelf](std::vector<Value>&) {
             Character* c = charSelf();

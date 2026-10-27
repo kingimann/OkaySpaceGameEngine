@@ -33,6 +33,7 @@
 #include "okay/Components/ChestInventory.hpp"
 #include "okay/Components/ItemPickup.hpp"
 #include "okay/Components/LootSource.hpp"
+#include "okay/Components/Equipment.hpp"
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"
@@ -1056,7 +1057,20 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         k("rayUp", f->maxRayUp)("rayDown", f->maxRayDown)("pelvisShift", f->maxPelvisShift)
          ("upX", f->footUpAxis.x)("upY", f->footUpAxis.y)("upZ", f->footUpAxis.z)
          .b("lock", f->footLock)("lockSpeed", f->lockSpeed)("lockHeight", f->lockHeight)
-         ("lockRelease", f->lockRelease);
+         ("lockRelease", f->lockRelease)
+         ("upRX", f->footUpAxisR.x)("upRY", f->footUpAxisR.y)("upRZ", f->footUpAxisR.z)
+         ("om", 1);   // orient is saved after its migration: keep it as written
+        auto lim = [&k](const char* p, const IKJointLimit& l) {
+            if (!l.Active()) return;
+            const std::string b = p;
+            k((b + "T").c_str(), (int)l.type)((b + "S").c_str(), l.swingMax)
+             ((b + "H0").c_str(), l.hingeMin)((b + "H1").c_str(), l.hingeMax)
+             ((b + "W0").c_str(), l.twistMin)((b + "W1").c_str(), l.twistMax);
+            if (!l.autoAxes)
+                k((b + "TX").c_str(), l.twistAxis.x)((b + "TY").c_str(), l.twistAxis.y)((b + "TZ").c_str(), l.twistAxis.z)
+                 ((b + "HX").c_str(), l.hingeAxis.x)((b + "HY").c_str(), l.hingeAxis.y)((b + "HZ").c_str(), l.hingeAxis.z);
+        };
+        lim("hl", f->hipLimit); lim("kl", f->kneeLimit);
         out << "\n";
     }
     if (auto* lb = go->GetComponent<LimbIK>()) {
@@ -1088,6 +1102,22 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << ci->boneNames.size();
         for (const std::string& n : ci->boneNames) out << " " << Quote(n);
         out << "\n";
+        // Pole mode/direction and per-joint limits (a newer record).
+        bool anyLim = false;
+        for (const auto& l : ci->limits) anyLim = anyLim || l.Active();
+        if (ci->poleMode >= 0 || anyLim) {
+            out << "  chainx2 " << ci->poleMode
+                << " " << ci->poleDir.x << " " << ci->poleDir.y << " " << ci->poleDir.z
+                << " " << (anyLim ? ci->limits.size() : 0);
+            if (anyLim) for (const auto& l : ci->limits) {
+                out << " " << (int)l.type << " " << l.swingMax << " " << l.hingeMin << " " << l.hingeMax
+                    << " " << l.twistMin << " " << l.twistMax << " " << (l.autoAxes ? 1 : 0);
+                if (!l.autoAxes)
+                    out << " " << l.twistAxis.x << " " << l.twistAxis.y << " " << l.twistAxis.z
+                        << " " << l.hingeAxis.x << " " << l.hingeAxis.y << " " << l.hingeAxis.z;
+            }
+            out << "\n";
+        }
     }
     // IK fade + ChainIK constraints (separate records so older builds still load).
     auto ikFade = [&](const char* kind, bool active, float fade) {
@@ -1827,7 +1857,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             // extended: the camera follow (pivot) and the spring arm
             << " " << ts->pivotDampingXZ << " " << ts->pivotDampingY << " " << ts->maxPivotLag
             << " " << ts->cameraCollisionRadius << " " << ts->cameraCollisionMask
-            << " " << ts->cameraCollisionPullIn << " " << ts->cameraCollisionRecover << "\n";
+            << " " << ts->cameraCollisionPullIn << " " << ts->cameraCollisionRecover
+            << " " << ts->stepOffset << "\n";
     }
     if (auto* cm = go->GetComponent<ClickToMoveController>()) {
         out << "  ctmctrl " << cm->walkSpeed << " " << cm->runSpeed << " "
@@ -1908,6 +1939,26 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             for (std::size_t v = 0; v < pk->data.values.size(); ++v) {
                 const std::string n = std::to_string(v);
                 k.str(("k" + n).c_str(), pk->data.values[v].first).str(("v" + n).c_str(), pk->data.values[v].second);
+            }
+        }
+        out << "\n";
+    }
+    if (auto* eq = go->GetComponent<Equipment>()) {
+        // One line: the flags, then per slot sN* keys (name, accepted type, socket, item and
+        // its instance data, a worn bag's contents included).
+        out << "  equipment";
+        KvOut k{out};
+        k.b("show", eq->showOnCharacter).b("keep", eq->keepOnSceneLoad)("n", eq->slots.size());
+        for (std::size_t i = 0; i < eq->slots.size(); ++i) {
+            const auto& s = eq->slots[i];
+            const std::string p = "s" + std::to_string(i);
+            k.str((p + "name").c_str(), s.name)((p + "acc").c_str(), (int)s.accepts).str((p + "sock").c_str(), s.socket);
+            if (s.item.empty()) continue;
+            const ItemInstanceData d = eq->CurrentData((int)i);
+            k.str((p + "item").c_str(), s.item)((p + "dur").c_str(), d.durability)((p + "uid").c_str(), d.uid)((p + "vals").c_str(), d.values.size());
+            for (std::size_t v = 0; v < d.values.size(); ++v) {
+                const std::string n = std::to_string(v);
+                k.str((p + "k" + n).c_str(), d.values[v].first).str((p + "v" + n).c_str(), d.values[v].second);
             }
         }
         out << "\n";
@@ -3523,7 +3574,29 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                       k.f("rayUp", f->maxRayUp); k.f("rayDown", f->maxRayDown); k.f("pelvisShift", f->maxPelvisShift);
                       k.f("upX", f->footUpAxis.x); k.f("upY", f->footUpAxis.y); k.f("upZ", f->footUpAxis.z);
                       k.b("lock", f->footLock); k.f("lockSpeed", f->lockSpeed); k.f("lockHeight", f->lockHeight);
-                      k.f("lockRelease", f->lockRelease); }
+                      k.f("lockRelease", f->lockRelease);
+                      // The right sole's axis: files from before it leave it at Up,
+                      // which reads that foot's own rest pose (a mirrored rig's right
+                      // sole isn't the left one's axis).
+                      k.f("upRX", f->footUpAxisR.x); k.f("upRY", f->footUpAxisR.y); k.f("upRZ", f->footUpAxisR.z);
+                      // Files from before orient's migration loaded a Character's
+                      // part rig with it off; Start() turns it on there.
+                      if (!k.find("om") && !f->orient) f->orientMigrate = true;
+                      auto lim = [&k](const char* p, IKJointLimit& l) {
+                          const std::string b = p;
+                          int ty = 0; k.i((b + "T").c_str(), ty);
+                          if (ty <= 0) return;
+                          l.type = (IKJointLimit::Type)std::clamp(ty, 0, 2);
+                          k.f((b + "S").c_str(), l.swingMax);
+                          k.f((b + "H0").c_str(), l.hingeMin); k.f((b + "H1").c_str(), l.hingeMax);
+                          k.f((b + "W0").c_str(), l.twistMin); k.f((b + "W1").c_str(), l.twistMax);
+                          if (k.find((b + "TX").c_str())) {
+                              l.autoAxes = false;
+                              k.f((b + "TX").c_str(), l.twistAxis.x); k.f((b + "TY").c_str(), l.twistAxis.y); k.f((b + "TZ").c_str(), l.twistAxis.z);
+                              k.f((b + "HX").c_str(), l.hingeAxis.x); k.f((b + "HY").c_str(), l.hingeAxis.y); k.f((b + "HZ").c_str(), l.hingeAxis.z);
+                          }
+                      };
+                      lim("hl", f->hipLimit); lim("kl", f->kneeLimit); }
                 } else if (field == "limbik") {
                     auto* lb = go->AddComponent<LimbIK>();
                     lb->upperName = ReadQuoted(in); lb->lowerName = ReadQuoted(in); lb->endName = ReadQuoted(in);
@@ -3573,6 +3646,23 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ci->orient = (orient != 0);
                     std::size_t bn = 0; in >> bn;
                     for (std::size_t k = 0; k < bn && in; ++k) ci->boneNames.push_back(ReadQuoted(in));
+                } else if (field == "chainx2") {
+                    // Newer ChainIK data: pole mode/direction + per-joint limits.
+                    if (auto* ci = go->GetComponent<ChainIK>()) {
+                        std::size_t nl = 0;
+                        in >> ci->poleMode >> ci->poleDir.x >> ci->poleDir.y >> ci->poleDir.z >> nl;
+                        ci->limits.assign(nl, {});
+                        for (std::size_t k = 0; k < nl && in; ++k) {
+                            IKJointLimit& l = ci->limits[k];
+                            int ty = 0, aa = 1;
+                            in >> ty >> l.swingMax >> l.hingeMin >> l.hingeMax >> l.twistMin >> l.twistMax >> aa;
+                            l.type = (IKJointLimit::Type)std::clamp(ty, 0, 2);
+                            l.autoAxes = aa != 0;
+                            if (!l.autoAxes)
+                                in >> l.twistAxis.x >> l.twistAxis.y >> l.twistAxis.z
+                                   >> l.hingeAxis.x >> l.hingeAxis.y >> l.hingeAxis.z;
+                        }
+                    }
                 } else if (field == "fbik") {
                     auto* fb = go->AddComponent<FullBodyIK>();
                     int act = 1, am = 1, le = 0;
@@ -4720,6 +4810,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     ts->pivotDampingXZ = pxz; ts->pivotDampingY = py; ts->maxPivotLag = lag;
                                     ts->cameraCollisionRadius = rad; ts->cameraCollisionMask = mask;
                                     ts->cameraCollisionPullIn = pin; ts->cameraCollisionRecover = rec;
+                                    // Optional trailing step height (older scenes keep 0.35).
+                                    float so = ts->stepOffset;
+                                    in >> std::ws;
+                                    if ((std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') && (in >> so))
+                                        ts->stepOffset = so;
                                 }
                             } }
                     }
@@ -4797,6 +4892,30 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int w = 0;
                     k.str("table", ls->table); k.i("when", w); k.f("refill", ls->refill); k.i("seed", ls->seed);
                     ls->when = (LootSource::When)std::max(0, std::min(w, 2));
+                } else if (field == "equipment") {
+                    auto* eq = go->AddComponent<Equipment>();
+                    KvIn k(in);
+                    k.b("show", eq->showOnCharacter); k.b("keep", eq->keepOnSceneLoad);
+                    int n = -1; k.i("n", n);
+                    if (n >= 0) eq->slots.assign((std::size_t)std::min(n, 64), Equipment::Slot{});
+                    for (int i = 0; i < (int)eq->slots.size(); ++i) {
+                        auto& s = eq->slots[i];
+                        const std::string p = "s" + std::to_string(i);
+                        int acc = 0;
+                        k.str((p + "name").c_str(), s.name); k.i((p + "acc").c_str(), acc); k.str((p + "sock").c_str(), s.socket);
+                        s.accepts = (EquipSlot)std::max(0, std::min(acc, (int)EquipSlot::OffHand));
+                        k.str((p + "item").c_str(), s.item);
+                        if (s.item.empty()) continue;
+                        s.item = ItemId(s.item);
+                        k.f((p + "dur").c_str(), s.data.durability);
+                        if (const std::string* u = k.find((p + "uid").c_str())) s.data.uid = std::strtoull(u->c_str(), nullptr, 10);
+                        int nv = 0; k.i((p + "vals").c_str(), nv);
+                        for (int v = 0; v < nv && v < 256; ++v) {
+                            std::string key, val;
+                            k.str((p + "k" + std::to_string(v)).c_str(), key); k.str((p + "v" + std::to_string(v)).c_str(), val);
+                            s.data.values.push_back({key, val});
+                        }
+                    }
                 } else if (field == "itempickup") {
                     auto* pk = go->AddComponent<ItemPickup>();
                     KvIn k(in);
@@ -6277,11 +6396,11 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
     // The item database (and its icons / drop prefabs) ships with any scene that has items.
     bool hasItems = false;
     for (const auto& go : scene.Objects())
-        if (go->GetComponent<Inventory>() || go->GetComponent<GridInventory>() || go->GetComponent<ItemPickup>() || go->GetComponent<LootSource>()) { hasItems = true; break; }
+        if (go->GetComponent<Inventory>() || go->GetComponent<GridInventory>() || go->GetComponent<ItemPickup>() || go->GetComponent<LootSource>() || go->GetComponent<Equipment>()) { hasItems = true; break; }
     const ItemDatabase& db = ItemDatabase::Get();
     if (hasItems && !db.Path().empty()) {
         add(db.Path());
-        for (const auto& d : db.Items()) if (!d.loose) { add(d.icon); add(d.worldPrefab); }
+        for (const auto& d : db.Items()) if (!d.loose) { add(d.icon); add(d.worldPrefab); add(d.Custom("equipPrefab")); }
     }
     return out;
 }

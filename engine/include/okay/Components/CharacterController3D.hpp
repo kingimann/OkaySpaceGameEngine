@@ -108,13 +108,17 @@ public:
         bool grounded = true, jumped = false;
 
         if (rb) {
-            grounded = Mathf::Abs(rb->velocity.y) < 0.5f;
+            // Contact or terrain, not merely a quiet vertical speed: the apex of
+            // a jump is also |vy| < 0.5, and that used to count as a second jump.
+            grounded = ResolveGrounded(m_ground, rb->groundedOnTerrain, rb->velocity.y);
             float rate = (moving ? acceleration : deceleration) * (grounded ? 1.0f : airControl);
             rb->velocity.x = Mathf::MoveTowards(rb->velocity.x, tx, rate * dt);
             rb->velocity.z = Mathf::MoveTowards(rb->velocity.z, tz, rate * dt);
             if (canJump && standing && in.Pressed(PlayerInput::Jump) && grounded) {
                 rb->velocity.y = jumpForce;
                 jumped = true;
+                m_ground.left = true; m_ground.fell = false;
+                grounded = false;
             }
             // Slope limit: too-steep terrain cancels uphill velocity and slides.
             if (slopeLimit > 0.0f && (grounded || rb->groundedOnTerrain) && rb->groundNormal.y < std::cos(slopeLimit * Mathf::Deg2Rad)) {
@@ -159,6 +163,7 @@ public:
 
 private:
     PlatformRide m_platRide;   // moving-platform tracking
+    GroundLatch  m_ground;     // apex of a jump is not ground
 
     Vec3 m_spawn{0, 0, 0}; bool m_haveSpawn = false;   // fall-reset home position
 };

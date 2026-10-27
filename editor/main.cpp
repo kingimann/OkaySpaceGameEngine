@@ -346,6 +346,7 @@ int main(int argc, char** argv) {
 #include "VisualScriptEditor.hpp"  // node-based visual script editor (okay::editor::vsed) — global scope
 #include "EditorWidgets.hpp"       // accent, category tints, toolbar icons, icon/search buttons
 #include "ConsolePanel.hpp"        // ConsoleLog + the Console panel
+#include "SceneManagerPanel.hpp"   // Scene Manager window + build-list bridge
 #include "UIPreviewPainter.hpp"    // the engine UI renderer drawn into ImGui (UI preview)
 #include "okay/UI/UIRenderer.hpp"
 #include "MainShared.hpp"          // main.cpp functions the split-out panels call
@@ -1014,7 +1015,7 @@ static SDL_Texture* GetPrefabThumb(const std::string& path) {
 // Rendered thumbnail for a .okayscene: load the whole scene into a throwaway
 // Scene, frame ALL of its objects, snapshot once. Cached until the file
 // changes; oversized scene files are skipped rather than stalling the browser.
-static SDL_Texture* GetSceneThumb(const std::string& path) {
+SDL_Texture* GetSceneThumb(const std::string& path) {
     struct Entry { SDL_Texture* tex; std::filesystem::file_time_type mtime; };
     static std::unordered_map<std::string, Entry> cache;
     std::error_code ec;
@@ -1117,6 +1118,7 @@ static void SetupHumanoidIK(EditorState& ed, GameObject* root) {
     int legs = foot->DetectHumanoidBones(ed.scene(), root);
     foot->orient = true; foot->alignToGround = true; foot->footLock = true;
     foot->adjustPelvis = !foot->pelvisName.empty();
+    foot->hipLimit = IKJointLimit::Hip(); foot->kneeLimit = IKJointLimit::Knee();
     auto* fb = root->GetComponent<FullBodyIK>();
     if (!fb) fb = root->AddComponent<FullBodyIK>();
     int mapped = fb->MapBones(true);
@@ -4218,7 +4220,7 @@ static const DockPanelDef* DockPanels(int& n) {
         {"Console",       "Console###Console",         &g_showConsole,       "Panels", PI_Console},
         {"Game",          "Game",                      &g_showGame,          "Panels", PI_Game},
         {"Services",      "Services",                  &g_showServices,      "Panels", PI_Services},
-        {"Scenes",        "Scenes",                    &g_showScenes,        "Panels", PI_Scenes},
+        {"Scene Manager", "Scene Manager###Scenes",    &g_showScenes,        "Panels", PI_Scenes},
         {"Save Manager",  "Save Manager",              &g_showSaveManager,   "Panels", PI_Save},
         {"Variables",     "Variables",                 &g_showVarWatch,      "Panels", PI_Variables},
         {"History",       "History",                   &g_showHistory,       "Panels", PI_History},
@@ -5396,6 +5398,7 @@ static void StopModelScenePreview(EditorState& ed);
 static void StopLivePreview(EditorState& ed);
 
 void DrawMenuAndToolbar(EditorState& ed) {
+    SceneBuildSync(ed);
     // play tint: while the game runs, darken the editor chrome a
     // touch so edit vs play is unmistakable at a glance. Only the custom dark
     // theme (its palette constants are known); reset exactly on stop.
@@ -5495,7 +5498,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             ImGui::MenuItem("Game", nullptr, &g_showGame);
             ImGui::Separator();
             ImGui::MenuItem("Services", nullptr, &g_showServices);
-            ImGui::MenuItem("Scenes", nullptr, &g_showScenes);
+            ImGui::MenuItem("Scene Manager", nullptr, &g_showScenes);
             ImGui::MenuItem("Save Manager", nullptr, &g_showSaveManager);
             ImGui::MenuItem("Variables (watch)", nullptr, &g_showVarWatch);
             ImGui::Separator();
@@ -9946,73 +9949,20 @@ void DrawSceneSettings(EditorState& ed) {
     ImGui::End();
 }
 
-// The Scene Manager panel: the project's scenes.
-// Lists the .okayscene files in the project, opens them, and manages a build
-// order with a startup scene the player loads first. The build list is fed into
-// the engine SceneManager so scripts can load_scene_index / load_next_scene.
-void DrawScenes(EditorState& ed) {
-    if (!ImGui::Begin("Scenes", &g_showScenes)) { ImGui::End(); return; }
-    namespace fs = std::filesystem;
-    std::error_code ec;
-    fs::path dir = ed.projectDir().empty() ? fs::absolute(".", ec)
-                                           : fs::path(ed.projectDir()) / "Assets";
-    ImGui::TextDisabled("%s", dir.string().c_str());
-
-    // Rescan the folder for scene files (cheap; refresh button forces it).
-    static std::vector<std::string> scenes;
-    static std::string lastDir;
-    auto rescan = [&]() {
-        scenes.clear();
-        if (fs::exists(dir, ec))
-            for (auto& e : fs::recursive_directory_iterator(dir, ec)) {
-                if (e.is_regular_file() && e.path().extension() == ".okayscene")
-                    scenes.push_back(e.path().string());
-            }
-        std::sort(scenes.begin(), scenes.end());
-        // Mirror into the engine SceneManager build list.
-        SceneManager::ClearScenes();
-        for (auto& s : scenes) SceneManager::AddScene(s);
-        lastDir = dir.string();
-    };
-    if (lastDir != dir.string()) rescan();
-    if (ImGui::Button("Refresh")) rescan();
-    ImGui::SameLine();
-    if (ImGui::Button("Save Current As...")) g_showSaveAs = true;
-    ImGui::Separator();
-
-    if (scenes.empty()) ImGui::TextDisabled("No .okayscene files in the project yet.");
-    for (int i = 0; i < (int)scenes.size(); ++i) {
-        const std::string& path = scenes[i];
-        std::string name = fs::path(path).stem().string();
-        bool isCurrent = (path == ed.path());
-        ImGui::PushID(i);
-        ImGui::Text("%d", i);                 // build index
-        ImGui::SameLine();
-        // Rendered scene preview (same cached snapshot the Project browser uses).
-        const float th = 34.0f;
-        if (SDL_Texture* stx = GetSceneThumb(path)) {
-            ImGui::Image((ImTextureID)stx, ImVec2(th, th));
-            ImGui::SameLine();
-        }
-        if (ImGui::Selectable(name.c_str(), isCurrent,
-                              ImGuiSelectableFlags_AllowDoubleClick, ImVec2(0, th))) {
-            if (ImGui::IsMouseDoubleClicked(0)) {
-                std::string err;
-                if (ed.Load(path, &err)) ConsoleLog("Opened " + name);
-                else ConsoleLog("Open failed: " + err);
-            }
-        }
-        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 70);
-        if (ImGui::SmallButton("Open")) {
-            std::string err;
-            if (ed.Load(path, &err)) ConsoleLog("Opened " + name);
-            else ConsoleLog("Open failed: " + err);
-        }
-        ImGui::PopID();
-    }
-    ImGui::Separator();
-    ImGui::TextDisabled("double-click to open; the build order is the index shown");
-    ImGui::End();
+// Live "Scenes In Build" list. The Scene Manager window edits this, and Build
+// Settings reads the same vector, so both stay on one order and one start scene.
+std::vector<SceneBuildEntry> SceneBuildSnapshot() {
+    std::vector<SceneBuildEntry> out;
+    out.reserve(g_build.scenes.size());
+    for (const BuildScene& s : g_build.scenes) out.push_back(SceneBuildEntry{s.path, s.on});
+    return out;
+}
+void SceneBuildApply(EditorState&, const std::vector<SceneBuildEntry>& entries) {
+    g_build.scenes.clear();
+    g_build.scenes.reserve(entries.size());
+    for (const SceneBuildEntry& e : entries) g_build.scenes.push_back(BuildScene{e.path, e.on});
+    if (g_buildProfileSel >= 0 && g_buildProfileSel < (int)g_buildProfiles.size())
+        g_buildProfiles[g_buildProfileSel].settings.scenes = g_build.scenes;
 }
 
 // A dedicated code/graph editor panel (separate from the Inspector), with
@@ -29197,8 +29147,17 @@ void DrawInspector(EditorState& ed) {
                 ImGui::Checkbox("Plant Down##fik", &f->plantDown);
                 ImGui::Checkbox("Align To Slope##fik", &f->alignToGround); ImGui::SameLine();
                 ImGui::Checkbox("Orient Bones##fik", &f->orient);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also rotate the thigh/shin bones to follow the planted knee/foot,\nso leg meshes bend with the joints (not just the joints moving).");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Joints that aren't parented in a chain: also rotate the thigh/shin\nbones toward the moved knee/foot. A parented leg always turns.");
+                if (f->alignToGround) {
+                    float ul[3] = {f->footUpAxis.x, f->footUpAxis.y, f->footUpAxis.z};
+                    float ur[3] = {f->footUpAxisR.x, f->footUpAxisR.y, f->footUpAxisR.z};
+                    if (ImGui::DragFloat3("Sole Up L##fik", ul, 0.05f)) { f->footUpAxis = {ul[0], ul[1], ul[2]}; ed.dirty = true; }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The foot bone's local sole normal. Left at (0,1,0), it's read\nfrom that foot's own rest pose, so mirrored rigs just work.");
+                    if (ImGui::DragFloat3("Sole Up R##fik", ur, 0.05f)) { f->footUpAxisR = {ur[0], ur[1], ur[2]}; ed.dirty = true; }
+                }
                 ImGui::DragFloat("Max Knee Bend##fik", &f->maxKneeBend, 1.0f, 0.0f, 180.0f);
+                if (IKJointLimitUI("Hip limit##fik", f->hipLimit)) ed.dirty = true;
+                if (IKJointLimitUI("Knee limit##fik", f->kneeLimit)) ed.dirty = true;
                 ImGui::DragFloat("Smoothing##fik", &f->smoothing, 0.5f, 0.0f, 40.0f);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast corrections ease in/out (per second).\nStops feet popping at step edges. 0 = instant.");
                 if (ImGui::SmallButton("Remove##fik")) toRemove = f;
@@ -29306,7 +29265,8 @@ void DrawInspector(EditorState& ed) {
         }
         if (auto* ci = dynamic_cast<ChainIK*>(curComp)) {
             if (CompHeader("Chain IK", ci, &toRemove)) {
-                ImGui::TextDisabled("Long-chain IK (spider legs, tentacles). Bones root->tip.");
+                ImGui::TextDisabled("Long-chain IK: spines, tails, tentacles, spider legs. Bones root->tip.");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Solver: FABRIK for spines, tails and tentacles; CCD bends from the tip first.\nFor arms and legs use Limb IK (cheaper, exact two-bone solve).");
                 NameField("Target##cik", ci->targetName);
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Create##ciktgt")) {
@@ -29330,8 +29290,24 @@ void DrawInspector(EditorState& ed) {
                     ci->poleName = MakeIKHelper(ed, go, "Chain Pole", seed); ci->poleObject = nullptr;
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawn a pole the chain bends toward (knee / elbow / curl direction).");
+                if (ci->poleName.empty() && !ci->poleObject) {
+                    int pm = ci->poleMode + 1;
+                    if (ImGui::Combo("Pole Mode##cik", &pm, "World point (legacy)\0Auto (keep the bend)\0Character\0World direction\0"))
+                        { ci->poleMode = pm - 1; ed.dirty = true; }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Without a Pole object: a fixed world POINT (old scenes, ik_set_pole),\nor a bend DIRECTION - Auto keeps the animation's own bend and eases\ntoward Pole Dir as the chain straightens; Character turns with this\nobject; World is fixed.");
+                    if (ci->poleMode < 0) {
+                        ImGui::Checkbox("Use Pole Point##cik", &ci->usePole);
+                        if (ci->usePole) {
+                            float pp[3] = {ci->pole.x, ci->pole.y, ci->pole.z};
+                            if (ImGui::DragFloat3("Pole point##cik", pp, 0.1f)) { ci->pole = {pp[0], pp[1], pp[2]}; ed.dirty = true; }
+                        }
+                    } else {
+                        float pd[3] = {ci->poleDir.x, ci->poleDir.y, ci->poleDir.z};
+                        if (ImGui::DragFloat3("Pole Dir##cik", pd, 0.05f)) { ci->poleDir = {pd[0], pd[1], pd[2]}; ed.dirty = true; }
+                    }
+                }
                 ImGui::DragFloat("Max Joint Bend##cik", &ci->maxJointBend, 1.0f, 0.0f, 180.0f, ci->maxJointBend <= 0.0f ? "unlimited" : "%.0f deg");
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cap how sharply any joint may bend (0 = no limit). FABRIK only.");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cap how sharply any joint may bend (0 = no limit). A per-bone limit\nbelow replaces it for that joint.");
                 ImGui::Checkbox("IK Active##cik", &ci->ikActive); ImGui::SameLine();
                 ImGui::SetNextItemWidth(90); ImGui::DragFloat("Fade (s)##cik", &ci->fadeTime, 0.01f, 0.0f, 3.0f);
                 if (ed.isPlaying()) ImGui::TextDisabled("Tip error: %.3f", ci->Error());
@@ -29346,6 +29322,21 @@ void DrawInspector(EditorState& ed) {
                     ImGui::PopID();
                 }
                 if (ImGui::SmallButton("+ Bone##cik")) { ci->boneNames.push_back(""); ed.dirty = true; }
+                if (!ci->boneNames.empty() && ImGui::TreeNode("Joint limits##cik")) {
+                    if (ci->limits.size() != ci->boneNames.size()) { ci->limits.resize(ci->boneNames.size()); ed.dirty = true; }
+                    if (ImGui::SmallButton("Preset all: Spine##cik")) { for (auto& l : ci->limits) l = IKJointLimit::Spine(); ed.dirty = true; }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Tail (loose)##cik")) { for (auto& l : ci->limits) l = IKJointLimit::Ball(45.0f, 30.0f); ed.dirty = true; }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Clear##ciklim")) { for (auto& l : ci->limits) l = {}; ed.dirty = true; }
+                    for (std::size_t i = 0; i < ci->limits.size(); ++i) {
+                        ImGui::PushID((int)i + 1000);
+                        const std::string lbl = (ci->boneNames[i].empty() ? ("Bone " + std::to_string(i)) : ci->boneNames[i]) + "##ciklim";
+                        if (IKJointLimitUI(lbl.c_str(), ci->limits[i])) ed.dirty = true;
+                        ImGui::PopID();
+                    }
+                    ImGui::TreePop();
+                }
                 if (ImGui::SmallButton("Remove##cik")) toRemove = ci;
             }
         }
@@ -30650,6 +30641,39 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TreePop();
             }
             if (ImGui::SmallButton("Remove##cs")) toRemove = cs;
+        }
+    }
+    if (auto* eq = dynamic_cast<Equipment*>(curComp)) {
+        if (CompHeader("Equipment", eq, &toRemove)) {
+            ImGui::TextDisabled("Worn / held items. Drag an item from the bag onto a slot in Play.");
+            if (ImGui::Checkbox("Show On Character##eq", &eq->showOnCharacter)) ed.dirty = true;
+            if (ImGui::Checkbox("Keep On Scene Load##eq", &eq->keepOnSceneLoad)) ed.dirty = true;
+            int removeAt = -1;
+            for (int i = 0; i < (int)eq->slots.size(); ++i) {
+                auto& s = eq->slots[i];
+                ImGui::PushID(i);
+                ImGui::Separator();
+                char nb[64]; std::snprintf(nb, sizeof(nb), "%s", s.name.c_str());
+                if (ImGui::InputText("Slot", nb, sizeof(nb))) { s.name = nb; ed.dirty = true; }
+                int acc = (int)s.accepts;
+                if (ImGui::BeginCombo("Accepts", acc == 0 ? "Anything equippable" : okay::EquipSlotName(s.accepts))) {
+                    for (int k = 0; k <= (int)okay::EquipSlot::OffHand; ++k)
+                        if (ImGui::Selectable(k == 0 ? "Anything equippable" : okay::EquipSlotName((okay::EquipSlot)k), k == acc)) {
+                            s.accepts = (okay::EquipSlot)k; ed.dirty = true;
+                        }
+                    ImGui::EndCombo();
+                }
+                char sb[64]; std::snprintf(sb, sizeof(sb), "%s", s.socket.c_str());
+                if (ImGui::InputTextWithHint("Socket", Equipment::DefaultSocket(s.accepts), sb, sizeof(sb))) { s.socket = sb; ed.dirty = true; }
+                if (ItemPicker("Worn Item", s.item, 160)) ed.dirty = true;
+                if (!s.item.empty() && !eq->Accepts(i, s.item))
+                    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "This item's equip slot doesn't match.");
+                if (ImGui::SmallButton("Remove Slot")) removeAt = i;
+                ImGui::PopID();
+            }
+            if (removeAt >= 0) { eq->slots.erase(eq->slots.begin() + removeAt); ed.dirty = true; }
+            if (ImGui::SmallButton("Add Slot##eq")) { Equipment::Slot s; s.name = "Slot"; eq->slots.push_back(s); ed.dirty = true; }
+            ImGui::TextDisabled("Item custom fields: armor, defense, equipPrefab.");
         }
     }
     if (auto* pk = dynamic_cast<ItemPickup*>(curComp)) {
@@ -34832,6 +34856,7 @@ void DrawInspector(EditorState& ed) {
                 ed.dirty = true;
             }
             if (item(!go->GetComponent<LootSource>(), "Loot Source")) { go->AddComponent<LootSource>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Equipment>(), "Equipment")) { go->AddComponent<Equipment>(); ed.dirty = true; }
             if (item(!go->GetComponent<ChestInventory>(), "Chest / Container")) {
                 go->AddComponent<ChestInventory>();
                 if (!go->GetComponent<Inventory>()) {        // chest needs an Inventory for its loot
@@ -35361,6 +35386,26 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             }
         }
         for (int i = 0; i < n && i < total; ++i) slot(hx + i * (sz + gap), hy, i, i == ui->selected);
+        // Equipment column (worn items) beside the open backpack, as in the player.
+        auto equipBox = [&](float x, float y, const std::string& item, const std::string& label) {
+            ImVec2 p0(canvasPos.x + x, canvasPos.y + y), p1(p0.x + sz, p0.y + sz);
+            dl->AddRectFilled(p0, p1, col(ui->slotBorder), cr);
+            float b = ui->borderWidth < 0 ? 0 : ui->borderWidth;
+            dl->AddRectFilled(ImVec2(p0.x + b, p0.y + b), ImVec2(p1.x - b, p1.y - b), col(item.empty() ? ui->emptySlotColor : ui->slotColor), cr > b ? cr - b : 0.0f);
+            if (!item.empty()) {
+                if (SDL_Texture* icon = ItemThumb(okay::ItemIconPath(ui->iconFolder, item)))
+                    dl->AddImage((ImTextureID)icon, ImVec2(p0.x + b + 2, p0.y + b + 2), ImVec2(p1.x - b - 2, p1.y - b - 2));
+                else dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), item.substr(0, ui->nameChars < 1 ? 1 : (std::size_t)ui->nameChars).c_str());
+            } else if (!label.empty()) {
+                okay::Color tc = ui->textColor; tc.a = 0.45f;
+                dl->AddText(ImVec2(p0.x + 3, p0.y + sz * 0.5f - ImGui::GetTextLineHeight() * 0.5f), col(tc), label.c_str());
+            }
+        };
+        if (L.equip)
+            for (int e = 0; e < L.equipN; ++e) {
+                float x, y; L.EquipXY(e, x, y);
+                equipBox(x, y, e == ui->equipDrag ? std::string() : L.equip->ItemIn(e), L.equip->slots[e].name);
+            }
         // Hotbar slot numbers (1–9).
         if (ui->slotNumbers)
             for (int i = 0; i < n && i < 9; ++i)
@@ -35394,6 +35439,12 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (gameView) {
             okay::Vec2 m = okay::Input::MousePosition();
             const okay::InventoryInput::HotbarFrame fr = okay::InventoryInput::HandleHotbar(*ui, L, m);
+            if (L.equip && fr.equipHover >= 0) {   // equipment slot under the cursor
+                float ex, ey; L.EquipXY(fr.equipHover, ex, ey);
+                dl->AddRectFilled(ImVec2(canvasPos.x + ex, canvasPos.y + ey), ImVec2(canvasPos.x + ex + sz, canvasPos.y + ey + sz), col(ui->hoverColor), cr);
+            }
+            if (L.equip && ui->equipDrag >= 0 && ui->equipDrag < L.equipN)   // a worn item following the cursor
+                equipBox(m.x - sz * 0.5f, m.y - sz * 0.5f, L.equip->ItemIn(ui->equipDrag), std::string());
             if (fr.target >= 0) {   // highlight the destination slot
                 float sx, sy; L.SlotXY(fr.target, sx, sy);
                 ImU32 hc = IM_COL32((int)(ui->selectedColor.r*255), (int)(ui->selectedColor.g*255), (int)(ui->selectedColor.b*255), 100);
@@ -42386,7 +42437,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.Stats"); if (g_showStats)     DrawStats(ed); }
         { OKAY_PROFILE("UI.SceneSettings"); if (g_showSceneSettings) DrawSceneSettings(ed); }
         { OKAY_PROFILE("UI.SaveManager"); if (g_showSaveManager) DrawSaveManager(ed); }
-        { OKAY_PROFILE("UI.Scenes"); if (g_showScenes)    DrawScenes(ed); }
+        { OKAY_PROFILE("UI.Scenes"); if (g_showScenes)    DrawSceneManager(ed); }
         DrawPanelTabsExtras();   // tab icons, overflow lists, side tabs, Ctrl+Tab, right-click tab menu
         {   // UI Safe Area containers keep clear of the emulated phone's notch / home bar
             auto& f = okay::UISafeInsets();

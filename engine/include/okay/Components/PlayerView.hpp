@@ -73,6 +73,8 @@ private:
     float m_aimT = 0.0f;
     float m_stanceDrop = 0.0f;
     float m_shake = 0.0f;
+    float m_savedNear = -1.0f;   ///< camera near plane before first person pulled it in; < 0 = not held
+    bool  m_fpApplied = false;   ///< this view has put the body into the first-person setup
 
     void ArmDefault();
     void StepBlend(float dt);

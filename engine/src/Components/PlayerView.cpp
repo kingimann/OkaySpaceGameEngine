@@ -3,6 +3,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/FirstPersonController.hpp"
+#include "okay/Components/FirstPersonHand.hpp"
 #include "okay/Components/Stance.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Animation/HumanoidMotion.hpp"
@@ -44,9 +45,25 @@ Pose ReadPose(Transform* t) {
     return p;
 }
 
+// A FirstPersonHand already owns the arm pose. The view toggle must not fight it.
+bool HandOwnsArm(GameObject* go, Camera* cam) {
+    if (go && go->GetComponent<FirstPersonHand>()) return true;
+    return cam && cam->gameObject && cam->gameObject->GetComponent<FirstPersonHand>();
+}
+
+// First-person pitch is positive looking up. A third-person orbit is the opposite.
+float LookUpDegrees(GameObject* go) {
+    if (!go) return 0.0f;
+    if (auto* tp = go->GetComponent<ThirdPersonController>()) return -tp->pitch;
+    if (auto* fp = go->GetComponent<FirstPersonController>()) return fp->pitch;
+    return 0.0f;
+}
+
 Pose FirstFromThird(const ThirdPersonController& tp, const Vec3& eyeOffset) {
-    const float drop = StanceValue(tp.stanceLevel(), 0.0f, tp.crouchHeightDrop, tp.proneHeightDrop);
-    const float eyeY = tp.cameraHeight - drop + eyeOffset.y;
+    // Same socket as a first-person controller (stand 1.6, crouch 1.2, prone 0.4).
+    // The orbit's cameraHeight is the look-at point, about the collar, and sitting
+    // the eye there looks out through the neck and down into the open chest.
+    const float eyeY = StanceValue(tp.stanceLevel(), 1.6f, 1.2f, 0.4f) + eyeOffset.y;
     const Quat yawQ = Quat::Euler(0, tp.yaw, 0);
     const float roll = -tp.lean() * tp.leanAngle;
     // Third-person pitch is positive looking down. The eye starts just in front
@@ -186,7 +203,10 @@ void PlayerView::Update(float dt) {
         if (key || pad) Toggle();
     }
     if (!Driving()) {
-        if (Character* ch = gameObject ? gameObject->GetComponent<Character>() : nullptr) {
+        // The controller owns this camera. Only undo a body setup this view
+        // applied earlier; don't clear an ignore the controller set itself.
+        if (m_fpApplied) ApplyHead();
+        else if (Character* ch = gameObject ? gameObject->GetComponent<Character>() : nullptr) {
             ch->hideOwnHead = false;
             if (ch->PartsBuilt()) ch->ApplyOwnerVisibility(false);
         }
@@ -200,7 +220,7 @@ void PlayerView::ApplyHead() {
     if (!gameObject) return;
     // Hide the head once the camera is well on its way to the eyes, so it is
     // gone before the near plane meets it, and back as soon as we leave.
-    const bool fp = FirstAmount() > 0.35f;
+    const bool fp = Driving() && FirstAmount() > 0.35f;
     Character* ch = gameObject->GetComponent<Character>();
     Camera* cam = ViewCamera(gameObject);
     // A part rig can hide the head and neck from this camera only. The baked
@@ -209,25 +229,56 @@ void PlayerView::ApplyHead() {
         ch->separateParts = true;
         ch->BuildParts();
     }
-    if (ch && ch->PartsBuilt()) {
-        ch->hideOwnHead = false;
-        if (cam) {
-            cam->ignoreObject = fp ? gameObject : nullptr;
-            // 0.3 m is the depth of the chest, so the default plane cuts it open.
-            if (fp && cam->nearClip > 0.06f) cam->nearClip = 0.04f;
+    const bool rig = ch && ch->PartsBuilt();
+    if (fp) {
+        if (rig) {
+            ch->hideOwnHead = false;
+            ch->ApplyOwnerVisibility(true);
+            // Same arm a native first-person hand uses: one plain hand in view,
+            // and both arms dropped while a run would swing them into the camera.
+            // A FirstPersonHand on this player already writes these each frame.
+            if (!HandOwnsArm(gameObject, cam)) {
+                ch->firstPersonArm = true;
+                ch->fpArmBase = 3;
+                ch->fpArmBob = true;
+                ch->fpSteady = false;
+                ch->fpArmUp = ch->HideFirstPersonHands() ? 0.0f : 1.0f;
+                ch->fpPitch = LookUpDegrees(gameObject);
+            }
+            if (GameObject* head = ch->Part(HumanoidMotion::B_HEAD))
+                if (head->transform) head->transform->localScale = Vec3::One;
+        } else if (ch) {
+            ch->hideOwnHead = true;
         }
-        ch->ApplyOwnerVisibility(fp);
-        if (GameObject* head = ch->Part(HumanoidMotion::B_HEAD))
-            if (head->transform) head->transform->localScale = Vec3::One;
+        if (cam) {
+            cam->ignoreObject = rig ? gameObject : nullptr;
+            // 0.3 m is the depth of the chest, so the default plane cuts it open.
+            // Remember the plane so third person can have it back.
+            if (m_savedNear < 0.0f) m_savedNear = cam->nearClip;
+            if (cam->nearClip > 0.06f) cam->nearClip = 0.04f;
+        }
+        m_fpApplied = true;
         return;
     }
-    if (ch) ch->hideOwnHead = fp;
-    // No rig (a custom model that refused one): shrink the head in the shared
-    // mesh. Third person sees that too; the part rig above does not have to.
+    // Third person again: the whole body, the animated arms, and the old near plane.
+    if (ch) {
+        ch->hideOwnHead = false;
+        if (rig) ch->ApplyOwnerVisibility(false);
+        if (!HandOwnsArm(gameObject, cam)) {
+            ch->firstPersonArm = false;
+            ch->fpArmBase = -1;
+            ch->fpPitch = 0.0f;
+            ch->fpArmUp = 1.0f;
+        }
+    }
     if (cam) {
         cam->ignoreObject = nullptr;
-        if (fp && cam->nearClip > 0.06f) cam->nearClip = 0.04f;
+        if (m_savedNear >= 0.0f) {
+            cam->nearClip = m_savedNear;
+            m_savedNear = -1.0f;
+        }
     }
+    m_fpApplied = false;
 }
 
 void PlayerView::PlaceCamera(float dt) {

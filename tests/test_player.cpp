@@ -246,6 +246,13 @@ int main() {
         CHECK(ch->PartsBuilt());
         CHECK(ch->Part(2) && ch->Part(2)->active && !ch->Part(2)->firstPersonViewmodel);   // head stays for everyone else
         CHECK(!ch->hideOwnHead);
+        CHECK(ch->firstPersonArm);                            // same arm a native first-person hand raises
+        CHECK(ch->fpArmBase == 3);
+        CHECK(cam->GetComponent<Camera>()->ignoreObject == p);
+        CHECK(cam->GetComponent<Camera>()->nearClip < 0.06f);
+        const Vec3 arrived = cam->transform->Position() - p->transform->Position();
+        CHECK_NEAR(arrived.y, 1.6f, 0.08f);                   // eye socket, not the orbit look-at
+        CHECK(arrived.z < -0.10f);
 
         pv->SetView(1);
         for (int i = 0; i < 10; ++i) { Input::FeedKeys({}); sc.Update(1.0f / 60.0f); }
@@ -266,6 +273,87 @@ int main() {
         Input::FeedGamepad({0, 0}, 1u << 4); sc.Update(1.0f / 60.0f);   // Back flips it again
         CHECK(pv->GetView() == 0);
         Input::FeedKeys({}); Input::FeedGamepad({0, 0}, 0);
+    }
+
+    // --- Third to first and back, several times: the eye, the body, then all of it restored ---
+    {
+        Scene sc("toggle"); sc.physicsEnabled = false;
+        GameObject* cam = sc.CreateGameObject("Camera");
+        auto* camera = cam->AddComponent<Camera>();
+        const float nearBefore = camera->nearClip;
+        GameObject* p = sc.CreateGameObject("Player");
+        auto* ch = p->AddComponent<Character>(); ch->Apply();
+        auto* tp = p->AddComponent<ThirdPersonController>();
+        tp->yaw = 0.0f; tp->pitch = 0.0f; tp->distance = 5.0f; tp->cameraHeight = 1.5f;
+        tp->pivotDampingXZ = tp->pivotDampingY = 0.0f; tp->orbitSmoothing = 0.0f; tp->lookSmoothing = 0.0f;
+        tp->autoRecenter = false;
+        auto* pv = p->AddComponent<PlayerView>();
+        pv->allowToggle = true; pv->defaultView = PlayerView::View::Third;
+        pv->thirdPersonDistance = -1.0f; pv->shoulderOffset = 0.45f; pv->blendTime = 0.05f;
+        sc.Start();
+        Input::FeedKeys({}); sc.Update(1.0f / 60.0f);
+        auto neckOf = [&]() -> GameObject* {
+            GameObject* torso = ch->Part(1);
+            if (!torso || !torso->transform) return nullptr;
+            for (Transform* c : torso->transform->Children())
+                if (c && c->gameObject && c->gameObject->name == "Neck") return c->gameObject;
+            return nullptr;
+        };
+        for (int cycle = 0; cycle < 3; ++cycle) {
+            pv->SetView(0);
+            for (int i = 0; i < 20; ++i) { Input::FeedKeys({}); sc.Update(1.0f / 60.0f); }
+            CHECK(!pv->Blending());
+            CHECK(pv->GetView() == 0);
+            CHECK(ch->PartsBuilt());
+            CHECK(ch->firstPersonArm);
+            CHECK(ch->fpArmBase == 3);
+            CHECK(ch->fpArmUp == 1.0f);
+            CHECK(ch->Part(2) && ch->Part(2)->active && !ch->Part(2)->firstPersonViewmodel);
+            GameObject* neck = neckOf();
+            CHECK(neck && neck->active && !neck->firstPersonViewmodel);
+            CHECK(ch->Part(1) && ch->Part(1)->firstPersonViewmodel);
+            CHECK(camera->ignoreObject == p);
+            CHECK(camera->nearClip < 0.06f);
+            Vec3 eye = cam->transform->Position() - p->transform->Position();
+            CHECK_NEAR(eye.y, 1.6f, 0.08f);
+            CHECK(eye.z < -0.10f);
+
+            tp->pitch = 80.0f;   // looking down: the eye steps forward and up, out of the chest
+            for (int i = 0; i < 5; ++i) { Input::FeedKeys({}); sc.Update(1.0f / 60.0f); }
+            eye = cam->transform->Position() - p->transform->Position();
+            CHECK(eye.y > 1.70f);
+            CHECK(eye.z < -0.28f);
+            tp->pitch = 0.0f;
+            for (int i = 0; i < 3; ++i) { Input::FeedKeys({}); sc.Update(1.0f / 60.0f); }
+
+            tp->driveAnimation = false;
+            ch->anim = 3;
+            sc.Update(1.0f / 60.0f);
+            CHECK(ch->HideFirstPersonHands());
+            CHECK(ch->fpArmUp == 0.0f);
+            CHECK(ch->Part(3) && !ch->Part(3)->firstPersonViewmodel);
+            CHECK(ch->Part(5) && !ch->Part(5)->firstPersonViewmodel);
+            CHECK(ch->Part(6) && !ch->Part(6)->firstPersonViewmodel);
+            CHECK(ch->Part(1) && ch->Part(1)->firstPersonViewmodel);
+            ch->anim = 1;
+            tp->driveAnimation = true;
+            sc.Update(1.0f / 60.0f);
+
+            pv->SetView(1);
+            for (int i = 0; i < 20; ++i) { Input::FeedKeys({}); sc.Update(1.0f / 60.0f); }
+            CHECK(!pv->Blending());
+            CHECK(pv->GetView() == 1);
+            CHECK(!ch->firstPersonArm);
+            CHECK(ch->fpArmBase == -1);
+            CHECK(ch->Part(2) && ch->Part(2)->active);
+            neck = neckOf();
+            CHECK(neck && neck->active);
+            CHECK(camera->ignoreObject == nullptr);
+            CHECK_NEAR(camera->nearClip, nearBefore, 1e-4f);
+            const float back = (cam->transform->Position() - Vec3{0, 1.5f, 0}).Magnitude();
+            CHECK_NEAR(back, 5.0f, 0.45f);
+        }
+        Input::FeedKeys({});
     }
 
     // --- First person on its own camera, then out to an orbit ---

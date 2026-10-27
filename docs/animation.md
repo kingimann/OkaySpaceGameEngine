@@ -831,6 +831,9 @@ elbows bend down and out, and the object moves with the body.
   sees them. The eye sits just in front of the face and moves forward and up
   as you look down, with a close near plane. The body is drawn from the
   outside only, so looking down shows that body or the ground, not the cavity.
+  Switching into that view from third person (the V toggle on the orbit
+  controller) uses the same eye, the same hidden head and neck, and the same
+  arm. Switching back restores the near plane and shows the whole body again.
 - **Socket**: hold it at a named object inside the character (a holster, a back
   slot) instead of in front of the chest.
 - The hands never stretch: when a grip is out of reach the object comes closer

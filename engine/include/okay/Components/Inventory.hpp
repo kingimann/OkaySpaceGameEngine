@@ -26,6 +26,9 @@ public:
     float weightLimit = 0.0f;     // carry limit from the item definitions' weights (0 = none)
     bool  slowWhenOverWeight = false;   // controllers move at overWeightSpeed while over the limit
     float overWeightSpeed = 0.5f;
+    /// Carry the contents into the next scene loaded with load_scene: the object with
+    /// the same name there (usually the player) gets them.
+    bool keepOnSceneLoad = false;
 
     /// Slots may be FIXED-POSITION: an empty stack (item == "" or count <= 0) is a
     /// reusable hole, so the UI can drag an item to any slot and leave a gap behind.

@@ -202,6 +202,8 @@
 #include "okay/Inventory/ItemDatabase.hpp"
 #include "okay/Inventory/LootTable.hpp"
 #include "okay/Inventory/InventoryInput.hpp"
+#include "okay/Inventory/InventoryPersistence.hpp"
+#include "okay/Inventory/Recipe.hpp"
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"

@@ -184,6 +184,28 @@ public:
     bool  IsAiming() const { return m_aim; }
     bool  IsSliding() const { return m_slideT > 0.0f; }
     bool  IsGrounded() const { return m_grounded; }
+    /// Orbit pitch at Start. A first-person handoff treats this as the camera's
+    /// rest tilt, so a view that was never looked away from rest arrives level.
+    float restPitch() const { return m_restPitch; }
+    bool  HasDriven() const { return m_drove; }
+    bool  HasPresentedOrbit() const { return m_haveOrbit; }
+    Vec3  PresentedOrbitPosition() const { return m_orbitPos; }
+    Quat  PresentedOrbitRotation() const { return m_orbitRot; }
+    void AcceptHandoff(float newYaw, float newPitch, int stanceIndex, float leanAmount, bool wasGrounded) {
+        yaw = newYaw;
+        pitch = Mathf::Clamp(newPitch, -89.0f, 89.0f);
+        Stance s = Stance::Stand;
+        if (stanceIndex == (int)Stance::Crouch) s = Stance::Crouch;
+        else if (stanceIndex == (int)Stance::Prone) s = Stance::Prone;
+        RestoreStance(s);
+        m_lean = Mathf::Clamp(leanAmount, -1.0f, 1.0f);
+        if (!wasGrounded) {
+            if (m_jumpsUsed < 1) m_jumpsUsed = 1;
+            m_jumpBuf = 0.0f;
+            m_coyote = 0.0f;
+        }
+    }
+    bool SimActive() const override { return !FirstPersonOwns(gameObject); }
 
 
     /// Safety net: falling below this world Y teleports the player back to its
@@ -197,9 +219,12 @@ public:
     /// back down. 0 = no limit.
     float slopeLimit = 50.0f;
     void Start() override {
+        m_restPitch = pitch;
         if (footIK) AttachCharacterFootIK(gameObject);
         if (transform) { m_spawn = transform->Position(); m_haveSpawn = true; }
-        ApplyRestoredStance();
+        // With a first-person controller on the same body, only the view that
+        // is actually running sizes the collider. The other stays at its saved stance.
+        if (!FirstPersonOwns(gameObject)) ApplyRestoredStance();
     }
 
     void Update(float dt) override {
@@ -217,6 +242,19 @@ public:
         if (Game::Paused()) return;   // frozen while the pause menu is up
         m_lookDt = dt;   // also for a client's ReadLocalInput in authoritative movement
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
+        // First person owns the body while the view is at the eyes. Keep the
+        // mouse baseline so orbiting again doesn't spike on the first frame.
+        if (!SimActive()) {
+            m_lastMouse = Input::MousePosition();
+            m_haveMouse = !Input::UICaptured();
+            m_owned = false;
+            return;
+        }
+        if (!m_owned) {
+            HandOffToThirdPerson(gameObject);
+            m_owned = true;
+        }
+        m_drove = true;
         // Optionally hide + lock the cursor while playing (re-assert if freed).
         if (lockCursor && !Cursor::IsLocked()) Cursor::Capture(true);
         Simulate(ReadLocalInput(), dt);
@@ -559,13 +597,23 @@ public:
             m_pivot, pivotDampingXZ, pivotDampingY, maxPivotLag,
             cameraCollision, m_arm, cameraCollisionRadius, cameraCollisionSkin, cameraCollisionMask,
             cameraCollisionPullIn, cameraCollisionRecover, applyShake, dt);
-        cam->SetPosition(orbit.position);
-        // No roll: the horizon stays level. Leaning turns the body, not this camera.
-        cam->localRotation = orbit.rotation;
-        m_fov.Update(sc->mainCamera, m_running && m_lastSpeed > walkSpeed * 0.9f, sprintFovBoost,
-                     m_aimT > 0.5f, aimFov, fovLerp, dt);
+        m_orbitPos = orbit.position;
+        m_orbitRot = orbit.rotation;
+        m_haveOrbit = true;
+        // During a blend the first-person eye stays on the camera and Player View
+        // lerps to this orbit. A child eye uses a world rotation either way.
+        if (ThirdPersonWritesCamera(gameObject)) {
+            cam->SetPosition(orbit.position);
+            cam->SetRotation(orbit.rotation);
+        }
+        if (SimActive()) {
+            m_fov.Update(sc->mainCamera, m_running && m_lastSpeed > walkSpeed * 0.9f, sprintFovBoost,
+                         m_aimT > 0.5f, aimFov, fovLerp, dt, !PlayerHasBothViews(gameObject));
+        }
         // Full Body IK: look where the camera looks (a point well ahead of it).
-        if (ikLook)
+        // Only while this controller is driving — in first person the eye controller
+        // aims the head, and overwriting it from the orbit pulled the gaze back.
+        if (SimActive() && ikLook)
             if (FullBodyIK* fb = FindInTree<FullBodyIK>(gameObject)) {
                 fb->lookEnabled = true; fb->lookTarget = nullptr;
                 fb->lookPosition = cam->Position() + (cam->Rotation() * Vec3{0, 0, -1}) * 20.0f;
@@ -658,6 +706,12 @@ private:
     bool m_haveMouse = false;
     bool m_runToggled = false;
     float m_lean = 0.0f;             // eased lean amount (-1..+1)
+    float m_restPitch = 18.0f;       // orbit pitch at Start (the camera's rest tilt)
+    bool  m_drove = false;
+    bool  m_owned = false;
+    bool  m_haveOrbit = false;
+    Vec3  m_orbitPos{0, 0, 0};
+    Quat  m_orbitRot = Quat::Identity;
     int   m_jumpsUsed = 0;          // jumps since last grounded (for double-jump)
     Stance m_stance = Stance::Stand;
     Stance m_wantStance = Stance::Stand;   // what the input asks for (m_stance may wait for headroom)

@@ -23,6 +23,7 @@
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/PlayerView.hpp"
+#include "okay/Components/FirstPersonHand.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
 #include "okay/Components/TopDownShooterController.hpp"
@@ -178,26 +179,54 @@ inline void AddTemplateHoldables(Scene& scene, GameObject* player) {
     }
 }
 
-/// Add a third-person player (orbit camera positioned by the controller).
-inline GameObject* AddThirdPersonPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
-    GameObject* player = BuildPlayerBody(scene, pos, "Player");
-    player->AddComponent<ThirdPersonController>();
-    AddViewToggle(player, PlayerView::View::Third);
-    EnsureMainCamera(scene);
-    return player;
+/// Both view controllers, one view toggle, and First Person Hands. First person
+/// is the eye controller either way; `start` is only which view a fresh play
+/// begins in. The legacy single hand is not mounted.
+inline PlayerView* AddSharedView(GameObject* player, PlayerView::View start, float shoulder = 0.0f) {
+    if (!player->GetComponent<FirstPersonController>()) player->AddComponent<FirstPersonController>();
+    if (!player->GetComponent<ThirdPersonController>()) player->AddComponent<ThirdPersonController>();
+    if (!player->GetComponent<FirstPersonHands>()) player->AddComponent<FirstPersonHands>();
+    if (auto* existing = player->GetComponent<PlayerView>()) return existing;
+    return AddViewToggle(player, start, shoulder);
 }
 
-/// Add a first-person player (camera mounted as a child at eye height).
-inline GameObject* AddFirstPersonPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
-    GameObject* player = BuildPlayerBody(scene, pos, "Player");
-    player->AddComponent<FirstPersonController>();
-    AddViewToggle(player, PlayerView::View::First);
-    GameObject* camObj = scene.CreateGameObject("Player Camera");
+/// The eye camera both views share. The orbit repositions this same camera
+/// while the view is third person. It starts at the standing eye, just in
+/// front of the face, looking level. No legacy hand.
+inline GameObject* MountEyeCamera(Scene& scene, GameObject* player, const char* name) {
+    GameObject* camObj = scene.CreateGameObject(name);
     auto* cam = camObj->AddComponent<Camera>();
     cam->projection = Camera::Projection::Perspective;
     cam->main = true;
     camObj->transform->SetParent(player->transform, false);
-    camObj->transform->localPosition = {0, 1.62f, 0.0f};   // eye height
+    camObj->transform->localPosition = {0.0f, 1.6f, -0.20f};
+    camObj->transform->localRotation = Quat::Identity;
+    return camObj;
+}
+
+/// Resting over-the-shoulder orbit in the player's space (pitch 18 looks
+/// slightly down). The controller writes the same pose on the first frame.
+inline void PoseRestingOrbit(GameObject* camObj) {
+    const float rest = 18.0f * 0.0174532925f;
+    camObj->transform->localPosition = {0.45f, 1.5f + std::sin(rest) * 5.0f, std::cos(rest) * 5.0f};
+    camObj->transform->localRotation = Quat::Euler(-18.0f, 0.0f, 0.0f);
+}
+
+/// Add a third-person player. Same controllers and eye camera as first person;
+/// play starts on the orbit. V switches to the eyes.
+inline GameObject* AddThirdPersonPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
+    GameObject* player = BuildPlayerBody(scene, pos, "Player");
+    AddSharedView(player, PlayerView::View::Third);
+    PoseRestingOrbit(MountEyeCamera(scene, player, "Main Camera"));
+    return player;
+}
+
+/// Add a first-person player. Same controllers and eye camera as third person;
+/// play starts at the eyes. V switches to the orbit.
+inline GameObject* AddFirstPersonPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
+    GameObject* player = BuildPlayerBody(scene, pos, "Player");
+    AddSharedView(player, PlayerView::View::First);
+    MountEyeCamera(scene, player, "Player Camera");
     return player;
 }
 
@@ -468,19 +497,8 @@ inline void ThirdPerson(Scene& scene) {
         col->size = {0.6f, 1.8f, 0.6f};
         col->offset = {0.0f, 0.9f, 0.0f};   // wrap the body feet->head
     }
-    player->AddComponent<ThirdPersonController>();
-    AddViewToggle(player, PlayerView::View::Third, 0.45f);   // V switches to the eyes
-
-    // Resting over-the-shoulder orbit (pitch 18 looks slightly down, shoulder
-    // 0.45). The controller writes the same pose on the first frame; starting
-    // here keeps Play from opening on the old high, level camera.
-    GameObject* camObj = scene.CreateGameObject("Main Camera");
-    auto* cam = camObj->AddComponent<Camera>();
-    cam->projection = Camera::Projection::Perspective;
-    cam->main = true;
-    const float rest = 18.0f * 0.0174532925f;
-    camObj->transform->localPosition = {0.45f, 1.0f + 1.5f + std::sin(rest) * 5.0f, std::cos(rest) * 5.0f};
-    camObj->transform->localRotation = Quat::Euler(-18.0f, 0.0f, 0.0f);
+    AddSharedView(player, PlayerView::View::Third, 0.45f);   // V switches to the eyes
+    PoseRestingOrbit(MountEyeCamera(scene, player, "Main Camera"));
     AddTemplateHoldables(scene, player);
 }
 
@@ -680,18 +698,10 @@ inline void FPS(Scene& scene) {
         col->offset = {0.0f, 0.9f, 0.0f};   // the character's origin is at its feet,
                                             // so lift the box to wrap feet->head
     }
-    player->AddComponent<FirstPersonController>();
-    AddViewToggle(player, PlayerView::View::First, 0.45f);   // V switches to over the shoulder
-
-    // Camera at the standing eye, just in front of the face, looking level.
-    // The controller keeps this pose; it is not pitched up at Play.
-    GameObject* camObj = scene.CreateGameObject("FPS Camera");
-    auto* cam = camObj->AddComponent<Camera>();
-    cam->projection = Camera::Projection::Perspective;
-    cam->main = true;
-    camObj->transform->SetParent(player->transform, false);
-    camObj->transform->localPosition = {0.0f, 1.6f, -0.20f};
-    camObj->transform->localRotation = Quat::Identity;
+    AddSharedView(player, PlayerView::View::First, 0.45f);   // V switches to over the shoulder
+    // Same eye camera as the third-person template. Starting here only means
+    // the view begins at the eyes, level, just in front of the face.
+    MountEyeCamera(scene, player, "FPS Camera");
     AddTemplateHoldables(scene, player);
 }
 

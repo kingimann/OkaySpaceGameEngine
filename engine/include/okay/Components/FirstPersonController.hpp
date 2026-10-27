@@ -148,6 +148,25 @@ public:
     bool  IsSliding() const { return m_slideT > 0.0f; }
     bool  IsZooming() const { return m_zoom; }
     bool  IsGrounded() const { return m_grounded; }
+    /// This controller has simulated at least once (a view switch can copy its look).
+    bool  HasDriven() const { return m_drove; }
+    /// The other view just became this one. Look, stance and lean come across;
+    /// pitch is clamped by the controller on the next input, not here.
+    void AcceptHandoff(float newYaw, float newPitch, int stanceIndex, float leanAmount, bool wasGrounded) {
+        yaw = newYaw;
+        pitch = Mathf::Clamp(newPitch, -89.0f, 89.0f);
+        Stance s = Stance::Stand;
+        if (stanceIndex == (int)Stance::Crouch) s = Stance::Crouch;
+        else if (stanceIndex == (int)Stance::Prone) s = Stance::Prone;
+        RestoreStance(s);
+        m_lean = Mathf::Clamp(leanAmount, -1.0f, 1.0f);
+        if (!wasGrounded) {
+            if (m_jumpsUsed < 1) m_jumpsUsed = 1;
+            m_jumpBuf = 0.0f;
+            m_coyote = 0.0f;
+        }
+    }
+    bool SimActive() const override { return FirstPersonOwns(gameObject); }
 
 
     /// Safety net: falling below this world Y teleports the player back to its
@@ -161,11 +180,16 @@ public:
     /// back down. 0 = no limit.
     float slopeLimit = 50.0f;
     void Start() override {
-        ApplyBodyVisibility();
+        // The orbit controller, when it is the one running, owns the body size
+        // and the camera's ignore. Applying both would stand a crouched player
+        // back up, or hide the body in third person.
+        if (FirstPersonOwns(gameObject)) {
+            ApplyBodyVisibility();
+            ApplyRestoredStance();
+        }
         if (lockCursor) Cursor::Capture(true);   // hide + lock for mouse-look
         if (footIK) AttachCharacterFootIK(gameObject);
         if (transform) { m_spawn = transform->Position(); m_haveSpawn = true; }
-        ApplyRestoredStance();
     }
 
     // First person: the player's own camera should IGNORE the body (so you don't
@@ -216,6 +240,19 @@ public:
         if (Game::Paused()) return;   // frozen: no mouse-look, no cursor recapture
         m_lookDt = dt;   // also for a client's ReadLocalInput in authoritative movement
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
+        // The orbit controller owns the body while the view is third person.
+        // Keep the mouse baseline so the first frame back at the eyes has no spike.
+        if (!SimActive()) {
+            m_lastMouse = Input::MousePosition();
+            m_haveMouse = !Input::UICaptured();
+            m_owned = false;
+            return;
+        }
+        if (!m_owned) {
+            HandOffToFirstPerson(gameObject);
+            m_owned = true;
+        }
+        m_drove = true;
         ApplyBodyVisibility();
         // Keep the cursor hidden + locked while playing (re-assert if something freed
         // it). Turn lockCursor off to author with a normal pointer / click screen UI.
@@ -440,7 +477,7 @@ public:
             ApplyHeadBob(dt, groundish, hSpeed);
             if (Transform* camT = FindCameraChild()) {
                 m_fov.Update(camT->gameObject->GetComponent<Camera>(), running && hSpeed > walkSpeed * 0.9f,
-                             sprintFovBoost, m_zoom, zoomFov, fovLerp, dt);
+                             sprintFovBoost, m_zoom, zoomFov, fovLerp, dt, !PlayerHasBothViews(gameObject));
             }
         }
         m_wasRunning = running && hSpeed > walkSpeed * 0.8f;
@@ -501,6 +538,9 @@ public:
     /// Camera only: Simulate never reads any of it.
     void LateUpdate(float dt) override {
         if (!transform || !m_haveEyeBase) return;   // the eye starts once this peer has simulated the player
+        // Settled third person leaves the orbit on the camera. During a blend the
+        // eye is written so Player View can read it, then the blend overwrites.
+        if (!FirstPersonWritesEye(gameObject)) return;
         const float y = transform->Position().y;
         if (m_haveBodyY) {
             // A correction from the host (online prediction) is eased out like a
@@ -653,7 +693,18 @@ private:
     void ApplyEyeHeight(float dt) {
         Transform* cam = FindCameraChild();
         if (!cam) return;
-        if (!m_haveEyeBase) { m_eyeBase = cam->localPosition.y; m_haveEyeBase = true; }
+        if (!m_haveEyeBase) {
+            // A camera that was just orbiting is not at the eyes. Starting the
+            // ease from that local Y would put the first-person view a metre
+            // off until it caught up. A child already mounted at eye height
+            // (the template's 1.62) keeps its Y and Z.
+            const float y = cam->localPosition.y;
+            const float targetNow = m_slideT > 0.0f && m_stance == Stance::Crouch ? slideEyeHeight
+                       : StanceValue(m_stanceLevel, standEyeHeight, crouchEyeHeight, proneEyeHeight);
+            if (std::fabs(y - targetNow) > 0.75f) { m_eyeBase = targetNow; m_eyeZ = 0.0f; }
+            else { m_eyeBase = y; m_eyeZ = cam->localPosition.z; }
+            m_haveEyeBase = true;
+        }
         float target = m_slideT > 0.0f && m_stance == Stance::Crouch ? slideEyeHeight
                      : StanceValue(m_stanceLevel, standEyeHeight, crouchEyeHeight, proneEyeHeight);
         float t = stanceLerp > 0.0f ? (1.0f - std::exp(-stanceLerp * dt)) : 1.0f;
@@ -705,7 +756,10 @@ private:
     float m_padHeld = 0.0f; bool m_padProned = false;
     Stance m_padWant = Stance::Stand;   // the stance the gamepad button set (hold mode)
     float m_eyeBase = 1.6f;          // eased base eye height (bob layered on top)
+    float m_eyeZ = 0.0f;             // child-camera local Z captured at the eyes
     bool  m_haveEyeBase = false;
+    bool  m_drove = false;           // simulated at least once
+    bool  m_owned = false;           // this controller ran last frame
     float m_bobPhase = 0.0f, m_bob = 0.0f;   // walking view-bob state
     float m_bobAmp = 0.0f, m_sway = 0.0f;    // the bob's eased size, the sideways sway
     float m_sinceGround = 0.0f;              // s since grounded (bobGroundGrace)

@@ -1243,15 +1243,30 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << (cy->isTrigger ? 1 : 0) << " " << cy->layer << " " << (cy->autoFit ? 1 : 0) << "\n";
     }
     // A crouched / prone player has a shrunken collider; save the standing one.
+    // When both view controllers are present, the one that isn't running still
+    // has a standing record — save the body the active view actually resized.
     const StanceBody* stance = nullptr;
-    if (auto* fpc = go->GetComponent<FirstPersonController>()) stance = &fpc->stanceBody();
-    else if (auto* tpc = go->GetComponent<ThirdPersonController>()) stance = &tpc->stanceBody();
-    else if (auto* p25 = go->GetComponent<Platformer25DController>()) stance = &p25->stanceBody();
-    else if (auto* c3 = go->GetComponent<CharacterController3D>()) stance = &c3->stanceControl.Body();
-    else if (auto* tps = go->GetComponent<ThirdPersonShooterController>()) stance = &tps->stanceControl.Body();
-    else if (auto* tdc = go->GetComponent<TopDownController>()) stance = &tdc->stanceControl.Body();
-    else if (auto* ctm = go->GetComponent<ClickToMoveController>()) stance = &ctm->stanceControl.Body();
-    else if (auto* npc = go->GetComponent<NPCController>()) stance = &npc->stanceControl.Body();
+    auto* fpcStance = go->GetComponent<FirstPersonController>();
+    auto* tpcStance = go->GetComponent<ThirdPersonController>();
+    auto captured = [](const FirstPersonController* c) { return c && c->stanceBody().captured; };
+    auto capturedTp = [](const ThirdPersonController* c) { return c && c->stanceBody().captured; };
+    if (fpcStance && tpcStance) {
+        const bool fp = FirstPersonOwns(go);
+        if (fp && captured(fpcStance)) stance = &fpcStance->stanceBody();
+        else if (!fp && capturedTp(tpcStance)) stance = &tpcStance->stanceBody();
+    }
+    if (!stance && captured(fpcStance)) stance = &fpcStance->stanceBody();
+    if (!stance && capturedTp(tpcStance)) stance = &tpcStance->stanceBody();
+    if (!stance && fpcStance) stance = &fpcStance->stanceBody();
+    if (!stance && tpcStance) stance = &tpcStance->stanceBody();
+    if (!stance) {
+        if (auto* p25 = go->GetComponent<Platformer25DController>()) stance = &p25->stanceBody();
+        else if (auto* c3 = go->GetComponent<CharacterController3D>()) stance = &c3->stanceControl.Body();
+        else if (auto* tps = go->GetComponent<ThirdPersonShooterController>()) stance = &tps->stanceControl.Body();
+        else if (auto* tdc = go->GetComponent<TopDownController>()) stance = &tdc->stanceControl.Body();
+        else if (auto* ctm = go->GetComponent<ClickToMoveController>()) stance = &ctm->stanceControl.Body();
+        else if (auto* npc = go->GetComponent<NPCController>()) stance = &npc->stanceControl.Body();
+    }
     const bool resized = stance && stance->captured && std::fabs(stance->curH - stance->standH) > 1e-4f;
     const float standOffY = resized ? stance->feetY + stance->standH * 0.5f : 0.0f;
     if (auto* bc = go->GetComponent<BoxCollider3D>(); bc && bc->shape() == Collider3D::Shape::Box) {

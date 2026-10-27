@@ -97,6 +97,58 @@ Pose FirstFromThird(const ThirdPersonController& tp, const Vec3& eyeOffset) {
 
 } // namespace
 
+bool FirstPersonOwns(GameObject* go) {
+    if (!go || !go->GetComponent<FirstPersonController>()) return false;
+    if (!go->GetComponent<ThirdPersonController>()) return true;
+    if (auto* v = go->GetComponent<PlayerView>()) return v->TargetFirst();
+    return true;
+}
+
+bool PlayerHasBothViews(GameObject* go) {
+    return go && go->GetComponent<FirstPersonController>() && go->GetComponent<ThirdPersonController>();
+}
+
+bool FirstPersonWritesEye(GameObject* go) {
+    if (!go || !go->GetComponent<ThirdPersonController>()) return true;
+    if (auto* view = go->GetComponent<PlayerView>(); view && view->Driving()) {
+        if (view->Blending()) return true;
+        return view->TargetFirst();
+    }
+    return FirstPersonOwns(go);
+}
+
+bool ThirdPersonWritesCamera(GameObject* go) {
+    if (!go || !go->GetComponent<FirstPersonController>()) return true;
+    if (auto* view = go->GetComponent<PlayerView>(); view && view->Driving()) {
+        if (view->Blending()) return false;
+        return !view->TargetFirst();
+    }
+    return !FirstPersonOwns(go);
+}
+
+void HandOffToFirstPerson(GameObject* go) {
+    if (!go) return;
+    auto* fp = go->GetComponent<FirstPersonController>();
+    auto* tp = go->GetComponent<ThirdPersonController>();
+    if (!fp || !tp || !tp->HasDriven()) return;
+    // Orbit pitch is positive looking down. Its rest is the third-person camera
+    // tilt, not the player's gaze: sitting on that rest becomes a level horizon,
+    // and a look away from rest carries over one for one.
+    fp->OnTeleported();
+    fp->AcceptHandoff(tp->yaw, -(tp->pitch - tp->restPitch()),
+                      static_cast<int>(tp->stance()), tp->lean(), tp->IsGrounded());
+}
+
+void HandOffToThirdPerson(GameObject* go) {
+    if (!go) return;
+    auto* fp = go->GetComponent<FirstPersonController>();
+    auto* tp = go->GetComponent<ThirdPersonController>();
+    if (!fp || !tp || !fp->HasDriven()) return;
+    tp->OnTeleported();
+    tp->AcceptHandoff(fp->yaw, tp->restPitch() - fp->pitch,
+                      static_cast<int>(fp->stance()), fp->lean(), fp->IsGrounded());
+}
+
 void PlayerView::SetView(int view) {
     const View next = (view == 0) ? View::First : View::Third;
     m_target = next;
@@ -107,7 +159,10 @@ void PlayerView::SetView(int view) {
 }
 
 int PlayerView::GetView() const {
-    if (!Driving()) return NativeThird(gameObject) ? 1 : 0;
+    if (!Driving()) {
+        if (PlayerHasBothViews(gameObject)) return m_target == View::First ? 0 : 1;
+        return NativeThird(gameObject) ? 1 : 0;
+    }
     return m_target == View::First ? 0 : 1;
 }
 
@@ -456,6 +511,36 @@ void PlayerView::PlaceCamera(float dt) {
     if (!Driving() || !gameObject || !transform) return;
     Camera* cam = ViewCamera(gameObject);
     if (!cam || !cam->transform) return;
+
+    // Both controllers: a settled view is whichever controller just placed the
+    // camera (the eye, or the orbit). A blend reads the eye the first-person
+    // controller wrote and the orbit the third-person controller stored.
+    if (PlayerHasBothViews(gameObject)) {
+        auto* tpc = gameObject->GetComponent<ThirdPersonController>();
+        if (!Blending()) {
+            m_pivot.Reset();
+            m_arm.Reset();
+            m_aimT = 0.0f;
+            m_stanceDrop = 0.0f;
+            if (m_target == View::First && (eyeOffset.x != 0.0f || eyeOffset.y != 0.0f || eyeOffset.z != 0.0f))
+                cam->transform->SetPosition(cam->transform->Position() + cam->transform->Rotation() * eyeOffset);
+            return;
+        }
+        if (tpc && tpc->HasPresentedOrbit()) {
+            Pose fp = ReadPose(cam->transform);
+            if (eyeOffset.x != 0.0f || eyeOffset.y != 0.0f || eyeOffset.z != 0.0f)
+                fp.position = fp.position + fp.rotation * eyeOffset;
+            Pose tpPose;
+            tpPose.position = tpc->PresentedOrbitPosition();
+            tpPose.rotation = tpc->PresentedOrbitRotation();
+            const float t = EasedThird();
+            Vec3 pos = Vec3::Lerp(fp.position, tpPose.position, t);
+            PullCameraIn(cam, fp.position, pos);
+            cam->transform->SetPosition(pos);
+            cam->transform->SetRotation(Quat::Slerp(fp.rotation, tpPose.rotation, t));
+            return;
+        }
+    }
 
     const bool nativeThird = NativeThird(gameObject);
     const float nativeT = nativeThird ? 1.0f : 0.0f;

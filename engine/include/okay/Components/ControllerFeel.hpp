@@ -84,11 +84,17 @@ private:
 
 /// Eased field of view: base (captured from the camera) + sprint boost, or a zoom FOV.
 struct FovKick {
-    void Update(Camera* cam, bool sprinting, float boost, bool zoom, float zoomFov, float lerp, float dt) {
+    /// `adoptExternal`: a script or the inspector changed the FOV, so that becomes
+    /// the new base. Pass false when another controller shares this camera — its
+    /// sprint kick is not a new base, or the two views would settle at different FOVs.
+    void Update(Camera* cam, bool sprinting, float boost, bool zoom, float zoomFov, float lerp, float dt,
+                bool adoptExternal = true) {
         if (!cam) return;
         if (m_cam != cam) { m_cam = cam; m_base = cam->fieldOfView; m_cur = m_base; }
-        // Someone else changed the FOV (a script, the inspector): adopt it as the new base.
-        if (std::fabs(cam->fieldOfView - m_cur) > 0.01f) { m_base = cam->fieldOfView - (m_cur - m_base); m_cur = cam->fieldOfView; }
+        if (std::fabs(cam->fieldOfView - m_cur) > 0.01f) {
+            if (adoptExternal) m_base = cam->fieldOfView - (m_cur - m_base);
+            m_cur = cam->fieldOfView;
+        }
         float want = zoom ? zoomFov : m_base + (sprinting ? boost : 0.0f);
         float t = lerp > 0.0f ? 1.0f - std::exp(-lerp * dt) : 1.0f;
         m_cur += (want - m_cur) * t;

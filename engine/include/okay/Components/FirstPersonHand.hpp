@@ -45,6 +45,8 @@ public:
     void Update(float) override {
         if (Game::Paused()) return;
         Apply();
+        // Third person keeps a normal body. The swing is the first-person arm.
+        if (!ShowingToOwner()) return;
         bool fire = holdToSwing ? Input::GetMouseButton(attackButton)
                                 : Input::GetMouseButtonDown(attackButton);
         if (fire) if (Character* c = FindCharacter()) if (!c->Punching()) c->Punch();
@@ -53,12 +55,31 @@ public:
     void OnDestroy() override { ClearArm(); }
 
 private:
+    // First person, or a view on its way to the eyes. No view (the voxel
+    // starter) is always the eyes. Third person clears the raised arm.
+    bool ShowingToOwner() const {
+        GameObject* owner = nullptr;
+        for (Transform* t = transform; t; t = t->Parent()) {
+            if (!t->gameObject) continue;
+            if (t->gameObject->GetComponent<PlayerView>() || t->gameObject->GetComponent<FirstPersonController>()) {
+                owner = t->gameObject;
+                break;
+            }
+        }
+        if (auto* v = owner ? owner->GetComponent<PlayerView>() : nullptr) {
+            if (!v->Driving()) return v->TargetFirst();
+            return v->FirstAmount() > 0.35f;
+        }
+        return true;
+    }
+
     // Show the body to the owner, except the head and the neck. Those stay
     // active so they cast shadows and other cameras still see them; this camera
     // skips them because they are not the viewmodel. A run also drops both arms.
     void Apply() {
         Character* c = FindCharacter();
         if (!c) return;
+        if (!ShowingToOwner()) { ClearArm(); return; }
         if (!c->separateParts) c->separateParts = true;   // the real arm lives on the part rig
         if (!c->PartsBuilt()) c->BuildParts();
         if (c->PartsBuilt()) {

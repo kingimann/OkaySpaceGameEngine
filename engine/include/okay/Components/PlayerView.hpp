@@ -1,7 +1,11 @@
 #pragma once
-// One player, two views. Sits next to a First Person or Third Person controller
-// and blends the camera between them (GTA-style). With Allow Toggle off, and
-// until a script calls SetView, the controller's own camera is left alone.
+// One player, two views. Sits next to a First Person controller, a Third Person
+// controller, or both, and blends the camera between them (GTA-style). When both
+// are on the player, the view you are going to is the only one that moves the
+// body: first person is always the FirstPersonController (eye, bob, zoom), and
+// third person is always the orbit. The template only chooses the starting view.
+// With Allow Toggle off, and until a script calls SetView, the controller's own
+// camera is left alone.
 #include "okay/Components/ControllerFeel.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -98,5 +102,23 @@ private:
     void ApplyHead();
     void PlaceCamera(float dt);
 };
+
+/// True when `go`'s FirstPersonController should move the body this frame.
+/// Only that controller: always. Both: the Player View's target (first person
+/// while switching to the eyes, third while switching to the orbit).
+bool FirstPersonOwns(GameObject* go);
+/// Both a first- and a third-person controller are on `go`.
+bool PlayerHasBothViews(GameObject* go);
+/// The eye camera should be written this frame. During a blend it is, so the
+/// view can read the first-person pose; once settled in third person it is not.
+bool FirstPersonWritesEye(GameObject* go);
+/// The orbit should be written onto the camera. During a blend the view blends
+/// toward the stored orbit instead, so the eye pose is left intact.
+bool ThirdPersonWritesCamera(GameObject* go);
+/// Copy look, stance and lean from the orbit controller. No-op until that
+/// controller has actually run, so a fresh first-person start keeps its own pitch.
+void HandOffToFirstPerson(GameObject* go);
+/// Copy look, stance and lean from the eye controller onto the orbit.
+void HandOffToThirdPerson(GameObject* go);
 
 } // namespace okay

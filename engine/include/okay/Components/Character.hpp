@@ -122,18 +122,20 @@ public:
     bool  Punching() const { return m_punchT >= 0.0f && m_punchT < 1.0f; }
 
     // ---- First-person arm (driven by FirstPersonHand / PlayerView) ----
-    // firstPersonArm raises a COPY of one arm into the owner's camera. The copy
-    // is drawn only by that camera and does not cast a shadow. The real arm
-    // bones stay on the animation, so another camera and another player see the
-    // ordinary body. fpArmUp eases 0 (copy hidden) .. 1 (copy raised). fpRaise /
-    // fpElbow place the copy. Nothing here is replicated.
+    // firstPersonArm shows a small COPY of one arm in the lower right of the
+    // owner's camera, past the near plane. The copy is drawn only by that
+    // camera and does not cast a shadow. Looking down takes it off the screen.
+    // The real arm bones stay on the animation, so another camera and another
+    // player see the ordinary body. fpArmUp eases 0 (copy hidden) .. 1 (copy
+    // shown). fpRaise nudges how high it hangs; -96 is the natural hang.
+    // Nothing here is replicated.
     bool  firstPersonArm = false;
     /// Runtime only (not saved). Kept so older scenes load. It does not remove
     /// the head: a first-person camera skips the head and neck parts, and the
     /// mesh itself stays whole for shadows and every other camera.
     bool  hideOwnHead = false;
     float fpArmUp = 1.0f;
-    float fpRaise = -96.0f;   // raised upper-arm forward angle
+    float fpRaise = -96.0f;   // -96 = natural lower-right hang; the slider nudges it
     float fpElbow = 16.0f;    // elbow bend in degrees (positive folds the forearm; 0 = straight)
     /// Which 3-bone arm the owner's copy is taken from (the base bone index,
     /// e.g. 3 = the +X / screen-right arm). -1 = none. Set by FirstPersonHand.
@@ -211,9 +213,12 @@ public:
     void EditorPreviewTick();
     bool PartsBuilt() const { return m_partsBuilt; }
     GameObject* Part(int bone) const { return (bone >= 0 && bone < (int)m_parts.size()) ? m_parts[bone] : nullptr; }
-    /// The owner's raised-arm copy (the upper arm). Only the camera that hides
-    /// this player draws it. Null until first person has built it.
+    /// The owner's first-person arm copy (the upper arm). Only the camera that
+    /// hides this player draws it. Null until first person has built it.
     GameObject* OwnerViewArm() const { return m_ownerArm; }
+    /// Place that copy for the camera as it stands right now. The view and the
+    /// first-person controller call this after they have moved the lens.
+    void RefreshOwnerArm();
     /// Flag the rig for one camera. `firstPerson` draws every part the owner
     /// should see and leaves the head and neck active but unflagged, so this
     /// camera skips them while shadows and every other camera still get them.

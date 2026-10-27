@@ -121,7 +121,10 @@ Mesh Character::BuildRig(std::vector<int>& bone) const {
     for (int s = -1; s <= 1; s += 2) {
         int up = s < 0 ? B_LUPARM : B_RUPARM, fo = s < 0 ? B_LFORE : B_RFORE, ha = s < 0 ? B_LHAND : B_RHAND;
         box({s * 0.27f, 1.30f, 0}, {0.13f, 0.34f, 0.18f}, upperArmCol, up);
-        box({s * 0.27f, 0.99f, 0}, {0.12f, 0.32f, 0.16f}, foreArmCol, fo);
+        // Stops a centimetre short of the upper arm and of the hand. Sharing a
+        // face with either one z-fights on a depth buffer: dark vertical lines
+        // down the hand, as if the old finger gaps were still there.
+        box({s * 0.27f, 0.995f, 0}, {0.10f, 0.25f, 0.14f}, foreArmCol, fo);
         // One brick on the hand bone, the block this rig used before the palm,
         // thumb and finger boxes. No finger bones: the hand is still l_hand / r_hand.
         box({s * 0.27f, 0.80f, 0.02f}, {0.12f, 0.12f, 0.17f}, handCol, ha);
@@ -1060,18 +1063,49 @@ void Character::EnsureOwnerArm(int base) {
     }
     made[1]->transform->SetParent(made[0]->transform, false);
     made[2]->transform->SetParent(made[1]->transform, false);
-    if (src[0]->transform && src[0]->transform->Parent())
-        made[0]->transform->SetParent(src[0]->transform->Parent(), false);
+    for (int i = 0; i < 3; ++i) made[i]->transient = true;
+    // Under the player, not the camera. A first-person-only object is drawn
+    // only for the camera that is hiding its owner, and only when it is still
+    // inside that owner's subtree. Parenting it to the camera would hide it
+    // from the owner too.
+    if (gameObject && gameObject->transform)
+        made[0]->transform->SetParent(gameObject->transform, false);
     m_ownerArm = made[0];
     m_ownerFore = made[1];
     m_ownerHand = made[2];
     m_ownerArmBase = base;
 }
 
-void Character::PoseOwnerArm(const std::vector<Vec3>& pose) {
+namespace {
+// The camera that is allowed to draw this player's first-person-only arm.
+// Prefer the one already hiding the player; otherwise the camera mounted on
+// the body. A free orbit camera is not it — posing the arm there parks a
+// giant sleeve out in the world.
+Camera* OwnerCamera(GameObject* player) {
+    if (!player || !player->scene()) return nullptr;
+    Scene* sc = player->scene();
+    Camera* child = nullptr;
+    Camera* ignoring = nullptr;
+    for (const auto& o : sc->Objects()) {
+        if (!o || !o->active) continue;
+        Camera* cam = o->GetComponent<Camera>();
+        if (!cam || !cam->enabled || !cam->transform || !o->active) continue;
+        if (cam->ignoreObject == player) ignoring = cam;
+        if (!child && o.get() != player && o->IsSelfOrDescendantOf(player)) child = cam;
+    }
+    if (ignoring) return ignoring;
+    return child;
+}
+}
+
+void Character::RefreshOwnerArm() {
+    if (!m_partsBuilt) return;
+    PoseOwnerArm(CurrentSourcePose());
+}
+
+void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     const int base = fpArmBase;
-    const bool on = firstPersonArm && base >= 0 && base + 2 < (int)pose.size()
-        && base + 2 < (int)m_parts.size();
+    const bool on = firstPersonArm && base >= 0 && base + 2 < (int)m_parts.size();
     // A run hides the hands. A hold uses the real hands, which already carry
     // the grip. Either way the copy stays out of every camera.
     if (!on || HideFirstPersonHands() || HandsOnAHold()) {
@@ -1080,35 +1114,75 @@ void Character::PoseOwnerArm(const std::vector<Vec3>& pose) {
     }
     EnsureOwnerArm(base);
     if (!m_ownerArm || !m_ownerFore || !m_ownerHand || !m_ownerArm->transform) return;
-    const float w = m_fpShown < 0.0f ? 0.0f : (m_fpShown > 1.0f ? 1.0f : m_fpShown);
-    Vec3 up = pose[base];
-    Vec3 fo = pose[base + 1];
-    Vec3 ha = pose[base + 2];
-    const Vec3 raised{fpRaise - fpPitch, 0.0f, 0.0f};
-    const Vec3 elbow{-fpElbow, 0.0f, 0.0f};
-    up = up + (raised - up) * w;
-    fo = fo + (elbow - fo) * w;
-    ha = ha * (1.0f - w);
+    if (gameObject && gameObject->transform && m_ownerArm->transform->Parent() != gameObject->transform)
+        m_ownerArm->transform->SetParent(gameObject->transform, false);
+    Camera* cam = OwnerCamera(gameObject);
+    if (!cam || !cam->transform || !gameObject || !gameObject->transform) {
+        SetOwnerArmActive(false);
+        return;
+    }
+    // Positive pitch looks up. Past a moderate look down the arm would sit
+    // in front of the ground, so it leaves the frame instead.
+    const Quat playerRot = gameObject->transform->Rotation();
+    const Quat camRot = cam->transform->Rotation();
+    const Quat camLocal = (playerRot.Conjugate() * camRot).Normalized();
+    const Vec3 camEuler = camLocal.ToEuler();
+    const float viewPitch = camEuler.x;
+    if (viewPitch < -36.0f) {
+        SetOwnerArmActive(false);
+        return;
+    }
+    const float h = height > 1e-3f ? height : 1.0f;
+    // The rig's 180° yaw is what makes these unflipped part meshes face the
+    // lens. Default fpRaise (-96) used to crank the full-size bone into the
+    // camera; that value now means the natural hang, and the slider nudges it.
+    const float hang = -42.0f + (fpRaise + 96.0f) * 0.25f;
+    const bool follow = std::fabs(fpPitch - viewPitch) < 8.0f;
+    const Quat basis = follow ? camRot : (playerRot * Quat::Euler(fpPitch, camEuler.y, camEuler.z));
+    Quat armRot = basis * Quat::Euler(0.0f, 180.0f, 0.0f) * Quat::Euler(hang, 0.0f, 0.0f);
     if (m_punchT >= 0.0f && m_punchT < 1.0f) {
         const float arc = std::sin(m_punchT * 3.14159265f);
-        const Vec3 punchUp{-110.0f, 0.0f, 8.0f};
-        const Vec3 punchFore{-18.0f, 0.0f, 0.0f};
-        up = up + (punchUp - up) * arc;
-        fo = fo + (punchFore - fo) * arc;
+        armRot = armRot * Quat::Euler(-75.0f * arc, 0.0f, 0.0f);
     }
-    const bool steady = fpSteady || !fpArmBob;
-    if (steady && m_rigRoot && m_rigRoot->transform && base < (int)m_partRest.size()) {
-        m_ownerArm->transform->SetParent(m_rigRoot->transform, false);
-        m_ownerArm->transform->localPosition = m_partRest[B_HIPS] + m_partRest[B_TORSO] + m_partRest[base];
-    } else if (m_parts[base] && m_parts[base]->transform && m_parts[base]->transform->Parent()) {
-        m_ownerArm->transform->SetParent(m_parts[base]->transform->Parent(), false);
-        m_ownerArm->transform->localPosition = base < (int)m_partRest.size() ? m_partRest[base] : Vec3{0, 0, 0};
-    }
-    m_ownerArm->transform->localRotation = Quat::Euler(up);
+    // Screen-right for the L-named bones (the rig's yaw puts them there).
+    const float side = base >= B_RUPARM ? -1.0f : 1.0f;
+    // Shoulder high enough that the hanging hand lands in the lower right,
+    // still on screen, instead of dropping out through the bottom edge.
+    Vec3 shoulder{side * 0.30f * h, -0.18f * h, -0.46f * h};
+    // Up and down only. A sideways or rolling bob is what tilts the horizon
+    // while the sleeve is on screen, and the camera bob itself no longer rolls.
+    if (fpArmBob && !fpSteady)
+        shoulder.y += std::sin(m_gaitPhase * 6.2831853f) * 0.012f * h;
+    const float s = 0.40f * h;
+    m_ownerArm->transform->SetRotation(armRot);
+    m_ownerArm->transform->SetPosition(cam->transform->Position() + basis * shoulder);
+    m_ownerArm->transform->localScale = Vec3{s, s, s};
+    m_ownerFore->transform->localScale = Vec3::One;
+    m_ownerHand->transform->localScale = Vec3::One;
     m_ownerFore->transform->localPosition = base + 1 < (int)m_partRest.size() ? m_partRest[base + 1] : Vec3{0, 0, 0};
-    m_ownerFore->transform->localRotation = Quat::Euler(fo);
+    m_ownerFore->transform->localRotation = Quat::Euler(-fpElbow, 0.0f, 0.0f);
     m_ownerHand->transform->localPosition = base + 2 < (int)m_partRest.size() ? m_partRest[base + 2] : Vec3{0, 0, 0};
-    m_ownerHand->transform->localRotation = Quat::Euler(ha);
+    m_ownerHand->transform->localRotation = Quat::Identity;
+    // The sleeve used to cross the near plane and dither. Push the whole copy
+    // along the look until every vertex is well in front of it.
+    const float keep = 0.18f;
+    float minAhead = 1.0e9f;
+    auto consider = [&](GameObject* g) {
+        if (!g || !g->transform) return;
+        auto* mr = g->GetComponent<MeshRenderer>();
+        if (!mr) return;
+        for (const Vec3& v : mr->mesh.vertices) {
+            const Vec3 local = cam->transform->InverseTransformPoint(g->transform->TransformPoint(v));
+            minAhead = std::min(minAhead, -local.z);
+        }
+    };
+    consider(m_ownerArm);
+    consider(m_ownerFore);
+    consider(m_ownerHand);
+    if (minAhead < keep) {
+        const Vec3 fwd = camRot * Vec3{0.0f, 0.0f, -1.0f};
+        m_ownerArm->transform->SetPosition(m_ownerArm->transform->Position() + fwd * (keep - minAhead));
+    }
     SetOwnerArmActive(true);
 }
 
@@ -1119,8 +1193,7 @@ void Character::RememberPartRest() {
 }
 
 void Character::RemoveParts() {
-    m_ownerArm = m_ownerFore = m_ownerHand = nullptr;
-    m_ownerArmBase = -2;
+    ReleaseOwnerArm();   // the copy hangs off the player, not the rig, so the rig's destroy would miss it
     if (GameObject* rig = FindRig())
         if (Scene* s = GetScene()) s->Destroy(rig);   // takes its children with it, copy included
     m_rigRoot = nullptr;

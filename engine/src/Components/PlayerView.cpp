@@ -390,6 +390,10 @@ void PlayerView::LateUpdate(float dt) {
     // front of the face, which PlaceCamera has just done.
     PlaceCamera(dt);
     ApplyHead();
+    // The lens is in its final spot for this frame. The arm copy has to be
+    // placed after that, or it is posed on the orbit camera and fills the view.
+    if (Character* ch = gameObject ? gameObject->GetComponent<Character>() : nullptr)
+        ch->RefreshOwnerArm();
 }
 
 } // namespace okay

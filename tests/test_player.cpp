@@ -708,7 +708,8 @@ int main() {
                             if (h && h->gameObject && h->gameObject->name == "FP_OwnerHand")
                                 ownerHand = h->gameObject;
         CHECK(partDiff(ch->Part(1)) > 40);             // the shirt is drawn, not an open hole
-        CHECK(ownerHand && partDiff(ownerHand) > 40); // the plain hand is the owner's copy
+        CHECK(ownerHand && !ownerHand->active);        // looking down takes the copy off the screen
+        CHECK(partDiff(ownerHand) == 0);
         CHECK(partDiff(ch->Part(5)) == 0);            // the real hand is not in this camera
         // A block inside the chest must not show through the cloth.
         GameObject* marker = sc.CreateGameObject("ChestMarker");
@@ -725,8 +726,14 @@ int main() {
         CHECK(partDiff(ch->Part(3)) == 0);
         CHECK(!ownerHand->active || partDiff(ownerHand) == 0);
         ch->anim = 1;
-        sc.Update(1.0f / 60.0f);
-        CHECK(partDiff(ownerHand) > 40);
+        tp->pitch = restPitch;                         // level again: a small hand, not the whole right third
+        settle(sc, 8);
+        CHECK(ownerHand->active);
+        {
+            const int handPx = partDiff(ownerHand);
+            CHECK(handPx > 15);
+            CHECK(handPx < 900);
+        }
         // Back to third person. The head is drawn again before the ease moves.
         pressV(sc);
         CHECK(pv->GetView() == 1);

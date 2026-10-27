@@ -28030,7 +28030,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Follow camera look##fh", &fh->followPitch)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The arm tilts up/down with your view (Minecraft-style).");
             if (ImGui::Checkbox("Bobbing##fh", &fh->bobbing)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Let the walk/run cycle bob the arm. Off = rock-steady.\n(Steadying zeroes the shared hips/torso, so use it in first person where the body is hidden.)");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A small up-and-down bob on the viewmodel arm. It does not roll, and it does not move the shared body.");
             if (ImGui::Checkbox("Steady arm (ignore lean/crouch/prone)##fh", &fh->steadyArm)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fully decouple the arm from the body so it stays put in view no matter what the body does (lean, crouch, prone).");
             SectionHeader("Manual adjust");
@@ -31624,8 +31624,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat("Bob Amount##fp", &fp->bobAmount, 0.001f, 0.0f, 0.3f, "%.3f m")) ed.dirty = true;
                 if (ImGui::DragFloat("Bob Speed##fp", &fp->bobSpeed, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bob cadence at walking speed (it speeds up with you).");
-                if (ImGui::DragFloat("Bob Sway##fp", &fp->bobSway, 0.001f, 0.0f, 0.2f, "%.3f m")) ed.dirty = true;
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sideways sway, at half the bob's rate (0 = none).");
+                ImGui::TextDisabled("Up and down only. The stride does not sway or roll the view.");
                 if (ImGui::DragFloat("Bob Run Scale##fp", &fp->bobRunScale, 0.01f, 0.0f, 2.0f, "x%.2f")) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bob size at run speed, times the walking bob.");
                 if (ImGui::DragFloat("Bob Blend##fp", &fp->bobBlend, 0.1f, 0.0f, 40.0f)) ed.dirty = true;

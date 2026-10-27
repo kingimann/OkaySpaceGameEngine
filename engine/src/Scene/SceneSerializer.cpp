@@ -350,7 +350,11 @@ static bool IsGeneratedRig(GameObject* go) {
 // child of the camera). Like the rig, it's regenerated each run, so it must not be
 // written to the scene file — otherwise it would reload as a stale duplicate.
 static bool IsGeneratedViewmodel(GameObject* go) {
-    if (!go || go->name != "FP_Arm" || !go->transform) return false;
+    if (!go) return false;
+    // The owner's arm copy is spawned beside the rig and rebuilt every run.
+    if (go->name == "FP_OwnerArm" || go->name == "FP_OwnerFore" || go->name == "FP_OwnerHand")
+        return true;
+    if (go->name != "FP_Arm" || !go->transform) return false;
     Transform* par = go->transform->Parent();
     return par && par->gameObject && par->gameObject->GetComponent<FirstPersonHand>();
 }

@@ -56,12 +56,12 @@ public:
     float mouseSensitivity = 0.15f;     // degrees per pixel of mouse movement
     float minPitch = -85.0f, maxPitch = 85.0f;
     bool  invertY = false;              // invert vertical mouse look
-    // View bob: a subtle up/down camera sway in step with walking, so movement
-    // feels grounded instead of gliding. Scales with speed; smooths out when idle.
+    // View bob: up and down only, in step with walking. No sideways sway and no
+    // roll — those tilt the horizon. Scales with speed; smooths out when idle.
     bool  headBob   = true;
     float bobAmount = 0.035f;           // bob height (world units)
     float bobSpeed  = 9.0f;             // bob cadence (≈ footstep rate)
-    float bobSway   = 0.015f;           // sideways sway (world units), at half the bob's rate
+    float bobSway   = 0.0f;             // kept so old scenes still load; not applied
     float bobRunScale = 0.8f;           // bob size at run speed (x the walking bob)
     float bobBlend  = 8.0f;             // how fast the bob fades in / out as you start / stop
     float bobGroundGrace = 0.12f;       // s the bob and landing dip still count you as grounded (stairs, slopes)
@@ -532,7 +532,7 @@ public:
             if (auto* view = gameObject->GetComponent<PlayerView>(); view && view->Driving())
                 bobW = view->FirstAmount();
         cam->localPosition.y = m_eyeBase + (m_bob - m_dip) * bobW + m_stepOffsetY;
-        cam->localPosition.x = m_lean * leanOffset + m_sway * bobW;
+        cam->localPosition.x = m_lean * leanOffset;
         m_smooth.Step(yaw, pitch, lookSmoothing, dt);
         if (lookSmoothing > 0.0f) {
             transform->localRotation = Quat::Euler(0, m_smooth.Yaw(), 0);
@@ -554,6 +554,13 @@ public:
                 cam->localPosition = transform->InverseTransformPoint(cleared);
             }
         }
+        // The stride never rolls the view. Pitch and the up/down bob are the
+        // only head motion; Q/E lean is the only roll.
+        {
+            const float shownPitch = lookSmoothing > 0.0f ? m_smooth.Pitch() : pitch;
+            cam->localRotation = Quat::Euler(shownPitch, 0.0f, -m_lean * leanAngle);
+        }
+        if (Character* ch = FindCharacter()) ch->RefreshOwnerArm();
     }
 
     // Grounded detection: a roughly-vertical contact with something below the player.
@@ -651,10 +658,11 @@ private:
         m_eyeBase += (target - m_eyeBase) * t;   // the camera is placed in LateUpdate
     }
 
-    // The walking head-bob (and sway), layered on the eye height in LateUpdate.
-    // Its size eases in and out (bobBlend) instead of switching formulas, so
-    // starting, stopping and a flickering `grounded` never jolt the view; the
-    // phase restarts from 0 once it has faded out, so the next start does too.
+    // The walking head-bob, layered on the eye height in LateUpdate. Up and
+    // down only: a sideways term reads as the horizon rolling. Its size eases
+    // in and out (bobBlend) instead of switching formulas, so starting,
+    // stopping and a flickering `grounded` never jolt the view; the phase
+    // restarts from 0 once it has faded out, so the next start does too.
     void ApplyHeadBob(float dt, bool grounded, float hSpeed) {
         const float ref = Mathf::Max(0.1f, walkSpeed);
         const bool walking = grounded && hSpeed > 0.3f && m_slideT <= 0.0f;
@@ -675,9 +683,8 @@ private:
         } else {
             m_bobAmp = 0.0f; m_bobPhase = 0.0f;
         }
-        const float w = bobAmount > 1e-5f ? m_bobAmp / bobAmount : 0.0f;
         m_bob  = std::sin(m_bobPhase) * m_bobAmp;
-        m_sway = std::cos(m_bobPhase * 0.5f) * bobSway * w;
+        m_sway = 0.0f;
     }
 
     Vec2 m_lastMouse{0, 0};

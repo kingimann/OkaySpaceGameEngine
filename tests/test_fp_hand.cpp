@@ -2,6 +2,7 @@
 #include <Okay.hpp>
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <thread>
 
@@ -106,7 +107,35 @@ int main() {
         {
             const Quat raised = Quat::Euler(ch->fpRaise - ch->fpPitch, 0.0f, 0.0f);
             CHECK(Quat::Angle(ch->Part(3)->transform->localRotation, raised) > 40.0f);
-            CHECK(Quat::Angle(ch->OwnerViewArm()->transform->localRotation, raised) < 8.0f);
+            // A small copy on the player, in front of the near plane. Not the old
+            // full-size bone cranked to fpRaise.
+            GameObject* arm = ch->OwnerViewArm();
+            CHECK(arm->transform->Parent() == player->transform);
+            CHECK(arm->transform->localScale.x > 0.15f);
+            CHECK(arm->transform->localScale.x < 0.60f);
+            float minAhead = 1.0e9f;
+            auto walk = [&](auto&& self, GameObject* g) -> void {
+                if (!g || !g->active || !g->transform) return;
+                if (auto* mr = g->GetComponent<MeshRenderer>())
+                    for (const Vec3& v : mr->mesh.vertices) {
+                        const Vec3 local = cam->transform->InverseTransformPoint(g->transform->TransformPoint(v));
+                        minAhead = std::min(minAhead, -local.z);
+                    }
+                for (Transform* c : g->transform->Children())
+                    if (c && c->gameObject) self(self, c->gameObject);
+            };
+            walk(walk, arm);
+            CHECK(minAhead >= 0.15f);
+        }
+        // The sleeve stops short of the hand, so the two cubes do not share a face.
+        {
+            const int fore = Character::BoneIndex("l_fore");
+            float foreMinY = 1.0e9f, handMaxY = -1.0e9f;
+            for (int i = 0; i < (int)bone.size() && i < (int)rig.vertices.size(); ++i) {
+                if (bone[i] == fore) foreMinY = std::min(foreMinY, rig.vertices[i].y);
+                if (bone[i] == hand) handMaxY = std::max(handMaxY, rig.vertices[i].y);
+            }
+            CHECK(foreMinY >= handMaxY - 1e-4f);
         }
     }
 
@@ -418,7 +447,9 @@ int main() {
                 if (tp->pitch > -1.0f && tp->pitch < 1.0f && ch->OwnerViewArm() && ch->OwnerViewArm()->active) {
                     const Quat raised = Quat::Euler(ch->fpRaise - ch->fpPitch, 0.0f, 0.0f);
                     CHECK(Quat::Angle(ch->Part(3)->transform->localRotation, raised) > 40.0f);
-                    CHECK(Quat::Angle(ch->OwnerViewArm()->transform->localRotation, raised) < 8.0f);
+                    CHECK(ch->OwnerViewArm()->transform->Parent() == player->transform);
+                    CHECK(ch->OwnerViewArm()->transform->localScale.x > 0.15f);
+                    CHECK(ch->OwnerViewArm()->transform->localScale.x < 0.60f);
                 }
             }
             if (ch->OwnerViewArm() && ch->OwnerViewArm()->active)
@@ -437,10 +468,9 @@ int main() {
             tp->pitch = 80.0f;
             pump(8);
             CHECK(Quat::Angle(ch->Part(3)->transform->localRotation, realLevel) < 3.0f);
-            CHECK(ch->OwnerViewArm() && ch->OwnerViewArm()->active);
-            CHECK(Quat::Angle(ch->OwnerViewArm()->transform->localRotation, copyLevel) > 40.0f);
+            CHECK(ch->OwnerViewArm() && !ch->OwnerViewArm()->active);   // a look down takes the copy off the screen
             CHECK(Quat::Angle(gh->Part(3)->transform->localRotation, ghostLevel) < 8.0f);
-            CHECK(Quat::Angle(gh->Part(3)->transform->localRotation, copyLevel) > 40.0f);
+            (void)copyLevel;
         }
         tp->pitch = 0.0f;
         match(2);
@@ -457,6 +487,65 @@ int main() {
         match(1);
         CHECK(gh->Part(2)->active);
         CHECK((int)gh->Part(5)->GetComponent<MeshRenderer>()->mesh.vertices.size() == 36);
+    }
+
+    // Entering first person must not log a warning, and a run bobs the eye
+    // up and down without rolling it or sliding it sideways.
+    {
+        std::vector<std::string> warns;
+        auto prev = Log::sink;
+        Log::sink = [&](Log::Level lv, const std::string& m) {
+            if (lv == Log::Level::Warning || lv == Log::Level::Error) warns.push_back(m);
+        };
+        {
+            Scene sc("enter");
+            sc.physicsEnabled = true;
+            Templates::ThirdPerson(sc);
+            sc.Start();
+            for (int i = 0; i < 5; ++i) sc.Update(1.0f / 60.0f);
+            sc.Find("Player")->GetComponent<PlayerView>()->SetView(0);
+            for (int i = 0; i < 40; ++i) sc.Update(1.0f / 60.0f);
+            if (!warns.empty()) std::cerr << "  FP warning: " << warns[0] << "\n";
+            CHECK(warns.empty());
+        }
+        warns.clear();
+        {
+            Scene sc("bob");
+            sc.physicsEnabled = true;
+            Templates::FPS(sc);
+            GameObject* player = nullptr;
+            Camera* cam = nullptr;
+            for (auto& o : sc.Objects()) {
+                if (o->name == "Player") player = o.get();
+                if (auto* c = o->GetComponent<Camera>()) cam = c;
+            }
+            player->transform->localPosition = {0, 1.0f, 8.0f};   // open ground, away from the crates
+            auto* fpc = player->GetComponent<FirstPersonController>();
+            fpc->sprintKey = 'r';
+            fpc->bobSway = 0.05f;   // an old scene value; it must not move the camera
+            fpc->yaw = 0.0f;
+            sc.Start();
+            float maxRoll = 0.0f, maxAbsX = 0.0f, minY = 1.0e9f, maxY = -1.0e9f;
+            for (int i = 0; i < 120; ++i) {
+                Input::FeedKeys({'w', 'r'});
+                sc.Update(1.0f / 60.0f);
+                if (i < 40) continue;   // let the body land, then measure the stride
+                const Quat q = cam->transform->Rotation();
+                const Vec3 right = q * Vec3{1, 0, 0};
+                const Vec3 up = q * Vec3{0, 1, 0};
+                const float roll = std::atan2(right.y, up.y) * 57.2957795f;
+                maxRoll = std::max(maxRoll, std::fabs(roll));
+                maxAbsX = std::max(maxAbsX, std::fabs(cam->transform->localPosition.x));
+                minY = std::min(minY, cam->transform->localPosition.y);
+                maxY = std::max(maxY, cam->transform->localPosition.y);
+            }
+            if (!warns.empty()) std::cerr << "  FPS warning: " << warns[0] << "\n";
+            CHECK(warns.empty());
+            CHECK(maxRoll < 0.5f);
+            CHECK(maxAbsX < 0.004f);
+            CHECK(maxY - minY > 0.008f);   // the up/down bob is still there
+        }
+        Log::sink = std::move(prev);
     }
 
     TEST_MAIN_RESULT();

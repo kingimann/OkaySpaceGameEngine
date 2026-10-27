@@ -553,6 +553,7 @@ inline std::shared_ptr<Environment> SharedStatics(const std::string& source) {
 struct FunctionDecl {
     std::vector<std::string> params;
     std::vector<unsigned char> paramKinds;   ///< `int dmg` converts / checks its argument
+    std::vector<ExprPtr> defaults;           ///< null unless the parameter was written `a = expr`
     std::vector<StmtPtr> body;
     unsigned char returnKind = 0;            ///< `int Score()` converts what it returns
 };
@@ -594,6 +595,7 @@ struct Runtime {
     struct Coroutine {
         int id = 0;
         std::string fn; std::vector<Value> args;
+        std::vector<std::string> argNames;   ///< parallel to args; empty = positional
         std::thread th;
         std::mutex m; std::condition_variable cv;
         bool coTurn = false, started = false, done = false, abort = false;
@@ -618,7 +620,7 @@ struct Runtime {
             co->started = true;
             co->th = std::thread([this, co] {
                 { std::unique_lock<std::mutex> lk(co->m); co->cv.wait(lk, [co] { return co->coTurn; }); }
-                try { if (!co->abort) Call(co->fn, co->args); }
+                try { if (!co->abort) Call(co->fn, co->args, co->argNames.empty() ? nullptr : &co->argNames); }
                 catch (const CoroutineAbort&) {}
                 catch (const std::exception& e) { Log::Error("OkayScript coroutine ", co->fn, "(): ", e.what()); }
                 catch (...) { Log::Error("OkayScript coroutine ", co->fn, "(): error"); }
@@ -646,10 +648,13 @@ struct Runtime {
         co->cv.wait(lk, [co] { return co->coTurn; });
         if (co->abort) throw CoroutineAbort{};
     }
-    int StartCoroutine(const std::string& fn, std::vector<Value> args) {
+    // Names from the call that started a coroutine (StartCoroutine(Blink(delay: 0.2))).
+    // Set only while that builtin runs, on the caller's thread.
+    const std::vector<std::string>* activeArgNames = nullptr;
+    int StartCoroutine(const std::string& fn, std::vector<Value> args, std::vector<std::string> argNames = {}) {
         if (!functions.count(fn)) throw ScriptError("StartCoroutine: no function named '" + fn + "'");
         auto co = std::make_unique<Coroutine>();
-        co->id = nextCoId++; co->fn = fn; co->args = std::move(args);
+        co->id = nextCoId++; co->fn = fn; co->args = std::move(args); co->argNames = std::move(argNames);
         Coroutine* raw = co.get();
         coroutines.push_back(std::move(co));
         Resume(raw);   // runs until its first yield
@@ -767,15 +772,19 @@ struct Runtime {
         return statics && statics->vars.count(n);
     }
 
-    Value Call(const std::string& name, std::vector<Value>& args);
+    Value Call(const std::string& name, std::vector<Value>& args, const std::vector<std::string>* names = nullptr);
 
     // C# lambdas (x => x * 2, (a, b) => { ... }): a lambda value is {"__lambda": id};
     // calling it runs its body in a new frame on top of the current scopes, so it
     // sees the locals of the code that called it (fine for ForEach/Find/Where...).
-    struct LambdaBody { const std::vector<std::string>* params; const std::vector<StmtPtr>* body; };
+    struct LambdaBody {
+        const std::vector<std::string>* params;
+        const std::vector<StmtPtr>* body;
+        const std::vector<ExprPtr>* defaults = nullptr;
+    };
     std::unordered_map<int, LambdaBody> lambdas;
     static bool IsLambda(const Value& v) { auto m = v.AsMap(); return m && m->count("__lambda"); }
-    Value CallLambda(const Value& f, std::vector<Value>& args);
+    Value CallLambda(const Value& f, std::vector<Value>& args, const std::vector<std::string>* names = nullptr);
 
     // dotted property read/write (transform.position.x, Time.timeScale,
     // gameObject.name, ...). GetDotted sets `ok` when it recognized the name;
@@ -1183,12 +1192,20 @@ struct MethodCallExpr : Expr {
 
 struct CallExpr : Expr {
     std::string name; std::vector<ExprPtr> args;
+    std::vector<std::string> argNames;   ///< parallel to args; empty string = positional
     explicit CallExpr(std::string n) : name(std::move(n)) {}
     Value Eval(Runtime& rt) override {
         std::vector<Value> vals;
+        std::vector<std::string> names;
         vals.reserve(args.size());
-        for (auto& a : args) vals.push_back(a->Eval(rt));
-        return rt.Call(name, vals);
+        bool anyNamed = false;
+        for (std::size_t i = 0; i < args.size(); ++i) {
+            std::string nm = i < argNames.size() ? argNames[i] : std::string();
+            if (!nm.empty()) anyNamed = true;
+            names.push_back(std::move(nm));
+            vals.push_back(args[i]->Eval(rt));
+        }
+        return rt.Call(name, vals, anyNamed ? &names : nullptr);
     }
 };
 
@@ -1439,9 +1456,10 @@ struct ForEachStmt : Stmt {
 struct LambdaExpr : Expr {
     int id = 0;
     std::vector<std::string> params;
+    std::vector<ExprPtr> defaults;   ///< null unless that parameter was written `a = expr`
     std::vector<StmtPtr> body;
     Value Eval(Runtime& r) override {
-        r.lambdas[id] = Runtime::LambdaBody{&params, &body};
+        r.lambdas[id] = Runtime::LambdaBody{&params, &body, &defaults};
         Value v = Value::MakeMap(); (*v.AsMap())["__lambda"] = Value{(float)id};
         return v;
     }
@@ -1479,9 +1497,50 @@ struct CallDepthGuard {
     ~CallDepthGuard() { --t_callDepth; }
 };
 
-Value Runtime::Call(const std::string& name, std::vector<Value>& args) {
+namespace {
+bool AnyNamed(const std::vector<std::string>* names) {
+    if (!names) return false;
+    for (const std::string& n : *names) if (!n.empty()) return true;
+    return false;
+}
+// Lay call arguments onto parameter slots. Extra positional arguments are ignored,
+// matching calls that already passed more values than a function reads.
+void PlaceArgs(const std::vector<std::string>& params, const std::vector<Value>& args,
+               const std::vector<std::string>* names, std::vector<char>& present,
+               std::vector<Value>& slot, const std::string& what) {
+    present.assign(params.size(), 0);
+    slot.assign(params.size(), Value{});
+    bool sawNamed = false;
+    std::size_t next = 0;
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        const std::string nm = (names && i < names->size()) ? (*names)[i] : std::string();
+        if (nm.empty()) {
+            if (sawNamed) throw ScriptError(what + ": a value without a name can't follow a named one");
+            if (next >= params.size()) continue;
+            slot[next] = args[i]; present[next] = 1; ++next;
+        } else {
+            sawNamed = true;
+            std::size_t idx = params.size();
+            for (std::size_t p = 0; p < params.size(); ++p) if (params[p] == nm) { idx = p; break; }
+            if (idx == params.size()) throw ScriptError(what + " has no parameter '" + nm + "'");
+            if (present[idx]) throw ScriptError(what + ": '" + nm + "' was given twice");
+            slot[idx] = args[i]; present[idx] = 1;
+        }
+    }
+}
+} // namespace
+
+Value Runtime::Call(const std::string& name, std::vector<Value>& args, const std::vector<std::string>* names) {
     auto b = builtins.find(name);
-    if (b != builtins.end()) return b->second(args);
+    if (b != builtins.end()) {
+        if (AnyNamed(names) && name != "StartCoroutine")
+            throw ScriptError("'" + name + "' doesn't take named arguments");
+        const std::vector<std::string>* prev = activeArgNames;
+        activeArgNames = names;
+        Value v = b->second(args);
+        activeArgNames = prev;
+        return v;
+    }
 
     auto f = functions.find(name);
     if (f == functions.end()) {
@@ -1509,18 +1568,26 @@ Value Runtime::Call(const std::string& name, std::vector<Value>& args) {
             if (ok && CallValueMethod(obj, method, args, out, &inv)) return out;
         }
         // A variable holding a lambda: Action onHit = () => ...; onHit();
-        if (Has(name) && IsLambda(Get(name))) return CallLambda(Get(name), args);
+        if (Has(name) && IsLambda(Get(name))) return CallLambda(Get(name), args, names);
         throw ScriptError("call to undefined function '" + name + "'");
     }
 
     CallDepthGuard depthGuard(name + "()");
-    scopes.push_back(Environment{});
     const FunctionDecl& fn = f->second;
+    std::vector<char> present;
+    std::vector<Value> slot;
+    PlaceArgs(fn.params, args, names, present, slot, name + "()");
+    scopes.push_back(Environment{});
     for (std::size_t i = 0; i < fn.params.size(); ++i) {
         const unsigned char k = i < fn.paramKinds.size() ? fn.paramKinds[i] : 0;
-        if (!k) { Define(fn.params[i], i < args.size() ? args[i] : Value{}); continue; }
-        try { DefineTyped(fn.params[i], i < args.size() ? args[i] : DefaultForKind(k), k); }
-        catch (...) { scopes.pop_back(); throw; }
+        Value v;
+        try {
+            if (present[i]) v = slot[i];
+            else if (i < fn.defaults.size() && fn.defaults[i]) v = fn.defaults[i]->Eval(*this);
+            else v = k ? DefaultForKind(k) : Value{};
+            if (!k) Define(fn.params[i], v);
+            else DefineTyped(fn.params[i], v, k);
+        } catch (...) { scopes.pop_back(); throw; }
     }
 
     Value ret;
@@ -1539,7 +1606,7 @@ Value Runtime::Call(const std::string& name, std::vector<Value>& args) {
     return ret;
 }
 
-Value Runtime::CallLambda(const Value& f, std::vector<Value>& args) {
+Value Runtime::CallLambda(const Value& f, std::vector<Value>& args, const std::vector<std::string>* names) {
     auto m = f.AsMap();
     if (!m) throw ScriptError("not a function");
     auto it = m->find("__lambda");
@@ -1547,9 +1614,21 @@ Value Runtime::CallLambda(const Value& f, std::vector<Value>& args) {
     auto lb = lambdas.find((int)it->second.AsFloat());
     if (lb == lambdas.end()) throw ScriptError("lambda is no longer available");
     CallDepthGuard depthGuard("a lambda");
-    scopes.push_back(Environment{});
     const auto& ps = *lb->second.params;
-    for (std::size_t i = 0; i < ps.size(); ++i) Define(ps[i], i < args.size() ? args[i] : Value{});
+    const std::vector<ExprPtr>* defs = lb->second.defaults;
+    std::vector<char> present;
+    std::vector<Value> slot;
+    PlaceArgs(ps, args, names, present, slot, "lambda");
+    scopes.push_back(Environment{});
+    for (std::size_t i = 0; i < ps.size(); ++i) {
+        try {
+            Value v;
+            if (present[i]) v = slot[i];
+            else if (defs && i < defs->size() && (*defs)[i]) v = (*defs)[i]->Eval(*this);
+            else v = Value{};
+            Define(ps[i], v);
+        } catch (...) { scopes.pop_back(); throw; }
+    }
     Value ret;
     try { for (auto& st : *lb->second.body) st->Exec(*this); }
     catch (ReturnSignal& rs) { ret = rs.value; }
@@ -2090,9 +2169,15 @@ private:
                 // `dt`, `float dt`, `List<int> xs`, `ref int n` — the last identifier is the name.
                 const unsigned char pk = (unsigned char)(DeclKindAhead() & 0x0F);
                 std::string p = ConsumeIdentRun("parameter");
-                if (Match(Tok::Assign)) ParseExpression();   // C# default value (ignored)
+                ExprPtr def;
+                if (Match(Tok::Assign)) def = ParseExpression();   // `void Heal(int hp, int bonus = 2)`
+                else if (!decl.defaults.empty() && decl.defaults.back())
+                    throw ScriptError("parameter '" + p + "' needs a default too (ones with defaults come last)", Peek().line);
+                for (const std::string& prev : decl.params)
+                    if (prev == p) throw ScriptError("parameter '" + p + "' is already in this function", Peek().line);
                 decl.params.push_back(p);
                 decl.paramKinds.push_back(pk);
+                decl.defaults.push_back(std::move(def));
             } while (Match(Tok::Comma));
         }
         Expect(Tok::RParen, "')'");
@@ -2404,9 +2489,14 @@ private:
     bool IsLambdaAhead() const {
         if (Check(Tok::Ident) && m_toks[m_pos + 1].type == Tok::Arrow) return true;
         if (!Check(Tok::LParen)) return false;
-        std::size_t i = m_pos + 1;
-        while (m_toks[i].type == Tok::Ident || m_toks[i].type == Tok::Comma) ++i;
-        return m_toks[i].type == Tok::RParen && m_toks[i + 1].type == Tok::Arrow;
+        int depth = 0;
+        for (std::size_t i = m_pos; i < m_toks.size(); ++i) {
+            if (m_toks[i].type == Tok::LParen) ++depth;
+            else if (m_toks[i].type == Tok::RParen) {
+                if (--depth == 0) return i + 1 < m_toks.size() && m_toks[i + 1].type == Tok::Arrow;
+            }
+        }
+        return false;
     }
     ExprPtr ParseLambda() {
         static int s_nextLambda = 1;
@@ -2415,8 +2505,15 @@ private:
         if (Check(Tok::Ident)) lam->params.push_back(m_toks[m_pos++].text);
         else {
             Expect(Tok::LParen, "'('");
+            bool sawDefault = false;
             while (!Check(Tok::RParen)) {
-                lam->params.push_back(ConsumeIdentRun("parameter"));
+                std::string p = ConsumeIdentRun("parameter");
+                ExprPtr def;
+                if (Match(Tok::Assign)) { def = ParseExpression(); sawDefault = true; }
+                else if (sawDefault)
+                    throw ScriptError("parameter '" + p + "' needs a default too (ones with defaults come last)", Peek().line);
+                lam->params.push_back(std::move(p));
+                lam->defaults.push_back(std::move(def));
                 if (!Match(Tok::Comma)) break;
             }
             Expect(Tok::RParen, "')'");
@@ -2704,6 +2801,20 @@ private:
         return node;
     }
 
+    // `Heal(5)` or `Heal(bonus: 4, hp: 1)`. A name is a bare identifier followed by ':'.
+    void ParseCallArguments(std::vector<ExprPtr>& args, std::vector<std::string>& names) {
+        if (Check(Tok::RParen)) return;
+        do {
+            std::string nm;
+            if (Check(Tok::Ident) && m_pos + 1 < m_toks.size() && m_toks[m_pos + 1].type == Tok::Colon) {
+                nm = m_toks[m_pos].text;
+                m_pos += 2;
+            }
+            names.push_back(std::move(nm));
+            args.push_back(ParseExpression());
+        } while (Match(Tok::Comma));
+    }
+
     ExprPtr ParsePrimary() {
         if (Match(Tok::Number)) return std::make_unique<NumberExpr>(Prev().number);
         if (Match(Tok::String)) return std::make_unique<StringExpr>(Prev().text);
@@ -2757,16 +2868,19 @@ private:
             }
             if (Match(Tok::LParen)) {
                 auto call = std::make_unique<CallExpr>(name);
-                if (!Check(Tok::RParen)) {
-                    do { call->args.push_back(ParseExpression()); } while (Match(Tok::Comma));
-                }
+                ParseCallArguments(call->args, call->argNames);
                 Expect(Tok::RParen, "')'");
                 // StartCoroutine(Blink(0.2f)) names the routine instead of calling it now.
+                // Named arguments inside it (`Blink(delay: 0.2)`) travel with the values.
                 if ((name == "StartCoroutine" || name == "StopCoroutine") && call->args.size() == 1)
                     if (auto* inner = dynamic_cast<CallExpr*>(call->args[0].get())) {
                         auto co = std::make_unique<CallExpr>(name);
                         co->args.push_back(std::make_unique<StringExpr>(inner->name));
-                        for (auto& a : inner->args) co->args.push_back(std::move(a));
+                        co->argNames.push_back("");
+                        for (std::size_t i = 0; i < inner->args.size(); ++i) {
+                            co->args.push_back(std::move(inner->args[i]));
+                            co->argNames.push_back(i < inner->argNames.size() ? inner->argNames[i] : "");
+                        }
                         return co;
                     }
                 return call;
@@ -8090,7 +8204,10 @@ struct OkayScriptVM::Impl {
         b["StartCoroutine"] = [this](std::vector<Value>& a) {
             if (a.empty()) return Value{};
             std::vector<Value> args(a.begin() + 1, a.end());
-            int id = rt.StartCoroutine(a[0].AsString(), std::move(args));
+            std::vector<std::string> names;
+            if (rt.activeArgNames && rt.activeArgNames->size() > 1)
+                names.assign(rt.activeArgNames->begin() + 1, rt.activeArgNames->end());
+            int id = rt.StartCoroutine(a[0].AsString(), std::move(args), std::move(names));
             Value v = Value::MakeMap(); (*v.AsMap())["__co"] = Value{(float)id}; return v;
         };
         b["StopCoroutine"] = [this](std::vector<Value>& a) {

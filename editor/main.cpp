@@ -908,6 +908,24 @@ static bool ItemPicker(const char* label, std::string& id, float width = 140.0f)
     return changed;
 }
 
+// A recipe's newer fields (craft time, bench tag, unlock flag), shared by the Crafting
+// and Crafting Station inspectors. Returns true when anything changed.
+static bool RecipeExtrasUI(okay::Recipe& r) {
+    bool ch = false;
+    ImGui::SetNextItemWidth(70);
+    if (ImGui::DragFloat("time##rt", &r.craftTime, 0.05f, 0.0f, 3600.0f, "%.1fs")) ch = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to craft (0 = instant). Timed crafts queue up with a progress bar.");
+    ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+    char st[48]; std::snprintf(st, sizeof(st), "%s", r.station.c_str());
+    if (ImGui::InputTextWithHint("##rst", "bench tag", st, sizeof(st))) { r.station = st; ch = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only craftable at an open Crafting Station with this tag (blank = anywhere).");
+    ImGui::SameLine(); ImGui::SetNextItemWidth(90);
+    char ul[48]; std::snprintf(ul, sizeof(ul), "%s", r.unlockFlag.c_str());
+    if (ImGui::InputTextWithHint("##rul", "unlock flag", ul, sizeof(ul))) { r.unlockFlag = ul; ch = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hidden until this game variable is non-zero (blank = always known).");
+    return ch;
+}
+
 // Cached albedo color of a .okaymat — a cheap material "thumbnail" for the
 // Project browser (a real render would need a preview scene). Reloads when the
 // file's write time changes, so edits show up without a restart.
@@ -19236,6 +19254,8 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
             if (ma->idleClip == oldName) ma->idleClip = nb;
             if (ma->walkClip == oldName) ma->walkClip = nb;
             if (ma->runClip  == oldName) ma->runClip  = nb;
+            for (std::string* c : {&ma->crouchClip, &ma->crouchWalkClip, &ma->proneClip, &ma->crawlClip, &ma->getUpClip})
+                if (*c == oldName) *c = nb;
             ed.dirty = true;
         }
         if (ImGui::IsItemActivated()) ed.PushUndo();
@@ -23884,6 +23904,50 @@ static std::string MakeIKHelper(EditorState& ed, GameObject* owner,
     return g->name;
 }
 
+// Inspector widget for one IK joint limit, shared by every IK inspector that
+// grows limits: type, the angle ranges the type uses, auto axes and a humanoid
+// preset menu. Returns true when anything changed.
+static bool IKJointLimitUI(const char* label, IKJointLimit& l) {
+    bool ch = false;
+    ImGui::PushID(label);
+    int ty = (int)l.type;
+    ImGui::SetNextItemWidth(150);
+    if (ImGui::Combo(label, &ty, "None\0Hinge (elbow / knee)\0Ball (shoulder / hip)\0")) { l.type = (IKJointLimit::Type)ty; ch = true; }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Preset")) ImGui::OpenPopup("ikjlpreset");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Humanoid presets: sensible angles for each joint.");
+    if (ImGui::BeginPopup("ikjlpreset")) {
+        struct { const char* n; IKJointLimit v; } ps[] = {
+            {"Elbow", IKJointLimit::Elbow()}, {"Knee", IKJointLimit::Knee()},
+            {"Shoulder", IKJointLimit::Shoulder()}, {"Hip", IKJointLimit::Hip()},
+            {"Spine", IKJointLimit::Spine()}, {"Neck", IKJointLimit::Neck()}};
+        for (auto& p : ps) if (ImGui::MenuItem(p.n)) { l = p.v; ch = true; }
+        ImGui::EndPopup();
+    }
+    if (l.type != IKJointLimit::Type::None) {
+        ImGui::Indent();
+        if (l.type == IKJointLimit::Type::Ball)
+            ch |= ImGui::DragFloat("Swing (deg)", &l.swingMax, 1.0f, 0.0f, 180.0f);
+        if (l.type == IKJointLimit::Type::Hinge) {
+            float b[2] = {l.hingeMin, l.hingeMax};
+            if (ImGui::DragFloat2("Bend min/max", b, 1.0f, -180.0f, 180.0f)) { l.hingeMin = b[0]; l.hingeMax = b[1]; ch = true; }
+        }
+        float t[2] = {l.twistMin, l.twistMax};
+        if (ImGui::DragFloat2("Twist min/max", t, 1.0f, -180.0f, 180.0f)) { l.twistMin = t[0]; l.twistMax = t[1]; ch = true; }
+        ch |= ImGui::Checkbox("Auto axes (from the rig)", &l.autoAxes);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Twist axis = toward the child bone; hinge axis = the rest bend plane.\nPer bone, so the same numbers work on both sides of a mirrored rig.");
+        if (!l.autoAxes) {
+            float tw[3] = {l.twistAxis.x, l.twistAxis.y, l.twistAxis.z};
+            float hg[3] = {l.hingeAxis.x, l.hingeAxis.y, l.hingeAxis.z};
+            if (ImGui::DragFloat3("Twist axis", tw, 0.05f)) { l.twistAxis = {tw[0], tw[1], tw[2]}; ch = true; }
+            if (ImGui::DragFloat3("Hinge axis", hg, 0.05f)) { l.hingeAxis = {hg[0], hg[1], hg[2]}; ch = true; }
+        }
+        ImGui::Unindent();
+    }
+    ImGui::PopID();
+    return ch;
+}
+
 // If an asset is dropped on the previous widget, set `field` to its path.
 static bool AcceptAssetPathField(std::string& field) {
     bool changed = false;
@@ -27760,6 +27824,15 @@ void DrawInspector(EditorState& ed) {
                 clipCombo("Fall clip##ma", ma->fallClip);
                 clipCombo("Land clip##ma", ma->landClip);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Air states from the capsule's vertical motion: launching plays Jump,\npast the apex Fall loops, touchdown plays Land once. Works with any\ncontroller; leave a slot on (none) to skip that state.");
+                if (ImGui::TreeNode("Crouch / prone clips##ma")) {
+                    clipCombo("Crouch clip##ma", ma->crouchClip);
+                    clipCombo("Crouch walk clip##ma", ma->crouchWalkClip);
+                    clipCombo("Prone clip##ma", ma->proneClip);
+                    clipCombo("Crawl clip##ma", ma->crawlClip);
+                    clipCombo("Get up clip##ma", ma->getUpClip);
+                    ImGui::TextDisabled("Follow the player controller's crouch / prone. Getting up\nfrom prone plays Get up once; (none) keeps the standing clips.");
+                    ImGui::TreePop();
+                }
                 if (ImGui::Checkbox("Animate in place##ma", &ma->inPlace)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Strip the clips' baked forward travel so the CONTROLLER moves the\nbody and the clip only cycles the limbs. Fixes a walking model sliding\naway from its collider and snapping back every loop. On automatically\nfor models set as a player's character.");
             }
@@ -27996,6 +28069,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("If this object (or a child) has a Character, replicate its animation + punches too.");
             if (ImGui::Checkbox("Players can claim it##ns", &ns->clientClaimable)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("With an Anti-Cheat Config, an object nobody owns is the host's: no player may move it or change its variables. Tick this for objects any player may grab (a ball): the first one to move it owns it.");
+            if (ns->authority == NetworkSync::Authority::Manual && !ns->clientClaimable)
+                ImGui::TextDisabled("Anti-cheat on: players can't move this or write its variables until \"Players can claim it\" is on.");
             if (ImGui::SmallButton("Remove##ns")) toRemove = ns;
         }
     }
@@ -29209,6 +29284,10 @@ void DrawInspector(EditorState& ed) {
                 ImGui::DragFloat("Weight##lik", &lb->weight, 0.01f, 0.0f, 1.0f);
                 ImGui::DragFloat("Min Bend##lik", &lb->minBend, 1.0f, 0.0f, 180.0f);
                 ImGui::DragFloat("Max Bend##lik", &lb->maxBend, 1.0f, 0.0f, 180.0f);
+                if (IKJointLimitUI("Upper limit##lik", lb->upperLimit)) ed.dirty = true;
+                if (IKJointLimitUI("Lower limit##lik", lb->lowerLimit)) ed.dirty = true;
+                if (lb->upperLimit.Active() || lb->lowerLimit.Active())
+                    ImGui::TextDisabled("Limits clamp from each bone's rest pose. A Hinge on the lower\nbone only stops twist (Min/Max Bend decide the reach).");
                 if (ImGui::DragFloat("Softness##lik", &lb->softness, 0.005f, 0.0f, 0.5f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ease the last stretch to full reach over this distance,\nso the limb doesn't snap straight as the target moves out of reach.");
                 ImGui::Checkbox("Match Target Rotation##lik", &lb->matchTargetRotation);
@@ -29227,7 +29306,8 @@ void DrawInspector(EditorState& ed) {
         }
         if (auto* ci = dynamic_cast<ChainIK*>(curComp)) {
             if (CompHeader("Chain IK", ci, &toRemove)) {
-                ImGui::TextDisabled("Long-chain IK (spider legs, tentacles). Bones root->tip.");
+                ImGui::TextDisabled("Long-chain IK: spines, tails, tentacles, spider legs. Bones root->tip.");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Solver: FABRIK for spines, tails and tentacles; CCD bends from the tip first.\nFor arms and legs use Limb IK (cheaper, exact two-bone solve).");
                 NameField("Target##cik", ci->targetName);
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Create##ciktgt")) {
@@ -29251,8 +29331,24 @@ void DrawInspector(EditorState& ed) {
                     ci->poleName = MakeIKHelper(ed, go, "Chain Pole", seed); ci->poleObject = nullptr;
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spawn a pole the chain bends toward (knee / elbow / curl direction).");
+                if (ci->poleName.empty() && !ci->poleObject) {
+                    int pm = ci->poleMode + 1;
+                    if (ImGui::Combo("Pole Mode##cik", &pm, "World point (legacy)\0Auto (keep the bend)\0Character\0World direction\0"))
+                        { ci->poleMode = pm - 1; ed.dirty = true; }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Without a Pole object: a fixed world POINT (old scenes, ik_set_pole),\nor a bend DIRECTION - Auto keeps the animation's own bend and eases\ntoward Pole Dir as the chain straightens; Character turns with this\nobject; World is fixed.");
+                    if (ci->poleMode < 0) {
+                        ImGui::Checkbox("Use Pole Point##cik", &ci->usePole);
+                        if (ci->usePole) {
+                            float pp[3] = {ci->pole.x, ci->pole.y, ci->pole.z};
+                            if (ImGui::DragFloat3("Pole point##cik", pp, 0.1f)) { ci->pole = {pp[0], pp[1], pp[2]}; ed.dirty = true; }
+                        }
+                    } else {
+                        float pd[3] = {ci->poleDir.x, ci->poleDir.y, ci->poleDir.z};
+                        if (ImGui::DragFloat3("Pole Dir##cik", pd, 0.05f)) { ci->poleDir = {pd[0], pd[1], pd[2]}; ed.dirty = true; }
+                    }
+                }
                 ImGui::DragFloat("Max Joint Bend##cik", &ci->maxJointBend, 1.0f, 0.0f, 180.0f, ci->maxJointBend <= 0.0f ? "unlimited" : "%.0f deg");
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cap how sharply any joint may bend (0 = no limit). FABRIK only.");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cap how sharply any joint may bend (0 = no limit). A per-bone limit\nbelow replaces it for that joint.");
                 ImGui::Checkbox("IK Active##cik", &ci->ikActive); ImGui::SameLine();
                 ImGui::SetNextItemWidth(90); ImGui::DragFloat("Fade (s)##cik", &ci->fadeTime, 0.01f, 0.0f, 3.0f);
                 if (ed.isPlaying()) ImGui::TextDisabled("Tip error: %.3f", ci->Error());
@@ -29267,6 +29363,21 @@ void DrawInspector(EditorState& ed) {
                     ImGui::PopID();
                 }
                 if (ImGui::SmallButton("+ Bone##cik")) { ci->boneNames.push_back(""); ed.dirty = true; }
+                if (!ci->boneNames.empty() && ImGui::TreeNode("Joint limits##cik")) {
+                    if (ci->limits.size() != ci->boneNames.size()) { ci->limits.resize(ci->boneNames.size()); ed.dirty = true; }
+                    if (ImGui::SmallButton("Preset all: Spine##cik")) { for (auto& l : ci->limits) l = IKJointLimit::Spine(); ed.dirty = true; }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Tail (loose)##cik")) { for (auto& l : ci->limits) l = IKJointLimit::Ball(45.0f, 30.0f); ed.dirty = true; }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Clear##ciklim")) { for (auto& l : ci->limits) l = {}; ed.dirty = true; }
+                    for (std::size_t i = 0; i < ci->limits.size(); ++i) {
+                        ImGui::PushID((int)i + 1000);
+                        const std::string lbl = (ci->boneNames[i].empty() ? ("Bone " + std::to_string(i)) : ci->boneNames[i]) + "##ciklim";
+                        if (IKJointLimitUI(lbl.c_str(), ci->limits[i])) ed.dirty = true;
+                        ImGui::PopID();
+                    }
+                    ImGui::TreePop();
+                }
                 if (ImGui::SmallButton("Remove##cik")) toRemove = ci;
             }
         }
@@ -30307,9 +30418,9 @@ void DrawInspector(EditorState& ed) {
                 char sk[2] = {ui->sortKey, 0};
                 if (ImGui::InputText("Sort Key##iu", sk, sizeof(sk))) { ui->sortKey = sk[0]; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Press to compact + merge stacks (blank = off).");
-                const char* sortModes[] = {"Compact", "Name", "Count", "Rarity"};
+                const char* sortModes[] = {"Compact", "Name", "Count", "Rarity", "Category", "Weight", "Value"};
                 int smi = (int)ui->sortMode;
-                if (ImGui::Combo("Sort Mode##iu", &smi, sortModes, 4)) { ui->sortMode = (InventoryUI::SortMode)smi; ed.dirty = true; }
+                if (ImGui::Combo("Sort Mode##iu", &smi, sortModes, IM_ARRAYSIZE(sortModes))) { ui->sortMode = (InventoryUI::SortMode)smi; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("How the Sort key orders stacks: keep gather order, A-Z, biggest first, or by rarity list.");
                 ImGui::SameLine();
                 if (ImGui::Checkbox("Sort on close##iu", &ui->sortOnClose)) ed.dirty = true;
@@ -30373,6 +30484,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Enforce Weight Limit##gi", &gi->enforceWeight)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Refuse adds and drags that would go over the weight limit (off = the limit is only shown).");
             if (ImGui::DragInt("Max Stack##gi", &gi->maxStack, 0.2f, 0, 9999)) ed.dirty = true;
+            if (ImGui::Checkbox("Keep On Scene Load##gi", &gi->keepOnSceneLoad)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Carry these items into the next scene (load_scene): the object with the same name there gets them.");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Same-name items merge when dropped on each other, up to this many (0 = never). Right-click a stack in Play to split it.");
             ImGui::Text("Total weight: %.1f%s", gi->TotalWeight(), gi->OverWeight() ? "  (OVER!)" : "");
             if (ImGui::TreeNodeEx("Items##gi", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -30525,6 +30638,12 @@ void DrawInspector(EditorState& ed) {
             char pnc[64]; std::snprintf(pnc, sizeof(pnc), "%s", cs->playerName.c_str());
             if (ImGui::InputText("Player Object##cs", pnc, sizeof(pnc))) { cs->playerName = pnc; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Who the player is. Blank = the \"Player\"-tagged object, else the main camera's target.");
+            char rbs[256]; std::snprintf(rbs, sizeof(rbs), "%s", cs->recipeBook.c_str());
+            if (ImGui::InputText("Recipe Book##cs", rbs, sizeof(rbs))) { cs->recipeBook = rbs; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional .okayrecipes file: its recipes for this bench's tag show here too.");
+            char tg[48]; std::snprintf(tg, sizeof(tg), "%s", cs->stationTag.c_str());
+            if (ImGui::InputText("Station Tag##cs", tg, sizeof(tg))) { cs->stationTag = tg; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("What kind of bench this is (workbench, forge...). Recipes needing this tag craft here.");
             if (ImGui::DragFloat("Width##cs", &cs->width, 0.5f, 80.0f, 800.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Row Height##cs", &cs->rowHeight, 0.25f, 14.0f, 60.0f)) ed.dirty = true;
             auto cc = [&](const char* lbl, Color& c, const char* id) {
@@ -30554,6 +30673,7 @@ void DrawInspector(EditorState& ed) {
                         ImGui::PopID();
                     }
                     if (ImGui::SmallButton("+ ingredient")) { rec.inputs.push_back({}); ed.dirty = true; }
+                    if (RecipeExtrasUI(rec)) ed.dirty = true;
                     ImGui::Unindent();
                     ImGui::Separator();
                     ImGui::PopID();
@@ -30562,6 +30682,39 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TreePop();
             }
             if (ImGui::SmallButton("Remove##cs")) toRemove = cs;
+        }
+    }
+    if (auto* eq = dynamic_cast<Equipment*>(curComp)) {
+        if (CompHeader("Equipment", eq, &toRemove)) {
+            ImGui::TextDisabled("Worn / held items. Drag an item from the bag onto a slot in Play.");
+            if (ImGui::Checkbox("Show On Character##eq", &eq->showOnCharacter)) ed.dirty = true;
+            if (ImGui::Checkbox("Keep On Scene Load##eq", &eq->keepOnSceneLoad)) ed.dirty = true;
+            int removeAt = -1;
+            for (int i = 0; i < (int)eq->slots.size(); ++i) {
+                auto& s = eq->slots[i];
+                ImGui::PushID(i);
+                ImGui::Separator();
+                char nb[64]; std::snprintf(nb, sizeof(nb), "%s", s.name.c_str());
+                if (ImGui::InputText("Slot", nb, sizeof(nb))) { s.name = nb; ed.dirty = true; }
+                int acc = (int)s.accepts;
+                if (ImGui::BeginCombo("Accepts", acc == 0 ? "Anything equippable" : okay::EquipSlotName(s.accepts))) {
+                    for (int k = 0; k <= (int)okay::EquipSlot::OffHand; ++k)
+                        if (ImGui::Selectable(k == 0 ? "Anything equippable" : okay::EquipSlotName((okay::EquipSlot)k), k == acc)) {
+                            s.accepts = (okay::EquipSlot)k; ed.dirty = true;
+                        }
+                    ImGui::EndCombo();
+                }
+                char sb[64]; std::snprintf(sb, sizeof(sb), "%s", s.socket.c_str());
+                if (ImGui::InputTextWithHint("Socket", Equipment::DefaultSocket(s.accepts), sb, sizeof(sb))) { s.socket = sb; ed.dirty = true; }
+                if (ItemPicker("Worn Item", s.item, 160)) ed.dirty = true;
+                if (!s.item.empty() && !eq->Accepts(i, s.item))
+                    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "This item's equip slot doesn't match.");
+                if (ImGui::SmallButton("Remove Slot")) removeAt = i;
+                ImGui::PopID();
+            }
+            if (removeAt >= 0) { eq->slots.erase(eq->slots.begin() + removeAt); ed.dirty = true; }
+            if (ImGui::SmallButton("Add Slot##eq")) { Equipment::Slot s; s.name = "Slot"; eq->slots.push_back(s); ed.dirty = true; }
+            ImGui::TextDisabled("Item custom fields: armor, defense, equipPrefab.");
         }
     }
     if (auto* pk = dynamic_cast<ItemPickup*>(curComp)) {
@@ -31202,6 +31355,9 @@ void DrawInspector(EditorState& ed) {
     if (auto* c = dynamic_cast<Crafting*>(curComp)) {
         if (CompHeader("Crafting", c, &toRemove)) {
             ImGui::TextDisabled("Recipes consume Inventory items to make an output.");
+            char rb[256]; std::snprintf(rb, sizeof(rb), "%s", c->recipeBook.c_str());
+            if (ImGui::InputText("Recipe Book##cr", rb, sizeof(rb))) { c->recipeBook = rb; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional .okayrecipes file: its recipes are added to the ones below.");
             int removeAt = -1;
             for (int i = 0; i < (int)c->recipes.size(); ++i) {
                 ImGui::PushID(i);
@@ -31229,6 +31385,7 @@ void DrawInspector(EditorState& ed) {
                 if (rmIng >= 0) { r.inputs.erase(r.inputs.begin() + rmIng); ed.dirty = true; }
                 ImGui::Indent(16.0f);
                 if (ImGui::SmallButton("+ ingredient")) { r.inputs.push_back({"item", 1}); ed.dirty = true; }
+                if (RecipeExtrasUI(r)) ed.dirty = true;
                 ImGui::Unindent(16.0f);
                 ImGui::Separator();
                 ImGui::PopID();
@@ -32321,6 +32478,8 @@ void DrawInspector(EditorState& ed) {
                 if (inv->slowWhenOverWeight && ImGui::SliderFloat("Over-weight Speed##inv", &inv->overWeightSpeed, 0.1f, 1.0f)) ed.dirty = true;
                 ImGui::Text("Weight: %.1f / %.1f%s", inv->TotalWeight(), inv->weightLimit, inv->OverWeight() ? "  (over)" : "");
             }
+            if (ImGui::Checkbox("Keep On Scene Load##inv", &inv->keepOnSceneLoad)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Carry these items into the next scene (load_scene): the object with the same name there gets them.");
             ImGui::Text("Slots: %d / %d", inv->SlotsUsed(), inv->capacity);
             int eraseS = -1;
             for (int i = 0; i < (int)inv->slots.size(); ++i) {
@@ -34738,6 +34897,7 @@ void DrawInspector(EditorState& ed) {
                 ed.dirty = true;
             }
             if (item(!go->GetComponent<LootSource>(), "Loot Source")) { go->AddComponent<LootSource>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Equipment>(), "Equipment")) { go->AddComponent<Equipment>(); ed.dirty = true; }
             if (item(!go->GetComponent<ChestInventory>(), "Chest / Container")) {
                 go->AddComponent<ChestInventory>();
                 if (!go->GetComponent<Inventory>()) {        // chest needs an Inventory for its loot
@@ -35267,6 +35427,26 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             }
         }
         for (int i = 0; i < n && i < total; ++i) slot(hx + i * (sz + gap), hy, i, i == ui->selected);
+        // Equipment column (worn items) beside the open backpack, as in the player.
+        auto equipBox = [&](float x, float y, const std::string& item, const std::string& label) {
+            ImVec2 p0(canvasPos.x + x, canvasPos.y + y), p1(p0.x + sz, p0.y + sz);
+            dl->AddRectFilled(p0, p1, col(ui->slotBorder), cr);
+            float b = ui->borderWidth < 0 ? 0 : ui->borderWidth;
+            dl->AddRectFilled(ImVec2(p0.x + b, p0.y + b), ImVec2(p1.x - b, p1.y - b), col(item.empty() ? ui->emptySlotColor : ui->slotColor), cr > b ? cr - b : 0.0f);
+            if (!item.empty()) {
+                if (SDL_Texture* icon = ItemThumb(okay::ItemIconPath(ui->iconFolder, item)))
+                    dl->AddImage((ImTextureID)icon, ImVec2(p0.x + b + 2, p0.y + b + 2), ImVec2(p1.x - b - 2, p1.y - b - 2));
+                else dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), item.substr(0, ui->nameChars < 1 ? 1 : (std::size_t)ui->nameChars).c_str());
+            } else if (!label.empty()) {
+                okay::Color tc = ui->textColor; tc.a = 0.45f;
+                dl->AddText(ImVec2(p0.x + 3, p0.y + sz * 0.5f - ImGui::GetTextLineHeight() * 0.5f), col(tc), label.c_str());
+            }
+        };
+        if (L.equip)
+            for (int e = 0; e < L.equipN; ++e) {
+                float x, y; L.EquipXY(e, x, y);
+                equipBox(x, y, e == ui->equipDrag ? std::string() : L.equip->ItemIn(e), L.equip->slots[e].name);
+            }
         // Hotbar slot numbers (1–9).
         if (ui->slotNumbers)
             for (int i = 0; i < n && i < 9; ++i)
@@ -35300,6 +35480,12 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (gameView) {
             okay::Vec2 m = okay::Input::MousePosition();
             const okay::InventoryInput::HotbarFrame fr = okay::InventoryInput::HandleHotbar(*ui, L, m);
+            if (L.equip && fr.equipHover >= 0) {   // equipment slot under the cursor
+                float ex, ey; L.EquipXY(fr.equipHover, ex, ey);
+                dl->AddRectFilled(ImVec2(canvasPos.x + ex, canvasPos.y + ey), ImVec2(canvasPos.x + ex + sz, canvasPos.y + ey + sz), col(ui->hoverColor), cr);
+            }
+            if (L.equip && ui->equipDrag >= 0 && ui->equipDrag < L.equipN)   // a worn item following the cursor
+                equipBox(m.x - sz * 0.5f, m.y - sz * 0.5f, L.equip->ItemIn(ui->equipDrag), std::string());
             if (fr.target >= 0) {   // highlight the destination slot
                 float sx, sy; L.SlotXY(fr.target, sx, sy);
                 ImU32 hc = IM_COL32((int)(ui->selectedColor.r*255), (int)(ui->selectedColor.g*255), (int)(ui->selectedColor.b*255), 100);
@@ -35486,30 +35672,39 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         okay::Inventory* inv = cs->Inv();
         auto col = [&](const okay::Color& c) { return IM_COL32((int)(c.r*255),(int)(c.g*255),(int)(c.b*255),(int)(c.a*255)); };
         float cr = cs->cornerRadius;
-        int n = (int)cs->recipes.size();
-        float pw = cs->width, ph = n * cs->rowHeight + 8.0f;
-        float lx = (canvasSize.x - pw) * 0.5f + cs->marginX, ly = (canvasSize.y - ph) * 0.5f + cs->marginY;
-        float px = canvasPos.x + lx, py = canvasPos.y + ly;
-        dl->AddRectFilled(ImVec2(px, py - 26), ImVec2(px + pw, py + ph), col(cs->panelColor), cr + 2);
+        // Layout + input shared with the built player (okay/Inventory/InventoryInput).
+        const okay::InventoryInput::CraftingLayout L = okay::InventoryInput::LayoutCrafting(*cs, canvasSize.x, canvasSize.y);
+        const float pw = L.pw, ph = L.ph, px = canvasPos.x + L.px, py = canvasPos.y + L.py;
+        const auto recipes = cs->Recipes();
+        const bool busy = !cs->Queue().Jobs().empty();
+        dl->AddRectFilled(ImVec2(px, py - 26), ImVec2(px + pw, py + ph + (busy ? 16.0f : 0.0f)), col(cs->panelColor), cr + 2);
         dl->AddRectFilled(ImVec2(px, py - 26), ImVec2(px + pw, py - 2), col(cs->titleBar), cr + 2);
         dl->AddText(ImVec2(px + 8, py - 20), col(cs->textColor), cs->title.c_str());
-        okay::Vec2 m = okay::Input::MousePosition();   // canvas-local (Game view)
-        for (int i = 0; i < n; ++i) {
-            const auto& rec = cs->recipes[i];
-            float ry = py + i * cs->rowHeight + 4.0f;            // screen-space row top
-            float lry = ly + i * cs->rowHeight + 4.0f;          // canvas-local row top
-            bool can = inv && cs->CanCraft(rec, *inv);
-            bool hover = gameView && m.x >= lx + 4 && m.x < lx + pw - 4 &&
-                         m.y >= lry && m.y < lry + cs->rowHeight - 2;
+        auto label = [](const std::string& item) {
+            const okay::ItemDefinition* d = okay::ItemDatabase::Get().Find(item);
+            return d ? d->DisplayName() : item;
+        };
+        // Click: craft one, shift-click: as many as you can afford (Game view only).
+        const int hover = gameView ? okay::InventoryInput::HandleCrafting(*cs, L, okay::Input::MousePosition()) : -1;
+        for (int i = 0; i < L.rows && i < (int)recipes.size(); ++i) {
+            const auto& rec = recipes[i];
+            const float ry = canvasPos.y + L.RowY(i);
+            const bool can = inv && cs->CanCraft(rec, *inv);
             dl->AddRectFilled(ImVec2(px + 4, ry), ImVec2(px + pw - 4, ry + cs->rowHeight - 2), col(can ? cs->canColor : cs->cantColor), cr);
-            if (hover) dl->AddRectFilled(ImVec2(px + 4, ry), ImVec2(px + pw - 4, ry + cs->rowHeight - 2), col(cs->hoverColor), cr);
-            std::string out = rec.output + (rec.outputCount > 1 ? " x" + std::to_string(rec.outputCount) : std::string());
+            if (i == hover) dl->AddRectFilled(ImVec2(px + 4, ry), ImVec2(px + pw - 4, ry + cs->rowHeight - 2), col(cs->hoverColor), cr);
+            std::string out = label(rec.output) + (rec.outputCount > 1 ? " x" + std::to_string(rec.outputCount) : std::string());
             dl->AddText(ImVec2(px + 10, ry + 5), col(cs->textColor), out.c_str());
             std::string ins;
-            for (std::size_t k = 0; k < rec.inputs.size(); ++k) { if (k) ins += ", "; ins += std::to_string(rec.inputs[k].count) + " " + rec.inputs[k].item; }
+            for (std::size_t k = 0; k < rec.inputs.size(); ++k) { if (k) ins += ", "; ins += std::to_string(rec.inputs[k].count) + " " + label(rec.inputs[k].item); }
             ImVec2 ts = ImGui::CalcTextSize(ins.c_str());
             dl->AddText(ImVec2(px + pw - 10 - ts.x, ry + 6), col(cs->textColor), ins.c_str());
-            if (hover && can && okay::Input::GetMouseButtonDown(0)) cs->Craft(i);
+        }
+        if (busy) {   // the queue: progress of the item being made, and how many are waiting
+            const float by = py + ph + 2.0f;
+            dl->AddRectFilled(ImVec2(px + 6, by), ImVec2(px + pw - 6, by + 8), col(cs->cantColor), 3.0f);
+            dl->AddRectFilled(ImVec2(px + 6, by), ImVec2(px + 6 + (pw - 12) * cs->Queue().Progress(), by + 8), col(cs->canColor), 3.0f);
+            const int waiting = (int)cs->Queue().Jobs().size();
+            if (waiting > 1) dl->AddText(ImVec2(px + pw - 30, by - 3), col(cs->textColor), ("x" + std::to_string(waiting)).c_str());
         }
         break;
     }
@@ -36970,6 +37165,44 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     jointDot(u); jointDot(m); jointDot(e);
                     Vec3 tgt; marker(scenePos(lb->targetName, tgt) ? tgt : lb->target, kTgtCol, 7.0f);
                     Vec3 pol; if (scenePos(lb->poleName, pol)) { marker(pol, kPoleCol, 5.0f); line(m, pol, kPoleCol, 1.0f); }
+                    // Joint-limit gizmos: the shoulder/hip swing cone and the
+                    // elbow/knee bend arc, drawn from the current bone directions.
+                    const ImU32 kLimCol = IM_COL32(250, 220, 90, 220);
+                    const float ub = ((m - u)).Magnitude(), lo = ((e - m)).Magnitude();
+                    if (lb->upperLimit.type == IKJointLimit::Type::Ball && ub > 1e-4f) {
+                        const Vec3 d = (m - u) * (1.0f / ub);
+                        Vec3 side = Vec3::Cross(d, Vec3::Up);
+                        if (side.SqrMagnitude() < 1e-6f) side = Vec3::Cross(d, Vec3::Right);
+                        side = side.Normalized();
+                        const Vec3 up2 = Vec3::Cross(d, side);
+                        const float sw = lb->upperLimit.swingMax * 0.01745329f, len = ub * 0.5f;
+                        const float r = len * std::sin(sw), h = len * std::cos(sw);
+                        Vec3 prev2; const int N = 24;
+                        for (int s2 = 0; s2 <= N; ++s2) {
+                            const float a2 = 6.2831853f * s2 / N;
+                            const Vec3 p2 = u + d * h + (side * std::cos(a2) + up2 * std::sin(a2)) * r;
+                            if (s2) line(prev2, p2, kLimCol, 1.0f);
+                            if (s2 % 6 == 0) line(u, p2, kLimCol, 1.0f);
+                            prev2 = p2;
+                        }
+                    }
+                    if (lb->lowerLimit.type == IKJointLimit::Type::Hinge && ub > 1e-4f && lo > 1e-4f) {
+                        // Bend 0 = straight on: sweep the allowed bend range in the
+                        // limb's current bend plane.
+                        const Vec3 straight = (m - u) * (1.0f / ub);
+                        Vec3 ax = Vec3::Cross(m - u, e - m);
+                        if (ax.SqrMagnitude() > 1e-8f) {
+                            ax = ax.Normalized();
+                            const float r = lo * 0.35f; Vec3 prev2; const int N = 20;
+                            for (int s2 = 0; s2 <= N; ++s2) {
+                                const float deg = lb->lowerLimit.hingeMin + (lb->lowerLimit.hingeMax - lb->lowerLimit.hingeMin) * s2 / N;
+                                const Vec3 p2 = m + (Quat::AngleAxis(deg, ax) * straight) * r;
+                                if (s2) line(prev2, p2, kLimCol, 1.0f); else line(m, p2, kLimCol, 1.0f);
+                                prev2 = p2;
+                            }
+                            line(m, prev2, kLimCol, 1.0f);
+                        }
+                    }
                 }
                 if (auto* ci = up->GetComponent<ChainIK>()) {
                     chain(ci->boneNames);

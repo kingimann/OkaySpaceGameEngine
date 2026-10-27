@@ -51,7 +51,7 @@ public:
 private:
     static std::string Signature(const Crafting* craft) {
         std::string sig;
-        if (craft) for (const auto& r : craft->recipes) { sig += r.output; sig += '\n'; }
+        if (craft) for (const auto& r : craft->AllRecipes()) { sig += r.output; sig += '\n'; }
         return sig;
     }
     void Clear() {
@@ -65,11 +65,13 @@ private:
         auto* craft = gameObject ? gameObject->GetComponent<Crafting>() : nullptr;
         m_signature = Signature(craft);
         if (!s || !craft) return;
-        for (int i = 0; i < (int)craft->recipes.size(); ++i) {
-            GameObject* b = s->CreateGameObject("CraftBtn:" + craft->recipes[i].output);
+        const auto all = craft->AllRecipes();
+        for (int i = 0; i < (int)all.size(); ++i) {
+            GameObject* b = s->CreateGameObject("CraftBtn:" + all[i].output);
             b->transient = true;
             auto* btn = b->AddComponent<UIButton>();
-            btn->label = "Craft " + craft->recipes[i].output;
+            const ItemDefinition* d = ItemDatabase::Get().Find(all[i].output);
+            btn->label = "Craft " + (d ? d->DisplayName() : all[i].output);
             btn->anchor = anchor;
             btn->size = buttonSize;
             btn->position = {position.x, position.y + (buttonSize.y + spacing) * (float)i};

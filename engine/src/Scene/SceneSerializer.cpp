@@ -27,11 +27,13 @@
 #include "okay/Components/InventoryUI.hpp"
 #include "okay/Components/GridInventory.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
+#include "okay/Inventory/Recipe.hpp"
 #include "okay/Components/GridInventoryUI.hpp"
 #include "okay/Components/CraftingStation.hpp"
 #include "okay/Components/ChestInventory.hpp"
 #include "okay/Components/ItemPickup.hpp"
 #include "okay/Components/LootSource.hpp"
+#include "okay/Components/Equipment.hpp"
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"
@@ -219,6 +221,24 @@ void ReadInstanceData(std::istream& in, std::size_t n, Get data) {
         in >> i >> d.durability >> d.uid >> nv;
         for (std::size_t v = 0; v < nv && in; ++v) { std::string key = ReadQuoted(in); d.values.push_back({key, ReadQuoted(in)}); }
         if (in && i < n) data(i) = d;
+    }
+}
+
+// A recipe list's newer fields (craft time, bench tag, unlock flag, byproducts),
+// appended after the older fields: one entry per recipe, in order.
+void WriteRecipeExtras(std::ostream& out, const std::vector<Recipe>& rs) {
+    for (const auto& r : rs) {
+        out << " " << r.craftTime << " " << Quote(r.station) << " " << Quote(r.unlockFlag) << " " << r.byproducts.size();
+        for (const auto& b : r.byproducts) out << " " << Quote(b.item) << " " << b.count;
+    }
+}
+void ReadRecipeExtras(std::istream& in, std::vector<Recipe>& rs) {
+    for (auto& r : rs) {
+        std::size_t nb = 0;
+        in >> r.craftTime; r.station = ReadQuoted(in); r.unlockFlag = ReadQuoted(in); in >> nb;
+        if (!in) return;
+        if (!(r.craftTime >= 0.0f)) r.craftTime = 0.0f;
+        for (std::size_t k = 0; k < nb && in; ++k) { Ingredient b; b.item = ItemId(ReadQuoted(in)); in >> b.count; r.byproducts.push_back(b); }
     }
 }
 
@@ -596,6 +616,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         if (!ma->jumpClip.empty() || !ma->fallClip.empty() || !ma->landClip.empty())
             out << "  modelanimair " << Quote(ma->jumpClip) << " " << Quote(ma->fallClip)
                 << " " << Quote(ma->landClip) << " " << ma->airUpVel << " " << ma->airDownVel << "\n";
+        // Stance clips (crouch / prone / get up) — optional record.
+        if (!ma->crouchClip.empty() || !ma->crouchWalkClip.empty() || !ma->proneClip.empty() ||
+            !ma->crawlClip.empty() || !ma->getUpClip.empty())
+            out << "  modelanimstance " << Quote(ma->crouchClip) << " " << Quote(ma->crouchWalkClip)
+                << " " << Quote(ma->proneClip) << " " << Quote(ma->crawlClip) << " " << Quote(ma->getUpClip) << "\n";
         // Crossfade + clip events — separate optional records (older scenes lack them).
         out << "  modelanimblend " << ma->blendTime << "\n";
         if (ma->rootMotion || ma->rootMotionY || !ma->rootMotionNode.empty() || ma->rootMotionRotation || ma->rootMotionApplyTo)
@@ -1043,7 +1068,19 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << lb->pole.x << " " << lb->pole.y << " " << lb->pole.z
             << " " << (lb->orient ? 1 : 0) << " " << (int)lb->poleMode << " " << lb->softness
             << " " << lb->targetRotation.x << " " << lb->targetRotation.y << " " << lb->targetRotation.z
-            << " " << lb->targetRotation.w << "\n";
+            << " " << lb->targetRotation.w;
+        // Optional joint limits as trailing key=value (older builds skip them).
+        auto lim = [&out](const char* p, const IKJointLimit& l) {
+            if (!l.Active()) return;
+            out << ' ' << p << "T=" << (int)l.type << ' ' << p << "S=" << l.swingMax
+                << ' ' << p << "H0=" << l.hingeMin << ' ' << p << "H1=" << l.hingeMax
+                << ' ' << p << "W0=" << l.twistMin << ' ' << p << "W1=" << l.twistMax;
+            if (!l.autoAxes)
+                out << ' ' << p << "TX=" << l.twistAxis.x << ' ' << p << "TY=" << l.twistAxis.y << ' ' << p << "TZ=" << l.twistAxis.z
+                    << ' ' << p << "HX=" << l.hingeAxis.x << ' ' << p << "HY=" << l.hingeAxis.y << ' ' << p << "HZ=" << l.hingeAxis.z;
+        };
+        lim("ul", lb->upperLimit); lim("ll", lb->lowerLimit);
+        out << "\n";
     }
     if (auto* ci = go->GetComponent<ChainIK>()) {
         out << "  chainik " << Quote(ci->targetName) << " " << ci->weight << " " << ci->iterations
@@ -1052,6 +1089,22 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << ci->boneNames.size();
         for (const std::string& n : ci->boneNames) out << " " << Quote(n);
         out << "\n";
+        // Pole mode/direction and per-joint limits (a newer record).
+        bool anyLim = false;
+        for (const auto& l : ci->limits) anyLim = anyLim || l.Active();
+        if (ci->poleMode >= 0 || anyLim) {
+            out << "  chainx2 " << ci->poleMode
+                << " " << ci->poleDir.x << " " << ci->poleDir.y << " " << ci->poleDir.z
+                << " " << (anyLim ? ci->limits.size() : 0);
+            if (anyLim) for (const auto& l : ci->limits) {
+                out << " " << (int)l.type << " " << l.swingMax << " " << l.hingeMin << " " << l.hingeMax
+                    << " " << l.twistMin << " " << l.twistMax << " " << (l.autoAxes ? 1 : 0);
+                if (!l.autoAxes)
+                    out << " " << l.twistAxis.x << " " << l.twistAxis.y << " " << l.twistAxis.z
+                        << " " << l.hingeAxis.x << " " << l.hingeAxis.y << " " << l.hingeAxis.z;
+            }
+            out << "\n";
+        }
     }
     // IK fade + ChainIK constraints (separate records so older builds still load).
     auto ikFade = [&](const char* kind, bool active, float fade) {
@@ -1374,6 +1427,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         for (const auto& it : gi->overflow)
             out << " " << Quote(it.name) << " " << it.w << " " << it.h << " " << it.count << " " << it.weight;
         WriteInstanceData(out, gi->items.size(), [&](std::size_t i) -> const ItemInstanceData& { return gi->items[i].data; });
+        out << " " << (gi->keepOnSceneLoad ? 1 : 0);   // appended (numeric-peek guarded)
         out << "\n";
     }
     if (auto* gu = go->GetComponent<GridInventoryUI>()) {
@@ -1417,6 +1471,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             out << " " << Quote(r.output) << " " << r.outputCount;
         }
         out << " " << cs->range << " " << Quote(cs->playerName);   // appended (numeric-peek guarded)
+        out << " " << Quote(cs->recipeBook) << " " << Quote(cs->stationTag);   // appended (quote-peek guarded)
+        WriteRecipeExtras(out, cs->recipes);
         out << "\n";
     }
     if (auto* ch = go->GetComponent<ChestInventory>()) {
@@ -1601,6 +1657,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             out << " " << Quote(r.output) << " " << r.outputCount << " " << r.inputs.size();
             for (const auto& in : r.inputs) out << " " << Quote(in.item) << " " << in.count;
         }
+        out << " " << Quote(c->recipeBook);   // appended (quote-peek guarded)
+        WriteRecipeExtras(out, c->recipes);
         out << "\n";
     }
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
@@ -1786,7 +1844,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             // extended: the camera follow (pivot) and the spring arm
             << " " << ts->pivotDampingXZ << " " << ts->pivotDampingY << " " << ts->maxPivotLag
             << " " << ts->cameraCollisionRadius << " " << ts->cameraCollisionMask
-            << " " << ts->cameraCollisionPullIn << " " << ts->cameraCollisionRecover << "\n";
+            << " " << ts->cameraCollisionPullIn << " " << ts->cameraCollisionRecover
+            << " " << ts->stepOffset << "\n";
     }
     if (auto* cm = go->GetComponent<ClickToMoveController>()) {
         out << "  ctmctrl " << cm->walkSpeed << " " << cm->runSpeed << " "
@@ -1852,7 +1911,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         for (const auto& s : inv->slots) out << " " << Quote(s.item) << " " << s.count;
         out << " " << inv->maxStack;   // appended (numeric-peek guarded on read)
         WriteInstanceData(out, inv->slots.size(), [&](std::size_t i) -> const ItemInstanceData& { return inv->slots[i].data; });
-        out << " " << inv->weightLimit << " " << (inv->slowWhenOverWeight ? 1 : 0) << " " << inv->overWeightSpeed;   // appended (guarded)
+        out << " " << inv->weightLimit << " " << (inv->slowWhenOverWeight ? 1 : 0) << " " << inv->overWeightSpeed   // appended (guarded)
+            << " " << (inv->keepOnSceneLoad ? 1 : 0);
         out << "\n";
     }
     if (auto* pk = go->GetComponent<ItemPickup>()) {
@@ -1866,6 +1926,26 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             for (std::size_t v = 0; v < pk->data.values.size(); ++v) {
                 const std::string n = std::to_string(v);
                 k.str(("k" + n).c_str(), pk->data.values[v].first).str(("v" + n).c_str(), pk->data.values[v].second);
+            }
+        }
+        out << "\n";
+    }
+    if (auto* eq = go->GetComponent<Equipment>()) {
+        // One line: the flags, then per slot sN* keys (name, accepted type, socket, item and
+        // its instance data, a worn bag's contents included).
+        out << "  equipment";
+        KvOut k{out};
+        k.b("show", eq->showOnCharacter).b("keep", eq->keepOnSceneLoad)("n", eq->slots.size());
+        for (std::size_t i = 0; i < eq->slots.size(); ++i) {
+            const auto& s = eq->slots[i];
+            const std::string p = "s" + std::to_string(i);
+            k.str((p + "name").c_str(), s.name)((p + "acc").c_str(), (int)s.accepts).str((p + "sock").c_str(), s.socket);
+            if (s.item.empty()) continue;
+            const ItemInstanceData d = eq->CurrentData((int)i);
+            k.str((p + "item").c_str(), s.item)((p + "dur").c_str(), d.durability)((p + "uid").c_str(), d.uid)((p + "vals").c_str(), d.values.size());
+            for (std::size_t v = 0; v < d.values.size(); ++v) {
+                const std::string n = std::to_string(v);
+                k.str((p + "k" + n).c_str(), d.values[v].first).str((p + "v" + n).c_str(), d.values[v].second);
             }
         }
         out << "\n";
@@ -2995,6 +3075,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ma->fallClip = ReadQuoted(in);
                     ma->landClip = ReadQuoted(in);
                     in >> ma->airUpVel >> ma->airDownVel;
+                } else if (field == "modelanimstance") {
+                    auto* ma = go->GetComponent<ModelAnimator>();
+                    if (!ma) ma = go->AddComponent<ModelAnimator>();
+                    ma->crouchClip     = ReadQuoted(in);
+                    ma->crouchWalkClip = ReadQuoted(in);
+                    ma->proneClip      = ReadQuoted(in);
+                    ma->crawlClip      = ReadQuoted(in);
+                    ma->getUpClip      = ReadQuoted(in);
                 } else if (field == "modelanimblend") {
                     auto* ma = go->GetComponent<ModelAnimator>();
                     if (!ma) ma = go->AddComponent<ModelAnimator>();
@@ -3491,7 +3579,29 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                       if (rs >> o) lb->orient = (o != 0);
                       lb->poleMode = (rs >> pm) ? (LimbIK::PoleMode)std::clamp(pm, 0, 2) : LimbIK::PoleMode::World;
                       Quat q;
-                      if (rs >> lb->softness >> q.x >> q.y >> q.z >> q.w) lb->targetRotation = q; }
+                      if (rs >> lb->softness >> q.x >> q.y >> q.z >> q.w) lb->targetRotation = q;
+                      // Newer still: joint limits as trailing key=value.
+                      std::string tok;
+                      while (rs >> tok) {
+                          auto eq = tok.find('=');
+                          if (eq == std::string::npos) continue;
+                          const std::string k = tok.substr(0, eq);
+                          const float v = std::strtof(tok.c_str() + eq + 1, nullptr);
+                          IKJointLimit& l = k.compare(0, 2, "ul") == 0 ? lb->upperLimit : lb->lowerLimit;
+                          const std::string f = k.substr(2);
+                          if      (f == "T")  l.type = (IKJointLimit::Type)std::clamp((int)v, 0, 2);
+                          else if (f == "S")  l.swingMax = v;
+                          else if (f == "H0") l.hingeMin = v;
+                          else if (f == "H1") l.hingeMax = v;
+                          else if (f == "W0") l.twistMin = v;
+                          else if (f == "W1") l.twistMax = v;
+                          else if (f == "TX") { l.twistAxis.x = v; l.autoAxes = false; }
+                          else if (f == "TY") l.twistAxis.y = v;
+                          else if (f == "TZ") l.twistAxis.z = v;
+                          else if (f == "HX") l.hingeAxis.x = v;
+                          else if (f == "HY") l.hingeAxis.y = v;
+                          else if (f == "HZ") l.hingeAxis.z = v;
+                      } }
                 } else if (field == "chainik") {
                     auto* ci = go->AddComponent<ChainIK>();
                     ci->targetName = ReadQuoted(in);
@@ -3501,6 +3611,23 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ci->orient = (orient != 0);
                     std::size_t bn = 0; in >> bn;
                     for (std::size_t k = 0; k < bn && in; ++k) ci->boneNames.push_back(ReadQuoted(in));
+                } else if (field == "chainx2") {
+                    // Newer ChainIK data: pole mode/direction + per-joint limits.
+                    if (auto* ci = go->GetComponent<ChainIK>()) {
+                        std::size_t nl = 0;
+                        in >> ci->poleMode >> ci->poleDir.x >> ci->poleDir.y >> ci->poleDir.z >> nl;
+                        ci->limits.assign(nl, {});
+                        for (std::size_t k = 0; k < nl && in; ++k) {
+                            IKJointLimit& l = ci->limits[k];
+                            int ty = 0, aa = 1;
+                            in >> ty >> l.swingMax >> l.hingeMin >> l.hingeMax >> l.twistMin >> l.twistMax >> aa;
+                            l.type = (IKJointLimit::Type)std::clamp(ty, 0, 2);
+                            l.autoAxes = aa != 0;
+                            if (!l.autoAxes)
+                                in >> l.twistAxis.x >> l.twistAxis.y >> l.twistAxis.z
+                                   >> l.hingeAxis.x >> l.hingeAxis.y >> l.hingeAxis.z;
+                        }
+                    }
                 } else if (field == "fbik") {
                     auto* fb = go->AddComponent<FullBodyIK>();
                     int act = 1, am = 1, le = 0;
@@ -3962,7 +4089,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                         if (std::isdigit(pk6) || pk6 == '-' || pk6 == '.') {
                                             int sm = 0, soc = 0, dk = 0;
                                             in >> sm >> soc >> dk;
-                                            ui->sortMode = (InventoryUI::SortMode)sm;
+                                            ui->sortMode = (InventoryUI::SortMode)std::max(0, std::min(sm, (int)InventoryUI::SortMode::Value));
                                             ui->sortOnClose = (soc != 0);
                                             ui->dropKey = (char)dk;
                                             in >> std::ws;   // optional style block (align/pop/colours/border/title)
@@ -4017,6 +4144,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     gi->overflow.push_back(it);
                                 }
                                 ReadInstanceData(in, gi->items.size(), [&](std::size_t i) -> ItemInstanceData& { return gi->items[i].data; });
+                                in >> std::ws;   // optional keep-on-scene-load
+                                if (std::isdigit(in.peek())) { int keep = 0; in >> keep; gi->keepOnSceneLoad = (keep != 0); }
                             }
                         }
                     }
@@ -4102,7 +4231,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (std::isdigit(spk) || spk == '-' || spk == '.') {
                         in >> cs->range;
                         in >> std::ws;
-                        if (in.peek() == '"') cs->playerName = ReadQuoted(in);
+                        if (in.peek() == '"') {
+                            cs->playerName = ReadQuoted(in);
+                            in >> std::ws;   // optional recipe book + station tag + recipe extras
+                            if (in.peek() == '"') {
+                                cs->recipeBook = ReadQuoted(in); cs->stationTag = ReadQuoted(in);
+                                ReadRecipeExtras(in, cs->recipes);
+                            }
+                        }
                     }
                 } else if (field == "chestinventory") {
                     auto* ch = go->AddComponent<ChestInventory>();
@@ -4345,6 +4481,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         }
                         c->recipes.push_back(std::move(r));
                     }
+                    in >> std::ws;   // optional recipe book + recipe extras
+                    if (in.peek() == '"') { c->recipeBook = ReadQuoted(in); ReadRecipeExtras(in, c->recipes); }
                 } else if (field == "fpfeel") {
                     if (auto* fp = go->GetComponent<FirstPersonController>()) {
                         int z = 1, sl = 1, sm = 1, ik = 1;
@@ -4637,6 +4775,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     ts->pivotDampingXZ = pxz; ts->pivotDampingY = py; ts->maxPivotLag = lag;
                                     ts->cameraCollisionRadius = rad; ts->cameraCollisionMask = mask;
                                     ts->cameraCollisionPullIn = pin; ts->cameraCollisionRecover = rec;
+                                    // Optional trailing step height (older scenes keep 0.35).
+                                    float so = ts->stepOffset;
+                                    in >> std::ws;
+                                    if ((std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') && (in >> so))
+                                        ts->stepOffset = so;
                                 }
                             } }
                     }
@@ -4704,6 +4847,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             int slow = 0;
                             in >> inv->weightLimit >> slow >> inv->overWeightSpeed;
                             inv->slowWhenOverWeight = (slow != 0);
+                            in >> std::ws;   // optional keep-on-scene-load
+                            if (std::isdigit(in.peek())) { int keep = 0; in >> keep; inv->keepOnSceneLoad = (keep != 0); }
                         }
                     }
                 } else if (field == "lootsource") {
@@ -4712,6 +4857,30 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int w = 0;
                     k.str("table", ls->table); k.i("when", w); k.f("refill", ls->refill); k.i("seed", ls->seed);
                     ls->when = (LootSource::When)std::max(0, std::min(w, 2));
+                } else if (field == "equipment") {
+                    auto* eq = go->AddComponent<Equipment>();
+                    KvIn k(in);
+                    k.b("show", eq->showOnCharacter); k.b("keep", eq->keepOnSceneLoad);
+                    int n = -1; k.i("n", n);
+                    if (n >= 0) eq->slots.assign((std::size_t)std::min(n, 64), Equipment::Slot{});
+                    for (int i = 0; i < (int)eq->slots.size(); ++i) {
+                        auto& s = eq->slots[i];
+                        const std::string p = "s" + std::to_string(i);
+                        int acc = 0;
+                        k.str((p + "name").c_str(), s.name); k.i((p + "acc").c_str(), acc); k.str((p + "sock").c_str(), s.socket);
+                        s.accepts = (EquipSlot)std::max(0, std::min(acc, (int)EquipSlot::OffHand));
+                        k.str((p + "item").c_str(), s.item);
+                        if (s.item.empty()) continue;
+                        s.item = ItemId(s.item);
+                        k.f((p + "dur").c_str(), s.data.durability);
+                        if (const std::string* u = k.find((p + "uid").c_str())) s.data.uid = std::strtoull(u->c_str(), nullptr, 10);
+                        int nv = 0; k.i((p + "vals").c_str(), nv);
+                        for (int v = 0; v < nv && v < 256; ++v) {
+                            std::string key, val;
+                            k.str((p + "k" + std::to_string(v)).c_str(), key); k.str((p + "v" + std::to_string(v)).c_str(), val);
+                            s.data.values.push_back({key, val});
+                        }
+                    }
                 } else if (field == "itempickup") {
                     auto* pk = go->AddComponent<ItemPickup>();
                     KvIn k(in);
@@ -6192,11 +6361,11 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
     // The item database (and its icons / drop prefabs) ships with any scene that has items.
     bool hasItems = false;
     for (const auto& go : scene.Objects())
-        if (go->GetComponent<Inventory>() || go->GetComponent<GridInventory>() || go->GetComponent<ItemPickup>() || go->GetComponent<LootSource>()) { hasItems = true; break; }
+        if (go->GetComponent<Inventory>() || go->GetComponent<GridInventory>() || go->GetComponent<ItemPickup>() || go->GetComponent<LootSource>() || go->GetComponent<Equipment>()) { hasItems = true; break; }
     const ItemDatabase& db = ItemDatabase::Get();
     if (hasItems && !db.Path().empty()) {
         add(db.Path());
-        for (const auto& d : db.Items()) if (!d.loose) { add(d.icon); add(d.worldPrefab); }
+        for (const auto& d : db.Items()) if (!d.loose) { add(d.icon); add(d.worldPrefab); add(d.Custom("equipPrefab")); }
     }
     return out;
 }

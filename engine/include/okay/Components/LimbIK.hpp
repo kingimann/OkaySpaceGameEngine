@@ -22,6 +22,7 @@
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/IKFade.hpp"
 #include "okay/Math/IKMath.hpp"
+#include "okay/Math/JointLimit.hpp"
 #include "okay/Components/IKRestore.hpp"
 #include "okay/Components/IKBones.hpp"
 #include <cmath>
@@ -58,6 +59,10 @@ public:
     float fadeTime = 0.0f;             ///< seconds to blend IK in/out (0 = instant)
     float minBend  = 0.0f;             ///< joint limits (interior angle, degrees)
     float maxBend  = 180.0f;
+    /// Per-bone swing/twist limits, measured from each bone's rest pose (see
+    /// JointLimit.hpp). Default None = the old behaviour. A Hinge on the lower
+    /// bone doesn't re-decide the bend (minBend/maxBend do); it stops the twist.
+    IKJointLimit upperLimit, lowerLimit;
     float softness = 0.0f;             ///< ease the last stretch to full reach over this distance (no snap straight)
     bool  matchTargetRotation = false; ///< align the end bone to the target's rotation (grab)
     bool  orient   = false;            ///< joints not in a chain: also turn the upper/lower bones toward
@@ -94,10 +99,18 @@ public:
         if (Chained()) {
             // Turn the bones (rotations blend by the weight, so lengths stay): the
             // upper toward the solved elbow, then the lower, as turned by its
-            // parent, toward the solved hand.
+            // parent, toward the solved hand. Joint limits clamp each solved
+            // rotation around its rest frame before the weight blend.
             const Quat ru = upper->Rotation(), rl = lower->Rotation(), endRot = end->Rotation();
+            if (upperLimit.Active() || lowerLimit.Active()) CaptureLimitFrames(root, oldMid, oldEnd, mid, e);
             upper->SetRotation(AimBone(upper, oldMid, mid));
-            const Quat rlSolved = AimBone(lower, end->Position(), e);
+            if (upperLimit.Active())
+                upper->localRotation = ApplyLimit(upper->localRotation, m_upFrame, upperLimit);
+            lower->SetRotation(AimBone(lower, end->Position(), e));
+            if (lowerLimit.Active())
+                lower->localRotation = ApplyLimit(lower->localRotation, m_loFrame, lowerLimit,
+                                                  lowerLimit.type == IKJointLimit::Type::Hinge);
+            const Quat rlSolved = lower->Rotation();
             BlendWorldRotation(upper, ru, upper->Rotation(), w);
             BlendWorldRotation(lower, rl, rlSolved, w);
             if (matchTargetRotation) end->SetRotation(endRot);   // matched below from the animated rotation
@@ -128,8 +141,21 @@ private:
     IKFade m_fade;
     IKRestore m_restore;
     IKPole m_pole;   ///< the bend direction, eased as the limb straightens (see IKMath.hpp)
+    IKJointFrame m_upFrame, m_loFrame;   ///< rest frames the limits measure from
 
     bool Chained() const { return IsUnder(lower, upper) && IsUnder(end, lower); }
+
+    /// Capture the rest frames when the bones (re)resolve. A straight rest pose
+    /// has no bend plane, so the hinge axis then comes from this solve's bend.
+    void CaptureLimitFrames(const Vec3& root, const Vec3& oldMid, const Vec3& oldEnd,
+                            const Vec3& mid, const Vec3& e) {
+        if (!m_upFrame.CapturedFor(upper)) m_upFrame.Capture(upper, lower, end);
+        if (!m_loFrame.CapturedFor(lower)) m_loFrame.Capture(lower, end, nullptr);
+        if (!m_upFrame.hasHinge) m_upFrame.SetHingeFromBend(root, oldMid, oldEnd);
+        if (!m_loFrame.hasHinge) m_loFrame.SetHingeFromBend(root, oldMid, oldEnd);
+        if (!m_upFrame.hasHinge) m_upFrame.SetHingeFromBend(root, mid, e);
+        if (!m_loFrame.hasHinge) m_loFrame.SetHingeFromBend(root, mid, e);
+    }
 };
 
 } // namespace okay

@@ -24,9 +24,11 @@
 #include "okay/Components/UIBarBind.hpp"    // health bar follows a variable
 #include "okay/Components/UITextBind.hpp"   // score/text follows a variable
 #include "okay/Components/TextRenderer.hpp"
+#include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/UIAnchor.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Scene/UILayoutTools.hpp"   // AvoidOverlap: HUD pieces don't land on each other
+#include "okay/Graphics/Image.hpp"
 #include <cctype>
 #include <string>
 
@@ -735,6 +737,120 @@ inline GameObject* AddLeaderboard(Scene& scene) {
         Text(scene, row, "Name", names[i], UIAnchor::TopLeft, {90, 0}, {200, 48}, 16.0f);
         Text(scene, row, "Points", std::to_string(pts[i]), UIAnchor::TopRight, {-14, 0}, {120, 48}, 16.0f, slate::Text(), 2, true);
     }
+    return root;
+}
+
+// grok/ui-options: every new slider, health-bar and button control, on one screen
+// that fits a 1280x720 game view. Themes stay on the UI Showcase (#452).
+inline GameObject* AddUIOptions(Scene& scene) {
+    using namespace detail;
+    {
+        Image icon(16, 16);
+        icon.Fill(Color::FromBytes(255, 255, 255));
+        for (int y = 3; y < 13; ++y)
+            for (int x = 4; x < 12; ++x)
+                if (x < 7 || y < 8) icon.SetPixel(x, y, Color::FromBytes(66, 150, 250));
+        icon.SavePNG("/tmp/okay_ui_opt_icon.png");
+    }
+    GameObject* canvas = EnsureCanvas(scene);
+    GameObject* root = Panel(scene, canvas, "UI Options", UIAnchor::Center, {0, 0}, {1200, 640}, slate::Panel(), 16.0f, true);
+    Caption(scene, root, "Caption", "WIDGET OPTIONS", UIAnchor::TopLeft, {28, 18}, 400);
+    Text(scene, root, "Title", "Slider, health, button", UIAnchor::TopLeft, {28, 34}, {700, 28}, 22.0f, slate::Text(), 0, true);
+
+    auto column = [&](const char* name, float x, const char* title) {
+        GameObject* card = Panel(scene, root, name, UIAnchor::TopLeft, {x, 78}, {370, 530}, slate::Card(), 12.0f);
+        Text(scene, card, "Heading", title, UIAnchor::TopLeft, {16, 12}, {330, 24}, 16.0f, slate::Text(), 0, true);
+        return card;
+    };
+
+    GameObject* slCard = column("SliderCard", 24.0f, "Slider");
+    Text(scene, slCard, "StepLabel", "Step 1, label {v}, gradient fill", UIAnchor::TopLeft, {16, 46}, {330, 18}, 13.0f, slate::Dim());
+    {
+        GameObject* g = Child(scene, slCard, "StepSlider");
+        auto* sl = g->AddComponent<UISlider>();
+        sl->anchor = UIAnchor::TopLeft; sl->position = {16, 72}; sl->size = {250, 22};
+        sl->minValue = 0.0f; sl->maxValue = 10.0f; sl->step = 1.0f; sl->value = 4.0f;
+        sl->wholeNumbers = true; sl->showValue = true; sl->valueFormat = "{v}";
+        sl->fillGradient = true; sl->fillEnd = Color::FromBytes(120, 220, 255);
+        sl->background = slate::Field(); sl->fill = slate::Accent();
+    }
+    Text(scene, slCard, "VertLabel", "Vertical, diamond handle", UIAnchor::TopLeft, {16, 112}, {200, 18}, 13.0f, slate::Dim());
+    {
+        GameObject* g = Child(scene, slCard, "VertSlider");
+        auto* sl = g->AddComponent<UISlider>();
+        sl->anchor = UIAnchor::TopLeft; sl->position = {16, 138}; sl->size = {28, 150};
+        sl->vertical = true; sl->value = 0.65f; sl->knobShape = (int)UIShape::Diamond;
+        sl->background = slate::Field(); sl->fill = slate::Success(); sl->knob = Color::White;
+    }
+    Text(scene, slCard, "SqLabel", "Square handle", UIAnchor::TopLeft, {70, 150}, {220, 18}, 13.0f, slate::Dim());
+    {
+        GameObject* g = Child(scene, slCard, "SquareSlider");
+        auto* sl = g->AddComponent<UISlider>();
+        sl->anchor = UIAnchor::TopLeft; sl->position = {70, 178}; sl->size = {250, 22};
+        sl->value = 0.40f; sl->knobShape = (int)UIShape::Rectangle; sl->roundKnob = false;
+        sl->showValue = true; sl->fillGradient = true; sl->fillEnd = Color::FromBytes(240, 180, 70);
+        sl->background = slate::Field(); sl->fill = Color::FromBytes(240, 140, 70);
+    }
+
+    GameObject* hpCard = column("HealthCard", 414.0f, "Health");
+    Text(scene, hpCard, "SegLabel", "10 segments, damage trail, {n}%", UIAnchor::TopLeft, {16, 46}, {330, 18}, 13.0f, slate::Dim());
+    {
+        GameObject* g = Child(scene, hpCard, "Health");
+        auto* pb = g->AddComponent<UIProgressBar>();
+        pb->anchor = UIAnchor::TopLeft; pb->position = {16, 72}; pb->size = {330, 26};
+        pb->value = 0.72f; pb->segments = 10; pb->segmentGap = 3.0f; pb->trailDelay = 0.55f;
+        pb->showPercent = true; pb->textFormat = "{n}%";
+        pb->background = slate::Field(); pb->fill = slate::Success();
+        pb->trailColor = Color::FromBytes(226, 120, 70);
+    }
+    {
+        GameObject* g = Button(scene, hpCard, "Hit", "Hit", UIAnchor::TopLeft, {16, 108}, {96, 32}, ButtonKind::Danger);
+        g->GetComponent<UIButton>()->fontScale = 1.6f;
+        auto* sc = g->AddComponent<ScriptComponent>();
+        sc->LoadSource("function on_click() { ui_set_progress(\"Health\", 0.35); }\n");
+    }
+    Text(scene, hpCard, "HeatLabel", "Color by value (low to high)", UIAnchor::TopLeft, {16, 152}, {330, 18}, 13.0f, slate::Dim());
+    {
+        GameObject* g = Child(scene, hpCard, "Heat");
+        auto* pb = g->AddComponent<UIProgressBar>();
+        pb->anchor = UIAnchor::TopLeft; pb->position = {16, 176}; pb->size = {330, 26};
+        pb->value = 0.35f; pb->colorByValue = true; pb->showPercent = true; pb->textFormat = "{n}";
+        pb->background = slate::Field();
+        pb->lowColor = slate::Danger(); pb->highColor = slate::Success();
+    }
+    Text(scene, hpCard, "UpLabel", "Fills upward, 6 segments", UIAnchor::TopLeft, {16, 216}, {240, 18}, 13.0f, slate::Dim());
+    {
+        GameObject* g = Child(scene, hpCard, "Mana");
+        auto* pb = g->AddComponent<UIProgressBar>();
+        pb->anchor = UIAnchor::TopLeft; pb->position = {16, 242}; pb->size = {36, 160};
+        pb->value = 0.55f; pb->segments = 6; pb->segmentGap = 4.0f;
+        pb->fillDir = UIProgressBar::FillDir::BottomTop;
+        pb->background = slate::Field(); pb->fill = slate::Accent();
+    }
+
+    GameObject* btCard = column("ButtonCard", 804.0f, "Button");
+    Text(scene, btCard, "EaseLabel", "Icon + label, smooth 0.2s", UIAnchor::TopLeft, {16, 46}, {330, 18}, 13.0f, slate::Dim());
+    {
+        GameObject* g = Button(scene, btCard, "Launch", "Launch", UIAnchor::TopLeft, {16, 76}, {220, 48}, ButtonKind::Primary);
+        auto* b = g->GetComponent<UIButton>();
+        b->icon = "/tmp/okay_ui_opt_icon.png"; b->iconSize = 22.0f;
+        b->hoverScale = 1.08f; b->transitionEase = 1; b->transitionDuration = 0.20f; b->transitionSpeed = 6.0f;
+        b->shadow = true;
+    }
+    Text(scene, btCard, "LockLabel", "Disabled", UIAnchor::TopLeft, {16, 140}, {200, 18}, 13.0f, slate::Dim());
+    {
+        GameObject* g = Button(scene, btCard, "Locked", "Locked", UIAnchor::TopLeft, {16, 164}, {220, 48}, ButtonKind::Secondary);
+        g->GetComponent<UIButton>()->interactable = false;
+    }
+    Text(scene, btCard, "FocusLabel", "Ease-out, own focus color", UIAnchor::TopLeft, {16, 228}, {330, 18}, 13.0f, slate::Dim());
+    {
+        GameObject* g = Button(scene, btCard, "Focus", "Focus", UIAnchor::TopLeft, {16, 254}, {220, 48}, ButtonKind::Secondary);
+        auto* b = g->GetComponent<UIButton>();
+        b->separateFocus = true; b->focusColor = Color::FromBytes(240, 180, 70);
+        b->hoverScale = 1.06f; b->transitionEase = 2; b->transitionDuration = 0.25f; b->transitionSpeed = 6.0f;
+    }
+    Text(scene, root, "Hint", "Drag a slider. Drop the health bar and the orange trail catches up.",
+         UIAnchor::BottomLeft, {28, -16}, {900, 20}, 13.0f, slate::Dim());
     return root;
 }
 

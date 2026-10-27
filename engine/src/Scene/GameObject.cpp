@@ -62,8 +62,9 @@ bool GameObject::RemoveComponent(Component* component) {
     if (!component || component == transform) return false; // Transform is permanent
     for (auto it = m_components.begin(); it != m_components.end(); ++it) {
         if (it->get() == component) {
-            if (m_scene) m_scene->NotifyComponentRemoved(component);
             component->OnDestroy();
+            // Notify after OnDestroy: a query it runs can't cache a component about to be freed.
+            if (m_scene) m_scene->NotifyComponentRemoved(component);
             m_components.erase(it);
             return true;
         }

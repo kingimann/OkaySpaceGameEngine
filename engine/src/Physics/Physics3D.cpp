@@ -1183,7 +1183,28 @@ bool TerrainPasses(Terrain* terr, GameObject* ignore, std::uint32_t mask) {
     return ((mask >> (tg->layer & 31)) & 1u) != 0;
 }
 
+// Cheap reject before the exact shape test: does the ray come within maxT of the
+// collider's world bounds? Padded so an exact hit is never rejected.
+bool RayNearBounds(Collider3D* c, const Vec3& o, const Vec3& d, float maxT) {
+    Vec3 mn, mx; c->WorldAABB(mn, mx);
+    const Vec3 pad = (mx - mn) * 1e-4f + Vec3(1e-3f, 1e-3f, 1e-3f);
+    float t0, t1;
+    return RaySlabs(o, d, mn - pad, mx + pad, t0, t1) && t1 >= 0.0f && t0 <= maxT;
+}
+
 } // namespace
+
+const Physics3D::QueryCache& Physics3D::QueryLists(Scene& scene) {
+    if (m_query.scene != scene.Uid() || m_query.structure != scene.StructureVersion() ||
+        m_query.components != scene.ComponentVersion()) {
+        m_query.scene = scene.Uid();
+        m_query.structure = scene.StructureVersion();
+        m_query.components = scene.ComponentVersion();
+        m_query.colliders = scene.FindObjectsOfType<Collider3D>();
+        m_query.terrains = scene.FindObjectsOfType<Terrain>();
+    }
+    return m_query;
+}
 
 RaycastHit3D Physics3D::Raycast(Scene& scene, const Vec3& origin, const Vec3& direction,
                                 float maxDistance, GameObject* ignore,
@@ -1191,15 +1212,16 @@ RaycastHit3D Physics3D::Raycast(Scene& scene, const Vec3& origin, const Vec3& di
     RaycastHit3D best;
     best.distance = maxDistance;
     Vec3 dir = direction.Normalized();
-    for (Collider3D* c : scene.FindObjectsOfType<Collider3D>()) {
-        if (!Passes(c, ignore, layerMask, queryTriggers)) continue;
+    const QueryCache& q = QueryLists(scene);
+    for (Collider3D* c : q.colliders) {
+        if (!Passes(c, ignore, layerMask, queryTriggers) || !RayNearBounds(c, origin, dir, best.distance)) continue;
         float t; Vec3 n;
         if (RayCollider(c, origin, dir, best.distance, t, n) && t <= best.distance) {
             best.hit = true; best.collider = c; best.gameObject = c->gameObject;
             best.distance = t; best.point = origin + dir * t; best.normal = n;
         }
     }
-    for (Terrain* terr : scene.FindObjectsOfType<Terrain>()) {
+    for (Terrain* terr : q.terrains) {
         if (!TerrainPasses(terr, ignore, layerMask)) continue;
         float t; Vec3 n;
         if (RayTerrain(terr, origin, dir, best.distance, t, n) && t <= best.distance) {
@@ -1221,12 +1243,13 @@ std::vector<RaycastHit3D> Physics3D::RaycastAll(Scene& scene, const Vec3& origin
         h.distance = t; h.point = origin + dir * t; h.normal = n;
         hits.push_back(h);
     };
-    for (Collider3D* c : scene.FindObjectsOfType<Collider3D>()) {
-        if (!Passes(c, ignore, layerMask, queryTriggers)) continue;
+    const QueryCache& q = QueryLists(scene);
+    for (Collider3D* c : q.colliders) {
+        if (!Passes(c, ignore, layerMask, queryTriggers) || !RayNearBounds(c, origin, dir, maxDistance)) continue;
         float t; Vec3 n;
         if (RayCollider(c, origin, dir, maxDistance, t, n)) add(c, c->gameObject, t, n);
     }
-    for (Terrain* terr : scene.FindObjectsOfType<Terrain>()) {
+    for (Terrain* terr : q.terrains) {
         if (!TerrainPasses(terr, ignore, layerMask)) continue;
         float t; Vec3 n;
         if (RayTerrain(terr, origin, dir, maxDistance, t, n)) add(nullptr, terr->gameObject, t, n);

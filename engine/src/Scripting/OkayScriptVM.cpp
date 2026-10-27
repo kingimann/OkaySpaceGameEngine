@@ -236,7 +236,7 @@ struct JsonReader {
 enum class Tok {
     End, Number, String, InterpString, Ident,
     Var, If, Else, While, For, In, Function, Return, True, False, Break, Continue,
-    Question, Colon,
+    Question, Colon, QuestionQuestion, QuestionQuestionEq, QuestionDot,
     Plus, Minus, Star, Slash, Percent,
     Assign, PlusEq, MinusEq, StarEq, SlashEq, Inc, Dec,
     Eq, Ne, Lt, Gt, Le, Ge, Not, And, Or,
@@ -413,7 +413,14 @@ private:
             case '}': return {Tok::RBrace, "", 0, m_line};
             case '[': return {Tok::LBracket, "", 0, m_line};
             case ']': return {Tok::RBracket, "", 0, m_line};
-            case '?': return {Tok::Question, "", 0, m_line};
+            case '?':
+                if (Peek() == '?') {
+                    Advance();
+                    if (Peek() == '=') { Advance(); return {Tok::QuestionQuestionEq, "", 0, m_line}; }
+                    return {Tok::QuestionQuestion, "", 0, m_line};
+                }
+                if (Peek() == '.') { Advance(); return {Tok::QuestionDot, "", 0, m_line}; }
+                return {Tok::Question, "", 0, m_line};
             case ':': return {Tok::Colon, "", 0, m_line};
             case ',': return {Tok::Comma, "", 0, m_line};
             case ';': return {Tok::Semicolon, "", 0, m_line};
@@ -467,6 +474,17 @@ inline const char* KindName(unsigned char k) {
     switch (k & 0x0F) { case KInt: return "an int"; case KFloat: return "a float"; case KBool: return "a bool";
                         case KString: return "a string"; default: return "a variable"; }
 }
+// This VM spells null as the number 0 (an unset variable, a missed Find or
+// GetComponent, the name `null`). A real object name, a bool, a vector, or any
+// other number is present. A destroyed object reference (instance id) is null too.
+inline bool IsNullish(const Value& v) {
+    if (v.IsBool() || v.IsString() || v.IsVec3()) return false;
+    if (v.IsObject()) return v.AsObjectId() == 0 || !vs::VsObjectAlive(v.AsObjectId());
+    if (v.IsArray()) return !v.AsArray();
+    if (v.IsMap()) return !v.AsMap();
+    return v.IsNumber() && v.AsFloat() == 0.0f;
+}
+
 inline const char* ValueKindName(const Value& v) {
     if (v.IsString()) return "text";
     if (v.IsBool()) return "true/false";
@@ -817,6 +835,29 @@ struct LogicalExpr : Expr {
     }
 };
 
+// a ?? b: a, or b when a is null. b is not worked out when a is present.
+struct CoalesceExpr : Expr {
+    ExprPtr l, r;
+    CoalesceExpr(ExprPtr a, ExprPtr b) : l(std::move(a)), r(std::move(b)) {}
+    Value Eval(Runtime& rt) override {
+        Value lv = l->Eval(rt);
+        return IsNullish(lv) ? r->Eval(rt) : lv;
+    }
+};
+
+// x ??= value: set x only while it is null, and only then work out value.
+struct NullishAssignExpr : Expr {
+    std::string n; ExprPtr value;
+    NullishAssignExpr(std::string s, ExprPtr e) : n(std::move(s)), value(std::move(e)) {}
+    Value Eval(Runtime& rt) override {
+        Value cur = rt.Get(n);
+        if (!IsNullish(cur)) return cur;
+        Value v = value->Eval(rt);
+        rt.Assign(n, v);
+        return v;
+    }
+};
+
 struct BinaryExpr : Expr {
     Tok op; ExprPtr l, r;
     BinaryExpr(Tok o, ExprPtr a, ExprPtr b) : op(o), l(std::move(a)), r(std::move(b)) {}
@@ -1067,10 +1108,11 @@ inline bool IsComponentRef(const Value& v) {
 }
 // expr.member  — a property read on any expression's value.
 struct MemberExpr : Expr {
-    ExprPtr obj; std::string name;
-    MemberExpr(ExprPtr o, std::string n) : obj(std::move(o)), name(std::move(n)) {}
+    ExprPtr obj; std::string name; bool safe = false;
+    MemberExpr(ExprPtr o, std::string n, bool s = false) : obj(std::move(o)), name(std::move(n)), safe(s) {}
     Value Eval(Runtime& rt) override {
         Value v = obj->Eval(rt), out;
+        if (safe && IsNullish(v)) return Value{};
         if (IsComponentRef(v)) { std::vector<Value> a{Value{v.AsString().substr(1)}, Value{name}}; return rt.Call("__get_component", a); }
         if (ValueProperty(v, name, out)) return out;
         throw ScriptError("no property '" + name + "' on this value");
@@ -1110,10 +1152,11 @@ struct CastExpr : Expr {
 };
 // expr.Method(args)  — a C#-style method on a value (string, list, dictionary, number).
 struct MethodCallExpr : Expr {
-    ExprPtr obj; std::string name; std::vector<ExprPtr> args;
-    MethodCallExpr(ExprPtr o, std::string n) : obj(std::move(o)), name(std::move(n)) {}
+    ExprPtr obj; std::string name; std::vector<ExprPtr> args; bool safe = false;
+    MethodCallExpr(ExprPtr o, std::string n, bool s = false) : obj(std::move(o)), name(std::move(n)), safe(s) {}
     Value Eval(Runtime& rt) override {
         Value v = obj->Eval(rt), out;
+        if (safe && IsNullish(v)) return Value{};
         std::vector<Value> vals; vals.reserve(args.size());
         for (auto& a : args) vals.push_back(a->Eval(rt));
         if (IsComponentRef(v)) {
@@ -1157,10 +1200,11 @@ struct ArrayExpr : Expr {
 
 // Read an element: arr[index] for arrays, or map["key"] for dictionaries.
 struct IndexExpr : Expr {
-    ExprPtr arr, index;
-    IndexExpr(ExprPtr a, ExprPtr i) : arr(std::move(a)), index(std::move(i)) {}
+    ExprPtr arr, index; bool safe = false;
+    IndexExpr(ExprPtr a, ExprPtr i, bool s = false) : arr(std::move(a)), index(std::move(i)), safe(s) {}
     Value Eval(Runtime& rt) override {
         Value a = arr->Eval(rt);
+        if (safe && IsNullish(a)) return Value{};
         if (auto v = a.AsArray()) {
             int i = (int)index->Eval(rt).AsFloat();
             if (i < 0 || i >= (int)v->size()) return Value{};
@@ -2333,7 +2377,7 @@ private:
 
     // Ternary: cond ? a : b (lower precedence than assignment's RHS).
     ExprPtr ParseTernary() {
-        ExprPtr c = ParseOr();
+        ExprPtr c = ParseCoalesce();
         if (Match(Tok::Question)) {
             ExprPtr a = ParseAssignment();
             Expect(Tok::Colon, "':'");
@@ -2373,6 +2417,11 @@ private:
     ExprPtr ParseAssignment() {
         if (IsLambdaAhead()) return ParseLambda();
         ExprPtr left = ParseTernary();
+        if (Match(Tok::QuestionQuestionEq)) {
+            if (auto* var = dynamic_cast<VarExpr*>(left.get()))
+                return std::make_unique<NullishAssignExpr>(var->n, ParseAssignment());
+            throw ScriptError("invalid ??=", Peek().line);
+        }
         if (Match(Tok::Assign)) {
             ExprPtr value = ParseAssignment();
             if (auto* var = dynamic_cast<VarExpr*>(left.get()))
@@ -2445,6 +2494,15 @@ private:
         if (++m_operators > kMaxOperators)
             throw ScriptError("parse error: expression is too long (more than " + std::to_string(kMaxOperators) + " operators)", Peek().line);
     }
+    // a ?? b ?? c groups to the right, below || and above ?:.
+    ExprPtr ParseCoalesce() {
+        ExprPtr l = ParseOr();
+        if (Match(Tok::QuestionQuestion)) {
+            CountOperator();
+            l = std::make_unique<CoalesceExpr>(std::move(l), ParseCoalesce());
+        }
+        return l;
+    }
     ExprPtr ParseOr() {
         auto l = ParseAnd();
         while (Match(Tok::Or)) { CountOperator(); l = std::make_unique<LogicalExpr>(Tok::Or, std::move(l), ParseAnd()); }
@@ -2510,34 +2568,40 @@ private:
         return ParsePostfix();
     }
     // Postfix indexing: base[i][j]...
+    // One `.name` or `.name(args)` step. `safe` skips the step when the receiver is null.
+    ExprPtr ParseMemberStep(ExprPtr e, bool safe) {
+        std::string path = Expect(Tok::Ident, "member name").text;
+        std::vector<std::string> parts;
+        for (std::size_t a = 0, b; a <= path.size(); a = b + 1) {
+            b = path.find('.', a); if (b == std::string::npos) b = path.size();
+            parts.push_back(path.substr(a, b - a));
+        }
+        for (std::size_t k = 0; k + 1 < parts.size(); ++k)
+            e = std::make_unique<MemberExpr>(std::move(e), parts[k], safe);
+        if (Match(Tok::LParen)) {
+            auto call = std::make_unique<MethodCallExpr>(std::move(e), parts.back(), safe);
+            if (!Check(Tok::RParen)) {
+                do { call->args.push_back(ParseExpression()); } while (Match(Tok::Comma));
+            }
+            Expect(Tok::RParen, "')'");
+            return call;
+        }
+        return std::make_unique<MemberExpr>(std::move(e), parts.back(), safe);
+    }
     ExprPtr ParsePostfix() {
         ExprPtr e = ParsePrimary();
+        // After `?.`, the rest of this chain is skipped when a step is null.
+        bool safe = false;
         for (;;) {
             if (Match(Tok::LBracket)) {
                 ExprPtr idx = ParseExpression();
                 Expect(Tok::RBracket, "']'");
-                e = std::make_unique<IndexExpr>(std::move(e), std::move(idx));
+                e = std::make_unique<IndexExpr>(std::move(e), std::move(idx), safe);
+            } else if (Match(Tok::QuestionDot)) {
+                safe = true;
+                e = ParseMemberStep(std::move(e), true);
             } else if (Match(Tok::Dot)) {
-                // Member access on any expression: (a - b).magnitude, xs[0].ToString(),
-                // GetName().ToUpper(). The lexer may glue a dotted run ("position.x").
-                std::string path = Expect(Tok::Ident, "member name").text;
-                std::vector<std::string> parts;
-                for (std::size_t a = 0, b; a <= path.size(); a = b + 1) {
-                    b = path.find('.', a); if (b == std::string::npos) b = path.size();
-                    parts.push_back(path.substr(a, b - a));
-                }
-                for (std::size_t k = 0; k + 1 < parts.size(); ++k)
-                    e = std::make_unique<MemberExpr>(std::move(e), parts[k]);
-                if (Match(Tok::LParen)) {
-                    auto call = std::make_unique<MethodCallExpr>(std::move(e), parts.back());
-                    if (!Check(Tok::RParen)) {
-                        do { call->args.push_back(ParseExpression()); } while (Match(Tok::Comma));
-                    }
-                    Expect(Tok::RParen, "')'");
-                    e = std::move(call);
-                } else {
-                    e = std::make_unique<MemberExpr>(std::move(e), parts.back());
-                }
+                e = ParseMemberStep(std::move(e), safe);
             } else break;
         }
         return e;

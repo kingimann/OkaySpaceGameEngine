@@ -35,6 +35,7 @@ public:
     bool  dragItems     = true;   ///< drag items between slots while the backpack is open
     int   dragIndex     = -1;     ///< slot being dragged (runtime), or -1
     int   dragAmount    = 0;      ///< how many are lifted off the source (0 = whole stack)
+    int   equipDrag     = -1;     ///< Equipment slot being dragged (runtime), or -1
 
     float slotSize = 50.0f;       ///< slot square, pixels (at the reference height)
     float slotGap  = 6.0f;

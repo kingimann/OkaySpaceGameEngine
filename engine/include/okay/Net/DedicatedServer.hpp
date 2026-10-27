@@ -66,6 +66,10 @@ struct DedicatedServerOptions {
     /// tickRate (NetworkManager::netTickRate): snapshots carry the tick and
     /// clients send once a tick. Off: as before.
     bool fixedTick = false;
+    /// --authoritative / authoritative = true: the server moves players from
+    /// their inputs (NetworkManager::authoritativeMovement). Off: the scene's
+    /// own setting is left as it is.
+    bool authoritative = false;
 };
 
 /// What --report-kicks files: an ac_reports "player" row from the server's

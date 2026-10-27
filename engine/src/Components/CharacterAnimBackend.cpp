@@ -317,6 +317,9 @@ void CharacterAnimBackend::Move(const Movement& m) {
     m_sm->SetFloat("stance", m.stance);
     m_sm->SetFloat("airTime", m.airTime);
     m_sm->SetFloat("verticalSpeed", m.verticalSpeed);
+    // Declared or not: a swim clip the animator adds can transition on this.
+    // Until that clip exists the graph stays on idle / walk (airTime stays 0).
+    m_sm->SetBool("swim", m.swim);
 }
 
 void CharacterAnimBackend::Gait(float x, float z, float speed) {
@@ -324,6 +327,24 @@ void CharacterAnimBackend::Gait(float x, float z, float speed) {
     m_sm->SetFloat("gaitX", x);
     m_sm->SetFloat("gaitZ", z);
     m_sm->SetFloat("gaitSpeed", speed);
+}
+
+bool CharacterAnimBackend::AnimatorOn() const {
+    return m_machine && m_machine->enabled;
+}
+
+void CharacterAnimBackend::ResumeFrom(const std::vector<Vec3>& pose, const Vec3& root, float seconds) {
+    if (pose.empty()) return;
+    // This frame still shows the built-in pose. The next Advance eases into the clip.
+    m_fromPose = pose;
+    m_fromRoot = root;
+    m_fromLive = false;
+    m_fadeT = 0.0f;
+    m_fadeDur = seconds > 1e-3f ? seconds : 0.0f;
+    m_pose = pose;
+    m_root = root;
+    m_have = true;
+    m_final = true;
 }
 
 bool CharacterAnimBackend::Live() const {

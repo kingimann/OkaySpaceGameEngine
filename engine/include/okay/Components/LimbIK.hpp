@@ -81,6 +81,7 @@ public:
     // Solve in LateUpdate so the correction lands AFTER every animation driver
     // has posed the bones this frame (imported rigs create their per-node
     // Animators lazily, which puts them late in the Update order).
+    void Update(float) override { m_restore.Restore(); }   // before the animator blends (see IKRestore.hpp)
     void LateUpdate(float dt) override {
         m_restore.Restore();
         const float w = weight * m_fade.Step(ikActive, fadeTime, dt);

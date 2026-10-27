@@ -84,7 +84,11 @@ public:
     bool Craft(int idx, int times = 1) {
         Inventory* inv = Inv();
         const auto all = Recipes();
-        if (!inv || idx < 0 || idx >= (int)all.size() || !CanCraft(all[idx], *inv)) return false;
+        if (!inv || idx < 0 || idx >= (int)all.size()) return false;
+        if (!CanCraft(all[idx], *inv)) {
+            CraftQueue::Failed(*inv, all[idx], !all[idx].Unlocked() ? "not unlocked" : "missing ingredients");
+            return false;
+        }
         const bool ok = m_queue.Craft(*inv, all[idx], times) > 0;
         if (ok && closeWhenCrafted) open = false;
         return ok;

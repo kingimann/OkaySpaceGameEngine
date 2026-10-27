@@ -5,6 +5,7 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Net/NetworkManager.hpp"
+#include "okay/Components/NetworkObject.hpp"
 #include "okay/Platform/Steam/Steam.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
@@ -639,6 +640,53 @@ struct NetDisconnectNode : VsNode {
 struct NetChatNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override { if (auto* n = VsNet(ctx)) n->Chat(In(0, g, ctx).AsString()); return 0; }
+};
+// RPC on this object's NetworkObject (in0 = payload). The name is local to the object.
+struct NetObjRpcNode : VsNode {
+    std::string name;
+    explicit NetObjRpcNode(std::string nm) : name(std::move(nm)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (ctx.gameObject)
+            if (auto* o = ctx.gameObject->GetComponent<NetworkObject>())
+                o->Rpc(name, In(0, g, ctx).AsString());
+        return 0;
+    }
+};
+// Write this object's SyncVar (in0 = value). Creates nothing: the component must be there,
+// otherwise the value still goes out through SetVar under "<netId>.<name>".
+struct SyncVarSetNode : VsNode {
+    std::string varName;
+    explicit SyncVarSetNode(std::string n) : varName(std::move(n)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        const std::string val = In(0, g, ctx).AsString();
+        if (!ctx.gameObject) return 0;
+        for (auto* sv : ctx.gameObject->GetComponents<SyncVar>())
+            if (sv->name == varName) { sv->Set(val); return 0; }
+        if (auto* n = VsNet(ctx)) {
+            auto* o = ctx.gameObject->GetComponent<NetworkObject>();
+            if (!o || o->IsLocallyOwned()) {
+                const std::string id = o ? o->Id() : ctx.gameObject->name;
+                n->SetVar(id.empty() ? varName : id + "." + varName, val);
+            }
+        }
+        return 0;
+    }
+};
+struct SyncVarGetNode : VsNode {
+    std::string varName;
+    explicit SyncVarGetNode(std::string n) : varName(std::move(n)) {}
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        if (ctx.gameObject)
+            for (auto* sv : ctx.gameObject->GetComponents<SyncVar>())
+                if (sv->name == varName) return sv->Get();
+        auto* n = VsNet(ctx);
+        if (!n || !ctx.gameObject) return std::string{};
+        auto* o = ctx.gameObject->GetComponent<NetworkObject>();
+        const std::string id = o ? o->Id() : ctx.gameObject->name;
+        return n->GetVar(id.empty() ? varName : id + "." + varName);
+    }
 };
 // Fire a named RPC on every other peer (in0 = payload string).
 struct NetRpcNode : VsNode {

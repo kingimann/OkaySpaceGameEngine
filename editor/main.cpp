@@ -1624,6 +1624,7 @@ bool g_showPluginManager = false;  // Plugin Manager (editor plugins)
 static void DrawPluginsMenu(EditorState& ed);
 static void NewPluginFromTemplate(EditorState& ed);
 bool g_showCrashLog = false;   // Crash Log window (view/copy okay_crashlog.txt reports)
+bool g_showAudioMixer = false; // Audio Mixer window (master + group volumes, meters, ducking)
 bool g_showSpriteEditor = false; // pixel-art Sprite Editor (paint/shape custom sprites)
 bool g_showUIThemer = false;     // UI Theme window (reusable styles applied across widgets)
 bool g_showItemDatabase = false; // Item Database window (the project's item definitions)
@@ -4317,6 +4318,7 @@ static const DockPanelDef* DockPanels(int& n) {
         {"Profiler",      "Profiler",                  &g_showProfiler,      "Panels", PI_Profiler},
         {"Asset Manager", "Asset Manager",             &g_showAssetManager,  "Panels", PI_Package},
         {"Crash Log",     "Crash Log",                 &g_showCrashLog,      "Panels", PI_Warning},
+        {"Audio Mixer",   "Audio Mixer",               &g_showAudioMixer,    "Panels", PI_Stats},
         {"Script Editor", "Script Editor",             &g_showScriptEditor,  "Editors & Tools", PI_Script},
         {"Visual Script", "Visual Script",             &g_showVisualScript,  "Editors & Tools", PI_Nodes},
         {"Custom Actions","Custom Actions",            &g_showCustomActions, "Editors & Tools", PI_Bolt},
@@ -5599,6 +5601,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
             ImGui::MenuItem("Asset Manager", nullptr, &g_showAssetManager);
             ImGui::MenuItem("Crash Log", nullptr, &g_showCrashLog);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "View past crash reports (okay_crashlog.txt) and copy them to send to support.");
+            ImGui::MenuItem("Audio Mixer", nullptr, &g_showAudioMixer);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Master and group volumes (Music, SFX, UI, Voice), output levels while playing, and music ducking.");
             ImGui::EndMenu();
         }
         // Editors & Tools — the bigger authoring surfaces.
@@ -6457,6 +6461,59 @@ static std::string OkayExeDir() {
                  return s == std::string::npos ? std::string(".") : p.substr(0, s); }
     return ".";
 #endif
+}
+
+// Audio Mixer: the same levels a game's settings menu drives (master, each group,
+// mutes), live output meters during Play, and music ducking under voice.
+void DrawAudioMixer() {
+    if (!ImGui::Begin("Audio Mixer", &g_showAudioMixer)) { ImGui::End(); return; }
+    auto meter = [](const char* id, float v) {
+        const float db = v > 1e-5f ? 20.0f * std::log10(v) : -60.0f;
+        const float t = std::clamp((db + 60.0f) / 60.0f, 0.0f, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, v >= 1.0f ? ImVec4(0.85f, 0.3f, 0.3f, 1) : ImVec4(0.35f, 0.7f, 0.45f, 1));
+        ImGui::ProgressBar(t, ImVec2(-1, 6), "");
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s: %.1f dB", id, db);
+    };
+    ImGui::TextDisabled("Output");
+    meter("Left", AudioMixer::peak[0]);
+    meter("Right", AudioMixer::peak[1]);
+    ImGui::Spacing();
+    if (ImGui::BeginTable("##mix", 3, ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Group", ImGuiTableColumnFlags_WidthFixed, 70);
+        ImGui::TableSetupColumn("Volume", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Mute", ImGuiTableColumnFlags_WidthFixed, 40);
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn(); ImGui::TextUnformatted("Master");
+        ImGui::TableNextColumn(); ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##master", &AudioMixer::masterVolume, 0.0f, 1.0f, "%.2f");
+        ImGui::TableNextColumn(); ImGui::Checkbox("##mastermute", &AudioMixer::muted);
+        for (int i = 0; i < (int)AudioGroup::Count; ++i) {
+            ImGui::PushID(i);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn(); ImGui::TextUnformatted(AudioMixer::GroupName((AudioGroup)i));
+            ImGui::TableNextColumn(); ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##v", &AudioMixer::groupVolume[i], 0.0f, 1.0f, "%.2f");
+            ImGui::TableNextColumn(); ImGui::Checkbox("##m", &AudioMixer::groupMuted[i]);
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::Spacing();
+    ImGui::Checkbox("Duck music under voice", &AudioMixer::duckMusicUnderVoice);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "While a Voice-group source plays, the Music group dips to the duck level.");
+    if (AudioMixer::duckMusicUnderVoice) {
+        ImGui::SliderFloat("Duck level", &AudioMixer::duckLevel, 0.0f, 1.0f, "%.2f");
+        ImGui::SliderFloat("Attack (s)", &AudioMixer::duckAttack, 0.0f, 2.0f, "%.2f");
+        ImGui::SliderFloat("Release (s)", &AudioMixer::duckRelease, 0.0f, 4.0f, "%.2f");
+        ImGui::TextDisabled("Music now at %.0f%%", AudioMixer::duckGain * 100.0f);
+    }
+    ImGui::Spacing();
+    if (ImGui::Button("Reset")) {
+        AudioMixer::masterVolume = 1.0f; AudioMixer::muted = false;
+        for (int i = 0; i < (int)AudioGroup::Count; ++i) { AudioMixer::groupVolume[i] = 1.0f; AudioMixer::groupMuted[i] = false; }
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("Editor only; players set their own in the pause menu.");
+    ImGui::End();
 }
 
 // Crash Log viewer: shows the crash reports the exception handler writes next to the
@@ -42863,6 +42920,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.Inspector"); if (g_showInspector) DrawInspector(ed); }
         { OKAY_PROFILE("UI.Console"); if (g_showConsole)   DrawConsole(); }
         { OKAY_PROFILE("UI.CrashLog"); if (g_showCrashLog)  DrawCrashLog(); }
+        { OKAY_PROFILE("UI.AudioMixer"); if (g_showAudioMixer) DrawAudioMixer(); }
         { OKAY_PROFILE("UI.AssetManager"); if (g_showAssetManager) DrawAssetManager(ed); }
         { OKAY_PROFILE("UI.Plugins"); TickPlugins(ed); DrawPluginManager(ed); }
         {   // Every scene needs a camera (the Game view and builds render through it):

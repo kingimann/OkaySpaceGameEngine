@@ -24,6 +24,9 @@ struct AudioMixer {
     /// Global output level [0..1] and mute, for settings menus.
     static inline float masterVolume = 1.0f;
     static inline bool  muted = false;
+    /// Silences output while the window is in the background (the host sets it);
+    /// unlike `muted` it is not a player setting and is never saved.
+    static inline bool  focusMuted = false;
 
     /// Per-group level [0..1] and mute, under the master (AudioGroup order).
     static inline float groupVolume[(int)AudioGroup::Count] = {1.0f, 1.0f, 1.0f, 1.0f};
@@ -40,6 +43,16 @@ struct AudioMixer {
     }
     /// "music", "SFX", ... (any case) -> group; false when the name is unknown.
     static bool GroupFromName(const char* name, AudioGroup& out);
+
+    /// The player's volume settings (master, each group, mutes) to and from
+    /// Prefs, under "audio.*" keys. The player loads them at start and saves
+    /// them with the rest of its prefs; keys that aren't there keep the default.
+    static void LoadSettings();
+    static void SaveSettings();
+
+    /// Loudest output sample per channel in the last RenderStereo (before the
+    /// clamp), for level meters.
+    static inline float peak[2] = {0.0f, 0.0f};
 
     /// Ducking: while a Voice-group source plays, the Music group dips to
     /// duckLevel over duckAttack seconds and comes back over duckRelease.

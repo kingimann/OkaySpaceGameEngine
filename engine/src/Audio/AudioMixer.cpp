@@ -4,6 +4,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Core/Prefs.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -21,6 +22,34 @@ bool AudioMixer::GroupFromName(const char* name, AudioGroup& out) {
         if (n == g) { out = (AudioGroup)i; return true; }
     }
     return false;
+}
+
+namespace {
+std::string GroupKey(int i) {
+    std::string k = std::string("audio.") + AudioMixer::GroupName((AudioGroup)i);
+    for (char& c : k) c = (char)std::tolower((unsigned char)c);
+    return k;
+}
+} // namespace
+
+void AudioMixer::LoadSettings() {
+    masterVolume = Mathf::Clamp(Prefs::GetFloat("audio.master", masterVolume), 0.0f, 1.0f);
+    muted = Prefs::GetInt("audio.muted", muted ? 1 : 0) != 0;
+    for (int i = 0; i < (int)AudioGroup::Count; ++i) {
+        const std::string k = GroupKey(i);
+        groupVolume[i] = Mathf::Clamp(Prefs::GetFloat(k, groupVolume[i]), 0.0f, 1.0f);
+        groupMuted[i] = Prefs::GetInt(k + ".muted", groupMuted[i] ? 1 : 0) != 0;
+    }
+}
+
+void AudioMixer::SaveSettings() {
+    Prefs::SetFloat("audio.master", masterVolume);
+    Prefs::SetInt("audio.muted", muted ? 1 : 0);
+    for (int i = 0; i < (int)AudioGroup::Count; ++i) {
+        const std::string k = GroupKey(i);
+        Prefs::SetFloat(k, groupVolume[i]);
+        Prefs::SetInt(k + ".muted", groupMuted[i] ? 1 : 0);
+    }
 }
 
 float AudioMixer::Attenuation(const AudioSource& src, float dist) {
@@ -182,8 +211,13 @@ int AudioMixer::RenderStereo(Scene& scene, float* out, int frames) {
         if (src->m_fadeStop && src->m_fade <= 0.0f) src->Stop();
     }
 
-    const float gain = muted ? 0.0f : masterVolume;
-    for (int i = 0; i < 2 * frames; ++i) out[i] = Mathf::Clamp(out[i] * gain, -1.0f, 1.0f);
+    const float gain = (muted || focusMuted) ? 0.0f : masterVolume;
+    peak[0] = peak[1] = 0.0f;
+    for (int i = 0; i < 2 * frames; ++i) {
+        const float v = out[i] * gain;
+        peak[i & 1] = std::max(peak[i & 1], std::fabs(v));
+        out[i] = Mathf::Clamp(v, -1.0f, 1.0f);
+    }
     return mixed;
 }
 

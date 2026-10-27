@@ -2,6 +2,8 @@
 #include <Okay.hpp>
 #include <cstdio>
 #include <fstream>
+#include "okay/VisualScript/VsApi.hpp"
+#include "okay/VisualScript/NodeGraph.hpp"
 
 using namespace okay;
 
@@ -11,6 +13,7 @@ void ResetMixer() {
     AudioMixer::sampleRate = 44100;
     AudioMixer::masterVolume = 1.0f;
     AudioMixer::muted = false;
+    AudioMixer::focusMuted = false;
     for (int i = 0; i < (int)AudioGroup::Count; ++i) {
         AudioMixer::groupVolume[i] = 1.0f;
         AudioMixer::groupMuted[i] = false;
@@ -198,6 +201,83 @@ int main() {
             CHECK(b->rolloff == AudioRolloff::Logarithmic);
         }
         std::remove(path.c_str());
+    }
+
+    // ---- Player settings: saved to Prefs and read back ----
+    {
+        ResetMixer();
+        Prefs::Clear();
+        AudioMixer::masterVolume = 0.6f;
+        AudioMixer::groupVolume[(int)AudioGroup::Music] = 0.25f;
+        AudioMixer::groupMuted[(int)AudioGroup::Voice] = true;
+        AudioMixer::SaveSettings();
+        CHECK_NEAR(Prefs::GetFloat("audio.music", -1.0f), 0.25f, 1e-4);
+        const std::string path = "test_audio_settings.okayprefs";
+        CHECK(Prefs::Save(path));
+        ResetMixer();
+        Prefs::Clear();
+        CHECK(Prefs::Load(path));
+        AudioMixer::LoadSettings();
+        CHECK_NEAR(AudioMixer::masterVolume, 0.6f, 1e-4);
+        CHECK_NEAR(AudioMixer::groupVolume[(int)AudioGroup::Music], 0.25f, 1e-4);
+        CHECK(AudioMixer::groupMuted[(int)AudioGroup::Voice]);
+        CHECK(!AudioMixer::groupMuted[(int)AudioGroup::SFX]);
+        // Keys that aren't saved leave the current value alone.
+        Prefs::Clear();
+        AudioMixer::masterVolume = 0.8f;
+        AudioMixer::LoadSettings();
+        CHECK_NEAR(AudioMixer::masterVolume, 0.8f, 1e-4);
+        std::remove(path.c_str());
+        Prefs::Clear();
+    }
+
+    // ---- Focus mute silences without touching the saved master; peaks meter the output ----
+    {
+        ResetMixer();
+        Scene s;
+        auto* a = MakeSource(s, "Tone", 0.5f, 64);
+        a->Play();
+        float out[64];
+        AudioMixer::Render(s, out, 32);
+        CHECK_NEAR(AudioMixer::peak[0], 0.5f, 1e-4);
+        CHECK_NEAR(AudioMixer::peak[1], 0.5f, 1e-4);
+        AudioMixer::focusMuted = true;
+        AudioMixer::Render(s, out, 32);
+        CHECK_NEAR(out[0], 0.0f, 1e-6);
+        CHECK_NEAR(AudioMixer::masterVolume, 1.0f, 1e-6);
+        AudioMixer::focusMuted = false;
+    }
+
+    // ---- Pause menu: Volume, Music and Effects sliders drive the mixer ----
+    {
+        ResetMixer();
+        AudioMixer::groupVolume[(int)AudioGroup::Music] = 0.4f;
+        Scene s;
+        auto* pm = s.CreateGameObject("Menu")->AddComponent<PauseMenu>();
+        CHECK(pm->EnsureBuilt() != nullptr);
+        auto slider = [&](const char* n) { GameObject* o = s.Find(n); return o ? o->GetComponent<UISlider>() : nullptr; };
+        UISlider* music = slider("Pause_Music"); UISlider* fx = slider("Pause_Effects"); UISlider* vol = slider("Pause_Volume");
+        CHECK(music && fx && vol);
+        if (music && fx && vol) {
+            CHECK_NEAR(music->value, 0.4f, 1e-4);   // starts at the mixer's level
+            pm->Pause();
+            music->value = 0.1f; fx->value = 0.3f; vol->value = 0.7f;
+            pm->Update(0.016f);
+            CHECK_NEAR(AudioMixer::groupVolume[(int)AudioGroup::Music], 0.1f, 1e-4);
+            CHECK_NEAR(AudioMixer::groupVolume[(int)AudioGroup::SFX], 0.3f, 1e-4);
+            CHECK_NEAR(AudioMixer::groupVolume[(int)AudioGroup::UI], 0.3f, 1e-4);
+            CHECK_NEAR(AudioMixer::masterVolume, 0.7f, 1e-4);
+            pm->Resume();
+        }
+    }
+
+    // ---- Scripts and visual scripts share the Audio bindings ----
+    {
+        CHECK(vs::VsApiFind("Audio.SetGroupVolume/2") != nullptr);
+        CHECK(vs::VsApiFind("Audio.GetGroupVolume/1") != nullptr);
+        CHECK(vs::VsApiFind("Audio.MuteGroup/2") != nullptr);
+        CHECK(vs::VsApiFind("Audio.masterVolume=") != nullptr);
+        CHECK(vs::MakeApiNode("Audio.SetGroupVolume/2") != nullptr);
     }
 
     ResetMixer();

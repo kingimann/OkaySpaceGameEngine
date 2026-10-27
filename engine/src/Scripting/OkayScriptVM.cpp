@@ -4412,6 +4412,8 @@ struct OkayScriptVM::Impl {
                 return Value{AudioMixer::groupVolume[(int)g]};
             return Value{0.0f};
         };
+        // Keep the current volumes as the player's settings (also saved on quit).
+        b["save_audio_settings"] = [](std::vector<Value>&) { AudioMixer::SaveSettings(); return Value{}; };
         // Music: the scene's MusicPlayer. music_play(index or "file"), music_next(),
         // music_previous(), music_stop([fade seconds]), music_pause(), music_resume().
         auto music = [go]() -> MusicPlayer* {

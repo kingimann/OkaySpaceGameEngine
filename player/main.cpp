@@ -1466,6 +1466,7 @@ int main(int argc, char** argv) {
         SDL_AUDIO_ALLOW_FREQUENCY_CHANGE | SDL_AUDIO_ALLOW_CHANNELS_CHANGE);
     if (audioDev) { AudioMixer::sampleRate = have.freq; SDL_PauseAudioDevice(audioDev, 0); }
     AudioMixer::masterVolume = cfg.volume;   // global mix scale from build settings
+    AudioMixer::LoadSettings();   // the player's own volume settings win over it
 
     // baseDir (resolved above) is where the game files live, for relative paths.
     std::unordered_map<std::string, SDL_Texture*> textureCache;
@@ -1849,7 +1850,7 @@ int main(int argc, char** argv) {
 #endif
         // Focus behaviour: optionally pause the sim and/or mute audio
         // when the window isn't focused.
-        if (cfg.muteOnFocusLoss) AudioMixer::masterVolume = windowFocused ? cfg.volume : 0.0f;
+        AudioMixer::focusMuted = cfg.muteOnFocusLoss && !windowFocused;
         const bool tick = windowFocused || cfg.runInBackground;
 
         // --- Built-in Builder Mode (an engine feature, not a component to add): F2
@@ -2473,6 +2474,7 @@ int main(int argc, char** argv) {
         acFileReport(acGuard.Findings().front().check, all);
     }
 
+    AudioMixer::SaveSettings();
     Prefs::Save(prefsPath); // persist any prefs the game set this session
 
     for (auto& kv : textureCache)

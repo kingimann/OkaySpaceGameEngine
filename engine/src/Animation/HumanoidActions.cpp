@@ -204,12 +204,46 @@ void BakeDeath(std::vector<HumanoidLibrary::Entry>& out) {
     AddClip(out, BakeAction("DeadHold_R", {right}, true, {}));
 }
 
+// One-shots from idle back to idle. The looping Wave / Cheer gestures are separate.
+void BakeEmotes(std::vector<HumanoidLibrary::Entry>& out) {
+    const KeyPose idle = FromState(1);
+
+    KeyPose nod = idle;
+    nod.bones[B::B_HEAD].x += 26.0f;
+    nod.bones[B::B_TORSO].x += 6.0f;
+    const std::vector<std::pair<float, const char*>> nodEv = {{0.55f, "action_end"}};
+    AddClip(out, BakeAction("Emote_Nod", {At(idle, 0.0f), At(nod, 0.22f), At(nod, 0.38f), At(idle, 0.55f)}, false, nodEv));
+
+    KeyPose lookL = idle;
+    lookL.bones[B::B_HEAD].y += 32.0f;
+    lookL.bones[B::B_TORSO].y += 6.0f;
+    KeyPose lookR = idle;
+    lookR.bones[B::B_HEAD].y -= 32.0f;
+    lookR.bones[B::B_TORSO].y -= 4.0f;
+    const std::vector<std::pair<float, const char*>> shakeEv = {{0.72f, "action_end"}};
+    AddClip(out, BakeAction("Emote_Shake", {
+        At(idle, 0.0f), At(lookL, 0.16f), At(lookR, 0.38f), At(lookL, 0.55f), At(idle, 0.72f)}, false, shakeEv));
+
+    KeyPose shrug = idle;
+    shrug.bones[B::B_LUPARM] = {-48.0f, 0.0f, -36.0f};
+    shrug.bones[B::B_RUPARM] = {-48.0f, 0.0f, 36.0f};
+    shrug.bones[B::B_LFORE].x = -55.0f;
+    shrug.bones[B::B_RFORE].x = -55.0f;
+    shrug.bones[B::B_HEAD].x = -10.0f;
+    shrug.bones[B::B_HEAD].z = 8.0f;
+    shrug.bones[B::B_TORSO].x = -4.0f;
+    const std::vector<std::pair<float, const char*>> shrugEv = {{0.68f, "action_end"}};
+    AddClip(out, BakeAction("Emote_Shrug", {At(idle, 0.0f), At(shrug, 0.22f), At(shrug, 0.42f), At(idle, 0.68f)}, false, shrugEv));
+}
+
 struct ActionSpec {
     const char* name;
     int rev;
 };
 
-const ActionSpec kStates[] = {{"Death", 1}, {"DeadHold", 1}};
+const ActionSpec kStates[] = {
+    {"Death", 1}, {"DeadHold", 1},
+    {"Emote_Nod", 2}, {"Emote_Shake", 2}, {"Emote_Shrug", 2}};
 
 SM::State* FindMutable(SM& sm, const std::string& name) {
     for (SM::State& s : sm.states) if (s.name == name) return &s;
@@ -303,6 +337,69 @@ SM::State MakeHoldState() {
     return s;
 }
 
+const char* kEmoteNames[] = {"Emote_Nod", "Emote_Shake", "Emote_Shrug"};
+
+SM::State MakeEmoteState(const char* name) {
+    SM::State s;
+    s.name = name;
+    s.clip = name;
+    s.loop = false;
+    // Jump, fall and death (Any State) can cut a nod. Walking leaves through
+    // the state's own edges below.
+    s.interruptible = true;
+    return s;
+}
+
+void WireEmote(SM::State& st, const SM& sm) {
+    st.transitions.clear();
+    if (HasState(sm, "Run")) {
+        SM::Transition run;
+        run.to = "Run";
+        run.cond = C::FloatGreater;
+        run.param = "speed";
+        run.value = 0.35f;
+        run.blend = 0.12f;
+        SM::Condition flag;
+        flag.cond = C::BoolTrue;
+        flag.param = "run";
+        run.extra.push_back(flag);
+        st.transitions.push_back(std::move(run));
+    }
+    if (HasState(sm, "Walk")) {
+        SM::Transition walk;
+        walk.to = "Walk";
+        walk.cond = C::FloatGreater;
+        walk.param = "speed";
+        walk.value = 0.35f;
+        walk.blend = 0.12f;
+        st.transitions.push_back(std::move(walk));
+    }
+    if (HasState(sm, "Idle")) {
+        SM::Transition done;
+        done.to = "Idle";
+        done.cond = C::OnClipEnd;
+        done.hasExitTime = true;
+        done.exitTime = 1.0f;
+        done.blend = 0.15f;
+        st.transitions.push_back(std::move(done));
+    }
+}
+
+void AddEmoteAny(SM& sm, const char* to, float id) {
+    if (!HasState(sm, to) || HasAny(sm, to, "emote")) return;
+    SM::Transition go;
+    go.to = to;
+    go.cond = C::Trigger;
+    go.param = "emote";
+    go.blend = 0.12f;
+    SM::Condition which;
+    which.cond = C::IntEquals;
+    which.param = "emoteId";
+    which.value = id;
+    go.extra.push_back(which);
+    sm.anyState.push_back(std::move(go));
+}
+
 bool IsKnownAction(const std::string& name) {
     for (const ActionSpec& s : kStates) if (name == s.name) return true;
     return false;
@@ -357,7 +454,10 @@ void LatchDeath(SM& sm, int dir) {
 
 } // namespace
 
-void Bake(std::vector<HumanoidLibrary::Entry>& out) { BakeDeath(out); }
+void Bake(std::vector<HumanoidLibrary::Entry>& out) {
+    BakeDeath(out);
+    BakeEmotes(out);
+}
 
 void ApplyTimes(AnimStateMachine& sm) {
     const StanceTimes& t = sm.stanceTimes;
@@ -372,10 +472,13 @@ void ApplyTimes(AnimStateMachine& sm) {
         if (tr.to == "Death") tr.blend = t.standCrouch;
 }
 
-void AddStates(AnimStateMachine& sm, const Character* body) {
+void AddStates(AnimStateMachine& sm, const Character* body, bool force) {
     (void)body;
-    const bool freshDeath = !HasState(sm, "Death");
-    const bool freshHold = !HasState(sm, "DeadHold");
+    const int had = sm.actionsRev;
+    const bool deathDue = force || had < 1;
+    const bool emoteDue = force || had < 2;
+    const bool freshDeath = deathDue && !HasState(sm, "Death");
+    const bool freshHold = deathDue && !HasState(sm, "DeadHold");
     float col = 40.0f;
     if (const SM::State* existing = FindMutable(sm, "Death")) col = existing->nx;
     else if (const SM::State* existing = FindMutable(sm, "DeadHold")) col = existing->nx;
@@ -416,6 +519,26 @@ void AddStates(AnimStateMachine& sm, const Character* body) {
             sm.anyState.push_back(std::move(die));
         }
     }
+    bool freshEmote = false;
+    float ecol = 40.0f;
+    for (const SM::State& o : sm.states) ecol = std::max(ecol, o.nx);
+    ecol += 220.0f;
+    int row = 0;
+    for (int i = 0; i < 3; ++i) {
+        if (!emoteDue || HasState(sm, kEmoteNames[i])) continue;
+        freshEmote = true;
+        SM::State em = MakeEmoteState(kEmoteNames[i]);
+        em.nx = ecol;
+        em.ny = 40.0f + 90.0f * (float)row;
+        sm.states.push_back(std::move(em));
+        if (SM::State* s = FindMutable(sm, kEmoteNames[i])) WireEmote(*s, sm);
+        AddEmoteAny(sm, kEmoteNames[i], (float)i);
+        ++row;
+    }
+    if (freshEmote) {
+        EnsureParam(sm, "emoteId", 3);
+        EnsureParam(sm, "emote", 2);
+    }
     if (sm.actionsRev < kActionsRev) sm.actionsRev = kActionsRev;
     ApplyTimes(sm);
 }
@@ -425,14 +548,15 @@ void MergeMissing(AnimStateMachine& sm, const Character* body, bool force) {
     if (!force && !looksDefault) return;
     if (!force && sm.actionsRev >= kActionsRev) return;
     // AddStates only creates states that are absent, which is the whole merge.
-    AddStates(sm, body);
+    AddStates(sm, body, force);
 }
 
 const std::vector<std::string>& ActionNames() {
     static const std::vector<std::string> names = {
         "Death", "DeadHold",
         "Death_F", "Death_B", "Death_L", "Death_R",
-        "DeadHold_F", "DeadHold_B", "DeadHold_L", "DeadHold_R"};
+        "DeadHold_F", "DeadHold_B", "DeadHold_L", "DeadHold_R",
+        "Emote_Nod", "Emote_Shake", "Emote_Shrug"};
     return names;
 }
 
@@ -536,6 +660,30 @@ void RequestRevive(GameObject* go) {
         if (hp->IsDead()) { hp->Revive(); return; }
     }
     ReviveAnim(go);
+}
+
+int EmoteIndex(const std::string& name) {
+    std::string k;
+    k.reserve(name.size());
+    for (char c : name) k += (char)std::tolower((unsigned char)c);
+    if (k == "nod" || k == "emote_nod" || k == "0") return 0;
+    if (k == "shake" || k == "headshake" || k == "emote_shake" || k == "1") return 1;
+    if (k == "shrug" || k == "emote_shrug" || k == "2") return 2;
+    return -1;
+}
+
+bool PlayEmote(GameObject* go, int which) {
+    if (!go) return false;
+    if (which < 0) which = 0;
+    if (which > 2) which = 2;
+    if (SM* sm = BaseMachine(go)) sm->SetInt("emoteId", which);
+    return Play(go, kEmoteNames[which], 0.12f);
+}
+
+bool PlayEmote(GameObject* go, const std::string& name) {
+    const int which = EmoteIndex(name);
+    if (which < 0) return false;
+    return PlayEmote(go, which);
 }
 
 bool IsDead(GameObject* go) {

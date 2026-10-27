@@ -1,7 +1,7 @@
 #pragma once
 // ---------------------------------------------------------------------------
-// HumanoidActions — built-in action clips (death, and later dive, sit, hit,
-// roll, vault, swim, emotes) baked the same way as HumanoidLibrary, plus the
+// HumanoidActions — built-in action clips (death and emotes, and later dive,
+// sit, hit, roll, vault, swim) baked the same way as HumanoidLibrary, plus the
 // states, params and Any-State transitions they add to the default Animator.
 // Gameplay displacement stays on the controllers. Clip root tracks are visual.
 // ---------------------------------------------------------------------------
@@ -16,10 +16,10 @@ class GameObject;
 
 namespace HumanoidActions {
 
-/// How far the built-in action set has got. Death is 1. A saved graph records
-/// the revision it already has, so a later action is added once and a state the
-/// user deleted is not put back when the next action lands.
-constexpr int kActionsRev = 1;
+/// How far the built-in action set has got. Death is 1, emotes are 2. A saved
+/// graph records the revision it already has, so a later action is added once
+/// and a state the user deleted is not put back when the next action lands.
+constexpr int kActionsRev = 2;
 
 /// One authored pose. Degrees, hip height in rig units, rootOffset.x/z a visual
 /// lean only (y is unused; hipY is the root height).
@@ -42,7 +42,9 @@ struct DeadShape {
 void Bake(std::vector<HumanoidLibrary::Entry>& out);
 /// Append this revision's states, params and Any-State transitions. Safe to
 /// call again: a state that already exists is left as the user edited it.
-void AddStates(AnimStateMachine& sm, const Character* body);
+/// `force` fills anything missing (the inspector button) and still does not
+/// overwrite a state. Otherwise only actions newer than `sm.actionsRev` are added.
+void AddStates(AnimStateMachine& sm, const Character* body, bool force = false);
 /// Stance-timed blends for action transitions (called from ApplyStanceTimes).
 void ApplyTimes(AnimStateMachine& sm);
 /// Saved default graphs (Idle/Walk/Run/Jump) gain any action whose revision is
@@ -75,6 +77,13 @@ void RequestRevive(GameObject* go);
 void ReviveAnim(GameObject* go);
 /// HealthStat::IsDead when that component is present, otherwise the `dead` param.
 bool IsDead(GameObject* go);
+
+/// Play a one-shot emote: 0 nod, 1 head shake, 2 shrug. The clip plays out into
+/// Idle. Walking or running leaves it early. Sets `emoteId`.
+bool PlayEmote(GameObject* go, int which);
+/// "nod", "shake" / "headshake", "shrug" (also Emote_Nod and 0..2). Unknown names
+/// do not play.
+bool PlayEmote(GameObject* go, const std::string& name);
 
 /// True once the body is in DeadHold (or Death has played out).
 bool DeathPoseSettled(GameObject* go);

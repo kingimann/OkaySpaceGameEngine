@@ -98,6 +98,7 @@ public:
         bool  sprint = false;      ///< the run input is held
         float walkSpeed = 4.5f;    ///< the controller's walk speed (run/walk split)
         float dt = 0.0f;
+        bool  swim = false;        ///< supported by water. No swim clip yet: idle or walk stands in.
         /// Movement along this axis isn't walking (2.5D: the hop between depth
         /// layers slides along Z); zero = count every direction.
         Vec3  ignoreAxis{0, 0, 0};
@@ -112,6 +113,8 @@ public:
     /// and its eased level: an imported model's own clips follow it.
     int   StanceTarget() const { return m_stanceTarget; }
     float StanceLevel() const { return m_stanceLevel; }
+    /// True while the last DriveLocomotion said the body was swimming.
+    bool  Swimming() const { return m_swimming; }
 
     // ---- Punch / swing (a quick right-arm arc layered over the current anim) ----
     // Trigger a one-shot punch with Punch(); the right arm swings forward and back
@@ -261,6 +264,7 @@ public:
             float stance = 0.0f;           ///< eased stance level, 0 stand .. 1 crouch .. 2 prone
             float airTime = 0.0f;          ///< seconds off the ground
             float verticalSpeed = 0.0f;    ///< m/s, + = rising
+            bool  swim = false;            ///< water is holding the body. The graph's "swim" bool.
         };
         virtual void Move(const Movement& m) = 0;
         /// The stride, every frame: direction of travel as a point (x = right,
@@ -541,6 +545,7 @@ private:
     float m_travelYaw = 0.0f;      // eased travel direction the feet step along (deg, unclamped)
     float m_gaitDir = 1.0f;        // +1 stepping forward, -1 stepping backward (backpedal)
     float m_airT = 0.0f;           // seconds off the ground (DriveLocomotion)
+    bool  m_swimming = false;      // the last DriveLocomotion was a swim
     int   m_stanceTarget = 0;      // the stance DriveLocomotion last reported ...
     float m_stanceLevel = 0.0f;    // ... and its eased level
     struct MoveSample { Vec3 p; float t; };

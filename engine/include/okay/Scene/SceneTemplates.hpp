@@ -1283,7 +1283,31 @@ inline void VoxelSandbox(Scene& scene) {
     lake->transform->localPosition = {0, waterY, 0};
     auto* water = lake->AddComponent<Water>();
     water->size = vox->HalfX() * 2.4f;
+    water->depth = 6.0f;            // deeper than the valleys, so the volume reaches the floor
+    water->fluidDensity = 1.0f;     // a 1 m cube of mass 1 is neutral
     water->Apply();
+
+    // One light crate and one heavy stone, dropped in the deepest sampled pool
+    // so the crate floats and the stone sinks instead of landing on a hill.
+    float poolX = 0.0f, poolZ = 0.0f, poolBed = 1.0e9f;
+    for (float z = -vox->HalfZ(); z <= vox->HalfZ(); z += sample)
+        for (float x = -vox->HalfX(); x <= vox->HalfX(); x += sample) {
+            float y = 0.0f;
+            if (!vox->SurfaceY(x, z, y)) continue;
+            if (y < poolBed) { poolBed = y; poolX = x; poolZ = z; }
+        }
+    auto buoy = [&](const char* name, Vec3 pos, float scale, Color color, float mass) {
+        GameObject* o = scene.CreateGameObject(name);
+        o->transform->localPosition = pos;
+        o->transform->localScale = {scale, scale, scale};
+        auto* mr = o->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube();
+        mr->color = color;
+        o->AddComponent<BoxCollider3D>();
+        o->AddComponent<Rigidbody3D>()->mass = mass;
+    };
+    buoy("Float Crate", {poolX + 1.6f, waterY + 1.5f, poolZ}, 0.8f, Color::FromBytes(196, 150, 90), 0.25f);
+    buoy("Sink Stone", {poolX - 1.6f, waterY + 1.5f, poolZ + 0.8f}, 0.7f, Color::FromBytes(80, 82, 90), 8.0f);
 
     // First-person player. Spawned above a solid column so it drops onto the
     // surface (voxel collision in Physics3D catches it).
@@ -1314,7 +1338,7 @@ inline void VoxelSandbox(Scene& scene) {
 
     GameObject* help = scene.CreateGameObject("Help");
     auto* ht = help->AddComponent<TextRenderer>();
-    ht->text = "WASD + mouse   Dig: LMB   Fill: RMB   Jump: Space   Light: F   Pause: Esc";
+    ht->text = "WASD + mouse   Dig: LMB   Fill: RMB   Jump / swim up: Space   Swim down: Ctrl   Light: F   Pause: Esc";
     ht->screenSpace = true; ht->screenPos = {12, 12}; ht->pixelSize = 2.0f;
 
     scene.CreateGameObject("Pause Menu")->AddComponent<PauseMenu>();

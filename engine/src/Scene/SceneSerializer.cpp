@@ -791,6 +791,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             if (t.standCrouch != def.standCrouch || t.crouchProne != def.crouchProne || t.proneStand != def.proneStand)
                 out << "  animsmstance " << t.standCrouch << " " << t.crouchProne << " " << t.proneStand << "\n";
         }
+        {
+            const GaitCrossfades def;
+            const GaitCrossfades& t = asm2->crossfades;
+            if (t.idleWalk != def.idleWalk || t.walkRun != def.walkRun ||
+                t.groundAir != def.groundAir || t.airGround != def.airGround)
+                out << "  animsmxfade " << t.idleWalk << " " << t.walkRun << " " << t.groundAir << " " << t.airGround << "\n";
+        }
         bool anyMatch = false;
         for (const auto& st : asm2->states) anyMatch = anyMatch || st.matchSpeed;
         if (anyMatch) {   // blend trees that keep pace with the body's speed
@@ -3284,6 +3291,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "animsmstance") {
                     StanceTimes& t = smFor()->stanceTimes;
                     in >> t.standCrouch >> t.crouchProne >> t.proneStand;
+                } else if (field == "animsmxfade") {
+                    GaitCrossfades& t = smFor()->crossfades;
+                    in >> t.idleWalk >> t.walkRun >> t.groundAir >> t.airGround;
                 } else if (field == "animsmmatch") {
                     auto* sm2 = smFor();
                     long n = 0; in >> n;

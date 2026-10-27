@@ -41,6 +41,15 @@ struct AudioMixer {
     /// "music", "SFX", ... (any case) -> group; false when the name is unknown.
     static bool GroupFromName(const char* name, AudioGroup& out);
 
+    /// Ducking: while a Voice-group source plays, the Music group dips to
+    /// duckLevel over duckAttack seconds and comes back over duckRelease.
+    static inline bool  duckMusicUnderVoice = false;
+    static inline float duckLevel = 0.35f;
+    static inline float duckAttack = 0.15f;
+    static inline float duckRelease = 0.6f;
+    /// The Music group's current duck multiplier (1 = not ducked).
+    static inline float duckGain = 1.0f;
+
     /// World-space listener for 3D (spatial) sources: set it each frame to the
     /// camera. `right` is the listener's right-hand direction; sources on that
     /// side pan right. Without it (zero), 3D sources are only faded, not panned.

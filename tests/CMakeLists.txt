@@ -51,6 +51,10 @@ target_link_libraries(test_audio_formats PRIVATE okay::engine)
 target_compile_definitions(test_audio_formats PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME audio_formats COMMAND test_audio_formats)
 
+add_executable(test_audio_music test_audio_music.cpp)
+target_link_libraries(test_audio_music PRIVATE okay::engine)
+add_test(NAME audio_music COMMAND test_audio_music)
+
 add_executable(test_layers test_layers.cpp)
 target_link_libraries(test_layers PRIVATE okay::engine)
 add_test(NAME physics_layers COMMAND test_layers)

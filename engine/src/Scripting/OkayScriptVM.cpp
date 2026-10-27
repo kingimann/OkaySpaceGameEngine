@@ -55,6 +55,7 @@
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/AudioSource.hpp"
+#include "okay/Components/MusicPlayer.hpp"
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UIElement.hpp"
 #include "okay/Components/UISlider.hpp"
@@ -4411,6 +4412,32 @@ struct OkayScriptVM::Impl {
                 return Value{AudioMixer::groupVolume[(int)g]};
             return Value{0.0f};
         };
+        // Music: the scene's MusicPlayer. music_play(index or "file"), music_next(),
+        // music_previous(), music_stop([fade seconds]), music_pause(), music_resume().
+        auto music = [go]() -> MusicPlayer* {
+            GameObject* g = go();
+            if (!g || !g->scene()) return nullptr;
+            auto all = g->scene()->FindObjectsOfType<MusicPlayer>();
+            return all.empty() ? nullptr : all.front();
+        };
+        b["music_play"] = [music](std::vector<Value>& a) {
+            MusicPlayer* m = music();
+            if (!m) return Value{false};
+            if (a.empty()) return Value{m->Play(m->CurrentIndex() < 0 ? 0 : m->CurrentIndex())};
+            if (a[0].IsString()) return Value{m->Play(a[0].AsString())};
+            return Value{m->Play((int)a[0].AsFloat())};
+        };
+        b["music_next"]     = [music](std::vector<Value>&) { if (MusicPlayer* m = music()) m->Next(); return Value{}; };
+        b["music_previous"] = [music](std::vector<Value>&) { if (MusicPlayer* m = music()) m->Previous(); return Value{}; };
+        b["music_stop"]     = [music](std::vector<Value>& a) { if (MusicPlayer* m = music()) m->Stop(a.empty() ? 1.0f : a[0].AsFloat()); return Value{}; };
+        b["music_pause"]    = [music](std::vector<Value>&) { if (MusicPlayer* m = music()) m->Pause(); return Value{}; };
+        b["music_resume"]   = [music](std::vector<Value>&) { if (MusicPlayer* m = music()) m->Resume(); return Value{}; };
+        // Ducking: set_ducking(on [, level]) dips the Music group while Voice plays.
+        b["set_ducking"] = [](std::vector<Value>& a) {
+            AudioMixer::duckMusicUnderVoice = a.empty() || a[0].AsBool();
+            if (a.size() >= 2) AudioMixer::duckLevel = Mathf::Clamp(a[1].AsFloat(), 0.0f, 1.0f);
+            return Value{};
+        };
         b["mute_group"] = [](std::vector<Value>& a) {
             AudioGroup g;
             if (!a.empty() && AudioMixer::GroupFromName(a[0].AsString().c_str(), g))
@@ -8382,6 +8409,7 @@ struct OkayScriptVM::Impl {
                 if (p == "volume") return Value{au->volume};
                 if (p == "pitch") return Value{au->pitch};
                 if (p == "pan") return Value{au->pan};
+                if (p == "lowPass") return Value{au->lowPass};
                 if (p == "isPlaying") return Value{au->IsPlaying()};
             }
             if (auto* o = g->GetComponent<NetworkObject>(); o && t == "NetworkObject") {
@@ -8423,6 +8451,7 @@ struct OkayScriptVM::Impl {
                 if (p == "volume") au->volume = v.AsFloat();
                 if (p == "pitch") au->pitch = v.AsFloat();
                 if (p == "pan") au->pan = v.AsFloat();
+                if (p == "lowPass") au->lowPass = v.AsFloat();
             }
             if (t == "NetworkObject") if (auto* o = g->GetComponent<NetworkObject>()) {
                 if (p == "netId") o->netId = v.AsString();
@@ -8466,6 +8495,8 @@ struct OkayScriptVM::Impl {
                 if (m == "Pause") au->Pause();
                 if (m == "Resume") au->Resume();
                 if (m == "PlayOneShot") au->PlayOneShot(rest.empty() ? 1.0f : arg(0).AsFloat());
+                if (m == "FadeIn") au->FadeIn(rest.empty() ? 1.0f : arg(0).AsFloat());
+                if (m == "FadeOut") au->FadeOut(rest.empty() ? 1.0f : arg(0).AsFloat());
                 return Value{};
             }
             if (t == "NetworkObject") if (auto* o = g->GetComponent<NetworkObject>()) {

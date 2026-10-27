@@ -32529,6 +32529,8 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Combo("Group##audio", &g, groups, IM_ARRAYSIZE(groups))) { a->group = (AudioGroup)g; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mixer group: its volume and mute apply on top of the master");
             }
+            if (ImGui::SliderFloat("Low Pass##audio", &a->lowPass, 200.0f, AudioSource::kLowPassOff, "%.0f Hz", ImGuiSliderFlags_Logarithmic)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lower muffles the sound (behind a wall, underwater). All the way right is off.");
             ImGui::Checkbox("Loop", &a->loop);
             ImGui::SameLine();
             ImGui::Checkbox("Play On Awake", &a->playOnAwake);
@@ -32580,6 +32582,48 @@ void DrawInspector(EditorState& ed) {
                                       "Logarithmic: loud up close with a long quiet tail.");
             }
             if (ImGui::SmallButton("Remove##audio")) toRemove = a;
+        }
+    }
+    if (auto* mp = dynamic_cast<MusicPlayer*>(curComp)) {
+        if (CompHeader("Music Player", mp, &toRemove)) {
+            ImGui::TextDisabled("Plays its tracks on the Music group, crossfading between them.");
+            int removeAt = -1;
+            for (std::size_t i = 0; i < mp->tracks.size(); ++i) {
+                ImGui::PushID((int)i);
+                char tb[256];
+                std::strncpy(tb, mp->tracks[i].c_str(), sizeof(tb) - 1);
+                tb[sizeof(tb) - 1] = '\0';
+                ImGui::SetNextItemWidth(200);
+                if (ImGui::InputText("##track", tb, sizeof(tb))) { mp->tracks[i] = tb; ed.dirty = true; }
+                if (AcceptAssetPathField(mp->tracks[i])) ed.dirty = true;   // drop from Project
+                ImGui::SameLine(0, 4);
+                if (ImGui::SmallButton("...")) {
+                    const char* filt[3] = {"*.wav", "*.ogg", "*.mp3"};
+                    if (const char* f = tinyfd_openFileDialog("Choose a music file", "", 3, filt, "Audio (WAV, OGG, MP3)", 0)) {
+                        mp->tracks[i] = f; ed.dirty = true;
+                    }
+                }
+                ImGui::SameLine(0, 4);
+                if (ImGui::SmallButton("x")) removeAt = (int)i;
+                ImGui::PopID();
+            }
+            if (removeAt >= 0) { mp->tracks.erase(mp->tracks.begin() + removeAt); ed.dirty = true; }
+            if (ImGui::Button("+ Track")) { mp->tracks.emplace_back(); ed.dirty = true; }
+            if (ImGui::DragFloat("Volume##music", &mp->volume, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Crossfade##music", &mp->crossfade, 0.05f, 0.0f, 20.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::Checkbox("Play On Start##music", &mp->playOnStart)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Shuffle##music", &mp->shuffle)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Loop##music", &mp->loopPlaylist)) ed.dirty = true;
+            if (ed.isPlaying()) {
+                ImGui::Text("Now: %s", mp->CurrentTrack().empty() ? "(nothing)" : mp->CurrentTrack().c_str());
+                if (ImGui::Button("Previous##music")) mp->Previous();
+                ImGui::SameLine();
+                if (ImGui::Button("Next##music")) mp->Next();
+                ImGui::SameLine();
+                if (ImGui::Button("Stop##music")) mp->Stop(1.0f);
+            }
         }
     }
 
@@ -35137,6 +35181,7 @@ void DrawInspector(EditorState& ed) {
         { bool o = BeginCat("Audio");
           if (o) {
             if (item(!go->GetComponent<AudioSource>(), "Audio Source")) { go->AddComponent<AudioSource>()->clip = AudioClip::Sine(440.0f, 0.3f); ed.dirty = true; }
+            if (item(!go->GetComponent<MusicPlayer>(), "Music Player")) { go->AddComponent<MusicPlayer>(); ed.dirty = true; }
           } EndCat(o); }
 
         { bool o = BeginCat("Gameplay");

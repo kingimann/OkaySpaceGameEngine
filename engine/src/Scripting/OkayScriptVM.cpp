@@ -1588,13 +1588,24 @@ struct LambdaExpr : Expr {
 };
 // `OnClick += fn` / `OnHurt += (n) => ...` subscribes. A number on the right
 // stays ordinary compound assignment (`score += 1`), so both share `+=` / `-=`.
+// Evaluates an expression owned elsewhere.
+struct BorrowedExpr : Expr {
+    Expr* e;
+    explicit BorrowedExpr(Expr* x) : e(x) {}
+    Value Eval(Runtime& rt) override { return e->Eval(rt); }
+};
 struct EventOrCompoundExpr : Expr {
     std::string name;
     ExprPtr rhs;
     bool remove;
     Tok bin;
+    // name = name <bin> rhs, the plain compound assignment (dotted names and
+    // this. included); it borrows rhs so every run can still read it.
+    ExprPtr combined;
     EventOrCompoundExpr(std::string n, ExprPtr r, bool rem, Tok b)
-        : name(std::move(n)), rhs(std::move(r)), remove(rem), bin(b) {}
+        : name(std::move(n)), rhs(std::move(r)), remove(rem), bin(b),
+          combined(std::make_unique<AssignExpr>(name, std::make_unique<BinaryExpr>(
+              b, std::make_unique<VarExpr>(name), std::make_unique<BorrowedExpr>(rhs.get())))) {}
     Value Eval(Runtime& rt) override {
         auto take = [&](const Value& fn) {
             if (remove) rt.RemoveSub(name, fn);
@@ -1612,11 +1623,7 @@ struct EventOrCompoundExpr : Expr {
         } else if (dynamic_cast<LambdaExpr*>(rhs.get())) {
             return take(rhs->Eval(rt));
         }
-        auto combined = std::make_unique<BinaryExpr>(
-            bin, std::make_unique<VarExpr>(name), std::move(rhs));
-        Value sum = combined->Eval(rt);
-        rt.Assign(name, sum);
-        return sum;
+        return combined->Eval(rt);
     }
 };
 // yield return <wait>;  — inside a coroutine: hand control back to the game loop.

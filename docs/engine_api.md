@@ -114,6 +114,7 @@ A row of color swatches. The chosen swatch is the current color.
 |---|---|---|---|---|---|
 | `GetComponent<UIColorPicker>().SetValue(index)` | `UIColorPicker.SetValue/1` | step | index (Number), Target (Object) | - | Select a swatch by index. The chip shows that color. |
 | `GetComponent<UIColorPicker>().Value()` | `UIColorPicker.Value/0` | value | Target (Object) | Result (Number) | The selected swatch, or -1. |
+
 ## Crosshair
 
 An aim reticle. SpreadRecover pulls an extra gap back to 0; 0 keeps the authored spread.
@@ -148,6 +149,7 @@ A grid of buttons. Selecting one fires on_change. It does not know about invento
 | `GetComponent<UISlotGrid>().SetColumns(columns)` | `UISlotGrid.SetColumns/1` | step | columns (Number), Target (Object) | - | How many slots across (1 to 16). |
 | `GetComponent<UISlotGrid>().SetRows(rows)` | `UISlotGrid.SetRows/1` | step | rows (Number), Target (Object) | - | How many slots down (1 to 16). |
 | `GetComponent<UISlotGrid>().Value()` | `UISlotGrid.Value/0` | value | Target (Object) | Result (Number) | The selected slot, or -1. |
+
 ## UIDropdown
 
 A dropdown. Search, a row cap and per-option glyphs are optional.
@@ -198,6 +200,7 @@ A text field. Password, a character limit and integer or decimal mode already ex
 | `GetComponent<UIInputField>().SetMultiline(on)` | `UIInputField.SetMultiline/1` | step | on (Bool), Target (Object) | - | Enter inserts a newline instead of submitting. |
 | `GetComponent<UIInputField>().SetMaxLength(length)` | `UIInputField.SetMaxLength/1` | step | length (Number), Target (Object) | - | The most characters the field accepts. |
 | `GetComponent<UIInputField>().SetContentType(type)` | `UIInputField.SetContentType/1` | step | type (Number), Target (Object) | - | 0 standard, 1 integer, 2 decimal, 3 password. |
+
 ## UIToast
 
 A stack of toast notifications. The object needs a UI Toast.
@@ -225,6 +228,7 @@ A modal dialog. Style Card restyles the Card, Title, Message, Confirm and Cancel
 | `GetComponent<UIModal>().SetConfirmText(text)` | `UIModal.SetConfirmText/1` | step | text (Text), Target (Object) | - | Confirm button label. Empty leaves the button's own label. |
 | `GetComponent<UIModal>().SetCancelText(text)` | `UIModal.SetCancelText/1` | step | text (Text), Target (Object) | - | Cancel button label. Empty leaves the button's own label. |
 | `GetComponent<UIModal>().IsOpen()` | `UIModal.IsOpen/0` | value | Target (Object) | Result (Bool) | True while the dialog is shown. |
+
 ## UITheme
 
 A saved skin for panels, buttons, sliders and the rest of the UI kit. The object needs a UI Theme.

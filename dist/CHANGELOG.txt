@@ -1,5 +1,107 @@
 OkaySpace Game Engine — Changelog
 
+v2.834.0
+  Animation and characters
+  - Crawling goes four ways, and lying down and getting up play real
+    get-up and drop moves instead of snapping; stance crossfades follow
+    the Animator's stance times (#371).
+  - Crouch and prone work on every movement controller: first and third
+    person, top-down, click-to-move and the shooter (#375).
+  - Limb IK turns the arm or leg bones instead of moving joints, so a
+    skinned mesh bends with it, blends smoothly by weight, and the elbow or
+    knee no longer flips as the limb straightens (#388, #395).
+  - Two copies of the same imported character each find their own bones
+    for IK, instead of the second grabbing the first's (#395).
+  - Holding: the body leans and adjusts for what it carries, and a heavy
+    load slows the player down (#389).
+  - Fixed: a held object no longer drops out of the hands when the
+    character goes prone, crawls, gets up or drops down (#397).
+  - Fixed: with Auto-recenter Camera on, strafing or backing up no longer
+    spins the third-person camera; it still settles in behind a forward
+    run (#399).
+  Inventory
+  - World pickups and drops, using the item in your hand, encumbrance
+    (an over-full bag slows you down, opt-in) and loot tables (#359).
+  In-game UI
+  - Free anchors and pivot on every UI element (UIFrame), with old layouts
+    converted automatically (#381).
+  - A modal stack, context menus and a key-binding field (#386).
+  - Two-way gamepad navigation and touch input (#391).
+  Scripting
+  - Typed OkayScript gains lambdas, Func / Action and LINQ-style list
+    methods (#379).
+  Multiplayer and voice
+  - Voice calls work on the new relay hub, and the relay caps sessions per
+    address (#393).
+  Multiplayer security (anti-cheat)
+  - Bans keep players out: a banned account or machine gets no session
+    ticket, so no ticket-checking server lets it in (#350).
+  - Tickets are bound to one server, one session and one connection, so a
+    stolen ticket can't be replayed elsewhere (#360).
+  - The anti-cheat SQL: nobody can lift their own ban, and only listed
+    server accounts can file server kicks (#392). Apply docs/sql/anticheat.sql
+    and redeploy the session-ticket function to use these.
+  - Joins check encryption first, then the password and sign-in, with
+    per-address attempt limits that back off up to 5 minutes (#365).
+  - Budgets and strikes survive a reconnect, and a kicked player waits out a
+    growing cooldown before rejoining (#363).
+  - SyncVar, message and spawn size limits per client (#368).
+  - Safer defaults: a broken anti-cheat config refuses joins instead of
+    running open, and a plaintext session cookie stops spoofed leaves when
+    encryption is off (#384).
+  - Lag compensation can't be stretched by a client faking a long round
+    trip (#376).
+  - Pings only from players, over-rate messages left unacknowledged, press
+    limits, and dead pawns can't shoot (#390).
+  - Trusted anti-cheat keys ship in the launcher only; the release warns
+    when built without them (#394).
+
+v2.833.0
+  Animation and characters
+  - Stance changes are smooth: going between standing, crouching and prone
+    eases the body, the collider, the speed and the camera together over
+    0.25 s (stand/crouch), 0.5 s (crouch/prone) and 0.8 s (prone to stand),
+    and changing your mind halfway carries on from where the body is. The
+    times can be changed on the Animator (#364).
+  - Fixed: a player pushing into a wall no longer walks in place (#366).
+  - Fixed: a landing or gesture no longer plays a second time as it fades
+    into the next animation (#380).
+  - Fixed: rotations close to straight up or down no longer flip for a
+    frame in animation blends (#370).
+  - Characters can pick up and hold objects with their hands, on the
+    built-in Character and on imported humanoids. Holding styles: pistol,
+    rifle, box, flashlight, sword, cup and heavy, chosen automatically from
+    the object's name, size and weight, with fingers closing around the
+    grip on rigs that have finger bones (#362, #377).
+  Inventory
+  - Items have definitions in the project's items.okayitems: name,
+    description, icon, stack size, weight, rarity, category, equip slot,
+    use action and drop prefab. Inventories store the item's id, so
+    renaming an item no longer breaks scenes. Old scenes load unchanged
+    (#358).
+  In-game UI
+  - The UI is cached between frames and drawn in a few batches, so large
+    menus cost far less CPU (#361).
+  - New: flex rows and columns on the Layout Group, UI Mask (clips its
+    children, both drawing and clicks), horizontal and two-way scrolling,
+    and a List View that only builds the rows on screen (#374).
+  Scripting
+  - The typed C#-style OkayScript gains ??, ??= and ?., plain classes made
+    with new, List<T>, Dictionary<K, V> and do / while (#354, #369).
+  Multiplayer security
+  - With the anti-cheat on, a networked object nobody owns now belongs to
+    the server: a client can't take a scene door or a pickup by moving it.
+    For objects any player may grab, like a ball, tick Network Sync >
+    "Players can claim it" (#372).
+  - A hit claim's origin is checked against where the server knows the
+    shooter was, and a client that goes quiet can no longer bank one long
+    jump to shoot from (#355).
+  Build
+  - Release tags now point at the commit the release was built from (#373).
+  - CI cancels a pull request's older run when it gets a new push (#382).
+  Note: #354, #355, #361 and #362 merged while 2.832.0 was building, so
+  the 2.832.0 tag's generated notes list them, but they ship in 2.833.0.
+
 v2.832.0
   Animation
   - Every built-in player now has a visible Animator with a default humanoid

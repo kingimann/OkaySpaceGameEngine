@@ -278,7 +278,7 @@ int main() {
         CHECK(rep.File(k, 0.0));
         CHECK(sent.size() == 1);
         CHECK(Has(sent[0], "POST /rest/v1/ac_reports"));
-        CHECK(Has(sent[0], "\"reported\":\"" + uid + "\"") && Has(sent[0], "\"kind\":\"player\""));
+        CHECK(Has(sent[0], "\"reported\":\"" + uid + "\"") && Has(sent[0], "\"kind\":\"server_kick\""));
         CHECK(Has(sent[0], "[server check]") && Has(sent[0], "forged transform, speed hack"));
         CHECK(Has(sent[0], "forged transform: door") && Has(sent[0], "\"game\":\"Arena\""));
         CHECK(!rep.File(k, 600.0));                    // the same account within the hour: once

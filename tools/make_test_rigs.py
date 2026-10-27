@@ -245,9 +245,29 @@ def clip_pose(name, t):
         rot["RightFoot"] = qaxis(X, -bend * 0.5)
         arms_down(-60.0 * tuck, -60.0 * tuck, 30.0)
         hips = (0.0, -0.25 * crouch, 0.0)
+    elif name in ("Crouch Idle", "Crouched Walking", "Standing To Crouched"):
+        k = min(1.0, t / 0.5) if name == "Standing To Crouched" else 1.0
+        s = math.sin(2 * math.pi * t / 1.2) if name == "Crouched Walking" else 0.0
+        rot["LeftUpLeg"] = qaxis(X, -70.0 * k - 20.0 * s)
+        rot["RightUpLeg"] = qaxis(X, -70.0 * k + 20.0 * s)
+        rot["LeftLeg"] = rot["RightLeg"] = qaxis(X, 120.0 * k)
+        rot["LeftFoot"] = rot["RightFoot"] = qaxis(X, -50.0 * k)
+        arms_down(10.0 * s, -10.0 * s, 30.0)
+        hips = (0.0, -0.35 * k, 0.0)
+    elif name in ("Prone Idle", "Crawling", "Getting Up"):
+        k = 1.0 - min(1.0, t / 1.0) if name == "Getting Up" else 1.0
+        s = math.sin(2 * math.pi * t / 1.5) if name == "Crawling" else 0.0
+        arms_down(-150.0 * k + 25.0 * s, -150.0 * k - 25.0 * s, 20.0)
+        rot["LeftUpLeg"] = qaxis(X, 15.0 * s)
+        rot["RightUpLeg"] = qaxis(X, -15.0 * s)
+        hips = (0.0, -0.75 * k, 0.0)
     return rot, hips
 
 CLIPS = [("Idle", 2.0, 17), ("Walk", 1.0, 17), ("Run", 0.7, 15), ("Jump", 1.0, 17)]
+# Crouch / prone clips under the names a Mixamo download gives them (plus a
+# stance change that maps to no state).
+STANCE_CLIPS = CLIPS[:3] + [("Crouch Idle", 2.0, 9), ("Crouched Walking", 1.2, 13), ("Prone Idle", 2.0, 9),
+                            ("Crawling", 1.5, 13), ("Getting Up", 1.0, 11), ("Standing To Crouched", 0.5, 7)]
 CLIP_BONES = ["Hips", "Spine", "Spine1", "LeftArm", "LeftForeArm", "RightArm", "RightForeArm",
               "LeftUpLeg", "LeftLeg", "LeftFoot", "RightUpLeg", "RightLeg", "RightFoot"]
 
@@ -366,7 +386,7 @@ def write_rig(path, skel, names, pos, style, unit=1.0, clips=False, widths=None)
            "meshes": [mesh], "skins": [skin]}
     if clips:
         anims = []
-        for cname, length, count in CLIPS:
+        for cname, length, count in (CLIPS if clips is True else clips):
             times = [length * i / (count - 1) for i in range(count)]
             ta = g.add("f", [(round(t, 6),) for t in times], "SCALAR", 5126, minmax=True)
             samplers, channels = [], []
@@ -436,6 +456,7 @@ def main():
     rigs = [
         # file,                        names,    pose, legs, arms, scale, frames,     unit, clips
         ("mixamo_t_cm_clips.glb",      MIXAMO,   "T", 1.0,  1.0, 1.0,  "identity", 0.01, True),
+        ("mixamo_t_stance_clips.glb",  MIXAMO,   "T", 1.0,  1.0, 1.0,  "identity", 1.0,  STANCE_CLIPS),
         ("mixamo_t_noclips.glb",       MIXAMO,   "T", 1.0,  1.0, 1.0,  "identity", 1.0,  False),
         ("ue_a_blender.glb",           UE,       "A", 1.15, 0.9, 1.0,  "y_bone_ue", 1.0, False),
         ("mixamo_a_blender_short.glb", MIXAMO,   "A", 1.0,  1.0, 0.8,  "y_bone",   1.0,  False),

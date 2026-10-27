@@ -19,6 +19,8 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Components/BlendShapes.hpp"
 #include "okay/Components/AnimBackend.hpp"
+#include "okay/Components/Character.hpp"
+#include "okay/Components/Stance.hpp"
 #include <cstdint>
 #include <functional>
 #include <unordered_map>
@@ -129,6 +131,15 @@ public:
     /// True while the air heuristic says we're off the ground (for gameplay checks).
     bool InAir() const { return m_inAir; }
 
+    // ---- Stances: crouch / prone clips, following the player's stance ----
+    // A movement controller's crouch / prone (reported to the player's Character)
+    // switches locomotion to these, crossfaded over the stance change times;
+    // getting up from prone plays `getUpClip` once. A stance with no clips of
+    // its own keeps the standing ones. Active only with driveByMovement.
+    std::string crouchClip, crouchWalkClip, proneClip, crawlClip, getUpClip;
+    /// The stance whose clips play (0 stand, 1 crouch, 2 prone).
+    int StanceClips() const { return m_stance; }
+
     void Start() override {
         if (transform) { m_lastPos = transform->Position(); m_haveLast = true; }
         if (autoPlay && !clips.empty()) PlayIndex(active);
@@ -196,6 +207,20 @@ public:
             }
         }
 
+        // Stance: the player's crouch / prone picks the clip set.
+        if (spd >= 0.0f) {
+            const int st = BodyStance();
+            if (st != m_stance) {
+                const int from = m_stance;
+                m_stance = st;
+                m_stanceFade = StanceChangeTime(from, st);
+                if (from == 2 && st == 0 && !getUpClip.empty() && !m_inAir && PlayOnce(getUpClip)) {
+                    m_onceReturnTo = FindClip(idleClip);   // the get-up hands over to standing
+                    m_stanceFade = -1.0f;
+                }
+            }
+        }
+
         // Continuous 1D blend (idle<->walk<->run by speed): drives the bones
         // directly and replaces the discrete machinery below while it's active.
         // A one-shot (attack etc.) or an air clip suspends locomotion. (In the air
@@ -251,9 +276,17 @@ public:
         const float runAt  = cur == runClip ? runThreshold * 0.9f : runThreshold;
         const float walkAt = (cur == walkClip || cur == runClip) ? walkThreshold * 0.9f : walkThreshold;
         const std::string* want = &idleClip;
-        if (spd >= runAt && !runClip.empty())        want = &runClip;
+        if (m_stance != 0) {
+            const std::string *still, *moving;
+            StanceSet(still, moving);
+            want = spd > walkAt * (m_stance == 1 ? 0.5f : 0.25f) ? moving : still;
+        }
+        else if (spd >= runAt && !runClip.empty())   want = &runClip;
         else if (spd > walkAt && !walkClip.empty())  want = &walkClip;
-        if (!want->empty() && *want != CurrentName()) Play(*want);   // switch only on change
+        if (!want->empty() && *want != CurrentName()) {   // switch only on change
+            Play(*want, m_stanceFade);
+            m_stanceFade = -1.0f;
+        }
     }
 
     /// Crossfade: eases the pose captured at the moment of a clip switch into the
@@ -394,18 +427,8 @@ public:
         active = i;
         m_fadeTime = blend >= 0.0f ? blend : blendTime;
         m_fromStart = true;
-        Scene* sc = gameObject->scene();
-        if (!sc) return;
-        // Capture the CURRENT pose of every node the new clip animates (a missing
-        // node just stops blending).
-        m_blend.clear(); m_blendW = 0.0f;
-        m_blendVer = sc->StructureVersion();
-        if (m_fadeTime > 0.001f) {
-            const auto& b = Bind(i);
-            for (std::size_t n = 0; n < b.size(); ++n)
-                if (Transform* t = b[n])
-                    m_blend.push_back({clips[i].nodes[n].node, t, t->localPosition, t->localRotation, t->localScale});
-        }
+        if (!gameObject->scene()) return;
+        CaptureFade(i, m_fadeTime);
         m_clock = 0.0f;
         NormalizeClip(clips[i]);
         for (NodeClip& nc : clips[i].nodes) nc.clip.loop = loop;
@@ -536,6 +559,49 @@ public:
         return -1;
     }
 
+    /// Capture the CURRENT pose of every node clip `i` animates, to ease into
+    /// whatever poses the model next over `seconds` (a missing node just stops
+    /// blending).
+    void CaptureFade(int i, float seconds) {
+        Scene* sc = gameObject ? gameObject->scene() : nullptr;
+        if (!sc || i < 0 || i >= (int)clips.size()) return;
+        m_fadeTime = seconds;
+        m_blend.clear(); m_blendW = 0.0f;
+        m_blendVer = sc->StructureVersion();
+        if (seconds > 0.001f) {
+            const auto& b = Bind(i);
+            for (std::size_t n = 0; n < b.size(); ++n)
+                if (Transform* t = b[n])
+                    m_blend.push_back({clips[i].nodes[n].node, t, t->localPosition, t->localRotation, t->localScale});
+        }
+    }
+
+    /// The stance the player's Character reports, as far as this model has clips
+    /// for it (prone without prone clips crouches if it can, else stands).
+    int BodyStance() const {
+        int st = 0;
+        for (Transform* t = transform; t; t = t->Parent())
+            if (auto* ch = t->gameObject ? t->gameObject->GetComponent<Character>() : nullptr) { st = ch->StanceTarget(); break; }
+        if (st == 2 && proneClip.empty() && crawlClip.empty()) st = 1;
+        if (st == 1 && crouchClip.empty() && crouchWalkClip.empty()) st = 0;
+        return st;
+    }
+    /// The still and moving clips of the current stance (one stands in for a missing other).
+    void StanceSet(const std::string*& still, const std::string*& moving) const {
+        const std::string& a = m_stance == 2 ? proneClip : crouchClip;
+        const std::string& b = m_stance == 2 ? crawlClip : crouchWalkClip;
+        still = a.empty() ? &b : &a;
+        moving = b.empty() ? &a : &b;
+    }
+    /// Seconds a stance change takes (the controllers' default stance times).
+    static float StanceChangeTime(int from, int to) {
+        const StanceTimes t;
+        if (from == to) return 0.0f;
+        if (from + to == 1) return t.standCrouch;   // stand <-> crouch
+        if (from + to == 3) return t.crouchProne;   // crouch <-> prone
+        return from == 2 ? t.proneStand : t.standCrouch + t.crouchProne;
+    }
+
     /// One frame of continuous locomotion blending. Returns false when it can't
     /// run (no scene / no usable clips) so the caller falls back to discrete mode.
     bool SmoothBlendStep(float dt, float spd) {
@@ -544,7 +610,15 @@ public:
         int A, B; float w, lo, hi;   // lo/hi: the ground speed each clip is made for
         // A clip's own root travel when it has one, else the threshold it's full at.
         auto clipSpeed = [&](int ci, float thr) { float v = ClipRootSpeed(ci); return v > 1e-3f ? v : thr; };
-        if (spd <= walkThreshold) {
+        const bool still = m_stance != 0 || spd <= walkThreshold;   // A is a standing-still clip
+        if (m_stance != 0) {   // crouched / prone: still <-> moving up to that stance's pace
+            const std::string *a, *b;
+            StanceSet(a, b);
+            const float full = walkThreshold * (m_stance == 1 ? 0.5f : 0.25f);
+            A = FindClip(*a); B = FindClip(*b);
+            w = full > 1e-4f ? spd / full : 1.0f;
+            lo = 0.0f; hi = clipSpeed(B, full);
+        } else if (spd <= walkThreshold) {
             A = FindClip(idleClip); B = FindClip(walkClip);
             w = walkThreshold > 1e-4f ? spd / walkThreshold : 1.0f;
             lo = 0.0f; hi = clipSpeed(B, walkThreshold);
@@ -558,7 +632,8 @@ public:
         // (unless root motion is what moves it: then the clip sets the pace).
         float clipSpd = lo + (hi - lo) * w, rate = 1.0f;
         if (!rootMotion && clipSpd > 1e-3f) rate = std::fmin(2.0f, std::fmax(0.5f, spd / clipSpd));
-        if (spd <= walkThreshold) rate = 1.0f + (rate - 1.0f) * w;   // idle plays at its own pace
+        if (still) rate = 1.0f + (rate - 1.0f) * w;   // idle plays at its own pace
+        if (m_stanceFade >= 0.0f) { CaptureFade(A >= 0 ? A : B, m_stanceFade); m_stanceFade = -1.0f; }   // ease into the stance's clips
         return BlendClips(dt * rate, A, B, w);
     }
 
@@ -1128,6 +1203,8 @@ private:
     bool  m_inAir = false;   // air-state machine (jump/fall/land by vertical motion)
     float m_airT  = 0.0f;    // hysteresis timer for takeoff/touchdown detection
     bool  m_fell  = false;   // descended since leaving the ground (past any jump apex)
+    int   m_stance = 0;      // the stance whose clips play (see BodyStance)
+    float m_stanceFade = -1.0f;   // a stance change's crossfade, for the next switch (< 0 = none)
 
     // Something solid just under this object's origin (the feet), other than
     // the model itself or the bodies carrying it (the player's capsule

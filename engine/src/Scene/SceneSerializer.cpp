@@ -88,6 +88,7 @@
 #include "okay/Components/UIMask.hpp"
 #include "okay/Components/UIFrame.hpp"
 #include "okay/Components/UIModal.hpp"
+#include "okay/Components/UIToast.hpp"   // grok/ui-toast
 #include "okay/Components/UIContextMenu.hpp"
 #include "okay/Components/UIKeybindField.hpp"
 #include "okay/Components/UIElement.hpp"   // GetUIRect: settle loaded UIFrames
@@ -2376,9 +2377,21 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* mk = go->GetComponent<UIMask>()) out << "  uimask " << (mk->showGraphic ? 1 : 0) << "\n";
     if (auto* md = go->GetComponent<UIModal>()) {
+        auto c4 = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
         out << "  uimodal " << (md->dimBackground ? 1 : 0) << " "
             << md->dimColor.r << " " << md->dimColor.g << " " << md->dimColor.b << " " << md->dimColor.a << " "
-            << (md->closeOnCancel ? 1 : 0) << " " << (md->closeOnClickOutside ? 1 : 0) << "\n";
+            << (md->closeOnCancel ? 1 : 0) << " " << (md->closeOnClickOutside ? 1 : 0);
+        // grok/ui-toast: optional style tail. Old scenes stop after the two flags.
+        out << " " << (md->styleCard ? 1 : 0) << " " << md->cardRadius;
+        c4(md->cardColor); c4(md->titleColor); c4(md->bodyColor); c4(md->confirmColor); c4(md->cancelColor);
+        out << " " << Quote(md->titleText) << " " << Quote(md->bodyText)
+            << " " << Quote(md->confirmText) << " " << Quote(md->cancelText) << "\n";
+    }
+    if (auto* toast = go->GetComponent<UIToast>()) {
+        // grok/ui-toast. Live toast cards are ordinary children and are not listed here.
+        out << "  uitoast " << toast->corner << " " << toast->duration << " " << toast->maxStack << " "
+            << toast->margin << " " << toast->gap << " " << toast->width << " " << toast->height << " "
+            << (toast->showIcon ? 1 : 0) << "\n";
     }
     if (auto* cm = go->GetComponent<UIContextMenu>()) {
         auto c4 = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
@@ -5962,6 +5975,26 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int dim = 1, cc = 1, co = 0;
                     in >> dim >> md->dimColor.r >> md->dimColor.g >> md->dimColor.b >> md->dimColor.a >> cc >> co;
                     md->dimBackground = dim != 0; md->closeOnCancel = cc != 0; md->closeOnClickOutside = co != 0;
+                    // grok/ui-toast: the style tail is optional. A letter means the next field.
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) {
+                        int styled = 0;
+                        in >> styled >> md->cardRadius;
+                        auto c4 = [&](Color& c) { in >> c.r >> c.g >> c.b >> c.a; };
+                        c4(md->cardColor); c4(md->titleColor); c4(md->bodyColor);
+                        c4(md->confirmColor); c4(md->cancelColor);
+                        md->styleCard = styled != 0;
+                        md->titleText = ReadQuoted(in);
+                        md->bodyText = ReadQuoted(in);
+                        md->confirmText = ReadQuoted(in);
+                        md->cancelText = ReadQuoted(in);
+                    }
+                } else if (field == "uitoast") {   // grok/ui-toast
+                    auto* toast = go->AddComponent<UIToast>();
+                    int icon = 1;
+                    in >> toast->corner >> toast->duration >> toast->maxStack
+                       >> toast->margin >> toast->gap >> toast->width >> toast->height >> icon;
+                    toast->showIcon = icon != 0;
                 } else if (field == "uicontext") {
                     auto* cm = go->AddComponent<UIContextMenu>();
                     auto c4 = [&](Color& c) { in >> c.r >> c.g >> c.b >> c.a; };

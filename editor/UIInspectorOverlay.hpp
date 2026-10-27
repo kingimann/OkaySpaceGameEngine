@@ -11,6 +11,7 @@ void DrawUIOverlayComponentInspector(okay::Component* comp, okay::editor::Editor
 
 /// Create > UI builders.
 void BuildUIModalDialog(okay::GameObject* g);   // panel + modal + title + a Close button
+void BuildUIToast(okay::GameObject* g);         // grok/ui-toast: a toast stack host
 void BuildUIKeybindField(okay::GameObject* g);
 void BuildUIContextMenu(okay::GameObject* g);   // a panel that has a right-click menu
 

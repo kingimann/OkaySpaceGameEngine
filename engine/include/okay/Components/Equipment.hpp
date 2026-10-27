@@ -17,6 +17,8 @@ class GameObject;
 ///  - The item's prefab (custom field "equipPrefab", else its world prefab) is shown on
 ///    the character at the slot's socket (FindSocket: a named child, a Character bone,
 ///    or a ModelAnimator node), without physics. It is runtime-only and never saved.
+///    A Main Hand item goes into the character's hands instead when it has a
+///    ProceduralObjectHolding (ProceduralObjectHolding::Pickup; Drop when it comes off).
 ///  - The definitions' custom "armor" fields add to HealthStat / SurvivalStats armor and
 ///    "defense" to Stats defense, and worn items' weight still counts toward the
 ///    Inventory's encumbrance, all as runtime values removed when the item comes off.

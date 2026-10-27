@@ -330,6 +330,7 @@ int main(int argc, char** argv) {
 #include "AppIcon.hpp"
 #include "OkayTheme.hpp"   // shared Slate palette (launcher + editor)
 #include "imgui.h"
+#include "AnimatorPreview.hpp"          // inspector / graph live preview (not the Animation window's)
 #include "imgui_internal.h" // DockBuilder for the default layout
 #include "EditorTabs.hpp"   // panel tabs: saved layouts, presets, Ctrl+Tab order
 #include "okay/Scripting/OkayScriptVM.hpp"   // editor plugins
@@ -6087,9 +6088,13 @@ void DrawMenuAndToolbar(EditorState& ed) {
         if (!playing) {
             if (g_clearConsoleOnPlay) ConsoleClear();
             StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed);   // previews must not override Play
+            okay::editor::apreview::Stop(ed.scene());   // before the snapshot, so Play doesn't save the preview pose
             ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
             g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
-        } else { ed.Stop(); g_paused = false; ConsoleLog("Stop"); }
+        } else {
+            okay::editor::apreview::Stop(ed.scene());   // before Stop destroys the play copy
+            ed.Stop(); g_paused = false; ConsoleLog("Stop");
+        }
     }
     // Pause
     ImGui::SameLine();
@@ -14739,10 +14744,14 @@ void HandleShortcuts(EditorState& ed) {
     // Play/Stop toggle is Ctrl+P. It used to be plain Space, which
     // clashed with the in-game jump — pressing Space in play mode stopped the game.
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_P, false)) {
-        if (ed.isPlaying()) { ed.Stop(); g_paused = false; ConsoleLog("Stop"); }
+        if (ed.isPlaying()) {
+            okay::editor::apreview::Stop(ed.scene());
+            ed.Stop(); g_paused = false; ConsoleLog("Stop");
+        }
         else {
             if (g_clearConsoleOnPlay) ConsoleClear();
             StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed);   // previews must not override Play
+            okay::editor::apreview::Stop(ed.scene());
             ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
             g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
         }
@@ -18513,6 +18522,7 @@ static void StopLivePreview(EditorState& ed) {
 // Start (or retarget) the live preview on `ch` from the beginning; the caller
 // picks what plays (g_livePrevAnim, or a clip in g_livePrevClip).
 static void StartLivePreview(EditorState& ed, Character* ch) {
+    okay::editor::apreview::Stop(ed.scene());   // one live pose: the window's grid or the inspector preview
     if (g_livePrevCh != ch) {
         StopLivePreview(ed);
         g_livePrevKeepAnim = ch->anim;
@@ -18735,7 +18745,7 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
     // would override the character's real animations every frame ("I pressed
     // Play and nothing happens" with the Animation window open). The live
     // built-in preview (buttons above) owns the pose while it runs.
-    if (!ed.isPlaying() && g_livePrevCh != ch) {
+    if (!ed.isPlaying() && g_livePrevCh != ch && okay::editor::apreview::ActiveCharacter() != ch) {
         g_animPreview = ch;
         if (playing && !clip.keys.empty()) ch->PreviewPose(clip.Sample(t));
         else ch->PreviewPose(pose);
@@ -19220,6 +19230,7 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
     if (ImGui::Checkbox("Preview in Scene view##maed", &scenePrev)) {
         StopModelScenePreview(ed);              // restore whatever was previewing
         if (scenePrev) {
+            okay::editor::apreview::Stop(ed.scene());   // one pose on this model
             // Capture the pre-preview pose of every node any clip animates.
             std::set<GameObject*> caught;
             for (const auto& cl : ma->clips)
@@ -20258,6 +20269,14 @@ static void DrawAnimatorGraph(EditorState& ed) {
                 ed.dirty = true;
             }
         }
+        // Live preview of this state (edit and Play). A blend tree offers its motions.
+        if (body && okay::editor::apreview::BodyClip(body, okay::editor::apreview::MiddleMotion(st))) {
+            const bool prevOn = okay::editor::apreview::ToggleCharacterState(ed.scene(), body, st, ed.isPlaying(), "agprev");
+            if (prevOn) okay::editor::apreview::DrawTransport("agprev");
+        } else if (ma && ma->FindClip(okay::editor::apreview::MiddleMotion(st)) >= 0) {
+            const bool prevOn = okay::editor::apreview::ToggleModelState(ed.scene(), ma, st, ed.isPlaying());
+            if (prevOn) okay::editor::apreview::DrawTransport("agmaprev");
+        }
         if (!clipNames.empty()) {
             if (ImGui::BeginCombo("Clip##ag", st.clip.empty() ? "(none)" : st.clip.c_str())) {
                 for (const auto& cn : clipNames)
@@ -20590,7 +20609,10 @@ static void DrawAnimatorGraph(EditorState& ed) {
 
 static void DrawObjectAnimTimeline(EditorState& ed, GameObject* go, Animator* an);
 static void DrawAnimationEditor(EditorState& ed) {
-    if (!g_showAnimation) { StopAnimPreview(); StopModelScenePreview(ed); StopLivePreview(ed); return; }
+    // Hiding this window stops only the drafts it owns. The inspector / graph
+    // preview (apreview) keeps playing, and so does a built-in grid preview
+    // already running — selection, not the window, ends that one.
+    if (!g_showAnimation) { StopAnimPreview(); StopModelScenePreview(ed); return; }
     // Docked with the bottom panels (Console / Project) on first open, never floating
     // over the Scene view. The ### id is new so older layouts that saved it floating
     // pick up the docked default once.
@@ -27749,6 +27771,13 @@ void DrawInspector(EditorState& ed) {
                 }
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Play##ma")) ma->PlayIndex(ma->active);
+                if (ma->active >= 0 && ma->active < (int)names.size()) {
+                    ImGui::SameLine();
+                    const bool prevOn = okay::editor::apreview::ToggleModelClip(
+                        ed.scene(), ma, names[ma->active < (int)names.size() ? ma->active : 0],
+                        ma->speed, ma->loop, ed.isPlaying());
+                    if (prevOn) okay::editor::apreview::DrawTransport("maprev");
+                }
             }
             if (ImGui::Checkbox("Auto-play on start##ma", &ma->autoPlay)) ed.dirty = true;
             if (ImGui::Checkbox("Loop##ma", &ma->loop)) ed.dirty = true;
@@ -27945,14 +27974,8 @@ void DrawInspector(EditorState& ed) {
                 // a copy of it in the Animation tab (Apply there makes it this body's).
                 const std::string shown = body ? shownClip(st) : std::string();
                 if (body && BodyClip(body, shown)) {
-                    if (!ed.isPlaying()) {
-                        const bool on = g_livePrevCh == body && g_livePrevClip == shown;
-                        if (ImGui::SmallButton(on ? "Stop##asmprev" : "Preview##asmprev")) {
-                            if (on) StopLivePreview(ed);
-                            else { StartLivePreview(ed, body); g_livePrevAnim = body->anim; g_livePrevClip = shown; }
-                        }
-                        ImGui::SameLine();
-                    }
+                    const bool prevOn = okay::editor::apreview::ToggleCharacterState(ed.scene(), body, st, ed.isPlaying(), "asmprev");
+                    ImGui::SameLine();
                     if (ImGui::SmallButton("Edit clip##asm")) {
                         const std::string key = AnimDraftKey(go);
                         AnimDraft& d = g_animDrafts[key];
@@ -27967,6 +27990,10 @@ void DrawInspector(EditorState& ed) {
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip("Edit %s in the Animation tab. Apply there saves it on this\n"
                                           "Character, where it replaces the default clip of that name.", shown.c_str());
+                    if (prevOn) okay::editor::apreview::DrawTransport("asmprev");
+                } else if (ma && ma->FindClip(okay::editor::apreview::MiddleMotion(st)) >= 0) {
+                    const bool prevOn = okay::editor::apreview::ToggleModelState(ed.scene(), ma, st, ed.isPlaying());
+                    if (prevOn) okay::editor::apreview::DrawTransport("asmma");
                 }
 
                 int delTr = -1;
@@ -28418,6 +28445,21 @@ void DrawInspector(EditorState& ed) {
             ImGui::Combo("Animation##char", &ch->anim, anims, IM_ARRAYSIZE(anims));
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Idle/walk/run/jump are driven by the controllers; the gestures and emotions (Point...Think) are poses you can trigger from scripts (set a Character's anim) or preview here.");
             if (ch->anim != 0) ImGui::SliderFloat("Anim Speed##char", &ch->animSpeed, 0.1f, 3.0f);
+            {
+                // This character's own clips, each with a Scene-view preview.
+                const std::vector<std::string> own = ch->ClipNames();
+                if (!own.empty() && ImGui::TreeNode("Clips##charprev", "Clips (%d)", (int)own.size())) {
+                    for (const std::string& n : own) {
+                        ImGui::PushID(n.c_str());
+                        ImGui::TextUnformatted(n.c_str());
+                        ImGui::SameLine();
+                        const bool on = okay::editor::apreview::ToggleCharacterClip(ed.scene(), ch, n, ed.isPlaying());
+                        if (on) okay::editor::apreview::DrawTransport("charclip");
+                        ImGui::PopID();
+                    }
+                    ImGui::TreePop();
+                }
+            }
 
             SectionHeader("Head look");
             if (ImGui::Checkbox("Look at Camera##char", &ch->lookAtCamera)) ed.dirty = true;
@@ -30749,6 +30791,8 @@ void DrawInspector(EditorState& ed) {
             char ik[2] = {pk->interactKey, 0};
             if (ImGui::InputText("Interact Key##pk", ik, sizeof(ik))) { pk->interactKey = ik[0]; ed.dirty = true; }
             if (pk->interactKey && ImGui::DragFloat("Interact Range##pk", &pk->interactRange, 0.05f, 0.1f, 50.0f)) ed.dirty = true;
+            if (pk->interactKey && ImGui::Checkbox("Hold In Hands##pk", &pk->holdInHands)) ed.dirty = true;
+            if (pk->interactKey && pk->holdInHands) ImGui::TextDisabled("The key picks it up with Procedural Object Holding (if the player has it).");
             if (ImGui::DragFloat("Magnet Radius##pk", &pk->magnetRadius, 0.05f, 0.0f, 50.0f)) ed.dirty = true;
             if (pk->magnetRadius > 0.0f && ImGui::DragFloat("Magnet Speed##pk", &pk->magnetSpeed, 0.1f, 0.1f, 100.0f)) ed.dirty = true;
         }
@@ -40899,7 +40943,7 @@ static bool SaveProject(EditorState& ed, bool interactive) {
     bool sceneSkipped = false;
     if (ed.isPlaying()) {
         if (interactive) sceneSkipped = true;
-        else ed.Stop();   // save the edited scene, not the running copy
+        else { okay::editor::apreview::Stop(ed.scene()); ed.Stop(); }   // save the edited scene, not the running copy
     }
     if (!sceneSkipped) {   // always written: "Save Project" means everything is on disk
         const std::string p = ed.path().empty() ? DefaultScenePath(ed) : ed.path();
@@ -41774,6 +41818,10 @@ int main(int argc, char** argv) {
             // frame and pose the character — blocky body, custom-rigged mesh, or
             // (through the HumanoidRetarget) a swapped imported model — right in
             // the Scene view, no Play needed.
+            if (g_livePrevCh && okay::editor::apreview::Cur().kind != okay::editor::apreview::Kind::None)
+                StopLivePreview(ed);   // a new inspector/graph preview replaces this one
+            if (g_maScenePrev && okay::editor::apreview::Cur().kind != okay::editor::apreview::Kind::None)
+                StopModelScenePreview(ed);
             if (g_livePrevCh) {
                 bool alive = false;
                 for (okay::Character* c2 : chars) if (c2 == g_livePrevCh) { alive = true; break; }
@@ -41802,10 +41850,20 @@ int main(int argc, char** argv) {
                         ch->anim = keep;
                     } else {
                         ch->anim = keep;
-                        g_animPreview = ch;   // the loop below pushes the pose onto the body
+                        // The inspector preview poses its own body; don't hand it to the draft.
+                        const okay::editor::apreview::Preview& ap = okay::editor::apreview::Cur();
+                        const bool apOwns = ap.kind != okay::editor::apreview::Kind::None &&
+                                            ap.kind != okay::editor::apreview::Kind::Model &&
+                                            ap.target == ch->gameObject;
+                        if (!apOwns) g_animPreview = ch;
                     }
                 }
             }
+            // The Animation window may be closed. Its built-in grid preview still
+            // ends when the selection leaves that character (and its parents/children).
+            if (g_livePrevCh && g_livePrevCh->gameObject &&
+                !okay::editor::apreview::InFamily(ed.selected(), g_livePrevCh->gameObject))
+                StopLivePreview(ed);
             // Materialize each separated Character's part rig in the EDITOR (so the
             // parts are real, selectable objects, not spawned at Play) and drive the
             // Animation window's preview pose onto the rig (Update() doesn't run while
@@ -41815,6 +41873,8 @@ int main(int argc, char** argv) {
                 if (ch->separateParts && !ch->PartsBuilt()) ch->BuildParts();
                 if (ch == g_animPreview) ch->EditorPreviewTick();
             }
+            okay::editor::apreview::NoteSelection(ed.scene(), ed.selected());
+            okay::editor::apreview::Tick(ed.scene(), pdt);
             // Same idea for the Pause Menu: build its editable UI in the editor so it's
             // there to customize and is ADOPTED (not spawned) at Play.
             for (okay::PauseMenu* pm : pauseMenus)
@@ -42043,7 +42103,18 @@ int main(int argc, char** argv) {
             }
         }
         // A PauseMenu / script Quit during Play stops play (mirrors the built game).
-        if (ed.isPlaying() && okay::Game::QuitRequested()) { ed.Stop(); g_paused = false; ConsoleLog("Quit (game requested exit)"); }
+        if (ed.isPlaying() && okay::Game::QuitRequested()) {
+            okay::editor::apreview::Stop(ed.scene());
+            ed.Stop(); g_paused = false; ConsoleLog("Quit (game requested exit)");
+        }
+        // Inspector / graph preview keeps sampling while Play is paused (real dt,
+        // after the game tick, so the preview pose wins over the running Animator).
+        if (ed.isPlaying()) {
+            float pdt = dt > 0.05f ? 0.05f : dt;
+            if (pdt < 0.0f) pdt = 0.0f;
+            okay::editor::apreview::NoteSelection(ed.scene(), ed.selected());
+            okay::editor::apreview::Tick(ed.scene(), pdt);
+        }
         // Modifier stacks: rebuild any whose base mesh, settings or Boolean target
         // changed (components don't Update while editing). The object in mesh edit
         // mode hides modifiers that have "Show in Edit Mode" off.

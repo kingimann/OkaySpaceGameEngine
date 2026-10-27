@@ -1261,9 +1261,23 @@ inline void VoxelSandbox(Scene& scene) {
     auto* dig = ground->AddComponent<VoxelDigger>();
     dig->radius = 3.0f; dig->strength = 10.0f;   // left = dig, right = add (defaults)
 
-    // A lake of animated water sitting in the low ground.
+    // A lake in the low ground. 0.32 * SizeY is below every hill this Generate
+    // builds (surface = SizeY * 0.55 ± amplitude), so the water used to sit
+    // inside solid terrain and never showed. Use the real surface instead:
+    // low enough that valleys flood, high enough that the peaks stay dry.
+    float minSurf = 1.0e9f, maxSurf = -1.0e9f;
+    const float sample = 4.0f;
+    for (float z = -vox->HalfZ(); z <= vox->HalfZ(); z += sample)
+        for (float x = -vox->HalfX(); x <= vox->HalfX(); x += sample) {
+            float y = 0.0f;
+            if (!vox->SurfaceY(x, z, y)) continue;
+            if (y < minSurf) minSurf = y;
+            if (y > maxSurf) maxSurf = y;
+        }
+    const float waterY = (minSurf < maxSurf) ? minSurf + (maxSurf - minSurf) * 0.22f
+                                              : vox->SizeY() * 0.5f;
     GameObject* lake = scene.CreateGameObject("Water");
-    lake->transform->localPosition = {0, vox->SizeY() * 0.32f, 0};
+    lake->transform->localPosition = {0, waterY, 0};
     auto* water = lake->AddComponent<Water>();
     water->size = vox->HalfX() * 2.4f;
     water->Apply();

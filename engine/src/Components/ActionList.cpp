@@ -1315,6 +1315,10 @@ void ActionList::Update(float dt) {
             }
             HumanoidActions::HitReact(gameObject, dir, heavy);
         }
+        else if (op == "roll")
+            HumanoidActions::RequestRoll(gameObject, it.args.empty() ? 0 : HumanoidActions::DirFromName(Str(it, 0)));
+        else if (op == "dodge")
+            HumanoidActions::RequestDodge(gameObject, it.args.empty() ? 0 : HumanoidActions::DirFromName(Str(it, 0)));
         else if (op == "set_cam") {
             if (scene && scene->mainCamera) {
                 Transform* ct = scene->mainCamera->gameObject->transform;

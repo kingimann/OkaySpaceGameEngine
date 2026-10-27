@@ -19,7 +19,7 @@ namespace HumanoidActions {
 /// How far the built-in action set has got. Death is 1, dolphin dive is 2. A
 /// saved graph records the revision it already has, so a later action is added
 /// once and a state the user deleted is not put back when the next action lands.
-constexpr int kActionsRev = 4;
+constexpr int kActionsRev = 5;
 
 /// One authored pose. Degrees, hip height in rig units, rootOffset.x/z a visual
 /// lean only (y is unused; hipY is the root height).
@@ -110,6 +110,15 @@ bool HitReact(GameObject* go, int dir, bool heavy = false);
 /// 1 except during a heavy / crouch / prone hit, when it is the Animator's
 /// `staggerScale` (itself 1 until a game sets it lower).
 float StaggerScale(const GameObject* go);
+
+/// Play the roll / dodge clip. `dir` 0 forward (Roll_F), 1 back, 2 left, 3 right.
+/// No impulse. Dodge() is this plus the controller burst.
+bool RequestRoll(GameObject* go, int dir = 0);
+/// Clip plus a dodge burst when this body has a first- or third-person controller.
+bool RequestDodge(GameObject* go, int dir);
+/// Bodies whose current dodge asked for i-frames. Empty unless that option is on.
+void SetDodgeIFrames(GameObject* go, bool on);
+bool DodgeIFrames(const GameObject* go);
 
 /// True once the body is in DeadHold (or Death has played out).
 bool DeathPoseSettled(GameObject* go);

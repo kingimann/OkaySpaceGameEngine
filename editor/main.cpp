@@ -10873,6 +10873,7 @@ void DrawScriptDocs() {
         fapi("sit([\"Seat\"|\"ground\"|\"knees\"|\"chair\"]) / stand_up() / is_sitting()", "sit on a Seat or a flat floor; move or jump stands up");
         fapi("interact() / seat_prompt()", "nearest Seat (E in range does this too), or its prompt");
         fapi("hit_react(\"forward\"|\"back\"|\"left\"|\"right\" [, heavy]) / hit_react(x, y, z [, heavy])", "flinch from where the hit came from; heavy is a full-body stumble");
+        fapi("roll([\"forward\"|\"back\"|\"left\"|\"right\"]) / dodge([...])", "roll is the clip; dodge also bursts a first- or third-person body");
         fapi("play_clip_once(\"name\")", "play a clip once (attack/jump), then return to the previous one");
         fapi("playing_clip() / is_playing_clip()", "active clip name / is one playing");
         fapi("set_anim(n) / get_anim()", "built-in animation index (1 idle, 2 walk, 3 run, ...)");
@@ -11284,6 +11285,7 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"sit","sit([\"Chair\"])"}, {"stand_up","stand_up()"}, {"is_sitting","is_sitting()"},
         {"interact","interact()"}, {"seat_prompt","seat_prompt()"},
         {"hit_react","hit_react(\"back\" [, 1])"},
+        {"roll","roll(\"forward\")"}, {"dodge","dodge(\"left\")"},
         {"stop_clip","stop_clip()"}, {"is_playing_clip","is_playing_clip()"},
         {"play_layer","play_layer(\"clip\", \"part\")"}, {"stop_layer","stop_layer()"}, {"anim_event","anim_event(\"name\")"},
         {"play_sound","play_sound(\"name\")"}, {"set_volume","set_volume(v)"},
@@ -17945,6 +17947,8 @@ static const ActionOpInfo kInstrOps[] = {
     {"stand_up",    "Stand Up",           "",                     "Leave a sit and free the Seat.",                         "Character"},
     {"interact",    "Interact",           "",                     "Nearest Seat, or a ground sit. Stands up if already sitting.", "Character"},
     {"hit_react",   "Hit React",          "forward|back|left|right [heavy]", "Flinch from where the hit came from. heavy = 1 is a full-body stumble.", "Character"},
+    {"roll",        "Roll",               "forward|back|left|right", "Play a roll or sidestep clip. Does not move the body.", "Character"},
+    {"dodge",       "Dodge",              "forward|back|left|right", "That clip, plus a burst on a first- or third-person controller.", "Character"},
     {"stop_clip",   "Stop Anim Clip",     "",                     "Return the Character to its built-in / state animation.", "Character"},
     {"play_layer",  "Play Anim Layer",    "clip  arms|upper|bone","Overlay a clip on part of the body (e.g. wave with the arms while walking).", "Character"},
     {"stop_layer",  "Stop Anim Layer",    "",                     "Clear the partial-body animation layer.",                 "Character"},
@@ -18826,7 +18830,8 @@ static const char* ActionOpRequires(const std::string& op) {
         op=="play_action"||op=="die"||op=="revive"||op=="is_in_action"||op=="is_dead"||
         op=="dive"||op=="can_dive"||
         op=="sit"||op=="stand_up"||op=="is_sitting"||op=="interact"||
-        op=="play_action"||op=="die"||op=="revive"||op=="is_in_action"||op=="is_dead"||op=="hit_react")
+        op=="play_action"||op=="die"||op=="revive"||op=="is_in_action"||op=="is_dead"||op=="hit_react"||
+        op=="play_action"||op=="die"||op=="revive"||op=="is_in_action"||op=="is_dead"||op=="roll"||op=="dodge")
         return "a Character / Animator on this object";
     if (op=="emit"||op=="particles_on") return "a Particle System on this object";
     if (op=="set_text") return "a Text Renderer on this object";
@@ -32239,6 +32244,19 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat("Dive Hop##fp", &fp->diveHop, 0.01f, 0.0f, 1.5f, "%.2f m")) ed.dirty = true;
                 if (ImGui::DragFloat("Dive Slide Time##fp", &fp->diveSlideTime, 0.01f, 0.05f, 2.0f, "%.2f s")) ed.dirty = true;
             }
+            SectionHeader("Dodge");
+            if (ImGui::Checkbox("Can Dodge##fp", &fp->dodge.canDodge)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off by default. dodge() from a script still works.\nThe key does nothing until this is on.");
+            if (fp->dodge.canDodge) {
+                char dk[8]; dk[0] = fp->dodge.key ? fp->dodge.key : '\0'; dk[1] = 0;
+                if (ImGui::InputText("Dodge Key##fp", dk, sizeof(dk))) { fp->dodge.key = dk[0]; ed.dirty = true; }
+                if (ImGui::DragFloat("Dodge Speed##fp", &fp->dodge.impulse, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Dodge Time##fp", &fp->dodge.duration, 0.01f, 0.05f, 2.0f, "%.2f s")) ed.dirty = true;
+                if (ImGui::DragFloat("Cooldown##fp", &fp->dodge.cooldown, 0.01f, 0.0f, 5.0f, "%.2f s")) ed.dirty = true;
+                if (ImGui::DragFloat("Stamina##fp", &fp->dodge.stamina, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
+                if (ImGui::Checkbox("I-Frames##fp", &fp->dodge.iFrames)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off by default. While on, Health ignores damage during the burst.");
+            }
             SectionHeader("Animation & IK");
             if (ImGui::Checkbox("Drive State Machine##fp", &fp->driveStateMachine)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets speed, verticalSpeed, grounded, crouch, prone, sprint, slide, aim\nand fires jump / land triggers on an Animator state machine on the player.");
@@ -32414,6 +32432,17 @@ void DrawInspector(EditorState& ed) {
             if (tp->diveOnProneWhileSprinting) {
                 if (ImGui::DragFloat("Dive Hop##tp", &tp->diveHop, 0.01f, 0.0f, 1.5f, "%.2f m")) ed.dirty = true;
                 if (ImGui::DragFloat("Dive Slide Time##tp", &tp->diveSlideTime, 0.01f, 0.05f, 2.0f, "%.2f s")) ed.dirty = true;
+            }
+            SectionHeader("Dodge");
+            if (ImGui::Checkbox("Can Dodge##tp", &tp->dodge.canDodge)) ed.dirty = true;
+            if (tp->dodge.canDodge) {
+                char dk[8]; dk[0] = tp->dodge.key ? tp->dodge.key : '\0'; dk[1] = 0;
+                if (ImGui::InputText("Dodge Key##tp", dk, sizeof(dk))) { tp->dodge.key = dk[0]; ed.dirty = true; }
+                if (ImGui::DragFloat("Dodge Speed##tp", &tp->dodge.impulse, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Dodge Time##tp", &tp->dodge.duration, 0.01f, 0.05f, 2.0f, "%.2f s")) ed.dirty = true;
+                if (ImGui::DragFloat("Cooldown##tp", &tp->dodge.cooldown, 0.01f, 0.0f, 5.0f, "%.2f s")) ed.dirty = true;
+                if (ImGui::DragFloat("Stamina##tp", &tp->dodge.stamina, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
+                if (ImGui::Checkbox("I-Frames##tp", &tp->dodge.iFrames)) ed.dirty = true;
             }
             SectionHeader("Animation & IK");
             if (ImGui::Checkbox("Drive State Machine##tp", &tp->driveStateMachine)) ed.dirty = true;

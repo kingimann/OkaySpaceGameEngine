@@ -527,6 +527,24 @@ struct HitReactNode : VsNode {
         return 0;
     }
 };
+struct RollNode : VsNode {
+    std::string dir;
+    explicit RollNode(std::string d) : dir(std::move(d)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        HumanoidActions::RequestRoll(ctx.gameObject, HumanoidActions::DirFromName(dir.empty() ? "forward" : dir));
+        return 0;
+    }
+};
+struct DodgeNode : VsNode {
+    std::string dir;
+    explicit DodgeNode(std::string d) : dir(std::move(d)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        HumanoidActions::RequestDodge(ctx.gameObject, HumanoidActions::DirFromName(dir.empty() ? "forward" : dir));
+        return 0;
+    }
+};
 struct ReviveNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph&, VsContext& ctx) override {

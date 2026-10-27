@@ -273,6 +273,8 @@ inline const char* VsNodeHelp(const char* type) {
         {"Interact",       "Sits on the nearest Seat, or the ground if the floor is flat. Stands up if already sitting."},
         {"SeatPrompt",     "The prompt of the nearest Seat in range (empty when none)."},
         {"HitReact",       "Plays a hit flinch. Direction is where the hit came from. Heavy plays a full-body stumble."},
+        {"Roll",           "Plays a roll or dodge clip in that direction. It does not move the body."},
+        {"Dodge",          "Plays that clip and, on a first- or third-person controller, bursts that way. Spends stamina when a Stamina stat is present."},
         {"AnimTrigger",    "Fires a trigger on this object's Animator (e.g. Jump, Attack)."},
         {"AnimSetFloat",   "Sets a number parameter on this object's Animator (e.g. Speed)."},
         {"AnimSetBool",    "Sets a true/false parameter on this object's Animator (e.g. Grounded)."},

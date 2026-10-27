@@ -27,6 +27,7 @@
 #include "okay/Components/Water.hpp"
 #include "okay/Components/DiveAction.hpp"
 #include "okay/Animation/HumanoidActions.hpp"
+#include "okay/Components/DodgeAction.hpp"
 
 namespace okay {
 
@@ -191,6 +192,7 @@ public:
     int   FootstepCount() const { return m_steps; }
     bool  IsAiming() const { return m_aim; }
     bool  IsSliding() const { return m_slideT > 0.0f; }
+    DodgeMove dodge;   // key dodge stays off until canDodge is set
     bool  IsGrounded() const { return m_grounded; }
 
 
@@ -288,6 +290,7 @@ public:
         key(sprintKey, PlayerInput::Sprint);
         key(crouchKey, PlayerInput::Crouch);
         key(proneKey, PlayerInput::Prone);
+        m_dodgeEdge = dodge.canDodge && dodge.key && Input::GetKeyDown(dodge.key);
         key(leanLeftKey, PlayerInput::LeanLeft);
         key(leanRightKey, PlayerInput::LeanRight);
         if (stanceGamepadButton >= 0 && Input::GetGamepadButton(stanceGamepadButton)) in.held |= PlayerInput::StanceButton;
@@ -494,6 +497,15 @@ public:
         // Moving platforms: ride whatever we stand on (elevators, movers).
         if (gameObject && gameObject->scene())
             RideMovingPlatform(*gameObject->scene(), gameObject, m_platRide, grounded);
+
+        // Dodge overwrites the horizontal velocity just written. Slide physics above is unchanged.
+        if (m_dodgeEdge && grounded) {
+            const Vec3 wish = moving ? dir : fwd;
+            if (DodgeBurst(gameObject, dodge, wish))
+                HumanoidActions::RequestRoll(gameObject, DodgeDir(wish, fwd, right));
+        }
+        m_dodgeEdge = false;
+        DodgeTick(gameObject, dodge, dt);
 
         // ---- Turn the body (smoothly) ----
         // The character mesh faces -Z (engine camera/controller convention).
@@ -776,6 +788,7 @@ private:
     Stance m_prevStance = Stance::Stand;
     float m_slideT = 0.0f;
     DiveMotion m_dive;
+    bool  m_dodgeEdge = false;
     Vec3  m_slideDir{0, 0, -1};
     int   m_steps = 0;
 

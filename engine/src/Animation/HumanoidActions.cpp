@@ -4,12 +4,15 @@
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/Seat.hpp"
+#include "okay/Components/DodgeAction.hpp"
+#include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Scene/Scene.hpp"
+#include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Physics/Collider3D.hpp"
@@ -22,6 +25,7 @@
 #include <cmath>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace okay {
 namespace HumanoidActions {
@@ -312,12 +316,56 @@ void BakeHits(std::vector<HumanoidLibrary::Entry>& out) {
     AddClip(out, BakeAction("Hit_Off", {idle}, true, {}));
 }
 
+void BakeRoll(std::vector<HumanoidLibrary::Entry>& out) {
+    const KeyPose idle = FromState(1);
+    const KeyPose crouch = FromState(6);
+    KeyPose tuck = idle;
+    tuck.bones[B::B_HIPS].x = 28.0f;
+    tuck.bones[B::B_TORSO].x = 36.0f;
+    tuck.bones[B::B_HEAD].x = -20.0f;
+    tuck.bones[B::B_LTHIGH] = {110.0f, 8.0f, -6.0f};
+    tuck.bones[B::B_RTHIGH] = {110.0f, -8.0f, 6.0f};
+    tuck.bones[B::B_LSHIN].x = -110.0f;
+    tuck.bones[B::B_RSHIN].x = -110.0f;
+    tuck.hipY = -0.15f;
+    KeyPose tuck2 = tuck;
+    tuck2.bones[B::B_HIPS].x = -20.0f;
+    tuck2.bones[B::B_TORSO].x = -10.0f;
+    AddClip(out, BakeAction("Roll_F", {At(idle, 0.0f), At(tuck, 0.22f), At(tuck2, 0.42f), At(idle, 0.65f)}, false, {{0.65f, "action_end"}}));
+
+    auto dodge = [&](const char* name, float side, float back) {
+        KeyPose lean = idle;
+        lean.bones[B::B_TORSO].z = side * 16.0f;
+        lean.bones[B::B_HIPS].z = side * 8.0f;
+        lean.bones[B::B_TORSO].x = back * 12.0f;
+        lean.bones[B::B_LTHIGH].x = back > 0.0f ? -18.0f : 14.0f;
+        lean.bones[B::B_RTHIGH].x = back > 0.0f ? -18.0f : 14.0f;
+        lean.rootOffset = {side * 0.04f, 0.0f, back * 0.03f};
+        AddClip(out, BakeAction(name, {At(idle, 0.0f), At(lean, 0.14f), At(idle, 0.40f)}, false, {{0.40f, "action_end"}}));
+    };
+    dodge("Dodge_L", 1.0f, 0.0f);
+    dodge("Dodge_R", -1.0f, 0.0f);
+    dodge("Dodge_B", 0.0f, 1.0f);
+
+    KeyPose feet = crouch;
+    feet.bones[B::B_HIPS].x = 18.0f;
+    feet.bones[B::B_LTHIGH].x = 40.0f;
+    feet.bones[B::B_RTHIGH].x = 70.0f;
+    feet.bones[B::B_LSHIN].x = -30.0f;
+    feet.bones[B::B_RSHIN].x = -50.0f;
+    feet.bones[B::B_LUPARM] = {20.0f, 0.0f, 30.0f};
+    feet.bones[B::B_RUPARM] = {20.0f, 0.0f, -30.0f};
+    feet.hipY = crouch.hipY;
+    AddClip(out, BakeAction("Slide", {At(feet, 0.0f), At(feet, 0.6f)}, true, {}));
+    AddClip(out, BakeAction("SlideEnd", {At(feet, 0.0f), At(crouch, 0.32f)}, false, {{0.32f, "action_end"}}));
+}
+
 struct ActionSpec {
     const char* name;
     int rev;
 };
 
-const ActionSpec kStates[] = {{"Death", 1}, {"DeadHold", 1}, {"Dive", 2}, {"DiveLand", 2}, {"SitDown", 3}, {"Sit", 3}, {"StandUp", 3}, {"Hit", 4}, {"HitHeavy", 4}, {"Hit_Crouch", 4}, {"Hit_Prone", 4}};
+const ActionSpec kStates[] = {{"Death", 1}, {"DeadHold", 1}, {"Dive", 2}, {"DiveLand", 2}, {"SitDown", 3}, {"Sit", 3}, {"StandUp", 3}, {"Hit", 4}, {"HitHeavy", 4}, {"Hit_Crouch", 4}, {"Hit_Prone", 4}, {"Roll", 5}, {"Dodge", 5}, {"Slide", 5}, {"SlideEnd", 5}};
 
 SM::State* FindMutable(SM& sm, const std::string& name) {
     for (SM::State& s : sm.states) if (s.name == name) return &s;
@@ -520,6 +568,7 @@ void Bake(std::vector<HumanoidLibrary::Entry>& out) {
     BakeDive(out);
     BakeSit(out);
     BakeHits(out);
+    BakeRoll(out);
 }
 
 void ApplyTimes(AnimStateMachine& sm) {
@@ -720,12 +769,24 @@ void BindHitLayer(AnimStateMachine& base) {
     }
 }
 
+SM::Motion AtClip(const char* clip, float threshold) {
+    SM::Motion m; m.clip = clip; m.threshold = threshold; return m;
+}
+void EndAt(SM::State& st, const char* to) {
+    st.transitions.clear();
+    if (!to) return;
+    SM::Transition done;
+    done.to = to; done.cond = C::OnClipEnd; done.hasExitTime = true; done.exitTime = 1.0f; done.blend = 0.12f;
+    st.transitions.push_back(done);
+}
+
 void AddStates(AnimStateMachine& sm, const Character* body, bool force) {
     const int had = sm.actionsRev;
     const bool deathDue = force || had < 1;
     const bool diveDue = force || had < 2;
     const bool sitDue = force || had < 3;
     const bool hitDue = force || had < 4;
+    const bool rollDue = force || had < 5;
     const bool freshDeath = deathDue && !HasState(sm, "Death");
     const bool freshHold = deathDue && !HasState(sm, "DeadHold");
     float col = 40.0f;
@@ -944,6 +1005,75 @@ void AddStates(AnimStateMachine& sm, const Character* body, bool force) {
             BindHitLayer(sm);
         }
     }
+    if (rollDue) {
+        float col = 40.0f;
+        for (const SM::State& o : sm.states) col = std::max(col, o.nx);
+        col += 220.0f;
+        const char* home = HasState(sm, "Idle") ? "Idle" : nullptr;
+        if (!HasState(sm, "Roll")) {
+            SM::State s;
+            s.name = "Roll"; s.clip = "Roll_F"; s.loop = false; s.ikWeight = 0.0f; s.interruptible = true;
+            s.nx = col; s.ny = 40.0f;
+            sm.states.push_back(std::move(s));
+            if (SM::State* st = FindMutable(sm, "Roll")) EndAt(*st, home);
+        }
+        if (!HasState(sm, "Dodge")) {
+            SM::State s;
+            s.name = "Dodge"; s.blendTree = true; s.blendDims = 1; s.blendParam = "dodgeDir";
+            s.loop = false; s.ikWeight = 0.0f; s.interruptible = true;
+            s.motions = {AtClip("Roll_F", 0.0f), AtClip("Dodge_B", 1.0f), AtClip("Dodge_L", 2.0f), AtClip("Dodge_R", 3.0f)};
+            s.nx = col; s.ny = 130.0f;
+            sm.states.push_back(std::move(s));
+            if (SM::State* st = FindMutable(sm, "Dodge")) EndAt(*st, home);
+        }
+        if (!HasState(sm, "Slide")) {
+            SM::State s;
+            s.name = "Slide"; s.clip = "Slide"; s.loop = true; s.ikWeight = 0.0f; s.interruptible = true;
+            s.nx = col; s.ny = 220.0f;
+            sm.states.push_back(std::move(s));
+        }
+        if (!HasState(sm, "SlideEnd")) {
+            SM::State s;
+            s.name = "SlideEnd"; s.clip = "SlideEnd"; s.loop = false; s.ikWeight = 0.0f; s.interruptible = true;
+            s.nx = col; s.ny = 310.0f;
+            sm.states.push_back(std::move(s));
+            if (SM::State* st = FindMutable(sm, "SlideEnd")) {
+                st->transitions.clear();
+                if (HasState(sm, "Run")) {
+                    SM::Transition run;
+                    run.to = "Run"; run.cond = C::OnClipEnd; run.hasExitTime = true; run.exitTime = 1.0f;
+                    run.blend = 0.12f; run.extra.push_back({C::BoolTrue, "sprint", 0.0f});
+                    run.extra.push_back({C::BoolFalse, "crouch", 0.0f});
+                    st->transitions.push_back(run);
+                }
+                if (const char* to = HasState(sm, "Crouch") ? "Crouch" : home) {
+                    SM::Transition done;
+                    done.to = to; done.cond = C::OnClipEnd; done.hasExitTime = true; done.exitTime = 1.0f; done.blend = 0.12f;
+                    st->transitions.push_back(done);
+                }
+            }
+        }
+        if (SM::State* st = FindMutable(sm, "Slide")) if (st->transitions.empty() && HasState(sm, "SlideEnd")) {
+            SM::Transition up;
+            up.to = "SlideEnd"; up.cond = C::BoolFalse; up.param = "slide"; up.blend = 0.1f;
+            st->transitions.push_back(up);
+        }
+        EnsureParam(sm, "dodgeDir", 0);
+        EnsureParam(sm, "roll", 2);
+        EnsureParam(sm, "dodge", 2);
+        EnsureParam(sm, "slide", 1);
+        auto entry = [&](const char* to, const char* param, C cond) {
+            if (HasAny(sm, to, param) || !HasState(sm, to)) return;
+            SM::Transition go;
+            go.to = to; go.cond = cond; go.param = param; go.blend = 0.1f;
+            go.canInterruptSelf = (cond == C::Trigger);
+            go.interruption = SM::Transition::Interrupt::None;
+            sm.anyState.push_back(std::move(go));
+        };
+        entry("Roll", "roll", C::Trigger);
+        entry("Dodge", "dodge", C::Trigger);
+        entry("Slide", "slide", C::BoolTrue);
+    }
     if (sm.actionsRev < kActionsRev) sm.actionsRev = kActionsRev;
     ApplyTimes(sm);
     BindHitLayer(sm);
@@ -966,7 +1096,8 @@ const std::vector<std::string>& ActionNames() {
         "DeadHold_F", "DeadHold_B", "DeadHold_L", "DeadHold_R",
         "Dive", "DiveLand",
         "SitDown", "Sit", "StandUp", "SitDown_Chair", "Sit_Chair", "StandUp_Chair", "SitDown_Ground", "Sit_Ground", "Sit_Ground_Knees", "StandUp_Ground",
-        "Hit", "HitHeavy", "Hit_Crouch", "Hit_Prone", "Hit_F", "Hit_B", "Hit_L", "Hit_R", "Hit_Heavy_F", "Hit_Heavy_B", "Hit_Off"};
+        "Hit", "HitHeavy", "Hit_Crouch", "Hit_Prone", "Hit_F", "Hit_B", "Hit_L", "Hit_R", "Hit_Heavy_F", "Hit_Heavy_B", "Hit_Off",
+        "Roll", "Dodge", "Slide", "SlideEnd", "Roll_F", "Dodge_L", "Dodge_R", "Dodge_B"};
     return names;
 }
 
@@ -1294,6 +1425,54 @@ float StaggerScale(const GameObject* go) {
     if (c != "HitHeavy" && c != "Hit_Crouch" && c != "Hit_Prone") return 1.0f;
     const float s = sm->GetFloat("staggerScale");
     return s > 0.0f ? s : 1.0f;
+}
+
+namespace {
+std::unordered_set<const GameObject*> g_dodgeIFrames;
+}
+
+void SetDodgeIFrames(GameObject* go, bool on) {
+    if (!go) return;
+    if (on) g_dodgeIFrames.insert(go);
+    else g_dodgeIFrames.erase(go);
+}
+bool DodgeIFrames(const GameObject* go) {
+    return go && g_dodgeIFrames.count(go) != 0;
+}
+
+bool RequestRoll(GameObject* go, int dir) {
+    if (!go || IsDead(go)) return false;
+    if (dir < 0) dir = 0;
+    if (dir > 3) dir = 3;
+    if (SM* sm = BaseMachine(go)) {
+        sm->SetFloat("dodgeDir", (float)dir);
+        if (dir == 0 && HasState(*sm, "Roll") && sm->GoTo("Roll", 0.1f)) return true;
+        if (HasState(*sm, "Dodge") && sm->GoTo("Dodge", 0.1f)) return true;
+    }
+    static const char* k[] = {"Roll_F", "Dodge_B", "Dodge_L", "Dodge_R"};
+    return Play(go, k[dir], 0.1f);
+}
+
+bool RequestDodge(GameObject* go, int dir) {
+    if (!go || IsDead(go)) return false;
+    if (dir < 0) dir = 0;
+    if (dir > 3) dir = 3;
+    Vec3 world{0.0f, 0.0f, -1.0f};
+    if (go->transform) {
+        const Vec3 facing = go->transform->TransformDirection(Vec3{0.0f, 0.0f, -1.0f});
+        const Vec3 right = go->transform->TransformDirection(Vec3{1.0f, 0.0f, 0.0f});
+        world = facing;
+        if (dir == 1) world = facing * -1.0f;
+        else if (dir == 2) world = right * -1.0f;
+        else if (dir == 3) world = right;
+    }
+    auto* fp = go->GetComponent<FirstPersonController>();
+    auto* tp = fp ? nullptr : go->GetComponent<ThirdPersonController>();
+    if (fp || tp) {
+        DodgeMove& move = fp ? fp->dodge : tp->dodge;
+        if (!DodgeBurst(go, move, world)) return false;
+    }
+    return RequestRoll(go, dir);
 }
 
 bool DeathPoseSettled(GameObject* go) {

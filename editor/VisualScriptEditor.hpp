@@ -299,6 +299,8 @@ inline const std::vector<VsDef>& Registry() {
         {"Interact",      "Interact",       CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         {"SeatPrompt",    "Seat Prompt",    CAT_DATA, false, {}, {}, {"Prompt"}, 0, nullptr},
         {"HitReact",      "Hit React",      CAT_ACTION, true, {""}, {"Heavy"}, {}, 1, "forward / back / left / right"},
+        {"Roll",          "Roll",           CAT_ACTION, true, {""}, {}, {}, 1, "forward / back / left / right"},
+        {"Dodge",         "Dodge",          CAT_ACTION, true, {""}, {}, {}, 1, "forward / back / left / right"},
         {"SetTimeScale",  "Set Time Scale", CAT_ACTION, true, {""}, {"Scale"}, {}, 0, nullptr},
         {"SetBlendShape", "Set Blend Shape",CAT_ACTION, true, {""}, {"Weight"}, {}, 1, "shape name"},
         {"GetBlendShape", "Blend Shape",    CAT_DATA,  false, {}, {}, {"Weight"}, 1, "shape name"},
@@ -1325,6 +1327,8 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="StandUp")     out += ind + "stand_up()\n";
     else if (t=="Interact")    out += ind + "interact()\n";
     else if (t=="HitReact")      out += ind + "hit_react(" + q(arg("forward")) + ", " + in(0, "0") + ")\n";
+    else if (t=="Roll")          out += ind + "roll(" + q(arg("forward")) + ")\n";
+    else if (t=="Dodge")         out += ind + "dodge(" + q(arg("forward")) + ")\n";
     else if (t=="SetTimeScale")  out += ind + "set_timescale(" + in(0, "1") + ")\n";
     else if (t=="SetBlendShape") out += ind + "blend_shape(" + q(arg("")) + ", " + in(0, "1") + ")\n";
     else if (t=="NetHost")       out += ind + "net_host(" + VsNum(arg("45000"), "45000") + ")\n";

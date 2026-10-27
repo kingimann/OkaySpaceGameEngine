@@ -5519,6 +5519,18 @@ struct OkayScriptVM::Impl {
             }
             return Value{HumanoidActions::HitReact(go, dir, heavy) ? 1.0f : 0.0f};
         };
+        auto dirArg = [](const Value& v) {
+            if (v.IsString()) return HumanoidActions::DirFromName(v.AsString());
+            return (int)v.AsFloat();
+        };
+        b["roll"] = [selfObj, dirArg](std::vector<Value>& a) {
+            const int dir = a.empty() ? 0 : dirArg(a[0]);
+            return Value{HumanoidActions::RequestRoll(selfObj(), dir) ? 1.0f : 0.0f};
+        };
+        b["dodge"] = [selfObj, dirArg](std::vector<Value>& a) {
+            const int dir = a.empty() ? 0 : dirArg(a[0]);
+            return Value{HumanoidActions::RequestDodge(selfObj(), dir) ? 1.0f : 0.0f};
+        };
         // ---- Blend shapes (morph targets) on this object and everything under it ----
         //   blend_shape("Smile", 0.8)   set a shape's weight 0..1 on every mesh that has it
         //   blend_shape_get("Smile")    read it back (0 if no mesh has it)

@@ -1796,7 +1796,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << fp->slideEyeHeight << " " << (fp->driveStateMachine ? 1 : 0) << " " << (fp->ikLook ? 1 : 0)
             // extended: the head bob and the eye smoothing
             << " " << (fp->headBob ? 1 : 0) << " " << fp->bobAmount << " " << fp->bobSpeed << " " << fp->bobSway
-            << " " << fp->bobRunScale << " " << fp->bobBlend << " " << fp->bobGroundGrace << " " << fp->eyeStepSmoothing << "\n";
+            << " " << fp->bobRunScale << " " << fp->bobBlend << " " << fp->bobGroundGrace << " " << fp->eyeStepSmoothing
+            << " " << (fp->dodge.canDodge ? 1 : 0) << " " << (int)(unsigned char)fp->dodge.key
+            << " " << fp->dodge.impulse << " " << fp->dodge.duration << " " << fp->dodge.cooldown
+            << " " << fp->dodge.stamina << " " << (fp->dodge.iFrames ? 1 : 0) << "\n";
         out << "  fpstance";
         KvOut k{out};
         k.b("prone", fp->allowProne).b("resize", fp->resizeBody)("crouchH", fp->crouchHeight)("proneH", fp->proneHeight)
@@ -1850,7 +1853,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (tp->autoRecenter ? 1 : 0) << " " << tp->recenterDelay << " " << tp->recenterSpeed
             << " " << tp->landShake << " " << tp->strideLength << " " << (tp->canSlide ? 1 : 0)
             << " " << tp->slideSpeed << " " << tp->slideTime << " " << (tp->driveStateMachine ? 1 : 0)
-            << " " << (tp->ikLook ? 1 : 0) << "\n";
+            << " " << (tp->ikLook ? 1 : 0)
+            << " " << (tp->dodge.canDodge ? 1 : 0) << " " << (int)(unsigned char)tp->dodge.key
+            << " " << tp->dodge.impulse << " " << tp->dodge.duration << " " << tp->dodge.cooldown
+            << " " << tp->dodge.stamina << " " << (tp->dodge.iFrames ? 1 : 0) << "\n";
     }
     // Player view toggle (grok/view-toggle). Its own record, so older scenes skip it.
     // Fields: allow, view (0 first / 1 third), key, pad, blend, ex ey ez, dist, shoulder.
@@ -4777,6 +4783,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             fp->headBob = hb != 0; fp->bobAmount = ba; fp->bobSpeed = bs; fp->bobSway = bw;
                             fp->bobRunScale = br; fp->bobBlend = bb; fp->bobGroundGrace = bg; fp->eyeStepSmoothing = es;
                         }
+                        in >> std::ws;   // optional dodge (off unless a game turns it on)
+                        if (std::isdigit(in.peek())) {
+                            int on = 0, key = 0, ifr = 0;
+                            in >> on >> key >> fp->dodge.impulse >> fp->dodge.duration >> fp->dodge.cooldown
+                               >> fp->dodge.stamina >> ifr;
+                            fp->dodge.canDodge = on != 0; fp->dodge.key = (char)key; fp->dodge.iFrames = ifr != 0;
+                        }
                     }
                 } else if (field == "tpfeel") {
                     if (auto* tp = go->GetComponent<ThirdPersonController>()) {
@@ -4786,6 +4799,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                            >> tp->landShake >> tp->strideLength >> sl >> tp->slideSpeed >> tp->slideTime >> sm >> ik;
                         tp->aimWithRightMouse = a != 0; tp->autoRecenter = rc != 0; tp->canSlide = sl != 0;
                         tp->driveStateMachine = sm != 0; tp->ikLook = ik != 0;
+                        in >> std::ws;   // optional dodge (off unless a game turns it on)
+                        if (std::isdigit(in.peek())) {
+                            int on = 0, key = 0, ifr = 0;
+                            in >> on >> key >> tp->dodge.impulse >> tp->dodge.duration >> tp->dodge.cooldown
+                               >> tp->dodge.stamina >> ifr;
+                            tp->dodge.canDodge = on != 0; tp->dodge.key = (char)key; tp->dodge.iFrames = ifr != 0;
+                        }
                     }
                 } else if (field == "playerview") {
                     // grok/view-toggle. key=value record; missing keys keep the defaults.

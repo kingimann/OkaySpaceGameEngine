@@ -358,6 +358,13 @@ inline const std::vector<VsDef>& Registry() {
         {"OnObjectPlaced",  "On Object Placed", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnObjectRemoved", "On Object Removed",CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnLogicSignal",   "On Logic Signal",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        // Inventory (Event Name = the item / slot / recipe, Event Value = the count / item).
+        {"OnItemAdded", "On Item Added", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnItemRemoved", "On Item Removed", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnInventoryFull", "On Inventory Full", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnItemUsed", "On Item Used", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnEquip", "On Equip", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnCraft", "On Craft", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         // Anti-cheat (server; needs an Anti-Cheat Config in the scene).
         {"OnCheatDetected", "On Cheat Detected",CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnValidateRpc",   "On Validate Rpc",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
@@ -607,7 +614,9 @@ inline std::string VsEntryName(const std::string& type, const std::string& arg) 
         type == "OnTriggerStay" ||
         type == "OnFixedUpdate" || type == "OnDestroy" || type == "OnEnable" || type == "OnDisable" ||
         type == "OnObjectPlaced" || type == "OnObjectRemoved" || type == "OnLogicSignal" ||
-        type == "OnCheatDetected" || type == "OnValidateRpc" || type == "OnValidateHit") return type;
+        type == "OnCheatDetected" || type == "OnValidateRpc" || type == "OnValidateHit" ||
+        type == "OnItemAdded" || type == "OnItemRemoved" || type == "OnInventoryFull" ||
+        type == "OnItemUsed" || type == "OnEquip" || type == "OnCraft") return type;
     if (type == "OnAnimEvent") return arg.empty() ? std::string("OnAnimEvent") : "OnAnimEvent:" + tok(arg, "");
     if (type == "OnKey")   return "OnKey:" + tok(arg, "space");
     if (type == "OnKeyUp") return "OnKeyUp:" + tok(arg, "space");
@@ -1518,7 +1527,14 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
         {"OnDestroy",       "void OnDestroy()"},
         {"OnObjectPlaced",  "void OnObjectPlaced(string name)"},    // name = the placed object's name
         {"OnObjectRemoved", "void OnObjectRemoved(string name)"},
-        {"OnLogicSignal",   "void OnLogicSignal(string name)"}};
+        {"OnLogicSignal",   "void OnLogicSignal(string name)"},
+        // Inventory: the Event Name / Event Value nodes read these parameters.
+        {"OnItemAdded", "void OnItemAdded(string event_name, float value)"},
+        {"OnItemRemoved", "void OnItemRemoved(string event_name, float value)"},
+        {"OnInventoryFull", "void OnInventoryFull(string event_name, float value)"},
+        {"OnItemUsed", "void OnItemUsed(string event_name)"},
+        {"OnEquip", "void OnEquip(string event_name, string value)"},
+        {"OnCraft", "void OnCraft(string event_name)"}};
     // Events sharing a handler (On Click + On Mouse Down) go into one method.
     std::set<std::string> doneSig;
     for (const auto& ev : kEvents) {

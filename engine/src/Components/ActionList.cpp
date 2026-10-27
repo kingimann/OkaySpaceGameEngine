@@ -18,6 +18,7 @@
 #include "okay/Components/VisualScriptComponent.hpp"   // messages also reach node graphs
 #include "okay/Components/NativeUIActions.hpp"   // InvokeNativeUIAction (survival verbs)
 #include "okay/Components/Consumables.hpp"       // UseIndex
+#include "okay/Components/ItemPickup.hpp"        // InventoryOf (give / take / has_item)
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Collider2D.hpp"
@@ -131,6 +132,15 @@ std::string Rest(const ActionList::Item& it, std::size_t i) {
 }
 // An object-name argument: a literal name, or "$textvar" to read the name from a
 // text variable — so a For Each Tagged loop can act on "the current object".
+// give / take / has_item: an item id or name, a count (default 1), and an optional
+// object whose Inventory it is (default this object's, else its root's).
+int ItemCount(const ActionList::Item& it) { return it.args.size() > 1 ? (int)std::atof(it.args[1].c_str()) : 1; }
+std::string ObjName(const ActionList::Item& it, std::size_t i);
+Inventory* ItemInv(const ActionList::Item& it, GameObject* self, Scene* s) {
+    GameObject* g = it.args.size() > 2 ? (s ? s->Find(ObjName(it, 2)) : nullptr) : self;
+    return ItemPickup::InventoryOf(g);
+}
+std::string ItemName(const ActionList::Item& it) { return ItemDatabase::Get().Resolve(Str(it, 0)); }
 std::string ObjName(const ActionList::Item& it, std::size_t i) {
     std::string s = Str(it, i);
     if (s.size() > 1 && s[0] == '$') {
@@ -589,6 +599,10 @@ bool ActionList::EvalConditions(const std::vector<Item>& conds) {
         else if (op == "str_ends")     { const std::string& s = StrVars()[Str(c, 0)]; std::string p = Rest(c, 1); ok = s.size() >= p.size() && s.compare(s.size() - p.size(), p.size(), p) == 0; }
         else if (op == "has_tag")  ok = gameObject && gameObject->tag == Str(c, 0);
         else if (op == "is_active")ok = gameObject && gameObject->active;
+        else if (op == "has_item") {      // item [count] [object]: the inventory holds at least count
+            Inventory* inv = ItemInv(c, gameObject, GetScene());
+            ok = inv && inv->Has(ItemName(c), ItemCount(c));
+        }
         else if (op == "obj_has_tag") {   // does a NAMED object have this tag?
             Scene* s = GetScene(); GameObject* g = s ? s->Find(ObjName(c, 0)) : nullptr;
             ok = g && g->tag == Str(c, 1);
@@ -1577,6 +1591,14 @@ void ActionList::Update(float dt) {
         else if (op == "use_item") {
             if (gameObject) if (auto* cons = gameObject->GetComponent<Consumables>())
                 cons->UseIndex((int)Num(it, 0));
+        }
+        else if (op == "give") {   // item [count] [object]: as many as fit (on_inventory_full reports the rest)
+            if (Inventory* inv = ItemInv(it, gameObject, GetScene())) inv->AddPartial(ItemName(it), ItemCount(it));
+        }
+        else if (op == "take") {   // item [count] [object]: all or nothing
+            Inventory* inv = ItemInv(it, gameObject, GetScene());
+            const std::string item = ItemName(it);
+            if (inv && inv->Has(item, ItemCount(it))) inv->Remove(item, ItemCount(it));
         }
         // ---- Added ops: single-axis position, game flow, facing, chase/spawn ----
         else if (op == "set_x") { if (t) t->localPosition.x = Num(it, 0); }

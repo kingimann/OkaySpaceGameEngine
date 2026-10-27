@@ -201,6 +201,33 @@ private:
     float m_len = -1.0f;
 };
 
+/// Mouse pixels this frame, before sensitivity. A warp (capture starting, or a
+/// tool injecting a jump) is dropped. A large flick is capped. Never scale this
+/// by frame time: degrees are pixels times sensitivity, so a hitch cannot swing
+/// the view.
+inline void LookPixels(float& dx, float& dy) {
+    const float ax = std::fabs(dx), ay = std::fabs(dy);
+    if (ax >= 700.0f || ay >= 700.0f || ax + ay >= 700.0f) { dx = 0.0f; dy = 0.0f; return; }
+    if (dx > 220.0f) dx = 220.0f;
+    else if (dx < -220.0f) dx = -220.0f;
+    if (dy > 220.0f) dy = 220.0f;
+    else if (dy < -220.0f) dy = -220.0f;
+}
+
+/// Pitch stays short of straight up or straight down. A wider window (a blend,
+/// or a look easing home) cannot open past this, or the view flips over.
+inline void ClampPitchWindow(float& lo, float& hi) {
+    constexpr float kCap = 89.0f;
+    if (lo < -kCap) lo = -kCap;
+    if (hi > kCap) hi = kCap;
+    if (lo > hi) { lo = -kCap; hi = kCap; }
+}
+inline float ClampLookPitch(float pitch) {
+    if (pitch > 89.0f) return 89.0f;
+    if (pitch < -89.0f) return -89.0f;
+    return pitch;
+}
+
 /// Grounded stops stay at full deceleration until 2.2 m/s, then ease out
 /// (time constant 0.10 s). The last 0.12 m/s uses the full rate so the body
 /// actually reaches rest. Airborne stops are unchanged.

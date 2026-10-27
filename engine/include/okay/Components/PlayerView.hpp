@@ -101,6 +101,7 @@ private:
     void DestLimits(bool thirdController, float nativeMin, float nativeMax, float& lo, float& hi) const;
     void ApplyHead();
     void PlaceCamera(float dt);
+    void KeepLensClear(Camera* cam) const;
 };
 
 /// True when `go`'s FirstPersonController should move the body this frame.

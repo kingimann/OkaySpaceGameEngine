@@ -56,7 +56,7 @@ public:
     float jumpBufferTime = 0.12f;
     int   maxJumps = 1;                 // 1 = single jump, 2 = double jump, etc.
     float mouseSensitivity = 0.15f;     // degrees per pixel of mouse movement
-    float minPitch = -85.0f, maxPitch = 85.0f;
+    float minPitch = -89.0f, maxPitch = 89.0f;
     bool  invertY = false;              // invert vertical mouse look
     // View bob: up and down only, in step with walking. No sideways sway and no
     // roll — those tilt the horizon. Scales with speed; smooths out when idle.
@@ -273,7 +273,11 @@ public:
         in.yaw = yaw; in.pitch = pitch;
         if (m_haveMouse && !uiBlocked) {
             float sens = mouseSensitivity * (zoomWithRightMouse && zoom ? zoomSensitivity : 1.0f);
-            float dx = (mp.x - m_lastMouse.x) * sens, dy = (mp.y - m_lastMouse.y) * sens;
+            // Pixels, then degrees. Frame time is not part of this: a long frame
+            // must not turn a small move into a flip.
+            float pdx = mp.x - m_lastMouse.x, pdy = mp.y - m_lastMouse.y;
+            LookPixels(pdx, pdy);
+            float dx = pdx * sens, dy = pdy * sens;
             in.yaw   -= dx;
             in.pitch += (invertY ? 1.0f : -1.0f) * dy;
             // Kept here too, so the look adds up where Simulate doesn't run every
@@ -282,8 +286,9 @@ public:
             if (gameObject)
                 if (auto* view = gameObject->GetComponent<PlayerView>())
                     view->LookLimits(false, minPitch, maxPitch, lo, hi);
+            ClampPitchWindow(lo, hi);
             yaw = in.yaw;
-            pitch = in.pitch = Mathf::Clamp(in.pitch, lo, hi);
+            pitch = in.pitch = ClampLookPitch(Mathf::Clamp(in.pitch, lo, hi));
         }
         // Drop the baseline while a bag is open: the fed mouse switches between locked
         // (accumulated relative) and free (absolute) space, so without this the first
@@ -321,7 +326,8 @@ public:
             if (gameObject)
                 if (auto* view = gameObject->GetComponent<PlayerView>())
                     view->LookLimits(false, minPitch, maxPitch, lo, hi);
-            if (in.pitch != pitch) pitch = Mathf::Clamp(in.pitch, lo, hi);
+            ClampPitchWindow(lo, hi);
+            if (in.pitch != pitch) pitch = ClampLookPitch(Mathf::Clamp(in.pitch, lo, hi));
             if (gameObject)
                 if (auto* view = gameObject->GetComponent<PlayerView>())
                     view->ConformPitch(pitch, false, minPitch, maxPitch, dt);

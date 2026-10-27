@@ -196,7 +196,7 @@ void PlayerView::NoteIllegalPitch() {
         pitch = fp->pitch; lo = -70.0f; hi = 20.0f;
     } else return;
     if (pitch < lo || pitch > hi) {
-        if (!m_pitchHoming) m_homeFrom = pitch;
+        if (!m_pitchHoming) m_homeFrom = ClampLookPitch(pitch);
         m_pitchHoming = true;
     }
 }
@@ -275,11 +275,10 @@ bool PlayerView::CameraNearEyes(Camera* cam) const {
         }
     }
     const float dist = (cam->transform->Position() - head).Magnitude();
-    // Half the head, plus one head-size of clearance, plus a little so the
-    // third-person near plane (0.3 m) cannot slice the shell open. Never
-    // closer than 0.90 m: a walk brings the back of the head up until it
-    // fills the lens, which is still outside that one-head clearance.
-    return dist < std::max(size * 1.5f + 0.12f, 0.90f);
+    // Hide before the skull fills the frame. The straight slide passes the
+    // back of the head while the lens is still more than a metre out, which
+    // the old 0.90 m test still drew. A resting orbit (about 5 m) stays outside.
+    return dist < std::max(size * 2.2f + 0.25f, 1.45f);
 }
 
 void PlayerView::PullCameraIn(Camera* cam, const Vec3& eye, Vec3& want) const {
@@ -296,6 +295,11 @@ void PlayerView::PullCameraIn(Camera* cam, const Vec3& eye, Vec3& want) const {
     const RaycastHit3D hit = sc->physics3D().SphereCast(
         *sc, eye, dir, radius, dist + skin, gameObject, Physics3D::kAllLayers, false);
     if (!hit.hit) return;
+    // A probe that starts inside a solid reports distance 0. Pulling to that
+    // origin pins the lens on the buried eye for the whole blend, so V cannot
+    // climb back out. Leave the lerped pose; KeepLensClear lifts a lens that
+    // is actually under the ground.
+    if (hit.distance < 0.02f) return;
     const float allow = std::max(0.05f, hit.distance - skin);
     if (allow < dist) want = eye + dir * allow;
 }
@@ -323,7 +327,7 @@ void PlayerView::StepBlend(float dt) {
 
 void PlayerView::DestLimits(bool thirdController, float nativeMin, float nativeMax, float& lo, float& hi) const {
     if (m_target == View::First) {
-        if (thirdController) { lo = -85.0f; hi = 85.0f; }
+        if (thirdController) { lo = -89.0f; hi = 89.0f; }
         else { lo = nativeMin; hi = nativeMax; }
     } else if (thirdController) {
         lo = nativeMin; hi = nativeMax;
@@ -351,6 +355,8 @@ void PlayerView::LookLimits(bool thirdController, float nativeMin, float nativeM
         lo = std::min(lo, std::min(m_homeFrom, m_restPitch));
         hi = std::max(hi, std::max(m_homeFrom, m_restPitch));
     }
+    // Homing must not hold an angle past straight up or down. That is the flip.
+    ClampPitchWindow(lo, hi);
 }
 
 void PlayerView::ConformPitch(float& pitch, bool thirdController, float nativeMin, float nativeMax, float dt) {
@@ -507,6 +513,46 @@ void PlayerView::ApplyHead() {
     m_fpApplied = false;
 }
 
+namespace {
+
+bool PoseFinite(const Vec3& p) {
+    return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z);
+}
+
+Vec3 StandingEye(GameObject* go) {
+    float h = 1.6f;
+    if (go)
+        if (auto* fp = go->GetComponent<FirstPersonController>()) h = fp->standEyeHeight;
+    if (!go || !go->transform) return Vec3{0.0f, h, -0.2f};
+    return go->transform->TransformPoint(Vec3{0.0f, h, -0.20f});
+}
+
+/// The blend start is the eye the first-person controller just wrote. A pose
+/// that is non-finite, metres away from that eye, or under the feet is a stale
+/// orbit or a zero — not a place to start the slide.
+void RejectStaleEye(GameObject* go, Vec3& pos) {
+    if (!go || !go->transform) return;
+    const Vec3 eye = StandingEye(go);
+    const Vec3 feet = go->transform->Position();
+    const bool bad = !PoseFinite(pos) || (pos - eye).Magnitude() > 4.0f || pos.y < feet.y - 0.5f;
+    if (bad) pos = eye;
+}
+
+/// The straight slide from the orbit to the eyes passes through the skull.
+/// Bow over the shoulder only on that stretch (t near the eyes). t near 1
+/// (just leaving the orbit, and the settled orbit) is unchanged.
+Vec3 ShoulderBow(Transform* body, const Vec3& pos, float t, float shoulder) {
+    if (!body || !(t > 0.03f && t < 0.45f)) return pos;
+    const float u = (t - 0.03f) / 0.42f;
+    const float bow = std::sin(u * 3.14159265f);
+    const float side = shoulder < 0.0f ? -1.0f : 1.0f;
+    const float mag = std::max(0.55f, std::fabs(shoulder));
+    const Vec3 right = body->Rotation() * Vec3{1.0f, 0.0f, 0.0f};
+    return pos + right * (side * mag * bow) + Vec3{0.0f, 0.45f * bow, 0.0f};
+}
+
+} // namespace
+
 void PlayerView::PlaceCamera(float dt) {
     if (!Driving() || !gameObject || !transform) return;
     Camera* cam = ViewCamera(gameObject);
@@ -530,11 +576,14 @@ void PlayerView::PlaceCamera(float dt) {
             Pose fp = ReadPose(cam->transform);
             if (eyeOffset.x != 0.0f || eyeOffset.y != 0.0f || eyeOffset.z != 0.0f)
                 fp.position = fp.position + fp.rotation * eyeOffset;
+            RejectStaleEye(gameObject, fp.position);
             Pose tpPose;
             tpPose.position = tpc->PresentedOrbitPosition();
             tpPose.rotation = tpc->PresentedOrbitRotation();
+            if (!PoseFinite(tpPose.position)) tpPose.position = fp.position;
             const float t = EasedThird();
             Vec3 pos = Vec3::Lerp(fp.position, tpPose.position, t);
+            pos = ShoulderBow(transform, pos, t, shoulderOffset);
             PullCameraIn(cam, fp.position, pos);
             cam->transform->SetPosition(pos);
             cam->transform->SetRotation(Quat::Slerp(fp.rotation, tpPose.rotation, t));
@@ -591,8 +640,11 @@ void PlayerView::PlaceCamera(float dt) {
         }
     }
 
+    RejectStaleEye(gameObject, fp.position);
+    if (!PoseFinite(tp.position)) tp.position = fp.position;
     const float t = EasedThird();
     Vec3 pos = Vec3::Lerp(fp.position, tp.position, t);
+    pos = ShoulderBow(transform, pos, t, shoulderOffset);
     // The straight slide can cut a wall the orbit arm would have stopped at.
     // Sweep from the eyes and keep the lens on the near side of whatever it hits.
     PullCameraIn(cam, fp.position, pos);
@@ -600,11 +652,41 @@ void PlayerView::PlaceCamera(float dt) {
     cam->transform->SetRotation(Quat::Slerp(fp.rotation, tp.rotation, t));
 }
 
+void PlayerView::KeepLensClear(Camera* cam) const {
+    if (!cam || !cam->transform || !gameObject || !gameObject->transform) return;
+    const Vec3 feet = gameObject->transform->Position();
+    Vec3 p = cam->transform->Position();
+    if (!PoseFinite(p)) {
+        cam->transform->SetPosition(feet + Vec3{0.0f, 1.6f, 0.0f});
+        return;
+    }
+    Scene* sc = gameObject->scene();
+    if (sc && sc->physicsEnabled) {
+        // Start above the slab. A ray that begins inside it reports no normal
+        // and would leave the lens where it is.
+        const float startY = std::max(p.y, feet.y + 1.2f) + 0.5f;
+        Physics3D::IgnoreHierarchy own(gameObject);
+        const RaycastHit3D hit = sc->physics3D().Raycast(
+            *sc, Vec3{p.x, startY, p.z}, Vec3{0.0f, -1.0f, 0.0f},
+            startY - p.y + 1.0f, gameObject, Physics3D::kAllLayers, false);
+        // Below the surface, or sitting on it so the near plane is the ground.
+        // A lens that is already up in the air is left where the orbit put it.
+        if (hit.hit && hit.normal.y > 0.5f && p.y < hit.point.y + 0.20f) {
+            p.y = std::max(hit.point.y + 0.45f, feet.y + 0.45f);
+            cam->transform->SetPosition(p);
+        }
+    } else if (p.y < feet.y + 0.25f) {
+        p.y = feet.y + 0.45f;
+        cam->transform->SetPosition(p);
+    }
+}
+
 void PlayerView::LateUpdate(float dt) {
     if (!Driving()) return;
     // Place the lens first. The head is skipped once that lens is within a
     // head of the skull, which PlaceCamera has just done.
     PlaceCamera(dt);
+    KeepLensClear(ViewCamera(gameObject));
     ApplyHead();
     // The lens is in its final spot for this frame. The arm copy has to be
     // placed after that, or it is posed on the orbit camera and fills the view.

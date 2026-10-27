@@ -275,8 +275,12 @@ public:
         in.yaw = yaw; in.pitch = pitch;
         if (m_haveMouse && !uiBlocked) {
             float sens = mouseSensitivity * (aimWithRightMouse && aim ? aimSensitivity : 1.0f);
-            float dx = (mp.x - m_lastMouse.x) * sens, dy = (mp.y - m_lastMouse.y) * sens;
-            if (std::fabs(mp.x - m_lastMouse.x) + std::fabs(mp.y - m_lastMouse.y) > 0.5f) m_mouseIdle = 0.0f;
+            // Pixels, then degrees. m_lookDt is only the idle timer below; it
+            // does not scale the look, so a hitch cannot swing the orbit.
+            float pdx = mp.x - m_lastMouse.x, pdy = mp.y - m_lastMouse.y;
+            LookPixels(pdx, pdy);
+            float dx = pdx * sens, dy = pdy * sens;
+            if (std::fabs(pdx) + std::fabs(pdy) > 0.5f) m_mouseIdle = 0.0f;
             else m_mouseIdle += m_lookDt;
             in.yaw   += (invertX ? 1.0f : -1.0f) * dx;
             in.pitch += (invertY ? -1.0f : 1.0f) * dy;
@@ -286,8 +290,9 @@ public:
             if (gameObject)
                 if (auto* view = gameObject->GetComponent<PlayerView>())
                     view->LookLimits(true, minPitch, maxPitch, lo, hi);
+            ClampPitchWindow(lo, hi);
             yaw = in.yaw;
-            pitch = in.pitch = Mathf::Clamp(in.pitch, lo, hi);
+            pitch = in.pitch = ClampLookPitch(Mathf::Clamp(in.pitch, lo, hi));
         }
         // Drop the baseline while a bag is open (locked/free mouse space switch) so the
         // camera doesn't snap on the first frame after the panel closes.
@@ -328,7 +333,8 @@ public:
             if (gameObject)
                 if (auto* view = gameObject->GetComponent<PlayerView>())
                     view->LookLimits(true, minPitch, maxPitch, lo, hi);
-            if (in.pitch != pitch) pitch = Mathf::Clamp(in.pitch, lo, hi);
+            ClampPitchWindow(lo, hi);
+            if (in.pitch != pitch) pitch = ClampLookPitch(Mathf::Clamp(in.pitch, lo, hi));
             if (gameObject)
                 if (auto* view = gameObject->GetComponent<PlayerView>())
                     view->ConformPitch(pitch, true, minPitch, maxPitch, dt);

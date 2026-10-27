@@ -42022,7 +42022,10 @@ int main(int argc, char** argv) {
             bool capture = (g_gameMouseCapture || Cursor::IsLocked()) && !gameModal && !g_gameCursorReleased;
             static Vec2 s_gameVMouse{0, 0};
             if (capture) {
-                SDL_SetRelativeMouseMode(SDL_TRUE);
+                // Relative mode only on the transition. Calling it every frame
+                // re-warps, and that warp was added on top of the real delta.
+                if (!s_playLookLocked)
+                    SDL_SetRelativeMouseMode(SDL_TRUE);
                 int dxp = 0, dyp = 0;
                 Uint32 rmb = SDL_GetRelativeMouseState(&dxp, &dyp);
                 if (!s_playLookLocked) {
@@ -42030,7 +42033,7 @@ int main(int argc, char** argv) {
                     // canvas sample the controller already took as its baseline.
                     s_gameVMouse = s_playLookAnchor;
                     s_playLookLocked = true;
-                } else {
+                } else if (std::abs(dxp) + std::abs(dyp) <= 600) {
                     s_gameVMouse.x += (float)dxp;
                     s_gameVMouse.y += (float)dyp;
                 }
@@ -42040,8 +42043,9 @@ int main(int argc, char** argv) {
                 if (rmb & SDL_BUTTON(SDL_BUTTON_MIDDLE)) mask |= 1u << 2;
                 Input::FeedMouse(s_gameVMouse, mask);
             } else {
+                if (s_playLookLocked)
+                    SDL_SetRelativeMouseMode(SDL_FALSE);
                 s_playLookLocked = false;
-                SDL_SetRelativeMouseMode(SDL_FALSE);
                 // Mouse, relative to the Game/Scene canvas so UI buttons hit-test
                 // against the same coordinates the preview draws with.
                 ImVec2 mp = ImGui::GetMousePos();

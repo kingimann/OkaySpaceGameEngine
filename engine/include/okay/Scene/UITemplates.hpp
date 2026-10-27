@@ -33,6 +33,8 @@
 #include "okay/Graphics/Image.hpp"
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UIRadialProgress.hpp"
+#include "okay/Components/UIColorPicker.hpp"   // grok/ui-color
+#include "okay/Components/ScriptComponent.hpp" // grok/ui-color
 #include "okay/Components/Crosshair.hpp"       // grok/ui-hud
 #include "okay/Components/UISlotGrid.hpp"      // grok/ui-hud
 #include "okay/Components/ScriptComponent.hpp" // grok/ui-hud
@@ -755,6 +757,32 @@ inline GameObject* AddLeaderboard(Scene& scene) {
         Text(scene, row, "Name", names[i], UIAnchor::TopLeft, {90, 0}, {200, 48}, 16.0f);
         Text(scene, row, "Points", std::to_string(pts[i]), UIAnchor::TopRight, {-14, 0}, {120, 48}, 16.0f, slate::Text(), 2, true);
     }
+    return root;
+}
+
+// grok/ui-color — swatches plus the current color. Fits 1280x720. Not in the template test table.
+inline GameObject* AddUIColor(Scene& scene) {
+    using namespace detail;
+    GameObject* canvas = EnsureCanvas(scene);
+    GameObject* root = Group(scene, canvas, "UI Color");
+    Panel(scene, root, "Backdrop", UIAnchor::TopLeft, {0, 0}, {1280, 720}, slate::Backdrop(), 0.0f);
+    Caption(scene, root, "Head", "COLOR", UIAnchor::TopLeft, {36, 36}, 240);
+    Text(scene, root, "Title", "Pick a swatch", UIAnchor::TopLeft, {36, 58}, {480, 36}, 28.0f, slate::Text(), 0, true);
+    GameObject* picker = Child(scene, root, "Picker");
+    auto* cp = picker->AddComponent<UIColorPicker>();
+    cp->anchor = UIAnchor::TopLeft;
+    cp->position = {36, 140};
+    cp->SetSwatchSize(56);
+    cp->SetGap(12);
+    cp->SetValue(6);
+    cp->Rebuild();
+    picker->AddComponent<ScriptComponent>()->LoadSource(
+        "function on_change() {\n"
+        "  ui_set_text(\"Status\", \"picked\");\n"
+        "}\n");
+    Text(scene, root, "Status", "ready", UIAnchor::TopLeft, {36, 280}, {400, 40}, 22.0f, slate::Text(), 0, true);
+    Text(scene, root, "Hint", "The chip on the right is the current color. The white edge is the selection.",
+         UIAnchor::TopLeft, {36, 340}, {760, 28}, 16.0f, slate::Dim());
     return root;
 }
 

@@ -146,6 +146,7 @@
 #include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/Minimap.hpp"
 #include "okay/Components/Crosshair.hpp"
+#include "okay/Components/UIColorPicker.hpp"   // grok/ui-color
 #include "okay/Components/UISlotGrid.hpp"   // grok/ui-hud
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIStepper.hpp"
@@ -2581,6 +2582,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << sg->hoverColor.r << " " << sg->hoverColor.g << " " << sg->hoverColor.b << " " << sg->hoverColor.a << " "
             << sg->labels.size();
         for (const auto& lb : sg->labels) out << " " << Quote(lb);
+        out << "\n";
+    }
+    if (auto* cp = go->GetComponent<UIColorPicker>()) { // grok/ui-color
+        out << "  uicolorpicker " << cp->position.x << " " << cp->position.y << " " << (int)cp->anchor << " "
+            << cp->swatch << " " << cp->gap << " " << cp->value << " " << cp->swatches.size();
+        for (const Color& c : cp->swatches)
+            out << " " << c.r << " " << c.g << " " << c.b << " " << c.a;
         out << "\n";
     }
     if (auto* sa = go->GetComponent<UISafeArea>())
@@ -6324,6 +6332,17 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     for (std::size_t i = 0; i < n && in; ++i) sg->labels.push_back(ReadQuoted(in));
                     // Children are parented after every object exists. Update builds any slot
                     // that wasn't saved; calling Rebuild here would duplicate them.
+                } else if (field == "uicolorpicker") { // grok/ui-color
+                    auto* cp = go->AddComponent<UIColorPicker>();
+                    int an = 0; std::size_t n = 0;
+                    in >> cp->position.x >> cp->position.y >> an >> cp->swatch >> cp->gap >> cp->value >> n;
+                    cp->anchor = (UIAnchor)an;
+                    cp->swatches.clear();
+                    for (std::size_t i = 0; i < n && in; ++i) {
+                        Color c;
+                        in >> c.r >> c.g >> c.b >> c.a;
+                        cp->swatches.push_back(c);
+                    }
                 } else if (field == "uisafearea") {
                     auto* sa = go->AddComponent<UISafeArea>();
                     int l = 1, t = 1, r = 1, b = 1, en = 1;

@@ -5373,6 +5373,7 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         if (ImGui::MenuItem("Radial Progress")) addUI("Radial",   [](GameObject* g){ g->AddComponent<UIRadialProgress>(); });
         if (ImGui::MenuItem("Minimap"))      addUI("Minimap",     [](GameObject* g){ g->AddComponent<Minimap>(); });
         if (ImGui::MenuItem("Crosshair"))    addUI("Crosshair",   [](GameObject* g){ g->AddComponent<Crosshair>(); });
+        if (ImGui::MenuItem("Color Picker")) addUI("ColorPicker", [](GameObject* g){ g->AddComponent<UIColorPicker>()->Rebuild(); }); // grok/ui-color
         if (ImGui::MenuItem("Slot Grid"))    addUI("SlotGrid",   [](GameObject* g){ g->AddComponent<UISlotGrid>()->Rebuild(); }); // grok/ui-hud
         if (ImGui::MenuItem("Tooltip"))      addUI("Tooltip",     [](GameObject* g){ g->AddComponent<UIPanel>(); g->AddComponent<UITooltip>(); });
         ImGui::EndMenu();
@@ -5479,6 +5480,7 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         add("Scoreboard",           &okay::UITemplates::AddScoreboard);
         add("Leaderboard",          &okay::UITemplates::AddLeaderboard);
         add("Matchmaking",          &okay::UITemplates::AddMatchmaking);
+        add("UI Color",             &okay::UITemplates::AddUIColor); // grok/ui-color
         add("UI HUD",               &okay::UITemplates::AddUIHUD); // grok/ui-hud
         add("UI Controls",          &okay::UITemplates::AddUIControls);   // grok/ui-controls
         add("UI Notify",            &okay::UITemplates::AddUINotify);   // grok/ui-toast
@@ -10483,6 +10485,7 @@ void DrawScriptDocs() {
         fapi("ui_tab_value(\"n\") / ui_tab_text(\"n\") / ui_set_tab(\"n\", i)", "selected tab index / label; select a tab (fires on_change)");
         fapi("ui_set_tab_badge(\"n\", i, count) / ui_set_tab_enabled(\"n\", i, on)", "badge a tab (0 none, -1 dot) / enable or disable it");
         fapi("ui_set_progress(\"n\", v)", "set a progress bar's fill (0..1)");
+        fapi("set_swatch(\"n\", i) / swatch_value(\"n\")", "pick a color swatch / read the index"); // grok/ui-color
         fapi("kick_spread(\"n\", px) / set_spread / set_spread_recover", "crosshair gap; recover eases it back"); // grok/ui-hud
         fapi("set_radial(\"n\", v) / set_radial_thickness / set_radial_start", "radial fill, ring width, start angle"); // grok/ui-hud
         fapi("set_radial_spin / set_radial_clockwise / set_radial_percent", "loader spin, direction, percent text"); // grok/ui-hud
@@ -10889,6 +10892,7 @@ static const std::vector<std::string>& ScriptCompletions() {
         // ui
         "ui_set_text","ui_get_text","ui_clicked","ui_slider_value","ui_set_slider",
         "ui_toggle_value","ui_set_progress",
+        "set_swatch","swatch_value", // grok/ui-color
         "kick_spread","set_spread","set_spread_recover","set_radial","set_slot","slot_value", // grok/ui-hud
 
         // grok/ui-toast
@@ -10995,6 +10999,7 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"ui_checkbox","ui_checkbox(\"Label\", on)"}, {"ui_slider","ui_slider(\"Label\", v, lo, hi)"},
         {"ui_progress","ui_progress(t)"}, {"ui_set_text","ui_set_text(\"n\", \"s\")"}, {"ui_get_text","ui_get_text(\"n\")"},
         {"ui_clicked","ui_clicked(\"n\")"}, {"ui_set_slider","ui_set_slider(\"n\", v)"}, {"ui_set_progress","ui_set_progress(\"n\", v)"},
+        {"set_swatch","set_swatch(\"n\", i)"}, {"swatch_value","swatch_value(\"n\")"}, // grok/ui-color
         {"kick_spread","kick_spread(\"n\", px)"}, {"set_spread","set_spread(\"n\", px)"}, {"set_radial","set_radial(\"n\", v)"}, {"set_slot","set_slot(\"n\", i)"}, // grok/ui-hud
         // grok/ui-controls
         {"set_dropdown_search","set_dropdown_search(\"n\", on)"}, {"set_dropdown_max","set_dropdown_max(\"n\", rows)"},
@@ -11326,6 +11331,9 @@ static const std::string* ScriptDoc(const std::string& name) {
         {"ease_back","Ease with a slight backward overshoot."},
         {"ease_elastic","Springy elastic ease-out."},
         {"ease_bounce","Bouncing ease-out."},
+        // grok/ui-color
+        {"set_swatch","Select a swatch on a named color picker. Fires on_change when it changes."},
+        {"swatch_value","The selected swatch index on a named color picker, or -1."},
         // grok/ui-hud
         {"kick_spread","Push a named crosshair's ticks apart. They ease back while its recover rate is above 0."},
         {"set_spread","Set a named crosshair's extra gap, in pixels."},
@@ -17155,6 +17163,7 @@ void DrawHierarchy(EditorState& ed) {
             if (ImGui::MenuItem("Radial Progress")) mkUI("Radial", [](GameObject* g){ g->AddComponent<UIRadialProgress>(); });
             if (ImGui::MenuItem("Minimap"))      mkUI("Minimap", [](GameObject* g){ g->AddComponent<Minimap>(); });
             if (ImGui::MenuItem("Crosshair"))    mkUI("Crosshair", [](GameObject* g){ g->AddComponent<Crosshair>(); });
+            if (ImGui::MenuItem("Color Picker")) mkUI("ColorPicker", [](GameObject* g){ g->AddComponent<UIColorPicker>()->Rebuild(); }); // grok/ui-color
             if (ImGui::MenuItem("Slot Grid"))    mkUI("SlotGrid", [](GameObject* g){ g->AddComponent<UISlotGrid>()->Rebuild(); }); // grok/ui-hud
             if (ImGui::MenuItem("Input Field"))  mkUI("InputField", [](GameObject* g){ g->AddComponent<UIInputField>(); });
             if (ImGui::MenuItem("Dropdown"))     mkUI("Dropdown", [](GameObject* g){ g->AddComponent<UIDropdown>(); });
@@ -34521,6 +34530,28 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##uch")) toRemove = cr;
         }
     }
+    if (auto* cp = dynamic_cast<UIColorPicker*>(curComp)) { // grok/ui-color
+        if (CompHeader("UI Color Picker", cp, &toRemove)) {
+            float pos[2] = {cp->position.x, cp->position.y};
+            if (ImGui::DragFloat2("Pos (px)##ucp", pos, 1.0f)) { cp->position = {pos[0], pos[1]}; cp->Rebuild(); ed.dirty = true; }
+            if (ImGui::DragFloat("Swatch##ucp", &cp->swatch, 1.0f, 16.0f, 128.0f)) { cp->SetSwatchSize(cp->swatch); cp->Rebuild(); ed.dirty = true; }
+            float gap = cp->gap;
+            if (ImGui::DragFloat("Gap##ucp", &gap, 0.5f, 0.0f, 48.0f)) { cp->SetGap(gap); cp->Rebuild(); ed.dirty = true; }
+            int sel = cp->value;
+            if (ImGui::DragInt("Selected##ucp", &sel, 0.1f, 0, std::max(0, cp->Count() - 1))) { cp->SetValue(sel); ed.dirty = true; }
+            AnchorCombo("Anchor##ucp", cp->anchor, ed);
+            cp->Rebuild();
+            for (int i = 0; i < cp->Count(); ++i) {
+                Color c = cp->swatches[(std::size_t)i];
+                float col[4] = {c.r, c.g, c.b, c.a};
+                ImGui::PushID(i);
+                if (ImGui::ColorEdit4("Swatch##ucp", col)) { cp->SetSwatch(i, {col[0], col[1], col[2], col[3]}); cp->Rebuild(); ed.dirty = true; }
+                ImGui::PopID();
+            }
+            ImGui::TextDisabled("script: set_swatch(\"name\", i)   event: on_change");
+            if (ImGui::SmallButton("Remove##ucp")) toRemove = cp;
+        }
+    }
     if (auto* sg = dynamic_cast<UISlotGrid*>(curComp)) { // grok/ui-hud
         if (CompHeader("UI Slot Grid", sg, &toRemove)) {
             float pos[2] = {sg->position.x, sg->position.y};
@@ -35538,6 +35569,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Minimap>(), "Minimap")) { go->AddComponent<Minimap>(); ed.dirty = true; }
             if (item(!go->GetComponent<MinimapBlip>(), "Minimap Blip")) { go->AddComponent<MinimapBlip>(); ed.dirty = true; }
             if (item(!go->GetComponent<Crosshair>(), "Crosshair")) { go->AddComponent<Crosshair>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIColorPicker>(), "UI Color Picker")) { go->AddComponent<UIColorPicker>()->Rebuild(); ed.dirty = true; } // grok/ui-color
             if (item(!go->GetComponent<UISlotGrid>(), "UI Slot Grid")) { go->AddComponent<UISlotGrid>()->Rebuild(); ed.dirty = true; } // grok/ui-hud
             if (item(!go->GetComponent<LoadingScreen>(), "Loading Screen")) {
                 auto* ls = go->AddComponent<LoadingScreen>();
@@ -42888,6 +42920,7 @@ int main(int argc, char** argv) {
                     {"UI Notify", &AddUINotify},   // grok/ui-toast
                     {"UI Showcase", &AddUIShowcase},   // grok/ui-theme
                     {"Matchmaking", &AddMatchmaking}, {"Leaderboard", &AddLeaderboard},
+                    {"UI Color", &AddUIColor}, // grok/ui-color
                     {"UI Options", &AddUIOptions}};   // grok/ui-options
                 for (const auto& sc : kScreens)
                     if (n == sc.first) { ed.PushUndo(); ed.Select(sc.second(ed.scene())); }

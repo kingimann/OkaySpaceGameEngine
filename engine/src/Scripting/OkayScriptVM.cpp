@@ -57,6 +57,7 @@
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/UIProgressBar.hpp"
+#include "okay/Components/UIColorPicker.hpp"   // grok/ui-color
 #include "okay/Components/UIRadialProgress.hpp"   // grok/ui-hud
 #include "okay/Components/Crosshair.hpp"          // grok/ui-hud
 #include "okay/Components/UISlotGrid.hpp"         // grok/ui-hud
@@ -4478,6 +4479,17 @@ struct OkayScriptVM::Impl {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
                 if (auto* pb = g->GetComponent<UIProgressBar>()) pb->value = a[1].AsFloat();
             return Value{};
+        };
+        // grok/ui-color — pick a swatch on a named color picker (fires on_change).
+        b["set_swatch"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* cp = g->GetComponent<UIColorPicker>()) cp->SetValue((int)a[1].AsFloat());
+            return Value{};
+        };
+        b["swatch_value"] = [sceneOf](std::vector<Value>& a) -> Value {
+            if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = s->Find(a[0].AsString()))
+                if (auto* cp = g->GetComponent<UIColorPicker>()) return Value{(float)cp->Value()};
+            return Value{-1.0f};
         };
         // grok/ui-hud — crosshair recovery, radial options, and the slot grid, by object name.
         b["kick_spread"] = [sceneOf](std::vector<Value>& a) {

@@ -12,6 +12,7 @@
 #include "okay/Math/Quat.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Components/PlayerView.hpp"
+#include "okay/Components/UIColorPicker.hpp"   // grok/ui-color
 #include "okay/Components/Crosshair.hpp"          // grok/ui-hud
 #include "okay/Components/UIRadialProgress.hpp"   // grok/ui-hud
 #include "okay/Components/UISlotGrid.hpp"         // grok/ui-hud
@@ -326,6 +327,27 @@ EngineApi Build() {
         get.pure = true;
         pv.methods.push_back(std::move(get));
         api.types.push_back(std::move(pv));
+    }
+    // ---- grok/ui-color ----
+    {
+        ApiType cp; cp.name = "UIColorPicker"; cp.isComponent = true;
+        cp.doc = "A row of color swatches. The chosen swatch is the current color.";
+        cp.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIColorPicker>() : nullptr; };
+        auto of = [](const Value& self, CallContext& c) -> UIColorPicker* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* p = g->GetComponent<UIColorPicker>();
+            if (!p) throw RuntimeError("'" + g->name + "' has no Color Picker (add one in the Inspector)", c.loc);
+            return p;
+        };
+        cp.methods.push_back(method("SetValue", {tInt}, {"index"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->SetValue(I(a[0])); return Value{}; },
+            "Select a swatch by index. The chip shows that color."));
+        ApiMethod val = method("Value", {}, {}, tInt,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{(std::int32_t)of(s, c)->Value()}; },
+            "The selected swatch, or -1.");
+        val.pure = true;
+        cp.methods.push_back(std::move(val));
+        api.types.push_back(std::move(cp));
     }
     // ---- grok/ui-hud: crosshair recovery, radial options, slot grid ----
     {

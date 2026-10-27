@@ -449,7 +449,9 @@ private:
         m_stateTime += dt;
         m_lCT.clear(); m_lW.clear();
         std::vector<std::pair<int, float>> ctCur; std::vector<float> wCur;
-        const bool clipMissing = !cur->blendTree && ma->FindClip(cur->clip) < 0;
+        // An empty clip name is a layer that plays nothing. A name that does not
+        // resolve is a missing clip: hold, and let OnClipEnd move on.
+        const bool clipMissing = !cur->blendTree && !cur->clip.empty() && ma->FindClip(cur->clip) < 0;
         float prevPhase = m_lCur.phase;
         LayerMotion(m_lCur, dt, ma, ctCur, wCur, !clipMissing);
         if (clipMissing) {
@@ -634,9 +636,9 @@ private:
                 if (m_lW[i] > 1e-5f) m_lSnap.push_back(LayerSnap{m_lCT[i].first, m_lCT[i].second, m_lW[i]});
             m_lCur = LayerPlay{st.name, 0.0f, offset};
             if (!st.blendTree) {
-                int c = ma->FindClip(st.clip);
+                int c = st.clip.empty() ? -1 : ma->FindClip(st.clip);
                 if (c >= 0) m_lCur.time = offset * ma->ClipLength(c);
-                else { NoteMissingClip(st); m_normTime = 1.0f; }
+                else if (!st.clip.empty()) { NoteMissingClip(st); m_normTime = 1.0f; }
             }
             m_fadeT = 0.0f;
             m_fadeDur = (!m_lSnap.empty() && blend > 0.0f) ? blend : 0.0f;
@@ -664,15 +666,20 @@ private:
             ma->SetExternalDrive(true);
         } else {
             ma->SetExternalDrive(false);
-            // Play returns false when the clip isn't loaded. Leave the pose that
-            // is already showing, stop it advancing, and let OnClipEnd move on.
-            const bool haveClip = ma->FindClip(st.clip) >= 0;
-            if (haveClip) ma->SetLoop(st.loop);
-            if (!haveClip || !ma->Play(st.clip, blend)) {
+            // A named clip that fails to play: leave the pose already showing,
+            // stop it advancing, and let OnClipEnd move on. An empty clip name
+            // is "play nothing" and stays the old path.
+            const int clip = st.clip.empty() ? -1 : ma->FindClip(st.clip);
+            if (!st.clip.empty() && clip < 0) {
                 NoteMissingClip(st);
                 ma->SetSpeed(0.0f);
-            } else if (offset > 0.0f && ma->ActiveClip() >= 0) {
-                ma->SetTime(offset * ma->ClipLength(ma->ActiveClip()));
+            } else {
+                ma->SetLoop(st.loop);
+                if (!ma->Play(st.clip, blend)) {
+                    if (!st.clip.empty()) { NoteMissingClip(st); ma->SetSpeed(0.0f); }
+                } else if (offset > 0.0f && ma->ActiveClip() >= 0) {
+                    ma->SetTime(offset * ma->ClipLength(ma->ActiveClip()));
+                }
             }
         }
         if (onStateEnter) onStateEnter(st.name);

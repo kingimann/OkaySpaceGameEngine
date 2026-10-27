@@ -2941,6 +2941,12 @@ void TemplateGlyph(ImDrawList* d, const std::string& t, ImVec2 p, float size, Im
         const ImVec2 sn[] = {P(7, 30), P(7, 22), P(18, 22), P(18, 14), P(30, 14), P(30, 8)};
         d->AddPolyline(sn, 6, col, 0, th * 1.8f);
         d->AddCircleFilled(P(30, 30), 2.6f * k, col, 10);
+    } else if (t == "Brick Breaker") {
+        d->AddRect(P(8, 8), P(16, 12), col, 1.0f * k, 0, th * 0.8f);
+        d->AddRect(P(18, 8), P(26, 12), col, 1.0f * k, 0, th * 0.8f);
+        d->AddRect(P(12, 14), P(20, 18), col, 1.0f * k, 0, th * 0.8f);
+        d->AddCircleFilled(P(20, 26), 2.2f * k, col, 10);
+        d->AddLine(P(12, 33), P(28, 33), col, th * 1.4f);
     } else if (t == "Main Menu") {
         d->AddRect(P(9, 7), P(31, 33), col, 3 * k, 0, th);
         for (int i = 0; i < 3; ++i) d->AddRect(P(13, 12 + i * 7), P(27, 16.5f + i * 7), col, 2 * k, 0, th * 0.8f);
@@ -16493,6 +16499,7 @@ int main(int argc, char** argv) {
         {"Coin Collector", "A complete pickup-the-coins game.",     "Coin Collector"},
         {"Main Menu (UI)", "A title screen with buttons.",          "Main Menu"},
         {"Snake",          "The classic, fully playable.",          "Snake"},
+        {"Brick Breaker",  "Paddle, ball, and a wall of bricks.",   "Brick Breaker"},
         {"First Person",   "FPS character: mouse-look, WASD, jump.", "First Person"},
         {"Third Person",   "Orbit-camera character controller.",    "Third Person"},
         {"Inventory",      "Drag & drop item grid.",                "Inventory"},
@@ -18439,6 +18446,7 @@ int main(int argc, char** argv) {
                 {"Multiplayer",          "Host / join networked starter.", 3},
                 {"Coin Collector",       "A complete pickup-the-coins game.", 3},
                 {"Snake",                "The classic, fully playable.", 3},
+                {"Brick Breaker",        "Paddle, ball, and a wall of bricks.", 3},
                 {"Main Menu",            "A title screen with buttons.", 3},
                 {"Inventory",            "Drag-and-drop item grid.", 3},
                 {"Humanoid",             "A rigged character to animate.", 3},

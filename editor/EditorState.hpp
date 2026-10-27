@@ -92,6 +92,7 @@ public:
     void NewCoinCollector();
     void NewMainMenu();
     void NewSnake();
+    void NewBrickBreaker();
     void NewInventory();
     void NewTerrainSandbox();
     void NewVoxelSandbox();

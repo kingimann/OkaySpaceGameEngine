@@ -678,6 +678,11 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "Die")            return std::make_unique<DieNode>(argOr("forward"));
     if (type == "Revive")         return std::make_unique<ReviveNode>();
     if (type == "Dive")           return std::make_unique<DiveNode>();
+    if (type == "Sit")            return std::make_unique<SitNode>(argOr(""));
+    if (type == "StandUp")        return std::make_unique<StandUpNode>();
+    if (type == "IsSitting")      return std::make_unique<IsSittingNode>();
+    if (type == "Interact")       return std::make_unique<InteractNode>();
+    if (type == "SeatPrompt")     return std::make_unique<SeatPromptNode>();
     if (type == "SetTimeScale")   return std::make_unique<SetTimeScaleNode>();
     if (type == "SetBlendShape")  return std::make_unique<BlendShapeNode>(argOr(""), true);
     if (type == "GetBlendShape")  return std::make_unique<BlendShapeNode>(argOr(""), false);

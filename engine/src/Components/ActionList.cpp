@@ -662,6 +662,7 @@ bool ActionList::EvalConditions(const std::vector<Item>& conds) {
         else if (op == "is_in_action") ok = HumanoidActions::IsInAction(gameObject);
         else if (op == "is_dead") ok = HumanoidActions::IsDead(gameObject);
         else if (op == "can_dive") ok = HumanoidActions::CanDive(gameObject);
+        else if (op == "is_sitting") ok = HumanoidActions::IsSitting(gameObject);
         else if (op == "is_active")ok = gameObject && gameObject->active;
         else if (op == "has_item") {      // item [count] [object]: the inventory holds at least count
             Inventory* inv = ItemInv(c, gameObject, GetScene());
@@ -1282,6 +1283,27 @@ void ActionList::Update(float dt) {
         }
         else if (op == "revive") HumanoidActions::RequestRevive(gameObject);
         else if (op == "dive") HumanoidActions::RequestDive(gameObject);
+        else if (op == "sit") {
+            GameObject* seat = nullptr;
+            int type = 1;
+            if (!it.args.empty()) {
+                const std::string s = Str(it, 0);
+                const bool num = !s.empty() && (std::isdigit((unsigned char)s[0]) || s[0] == '-' || s[0] == '.');
+                if (num) type = (int)Num(it, 0);
+                else if (gameObject && gameObject->scene()) {
+                    seat = gameObject->scene()->Find(s);
+                    if (!seat) {
+                        std::string k = s;
+                        for (char& c : k) c = (char)std::tolower((unsigned char)c);
+                        if (k == "chair" || k == "bench") type = 0;
+                        else if (k == "knees") type = 2;
+                    }
+                }
+            }
+            HumanoidActions::RequestSit(gameObject, seat, type);
+        }
+        else if (op == "stand_up") HumanoidActions::RequestStandUp(gameObject);
+        else if (op == "interact") HumanoidActions::Interact(gameObject);
         else if (op == "set_cam") {
             if (scene && scene->mainCamera) {
                 Transform* ct = scene->mainCamera->gameObject->transform;

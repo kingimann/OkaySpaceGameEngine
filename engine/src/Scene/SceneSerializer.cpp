@@ -1,6 +1,7 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Animation/HumanoidLibrary.hpp"
 #include "okay/Animation/HumanoidActions.hpp"
+#include "okay/Components/Seat.hpp"
 #include "okay/Modeling/MeshAsset.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -1620,6 +1621,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (c->destroyOnDeath ? 1 : 0) << " " << (c->respawn ? 1 : 0)
             << " " << c->respawnDelay << " " << c->lives
             << " " << (c->playDeathAnim ? 1 : 0) << "\n";
+    }
+    if (auto* c = go->GetComponent<Seat>()) {
+        out << "  seat " << c->seatHeight << " "
+            << c->sitPoint.x << " " << c->sitPoint.y << " " << c->sitPoint.z << " "
+            << c->facing << " " << c->type << " "
+            << c->exitPoint.x << " " << c->exitPoint.y << " " << c->exitPoint.z << " "
+            << c->useRadius << " " << Quote(c->prompt) << "\n";
     }
     if (auto* c = go->GetComponent<HungerStat>()) {
         out << "  stat_hunger " << c->maxHunger << " " << c->drainPerSecond << " "
@@ -4542,6 +4550,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (std::isdigit(in.peek())) {
                         int pda = 1; in >> pda; c->playDeathAnim = (pda != 0);
                     }
+                } else if (field == "seat") {
+                    auto* c = go->AddComponent<Seat>();
+                    in >> c->seatHeight >> c->sitPoint.x >> c->sitPoint.y >> c->sitPoint.z
+                       >> c->facing >> c->type
+                       >> c->exitPoint.x >> c->exitPoint.y >> c->exitPoint.z
+                       >> c->useRadius;
+                    in >> std::ws;
+                    if (in.peek() == '"') c->prompt = ReadQuoted(in);
                 } else if (field == "stat_hunger") {
                     auto* c = go->AddComponent<HungerStat>();
                     in >> c->maxHunger >> c->drainPerSecond >> c->sprintMultiplier >> c->lowThreshold;

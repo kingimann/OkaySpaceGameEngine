@@ -3,7 +3,13 @@
 #include "okay/Components/AnimControl.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/Seat.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
+#include "okay/Input/Input.hpp"
+#include "okay/Net/NetOwnership.hpp"
+#include "okay/Physics/Physics3D.hpp"
+#include "okay/Physics/Rigidbody3D.hpp"
+#include "okay/Scene/Scene.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
@@ -273,7 +279,7 @@ struct ActionSpec {
     int rev;
 };
 
-const ActionSpec kStates[] = {{"Death", 1}, {"DeadHold", 1}, {"Dive", 2}, {"DiveLand", 2}};
+const ActionSpec kStates[] = {{"Death", 1}, {"DeadHold", 1}, {"Dive", 2}, {"DiveLand", 2}, {"SitDown", 3}, {"Sit", 3}, {"StandUp", 3}};
 
 SM::State* FindMutable(SM& sm, const std::string& name) {
     for (SM::State& s : sm.states) if (s.name == name) return &s;
@@ -412,6 +418,56 @@ int DirFromWorld(GameObject* go, const Vec3& fromWorld) {
     return r >= 0.0f ? 3 : 2;
 }
 
+void BakeSit(std::vector<HumanoidLibrary::Entry>& out) {
+    const KeyPose idle = FromState(1);
+    KeyPose chair = idle;
+    chair.bones[B::B_HIPS].x = -6.0f;
+    chair.bones[B::B_TORSO].x = 6.0f;
+    chair.bones[B::B_LTHIGH] = {86.0f, 10.0f, -8.0f};
+    chair.bones[B::B_RTHIGH] = {86.0f, -10.0f, 8.0f};
+    chair.bones[B::B_LSHIN] = {-78.0f, 0.0f, 0.0f};
+    chair.bones[B::B_RSHIN] = {-78.0f, 0.0f, 0.0f};
+    chair.bones[B::B_LUPARM] = {-18.0f, 0.0f, 22.0f};
+    chair.bones[B::B_RUPARM] = {-18.0f, 0.0f, -22.0f};
+    chair.bones[B::B_LFORE].x = -24.0f;
+    chair.bones[B::B_RFORE].x = -24.0f;
+    chair.hipY = 0.48f;   // baked for a 0.45 m seat; the Seat moves the body onto it
+
+    KeyPose ground = idle;
+    ground.bones[B::B_HIPS].x = 10.0f;
+    ground.bones[B::B_TORSO].x = 8.0f;
+    ground.bones[B::B_LTHIGH] = {68.0f, 26.0f, -28.0f};
+    ground.bones[B::B_RTHIGH] = {68.0f, -26.0f, 28.0f};
+    ground.bones[B::B_LSHIN] = {-108.0f, 0.0f, 8.0f};
+    ground.bones[B::B_RSHIN] = {-108.0f, 0.0f, -8.0f};
+    ground.bones[B::B_LUPARM] = {-24.0f, 0.0f, 16.0f};
+    ground.bones[B::B_RUPARM] = {-24.0f, 0.0f, -16.0f};
+    ground.hipY = 0.22f;
+
+    KeyPose knees = ground;
+    knees.bones[B::B_LTHIGH] = {42.0f, 8.0f, -10.0f};
+    knees.bones[B::B_RTHIGH] = {42.0f, -8.0f, 10.0f};
+    knees.bones[B::B_LSHIN] = {-96.0f, 0.0f, 0.0f};
+    knees.bones[B::B_RSHIN] = {-96.0f, 0.0f, 0.0f};
+    knees.hipY = 0.32f;
+
+    KeyPose chairBreath = chair;
+    chairBreath.bones[B::B_TORSO].x += 3.0f;
+    chairBreath.bones[B::B_HEAD].x -= 4.0f;
+    KeyPose groundBreath = ground;
+    groundBreath.bones[B::B_TORSO].x += 2.5f;
+    groundBreath.bones[B::B_HEAD].y += 6.0f;
+
+    // On Sit / On Stand are the state enter events. Clips only mark action_end.
+    AddClip(out, BakeAction("SitDown_Chair", {At(idle, 0.0f), At(chair, 0.50f)}, false, {{0.50f, "action_end"}}));
+    AddClip(out, BakeAction("SitDown_Ground", {At(idle, 0.0f), At(ground, 0.55f)}, false, {{0.55f, "action_end"}}));
+    AddClip(out, BakeAction("StandUp_Chair", {At(chair, 0.0f), At(idle, 0.55f)}, false, {{0.55f, "action_end"}}));
+    AddClip(out, BakeAction("StandUp_Ground", {At(ground, 0.0f), At(idle, 0.60f)}, false, {{0.60f, "action_end"}}));
+    AddClip(out, BakeAction("Sit_Chair", {At(chair, 0.0f), At(chairBreath, 1.1f), At(chair, 2.2f)}, true, {}));
+    AddClip(out, BakeAction("Sit_Ground", {At(ground, 0.0f), At(groundBreath, 1.2f), At(ground, 2.4f)}, true, {}));
+    AddClip(out, BakeAction("Sit_Ground_Knees", {At(knees, 0.0f), At(knees, 2.0f)}, true, {}));
+}
+
 void LatchDeath(SM& sm, int dir) {
     if (dir < 0) dir = 0;
     if (dir > 3) dir = 3;
@@ -424,6 +480,7 @@ void LatchDeath(SM& sm, int dir) {
 void Bake(std::vector<HumanoidLibrary::Entry>& out) {
     BakeDeath(out);
     BakeDive(out);
+    BakeSit(out);
 }
 
 void ApplyTimes(AnimStateMachine& sm) {
@@ -435,6 +492,7 @@ void ApplyTimes(AnimStateMachine& sm) {
             else if (tr.to == "GetUp" || tr.to == "Idle") tr.blend = t.proneStand;
             else if (tr.to == "Prone" || tr.to == "Crawl" || tr.to == "Crouch" || tr.to == "DiveLand")
                 tr.blend = t.crouchProne;
+            else if (tr.to == "Sit" || tr.to == "StandUp" || tr.to == "SitDown") tr.blend = t.standCrouch;
         }
     }
     for (SM::Transition& tr : sm.anyState)
@@ -494,10 +552,75 @@ SM::State MakeDiveState(const char* name, const char* clip, bool loop) {
     return s;
 }
 
+SM::Motion ClipAt(const char* clip, float threshold) {
+    SM::Motion m;
+    m.clip = clip;
+    m.threshold = threshold;
+    return m;
+}
+
+void WireSitDown(SM::State& st, const SM& sm) {
+    st.transitions.clear();
+    if (!HasState(sm, "Sit")) return;
+    SM::Transition hold;
+    hold.to = "Sit";
+    hold.cond = C::OnClipEnd;
+    hold.hasExitTime = true;
+    hold.exitTime = 1.0f;
+    hold.blend = 0.15f;
+    st.transitions.push_back(hold);
+}
+
+void WireSit(SM::State& st, const SM& sm) {
+    st.transitions.clear();
+    if (HasState(sm, "StandUp")) {
+        SM::Transition up;
+        up.to = "StandUp";
+        up.cond = C::BoolFalse;
+        up.param = "sitting";
+        up.blend = 0.12f;
+        st.transitions.push_back(up);
+    } else if (HasState(sm, "Idle")) {
+        SM::Transition up;
+        up.to = "Idle";
+        up.cond = C::BoolFalse;
+        up.param = "sitting";
+        up.blend = 0.2f;
+        st.transitions.push_back(up);
+    }
+}
+
+void WireStand(SM::State& st, const SM& sm) {
+    st.transitions.clear();
+    const char* to = HasState(sm, "Idle") ? "Idle" : (HasState(sm, "Crouch") ? "Crouch" : nullptr);
+    if (!to) return;
+    SM::Transition done;
+    done.to = to;
+    done.cond = C::OnClipEnd;
+    done.hasExitTime = true;
+    done.exitTime = 1.0f;
+    done.blend = 0.2f;
+    st.transitions.push_back(done);
+}
+
+SM::State MakeSitTree(const char* name, bool loop) {
+    SM::State s;
+    s.name = name;
+    s.blendTree = true;
+    s.blendDims = 1;
+    s.blendParam = "sitType";
+    s.loop = loop;
+    s.ikWeight = 0.0f;
+    s.fullBodyIkWeight = 1.0f;   // hands stay free for holding
+    s.interruptible = true;      // die and jump can cut a sit short
+    return s;
+}
+
 void AddStates(AnimStateMachine& sm, const Character* body, bool force) {
     const int had = sm.actionsRev;
     const bool deathDue = force || had < 1;
     const bool diveDue = force || had < 2;
+    const bool sitDue = force || had < 3;
     const bool freshDeath = deathDue && !HasState(sm, "Death");
     const bool freshHold = deathDue && !HasState(sm, "DeadHold");
     float col = 40.0f;
@@ -581,6 +704,50 @@ void AddStates(AnimStateMachine& sm, const Character* body, bool force) {
             sm.anyState.push_back(std::move(die));
         }
     }
+    const bool freshDown = sitDue && !HasState(sm, "SitDown");
+    const bool freshSit = sitDue && !HasState(sm, "Sit");
+    const bool freshUp = sitDue && !HasState(sm, "StandUp");
+    if (freshDown || freshSit || freshUp) {
+        float col = 40.0f;
+        for (const SM::State& o : sm.states) col = std::max(col, o.nx);
+        col += 220.0f;
+        if (freshDown) {
+            SM::State s = MakeSitTree("SitDown", false);
+            s.motions = {ClipAt("SitDown_Chair", 0.0f), ClipAt("SitDown_Ground", 1.0f)};
+            s.nx = col; s.ny = 40.0f;
+            sm.states.push_back(std::move(s));
+        }
+        if (freshSit) {
+            SM::State s = MakeSitTree("Sit", true);
+            s.enterEvent = "sit";
+            s.motions = {ClipAt("Sit_Chair", 0.0f), ClipAt("Sit_Ground", 1.0f), ClipAt("Sit_Ground_Knees", 2.0f)};
+            s.nx = col; s.ny = 130.0f;
+            sm.states.push_back(std::move(s));
+        }
+        if (freshUp) {
+            SM::State s = MakeSitTree("StandUp", false);
+            s.enterEvent = "stand";
+            s.motions = {ClipAt("StandUp_Chair", 0.0f), ClipAt("StandUp_Ground", 1.0f)};
+            s.nx = col; s.ny = 220.0f;
+            sm.states.push_back(std::move(s));
+        }
+        if (freshDown) if (SM::State* s = FindMutable(sm, "SitDown")) WireSitDown(*s, sm);
+        if (freshSit) if (SM::State* s = FindMutable(sm, "Sit")) WireSit(*s, sm);
+        if (freshUp) if (SM::State* s = FindMutable(sm, "StandUp")) WireStand(*s, sm);
+        EnsureParam(sm, "sitting", 1);
+        EnsureParam(sm, "sitType", 0);
+        EnsureParam(sm, "sit", 2);
+        if (!HasAny(sm, "SitDown", "sit") && HasState(sm, "SitDown")) {
+            SM::Transition go;
+            go.to = "SitDown";
+            go.cond = C::Trigger;
+            go.param = "sit";
+            go.blend = 0.2f;
+            // None so Walk cannot cancel the blend. interruptible stays true, so die still can.
+            go.interruption = SM::Transition::Interrupt::None;
+            sm.anyState.push_back(std::move(go));
+        }
+    }
     if (sm.actionsRev < kActionsRev) sm.actionsRev = kActionsRev;
     ApplyTimes(sm);
 }
@@ -598,7 +765,8 @@ const std::vector<std::string>& ActionNames() {
         "Death", "DeadHold",
         "Death_F", "Death_B", "Death_L", "Death_R",
         "DeadHold_F", "DeadHold_B", "DeadHold_L", "DeadHold_R",
-        "Dive", "DiveLand"};
+        "Dive", "DiveLand",
+        "SitDown", "Sit", "StandUp", "SitDown_Chair", "Sit_Chair", "StandUp_Chair", "SitDown_Ground", "Sit_Ground", "Sit_Ground_Knees", "StandUp_Ground"};
     return names;
 }
 
@@ -765,6 +933,102 @@ bool IsDead(GameObject* go) {
     return false;
 }
 
+namespace {
+
+bool FlatFloor(GameObject* go) {
+    if (!go || !go->transform || !go->scene()) return true;
+    const Vec3 o = go->transform->Position();
+    const RaycastHit3D h = go->scene()->physics3D().Raycast(
+        *go->scene(), o + Vec3{0.0f, 0.2f, 0.0f}, Vec3{0.0f, -1.0f, 0.0f}, 0.8f,
+        go, Physics3D::kAllLayers, false);
+    return h.hit && h.normal.y > 0.75f;
+}
+
+Seat* SeatHolding(GameObject* who) {
+    if (!who || !who->scene()) return nullptr;
+    for (const auto& up : who->scene()->Objects()) {
+        if (!up) continue;
+        if (Seat* s = up->GetComponent<Seat>())
+            if (s->Occupant() == who) return s;
+    }
+    return nullptr;
+}
+
+Seat* NearestSeat(GameObject* go) {
+    if (!go || !go->transform || !go->scene()) return nullptr;
+    Seat* best = nullptr;
+    float bestD = 1.0e9f;
+    const Vec3 p = go->transform->Position();
+    for (const auto& up : go->scene()->Objects()) {
+        if (!up || !up->active) continue;
+        Seat* s = up->GetComponent<Seat>();
+        if (!s || !s->transform || s->occupied) continue;
+        Vec3 d = s->SitWorld() - p;
+        d.y *= 0.25f;
+        const float dist = d.Magnitude();
+        if (dist <= s->useRadius && dist < bestD) { bestD = dist; best = s; }
+    }
+    return best;
+}
+
+} // namespace
+
+bool RequestSit(GameObject* go, GameObject* seatObject, int sitType) {
+    if (!go || IsDead(go) || IsSitting(go)) return false;
+    Seat* seat = seatObject ? seatObject->GetComponent<Seat>() : nullptr;
+    if (seat) {
+        if (seat->occupied && seat->Occupant() != go) return false;
+        sitType = (seat->type == 1) ? 1 : 0;
+    } else if (!FlatFloor(go)) return false;
+    if (sitType < 0) sitType = 0;
+    if (sitType > 2) sitType = 2;
+    SM* sm = BaseMachine(go);
+    if (sm && HasState(*sm, "SitDown")) {
+        sm->SetFloat("sitType", (float)sitType);
+        sm->SetBool("sitting", true);
+        // GoTo, not the trigger: a latched `sit` would re-enter SitDown every frame.
+        sm->GoTo("SitDown", 0.2f);
+    }
+    if (seat) seat->Claim(go);
+    return true;
+}
+
+void RequestStandUp(GameObject* go) {
+    if (!go) return;
+    // Stand-up is already playing. Calling this again (move held) would restart it.
+    if (SM* sm = BaseMachine(go)) if (sm->Current() == "StandUp") return;
+    if (Seat* seat = SeatHolding(go)) seat->Release();
+    if (SM* sm = BaseMachine(go)) {
+        sm->SetBool("sitting", false);
+        const float type = sm->GetFloat("sitType");
+        if (HasState(*sm, "StandUp")) {
+            // StandUp only has chair (0) and ground (1). Knees uses the ground clip.
+            sm->SetFloat("sitType", type >= 1.5f ? 1.0f : type);
+            sm->GoTo("StandUp", 0.12f);
+        }
+    }
+}
+
+bool IsSitting(GameObject* go) {
+    SM* sm = BaseMachine(go);
+    if (!sm) return false;
+    if (sm->GetBool("sitting")) return true;
+    const std::string c = sm->Current();
+    return c == "SitDown" || c == "Sit" || c == "StandUp";
+}
+
+void Interact(GameObject* go) {
+    if (!go) return;
+    if (IsSitting(go)) { RequestStandUp(go); return; }
+    if (Seat* s = NearestSeat(go)) RequestSit(go, s->gameObject, s->type);
+    else RequestSit(go, nullptr, 1);
+}
+
+std::string SeatPrompt(GameObject* go) {
+    if (Seat* s = NearestSeat(go)) return s->prompt;
+    return {};
+}
+
 bool DeathPoseSettled(GameObject* go) {
     SM* sm = BaseMachine(go);
     if (!sm) return false;
@@ -809,4 +1073,83 @@ void RestoreDeadBody(GameObject* go, DeadShape& shape) {
 }
 
 } // namespace HumanoidActions
+
+void Seat::Claim(GameObject* who) {
+    if (!who || !who->transform) return;
+    m_who = who;
+    occupied = true;
+    m_from = who->transform->Position();
+    m_fromRot = who->transform->Rotation();
+    m_blend = 0.0f;
+    if (auto* rb = who->GetComponent<Rigidbody3D>()) {
+        rb->velocity = Vec3{0, 0, 0};
+        m_savedGravity = rb->gravityScale;
+        m_hadGravity = true;
+        rb->gravityScale = 0.0f;
+    }
+}
+
+void Seat::Release() {
+    if (m_who && m_who->transform && transform && !m_who->IsDestroyed())
+        m_who->transform->SetPosition(ExitWorld());
+    if (m_who && !m_who->IsDestroyed()) {
+        if (auto* rb = m_who->GetComponent<Rigidbody3D>()) {
+            if (m_hadGravity) rb->gravityScale = m_savedGravity;
+            rb->velocity = Vec3{0, 0, 0};
+        }
+    }
+    m_who = nullptr;
+    occupied = false;
+    m_hadGravity = false;
+    m_blend = 1.0f;
+}
+
+void Seat::Update(float dt) {
+    if (m_who && (m_who->IsDestroyed() || !m_who->transform || HumanoidActions::IsDead(m_who))) {
+        // Death frees the seat and restores gravity. It does not snap to exitPoint.
+        GameObject* who = m_who;
+        m_who = nullptr;
+        occupied = false;
+        if (who && !who->IsDestroyed()) {
+            if (auto* rb = who->GetComponent<Rigidbody3D>()) {
+                if (m_hadGravity) rb->gravityScale = m_savedGravity;
+            }
+        }
+        m_hadGravity = false;
+    }
+    if (m_who && m_who->transform && transform) {
+        m_blend = std::min(1.0f, m_blend + dt / 0.45f);
+        const float u = m_blend * m_blend * (3.0f - 2.0f * m_blend);
+        m_who->transform->SetPosition(Vec3::Lerp(m_from, SitWorld(), u));
+        m_who->transform->SetRotation(Quat::Slerp(m_fromRot, FaceWorld(), u));
+        if (auto* rb = m_who->GetComponent<Rigidbody3D>()) rb->velocity = Vec3{0, 0, 0};
+    }
+    playerInRange = false;
+    if (!gameObject || !gameObject->scene() || !transform || occupied) return;
+    GameObject* who = nullptr;
+    float best = useRadius;
+    const Vec3 sit = SitWorld();
+    for (const auto& up : gameObject->scene()->Objects()) {
+        if (!up || !up->active || !up->transform || up.get() == gameObject) continue;
+        if (!IsLocallyControlled(up.get()) || !up->GetComponent<Character>()) continue;
+        Vec3 d = up->transform->Position() - sit;
+        d.y = 0.0f;
+        const float dist = d.Magnitude();
+        if (dist < best) { best = dist; who = up.get(); }
+    }
+    if (!who) return;
+    bool closer = false;
+    for (const auto& up : gameObject->scene()->Objects()) {
+        Seat* other = up ? up->GetComponent<Seat>() : nullptr;
+        if (!other || other == this || other->occupied || !other->transform) continue;
+        Vec3 d = who->transform->Position() - other->SitWorld();
+        d.y = 0.0f;
+        if (d.Magnitude() < best) closer = true;
+    }
+    playerInRange = !closer;
+    // E is the use key. There is no shared interact binding; FPC lean-right is also E.
+    if (playerInRange && Input::GetKeyDown('e'))
+        HumanoidActions::RequestSit(who, gameObject, type);
+}
+
 } // namespace okay

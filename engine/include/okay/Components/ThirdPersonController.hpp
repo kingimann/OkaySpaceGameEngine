@@ -26,6 +26,7 @@
 #include "okay/Components/DeathLock.hpp"
 #include "okay/Components/Water.hpp"
 #include "okay/Components/DiveAction.hpp"
+#include "okay/Animation/HumanoidActions.hpp"
 
 namespace okay {
 
@@ -310,6 +311,13 @@ public:
             if (gameObject)
                 if (auto* view = gameObject->GetComponent<PlayerView>())
                     view->ConformPitch(pitch, true, minPitch, maxPitch, dt);
+        }
+        // Orbit (LateUpdate) still runs. Move or jump stands up; the body stays put.
+        if (HumanoidActions::IsSitting(gameObject)) {
+            const bool wantMove = in.move.x * in.move.x + in.move.y * in.move.y > 1e-4f;
+            if (wantMove || in.Pressed(PlayerInput::Jump))
+                HumanoidActions::RequestStandUp(gameObject);
+            return;
         }
         m_aim = aimWithRightMouse && in.Held(PlayerInput::AltFire);
         Vec2 axis = in.move;

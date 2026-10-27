@@ -445,6 +445,7 @@ int main(int argc, char** argv) {
 #include "EditorTabs.hpp"   // panel tabs: saved layouts, presets, Ctrl+Tab order
 #include "okay/Scripting/OkayScriptVM.hpp"   // editor plugins
 #include "okay/Animation/HumanoidActions.hpp"
+#include "okay/Components/Seat.hpp"
 #include "okay/Scripting/ScriptUI.hpp"
 #include "okay/Scene/EnsureCamera.hpp"       // every scene keeps a camera
 #include "backends/imgui_impl_sdl2.h"
@@ -10869,6 +10870,8 @@ void DrawScriptDocs() {
         fapi("play_action(\"Death\" [, blend]) / is_in_action() / action_time()", "go to a built-in action state (0 if it is missing)");
         fapi("die([\"forward\"|\"back\"|\"left\"|\"right\"]) / die(x, y, z) / revive() / is_dead()", "death anim; x,y,z is where the hit came from");
         fapi("dive() / can_dive()", "dolphin dive while sprinting on the ground; 1 if a dive can start");
+        fapi("sit([\"Seat\"|\"ground\"|\"knees\"|\"chair\"]) / stand_up() / is_sitting()", "sit on a Seat or a flat floor; move or jump stands up");
+        fapi("interact() / seat_prompt()", "nearest Seat (E in range does this too), or its prompt");
         fapi("play_clip_once(\"name\")", "play a clip once (attack/jump), then return to the previous one");
         fapi("playing_clip() / is_playing_clip()", "active clip name / is one playing");
         fapi("set_anim(n) / get_anim()", "built-in animation index (1 idle, 2 walk, 3 run, ...)");
@@ -11277,6 +11280,8 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"play_action","play_action(\"Death\" [, blend])"}, {"is_in_action","is_in_action()"},
         {"action_time","action_time()"}, {"die","die([\"back\"])"}, {"revive","revive()"}, {"is_dead","is_dead()"},
         {"dive","dive()"}, {"can_dive","can_dive()"},
+        {"sit","sit([\"Chair\"])"}, {"stand_up","stand_up()"}, {"is_sitting","is_sitting()"},
+        {"interact","interact()"}, {"seat_prompt","seat_prompt()"},
         {"stop_clip","stop_clip()"}, {"is_playing_clip","is_playing_clip()"},
         {"play_layer","play_layer(\"clip\", \"part\")"}, {"stop_layer","stop_layer()"}, {"anim_event","anim_event(\"name\")"},
         {"play_sound","play_sound(\"name\")"}, {"set_volume","set_volume(v)"},
@@ -17825,6 +17830,7 @@ static const ActionOpInfo kCondOps[] = {
     {"is_in_action","Is In Action",       "",                           "Passes while a built-in action (Death, and later dive, sit, ...) is playing.", "Character"},
     {"is_dead",    "Is Dead",             "",                           "Passes while Health says this body is dead, or the Animator `dead` flag is set.", "Character"},
     {"can_dive",   "Can Dive",            "",                           "Passes when this body can dolphin-dive (sprinting, on the ground, not already diving).", "Character"},
+    {"is_sitting", "Is Sitting",           "",                           "Passes while this body is sitting down, seated, or standing back up.", "Character"},
     {"tag_count_lt","Fewer Tagged Than",   "tag count",                  "Passes if fewer than N active objects have this tag (e.g. wave cleared).", "World"},
     {"tag_count_gt","More Tagged Than",    "tag count",                  "Passes if more than N active objects have this tag.",          "World"},
     {"array_has",  "Array Contains",       "array value",                "Passes if the named array contains the value.",                "Arrays"},
@@ -17933,6 +17939,9 @@ static const ActionOpInfo kInstrOps[] = {
     {"die",         "Die",                "forward|back|left|right", "Play Death. A direction, or x y z for where the hit came from.", "Character"},
     {"revive",      "Revive",             "",                     "Clear dead and get up. A Health stat respawns.",          "Character"},
     {"dive",        "Dive",               "",                     "Dolphin dive: forward launch while sprinting, then prone.", "Character"},
+    {"sit",         "Sit",                "[seat|ground|knees|chair]", "Sit on a named Seat, or on a flat floor.",          "Character"},
+    {"stand_up",    "Stand Up",           "",                     "Leave a sit and free the Seat.",                         "Character"},
+    {"interact",    "Interact",           "",                     "Nearest Seat, or a ground sit. Stands up if already sitting.", "Character"},
     {"stop_clip",   "Stop Anim Clip",     "",                     "Return the Character to its built-in / state animation.", "Character"},
     {"play_layer",  "Play Anim Layer",    "clip  arms|upper|bone","Overlay a clip on part of the body (e.g. wave with the arms while walking).", "Character"},
     {"stop_layer",  "Stop Anim Layer",    "",                     "Clear the partial-body animation layer.",                 "Character"},
@@ -18812,7 +18821,8 @@ static const char* ActionOpRequires(const std::string& op) {
     if (op=="play_anim"||op=="stop_anim"||op=="set_anim"||op=="play_clip"||op=="stop_clip"||
         op=="play_layer"||op=="stop_layer"||op=="clip_speed"||op=="anim_event"||
         op=="play_action"||op=="die"||op=="revive"||op=="is_in_action"||op=="is_dead"||
-        op=="dive"||op=="can_dive")
+        op=="dive"||op=="can_dive"||
+        op=="sit"||op=="stand_up"||op=="is_sitting"||op=="interact")
         return "a Character / Animator on this object";
     if (op=="emit"||op=="particles_on") return "a Particle System on this object";
     if (op=="set_text") return "a Text Renderer on this object";
@@ -31475,6 +31485,26 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##sth")) toRemove = c;
         }
     }
+    if (auto* c = dynamic_cast<Seat*>(curComp)) {
+        if (CompHeader("Seat", c, &toRemove)) {
+            if (ImGui::DragFloat("Height##seat", &c->seatHeight, 0.01f, 0.0f, 2.0f, "%.2f m")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The chair clips are baked for 0.45 m. This moves the body onto the seat.");
+            if (ImGui::DragFloat3("Sit Point##seat", &c->sitPoint.x, 0.01f)) ed.dirty = true;
+            if (ImGui::DragFloat("Facing##seat", &c->facing, 1.0f, -180.0f, 180.0f, "%.0f deg")) ed.dirty = true;
+            const char* kinds[] = {"Chair", "Ground", "Bench"};
+            int kind = c->type;
+            if (kind < 0 || kind > 2) kind = 0;
+            if (ImGui::Combo("Type##seat", &kind, kinds, 3)) { c->type = kind; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bench uses the chair clips. Ground uses the cross-legged sit.");
+            if (ImGui::DragFloat3("Exit Point##seat", &c->exitPoint.x, 0.01f)) ed.dirty = true;
+            if (ImGui::DragFloat("Use Radius##seat", &c->useRadius, 0.05f, 0.1f, 10.0f)) ed.dirty = true;
+            char pbuf[128];
+            std::snprintf(pbuf, sizeof(pbuf), "%s", c->prompt.c_str());
+            if (ImGui::InputText("Prompt##seat", pbuf, sizeof(pbuf))) { c->prompt = pbuf; ed.dirty = true; }
+            if (c->occupied) ImGui::TextDisabled("Occupied");
+            if (ImGui::SmallButton("Remove##seat")) toRemove = c;
+        }
+    }
     if (auto* c = dynamic_cast<HungerStat*>(curComp)) {
         if (CompHeader("Stat: Hunger", c, &toRemove)) {
             statValue(&c->hunger, c->maxHunger, "sthu");
@@ -35815,6 +35845,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<LogicTarget>(), "Logic Target (door / light / spawner / event)")) { go->AddComponent<LogicTarget>(); ed.dirty = true; }
             if (item(!go->GetComponent<SurvivalStats>(), "Survival Stats (native)")) { go->AddComponent<SurvivalStats>(); ed.dirty = true; }
             if (item(!go->GetComponent<HealthStat>(), "Stat: Health")) { go->AddComponent<HealthStat>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Seat>(), "Seat")) { go->AddComponent<Seat>(); ed.dirty = true; }
             if (item(!go->GetComponent<HungerStat>(), "Stat: Hunger")) { go->AddComponent<HungerStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<ThirstStat>(), "Stat: Thirst")) { go->AddComponent<ThirstStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<StaminaStat>(), "Stat: Stamina")) { go->AddComponent<StaminaStat>(); ed.dirty = true; }
@@ -38311,6 +38342,18 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     line(a + v * r, b + v * r, kColliderCol, 1.0f);
                     line(a - v * r, b - v * r, kColliderCol, 1.0f);
                 }
+            }
+            if (auto* seat = up->GetComponent<Seat>()) {
+                const ImU32 scol = IM_COL32(80, 210, 140, 220);
+                const Vec3 sit = seat->SitWorld();
+                const Vec3 ex = seat->ExitWorld();
+                line(sit, sit + Vec3{0, 0.35f, 0}, scol, 2.0f);
+                const Vec3 fwd = seat->FaceWorld() * Vec3{0, 0, -1};
+                const Vec3 tip = sit + Vec3{0, 0.08f, 0} + fwd * 0.55f;
+                line(sit + Vec3{0, 0.08f, 0}, tip, scol, 2.0f);
+                line(tip, tip - fwd * 0.12f + Vec3{fwd.z, 0, -fwd.x} * 0.08f, scol, 2.0f);
+                line(tip, tip - fwd * 0.12f - Vec3{fwd.z, 0, -fwd.x} * 0.08f, scol, 2.0f);
+                line(ex, ex + Vec3{0, 0.22f, 0}, IM_COL32(210, 190, 70, 200), 1.5f);
             }
             // Patrol route gizmo: the selected NPC's waypoints as an orange
             // polyline with numbered ticks (closed when the route loops) —

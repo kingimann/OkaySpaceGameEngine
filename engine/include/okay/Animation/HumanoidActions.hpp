@@ -19,7 +19,7 @@ namespace HumanoidActions {
 /// How far the built-in action set has got. Death is 1, dolphin dive is 2. A
 /// saved graph records the revision it already has, so a later action is added
 /// once and a state the user deleted is not put back when the next action lands.
-constexpr int kActionsRev = 2;
+constexpr int kActionsRev = 3;
 
 /// One authored pose. Degrees, hip height in rig units, rootOffset.x/z a visual
 /// lean only (y is unused; hipY is the root height).
@@ -88,6 +88,18 @@ void RequestDive(GameObject* go);
 bool BeginDive(GameObject* go);
 /// True once, if RequestDive asked a controller to launch. Clears the flag.
 bool TakeDivePending(GameObject* go);
+
+/// Sit on a Seat, or on the ground when `seatObject` is null and the floor is
+/// flat. `sitType` 0 chair, 1 ground, 2 knees (ignored when a Seat is passed).
+bool RequestSit(GameObject* go, GameObject* seatObject, int sitType = 1);
+/// Leave Sit through StandUp and free the Seat.
+void RequestStandUp(GameObject* go);
+bool IsSitting(GameObject* go);
+/// Nearest Seat in range, else a ground sit when the floor is flat. Already
+/// sitting stands up.
+void Interact(GameObject* go);
+/// Prompt of the nearest in-range Seat, or empty.
+std::string SeatPrompt(GameObject* go);
 
 /// True once the body is in DeadHold (or Death has played out).
 bool DeathPoseSettled(GameObject* go);

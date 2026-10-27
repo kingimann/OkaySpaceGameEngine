@@ -350,6 +350,30 @@ Visual script: Dive. Animators also get a `dived` trigger. A Character can
 bind `clipDive` the same way as `clipJump`; a model with no Animator clip of
 that name still gets the movement.
 
+Sitting clips: `SitDown_Chair` → `Sit_Chair` (a breathing loop) → `StandUp_Chair`,
+and `SitDown_Ground` → `Sit_Ground` or `Sit_Ground_Knees` → `StandUp_Ground`.
+`sitType` is 0 chair, 1 ground, 2 knees. A bench Seat uses the chair clips.
+The chair pose is baked for a 0.45 m seat; a Seat moves the body onto
+`sitPoint` (the clip's hip height is only the visual). Hands stay on full-body
+IK so they can still hold something. The states are interruptible, so death
+and jump can cut them. The Any-State `sit` blend uses interruption None, so
+Walk cannot cancel it. `sitting` false leaves through Stand Up, which ends on
+Idle. Entering Sit fires `sit`; entering Stand Up fires `stand` (On Sit / On
+Stand). `action_end` is at the end of the sit-down and stand-up clips.
+
+A **Seat** (seat height, sit point, facing, type, exit point, use radius,
+prompt) claims the nearest locally controlled character on E. There is no
+shared interact key; first-person lean-right is also E, so a press in range
+sits and can start a lean. Gravity is zero while seated and comes back on
+standing or on death. Death does not teleport to the exit point. With no Seat,
+`sit()` sits on the ground when the floor normal is steeper than 0.75. Move or
+jump on a first-person, third-person, or shooter controller stands up and
+stays locked until the stand-up clip finishes. Look still works.
+
+Script: `sit()`, `sit("Chair")`, `sit("ground"|"knees"|"chair")`, `sit(0|1|2)`,
+`stand_up()`, `is_sitting()`, `interact()`, `seat_prompt()`. Visual scripts:
+Sit, Stand Up, Is Sitting, Interact, Seat Prompt.
+
 In the Inspector the Animator lists its states, what each plays (a clip, or a
 blend tree's clip count) and its transitions (folded; click to open). On a
 Character each state also has **Preview** (plays that clip live in the Scene

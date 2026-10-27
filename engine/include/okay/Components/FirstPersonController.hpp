@@ -22,6 +22,7 @@
 #include "okay/Components/DeathLock.hpp"
 #include "okay/Components/Water.hpp"
 #include "okay/Components/DiveAction.hpp"
+#include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
 
@@ -296,14 +297,21 @@ public:
         }
         m_zoom = zoomWithRightMouse && in.Held(PlayerInput::AltFire);
 
-        // Lean: hold Q/E to peek; the camera rolls and shifts sideways.
-        UpdateLean(in, dt);
-        float roll = -m_lean * leanAngle;
+        // Seated: look still works. The Seat owns the body pose. Move or jump stands up.
+        const bool seated = HumanoidActions::IsSitting(gameObject);
+        if (!seated) UpdateLean(in, dt);
+        float roll = seated ? 0.0f : -m_lean * leanAngle;
         if (Transform* cam = FindCameraChild()) {
-            transform->localRotation = Quat::Euler(0, yaw, 0);        // body turns
-            cam->localRotation       = Quat::Euler(pitch, 0, roll);  // camera tilts + leans (shifts sideways in LateUpdate)
-        } else {
+            if (!seated) transform->localRotation = Quat::Euler(0, yaw, 0); // body turns
+            cam->localRotation = Quat::Euler(pitch, 0, roll);  // camera tilts + leans
+        } else if (!seated) {
             transform->localRotation = Quat::Euler(pitch, yaw, roll); // no child cam: tilt self
+        }
+        if (seated) {
+            const bool wantMove = in.move.x * in.move.x + in.move.y * in.move.y > 1e-4f;
+            if (wantMove || in.Pressed(PlayerInput::Jump))
+                HumanoidActions::RequestStandUp(gameObject);
+            return;
         }
 
         // Water: waist-deep is a swim. Shallower is wading, so a shore still walks

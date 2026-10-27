@@ -5465,6 +5465,42 @@ struct OkayScriptVM::Impl {
         b["can_dive"] = [selfObj](std::vector<Value>&) {
             return Value{HumanoidActions::CanDive(selfObj()) ? 1.0f : 0.0f};
         };
+        // sit() ground, sit("Chair") a Seat by name, sit("knees") / sit(2) a kneel.
+        // sit(0) is a chair pose with no Seat (the body stays where it is).
+        b["sit"] = [selfObj](std::vector<Value>& a) {
+            GameObject* go = selfObj();
+            if (!go) return Value{0.0f};
+            GameObject* seat = nullptr;
+            int type = 1;
+            if (!a.empty()) {
+                if (a[0].IsNumber()) type = (int)a[0].AsFloat();
+                else if (go->scene()) {
+                    const std::string name = a[0].AsString();
+                    seat = go->scene()->Find(name);
+                    if (!seat) {
+                        std::string k = name;
+                        for (char& c : k) c = (char)std::tolower((unsigned char)c);
+                        if (k == "chair" || k == "bench") type = 0;
+                        else if (k == "knees") type = 2;
+                    }
+                }
+            }
+            return Value{HumanoidActions::RequestSit(go, seat, type) ? 1.0f : 0.0f};
+        };
+        b["stand_up"] = [selfObj](std::vector<Value>&) {
+            HumanoidActions::RequestStandUp(selfObj());
+            return Value{};
+        };
+        b["is_sitting"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::IsSitting(selfObj()) ? 1.0f : 0.0f};
+        };
+        b["interact"] = [selfObj](std::vector<Value>&) {
+            HumanoidActions::Interact(selfObj());
+            return Value{};
+        };
+        b["seat_prompt"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::SeatPrompt(selfObj())};
+        };
         // ---- Blend shapes (morph targets) on this object and everything under it ----
         //   blend_shape("Smile", 0.8)   set a shape's weight 0..1 on every mesh that has it
         //   blend_shape_get("Smile")    read it back (0 if no mesh has it)

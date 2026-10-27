@@ -30688,6 +30688,8 @@ void DrawInspector(EditorState& ed) {
             char ik[2] = {pk->interactKey, 0};
             if (ImGui::InputText("Interact Key##pk", ik, sizeof(ik))) { pk->interactKey = ik[0]; ed.dirty = true; }
             if (pk->interactKey && ImGui::DragFloat("Interact Range##pk", &pk->interactRange, 0.05f, 0.1f, 50.0f)) ed.dirty = true;
+            if (pk->interactKey && ImGui::Checkbox("Hold In Hands##pk", &pk->holdInHands)) ed.dirty = true;
+            if (pk->interactKey && pk->holdInHands) ImGui::TextDisabled("The key picks it up with Procedural Object Holding (if the player has it).");
             if (ImGui::DragFloat("Magnet Radius##pk", &pk->magnetRadius, 0.05f, 0.0f, 50.0f)) ed.dirty = true;
             if (pk->magnetRadius > 0.0f && ImGui::DragFloat("Magnet Speed##pk", &pk->magnetSpeed, 0.1f, 0.1f, 100.0f)) ed.dirty = true;
         }

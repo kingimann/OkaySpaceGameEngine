@@ -56,6 +56,8 @@ public:
     /// A blend tree entered from another one at offset 0 carries on at the same
     /// phase, so the feet stay in step (walk -> run -> crouch-walk).
     void  ResetBlendPhase(float p = 0.0f) override;
+    /// A one-shot blend (death, dive) starts at 0 instead of inheriting the gait.
+    void  RestartBlendPhase() override;
     bool  BlendClips(float dt, int A, int B, float w) override;
     bool  BlendMany(float dt, const std::vector<int>& clips, const std::vector<float>& weights) override;
     void  PoseLayer(const std::vector<std::pair<int, float>>& clipTimes, const std::vector<float>& weights,

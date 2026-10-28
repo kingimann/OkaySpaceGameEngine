@@ -303,6 +303,41 @@ controller reports again. `anim` 0 hands the body back to its own pose; a
 script's held gesture (`play_clip("Wave")`) holds the state until released.
 Disable the Animator and the built-in animation plays the body as before.
 
+## Actions
+
+Built-in actions (death, and later dive, sit, hits, and the rest) are clips baked
+by `HumanoidActions` and states on the default Animator. They are not new
+`Character::anim` numbers. A scene saved with the default graph (it has Idle,
+Walk, Run and Jump) gains each action once. A state you renamed or deleted stays
+gone: the machine remembers `animsmactions`, and a later action does not put an
+older one back. **Add built-in actions** on the Animator fills in anything missing
+without overwriting a state you edited.
+
+Death clips: `Death_F`, `Death_B`, `Death_L`, `Death_R`, and the looping holds
+`DeadHold_F`, `DeadHold_B`, `DeadHold_L`, `DeadHold_R`. `Death_F` falls forward,
+`Death_B` onto the back, and the side clips are mirrors. The last 0.15s of each
+fall is still, with a `death_settled` event, and `action_end` at the end. The
+state `Death` is a 1D tree on `deathDir` (0 forward, 1 back, 2 left, 3 right).
+It is not interruptible and turns IK off, so jump and fall cannot cut it short.
+The Any-State `die` transition uses interruption None so the blend into Death
+cannot be cancelled by the state being left. `dead` false (revive) goes to GetUp,
+then Idle. `DeadHold` is the settled pose.
+
+`Health` plays this when **Play Death Anim** is on (the default). The body stays
+active until the pose settles, then its capsule (or box) shrinks to about crouch
+height. A respawn restores that height and gets up. Movement controllers skip
+their input while `Health` says the body is dead. `Damage` does not know where a
+hit came from; `Damage(amount, fromWorld)` and `die(x, y, z)` do, and the body
+falls away from that point. With no direction, it falls forward.
+
+Script: `play_action("Death" [, blend])` (0 if that state is missing),
+`is_in_action()`, `action_time()`, `die(["forward"|"back"|"left"|"right"])`,
+`die(x, y, z)`, `revive()`, `is_dead()`. `on_action_end` is the anim event
+`action_end`. `animator.Play("Death_F")` and `CrossFade` go through
+`play_action`, which also falls back to `play_clip` (and logs once) when the
+name is not a state or a blend-tree motion. Visual scripts: Play Action, Is In
+Action, Die, Revive.
+
 In the Inspector the Animator lists its states, what each plays (a clip, or a
 blend tree's clip count) and its transitions (folded; click to open). On a
 Character each state also has **Preview** (plays that clip live in the Scene

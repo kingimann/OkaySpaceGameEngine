@@ -668,7 +668,7 @@ public:
         // cycle, so left/right footfalls stay aligned through the blend.
         float prevPhase = m_phase;
         float cycle = lenA + (lenB - lenA) * w;
-        m_phase = std::fmod(m_phase + dt * speed / std::fmax(cycle, 1e-4f), 1.0f);
+        m_phase = AdvanceBlendPhase(prevPhase, dt * speed / std::fmax(cycle, 1e-4f));
         float tA = m_phase * lenA, tB = m_phase * lenB;
         active = w < 0.5f ? A : B;   // the dominant clip (UI + events)
 
@@ -741,7 +741,7 @@ public:
         float cycle = 0.0f; int dom = 0;
         for (std::size_t i = 0; i < w.size(); ++i) { w[i] /= sum; cycle += len[i] * w[i]; if (w[i] > w[dom]) dom = (int)i; }
         float prevPhase = m_phase;
-        m_phase = std::fmod(m_phase + dt * speed / std::fmax(cycle, 1e-4f), 1.0f);
+        m_phase = AdvanceBlendPhase(prevPhase, dt * speed / std::fmax(cycle, 1e-4f));
         active = ci[dom];
         if (rootMotion) {
             Vec3 d{0, 0, 0}; float yaw = 0.0f;
@@ -1194,6 +1194,15 @@ private:
     float                    m_fadeTime = 0.25f;    ///< the running crossfade's length (blendTime, or a transition's blend)
     bool                     m_fromStart = true;    ///< next event window starts at a Play: an event at 0 fires too
     // Fire clip `c`'s events with time in (a, b], or [a, b] when `fromStart`.
+    /// Looping trees wrap so the feet stay in step. One-shots stop at the end
+    /// pose instead of sampling the first frame on the frame the clip finishes.
+    float AdvanceBlendPhase(float prev, float step) {
+        float next = prev + step;
+        if (!loop) return next >= 1.0f ? 1.0f : (next < 0.0f ? 0.0f : next);
+        next = std::fmod(next, 1.0f);
+        if (next < 0.0f) next += 1.0f;
+        return next;
+    }
     void FireWindow(int c, float a, float b, bool fromStart) {
         for (const ClipEvent& ev : clips[(std::size_t)c].events)
             if ((fromStart ? ev.time >= a : ev.time > a) && ev.time <= b && !ev.name.empty()) FireEvent(ev.name);

@@ -1,4 +1,5 @@
 #include "okay/Animation/HumanoidLibrary.hpp"
+#include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Animation/HumanoidMotion.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/Character.hpp"
@@ -149,6 +150,7 @@ std::vector<Entry> BakeAll() {
     add(Hold("Sad", 14, 2.0f * kPi / 1.4f, 24), 14);
     add(Hold("Angry", 15, 2.0f * kPi / 5.0f, 16), 15);
     add(Hold("Think", 16), 16);
+    HumanoidActions::Bake(out);
     return out;
 }
 } // namespace
@@ -332,6 +334,7 @@ void DefaultGraph(AnimStateMachine& sm, const Character* body) {
         sm.states[i].nx = 40.0f + 220.0f * (float)col;
         sm.states[i].ny = 40.0f + 90.0f * (float)((int)i - kColStart[col]);
     }
+    HumanoidActions::AddStates(sm, body);
 
     // A clip bound to a movement state on the body plays in its place.
     if (!body) return;
@@ -370,6 +373,7 @@ void ApplyStanceTimes(AnimStateMachine& sm) {
             tr.interruption = SM::Transition::Interrupt::NextThenCurrent;
         }
     }
+    HumanoidActions::ApplyTimes(sm);
 }
 
 void ApplyCrossfades(AnimStateMachine& sm) {
@@ -406,7 +410,7 @@ AnimStateMachine* EnsureAnimator(GameObject* go) {
     Character* body = go ? go->GetComponent<Character>() : nullptr;
     if (!body) return nullptr;
     for (AnimStateMachine* sm : go->GetComponents<AnimStateMachine>())
-        if (sm->layer == 0) return sm;
+        if (sm->layer == 0) { HumanoidActions::MergeMissing(*sm, body, false); return sm; }
     if (go->GetComponent<ModelAnimator>()) return nullptr;
     AnimStateMachine* sm = go->AddComponent<AnimStateMachine>();
     DefaultGraph(*sm, body);

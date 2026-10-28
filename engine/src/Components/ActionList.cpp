@@ -8,6 +8,7 @@
 #include "okay/Components/ParticleSystem.hpp"
 #include "okay/Components/SpriteAnimator.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/UIButton.hpp"
@@ -658,6 +659,8 @@ bool ActionList::EvalConditions(const std::vector<Item>& conds) {
         else if (op == "str_starts")   { const std::string& s = StrVars()[Str(c, 0)]; std::string p = Rest(c, 1); ok = s.rfind(p, 0) == 0; }
         else if (op == "str_ends")     { const std::string& s = StrVars()[Str(c, 0)]; std::string p = Rest(c, 1); ok = s.size() >= p.size() && s.compare(s.size() - p.size(), p.size(), p) == 0; }
         else if (op == "has_tag")  ok = gameObject && gameObject->tag == Str(c, 0);
+        else if (op == "is_in_action") ok = HumanoidActions::IsInAction(gameObject);
+        else if (op == "is_dead") ok = HumanoidActions::IsDead(gameObject);
         else if (op == "is_active")ok = gameObject && gameObject->active;
         else if (op == "has_item") {      // item [count] [object]: the inventory holds at least count
             Inventory* inv = ItemInv(c, gameObject, GetScene());
@@ -1267,6 +1270,16 @@ void ActionList::Update(float dt) {
                 }
             }
         }
+        else if (op == "play_action") {
+            HumanoidActions::Play(gameObject, Str(it, 0), it.args.size() > 1 ? Num(it, 1) : 0.2f);
+        }
+        else if (op == "die") {
+            int dir = 0; Vec3 from{}; const Vec3* hit = nullptr;
+            if (it.args.size() >= 3) { from = {Num(it, 0), Num(it, 1), Num(it, 2)}; hit = &from; }
+            else if (!it.args.empty()) dir = HumanoidActions::DirFromName(Str(it, 0));
+            HumanoidActions::RequestDeath(gameObject, dir, hit);
+        }
+        else if (op == "revive") HumanoidActions::RequestRevive(gameObject);
         else if (op == "set_cam") {
             if (scene && scene->mainCamera) {
                 Transform* ct = scene->mainCamera->gameObject->transform;

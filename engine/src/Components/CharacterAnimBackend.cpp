@@ -111,6 +111,11 @@ void CharacterAnimBackend::ResetBlendPhase(float p) {
     m_fromStart = true;
 }
 
+void CharacterAnimBackend::RestartBlendPhase() {
+    m_carry = false;   // a one-shot must not inherit the gait cycle
+    ResetBlendPhase(0.0f);
+}
+
 void CharacterAnimBackend::SetTime(float t) {
     if (m_cur.blend) return;
     const float len = ClipLength(m_cur.clip);
@@ -160,14 +165,18 @@ bool CharacterAnimBackend::BlendMany(float dt, const std::vector<int>& clips, co
     for (float& w : p.weights) w /= sum;
     p.cycle = cycle / sum;
     p.rate = m_speed;
+    p.loop = m_loop;
     // One shared phase: every clip samples the same fraction of its cycle, so the
-    // footfalls line up through the blend.
+    // footfalls line up through the blend. A one-shot holds its last frame; wrapping
+    // it would sample the start pose on the frame the clip ends.
     const float prev = p.phase;
-    p.phase = frac01(p.phase + dt * m_speed / std::fmax(p.cycle, 1e-4f));
+    float next = p.phase + dt * m_speed / std::fmax(p.cycle, 1e-4f);
+    if (!p.loop) p.phase = next >= 1.0f ? 1.0f : (next < 0.0f ? 0.0f : next);
+    else p.phase = frac01(next);
     const float len = ClipLength(dom);
-    if (m_speed > 0.0f && len > 0.0f) {   // the dominant clip's events over this frame's window
+    if (m_speed > 0.0f && len > 0.0f && p.phase != prev) {   // the dominant clip's events over this frame's window
         if (p.phase < prev) { FireWindow(dom, prev * len, len); m_fromStart = true; FireWindow(dom, 0.0f, p.phase * len); }
-        else FireWindow(dom, prev * len, p.phase * len);
+        else FireWindow(dom, prev * len, p.phase >= 1.0f ? len : p.phase * len);
     }
     return true;
 }
@@ -185,7 +194,12 @@ void CharacterAnimBackend::FireWindow(int clip, float t0, float t1) {
 }
 
 void CharacterAnimBackend::Step(Playing& p, float dt) const {
-    if (p.blend) { p.phase = frac01(p.phase + dt * p.rate / std::fmax(p.cycle, 1e-4f)); return; }
+    if (p.blend) {
+        if (!p.loop && p.phase >= 1.0f) return;   // a fading one-shot holds its end pose
+        const float next = p.phase + dt * p.rate / std::fmax(p.cycle, 1e-4f);
+        p.phase = p.loop ? frac01(next) : std::fmin(next, 1.0f);
+        return;
+    }
     const float len = ClipLength(p.clip);
     p.time += dt * p.rate;
     if (len > 0.0f) p.time = p.loop ? frac01(p.time / len) * len : std::fmin(p.time, len);   // a one-shot fading out holds its end

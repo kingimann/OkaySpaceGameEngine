@@ -128,6 +128,9 @@ public:
         /// blend position's distance from 0) over the blended motions' speed, so
         /// the feet keep pace with the ground between and beyond the motions.
         bool        matchSpeed = false;
+        /// False locks the state: Any State (jump, fall, a later action) cannot
+        /// cut it short. Death uses this. Its own transitions still run.
+        bool        interruptible = true;
     };
 
     // ---- Layer settings (layer 0 = the base machine) ----
@@ -145,6 +148,9 @@ public:
     /// How long this body's stance changes take; the movement controllers ease the
     /// body, its collider and the camera over them. Serialized.
     StanceTimes stanceTimes;
+    /// Built-in action revision already merged into this graph (see HumanoidActions).
+    /// 0 = a graph from before actions. Serialized as `animsmactions`.
+    int actionsRev = 0;
     /// How long idle / walk / run and ground / air crossfades take. Serialized
     /// when it differs from the defaults. Editing it retimes those pairs.
     GaitCrossfades crossfades;
@@ -570,9 +576,13 @@ private:
             if (m_trLeft <= 0.0f) m_trActive = false;
         }
         if (hold) return;
-        for (const Transition& tr : anyState) {
-            if (tr.to == m_current && !tr.canInterruptSelf) continue;
-            if (Try(tr, ma, cur)) return;
+        // A locked state (death) ignores Any State. Jump, fall and later actions
+        // cannot leave it; its own transitions (clip end, revive) still run below.
+        if (!cur || cur->interruptible) {
+            for (const Transition& tr : anyState) {
+                if (tr.to == m_current && !tr.canInterruptSelf) continue;
+                if (Try(tr, ma, cur)) return;
+            }
         }
         if (!m_trActive) {
             for (const Transition& tr : cur->transitions)
@@ -726,6 +736,7 @@ private:
             return;
         }
         ma->SetSpeed(StateSpeed(st));
+        ma->SetLoop(st.loop);
         if (st.blendTree && st.blendDims == 2) {
             ReleaseImported();
             Weights2D(st.motions, GetFloat(st.blendParam), GetFloat(st.blendParamY), m_bWeights);
@@ -733,7 +744,8 @@ private:
             for (std::size_t i = 0; i < st.motions.size(); ++i)
                 if (m_bWeights[i] > 0.0f) idx.push_back(MotionClip(ma, st, st.motions[i].clip));
             ma->CaptureCrossfadeMany(idx, blend);
-            ma->ResetBlendPhase(offset);
+            if (!st.loop) ma->RestartBlendPhase();
+            else ma->ResetBlendPhase(offset);
             ma->SetExternalDrive(true);
         } else if (st.blendTree) {
             ReleaseImported();
@@ -742,7 +754,10 @@ private:
             PickMotions(st, GetFloat(st.blendParam), lo, hi, w);
             ma->CaptureCrossfade(lo >= 0 ? MotionClip(ma, st, st.motions[lo].clip) : -1,
                                  hi >= 0 ? MotionClip(ma, st, st.motions[hi].clip) : -1, blend);
-            ma->ResetBlendPhase(offset);
+            // A one-shot tree starts at the beginning. A looping tree keeps the
+            // transition's normalized offset.
+            if (!st.loop) ma->RestartBlendPhase();
+            else ma->ResetBlendPhase(offset);
             ma->SetExternalDrive(true);
         } else {
             ma->SetExternalDrive(false);

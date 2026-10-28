@@ -28,6 +28,7 @@
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/AnimControl.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
+#include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Components/BlendShapes.hpp"
 #include "okay/Components/LimbIK.hpp"
 #include "okay/Components/ChainIK.hpp"
@@ -5421,6 +5422,42 @@ struct OkayScriptVM::Impl {
             if (AnimStateMachine* m = smSelf(); m && !a.empty()) m->SetTrigger(a[0].AsString());
             return Value{};
         };
+        // Actions (HumanoidActions): play_action goes to a state, or a blend-tree
+        // motion of that clip name, else play_clip. die/revive drive Death.
+        b["play_action"] = [selfObj](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            const float blend = a.size() >= 2 ? a[1].AsFloat() : 0.2f;
+            return Value{HumanoidActions::Play(selfObj(), a[0].AsString(), blend) ? 1.0f : 0.0f};
+        };
+        b["is_in_action"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::IsInAction(selfObj()) ? 1.0f : 0.0f};
+        };
+        b["action_time"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::ActionTime(selfObj())};
+        };
+        b["die"] = [selfObj](std::vector<Value>& a) {
+            GameObject* go = selfObj();
+            int dir = 0;
+            const Vec3* from = nullptr;
+            Vec3 world;
+            if (a.size() >= 3 && a[0].IsNumber()) {
+                world = {a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+                from = &world;
+            } else if (!a.empty() && a[0].IsVec3()) {
+                world = a[0].AsVec3();
+                from = &world;
+            } else if (!a.empty() && a[0].IsString()) dir = HumanoidActions::DirFromName(a[0].AsString());
+            else if (!a.empty() && a[0].IsNumber()) dir = (int)a[0].AsFloat();
+            HumanoidActions::RequestDeath(go, dir, from);
+            return Value{};
+        };
+        b["revive"] = [selfObj](std::vector<Value>&) {
+            HumanoidActions::RequestRevive(selfObj());
+            return Value{};
+        };
+        b["is_dead"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::IsDead(selfObj()) ? 1.0f : 0.0f};
+        };
         // ---- Blend shapes (morph targets) on this object and everything under it ----
         //   blend_shape("Smile", 0.8)   set a shape's weight 0..1 on every mesh that has it
         //   blend_shape_get("Smile")    read it back (0 if no mesh has it)
@@ -9196,7 +9233,11 @@ struct OkayScriptVM::Impl {
                 if (m == "SetTrigger") { std::vector<Value> x{arg(0)}; return rt.Call("anim_trigger", x); }
                 if (m == "SetBool")    { std::vector<Value> x{arg(0), Value{arg(1).AsBool() ? 1.0f : 0.0f}}; return rt.Call("anim_set_bool", x); }
                 if (m == "SetFloat" || m == "SetInteger") { std::vector<Value> x{arg(0), arg(1)}; return rt.Call("anim_set_float", x); }
-                if (m == "Play" || m == "CrossFade" || m == "CrossFadeInFixedTime") { std::vector<Value> x{arg(0)}; return rt.Call("play_clip", x); }
+                if (m == "Play" || m == "CrossFade" || m == "CrossFadeInFixedTime") {
+                    std::vector<Value> x{arg(0)};
+                    if (m != "Play" && rest.size() >= 2) x.push_back(arg(1));
+                    return rt.Call("play_action", x);
+                }
                 return Value{};
             }
             if (t == "Rigidbody2D") if (auto* rb = g->GetComponent<Rigidbody2D>()) {

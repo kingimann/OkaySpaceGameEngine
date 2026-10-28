@@ -9,6 +9,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/DeathLock.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/StepUp.hpp"
 #include "okay/Input/Input.hpp"
@@ -179,6 +180,7 @@ public:
         if (!transform || !gameObject) return;
         if (Game::Paused()) return;
         if (!IsLocallyControlled(gameObject)) return;
+        if (DeathLocksInput(gameObject)) { StopDeadSlide(gameObject); return; }
         Scene* sc = gameObject->scene();
         const bool ui = Input::UICaptured();
         auto* rb = gameObject->GetComponent<Rigidbody3D>();

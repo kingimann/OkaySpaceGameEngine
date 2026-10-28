@@ -9,6 +9,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Animation/HumanoidActions.hpp"
 #include <cmath>
 #include <string>
 
@@ -100,6 +101,7 @@ public:
     bool  respawn = false;         // come back after respawnDelay
     float respawnDelay = 3.0f;
     int   lives = 0;               // respawns allowed (0 = unlimited)
+    bool  playDeathAnim = true;   // play Death and stay active until it settles
 
     bool  dead = false, lowHealth = false;
 
@@ -117,6 +119,10 @@ public:
         if (dt <= 0.0f) return;
         if (m_iframes > 0.0f) m_iframes -= dt;
         if (dead) {
+            if (m_deathPlayed && !m_settled) {
+                m_deathAge += dt;
+                if (HumanoidActions::DeathPoseSettled(gameObject) || m_deathAge >= 2.5f) FinishDeathPose();
+            }
             if (respawn && m_respawnTimer > 0.0f) {
                 m_respawnTimer -= dt;
                 if (m_respawnTimer <= 0.0f) Respawn();
@@ -131,7 +137,27 @@ public:
         lowHealth = health <= lowThreshold;
         Publish();
     }
-    void Damage(float amount) {
+    void Damage(float amount) { hasLastHit = false; ApplyDamage(amount); }
+    /// `fromWorld` is where the hit came from. Death falls away from it.
+    void Damage(float amount, const Vec3& fromWorld) {
+        lastHitFrom = fromWorld; hasLastHit = true; ApplyDamage(amount);
+    }
+    /// Script die(): kill without another damage calculation. Replays the anim
+    /// if this body is already dead.
+    void KillFromAction(bool hasFrom, const Vec3& from) {
+        if (hasFrom) { lastHitFrom = from; hasLastHit = true; }
+        else hasLastHit = false;
+        if (dead) {
+            if (playDeathAnim) HumanoidActions::PlayDeath(gameObject, hasLastHit ? &lastHitFrom : nullptr);
+            return;
+        }
+        OnDeath();
+    }
+    void OnAnimationEvent(const std::string& name) override {
+        if (name == "death_settled") FinishDeathPose();
+    }
+
+    void ApplyDamage(float amount) {
         if (dead || godMode || m_iframes > 0.0f || amount <= 0.0f) return;
         float dmg = Mathf::Max(0.0f, amount - (armor + equipArmor));
         dmg *= (1.0f - Mathf::Clamp01(resistance));
@@ -162,22 +188,40 @@ public:
 private:
     void OnDeath() {
         health = 0.0f; dead = true;
+        m_settled = false; m_deathAge = 0.0f; m_deathPlayed = false; m_waitDeath = false;
         Broadcast("died");
         if (gameObject) { if (auto* au = gameObject->GetComponent<AudioSource>()) au->Play(); }
+        if (playDeathAnim)
+            m_deathPlayed = HumanoidActions::PlayDeath(gameObject, hasLastHit ? &lastHitFrom : nullptr);
         bool canRespawn = respawn && (lives <= 0 || m_livesLeft > 0);
         if (canRespawn) {
             if (lives > 0) --m_livesLeft;
             m_respawnTimer = respawnDelay;
             // Stay active (inert) so Update keeps ticking the respawn timer; a
             // deactivated object gets no Update. Hide visuals via the `died` message.
+        } else if (m_deathPlayed) {
+            m_waitDeath = true;   // shrink the capsule once the pose settles; stay in DeadHold
         } else if (destroyOnDeath && gameObject && gameObject->scene()) {
             gameObject->scene()->Destroy(gameObject);
         } else if (gameObject) {
             gameObject->active = false;
         }
     }
+    void FinishDeathPose() {
+        if (m_settled || !dead) return;
+        m_settled = true;
+        HumanoidActions::ShrinkDeadBody(gameObject, m_deathShape);
+        if (!m_waitDeath) return;
+        m_waitDeath = false;
+        // The settled DeadHold stays visible and revive can get up. DeathLocksInput
+        // holds the body. A body with no death clip still deactivates in OnDeath.
+        if (destroyOnDeath && gameObject && gameObject->scene()) gameObject->scene()->Destroy(gameObject);
+    }
     void Respawn() {
         dead = false; health = maxHealth; m_timer = 0.0f; m_iframes = 0.0f; m_respawnTimer = 0.0f;
+        m_deathPlayed = false; m_settled = false; m_waitDeath = false; m_deathAge = 0.0f;
+        HumanoidActions::RestoreDeadBody(gameObject, m_deathShape);
+        HumanoidActions::ReviveAnim(gameObject);
         if (gameObject) {
             gameObject->active = true;
             if (gameObject->transform && respawn) gameObject->transform->SetPosition(m_start);
@@ -189,6 +233,11 @@ private:
     float m_timer = 0.0f, m_iframes = 0.0f, m_respawnTimer = 0.0f;
     int   m_livesLeft = 0;
     Vec3  m_start{0, 0, 0};
+    Vec3  lastHitFrom{0, 0, 0};
+    bool  hasLastHit = false;
+    bool  m_deathPlayed = false, m_settled = false, m_waitDeath = false;
+    float m_deathAge = 0.0f;
+    HumanoidActions::DeadShape m_deathShape;
 };
 
 /// Hunger that drains over time (faster while sprinting); empty -> `starving`. When

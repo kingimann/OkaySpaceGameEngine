@@ -4,7 +4,7 @@
 // editor's Play mode. Header-only so the engine library stays SDL-free; include
 // it only from code that already links SDL.
 #include "okay/Input/Input.hpp"
-#include <SDL.h>
+#include <SDL_gamecontroller.h>   // not SDL.h: on Windows it renames every `main` (Camera::main) to SDL_main
 #include <cmath>
 #include <vector>
 

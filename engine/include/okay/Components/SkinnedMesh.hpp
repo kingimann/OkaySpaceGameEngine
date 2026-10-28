@@ -24,7 +24,9 @@
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Render/Mesh.hpp"
 #include "okay/Math/Mat4.hpp"
+#include "okay/Math/Quat.hpp"
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -40,6 +42,47 @@ public:
     std::vector<Transform*>  joints;             ///< bone transforms (runtime; resolved from jointNames)
     std::vector<std::string> jointNames;         ///< bone object names (serialized; resolved on load)
     std::vector<Mat4>        inverseBind;         ///< per-joint inverse bind matrix
+
+    /// The joint's bind pose, recovered from `inverseBind` — not from its current
+    /// transform. A scene saved mid-play stores the animated bone; this is the
+    /// pose the skin was bound in. `localRot` / `localPos` are relative to the
+    /// parent joint (or to this mesh node, when the parent isn't a joint).
+    /// `meshPos` is the joint's position in this mesh node's space. False when
+    /// `joint` isn't one of the joints, or the inverse bind is missing.
+    bool BindJoint(Transform* joint, Quat& localRot, Vec3& localPos, Vec3& meshPos) const {
+        if (!joint || !transform) return false;
+        int idx = -1;
+        for (int i = 0; i < (int)joints.size(); ++i) if (joints[i] == joint) { idx = i; break; }
+        if (idx < 0 || idx >= (int)inverseBind.size()) return false;
+        const Mat4 id = Mat4::Identity();
+        auto useful = [&](const Mat4& M) {
+            for (int e = 0; e < 16; ++e) if (std::fabs(M.m[e] - id.m[e]) > 1e-4f) return true;
+            return false;
+        };
+        const Mat4& ib = inverseBind[idx];
+        if (!useful(ib)) return false;
+        const Mat4 jointMesh = ib.Inverse();
+        meshPos = {jointMesh.at(3, 0), jointMesh.at(3, 1), jointMesh.at(3, 2)};
+        Mat4 parentMesh = Mat4::Identity();
+        Transform* parent = joint->Parent();
+        if (parent && parent != transform) {
+            int pi = -1;
+            for (int i = 0; i < (int)joints.size(); ++i) if (joints[i] == parent) { pi = i; break; }
+            if (pi < 0 || pi >= (int)inverseBind.size() || !useful(inverseBind[pi])) return false;
+            parentMesh = inverseBind[pi].Inverse();
+        }
+        const Mat4 local = parentMesh.Inverse() * jointMesh;
+        Vec3 c0{local.at(0, 0), local.at(0, 1), local.at(0, 2)};
+        Vec3 c1{local.at(1, 0), local.at(1, 1), local.at(1, 2)};
+        Vec3 c2{local.at(2, 0), local.at(2, 1), local.at(2, 2)};
+        const float sx = c0.Magnitude(), sy = c1.Magnitude(), sz = c2.Magnitude();
+        if (sx > 1e-8f) c0 = c0 * (1.0f / sx);
+        if (sy > 1e-8f) c1 = c1 * (1.0f / sy);
+        if (sz > 1e-8f) c2 = c2 * (1.0f / sz);
+        localRot = Quat::FromRotationMatrix(c0.x, c1.x, c2.x, c0.y, c1.y, c2.y, c0.z, c1.z, c2.z).Normalized();
+        localPos = {local.at(3, 0), local.at(3, 1), local.at(3, 2)};
+        return true;
+    }
 
     enum class Method { Linear = 0, DualQuaternion = 1 };
     int method = (int)Method::Linear;            ///< see Method

@@ -32,7 +32,7 @@ namespace okay {
 
 class LimbIK : public Component {
 public:
-    int ExecutionOrder() const override { return 100; }   // after animation
+    int ExecutionOrder() const override { return 105; }   // after the body solvers (FootIK 85, FullBodyIK 100)
     Transform* upper = nullptr;        ///< shoulder / hip
     Transform* lower = nullptr;        ///< elbow / knee
     Transform* end   = nullptr;        ///< hand / foot
@@ -67,6 +67,9 @@ public:
     bool  matchTargetRotation = false; ///< align the end bone to the target's rotation (grab)
     bool  orient   = false;            ///< joints not in a chain: also turn the upper/lower bones toward
                                        ///< the moved joints (a chain always turns)
+    /// Seconds to swing over when the goal switches (another target object, object
+    /// <-> point) or jumps; measured on the character, so moving it never trails.
+    float targetBlendTime = 0.15f;
 
     void Start() override {
         // Names resolve inside this character first (two copies of one model
@@ -85,9 +88,10 @@ public:
     void LateUpdate(float dt) override {
         m_restore.Restore();
         const float w = weight * m_fade.Step(ikActive, fadeTime, dt);
-        if (w <= 0.0f || !upper || !lower || !end) return;
+        if (w <= 0.0f || !upper || !lower || !end) { m_goal.Reset(); return; }
         const Vec3 root = upper->Position(), oldMid = lower->Position(), oldEnd = end->Position();
-        const Vec3 tgt = targetObject ? targetObject->Position() : target;
+        const Vec3 tgt = m_goal.Step(targetObject ? targetObject->Position() : target, (std::uintptr_t)targetObject,
+                                     targetBlendTime, dt, CharacterSpace());
         const float upLen = (oldMid - root).Magnitude(), loLen = (oldEnd - oldMid).Magnitude();
         // A missing or broken target (NaN, infinity) or a zero-length bone leaves the animated pose.
         if (!Finite(tgt) || !Finite(root) || !Finite(oldMid) || !Finite(oldEnd) || upLen < 1e-5f || loLen < 1e-5f) return;
@@ -143,6 +147,12 @@ private:
     IKRestore m_restore;
     IKPole m_pole;   ///< the bend direction, eased as the limb straightens (see IKMath.hpp)
     IKJointFrame m_upFrame, m_loFrame;   ///< rest frames the limits measure from
+    IKGoalBlend m_goal;
+
+    const Transform* CharacterSpace() const {
+        const Transform* r = CharacterRootOf(transform);
+        return r ? r : transform;
+    }
 
     bool Chained() const { return IsUnder(lower, upper) && IsUnder(end, lower); }
 

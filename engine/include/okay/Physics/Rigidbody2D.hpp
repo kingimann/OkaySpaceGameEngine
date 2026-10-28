@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Physics/PoseHistory.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Math/Vec2.hpp"
@@ -44,6 +45,8 @@ public:
     bool     allowSleep = true;
     /// Runtime: true while asleep. Not authored — set/cleared by Physics2D.
     bool     sleeping   = false;
+    /// Runtime: poses for render interpolation (Scene::interpolatePhysics).
+    PoseHistory poseHistory;
     /// Force this body awake (call after teleporting or externally moving it).
     void WakeUp() { sleeping = false; m_sleepTimer = 0.0f; }
 

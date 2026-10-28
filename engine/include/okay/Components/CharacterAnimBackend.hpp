@@ -61,13 +61,16 @@ public:
     bool  BlendClips(float dt, int A, int B, float w) override;
     bool  BlendMany(float dt, const std::vector<int>& clips, const std::vector<float>& weights) override;
     void  PoseLayer(const std::vector<std::pair<int, float>>& clipTimes, const std::vector<float>& weights,
-                    const std::string& maskBone, float amount) override;
+                    const std::string& maskBone, float amount, bool additive = false,
+                    const std::vector<std::string>* moreBones = nullptr) override;
     void  AddPostPose(const void* owner, std::function<void(float)> fn) override;
     void  RemovePostPose(const void* owner) override;
     void  FireEvent(const std::string& name) override;
     void  SetStateMachine(const Component* sm) override { m_machine = sm; }
     void  Advance(float dt) override;
     void  BeginFrame(AnimStateMachine& sm) override;
+    void  SetMirror(bool on) override { m_mirror = on; }
+    void  SetRootMotion(int mode) override { m_rootMotion = mode; }
 
     bool  AnimatorPose(std::vector<Vec3>& pose, Vec3& root) override;
     bool  Live() const override;
@@ -123,6 +126,8 @@ private:
     bool  m_have = false;                            // a pose was made
     bool  m_final = true;                            // the post-pose hooks ran on it
     float m_dt = 0.0f;
+    bool  m_mirror = false;                          // the current state plays mirrored
+    int   m_rootMotion = -1;                         // -1 keep the clip root, 0 strip it, 1 keep it
 };
 
 } // namespace okay

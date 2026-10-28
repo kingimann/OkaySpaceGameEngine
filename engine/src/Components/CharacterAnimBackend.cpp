@@ -274,6 +274,11 @@ void CharacterAnimBackend::Advance(float dt) {
             root = fromRoot + (root - fromRoot) * u;
         }
     }
+    if (m_mirror && !pose.empty()) {
+        Character::MirrorPose(pose);
+        root.x = -root.x;
+    }
+    if (m_rootMotion == 0) root = Vec3{0, 0, 0};
     m_have = !pose.empty();
     m_pose = std::move(pose); m_root = root;
     m_final = false; m_dt = dt;
@@ -390,17 +395,27 @@ bool CharacterAnimBackend::AnimatorPose(std::vector<Vec3>& pose, Vec3& root) {
 }
 
 void CharacterAnimBackend::PoseLayer(const std::vector<std::pair<int, float>>& clipTimes, const std::vector<float>& weights,
-                                     const std::string& maskBone, float amount) {
+                                     const std::string& maskBone, float amount, bool additive,
+                                     const std::vector<std::string>* moreBones) {
     Character* ch = Body();
     if (!ch || !m_have || amount <= 0.0f) return;
-    // The mask bone and every bone under it ("" = the whole body, root included).
+    // The mask bone and every bone under it, plus each extra root's subtree
+    // ("" and no extras = the whole body, root included).
     const std::vector<Character::Bone> sk = ch->Skeleton();
-    std::vector<char> in(sk.size(), maskBone.empty() ? 1 : 0);
-    if (!maskBone.empty()) {
-        const int mb = Character::BoneIndex(maskBone);
-        if (mb < 0) return;
-        for (int b = 0; b < (int)sk.size(); ++b)
-            for (int a = b; a >= 0; a = sk[a].parent) if (a == mb) { in[b] = 1; break; }
+    std::vector<std::string> roots;
+    if (!maskBone.empty()) roots.push_back(maskBone);
+    if (moreBones) for (const std::string& b : *moreBones) if (!b.empty()) roots.push_back(b);
+    std::vector<char> in(sk.size(), roots.empty() ? 1 : 0);
+    if (!roots.empty()) {
+        for (const std::string& bone : roots) {
+            const int mb = Character::BoneIndex(bone);
+            if (mb < 0) continue;
+            for (int b = 0; b < (int)sk.size(); ++b)
+                for (int a = b; a >= 0; a = sk[a].parent) if (a == mb) { in[b] = 1; break; }
+        }
+        bool hit = false;
+        for (char c : in) if (c) { hit = true; break; }
+        if (!hit) return;   // none of the mask bones exist: drive nothing
     }
     std::vector<Vec3> lp; Vec3 lr; float total = 0.0f;
     for (std::size_t k = 0; k < clipTimes.size() && k < weights.size(); ++k) {
@@ -410,10 +425,20 @@ void CharacterAnimBackend::PoseLayer(const std::vector<std::pair<int, float>>& c
         MixIn(lp, lr, total, c->Sample(t), c->SampleRoot(t), weights[k]);
     }
     if (lp.empty()) return;
+    if (m_mirror) {
+        Character::MirrorPose(lp);
+        lr.x = -lr.x;
+    }
     const float u = std::fmin(amount, 1.0f);
-    for (std::size_t b = 0; b < m_pose.size() && b < lp.size() && b < in.size(); ++b)
-        if (in[b]) m_pose[b] = AnimClip::BlendEuler(m_pose[b], lp[b], u);
-    if (!in.empty() && in[0]) m_root = m_root + (lr - m_root) * u;   // the layer carries the hips
+    for (std::size_t b = 0; b < m_pose.size() && b < lp.size() && b < in.size(); ++b) {
+        if (!in[b]) continue;
+        if (additive) m_pose[b] = m_pose[b] + lp[b] * u;   // clip is an offset from rest
+        else          m_pose[b] = AnimClip::BlendEuler(m_pose[b], lp[b], u);
+    }
+    if (!in.empty() && in[0]) {
+        if (additive) m_root = m_root + lr * u;
+        else          m_root = m_root + (lr - m_root) * u;   // the layer carries the hips
+    }
 }
 
 void CharacterAnimBackend::AddPostPose(const void* owner, std::function<void(float)> fn) {

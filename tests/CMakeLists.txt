@@ -1258,3 +1258,8 @@ add_test(NAME object_holding COMMAND test_object_holding)
 add_executable(test_input_actions test_input_actions.cpp)
 target_link_libraries(test_input_actions PRIVATE okay::engine)
 add_test(NAME input_actions COMMAND test_input_actions)
+
+# Fixed-step physics: same result at any frame rate, catch-up limit, render interpolation
+add_executable(test_fixed_step test_fixed_step.cpp)
+target_link_libraries(test_fixed_step PRIVATE okay::engine)
+add_test(NAME fixed_step COMMAND test_fixed_step)

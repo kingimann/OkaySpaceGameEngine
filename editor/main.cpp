@@ -20066,6 +20066,10 @@ static void DrawAnimatorGraph(EditorState& ed) {
         static GameObject* s_layerObj = nullptr;
         static int s_layer = 0, s_forceTab = -1;
         if (s_layerObj != smObj) { s_layerObj = smObj; s_layer = 0; }
+        if (const char* e = std::getenv("OKAY_UI_AGLAYER")) {
+            static bool once = false;
+            if (!once) { s_layer = std::atoi(e); s_forceTab = s_layer; once = true; }
+        }
         std::vector<AnimStateMachine*> machines = smObj->GetComponents<AnimStateMachine>();
         if (s_layer >= (int)machines.size()) s_layer = 0;
         if (ImGui::BeginTabBar("##aglayers", ImGuiTabBarFlags_FittingPolicyScroll)) {
@@ -20120,12 +20124,43 @@ static void DrawAnimatorGraph(EditorState& ed) {
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("This layer drives this bone and everything under it.\nPick the spine for upper-body actions (attack while walking).");
             ImGui::SameLine();
+            if (ImGui::Checkbox("Additive##agl", &sm->additive)) ed.dirty = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Add this layer onto the base pose instead of replacing the masked bones.\n"
+                                  "A recoil, aim offset, or lean while the body keeps walking.");
+            ImGui::SameLine();
             if (ImGui::SmallButton("Remove layer##agl")) {
                 ed.PushUndo();
                 smObj->RemoveComponent(sm);
                 ed.dirty = true;
                 ImGui::End(); return;
             }
+            auto maskCombo = [&](const char* id, std::string& bone) {
+                ImGui::SetNextItemWidth(170);
+                if (ImGui::BeginCombo(id, bone.empty() ? "(pick a bone)" : bone.c_str())) {
+                    std::set<std::string> seen;
+                    if (ma)
+                        for (const auto& c : ma->clips)
+                            for (const auto& nc : c.nodes)
+                                if (seen.insert(nc.node).second && ImGui::Selectable(nc.node.c_str(), bone == nc.node)) { bone = nc.node; ed.dirty = true; }
+                    if (body)
+                        for (int b = 0; b < Character::BoneCount(); ++b)
+                            if (ImGui::Selectable(Character::BoneName(b), bone == Character::BoneToken(b))) { bone = Character::BoneToken(b); ed.dirty = true; }
+                    ImGui::EndCombo();
+                }
+            };
+            int delMask = -1;
+            for (int mi = 0; mi < (int)sm->maskBones.size(); ++mi) {
+                ImGui::PushID(mi);
+                maskCombo("Also##agl", sm->maskBones[mi]);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("x##agmx")) delMask = mi;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("This bone and the ones under it are in the mask too.");
+                ImGui::PopID();
+            }
+            if (delMask >= 0) { sm->maskBones.erase(sm->maskBones.begin() + delMask); ed.dirty = true; }
+            if (ImGui::SmallButton("+ Mask bone##agl")) { sm->maskBones.push_back(std::string()); ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add another bone subtree to this layer's mask (an avatar mask).");
         }
     }
 
@@ -20777,13 +20812,104 @@ static void DrawAnimatorGraph(EditorState& ed) {
             if (useSp) { ImGui::SameLine(); ImGui::SetNextItemWidth(-1); paramPicker("##agspp", st.speedParam, 0); }
         }
         if (!st.blendTree && ImGui::Checkbox("Loop##ag", &st.loop)) ed.dirty = true;
+        if (ImGui::Checkbox("Mirror##ag", &st.mirror)) ed.dirty = true;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Play this state on the other side: left and right swap.\n"
+                              "Author one wave or punch and mirror it for the other hand.");
+        {
+            static const char* kRoot[] = {"Inherit", "Off", "On"};
+            int rm = st.rootMotion < 0 ? 0 : (st.rootMotion == 0 ? 1 : 2);
+            ImGui::SetNextItemWidth(120);
+            if (ImGui::Combo("Root motion##ag", &rm, kRoot, 3)) {
+                st.rootMotion = rm == 0 ? -1 : (rm == 1 ? 0 : 1);
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Inherit uses the Model Animator's own root-motion toggle.\n"
+                                  "Off strips this state's root travel. On turns it on for this state only.");
+        }
         if (ImGui::SliderFloat("IK weight##ag", &st.ikWeight, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Foot planting in this state (and Full Body IK, unless given its own weight below).");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Foot planting in this state (and Full Body IK, unless given its own weight below).\n"
+                                                      "A curve below multiplies this over the clip.");
+        auto drawIkCurve = [&](const char* id, std::vector<AnimStateMachine::State::IkKey>& keys, const char* tip) {
+            ImGui::PushID(id);
+            if (keys.empty()) {
+                if (ImGui::SmallButton("Add curve")) {
+                    keys.push_back({0.0f, 1.0f});
+                    keys.push_back({1.0f, 1.0f});
+                    ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+            } else {
+                const float mw = ImGui::GetContentRegionAvail().x, mh = 64.0f;
+                const ImVec2 mo = ImGui::GetCursorScreenPos();
+                ImGui::InvisibleButton("##plot", ImVec2(mw, mh));
+                ImDrawList* pdl = ImGui::GetWindowDrawList();
+                pdl->AddRectFilled(mo, ImVec2(mo.x + mw, mo.y + mh), ImGui::GetColorU32(ImGuiCol_FrameBg), 3.0f);
+                auto toP = [&](float t, float w) { return ImVec2(mo.x + t * mw, mo.y + (1.0f - w) * mh); };
+                auto fromP = [&](ImVec2 p) {
+                    float t = mw > 1.0f ? (p.x - mo.x) / mw : 0.0f;
+                    float w = mh > 1.0f ? 1.0f - (p.y - mo.y) / mh : 0.0f;
+                    return ImVec2(std::min(std::max(t, 0.0f), 1.0f), std::min(std::max(w, 0.0f), 1.0f));
+                };
+                std::vector<ImVec2> pts;
+                for (const auto& k : keys) pts.push_back(toP(k.t, k.w));
+                if ((int)pts.size() >= 2)
+                    pdl->AddPolyline(pts.data(), (int)pts.size(), ImGui::GetColorU32(ImGuiCol_PlotLines), ImDrawFlags_None, 2.0f);
+                if (ed.isPlaying() && sm->Current() == st.name) {
+                    float u = sm->NormalizedTime(); u -= std::floor(u); if (u < 0.0f) u += 1.0f;
+                    const float x = mo.x + u * mw;
+                    pdl->AddLine(ImVec2(x, mo.y), ImVec2(x, mo.y + mh), ImGui::GetColorU32(ImGuiCol_PlotHistogram));
+                }
+                static int s_drag = -1;
+                static std::vector<AnimStateMachine::State::IkKey>* s_owner = nullptr;
+                const ImVec2 mp = ImGui::GetIO().MousePos;
+                int hit = -1; float best = 9.0f;
+                for (int i = 0; i < (int)keys.size(); ++i) {
+                    const ImVec2 p = toP(keys[i].t, keys[i].w);
+                    const float d = std::hypot(p.x - mp.x, p.y - mp.y);
+                    if (d < best) { best = d; hit = i; }
+                }
+                if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && hit >= 0) {
+                    keys.erase(keys.begin() + hit); ed.dirty = true;
+                    if (s_owner == &keys) { s_drag = -1; s_owner = nullptr; }
+                } else if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+                    if (hit < 0) {
+                        const ImVec2 tw = fromP(mp);
+                        keys.push_back({tw.x, tw.y});
+                        std::stable_sort(keys.begin(), keys.end(), [](const auto& a, const auto& b) { return a.t < b.t; });
+                        hit = 0;
+                        for (int i = 0; i < (int)keys.size(); ++i) if (keys[i].t == tw.x && keys[i].w == tw.y) { hit = i; break; }
+                        ed.dirty = true;
+                    }
+                    s_drag = hit; s_owner = &keys;
+                }
+                if (s_owner == &keys && s_drag >= 0 && s_drag < (int)keys.size() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                    const ImVec2 tw = fromP(mp);
+                    keys[s_drag].t = tw.x; keys[s_drag].w = tw.y;
+                    const float t = tw.x, w = tw.y;
+                    std::stable_sort(keys.begin(), keys.end(), [](const auto& a, const auto& b) { return a.t < b.t; });
+                    s_drag = 0;
+                    for (int i = 0; i < (int)keys.size(); ++i) if (keys[i].t == t && keys[i].w == w) { s_drag = i; break; }
+                    ed.dirty = true;
+                }
+                if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) { s_drag = -1; s_owner = nullptr; }
+                for (int i = 0; i < (int)keys.size(); ++i) {
+                    const ImVec2 p = toP(keys[i].t, keys[i].w);
+                    pdl->AddCircleFilled(p, 4.0f, ImGui::GetColorU32(i == s_drag && s_owner == &keys ? ImGuiCol_PlotHistogramHovered : ImGuiCol_PlotLinesHovered));
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nClick to add a key, drag to move, right-click to remove.", tip);
+                if (ImGui::SmallButton("Clear curve")) { keys.clear(); ed.dirty = true; }
+            }
+            ImGui::PopID();
+        };
+        drawIkCurve("foot", st.ikCurve, "Foot IK weight over this clip (0 at the bottom, 1 at the top),\nmultiplied by the IK weight slider. Empty = that constant.");
         {
             bool follow = st.fullBodyIkWeight < 0.0f;
             if (ImGui::Checkbox("Full-body IK follows##ag", &follow)) { st.fullBodyIkWeight = follow ? -1.0f : 1.0f; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: Full Body IK gets its own weight here, so a state can stop foot\nplanting while the hands keep holding (prone, crawling).");
             if (!follow && ImGui::SliderFloat("Full-body IK weight##ag", &st.fullBodyIkWeight, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+            if (!follow) drawIkCurve("body", st.fullBodyIkCurve, "Full Body IK weight over this clip, multiplied by its slider.\nEmpty = the constant. Foot IK keeps its own curve.");
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("How much Foot IK / Full Body IK apply in this state; eases over\n"
                                                       "the transition. 0 for jumps, rolls and falls (feet leave the ground).");
@@ -43512,6 +43638,7 @@ int main(int argc, char** argv) {
                             auto names = mx->ClipNames();
                             asmx->params = {{"speed", 0}, {"jump", 2}, {"grounded", 1}};
                             SM::State idle; idle.name = "Idle"; idle.clip = names[0]; idle.nx = 20; idle.ny = 130;
+                            idle.ikCurve = {{0.0f, 1.0f}, {0.45f, 0.2f}, {1.0f, 1.0f}};
                             SM::State move; move.name = "Locomotion"; move.blendTree = true; move.blendParam = "speed";
                             move.motions = {{names[0], 0.0f}, {names[1], 1.5f}, {names[2], 5.0f}}; move.nx = 300; move.ny = 130;
                             SM::State jump; jump.name = "Jump"; jump.clip = names[2]; jump.loop = false; jump.nx = 300; jump.ny = 10;

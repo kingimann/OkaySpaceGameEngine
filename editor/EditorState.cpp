@@ -711,6 +711,7 @@ bool EditorState::Load(const std::string& path, std::string* error) {
 void EditorState::Play() {
     if (m_playing) return;
     m_snapshot = SceneSerializer::Serialize(m_scene); // remember edit state
+    m_scene.UseFixedStepPhysics(true);   // physics as the game runs it: fixed steps, drawn smoothly
     Character::SetAssetBaseDir(m_projectDir);   // a Character's project-relative clips file
     Select(nullptr);   // Start()/reset may rebuild; clear m_multi too (no dangling ptrs)
     ActionList::ResetVars();   // clear visual-script variables each Play session
@@ -746,6 +747,7 @@ void EditorState::Stop() {
     if (finishFrozenTick) finishFrozenTick();   // never rebuild a scene frozen mid-frame
     if (!m_playing) return;
     m_playing = false;
+    m_scene.UseFixedStepPhysics(false);
     Game::Reset();   // unpause + clear quit so the next Play starts clean
     ActionList::DebugPaused() = false; ActionList::StepBudget() = 0;   // never leave Actions frozen after Stop
     // Deserialize rebuilds the scene, destroying every live component — including

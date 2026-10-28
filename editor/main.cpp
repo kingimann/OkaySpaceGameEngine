@@ -32538,6 +32538,25 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##td")) toRemove = td;
         }
     }
+    if (auto* rd = dynamic_cast<Ragdoll*>(curComp)) {
+        if (CompHeader("Ragdoll", rd, &toRemove)) {
+            ImGui::TextDisabled("Goes limp on death and flinches on hits. Needs a humanoid (Character or rig).");
+            SectionHeader("Triggers");
+            if (ImGui::Checkbox("Ragdoll On Death##rd", &rd->ragdollOnDeath)) ed.dirty = true;
+            if (ImGui::DragFloat("Death Push##rd", &rd->deathImpulse, 0.05f, 0.0f, 20.0f, "%.2f m/s")) ed.dirty = true;
+            if (ImGui::Checkbox("Hit Reactions##rd", &rd->hitReactions)) ed.dirty = true;
+            if (ImGui::DragFloat("Hit Push##rd", &rd->hitImpulse, 0.05f, 0.0f, 20.0f, "%.2f m/s")) ed.dirty = true;
+            if (ImGui::DragFloat("Recover Time##rd", &rd->hitRecover, 0.01f, 0.05f, 3.0f, "%.2fs")) ed.dirty = true;
+            SectionHeader("Simulation");
+            if (ImGui::DragFloat("Gravity##rd", &rd->gravity, 0.05f, 0.0f, 50.0f)) ed.dirty = true;
+            if (ImGui::SliderFloat("Damping##rd", &rd->damping, 0.0f, 0.5f)) ed.dirty = true;
+            if (ImGui::SliderFloat("Friction##rd", &rd->friction, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Skin Radius##rd", &rd->radius, 0.005f, 0.0f, 0.5f)) ed.dirty = true;
+            if (ImGui::SliderInt("Iterations##rd", &rd->iterations, 1, 30)) ed.dirty = true;
+            if (ImGui::DragFloat("Max Speed##rd", &rd->maxSpeed, 0.5f, 1.0f, 200.0f, "%.1f m/s")) ed.dirty = true;
+            if (ImGui::SmallButton("Remove##rd")) toRemove = rd;
+        }
+    }
     if (auto* sh = dynamic_cast<TopDownShooterController*>(curComp)) {
         if (CompHeader("Top Down Shooter Controller", sh, &toRemove)) {
             ImGui::TextDisabled("Twin-stick: WASD moves, the mouse aims, LMB fires, Space dashes, R reloads.");
@@ -35823,6 +35842,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<LogicTarget>(), "Logic Target (door / light / spawner / event)")) { go->AddComponent<LogicTarget>(); ed.dirty = true; }
             if (item(!go->GetComponent<SurvivalStats>(), "Survival Stats (native)")) { go->AddComponent<SurvivalStats>(); ed.dirty = true; }
             if (item(!go->GetComponent<HealthStat>(), "Stat: Health")) { go->AddComponent<HealthStat>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Ragdoll>(), "Ragdoll (death + hit reactions)")) { ed.PushUndo(); go->AddComponent<Ragdoll>(); ed.dirty = true; }
             if (item(!go->GetComponent<HungerStat>(), "Stat: Hunger")) { go->AddComponent<HungerStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<ThirstStat>(), "Stat: Thirst")) { go->AddComponent<ThirstStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<StaminaStat>(), "Stat: Stamina")) { go->AddComponent<StaminaStat>(); ed.dirty = true; }

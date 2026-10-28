@@ -1246,3 +1246,7 @@ add_test(NAME object_holding COMMAND test_object_holding)
 add_executable(test_input_actions test_input_actions.cpp)
 target_link_libraries(test_input_actions PRIVATE okay::engine)
 add_test(NAME input_actions COMMAND test_input_actions)
+
+add_executable(test_ragdoll test_ragdoll.cpp)
+target_link_libraries(test_ragdoll PRIVATE okay::engine)
+add_test(NAME ragdoll COMMAND test_ragdoll)

@@ -1,6 +1,7 @@
 #include "okay/Scripting/OkayScriptVM.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Components/UIAnimation.hpp"
+#include "okay/Components/Ragdoll.hpp"
 #include "okay/Components/TweenAnimation.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Core/Game.hpp"
@@ -5457,6 +5458,27 @@ struct OkayScriptVM::Impl {
         };
         b["is_dead"] = [selfObj](std::vector<Value>&) {
             return Value{HumanoidActions::IsDead(selfObj()) ? 1.0f : 0.0f};
+        };
+        // Ragdoll: ragdoll() / ragdoll(0) goes limp / stands up; ragdoll_push(vx, vy, vz)
+        // shoves the chest (or the part nearest an optional px, py, pz).
+        b["ragdoll"] = [selfObj](std::vector<Value>& a) {
+            auto* rd = selfObj() ? selfObj()->GetComponent<Ragdoll>() : nullptr;
+            if (!rd) return Value{0.0f};
+            if (!a.empty() && a[0].AsFloat() == 0.0f) { rd->Deactivate(); return Value{1.0f}; }
+            return Value{rd->Activate() ? 1.0f : 0.0f};
+        };
+        b["ragdoll_push"] = [selfObj](std::vector<Value>& a) {
+            auto* rd = selfObj() ? selfObj()->GetComponent<Ragdoll>() : nullptr;
+            if (!rd || a.size() < 3) return Value{0.0f};
+            const Vec3 v{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+            const Vec3 at = a.size() >= 6 ? Vec3{a[3].AsFloat(), a[4].AsFloat(), a[5].AsFloat()}
+                                          : rd->ParticlePosition(rd->BoneParticle(humanoid::Torso));
+            rd->Hit(at, v);
+            return Value{1.0f};
+        };
+        b["is_ragdoll"] = [selfObj](std::vector<Value>&) {
+            auto* rd = selfObj() ? selfObj()->GetComponent<Ragdoll>() : nullptr;
+            return Value{rd && rd->IsActive() ? 1.0f : 0.0f};
         };
         // ---- Blend shapes (morph targets) on this object and everything under it ----
         //   blend_shape("Smile", 0.8)   set a shape's weight 0..1 on every mesh that has it

@@ -24,6 +24,7 @@ add_library(okay_engine
     src/Net/SessionTicket.cpp
     src/Net/ClockCheck.cpp
     src/Components/AntiCheatConfig.cpp
+    src/Components/Ragdoll.cpp
     src/Components/NetworkObject.cpp
     src/Net/NetworkManager.cpp
     src/Net/NetDelta.cpp

@@ -102,12 +102,15 @@ public:
     float respawnDelay = 3.0f;
     int   lives = 0;               // respawns allowed (0 = unlimited)
     bool  playDeathAnim = true;   // play Death and stay active until it settles
+    bool  keepBodyOnDeath = false; // runtime: a Ragdoll shows the death, so the body stays
 
     bool  dead = false, lowHealth = false;
 
     float Fraction() const { return Frac(health, maxHealth); }
     bool  IsDead()   const { return dead; }
     bool  IsInvincible() const { return godMode || m_iframes > 0.0f; }
+    /// Where the last hit came from (false when it had no source).
+    bool  LastHitFrom(Vec3& out) const { if (hasLastHit) out = lastHitFrom; return hasLastHit; }
 
     void Start() override {
         health = maxHealth; dead = false; m_timer = 0.0f; m_iframes = 0.0f;
@@ -199,7 +202,7 @@ private:
             m_respawnTimer = respawnDelay;
             // Stay active (inert) so Update keeps ticking the respawn timer; a
             // deactivated object gets no Update. Hide visuals via the `died` message.
-        } else if (m_deathPlayed) {
+        } else if (m_deathPlayed || keepBodyOnDeath) {
             m_waitDeath = true;   // shrink the capsule once the pose settles; stay in DeadHold
         } else if (destroyOnDeath && gameObject && gameObject->scene()) {
             gameObject->scene()->Destroy(gameObject);

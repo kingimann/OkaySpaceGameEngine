@@ -231,6 +231,7 @@
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
 #include "okay/Components/TopDownShooterController.hpp"
+#include "okay/Components/Ragdoll.hpp"
 #include "okay/Components/Platformer25DController.hpp"
 #include "okay/Components/Projectile3D.hpp"
 #include "okay/Components/TopDownController2D.hpp"

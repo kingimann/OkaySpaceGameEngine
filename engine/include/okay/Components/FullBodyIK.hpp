@@ -33,6 +33,7 @@
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/IKMath.hpp"
 #include "okay/Math/JointLimit.hpp"
+#include "okay/Animation/HumanoidBones.hpp"
 #include "okay/Components/IKRestore.hpp"
 #include "okay/Components/IKBones.hpp"
 #include "okay/Components/FootIK.hpp"
@@ -134,58 +135,59 @@ public:
         for (IKPole& p : m_pole) p.Reset();
     }
 
-    /// Find bones by common rig names under this object. Keeps already-assigned
-    /// bones unless `overwrite`. Returns how many bones are mapped afterwards.
+    /// Find the bones under this object with the shared humanoid mapper
+    /// (Animation/HumanoidBones.hpp). Keeps already-assigned bones unless
+    /// `overwrite`. An incomplete rig (one arm, no legs) maps what it has; one
+    /// whose shape isn't a humanoid's maps nothing (MapProblem() says why).
+    /// Returns how many bones are mapped afterwards.
     int MapBones(bool overwrite) {
         if (!gameObject || !gameObject->transform) return 0;
-        std::vector<Transform*> all;
-        Collect(gameObject->transform, all);
-        for (Transform* t : all) {
-            if (!t->gameObject || t == gameObject->transform) continue;
-            int id = Classify(t->gameObject->name);
-            if (id < 0) continue;
-            if (bones[id] && !overwrite) continue;
-            // Prefer the shallowest match (e.g. "Spine" over "Spine1" for Spine).
-            if (bones[id] && overwrite && Depth(bones[id]) <= Depth(t)) continue;
-            bones[id] = t;
-            boneNames[id] = t->gameObject->name;
+        const humanoid::BoneMap m = humanoid::MapHumanoidBones(gameObject);
+        m_mapWhy = m.consistent ? std::string() : m.why;
+        if (m.consistent) {
+            GameObject* want[BoneCount] = {};
+            want[Hips] = m.bone[humanoid::Hips];
+            want[Head] = m.bone[humanoid::Head];
+            want[Neck] = m.neck;
+            if (!m.spine.empty()) want[Spine] = m.spine.front();
+            if (m.spine.size() >= 2) want[Chest] = m.spine.back();
+            static const int kLimb[12][2] = {
+                {LUpperArm, humanoid::LUpperArm}, {LForeArm, humanoid::LForeArm}, {LHand, humanoid::LHand},
+                {RUpperArm, humanoid::RUpperArm}, {RForeArm, humanoid::RForeArm}, {RHand, humanoid::RHand},
+                {LThigh, humanoid::LThigh}, {LShin, humanoid::LShin}, {LFoot, humanoid::LFoot},
+                {RThigh, humanoid::RThigh}, {RShin, humanoid::RShin}, {RFoot, humanoid::RFoot}};
+            for (const auto& e : kLimb) want[e[0]] = m.bone[e[1]];
+            for (int id = 0; id < BoneCount; ++id) {
+                if (!want[id] || !want[id]->transform || (bones[id] && !overwrite)) continue;
+                bones[id] = want[id]->transform;
+                boneNames[id] = want[id]->name;
+            }
         }
         int n = 0;
         for (Transform* b : bones) if (b) ++n;
         return n;
     }
+    /// Why the last MapBones turned the rig away ("" when it didn't).
+    const std::string& MapProblem() const { return m_mapWhy; }
 
     /// An object by name inside this character (else anywhere in the scene).
     GameObject* FindBone(const std::string& name) const { return FindUnder(name); }
 
     /// Classify a bone name into a BoneId (-1 = not a humanoid bone we drive).
     static int Classify(const std::string& raw) {
-        std::string n;
-        for (char c : raw) n += (char)std::tolower((unsigned char)c);
-        if (auto c = n.rfind(':'); c != std::string::npos) n = n.substr(c + 1);   // mixamorig:LeftArm
-        auto has = [&](const char* k) { return n.find(k) != std::string::npos; };
-        auto ends = [&](const char* k) { std::size_t l = std::strlen(k); return n.size() >= l && n.compare(n.size() - l, l, k) == 0; };
-        const bool left  = has("left") || n.rfind("l ", 0) == 0 || n.rfind("l_", 0) == 0 || ends("_l") || ends(".l") || ends(" l");
-        const bool right = has("right") || n.rfind("r ", 0) == 0 || n.rfind("r_", 0) == 0 || ends("_r") || ends(".r") || ends(" r");
-        if (has("finger") || has("thumb") || has("index") || has("toe") || has("end") || has("twist") ||
-            has("eye") || has("jaw") || has("shoulder") || has("clavicle")) return -1;
-        if (left || right) {
-            const int base = left ? 0 : 1;
-            if (has("forearm") || has("lowerarm") || has("lower arm") || has("lower_arm") || has("elbow")) return base ? RForeArm : LForeArm;
-            if (has("upperarm") || has("upper arm") || has("upper_arm") || ends("arm")) return base ? RUpperArm : LUpperArm;
-            if (has("hand") || has("wrist")) return base ? RHand : LHand;
-            if (has("upleg") || has("thigh") || has("upperleg") || has("upper leg") || has("upper_leg")) return base ? RThigh : LThigh;
-            if (has("shin") || has("calf") || has("lowerleg") || has("lower leg") || has("lower_leg") || has("knee") || ends("leg")) return base ? RShin : LShin;
-            if (has("foot") || has("ankle")) return base ? RFoot : LFoot;
-            return -1;
+        if (humanoid::IsNeckName(raw)) return Neck;
+        int sc = 0;
+        const int b = humanoid::ClassifyBone(raw, sc);
+        if (b < 0) return -1;
+        if (b == humanoid::Torso) {   // the chest is the upper link, the spine the lower
+            const std::string n = humanoid::StripBoneName(raw);
+            const bool chest = n.find("chest") != std::string::npos || n.find("torso") != std::string::npos ||
+                               n == "spine2" || n == "spine_02" || n == "spine.002" || n == "spine1" || n == "spine_01";
+            return chest ? Chest : Spine;
         }
-        if (has("hips") || has("pelvis")) return Hips;
-        if (has("head")) return has("top") ? -1 : Head;
-        if (has("neck")) return Neck;
-        if (has("chest") || has("torso") || n == "spine2" || n == "spine_02" || n == "spine.002" || n == "spine1" || n == "spine_01")
-            return Chest;
-        if (n == "spine" || has("spine")) return Spine;
-        return -1;
+        static const int kMap[humanoid::BoneCount] = {Hips, Spine, Head, LUpperArm, LForeArm, LHand,
+            RUpperArm, RForeArm, RHand, LThigh, LShin, LFoot, RThigh, RShin, RFoot};
+        return kMap[b];
     }
 
     void Update(float) override { m_restore.Restore(); }   // before the animator blends (see IKRestore.hpp)
@@ -406,6 +408,7 @@ private:
     }
 
     IKRestore m_restore;
+    std::string m_mapWhy;   // why the last MapBones turned the rig away
     IKPole m_pole[LimbCount];
     IKGoalBlend m_blend[LimbCount];           ///< eases a switched or jumping goal
     IKJointFrame m_frame[LimbCount][2];       ///< upper / lower rest frames for the limits

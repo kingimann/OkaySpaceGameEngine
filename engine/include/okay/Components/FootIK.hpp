@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Animation/HumanoidBones.hpp"
 // ---------------------------------------------------------------------------
 // FootIK — plant a biped's feet on the ground. Each frame it raycasts down
 // under each foot and moves the foot by how far that ground sits above (or,
@@ -128,51 +129,23 @@ public:
         }
     }
 
-    /// Detect humanoid leg bones by NAME among `root`'s descendants (Mixamo
-    /// "LeftUpLeg/LeftLeg/LeftFoot", thigh/shin/calf variants, l_/_l suffixes)
-    /// and fill the *Name fields. Returns how many of the six leg bones matched
-    /// (Start() resolves the names to transforms). Mirrors the editor's
-    /// Auto-Detect so the character-swap can wire foot IK with no clicks.
-    int DetectHumanoidBones(Scene& s, GameObject* root) {
-        if (!root) return 0;
-        auto lower = [](std::string v) { for (auto& c : v) c = (char)std::tolower((unsigned char)c); return v; };
-        std::string hipL, kneeL, footL, hipR, kneeR, footR, pel;
-        for (const auto& up : s.Objects()) {
-            GameObject* g = up.get();
-            if (!g || !g->IsSelfOrDescendantOf(root)) continue;
-            std::string nm = lower(g->name);
-            auto has = [&](const char* k) { return nm.find(k) != std::string::npos; };
-            auto endsW = [&](const char* k) {
-                std::size_t kl = std::char_traits<char>::length(k);
-                return nm.size() >= kl && nm.compare(nm.size() - kl, kl, k) == 0;
-            };
-            bool isLeft  = has("left")  || nm.rfind("l_", 0) == 0 || endsW("_l") || endsW(".l");
-            bool isRight = has("right") || nm.rfind("r_", 0) == 0 || endsW("_r") || endsW(".r");
-            if (!isLeft && !isRight) {
-                if (pel.empty() && (has("hips") || has("pelvis"))) pel = g->name;
-                continue;
-            }
-            int part = -1;
-            if (has("foot") || has("ankle")) part = 2;
-            else if (has("upleg") || has("upperleg") || has("thigh") || has("hip")) part = 0;
-            else if (has("knee") || has("calf") || has("shin") || has("lowerleg") || has("leg")) part = 1;
-            if (part < 0) continue;
-            std::string& slot = isLeft ? (part == 0 ? hipL : part == 1 ? kneeL : footL)
-                                       : (part == 0 ? hipR : part == 1 ? kneeR : footR);
-            if (slot.empty()) slot = g->name;
-        }
-        int found = (int)(!hipL.empty()) + (int)(!kneeL.empty()) + (int)(!footL.empty()) +
-                    (int)(!hipR.empty()) + (int)(!kneeR.empty()) + (int)(!footR.empty());
-        if (found > 0) {
-            leftHipName = hipL;   leftKneeName = kneeL;   leftFootName = footL;
-            rightHipName = hipR;  rightKneeName = kneeR;  rightFootName = footR;
-            if (!pel.empty()) pelvisName = pel;
-            leftHip = leftKnee = leftFoot = nullptr;    // resolve the names on Start
-            rightHip = rightKnee = rightFoot = nullptr;
-            pelvis = nullptr;
-            m_restore.Clear();
-        }
-        return found;
+    /// Detect the leg bones (and pelvis) under `root` with the shared humanoid
+    /// mapper (Animation/HumanoidBones.hpp) and fill the *Name fields. Returns
+    /// how many of the six leg bones matched: 0 when the legs aren't two thigh ->
+    /// shin -> foot chains below the hips (`why` says what's wrong). Start()
+    /// resolves the names to transforms.
+    int DetectHumanoidBones(Scene&, GameObject* root, std::string* why = nullptr) {
+        const humanoid::BoneMap m = humanoid::MapHumanoidBones(root);
+        if (!m.legsOk) { if (why) *why = m.why; return 0; }
+        auto nm = [&](int b) { return m.bone[b]->name; };
+        leftHipName = nm(humanoid::LThigh);   leftKneeName = nm(humanoid::LShin);   leftFootName = nm(humanoid::LFoot);
+        rightHipName = nm(humanoid::RThigh);  rightKneeName = nm(humanoid::RShin);  rightFootName = nm(humanoid::RFoot);
+        if (m.bone[humanoid::Hips]) pelvisName = nm(humanoid::Hips);
+        leftHip = leftKnee = leftFoot = nullptr;    // resolve the names on Start
+        rightHip = rightKnee = rightFoot = nullptr;
+        pelvis = nullptr;
+        m_restore.Clear();
+        return m.LegBones();
     }
 
     // Wire the six leg bones (+ pelvis) from a Character's part rig by bone index.

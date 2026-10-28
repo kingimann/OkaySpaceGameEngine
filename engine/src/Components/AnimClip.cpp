@@ -32,8 +32,77 @@ std::vector<Vec3> BlendPose(const AnimKey& a, const AnimKey& b, float u) {
 }
 } // namespace
 
+namespace {
+// Cubic: a Catmull-Rom curve through the keys around `t` (the clip's own key
+// times, so unevenly spaced keys keep their timing). A looping clip with room
+// past its last key wraps its neighbours around, so the loop seam is smooth too.
+struct CubicSpan {
+    const AnimKey* k[4];
+    float t[4];
+    float u;
+};
+bool FindCubicSpan(const AnimClip& c, float t, CubicSpan& s) {
+    const auto& keys = c.keys;
+    const int n = (int)keys.size();
+    if (n < 3) return false;
+    const float first = keys.front().time, last = keys.back().time;
+    const bool cyclic = c.loop && c.length > last;
+    int i = -1;
+    if (t >= last) { if (!cyclic) return false; i = n - 1; }
+    else for (int j = 0; j + 1 < n; ++j) if (t >= keys[j].time && t <= keys[j + 1].time) { i = j; break; }
+    if (i < 0) return false;
+    auto at = [&](int j, const AnimKey*& key, float& time) {
+        if (cyclic) {
+            int w = ((j % n) + n) % n;
+            key = &keys[w];
+            time = keys[w].time + c.length * (float)((j - w) / n);
+        } else {
+            int w = j < 0 ? 0 : (j >= n ? n - 1 : j);
+            key = &keys[w];
+            time = keys[w].time;
+        }
+    };
+    for (int q = 0; q < 4; ++q) at(i - 1 + q, s.k[q], s.t[q]);
+    (void)first;
+    const float span = s.t[2] - s.t[1];
+    s.u = span > 1e-6f ? (t - s.t[1]) / span : 0.0f;
+    return true;
+}
+// Hermite through p1 -> p2, with Catmull-Rom tangents from the outer keys (an
+// end key's tangent is one-sided).
+float Cubic(float p0, float p1, float p2, float p3, const CubicSpan& s) {
+    const float span = s.t[2] - s.t[1];
+    auto tangent = [&](float a, float b, float ta, float tb, float fa, float fb) {
+        return tb - ta > 1e-6f ? (b - a) * (span / (tb - ta)) : (fb - fa);
+    };
+    const float m1 = tangent(p0, p2, s.t[0], s.t[2], p1, p2);
+    const float m2 = tangent(p1, p3, s.t[1], s.t[3], p1, p2);
+    const float u = s.u, u2 = u * u, u3 = u2 * u;
+    return (2 * u3 - 3 * u2 + 1) * p1 + (u3 - 2 * u2 + u) * m1 + (-2 * u3 + 3 * u2) * p2 + (u3 - u2) * m2;
+}
+} // namespace
+
 std::vector<Vec3> AnimClip::Sample(float t) const {
     if (keys.empty()) return {};
+    if (interp == AnimInterp::Cubic) {
+        CubicSpan s;
+        if (t > keys.front().time && FindCubicSpan(*this, t, s)) {
+            std::size_t n = 0;
+            for (const AnimKey* k : s.k) n = k->pose.size() > n ? k->pose.size() : n;
+            std::vector<Vec3> out(n, Vec3{0, 0, 0});
+            // Angles are unwrapped toward the segment's start, so a bone near
+            // +-180 doesn't swing the long way round.
+            auto near = [](float v, float r) { return v + 360.0f * std::round((r - v) / 360.0f); };
+            for (std::size_t b = 0; b < n; ++b) {
+                Vec3 p[4];
+                for (int q = 0; q < 4; ++q) p[q] = b < s.k[q]->pose.size() ? s.k[q]->pose[b] : Vec3{0, 0, 0};
+                for (int q : {0, 2, 3}) p[q] = Vec3{near(p[q].x, p[1].x), near(p[q].y, p[1].y), near(p[q].z, p[1].z)};
+                out[b] = Vec3{Cubic(p[0].x, p[1].x, p[2].x, p[3].x, s), Cubic(p[0].y, p[1].y, p[2].y, p[3].y, s),
+                              Cubic(p[0].z, p[1].z, p[2].z, p[3].z, s)};
+            }
+            return out;
+        }
+    }
     if (t <= keys.front().time) return keys.front().pose;
     if (t >= keys.back().time) {
         // A loop with room past its last key eases back into the first key.
@@ -55,6 +124,13 @@ std::vector<Vec3> AnimClip::Sample(float t) const {
 
 Vec3 AnimClip::SampleRoot(float t) const {
     if (!hasRoot || keys.empty()) return Vec3{0, 0, 0};
+    if (interp == AnimInterp::Cubic) {
+        CubicSpan s;
+        if (t > keys.front().time && FindCubicSpan(*this, t, s)) {
+            const Vec3 &a = s.k[0]->root, &b = s.k[1]->root, &c = s.k[2]->root, &d = s.k[3]->root;
+            return Vec3{Cubic(a.x, b.x, c.x, d.x, s), Cubic(a.y, b.y, c.y, d.y, s), Cubic(a.z, b.z, c.z, d.z, s)};
+        }
+    }
     if (t <= keys.front().time) return keys.front().root;
     const AnimKey* a = &keys.back();
     const AnimKey* b = &keys.back();
@@ -105,6 +181,7 @@ std::vector<AnimClip> AnimClip::ParseAll(const std::string& text,
                 else if (w == "smooth") c.interp = AnimInterp::Smooth;
                 else if (w == "step")   c.interp = AnimInterp::Step;
                 else if (w == "linear") c.interp = AnimInterp::Linear;
+                else if (w == "cubic")  c.interp = AnimInterp::Cubic;
                 else if (w == "override") c.overrideMovement = true;
             }
             clips.push_back(std::move(c));
@@ -158,6 +235,7 @@ std::string AnimClip::WriteAll(const std::vector<AnimClip>& clips,
             << (c.loop ? " loop" : " once");
         if (c.interp == AnimInterp::Smooth)    out << " smooth";
         else if (c.interp == AnimInterp::Step) out << " step";
+        else if (c.interp == AnimInterp::Cubic) out << " cubic";
         else                                   out << " linear";
         if (c.overrideMovement) out << " override";
         out << "\n";

@@ -19,6 +19,15 @@ struct StanceTimes {
     float proneStand  = 0.8f;    ///< prone -> stand, all the way (getting up through a kneel)
 };
 
+/// Seconds for the locomotion crossfades (the Animator stores a scene's own).
+/// Both directions of a pair share a time. Stance changes stay on StanceTimes.
+struct GaitCrossfades {
+    float idleWalk  = 0.28f;   ///< idle <-> walk
+    float walkRun   = 0.22f;   ///< walk <-> run, and idle <-> run
+    float groundAir = 0.12f;   ///< into a jump or a fall
+    float airGround = 0.24f;   ///< back onto the ground, including a landing
+};
+
 /// The level `dt` seconds on from `level`, heading for stance `target`
 /// (0 stand, 1 crouch, 2 prone). Each half of the way takes its pair's time;
 /// rising from prone to stand takes proneStand in total.

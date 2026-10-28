@@ -127,7 +127,7 @@ int main() {
 
     // --- Save system: save_game writes a slot file; exists/delete work --
     {
-        std::remove("saves/utest.okaysave");
+        std::remove("saves/utest.okaygame");
         Scene s("Sv"); s.physicsEnabled = false;
         GameObject* go = s.CreateGameObject("Hero");
         auto* sc = go->AddComponent<ScriptComponent>("okayscript");
@@ -140,8 +140,8 @@ int main() {
         s.Start();
         CHECK_NEAR(sc->VM()->GetGlobal("saved").AsFloat(), 1.0f, 1e-4f);
         CHECK_NEAR(sc->VM()->GetGlobal("existed").AsFloat(), 1.0f, 1e-4f);
-        CHECK(std::ifstream("saves/utest.okaysave").good());
-        std::remove("saves/utest.okaysave");
+        CHECK(std::ifstream("saves/utest.okaygame").good());
+        std::remove("saves/utest.okaygame");
     }
 
     // --- Scroll View: owning lookup, clamped scroll, child offset, save -

@@ -137,6 +137,15 @@ void NextScriptVM::CallEvent(const std::string& function) {
     if (m.isPublic && m.params.empty() && m.lifecycle < 0) RunMethod(function);
 }
 
+std::vector<std::string> NextScriptVM::GlobalNames() const {
+    std::vector<std::string> out;
+    if (!m_impl->inst) return out;
+    if (const ClassDecl* c = m_impl->inst->program().Component())
+        for (const FieldDecl& f : c->fields)
+            if (!f.isConst && !f.isStatic) out.push_back(f.name);
+    return out;
+}
+
 vs::VsValue NextScriptVM::GetGlobal(const std::string& name) const {
     if (!m_impl->inst) return vs::VsValue{};
     Value v = m_impl->inst->GetField(name);

@@ -141,6 +141,7 @@
 #include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Components/RootMotion.hpp"
 #include "okay/Components/PauseMenu.hpp"
+#include "okay/Components/AutoSave.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/UIRawImage.hpp"
@@ -889,6 +890,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << pm->panelColor.r << " " << pm->panelColor.g << " " << pm->panelColor.b << " " << pm->panelColor.a
             << " " << Quote(pm->title) << " " << Quote(pm->mainMenuScene) << "\n";
     }
+    if (auto* as = go->GetComponent<AutoSave>())
+        out << "  autosave " << as->interval << " " << (as->saveOnStart ? 1 : 0)
+            << " " << Quote(as->slot) << " " << Quote(as->label) << "\n";
     if (auto* fl = go->GetComponent<Flashlight>()) {
         out << "  flashlight " << (int)(unsigned char)fl->toggleKey << " " << (fl->on ? 1 : 0)
             << " " << fl->range << " " << fl->angle << " " << fl->intensity
@@ -5636,6 +5640,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     pm->toggleKey = (char)tk; pm->showResume = (sr != 0); pm->showQuit = (sq != 0);
                     pm->title = ReadQuoted(in);
                     pm->mainMenuScene = ReadQuoted(in);
+                } else if (field == "autosave") {
+                    auto* as = go->AddComponent<AutoSave>();
+                    int sos = 0;
+                    in >> as->interval >> sos;
+                    as->saveOnStart = sos != 0;
+                    as->slot = ReadQuoted(in);
+                    as->label = ReadQuoted(in);
                 } else if (field == "flashlight") {
                     auto* fl = go->AddComponent<Flashlight>();
                     int tk = 'f', onv = 1;

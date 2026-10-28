@@ -217,7 +217,7 @@ has the full list, plus the **Tween Animation** component for tweens without cod
 | `tween_number(from, to, dur [, "prefix"])` | Count a sibling text number (score ticks) |
 | `tween_punch_scale(amount, dur [, vib])` / `tween_punch_pos(dx, dy, dur [, vib])` | Punch & settle ("juice") |
 | `tween_shake(intensity, dur)` | Random shake that decays to a stop |
-| `save_game([slot])` / `load_game([slot])` | Snapshot / restore the scene |
+| `save_game([slot] [, label])` / `load_game([slot])` | Save / load the whole game (see docs/save_games.md) |
 | `save_exists([slot])` / `delete_save([slot])` | Manage save slots |
 
 Easings: `linear`, `in/out/in_out_quad`, `..._cubic`, `..._sine`, `..._expo`,

@@ -1246,3 +1246,8 @@ add_test(NAME object_holding COMMAND test_object_holding)
 add_executable(test_input_actions test_input_actions.cpp)
 target_link_libraries(test_input_actions PRIVATE okay::engine)
 add_test(NAME input_actions COMMAND test_input_actions)
+
+# Save games: slots, whole-scene state, script variables, deferred load, autosave
+add_executable(test_save_game test_save_game.cpp)
+target_link_libraries(test_save_game PRIVATE okay::engine)
+add_test(NAME save_game COMMAND test_save_game)

@@ -10794,7 +10794,7 @@ void DrawScriptDocs() {
         fapi("tween_kill_all() / tween_play_id(\"name\") / is_tweening()", "this object / by name");
         fapi("seq_new() / seq_append(s, id) / seq_join(s, id)", "sequence: after / together");
         fapi("seq_interval(s, t) / seq_callback(s, \"fn\") / seq_insert(s, t, id)", "pauses, calls, timing");
-        fapi("save_game([slot]) / load_game([slot])", "snapshot / restore the scene");
+        fapi("save_game([slot], [label]) / load_game([slot])", "save / load the whole game");
         fapi("save_exists([slot]) / delete_save([slot])", "manage save slots");
         ImGui::TextDisabled("Eases: linear, in_/out_/in_out_ + quad cubic quart quint sine expo circ back elastic bounce.");
     }
@@ -28760,6 +28760,20 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##nv")) toRemove = nv;
         }
     }
+    if (auto* as = dynamic_cast<AutoSave*>(curComp)) {
+        if (CompHeader("Auto Save", as, &toRemove)) {
+            ImGui::TextDisabled("Saves the whole game to a slot while playing.");
+            if (ImGui::DragFloat("Every (s)##as", &as->interval, 1.0f, 0.0f, 3600.0f, "%.0f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds of play between saves (0 = only when the scene starts, if ticked below).");
+            if (ImGui::Checkbox("Save when the scene starts##as", &as->saveOnStart)) ed.dirty = true;
+            char sbuf[65]; std::snprintf(sbuf, sizeof(sbuf), "%s", as->slot.c_str());
+            if (ImGui::InputText("Slot##as", sbuf, sizeof(sbuf))) { as->slot = sbuf; ed.dirty = true; }
+            if (!SaveGame::ValidSlot(as->slot)) ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.3f, 1), "Use letters, digits, - and _ only.");
+            char lbuf[128]; std::snprintf(lbuf, sizeof(lbuf), "%s", as->label.c_str());
+            if (ImGui::InputText("Label##as", lbuf, sizeof(lbuf))) { as->label = lbuf; ed.dirty = true; }
+            if (ImGui::SmallButton("Remove##as")) toRemove = as;
+        }
+    }
     if (auto* pm = dynamic_cast<PauseMenu*>(curComp)) {
         if (CompHeader("Pause Menu", pm, &toRemove)) {
             // The menu UI lives in the scene as editable objects (under "PauseMenu UI")
@@ -35651,6 +35665,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Flashlight>(), "Flashlight")) { go->AddComponent<Flashlight>(); ed.dirty = true; }
             if (item(!go->GetComponent<FirstPersonHand>(), "First Person Hand")) { go->AddComponent<FirstPersonHand>(); ed.view3D = true; ed.dirty = true; }
             if (item(!go->GetComponent<PauseMenu>(), "Pause Menu")) { go->AddComponent<PauseMenu>()->EnsureBuilt(); ed.dirty = true; }
+            if (item(!go->GetComponent<AutoSave>(), "Auto Save")) { go->AddComponent<AutoSave>(); ed.dirty = true; }
             if (item(!go->GetComponent<WorldStreamer>(), "World Streamer (partition)")) { go->AddComponent<WorldStreamer>(); ed.dirty = true; }
             if (item(!go->GetComponent<Destructible>(), "Destructible (Chaos)")) { go->AddComponent<Destructible>(); ed.dirty = true; }
             if (item(!go->GetComponent<Draggable>(), "Draggable (item)")) { go->AddComponent<Draggable>(); ed.dirty = true; }

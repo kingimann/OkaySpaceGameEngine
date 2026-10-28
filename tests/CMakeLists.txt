@@ -308,6 +308,10 @@ add_executable(test_player test_player.cpp)
 target_link_libraries(test_player PRIVATE okay::engine)
 add_test(NAME player COMMAND test_player)
 
+add_executable(test_stop_settle test_stop_settle.cpp)
+target_link_libraries(test_stop_settle PRIVATE okay::engine)
+add_test(NAME stop_settle COMMAND test_stop_settle)
+
 add_executable(test_software_renderer test_software_renderer.cpp)
 target_link_libraries(test_software_renderer PRIVATE okay::engine)
 add_test(NAME software_renderer COMMAND test_software_renderer)

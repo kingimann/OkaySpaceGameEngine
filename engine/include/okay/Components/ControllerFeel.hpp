@@ -142,6 +142,16 @@ private:
 /// (frame-rate independent; k <= 0 = all the way at once).
 inline float EaseFactor(float k, float dt) { return k > 0.0f ? 1.0f - std::exp(-k * dt) : 1.0f; }
 
+/// A grounded stop keeps full deceleration until the last 2.2 m/s, then
+/// decays with a 0.10 s time constant so the body settles. The last 0.12 m/s
+/// uses the full rate again, so the stop still reaches rest. A held move,
+/// and any stop in the air, keep `rate`.
+inline float StopSettleRate(float rate, bool stopping, float speed) {
+    if (!stopping || speed >= 2.2f || speed < 0.12f) return rate;
+    const float eased = speed / 0.10f;
+    return eased < rate ? eased : rate;
+}
+
 /// The point an orbit camera looks at and turns around: the player's head,
 /// smoothed. Horizontal and vertical ease on their own (a slower vertical soaks
 /// up steps, landings and bob), the lag never exceeds `maxLag`, and a jump of

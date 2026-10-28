@@ -7,6 +7,7 @@
 #include "okay/Math/Mathf.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Components/UITouchScroll.hpp"
+#include <cmath>
 
 namespace okay {
 
@@ -52,7 +53,22 @@ public:
     Vec2  Offset() const { return Vec2{ScrollsX() ? scrollX : 0.0f, ScrollsY() ? scroll : 0.0f}; }
     /// Pixels scrolled per wheel notch.
     float wheelSpeed = 30.0f;
+    // grok/ui-controls — 0 / false / 0 keep the immediate wheel step and the old bar.
+    /// Wheel glide. 0 = each notch scrolls immediately. Higher stops the glide sooner (1/seconds).
+    float inertia = 0.0f;
+    /// Let a drag or a glide pass the ends, then spring back.
+    bool elastic = false;
+    /// Scrollbar: 0 = the current bar, 1 = thin, 2 = hidden until the view is scrolling.
+    int barStyle = 0;
     bool IsDraggingBar() const { return m_dragBar || m_dragBarX; }
+    void SetInertia(float v) { inertia = v < 0.0f ? 0.0f : v; if (inertia <= 0.0f) m_velY = m_velX = 0.0f; }
+    void SetElastic(bool on) { elastic = on; }
+    void SetBarStyle(int s) { barStyle = s < 0 ? 0 : (s > 2 ? 2 : s); }
+    float Inertia() const { return inertia; }
+    bool Elastic() const { return elastic; }
+    int BarStyle() const { return barStyle; }
+    /// Autohide bars stay hidden until a scroll; other styles are always drawn.
+    bool BarVisible() const { return barStyle != 2 || m_barHold > 0.0f || m_dragBar || m_dragBarX; }
 
     /// A screen point mapped into this widget's own frame (where it is really drawn:
     /// inside its UI parent, at the Canvas scale). See UIToLocal.
@@ -75,8 +91,18 @@ public:
         float wheel = Input::MouseWheel();
         if (wheel != 0.0f && LocalContains(m)) {
             const bool horiz = axis == Axis::Horizontal || (axis == Axis::Both && Input::GetKey(Input::KeyShift));
-            if (horiz) ScrollByX(-wheel * wheelSpeed);
-            else       ScrollBy(-wheel * wheelSpeed);
+            if (inertia <= 0.0f && !elastic) {
+                if (horiz) ScrollByX(-wheel * wheelSpeed);
+                else       ScrollBy(-wheel * wheelSpeed);
+            } else if (inertia <= 0.0f) {
+                if (horiz) Nudge(scrollX, -wheel * wheelSpeed, ScrollMaxX(), size.x);
+                else       Nudge(scroll, -wheel * wheelSpeed, ScrollMax(), size.y);
+            } else if (horiz) {
+                m_velX += -wheel * wheelSpeed * 18.0f;
+            } else {
+                m_velY += -wheel * wheelSpeed * 18.0f;
+            }
+            m_barHold = 0.75f;
         }
 
         // Scrollbar drag: grab anywhere in a bar's strip, then track the pointer
@@ -108,17 +134,61 @@ public:
             [&](const Vec2& sp) { return ToLocal(sp); });
         if (d.x != 0.0f || d.y != 0.0f) {
             const Vec2 before = Offset();
-            if (ScrollsY()) ScrollBy(d.y);
-            if (ScrollsX()) ScrollByX(d.x);
+            if (ScrollsY()) { if (elastic) Nudge(scroll, d.y, ScrollMax(), size.y); else ScrollBy(d.y); }
+            if (ScrollsX()) { if (elastic) Nudge(scrollX, d.x, ScrollMaxX(), size.x); else ScrollByX(d.x); }
             if (!m_touch.tracking && Offset().x == before.x && Offset().y == before.y) m_touch.Stop();   // hit the end
+            m_barHold = 0.75f;
         }
+        // grok/ui-controls: wheel glide, then a spring when the content is past an end.
+        if (inertia > 0.0f && !m_dragBar && !m_dragBarX && !m_touch.tracking) {
+            auto coast = [&](float& vel, float& pos, auto step) {
+                if (std::fabs(vel) <= 0.5f) { vel = 0.0f; return; }
+                const float before = pos;
+                step(vel * dt);
+                vel *= std::exp(-inertia * dt);
+                if (!elastic && pos == before) vel = 0.0f;
+                m_barHold = 0.75f;
+            };
+            if (ScrollsY()) coast(m_velY, scroll, [&](float dlt) {
+                if (elastic) Nudge(scroll, dlt, ScrollMax(), size.y); else ScrollBy(dlt);
+            });
+            if (ScrollsX()) coast(m_velX, scrollX, [&](float dlt) {
+                if (elastic) Nudge(scrollX, dlt, ScrollMaxX(), size.x); else ScrollByX(dlt);
+            });
+        }
+        if (elastic && !m_dragBar && !m_dragBarX && !m_touch.tracking) {
+            Spring(scroll, ScrollMax(), dt);
+            Spring(scrollX, ScrollMaxX(), dt);
+        }
+        if (m_dragBar || m_dragBarX) m_barHold = 0.75f;
+        else if (m_barHold > 0.0f) m_barHold -= dt;
     }
 
     bool IsTouchDragging() const { return m_touch.tracking && m_touch.dragging; }
 
 private:
+    static void Nudge(float& v, float delta, float maxv, float view) {
+        const float lim = std::min(72.0f, std::max(24.0f, view * 0.35f));
+        if (v < 0.0f || v > maxv) v += delta * 0.28f;
+        else {
+            float next = v + delta;
+            if (next < 0.0f) next = next * 0.35f;
+            else if (next > maxv) next = maxv + (next - maxv) * 0.35f;
+            v = next;
+        }
+        if (v < -lim) v = -lim;
+        if (v > maxv + lim) v = maxv + lim;
+    }
+    static void Spring(float& v, float maxv, float dt) {
+        if (v >= 0.0f && v <= maxv) return;
+        const float target = v < 0.0f ? 0.0f : maxv;
+        v += (target - v) * (1.0f - std::exp(-14.0f * dt));
+        if (std::fabs(v - target) < 0.5f) v = target;
+    }
     bool m_dragBar = false;
     bool m_dragBarX = false;
+    float m_velY = 0.0f, m_velX = 0.0f;
+    float m_barHold = 0.0f;
     UITouchScroll m_touch;
 };
 

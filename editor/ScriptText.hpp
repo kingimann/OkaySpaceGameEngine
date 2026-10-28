@@ -88,6 +88,93 @@ inline std::vector<Tok> Tokenize(const std::string& src) {
     return out;
 }
 
+// For each character of `src`: 1 when it is code, 0 when it is part of a
+// comment or a string literal. The `{...}` holes of an interpolated string
+// $"HP {hp}" are code (the braces around them are not). A quote with no
+// closing quote on its line isn't a char literal, so the apostrophe in
+// `# don't` never swallows the code after it.
+inline std::vector<char> CodeMask(const std::string& src) {
+    const std::size_t n = src.size();
+    std::vector<char> mask(n, 0);
+    struct Frame { bool interp; int depth; };       // interp: inside $"…" text; else code (depth: braces in a hole)
+    std::vector<Frame> st{{false, 0}};
+    auto at = [&](std::size_t k) { return k < n ? src[k] : '\0'; };
+    for (std::size_t i = 0; i < n;) {
+        const char c = src[i];
+        if (st.back().interp) {
+            if (c == '\\') { i += 2; continue; }
+            if (c == '"') { st.pop_back(); ++i; continue; }
+            if (c == '{' && at(i + 1) == '{') { i += 2; continue; }
+            if (c == '{') { st.push_back({false, 0}); ++i; continue; }
+            ++i; continue;
+        }
+        if ((c == '/' && at(i + 1) == '/') || c == '#') { while (i < n && src[i] != '\n') ++i; continue; }
+        if (c == '/' && at(i + 1) == '*') {
+            i += 2;
+            while (i < n && !(src[i] == '*' && at(i + 1) == '/')) ++i;
+            i = i < n ? i + 2 : n;
+            continue;
+        }
+        if (c == '$' && at(i + 1) == '"') { st.push_back({true, 0}); i += 2; continue; }
+        if (c == '"') {
+            ++i;
+            while (i < n && src[i] != '"') { if (src[i] == '\\') ++i; ++i; }
+            if (i < n) ++i;
+            continue;
+        }
+        if (c == '\'') {
+            std::size_t j = i + 1;
+            while (j < n && src[j] != '\'' && src[j] != '\n') { if (src[j] == '\\' && j + 1 < n) ++j; ++j; }
+            if (j < n && src[j] == '\'') { i = j + 1; continue; }
+            mask[i++] = 1;
+            continue;
+        }
+        if (st.size() > 1) {                                     // in an interpolation hole
+            if (c == '{') ++st.back().depth;
+            else if (c == '}') {
+                if (st.back().depth == 0) { st.pop_back(); ++i; continue; }
+                --st.back().depth;
+            }
+        }
+        mask[i++] = 1;
+    }
+    return mask;
+}
+
+inline bool IsIdentChar(char c) { return std::isalnum((unsigned char)c) || c == '_'; }
+
+// A name Rename may give a symbol: an identifier that isn't a keyword.
+inline bool IsValidNewName(const std::string& s) {
+    if (s.empty() || std::isdigit((unsigned char)s[0])) return false;
+    for (char c : s) if (!IsIdentChar(c)) return false;
+    static const char* kw[] = {"var", "if", "else", "while", "for", "foreach", "in", "function", "return", "true",
+                               "false", "null", "break", "continue", "class", "struct", "enum", "new", "this",
+                               "public", "private", "protected", "static", "void", "do", "switch", "case"};
+    for (const char* k : kw) if (s == k) return false;
+    return true;
+}
+
+// Whole-word uses of identifier `sym` in code (not in comments or strings,
+// but inside $"…{sym}…" holes): {offset, 1-based line}.
+inline std::vector<std::pair<std::size_t, int>> FindIdent(const std::string& src, const std::string& sym) {
+    std::vector<std::pair<std::size_t, int>> out;
+    if (sym.empty()) return out;
+    const std::vector<char> code = CodeMask(src);
+    int line = 1;
+    for (std::size_t i = 0; i < src.size();) {
+        if (src[i] == '\n') { ++line; ++i; continue; }
+        if (code[i] && IsIdentChar(src[i]) && (i == 0 || !IsIdentChar(src[i - 1]))) {
+            std::size_t j = i;
+            while (j < src.size() && IsIdentChar(src[j])) ++j;
+            if (j - i == sym.size() && src.compare(i, j - i, sym) == 0) out.push_back({i, line});
+            i = j;
+            continue;
+        }
+        ++i;
+    }
+    return out;
+}
+
 namespace detail {
 inline bool Is(const std::vector<Tok>& t, std::size_t i, const char* s) { return i < t.size() && t[i].text == s; }
 

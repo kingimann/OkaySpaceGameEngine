@@ -46,7 +46,8 @@ passes any value type through), `Concat` (in0+in1 as strings),
 **Data — Steam**: `SteamName`, `SteamIsUnlocked <achievement>`,
 `SteamGetStat <name>`
 
-**Data — physics & tween**: `VelX` / `VelY` (this object's Rigidbody2D velocity),
+**Data — physics & tween**: `VelX` / `VelY` / `VelZ` (this object's Rigidbody2D or
+Rigidbody3D velocity; a 2D body reads 0 on Z),
 `Raycast` (in0=ox, in1=oy, in2=dx, in3=dy [, in4=maxDist] → did it hit?),
 `EaseIn` / `EaseOut` / `EaseInOut` (shape a 0..1 `t` for smooth motion — feed into
 `Lerp`)
@@ -334,8 +335,16 @@ Every N Times.
 
 ## Flow Graph editor: working faster
 
+- **Drag a component header, or Position / Rotation / Scale, from the Inspector
+  onto the graph.** Transform, Camera and Light drop a Get Position node.
+  Sprite, Mesh and Text drop Set Color. A rigidbody drops Set Velocity. Audio
+  drops Play Sound. Position, Rotation and Scale drop the matching getter.
+  Anything else drops a Const labelled with that name.
 - **Drag a wire into empty space** and the node palette opens, filtered to nodes
-  that fit; the node you pick is wired to that pin.
+  whose pin type can take that wire (a Number does not offer a Vector3-only
+  input). The bar names the type. The search box also matches pin types, so
+  typing `object` or `number` finds those nodes. The node you pick is wired to
+  that pin.
 - **Box select** by dragging on empty canvas; Ctrl/Shift+click adds to the
   selection; dragging any selected node moves the whole selection.
 - **Ctrl+C / Ctrl+V / Ctrl+D** copy, paste (at the mouse) and duplicate;
@@ -727,6 +736,42 @@ They give the new **Value** and the **Old** one.
 - **Lists:** adding to a list doesn't change the variable that holds it. Setting the variable to another list does.
 - **Runaway handlers:** a handler that changes its own variable every time it runs is stopped after 16 rounds and reported.
 
+## Nodes the sections above skip
+
+These are in the node search. The [palette index](#palette-index) at the end lists every hand-written node, in the same groups as the sidebar.
+
+**Animation clip events.** **On Anim Event** runs when a clip fires an event. Its setting is the event name; leave it blank to run for every clip event. **Anim Event Name** reads the name of the event that started the chain.
+
+**UI show and hide.** **Show UI** turns a UI object on (blank = this object) and plays its UI Animation intro. **Hide UI** plays the outro, then hides it; with no UI Animation it hides immediately.
+
+**Object RPCs and sync vars** (Multiplayer & Steam):
+
+| Node | What it does |
+|---|---|
+| Call Object RPC | Calls a named RPC on this object's NetworkObject. **Data** is the payload. |
+| On Object RPC | Runs when that named object RPC arrives. **Value** is the payload. |
+| Set Sync Var | Writes this object's SyncVar of that name. With no SyncVar component, a locally owned object still publishes the value as a net var named `<net id>.<name>`. |
+| Get Sync Var | Reads that SyncVar, or the same net var when the component is absent. |
+
+**Inventory.** These run on the object whose inventory changed. **Event Name** is the item, slot, or recipe. **Event Value** is the count or the item, when the event has one.
+
+| Node | When |
+|---|---|
+| On Item Added / On Item Removed | A stack was added or removed. Event Value is the count. |
+| On Inventory Full | An add did not fit. Event Value is how many were left over. |
+| On Item Used | An item was used. |
+| On Equip | An item was equipped. Event Name is the slot, Event Value the item. Taking it off does not fire this node. |
+| On Craft | A recipe finished. Event Name is the output item. |
+
+**Anti-cheat** (the server; the scene needs an Anti-Cheat Config):
+
+| Node | What it does |
+|---|---|
+| On Cheat Detected | A check failed. Event Name is the kind, Event Value the peer. |
+| On Validate Rpc | An RPC is about to run. Event Name is the RPC, Event Value its data. **Reject Rpc** in that chain refuses it. |
+| On Validate Hit | A hit claim is being checked. Event Name is the weapon, Event Value the shooter. **Reject Hit** refuses it. |
+| Server Budget | That RPC's remaining budget for a player. **Player** is the peer id, **Add** tops it up first (0 only reads). **Left** is what remains, or -1 when that RPC has no budget. |
+
 ## Debugging: breakpoints, stepping and the watch panel
 
 A breakpoint freezes the game just before a node runs, so you can see the variables at that moment and step through the graph.
@@ -776,3 +821,351 @@ The keys work while the Visual Script window has focus.
 
 - **Saving:** you can edit and save the graph while the game is paused. The running copy keeps going with the old graph until the paused event ends; the next event uses the saved one.
 - **Removing objects:** removing objects, undo, a new scene and loading a scene all let the frozen frame finish first.
+
+## Palette index
+
+Every hand-written node in the editor's node list (`Registry()` in `editor/VisualScriptEditor.hpp`), under the same group names as the sidebar.
+The word in backticks is the type stored in a `.okayvs` file.
+The **Engine API** group is the generated list in [engine_api.md](engine_api.md): one node for each script property and method. It is not copied here.
+
+### Events
+
+- **On Start** (`OnStart`)
+- **On Update** (`OnUpdate`)
+- **On Collision** (`OnCollision`)
+- **On Trigger** (`OnTrigger`)
+- **On Click** (`OnClick`)
+- **On Anim Event** (`OnAnimEvent`) — setting: event (blank = any)
+- **On Key Pressed** (`OnKey`) — setting: key
+- **On Key Released** (`OnKeyUp`) — setting: key
+- **On Timer** (`OnTimer`) — setting: every N seconds
+- **On Custom Event** (`OnEvent`) — out Value; setting: event name
+- **On Collision Exit** (`OnCollisionExit`)
+- **On Trigger Exit** (`OnTriggerExit`)
+- **On Mouse Enter** (`OnMouseEnter`)
+- **On Mouse Down** (`OnMouseDown`)
+- **On Mouse Up** (`OnMouseUp`)
+- **On Mouse Over** (`OnMouseOver`)
+- **On Collision Stay** (`OnCollisionStay`)
+- **On Late Update** (`OnLateUpdate`)
+- **On Fixed Update** (`OnFixedUpdate`)
+- **On Enable** (`OnEnable`)
+- **On Disable** (`OnDisable`)
+- **On Destroy** (`OnDestroy`)
+- **On Mouse Exit** (`OnMouseExit`)
+- **On Object Placed** (`OnObjectPlaced`)
+- **On Object Removed** (`OnObjectRemoved`)
+- **On Logic Signal** (`OnLogicSignal`)
+- **On Item Added** (`OnItemAdded`)
+- **On Item Removed** (`OnItemRemoved`)
+- **On Inventory Full** (`OnInventoryFull`)
+- **On Item Used** (`OnItemUsed`)
+- **On Equip** (`OnEquip`)
+- **On Craft** (`OnCraft`)
+- **On Cheat Detected** (`OnCheatDetected`)
+- **On Validate Rpc** (`OnValidateRpc`)
+- **On Validate Hit** (`OnValidateHit`)
+- **On Trigger Stay** (`OnTriggerStay`)
+- **On Var Changed** (`OnVarChanged`) — out Value, Old; setting: variable
+- **On Scene Var Changed** (`OnSceneVarChanged`) — out Value, Old; setting: variable
+- **On Global Var Changed** (`OnGlobalVarChanged`) — out Value, Old; setting: variable
+
+### Flow
+
+- **Branch** (`Branch`) — in Cond
+- **Sequence** (`Sequence`)
+- **Once** (`Once`)
+- **Every (s)** (`Timer`) — setting: seconds
+- **Wait (s)** (`Wait`) — setting: seconds
+- **Cooldown (s)** (`Cooldown`) — setting: seconds
+- **For Loop** (`ForLoop`) — in First, Last; out Index
+- **Repeat N** (`Repeat`) — setting: count
+- **Flip-Flop** (`FlipFlop`)
+- **Gate** (`Gate`) — in Open
+- **Do N Times** (`DoN`) — out Count; setting: N
+- **Switch (int)** (`SwitchInt`) — in Value
+- **Delay (s)** (`Delay`) — setting: seconds
+- **Random Branch** (`ChanceBranch`) — in Chance
+- **Counter** (`Counter`) — in Reset; out Count
+- **Every N Times** (`EveryN`) — in N
+- **Function** (`FunctionStart`) — setting: Name(a: Number) -> out: Number
+- **Return** (`Return`)
+- **Call Function** (`CallFunction`)
+- **While** (`While`) — in Cond
+- **For Each** (`ForEach`) — in List; out Item, Index
+- **Break** (`Break`)
+- **Continue** (`Continue`)
+
+### Variables
+
+- **Get Var** (`GetVar`) — out Value; setting: name
+- **Set Var** (`SetVar`) — in Value; setting: name
+- **Add Var** (`AddVar`) — in Amount; setting: name
+- **Toggle Var** (`Toggle`) — setting: name
+- **Set Object Var** (`SetObjectVar`) — in Target, Value; setting: variable
+- **Get Object Var** (`GetObjectVar`) — in Target; out Value; setting: variable
+- **Save Value** (`SaveValue`) — in Value; setting: key
+- **Load Value** (`LoadValue`) — in Default; out Value; setting: key
+- **Set Local** (`SetLocal`) — in Value; setting: name
+- **Get Local** (`GetLocal`) — out Value; setting: name
+- **Get Scene Var** (`GetSceneVar`) — out Value; setting: name
+- **Set Scene Var** (`SetSceneVar`) — in Value; setting: name
+- **Add Scene Var** (`AddSceneVar`) — in Amount; setting: name
+- **Get Global Var** (`GetGlobalVar`) — out Value; setting: name
+- **Set Global Var** (`SetGlobalVar`) — in Value; setting: name
+- **Add Global Var** (`AddGlobalVar`) — in Amount; setting: name
+
+### Math
+
+- **Add (+)** (`Add`) — in A, B; out Out
+- **Sub (-)** (`Sub`) — in A, B; out Out
+- **Mul (x)** (`Mul`) — in A, B; out Out
+- **Div (/)** (`Div`) — in A, B; out Out
+- **Min** (`Min`) — in A, B; out Out
+- **Max** (`Max`) — in A, B; out Out
+- **Mod (%)** (`Mod`) — in A, B; out Out
+- **Pow (^)** (`Pow`) — in A, B; out Out
+- **Abs** (`Abs`) — in In; out Out
+- **Negate** (`Neg`) — in In; out Out
+- **Sqrt** (`Sqrt`) — in In; out Out
+- **Sin** (`Sin`) — in In; out Out
+- **Cos** (`Cos`) — in In; out Out
+- **Floor** (`Floor`) — in In; out Out
+- **Round** (`Round`) — in In; out Out
+- **Sign** (`Sign`) — in In; out Out
+- **Clamp** (`Clamp`) — in Value, Min, Max; out Out
+- **Lerp** (`Lerp`) — in A, B, T; out Out
+- **Random 0-1** (`Random`) — out Out
+- **Random Range** (`RandomRange`) — in Min, Max; out Out
+- **Vec X** (`VecX`) — in Vec; out X
+- **Vec Y** (`VecY`) — in Vec; out Y
+- **Vec Z** (`VecZ`) — in Vec; out Z
+- **Ease In** (`EaseIn`) — in T; out Out
+- **Ease Out** (`EaseOut`) — in T; out Out
+- **Ease In-Out** (`EaseInOut`) — in T; out Out
+- **Tan** (`Tan`) — in In; out Out
+- **Atan2** (`Atan2`) — in Y, X; out Rad
+- **Exp** (`Exp`) — in In; out Out
+- **Log (ln)** (`Log`) — in In; out Out
+- **Inverse Lerp** (`InverseLerp`) — in A, B, Value; out T
+- **Remap** (`Remap`) — in Value, In Min, In Max, Out Min, Out Max; out Out
+- **Smooth Step** (`SmoothStep`) — in Edge0, Edge1, X; out Out
+- **Ping-Pong** (`PingPong`) — in T, Length; out Out
+- **Repeat (wrap)** (`Repeat01`) — in T, Length; out Out
+- **Move Towards (value)** (`MoveTowardsValue`) — in Current, Target, Max Step; out Out
+- **Delta Angle** (`DeltaAngle`) — in From, To; out Deg
+- **Vec3 Add** (`Vec3Add`) — in A, B; out Vec3
+- **Vec3 Subtract** (`Vec3Sub`) — in A, B; out Vec3
+- **Vec3 Scale** (`Vec3Scale`) — in Vec, Scale; out Vec3
+- **Vec3 Length** (`Vec3Length`) — in Vec; out Length
+- **Vec3 Normalize** (`Vec3Normalize`) — in Vec; out Vec3
+- **Vec3 Dot** (`Vec3Dot`) — in A, B; out Dot
+- **Vec3 Distance** (`Vec3Distance`) — in A, B; out Dist
+- **Random Int** (`RandomInt`) — in Min, Max; out Out
+- **Ceil** (`Ceil`) — in In; out Out
+- **Fraction** (`Frac`) — in In; out Out
+- **One Minus** (`OneMinus`) — in In; out Out
+- **Clamp 0-1** (`Saturate`) — in In; out Out
+- **Asin** (`Asin`) — in In; out Rad
+- **Acos** (`Acos`) — in In; out Rad
+- **Deg to Rad** (`Deg2Rad`) — in Deg; out Rad
+- **Rad to Deg** (`Rad2Deg`) — in Rad; out Deg
+- **Vec3 Cross** (`Vec3Cross`) — in A, B; out Vec3
+- **Vec3 Lerp** (`Vec3Lerp`) — in A, B, T; out Vec3
+- **Vec3 Negate** (`Vec3Negate`) — in Vec; out Vec3
+- **Perlin Noise** (`Noise`) — in X, Y; out Value
+- **Snap To Step** (`Snap`) — in Value, Step; out Out
+- **Wrap** (`Wrap`) — in Value, Min, Max; out Out
+- **Average** (`Average`) — in A, B; out Out
+- **Distance 2D** (`Distance2D`) — in X1, Y1, X2, Y2; out Distance
+
+### Logic
+
+- **Compare** (`Compare`) — in A, B; out Bool
+- **And** (`And`) — in A, B; out Out
+- **Or** (`Or`) — in A, B; out Out
+- **Not** (`Not`) — in In; out Out
+- **Xor** (`Xor`) — in A, B; out Out
+- **Equals** (`Equals`) — in A, B; out Bool
+- **Not Equals** (`NotEquals`) — in A, B; out Bool
+- **Approx Equal** (`Approx`) — in A, B; out Bool
+- **Between** (`Between`) — in Value, Min, Max; out Bool
+- **Chance** (`Chance`) — out Bool; setting: 0..1
+- **Has Var** (`HasVar`) — out Bool; setting: name
+- **Select** (`Select`) — in Cond, A, B; out Out
+- **Contains** (`Contains`) — in Text, Part; out Bool
+- **Check** (`Condition`)
+
+### Input
+
+- **Key Held** (`Key`) — out Down; setting: key
+- **Key Down** (`KeyDown`) — out Pressed; setting: key
+- **Axis X** (`AxisX`) — out X
+- **Axis Y** (`AxisY`) — out Y
+- **Time** (`Time`) — out t
+- **Delta Time** (`DeltaTime`) — out dt
+- **Key Up** (`KeyUp`) — out Released; setting: key
+- **Mouse X** (`MouseX`) — out X
+- **Mouse Y** (`MouseY`) — out Y
+- **Velocity X** (`VelX`) — out X
+- **Velocity Y** (`VelY`) — out Y
+- **Velocity Z** (`VelZ`) — out Z
+- **Mouse Held** (`MouseButton`) — out Down; setting: 0 L / 1 R / 2 M
+- **Mouse Pressed** (`MouseButtonDown`) — out Pressed; setting: 0 L / 1 R / 2 M
+- **Raycast 2D** (`Raycast`) — in Origin X, Origin Y, Dir X, Dir Y, Max Dist; out Hit
+- **Mouse Wheel** (`MouseWheel`) — out Delta
+- **Time Scale** (`TimeScale`) — out Scale
+- **Frame Count** (`FrameCount`) — out Frame
+- **Show Cursor** (`ShowCursor`) — in Visible
+- **Raycast 3D** (`Raycast3D`) — in Origin, Direction, Max Dist, Ignore Triggers; out Hit, Point, Normal, Distance, Object; setting: layers (blank = all)
+- **Sphere Cast** (`SphereCast3D`) — in Origin, Direction, Radius, Max Dist; out Hit, Point, Normal, Distance, Object; setting: layers (blank = all)
+- **Raycast All 3D** (`RaycastAll3D`) — in Origin, Direction, Max Dist; out Count, Objects, Nearest; setting: layers (blank = all)
+- **Overlap Sphere** (`OverlapSphere3D`) — in Center, Radius; out Count, Objects; setting: layers (blank = all)
+- **Overlap Box** (`OverlapBox3D`) — in Center, Half Size; out Count, Objects; setting: layers (blank = all)
+
+### Transform
+
+- **Get X** (`GetX`) — out X
+- **Get Y** (`GetY`) — out Y
+- **Translate** (`Translate`) — in X, Y, Z
+- **Set Position** (`SetPosition`) — in X, Y, Z
+- **Rotate** (`Rotate`) — in Deg
+- **Get Position** (`GetPosition`) — out Pos
+- **Get Z** (`GetZ`) — out Z
+- **Set Scale** (`SetScale`) — in X, Y, Z
+- **Set Rotation** (`SetRotation`) — in Deg
+- **Object Exists** (`ObjectExists`) — in Object; out Bool; setting: name
+- **Object Position** (`ObjectPosition`) — in Object; out Pos; setting: name / self / other
+- **Distance To** (`DistanceTo`) — in Object; out Dist; setting: name / other
+- **Self Name** (`SelfName`) — out Name
+- **Look At** (`LookAt`) — in Object; setting: name / other
+- **Move Towards** (`MoveTowards`) — in Speed, Object; setting: name / other
+- **Forward Vector** (`ForwardVector`) — out Vec3
+- **Right Vector** (`RightVector`) — out Vec3
+- **Up Vector** (`UpVector`) — out Vec3
+- **Get Scale** (`GetScale`) — out Scale
+- **Get Rotation** (`GetRotation`) — out Euler
+- **Set Position (Vec3)** (`SetPositionVec`) — in Pos
+- **Move By (Vec3)** (`MoveBy`) — in Offset
+- **Rotate (3D)** (`Rotate3`) — in X, Y, Z
+- **Set Rotation (3D)** (`SetRotation3`) — in X, Y, Z
+- **Find With Tag** (`FindWithTag`) — out Object; setting: tag
+- **Count With Tag** (`CountWithTag`) — out Count; setting: tag
+- **Nearest With Tag** (`NearestWithTag`) — out Object; setting: tag
+- **Teleport** (`Teleport`) — in X, Y, Z, Object; setting: object (self)
+- **Self** (`Self`) — out Object
+- **Other Object** (`Other`) — out Object
+- **Find Object** (`FindObject`) — out Object; setting: object name
+- **Get Name** (`GetName`) — out Name
+- **Get Tag** (`GetTag`) — out Tag
+- **All With Tag** (`AllWithTag`) — out Objects; setting: tag
+
+### Actions
+
+- **Print** (`Print`) — in Value
+- **Play Sound** (`PlaySound`)
+- **Spawn** (`Spawn`) — in X, Y, Z; out Object; setting: prefab
+- **Destroy** (`Destroy`) — in Target
+- **Log Warning** (`LogWarn`) — in Value
+- **Log Error** (`LogError`) — in Value
+- **Add Force** (`AddForce`) — in X, Y, Z
+- **Set Velocity** (`SetVelocity`) — in X, Y, Z
+- **Add Impulse** (`AddImpulse`) — in X, Y, Z
+- **Set Active** (`SetActive`) — in On, Object; setting: name / self / other
+- **Set Text** (`SetText`) — in Text, Object; setting: text object name
+- **Load Scene** (`LoadScene`) — setting: scene name
+- **Anim Trigger** (`AnimTrigger`) — setting: parameter
+- **Anim Set Float** (`AnimSetFloat`) — in Value; setting: parameter
+- **Anim Set Bool** (`AnimSetBool`) — in Value; setting: parameter
+- **IK Look At** (`IkLook`) — in Point, Weight
+- **IK Hand Reach** (`IkHand`) — in Point, Weight; setting: left / right
+- **Set Color** (`SetColor`) — in R, G, B, A
+- **Play Clip** (`PlayClip`) — setting: clip name
+- **Set Time Scale** (`SetTimeScale`) — in Scale
+- **Set Blend Shape** (`SetBlendShape`) — in Weight; setting: shape name
+- **Action** (`Action`)
+- **Action Steps** (`Actions`)
+- **Send Event** (`SendEvent`) — in Target, Value; setting: event name
+- **Broadcast Event** (`BroadcastEvent`) — in Value; setting: event name
+- **Reject Rpc** (`RejectRpc`)
+- **Reject Hit** (`RejectHit`)
+- **Server Budget** (`ServerBudget`) — in Player, Add; out Left; setting: rpc name
+- **Enter Build Mode** (`EnterBuildMode`)
+- **Exit Build Mode** (`ExitBuildMode`)
+- **Set Build Palette** (`SetBuildPalette`) — setting: Name=prefab|icon, ...
+- **Save Creation** (`SaveCreation`) — out Saved; setting: creation name
+- **Load Creation** (`LoadCreation`) — out Loaded; setting: creation name
+- **Set Visible** (`SetVisible`) — in Visible
+- **Pause Game** (`PauseGame`) — in Paused
+- **Quit Game** (`QuitGame`)
+- **Show UI** (`ShowUI`) — setting: UI object (self)
+- **Hide UI** (`HideUI`) — setting: UI object (self)
+
+### Data
+
+- **Const** (`Const`) — out Value; setting: value
+- **Make Vec3** (`MakeVec3`) — in X, Y, Z; out Vec3
+- **Concat (text)** (`Concat`) — in A, B; out Out
+- **Anim Event Name** (`AnimEventName`) — out Name
+- **Other Name** (`OtherName`) — out Name
+- **Other Tag** (`OtherTag`) — out Tag
+- **To Text** (`ToString`) — in Value; out Text
+- **Format Number** (`ToFixed`) — in Value; out Text; setting: decimals
+- **Text Length** (`TextLength`) — in Text; out Len
+- **Upper Case** (`Upper`) — in Text; out Text
+- **Lower Case** (`Lower`) — in Text; out Text
+- **Anim State** (`AnimState`) — out State
+- **Blend Shape** (`GetBlendShape`) — out Weight; setting: shape name
+- **Event Value** (`EventValue`) — out Value
+- **Event Name** (`EventName`) — out Name
+- **In Build Mode?** (`InBuildMode`) — out Bool
+- **Format Text** (`Format`) — in {0}, {1}, {2}; out Text; setting: Score: {0}
+- **Substring** (`Substring`) — in Text, Start, Length; out Text
+- **Replace Text** (`Replace`) — in Text, Find, With; out Text
+- **To Number** (`ToNumber`) — in Text; out Number
+- **Starts With** (`StartsWith`) — in Text, Prefix; out Yes
+- **Ends With** (`EndsWith`) — in Text, Suffix; out Yes
+- **Trim Spaces** (`Trim`) — in Text; out Text
+- **Index Of** (`IndexOf`) — in Text, Find; out Index
+- **Contact Point** (`ContactPoint`) — out Point
+- **Contact Normal** (`ContactNormal`) — out Normal
+- **Impact Speed** (`ImpactSpeed`) — out Speed
+- **New List** (`NewList`) — out List
+- **List Add** (`ListAdd`) — in List, Item
+- **List Remove At** (`ListRemoveAt`) — in List, Index
+- **List Get** (`ListGet`) — in List, Index; out Item
+- **List Length** (`ListLength`) — in List; out Count
+- **List Contains** (`ListContains`) — in List, Item; out Bool
+
+### Multiplayer & Steam
+
+- **Host Game** (`NetHost`) — setting: port (45000)
+- **Join Game** (`NetJoin`) — setting: host [port]
+- **Disconnect** (`NetDisconnect`)
+- **Is Connected** (`NetConnected`) — out Bool
+- **Is Server** (`NetIsServer`) — out Bool
+- **Is Client** (`NetIsClient`) — out Bool
+- **Peer Count** (`NetPeers`) — out Count
+- **My Net Id** (`NetId`) — out Id
+- **Send Message** (`NetSend`) — in Data; setting: channel
+- **Set Net Var** (`NetSetVar`) — in Value; setting: name
+- **Get Net Var** (`NetGetVar`) — out Value; setting: name
+- **Send Chat** (`NetChat`) — in Text
+- **Call RPC** (`NetRpc`) — in Data; setting: rpc name
+- **Net Spawn** (`NetSpawnOwned`) — setting: prefab
+- **Net Despawn** (`NetDespawn`) — in Net Id
+- **Set Ready** (`NetReady`) — in Ready
+- **Start Match** (`NetStartMatch`)
+- **Match Started** (`NetMatchStarted`) — out Bool
+- **All Ready** (`NetAllReady`) — out Bool
+- **Call Object RPC** (`NetObjRpc`) — in Data; setting: rpc name
+- **Set Sync Var** (`SyncVarSet`) — in Value; setting: name
+- **Get Sync Var** (`SyncVarGet`) — out Value; setting: name
+- **On Object RPC** (`OnNetRpc`) — out Value; setting: rpc name
+- **Steam Name** (`SteamName`) — out Name
+- **Achievement Unlocked** (`SteamIsUnlocked`) — out Bool; setting: achievement id
+- **Unlock Achievement** (`SteamUnlock`) — setting: achievement id
+- **Get Steam Stat** (`SteamGetStat`) — out Value; setting: stat
+- **Set Steam Stat** (`SteamSetStat`) — in Value; setting: stat
+- **Store Stats** (`SteamStore`)
+- **Submit Score** (`SteamLeaderboard`) — in Score; setting: leaderboard

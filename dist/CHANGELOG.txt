@@ -1,5 +1,92 @@
 OkaySpace Game Engine — Changelog
 
+v2.837.0
+  Animation and characters
+  - IK runs in one fixed order each frame (feet, then body, then limbs, then
+    look and aim), and IK goals that jump to a new target swing over instead
+    of snapping (#417).
+  - Dropping a model onto a character recovers its bind pose, and a held prop
+    stays in the hand when the model is swapped (#416).
+  Scripting
+  - Fixed: a script that ran the same += or -= twice (in a loop, or every
+    frame) crashed, and += on transform.position or this.hp did nothing (#490).
+  Editor
+  - Script Editor: Ctrl+Z undoes Format, Rename, Replace All and Reload, and
+    the view stays where it was (#445).
+  - The Plugins menu stays usable with more than one plugin installed (#479).
+
+v2.836.0
+  How to try it
+  - Open the editor, pick the Third Person template, and press the green
+    Play triangle (Ctrl+P). WASD moves, the mouse looks, Space jumps.
+  - For the sandbox, pick Sandbox. Dig with the left mouse button, fill
+    with the right, jump or swim up with Space, swim down with Ctrl, and
+    throw what you are holding with G.
+  - The new screens are under Create > UI: UI Showcase, UI Options,
+    UI Notify, UI Controls, UI HUD, and UI Color. Open one, then press Play.
+
+  Multiplayer
+  - When a character leaves, the server frees that player so they can
+    spawn again (#401).
+  - After a hitch, the server catches up the inputs it missed instead of
+    leaving the player behind (#403).
+  - Ticks, transform checks, a pinned host, and animation clip speed are
+    checked more carefully (#407).
+  - A shot rewinds only as far as the hit claim allows (#408).
+  - Messages can be sent in order, or as a latest-only stream (#423).
+  - Owned objects send a smaller update when only the position changed
+    (#427), and objects that are far away are not sent at all (#428).
+
+  Animation and characters
+  - If a state's clip is missing, the character holds the last pose, or
+    plays a fallback clip when one is set (#404, #459).
+  - A jump holds its last frame instead of starting over (#410).
+  - Walking and running crossfade once as the speed changes (#419).
+  - Full-body IK puts the body back, turns the limbs, and eases toward
+    the pose (#414).
+
+  World and sandbox
+  - Filling the ground with the right mouse button no longer zooms the
+    camera (#439).
+  - You can swim in the sandbox lake. Props float or sink based on how
+    dense they are (#448).
+  - Hold G to throw what you are holding, along where the camera looks
+    (#443).
+
+  Scripting
+  - The arrow keys count as movement, the same as WASD (#454).
+  - Pressing Play runs the script you are editing, even if you have not
+    saved it yet (#455).
+  - Scripts can use ??, ?., and ??= (#456), default and named arguments
+    (#465), and plain classes made with new (#458).
+  - Subscribe to an event with += and unsubscribe with -= (#474).
+  - Each scene keeps its own action-list variables (#462).
+  - A script error names the line and the column (#460).
+  - Drag a component or a field from the Inspector onto the visual script
+    (#475). The node list can be filtered by the pin you are connecting
+    (#473), and every node is written up (#463).
+  - In the Script Editor: Rename, Find References, Format, and
+    autocomplete that reads the code the way the language does (#444).
+
+  In-game UI
+  - Four built-in looks: Dark, Light, Sci-fi, and Fantasy. Open
+    Create > UI > UI Showcase (#452).
+  - Sliders can snap and show a label, health bars can be split into
+    chunks with a damage trail, and buttons can ease and show an icon.
+    Create > UI > UI Options (#457).
+  - Toast messages and a styled confirm dialog. Create > UI > UI Notify
+    (#466).
+  - Dropdowns can search, scrolling glides and springs back, tabs can
+    close, tooltips can be rich text, and a text field can be more than
+    one line. Create > UI > UI Controls (#470).
+  - Crosshairs that kick open and ease back, ring and pie meters, and a
+    grid of slots. Create > UI > UI HUD (#472).
+  - A color picker made of swatches and a chip that shows the current
+    color. Create > UI > UI Color (#476).
+
+  Examples
+  - Brick Breaker is a new template you can open and play (#477).
+
 v2.835.0
   Animation and characters
   - Imported humanoids play their own crouch and prone clips, so the head

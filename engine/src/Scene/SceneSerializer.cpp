@@ -686,8 +686,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     for (AnimStateMachine* asm2 : go->GetComponents<AnimStateMachine>()) {
         // Layers (machines after the base) start with a header record; every
         // record that follows belongs to that machine until the next header.
-        if (asm2->layer > 0)
+        if (asm2->layer > 0) {
             out << "  animsmlayer " << asm2->layer << " " << asm2->layerWeight << " " << Quote(asm2->maskBone) << "\n";
+            if (asm2->additive || !asm2->maskBones.empty()) {
+                out << "  animsmlayerx " << (asm2->additive ? 1 : 0) << " " << asm2->maskBones.size();
+                for (const std::string& b : asm2->maskBones) out << " " << Quote(b);
+                out << "\n";
+            }
+        }
         out << "  animsm " << Quote(asm2->entry) << " " << asm2->states.size();
         for (const auto& st : asm2->states) {
             out << " " << Quote(st.name) << " " << Quote(st.clip) << " " << st.speed
@@ -768,6 +774,20 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             for (const auto& st : asm2->states) out << " " << st.fullBodyIkWeight;
             out << "\n";
         }
+        // Per-state IK weight curves (foot, then full-body). Written only when
+        // a state has keys, so older scenes and older builds stay unchanged.
+        bool anyIkC = false;
+        for (const auto& st : asm2->states) anyIkC = anyIkC || !st.ikCurve.empty() || !st.fullBodyIkCurve.empty();
+        if (anyIkC) {
+            out << "  animsmikc " << asm2->states.size();
+            for (const auto& st : asm2->states) {
+                out << " " << st.ikCurve.size();
+                for (const auto& k : st.ikCurve) out << " " << k.t << " " << k.w;
+                out << " " << st.fullBodyIkCurve.size();
+                for (const auto& k : st.fullBodyIkCurve) out << " " << k.t << " " << k.w;
+            }
+            out << "\n";
+        }
         // Muted transitions.
         bool anyMute = false;
         for (const auto& st : asm2->states) for (const auto& tr : st.transitions) anyMute = anyMute || tr.muted;
@@ -835,6 +855,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         if (anyFall) {   // per-state stand-in when the named clip is missing
             out << "  animsmfall " << asm2->states.size();
             for (const auto& st : asm2->states) out << " " << Quote(st.fallbackClip);
+            out << "\n";
+        }
+        bool anyMir = false;
+        for (const auto& st : asm2->states) anyMir = anyMir || st.mirror || st.rootMotion >= 0;
+        if (anyMir) {
+            out << "  animsmmir " << asm2->states.size();
+            for (const auto& st : asm2->states)
+                out << " " << (st.mirror ? 1 : 0) << " " << st.rootMotion;
             out << "\n";
         }
     }
@@ -3315,6 +3343,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         if (ci >= 0 && ci < (long)ma->clips.size())
                             ma->clips[ci].events.push_back(std::move(ev));
                     }
+                } else if (field == "animsmlayerx") {
+                    auto* sm2 = smFor();
+                    int add = 0; long n = 0;
+                    in >> add >> n;
+                    if (sm2) sm2->additive = add != 0;
+                    for (long i = 0; i < n && in; ++i) {
+                        std::string b = ReadQuoted(in);
+                        if (sm2 && !b.empty()) sm2->maskBones.push_back(std::move(b));
+                    }
                 } else if (field == "animsmlayer") {
                     curSM = go->AddComponent<AnimStateMachine>();
                     in >> curSM->layer >> curSM->layerWeight;
@@ -3421,6 +3458,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "animsmxfade") {
                     GaitCrossfades& t = smFor()->crossfades;
                     in >> t.idleWalk >> t.walkRun >> t.groundAir >> t.airGround;
+                } else if (field == "animsmmir") {
+                    auto* sm2 = smFor();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n && in; ++i) {
+                        int mir = 0, rm = -1; in >> mir >> rm;
+                        if (sm2 && i < (long)sm2->states.size()) {
+                            sm2->states[i].mirror = mir != 0;
+                            sm2->states[i].rootMotion = rm;
+                        }
+                    }
                 } else if (field == "animsmmatch") {
                     auto* sm2 = smFor();
                     long n = 0; in >> n;
@@ -3491,6 +3538,26 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     for (long i = 0; i < n && in; ++i) {
                         std::string fb = ReadQuoted(in);
                         if (sm2 && i < (long)sm2->states.size()) sm2->states[i].fallbackClip = std::move(fb);
+                    }
+                } else if (field == "animsmikc") {
+                    auto* sm2 = smFor();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n && in; ++i) {
+                        long nk = 0; in >> nk;
+                        std::vector<AnimStateMachine::State::IkKey> foot, body;
+                        for (long k = 0; k < nk && in; ++k) {
+                            AnimStateMachine::State::IkKey key; in >> key.t >> key.w;
+                            foot.push_back(key);
+                        }
+                        long nb = 0; in >> nb;
+                        for (long k = 0; k < nb && in; ++k) {
+                            AnimStateMachine::State::IkKey key; in >> key.t >> key.w;
+                            body.push_back(key);
+                        }
+                        if (sm2 && i < (long)sm2->states.size()) {
+                            sm2->states[i].ikCurve = std::move(foot);
+                            sm2->states[i].fullBodyIkCurve = std::move(body);
+                        }
                     }
                 } else if (field == "animsmparams") {
                     auto* sm2 = smFor();

@@ -123,6 +123,30 @@ public:
     const Physics3D& physics3D() const { return m_physics3d; }
     /// Set false to skip the physics step (e.g. for pure-UI scenes).
     bool physicsEnabled = true;
+    /// With this above 0, physics runs in steps of this many seconds whatever the
+    /// frame rate, so a game behaves the same at 30 and 240 FPS (frame time left
+    /// over carries to the next frame). 0 = one step per frame, sized to the frame.
+    /// The player, the editor's Play mode and the dedicated server use
+    /// kDefaultFixedStep (scripts' FixedUpdate rate); a bare Scene keeps 0.
+    float fixedTimeStep = 0.0f;
+    static constexpr float kDefaultFixedStep = 1.0f / 50.0f;
+    /// Fixed steps plus interpolation: how games run.
+    void UseFixedStepPhysics(bool on = true) {
+        fixedTimeStep = on ? kDefaultFixedStep : 0.0f;
+        interpolatePhysics = on;
+    }
+    /// The most frame time physics catches up on in one frame, so a long hitch
+    /// can't snowball into ever more steps.
+    float maxPhysicsCatchUp = 1.0f / 3.0f;
+    /// Draw rigidbodies part way between their last two physics poses, so motion
+    /// stays smooth when the frame rate and the physics rate differ. The player
+    /// and the editor's Play mode turn it on; a body moved by game code jumps
+    /// there with no blending.
+    bool interpolatePhysics = false;
+    /// How far the current frame is between the last physics step and the next (0..1).
+    float PhysicsAlpha() const { return m_physicsAlpha; }
+    /// Physics steps taken during the last Update.
+    int PhysicsStepsLastFrame() const { return m_physicsSteps; }
     /// Whether scripts (Script, Visual Script and Actions components) run. The
     /// editor turns it off outside Play, so opening, previewing or editing a scene
     /// never runs game code; their Start runs once it's back on.
@@ -226,6 +250,10 @@ public:
     };
 
 private:
+    void StepPhysics(float deltaTime);
+    float m_physicsAcc = 0.0f;     // frame time not yet simulated
+    float m_physicsAlpha = 0.0f;
+    int   m_physicsSteps = 0;
     friend class GameObject;
     void QueuePending(Component* component);
     void NotifyComponentRemoved(Component* component);

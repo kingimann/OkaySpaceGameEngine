@@ -38,6 +38,11 @@ float NaturalSpeed(int state);
 /// Stride cycles per second at `speed` (< 0 = natural pace), walk and run
 /// blended by `runW`; 0 for a state with no stride.
 float CycleFreq(int state, float speed, float runW);
+/// How much a walk at `speed` (m/s) takes the run's style (0..1). People break
+/// into a jog at about 2.5 m/s: past that a walk cycle is a frantic speed-walk
+/// (the swing foot whips forward at 10 m/s, the feet slap down), so a fast
+/// "walk" eases into a jog between 2.4 and 3.4 m/s. The state stays the walk.
+float JogWeight(float speed);
 /// The phase a gait starts at when stepping off from a stand: the left foot
 /// planted under the hips, the right one swinging through.
 float StartPhase(int state, float speed);

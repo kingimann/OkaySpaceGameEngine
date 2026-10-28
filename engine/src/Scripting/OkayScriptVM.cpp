@@ -56,6 +56,7 @@
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/AudioSource.hpp"
+#include "okay/Components/MusicPlayer.hpp"
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UIColorPicker.hpp"   // grok/ui-color
 #include "okay/Components/UIRadialProgress.hpp"   // grok/ui-hud
@@ -4729,9 +4730,14 @@ struct OkayScriptVM::Impl {
                     sr->flipY = a.empty() ? true : a[0].AsBool();
             return Value{};
         };
-        b["play_sound"] = [go](std::vector<Value>&) {
+        b["play_sound"] = [go](std::vector<Value>& a) {
+            // play_sound() restarts the source; play_sound(volume) plays its clip
+            // as a one-shot instead, so quick repeats overlap.
             if (GameObject* g = go())
-                if (auto* au = g->GetComponent<AudioSource>()) au->Play();
+                if (auto* au = g->GetComponent<AudioSource>()) {
+                    if (a.empty()) au->Play();
+                    else au->PlayOneShot(a[0].AsFloat());
+                }
             return Value{};
         };
         b["set_progress"] = [go](std::vector<Value>& a) {
@@ -5028,6 +5034,53 @@ struct OkayScriptVM::Impl {
         b["set_volume"] = [](std::vector<Value>& a) { AudioMixer::masterVolume = a.empty() ? 1.0f : a[0].AsFloat(); return Value{}; };
         b["volume"]     = [](std::vector<Value>&) { return Value{AudioMixer::masterVolume}; };
         b["mute"]       = [](std::vector<Value>& a) { AudioMixer::muted = a.empty() ? true : a[0].AsBool(); return Value{}; };
+        // Mixer groups ("music", "sfx", "ui", "voice"): their own volume and mute.
+        b["set_group_volume"] = [](std::vector<Value>& a) {
+            AudioGroup g;
+            if (a.size() >= 2 && AudioMixer::GroupFromName(a[0].AsString().c_str(), g))
+                AudioMixer::groupVolume[(int)g] = Mathf::Clamp(a[1].AsFloat(), 0.0f, 1.0f);
+            return Value{};
+        };
+        b["group_volume"] = [](std::vector<Value>& a) {
+            AudioGroup g;
+            if (!a.empty() && AudioMixer::GroupFromName(a[0].AsString().c_str(), g))
+                return Value{AudioMixer::groupVolume[(int)g]};
+            return Value{0.0f};
+        };
+        // Keep the current volumes as the player's settings (also saved on quit).
+        b["save_audio_settings"] = [](std::vector<Value>&) { AudioMixer::SaveSettings(); return Value{}; };
+        // Music: the scene's MusicPlayer. music_play(index or "file"), music_next(),
+        // music_previous(), music_stop([fade seconds]), music_pause(), music_resume().
+        auto music = [go]() -> MusicPlayer* {
+            GameObject* g = go();
+            if (!g || !g->scene()) return nullptr;
+            auto all = g->scene()->FindObjectsOfType<MusicPlayer>();
+            return all.empty() ? nullptr : all.front();
+        };
+        b["music_play"] = [music](std::vector<Value>& a) {
+            MusicPlayer* m = music();
+            if (!m) return Value{false};
+            if (a.empty()) return Value{m->Play(m->CurrentIndex() < 0 ? 0 : m->CurrentIndex())};
+            if (a[0].IsString()) return Value{m->Play(a[0].AsString())};
+            return Value{m->Play((int)a[0].AsFloat())};
+        };
+        b["music_next"]     = [music](std::vector<Value>&) { if (MusicPlayer* m = music()) m->Next(); return Value{}; };
+        b["music_previous"] = [music](std::vector<Value>&) { if (MusicPlayer* m = music()) m->Previous(); return Value{}; };
+        b["music_stop"]     = [music](std::vector<Value>& a) { if (MusicPlayer* m = music()) m->Stop(a.empty() ? 1.0f : a[0].AsFloat()); return Value{}; };
+        b["music_pause"]    = [music](std::vector<Value>&) { if (MusicPlayer* m = music()) m->Pause(); return Value{}; };
+        b["music_resume"]   = [music](std::vector<Value>&) { if (MusicPlayer* m = music()) m->Resume(); return Value{}; };
+        // Ducking: set_ducking(on [, level]) dips the Music group while Voice plays.
+        b["set_ducking"] = [](std::vector<Value>& a) {
+            AudioMixer::duckMusicUnderVoice = a.empty() || a[0].AsBool();
+            if (a.size() >= 2) AudioMixer::duckLevel = Mathf::Clamp(a[1].AsFloat(), 0.0f, 1.0f);
+            return Value{};
+        };
+        b["mute_group"] = [](std::vector<Value>& a) {
+            AudioGroup g;
+            if (!a.empty() && AudioMixer::GroupFromName(a[0].AsString().c_str(), g))
+                AudioMixer::groupMuted[(int)g] = a.size() < 2 || a[1].AsBool();
+            return Value{};
+        };
         // Physics queries: raycast_hit(ox, oy, dx, dy [, maxDist]) returns 1 if
         // the ray hits a collider, and overlap(x, y) returns 1 if a collider
         // contains that point. Great for shooting, ground checks, line-of-sight.
@@ -9046,8 +9099,13 @@ struct OkayScriptVM::Impl {
             }
             if (auto* rb = g->GetComponent<Rigidbody3D>(); rb && t == "Rigidbody")
                 if (p == "velocity" || p == "linearVelocity") return Value{rb->velocity};
-            if (auto* au = g->GetComponent<AudioSource>(); au && t == "AudioSource")
+            if (auto* au = g->GetComponent<AudioSource>(); au && t == "AudioSource") {
                 if (p == "volume") return Value{au->volume};
+                if (p == "pitch") return Value{au->pitch};
+                if (p == "pan") return Value{au->pan};
+                if (p == "lowPass") return Value{au->lowPass};
+                if (p == "isPlaying") return Value{au->IsPlaying()};
+            }
             if (auto* o = g->GetComponent<NetworkObject>(); o && t == "NetworkObject") {
                 if (p == "netId") return Value{o->netId};
                 if (p == "owned" || p == "isOwned") return Value{o->IsLocallyOwned()};
@@ -9083,7 +9141,12 @@ struct OkayScriptVM::Impl {
             }
             if (t == "Rigidbody") if (auto* rb = g->GetComponent<Rigidbody3D>())
                 if (p == "velocity" || p == "linearVelocity") rb->velocity = v.AsVec3();
-            if (t == "AudioSource") if (auto* au = g->GetComponent<AudioSource>()) if (p == "volume") au->volume = v.AsFloat();
+            if (t == "AudioSource") if (auto* au = g->GetComponent<AudioSource>()) {
+                if (p == "volume") au->volume = v.AsFloat();
+                if (p == "pitch") au->pitch = v.AsFloat();
+                if (p == "pan") au->pan = v.AsFloat();
+                if (p == "lowPass") au->lowPass = v.AsFloat();
+            }
             if (t == "NetworkObject") if (auto* o = g->GetComponent<NetworkObject>()) {
                 if (p == "netId") o->netId = v.AsString();
                 if (p == "owned") o->SetOwned(v.AsBool());
@@ -9123,6 +9186,11 @@ struct OkayScriptVM::Impl {
             if (t == "AudioSource") if (auto* au = g->GetComponent<AudioSource>()) {
                 if (m == "Play") au->Play();
                 if (m == "Stop") au->Stop();
+                if (m == "Pause") au->Pause();
+                if (m == "Resume") au->Resume();
+                if (m == "PlayOneShot") au->PlayOneShot(rest.empty() ? 1.0f : arg(0).AsFloat());
+                if (m == "FadeIn") au->FadeIn(rest.empty() ? 1.0f : arg(0).AsFloat());
+                if (m == "FadeOut") au->FadeOut(rest.empty() ? 1.0f : arg(0).AsFloat());
                 return Value{};
             }
             if (t == "NetworkObject") if (auto* o = g->GetComponent<NetworkObject>()) {

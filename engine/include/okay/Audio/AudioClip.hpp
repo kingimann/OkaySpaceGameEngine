@@ -1,6 +1,7 @@
 #pragma once
 #include "okay/Math/Mathf.hpp"
 #include "okay/Core/Random.hpp"
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -58,6 +59,17 @@ struct AudioClip {
     /// Load a PCM/float WAV file as mono samples (multi-channel is downmixed).
     /// Returns false (leaving the clip empty) on failure.
     bool LoadWAV(const std::string& path, std::string* error = nullptr);
+    /// Load an OGG Vorbis or MP3 file the same way (mono, the file's own rate).
+    bool LoadOGG(const std::string& path, std::string* error = nullptr);
+    bool LoadMP3(const std::string& path, std::string* error = nullptr);
+    /// Load a WAV, OGG or MP3 file, chosen by its extension.
+    bool Load(const std::string& path, std::string* error = nullptr);
+    /// True for the extensions Load understands (.wav, .ogg, .mp3).
+    static bool IsAudioFile(const std::string& path);
+    /// Load `path` once (resampled to `rate`, or kept as is when 0) and share the
+    /// decoded clip: twenty sources on one file decode it once. Null on failure.
+    static std::shared_ptr<const AudioClip> LoadCached(const std::string& path, int rate = 0,
+                                                       std::string* error = nullptr);
     /// Save as a 16-bit mono PCM WAV. Returns false on failure.
     bool SaveWAV(const std::string& path) const;
 

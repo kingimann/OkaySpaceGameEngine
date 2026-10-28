@@ -309,6 +309,21 @@ Messages to the Console.
 | `Debug.LogWarning(message)` | `Debug.LogWarning/1` | step | message (Any) | - | Print a warning to the Console. |
 | `Debug.LogError(message)` | `Debug.LogError/1` | step | message (Any) | - | Print an error to the Console. |
 
+## Audio
+
+The mixer: overall volume and each group's (Music, SFX, UI, Voice), as a settings menu sets them.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `Audio.masterVolume` | `Audio.masterVolume` | value | - | masterVolume (Number) | Overall volume, 0 to 1. |
+| `Audio.masterVolume = masterVolume` | `Audio.masterVolume=` | step | masterVolume (Number) | - | Overall volume, 0 to 1. |
+| `Audio.muted` | `Audio.muted` | value | - | muted (Bool) | Silence everything. |
+| `Audio.muted = muted` | `Audio.muted=` | step | muted (Bool) | - | Silence everything. |
+| `Audio.SetGroupVolume(group, volume)` | `Audio.SetGroupVolume/2` | step | group (Text), volume (Number) | - | Set one group's volume, 0 to 1 ("Music", "SFX", "UI" or "Voice"). |
+| `Audio.GetGroupVolume(group)` | `Audio.GetGroupVolume/1` | value | group (Text) | Result (Number) | One group's volume. |
+| `Audio.MuteGroup(group, mute)` | `Audio.MuteGroup/2` | step | group (Text), mute (Bool) | - | Mute or unmute one group. |
+| `Audio.SaveSettings()` | `Audio.SaveSettings/0` | step | - | - | Store the volumes in the player's prefs now (they are also saved when the game closes). |
+
 ## Mathf
 
 Maths helpers.

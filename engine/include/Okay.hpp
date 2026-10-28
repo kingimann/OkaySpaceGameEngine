@@ -177,6 +177,7 @@
 // Audio
 #include "okay/Audio/AudioClip.hpp"
 #include "okay/Components/AudioSource.hpp"
+#include "okay/Components/MusicPlayer.hpp"
 #include "okay/Components/ActionList.hpp"
 #include "okay/Components/CharacterController2D.hpp"
 #include "okay/Components/CharacterController3D.hpp"
@@ -234,6 +235,7 @@
 #include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
 #include "okay/Audio/AudioMixer.hpp"
+#include "okay/Audio/AudioLoad.hpp"
 
 // Multiplayer networking
 #include "okay/Net/Packet.hpp"

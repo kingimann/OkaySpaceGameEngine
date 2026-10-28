@@ -6,6 +6,7 @@
 #include "okay/VisualScript/VsTypes.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Audio/AudioLoad.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/ColliderFit.hpp"
 #include <filesystem>
@@ -715,6 +716,12 @@ void EditorState::Play() {
     vs::ForgetSceneVariables(&m_scene);   // scene / global graph variables start empty too
     vs::ClearGlobalVariables();
     Game::Reset();             // clear stale pause/quit state from a prior session
+    // Audio files named on AudioSources play in Play mode without pressing Load.
+    {
+        std::vector<std::string> missing;
+        LoadSceneAudio(m_scene, m_projectDir, AudioMixer::sampleRate, &missing);
+        for (const auto& p : missing) Log::Warning("Audio Source: can't read ", p, " (WAV, OGG or MP3)");
+    }
     // Check every visual script first and say what's wrong in the Console
     // (errors in red: that part won't work; warnings: probably not what you meant).
     {

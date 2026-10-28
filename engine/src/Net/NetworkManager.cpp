@@ -501,7 +501,21 @@ void NetworkManager::ApplyRemoteXform(const std::string& id, const Vec3& p, cons
         auto at = buf.end();
         while (at != buf.begin() && (at - 1)->tick > tick) --at;
         const bool newest = at == buf.end();
-        const double gap = (newest && !buf.empty()) ? tick - buf.back().tick : 0.0;
+        double gap = (newest && !buf.empty()) ? tick - buf.back().tick : 0.0;
+        // An unchanged state isn't sent again, so a gap well past the send
+        // spacing is the object holding still, not the network: it stays where
+        // it was until one spacing before this state (instead of creeping
+        // toward it across the whole pause), and the pause doesn't grow the
+        // delay (it read as a full second of jitter and the buffer settled
+        // near that, ~860 ms behind).
+        const double spacing = syncRate > 0.0f ? (double)TickRateInForce() / (double)syncRate : 1.0;
+        if (gap > 2.5 * spacing) {
+            SyncObj::Sample hold = buf.back();
+            hold.tick = tick - spacing;
+            buf.push_back(hold);
+            at = buf.end();
+            gap = spacing;
+        }
         if (at == buf.begin() || (at - 1)->tick < tick) buf.insert(at, SyncObj::Sample{tick, p, q});
         if (buf.size() > kMaxSamples) buf.erase(buf.begin());
         if (newest) {

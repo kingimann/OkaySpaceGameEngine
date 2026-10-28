@@ -542,6 +542,8 @@ int main() {
         pv->SetView(0);
         pump(20);
         CHECK(ch->firstPersonArm);
+        ch->anim = 1;   // rising from prone crossfades over StanceTimes::proneStand (0.8 s)
+        pump(50);
         match(1);
         CHECK(gh->Part(2)->active);
         CHECK((int)gh->Part(5)->GetComponent<MeshRenderer>()->mesh.vertices.size() == 36);

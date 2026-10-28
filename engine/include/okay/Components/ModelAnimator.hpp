@@ -770,7 +770,7 @@ public:
     /// result over the current pose by `amount` — only on bones in `mask` when
     /// given. Base for layers and multi-clip blends.
     void PoseWeighted(const std::vector<std::pair<int, float>>& clipTimes, const std::vector<float>& weights,
-                      const std::unordered_set<Transform*>* mask, float amount) {
+                      const std::unordered_set<Transform*>* mask, float amount, bool additive = false) {
         std::vector<PwAcc>& acc = m_pwAcc;              // scratch kept on the component
         std::unordered_map<Transform*, int>& at = m_pwAt;
         acc.clear(); at.clear();
@@ -788,11 +788,19 @@ public:
                 else ai = it->second;
                 Vec3 p = t->localPosition, sc = t->localScale; Quat r = t->localRotation;
                 SampleNode(c, (int)n, clipTimes[k].second, p, r, sc);
+                Vec3 rp = p, rsc = sc; Quat rr = r;
+                if (additive) SampleNode(c, (int)n, 0.0f, rp, rr, rsc);
                 PwAcc& a = acc[ai];
                 if (a.w == 0.0f) a.ref = r;
                 if (Quat::Dot(a.ref, r) < 0.0f) r = Quat{-r.x, -r.y, -r.z, -r.w};
                 a.p = a.p + p * wk; a.s = a.s + sc * wk;
                 a.q = Quat{a.q.x + r.x * wk, a.q.y + r.y * wk, a.q.z + r.z * wk, a.q.w + r.w * wk};
+                if (additive) {
+                    if (a.w == 0.0f) a.rref = rr;
+                    if (Quat::Dot(a.rref, rr) < 0.0f) rr = Quat{-rr.x, -rr.y, -rr.z, -rr.w};
+                    a.rp = a.rp + rp * wk; a.rs = a.rs + rsc * wk;
+                    a.rq = Quat{a.rq.x + rr.x * wk, a.rq.y + rr.y * wk, a.rq.z + rr.z * wk, a.rq.w + rr.w * wk};
+                }
                 a.w += wk;
             }
         }
@@ -802,6 +810,17 @@ public:
             Vec3 p = a.p * iw, sc = a.s * iw;
             Quat q = Quat{a.q.x * iw, a.q.y * iw, a.q.z * iw, a.q.w * iw}.Normalized();
             Transform* t = a.t;
+            if (additive) {
+                Vec3 rp = a.rp * iw, rs = a.rs * iw;
+                Quat rq = Quat{a.rq.x * iw, a.rq.y * iw, a.rq.z * iw, a.rq.w * iw}.Normalized();
+                Quat delta = (rq.Inverse() * q).Normalized();
+                Quat added = (t->localRotation * delta).Normalized();
+                const float u = std::fmin(std::fmax(amount, 0.0f), 1.0f);
+                t->localPosition = t->localPosition + (p - rp) * u;
+                t->localScale    = t->localScale + (sc - rs) * u;
+                t->localRotation = Quat::Slerp(t->localRotation, added, u).Normalized();
+                continue;
+            }
             if (amount >= 0.999f) { t->localPosition = p; t->localScale = sc; t->localRotation = q; continue; }
             t->localPosition = t->localPosition + (p - t->localPosition) * amount;
             t->localScale    = t->localScale + (sc - t->localScale) * amount;
@@ -815,23 +834,32 @@ public:
     void SetLoop(bool l) override { loop = l; }
     void SetExternalDrive(bool on) override { externalDrive = on; }
     void PoseLayer(const std::vector<std::pair<int, float>>& clipTimes, const std::vector<float>& weights,
-                   const std::string& maskBone, float amount) override {
+                   const std::string& maskBone, float amount, bool additive = false,
+                   const std::vector<std::string>* moreBones = nullptr) override {
         Scene* sc = gameObject ? gameObject->scene() : nullptr;
         const std::uint64_t ver = sc ? sc->StructureVersion() : 0;
-        if (ver != m_maskVer || m_maskName != maskBone) {   // the mask bone's subtree, cached
-            m_mask.clear(); m_maskVer = ver; m_maskName = maskBone;
-            if (!maskBone.empty())
-                if (GameObject* mb = FindNode(maskBone)) {
+        std::string key = maskBone;
+        if (moreBones) for (const std::string& b : *moreBones) { key.push_back('|'); key += b; }
+        if (ver != m_maskVer || m_maskName != key) {   // each mask root's subtree, cached
+            m_mask.clear(); m_maskVer = ver; m_maskName = key;
+            auto addTree = [&](const std::string& bone) {
+                if (bone.empty()) return;
+                if (GameObject* mb = FindNode(bone)) {
                     std::vector<Transform*> stack{mb->transform};
                     while (!stack.empty()) {
                         Transform* t = stack.back(); stack.pop_back();
+                        if (!t) continue;
                         m_mask.insert(t);
                         for (Transform* c : t->Children()) stack.push_back(c);
                     }
                 }
+            };
+            addTree(maskBone);
+            if (moreBones) for (const std::string& b : *moreBones) addTree(b);
         }
-        if (!maskBone.empty() && m_mask.empty()) return;   // mask bone missing: drive nothing
-        PoseWeighted(clipTimes, weights, maskBone.empty() ? nullptr : &m_mask, amount);
+        const bool masked = !key.empty();
+        if (masked && m_mask.empty()) return;   // mask bones missing: drive nothing
+        PoseWeighted(clipTimes, weights, masked ? &m_mask : nullptr, amount, additive);
     }
 
     /// CaptureCrossfade for any number of clips (entering a 2D blend tree).
@@ -1173,7 +1201,16 @@ private:
     struct PostPose { const void* owner; std::function<void(float)> fn; };
     std::vector<PostPose> m_postPose;
     // Per-frame scratch for BlendMany / PoseWeighted (reused, not reallocated).
-    struct PwAcc { Transform* t; Vec3 p{0, 0, 0}, s{0, 0, 0}; Quat q{0, 0, 0, 0}; Quat ref{0, 0, 0, 1}; float w = 0.0f; };
+    struct PwAcc {
+        Transform* t;
+        Vec3 p{0, 0, 0}, s{0, 0, 0};
+        Quat q{0, 0, 0, 0};
+        Quat ref{0, 0, 0, 1};
+        Vec3 rp{0, 0, 0}, rs{0, 0, 0};   // additive: the clip's first frame
+        Quat rq{0, 0, 0, 0};
+        Quat rref{0, 0, 0, 1};
+        float w = 0.0f;
+    };
     std::vector<int> m_bmClip;
     std::vector<float> m_bmW, m_bmLen;
     std::vector<std::pair<int, float>> m_bmCT;

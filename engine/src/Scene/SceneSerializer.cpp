@@ -685,8 +685,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     for (AnimStateMachine* asm2 : go->GetComponents<AnimStateMachine>()) {
         // Layers (machines after the base) start with a header record; every
         // record that follows belongs to that machine until the next header.
-        if (asm2->layer > 0)
+        if (asm2->layer > 0) {
             out << "  animsmlayer " << asm2->layer << " " << asm2->layerWeight << " " << Quote(asm2->maskBone) << "\n";
+            if (asm2->additive || !asm2->maskBones.empty()) {
+                out << "  animsmlayerx " << (asm2->additive ? 1 : 0) << " " << asm2->maskBones.size();
+                for (const std::string& b : asm2->maskBones) out << " " << Quote(b);
+                out << "\n";
+            }
+        }
         out << "  animsm " << Quote(asm2->entry) << " " << asm2->states.size();
         for (const auto& st : asm2->states) {
             out << " " << Quote(st.name) << " " << Quote(st.clip) << " " << st.speed
@@ -3310,6 +3316,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> ev.time; ev.name = ReadQuoted(in);
                         if (ci >= 0 && ci < (long)ma->clips.size())
                             ma->clips[ci].events.push_back(std::move(ev));
+                    }
+                } else if (field == "animsmlayerx") {
+                    auto* sm2 = smFor();
+                    int add = 0; long n = 0;
+                    in >> add >> n;
+                    if (sm2) sm2->additive = add != 0;
+                    for (long i = 0; i < n && in; ++i) {
+                        std::string b = ReadQuoted(in);
+                        if (sm2 && !b.empty()) sm2->maskBones.push_back(std::move(b));
                     }
                 } else if (field == "animsmlayer") {
                     curSM = go->AddComponent<AnimStateMachine>();

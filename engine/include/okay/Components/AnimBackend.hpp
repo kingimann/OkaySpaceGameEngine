@@ -55,9 +55,12 @@ public:
     virtual bool  BlendMany(float dt, const std::vector<int>& clips, const std::vector<float>& weights) = 0;
 
     /// Mix (clip, time) samples by `weights` over the current pose by `amount`,
-    /// on `maskBone` and the bones under it ("" = the whole body). Layers.
+    /// on `maskBone` and its children, plus `moreBones` (each a subtree). An
+    /// empty mask is the whole body. `additive` adds the clip on top of the
+    /// pose already there (a recoil or aim offset) instead of replacing it.
     virtual void  PoseLayer(const std::vector<std::pair<int, float>>& clipTimes, const std::vector<float>& weights,
-                            const std::string& maskBone, float amount) = 0;
+                            const std::string& maskBone, float amount, bool additive = false,
+                            const std::vector<std::string>* moreBones = nullptr) = 0;
     /// Run `fn` every frame after the base pose (layers register here); the
     /// owner calls RemovePostPose from its OnDestroy.
     virtual void  AddPostPose(const void* owner, std::function<void(float)> fn) = 0;

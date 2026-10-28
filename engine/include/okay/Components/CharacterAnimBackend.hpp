@@ -61,7 +61,8 @@ public:
     bool  BlendClips(float dt, int A, int B, float w) override;
     bool  BlendMany(float dt, const std::vector<int>& clips, const std::vector<float>& weights) override;
     void  PoseLayer(const std::vector<std::pair<int, float>>& clipTimes, const std::vector<float>& weights,
-                    const std::string& maskBone, float amount) override;
+                    const std::string& maskBone, float amount, bool additive = false,
+                    const std::vector<std::string>* moreBones = nullptr) override;
     void  AddPostPose(const void* owner, std::function<void(float)> fn) override;
     void  RemovePostPose(const void* owner) override;
     void  FireEvent(const std::string& name) override;

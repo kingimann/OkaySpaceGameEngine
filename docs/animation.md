@@ -551,6 +551,10 @@ and transitions. Beyond single conditions:
   clip (0.9 = 90%). With the *Always* condition it fires purely on time: an attack
   returning to locomotion when it's nearly done.
 - **Any State** — transitions checked from every state first (hit reactions, death).
+- **Layers** — a layer plays on a bone and the bones under it (the mask), over the
+  base pose. **+ Mask bone** adds more subtrees (arms and the head, not the
+  whole spine). **Additive** adds the clip on top of the base pose instead of
+  replacing those bones, for a recoil or aim offset while the body keeps walking.
 - **If missing** — when the state's clip is not in this Animator's library, play
   the fallback clip instead. A name that exists only on a child model's imported
   clips plays there (Humanoid Retarget yields until the state changes).

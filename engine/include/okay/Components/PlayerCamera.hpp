@@ -68,7 +68,9 @@ inline OrbitPose PlaceThirdPersonOrbit(
         }
     }
 
-    float minY = target.y - cameraHeight;
+    // Keep the lens off the ground under the feet. Clamping to the feet
+    // themselves parks a low orbit on the slab, and the near plane fills with it.
+    float minY = transform->Position().y + 0.4f;
     if (camPos.y < minY) camPos.y = minY;
     if (applyShake) camPos.y -= shake;
 

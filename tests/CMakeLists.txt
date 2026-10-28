@@ -628,6 +628,14 @@ add_executable(test_fp_hand test_fp_hand.cpp)
 target_link_libraries(test_fp_hand PRIVATE okay::engine)
 add_test(NAME fp_hand COMMAND test_fp_hand)
 
+add_executable(test_run_feel test_run_feel.cpp)
+target_link_libraries(test_run_feel PRIVATE okay::engine)
+add_test(NAME run_feel COMMAND test_run_feel)
+
+add_executable(test_view_ground test_view_ground.cpp)
+target_link_libraries(test_view_ground PRIVATE okay::engine)
+add_test(NAME view_ground COMMAND test_view_ground)
+
 # The account service core is header-only, so this test just needs the engine's
 # public include path and C++17 — no engine link required.
 add_executable(test_account test_account.cpp)

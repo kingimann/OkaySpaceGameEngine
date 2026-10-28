@@ -63,14 +63,23 @@ public:
     /// Client prediction snapped the body to the host's position: drop any
     /// camera smoothing that would glide across the jump.
     virtual void OnTeleported() {}
+    /// False when another controller on this object owns the body this frame.
+    /// A player with both a first- and a third-person controller runs only the
+    /// one for the current view; the network must not keep driving the other.
+    virtual bool SimActive() const { return true; }
 };
 
-/// The first IPlayerSim on `go`, or null.
+/// The IPlayerSim that owns this frame, or the first one if none reports active.
 inline IPlayerSim* FindPlayerSim(GameObject* go) {
     if (!go) return nullptr;
-    for (const auto& c : go->Components())
-        if (auto* s = dynamic_cast<IPlayerSim*>(c.get())) return s;
-    return nullptr;
+    IPlayerSim* fallback = nullptr;
+    for (const auto& c : go->Components()) {
+        auto* s = dynamic_cast<IPlayerSim*>(c.get());
+        if (!s) continue;
+        if (!fallback) fallback = s;
+        if (s->SimActive()) return s;
+    }
+    return fallback;
 }
 
 } // namespace okay

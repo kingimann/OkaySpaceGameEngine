@@ -64,6 +64,16 @@ public:
     /// player at all, so they see the full body regardless of this flag.
     bool firstPersonViewmodel = false;
 
+    /// A copy that exists only for the camera hiding this object's owner (the
+    /// raised first-person arm). Colour passes draw it only for that camera.
+    /// Shadow passes never draw it, so the copy cannot change another view.
+    /// Not saved. The real body is a different object and is left alone.
+    bool firstPersonOnly = false;
+
+    /// A camera that ignores this object also skips this one. The real held
+    /// prop uses it while the owner's viewmodel shows its own copy. Not saved.
+    GameObject* ownerCameraSkip = nullptr;
+
     /// Every GameObject has a Transform from birth.
     Transform* transform = nullptr;
 
@@ -101,6 +111,17 @@ public:
     /// a whole subtree (e.g. hiding the local player's body, rig parts included, from
     /// the first-person view without affecting other cameras).
     bool IsSelfOrDescendantOf(const GameObject* other) const;
+
+    /// True when a camera whose ignore object is `camIgnore` should skip this
+    /// object. A first-person-only copy is drawn solely for the camera that is
+    /// hiding its owner. Any other object in that owner's subtree is skipped
+    /// unless it is a viewmodel that camera is meant to see.
+    bool HiddenFromCamera(const GameObject* camIgnore) const {
+        if (firstPersonOnly)
+            return !camIgnore || !IsSelfOrDescendantOf(camIgnore);
+        if (ownerCameraSkip && camIgnore == ownerCameraSkip) return true;
+        return camIgnore && IsSelfOrDescendantOf(camIgnore) && !firstPersonViewmodel;
+    }
 
     /// Move `component` by `delta` positions within the stored order. Transform
     /// is pinned to index 0: the valid target range is [1, size-1], so neither the

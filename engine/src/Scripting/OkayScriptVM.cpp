@@ -137,6 +137,95 @@ namespace {
 
 using Value = vs::VsValue;
 
+static FirstPersonHands::HandSide* FpSide(FirstPersonHands* h, const std::string& p, std::string& rest) {
+    if (!h) return nullptr;
+    if (p.rfind("right", 0) == 0) { rest = p.substr(5); return &h->right; }
+    if (p.rfind("left", 0) == 0) { rest = p.substr(4); return &h->left; }
+    return nullptr;
+}
+static Value FpHandsGet(FirstPersonHands* h, const std::string& p) {
+    if (!h) return Value{};
+    if (p == "showWhenEmpty") return Value{h->showWhenEmpty};
+    if (p == "showWhileRunning") return Value{h->showWhileRunning};
+    if (p == "bobAmount") return Value{h->bobAmount};
+    if (p == "swayAmount") return Value{h->swayAmount};
+    if (p == "punchAmount") return Value{h->punchAmount};
+    if (p == "handFov") return Value{h->handFov};
+    if (p == "itemScale") return Value{h->itemScale};
+    if (p == "holdMode") return Value{(float)h->holdMode};
+    if (p == "itemOffset") return Value{h->itemOffset};
+    if (p == "itemRotation") return Value{h->itemRotation};
+    if (p == "othersItemOffset") return Value{h->othersItemOffset};
+    if (p == "othersItemRotation") return Value{h->othersItemRotation};
+    if (p == "othersArmLift") return Value{h->othersArmLift};
+    if (p == "othersArmForward") return Value{h->othersArmForward};
+    std::string rest;
+    if (FirstPersonHands::HandSide* s = FpSide(h, p, rest)) {
+        if (rest == "Enabled") return Value{s->enabled};
+        if (rest == "Position") return Value{s->position};
+        if (rest == "Rotation") return Value{s->rotation};
+        if (rest == "UniformScale") return Value{s->uniformScale};
+        if (rest == "Scale") return Value{s->scale};
+        if (rest == "Size") return Value{s->size};
+        if (rest == "UseColour" || rest == "UseColor") return Value{s->useColour};
+        if (rest == "Colour" || rest == "Color") return Value{Vec3{s->colour.r, s->colour.g, s->colour.b}};
+        if (rest == "Sleeve") return Value{s->sleeve};
+        if (rest == "SleeveLength") return Value{s->sleeveLength};
+        if (rest == "SleeveColour" || rest == "SleeveColor")
+            return Value{Vec3{s->sleeveColour.r, s->sleeveColour.g, s->sleeveColour.b}};
+    }
+    return Value{};
+}
+static bool FpHandsSet(FirstPersonHands* h, const std::string& p, const Value& v) {
+    if (!h) return false;
+    auto col = [&](Color& c) {
+        if (!v.IsVec3()) return;
+        Vec3 q = v.AsVec3();
+        c = Color{q.x, q.y, q.z, 1.0f};
+    };
+    if (p == "showWhenEmpty") { h->showWhenEmpty = v.AsBool(); return true; }
+    if (p == "showWhileRunning") { h->showWhileRunning = v.AsBool(); return true; }
+    if (p == "bobAmount") { h->bobAmount = v.AsFloat(); return true; }
+    if (p == "swayAmount") { h->swayAmount = v.AsFloat(); return true; }
+    if (p == "punchAmount") { h->punchAmount = v.AsFloat(); return true; }
+    if (p == "handFov") { h->handFov = v.AsFloat(); return true; }
+    if (p == "itemScale") { h->itemScale = v.AsFloat(); return true; }
+    if (p == "holdMode") {
+        int m = (int)v.AsFloat();
+        h->holdMode = m == 1 ? FirstPersonHands::HoldMode::Left
+                    : m == 2 ? FirstPersonHands::HoldMode::Two
+                             : FirstPersonHands::HoldMode::Right;
+        return true;
+    }
+    if (p == "itemOffset" && v.IsVec3()) { h->itemOffset = v.AsVec3(); return true; }
+    if (p == "itemRotation" && v.IsVec3()) { h->itemRotation = v.AsVec3(); return true; }
+    if (p == "othersItemOffset" && v.IsVec3()) { h->othersItemOffset = v.AsVec3(); return true; }
+    if (p == "othersItemRotation" && v.IsVec3()) { h->othersItemRotation = v.AsVec3(); return true; }
+    if (p == "othersArmLift") { h->othersArmLift = v.AsFloat(); return true; }
+    if (p == "othersArmForward") { h->othersArmForward = v.AsFloat(); return true; }
+    std::string rest;
+    if (FirstPersonHands::HandSide* s = FpSide(h, p, rest)) {
+        if (rest == "Enabled") { s->enabled = v.AsBool(); return true; }
+        if (rest == "Position" && v.IsVec3()) { s->position = v.AsVec3(); return true; }
+        if (rest == "Rotation" && v.IsVec3()) { s->rotation = v.AsVec3(); return true; }
+        if (rest == "UniformScale") { s->uniformScale = v.AsFloat(); return true; }
+        if (rest == "Scale" && v.IsVec3()) { s->scale = v.AsVec3(); return true; }
+        if (rest == "Size" && v.IsVec3()) { s->size = v.AsVec3(); return true; }
+        if (rest == "UseColour" || rest == "UseColor") { s->useColour = v.AsBool(); return true; }
+        if (rest == "Colour" || rest == "Color") { col(s->colour); return true; }
+        if (rest == "Sleeve") { s->sleeve = v.AsBool(); return true; }
+        if (rest == "SleeveLength") { s->sleeveLength = v.AsFloat(); return true; }
+        if (rest == "SleeveColour" || rest == "SleeveColor") { col(s->sleeveColour); return true; }
+    }
+    return false;
+}
+static bool FpHandsCall(FirstPersonHands* h, const std::string& m) {
+    if (!h) return false;
+    if (m == "ResetPlayerView") { h->ResetPlayerView(); return true; }
+    if (m == "ResetOthersView") { h->ResetOthersView(); return true; }
+    return false;
+}
+
 // Friendly key name -> Input char code (shared with the visual-script nodes).
 static char KeyCharFromName(const std::string& s) { return Input::KeyFromName(s); }
 
@@ -8703,6 +8792,7 @@ struct OkayScriptVM::Impl {
                 if (a.size() > 1) sv->name = a[1].AsString();
                 return Value{true};
             }
+            if (c == "FirstPersonHands") { g->AddComponent<FirstPersonHands>(); return Value{true}; }
             return Value{false};
         };
         // Input.GetAxis("Horizontal"/"Vertical") -> WASD/stick axis.
@@ -9113,6 +9203,7 @@ struct OkayScriptVM::Impl {
             if (t == "NetworkObject") return g->GetComponent<NetworkObject>();
             if (t == "NetworkTransform") return g->GetComponent<NetworkTransform>();
             if (t == "SyncVar") return g->GetComponent<SyncVar>();
+            if (t == "FirstPersonHands") return g->GetComponent<FirstPersonHands>() != nullptr;
             if (t == "Animator" || t == "Animation") return true;   // resolved by the anim_* builtins
             return false;
         };
@@ -9130,6 +9221,7 @@ struct OkayScriptVM::Impl {
             if (t == "NetworkObject") return g->GetComponent<NetworkObject>();
             if (t == "NetworkTransform") return g->GetComponent<NetworkTransform>();
             if (t == "SyncVar") return g->GetComponent<SyncVar>();
+            if (t == "FirstPersonHands") return g->GetComponent<FirstPersonHands>();
             return nullptr;
         };
         b["GetComponent"] = [this, compOf](std::vector<Value>& a) -> Value {
@@ -9181,6 +9273,7 @@ struct OkayScriptVM::Impl {
                 if (p == "name") return Value{sv->name};
                 if (p == "value") return Value{sv->Get()};
             }
+            if (t == "FirstPersonHands") return FpHandsGet(g->GetComponent<FirstPersonHands>(), p);
             return Value{};
         };
         b["__set_component"] = [this, go, compPtr](std::vector<Value>& a) -> Value {
@@ -9222,6 +9315,7 @@ struct OkayScriptVM::Impl {
                 if (p == "name") sv->name = v.AsString();
                 if (p == "value") sv->Set(v.AsString());
             }
+            if (t == "FirstPersonHands") FpHandsSet(g->GetComponent<FirstPersonHands>(), p, v);
             return Value{};
         };
         b["__call_component"] = [this, go](std::vector<Value>& a) -> Value {
@@ -9274,6 +9368,7 @@ struct OkayScriptVM::Impl {
                 if (m == "Get") return Value{sv->Get()};
                 return Value{};
             }
+            if (t == "FirstPersonHands") { FpHandsCall(g->GetComponent<FirstPersonHands>(), m); return Value{}; }
             if (t == "Transform") {
                 std::vector<Value> x = rest;
                 return rt.Call("transform." + m, x);

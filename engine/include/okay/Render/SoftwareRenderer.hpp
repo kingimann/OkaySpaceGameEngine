@@ -855,6 +855,9 @@ namespace detail {
 inline void RenderCascadeDepth(const Scene& scene, ShadowCascade& cas, bool cull) {
     const int S = cas.size;
     auto visible = [](const GameObject& go) {
+        // The raised-arm copy is for one camera. It never casts, even into a
+        // shadow map another view would sample.
+        if (go.firstPersonOnly) return static_cast<MeshRenderer*>(nullptr);
         auto* mr = go.GetComponent<MeshRenderer>();
         return mr && go.active && mr->enabled && !mr->wireframe && mr->castShadows ? mr : nullptr;
     };
@@ -1543,7 +1546,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     // Vertex transforms are repeated per band, but pixel fill dominates.
     auto renderBand = [&](int bandY0, int bandY1) {
     for (const auto& go : scene.Objects()) {
-        if (ignore && go->IsSelfOrDescendantOf(ignore) && !go->firstPersonViewmodel) continue;   // skip the owner's subtree (1st-person body) — except viewmodel parts (the arm)
+        if (go->HiddenFromCamera(ignore)) continue;   // owner's body, except the parts that camera is meant to see (shirt, raised-arm copy)
         if (!(RenderCullingMask() & (1 << (go->layer & 31)))) continue;   // camera layer culling mask
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || !go->active || !mr->enabled || mr->wireframe) continue;   // wireframe drawn as lines

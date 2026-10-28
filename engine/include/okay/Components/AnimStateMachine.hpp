@@ -28,6 +28,8 @@
 // Per state: an event fired on enter / exit (to anim_event() and every
 // component's OnAnimationEvent, like clip events) and an IK weight that Foot IK
 // and Full Body IK ease to over the transition (0 = feet free while jumping).
+// An optional curve shapes that weight over the clip; IK components read the
+// sampled result through the same state weight.
 // A transition can start its target part-way in (`offset`, normalized).
 // ---------------------------------------------------------------------------
 #include "okay/Scene/Component.hpp"
@@ -119,10 +121,17 @@ public:
         std::string speedParam;     ///< float parameter that multiplies `speed` ("" = none)
         std::string enterEvent, exitEvent;   ///< animation events fired on entering / leaving ("" = none)
         float       ikWeight = 1.0f;         ///< Foot IK / Full Body IK weight in this state (base layer)
+        /// Weight over normalized clip time. Empty = the constant `ikWeight`.
+        /// Keys are multiplied by `ikWeight`, so the slider stays a master gain.
+        struct IkKey { float t = 0.0f; float w = 1.0f; };
+        std::vector<IkKey> ikCurve;
         /// Full Body IK weight on its own, below 0 = follow ikWeight. Lets a
         /// state turn foot planting off while the hands keep working (prone,
         /// crawling: the body lies down but still holds what it holds).
         float       fullBodyIkWeight = -1.0f;
+        /// Full-body weight over the clip. Empty = the constant above (or follow
+        /// the foot weight, curve included, when `fullBodyIkWeight` < 0).
+        std::vector<IkKey> fullBodyIkCurve;
         /// Blend trees: the motions' positions are how fast each one travels, and
         /// the tree plays as fast as the body moves (speedParam's value, else the
         /// blend position's distance from 0) over the blended motions' speed, so
@@ -131,12 +140,23 @@ public:
         /// False locks the state: Any State (jump, fall, a later action) cannot
         /// cut it short. Death uses this. Its own transitions still run.
         bool        interruptible = true;
+        /// Play this state mirrored (left and right swapped). Off by default.
+        bool        mirror = false;
+        /// Root motion for this state: -1 keeps the animator's own toggle, 0 off, 1 on.
+        int         rootMotion = -1;
     };
 
     // ---- Layer settings (layer 0 = the base machine) ----
     int         layer = 0;
-    float       layerWeight = 1.0f;   ///< 0..1 how much this layer overrides the base pose
+    float       layerWeight = 1.0f;   ///< 0..1 how strongly this layer mixes in
     std::string maskBone;             ///< bone whose subtree this layer drives ("" = whole model)
+    /// More mask roots, each with the bones under it. Together with `maskBone`
+    /// this is the avatar mask (upper body plus the head, arms only, ...).
+    std::vector<std::string> maskBones;
+    /// Add the layer onto the base pose instead of replacing the masked bones.
+    /// Character clips are offsets from rest, so this is a recoil or aim layer.
+    /// Imported clips add their change from the clip's first frame.
+    bool        additive = false;
 
     std::vector<State> states;
     std::string entry;              ///< starting state ("" = first state)
@@ -265,7 +285,31 @@ public:
     /// own clip library (Humanoid Retarget yields to it).
     bool PlayingImported() const { return m_importHold != nullptr; }
     /// The IK weight currently applied (eases to the state's ikWeight).
+    /// Sample an IK curve at a normalized time. Empty keys return `scale`.
+    /// Otherwise the keys (0..1 over the clip) are lerped and multiplied by
+    /// `scale` (the state's IK weight slider). `normTime` may run past 1 on a loop.
+    static float SampleIkCurve(const std::vector<State::IkKey>& keys, float normTime, float scale) {
+        scale = std::fmin(std::fmax(scale, 0.0f), 1.0f);
+        if (keys.empty()) return scale;
+        float t = normTime - std::floor(normTime);
+        if (t < 0.0f) t += 1.0f;
+        auto clampw = [](float w) { return std::fmin(std::fmax(w, 0.0f), 1.0f); };
+        if (t <= keys.front().t) return clampw(keys.front().w) * scale;
+        if (t >= keys.back().t) return clampw(keys.back().w) * scale;
+        for (std::size_t i = 1; i < keys.size(); ++i) {
+            if (t <= keys[i].t) {
+                const float a = keys[i - 1].t, b = keys[i].t;
+                const float u = (b - a) > 1e-5f ? (t - a) / (b - a) : 0.0f;
+                return clampw(keys[i - 1].w + (keys[i].w - keys[i - 1].w) * u) * scale;
+            }
+        }
+        return clampw(keys.back().w) * scale;
+    }
+    /// The IK weight currently applied (eases to the state's ikWeight, then
+    /// follows its curve). Foot IK reads this as `stateWeight`.
     float IKWeight() const { return m_ikW; }
+    /// Full Body IK's weight (its own curve, else the foot weight when it follows).
+    float FullBodyIKWeight() const { return m_fbW; }
 
     /// The last state changes, oldest first (Play-mode debugging: "why did it
     /// go to Fall?"). `time` is seconds since the machine started.
@@ -313,23 +357,10 @@ public:
         const State* cur = FindState(m_current);
         if (!cur) { m_current.clear(); return; }
 
-        // Per-state IK weights (feet, and the full body's own), eased over the
-        // transition's blend time.
-        {
-            const float want = std::fmin(std::fmax(cur->ikWeight, 0.0f), 1.0f);
-            const float wantFb = cur->fullBodyIkWeight < 0.0f ? want
-                               : std::fmin(std::fmax(cur->fullBodyIkWeight, 0.0f), 1.0f);
-            const float step = m_ikBlend > 1e-4f ? dt / m_ikBlend : 1.0f;
-            if (m_ikW != want) m_ikW = m_ikW < want ? std::fmin(want, m_ikW + step) : std::fmax(want, m_ikW - step);
-            if (m_fbW != wantFb) m_fbW = m_fbW < wantFb ? std::fmin(wantFb, m_fbW + step) : std::fmax(wantFb, m_fbW - step);
-            // Push them to the IK components when they change (plus a slow refresh,
-            // so IK added later picks it up) instead of two GetComponent scans a frame.
-            if (gameObject && (m_ikW != m_ikWritten || m_fbW != m_fbWritten || (m_ikRefresh -= dt) <= 0.0f)) {
-                if (auto* f = gameObject->GetComponent<FootIK>()) f->stateWeight = m_ikW;
-                if (auto* b = gameObject->GetComponent<FullBodyIK>()) b->stateWeight = m_fbW;
-                m_ikWritten = m_ikW; m_fbWritten = m_fbW; m_ikRefresh = 0.5f;
-            }
-        }
+        // Mirror and root motion before the pose, so blend trees (posed here)
+        // and single clips (posed in the backend's update) both see them.
+        ma->SetMirror(cur->mirror);
+        ma->SetRootMotion(cur->rootMotion);
 
         // Advance the state clock (and drive a blend tree).
         m_stateTime += dt;
@@ -377,7 +408,13 @@ public:
             m_normTime += len > 1e-5f ? dt * std::fabs(spd) / len : 0.0f;
         }
 
+        ApplyIk(*cur, dt);
         EvaluateTransitions(dt, ma, cur);
+        // A transition that fired poses the new state immediately (Play).
+        if (const State* now = FindState(m_current); now && now != cur) {
+            ma->SetMirror(now->mirror);
+            ma->SetRootMotion(now->rootMotion);
+        }
         ma->Advance(dt);
     }
 
@@ -620,7 +657,12 @@ private:
     void LayerPose() {
         AnimBackend* ma = Anim();
         if (!ma || m_lCT.empty() || layerWeight <= 0.0f) return;
-        ma->PoseLayer(m_lCT, m_lW, maskBone, std::fmin(layerWeight, 1.0f));
+        // Layers pose on top of the base. Mirror only this overlay; root motion
+        // stays the base state's (a layer does not move the body).
+        if (const State* st = FindState(m_current)) ma->SetMirror(st->mirror);
+        ma->PoseLayer(m_lCT, m_lW, maskBone, std::fmin(layerWeight, 1.0f), additive,
+                      maskBones.empty() ? nullptr : &maskBones);
+        ma->SetMirror(false);
     }
     // Looked up by name every frame (states may be edited at runtime); the last
     // hit is tried first, so the usual case is one string compare.
@@ -676,6 +718,44 @@ private:
         for (const Condition& c : tr.extra) if (!Test(c.cond, c.param, c.value, ma, cur)) return false;
         return true;
     }
+    /// Publish this state's IK weight (constant, or its curve at m_normTime).
+    /// A constant still eases across the transition. A curve eases for that
+    /// same blend, then follows the clip. Foot IK / Full Body IK read the result.
+    void ApplyIk(const State& st, float dt) {
+        const bool curved = !st.ikCurve.empty() || !st.fullBodyIkCurve.empty();
+        const float want = SampleIkCurve(st.ikCurve, m_normTime, st.ikWeight);
+        float wantFb;
+        if (!st.fullBodyIkCurve.empty()) {
+            const float scale = st.fullBodyIkWeight < 0.0f ? 1.0f : st.fullBodyIkWeight;
+            wantFb = SampleIkCurve(st.fullBodyIkCurve, m_normTime, scale);
+        } else if (st.fullBodyIkWeight < 0.0f) {
+            wantFb = want;
+        } else {
+            wantFb = std::fmin(std::fmax(st.fullBodyIkWeight, 0.0f), 1.0f);
+        }
+        auto chase = [&](float& curW, float target) {
+            if (curW == target) return;
+            const float step = m_ikBlend > 1e-4f ? dt / m_ikBlend : 1.0f;
+            curW = curW < target ? std::fmin(target, curW + step) : std::fmax(target, curW - step);
+        };
+        if (!curved) {
+            chase(m_ikW, want);
+            chase(m_fbW, wantFb);
+        } else if (m_ikEase > 1e-4f) {
+            chase(m_ikW, want);
+            chase(m_fbW, wantFb);
+            m_ikEase -= dt;
+            if (m_ikEase <= 0.0f) { m_ikW = want; m_fbW = wantFb; }
+        } else {
+            m_ikW = want;
+            m_fbW = wantFb;
+        }
+        if (gameObject && (m_ikW != m_ikWritten || m_fbW != m_fbWritten || (m_ikRefresh -= dt) <= 0.0f)) {
+            if (auto* f = gameObject->GetComponent<FootIK>()) f->stateWeight = m_ikW;
+            if (auto* b = gameObject->GetComponent<FullBodyIK>()) b->stateWeight = m_fbW;
+            m_ikWritten = m_ikW; m_fbWritten = m_fbW; m_ikRefresh = 0.5f;
+        }
+    }
     bool Try(const Transition& tr, AnimBackend* ma, const State* cur, bool presatisfied = false) {
         if (tr.muted || (!presatisfied && !Satisfied(tr, ma, cur))) return false;
         const State* to = FindState(tr.to);
@@ -710,9 +790,15 @@ private:
         offset = std::fmin(std::fmax(offset, 0.0f), 0.999f);
         m_stateTime = 0.0f; m_normTime = offset;
         m_ikBlend = blend;
+        m_ikEase = blend;
         if (first) {
-            m_ikW = std::fmin(std::fmax(st.ikWeight, 0.0f), 1.0f);
-            m_fbW = st.fullBodyIkWeight < 0.0f ? m_ikW : std::fmin(std::fmax(st.fullBodyIkWeight, 0.0f), 1.0f);
+            m_ikW = SampleIkCurve(st.ikCurve, offset, st.ikWeight);
+            if (!st.fullBodyIkCurve.empty()) {
+                const float scale = st.fullBodyIkWeight < 0.0f ? 1.0f : st.fullBodyIkWeight;
+                m_fbW = SampleIkCurve(st.fullBodyIkCurve, offset, scale);
+            } else {
+                m_fbW = st.fullBodyIkWeight < 0.0f ? m_ikW : std::fmin(std::fmax(st.fullBodyIkWeight, 0.0f), 1.0f);
+            }
         }
         m_bLo = m_bHi = -1; m_bW = 0.0f;
         m_missingClip = false;
@@ -735,6 +821,8 @@ private:
             if (!st.enterEvent.empty()) ma->FireEvent(st.enterEvent);
             return;
         }
+        ma->SetMirror(st.mirror);
+        ma->SetRootMotion(st.rootMotion);
         ma->SetSpeed(StateSpeed(st));
         ma->SetLoop(st.loop);
         if (st.blendTree && st.blendDims == 2) {
@@ -792,7 +880,7 @@ private:
     std::unordered_map<std::string, bool>  m_bools;
     std::unordered_map<std::string, bool>  m_triggers;
     std::vector<float> m_bWeights;
-    float m_ikW = 1.0f, m_fbW = 1.0f, m_ikBlend = 0.25f;
+    float m_ikW = 1.0f, m_fbW = 1.0f, m_ikBlend = 0.25f, m_ikEase = 0.0f;
     float m_clock = 0.0f;
     std::vector<HistoryEntry> m_history;
     // the transition currently blending (interruption rules)

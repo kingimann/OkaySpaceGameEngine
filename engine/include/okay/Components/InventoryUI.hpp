@@ -252,6 +252,7 @@ public:
         GameObject* carrier = inv->gameObject;
         Scene* sc = carrier ? carrier->scene() : nullptr;
         if (!sc || !carrier->transform || !InventoryOps::Drop(inv, i, dropped.count).Ok()) return false;
+        if (!NetInventory::LocalWorldDrops(carrier)) return true;   // the host spawns the drop
         const Vec3 pos = carrier->transform->Position() + carrier->transform->Forward() * 1.2f;
         if (GameObject* g = ItemPickup::Spawn(*sc, dropped.item, dropped.count, dropped.data, pos))
             g->GetComponent<ItemPickup>()->collectorTag = carrier->tag.empty() ? carrier->name : carrier->tag;

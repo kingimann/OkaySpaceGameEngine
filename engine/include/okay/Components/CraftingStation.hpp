@@ -4,6 +4,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/Inventory.hpp"
 #include "okay/Components/InventoryPlayer.hpp"
+#include "okay/Components/NetInventory.hpp"
 #include "okay/Inventory/InventoryOps.hpp"
 #include "okay/Inventory/Recipe.hpp"
 #include "okay/Render/Color.hpp"
@@ -82,6 +83,7 @@ public:
     /// Craft recipe `idx` (of Recipes()) `times` times — instantly and atomically, or
     /// queued when it takes time. Returns false if none was crafted.
     bool Craft(int idx, int times = 1) {
+        NetInventory::NoticeCraft(gameObject, idx, times);
         Inventory* inv = Inv();
         const auto all = Recipes();
         if (!inv || idx < 0 || idx >= (int)all.size()) return false;

@@ -153,18 +153,8 @@ private:
         mr->mesh = Mesh::Cube();
         mr->color = color;
         auto* h = g->AddComponent<HoldableObject>();
-        if (two) {
-            h->style = HoldableObject::Style::Custom;
-            h->twoHanded = true;
-            h->holdOffset = {0.0f, -0.05f, 0.42f};
-            h->leftGrip.enabled = true;
-            h->leftGrip.position = {-0.55f, 0.0f, 0.0f};
-            h->rightGrip.enabled = true;
-            h->rightGrip.position = {0.55f, 0.0f, 0.0f};
-        } else {
-            h->style = HoldableObject::Style::Automatic;
-            h->weight = 0.4f;
-        }
+        if (two) h->ApplyPreset(HoldableObject::Preset::CarryFront);
+        else { h->ApplyPreset(HoldableObject::Preset::OneHandRight); h->weight = 0.4f; }
         return g;
     }
 

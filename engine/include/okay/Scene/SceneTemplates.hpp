@@ -142,10 +142,10 @@ inline void AddTemplateHoldables(Scene& scene, GameObject* player) {
         g->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Dynamic;
         auto* ho = g->AddComponent<HoldableObject>();
         if (twoHanded) {
-            ho->style = HoldableObject::Style::Box;
-            ho->twoHanded = true;
+            ho->ApplyPreset(HoldableObject::Preset::CarryFront);
             ho->weight = 3.0f;
         } else {
+            ho->ApplyPreset(HoldableObject::Preset::OneHandRight);
             ho->weight = 0.3f;   // small enough to stay one hand (a "crate" name would not)
         }
         auto* pk = g->AddComponent<ItemPickup>();

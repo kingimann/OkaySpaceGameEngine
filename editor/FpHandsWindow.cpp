@@ -54,15 +54,47 @@ void HandSection(const char* title, const char* id, FirstPersonHands::HandSide& 
         if (Vec("Rotation", s.rotation, 0.5f)) dirty = true;
         if (ImGui::DragFloat("Uniform scale", &s.uniformScale, 0.01f, 0.2f, 3.0f)) dirty = true;
         if (Vec("Scale", s.scale, 0.01f)) dirty = true;
-        if (Vec("Size", s.size, 0.01f)) dirty = true;
         if (ImGui::Checkbox("Custom colour", &s.useColour)) dirty = true;
         if (s.useColour && Col("Colour", s.colour)) dirty = true;
         if (!s.useColour) ImGui::TextDisabled("Colour comes from the character's skin.");
+        if (ImGui::DragFloat("Width", &s.size.x, 0.01f, 0.2f, 3.0f)) dirty = true;
+        if (ImGui::DragFloat("Height", &s.size.y, 0.01f, 0.2f, 3.0f)) dirty = true;
+        if (ImGui::DragFloat("Depth", &s.size.z, 0.01f, 0.2f, 3.0f)) dirty = true;
+        if (Vec("Wrist offset", s.wristOffset, 0.005f)) dirty = true;
+        if (Vec("Wrist rotation", s.wristRotation, 0.5f)) dirty = true;
+        if (ImGui::DragFloat("Elbow bend", &s.elbowBend, 0.5f, -80.0f, 120.0f)) dirty = true;
+        if (ImGui::DragFloat("Reach", &s.reach, 0.005f, -0.4f, 0.6f)) dirty = true;
+        if (ImGui::Checkbox("Forearm", &s.forearm)) dirty = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off by default. The hand is only the brick until this is on.");
+        if (s.forearm) {
+            if (ImGui::DragFloat("Forearm length", &s.forearmLength, 0.01f, 0.05f, 1.2f)) dirty = true;
+            if (ImGui::DragFloat("Forearm thickness", &s.forearmThickness, 0.005f, 0.02f, 0.4f)) dirty = true;
+            if (Col("Forearm colour", s.forearmColour)) dirty = true;
+        }
         if (ImGui::Checkbox("Sleeve", &s.sleeve)) dirty = true;
         if (s.sleeve) {
             if (ImGui::DragFloat("Sleeve length", &s.sleeveLength, 0.01f, 0.04f, 0.8f)) dirty = true;
             if (Col("Sleeve colour", s.sleeveColour)) dirty = true;
         }
+    }
+    ImGui::PopID();
+}
+
+void OthersArmSection(const char* title, const char* id, FirstPersonHands::OthersArm& a, bool& dirty) {
+    ImGui::PushID(id);
+    if (ImGui::CollapsingHeader(title)) {
+        if (ImGui::Checkbox("Forearm", &a.forearm)) dirty = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The body's forearm. On so the arm still connects to the hand.");
+        if (ImGui::DragFloat("Forearm length", &a.forearmLength, 0.01f, 0.05f, 1.2f)) dirty = true;
+        if (ImGui::DragFloat("Forearm thickness", &a.forearmThickness, 0.005f, 0.02f, 0.4f)) dirty = true;
+        if (Col("Forearm colour", a.forearmColour)) dirty = true;
+        if (ImGui::DragFloat("Hand width", &a.handSize.x, 0.01f, 0.2f, 3.0f)) dirty = true;
+        if (ImGui::DragFloat("Hand height", &a.handSize.y, 0.01f, 0.2f, 3.0f)) dirty = true;
+        if (ImGui::DragFloat("Hand depth", &a.handSize.z, 0.01f, 0.2f, 3.0f)) dirty = true;
+        if (Vec("Wrist offset", a.wristOffset, 0.005f)) dirty = true;
+        if (Vec("Wrist rotation", a.wristRotation, 0.5f)) dirty = true;
+        if (ImGui::DragFloat("Elbow bend", &a.elbowBend, 0.5f, 0.0f, 120.0f)) dirty = true;
+        if (ImGui::DragFloat("Reach", &a.reach, 0.005f, -0.4f, 0.6f)) dirty = true;
     }
     ImGui::PopID();
 }
@@ -89,6 +121,29 @@ void GripFields(HoldableObject* item, bool& dirty) {
         }
         ImGui::PopID();
     };
+    int st = (int)item->style;
+    const char* styles =
+        "Automatic\0Custom\0Pistol\0Rifle\0Box\0Flashlight\0Sword\0Cup\0Heavy\0"
+        "One hand right\0One hand left\0Two handed\0Carry in front\0Over the shoulder\0";
+    if (ImGui::Combo("Hold style", &st, styles)) {
+        item->style = (HoldableObject::Style)st;
+        dirty = true;
+    }
+    if (ImGui::SmallButton("One hand right")) { item->ApplyPreset(HoldableObject::Preset::OneHandRight); dirty = true; }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("One hand left")) { item->ApplyPreset(HoldableObject::Preset::OneHandLeft); dirty = true; }
+    if (ImGui::SmallButton("Two handed")) { item->ApplyPreset(HoldableObject::Preset::TwoHanded); dirty = true; }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Carry in front")) { item->ApplyPreset(HoldableObject::Preset::CarryFront); dirty = true; }
+    if (ImGui::SmallButton("Over shoulder")) { item->ApplyPreset(HoldableObject::Preset::OverShoulder); dirty = true; }
+    if (Vec("In-hand offset", item->holdOffset, 0.01f)) dirty = true;
+    if (Vec("In-hand rotation", item->holdRotation, 0.5f)) dirty = true;
+    if (ImGui::DragFloat("In-hand scale", &item->inHandScale, 0.01f, 0.1f, 3.0f)) dirty = true;
+    if (Vec("FP offset", item->fpOffset, 0.005f)) dirty = true;
+    if (Vec("FP rotation", item->fpRotation, 0.5f)) dirty = true;
+    if (ImGui::DragFloat("FP scale", &item->fpScale, 0.01f, 0.1f, 3.0f)) dirty = true;
+    if (Vec("TP offset", item->tpOffset, 0.005f)) dirty = true;
+    if (Vec("TP rotation", item->tpRotation, 0.5f)) dirty = true;
     grip("Left grip", "lg", item->leftGrip);
     grip("Right grip", "rg", item->rightGrip);
     if (ImGui::SmallButton("Reset grips")) {
@@ -163,7 +218,9 @@ void DrawFpHandsBody(EditorState& ed, FirstPersonHands* h) {
     if (Vec("Item rotation", h->othersItemRotation, 0.5f)) dirty = true;
     if (ImGui::DragFloat("Arm lift", &h->othersArmLift, 0.005f, -1.0f, 1.0f)) dirty = true;
     if (ImGui::DragFloat("Arm reach", &h->othersArmForward, 0.005f, -1.0f, 1.0f)) dirty = true;
-    ImGui::TextDisabled("Grip points live on the item.");
+    OthersArmSection("Left arm", "ola", h->othersLeft, dirty);
+    OthersArmSection("Right arm", "ora", h->othersRight, dirty);
+    ImGui::TextDisabled("Grip points and the hold style live on the item.");
     HoldableObject* grips = HeldItem(h);
     if (!grips && g_open) grips = g_preview.ExampleItem();
     GripFields(grips, dirty);
@@ -196,7 +253,23 @@ int MixHand(int s, const FirstPersonHands::HandSide& h) {
     s = MixVec(s, h.size);
     s = MixFloat(s, h.colour.r); s = MixFloat(s, h.colour.g); s = MixFloat(s, h.colour.b);
     s = MixFloat(s, h.sleeveLength);
-    s = MixFloat(s, h.sleeveColour.r); s = MixFloat(s, h.sleeveColour.g); return MixFloat(s, h.sleeveColour.b);
+    s = MixFloat(s, h.sleeveColour.r); s = MixFloat(s, h.sleeveColour.g); s = MixFloat(s, h.sleeveColour.b);
+    s = s * 33 + (h.forearm ? 1 : 0);
+    s = MixFloat(s, h.forearmLength);
+    s = MixFloat(s, h.forearmThickness);
+    s = MixVec(s, h.wristOffset);
+    s = MixVec(s, h.wristRotation);
+    s = MixFloat(s, h.elbowBend);
+    return MixFloat(s, h.reach);
+}
+int MixOthers(int s, const FirstPersonHands::OthersArm& a) {
+    s = s * 33 + (a.forearm ? 1 : 0);
+    s = MixFloat(s, a.forearmLength);
+    s = MixFloat(s, a.elbowBend);
+    s = MixFloat(s, a.reach);
+    s = MixVec(s, a.handSize);
+    s = MixVec(s, a.wristOffset);
+    return MixVec(s, a.wristRotation);
 }
 int PreviewSig(const FirstPersonHands& h, int example, const HoldableObject* item) {
     int s = example * 17 + (int)h.holdMode;
@@ -215,7 +288,19 @@ int PreviewSig(const FirstPersonHands& h, int example, const HoldableObject* ite
     s = MixFloat(s, h.othersArmForward);
     s = MixHand(s, h.right);
     s = MixHand(s, h.left);
-    if (item) { s = MixGrip(s, item->leftGrip); s = MixGrip(s, item->rightGrip); }
+    s = MixOthers(s, h.othersRight);
+    s = MixOthers(s, h.othersLeft);
+    if (item) {
+        s = s * 17 + (int)item->style;
+        s = MixFloat(s, item->inHandScale);
+        s = MixFloat(s, item->fpScale);
+        s = MixVec(s, item->fpOffset);
+        s = MixVec(s, item->fpRotation);
+        s = MixVec(s, item->tpOffset);
+        s = MixVec(s, item->tpRotation);
+        s = MixGrip(s, item->leftGrip);
+        s = MixGrip(s, item->rightGrip);
+    }
     return s;
 }
 
@@ -247,8 +332,18 @@ void DrawFpHandsPreviewWindow(EditorState& ed) {
         if (held)
             if (HoldableObject* example = g_preview.ExampleItem())
                 if (held != example) {
+                    example->style = held->style;
+                    example->twoHanded = held->twoHanded;
                     example->leftGrip = held->leftGrip;
                     example->rightGrip = held->rightGrip;
+                    example->holdOffset = held->holdOffset;
+                    example->holdRotation = held->holdRotation;
+                    example->inHandScale = held->inHandScale;
+                    example->fpOffset = held->fpOffset;
+                    example->fpRotation = held->fpRotation;
+                    example->fpScale = held->fpScale;
+                    example->tpOffset = held->tpOffset;
+                    example->tpRotation = held->tpRotation;
                 }
         g_preview.Step(48);
         auto player = g_preview.Render(true, W, H);

@@ -25,18 +25,40 @@ public:
     enum class HoldMode { Right = 0, Left = 1, Two = 2 };
 
     /// One hand in the owner's view. Right is the lower-right hand.
+    /// The brick stays one block. There are no fingers.
     struct HandSide {
         bool  enabled = true;
         Vec3  position{0, 0, 0};          ///< camera-space nudge, metres
         Vec3  rotation{0, 0, 0};          ///< extra euler, degrees
         float uniformScale = 1.0f;
         Vec3  scale{1, 1, 1};
-        Vec3  size{1, 1, 1};              ///< brick size, on top of scale
+        Vec3  size{1, 1, 1};              ///< width, height, depth of the brick, on top of scale
         bool  useColour = false;          ///< false = the character's skin
         Color colour = Color::FromBytes(220, 176, 150);
         bool  sleeve = false;
         float sleeveLength = 0.28f;
         Color sleeveColour = Color::FromBytes(60, 95, 75);
+        bool  forearm = false;            ///< the bar under the hand. Hidden unless asked for.
+        float forearmLength = 0.42f;
+        float forearmThickness = 0.07f;
+        Color forearmColour = Color::FromBytes(60, 95, 75);
+        Vec3  wristOffset{0, 0, 0};       ///< extra camera-space nudge at the wrist
+        Vec3  wristRotation{0, 0, 0};     ///< extra euler at the wrist, degrees
+        float elbowBend = 0.0f;           ///< degrees the forearm folds
+        float reach = 0.0f;               ///< metres further out from the lens
+    };
+
+    /// How one arm reads on the full body (what other players see).
+    struct OthersArm {
+        bool  forearm = true;             ///< the body's own forearm. On, so the arm still connects.
+        float forearmLength = 0.28f;
+        float forearmThickness = 0.05f;
+        Color forearmColour = Color::FromBytes(60, 95, 75);
+        Vec3  handSize{1, 1, 1};          ///< width, height, depth multiplier on that hand while holding
+        Vec3  wristOffset{0, 0, 0};       ///< metres, body space (side, up, forward), added at the grip
+        Vec3  wristRotation{0, 0, 0};     ///< degrees added to the hand's grip
+        float elbowBend = 0.0f;           ///< degrees the elbow hint folds out (0 = the built-in hint)
+        float reach = 0.0f;               ///< metres the grip is pushed forward
     };
 
     // ---- Player view (first person) ----
@@ -58,6 +80,7 @@ public:
     Vec3  othersItemRotation{0, 0, 0};    ///< degrees, after the hold's own rotation
     float othersArmLift = 0.0f;           ///< metres up
     float othersArmForward = 0.0f;        ///< metres forward
+    OthersArm othersRight, othersLeft;
 
     void CopySettingsFrom(const FirstPersonHands& o) {
         showWhenEmpty = o.showWhenEmpty;
@@ -76,6 +99,8 @@ public:
         othersItemRotation = o.othersItemRotation;
         othersArmLift = o.othersArmLift;
         othersArmForward = o.othersArmForward;
+        othersRight = o.othersRight;
+        othersLeft = o.othersLeft;
     }
 
     void ResetPlayerView() {
@@ -99,6 +124,8 @@ public:
         othersItemRotation = d.othersItemRotation;
         othersArmLift = d.othersArmLift;
         othersArmForward = d.othersArmForward;
+        othersRight = d.othersRight;
+        othersLeft = d.othersLeft;
     }
 
     /// On the player, or on a camera parented to the player.

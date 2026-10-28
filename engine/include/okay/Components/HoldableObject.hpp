@@ -48,11 +48,22 @@ namespace okay {
 
 class HoldableObject : public Component {
 public:
-    enum class Style { Automatic, Custom, Pistol, Rifle, Box, Flashlight, Sword, Cup, Heavy };
+    enum class Style {
+        Automatic, Custom, Pistol, Rifle, Box, Flashlight, Sword, Cup, Heavy,
+        OneHandRight, OneHandLeft, TwoHanded, CarryFront, OverShoulder
+    };
+    enum class Preset { OneHandRight, OneHandLeft, TwoHanded, CarryFront, OverShoulder };
     static const char* StyleName(Style s) {
-        static const char* n[] = {"Automatic", "Custom", "Pistol", "Rifle", "Box", "Flashlight", "Sword", "Cup", "Heavy"};
+        static const char* n[] = {
+            "Automatic", "Custom", "Pistol", "Rifle", "Box", "Flashlight", "Sword", "Cup", "Heavy",
+            "One hand right", "One hand left", "Two handed", "Carry in front", "Over the shoulder"
+        };
         const int i = (int)s;
         return i >= 0 && i < (int)(sizeof(n) / sizeof(n[0])) ? n[i] : "?";
+    }
+    static bool IsNamedHold(Style s) {
+        return s == Style::OneHandRight || s == Style::OneHandLeft || s == Style::TwoHanded
+            || s == Style::CarryFront || s == Style::OverShoulder;
     }
     /// Where one hand touches the object (object-local position, rotation in
     /// degrees). `curl` is kept so older scenes still load; hands have no fingers,
@@ -70,8 +81,58 @@ public:
     Grip  leftGrip, rightGrip;
     Vec3  holdOffset{0.0f, -0.25f, 0.35f};   ///< Custom: object origin from the chest (right, up, forward), metres
     Vec3  holdRotation{0, 0, 0};              ///< Custom: object rotation relative to the body; other styles: a model fix (degrees)
+    float inHandScale = 1.0f;                 ///< scale while it is in the hands (1 = the object's own scale)
+    Vec3  fpOffset{0, 0, 0};                  ///< first-person copy, in the hand's space
+    Vec3  fpRotation{0, 0, 0};                ///< degrees, on the first-person copy
+    float fpScale = 1.0f;
+    Vec3  tpOffset{0, 0, 0};                  ///< third person, body space (side, up, forward)
+    Vec3  tpRotation{0, 0, 0};                ///< degrees, after the hold's own rotation
     float weight = 0.0f;                      ///< kg (0 = the Rigidbody3D's mass, else 1)
     std::string socket;                       ///< hold at this object inside the character (a holster, a back slot)
+
+    /// Grip a unit cube (local -0.5..0.5) the way `p` says, and remember the style.
+    void ApplyPreset(Preset p) {
+        leftGrip = {};
+        rightGrip = {};
+        fpOffset = {}; fpRotation = {}; fpScale = 1.0f;
+        tpOffset = {}; tpRotation = {}; inHandScale = 1.0f;
+        holdRotation = {};
+        switch (p) {
+        case Preset::OneHandLeft:
+            style = Style::OneHandLeft;
+            twoHanded = false;
+            leftGrip.enabled = true;
+            leftGrip.position = {0.0f, -0.5f, 0.0f};
+            break;
+        case Preset::TwoHanded:
+            style = Style::TwoHanded;
+            twoHanded = true;
+            leftGrip.enabled = true;  leftGrip.position = {-0.5f, -0.05f, 0.15f};
+            rightGrip.enabled = true; rightGrip.position = {0.5f, -0.05f, 0.15f};
+            break;
+        case Preset::CarryFront:
+            style = Style::CarryFront;
+            twoHanded = true;
+            leftGrip.enabled = true;  leftGrip.position = {-0.5f, 0.0f, 0.1f};
+            rightGrip.enabled = true; rightGrip.position = {0.5f, 0.0f, 0.1f};
+            tpOffset = {0.0f, -0.05f, 0.02f};
+            break;
+        case Preset::OverShoulder:
+            style = Style::OverShoulder;
+            twoHanded = false;
+            rightGrip.enabled = true;
+            rightGrip.position = {0.15f, -0.5f, 0.2f};
+            tpOffset = {0.04f, 0.02f, -0.02f};
+            break;
+        case Preset::OneHandRight:
+        default:
+            style = Style::OneHandRight;
+            twoHanded = false;
+            rightGrip.enabled = true;
+            rightGrip.position = {0.0f, -0.5f, 0.0f};
+            break;
+        }
+    }
 
     /// The character holding this object right now (null when it's free).
     GameObject* Holder() const { return m_holder; }
@@ -151,6 +212,7 @@ public:
         if (leftGrip.enabled && rightGrip.enabled) return true;
         const Style s = ResolvedStyle();
         if (s == Style::Rifle || s == Style::Box || s == Style::Heavy) return true;
+        if (s == Style::TwoHanded || s == Style::CarryFront) return true;
         if (supportHand && (s == Style::Pistol || s == Style::Sword)) return true;
         return false;
     }

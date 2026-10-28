@@ -5,6 +5,7 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
 #include <cmath>
+#include <string>
 
 using namespace okay;
 
@@ -517,6 +518,83 @@ int main() {
             CHECK_NEAR(oh->weight, 12.5f, 1e-5f); CHECK(oh->socket == "Back Slot");
             CHECK(oh->supportHand); CHECK_NEAR(oh->leftGrip.curl, 0.25f, 1e-5f); CHECK_NEAR(oh->rightGrip.curl, 0.6f, 1e-5f);
         }
+    }
+
+    // ---- Carry in front sits at the hands, below the head. One hand right uses one palm.
+    {
+        Scene s("Pose");
+        Ground(s);
+        GameObject* player = Templates::BuildPlayerBody(s, {0, 0, 0}, "Player");
+        auto* hold = player->AddComponent<ProceduralObjectHolding>();
+        GameObject* crate = Crate(s, "Carry Crate", {0, 0.3f, -1.0f}, {0.62f, 0.48f, 0.48f}, 3.0f);
+        crate->AddComponent<HoldableObject>()->ApplyPreset(HoldableObject::Preset::CarryFront);
+        s.Start();
+        Step(s, 2);
+        CHECK(hold->Pickup(crate));
+        Step(s, 90);
+        FullBodyIK* ik = hold->IK();
+        CHECK(hold->HandInUse(true) && hold->HandInUse(false));
+        const float headY = ik->bones[FullBodyIK::Head] ? ik->bones[FullBodyIK::Head]->Position().y : 1.6f;
+        const float gripY = (hold->GripPoint(true).y + hold->GripPoint(false).y) * 0.5f;
+        CHECK(gripY < headY - 0.35f);
+        for (int l = 0; l < 2; ++l) {
+            Arm a = ArmOf(ik, l);
+            CHECK(WristError(ik, l, a.hand) < 0.08f);
+            CHECK(Dist(hold->GripPoint(l == 0), a.hand->Position()) < 0.2f);
+        }
+        hold->Drop();
+        GameObject* block = Crate(s, "Block", {0.4f, 0.3f, -0.8f}, {0.28f, 0.28f, 0.28f}, 0.3f);
+        block->AddComponent<HoldableObject>()->ApplyPreset(HoldableObject::Preset::OneHandRight);
+        CHECK(hold->Pickup(block));
+        Step(s, 90);
+        CHECK(!hold->HandInUse(true) && hold->HandInUse(false));
+        Arm right = ArmOf(ik, 1);
+        CHECK(Dist(hold->GripPoint(false), right.hand->Position()) < 0.2f);
+        CHECK(hold->GripPoint(false).y < headY - 0.25f);
+    }
+
+    // ---- A Mixamo-named rig: grips land on the hands, not the head.
+    {
+        Scene s("Mixamo");
+        GameObject* root = s.CreateGameObject("Soldier");
+        auto mk = [&](const char* n, GameObject* parent, Vec3 local) {
+            GameObject* o = s.CreateGameObject(n);
+            o->transform->SetParent(parent->transform, false);
+            o->transform->localPosition = local;
+            return o;
+        };
+        GameObject* hips = mk("mixamorig:Hips", root, {0, 1.0f, 0});
+        GameObject* spine = mk("mixamorig:Spine", hips, {0, 0.1f, 0});
+        GameObject* chest = mk("mixamorig:Spine2", spine, {0, 0.2f, 0});
+        mk("mixamorig:Neck", chest, {0, 0.15f, 0});
+        GameObject* head = mk("mixamorig:Head", chest, {0, 0.25f, 0});
+        GameObject* lhand = nullptr;
+        GameObject* rhand = nullptr;
+        for (int sd = -1; sd <= 1; sd += 2) {
+            const char* side = sd < 0 ? "Left" : "Right";
+            GameObject* arm = mk((std::string("mixamorig:") + side + "Arm").c_str(), chest, {sd * 0.18f, 0.05f, 0});
+            GameObject* fore = mk((std::string("mixamorig:") + side + "ForeArm").c_str(), arm, {sd * 0.05f, -0.28f, 0.02f});
+            GameObject* hand = mk((std::string("mixamorig:") + side + "Hand").c_str(), fore, {0, -0.25f, 0.02f});
+            mk((std::string("mixamorig:") + side + "HandIndex1").c_str(), hand, {0, -0.04f, 0.04f});
+            if (sd < 0) lhand = hand; else rhand = hand;
+        }
+        auto* ik = root->AddComponent<FullBodyIK>();
+        auto* hold = root->AddComponent<ProceduralObjectHolding>();
+        hold->transitionTime = 0.0f;
+        s.Start();
+        CHECK(ik->bones[FullBodyIK::LHand] == lhand->transform);
+        CHECK(ik->bones[FullBodyIK::RHand] == rhand->transform);
+        CHECK(ik->bones[FullBodyIK::Head] == head->transform);
+        CHECK(ik->bones[FullBodyIK::LUpperArm] != nullptr);
+        CHECK(FullBodyIK::Classify("mixamorig:LeftHandMiddle1") == -1);
+        GameObject* crate = Crate(s, "Carry Crate", {0, 1.0f, -0.4f}, {0.4f, 0.3f, 0.3f}, 2.0f);
+        crate->AddComponent<HoldableObject>()->ApplyPreset(HoldableObject::Preset::CarryFront);
+        CHECK(hold->Pickup(crate));
+        Step(s, 30);
+        CHECK(hold->HandInUse(true) && hold->HandInUse(false));
+        CHECK(Dist(hold->GripPoint(true), lhand->transform->Position()) < 0.18f);
+        CHECK(Dist(hold->GripPoint(false), rhand->transform->Position()) < 0.18f);
+        CHECK(Dist(crate->transform->Position(), head->transform->Position()) > 0.35f);
     }
 
     TEST_MAIN_RESULT();

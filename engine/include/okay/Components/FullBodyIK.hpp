@@ -128,11 +128,16 @@ public:
         Collect(gameObject->transform, all);
         for (Transform* t : all) {
             if (!t->gameObject || t == gameObject->transform) continue;
-            int id = Classify(t->gameObject->name);
+            int rank = 0;
+            int id = ClassifyRanked(t->gameObject->name, rank);
             if (id < 0) continue;
-            if (bones[id] && !overwrite) continue;
-            // Prefer the shallowest match (e.g. "Spine" over "Spine1" for Spine).
-            if (bones[id] && overwrite && Depth(bones[id]) <= Depth(t)) continue;
+            if (bones[id]) {
+                int oldRank = 0;
+                ClassifyRanked(boneNames[id], oldRank);
+                if (!overwrite && rank < oldRank) continue;
+                if (rank < oldRank) continue;
+                if (rank == oldRank && Depth(bones[id]) <= Depth(t)) continue;
+            }
             bones[id] = t;
             boneNames[id] = t->gameObject->name;
         }
@@ -144,17 +149,54 @@ public:
     /// An object by name inside this character (else anywhere in the scene).
     GameObject* FindBone(const std::string& name) const { return FindUnder(name); }
 
+    /// 2 = an exact Mixamo / Unity humanoid name, 1 = a looser match, 0 = none.
+    static int ClassifyRanked(const std::string& raw, int& rank) {
+        rank = 0;
+        return Classify(raw, &rank);
+    }
     /// Classify a bone name into a BoneId (-1 = not a humanoid bone we drive).
-    static int Classify(const std::string& raw) {
+    static int Classify(const std::string& raw) { return Classify(raw, nullptr); }
+    static int Classify(const std::string& raw, int* rankOut) {
         std::string n;
-        for (char c : raw) n += (char)std::tolower((unsigned char)c);
-        if (auto c = n.rfind(':'); c != std::string::npos) n = n.substr(c + 1);   // mixamorig:LeftArm
+        {
+            std::string s0 = raw;
+            if (auto c = s0.find_last_of(":|"); c != std::string::npos) s0 = s0.substr(c + 1);
+            for (char c : s0) n += (char)std::tolower((unsigned char)c);
+            if (n.rfind("mixamorig", 0) == 0) n = n.substr(9);
+        }
+        std::string key;
+        for (char c : n) if (std::isalnum((unsigned char)c)) key += c;
+        struct Hit { const char* name; int id; };
+        static const Hit kExact[] = {
+            {"hips", Hips}, {"pelvis", Hips},
+            {"spine", Spine}, {"spine1", Chest}, {"spine01", Chest}, {"spine2", Chest}, {"spine02", Chest},
+            {"chest", Chest}, {"upperchest", Chest},
+            {"neck", Neck}, {"head", Head},
+            {"leftarm", LUpperArm}, {"leftupperarm", LUpperArm}, {"lupperarm", LUpperArm},
+            {"leftforearm", LForeArm}, {"leftlowerarm", LForeArm}, {"lforearm", LForeArm},
+            {"lefthand", LHand}, {"lwrist", LHand},
+            {"rightarm", RUpperArm}, {"rightupperarm", RUpperArm}, {"rupperarm", RUpperArm},
+            {"rightforearm", RForeArm}, {"rightlowerarm", RForeArm}, {"rforearm", RForeArm},
+            {"righthand", RHand}, {"rwrist", RHand},
+            {"leftupleg", LThigh}, {"leftupperleg", LThigh}, {"leftthigh", LThigh},
+            {"leftleg", LShin}, {"leftlowerleg", LShin}, {"leftcalf", LShin},
+            {"leftfoot", LFoot}, {"leftankle", LFoot},
+            {"rightupleg", RThigh}, {"rightupperleg", RThigh}, {"rightthigh", RThigh},
+            {"rightleg", RShin}, {"rightlowerleg", RShin}, {"rightcalf", RShin},
+            {"rightfoot", RFoot}, {"rightankle", RFoot},
+            {"lupperarm", LUpperArm}, {"rhand", RHand}, {"lhand", LHand},
+        };
+        for (const Hit& h : kExact) if (key == h.name) { if (rankOut) *rankOut = 2; return h.id; }
         auto has = [&](const char* k) { return n.find(k) != std::string::npos; };
         auto ends = [&](const char* k) { std::size_t l = std::strlen(k); return n.size() >= l && n.compare(n.size() - l, l, k) == 0; };
         const bool left  = has("left") || n.rfind("l ", 0) == 0 || n.rfind("l_", 0) == 0 || ends("_l") || ends(".l") || ends(" l");
         const bool right = has("right") || n.rfind("r ", 0) == 0 || n.rfind("r_", 0) == 0 || ends("_r") || ends(".r") || ends(" r");
-        if (has("finger") || has("thumb") || has("index") || has("toe") || has("end") || has("twist") ||
-            has("eye") || has("jaw") || has("shoulder") || has("clavicle")) return -1;
+        if (has("finger") || has("thumb") || has("index") || has("middle") || has("ring") || has("pinky") ||
+            has("toe") || has("end") || has("twist") || has("eye") || has("jaw") || has("shoulder") || has("clavicle")) {
+            if (rankOut) *rankOut = 0;
+            return -1;
+        }
+        if (rankOut) *rankOut = 1;
         if (left || right) {
             const int base = left ? 0 : 1;
             if (has("forearm") || has("lowerarm") || has("lower arm") || has("lower_arm") || has("elbow")) return base ? RForeArm : LForeArm;
@@ -171,6 +213,7 @@ public:
         if (has("chest") || has("torso") || n == "spine2" || n == "spine_02" || n == "spine.002" || n == "spine1" || n == "spine_01")
             return Chest;
         if (n == "spine" || has("spine")) return Spine;
+        if (rankOut) *rankOut = 0;
         return -1;
     }
 

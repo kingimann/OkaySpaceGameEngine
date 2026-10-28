@@ -871,6 +871,24 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << " " << hh->othersItemOffset.x << " " << hh->othersItemOffset.y << " " << hh->othersItemOffset.z
             << " " << hh->othersItemRotation.x << " " << hh->othersItemRotation.y << " " << hh->othersItemRotation.z
             << " " << hh->othersArmLift << " " << hh->othersArmForward << "\n";
+        auto extra = [&](const FirstPersonHands::HandSide& s) {
+            out << " " << (s.forearm ? 1 : 0) << " " << s.forearmLength << " " << s.forearmThickness
+                << " " << s.forearmColour.r << " " << s.forearmColour.g << " " << s.forearmColour.b
+                << " " << s.wristOffset.x << " " << s.wristOffset.y << " " << s.wristOffset.z
+                << " " << s.wristRotation.x << " " << s.wristRotation.y << " " << s.wristRotation.z
+                << " " << s.elbowBend << " " << s.reach;
+        };
+        auto oarm = [&](const FirstPersonHands::OthersArm& a) {
+            out << " " << (a.forearm ? 1 : 0) << " " << a.forearmLength << " " << a.forearmThickness
+                << " " << a.forearmColour.r << " " << a.forearmColour.g << " " << a.forearmColour.b
+                << " " << a.handSize.x << " " << a.handSize.y << " " << a.handSize.z
+                << " " << a.wristOffset.x << " " << a.wristOffset.y << " " << a.wristOffset.z
+                << " " << a.wristRotation.x << " " << a.wristRotation.y << " " << a.wristRotation.z
+                << " " << a.elbowBend << " " << a.reach;
+        };
+        out << "  fphands2";
+        extra(hh->right); extra(hh->left); oarm(hh->othersRight); oarm(hh->othersLeft);
+        out << "\n";
     }
     if (auto* ps = go->GetComponent<NetworkPlayerSpawner>()) {
         out << "  npspawner " << Quote(ps->playerTemplate) << " " << Quote(ps->prefabFile)
@@ -1200,7 +1218,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         KvOut k{out};
         k("style", (int)h->style).b("support", h->supportHand).b("two", h->twoHanded)("weight", h->weight).str("socket", h->socket)
          ("offX", h->holdOffset.x)("offY", h->holdOffset.y)("offZ", h->holdOffset.z)
-         ("rotX", h->holdRotation.x)("rotY", h->holdRotation.y)("rotZ", h->holdRotation.z);
+         ("rotX", h->holdRotation.x)("rotY", h->holdRotation.y)("rotZ", h->holdRotation.z)
+         ("handScale", h->inHandScale)
+         ("fpX", h->fpOffset.x)("fpY", h->fpOffset.y)("fpZ", h->fpOffset.z)
+         ("fpRX", h->fpRotation.x)("fpRY", h->fpRotation.y)("fpRZ", h->fpRotation.z)("fpS", h->fpScale)
+         ("tpX", h->tpOffset.x)("tpY", h->tpOffset.y)("tpZ", h->tpOffset.z)
+         ("tpRX", h->tpRotation.x)("tpRY", h->tpRotation.y)("tpRZ", h->tpRotation.z);
         const HoldableObject::Grip* grips[2] = {&h->leftGrip, &h->rightGrip};
         for (int g = 0; g < 2; ++g) {
             const std::string p = g == 0 ? "l" : "r";
@@ -3771,10 +3794,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* h = go->AddComponent<HoldableObject>();
                     KvIn k(in);
                     int st = 0; k.i("style", st);
-                    h->style = st >= 0 && st <= (int)HoldableObject::Style::Heavy ? (HoldableObject::Style)st : HoldableObject::Style::Automatic;
+                    h->style = st >= 0 && st <= (int)HoldableObject::Style::OverShoulder ? (HoldableObject::Style)st : HoldableObject::Style::Automatic;
                     k.b("support", h->supportHand); k.b("two", h->twoHanded); k.f("weight", h->weight); k.str("socket", h->socket);
                     k.f("offX", h->holdOffset.x); k.f("offY", h->holdOffset.y); k.f("offZ", h->holdOffset.z);
                     k.f("rotX", h->holdRotation.x); k.f("rotY", h->holdRotation.y); k.f("rotZ", h->holdRotation.z);
+                    k.f("handScale", h->inHandScale);
+                    k.f("fpX", h->fpOffset.x); k.f("fpY", h->fpOffset.y); k.f("fpZ", h->fpOffset.z);
+                    k.f("fpRX", h->fpRotation.x); k.f("fpRY", h->fpRotation.y); k.f("fpRZ", h->fpRotation.z); k.f("fpS", h->fpScale);
+                    k.f("tpX", h->tpOffset.x); k.f("tpY", h->tpOffset.y); k.f("tpZ", h->tpOffset.z);
+                    k.f("tpRX", h->tpRotation.x); k.f("tpRY", h->tpRotation.y); k.f("tpRZ", h->tpRotation.z);
                     HoldableObject::Grip* grips[2] = {&h->leftGrip, &h->rightGrip};
                     for (int g = 0; g < 2; ++g) {
                         const std::string p = g == 0 ? "l" : "r";
@@ -5507,6 +5535,32 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     rs >> hh->othersItemOffset.x >> hh->othersItemOffset.y >> hh->othersItemOffset.z
                        >> hh->othersItemRotation.x >> hh->othersItemRotation.y >> hh->othersItemRotation.z
                        >> hh->othersArmLift >> hh->othersArmForward;
+                } else if (field == "fphands2") {
+                    auto* hh = go->GetComponent<FirstPersonHands>();
+                    if (!hh) hh = go->AddComponent<FirstPersonHands>();
+                    auto extra = [&](FirstPersonHands::HandSide& s, std::istringstream& rs) {
+                        int on = 0;
+                        rs >> on >> s.forearmLength >> s.forearmThickness
+                           >> s.forearmColour.r >> s.forearmColour.g >> s.forearmColour.b
+                           >> s.wristOffset.x >> s.wristOffset.y >> s.wristOffset.z
+                           >> s.wristRotation.x >> s.wristRotation.y >> s.wristRotation.z
+                           >> s.elbowBend >> s.reach;
+                        s.forearm = on != 0;
+                    };
+                    auto oarm = [&](FirstPersonHands::OthersArm& a, std::istringstream& rs) {
+                        int on = 1;
+                        rs >> on >> a.forearmLength >> a.forearmThickness
+                           >> a.forearmColour.r >> a.forearmColour.g >> a.forearmColour.b
+                           >> a.handSize.x >> a.handSize.y >> a.handSize.z
+                           >> a.wristOffset.x >> a.wristOffset.y >> a.wristOffset.z
+                           >> a.wristRotation.x >> a.wristRotation.y >> a.wristRotation.z
+                           >> a.elbowBend >> a.reach;
+                        a.forearm = on != 0;
+                    };
+                    std::string rest; std::getline(in, rest);
+                    std::istringstream rs(rest);
+                    extra(hh->right, rs); extra(hh->left, rs);
+                    oarm(hh->othersRight, rs); oarm(hh->othersLeft, rs);
                 } else if (field == "npspawner") {
                     auto* ps = go->AddComponent<NetworkPlayerSpawner>();
                     ps->playerTemplate = ReadQuoted(in);

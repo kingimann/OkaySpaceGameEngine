@@ -1134,36 +1134,38 @@ void PaintFpSleeve(GameObject* fore, const FirstPersonHands::HandSide* side) {
                          side->sleeveColour.b * 0.37f, 1.0f};
 }
 
-// The real forearm, not the optional sleeve. It runs from the wrist down the
-// view and off the bottom edge, so a held hand is an arm rather than a brick
-// floating in front of the lens. `armInCam` is the arm's rotation in camera space.
-void PaintFpForearm(GameObject* fore, GameObject* srcPart, const Quat& armInCam) {
+// Optional bar under the hand. Off unless the hand asks for it, so a hold is
+// a brick in the palm and not a green sleeve filling the corner. `armInCam`
+// is the arm's rotation in camera space.
+void PaintFpForearm(GameObject* fore, const FirstPersonHands::HandSide* side, const Quat& armInCam) {
     if (!fore) return;
     auto* mr = fore->GetComponent<MeshRenderer>();
     if (!mr) return;
-    // The body part keeps its shirt on the face colors. The renderer's own
-    // color stays white, and a white tint here drew a pale wedge.
-    Color col = Color::FromBytes(60, 95, 75);
-    if (srcPart) if (auto* src = srcPart->GetComponent<MeshRenderer>()) {
-        if (!src->mesh.triColors.empty()) col = src->mesh.triColors[0];
-        else if (src->color.r + src->color.g + src->color.b > 0.04f
-                 && src->color.r + src->color.g + src->color.b < 2.9f)
-            col = src->color;
+    if (!side || !side->forearm || side->sleeve) {
+        mr->mesh = Mesh{};
+        mr->enabled = false;
+        return;
     }
-    Vec3 down = armInCam.Conjugate() * Vec3{0.0f, -1.0f, -0.16f};
+    Color col = side->forearmColour;
+    float length = side->forearmLength;
+    if (length < 0.05f) length = 0.05f;
+    if (length > 1.2f) length = 1.2f;
+    float rad = side->forearmThickness * 0.5f;
+    if (rad < 0.012f) rad = 0.012f;
+    if (rad > 0.2f) rad = 0.2f;
+    const float bend = side->elbowBend * Mathf::Deg2Rad;
+    Vec3 down = armInCam.Conjugate() * Vec3{0.0f, -std::cos(bend), -0.16f - std::sin(bend)};
     if (down.SqrMagnitude() < 1e-8f) down = Vec3{0.0f, -1.0f, 0.0f};
     down = down.Normalized();
     Vec3 hint = armInCam.Conjugate() * Vec3{0.0f, 0.0f, -1.0f};
-    Vec3 side = hint - down * Vec3::Dot(hint, down);
-    if (side.SqrMagnitude() < 1e-6f) side = Vec3{1.0f, 0.0f, 0.0f};
-    side = side.Normalized();
-    Vec3 up = Vec3::Cross(side, down).Normalized();
-    const float rad = 0.07f;
+    Vec3 sidev = hint - down * Vec3::Dot(hint, down);
+    if (sidev.SqrMagnitude() < 1e-6f) sidev = Vec3{1.0f, 0.0f, 0.0f};
+    sidev = sidev.Normalized();
+    Vec3 up = Vec3::Cross(sidev, down).Normalized();
     const float start = 0.02f;
-    const float length = 0.62f;
     Mesh m;
     Mesh::AppendBox(m, {-rad, start, -rad}, {rad, start + length, rad});
-    for (Vec3& v : m.vertices) v = side * v.x + down * v.y + up * v.z;
+    for (Vec3& v : m.vertices) v = sidev * v.x + down * v.y + up * v.z;
     mr->mesh = std::move(m);
     mr->mesh.normals.clear();
     mr->enabled = true;
@@ -1357,6 +1359,12 @@ void Character::ApplyFirstPersonHandDrive(bool showLeftArm, bool showWhileRunnin
             const bool rightOn = !h || h->right.enabled;
             const bool leftOn = !h || h->left.enabled;
             if (rightOn && leftOn) { two = true; primary = B_LUPARM; }
+        } else if (ho && ho->style == HoldableObject::Style::OneHandLeft) {
+            primary = B_RUPARM;
+            two = false;
+        } else if (ho && ho->style == HoldableObject::Style::OneHandRight) {
+            primary = B_LUPARM;
+            two = false;
         }
     }
     const bool run = HideFirstPersonHands();
@@ -1494,7 +1502,9 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     top = top.Normalized();
     Quat camSpace = Quat::LookRotation(inward, top);
     camSpace = Quat::Euler(1.6f * bobS, -side * 2.2f * bobC, side * 1.1f * bobS) * camSpace;
-    if (fpSide && !m_fpSecond) camSpace = Quat::Euler(fpSide->rotation) * camSpace;
+    if (fpSide && !m_fpSecond)
+        camSpace = Quat::Euler(fpSide->elbowBend, 0.0f, 0.0f) * Quat::Euler(fpSide->wristRotation)
+                 * Quat::Euler(fpSide->rotation) * camSpace;
     m_ownerFore->transform->localPosition = Vec3::Zero;
     m_ownerFore->transform->localRotation = Quat::Identity;
     m_ownerFore->transform->localScale = Vec3::One;
@@ -1577,6 +1587,10 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
                 if (fpHands && fpHands->itemScale > 0.0f) uni *= fpHands->itemScale;
                 Quat irot = Quat::Euler(-16.0f, -side * 18.0f, side * 8.0f);
                 if (fpHands) irot = Quat::Euler(fpHands->itemRotation) * irot;
+                if (auto* hoScale = held->GetComponent<HoldableObject>()) {
+                    if (hoScale->fpScale > 0.0f) uni *= hoScale->fpScale;
+                    irot = Quat::Euler(hoScale->fpRotation) * irot;
+                }
                 Vec3 center{0.0f, 0.0f, 0.0f};
                 float minY = 1.0e9f;
                 const float invN = 1.0f / (float)src->mesh.vertices.size();
@@ -1594,6 +1608,7 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
                         place = palmPoint - irot * (grip.position * uni);
                     }
                 }
+                if (auto* hoPlace = held->GetComponent<HoldableObject>()) place = place + hoPlace->fpOffset;
                 if (fpHands) place = place + fpHands->itemOffset;
                 m_ownerItem->transform->localScale = Vec3{uni, uni, uni};
                 m_ownerItem->transform->localRotation = irot;
@@ -1632,7 +1647,10 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     if (showItem) bound(m_ownerItem);
     if (fpSide && fpSide->sleeve && !m_fpSecond) bound(m_ownerFore);
     if (any) { camOff.x += shiftX; camOff.y += shiftY; }
-    if (fpSide && !m_fpSecond) camOff = camOff + fpSide->position;
+    if (fpSide && !m_fpSecond) {
+        camOff = camOff + fpSide->position + fpSide->wristOffset;
+        camOff.z -= fpSide->reach;
+    }
     const float sway = fpHands ? fpHands->swayAmount : 1.0f;
     const Quat lag = Quat::Euler(m_fpTrailPitch * sway, m_fpTrailYaw * sway, 0.0f);
     camOff = lag * camOff;
@@ -1653,16 +1671,13 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     };
     consider(m_ownerArm);
     consider(m_ownerHand);
-    if (fpSide && fpSide->sleeve && !m_fpSecond) consider(m_ownerFore);
+    if (fpSide && (fpSide->sleeve || fpSide->forearm) && !m_fpSecond) consider(m_ownerFore);
     if (showItem) consider(m_ownerItem);
     if (minAhead < keep) {
         const Vec3 fwd = basis * Vec3{0.0f, 0.0f, -1.0f};
         m_ownerArm->transform->SetPosition(m_ownerArm->transform->Position() + fwd * (keep - minAhead));
     }
-    if (!(fpSide && fpSide->sleeve) && m_ownerFore) {
-        GameObject* forePart = (base + 1 < (int)m_parts.size()) ? m_parts[base + 1] : nullptr;
-        PaintFpForearm(m_ownerFore, forePart, lag * camSpace);
-    }
+    if (m_ownerFore) PaintFpForearm(m_ownerFore, m_fpSecond ? nullptr : fpSide, lag * camSpace);
     SetOwnerArmActive(true);
     if (m_ownerItem && !showItem) m_ownerItem->active = false;
     if (m_fpSecond) FinishTwoHands(cam, depth, snap, bobS, bobC);
@@ -1818,19 +1833,16 @@ void Character::FinishTwoHands(Camera* cam, float depth, float snap, float bobS,
         const Vec3 face = (cam->transform->Rotation() * Vec3{isLeft ? -0.2f : 0.2f, 0.78f, 0.50f}).Normalized();
         Quat rot = Quat::LookRotation(inward, face);
         if (side) {
-            rot = rot * Quat::Euler(side->rotation);
-            pos = pos + cam->transform->Rotation() * side->position;
+            rot = Quat::Euler(side->elbowBend, 0.0f, 0.0f) * Quat::Euler(side->wristRotation)
+                * Quat::Euler(side->rotation) * rot;
+            pos = pos + cam->transform->Rotation() * (side->position + side->wristOffset + Vec3{0.0f, 0.0f, -side->reach});
         }
         arm->transform->SetRotation(rot);
         arm->transform->SetPosition(pos);
         arm->active = true;
-        if (!(side && side->sleeve) && hand && hand->transform && hand->transform->Parent()
-            && hand->transform->Parent()->gameObject) {
-            const int part = isLeft ? B_RUPARM : B_LUPARM;
-            GameObject* forePart = (part + 1 < (int)m_parts.size()) ? m_parts[part + 1] : nullptr;
-            PaintFpForearm(hand->transform->Parent()->gameObject, forePart,
+        if (hand && hand->transform && hand->transform->Parent() && hand->transform->Parent()->gameObject)
+            PaintFpForearm(hand->transform->Parent()->gameObject, side,
                            cam->transform->Rotation().Conjugate() * rot);
-        }
         (void)snap;
     };
     placeHand(m_ownerArm, m_ownerHand, false, right);

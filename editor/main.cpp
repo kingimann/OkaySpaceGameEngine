@@ -29543,7 +29543,14 @@ void DrawInspector(EditorState& ed) {
             if (CompHeader("Holdable Object", ho, &toRemove)) {
                 ImGui::TextDisabled("A character's Procedural Object Holding can pick this up.");
                 int st = (int)ho->style;
-                if (ImGui::Combo("Style##hold", &st, "Automatic\0Custom\0Pistol\0Rifle\0Box\0Flashlight\0Sword\0Cup\0Heavy\0")) { ho->style = (HoldableObject::Style)st; ed.dirty = true; }
+                if (ImGui::Combo("Style##hold", &st,
+                        "Automatic\0Custom\0Pistol\0Rifle\0Box\0Flashlight\0Sword\0Cup\0Heavy\0"
+                        "One hand right\0One hand left\0Two handed\0Carry in front\0Over the shoulder\0")) {
+                    ho->style = (HoldableObject::Style)st; ed.dirty = true;
+                }
+                if (ImGui::SmallButton("Preset: block##hold")) { ho->ApplyPreset(HoldableObject::Preset::OneHandRight); ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Preset: crate##hold")) { ho->ApplyPreset(HoldableObject::Preset::CarryFront); ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatic: from the tag / name (\"pistol\", \"crate\"...), else its shape and weight.\nCustom: the hands go to the grip points below.\nGuns and lights point along -Z, a sword's blade along +Y, a cup's handle along +X\n(Hold Rotation corrects a model built another way).");
                 if (ho->style == HoldableObject::Style::Automatic) {
                     const HoldableObject::Style rs = ho->ResolvedStyle();
@@ -29560,6 +29567,13 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat3("Hold Offset##hold", &ho->holdOffset.x, 0.01f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Custom: where the object's origin sits from the chest (right, up, forward), metres.");
                 if (ImGui::DragFloat3("Hold Rotation##hold", &ho->holdRotation.x, 1.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("In-hand scale##hold", &ho->inHandScale, 0.01f, 0.1f, 3.0f)) ed.dirty = true;
+                if (ImGui::DragFloat3("FP offset##hold", &ho->fpOffset.x, 0.005f)) ed.dirty = true;
+                if (ImGui::DragFloat3("FP rotation##hold", &ho->fpRotation.x, 1.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("FP scale##hold", &ho->fpScale, 0.01f, 0.1f, 3.0f)) ed.dirty = true;
+                if (ImGui::DragFloat3("TP offset##hold", &ho->tpOffset.x, 0.005f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Side, up, forward, added on top of the hold. Use this when a third-person grip sits too high.");
+                if (ImGui::DragFloat3("TP rotation##hold", &ho->tpRotation.x, 1.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Custom: the object's turn relative to the body (degrees).\nOther styles: turns a model built another way (e.g. 0, 180, 0 for a gun facing backwards).");
                 HoldableObject::Grip* grips[2] = {&ho->leftGrip, &ho->rightGrip};
                 for (int g = 0; g < 2; ++g) {

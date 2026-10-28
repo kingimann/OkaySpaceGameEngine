@@ -651,8 +651,8 @@ int main() {
         CHECK(!ch->OwnerViewArm2() || !ch->OwnerViewArm2()->active);
         GameObject* item = scene.Find("FP_OwnerItem");
         CHECK(item && item->active && item->firstPersonOnly);
-        // The hold sits close to the lens, and a forearm runs down from the wrist
-        // so the hand is not a brick floating in the middle of the view.
+        // The hold sits close to the lens. The forearm stays off until the panel
+        // asks for it, so the hand is a brick and not a green bar under it.
         {
             GameObject* fore = nullptr;
             GameObject* hand = nullptr;
@@ -664,26 +664,37 @@ int main() {
                         if (h && h->gameObject && h->gameObject->name == "FP_OwnerHand") hand = h->gameObject;
                 }
             auto* fmr = fore ? fore->GetComponent<MeshRenderer>() : nullptr;
-            CHECK(fore && fore->active && fmr && fmr->enabled && fmr->mesh.vertices.size() >= 8);
+            CHECK(fore && fmr && !fmr->enabled);
             auto* hmr = hand ? hand->GetComponent<MeshRenderer>() : nullptr;
             CHECK(hand && hmr && !hmr->mesh.vertices.empty());
-            float handMinY = 1.0e9f, foreMinY = 1.0e9f, handFar = 0.0f;
-            auto measure = [&](GameObject* g, float& minY, float* far) {
+            float handFar = 0.0f;
+            for (const Vec3& v : hmr->mesh.vertices) {
+                const Vec3 local = cam->transform->InverseTransformPoint(hand->transform->TransformPoint(v));
+                handFar = std::max(handFar, -local.z);
+            }
+            CHECK(handFar < 0.42f);
+            CHECK(handFar > 0.15f);
+
+            hands->right.forearm = true;
+            hands->right.forearmLength = 0.5f;
+            hands->right.forearmColour = Color::FromBytes(60, 95, 75);
+            for (int i = 0; i < 4; ++i) scene.Update(1.0f / 60.0f);
+            CHECK(fmr->enabled && fmr->mesh.vertices.size() >= 8);
+            float handMinY = 1.0e9f, foreMinY = 1.0e9f;
+            auto measure = [&](GameObject* g, float& minY) {
                 auto* mr = g->GetComponent<MeshRenderer>();
                 for (const Vec3& v : mr->mesh.vertices) {
                     const Vec3 local = cam->transform->InverseTransformPoint(g->transform->TransformPoint(v));
                     minY = std::min(minY, local.y);
-                    if (far) *far = std::max(*far, -local.z);
                 }
             };
-            measure(hand, handMinY, &handFar);
-            measure(fore, foreMinY, nullptr);
+            measure(hand, handMinY);
+            measure(fore, foreMinY);
             CHECK(foreMinY < handMinY - 0.04f);
-            CHECK(handFar < 0.42f);
-            CHECK(handFar > 0.15f);
-            // Shirt green, not the part renderer's default white.
             CHECK(fmr->color.g > fmr->color.r + 0.05f);
-            CHECK(fmr->color.g > fmr->color.b);
+            hands->right.forearm = false;
+            for (int i = 0; i < 2; ++i) scene.Update(1.0f / 60.0f);
+            CHECK(!fmr->enabled);
         }
 
         hold->Drop();

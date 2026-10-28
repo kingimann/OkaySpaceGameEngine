@@ -17,6 +17,7 @@
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/PlayerView.hpp"
+#include "okay/Components/UITheme.hpp"          // grok/ui-theme
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/BlockBuilder.hpp"
@@ -87,6 +88,7 @@
 #include "okay/Components/UIMask.hpp"
 #include "okay/Components/UIFrame.hpp"
 #include "okay/Components/UIModal.hpp"
+#include "okay/Components/UIToast.hpp"   // grok/ui-toast
 #include "okay/Components/UIContextMenu.hpp"
 #include "okay/Components/UIKeybindField.hpp"
 #include "okay/Components/UIElement.hpp"   // GetUIRect: settle loaded UIFrames
@@ -144,6 +146,8 @@
 #include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/Minimap.hpp"
 #include "okay/Components/Crosshair.hpp"
+#include "okay/Components/UIColorPicker.hpp"   // grok/ui-color
+#include "okay/Components/UISlotGrid.hpp"   // grok/ui-hud
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIStepper.hpp"
 #include "okay/Components/UIRating.hpp"
@@ -284,6 +288,29 @@ struct KvIn {
         f((b + "R").c_str(), c.r); f((b + "G").c_str(), c.g); f((b + "B").c_str(), c.b); f((b + "A").c_str(), c.a);
     }
 };
+// A joint limit as `<p>T= <p>S= ...` keys (nothing when it's None).
+void WriteLimitKv(KvOut& k, const std::string& p, const IKJointLimit& l) {
+    if (!l.Active()) return;
+    k((p + "T").c_str(), (int)l.type)((p + "S").c_str(), l.swingMax)
+     ((p + "H0").c_str(), l.hingeMin)((p + "H1").c_str(), l.hingeMax)
+     ((p + "W0").c_str(), l.twistMin)((p + "W1").c_str(), l.twistMax);
+    if (!l.autoAxes)
+        k((p + "TX").c_str(), l.twistAxis.x)((p + "TY").c_str(), l.twistAxis.y)((p + "TZ").c_str(), l.twistAxis.z)
+         ((p + "HX").c_str(), l.hingeAxis.x)((p + "HY").c_str(), l.hingeAxis.y)((p + "HZ").c_str(), l.hingeAxis.z);
+}
+void ReadLimitKv(const KvIn& k, const std::string& p, IKJointLimit& l) {
+    int ty = 0; k.i((p + "T").c_str(), ty);
+    if (ty <= 0) return;
+    l.type = (IKJointLimit::Type)std::clamp(ty, 0, 2);
+    k.f((p + "S").c_str(), l.swingMax);
+    k.f((p + "H0").c_str(), l.hingeMin); k.f((p + "H1").c_str(), l.hingeMax);
+    k.f((p + "W0").c_str(), l.twistMin); k.f((p + "W1").c_str(), l.twistMax);
+    if (k.find((p + "TX").c_str())) {
+        l.autoAxes = false;
+        k.f((p + "TX").c_str(), l.twistAxis.x); k.f((p + "TY").c_str(), l.twistAxis.y); k.f((p + "TZ").c_str(), l.twistAxis.z);
+        k.f((p + "HX").c_str(), l.hingeAxis.x); k.f((p + "HY").c_str(), l.hingeAxis.y); k.f((p + "HZ").c_str(), l.hingeAxis.z);
+    }
+}
 // The crouch / prone options of a movement controller (StanceControl) and the
 // stance it was saved in: one `<rec> key=value ...` line.
 void WriteStanceControl(std::ostream& out, const char* rec, const StanceControl& sc) {
@@ -774,11 +801,25 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             if (t.standCrouch != def.standCrouch || t.crouchProne != def.crouchProne || t.proneStand != def.proneStand)
                 out << "  animsmstance " << t.standCrouch << " " << t.crouchProne << " " << t.proneStand << "\n";
         }
+        {
+            const GaitCrossfades def;
+            const GaitCrossfades& t = asm2->crossfades;
+            if (t.idleWalk != def.idleWalk || t.walkRun != def.walkRun ||
+                t.groundAir != def.groundAir || t.airGround != def.airGround)
+                out << "  animsmxfade " << t.idleWalk << " " << t.walkRun << " " << t.groundAir << " " << t.airGround << "\n";
+        }
         bool anyMatch = false;
         for (const auto& st : asm2->states) anyMatch = anyMatch || st.matchSpeed;
         if (anyMatch) {   // blend trees that keep pace with the body's speed
             out << "  animsmmatch " << asm2->states.size();
             for (const auto& st : asm2->states) out << " " << (st.matchSpeed ? 1 : 0);
+            out << "\n";
+        }
+        bool anyFall = false;
+        for (const auto& st : asm2->states) anyFall = anyFall || !st.fallbackClip.empty();
+        if (anyFall) {   // per-state stand-in when the named clip is missing
+            out << "  animsmfall " << asm2->states.size();
+            for (const auto& st : asm2->states) out << " " << Quote(st.fallbackClip);
             out << "\n";
         }
     }
@@ -904,6 +945,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << w->color.r << " " << w->color.g << " " << w->color.b
             << " " << w->opacity << " " << w->reflectivity << " " << w->specular
             << " " << w->shininess << " " << w->flow.x << " " << w->flow.y
+            << " " << w->depth << " " << w->fluidDensity << " " << w->linearDrag
             << " " << Quote(w->texture) << "\n";
     }
     if (auto* ws = go->GetComponent<WorldStreamer>()) {
@@ -1079,17 +1121,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
          ("upRX", f->footUpAxisR.x)("upRY", f->footUpAxisR.y)("upRZ", f->footUpAxisR.z)
          ("om", 1)   // orient is saved after its migration: keep it as written
          ("mask", f->groundMask);
-        auto lim = [&k](const char* p, const IKJointLimit& l) {
-            if (!l.Active()) return;
-            const std::string b = p;
-            k((b + "T").c_str(), (int)l.type)((b + "S").c_str(), l.swingMax)
-             ((b + "H0").c_str(), l.hingeMin)((b + "H1").c_str(), l.hingeMax)
-             ((b + "W0").c_str(), l.twistMin)((b + "W1").c_str(), l.twistMax);
-            if (!l.autoAxes)
-                k((b + "TX").c_str(), l.twistAxis.x)((b + "TY").c_str(), l.twistAxis.y)((b + "TZ").c_str(), l.twistAxis.z)
-                 ((b + "HX").c_str(), l.hingeAxis.x)((b + "HY").c_str(), l.hingeAxis.y)((b + "HZ").c_str(), l.hingeAxis.z);
-        };
-        lim("hl", f->hipLimit); lim("kl", f->kneeLimit);
+        WriteLimitKv(k, "hl", f->hipLimit); WriteLimitKv(k, "kl", f->kneeLimit);
         out << "\n";
     }
     if (auto* lb = go->GetComponent<LimbIK>()) {
@@ -1112,6 +1144,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
                     << ' ' << p << "HX=" << l.hingeAxis.x << ' ' << p << "HY=" << l.hingeAxis.y << ' ' << p << "HZ=" << l.hingeAxis.z;
         };
         lim("ul", lb->upperLimit); lim("ll", lb->lowerLimit);
+        if (lb->targetBlendTime != 0.0f) out << " tb=" << lb->targetBlendTime;
         out << "\n";
     }
     if (auto* ci = go->GetComponent<ChainIK>()) {
@@ -1124,7 +1157,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         // Pole mode/direction and per-joint limits (a newer record).
         bool anyLim = false;
         for (const auto& l : ci->limits) anyLim = anyLim || l.Active();
-        if (ci->poleMode >= 0 || anyLim) {
+        if (ci->poleMode >= 0 || anyLim || ci->targetBlendTime != 0.0f) {
             out << "  chainx2 " << ci->poleMode
                 << " " << ci->poleDir.x << " " << ci->poleDir.y << " " << ci->poleDir.z
                 << " " << (anyLim ? ci->limits.size() : 0);
@@ -1135,6 +1168,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
                     out << " " << l.twistAxis.x << " " << l.twistAxis.y << " " << l.twistAxis.z
                         << " " << l.hingeAxis.x << " " << l.hingeAxis.y << " " << l.hingeAxis.z;
             }
+            if (ci->targetBlendTime != 0.0f) out << " tb=" << ci->targetBlendTime;
             out << "\n";
         }
     }
@@ -1166,7 +1200,16 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "\n";
         // Easing, smoothing and joint limits (separate record: older builds skip it).
         out << "  fbikx " << fb->blendSpeed << " " << fb->goalSmoothing << " " << fb->lookSmoothing
-            << " " << fb->armMinBend << " " << fb->legMinBend << "\n";
+            << " " << fb->armMinBend << " " << fb->legMinBend;
+        // Per-limb joint limits (e<limb>u / e<limb>l keys), only when set.
+        KvOut k{out};
+        for (int l = 0; l < FullBodyIK::LimbCount; ++l) {
+            const std::string p = "e" + std::to_string(l);
+            WriteLimitKv(k, p + "u", fb->effectors[l].upperLimit);
+            WriteLimitKv(k, p + "l", fb->effectors[l].lowerLimit);
+            if (fb->effectors[l].targetBlendTime != 0.0f) k((p + "b").c_str(), fb->effectors[l].targetBlendTime);
+        }
+        out << "\n";
     }
     if (auto* h = go->GetComponent<HoldableObject>()) {
         out << "  holdable";
@@ -1189,7 +1232,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  objholding";
         KvOut k{out};
         k("hand", (int)ph->primaryHand)("style", (int)ph->holdingStyle).b("armIK", ph->armIK)("transition", ph->transitionTime)
-         .b("body", ph->bodyAdjustment)("carry", (int)ph->carryAnimations);
+         .b("body", ph->bodyAdjustment)("carry", (int)ph->carryAnimations)
+         .key("throwKey", ph->throwKey)("throwMouse", ph->throwMouseButton)("throwPad", ph->throwGamepadButton)
+         ("charge", ph->throwChargeTime)("tmin", ph->throwMinSpeed)("tmax", ph->throwMaxSpeed)("reach", ph->pickupRange);
         out << "\n";
     }
     if (auto* rm = go->GetComponent<RootMotion>()) {
@@ -1786,6 +1831,24 @@ void WriteComponents(std::ostream& out, GameObject* go) {
          ("dist", pv->thirdPersonDistance)("shoulder", pv->shoulderOffset);
         out << "\n";
     }
+    // grok/ui-theme. Own record so older scenes skip it. apply=1 bakes on play.
+    if (auto* th = go->GetComponent<UITheme>()) {
+        out << "  uitheme";
+        KvOut k{out};
+        k.str("name", th->themeName).b("apply", th->applyOnStart)("preset", th->preset)
+         ("corner", th->cornerRadius)("mask", th->cornerMask)("border", th->borderWidth).b("shadow", th->shadow)
+         ("soft", th->shadowSoftness)("ox", th->shadowOffset.x)("oy", th->shadowOffset.y)
+         ("pad", th->padding)("font", th->fontScale)("tpx", th->textPixelSize)("trans", th->transitionSpeed)
+         ("hscale", th->hoverScale)("glow", th->glow)("opa", th->opacity)
+         .b("grad", th->gradient)("gdir", th->gradientDir).b("sheen", th->sheen)
+         .col("panel", th->panel).col("pbot", th->panelBottom).col("accent", th->accent)
+         .col("text", th->text).col("muted", th->muted)
+         .col("button", th->button).col("hover", th->buttonHover).col("press", th->buttonPressed)
+         .col("btext", th->buttonText)
+         .col("off", th->disabled).col("danger", th->danger).col("ok", th->success)
+         .col("edge", th->border).col("sh", th->shadowCol).col("glowc", th->glowColor);
+        out << "\n";
+    }
     if (auto* td = go->GetComponent<TopDownController>()) {
         out << "  tdctrl " << td->walkSpeed << " " << td->runSpeed << " "
             << (td->sprintKey ? td->sprintKey : '-') << " "
@@ -2147,7 +2210,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             // extended: assigned OnClick action (target object + public function)
             << " " << Quote(btn->clickTarget) << " " << Quote(btn->clickFunction)
             << " " << btn->clickArg
-            << " " << Quote(btn->fontPath) << "\n";   // optional TTF label font (newest)
+            << " " << Quote(btn->fontPath)   // optional TTF label font
+            // grok/ui-options: ease, duration, optional focus color (trailing, older scenes omit it)
+            << " " << btn->transitionEase << " " << btn->transitionDuration
+            << " " << (btn->separateFocus ? 1 : 0) << " "
+            << btn->focusColor.r << " " << btn->focusColor.g << " "
+            << btn->focusColor.b << " " << btn->focusColor.a << "\n";
     }
     if (auto* pn = go->GetComponent<UIPanel>()) {
         out << "  uipanel " << pn->position.x << " " << pn->position.y << " "
@@ -2206,7 +2274,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << (int)in->contentType
             // extended (back-compatible trailing fields): shape + corner + focus ring
             << " " << (int)in->shape << " " << in->cornerRadius << " " << in->borderWidth << " "
-            << in->borderColor.r << " " << in->borderColor.g << " " << in->borderColor.b << " " << in->borderColor.a << "\n";
+            << in->borderColor.r << " " << in->borderColor.g << " " << in->borderColor.b << " " << in->borderColor.a
+            << " " << (in->multiline ? 1 : 0) << "\n";   // grok/ui-controls
     }
     if (auto* tb = go->GetComponent<UITabs>()) {
         out << "  uitabs " << tb->position.x << " " << tb->position.y << " "
@@ -2237,7 +2306,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         for (int b : tb->badges) out << " " << b;
         out << " " << tb->disabled.size();
         for (bool d : tb->disabled) out << " " << (d ? 1 : 0);
-        out << "\n";
+        out << " " << (tb->closable ? 1 : 0) << "\n";   // grok/ui-controls
     }
     if (auto* dd = go->GetComponent<UIDropdown>()) {
         out << "  uidropdown " << dd->position.x << " " << dd->position.y << " "
@@ -2251,7 +2320,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << dd->options.size();
         for (const auto& opt : dd->options) out << " " << Quote(opt);
         out << " " << (dd->interactable ? 1 : 0) << " " << Quote(dd->placeholder)
-            << " " << (int)dd->shape << " " << dd->cornerRadius << "\n";   // extended (back-compatible)
+            << " " << (int)dd->shape << " " << dd->cornerRadius
+            << " " << (dd->searchable ? 1 : 0) << " " << dd->maxVisible << " " << dd->optionIcons.size();
+        for (const auto& ic : dd->optionIcons) out << " " << Quote(ic);   // grok/ui-controls
+        out << "\n";
     }
     if (auto* tb = go->GetComponent<UITextBind>()) {
         out << "  uibind " << Quote(tb->format) << "\n";
@@ -2290,7 +2362,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  uitooltip " << Quote(tt->text) << " " << tt->delay << " "
             << tt->background.r << " " << tt->background.g << " " << tt->background.b << " " << tt->background.a << " "
             << tt->textColor.r << " " << tt->textColor.g << " " << tt->textColor.b << " " << tt->textColor.a << " "
-            << tt->borderColor.r << " " << tt->borderColor.g << " " << tt->borderColor.b << " " << tt->borderColor.a << "\n";
+            << tt->borderColor.r << " " << tt->borderColor.g << " " << tt->borderColor.b << " " << tt->borderColor.a
+            << " " << (tt->richText ? 1 : 0) << " " << tt->offset.x << " " << tt->offset.y << "\n";   // grok/ui-controls
     }
     if (auto* ua = go->GetComponent<UIAnimation>()) {
         out << "  uianim " << (int)ua->intro << " " << (int)ua->loop << " " << (int)ua->outro << " "
@@ -2320,9 +2393,21 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* mk = go->GetComponent<UIMask>()) out << "  uimask " << (mk->showGraphic ? 1 : 0) << "\n";
     if (auto* md = go->GetComponent<UIModal>()) {
+        auto c4 = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
         out << "  uimodal " << (md->dimBackground ? 1 : 0) << " "
             << md->dimColor.r << " " << md->dimColor.g << " " << md->dimColor.b << " " << md->dimColor.a << " "
-            << (md->closeOnCancel ? 1 : 0) << " " << (md->closeOnClickOutside ? 1 : 0) << "\n";
+            << (md->closeOnCancel ? 1 : 0) << " " << (md->closeOnClickOutside ? 1 : 0);
+        // grok/ui-toast: optional style tail. Old scenes stop after the two flags.
+        out << " " << (md->styleCard ? 1 : 0) << " " << md->cardRadius;
+        c4(md->cardColor); c4(md->titleColor); c4(md->bodyColor); c4(md->confirmColor); c4(md->cancelColor);
+        out << " " << Quote(md->titleText) << " " << Quote(md->bodyText)
+            << " " << Quote(md->confirmText) << " " << Quote(md->cancelText) << "\n";
+    }
+    if (auto* toast = go->GetComponent<UIToast>()) {
+        // grok/ui-toast. Live toast cards are ordinary children and are not listed here.
+        out << "  uitoast " << toast->corner << " " << toast->duration << " " << toast->maxStack << " "
+            << toast->margin << " " << toast->gap << " " << toast->width << " " << toast->height << " "
+            << (toast->showIcon ? 1 : 0) << "\n";
     }
     if (auto* cm = go->GetComponent<UIContextMenu>()) {
         auto c4 = [&](const Color& c) { out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; };
@@ -2350,7 +2435,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << sv->size.x << " " << sv->size.y << " " << (int)sv->anchor << " "
             << sv->contentHeight << " "
             << sv->background.r << " " << sv->background.g << " " << sv->background.b << " " << sv->background.a
-            << " " << (int)sv->axis << " " << sv->contentWidth << " " << (sv->autoContent ? 1 : 0) << "\n";   // optional, newer
+            << " " << (int)sv->axis << " " << sv->contentWidth << " " << (sv->autoContent ? 1 : 0)
+            << " " << sv->inertia << " " << (sv->elastic ? 1 : 0) << " " << sv->barStyle << "\n";   // grok/ui-controls
     }
     if (auto* lv = go->GetComponent<UIListView>()) {
         out << "  uilist " << lv->position.x << " " << lv->position.y << " " << lv->size.x << " " << lv->size.y
@@ -2390,7 +2476,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (int)pb->fillDir
             // extended (back-compatible trailing fields): shape + gradient fill
             << " " << (int)pb->shape << " " << (pb->gradientFill ? 1 : 0) << " "
-            << pb->fillEnd.r << " " << pb->fillEnd.g << " " << pb->fillEnd.b << " " << pb->fillEnd.a << "\n";
+            << pb->fillEnd.r << " " << pb->fillEnd.g << " " << pb->fillEnd.b << " " << pb->fillEnd.a
+            // grok/ui-options: segments, damage trail, color-by-value, text format
+            << " " << pb->segments << " " << pb->segmentGap << " " << pb->trailDelay << " "
+            << pb->trailColor.r << " " << pb->trailColor.g << " " << pb->trailColor.b << " " << pb->trailColor.a
+            << " " << (pb->colorByValue ? 1 : 0) << " "
+            << pb->lowColor.r << " " << pb->lowColor.g << " " << pb->lowColor.b << " " << pb->lowColor.a << " "
+            << pb->highColor.r << " " << pb->highColor.g << " " << pb->highColor.b << " " << pb->highColor.a
+            << " " << Quote(pb->textFormat) << "\n";
     }
     if (auto* rp = go->GetComponent<UIRadialProgress>()) {
         out << "  uiradial " << rp->position.x << " " << rp->position.y << " "
@@ -2485,7 +2578,26 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << " " << (cr->lineUp ? 1 : 0) << " " << (cr->lineDown ? 1 : 0)
             << " " << (cr->lineLeft ? 1 : 0) << " " << (cr->lineRight ? 1 : 0) << " " << cr->spread
             << " " << (cr->circle ? 1 : 0) << " " << cr->circleRadius << " " << cr->circleThickness
-            << " " << cr->circleColor.r << " " << cr->circleColor.g << " " << cr->circleColor.b << " " << cr->circleColor.a;
+            << " " << cr->circleColor.r << " " << cr->circleColor.g << " " << cr->circleColor.b << " " << cr->circleColor.a
+            << " " << cr->spreadRecover << " " << cr->spreadMax;   // grok/ui-hud
+        out << "\n";
+    }
+    if (auto* sg = go->GetComponent<UISlotGrid>()) {
+        out << "  uislotgrid " << sg->position.x << " " << sg->position.y << " " << (int)sg->anchor << " "
+            << sg->columns << " " << sg->rows << " " << sg->cell.x << " " << sg->cell.y << " " << sg->gap << " "
+            << sg->value << " "
+            << sg->color.r << " " << sg->color.g << " " << sg->color.b << " " << sg->color.a << " "
+            << sg->selectedColor.r << " " << sg->selectedColor.g << " " << sg->selectedColor.b << " " << sg->selectedColor.a << " "
+            << sg->hoverColor.r << " " << sg->hoverColor.g << " " << sg->hoverColor.b << " " << sg->hoverColor.a << " "
+            << sg->labels.size();
+        for (const auto& lb : sg->labels) out << " " << Quote(lb);
+        out << "\n";
+    }
+    if (auto* cp = go->GetComponent<UIColorPicker>()) { // grok/ui-color
+        out << "  uicolorpicker " << cp->position.x << " " << cp->position.y << " " << (int)cp->anchor << " "
+            << cp->swatch << " " << cp->gap << " " << cp->value << " " << cp->swatches.size();
+        for (const Color& c : cp->swatches)
+            out << " " << c.r << " " << c.g << " " << c.b << " " << c.a;
         out << "\n";
     }
     if (auto* sa = go->GetComponent<UISafeArea>())
@@ -2532,7 +2644,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (sl->interactable ? 1 : 0)
             << " " << (sl->vertical ? 1 : 0)
             // extended (back-compatible trailing fields): track shape + round knob
-            << " " << (int)sl->trackShape << " " << (sl->roundKnob ? 1 : 0) << "\n";
+            << " " << (int)sl->trackShape << " " << (sl->roundKnob ? 1 : 0)
+            // grok/ui-options: step, fill gradient, handle shape, value format
+            << " " << sl->step << " " << (sl->fillGradient ? 1 : 0) << " "
+            << sl->fillEnd.r << " " << sl->fillEnd.g << " " << sl->fillEnd.b << " " << sl->fillEnd.a
+            << " " << sl->knobShape << " " << Quote(sl->valueFormat) << "\n";
     }
     if (auto* st = go->GetComponent<UIStepper>()) {
         out << "  uistepper " << st->position.x << " " << st->position.y << " "
@@ -3278,6 +3394,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "animsmstance") {
                     StanceTimes& t = smFor()->stanceTimes;
                     in >> t.standCrouch >> t.crouchProne >> t.proneStand;
+                } else if (field == "animsmxfade") {
+                    GaitCrossfades& t = smFor()->crossfades;
+                    in >> t.idleWalk >> t.walkRun >> t.groundAir >> t.airGround;
                 } else if (field == "animsmmatch") {
                     auto* sm2 = smFor();
                     long n = 0; in >> n;
@@ -3322,6 +3441,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     for (long i = 0; i < n && in; ++i) {
                         float w = -1.0f; in >> w;
                         if (i < (long)sm2->states.size()) sm2->states[i].fullBodyIkWeight = w;
+                    }
+                } else if (field == "animsmfall") {
+                    auto* sm2 = smFor();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n && in; ++i) {
+                        std::string fb = ReadQuoted(in);
+                        if (sm2 && i < (long)sm2->states.size()) sm2->states[i].fallbackClip = std::move(fb);
                     }
                 } else if (field == "animsmparams") {
                     auto* sm2 = smFor();
@@ -3622,23 +3748,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                       // Files from before orient's migration loaded a Character's
                       // part rig with it off; Start() turns it on there.
                       if (!k.find("om") && !f->orient) f->orientMigrate = true;
-                      auto lim = [&k](const char* p, IKJointLimit& l) {
-                          const std::string b = p;
-                          int ty = 0; k.i((b + "T").c_str(), ty);
-                          if (ty <= 0) return;
-                          l.type = (IKJointLimit::Type)std::clamp(ty, 0, 2);
-                          k.f((b + "S").c_str(), l.swingMax);
-                          k.f((b + "H0").c_str(), l.hingeMin); k.f((b + "H1").c_str(), l.hingeMax);
-                          k.f((b + "W0").c_str(), l.twistMin); k.f((b + "W1").c_str(), l.twistMax);
-                          if (k.find((b + "TX").c_str())) {
-                              l.autoAxes = false;
-                              k.f((b + "TX").c_str(), l.twistAxis.x); k.f((b + "TY").c_str(), l.twistAxis.y); k.f((b + "TZ").c_str(), l.twistAxis.z);
-                              k.f((b + "HX").c_str(), l.hingeAxis.x); k.f((b + "HY").c_str(), l.hingeAxis.y); k.f((b + "HZ").c_str(), l.hingeAxis.z);
-                          }
-                      };
-                      lim("hl", f->hipLimit); lim("kl", f->kneeLimit); }
+                      ReadLimitKv(k, "hl", f->hipLimit); ReadLimitKv(k, "kl", f->kneeLimit); }
                 } else if (field == "limbik") {
                     auto* lb = go->AddComponent<LimbIK>();
+                    lb->targetBlendTime = 0.0f;   // files from before it snapped to a new goal
                     lb->upperName = ReadQuoted(in); lb->lowerName = ReadQuoted(in); lb->endName = ReadQuoted(in);
                     lb->targetName = ReadQuoted(in); lb->poleName = ReadQuoted(in);
                     int mr = 0;
@@ -3662,6 +3775,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                           if (eq == std::string::npos) continue;
                           const std::string k = tok.substr(0, eq);
                           const float v = std::strtof(tok.c_str() + eq + 1, nullptr);
+                          if (k == "tb") { lb->targetBlendTime = v; continue; }
                           IKJointLimit& l = k.compare(0, 2, "ul") == 0 ? lb->upperLimit : lb->lowerLimit;
                           const std::string f = k.substr(2);
                           if      (f == "T")  l.type = (IKJointLimit::Type)std::clamp((int)v, 0, 2);
@@ -3679,6 +3793,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                       } }
                 } else if (field == "chainik") {
                     auto* ci = go->AddComponent<ChainIK>();
+                    ci->targetBlendTime = 0.0f;   // files from before it snapped to a new goal
                     ci->targetName = ReadQuoted(in);
                     int orient = 0;
                     in >> ci->weight >> ci->iterations >> ci->solver >> orient
@@ -3702,9 +3817,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                 in >> l.twistAxis.x >> l.twistAxis.y >> l.twistAxis.z
                                    >> l.hingeAxis.x >> l.hingeAxis.y >> l.hingeAxis.z;
                         }
+                        KvIn k(in);
+                        k.f("tb", ci->targetBlendTime);
                     }
                 } else if (field == "fbik") {
                     auto* fb = go->AddComponent<FullBodyIK>();
+                    for (auto& e : fb->effectors) e.targetBlendTime = 0.0f;   // files from before it snapped to a new goal
                     int act = 1, am = 1, le = 0;
                     in >> fb->weight >> act >> fb->fadeTime >> fb->softness >> fb->bodyPull >> fb->maxBodyOffset
                        >> fb->spineReach >> fb->maxSpineAngle >> am >> le;
@@ -3751,9 +3869,21 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     k.b("armIK", ph->armIK); k.f("transition", ph->transitionTime);
                     int carry = 0; k.b("body", ph->bodyAdjustment); k.i("carry", carry);
                     ph->carryAnimations = carry == 1 ? ProceduralObjectHolding::CarryAnim::Custom : ProceduralObjectHolding::CarryAnim::Automatic;
+                    // Throw bindings came later. Missing keys keep the defaults, so an
+                    // older objholding line still loads.
+                    k.key("throwKey", ph->throwKey); k.i("throwMouse", ph->throwMouseButton); k.i("throwPad", ph->throwGamepadButton);
+                    k.f("charge", ph->throwChargeTime); k.f("tmin", ph->throwMinSpeed); k.f("tmax", ph->throwMaxSpeed); k.f("reach", ph->pickupRange);
                 } else if (field == "fbikx") {
-                    if (auto* fb = go->GetComponent<FullBodyIK>())
+                    if (auto* fb = go->GetComponent<FullBodyIK>()) {
                         in >> fb->blendSpeed >> fb->goalSmoothing >> fb->lookSmoothing >> fb->armMinBend >> fb->legMinBend;
+                        KvIn k(in);
+                        for (int l = 0; l < FullBodyIK::LimbCount; ++l) {
+                            const std::string p = "e" + std::to_string(l);
+                            ReadLimitKv(k, p + "u", fb->effectors[l].upperLimit);
+                            ReadLimitKv(k, p + "l", fb->effectors[l].lowerLimit);
+                            k.f((p + "b").c_str(), fb->effectors[l].targetBlendTime);
+                        }
+                    }
                 } else if (field == "ikx") {
                     std::string kind; int act = 1; float fade = 0.0f;
                     in >> kind >> act >> fade;
@@ -4597,6 +4727,45 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     k.f("ex", pv->eyeOffset.x); k.f("ey", pv->eyeOffset.y); k.f("ez", pv->eyeOffset.z);
                     k.f("dist", pv->thirdPersonDistance);
                     k.f("shoulder", pv->shoulderOffset);
+                } else if (field == "uitheme") {
+                    // grok/ui-theme. Missing keys keep the Studio defaults.
+                    auto* th = go->AddComponent<UITheme>();
+                    KvIn k(in);
+                    k.str("name", th->themeName);
+                    k.b("apply", th->applyOnStart);
+                    k.i("preset", th->preset);
+                    k.f("corner", th->cornerRadius);
+                    k.i("mask", th->cornerMask);
+                    k.f("border", th->borderWidth);
+                    k.b("shadow", th->shadow);
+                    k.f("soft", th->shadowSoftness);
+                    k.f("ox", th->shadowOffset.x);
+                    k.f("oy", th->shadowOffset.y);
+                    k.f("pad", th->padding);
+                    k.f("font", th->fontScale);
+                    k.f("tpx", th->textPixelSize);
+                    k.f("trans", th->transitionSpeed);
+                    k.f("hscale", th->hoverScale);
+                    k.f("glow", th->glow);
+                    k.f("opa", th->opacity);
+                    k.b("grad", th->gradient);
+                    k.i("gdir", th->gradientDir);
+                    k.b("sheen", th->sheen);
+                    k.col("panel", th->panel);
+                    k.col("pbot", th->panelBottom);
+                    k.col("accent", th->accent);
+                    k.col("text", th->text);
+                    k.col("muted", th->muted);
+                    k.col("button", th->button);
+                    k.col("hover", th->buttonHover);
+                    k.col("press", th->buttonPressed);
+                    k.col("btext", th->buttonText);
+                    k.col("off", th->disabled);
+                    k.col("danger", th->danger);
+                    k.col("ok", th->success);
+                    k.col("edge", th->border);
+                    k.col("sh", th->shadowCol);
+                    k.col("glowc", th->glowColor);
                 } else if (field == "fpctrl") {
                     float ws = 4.5f, rs = 8, jf = 6, ms = 0.15f; int cj = 1, da = 1, iy = 0;
                     in >> ws >> rs >> jf >> ms >> cj >> da;
@@ -5244,8 +5413,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     btn->clickTarget = ReadQuoted(in); btn->clickFunction = ReadQuoted(in);
                                     in >> std::ws; // optional OnClick argument (added later)
                                     if (std::isdigit(in.peek()) || in.peek() == '.' || in.peek() == '-') in >> btn->clickArg;
-                                    in >> std::ws; // optional TTF label font (newest)
+                                    in >> std::ws; // optional TTF label font
                                     if (in.peek() == '"') btn->fontPath = ReadQuoted(in);
+                                    in >> std::ws; // grok/ui-options: ease, duration, focus color
+                                    if (std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') {
+                                        int ez = 0, sf = 0; Color fc;
+                                        in >> ez >> btn->transitionDuration >> sf
+                                           >> fc.r >> fc.g >> fc.b >> fc.a;
+                                        btn->transitionEase = ez; btn->separateFocus = (sf != 0);
+                                        btn->focusColor = fc;
+                                    }
                                 }
                             }
                         }
@@ -5539,6 +5716,19 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> w->color.r >> w->color.g >> w->color.b >> w->opacity
                        >> w->reflectivity >> w->specular >> w->shininess >> w->flow.x >> w->flow.y;
                     w->color.a = w->opacity;
+                    // depth, density and drag came later. A quote means an older water
+                    // line (visual plane only, depth stays 0).
+                    auto numeric = [](std::istream& in) {
+                        in >> std::ws;
+                        const int c = in.peek();
+                        return c == '-' || c == '+' || c == '.' || std::isdigit(c);
+                    };
+                    if (numeric(in)) in >> w->depth;
+                    if (numeric(in)) in >> w->fluidDensity;
+                    if (numeric(in)) in >> w->linearDrag;
+                    if (!std::isfinite(w->depth) || w->depth < 0.0f) w->depth = 0.0f;
+                    if (!std::isfinite(w->fluidDensity) || w->fluidDensity < 0.0f) w->fluidDensity = 1.0f;
+                    if (!std::isfinite(w->linearDrag) || w->linearDrag < 0.0f) w->linearDrag = 4.0f;
                     w->texture = ReadQuoted(in);
                     w->Apply();
                 } else if (field == "worldstreamer") {
@@ -5661,6 +5851,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         in >> sp >> inp->cornerRadius >> inp->borderWidth >> bc.r >> bc.g >> bc.b >> bc.a;
                         inp->shape = (UIShape)sp; inp->borderColor = bc;
                     }
+                    in >> std::ws; // grok/ui-controls: optional multiline
+                    if (std::isdigit(in.peek())) { int ml = 0; in >> ml; inp->multiline = (ml != 0); }
                 } else if (field == "uitabs") {
                     auto* tb = go->AddComponent<UITabs>();
                     int an = 0, sp = 0, it = 1; std::size_t count = 0;
@@ -5702,6 +5894,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         for (std::size_t k = 0; k < bn && in; ++k) { int b = 0; in >> b; tb->badges.push_back(b); }
                         in >> dn; tb->disabled.clear();
                         for (std::size_t k = 0; k < dn && in; ++k) { int d = 0; in >> d; tb->disabled.push_back(d != 0); }
+                        in >> std::ws; // grok/ui-controls: optional closable
+                        if (std::isdigit(in.peek())) { int cl = 0; in >> cl; tb->closable = (cl != 0); }
                     } else {
                         // Saved before tab keys / tab focus existed: keep Q/E, the gamepad
                         // shoulders and A/D doing whatever the game already uses them for.
@@ -5727,6 +5921,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (in.peek() == '"') dd->placeholder = ReadQuoted(in);
                     in >> std::ws; // optional shape + corner radius (added later)
                     if (std::isdigit(in.peek())) { int sp = 0; in >> sp >> dd->cornerRadius; dd->shape = (UIShape)sp; }
+                    in >> std::ws; // grok/ui-controls: optional search, row cap, glyphs
+                    if (std::isdigit(in.peek())) {
+                        int se = 0; std::size_t ic = 0;
+                        in >> se >> dd->maxVisible >> ic;
+                        dd->searchable = (se != 0);
+                        dd->optionIcons.clear();
+                        for (std::size_t k = 0; k < ic && in; ++k) dd->optionIcons.push_back(ReadQuoted(in));
+                    }
                 } else if (field == "uibind") {
                     auto* tb = go->AddComponent<UITextBind>();
                     tb->format = ReadQuoted(in);
@@ -5805,6 +6007,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                        >> tc.r >> tc.g >> tc.b >> tc.a
                        >> bc.r >> bc.g >> bc.b >> bc.a;
                     tt->background = bg; tt->textColor = tc; tt->borderColor = bc;
+                    in >> std::ws; // grok/ui-controls: optional rich text + cursor offset
+                    if (std::isdigit(in.peek())) {
+                        int rich = 0; in >> rich >> tt->offset.x >> tt->offset.y;
+                        tt->richText = (rich != 0);
+                    }
                 } else if (field == "uilayout") {
                     auto* lg = go->AddComponent<UILayoutGroup>();
                     std::string rest; std::getline(in, rest);   // whole line: newer files carry extra fields
@@ -5837,6 +6044,26 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     int dim = 1, cc = 1, co = 0;
                     in >> dim >> md->dimColor.r >> md->dimColor.g >> md->dimColor.b >> md->dimColor.a >> cc >> co;
                     md->dimBackground = dim != 0; md->closeOnCancel = cc != 0; md->closeOnClickOutside = co != 0;
+                    // grok/ui-toast: the style tail is optional. A letter means the next field.
+                    in >> std::ws;
+                    if (std::isdigit(in.peek())) {
+                        int styled = 0;
+                        in >> styled >> md->cardRadius;
+                        auto c4 = [&](Color& c) { in >> c.r >> c.g >> c.b >> c.a; };
+                        c4(md->cardColor); c4(md->titleColor); c4(md->bodyColor);
+                        c4(md->confirmColor); c4(md->cancelColor);
+                        md->styleCard = styled != 0;
+                        md->titleText = ReadQuoted(in);
+                        md->bodyText = ReadQuoted(in);
+                        md->confirmText = ReadQuoted(in);
+                        md->cancelText = ReadQuoted(in);
+                    }
+                } else if (field == "uitoast") {   // grok/ui-toast
+                    auto* toast = go->AddComponent<UIToast>();
+                    int icon = 1;
+                    in >> toast->corner >> toast->duration >> toast->maxStack
+                       >> toast->margin >> toast->gap >> toast->width >> toast->height >> icon;
+                    toast->showIcon = icon != 0;
                 } else if (field == "uicontext") {
                     auto* cm = go->AddComponent<UIContextMenu>();
                     auto c4 = [&](Color& c) { in >> c.r >> c.g >> c.b >> c.a; };
@@ -5882,6 +6109,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     sv->anchor = (UIAnchor)an; sv->background = c;
                     int ax = 0, ac = 1; float cw = 0.0f;
                     if (rs >> ax >> cw >> ac) { sv->axis = (UIScrollView::Axis)ax; sv->contentWidth = cw; sv->autoContent = ac != 0; }
+                    float ine = 0.0f; int el = 0, bs = 0;   // grok/ui-controls
+                    if (rs >> ine >> el >> bs) { sv->inertia = ine; sv->elastic = el != 0; sv->barStyle = bs; }
                 } else if (field == "canvas") {
                     auto* cv = go->AddComponent<Canvas>();
                     int sm = 0;
@@ -5936,6 +6165,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             int sp = 0, gf = 0; Color fe;
                             in >> sp >> gf >> fe.r >> fe.g >> fe.b >> fe.a;
                             pb->shape = (UIShape)sp; pb->gradientFill = (gf != 0); pb->fillEnd = fe;
+                            in >> std::ws; // grok/ui-options: segments, trail, color-by-value, text
+                            if (std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') {
+                                int seg = 0, cb = 0; Color tc, lo, hi;
+                                in >> seg >> pb->segmentGap >> pb->trailDelay
+                                   >> tc.r >> tc.g >> tc.b >> tc.a >> cb
+                                   >> lo.r >> lo.g >> lo.b >> lo.a
+                                   >> hi.r >> hi.g >> hi.b >> hi.a;
+                                pb->segments = seg; pb->trailColor = tc;
+                                pb->colorByValue = (cb != 0); pb->lowColor = lo; pb->highColor = hi;
+                                in >> std::ws;
+                                if (in.peek() == '"') pb->textFormat = ReadQuoted(in);
+                            }
                         }
                     }
                 } else if (field == "uiradial") {
@@ -6098,6 +6339,35 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         cr->lineLeft = (ll != 0); cr->lineRight = (lr != 0);
                         cr->circle = (ci != 0); cr->circleColor = qc;
                     }
+                    in >> std::ws; // grok/ui-hud: optional spread recovery
+                    int rpk = in.peek();
+                    if (std::isdigit(rpk) || rpk == '-' || rpk == '.')
+                        in >> cr->spreadRecover >> cr->spreadMax;
+                } else if (field == "uislotgrid") {
+                    auto* sg = go->AddComponent<UISlotGrid>();
+                    int an = 0; std::size_t n = 0;
+                    in >> sg->position.x >> sg->position.y >> an >> sg->columns >> sg->rows
+                       >> sg->cell.x >> sg->cell.y >> sg->gap >> sg->value
+                       >> sg->color.r >> sg->color.g >> sg->color.b >> sg->color.a
+                       >> sg->selectedColor.r >> sg->selectedColor.g >> sg->selectedColor.b >> sg->selectedColor.a
+                       >> sg->hoverColor.r >> sg->hoverColor.g >> sg->hoverColor.b >> sg->hoverColor.a
+                       >> n;
+                    sg->anchor = (UIAnchor)an;
+                    sg->labels.clear();
+                    for (std::size_t i = 0; i < n && in; ++i) sg->labels.push_back(ReadQuoted(in));
+                    // Children are parented after every object exists. Update builds any slot
+                    // that wasn't saved; calling Rebuild here would duplicate them.
+                } else if (field == "uicolorpicker") { // grok/ui-color
+                    auto* cp = go->AddComponent<UIColorPicker>();
+                    int an = 0; std::size_t n = 0;
+                    in >> cp->position.x >> cp->position.y >> an >> cp->swatch >> cp->gap >> cp->value >> n;
+                    cp->anchor = (UIAnchor)an;
+                    cp->swatches.clear();
+                    for (std::size_t i = 0; i < n && in; ++i) {
+                        Color c;
+                        in >> c.r >> c.g >> c.b >> c.a;
+                        cp->swatches.push_back(c);
+                    }
                 } else if (field == "uisafearea") {
                     auto* sa = go->AddComponent<UISafeArea>();
                     int l = 1, t = 1, r = 1, b = 1, en = 1;
@@ -6175,6 +6445,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         if (std::isdigit(in.peek())) {
                             int ts = 0, rk = 0; in >> ts >> rk;
                             sl->trackShape = (UIShape)ts; sl->roundKnob = (rk != 0);
+                            in >> std::ws; // grok/ui-options: step, gradient, handle, format
+                            if (std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') {
+                                int fg = 0, ks = -1; Color fe;
+                                in >> sl->step >> fg >> fe.r >> fe.g >> fe.b >> fe.a >> ks;
+                                sl->fillGradient = (fg != 0); sl->fillEnd = fe; sl->knobShape = ks;
+                                in >> std::ws;
+                                if (in.peek() == '"') sl->valueFormat = ReadQuoted(in);
+                            }
                         }
                     }
                 } else if (field == "uistepper") {

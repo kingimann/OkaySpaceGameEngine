@@ -520,6 +520,12 @@ and transitions. Beyond single conditions:
   base pose. **+ Mask bone** adds more subtrees (arms and the head, not the
   whole spine). **Additive** adds the clip on top of the base pose instead of
   replacing those bones, for a recoil or aim offset while the body keeps walking.
+- **If missing** — when the state's clip is not in this Animator's library, play
+  the fallback clip instead. A name that exists only on a child model's imported
+  clips plays there (Humanoid Retarget yields until the state changes).
+  **Import into clip** / **Import as fallback** load a file into that slot
+  (`.okayanim` on a character, FBX / glTF / BVH on an imported model). The Clip
+  list also includes the built-in library and those imported takes.
 
 Scripts: `anim_set_float`, `anim_set_bool`, `anim_trigger`, `anim_state()`,
 `anim_prev_state()`, `anim_state_time()`, `anim_normalized_time()`.

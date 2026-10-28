@@ -32,7 +32,7 @@ namespace okay {
 
 class LookAtIK : public Component {
 public:
-    int ExecutionOrder() const override { return 100; }   // after animation
+    int ExecutionOrder() const override { return 110; }   // last: looks from the final body pose
     std::vector<Transform*> chain;     ///< bones root..tip (e.g. spine, neck, head)
     Transform* targetObject = nullptr; ///< look at this object (overrides `target`)
     std::vector<std::string> chainNames; ///< editor/serialized: resolve `chain` by object names

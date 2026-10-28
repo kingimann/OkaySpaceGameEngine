@@ -131,6 +131,62 @@ static SDL_Texture* IconTexture(SDL_Renderer* r, const std::string& path, const 
     return path.empty() ? nullptr : GetTexture(r, path, baseDir, cache);
 }
 
+// The item's picture, or a colour tile with its initials when the file is missing.
+// An atlas definition samples a UV cell of the sheet.
+static void DrawItemIcon(SDL_Renderer* r, const std::string& folder, const std::string& item,
+                         const std::string& baseDir, std::unordered_map<std::string, SDL_Texture*>& cache,
+                         float x, float y, float w, float h) {
+    const okay::ItemIconRef ref = okay::ItemIconOf(folder, item);
+    if (SDL_Texture* tex = IconTexture(r, ref.path, baseDir, cache)) {
+        SDL_Rect dst{(int)x, (int)y, (int)w, (int)h};
+        SDL_Rect src{};
+        SDL_Rect* sp = nullptr;
+        if (ref.atlas) {
+            int tw = 0, th = 0;
+            SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+            if (tw > 0 && th > 0) {
+                src.x = (int)(ref.u0 * tw); src.y = (int)(ref.v0 * th);
+                src.w = std::max(1, (int)((ref.u1 - ref.u0) * tw));
+                src.h = std::max(1, (int)((ref.v1 - ref.v0) * th));
+                sp = &src;
+            }
+        }
+        SDL_RenderCopy(r, tex, sp, &dst);
+        return;
+    }
+    const okay::ItemGlyph g = okay::GlyphFor(item);
+    SDL_Rect tile{(int)x, (int)y, (int)w, (int)h};
+    FillUIShape(r, tile, UIShape::Rounded, 3.0f, g.bg, g.bg, false, false, 1.0f);
+    if (g.letters.empty()) return;
+    float px = h / ((Font8x8::Height + 1) * (g.letters.size() > 1 ? 2.4f : 1.8f));
+    if (px < 1.0f) px = 1.0f;
+    const float tw = UITextW(g.letters, px);
+    DrawText(r, g.letters, x + (w - tw) * 0.5f, y + (h - Font8x8::Height * px) * 0.5f, px,
+             SDL_Color{(Uint8)(g.fg.r * 255), (Uint8)(g.fg.g * 255), (Uint8)(g.fg.b * 255), 255});
+}
+
+static void DrawItemTip(SDL_Renderer* r, const okay::ItemTip& tip, float mx, float my, float px,
+                        const Color& bg, const Color& text, int W, int H) {
+    if (tip.lines.empty()) return;
+    if (px < 1.0f) px = 1.0f;
+    float maxW = 0;
+    for (const auto& ln : tip.lines) maxW = std::max(maxW, UITextW(ln.text, px));
+    const float lineH = (Font8x8::Height + 2) * px, pad = 6.0f;
+    const float bw = maxW + pad * 2, bh = lineH * (float)tip.lines.size() + pad * 2;
+    float x = mx + 14, y = my + 14;
+    if (x + bw > W - 4) x = mx - bw - 8;
+    if (y + bh > H - 4) y = my - bh - 8;
+    if (x < 4) x = 4;
+    if (y < 4) y = 4;
+    SDL_Rect box{(int)x, (int)y, (int)bw, (int)bh};
+    FillUIShape(r, box, UIShape::Rounded, 4.0f, bg, bg, false, false, 1.0f);
+    for (std::size_t i = 0; i < tip.lines.size(); ++i) {
+        const Color c = tip.lines[i].useTint ? tip.lines[i].tint : text;
+        DrawText(r, tip.lines[i].text, x + pad, y + pad + lineH * (float)i, px,
+                 SDL_Color{(Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255), 255});
+    }
+}
+
 
 // Screen-space vignette (RenderSettings.vignette): darken the frame's edges toward
 // the corners. A cheap post overlay of stepped 1px border frames fading inward, so
@@ -537,15 +593,9 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         if (idx == ui.dragIndex) shown -= (ui.dragAmount > 0 ? ui.dragAmount : shown);
         if (shown > 0 && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
             const auto& it = inv->slots[idx];
-            SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(ui.iconFolder, it.item), baseDir, cache);
-            if (icon) { int ins = (int)(ui.iconInset * uiScale); SDL_Rect d{inner.x + ins, inner.y + ins, inner.w - 2 * ins, inner.h - 2 * ins}; SDL_RenderCopy(r, icon, nullptr, &d); }
-            else if (ui.showNames) {
-                std::string nm = it.item.substr(0, ui.nameChars < 1 ? 1 : (std::size_t)ui.nameChars);
-                float px = (S - 8.0f) / ((float)nm.size() * (Font8x8::Width + 1)) * ui.labelScale;
-                if (px < 1.0f) px = 1.0f; if (px > S * 0.05f) px = S * 0.05f;   // fit the slot
-                DrawText(r, nm, X + 4, Y + 5, px,
-                         SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
-            }
+            int ins = (int)(ui.iconInset * uiScale);
+            DrawItemIcon(r, ui.iconFolder, it.item, baseDir, cache, (float)(inner.x + ins), (float)(inner.y + ins),
+                         (float)(inner.w - 2 * ins), (float)(inner.h - 2 * ins));
             if (ui.showCounts && shown > 1) {
                 std::string cs = std::to_string(shown);
                 float px = S * 0.038f * ui.labelScale; if (px < 1.0f) px = 1.0f;
@@ -598,15 +648,8 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     for (int i = 0; i < n && i < total; ++i) slot(hx + i * (sz + gap), hy, i, i == ui.selected);
     // Equipment column (worn items) beside the open backpack.
     auto equipIcon = [&](const std::string& item, float x, float y) {
-        if (SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(ui.iconFolder, item), baseDir, cache)) {
-            int ins = (int)(ui.iconInset * uiScale); SDL_Rect d{(int)x + ins, (int)y + ins, (int)sz - 2 * ins, (int)sz - 2 * ins};
-            SDL_RenderCopy(r, icon, nullptr, &d);
-        } else {
-            std::string nm = item.substr(0, ui.nameChars < 1 ? 1 : (std::size_t)ui.nameChars);
-            float px = (sz - 8.0f) / ((float)nm.size() * (Font8x8::Width + 1)) * ui.labelScale;
-            if (px < 1.0f) px = 1.0f; if (px > sz * 0.05f) px = sz * 0.05f;
-            DrawText(r, nm, x + 4, y + 5, px, SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
-        }
+        int ins = (int)(ui.iconInset * uiScale);
+        DrawItemIcon(r, ui.iconFolder, item, baseDir, cache, x + ins, y + ins, sz - 2 * ins, sz - 2 * ins);
     };
     if (L.equip && L.equipN > 0) {
         float x0, y0, x1, y1; L.EquipXY(0, x0, y0); L.EquipXY(L.equipN - 1, x1, y1);
@@ -637,26 +680,30 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
             DrawText(r, std::to_string(i + 1), hx + i * (sz + gap) + 3, hy + 2, px,
                      SDL_Color{(Uint8)(ui.numberColor.r*255),(Uint8)(ui.numberColor.g*255),(Uint8)(ui.numberColor.b*255),255});
     }
-    // Tooltip helper: a small panel near the cursor with the item's name + count.
+    // Keyboard / gamepad cursor: an outline on the slot A will pick up or drop into.
+    if (ui.open && ui.navSlot >= 0 && ui.navSlot < total) {
+        float sx, sy; L.SlotXY(ui.navSlot, sx, sy);
+        setc(ui.selectedColor);
+        SDL_Rect nr{(int)sx - 2, (int)sy - 2, (int)sz + 4, (int)sz + 4};
+        SDL_RenderDrawRect(r, &nr);
+    }
+    // Tooltip: the item's definition, and a compare against whatever is worn in that slot.
     okay::Vec2 mpos = okay::Input::MousePosition();
-    auto drawTip = [&](const std::string& label) {
-        if (!ui.showTooltips || label.empty()) return;
-        float px = sz * 0.030f * ui.labelScale; if (px < 1.0f) px = 1.0f;
-        float tw = UITextW(label, px), th = Font8x8::Height * px, pad = 6.0f;
-        SDL_Rect bg{(int)(mpos.x + 14), (int)(mpos.y + 14), (int)(tw + pad * 2), (int)(th + pad * 2)};
-        FillUIShape(r, bg, UIShape::Rounded, 4.0f, ui.tooltipColor, ui.tooltipColor, false, false, 1.0f);
-        DrawText(r, label, bg.x + pad, bg.y + pad, px,
-                 SDL_Color{(Uint8)(ui.tooltipText.r*255),(Uint8)(ui.tooltipText.g*255),(Uint8)(ui.tooltipText.b*255),255});
+    const okay::Equipment* worn = inv ? okay::Equipment::Of(inv->gameObject) : nullptr;
+    auto drawTip = [&](const okay::ItemTip& tip) {
+        if (!ui.showTooltips) return;
+        float px = sz * 0.028f * ui.labelScale; if (px < 1.0f) px = 1.0f;
+        DrawItemTip(r, tip, mpos.x, mpos.y, px, ui.tooltipColor, ui.tooltipText, W, H);
     };
-    auto slotLabel = [&](const Inventory::Slot& it) {
-        return it.item + (it.count > 1 ? " x" + std::to_string(it.count) : std::string());
+    auto slotTip = [&](const Inventory::Slot& it) {
+        return okay::DescribeItem(it.item, it.count, &it.data, worn);
     };
     // Hotbar tooltip on hover (shown even when the backpack is closed).
     if (inv && ui.showTooltips && !ui.open && ui.dragIndex < 0)
         for (int i = 0; i < n && i < (int)inv->slots.size(); ++i) {
             float sx = hx + i * (sz + gap);
             if (mpos.x >= sx && mpos.x < sx + sz && mpos.y >= hy && mpos.y < hy + sz &&
-                !inv->slots[i].item.empty()) { drawTip(slotLabel(inv->slots[i])); break; }
+                !inv->slots[i].item.empty()) { drawTip(slotTip(inv->slots[i])); break; }
         }
     // Minecraft-style held-item name above (or below) the hotbar.
     if (ui.showSelectedName) {
@@ -684,8 +731,10 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
         SDL_Rect hr{(int)ex, (int)ey, (int)sz, (int)sz};
         FillUIShape(r, hr, cr > 0.5f ? UIShape::Rounded : UIShape::Rectangle, cr, ui.hoverColor, ui.hoverColor, false, false, 1.0f);
         const std::string& it = L.equip->ItemIn(fr.equipHover);
-        const okay::ItemDefinition* d = it.empty() ? nullptr : okay::ItemDatabase::Get().Find(it);
-        drawTip(L.equip->slots[fr.equipHover].name + (it.empty() ? std::string() : ": " + (d ? d->DisplayName() : it)));
+        if (it.empty()) {
+            okay::ItemTip t; okay::TipLine ln; ln.text = L.equip->slots[fr.equipHover].name; t.lines.push_back(ln);
+            drawTip(t);
+        } else drawTip(okay::DescribeItem(it, 1, &L.equip->slots[fr.equipHover].data, nullptr));
     }
     if (L.equip && ui.equipDrag >= 0 && ui.equipDrag < L.equipN) {   // a worn item following the cursor
         const float x = mp.x - sz * 0.5f, y = mp.y - sz * 0.5f;
@@ -695,22 +744,14 @@ static void DrawInventoryUI(SDL_Renderer* r, okay::InventoryUI& ui, const std::s
     // Highlight the slot under the cursor while hovering, or where a held stack will land.
     if (fr.hover >= 0) {
         hilite(fr.hover, ui.hoverColor);
-        if (fr.hover < (int)inv->slots.size() && !inv->slots[fr.hover].item.empty()) drawTip(slotLabel(inv->slots[fr.hover]));
+        if (fr.hover < (int)inv->slots.size() && !inv->slots[fr.hover].item.empty()) drawTip(slotTip(inv->slots[fr.hover]));
     }
     hilite(fr.target, Color{ui.selectedColor.r, ui.selectedColor.g, ui.selectedColor.b, 0.40f});
     if (ui.dragIndex >= 0 && ui.dragIndex < (int)inv->slots.size()) {
         const auto& it = inv->slots[ui.dragIndex];
         float x = mp.x - sz * 0.5f, y = mp.y - sz * 0.5f;
         slot(x, y, -2, false);   // an empty slot frame floating under the cursor
-        SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(ui.iconFolder, it.item), baseDir, cache);
-        if (icon) { SDL_Rect d{(int)x + 4, (int)y + 4, (int)sz - 8, (int)sz - 8}; SDL_RenderCopy(r, icon, nullptr, &d); }
-        else {
-            std::string nm = it.item.substr(0, ui.nameChars < 1 ? 1 : (std::size_t)ui.nameChars);
-            float px = (sz - 8.0f) / ((float)nm.size() * (Font8x8::Width + 1)) * ui.labelScale;
-            if (px < 1.0f) px = 1.0f; if (px > sz * 0.05f) px = sz * 0.05f;
-            DrawText(r, nm, x + 4, y + 5, px,
-                     SDL_Color{(Uint8)(ui.textColor.r*255),(Uint8)(ui.textColor.g*255),(Uint8)(ui.textColor.b*255),255});
-        }
+        DrawItemIcon(r, ui.iconFolder, it.item, baseDir, cache, x + 4, y + 4, sz - 8, sz - 8);
         // The carried count (the split amount, or the whole stack).
         int carried = ui.dragAmount > 0 ? ui.dragAmount : it.count;
         if (ui.showCounts && carried > 1) {
@@ -813,12 +854,30 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
         SDL_Rect box{(int)px0, (int)py0, (int)w, (int)h};
         stroke(px0, py0, w, h, rar ? *rar : u.itemBorder, ghost ? 170 : 235);
         if (hover) { fill(px0, py0, w, h, u.hoverColor, cr); stroke(px0, py0, w, h, lighten(u.itemBorder, 0.35f), 255); }
-        SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(u.iconFolder, it.name), baseDir, cache);
-        if (icon) { SDL_SetTextureAlphaMod(icon, ghost ? 160 : 255); SDL_Rect d{box.x + 6, box.y + 6, box.w - 12, box.h - 12}; SDL_RenderCopy(r, icon, nullptr, &d); }
-        else if (u.showItemNames) {   // clip the name to the tile width so it never overflows the cell
-            float px = u.itemNameScale; int maxc = (int)((w - 12) / ((Font8x8::Width + 1) * px)); if (maxc < 1) maxc = 1;
-            std::string nm = (int)it.name.size() > maxc ? it.name.substr(0, maxc) : it.name;
-            DrawText(r, nm, box.x + 6, box.y + 7, px, sc(u.textColor));
+        if (SDL_Texture* icon = IconTexture(r, okay::ItemIconOf(u.iconFolder, it.name).path, baseDir, cache)) {
+            SDL_SetTextureAlphaMod(icon, ghost ? 160 : 255);
+            const okay::ItemIconRef ref = okay::ItemIconOf(u.iconFolder, it.name);
+            SDL_Rect src{}, d{box.x + 6, box.y + 6, box.w - 12, box.h - 12};
+            SDL_Rect* sp = nullptr;
+            if (ref.atlas) {
+                int tw = 0, th = 0; SDL_QueryTexture(icon, nullptr, nullptr, &tw, &th);
+                if (tw > 0 && th > 0) {
+                    src.x = (int)(ref.u0 * tw); src.y = (int)(ref.v0 * th);
+                    src.w = std::max(1, (int)((ref.u1 - ref.u0) * tw));
+                    src.h = std::max(1, (int)((ref.v1 - ref.v0) * th));
+                    sp = &src;
+                }
+            }
+            SDL_RenderCopy(r, icon, sp, &d);
+            if (ghost) SDL_SetTextureAlphaMod(icon, 255);
+        } else {
+            const okay::ItemGlyph g = okay::GlyphFor(it.name);
+            fill(px0 + 4, py0 + 4, w - 8, h - 8, g.bg, cr);
+            if (!g.letters.empty()) {
+                float px = std::min(u.itemNameScale, (h - 10) / (Font8x8::Height + 1));
+                if (px < 1.0f) px = 1.0f;
+                DrawText(r, g.letters, box.x + 8, box.y + 8, px, sc(g.fg));
+            }
         }
         if (it.count > 1) {
             std::string cstr = std::to_string(it.count); float px = 1.3f;
@@ -837,6 +896,8 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
         fillG(P.ox - 6, hy, P.gw + 12, labelH, lighten(ui.headerColor, 0.08f), darken(ui.headerColor, 0.05f), cr);
         if (ui.accentBars) fill(P.ox - 6, hy, 3, labelH, acc, 0);    // category accent stripe
         DrawText(r, P.label, P.ox + (ui.accentBars ? 2.0f : 6.0f), hy + 5, 1.4f, sc(ui.textColor));
+        if (P.ground && P.actW > 0)
+            DrawText(r, "Take all", P.actX + 2, P.actY + 4, 1.1f, sc(ui.textColor));
         if (ui.showWeight && inv->weightLimit > 0.0f) {
             char wb[48]; std::snprintf(wb, sizeof(wb), "%.1f/%.0f", inv->TotalWeight(), inv->weightLimit);
             float px = 1.2f, tw = UITextW(wb, px);
@@ -873,12 +934,8 @@ static void DrawGridInventory(SDL_Renderer* r, okay::GridInventoryUI& ui, const 
         int hov = inv->ItemAtCell(hovCx, hovCy);
         if (hov >= 0) {
             const auto& it = inv->items[hov];
-            char tip[96];
-            std::snprintf(tip, sizeof(tip), "%s  %dx%d%s  %.1fkg", it.name.c_str(), it.w, it.h,
-                          it.count > 1 ? ("  x" + std::to_string(it.count)).c_str() : "", it.weight * it.count);
-            float px = 1.4f, tw = UITextW(tip, px), tpad = 6.0f;
-            fill(mp.x + 14, mp.y + 14, tw + tpad * 2, Font8x8::Height * px + tpad * 2, ui.tooltipColor, 4.0f);
-            DrawText(r, tip, mp.x + 14 + tpad, mp.y + 14 + tpad, px, sc(ui.tooltipText));
+            DrawItemTip(r, okay::DescribeItem(it.name, it.count, &it.data, nullptr, it.weight, it.w, it.h),
+                        mp.x, mp.y, 1.3f, ui.tooltipColor, ui.tooltipText, W, H);
         }
     }
     // Rotate (applied only on a good drop), pick up, right-click split, drop / transfer / merge.
@@ -959,15 +1016,19 @@ static void DrawChest(SDL_Renderer* r, okay::ChestInventory& ch, const std::stri
         FillUIShape(r, rc2, rad > 0.5f ? UIShape::Rounded : UIShape::Rectangle, rad, c, c, false, false, 1.0f);
     };
     okay::Vec2 mp = okay::Input::MousePosition();
-    fill(L.panelX - 12, L.topY - 34, L.panelW + 24, L.totalH + 46, ch.panelColor, cr + 2);
+    const float bodyH = L.drawH > 0 ? L.drawH : L.totalH + 46.0f;
+    fill(L.panelX - 12, L.topY - 34, L.panelW + 24, bodyH, ch.panelColor, cr + 2);
     fill(L.panelX - 12, L.topY - 34, L.panelW + 24, 26, ch.titleBar, cr + 2);
     DrawText(r, ch.title, L.panelX, L.topY - 28, 1.6f, sc(ch.textColor));
+    auto btn = [&](const okay::InventoryInput::ClickRect& b, const char* label) {
+        fill(b.x, b.y, b.w, b.h, ch.slotColor, 3);
+        DrawText(r, label, b.x + 4, b.y + 3, 1.0f, sc(ch.textColor));
+    };
+    btn(L.takeAll, "Take all"); btn(L.stash, "Stash"); btn(L.sort, "Sort");
     int hovSide = -1, hovIdx = -1;   // which grid + slot the cursor is over
     L.Pick(mp.x, mp.y, hovSide, hovIdx);
     auto stack = [&](const okay::Inventory::Slot& it, float x, float y, float sz) {
-        SDL_Texture* icon = IconTexture(r, okay::ItemIconPath(ch.iconFolder, it.item), baseDir, cache);
-        if (icon) { SDL_Rect d{(int)x+4, (int)y+4, (int)sz-8, (int)sz-8}; SDL_RenderCopy(r, icon, nullptr, &d); }
-        else DrawText(r, it.item.substr(0, 5), x + 4, y + 5, 1.0f, sc(ch.textColor));
+        DrawItemIcon(r, ch.iconFolder, it.item, baseDir, cache, x + 4, y + 4, sz - 8, sz - 8);
         if (it.count > 1) { std::string c = std::to_string(it.count); float px = 1.2f;
             float tw = UITextW(c, px);
             DrawText(r, c, x + sz - tw - 3, y + sz - (Font8x8::Height + 1) * px - 2, px, SDL_Color{255,255,255,255}); }
@@ -984,10 +1045,26 @@ static void DrawChest(SDL_Renderer* r, okay::ChestInventory& ch, const std::stri
             if (!dragged && inv && i < (int)inv->slots.size() && !inv->slots[i].item.empty()) stack(inv->slots[i], x, y, sz);
         }
     };
+    if (L.scrolling) {
+        SDL_Rect clip{(int)(L.panelX - 12), (int)L.viewY, (int)(L.panelW + 24), (int)L.viewH};
+        SDL_RenderSetClipRect(r, &clip);
+    }
     grid(0);
-    DrawText(r, "Your inventory", L.playOx, L.topY + L.chestH + 6, 1.2f, sc(ch.textColor));
+    DrawText(r, "Your inventory", L.playOx, L.topY + L.chestH + 6 - (L.scrolling ? ch.scroll : 0.0f), 1.2f, sc(ch.textColor));
     if (L.player) grid(1);
-    okay::InventoryInput::HandleChest(ch, L, mp);   // lift / drop (move, swap, merge)
+    if (L.scrolling) SDL_RenderSetClipRect(r, nullptr);
+    // Hover tooltip on whichever stack the cursor is over.
+    if (hovIdx >= 0) {
+        okay::Inventory* hinv = L.Inv(hovSide);
+        if (hinv && hovIdx < (int)hinv->slots.size() && !hinv->slots[hovIdx].item.empty() &&
+            !(hovSide == ch.dragSide && hovIdx == ch.dragIndex)) {
+            const auto& it = hinv->slots[hovIdx];
+            const okay::Equipment* worn = L.player ? okay::Equipment::Of(L.player->gameObject) : nullptr;
+            DrawItemTip(r, okay::DescribeItem(it.item, it.count, &it.data, hovSide == 1 ? worn : nullptr),
+                        mp.x, mp.y, 1.3f, ch.panelColor, ch.textColor, W, H);
+        }
+    }
+    okay::InventoryInput::HandleChest(ch, L, mp);   // buttons, lift / drop (move, swap, merge)
     // The lifted item floats under the cursor, at its source grid's slot size.
     if (ch.dragSide >= 0) {
         const auto& it = L.Inv(ch.dragSide)->slots[ch.dragIndex];

@@ -39,6 +39,7 @@ public:
     // ---- Runtime drag state (driven by the renderer's mouse handling) ----
     int   dragSide  = -1;   ///< 0 = chest grid, 1 = player grid, -1 = not dragging
     int   dragIndex = -1;   ///< slot being dragged
+    float scroll = 0;       ///< pixels the grids are scrolled, when they don't fit the screen
 
     /// Move (or swap/merge) the stack in src slot `si` into dst slot `di`. Works within
     /// one grid or across the chest<->player grids (drag-and-drop, place where you want).
@@ -88,6 +89,19 @@ public:
     /// Move as much of `from` slot `i` into `to` as fits; only the leftover stays in
     /// the source slot (never duplicated, never lost). False if nothing fit.
     static bool Transfer(Inventory* from, int i, Inventory* to) { return InventoryOps::Transfer(from, i, to).Ok(); }
+
+    /// Move every chest stack into the player's bag, as much as fits.
+    int TakeAll() { return InventoryOps::TransferAll(Inv(), PlayerInv()); }
+    /// Move player stacks that this chest already holds into it (quick-stack).
+    int StashMatching() { return InventoryOps::TransferMatching(PlayerInv(), Inv()); }
+    /// Compact the chest and order it by display name. Never drops items.
+    bool SortContents() { return InventoryOps::SortByName(Inv()); }
+
+    void Update(float dt) override {
+        const bool was = open;
+        InventoryInteractable::Update(dt);
+        if (was && !open) { dragSide = -1; dragIndex = -1; scroll = 0; }   // a close mid-drag must not linger
+    }
 };
 
 } // namespace okay

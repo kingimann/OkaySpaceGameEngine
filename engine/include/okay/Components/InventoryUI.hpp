@@ -35,6 +35,8 @@ public:
     bool  dragItems     = true;   ///< drag items between slots while the backpack is open
     int   dragIndex     = -1;     ///< slot being dragged (runtime), or -1
     int   dragAmount    = 0;      ///< how many are lifted off the source (0 = whole stack)
+    int   navSlot       = -1;     ///< keyboard / gamepad cursor while the bag is open (-1 = none)
+    bool  gamepadNav    = true;   ///< d-pad / WASD moves navSlot; A picks up and drops, X splits, B cancels
     int   equipDrag     = -1;     ///< Equipment slot being dragged (runtime), or -1
 
     float slotSize = 50.0f;       ///< slot square, pixels (at the reference height)
@@ -318,9 +320,80 @@ public:
         if ((useKey && Input::GetKeyDown(useKey)) || (clickToUse && !open && Input::GetMouseButtonDown(0))) UseSelected();
         if (selected < 0) selected = 0;
         if (selected >= hotbarSlots) selected = hotbarSlots - 1;
+        if (open && gamepadNav) Navigate();
+        else navSlot = -1;
+    }
+
+    /// Move the keyboard / gamepad cursor. dy -1 is up the screen (backpack toward the
+    /// hotbar when the bar is docked to the bottom).
+    void NudgeNav(int dx, int dy) {
+        const int cols = hotbarSlots < 1 ? 1 : hotbarSlots;
+        const int total = SlotCount();
+        const int bp = BackpackRowCount();
+        if (total <= 0) return;
+        if (navSlot < 0 || navSlot >= total) navSlot = (selected >= 0 && selected < total) ? selected : 0;
+        std::vector<int> rowStart, rowCount;
+        auto pushRow = [&](int start, int n) {
+            if (n > 0 && start < total) { rowStart.push_back(start); rowCount.push_back(n); }
+        };
+        auto backpack = [&]() {
+            for (int r = 0; r < bp; ++r) {
+                const int start = cols + r * cols;
+                pushRow(start, std::min(cols, total - start));
+            }
+        };
+        if (anchorTop) { pushRow(0, std::min(cols, total)); backpack(); }
+        else { backpack(); pushRow(0, std::min(cols, total)); }
+        if (rowStart.empty()) return;
+        int rr = 0, cc = 0;
+        for (int r = 0; r < (int)rowStart.size(); ++r)
+            for (int c = 0; c < rowCount[r]; ++c)
+                if (rowStart[r] + c == navSlot) { rr = r; cc = c; }
+        rr += dy; cc += dx;
+        if (rr < 0) rr = 0;
+        if (rr >= (int)rowStart.size()) rr = (int)rowStart.size() - 1;
+        if (cc < 0) cc = 0;
+        if (cc >= rowCount[rr]) cc = rowCount[rr] - 1;
+        navSlot = rowStart[rr] + cc;
     }
 
 private:
+    /// D-pad (or WASD, when the pad isn't also steering) moves the cursor. A picks up or
+    /// places, X lifts a split, B puts a held stack back. The d-pad is also fed as WASD,
+    /// so a pad press is handled once, from the button, not again as a key.
+    void Navigate() {
+        if (navSlot < 0) navSlot = selected;
+        const bool pad = Input::GetGamepadButton(8) || Input::GetGamepadButton(9)
+                      || Input::GetGamepadButton(10) || Input::GetGamepadButton(11);
+        if (Input::GetGamepadButtonDown(8)) NudgeNav(0, -1);
+        else if (Input::GetGamepadButtonDown(9)) NudgeNav(0, 1);
+        else if (Input::GetGamepadButtonDown(10)) NudgeNav(-1, 0);
+        else if (Input::GetGamepadButtonDown(11)) NudgeNav(1, 0);
+        else if (!pad) {
+            if (Input::GetKeyDown('w')) NudgeNav(0, -1);
+            else if (Input::GetKeyDown('s')) NudgeNav(0, 1);
+            else if (Input::GetKeyDown('a')) NudgeNav(-1, 0);
+            else if (Input::GetKeyDown('d')) NudgeNav(1, 0);
+        }
+        Inventory* inv = Inv();
+        if (!inv) return;
+        if (Input::GetGamepadButtonDown(1) && dragIndex >= 0) { dragIndex = -1; dragAmount = 0; return; }
+        if (Input::GetGamepadButtonDown(2) && dragIndex < 0 && splitRightClick &&
+            navSlot >= 0 && navSlot < (int)inv->slots.size() && inv->slots[navSlot].count > 1) {
+            dragIndex = navSlot;
+            dragAmount = splitHalf ? inv->slots[navSlot].count / 2 : 1;
+        }
+        if (Input::GetGamepadButtonDown(0)) {
+            if (dragIndex < 0) {
+                if (navSlot >= 0 && navSlot < (int)inv->slots.size() && !Inventory::Empty(inv->slots[navSlot])) {
+                    dragIndex = navSlot; dragAmount = 0;
+                }
+            } else if (navSlot >= 0) {
+                ApplyDrag(dragIndex, navSlot);
+                dragIndex = -1; dragAmount = 0;
+            }
+        }
+    }
     /// A script that handles on_item_dropped: on this object, the inventory's, or the root.
     IScriptVM* DropHandler() const {
         GameObject* cands[3] = {gameObject, nullptr, Owner()};

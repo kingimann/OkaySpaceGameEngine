@@ -984,6 +984,48 @@ SDL_Texture* GetThumb(const std::string& path) {
 // An item's icon (okay::ItemIconPath), or null when it has none (the name is drawn).
 static SDL_Texture* ItemThumb(const std::string& path) { return path.empty() ? nullptr : GetThumb(path); }
 
+// Item picture, or a colour tile with initials. Atlas definitions sample a UV cell.
+static void DrawItemIconIm(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const std::string& folder, const std::string& item) {
+    const okay::ItemIconRef ref = okay::ItemIconOf(folder, item);
+    if (SDL_Texture* icon = ItemThumb(ref.path)) {
+        dl->AddImage((ImTextureID)icon, p0, p1, ImVec2(ref.u0, ref.v0), ImVec2(ref.u1, ref.v1));
+        return;
+    }
+    const okay::ItemGlyph g = okay::GlyphFor(item);
+    auto C = [](const okay::Color& c) { return IM_COL32((int)(c.r * 255), (int)(c.g * 255), (int)(c.b * 255), (int)(c.a * 255)); };
+    dl->AddRectFilled(p0, p1, C(g.bg), 3.0f);
+    if (g.letters.empty()) return;
+    const ImVec2 ts = ImGui::CalcTextSize(g.letters.c_str());
+    dl->AddText(ImVec2(p0.x + ((p1.x - p0.x) - ts.x) * 0.5f, p0.y + ((p1.y - p0.y) - ts.y) * 0.5f), C(g.fg), g.letters.c_str());
+}
+
+static void DrawItemTipIm(ImDrawList* dl, ImVec2 origin, okay::Vec2 m, const okay::ItemTip& tip,
+                          ImU32 bg, ImU32 text) {
+    if (tip.lines.empty()) return;
+    const float lh = ImGui::GetTextLineHeight();
+    float maxW = 0;
+    for (const auto& ln : tip.lines) maxW = std::max(maxW, ImGui::CalcTextSize(ln.text.c_str()).x);
+    ImVec2 p0(origin.x + m.x + 14, origin.y + m.y + 14);
+    ImVec2 p1(p0.x + maxW + 12, p0.y + lh * (float)tip.lines.size() + 10);
+    dl->AddRectFilled(p0, p1, bg, 4.0f);
+    for (std::size_t i = 0; i < tip.lines.size(); ++i) {
+        ImU32 tc = text;
+        if (tip.lines[i].useTint) {
+            const okay::Color& c = tip.lines[i].tint;
+            tc = IM_COL32((int)(c.r * 255), (int)(c.g * 255), (int)(c.b * 255), 255);
+        }
+        dl->AddText(ImVec2(p0.x + 6, p0.y + 5 + lh * (float)i), tc, tip.lines[i].text.c_str());
+    }
+}
+
+static void ShowInvKeyWarning(const okay::Scene& scene) {
+    const std::string w = okay::InventoryKeyWarning(&scene);
+    if (w.empty()) return;
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.72f, 0.28f, 1.0f));
+    ImGui::TextWrapped("%s", w.c_str());
+    ImGui::PopStyleColor();
+}
+
 // Item field for the inventory/recipe inspectors: a searchable combo of the project's
 // item definitions (with icons). Typing a new id is still allowed; an id with no
 // definition is flagged. Returns true when `id` changed.
@@ -30857,6 +30899,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Slot Gap##iu", &ui->slotGap, 0.25f, 0.0f, 32.0f)) ed.dirty = true;
             char tk[2] = {ui->toggleKey, 0};
             if (ImGui::InputText("Open Key##iu", tk, sizeof(tk))) { if (tk[0]) ui->toggleKey = tk[0]; ed.dirty = true; }
+            if (ImGui::IsItemDeactivatedAfterEdit()) ed.PushUndo();
+            ShowInvKeyWarning(ed.scene());
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Key to open/close the backpack (default E).");
             if (ImGui::Checkbox("1-9 select##iu", &ui->selectHotkeys)) ed.dirty = true; ImGui::SameLine();
             if (ImGui::Checkbox("Wheel select##iu", &ui->scrollSelect)) ed.dirty = true; ImGui::SameLine();
@@ -30917,7 +30961,7 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::TreeNodeEx("Features##iu", ImGuiTreeNodeFlags_DefaultOpen)) {
                 if (ImGui::Checkbox("Tooltips##iu", &ui->showTooltips)) ed.dirty = true;
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hover a slot to see the item's name + count.");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hover a slot to see the item's name, description, weight, stats, and a compare against what's equipped.");
                 ImGui::SameLine();
                 if (ImGui::Checkbox("Slot numbers##iu", &ui->slotNumbers)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw 1–9 in the corner of each hotbar slot.");
@@ -30980,6 +31024,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SliderInt("Rows##gi", &gi->rows, 1, 12)) { gi->Validate(); ed.dirty = true; }
             char ok[2] = {gi->toggleKey, 0};
             if (ImGui::InputText("Open Key##gi", ok, sizeof(ok))) { if (ok[0]) gi->toggleKey = ok[0]; ed.dirty = true; }
+            ShowInvKeyWarning(ed.scene());
             char cab[48]; std::snprintf(cab, sizeof(cab), "%s", gi->category.c_str());
             if (ImGui::InputText("Category##gi", cab, sizeof(cab))) { gi->category = cab; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Label shown above this container in the Unturned screen (Shirt, Vest, Backpack...). Blank = use Title.");
@@ -31138,6 +31183,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Title##cs", tb, sizeof(tb))) { cs->title = tb; ed.dirty = true; }
             char ok[2] = {cs->toggleKey, 0};
             if (ImGui::InputText("Open Key##cs", ok, sizeof(ok))) { if (ok[0]) cs->toggleKey = ok[0]; ed.dirty = true; }
+            ShowInvKeyWarning(ed.scene());
             if (ImGui::Checkbox("Close after craft##cs", &cs->closeWhenCrafted)) ed.dirty = true;
             if (ImGui::DragFloat("Open Range##cs", &cs->range, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How close the player must be. Only the nearest bench in range opens. 0 = any distance.");
@@ -31263,6 +31309,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("Title##ch", tb, sizeof(tb))) { ch->title = tb; ed.dirty = true; }
             char ok[2] = {ch->openKey, 0};
             if (ImGui::InputText("Open Key##ch", ok, sizeof(ok))) { if (ok[0]) ch->openKey = ok[0]; ed.dirty = true; }
+            ShowInvKeyWarning(ed.scene());
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Press near the chest to open (default F). Click items to move them.");
             if (ImGui::DragFloat("Open Range##ch", &ch->range, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How close the player must be to press the key. Only the nearest chest in range opens. 0 = any distance.");
@@ -31911,6 +31958,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextDisabled("Auto-builds a button per Crafting recipe at play.");
             char k[2] = { c->toggleKey, 0 };
             if (ImGui::InputText("Toggle Key##cmenu", k, sizeof(k))) { c->toggleKey = k[0]; ed.dirty = true; }
+            ShowInvKeyWarning(ed.scene());
             if (ImGui::Checkbox("Open at start##cmenu", &c->open)) ed.dirty = true;
             float p[2] = { c->position.x, c->position.y };
             if (ImGui::DragFloat2("Position##cmenu", p)) { c->position = {p[0], p[1]}; ed.dirty = true; }
@@ -33150,31 +33198,71 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* inv = dynamic_cast<Inventory*>(curComp)) {
         if (CompHeader("Inventory", inv, &toRemove)) {
-            if (ImGui::DragInt("Capacity##inv", &inv->capacity, 0.2f, 1, 999)) ed.dirty = true;
-            if (ImGui::DragInt("Max Stack##inv", &inv->maxStack, 0.2f, 0, 9999)) ed.dirty = true;
+            if (ed.isPlaying()) ImGui::TextDisabled("Live bag — Stop puts these slots back.");
+            auto edited = [&](bool changed) {
+                if (ImGui::IsItemActivated()) ed.PushUndo();
+                if (changed) ed.dirty = true;
+            };
+            edited(ImGui::DragInt("Capacity##inv", &inv->capacity, 0.2f, 1, 999));
+            edited(ImGui::DragInt("Max Stack##inv", &inv->maxStack, 0.2f, 0, 9999));
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Max items per stack (0 = unlimited). Add()/pickups and merges split past this, like Minecraft's 64.");
-            if (ImGui::DragFloat("Weight Limit##inv", &inv->weightLimit, 0.5f, 0.0f, 100000.0f)) ed.dirty = true;
+            edited(ImGui::DragFloat("Weight Limit##inv", &inv->weightLimit, 0.5f, 0.0f, 100000.0f));
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Carry limit from the item definitions' weights (0 = none). Scripts get on_encumbered(true/false).");
             if (inv->weightLimit > 0.0f) {
-                if (ImGui::Checkbox("Slow When Over##inv", &inv->slowWhenOverWeight)) ed.dirty = true;
-                if (inv->slowWhenOverWeight && ImGui::SliderFloat("Over-weight Speed##inv", &inv->overWeightSpeed, 0.1f, 1.0f)) ed.dirty = true;
+                edited(ImGui::Checkbox("Slow When Over##inv", &inv->slowWhenOverWeight));
+                if (inv->slowWhenOverWeight) edited(ImGui::SliderFloat("Over-weight Speed##inv", &inv->overWeightSpeed, 0.1f, 1.0f));
                 ImGui::Text("Weight: %.1f / %.1f%s", inv->TotalWeight(), inv->weightLimit, inv->OverWeight() ? "  (over)" : "");
             }
-            if (ImGui::Checkbox("Keep On Scene Load##inv", &inv->keepOnSceneLoad)) ed.dirty = true;
+            edited(ImGui::Checkbox("Keep On Scene Load##inv", &inv->keepOnSceneLoad));
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Carry these items into the next scene (load_scene): the object with the same name there gets them.");
             ImGui::Text("Slots: %d / %d", inv->SlotsUsed(), inv->capacity);
             int eraseS = -1;
             for (int i = 0; i < (int)inv->slots.size(); ++i) {
                 ImGui::PushID(i);
-                if (ItemPicker("##invit", inv->slots[i].item, 130)) ed.dirty = true;
+                ImGui::SmallButton("::");
+                if (ImGui::BeginDragDropSource()) {
+                    ImGui::SetDragDropPayload("INV_SLOT", &i, sizeof(int));
+                    ImGui::TextUnformatted(inv->slots[i].item.c_str());
+                    ImGui::EndDragDropSource();
+                }
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("INV_SLOT")) {
+                        const int from = p->DataSize == (int)sizeof(int) ? *(const int*)p->Data : -1;
+                        if (from >= 0 && from < (int)inv->slots.size() && from != i) {
+                            ed.PushUndo();
+                            okay::Inventory::Slot moved = inv->slots[from];
+                            inv->slots.erase(inv->slots.begin() + from);
+                            const int to = from < i ? i - 1 : i;
+                            inv->slots.insert(inv->slots.begin() + to, moved);
+                            ed.dirty = true;
+                            ImGui::EndDragDropTarget();
+                            ImGui::PopID();
+                            break;
+                        }
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+                ImGui::SameLine();
+                if (ItemPicker("##invit", inv->slots[i].item, 130)) {
+                    ed.PushUndo();
+                    const long long cap = inv->StackCap(inv->slots[i].item);
+                    if (inv->slots[i].count > cap) inv->slots[i].count = (int)cap;
+                    ed.dirty = true;
+                }
                 ImGui::SameLine(); ImGui::SetNextItemWidth(70);
-                if (ImGui::DragInt("##invn", &inv->slots[i].count, 0.2f, 0, 9999)) ed.dirty = true;
+                if (ImGui::DragInt("##invn", &inv->slots[i].count, 0.2f, 0, 9999)) {
+                    const long long cap = inv->StackCap(inv->slots[i].item);
+                    if (inv->slots[i].count > cap) inv->slots[i].count = (int)cap;
+                    if (inv->slots[i].count < 0) inv->slots[i].count = 0;
+                    ed.dirty = true;
+                }
+                if (ImGui::IsItemActivated()) ed.PushUndo();
                 ImGui::SameLine();
                 if (ImGui::SmallButton("X")) eraseS = i;
                 ImGui::PopID();
             }
-            if (eraseS >= 0) { inv->slots.erase(inv->slots.begin() + eraseS); ed.dirty = true; }
-            if (ImGui::SmallButton("Add Item##inv") && !inv->IsFull()) { inv->slots.push_back({"Item", 1}); ed.dirty = true; }
+            if (eraseS >= 0) { ed.PushUndo(); inv->slots.erase(inv->slots.begin() + eraseS); ed.dirty = true; }
+            if (ImGui::SmallButton("Add Item##inv") && !inv->IsFull()) { ed.PushUndo(); inv->slots.push_back({"Item", 1}); ed.dirty = true; }
             if (ImGui::SmallButton("Remove##inv")) toRemove = inv;
         }
     }
@@ -36263,9 +36351,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             if (idx == ui->dragIndex) shown -= (ui->dragAmount > 0 ? ui->dragAmount : shown);
             if (shown > 0 && inv && idx >= 0 && idx < (int)inv->slots.size() && !inv->slots[idx].item.empty()) {
                 const auto& it = inv->slots[idx];
-                SDL_Texture* icon = ItemThumb(okay::ItemIconPath(ui->iconFolder, it.item));
-                if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + b + 2, p0.y + b + 2), ImVec2(p1.x - b - 2, p1.y - b - 2));
-                else if (ui->showNames) dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), it.item.substr(0, ui->nameChars < 1 ? 1 : (std::size_t)ui->nameChars).c_str());
+                DrawItemIconIm(dl, ImVec2(p0.x + b + 2, p0.y + b + 2), ImVec2(p1.x - b - 2, p1.y - b - 2), ui->iconFolder, it.item);
                 if (ui->showCounts && shown > 1) {
                     std::string cs = std::to_string(shown);
                     ImVec2 ts = ImGui::CalcTextSize(cs.c_str());
@@ -36298,11 +36384,9 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             dl->AddRectFilled(p0, p1, col(ui->slotBorder), cr);
             float b = ui->borderWidth < 0 ? 0 : ui->borderWidth;
             dl->AddRectFilled(ImVec2(p0.x + b, p0.y + b), ImVec2(p1.x - b, p1.y - b), col(item.empty() ? ui->emptySlotColor : ui->slotColor), cr > b ? cr - b : 0.0f);
-            if (!item.empty()) {
-                if (SDL_Texture* icon = ItemThumb(okay::ItemIconPath(ui->iconFolder, item)))
-                    dl->AddImage((ImTextureID)icon, ImVec2(p0.x + b + 2, p0.y + b + 2), ImVec2(p1.x - b - 2, p1.y - b - 2));
-                else dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), item.substr(0, ui->nameChars < 1 ? 1 : (std::size_t)ui->nameChars).c_str());
-            } else if (!label.empty()) {
+            if (!item.empty())
+                DrawItemIconIm(dl, ImVec2(p0.x + b + 2, p0.y + b + 2), ImVec2(p1.x - b - 2, p1.y - b - 2), ui->iconFolder, item);
+            else if (!label.empty()) {
                 okay::Color tc = ui->textColor; tc.a = 0.45f;
                 dl->AddText(ImVec2(p0.x + 3, p0.y + sz * 0.5f - ImGui::GetTextLineHeight() * 0.5f), col(tc), label.c_str());
             }
@@ -36317,6 +36401,11 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             for (int i = 0; i < n && i < 9; ++i)
                 dl->AddText(ImVec2(canvasPos.x + hx + i * (sz + gap) + 3, canvasPos.y + hy + 2),
                             col(ui->numberColor), std::to_string(i + 1).c_str());
+        if (ui->open && ui->navSlot >= 0 && ui->navSlot < total) {
+            float sx, sy; L.SlotXY(ui->navSlot, sx, sy);
+            dl->AddRect(ImVec2(canvasPos.x + sx - 2, canvasPos.y + sy - 2),
+                        ImVec2(canvasPos.x + sx + sz + 2, canvasPos.y + sy + sz + 2), col(ui->selectedColor), cr, 0, 2.0f);
+        }
         // Hover tooltip (Game view only — the mouse is fed against that canvas).
         if (gameView && ui->showTooltips && inv && ui->dragIndex < 0) {
             okay::Vec2 m = okay::Input::MousePosition();
@@ -36329,11 +36418,17 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                         if (m.x >= sx && m.x < sx + sz && m.y >= sy && m.y < sy + sz) { hov = n + row * n + c; break; } }
             if (hov >= 0 && hov < (int)inv->slots.size() && !inv->slots[hov].item.empty()) {
                 const auto& it = inv->slots[hov];
-                std::string label = it.item + (it.count > 1 ? " x" + std::to_string(it.count) : std::string());
-                ImVec2 ts = ImGui::CalcTextSize(label.c_str());
-                ImVec2 p0(canvasPos.x + m.x + 14, canvasPos.y + m.y + 14);
-                dl->AddRectFilled(p0, ImVec2(p0.x + ts.x + 12, p0.y + ts.y + 10), col(ui->tooltipColor), 4.0f);
-                dl->AddText(ImVec2(p0.x + 6, p0.y + 5), col(ui->tooltipText), label.c_str());
+                const okay::Equipment* worn = okay::Equipment::Of(inv->gameObject);
+                DrawItemTipIm(dl, canvasPos, m, okay::DescribeItem(it.item, it.count, &it.data, worn),
+                              col(ui->tooltipColor), col(ui->tooltipText));
+            }
+            if (L.equip && ui->dragIndex < 0) {
+                const int eq = L.PickEquip(m.x, m.y);
+                if (eq >= 0 && !L.equip->ItemIn(eq).empty()) {
+                    const auto& slot = L.equip->slots[eq];
+                    DrawItemTipIm(dl, canvasPos, m, okay::DescribeItem(slot.item, 1, &slot.data, nullptr),
+                                  col(ui->tooltipColor), col(ui->tooltipText));
+                }
             }
         }
         // Drag-and-drop in the editor Play view (Input is fed canvas-relative, matching
@@ -36363,9 +36458,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 ImVec2 p1(p0.x + sz, p0.y + sz);
                 dl->AddRectFilled(p0, p1, col(ui->slotBorder), cr);
                 dl->AddRectFilled(ImVec2(p0.x + 2, p0.y + 2), ImVec2(p1.x - 2, p1.y - 2), col(ui->slotColor), cr);
-                SDL_Texture* icon = ItemThumb(okay::ItemIconPath(ui->iconFolder, it.item));
-                if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 4, p0.y + 4), ImVec2(p1.x - 4, p1.y - 4));
-                else dl->AddText(ImVec2(p0.x + 5, p0.y + 5), col(ui->textColor), it.item.substr(0, ui->nameChars < 1 ? 1 : (std::size_t)ui->nameChars).c_str());
+                DrawItemIconIm(dl, ImVec2(p0.x + 4, p0.y + 4), ImVec2(p1.x - 4, p1.y - 4), ui->iconFolder, it.item);
                 int carried = ui->dragAmount > 0 ? ui->dragAmount : it.count;
                 if (ui->showCounts && carried > 1) {
                     std::string ccs = std::to_string(carried);
@@ -36449,13 +36542,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             rectS(lx, ly, w, h, rar ? *rar : gui->itemBorder, cr);
             if (hover) { rectF(lx, ly, w, h, gui->hoverColor, cr); rectS(lx, ly, w, h, lighten(gui->itemBorder, 0.35f), cr); }
             ImVec2 p0(canvasPos.x + lx, canvasPos.y + ly);
-            SDL_Texture* icon = ItemThumb(okay::ItemIconPath(gui->iconFolder, it.name));
-            if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 6, p0.y + 6), ImVec2(p0.x + w - 6, p0.y + h - 6));
-            else if (gui->showItemNames) {   // clip the name to the tile width so it never overflows the cell
-                int maxc = (int)((w - 12) / 7.0f); if (maxc < 1) maxc = 1;
-                std::string nm = (int)it.name.size() > maxc ? it.name.substr(0, maxc) : it.name;
-                dl->AddText(ImVec2(p0.x + 6, p0.y + 7), col(gui->textColor), nm.c_str());
-            }
+            DrawItemIconIm(dl, ImVec2(p0.x + 6, p0.y + 6), ImVec2(p0.x + w - 6, p0.y + h - 6), gui->iconFolder, it.name);
             if (it.count > 1) {
                 std::string cstr = std::to_string(it.count);
                 ImVec2 ts = ImGui::CalcTextSize(cstr.c_str());
@@ -36471,6 +36558,8 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             rectF(P.ox - 6, hy, P.gw + 12, labelH, lighten(gui->headerColor, 0.06f), cr);
             if (gui->accentBars) rectF(P.ox - 6, hy, 3, labelH, acc, 0);
             dl->AddText(ImVec2(canvasPos.x + P.ox + (gui->accentBars ? 2.0f : 6.0f), canvasPos.y + hy + 4), col(gui->textColor), P.label.c_str());
+            if (P.ground && P.actW > 0)
+                dl->AddText(ImVec2(canvasPos.x + P.actX + 2, canvasPos.y + P.actY + 3), col(gui->textColor), "Take all");
             if (gui->showWeight && inv->weightLimit > 0.0f) {
                 char wb[48]; std::snprintf(wb, sizeof(wb), "%.1f/%.0f", inv->TotalWeight(), inv->weightLimit);
                 ImVec2 ts = ImGui::CalcTextSize(wb);
@@ -36510,13 +36599,9 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             int hov = inv->ItemAtCell(hovCx, hovCy);
             if (hov >= 0) {
                 const auto& it = inv->items[hov];
-                char tip[96];
-                std::snprintf(tip, sizeof(tip), "%s  %dx%d%s  %.1fkg", it.name.c_str(), it.w, it.h,
-                              it.count > 1 ? ("  x" + std::to_string(it.count)).c_str() : "", it.weight * it.count);
-                ImVec2 ts = ImGui::CalcTextSize(tip);
-                ImVec2 p0(canvasPos.x + m.x + 14, canvasPos.y + m.y + 14);
-                dl->AddRectFilled(p0, ImVec2(p0.x + ts.x + 12, p0.y + ts.y + 10), col(gui->tooltipColor), 4.0f);
-                dl->AddText(ImVec2(p0.x + 6, p0.y + 5), col(gui->tooltipText), tip);
+                DrawItemTipIm(dl, canvasPos, m,
+                              okay::DescribeItem(it.name, it.count, &it.data, nullptr, it.weight, it.w, it.h),
+                              col(gui->tooltipColor), col(gui->tooltipText));
             }
         }
         // Rotate (applied only on a good drop), pick up, right-click split, drop / transfer /
@@ -36585,16 +36670,21 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         float ox = canvasPos.x + L.panelX, oy = canvasPos.y + L.topY;
         if (ch->darkenWhenOpen)
             dl->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(0, 0, 0, 150));
-        dl->AddRectFilled(ImVec2(ox - 12, oy - 34), ImVec2(ox + L.panelW + 12, oy + L.totalH + 12), col(ch->panelColor), cr + 2);
+        const float bodyH = L.drawH > 0 ? L.drawH : L.totalH + 46.0f;
+        dl->AddRectFilled(ImVec2(ox - 12, oy - 34), ImVec2(ox + L.panelW + 12, oy - 34 + bodyH), col(ch->panelColor), cr + 2);
         dl->AddRectFilled(ImVec2(ox - 12, oy - 34), ImVec2(ox + L.panelW + 12, oy - 8), col(ch->titleBar), cr + 2);
         dl->AddText(ImVec2(ox, oy - 28), col(ch->textColor), ch->title.c_str());
+        auto btn = [&](const okay::InventoryInput::ClickRect& b, const char* label) {
+            dl->AddRectFilled(ImVec2(canvasPos.x + b.x, canvasPos.y + b.y),
+                              ImVec2(canvasPos.x + b.x + b.w, canvasPos.y + b.y + b.h), col(ch->slotColor), 3.0f);
+            dl->AddText(ImVec2(canvasPos.x + b.x + 4, canvasPos.y + b.y + 1), col(ch->textColor), label);
+        };
+        btn(L.takeAll, "Take all"); btn(L.stash, "Stash"); btn(L.sort, "Sort");
         okay::Vec2 m = okay::Input::MousePosition();
         int hovSide = -1, hovIdx = -1;
         if (gameView) L.Pick(m.x, m.y, hovSide, hovIdx);
         auto stack = [&](const okay::Inventory::Slot& it, ImVec2 p0, ImVec2 p1) {
-            SDL_Texture* icon = ItemThumb(okay::ItemIconPath(ch->iconFolder, it.item));
-            if (icon) dl->AddImage((ImTextureID)icon, ImVec2(p0.x + 4, p0.y + 4), ImVec2(p1.x - 4, p1.y - 4));
-            else dl->AddText(ImVec2(p0.x + 4, p0.y + 4), col(ch->textColor), it.item.substr(0, 5).c_str());
+            DrawItemIconIm(dl, ImVec2(p0.x + 4, p0.y + 4), ImVec2(p1.x - 4, p1.y - 4), ch->iconFolder, it.item);
             if (it.count > 1) { std::string c = std::to_string(it.count); ImVec2 ts = ImGui::CalcTextSize(c.c_str());
                 dl->AddText(ImVec2(p1.x - ts.x - 3, p1.y - ts.y - 2), col(ch->textColor), c.c_str()); }
         };
@@ -36611,9 +36701,22 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 if (!dragged && inv && i < (int)inv->slots.size() && !inv->slots[i].item.empty()) stack(inv->slots[i], p0, p1);
             }
         };
+        if (L.scrolling)
+            dl->PushClipRect(ImVec2(ox - 12, canvasPos.y + L.viewY),
+                             ImVec2(ox + L.panelW + 12, canvasPos.y + L.viewY + L.viewH), true);
         grid(0);
-        dl->AddText(ImVec2(canvasPos.x + L.playOx, oy + L.chestH + 6), col(ch->textColor), "Your inventory");
+        dl->AddText(ImVec2(canvasPos.x + L.playOx, oy + L.chestH + 6 - (L.scrolling ? ch->scroll : 0.0f)), col(ch->textColor), "Your inventory");
         if (L.player) grid(1);
+        if (L.scrolling) dl->PopClipRect();
+        if (gameView && hovIdx >= 0 && ch->dragSide < 0) {
+            okay::Inventory* hinv = L.Inv(hovSide);
+            if (hinv && hovIdx < (int)hinv->slots.size() && !hinv->slots[hovIdx].item.empty()) {
+                const auto& it = hinv->slots[hovIdx];
+                const okay::Equipment* worn = L.player ? okay::Equipment::Of(L.player->gameObject) : nullptr;
+                DrawItemTipIm(dl, canvasPos, m, okay::DescribeItem(it.item, it.count, &it.data, hovSide == 1 ? worn : nullptr),
+                              col(ch->panelColor), col(ch->textColor));
+            }
+        }
         if (gameView) {
             okay::InventoryInput::HandleChest(*ch, L, m);   // lift / drop (move, swap, merge)
             if (ch->dragSide >= 0) {   // the lifted item floats under the cursor at its source grid's size

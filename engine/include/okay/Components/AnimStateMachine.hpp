@@ -131,6 +131,10 @@ public:
         /// False locks the state: Any State (jump, fall, a later action) cannot
         /// cut it short. Death uses this. Its own transitions still run.
         bool        interruptible = true;
+        /// Play this state mirrored (left and right swapped). Off by default.
+        bool        mirror = false;
+        /// Root motion for this state: -1 keeps the animator's own toggle, 0 off, 1 on.
+        int         rootMotion = -1;
     };
 
     // ---- Layer settings (layer 0 = the base machine) ----
@@ -338,6 +342,11 @@ public:
             }
         }
 
+        // Mirror and root motion before the pose, so blend trees (posed here)
+        // and single clips (posed in the backend's update) both see them.
+        ma->SetMirror(cur->mirror);
+        ma->SetRootMotion(cur->rootMotion);
+
         // Advance the state clock (and drive a blend tree).
         m_stateTime += dt;
         const float spd = StateSpeed(*cur);
@@ -385,6 +394,11 @@ public:
         }
 
         EvaluateTransitions(dt, ma, cur);
+        // A transition that fired poses the new state immediately (Play).
+        if (const State* now = FindState(m_current); now && now != cur) {
+            ma->SetMirror(now->mirror);
+            ma->SetRootMotion(now->rootMotion);
+        }
         ma->Advance(dt);
     }
 
@@ -627,8 +641,12 @@ private:
     void LayerPose() {
         AnimBackend* ma = Anim();
         if (!ma || m_lCT.empty() || layerWeight <= 0.0f) return;
+        // Layers pose on top of the base. Mirror only this overlay; root motion
+        // stays the base state's (a layer does not move the body).
+        if (const State* st = FindState(m_current)) ma->SetMirror(st->mirror);
         ma->PoseLayer(m_lCT, m_lW, maskBone, std::fmin(layerWeight, 1.0f), additive,
                       maskBones.empty() ? nullptr : &maskBones);
+        ma->SetMirror(false);
     }
     // Looked up by name every frame (states may be edited at runtime); the last
     // hit is tried first, so the usual case is one string compare.
@@ -743,6 +761,8 @@ private:
             if (!st.enterEvent.empty()) ma->FireEvent(st.enterEvent);
             return;
         }
+        ma->SetMirror(st.mirror);
+        ma->SetRootMotion(st.rootMotion);
         ma->SetSpeed(StateSpeed(st));
         ma->SetLoop(st.loop);
         if (st.blendTree && st.blendDims == 2) {

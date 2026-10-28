@@ -20763,6 +20763,22 @@ static void DrawAnimatorGraph(EditorState& ed) {
             if (useSp) { ImGui::SameLine(); ImGui::SetNextItemWidth(-1); paramPicker("##agspp", st.speedParam, 0); }
         }
         if (!st.blendTree && ImGui::Checkbox("Loop##ag", &st.loop)) ed.dirty = true;
+        if (ImGui::Checkbox("Mirror##ag", &st.mirror)) ed.dirty = true;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Play this state on the other side: left and right swap.\n"
+                              "Author one wave or punch and mirror it for the other hand.");
+        {
+            static const char* kRoot[] = {"Inherit", "Off", "On"};
+            int rm = st.rootMotion < 0 ? 0 : (st.rootMotion == 0 ? 1 : 2);
+            ImGui::SetNextItemWidth(120);
+            if (ImGui::Combo("Root motion##ag", &rm, kRoot, 3)) {
+                st.rootMotion = rm == 0 ? -1 : (rm == 1 ? 0 : 1);
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Inherit uses the Model Animator's own root-motion toggle.\n"
+                                  "Off strips this state's root travel. On turns it on for this state only.");
+        }
         if (ImGui::SliderFloat("IK weight##ag", &st.ikWeight, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Foot planting in this state (and Full Body IK, unless given its own weight below).");
         {

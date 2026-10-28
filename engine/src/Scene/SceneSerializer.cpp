@@ -842,6 +842,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             for (const auto& st : asm2->states) out << " " << Quote(st.fallbackClip);
             out << "\n";
         }
+        bool anyMir = false;
+        for (const auto& st : asm2->states) anyMir = anyMir || st.mirror || st.rootMotion >= 0;
+        if (anyMir) {
+            out << "  animsmmir " << asm2->states.size();
+            for (const auto& st : asm2->states)
+                out << " " << (st.mirror ? 1 : 0) << " " << st.rootMotion;
+            out << "\n";
+        }
     }
     if (auto* tr = go->GetComponent<Terrain>()) {
         out << "  terrain " << tr->resolution << " " << tr->size << " "
@@ -3432,6 +3440,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "animsmxfade") {
                     GaitCrossfades& t = smFor()->crossfades;
                     in >> t.idleWalk >> t.walkRun >> t.groundAir >> t.airGround;
+            out << "\n";
+        }
+                } else if (field == "animsmmir") {
+                    auto* sm2 = smFor();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n && in; ++i) {
+                        int mir = 0, rm = -1; in >> mir >> rm;
+                        if (sm2 && i < (long)sm2->states.size()) {
+                            sm2->states[i].mirror = mir != 0;
+                            sm2->states[i].rootMotion = rm;
+                        }
+                    }
                 } else if (field == "animsmmatch") {
                     auto* sm2 = smFor();
                     long n = 0; in >> n;

@@ -259,6 +259,7 @@ public:
                 float e1 = wrapLoop ? std::fmod(std::fmod(t1, len) + len, len) : std::fmin(t1, len);
                 Vec3 d; float yaw = 0.0f;
                 RootDelta(active, e0, e1, len, d, yaw);   // none (idle clip): a zero move stops a rigidbody
+                if (m_stateMirror) d.x = -d.x;
                 ApplyRootMotion(d, yaw, dt);
             }
             m_clock = len > 0.0f ? (wrap ? std::fmod(t1, len) : std::fmin(t1, len)) : t1;
@@ -679,6 +680,7 @@ public:
             if (RootDelta(A, prevPhase * lenA, tA, lenA, dA, yA)) { d = d + dA * (1.0f - w); yaw += yA * (1.0f - w); any = true; }
             if (RootDelta(B, prevPhase * lenB, tB, lenB, dB, yB)) { d = d + dB * w; yaw += yB * w; any = true; }
             (void)any;
+            if (m_stateMirror) d.x = -d.x;
             ApplyRootMotion(d, yaw, dt);
         }
 
@@ -718,6 +720,12 @@ public:
         if (A != B)
             for (int nb : pm.onlyB)
                 if (bB[nb]) blendWrite(bB[nb], -1, nb);
+        if (m_stateMirror) {
+            std::vector<std::pair<std::string, Transform*>> ns;
+            for (std::size_t n = 0; n < bA.size(); ++n) ns.push_back({clips[A].nodes[n].node, bA[n]});
+            for (std::size_t n = 0; n < bB.size(); ++n) ns.push_back({clips[B].nodes[n].node, bB[n]});
+            MirrorPairs(ns);
+        }
         ApplyShapeWeights(active, active == A ? tA : tB);   // face shapes follow the dominant clip
         return true;
     }
@@ -749,6 +757,7 @@ public:
                 Vec3 di; float yi;
                 if (RootDelta(ci[i], prevPhase * len[i], m_phase * len[i], len[i], di, yi)) { d = d + di * w[i]; yaw += yi * w[i]; }
             }
+            if (m_stateMirror) d.x = -d.x;
             ApplyRootMotion(d, yaw, dt);
         }
         {   // events of the dominant clip over this frame's phase window
@@ -826,6 +835,12 @@ public:
             t->localScale    = t->localScale + (sc - t->localScale) * amount;
             t->localRotation = Quat::Slerp(t->localRotation, q, amount).Normalized();
         }
+        if (m_stateMirror) {
+            std::vector<std::pair<std::string, Transform*>> ns;
+            for (const PwAcc& a : acc)
+                if (a.w > 1e-6f && a.t && a.t->gameObject) ns.push_back({a.t->gameObject->name, a.t});
+            MirrorPairs(ns);
+        }
     }
 
     // ---- AnimBackend: the Animator's fields, and layers by mask bone ----
@@ -833,6 +848,11 @@ public:
     void SetSpeed(float s) override { speed = s; }
     void SetLoop(bool l) override { loop = l; }
     void SetExternalDrive(bool on) override { externalDrive = on; }
+    void SetMirror(bool on) override { m_stateMirror = on; }
+    void SetRootMotion(int mode) override {
+        if (!m_rootSaved) { m_rootSaved = true; m_rootWas = rootMotion; }
+        rootMotion = mode < 0 ? m_rootWas : (mode != 0);
+    }
     void PoseLayer(const std::vector<std::pair<int, float>>& clipTimes, const std::vector<float>& weights,
                    const std::string& maskBone, float amount, bool additive = false,
                    const std::vector<std::string>* moreBones = nullptr) override {
@@ -1020,7 +1040,53 @@ public:
             SampleNode(ci, (int)n, t, p, r, sc);
             tr->localPosition = p; tr->localRotation = r; tr->localScale = sc;
         }
+        if (m_stateMirror) {
+            std::vector<std::pair<std::string, Transform*>> ns;
+            for (std::size_t n = 0; n < b.size() && n < clips[ci].nodes.size(); ++n)
+                ns.push_back({clips[ci].nodes[n].node, b[n]});
+            MirrorPairs(ns);
+        }
         ApplyShapeWeights(ci, t);
+    }
+    /// Swap left/right nodes that were just posed, so one clip plays on the other side.
+    void MirrorPairs(const std::vector<std::pair<std::string, Transform*>>& nodes) {
+        std::unordered_set<Transform*> done;
+        for (const auto& nt : nodes) {
+            Transform* t = nt.second;
+            if (!t || done.count(t)) continue;
+            const std::string other = MirrorNodeName(nt.first);
+            if (other.empty()) continue;
+            Transform* o = NodeT(other);
+            if (!o || o == t) continue;
+            done.insert(t); done.insert(o);
+            std::swap(t->localRotation, o->localRotation);
+            std::swap(t->localPosition, o->localPosition);
+            t->localPosition.x = -t->localPosition.x;
+            o->localPosition.x = -o->localPosition.x;
+        }
+    }
+    static std::string MirrorNodeName(std::string name) {
+        auto swapWord = [&](const char* a, const char* b) {
+            const std::string A = a, B = b;
+            std::size_t at = name.find(A);
+            if (at == std::string::npos) return false;
+            name.replace(at, A.size(), B);
+            return true;
+        };
+        if (swapWord("Left", "Right") || swapWord("Right", "Left")) return name;
+        if (swapWord("left", "right") || swapWord("right", "left")) return name;
+        if (name.size() >= 2 && (name.back() == 'l' || name.back() == 'L' || name.back() == 'r' || name.back() == 'R')) {
+            char& c = name.back();
+            if (name[name.size() - 2] == '_' || name[name.size() - 2] == '.') {
+                if (c == 'l') c = 'r';
+                else if (c == 'L') c = 'R';
+                else if (c == 'r') c = 'l';
+                else if (c == 'R') c = 'L';
+                else return {};
+                return name;
+            }
+        }
+        return {};
     }
 
     /// Blend shape weight tracks of clip `ci` at time `t` onto the nodes' BlendShapes.
@@ -1224,6 +1290,9 @@ private:
     bool                     m_once = false;        ///< current playback is a one-shot
     bool                     m_held = false;        ///< a script holds the current clip (PlayHeld)
     int                      m_heldReturnTo = -1;   ///< clip to return to after the hold
+    bool                     m_stateMirror = false; ///< the Animator's current state plays mirrored
+    bool                     m_rootSaved = false;   ///< the component root-motion toggle, before a state overrode it
+    bool                     m_rootWas = false;
     std::unordered_set<Transform*> m_mask;   ///< PoseLayer's mask bone subtree
     std::uint64_t            m_maskVer = 0;
     std::string              m_maskName;

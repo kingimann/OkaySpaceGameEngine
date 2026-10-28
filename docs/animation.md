@@ -561,6 +561,10 @@ and transitions. Beyond single conditions:
   **Import into clip** / **Import as fallback** load a file into that slot
   (`.okayanim` on a character, FBX / glTF / BVH on an imported model). The Clip
   list also includes the built-in library and those imported takes.
+- **Mirror** — the state plays with left and right swapped, so one authored side
+  covers the other. It applies to a single clip, a blend tree, and a layer
+  (the layer mirrors only its own overlay). **Root motion** per state is Inherit
+  (the Model Animator's toggle), Off, or On. A layer does not change root motion.
 
 Scripts: `anim_set_float`, `anim_set_bool`, `anim_trigger`, `anim_state()`,
 `anim_prev_state()`, `anim_state_time()`, `anim_normalized_time()`.

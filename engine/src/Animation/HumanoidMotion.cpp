@@ -244,6 +244,11 @@ float NaturalSpeed(int state) {
     return state == 3 ? 4.8f : (state == 17 ? 1.0f : (state == 7 ? 0.8f : 1.5f));
 }
 
+float JogWeight(float speed) {
+    const float t = clampf((speed - 2.4f) / 1.0f, 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
 float CycleFreq(int state, float speed, float runW) {
     const float v = SpeedFor(state, speed);
     if (state == 17) return GaitFor(17, v).freq;

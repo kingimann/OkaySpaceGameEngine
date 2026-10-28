@@ -24,6 +24,7 @@ AnimClip Bake(const std::string& name, int state, float length, int keys, F at) 
     c.name = name;
     c.loop = true;
     c.length = length;
+    c.interp = AnimInterp::Cubic;   // a curve through the sampled poses: no kink at each key
     for (int k = 0; k < keys; ++k) {
         const float u = (float)k / (float)keys;
         HumanoidMotion::Inputs in = at(u);
@@ -79,7 +80,8 @@ Entry Gait(const char* base, int state, float speed, int dir8) {
     const float a = dir8 <= 4 ? dir8 * 45.0f : (dir8 - 8) * 45.0f;   // -135 .. 180
     const bool back = std::fabs(a) > 90.0f;
     const float yaw = back ? (a > 0.0f ? a - 180.0f : a + 180.0f) : a;
-    const float runW = state == 3 ? 1.0f : 0.0f;
+    // A fast walk is baked in the run's style (a jog), as the live body plays it.
+    const float runW = state == 3 ? 1.0f : (state == 2 ? HumanoidMotion::JogWeight(speed) : 0.0f);
     const float len = 1.0f / HumanoidMotion::CycleFreq(state, speed, runW);
     Entry e;
     e.state = state; e.speed = speed;

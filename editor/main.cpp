@@ -21,6 +21,7 @@
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Core/Profiler.hpp"        // CPU/GPU frame profiler
 #include "okay/Animation/HumanoidLibrary.hpp"  // built-in clip names in the Animator clip slot
+#include "okay/Animation/ClipGraph.hpp"       // an Animator graph from an imported model's clips
 #include "okay/Scene/UITemplates.hpp"    // prebuilt, droppable UI screens (UI > Prebuilt Screens)
 #include "okay/Scene/UIStyles.hpp"       // one-click looks + copy / paste style for UI components
 #include "okay/Scene/UILayoutTools.hpp"  // wrap in panel, fit to children, match size, stack
@@ -19976,6 +19977,32 @@ static void DrawAnimatorGraph(EditorState& ed) {
                     if (auto* m = up->GetComponent<AnimStateMachine>()) { sm = m; smObj = up.get(); break; }
     }
     if (!sm) {
+        // A character without one yet: the built-in body gets the default humanoid
+        // graph, an imported model a graph from its own clips.
+        GameObject* sel = ed.selected();
+        GameObject* modelGo = nullptr; Character* bodyGo = nullptr;
+        if (sel)
+            for (const auto& up : ed.scene().Objects()) {
+                if (!up || !up->IsSelfOrDescendantOf(sel)) continue;
+                if (auto* m = up->GetComponent<ModelAnimator>(); m && !m->clips.empty() && !modelGo) modelGo = up.get();
+                if (auto* c = up->GetComponent<Character>(); c && !bodyGo && !up->GetComponent<ModelAnimator>()) bodyGo = c;
+            }
+        if (bodyGo || modelGo) {
+            ImGui::TextDisabled("'%s' has no Animator yet.", sel->name.c_str());
+            if (ImGui::Button(bodyGo ? "Create Animator (default humanoid graph)##agnew" : "Create Animator from this model's clips##agnew")) {
+                ed.PushUndo();
+                if (bodyGo) HumanoidLibrary::EnsureAnimator(bodyGo->gameObject);
+                else {
+                    okay::AutoMapLocomotion(modelGo->GetComponent<ModelAnimator>());
+                    ClipGraph::Ensure(modelGo);
+                }
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Every state and transition then shows here to edit and preview.\n"
+                                  "It takes the parameters the player controllers send (speed, grounded, crouch, prone, jump).");
+            ImGui::End(); return;
+        }
         ImGui::TextDisabled("Select an object with an Animator (Add Component > Animation).");
         ImGui::TextDisabled("States name a clip (the Model Animator's, or the Character's); transitions switch\nbetween them when a condition passes (clip end, float compare, bool, trigger).");
         ImGui::End(); return;
@@ -20113,75 +20140,17 @@ static void DrawAnimatorGraph(EditorState& ed) {
                                                       "idle/walk/run blended by speed, jump, fall and land,\n"
                                                       "with the parameters the player controllers send.");
         if (ImGui::BeginPopup("##aglocosetup")) {
-            auto find = [&](std::initializer_list<const char*> keys) -> std::string {
-                for (const char* k : keys)
-                    for (const auto& cn : clipNames) {
-                        std::string lo = cn; for (auto& ch : lo) ch = (char)std::tolower((unsigned char)ch);
-                        if (lo.find(k) != std::string::npos) return cn;
-                    }
-                return std::string();
-            };
-            std::string idle = !ma->idleClip.empty() ? ma->idleClip : find({"idle", "stand", "breath"});
-            std::string walk = !ma->walkClip.empty() ? ma->walkClip : find({"walk"});
-            std::string run  = !ma->runClip.empty()  ? ma->runClip  : find({"run", "sprint", "jog"});
-            std::string jump = !ma->jumpClip.empty() ? ma->jumpClip : find({"jump"});
-            std::string fall = !ma->fallClip.empty() ? ma->fallClip : find({"fall", "air"});
-            std::string land = !ma->landClip.empty() ? ma->landClip : find({"land"});
-            if (idle.empty()) idle = clipNames.front();
-            ImGui::TextDisabled("Clips found:");
-            ImGui::Text("Idle: %s\nWalk: %s\nRun:  %s\nJump: %s\nFall: %s\nLand: %s", idle.c_str(),
-                        walk.empty() ? "-" : walk.c_str(), run.empty() ? "-" : run.c_str(), jump.empty() ? "-" : jump.c_str(),
-                        fall.empty() ? "-" : fall.c_str(), land.empty() ? "-" : land.c_str());
+            auto shown = [&](const std::string& c) { return c.empty() || ma->FindClip(c) < 0 ? "-" : c.c_str(); };
+            ImGui::TextDisabled("Clips mapped (empty slots are filled from the clip names):");
+            ImGui::Text("Idle: %s\nWalk: %s\nRun:  %s\nJump: %s\nFall: %s\nLand: %s", shown(ma->idleClip), shown(ma->walkClip),
+                        shown(ma->runClip), shown(ma->jumpClip), shown(ma->fallClip), shown(ma->landClip));
+            ImGui::Text("Crouch: %s\nCrouch walk: %s\nProne: %s\nCrawl: %s\nGet up: %s", shown(ma->crouchClip),
+                        shown(ma->crouchWalkClip), shown(ma->proneClip), shown(ma->crawlClip), shown(ma->getUpClip));
             if (!sm->states.empty()) ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1), "Replaces the %d existing state(s).", (int)sm->states.size());
             if (ImGui::Button("Build it", ImVec2(-1, 0))) {
                 ed.PushUndo();
-                using SM = AnimStateMachine;
-                sm->states.clear(); sm->anyState.clear();
-                auto addParam = [&](const char* nm, int type) {
-                    for (const auto& p : sm->params) if (p.name == nm) return;
-                    sm->params.push_back({nm, type});
-                };
-                addParam("speed", 0); addParam("grounded", 1); addParam("verticalSpeed", 0); addParam("jump", 2);
-                SM::State loco; loco.name = "Locomotion"; loco.blendTree = true; loco.blendParam = "speed";
-                loco.motions.push_back({idle, 0.0f});
-                if (!walk.empty()) loco.motions.push_back({walk, 1.5f});
-                if (!run.empty())  loco.motions.push_back({run, 5.0f});
-                loco.nx = 20; loco.ny = 120;
-                sm->states.push_back(loco);
-                auto tr = [](const std::string& to, SM::Cond c, const char* p, float v, float blend) {
-                    SM::Transition t; t.to = to; t.cond = c; t.param = p; t.value = v; t.blend = blend; return t;
-                };
-                std::string afterAir = land.empty() ? "Locomotion" : "Land";
-                if (!jump.empty()) {
-                    SM::State j; j.name = "Jump"; j.clip = jump; j.loop = false; j.nx = 260; j.ny = 20;
-                    j.ikWeight = 0.0f; j.enterEvent = "jump";
-                    if (!fall.empty()) j.transitions.push_back(tr("Fall", SM::Cond::OnClipEnd, "", 0, 0.15f));
-                    j.transitions.push_back(tr(afterAir, SM::Cond::BoolTrue, "grounded", 0, 0.1f));
-                    j.transitions.back().hasExitTime = true; j.transitions.back().exitTime = 0.4f;
-                    sm->states.push_back(j);
-                    SM::Transition any = tr("Jump", SM::Cond::Trigger, "jump", 0, 0.1f);
-                    sm->anyState.push_back(any);
-                }
-                if (!fall.empty()) {
-                    SM::State f; f.name = "Fall"; f.clip = fall; f.loop = true; f.nx = 500; f.ny = 20;
-                    f.ikWeight = 0.0f;
-                    f.transitions.push_back(tr(afterAir, SM::Cond::BoolTrue, "grounded", 0, 0.1f));
-                    sm->states.push_back(f);
-                    SM::Transition off = tr("Fall", SM::Cond::BoolFalse, "grounded", 0, 0.2f);
-                    off.extra.push_back({SM::Cond::FloatLess, "verticalSpeed", -2.0f});
-                    sm->states[0].transitions.push_back(off);
-                }
-                if (!land.empty()) {
-                    SM::State l; l.name = "Land"; l.clip = land; l.loop = false; l.nx = 500; l.ny = 140;
-                    l.enterEvent = "land";
-                    SM::Transition back = tr("Locomotion", SM::Cond::OnClipEnd, "", 0, 0.2f);
-                    l.transitions.push_back(back);
-                    SM::Transition early = tr("Locomotion", SM::Cond::FloatGreater, "speed", 1.0f, 0.2f);
-                    early.hasExitTime = true; early.exitTime = 0.3f;
-                    l.transitions.push_back(early);
-                    sm->states.push_back(l);
-                }
-                sm->entry = "Locomotion";
+                okay::AutoMapLocomotion(ma);   // fills only the clip slots that are still empty
+                ClipGraph::Build(*sm, *ma);
                 // The machine drives the clips now; the animator's own speed switching stands down.
                 ma->driveByMovement = false;
                 ed.dirty = true;

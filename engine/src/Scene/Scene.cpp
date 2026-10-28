@@ -19,6 +19,9 @@
 #include "okay/Render/Renderer.hpp"
 #include "okay/Core/Profiler.hpp"
 #include "okay/Net/NetTransport.hpp"   // per-frame pump for non-native transports
+#include "okay/Physics/Rigidbody2D.hpp"
+#include "okay/Physics/Rigidbody3D.hpp"
+#include <cmath>
 #include <algorithm>
 #include <atomic>
 #include <functional>
@@ -167,10 +170,7 @@ void Scene::Update(float deltaTime) {
     for (const auto& go : m_objects)
         if (go->active && go->Components().size() > 1) FitColliders(go.get(), /*onlyAuto*/ true);
 
-    if (physicsEnabled) {
-        { OKAY_PROFILE("Physics.2D"); m_physics.Step(*this, deltaTime); }
-        { OKAY_PROFILE("Physics.3D"); m_physics3d.Step(*this, deltaTime); }
-    }
+    if (physicsEnabled) StepPhysics(deltaTime);
 
     {
         OKAY_PROFILE("Scripts.LateUpdate");
@@ -220,6 +220,70 @@ void Scene::Update(float deltaTime) {
         for (auto& m : merges)
             if (SceneSerializer::MergeFromFile(*this, m.first, m.second)) any = true;
         if (any) Start();
+    }
+}
+
+namespace {
+
+// Render interpolation: a body is drawn between its last two physics poses.
+bool SamePose(Transform* t, const Vec3& p, const Quat& r) {
+    return (t->Position() - p).SqrMagnitude() < 1e-10f && std::fabs(Quat::Dot(t->Rotation(), r)) > 1.0f - 1e-6f;
+}
+// Before stepping: put the body back at its real physics pose (it was drawn at an
+// in-between one). If game code moved it since, it was teleported: keep that.
+void RestorePose(Transform* t, PoseHistory& h) {
+    if (!h.valid) return;
+    if (SamePose(t, h.shownPos, h.shownRot)) { t->SetPosition(h.curPos); t->SetRotation(h.curRot); }
+    else h.valid = false;
+}
+void BeginStep(Transform* t, PoseHistory& h) {
+    h.prevPos = t->Position();
+    h.prevRot = t->Rotation();
+}
+void ShowPose(Transform* t, PoseHistory& h, bool stepped, float alpha) {
+    if (!h.valid && !stepped) return;            // not simulated yet: draw where it is
+    if (!h.valid) { h.valid = true; }
+    h.curPos = t->Position();
+    h.curRot = t->Rotation();
+    h.shownPos = Vec3::LerpUnclamped(h.prevPos, h.curPos, alpha);
+    h.shownRot = Quat::Slerp(h.prevRot, h.curRot, alpha);
+    t->SetPosition(h.shownPos);
+    t->SetRotation(h.shownRot);
+}
+
+} // namespace
+
+void Scene::StepPhysics(float deltaTime) {
+    const float step = fixedTimeStep;
+    if (step <= 0.0f) {   // one step per frame, sized to the frame
+        { OKAY_PROFILE("Physics.2D"); m_physics.Step(*this, deltaTime); }
+        { OKAY_PROFILE("Physics.3D"); m_physics3d.Step(*this, deltaTime); }
+        m_physicsSteps = 1; m_physicsAlpha = 0.0f;
+        return;
+    }
+    const auto bodies3 = FindObjectsOfType<Rigidbody3D>();
+    const auto bodies2 = FindObjectsOfType<Rigidbody2D>();
+    if (interpolatePhysics) {
+        for (Rigidbody3D* rb : bodies3) if (rb->transform) RestorePose(rb->transform, rb->poseHistory);
+        for (Rigidbody2D* rb : bodies2) if (rb->transform) RestorePose(rb->transform, rb->poseHistory);
+    }
+    m_physicsAcc = std::min(m_physicsAcc + std::max(0.0f, deltaTime), std::max(step, maxPhysicsCatchUp));
+    m_physicsSteps = 0;
+    while (m_physicsAcc >= step) {
+        if (interpolatePhysics) {
+            for (Rigidbody3D* rb : bodies3) if (rb->transform) BeginStep(rb->transform, rb->poseHistory);
+            for (Rigidbody2D* rb : bodies2) if (rb->transform) BeginStep(rb->transform, rb->poseHistory);
+        }
+        { OKAY_PROFILE("Physics.2D"); m_physics.Step(*this, step); }
+        { OKAY_PROFILE("Physics.3D"); m_physics3d.Step(*this, step); }
+        m_physicsAcc -= step;
+        ++m_physicsSteps;
+    }
+    m_physicsAlpha = m_physicsAcc / step;
+    if (interpolatePhysics) {
+        const bool stepped = m_physicsSteps > 0;
+        for (Rigidbody3D* rb : bodies3) if (rb->transform) ShowPose(rb->transform, rb->poseHistory, stepped, m_physicsAlpha);
+        for (Rigidbody2D* rb : bodies2) if (rb->transform) ShowPose(rb->transform, rb->poseHistory, stepped, m_physicsAlpha);
     }
 }
 

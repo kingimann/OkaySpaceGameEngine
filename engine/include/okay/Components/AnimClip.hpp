@@ -40,7 +40,10 @@ struct AnimEvent {
 ///  - Linear: straight component-wise lerp (the default).
 ///  - Smooth: ease in/out (smoothstep) for a softer, more natural motion.
 ///  - Step:   hold each key until the next (no interpolation — snappy / robotic).
-enum class AnimInterp { Linear, Smooth, Step };
+///  - Cubic:  a Catmull-Rom curve through the keys: no kink where one key hands
+///            over to the next (a densely sampled cycle such as a walk plays
+///            smoothly instead of changing speed at every key).
+enum class AnimInterp { Linear, Smooth, Step, Cubic };
 
 struct AnimClip {
     std::string name;
@@ -74,6 +77,7 @@ struct AnimClip {
         switch (interp) {
             case AnimInterp::Smooth: return u * u * (3.0f - 2.0f * u);
             case AnimInterp::Step:   return 0.0f;   // hold the earlier key until the next
+            case AnimInterp::Cubic:  return u;      // (Sample curves through the neighbours itself)
             case AnimInterp::Linear: default: return u;
         }
     }

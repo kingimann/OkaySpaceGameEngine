@@ -1625,6 +1625,7 @@ bool g_showPluginManager = false;  // Plugin Manager (editor plugins)
 static void DrawPluginsMenu(EditorState& ed);
 static void NewPluginFromTemplate(EditorState& ed);
 bool g_showCrashLog = false;   // Crash Log window (view/copy okay_crashlog.txt reports)
+bool g_showAudioMixer = false; // Audio Mixer window (master + group volumes, meters, ducking)
 bool g_showSpriteEditor = false; // pixel-art Sprite Editor (paint/shape custom sprites)
 bool g_showUIThemer = false;     // UI Theme window (reusable styles applied across widgets)
 bool g_showItemDatabase = false; // Item Database window (the project's item definitions)
@@ -4318,6 +4319,7 @@ static const DockPanelDef* DockPanels(int& n) {
         {"Profiler",      "Profiler",                  &g_showProfiler,      "Panels", PI_Profiler},
         {"Asset Manager", "Asset Manager",             &g_showAssetManager,  "Panels", PI_Package},
         {"Crash Log",     "Crash Log",                 &g_showCrashLog,      "Panels", PI_Warning},
+        {"Audio Mixer",   "Audio Mixer",               &g_showAudioMixer,    "Panels", PI_Stats},
         {"Script Editor", "Script Editor",             &g_showScriptEditor,  "Editors & Tools", PI_Script},
         {"Visual Script", "Visual Script",             &g_showVisualScript,  "Editors & Tools", PI_Nodes},
         {"Custom Actions","Custom Actions",            &g_showCustomActions, "Editors & Tools", PI_Bolt},
@@ -5609,6 +5611,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
             ImGui::MenuItem("Asset Manager", nullptr, &g_showAssetManager);
             ImGui::MenuItem("Crash Log", nullptr, &g_showCrashLog);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "View past crash reports (okay_crashlog.txt) and copy them to send to support.");
+            ImGui::MenuItem("Audio Mixer", nullptr, &g_showAudioMixer);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Master and group volumes (Music, SFX, UI, Voice), output levels while playing, and music ducking.");
             ImGui::EndMenu();
         }
         // Editors & Tools — the bigger authoring surfaces.
@@ -6467,6 +6471,59 @@ static std::string OkayExeDir() {
                  return s == std::string::npos ? std::string(".") : p.substr(0, s); }
     return ".";
 #endif
+}
+
+// Audio Mixer: the same levels a game's settings menu drives (master, each group,
+// mutes), live output meters during Play, and music ducking under voice.
+void DrawAudioMixer() {
+    if (!ImGui::Begin("Audio Mixer", &g_showAudioMixer)) { ImGui::End(); return; }
+    auto meter = [](const char* id, float v) {
+        const float db = v > 1e-5f ? 20.0f * std::log10(v) : -60.0f;
+        const float t = std::clamp((db + 60.0f) / 60.0f, 0.0f, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, v >= 1.0f ? ImVec4(0.85f, 0.3f, 0.3f, 1) : ImVec4(0.35f, 0.7f, 0.45f, 1));
+        ImGui::ProgressBar(t, ImVec2(-1, 6), "");
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s: %.1f dB", id, db);
+    };
+    ImGui::TextDisabled("Output");
+    meter("Left", AudioMixer::peak[0]);
+    meter("Right", AudioMixer::peak[1]);
+    ImGui::Spacing();
+    if (ImGui::BeginTable("##mix", 3, ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Group", ImGuiTableColumnFlags_WidthFixed, 70);
+        ImGui::TableSetupColumn("Volume", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Mute", ImGuiTableColumnFlags_WidthFixed, 40);
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn(); ImGui::TextUnformatted("Master");
+        ImGui::TableNextColumn(); ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##master", &AudioMixer::masterVolume, 0.0f, 1.0f, "%.2f");
+        ImGui::TableNextColumn(); ImGui::Checkbox("##mastermute", &AudioMixer::muted);
+        for (int i = 0; i < (int)AudioGroup::Count; ++i) {
+            ImGui::PushID(i);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn(); ImGui::TextUnformatted(AudioMixer::GroupName((AudioGroup)i));
+            ImGui::TableNextColumn(); ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##v", &AudioMixer::groupVolume[i], 0.0f, 1.0f, "%.2f");
+            ImGui::TableNextColumn(); ImGui::Checkbox("##m", &AudioMixer::groupMuted[i]);
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::Spacing();
+    ImGui::Checkbox("Duck music under voice", &AudioMixer::duckMusicUnderVoice);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "While a Voice-group source plays, the Music group dips to the duck level.");
+    if (AudioMixer::duckMusicUnderVoice) {
+        ImGui::SliderFloat("Duck level", &AudioMixer::duckLevel, 0.0f, 1.0f, "%.2f");
+        ImGui::SliderFloat("Attack (s)", &AudioMixer::duckAttack, 0.0f, 2.0f, "%.2f");
+        ImGui::SliderFloat("Release (s)", &AudioMixer::duckRelease, 0.0f, 4.0f, "%.2f");
+        ImGui::TextDisabled("Music now at %.0f%%", AudioMixer::duckGain * 100.0f);
+    }
+    ImGui::Spacing();
+    if (ImGui::Button("Reset")) {
+        AudioMixer::masterVolume = 1.0f; AudioMixer::muted = false;
+        for (int i = 0; i < (int)AudioGroup::Count; ++i) { AudioMixer::groupVolume[i] = 1.0f; AudioMixer::groupMuted[i] = false; }
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("Editor only; players set their own in the pause menu.");
+    ImGui::End();
 }
 
 // Crash Log viewer: shows the crash reports the exception handler writes next to the
@@ -32872,7 +32929,19 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* a = dynamic_cast<AudioSource*>(curComp)) {
         if (CompHeader("Audio Source", a, &toRemove)) {
-            ImGui::DragFloat("Volume", &a->volume, 0.01f, 0.0f, 1.0f);
+            if (ImGui::DragFloat("Volume", &a->volume, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Pitch##audio", &a->pitch, 0.01f, 0.1f, 3.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Speed and pitch together: 2 is an octave up and twice as fast");
+            if (ImGui::SliderFloat("Pan##audio", &a->pan, -1.0f, 1.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("-1 left, 0 centre, 1 right (adds to the 3D pan)");
+            {
+                int g = (int)a->group;
+                const char* groups[] = {"SFX", "Music", "UI", "Voice"};
+                if (ImGui::Combo("Group##audio", &g, groups, IM_ARRAYSIZE(groups))) { a->group = (AudioGroup)g; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mixer group: its volume and mute apply on top of the master");
+            }
+            if (ImGui::SliderFloat("Low Pass##audio", &a->lowPass, 200.0f, AudioSource::kLowPassOff, "%.0f Hz", ImGuiSliderFlags_Logarithmic)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lower muffles the sound (behind a wall, underwater). All the way right is off.");
             ImGui::Checkbox("Loop", &a->loop);
             ImGui::SameLine();
             ImGui::Checkbox("Play On Awake", &a->playOnAwake);
@@ -32890,34 +32959,82 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::InputText("##audiowav", cb, sizeof(cb))) { a->clipPath = cb; ed.dirty = true; }
             if (AcceptAssetPathField(a->clipPath)) ed.dirty = true;   // drop from Project
             ImGui::SameLine(0, 4);
-            // Browse for a WAV and load it immediately so Play previews it in-editor.
+            // Browse for an audio file and load it now so Play previews it in-editor.
             if (ImGui::Button("...##audiobrowse")) {
-                const char* wavFilt[1] = {"*.wav"};
-                if (const char* p = tinyfd_openFileDialog("Choose a WAV file", "", 1, wavFilt, "WAV audio", 0)) {
+                const char* audioFilt[3] = {"*.wav", "*.ogg", "*.mp3"};
+                if (const char* p = tinyfd_openFileDialog("Choose an audio file", "", 3, audioFilt, "Audio (WAV, OGG, MP3)", 0)) {
                     a->clipPath = p; ed.dirty = true;
                     std::string werr;
-                    if (a->clip.LoadWAV(p, &werr)) ConsoleLog("Loaded " + std::string(p));
-                    else ConsoleLog("WAV load failed: " + werr, 2);
+                    if (a->clip.Load(p, &werr)) ConsoleLog("Loaded " + std::string(p));
+                    else ConsoleLog("Audio load failed: " + werr, 2);
                 }
             }
             ImGui::SameLine(0, 4);
-            ImGui::TextUnformatted("WAV File");
+            ImGui::TextUnformatted("Audio File");
             if (!a->clipPath.empty()) {
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Load##audiowavload")) {   // preview a typed/dropped path
                     std::string werr;
-                    if (a->clip.LoadWAV(a->clipPath, &werr)) ConsoleLog("Loaded " + a->clipPath);
-                    else ConsoleLog("WAV load failed: " + werr, 2);
+                    if (a->clip.Load(a->clipPath, &werr)) ConsoleLog("Loaded " + a->clipPath);
+                    else ConsoleLog("Audio load failed: " + werr, 2);
                 }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Load this WAV now so Play previews it in the editor");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Load this file now to hear it with the Play button here");
             }
-            ImGui::TextDisabled("WAV path also loads in the built game; %.2fs clip", a->clip.Duration());
+            ImGui::TextDisabled("WAV, OGG or MP3; loads on Play and in the built game; %.2fs clip", a->clip.Duration());
             if (ImGui::Checkbox("3D (spatial)", &a->spatial)) ed.dirty = true;
             if (a->spatial) {
                 if (ImGui::DragFloat("Min Distance##audio", &a->minDistance, 0.1f, 0.0f, 1000.0f)) ed.dirty = true;
                 if (ImGui::DragFloat("Max Distance##audio", &a->maxDistance, 0.1f, 0.0f, 5000.0f)) ed.dirty = true;
+                int r = (int)a->rolloff;
+                const char* rolls[] = {"Linear", "Inverse", "Logarithmic"};
+                if (ImGui::Combo("Rolloff##audio", &r, rolls, IM_ARRAYSIZE(rolls))) { a->rolloff = (AudioRolloff)r; ed.dirty = true; }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Linear: straight fade. Inverse: like real sound, loud up close.\n"
+                                      "Logarithmic: loud up close with a long quiet tail.");
             }
             if (ImGui::SmallButton("Remove##audio")) toRemove = a;
+        }
+    }
+    if (auto* mp = dynamic_cast<MusicPlayer*>(curComp)) {
+        if (CompHeader("Music Player", mp, &toRemove)) {
+            ImGui::TextDisabled("Plays its tracks on the Music group, crossfading between them.");
+            int removeAt = -1;
+            for (std::size_t i = 0; i < mp->tracks.size(); ++i) {
+                ImGui::PushID((int)i);
+                char tb[256];
+                std::strncpy(tb, mp->tracks[i].c_str(), sizeof(tb) - 1);
+                tb[sizeof(tb) - 1] = '\0';
+                ImGui::SetNextItemWidth(200);
+                if (ImGui::InputText("##track", tb, sizeof(tb))) { mp->tracks[i] = tb; ed.dirty = true; }
+                if (AcceptAssetPathField(mp->tracks[i])) ed.dirty = true;   // drop from Project
+                ImGui::SameLine(0, 4);
+                if (ImGui::SmallButton("...")) {
+                    const char* filt[3] = {"*.wav", "*.ogg", "*.mp3"};
+                    if (const char* f = tinyfd_openFileDialog("Choose a music file", "", 3, filt, "Audio (WAV, OGG, MP3)", 0)) {
+                        mp->tracks[i] = f; ed.dirty = true;
+                    }
+                }
+                ImGui::SameLine(0, 4);
+                if (ImGui::SmallButton("x")) removeAt = (int)i;
+                ImGui::PopID();
+            }
+            if (removeAt >= 0) { mp->tracks.erase(mp->tracks.begin() + removeAt); ed.dirty = true; }
+            if (ImGui::Button("+ Track")) { mp->tracks.emplace_back(); ed.dirty = true; }
+            if (ImGui::DragFloat("Volume##music", &mp->volume, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Crossfade##music", &mp->crossfade, 0.05f, 0.0f, 20.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::Checkbox("Play On Start##music", &mp->playOnStart)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Shuffle##music", &mp->shuffle)) ed.dirty = true;
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Loop##music", &mp->loopPlaylist)) ed.dirty = true;
+            if (ed.isPlaying()) {
+                ImGui::Text("Now: %s", mp->CurrentTrack().empty() ? "(nothing)" : mp->CurrentTrack().c_str());
+                if (ImGui::Button("Previous##music")) mp->Previous();
+                ImGui::SameLine();
+                if (ImGui::Button("Next##music")) mp->Next();
+                ImGui::SameLine();
+                if (ImGui::Button("Stop##music")) mp->Stop(1.0f);
+            }
         }
     }
 
@@ -35570,6 +35687,7 @@ void DrawInspector(EditorState& ed) {
         { bool o = BeginCat("Audio");
           if (o) {
             if (item(!go->GetComponent<AudioSource>(), "Audio Source")) { go->AddComponent<AudioSource>()->clip = AudioClip::Sine(440.0f, 0.3f); ed.dirty = true; }
+            if (item(!go->GetComponent<MusicPlayer>(), "Music Player")) { go->AddComponent<MusicPlayer>(); ed.dirty = true; }
           } EndCat(o); }
 
         { bool o = BeginCat("Gameplay");
@@ -42158,11 +42276,13 @@ int main(int argc, char** argv) {
     for (int i = 0; i < SDL_NumJoysticks(); ++i)
         if (SDL_IsGameController(i)) { g_pad = SDL_GameControllerOpen(i); if (g_pad) break; }
 
-    // Open a mono float audio device (queue mode); audio is optional.
+    // Open a stereo float audio device (queue mode); audio is optional. Take
+    // whatever rate and channel count the device gives us.
     SDL_AudioSpec want{}, have{};
-    want.freq = 44100; want.format = AUDIO_F32SYS; want.channels = 1; want.samples = 1024;
-    SDL_AudioDeviceID audioDev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
-    if (audioDev) SDL_PauseAudioDevice(audioDev, 0);
+    want.freq = 44100; want.format = AUDIO_F32SYS; want.channels = 2; want.samples = 1024;
+    SDL_AudioDeviceID audioDev = SDL_OpenAudioDevice(nullptr, 0, &want, &have,
+        SDL_AUDIO_ALLOW_FREQUENCY_CHANGE | SDL_AUDIO_ALLOW_CHANNELS_CHANGE);
+    if (audioDev) { AudioMixer::sampleRate = have.freq; SDL_PauseAudioDevice(audioDev, 0); }
 
     // Create the window HIDDEN so the OS never composites a black, uninitialized
     // rectangle during the window + renderer setup. We paint the first splash
@@ -42865,18 +42985,25 @@ int main(int argc, char** argv) {
             }
         }
 
-        // Pump audio while playing (mono float, queued).
+        // Pump audio while playing (stereo float, queued). Top the queue up to a
+        // fixed ~70 ms rather than rendering dt worth, which drifts against the
+        // sound card and crackles.
         if (audioDev) {
             if (ed.isPlaying()) {
-                int n = (int)(dt * 44100.0f);
-                if (n > 8192) n = 8192;
+                const int ch = have.channels >= 2 ? 2 : 1;
+                const int target = have.freq / 14;
+                const int queued = (int)(SDL_GetQueuedAudioSize(audioDev) / (sizeof(float) * ch));
+                const int n = std::min(target - queued, 8192);
                 if (n > 0) {
                     // Listener = the scene's main camera (for 3D/spatial sources).
-                    if (Camera* mc = SceneCamera(ed.scene()))
-                        AudioMixer::SetListener(mc->gameObject->transform->Position());
-                    std::vector<float> ab(n);
-                    AudioMixer::Render(ed.scene(), ab.data(), n);
-                    SDL_QueueAudio(audioDev, ab.data(), (Uint32)(n * sizeof(float)));
+                    if (Camera* mc = SceneCamera(ed.scene())) {
+                        Transform* lt = mc->gameObject->transform;
+                        AudioMixer::SetListener(lt->Position(), lt->Right());
+                    }
+                    std::vector<float> st((size_t)n * 2);
+                    AudioMixer::RenderStereo(ed.scene(), st.data(), n);
+                    if (ch == 1) for (int i = 0; i < n; ++i) st[i] = 0.5f * (st[2 * i] + st[2 * i + 1]);
+                    SDL_QueueAudio(audioDev, st.data(), (Uint32)((size_t)n * ch * sizeof(float)));
                 }
             } else {
                 SDL_ClearQueuedAudio(audioDev);
@@ -43240,6 +43367,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.Inspector"); if (g_showInspector) DrawInspector(ed); }
         { OKAY_PROFILE("UI.Console"); if (g_showConsole)   DrawConsole(); }
         { OKAY_PROFILE("UI.CrashLog"); if (g_showCrashLog)  DrawCrashLog(); }
+        { OKAY_PROFILE("UI.AudioMixer"); if (g_showAudioMixer) DrawAudioMixer(); }
         { OKAY_PROFILE("UI.AssetManager"); if (g_showAssetManager) DrawAssetManager(ed); }
         { OKAY_PROFILE("UI.Plugins"); TickPlugins(ed); DrawPluginManager(ed); }
         {   // Every scene needs a camera (the Game view and builds render through it):

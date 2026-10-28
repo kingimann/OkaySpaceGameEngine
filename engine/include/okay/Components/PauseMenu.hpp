@@ -20,9 +20,10 @@ namespace okay {
 
 /// A ready-made pause menu: press the toggle key (Escape by default) to freeze the
 /// game and pop up a centred card with Resume / Restart / Main Menu / Quit buttons,
-/// a master-volume slider, and a hint line, over a dimmed backdrop. No scripting —
+/// Volume, Music and Effects sliders, and a hint line, over a dimmed backdrop. No scripting —
 /// drop it on any object. It pauses via the global Game state (so all gameplay
-/// freezes and the cursor is freed to click), drives the audio master volume, and
+/// freezes and the cursor is freed to click), drives the audio mixer (the player's
+/// settings are saved with their prefs), and
 /// Quit asks the host to exit. Buttons also work with keyboard/gamepad navigation.
 class PauseMenu : public Behaviour {
 public:
@@ -32,7 +33,7 @@ public:
     bool  showResume  = true;
     bool  showRestart = false;            ///< needs `restartScene` set
     bool  showQuit    = true;
-    bool  showVolume  = true;             ///< a master-volume slider
+    bool  showVolume  = true;             ///< Volume (master), Music and Effects sliders
     /// Scene to (re)load for Restart / Main Menu (empty = button hidden).
     std::string restartScene;
     std::string mainMenuScene;
@@ -50,11 +51,11 @@ public:
         // Keep the overlay synced to the pause state (another source un-pausing also
         // closes it). Only touch it on a change so we don't fight other systems.
         bool paused = Game::Paused();
-        if (paused != m_shown) { SetOverlayActive(paused); m_shown = paused; }
+        if (paused != m_shown) { SetOverlayActive(paused); m_shown = paused; if (paused) SyncSliders(); }
         if (paused) {
             Cursor::Capture(false);            // free the cursor so the buttons are clickable
             Input::SetUICaptured(true);        // the world ignores clicks/keys behind the menu
-            if (m_volume) AudioMixer::masterVolume = m_volume->value;   // live volume
+            ApplySliders();                    // live volume
         }
     }
 
@@ -72,12 +73,13 @@ public:
         // here — just drop our references and never leave the game frozen.
         m_objects.clear(); m_root = nullptr; m_built = false; m_shown = false;
         m_resume = nullptr; m_restart = nullptr; m_menu = nullptr; m_quit = nullptr; m_volume = nullptr;
+        m_music = nullptr; m_effects = nullptr;
         if (Game::Paused()) { Game::SetPaused(false); Input::SetUICaptured(false); }
     }
 
     /// Open/close the pause menu programmatically (e.g. from a HUD button).
     void Toggle() { Game::Paused() ? Resume() : Pause(); }
-    void Pause()  { EnsureBuilt(); Game::SetPaused(true);  SetOverlayActive(true);  m_shown = true;
+    void Pause()  { EnsureBuilt(); Game::SetPaused(true);  SetOverlayActive(true);  m_shown = true; SyncSliders();
                     Cursor::Capture(false); Input::SetUICaptured(true); }
 
     /// Create the editable pause-menu UI (Canvas, panels, buttons, slider) as real
@@ -102,6 +104,8 @@ private:
     UIButton* m_menu    = nullptr;
     UIButton* m_quit    = nullptr;
     UISlider* m_volume  = nullptr;
+    UISlider* m_music   = nullptr;
+    UISlider* m_effects = nullptr;
     bool      m_built   = false;
     bool      m_shown   = false;
 
@@ -130,8 +134,26 @@ private:
             else if (o->name == "Pause_Main Menu") m_menu    = o->GetComponent<UIButton>();
             else if (o->name == "Pause_Quit")      m_quit    = o->GetComponent<UIButton>();
             else if (o->name == "Pause_Volume")    m_volume  = o->GetComponent<UISlider>();
+            else if (o->name == "Pause_Music")     m_music   = o->GetComponent<UISlider>();
+            else if (o->name == "Pause_Effects")   m_effects = o->GetComponent<UISlider>();
         }
         m_built = true;   // adopt visibility as-is; Start() hides at Play
+    }
+
+    // Sliders show the mixer's current levels when the menu opens, then drive them.
+    // Effects covers sound effects and UI sounds.
+    void SyncSliders() {
+        if (m_volume)  m_volume->value  = AudioMixer::masterVolume;
+        if (m_music)   m_music->value   = AudioMixer::groupVolume[(int)AudioGroup::Music];
+        if (m_effects) m_effects->value = AudioMixer::groupVolume[(int)AudioGroup::SFX];
+    }
+    void ApplySliders() {
+        if (m_volume) AudioMixer::masterVolume = m_volume->value;
+        if (m_music)  AudioMixer::groupVolume[(int)AudioGroup::Music] = m_music->value;
+        if (m_effects) {
+            AudioMixer::groupVolume[(int)AudioGroup::SFX] = m_effects->value;
+            AudioMixer::groupVolume[(int)AudioGroup::UI]  = m_effects->value;
+        }
     }
 
     void LoadScene(const std::string& path) {
@@ -182,6 +204,22 @@ private:
         m_objects.push_back(t);
     }
 
+    // A labelled volume slider; advances `y` past it.
+    UISlider* AddSlider(Scene& s, GameObject* root, const char* label, const char* name, float value, float& y) {
+        AddLabel(s, root, (std::string(name) + "Label").c_str(), label, y, kVolLblH, 1.6f, Color::FromBytes(200, 205, 220), false);
+        y += kVolLblH + kVolGap;
+        GameObject* o = s.CreateGameObject(name);
+        auto* sl = o->AddComponent<UISlider>();
+        sl->anchor = UIAnchor::Center;
+        sl->size = {kBtnW, kVolBarH}; sl->position = {-kBtnW * 0.5f, y};
+        sl->value = value;
+        sl->cornerRadius = 6.0f;
+        o->transform->SetParent(root->transform, false);
+        m_objects.push_back(o);
+        y += kVolBarH;
+        return sl;
+    }
+
     void Build() {
         if (m_built) return;
         Scene* s = GetScene();
@@ -194,7 +232,7 @@ private:
 
         float bodyH = kTitleH;
         if (nBtn > 0) bodyH += kSection + nBtn * kBtnH + (nBtn - 1) * kBtnGap;
-        if (showVolume) bodyH += kSection + kVolLblH + kVolGap + kVolBarH;
+        if (showVolume) bodyH += kSection + 3 * (kVolLblH + kVolGap + kVolBarH) + 2 * kVolGap;
         if (!hint.empty()) bodyH += kSection + kHintH;
         float cardH = bodyH + kPad * 2.0f;
 
@@ -244,17 +282,11 @@ private:
 
         if (showVolume) {
             y += kSection;
-            AddLabel(*s, root, "Pause_VolLabel", "Volume", y, kVolLblH, 1.6f, Color::FromBytes(200, 205, 220), false);
-            y += kVolLblH + kVolGap;
-            GameObject* vol = s->CreateGameObject("Pause_Volume");
-            m_volume = vol->AddComponent<UISlider>();
-            m_volume->anchor = UIAnchor::Center;
-            m_volume->size = {kBtnW, kVolBarH}; m_volume->position = {-kBtnW * 0.5f, y};
-            m_volume->value = AudioMixer::masterVolume;
-            m_volume->cornerRadius = 6.0f;
-            vol->transform->SetParent(root->transform, false);
-            m_objects.push_back(vol);
-            y += kVolBarH;
+            m_volume  = AddSlider(*s, root, "Volume",  "Pause_Volume",  AudioMixer::masterVolume, y);
+            y += kVolGap;
+            m_music   = AddSlider(*s, root, "Music",   "Pause_Music",   AudioMixer::groupVolume[(int)AudioGroup::Music], y);
+            y += kVolGap;
+            m_effects = AddSlider(*s, root, "Effects", "Pause_Effects", AudioMixer::groupVolume[(int)AudioGroup::SFX], y);
         }
 
         if (!hint.empty()) {

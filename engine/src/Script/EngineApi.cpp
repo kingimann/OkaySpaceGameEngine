@@ -28,6 +28,7 @@
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UIButton.hpp"
+#include "okay/Audio/AudioMixer.hpp"
 #include <cmath>
 #include <set>
 
@@ -857,6 +858,41 @@ EngineApi Build() {
             [](const Value&, std::vector<Value>& a, CallContext&) { Log::Error("[script] ", LogText(a[0])); return Value{}; },
             "Print an error to the Console."));
         api.types.push_back(std::move(d));
+    }
+    // ---- Audio ----
+    {
+        ApiType au; au.name = "Audio"; au.isStatic = true;
+        au.doc = "The mixer: overall volume and each group's (Music, SFX, UI, Voice), as a settings menu sets them.";
+        au.staticProps.push_back(prop("masterVolume", tFloat,
+            [](const Value&, CallContext&) { return Value{AudioMixer::masterVolume}; },
+            [](const Value&, const Value& v, CallContext&) { AudioMixer::masterVolume = Mathf::Clamp(F(v), 0.0f, 1.0f); },
+            "Overall volume, 0 to 1."));
+        au.staticProps.push_back(prop("muted", tBool,
+            [](const Value&, CallContext&) { return Value{AudioMixer::muted}; },
+            [](const Value&, const Value& v, CallContext&) { AudioMixer::muted = std::get<bool>(v); },
+            "Silence everything."));
+        auto group = [](const std::string& name, CallContext& c) {
+            AudioGroup g;
+            if (!AudioMixer::GroupFromName(name.c_str(), g))
+                throw RuntimeError("There's no audio group called \"" + name + "\" (use Music, SFX, UI or Voice)", c.loc);
+            return (int)g;
+        };
+        au.staticMethods.push_back(method("SetGroupVolume", {tString, tFloat}, {"group", "volume"}, tVoid,
+            [group](const Value&, std::vector<Value>& a, CallContext& c) {
+                AudioMixer::groupVolume[group(S(a[0]), c)] = Mathf::Clamp(F(a[1]), 0.0f, 1.0f); return Value{}; },
+            "Set one group's volume, 0 to 1 (\"Music\", \"SFX\", \"UI\" or \"Voice\")."));
+        au.staticMethods.push_back(method("GetGroupVolume", {tString}, {"group"}, tFloat,
+            [group](const Value&, std::vector<Value>& a, CallContext& c) { return Value{AudioMixer::groupVolume[group(S(a[0]), c)]}; },
+            "One group's volume."));
+        au.staticMethods.back().pure = true;   // a value node in a visual script
+        au.staticMethods.push_back(method("MuteGroup", {tString, tBool}, {"group", "mute"}, tVoid,
+            [group](const Value&, std::vector<Value>& a, CallContext& c) {
+                AudioMixer::groupMuted[group(S(a[0]), c)] = std::get<bool>(a[1]); return Value{}; },
+            "Mute or unmute one group."));
+        au.staticMethods.push_back(method("SaveSettings", {}, {}, tVoid,
+            [](const Value&, std::vector<Value>&, CallContext&) { AudioMixer::SaveSettings(); return Value{}; },
+            "Store the volumes in the player's prefs now (they are also saved when the game closes)."));
+        api.types.push_back(std::move(au));
     }
     // ---- Mathf ----
     {

@@ -76,6 +76,7 @@
 #include "okay/Components/SpriteAnimator.hpp"
 #include "okay/Components/Animator.hpp"
 #include "okay/Components/AudioSource.hpp"
+#include "okay/Components/MusicPlayer.hpp"
 #include "okay/Components/Tilemap.hpp"
 #include "okay/Components/TilemapCollider2D.hpp"
 #include "okay/Components/ParticleSystem.hpp"
@@ -2144,7 +2145,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* au = go->GetComponent<AudioSource>()) {
         out << "  audio " << Quote(au->clipPath) << " " << au->volume << " "
             << (au->loop ? 1 : 0) << " " << (au->playOnAwake ? 1 : 0) << " "
-            << (au->spatial ? 1 : 0) << " " << au->minDistance << " " << au->maxDistance << "\n";
+            << (au->spatial ? 1 : 0) << " " << au->minDistance << " " << au->maxDistance << " "
+            << au->pitch << " " << au->pan << " " << (int)au->group << " " << (int)au->rolloff << " "
+            << au->lowPass << "\n";
+    }
+    if (auto* mp = go->GetComponent<MusicPlayer>()) {
+        out << "  music " << (mp->playOnStart ? 1 : 0) << " " << (mp->shuffle ? 1 : 0) << " "
+            << (mp->loopPlaylist ? 1 : 0) << " " << mp->crossfade << " " << mp->volume << " " << mp->tracks.size();
+        for (const auto& t : mp->tracks) out << " " << Quote(t);
+        out << "\n";
     }
     if (auto* anim = go->GetComponent<Animator>()) {
         out << "  animator " << anim->speed << " " << (anim->playing ? 1 : 0) << " "
@@ -5302,7 +5311,23 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (std::isdigit(in.peek())) {
                         int sp = 0; in >> sp >> au->minDistance >> au->maxDistance;
                         au->spatial = (sp != 0);
+                        // optional mixer fields: pitch pan group rolloff
+                        in >> std::ws;
+                        if (std::isdigit(in.peek()) || in.peek() == '.') {
+                            int grp = 0, ro = 0;
+                            in >> au->pitch >> au->pan >> grp >> ro;
+                            if (grp >= 0 && grp < (int)AudioGroup::Count) au->group = (AudioGroup)grp;
+                            if (ro >= 0 && ro <= (int)AudioRolloff::Logarithmic) au->rolloff = (AudioRolloff)ro;
+                            in >> std::ws;   // optional low-pass cutoff
+                            if (std::isdigit(in.peek())) in >> au->lowPass;
+                        }
                     }
+                } else if (field == "music") {
+                    auto* mp = go->AddComponent<MusicPlayer>();
+                    int pos = 1, sh = 0, lp = 1; std::size_t n = 0;
+                    in >> pos >> sh >> lp >> mp->crossfade >> mp->volume >> n;
+                    mp->playOnStart = pos != 0; mp->shuffle = sh != 0; mp->loopPlaylist = lp != 0;
+                    for (std::size_t t = 0; t < n && in; ++t) mp->tracks.push_back(ReadQuoted(in));
                 } else if (field == "animator") {
                     float speed = 1.0f; int playing = 1, loop = 1, tc = 0;
                     in >> speed >> playing >> loop;
@@ -6717,6 +6742,7 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
     for (const auto& go : scene.Objects()) {
         if (auto* sr = go->GetComponent<SpriteRenderer>()) add(sr->texture);
         if (auto* au = go->GetComponent<AudioSource>())    add(au->clipPath);
+        if (auto* mp = go->GetComponent<MusicPlayer>())    for (const auto& t : mp->tracks) add(t);
         if (auto* mr = go->GetComponent<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); add(mr->normalMap); add(mr->specularMap); add(mr->aoMap); }
         if (auto* tr = go->GetComponent<Terrain>())         { add(tr->texture); add(tr->normalMap); }
         if (auto* ps = go->GetComponent<ParticleSystem>())  add(ps->texture);

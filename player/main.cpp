@@ -1461,10 +1461,13 @@ int main(int argc, char** argv) {
     int gpuFails = 0;   // self-heal: after repeated GPU failures, fall back for good
 
     SDL_AudioSpec want{}, have{};
-    want.freq = 44100; want.format = AUDIO_F32SYS; want.channels = 1; want.samples = 1024;
-    SDL_AudioDeviceID audioDev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
-    if (audioDev) SDL_PauseAudioDevice(audioDev, 0);
+    want.freq = 44100; want.format = AUDIO_F32SYS; want.channels = 2; want.samples = 1024;
+    // Float output at whatever rate and channel count the device gives us.
+    SDL_AudioDeviceID audioDev = SDL_OpenAudioDevice(nullptr, 0, &want, &have,
+        SDL_AUDIO_ALLOW_FREQUENCY_CHANGE | SDL_AUDIO_ALLOW_CHANNELS_CHANGE);
+    if (audioDev) { AudioMixer::sampleRate = have.freq; SDL_PauseAudioDevice(audioDev, 0); }
     AudioMixer::masterVolume = cfg.volume;   // global mix scale from build settings
+    AudioMixer::LoadSettings();   // the player's own volume settings win over it
     InputActions::Load();   // the player's own control bindings
 
     // baseDir (resolved above) is where the game files live, for relative paths.
@@ -1481,14 +1484,8 @@ int main(int argc, char** argv) {
     SDL_Texture* mesh3DTex = nullptr;
     int mesh3DW = 0, mesh3DH = 0;
 
-    // Load any WAV clips referenced by AudioSources, resampled to the mix rate.
-    for (const auto& up : scene.Objects()) {
-        auto* au = up->GetComponent<AudioSource>();
-        if (!au || au->clipPath.empty()) continue;
-        AudioClip wav;
-        if (wav.LoadWAV(au->clipPath) || wav.LoadWAV(baseDir + au->clipPath))
-            au->clip = wav.Resampled(44100);
-    }
+    // Load the audio files (WAV, OGG, MP3) AudioSources name, resampled to the mix rate.
+    LoadSceneAudio(scene, baseDir, AudioMixer::sampleRate);
 
     // Load any .OBJ models referenced by MeshRenderers (resolve next to the exe).
     for (const auto& up : scene.Objects()) {
@@ -1836,7 +1833,7 @@ int main(int argc, char** argv) {
 #endif
         // Focus behaviour: optionally pause the sim and/or mute audio
         // when the window isn't focused.
-        if (cfg.muteOnFocusLoss) AudioMixer::masterVolume = windowFocused ? cfg.volume : 0.0f;
+        AudioMixer::focusMuted = cfg.muteOnFocusLoss && !windowFocused;
         const bool tick = windowFocused || cfg.runInBackground;
 
         // --- Built-in Builder Mode (an engine feature, not a component to add): F2
@@ -1895,13 +1892,21 @@ int main(int argc, char** argv) {
         NavigateUI(scene);
 
         if (audioDev) {
-            int n = (int)(dt * 44100.0f); if (n > 8192) n = 8192;
+            // Top the queue up to a fixed ~70 ms instead of rendering dt worth:
+            // dt drifts against the sound card, which starves or piles up audio.
+            const int ch = have.channels >= 2 ? 2 : 1;
+            const int target = have.freq / 14;
+            const int queued = (int)(SDL_GetQueuedAudioSize(audioDev) / (sizeof(float) * ch));
+            const int n = std::min(target - queued, 8192);
             if (n > 0) {
-                if (scene.mainCamera)   // listener for 3D/spatial audio sources
-                    AudioMixer::SetListener(scene.mainCamera->gameObject->transform->Position());
-                std::vector<float> ab(n);
-                AudioMixer::Render(scene, ab.data(), n);
-                SDL_QueueAudio(audioDev, ab.data(), (Uint32)(n * sizeof(float)));
+                if (scene.mainCamera) {   // listener for 3D/spatial audio sources
+                    Transform* lt = scene.mainCamera->gameObject->transform;
+                    AudioMixer::SetListener(lt->Position(), lt->Right());
+                }
+                std::vector<float> st((size_t)n * 2);
+                AudioMixer::RenderStereo(scene, st.data(), n);
+                if (ch == 1) for (int i = 0; i < n; ++i) st[i] = 0.5f * (st[2 * i] + st[2 * i + 1]);
+                SDL_QueueAudio(audioDev, st.data(), (Uint32)((size_t)n * ch * sizeof(float)));
             }
         }
 
@@ -2452,6 +2457,7 @@ int main(int argc, char** argv) {
         acFileReport(acGuard.Findings().front().check, all);
     }
 
+    AudioMixer::SaveSettings();
     Prefs::Save(prefsPath); // persist any prefs the game set this session
 
     for (auto& kv : textureCache)

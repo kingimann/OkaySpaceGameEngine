@@ -5696,6 +5696,51 @@ void DrawMenuAndToolbar(EditorState& ed) {
         if (ImGui::MenuItem("Reset Layout")) g_resetLayout = true;
         ImGui::EndMenu();
     }
+    // Downloads a three.js Mixamo sample into mixamo-cache/ (gitignored) and
+    // parents it to the Player so Play, E, and V use that rig.
+    auto spawnMixamo = [&](const char* file, const char* label) {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        fs::create_directories("mixamo-cache", ec);
+        const fs::path path = fs::path("mixamo-cache") / file;
+        if (!fs::exists(path)) {
+            const std::string url = std::string("https://raw.githubusercontent.com/mrdoob/three.js/r160/examples/models/gltf/") + file;
+            ConsoleLog("Downloading " + url + " into mixamo-cache/");
+            const std::string cmd = "curl -fsSL --retry 2 -o \"" + path.string() + "\" \"" + url + "\"";
+            if (std::system(cmd.c_str()) != 0 || !fs::exists(path)) {
+                ConsoleLog("Could not download " + std::string(file) + ". Check the network, then try the menu again.", 1);
+                return;
+            }
+        }
+        ed.PushUndo();
+        GameObject* player = ed.scene().Find("Player");
+        if (!player) player = okay::Templates::AddFirstPersonPlayer(ed.scene());
+        if (!player) { ConsoleLog("No player to attach the Mixamo rig to.", 1); return; }
+        if (auto* ch = player->GetComponent<Character>()) {
+            ch->driveExternal = true;
+            if (auto* mr = player->GetComponent<MeshRenderer>()) mr->enabled = false;
+        }
+        if (!player->GetComponent<ProceduralObjectHolding>()) player->AddComponent<ProceduralObjectHolding>();
+        if (!player->GetComponent<FirstPersonHands>()) player->AddComponent<FirstPersonHands>();
+        bool ok = false;
+        GameObject* model = okay::ImportModelScene(ed.scene(), path.string(), &ok);
+        if (!model || !ok) { ConsoleLog("Import failed: " + path.string(), 1); return; }
+        model->name = std::string("Mixamo ") + label;
+        if (player->transform && model->transform) {
+            model->transform->SetParent(player->transform, false);
+            model->transform->localPosition = Vec3::Zero;
+            model->transform->localRotation = Quat::Identity;
+            model->transform->localScale = Vec3::One;
+        }
+        auto* ik = player->GetComponent<FullBodyIK>();
+        if (!ik) ik = player->AddComponent<FullBodyIK>();
+        for (auto*& b : ik->bones) b = nullptr;
+        const int mapped = ik->MapBones(true);
+        ed.Select(player);
+        ed.dirty = true;
+        ConsoleLog("Mixamo " + std::string(label) + " is on Player (" + std::to_string(mapped)
+                   + " bones). Press Play, E to pick up, V to switch views. File: " + path.string());
+    };
     if (ImGui::BeginMenu("GameObject")) {
         bool created = false;
         if (ImGui::MenuItem("Create Empty"))   { ed.CreateEmpty();   ConsoleLog("Created empty GameObject"); created = true; }
@@ -5728,6 +5773,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 ed.Select(okay::Templates::AddFirstPersonPlayer(ed.scene()));
                 ConsoleLog("Added First-Person player"); ed.dirty = true; created = true;
             }
+            if (ImGui::MenuItem("Mixamo Soldier")) { spawnMixamo("Soldier.glb", "Soldier"); created = true; }
+            if (ImGui::MenuItem("Mixamo Xbot")) { spawnMixamo("Xbot.glb", "Xbot"); created = true; }
             if (ImGui::MenuItem("Third Person Shooter")) {
                 ed.PushUndo();
                 ed.Select(okay::Templates::AddThirdPersonShooterPlayer(ed.scene()));
@@ -28047,7 +28094,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* fhs = dynamic_cast<FirstPersonHands*>(curComp)) {
-        if (CompHeader("FP Hands", fhs, &toRemove)) {
+        if (CompHeader("First Person Hands", fhs, &toRemove)) {
             DrawFpHandsBody(ed, fhs);
             if (ImGui::SmallButton("Remove##fphs")) toRemove = fhs;
         }

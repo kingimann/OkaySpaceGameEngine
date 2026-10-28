@@ -43,6 +43,8 @@
 #include <initializer_list>
 #include <string>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 namespace okay {
 
@@ -221,9 +223,58 @@ public:
         if (dying.count(m_holder)) m_holder = nullptr;
     }
 
+    /// Put physics back and clear the holder. Safe to call more than once.
+    void ReleaseHold() {
+        if (m_froze) {
+            if (m_rb) m_rb->bodyType = m_savedType;
+            for (auto& c : m_triggers) if (c.first) c.first->isTrigger = c.second;
+            m_froze = false;
+            m_rb = nullptr;
+            m_triggers.clear();
+        }
+        if (gameObject) gameObject->ownerCameraSkip = nullptr;
+        if (gameObject && gameObject->transform && gameObject->transform->Parent()) {
+            Transform* parent = gameObject->transform->Parent();
+            GameObject* pg = parent->gameObject;
+            if (pg && (pg == m_holder || (m_holder && pg->IsSelfOrDescendantOf(m_holder)))) {
+                const Vec3 p = gameObject->transform->Position();
+                const Quat r = gameObject->transform->Rotation();
+                gameObject->transform->SetParent(nullptr, false);
+                gameObject->transform->SetPosition(p);
+                gameObject->transform->SetRotation(r);
+            }
+        }
+        m_holder = nullptr;
+    }
+
 private:
     friend class ProceduralObjectHolding;
+    void FreezeForHold(GameObject* holder) {
+        ReleaseHold();
+        m_holder = holder;
+        if (!gameObject) return;
+        if (auto* rb = gameObject->GetComponent<Rigidbody3D>()) {
+            m_rb = rb;
+            m_savedType = rb->bodyType;
+            rb->bodyType = Rigidbody3D::BodyType::Kinematic;
+            rb->velocity = Vec3::Zero;
+            rb->angularVelocity = Vec3::Zero;
+        }
+        if (Scene* sc = gameObject->scene())
+            for (const auto& up : sc->Objects())
+                if (up && up->IsSelfOrDescendantOf(gameObject))
+                    for (auto* c : up->GetComponents<Collider3D>()) {
+                        m_triggers.push_back({c, c->isTrigger});
+                        c->isTrigger = true;
+                    }
+        m_froze = true;
+    }
+
     GameObject* m_holder = nullptr;
+    bool m_froze = false;
+    Rigidbody3D* m_rb = nullptr;
+    Rigidbody3D::BodyType m_savedType = Rigidbody3D::BodyType::Dynamic;
+    std::vector<std::pair<Collider3D*, bool>> m_triggers;
 };
 
 } // namespace okay

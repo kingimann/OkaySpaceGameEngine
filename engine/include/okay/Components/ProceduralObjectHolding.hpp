@@ -66,9 +66,9 @@ public:
         if (h && h->m_holder && h->m_holder != gameObject) return false;
         if (obj == m_held) return true;
         Drop();
+        ReleaseStrays(obj);
         FinishRelease(true);
         if (!h) h = obj->AddComponent<HoldableObject>();
-        h->m_holder = gameObject;
         m_held = obj; m_hold = h;
         m_itemScale = obj->transform->localScale;
         m_scaledItem = false;
@@ -77,17 +77,7 @@ public:
             m_scaledItem = true;
         }
         m_haveFrom = false; m_t = 0.0f;
-        // Physics lets go of it: no falling, no pushing the holder around.
-        m_physics.clear();
-        if (auto* rb = obj->GetComponent<Rigidbody3D>()) {
-            m_rbType = rb->bodyType; m_rb = rb;
-            rb->bodyType = Rigidbody3D::BodyType::Kinematic;
-            rb->velocity = Vec3::Zero; rb->angularVelocity = Vec3::Zero;
-        }
-        if (Scene* sc = obj->scene())
-            for (const auto& up : sc->Objects())
-                if (up && up->IsSelfOrDescendantOf(obj))
-                    for (auto* c : up->GetComponents<Collider3D>()) { m_physics.push_back({c, c->isTrigger}); c->isTrigger = true; }
+        h->FreezeForHold(gameObject);
         if (m_ik) for (int l = 0; l < 2; ++l) m_saved[l] = m_ik->effectors[l];
         m_savedValid = m_ik != nullptr;
         return true;
@@ -113,17 +103,21 @@ public:
     /// Let go of the held object: physics takes it back (moving with the holder's
     /// velocity) and the hands ease back to the animation.
     void Drop() {
-        if (!m_held) return;
-        if (m_rb) {
-            m_rb->bodyType = m_rbType;
-            if (m_rbType == Rigidbody3D::BodyType::Dynamic)
-                if (auto* own = BodyRigidbody()) m_rb->velocity = own->velocity;
-        }
-        for (auto& p : m_physics) if (p.c) p.c->isTrigger = p.trigger;
-        if (m_scaledItem && m_held->transform) m_held->transform->localScale = m_itemScale;
+        if (!m_held && !m_hold) { ReleaseStrays(nullptr); return; }
+        GameObject* dropped = m_held;
+        HoldableObject* hold = m_hold;
+        if (m_scaledItem && dropped && dropped->transform) dropped->transform->localScale = m_itemScale;
         m_scaledItem = false;
-        if (m_hold && m_hold->m_holder == gameObject) m_hold->m_holder = nullptr;
+        if (hold) {
+            Rigidbody3D* rb = dropped ? dropped->GetComponent<Rigidbody3D>() : nullptr;
+            const bool giveSpeed = rb && rb->bodyType == Rigidbody3D::BodyType::Kinematic;
+            hold->ReleaseHold();
+            if (giveSpeed && rb && rb->bodyType == Rigidbody3D::BodyType::Dynamic)
+                if (auto* own = BodyRigidbody()) rb->velocity = own->velocity;
+        }
+        if (dropped) dropped->ownerCameraSkip = nullptr;
         Forget();
+        ReleaseStrays(nullptr);
     }
 
     GameObject* Held() const { return m_held; }
@@ -158,11 +152,9 @@ public:
 
     void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying) override {
         if (m_held && dying.count(m_held)) {
-            m_rb = nullptr; m_physics.clear();
+            if (m_hold) m_hold->ReleaseHold();
             Forget();
         }
-        for (auto& p : m_physics) if (p.c && dying.count(p.c->gameObject)) p.c = nullptr;
-        if (m_rb && dying.count(m_rb->gameObject)) m_rb = nullptr;
         for (int l = 0; l < 2; ++l) {
             if (m_grip[l] && dying.count(m_grip[l])) m_grip[l] = nullptr;
             if (m_hint[l] && dying.count(m_hint[l])) m_hint[l] = nullptr;
@@ -218,7 +210,6 @@ private:
         bool fixed = false;          // at a socket: the object doesn't move to suit the arms
         Vec3 bc{0, 0, 0}, bh{0.1f, 0.1f, 0.1f};   // the object's local bounds (centre, half size; scaled)
     };
-    struct SavedCollider { Collider3D* c; bool trigger; };
     struct ArmRest {
         bool saved = false;
         MeshRenderer* fore = nullptr;
@@ -234,9 +225,6 @@ private:
     HoldableObject*  m_hold = nullptr;
     Character*       m_char = nullptr;
     FullBodyIK*      m_ik = nullptr;
-    Rigidbody3D*     m_rb = nullptr;
-    Rigidbody3D::BodyType m_rbType = Rigidbody3D::BodyType::Dynamic;
-    std::vector<SavedCollider> m_physics;
     FullBodyIK::Effector m_saved[2];
     bool  m_savedValid = false, m_releasing = false;
     GameObject* m_grip[2] = {};     // runtime hand goals (children of the body)
@@ -758,9 +746,17 @@ private:
             a = {};
         }
     }
+    void ReleaseStrays(GameObject* keep) {
+        Scene* sc = gameObject ? gameObject->scene() : nullptr;
+        if (!sc) return;
+        for (auto* h : sc->FindObjectsOfType<HoldableObject>()) {
+            if (!h || !h->gameObject || h->gameObject == keep || h->gameObject == m_held) continue;
+            if (h->Holder() == gameObject) h->ReleaseHold();
+        }
+    }
     void Forget() {
         RestoreArms();
-        m_held = nullptr; m_hold = nullptr; m_rb = nullptr; m_physics.clear();
+        m_held = nullptr; m_hold = nullptr;
         m_use[0] = m_use[1] = false;
         if (m_ik) { m_ik->effectors[0].enabled = false; m_ik->effectors[1].enabled = false; }
         m_releasing = m_savedValid;

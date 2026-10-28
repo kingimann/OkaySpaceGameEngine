@@ -7,6 +7,7 @@
 #include "okay/Components/Inventory.hpp"
 #include "okay/Components/InventoryPlayer.hpp"
 #include "okay/Components/MeshRenderer.hpp"
+#include "okay/Components/Camera.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Inventory/InventoryOps.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
@@ -58,6 +59,13 @@ public:
     }
 
     void Update(float dt) override {
+        // A previous hold must not stay kinematic after the hands have moved on.
+        if (auto* ho = gameObject ? gameObject->GetComponent<HoldableObject>() : nullptr) {
+            if (GameObject* who = ho->Holder()) {
+                auto* hands = who->GetComponent<ProceduralObjectHolding>();
+                if (!hands || hands->Held() != gameObject) ho->ReleaseHold();
+            }
+        }
         if (m_gone || !gameObject || !gameObject->transform || Held()) return;
         GameObject* player = FindInventoryPlayer(gameObject->scene());
         if (!player || !player->transform) return;
@@ -82,6 +90,24 @@ public:
     }
 
     void LateUpdate(float) override { ClearInteractBlock(); }
+
+    /// Lower is a better pickup: closest to the camera aim, then nearer to the camera.
+    static float AimScore(const Vec3& point, GameObject* player) {
+        Vec3 origin = player && player->transform ? player->transform->Position() : Vec3::Zero;
+        Vec3 dir = player && player->transform ? player->transform->Rotation() * Vec3{0.0f, 0.0f, -1.0f} : Vec3{0.0f, 0.0f, -1.0f};
+        if (player && player->scene() && player->scene()->mainCamera && player->scene()->mainCamera->transform) {
+            Transform* ct = player->scene()->mainCamera->transform;
+            origin = ct->Position();
+            dir = ct->Rotation() * Vec3{0.0f, 0.0f, -1.0f};
+        }
+        const float dl = dir.Magnitude();
+        dir = dl > 1e-6f ? dir * (1.0f / dl) : Vec3{0.0f, 0.0f, -1.0f};
+        const Vec3 w = point - origin;
+        const float along = Vec3::Dot(w, dir);
+        const float t = along > 0.0f ? along : 0.0f;
+        const float offRay = (point - (origin + dir * t)).Magnitude();
+        return offRay * 1000.0f + w.Magnitude();
+    }
 
     /// Someone is holding it in their hands right now.
     bool Held() const {
@@ -143,21 +169,24 @@ private:
 
     static bool& InteractBlocked() { static bool blocked = false; return blocked; }
 
-    /// Hold-in-hands props share one key. Only the closest one in range takes it,
-    /// so two crates in front of the player don't swap on a single press.
-    /// A bag pickup (holdInHands off) is unchanged.
+    /// Hold-in-hands props share one key. The one closest to the aim ray takes it
+    /// (distance breaks a tie), so a block sitting beside a crate does not steal
+    /// the press when the crosshair is on the crate.
     bool NearestHold(GameObject* player, float dist) const {
-        if (!holdInHands || !player || !player->transform) return true;
+        if (!holdInHands || !player || !player->transform || !gameObject || !gameObject->transform) return true;
         Scene* sc = gameObject->scene();
         if (!sc) return true;
+        const float mine = AimScore(gameObject->transform->Position(), player);
         const Vec3 p = player->transform->Position();
         for (auto* other : sc->FindObjectsOfType<ItemPickup>()) {
             if (!other || other == this || !other->enabled || !other->holdInHands || !other->interactKey || other->Held()) continue;
             GameObject* go = other->gameObject;
             if (!go || !go->active || !go->transform) continue;
             const float od = (go->transform->Position() - p).Magnitude();
-            if (od <= other->interactRange && od < dist) return false;
+            if (od > other->interactRange) continue;
+            if (AimScore(go->transform->Position(), player) + 1e-3f < mine) return false;
         }
+        (void)dist;
         return true;
     }
 };

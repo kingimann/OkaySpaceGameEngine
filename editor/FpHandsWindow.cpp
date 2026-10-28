@@ -21,6 +21,12 @@ FpHandsPreview g_preview;
 SDL_Texture* g_playerTex = nullptr;
 SDL_Texture* g_otherTex = nullptr;
 
+void Help(const char* text) {
+    ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + ImGui::GetContentRegionAvail().x);
+    ImGui::TextDisabled("%s", text);
+    ImGui::PopTextWrapPos();
+}
+
 void Section(const char* label) {
     ImGui::Spacing();
     ImVec2 p = ImGui::GetCursorScreenPos();
@@ -107,9 +113,8 @@ HoldableObject* HeldItem(FirstPersonHands* hands) {
 }
 
 void GripFields(HoldableObject* item, bool& dirty) {
-    if (!item) {
-        ImGui::TextDisabled("Open the preview to edit an example item's grip points,\n"
-                            "or pick something up to edit that item.");
+        if (!item) {
+        Help("Open the preview to edit an example item's grip points, or pick something up to edit that item.");
         return;
     }
     auto grip = [&](const char* name, const char* id, HoldableObject::Grip& g) {
@@ -168,8 +173,8 @@ FirstPersonHands* FindHands(EditorState& ed) {
 void DrawFpHandsBody(EditorState& ed, FirstPersonHands* h) {
     if (!h) return;
     bool dirty = false;
-    ImGui::TextWrapped("Nothing shows in first person until this player is holding an item. "
-                       "Other players always see the full character.");
+    Help("Nothing shows in first person until this player is holding an item. "
+         "Other players always see the full character.");
     if (ImGui::Button("Open Preview")) {
         g_open = true;
         g_object = h->gameObject ? h->gameObject->name : "";
@@ -191,7 +196,7 @@ void DrawFpHandsBody(EditorState& ed, FirstPersonHands* h) {
         h->holdMode = (FirstPersonHands::HoldMode)mode;
         dirty = true;
     }
-    ImGui::TextDisabled("A two-handed item uses both hands even if the mode is one hand.");
+    Help("A two-handed item uses both hands even if the mode is one hand.");
     if (ImGui::DragFloat("Bob amount", &h->bobAmount, 0.01f, 0.0f, 3.0f)) dirty = true;
     if (ImGui::DragFloat("Sway amount", &h->swayAmount, 0.01f, 0.0f, 3.0f)) dirty = true;
     if (ImGui::DragFloat("Punch", &h->punchAmount, 0.01f, 0.0f, 3.0f)) dirty = true;
@@ -211,8 +216,8 @@ void DrawFpHandsBody(EditorState& ed, FirstPersonHands* h) {
     ImGui::TextDisabled("Player view");
 
     Section("Others View");
-    ImGui::TextWrapped("Where the held item sits on the full body, and where each hand grips it. "
-                       "The arms follow the item.");
+    Help("Where the held item sits on the full body, and where each hand grips it. "
+         "The arms follow the item.");
     if (Vec("Item offset", h->othersItemOffset, 0.005f)) dirty = true;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Side, up, forward, in metres, added to the hold.");
     if (Vec("Item rotation", h->othersItemRotation, 0.5f)) dirty = true;
@@ -306,7 +311,13 @@ int PreviewSig(const FirstPersonHands& h, int example, const HoldableObject* ite
 
 void DrawFpHandsPreviewWindow(EditorState& ed) {
     if (!g_open) return;
-    ImGui::SetNextWindowSize(ImVec2(860.0f, 460.0f), ImGuiCond_FirstUseEver);
+    // Sit in the scene area: right of the Hierarchy, left of the Inspector.
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    const float width = 680.0f;
+    float x = display.x - width - 300.0f;
+    if (x < 250.0f) x = 250.0f;
+    ImGui::SetNextWindowPos(ImVec2(x, 64.0f), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(width, 520.0f), ImGuiCond_Appearing);
     if (!ImGui::Begin("First Person Hands", &g_open)) { ImGui::End(); return; }
     FirstPersonHands* live = FindHands(ed);
     if (!live) {
@@ -315,8 +326,43 @@ void DrawFpHandsPreviewWindow(EditorState& ed) {
         return;
     }
     const char* items[] = {"One-handed block", "Two-handed crate", "Empty hands"};
-    ImGui::SetNextItemWidth(220.0f);
+    ImGui::SetNextItemWidth(180.0f);
     const bool picked = ImGui::Combo("Preview item", &g_example, items, 3);
+    auto preset = [&](const char* label, HoldableObject::Preset p) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton(label)) {
+            g_preview.RefitExample(p);
+            g_example = (p == HoldableObject::Preset::OneHandRight || p == HoldableObject::Preset::OneHandLeft) ? 0 : 1;
+            if (HoldableObject* liveItem = HeldItem(live)) liveItem->ApplyPreset(p);
+            else if (HoldableObject* ex = g_preview.ExampleItem()) {
+                // The preview item is the one on screen. Keep the live component in step
+                // when a held prop is not selected.
+                (void)ex;
+            }
+            ed.dirty = true;
+            return true;
+        }
+        return false;
+    };
+    bool presetChanged = false;
+    presetChanged = preset("One hand R", HoldableObject::Preset::OneHandRight) || presetChanged;
+    presetChanged = preset("One hand L", HoldableObject::Preset::OneHandLeft) || presetChanged;
+    presetChanged = preset("Two hands", HoldableObject::Preset::TwoHanded) || presetChanged;
+    presetChanged = preset("Carry front", HoldableObject::Preset::CarryFront) || presetChanged;
+    presetChanged = preset("Shoulder", HoldableObject::Preset::OverShoulder) || presetChanged;
+    bool foreYou = live->right.forearm || live->left.forearm;
+    bool foreThem = live->othersRight.forearm && live->othersLeft.forearm;
+    if (ImGui::Checkbox("Your forearm", &foreYou)) {
+        live->right.forearm = live->left.forearm = foreYou;
+        ed.dirty = true;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The bar under the hand in the view you see. Off shows the hand only.");
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Their forearm", &foreThem)) {
+        live->othersRight.forearm = live->othersLeft.forearm = foreThem;
+        ed.dirty = true;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The body's forearm in the view everyone else sees.");
 
     HoldableObject* held = HeldItem(live);
     const int sig = PreviewSig(*live, g_example, held);
@@ -325,7 +371,7 @@ void DrawFpHandsPreviewWindow(EditorState& ed) {
     // Small software frames. Rebuilt only when the example or a setting changes,
     // so an open preview does not re-render the character every editor frame.
     const int W = 200, H = 132;
-    const bool dirty = picked || sig != cachedSig || !g_playerTex || texW != W || texH != H;
+    const bool dirty = picked || presetChanged || sig != cachedSig || !g_playerTex || texW != W || texH != H;
     if (dirty) {
         g_preview.CopyFrom(*live);
         g_preview.SetExample(g_example);
@@ -368,6 +414,7 @@ void DrawFpHandsPreviewWindow(EditorState& ed) {
     const ImVec2 shown(400.0f, 264.0f);
     ImGui::Columns(2, "fphandsviews", false);
     ImGui::TextUnformatted("Player view (first person)");
+    if (g_example == 2) Help("No hands shown when empty.");
     if (g_playerTex) ImGui::Image((ImTextureID)g_playerTex, shown);
     ImGui::NextColumn();
     ImGui::TextUnformatted("Others view (third person)");

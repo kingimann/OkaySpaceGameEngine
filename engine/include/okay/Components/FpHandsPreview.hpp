@@ -30,6 +30,21 @@ public:
         if (m_hands) m_hands->CopySettingsFrom(src);
     }
 
+    /// Switch to the block or the crate and apply a hold preset, then grab it again.
+    void RefitExample(HoldableObject::Preset p) {
+        Ensure();
+        const bool one = p == HoldableObject::Preset::OneHandRight || p == HoldableObject::Preset::OneHandLeft;
+        SetExample(one ? 0 : 1);
+        if (HoldableObject* h = ExampleItem()) {
+            h->ApplyPreset(p);
+            if (m_hold && h->gameObject) {
+                m_hold->Drop();
+                m_hold->Pickup(h->gameObject);
+            }
+        }
+        m_warm = 0;
+    }
+
     void SetExample(int which) {
         Ensure();
         if (which < 0) which = 0;

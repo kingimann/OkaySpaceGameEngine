@@ -156,9 +156,10 @@ inline void AddTemplateHoldables(Scene& scene, GameObject* player) {
         pk->autoRadius = 0.0f;
         pk->interactRange = 3.0f;
     };
-    // In front of the spawn (yaw 0 looks down -Z), beside each other, inside E's range.
-    prop("Block", {0.85f, 0.20f, -1.80f}, {0.28f, 0.28f, 0.28f}, Color::FromBytes(214, 140, 48), false);
-    prop("Carry Crate", {-0.95f, 0.32f, -2.15f}, {0.62f, 0.48f, 0.48f}, Color::FromBytes(176, 122, 72), true);
+    // In front of the spawn (yaw 0 looks down -Z), a few metres apart so aiming
+    // at one does not land on the other. The block sits nearer the centre line.
+    prop("Block", {0.55f, 0.16f, -2.4f}, {0.28f, 0.28f, 0.28f}, Color::FromBytes(214, 140, 48), false);
+    prop("Carry Crate", {-2.8f, 0.26f, -2.6f}, {0.62f, 0.48f, 0.48f}, Color::FromBytes(176, 122, 72), true);
 
     if (!scene.Find("Hold Prompt")) {
         GameObject* label = scene.CreateGameObject("Hold Prompt");

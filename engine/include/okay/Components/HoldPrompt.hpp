@@ -48,14 +48,15 @@ private:
         if (!sc || !player->transform) return nullptr;
         const Vec3 at = player->transform->Position();
         ItemPickup* best = nullptr;
-        float bestD = 0.0f;
+        float bestS = 0.0f;
         for (auto* pk : sc->FindObjectsOfType<ItemPickup>()) {
             if (!pk || !pk->enabled || !pk->holdInHands || !pk->interactKey || pk->Held()) continue;
             GameObject* go = pk->gameObject;
             if (!go || !go->active || !go->transform) continue;
             const float d = (go->transform->Position() - at).Magnitude();
             if (d > pk->interactRange) continue;
-            if (!best || d < bestD) { best = pk; bestD = d; }
+            const float s = ItemPickup::AimScore(go->transform->Position(), player);
+            if (!best || s < bestS) { best = pk; bestS = s; }
         }
         return best;
     }

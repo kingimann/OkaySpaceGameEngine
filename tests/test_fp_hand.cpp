@@ -913,6 +913,17 @@ int main() {
             press(sc, 'e');
             CHECK(hold && !hold->IsHolding());   // E again drops, and does not grab it straight back
             CHECK(!pc->Held());
+            CHECK(!hc->Holder());
+            CHECK(crate->GetComponent<Rigidbody3D>()->bodyType == Rigidbody3D::BodyType::Dynamic);
+            // The dropped crate stays free when E takes the block.
+            player->transform->SetPosition(block->transform->Position() + Vec3{0.0f, 0.0f, 1.2f});
+            crate->transform->SetPosition(block->transform->Position() + Vec3{3.5f, 0.0f, 0.0f});
+            sc.Update(1.0f / 60.0f);
+            press(sc, 'e');
+            CHECK(hold && hold->Held() == block);
+            CHECK(!hc->Holder());
+            CHECK(crate->GetComponent<Rigidbody3D>()->bodyType == Rigidbody3D::BodyType::Dynamic);
+            CHECK(block->GetComponent<Rigidbody3D>()->bodyType == Rigidbody3D::BodyType::Kinematic);
 
             std::string text = SceneSerializer::Serialize(sc);
             Scene back("back");
@@ -930,6 +941,27 @@ int main() {
         };
         checkTemplate(Templates::FPS, true);
         checkTemplate(Templates::ThirdPerson, false);
+
+        // Aim along the camera picks the crate even when the block is closer to the body.
+        {
+            Scene sc("aim");
+            sc.physicsEnabled = false;
+            Templates::FPS(sc);
+            sc.Start();
+            GameObject* player = sc.Find("Player");
+            GameObject* block = sc.Find("Block");
+            GameObject* crate = sc.Find("Carry Crate");
+            block->transform->SetPosition({0.7f, 1.0f, -1.3f});
+            crate->transform->SetPosition({0.0f, 1.1f, -2.6f});
+            sc.Update(1.0f / 60.0f);
+            const float blockScore = ItemPickup::AimScore(block->transform->Position(), player);
+            const float crateScore = ItemPickup::AimScore(crate->transform->Position(), player);
+            CHECK(crateScore < blockScore);
+            press(sc, 'e');
+            auto* hold = player->GetComponent<ProceduralObjectHolding>();
+            CHECK(hold && hold->Held() == crate);
+            CHECK(!block->GetComponent<HoldableObject>()->Holder());
+        }
     }
 
     // Play starts level. First person looks at the horizon. Third person rests

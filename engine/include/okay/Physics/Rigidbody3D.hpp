@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Physics/PoseHistory.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -73,6 +74,8 @@ public:
     /// Physics3D; `hasPrevPos` is false until the first step records it.
     Vec3     prevPos = Vec3::Zero;
     bool     hasPrevPos = false;
+    /// Runtime: poses for render interpolation (Scene::interpolatePhysics).
+    PoseHistory poseHistory;
 
     /// Apply a continuous force (integrated over the next step, scaled by mass).
     void AddForce(const Vec3& force) { m_forceAccum = m_forceAccum + force; WakeUp(); }

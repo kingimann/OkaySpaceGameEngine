@@ -19,6 +19,7 @@ namespace okay {
 
 class Scene;
 class GameObject;
+class ModelAnimator;
 
 /// True if this build includes the Assimp importer (compiled with OKAY_USE_ASSIMP).
 bool AssimpAvailable();
@@ -102,6 +103,9 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
 /// made for another character doesn't stretch this one. Idle/walk/run/jump are
 /// mapped from the clip names if not set yet. Returns how many clips were added;
 /// `outLog` gets a one-line summary (or why nothing was added).
+/// Fill a model's empty locomotion clip slots (idle, walk, run, jump, fall,
+/// land, crouch, crouch walk, prone, crawl, get up) from its clip names.
+void AutoMapLocomotion(ModelAnimator* ma);
 int AddAnimationsFromFile(Scene& scene, GameObject* modelRoot, const std::string& path,
                           std::string* outLog = nullptr);
 

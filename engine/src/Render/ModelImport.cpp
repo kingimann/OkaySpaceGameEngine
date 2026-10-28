@@ -1544,7 +1544,7 @@ static std::vector<std::string> ClipNameWords(const std::string& raw) {
 
 // Map idle/walk/run/jump/fall/land and the crouch / prone clips from the clip
 // names, where not set yet.
-static void AutoMapLocomotion(ModelAnimator* ma) {
+void AutoMapLocomotion(ModelAnimator* ma) {
     if (!ma) return;
     // By whole words of the clip name, an exact name first ("Walk" before
     // "Walk Back"): "Stairs" isn't "air", and a "Running Jump" is a jump.

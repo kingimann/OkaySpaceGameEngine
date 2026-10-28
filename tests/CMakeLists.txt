@@ -889,6 +889,10 @@ add_executable(test_anim_sm_realloc test_anim_sm_realloc.cpp)
 target_link_libraries(test_anim_sm_realloc PRIVATE okay::engine)
 add_test(NAME anim_sm_realloc COMMAND test_anim_sm_realloc)
 
+add_executable(test_clip_graph test_clip_graph.cpp)
+target_link_libraries(test_clip_graph PRIVATE okay::engine)
+add_test(NAME clip_graph COMMAND test_clip_graph)
+
 add_executable(test_foot_planting test_foot_planting.cpp)
 target_link_libraries(test_foot_planting PRIVATE okay::engine)
 add_test(NAME foot_planting COMMAND test_foot_planting)
@@ -1250,3 +1254,8 @@ add_test(NAME input_actions COMMAND test_input_actions)
 add_executable(test_ragdoll test_ragdoll.cpp)
 target_link_libraries(test_ragdoll PRIVATE okay::engine)
 add_test(NAME ragdoll COMMAND test_ragdoll)
+
+# Fixed-step physics: same result at any frame rate, catch-up limit, render interpolation
+add_executable(test_fixed_step test_fixed_step.cpp)
+target_link_libraries(test_fixed_step PRIVATE okay::engine)
+add_test(NAME fixed_step COMMAND test_fixed_step)

@@ -21,6 +21,7 @@
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Core/Profiler.hpp"        // CPU/GPU frame profiler
 #include "okay/Animation/HumanoidLibrary.hpp"  // built-in clip names in the Animator clip slot
+#include "okay/Animation/ClipGraph.hpp"       // an Animator graph from an imported model's clips
 #include "okay/Scene/UITemplates.hpp"    // prebuilt, droppable UI screens (UI > Prebuilt Screens)
 #include "okay/Scene/UIStyles.hpp"       // one-click looks + copy / paste style for UI components
 #include "okay/Scene/UILayoutTools.hpp"  // wrap in panel, fit to children, match size, stack
@@ -19976,6 +19977,32 @@ static void DrawAnimatorGraph(EditorState& ed) {
                     if (auto* m = up->GetComponent<AnimStateMachine>()) { sm = m; smObj = up.get(); break; }
     }
     if (!sm) {
+        // A character without one yet: the built-in body gets the default humanoid
+        // graph, an imported model a graph from its own clips.
+        GameObject* sel = ed.selected();
+        GameObject* modelGo = nullptr; Character* bodyGo = nullptr;
+        if (sel)
+            for (const auto& up : ed.scene().Objects()) {
+                if (!up || !up->IsSelfOrDescendantOf(sel)) continue;
+                if (auto* m = up->GetComponent<ModelAnimator>(); m && !m->clips.empty() && !modelGo) modelGo = up.get();
+                if (auto* c = up->GetComponent<Character>(); c && !bodyGo && !up->GetComponent<ModelAnimator>()) bodyGo = c;
+            }
+        if (bodyGo || modelGo) {
+            ImGui::TextDisabled("'%s' has no Animator yet.", sel->name.c_str());
+            if (ImGui::Button(bodyGo ? "Create Animator (default humanoid graph)##agnew" : "Create Animator from this model's clips##agnew")) {
+                ed.PushUndo();
+                if (bodyGo) HumanoidLibrary::EnsureAnimator(bodyGo->gameObject);
+                else {
+                    okay::AutoMapLocomotion(modelGo->GetComponent<ModelAnimator>());
+                    ClipGraph::Ensure(modelGo);
+                }
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Every state and transition then shows here to edit and preview.\n"
+                                  "It takes the parameters the player controllers send (speed, grounded, crouch, prone, jump).");
+            ImGui::End(); return;
+        }
         ImGui::TextDisabled("Select an object with an Animator (Add Component > Animation).");
         ImGui::TextDisabled("States name a clip (the Model Animator's, or the Character's); transitions switch\nbetween them when a condition passes (clip end, float compare, bool, trigger).");
         ImGui::End(); return;
@@ -19990,6 +20017,10 @@ static void DrawAnimatorGraph(EditorState& ed) {
         static GameObject* s_layerObj = nullptr;
         static int s_layer = 0, s_forceTab = -1;
         if (s_layerObj != smObj) { s_layerObj = smObj; s_layer = 0; }
+        if (const char* e = std::getenv("OKAY_UI_AGLAYER")) {
+            static bool once = false;
+            if (!once) { s_layer = std::atoi(e); s_forceTab = s_layer; once = true; }
+        }
         std::vector<AnimStateMachine*> machines = smObj->GetComponents<AnimStateMachine>();
         if (s_layer >= (int)machines.size()) s_layer = 0;
         if (ImGui::BeginTabBar("##aglayers", ImGuiTabBarFlags_FittingPolicyScroll)) {
@@ -20044,12 +20075,43 @@ static void DrawAnimatorGraph(EditorState& ed) {
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("This layer drives this bone and everything under it.\nPick the spine for upper-body actions (attack while walking).");
             ImGui::SameLine();
+            if (ImGui::Checkbox("Additive##agl", &sm->additive)) ed.dirty = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Add this layer onto the base pose instead of replacing the masked bones.\n"
+                                  "A recoil, aim offset, or lean while the body keeps walking.");
+            ImGui::SameLine();
             if (ImGui::SmallButton("Remove layer##agl")) {
                 ed.PushUndo();
                 smObj->RemoveComponent(sm);
                 ed.dirty = true;
                 ImGui::End(); return;
             }
+            auto maskCombo = [&](const char* id, std::string& bone) {
+                ImGui::SetNextItemWidth(170);
+                if (ImGui::BeginCombo(id, bone.empty() ? "(pick a bone)" : bone.c_str())) {
+                    std::set<std::string> seen;
+                    if (ma)
+                        for (const auto& c : ma->clips)
+                            for (const auto& nc : c.nodes)
+                                if (seen.insert(nc.node).second && ImGui::Selectable(nc.node.c_str(), bone == nc.node)) { bone = nc.node; ed.dirty = true; }
+                    if (body)
+                        for (int b = 0; b < Character::BoneCount(); ++b)
+                            if (ImGui::Selectable(Character::BoneName(b), bone == Character::BoneToken(b))) { bone = Character::BoneToken(b); ed.dirty = true; }
+                    ImGui::EndCombo();
+                }
+            };
+            int delMask = -1;
+            for (int mi = 0; mi < (int)sm->maskBones.size(); ++mi) {
+                ImGui::PushID(mi);
+                maskCombo("Also##agl", sm->maskBones[mi]);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("x##agmx")) delMask = mi;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("This bone and the ones under it are in the mask too.");
+                ImGui::PopID();
+            }
+            if (delMask >= 0) { sm->maskBones.erase(sm->maskBones.begin() + delMask); ed.dirty = true; }
+            if (ImGui::SmallButton("+ Mask bone##agl")) { sm->maskBones.push_back(std::string()); ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add another bone subtree to this layer's mask (an avatar mask).");
         }
     }
 
@@ -20113,75 +20175,17 @@ static void DrawAnimatorGraph(EditorState& ed) {
                                                       "idle/walk/run blended by speed, jump, fall and land,\n"
                                                       "with the parameters the player controllers send.");
         if (ImGui::BeginPopup("##aglocosetup")) {
-            auto find = [&](std::initializer_list<const char*> keys) -> std::string {
-                for (const char* k : keys)
-                    for (const auto& cn : clipNames) {
-                        std::string lo = cn; for (auto& ch : lo) ch = (char)std::tolower((unsigned char)ch);
-                        if (lo.find(k) != std::string::npos) return cn;
-                    }
-                return std::string();
-            };
-            std::string idle = !ma->idleClip.empty() ? ma->idleClip : find({"idle", "stand", "breath"});
-            std::string walk = !ma->walkClip.empty() ? ma->walkClip : find({"walk"});
-            std::string run  = !ma->runClip.empty()  ? ma->runClip  : find({"run", "sprint", "jog"});
-            std::string jump = !ma->jumpClip.empty() ? ma->jumpClip : find({"jump"});
-            std::string fall = !ma->fallClip.empty() ? ma->fallClip : find({"fall", "air"});
-            std::string land = !ma->landClip.empty() ? ma->landClip : find({"land"});
-            if (idle.empty()) idle = clipNames.front();
-            ImGui::TextDisabled("Clips found:");
-            ImGui::Text("Idle: %s\nWalk: %s\nRun:  %s\nJump: %s\nFall: %s\nLand: %s", idle.c_str(),
-                        walk.empty() ? "-" : walk.c_str(), run.empty() ? "-" : run.c_str(), jump.empty() ? "-" : jump.c_str(),
-                        fall.empty() ? "-" : fall.c_str(), land.empty() ? "-" : land.c_str());
+            auto shown = [&](const std::string& c) { return c.empty() || ma->FindClip(c) < 0 ? "-" : c.c_str(); };
+            ImGui::TextDisabled("Clips mapped (empty slots are filled from the clip names):");
+            ImGui::Text("Idle: %s\nWalk: %s\nRun:  %s\nJump: %s\nFall: %s\nLand: %s", shown(ma->idleClip), shown(ma->walkClip),
+                        shown(ma->runClip), shown(ma->jumpClip), shown(ma->fallClip), shown(ma->landClip));
+            ImGui::Text("Crouch: %s\nCrouch walk: %s\nProne: %s\nCrawl: %s\nGet up: %s", shown(ma->crouchClip),
+                        shown(ma->crouchWalkClip), shown(ma->proneClip), shown(ma->crawlClip), shown(ma->getUpClip));
             if (!sm->states.empty()) ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1), "Replaces the %d existing state(s).", (int)sm->states.size());
             if (ImGui::Button("Build it", ImVec2(-1, 0))) {
                 ed.PushUndo();
-                using SM = AnimStateMachine;
-                sm->states.clear(); sm->anyState.clear();
-                auto addParam = [&](const char* nm, int type) {
-                    for (const auto& p : sm->params) if (p.name == nm) return;
-                    sm->params.push_back({nm, type});
-                };
-                addParam("speed", 0); addParam("grounded", 1); addParam("verticalSpeed", 0); addParam("jump", 2);
-                SM::State loco; loco.name = "Locomotion"; loco.blendTree = true; loco.blendParam = "speed";
-                loco.motions.push_back({idle, 0.0f});
-                if (!walk.empty()) loco.motions.push_back({walk, 1.5f});
-                if (!run.empty())  loco.motions.push_back({run, 5.0f});
-                loco.nx = 20; loco.ny = 120;
-                sm->states.push_back(loco);
-                auto tr = [](const std::string& to, SM::Cond c, const char* p, float v, float blend) {
-                    SM::Transition t; t.to = to; t.cond = c; t.param = p; t.value = v; t.blend = blend; return t;
-                };
-                std::string afterAir = land.empty() ? "Locomotion" : "Land";
-                if (!jump.empty()) {
-                    SM::State j; j.name = "Jump"; j.clip = jump; j.loop = false; j.nx = 260; j.ny = 20;
-                    j.ikWeight = 0.0f; j.enterEvent = "jump";
-                    if (!fall.empty()) j.transitions.push_back(tr("Fall", SM::Cond::OnClipEnd, "", 0, 0.15f));
-                    j.transitions.push_back(tr(afterAir, SM::Cond::BoolTrue, "grounded", 0, 0.1f));
-                    j.transitions.back().hasExitTime = true; j.transitions.back().exitTime = 0.4f;
-                    sm->states.push_back(j);
-                    SM::Transition any = tr("Jump", SM::Cond::Trigger, "jump", 0, 0.1f);
-                    sm->anyState.push_back(any);
-                }
-                if (!fall.empty()) {
-                    SM::State f; f.name = "Fall"; f.clip = fall; f.loop = true; f.nx = 500; f.ny = 20;
-                    f.ikWeight = 0.0f;
-                    f.transitions.push_back(tr(afterAir, SM::Cond::BoolTrue, "grounded", 0, 0.1f));
-                    sm->states.push_back(f);
-                    SM::Transition off = tr("Fall", SM::Cond::BoolFalse, "grounded", 0, 0.2f);
-                    off.extra.push_back({SM::Cond::FloatLess, "verticalSpeed", -2.0f});
-                    sm->states[0].transitions.push_back(off);
-                }
-                if (!land.empty()) {
-                    SM::State l; l.name = "Land"; l.clip = land; l.loop = false; l.nx = 500; l.ny = 140;
-                    l.enterEvent = "land";
-                    SM::Transition back = tr("Locomotion", SM::Cond::OnClipEnd, "", 0, 0.2f);
-                    l.transitions.push_back(back);
-                    SM::Transition early = tr("Locomotion", SM::Cond::FloatGreater, "speed", 1.0f, 0.2f);
-                    early.hasExitTime = true; early.exitTime = 0.3f;
-                    l.transitions.push_back(early);
-                    sm->states.push_back(l);
-                }
-                sm->entry = "Locomotion";
+                okay::AutoMapLocomotion(ma);   // fills only the clip slots that are still empty
+                ClipGraph::Build(*sm, *ma);
                 // The machine drives the clips now; the animator's own speed switching stands down.
                 ma->driveByMovement = false;
                 ed.dirty = true;
@@ -20759,13 +20763,104 @@ static void DrawAnimatorGraph(EditorState& ed) {
             if (useSp) { ImGui::SameLine(); ImGui::SetNextItemWidth(-1); paramPicker("##agspp", st.speedParam, 0); }
         }
         if (!st.blendTree && ImGui::Checkbox("Loop##ag", &st.loop)) ed.dirty = true;
+        if (ImGui::Checkbox("Mirror##ag", &st.mirror)) ed.dirty = true;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Play this state on the other side: left and right swap.\n"
+                              "Author one wave or punch and mirror it for the other hand.");
+        {
+            static const char* kRoot[] = {"Inherit", "Off", "On"};
+            int rm = st.rootMotion < 0 ? 0 : (st.rootMotion == 0 ? 1 : 2);
+            ImGui::SetNextItemWidth(120);
+            if (ImGui::Combo("Root motion##ag", &rm, kRoot, 3)) {
+                st.rootMotion = rm == 0 ? -1 : (rm == 1 ? 0 : 1);
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Inherit uses the Model Animator's own root-motion toggle.\n"
+                                  "Off strips this state's root travel. On turns it on for this state only.");
+        }
         if (ImGui::SliderFloat("IK weight##ag", &st.ikWeight, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Foot planting in this state (and Full Body IK, unless given its own weight below).");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Foot planting in this state (and Full Body IK, unless given its own weight below).\n"
+                                                      "A curve below multiplies this over the clip.");
+        auto drawIkCurve = [&](const char* id, std::vector<AnimStateMachine::State::IkKey>& keys, const char* tip) {
+            ImGui::PushID(id);
+            if (keys.empty()) {
+                if (ImGui::SmallButton("Add curve")) {
+                    keys.push_back({0.0f, 1.0f});
+                    keys.push_back({1.0f, 1.0f});
+                    ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+            } else {
+                const float mw = ImGui::GetContentRegionAvail().x, mh = 64.0f;
+                const ImVec2 mo = ImGui::GetCursorScreenPos();
+                ImGui::InvisibleButton("##plot", ImVec2(mw, mh));
+                ImDrawList* pdl = ImGui::GetWindowDrawList();
+                pdl->AddRectFilled(mo, ImVec2(mo.x + mw, mo.y + mh), ImGui::GetColorU32(ImGuiCol_FrameBg), 3.0f);
+                auto toP = [&](float t, float w) { return ImVec2(mo.x + t * mw, mo.y + (1.0f - w) * mh); };
+                auto fromP = [&](ImVec2 p) {
+                    float t = mw > 1.0f ? (p.x - mo.x) / mw : 0.0f;
+                    float w = mh > 1.0f ? 1.0f - (p.y - mo.y) / mh : 0.0f;
+                    return ImVec2(std::min(std::max(t, 0.0f), 1.0f), std::min(std::max(w, 0.0f), 1.0f));
+                };
+                std::vector<ImVec2> pts;
+                for (const auto& k : keys) pts.push_back(toP(k.t, k.w));
+                if ((int)pts.size() >= 2)
+                    pdl->AddPolyline(pts.data(), (int)pts.size(), ImGui::GetColorU32(ImGuiCol_PlotLines), ImDrawFlags_None, 2.0f);
+                if (ed.isPlaying() && sm->Current() == st.name) {
+                    float u = sm->NormalizedTime(); u -= std::floor(u); if (u < 0.0f) u += 1.0f;
+                    const float x = mo.x + u * mw;
+                    pdl->AddLine(ImVec2(x, mo.y), ImVec2(x, mo.y + mh), ImGui::GetColorU32(ImGuiCol_PlotHistogram));
+                }
+                static int s_drag = -1;
+                static std::vector<AnimStateMachine::State::IkKey>* s_owner = nullptr;
+                const ImVec2 mp = ImGui::GetIO().MousePos;
+                int hit = -1; float best = 9.0f;
+                for (int i = 0; i < (int)keys.size(); ++i) {
+                    const ImVec2 p = toP(keys[i].t, keys[i].w);
+                    const float d = std::hypot(p.x - mp.x, p.y - mp.y);
+                    if (d < best) { best = d; hit = i; }
+                }
+                if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && hit >= 0) {
+                    keys.erase(keys.begin() + hit); ed.dirty = true;
+                    if (s_owner == &keys) { s_drag = -1; s_owner = nullptr; }
+                } else if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+                    if (hit < 0) {
+                        const ImVec2 tw = fromP(mp);
+                        keys.push_back({tw.x, tw.y});
+                        std::stable_sort(keys.begin(), keys.end(), [](const auto& a, const auto& b) { return a.t < b.t; });
+                        hit = 0;
+                        for (int i = 0; i < (int)keys.size(); ++i) if (keys[i].t == tw.x && keys[i].w == tw.y) { hit = i; break; }
+                        ed.dirty = true;
+                    }
+                    s_drag = hit; s_owner = &keys;
+                }
+                if (s_owner == &keys && s_drag >= 0 && s_drag < (int)keys.size() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                    const ImVec2 tw = fromP(mp);
+                    keys[s_drag].t = tw.x; keys[s_drag].w = tw.y;
+                    const float t = tw.x, w = tw.y;
+                    std::stable_sort(keys.begin(), keys.end(), [](const auto& a, const auto& b) { return a.t < b.t; });
+                    s_drag = 0;
+                    for (int i = 0; i < (int)keys.size(); ++i) if (keys[i].t == t && keys[i].w == w) { s_drag = i; break; }
+                    ed.dirty = true;
+                }
+                if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) { s_drag = -1; s_owner = nullptr; }
+                for (int i = 0; i < (int)keys.size(); ++i) {
+                    const ImVec2 p = toP(keys[i].t, keys[i].w);
+                    pdl->AddCircleFilled(p, 4.0f, ImGui::GetColorU32(i == s_drag && s_owner == &keys ? ImGuiCol_PlotHistogramHovered : ImGuiCol_PlotLinesHovered));
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nClick to add a key, drag to move, right-click to remove.", tip);
+                if (ImGui::SmallButton("Clear curve")) { keys.clear(); ed.dirty = true; }
+            }
+            ImGui::PopID();
+        };
+        drawIkCurve("foot", st.ikCurve, "Foot IK weight over this clip (0 at the bottom, 1 at the top),\nmultiplied by the IK weight slider. Empty = that constant.");
         {
             bool follow = st.fullBodyIkWeight < 0.0f;
             if (ImGui::Checkbox("Full-body IK follows##ag", &follow)) { st.fullBodyIkWeight = follow ? -1.0f : 1.0f; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: Full Body IK gets its own weight here, so a state can stop foot\nplanting while the hands keep holding (prone, crawling).");
             if (!follow && ImGui::SliderFloat("Full-body IK weight##ag", &st.fullBodyIkWeight, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+            if (!follow) drawIkCurve("body", st.fullBodyIkCurve, "Full Body IK weight over this clip, multiplied by its slider.\nEmpty = the constant. Foot IK keeps its own curve.");
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("How much Foot IK / Full Body IK apply in this state; eases over\n"
                                                       "the transition. 0 for jumps, rolls and falls (feet leave the ground).");
@@ -43429,6 +43524,7 @@ int main(int argc, char** argv) {
                             auto names = mx->ClipNames();
                             asmx->params = {{"speed", 0}, {"jump", 2}, {"grounded", 1}};
                             SM::State idle; idle.name = "Idle"; idle.clip = names[0]; idle.nx = 20; idle.ny = 130;
+                            idle.ikCurve = {{0.0f, 1.0f}, {0.45f, 0.2f}, {1.0f, 1.0f}};
                             SM::State move; move.name = "Locomotion"; move.blendTree = true; move.blendParam = "speed";
                             move.motions = {{names[0], 0.0f}, {names[1], 1.5f}, {names[2], 5.0f}}; move.nx = 300; move.ny = 130;
                             SM::State jump; jump.name = "Jump"; jump.clip = names[2]; jump.loop = false; jump.nx = 300; jump.ny = 10;

@@ -374,7 +374,9 @@ void Character::AdvanceAnimClock(float dt) {
     m_lowerYaw  += (clampf(yaw, -75.0f, 75.0f) - m_lowerYaw) * ek;   // how far the hips turn
 
     // Walk <-> run blends the two styles over ~0.2 s on the live poses.
-    float wantRun = anim == 3 ? 1.0f : 0.0f;
+    // A fast walk takes the run's style (JogWeight): a walk cycle stretched to a
+    // controller's 4.5 m/s whips the feet.
+    float wantRun = anim == 3 ? 1.0f : (anim == 2 ? HumanoidMotion::JogWeight(m_gaitSpeed) : 0.0f);
     float step = dt / 0.2f;
     m_runW = m_runW < wantRun ? std::fmin(wantRun, m_runW + step) : std::fmax(wantRun, m_runW - step);
 

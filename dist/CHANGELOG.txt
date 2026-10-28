@@ -1,5 +1,41 @@
 OkaySpace Game Engine — Changelog
 
+v2.838.0
+  Audio
+  - Sounds play in stereo with pitch, pan, 3D panning that follows the
+    camera, and three distance curves. Every sound plays through a group
+    (Music, SFX, UI, Voice) with its own volume.
+  - AudioSource plays OGG and MP3 files as well as WAV.
+  - Fades, a low-pass filter for muffled sounds, and a Music Player
+    component: a playlist with crossfades, shuffle and looping. Music can
+    dip while a Voice-group sound plays.
+  - The Pause Menu has Volume, Music and Effects sliders. Each player's
+    levels are saved and come back the next time they play.
+  - New Audio Mixer window (Window > Panels): group volumes, mutes, output
+    meters and ducking. Scripts and visual scripts get Audio commands
+    (#492; see docs/audio.md).
+  Controls
+  - Named actions (Move, Look, Jump, Sprint, Crouch, Fire, Aim, Interact,
+    Reload, Inventory, Pause) work on keyboard, mouse and controller at
+    once. Players can rebind them with a UI Keybind Field, and their
+    bindings are saved.
+  - Full controller support: right stick, analog triggers, stick clicks,
+    rumble, and plugging a controller in or out mid-game. The editor's
+    Play mode reads the whole controller too.
+  - Scripts and visual scripts: Input.GetButton / GetButtonDown,
+    GetActionVector, Rumble, RebindAction and DefineAction (#494; see
+    docs/input.md).
+  Animation and characters
+  - Built-in action framework and death clips (#435).
+  - One shared bone mapper finds the humanoid bones on imported models,
+    rejects models that aren't humanoid, and pairs clips up by bone (#493).
+  - Grounded stops ease out over the last 2.2 m/s (#480).
+  - A guide to the rewritten IK (#424).
+  Inventory
+  - Tooltips, chest actions, a slot cursor and icon tiles (#426).
+  - In multiplayer the host owns the bags, and changes go through requests
+    that can be rolled back (#481).
+
 v2.837.0
   Animation and characters
   - IK runs in one fixed order each frame (feet, then body, then limbs, then

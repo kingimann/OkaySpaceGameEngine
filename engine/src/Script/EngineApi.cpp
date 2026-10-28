@@ -6,6 +6,7 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputActions.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -779,6 +780,50 @@ EngineApi Build() {
         in.staticProps.push_back(ro("mousePosition", tVec,
             [](const Value&, CallContext&) { Vec2 m = Input::MousePosition(); return Value{Vec3{m.x, m.y, 0.0f}}; },
             "The cursor in screen pixels (x, y; z is 0)."));
+        // Game actions (InputActions): what the player pressed, on any device, after
+        // their own rebinding. Prefer these over raw keys.
+        auto actionOf = [](const std::string& n, CallContext& c) {
+            if (!InputActions::Has(n))
+                throw RuntimeError("There's no input action called \"" + n + "\" (Move, Look, Jump, Sprint, Crouch, Fire, Aim, Interact, Reload, Inventory, Pause, or one the game defined)", c.loc);
+            return n;
+        };
+        auto button = [&](const char* n, bool (*fn)(const std::string&), const char* doc) {
+            in.staticMethods.push_back(method(n, {tString}, {"action"}, tBool,
+                [fn, actionOf](const Value&, std::vector<Value>& a, CallContext& c) { return Value{fn(actionOf(S(a[0]), c))}; }, doc));
+        };
+        button("GetButton", &InputActions::Get, "True while the action is held (\"Jump\", \"Fire\"...), on keyboard, mouse or controller.");
+        button("GetButtonDown", &InputActions::Down, "True on the frame the action is pressed.");
+        button("GetButtonUp", &InputActions::Up, "True on the frame the action is released.");
+        in.staticMethods.push_back(method("GetActionValue", {tString}, {"action"}, tFloat,
+            [actionOf](const Value&, std::vector<Value>& a, CallContext& c) { return Value{InputActions::Value(actionOf(S(a[0]), c))}; },
+            "How far the action is pressed, 0 to 1 (a trigger can be part way)."));
+        in.staticMethods.push_back(method("GetActionVector", {tString}, {"action"}, tVec,
+            [actionOf](const Value&, std::vector<Value>& a, CallContext& c) {
+                const Vec2 v = InputActions::Vector(actionOf(S(a[0]), c));
+                return Value{Vec3{v.x, v.y, 0.0f}};
+            }, "A direction action (\"Move\", \"Look\") as x, y in -1..1 (y up; z is 0)."));
+        in.staticMethods.push_back(method("Rumble", {tFloat, tFloat, tFloat}, {"low", "high", "seconds"}, tVoid,
+            [](const Value&, std::vector<Value>& a, CallContext&) { Input::Rumble(F(a[0]), F(a[1]), F(a[2])); return Value{}; },
+            "Shake the controller: low (heavy) and high (light) motor strength 0 to 1, for some seconds."));
+        in.staticMethods.push_back(method("RebindAction", {tString, tString}, {"action", "binding"}, tBool,
+            [actionOf](const Value&, std::vector<Value>& a, CallContext& c) { return Value{InputActions::Rebind(actionOf(S(a[0]), c), S(a[1]))}; },
+            "Bind an action to \"key:e\", \"mouse:right\", \"pad:rt\"... for this player (saved). False if the binding isn't understood."));
+        in.staticMethods.push_back(method("DefineAction", {tString, tString, tString}, {"action", "binding", "binding2"}, tVoid,
+            [](const Value&, std::vector<Value>& a, CallContext&) {
+                std::vector<std::string> b;
+                for (int i = 1; i < 3; ++i) if (!S(a[i]).empty()) b.push_back(S(a[i]));
+                InputActions::Define(S(a[0]), b, false);
+                return Value{};
+            }, "Add a game action (or change its defaults), e.g. (\"Dash\", \"key:q\", \"pad:rs\"). Use \"\" for an unused binding."));
+        in.staticMethods.push_back(method("DefineDirection", {tString, tString, tString}, {"action", "binding", "binding2"}, tVoid,
+            [](const Value&, std::vector<Value>& a, CallContext&) {
+                std::vector<std::string> b;
+                for (int i = 1; i < 3; ++i) if (!S(a[i]).empty()) b.push_back(S(a[i]));
+                InputActions::Define(S(a[0]), b, true);
+                return Value{};
+            }, "Add a direction action, e.g. (\"Steer\", \"keys:i,k,j,l\", \"stick:right\")."));
+        in.staticProps.push_back(ro("gamepadConnected", tBool,
+            [](const Value&, CallContext&) { return Value{Input::GamepadConnected()}; }, "True while a controller is plugged in."));
         api.types.push_back(std::move(in));
     }
     // ---- Time ----
@@ -889,7 +934,8 @@ EngineApi Build() {
     // nodes, not steps in the flow.
     for (ApiType& t : api.types)
         if (t.name == "GameObject" || t.name == "Vector3" || t.name == "Input" || t.name == "Mathf")
-            for (ApiMethod& m : t.staticMethods) m.pure = true;
+            for (ApiMethod& m : t.staticMethods) m.pure = m.name != "Rumble" && m.name != "RebindAction" &&
+                                                      m.name != "DefineAction" && m.name != "DefineDirection";
     return api;
 }
 

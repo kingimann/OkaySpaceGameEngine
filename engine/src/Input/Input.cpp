@@ -18,6 +18,9 @@ Vec2     Input::s_mousePos;
 Vec2     Input::s_mousePrevPos;
 unsigned Input::s_mouseCurrent = 0;
 Vec2     Input::s_padAxis;
+Vec2     Input::s_padRight;
+float    Input::s_padTrigger[2] = {0.0f, 0.0f};
+bool     Input::s_padConnected = false;
 unsigned Input::s_padCurrent = 0;
 unsigned Input::s_padPrevious = 0;
 unsigned Input::s_mousePrevious = 0;
@@ -119,6 +122,51 @@ void Input::FeedGamepad(const Vec2& axis, unsigned buttonMask) {
     s_padPrevious = s_padCurrent;
     s_padCurrent = buttonMask;
 }
+void Input::FeedGamepadExtra(const Vec2& rightAxis, float leftTrigger, float rightTrigger, bool connected) {
+    s_padRight = rightAxis;
+    s_padTrigger[0] = leftTrigger < 0.0f ? 0.0f : (leftTrigger > 1.0f ? 1.0f : leftTrigger);
+    s_padTrigger[1] = rightTrigger < 0.0f ? 0.0f : (rightTrigger > 1.0f ? 1.0f : rightTrigger);
+    s_padConnected = connected;
+}
+
+namespace {
+struct RumbleRequest { float low = 0, high = 0, seconds = 0; bool pending = false; };
+RumbleRequest& PendingRumble() { static RumbleRequest r; return r; }
+const char* const kPadNames[Input::PadButtonCount] = {
+    "a", "b", "x", "y", "back", "start", "lb", "rb", "up", "down", "left", "right", "ls", "rs", "lt", "rt"};
+const char* const kPadLabels[Input::PadButtonCount] = {
+    "A", "B", "X", "Y", "Back", "Start", "LB", "RB", "D-pad Up", "D-pad Down", "D-pad Left", "D-pad Right",
+    "Left Stick", "Right Stick", "LT", "RT"};
+} // namespace
+
+void Input::Rumble(float low, float high, float seconds) {
+    auto clamp01 = [](float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); };
+    PendingRumble() = {clamp01(low), clamp01(high), seconds > 0.0f ? seconds : 0.0f, true};
+}
+bool Input::TakeRumble(float& low, float& high, float& seconds) {
+    RumbleRequest& r = PendingRumble();
+    if (!r.pending) return false;
+    low = r.low; high = r.high; seconds = r.seconds; r.pending = false;
+    return true;
+}
+
+int Input::GamepadButtonFromName(const std::string& name) {
+    std::string n;
+    for (char c : name) n += (char)std::tolower((unsigned char)c);
+    for (int i = 0; i < PadButtonCount; ++i) if (n == kPadNames[i]) return i;
+    return -1;
+}
+std::string Input::GamepadButtonKey(int button) {
+    return button >= 0 && button < PadButtonCount ? kPadNames[button] : "";
+}
+std::string Input::GamepadButtonName(int button) {
+    return button >= 0 && button < PadButtonCount ? kPadLabels[button] : "?";
+}
+int Input::FirstGamepadButtonDown() {
+    for (int i = 0; i < PadButtonCount; ++i) if (GetGamepadButtonDown(i)) return i;
+    return -1;
+}
+
 const std::string& Input::TypedText() { return s_typedText; }
 void Input::FeedText(const std::string& utf8) { s_typedText += utf8; }
 void Input::ClearTypedText() {
@@ -167,6 +215,9 @@ bool Input::UICaptured() { return s_uiCaptured; }
 void Input::SetUICaptured(bool captured) { s_uiCaptured = captured; }
 
 Vec2 Input::GamepadAxis() { return s_padAxis; }
+Vec2 Input::GamepadRightAxis() { return s_padRight; }
+float Input::GamepadTrigger(int side) { return side == 0 || side == 1 ? s_padTrigger[side] : 0.0f; }
+bool Input::GamepadConnected() { return s_padConnected; }
 bool Input::GetGamepadButton(int button) {
     if (button < 0 || button > 31) return false;
     return (s_padCurrent & (1u << button)) != 0;

@@ -1233,3 +1233,8 @@ add_executable(test_object_holding test_object_holding.cpp)
 target_link_libraries(test_object_holding PRIVATE okay::engine)
 target_compile_definitions(test_object_holding PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME object_holding COMMAND test_object_holding)
+
+# Input actions: bindings, gamepad sticks / triggers, rebinding saved per player, keybind fields
+add_executable(test_input_actions test_input_actions.cpp)
+target_link_libraries(test_input_actions PRIVATE okay::engine)
+add_test(NAME input_actions COMMAND test_input_actions)

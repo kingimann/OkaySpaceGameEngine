@@ -8,6 +8,7 @@
 // window — used in CI where there's no display.
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
+#include "okay/Input/SdlGamepad.hpp"   // controller -> Input (sticks, triggers, rumble)
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
 #include "okay/Modeling/MeshAsset.hpp"       // .okaymesh / .obj mesh files
@@ -42593,6 +42594,11 @@ int main(int argc, char** argv) {
         while (SDL_PollEvent(&e)) {
             ImGui_ImplSDL2_ProcessEvent(&e);
             if (e.type == SDL_QUIT) g_quitRequested = true;
+            if (e.type == SDL_CONTROLLERDEVICEADDED && !g_pad) g_pad = SDL_GameControllerOpen(e.cdevice.which);
+            if (e.type == SDL_CONTROLLERDEVICEREMOVED && g_pad &&
+                e.cdevice.which == SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(g_pad))) {
+                SDL_GameControllerClose(g_pad); g_pad = nullptr;
+            }
             if (e.type == SDL_RENDER_TARGETS_RESET || e.type == SDL_RENDER_DEVICE_RESET)
                 ResetViewTextures(e.type == SDL_RENDER_DEVICE_RESET);
             if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE &&
@@ -42742,26 +42748,8 @@ int main(int argc, char** argv) {
             if (ks[SDL_SCANCODE_DOWN])  { down.push_back('s'); down.push_back(Input::KeyDown); }
             if (ks[SDL_SCANCODE_RIGHT]) { down.push_back('d'); down.push_back(Input::KeyRight); }
 
-            Vec2 padAxis; unsigned padMask = 0;
-            if (g_pad) {
-                float lx = SDL_GameControllerGetAxis(g_pad, SDL_CONTROLLER_AXIS_LEFTX) / 32767.0f;
-                float ly = -SDL_GameControllerGetAxis(g_pad, SDL_CONTROLLER_AXIS_LEFTY) / 32767.0f;
-                if (lx > -0.18f && lx < 0.18f) lx = 0.0f;
-                if (ly > -0.18f && ly < 0.18f) ly = 0.0f;
-                padAxis = {lx, ly};
-                auto bit = [&](SDL_GameControllerButton b, int id) {
-                    if (SDL_GameControllerGetButton(g_pad, b)) padMask |= 1u << id;
-                };
-                bit(SDL_CONTROLLER_BUTTON_A, 0); bit(SDL_CONTROLLER_BUTTON_B, 1);
-                bit(SDL_CONTROLLER_BUTTON_X, 2); bit(SDL_CONTROLLER_BUTTON_Y, 3);
-                if (lx > 0.4f) down.push_back('d');
-                if (lx < -0.4f) down.push_back('a');
-                if (ly > 0.4f) down.push_back('w');
-                if (ly < -0.4f) down.push_back('s');
-                if (padMask & 1u) down.push_back(' ');
-            }
+            FeedSdlGamepad(g_pad, down);
             Input::FeedKeys(down);
-            Input::FeedGamepad(padAxis, padMask);
 
             // A modal inventory/crafting/chest releases capture so you can click it.
             bool gameModal = false;
@@ -42833,6 +42821,7 @@ int main(int argc, char** argv) {
                 }
                 Input::FeedMouse(Vec2{rx, ry}, mask);
             }
+            InputActions::Tick();
         } else if (!ed.isPlaying()) {
             Input::FeedKeys({}); // release everything in edit mode
             // Keep the Capture mouse choice for the next Play; just free the pointer and

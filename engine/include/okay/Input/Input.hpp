@@ -97,10 +97,31 @@ public:
     static bool GetMouseButtonUp(int button);
 
     // ---- Gamepad (driven by FeedGamepad from the windowed runtime) -------
+    /// Button ids for GetGamepadButton. The triggers also count as buttons once
+    /// pulled past half way.
+    enum PadButton {
+        PadA = 0, PadB, PadX, PadY, PadBack, PadStart, PadLB, PadRB,
+        PadUp, PadDown, PadLeft, PadRight, PadLeftStick, PadRightStick, PadLT, PadRT,
+        PadButtonCount
+    };
     /// Left-stick axis, each component in [-1, 1] (y up).
     static Vec2 GamepadAxis();
-    /// True while a gamepad button is held. Button ids: 0=A 1=B 2=X 3=Y
-    /// 4=Back 5=Start 6=L 7=R 8=Up 9=Down 10=Left 11=Right.
+    /// Right-stick axis, each component in [-1, 1] (y up).
+    static Vec2 GamepadRightAxis();
+    /// Trigger pull in [0, 1]: 0 = left trigger, 1 = right trigger.
+    static float GamepadTrigger(int side);
+    /// True while a controller is plugged in.
+    static bool GamepadConnected();
+    /// "a", "b", "x", "y", "back", "start", "lb", "rb", "up", "down", "left",
+    /// "right", "ls", "rs", "lt", "rt" (any case) -> PadButton, or -1.
+    static int GamepadButtonFromName(const std::string& name);
+    /// Short display name ("A", "LB", "RT", "D-pad Up", ...).
+    static std::string GamepadButtonName(int button);
+    /// The lowercase name GamepadButtonFromName reads ("a", "lb", "rt", ...).
+    static std::string GamepadButtonKey(int button);
+    /// The gamepad button first pressed this frame, or -1. For "press a button to bind".
+    static int FirstGamepadButtonDown();
+    /// True while a gamepad button is held (see PadButton).
     static bool GetGamepadButton(int button);
     /// True only on the frame the button was first pressed.
     static bool GetGamepadButtonDown(int button);
@@ -116,6 +137,16 @@ public:
     /// Drive gamepad state: left-stick axis and a held-button bitmask (bit n =
     /// button id n). Advances the gamepad down-edge state.
     static void FeedGamepad(const Vec2& axis, unsigned buttonMask);
+    /// The rest of the controller, fed with FeedGamepad each frame: right stick,
+    /// trigger pulls [0, 1], and whether a controller is connected.
+    static void FeedGamepadExtra(const Vec2& rightAxis, float leftTrigger, float rightTrigger, bool connected);
+
+    /// Shake the controller: `low` / `high` are the two motors' strength [0, 1]
+    /// (low = heavy rumble, high = light buzz) for `seconds`. The windowed runtime
+    /// picks the request up with TakeRumble.
+    static void Rumble(float low, float high, float seconds);
+    /// The latest Rumble request since the last call, for the runtime to play.
+    static bool TakeRumble(float& low, float& high, float& seconds);
 
     // ---- Text input (real typed characters: shift, caps, symbols, layout) ----
     /// The characters typed since the last ClearTypedText() — for text fields.
@@ -183,6 +214,9 @@ private:
     static unsigned s_mousePrevious;  // bitmask from last frame
 
     static Vec2     s_padAxis;
+    static Vec2     s_padRight;
+    static float    s_padTrigger[2];
+    static bool     s_padConnected;
     static unsigned s_padCurrent;
     static unsigned s_padPrevious;
 

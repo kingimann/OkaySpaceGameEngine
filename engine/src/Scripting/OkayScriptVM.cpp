@@ -87,6 +87,7 @@
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputActions.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Core/Random.hpp"
 #include "okay/Core/Prefs.hpp"
@@ -3638,6 +3639,34 @@ struct OkayScriptVM::Impl {
             if (a.empty()) return Value{false};
             char c = KeyCharFromName(a[0].AsString());
             return Value{c != 0 && Input::GetKeyDown(c)};
+        };
+        // Game actions (InputActions): action("jump"), action_down / action_up,
+        // action_value (0..1), action_x / action_y for Move / Look, rumble(low, high, s),
+        // rebind("interact", "key:f").
+        auto actName = [](std::vector<Value>& a) { return a.empty() ? std::string() : a[0].AsString(); };
+        b["action"]       = [actName](std::vector<Value>& a) { return Value{InputActions::Get(actName(a))}; };
+        b["action_down"]  = [actName](std::vector<Value>& a) { return Value{InputActions::Down(actName(a))}; };
+        b["action_up"]    = [actName](std::vector<Value>& a) { return Value{InputActions::Up(actName(a))}; };
+        b["action_value"] = [actName](std::vector<Value>& a) { return Value{InputActions::Value(actName(a))}; };
+        b["action_x"]     = [actName](std::vector<Value>& a) { return Value{InputActions::Vector(actName(a)).x}; };
+        b["action_y"]     = [actName](std::vector<Value>& a) { return Value{InputActions::Vector(actName(a)).y}; };
+        b["rumble"] = [](std::vector<Value>& a) {
+            Input::Rumble(a.size() > 0 ? a[0].AsFloat() : 0.5f, a.size() > 1 ? a[1].AsFloat() : 0.5f, a.size() > 2 ? a[2].AsFloat() : 0.2f);
+            return Value{};
+        };
+        // define_action("dash", "key:q", "pad:rs") adds an action (or changes its defaults);
+        // define_direction("steer", "keys:i,k,j,l", "stick:right") a direction one.
+        auto define = [](std::vector<Value>& a, bool dir) {
+            if (a.empty()) return Value{false};
+            std::vector<std::string> binds;
+            for (std::size_t i = 1; i < a.size(); ++i) binds.push_back(a[i].AsString());
+            InputActions::Define(a[0].AsString(), binds, dir);
+            return Value{true};
+        };
+        b["define_action"]    = [define](std::vector<Value>& a) { return define(a, false); };
+        b["define_direction"] = [define](std::vector<Value>& a) { return define(a, true); };
+        b["rebind"] = [](std::vector<Value>& a) {
+            return Value{a.size() >= 2 && InputActions::Rebind(a[0].AsString(), a[1].AsString())};
         };
         b["mouse_x"] = [](std::vector<Value>&) { return Value{Input::MousePosition().x}; };
         b["mouse_y"] = [](std::vector<Value>&) { return Value{Input::MousePosition().y}; };

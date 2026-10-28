@@ -112,12 +112,41 @@ void DrawUIOverlayComponentInspector(Component* comp, EditorState& ed, Component
             if (ImGui::DragFloat2("Pos (px)##ukb", pos, 1.0f)) { kb->position = {pos[0], pos[1]}; ed.dirty = true; }
             if (ImGui::DragFloat2("Size (px)##ukb", sz, 1.0f, 8.0f, 4000.0f)) { kb->size = {sz[0], sz[1]}; ed.dirty = true; }
             EditText("Action##ukb", kb->action, ed);
-            std::string keyName = Input::KeyName(kb->key), defName = Input::KeyName(kb->defaultKey);
-            if (EditText("Key##ukb", keyName, ed)) kb->key = Input::KeyFromName(keyName);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A key name: a letter or digit, Space, Enter, Shift, Ctrl, Tab...");
-            if (EditText("Default Key##ukb", defName, ed)) kb->defaultKey = Input::KeyFromName(defName);
-            EditText("Save As (Prefs)##ukb", kb->prefKey, ed);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Prefs name the binding is saved under, so it survives restarts (empty = not saved).");
+            // Rebind a game action (InputActions) rather than a plain key.
+            {
+                const auto& actions = InputActions::All();
+                const char* cur = kb->inputAction.empty() ? "(none: a plain key)" : kb->inputAction.c_str();
+                if (ImGui::BeginCombo("Input Action##ukb", cur)) {
+                    if (ImGui::Selectable("(none: a plain key)", kb->inputAction.empty())) { kb->inputAction.clear(); ed.dirty = true; }
+                    for (const auto& act : actions)
+                        if (ImGui::Selectable(act.name.c_str(), kb->inputAction == act.name)) {
+                            kb->inputAction = act.name;
+                            if (kb->action.empty() || kb->action == "Jump") kb->action = act.name;
+                            ed.dirty = true;
+                        }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pick an action (Jump, Fire, Move...) to let players rebind it. Their choice is saved with their prefs.");
+                if (!kb->inputAction.empty()) {
+                    if (ImGui::Checkbox("Gamepad##ukb", &kb->gamepad)) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Listen for a controller button instead of a key or mouse button.");
+                    const InputActions::Action* act = InputActions::Find(kb->inputAction);
+                    if (act && act->direction && !kb->gamepad) {
+                        static const char* const parts[] = {"Whole binding", "Up", "Down", "Left", "Right"};
+                        int p = kb->part + 1;
+                        if (ImGui::Combo("Direction Key##ukb", &p, parts, 5)) { kb->part = p - 1; ed.dirty = true; }
+                    }
+                    ImGui::TextDisabled("Bound to: %s", kb->KeyLabel().c_str());
+                }
+            }
+            if (kb->inputAction.empty()) {
+                std::string keyName = Input::KeyName(kb->key), defName = Input::KeyName(kb->defaultKey);
+                if (EditText("Key##ukb", keyName, ed)) kb->key = Input::KeyFromName(keyName);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("A key name: a letter or digit, Space, Enter, Shift, Ctrl, Tab...");
+                if (EditText("Default Key##ukb", defName, ed)) kb->defaultKey = Input::KeyFromName(defName);
+                EditText("Save As (Prefs)##ukb", kb->prefKey, ed);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Prefs name the binding is saved under, so it survives restarts (empty = not saved).");
+            }
             if (ImGui::DragFloat("Text Size##ukb", &kb->textSize, 0.05f, 0.5f, 8.0f)) ed.dirty = true;
             EditColor("Background##ukb", kb->background, ed);
             EditColor("Key Color##ukb", kb->keyColor, ed);

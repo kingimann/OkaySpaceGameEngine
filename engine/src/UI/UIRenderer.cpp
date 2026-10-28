@@ -1708,7 +1708,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         p.FillRect(&box);
         const float px = kb->textSize, ty = o.y + (kb->size.y - Font8x8::Height * px) * 0.5f;
         DrawUIText(p, kb->action, o.x + 8.0f, ty, px, col(kb->textColor));
-        const std::string keyText = kb->IsListening() ? std::string("Press a key...") : "[" + kb->KeyLabel() + "]";
+        const std::string keyText = kb->IsListening() ? std::string(kb->ListenPrompt()) : "[" + kb->KeyLabel() + "]";
         const RGBA kc = col(kb->IsListening() ? kb->listenColor : kb->keyColor);
         DrawUIText(p, keyText, o.x + kb->size.x - 8.0f - UITextW(keyText, px), ty, px, kc);
         if (kb->IsListening()) {

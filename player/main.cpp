@@ -9,6 +9,7 @@
 #include <SDL.h>
 
 #include <Okay.hpp>
+#include "okay/Input/SdlGamepad.hpp"   // controller -> Input (sticks, triggers, rumble)
 #include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Net/DedicatedServer.hpp"
 #if !defined(_WIN32)
@@ -1467,6 +1468,7 @@ int main(int argc, char** argv) {
     if (audioDev) { AudioMixer::sampleRate = have.freq; SDL_PauseAudioDevice(audioDev, 0); }
     AudioMixer::masterVolume = cfg.volume;   // global mix scale from build settings
     AudioMixer::LoadSettings();   // the player's own volume settings win over it
+    InputActions::Load();   // the player's own control bindings
 
     // baseDir (resolved above) is where the game files live, for relative paths.
     std::unordered_map<std::string, SDL_Texture*> textureCache;
@@ -1631,6 +1633,10 @@ int main(int argc, char** argv) {
             if (e.type == SDL_MOUSEBUTTONDOWN && cursorReleased) cursorReleased = false;
             if (e.type == SDL_CONTROLLERDEVICEADDED && !pad)
                 pad = SDL_GameControllerOpen(e.cdevice.which);
+            if (e.type == SDL_CONTROLLERDEVICEREMOVED && pad &&
+                e.cdevice.which == SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(pad))) {
+                SDL_GameControllerClose(pad); pad = nullptr;
+            }
             if (e.type == SDL_TEXTINPUT) Input::FeedText(e.text.text);   // real characters
             if (e.type == SDL_MOUSEWHEEL) Input::FeedMouseWheel((float)e.wheel.y);
             if (e.type == SDL_FINGERDOWN || e.type == SDL_FINGERMOTION || e.type == SDL_FINGERUP) {
@@ -1694,32 +1700,8 @@ int main(int argc, char** argv) {
         if (ks[SDL_SCANCODE_DOWN])  { down.push_back('s'); down.push_back(Input::KeyDown); }
         if (ks[SDL_SCANCODE_RIGHT]) { down.push_back('d'); down.push_back(Input::KeyRight); }
 
-        // Read the gamepad (first connected controller).
-        Vec2 padAxis; unsigned padMask = 0;
-        if (pad) {
-            float lx = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX) / 32767.0f;
-            float ly = -SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY) / 32767.0f;
-            if (lx > -0.18f && lx < 0.18f) lx = 0.0f; // stick deadzone
-            if (ly > -0.18f && ly < 0.18f) ly = 0.0f;
-            padAxis = {lx, ly};
-            auto bit = [&](SDL_GameControllerButton b, int id) {
-                if (SDL_GameControllerGetButton(pad, b)) padMask |= 1u << id;
-            };
-            bit(SDL_CONTROLLER_BUTTON_A, 0); bit(SDL_CONTROLLER_BUTTON_B, 1);
-            bit(SDL_CONTROLLER_BUTTON_X, 2); bit(SDL_CONTROLLER_BUTTON_Y, 3);
-            bit(SDL_CONTROLLER_BUTTON_BACK, 4); bit(SDL_CONTROLLER_BUTTON_START, 5);
-            bit(SDL_CONTROLLER_BUTTON_LEFTSHOULDER, 6); bit(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, 7);
-            bit(SDL_CONTROLLER_BUTTON_DPAD_UP, 8); bit(SDL_CONTROLLER_BUTTON_DPAD_DOWN, 9);
-            bit(SDL_CONTROLLER_BUTTON_DPAD_LEFT, 10); bit(SDL_CONTROLLER_BUTTON_DPAD_RIGHT, 11);
-            // Fold the stick / d-pad into WASD so movement scripts work on a pad.
-            if (lx > 0.4f || (padMask & (1u << 11))) down.push_back('d');
-            if (lx < -0.4f || (padMask & (1u << 10))) down.push_back('a');
-            if (ly > 0.4f || (padMask & (1u << 8)))  down.push_back('w');
-            if (ly < -0.4f || (padMask & (1u << 9)))  down.push_back('s');
-            if (padMask & (1u << 0)) down.push_back(' '); // A -> space (jump/confirm)
-        }
+        FeedSdlGamepad(pad, down);   // first connected controller (sticks, triggers, buttons, rumble)
         Input::FeedKeys(down);
-        Input::FeedGamepad(padAxis, padMask);
 
         // An open inventory is modal: free the cursor (even in FPS/locked mode) so you
         // can point at and drag items, and show it — just like Minecraft/DayZ.
@@ -1784,6 +1766,7 @@ int main(int argc, char** argv) {
         if (mb & SDL_BUTTON(SDL_BUTTON_RIGHT))  mask |= 1u << 1;
         if (mb & SDL_BUTTON(SDL_BUTTON_MIDDLE)) mask |= 1u << 2;
         Input::FeedMouse(s_virtualMouse, mask);
+        InputActions::Tick();   // after every device is fed: Jump, Move, Fire... for this frame
 
         Uint64 now = SDL_GetPerformanceCounter();
         float dt = (float)((now - last) / (double)SDL_GetPerformanceFrequency());

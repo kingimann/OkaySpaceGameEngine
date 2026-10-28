@@ -151,18 +151,21 @@ public:
         const float lo = std::min(throwMinSpeed, throwMaxSpeed);
         const float hi = std::max(throwMinSpeed, throwMaxSpeed);
         const Vec3 vel = HolderVelocity() + AimDirection() * (lo + c * (hi - lo));
-        if (m_rb) {
-            if (m_rbType == Rigidbody3D::BodyType::Static) m_rb->bodyType = m_rbType;
-            else m_rb->bodyType = Rigidbody3D::BodyType::Dynamic;
-            if (m_rb->bodyType == Rigidbody3D::BodyType::Dynamic) {
-                m_rb->velocity = vel;
-                m_rb->angularVelocity = Vec3::Zero;
-                m_rb->continuousCollision = true;   // a fast throw shouldn't tunnel a wall
-                m_rb->WakeUp();
+        GameObject* thrown = m_held;
+        if (m_scaledItem && thrown->transform) thrown->transform->localScale = m_itemScale;
+        m_scaledItem = false;
+        // ReleaseHold puts the body type and colliders back and unparents the item.
+        if (m_hold) m_hold->ReleaseHold();
+        thrown->ownerCameraSkip = nullptr;
+        if (auto* rb = thrown->GetComponent<Rigidbody3D>()) {
+            if (rb->bodyType == Rigidbody3D::BodyType::Kinematic) rb->bodyType = Rigidbody3D::BodyType::Dynamic;
+            if (rb->bodyType == Rigidbody3D::BodyType::Dynamic) {
+                rb->velocity = vel;
+                rb->angularVelocity = Vec3::Zero;
+                rb->continuousCollision = true;   // a fast throw shouldn't tunnel a wall
+                rb->WakeUp();
             }
         }
-        for (auto& p : m_physics) if (p.c) p.c->isTrigger = p.trigger;
-        if (m_hold && m_hold->m_holder == gameObject) m_hold->m_holder = nullptr;
         Forget();
         return true;
     }

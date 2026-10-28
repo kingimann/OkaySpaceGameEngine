@@ -25,19 +25,22 @@ public:
         const bool holding = hold && hold->IsHolding();
         if (m_wasHolding && holding) {
             const bool main = dropKey && Input::GetKeyDown(dropKey);
-            const bool alt = altDropKey && altDropKey != dropKey && Input::GetKeyDown(altDropKey);
+            // The holder's throw key already lets go (a tap throws softly), and
+            // dropping on it too would let the same press pick the item back up.
+            const bool alt = altDropKey && altDropKey != dropKey && altDropKey != hold->throwKey &&
+                             Input::GetKeyDown(altDropKey);
             if (main || alt) {
                 hold->Drop();
                 if (main) ItemPickup::BlockInteract();
             }
         }
-        Refresh(hold);
     }
 
     void LateUpdate(float) override {
         ProceduralObjectHolding* hold = gameObject ? gameObject->GetComponent<ProceduralObjectHolding>() : nullptr;
         m_wasHolding = hold && hold->IsHolding();
         ItemPickup::ClearInteractBlock();
+        Refresh(hold);   // after this frame's pick up, drop or throw
     }
 
 private:

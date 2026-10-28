@@ -16,9 +16,11 @@ class GameObject;
 
 namespace HumanoidActions {
 
-/// How far the built-in action set has got. Death is 1, dolphin dive is 2. A
-/// saved graph records the revision it already has, so a later action is added
-/// once and a state the user deleted is not put back when the next action lands.
+/// How far the built-in action set has got: death 1, dolphin dive 2, sitting 3,
+/// hit reactions 4, roll / dodge / slide 5, vault and ledge 6, swimming 7,
+/// emotes 8. A saved graph records the revision it already has, so a later
+/// action is added once and a state the user deleted is not put back when the
+/// next action lands.
 constexpr int kActionsRev = 8;
 
 /// One authored pose. Degrees, hip height in rig units, rootOffset.x/z a visual

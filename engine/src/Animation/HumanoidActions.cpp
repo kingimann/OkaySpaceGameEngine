@@ -457,7 +457,16 @@ struct ActionSpec {
     int rev;
 };
 
-const ActionSpec kStates[] = {{"Death", 1}, {"DeadHold", 1}, {"Dive", 2}, {"DiveLand", 2}, {"SitDown", 3}, {"Sit", 3}, {"StandUp", 3}, {"Hit", 4}, {"HitHeavy", 4}, {"Hit_Crouch", 4}, {"Hit_Prone", 4}, {"Roll", 5}, {"Dodge", 5}, {"Slide", 5}, {"SlideEnd", 5}, {"Vault", 6}, {"MantleLow", 6}, {"MantleHigh", 6}, {"LedgeGrab", 6}, {"HangShimmy", 6}, {"ClimbUp", 6}, {"LetGo", 6}, {"Swim", 7}, {"Emote_Nod", 8}, {"Emote_Shake", 8}, {"Emote_Shrug", 8}};
+const ActionSpec kStates[] = {
+    {"Death", 1}, {"DeadHold", 1},
+    {"Dive", 2}, {"DiveLand", 2},
+    {"SitDown", 3}, {"Sit", 3}, {"StandUp", 3},
+    {"Hit", 4}, {"HitHeavy", 4}, {"Hit_Crouch", 4}, {"Hit_Prone", 4},
+    {"Roll", 5}, {"Dodge", 5}, {"Slide", 5}, {"SlideEnd", 5},
+    {"Vault", 6}, {"MantleLow", 6}, {"MantleHigh", 6}, {"LedgeGrab", 6},
+    {"HangShimmy", 6}, {"ClimbUp", 6}, {"LetGo", 6},
+    {"Swim", 7},
+    {"Emote_Nod", 8}, {"Emote_Shake", 8}, {"Emote_Shrug", 8}};
 
 SM::State* FindMutable(SM& sm, const std::string& name) {
     for (SM::State& s : sm.states) if (s.name == name) return &s;

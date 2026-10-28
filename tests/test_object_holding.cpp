@@ -2,9 +2,11 @@
 #include "rig_harness.hpp"
 #include <Okay.hpp>
 #include "okay/Components/ProceduralObjectHolding.hpp"
+#include "okay/Render/ModelImport.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
 #include <cmath>
+#include <cstdio>
 #include <string>
 
 using namespace okay;
@@ -595,6 +597,42 @@ int main() {
         CHECK(Dist(hold->GripPoint(true), lhand->transform->Position()) < 0.18f);
         CHECK(Dist(hold->GripPoint(false), rhand->transform->Position()) < 0.18f);
         CHECK(Dist(crate->transform->Position(), head->transform->Position()) > 0.35f);
+    }
+
+    // A real Mixamo glTF (three.js examples). Skipped when the file is not on disk.
+    {
+        const char* path = "/tmp/mixamo/Soldier.glb";
+        FILE* f = std::fopen(path, "rb");
+        if (!f) {
+            std::printf("  mixamo file not present, synthetic rig covered the names\n");
+        } else {
+            std::fclose(f);
+            Scene s("Soldier");
+            bool ok = false;
+            GameObject* root = ImportModelScene(s, path, &ok);
+            CHECK(ok && root);
+            if (root) {
+                auto* ik = root->AddComponent<FullBodyIK>();
+                s.Start();
+                CHECK(ik->bones[FullBodyIK::LHand] != nullptr);
+                CHECK(ik->bones[FullBodyIK::RHand] != nullptr);
+                CHECK(ik->bones[FullBodyIK::LUpperArm] != nullptr);
+                CHECK(ik->bones[FullBodyIK::Head] != nullptr);
+                CHECK(ik->bones[FullBodyIK::LHand]->gameObject->name.find("Hand") != std::string::npos);
+                CHECK(ik->bones[FullBodyIK::LHand]->gameObject->name.find("Index") == std::string::npos);
+                auto* hold = root->AddComponent<ProceduralObjectHolding>();
+                hold->transitionTime = 0.0f;
+                GameObject* crate = Crate(s, "Carry Crate", root->transform->Position() + Vec3{0, 1, -0.5f},
+                                          {0.35f, 0.28f, 0.28f}, 2.0f);
+                crate->AddComponent<HoldableObject>()->ApplyPreset(HoldableObject::Preset::CarryFront);
+                CHECK(hold->Pickup(crate));
+                Step(s, 20);
+                const Vec3 lh = ik->bones[FullBodyIK::LHand]->Position();
+                const Vec3 head = ik->bones[FullBodyIK::Head]->Position();
+                CHECK(Dist(hold->GripPoint(true), lh) < Dist(hold->GripPoint(true), head));
+                CHECK(Dist(crate->transform->Position(), head) > 0.2f);
+            }
+        }
     }
 
     TEST_MAIN_RESULT();

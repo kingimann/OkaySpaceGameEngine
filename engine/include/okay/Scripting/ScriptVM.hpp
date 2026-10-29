@@ -101,6 +101,10 @@ public:
     /// Set a global variable — used to apply a component's serialized public-field
     /// overrides over the script's defaults.
     virtual void SetGlobal(const std::string& /*name*/, const vs::VsValue& /*v*/) {}
+
+    /// The names of the script's own variables (globals, or a component class's
+    /// instance fields), for save games. Empty when the backend can't list them.
+    virtual std::vector<std::string> GlobalNames() const { return {}; }
 };
 
 /// Names of the script backends compiled into this build (always includes

@@ -25,6 +25,11 @@
 #include "okay/Components/PlayerView.hpp"
 #include "okay/Components/DeathLock.hpp"
 #include "okay/Components/Water.hpp"
+#include "okay/Components/DiveAction.hpp"
+#include "okay/Animation/HumanoidActions.hpp"
+#include "okay/Components/DodgeAction.hpp"
+#include "okay/Animation/HumanoidActions.hpp"
+#include "okay/Components/Traversal.hpp"
 
 namespace okay {
 
@@ -174,8 +179,17 @@ public:
 
     // ---- Slide (sprint, then crouch) ----
     bool  canSlide = true;
+    // ---- Vault / mantle / ledge (off until a game opts in; vault() still probes) ----
+    bool  canVault = false;
+    bool  canMantle = false;
+    bool  canLedgeGrab = false;
     float slideSpeed = 10.0f;
     float slideTime  = 0.75f;
+
+    // ---- Dolphin dive (sprint, then prone). Does not change slide-on-crouch. ----
+    bool  diveOnProneWhileSprinting = true;
+    float diveHop = 0.25f;
+    float diveSlideTime = 0.45f;
 
     // ---- Hooks ----
     bool  driveStateMachine = true;     // feed an AnimStateMachine speed/grounded/crouch/aim/... + jump/land triggers
@@ -186,6 +200,7 @@ public:
     int   FootstepCount() const { return m_steps; }
     bool  IsAiming() const { return m_aim; }
     bool  IsSliding() const { return m_slideT > 0.0f; }
+    DodgeMove dodge;   // key dodge stays off until canDodge is set
     bool  IsGrounded() const { return m_grounded; }
     /// Orbit pitch at Start. A first-person handoff treats this as the camera's
     /// rest tilt, so a view that was never looked away from rest arrives level.
@@ -253,7 +268,7 @@ public:
         if (Game::Paused()) return;   // frozen while the pause menu is up
         m_lookDt = dt;   // also for a client's ReadLocalInput in authoritative movement
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
-        if (DeathLocksInput(gameObject)) { StopDeadSlide(gameObject); return; }
+        if (DeathLocksInput(gameObject)) { StopDeadSlide(gameObject); AbortTraverse(gameObject); return; }
         // First person owns the body while the view is at the eyes. Keep the
         // mouse baseline so orbiting again doesn't spike on the first frame.
         if (!SimActive()) {
@@ -326,6 +341,7 @@ public:
         key(sprintKey, PlayerInput::Sprint);
         key(crouchKey, PlayerInput::Crouch);
         key(proneKey, PlayerInput::Prone);
+        m_dodgeEdge = dodge.canDodge && dodge.key && Input::GetKeyDown(dodge.key);
         key(leanLeftKey, PlayerInput::LeanLeft);
         key(leanRightKey, PlayerInput::LeanRight);
         if (stanceGamepadButton >= 0 && Input::GetGamepadButton(stanceGamepadButton)) in.held |= PlayerInput::StanceButton;
@@ -350,6 +366,13 @@ public:
             if (gameObject)
                 if (auto* view = gameObject->GetComponent<PlayerView>())
                     view->ConformPitch(pitch, true, minPitch, maxPitch, dt);
+        }
+        // Orbit (LateUpdate) still runs. Move or jump stands up; the body stays put.
+        if (HumanoidActions::IsSitting(gameObject)) {
+            const bool wantMove = in.move.x * in.move.x + in.move.y * in.move.y > 1e-4f;
+            if (wantMove || in.Pressed(PlayerInput::Jump))
+                HumanoidActions::RequestStandUp(gameObject);
+            return;
         }
         m_aim = aimWithRightMouse && in.Held(PlayerInput::AltFire);
         Vec2 axis = in.move;
@@ -481,6 +504,27 @@ public:
             rb->gravityScale = m_savedGravity;
             m_heldGravity = false;
         }
+        bool dived = false;
+        {
+            const float hsNow = rb ? std::sqrt(rb->velocity.x * rb->velocity.x + rb->velocity.z * rb->velocity.z) : 0.0f;
+            DiveTune tune;
+            tune.enabled = diveOnProneWhileSprinting && !m_swimming;
+            tune.hop = diveHop;
+            tune.slideTime = diveSlideTime;
+            tune.proneSpeed = proneSpeed;
+            tune.crouchFrac = crouchHeight;
+            tune.proneFrac = proneHeight;
+            tune.resize = resizeBody;
+            tune.speedCap = runSpeed * 1.5f;
+            const DiveOut d = TickDive(gameObject, rb, m_dive, m_body, tune, grounded, m_wasRunning,
+                                       (int)m_wantStance, fwd, hsNow, dt);
+            if (d.pose.drive) {
+                m_stance = (Stance)d.pose.stance;
+                m_wantStance = m_padWant = (Stance)d.pose.stance;
+                m_stanceLevel = d.pose.level;
+            }
+            if (d.started) { dived = true; m_slideT = 0.0f; }
+        }
         // Slope limit: on terrain steeper than slopeLimit, cancel the uphill
         // velocity component and accelerate a downhill slide.
         if (!m_swimming && rb && (grounded || rb->groundedOnTerrain) && slopeLimit > 0.0f && rb->groundNormal.y < std::cos(slopeLimit * Mathf::Deg2Rad)) {
@@ -501,6 +545,25 @@ public:
         // Moving platforms: ride whatever we stand on (elevators, movers).
         if (gameObject && gameObject->scene())
             RideMovingPlatform(*gameObject->scene(), gameObject, m_platRide, grounded);
+
+        // Dodge overwrites the horizontal velocity just written. Slide physics above is unchanged.
+        if (m_dodgeEdge && grounded) {
+            const Vec3 wish = moving ? dir : fwd;
+            if (DodgeBurst(gameObject, dodge, wish))
+                HumanoidActions::RequestRoll(gameObject, DodgeDir(wish, fwd, right));
+        }
+        m_dodgeEdge = false;
+        DodgeTick(gameObject, dodge, dt);
+
+        // Vault / mantle / ledge. Flags default off. Probe along the wish
+        // direction; the body has not turned yet this frame.
+        if (gameObject && (canVault || canMantle || canLedgeGrab)) {
+            const Vec3 face = moving ? dir : fwd;
+            const bool airborne = !grounded;
+            if ((moving && (canVault || canMantle)) || (airborne && canLedgeGrab))
+                HumanoidActions::TryTraverse(gameObject, face, airborne, canVault, canMantle, canLedgeGrab);
+        }
+        if (gameObject) TickTraverse(gameObject, dt);
 
         // ---- Turn the body (smoothly) ----
         // The character mesh faces -Z (engine camera/controller convention).
@@ -626,7 +689,7 @@ public:
             f.stance = m_swimming ? 0.0f : m_stanceLevel;
             f.sprint = m_swimming ? false : running; f.slide = m_slideT > 0.0f; f.aim = m_aim;
             f.jumped = m_swimming ? false : m_jumped; f.landed = m_inWater ? false : m_landed;
-            f.swim = m_swimming;
+            f.swim = m_swimming; f.dived = dived;
             m_anim.Apply(gameObject, f);
         }
         m_jumped = false;
@@ -799,6 +862,8 @@ private:
     float m_aimT = 0.0f, m_mouseIdle = 0.0f, m_shake = 0.0f, m_stepDist = 0.0f, m_lastSpeed = 0.0f, m_lastVy = 0.0f;
     Stance m_prevStance = Stance::Stand;
     float m_slideT = 0.0f;
+    DiveMotion m_dive;
+    bool  m_dodgeEdge = false;
     Vec3  m_slideDir{0, 0, -1};
     int   m_steps = 0;
 

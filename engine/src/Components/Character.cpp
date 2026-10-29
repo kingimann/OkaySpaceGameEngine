@@ -2474,6 +2474,7 @@ std::string Character::ToText() const {
     }
     // How fast the stride follows the ground (trailing, so older saves keep the default).
     o << ' ' << gaitSpeedSmoothing;
+    o << ' ' << (clipDive.empty() ? "-" : clipDive);
     // Per-key easing, for the clips that set it on any key (trailing, count-prefixed).
     auto hasKeyEase = [](const AnimClip& c) {
         for (const auto& k : c.keys) if (k.ease != AnimKeyEase::Clip) return true;
@@ -2592,6 +2593,9 @@ void Character::FromText(const std::string& text) {
     }
     float gs = gaitSpeedSmoothing;
     if (in >> gs) gaitSpeedSmoothing = gs > 0.0f ? gs : 0.0f;
+    // Optional trailing dive binding (absent in older saves).
+    std::string sdive;
+    if (in >> sdive) clipDive = (sdive == "-" ? "" : sdive);
     // Optional trailing per-key easing.
     int ne = 0;
     if (in >> ne) {

@@ -21,6 +21,11 @@
 #include "okay/Components/PlayerView.hpp"
 #include "okay/Components/DeathLock.hpp"
 #include "okay/Components/Water.hpp"
+#include "okay/Components/DiveAction.hpp"
+#include "okay/Animation/HumanoidActions.hpp"
+#include "okay/Components/DodgeAction.hpp"
+#include "okay/Animation/HumanoidActions.hpp"
+#include "okay/Components/Traversal.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
 
@@ -137,9 +142,18 @@ public:
 
     // ---- Slide (sprint, then crouch) ----
     bool  canSlide = true;
+    // ---- Vault / mantle / ledge (off until a game opts in; vault() still probes) ----
+    bool  canVault = false;
+    bool  canMantle = false;
+    bool  canLedgeGrab = false;
     float slideSpeed = 10.5f;           // burst speed at the start of a slide
     float slideTime  = 0.75f;           // seconds until it settles into a crouch
     float slideEyeHeight = 0.9f;
+
+    // ---- Dolphin dive (sprint, then prone). Does not change slide-on-crouch. ----
+    bool  diveOnProneWhileSprinting = true;
+    float diveHop = 0.25f;              // metres of upward launch
+    float diveSlideTime = 0.45f;        // glide after landing, then prone
 
     // ---- Hooks ----
     bool  driveStateMachine = true;     // feed an AnimStateMachine speed/grounded/crouch/... + jump/land triggers
@@ -149,6 +163,7 @@ public:
     std::function<void(float impactSpeed)> onLand;
     int   FootstepCount() const { return m_steps; }
     bool  IsSliding() const { return m_slideT > 0.0f; }
+    DodgeMove dodge;   // key dodge stays off until canDodge is set
     bool  IsZooming() const { return m_zoom; }
     bool  IsGrounded() const { return m_grounded; }
     /// This controller has simulated at least once (a view switch can copy its look).
@@ -251,7 +266,7 @@ public:
         if (Game::Paused()) return;   // frozen: no mouse-look, no cursor recapture
         m_lookDt = dt;   // also for a client's ReadLocalInput in authoritative movement
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
-        if (DeathLocksInput(gameObject)) { StopDeadSlide(gameObject); return; }
+        if (DeathLocksInput(gameObject)) { StopDeadSlide(gameObject); AbortTraverse(gameObject); return; }
         // The orbit controller owns the body while the view is third person.
         // Keep the mouse baseline so the first frame back at the eyes has no spike.
         if (!SimActive()) {
@@ -318,6 +333,7 @@ public:
         key(sprintKey, PlayerInput::Sprint);
         key(crouchKey, PlayerInput::Crouch);
         key(proneKey, PlayerInput::Prone);
+        m_dodgeEdge = dodge.canDodge && dodge.key && Input::GetKeyDown(dodge.key);
         key(leanLeftKey, PlayerInput::LeanLeft);
         key(leanRightKey, PlayerInput::LeanRight);
         if (stanceGamepadButton >= 0 && Input::GetGamepadButton(stanceGamepadButton)) in.held |= PlayerInput::StanceButton;
@@ -346,14 +362,21 @@ public:
         }
         m_zoom = zoomWithRightMouse && in.Held(PlayerInput::AltFire);
 
-        // Lean: hold Q/E to peek; the camera rolls and shifts sideways.
-        UpdateLean(in, dt);
-        float roll = -m_lean * leanAngle;
+        // Seated: look still works. The Seat owns the body pose. Move or jump stands up.
+        const bool seated = HumanoidActions::IsSitting(gameObject);
+        if (!seated) UpdateLean(in, dt);
+        float roll = seated ? 0.0f : -m_lean * leanAngle;
         if (Transform* cam = FindCameraChild()) {
-            transform->localRotation = Quat::Euler(0, yaw, 0);        // body turns
-            cam->localRotation       = Quat::Euler(pitch, 0, roll);  // camera tilts + leans (shifts sideways in LateUpdate)
-        } else {
+            if (!seated) transform->localRotation = Quat::Euler(0, yaw, 0); // body turns
+            cam->localRotation = Quat::Euler(pitch, 0, roll);  // camera tilts + leans
+        } else if (!seated) {
             transform->localRotation = Quat::Euler(pitch, yaw, roll); // no child cam: tilt self
+        }
+        if (seated) {
+            const bool wantMove = in.move.x * in.move.x + in.move.y * in.move.y > 1e-4f;
+            if (wantMove || in.Pressed(PlayerInput::Jump))
+                HumanoidActions::RequestStandUp(gameObject);
+            return;
         }
 
         // Water: waist-deep is a swim. Shallower is wading, so a shore still walks
@@ -493,6 +516,27 @@ public:
             rb->gravityScale = m_savedGravity;
             m_heldGravity = false;
         }
+        bool dived = false;
+        {
+            const float hsNow = rb ? std::sqrt(rb->velocity.x * rb->velocity.x + rb->velocity.z * rb->velocity.z) : 0.0f;
+            DiveTune tune;
+            tune.enabled = diveOnProneWhileSprinting && !m_swimming;
+            tune.hop = diveHop;
+            tune.slideTime = diveSlideTime;
+            tune.proneSpeed = proneSpeed;
+            tune.crouchFrac = crouchHeight;
+            tune.proneFrac = proneHeight;
+            tune.resize = resizeBody;
+            tune.speedCap = runSpeed * 1.5f;
+            const DiveOut d = TickDive(gameObject, rb, m_dive, m_body, tune, grounded, m_wasRunning,
+                                       (int)m_wantStance, fwd, hsNow, dt);
+            if (d.pose.drive) {
+                m_stance = (Stance)d.pose.stance;
+                m_wantStance = m_padWant = (Stance)d.pose.stance;
+                m_stanceLevel = d.pose.level;
+            }
+            if (d.started) { dived = true; m_slideT = 0.0f; }
+        }
         // Slope limit: on terrain steeper than slopeLimit, cancel the uphill
         // velocity component and accelerate a downhill slide.
         if (!m_swimming && rb && (grounded || rb->groundedOnTerrain) && slopeLimit > 0.0f && rb->groundNormal.y < std::cos(slopeLimit * Mathf::Deg2Rad)) {
@@ -513,6 +557,25 @@ public:
         // Moving platforms: ride whatever we stand on (elevators, movers).
         if (gameObject && gameObject->scene())
             RideMovingPlatform(*gameObject->scene(), gameObject, m_platRide, grounded);
+
+        // Dodge overwrites the horizontal velocity just written. Slide physics above is unchanged.
+        if (m_dodgeEdge && grounded) {
+            const Vec3 wish = moving ? dir : fwd;
+            if (DodgeBurst(gameObject, dodge, wish))
+                HumanoidActions::RequestRoll(gameObject, DodgeDir(wish, fwd, right));
+        }
+        m_dodgeEdge = false;
+        DodgeTick(gameObject, dodge, dt);
+
+        // Vault / mantle / ledge. Flags default off. The probe uses the move
+        // direction, which was already chosen above — no key is read here.
+        if (gameObject && (canVault || canMantle || canLedgeGrab)) {
+            const Vec3 face = moving ? dir : fwd;
+            const bool airborne = !grounded;
+            if ((moving && (canVault || canMantle)) || (airborne && canLedgeGrab))
+                HumanoidActions::TryTraverse(gameObject, face, airborne, canVault, canMantle, canLedgeGrab);
+        }
+        if (gameObject) TickTraverse(gameObject, dt);
 
         // ---- View bob (footstep sway), landing dip, FOV ----
         float hSpeed = rb ? std::sqrt(rb->velocity.x * rb->velocity.x + rb->velocity.z * rb->velocity.z)
@@ -581,7 +644,7 @@ public:
             f.stance = m_swimming ? 0.0f : m_stanceLevel;
             f.sprint = m_swimming ? false : running; f.slide = m_slideT > 0.0f; f.aim = m_zoom;
             f.jumped = m_swimming ? false : m_jumped; f.landed = m_inWater ? false : m_landed;
-            f.swim = m_swimming;
+            f.swim = m_swimming; f.dived = dived;
             m_anim.Apply(gameObject, f);
         }
         m_jumped = false;
@@ -844,6 +907,8 @@ private:
     bool  m_zoom = false, m_grounded = true, m_wasRunning = false, m_jumped = false, m_landed = false;
     Stance m_prevStance = Stance::Stand;
     float m_slideT = 0.0f;
+    DiveMotion m_dive;
+    bool  m_dodgeEdge = false;
     Vec3  m_slideDir{0, 0, -1};
     float m_dip = 0.0f;
     int   m_steps = 0;

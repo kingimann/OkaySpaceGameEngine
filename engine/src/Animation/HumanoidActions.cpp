@@ -3,14 +3,30 @@
 #include "okay/Components/AnimControl.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/Seat.hpp"
+#include "okay/Components/DodgeAction.hpp"
+#include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
+#include "okay/Input/Input.hpp"
+#include "okay/Net/NetOwnership.hpp"
+#include "okay/Physics/Physics3D.hpp"
+#include "okay/Physics/Rigidbody3D.hpp"
+#include "okay/Scene/Scene.hpp"
+#include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/Traversal.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Core/Time.hpp"
 #include "okay/Physics/Collider3D.hpp"
+#include "okay/Physics/Physics3D.hpp"
+#include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Scene/GameObject.hpp"
+#include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace okay {
 namespace HumanoidActions {
@@ -204,12 +220,253 @@ void BakeDeath(std::vector<HumanoidLibrary::Entry>& out) {
     AddClip(out, BakeAction("DeadHold_R", {right}, true, {}));
 }
 
+void BakeDive(std::vector<HumanoidLibrary::Entry>& out) {
+    const KeyPose run = FromState(3);
+    const KeyPose prone = FromState(7);
+
+    KeyPose plant = run;
+    plant.bones[B::B_HIPS].x += 22.0f;
+    plant.bones[B::B_TORSO].x += 16.0f;
+    plant.bones[B::B_LTHIGH].x += 26.0f;
+    plant.bones[B::B_RTHIGH].x += 18.0f;
+    plant.bones[B::B_LSHIN].x += 28.0f;
+    plant.bones[B::B_RSHIN].x += 22.0f;
+    plant.bones[B::B_LUPARM] = {24.0f, 0.0f, 28.0f};
+    plant.bones[B::B_RUPARM] = {24.0f, 0.0f, -28.0f};
+    plant.hipY = -0.10f;
+
+    KeyPose launch = run;
+    launch.bones[B::B_HIPS].x = 50.0f;
+    launch.bones[B::B_TORSO].x = 20.0f;
+    launch.bones[B::B_HEAD].x = -14.0f;
+    launch.bones[B::B_LUPARM] = {-78.0f, 0.0f, 16.0f};
+    launch.bones[B::B_RUPARM] = {-78.0f, 0.0f, -16.0f};
+    launch.bones[B::B_LFORE].x = -14.0f;
+    launch.bones[B::B_RFORE].x = -14.0f;
+    launch.bones[B::B_LTHIGH].x = -16.0f;
+    launch.bones[B::B_RTHIGH].x = -8.0f;
+    launch.hipY = -0.02f;
+    launch.rootOffset = {0.0f, 0.0f, 0.05f};
+
+    KeyPose flight = prone;
+    flight.bones[B::B_HIPS].x = 76.0f;
+    flight.bones[B::B_TORSO].x = 10.0f;
+    flight.bones[B::B_HEAD].x = -16.0f;
+    flight.bones[B::B_LUPARM] = {-148.0f, 0.0f, 10.0f};
+    flight.bones[B::B_RUPARM] = {-148.0f, 0.0f, -10.0f};
+    flight.bones[B::B_LFORE].x = -6.0f;
+    flight.bones[B::B_RFORE].x = -6.0f;
+    flight.bones[B::B_LTHIGH].x = 14.0f;
+    flight.bones[B::B_RTHIGH].x = 20.0f;
+    flight.hipY = -0.26f;
+
+    KeyPose chest = prone;
+    chest.bones[B::B_HIPS].x = 84.0f;
+    chest.bones[B::B_LUPARM] = {-128.0f, 0.0f, 18.0f};
+    chest.bones[B::B_RUPARM] = {-128.0f, 0.0f, -18.0f};
+    chest.bones[B::B_LFORE].x = -22.0f;
+    chest.bones[B::B_RFORE].x = -22.0f;
+    chest.hipY = -0.58f;
+
+    // Ends on the prone pose the crawl and get-up already use.
+    const std::vector<std::pair<float, const char*>> ev = {
+        {0.18f, "takeoff"}, {0.50f, "impact"}, {0.70f, "action_end"}};
+    AddClip(out, BakeAction("Dive", {
+        At(run, 0.0f), At(plant, 0.12f), At(launch, 0.22f), At(flight, 0.40f),
+        At(chest, 0.55f), At(prone, 0.70f)}, false, ev));
+
+    KeyPose absorb = flight;
+    absorb.hipY = -0.40f;
+    const std::vector<std::pair<float, const char*>> landEv = {{0.08f, "impact"}, {0.28f, "action_end"}};
+    AddClip(out, BakeAction("DiveLand", {At(absorb, 0.0f), At(chest, 0.12f), At(prone, 0.28f)}, false, landEv));
+}
+
+void BakeHits(std::vector<HumanoidLibrary::Entry>& out) {
+    const KeyPose idle = FromState(1);
+    const KeyPose crouch = FromState(6);
+    const KeyPose prone = FromState(7);
+    auto flinch = [](KeyPose base, float torsoX, float torsoZ, float headX) {
+        base.bones[B::B_TORSO].x += torsoX;
+        base.bones[B::B_TORSO].z += torsoZ;
+        base.bones[B::B_HEAD].x += headX;
+        base.bones[B::B_LUPARM].z += 18.0f;
+        base.bones[B::B_RUPARM].z -= 18.0f;
+        return base;
+    };
+    const std::vector<std::pair<float, const char*>> lightEv = {{0.35f, "action_end"}};
+    AddClip(out, BakeAction("Hit_F", {At(idle, 0.0f), At(flinch(idle, 22.0f, 0.0f, -14.0f), 0.12f), At(idle, 0.35f)}, false, lightEv));
+    AddClip(out, BakeAction("Hit_B", {At(idle, 0.0f), At(flinch(idle, -18.0f, 0.0f, 12.0f), 0.12f), At(idle, 0.35f)}, false, lightEv));
+    AddClip(out, BakeAction("Hit_L", {At(idle, 0.0f), At(flinch(idle, 6.0f, 20.0f, 0.0f), 0.12f), At(idle, 0.35f)}, false, lightEv));
+    AddClip(out, BakeAction("Hit_R", {At(idle, 0.0f), At(flinch(idle, 6.0f, -20.0f, 0.0f), 0.12f), At(idle, 0.35f)}, false, lightEv));
+
+    KeyPose heavyF = flinch(idle, 28.0f, 0.0f, -16.0f);
+    heavyF.bones[B::B_HIPS].x = 12.0f;
+    heavyF.bones[B::B_LTHIGH].x = 22.0f;
+    heavyF.bones[B::B_RTHIGH].x = -10.0f;
+    heavyF.hipY = -0.08f;
+    heavyF.rootOffset = {0.0f, 0.0f, 0.06f};
+    KeyPose heavyB = flinch(idle, -24.0f, 0.0f, 14.0f);
+    heavyB.bones[B::B_HIPS].x = -10.0f;
+    heavyB.hipY = -0.06f;
+    heavyB.rootOffset = {0.0f, 0.0f, -0.05f};
+    const std::vector<std::pair<float, const char*>> heavyEv = {{0.80f, "action_end"}};
+    AddClip(out, BakeAction("Hit_Heavy_F", {At(idle, 0.0f), At(heavyF, 0.18f), At(heavyF, 0.42f), At(idle, 0.80f)}, false, heavyEv));
+    AddClip(out, BakeAction("Hit_Heavy_B", {At(idle, 0.0f), At(heavyB, 0.18f), At(heavyB, 0.42f), At(idle, 0.80f)}, false, heavyEv));
+    AddClip(out, BakeAction("Hit_Crouch", {At(crouch, 0.0f), At(flinch(crouch, 16.0f, 0.0f, -8.0f), 0.14f), At(crouch, 0.40f)}, false, {{0.40f, "action_end"}}));
+    AddClip(out, BakeAction("Hit_Prone", {At(prone, 0.0f), At(flinch(prone, 8.0f, 6.0f, -4.0f), 0.12f), At(prone, 0.36f)}, false, {{0.36f, "action_end"}}));
+    AddClip(out, BakeAction("Hit_Off", {idle}, true, {}));
+}
+
+void BakeRoll(std::vector<HumanoidLibrary::Entry>& out) {
+    const KeyPose idle = FromState(1);
+    const KeyPose crouch = FromState(6);
+    KeyPose tuck = idle;
+    tuck.bones[B::B_HIPS].x = 28.0f;
+    tuck.bones[B::B_TORSO].x = 36.0f;
+    tuck.bones[B::B_HEAD].x = -20.0f;
+    tuck.bones[B::B_LTHIGH] = {110.0f, 8.0f, -6.0f};
+    tuck.bones[B::B_RTHIGH] = {110.0f, -8.0f, 6.0f};
+    tuck.bones[B::B_LSHIN].x = -110.0f;
+    tuck.bones[B::B_RSHIN].x = -110.0f;
+    tuck.hipY = -0.15f;
+    KeyPose tuck2 = tuck;
+    tuck2.bones[B::B_HIPS].x = -20.0f;
+    tuck2.bones[B::B_TORSO].x = -10.0f;
+    AddClip(out, BakeAction("Roll_F", {At(idle, 0.0f), At(tuck, 0.22f), At(tuck2, 0.42f), At(idle, 0.65f)}, false, {{0.65f, "action_end"}}));
+
+    auto dodge = [&](const char* name, float side, float back) {
+        KeyPose lean = idle;
+        lean.bones[B::B_TORSO].z = side * 16.0f;
+        lean.bones[B::B_HIPS].z = side * 8.0f;
+        lean.bones[B::B_TORSO].x = back * 12.0f;
+        lean.bones[B::B_LTHIGH].x = back > 0.0f ? -18.0f : 14.0f;
+        lean.bones[B::B_RTHIGH].x = back > 0.0f ? -18.0f : 14.0f;
+        lean.rootOffset = {side * 0.04f, 0.0f, back * 0.03f};
+        AddClip(out, BakeAction(name, {At(idle, 0.0f), At(lean, 0.14f), At(idle, 0.40f)}, false, {{0.40f, "action_end"}}));
+    };
+    dodge("Dodge_L", 1.0f, 0.0f);
+    dodge("Dodge_R", -1.0f, 0.0f);
+    dodge("Dodge_B", 0.0f, 1.0f);
+
+    KeyPose feet = crouch;
+    feet.bones[B::B_HIPS].x = 18.0f;
+    feet.bones[B::B_LTHIGH].x = 40.0f;
+    feet.bones[B::B_RTHIGH].x = 70.0f;
+    feet.bones[B::B_LSHIN].x = -30.0f;
+    feet.bones[B::B_RSHIN].x = -50.0f;
+    feet.bones[B::B_LUPARM] = {20.0f, 0.0f, 30.0f};
+    feet.bones[B::B_RUPARM] = {20.0f, 0.0f, -30.0f};
+    feet.hipY = crouch.hipY;
+    AddClip(out, BakeAction("Slide", {At(feet, 0.0f), At(feet, 0.6f)}, true, {}));
+    AddClip(out, BakeAction("SlideEnd", {At(feet, 0.0f), At(crouch, 0.32f)}, false, {{0.32f, "action_end"}}));
+}
+
+// Prone base, so the body stays low. The first and last keys match: a loop that
+// does not pop. hipY stays near the prone height. rootOffset is visual only.
+void BakeSwim(std::vector<HumanoidLibrary::Entry>& out) {
+    const KeyPose prone = FromState(7);
+
+    KeyPose treadOut = prone;
+    treadOut.bones[B::B_HEAD].x = -40.0f;
+    treadOut.bones[B::B_LUPARM] = {-130.0f, 10.0f, 55.0f};
+    treadOut.bones[B::B_RUPARM] = {-130.0f, -10.0f, -55.0f};
+    treadOut.bones[B::B_LFORE].x = -18.0f;
+    treadOut.bones[B::B_RFORE].x = -18.0f;
+    treadOut.bones[B::B_LTHIGH].x = 8.0f;
+    treadOut.bones[B::B_RTHIGH].x = 8.0f;
+    treadOut.bones[B::B_LSHIN].x = 18.0f;
+    treadOut.bones[B::B_RSHIN].x = 18.0f;
+    treadOut.hipY = -0.74f;
+
+    KeyPose treadIn = prone;
+    treadIn.bones[B::B_HEAD].x = -36.0f;
+    treadIn.bones[B::B_LUPARM] = {-78.0f, -8.0f, 20.0f};
+    treadIn.bones[B::B_RUPARM] = {-78.0f, 8.0f, -20.0f};
+    treadIn.bones[B::B_LFORE].x = -62.0f;
+    treadIn.bones[B::B_RFORE].x = -62.0f;
+    treadIn.bones[B::B_LTHIGH].x = 22.0f;
+    treadIn.bones[B::B_RTHIGH].x = 22.0f;
+    treadIn.bones[B::B_LSHIN].x = 40.0f;
+    treadIn.bones[B::B_RSHIN].x = 40.0f;
+    treadIn.hipY = -0.70f;
+
+    const std::vector<std::pair<float, const char*>> treadEv = {{0.55f, "stroke"}};
+    AddClip(out, BakeAction("Swim_Tread", {At(treadOut, 0.0f), At(treadIn, 0.55f), At(treadOut, 1.10f)}, true, treadEv));
+
+    KeyPose reach = prone;
+    reach.bones[B::B_HEAD].x = -28.0f;
+    reach.bones[B::B_TORSO].x = 6.0f;
+    reach.bones[B::B_LUPARM] = {-172.0f, 0.0f, 14.0f};
+    reach.bones[B::B_RUPARM] = {-172.0f, 0.0f, -14.0f};
+    reach.bones[B::B_LFORE].x = -6.0f;
+    reach.bones[B::B_RFORE].x = -6.0f;
+    reach.hipY = -0.76f;
+
+    KeyPose pull = prone;
+    pull.bones[B::B_HEAD].x = -32.0f;
+    pull.bones[B::B_TORSO].x = 4.0f;
+    pull.bones[B::B_LUPARM] = {-96.0f, 0.0f, 8.0f};
+    pull.bones[B::B_RUPARM] = {-96.0f, 0.0f, -8.0f};
+    pull.bones[B::B_LFORE].x = -48.0f;
+    pull.bones[B::B_RFORE].x = -48.0f;
+    pull.bones[B::B_LTHIGH].x = 16.0f;
+    pull.bones[B::B_RTHIGH].x = 10.0f;
+    pull.bones[B::B_LSHIN].x = 24.0f;
+    pull.bones[B::B_RSHIN].x = 16.0f;
+    pull.hipY = -0.73f;
+    pull.rootOffset = {0.0f, 0.0f, 0.05f};
+
+    const std::vector<std::pair<float, const char*>> fwdEv = {{0.40f, "stroke"}};
+    AddClip(out, BakeAction("Swim_Fwd", {At(reach, 0.0f), At(pull, 0.40f), At(reach, 0.80f)}, true, fwdEv));
+}
+
+// One-shots from idle back to idle. The looping Wave / Cheer gestures are separate.
+void BakeEmotes(std::vector<HumanoidLibrary::Entry>& out) {
+    const KeyPose idle = FromState(1);
+
+    KeyPose nod = idle;
+    nod.bones[B::B_HEAD].x += 26.0f;
+    nod.bones[B::B_TORSO].x += 6.0f;
+    const std::vector<std::pair<float, const char*>> nodEv = {{0.55f, "action_end"}};
+    AddClip(out, BakeAction("Emote_Nod", {At(idle, 0.0f), At(nod, 0.22f), At(nod, 0.38f), At(idle, 0.55f)}, false, nodEv));
+
+    KeyPose lookL = idle;
+    lookL.bones[B::B_HEAD].y += 32.0f;
+    lookL.bones[B::B_TORSO].y += 6.0f;
+    KeyPose lookR = idle;
+    lookR.bones[B::B_HEAD].y -= 32.0f;
+    lookR.bones[B::B_TORSO].y -= 4.0f;
+    const std::vector<std::pair<float, const char*>> shakeEv = {{0.72f, "action_end"}};
+    AddClip(out, BakeAction("Emote_Shake", {
+        At(idle, 0.0f), At(lookL, 0.16f), At(lookR, 0.38f), At(lookL, 0.55f), At(idle, 0.72f)}, false, shakeEv));
+
+    KeyPose shrug = idle;
+    shrug.bones[B::B_LUPARM] = {-48.0f, 0.0f, -36.0f};
+    shrug.bones[B::B_RUPARM] = {-48.0f, 0.0f, 36.0f};
+    shrug.bones[B::B_LFORE].x = -55.0f;
+    shrug.bones[B::B_RFORE].x = -55.0f;
+    shrug.bones[B::B_HEAD].x = -10.0f;
+    shrug.bones[B::B_HEAD].z = 8.0f;
+    shrug.bones[B::B_TORSO].x = -4.0f;
+    const std::vector<std::pair<float, const char*>> shrugEv = {{0.68f, "action_end"}};
+    AddClip(out, BakeAction("Emote_Shrug", {At(idle, 0.0f), At(shrug, 0.22f), At(shrug, 0.42f), At(idle, 0.68f)}, false, shrugEv));
+}
+
 struct ActionSpec {
     const char* name;
     int rev;
 };
 
-const ActionSpec kStates[] = {{"Death", 1}, {"DeadHold", 1}};
+const ActionSpec kStates[] = {
+    {"Death", 1}, {"DeadHold", 1},
+    {"Dive", 2}, {"DiveLand", 2},
+    {"SitDown", 3}, {"Sit", 3}, {"StandUp", 3},
+    {"Hit", 4}, {"HitHeavy", 4}, {"Hit_Crouch", 4}, {"Hit_Prone", 4},
+    {"Roll", 5}, {"Dodge", 5}, {"Slide", 5}, {"SlideEnd", 5},
+    {"Vault", 6}, {"MantleLow", 6}, {"MantleHigh", 6}, {"LedgeGrab", 6},
+    {"HangShimmy", 6}, {"ClimbUp", 6}, {"LetGo", 6},
+    {"Swim", 7},
+    {"Emote_Nod", 8}, {"Emote_Shake", 8}, {"Emote_Shrug", 8}};
 
 SM::State* FindMutable(SM& sm, const std::string& name) {
     for (SM::State& s : sm.states) if (s.name == name) return &s;
@@ -303,6 +560,106 @@ SM::State MakeHoldState() {
     return s;
 }
 
+SM::State MakeSwimState() {
+    SM::State s;
+    s.name = "Swim";
+    s.blendTree = true;
+    s.blendDims = 1;
+    s.blendParam = "swimSpeed";
+    s.loop = true;
+    s.ikWeight = 0.0f;
+    s.fullBodyIkWeight = 0.0f;
+    // Locked so jump and fall (Any State, and this state is not prone) cannot
+    // cut a stroke. Death is an edge on the state itself.
+    s.interruptible = false;
+    s.motions = {MotionAt("Swim_Tread", 0.0f), MotionAt("Swim_Fwd", 1.5f)};
+    return s;
+}
+
+void WireSwim(SM::State& swim, const SM& sm) {
+    swim.transitions.clear();
+    if (HasState(sm, "Death")) {
+        SM::Transition die;
+        die.to = "Death";
+        die.cond = C::Trigger;
+        die.param = "die";
+        die.blend = 0.2f;
+        die.interruption = SM::Transition::Interrupt::None;
+        swim.transitions.push_back(die);
+    }
+    if (HasState(sm, "Idle")) {
+        SM::Transition out;
+        out.to = "Idle";
+        out.cond = C::BoolFalse;
+        out.param = "swimming";
+        out.blend = 0.35f;
+        swim.transitions.push_back(out);
+    }
+}
+
+const char* kEmoteNames[] = {"Emote_Nod", "Emote_Shake", "Emote_Shrug"};
+
+SM::State MakeEmoteState(const char* name) {
+    SM::State s;
+    s.name = name;
+    s.clip = name;
+    s.loop = false;
+    // Jump, fall and death (Any State) can cut a nod. Walking leaves through
+    // the state's own edges below.
+    s.interruptible = true;
+    return s;
+}
+
+void WireEmote(SM::State& st, const SM& sm) {
+    st.transitions.clear();
+    if (HasState(sm, "Run")) {
+        SM::Transition run;
+        run.to = "Run";
+        run.cond = C::FloatGreater;
+        run.param = "speed";
+        run.value = 0.35f;
+        run.blend = 0.12f;
+        SM::Condition flag;
+        flag.cond = C::BoolTrue;
+        flag.param = "run";
+        run.extra.push_back(flag);
+        st.transitions.push_back(std::move(run));
+    }
+    if (HasState(sm, "Walk")) {
+        SM::Transition walk;
+        walk.to = "Walk";
+        walk.cond = C::FloatGreater;
+        walk.param = "speed";
+        walk.value = 0.35f;
+        walk.blend = 0.12f;
+        st.transitions.push_back(std::move(walk));
+    }
+    if (HasState(sm, "Idle")) {
+        SM::Transition done;
+        done.to = "Idle";
+        done.cond = C::OnClipEnd;
+        done.hasExitTime = true;
+        done.exitTime = 1.0f;
+        done.blend = 0.15f;
+        st.transitions.push_back(std::move(done));
+    }
+}
+
+void AddEmoteAny(SM& sm, const char* to, float id) {
+    if (!HasState(sm, to) || HasAny(sm, to, "emote")) return;
+    SM::Transition go;
+    go.to = to;
+    go.cond = C::Trigger;
+    go.param = "emote";
+    go.blend = 0.12f;
+    SM::Condition which;
+    which.cond = C::IntEquals;
+    which.param = "emoteId";
+    which.value = id;
+    go.extra.push_back(which);
+    sm.anyState.push_back(std::move(go));
+}
+
 bool IsKnownAction(const std::string& name) {
     for (const ActionSpec& s : kStates) if (name == s.name) return true;
     return false;
@@ -310,6 +667,15 @@ bool IsKnownAction(const std::string& name) {
 
 bool IsDeathLabel(const std::string& name) {
     return name == "Death" || name == "DeadHold" || name.rfind("Death_", 0) == 0 || name.rfind("DeadHold_", 0) == 0;
+}
+
+bool IsSwimLabel(const std::string& name) {
+    return name == "Swim" || name.rfind("Swim_", 0) == 0;
+}
+
+void LatchSwim(SM& sm, float speed) {
+    sm.SetBool("swimming", true);
+    if (speed >= 0.0f) sm.SetFloat("swimSpeed", speed);
 }
 
 int DirOfClip(const std::string& name) {
@@ -348,6 +714,56 @@ int DirFromWorld(GameObject* go, const Vec3& fromWorld) {
     return r >= 0.0f ? 3 : 2;
 }
 
+void BakeSit(std::vector<HumanoidLibrary::Entry>& out) {
+    const KeyPose idle = FromState(1);
+    KeyPose chair = idle;
+    chair.bones[B::B_HIPS].x = -6.0f;
+    chair.bones[B::B_TORSO].x = 6.0f;
+    chair.bones[B::B_LTHIGH] = {86.0f, 10.0f, -8.0f};
+    chair.bones[B::B_RTHIGH] = {86.0f, -10.0f, 8.0f};
+    chair.bones[B::B_LSHIN] = {-78.0f, 0.0f, 0.0f};
+    chair.bones[B::B_RSHIN] = {-78.0f, 0.0f, 0.0f};
+    chair.bones[B::B_LUPARM] = {-18.0f, 0.0f, 22.0f};
+    chair.bones[B::B_RUPARM] = {-18.0f, 0.0f, -22.0f};
+    chair.bones[B::B_LFORE].x = -24.0f;
+    chair.bones[B::B_RFORE].x = -24.0f;
+    chair.hipY = 0.48f;   // baked for a 0.45 m seat; the Seat moves the body onto it
+
+    KeyPose ground = idle;
+    ground.bones[B::B_HIPS].x = 10.0f;
+    ground.bones[B::B_TORSO].x = 8.0f;
+    ground.bones[B::B_LTHIGH] = {68.0f, 26.0f, -28.0f};
+    ground.bones[B::B_RTHIGH] = {68.0f, -26.0f, 28.0f};
+    ground.bones[B::B_LSHIN] = {-108.0f, 0.0f, 8.0f};
+    ground.bones[B::B_RSHIN] = {-108.0f, 0.0f, -8.0f};
+    ground.bones[B::B_LUPARM] = {-24.0f, 0.0f, 16.0f};
+    ground.bones[B::B_RUPARM] = {-24.0f, 0.0f, -16.0f};
+    ground.hipY = 0.22f;
+
+    KeyPose knees = ground;
+    knees.bones[B::B_LTHIGH] = {42.0f, 8.0f, -10.0f};
+    knees.bones[B::B_RTHIGH] = {42.0f, -8.0f, 10.0f};
+    knees.bones[B::B_LSHIN] = {-96.0f, 0.0f, 0.0f};
+    knees.bones[B::B_RSHIN] = {-96.0f, 0.0f, 0.0f};
+    knees.hipY = 0.32f;
+
+    KeyPose chairBreath = chair;
+    chairBreath.bones[B::B_TORSO].x += 3.0f;
+    chairBreath.bones[B::B_HEAD].x -= 4.0f;
+    KeyPose groundBreath = ground;
+    groundBreath.bones[B::B_TORSO].x += 2.5f;
+    groundBreath.bones[B::B_HEAD].y += 6.0f;
+
+    // On Sit / On Stand are the state enter events. Clips only mark action_end.
+    AddClip(out, BakeAction("SitDown_Chair", {At(idle, 0.0f), At(chair, 0.50f)}, false, {{0.50f, "action_end"}}));
+    AddClip(out, BakeAction("SitDown_Ground", {At(idle, 0.0f), At(ground, 0.55f)}, false, {{0.55f, "action_end"}}));
+    AddClip(out, BakeAction("StandUp_Chair", {At(chair, 0.0f), At(idle, 0.55f)}, false, {{0.55f, "action_end"}}));
+    AddClip(out, BakeAction("StandUp_Ground", {At(ground, 0.0f), At(idle, 0.60f)}, false, {{0.60f, "action_end"}}));
+    AddClip(out, BakeAction("Sit_Chair", {At(chair, 0.0f), At(chairBreath, 1.1f), At(chair, 2.2f)}, true, {}));
+    AddClip(out, BakeAction("Sit_Ground", {At(ground, 0.0f), At(groundBreath, 1.2f), At(ground, 2.4f)}, true, {}));
+    AddClip(out, BakeAction("Sit_Ground_Knees", {At(knees, 0.0f), At(knees, 2.0f)}, true, {}));
+}
+
 void LatchDeath(SM& sm, int dir) {
     if (dir < 0) dir = 0;
     if (dir > 3) dir = 3;
@@ -357,25 +773,293 @@ void LatchDeath(SM& sm, int dir) {
 
 } // namespace
 
-void Bake(std::vector<HumanoidLibrary::Entry>& out) { BakeDeath(out); }
+void BakeVault(std::vector<HumanoidLibrary::Entry>& out) {
+    const KeyPose idle = FromState(1);
+    const KeyPose hang = FromState(19);
+    auto plant = [](KeyPose k, float hip) {
+        k.bones[B::B_LUPARM] = {-140.0f, -20.0f, 16.0f};
+        k.bones[B::B_RUPARM] = {-140.0f, 20.0f, -16.0f};
+        k.bones[B::B_LFORE].x = -20.0f;
+        k.bones[B::B_RFORE].x = -20.0f;
+        k.bones[B::B_TORSO].x = 20.0f;
+        k.hipY = hip;
+        return k;
+    };
+    KeyPose over = plant(idle, 0.15f);
+    over.bones[B::B_LTHIGH].x = 50.0f;
+    over.bones[B::B_RTHIGH].x = 20.0f;
+    AddClip(out, BakeAction("Vault", {At(idle, 0.0f), At(plant(idle, 0.05f), 0.18f), At(over, 0.36f), At(idle, 0.60f)}, false, {{0.60f, "action_end"}}));
+    AddClip(out, BakeAction("Mantle_Low", {At(idle, 0.0f), At(plant(idle, 0.1f), 0.2f), At(idle, 0.5f)}, false, {{0.50f, "action_end"}}));
+    KeyPose high = plant(idle, 0.35f);
+    high.bones[B::B_LTHIGH].x = 70.0f;
+    high.bones[B::B_RTHIGH].x = 70.0f;
+    AddClip(out, BakeAction("Mantle_High", {At(idle, 0.0f), At(high, 0.3f), At(plant(idle, 0.2f), 0.55f), At(idle, 0.8f)}, false, {{0.80f, "action_end"}}));
+    AddClip(out, BakeAction("LedgeGrab", {At(idle, 0.0f), At(hang, 0.35f)}, false, {{0.35f, "action_end"}}));
+    KeyPose shimL = hang; shimL.bones[B::B_HIPS].z = 8.0f; shimL.bones[B::B_TORSO].z = 10.0f;
+    KeyPose shimR = hang; shimR.bones[B::B_HIPS].z = -8.0f; shimR.bones[B::B_TORSO].z = -10.0f;
+    AddClip(out, BakeAction("Hang_Shimmy_L", {At(hang, 0.0f), At(shimL, 0.25f), At(hang, 0.5f)}, true, {}));
+    AddClip(out, BakeAction("Hang_Shimmy_R", {At(hang, 0.0f), At(shimR, 0.25f), At(hang, 0.5f)}, true, {}));
+    AddClip(out, BakeAction("ClimbUp", {At(hang, 0.0f), At(plant(idle, 0.2f), 0.35f), At(idle, 0.7f)}, false, {{0.70f, "action_end"}}));
+    AddClip(out, BakeAction("LetGo", {At(hang, 0.0f), At(idle, 0.3f)}, false, {{0.30f, "action_end"}}));
+}
+
+void Bake(std::vector<HumanoidLibrary::Entry>& out) {
+    BakeDeath(out);
+    BakeDive(out);
+    BakeSit(out);
+    BakeHits(out);
+    BakeRoll(out);
+    BakeVault(out);
+    BakeSwim(out);
+    BakeEmotes(out);
+}
 
 void ApplyTimes(AnimStateMachine& sm) {
     const StanceTimes& t = sm.stanceTimes;
     for (SM::State& st : sm.states) {
-        if (st.name != "Death" && st.name != "DeadHold") continue;
+        if (st.name != "Death" && st.name != "DeadHold" && st.name != "Dive" && st.name != "DiveLand" &&
+            st.name != "Swim") continue;
         for (SM::Transition& tr : st.transitions) {
             if (tr.to == "DeadHold") tr.blend = t.crouchProne;          // ends on the ground
             else if (tr.to == "GetUp" || tr.to == "Idle") tr.blend = t.proneStand;
+            else if (tr.to == "Prone" || tr.to == "Crawl" || tr.to == "Crouch" || tr.to == "DiveLand")
+                tr.blend = t.crouchProne;
+            else if (tr.to == "Sit" || tr.to == "StandUp" || tr.to == "SitDown") tr.blend = t.standCrouch;
         }
     }
-    for (SM::Transition& tr : sm.anyState)
-        if (tr.to == "Death") tr.blend = t.standCrouch;
+    for (SM::Transition& tr : sm.anyState) {
+        if (tr.to == "Death" || tr.to == "HitHeavy" || tr.to == "Hit_Crouch" || tr.to == "Hit_Prone")
+            tr.blend = t.standCrouch;
+        else if (tr.to == "Swim") tr.blend = t.crouchProne;
+    }
 }
 
-void AddStates(AnimStateMachine& sm, const Character* body) {
-    (void)body;
-    const bool freshDeath = !HasState(sm, "Death");
-    const bool freshHold = !HasState(sm, "DeadHold");
+SM::Condition Cond(C c, const char* param, float value = 0.0f) {
+    SM::Condition x;
+    x.cond = c;
+    x.param = param ? param : "";
+    x.value = value;
+    return x;
+}
+
+void AddEdge(SM::State& st, const SM& sm, const char* to, C cond, const char* param,
+             std::vector<SM::Condition> extra, bool exitTime) {
+    if (!HasState(sm, to)) return;
+    SM::Transition t;
+    t.to = to;
+    t.cond = cond;
+    t.param = param ? param : "";
+    t.extra = std::move(extra);
+    t.hasExitTime = exitTime;
+    t.exitTime = 1.0f;
+    t.blend = 0.2f;
+    st.transitions.push_back(std::move(t));
+}
+
+void WireDive(SM::State& dive, const SM& sm) {
+    dive.transitions.clear();
+    // Die wins over "wait for the clip". Anything else is locked out (not interruptible).
+    AddEdge(dive, sm, "Death", C::Trigger, "die", {}, false);
+    AddEdge(dive, sm, "DiveLand", C::OnClipEnd, "", {Cond(C::BoolFalse, "grounded")}, true);
+    AddEdge(dive, sm, "Crawl", C::OnClipEnd, "", {Cond(C::BoolTrue, "grounded"), Cond(C::FloatGreater, "speed", 0.35f)}, true);
+    AddEdge(dive, sm, "Prone", C::OnClipEnd, "", {Cond(C::BoolTrue, "grounded")}, true);
+    if (!HasState(sm, "Prone"))
+        AddEdge(dive, sm, "Crouch", C::OnClipEnd, "", {}, true);
+}
+
+void WireDiveLand(SM::State& land, const SM& sm) {
+    land.transitions.clear();
+    AddEdge(land, sm, "Death", C::Trigger, "die", {}, false);
+    AddEdge(land, sm, "Crawl", C::BoolTrue, "grounded", {Cond(C::FloatGreater, "speed", 0.35f)}, false);
+    AddEdge(land, sm, "Prone", C::BoolTrue, "grounded", {}, false);
+    if (!HasState(sm, "Prone"))
+        AddEdge(land, sm, "Crouch", C::BoolTrue, "grounded", {}, false);
+}
+
+SM::State MakeDiveState(const char* name, const char* clip, bool loop) {
+    SM::State s;
+    s.name = name;
+    s.clip = clip;
+    s.loop = loop;
+    s.ikWeight = 0.0f;
+    s.fullBodyIkWeight = 0.0f;
+    s.interruptible = false;
+    return s;
+}
+
+SM::Motion ClipAt(const char* clip, float threshold) {
+    SM::Motion m;
+    m.clip = clip;
+    m.threshold = threshold;
+    return m;
+}
+
+void WireSitDown(SM::State& st, const SM& sm) {
+    st.transitions.clear();
+    if (!HasState(sm, "Sit")) return;
+    SM::Transition hold;
+    hold.to = "Sit";
+    hold.cond = C::OnClipEnd;
+    hold.hasExitTime = true;
+    hold.exitTime = 1.0f;
+    hold.blend = 0.15f;
+    st.transitions.push_back(hold);
+}
+
+void WireSit(SM::State& st, const SM& sm) {
+    st.transitions.clear();
+    if (HasState(sm, "StandUp")) {
+        SM::Transition up;
+        up.to = "StandUp";
+        up.cond = C::BoolFalse;
+        up.param = "sitting";
+        up.blend = 0.12f;
+        st.transitions.push_back(up);
+    } else if (HasState(sm, "Idle")) {
+        SM::Transition up;
+        up.to = "Idle";
+        up.cond = C::BoolFalse;
+        up.param = "sitting";
+        up.blend = 0.2f;
+        st.transitions.push_back(up);
+    }
+}
+
+void WireStand(SM::State& st, const SM& sm) {
+    st.transitions.clear();
+    const char* to = HasState(sm, "Idle") ? "Idle" : (HasState(sm, "Crouch") ? "Crouch" : nullptr);
+    if (!to) return;
+    SM::Transition done;
+    done.to = to;
+    done.cond = C::OnClipEnd;
+    done.hasExitTime = true;
+    done.exitTime = 1.0f;
+    done.blend = 0.2f;
+    st.transitions.push_back(done);
+}
+
+SM::State MakeSitTree(const char* name, bool loop) {
+    SM::State s;
+    s.name = name;
+    s.blendTree = true;
+    s.blendDims = 1;
+    s.blendParam = "sitType";
+    s.loop = loop;
+    s.ikWeight = 0.0f;
+    s.fullBodyIkWeight = 1.0f;   // hands stay free for holding
+    s.interruptible = true;      // die and jump can cut a sit short
+    return s;
+}
+
+SM::Motion HitClip(const char* clip, float threshold) {
+    SM::Motion m;
+    m.clip = clip;
+    m.threshold = threshold;
+    return m;
+}
+
+void WireClipEnd(SM::State& st, const char* to) {
+    st.transitions.clear();
+    if (!to) return;
+    SM::Transition done;
+    done.to = to;
+    done.cond = C::OnClipEnd;
+    done.hasExitTime = true;
+    done.exitTime = 1.0f;
+    done.blend = 0.1f;
+    st.transitions.push_back(done);
+}
+
+SM::Condition CondOf(C cond, const char* param) {
+    SM::Condition c;
+    c.cond = cond;
+    c.param = param;
+    return c;
+}
+
+void HitEntry(SM& sm, const char* to, std::vector<SM::Condition> extra) {
+    if (HasAny(sm, to, "hit") || !HasState(sm, to)) return;
+    SM::Transition go;
+    go.to = to;
+    go.cond = C::Trigger;
+    go.param = "hit";
+    go.blend = 0.1f;
+    go.canInterruptSelf = true;
+    go.interruption = SM::Transition::Interrupt::None;
+    go.extra = std::move(extra);
+    sm.anyState.push_back(std::move(go));
+}
+
+AnimStateMachine* EnsureHitLayer(AnimStateMachine& base) {
+    if (!base.gameObject) return nullptr;
+    for (AnimStateMachine* sm : base.gameObject->GetComponents<AnimStateMachine>())
+        if (sm->layer > 0 && sm->maskBone == "Torso") return sm;
+    AnimStateMachine* layer = base.gameObject->AddComponent<AnimStateMachine>();
+    layer->layer = 1;
+    for (AnimStateMachine* sm : base.gameObject->GetComponents<AnimStateMachine>())
+        if (sm != layer && sm->layer >= layer->layer) layer->layer = sm->layer + 1;
+    layer->maskBone = "Torso";
+    layer->layerWeight = 0.0f;
+    return layer;
+}
+
+void BindHitLayer(AnimStateMachine& base) {
+    if (!base.gameObject) return;
+    for (AnimStateMachine* sm : base.gameObject->GetComponents<AnimStateMachine>()) {
+        if (sm->layer <= 0 || sm->maskBone != "Torso") continue;
+        if (!HasState(*sm, "Hit") && !HasState(*sm, "Off")) continue;
+        sm->onStateEnter = [sm](const std::string& name) {
+            sm->layerWeight = (name == "Off") ? 0.0f : 1.0f;
+        };
+        if (sm->Current().empty() || sm->Current() == "Off") sm->layerWeight = 0.0f;
+    }
+}
+
+SM::Motion AtClip(const char* clip, float threshold) {
+    SM::Motion m; m.clip = clip; m.threshold = threshold; return m;
+}
+void EndAt(SM::State& st, const char* to) {
+    st.transitions.clear();
+    if (!to) return;
+    SM::Transition done;
+    done.to = to; done.cond = C::OnClipEnd; done.hasExitTime = true; done.exitTime = 1.0f; done.blend = 0.12f;
+    st.transitions.push_back(done);
+}
+
+void AddOneShot(SM& sm, const char* name, const char* clip, float col, float ny, const char* to) {
+    if (HasState(sm, name)) return;
+    SM::State s;
+    s.name = name; s.clip = clip; s.loop = false; s.ikWeight = 0.0f;
+    // Fall / Jump Any-State would cut a vault the moment the body leaves the
+    // ground. Own edges still run, including die.
+    s.interruptible = false;
+    s.nx = col; s.ny = ny;
+    if (HasState(sm, "Death")) {
+        SM::Transition die;
+        die.to = "Death"; die.cond = C::Trigger; die.param = "die"; die.blend = 0.12f;
+        die.interruption = SM::Transition::Interrupt::None;
+        s.transitions.push_back(die);
+    }
+    if (to) {
+        SM::Transition done;
+        done.to = to; done.cond = C::OnClipEnd; done.hasExitTime = true; done.exitTime = 1.0f; done.blend = 0.15f;
+        s.transitions.push_back(done);
+    }
+    sm.states.push_back(std::move(s));
+}
+
+void AddStates(AnimStateMachine& sm, const Character* body, bool force) {
+    const int had = sm.actionsRev;
+    const bool deathDue = force || had < 1;
+    const bool diveDue = force || had < 2;
+    const bool sitDue = force || had < 3;
+    const bool hitDue = force || had < 4;
+    const bool rollDue = force || had < 5;
+    const bool vaultDue = force || had < 6;
+    const bool swimDue = force || had < 7;
+    const bool emoteDue = force || had < 8;
+    const bool freshDeath = deathDue && !HasState(sm, "Death");
+    const bool freshHold = deathDue && !HasState(sm, "DeadHold");
     float col = 40.0f;
     if (const SM::State* existing = FindMutable(sm, "Death")) col = existing->nx;
     else if (const SM::State* existing = FindMutable(sm, "DeadHold")) col = existing->nx;
@@ -399,6 +1083,47 @@ void AddStates(AnimStateMachine& sm, const Character* body) {
     // the user's edges.
     if (freshDeath) if (SM::State* s = FindMutable(sm, "Death")) WireDeath(*s, sm);
     if (freshHold) if (SM::State* s = FindMutable(sm, "DeadHold")) WireHold(*s, sm);
+    const bool freshDive = diveDue && !HasState(sm, "Dive");
+    const bool freshLand = diveDue && !HasState(sm, "DiveLand");
+    if (freshDive || freshLand) {
+        float col = 40.0f;
+        for (const SM::State& o : sm.states) col = std::max(col, o.nx);
+        col += 220.0f;
+        if (freshDive) {
+            SM::State dive = MakeDiveState("Dive", "Dive", false);
+            if (body && !body->clipDive.empty()) dive.clip = body->clipDive;
+            dive.nx = col;
+            dive.ny = 40.0f;
+            sm.states.push_back(std::move(dive));
+        }
+        if (freshLand) {
+            SM::State land = MakeDiveState("DiveLand", "DiveLand", false);
+            land.nx = col;
+            land.ny = 130.0f;
+            sm.states.push_back(std::move(land));
+        }
+        if (freshDive) if (SM::State* s = FindMutable(sm, "Dive")) WireDive(*s, sm);
+        if (freshLand) if (SM::State* s = FindMutable(sm, "DiveLand")) WireDiveLand(*s, sm);
+        EnsureParam(sm, "dive", 2);
+        EnsureParam(sm, "grounded", 1);
+        EnsureParam(sm, "sprint", 1);
+        EnsureParam(sm, "run", 1);
+        auto anyDive = [&](const char* flag) {
+            if (!HasState(sm, "Dive")) return;
+            SM::Transition go;
+            go.to = "Dive";
+            go.cond = C::Trigger;
+            go.param = "dive";
+            go.blend = 0.12f;
+            go.extra = {Cond(C::BoolTrue, flag), Cond(C::BoolTrue, "grounded")};
+            // None so the state being left cannot cancel the blend. Dive itself
+            // is not interruptible, so only its own die edge can cut it short.
+            go.interruption = SM::Transition::Interrupt::None;
+            sm.anyState.push_back(std::move(go));
+        };
+        // sprint OR run, and grounded. Extras are ANDed, so this is two edges.
+        if (!HasAny(sm, "Dive", "dive")) { anyDive("sprint"); anyDive("run"); }
+    }
     if (freshDeath || freshHold) {
         EnsureParam(sm, "deathDir", 0);
         EnsureParam(sm, "dead", 1);
@@ -416,33 +1141,430 @@ void AddStates(AnimStateMachine& sm, const Character* body) {
             sm.anyState.push_back(std::move(die));
         }
     }
+    const bool freshDown = sitDue && !HasState(sm, "SitDown");
+    const bool freshSit = sitDue && !HasState(sm, "Sit");
+    const bool freshUp = sitDue && !HasState(sm, "StandUp");
+    if (freshDown || freshSit || freshUp) {
+        float col = 40.0f;
+        for (const SM::State& o : sm.states) col = std::max(col, o.nx);
+        col += 220.0f;
+        if (freshDown) {
+            SM::State s = MakeSitTree("SitDown", false);
+            s.motions = {ClipAt("SitDown_Chair", 0.0f), ClipAt("SitDown_Ground", 1.0f)};
+            s.nx = col; s.ny = 40.0f;
+            sm.states.push_back(std::move(s));
+        }
+        if (freshSit) {
+            SM::State s = MakeSitTree("Sit", true);
+            s.enterEvent = "sit";
+            s.motions = {ClipAt("Sit_Chair", 0.0f), ClipAt("Sit_Ground", 1.0f), ClipAt("Sit_Ground_Knees", 2.0f)};
+            s.nx = col; s.ny = 130.0f;
+            sm.states.push_back(std::move(s));
+        }
+        if (freshUp) {
+            SM::State s = MakeSitTree("StandUp", false);
+            s.enterEvent = "stand";
+            s.motions = {ClipAt("StandUp_Chair", 0.0f), ClipAt("StandUp_Ground", 1.0f)};
+            s.nx = col; s.ny = 220.0f;
+            sm.states.push_back(std::move(s));
+        }
+        if (freshDown) if (SM::State* s = FindMutable(sm, "SitDown")) WireSitDown(*s, sm);
+        if (freshSit) if (SM::State* s = FindMutable(sm, "Sit")) WireSit(*s, sm);
+        if (freshUp) if (SM::State* s = FindMutable(sm, "StandUp")) WireStand(*s, sm);
+        EnsureParam(sm, "sitting", 1);
+        EnsureParam(sm, "sitType", 0);
+        EnsureParam(sm, "sit", 2);
+        if (!HasAny(sm, "SitDown", "sit") && HasState(sm, "SitDown")) {
+            SM::Transition go;
+            go.to = "SitDown";
+            go.cond = C::Trigger;
+            go.param = "sit";
+            go.blend = 0.2f;
+            // None so Walk cannot cancel the blend. interruptible stays true, so die still can.
+            go.interruption = SM::Transition::Interrupt::None;
+            sm.anyState.push_back(std::move(go));
+        }
+    }
+    if (hitDue) {
+        const bool freshHeavy = !HasState(sm, "HitHeavy");
+        const bool freshCrouch = !HasState(sm, "Hit_Crouch");
+        const bool freshProne = !HasState(sm, "Hit_Prone");
+        float col = 40.0f;
+        for (const SM::State& o : sm.states) col = std::max(col, o.nx);
+        col += 220.0f;
+        if (freshHeavy) {
+            SM::State s;
+            s.name = "HitHeavy";
+            s.blendTree = true;
+            s.blendDims = 1;
+            s.blendParam = "hitDir";
+            s.loop = false;
+            s.ikWeight = 0.0f;
+            s.fullBodyIkWeight = 0.0f;
+            s.interruptible = true;
+            s.motions = {HitClip("Hit_Heavy_F", 0.0f), HitClip("Hit_Heavy_B", 1.0f)};
+            s.nx = col; s.ny = 40.0f;
+            sm.states.push_back(std::move(s));
+        }
+        if (freshCrouch) {
+            SM::State s;
+            s.name = "Hit_Crouch";
+            s.clip = "Hit_Crouch";
+            s.loop = false;
+            s.ikWeight = 0.0f;
+            s.interruptible = true;
+            s.nx = col; s.ny = 130.0f;
+            sm.states.push_back(std::move(s));
+        }
+        if (freshProne) {
+            SM::State s;
+            s.name = "Hit_Prone";
+            s.clip = "Hit_Prone";
+            s.loop = false;
+            s.ikWeight = 0.0f;
+            s.interruptible = true;
+            s.nx = col; s.ny = 220.0f;
+            sm.states.push_back(std::move(s));
+        }
+        if (freshHeavy) if (SM::State* s = FindMutable(sm, "HitHeavy"))
+            WireClipEnd(*s, HasState(sm, "Idle") ? "Idle" : nullptr);
+        if (freshCrouch) if (SM::State* s = FindMutable(sm, "Hit_Crouch"))
+            WireClipEnd(*s, HasState(sm, "Crouch") ? "Crouch" : (HasState(sm, "Idle") ? "Idle" : nullptr));
+        if (freshProne) if (SM::State* s = FindMutable(sm, "Hit_Prone"))
+            WireClipEnd(*s, HasState(sm, "Prone") ? "Prone" : (HasState(sm, "Idle") ? "Idle" : nullptr));
+        EnsureParam(sm, "hit", 2);
+        EnsureParam(sm, "hitDir", 0);
+        EnsureParam(sm, "hitHeavy", 1);
+        bool haveScale = false;
+        for (const SM::Param& p : sm.params) if (p.name == "staggerScale") haveScale = true;
+        if (!haveScale) {
+            sm.params.push_back({"staggerScale", 0});
+            sm.SetFloat("staggerScale", 1.0f);
+        }
+        // Prone and crouch before the standing heavy edge, so the first match wins.
+        HitEntry(sm, "Hit_Prone", {CondOf(C::BoolTrue, "prone")});
+        HitEntry(sm, "Hit_Crouch", {CondOf(C::BoolTrue, "crouch"), CondOf(C::BoolFalse, "prone")});
+        HitEntry(sm, "HitHeavy", {CondOf(C::BoolTrue, "hitHeavy"), CondOf(C::BoolFalse, "crouch"), CondOf(C::BoolFalse, "prone")});
+
+        if (AnimStateMachine* layer = EnsureHitLayer(sm)) {
+            const bool freshOff = !HasState(*layer, "Off");
+            const bool freshHit = !HasState(*layer, "Hit");
+            if (freshOff) {
+                SM::State off;
+                off.name = "Off";
+                off.clip = "Hit_Off";
+                off.loop = true;
+                off.nx = 40.0f; off.ny = 40.0f;
+                layer->states.push_back(std::move(off));
+                if (layer->entry.empty()) layer->entry = "Off";
+            }
+            if (freshHit) {
+                SM::State s;
+                s.name = "Hit";
+                s.blendTree = true;
+                s.blendDims = 1;
+                s.blendParam = "hitDir";
+                s.loop = false;
+                s.interruptible = true;
+                s.motions = {HitClip("Hit_F", 0.0f), HitClip("Hit_B", 1.0f), HitClip("Hit_L", 2.0f), HitClip("Hit_R", 3.0f)};
+                s.nx = 40.0f; s.ny = 140.0f;
+                layer->states.push_back(std::move(s));
+            }
+            if (freshHit) if (SM::State* s = FindMutable(*layer, "Hit"))
+                WireClipEnd(*s, HasState(*layer, "Off") ? "Off" : nullptr);
+            HitEntry(*layer, "Hit", {CondOf(C::BoolFalse, "hitHeavy"), CondOf(C::BoolFalse, "crouch"), CondOf(C::BoolFalse, "prone")});
+            BindHitLayer(sm);
+        }
+    }
+    if (rollDue) {
+        float col = 40.0f;
+        for (const SM::State& o : sm.states) col = std::max(col, o.nx);
+        col += 220.0f;
+        const char* home = HasState(sm, "Idle") ? "Idle" : nullptr;
+        if (!HasState(sm, "Roll")) {
+            SM::State s;
+            s.name = "Roll"; s.clip = "Roll_F"; s.loop = false; s.ikWeight = 0.0f; s.interruptible = true;
+            s.nx = col; s.ny = 40.0f;
+            sm.states.push_back(std::move(s));
+            if (SM::State* st = FindMutable(sm, "Roll")) EndAt(*st, home);
+        }
+        if (!HasState(sm, "Dodge")) {
+            SM::State s;
+            s.name = "Dodge"; s.blendTree = true; s.blendDims = 1; s.blendParam = "dodgeDir";
+            s.loop = false; s.ikWeight = 0.0f; s.interruptible = true;
+            s.motions = {AtClip("Roll_F", 0.0f), AtClip("Dodge_B", 1.0f), AtClip("Dodge_L", 2.0f), AtClip("Dodge_R", 3.0f)};
+            s.nx = col; s.ny = 130.0f;
+            sm.states.push_back(std::move(s));
+            if (SM::State* st = FindMutable(sm, "Dodge")) EndAt(*st, home);
+        }
+        if (!HasState(sm, "Slide")) {
+            SM::State s;
+            s.name = "Slide"; s.clip = "Slide"; s.loop = true; s.ikWeight = 0.0f; s.interruptible = true;
+            s.nx = col; s.ny = 220.0f;
+            sm.states.push_back(std::move(s));
+        }
+        if (!HasState(sm, "SlideEnd")) {
+            SM::State s;
+            s.name = "SlideEnd"; s.clip = "SlideEnd"; s.loop = false; s.ikWeight = 0.0f; s.interruptible = true;
+            s.nx = col; s.ny = 310.0f;
+            sm.states.push_back(std::move(s));
+            if (SM::State* st = FindMutable(sm, "SlideEnd")) {
+                st->transitions.clear();
+                if (HasState(sm, "Run")) {
+                    SM::Transition run;
+                    run.to = "Run"; run.cond = C::OnClipEnd; run.hasExitTime = true; run.exitTime = 1.0f;
+                    run.blend = 0.12f; run.extra.push_back({C::BoolTrue, "sprint", 0.0f});
+                    run.extra.push_back({C::BoolFalse, "crouch", 0.0f});
+                    st->transitions.push_back(run);
+                }
+                if (const char* to = HasState(sm, "Crouch") ? "Crouch" : home) {
+                    SM::Transition done;
+                    done.to = to; done.cond = C::OnClipEnd; done.hasExitTime = true; done.exitTime = 1.0f; done.blend = 0.12f;
+                    st->transitions.push_back(done);
+                }
+            }
+        }
+        if (SM::State* st = FindMutable(sm, "Slide")) if (st->transitions.empty() && HasState(sm, "SlideEnd")) {
+            SM::Transition up;
+            up.to = "SlideEnd"; up.cond = C::BoolFalse; up.param = "slide"; up.blend = 0.1f;
+            st->transitions.push_back(up);
+        }
+        EnsureParam(sm, "dodgeDir", 0);
+        EnsureParam(sm, "roll", 2);
+        EnsureParam(sm, "dodge", 2);
+        EnsureParam(sm, "slide", 1);
+        auto entry = [&](const char* to, const char* param, C cond) {
+            if (HasAny(sm, to, param) || !HasState(sm, to)) return;
+            SM::Transition go;
+            go.to = to; go.cond = cond; go.param = param; go.blend = 0.1f;
+            go.canInterruptSelf = (cond == C::Trigger);
+            go.interruption = SM::Transition::Interrupt::None;
+            sm.anyState.push_back(std::move(go));
+        };
+        entry("Roll", "roll", C::Trigger);
+        entry("Dodge", "dodge", C::Trigger);
+        entry("Slide", "slide", C::BoolTrue);
+    }
+    if (vaultDue) {
+        float col = 40.0f;
+        for (const SM::State& o : sm.states) col = std::max(col, o.nx);
+        col += 220.0f;
+        const char* home = HasState(sm, "Idle") ? "Idle" : nullptr;
+        const char* drop = HasState(sm, "Fall") ? "Fall" : home;
+        AddOneShot(sm, "Vault", "Vault", col, 40.0f, home);
+        AddOneShot(sm, "MantleLow", "Mantle_Low", col, 130.0f, home);
+        AddOneShot(sm, "MantleHigh", "Mantle_High", col, 220.0f, home);
+        AddOneShot(sm, "LedgeGrab", "LedgeGrab", col, 310.0f, HasState(sm, "Hang") ? "Hang" : home);
+        AddOneShot(sm, "ClimbUp", "ClimbUp", col, 400.0f, home);
+        AddOneShot(sm, "LetGo", "LetGo", col, 490.0f, drop);
+        if (!HasState(sm, "HangShimmy")) {
+            SM::State s;
+            s.name = "HangShimmy"; s.blendTree = true; s.blendDims = 1; s.blendParam = "shimmy";
+            s.loop = true; s.ikWeight = 0.0f; s.interruptible = false;
+            SM::Motion l; l.clip = "Hang_Shimmy_L"; l.threshold = -1.0f;
+            SM::Motion r; r.clip = "Hang_Shimmy_R"; r.threshold = 1.0f;
+            s.motions = {l, r};
+            s.nx = col; s.ny = 580.0f;
+            SM::Transition back;
+            back.to = HasState(sm, "Hang") ? "Hang" : (home ? home : "");
+            if (HasState(sm, "Death")) {
+                SM::Transition die;
+                die.to = "Death"; die.cond = C::Trigger; die.param = "die"; die.blend = 0.12f;
+                die.interruption = SM::Transition::Interrupt::None;
+                s.transitions.push_back(die);
+            }
+            if (!back.to.empty()) {
+                back.cond = C::FloatLess; back.param = "shimmy"; back.value = 0.2f;
+                SM::Condition neg; neg.cond = C::FloatGreater; neg.param = "shimmy"; neg.value = -0.2f;
+                back.extra.push_back(neg);
+                s.transitions.push_back(back);
+            }
+            sm.states.push_back(std::move(s));
+        }
+        if (SM::State* hang = FindMutable(sm, "Hang")) {
+            bool has = false;
+            for (const SM::Transition& t : hang->transitions) if (t.param == "hanging") has = true;
+            if (!has && drop) {
+                SM::Transition rel;
+                rel.to = drop; rel.cond = C::BoolFalse; rel.param = "hanging"; rel.blend = 0.12f;
+                hang->transitions.push_back(rel);
+                // Fall's Any-State would yo-yo with `hanging` while the feet are off the floor.
+                hang->interruptible = false;
+                bool hasDie = false;
+                for (const SM::Transition& t : hang->transitions) if (t.param == "die") hasDie = true;
+                if (!hasDie && HasState(sm, "Death")) {
+                    SM::Transition die;
+                    die.to = "Death"; die.cond = C::Trigger; die.param = "die"; die.blend = 0.12f;
+                    die.interruption = SM::Transition::Interrupt::None;
+                    hang->transitions.insert(hang->transitions.begin(), die);
+                }
+            }
+        }
+        EnsureParam(sm, "vault", 2);
+        EnsureParam(sm, "mantle", 2);
+        EnsureParam(sm, "ledgeGrab", 2);
+        EnsureParam(sm, "climbUp", 2);
+        EnsureParam(sm, "letGo", 2);
+        EnsureParam(sm, "hanging", 1);
+        EnsureParam(sm, "shimmy", 0);
+        auto trig = [&](const char* to, const char* param) {
+            if (HasAny(sm, to, param) || !HasState(sm, to)) return;
+            SM::Transition go;
+            go.to = to; go.cond = C::Trigger; go.param = param; go.blend = 0.12f;
+            go.interruption = SM::Transition::Interrupt::None;
+            sm.anyState.push_back(std::move(go));
+        };
+        trig("Vault", "vault");
+        trig("MantleLow", "mantle");
+        trig("LedgeGrab", "ledgeGrab");
+        trig("ClimbUp", "climbUp");
+        trig("LetGo", "letGo");
+        if (!HasAny(sm, "Hang", "hanging") && HasState(sm, "Hang")) {
+            SM::Transition go;
+            go.to = "Hang"; go.cond = C::BoolTrue; go.param = "hanging"; go.blend = 0.12f;
+            go.interruption = SM::Transition::Interrupt::None;
+            sm.anyState.push_back(std::move(go));
+        }
+    }
+    const bool freshSwim = swimDue && !HasState(sm, "Swim");
+    if (freshSwim) {
+        float scol = 40.0f;
+        for (const SM::State& o : sm.states) scol = std::max(scol, o.nx);
+        scol += 220.0f;
+        SM::State swim = MakeSwimState();
+        swim.nx = scol;
+        swim.ny = 40.0f;
+        sm.states.push_back(std::move(swim));
+        if (SM::State* s = FindMutable(sm, "Swim")) WireSwim(*s, sm);
+        EnsureParam(sm, "swimSpeed", 0);
+        EnsureParam(sm, "swimming", 1);
+        if (!HasAny(sm, "Swim", "swimming")) {
+            SM::Transition go;
+            go.to = "Swim";
+            go.cond = C::BoolTrue;
+            go.param = "swimming";
+            go.blend = 0.25f;
+            // None so Walk cannot cancel the blend. Swim itself is not
+            // interruptible, so only its die / leave edges run after that.
+            go.interruption = SM::Transition::Interrupt::None;
+            // Before jump and fall, so a body already in the air still enters.
+            sm.anyState.insert(sm.anyState.begin(), std::move(go));
+        }
+    }
+    bool freshEmote = false;
+    float ecol = 40.0f;
+    for (const SM::State& o : sm.states) ecol = std::max(ecol, o.nx);
+    ecol += 220.0f;
+    int row = 0;
+    for (int i = 0; i < 3; ++i) {
+        if (!emoteDue || HasState(sm, kEmoteNames[i])) continue;
+        freshEmote = true;
+        SM::State em = MakeEmoteState(kEmoteNames[i]);
+        em.nx = ecol;
+        em.ny = 40.0f + 90.0f * (float)row;
+        sm.states.push_back(std::move(em));
+        if (SM::State* s = FindMutable(sm, kEmoteNames[i])) WireEmote(*s, sm);
+        AddEmoteAny(sm, kEmoteNames[i], (float)i);
+        ++row;
+    }
+    if (freshEmote) {
+        EnsureParam(sm, "emoteId", 3);
+        EnsureParam(sm, "emote", 2);
+    }
     if (sm.actionsRev < kActionsRev) sm.actionsRev = kActionsRev;
     ApplyTimes(sm);
+    BindHitLayer(sm);
 }
 
 void MergeMissing(AnimStateMachine& sm, const Character* body, bool force) {
+    // The layer callback is not saved. Put it back even when the graph is current.
+    BindHitLayer(sm);
     const bool looksDefault = HasState(sm, "Idle") && HasState(sm, "Walk") && HasState(sm, "Run") && HasState(sm, "Jump");
     if (!force && !looksDefault) return;
     if (!force && sm.actionsRev >= kActionsRev) return;
     // AddStates only creates states that are absent, which is the whole merge.
-    AddStates(sm, body);
+    AddStates(sm, body, force);
 }
 
 const std::vector<std::string>& ActionNames() {
     static const std::vector<std::string> names = {
         "Death", "DeadHold",
         "Death_F", "Death_B", "Death_L", "Death_R",
-        "DeadHold_F", "DeadHold_B", "DeadHold_L", "DeadHold_R"};
+        "DeadHold_F", "DeadHold_B", "DeadHold_L", "DeadHold_R",
+        "Dive", "DiveLand",
+        "SitDown", "Sit", "StandUp", "SitDown_Chair", "Sit_Chair", "StandUp_Chair", "SitDown_Ground", "Sit_Ground", "Sit_Ground_Knees", "StandUp_Ground",
+        "Hit", "HitHeavy", "Hit_Crouch", "Hit_Prone", "Hit_F", "Hit_B", "Hit_L", "Hit_R", "Hit_Heavy_F", "Hit_Heavy_B", "Hit_Off",
+        "Roll", "Dodge", "Slide", "SlideEnd", "Roll_F", "Dodge_L", "Dodge_R", "Dodge_B",
+        "Vault", "MantleLow", "MantleHigh", "LedgeGrab", "HangShimmy", "ClimbUp", "LetGo", "Mantle_Low", "Mantle_High", "Hang_Shimmy_L", "Hang_Shimmy_R",
+        "Swim", "Swim_Tread", "Swim_Fwd",
+        "Emote_Nod", "Emote_Shake", "Emote_Shrug"};
     return names;
 }
 
 bool IsInAction(GameObject* go) {
     SM* sm = BaseMachine(go);
-    return sm && IsKnownAction(sm->Current());
+    if (sm && IsKnownAction(sm->Current())) return true;
+    if (!go) return false;
+    for (AnimStateMachine* layer : go->GetComponents<AnimStateMachine>())
+        if (layer->layer > 0 && layer->Current() == "Hit") return true;
+    return false;
 }
 
 float ActionTime(GameObject* go) {
     return IsInAction(go) ? BaseMachine(go)->StateTime() : 0.0f;
+}
+
+bool IsDead(GameObject* go);
+
+bool CanDive(GameObject* go) {
+    if (!go || IsDead(go)) return false;
+    SM* sm = BaseMachine(go);
+    if (sm) {
+        const std::string cur = sm->Current();
+        if (cur == "Dive" || cur == "DiveLand") return false;
+    }
+    bool grounded = sm && sm->GetBool("grounded");
+    Rigidbody3D* rb = go->GetComponent<Rigidbody3D>();
+    if (rb && rb->groundedOnTerrain) grounded = true;
+    if (!grounded && go->transform && go->scene()) {
+        const Vec3 o = go->transform->Position();
+        const RaycastHit3D h = go->scene()->physics3D().Raycast(
+            *go->scene(), o + Vec3{0.0f, 0.2f, 0.0f}, Vec3{0.0f, -1.0f, 0.0f}, 0.45f,
+            go, Physics3D::kAllLayers, false);
+        grounded = h.hit && (!rb || rb->velocity.y < 1.5f);
+    }
+    if (!grounded) return false;
+    if (sm && (sm->GetBool("sprint") || sm->GetBool("run") || sm->GetFloat("speed") > 3.0f)) return true;
+    if (rb) {
+        const float hs = std::sqrt(rb->velocity.x * rb->velocity.x + rb->velocity.z * rb->velocity.z);
+        if (hs > 3.0f) return true;
+    }
+    return false;
+}
+
+void RequestDive(GameObject* go) {
+    if (!CanDive(go)) return;
+    SM* sm = BaseMachine(go);
+    if (!sm) return;
+    sm->SetBool("divePending", true);
+    sm->SetBool("grounded", true);
+    sm->SetBool("sprint", true);
+    if (HasState(*sm, "Dive") && sm->Current() != "Dive") sm->GoTo("Dive", 0.12f);
+}
+
+bool BeginDive(GameObject* go) {
+    SM* sm = BaseMachine(go);
+    if (!sm || !HasState(*sm, "Dive")) return false;
+    sm->SetTrigger("dived");
+    if (sm->Current() == "Dive") return true;
+    return sm->GoTo("Dive", 0.12f);
+}
+
+bool TakeDivePending(GameObject* go) {
+    SM* sm = BaseMachine(go);
+    if (!sm || !sm->GetBool("divePending")) return false;
+    sm->SetBool("divePending", false);
+    return true;
 }
 
 int DirFromName(const std::string& name) {
@@ -465,6 +1587,9 @@ bool Play(GameObject* go, const std::string& name, float blend) {
                 const int d = DirOfClip(name);
                 LatchDeath(*sm, d >= 0 ? d : (int)std::lround(sm->GetFloat("deathDir")));
             }
+            if (name == "Dive") sm->SetBool("divePending", true);
+            if (IsSwimLabel(name))
+                LatchSwim(*sm, name == "Swim_Fwd" ? 1.5f : (name == "Swim" ? -1.0f : 0.0f));
             if (sm->GoTo(name, blend)) return true;
         }
         for (const SM::State& st : sm->states) {
@@ -472,8 +1597,22 @@ bool Play(GameObject* go, const std::string& name, float blend) {
                 if (m.clip != name) continue;
                 if (!st.blendParam.empty()) sm->SetFloat(st.blendParam, m.threshold);
                 if (IsDeathLabel(name) || IsDeathLabel(st.name)) LatchDeath(*sm, (int)std::lround(m.threshold));
+                if (IsSwimLabel(name) || st.name == "Swim") LatchSwim(*sm, m.threshold);
                 if (sm->GoTo(st.name, blend)) return true;
             }
+        }
+        for (AnimStateMachine* layer : go->GetComponents<AnimStateMachine>()) {
+            if (layer->layer <= 0) continue;
+            if (HasState(*layer, name.c_str()) && layer->GoTo(name, blend)) {
+                layer->layerWeight = 1.0f;
+                return true;
+            }
+            for (const SM::State& st : layer->states)
+                for (const SM::Motion& m : st.motions) {
+                    if (m.clip != name) continue;
+                    if (!st.blendParam.empty()) layer->SetFloat(st.blendParam, m.threshold);
+                    if (layer->GoTo(st.name, blend)) { layer->layerWeight = 1.0f; return true; }
+                }
         }
     }
     static bool warned = false;
@@ -538,11 +1677,375 @@ void RequestRevive(GameObject* go) {
     ReviveAnim(go);
 }
 
+void SetSwimming(GameObject* go, bool on, float speed) {
+    if (SM* sm = BaseMachine(go)) {
+        sm->SetBool("swimming", on);
+        if (on && speed >= 0.0f) sm->SetFloat("swimSpeed", speed);
+    }
+}
+
+bool IsSwimming(GameObject* go) {
+    SM* sm = BaseMachine(go);
+    if (!sm) return false;
+    if (sm->GetBool("swimming")) return true;
+    return sm->Current() == "Swim";
+}
+
+int EmoteIndex(const std::string& name) {
+    std::string k;
+    k.reserve(name.size());
+    for (char c : name) k += (char)std::tolower((unsigned char)c);
+    if (k == "nod" || k == "emote_nod" || k == "0") return 0;
+    if (k == "shake" || k == "headshake" || k == "emote_shake" || k == "1") return 1;
+    if (k == "shrug" || k == "emote_shrug" || k == "2") return 2;
+    return -1;
+}
+
+bool PlayEmote(GameObject* go, int which) {
+    if (!go) return false;
+    if (which < 0) which = 0;
+    if (which > 2) which = 2;
+    if (SM* sm = BaseMachine(go)) sm->SetInt("emoteId", which);
+    return Play(go, kEmoteNames[which], 0.12f);
+}
+
+bool PlayEmote(GameObject* go, const std::string& name) {
+    const int which = EmoteIndex(name);
+    if (which < 0) return false;
+    return PlayEmote(go, which);
+}
+
 bool IsDead(GameObject* go) {
     if (!go) return false;
     if (auto* hp = go->GetComponent<HealthStat>()) return hp->IsDead();
     if (SM* sm = BaseMachine(go)) return sm->GetBool("dead");
     return false;
+}
+
+namespace {
+
+bool FlatFloor(GameObject* go) {
+    if (!go || !go->transform || !go->scene()) return true;
+    const Vec3 o = go->transform->Position();
+    const RaycastHit3D h = go->scene()->physics3D().Raycast(
+        *go->scene(), o + Vec3{0.0f, 0.2f, 0.0f}, Vec3{0.0f, -1.0f, 0.0f}, 0.8f,
+        go, Physics3D::kAllLayers, false);
+    return h.hit && h.normal.y > 0.75f;
+}
+
+Seat* SeatHolding(GameObject* who) {
+    if (!who || !who->scene()) return nullptr;
+    for (const auto& up : who->scene()->Objects()) {
+        if (!up) continue;
+        if (Seat* s = up->GetComponent<Seat>())
+            if (s->Occupant() == who) return s;
+    }
+    return nullptr;
+}
+
+Seat* NearestSeat(GameObject* go) {
+    if (!go || !go->transform || !go->scene()) return nullptr;
+    Seat* best = nullptr;
+    float bestD = 1.0e9f;
+    const Vec3 p = go->transform->Position();
+    for (const auto& up : go->scene()->Objects()) {
+        if (!up || !up->active) continue;
+        Seat* s = up->GetComponent<Seat>();
+        if (!s || !s->transform || s->occupied) continue;
+        Vec3 d = s->SitWorld() - p;
+        d.y *= 0.25f;
+        const float dist = d.Magnitude();
+        if (dist <= s->useRadius && dist < bestD) { bestD = dist; best = s; }
+    }
+    return best;
+}
+
+} // namespace
+
+bool RequestSit(GameObject* go, GameObject* seatObject, int sitType) {
+    if (!go || IsDead(go) || IsSitting(go)) return false;
+    Seat* seat = seatObject ? seatObject->GetComponent<Seat>() : nullptr;
+    if (seat) {
+        if (seat->occupied && seat->Occupant() != go) return false;
+        sitType = (seat->type == 1) ? 1 : 0;
+    } else if (!FlatFloor(go)) return false;
+    if (sitType < 0) sitType = 0;
+    if (sitType > 2) sitType = 2;
+    SM* sm = BaseMachine(go);
+    if (sm && HasState(*sm, "SitDown")) {
+        sm->SetFloat("sitType", (float)sitType);
+        sm->SetBool("sitting", true);
+        // GoTo, not the trigger: a latched `sit` would re-enter SitDown every frame.
+        sm->GoTo("SitDown", 0.2f);
+    }
+    if (seat) seat->Claim(go);
+    return true;
+}
+
+void RequestStandUp(GameObject* go) {
+    if (!go) return;
+    // Stand-up is already playing. Calling this again (move held) would restart it.
+    if (SM* sm = BaseMachine(go)) if (sm->Current() == "StandUp") return;
+    if (Seat* seat = SeatHolding(go)) seat->Release();
+    if (SM* sm = BaseMachine(go)) {
+        sm->SetBool("sitting", false);
+        const float type = sm->GetFloat("sitType");
+        if (HasState(*sm, "StandUp")) {
+            // StandUp only has chair (0) and ground (1). Knees uses the ground clip.
+            sm->SetFloat("sitType", type >= 1.5f ? 1.0f : type);
+            sm->GoTo("StandUp", 0.12f);
+        }
+    }
+}
+
+bool IsSitting(GameObject* go) {
+    SM* sm = BaseMachine(go);
+    if (!sm) return false;
+    if (sm->GetBool("sitting")) return true;
+    const std::string c = sm->Current();
+    return c == "SitDown" || c == "Sit" || c == "StandUp";
+}
+
+void Interact(GameObject* go) {
+    if (!go) return;
+    if (IsSitting(go)) { RequestStandUp(go); return; }
+    if (Seat* s = NearestSeat(go)) RequestSit(go, s->gameObject, s->type);
+    else RequestSit(go, nullptr, 1);
+}
+
+std::string SeatPrompt(GameObject* go) {
+    if (Seat* s = NearestSeat(go)) return s->prompt;
+    return {};
+}
+
+int HitDirFromWorld(GameObject* go, const Vec3& fromWorld) {
+    // Death falls away from the hit. A flinch faces the hit, so swap the axis.
+    static const int kOpp[] = {1, 0, 3, 2};
+    return kOpp[DirFromWorld(go, fromWorld)];
+}
+
+bool HitReact(GameObject* go, int dir, bool heavy) {
+    if (!go || IsDead(go)) return false;
+    if (dir < 0) dir = 0;
+    if (dir > 3) dir = 3;
+    static std::unordered_map<const GameObject*, float> last;
+    const float now = Time::ElapsedTime();
+    if (auto it = last.find(go); it != last.end() && now - it->second < 0.1f) return false;
+    if (last.size() > 512) last.clear();
+    last[go] = now;
+
+    SM* sm = BaseMachine(go);
+    const bool prone = sm && sm->GetBool("prone");
+    const bool crouch = sm && sm->GetBool("crouch") && !prone;
+    if (sm) {
+        sm->SetFloat("hitDir", (float)dir);
+        sm->SetBool("hitHeavy", heavy && !crouch && !prone);
+    }
+    auto goBase = [&](const char* state) {
+        return sm && HasState(*sm, state) && sm->GoTo(state, 0.12f);
+    };
+    if (prone && goBase("Hit_Prone")) return true;
+    if (crouch && goBase("Hit_Crouch")) return true;
+    if (heavy && goBase("HitHeavy")) return true;
+    if (sm && sm->gameObject) {
+        for (AnimStateMachine* layer : sm->gameObject->GetComponents<AnimStateMachine>()) {
+            if (layer->layer <= 0 || layer->maskBone != "Torso" || !HasState(*layer, "Hit")) continue;
+            layer->layerWeight = 1.0f;
+            if (layer->GoTo("Hit", 0.08f)) return true;
+        }
+    }
+    static const char* kLight[] = {"Hit_F", "Hit_B", "Hit_L", "Hit_R"};
+    static const char* kHeavy[] = {"Hit_Heavy_F", "Hit_Heavy_B", "Hit_Heavy_F", "Hit_Heavy_B"};
+    return Play(go, heavy ? kHeavy[dir] : kLight[dir], 0.1f);
+}
+
+float StaggerScale(const GameObject* go) {
+    const SM* sm = BaseMachine(const_cast<GameObject*>(go));
+    if (!sm) return 1.0f;
+    const std::string c = sm->Current();
+    if (c != "HitHeavy" && c != "Hit_Crouch" && c != "Hit_Prone") return 1.0f;
+    const float s = sm->GetFloat("staggerScale");
+    return s > 0.0f ? s : 1.0f;
+}
+
+namespace {
+std::unordered_set<const GameObject*> g_dodgeIFrames;
+}
+
+void SetDodgeIFrames(GameObject* go, bool on) {
+    if (!go) return;
+    if (on) g_dodgeIFrames.insert(go);
+    else g_dodgeIFrames.erase(go);
+}
+bool DodgeIFrames(const GameObject* go) {
+    return go && g_dodgeIFrames.count(go) != 0;
+}
+
+bool RequestRoll(GameObject* go, int dir) {
+    if (!go || IsDead(go)) return false;
+    if (dir < 0) dir = 0;
+    if (dir > 3) dir = 3;
+    if (SM* sm = BaseMachine(go)) {
+        sm->SetFloat("dodgeDir", (float)dir);
+        if (dir == 0 && HasState(*sm, "Roll") && sm->GoTo("Roll", 0.1f)) return true;
+        if (HasState(*sm, "Dodge") && sm->GoTo("Dodge", 0.1f)) return true;
+    }
+    static const char* k[] = {"Roll_F", "Dodge_B", "Dodge_L", "Dodge_R"};
+    return Play(go, k[dir], 0.1f);
+}
+
+bool RequestDodge(GameObject* go, int dir) {
+    if (!go || IsDead(go)) return false;
+    if (dir < 0) dir = 0;
+    if (dir > 3) dir = 3;
+    Vec3 world{0.0f, 0.0f, -1.0f};
+    if (go->transform) {
+        const Vec3 facing = go->transform->TransformDirection(Vec3{0.0f, 0.0f, -1.0f});
+        const Vec3 right = go->transform->TransformDirection(Vec3{1.0f, 0.0f, 0.0f});
+        world = facing;
+        if (dir == 1) world = facing * -1.0f;
+        else if (dir == 2) world = right * -1.0f;
+        else if (dir == 3) world = right;
+    }
+    auto* fp = go->GetComponent<FirstPersonController>();
+    auto* tp = fp ? nullptr : go->GetComponent<ThirdPersonController>();
+    if (fp || tp) {
+        DodgeMove& move = fp ? fp->dodge : tp->dodge;
+        if (!DodgeBurst(go, move, world)) return false;
+    }
+    return RequestRoll(go, dir);
+}
+
+namespace {
+
+Vec3 BodyForward(GameObject* go) {
+    if (!go || !go->transform) return Vec3{0.0f, 0.0f, -1.0f};
+    return go->transform->TransformDirection(Vec3{0.0f, 0.0f, -1.0f});
+}
+
+bool BodyAirborne(GameObject* go) {
+    if (!go || !go->transform) return false;
+    auto* rb = go->GetComponent<Rigidbody3D>();
+    if (rb && rb->groundedOnTerrain) return false;
+    if (go->scene()) {
+        const Vec3 o = go->transform->Position() + Vec3{0.0f, 0.08f, 0.0f};
+        const RaycastHit3D h = go->scene()->physics3D().Raycast(
+            *go->scene(), o, Vec3{0.0f, -1.0f, 0.0f}, 0.22f, go, Physics3D::kAllLayers, false);
+        if (h.hit && h.normal.y > 0.5f) return false;
+    }
+    return true;
+}
+
+bool PlayNamed(GameObject* go, const char* state, const char* clip) {
+    if (SM* sm = BaseMachine(go)) {
+        if (HasState(*sm, state) && sm->GoTo(state, 0.12f)) return true;
+    }
+    return Play(go, clip, 0.12f);
+}
+
+bool StartFromProbe(GameObject* go, const TraverseProbe& p) {
+    if (!go || p.kind == TraverseKind::None || IsDead(go) || TraverseBusy(go)) return false;
+    const char* state = "Vault";
+    const char* clip = "Vault";
+    if (p.kind == TraverseKind::MantleLow) { state = "MantleLow"; clip = "Mantle_Low"; }
+    else if (p.kind == TraverseKind::MantleHigh) { state = "MantleHigh"; clip = "Mantle_High"; }
+    else if (p.kind == TraverseKind::Ledge) { state = "LedgeGrab"; clip = "LedgeGrab"; }
+    if (p.kind == TraverseKind::Ledge) SetHanging(go, true);
+    PlayNamed(go, state, clip);
+    BeginTraverse(go, p);
+    if (p.kind == TraverseKind::Ledge) {
+        auto it = TraverseJobs().find(go);
+        if (it != TraverseJobs().end()) { it->second.rememberLip = true; it->second.lip = p.lip; }
+    }
+    return true;
+}
+
+} // namespace
+
+bool RequestVault(GameObject* go) {
+    if (!go || IsDead(go) || TraverseBusy(go)) return false;
+    const TraverseProbe p = ProbeTraverse(go, BodyForward(go), BodyAirborne(go));
+    if (p.kind != TraverseKind::Vault) return false;
+    return StartFromProbe(go, p);
+}
+
+bool RequestMantle(GameObject* go) {
+    if (!go || IsDead(go) || TraverseBusy(go)) return false;
+    const TraverseProbe p = ProbeTraverse(go, BodyForward(go), BodyAirborne(go));
+    if (p.kind != TraverseKind::MantleLow && p.kind != TraverseKind::MantleHigh) return false;
+    return StartFromProbe(go, p);
+}
+
+bool RequestLedgeGrab(GameObject* go) {
+    if (!go || IsDead(go) || TraverseBusy(go) || !BodyAirborne(go)) return false;
+    const TraverseProbe p = ProbeTraverse(go, BodyForward(go), true);
+    if (p.kind != TraverseKind::Ledge) return false;
+    return StartFromProbe(go, p);
+}
+
+bool RequestClimbUp(GameObject* go) {
+    if (!go || IsDead(go)) return false;
+    AbortTraverse(go);
+    SetHanging(go, false);
+    const bool played = PlayNamed(go, "ClimbUp", "ClimbUp");
+    auto it = HangPoints().find(go);
+    if (it != HangPoints().end() && go->transform) {
+        TraverseProbe p;
+        p.kind = TraverseKind::MantleHigh;
+        p.from = go->transform->Position();
+        p.to = it->second;
+        p.lip = it->second;
+        p.duration = 0.7f;
+        HangPoints().erase(it);
+        BeginTraverse(go, p);
+    } else {
+        RestoreHangGravity(go);
+    }
+    return played;
+}
+
+void RequestLetGo(GameObject* go) {
+    if (!go) return;
+    AbortTraverse(go);
+    SetHanging(go, false);
+    PlayNamed(go, "LetGo", "LetGo");
+    HangPoints().erase(go);
+    RestoreHangGravity(go);
+}
+
+bool IsHanging(GameObject* go) {
+    SM* sm = BaseMachine(go);
+    if (!sm) return false;
+    if (sm->GetBool("hanging")) return true;
+    const std::string& c = sm->Current();
+    return c == "Hang" || c == "LedgeGrab" || c == "HangShimmy";
+}
+
+void SetHanging(GameObject* go, bool on) {
+    if (SM* sm = BaseMachine(go)) sm->SetBool("hanging", on);
+}
+
+void SetShimmy(GameObject* go, float v) {
+    if (v > 1.0f) v = 1.0f;
+    if (v < -1.0f) v = -1.0f;
+    SM* sm = BaseMachine(go);
+    if (!sm) return;
+    sm->SetFloat("shimmy", v);
+    if (std::fabs(v) <= 0.3f) return;
+    if (!sm->GetBool("hanging") && sm->Current() != "Hang" && sm->Current() != "HangShimmy") return;
+    if (sm->Current() == "HangShimmy") return;
+    if (HasState(*sm, "HangShimmy")) sm->GoTo("HangShimmy", 0.1f);
+}
+
+bool TryTraverse(GameObject* go, const Vec3& fwd, bool airborne, bool vault, bool mantle, bool ledge) {
+    if (!go || IsDead(go) || TraverseBusy(go) || IsHanging(go)) return false;
+    if (!vault && !mantle && !ledge) return false;
+    const TraverseProbe p = ProbeTraverse(go, fwd, airborne);
+    if (p.kind == TraverseKind::Vault && !vault) return false;
+    if ((p.kind == TraverseKind::MantleLow || p.kind == TraverseKind::MantleHigh) && !mantle) return false;
+    if (p.kind == TraverseKind::Ledge && (!ledge || !airborne)) return false;
+    if (p.kind == TraverseKind::None) return false;
+    return StartFromProbe(go, p);
 }
 
 bool DeathPoseSettled(GameObject* go) {
@@ -589,4 +2092,83 @@ void RestoreDeadBody(GameObject* go, DeadShape& shape) {
 }
 
 } // namespace HumanoidActions
+
+void Seat::Claim(GameObject* who) {
+    if (!who || !who->transform) return;
+    m_who = who;
+    occupied = true;
+    m_from = who->transform->Position();
+    m_fromRot = who->transform->Rotation();
+    m_blend = 0.0f;
+    if (auto* rb = who->GetComponent<Rigidbody3D>()) {
+        rb->velocity = Vec3{0, 0, 0};
+        m_savedGravity = rb->gravityScale;
+        m_hadGravity = true;
+        rb->gravityScale = 0.0f;
+    }
+}
+
+void Seat::Release() {
+    if (m_who && m_who->transform && transform && !m_who->IsDestroyed())
+        m_who->transform->SetPosition(ExitWorld());
+    if (m_who && !m_who->IsDestroyed()) {
+        if (auto* rb = m_who->GetComponent<Rigidbody3D>()) {
+            if (m_hadGravity) rb->gravityScale = m_savedGravity;
+            rb->velocity = Vec3{0, 0, 0};
+        }
+    }
+    m_who = nullptr;
+    occupied = false;
+    m_hadGravity = false;
+    m_blend = 1.0f;
+}
+
+void Seat::Update(float dt) {
+    if (m_who && (m_who->IsDestroyed() || !m_who->transform || HumanoidActions::IsDead(m_who))) {
+        // Death frees the seat and restores gravity. It does not snap to exitPoint.
+        GameObject* who = m_who;
+        m_who = nullptr;
+        occupied = false;
+        if (who && !who->IsDestroyed()) {
+            if (auto* rb = who->GetComponent<Rigidbody3D>()) {
+                if (m_hadGravity) rb->gravityScale = m_savedGravity;
+            }
+        }
+        m_hadGravity = false;
+    }
+    if (m_who && m_who->transform && transform) {
+        m_blend = std::min(1.0f, m_blend + dt / 0.45f);
+        const float u = m_blend * m_blend * (3.0f - 2.0f * m_blend);
+        m_who->transform->SetPosition(Vec3::Lerp(m_from, SitWorld(), u));
+        m_who->transform->SetRotation(Quat::Slerp(m_fromRot, FaceWorld(), u));
+        if (auto* rb = m_who->GetComponent<Rigidbody3D>()) rb->velocity = Vec3{0, 0, 0};
+    }
+    playerInRange = false;
+    if (!gameObject || !gameObject->scene() || !transform || occupied) return;
+    GameObject* who = nullptr;
+    float best = useRadius;
+    const Vec3 sit = SitWorld();
+    for (const auto& up : gameObject->scene()->Objects()) {
+        if (!up || !up->active || !up->transform || up.get() == gameObject) continue;
+        if (!IsLocallyControlled(up.get()) || !up->GetComponent<Character>()) continue;
+        Vec3 d = up->transform->Position() - sit;
+        d.y = 0.0f;
+        const float dist = d.Magnitude();
+        if (dist < best) { best = dist; who = up.get(); }
+    }
+    if (!who) return;
+    bool closer = false;
+    for (const auto& up : gameObject->scene()->Objects()) {
+        Seat* other = up ? up->GetComponent<Seat>() : nullptr;
+        if (!other || other == this || other->occupied || !other->transform) continue;
+        Vec3 d = who->transform->Position() - other->SitWorld();
+        d.y = 0.0f;
+        if (d.Magnitude() < best) closer = true;
+    }
+    playerInRange = !closer;
+    // E is the use key. There is no shared interact binding; FPC lean-right is also E.
+    if (playerInRange && Input::GetKeyDown('e'))
+        HumanoidActions::RequestSit(who, gameObject, type);
+}
+
 } // namespace okay

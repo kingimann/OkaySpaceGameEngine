@@ -610,6 +610,21 @@ Vec3 Character::RawStanceOffsetFor(int state, float t) const {
     return {0.0f, HumanoidMotion::HipY(state, MotionInputs(state, t)) * height, 0.0f};   // rig units scale with height
 }
 
+std::vector<Vec3> Character::PosedJoints(const std::vector<Vec3>& pose) const {
+    std::vector<Bone> bones = Skeleton();
+    const int n = (int)bones.size();
+    std::vector<Mat4> poseW(n);
+    std::vector<Vec3> out(n);
+    for (int i = 0; i < n; ++i) {
+        Vec3 jp = bones[i].parent >= 0 ? bones[bones[i].parent].joint : Vec3{0, 0, 0};
+        Mat4 posed = Mat4::Translate(bones[i].joint - jp) *
+                     Mat4::Rotate(Quat::Euler(i < (int)pose.size() ? pose[i] : Vec3{0, 0, 0}));
+        poseW[i] = bones[i].parent >= 0 ? poseW[bones[i].parent] * posed : posed;
+        out[i] = poseW[i].MultiplyPoint(Vec3{0, 0, 0});
+    }
+    return out;
+}
+
 void Character::Skin(Mesh& m, const std::vector<int>& bone, const std::vector<Vec3>& rot) const {
     std::vector<Bone> bones = Skeleton();
     int n = (int)bones.size();
@@ -756,6 +771,35 @@ void Character::AdvanceClip(float dt) {
         if (m_activeClip->loop && !holdJump) m_clipTime = std::fmod(m_clipTime, dur);
         else if (m_clipTime > dur) m_clipTime = dur;
     }
+}
+
+bool Character::RemoveClip(const std::string& name) {
+    auto it = m_clips.find(name);
+    if (it == m_clips.end()) return false;
+    if (m_activeClipName == name) StopClip();   // before the erase: the pointer goes with it
+    if (m_layerName == name) StopLayer();
+    m_clips.erase(it);
+    ++m_clipsVer;
+    for (std::string* b : {&clipIdle, &clipWalk, &clipRun, &clipJump, &clipFall, &clipCrouch, &clipDive, &autoPlayClip})
+        if (*b == name) b->clear();
+    return true;
+}
+
+bool Character::RenameClip(const std::string& from, const std::string& to) {
+    auto it = m_clips.find(from);
+    if (it == m_clips.end() || to.empty() || from == to || m_clips.count(to)) return false;
+    AnimClip c = std::move(it->second);
+    m_clips.erase(it);
+    c.name = to;
+    AnimClip& stored = m_clips[to];
+    stored = std::move(c);
+    if (m_activeClipName == from) { m_activeClipName = to; m_activeClip = &stored; }
+    if (m_layerName == from)      { m_layerName = to; m_layerClip = &stored; }
+    for (std::string* b : {&clipIdle, &clipWalk, &clipRun, &clipJump, &clipFall, &clipCrouch, &clipDive, &autoPlayClip})
+        if (*b == from) *b = to;
+    for (BlendStop& st : m_blendStops) if (st.clip == from) st.clip = to;
+    ++m_clipsVer;
+    return true;
 }
 
 std::vector<std::string> Character::ClipNames() const {

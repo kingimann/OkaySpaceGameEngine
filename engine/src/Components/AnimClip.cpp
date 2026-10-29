@@ -275,6 +275,120 @@ void AnimClip::ScalePose(const std::vector<int>& indices, int bone, float factor
     }
 }
 
+// ---- Queries and single-bone keying --------------------------------------------
+namespace {
+Vec3 BoneOf(const AnimKey& k, int bone) {
+    return (bone >= 0 && bone < (int)k.pose.size()) ? k.pose[bone] : Vec3{0, 0, 0};
+}
+bool SameAngles(const Vec3& a, const Vec3& b) {
+    return std::fabs(a.x - b.x) < 1e-4f && std::fabs(a.y - b.y) < 1e-4f && std::fabs(a.z - b.z) < 1e-4f;
+}
+} // namespace
+
+int AnimClip::KeyAt(float t, float eps) const {
+    for (int i = 0; i < (int)keys.size(); ++i) if (std::fabs(keys[i].time - t) <= eps) return i;
+    return -1;
+}
+
+int AnimClip::PrevKey(float t) const {
+    int best = -1;
+    for (int i = 0; i < (int)keys.size(); ++i) if (keys[i].time < t - 1e-3f) best = i;
+    return best;
+}
+
+int AnimClip::NextKey(float t) const {
+    for (int i = 0; i < (int)keys.size(); ++i) if (keys[i].time > t + 1e-3f) return i;
+    return -1;
+}
+
+int AnimClip::SetKey(AnimKey key) {
+    if (key.time < 0.0f) key.time = 0.0f;
+    const int at = KeyAt(key.time);
+    if (at >= 0) {
+        key.ease = keys[at].ease;   // the key that was here keeps its easing
+        keys[at] = std::move(key);
+        return at;
+    }
+    int i = 0;
+    while (i < (int)keys.size() && keys[i].time < key.time) ++i;
+    keys.insert(keys.begin() + i, std::move(key));
+    return i;
+}
+
+int AnimClip::SetBoneKey(float t, int bone, const Vec3& value) {
+    if (bone < 0) return -1;
+    int at = KeyAt(t);
+    if (at < 0) {
+        AnimKey k; k.time = t < 0.0f ? 0.0f : t;
+        k.pose = Sample(k.time);                   // the other bones hold the clip's pose here
+        if (hasRoot) k.root = SampleRoot(k.time);
+        at = SetKey(std::move(k));
+    }
+    AnimKey& k = keys[at];
+    if ((int)k.pose.size() <= bone) k.pose.resize(bone + 1, Vec3{0, 0, 0});
+    k.pose[bone] = value;
+    return at;
+}
+
+int AnimClip::SetRootKey(float t, const Vec3& root) {
+    int at = KeyAt(t);
+    if (at < 0) {
+        AnimKey k; k.time = t < 0.0f ? 0.0f : t;
+        k.pose = Sample(k.time);
+        k.root = SampleRoot(k.time);
+        at = SetKey(std::move(k));
+    }
+    keys[at].root = root;
+    hasRoot = true;
+    return at;
+}
+
+void AnimClip::ClearBoneAtKey(int index, int bone) {
+    if (index < 0 || index >= (int)keys.size() || bone < 0) return;
+    const int prev = index - 1, next = index + 1;
+    Vec3 v{0, 0, 0};
+    if (prev >= 0 && next < (int)keys.size()) {
+        const AnimKey& a = keys[prev];
+        const AnimKey& b = keys[next];
+        const float span = b.time - a.time;
+        const float u = span > 1e-6f ? (keys[index].time - a.time) / span : 0.0f;
+        v = BlendEuler(BoneOf(a, bone), BoneOf(b, bone), EaseFrom(a, u));
+    } else if (prev >= 0) v = BoneOf(keys[prev], bone);
+    else if (next < (int)keys.size()) v = BoneOf(keys[next], bone);
+    AnimKey& k = keys[index];
+    if ((int)k.pose.size() <= bone) k.pose.resize(bone + 1, Vec3{0, 0, 0});
+    k.pose[bone] = v;
+}
+
+bool AnimClip::KeyHoldsBone(int index, int bone) const {
+    const int n = (int)keys.size();
+    if (index < 0 || index >= n) return true;
+    const Vec3 v = BoneOf(keys[index], bone);
+    const bool cyclic = loop && n >= 2 && length > keys.back().time;
+    const int prev = index > 0 ? index - 1 : (cyclic ? n - 1 : -1);
+    const int next = index + 1 < n ? index + 1 : (cyclic ? 0 : -1);
+    if (prev >= 0 && prev != index && !SameAngles(v, BoneOf(keys[prev], bone))) return false;
+    if (next >= 0 && next != index && !SameAngles(v, BoneOf(keys[next], bone))) return false;
+    return true;
+}
+
+bool AnimClip::KeyHoldsRoot(int index) const {
+    const int n = (int)keys.size();
+    if (!hasRoot || index < 0 || index >= n) return true;
+    const Vec3 v = keys[index].root;
+    const bool cyclic = loop && n >= 2 && length > keys.back().time;
+    const int prev = index > 0 ? index - 1 : (cyclic ? n - 1 : -1);
+    const int next = index + 1 < n ? index + 1 : (cyclic ? 0 : -1);
+    if (prev >= 0 && prev != index && !SameAngles(v, keys[prev].root)) return false;
+    if (next >= 0 && next != index && !SameAngles(v, keys[next].root)) return false;
+    return true;
+}
+
+float AnimClip::SnapToFrame(float t, int fps) {
+    if (fps <= 0) return t;
+    return std::round(t * (float)fps) / (float)fps;
+}
+
 namespace {
 // The easing words a `key` line may end with (none = the clip's mode).
 const struct { AnimKeyEase ease; const char* word; } kEaseWords[] = {

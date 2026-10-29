@@ -475,6 +475,13 @@ public:
         for (int i = 1; i < (int)(sizeof(names) / sizeof(names[0])); ++i) if (key == names[i]) return i;
         return -1;
     }
+    /// Drop a registered clip. It stops if it is playing or layering, and the
+    /// state bindings and start clip that named it are cleared. False if none.
+    bool RemoveClip(const std::string& name);
+    /// Rename a registered clip; the state bindings, the start clip, the blend
+    /// tree and a playing clip follow it. False if `from` is missing, `to` is
+    /// empty or `to` is already a clip.
+    bool RenameClip(const std::string& from, const std::string& to);
     /// Names of every registered clip (for editor dropdowns), sorted.
     std::vector<std::string> ClipNames() const;
     /// Is a clip with this name registered?
@@ -562,6 +569,11 @@ public:
     /// The short token BoneIndex reads back ("hips", "l_uparm", ...), as clip files use.
     static const char* BoneToken(int i);
     std::vector<Bone> Skeleton() const;
+    /// Where the rig's joints are under a per-bone Euler pose, in rig space
+    /// (before the height scale and the body's turn to face -Z): the rest joints
+    /// moved by their parents' rotations. The Animation window's onion skin draws
+    /// these for the keys around the playhead.
+    std::vector<Vec3> PosedJoints(const std::vector<Vec3>& pose) const;
 
     Mesh BuildRig(std::vector<int>& bone) const;
     Mesh Build() const { std::vector<int> b; return BuildRig(b); }

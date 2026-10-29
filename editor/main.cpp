@@ -19020,14 +19020,30 @@ static const AnimClip* BodyClip(Character* ch, const std::string& name) {
 struct AnimDraft {
     AnimClip clip;
     std::vector<Vec3> pose;      // the pose being authored at the playhead
+    Vec3  root{0, 0, 0};         // the body offset being authored (rig units; keyed onto the root track)
     float t = 0.0f;
     int bone = 0;
     bool playing = false;
     bool playOnStart = false;    // Apply also sets autoPlayClip (+ overrideMovement)
-    std::string evName;
     std::vector<int> sel;        // selected keys (indices into clip.keys, ascending)
-    bool  dragKeys = false; float dragFrom = 0.0f, dragDelta = 0.0f;   // dragging the selection along the lane
-    bool  boxing = false; ImVec2 boxFrom;                              // box-selecting on the lane
+    bool  dragKeys = false; float dragFrom = 0.0f, dragDelta = 0.0f;   // dragging the selection along the rows
+    bool  boxing = false; ImVec2 boxFrom;                              // box-selecting across the rows
+    // The views and the tools around the dope sheet.
+    bool  record = false;        // changing a bone keys it at the playhead
+    int   fps = 30; bool snap = true;
+    bool  curves = false;        // the curve editor instead of the key rows
+    bool  chan[3] = {true, true, true};   // which Euler channels the curves show
+    bool  curveRoot = false;     // the root track is picked instead of a bone
+    bool  onion = false; int onionN = 1;  // onion skin in the Scene view, keys each side
+    bool  showPreview = false;   // the inset preview pane (the Scene view shows the pose anyway)
+    float viewStart = 0.0f, viewLen = 0.0f;   // the visible stretch of the timeline (0 = fit)
+    std::vector<Vec3> previewed; int previewFrame = -1;   // the pose last sent to the rig: a part the gizmo turned since differs
+    bool  gizmoUndo = false;     // an undo step was taken for the gizmo drag in progress
+    int   menuBone = -1;         // the bone row a key menu was opened from
+    int   evDrag = -1; float evDragT = 0.0f; int evEdit = -1; int evMenu = -1; char evName[48] = {0};
+    int   cvKey = -1; int cvChan = 0; bool cvDrag = false;   // the curve point being dragged
+    char  search[48] = {0};      // the clip list's filter
+    char  renameBuf[48] = {0}; std::string renameFrom;
 };
 static std::unordered_map<std::string, AnimDraft> g_animDrafts;
 static std::vector<Vec3> g_animPoseClipboard;   // Copy Pose / Paste Pose, across characters too
@@ -19089,9 +19105,220 @@ static AnimClip BakeBuiltInClip(Character* ch, int state, const std::string& nam
     return c;
 }
 
+// The embedded 3D preview (defined below the clip editor, which draws it in its right column).
+static void DrawAnimPreview(EditorState& ed, GameObject* go,
+                            const std::function<void()>& pose = {}, const std::function<void()>& restore = {},
+                            bool poseUnchanged = false, ImVec2 size = ImVec2(0, 0));
+
+// ---- Widgets the Animation tab's editors share -------------------------------
+// The Character clip editor, the imported-clip panel and the property timeline
+// draw their transport, rulers, playhead and key diamonds with these, so the tab
+// reads as one tool whatever is selected.
+
+// A square toolbar button with a drawn glyph. `kind`: 0 record, 1 play, 2 pause,
+// 3 go to start, 4 previous key, 5 next key, 6 add key, 7 preview, 8 event flag,
+// 9 curves, 10 more, 11 presets, 12 go to end, 13 loop, 14 onion skin, 15 fit,
+// 16 key rows. An active button uses the accent, or `activeCol` when given.
+static bool AnimGlyphButton(const char* id, int kind, const char* tip, bool active, ImU32 activeCol = 0) {
+    const float fh = ImGui::GetFrameHeight();
+    if (active && activeCol) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(activeCol));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::ColorConvertU32ToFloat4(activeCol));
+    }
+    bool hit = (active && !activeCol) ? AccentToggleButton(id, true, ImVec2(fh, fh)) : ImGui::Button(id, ImVec2(fh, fh));
+    if (active && activeCol) ImGui::PopStyleColor(2);
+    ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+    ImVec2 c((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f);
+    float s = fh * 0.22f;
+    ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    switch (kind) {
+    case 0: dl->AddCircleFilled(c, s * 1.05f, active ? IM_COL32(255, 255, 255, 255) : IM_COL32(230, 80, 80, 255)); break;   // record
+    case 1: dl->AddTriangleFilled(ImVec2(c.x - s * 0.7f, c.y - s), ImVec2(c.x - s * 0.7f, c.y + s), ImVec2(c.x + s, c.y), col); break; // play
+    case 2: dl->AddRectFilled(ImVec2(c.x - s * 0.8f, c.y - s), ImVec2(c.x - s * 0.25f, c.y + s), col, 1.0f);
+            dl->AddRectFilled(ImVec2(c.x + s * 0.25f, c.y - s), ImVec2(c.x + s * 0.8f, c.y + s), col, 1.0f); break;           // pause
+    case 3: dl->AddRectFilled(ImVec2(c.x - s, c.y - s), ImVec2(c.x - s * 0.65f, c.y + s), col);                               // first
+            dl->AddTriangleFilled(ImVec2(c.x + s, c.y - s), ImVec2(c.x + s, c.y + s), ImVec2(c.x - s * 0.5f, c.y), col); break;
+    case 4: dl->AddTriangleFilled(ImVec2(c.x + s * 0.6f, c.y - s), ImVec2(c.x + s * 0.6f, c.y + s), ImVec2(c.x - s * 0.6f, c.y), col);   // prev key
+            dl->AddRectFilled(ImVec2(c.x - s, c.y - s), ImVec2(c.x - s * 0.7f, c.y + s), col); break;
+    case 5: dl->AddTriangleFilled(ImVec2(c.x - s * 0.6f, c.y - s), ImVec2(c.x - s * 0.6f, c.y + s), ImVec2(c.x + s * 0.6f, c.y), col);   // next key
+            dl->AddRectFilled(ImVec2(c.x + s * 0.7f, c.y - s), ImVec2(c.x + s, c.y + s), col); break;
+    case 6: { ImVec2 d[4] = {{c.x, c.y - s * 1.1f}, {c.x + s * 1.1f, c.y}, {c.x, c.y + s * 1.1f}, {c.x - s * 1.1f, c.y}};   // add key
+              dl->AddConvexPolyFilled(d, 4, col); break; }
+    case 7: dl->AddRect(ImVec2(c.x - s * 1.2f, c.y - s * 0.85f), ImVec2(c.x + s * 1.2f, c.y + s * 0.85f), col, 2.0f, 0, 1.4f);   // preview
+            dl->AddCircleFilled(c, s * 0.4f, col); break;
+    case 8: dl->AddLine(ImVec2(c.x - s, c.y + s), ImVec2(c.x - s, c.y - s * 1.2f), col, 1.5f);                              // event flag
+            dl->AddTriangleFilled(ImVec2(c.x - s, c.y - s * 1.2f), ImVec2(c.x + s, c.y - s * 0.6f), ImVec2(c.x - s, c.y), col); break;
+    case 9: { ImVec2 pts[8];                                                                                                 // curves
+              for (int i = 0; i < 8; ++i) { float u = i / 7.0f; pts[i] = ImVec2(c.x - s * 1.2f + u * s * 2.4f, c.y + std::sin(u * 6.2832f) * s * 0.8f); }
+              dl->AddPolyline(pts, 8, col, 0, 1.5f); break; }
+    case 10: for (int i = -1; i <= 1; ++i) dl->AddCircleFilled(ImVec2(c.x + i * s * 0.9f, c.y), s * 0.28f, col);          // more
+             break;
+    case 11: { ImVec2 st4[10];                                                                                               // presets (star)
+               for (int i = 0; i < 10; ++i) { float ang = -1.5708f + i * 0.6283f, rr = (i % 2) ? s * 0.5f : s * 1.15f;
+                   st4[i] = ImVec2(c.x + std::cos(ang) * rr, c.y + std::sin(ang) * rr); }
+               for (int i = 0; i < 10; i += 2) dl->AddTriangleFilled(c, st4[i], st4[(i + 1) % 10], col);
+               for (int i = 0; i < 10; i += 2) dl->AddTriangleFilled(c, st4[i], st4[(i + 9) % 10], col); break; }
+    case 12: dl->AddTriangleFilled(ImVec2(c.x - s, c.y - s), ImVec2(c.x - s, c.y + s), ImVec2(c.x + s * 0.5f, c.y), col);   // last
+             dl->AddRectFilled(ImVec2(c.x + s * 0.65f, c.y - s), ImVec2(c.x + s, c.y + s), col); break;
+    case 13: dl->PathArcTo(c, s * 1.05f, 0.6f, 5.9f, 14);                                                                   // loop
+             dl->PathStroke(col, 0, 1.5f);
+             dl->AddTriangleFilled(ImVec2(c.x + s * 1.05f + s * 0.55f, c.y - s * 0.25f), ImVec2(c.x + s * 1.05f - s * 0.5f, c.y - s * 0.25f),
+                                   ImVec2(c.x + s * 1.05f, c.y + s * 0.6f), col); break;
+    case 14: dl->AddCircle(ImVec2(c.x - s * 0.55f, c.y), s * 0.95f, ImGui::GetColorU32(ImGuiCol_Text, 0.45f), 0, 1.5f);   // onion skin: ghosts
+             dl->AddCircle(ImVec2(c.x + s * 0.55f, c.y), s * 0.95f, col, 0, 1.5f); break;
+    case 15: dl->AddLine(ImVec2(c.x - s * 1.25f, c.y - s), ImVec2(c.x - s * 1.25f, c.y + s), col, 1.5f);                  // fit
+             dl->AddLine(ImVec2(c.x + s * 1.25f, c.y - s), ImVec2(c.x + s * 1.25f, c.y + s), col, 1.5f);
+             dl->AddLine(ImVec2(c.x - s * 0.9f, c.y), ImVec2(c.x + s * 0.9f, c.y), col, 1.5f);
+             dl->AddTriangleFilled(ImVec2(c.x - s * 1.05f, c.y), ImVec2(c.x - s * 0.5f, c.y - s * 0.45f), ImVec2(c.x - s * 0.5f, c.y + s * 0.45f), col);
+             dl->AddTriangleFilled(ImVec2(c.x + s * 1.05f, c.y), ImVec2(c.x + s * 0.5f, c.y - s * 0.45f), ImVec2(c.x + s * 0.5f, c.y + s * 0.45f), col); break;
+    case 16: for (int i = -1; i <= 1; ++i) {                                                                                 // key rows
+                 float y = c.y + i * s * 0.8f, x = c.x + i * s * 0.6f;
+                 dl->AddLine(ImVec2(c.x - s * 1.2f, y), ImVec2(c.x + s * 1.2f, y), ImGui::GetColorU32(ImGuiCol_Text, 0.5f), 1.0f);
+                 ImVec2 d[4] = {{x, y - s * 0.4f}, {x + s * 0.4f, y}, {x, y + s * 0.4f}, {x - s * 0.4f, y}};
+                 dl->AddConvexPolyFilled(d, 4, col);
+             } break;
+    }
+    if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+    return hit;
+}
+
+// The transport: go to start, previous key, play / pause, next key, go to end.
+// Returns 0..4 for the button pressed (in that order), -1 for none.
+static int AnimTransport(bool playing) {
+    const ImGuiStyle& sty = ImGui::GetStyle();
+    int hit = -1;
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, sty.ItemSpacing.y));
+    if (AnimGlyphButton("##tfirst", 3, "Go to start (Home)", false)) hit = 0;
+    ImGui::SameLine();
+    if (AnimGlyphButton("##tprev", 4, "Previous key ( [ )", false)) hit = 1;
+    ImGui::SameLine();
+    if (AnimGlyphButton("##tplay", playing ? 2 : 1, playing ? "Pause (Space)" : "Play (Space)", playing)) hit = 2;
+    ImGui::SameLine();
+    if (AnimGlyphButton("##tnext", 5, "Next key ( ] )", false)) hit = 3;
+    ImGui::SameLine();
+    if (AnimGlyphButton("##tlast", 12, "Go to end (End)", false)) hit = 4;
+    ImGui::PopStyleVar();
+    return hit;
+}
+
+// The visible stretch of a timeline: `start` seconds at the left edge and `len`
+// seconds across (0 = not set yet: fit the clip).
+struct AnimTimeView { float start = 0.0f, len = 0.0f; };
+static void AnimTimeViewFit(AnimTimeView& v, float clipLen) { v.start = 0.0f; v.len = std::max(2.0f, clipLen * 1.15f); }
+// Wheel zooms about the cursor (`mouseT` is the time under it), middle-drag pans.
+// Shift+wheel is left alone, so a caller can scroll rows with it.
+static void AnimTimeViewInput(AnimTimeView& v, float pxPerSec, float mouseT) {
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.MouseWheel != 0.0f && !io.KeyShift) {
+        float nl = Mathf::Clamp(v.len * (io.MouseWheel > 0 ? 0.85f : 1.18f), 0.25f, 600.0f);
+        v.start = std::max(0.0f, mouseT - (mouseT - v.start) * (nl / v.len));
+        v.len = nl;
+    }
+    if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 0.0f) && pxPerSec > 0.0f)
+        v.start = std::max(0.0f, v.start - io.MouseDelta.x / pxPerSec);
+}
+
+// A time ruler across the rect from `o`, `W` wide and `h` tall: tick labels at a
+// readable step, frame ticks when `fps` is set and they are far enough apart,
+// grid lines down to `gridBottom` and the stretch past `clipLen` shaded. `pad`
+// is the margin the times are inset by (the caller's tToX uses the same one).
+static void AnimDrawRuler(ImDrawList* dl, ImVec2 o, float W, float h, float gridBottom,
+                          const AnimTimeView& v, float pad, float clipLen, int fps) {
+    auto tToX = [&](float t) { return o.x + pad + ((t - v.start) / v.len) * (W - pad * 2.0f); };
+    dl->PushClipRect(ImVec2(o.x, o.y), ImVec2(o.x + W, std::max(gridBottom, o.y + h)), true);   // a zoomed view's first tick can start left of the ruler
+    dl->AddRectFilled(o, ImVec2(o.x + W, o.y + h), ImGui::GetColorU32(ImGuiCol_FrameBg));
+    const float pxPerSec = (W - pad * 2.0f) / v.len;
+    const float frame = fps > 0 ? 1.0f / (float)fps : 0.0f;
+    if (frame > 0.0f && frame * pxPerSec >= 12.0f) {
+        for (float t = std::floor(v.start / frame) * frame; t <= v.start + v.len + 1e-4f; t += frame) {
+            if (t < -1e-4f) continue;
+            const float x = tToX(t);
+            dl->AddLine(ImVec2(x, o.y + h * 0.75f), ImVec2(x, o.y + h), ImGui::GetColorU32(ImGuiCol_TextDisabled, 0.45f));
+        }
+    }
+    float step = 0.1f;
+    for (float cand : {0.05f, 0.1f, 0.25f, 0.5f, 1.0f, 2.0f, 5.0f, 10.0f, 30.0f, 60.0f}) { step = cand; if (cand * pxPerSec >= 60.0f) break; }
+    for (float t = std::floor(v.start / step) * step; t <= v.start + v.len + 1e-4f; t += step) {
+        if (t < -1e-4f) continue;
+        const float x = tToX(t);
+        dl->AddLine(ImVec2(x, o.y + h * 0.5f), ImVec2(x, o.y + h), ImGui::GetColorU32(ImGuiCol_TextDisabled));
+        if (gridBottom > o.y + h) dl->AddLine(ImVec2(x, o.y + h), ImVec2(x, gridBottom), ImGui::GetColorU32(ImGuiCol_Separator, 0.35f));
+        char lb[24]; std::snprintf(lb, sizeof(lb), step < 1.0f ? "%.2f" : "%.0fs", t);
+        dl->AddText(ImVec2(x + 3.0f, o.y + 1.0f), ImGui::GetColorU32(ImGuiCol_TextDisabled), lb);
+    }
+    if (clipLen > 0.0f) {
+        const float xe = tToX(clipLen);
+        if (xe < o.x + W) dl->AddRectFilled(ImVec2(std::max(xe, o.x), o.y + h), ImVec2(o.x + W, gridBottom), IM_COL32(0, 0, 0, 40));
+    }
+    dl->PopClipRect();
+}
+
+// The playhead: a line from `top` to `bottom` with a flag at the top; red while recording.
+static void AnimDrawPlayhead(ImDrawList* dl, float x, float top, float bottom, bool recording) {
+    const ImU32 c = recording ? IM_COL32(235, 70, 70, 255) : IM_COL32(255, 200, 60, 255);
+    dl->AddLine(ImVec2(x, top), ImVec2(x, bottom), c, 1.5f);
+    dl->AddTriangleFilled(ImVec2(x - 5.0f, top), ImVec2(x + 5.0f, top), ImVec2(x, top + 7.0f), c);
+}
+
+// A key diamond of radius `r` at `c`: filled in the row's colour, or hollow when
+// the row's value holds still across the key; white while hovered or selected,
+// outlined when it sits under the playhead.
+static void AnimDrawDiamond(ImDrawList* dl, ImVec2 c, float r, ImU32 col, bool filled, bool hot, bool selected, bool atHead) {
+    const ImVec2 d[4] = {{c.x, c.y - r}, {c.x + r, c.y}, {c.x, c.y + r}, {c.x - r, c.y}};
+    if (filled) dl->AddConvexPolyFilled(d, 4, hot ? IM_COL32(255, 255, 255, 255) : col);
+    else {
+        dl->AddConvexPolyFilled(d, 4, ImGui::GetColorU32(ImGuiCol_WindowBg));
+        dl->AddPolyline(d, 4, hot ? IM_COL32(255, 255, 255, 255) : col, ImDrawFlags_Closed, hot ? 2.0f : 1.2f);
+    }
+    if (selected) dl->AddPolyline(d, 4, filled ? col : IM_COL32(255, 255, 255, 255), ImDrawFlags_Closed, 2.0f);
+    else if (atHead) dl->AddPolyline(d, 4, IM_COL32(255, 255, 255, 230), ImDrawFlags_Closed, 1.5f);
+}
+
+// World-space lines the Animation window asks the Scene view to draw this frame:
+// the onion skin, the rig at the keys around the playhead. The window refills the
+// list every frame it is shown and clears it first, so a window that goes away
+// leaves nothing behind.
+struct AnimSceneLine { Vec3 a, b; ImU32 col; float th; };
+static std::vector<AnimSceneLine> g_animSceneLines;
+
+// A cheap signature of a clip's keys, events and settings, to tell whether the
+// draft differs from the clip stored on the character.
+static std::size_t AnimClipHash(const AnimClip& c) {
+    std::size_t h = c.keys.size() * 1315423911u + (std::size_t)c.interp * 7u + (c.loop ? 3u : 0u) + c.events.size() * 131u;
+    auto mix = [&](float f) { std::uint32_t a; std::memcpy(&a, &f, 4); h ^= (std::size_t)a + 0x9e3779b9u + (h << 6) + (h >> 2); };
+    mix(c.length); mix(c.speed);
+    for (const AnimKey& k : c.keys) {
+        mix(k.time); mix(k.root.x); mix(k.root.y); mix(k.root.z);
+        h ^= (std::size_t)k.ease * 31u;
+        for (const Vec3& p : k.pose) { mix(p.x); mix(p.y); mix(p.z); }
+    }
+    for (const AnimEvent& e : c.events) { mix(e.time); h ^= std::hash<std::string>()(e.name); }
+    return h;
+}
+
+// The movement states a Character clip can be bound to (the controller plays the
+// bound clip instead of the built-in animation).
+struct AnimBindSlot { const char* label; std::string Character::* field; };
+static const AnimBindSlot kAnimBindSlots[] = {
+    {"Idle", &Character::clipIdle}, {"Walk", &Character::clipWalk}, {"Run", &Character::clipRun},
+    {"Jump", &Character::clipJump}, {"Fall", &Character::clipFall}, {"Crouch", &Character::clipCrouch},
+    {"Dive", &Character::clipDive},
+};
+
+// The dope sheet's row colour for a bone: the spine grey-blue, the left side warm,
+// the right side cool, so a limb's keys read at a glance.
+static ImU32 AnimBoneColor(int bone) {
+    const char* n = Character::BoneName(bone);
+    if (n[0] == 'L' && n[1] == ' ') return IM_COL32(235, 165, 90, 255);
+    if (n[0] == 'R' && n[1] == ' ') return IM_COL32(110, 190, 245, 255);
+    return IM_COL32(205, 205, 225, 255);
+}
+static float& AnimComp(Vec3& v, int c) { return c == 0 ? v.x : c == 1 ? v.y : v.z; }
+static float  AnimComp(const Vec3& v, int c) { return c == 0 ? v.x : c == 1 ? v.y : v.z; }
+
 static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, int focusBone = -1) {
-    (void)go;
-    static std::unordered_map<std::string, int> lastFocus;   // jump the bone dropdown when a new part is selected
+    static std::unordered_map<std::string, int> lastFocus;   // follow the part selected in the hierarchy / Scene view
     const int nb = Character::BoneCount();
     RestoreAnimDraftsAfterUndo(ed);
     const std::string key = AnimDraftKey(ch->gameObject);
@@ -19102,188 +19329,125 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
     float& t = d.t;
     int& bone = d.bone;
     bool& playing = d.playing;
-    // When the user selects a different rig part in the hierarchy, jump the bone
-    // dropdown to it (so you edit the part you clicked). Only on change, so the manual
-    // dropdown still works while the same part stays selected.
-    if (focusBone >= 0 && focusBone < nb && lastFocus[key] != focusBone) {
-        bone = focusBone; lastFocus[key] = focusBone;
-    }
-    if (focusBone < 0) lastFocus[key] = -1;   // reset when the Character itself is selected
+    std::vector<int>& sel = d.sel;
+    const ImGuiStyle& sty = ImGui::GetStyle();
+    const float fh = ImGui::GetFrameHeight();
+    const bool playMode = ed.isPlaying();
+    ImGuiIO& io = ImGui::GetIO();
+    GameObject* chGo = ch->gameObject ? ch->gameObject : go;
+    // When the user selects a different rig part (hierarchy or Scene view), the
+    // bone follows it, so clicking "R Upper Arm" edits that bone. Only on change,
+    // so the row list and the dropdown still work while the same part stays selected.
+    if (focusBone >= 0 && focusBone < nb && lastFocus[key] != focusBone) { bone = focusBone; lastFocus[key] = focusBone; d.curveRoot = false; }
+    if (focusBone < 0) lastFocus[key] = -1;
     if (clip.name.empty()) clip.name = UniqueClipName(ch, "MyAnim");
-
-    // ---- One-click built-in animation preview (live, in the Scene view) ----
-    static const struct { int id; const char* name; } kLiveAnims[] = {
-        {1, "Idle"},   {2, "Walk"},       {3, "Run"},     {5, "Jump"},
-        {6, "Crouch"}, {7, "Prone"},      {4, "Wave"},    {8, "Point"},
-        {9, "Clap"},   {10, "Thumbs Up"}, {11, "Salute"}, {12, "Wave Both"},
-        {13, "Cheer"}, {14, "Sad"},       {15, "Angry"},  {16, "Think"},
-        {17, "Crouch Walk"}, {18, "Fall"}, {19, "Hang"},
-    };
-    if (!ed.isPlaying()) {
-        ImGui::TextDisabled("Built-in animations - click one to watch it live in the Scene view:");
-        for (int i = 0; i < (int)(sizeof(kLiveAnims) / sizeof(kLiveAnims[0])); ++i) {
-            if (i % 4) ImGui::SameLine();
-            bool on = (g_livePrevCh == ch && g_livePrevClip.empty() && g_livePrevAnim == kLiveAnims[i].id);
-            if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.30f, 1.0f));
-            char bl[32]; std::snprintf(bl, sizeof(bl), "%s##lp%d", kLiveAnims[i].name, kLiveAnims[i].id);
-            if (ImGui::Button(bl, ImVec2(88, 0))) {
-                StartLivePreview(ed, ch);
-                g_livePrevAnim = kLiveAnims[i].id;
-            }
-            if (on) ImGui::PopStyleColor();
-        }
-        if (g_livePrevCh == ch) {
-            if (ImGui::Button("Stop Preview##lp")) StopLivePreview(ed);
-            else {
-                ImGui::SameLine(); ImGui::SetNextItemWidth(110);
-                ImGui::SliderFloat("Speed##lp", &g_livePrevSpeed, 0.25f, 2.0f);
-                ImGui::SameLine();
-                if (ImGui::SmallButton("Set as start animation##lp")) {
-                    g_livePrevKeepAnim = g_livePrevAnim; ed.dirty = true;
-                    const char* nm = "?";
-                    for (const auto& a : kLiveAnims) if (a.id == g_livePrevAnim) { nm = a.name; break; }
-                    ConsoleLog(std::string("Start animation set to ") + nm);
-                }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The animation this character starts with in Play mode\n(controllers switch idle/walk/run/jump automatically).");
-            }
-        }
-        ImGui::Separator();
-    }
-
-    if (!ch->separateParts) {
-        ImGui::TextWrapped("This character is one object — separate it into parts to pose and "
-                           "animate it (arms, legs, head move independently).");
-        if (ImGui::Button("Separate Into Parts##caSplit")) {
-            ch->separateParts = true;
-            ch->BuildParts();          // build the editable rig right now
-            ed.dirty = true;
-        }
-        ImGui::Separator();
-    }
-    // ---- Which clip to edit: one of the character's, a new one, or a copy of a
-    //      built-in animation to start from. ----
-    {
-        static const struct { int state; const char* label; const char* name; } kBake[] = {
-            {1, "Idle (from built-in)", "Idle"}, {2, "Walk (from built-in)", "Walk"},
-            {3, "Run (from built-in)", "Run"},   {5, "Jump (from built-in)", "Jump"},
-        };
-        ImGui::SetNextItemWidth(200);
-        if (ImGui::BeginCombo("Clip##caPick", clip.name.c_str())) {
-            auto load = [&](AnimClip c) {
-                PushAnimDraftUndo(ed, key, d);
-                clip = std::move(c);
-                t = 0.0f; playing = false;
-                pose = clip.keys.empty() ? std::vector<Vec3>(nb, Vec3{0, 0, 0}) : clip.keys.front().pose;
-                pose.resize(nb, Vec3{0, 0, 0});
-                d.playOnStart = !clip.name.empty() && ch->autoPlayClip == clip.name;
-                d.sel.clear();
-            };
-            if (ImGui::Selectable("New clip##caNew")) { AnimClip c; c.name = UniqueClipName(ch, "MyAnim"); load(c); }
-            for (const auto& b : kBake)
-                if (ImGui::Selectable(b.label)) load(BakeBuiltInClip(ch, b.state, UniqueClipName(ch, b.name)));
-            ImGui::Separator();
-            for (const std::string& n : ch->ClipNames())
-                if (const AnimClip* c = ch->FindClip(n))
-                    if (ImGui::Selectable(n.c_str(), n == clip.name)) load(*c);
-            ImGui::EndCombo();
-        }
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Edit one of this character's clips, start a new one, or start from a copy\n"
-                              "of a built-in animation (its pose sampled into keys you can tweak).");
-    }
-    char cn[48]; std::snprintf(cn, sizeof(cn), "%s", clip.name.c_str());
-    AnimDraft beforeRename = d;
-    if (ImGui::InputText("Clip Name##ca", cn, sizeof(cn))) {
-        std::string s(cn); for (char& c : s) if (c == ' ') c = '_'; clip.name = s; ed.dirty = true;
-    }
-    if (ImGui::IsItemActivated()) PushAnimDraftUndo(ed, key, beforeRename);
-    ImGui::SameLine(); ImGui::Checkbox("Loop##ca", &clip.loop);
-    // Clip-wide playback settings: easing between keys (a key's own easing, set on
-    // the lane below, overrides it for its span), loop length and speed.
-    {
-        int ip = (int)clip.interp;
-        ImGui::SetNextItemWidth(90);
-        if (ImGui::Combo("Easing##ca", &ip, "Linear\0Smooth\0Step\0Cubic\0")) {
-            PushAnimDraftUndo(ed, key, d); clip.interp = (AnimInterp)ip; ed.dirty = true;
-        }
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("How the clip moves between keys: at constant speed, eased, held until the next\n"
-                              "key, or along a curve through them. A key's own easing (select it below) overrides this.");
-        AnimDraft beforeSetting = d;   // undo checkpoint taken as a drag starts
-        ImGui::SameLine();
-        float len = clip.length;
-        ImGui::SetNextItemWidth(70);
-        if (ImGui::DragFloat("Length##ca", &len, 0.01f, 0.0f, 600.0f, "%.2fs")) { clip.length = len < 0.0f ? 0.0f : len; ed.dirty = true; }
-        if (ImGui::IsItemActivated()) PushAnimDraftUndo(ed, key, beforeSetting);
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Loop length (0 = loop at the last key). Room past the last key lets a\nloop ease back into its first key with no seam.");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(60);
-        if (ImGui::DragFloat("Speed##ca", &clip.speed, 0.01f, 0.1f, 8.0f, "x%.2f")) ed.dirty = true;
-        if (ImGui::IsItemActivated()) PushAnimDraftUndo(ed, key, beforeSetting);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Playback rate (2 = twice as fast). Play here runs at it too.");
-    }
-
-    float dur = clip.Duration();
-    if (ImGui::Button(playing ? "Pause##ca" : "Play##ca")) playing = !playing;
-    ImGui::SameLine(); if (ImGui::Button("Stop##ca")) { playing = false; t = 0.0f; }
-    ImGui::SameLine(); ImGui::Text("len %.2fs  keys %d", dur, (int)clip.keys.size());
-    if (playing && dur > 0.01f) {
-        t += ImGui::GetIO().DeltaTime * clip.speed;
-        if (clip.loop) t = std::fmod(t, dur); else if (t > dur) { t = dur; playing = false; }
-    }
-    ImGui::SliderFloat("Time##ca", &t, 0.0f, dur > 0.5f ? dur : 2.0f);
-
-    // While the window's transport plays, show the sampled pose; otherwise show
-    // the pose being authored. NEVER during Play mode — the forced preview pose
-    // would override the character's real animations every frame ("I pressed
-    // Play and nothing happens" with the Animation window open). The live
-    // built-in preview (buttons above) owns the pose while it runs.
-    if (!ed.isPlaying() && g_livePrevCh != ch && okay::editor::apreview::ActiveCharacter() != ch) {
-        g_animPreview = ch;
-        if (playing && !clip.keys.empty()) ch->PreviewPose(clip.Sample(t));
-        else ch->PreviewPose(pose);
-    } else if (ed.isPlaying() && g_animPreview == ch) {
-        StopAnimPreview();
-    }
-    if (ed.isPlaying())
-        ImGui::TextDisabled("(Play mode: the character plays its real animations - Stop to pose/author)");
-
-    ImGui::Separator();
-    // Pick a bone and rotate it (euler degrees). The rig updates live.
-    std::vector<const char*> names(nb);
-    for (int i = 0; i < nb; ++i) names[i] = Character::BoneName(i);
     if (bone < 0 || bone >= nb) bone = 0;
-    ImGui::SetNextItemWidth(160); ImGui::Combo("Bone##ca", &bone, names.data(), nb);
-    AnimDraft beforeNudge = d;   // undo checkpoint taken as a drag starts
-    ImGui::DragFloat3("Bone Rotation##ca", &pose[bone].x, 0.5f);
-    if (ImGui::IsItemActivated()) PushAnimDraftUndo(ed, key, beforeNudge);
-    ImGui::SameLine();
-    if (ImGui::SmallButton("0##careset")) { PushAnimDraftUndo(ed, key, d); pose[bone] = Vec3{0, 0, 0}; }
+    if (d.fps != 24 && d.fps != 30 && d.fps != 60) d.fps = 30;
+    if (d.onionN < 1) d.onionN = 1; else if (d.onionN > 5) d.onionN = 5;
+    sel.erase(std::remove_if(sel.begin(), sel.end(), [&](int i) { return i < 0 || i >= (int)clip.keys.size(); }), sel.end());
+    static const char* const kEaseLabels[] = {"Clip default", "Linear", "Smooth", "Step (hold)", "Ease in", "Ease out"};
 
-    // Key the authored pose at the playhead: replace a key at ~this time (keeping
-    // its own easing), else insert in time order. The key is then the selection.
+    // ---- The tools, as lambdas: the toolbar, the rows, the menus and the keys share them ----
+    auto isSel = [&](int i) { return std::find(sel.begin(), sel.end(), i) != sel.end(); };
+    auto snapT = [&](float tt) { return (d.snap && !io.KeyAlt) ? AnimClip::SnapToFrame(tt, d.fps) : tt; };
+    auto loadPose = [&](const std::vector<Vec3>& p) { pose = p; pose.resize(nb, Vec3{0, 0, 0}); playing = false; };
+    // Move the playhead and load the clip's pose (and root offset) there.
+    auto seek = [&](float tt) {
+        t = std::max(0.0f, tt); playing = false;
+        if (!clip.keys.empty()) { loadPose(clip.Sample(t)); d.root = clip.SampleRoot(t); }
+    };
+    // Key the authored pose at the playhead (a key already there keeps its easing).
     auto keyPoseNow = [&] {
         AnimKey k; k.time = t; k.pose = pose;
-        if (clip.hasRoot) k.root = clip.SampleRoot(t);   // keep the hips' height where the clip had it
-        int at = -1;
-        for (int i = 0; i < (int)clip.keys.size(); ++i)
-            if (std::fabs(clip.keys[i].time - t) < 1e-3f) { k.ease = clip.keys[i].ease; clip.keys[i] = k; at = i; break; }
-        if (at < 0) {
-            clip.keys.push_back(k);
-            std::sort(clip.keys.begin(), clip.keys.end(),
-                      [](const AnimKey& a, const AnimKey& b) { return a.time < b.time; });
-            for (int i = 0; i < (int)clip.keys.size(); ++i) if (std::fabs(clip.keys[i].time - t) < 1e-3f) at = i;
-        }
-        d.sel.assign(1, at);
+        k.root = clip.hasRoot ? d.root : Vec3{0, 0, 0};
+        sel.assign(1, clip.SetKey(std::move(k)));
         ed.dirty = true;
     };
-    if (ImGui::Button("Key Pose##ca")) { PushAnimDraftUndo(ed, key, d); keyPoseNow(); }
-    ImGui::SameLine();
-    if (ImGui::Button("Apply to Character##ca")) {
+    auto keyBoneNow = [&](int b) { sel.assign(1, clip.SetBoneKey(t, b, pose[b])); ed.dirty = true; };
+    auto keyRootNow = [&] { sel.assign(1, clip.SetRootKey(t, d.root)); ed.dirty = true; };
+    // After the selected keys' values change, show the one under the playhead.
+    auto refreshPose = [&] {
+        for (int i : sel) if (std::fabs(clip.keys[i].time - t) < 1e-3f) { loadPose(clip.keys[i].pose); d.root = clip.keys[i].root; break; }
+    };
+    auto selectAll = [&] { sel.clear(); for (int i = 0; i < (int)clip.keys.size(); ++i) sel.push_back(i); };
+    auto deleteSel = [&] {
+        if (sel.empty()) return;
         PushAnimDraftUndo(ed, key, d);
-        // Apply only adds/replaces the clip: the character keeps idling, walking and
-        // jumping. It plays on start only when asked, and then overrides movement.
+        for (int i = (int)sel.size() - 1; i >= 0; --i) clip.keys.erase(clip.keys.begin() + sel[i]);   // ascending: erase from the back
+        sel.clear(); ed.dirty = true;
+    };
+    auto moveSel = [&](float dt) { if (!sel.empty()) { sel = clip.MoveKeys(sel, dt); ed.dirty = true; } };
+    auto nudge = [&](float dt) { if (!sel.empty()) { PushAnimDraftUndo(ed, key, d); moveSel(dt); } };
+    auto setEase = [&](AnimKeyEase e) {
+        if (sel.empty()) return;
+        PushAnimDraftUndo(ed, key, d);
+        for (int i : sel) clip.keys[i].ease = e;
+        ed.dirty = true;
+    };
+    auto clearBoneAtSel = [&](int b) {
+        if (sel.empty() || b < 0) return;
+        PushAnimDraftUndo(ed, key, d);
+        for (int i : sel) clip.ClearBoneAtKey(i, b);
+        refreshPose(); ed.dirty = true;
+    };
+    auto copyPose = [&] { g_animPoseClipboard = pose; ConsoleLog("Copied pose"); };
+    auto pastePose = [&](bool mirrored) {   // the copied pose becomes the authored one, keyed at the playhead
+        if (g_animPoseClipboard.empty()) return;
+        PushAnimDraftUndo(ed, key, d);
+        std::vector<Vec3> p = g_animPoseClipboard;
+        if (mirrored) Character::MirrorPose(p);
+        loadPose(p); keyPoseNow();
+    };
+    auto mirrorPose = [&] {
+        PushAnimDraftUndo(ed, key, d);
+        Character::MirrorPose(pose);
+        if (d.record) keyPoseNow();
+    };
+    auto mirrorClip = [&] {
+        PushAnimDraftUndo(ed, key, d);
+        clip.Mirror(&Character::MirrorPose);
+        Character::MirrorPose(pose);   // what's shown flips with it
+        ed.dirty = true;
+    };
+    static float s_gap = 0.1f;   // Insert / Remove time at the playhead
+    auto insertTime = [&] { PushAnimDraftUndo(ed, key, d); clip.InsertTime(t, s_gap); ed.dirty = true; };
+    auto removeTime = [&] { PushAnimDraftUndo(ed, key, d); clip.RemoveTime(t, s_gap); sel.clear(); ed.dirty = true; };
+    auto resetBone = [&](int b) {
+        PushAnimDraftUndo(ed, key, d);
+        pose[b] = Vec3{0, 0, 0};
+        if (d.record) keyBoneNow(b);
+    };
+    auto resetPose = [&] {
+        PushAnimDraftUndo(ed, key, d);
+        pose.assign(nb, Vec3{0, 0, 0}); d.root = Vec3{0, 0, 0};
+        if (d.record) keyPoseNow();
+    };
+    auto addEventAt = [&](float at) {
+        PushAnimDraftUndo(ed, key, d);
+        char nm[32]; std::snprintf(nm, sizeof(nm), "event%d", (int)clip.events.size() + 1);
+        clip.AddEvent(at, nm); ed.dirty = true;
+        for (int i = 0; i < (int)clip.events.size(); ++i)
+            if (clip.events[i].name == nm && std::fabs(clip.events[i].time - at) < 1e-4f) {
+                d.evEdit = i; std::snprintf(d.evName, sizeof(d.evName), "%s", nm);
+            }
+    };
+    auto gotoPrevKey = [&] { const int p = clip.PrevKey(t); seek(p >= 0 ? clip.keys[p].time : 0.0f); };
+    auto gotoNextKey = [&] { const int n = clip.NextKey(t); seek(n >= 0 ? clip.keys[n].time : clip.Duration()); };
+    // Replace the draft with another clip (one of the character's, a new one, a bake, an import).
+    auto loadClip = [&](AnimClip c) {
+        PushAnimDraftUndo(ed, key, d);
+        clip = std::move(c);
+        t = 0.0f; playing = false;
+        pose = clip.keys.empty() ? std::vector<Vec3>(nb, Vec3{0, 0, 0}) : clip.keys.front().pose;
+        pose.resize(nb, Vec3{0, 0, 0});
+        d.root = clip.keys.empty() ? Vec3{0, 0, 0} : clip.keys.front().root;
+        d.playOnStart = !clip.name.empty() && ch->autoPlayClip == clip.name;
+        sel.clear(); d.viewLen = 0.0f;
+    };
+    // Apply only adds/replaces the clip: the character keeps idling, walking and
+    // jumping. It plays on start only when asked, and then overrides movement.
+    auto applyClip = [&] {
+        PushAnimDraftUndo(ed, key, d);
         clip.overrideMovement = d.playOnStart;
         ch->AddClip(clip);
         if (d.playOnStart) ch->autoPlayClip = clip.name;
@@ -19295,12 +19459,10 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
         }
         ch->StopPreview(); g_animPreview = nullptr;
         ed.dirty = true;
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add (or replace) this clip on the Character, saved with the scene.\n"
-                                                  "Bind it to a movement state below to use it in Play.");
-    ImGui::SameLine();
-    if (ImGui::Button("Save .okayanim...##ca")) {
-        ch->AddClip(clip);   // make sure the edited clip is included
+    };
+    // Write every clip of the character to a .okayanim file (the edited one included).
+    auto exportClips = [&] {
+        ch->AddClip(clip);
         const char* filt[] = {"*.okayanim"};
         std::string def = ch->clipsFile.empty() ? (clip.name + ".okayanim") : ch->ResolvedClipsFile();
         if (const char* p = tinyfd_saveFileDialog("Save animation clips", def.c_str(), 1, filt, "OkaySpace animation")) {
@@ -19319,391 +19481,1134 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
             }
             else ConsoleLog("Save clips failed: " + werr, 2);
         }
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write all the Character's clips to a .okayanim text file you can re-load or ship.");
-    ImGui::Checkbox("Play on start (overrides movement)##ca", &d.playOnStart);
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Off (default): Apply only adds the clip; bind it to a state to use it.\n"
-                          "On: the clip plays when Play starts and keeps playing while the\n"
-                          "character moves, until a script stops it.");
-    if (!ch->clipsFile.empty()) {
-        ImGui::SameLine();
-        bool linked = ch->clipsLinked;
-        if (ImGui::Checkbox("Linked to file##ca", &linked)) { ed.PushUndo(); ch->clipsLinked = linked; ed.dirty = true; }
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("%s\nOff: clips saved with the scene win; the file only adds missing ones.\n"
-                              "On: the file is the source - Play loads it over same-named clips,\n"
-                              "and Apply re-saves it.", ch->clipsFile.c_str());
-    }
-
-    // ---- Bind clips to movement states: the controller's idle/walk/run/jump/fall/
-    //      crouch plays YOUR clip instead of the built-in one. ----
-    {
-        ImGui::TextDisabled("Use this clip for (click again to unbind):");
-        struct Slot { const char* label; std::string* field; };
-        Slot slots[] = {{"Idle", &ch->clipIdle}, {"Walk", &ch->clipWalk}, {"Run", &ch->clipRun},
-                        {"Jump", &ch->clipJump}, {"Fall", &ch->clipFall}, {"Crouch", &ch->clipCrouch},
-                        {"Dive", &ch->clipDive}};
-        for (int i = 0; i < 7; ++i) {
-            if (i) ImGui::SameLine();
-            const bool on = !clip.name.empty() && *slots[i].field == clip.name;
-            if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.30f, 1.0f));
-            char bl[32]; std::snprintf(bl, sizeof(bl), "%s##cabind%d", slots[i].label, i);
-            if (ImGui::Button(bl) && !clip.name.empty()) {
-                ed.PushUndo();
-                if (on) slots[i].field->clear();
-                else { if (!ch->HasClip(clip.name)) ch->AddClip(clip); *slots[i].field = clip.name; }
-                ed.dirty = true;
-            }
-            if (on) ImGui::PopStyleColor();
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("%s: %s", slots[i].label, slots[i].field->empty() ? "built-in" : slots[i].field->c_str());
+    };
+    // Add the clips of a .okayanim file to the character (a name already in use
+    // gets a number, nothing is overwritten) and open the first one.
+    auto importClips = [&] {
+        const char* filt[] = {"*.okayanim"};
+        const char* p = tinyfd_openFileDialog("Import animation clips", "", 1, filt, "OkaySpace animation", 0);
+        if (!p || !*p) return;
+        std::ifstream fin(p);
+        std::stringstream ss; if (fin) ss << fin.rdbuf();
+        std::string err;
+        std::vector<AnimClip> got = AnimClip::ParseAll(ss.str(), &Character::BoneIndex, nb, &err);
+        if (!err.empty()) { ConsoleLog("Import failed: " + err, 2); return; }
+        if (got.empty()) { ConsoleLog("No clips in " + std::string(p), 1); return; }
+        ed.PushUndo();
+        for (AnimClip& c : got) {
+            c.name = UniqueClipName(ch, c.name.empty() ? std::string("clip") : c.name);
+            ch->AddClip(c);
         }
-    }
-
-    ImGui::Separator();
-    // ---- Key lane: the clip's keys as diamonds on a ruler. Click one to select
-    //      it and load its pose, Shift+click adds, drag moves the selection, a
-    //      drag across empty space box-selects, and the ruler scrubs. The tools
-    //      below (and the lane's right-click menu) act on the selection. ----
-    static const char* const kEaseLabels[] = {"Clip default", "Linear", "Smooth", "Step (hold)", "Ease in", "Ease out"};
-    constexpr float kAnimFrame = 1.0f / 30.0f;   // one frame, for the arrow-key nudge
-    std::vector<int>& sel = d.sel;
-    sel.erase(std::remove_if(sel.begin(), sel.end(), [&](int i) { return i < 0 || i >= (int)clip.keys.size(); }), sel.end());
-    auto isSel = [&](int i) { return std::find(sel.begin(), sel.end(), i) != sel.end(); };
-    auto loadPose = [&](const std::vector<Vec3>& p) { pose = p; pose.resize(nb, Vec3{0, 0, 0}); playing = false; };
-    // After the selected keys' values change, show the one under the playhead.
-    auto refreshPose = [&] {
-        for (int i : sel) if (std::fabs(clip.keys[i].time - t) < 1e-3f) { loadPose(clip.keys[i].pose); break; }
-    };
-    auto selectAll = [&] { sel.clear(); for (int i = 0; i < (int)clip.keys.size(); ++i) sel.push_back(i); };
-    auto deleteSel = [&] {
-        if (sel.empty()) return;
-        PushAnimDraftUndo(ed, key, d);
-        for (int i = (int)sel.size() - 1; i >= 0; --i) clip.keys.erase(clip.keys.begin() + sel[i]);   // ascending: erase from the back
-        sel.clear(); ed.dirty = true;
-    };
-    auto moveSel = [&](float dt) { if (!sel.empty()) { sel = clip.MoveKeys(sel, dt); ed.dirty = true; } };
-    auto nudge = [&](float dt) { if (!sel.empty()) { PushAnimDraftUndo(ed, key, d); moveSel(dt); } };
-    auto setEase = [&](AnimKeyEase e) {
-        if (sel.empty()) return;
-        PushAnimDraftUndo(ed, key, d);
-        for (int i : sel) clip.keys[i].ease = e;
         ed.dirty = true;
+        ConsoleLog("Imported " + std::to_string(got.size()) + " clip" + (got.size() == 1 ? "" : "s") + " from " +
+                   std::filesystem::path(p).filename().string());
+        loadClip(got.front());
     };
-    auto copyPose = [&] { g_animPoseClipboard = pose; ConsoleLog("Copied pose"); };
-    auto pastePose = [&](bool mirrored) {   // the copied pose becomes the authored one, keyed at the playhead
-        if (g_animPoseClipboard.empty()) return;
-        PushAnimDraftUndo(ed, key, d);
-        std::vector<Vec3> p = g_animPoseClipboard;
-        if (mirrored) Character::MirrorPose(p);
-        loadPose(p); keyPoseNow();
-    };
-    auto mirrorPose = [&] { PushAnimDraftUndo(ed, key, d); Character::MirrorPose(pose); };
-    auto mirrorClip = [&] {
-        PushAnimDraftUndo(ed, key, d);
-        clip.Mirror(&Character::MirrorPose);
-        Character::MirrorPose(pose);   // what's shown flips with it
-        ed.dirty = true;
-    };
-    static float s_gap = 0.1f;   // Insert / Remove time at the playhead
-    auto insertTime = [&] { PushAnimDraftUndo(ed, key, d); clip.InsertTime(t, s_gap); ed.dirty = true; };
-    auto removeTime = [&] { PushAnimDraftUndo(ed, key, d); clip.RemoveTime(t, s_gap); sel.clear(); ed.dirty = true; };
-    int menuAt = -1;   // right-click: a key's index, or -2 for the lane itself
-    {
-        const float sliderMax = dur > 0.5f ? dur : 2.0f;   // the Time slider's range...
-        const float viewLen = sliderMax * 1.25f;            // ...plus room to key past the end
-        const float rulerH = ImGui::GetTextLineHeight() + 6.0f, keysH = 24.0f, pad = 8.0f;
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        const ImVec2 o = ImGui::GetCursorScreenPos();
-        const float W = std::max(ImGui::GetContentRegionAvail().x, 120.0f);
-        const float rulerBot = o.y + rulerH, laneBot = rulerBot + keysH;
-        auto tToX = [&](float tt) { return o.x + pad + tt / viewLen * (W - pad * 2.0f); };
-        auto xToT = [&](float x) { return std::max(0.0f, std::min(viewLen, (x - o.x - pad) / (W - pad * 2.0f) * viewLen)); };
-        dl->AddRectFilled(o, ImVec2(o.x + W, laneBot), ImGui::GetColorU32(ImGuiCol_FrameBg), 3.0f);
-        dl->AddLine(ImVec2(o.x, rulerBot), ImVec2(o.x + W, rulerBot), ImGui::GetColorU32(ImGuiCol_Separator));
-        float step = 0.1f;
-        for (float cand : {0.05f, 0.1f, 0.25f, 0.5f, 1.0f, 2.0f, 5.0f, 10.0f}) { step = cand; if (cand * (W - pad * 2.0f) / viewLen >= 50.0f) break; }
-        for (float tt = 0.0f; tt <= viewLen + 1e-4f; tt += step) {
-            const float x = tToX(tt);
-            dl->AddLine(ImVec2(x, rulerBot - 4.0f), ImVec2(x, laneBot), ImGui::GetColorU32(ImGuiCol_Separator, 0.5f));
-            char lb[16]; std::snprintf(lb, sizeof(lb), step < 1.0f ? "%.2f" : "%.0fs", tt);
-            dl->AddText(ImVec2(x + 2.0f, o.y + 1.0f), ImGui::GetColorU32(ImGuiCol_TextDisabled), lb);
-        }
-        if (dur > 0.0f) dl->AddRectFilled(ImVec2(tToX(dur), rulerBot), ImVec2(o.x + W, laneBot), IM_COL32(0, 0, 0, 40));   // past the end
-        for (const AnimEvent& e : clip.events) {   // event markers (edit them in the list below)
-            const float x = tToX(e.time);
-            dl->AddLine(ImVec2(x, rulerBot), ImVec2(x, laneBot), IM_COL32(240, 200, 90, 200));
-            dl->AddTriangleFilled(ImVec2(x, rulerBot), ImVec2(x + 6.0f, rulerBot + 3.0f), ImVec2(x, rulerBot + 6.0f), IM_COL32(240, 200, 90, 255));
-        }
-        // Ruler: press or drag to scrub; the clip's pose at that time is loaded.
-        ImGui::SetCursorScreenPos(o);
-        ImGui::InvisibleButton("##caruler", ImVec2(W, rulerH));
-        if (ImGui::IsItemActivated()) PushAnimDraftUndo(ed, key, d);
-        if (ImGui::IsItemActive()) {
-            t = xToT(ImGui::GetIO().MousePos.x);
-            if (!clip.keys.empty()) loadPose(clip.Sample(t));
-            playing = false;
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click or drag to scrub (loads the pose at that time)");
 
-        // Keys, submitted before the lane's own button so they take the click.
-        const float cy = rulerBot + keysH * 0.5f, r = 6.0f;
-        const ImU32 keyCol = IM_COL32(120, 170, 255, 255);
-        bool commitDrag = false;
-        for (int i = 0; i < (int)clip.keys.size(); ++i) {
-            const AnimKey& k = clip.keys[i];
-            const bool selected = isSel(i);
-            const float x = tToX(k.time + (d.dragKeys && selected ? d.dragDelta : 0.0f));
-            ImGui::SetCursorScreenPos(ImVec2(x - r - 2.0f, cy - r - 2.0f));
-            ImGui::PushID(i);
-            ImGui::InvisibleButton("##key", ImVec2(r * 2.0f + 4.0f, r * 2.0f + 4.0f));
-            const bool hov = ImGui::IsItemHovered();
-            if (ImGui::IsItemActivated()) {
-                PushAnimDraftUndo(ed, key, d);   // covers the pose load and a drag that follows
-                if (ImGui::GetIO().KeyShift) {
-                    if (selected) sel.erase(std::find(sel.begin(), sel.end(), i));
-                    else { sel.push_back(i); std::sort(sel.begin(), sel.end()); }
-                } else if (!selected) sel.assign(1, i);
-                if (isSel(i)) {
-                    d.dragKeys = true; d.dragFrom = k.time; d.dragDelta = 0.0f;
-                    t = k.time; loadPose(k.pose);
-                }
-            }
-            if (ImGui::IsItemActive() && d.dragKeys) {
-                float delta = xToT(ImGui::GetIO().MousePos.x) - d.dragFrom;
-                float first = 1e30f; for (int s : sel) first = std::min(first, clip.keys[s].time);
-                if (first + delta < 0.0f) delta = -first;
-                d.dragDelta = delta;
-                if (std::fabs(delta) > 1e-4f) ImGui::SetTooltip("%+.2fs  ->  %.2fs", delta, d.dragFrom + delta);
-            }
-            if (ImGui::IsItemDeactivated() && d.dragKeys) {
-                if (std::fabs(d.dragDelta) > 1e-4f) commitDrag = true;   // applied after the loop: it reorders the keys
-                else { if (!ImGui::GetIO().KeyShift) sel.assign(1, i); d.dragKeys = false; }
-            }
-            if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) { if (!selected) sel.assign(1, i); menuAt = i; }
-            if (hov && !d.dragKeys)
-                ImGui::SetTooltip("Key at %.2fs  -  %s\nClick to select it and load its pose, Shift+click adds, drag to move\nRight-click for options",
-                                  k.time, kEaseLabels[(int)k.ease]);
-            ImGui::PopID();
-            const ImVec2 dm[4] = {{x, cy - r}, {x + r, cy}, {x, cy + r}, {x - r, cy}};
-            dl->AddConvexPolyFilled(dm, 4, (hov || selected) ? IM_COL32(255, 255, 255, 255) : keyCol);
-            if (selected) dl->AddPolyline(dm, 4, keyCol, ImDrawFlags_Closed, 2.0f);
-            else if (std::fabs(k.time - t) < 1e-3f) dl->AddPolyline(dm, 4, IM_COL32(255, 255, 255, 230), ImDrawFlags_Closed, 1.5f);
-            if (k.ease != AnimKeyEase::Clip) dl->AddCircleFilled(ImVec2(x, cy + r + 3.5f), 2.0f, IM_COL32(240, 200, 90, 255));   // has its own easing
+    // ---- The Scene view's rotate gizmo on a rig part: the part was turned since
+    //      the preview posed it last frame, so pull the turn into the authored pose
+    //      (and key the bone while recording). ----
+    if (!playMode && ch->PartsBuilt() && !d.previewed.empty() && d.previewFrame == ImGui::GetFrameCount() - 1 &&
+        g_animPreview == ch && !playing) {
+        bool moved = false;
+        for (int b = 0; b < nb && b < (int)d.previewed.size(); ++b) {
+            GameObject* part = ch->Part(b);
+            if (!part || !part->transform) continue;
+            const Quat shown = Quat::Euler(d.previewed[b]);
+            const Quat now = part->transform->localRotation;
+            if (std::fabs(Quat::Dot(shown, now)) > 0.99999f) continue;
+            if (!d.gizmoUndo) { PushAnimDraftUndo(ed, key, d); d.gizmoUndo = true; }
+            // Keep the angles close to the ones authored (ToEuler picks any one turn).
+            const Vec3 e = now.ToEuler(), ref = pose[b];
+            auto sameTurn = [](float v, float r) { return v + 360.0f * std::round((r - v) / 360.0f); };
+            pose[b] = Vec3{sameTurn(e.x, ref.x), sameTurn(e.y, ref.y), sameTurn(e.z, ref.z)};
+            bone = b; d.curveRoot = false;
+            if (d.record) { sel.assign(1, clip.SetBoneKey(t, b, pose[b])); ed.dirty = true; }
+            moved = true;
         }
-        if (commitDrag) {
-            moveSel(d.dragDelta);
-            t = d.dragFrom + d.dragDelta;
-            d.dragKeys = false; d.dragDelta = 0.0f;
-        }
-        // The lane itself: press clears the selection (Shift keeps it), a drag box-selects.
-        ImGui::SetCursorScreenPos(ImVec2(o.x, rulerBot));
-        ImGui::InvisibleButton("##calane", ImVec2(W, keysH));
-        if (ImGui::IsItemActivated()) {
-            if (!ImGui::GetIO().KeyShift) sel.clear();
-            d.boxFrom = ImGui::GetIO().MousePos; d.boxing = false;
-        }
-        if (ImGui::IsItemActive() && std::fabs(ImGui::GetIO().MousePos.x - d.boxFrom.x) > 4.0f) d.boxing = true;
-        if (ImGui::IsItemDeactivated() && d.boxing) {
-            const float mx = ImGui::GetIO().MousePos.x;
-            const float t0 = xToT(std::min(d.boxFrom.x, mx)), t1 = xToT(std::max(d.boxFrom.x, mx));
-            for (int i = 0; i < (int)clip.keys.size(); ++i)
-                if (clip.keys[i].time >= t0 - 1e-3f && clip.keys[i].time <= t1 + 1e-3f && !isSel(i)) sel.push_back(i);
-            std::sort(sel.begin(), sel.end());
-            d.boxing = false;
-        }
-        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) menuAt = -2;
-        if (ImGui::IsItemHovered() && !d.boxing)
-            ImGui::SetTooltip("Drag across keys to box-select (Shift adds), click empty space to clear\n"
-                              "Del deletes, arrows nudge a frame (Shift: ten), Ctrl+A selects all\nRight-click for options");
-        if (d.boxing && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-            const float x0 = std::min(d.boxFrom.x, ImGui::GetIO().MousePos.x), x1 = std::max(d.boxFrom.x, ImGui::GetIO().MousePos.x);
-            dl->AddRectFilled(ImVec2(x0, rulerBot), ImVec2(x1, laneBot), IM_COL32(120, 160, 255, 40));
-            dl->AddRect(ImVec2(x0, rulerBot), ImVec2(x1, laneBot), IM_COL32(120, 160, 255, 200));
-        }
-        // Playhead.
-        if (const float x = tToX(t); x <= o.x + W) {
-            dl->AddLine(ImVec2(x, o.y), ImVec2(x, laneBot), IM_COL32(255, 90, 90, 255), 1.5f);
-            dl->AddTriangleFilled(ImVec2(x - 5.0f, o.y), ImVec2(x + 5.0f, o.y), ImVec2(x, o.y + 6.0f), IM_COL32(255, 90, 90, 255));
-        }
-        ImGui::SetCursorScreenPos(ImVec2(o.x, laneBot + ImGui::GetStyle().ItemSpacing.y));
+        if (moved) playing = false;
     }
-    if (clip.keys.empty())
-        ImGui::TextDisabled("Pose the bones, set Time, press Key Pose. Repeat, then Apply.");
+    if (!io.MouseDown[ImGuiMouseButton_Left]) d.gizmoUndo = false;
 
-    // Pose and clip tools.
-    if (ImGui::Button("Copy Pose##ca")) copyPose();
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Copy the pose being authored (Ctrl+C). Paste it on any character.");
+    // ---- Playback ----
+    float dur = clip.Duration();
+    if (playing && dur > 0.01f) {
+        t += io.DeltaTime * clip.speed;
+        if (clip.loop) t = std::fmod(t, dur); else if (t > dur) { t = dur; playing = false; }
+    }
+    // While the window's transport plays, show the sampled pose; otherwise show
+    // the pose being authored. NEVER during Play mode — the forced preview pose
+    // would override the character's real animations every frame ("I pressed
+    // Play and nothing happens" with the Animation window open). The live
+    // built-in preview owns the pose while it runs.
+    const bool ownsPreview = !playMode && g_livePrevCh != ch && okay::editor::apreview::ActiveCharacter() != ch;
+    if (ownsPreview) {
+        g_animPreview = ch;
+        const bool sampled = playing && !clip.keys.empty();
+        std::vector<Vec3> shown = sampled ? clip.Sample(t) : pose;
+        shown.resize(nb, Vec3{0, 0, 0});
+        const Vec3 off = sampled ? clip.SampleRoot(t) : d.root;
+        ch->PreviewPose(shown, off * ch->height);
+        d.previewed = std::move(shown); d.previewFrame = ImGui::GetFrameCount();
+    } else {
+        d.previewed.clear();
+        if (playMode && g_animPreview == ch) StopAnimPreview();
+    }
+    // Onion skin: the rig's bones at the keys before and after the playhead, as
+    // faded lines in the Scene view (earlier keys warm, later ones cool, fading
+    // with distance). Joint positions come from the rig posed by each key.
+    if (d.onion && ownsPreview && !clip.keys.empty() && chGo && chGo->transform) {
+        const std::vector<Character::Bone> sk = ch->Skeleton();
+        const float h = ch->height;
+        auto pushKey = [&](int ki, ImU32 col) {
+            const AnimKey& k = clip.keys[ki];
+            const Vec3 off = clip.hasRoot ? k.root * h : Vec3{0, 0, 0};
+            const Mat4 M = chGo->transform->LocalToWorldMatrix() * Mat4::Translate(off) *
+                           Mat4::Rotate(Quat::Euler(0.0f, 180.0f, 0.0f)) * Mat4::Scale(Vec3{h, h, h});
+            const std::vector<Vec3> j = ch->PosedJoints(k.pose);
+            for (int b = 0; b < (int)j.size() && b < (int)sk.size(); ++b)
+                if (sk[b].parent >= 0) g_animSceneLines.push_back({M.MultiplyPoint(j[sk[b].parent]), M.MultiplyPoint(j[b]), col, 1.5f});
+            // The head joint has no child: mark it with a small diamond.
+            if ((int)j.size() > HumanoidMotion::B_HEAD) {
+                const Vec3 hd = j[HumanoidMotion::B_HEAD];
+                const Vec3 c[4] = {hd + Vec3{0, 0.16f, 0}, hd + Vec3{0.08f, 0.08f, 0}, hd + Vec3{0, 0, 0}, hd + Vec3{-0.08f, 0.08f, 0}};
+                for (int q = 0; q < 4; ++q) g_animSceneLines.push_back({M.MultiplyPoint(c[q]), M.MultiplyPoint(c[(q + 1) % 4]), col, 1.0f});
+            }
+        };
+        int p = clip.PrevKey(t), n = clip.NextKey(t);
+        for (int step = 1; step <= d.onionN; ++step) {
+            const int a = 210 - (step - 1) * 55;
+            if (p >= 0) { pushKey(p, IM_COL32(255, 150, 60, a)); p = p > 0 ? p - 1 : -1; }
+            if (n >= 0) { pushKey(n, IM_COL32(80, 170, 255, a)); n = n + 1 < (int)clip.keys.size() ? n + 1 : -1; }
+        }
+    }
+
+    // ---- Toolbar: record, transport, loop, time, frames, keying, views ----
+    ImGui::BeginDisabled(playMode);
+    if (AnimGlyphButton("##carec", 0, d.record ? "Recording: changing a bone (the fields on the right, or the rotate gizmo\non a rig part in the Scene view) keys it at the playhead. Click to stop."
+                                              : "Record: changes to a bone are keyed at the playhead automatically", d.record, IM_COL32(200, 50, 50, 255)))
+        d.record = !d.record;
+    ImGui::SameLine(0, sty.ItemSpacing.x * 1.5f);
+    {
+        const int tr = AnimTransport(playing);
+        if (tr == 0) seek(0.0f);
+        else if (tr == 1) gotoPrevKey();
+        else if (tr == 2) playing = !playing;
+        else if (tr == 3) gotoNextKey();
+        else if (tr == 4) seek(dur);
+    }
     ImGui::SameLine();
-    ImGui::BeginDisabled(g_animPoseClipboard.empty());
-    if (ImGui::Button("Paste Pose##ca")) pastePose(false);
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Key the copied pose at the playhead (Ctrl+V).");
+    if (AnimGlyphButton("##caloop", 13, clip.loop ? "Looping (click: play once)" : "Plays once (click: loop)", clip.loop)) {
+        PushAnimDraftUndo(ed, key, d); clip.loop = !clip.loop; ed.dirty = true;
+    }
+    ImGui::SameLine(0, sty.ItemSpacing.x * 1.5f);
+    ImGui::SetNextItemWidth(fh * 2.8f);
+    {
+        float tt = t;
+        if (ImGui::DragFloat("##catime", &tt, 0.01f, 0.0f, 600.0f, "%.2fs")) seek(snapT(tt));
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Playhead: %.3fs  =  frame %d at %d fps\nDrag, or scrub the ruler", t, (int)std::lround(t * d.fps), d.fps);
+    }
     ImGui::SameLine();
-    if (ImGui::Button("Paste Mirrored##ca")) pastePose(true);
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Key the copied pose flipped left<->right at the playhead:\nthe second half of a walk cycle from the first.");
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("f%d", (int)std::lround(t * d.fps));
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The playhead's frame at %d fps", d.fps);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(fh * 2.8f);
+    {
+        int fi = d.fps == 24 ? 0 : d.fps == 60 ? 2 : 1;
+        if (ImGui::Combo("##cafps", &fi, "24 fps\0" "30 fps\0" "60 fps\0")) d.fps = fi == 0 ? 24 : fi == 2 ? 60 : 30;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Frame rate the ruler, the frame counter and snapping use\n(the clip itself keeps times in seconds)");
+    }
+    ImGui::SameLine();
+    ImGui::Checkbox("Snap##casnap", &d.snap);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap the playhead and moved keys to frames (hold Alt for free time)");
+    ImGui::SameLine(0, sty.ItemSpacing.x * 1.5f);
+    if (AnimGlyphButton("##cakey", 6, "Key the whole pose at the playhead (K)", false)) { PushAnimDraftUndo(ed, key, d); keyPoseNow(); }
+    ImGui::SameLine();
+    if (AnimGlyphButton("##caevt", 8, "Add an event at the playhead (E)\nThe character fires it as the clip plays past", false)) addEventAt(t);
     ImGui::EndDisabled();
+    ImGui::SameLine(0, sty.ItemSpacing.x * 1.5f);
+    if (AnimGlyphButton("##cacurves", d.curves ? 16 : 9, d.curves ? "Back to the key rows (dope sheet)"
+                                                                   : "Curve editor: the picked bone's x / y / z angles over time, keys draggable", d.curves))
+        d.curves = !d.curves;
     ImGui::SameLine();
-    if (ImGui::Button("Mirror Pose##ca")) mirrorPose();
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Flip the pose being authored left<->right (Key Pose keeps it).");
-    ImGui::SameLine(0, 16);
-    if (ImGui::Button("Mirror Clip##ca")) mirrorClip();
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Flip every key left<->right: a right-handed clip becomes its left-handed twin.");
+    if (AnimGlyphButton("##caonion", 14, d.onion ? "Onion skin on: the rig at the keys before (orange) and after (blue) the playhead\nshows in the Scene view. Click to hide."
+                                                 : "Onion skin: draw the rig at the keys before and after the playhead in the Scene view", d.onion))
+        d.onion = !d.onion;
+    if (d.onion) {
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(fh * 1.7f);
+        ImGui::DragInt("##caonionn", &d.onionN, 0.05f, 1, 5, "%d");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keys shown on each side of the playhead");
+    }
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(60);
-    ImGui::DragFloat("##cagap", &s_gap, 0.01f, 0.01f, 10.0f, "%.2fs");
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("How much time Insert opens and Remove closes at the playhead");
+    if (AnimGlyphButton("##cafit", 15, "Fit the whole clip in view (F)\nWheel zooms the timeline, middle-drag pans", false)) d.viewLen = 0.0f;
     ImGui::SameLine();
-    if (ImGui::Button("Insert##cagap")) insertTime();
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open a gap at the playhead: keys and events from here on move later by that much.");
-    ImGui::SameLine();
-    if (ImGui::Button("Remove##cagap")) removeTime();
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close a gap at the playhead: keys and events inside it go, the rest move earlier.");
-
-    // The selection: its time and easing, Adjust (retime / amplify / offset), delete.
-    if (!sel.empty()) {
-        const int n = (int)sel.size();
-        ImGui::Text("%d key%s selected:", n, n == 1 ? "" : "s");
-        ImGui::SameLine();
-        AnimDraft beforeTime = d;
-        float kt = clip.keys[sel.front()].time;
-        ImGui::SetNextItemWidth(70);
-        if (ImGui::DragFloat("Time##cakt", &kt, 0.01f, 0.0f, 600.0f, "%.2fs")) moveSel(kt - clip.keys[sel.front()].time);
-        if (ImGui::IsItemActivated()) PushAnimDraftUndo(ed, key, beforeTime);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Time of the first selected key; the others keep their distance from it.\nA moved key replaces any key it lands on.");
-        ImGui::SameLine();
-        const int e0 = (int)clip.keys[sel.front()].ease;
-        bool mixed = false;
-        for (int i : sel) if ((int)clip.keys[i].ease != e0) mixed = true;
-        ImGui::SetNextItemWidth(110);
-        if (ImGui::BeginCombo("Ease##cake", mixed ? "Mixed" : kEaseLabels[e0])) {
-            for (int e = 0; e < 6; ++e)
-                if (ImGui::Selectable(kEaseLabels[e], !mixed && e == e0)) setEase((AnimKeyEase)e);
-            ImGui::EndCombo();
-        }
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("How the clip leaves the selected key(s) for the next one: hold the pose (Step),\n"
-                              "or ease that one move in or out. Clip default follows the Easing above.");
-        ImGui::SameLine();
-        if (ImGui::Button("Adjust...##ca")) ImGui::OpenPopup("##caadjust");
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Retime, amplify or offset the selected keys");
-        ImGui::SameLine();
-        if (ImGui::Button("Delete##casel")) deleteSel();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Delete the selected keys (Del)");
-        if (ImGui::BeginPopup("##caadjust")) {
-            static float s_retime = 1.0f, s_amp = 1.2f;
-            static Vec3 s_off{0, 0, 0};
-            static bool s_allBones = false;
-            const int target = s_allBones ? -1 : bone;
-            ImGui::TextDisabled("%d selected key%s", n, n == 1 ? "" : "s");
-            ImGui::SetNextItemWidth(70);
-            ImGui::DragFloat("##caretime", &s_retime, 0.01f, 0.1f, 10.0f, "x%.2f");
-            ImGui::SameLine();
-            if (ImGui::Button("Retime about playhead", ImVec2(170, 0))) {
-                PushAnimDraftUndo(ed, key, d);
-                sel = clip.ScaleKeyTimes(sel, t, s_retime); ed.dirty = true;
+    if (AnimGlyphButton("##caprevw", 7, d.showPreview ? "Hide the preview pane" : "Show a preview pane of the character (drag to orbit)", d.showPreview))
+        d.showPreview = !d.showPreview;
+    // One-click built-in animation preview (live, in the Scene view): a popup
+    // with the library, so the toolbar stays one line.
+    static const struct { int id; const char* name; } kLiveAnims[] = {
+        {1, "Idle"},   {2, "Walk"},       {3, "Run"},     {5, "Jump"},
+        {6, "Crouch"}, {7, "Prone"},      {4, "Wave"},    {8, "Point"},
+        {9, "Clap"},   {10, "Thumbs Up"}, {11, "Salute"}, {12, "Wave Both"},
+        {13, "Cheer"}, {14, "Sad"},       {15, "Angry"},  {16, "Think"},
+        {17, "Crouch Walk"}, {18, "Fall"}, {19, "Hang"},
+    };
+    if (!playMode) {
+        ImGui::SameLine(0, sty.ItemSpacing.x * 1.5f);
+        const bool liveOn = g_livePrevCh == ch && g_livePrevClip.empty();
+        if (liveOn) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.30f, 1.0f));
+        if (ImGui::Button(liveOn ? "Built-in: playing##calive" : "Built-in...##calive")) ImGui::OpenPopup("##calivepop");
+        if (liveOn) ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Watch a built-in animation live in the Scene view (no Play needed)");
+        if (ImGui::BeginPopup("##calivepop")) {
+            ImGui::TextDisabled("Built-in animations - click one to watch it live in the Scene view:");
+            for (int i = 0; i < (int)(sizeof(kLiveAnims) / sizeof(kLiveAnims[0])); ++i) {
+                if (i % 4) ImGui::SameLine();
+                const bool on = (g_livePrevCh == ch && g_livePrevClip.empty() && g_livePrevAnim == kLiveAnims[i].id);
+                if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.30f, 1.0f));
+                char bl[32]; std::snprintf(bl, sizeof(bl), "%s##lp%d", kLiveAnims[i].name, kLiveAnims[i].id);
+                if (ImGui::Button(bl, ImVec2(92, 0))) { StartLivePreview(ed, ch); g_livePrevAnim = kLiveAnims[i].id; }
+                if (on) ImGui::PopStyleColor();
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stretch the selected keys' timing about the playhead:\nx2 makes that stretch take twice as long, x0.5 half.");
-            ImGui::SetNextItemWidth(70);
-            ImGui::DragFloat("##caamp", &s_amp, 0.01f, 0.0f, 5.0f, "x%.2f");
-            ImGui::SameLine();
-            if (ImGui::Button("Amplify", ImVec2(170, 0))) {
-                PushAnimDraftUndo(ed, key, d);
-                clip.ScalePose(sel, target, s_amp); refreshPose(); ed.dirty = true;
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exaggerate (above x1) or dampen (below) the motion on the selected keys:\nangles move away from, or toward, the clip's average pose.");
-            ImGui::SetNextItemWidth(160);
-            ImGui::DragFloat3("##caoff", &s_off.x, 0.5f, -180.0f, 180.0f, "%.0f");
-            ImGui::SameLine();
-            if (ImGui::Button("Offset", ImVec2(170, 0))) {
-                PushAnimDraftUndo(ed, key, d);
-                clip.OffsetPose(sel, target, s_off); refreshPose(); ed.dirty = true;
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add these degrees (x y z) to the selected keys.");
-            char ab[64]; std::snprintf(ab, sizeof(ab), "All bones (else just %s)##caadj", names[bone]);
-            ImGui::Checkbox(ab, &s_allBones);
+            ImGui::Separator();
+            if (g_livePrevCh == ch) {
+                if (ImGui::Button("Stop Preview##lp")) StopLivePreview(ed);
+                ImGui::SameLine(); ImGui::SetNextItemWidth(110);
+                ImGui::SliderFloat("Speed##lp", &g_livePrevSpeed, 0.25f, 2.0f);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Set as start animation##lp")) {
+                    g_livePrevKeepAnim = g_livePrevAnim; ed.dirty = true;
+                    const char* nm = "?";
+                    for (const auto& a : kLiveAnims) if (a.id == g_livePrevAnim) { nm = a.name; break; }
+                    ConsoleLog(std::string("Start animation set to ") + nm);
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The animation this character starts with in Play mode\n(controllers switch idle/walk/run/jump automatically).");
+            } else ImGui::TextDisabled("Nothing previewing. Bake one into a clip from the Bake menu to edit it.");
             ImGui::EndPopup();
         }
     }
-    // The lane's right-click menu: the same tools, plus keying at the playhead.
-    if (menuAt != -1) ImGui::OpenPopup("##cakeymenu");
-    if (ImGui::BeginPopup("##cakeymenu")) {
-        const int n = (int)sel.size();
-        if (n) ImGui::TextDisabled("%d key%s selected", n, n == 1 ? "" : "s"); else ImGui::TextDisabled("No keys selected");
-        if (ImGui::MenuItem("Key pose at playhead")) { PushAnimDraftUndo(ed, key, d); keyPoseNow(); }
-        ImGui::Separator();
-        if (ImGui::MenuItem("Delete", "Del", false, n > 0)) deleteSel();
-        if (ImGui::MenuItem("Move to playhead", nullptr, false, n > 0)) nudge(t - clip.keys[sel.front()].time);
-        if (ImGui::BeginMenu("Easing", n > 0)) {
-            for (int e = 0; e < 6; ++e) {
-                bool all = true;
-                for (int i : sel) if ((int)clip.keys[i].ease != e) all = false;
-                if (ImGui::MenuItem(kEaseLabels[e], nullptr, all)) setEase((AnimKeyEase)e);
-            }
-            ImGui::EndMenu();
-        }
-        if (ImGui::MenuItem("Select all", "Ctrl+A", false, !clip.keys.empty())) selectAll();
-        ImGui::Separator();
-        if (ImGui::MenuItem("Copy pose", "Ctrl+C")) copyPose();
-        if (ImGui::MenuItem("Paste pose at playhead", "Ctrl+V", false, !g_animPoseClipboard.empty())) pastePose(false);
-        if (ImGui::MenuItem("Paste pose mirrored", nullptr, false, !g_animPoseClipboard.empty())) pastePose(true);
-        if (ImGui::MenuItem("Mirror pose")) mirrorPose();
-        ImGui::Separator();
-        if (ImGui::MenuItem("Mirror clip left<->right", nullptr, false, !clip.keys.empty())) mirrorClip();
-        char gl[48];
-        std::snprintf(gl, sizeof(gl), "Insert %.2fs at playhead", s_gap);
-        if (ImGui::MenuItem(gl)) insertTime();
-        std::snprintf(gl, sizeof(gl), "Remove %.2fs at playhead", s_gap);
-        if (ImGui::MenuItem(gl, nullptr, false, !clip.keys.empty())) removeTime();
-        ImGui::EndPopup();
+    // Apply, lit while the draft differs from the clip stored on the character.
+    {
+        const AnimClip* stored = ch->FindClip(clip.name);
+        const bool differs = !stored || AnimClipHash(*stored) != AnimClipHash(clip);
+        const float w = ImGui::CalcTextSize("Apply to Character").x + sty.FramePadding.x * 2.0f;
+        SameLineRight(w);
+        ImGui::BeginDisabled(playMode);
+        if (AccentToggleButton("Apply to Character##ca", differs, ImVec2(w, 0))) applyClip();
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip(differs ? (stored ? "The draft has changes the character doesn't have yet.\nApply replaces the stored clip (saved with the scene)."
+                                                : "This clip isn't on the character yet. Apply adds it (saved with the scene).")
+                                      : "The character has this clip as shown.");
     }
-    // Keyboard, while the Animation window has focus and no text field does: Del
-    // deletes the selected keys, the arrows nudge them a frame (Shift: ten), Ctrl+A
-    // selects all, Ctrl+C / Ctrl+V copy the pose and paste it as a key. Shortcut()
-    // takes the arrows, so keyboard nav doesn't also walk the widgets with them.
-    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput) {
-        const bool ctrl = ImGui::GetIO().KeyCtrl;
+    if (playMode) ImGui::TextDisabled("(Play mode: the character plays its real animations - Stop to pose and author)");
+    ImGui::Separator();
+
+    // ---- Body: [clip list] [names | ruler, events, key rows or curves] [key / bone / clip] ----
+    const float bodyH = std::max(ImGui::GetContentRegionAvail().y, fh * 6.0f);
+    const float totalW = ImGui::GetContentRegionAvail().x;
+    const float leftInit = Mathf::Clamp(totalW * 0.19f, 200.0f, 280.0f);
+    const float rightInit = Mathf::Clamp(totalW * 0.24f, 240.0f, 360.0f);
+
+    // Left column: this character's clips.
+    ImGui::BeginChild("##caclips", ImVec2(leftInit, bodyH), ImGuiChildFlags_Borders | ImGuiChildFlags_ResizeX, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    {
+        const float colW = ImGui::GetContentRegionAvail().x;
+        SearchField("##casearch", d.search, sizeof(d.search), "Search clips", 0.0f);
+        std::string needle = d.search;
+        for (char& c : needle) c = (char)std::tolower((unsigned char)c);
+        const float btnRows = (fh + sty.ItemSpacing.y) * (colW < 250.0f ? 3.0f : 2.0f) + sty.ItemSpacing.y;
+        ImGui::BeginChild("##caclipsl", ImVec2(0, -btnRows), ImGuiChildFlags_None, ImGuiWindowFlags_None);
+        {
+            const float lineH = ImGui::GetTextLineHeight();
+            const float rowH2 = lineH * 2.0f + 8.0f;
+            const std::size_t draftSig = AnimClipHash(clip);
+            ImDrawList* ldl = ImGui::GetWindowDrawList();
+            std::vector<std::string> names = ch->ClipNames();
+            const bool draftStored = ch->HasClip(clip.name);
+            if (!draftStored) names.insert(names.begin(), clip.name);   // the unapplied draft tops the list
+            int shown = 0;
+            bool openRename = false;   // opened after the loop, outside the rows' ID scope
+            for (const std::string& n : names) {
+                std::string ln = n;
+                for (char& c : ln) c = (char)std::tolower((unsigned char)c);
+                if (!needle.empty() && ln.find(needle) == std::string::npos) continue;
+                const bool isDraft = (n == clip.name);
+                const AnimClip* c = isDraft ? &clip : ch->FindClip(n);
+                if (!c) continue;
+                ++shown;
+                ImGui::PushID(n.c_str());
+                const ImVec2 rp = ImGui::GetCursorScreenPos();
+                if (ImGui::Selectable("##row", isDraft, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(0, rowH2))) {
+                    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                        d.renameFrom = n; std::snprintf(d.renameBuf, sizeof(d.renameBuf), "%s", n.c_str());
+                        openRename = true;
+                    } else if (!isDraft) loadClip(*c);
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip(isDraft ? "The clip being edited. Double-click to rename." : "Click to edit this clip (the draft is replaced; Ctrl+Z brings it back).\nDouble-click to rename.");
+                const ImU32 textCol = ImGui::GetColorU32(ImGuiCol_Text), dimCol = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+                ldl->AddText(ImVec2(rp.x + 6.0f, rp.y + 3.0f), textCol, n.c_str());
+                char info[48];
+                std::snprintf(info, sizeof(info), "%.2fs  %d key%s", c->Duration(), (int)c->keys.size(), c->keys.size() == 1 ? "" : "s");
+                ldl->AddText(ImVec2(rp.x + 6.0f, rp.y + 5.0f + lineH), dimCol, info);
+                // The draft's state: new, or edited since it was applied.
+                if (isDraft) {
+                    const AnimClip* stored = ch->FindClip(n);
+                    const char* st = !stored ? "not applied" : AnimClipHash(*stored) != draftSig ? "edited" : nullptr;
+                    if (st) {
+                        const ImVec2 ts = ImGui::CalcTextSize(st);
+                        ldl->AddText(ImVec2(rp.x + colW - ts.x - 8.0f, rp.y + 5.0f + lineH), IM_COL32(240, 200, 90, 255), st);
+                    }
+                }
+                // Binding chips on the first line, right-aligned: the states that play this clip.
+                float cx = rp.x + colW - 6.0f;
+                for (int si = (int)(sizeof(kAnimBindSlots) / sizeof(kAnimBindSlots[0])) - 1; si >= 0; --si) {
+                    if (ch->*(kAnimBindSlots[si].field) != n) continue;
+                    const ImVec2 ts = ImGui::CalcTextSize(kAnimBindSlots[si].label);
+                    const float cw = ts.x + 8.0f;
+                    ldl->AddRectFilled(ImVec2(cx - cw, rp.y + 3.0f), ImVec2(cx, rp.y + 3.0f + lineH), IM_COL32(40, 110, 60, 255), 3.0f);
+                    ldl->AddText(ImVec2(cx - cw + 4.0f, rp.y + 3.0f), IM_COL32(220, 245, 225, 255), kAnimBindSlots[si].label);
+                    cx -= cw + 3.0f;
+                }
+                if (ch->autoPlayClip == n) {
+                    const ImVec2 ts = ImGui::CalcTextSize("Start");
+                    const float cw = ts.x + 8.0f;
+                    ldl->AddRectFilled(ImVec2(cx - cw, rp.y + 3.0f), ImVec2(cx, rp.y + 3.0f + lineH), IM_COL32(110, 80, 40, 255), 3.0f);
+                    ldl->AddText(ImVec2(cx - cw + 4.0f, rp.y + 3.0f), IM_COL32(250, 230, 200, 255), "Start");
+                }
+                ImGui::PopID();
+            }
+            if (shown == 0) ImGui::TextDisabled(needle.empty() ? "No clips yet - New, Bake or Import." : "No clip matches.");
+            // Rename (double-click; the Rename button has its own popup below).
+            if (openRename) ImGui::OpenPopup("##carename");
+            if (ImGui::BeginPopup("##carename")) {
+                ImGui::TextDisabled("Rename \"%s\"", d.renameFrom.c_str());
+                if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+                ImGui::SetNextItemWidth(fh * 9.0f);
+                const bool enter = ImGui::InputText("##carenamein", d.renameBuf, sizeof(d.renameBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+                ImGui::SameLine();
+                if (ImGui::Button("OK##carename") || enter) {
+                    std::string nn = d.renameBuf;
+                    for (char& c : nn) if (c == ' ') c = '_';
+                    if (!nn.empty() && nn != d.renameFrom) {
+                        if (ch->HasClip(nn)) ConsoleLog("A clip called " + nn + " already exists", 1);
+                        else {
+                            if (ch->HasClip(d.renameFrom)) { ed.PushUndo(); ch->RenameClip(d.renameFrom, nn); }
+                            else PushAnimDraftUndo(ed, key, d);
+                            if (clip.name == d.renameFrom) clip.name = nn;
+                            ed.dirty = true;
+                            ImGui::CloseCurrentPopup();
+                        }
+                    } else ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            }
+        }
+        ImGui::EndChild();
+        // Clip actions: small buttons, wrapped to the column's width.
+        float lineW = 0.0f;
+        auto nextBtn = [&](const char* label) {   // SameLine when the next button fits
+            const float bw = ImGui::CalcTextSize(label, ImGui::FindRenderedTextEnd(label)).x + sty.FramePadding.x * 2.0f + sty.ItemSpacing.x;
+            if (lineW > 0.0f && lineW + bw <= colW) ImGui::SameLine(); else lineW = 0.0f;
+            lineW += bw;
+        };
+        ImGui::BeginDisabled(playMode);
+        nextBtn("New");
+        if (ImGui::SmallButton("New##cac")) { AnimClip c; c.name = UniqueClipName(ch, "MyAnim"); loadClip(c); }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Start an empty clip");
+        nextBtn("Duplicate");
+        if (ImGui::SmallButton("Duplicate##cac")) {
+            AnimClip c = clip; c.name = UniqueClipName(ch, clip.name);
+            ed.PushUndo(); ch->AddClip(c); ed.dirty = true;
+            loadClip(c);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Copy this clip onto the character under a new name and edit the copy");
+        nextBtn("Rename");
+        if (ImGui::SmallButton("Rename##cac")) {
+            d.renameFrom = clip.name; std::snprintf(d.renameBuf, sizeof(d.renameBuf), "%s", clip.name.c_str());
+            ImGui::OpenPopup("##carename2");
+        }
+        if (ImGui::BeginPopup("##carename2")) {
+            ImGui::TextDisabled("Rename \"%s\"", d.renameFrom.c_str());
+            if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+            ImGui::SetNextItemWidth(fh * 9.0f);
+            const bool enter = ImGui::InputText("##carenamein2", d.renameBuf, sizeof(d.renameBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::SameLine();
+            if (ImGui::Button("OK##carename2") || enter) {
+                std::string nn = d.renameBuf;
+                for (char& c : nn) if (c == ' ') c = '_';
+                if (!nn.empty() && nn != d.renameFrom) {
+                    if (ch->HasClip(nn)) ConsoleLog("A clip called " + nn + " already exists", 1);
+                    else {
+                        if (ch->HasClip(d.renameFrom)) { ed.PushUndo(); ch->RenameClip(d.renameFrom, nn); }
+                        else PushAnimDraftUndo(ed, key, d);
+                        if (clip.name == d.renameFrom) clip.name = nn;
+                        ed.dirty = true;
+                        ImGui::CloseCurrentPopup();
+                    }
+                } else ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+        nextBtn("Delete");
+        ImGui::BeginDisabled(!ch->HasClip(clip.name));
+        if (ImGui::SmallButton("Delete##cac")) {
+            ed.PushUndo();
+            ch->RemoveClip(clip.name);
+            ed.dirty = true;
+            ConsoleLog("Removed clip " + clip.name + " from the character (the draft stays open; Apply puts it back)");
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove this clip from the character (and from its state bindings).\nThe draft stays open here, so Apply would put it back.");
+        nextBtn("Import...");
+        if (ImGui::SmallButton("Import...##cac")) importClips();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add the clips of a .okayanim file to this character");
+        nextBtn("Export...");
+        if (ImGui::SmallButton("Export...##cac")) exportClips();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write all the character's clips (this draft included) to a .okayanim file you can re-load or ship");
+        nextBtn("Bake");
+        if (ImGui::SmallButton("Bake##cac")) ImGui::OpenPopup("##cabake");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Start from a copy of a built-in animation: its poses sampled into keys you can tweak");
+        if (ImGui::BeginPopup("##cabake")) {
+            static const struct { int state; const char* label; const char* name; } kBake[] = {
+                {1, "Idle (from built-in)", "Idle"}, {2, "Walk (from built-in)", "Walk"},
+                {3, "Run (from built-in)", "Run"},   {5, "Jump (from built-in)", "Jump"},
+            };
+            for (const auto& b : kBake)
+                if (ImGui::MenuItem(b.label)) loadClip(BakeBuiltInClip(ch, b.state, UniqueClipName(ch, b.name)));
+            ImGui::EndPopup();
+        }
+        ImGui::EndDisabled();
+    }
+    ImGui::EndChild();
+    const float leftW = ImGui::GetItemRectSize().x;
+    ImGui::SameLine();
+
+    // Centre: the names column, the ruler, the events lane and the key rows (or curves).
+    ImGui::BeginChild("##cacentre", ImVec2(std::max(220.0f, totalW - leftW - rightInit - sty.ItemSpacing.x * 2.0f), bodyH),
+                      ImGuiChildFlags_Borders | ImGuiChildFlags_ResizeX, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    {
+        // Keep room for the right column when the window shrinks or a column was dragged wide.
+        const float room = totalW - leftW - sty.ItemSpacing.x * 2.0f;
+        if (room > 440.0f && ImGui::GetWindowSize().x > room - 220.0f) ImGui::SetWindowSize(ImVec2(room - 220.0f, bodyH), ImGuiCond_Always);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImVec2 o = ImGui::GetCursorScreenPos();
+        const float W = std::max(ImGui::GetContentRegionAvail().x, 200.0f), H = std::max(ImGui::GetContentRegionAvail().y, fh * 3.0f);
+        const float namesW = std::min(132.0f, W * 0.35f), pad = 8.0f;
+        const float rulerH = fh, evH = fh * 0.85f, rowH = fh;
+        const float rowsTop = o.y + rulerH + evH;
+        const float kx0 = o.x + namesW, KW = W - namesW;
+        AnimTimeView view{d.viewStart, d.viewLen};
+        if (view.len <= 0.0f) AnimTimeViewFit(view, dur);
+        if (view.start <= 0.0f && !playing && dur * 1.05f > view.len) view.len = std::max(2.0f, dur * 1.15f);   // the clip grew: keep it in view
+        auto tToX = [&](float tt) { return kx0 + pad + ((tt - view.start) / view.len) * (KW - pad * 2.0f); };
+        auto xToT = [&](float x) { return std::max(0.0f, view.start + (x - kx0 - pad) / (KW - pad * 2.0f) * view.len); };
+        const float pxPerSec = (KW - pad * 2.0f) / view.len;
+        dl->PushClipRect(o, ImVec2(o.x + W, o.y + H), true);
+
+        // Names column header: what the rows are, and the recording state.
+        dl->AddRectFilled(o, ImVec2(kx0, rowsTop), ImGui::GetColorU32(ImGuiCol_FrameBg));
+        if (d.record) dl->AddText(ImVec2(o.x + 6.0f, o.y + (rulerH - ImGui::GetTextLineHeight()) * 0.5f), IM_COL32(235, 80, 80, 255), "REC");
+        else dl->AddText(ImVec2(o.x + 6.0f, o.y + (rulerH - ImGui::GetTextLineHeight()) * 0.5f), ImGui::GetColorU32(ImGuiCol_TextDisabled), d.curves ? "Curves" : "Dope sheet");
+        dl->AddText(ImVec2(o.x + 6.0f, o.y + rulerH + (evH - ImGui::GetTextLineHeight()) * 0.5f), ImGui::GetColorU32(ImGuiCol_TextDisabled), "Events");
+
+        // Ruler: scrub (snapped; Alt for free time).
+        AnimDrawRuler(dl, ImVec2(kx0, o.y), KW, rulerH, o.y + H, view, pad, dur, d.fps);
+        if (clip.loop && clip.length > 0.0f && clip.length > (clip.keys.empty() ? 0.0f : clip.keys.back().time)) {   // the loop's seam
+            const float xl = tToX(clip.length);
+            dl->AddLine(ImVec2(xl, o.y + rulerH * 0.3f), ImVec2(xl, o.y + H), IM_COL32(170, 140, 240, 160), 1.0f);
+        }
+        ImGui::SetCursorScreenPos(ImVec2(kx0, o.y));
+        ImGui::InvisibleButton("##caruler", ImVec2(KW, rulerH));
+        if (!playMode && ImGui::IsItemActive()) seek(snapT(xToT(io.MousePos.x)));
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click or drag to scrub (loads the pose at that time)\nWheel zooms, middle-drag pans, Shift+wheel scrolls the rows, F fits");
+
+        // Events lane: double-click adds, drag moves, double-click a flag renames,
+        // right-click for options. The flags come before the lane's own button so
+        // they take the click.
+        dl->AddRectFilled(ImVec2(kx0, o.y + rulerH), ImVec2(o.x + W, rowsTop), ImGui::GetColorU32(ImGuiCol_FrameBg, 0.45f));
+        int evMenu = -1;
+        for (int ei = 0; ei < (int)clip.events.size(); ++ei) {
+            const float et = (d.evDrag == ei) ? d.evDragT : clip.events[ei].time;
+            const float x = tToX(et), y0 = o.y + rulerH + 2.0f, y1 = rowsTop - 2.0f;
+            if (x < kx0 - 8.0f || x > o.x + W + 8.0f) continue;
+            ImGui::SetCursorScreenPos(ImVec2(x - 5.0f, y0));
+            ImGui::PushID(5000 + ei);
+            ImGui::InvisibleButton("##ev", ImVec2(10.0f, y1 - y0));
+            const bool hov = ImGui::IsItemHovered();
+            if (!playMode && ImGui::IsItemActivated()) { PushAnimDraftUndo(ed, key, d); d.evDrag = ei; d.evDragT = clip.events[ei].time; }
+            if (!playMode && ImGui::IsItemActive() && d.evDrag == ei) d.evDragT = snapT(xToT(io.MousePos.x));
+            if (ImGui::IsItemDeactivated() && d.evDrag == ei) {
+                if (std::fabs(d.evDragT - clip.events[ei].time) > 1e-4f) {
+                    AnimEvent e = clip.events[ei]; clip.events.erase(clip.events.begin() + ei);
+                    clip.AddEvent(d.evDragT, e.name); ed.dirty = true;
+                } else seek(clip.events[ei].time);
+                d.evDrag = -1;
+            }
+            if (!playMode && hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                d.evEdit = ei; std::snprintf(d.evName, sizeof(d.evName), "%s", clip.events[ei].name.c_str());
+            }
+            if (!playMode && ImGui::IsItemClicked(ImGuiMouseButton_Right)) evMenu = ei;
+            if (hov && d.evDrag < 0) ImGui::SetTooltip("Event \"%s\" at %.2fs\nDrag to move, double-click to rename, right-click for options",
+                                                       clip.events[ei].name.c_str(), clip.events[ei].time);
+            ImGui::PopID();
+            const ImU32 ec = (hov || d.evDrag == ei) ? IM_COL32(255, 255, 255, 255) : IM_COL32(240, 200, 90, 255);
+            dl->AddLine(ImVec2(x, y0), ImVec2(x, y1), ec, 1.5f);
+            dl->AddTriangleFilled(ImVec2(x, y0), ImVec2(x + 8.0f, y0 + 4.0f), ImVec2(x, y0 + 8.0f), ec);
+            dl->AddText(ImVec2(x + 10.0f, y0 + (y1 - y0 - ImGui::GetTextLineHeight()) * 0.5f + 1.0f),
+                        ImGui::GetColorU32(ImGuiCol_TextDisabled), clip.events[ei].name.c_str());
+        }
+        ImGui::SetCursorScreenPos(ImVec2(kx0, o.y + rulerH));
+        ImGui::InvisibleButton("##caevlane", ImVec2(KW, evH));
+        if (!playMode && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) addEventAt(snapT(xToT(io.MousePos.x)));
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Double-click to add an event here (or press E at the playhead)");
+        if (evMenu >= 0) { d.evEdit = -1; d.evMenu = evMenu; ImGui::OpenPopup("##caevmenu"); }
+        if (ImGui::BeginPopup("##caevmenu")) {
+            const int ei = d.evMenu;
+            if (ei >= 0 && ei < (int)clip.events.size()) {
+                ImGui::TextDisabled("Event \"%s\"  %.2fs", clip.events[ei].name.c_str(), clip.events[ei].time);
+                if (ImGui::MenuItem("Rename...")) { d.evEdit = ei; std::snprintf(d.evName, sizeof(d.evName), "%s", clip.events[ei].name.c_str()); }
+                if (ImGui::MenuItem("Move to playhead")) {
+                    PushAnimDraftUndo(ed, key, d);
+                    std::string n = clip.events[ei].name;
+                    clip.events.erase(clip.events.begin() + ei); clip.AddEvent(t, n); ed.dirty = true;
+                }
+                if (ImGui::MenuItem("Delete")) { PushAnimDraftUndo(ed, key, d); clip.events.erase(clip.events.begin() + ei); ed.dirty = true; }
+            }
+            ImGui::EndPopup();
+        }
+        if (d.evEdit >= 0) ImGui::OpenPopup("##caevname");
+        if (ImGui::BeginPopup("##caevname")) {
+            if (d.evEdit < 0 || d.evEdit >= (int)clip.events.size()) { d.evEdit = -1; ImGui::CloseCurrentPopup(); }
+            else {
+                ImGui::TextDisabled("Event name (gameplay reads it as the clip plays past; no spaces)");
+                if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+                ImGui::SetNextItemWidth(fh * 8.0f);
+                const bool enter = ImGui::InputText("##caevn", d.evName, sizeof(d.evName), ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CharsNoBlank);
+                ImGui::SameLine();
+                if ((ImGui::Button("OK##caevn") || enter) && d.evName[0]) {
+                    if (clip.events[d.evEdit].name != d.evName) { PushAnimDraftUndo(ed, key, d); clip.events[d.evEdit].name = d.evName; ed.dirty = true; }
+                    d.evEdit = -1; ImGui::CloseCurrentPopup();
+                }
+            }
+            ImGui::EndPopup();
+        } else if (d.evEdit >= 0 && !ImGui::IsPopupOpen("##caevname")) d.evEdit = -1;
+
+        // The rows: one per bone under a summary row and the root track, each
+        // with its name on the left and its keys on the right, scrolling together.
+        struct DsRow { int kind; int bone; const char* label; ImU32 col; };   // kind: 0 all keys, 1 root, 2 bone
+        std::vector<DsRow> rows;
+        rows.push_back({0, -1, "All keys", IM_COL32(230, 230, 240, 255)});
+        rows.push_back({1, -1, "Root", IM_COL32(190, 140, 235, 255)});
+        for (int b = 0; b < nb; ++b) rows.push_back({2, b, Character::BoneName(b), AnimBoneColor(b)});
+        int menuAt = -1;   // right-click: a key's index, or -2 for a row itself
+        ImGui::SetCursorScreenPos(ImVec2(o.x, rowsTop));
+        ImGui::BeginChild("##carows", ImVec2(W, H - (rowsTop - o.y)), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollWithMouse);
+        {
+            ImDrawList* rl = ImGui::GetWindowDrawList();
+            const ImVec2 r0 = ImGui::GetCursorScreenPos();   // scrolled origin of the rows
+            const float childH = ImGui::GetWindowSize().y;
+            const float lineH = ImGui::GetTextLineHeight();
+            if (!d.curves) {
+                bool commitDrag = false;
+                for (std::size_t ri = 0; ri < rows.size(); ++ri) {
+                    const DsRow& row = rows[ri];
+                    const float y0 = r0.y + ri * rowH;
+                    const bool focusRow = (row.kind == 2 && row.bone == bone && !d.curveRoot) || (row.kind == 1 && d.curveRoot);
+                    if (ri % 2 == 0) rl->AddRectFilled(ImVec2(o.x, y0), ImVec2(o.x + W, y0 + rowH), ImGui::GetColorU32(ImGuiCol_TableRowBgAlt));
+                    if (focusRow) rl->AddRectFilled(ImVec2(o.x, y0), ImVec2(kx0, y0 + rowH), ImGui::GetColorU32(ImGuiCol_Header));
+                    rl->AddRectFilled(ImVec2(o.x + 4.0f, y0 + rowH * 0.2f), ImVec2(o.x + 7.0f, y0 + rowH * 0.8f), row.col, 1.0f);
+                    rl->AddText(ImVec2(o.x + 12.0f, y0 + (rowH - lineH) * 0.5f), row.kind == 0 ? ImGui::GetColorU32(ImGuiCol_TextDisabled) : ImGui::GetColorU32(ImGuiCol_Text), row.label);
+                    ImGui::PushID((int)ri);
+                    // The name: click picks the track (its values are on the right);
+                    // double-click a bone selects its part in the Scene view, for the gizmo.
+                    ImGui::SetCursorScreenPos(ImVec2(o.x, y0));
+                    ImGui::InvisibleButton("##name", ImVec2(namesW, rowH));
+                    if (ImGui::IsItemClicked()) {
+                        if (row.kind == 2) { bone = row.bone; d.curveRoot = false; }
+                        else if (row.kind == 1) d.curveRoot = true;
+                    }
+                    if (ImGui::IsItemHovered() && row.kind == 2 && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && ch->Part(row.bone)) ed.Select(ch->Part(row.bone));
+                    if (ImGui::IsItemHovered()) {
+                        if (row.kind == 2) ImGui::SetTooltip("%s\nClick to pick this bone (edit it on the right, or see its curves).\nDouble-click to select its part in the Scene view and pose it with the rotate gizmo.", row.label);
+                        else if (row.kind == 1) ImGui::SetTooltip("The root track: the whole body's offset (a crouch's drop, a walk's hip bob).\nClick to pick it.");
+                        else ImGui::SetTooltip("Every key of the clip. A key holds the whole pose; the bone rows show\nwhich bones it actually moves (a hollow diamond holds still).");
+                    }
+                    // Keys, before the row's own button so they take the click.
+                    const float cy = y0 + rowH * 0.5f, r = row.kind == 0 ? rowH * 0.3f : rowH * 0.24f;
+                    for (int ki = 0; ki < (int)clip.keys.size(); ++ki) {
+                        const AnimKey& k = clip.keys[ki];
+                        const bool selected = isSel(ki);
+                        const float x = tToX(k.time + (d.dragKeys && selected ? d.dragDelta : 0.0f));
+                        if (x < kx0 - r || x > o.x + W + r) continue;
+                        const bool hollow = row.kind == 1 ? clip.KeyHoldsRoot(ki) : row.kind == 2 ? clip.KeyHoldsBone(ki, row.bone) : false;
+                        ImGui::SetCursorScreenPos(ImVec2(x - r - 2.0f, cy - r - 2.0f));
+                        ImGui::PushID(ki);
+                        ImGui::InvisibleButton("##key", ImVec2(r * 2.0f + 4.0f, r * 2.0f + 4.0f));
+                        const bool hov = ImGui::IsItemHovered();
+                        if (!playMode && ImGui::IsItemActivated()) {
+                            PushAnimDraftUndo(ed, key, d);   // covers the pose load and a drag that follows
+                            if (io.KeyShift) {
+                                if (selected) sel.erase(std::find(sel.begin(), sel.end(), ki));
+                                else { sel.push_back(ki); std::sort(sel.begin(), sel.end()); }
+                            } else if (!selected) sel.assign(1, ki);
+                            if (isSel(ki)) {
+                                d.dragKeys = true; d.dragFrom = k.time; d.dragDelta = 0.0f;
+                                seek(k.time);
+                            }
+                            if (row.kind == 2) { bone = row.bone; d.curveRoot = false; } else if (row.kind == 1) d.curveRoot = true;
+                        }
+                        if (!playMode && ImGui::IsItemActive() && d.dragKeys) {
+                            float delta = snapT(xToT(io.MousePos.x)) - d.dragFrom;
+                            float first = 1e30f; for (int s : sel) first = std::min(first, clip.keys[s].time);
+                            if (first + delta < 0.0f) delta = -first;
+                            d.dragDelta = delta;
+                            if (std::fabs(delta) > 1e-4f) ImGui::SetTooltip("%+.2fs  ->  %.2fs (frame %d)", delta, d.dragFrom + delta, (int)std::lround((d.dragFrom + delta) * d.fps));
+                        }
+                        if (ImGui::IsItemDeactivated() && d.dragKeys) {
+                            if (std::fabs(d.dragDelta) > 1e-4f) commitDrag = true;   // applied after the loop: it reorders the keys
+                            else { if (!io.KeyShift) sel.assign(1, ki); d.dragKeys = false; }
+                        }
+                        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+                            if (!selected) sel.assign(1, ki);
+                            menuAt = ki; d.menuBone = row.kind == 2 ? row.bone : -1;
+                        }
+                        if (hov && !d.dragKeys) {
+                            if (row.kind == 2)
+                                ImGui::SetTooltip("Key at %.2fs (frame %d)  -  %s\n%s: %s\nClick to select it and load its pose, Shift+click adds, drag to move\nRight-click for options",
+                                                  k.time, (int)std::lround(k.time * d.fps), kEaseLabels[(int)k.ease], row.label, hollow ? "holds still here" : "moves here");
+                            else
+                                ImGui::SetTooltip("Key at %.2fs (frame %d)  -  %s\nClick to select it and load its pose, Shift+click adds, drag to move\nRight-click for options",
+                                                  k.time, (int)std::lround(k.time * d.fps), kEaseLabels[(int)k.ease]);
+                        }
+                        ImGui::PopID();
+                        AnimDrawDiamond(rl, ImVec2(x, cy), r, row.col, !hollow, hov || selected, selected, std::fabs(k.time - t) < 1e-3f);
+                        if (row.kind == 0 && k.ease != AnimKeyEase::Clip) rl->AddCircleFilled(ImVec2(x, cy + r + 3.0f), 2.0f, IM_COL32(240, 200, 90, 255));   // has its own easing
+                    }
+                    // The row itself: press scrubs and clears the selection (Shift keeps it),
+                    // a drag box-selects across rows, a double-click keys the row at that time.
+                    ImGui::SetCursorScreenPos(ImVec2(kx0, y0));
+                    ImGui::InvisibleButton("##row", ImVec2(KW, rowH));
+                    if (!playMode && ImGui::IsItemActivated()) {
+                        seek(snapT(xToT(io.MousePos.x)));
+                        if (!io.KeyShift) sel.clear();
+                        d.boxFrom = io.MousePos; d.boxing = false;
+                        if (row.kind == 2) { bone = row.bone; d.curveRoot = false; } else if (row.kind == 1) d.curveRoot = true;
+                    }
+                    if (!playMode && ImGui::IsItemActive() && !d.dragKeys &&
+                        std::fabs(io.MousePos.x - d.boxFrom.x) + std::fabs(io.MousePos.y - d.boxFrom.y) > 5.0f) d.boxing = true;
+                    if (ImGui::IsItemDeactivated() && d.boxing) {
+                        const float t0 = xToT(std::min(d.boxFrom.x, io.MousePos.x)), t1 = xToT(std::max(d.boxFrom.x, io.MousePos.x));
+                        const float yA = std::min(d.boxFrom.y, io.MousePos.y), yB = std::max(d.boxFrom.y, io.MousePos.y);
+                        bool anyRow = false;
+                        for (std::size_t rj = 0; rj < rows.size(); ++rj) {
+                            const float ry = r0.y + rj * rowH + rowH * 0.5f;
+                            if (ry >= yA - rowH * 0.3f && ry <= yB + rowH * 0.3f) anyRow = true;
+                        }
+                        if (anyRow)
+                            for (int i = 0; i < (int)clip.keys.size(); ++i)
+                                if (clip.keys[i].time >= t0 - 1e-3f && clip.keys[i].time <= t1 + 1e-3f && !isSel(i)) sel.push_back(i);
+                        std::sort(sel.begin(), sel.end());
+                        d.boxing = false;
+                    }
+                    if (!playMode && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                        seek(snapT(xToT(io.MousePos.x)));
+                        PushAnimDraftUndo(ed, key, d);
+                        if (row.kind == 2) keyBoneNow(row.bone); else if (row.kind == 1) keyRootNow(); else keyPoseNow();
+                    }
+                    if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) { menuAt = -2; d.menuBone = row.kind == 2 ? row.bone : -1; }
+                    if (ImGui::IsItemHovered() && !d.boxing && !d.dragKeys && clip.keys.empty())
+                        ImGui::SetTooltip("Double-click to key %s here. Pose the bones on the right, then press K or the diamond.", row.kind == 2 ? row.label : "the pose");
+                    ImGui::PopID();
+                }
+                if (commitDrag) {
+                    moveSel(d.dragDelta);
+                    t = d.dragFrom + d.dragDelta;
+                    d.dragKeys = false; d.dragDelta = 0.0f;
+                }
+                if (d.boxing && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                    const ImVec2 a = d.boxFrom, b = io.MousePos;
+                    const ImVec2 mn(std::min(a.x, b.x), std::min(a.y, b.y)), mx(std::max(a.x, b.x), std::max(a.y, b.y));
+                    rl->AddRectFilled(mn, mx, IM_COL32(120, 160, 255, 40));
+                    rl->AddRect(mn, mx, IM_COL32(120, 160, 255, 200));
+                }
+                ImGui::SetCursorScreenPos(ImVec2(o.x, r0.y + rows.size() * rowH));
+                ImGui::Dummy(ImVec2(1.0f, 1.0f));
+                if (clip.keys.empty()) {
+                    const char* hint = "No keys yet. Pose the bones on the right (or a part with the Scene gizmo), press K to key the pose,\nor turn on Record and every change keys itself. Bake a built-in walk from the Bake menu to start from one.";
+                    rl->AddText(ImVec2(kx0 + 12.0f, r0.y + rows.size() * rowH + 8.0f), ImGui::GetColorU32(ImGuiCol_TextDisabled), hint);
+                    ImGui::Dummy(ImVec2(1.0f, lineH * 2.5f));
+                }
+            } else {
+                // ---- Curve editor: the picked track's x / y / z over time, sampled
+                //      through the clip itself so the lines match playback (easing,
+                //      cubic curves and the loop's wrap included). Drag a point up or
+                //      down to change that channel's value on its key; sideways moves
+                //      the key in time (Shift: value only). ----
+                const bool rootTrack = d.curveRoot;
+                const int cb = bone;
+                const float cTop = r0.y + 6.0f;
+                float cBot = r0.y + childH - 8.0f;
+                if (cBot - cTop < 40.0f) cBot = cTop + 40.0f;
+                static const ImU32 kChanCol[3] = {IM_COL32(235, 95, 95, 255), IM_COL32(120, 210, 110, 255), IM_COL32(100, 150, 255, 255)};
+                static const char* const kChanName[3] = {"x", "y", "z"};
+                auto keyVal = [&](const AnimKey& k) -> Vec3 { return rootTrack ? k.root : (cb < (int)k.pose.size() ? k.pose[cb] : Vec3{0, 0, 0}); };
+                auto valueAt = [&](float tt) -> Vec3 {
+                    if (rootTrack) return clip.SampleRoot(tt);
+                    std::vector<Vec3> p = clip.Sample(tt);
+                    return cb < (int)p.size() ? p[cb] : Vec3{0, 0, 0};
+                };
+                // Names column: the track and its channel toggles.
+                rl->AddText(ImVec2(o.x + 8.0f, cTop), ImGui::GetColorU32(ImGuiCol_Text), rootTrack ? "Root offset" : Character::BoneName(cb));
+                rl->AddText(ImVec2(o.x + 8.0f, cTop + lineH), ImGui::GetColorU32(ImGuiCol_TextDisabled), rootTrack ? "rig units" : "degrees");
+                for (int c = 0; c < 3; ++c) {
+                    ImGui::SetCursorScreenPos(ImVec2(o.x + 8.0f, cTop + lineH * 2.4f + c * (fh + 2.0f)));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(kChanCol[c]));
+                    ImGui::PushID(c);
+                    ImGui::Checkbox(kChanName[c], &d.chan[c]);
+                    ImGui::PopID();
+                    ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the %s channel", kChanName[c]);
+                }
+                ImGui::SetCursorScreenPos(ImVec2(o.x + 8.0f, cTop + lineH * 2.4f + 3 * (fh + 2.0f) + 4.0f));
+                ImGui::TextDisabled("Pick another bone\nin the rows view or\nthe Bone dropdown.");
+                // Value range: the visible samples and the keys, with a margin; frozen while dragging.
+                const float t0v = view.start, t1v = view.start + view.len;
+                const float tEnd = std::min(t1v, std::max(dur, t0v));
+                const int steps = std::max(16, (int)((tToX(tEnd) - tToX(t0v)) / 3.0f));
+                std::vector<Vec3> samples((std::size_t)steps + 1);
+                for (int i = 0; i <= steps; ++i) samples[(std::size_t)i] = valueAt(t0v + (tEnd - t0v) * i / (float)steps);
+                float vmin = 1e30f, vmax = -1e30f;
+                for (const Vec3& v : samples) for (int c = 0; c < 3; ++c) if (d.chan[c]) { vmin = std::min(vmin, AnimComp(v, c)); vmax = std::max(vmax, AnimComp(v, c)); }
+                for (const AnimKey& k : clip.keys) { const Vec3 v = keyVal(k); for (int c = 0; c < 3; ++c) if (d.chan[c]) { vmin = std::min(vmin, AnimComp(v, c)); vmax = std::max(vmax, AnimComp(v, c)); } }
+                if (vmin > vmax) { vmin = rootTrack ? -0.5f : -45.0f; vmax = -vmin; }
+                if (vmax - vmin < (rootTrack ? 0.05f : 2.0f)) { const float m = rootTrack ? 0.1f : 5.0f; vmin -= m; vmax += m; }
+                const float padV = (vmax - vmin) * 0.12f; vmin -= padV; vmax += padV;
+                static float s_cvMin = 0.0f, s_cvMax = 1.0f;
+                if (d.cvDrag) { vmin = s_cvMin; vmax = s_cvMax; } else { s_cvMin = vmin; s_cvMax = vmax; }
+                auto vToY = [&](float v) { return cBot - (v - vmin) / (vmax - vmin) * (cBot - cTop); };
+                auto yToV = [&](float y) { return vmin + (cBot - y) / (cBot - cTop) * (vmax - vmin); };
+                // Zero line and a few value labels.
+                if (vmin < 0.0f && vmax > 0.0f) rl->AddLine(ImVec2(kx0, vToY(0.0f)), ImVec2(o.x + W, vToY(0.0f)), ImGui::GetColorU32(ImGuiCol_Separator, 0.9f));
+                char vb[24];
+                std::snprintf(vb, sizeof(vb), rootTrack ? "%.2f" : "%.0f", vmax - padV);
+                rl->AddText(ImVec2(kx0 + 4.0f, vToY(vmax - padV) - lineH), ImGui::GetColorU32(ImGuiCol_TextDisabled), vb);
+                std::snprintf(vb, sizeof(vb), rootTrack ? "%.2f" : "%.0f", vmin + padV);
+                rl->AddText(ImVec2(kx0 + 4.0f, vToY(vmin + padV)), ImGui::GetColorU32(ImGuiCol_TextDisabled), vb);
+                // The curves.
+                for (int c = 0; c < 3; ++c) {
+                    if (!d.chan[c]) continue;
+                    std::vector<ImVec2> pts; pts.reserve(samples.size());
+                    for (int i = 0; i <= steps; ++i) pts.push_back(ImVec2(tToX(t0v + (tEnd - t0v) * i / (float)steps), vToY(AnimComp(samples[(std::size_t)i], c))));
+                    if (pts.size() >= 2) rl->AddPolyline(pts.data(), (int)pts.size(), kChanCol[c], 0, 1.8f);
+                    // Past the clip's end the value holds (or wraps into the loop): a dashed hint.
+                    if (tEnd < t1v) {
+                        const float y = vToY(AnimComp(valueAt(tEnd), c));
+                        for (float x = tToX(tEnd); x < o.x + W; x += 8.0f) rl->AddLine(ImVec2(x, y), ImVec2(std::min(x + 4.0f, o.x + W), y), kChanCol[c], 1.0f);
+                    }
+                }
+                // Key points: one per key per shown channel.
+                for (int ki = 0; ki < (int)clip.keys.size(); ++ki) {
+                    const float kt = clip.keys[ki].time;
+                    if (tToX(kt) < kx0 - 8.0f || tToX(kt) > o.x + W + 8.0f) continue;
+                    const Vec3 v = keyVal(clip.keys[ki]);
+                    for (int c = 0; c < 3; ++c) {
+                        if (!d.chan[c]) continue;
+                        const bool dragging = d.cvDrag && d.cvKey == ki && d.cvChan == c;
+                        const ImVec2 p(tToX(kt), vToY(AnimComp(v, c)));
+                        ImGui::SetCursorScreenPos(ImVec2(p.x - 6.0f, p.y - 6.0f));
+                        ImGui::PushID(ki * 4 + c);
+                        ImGui::InvisibleButton("##cvk", ImVec2(12.0f, 12.0f));
+                        const bool hov = ImGui::IsItemHovered();
+                        if (!playMode && ImGui::IsItemActivated()) {
+                            PushAnimDraftUndo(ed, key, d);
+                            d.cvDrag = true; d.cvKey = ki; d.cvChan = c;
+                            sel.assign(1, ki); seek(kt);
+                        }
+                        if (!playMode && ImGui::IsItemActive() && dragging && d.cvKey >= 0 && d.cvKey < (int)clip.keys.size()) {
+                            const float nv = yToV(io.MousePos.y);
+                            if (!io.KeyShift) {   // sideways: the whole key moves in time
+                                const float cur = clip.keys[d.cvKey].time;
+                                const float nt = snapT(xToT(io.MousePos.x));
+                                if (std::fabs(nt - cur) > 1e-4f) {
+                                    std::vector<int> moved = clip.MoveKeys({d.cvKey}, nt - cur);
+                                    if (!moved.empty()) d.cvKey = moved.front();
+                                }
+                            }
+                            AnimKey& k = clip.keys[d.cvKey];
+                            if (rootTrack) { AnimComp(k.root, c) = nv; clip.hasRoot = true; }
+                            else { if ((int)k.pose.size() <= cb) k.pose.resize(cb + 1, Vec3{0, 0, 0}); AnimComp(k.pose[cb], c) = nv; }
+                            t = k.time; loadPose(k.pose); d.root = k.root; sel.assign(1, d.cvKey); ed.dirty = true;
+                            ImGui::SetTooltip(rootTrack ? "%s.%s  %.2fs = %.3f\n(Shift: value only)" : "%s.%s  %.2fs = %.1f deg\n(Shift: value only)",
+                                              rootTrack ? "Root" : Character::BoneName(cb), kChanName[c], k.time, nv);
+                        }
+                        if (ImGui::IsItemDeactivated() && dragging) d.cvDrag = false;
+                        if (!playMode && ImGui::IsItemClicked(ImGuiMouseButton_Right)) { sel.assign(1, ki); menuAt = ki; d.menuBone = rootTrack ? -1 : cb; }
+                        if (hov && !d.cvDrag) ImGui::SetTooltip(rootTrack ? "%s.%s at %.2fs = %.3f\nDrag to change, right-click for options" : "%s.%s at %.2fs = %.1f deg\nDrag to change, right-click for options",
+                                                                rootTrack ? "Root" : Character::BoneName(cb), kChanName[c], kt, AnimComp(v, c));
+                        ImGui::PopID();
+                        const bool hot = hov || dragging || isSel(ki);
+                        rl->AddCircleFilled(p, hot ? 5.0f : 4.0f, hot ? IM_COL32(255, 255, 255, 255) : kChanCol[c]);
+                        rl->AddCircle(p, hot ? 5.0f : 4.0f, isSel(ki) ? kChanCol[c] : IM_COL32(0, 0, 0, 160), 0, isSel(ki) ? 2.0f : 1.0f);
+                    }
+                }
+                // The background scrubs (after the points, so they take the click).
+                ImGui::SetCursorScreenPos(ImVec2(kx0, cTop));
+                ImGui::InvisibleButton("##cacvbg", ImVec2(KW, cBot - cTop));
+                if (!playMode && ImGui::IsItemActive() && !d.cvDrag) seek(snapT(xToT(io.MousePos.x)));
+                if (ImGui::IsItemHovered() && !d.cvDrag) ImGui::SetTooltip("Drag a point up or down to change its value, sideways to move the key in time\n(Shift: value only). Click or drag the background to scrub.");
+                if (clip.keys.empty()) {
+                    const char* hint = "No curves yet - key a pose first";
+                    const ImVec2 ts = ImGui::CalcTextSize(hint);
+                    rl->AddText(ImVec2(kx0 + (KW - ts.x) * 0.5f, (cTop + cBot) * 0.5f), ImGui::GetColorU32(ImGuiCol_TextDisabled), hint);
+                }
+                ImGui::SetCursorScreenPos(ImVec2(o.x, cBot));
+                ImGui::Dummy(ImVec2(1.0f, 1.0f));
+            }
+            // The playhead through the rows.
+            {
+                const float px = tToX(t);
+                if (px >= kx0 && px <= o.x + W) rl->AddLine(ImVec2(px, r0.y - 2.0f), ImVec2(px, r0.y + std::max(childH, rows.size() * rowH)), d.record ? IM_COL32(235, 70, 70, 255) : IM_COL32(255, 200, 60, 255), 1.5f);
+            }
+            // Wheel zooms the time axis about the cursor (Shift+wheel scrolls the rows), middle-drag pans.
+            if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
+                if (io.MouseWheel != 0.0f && io.KeyShift) ImGui::SetScrollY(ImGui::GetScrollY() - io.MouseWheel * rowH * 2.0f);
+                else AnimTimeViewInput(view, pxPerSec, xToT(io.MousePos.x));
+            }
+        }
+        ImGui::EndChild();
+        // The playhead over the ruler and the events lane.
+        if (const float px = tToX(t); px >= kx0 && px <= o.x + W) AnimDrawPlayhead(dl, px, o.y, rowsTop, d.record);
+        // Zoom / pan from the ruler and the events lane too.
+        if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) && io.MousePos.y < rowsTop)
+            AnimTimeViewInput(view, pxPerSec, xToT(io.MousePos.x));
+        dl->PopClipRect();
+        d.viewStart = view.start; d.viewLen = view.len;
+        // The key menu (a key's or a row's right-click): the selection's tools, plus keying.
+        if (menuAt != -1) ImGui::OpenPopup("##cakeymenu");
+        if (ImGui::BeginPopup("##cakeymenu")) {
+            const int n = (int)sel.size();
+            if (n) ImGui::TextDisabled("%d key%s selected", n, n == 1 ? "" : "s"); else ImGui::TextDisabled("No keys selected");
+            if (ImGui::MenuItem("Key pose at playhead", "K")) { PushAnimDraftUndo(ed, key, d); keyPoseNow(); }
+            if (d.menuBone >= 0) {
+                char lb[64];
+                std::snprintf(lb, sizeof(lb), "Key %s at playhead", Character::BoneName(d.menuBone));
+                if (ImGui::MenuItem(lb)) { PushAnimDraftUndo(ed, key, d); keyBoneNow(d.menuBone); }
+                std::snprintf(lb, sizeof(lb), "Clear %s on selected keys", Character::BoneName(d.menuBone));
+                if (ImGui::MenuItem(lb, nullptr, false, n > 0)) clearBoneAtSel(d.menuBone);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The bone's value on those keys becomes what the keys around them\ninterpolate to, so they no longer bend its curve (hollow diamonds).");
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Delete", "Del", false, n > 0)) deleteSel();
+            if (ImGui::MenuItem("Move to playhead", nullptr, false, n > 0)) nudge(t - clip.keys[sel.front()].time);
+            if (ImGui::BeginMenu("Easing", n > 0)) {
+                for (int e = 0; e < 6; ++e) {
+                    bool all = true;
+                    for (int i : sel) if ((int)clip.keys[i].ease != e) all = false;
+                    if (ImGui::MenuItem(kEaseLabels[e], nullptr, all)) setEase((AnimKeyEase)e);
+                }
+                ImGui::EndMenu();
+            }
+            if (ImGui::MenuItem("Select all", "Ctrl+A", false, !clip.keys.empty())) selectAll();
+            ImGui::Separator();
+            if (ImGui::MenuItem("Copy pose", "Ctrl+C")) copyPose();
+            if (ImGui::MenuItem("Paste pose at playhead", "Ctrl+V", false, !g_animPoseClipboard.empty())) pastePose(false);
+            if (ImGui::MenuItem("Paste pose mirrored", nullptr, false, !g_animPoseClipboard.empty())) pastePose(true);
+            if (ImGui::MenuItem("Mirror pose")) mirrorPose();
+            ImGui::Separator();
+            if (ImGui::MenuItem("Mirror clip left<->right", nullptr, false, !clip.keys.empty())) mirrorClip();
+            char gl[48];
+            std::snprintf(gl, sizeof(gl), "Insert %.2fs at playhead", s_gap);
+            if (ImGui::MenuItem(gl)) insertTime();
+            std::snprintf(gl, sizeof(gl), "Remove %.2fs at playhead", s_gap);
+            if (ImGui::MenuItem(gl, nullptr, false, !clip.keys.empty())) removeTime();
+            ImGui::EndPopup();
+        }
+    }
+    ImGui::EndChild();
+    ImGui::SameLine();
+
+    // Right column: the selected keys, the picked bone and the root, the clip's settings, the events.
+    ImGui::BeginChild("##caprops", ImVec2(0, bodyH), ImGuiChildFlags_Borders);
+    {
+        const float colW = ImGui::GetContentRegionAvail().x;
+        if (d.showPreview) {
+            const float pw = std::max(80.0f, colW), ph = std::max(60.0f, pw * 0.6f);
+            DrawAnimPreview(ed, chGo, {}, {}, !playing && !ImGui::IsMouseDown(ImGuiMouseButton_Left), ImVec2(pw, ph));
+        }
+        std::vector<const char*> names((std::size_t)nb);
+        for (int i = 0; i < nb; ++i) names[(std::size_t)i] = Character::BoneName(i);
+
+        // ---- The selection ----
+        ImGui::SeparatorText("Keys");
+        if (sel.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            ImGui::TextWrapped("None selected. Click a diamond, drag a box across the rows, Ctrl+A for all.");
+            ImGui::PopStyleColor();
+        }
+        else {
+            const int n = (int)sel.size();
+            ImGui::Text("%d key%s selected", n, n == 1 ? "" : "s");
+            AnimDraft beforeTime = d;
+            float kt = clip.keys[sel.front()].time;
+            ImGui::SetNextItemWidth(fh * 3.0f);
+            if (ImGui::DragFloat("Time##cakt", &kt, 0.01f, 0.0f, 600.0f, "%.2fs")) moveSel(snapT(kt) - clip.keys[sel.front()].time);
+            if (ImGui::IsItemActivated()) PushAnimDraftUndo(ed, key, beforeTime);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Time of the first selected key; the others keep their distance from it.\nA moved key replaces any key it lands on.");
+            const int e0 = (int)clip.keys[sel.front()].ease;
+            bool mixed = false;
+            for (int i : sel) if ((int)clip.keys[i].ease != e0) mixed = true;
+            ImGui::SetNextItemWidth(std::max(80.0f, colW - ImGui::CalcTextSize("Ease").x - sty.ItemSpacing.x * 2.0f));
+            if (ImGui::BeginCombo("Ease##cake", mixed ? "Mixed" : kEaseLabels[e0])) {
+                for (int e = 0; e < 6; ++e)
+                    if (ImGui::Selectable(kEaseLabels[e], !mixed && e == e0)) setEase((AnimKeyEase)e);
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("How the clip leaves the selected key(s) for the next one: hold the pose (Step),\nor ease that one move in or out. Clip default follows the clip's Easing below.");
+            if (ImGui::SmallButton("Delete##casel")) deleteSel();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Delete the selected keys (Del)");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Adjust...##ca")) ImGui::OpenPopup("##caadjust");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Retime, amplify or offset the selected keys");
+            ImGui::SameLine();
+            {
+                char cl[48]; std::snprintf(cl, sizeof(cl), "Clear %s##caclr", d.curveRoot ? "root" : names[(std::size_t)bone]);
+                if (ImGui::SmallButton(cl)) {
+                    if (d.curveRoot) {
+                        PushAnimDraftUndo(ed, key, d);
+                        for (int i : sel) clip.keys[i].root = Vec3{0, 0, 0};
+                        refreshPose(); ed.dirty = true;
+                    } else clearBoneAtSel(bone);
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip(d.curveRoot ? "Zero the root offset on the selected keys"
+                                                                          : "Make the picked bone hold still through the selected keys: its value becomes what\nthe keys around them interpolate to, so they no longer bend its curve.");
+            }
+            if (ImGui::BeginPopup("##caadjust")) {
+                static float s_retime = 1.0f, s_amp = 1.2f;
+                static Vec3 s_off{0, 0, 0};
+                static bool s_allBones = false;
+                const int target = s_allBones ? -1 : bone;
+                ImGui::TextDisabled("%d selected key%s", n, n == 1 ? "" : "s");
+                ImGui::SetNextItemWidth(70);
+                ImGui::DragFloat("##caretime", &s_retime, 0.01f, 0.1f, 10.0f, "x%.2f");
+                ImGui::SameLine();
+                if (ImGui::Button("Retime about playhead", ImVec2(170, 0))) {
+                    PushAnimDraftUndo(ed, key, d);
+                    sel = clip.ScaleKeyTimes(sel, t, s_retime); ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stretch the selected keys' timing about the playhead:\nx2 makes that stretch take twice as long, x0.5 half.");
+                ImGui::SetNextItemWidth(70);
+                ImGui::DragFloat("##caamp", &s_amp, 0.01f, 0.0f, 5.0f, "x%.2f");
+                ImGui::SameLine();
+                if (ImGui::Button("Amplify", ImVec2(170, 0))) {
+                    PushAnimDraftUndo(ed, key, d);
+                    clip.ScalePose(sel, target, s_amp); refreshPose(); ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exaggerate (above x1) or dampen (below) the motion on the selected keys:\nangles move away from, or toward, the clip's average pose.");
+                ImGui::SetNextItemWidth(160);
+                ImGui::DragFloat3("##caoff", &s_off.x, 0.5f, -180.0f, 180.0f, "%.0f");
+                ImGui::SameLine();
+                if (ImGui::Button("Offset", ImVec2(170, 0))) {
+                    PushAnimDraftUndo(ed, key, d);
+                    clip.OffsetPose(sel, target, s_off); refreshPose(); ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add these degrees (x y z) to the selected keys.");
+                char ab[64]; std::snprintf(ab, sizeof(ab), "All bones (else just %s)##caadj", names[(std::size_t)bone]);
+                ImGui::Checkbox(ab, &s_allBones);
+                ImGui::EndPopup();
+            }
+        }
+
+        // ---- The picked bone: its angles (live on the rig), keyed by hand or by Record ----
+        ImGui::SeparatorText("Bone");
+        if (!ch->separateParts) {
+            ImGui::TextWrapped("This character is one object - separate it into parts to pose it with the Scene gizmo (the fields here work either way).");
+            if (ImGui::Button("Separate Into Parts##caSplit")) { ed.PushUndo(); ch->separateParts = true; ch->BuildParts(); ed.dirty = true; }
+        }
+        ImGui::SetNextItemWidth(colW);
+        if (ImGui::Combo("##cabone", &bone, names.data(), nb)) d.curveRoot = false;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The bone the fields below edit (clicking a row or a rig part picks it too)");
+        {
+            AnimDraft beforeNudge = d;   // undo checkpoint taken as a drag starts
+            ImGui::SetNextItemWidth(colW);
+            const bool ch3 = ImGui::DragFloat3("##carot", &pose[(std::size_t)bone].x, 0.5f, 0.0f, 0.0f, "%.1f");
+            if (ImGui::IsItemActivated()) PushAnimDraftUndo(ed, key, beforeNudge);
+            if (ch3 && d.record) keyBoneNow(bone);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s rotation (degrees about x, y, z). Drag to pose it live.\n%s", names[(std::size_t)bone],
+                                                          d.record ? "Recording: each change keys the bone at the playhead." : "Press K (or the diamond) to key the pose, or turn on Record.");
+            ImGui::BeginDisabled(playMode);
+            char kb[48]; std::snprintf(kb, sizeof(kb), "Key %s##cakb", names[(std::size_t)bone]);
+            if (ImGui::SmallButton(kb)) { PushAnimDraftUndo(ed, key, d); keyBoneNow(bone); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Key just this bone at the playhead (a new key keeps the other bones as the clip has them there)");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Reset bone##carb")) resetBone(bone);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Back to rest (0, 0, 0)");
+            if (ImGui::SmallButton("Key Pose##ca")) { PushAnimDraftUndo(ed, key, d); keyPoseNow(); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Key every bone (and the root) at the playhead (K)");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Reset pose##carp")) resetPose();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Every bone back to rest");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Mirror pose##ca")) mirrorPose();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Flip the pose being authored left<->right");
+            if (ImGui::SmallButton("Copy##cacp")) copyPose();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Copy the pose being authored (Ctrl+C). Paste it on any character.");
+            ImGui::SameLine();
+            ImGui::BeginDisabled(g_animPoseClipboard.empty());
+            if (ImGui::SmallButton("Paste##capp")) pastePose(false);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Key the copied pose at the playhead (Ctrl+V)");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Paste mirrored##capm")) pastePose(true);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Key the copied pose flipped left<->right at the playhead:\nthe second half of a walk cycle from the first.");
+            ImGui::EndDisabled();
+            ImGui::EndDisabled();
+        }
+
+        // ---- The root track: the body's offset ----
+        ImGui::SeparatorText("Root");
+        {
+            AnimDraft beforeRoot = d;
+            ImGui::SetNextItemWidth(colW);
+            const bool chr = ImGui::DragFloat3("##caroot", &d.root.x, 0.005f, 0.0f, 0.0f, "%.3f");
+            if (ImGui::IsItemActivated()) PushAnimDraftUndo(ed, key, beforeRoot);
+            if (chr && d.record) keyRootNow();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The whole body's offset at the playhead (rig units: 1 = the character's height).\nA walk's hip bob, a crouch's drop. Keying it turns the clip's root track on.");
+            ImGui::BeginDisabled(playMode);
+            if (ImGui::SmallButton("Key root##cakr")) { PushAnimDraftUndo(ed, key, d); keyRootNow(); }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Reset##carr")) { PushAnimDraftUndo(ed, key, d); d.root = Vec3{0, 0, 0}; if (d.record) keyRootNow(); }
+            ImGui::SameLine();
+            ImGui::TextDisabled(clip.hasRoot ? "root track on" : "no root track");
+            ImGui::EndDisabled();
+        }
+
+        // ---- The clip ----
+        ImGui::SeparatorText("Clip");
+        {
+            char cn[48]; std::snprintf(cn, sizeof(cn), "%s", clip.name.c_str());
+            AnimDraft beforeRename = d;
+            ImGui::SetNextItemWidth(colW);
+            if (ImGui::InputText("##caname", cn, sizeof(cn))) {
+                std::string s(cn); for (char& c : s) if (c == ' ') c = '_'; clip.name = s; ed.dirty = true;
+            }
+            if (ImGui::IsItemActivated()) PushAnimDraftUndo(ed, key, beforeRename);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The clip's name (Apply stores it under this name; Rename in the list renames a stored clip)");
+            if (ImGui::Checkbox("Loop##ca", &clip.loop)) ed.dirty = true;
+            ImGui::SameLine();
+            int ip = (int)clip.interp;
+            ImGui::SetNextItemWidth(std::max(70.0f, colW - ImGui::CalcTextSize("Loop  Easing").x - fh - sty.ItemSpacing.x * 3.0f));
+            if (ImGui::Combo("Easing##ca", &ip, "Linear\0Smooth\0Step\0Cubic\0")) { PushAnimDraftUndo(ed, key, d); clip.interp = (AnimInterp)ip; ed.dirty = true; }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("How the clip moves between keys: at constant speed, eased, held until the next\nkey, or along a curve through them. A key's own easing (select it) overrides this.");
+            AnimDraft beforeSetting = d;   // undo checkpoint taken as a drag starts
+            float len = clip.length;
+            ImGui::SetNextItemWidth(fh * 3.0f);
+            if (ImGui::DragFloat("Length##ca", &len, 0.01f, 0.0f, 600.0f, "%.2fs")) { clip.length = len < 0.0f ? 0.0f : len; ed.dirty = true; }
+            if (ImGui::IsItemActivated()) PushAnimDraftUndo(ed, key, beforeSetting);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Loop length (0 = loop at the last key). Room past the last key lets a\nloop ease back into its first key with no seam.");
+            ImGui::SetNextItemWidth(fh * 3.0f);
+            if (ImGui::DragFloat("Speed##ca", &clip.speed, 0.01f, 0.1f, 8.0f, "x%.2f")) ed.dirty = true;
+            if (ImGui::IsItemActivated()) PushAnimDraftUndo(ed, key, beforeSetting);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Playback rate (2 = twice as fast). Play here runs at it too.");
+            ImGui::Checkbox("Play on start##ca", &d.playOnStart);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Off (default): Apply only adds the clip; bind it to a state to use it.\nOn: the clip plays when Play starts and keeps playing while the\ncharacter moves (overrides movement), until a script stops it.");
+            if (!ch->clipsFile.empty()) {
+                ImGui::SameLine();
+                bool linked = ch->clipsLinked;
+                if (ImGui::Checkbox("Linked##ca", &linked)) { ed.PushUndo(); ch->clipsLinked = linked; ed.dirty = true; }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s\nOff: clips saved with the scene win; the file only adds missing ones.\n"
+                                      "On: the file is the source - Play loads it over same-named clips,\n"
+                                      "and Apply re-saves it.", ch->clipsFile.c_str());
+            }
+            // Bind the clip to movement states: the controller plays it instead of the built-in.
+            ImGui::TextDisabled("Use for (click again to unbind):");
+            const int nSlots = (int)(sizeof(kAnimBindSlots) / sizeof(kAnimBindSlots[0]));
+            float lineW = 0.0f;
+            for (int i = 0; i < nSlots; ++i) {
+                const float bw = ImGui::CalcTextSize(kAnimBindSlots[i].label).x + sty.FramePadding.x * 2.0f + sty.ItemSpacing.x;
+                if (i && lineW + bw < colW) ImGui::SameLine(); else lineW = 0.0f;
+                lineW += bw;
+                std::string& field = ch->*(kAnimBindSlots[i].field);
+                const bool on = !clip.name.empty() && field == clip.name;
+                if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.30f, 1.0f));
+                char bl[32]; std::snprintf(bl, sizeof(bl), "%s##cabind%d", kAnimBindSlots[i].label, i);
+                if (ImGui::SmallButton(bl) && !clip.name.empty()) {
+                    ed.PushUndo();
+                    if (on) field.clear();
+                    else { if (!ch->HasClip(clip.name)) ch->AddClip(clip); field = clip.name; }
+                    ed.dirty = true;
+                }
+                if (on) ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s: %s", kAnimBindSlots[i].label, field.empty() ? "built-in" : field.c_str());
+            }
+            ImGui::BeginDisabled(playMode);
+            if (ImGui::SmallButton("Mirror clip##ca")) mirrorClip();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Flip every key left<->right: a right-handed clip becomes its left-handed twin.");
+            ImGui::SetNextItemWidth(fh * 2.4f);
+            ImGui::DragFloat("##cagap", &s_gap, 0.01f, 0.01f, 10.0f, "%.2fs");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How much time Insert opens and Remove closes at the playhead");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Insert##cagap")) insertTime();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open a gap at the playhead: keys and events from here on move later by that much.");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Remove##cagap")) removeTime();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close a gap at the playhead: keys and events inside it go, the rest move earlier.");
+            ImGui::EndDisabled();
+        }
+
+        // ---- Events, as a list (the lane above adds, moves and renames them too) ----
+        ImGui::SeparatorText("Events");
+        if (clip.events.empty()) ImGui::TextDisabled("None. Press E or double-click the events lane.");
+        int edel = -1;
+        for (int i = 0; i < (int)clip.events.size(); ++i) {
+            ImGui::PushID(1000 + i);
+            char lbl[64]; std::snprintf(lbl, sizeof(lbl), "%.2fs  %s", clip.events[i].time, clip.events[i].name.c_str());
+            if (ImGui::SmallButton(lbl)) seek(clip.events[i].time);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Jump the playhead there");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("x")) edel = i;
+            ImGui::PopID();
+        }
+        if (edel >= 0) { PushAnimDraftUndo(ed, key, d); clip.events.erase(clip.events.begin() + edel); ed.dirty = true; }
+    }
+    ImGui::EndChild();
+
+    // Keyboard, while the Animation window has focus and no text field does:
+    // Space plays, Home / End and [ ] move the playhead, K keys the pose, E adds
+    // an event, F fits the view; Del deletes the selected keys, the arrows nudge
+    // them a frame (Shift: ten), Ctrl+A selects all, Ctrl+C / Ctrl+V copy the
+    // pose and paste it as a key. Shortcut() takes the arrows, so keyboard nav
+    // doesn't also walk the widgets with them.
+    if (!playMode && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !io.WantTextInput) {
+        const bool ctrl = io.KeyCtrl;
+        if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) playing = !playing;
+        if (ImGui::IsKeyPressed(ImGuiKey_Home, false)) seek(0.0f);
+        if (ImGui::IsKeyPressed(ImGuiKey_End, false)) seek(dur);
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftBracket, true)) gotoPrevKey();
+        if (ImGui::IsKeyPressed(ImGuiKey_RightBracket, true)) gotoNextKey();
+        if (!ctrl && ImGui::IsKeyPressed(ImGuiKey_K, false)) { PushAnimDraftUndo(ed, key, d); keyPoseNow(); }
+        if (!ctrl && ImGui::IsKeyPressed(ImGuiKey_E, false)) addEventAt(t);
+        if (!ctrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) d.viewLen = 0.0f;
         if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) deleteSel();
         if (ctrl && ImGui::IsKeyPressed(ImGuiKey_A, false)) selectAll();
         if (ctrl && ImGui::IsKeyPressed(ImGuiKey_C, false)) copyPose();
         if (ctrl && ImGui::IsKeyPressed(ImGuiKey_V, false)) pastePose(false);
         if (!sel.empty()) {
-            const float frame = ImGui::GetIO().KeyShift ? 10.0f * kAnimFrame : kAnimFrame;
+            const float frame = (io.KeyShift ? 10.0f : 1.0f) / (float)d.fps;
             if (ImGui::Shortcut(ImGuiKey_LeftArrow, ImGuiInputFlags_Repeat) ||
                 ImGui::Shortcut(ImGuiMod_Shift | ImGuiKey_LeftArrow, ImGuiInputFlags_Repeat)) nudge(-frame);
             if (ImGui::Shortcut(ImGuiKey_RightArrow, ImGuiInputFlags_Repeat) ||
                 ImGui::Shortcut(ImGuiMod_Shift | ImGuiKey_RightArrow, ImGuiInputFlags_Repeat)) nudge(frame);
         }
     }
-
-    // ---- Animation events: name a marker at the playhead; gameplay reacts when the
-    //      clip plays past it (footstep sounds, a hit window, etc.). ----
-    ImGui::Separator();
-    ImGui::TextDisabled("Events (fire a named marker as the clip plays)");
-    std::string& evName = d.evName;
-    char eb[48]; std::snprintf(eb, sizeof(eb), "%s", evName.c_str());
-    ImGui::SetNextItemWidth(160);
-    if (ImGui::InputText("Event Name##ca", eb, sizeof(eb))) {
-        std::string s(eb); for (char& c : s) if (c == ' ') c = '_'; evName = s;
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Add Event at Time##ca") && !evName.empty()) {
-        PushAnimDraftUndo(ed, key, d);
-        AnimEvent e; e.time = t; e.name = evName;
-        clip.events.push_back(e);
-        std::sort(clip.events.begin(), clip.events.end(),
-                  [](const AnimEvent& a, const AnimEvent& b) { return a.time < b.time; });
-        ed.dirty = true;
-    }
-    int edel = -1;
-    for (int i = 0; i < (int)clip.events.size(); ++i) {
-        ImGui::PushID(1000 + i);
-        char lbl[64]; std::snprintf(lbl, sizeof(lbl), "%.2fs  %s", clip.events[i].time, clip.events[i].name.c_str());
-        if (ImGui::Button(lbl)) t = clip.events[i].time;
-        ImGui::SameLine(); if (ImGui::SmallButton("x")) edel = i;
-        ImGui::PopID();
-    }
-    if (edel >= 0) { PushAnimDraftUndo(ed, key, d); clip.events.erase(clip.events.begin() + edel); ed.dirty = true; }
 }
 
 // Frame an object (and its whole subtree — a rig's parts) for the preview camera:
@@ -19752,8 +20657,8 @@ static void AnimFocusBounds(GameObject* go, Vec3& center, float& radius) {
 // preview reuse its last image (no re-pose, no re-skin, no render) while the
 // camera and size stay put; it still refreshes twice a second.
 static void DrawAnimPreview(EditorState& ed, GameObject* go,
-                            const std::function<void()>& pose = {}, const std::function<void()>& restore = {},
-                            bool poseUnchanged = false, ImVec2 size = ImVec2(0, 0)) {
+                            const std::function<void()>& pose, const std::function<void()>& restore,
+                            bool poseUnchanged, ImVec2 size) {
     if (!go || !go->transform) return;
     static std::unordered_map<void*, ImVec2> orbit;   // (yaw, pitch) degrees
     static std::unordered_map<void*, float>  zoomMul;
@@ -20008,13 +20913,26 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
     }
     ImGui::SameLine(); ImGui::TextDisabled("%d of %d", ma->active + 1, ma->ClipCount());
 
-    if (ImGui::Button(run ? "Pause##maed" : "Play##maed")) run = !run;
-    ImGui::SameLine();
-    if (ImGui::Button("Stop##maed")) { run = false; t = 0.0f; }
-    ImGui::SameLine(); ImGui::Text("len %.2fs", len);
-    ImGui::SameLine(); ImGui::TextDisabled("%d animated node(s)", (int)clip.nodes.size());
-    float tmax = len > 0.05f ? len : 1.0f;
-    if (ImGui::SliderFloat("Time##maed", &t, 0.0f, tmax, "%.2fs")) run = false;
+    {   // The transport the Character editor and the property timeline use too.
+        auto keyTimes = [&] {   // every node's key times, for previous / next key
+            std::vector<float> ts;
+            for (const auto& nc : clip.nodes) for (const auto& kv : nc.clip.Tracks()) for (const auto& k : kv.second.Keys()) ts.push_back(k.time);
+            std::sort(ts.begin(), ts.end());
+            return ts;
+        };
+        const int tr = AnimTransport(run);
+        if (tr == 0) { t = 0.0f; run = false; }
+        else if (tr == 1) { float b = 0.0f; for (float k : keyTimes()) if (k < t - 1e-3f) b = k; t = b; run = false; }
+        else if (tr == 2) run = !run;
+        else if (tr == 3) { for (float k : keyTimes()) if (k > t + 1e-3f) { t = k; break; } run = false; }
+        else if (tr == 4) { t = len; run = false; }
+        ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x * 1.5f);
+        ImGui::SetNextItemWidth(ImGui::GetFrameHeight() * 2.8f);
+        if (ImGui::DragFloat("##maedtime", &t, 0.01f, 0.0f, len > 0.05f ? len : 1.0f, "%.2fs")) run = false;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Playhead (the dope sheet below scrubs too)");
+        ImGui::SameLine(); ImGui::Text("len %.2fs", len);
+        ImGui::SameLine(); ImGui::TextDisabled("%d animated node(s)", (int)clip.nodes.size());
+    }
 
     bool ch = false;
     ch |= ImGui::Checkbox("Loop##maed", &ma->loop);
@@ -20239,20 +21157,10 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
         // ---- Time ruler: ticks + second labels + playhead time; drag to seek.
         {
             ImVec2 r0 = ImGui::GetCursorScreenPos();
-            const float rh = 17.0f;
-            ddl->AddRectFilled(r0, ImVec2(r0.x + dsW, r0.y + rh), IM_COL32(30, 33, 41, 255), 3.0f);
-            for (float ts2 = 0.0f; ts2 <= span + 1e-3f; ts2 += dsStep) {
-                float x = r0.x + (ts2 / span) * dsW;
-                bool major = std::fabs(ts2 - std::round(ts2)) < 1e-3f;
-                ddl->AddLine(ImVec2(x, r0.y + (major ? 3.0f : 9.0f)), ImVec2(x, r0.y + rh),
-                             IM_COL32(140, 145, 155, major ? 200 : 110), 1.0f);
-                if (major && x + 26.0f < r0.x + dsW) {
-                    char tb2[16]; std::snprintf(tb2, sizeof(tb2), "%.0fs", ts2);
-                    ddl->AddText(ImVec2(x + 3.0f, r0.y + 1.0f), IM_COL32(150, 155, 165, 210), tb2);
-                }
-            }
+            const float rh = ImGui::GetFrameHeight();
+            AnimDrawRuler(ddl, r0, dsW, rh, r0.y + rh, AnimTimeView{0.0f, span}, 0.0f, len, 0);
             float phx = r0.x + (t / span) * dsW;
-            ddl->AddLine(ImVec2(phx, r0.y), ImVec2(phx, r0.y + rh), IM_COL32(255, 210, 0, 255), 1.5f);
+            AnimDrawPlayhead(ddl, phx, r0.y, r0.y + rh, false);
             char pb[24]; std::snprintf(pb, sizeof(pb), "%.2fs", t);
             ImVec2 pbs = ImGui::CalcTextSize(pb);
             float pbx = phx + 5.0f;
@@ -20344,6 +21252,7 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
 
 static void DrawObjectAnimTimeline(EditorState& ed, GameObject* go, Animator* an);
 static void DrawAnimationEditor(EditorState& ed) {
+    g_animSceneLines.clear();   // the onion skin: a shown Character editor refills it below
     // Hiding this window stops only the drafts it owns. The inspector / graph
     // preview (apreview) keeps playing, and so does a built-in grid preview
     // already running — selection, not the window, ends that one.
@@ -20411,7 +21320,6 @@ static void DrawAnimationEditor(EditorState& ed) {
             if (ImGui::BeginTabBar("##animtabs")) {
                 if (ImGui::BeginTabItem("Character")) {
                     StopModelScenePreview(ed);
-                    DrawAnimPreview(ed, chGo);
                     DrawCharacterAnim(ed, chGo, ch, focusBone);
                     ImGui::EndTabItem();
                 }
@@ -20427,7 +21335,6 @@ static void DrawAnimationEditor(EditorState& ed) {
             ImGui::End(); return;
         }
         StopModelScenePreview(ed);
-        DrawAnimPreview(ed, chGo);
         DrawCharacterAnim(ed, chGo, ch, focusBone);
         ImGui::End(); return;
     }
@@ -20670,46 +21577,7 @@ static void DrawObjectAnimTimeline(EditorState& ed, GameObject* go, Animator* an
     // ---- Toolbar ----------------------------------------------------------------
     const float fh = ImGui::GetFrameHeight();
     auto glyphBtn = [&](const char* id, int kind, const char* tip, bool active, ImU32 activeCol = 0) {
-        if (active && activeCol) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(activeCol));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::ColorConvertU32ToFloat4(activeCol));
-        }
-        bool hit = (active && !activeCol) ? AccentToggleButton(id, true, ImVec2(fh, fh)) : ImGui::Button(id, ImVec2(fh, fh));
-        if (active && activeCol) ImGui::PopStyleColor(2);
-        ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-        ImVec2 c((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f);
-        float s = fh * 0.22f;
-        ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        switch (kind) {
-        case 0: dl->AddCircleFilled(c, s * 1.05f, active ? IM_COL32(255, 255, 255, 255) : IM_COL32(230, 80, 80, 255)); break;   // record
-        case 1: dl->AddTriangleFilled(ImVec2(c.x - s * 0.7f, c.y - s), ImVec2(c.x - s * 0.7f, c.y + s), ImVec2(c.x + s, c.y), col); break; // play
-        case 2: dl->AddRectFilled(ImVec2(c.x - s * 0.8f, c.y - s), ImVec2(c.x - s * 0.25f, c.y + s), col, 1.0f);
-                dl->AddRectFilled(ImVec2(c.x + s * 0.25f, c.y - s), ImVec2(c.x + s * 0.8f, c.y + s), col, 1.0f); break;           // pause
-        case 3: dl->AddRectFilled(ImVec2(c.x - s, c.y - s), ImVec2(c.x - s * 0.65f, c.y + s), col);                               // first
-                dl->AddTriangleFilled(ImVec2(c.x + s, c.y - s), ImVec2(c.x + s, c.y + s), ImVec2(c.x - s * 0.5f, c.y), col); break;
-        case 4: dl->AddTriangleFilled(ImVec2(c.x + s * 0.6f, c.y - s), ImVec2(c.x + s * 0.6f, c.y + s), ImVec2(c.x - s * 0.6f, c.y), col);   // prev key
-                dl->AddRectFilled(ImVec2(c.x - s, c.y - s), ImVec2(c.x - s * 0.7f, c.y + s), col); break;
-        case 5: dl->AddTriangleFilled(ImVec2(c.x - s * 0.6f, c.y - s), ImVec2(c.x - s * 0.6f, c.y + s), ImVec2(c.x + s * 0.6f, c.y), col);   // next key
-                dl->AddRectFilled(ImVec2(c.x + s * 0.7f, c.y - s), ImVec2(c.x + s, c.y + s), col); break;
-        case 6: { ImVec2 d[4] = {{c.x, c.y - s * 1.1f}, {c.x + s * 1.1f, c.y}, {c.x, c.y + s * 1.1f}, {c.x - s * 1.1f, c.y}};   // add key
-                  dl->AddConvexPolyFilled(d, 4, col); break; }
-        case 7: dl->AddRect(ImVec2(c.x - s * 1.2f, c.y - s * 0.85f), ImVec2(c.x + s * 1.2f, c.y + s * 0.85f), col, 2.0f, 0, 1.4f);   // preview
-                dl->AddCircleFilled(c, s * 0.4f, col); break;
-        case 8: dl->AddLine(ImVec2(c.x - s, c.y + s), ImVec2(c.x - s, c.y - s * 1.2f), col, 1.5f);                              // event flag
-                dl->AddTriangleFilled(ImVec2(c.x - s, c.y - s * 1.2f), ImVec2(c.x + s, c.y - s * 0.6f), ImVec2(c.x - s, c.y), col); break;
-        case 9: { ImVec2 pts[8];                                                                                                 // curves
-                  for (int i = 0; i < 8; ++i) { float u = i / 7.0f; pts[i] = ImVec2(c.x - s * 1.2f + u * s * 2.4f, c.y + std::sin(u * 6.2832f) * s * 0.8f); }
-                  dl->AddPolyline(pts, 8, col, 0, 1.5f); break; }
-        case 10: for (int i = -1; i <= 1; ++i) dl->AddCircleFilled(ImVec2(c.x + i * s * 0.9f, c.y), s * 0.28f, col); break;   // more
-        case 11: { ImVec2 st4[10];                                                                                               // presets (star)
-                   for (int i = 0; i < 10; ++i) { float ang = -1.5708f + i * 0.6283f, rr = (i % 2) ? s * 0.5f : s * 1.15f;
-                       st4[i] = ImVec2(c.x + std::cos(ang) * rr, c.y + std::sin(ang) * rr); }
-                   for (int i = 0; i < 10; i += 2) dl->AddTriangleFilled(c, st4[i], st4[(i + 1) % 10], col);
-                   for (int i = 0; i < 10; i += 2) dl->AddTriangleFilled(c, st4[i], st4[(i + 9) % 10], col); break; }
-        }
-        if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
-        return hit;
+        return AnimGlyphButton(id, kind, tip, active, activeCol);   // the glyphs the Animation tab's editors share
     };
     std::vector<float> allKeys = keyTimes("");
     auto addEventAt = [&](float t) {
@@ -20724,21 +21592,14 @@ static void DrawObjectAnimTimeline(EditorState& ed, GameObject* go, Animator* an
                                         : "Record: move / rotate / scale the object and keys are added automatically",
                  st.record, IM_COL32(200, 50, 50, 255))) { st.record = !st.record; snapshot(); }
     ImGui::SameLine(0, sty.ItemSpacing.x * 1.5f);
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, sty.ItemSpacing.y));
-    if (glyphBtn("##afirst", 3, "Go to start", false)) { st.t = 0.0f; st.playing = false; }
-    ImGui::SameLine();
-    if (glyphBtn("##aprev", 4, "Previous key ( [ )", false)) {
-        float best = 0.0f; for (float k : allKeys) if (k < st.t - 1e-3f) best = k;
-        st.t = best; st.playing = false;
+    {
+        const int tr = AnimTransport(st.playing);
+        if (tr == 0) { st.t = 0.0f; st.playing = false; }
+        else if (tr == 1) { float best = 0.0f; for (float k : allKeys) if (k < st.t - 1e-3f) best = k; st.t = best; st.playing = false; }
+        else if (tr == 2) st.playing = !st.playing;
+        else if (tr == 3) { for (float k : allKeys) if (k > st.t + 1e-3f) { st.t = k; break; } st.playing = false; }
+        else if (tr == 4) { st.t = len; st.playing = false; }
     }
-    ImGui::SameLine();
-    if (glyphBtn("##aplay", st.playing ? 2 : 1, st.playing ? "Pause (Space)" : "Play (Space)", st.playing)) st.playing = !st.playing;
-    ImGui::SameLine();
-    if (glyphBtn("##anext", 5, "Next key ( ] )", false)) {
-        for (float k : allKeys) if (k > st.t + 1e-3f) { st.t = k; break; }
-        st.playing = false;
-    }
-    ImGui::PopStyleVar();
     ImGui::SameLine(0, sty.ItemSpacing.x * 1.5f);
     ImGui::SetNextItemWidth(fh * 2.6f);
     if (ImGui::DragFloat("##atime", &st.t, 0.01f, 0.0f, 600.0f, "%.2fs")) st.playing = false;
@@ -20867,6 +21728,8 @@ static void DrawObjectAnimTimeline(EditorState& ed, GameObject* go, Animator* an
     if (!playMode && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput) {
         const bool ctrl = ImGui::GetIO().KeyCtrl;
         if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) st.playing = !st.playing;
+        if (ImGui::IsKeyPressed(ImGuiKey_Home, false)) { st.t = 0.0f; st.playing = false; }
+        if (ImGui::IsKeyPressed(ImGuiKey_End, false)) { st.t = len; st.playing = false; }
         if (!ctrl && ImGui::IsKeyPressed(ImGuiKey_K, false)) keyAll();
         if (!ctrl && ImGui::IsKeyPressed(ImGuiKey_E, false)) addEventAt(st.t);
         if (!ctrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) { st.viewStart = 0.0f; st.viewLen = 0.0f; }
@@ -21037,24 +21900,9 @@ static void DrawObjectAnimTimeline(EditorState& ed, GameObject* go, Animator* an
         const float rowsTop = o.y + rulerH + evH;
         dl->PushClipRect(o, ImVec2(o.x + W, o.y + H), true);
 
-        // Ruler
-        dl->AddRectFilled(o, ImVec2(o.x + W, o.y + rulerH), ImGui::GetColorU32(ImGuiCol_FrameBg));
+        // Ruler (the one the Character editor draws), the stretch past the clip's end shaded.
         float pxPerSec = (W - pad * 2.0f) / st.viewLen;
-        float step = 0.1f;
-        for (float cand : {0.05f, 0.1f, 0.25f, 0.5f, 1.0f, 2.0f, 5.0f, 10.0f, 30.0f, 60.0f}) { step = cand; if (cand * pxPerSec >= 60.0f) break; }
-        for (float t = std::floor(st.viewStart / step) * step; t <= st.viewStart + st.viewLen + 1e-4f; t += step) {
-            if (t < -1e-4f) continue;
-            float x = tToX(t);
-            dl->AddLine(ImVec2(x, o.y + rulerH * 0.55f), ImVec2(x, o.y + rulerH), ImGui::GetColorU32(ImGuiCol_TextDisabled));
-            dl->AddLine(ImVec2(x, o.y + rulerH), ImVec2(x, o.y + H), ImGui::GetColorU32(ImGuiCol_Separator, 0.35f));
-            char lb[16]; std::snprintf(lb, sizeof(lb), step < 1.0f ? "%.2f" : "%.0fs", t);
-            dl->AddText(ImVec2(x + 3.0f, o.y + 1.0f), ImGui::GetColorU32(ImGuiCol_TextDisabled), lb);
-        }
-        // Past the clip's end is shaded.
-        if (len > 0.0f) {
-            float xe = tToX(len);
-            if (xe < o.x + W) dl->AddRectFilled(ImVec2(std::max(xe, o.x), o.y + rulerH), ImVec2(o.x + W, o.y + H), IM_COL32(0, 0, 0, 40));
-        }
+        AnimDrawRuler(dl, o, W, rulerH, o.y + H, AnimTimeView{st.viewStart, st.viewLen}, pad, len, st.fps);
         ImGui::SetCursorScreenPos(o);
         ImGui::InvisibleButton("##aruler", ImVec2(W, rulerH));
         if (!playMode && ImGui::IsItemActive()) { st.t = snapT(xToT(ImGui::GetIO().MousePos.x)); st.playing = false; }
@@ -21214,11 +22062,7 @@ static void DrawObjectAnimTimeline(EditorState& ed, GameObject* go, Animator* an
                     if (hov && !st.dragKeys) ImGui::SetTooltip("%s key at %.2fs\nClick select, Shift+click add, drag to move\nRight-click for options",
                                                                row.label.c_str(), kt);
                     ImGui::PopID();
-                    ImVec2 d[4] = {{x, cy - r}, {x + r, cy}, {x, cy + r}, {x - r, cy}};
-                    ImU32 kc = (hov || selected) ? IM_COL32(255, 255, 255, 255) : row.col;
-                    dl->AddConvexPolyFilled(d, 4, kc);
-                    if (selected) dl->AddPolyline(d, 4, row.col, ImDrawFlags_Closed, 2.0f);
-                    else if (atHead) dl->AddPolyline(d, 4, IM_COL32(255, 255, 255, 230), ImDrawFlags_Closed, 1.5f);
+                    AnimDrawDiamond(dl, ImVec2(x, cy), r, row.col, true, hov || selected, selected, atHead);
                 }
             }
             if (st.boxing && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
@@ -21364,10 +22208,7 @@ static void DrawObjectAnimTimeline(EditorState& ed, GameObject* go, Animator* an
             }
         }
         // Playhead
-        float px = tToX(st.t);
-        ImU32 phc = st.record ? IM_COL32(235, 70, 70, 255) : IM_COL32(255, 200, 60, 255);
-        dl->AddLine(ImVec2(px, o.y), ImVec2(px, o.y + H), phc, 1.5f);
-        dl->AddTriangleFilled(ImVec2(px - 5.0f, o.y), ImVec2(px + 5.0f, o.y), ImVec2(px, o.y + 7.0f), phc);
+        AnimDrawPlayhead(dl, tToX(st.t), o.y, o.y + H, st.record);
         // Wheel zooms around the cursor; middle-drag pans.
         if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
             ImGuiIO& io = ImGui::GetIO();
@@ -27781,6 +28622,8 @@ void DrawInspector(EditorState& ed) {
                         d.t = 0.0f; d.playing = false; d.playOnStart = false;
                         d.pose = d.clip.keys.empty() ? std::vector<Vec3>() : d.clip.keys.front().pose;
                         d.pose.resize(Character::BoneCount(), Vec3{0, 0, 0});
+                        d.root = d.clip.keys.empty() ? Vec3{0, 0, 0} : d.clip.keys.front().root;
+                        d.sel.clear(); d.viewLen = 0.0f;   // a fresh selection and a fitted timeline for the new clip
                         g_showAnimation = true;
                         g_focusQueue.push_back("Animation###AnimationDock");
                     }
@@ -38003,6 +38846,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                                            gameView ? 1 : 0, viewIgnore))
         dl->AddImage((ImTextureID)tex, view3dMin, view3dMax);
     for (GameObject* g : isoHidden) g->active = true;
+    // The Animation window's onion skin, on top of the meshes like the skeleton
+    // overlay below: the rig at the keys around the playhead.
+    if (!gameView && g_showGizmos)
+        for (const AnimSceneLine& l : g_animSceneLines) clipLine(vp * Vec4{l.a, 1}, vp * Vec4{l.b, 1}, l.col, l.th);
     // Skeleton overlay on top of the meshes (built with the gizmos above).
     if (!gameView) {
         for (const SkelDraw& d : g_skelDraw) {

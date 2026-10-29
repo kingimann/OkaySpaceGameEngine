@@ -118,6 +118,35 @@ struct AnimClip {
     /// from, or toward, the clip's mean pose over all its keys.
     void ScalePose(const std::vector<int>& indices, int bone, float factor);
 
+    // ---- Queries and single-bone keying (the Animation window's dope sheet,
+    //      curve editor, transport and record mode) ----
+    /// Index of the key at `t` (within `eps` seconds), or -1.
+    int KeyAt(float t, float eps = 1e-3f) const;
+    /// Index of the last key before `t` / the first key after it, or -1.
+    int PrevKey(float t) const;
+    int NextKey(float t) const;
+    /// Put `key` in time order: it replaces a key at the same time (which keeps
+    /// its own easing). Returns the key's index.
+    int SetKey(AnimKey key);
+    /// Set one bone on the key at `t`, creating the key when there is none: a
+    /// new key's other bones (and root) take the clip's sampled pose at `t`, so
+    /// only this bone changes. Returns the key's index.
+    int SetBoneKey(float t, int bone, const Vec3& value);
+    /// Key the root track at `t` the same way (turns the track on).
+    int SetRootKey(float t, const Vec3& root);
+    /// Make `bone` hold still through key `index`: its value there becomes what
+    /// the neighbouring keys interpolate to, so the key no longer bends that
+    /// bone's curve (the dope sheet's "clear bone at key").
+    void ClearBoneAtKey(int index, int bone);
+    /// True when `bone` has the same value on key `index` as on its neighbouring
+    /// keys (the wrap of a seamless loop counts): the key holds that bone still,
+    /// and the dope sheet draws it hollow. A bone a key doesn't set is at rest.
+    bool KeyHoldsBone(int index, int bone) const;
+    /// The same for the root track (always true without one).
+    bool KeyHoldsRoot(int index) const;
+    /// `t` snapped to the nearest frame at `fps` (fps <= 0: unchanged).
+    static float SnapToFrame(float t, int fps);
+
     /// Register an event marker at `time` seconds (kept sorted by time).
     void AddEvent(float time, const std::string& name) {
         AnimEvent e; e.time = time; e.name = name;

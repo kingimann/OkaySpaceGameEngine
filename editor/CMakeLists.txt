@@ -50,6 +50,7 @@ target_link_libraries(okay_imgui PUBLIC ${OKAY_SDL_LIB})
 target_compile_options(okay_imgui PRIVATE -w) # silence third-party warnings
 
 add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
+    AnimatorWindow.cpp                                                 # the Animator window (state-machine graph)
     EditorWidgets.cpp                                                  # shared widgets (accent, icons, search field)
     ConsolePanel.cpp                                                   # ConsoleLog + Console panel
     SceneManagerPanel.cpp                                              # Scene Manager window

@@ -705,6 +705,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
                 for (const std::string& b : asm2->maskBones) out << " " << Quote(b);
                 out << "\n";
             }
+            if (!asm2->layerName.empty()) out << "  animsmlname " << Quote(asm2->layerName) << "\n";
         }
         out << "  animsm " << Quote(asm2->entry) << " " << asm2->states.size();
         for (const auto& st : asm2->states) {
@@ -720,10 +721,19 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  animsmpos " << asm2->states.size();
         for (const auto& st : asm2->states) out << " " << st.nx << " " << st.ny;
         out << "\n";
+        if (asm2->anyX != 0.0f || asm2->anyY != 0.0f) out << "  animsmanypos " << asm2->anyX << " " << asm2->anyY << "\n";
         if (!asm2->params.empty()) {
             out << "  animsmparams " << asm2->params.size();
             for (const auto& p : asm2->params) out << " " << Quote(p.name) << " " << p.type;
             out << "\n";
+            // Parameter defaults (index-matched; only when one is set).
+            bool anyDef = false;
+            for (const auto& p : asm2->params) anyDef = anyDef || p.def != 0.0f;
+            if (anyDef) {
+                out << "  animsmpdef " << asm2->params.size();
+                for (const auto& p : asm2->params) out << " " << p.def;
+                out << "\n";
+            }
         }
         // Extended transition/state data (exit time, extra conditions, blend trees)
         // and Any State transitions — separate records so older builds still load.
@@ -3713,6 +3723,22 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         p.name = ReadQuoted(in); in >> p.type;
                         if (sm2) sm2->params.push_back(std::move(p));
                     }
+                } else if (field == "animsmpdef") {
+                    // Parameter defaults (index-matched to animsmparams).
+                    auto* sm2 = smFor();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n && in; ++i) {
+                        float d = 0.0f; in >> d;
+                        if (sm2 && i < (long)sm2->params.size()) sm2->params[i].def = d;
+                    }
+                } else if (field == "animsmlname") {
+                    auto* sm2 = smFor();
+                    std::string nm = ReadQuoted(in);
+                    if (sm2) sm2->layerName = std::move(nm);
+                } else if (field == "animsmanypos") {
+                    auto* sm2 = smFor();
+                    float x = 0, y = 0; in >> x >> y;
+                    if (sm2) { sm2->anyX = x; sm2->anyY = y; }
                 } else if (field == "animsmpos") {
                     // Animator graph node positions (index-matched to animsm's states).
                     auto* sm2 = smFor();

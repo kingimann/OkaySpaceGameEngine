@@ -15082,7 +15082,7 @@ void HandleShortcuts(EditorState& ed) {
     ImGuiIO& io = ImGui::GetIO();
     if (io.WantTextInput || OwnShortcutsWindowFocused()) return;
     bool ctrl = io.KeyCtrl;
-    const bool animKeys = AnimationTabFocused();
+    const bool animKeys = AnimationTabFocused() || AnimatorGraphFocused();   // those windows own Delete, Ctrl+C/V/D and F
     // Ctrl+Z undoes; Ctrl+Shift+Z and Ctrl+Y redo. (Guard the undo with !Shift
     // so Ctrl+Shift+Z doesn't undo and redo in the same frame.)
     if (ctrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
@@ -42797,6 +42797,14 @@ int main(int argc, char** argv) {
             if (const char* sn = std::getenv("OKAY_UI_SELECT"); sn && (s_focusFrames == 31 || s_focusFrames == 40))
                 for (const auto& up : ed.scene().Objects()) if (up->name == sn) { ed.Select(up.get()); break; }
             if (std::getenv("OKAY_UI_ANIMGRAPH")) g_showAnimatorGraph = true;
+            // OKAY_UI_PLAY=1: enter Play once the scene is up (screenshots of the
+            // Animator and Animation windows while the game runs).
+            if (std::getenv("OKAY_UI_PLAY") && s_focusFrames == 60 && !ed.isPlaying()) {
+                StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed);
+                okay::editor::apreview::Stop(ed.scene());
+                CompileOpenScriptBuffers(ed.scene());
+                ed.Play(); g_paused = false; ConsoleLog("Play");
+            }
             // OKAY_UI_UIADD=Lobby: the UI editing view with that prebuilt screen added
             // (screenshots of the UI editor and its "+ Add" menu).
             if (const char* ua = std::getenv("OKAY_UI_UIADD"); ua && s_focusFrames == 32) {

@@ -194,10 +194,12 @@ value, a bool, or a one-frame trigger — each with its own crossfade time.
 Build it visually in the **Animator window** (View > Animator, or the
 "Open Animator Graph" button on the component): states are draggable
 nodes on a canvas (positions save with the scene), right-click a node to
-**Add Transition** (then click the target state), set the entry state, or
-delete; click a transition arrow to edit its condition/parameter/blend in
-the side panel; right-click empty canvas to add a state. In Play mode the
-**active state lights up** so you can watch the machine run.
+**Add transition from here** (then click the target state), set the entry
+state, rename, duplicate or delete; click an arrow to edit its conditions,
+exit time and blend in the side panel; double-click empty canvas to add a
+state. In Play mode the **running state lights up** with a progress bar and
+the arrows that fire flash, so you can watch the machine run. The window is
+described in full under [The Animator window](#the-animator-window).
 
 Gameplay sets the parameters:
 
@@ -904,16 +906,100 @@ character, and the bone stays over it.
 
 Clip events from imported models now also reach visual scripts.
 
-**Graph editor:**
-- **Zoom** with the mouse wheel (around the cursor); **Frame** (F) fits every
-  state.
-- **Labels** shows each transition's conditions on its arrow, e.g.
-  `speed > 0.1 & grounded @80%`.
-- **Find state** lights up matching states; Enter selects and centres the first.
-- **Ctrl+D** duplicates a state; **Ctrl+C / Ctrl+V** copy and paste one, keeping
-  its transitions to states that exist. Both are also in the right-click menus.
-- Nodes show a marker when the state fires events, and its IK weight when it
-  isn't 100%.
+### The Animator window
+
+Select an object with an Animator (or one of its parts) and open View >
+Animator. Tabs across the top pick the layer (**Base**, then each layer by
+name; **+** adds one). The toolbar adds states (**+ State**: an empty one, one
+per clip, several from the Clips tab, or a blend tree), **Auto Layout**s the
+graph in columns by distance from the entry, **Frame**s it, toggles the arrow
+**Labels** and the **Minimap**, builds a **Locomotion setup** on an imported
+model, and finds a state by name (matches light up; Enter selects and
+centres the first).
+
+**The canvas.** Drag a node to move it (a selection moves together), drag
+empty canvas to box-select, Shift / Ctrl-click to add to or toggle the
+selection. Pan with the middle or right button, or Space + drag; zoom with
+the wheel around the cursor (Ctrl+0 resets, F frames everything). The
+minimap in the corner shows the whole graph and the view; click or drag it to
+move. Double-click a node to rename it in place, double-click empty canvas
+to add a state, drop a clip from the Clips tab to make a state that plays it.
+Keys: Delete removes the selected states or the selected transition, Ctrl+C /
+Ctrl+V / Ctrl+D copy, paste and duplicate (transitions between copied
+states follow the copies), Ctrl+A selects all, Escape cancels a pending
+transition or clears the selection, the arrow keys nudge (Shift: a grid step).
+
+**Nodes** carry a green play badge on the entry state, the clip or blend
+tree (its parameter and motion count) under the name, "mirrored", "once"
+and the IK weight when they apply, a pink dot for enter / exit events, a
+"+" on an additive layer, and a warning glyph (hover it) when something is
+wrong: no clip, a clip that is not in the library, nothing leading to the
+state. The title strip is tinted by layer. The **Any State** node sits left of
+the graph (drag it anywhere): double-click it, or use its right-click menu,
+to add an Any State transition.
+
+**Arrows** run one per pair of states, with the head at the target and a
+chevron half way; a two-way pair bends so both directions show, a self
+transition loops above the node, and a pair with several transitions shows
+"x3" (clicking again cycles through them). The label reads the first
+transition's conditions, exit time and blend (`speed > 2 · exit 0.9 ·
+0.25s`); muted transitions draw dimmed. Hover highlights an arrow, click
+selects it. In Play the running state is orange with a progress bar through
+its clip, its outgoing arrows brighten, the arrow that just fired flashes
+green, and a dot travels along it while the blend runs.
+
+**The side panel** has five tabs:
+
+- **State / Transition / Any State / Animator** (whatever is selected). A
+  state: its name, the **Entry state** tick, then sections for *Motion* (a
+  single clip picked from every clip the machine can play, with a **Preview**
+  that plays it on the character in the Scene view, the **If missing**
+  fallback, and clip import; or a blend tree), *Playback* (speed and its
+  parameter multiplier, loop, mirror, root motion, whether Any State may
+  interrupt), *IK* (weight and curves), *Events* and *Transitions* (in test
+  order, with arrows to reorder, a right-click menu to mute or delete, and
+  the incoming transitions below). A transition: source and target buttons,
+  a target picker, its conditions (all must pass), exit time, blend, **Keep
+  phase** or **Start at**, interruption, mute, its priority among the source's
+  transitions, and **Preview blend**: the source clip plays and the target
+  fades in over the blend time on the character in the Scene view, with a
+  timeline to scrub. With nothing selected the tab shows the machine: entry
+  state, Any State transitions, and in Play the current state, the blend in
+  progress and the last state changes.
+- **Parameters**: one table for every layer (layers share the base layer's
+  parameters): type, name (rename it and every condition, blend tree and
+  speed multiplier follows), the **default** the machine starts with, and in
+  Play the live value (a slider, a tick box, or **Fire** for a trigger) to
+  drive the machine by hand. Drag the handle at the left of a row to reorder;
+  a filter box narrows the list; **Used** says whether anything reads the
+  parameter.
+- **Layer**: the layer's name, weight and **Additive** toggle, and its mask as
+  the rig's bone tree: tick a bone to drive it and everything under it (the
+  bones in the mask show in the layer's colour). The base layer lists the
+  layers over it.
+- **Issues**: everything the window flags, for this layer: a state with no
+  clip or a missing clip, a state nothing leads to, a transition with no
+  target, no parameter, or one that fires at once because it has neither a
+  condition nor an exit time, a transition that is never tested because an
+  earlier one always fires first, and parameters that are not declared.
+  Click one to select what it is about; the count shows on the tab. A state
+  nothing leads to is listed as a note, since a script can still `anim_goto` it.
+- **Clips**: every clip the machine can play (its own, the built-in library on
+  a character, imported takes on a model). Drag one onto the canvas or
+  double-click it to make a state, or tick several and **Create states** for
+  them all at once.
+
+**Blend trees** in the Motion section: a 1D tree shows a bar with each
+motion's influence, its clip name, and a draggable threshold marker (the
+live parameter is the orange line in Play; right-click a marker to remove
+the motion); a 2D tree shows the map with draggable points, the live point,
+and a right-click or double-click to add a motion where you click. Motions
+pick their clips from the same list as states. **Match speed** plays the
+tree as fast as the body moves.
+
+Every change is one undo step (a drag or a typing session counts as one),
+and the graph's layout, the Any State node's spot, parameter defaults and
+layer names save with the scene.
 
 ## IK: feet, hands, posing
 

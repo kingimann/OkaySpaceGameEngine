@@ -170,6 +170,7 @@
 #include <sstream>
 #include <type_traits>
 #include <unordered_map>
+#include <algorithm>
 #include <vector>
 
 namespace okay {
@@ -1224,7 +1225,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << " " << l->smoothing;
         // The rest as key=value (older builds ignore trailing tokens here).
         KvOut k{out};
-        k("clamp", l->clampAngle)("eyeMax", l->eyeMaxAngle)("eyeW", l->eyeWeight);
+        k("clamp", l->clampAngle)("eyeMax", l->eyeMaxAngle)("eyeW", l->eyeWeight)
+         ("maxDist", l->maxDistance)("fadeDist", l->fadeDistance);
         for (std::size_t i = 0; i < l->boneWeights.size(); ++i) k(("sh" + std::to_string(i)).c_str(), l->boneWeights[i]);
         for (std::size_t i = 0; i < l->eyeNames.size(); ++i) k.str(("eye" + std::to_string(i)).c_str(), l->eyeNames[i]);
         out << "\n";
@@ -1249,6 +1251,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
          ("upX", f->footUpAxis.x)("upY", f->footUpAxis.y)("upZ", f->footUpAxis.z)
          .b("lock", f->footLock)("lockSpeed", f->lockSpeed)("lockHeight", f->lockHeight)
          ("lockRelease", f->lockRelease)
+         .b("probes", f->stepProbes)("toeR", f->toeReach)("heelR", f->heelReach)
          ("upRX", f->footUpAxisR.x)("upRY", f->footUpAxisR.y)("upRZ", f->footUpAxisR.z)
          ("om", 1)   // orient is saved after its migration: keep it as written
          ("mask", f->groundMask);
@@ -1341,6 +1344,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             WriteLimitKv(k, p + "l", fb->effectors[l].lowerLimit);
             if (fb->effectors[l].targetBlendTime != 0.0f) k((p + "b").c_str(), fb->effectors[l].targetBlendTime);
         }
+        if (fb->stretch != 0.0f) k("st", fb->stretch);
         out << "\n";
     }
     if (auto* h = go->GetComponent<HoldableObject>()) {
@@ -2936,7 +2940,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
 
 std::string SceneSerializer::Serialize(const Scene& scene) {
     std::ostringstream out;
-    out << "okayscene 2\n";
+    out << "okayscene 3\n";
     out << "name " << Quote(scene.Name()) << "\n";
     if (!scene.uiFont.empty()) out << "uifont " << Quote(scene.uiFont) << "\n";
     out << "gravity " << scene.physics().gravity.x << " " << scene.physics().gravity.y << "\n";
@@ -3015,6 +3019,54 @@ bool SceneSerializer::SaveToFile(const Scene& scene, const std::string& path) {
         return !ce;
     }
     return true;
+}
+
+// Files from before version 3 came from starters whose First Person and Third
+// Person players carried one controller each, and the view toggle faked the
+// other view from it: a level orbit at eye height that still strafed like first
+// person, or an eye that still steered like the orbit. A toggle on such a
+// player gets the other controller, and the camera it will blend is mounted on
+// the player where both controllers look for it, so the switch runs as it does
+// on the current starters: first person is the eye controller, third person
+// the orbit. A player that already has both, or neither, is left alone.
+static void CompleteViewToggle(Scene& scene, GameObject* go) {
+    auto* view = go ? go->GetComponent<PlayerView>() : nullptr;
+    if (!view || !view->allowToggle || !go->transform) return;
+    auto* fp = go->GetComponent<FirstPersonController>();
+    auto* tp = go->GetComponent<ThirdPersonController>();
+    if ((fp != nullptr) == (tp != nullptr)) return;
+    const bool wasThird = tp != nullptr;
+    if (!fp) fp = go->AddComponent<FirstPersonController>();
+    if (!tp) tp = go->AddComponent<ThirdPersonController>();
+
+    // A camera already under the player serves both controllers.
+    for (Transform* c : go->transform->Children())
+        if (c && c->gameObject && c->gameObject->GetComponent<Camera>()) return;
+    // The old third-person starter left its camera loose in the scene: the main
+    // one, else the first. One that already sits on another player stays there.
+    Camera* cam = nullptr;
+    for (const auto& obj : scene.Objects()) {
+        auto* c = obj ? obj->GetComponent<Camera>() : nullptr;
+        if (!c || !c->transform) continue;
+        Transform* parent = c->transform->Parent();
+        if (parent && parent->gameObject && parent->gameObject->GetComponent<PlayerView>()) continue;
+        if (!cam || (c->main && !cam->main)) cam = c;
+    }
+    if (!cam) return;
+    for (Transform* t = go->transform; t; t = t->Parent())
+        if (t == cam->transform) return;   // the player hangs under this camera
+    if (!cam->transform->SetParent(go->transform, /*worldPositionStays=*/false)) return;
+    if (wasThird) {
+        // The resting orbit, as the third-person starter poses it; the controller
+        // writes the same pose on the first frame.
+        const float rest = tp->pitch * Mathf::Deg2Rad;
+        const float dist = tp->distance > 0.0f ? tp->distance : 5.0f;
+        cam->transform->localPosition = {view->shoulderOffset, tp->cameraHeight + std::sin(rest) * dist, std::cos(rest) * dist};
+        cam->transform->localRotation = Quat::Euler(-tp->pitch, 0.0f, 0.0f);
+    } else {
+        cam->transform->localPosition = {0.0f, fp->standEyeHeight, -0.20f};   // the eye, just in front of the face
+        cam->transform->localRotation = Quat::Identity;
+    }
 }
 
 // Parse a document into `scene`. If `clear` is false, objects are appended
@@ -4006,6 +4058,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                       KvIn k(rs);
                       l->clampAngle = 0.0f;
                       k.f("clamp", l->clampAngle); k.f("eyeMax", l->eyeMaxAngle); k.f("eyeW", l->eyeWeight);
+                      k.f("maxDist", l->maxDistance); k.f("fadeDist", l->fadeDistance);
                       for (int i = 0; ; ++i) {
                           const std::string key = "sh" + std::to_string(i);
                           float v = 1.0f;
@@ -4038,6 +4091,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                       k.f("upX", f->footUpAxis.x); k.f("upY", f->footUpAxis.y); k.f("upZ", f->footUpAxis.z);
                       k.b("lock", f->footLock); k.f("lockSpeed", f->lockSpeed); k.f("lockHeight", f->lockHeight);
                       k.f("lockRelease", f->lockRelease);
+                      k.b("probes", f->stepProbes); k.f("toeR", f->toeReach); k.f("heelR", f->heelReach);
                       // The right sole's axis: files from before it leave it at Up,
                       // which reads that foot's own rest pose (a mirrored rig's right
                       // sole isn't the left one's axis).
@@ -4191,6 +4245,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             ReadLimitKv(k, p + "l", fb->effectors[l].lowerLimit);
                             k.f((p + "b").c_str(), fb->effectors[l].targetBlendTime);
                         }
+                        k.f("st", fb->stretch);
                     }
                 } else if (field == "ikx") {
                     std::string kind; int act = 1; float fade = 0.0f;
@@ -7092,6 +7147,17 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
     // itself: give it the Animator that plays it now (its state clips carried over).
     if (version < 2)
         for (auto& [idx, go] : byIndex) { (void)idx; HumanoidLibrary::EnsureAnimator(go); }
+    // Version 3 starters put both view controllers on a switchable player. A
+    // whole scene only: a clone made at play keeps the layout it was given.
+    // In file order, so the first player in the file is the one a loose
+    // camera goes to.
+    if (version < 3 && clear) {
+        std::vector<int> order;
+        order.reserve(byIndex.size());
+        for (auto& [idx, go] : byIndex) { (void)go; order.push_back(idx); }
+        std::sort(order.begin(), order.end());
+        for (int idx : order) CompleteViewToggle(scene, byIndex[idx]);
+    }
     // Default graphs saved before a built-in action existed gain that action once.
     for (auto& [idx, go] : byIndex) {
         (void)idx;
@@ -7123,7 +7189,7 @@ std::string SceneSerializer::SerializeObject(const GameObject& root) {
     for (std::size_t i = 0; i < subtree.size(); ++i) localIndex[subtree[i]] = (int)i;
 
     std::ostringstream out;
-    out << "okayscene 2\n";
+    out << "okayscene 3\n";
     for (std::size_t i = 0; i < subtree.size(); ++i) {
         GameObject* go = subtree[i];
         if (go->transient || IsGeneratedRig(go) || IsGeneratedViewmodel(go) || IsBuildModeRuntime(go)) continue;   // a Character's part rig (and the FP viewmodel arm) is regenerated on load

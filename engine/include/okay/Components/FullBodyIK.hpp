@@ -93,6 +93,9 @@ public:
     bool  ikActive = true;           ///< eases over fadeTime
     float fadeTime = 0.0f;
     float softness = 0.03f;          ///< soft-IK band as a fraction of limb length (0 = off)
+    /// Let a limb lengthen by up to this fraction (0.15 = 15 %) to reach a goal
+    /// beyond it. The animated bone lengths come back with the next pose.
+    float stretch  = 0.0f;
     float bodyPull = 0.6f;           ///< 0..1: how far out-of-reach effectors move the hips
     float maxBodyOffset = 0.6f;      ///< clamp on the hip shift (world units)
     float spineReach = 0.4f;         ///< 0..1: chest bend toward hand goals still out of reach
@@ -361,7 +364,14 @@ private:
             Vec3 mid, end;
             const float minBend = l >= LeftFoot ? legMinBend : armMinBend;
             const Vec3 goal = pw >= 1.0f ? m_goal[l] : Vec3::Lerp(oldEnd, m_goal[l], pw);
-            SolveTwoBoneIKSoft(root, up, lo, goal, pole, softness * (up + lo), mid, end, std::max(0.0f, minBend), 180.0f);
+            // A goal beyond reach stretches the bones (up to `stretch`); a chain
+            // moves its joints out along the bones by the same factor.
+            float s = 1.0f;
+            if (stretch > 0.0f) {
+                const float dist = (goal - root).Magnitude();
+                if (dist > up + lo) s = std::min(dist / (up + lo), 1.0f + stretch);
+            }
+            SolveTwoBoneIKSoft(root, up * s, lo * s, goal, pole, softness * (up + lo) * s, mid, end, std::max(0.0f, minBend), 180.0f);
             if (!Finite(mid) || !Finite(end)) return;
             m_restore.Touch(a); m_restore.Touch(b); m_restore.Touch(c);
             const bool limited = e.upperLimit.Active() || e.lowerLimit.Active();
@@ -370,10 +380,12 @@ private:
             // mid joint, then the lower, as turned by its parent, toward the solved end.
             a->SetRotation(AimBone(a, oldMid, mid));
             if (e.upperLimit.Active()) a->localRotation = ApplyLimit(a->localRotation, m_frame[l][0], e.upperLimit);
+            if (s != 1.0f && IsUnder(b, a)) b->localPosition = b->localPosition * s;
             b->SetRotation(AimBone(b, c->Position(), end));
             if (e.lowerLimit.Active())
                 b->localRotation = ApplyLimit(b->localRotation, m_frame[l][1], e.lowerLimit,
                                               e.lowerLimit.type == IKJointLimit::Type::Hinge);
+            if (s != 1.0f && IsUnder(c, b)) c->localPosition = c->localPosition * s;
             // A bone chain keeps its lengths; joints that aren't parented are placed.
             if (!IsUnder(b, a)) b->SetPosition(mid);
             if (!IsUnder(c, b)) c->SetPosition(end);

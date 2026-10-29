@@ -73,6 +73,12 @@ public:
     float minKneeBend = 0.0f;      ///< min interior knee angle (deg); 0 = no limit
     float maxKneeBend = 178.0f;    ///< max knee angle (deg) — keeps knees from locking straight
     bool  alignToGround = false;   ///< tilt the planted foot to match the ground slope
+    /// Also probe the ground under the toes and the heel. On a stair edge the
+    /// foot then rests on the higher step and tilts over the edge instead of
+    /// sinking its toes into it; a slope tilts the sole from heel to toe.
+    bool  stepProbes = false;
+    float toeReach  = 0.12f;       ///< the toes this far ahead of the ankle, along the foot
+    float heelReach = 0.05f;       ///< the heel this far behind
     /// Each foot bone's local "up" (sole normal): footUpAxis for the left foot,
     /// footUpAxisR for the right. Left at Up (the default), a foot's axis is read
     /// from its own rest pose when the bones resolve, so both soles of a mirrored
@@ -284,6 +290,29 @@ private:
         return groundY;
     }
 
+    /// Toe and heel rays: the foot rests on the highest of its three contacts (a
+    /// stair edge under the toes lifts the whole foot) and its sole tilts from
+    /// the heel contact to the toe contact. A probe that finds no ground in
+    /// range is left out, and so is a contact more than kMaxStep above the one
+    /// under the ankle: that is a wall, not a step.
+    static constexpr float kMaxStep = 0.35f;
+    void ProbeStep(Scene* s, Transform* foot, const Vec3& pole, const Vec3& animFoot, float& g, Vec3& normal) {
+        const Vec3 toe = SafeNormalize(ToeDir(foot, pole), Vec3::Zero);
+        if (toe.SqrMagnitude() < 0.5f) return;
+        const Vec3 toeAt = animFoot + toe * toeReach, heelAt = animFoot - toe * heelReach;
+        const float gt = GroundAt(s, toeAt), gh = GroundAt(s, heelAt);
+        auto usable = [&](float h) { return std::isfinite(h) && h >= animFoot.y - maxRayDown && h - g <= kMaxStep; };
+        const bool okT = usable(gt), okH = usable(gh);
+        if (okT && okH) {
+            const Vec3 along{toeAt.x - heelAt.x, gt - gh, toeAt.z - heelAt.z};
+            Vec3 n = Vec3::Cross(along, Vec3::Cross(Vec3::Up, along));
+            if (n.y < 0.0f) n = n * -1.0f;
+            normal = SafeNormalize(n, normal);
+        }
+        if (okT) g = Mathf::Max(g, gt);
+        if (okH) g = Mathf::Max(g, gh);
+    }
+
     // Lower the pelvis so the foot wanting to go lowest can still reach the ground;
     // the other foot drops with the body and the per-leg IK re-plants it. The
     // shift eases in over a few frames instead of teleporting the body.
@@ -341,6 +370,7 @@ private:
         Vec3 normal;
         float g = GroundAt(s, animFoot, &normal);
         if (!std::isfinite(g)) return;
+        if (stepProbes) ProbeStep(s, foot, pole, animFoot, g, normal);
         float targetY = g + footOffset;
         // Lift the foot UP to meet ground (and, when plantDown/pelvis adjust is on,
         // also press it DOWN onto lower ground). Ignore ground out of reach below.

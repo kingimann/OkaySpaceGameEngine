@@ -28911,7 +28911,12 @@ void DrawInspector(EditorState& ed) {
                 if (GameObject* head = FindBone(ed, go, {"head"}, 0)) {
                     ed.PushUndo();
                     a->boneName = head->name; a->bone = nullptr; ed.dirty = true;
-                    ConsoleLog("Aim IK: bone set to '" + head->name + "'");
+                    // The axis that points at the face, read off the rest pose (see Look-At IK).
+                    const Transform* root = CharacterRootOf(go->transform);
+                    const Transform* body = root ? root : go->transform;
+                    a->aimAxis = LookAtIK::RestForwardAxis(head->transform, SafeNormalize(body->Rotation() * Vec3{0, 0, -1}, Vec3{0, 0, -1}));
+                    char axis[64]; std::snprintf(axis, sizeof(axis), ", aim axis (%.2f %.2f %.2f)", a->aimAxis.x, a->aimAxis.y, a->aimAxis.z);
+                    ConsoleLog("Aim IK: bone set to '" + head->name + "'" + axis);
                 } else ConsoleLog("Aim IK: no head bone found under " + go->name, 1);
             }
             char bn[64]; std::strncpy(bn, a->boneName.c_str(), sizeof(bn) - 1); bn[sizeof(bn) - 1] = '\0';
@@ -28958,13 +28963,22 @@ void DrawInspector(EditorState& ed) {
                     }
                     std::reverse(chain.begin(), chain.end());
                     l->chainNames = chain; l->chain.clear(); ed.dirty = true;
+                    // The axis the head bone points at the character's front: read
+                    // off the rest pose, since rigs disagree on which local axis it is.
+                    {
+                        const Transform* root = CharacterRootOf(go->transform);
+                        const Transform* body = root ? root : go->transform;
+                        const Vec3 facing = SafeNormalize(body->Rotation() * Vec3{0, 0, -1}, Vec3{0, 0, -1});
+                        l->forwardAxis = LookAtIK::RestForwardAxis(head->transform, facing);
+                    }
                     // Eye bones too, when the rig has them (not lids or brows).
                     l->eyeNames.clear(); l->eyes.clear();
                     for (int side : {-1, +1})
                         if (GameObject* eye = FindBone(ed, go, {"eye"}, side, {"lid", "brow", "lash"}))
                             l->eyeNames.push_back(eye->name);
+                    char axis[64]; std::snprintf(axis, sizeof(axis), ", forward axis (%.2f %.2f %.2f)", l->forwardAxis.x, l->forwardAxis.y, l->forwardAxis.z);
                     ConsoleLog("Look-At IK: chain of " + std::to_string((int)chain.size()) + " bone(s), tip '" + head->name + "'" +
-                               (l->eyeNames.empty() ? "" : ", " + std::to_string((int)l->eyeNames.size()) + " eye(s)"));
+                               (l->eyeNames.empty() ? "" : ", " + std::to_string((int)l->eyeNames.size()) + " eye(s)") + axis);
                 } else ConsoleLog("Look-At IK: no head bone found under " + go->name, 1);
             }
             char tn[64]; std::strncpy(tn, l->targetName.c_str(), sizeof(tn) - 1); tn[sizeof(tn) - 1] = '\0';
@@ -28986,6 +29000,13 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Head-turn ease speed (per second): swings smoothly onto a new target. 0 = snap.");
             if (ImGui::DragFloat("Clamp (deg)##look", &l->clampAngle, 1.0f, 0.0f, 180.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Furthest the whole look may swing from where the animation points\nthe first chain bone. A target behind is watched from the corner\nof the eye instead of the head turning round. 0 = no limit.");
+            ImGui::SetNextItemWidth(90); if (ImGui::DragFloat("Max Distance##look", &l->maxDistance, 0.1f, 0.0f, 100.0f, "%.1f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop looking at a target further away than this (0 = any distance).");
+            if (l->maxDistance > 0.0f) {
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(90); if (ImGui::DragFloat("Fade##look", &l->fadeDistance, 0.05f, 0.0f, 20.0f, "%.2f")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The look fades out over the last stretch of Max Distance, so nothing pops.");
+            }
             ImGui::Separator();
             ImGui::Text("Chain bones root->tip (%d)", (int)l->chainNames.size());
             ImGui::SameLine(); ImGui::TextDisabled("name, share of the turn");
@@ -29073,6 +29094,13 @@ void DrawInspector(EditorState& ed) {
                 ImGui::Checkbox("Align To Slope##fik", &f->alignToGround); ImGui::SameLine();
                 ImGui::Checkbox("Orient Bones##fik", &f->orient);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Joints that aren't parented in a chain: also rotate the thigh/shin\nbones toward the moved knee/foot. A parented leg always turns.");
+                if (ImGui::Checkbox("Toe & Heel Rays##fik", &f->stepProbes)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also probe the ground under the toes and the heel: on a stair edge the foot\nrests on the higher step and tilts over it instead of sinking its toes in;\na slope tilts the sole from heel to toe.");
+                if (f->stepProbes) {
+                    ImGui::SetNextItemWidth(90); if (ImGui::DragFloat("Toe Reach##fik", &f->toeReach, 0.005f, 0.0f, 0.5f)) ed.dirty = true;
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(90); if (ImGui::DragFloat("Heel Reach##fik", &f->heelReach, 0.005f, 0.0f, 0.5f)) ed.dirty = true;
+                }
                 if (f->alignToGround) {
                     float ul[3] = {f->footUpAxis.x, f->footUpAxis.y, f->footUpAxis.z};
                     float ur[3] = {f->footUpAxisR.x, f->footUpAxisR.y, f->footUpAxisR.z};
@@ -29295,6 +29323,8 @@ void DrawInspector(EditorState& ed) {
                 ImGui::SetNextItemWidth(90); ImGui::DragFloat("Fade (s)##fbik", &fb->fadeTime, 0.01f, 0.0f, 3.0f);
                 ImGui::DragFloat("Soft Reach##fbik", &fb->softness, 0.005f, 0.0f, 0.3f, "%.3f");
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ease limbs into full stretch instead of snapping straight (fraction of limb length).");
+                if (ImGui::DragFloat("Stretch##fbik", &fb->stretch, 0.005f, 0.0f, 0.5f, "%.2f")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Let a limb lengthen by up to this fraction to reach a goal beyond it\n(0.15 = 15 %%). The animated lengths come back with the next pose.");
                 ImGui::DragFloat("Body Pull##fbik", &fb->bodyPull, 0.01f, 0.0f, 1.0f);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far out-of-reach goals drag the hips toward them (crouch, lean).");
                 ImGui::DragFloat("Max Body Offset##fbik", &fb->maxBodyOffset, 0.01f, 0.0f, 3.0f);

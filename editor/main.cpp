@@ -19519,8 +19519,8 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
             if (!d.gizmoUndo) { PushAnimDraftUndo(ed, key, d); d.gizmoUndo = true; }
             // Keep the angles close to the ones authored (ToEuler picks any one turn).
             const Vec3 e = now.ToEuler(), ref = pose[b];
-            auto near = [](float v, float r) { return v + 360.0f * std::round((r - v) / 360.0f); };
-            pose[b] = Vec3{near(e.x, ref.x), near(e.y, ref.y), near(e.z, ref.z)};
+            auto sameTurn = [](float v, float r) { return v + 360.0f * std::round((r - v) / 360.0f); };
+            pose[b] = Vec3{sameTurn(e.x, ref.x), sameTurn(e.y, ref.y), sameTurn(e.z, ref.z)};
             bone = b; d.curveRoot = false;
             if (d.record) { sel.assign(1, clip.SetBoneKey(t, b, pose[b])); ed.dirty = true; }
             moved = true;

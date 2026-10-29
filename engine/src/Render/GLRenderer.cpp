@@ -3,6 +3,7 @@
 #include "okay/Render/Culling.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"   // GetCachedTexture: shares the texture cache
 #include "okay/Render/ShadowSetup.hpp"
+#include "okay/Render/Atmosphere.hpp"         // sky palette, fog modes, post settings
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/SkinnedMesh.hpp"    // skinned meshes: VB cache keyed on SkinnedMesh::version
 #include "okay/Components/Character.hpp"
@@ -40,6 +41,9 @@
 #endif
 #ifndef GL_RGBA8
 #define GL_RGBA8               0x8058
+#endif
+#ifndef GL_RGBA16F
+#define GL_RGBA16F             0x881A
 #endif
 #ifndef GL_DEPTH_COMPONENT24
 #define GL_DEPTH_COMPONENT24   0x81A6
@@ -242,7 +246,9 @@ const char* kFrag =
     "uniform vec3 uLCol[16]; uniform float uLRange[16]; uniform float uLCosOut[16]; uniform float uLCosIn[16];\n"
     "uniform float uLFalloff[16];\n"   // 0 = linear (1-d/r)^2, 1 = physical inverse-square
     "uniform float uFogOn; uniform vec3 uFogColor; uniform float uFogStart; uniform float uFogEnd;\n"  // distance fog
+    "uniform float uFogMode; uniform float uFogDensity; uniform float uFogHeight; uniform float uFogFalloff;\n"  // linear / exponential / height (Atmosphere.hpp)
     "uniform float uTonemap;\n"                                                                        // filmic ACES tonemap toggle
+    "uniform float uHdrOut;\n"                                                                         // 1 = leave the colour linear for the post chain
     "vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0); }\n"        // ACES filmic curve
     "uniform sampler2D uNormalTex; uniform float uHasNormal; uniform float uNormalStrength;\n"  // bump/normal map
     "uniform sampler2D uSpecTex; uniform float uHasSpecMap;\n"                  // gloss map (per-texel specular)
@@ -365,7 +371,7 @@ const char* kFrag =
     "  if (lin) emis = pow(max(emis, vec3(0.0)), vec3(2.2));\n"
     // Unlit: decode+encode cancel, so unlit colors look identical either way.
     "  if (uUnlit > 0.5) { vec3 uc = base + emis;\n"
-    "    if (lin) uc = pow(max(uc, vec3(0.0)), vec3(1.0/2.2));\n"
+    "    if (lin && uHdrOut < 0.5) uc = pow(max(uc, vec3(0.0)), vec3(1.0/2.2));\n"
     "    gl_FragColor = vec4(uc, uAlpha); return; }\n"
     "  bool toon = uShaderMode > 1.5 && uShaderMode < 2.5 && uToonBands > 0.5;\n"
     "  vec3 amb = mix(uAmbGround, uAmbSky, clamp(N.y * 0.5 + 0.5, 0.0, 1.0));\n"  // scene Ambient Mode (flat / hemisphere / sky)
@@ -431,17 +437,23 @@ const char* kFrag =
     "    float kk = reflK + (1.0 - reflK) * fr2;\n"
     "    col = col * (1.0 - kk) + env * f0 * kk;\n"
     "  }\n"
-    "  if (uFogOn > 0.5) {\n"                                      // distance fog (matches the software path)
+    "  if (uFogOn > 0.5) {\n"                                      // fog (FogFactor in Atmosphere.hpp, same maths)
     "    float fd = length(uEye - vWorld);\n"
-    "    float ff = clamp((fd - uFogStart) / max(uFogEnd - uFogStart, 1e-3), 0.0, 1.0);\n"
+    "    float ff;\n"
+    "    if (uFogMode < 0.5) ff = clamp((fd - uFogStart) / max(uFogEnd - uFogStart, 1e-3), 0.0, 1.0);\n"   // linear
+    "    else if (uFogMode < 1.5) ff = 1.0 - exp(-uFogDensity * fd);\n"                                   // exponential
+    "    else { float te = exp(-max(uEye.y - uFogHeight, 0.0) * uFogFalloff);\n"                          // height: thins above fogHeight
+    "           float tw = exp(-max(vWorld.y - uFogHeight, 0.0) * uFogFalloff);\n"
+    "           ff = 1.0 - exp(-uFogDensity * fd * 0.5 * (te + tw)); }\n"
     "    vec3 fc = uFogColor;\n"
     "    if (lin) fc = pow(max(fc, vec3(0.0)), vec3(2.2));\n"      // fog is authored sRGB too
     "    col = mix(col, fc, ff);\n"
     "  }\n"
     // Filmic output: ACES roll-off in linear light, then encode back to sRGB.
     // The gamma encode is what was missing before — without it linear results
-    // were displayed raw, crushing mid-tones.
-    "  if (lin) { col = aces(col); col = pow(max(col, vec3(0.0)), vec3(1.0/2.2)); }\n"
+    // were displayed raw, crushing mid-tones. With the post chain running the
+    // colour stays linear here: the chain exposes, tonemaps and encodes it.
+    "  if (lin && uHdrOut < 0.5) { col = aces(col); col = pow(max(col, vec3(0.0)), vec3(1.0/2.2)); }\n"
     "  gl_FragColor = vec4(col, uAlpha);\n"
     "}\n";
 
@@ -640,6 +652,11 @@ bool GLRenderer::EnsureProgram() {
     m_uFogColor = g.GetUniformLocation(m_prog, "uFogColor");
     m_uFogStart = g.GetUniformLocation(m_prog, "uFogStart");
     m_uFogEnd = g.GetUniformLocation(m_prog, "uFogEnd");
+    m_uFogMode = g.GetUniformLocation(m_prog, "uFogMode");
+    m_uFogDensity = g.GetUniformLocation(m_prog, "uFogDensity");
+    m_uFogHeight = g.GetUniformLocation(m_prog, "uFogHeight");
+    m_uFogFalloff = g.GetUniformLocation(m_prog, "uFogFalloff");
+    m_uHdrOut = g.GetUniformLocation(m_prog, "uHdrOut");
     m_uShadowTex = g.GetUniformLocation(m_prog, "uShadowTex");
     m_uShadowOn = g.GetUniformLocation(m_prog, "uShadowOn");
     m_uCasVP = g.GetUniformLocation(m_prog, "uCasVP");
@@ -789,13 +806,7 @@ bool GLRenderer::EnsurePostProgs() {
     m_ublDir = g.GetUniformLocation(m_blurProg, "uDir");
     m_uaSrc = g.GetUniformLocation(m_addProg, "uSrc");
     m_uaStrength = g.GetUniformLocation(m_addProg, "uStrength");
-    if (!m_quadVbo) {
-        static const float quad[12] = {-1,-1,  1,-1,  1,1,  -1,-1,  1,1,  -1,1};
-        g.GenBuffers(1, &m_quadVbo);
-        g.BindBuffer(GL_ARRAY_BUFFER, m_quadVbo);
-        g.BufferData(GL_ARRAY_BUFFER, sizeof(quad), quad, GL_STATIC_DRAW);
-    }
-    return true;
+    return EnsureQuad();
 }
 
 bool GLRenderer::EnsureBloomTargets(int w, int h) {
@@ -968,26 +979,412 @@ void GLRenderer::DestroySsao() {
     m_ssaoW = m_ssaoH = 0;
 }
 
+
+// ---- Procedural sky + the scene's post chain ------------------------------------
+// The sky is a fullscreen pass drawn before the meshes (depth off): every pixel
+// unprojects to a world direction, so it follows the camera's rotation and field
+// of view, and its colours come from the sun's height (SkyPaletteFor). The post
+// chain runs when PostActive(): the scene resolves from a float target, then
+// SSAO -> bloom (half + quarter res) -> exposure / tonemap / grading / vignette
+// -> depth of field -> FXAA, ending in an RGBA8 texture the host reads back.
+namespace {
+const char* kSkyFrag =
+    "#version 120\n"
+    "uniform mat4 uInvVP; uniform vec3 uEye; uniform vec3 uSunDir;\n"
+    "uniform vec3 uZenith; uniform vec3 uHorizon; uniform vec3 uGround; uniform vec3 uSunColor;\n"
+    "uniform float uSunSize; uniform float uSunHalo; uniform float uSunDisc; uniform float uHaze; uniform float uNight;\n"
+    "uniform float uStarDensity; uniform float uStarBright;\n"
+    "uniform float uCloudCover; uniform float uCloudDensity; uniform float uCloudScale; uniform vec2 uCloudOffset;\n"
+    "uniform float uTime; uniform float uLin;\n"
+    // Colour mode (uMode 0): the screen-space gradient the host paints, drawn in-frame
+    // while the post chain runs so grading / bloom / the vignette cover the sky too.
+    "uniform float uMode; uniform vec3 uTop; uniform vec3 uHor; uniform vec3 uBot; uniform float uHorizonPos;\n"
+    "uniform float uSunOn; uniform vec2 uSunPos; uniform float uSunRad; uniform float uStarsOn; uniform vec2 uViewSize;\n"
+    "varying vec2 vUV;\n"
+    "float hash21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }\n"
+    "float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);\n"
+    "  float a = hash21(i), b = hash21(i + vec2(1.0, 0.0)), c = hash21(i + vec2(0.0, 1.0)), d = hash21(i + vec2(1.0, 1.0));\n"
+    "  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y); }\n"
+    "float fbm(vec2 p){ float s = 0.0, a = 0.5; for (int i = 0; i < 5; i++) { s += a * vnoise(p); p = p * 2.03 + vec2(17.1, 9.7); a *= 0.5; } return s; }\n"
+    "void main(){\n"
+    "  if (uMode < 0.5) {\n"                                                       // Colour mode (see above)
+    "    float t = 1.0 - vUV.y; float hp = clamp(uHorizonPos, 0.05, 0.95);\n"
+    "    vec3 col = t < hp ? mix(uTop, uHor, t / hp) : mix(uHor, uBot, (t - hp) / (1.0 - hp));\n"
+    "    float hz = 1.0 - abs(t - hp) / 0.10;\n"
+    "    if (hz > 0.0) col = mix(col, min(uHor * vec3(1.15, 1.15, 1.10) + vec3(0.12, 0.12, 0.10), vec3(1.0)), hz * 0.5);\n"
+    "    if (uStarsOn > 0.5 && t < hp) {\n"
+    "      vec2 g = vUV * uViewSize / 22.0; vec2 cell = floor(g), cf = fract(g);\n"
+    "      float h = hash21(cell); vec2 sp = vec2(hash21(cell + 3.1), hash21(cell + 9.7)) * 0.8 + 0.1;\n"
+    "      col += vec3((h > 1.0 - 0.5 * uStarDensity ? 1.0 : 0.0) * smoothstep(0.12, 0.0, length(cf - sp)) * uStarBright);\n"
+    "    }\n"
+    "    if (uSunOn > 0.5) {\n"
+    "      float dp = length((vec2(vUV.x, t) - uSunPos) * uViewSize);\n"
+    "      float r = max(uSunRad, 0.005) * uViewSize.y; float glowR = 0.45 * uViewSize.y;\n"
+    "      for (int i = 12; i >= 1; --i) { float fr = float(i) / 12.0; if (dp < glowR * fr) col = mix(col, uSunColor, (34.0 / 255.0) * (1.0 - fr) * (1.0 - fr)); }\n"
+    "      for (int gi = 4; gi >= 1; --gi) { if (dp < r * (1.0 + float(gi) * 0.7)) col = mix(col, uSunColor, (40.0 - float(gi) * 6.0) / 255.0); }\n"
+    "      if (dp < r) col = uSunColor;\n"
+    "    }\n"
+    "    if (uLin > 0.5) col = pow(max(col, vec3(0.0)), vec3(2.2));\n"
+    "    gl_FragColor = vec4(col, 1.0); return;\n"
+    "  }\n"
+    "  vec2 ndc = vUV * 2.0 - 1.0;\n"
+    "  vec4 p0 = uInvVP * vec4(ndc, -1.0, 1.0); vec4 p1 = uInvVP * vec4(ndc, 1.0, 1.0);\n"
+    "  vec3 dir = normalize(p1.xyz / p1.w - p0.xyz / p0.w);\n"
+    "  float y = dir.y;\n"
+    "  vec3 col = (y >= 0.0) ? mix(uHorizon, uZenith, pow(y, 0.55)) : mix(uHorizon, uGround, smoothstep(0.0, 0.25, -y));\n"
+    "  vec3 hazeCol = uHorizon * 1.12 + 0.06;\n"                                   // aerial haze brightens the horizon
+    "  col = mix(col, hazeCol, uHaze * 0.6 * exp(-abs(y) * 5.0));\n"
+    "  vec3 flatD = normalize(vec3(dir.x, 0.0, dir.z) + vec3(1e-5)); vec3 flatS = normalize(vec3(uSunDir.x, 0.0, uSunDir.z) + vec3(1e-5));\n"
+    "  col += uSunColor * (0.14 * uHaze * uSunDisc * exp(-abs(y) * 4.0) * pow(max(dot(flatD, flatS), 0.0), 3.0));\n"   // the horizon warms toward the sun
+    "  float ang = acos(clamp(dot(dir, uSunDir), -1.0, 1.0));\n"
+    "  float disc = (1.0 - smoothstep(uSunSize * 0.85, uSunSize * 1.15, ang)) * uSunDisc;\n"
+    "  float halo = uSunHalo * uSunDisc * (0.6 * exp(-ang * 4.0) + 0.3 * exp(-ang * 1.2));\n"
+    "  col += uSunColor * (disc * 1.2 + halo);\n"
+    "  if (uNight > 0.0 && y > 0.0) {\n"                                           // stars: a hashed cell grid over the dome
+    "    float az = atan(dir.z, dir.x); float el = asin(clamp(y, -1.0, 1.0));\n"
+    "    vec2 sc = vec2(az, el) * (64.0 * (0.5 + uStarDensity));\n"
+    "    vec2 ci = floor(sc), cf = fract(sc);\n"
+    "    float h = hash21(ci);\n"
+    "    vec2 sp = vec2(hash21(ci + 7.3), hash21(ci + 13.7)) * 0.8 + 0.1;\n"
+    "    float d = length(cf - sp);\n"
+    "    float star = (h > 1.0 - 0.35 * uStarDensity ? 1.0 : 0.0) * smoothstep(0.09, 0.0, d);\n"
+    "    float tw = 0.7 + 0.3 * sin(uTime * 3.0 + h * 40.0);\n"
+    "    col += vec3(star * uStarBright * uNight * tw * smoothstep(0.0, 0.15, y));\n"
+    "  }\n"
+    "  if (uCloudCover > 0.0 && y > 0.01) {\n"                                     // a cloud layer on a plane above the camera
+    "    vec2 uv = dir.xz / (y + 0.12) * (0.6 / max(uCloudScale, 0.05)) + uCloudOffset;\n"
+    "    float n = fbm(uv);\n"
+    "    float cov = smoothstep(1.0 - uCloudCover, 1.0 - uCloudCover * 0.6 + 0.05, n);\n"
+    "    float lit = clamp(0.5 + (fbm(uv + flatS.xz * 0.06) - n) * 7.0, 0.0, 1.0);\n"  // thinner toward the sun = lit edge
+    "    vec3 bright = mix(vec3(1.0), uSunColor, 0.35) * (0.95 - 0.8 * uNight);\n"
+    "    vec3 shade = mix(uHorizon, uZenith, 0.5) * (0.8 - 0.3 * uNight);\n"
+    "    vec3 cc = mix(shade, bright, lit);\n"
+    "    float a = cov * uCloudDensity * smoothstep(0.0, 0.2, y);\n"
+    "    col = mix(col, cc, a);\n"
+    "  }\n"
+    "  if (uLin > 0.5) col = pow(max(col, vec3(0.0)), vec3(2.2));\n"              // linear for the HDR chain
+    "  gl_FragColor = vec4(col, 1.0);\n"
+    "}\n";
+
+// Bright-pass + 2x2 box downsample (uThresh 0 = plain downsample).
+const char* kDownFrag =
+    "#version 120\n"
+    "uniform sampler2D uSrc; uniform vec2 uTexel; uniform float uThresh; uniform float uRadius; varying vec2 vUV;\n"
+    "vec3 tap(vec2 uv){ vec3 c = texture2D(uSrc, uv).rgb; float l = dot(c, vec3(0.2126, 0.7152, 0.0722));\n"
+    "  float k = max(l - uThresh, 0.0) / max(l, 1e-4); return c * k; }\n"
+    "void main(){ vec2 o = uTexel * uRadius;\n"
+    "  vec3 s = tap(vUV + vec2(-o.x, -o.y)) + tap(vUV + vec2(o.x, -o.y)) + tap(vUV + vec2(-o.x, o.y)) + tap(vUV + vec2(o.x, o.y));\n"
+    "  gl_FragColor = vec4(s * 0.25, 1.0); }\n";
+
+// Exposure, bloom composite, tonemap, colour grading and vignette in one pass.
+// The alpha trick: the host composites this image over its own sky, so a sky
+// pixel (alpha 0) that bloom or the vignette touch is written as "colour at
+// coverage" (black at alpha v darkens whatever is behind by 1 - v).
+const char* kUberFrag =
+    "#version 120\n"
+    "uniform sampler2D uSrc; uniform sampler2D uBloomA; uniform sampler2D uBloomC;\n"
+    "uniform float uExposure; uniform float uLinearIn; uniform float uTonemap;\n"
+    "uniform float uBloomOn; uniform float uBloomIntensity;\n"
+    "uniform float uGradeOn; uniform float uTemperature; uniform float uTint; uniform float uSaturation; uniform float uContrast;\n"
+    "uniform vec3 uLift; uniform vec3 uGamma; uniform vec3 uGain;\n"
+    "uniform float uVignette; uniform float uVignetteSmooth; uniform float uAspect;\n"
+    "varying vec2 vUV;\n"
+    "vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0); }\n"
+    "vec3 hable(vec3 v){ float A = 0.15, B = 0.50, C = 0.10, D = 0.20, E = 0.02, F = 0.30;\n"
+    "  return ((v*(A*v+C*B)+D*E)/(v*(A*v+B)+D*F))-E/F; }\n"
+    "vec3 filmic(vec3 x){ return clamp(hable(x * 2.0) / hable(vec3(11.2)), 0.0, 1.0); }\n"
+    "void main(){\n"
+    "  vec4 s = texture2D(uSrc, vUV);\n"
+    "  vec3 c = s.rgb * uExposure;\n"
+    "  float blLum = 0.0;\n"
+    "  if (uBloomOn > 0.5) {\n"
+    "    vec3 bl = (texture2D(uBloomA, vUV).rgb + texture2D(uBloomC, vUV).rgb) * (0.5 * uBloomIntensity * uExposure);\n"
+    "    c += bl; blLum = dot(bl, vec3(0.2126, 0.7152, 0.0722));\n"
+    "  }\n"
+    "  if (uLinearIn > 0.5) {\n"
+    "    if (uTonemap > 1.5) c = filmic(c); else if (uTonemap > 0.5) c = aces(c); else c = clamp(c, 0.0, 1.0);\n"
+    "    c = pow(max(c, vec3(0.0)), vec3(1.0 / 2.2));\n"
+    "  } else c = clamp(c, 0.0, 1.0);\n"
+    "  if (uGradeOn > 0.5) {\n"
+    "    c *= vec3(1.0 + 0.25 * uTemperature, 1.0 + 0.2 * uTint, 1.0 - 0.25 * uTemperature);\n"   // white balance
+    "    float l = dot(c, vec3(0.2126, 0.7152, 0.0722));\n"
+    "    c = l + (c - l) * uSaturation;\n"
+    "    c = (c - 0.5) * uContrast + 0.5;\n"
+    "    c = c * (1.0 + uGain) + uLift * (1.0 - c);\n"                                           // lift the blacks, scale the whites
+    "    c = pow(max(c, vec3(0.0)), vec3(1.0) / max(vec3(1.0) + uGamma * 0.75, vec3(0.1)));\n"   // mid-tone gamma
+    "  }\n"
+    "  float cov = clamp(s.a + blLum * 2.0, 0.0, 1.0);\n"
+    "  float v = 0.0;\n"
+    "  if (uVignette > 0.0) {\n"
+    "    vec2 d = (vUV - 0.5) * vec2(uAspect, 1.0) * 2.0;\n"
+    "    float r = length(d) / sqrt(uAspect * uAspect + 1.0);\n"
+    "    v = 0.8 * uVignette * smoothstep(max(1.0 - uVignetteSmooth * 1.3, 0.0), 1.05, r);\n"
+    "  }\n"
+    "  vec3 pc = c * cov * (1.0 - v);\n"
+    "  float oa = 1.0 - (1.0 - v) * (1.0 - cov);\n"
+    "  gl_FragColor = vec4(oa > 1e-4 ? pc / oa : vec3(0.0), oa);\n"
+    "}\n";
+
+// FXAA: luma-driven edge blur along the gradient (the classic 3.x formulation).
+const char* kFxaaFrag =
+    "#version 120\n"
+    "uniform sampler2D uSrc; uniform vec2 uTexel; varying vec2 vUV;\n"
+    "float luma(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }\n"
+    "void main(){\n"
+    "  vec4 c = texture2D(uSrc, vUV);\n"
+    "  float lM = luma(c.rgb);\n"
+    "  float lNW = luma(texture2D(uSrc, vUV + vec2(-1.0, -1.0) * uTexel).rgb);\n"
+    "  float lNE = luma(texture2D(uSrc, vUV + vec2( 1.0, -1.0) * uTexel).rgb);\n"
+    "  float lSW = luma(texture2D(uSrc, vUV + vec2(-1.0,  1.0) * uTexel).rgb);\n"
+    "  float lSE = luma(texture2D(uSrc, vUV + vec2( 1.0,  1.0) * uTexel).rgb);\n"
+    "  float lMin = min(lM, min(min(lNW, lNE), min(lSW, lSE)));\n"
+    "  float lMax = max(lM, max(max(lNW, lNE), max(lSW, lSE)));\n"
+    "  if (lMax - lMin < max(0.0312, lMax * 0.125)) { gl_FragColor = c; return; }\n"
+    "  vec2 dir = vec2(-((lNW + lNE) - (lSW + lSE)), ((lNW + lSW) - (lNE + lSE)));\n"
+    "  float dirReduce = max((lNW + lNE + lSW + lSE) * (0.25 * 0.125), 1.0 / 128.0);\n"
+    "  float rcpDirMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);\n"
+    "  dir = clamp(dir * rcpDirMin, vec2(-8.0), vec2(8.0)) * uTexel;\n"
+    "  vec4 rgbA = 0.5 * (texture2D(uSrc, vUV + dir * (1.0 / 3.0 - 0.5)) + texture2D(uSrc, vUV + dir * (2.0 / 3.0 - 0.5)));\n"
+    "  vec4 rgbB = rgbA * 0.5 + 0.25 * (texture2D(uSrc, vUV + dir * -0.5) + texture2D(uSrc, vUV + dir * 0.5));\n"
+    "  float lB = luma(rgbB.rgb);\n"
+    "  gl_FragColor = (lB < lMin || lB > lMax) ? rgbA : rgbB;\n"
+    "}\n";
+
+// Depth of field: blend toward the blurred frame by how far the pixel's linear
+// depth (the SSAO depth pass) sits outside the focus range.
+const char* kDofFrag =
+    "#version 120\n"
+    "uniform sampler2D uSrc; uniform sampler2D uBlur; uniform sampler2D uDepth;\n"
+    "uniform float uFocus; uniform float uRange; uniform float uFar; varying vec2 vUV;\n"
+    "void main(){\n"
+    "  vec4 t = texture2D(uDepth, vUV); float dn = t.r + t.g / 255.0;\n"
+    "  float d = dn >= 0.995 ? uFar * 4.0 : dn * uFar;\n"                           // background: far away
+    "  float coc = clamp((abs(d - uFocus) - uRange * 0.5) / max(uRange, 1e-3), 0.0, 1.0);\n"
+    "  gl_FragColor = mix(texture2D(uSrc, vUV), texture2D(uBlur, vUV), coc);\n"
+    "}\n";
+
+GLuint buildQuadProgram(const char* fragSrc) {
+    GLuint vs = compile(GL_VERTEX_SHADER, kQuadVert), fs = compile(GL_FRAGMENT_SHADER, fragSrc);
+    if (!vs || !fs) { if (vs) g.DeleteShader(vs); if (fs) g.DeleteShader(fs); return 0; }
+    GLuint prog = g.CreateProgram();
+    g.AttachShader(prog, vs); g.AttachShader(prog, fs);
+    g.BindAttribLocation(prog, 0, "aPos");
+    g.LinkProgram(prog);
+    GLint ok = 0; g.GetProgramiv(prog, GL_LINK_STATUS, &ok);
+    g.DeleteShader(vs); g.DeleteShader(fs);
+    if (!ok) { char log[512]; g.GetProgramInfoLog(prog, 512, nullptr, log); Log::Error("[gl] post link: ", log); g.DeleteProgram(prog); return 0; }
+    return prog;
+}
+
+// A colour render target of the given format; false (and nothing left behind) on failure.
+bool makeColorTarget(unsigned int& fbo, unsigned int& tex, int w, int h, bool hdr) {
+    g.GenTextures(1, &tex);
+    g.BindTexture(GL_TEXTURE_2D, tex);
+    g.TexImage2D(GL_TEXTURE_2D, 0, hdr ? GL_RGBA16F : GL_RGBA8, w, h, 0, GL_RGBA, hdr ? GL_FLOAT : GL_UNSIGNED_BYTE, nullptr);
+    g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    g.GenFramebuffers(1, &fbo);
+    g.BindFramebuffer(GL_FRAMEBUFFER, fbo);
+    g.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+    const bool ok = g.CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    g.BindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (!ok) { g.DeleteTextures(1, &tex); tex = 0; g.DeleteFramebuffers(1, &fbo); fbo = 0; }
+    return ok;
+}
+} // namespace
+
+bool GLRenderer::EnsureQuad() {
+    if (m_quadVbo) return true;
+    static const float quad[12] = {-1,-1,  1,-1,  1,1,  -1,-1,  1,1,  -1,1};
+    g.GenBuffers(1, &m_quadVbo);
+    g.BindBuffer(GL_ARRAY_BUFFER, m_quadVbo);
+    g.BufferData(GL_ARRAY_BUFFER, sizeof(quad), quad, GL_STATIC_DRAW);
+    return m_quadVbo != 0;
+}
+
+void GLRenderer::DrawQuad() {
+    g.BindBuffer(GL_ARRAY_BUFFER, m_quadVbo);
+    g.EnableVertexAttribArray(0);
+    g.VertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, (const void*)0);
+    g.DisableVertexAttribArray(1); g.DisableVertexAttribArray(2);
+    g.DisableVertexAttribArray(3); g.DisableVertexAttribArray(4);
+    g.DisableVertexAttribArray(5); g.DisableVertexAttribArray(6);
+    g.DrawArrays(GL_TRIANGLES, 0, 6);
+}
+
+bool GLRenderer::EnsureSkyProgram() {
+    if (m_skyProg) return true;
+    m_skyProg = buildQuadProgram(kSkyFrag);
+    if (!m_skyProg) return false;
+    auto u = [&](const char* n) { return g.GetUniformLocation(m_skyProg, n); };
+    m_uskInvVP = u("uInvVP"); m_uskEye = u("uEye"); m_uskSun = u("uSunDir");
+    m_uskZenith = u("uZenith"); m_uskHorizon = u("uHorizon"); m_uskGround = u("uGround"); m_uskSunColor = u("uSunColor");
+    m_uskSunSize = u("uSunSize"); m_uskSunHalo = u("uSunHalo"); m_uskSunDisc = u("uSunDisc"); m_uskHaze = u("uHaze");
+    m_uskNight = u("uNight"); m_uskStarDensity = u("uStarDensity"); m_uskStarBright = u("uStarBright");
+    m_uskCloudCover = u("uCloudCover"); m_uskCloudDensity = u("uCloudDensity"); m_uskCloudScale = u("uCloudScale");
+    m_uskCloudOffset = u("uCloudOffset"); m_uskTime = u("uTime"); m_uskLin = u("uLin");
+    m_uskMode = u("uMode"); m_uskTop = u("uTop"); m_uskHor = u("uHor"); m_uskBot = u("uBot"); m_uskHorizonPos = u("uHorizonPos");
+    m_uskSunOn = u("uSunOn"); m_uskSunPos = u("uSunPos"); m_uskSunRad = u("uSunRad"); m_uskStarsOn = u("uStarsOn"); m_uskViewSize = u("uViewSize");
+    return true;
+}
+
+bool GLRenderer::EnsurePostChain() {
+    if (m_uberProg && m_fxaaProg && m_dofProg && m_downProg) return true;
+    if (!EnsurePostProgs()) return false;   // the shared blur / add programs + the quad
+    if (!m_uberProg) {
+        m_uberProg = buildQuadProgram(kUberFrag);
+        if (!m_uberProg) return false;
+        auto u = [&](const char* n) { return g.GetUniformLocation(m_uberProg, n); };
+        m_uuSrc = u("uSrc"); m_uuBloomA = u("uBloomA"); m_uuBloomC = u("uBloomC");
+        m_uuExposure = u("uExposure"); m_uuLinearIn = u("uLinearIn"); m_uuTonemap = u("uTonemap");
+        m_uuBloomOn = u("uBloomOn"); m_uuBloomIntensity = u("uBloomIntensity");
+        m_uuGradeOn = u("uGradeOn"); m_uuTemperature = u("uTemperature"); m_uuTint = u("uTint");
+        m_uuSaturation = u("uSaturation"); m_uuContrast = u("uContrast");
+        m_uuLift = u("uLift"); m_uuGamma = u("uGamma"); m_uuGain = u("uGain");
+        m_uuVignette = u("uVignette"); m_uuVignetteSmooth = u("uVignetteSmooth"); m_uuAspect = u("uAspect");
+    }
+    if (!m_fxaaProg) {
+        m_fxaaProg = buildQuadProgram(kFxaaFrag);
+        if (!m_fxaaProg) return false;
+        m_ufSrc = g.GetUniformLocation(m_fxaaProg, "uSrc"); m_ufTexel = g.GetUniformLocation(m_fxaaProg, "uTexel");
+    }
+    if (!m_dofProg) {
+        m_dofProg = buildQuadProgram(kDofFrag);
+        if (!m_dofProg) return false;
+        auto u = [&](const char* n) { return g.GetUniformLocation(m_dofProg, n); };
+        m_udfSrc = u("uSrc"); m_udfBlur = u("uBlur"); m_udfDepth = u("uDepth");
+        m_udfFocus = u("uFocus"); m_udfRange = u("uRange"); m_udfFar = u("uFar");
+    }
+    if (!m_downProg) {
+        m_downProg = buildQuadProgram(kDownFrag);
+        if (!m_downProg) return false;
+        auto u = [&](const char* n) { return g.GetUniformLocation(m_downProg, n); };
+        m_udnSrc = u("uSrc"); m_udnTexel = u("uTexel"); m_udnThresh = u("uThresh"); m_udnRadius = u("uRadius");
+    }
+    return true;
+}
+
+// The chain's own targets: a full-res RGBA8 output + ping-pong pair, and the
+// bloom pairs (half res, reusing the bloom A/B targets, plus a quarter-res C/D)
+// in the frame's format.
+bool GLRenderer::EnsurePostTargets(int w, int h, bool hdr) {
+    if (m_outFbo && m_postW == w && m_postH == h && m_postHdr == hdr) return true;
+    DestroyPostTargets();
+    DestroyBloom();
+    m_postW = w; m_postH = h; m_postHdr = hdr;
+    const int hw = w / 2 > 0 ? w / 2 : 1, hh = h / 2 > 0 ? h / 2 : 1;
+    const int qw = w / 4 > 0 ? w / 4 : 1, qh = h / 4 > 0 ? h / 4 : 1;
+    bool ok = makeColorTarget(m_outFbo, m_outTex, w, h, false) &&
+              makeColorTarget(m_pingFbo[0], m_pingTex[0], w, h, false) &&
+              makeColorTarget(m_pingFbo[1], m_pingTex[1], w, h, false) &&
+              makeColorTarget(m_bloomFboA, m_bloomTexA, hw, hh, hdr) &&
+              makeColorTarget(m_bloomFboB, m_bloomTexB, hw, hh, hdr) &&
+              makeColorTarget(m_bloomFboC, m_bloomTexC, qw, qh, hdr) &&
+              makeColorTarget(m_bloomFboD, m_bloomTexD, qw, qh, hdr);
+    if (!ok) { DestroyPostTargets(); DestroyBloom(); return false; }
+    m_bloomW = hw; m_bloomH = hh;
+    return true;
+}
+
+void GLRenderer::DestroyPostTargets() {
+    unsigned int* tex[] = {&m_outTex, &m_pingTex[0], &m_pingTex[1], &m_bloomTexC, &m_bloomTexD};
+    unsigned int* fbo[] = {&m_outFbo, &m_pingFbo[0], &m_pingFbo[1], &m_bloomFboC, &m_bloomFboD};
+    for (unsigned int* t : tex) if (*t) { g.DeleteTextures(1, t); *t = 0; }
+    for (unsigned int* f : fbo) if (*f) { g.DeleteFramebuffers(1, f); *f = 0; }
+    m_postW = m_postH = 0;
+}
+
+static std::uint64_t MeshKey(const SkinnedMesh* skin);   // defined with the mesh cache below
+
+// Opaque geometry as packed linear depth at half resolution (the SSAO and DoF
+// passes read it). Leaves the depth FBO bound and the depth test on.
+void GLRenderer::DrawLinearDepth(const Scene& scene, const Mat4& vp, const Vec3& eye, const GameObject* ignore,
+                                 const Frustum& viewFr) {
+    g.BindFramebuffer(GL_FRAMEBUFFER, m_ssaoDepthFbo);
+    g.Viewport(0, 0, m_ssaoW, m_ssaoH);
+    g.ClearColor(1.0f, 1.0f, 0.0f, 1.0f);            // far plane = no occlusion
+    g.Enable(GL_DEPTH_TEST); g.DepthFunc(GL_LEQUAL); g.DepthMask(GL_TRUE);
+    g.Disable(GL_BLEND);
+    g.Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    g.UseProgram(m_ssaoDepthProg);
+    g.Uniform3f(m_usdEye, eye.x, eye.y, eye.z);
+    g.Uniform1f(m_usdFar, kSsaoFar);
+    g.DisableVertexAttribArray(1); g.DisableVertexAttribArray(2);
+    g.DisableVertexAttribArray(3); g.DisableVertexAttribArray(4);
+    for (const auto& up : scene.Objects()) {
+        GameObject* go = up.get();
+        if (!go || !go->active || go->HiddenFromCamera(ignore)) continue;
+        auto* mr = go->GetComponent<MeshRenderer>();
+        if (!mr || mr->wireframe || !mr->enabled) continue;
+        if (mr->color.a < 0.999f) continue;           // transparents don't occlude
+        const Mesh& mesh = mr->DisplayMesh();
+        if (mesh.vertices.empty() || mesh.triangles.size() < 3) continue;
+        if (CulledByFrustum(viewFr, go, mr)) continue;
+        Mat4 model = go->transform->LocalToWorldMatrix();
+        Mat4 mvp = vp * model;
+        g.UniformMatrix4fv(m_usdMVP, 1, GL_FALSE, mvp.m);
+        g.UniformMatrix4fv(m_usdModel, 1, GL_FALSE, model.m);
+        const bool deformed = go->GetComponent<Character>() != nullptr;
+        if (!deformed) {
+            const auto* skin = go->GetComponent<SkinnedMesh>();
+            MeshVB* mv = EnsureMeshVB(mesh, MeshKey(skin));
+            if (!mv) continue;
+            g.BindBuffer(GL_ARRAY_BUFFER, mv->vbo);
+            g.EnableVertexAttribArray(0);
+            g.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(float), (const void*)0);
+            BindSkin(skin, mesh, mv, m_usdSkin, m_usdBones);
+            g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)mv->vertCount);
+            continue;
+        }
+        BindSkin(nullptr, mesh, nullptr, m_usdSkin, m_usdBones);
+        const auto& V = mesh.vertices; const auto& T = mesh.triangles;
+        const int nv = (int)V.size();
+        m_verts.clear(); m_verts.reserve(T.size() * 3);
+        for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
+            int a = T[i], b = T[i + 1], c = T[i + 2];
+            if (a < 0 || b < 0 || c < 0 || a >= nv || b >= nv || c >= nv) continue;
+            const Vec3& pa = V[a]; const Vec3& pb = V[b]; const Vec3& pc = V[c];
+            m_verts.push_back(pa.x); m_verts.push_back(pa.y); m_verts.push_back(pa.z);
+            m_verts.push_back(pb.x); m_verts.push_back(pb.y); m_verts.push_back(pb.z);
+            m_verts.push_back(pc.x); m_verts.push_back(pc.y); m_verts.push_back(pc.z);
+        }
+        if (m_verts.empty()) continue;
+        g.BindBuffer(GL_ARRAY_BUFFER, m_vbo);
+        g.BufferData(GL_ARRAY_BUFFER, (GLsizeiptrOK)(m_verts.size() * sizeof(float)), m_verts.data(), GL_DYNAMIC_DRAW);
+        g.EnableVertexAttribArray(0);
+        g.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (const void*)0);
+        g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)(m_verts.size() / 3));
+    }
+    g.DisableVertexAttribArray(5); g.DisableVertexAttribArray(6);
+}
+
 void GLRenderer::SwapSizeSet(SizeSet& s) {
-    unsigned int* f[16] = { &m_fbo, &m_colorRb, &m_depthRb, &m_resolveFbo, &m_resolveTex,
+    unsigned int* f[26] = { &m_fbo, &m_colorRb, &m_depthRb, &m_resolveFbo, &m_resolveTex,
                             &m_bloomFboA, &m_bloomTexA, &m_bloomFboB, &m_bloomTexB,
                             &m_ssaoDepthFbo, &m_ssaoDepthTex, &m_ssaoDepthRb,
-                            &m_ssaoFboA, &m_ssaoTexA, &m_ssaoFboB, &m_ssaoTexB };
-    for (int i = 0; i < 16; ++i) std::swap(*f[i], s.ids[i]);
+                            &m_ssaoFboA, &m_ssaoTexA, &m_ssaoFboB, &m_ssaoTexB,
+                            &m_outFbo, &m_outTex, &m_pingFbo[0], &m_pingTex[0], &m_pingFbo[1], &m_pingTex[1],
+                            &m_bloomFboC, &m_bloomTexC, &m_bloomFboD, &m_bloomTexD };
+    for (int i = 0; i < 26; ++i) std::swap(*f[i], s.ids[i]);
     std::swap(m_w, s.w); std::swap(m_h, s.h); std::swap(m_samples, s.samples);
     std::swap(m_bloomW, s.bloomW); std::swap(m_bloomH, s.bloomH);
     std::swap(m_ssaoW, s.ssaoW); std::swap(m_ssaoH, s.ssaoH);
+    std::swap(m_postW, s.postW); std::swap(m_postH, s.postH);
+    std::swap(m_hdr, s.hdr); std::swap(m_postHdr, s.postHdr);
 }
 
 void GLRenderer::DeleteSizeSet(SizeSet& s) {
     SwapSizeSet(s);                    // live <- s
-    DestroyTargets(); DestroyBloom(); DestroySsao();
+    DestroyTargets(); DestroyBloom(); DestroySsao(); DestroyPostTargets();
     SwapSizeSet(s);                    // live back, s <- emptied
 }
 
-bool GLRenderer::EnsureTargets(int w, int h, int samples) {
+bool GLRenderer::EnsureTargets(int w, int h, int samples, bool hdr) {
     ++m_targetUse;
-    if (m_fbo && m_w == w && m_h == h && m_samples == samples) return true;
+    if (hdr && m_hdrUnsupported) hdr = false;
+    if (m_fbo && m_w == w && m_h == h && m_samples == samples && m_hdr == hdr) return true;
     // Park the live set, then swap in a parked one of this size if there is one.
     if (m_fbo) {
         SizeSet park;
@@ -997,8 +1394,8 @@ bool GLRenderer::EnsureTargets(int w, int h, int samples) {
     }
     for (std::size_t i = 0; i < m_parkedSets.size(); ++i) {
         SizeSet& ps = m_parkedSets[i];
-        if (ps.w != w || ps.h != h || ps.samples != samples) continue;
-        DestroyTargets(); DestroyBloom(); DestroySsao();   // (already empty)
+        if (ps.w != w || ps.h != h || ps.samples != samples || ps.hdr != hdr) continue;
+        DestroyTargets(); DestroyBloom(); DestroySsao(); DestroyPostTargets();   // (already empty)
         SwapSizeSet(ps);
         m_parkedSets.erase(m_parkedSets.begin() + (std::ptrdiff_t)i);
         return true;
@@ -1010,32 +1407,49 @@ bool GLRenderer::EnsureTargets(int w, int h, int samples) {
         DeleteSizeSet(m_parkedSets[oldest]);
         m_parkedSets.erase(m_parkedSets.begin() + (std::ptrdiff_t)oldest);
     }
-    DestroyTargets();   // size/sample change -> rebuild ONLY the render targets
-    m_w = w; m_h = h; m_samples = samples < 1 ? 1 : samples;
-
-    g.GenFramebuffers(1, &m_fbo);
-    g.BindFramebuffer(GL_FRAMEBUFFER, m_fbo);
-    g.GenRenderbuffers(1, &m_colorRb);
-    g.BindRenderbuffer(GL_RENDERBUFFER, m_colorRb);
-    g.RenderbufferStorageMultisample(GL_RENDERBUFFER, m_samples, GL_RGBA8, w, h);
-    g.FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, m_colorRb);
-    g.GenRenderbuffers(1, &m_depthRb);
-    g.BindRenderbuffer(GL_RENDERBUFFER, m_depthRb);
-    g.RenderbufferStorageMultisample(GL_RENDERBUFFER, m_samples, GL_DEPTH_COMPONENT24, w, h);
-    g.FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, m_depthRb);
-    if (g.CheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) { Log::Error("[gl] MSAA FBO incomplete"); return false; }
-
-    g.GenFramebuffers(1, &m_resolveFbo);
-    g.BindFramebuffer(GL_FRAMEBUFFER, m_resolveFbo);
-    g.GenTextures(1, &m_resolveTex);
-    g.BindTexture(GL_TEXTURE_2D, m_resolveTex);
-    g.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-    g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    g.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_resolveTex, 0);
-    if (g.CheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) { Log::Error("[gl] resolve FBO incomplete"); return false; }
-    g.BindFramebuffer(GL_FRAMEBUFFER, 0);
-    return true;
+    DestroyTargets();   // size/sample/format change -> rebuild ONLY the render targets
+    // The post chain renders into a float (RGBA16F) target so highlights above
+    // 1.0 survive for bloom and the tonemap. A GPU that can't build one falls
+    // back to RGBA8 for good (the chain then works on display-range colour).
+    const bool wantHdr = hdr;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        hdr = wantHdr && attempt == 0;
+        m_w = w; m_h = h; m_samples = samples < 1 ? 1 : samples; m_hdr = hdr;
+        const GLenum fmt = hdr ? GL_RGBA16F : GL_RGBA8;
+        while (g.GetError() != 0) {}
+        g.GenFramebuffers(1, &m_fbo);
+        g.BindFramebuffer(GL_FRAMEBUFFER, m_fbo);
+        g.GenRenderbuffers(1, &m_colorRb);
+        g.BindRenderbuffer(GL_RENDERBUFFER, m_colorRb);
+        g.RenderbufferStorageMultisample(GL_RENDERBUFFER, m_samples, fmt, w, h);
+        g.FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, m_colorRb);
+        g.GenRenderbuffers(1, &m_depthRb);
+        g.BindRenderbuffer(GL_RENDERBUFFER, m_depthRb);
+        g.RenderbufferStorageMultisample(GL_RENDERBUFFER, m_samples, GL_DEPTH_COMPONENT24, w, h);
+        g.FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, m_depthRb);
+        bool ok = g.CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        if (ok) {
+            g.GenFramebuffers(1, &m_resolveFbo);
+            g.BindFramebuffer(GL_FRAMEBUFFER, m_resolveFbo);
+            g.GenTextures(1, &m_resolveTex);
+            g.BindTexture(GL_TEXTURE_2D, m_resolveTex);
+            g.TexImage2D(GL_TEXTURE_2D, 0, fmt, w, h, 0, GL_RGBA, hdr ? GL_FLOAT : GL_UNSIGNED_BYTE, nullptr);
+            g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            g.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_resolveTex, 0);
+            ok = g.CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        }
+        if (ok && g.GetError() != 0) ok = false;
+        g.BindFramebuffer(GL_FRAMEBUFFER, 0);
+        if (ok) return true;
+        DestroyTargets();
+        if (hdr) { m_hdrUnsupported = true; Log::Warning("[gl] float render target unavailable; post-processing runs on RGBA8"); continue; }
+        Log::Error("[gl] MSAA / resolve FBO incomplete");
+        return false;
+    }
+    return false;
 }
 
 // Upload (once) a material texture by name and cache its GL object. Shares the
@@ -1321,7 +1735,14 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
                                                 float clearR, float clearG, float clearB, float clearA,
                                                 const GameObject* ignore) {
     if (!g.ok || w < 1 || h < 1) return nullptr;
-    if (!EnsureProgram() || !EnsureTargets(w, h, samples)) return nullptr;
+    // The scene's post chain (bloom, grading, exposure, ...) wants a float target
+    // and linear colour out of the mesh shader; with everything off the frame
+    // takes the plain RGBA8 path exactly as before.
+    const auto& rsTop = scene.renderSettings;
+    const bool chain = PostActive(rsTop) && EnsurePostChain();
+    const bool wantHdr = chain && rsTop.tonemap;
+    if (!EnsureProgram() || !EnsureTargets(w, h, samples, wantHdr)) return nullptr;
+    const bool hdrOut = chain && m_hdr;   // the mesh shader leaves its colour linear
     while (g.GetError() != 0) {}   // drain any stale GL error state before we render
 
     // Advance the mesh-VB cache clock and evict buffers unused for ~5s of frames
@@ -1393,9 +1814,64 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
     g.DepthFunc(GL_LEQUAL);
     g.Enable(GL_MULTISAMPLE);
     g.Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    if (g.BindVertexArray && m_vao) g.BindVertexArray(m_vao);
+
+    // The sky as a fullscreen pass behind everything (no depth): the Procedural
+    // sky (coloured by the sun's height, with the disc, haze, stars and clouds),
+    // or, while the post chain runs, the Colour gradient the host would paint,
+    // so the chain's grading, bloom and vignette cover the sky as well.
+    const bool procedural = rsTop.skyMode == Scene::RenderSettings::SkyProcedural;
+    if (rsTop.skybox && SkyPassEnabled() && (procedural || chain) && EnsureSkyProgram() && EnsureQuad()) {
+        const auto now = std::chrono::steady_clock::now();
+        if (!m_clockSet) { m_clock0 = now; m_clockSet = true; }
+        const float t = std::chrono::duration<float>(now - m_clock0).count();
+        const float dt = t - m_skyTime; m_skyTime = t;
+        const Vec3 wind = WindVector();
+        // Clouds drift with the wind (and a little on their own), as a running offset
+        // so changing the speed never makes them jump.
+        m_cloudOffset.x += (0.012f * rsTop.cloudSpeed + wind.x * 0.004f) * dt;
+        m_cloudOffset.y += (0.005f * rsTop.cloudSpeed + wind.z * 0.004f) * dt;
+        const Vec3 sun = SunDirection();
+        const SkyPalette pal = SkyPaletteFor(sun.y);
+        const Mat4 inv = vp.Inverse();
+        g.Disable(GL_DEPTH_TEST); g.DepthMask(GL_FALSE); g.Disable(GL_BLEND);
+        g.UseProgram(m_skyProg);
+        g.UniformMatrix4fv(m_uskInvVP, 1, GL_FALSE, inv.m);
+        g.Uniform3f(m_uskEye, eye.x, eye.y, eye.z);
+        g.Uniform3f(m_uskSun, sun.x, sun.y, sun.z);
+        g.Uniform3f(m_uskZenith, pal.zenith.x, pal.zenith.y, pal.zenith.z);
+        g.Uniform3f(m_uskHorizon, pal.horizon.x, pal.horizon.y, pal.horizon.z);
+        g.Uniform3f(m_uskGround, pal.ground.x, pal.ground.y, pal.ground.z);
+        g.Uniform3f(m_uskSunColor, pal.sun.x, pal.sun.y, pal.sun.z);
+        g.Uniform1f(m_uskSunSize, rsTop.skySunDisc * 0.0174532925f);
+        g.Uniform1f(m_uskSunHalo, rsTop.skySunHalo);
+        g.Uniform1f(m_uskSunDisc, pal.sunDisc);
+        g.Uniform1f(m_uskHaze, rsTop.skyHaze);
+        g.Uniform1f(m_uskNight, pal.night);
+        g.Uniform1f(m_uskStarDensity, rsTop.skyStarDensity);
+        g.Uniform1f(m_uskStarBright, rsTop.skyStarBright);
+        g.Uniform1f(m_uskCloudCover, rsTop.cloudCover);
+        g.Uniform1f(m_uskCloudDensity, rsTop.cloudDensity);
+        g.Uniform1f(m_uskCloudScale, rsTop.cloudScale);
+        g.Uniform2f(m_uskCloudOffset, m_cloudOffset.x, m_cloudOffset.y);
+        g.Uniform1f(m_uskTime, t);
+        g.Uniform1f(m_uskLin, hdrOut ? 1.0f : 0.0f);
+        g.Uniform1f(m_uskMode, procedural ? 1.0f : 0.0f);
+        g.Uniform3f(m_uskTop, rsTop.skyTop.r, rsTop.skyTop.g, rsTop.skyTop.b);
+        g.Uniform3f(m_uskHor, rsTop.skyHorizon.r, rsTop.skyHorizon.g, rsTop.skyHorizon.b);
+        g.Uniform3f(m_uskBot, rsTop.skyBottom.r, rsTop.skyBottom.g, rsTop.skyBottom.b);
+        g.Uniform1f(m_uskHorizonPos, rsTop.skyHorizonPos);
+        g.Uniform1f(m_uskSunOn, rsTop.skySun ? 1.0f : 0.0f);
+        g.Uniform2f(m_uskSunPos, rsTop.skySunX, rsTop.skySunY);
+        g.Uniform1f(m_uskSunRad, rsTop.skySunSize);
+        if (!procedural) g.Uniform3f(m_uskSunColor, rsTop.skySunColor.r, rsTop.skySunColor.g, rsTop.skySunColor.b);
+        g.Uniform1f(m_uskStarsOn, rsTop.skyStars ? 1.0f : 0.0f);
+        g.Uniform2f(m_uskViewSize, (float)w, (float)h);
+        DrawQuad();
+        g.Enable(GL_DEPTH_TEST); g.DepthMask(GL_TRUE);
+    }
 
     g.UseProgram(m_prog);
-    if (g.BindVertexArray && m_vao) g.BindVertexArray(m_vao);
     Vec3 toLight = (SceneLight::Direction() * -1.0f).Normalized();
     Vec3 lightTravel = SceneLight::Direction();   // direction light travels (for ground shadows)
     g.Uniform3f(m_uLightDir, toLight.x, toLight.y, toLight.z);
@@ -1419,9 +1895,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
     {
         const auto& rs = scene.renderSettings;
         EnvSky().enabled = rs.skybox;
-        EnvSky().top     = {rs.skyTop.r, rs.skyTop.g, rs.skyTop.b};
-        EnvSky().horizon = {rs.skyHorizon.r, rs.skyHorizon.g, rs.skyHorizon.b};
-        EnvSky().bottom  = {rs.skyBottom.r, rs.skyBottom.g, rs.skyBottom.b};
+        EffectiveSkyColors(rs, EnvSky().top, EnvSky().horizon, EnvSky().bottom);   // gradient, or the sun's palette
     }
     const EnvSkyData& sky = EnvSky();
     g.Uniform3f(m_uSkyTop, sky.top.x, sky.top.y, sky.top.z);
@@ -1429,15 +1903,20 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
     g.Uniform3f(m_uSkyBot, sky.bottom.x, sky.bottom.y, sky.bottom.z);
     g.Uniform1f(m_uEnvOn, sky.enabled ? 1.0f : 0.0f);
 
-    // Distance fog from the scene's render settings (matches the software renderer).
+    // Fog from the scene's render settings (the same maths as FogFactor / the software renderer).
     {
         const auto& rs = scene.renderSettings;
-        bool fogOn = rs.fog && rs.fogEnd > rs.fogStart;
-        g.Uniform1f(m_uFogOn, fogOn ? 1.0f : 0.0f);
-        g.Uniform3f(m_uFogColor, rs.fogColor.r, rs.fogColor.g, rs.fogColor.b);
+        const Vec3 fc = EffectiveFogColor(rs);
+        g.Uniform1f(m_uFogOn, FogActive(rs) ? 1.0f : 0.0f);
+        g.Uniform3f(m_uFogColor, fc.x, fc.y, fc.z);
         g.Uniform1f(m_uFogStart, rs.fogStart);
         g.Uniform1f(m_uFogEnd, rs.fogEnd);
+        g.Uniform1f(m_uFogMode, (float)rs.fogMode);
+        g.Uniform1f(m_uFogDensity, rs.fogDensity);
+        g.Uniform1f(m_uFogHeight, rs.fogHeight);
+        g.Uniform1f(m_uFogFalloff, rs.fogFalloff);
         g.Uniform1f(m_uTonemap, rs.tonemap ? 1.0f : 0.0f);
+        g.Uniform1f(m_uHdrOut, hdrOut ? 1.0f : 0.0f);
     }
 
     // Shadow atlases: sun cascades on texture unit 4, local light tiles on unit 5.
@@ -1705,163 +2184,216 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
 
     LastCullCounters().drawn = drawn; LastCullCounters().culled = culled;
     g.DisableVertexAttribArray(5); g.DisableVertexAttribArray(6);   // skin inputs off for the post passes
-    // Resolve MSAA into the single-sample texture, then read it back.
+    // Resolve MSAA into the single-sample texture.
     g.BindFramebuffer(GL_READ_FRAMEBUFFER, m_fbo);
     g.BindFramebuffer(GL_DRAW_FRAMEBUFFER, m_resolveFbo);
     g.BlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_LINEAR);
 
-    // SSAO: darken corners/creases/contact points. Re-render opaque geometry at
-    // half res as packed linear depth, estimate occlusion from depth differences,
-    // blur once, multiply onto the frame. Runs BEFORE bloom (darken, then glow).
-    if (SSAOEnabled() && EnsurePostProgs() && EnsureSsaoProgs() &&
-        EnsureSsaoTargets(w / 2 > 0 ? w / 2 : 1, h / 2 > 0 ? h / 2 : 1)) {
-        // 1) linear-depth geometry pass
-        g.BindFramebuffer(GL_FRAMEBUFFER, m_ssaoDepthFbo);
-        g.Viewport(0, 0, m_ssaoW, m_ssaoH);
-        g.ClearColor(1.0f, 1.0f, 0.0f, 1.0f);            // far plane = no occlusion
-        g.Enable(GL_DEPTH_TEST); g.DepthFunc(GL_LEQUAL); g.DepthMask(GL_TRUE);
-        g.Disable(GL_BLEND);
-        g.Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        g.UseProgram(m_ssaoDepthProg);
-        g.Uniform3f(m_usdEye, eye.x, eye.y, eye.z);
-        g.Uniform1f(m_usdFar, kSsaoFar);
-        g.DisableVertexAttribArray(1); g.DisableVertexAttribArray(2);
-        g.DisableVertexAttribArray(3); g.DisableVertexAttribArray(4);
-        for (const auto& up : scene.Objects()) {
-            GameObject* go = up.get();
-            if (!go || !go->active || go->HiddenFromCamera(ignore)) continue;
-            auto* mr = go->GetComponent<MeshRenderer>();
-            if (!mr || mr->wireframe || !mr->enabled) continue;
-            if (mr->color.a < 0.999f) continue;           // transparents don't occlude
-            const Mesh& mesh = mr->DisplayMesh();
-            if (mesh.vertices.empty() || mesh.triangles.size() < 3) continue;
-            if (CulledByFrustum(viewFr, go, mr)) continue;
-            Mat4 model = go->transform->LocalToWorldMatrix();
-            Mat4 mvp = vp * model;
-            g.UniformMatrix4fv(m_usdMVP, 1, GL_FALSE, mvp.m);
-            g.UniformMatrix4fv(m_usdModel, 1, GL_FALSE, model.m);
-            const bool deformed = go->GetComponent<Character>() != nullptr;
-            if (!deformed) {
-                const auto* skin = go->GetComponent<SkinnedMesh>();
-                MeshVB* mv = EnsureMeshVB(mesh, MeshKey(skin));
-                if (!mv) continue;
-                g.BindBuffer(GL_ARRAY_BUFFER, mv->vbo);
-                g.EnableVertexAttribArray(0);
-                g.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(float), (const void*)0);
-                BindSkin(skin, mesh, mv, m_usdSkin, m_usdBones);
-                g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)mv->vertCount);
-                continue;
-            }
-            BindSkin(nullptr, mesh, nullptr, m_usdSkin, m_usdBones);
-            const auto& V = mesh.vertices; const auto& T = mesh.triangles;
-            const int nv = (int)V.size();
-            m_verts.clear(); m_verts.reserve(T.size() * 3);
-            for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
-                int a = T[i], b = T[i + 1], c = T[i + 2];
-                if (a < 0 || b < 0 || c < 0 || a >= nv || b >= nv || c >= nv) continue;
-                const Vec3& pa = V[a]; const Vec3& pb = V[b]; const Vec3& pc = V[c];
-                m_verts.push_back(pa.x); m_verts.push_back(pa.y); m_verts.push_back(pa.z);
-                m_verts.push_back(pb.x); m_verts.push_back(pb.y); m_verts.push_back(pb.z);
-                m_verts.push_back(pc.x); m_verts.push_back(pc.y); m_verts.push_back(pc.z);
-            }
-            if (m_verts.empty()) continue;
-            g.BindBuffer(GL_ARRAY_BUFFER, m_vbo);
-            g.BufferData(GL_ARRAY_BUFFER, (GLsizeiptrOK)(m_verts.size() * sizeof(float)), m_verts.data(), GL_DYNAMIC_DRAW);
-            g.EnableVertexAttribArray(0);
-            g.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (const void*)0);
-            g.DrawArrays(GL_TRIANGLES, 0, (GLsizei)(m_verts.size() / 3));
-        }
-        g.DisableVertexAttribArray(5); g.DisableVertexAttribArray(6);
-        // 2) AO estimate from the depth texture (fullscreen quad)
-        g.Disable(GL_DEPTH_TEST);
-        g.BindBuffer(GL_ARRAY_BUFFER, m_quadVbo);
-        g.EnableVertexAttribArray(0);
-        g.VertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, (const void*)0);
+    const int hw = w / 2 > 0 ? w / 2 : 1, hh = h / 2 > 0 ? h / 2 : 1;
+    // One fullscreen pass: program + source texture on unit 0 -> target FBO.
+    auto quadPass = [&](unsigned int prog, unsigned int fbo, int vw, int vh, unsigned int srcTex, int uSrc) {
+        g.BindFramebuffer(GL_FRAMEBUFFER, fbo);
+        g.Viewport(0, 0, vw, vh);
+        g.UseProgram(prog);
         g.ActiveTexture(GL_TEXTURE0);
-        g.BindFramebuffer(GL_FRAMEBUFFER, m_ssaoFboA);
-        g.UseProgram(m_ssaoProg);
-        g.BindTexture(GL_TEXTURE_2D, m_ssaoDepthTex);
-        g.Uniform1i(m_usDepth, 0);
+        g.BindTexture(GL_TEXTURE_2D, srcTex);
+        if (uSrc >= 0) g.Uniform1i(uSrc, 0);
+    };
+    // AO estimate + one blur round from the linear-depth texture into m_ssaoTexA.
+    auto computeAo = [&](float radius) {
+        g.Disable(GL_DEPTH_TEST);
+        quadPass(m_ssaoProg, m_ssaoFboA, m_ssaoW, m_ssaoH, m_ssaoDepthTex, m_usDepth);
         g.Uniform2f(m_usTexel, 1.0f / (float)m_ssaoW, 1.0f / (float)m_ssaoH);
-        g.Uniform1f(m_usRadius, SSAORadius());
+        g.Uniform1f(m_usRadius, radius);
         g.Uniform1f(m_usFar, kSsaoFar);
-        g.DrawArrays(GL_TRIANGLES, 0, 6);
-        // 3) one gaussian round to smooth the sampling noise
-        g.UseProgram(m_blurProg);
-        g.Uniform1i(m_ublSrc, 0);
-        g.BindFramebuffer(GL_FRAMEBUFFER, m_ssaoFboB);
-        g.BindTexture(GL_TEXTURE_2D, m_ssaoTexA);
+        DrawQuad();
+        quadPass(m_blurProg, m_ssaoFboB, m_ssaoW, m_ssaoH, m_ssaoTexA, m_ublSrc);
         g.Uniform2f(m_ublDir, 1.0f / (float)m_ssaoW, 0.0f);
-        g.DrawArrays(GL_TRIANGLES, 0, 6);
-        g.BindFramebuffer(GL_FRAMEBUFFER, m_ssaoFboA);
-        g.BindTexture(GL_TEXTURE_2D, m_ssaoTexB);
+        DrawQuad();
+        quadPass(m_blurProg, m_ssaoFboA, m_ssaoW, m_ssaoH, m_ssaoTexB, m_ublSrc);
         g.Uniform2f(m_ublDir, 0.0f, 1.0f / (float)m_ssaoH);
-        g.DrawArrays(GL_TRIANGLES, 0, 6);
-        // 4) multiply the AO onto the resolved frame
-        g.BindFramebuffer(GL_FRAMEBUFFER, m_resolveFbo);
-        g.Viewport(0, 0, w, h);
-        g.UseProgram(m_mulProg);
-        g.BindTexture(GL_TEXTURE_2D, m_ssaoTexA);
-        g.Uniform1i(m_umSrc, 0);
-        g.Uniform1f(m_umStrength, SSAOStrength() > 1.0f ? 1.0f : SSAOStrength());
+        DrawQuad();
+    };
+    // Multiply the AO onto a target (dst *= src).
+    auto multiplyAo = [&](unsigned int fbo, float strength) {
+        quadPass(m_mulProg, fbo, w, h, m_ssaoTexA, m_umSrc);
+        g.Uniform1f(m_umStrength, strength > 1.0f ? 1.0f : strength);
         g.Enable(GL_BLEND);
-        g.BlendFunc(GL_DST_COLOR, GL_ZERO);               // dst *= src
-        g.DrawArrays(GL_TRIANGLES, 0, 6);
+        g.BlendFunc(GL_DST_COLOR, GL_ZERO);
+        DrawQuad();
         g.Disable(GL_BLEND);
+    };
+
+    const bool useChain = chain && EnsurePostTargets(w, h, m_hdr);
+    PostVignetteHandled() = useChain && rsTop.vignette > 0.0f;
+    unsigned int readFbo = m_resolveFbo;
+    if (useChain) {
+        const auto& ps = rsTop.post;
+        g.Disable(GL_BLEND);
+        // 1) Linear depth (half res) for SSAO and depth of field.
+        const bool ssaoOn = ps.ssao || SSAOEnabled();
+        bool haveDepth = false;
+        if ((ssaoOn || ps.dof) && EnsureSsaoProgs() && EnsureSsaoTargets(hw, hh)) {
+            DrawLinearDepth(scene, vp, eye, ignore, viewFr);
+            haveDepth = true;
+        }
+        g.Disable(GL_DEPTH_TEST);
+        if (ssaoOn && haveDepth) {
+            computeAo(ps.ssao ? ps.ssaoRadius : SSAORadius());
+            multiplyAo(m_resolveFbo, ps.ssao ? ps.ssaoIntensity : SSAOStrength());
+        }
+        // 2) Bloom: bright-pass to half res, blur, down to quarter, blur. Both
+        //    levels are added in the uber pass (a wide soft glow + a tight one).
+        const bool bloomOn = ps.bloom || BloomEnabled();
+        const float bloomThresh = ps.bloom ? ps.bloomThreshold : BloomThreshold();
+        const float bloomIntensity = ps.bloom ? ps.bloomIntensity : BloomIntensity();
+        const float bloomRadius = ps.bloom ? ps.bloomRadius : 1.0f;
+        const int qw = m_bloomW / 2 > 0 ? m_bloomW / 2 : 1, qh = m_bloomH / 2 > 0 ? m_bloomH / 2 : 1;
+        if (bloomOn) {
+            quadPass(m_downProg, m_bloomFboA, m_bloomW, m_bloomH, m_resolveTex, m_udnSrc);
+            g.Uniform2f(m_udnTexel, 1.0f / (float)w, 1.0f / (float)h);
+            g.Uniform1f(m_udnThresh, bloomThresh);
+            g.Uniform1f(m_udnRadius, 1.0f);
+            DrawQuad();
+            for (int it = 0; it < 2; ++it) {
+                quadPass(m_blurProg, m_bloomFboB, m_bloomW, m_bloomH, m_bloomTexA, m_ublSrc);
+                g.Uniform2f(m_ublDir, bloomRadius / (float)m_bloomW, 0.0f);
+                DrawQuad();
+                quadPass(m_blurProg, m_bloomFboA, m_bloomW, m_bloomH, m_bloomTexB, m_ublSrc);
+                g.Uniform2f(m_ublDir, 0.0f, bloomRadius / (float)m_bloomH);
+                DrawQuad();
+            }
+            quadPass(m_downProg, m_bloomFboC, qw, qh, m_bloomTexA, m_udnSrc);
+            g.Uniform2f(m_udnTexel, 1.0f / (float)m_bloomW, 1.0f / (float)m_bloomH);
+            g.Uniform1f(m_udnThresh, 0.0f);
+            g.Uniform1f(m_udnRadius, 1.0f);
+            DrawQuad();
+            for (int it = 0; it < 2; ++it) {
+                quadPass(m_blurProg, m_bloomFboD, qw, qh, m_bloomTexC, m_ublSrc);
+                g.Uniform2f(m_ublDir, bloomRadius * 1.5f / (float)qw, 0.0f);
+                DrawQuad();
+                quadPass(m_blurProg, m_bloomFboC, qw, qh, m_bloomTexD, m_ublSrc);
+                g.Uniform2f(m_ublDir, 0.0f, bloomRadius * 1.5f / (float)qh);
+                DrawQuad();
+            }
+        }
+        // 3) Exposure, bloom composite, tonemap, grading, vignette.
+        const bool dofOn = ps.dof && haveDepth;
+        int after = (dofOn ? 1 : 0) + (ps.fxaa ? 1 : 0);
+        int ping = 0;
+        auto nextTarget = [&]() -> unsigned int {   // where the current pass writes
+            if (after == 0) return m_outFbo;
+            --after;
+            return m_pingFbo[ping];
+        };
+        unsigned int cur = m_resolveTex;
+        {
+            unsigned int dst = nextTarget();
+            quadPass(m_uberProg, dst, w, h, cur, m_uuSrc);
+            g.ActiveTexture(GL_TEXTURE1); g.BindTexture(GL_TEXTURE_2D, m_bloomTexA); g.Uniform1i(m_uuBloomA, 1);
+            g.ActiveTexture(GL_TEXTURE2); g.BindTexture(GL_TEXTURE_2D, m_bloomTexC); g.Uniform1i(m_uuBloomC, 2);
+            g.ActiveTexture(GL_TEXTURE0);
+            g.Uniform1f(m_uuExposure, ExposureScale(rsTop));
+            g.Uniform1f(m_uuLinearIn, hdrOut ? 1.0f : 0.0f);
+            g.Uniform1f(m_uuTonemap, (float)ps.tonemap);
+            g.Uniform1f(m_uuBloomOn, bloomOn ? 1.0f : 0.0f);
+            g.Uniform1f(m_uuBloomIntensity, bloomIntensity);
+            g.Uniform1f(m_uuGradeOn, ps.grading ? 1.0f : 0.0f);
+            g.Uniform1f(m_uuTemperature, ps.temperature);
+            g.Uniform1f(m_uuTint, ps.tint);
+            g.Uniform1f(m_uuSaturation, ps.saturation);
+            g.Uniform1f(m_uuContrast, ps.contrast);
+            g.Uniform3f(m_uuLift, ps.lift.x, ps.lift.y, ps.lift.z);
+            g.Uniform3f(m_uuGamma, ps.gamma.x, ps.gamma.y, ps.gamma.z);
+            g.Uniform3f(m_uuGain, ps.gain.x, ps.gain.y, ps.gain.z);
+            g.Uniform1f(m_uuVignette, rsTop.vignette > 1.0f ? 1.0f : rsTop.vignette);
+            g.Uniform1f(m_uuVignetteSmooth, ps.vignetteSmooth);
+            g.Uniform1f(m_uuAspect, (float)w / (float)h);
+            DrawQuad();
+            cur = dst == m_outFbo ? m_outTex : m_pingTex[ping];
+            if (dst != m_outFbo) ping ^= 1;
+        }
+        // 4) Depth of field: a blurred copy (half res, two blur rounds) mixed in
+        //    by the distance from the focus plane.
+        if (dofOn) {
+            quadPass(m_addProg, m_bloomFboA, m_bloomW, m_bloomH, cur, m_uaSrc);
+            g.Uniform1f(m_uaStrength, 1.0f);
+            DrawQuad();
+            for (int it = 0; it < 2; ++it) {
+                quadPass(m_blurProg, m_bloomFboB, m_bloomW, m_bloomH, m_bloomTexA, m_ublSrc);
+                g.Uniform2f(m_ublDir, 1.0f / (float)m_bloomW, 0.0f);
+                DrawQuad();
+                quadPass(m_blurProg, m_bloomFboA, m_bloomW, m_bloomH, m_bloomTexB, m_ublSrc);
+                g.Uniform2f(m_ublDir, 0.0f, 1.0f / (float)m_bloomH);
+                DrawQuad();
+            }
+            unsigned int dst = nextTarget();
+            quadPass(m_dofProg, dst, w, h, cur, m_udfSrc);
+            g.ActiveTexture(GL_TEXTURE1); g.BindTexture(GL_TEXTURE_2D, m_bloomTexA); g.Uniform1i(m_udfBlur, 1);
+            g.ActiveTexture(GL_TEXTURE2); g.BindTexture(GL_TEXTURE_2D, m_ssaoDepthTex); g.Uniform1i(m_udfDepth, 2);
+            g.ActiveTexture(GL_TEXTURE0);
+            g.Uniform1f(m_udfFocus, ps.dofFocus);
+            g.Uniform1f(m_udfRange, ps.dofRange);
+            g.Uniform1f(m_udfFar, kSsaoFar);
+            DrawQuad();
+            cur = dst == m_outFbo ? m_outTex : m_pingTex[ping];
+            if (dst != m_outFbo) ping ^= 1;
+        }
+        // 5) FXAA last, on the display image.
+        if (ps.fxaa) {
+            unsigned int dst = nextTarget();
+            quadPass(m_fxaaProg, dst, w, h, cur, m_ufSrc);
+            g.Uniform2f(m_ufTexel, 1.0f / (float)w, 1.0f / (float)h);
+            DrawQuad();
+        }
         g.Enable(GL_DEPTH_TEST);
         g.BindTexture(GL_TEXTURE_2D, 0);
         g.ClearColor(clearR, clearG, clearB, clearA);     // restore the caller's clear
-    }
-
-    // Bloom: bright-pass the resolved frame at half res, blur, add back on top.
-    // Any failure just skips the effect (the frame is already complete without it).
-    if (BloomEnabled() && EnsurePostProgs() &&
-        EnsureBloomTargets(w / 2 > 0 ? w / 2 : 1, h / 2 > 0 ? h / 2 : 1)) {
-        g.Disable(GL_DEPTH_TEST);
-        g.Disable(GL_BLEND);
-        g.BindBuffer(GL_ARRAY_BUFFER, m_quadVbo);
-        g.EnableVertexAttribArray(0);
-        g.VertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, (const void*)0);
-        g.DisableVertexAttribArray(1); g.DisableVertexAttribArray(2);
-        g.DisableVertexAttribArray(3); g.DisableVertexAttribArray(4);
-        g.ActiveTexture(GL_TEXTURE0);
-        // 1) bright-pass: resolve texture -> half-res A
-        g.BindFramebuffer(GL_FRAMEBUFFER, m_bloomFboA);
-        g.Viewport(0, 0, m_bloomW, m_bloomH);
-        g.UseProgram(m_brightProg);
-        g.BindTexture(GL_TEXTURE_2D, m_resolveTex);
-        g.Uniform1i(m_ubSrc, 0);
-        g.Uniform1f(m_ubThresh, BloomThreshold());
-        g.DrawArrays(GL_TRIANGLES, 0, 6);
-        // 2) two separable gaussian rounds: A -> B (horizontal), B -> A (vertical)
-        g.UseProgram(m_blurProg);
-        g.Uniform1i(m_ublSrc, 0);
-        for (int it = 0; it < 2; ++it) {
-            g.BindFramebuffer(GL_FRAMEBUFFER, m_bloomFboB);
-            g.BindTexture(GL_TEXTURE_2D, m_bloomTexA);
-            g.Uniform2f(m_ublDir, 1.0f / (float)m_bloomW, 0.0f);
-            g.DrawArrays(GL_TRIANGLES, 0, 6);
-            g.BindFramebuffer(GL_FRAMEBUFFER, m_bloomFboA);
-            g.BindTexture(GL_TEXTURE_2D, m_bloomTexB);
-            g.Uniform2f(m_ublDir, 0.0f, 1.0f / (float)m_bloomH);
-            g.DrawArrays(GL_TRIANGLES, 0, 6);
+        readFbo = m_outFbo;
+    } else {
+        // SSAO: darken corners/creases/contact points. Re-render opaque geometry at
+        // half res as packed linear depth, estimate occlusion from depth differences,
+        // blur once, multiply onto the frame. Runs BEFORE bloom (darken, then glow).
+        if (SSAOEnabled() && EnsurePostProgs() && EnsureSsaoProgs() && EnsureSsaoTargets(hw, hh)) {
+            DrawLinearDepth(scene, vp, eye, ignore, viewFr);
+            computeAo(SSAORadius());
+            multiplyAo(m_resolveFbo, SSAOStrength());
+            g.Enable(GL_DEPTH_TEST);
+            g.BindTexture(GL_TEXTURE_2D, 0);
+            g.ClearColor(clearR, clearG, clearB, clearA);     // restore the caller's clear
         }
-        // 3) additive composite onto the resolved frame
-        g.BindFramebuffer(GL_FRAMEBUFFER, m_resolveFbo);
-        g.Viewport(0, 0, w, h);
-        g.UseProgram(m_addProg);
-        g.BindTexture(GL_TEXTURE_2D, m_bloomTexA);
-        g.Uniform1i(m_uaSrc, 0);
-        g.Uniform1f(m_uaStrength, BloomIntensity());
-        g.Enable(GL_BLEND);
-        g.BlendFunc(GL_ONE, GL_ONE);
-        g.DrawArrays(GL_TRIANGLES, 0, 6);
-        g.Disable(GL_BLEND);
-        g.Enable(GL_DEPTH_TEST);
-        g.BindTexture(GL_TEXTURE_2D, 0);
+
+        // Bloom: bright-pass the resolved frame at half res, blur, add back on top.
+        // Any failure just skips the effect (the frame is already complete without it).
+        if (BloomEnabled() && EnsurePostProgs() && EnsureBloomTargets(hw, hh)) {
+            g.Disable(GL_DEPTH_TEST);
+            g.Disable(GL_BLEND);
+            // 1) bright-pass: resolve texture -> half-res A
+            quadPass(m_brightProg, m_bloomFboA, m_bloomW, m_bloomH, m_resolveTex, m_ubSrc);
+            g.Uniform1f(m_ubThresh, BloomThreshold());
+            DrawQuad();
+            // 2) two separable gaussian rounds: A -> B (horizontal), B -> A (vertical)
+            for (int it = 0; it < 2; ++it) {
+                quadPass(m_blurProg, m_bloomFboB, m_bloomW, m_bloomH, m_bloomTexA, m_ublSrc);
+                g.Uniform2f(m_ublDir, 1.0f / (float)m_bloomW, 0.0f);
+                DrawQuad();
+                quadPass(m_blurProg, m_bloomFboA, m_bloomW, m_bloomH, m_bloomTexB, m_ublSrc);
+                g.Uniform2f(m_ublDir, 0.0f, 1.0f / (float)m_bloomH);
+                DrawQuad();
+            }
+            // 3) additive composite onto the resolved frame
+            quadPass(m_addProg, m_resolveFbo, w, h, m_bloomTexA, m_uaSrc);
+            g.Uniform1f(m_uaStrength, BloomIntensity());
+            g.Enable(GL_BLEND);
+            g.BlendFunc(GL_ONE, GL_ONE);
+            DrawQuad();
+            g.Disable(GL_BLEND);
+            g.Enable(GL_DEPTH_TEST);
+            g.BindTexture(GL_TEXTURE_2D, 0);
+        }
     }
 
-    g.BindFramebuffer(GL_READ_FRAMEBUFFER, m_resolveFbo);
+    g.BindFramebuffer(GL_READ_FRAMEBUFFER, readFbo);
     m_pixels.assign((std::size_t)w * h, 0u);
     g.ReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, m_pixels.data());
     g.BindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -1899,6 +2431,7 @@ void GLRenderer::Destroy() {
     DestroyShadow();
     DestroyBloom();
     DestroySsao();
+    DestroyPostTargets();
     for (auto& kv : m_texCache) if (kv.second) g.DeleteTextures(1, &kv.second);
     m_texCache.clear();
     for (auto& kv : m_meshVB) if (kv.second.vbo) g.DeleteBuffers(1, &kv.second.vbo);
@@ -1910,6 +2443,14 @@ void GLRenderer::Destroy() {
     if (m_brightProg) { g.DeleteProgram(m_brightProg); m_brightProg = 0; }
     if (m_blurProg) { g.DeleteProgram(m_blurProg); m_blurProg = 0; }
     if (m_addProg) { g.DeleteProgram(m_addProg); m_addProg = 0; }
+    if (m_skyProg) { g.DeleteProgram(m_skyProg); m_skyProg = 0; }
+    if (m_uberProg) { g.DeleteProgram(m_uberProg); m_uberProg = 0; }
+    if (m_fxaaProg) { g.DeleteProgram(m_fxaaProg); m_fxaaProg = 0; }
+    if (m_dofProg) { g.DeleteProgram(m_dofProg); m_dofProg = 0; }
+    if (m_downProg) { g.DeleteProgram(m_downProg); m_downProg = 0; }
+    if (m_ssaoDepthProg) { g.DeleteProgram(m_ssaoDepthProg); m_ssaoDepthProg = 0; }
+    if (m_ssaoProg) { g.DeleteProgram(m_ssaoProg); m_ssaoProg = 0; }
+    if (m_mulProg) { g.DeleteProgram(m_mulProg); m_mulProg = 0; }
     if (m_prog) { g.DeleteProgram(m_prog); m_prog = 0; }
 }
 

@@ -244,6 +244,10 @@ Text (a Text object), Load Scene.
 **Animation & IK:** Anim Trigger, Anim Set Float, Anim Set Bool, Anim State
 (drive the Animator state machine), IK Look At and IK Hand Reach (Full Body IK).
 
+**Look:** Set Weather (none / rain / snow / storm, Intensity), Set Fog (On,
+Start, End) and Set Post Effect (a post-processing value by name) change the
+scene's weather, fog and post-processing; see [rendering.md](rendering.md).
+
 ## Third wave of nodes
 
 **Flow:** For Loop (First/Last; the **Index** output reads the current index, then
@@ -1079,6 +1083,9 @@ The **Engine API** group is the generated list in [engine_api.md](engine_api.md)
 - **Anim Set Bool** (`AnimSetBool`) — in Value; setting: parameter
 - **IK Look At** (`IkLook`) — in Point, Weight
 - **IK Hand Reach** (`IkHand`) — in Point, Weight; setting: left / right
+- **Set Weather** (`SetWeather`) — in Intensity; setting: none / rain / snow / storm
+- **Set Fog** (`SetFog`) — in On, Start, End
+- **Set Post Effect** (`SetPostEffect`) — in Value; setting: effect name (bloom, exposure, saturation, ...)
 - **Set Color** (`SetColor`) — in R, G, B, A
 - **Play Clip** (`PlayClip`) — setting: clip name
 - **Set Time Scale** (`SetTimeScale`) — in Scale

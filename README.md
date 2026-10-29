@@ -513,6 +513,7 @@ the rest join over LAN or a forwarded port.
 - [`docs/editor.md`](docs/editor.md) — the desktop editor and **Build Game**.
 - [`docs/modeling.md`](docs/modeling.md) — the built-in **mesh editor**: primitives, modifiers, sculpting, UV unwrap.
 - [`docs/animation.md`](docs/animation.md) — keyframe clips, **imported (FBX/GLB) animation**, state machine, IK.
+- [`docs/rendering.md`](docs/rendering.md) — **post-processing** (bloom, tonemap, grading, vignette, FXAA, SSAO, DoF), the **procedural sky**, **fog** and **weather**.
 - [`docs/scripting.md`](docs/scripting.md) — the OkayScript language + builtins.
 - [`docs/visual_scripting.md`](docs/visual_scripting.md) — the node-graph runtime + no-code Action Lists (incl. **raycasting**).
 - [`docs/survival_kit.md`](docs/survival_kit.md) — ready-made **health / hunger / thirst / stamina / oxygen / temperature** scripts.

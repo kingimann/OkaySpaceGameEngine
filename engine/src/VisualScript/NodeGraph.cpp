@@ -638,6 +638,9 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "AnimSetBool")     return std::make_unique<AnimParamNode>(AnimParamNode::Op::SetBool, argOr(""));
     if (type == "AnimState")       return std::make_unique<AnimStateNode>();
     if (type == "IkLook")          return std::make_unique<IkLookNode>();
+    if (type == "SetWeather")      return std::make_unique<SetWeatherNode>(argOr("rain"));
+    if (type == "SetFog")          return std::make_unique<SetFogNode>();
+    if (type == "SetPostEffect")   return std::make_unique<SetPostEffectNode>(argOr("bloom"));
     if (type == "IkHand") {
         std::string side = argOr("right");
         return std::make_unique<IkHandNode>(!side.empty() && (side[0] == 'l' || side[0] == 'L'));

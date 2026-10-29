@@ -254,6 +254,10 @@ inline const std::vector<VsDef>& Registry() {
         {"AnimState",    "Anim State",     CAT_DATA, false, {}, {}, {"State"}, 0, nullptr},
         {"IkLook",       "IK Look At",     CAT_ACTION, true, {""}, {"Point","Weight"}, {}, 0, nullptr},
         {"IkHand",       "IK Hand Reach",  CAT_ACTION, true, {""}, {"Point","Weight"}, {}, 1, "left / right"},
+        // --- Look: weather, fog, post-processing (docs/rendering.md) ---
+        {"SetWeather",    "Set Weather",     CAT_ACTION, true, {""}, {"Intensity"}, {}, 1, "none / rain / snow / storm"},
+        {"SetFog",        "Set Fog",         CAT_ACTION, true, {""}, {"On","Start","End"}, {}, 0, nullptr},
+        {"SetPostEffect", "Set Post Effect", CAT_ACTION, true, {""}, {"Value"}, {}, 1, "bloom / exposure / saturation / ..."},
         // --- Flow: loops, gates, switches ---
         {"ForLoop",   "For Loop",      CAT_FLOW, true, {"Body","Done"}, {"First","Last"}, {"Index"}, 0, nullptr},
         {"Repeat",    "Repeat N",      CAT_FLOW, true, {"Body"}, {}, {}, 1, "count"},
@@ -1263,6 +1267,9 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="AnimSetBool") out += ind + "anim_set_bool(" + q(arg("")) + ", " + in(0) + ")\n";
     else if (t=="IkLook")      out += ind + "ik_look(vec_x(" + in(0) + "), vec_y(" + in(0) + "), vec_z(" + in(0) + "), " + in(1, "1") + ")\n";
     else if (t=="IkHand")      out += ind + "ik_hand(" + q(arg("right")) + ", vec_x(" + in(0) + "), vec_y(" + in(0) + "), vec_z(" + in(0) + "), " + in(1, "1") + ")\n";
+    else if (t=="SetWeather")  out += ind + "weather_set(" + q(arg("rain")) + ", " + in(0, "1") + ")\n";
+    else if (t=="SetFog")      out += ind + "fog_set(" + in(0, "true") + ", " + in(1, "20") + ", " + in(2, "90") + ")\n";
+    else if (t=="SetPostEffect") out += ind + "post_set(" + q(arg("bloom")) + ", " + in(0, "1") + ")\n";
     else if (t=="Cooldown")    out += ind + "// Cooldown (" + VsCommentText(arg("1")) + "s): gate the actions after this with a timer\n";
     else if (t=="ForLoop") {
         const std::string v = "_i" + std::to_string(nodeId);

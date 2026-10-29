@@ -19,6 +19,7 @@
 #include "okay/Render/Renderer.hpp"
 #include "okay/Core/Profiler.hpp"
 #include "okay/Net/NetTransport.hpp"   // per-frame pump for non-native transports
+#include "okay/Environment/Weather.hpp"   // rain / snow / storm rig following the camera
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include <cmath>
@@ -145,6 +146,7 @@ void Scene::Update(float deltaTime) {
     m_physics3d.BeginDebugFrame();
 
     m_scheduler.Update(deltaTime);
+    UpdateWeather(*this, deltaTime);   // the scene's weather preset -> emitters, wind, lightning
     {   // Tweens set to ignore the time scale use the real frame time.
         const float ts = Time::TimeScale();
         m_tweens.Update(deltaTime, ts > 1e-6f ? deltaTime / ts : Time::UnscaledDeltaTime());

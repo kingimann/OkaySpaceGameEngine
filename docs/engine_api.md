@@ -347,6 +347,38 @@ Whole-game saves in named slots: every object, the player, inventories, script v
 | `SaveGame.Delete(slot)` | `SaveGame.Delete/1` | step | slot (Text) | Result (Bool) | Delete the save in a slot. |
 | `SaveGame.Label(slot)` | `SaveGame.Label/1` | value | slot (Text) | Result (Text) | The label a slot was saved with ("" if empty). |
 
+## PostProcess
+
+The scene's post-processing: exposure, tonemap, bloom, colour grading, vignette, FXAA, SSAO and depth of field (saved with the scene; the Lighting panel edits the same values).
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `PostProcess.exposure` | `PostProcess.exposure` | value | - | exposure (Number) | Scene brightness multiplier (1 = as lit). |
+| `PostProcess.exposure = exposure` | `PostProcess.exposure=` | step | exposure (Number) | - | Scene brightness multiplier (1 = as lit). |
+| `PostProcess.Set(name, value)` | `PostProcess.Set/2` | step | name (Text), value (Number) | Result (Bool) | Set one value by name: "exposure", "tonemap" (0 none, 1 ACES, 2 filmic), "bloom" (0/1), "bloom_threshold", "bloom_intensity", "bloom_radius", "grading", "temperature", "tint", "saturation", "contrast", "vignette", "vignette_smoothness", "fxaa", "ssao", "ssao_radius", "ssao_intensity", "dof", "dof_focus", "dof_range". False for a name it doesn't know. |
+
+## Fog
+
+The scene's fog: linear (start / end), exponential or height fog, in the colour you set or the sky's.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `Fog.enabled` | `Fog.enabled` | value | - | enabled (Bool) | Whether the fog is on. |
+| `Fog.enabled = enabled` | `Fog.enabled=` | step | enabled (Bool) | - | Whether the fog is on. |
+| `Fog.Set(enabled, start, end)` | `Fog.Set/3` | step | enabled (Bool), start (Number), end (Number) | - | Turn the fog on or off, fading from start to end (world units from the camera) in Linear mode. |
+| `Fog.SetColor(r, g, b)` | `Fog.SetColor/3` | step | r (Number), g (Number), b (Number) | - | The fog colour (0 to 1 each). Stops matching the sky's horizon. |
+| `Fog.SetMode(mode, density)` | `Fog.SetMode/2` | step | mode (Text), density (Number) | - | "linear", "exponential" or "height", with the density the last two thicken by per unit of distance. |
+
+## Weather
+
+Rain, snow and storms falling around the camera, and the wind particles and water follow.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `Weather.preset` | `Weather.preset` | value | - | preset (Text) | The current preset's name. |
+| `Weather.Set(preset, intensity)` | `Weather.Set/2` | step | preset (Text), intensity (Number) | - | "none", "rain", "snow" or "storm" at an intensity from 0 to 1; it cross-fades over the scene's weather fade time. |
+| `Weather.SetWind(x, y, z)` | `Weather.SetWind/3` | step | x (Number), y (Number), z (Number) | - | The wind (world units per second) that particles drift with and water waves follow. |
+
 ## Mathf
 
 Maths helpers.

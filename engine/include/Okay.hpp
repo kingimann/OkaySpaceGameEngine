@@ -227,6 +227,8 @@
 #include "okay/Components/SurvivalZone.hpp"
 #include "okay/Components/Consumables.hpp"
 #include "okay/Components/DayNightCycle.hpp"
+#include "okay/Render/Atmosphere.hpp"
+#include "okay/Environment/Weather.hpp"
 #include "okay/Components/NPCController.hpp"
 #include "okay/Components/Crafting.hpp"
 #include "okay/Components/MeleeAttacker.hpp"

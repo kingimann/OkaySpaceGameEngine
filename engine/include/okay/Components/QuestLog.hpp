@@ -49,6 +49,20 @@ struct QuestDef {
     bool repeatable = false;
 };
 
+/// The string-table keys a quest's text is looked up under; the typed text shows
+/// while the table has none (docs/localization.md): quest.<id>.title,
+/// quest.<id>.desc and quest.<id>.obj<n> for objective n (from 1).
+std::string QuestTitleKey(const std::string& id);
+std::string QuestDescriptionKey(const std::string& id);
+std::string QuestObjectiveKey(const std::string& id, int objective);
+/// What players read, in their language: the title (the id when it has none),
+/// the description, and an objective's description ("" when it has none).
+std::string QuestTitle(const QuestDef& q);
+std::string QuestDescription(const QuestDef& q);
+std::string QuestObjectiveText(const QuestDef& q, int index);
+/// Every text of a quest as (key, text), to add to a string table.
+std::vector<std::pair<std::string, std::string>> QuestStrings(const QuestDef& q);
+
 enum class QuestStatus { Inactive, Active, Completed, Failed };
 const char* QuestStatusName(QuestStatus s);
 bool QuestStatusFromName(const std::string& s, QuestStatus& out);
@@ -97,6 +111,9 @@ public:
 
     /// The scene's Quest Log; with `create`, one is added to a "Quests" object when missing.
     static QuestLog* Get(Scene* scene, bool create);
+    /// The string-table keys of the quest UI's own words (notifications, tracker,
+    /// journal) with their English text; a key the table has replaces the English.
+    static const std::vector<std::pair<std::string, std::string>>& LocKeys();
 
     int ExecutionOrder() const override { return 10; }   ///< after dialogues and pickups this frame
     void Awake() override;

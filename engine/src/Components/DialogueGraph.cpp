@@ -1,5 +1,6 @@
 #include "okay/Components/DialogueGraph.hpp"
 #include "StoryKv.hpp"
+#include "okay/Core/Localization.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -400,6 +401,32 @@ bool DialogueGraph::Save(const std::string& path) const {
     if (!f) return false;
     f << Write();
     return (bool)f;
+}
+
+// ---------------------------------------------------------------------------
+// Localization keys
+// ---------------------------------------------------------------------------
+std::string DialogueLineKey(const std::string& graph, int node) {
+    return "dlg." + Localization::KeyPart(graph) + "." + std::to_string(node);
+}
+std::string DialogueChoiceKey(const std::string& graph, int node, int choice) {
+    return DialogueLineKey(graph, node) + "." + std::to_string(choice);
+}
+std::string DialogueSpeakerKey(const std::string& speaker) { return "speaker." + Localization::KeyPart(speaker); }
+
+std::vector<std::pair<std::string, std::string>> DialogueStrings(const DialogueGraph& graph, const std::string& graphName) {
+    std::vector<std::pair<std::string, std::string>> out;
+    std::set<std::string> speakers;
+    for (const DialogueNode& n : graph.nodes) {
+        if (n.kind == Kind::Line) {
+            if (!n.text.empty()) out.push_back({DialogueLineKey(graphName, n.id), n.text});
+            if (!n.speaker.empty() && speakers.insert(n.speaker).second) out.push_back({DialogueSpeakerKey(n.speaker), n.speaker});
+        } else if (n.kind == Kind::Choice) {
+            for (std::size_t i = 0; i < n.choices.size(); ++i)
+                if (!n.choices[i].text.empty()) out.push_back({DialogueChoiceKey(graphName, n.id, (int)i + 1), n.choices[i].text});
+        }
+    }
+    return out;
 }
 
 // ---------------------------------------------------------------------------

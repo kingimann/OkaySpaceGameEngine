@@ -165,6 +165,12 @@ public:
     /// The key's text in the current or the default language; false (nothing
     /// reported) when the table has no text for it.
     static bool TryGet(const std::string& key, std::string& out);
+    /// The key's text, or `fallback` when the table has none (nothing reported):
+    /// for text that is localized once a project adds its key (dialogue, quests).
+    static std::string GetOr(const std::string& key, const std::string& fallback);
+    /// A name as part of a key: lower case, letters, digits, '_' and '-' kept,
+    /// anything else '_' ("Old Smith" -> "old_smith").
+    static std::string KeyPart(const std::string& name);
     static bool Has(const std::string& key) { return Table().Has(key); }
     /// Get(key) with its {0} / {name} / plural placeholders filled in.
     static std::string LocalizeArgs(const std::string& key, const std::vector<LocArg>& args);

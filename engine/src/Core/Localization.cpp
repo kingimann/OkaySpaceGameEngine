@@ -636,6 +636,20 @@ bool Localization::TryGet(const std::string& key, std::string& out) {
     return true;
 }
 
+std::string Localization::GetOr(const std::string& key, const std::string& fallback) {
+    std::string out;
+    return TryGet(key, out) ? out : fallback;
+}
+
+std::string Localization::KeyPart(const std::string& name) {
+    std::string out;
+    for (char c : Trim(name)) {
+        const unsigned char u = (unsigned char)c;
+        out += (std::isalnum(u) && u < 0x80) || c == '_' || c == '-' ? (char)std::tolower(u) : '_';
+    }
+    return out;
+}
+
 std::string Localization::LocalizeArgs(const std::string& key, const std::vector<LocArg>& args) {
     const std::string text = Lookup(key, true);
     if (S().language == kPseudo) return Pseudo(Format(text, args, S().table.DefaultLanguage()));

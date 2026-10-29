@@ -415,6 +415,86 @@ int main() {
         CHECK(std::any_of(lit.begin(), lit.end(), [](const LoadingDrawCmd& d) { return d.text == "loading.title"; }));
     }
 
+    // ---- A running dialogue line, its speaker and choices follow the language; quests too ----
+    {
+        Localization::Reset();
+        StringTable t = MakeTable();
+        DialogueGraph g;
+        g.name = "Old Smith";
+        int lineId = 0, choiceId = 0;
+        { DialogueNode& n = g.Add(DialogueNode::Kind::Line, 0, 0); n.speaker = "Smith"; n.text = "Welcome, traveller!"; lineId = n.id; }
+        {
+            DialogueNode& n = g.Add(DialogueNode::Kind::Choice, 0, 0);
+            DialogueChoice buy; buy.text = "Buy";
+            DialogueChoice leave; leave.text = "Leave";
+            n.choices = {buy, leave};
+            choiceId = n.id;
+        }
+        g.Find(lineId)->next = choiceId;
+        g.start = lineId;
+        const auto strings = DialogueStrings(g, g.name);
+        CHECK(strings.size() == 4);   // the line, its speaker, two choices
+        CHECK(DialogueLineKey("Old Smith", lineId) == "dlg.old_smith." + std::to_string(lineId));
+        for (const auto& kv : strings) t.Set(kv.first, "en", kv.second);
+        t.Set(DialogueLineKey(g.name, lineId), "fr", "Ça va, voyageur ?");
+        t.Set(DialogueSpeakerKey("Smith"), "fr", "Forgeron");
+        t.Set(DialogueChoiceKey(g.name, choiceId, 1), "fr", "Acheter");
+        t.Set(DialogueChoiceKey(g.name, choiceId, 2), "fr", "Partir");
+        QuestDef q;
+        q.id = "find_sword"; q.title = "The Lost Sword";
+        QuestObjective ob; ob.kind = QuestObjective::Kind::Custom; ob.description = "Find the sword";
+        q.objectives = {ob};
+        for (const auto& kv : QuestStrings(q)) t.Set(kv.first, "en", kv.second);
+        t.Set(QuestTitleKey("find_sword"), "fr", "L'épée perdue");
+        t.Set(QuestObjectiveKey("find_sword", 1), "fr", "Trouver l'épée");
+        t.Set("quest.started", "fr", "Quête commencée");
+        Localization::SetTable(t);
+
+        Scene s("D");
+        GameObject* npc = s.CreateGameObject("Smith");
+        auto* r = npc->AddComponent<DialogueRunner>();
+        r->SetGraph(g);
+        r->typewriterSpeed = 10.0f;
+        r->drawUI = false;
+        s.Start();
+        CHECK(r->StartDialogue());
+        DialogueRunner::Line l = r->CurrentLine();
+        CHECK(l.text == "Welcome, traveller!" && l.speaker == "Smith" && l.shownText.empty());
+        Localization::SetLanguage("fr");
+        l = r->CurrentLine();   // the line on screen switches with the language
+        CHECK(l.text == "Ça va, voyageur ?" && l.speaker == "Forgeron");
+        r->Update(0.2f);        // two characters typed: "Ç" is one character
+        CHECK(r->CurrentLine().shownText == "Ça");
+        r->Advance();           // finish typing
+        r->Advance();           // on to the choice
+        l = r->CurrentLine();
+        CHECK(l.choice && l.choices == (std::vector<std::string>{"Acheter", "Partir"}));
+        CHECK(l.text == "Ça va, voyageur ?");   // the question stays above the choices
+        Localization::SetLanguage("en");
+        CHECK(r->CurrentLine().choices == (std::vector<std::string>{"Buy", "Leave"}));
+        // Text without a key in the table shows as typed.
+        DialogueGraph plain = g;
+        plain.name = "Untranslated";
+        r->SetGraph(plain);
+        CHECK(r->StartDialogue() && r->CurrentLine().text == "Welcome, traveller!");
+        r->Stop();
+
+        QuestLog* log = QuestLog::Get(&s, true);
+        log->quests = {q};
+        log->drawUI = false;
+        Localization::SetLanguage("fr");
+        CHECK(log->StartQuest("find_sword"));
+        CHECK(!log->notifications.empty() && log->notifications.back() == "Quête commencée: L'épée perdue");
+        CHECK(QuestObjectiveText(q, 0) == "Trouver l'épée" && QuestTitle(q) == "L'épée perdue");
+        Localization::SetLanguage("ja");   // no Japanese: the default language's text
+        CHECK(QuestTitle(q) == "The Lost Sword");
+        const auto uses = CollectLocKeys(s);
+        auto used = [&](const std::string& k) {
+            return std::any_of(uses.begin(), uses.end(), [&](const LocKeyUse& u) { return u.key == k; });
+        };
+        CHECK(used(DialogueSpeakerKey("Smith")) && used(QuestTitleKey("find_sword")) && used("dialogue.talk") && used("quest.started"));
+    }
+
     // ---- The scene record; an older scene without it loads unchanged ----
     {
         Scene s("R");

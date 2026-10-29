@@ -10,10 +10,13 @@
 #include "okay/Components/WorldUI.hpp"
 #include "okay/Components/HoldPrompt.hpp"
 #include "okay/Components/LoadingScreen.hpp"
+#include "okay/Components/DialogueRunner.hpp"
+#include "okay/Components/QuestLog.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 
 #include <cstdint>
+#include <filesystem>
 #include <unordered_map>
 
 namespace okay {
@@ -87,6 +90,21 @@ std::vector<LocKeyUse> CollectLocKeys(const Scene& scene) {
             add(ls->title, go, "Loading Screen");
             add(ls->subtitle, go, "Loading Screen");
             for (const auto& t : ls->tips) add(t, go, "Loading Screen tip");
+        }
+        if (auto* dr = go->GetComponent<DialogueRunner>()) {   // the graph's lines, choices and speakers
+            DialogueGraph g = dr->Graph();
+            if (g.nodes.empty() && !dr->graphFile.empty()) g.Load(dr->ResolvedGraphFile());
+            const std::string name = !g.name.empty() ? g.name : std::filesystem::path(dr->graphFile).stem().string();
+            for (const auto& kv : DialogueStrings(g, name)) add(kv.first, go, "Dialogue");
+            for (const auto& kv : DialogueRunner::LocKeys()) add(kv.first, go, "Dialogue box");
+        }
+        if (auto* ql = go->GetComponent<QuestLog>()) {
+            std::vector<QuestDef> defs = ql->quests, fromFile;
+            if (!ql->questFile.empty() && QuestFile::Load(ql->ResolvedFile(), fromFile))
+                defs.insert(defs.end(), fromFile.begin(), fromFile.end());
+            for (const QuestDef& q : defs)
+                for (const auto& kv : QuestStrings(q)) add(kv.first, go, "Quest");
+            for (const auto& kv : QuestLog::LocKeys()) add(kv.first, go, "Quest UI");
         }
     }
     return out;

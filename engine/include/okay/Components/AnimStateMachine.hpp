@@ -86,6 +86,10 @@ public:
         float       exitTime = 1.0f;    ///< normalized state time it may fire from (0.75 = 75% through)
         bool        canInterruptSelf = false;   ///< Any State only: may re-enter the current state
         float       offset = 0.0f;      ///< normalized time the target state starts at (0..1)
+        /// Start the target where the state being left is in its cycle (instead
+        /// of at `offset`): walk <-> run between two looping states keeps the feet
+        /// in step instead of restarting the stride.
+        bool        syncPhase = false;
         bool        muted = false;      ///< never fires (try the machine without it, keep it for later)
         /// While this transition is blending, which state's transitions may cut it
         /// short. NextState = the target's own
@@ -766,7 +770,8 @@ private:
         if (m_trActive) ++m_interruptions;
         const std::string from = m_current;
         const float fromNorm = m_normTime;
-        Enter(*to, tr.blend, tr.offset);
+        // Keep phase: the new cycle picks up where the old one is (its loops wrap).
+        Enter(*to, tr.blend, tr.syncPhase ? fromNorm - std::floor(fromNorm) : tr.offset);
         m_trActive = tr.blend > 0.0f;
         m_trLeft = tr.blend;
         m_trFrom = from;

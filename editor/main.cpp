@@ -20706,9 +20706,14 @@ static void DrawAnimatorGraph(EditorState& ed) {
         if (ImGui::DragFloat("Blend (s)##ag", &tr.blend, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
         if (ImGui::Checkbox("Mute##ag", &tr.muted)) ed.dirty = true;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Never fire: try the machine without this transition, keep it for later.");
-        if (ImGui::SliderFloat("Start at##ag", &tr.offset, 0.0f, 0.99f, "%.2f")) ed.dirty = true;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Start the target state part-way into its clip (0.5 = halfway).\n"
-                                                      "Line up the feet when switching between walk/run cycles.");
+        if (ImGui::Checkbox("Keep phase##ag", &tr.syncPhase)) ed.dirty = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Start the target state where the current one is in its cycle,\n"
+                                                      "so walk <-> run between two looping states keeps the feet in step.");
+        if (!tr.syncPhase) {
+            if (ImGui::SliderFloat("Start at##ag", &tr.offset, 0.0f, 0.99f, "%.2f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Start the target state part-way into its clip (0.5 = halfway).\n"
+                                                          "Line up the feet when switching between walk/run cycles.");
+        }
         if (isAny && ImGui::Checkbox("Can re-enter itself##ag", &tr.canInterruptSelf)) ed.dirty = true;
         if (!isAny) {
             static const char* kInt[] = {"Next State", "None", "Current State", "Current, then Next", "Next, then Current"};
@@ -29867,7 +29872,13 @@ void DrawInspector(EditorState& ed) {
                     }
                     std::reverse(chain.begin(), chain.end());
                     l->chainNames = chain; l->chain.clear(); ed.dirty = true;
-                    ConsoleLog("Look-At IK: chain of " + std::to_string((int)chain.size()) + " bone(s), tip '" + head->name + "'");
+                    // Eye bones too, when the rig has them (not lids or brows).
+                    l->eyeNames.clear(); l->eyes.clear();
+                    for (int side : {-1, +1})
+                        if (GameObject* eye = FindBone(ed, go, {"eye"}, side, {"lid", "brow", "lash"}))
+                            l->eyeNames.push_back(eye->name);
+                    ConsoleLog("Look-At IK: chain of " + std::to_string((int)chain.size()) + " bone(s), tip '" + head->name + "'" +
+                               (l->eyeNames.empty() ? "" : ", " + std::to_string((int)l->eyeNames.size()) + " eye(s)"));
                 } else ConsoleLog("Look-At IK: no head bone found under " + go->name, 1);
             }
             char tn[64]; std::strncpy(tn, l->targetName.c_str(), sizeof(tn) - 1); tn[sizeof(tn) - 1] = '\0';
@@ -29887,17 +29898,57 @@ void DrawInspector(EditorState& ed) {
             ImGui::DragFloat("Max Angle / bone##look", &l->maxAngle, 1.0f, 0.0f, 180.0f);
             ImGui::DragFloat("Smoothing##look", &l->smoothing, 0.5f, 0.0f, 40.0f);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Head-turn ease speed (per second): swings smoothly onto a new target. 0 = snap.");
+            if (ImGui::DragFloat("Clamp (deg)##look", &l->clampAngle, 1.0f, 0.0f, 180.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Furthest the whole look may swing from where the animation points\nthe first chain bone. A target behind is watched from the corner\nof the eye instead of the head turning round. 0 = no limit.");
             ImGui::Separator();
             ImGui::Text("Chain bones root->tip (%d)", (int)l->chainNames.size());
+            ImGui::SameLine(); ImGui::TextDisabled("name, share of the turn");
             for (std::size_t i = 0; i < l->chainNames.size(); ++i) {
                 ImGui::PushID((int)i);
                 char nb[64]; std::strncpy(nb, l->chainNames[i].c_str(), sizeof(nb) - 1); nb[sizeof(nb) - 1] = '\0';
+                ImGui::SetNextItemWidth(150.0f);
                 if (ImGui::InputText("##cb", nb, sizeof(nb))) { l->chainNames[i] = nb; ed.dirty = true; }
                 ImGui::SameLine();
-                if (ImGui::SmallButton("x")) { l->chainNames.erase(l->chainNames.begin() + i); ed.dirty = true; ImGui::PopID(); break; }
+                // Each bone's share of the turn; the tip always finishes it. Bones
+                // without an entry ramp up to the tip.
+                const std::size_t n = l->chainNames.size();
+                float share = LookAtIK::ShareOf(l->boneWeights, i, n);
+                ImGui::SetNextItemWidth(56.0f);
+                if (i + 1 < n) {
+                    if (ImGui::DragFloat("##sh", &share, 0.01f, 0.0f, 1.0f, "%.2f")) {
+                        while (l->boneWeights.size() <= i) l->boneWeights.push_back(LookAtIK::ShareOf(l->boneWeights, l->boneWeights.size(), n));
+                        l->boneWeights[i] = share; ed.dirty = true;
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Share of its turn this bone takes (the last bone finishes the look).");
+                } else ImGui::TextDisabled("rest");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("x")) {
+                    l->chainNames.erase(l->chainNames.begin() + i);
+                    if (i < l->boneWeights.size()) l->boneWeights.erase(l->boneWeights.begin() + i);
+                    ed.dirty = true; ImGui::PopID(); break;
+                }
                 ImGui::PopID();
             }
             if (ImGui::SmallButton("+ Bone##look")) { l->chainNames.push_back(""); ed.dirty = true; }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Reset shares##look")) { l->boneWeights.clear(); ed.dirty = true; }
+            ImGui::Separator();
+            ImGui::Text("Eyes (%d)", (int)l->eyeNames.size());
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Eye bones aim straight at the target ahead of the head (no easing),\nwithin Eye Max Angle of where the animation points them.");
+            for (std::size_t i = 0; i < l->eyeNames.size(); ++i) {
+                ImGui::PushID(1000 + (int)i);
+                char nb[64]; std::strncpy(nb, l->eyeNames[i].c_str(), sizeof(nb) - 1); nb[sizeof(nb) - 1] = '\0';
+                ImGui::SetNextItemWidth(150.0f);
+                if (ImGui::InputText("##eye", nb, sizeof(nb))) { l->eyeNames[i] = nb; l->eyes.clear(); ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("x")) { l->eyeNames.erase(l->eyeNames.begin() + i); l->eyes.clear(); ed.dirty = true; ImGui::PopID(); break; }
+                ImGui::PopID();
+            }
+            if (ImGui::SmallButton("+ Eye##look")) { l->eyeNames.push_back(""); ed.dirty = true; }
+            if (!l->eyeNames.empty()) {
+                if (ImGui::DragFloat("Eye Max Angle##look", &l->eyeMaxAngle, 1.0f, 0.0f, 90.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Eye Weight##look", &l->eyeWeight, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            }
             if (ImGui::SmallButton("Remove##look")) toRemove = l;
         }
     }
@@ -30033,6 +30084,8 @@ void DrawInspector(EditorState& ed) {
                 ImGui::DragFloat("Max Bend##lik", &lb->maxBend, 1.0f, 0.0f, 180.0f);
                 if (ImGui::DragFloat("Target Blend (s)##lik", &lb->targetBlendTime, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to swing over when the goal switches to another target\nor jumps (0 = snap). Moving the character never trails.");
+                if (ImGui::DragFloat("Stretch##lik", &lb->stretch, 0.005f, 0.0f, 0.5f, "%.2f")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Let the limb lengthen by up to this fraction when the target is\nbeyond its reach (0.15 = 15 %%), instead of stopping short.");
                 if (IKJointLimitUI("Upper limit##lik", lb->upperLimit)) ed.dirty = true;
                 if (IKJointLimitUI("Lower limit##lik", lb->lowerLimit)) ed.dirty = true;
                 if (lb->upperLimit.Active() || lb->lowerLimit.Active())

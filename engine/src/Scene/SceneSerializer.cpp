@@ -825,6 +825,20 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             }
             out << "\n";
         }
+        // Transitions that keep the cycle's phase (same layout as animsmmute).
+        bool anySync = false;
+        for (const auto& st : asm2->states) for (const auto& tr : st.transitions) anySync = anySync || tr.syncPhase;
+        for (const auto& tr : asm2->anyState) anySync = anySync || tr.syncPhase;
+        if (anySync) {
+            out << "  animsmsync " << asm2->states.size();
+            for (const auto& st : asm2->states) {
+                out << " " << st.transitions.size();
+                for (const auto& tr : st.transitions) out << " " << (tr.syncPhase ? 1 : 0);
+            }
+            out << " " << asm2->anyState.size();
+            for (const auto& tr : asm2->anyState) out << " " << (tr.syncPhase ? 1 : 0);
+            out << "\n";
+        }
         {
             const StanceTimes def;
             const StanceTimes& t = asm2->stanceTimes;
@@ -1197,7 +1211,13 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << l->target.x << " " << l->target.y << " " << l->target.z
             << " " << l->chainNames.size();
         for (const std::string& n : l->chainNames) out << " " << Quote(n);
-        out << " " << l->smoothing << "\n";
+        out << " " << l->smoothing;
+        // The rest as key=value (older builds ignore trailing tokens here).
+        KvOut k{out};
+        k("clamp", l->clampAngle)("eyeMax", l->eyeMaxAngle)("eyeW", l->eyeWeight);
+        for (std::size_t i = 0; i < l->boneWeights.size(); ++i) k(("sh" + std::to_string(i)).c_str(), l->boneWeights[i]);
+        for (std::size_t i = 0; i < l->eyeNames.size(); ++i) k.str(("eye" + std::to_string(i)).c_str(), l->eyeNames[i]);
+        out << "\n";
     }
     // Written BEFORE footik on purpose: components load in record order, and
     // the retarget must pose the rig before FootIK plants the feet on it.
@@ -1246,6 +1266,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         };
         lim("ul", lb->upperLimit); lim("ll", lb->lowerLimit);
         if (lb->targetBlendTime != 0.0f) out << " tb=" << lb->targetBlendTime;
+        if (lb->stretch != 0.0f) out << " st=" << lb->stretch;
         out << "\n";
     }
     if (auto* ci = go->GetComponent<ChainIK>()) {
@@ -3565,6 +3586,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     }
                     long na = 0; in >> na;
                     for (long k = 0; k < na && in; ++k) { int m = 0; in >> m; if (k < (long)sm2->anyState.size()) sm2->anyState[k].muted = m != 0; }
+                } else if (field == "animsmsync") {
+                    auto* sm2 = smFor();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n && in; ++i) {
+                        long nt = 0; in >> nt;
+                        for (long k = 0; k < nt && in; ++k) {
+                            int m = 0; in >> m;
+                            if (i < (long)sm2->states.size() && k < (long)sm2->states[i].transitions.size()) sm2->states[i].transitions[k].syncPhase = m != 0;
+                        }
+                    }
+                    long na = 0; in >> na;
+                    for (long k = 0; k < na && in; ++k) { int m = 0; in >> m; if (k < (long)sm2->anyState.size()) sm2->anyState[k].syncPhase = m != 0; }
                 } else if (field == "animsmstance") {
                     StanceTimes& t = smFor()->stanceTimes;
                     in >> t.standCrouch >> t.crouchProne >> t.proneStand;
@@ -3942,7 +3975,23 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     for (std::size_t k = 0; k < n && in; ++k) l->chainNames.push_back(ReadQuoted(in));
                     { std::string rest; std::getline(in, rest);
                       std::istringstream rs(rest); float sm;
-                      if (rs >> sm) l->smoothing = sm; }
+                      if (rs >> sm) l->smoothing = sm;
+                      // Files from before the clamp looked all the way round.
+                      KvIn k(rs);
+                      l->clampAngle = 0.0f;
+                      k.f("clamp", l->clampAngle); k.f("eyeMax", l->eyeMaxAngle); k.f("eyeW", l->eyeWeight);
+                      for (int i = 0; ; ++i) {
+                          const std::string key = "sh" + std::to_string(i);
+                          float v = 1.0f;
+                          if (!k.find(key.c_str())) break;
+                          k.f(key.c_str(), v); l->boneWeights.push_back(v);
+                      }
+                      for (int i = 0; ; ++i) {
+                          const std::string key = "eye" + std::to_string(i);
+                          std::string nm;
+                          if (!k.find(key.c_str())) break;
+                          k.str(key.c_str(), nm); l->eyeNames.push_back(nm);
+                      } }
                 } else if (field == "footik") {
                     auto* f = go->AddComponent<FootIK>();
                     f->leftHipName = ReadQuoted(in); f->leftKneeName = ReadQuoted(in); f->leftFootName = ReadQuoted(in);
@@ -3999,6 +4048,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                           const std::string k = tok.substr(0, eq);
                           const float v = std::strtof(tok.c_str() + eq + 1, nullptr);
                           if (k == "tb") { lb->targetBlendTime = v; continue; }
+                          if (k == "st") { lb->stretch = v; continue; }
                           IKJointLimit& l = k.compare(0, 2, "ul") == 0 ? lb->upperLimit : lb->lowerLimit;
                           const std::string f = k.substr(2);
                           if      (f == "T")  l.type = (IKJointLimit::Type)std::clamp((int)v, 0, 2);

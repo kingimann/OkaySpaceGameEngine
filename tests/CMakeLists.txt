@@ -854,6 +854,11 @@ add_executable(test_ik_core test_ik_core.cpp)
 target_link_libraries(test_ik_core PRIVATE okay::engine)
 add_test(NAME ik_core COMMAND test_ik_core)
 
+# Look-At IK shares, clamp and eyes; Limb IK stretch.
+add_executable(test_ik_look_stretch test_ik_look_stretch.cpp)
+target_link_libraries(test_ik_look_stretch PRIVATE okay::engine)
+add_test(NAME ik_look_stretch COMMAND test_ik_look_stretch)
+
 add_executable(test_vs_nodes test_vs_nodes.cpp)
 target_link_libraries(test_vs_nodes PRIVATE okay::engine)
 add_test(NAME vs_nodes COMMAND test_vs_nodes)

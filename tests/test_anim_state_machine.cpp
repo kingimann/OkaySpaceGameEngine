@@ -107,5 +107,47 @@ int main() {
         CHECK(sm2->anyState.size() == 1 && sm2->anyState[0].extra.size() == 1);
         CHECK(sm2->anyState[0].extra[0].param == "armed");
     }
+
+    // ---- Keep phase: Walk -> Run picks up where the walk cycle is (its loops
+    // wrap), instead of restarting the stride; without it the target starts at
+    // the transition's offset.
+    {
+        Scene s2;
+        GameObject* m2 = s2.CreateGameObject("Model");
+        GameObject* b2 = s2.CreateGameObject("bone");
+        b2->transform->SetParent(m2->transform, false);
+        auto* ma2 = m2->AddComponent<ModelAnimator>();
+        ma2->autoPlay = false; ma2->blendTime = 0.0f;
+        ma2->clips = {ConstClip("walk", 1, 1), ConstClip("run", 2, 1)};
+        auto* sm3 = m2->AddComponent<AnimStateMachine>();
+        AnimStateMachine::State walk; walk.name = "Walk"; walk.clip = "walk";
+        AnimStateMachine::State run;  run.name = "Run";   run.clip = "run";
+        AnimStateMachine::Transition go; go.to = "Run"; go.cond = AnimStateMachine::Cond::Trigger; go.param = "go";
+        go.blend = 0.0f; go.syncPhase = true; go.offset = 0.2f;   // the offset is ignored while keeping phase
+        walk.transitions.push_back(go);
+        AnimStateMachine::Transition back2; back2.to = "Walk"; back2.cond = AnimStateMachine::Cond::Trigger; back2.param = "back";
+        back2.blend = 0.0f; back2.offset = 0.2f;
+        run.transitions.push_back(back2);
+        sm3->states = {walk, run};
+        s2.Start();
+        Tick(s2, 1 + 60 + 42);   // 1.7 s into the 1 s walk cycle: phase 0.7
+        CHECK(sm3->Current() == "Walk");
+        sm3->SetTrigger("go"); Tick(s2, 1);
+        CHECK(sm3->Current() == "Run");
+        CHECK(sm3->NormalizedTime() > 0.68f && sm3->NormalizedTime() < 0.75f);
+        CHECK(ma2->Time() > 0.68f && ma2->Time() < 0.75f);
+        // Back without keeping phase: the walk starts at its 0.2 offset.
+        Tick(s2, 10);
+        sm3->SetTrigger("back"); Tick(s2, 1);
+        CHECK(sm3->Current() == "Walk");
+        CHECK(sm3->NormalizedTime() > 0.19f && sm3->NormalizedTime() < 0.25f);
+        // The flag rides along in the scene file.
+        std::string t2 = SceneSerializer::Serialize(s2);
+        Scene s3("s3");
+        CHECK(SceneSerializer::Deserialize(s3, t2));
+        auto* sm4 = s3.Find("Model")->GetComponent<AnimStateMachine>();
+        CHECK(sm4 && sm4->states.size() == 2 && sm4->states[0].transitions.size() == 1);
+        CHECK(sm4 && sm4->states[0].transitions[0].syncPhase && !sm4->states[1].transitions[0].syncPhase);
+    }
     TEST_MAIN_RESULT();
 }

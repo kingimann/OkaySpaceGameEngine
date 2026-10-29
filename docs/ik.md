@@ -100,6 +100,33 @@ switch it on or off), **Goal Smoothing** (follow a moving target without jitter)
 and, for looking, **Smoothing**. All of these ease per second, so they look the
 same at 30 and 144 fps.
 
+## Look-At IK
+
+- **Chain** root to tip (spine, neck, head; *Auto-Detect Chain* finds them).
+  Each bone takes a **share** of its turn and the last bone always finishes the
+  look. Left alone the shares ramp up the chain — three bones split a turn a
+  third, two thirds of what's left, the rest — so the body leans a little, the
+  neck more and the head does the rest. Type your own shares next to the bone
+  names (the spine 0.2 for a stiff character, 0.5 for one that turns its torso).
+- **Max Angle / bone** is how far one bone may turn from its animated pose.
+  **Clamp** is how far the whole look may swing from where the animation points
+  the first chain bone (the body's forward): at the default 120, a target behind
+  the character is watched from the corner of the eye, and when it crosses
+  behind the head comes back round the front. 0 = no limit (scenes saved before
+  this setting load with 0).
+- **Eyes**: eye bones (found by *Auto-Detect Chain*, or named) aim straight at
+  the target with no easing — the eyes lead, the head follows — within **Eye
+  Max Angle** of where the animation points them.
+- **Smoothing** eases the head over to a new target (per second; 0 snaps).
+
+## Limb IK
+
+- **Stretch** lets the arm or leg lengthen by up to that fraction (0.15 = 15 %)
+  when the target is beyond its reach — a ledge grab, a long reach — instead of
+  stopping short. The animated bone lengths come back with the next pose, so
+  nothing accumulates. **Softness** eases the last stretch to full reach instead
+  of snapping straight.
+
 ## Foot IK
 
 - **Raycast Ground** finds the ground under each foot. **Ground Layers** limits

@@ -8,6 +8,7 @@
 #include "okay/VisualScript/VsValue.hpp"
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace okay {
@@ -100,6 +101,16 @@ public:
     bool Load(const std::string& path, std::string* err = nullptr);
     bool Save(const std::string& path) const;
 };
+
+/// The string-table keys a conversation's text is looked up under; the text typed
+/// in the graph shows while the table has none (docs/localization.md):
+/// dlg.<graph>.<node> for a line, dlg.<graph>.<node>.<n> for its choice n (from 1),
+/// speaker.<name> for a speaker.
+std::string DialogueLineKey(const std::string& graph, int node);
+std::string DialogueChoiceKey(const std::string& graph, int node, int choice);
+std::string DialogueSpeakerKey(const std::string& speaker);
+/// Every line, choice and speaker of a graph as (key, text), to add to a string table.
+std::vector<std::pair<std::string, std::string>> DialogueStrings(const DialogueGraph& graph, const std::string& graphName);
 
 /// A value as a dialogue file types it: "10" and "-2.5" are numbers, "true" /
 /// "false" are bools, anything else is text.

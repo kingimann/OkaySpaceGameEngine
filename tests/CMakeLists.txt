@@ -865,6 +865,11 @@ add_executable(test_sequence test_sequence.cpp)
 target_link_libraries(test_sequence PRIVATE okay::engine)
 add_test(NAME sequence COMMAND test_sequence)
 
+# Localization: .okayloc / CSV round trips, fallback, plurals, settings, localized widgets, scripts, fonts
+add_executable(test_localization test_localization.cpp)
+target_link_libraries(test_localization PRIVATE okay::engine)
+add_test(NAME localization COMMAND test_localization)
+
 add_executable(test_ik_core test_ik_core.cpp)
 target_link_libraries(test_ik_core PRIVATE okay::engine)
 add_test(NAME ik_core COMMAND test_ik_core)

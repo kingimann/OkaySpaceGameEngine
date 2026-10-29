@@ -770,6 +770,10 @@ These are in the node search. The [palette index](#palette-index) at the end lis
 **Cutscenes** (a Sequence Player plays a `.okayseq`, see docs/cutscenes.md): **Play Sequence** and **Stop Sequence** steps, and
 **On Sequence Event** (blank catches every event; Event Name reads it).
 
+**Localization** (the project's string table, see docs/localization.md): **Localize** reads a key's text in the
+player's language with `{0}`..`{2}` from its inputs, **Get Language** and **Set Language** read and switch the
+language, and **On Language Changed** runs after a switch (Event Name is the new code).
+
 **Anti-cheat** (the server; the scene needs an Anti-Cheat Config):
 
 | Node | What it does |
@@ -870,6 +874,7 @@ The **Engine API** group is the generated list in [engine_api.md](engine_api.md)
 - **On Equip** (`OnEquip`)
 - **On Craft** (`OnCraft`)
 - **On Sequence Event** (`OnSequenceEvent`, optional name)
+- **On Language Changed** (`OnLanguageChanged`) — Event Name is the new language's code
 - **On Cheat Detected** (`OnCheatDetected`)
 - **On Validate Rpc** (`OnValidateRpc`)
 - **On Validate Hit** (`OnValidateHit`)
@@ -1117,6 +1122,7 @@ The **Engine API** group is the generated list in [engine_api.md](engine_api.md)
 - **Quit Game** (`QuitGame`)
 - **Show UI** (`ShowUI`) — setting: UI object (self)
 - **Hide UI** (`HideUI`) — setting: UI object (self)
+- **Set Language** (`SetLanguage`) — in Code; setting: code
 
 ### Data
 
@@ -1144,6 +1150,8 @@ The **Engine API** group is the generated list in [engine_api.md](engine_api.md)
 - **Ends With** (`EndsWith`) — in Text, Suffix; out Yes
 - **Trim Spaces** (`Trim`) — in Text; out Text
 - **Index Of** (`IndexOf`) — in Text, Find; out Index
+- **Localize** (`Localize`) — in {0}, {1}, {2}; out Text; setting: key
+- **Get Language** (`GetLanguage`) — out Code
 - **Contact Point** (`ContactPoint`) — out Point
 - **Contact Normal** (`ContactNormal`) — out Normal
 - **Impact Speed** (`ImpactSpeed`) — out Speed

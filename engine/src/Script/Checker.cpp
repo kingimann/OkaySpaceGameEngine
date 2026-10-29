@@ -191,6 +191,8 @@ public:
 private:
     Program& prog_;
     const EngineApi& api_;
+    /// An engine binding's type in this program's terms (string[] gets the program's array type).
+    Type FromApi(const Type& t) { return t == Type::ApiStrings() ? prog_.ArrayOf(Type::Of(TK::String)) : t; }
     ClassDecl* cls_ = nullptr;
     MethodDecl* method_ = nullptr;
     std::vector<std::vector<LocalVar>> scopes_;
@@ -1221,7 +1223,7 @@ private:
         if (r == 1) {
             const ApiType& t = api_.types[(std::size_t)typeId];
             for (std::size_t i = 0; i < t.staticProps.size(); ++i)
-                if (t.staticProps[i].name == e.name) { e.bind = Bind::ApiStaticProp; e.slot = typeId; e.member = (int)i; e.type = t.staticProps[i].type; return; }
+                if (t.staticProps[i].name == e.name) { e.bind = Bind::ApiStaticProp; e.slot = typeId; e.member = (int)i; e.type = FromApi(t.staticProps[i].type); return; }
             for (auto& m : t.staticMethods)
                 if (m.name == e.name) { Error(e.loc, t.name + "." + e.name + " is a method: call it with " + e.name + "(...)"); return; }
             std::vector<std::string> opts = Names(t.staticProps);
@@ -1460,7 +1462,7 @@ private:
                 return;
             }
             BindArgs(e, *m);
-            e.bind = Bind::ApiStaticMethod; e.slot = typeId; e.member = (int)(m - t.staticMethods.data()); e.type = m->ret;
+            e.bind = Bind::ApiStaticMethod; e.slot = typeId; e.member = (int)(m - t.staticMethods.data()); e.type = FromApi(m->ret);
             return;
         }
         const Type& ot = e.object->type;

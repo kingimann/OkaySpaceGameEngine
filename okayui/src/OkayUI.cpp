@@ -2,6 +2,7 @@
 #include "okay/UI/OkayUI.hpp"
 #include "okay/Graphics/Font.hpp"   // okay::Font8x8 — a no-STL C API over a bitmap font
 #include "OkayUI_FontAtlas.hpp"     // the launcher font (TrueType) for UseLauncherLook()
+#include "okay/Graphics/TtfFont.hpp" // fallback fonts for characters the atlas lacks
 #include <SDL.h>
 #include <cstdio>   // snprintf for numeric widgets (C library, not STL)
 
@@ -41,6 +42,21 @@ SDL_Texture* g_defTex = nullptr;                    // texture for flat geometry
 float g_whiteU = 0.0f, g_whiteV = 0.0f;             // uv of an opaque texel for flat geometry
 SDL_Texture*  g_atlasTex = nullptr;                 // the atlas on g_atlasR
 SDL_Renderer* g_atlasR = nullptr;
+// Engine fonts drawing text the atlas lacks (fontatlas::FallbackFont). Their spans
+// carry the font's address as a placeholder; EndFrame binds the font's atlas.
+okay::TtfFont* g_fbFonts[8];
+int            g_nfb = 0;
+// Texture changes inside the overlay batch (fallback-font text in toasts and
+// popups): the overlay index each starts at. mergeOverlay turns them into spans.
+struct OverlaySpan { int startIdx; SDL_Texture* tex; };
+OverlaySpan g_ovSpans[32];
+int         g_novSpans = 0;
+SDL_Texture* fallbackTex(okay::TtfFont* f) {
+    for (int i = 0; i < g_nfb; ++i) if (g_fbFonts[i] == f) return (SDL_Texture*)(void*)f;
+    if (g_nfb == 8) return nullptr;
+    g_fbFonts[g_nfb++] = f;
+    return (SDL_Texture*)(void*)f;
+}
 
 // Draw spans: the main batch is split into contiguous index ranges, each carrying a
 // clip state and a texture, so scrolling child regions can clip and Image() can bind a
@@ -247,6 +263,7 @@ inline bool fPix(char c, int x, int y) { return g_font->pixel && g_font->pixel(c
 // launcher look it's the TrueType width at the 8-unit cell height (proportional).
 inline float fMeasure(const char* s) {
     if (g_ttf && s) {
+        if (okay::TtfFont* f = fontatlas::FallbackFont(s)) return f->Measure(s, 8.0f);
         const fontatlas::Size& z = g_ttf->Pick(16.0f);
         float w = 0.0f;
         for (const char* p = s; *p;) {
@@ -500,9 +517,53 @@ void rrect(float x, float y, float w, float h, float rad, const unsigned char c[
 }
 inline float rnd() { return g_theme.rounding; }
 
+// Text with characters the atlas lacks: every glyph from the engine font `f`, bound
+// to its atlas (a span of its own; in the overlay, an overlay span).
+void bindTexture(SDL_Texture* t) {
+    if (!g_toOverlay) { setTexture(t); return; }
+    if (g_novSpans > 0 && g_ovSpans[g_novSpans - 1].startIdx == g_oni) g_ovSpans[g_novSpans - 1].tex = t;
+    else if (g_novSpans < 32) g_ovSpans[g_novSpans++] = OverlaySpan{g_oni, t};
+}
+void drawTextWith(okay::TtfFont* f, float x, float y, const char* str, float s, const unsigned char c[4]) {
+    SDL_Texture* tex = fallbackTex(f);
+    if (!tex) return;
+    f->Prepare(str);   // bake its new characters before reading the atlas size
+    const float px = fH() * s, k = px / f->BakeHeight();
+    const float aw = (float)f->Atlas().Width(), ah = (float)f->Atlas().Height();
+    const float base = y + f->Ascent(px);
+    const SDL_Color sc = toColor(c);
+    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    int*        I = g_toOverlay ? g_ovIdx   : g_idx;
+    int&        nv = g_toOverlay ? g_onv : g_nv;
+    int&        ni = g_toOverlay ? g_oni : g_ni;
+    bindTexture(tex);
+    float pen = x;
+    for (const char* p = str; *p;) {
+        const okay::TtfFont::Glyph* g = f->GlyphFor(fontatlas::NextCodepoint(&p));
+        if (!g) continue;
+        if (g->x1 > g->x0 && g->y1 > g->y0 && nv + 4 <= kMaxVerts && ni + 6 <= kMaxIdx) {
+            const float x0 = pen + g->xoff * k, y0 = base + g->yoff * k;
+            const float x1 = x0 + (g->x1 - g->x0) * k, y1 = y0 + (g->y1 - g->y0) * k;
+            const float u0 = g->x0 / aw, v0 = g->y0 / ah, u1 = g->x1 / aw, v1 = g->y1 / ah;
+            const int b0 = nv;
+            SDL_Vertex v; v.color = sc;
+            v.position.x = x0; v.position.y = y0; v.tex_coord.x = u0; v.tex_coord.y = v0; V[nv++] = v;
+            v.position.x = x1; v.position.y = y0; v.tex_coord.x = u1; v.tex_coord.y = v0; V[nv++] = v;
+            v.position.x = x1; v.position.y = y1; v.tex_coord.x = u1; v.tex_coord.y = v1; V[nv++] = v;
+            v.position.x = x0; v.position.y = y1; v.tex_coord.x = u0; v.tex_coord.y = v1; V[nv++] = v;
+            I[ni++] = b0; I[ni++] = b0 + 1; I[ni++] = b0 + 2;
+            I[ni++] = b0; I[ni++] = b0 + 2; I[ni++] = b0 + 3;
+        }
+        pen += g->xadvance * k;
+    }
+    bindTexture(g_defTex);
+}
+
 // Draw a C string from the 8x8 bitmap font, each lit pixel a `s`x`s` quad.
 void drawText(float x, float y, const char* str, float s, const unsigned char c[4]) {
     if (!str) return;
+    if (g_ttf && (!g_toOverlay || g_novSpans < 30))
+        if (okay::TtfFont* f = fontatlas::FallbackFont(str)) { drawTextWith(f, x, y, str, s, c); return; }
     if (g_ttf) {   // TrueType: one textured quad per glyph from the atlas (same texture as shapes)
         const float px = fH() * s;
         const fontatlas::Size& z = g_ttf->Pick(px);
@@ -603,7 +664,7 @@ void BeginFrame(const Input& in) {
     g_lay.pendingSameLine = false;
     ++g_frame;
     g_nv = 0; g_ni = 0;
-    g_onv = 0; g_oni = 0; g_toOverlay = false;
+    g_onv = 0; g_oni = 0; g_toOverlay = false; g_novSpans = 0;
     g_inMenuBar = false; g_curMenu.active = false;
     g_idSeed = 0; g_idTop = 0;        // reset the ID stack each frame
     // Restore any colors left pushed by an imbalanced previous frame, then clear.
@@ -924,8 +985,12 @@ void mergeOverlay() {
     if (g_oni > 0) { setTexture(g_defTex); pushClipSpan(false, SDL_Rect{ 0, 0, 0, 0 }); }  // overlay: no clip/tex
     const int base = g_nv;
     for (int i = 0; i < g_onv && g_nv < kMaxVerts; ++i) g_verts[g_nv++] = g_ovVerts[i];
-    for (int j = 0; j < g_oni && g_ni < kMaxIdx; ++j)   g_idx[g_ni++] = base + g_ovIdx[j];
-    g_onv = 0; g_oni = 0;
+    int sp = 0;
+    for (int j = 0; j < g_oni && g_ni < kMaxIdx; ++j) {
+        while (sp < g_novSpans && g_ovSpans[sp].startIdx == j) setTexture(g_ovSpans[sp++].tex);
+        g_idx[g_ni++] = base + g_ovIdx[j];
+    }
+    g_onv = 0; g_oni = 0; g_novSpans = 0;
 }
 // End-of-frame interaction bookkeeping, shared by every backend.
 void finalizeFrame() {
@@ -956,6 +1021,8 @@ void EndFrameData() { finalizeFrame(); }
 
 // The real texture behind a span's texture (kAtlasTex -> this renderer's atlas).
 SDL_Texture* resolveTex(SDL_Renderer* r, SDL_Texture* t) {
+    for (int i = 0; i < g_nfb; ++i)
+        if (t == (SDL_Texture*)(void*)g_fbFonts[i]) return fontatlas::FallbackTexture(r, g_fbFonts[i]);
     if (t != kAtlasTex) return t;
     if (!g_ttf || !g_ttf->ok) return nullptr;
     if (!g_atlasTex || g_atlasR != r) {

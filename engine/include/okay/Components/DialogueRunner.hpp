@@ -82,6 +82,10 @@ public:
 
     /// The runner with a conversation running in `scene`, if any.
     static DialogueRunner* ActiveIn(Scene* scene);
+    /// The string-table keys of the box's and the prompt's own words with their
+    /// English text; a key the table has replaces the English. The graph's lines,
+    /// choices and speakers have keys of their own (DialogueLineKey...).
+    static const std::vector<std::pair<std::string, std::string>>& LocKeys();
     /// A runner by its object's name, else by its graph name or file stem.
     static DialogueRunner* FindByName(Scene* scene, const std::string& name);
 

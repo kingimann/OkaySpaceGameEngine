@@ -5,6 +5,8 @@
 #include "okay/Math/Vec2.hpp"
 #include "okay/Graphics/Font.hpp"
 #include "okay/Graphics/TtfFont.hpp"
+#include "okay/Core/Localization.hpp"
+#include "okay/Core/Utf8.hpp"
 #include <string>
 #include <cmath>
 #include <cctype>
@@ -18,6 +20,9 @@ namespace okay {
 class TextRenderer final : public Component {
 public:
     std::string text = "Text";
+    /// Localized: a string-table key whose text, in the current language, is shown
+    /// instead of the literal `text` (refreshed when the language changes).
+    LocalizedText loc;
     /// Optional path to an imported TrueType/OpenType font (e.g. "Assets/MyFont.ttf").
     /// Empty = the built-in 8x8 bitmap font. When set and loadable, hosts draw the
     /// text with the TTF glyph atlas; metrics fall back to the bitmap if it can't load.
@@ -127,14 +132,15 @@ public:
     /// else builds the result in `scratch` (reused, so its capacity carries over).
     const std::string& DisplayText(std::string& scratch) const {
         int vis = EffectiveVisible();
-        const bool cut = vis >= 0 && vis < (int)text.size();
+        const std::size_t cutAt = vis >= 0 ? utf8::Offset(text, (std::size_t)vis) : text.size();   // whole characters
+        const bool cut = cutAt < text.size();
         int maxChars = 0;
         if (wrap && size.x > 0.0f && pixelSize > 0.0f) {
             float glyphW = Advance() * pixelSize;
             maxChars = glyphW > 0.0f ? (int)(size.x / glyphW) : 0;
         }
         if (!cut && !uppercase && maxChars < 1) return text;
-        scratch.assign(text, 0, cut ? (std::size_t)vis : text.size());
+        scratch.assign(text, 0, cutAt);
         if (uppercase)
             for (char& c : scratch) c = (char)std::toupper((unsigned char)c);
         if (maxChars >= 1) scratch = WrapTo(scratch, maxChars);
@@ -145,7 +151,10 @@ public:
     /// All measurement/draw use the SAME "font pixel" space (Font8x8::Height tall),
     /// so a host can scale either font by `pixelSize` identically.
     /// Screen-space text without its own font uses the scene's UI font (ActiveUIFont).
-    TtfFont* Font() const { return fontPath.empty() ? (screenSpace ? ActiveUIFont() : nullptr) : GetFont(fontPath); }
+    /// A font with the text's characters stands in when this one lacks them (FontForText).
+    TtfFont* Font() const {
+        return FontForText(fontPath.empty() ? (screenSpace ? ActiveUIFont() : nullptr) : GetFont(fontPath), text);
+    }
 
     /// Width of the widest line in font pixels (honors letter spacing + wrap).
     int PixelWidth() const {
@@ -154,9 +163,10 @@ public:
         if (TtfFont* tf = Font()) {
             float best = 0.0f, cur = 0.0f;
             float adv = letterSpacing; // extra spacing per glyph, in font pixels
-            for (char ch : s) {
+            for (std::size_t i = 0; i < s.size();) {
+                const std::uint32_t ch = utf8::Next(s, i);
                 if (ch == '\n') { best = std::max(best, cur); cur = 0.0f; continue; }
-                const TtfFont::Glyph* g = tf->Get(ch);
+                const TtfFont::Glyph* g = tf->GlyphFor(ch);
                 cur += (g ? g->xadvance * tf->ScaleFor((float)Font8x8::Height) : 0.0f) + adv;
             }
             return (int)std::ceil(std::max(best, cur));
@@ -165,8 +175,8 @@ public:
         auto lineW = [this](int glyphs) {
             return glyphs > 0 ? (int)((glyphs - 1) * Advance() + Font8x8::Width) : 0;
         };
-        for (char ch : s) {
-            if (ch == '\n') { best = std::max(best, lineW(cur)); cur = 0; }
+        for (std::size_t i = 0; i < s.size();) {
+            if (utf8::Next(s, i) == '\n') { best = std::max(best, lineW(cur)); cur = 0; }
             else ++cur;
         }
         return std::max(best, lineW(cur));
@@ -190,9 +200,10 @@ public:
         std::string out, word; int lineLen = 0;
         auto flush = [&]() {
             if (word.empty()) return;
-            if (lineLen > 0 && lineLen + 1 + (int)word.size() > maxChars) { out += '\n'; lineLen = 0; }
+            const int wl = (int)utf8::Length(word);   // characters, not bytes
+            if (lineLen > 0 && lineLen + 1 + wl > maxChars) { out += '\n'; lineLen = 0; }
             else if (lineLen > 0) { out += ' '; ++lineLen; }
-            out += word; lineLen += (int)word.size(); word.clear();
+            out += word; lineLen += wl; word.clear();
         };
         for (char c : s) {
             if (c == '\n') { flush(); out += '\n'; lineLen = 0; }

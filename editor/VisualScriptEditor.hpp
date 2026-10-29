@@ -448,6 +448,11 @@ inline const std::vector<VsDef>& Registry() {
         {"EndsWith",        "Ends With",        CAT_DATA, false, {}, {"Text", "Suffix"}, {"Yes"}, 0, nullptr},
         {"Trim",            "Trim Spaces",      CAT_DATA, false, {}, {"Text"}, {"Text"}, 0, nullptr},
         {"IndexOf",         "Index Of",         CAT_DATA, false, {}, {"Text", "Find"}, {"Index"}, 0, nullptr},
+        // Localization (the project's string table; On Language Changed: Event Name = the new language).
+        {"Localize",          "Localize",            CAT_DATA, false, {}, {"{0}", "{1}", "{2}"}, {"Text"}, 1, "key"},
+        {"GetLanguage",       "Get Language",        CAT_DATA, false, {}, {}, {"Code"}, 0, nullptr},
+        {"SetLanguage",       "Set Language",        CAT_ACTION, true, {""}, {"Code"}, {}, 1, "code (fr, de...)"},
+        {"OnLanguageChanged", "On Language Changed", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         // Math.
         {"Noise",           "Perlin Noise",     CAT_MATH, false, {}, {"X", "Y"}, {"Value"}, 0, nullptr},
         {"Snap",            "Snap To Step",     CAT_MATH, false, {}, {"Value", "Step"}, {"Out"}, 0, nullptr},
@@ -683,6 +688,7 @@ inline std::string VsEntryName(const std::string& type, const std::string& arg) 
     if (type == "OnEvent") return "OnEvent:" + tok(arg, "Event");
     if (type == "OnNetRpc") return "OnNetRpc:" + tok(arg, "rpc");
     if (type == "OnVarChanged" || type == "OnSceneVarChanged" || type == "OnGlobalVarChanged") return type + ":" + tok(arg, "x");
+    if (type == "OnLanguageChanged") return type;
     return {};
 }
 
@@ -1233,6 +1239,14 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
         flush();
         return expr.empty() ? std::string("\"\"") : "(" + expr + ")";
     }
+    if (t == "Localize") {     // loc("key", {0}, {1}, {2}) up to the last input in use
+        int last = -1;
+        for (int i = 0; i < 3; ++i) if (VsInputLinkedOrSet(g, nodeId, i)) last = i;
+        std::string e = "loc(" + q(lit(""));
+        for (int i = 0; i <= last; ++i) e += ", " + In(i, "\"\"");
+        return e + ")";
+    }
+    if (t == "GetLanguage")    return "get_language()";
     if (t == "Substring")  return "str(" + In(0, "\"\"") + ").Substring(" + In(1, "0") + (VsInputLinkedOrSet(g, nodeId, 2) ? ", " + In(2, "1") : std::string()) + ")";
     if (t == "Replace")    return "str(" + In(0, "\"\"") + ").Replace(" + In(1, "\"\"") + ", " + In(2, "\"\"") + ")";
     if (t == "ToNumber")   return "float.Parse(str(" + In(0, "\"0\"") + "))";
@@ -1302,6 +1316,7 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="SetActive")   out += ind + "set_active_of(" + q(arg("self")) + ", " + in(0, "true") + ")\n";
     else if (t=="SetText")     out += ind + "set_text_of(" + q(arg("self")) + ", " + in(0, "\"\"") + ")\n";
     else if (t=="LoadScene")   out += ind + "load_scene_name(" + q(arg("")) + ")\n";
+    else if (t=="SetLanguage") out += ind + "set_language(" + (VsInputLinkedOrSet(g, nodeId, 0) ? in(0) : q(arg("fr"))) + ")\n";
     else if (t=="PlaySequence") out += ind + "play_sequence(" + q(arg("")) + ")\n";
     else if (t=="StopSequence") out += ind + "stop_sequence()\n";
     else if (t=="AnimTrigger") out += ind + "anim_trigger(" + q(arg("")) + ")\n";
@@ -1693,6 +1708,12 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
             }
         }
         if (opened) out += "    }\n";
+    }
+    // A change of language: OnLanguageChanged(event_name), event_name = the new language's code.
+    if (auto v = ofType("OnLanguageChanged"); !v.empty()) {
+        open("void OnLanguageChanged(string event_name)");
+        for (auto* n : v) chain(n->id, "        ");
+        out += "    }\n";
     }
     // Sequence events: one OnSequenceEvent(event_name) handler; named nodes check the name.
     {

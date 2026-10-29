@@ -221,6 +221,8 @@ has the full list, plus the **Tween Animation** component for tweens without cod
 | `save_exists([slot])` / `delete_save([slot])` | Manage save slots |
 | `play_sequence("name")` / `stop_sequence()` | Play / stop a cutscene sequence (see docs/cutscenes.md) |
 | `sequence_playing()` / `sequence_time()` | 1 while a sequence plays / seconds into it; events reach `on_sequence_event(name)` |
+| `loc("key" [, args...])` | The key's text in the player's language; `{0}`, `{1}`... from the arguments, `{name}` from a map (see docs/localization.md) |
+| `set_language("fr")` / `get_language()` / `languages()` / `language_name("fr")` | Switch (remembered for the next run) / read the language; a change runs `on_language_changed(code)` |
 | `spline_point([name,] t)` / `spline_length([name])` | A point a fraction t along a Spline, by length / its length (see docs/splines.md); a follower at an end calls `on_spline_end(which)` |
 | `follower_set_speed([name,] s)` / `line_set_points([name,] points)` / `trail_clear([name])` | Spline Follower speed / Line Renderer points / clear a Trail Renderer |
 

@@ -90,6 +90,7 @@
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Core/Localization.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputActions.hpp"
 #include "okay/Core/SaveGame.hpp"
@@ -5200,6 +5201,37 @@ struct OkayScriptVM::Impl {
         b["delete_save"] = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Delete(slotArg(a)) ? 1.0f : 0.0f}; };
         b["save_label"]  = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Info(slotArg(a)).label}; };
         b["play_time"]   = [](std::vector<Value>&) { return Value{SaveGame::PlayTime()}; };
+        // Localization (docs/localization.md): loc("key", args...) is the key's text in
+        // the player's language with {0}, {1}... filled from the arguments, or {name}
+        // from a map (loc("greet", map_set(map(), "player", name))); set_language("fr") switches and
+        // remembers the choice for the next run; get_language(), languages() (codes),
+        // language_name("fr") -> "Français". Changes reach on_language_changed(code).
+        b["loc"] = [](std::vector<Value>& a) {
+            if (a.empty()) return Value{std::string()};
+            auto arg = [](const Value& v) { return v.IsNumber() ? LocArg((double)v.AsFloat()) : LocArg(v.AsString()); };
+            std::vector<LocArg> args;
+            for (std::size_t i = 1; i < a.size(); ++i) {
+                if (auto m = a[i].AsMap()) { for (const auto& kv : *m) args.push_back(LocArg::Named(kv.first, arg(kv.second))); }
+                else args.push_back(arg(a[i]));
+            }
+            return Value{Localization::LocalizeArgs(a[0].AsString(), args)};
+        };
+        b["set_language"] = [](std::vector<Value>& a) {
+            const std::string code = a.empty() ? std::string() : a[0].AsString();
+            const bool ok = Localization::SetLanguage(code);
+            if (ok) Localization::SaveSettings();
+            else Log::Warning("[script] set_language: the string table has no language \"", code, "\"");
+            return Value{ok ? 1.0f : 0.0f};
+        };
+        b["get_language"]  = [](std::vector<Value>&) { return Value{Localization::Language()}; };
+        b["languages"]     = [](std::vector<Value>&) {
+            Value list = Value::MakeArray();
+            for (const std::string& c : Localization::Languages()) list.AsArray()->push_back(Value{c});
+            return list;
+        };
+        b["language_name"] = [](std::vector<Value>& a) {
+            return Value{Localization::LanguageName(a.empty() ? Localization::Language() : a[0].AsString())};
+        };
         // Cutscenes (SequencePlayer): play_sequence("Intro") plays the Sequence Player
         // whose file is Intro (or the first one, loading Assets/Intro.okayseq),
         // stop_sequence() stops every one, sequence_playing(), sequence_time().
@@ -10015,6 +10047,8 @@ const std::unordered_map<std::string, std::vector<std::string>>& EventAliases() 
         {"on_sequence_event",    {"OnSequenceEvent"}},
         {"on_sequence_started",  {"OnSequenceStarted"}},
         {"on_sequence_finished", {"OnSequenceFinished"}},
+        // Localization (the player picked another language).
+        {"on_language_changed",  {"OnLanguageChanged"}},
         // Splines (SplineFollower: "end" or "start").
         {"on_spline_end",        {"OnSplineEnd"}},
     };

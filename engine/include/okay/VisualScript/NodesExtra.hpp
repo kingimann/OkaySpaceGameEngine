@@ -10,6 +10,7 @@
 #include "okay/Scene/SceneManager.hpp"
 #include "okay/Core/SaveData.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Core/Localization.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/SequencePlayer.hpp"
 #include "okay/Components/FullBodyIK.hpp"
@@ -356,6 +357,35 @@ struct StopSequenceNode : VsNode {
         if (ctx.gameObject && ctx.gameObject->scene()) SequencePlayer::StopAll(*ctx.gameObject->scene());
         return 0;
     }
+};
+// Localization: text in the player's language from the project's string table.
+struct LocalizeNode : VsNode {   // arg = the key; in0..in2 fill {0}..{2} (a number also picks the plural form)
+    std::string key;
+    explicit LocalizeNode(std::string k) : key(std::move(k)) {}
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        int last = -1;
+        for (int i = 0; i < 3; ++i) if (HasInput(i)) last = i;
+        std::vector<LocArg> args;
+        for (int i = 0; i <= last; ++i) {
+            const VsValue v = In(i, g, ctx);
+            args.push_back(v.IsNumber() ? LocArg((double)v.AsFloat()) : LocArg(v.AsString()));
+        }
+        return VsValue(Localization::LocalizeArgs(key, args));
+    }
+};
+struct SetLanguageNode : VsNode {   // in0 = the language code, else the arg; the choice is remembered
+    std::string code;
+    explicit SetLanguageNode(std::string c) : code(std::move(c)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        const std::string c = HasInput(0) ? In(0, g, ctx).AsString() : code;
+        if (Localization::SetLanguage(c)) Localization::SaveSettings();
+        else g.Error(this, ctx, "the string table has no language \"" + c + "\"");
+        return 0;
+    }
+};
+struct GetLanguageNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext&) override { return VsValue(Localization::Language()); }
 };
 // ---- The scene's look: weather, fog and post-processing (Atmosphere.hpp) ----
 struct SetWeatherNode : VsNode {   // arg = none / rain / snow / storm; in0 = intensity (unwired: keep)

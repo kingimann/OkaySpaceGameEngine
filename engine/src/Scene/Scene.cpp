@@ -197,6 +197,20 @@ void Scene::Update(float deltaTime) {
         }
     }
 
+    // A save game being loaded (RequestLoadText): same as a file load, then the
+    // loader puts back what the scene text doesn't hold.
+    if (m_hasPendingText) {
+        std::string text = std::move(m_pendingText);
+        auto after = std::move(m_pendingTextAfter);
+        m_hasPendingText = false;
+        m_pendingText.clear(); m_pendingTextAfter = {};
+        m_pendingMerges.clear();
+        if (SceneSerializer::Deserialize(*this, text)) {
+            Start();
+            if (after) after(*this);
+        }
+    }
+
     // Deferred additive merges (RequestMerge): fold another scene's objects into this
     // one, then Start() — which only Awakes/Starts the newly added components.
     if (!m_pendingMerges.empty()) {

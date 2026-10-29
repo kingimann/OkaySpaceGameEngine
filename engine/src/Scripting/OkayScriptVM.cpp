@@ -89,6 +89,7 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputActions.hpp"
+#include "okay/Core/SaveGame.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Core/Random.hpp"
 #include "okay/Core/Prefs.hpp"
@@ -5166,6 +5167,28 @@ struct OkayScriptVM::Impl {
                 return Value{AudioMixer::groupVolume[(int)g]};
             return Value{0.0f};
         };
+        // Whole-game saves (SaveGame): save_game(["save1"] [, "label"]), load_game(["save1"])
+        // (happens at the end of the frame), has_save, delete_save, save_label,
+        // play_time (seconds played, carried through loads).
+        auto slotArg = [](std::vector<Value>& a) { return a.empty() ? std::string("save1") : a[0].AsString(); };
+        b["save_game"] = [sceneOf, slotArg](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            std::string err;
+            const bool ok = s && SaveGame::Save(*s, slotArg(a), a.size() > 1 ? a[1].AsString() : "", &err);
+            if (!ok) Log::Warning("[script] save_game: ", err);
+            return Value{ok ? 1.0f : 0.0f};
+        };
+        b["load_game"] = [sceneOf, slotArg](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            std::string err;
+            const bool ok = s && SaveGame::Load(*s, slotArg(a), &err);
+            if (!ok) Log::Warning("[script] load_game: ", err);
+            return Value{ok ? 1.0f : 0.0f};
+        };
+        b["has_save"]    = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Exists(slotArg(a)) ? 1.0f : 0.0f}; };
+        b["delete_save"] = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Delete(slotArg(a)) ? 1.0f : 0.0f}; };
+        b["save_label"]  = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Info(slotArg(a)).label}; };
+        b["play_time"]   = [](std::vector<Value>&) { return Value{SaveGame::PlayTime()}; };
         // Keep the current volumes as the player's settings (also saved on quit).
         b["save_audio_settings"] = [](std::vector<Value>&) { AudioMixer::SaveSettings(); return Value{}; };
         // Music: the scene's MusicPlayer. music_play(index or "file"), music_next(),
@@ -8554,34 +8577,8 @@ struct OkayScriptVM::Impl {
         b["seq_insert_callback"] = seqOp([fnFromArg](TweenSequence& s, std::vector<Value>& a) {
             if (auto f = fnFromArg(a, 2)) s.InsertCallback(a.size() > 1 ? a[1].AsFloat() : 0.0f, f);
         });
-        // ---- Save system: snapshot the whole scene to a slot file ------
-        b["save_game"] = [this](std::vector<Value>& a) {
-            Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
-            if (!s) return Value{0.0f};
-            std::string slot = a.empty() ? "save1" : a[0].AsString();
-            if (!ScriptPathOk(slot, "save_game")) return Value{0.0f};
-            const std::string path = Save::Resolve("saves/" + slot + ".okaysave");
-            std::error_code ec; std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
-            return Value{SceneSerializer::SaveToFile(*s, path) ? 1.0f : 0.0f};
-        };
-        b["load_game"] = [this](std::vector<Value>& a) {
-            Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
-            std::string slot = a.empty() ? "save1" : a[0].AsString();
-            if (!ScriptPathOk(slot, "load_game")) return Value{0.0f};
-            std::string path = ScriptReadPath("saves/" + slot + ".okaysave");
-            if (s && std::ifstream(path).good()) { s->RequestLoad(path); return Value{1.0f}; }
-            return Value{0.0f};
-        };
-        b["save_exists"] = [](std::vector<Value>& a) {
-            std::string slot = a.empty() ? "save1" : a[0].AsString();
-            if (!ScriptPathOk(slot, "save_exists")) return Value{0.0f};
-            return Value{std::ifstream(ScriptReadPath("saves/" + slot + ".okaysave")).good() ? 1.0f : 0.0f};
-        };
-        b["delete_save"] = [](std::vector<Value>& a) {
-            std::string slot = a.empty() ? "save1" : a[0].AsString();
-            if (!ScriptPathOk(slot, "delete_save")) return Value{0.0f};
-            return Value{std::remove(ScriptReadPath("saves/" + slot + ".okaysave").c_str()) == 0 ? 1.0f : 0.0f};
-        };
+        // Whole-game saves are save_game / load_game / has_save above (SaveGame).
+        b["save_exists"] = b["has_save"];
 
         // ---- Friendly aliases: intuitive names for common builtins so games
         //      read naturally. Each points at an already-registered function. ----
@@ -9740,6 +9737,13 @@ vs::VsValue OkayScriptVM::GetGlobal(const std::string& name) const {
     auto& g = m_impl->rt.Global().vars;
     auto it = g.find(name);
     return it != g.end() ? it->second : vs::VsValue{};
+}
+
+std::vector<std::string> OkayScriptVM::GlobalNames() const {
+    std::vector<std::string> out;
+    for (const auto& kv : m_impl->rt.Global().vars) out.push_back(kv.first);
+    std::sort(out.begin(), out.end());
+    return out;
 }
 
 void OkayScriptVM::SetGlobal(const std::string& name, const vs::VsValue& v) {

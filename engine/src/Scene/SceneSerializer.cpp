@@ -1214,7 +1214,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << " " << l->smoothing;
         // The rest as key=value (older builds ignore trailing tokens here).
         KvOut k{out};
-        k("clamp", l->clampAngle)("eyeMax", l->eyeMaxAngle)("eyeW", l->eyeWeight);
+        k("clamp", l->clampAngle)("eyeMax", l->eyeMaxAngle)("eyeW", l->eyeWeight)
+         ("maxDist", l->maxDistance)("fadeDist", l->fadeDistance);
         for (std::size_t i = 0; i < l->boneWeights.size(); ++i) k(("sh" + std::to_string(i)).c_str(), l->boneWeights[i]);
         for (std::size_t i = 0; i < l->eyeNames.size(); ++i) k.str(("eye" + std::to_string(i)).c_str(), l->eyeNames[i]);
         out << "\n";
@@ -1239,6 +1240,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
          ("upX", f->footUpAxis.x)("upY", f->footUpAxis.y)("upZ", f->footUpAxis.z)
          .b("lock", f->footLock)("lockSpeed", f->lockSpeed)("lockHeight", f->lockHeight)
          ("lockRelease", f->lockRelease)
+         .b("probes", f->stepProbes)("toeR", f->toeReach)("heelR", f->heelReach)
          ("upRX", f->footUpAxisR.x)("upRY", f->footUpAxisR.y)("upRZ", f->footUpAxisR.z)
          ("om", 1)   // orient is saved after its migration: keep it as written
          ("mask", f->groundMask);
@@ -1331,6 +1333,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             WriteLimitKv(k, p + "l", fb->effectors[l].lowerLimit);
             if (fb->effectors[l].targetBlendTime != 0.0f) k((p + "b").c_str(), fb->effectors[l].targetBlendTime);
         }
+        if (fb->stretch != 0.0f) k("st", fb->stretch);
         out << "\n";
     }
     if (auto* h = go->GetComponent<HoldableObject>()) {
@@ -3980,6 +3983,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                       KvIn k(rs);
                       l->clampAngle = 0.0f;
                       k.f("clamp", l->clampAngle); k.f("eyeMax", l->eyeMaxAngle); k.f("eyeW", l->eyeWeight);
+                      k.f("maxDist", l->maxDistance); k.f("fadeDist", l->fadeDistance);
                       for (int i = 0; ; ++i) {
                           const std::string key = "sh" + std::to_string(i);
                           float v = 1.0f;
@@ -4012,6 +4016,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                       k.f("upX", f->footUpAxis.x); k.f("upY", f->footUpAxis.y); k.f("upZ", f->footUpAxis.z);
                       k.b("lock", f->footLock); k.f("lockSpeed", f->lockSpeed); k.f("lockHeight", f->lockHeight);
                       k.f("lockRelease", f->lockRelease);
+                      k.b("probes", f->stepProbes); k.f("toeR", f->toeReach); k.f("heelR", f->heelReach);
                       // The right sole's axis: files from before it leave it at Up,
                       // which reads that foot's own rest pose (a mirrored rig's right
                       // sole isn't the left one's axis).
@@ -4165,6 +4170,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             ReadLimitKv(k, p + "l", fb->effectors[l].lowerLimit);
                             k.f((p + "b").c_str(), fb->effectors[l].targetBlendTime);
                         }
+                        k.f("st", fb->stretch);
                     }
                 } else if (field == "ikx") {
                     std::string kind; int act = 1; float fade = 0.0f;

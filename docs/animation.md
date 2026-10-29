@@ -80,40 +80,73 @@ for** does the same with one click. Leave a state unbound to keep the built-in.
 
 ### The Animation tab
 
-Pick a clip in the **Clip** dropdown to edit it: one of the character's, a new
-one, or "Walk (from built-in)" (Idle, Walk, Run, Jump) to start from a copy of a
-built-in animation, sampled into keys you can tweak. Key Pose, deleting a key,
-bone nudges, renames and Apply all undo with Ctrl+Z. **Apply** adds the clip to
-the character without playing it; tick **Play on start (overrides movement)** to
-make it the start animation. **Easing**, **Length** and **Speed** next to the
-name set the clip-wide easing (linear, smooth, step or cubic), the loop length
-(room past the last key lets a loop ease back into its first key) and the
-playback rate.
+Select a Character (or one of its rig parts) and the Animation tab becomes its
+clip editor, laid out in three columns under a toolbar:
 
-The **key lane** shows every key as a diamond on a ruler, with event markers
-as yellow flags. Click or drag the ruler to scrub; the pose at that time is
-loaded for editing. Click a key to select it and load its pose, Shift+click to
-add to the selection, drag across empty space to box-select, and drag a
-selected key to move the whole selection (a moved key replaces any key it lands
-on). **Del** deletes the selected keys, the **arrow keys** nudge them by a
-frame (1/30 s; hold Shift for ten) and **Ctrl+A** selects all.
+- **Left: the clip list.** Every clip on the character, with its length, key
+  count and the states it is bound to (Idle / Walk / ... chips, and *Start*
+  for the start clip). Click one to edit it, double-click to rename. **New**,
+  **Duplicate**, **Rename** and **Delete** manage the list; **Import...**
+  adds the clips of a `.okayanim` file (a name already in use gets a number),
+  **Export...** writes all of them to one, and **Bake** starts from a copy of
+  a built-in animation (Idle, Walk, Run, Jump) sampled into keys you can
+  tweak. The clip being edited is a *draft*: the list marks it *edited* or
+  *not applied* until **Apply to Character** (toolbar, lit while it differs)
+  stores it on the character, saved with the scene.
+- **Centre: the dope sheet.** A ruler (scrub it; it snaps to frames unless
+  you hold Alt), an events lane, then one row per bone under an *All keys*
+  row and the *Root* track. A key holds the whole pose, so it shows on every
+  row; a bone whose value is the same on the keys either side draws a
+  **hollow** diamond (it holds still there), a bone the key moves draws a
+  filled one. Click a diamond to select the key and load its pose, Shift+click
+  to add, drag a box across rows to select, drag a selected key to move the
+  selection (snapped to frames), double-click a row to key that bone (or the
+  pose, or the root) at that time. The wheel zooms the time axis about the
+  cursor, middle-drag pans, Shift+wheel scrolls the rows, **F** fits the clip.
+  Clicking a row's name picks that bone for the right column; double-clicking
+  a bone row selects its part in the Scene view, where the rotate gizmo poses
+  it.
+- **Right: values and settings.** The selected keys (time, easing, Delete,
+  **Adjust...** to retime about the playhead, amplify or offset, and
+  **Clear bone**, which makes the picked bone hold still through those keys),
+  the picked **bone**'s angles (drag them and the rig follows), **Key bone**,
+  **Reset bone**, **Key Pose**, **Reset pose**, **Mirror pose**, Copy / Paste /
+  Paste mirrored (the second half of a walk cycle from the first), the
+  **root** offset (keying it turns on the clip's root track: a walk's hip
+  bob, a crouch's drop), and the clip's name, loop, easing, length, speed,
+  play-on-start, state bindings, **Mirror clip** and Insert / Remove time.
+  The events list is here too.
 
-With keys selected, **Time** moves the first one (the others keep their
-distance), **Ease** sets how the clip leaves those keys for the next one (Clip
-default, Linear, Smooth, Step to hold a pose, Ease in or Ease out; a key with
-its own easing shows a dot under its diamond), and **Adjust...** retimes the
-selection about the playhead (x2 makes it take twice as long), amplifies it
-(angles move away from, or toward, the clip's average pose, for an exaggerated
-or a damped motion) or offsets it by some degrees, for just the bone in the
-Bone dropdown or for every bone.
+The **toolbar** holds Record, the transport (go to start, previous key, play,
+next key, go to end, loop), the playhead time and frame, the frame rate (24 /
+30 / 60) and the **Snap** toggle, the key and event buttons, the curve editor
+and onion skin toggles, Fit, the preview pane toggle, and **Built-in...** to
+watch a built-in animation live in the Scene view.
 
-Under the lane, **Copy Pose** / **Paste Pose** (Ctrl+C / Ctrl+V) key the copied
-pose at the playhead, on any character; **Paste Mirrored** keys it flipped
-left<->right, which gives the second half of a walk cycle from the first;
-**Mirror Pose** flips the pose being authored and **Mirror Clip** flips every
-key. **Insert** / **Remove** open or close a gap of the given length at the
-playhead, moving the keys and events after it. Right-clicking the lane offers
-the same tools, and all of them undo with Ctrl+Z.
+**Record** (the red button, or the REC mark in the dope sheet) keys every
+change automatically: drag a bone's angles, turn a selected rig part with the
+rotate gizmo in the Scene view, reset a bone, or edit the root offset, and that
+bone gets a key at the playhead (a new key keeps the other bones as the clip
+already has them there). With Record off, changes stay in the authored pose
+until you press **K** or **Key Pose**.
+
+The **curve editor** (the toolbar's curve button) replaces the rows with the
+picked bone's x, y and z angles over time (the root track's offsets when Root
+is picked), colour-coded, sampled through the clip itself so the lines match
+playback exactly, easing, cubic curves and the loop's wrap included. Drag a
+point up or down to change that channel's value on its key, sideways to move
+the key in time (Shift keeps the time); the channel checkboxes hide curves.
+
+**Onion skin** (the toolbar's ghost button, with the number of keys per side)
+draws the rig at the keys before the playhead in orange and after it in blue
+as thin lines in the Scene view, fading with distance, so an in-between pose
+can be judged against its neighbours.
+
+Keys: **Space** plays, **Home** / **End** and **[** / **]** move the playhead,
+**K** keys the pose, **E** adds an event, **F** fits the view, **Del** deletes
+the selected keys, the **arrows** nudge them a frame (Shift: ten), **Ctrl+A**
+selects all, **Ctrl+C** / **Ctrl+V** copy the pose and paste it as a key.
+Every edit undoes with Ctrl+Z.
 
 From C++ / a script-driven flow:
 

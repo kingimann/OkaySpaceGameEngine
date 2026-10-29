@@ -19,6 +19,7 @@
 #include "okay/Core/Prefs.hpp"
 #include "okay/Core/DataAsset.hpp"
 #include "okay/Core/SaveData.hpp"
+#include "okay/Core/SaveGame.hpp"
 #include "okay/Core/Application.hpp"
 
 // Input
@@ -95,6 +96,7 @@
 #include "okay/Components/NetworkAvatarMotion.hpp"
 #include "okay/Components/NetworkPlayerSpawner.hpp"
 #include "okay/Components/PauseMenu.hpp"
+#include "okay/Components/AutoSave.hpp"
 #include "okay/Components/WorldStreamer.hpp"
 #include "okay/Components/Destructible.hpp"
 #include "okay/Components/Character.hpp"

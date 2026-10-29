@@ -2474,6 +2474,7 @@ std::string Character::ToText() const {
     }
     // How fast the stride follows the ground (trailing, so older saves keep the default).
     o << ' ' << gaitSpeedSmoothing;
+    o << ' ' << (clipDive.empty() ? "-" : clipDive);
     return o.str();
 }
 
@@ -2577,6 +2578,9 @@ void Character::FromText(const std::string& text) {
     }
     float gs = gaitSpeedSmoothing;
     if (in >> gs) gaitSpeedSmoothing = gs > 0.0f ? gs : 0.0f;
+    // Optional trailing dive binding (absent in older saves).
+    std::string sdive;
+    if (in >> sdive) clipDive = (sdive == "-" ? "" : sdive);
     m_built = false;
 }
 

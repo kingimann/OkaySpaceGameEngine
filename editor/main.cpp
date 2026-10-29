@@ -447,6 +447,7 @@ int main(int argc, char** argv) {
 #include "EditorTabs.hpp"   // panel tabs: saved layouts, presets, Ctrl+Tab order
 #include "okay/Scripting/OkayScriptVM.hpp"   // editor plugins
 #include "okay/Animation/HumanoidActions.hpp"
+#include "okay/Components/Seat.hpp"
 #include "okay/Scripting/ScriptUI.hpp"
 #include "okay/Scene/EnsureCamera.hpp"       // every scene keeps a camera
 #include "backends/imgui_impl_sdl2.h"
@@ -10844,7 +10845,7 @@ void DrawScriptDocs() {
         fapi("tween_kill_all() / tween_play_id(\"name\") / is_tweening()", "this object / by name");
         fapi("seq_new() / seq_append(s, id) / seq_join(s, id)", "sequence: after / together");
         fapi("seq_interval(s, t) / seq_callback(s, \"fn\") / seq_insert(s, t, id)", "pauses, calls, timing");
-        fapi("save_game([slot]) / load_game([slot])", "snapshot / restore the scene");
+        fapi("save_game([slot], [label]) / load_game([slot])", "save / load the whole game");
         fapi("save_exists([slot]) / delete_save([slot])", "manage save slots");
         ImGui::TextDisabled("Eases: linear, in_/out_/in_out_ + quad cubic quart quint sine expo circ back elastic bounce.");
     }
@@ -10917,6 +10918,12 @@ void DrawScriptDocs() {
         fapi("play_clip(\"name\") / stop_clip()", "play a loaded clip / return to built-in");
         fapi("play_action(\"Death\" [, blend]) / is_in_action() / action_time()", "go to a built-in action state (0 if it is missing)");
         fapi("die([\"forward\"|\"back\"|\"left\"|\"right\"]) / die(x, y, z) / revive() / is_dead()", "death anim; x,y,z is where the hit came from");
+        fapi("dive() / can_dive()", "dolphin dive while sprinting on the ground; 1 if a dive can start");
+        fapi("sit([\"Seat\"|\"ground\"|\"knees\"|\"chair\"]) / stand_up() / is_sitting()", "sit on a Seat or a flat floor; move or jump stands up");
+        fapi("interact() / seat_prompt()", "nearest Seat (E in range does this too), or its prompt");
+        fapi("hit_react(\"forward\"|\"back\"|\"left\"|\"right\" [, heavy]) / hit_react(x, y, z [, heavy])", "flinch from where the hit came from; heavy is a full-body stumble");
+        fapi("roll([\"forward\"|\"back\"|\"left\"|\"right\"]) / dodge([...])", "roll is the clip; dodge also bursts a first- or third-person body");
+        fapi("vault() / mantle() / ledge_grab() / climb_up() / let_go() / is_hanging() / shimmy(v)", "vault, mantle, or hang; flags on the controller default off");
         fapi("play_clip_once(\"name\")", "play a clip once (attack/jump), then return to the previous one");
         fapi("playing_clip() / is_playing_clip()", "active clip name / is one playing");
         fapi("set_anim(n) / get_anim()", "built-in animation index (1 idle, 2 walk, 3 run, ...)");
@@ -11324,6 +11331,13 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"play_clip","play_clip(\"clip\")"}, {"play_clip_once","play_clip_once(\"clip\")"},
         {"play_action","play_action(\"Death\" [, blend])"}, {"is_in_action","is_in_action()"},
         {"action_time","action_time()"}, {"die","die([\"back\"])"}, {"revive","revive()"}, {"is_dead","is_dead()"},
+        {"dive","dive()"}, {"can_dive","can_dive()"},
+        {"sit","sit([\"Chair\"])"}, {"stand_up","stand_up()"}, {"is_sitting","is_sitting()"},
+        {"interact","interact()"}, {"seat_prompt","seat_prompt()"},
+        {"hit_react","hit_react(\"back\" [, 1])"},
+        {"roll","roll(\"forward\")"}, {"dodge","dodge(\"left\")"},
+        {"vault","vault()"}, {"mantle","mantle()"}, {"ledge_grab","ledge_grab()"},
+        {"climb_up","climb_up()"}, {"let_go","let_go()"}, {"is_hanging","is_hanging()"}, {"shimmy","shimmy(-1..1)"},
         {"stop_clip","stop_clip()"}, {"is_playing_clip","is_playing_clip()"},
         {"play_layer","play_layer(\"clip\", \"part\")"}, {"stop_layer","stop_layer()"}, {"anim_event","anim_event(\"name\")"},
         {"play_sound","play_sound(\"name\")"}, {"set_volume","set_volume(v)"},
@@ -17871,6 +17885,9 @@ static const ActionOpInfo kCondOps[] = {
     {"is_moving",  "Is Moving",            "[min speed]",                "Passes if this object's Rigidbody is moving faster than the threshold.", "World"},
     {"is_in_action","Is In Action",       "",                           "Passes while a built-in action (Death, and later dive, sit, ...) is playing.", "Character"},
     {"is_dead",    "Is Dead",             "",                           "Passes while Health says this body is dead, or the Animator `dead` flag is set.", "Character"},
+    {"can_dive",   "Can Dive",            "",                           "Passes when this body can dolphin-dive (sprinting, on the ground, not already diving).", "Character"},
+    {"is_sitting", "Is Sitting",           "",                           "Passes while this body is sitting down, seated, or standing back up.", "Character"},
+    {"is_hanging", "Is Hanging",           "",                           "Passes while a ledge grab, hang, or shimmy is playing.", "Character"},
     {"tag_count_lt","Fewer Tagged Than",   "tag count",                  "Passes if fewer than N active objects have this tag (e.g. wave cleared).", "World"},
     {"tag_count_gt","More Tagged Than",    "tag count",                  "Passes if more than N active objects have this tag.",          "World"},
     {"array_has",  "Array Contains",       "array value",                "Passes if the named array contains the value.",                "Arrays"},
@@ -17978,6 +17995,19 @@ static const ActionOpInfo kInstrOps[] = {
     {"play_action", "Play Action",        "action [blend]",       "Go to a built-in action (Death, Death_F, ...). Blend is seconds.", "Character"},
     {"die",         "Die",                "forward|back|left|right", "Play Death. A direction, or x y z for where the hit came from.", "Character"},
     {"revive",      "Revive",             "",                     "Clear dead and get up. A Health stat respawns.",          "Character"},
+    {"dive",        "Dive",               "",                     "Dolphin dive: forward launch while sprinting, then prone.", "Character"},
+    {"sit",         "Sit",                "[seat|ground|knees|chair]", "Sit on a named Seat, or on a flat floor.",          "Character"},
+    {"stand_up",    "Stand Up",           "",                     "Leave a sit and free the Seat.",                         "Character"},
+    {"interact",    "Interact",           "",                     "Nearest Seat, or a ground sit. Stands up if already sitting.", "Character"},
+    {"hit_react",   "Hit React",          "forward|back|left|right [heavy]", "Flinch from where the hit came from. heavy = 1 is a full-body stumble.", "Character"},
+    {"roll",        "Roll",               "forward|back|left|right", "Play a roll or sidestep clip. Does not move the body.", "Character"},
+    {"dodge",       "Dodge",              "forward|back|left|right", "That clip, plus a burst on a first- or third-person controller.", "Character"},
+    {"vault",       "Vault",              "",                     "Probe ahead and vault a thin obstacle. Ignores Can Vault.", "Character"},
+    {"mantle",      "Mantle",             "",                     "Probe ahead and mantle a low or high ledge. Ignores Can Mantle.", "Character"},
+    {"ledge_grab",  "Ledge Grab",         "",                     "In the air, catch a high ledge and hang.",               "Character"},
+    {"climb_up",    "Climb Up",           "",                     "Climb from a hang onto the lip the grab remembered.",     "Character"},
+    {"let_go",      "Let Go",             "",                     "Drop from a hang. Does not teleport.",                   "Character"},
+    {"shimmy",      "Shimmy",             "-1..1",                "While hanging, lean along the lip.",                     "Character"},
     {"stop_clip",   "Stop Anim Clip",     "",                     "Return the Character to its built-in / state animation.", "Character"},
     {"play_layer",  "Play Anim Layer",    "clip  arms|upper|bone","Overlay a clip on part of the body (e.g. wave with the arms while walking).", "Character"},
     {"stop_layer",  "Stop Anim Layer",    "",                     "Clear the partial-body animation layer.",                 "Character"},
@@ -18856,7 +18886,12 @@ static const char* ActionOpRequires(const std::string& op) {
     if (op=="play_sound"||op=="set_volume") return "an Audio Source on this object";
     if (op=="play_anim"||op=="stop_anim"||op=="set_anim"||op=="play_clip"||op=="stop_clip"||
         op=="play_layer"||op=="stop_layer"||op=="clip_speed"||op=="anim_event"||
-        op=="play_action"||op=="die"||op=="revive"||op=="is_in_action"||op=="is_dead")
+        op=="play_action"||op=="die"||op=="revive"||op=="is_in_action"||op=="is_dead"||
+        op=="dive"||op=="can_dive"||
+        op=="sit"||op=="stand_up"||op=="is_sitting"||op=="interact"||
+        op=="play_action"||op=="die"||op=="revive"||op=="is_in_action"||op=="is_dead"||op=="hit_react"||
+        op=="play_action"||op=="die"||op=="revive"||op=="is_in_action"||op=="is_dead"||op=="roll"||op=="dodge"||
+        op=="vault"||op=="mantle"||op=="ledge_grab"||op=="climb_up"||op=="let_go"||op=="shimmy"||op=="is_hanging")
         return "a Character / Animator on this object";
     if (op=="emit"||op=="particles_on") return "a Particle System on this object";
     if (op=="set_text") return "a Text Renderer on this object";
@@ -19272,8 +19307,9 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
         ImGui::TextDisabled("Use this clip for (click again to unbind):");
         struct Slot { const char* label; std::string* field; };
         Slot slots[] = {{"Idle", &ch->clipIdle}, {"Walk", &ch->clipWalk}, {"Run", &ch->clipRun},
-                        {"Jump", &ch->clipJump}, {"Fall", &ch->clipFall}, {"Crouch", &ch->clipCrouch}};
-        for (int i = 0; i < 6; ++i) {
+                        {"Jump", &ch->clipJump}, {"Fall", &ch->clipFall}, {"Crouch", &ch->clipCrouch},
+                        {"Dive", &ch->clipDive}};
+        for (int i = 0; i < 7; ++i) {
             if (i) ImGui::SameLine();
             const bool on = !clip.name.empty() && *slots[i].field == clip.name;
             if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.30f, 1.0f));
@@ -28912,6 +28948,20 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##nv")) toRemove = nv;
         }
     }
+    if (auto* as = dynamic_cast<AutoSave*>(curComp)) {
+        if (CompHeader("Auto Save", as, &toRemove)) {
+            ImGui::TextDisabled("Saves the whole game to a slot while playing.");
+            if (ImGui::DragFloat("Every (s)##as", &as->interval, 1.0f, 0.0f, 3600.0f, "%.0f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds of play between saves (0 = only when the scene starts, if ticked below).");
+            if (ImGui::Checkbox("Save when the scene starts##as", &as->saveOnStart)) ed.dirty = true;
+            char sbuf[65]; std::snprintf(sbuf, sizeof(sbuf), "%s", as->slot.c_str());
+            if (ImGui::InputText("Slot##as", sbuf, sizeof(sbuf))) { as->slot = sbuf; ed.dirty = true; }
+            if (!SaveGame::ValidSlot(as->slot)) ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.3f, 1), "Use letters, digits, - and _ only.");
+            char lbuf[128]; std::snprintf(lbuf, sizeof(lbuf), "%s", as->label.c_str());
+            if (ImGui::InputText("Label##as", lbuf, sizeof(lbuf))) { as->label = lbuf; ed.dirty = true; }
+            if (ImGui::SmallButton("Remove##as")) toRemove = as;
+        }
+    }
     if (auto* pm = dynamic_cast<PauseMenu*>(curComp)) {
         if (CompHeader("Pause Menu", pm, &toRemove)) {
             // The menu UI lives in the scene as editable objects (under "PauseMenu UI")
@@ -31666,6 +31716,10 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::TreeNodeEx("Death / Respawn##sth")) {
                 if (ImGui::Checkbox("Play Death Anim##sth", &c->playDeathAnim)) ed.dirty = true;
+                if (ImGui::Checkbox("Play Hit Anim##sth", &c->playHitAnim)) ed.dirty = true;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Off by default. When on, Damage that knows where the hit came from\n"
+                                      "plays a light upper-body flinch. Heavy stumbles are hit_react(dir, true).");
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("On death, play Death in the direction of the last hit and keep the\n"
                                       "body active until it settles, then shrink the capsule to crouch height.");
@@ -31680,6 +31734,26 @@ void DrawInspector(EditorState& ed) {
             statOutputs(c, "sth");
             ImGui::TextDisabled("Methods: Damage, Heal, AddArmor, Revive, SetGodMode.");
             if (ImGui::SmallButton("Remove##sth")) toRemove = c;
+        }
+    }
+    if (auto* c = dynamic_cast<Seat*>(curComp)) {
+        if (CompHeader("Seat", c, &toRemove)) {
+            if (ImGui::DragFloat("Height##seat", &c->seatHeight, 0.01f, 0.0f, 2.0f, "%.2f m")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The chair clips are baked for 0.45 m. This moves the body onto the seat.");
+            if (ImGui::DragFloat3("Sit Point##seat", &c->sitPoint.x, 0.01f)) ed.dirty = true;
+            if (ImGui::DragFloat("Facing##seat", &c->facing, 1.0f, -180.0f, 180.0f, "%.0f deg")) ed.dirty = true;
+            const char* kinds[] = {"Chair", "Ground", "Bench"};
+            int kind = c->type;
+            if (kind < 0 || kind > 2) kind = 0;
+            if (ImGui::Combo("Type##seat", &kind, kinds, 3)) { c->type = kind; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bench uses the chair clips. Ground uses the cross-legged sit.");
+            if (ImGui::DragFloat3("Exit Point##seat", &c->exitPoint.x, 0.01f)) ed.dirty = true;
+            if (ImGui::DragFloat("Use Radius##seat", &c->useRadius, 0.05f, 0.1f, 10.0f)) ed.dirty = true;
+            char pbuf[128];
+            std::snprintf(pbuf, sizeof(pbuf), "%s", c->prompt.c_str());
+            if (ImGui::InputText("Prompt##seat", pbuf, sizeof(pbuf))) { c->prompt = pbuf; ed.dirty = true; }
+            if (c->occupied) ImGui::TextDisabled("Occupied");
+            if (ImGui::SmallButton("Remove##seat")) toRemove = c;
         }
     }
     if (auto* c = dynamic_cast<HungerStat*>(curComp)) {
@@ -32408,6 +32482,32 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat("Slide Time##fp", &fp->slideTime, 0.01f, 0.05f, 3.0f, "%.2f s")) ed.dirty = true;
                 if (ImGui::DragFloat("Slide Eye Height##fp", &fp->slideEyeHeight, 0.01f, 0.1f, 2.0f)) ed.dirty = true;
             }
+            if (ImGui::Checkbox("Dive On Prone While Sprinting##fp", &fp->diveOnProneWhileSprinting)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sprint, then press prone: launch forward and land flat.\nCrouch-to-slide is unchanged. Off: prone works as before.");
+            if (fp->diveOnProneWhileSprinting) {
+                if (ImGui::DragFloat("Dive Hop##fp", &fp->diveHop, 0.01f, 0.0f, 1.5f, "%.2f m")) ed.dirty = true;
+                if (ImGui::DragFloat("Dive Slide Time##fp", &fp->diveSlideTime, 0.01f, 0.05f, 2.0f, "%.2f s")) ed.dirty = true;
+            }
+            SectionHeader("Dodge");
+            if (ImGui::Checkbox("Can Dodge##fp", &fp->dodge.canDodge)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off by default. dodge() from a script still works.\nThe key does nothing until this is on.");
+            if (fp->dodge.canDodge) {
+                char dk[8]; dk[0] = fp->dodge.key ? fp->dodge.key : '\0'; dk[1] = 0;
+                if (ImGui::InputText("Dodge Key##fp", dk, sizeof(dk))) { fp->dodge.key = dk[0]; ed.dirty = true; }
+                if (ImGui::DragFloat("Dodge Speed##fp", &fp->dodge.impulse, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Dodge Time##fp", &fp->dodge.duration, 0.01f, 0.05f, 2.0f, "%.2f s")) ed.dirty = true;
+                if (ImGui::DragFloat("Cooldown##fp", &fp->dodge.cooldown, 0.01f, 0.0f, 5.0f, "%.2f s")) ed.dirty = true;
+                if (ImGui::DragFloat("Stamina##fp", &fp->dodge.stamina, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
+                if (ImGui::Checkbox("I-Frames##fp", &fp->dodge.iFrames)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off by default. While on, Health ignores damage during the burst.");
+            }
+            SectionHeader("Traversal");
+            if (ImGui::Checkbox("Can Vault##fp", &fp->canVault)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Walk into a thin obstacle and vault it. Off by default.\nvault() still probes when this is off.");
+            if (ImGui::Checkbox("Can Mantle##fp", &fp->canMantle)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Walk into a low or high ledge and climb it. Off by default.");
+            if (ImGui::Checkbox("Can Ledge Grab##fp", &fp->canLedgeGrab)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In the air, catch a high ledge and hang. Off by default.\nHands-on-ledge IK is not wired.");
             SectionHeader("Animation & IK");
             if (ImGui::Checkbox("Drive State Machine##fp", &fp->driveStateMachine)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets speed, verticalSpeed, grounded, crouch, prone, sprint, slide, aim\nand fires jump / land triggers on an Animator state machine on the player.");
@@ -32585,6 +32685,30 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat("Slide Speed##tp", &tp->slideSpeed, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
                 if (ImGui::DragFloat("Slide Time##tp", &tp->slideTime, 0.01f, 0.05f, 3.0f, "%.2f s")) ed.dirty = true;
             }
+            if (ImGui::Checkbox("Dive On Prone While Sprinting##tp", &tp->diveOnProneWhileSprinting)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sprint, then press prone: launch forward and land flat.\nCrouch-to-slide is unchanged.");
+            if (tp->diveOnProneWhileSprinting) {
+                if (ImGui::DragFloat("Dive Hop##tp", &tp->diveHop, 0.01f, 0.0f, 1.5f, "%.2f m")) ed.dirty = true;
+                if (ImGui::DragFloat("Dive Slide Time##tp", &tp->diveSlideTime, 0.01f, 0.05f, 2.0f, "%.2f s")) ed.dirty = true;
+            }
+            SectionHeader("Dodge");
+            if (ImGui::Checkbox("Can Dodge##tp", &tp->dodge.canDodge)) ed.dirty = true;
+            if (tp->dodge.canDodge) {
+                char dk[8]; dk[0] = tp->dodge.key ? tp->dodge.key : '\0'; dk[1] = 0;
+                if (ImGui::InputText("Dodge Key##tp", dk, sizeof(dk))) { tp->dodge.key = dk[0]; ed.dirty = true; }
+                if (ImGui::DragFloat("Dodge Speed##tp", &tp->dodge.impulse, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Dodge Time##tp", &tp->dodge.duration, 0.01f, 0.05f, 2.0f, "%.2f s")) ed.dirty = true;
+                if (ImGui::DragFloat("Cooldown##tp", &tp->dodge.cooldown, 0.01f, 0.0f, 5.0f, "%.2f s")) ed.dirty = true;
+                if (ImGui::DragFloat("Stamina##tp", &tp->dodge.stamina, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
+                if (ImGui::Checkbox("I-Frames##tp", &tp->dodge.iFrames)) ed.dirty = true;
+            }
+            SectionHeader("Traversal");
+            if (ImGui::Checkbox("Can Vault##tp", &tp->canVault)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Walk into a thin obstacle and vault it. Off by default.\nvault() still probes when this is off.");
+            if (ImGui::Checkbox("Can Mantle##tp", &tp->canMantle)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Walk into a low or high ledge and climb it. Off by default.");
+            if (ImGui::Checkbox("Can Ledge Grab##tp", &tp->canLedgeGrab)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In the air, catch a high ledge and hang. Off by default.\nHands-on-ledge IK is not wired.");
             SectionHeader("Animation & IK");
             if (ImGui::Checkbox("Drive State Machine##tp", &tp->driveStateMachine)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets speed, verticalSpeed, grounded, crouch, prone, sprint, slide, aim\nand fires jump / land triggers on an Animator state machine on the player.");
@@ -33083,6 +33207,11 @@ void DrawInspector(EditorState& ed) {
     if (auto* ts = dynamic_cast<ThirdPersonShooterController*>(curComp)) {
         if (CompHeader("Third Person Shooter Controller", ts, &toRemove)) {
             if (StanceControlFields(ts->stanceControl, "ts")) ed.dirty = true;
+            if (ImGui::Checkbox("Dive On Prone While Sprinting##tps", &ts->stanceControl.diveOnProne)) ed.dirty = true;
+            if (ts->stanceControl.diveOnProne) {
+                if (ImGui::DragFloat("Dive Hop##tps", &ts->stanceControl.diveHop, 0.01f, 0.0f, 1.5f, "%.2f m")) ed.dirty = true;
+                if (ImGui::DragFloat("Dive Slide Time##tps", &ts->stanceControl.diveSlideTime, 0.01f, 0.05f, 2.0f, "%.2f s")) ed.dirty = true;
+            }
             SectionHeader("Movement");
             if (ImGui::DragFloat("Walk Speed##tps", &ts->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Run Speed##tps", &ts->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
@@ -35883,6 +36012,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<FirstPersonHand>(), "Hand (legacy)")) { go->AddComponent<FirstPersonHand>(); ed.view3D = true; ed.dirty = true; }
             if (item(!go->GetComponent<FirstPersonHands>(), "First Person Hands")) { go->AddComponent<FirstPersonHands>(); ed.view3D = true; ed.dirty = true; }
             if (item(!go->GetComponent<PauseMenu>(), "Pause Menu")) { go->AddComponent<PauseMenu>()->EnsureBuilt(); ed.dirty = true; }
+            if (item(!go->GetComponent<AutoSave>(), "Auto Save")) { go->AddComponent<AutoSave>(); ed.dirty = true; }
             if (item(!go->GetComponent<WorldStreamer>(), "World Streamer (partition)")) { go->AddComponent<WorldStreamer>(); ed.dirty = true; }
             if (item(!go->GetComponent<Destructible>(), "Destructible (Chaos)")) { go->AddComponent<Destructible>(); ed.dirty = true; }
             if (item(!go->GetComponent<Draggable>(), "Draggable (item)")) { go->AddComponent<Draggable>(); ed.dirty = true; }
@@ -36059,6 +36189,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<SurvivalStats>(), "Survival Stats (native)")) { go->AddComponent<SurvivalStats>(); ed.dirty = true; }
             if (item(!go->GetComponent<HealthStat>(), "Stat: Health")) { go->AddComponent<HealthStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<Ragdoll>(), "Ragdoll (death + hit reactions)")) { ed.PushUndo(); go->AddComponent<Ragdoll>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Seat>(), "Seat")) { go->AddComponent<Seat>(); ed.dirty = true; }
             if (item(!go->GetComponent<HungerStat>(), "Stat: Hunger")) { go->AddComponent<HungerStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<ThirstStat>(), "Stat: Thirst")) { go->AddComponent<ThirstStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<StaminaStat>(), "Stat: Stamina")) { go->AddComponent<StaminaStat>(); ed.dirty = true; }
@@ -38555,6 +38686,18 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     line(a + v * r, b + v * r, kColliderCol, 1.0f);
                     line(a - v * r, b - v * r, kColliderCol, 1.0f);
                 }
+            }
+            if (auto* seat = up->GetComponent<Seat>()) {
+                const ImU32 scol = IM_COL32(80, 210, 140, 220);
+                const Vec3 sit = seat->SitWorld();
+                const Vec3 ex = seat->ExitWorld();
+                line(sit, sit + Vec3{0, 0.35f, 0}, scol, 2.0f);
+                const Vec3 fwd = seat->FaceWorld() * Vec3{0, 0, -1};
+                const Vec3 tip = sit + Vec3{0, 0.08f, 0} + fwd * 0.55f;
+                line(sit + Vec3{0, 0.08f, 0}, tip, scol, 2.0f);
+                line(tip, tip - fwd * 0.12f + Vec3{fwd.z, 0, -fwd.x} * 0.08f, scol, 2.0f);
+                line(tip, tip - fwd * 0.12f - Vec3{fwd.z, 0, -fwd.x} * 0.08f, scol, 2.0f);
+                line(ex, ex + Vec3{0, 0.22f, 0}, IM_COL32(210, 190, 70, 200), 1.5f);
             }
             // Patrol route gizmo: the selected NPC's waypoints as an orange
             // polyline with numbered ticks (closed when the route loops) —

@@ -8,6 +8,7 @@
 #include "okay/Render/Color.hpp"
 #include <algorithm>
 #include <memory>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -51,6 +52,12 @@ public:
     /// (safe to call from a script/Update). Replaces this scene's contents.
     void RequestLoad(const std::string& path) { m_pendingLoad = path; m_hasPendingLoad = true; }
     bool HasPendingLoad() const { return m_hasPendingLoad; }
+    /// Like RequestLoad, from serialized scene text (a save game) instead of a
+    /// file; `after` runs once the loaded objects have started.
+    void RequestLoadText(std::string text, std::function<void(Scene&)> after = {}) {
+        m_pendingText = std::move(text); m_pendingTextAfter = std::move(after);
+        m_hasPendingText = true; m_hasPendingLoad = false;
+    }
 
     /// Additively MERGE another .okayscene into this one at the end of the frame,
     /// translated by `offset` — combine scenes into one seamless world without
@@ -286,6 +293,9 @@ private:
     std::vector<GameObject*> m_destroyQueue;
     std::string m_pendingLoad;
     bool        m_hasPendingLoad = false;
+    std::string m_pendingText;
+    std::function<void(Scene&)> m_pendingTextAfter;
+    bool        m_hasPendingText = false;
     std::vector<std::pair<std::string, Vec3>> m_pendingMerges;   // deferred additive scene merges
     std::vector<std::vector<const Component*>*> m_removalWatches;   // live RemovalWatch lists
 };

@@ -29,6 +29,7 @@
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UIButton.hpp"
 #include "okay/Audio/AudioMixer.hpp"
+#include "okay/Core/SaveGame.hpp"
 #include <cmath>
 #include <set>
 
@@ -893,6 +894,45 @@ EngineApi Build() {
             [](const Value&, std::vector<Value>&, CallContext&) { AudioMixer::SaveSettings(); return Value{}; },
             "Store the volumes in the player's prefs now (they are also saved when the game closes)."));
         api.types.push_back(std::move(au));
+    }
+    // ---- SaveGame ----
+    {
+        ApiType sg; sg.name = "SaveGame"; sg.isStatic = true;
+        sg.doc = "Whole-game saves in named slots: every object, the player, inventories, script variables.";
+        auto sceneOf = [](CallContext& c) -> Scene& {
+            Scene* s = c.self ? c.self->scene() : nullptr;
+            if (!s) throw RuntimeError("SaveGame needs a script running in a scene", c.loc);
+            return *s;
+        };
+        sg.staticMethods.push_back(method("Save", {tString, tString}, {"slot", "label"}, tBool,
+            [sceneOf](const Value&, std::vector<Value>& a, CallContext& c) {
+                std::string err;
+                const bool ok = SaveGame::Save(sceneOf(c), S(a[0]), S(a[1]), &err);
+                if (!ok) Log::Warning("[script] SaveGame.Save: ", err);
+                return Value{ok};
+            }, "Save the game to a slot (\"1\", \"quick\"...) with a label for the load menu. False if it couldn't."));
+        sg.staticMethods.push_back(method("Load", {tString}, {"slot"}, tBool,
+            [sceneOf](const Value&, std::vector<Value>& a, CallContext& c) {
+                std::string err;
+                const bool ok = SaveGame::Load(sceneOf(c), S(a[0]), &err);
+                if (!ok) Log::Warning("[script] SaveGame.Load: ", err);
+                return Value{ok};
+            }, "Load a slot at the end of this frame. False if there's no save there."));
+        sg.staticMethods.push_back(method("Exists", {tString}, {"slot"}, tBool,
+            [](const Value&, std::vector<Value>& a, CallContext&) { return Value{SaveGame::Exists(S(a[0]))}; },
+            "True if the slot has a save."));
+        sg.staticMethods.back().pure = true;
+        sg.staticMethods.push_back(method("Delete", {tString}, {"slot"}, tBool,
+            [](const Value&, std::vector<Value>& a, CallContext&) { return Value{SaveGame::Delete(S(a[0]))}; },
+            "Delete the save in a slot."));
+        sg.staticMethods.push_back(method("Label", {tString}, {"slot"}, tString,
+            [](const Value&, std::vector<Value>& a, CallContext&) { return Value{SaveGame::Info(S(a[0])).label}; },
+            "The label a slot was saved with (\"\" if empty)."));
+        sg.staticMethods.back().pure = true;
+        sg.staticProps.push_back(ro("playTime", tFloat,
+            [](const Value&, CallContext&) { return Value{SaveGame::PlayTime()}; },
+            "Seconds played, counting the time in the save that was loaded."));
+        api.types.push_back(std::move(sg));
     }
     // ---- Mathf ----
     {

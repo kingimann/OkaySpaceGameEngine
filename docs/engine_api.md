@@ -334,6 +334,19 @@ The mixer: overall volume and each group's (Music, SFX, UI, Voice), as a setting
 | `Audio.MuteGroup(group, mute)` | `Audio.MuteGroup/2` | step | group (Text), mute (Bool) | - | Mute or unmute one group. |
 | `Audio.SaveSettings()` | `Audio.SaveSettings/0` | step | - | - | Store the volumes in the player's prefs now (they are also saved when the game closes). |
 
+## SaveGame
+
+Whole-game saves in named slots: every object, the player, inventories, script variables.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `SaveGame.playTime` | `SaveGame.playTime` | value | - | playTime (Number) | Seconds played, counting the time in the save that was loaded. |
+| `SaveGame.Save(slot, label)` | `SaveGame.Save/2` | step | slot (Text), label (Text) | Result (Bool) | Save the game to a slot ("1", "quick"...) with a label for the load menu. False if it couldn't. |
+| `SaveGame.Load(slot)` | `SaveGame.Load/1` | step | slot (Text) | Result (Bool) | Load a slot at the end of this frame. False if there's no save there. |
+| `SaveGame.Exists(slot)` | `SaveGame.Exists/1` | value | slot (Text) | Result (Bool) | True if the slot has a save. |
+| `SaveGame.Delete(slot)` | `SaveGame.Delete/1` | step | slot (Text) | Result (Bool) | Delete the save in a slot. |
+| `SaveGame.Label(slot)` | `SaveGame.Label/1` | value | slot (Text) | Result (Text) | The label a slot was saved with ("" if empty). |
+
 ## Mathf
 
 Maths helpers.

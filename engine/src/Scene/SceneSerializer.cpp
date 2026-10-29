@@ -1,6 +1,7 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Animation/HumanoidLibrary.hpp"
 #include "okay/Animation/HumanoidActions.hpp"
+#include "okay/Components/Seat.hpp"
 #include "okay/Modeling/MeshAsset.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -144,6 +145,7 @@
 #include "okay/Components/HoldPrompt.hpp"
 #include "okay/Components/RootMotion.hpp"
 #include "okay/Components/PauseMenu.hpp"
+#include "okay/Components/AutoSave.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/UIImage.hpp"
 #include "okay/Components/UIRawImage.hpp"
@@ -324,7 +326,8 @@ void WriteStanceControl(std::ostream& out, const char* rec, const StanceControl&
     KvOut k{out};
     k.key("crouchKey", sc.crouchKey).key("proneKey", sc.proneKey).b("toggle", sc.toggle).b("prone", sc.allowProne)
      .b("resize", sc.resizeBody)("crouchSpeed", sc.crouchSpeed)("proneSpeed", sc.proneSpeed)
-     ("crouchH", sc.crouchHeight)("proneH", sc.proneHeight);
+     ("crouchH", sc.crouchHeight)("proneH", sc.proneHeight)
+     .b("dive", sc.diveOnProne)("diveHop", sc.diveHop)("diveSlide", sc.diveSlideTime);
     if (sc.Stance() != 0) k("stance", sc.Stance());   // saved crouched / prone (the collider is saved standing)
     out << "\n";
 }
@@ -334,6 +337,7 @@ void ReadStanceControl(std::istream& in, StanceControl* sc) {
     k.key("crouchKey", sc->crouchKey); k.key("proneKey", sc->proneKey); k.b("toggle", sc->toggle);
     k.b("prone", sc->allowProne); k.b("resize", sc->resizeBody); k.f("crouchSpeed", sc->crouchSpeed);
     k.f("proneSpeed", sc->proneSpeed); k.f("crouchH", sc->crouchHeight); k.f("proneH", sc->proneHeight);
+    k.b("dive", sc->diveOnProne); k.f("diveHop", sc->diveHop); k.f("diveSlide", sc->diveSlideTime);
     int st = 0; k.i("stance", st);
     if (st == 1 || st == 2) sc->Restore(st);
 }
@@ -926,6 +930,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << pm->panelColor.r << " " << pm->panelColor.g << " " << pm->panelColor.b << " " << pm->panelColor.a
             << " " << Quote(pm->title) << " " << Quote(pm->mainMenuScene) << "\n";
     }
+    if (auto* as = go->GetComponent<AutoSave>())
+        out << "  autosave " << as->interval << " " << (as->saveOnStart ? 1 : 0)
+            << " " << Quote(as->slot) << " " << Quote(as->label) << "\n";
     if (auto* fl = go->GetComponent<Flashlight>()) {
         out << "  flashlight " << (int)(unsigned char)fl->toggleKey << " " << (fl->on ? 1 : 0)
             << " " << fl->range << " " << fl->angle << " " << fl->intensity
@@ -1723,7 +1730,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << c->invincibleTime << " " << c->overhealMax << " " << c->overhealDecay
             << " " << (c->destroyOnDeath ? 1 : 0) << " " << (c->respawn ? 1 : 0)
             << " " << c->respawnDelay << " " << c->lives
-            << " " << (c->playDeathAnim ? 1 : 0) << "\n";
+            << " " << (c->playDeathAnim ? 1 : 0) << " " << (c->playHitAnim ? 1 : 0) << "\n";
+    }
+    if (auto* c = go->GetComponent<Seat>()) {
+        out << "  seat " << c->seatHeight << " "
+            << c->sitPoint.x << " " << c->sitPoint.y << " " << c->sitPoint.z << " "
+            << c->facing << " " << c->type << " "
+            << c->exitPoint.x << " " << c->exitPoint.y << " " << c->exitPoint.z << " "
+            << c->useRadius << " " << Quote(c->prompt) << "\n";
     }
     if (auto* c = go->GetComponent<HungerStat>()) {
         out << "  stat_hunger " << c->maxHunger << " " << c->drainPerSecond << " "
@@ -1892,12 +1906,18 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << fp->slideEyeHeight << " " << (fp->driveStateMachine ? 1 : 0) << " " << (fp->ikLook ? 1 : 0)
             // extended: the head bob and the eye smoothing
             << " " << (fp->headBob ? 1 : 0) << " " << fp->bobAmount << " " << fp->bobSpeed << " " << fp->bobSway
-            << " " << fp->bobRunScale << " " << fp->bobBlend << " " << fp->bobGroundGrace << " " << fp->eyeStepSmoothing << "\n";
+            << " " << fp->bobRunScale << " " << fp->bobBlend << " " << fp->bobGroundGrace << " " << fp->eyeStepSmoothing
+            << " " << (fp->dodge.canDodge ? 1 : 0) << " " << (int)(unsigned char)fp->dodge.key
+            << " " << fp->dodge.impulse << " " << fp->dodge.duration << " " << fp->dodge.cooldown
+            << " " << fp->dodge.stamina << " " << (fp->dodge.iFrames ? 1 : 0)
+            // Traversal flags. Older loaders do not skip these trailing ints.
+            << " " << (fp->canVault ? 1 : 0) << " " << (fp->canMantle ? 1 : 0) << " " << (fp->canLedgeGrab ? 1 : 0) << "\n";
         out << "  fpstance";
         KvOut k{out};
         k.b("prone", fp->allowProne).b("resize", fp->resizeBody)("crouchH", fp->crouchHeight)("proneH", fp->proneHeight)
          ("pad", fp->stanceGamepadButton)("hold", fp->proneHoldTime)
-         ("walkA", fp->walkAcceleration)("steer", fp->steerRate);
+         ("walkA", fp->walkAcceleration)("steer", fp->steerRate)
+         .b("dive", fp->diveOnProneWhileSprinting)("diveHop", fp->diveHop)("diveSlide", fp->diveSlideTime);
         if (fp->stance() != std::remove_pointer_t<decltype(fp)>::Stance::Stand) k("stance", (int)fp->stance());   // saved crouched / prone
         out << "\n";
     }
@@ -1935,7 +1955,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         KvOut k{out};
         k.b("prone", tp->allowProne).b("resize", tp->resizeBody)("crouchH", tp->crouchHeight)("proneH", tp->proneHeight)
          ("pad", tp->stanceGamepadButton)("hold", tp->proneHoldTime)
-         ("walkA", tp->walkAcceleration)("steer", tp->steerRate);
+         ("walkA", tp->walkAcceleration)("steer", tp->steerRate)
+         .b("dive", tp->diveOnProneWhileSprinting)("diveHop", tp->diveHop)("diveSlide", tp->diveSlideTime);
         if (tp->stance() != std::remove_pointer_t<decltype(tp)>::Stance::Stand) k("stance", (int)tp->stance());   // saved crouched / prone
         out << "\n";
     }
@@ -1946,7 +1967,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << (tp->autoRecenter ? 1 : 0) << " " << tp->recenterDelay << " " << tp->recenterSpeed
             << " " << tp->landShake << " " << tp->strideLength << " " << (tp->canSlide ? 1 : 0)
             << " " << tp->slideSpeed << " " << tp->slideTime << " " << (tp->driveStateMachine ? 1 : 0)
-            << " " << (tp->ikLook ? 1 : 0) << "\n";
+            << " " << (tp->ikLook ? 1 : 0)
+            << " " << (tp->dodge.canDodge ? 1 : 0) << " " << (int)(unsigned char)tp->dodge.key
+            << " " << tp->dodge.impulse << " " << tp->dodge.duration << " " << tp->dodge.cooldown
+            << " " << tp->dodge.stamina << " " << (tp->dodge.iFrames ? 1 : 0)
+            // Traversal flags. Older loaders do not skip these trailing ints.
+            << " " << (tp->canVault ? 1 : 0) << " " << (tp->canMantle ? 1 : 0) << " " << (tp->canLedgeGrab ? 1 : 0) << "\n";
     }
     // Player view toggle (grok/view-toggle). Its own record, so older scenes skip it.
     // Fields: allow, view (0 first / 1 third), key, pad, blend, ex ey ez, dist, shoulder.
@@ -4705,6 +4731,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (std::isdigit(in.peek())) {
                         int pda = 1; in >> pda; c->playDeathAnim = (pda != 0);
                     }
+                    in >> std::ws;   // optional: light hit flinch (defaults off)
+                    if (std::isdigit(in.peek())) {
+                        int pha = 0; in >> pha; c->playHitAnim = (pha != 0);
+                    }
+                } else if (field == "seat") {
+                    auto* c = go->AddComponent<Seat>();
+                    in >> c->seatHeight >> c->sitPoint.x >> c->sitPoint.y >> c->sitPoint.z
+                       >> c->facing >> c->type
+                       >> c->exitPoint.x >> c->exitPoint.y >> c->exitPoint.z
+                       >> c->useRadius;
+                    in >> std::ws;
+                    if (in.peek() == '"') c->prompt = ReadQuoted(in);
                 } else if (field == "stat_hunger") {
                     auto* c = go->AddComponent<HungerStat>();
                     in >> c->maxHunger >> c->drainPerSecond >> c->sprintMultiplier >> c->lowThreshold;
@@ -4920,6 +4958,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             fp->headBob = hb != 0; fp->bobAmount = ba; fp->bobSpeed = bs; fp->bobSway = bw;
                             fp->bobRunScale = br; fp->bobBlend = bb; fp->bobGroundGrace = bg; fp->eyeStepSmoothing = es;
                         }
+                        in >> std::ws;   // optional dodge (off unless a game turns it on)
+                        if (std::isdigit(in.peek())) {
+                            int on = 0, key = 0, ifr = 0;
+                            in >> on >> key >> fp->dodge.impulse >> fp->dodge.duration >> fp->dodge.cooldown
+                               >> fp->dodge.stamina >> ifr;
+                            fp->dodge.canDodge = on != 0; fp->dodge.key = (char)key; fp->dodge.iFrames = ifr != 0;
+                        }
+                        int cv = 0, cm = 0, cl = 0;
+                        in >> std::ws;
+                        if (std::isdigit(static_cast<unsigned char>(in.peek())) && (in >> cv >> cm >> cl)) {
+                            fp->canVault = cv != 0; fp->canMantle = cm != 0; fp->canLedgeGrab = cl != 0;
+                        }
                     }
                 } else if (field == "tpfeel") {
                     if (auto* tp = go->GetComponent<ThirdPersonController>()) {
@@ -4929,6 +4979,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                            >> tp->landShake >> tp->strideLength >> sl >> tp->slideSpeed >> tp->slideTime >> sm >> ik;
                         tp->aimWithRightMouse = a != 0; tp->autoRecenter = rc != 0; tp->canSlide = sl != 0;
                         tp->driveStateMachine = sm != 0; tp->ikLook = ik != 0;
+                        in >> std::ws;   // optional dodge (off unless a game turns it on)
+                        if (std::isdigit(in.peek())) {
+                            int on = 0, key = 0, ifr = 0;
+                            in >> on >> key >> tp->dodge.impulse >> tp->dodge.duration >> tp->dodge.cooldown
+                               >> tp->dodge.stamina >> ifr;
+                            tp->dodge.canDodge = on != 0; tp->dodge.key = (char)key; tp->dodge.iFrames = ifr != 0;
+                        }
+                        int cv = 0, cm = 0, cl = 0;
+                        in >> std::ws;
+                        if (std::isdigit(static_cast<unsigned char>(in.peek())) && (in >> cv >> cm >> cl)) {
+                            tp->canVault = cv != 0; tp->canMantle = cm != 0; tp->canLedgeGrab = cl != 0;
+                        }
                     }
                 } else if (field == "playerview") {
                     // grok/view-toggle. key=value record; missing keys keep the defaults.
@@ -5149,6 +5211,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         k.b("prone", c->allowProne); k.b("resize", c->resizeBody); k.f("crouchH", c->crouchHeight);
                         k.f("proneH", c->proneHeight); k.i("pad", c->stanceGamepadButton); k.f("hold", c->proneHoldTime);
                         k.f("walkA", c->walkAcceleration); k.f("steer", c->steerRate);
+                        k.b("dive", c->diveOnProneWhileSprinting); k.f("diveHop", c->diveHop); k.f("diveSlide", c->diveSlideTime);
                         // Saved crouched / prone: start that way (the collider was saved standing).
                         int st = 0; k.i("stance", st);
                         using S = typename std::remove_pointer_t<decltype(c)>::Stance;
@@ -5823,6 +5886,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     pm->toggleKey = (char)tk; pm->showResume = (sr != 0); pm->showQuit = (sq != 0);
                     pm->title = ReadQuoted(in);
                     pm->mainMenuScene = ReadQuoted(in);
+                } else if (field == "autosave") {
+                    auto* as = go->AddComponent<AutoSave>();
+                    int sos = 0;
+                    in >> as->interval >> sos;
+                    as->saveOnStart = sos != 0;
+                    as->slot = ReadQuoted(in);
+                    as->label = ReadQuoted(in);
                 } else if (field == "flashlight") {
                     auto* fl = go->AddComponent<Flashlight>();
                     int tk = 'f', onv = 1;

@@ -90,6 +90,7 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputActions.hpp"
+#include "okay/Core/SaveGame.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Core/Random.hpp"
 #include "okay/Core/Prefs.hpp"
@@ -5167,6 +5168,28 @@ struct OkayScriptVM::Impl {
                 return Value{AudioMixer::groupVolume[(int)g]};
             return Value{0.0f};
         };
+        // Whole-game saves (SaveGame): save_game(["save1"] [, "label"]), load_game(["save1"])
+        // (happens at the end of the frame), has_save, delete_save, save_label,
+        // play_time (seconds played, carried through loads).
+        auto slotArg = [](std::vector<Value>& a) { return a.empty() ? std::string("save1") : a[0].AsString(); };
+        b["save_game"] = [sceneOf, slotArg](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            std::string err;
+            const bool ok = s && SaveGame::Save(*s, slotArg(a), a.size() > 1 ? a[1].AsString() : "", &err);
+            if (!ok) Log::Warning("[script] save_game: ", err);
+            return Value{ok ? 1.0f : 0.0f};
+        };
+        b["load_game"] = [sceneOf, slotArg](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            std::string err;
+            const bool ok = s && SaveGame::Load(*s, slotArg(a), &err);
+            if (!ok) Log::Warning("[script] load_game: ", err);
+            return Value{ok ? 1.0f : 0.0f};
+        };
+        b["has_save"]    = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Exists(slotArg(a)) ? 1.0f : 0.0f}; };
+        b["delete_save"] = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Delete(slotArg(a)) ? 1.0f : 0.0f}; };
+        b["save_label"]  = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Info(slotArg(a)).label}; };
+        b["play_time"]   = [](std::vector<Value>&) { return Value{SaveGame::PlayTime()}; };
         // Keep the current volumes as the player's settings (also saved on quit).
         b["save_audio_settings"] = [](std::vector<Value>&) { AudioMixer::SaveSettings(); return Value{}; };
         // Music: the scene's MusicPlayer. music_play(index or "file"), music_next(),
@@ -5568,6 +5591,103 @@ struct OkayScriptVM::Impl {
         b["is_ragdoll"] = [selfObj](std::vector<Value>&) {
             auto* rd = selfObj() ? selfObj()->GetComponent<Ragdoll>() : nullptr;
             return Value{rd && rd->IsActive() ? 1.0f : 0.0f};
+        };
+        b["dive"] = [selfObj](std::vector<Value>&) {
+            HumanoidActions::RequestDive(selfObj());
+            return Value{};
+        };
+        b["can_dive"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::CanDive(selfObj()) ? 1.0f : 0.0f};
+        };
+        // sit() ground, sit("Chair") a Seat by name, sit("knees") / sit(2) a kneel.
+        // sit(0) is a chair pose with no Seat (the body stays where it is).
+        b["sit"] = [selfObj](std::vector<Value>& a) {
+            GameObject* go = selfObj();
+            if (!go) return Value{0.0f};
+            GameObject* seat = nullptr;
+            int type = 1;
+            if (!a.empty()) {
+                if (a[0].IsNumber()) type = (int)a[0].AsFloat();
+                else if (go->scene()) {
+                    const std::string name = a[0].AsString();
+                    seat = go->scene()->Find(name);
+                    if (!seat) {
+                        std::string k = name;
+                        for (char& c : k) c = (char)std::tolower((unsigned char)c);
+                        if (k == "chair" || k == "bench") type = 0;
+                        else if (k == "knees") type = 2;
+                    }
+                }
+            }
+            return Value{HumanoidActions::RequestSit(go, seat, type) ? 1.0f : 0.0f};
+        };
+        b["stand_up"] = [selfObj](std::vector<Value>&) {
+            HumanoidActions::RequestStandUp(selfObj());
+            return Value{};
+        };
+        b["is_sitting"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::IsSitting(selfObj()) ? 1.0f : 0.0f};
+        };
+        b["interact"] = [selfObj](std::vector<Value>&) {
+            HumanoidActions::Interact(selfObj());
+            return Value{};
+        };
+        b["seat_prompt"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::SeatPrompt(selfObj())};
+        };
+        // hit_react("back") light, hit_react("left", 1) heavy, or hit_react(x, y, z [, heavy]).
+        b["hit_react"] = [selfObj](std::vector<Value>& a) {
+            GameObject* go = selfObj();
+            int dir = 0;
+            bool heavy = false;
+            if (a.size() >= 3 && a[0].IsNumber()) {
+                dir = HumanoidActions::HitDirFromWorld(go, Vec3{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()});
+                if (a.size() >= 4) heavy = a[3].AsFloat() != 0.0f;
+            } else if (!a.empty() && a[0].IsVec3()) {
+                dir = HumanoidActions::HitDirFromWorld(go, a[0].AsVec3());
+                if (a.size() >= 2) heavy = a[1].AsFloat() != 0.0f;
+            } else {
+                if (!a.empty() && a[0].IsString()) dir = HumanoidActions::DirFromName(a[0].AsString());
+                else if (!a.empty() && a[0].IsNumber()) dir = (int)a[0].AsFloat();
+                if (a.size() >= 2) heavy = a[1].AsFloat() != 0.0f;
+            }
+            return Value{HumanoidActions::HitReact(go, dir, heavy) ? 1.0f : 0.0f};
+        };
+        auto dirArg = [](const Value& v) {
+            if (v.IsString()) return HumanoidActions::DirFromName(v.AsString());
+            return (int)v.AsFloat();
+        };
+        b["roll"] = [selfObj, dirArg](std::vector<Value>& a) {
+            const int dir = a.empty() ? 0 : dirArg(a[0]);
+            return Value{HumanoidActions::RequestRoll(selfObj(), dir) ? 1.0f : 0.0f};
+        };
+        b["dodge"] = [selfObj, dirArg](std::vector<Value>& a) {
+            const int dir = a.empty() ? 0 : dirArg(a[0]);
+            return Value{HumanoidActions::RequestDodge(selfObj(), dir) ? 1.0f : 0.0f};
+        };
+        // Vault / mantle / ledge. These probe even when the controller flags are off.
+        b["vault"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::RequestVault(selfObj()) ? 1.0f : 0.0f};
+        };
+        b["mantle"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::RequestMantle(selfObj()) ? 1.0f : 0.0f};
+        };
+        b["ledge_grab"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::RequestLedgeGrab(selfObj()) ? 1.0f : 0.0f};
+        };
+        b["climb_up"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::RequestClimbUp(selfObj()) ? 1.0f : 0.0f};
+        };
+        b["let_go"] = [selfObj](std::vector<Value>&) {
+            HumanoidActions::RequestLetGo(selfObj());
+            return Value{};
+        };
+        b["is_hanging"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::IsHanging(selfObj()) ? 1.0f : 0.0f};
+        };
+        b["shimmy"] = [selfObj](std::vector<Value>& a) {
+            HumanoidActions::SetShimmy(selfObj(), a.empty() ? 0.0f : a[0].AsFloat());
+            return Value{};
         };
         // ---- Blend shapes (morph targets) on this object and everything under it ----
         //   blend_shape("Smile", 0.8)   set a shape's weight 0..1 on every mesh that has it
@@ -8576,34 +8696,8 @@ struct OkayScriptVM::Impl {
         b["seq_insert_callback"] = seqOp([fnFromArg](TweenSequence& s, std::vector<Value>& a) {
             if (auto f = fnFromArg(a, 2)) s.InsertCallback(a.size() > 1 ? a[1].AsFloat() : 0.0f, f);
         });
-        // ---- Save system: snapshot the whole scene to a slot file ------
-        b["save_game"] = [this](std::vector<Value>& a) {
-            Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
-            if (!s) return Value{0.0f};
-            std::string slot = a.empty() ? "save1" : a[0].AsString();
-            if (!ScriptPathOk(slot, "save_game")) return Value{0.0f};
-            const std::string path = Save::Resolve("saves/" + slot + ".okaysave");
-            std::error_code ec; std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
-            return Value{SceneSerializer::SaveToFile(*s, path) ? 1.0f : 0.0f};
-        };
-        b["load_game"] = [this](std::vector<Value>& a) {
-            Scene* s = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
-            std::string slot = a.empty() ? "save1" : a[0].AsString();
-            if (!ScriptPathOk(slot, "load_game")) return Value{0.0f};
-            std::string path = ScriptReadPath("saves/" + slot + ".okaysave");
-            if (s && std::ifstream(path).good()) { s->RequestLoad(path); return Value{1.0f}; }
-            return Value{0.0f};
-        };
-        b["save_exists"] = [](std::vector<Value>& a) {
-            std::string slot = a.empty() ? "save1" : a[0].AsString();
-            if (!ScriptPathOk(slot, "save_exists")) return Value{0.0f};
-            return Value{std::ifstream(ScriptReadPath("saves/" + slot + ".okaysave")).good() ? 1.0f : 0.0f};
-        };
-        b["delete_save"] = [](std::vector<Value>& a) {
-            std::string slot = a.empty() ? "save1" : a[0].AsString();
-            if (!ScriptPathOk(slot, "delete_save")) return Value{0.0f};
-            return Value{std::remove(ScriptReadPath("saves/" + slot + ".okaysave").c_str()) == 0 ? 1.0f : 0.0f};
-        };
+        // Whole-game saves are save_game / load_game / has_save above (SaveGame).
+        b["save_exists"] = b["has_save"];
 
         // ---- Friendly aliases: intuitive names for common builtins so games
         //      read naturally. Each points at an already-registered function. ----
@@ -9762,6 +9856,13 @@ vs::VsValue OkayScriptVM::GetGlobal(const std::string& name) const {
     auto& g = m_impl->rt.Global().vars;
     auto it = g.find(name);
     return it != g.end() ? it->second : vs::VsValue{};
+}
+
+std::vector<std::string> OkayScriptVM::GlobalNames() const {
+    std::vector<std::string> out;
+    for (const auto& kv : m_impl->rt.Global().vars) out.push_back(kv.first);
+    std::sort(out.begin(), out.end());
+    return out;
 }
 
 void OkayScriptVM::SetGlobal(const std::string& name, const vs::VsValue& v) {

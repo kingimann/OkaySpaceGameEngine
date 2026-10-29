@@ -1,5 +1,59 @@
 OkaySpace Game Engine — Changelog
 
+v2.840.0
+  Characters and view
+  - Switching to third person with V no longer hides the character's head
+    (or, in the editor's Game view, the whole body): in first person only
+    the owner's own camera skips the head. First-person hands, run feel
+    and hold settings land with it (#505). A project created by an older
+    First Person or Third Person starter, whose player had only one of the
+    two controllers, gets the other when it loads, so its V switches the
+    same way (#510).
+  Save games
+  - Save the whole game to a slot: every object, the player, inventories,
+    spawned and destroyed objects, velocities, script variables and play
+    time. Load it from a script or a menu; an AutoSave component saves
+    every N seconds or on scene start. Scripts get SaveGame.Save / Load /
+    Exists / Delete / Label and playTime (#498; see docs/save_games.md).
+  Animation
+  - Built-in action clips for the Character: a dolphin dive from a sprint
+    into prone, chair and ground sitting with a Seat component, hit
+    reactions on an upper-body layer, roll, dodge and slide, vault, mantle
+    and ledge shimmy, swimming, and nod, shake and shrug emotes. The ones
+    that change movement stay off until a game turns them on (#506).
+  - Ragdolls: a character goes limp when it dies, pushed away from the hit,
+    and hits shove the struck part and spring back. Works on the blocky
+    Character and on imported humanoid rigs; revive restores the pose.
+    Scripts: ragdoll, ragdoll_push, is_ragdoll (#501; see docs/ragdolls.md).
+  - Animation window: a Character clip's keys are a lane of diamonds you
+    click, box-select, drag and nudge, with per-key easing, retime,
+    amplify and offset, copy / paste / mirror of a pose or the clip, and
+    insert or remove time (#509).
+  - The Animation tab is a clip editor: a clip list (new, duplicate, rename,
+    delete, import, export, bake from the built-ins), a dope sheet with a row
+    per bone (hollow diamonds where a bone holds still), a curve editor for
+    the picked bone, a transport with frame snapping, Record (angle fields,
+    the rotate gizmo on a rig part, the root offset all key at the playhead),
+    and an onion skin that draws the neighbouring keys in the Scene view
+    (#511).
+  - The Animator window is rebuilt: a canvas with pan, zoom, box and
+    multi-select, inline rename, a minimap and auto layout; readable nodes
+    and arrows (the running state lights up in Play and the fired
+    transition flashes); a tabbed side panel with state, transition,
+    parameter, layer, issues and clip tabs; parameters live in Play with
+    defaults; 1D and 2D blend trees you drag; layer masks as a bone tree; a
+    transition blend preview; and a list of the graph's problems (#512).
+  IK
+  - Look-At IK: each bone takes a share of the turn, the look stays within
+    a Clamp of the body's forward (a target behind is watched from the
+    corner of the eye), eye bones lead the head, and Max Distance fades
+    the look out on far targets. Limb IK and Full Body IK can Stretch a
+    limb for a goal just out of reach. Foot IK's Toe & Heel Rays sit a
+    foot on a stair edge instead of sinking its toes in. Auto-Detect reads
+    which way a rig's head bone faces, so look-at and aim work on rigs
+    whose head axis points backwards. Transitions can Keep phase, so a
+    walk hands its step to a run (#507, #508).
+
 v2.839.0
   Animation
   - The built-in character's walk is smooth at full speed: walking at the

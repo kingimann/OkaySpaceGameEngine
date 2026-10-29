@@ -4,12 +4,13 @@ What is being worked on right now and what comes next. Kept current by the main
 (coordinating) Claude session; each item links its PR once one exists. Every PR
 merges once its five CI jobs are green, and a release follows.
 
-_Last updated: 2026-10-27 13:40 UTC_
+_Last updated: 2026-10-29 05:37 UTC_
 
 ## Releases
 
 | Version | What's in it |
 |---|---|
+| 2.840.0 | First-person hands, view switch and the third-person head fix (#505); save games (#498); built-in action clips (#506); ragdolls (#501); IK batches 1–2: Look-At shares, clamp, eyes and range, Limb and Full Body stretch, foot toe/heel rays, keep-phase transitions (#507, #508); Animation window key lane (#509); older starter projects get both view controllers on load (#510); Animation tab clip editor: dope sheet, curves, record, onion skin, clip list (#511); Animator window: canvas, parameters, blend trees, inspectors, layers (#512) |
 | 2.839.0 | Smoother built-in walk: fast walks ease into a jog, baked cycles on a curve (#500); an Animator graph for imported characters' own clips (#499, IK plan item 7); net_interp fix: no near-second lag after an object stands still (#502) |
 | 2.838.0 | Audio: stereo mixer, OGG/MP3, music player, saved volume settings, Audio Mixer (#492); input actions, rebinding and full gamepad (#494); action framework (#435); bone mapper (#493); grounded stops (#480); IK guide (#424); inventory tooltips and host-owned bags (#426, #481) |
 | 2.837.0 | IK plan PR 7: one solve order, goals that swing (#417); bind-pose recovery and held props on model swap (#416); Script Editor undo for Format/Rename/Replace All/Reload (#445); Plugins menu with several plugins (#479) |

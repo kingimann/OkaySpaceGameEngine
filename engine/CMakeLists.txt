@@ -88,6 +88,8 @@ add_library(okay_engine
     src/Animation/HumanoidLibrary.cpp
     src/Animation/HumanoidActions.cpp
     src/Components/AnimClip.cpp
+    src/Components/Sequence.cpp
+    src/Components/SequencePlayer.cpp
     src/Components/BuildMode.cpp
     src/Components/DialogueGraph.cpp
     src/Components/DialogueRunner.cpp
@@ -102,6 +104,11 @@ add_library(okay_engine
     src/Audio/AudioClip.cpp
     src/Audio/AudioDecode.cpp
     src/AI/Pathfinding.cpp
+    src/AI/NavMesh.cpp
+    src/AI/NavMeshBake.cpp
+    src/AI/NavMeshSurface.cpp
+    src/AI/NavMeshAgent.cpp
+    src/AI/Navigation.cpp
     src/Graphics/Image.cpp
     src/Graphics/Font.cpp
     src/Graphics/TtfFont.cpp

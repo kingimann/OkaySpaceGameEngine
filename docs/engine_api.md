@@ -347,6 +347,38 @@ Whole-game saves in named slots: every object, the player, inventories, script v
 | `SaveGame.Delete(slot)` | `SaveGame.Delete/1` | step | slot (Text) | Result (Bool) | Delete the save in a slot. |
 | `SaveGame.Label(slot)` | `SaveGame.Label/1` | value | slot (Text) | Result (Text) | The label a slot was saved with ("" if empty). |
 
+## Sequence
+
+Cutscenes: play a .okayseq timeline through a Sequence Player in the scene.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `Sequence.isPlaying` | `Sequence.isPlaying` | value | - | isPlaying (Bool) | True while a sequence plays. |
+| `Sequence.time` | `Sequence.time` | value | - | time (Number) | Seconds into the playing sequence (0 when none plays). |
+| `Sequence.lastEvent` | `Sequence.lastEvent` | value | - | lastEvent (Text) | The event being delivered: read it in OnSequenceEvent(). |
+| `Sequence.Play(name)` | `Sequence.Play/1` | step | name (Text) | Result (Bool) | Play the sequence named like this (a Sequence Player's file, or Assets/<name>.okayseq). False if there is none. |
+| `Sequence.Stop()` | `Sequence.Stop/0` | step | - | - | Stop every playing sequence; the camera goes back to the game. |
+
+## NavMeshAgent
+
+Walks the object along the scene's navigation mesh (the grid when none is baked). The object needs a Nav Mesh Agent.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<NavMeshAgent>().speed` | `NavMeshAgent.speed` | value | Target (Object) | speed (Number) | Top speed in units per second. |
+| `GetComponent<NavMeshAgent>().speed = speed` | `NavMeshAgent.speed=` | step | speed (Number), Target (Object) | - | Top speed in units per second. |
+| `GetComponent<NavMeshAgent>().stoppingDistance` | `NavMeshAgent.stoppingDistance` | value | Target (Object) | stoppingDistance (Number) | How close to the destination counts as there. |
+| `GetComponent<NavMeshAgent>().stoppingDistance = stoppingDistance` | `NavMeshAgent.stoppingDistance=` | step | stoppingDistance (Number), Target (Object) | - | How close to the destination counts as there. |
+| `GetComponent<NavMeshAgent>().isStopped` | `NavMeshAgent.isStopped` | value | Target (Object) | isStopped (Bool) | True after Stop, until Resume or a new destination. |
+| `GetComponent<NavMeshAgent>().velocity` | `NavMeshAgent.velocity` | value | Target (Object) | velocity (Vector3) | How it is moving right now, in units per second. |
+| `GetComponent<NavMeshAgent>().destination` | `NavMeshAgent.destination` | value | Target (Object) | destination (Vector3) | The point it was last sent to. |
+| `GetComponent<NavMeshAgent>().SetDestination(point)` | `NavMeshAgent.SetDestination/1` | step | point (Vector3), Target (Object) | - | Plan a path to a world point and start walking there. |
+| `GetComponent<NavMeshAgent>().Stop()` | `NavMeshAgent.Stop/0` | step | Target (Object) | - | Stop where it is (Resume continues to the same point). |
+| `GetComponent<NavMeshAgent>().Resume()` | `NavMeshAgent.Resume/0` | step | Target (Object) | - | Carry on to the destination after Stop. |
+| `GetComponent<NavMeshAgent>().HasPath()` | `NavMeshAgent.HasPath/0` | value | Target (Object) | Result (Bool) | True while it is walking to a destination. |
+| `GetComponent<NavMeshAgent>().RemainingDistance()` | `NavMeshAgent.RemainingDistance/0` | value | Target (Object) | Result (Number) | Path length left to the destination (0 when there is none). |
+| `GetComponent<NavMeshAgent>().Arrived()` | `NavMeshAgent.Arrived/0` | value | Target (Object) | Result (Bool) | True once the last destination was reached (until the next SetDestination). |
+
 ## Dialogue
 
 Conversations: start an object's Dialogue Runner (by the object's or the graph's name) and ask whether one runs.

@@ -254,6 +254,10 @@ inline const std::vector<VsDef>& Registry() {
         {"AnimState",    "Anim State",     CAT_DATA, false, {}, {}, {"State"}, 0, nullptr},
         {"IkLook",       "IK Look At",     CAT_ACTION, true, {""}, {"Point","Weight"}, {}, 0, nullptr},
         {"IkHand",       "IK Hand Reach",  CAT_ACTION, true, {""}, {"Point","Weight"}, {}, 1, "left / right"},
+        // --- Navigation (Nav Mesh Agent) ---
+        {"NavMoveTo",    "Nav Move To",    CAT_ACTION, true, {""}, {"Point"}, {}, 0, nullptr},
+        {"NavStop",      "Nav Stop",       CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"NavArrived",   "Nav Arrived",    CAT_DATA, false, {}, {}, {"Bool"}, 0, nullptr},
         // --- Flow: loops, gates, switches ---
         {"ForLoop",   "For Loop",      CAT_FLOW, true, {"Body","Done"}, {"First","Last"}, {"Index"}, 0, nullptr},
         {"Repeat",    "Repeat N",      CAT_FLOW, true, {"Body"}, {}, {}, 1, "count"},
@@ -386,6 +390,10 @@ inline const std::vector<VsDef>& Registry() {
         {"OnItemUsed", "On Item Used", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnEquip", "On Equip", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnCraft", "On Craft", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        // Cutscenes (a Sequence Player plays a .okayseq; Event Name = the event).
+        {"OnSequenceEvent", "On Sequence Event", CAT_EVENT, false, {""}, {}, {}, 1, "event (blank = any)"},
+        {"PlaySequence",    "Play Sequence",     CAT_ACTION, true, {""}, {}, {}, 1, "name"},
+        {"StopSequence",    "Stop Sequence",     CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         // Dialogue, story variables and quests (Event Name = the event / quest id, Event Value = the objective / count).
         {"StartDialogue",     "Start Dialogue",     CAT_ACTION, true, {""}, {}, {}, 1, "object / graph name"},
         {"OnDialogueEvent",   "On Dialogue Event",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
@@ -655,6 +663,7 @@ inline std::string VsEntryName(const std::string& type, const std::string& arg) 
         type == "OnDialogueEvent" || type == "OnDialogueEnd" || type == "OnQuestStarted" || type == "OnQuestCompleted" ||
         type == "OnQuestFailed" || type == "OnObjectiveCompleted" || type == "OnQuestEvent") return type;
     if (type == "OnAnimEvent") return arg.empty() ? std::string("OnAnimEvent") : "OnAnimEvent:" + tok(arg, "");
+    if (type == "OnSequenceEvent") return arg.empty() ? std::string("OnSequenceEvent") : "OnSequenceEvent:" + tok(arg, "");
     if (type == "OnKey")   return "OnKey:" + tok(arg, "space");
     if (type == "OnKeyUp") return "OnKeyUp:" + tok(arg, "space");
     if (type == "OnTimer") return "OnTimer:" + tok(arg, "1");
@@ -1110,6 +1119,7 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
     if (t == "MouseButton")    return "mouse_held(" + VsNum(lit("0"), "0") + ")";
     if (t == "MouseButtonDown")return "mouse_down(" + VsNum(lit("0"), "0") + ")";
     if (t == "AnimState")      return "anim_state()";
+    if (t == "NavArrived")     return "nav_arrived()";
     if (t == "GetStoryVar")    return "get_story(" + q(lit("")) + ")";
     if (t == "QuestState")     return "quest_state(" + q(lit("")) + ")";
     if (t == "IsInAction")     return "is_in_action()";
@@ -1276,6 +1286,8 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="SetActive")   out += ind + "set_active_of(" + q(arg("self")) + ", " + in(0, "true") + ")\n";
     else if (t=="SetText")     out += ind + "set_text_of(" + q(arg("self")) + ", " + in(0, "\"\"") + ")\n";
     else if (t=="LoadScene")   out += ind + "load_scene_name(" + q(arg("")) + ")\n";
+    else if (t=="PlaySequence") out += ind + "play_sequence(" + q(arg("")) + ")\n";
+    else if (t=="StopSequence") out += ind + "stop_sequence()\n";
     else if (t=="AnimTrigger") out += ind + "anim_trigger(" + q(arg("")) + ")\n";
     else if (t=="AnimSetFloat")out += ind + "anim_set_float(" + q(arg("")) + ", " + in(0) + ")\n";
     else if (t=="AnimSetBool") out += ind + "anim_set_bool(" + q(arg("")) + ", " + in(0) + ")\n";
@@ -1285,6 +1297,8 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="CompleteObjective") out += ind + "complete_objective(" + q(arg("")) + ", " + in(0, "0") + ")\n";
     else if (t=="IkLook")      out += ind + "ik_look(vec_x(" + in(0) + "), vec_y(" + in(0) + "), vec_z(" + in(0) + "), " + in(1, "1") + ")\n";
     else if (t=="IkHand")      out += ind + "ik_hand(" + q(arg("right")) + ", vec_x(" + in(0) + "), vec_y(" + in(0) + "), vec_z(" + in(0) + "), " + in(1, "1") + ")\n";
+    else if (t=="NavMoveTo")   out += ind + "nav_move_to(vec_x(" + in(0) + "), vec_y(" + in(0) + "), vec_z(" + in(0) + "))\n";
+    else if (t=="NavStop")     out += ind + "nav_stop()\n";
     else if (t=="Cooldown")    out += ind + "// Cooldown (" + VsCommentText(arg("1")) + "s): gate the actions after this with a timer\n";
     else if (t=="ForLoop") {
         const std::string v = "_i" + std::to_string(nodeId);
@@ -1651,6 +1665,21 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
             if (n.arg.empty()) chain(n.id, "        ");
             else {
                 out += "        if (anim_event == " + VsStrLit(n.arg) + ") {\n";   // brace on this line: the terminator pass would put a ; after a bare if (...)
+                chain(n.id, "            ");
+                out += "        }\n";
+            }
+        }
+        if (opened) out += "    }\n";
+    }
+    // Sequence events: one OnSequenceEvent(event_name) handler; named nodes check the name.
+    {
+        bool opened = false;
+        for (const auto& n : g.nodes) {
+            if (n.type != "OnSequenceEvent") continue;
+            if (!opened) { open("void OnSequenceEvent(string event_name)"); opened = true; }
+            if (n.arg.empty()) chain(n.id, "        ");
+            else {
+                out += "        if (event_name == " + VsStrLit(n.arg) + ") {\n";
                 chain(n.id, "            ");
                 out += "        }\n";
             }

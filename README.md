@@ -513,11 +513,13 @@ the rest join over LAN or a forwarded port.
 - [`docs/editor.md`](docs/editor.md) — the desktop editor and **Build Game**.
 - [`docs/modeling.md`](docs/modeling.md) — the built-in **mesh editor**: primitives, modifiers, sculpting, UV unwrap.
 - [`docs/animation.md`](docs/animation.md) — keyframe clips, **imported (FBX/GLB) animation**, state machine, IK.
+- [`docs/cutscenes.md`](docs/cutscenes.md) — **cutscenes**: sequences of camera shots, keys, cues, events and subtitles, the Timeline window, the Sequence Player.
 - [`docs/scripting.md`](docs/scripting.md) — the OkayScript language + builtins.
 - [`docs/visual_scripting.md`](docs/visual_scripting.md) — the node-graph runtime + no-code Action Lists (incl. **raycasting**).
 - [`docs/survival_kit.md`](docs/survival_kit.md) — ready-made **health / hunger / thirst / stamina / oxygen / temperature** scripts.
 - [`docs/build_mode.md`](docs/build_mode.md) — let **players build** in your game, wire buttons to doors with **logic links**, and save their creations.
 - [`docs/vehicle_controller.md`](docs/vehicle_controller.md) — arcade **vehicle/car controller**.
+- [`docs/navigation.md`](docs/navigation.md) — **navigation meshes**: bake walkable polygons, Nav Mesh Agents, local avoidance, the grid fallback.
 - [`docs/ui_world_space.md`](docs/ui_world_space.md) — **in-world (3D) UI**: world canvases and standalone 3D widgets.
 - [`docs/ui_html.md`](docs/ui_html.md) — author menus/HUDs in an **HTML + CSS** subset (UIDocument).
 - [`docs/dialogue_quests.md`](docs/dialogue_quests.md) — **dialogue graphs** (`.okaydialog`, the Dialogue window), **story variables** and **quests** (`.okayquest`, objectives, rewards, tracker and journal).

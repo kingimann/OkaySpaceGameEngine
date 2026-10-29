@@ -30,6 +30,8 @@
 #include "okay/Components/UIButton.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/SaveGame.hpp"
+#include "okay/Components/SequencePlayer.hpp"
+#include "okay/Components/NavMeshAgent.hpp"
 #include "okay/Components/DialogueRunner.hpp"   // Dialogue / Story / Quest statics
 #include "okay/Components/QuestLog.hpp"
 #include "okay/Components/StoryState.hpp"
@@ -936,6 +938,84 @@ EngineApi Build() {
             [](const Value&, CallContext&) { return Value{SaveGame::PlayTime()}; },
             "Seconds played, counting the time in the save that was loaded."));
         api.types.push_back(std::move(sg));
+    }
+    // ---- Sequence (cutscenes) ----
+    {
+        ApiType sq; sq.name = "Sequence"; sq.isStatic = true;
+        sq.doc = "Cutscenes: play a .okayseq timeline through a Sequence Player in the scene.";
+        auto sceneOf = [](CallContext& c) -> Scene* { return c.self ? c.self->scene() : nullptr; };
+        sq.staticMethods.push_back(method("Play", {tString}, {"name"}, tBool,
+            [sceneOf](const Value&, std::vector<Value>& a, CallContext& c) {
+                Scene* s = sceneOf(c);
+                return Value{s && SequencePlayer::PlayByName(*s, c.self, S(a[0]))};
+            }, "Play the sequence named like this (a Sequence Player's file, or Assets/<name>.okayseq). False if there is none."));
+        sq.staticMethods.push_back(method("Stop", {}, {}, tVoid,
+            [sceneOf](const Value&, std::vector<Value>&, CallContext& c) { if (Scene* s = sceneOf(c)) SequencePlayer::StopAll(*s); return Value{}; },
+            "Stop every playing sequence; the camera goes back to the game."));
+        sq.staticProps.push_back(ro("isPlaying", tBool,
+            [sceneOf](const Value&, CallContext& c) { Scene* s = sceneOf(c); return Value{s && SequencePlayer::Playing(*s) != nullptr}; },
+            "True while a sequence plays."));
+        sq.staticProps.push_back(ro("time", tFloat,
+            [sceneOf](const Value&, CallContext& c) {
+                Scene* s = sceneOf(c);
+                SequencePlayer* sp = s ? SequencePlayer::Playing(*s) : nullptr;
+                return Value{sp ? sp->Time() : 0.0f};
+            }, "Seconds into the playing sequence (0 when none plays)."));
+        sq.staticProps.push_back(ro("lastEvent", tString,
+            [](const Value&, CallContext&) { return Value{SequencePlayer::LastEvent()}; },
+            "The event being delivered: read it in OnSequenceEvent()."));
+        api.types.push_back(std::move(sq));
+    }
+    // ---- NavMeshAgent ----
+    {
+        ApiType na; na.name = "NavMeshAgent"; na.isComponent = true;
+        na.doc = "Walks the object along the scene's navigation mesh (the grid when none is baked). The object needs a Nav Mesh Agent.";
+        na.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<NavMeshAgent>() : nullptr; };
+        auto agentOf = [](const Value& self, CallContext& c) -> NavMeshAgent* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* a = g->GetComponent<NavMeshAgent>();
+            if (!a) throw RuntimeError("'" + g->name + "' has no Nav Mesh Agent (add one in the Inspector)", c.loc);
+            return a;
+        };
+        na.methods.push_back(method("SetDestination", {tVec}, {"point"}, tVoid,
+            [agentOf](const Value& s, std::vector<Value>& a, CallContext& c) { agentOf(s, c)->SetDestination(V(a[0])); return Value{}; },
+            "Plan a path to a world point and start walking there."));
+        na.methods.push_back(method("Stop", {}, {}, tVoid,
+            [agentOf](const Value& s, std::vector<Value>&, CallContext& c) { agentOf(s, c)->Stop(); return Value{}; },
+            "Stop where it is (Resume continues to the same point)."));
+        na.methods.push_back(method("Resume", {}, {}, tVoid,
+            [agentOf](const Value& s, std::vector<Value>&, CallContext& c) { agentOf(s, c)->Resume(); return Value{}; },
+            "Carry on to the destination after Stop."));
+        ApiMethod hasPath = method("HasPath", {}, {}, tBool,
+            [agentOf](const Value& s, std::vector<Value>&, CallContext& c) { return Value{agentOf(s, c)->HasPath()}; },
+            "True while it is walking to a destination.");
+        hasPath.pure = true; na.methods.push_back(std::move(hasPath));
+        ApiMethod remaining = method("RemainingDistance", {}, {}, tFloat,
+            [agentOf](const Value& s, std::vector<Value>&, CallContext& c) { return Value{agentOf(s, c)->RemainingDistance()}; },
+            "Path length left to the destination (0 when there is none).");
+        remaining.pure = true; na.methods.push_back(std::move(remaining));
+        ApiMethod arrived = method("Arrived", {}, {}, tBool,
+            [agentOf](const Value& s, std::vector<Value>&, CallContext& c) { return Value{agentOf(s, c)->Arrived()}; },
+            "True once the last destination was reached (until the next SetDestination).");
+        arrived.pure = true; na.methods.push_back(std::move(arrived));
+        na.props.push_back(prop("speed", tFloat,
+            [agentOf](const Value& s, CallContext& c) { return Value{agentOf(s, c)->speed}; },
+            [agentOf](const Value& s, const Value& v, CallContext& c) { agentOf(s, c)->speed = std::max(0.0f, F(v)); },
+            "Top speed in units per second."));
+        na.props.push_back(prop("stoppingDistance", tFloat,
+            [agentOf](const Value& s, CallContext& c) { return Value{agentOf(s, c)->stoppingDistance}; },
+            [agentOf](const Value& s, const Value& v, CallContext& c) { agentOf(s, c)->stoppingDistance = std::max(0.0f, F(v)); },
+            "How close to the destination counts as there."));
+        na.props.push_back(ro("isStopped", tBool,
+            [agentOf](const Value& s, CallContext& c) { return Value{agentOf(s, c)->IsStopped()}; },
+            "True after Stop, until Resume or a new destination."));
+        na.props.push_back(ro("velocity", tVec,
+            [agentOf](const Value& s, CallContext& c) { return Value{agentOf(s, c)->Velocity()}; },
+            "How it is moving right now, in units per second."));
+        na.props.push_back(ro("destination", tVec,
+            [agentOf](const Value& s, CallContext& c) { return Value{agentOf(s, c)->Destination()}; },
+            "The point it was last sent to."));
+        api.types.push_back(std::move(na));
     }
     // ---- Dialogue / Story / Quest ----
     {

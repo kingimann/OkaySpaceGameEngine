@@ -13,7 +13,7 @@
 #include "okay/Components/UIAnchor.hpp"     // UICanvas::Width/Height (viewport)
 #include "okay/Input/Input.hpp"
 #include "okay/Input/Cursor.hpp"
-#include "okay/AI/NavGrid3D.hpp"
+#include "okay/AI/Navigation.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Math/Mat4.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -51,8 +51,9 @@ public:
     bool  showCursor = true;        // keep the mouse pointer visible (you click to move!)
     float groundY     = 0.0f;       // ground plane height when usePlayerHeight is off
     bool  usePlayerHeight = true;   // pick on the plane at the player's current Y
-    /// Route around obstacles with grid A* (walls, props, holes) — clicks
-    /// behind a wall walk AROUND it, Diablo/RuneScape style.
+    /// Route around obstacles (walls, props, holes) — clicks behind a wall walk
+    /// AROUND it, Diablo/RuneScape style: over the scene's baked NavMesh when it
+    /// has one, else grid A*.
     bool  usePathfinding = true;
     float repathInterval = 0.6f;
     /// Spawn a brief expanding ring at the clicked point (in-game feedback).
@@ -129,7 +130,7 @@ public:
             float gm = std::sqrt((m_dest.x - m_pathGoal.x) * (m_dest.x - m_pathGoal.x) +
                                  (m_dest.z - m_pathGoal.z) * (m_dest.z - m_pathGoal.z));
             if (m_repath <= 0.0f || m_path.empty() || gm > 0.5f) {
-                m_path = NavGrid3D::FindPath(scene, pos, m_dest, gameObject);
+                m_path = Navigation::FindPath(scene, pos, m_dest, 0.4f, gameObject);
                 m_pathIdx = 0; m_pathGoal = m_dest; m_repath = repathInterval;
             }
             while (m_pathIdx < (int)m_path.size() &&

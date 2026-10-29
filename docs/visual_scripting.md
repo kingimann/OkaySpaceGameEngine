@@ -763,6 +763,9 @@ These are in the node search. The [palette index](#palette-index) at the end lis
 | On Equip | An item was equipped. Event Name is the slot, Event Value the item. Taking it off does not fire this node. |
 | On Craft | A recipe finished. Event Name is the output item. |
 
+**Cutscenes** (a Sequence Player plays a `.okayseq`, see docs/cutscenes.md): **Play Sequence** and **Stop Sequence** steps, and
+**On Sequence Event** (blank catches every event; Event Name reads it).
+
 **Anti-cheat** (the server; the scene needs an Anti-Cheat Config):
 
 | Node | What it does |
@@ -862,6 +865,7 @@ The **Engine API** group is the generated list in [engine_api.md](engine_api.md)
 - **On Item Used** (`OnItemUsed`)
 - **On Equip** (`OnEquip`)
 - **On Craft** (`OnCraft`)
+- **On Sequence Event** (`OnSequenceEvent`, optional name)
 - **On Cheat Detected** (`OnCheatDetected`)
 - **On Validate Rpc** (`OnValidateRpc`)
 - **On Validate Hit** (`OnValidateHit`)
@@ -1079,6 +1083,9 @@ The **Engine API** group is the generated list in [engine_api.md](engine_api.md)
 - **Anim Set Bool** (`AnimSetBool`) — in Value; setting: parameter
 - **IK Look At** (`IkLook`) — in Point, Weight
 - **IK Hand Reach** (`IkHand`) — in Point, Weight; setting: left / right
+- **Nav Move To** (`NavMoveTo`) — in Point: the object's Nav Mesh Agent walks there (see docs/navigation.md)
+- **Nav Stop** (`NavStop`) — stops the Nav Mesh Agent
+- **Nav Arrived** (`NavArrived`) — out Bool: true once the last Nav Move To point was reached
 - **Set Color** (`SetColor`) — in R, G, B, A
 - **Play Clip** (`PlayClip`) — setting: clip name
 - **Set Time Scale** (`SetTimeScale`) — in Scale

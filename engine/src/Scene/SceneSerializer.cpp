@@ -20,6 +20,7 @@
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/PlayerView.hpp"
 #include "okay/Components/UITheme.hpp"          // grok/ui-theme
+#include "okay/Components/SequencePlayer.hpp"
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/BlockBuilder.hpp"
@@ -60,6 +61,9 @@
 #include "okay/Components/TopDownController2D.hpp"
 #include "okay/Components/FreeRoamController.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
+#include "okay/Components/NavMeshSurface.hpp"
+#include "okay/Components/NavMeshAgent.hpp"
+#include "okay/Components/NavMeshObstacle.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Collider2D.hpp"
@@ -2936,6 +2940,42 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             out << " " << c->count << " " << (c->smooth ? 1 : 0);
             for (int i = 0; i < c->count; ++i) out << " " << c->keys[i].time << " " << c->keys[i].value;
         }
+        out << "\n";
+    }
+    // Sequence player (cutscenes). key=value record; the playback state is not saved.
+    if (auto* sp = go->GetComponent<SequencePlayer>()) {
+        out << "  sequenceplayer";
+        KvOut k{out};
+        k.str("path", sp->sequencePath).b("auto", sp->playOnStart).b("loop", sp->loop)("speed", sp->timeScale)
+         .key("skip", sp->skipKey).b("lock", sp->lockPlayer);
+        out << "\n";
+    }
+    // Navigation: key=value records of their own, so older scenes load unchanged.
+    // The baked mesh stays in the .okaynav file the surface points at.
+    if (auto* ns = go->GetComponent<NavMeshSurface>()) {
+        out << "  navsurface";
+        KvOut k{out};
+        k("radius", ns->settings.agentRadius)("height", ns->settings.agentHeight)("slope", ns->settings.maxSlope)
+         ("step", ns->settings.maxStep)("cell", ns->settings.cellSize)("cellh", ns->settings.cellHeight)
+         .str("path", ns->navPath).b("autob", ns->autoBounds)
+         ("bcx", ns->boundsCenter.x)("bcy", ns->boundsCenter.y)("bcz", ns->boundsCenter.z)
+         ("bsx", ns->boundsSize.x)("bsy", ns->boundsSize.y)("bsz", ns->boundsSize.z)
+         .b("dyn", ns->includeDynamic)("layers", ns->layerMask).b("bakeplay", ns->bakeBeforePlay);
+        out << "\n";
+    }
+    if (auto* na = go->GetComponent<NavMeshAgent>()) {
+        out << "  navagent";
+        KvOut k{out};
+        k("radius", na->radius)("height", na->height)("speed", na->speed)("accel", na->acceleration)
+         ("angular", na->angularSpeed)("stop", na->stoppingDistance).b("repath", na->autoRepath)
+         ("repathT", na->repathInterval)("prio", na->avoidancePriority)("avoid", na->avoidanceRange)
+         .b("brake", na->autoBraking).b("face", na->faceMovement).b("anim", na->driveAnimation)("base", na->baseOffset);
+        out << "\n";
+    }
+    if (auto* no = go->GetComponent<NavMeshObstacle>()) {
+        out << "  navobstacle";
+        KvOut k{out};
+        k("sx", no->size.x)("sy", no->size.y)("sz", no->size.z)("cx", no->center.x)("cy", no->center.y)("cz", no->center.z);
         out << "\n";
     }
     // ---- Dialogue and quests: own key=value records, so older scenes skip nothing
@@ -7195,6 +7235,40 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             c->keys[c->count++] = k;
                         }
                     }
+                } else if (field == "sequenceplayer") {
+                    // Cutscene player. Missing keys keep the defaults.
+                    auto* sp = go->AddComponent<SequencePlayer>();
+                    KvIn k(in);
+                    k.str("path", sp->sequencePath);
+                    k.b("auto", sp->playOnStart);
+                    k.b("loop", sp->loop);
+                    k.f("speed", sp->timeScale);
+                    k.key("skip", sp->skipKey);
+                    k.b("lock", sp->lockPlayer);
+                } else if (field == "navsurface") {
+                    auto* ns = go->AddComponent<NavMeshSurface>();
+                    KvIn k(in);
+                    k.f("radius", ns->settings.agentRadius); k.f("height", ns->settings.agentHeight);
+                    k.f("slope", ns->settings.maxSlope); k.f("step", ns->settings.maxStep);
+                    k.f("cell", ns->settings.cellSize); k.f("cellh", ns->settings.cellHeight);
+                    k.str("path", ns->navPath); k.b("autob", ns->autoBounds);
+                    k.f("bcx", ns->boundsCenter.x); k.f("bcy", ns->boundsCenter.y); k.f("bcz", ns->boundsCenter.z);
+                    k.f("bsx", ns->boundsSize.x); k.f("bsy", ns->boundsSize.y); k.f("bsz", ns->boundsSize.z);
+                    k.b("dyn", ns->includeDynamic); k.u("layers", ns->layerMask); k.b("bakeplay", ns->bakeBeforePlay);
+                    ns->sceneDir = g_loadingSceneDir;   // the .okaynav is looked for next to the scene too
+                } else if (field == "navagent") {
+                    auto* na = go->AddComponent<NavMeshAgent>();
+                    KvIn k(in);
+                    k.f("radius", na->radius); k.f("height", na->height); k.f("speed", na->speed);
+                    k.f("accel", na->acceleration); k.f("angular", na->angularSpeed); k.f("stop", na->stoppingDistance);
+                    k.b("repath", na->autoRepath); k.f("repathT", na->repathInterval); k.i("prio", na->avoidancePriority);
+                    k.f("avoid", na->avoidanceRange); k.b("brake", na->autoBraking); k.b("face", na->faceMovement);
+                    k.b("anim", na->driveAnimation); k.f("base", na->baseOffset);
+                } else if (field == "navobstacle") {
+                    auto* no = go->AddComponent<NavMeshObstacle>();
+                    KvIn k(in);
+                    k.f("sx", no->size.x); k.f("sy", no->size.y); k.f("sz", no->size.z);
+                    k.f("cx", no->center.x); k.f("cy", no->center.y); k.f("cz", no->center.z);
                 } else if (field == "storystate") {
                     // Dialogue + quests: the story's global variables and flags.
                     auto* st = go->AddComponent<StoryState>();
@@ -7436,8 +7510,15 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         }
         if (auto* bm = go->GetComponent<BuildMode>())
             for (const auto& it : bm->palette) { add(it.prefab); add(it.icon); }
+        if (auto* sp = go->GetComponent<SequencePlayer>()) {
+            add(sp->sequencePath);
+            Sequence seq;   // the sounds its audio cues play ship with it
+            if (Sequence::LoadFromFile(sp->ResolvedPath(), seq))
+                for (const auto& tr : seq.audio) for (const auto& c : tr.cues) add(c.file);
+        }
         if (auto* lt = go->GetComponent<LogicTarget>()) add(lt->spawnPrefab);
         if (auto* ls = go->GetComponent<LootSource>()) add(ls->table);
+        if (auto* ns = go->GetComponent<NavMeshSurface>()) add(ns->navPath);   // the baked navmesh ships with the scene
     }
     // The item database (and its icons / drop prefabs) ships with any scene that has items.
     bool hasItems = false;

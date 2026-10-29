@@ -151,6 +151,9 @@ const Row kRows[] = {
         {"AnimState", false, "", "T"},
         {"IkLook", true, "VN", ""},
         {"IkHand", true, "VN", ""},
+        {"NavMoveTo", true, "V", ""},
+        {"NavStop", true, "", ""},
+        {"NavArrived", false, "", "B"},
         // Story: dialogues, story variables, quests.
         {"StartDialogue", true, "", ""},
         {"SetStoryVar", true, "A", ""},
@@ -368,6 +371,10 @@ const Row kRows[] = {
         {"FindObject", false, "", "O"},
         {"GetName", false, "", "T"},
         {"GetTag", false, "", "T"},
+        // Cutscenes (SequencePlayer).
+        {"OnSequenceEvent", false, "", ""},
+        {"PlaySequence", true, "", ""},
+        {"StopSequence", true, "", ""},
 };
 
 const std::unordered_map<std::string, NodeSignature>& Table() {

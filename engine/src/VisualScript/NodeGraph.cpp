@@ -236,6 +236,7 @@ int TargetPinFor(const std::string& type) {
         {"SetColor", 4}, {"SetVisible", 1}, {"PlaySound", 0}, {"PlayClip", 0},
         {"AnimTrigger", 0}, {"AnimSetFloat", 1}, {"AnimSetBool", 1}, {"AnimState", 0},
         {"SetBlendShape", 1}, {"GetBlendShape", 0}, {"IkLook", 2}, {"IkHand", 2},
+        {"NavMoveTo", 1}, {"NavStop", 0}, {"NavArrived", 0},
         {"GetName", 0}, {"GetTag", 0}};
     auto it = kPins.find(type);
     if (it != kPins.end()) return it->second;
@@ -310,7 +311,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         type == "OnObjectPlaced" || type == "OnObjectRemoved" || type == "OnLogicSignal" ||
         type == "OnCheatDetected" || type == "OnValidateRpc" || type == "OnValidateHit" ||
         type == "OnItemAdded" || type == "OnItemRemoved" || type == "OnInventoryFull" ||
-        type == "OnItemUsed" || type == "OnEquip" || type == "OnCraft" ||
+        type == "OnItemUsed" || type == "OnEquip" || type == "OnCraft" || type == "OnSequenceEvent" ||
         type == "OnDialogueEvent" || type == "OnDialogueEnd" || type == "OnQuestStarted" ||
         type == "OnQuestCompleted" || type == "OnQuestFailed" || type == "OnObjectiveCompleted" || type == "OnQuestEvent")
         return std::make_unique<EventNode>();
@@ -641,6 +642,8 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "AnimSetBool")     return std::make_unique<AnimParamNode>(AnimParamNode::Op::SetBool, argOr(""));
     if (type == "AnimState")       return std::make_unique<AnimStateNode>();
     if (type == "IkLook")          return std::make_unique<IkLookNode>();
+    if (type == "PlaySequence")    return std::make_unique<PlaySequenceNode>(argOr(""));
+    if (type == "StopSequence")    return std::make_unique<StopSequenceNode>();
     // Story: dialogues, story variables, quests (okay/VisualScript/NodesStory.hpp).
     if (type == "StartDialogue")     return std::make_unique<StartDialogueNode>(argOr(""));
     if (type == "SetStoryVar")       return std::make_unique<SetStoryVarNode>(argOr(""));
@@ -652,6 +655,9 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         std::string side = argOr("right");
         return std::make_unique<IkHandNode>(!side.empty() && (side[0] == 'l' || side[0] == 'L'));
     }
+    if (type == "NavMoveTo")       return std::make_unique<NavMoveToNode>();
+    if (type == "NavStop")         return std::make_unique<NavStopNode>();
+    if (type == "NavArrived")      return std::make_unique<NavArrivedNode>();
     // ---- Third wave: loops, switch, 3D transform, colour, clips, shapes ----
     if (type == "ForLoop")    return std::make_unique<ForLoopNode>();
     if (type == "Gate")       return std::make_unique<GateNode>();

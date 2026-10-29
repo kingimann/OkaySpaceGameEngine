@@ -76,6 +76,7 @@
 #include "okay/Components/UITooltip.hpp"
 #include "okay/Components/Tilemap.hpp"
 #include "okay/Components/NPCController.hpp"
+#include "okay/Components/NavMeshAgent.hpp"
 #include "okay/Components/Spawner.hpp"
 #include "okay/Components/BuildMode.hpp"
 #include "okay/Components/LogicLinks.hpp"
@@ -91,6 +92,7 @@
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputActions.hpp"
 #include "okay/Core/SaveGame.hpp"
+#include "okay/Components/SequencePlayer.hpp"
 #include "okay/Components/DialogueRunner.hpp"   // dialogue / story / quest builtins
 #include "okay/Components/QuestLog.hpp"
 #include "okay/Components/StoryState.hpp"
@@ -5193,6 +5195,24 @@ struct OkayScriptVM::Impl {
         b["delete_save"] = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Delete(slotArg(a)) ? 1.0f : 0.0f}; };
         b["save_label"]  = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Info(slotArg(a)).label}; };
         b["play_time"]   = [](std::vector<Value>&) { return Value{SaveGame::PlayTime()}; };
+        // Cutscenes (SequencePlayer): play_sequence("Intro") plays the Sequence Player
+        // whose file is Intro (or the first one, loading Assets/Intro.okayseq),
+        // stop_sequence() stops every one, sequence_playing(), sequence_time().
+        b["play_sequence"] = [sceneOf, this](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            const bool ok = s && !a.empty() && SequencePlayer::PlayByName(*s, rt.host ? rt.host->gameObject : nullptr, a[0].AsString());
+            return Value{ok ? 1.0f : 0.0f};
+        };
+        b["stop_sequence"] = [sceneOf](std::vector<Value>&) { if (Scene* s = sceneOf()) SequencePlayer::StopAll(*s); return Value{}; };
+        b["sequence_playing"] = [sceneOf](std::vector<Value>&) {
+            Scene* s = sceneOf();
+            return Value{(s && SequencePlayer::Playing(*s)) ? 1.0f : 0.0f};
+        };
+        b["sequence_time"] = [sceneOf](std::vector<Value>&) {
+            Scene* s = sceneOf();
+            SequencePlayer* sp = s ? SequencePlayer::Playing(*s) : nullptr;
+            return Value{sp ? sp->Time() : 0.0f};
+        };
         // Dialogue, story variables and quests (DialogueRunner / StoryState / QuestLog):
         //   start_dialogue("Smith") (an object with a Dialogue Runner, else a graph name;
         //   no name = this object's runner), dialogue_active(), set_story(name, value),
@@ -5262,6 +5282,39 @@ struct OkayScriptVM::Impl {
         b["toggle_journal"] = [sceneOf](std::vector<Value>&) { if (QuestLog* q = QuestLog::Get(sceneOf(), false)) q->ToggleJournal(); return Value{}; };
         // Keep the current volumes as the player's settings (also saved on quit).
         b["save_audio_settings"] = [](std::vector<Value>&) { AudioMixer::SaveSettings(); return Value{}; };
+        // ---- Navigation: the Nav Mesh Agent on this object (or a named one) --------
+        // nav_move_to(x, y, z) / nav_move_to("Name", x, y, z): walk there over the
+        // navmesh; nav_stop(), nav_arrived() -> 1 once the point was reached,
+        // nav_remaining() -> path length left (0 when idle).
+        auto navOf = [this, sceneOf](std::vector<Value>& a, std::size_t& first) -> NavMeshAgent* {
+            first = 0;
+            GameObject* g = rt.host ? rt.host->gameObject : nullptr;
+            if (!a.empty() && a[0].IsString()) {
+                first = 1;
+                Scene* s = sceneOf();
+                g = s ? s->Find(a[0].AsString()) : nullptr;
+            }
+            return g ? g->GetComponent<NavMeshAgent>() : nullptr;
+        };
+        b["nav_move_to"] = [navOf](std::vector<Value>& a) {
+            std::size_t i = 0; NavMeshAgent* n = navOf(a, i);
+            if (!n || a.size() < i + 3) return Value{0.0f};
+            n->SetDestination({a[i].AsFloat(), a[i + 1].AsFloat(), a[i + 2].AsFloat()});
+            return Value{1.0f};
+        };
+        b["nav_stop"] = [navOf](std::vector<Value>& a) {
+            std::size_t i = 0; NavMeshAgent* n = navOf(a, i);
+            if (!n) return Value{0.0f};
+            n->Stop(); return Value{1.0f};
+        };
+        b["nav_arrived"] = [navOf](std::vector<Value>& a) {
+            std::size_t i = 0; NavMeshAgent* n = navOf(a, i);
+            return Value{n && n->Arrived() ? 1.0f : 0.0f};
+        };
+        b["nav_remaining"] = [navOf](std::vector<Value>& a) {
+            std::size_t i = 0; NavMeshAgent* n = navOf(a, i);
+            return Value{n ? n->RemainingDistance() : 0.0f};
+        };
         // Music: the scene's MusicPlayer. music_play(index or "file"), music_next(),
         // music_previous(), music_stop([fade seconds]), music_pause(), music_resume().
         auto music = [go]() -> MusicPlayer* {
@@ -9809,6 +9862,10 @@ const std::unordered_map<std::string, std::vector<std::string>>& EventAliases() 
         {"on_cheat_detected", {"OnCheatDetected"}},
         {"on_validate_rpc",   {"OnValidateRpc"}},
         {"on_validate_hit",   {"OnValidateHit"}},
+        // Cutscenes (SequencePlayer).
+        {"on_sequence_event",    {"OnSequenceEvent"}},
+        {"on_sequence_started",  {"OnSequenceStarted"}},
+        {"on_sequence_finished", {"OnSequenceFinished"}},
     };
     return kAliases;
 }

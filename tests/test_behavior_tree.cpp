@@ -38,7 +38,7 @@ struct Lab {
     GameObject* go = nullptr;
     BehaviorTreeRunner* r = nullptr;
     std::shared_ptr<BehaviorTree> t = std::make_shared<BehaviorTree>();
-    std::map<int, int> ticks, aborts;   // per node id
+    std::map<int, int> ticks, aborts, runTicks;   // per node id (runTicks: since the node last started)
     Lab() {
         s.physicsEnabled = false;
         go = s.CreateGameObject("NPC");
@@ -46,7 +46,9 @@ struct Lab {
         r->runOnStart = false;
         r->onCustomTask = [this](BehaviorTreeRunner&, const BtNode& n, const char* phase) {
             if (std::strcmp(phase, "abort") == 0) { ++aborts[n.id]; return BtStatus::Aborted; }
-            const int k = ++ticks[n.id];
+            ++ticks[n.id];
+            if (std::strcmp(phase, "enter") == 0) runTicks[n.id] = 0;
+            const int k = ++runTicks[n.id];
             if (n.name == "ok") return BtStatus::Success;
             if (n.name == "fail") return BtStatus::Failure;
             if (n.name.rfind("run", 0) == 0) return k >= std::atoi(n.name.c_str() + 3) ? BtStatus::Success : BtStatus::Running;
@@ -60,7 +62,7 @@ struct Lab {
     BtStatus StatusOf(int id) const { const auto* st = r->State(id); return st ? st->status : BtStatus::Invalid; }
     int Ticks(int id) { return ticks[id]; }
     int Aborts(int id) { return aborts[id]; }
-    void Restart() { ticks.clear(); aborts.clear(); r->Run(); }
+    void Restart() { ticks.clear(); aborts.clear(); runTicks.clear(); r->Run(); }
 };
 
 } // namespace
@@ -225,6 +227,7 @@ int main() {
         L.Start();
         CHECK(L.Tick() == BtStatus::Failure);
         CHECK(L.Aborts(a) == 1 && L.StatusOf(a) == BtStatus::Aborted);
+        CHECK(L.Ticks(b) == 1 && L.StatusOf(b) == BtStatus::Failure);
     }
     {
         Lab L;   // succeed when one
@@ -551,7 +554,7 @@ int main() {
             for (int i = 0; i < 900; ++i) {
                 s.Update(1.0f / 60.0f);
                 const Vec3 p = self->gameObject->transform->Position();
-                if (std::fabs(p.x) < 0.85f && std::fabs(p.z) < 3.35f) crossedWall = true;
+                if (std::fabs(p.x) < 0.8f && std::fabs(p.z) < 3.3f) crossedWall = true;   // the wall plus most of the 0.4 clearance
                 if (reached < 0 && self->LastResult() == BtStatus::Success) reached = i;
                 if (agentReached < 0 && withAgent->LastResult() == BtStatus::Success) agentReached = i;
                 if (reached >= 0 && agentReached >= 0) break;

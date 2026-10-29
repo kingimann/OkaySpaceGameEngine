@@ -947,7 +947,8 @@ void BehaviorTreeRunner::StepMover(float dt) {
     const Vec3 pos = Position();
     const float remaining = Dist2D(pos, m_moveGoal);
     if (remaining <= m_moveStop) { StopMoving(); DriveBody(false, 0.0f, dt); return; }
-    while (m_pathIdx + 1 < (int)m_path.size() && Dist2D(pos, m_path[(std::size_t)m_pathIdx]) < 0.4f) ++m_pathIdx;
+    // Corners are passed closely (a wide reach cuts them and clips the walls they hug).
+    while (m_pathIdx + 1 < (int)m_path.size() && Dist2D(pos, m_path[(std::size_t)m_pathIdx]) < 0.12f) ++m_pathIdx;
     const Vec3 target = m_path.empty() ? m_moveGoal : m_path[(std::size_t)m_pathIdx];
     Vec3 dir = Dir2D(pos, target);
     if (dir.x == 0.0f && dir.z == 0.0f) dir = Dir2D(pos, m_moveGoal);

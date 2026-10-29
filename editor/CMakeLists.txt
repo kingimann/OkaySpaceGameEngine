@@ -52,6 +52,7 @@ target_compile_options(okay_imgui PRIVATE -w) # silence third-party warnings
 add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     AnimatorWindow.cpp                                                 # the Animator window (state-machine graph)
     NavigationWindow.cpp                                               # the Navigation window (navmesh bake + overlays)
+    BehaviorTreeWindow.cpp                                             # the Behavior Tree window (NPC AI trees)
     EditorWidgets.cpp                                                  # shared widgets (accent, icons, search field)
     ConsolePanel.cpp                                                   # ConsoleLog + Console panel
     SceneManagerPanel.cpp                                              # Scene Manager window

@@ -367,6 +367,23 @@ Walks the object along the scene's navigation mesh (the grid when none is baked)
 | `GetComponent<NavMeshAgent>().RemainingDistance()` | `NavMeshAgent.RemainingDistance/0` | value | Target (Object) | Result (Number) | Path length left to the destination (0 when there is none). |
 | `GetComponent<NavMeshAgent>().Arrived()` | `NavMeshAgent.Arrived/0` | value | Target (Object) | Result (Bool) | True once the last destination was reached (until the next SetDestination). |
 
+## BehaviorTree
+
+This object's Behavior Tree Runner: its blackboard, and starting or stopping its tree.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `BehaviorTree.isRunning` | `BehaviorTree.isRunning` | value | - | isRunning (Bool) | True while the tree is being ticked. |
+| `BehaviorTree.Set(key, value)` | `BehaviorTree.Set/2` | step | key (Text), value (Any) | - | Write a blackboard value: a number, bool, string, Vector3 or GameObject. |
+| `BehaviorTree.Get(key)` | `BehaviorTree.Get/1` | value | key (Text) | Result (Any) | Read a blackboard value as whatever it is (use GetFloat / GetBool / GetString / GetVector / GetObject for a typed one). |
+| `BehaviorTree.GetFloat(key)` | `BehaviorTree.GetFloat/1` | value | key (Text) | Result (Number) | A blackboard number (0 when the key is missing). |
+| `BehaviorTree.GetBool(key)` | `BehaviorTree.GetBool/1` | value | key (Text) | Result (Bool) | A blackboard bool (false when the key is missing). |
+| `BehaviorTree.GetString(key)` | `BehaviorTree.GetString/1` | value | key (Text) | Result (Text) | A blackboard string ("" when the key is missing). |
+| `BehaviorTree.GetVector(key)` | `BehaviorTree.GetVector/1` | value | key (Text) | Result (Vector3) | A blackboard vector, or an object key's position. |
+| `BehaviorTree.GetObject(key)` | `BehaviorTree.GetObject/1` | value | key (Text) | Result (Object) | The object a blackboard key refers to, or null. |
+| `BehaviorTree.Run(tree)` | `BehaviorTree.Run/1` | step | tree (Text) | Result (Bool) | Load a .okaybt file and start it ("" starts the current tree over). False when the file can't be read. |
+| `BehaviorTree.Stop()` | `BehaviorTree.Stop/0` | step | - | - | Stop the tree; running tasks are aborted and the NPC stops. |
+
 ## Mathf
 
 Maths helpers.

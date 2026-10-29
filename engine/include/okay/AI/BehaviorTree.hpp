@@ -169,6 +169,7 @@ struct BtNode {
     Vec3  Vec(const char* key) const;
     bool  Has(const char* key) const { return params.count(key) != 0; }
     void  Set(const char* key, const std::string& v) { params[key] = v; }
+    void  Set(const char* key, const char* v) { params[key] = v ? v : ""; }
     void  Set(const char* key, float v);
     void  Set(const char* key, bool v) { params[key] = v ? "1" : "0"; }
     void  Set(const char* key, int v) { params[key] = std::to_string(v); }
@@ -192,7 +193,7 @@ public:
     int IndexOf(int id) const;
     /// Add a node under `parent` (-1: a free node; the first one becomes the root)
     /// at sibling position `at` (-1 = last). Returns its id.
-    int AddNode(BtNodeType type, int parent, int at = -1, float x = 0.0f, float y = 0.0f);
+    int AddNode(BtNodeType type, int parent = -1, int at = -1, float x = 0.0f, float y = 0.0f);
     /// Remove a node and everything under it.
     void RemoveSubtree(int id);
     /// Move a node (with its subtree) under another parent at sibling position `at`

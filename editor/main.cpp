@@ -12,6 +12,7 @@
 #include "FpHandsWindow.hpp"
 #include "AnimatorWindow.hpp"          // the Animator window (state-machine graph editor)
 #include "NavigationWindow.hpp"        // the Navigation window (navmesh bake, overlays, agent inspectors)
+#include "BehaviorTreeWindow.hpp"      // the Behavior Tree window (NPC AI trees, runner inspector)
 #include "okay/Components/HoldPrompt.hpp"
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
@@ -4375,6 +4376,7 @@ static const DockPanelDef* DockPanels(int& n) {
         {"Animation",     "Animation###AnimationDock", &g_showAnimation,     "Editors & Tools", PI_Animation},
         {"Animator",      "Animator",                  &g_showAnimatorGraph, "Editors & Tools", PI_Animator},
         {"Navigation",    "Navigation",                &g_showNavigation,    "Editors & Tools", PI_Scene},
+        {"Behavior Tree", "Behavior Tree###BehaviorTree", &g_showBehaviorTree, "Editors & Tools", PI_Nodes},
         {"Modeling",      "Modeling",                  &g_showModeling,      "Editors & Tools", PI_Modeling},
         {"UV Editor",     "UV Editor",                 &g_showUVEditor,      "Editors & Tools", PI_Modeling},
         {"Sprite Editor", "Sprite Editor",             &g_showSpriteEditor,  "Editors & Tools", PI_Sprite},
@@ -5675,6 +5677,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
             ImGui::MenuItem("Animator (state graph)", nullptr, &g_showAnimatorGraph);
             ImGui::MenuItem("Navigation", nullptr, &g_showNavigation);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Bake the scene's colliders into a navigation mesh NPCs and Nav Mesh Agents path over, and see it in the Scene view.");
+            ImGui::MenuItem("Behavior Tree", nullptr, &g_showBehaviorTree);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Author NPC AI as a behavior tree (.okaybt): patrol, perception, chase, attack, scripts; watch it run in Play.");
             ImGui::Separator();
             ImGui::MenuItem("Modeling", nullptr, &g_showModeling);
             ImGui::MenuItem("UV Editor", nullptr, &g_showUVEditor);
@@ -6906,6 +6910,7 @@ static AssetKind KindOf(const std::string& extLower, bool isDir) {
     if (extLower == ".okaydata")   return {IM_COL32(110, 205, 190, 255), "DAT", AssetIcon::Data};
     if (extLower == ".obj")        return {IM_COL32(150, 175, 210, 255), "OBJ", AssetIcon::Mesh};
     if (extLower == ".okayvs")     return {IM_COL32(150, 200, 170, 255), "VS",  AssetIcon::Visual};
+    if (extLower == ".okaybt")     return {IM_COL32(120, 190, 150, 255), "BT",  AssetIcon::Visual};
     return {IM_COL32(150, 152, 162, 255), "FILE", AssetIcon::Generic};
 }
 
@@ -8984,6 +8989,8 @@ void DrawProject(EditorState& ed) {
         } else if (ext == ".okayvs") {
             okay::editor::vsed::OpenFile(full);   // open in the in-app node editor
             g_showVisualScript = true;
+        } else if (ext == ".okaybt") {
+            OpenBehaviorTreeFile(ed, full);   // open in the Behavior Tree window
         } else if (const char* k = ImportKindLabel(ext); k && std::strcmp(k, "model") == 0) {
             // Double-click a model: import it into the scene (hierarchy, textures,
             // rig + clips, size normalization — same path as drag-drop).
@@ -10735,6 +10742,8 @@ void DrawScriptDocs() {
         fapi("npc_stop(\"n\") / npc_busy(\"n\") / npc_state(\"n\")", "cancel / query the NPC");
         fapi("nav_move_to(x, y, z) / nav_stop()", "walk this object's Nav Mesh Agent over the navmesh / stop it");
         fapi("nav_arrived() / nav_remaining()", "reached the point? / path length left");
+        fapi("bt_set(\"key\", value) / bt_get(\"key\")", "write / read this object's Behavior Tree blackboard (bt_set(\"Name\", key, value) for another object)");
+        fapi("bt_run(\"Assets/Guard.okaybt\") / bt_stop()", "load and start a behavior tree on this object / stop it; on_bt_event(name) hears Send Event tasks");
         fapi("spawner_start(\"n\") / spawner_stop(\"n\")", "run / pause a Spawner's waves");
         fapi("spawner_alive(\"n\")", "live objects a Spawner created (enemies left)");
         fapi("build_enter() / build_exit() / build_toggle()", "in-game build mode on / off (Build Mode component)");
@@ -11148,6 +11157,7 @@ static const std::vector<std::string>& ScriptCompletions() {
         "set_parent","exists","is_active","obj_x","obj_y","dist_to","destroy_obj","count_tag",
         "npc_goto","npc_stop","npc_busy","npc_state",
         "nav_move_to","nav_stop","nav_arrived","nav_remaining",
+        "bt_set","bt_get","bt_run","bt_stop",
         "spawner_start","spawner_stop","spawner_alive",
         "build_enter","build_exit","build_toggle","build_active","build_link_mode","build_palette_clear",
         "build_palette_add","build_palette_select","build_selected","build_save","build_load","build_exists",
@@ -11261,6 +11271,7 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"npc_goto","npc_goto(\"name\", x, y, z)"}, {"npc_stop","npc_stop(\"name\")"},
         {"npc_busy","npc_busy(\"name\")"}, {"npc_state","npc_state(\"name\")"},
         {"nav_move_to","nav_move_to(x, y, z)"}, {"nav_stop","nav_stop()"}, {"nav_arrived","nav_arrived()"}, {"nav_remaining","nav_remaining()"},
+        {"bt_set","bt_set(\"key\", value)"}, {"bt_get","bt_get(\"key\")"}, {"bt_run","bt_run(\"file.okaybt\")"}, {"bt_stop","bt_stop()"},
         {"spawner_start","spawner_start(\"name\")"}, {"spawner_stop","spawner_stop(\"name\")"},
         {"spawner_alive","spawner_alive(\"name\")"},
         {"build_enter","build_enter()"}, {"build_exit","build_exit()"}, {"build_toggle","build_toggle()"},
@@ -15091,7 +15102,7 @@ void HandleShortcuts(EditorState& ed) {
     ImGuiIO& io = ImGui::GetIO();
     if (io.WantTextInput || OwnShortcutsWindowFocused()) return;
     bool ctrl = io.KeyCtrl;
-    const bool animKeys = AnimationTabFocused() || AnimatorGraphFocused();   // those windows own Delete, Ctrl+C/V/D and F
+    const bool animKeys = AnimationTabFocused() || AnimatorGraphFocused() || BehaviorTreeWindowFocused();   // those windows own Delete, Ctrl+C/V/D and F
     // Ctrl+Z undoes; Ctrl+Shift+Z and Ctrl+Y redo. (Guard the undo with !Shift
     // so Ctrl+Shift+Z doesn't undo and redo in the same frame.)
     if (ctrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
@@ -35889,6 +35900,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     DrawNavigationInspector(ed, go, curComp, toRemove, &CompHeader);   // Nav Mesh Surface / Agent / Obstacle
+    DrawBehaviorTreeInspector(ed, go, curComp, toRemove, &CompHeader);   // Behavior Tree Runner
     } // end component-order loop
 
     // Apply a queued component removal (undoable).
@@ -36241,6 +36253,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Spinner>(), "Spinner")) { go->AddComponent<Spinner>(); ed.dirty = true; }
             if (item(!go->GetComponent<Lifetime>(), "Lifetime")) { go->AddComponent<Lifetime>(); ed.dirty = true; }
             NavigationAddComponentItems(ed, go, item);   // Nav Mesh Surface / Agent / Obstacle
+            BehaviorTreeAddComponentItems(ed, go, item);   // Behavior Tree Runner
           } EndCat(o); }
 
         { bool o = BeginCat("No-Code Mechanics");
@@ -43691,6 +43704,7 @@ int main(int argc, char** argv) {
                 for (const auto& up : ed.scene().Objects()) if (up->name == sn) { ed.Select(up.get()); break; }
             if (std::getenv("OKAY_UI_ANIMGRAPH")) g_showAnimatorGraph = true;
             NavigationDevHooks(ed);   // OKAY_UI_NAV / NAVBAKE / NAVAGENT / NAVSEND / NAVDEST
+            BehaviorTreeDevHooks(ed);   // OKAY_UI_BT / BTGUARD / BTSEL / BTTAB
             // OKAY_UI_PLAY=1: enter Play once the scene is up (screenshots of the
             // Animator and Animation windows while the game runs).
             if (std::getenv("OKAY_UI_PLAY") && s_focusFrames == 60 && !ed.isPlaying()) {
@@ -43951,6 +43965,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.AnimationEditor"); DrawAnimationEditor(ed); }
         { OKAY_PROFILE("UI.AnimatorGraph"); DrawAnimatorGraph(ed); }
         { OKAY_PROFILE("UI.Navigation"); DrawNavigationWindow(ed); }
+        { OKAY_PROFILE("UI.BehaviorTree"); DrawBehaviorTreeWindow(ed); }
         { OKAY_PROFILE("UI.History"); DrawHistory(ed); }
         { OKAY_PROFILE("UI.Stats"); if (g_showStats)     DrawStats(ed); }
         { OKAY_PROFILE("UI.SceneSettings"); if (g_showSceneSettings) DrawSceneSettings(ed); }

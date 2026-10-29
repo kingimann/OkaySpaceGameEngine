@@ -1058,7 +1058,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         const Frustum lightFr = Frustum::FromVP(lightVP);   // only casters inside the light's view
         for (const auto& up : scene.Objects()) {
             GameObject* go = up.get();
-            if (!go || !go->active || (ignore && go->IsSelfOrDescendantOf(ignore) && !go->firstPersonViewmodel)) continue;
+            if (!go || !go->active || go->firstPersonOnly || go->HiddenFromCamera(ignore)) continue;
             auto* mr = go->GetComponent<MeshRenderer>();
             if (!mr || mr->wireframe || !mr->enabled || !mr->castShadows) continue;
             if (mr->color.a < 0.999f) continue;     // transparent meshes don't cast
@@ -1282,7 +1282,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
     int drawnN = 0, culledN = 0;
     for (const auto& up : scene.Objects()) {
         GameObject* go = up.get();
-        if (!go || !go->active || (ignore && go->IsSelfOrDescendantOf(ignore) && !go->firstPersonViewmodel)) continue;
+        if (!go || !go->active || go->HiddenFromCamera(ignore)) continue;
         if (!(RenderCullingMask() & (1 << (go->layer & 31)))) continue;   // camera layer cull
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || mr->wireframe || !mr->enabled) continue;
@@ -1429,7 +1429,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
 
         // Ground contact shadow: re-draw the SAME geometry flattened onto the ground
         // plane as flat translucent black, so objects sit on the ground (not floating).
-        if (planarShadows && mr->groundShadow && mr->castShadows && mr->groundShadowStrength > 0.001f &&
+        if (planarShadows && !go->firstPersonOnly && mr->groundShadow && mr->castShadows && mr->groundShadowStrength > 0.001f &&
             p->blend && p->depthPlanar) {
             Mat4 sModel = Mat4::PlanarShadow(mr->groundShadowY + 0.01f, SceneLight::Direction()) * model;
             Mat4 sMvp = vp * sModel;

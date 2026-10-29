@@ -7,6 +7,7 @@
 #include "okay/VisualScript/VsVariables.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Audio/AudioLoad.hpp"
+#include "okay/Components/FirstPersonHands.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/ColliderFit.hpp"
 #include <filesystem>
@@ -756,6 +757,7 @@ void EditorState::Stop() {
     Matchmaker::Shared().Cancel();   // a search started in play mode ends with it
     m_scene.runScripts = false;
     SceneSerializer::Deserialize(m_scene, m_snapshot); // restore edit state
+    if (okay::FirstPersonHands::RestoreApplied(m_scene)) dirty = true;   // Apply during Play
     Select(nullptr);   // Deserialize freed every object; clear m_multi too (no dangling ptrs)
 }
 

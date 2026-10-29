@@ -9,6 +9,8 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
 #include "okay/Input/SdlGamepad.hpp"   // controller -> Input (sticks, triggers, rumble)
+#include "FpHandsWindow.hpp"
+#include "okay/Components/HoldPrompt.hpp"
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
 #include "okay/Modeling/MeshAsset.hpp"       // .okaymesh / .obj mesh files
@@ -5806,6 +5808,51 @@ void DrawMenuAndToolbar(EditorState& ed) {
         if (ImGui::MenuItem("Reset Layout")) g_resetLayout = true;
         ImGui::EndMenu();
     }
+    // Downloads a three.js Mixamo sample into mixamo-cache/ (gitignored) and
+    // parents it to the Player so Play, E, and V use that rig.
+    auto spawnMixamo = [&](const char* file, const char* label) {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        fs::create_directories("mixamo-cache", ec);
+        const fs::path path = fs::path("mixamo-cache") / file;
+        if (!fs::exists(path)) {
+            const std::string url = std::string("https://raw.githubusercontent.com/mrdoob/three.js/r160/examples/models/gltf/") + file;
+            ConsoleLog("Downloading " + url + " into mixamo-cache/");
+            const std::string cmd = "curl -fsSL --retry 2 -o \"" + path.string() + "\" \"" + url + "\"";
+            if (std::system(cmd.c_str()) != 0 || !fs::exists(path)) {
+                ConsoleLog("Could not download " + std::string(file) + ". Check the network, then try the menu again.", 1);
+                return;
+            }
+        }
+        ed.PushUndo();
+        GameObject* player = ed.scene().Find("Player");
+        if (!player) player = okay::Templates::AddFirstPersonPlayer(ed.scene());
+        if (!player) { ConsoleLog("No player to attach the Mixamo rig to.", 1); return; }
+        if (auto* ch = player->GetComponent<Character>()) {
+            ch->driveExternal = true;
+            if (auto* mr = player->GetComponent<MeshRenderer>()) mr->enabled = false;
+        }
+        if (!player->GetComponent<ProceduralObjectHolding>()) player->AddComponent<ProceduralObjectHolding>();
+        if (!player->GetComponent<FirstPersonHands>()) player->AddComponent<FirstPersonHands>();
+        bool ok = false;
+        GameObject* model = okay::ImportModelScene(ed.scene(), path.string(), &ok);
+        if (!model || !ok) { ConsoleLog("Import failed: " + path.string(), 1); return; }
+        model->name = std::string("Mixamo ") + label;
+        if (player->transform && model->transform) {
+            model->transform->SetParent(player->transform, false);
+            model->transform->localPosition = Vec3::Zero;
+            model->transform->localRotation = Quat::Identity;
+            model->transform->localScale = Vec3::One;
+        }
+        auto* ik = player->GetComponent<FullBodyIK>();
+        if (!ik) ik = player->AddComponent<FullBodyIK>();
+        for (auto*& b : ik->bones) b = nullptr;
+        const int mapped = ik->MapBones(true);
+        ed.Select(player);
+        ed.dirty = true;
+        ConsoleLog("Mixamo " + std::string(label) + " is on Player (" + std::to_string(mapped)
+                   + " bones). Press Play, E to pick up, V to switch views. File: " + path.string());
+    };
     if (ImGui::BeginMenu("GameObject")) {
         bool created = false;
         if (ImGui::MenuItem("Create Empty"))   { ed.CreateEmpty();   ConsoleLog("Created empty GameObject"); created = true; }
@@ -5838,6 +5885,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 ed.Select(okay::Templates::AddFirstPersonPlayer(ed.scene()));
                 ConsoleLog("Added First-Person player"); ed.dirty = true; created = true;
             }
+            if (ImGui::MenuItem("Mixamo Soldier")) { spawnMixamo("Soldier.glb", "Soldier"); created = true; }
+            if (ImGui::MenuItem("Mixamo Xbot")) { spawnMixamo("Xbot.glb", "Xbot"); created = true; }
             if (ImGui::MenuItem("Third Person Shooter")) {
                 ed.PushUndo();
                 ed.Select(okay::Templates::AddThirdPersonShooterPlayer(ed.scene()));
@@ -27123,7 +27172,7 @@ void DrawInspector(EditorState& ed) {
     Component* toRemove = nullptr; // removed after drawing (avoids dangling use)
     // Fields fill the panel minus a label column that grows with it (labels sit on
     // the right): a narrow Inspector keeps labels readable instead of clipping them.
-    const float inspLabelW = std::clamp(ImGui::GetContentRegionAvail().x * 0.42f, 96.0f, 170.0f);
+    const float inspLabelW = std::clamp(ImGui::GetContentRegionAvail().x * 0.46f, 128.0f, 190.0f);
     ImGui::PushItemWidth(-inspLabelW);
 
     // UI layout card for any screen-space widget:
@@ -28677,7 +28726,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* fh = dynamic_cast<FirstPersonHand*>(curComp)) {
-        if (CompHeader("First Person Hand", fh, &toRemove)) {
+        if (CompHeader("Hand (legacy)", fh, &toRemove)) {
             ImGui::TextDisabled("Shows your character's OWN arm in first person. Your body is\n"
                                 "hidden from your camera only (others see all of it) and never\n"
                                 "duplicated. Click to punch.");
@@ -28691,8 +28740,10 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Follow camera look##fh", &fh->followPitch)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The arm tilts up/down with your view (Minecraft-style).");
             if (ImGui::Checkbox("Bobbing##fh", &fh->bobbing)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Let the walk/run cycle bob the arm. Off = rock-steady.\n(Steadying zeroes the shared hips/torso, so use it in first person where the body is hidden.)");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A small up-and-down bob on the viewmodel arm. It does not roll, and it does not move the shared body.");
             if (ImGui::Checkbox("Steady arm (ignore lean/crouch/prone)##fh", &fh->steadyArm)) ed.dirty = true;
+            if (ImGui::Checkbox("Show While Running##fh", &fh->showWhileRunning)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: the arm, sleeve and held item leave the local view while sprinting. Others still see them.");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fully decouple the arm from the body so it stays put in view no matter what the body does (lean, crouch, prone).");
             SectionHeader("Manual adjust");
             if (ImGui::DragFloat("Raise##fh", &fh->armRaise, 0.5f, -180.0f, 180.0f, "%.0f deg")) ed.dirty = true;
@@ -28701,6 +28752,12 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Forearm bend: hand closeness / height.");
             if (ImGui::SmallButton("Reset arm pose##fh")) { fh->armRaise = -96.0f; fh->armElbow = 16.0f; ed.dirty = true; }
             if (ImGui::SmallButton("Remove##fh")) toRemove = fh;
+        }
+    }
+    if (auto* fhs = dynamic_cast<FirstPersonHands*>(curComp)) {
+        if (CompHeader("First Person Hands", fhs, &toRemove)) {
+            DrawFpHandsBody(ed, fhs);
+            if (ImGui::SmallButton("Remove##fphs")) toRemove = fhs;
         }
     }
     if (auto* ns = dynamic_cast<NetworkSync*>(curComp)) {
@@ -30166,11 +30223,31 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::SmallButton("Remove##poh")) toRemove = ph;
             }
         }
+        if (auto* hp = dynamic_cast<HoldPrompt*>(curComp)) {
+            if (CompHeader("Hold Prompt", hp, &toRemove)) {
+                ImGui::TextDisabled("E picks a hold-in-hands item up. E again, or G, puts it down.");
+                char dk[2] = {hp->dropKey, 0};
+                if (ImGui::InputText("Drop Key##hp", dk, sizeof(dk))) { hp->dropKey = dk[0]; ed.dirty = true; }
+                char ak[2] = {hp->altDropKey, 0};
+                if (ImGui::InputText("Alt Drop Key##hp", ak, sizeof(ak))) { hp->altDropKey = ak[0]; ed.dirty = true; }
+                char pn[64]; std::snprintf(pn, sizeof(pn), "%s", hp->promptObject.c_str());
+                if (ImGui::InputText("Prompt Object##hp", pn, sizeof(pn))) { hp->promptObject = pn; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("A screen-space Text named this shows \"E to pick up\" and \"E or G to drop\".");
+                if (ImGui::SmallButton("Remove##hp")) toRemove = hp;
+            }
+        }
         if (auto* ho = dynamic_cast<HoldableObject*>(curComp)) {
             if (CompHeader("Holdable Object", ho, &toRemove)) {
                 ImGui::TextDisabled("A character's Procedural Object Holding can pick this up.");
                 int st = (int)ho->style;
-                if (ImGui::Combo("Style##hold", &st, "Automatic\0Custom\0Pistol\0Rifle\0Box\0Flashlight\0Sword\0Cup\0Heavy\0")) { ho->style = (HoldableObject::Style)st; ed.dirty = true; }
+                if (ImGui::Combo("Style##hold", &st,
+                        "Automatic\0Custom\0Pistol\0Rifle\0Box\0Flashlight\0Sword\0Cup\0Heavy\0"
+                        "One hand right\0One hand left\0Two handed\0Carry in front\0Over the shoulder\0")) {
+                    ho->style = (HoldableObject::Style)st; ed.dirty = true;
+                }
+                if (ImGui::SmallButton("Preset: block##hold")) { ho->ApplyPreset(HoldableObject::Preset::OneHandRight); ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Preset: crate##hold")) { ho->ApplyPreset(HoldableObject::Preset::CarryFront); ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatic: from the tag / name (\"pistol\", \"crate\"...), else its shape and weight.\nCustom: the hands go to the grip points below.\nGuns and lights point along -Z, a sword's blade along +Y, a cup's handle along +X\n(Hold Rotation corrects a model built another way).");
                 if (ho->style == HoldableObject::Style::Automatic) {
                     const HoldableObject::Style rs = ho->ResolvedStyle();
@@ -30178,6 +30255,8 @@ void DrawInspector(EditorState& ed) {
                 }
                 if (ImGui::Checkbox("Support Hand##hold", &ho->supportHand)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pistol: the other hand wraps the first. Sword: held in two hands.");
+                if (ImGui::Checkbox("Two Handed##hold", &ho->twoHanded)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("First person draws both hands on this item. Rifle, Box and Heavy do that already, and so do two enabled grips.");
                 if (ImGui::DragFloat("Weight (kg)##hold", &ho->weight, 0.1f, 0.0f, 500.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = the Rigidbody's mass.");
                 if (NameField("Socket##hold", ho->socket)) ed.dirty = true;
@@ -30185,6 +30264,13 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat3("Hold Offset##hold", &ho->holdOffset.x, 0.01f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Custom: where the object's origin sits from the chest (right, up, forward), metres.");
                 if (ImGui::DragFloat3("Hold Rotation##hold", &ho->holdRotation.x, 1.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("In-hand scale##hold", &ho->inHandScale, 0.01f, 0.1f, 3.0f)) ed.dirty = true;
+                if (ImGui::DragFloat3("FP offset##hold", &ho->fpOffset.x, 0.005f)) ed.dirty = true;
+                if (ImGui::DragFloat3("FP rotation##hold", &ho->fpRotation.x, 1.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("FP scale##hold", &ho->fpScale, 0.01f, 0.1f, 3.0f)) ed.dirty = true;
+                if (ImGui::DragFloat3("TP offset##hold", &ho->tpOffset.x, 0.005f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Side, up, forward, added on top of the hold. Use this when a third-person grip sits too high.");
+                if (ImGui::DragFloat3("TP rotation##hold", &ho->tpRotation.x, 1.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Custom: the object's turn relative to the body (degrees).\nOther styles: turns a model built another way (e.g. 0, 180, 0 for a gun facing backwards).");
                 HoldableObject::Grip* grips[2] = {&ho->leftGrip, &ho->rightGrip};
                 for (int g = 0; g < 2; ++g) {
@@ -30194,11 +30280,12 @@ void DrawInspector(EditorState& ed) {
                     if (gr.enabled) {
                         if (ImGui::DragFloat3("Position##grip", &gr.position.x, 0.005f)) ed.dirty = true;
                         if (ImGui::DragFloat3("Rotation##grip", &gr.rotation.x, 1.0f)) ed.dirty = true;
-                        if (ImGui::SliderFloat("Finger Curl##grip", &gr.curl, 0.0f, 1.0f)) ed.dirty = true;
+                        // Hands have no fingers. `curl` stays on the grip so saved
+                        // scenes still load; it is not applied to any bone.
                     }
                     ImGui::PopID();
                 }
-                ImGui::TextDisabled("Grip rotation 0 = palm down, fingers forward (-Z).");
+                ImGui::TextDisabled("Grip rotation 0 = palm down, the hand points along -Z.");
                 if (GameObject* holder = ho->Holder()) ImGui::Text("Held by: %s", holder->name.c_str());
                 if (ImGui::SmallButton("Remove##hold")) toRemove = ho;
             }
@@ -32197,17 +32284,20 @@ void DrawInspector(EditorState& ed) {
                     switch (which) {
                         case 0:   // Tactical: weighty mil-sim movement
                             F.walkSpeed = 3.2f; F.runSpeed = 5.5f; F.jumpForce = 4.5f;
-                            F.acceleration = 30.0f; F.deceleration = 35.0f; F.airControl = 0.15f;
+                            F.walkAcceleration = 22.0f; F.acceleration = 30.0f; F.steerRate = 90.0f;
+                            F.deceleration = 35.0f; F.airControl = 0.15f;
                             F.coyoteTime = 0.05f; F.jumpBufferTime = 0.08f;
                             break;
                         case 1:   // Arcade: snappy fast shooter
                             F.walkSpeed = 5.5f; F.runSpeed = 9.0f; F.jumpForce = 6.5f;
-                            F.acceleration = 90.0f; F.deceleration = 100.0f; F.airControl = 0.6f;
+                            F.walkAcceleration = 70.0f; F.acceleration = 90.0f; F.steerRate = 280.0f;
+                            F.deceleration = 100.0f; F.airControl = 0.6f;
                             F.coyoteTime = 0.12f; F.jumpBufferTime = 0.12f;
                             break;
                         case 2:   // Floaty: big forgiving jumps, drifty air
                             F.walkSpeed = 4.0f; F.runSpeed = 7.0f; F.jumpForce = 9.0f;
-                            F.acceleration = 40.0f; F.deceleration = 25.0f; F.airControl = 0.8f;
+                            F.walkAcceleration = 28.0f; F.acceleration = 40.0f; F.steerRate = 80.0f;
+                            F.deceleration = 25.0f; F.airControl = 0.8f;
                             F.coyoteTime = 0.15f; F.jumpBufferTime = 0.15f;
                             break;
                     }
@@ -32224,8 +32314,11 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Walk Speed##fp", &fp->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Run Speed##fp", &fp->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Jump Force##fp", &fp->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
-            if (ImGui::DragFloat("Acceleration##fp", &fp->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
-            if (ImGui::DragFloat("Deceleration##fp", &fp->deceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Walk Accel##fp", &fp->walkAcceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Run Accel##fp", &fp->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Decel##fp", &fp->deceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Turn Rate##fp", &fp->steerRate, 1.0f, 1.0f, 600.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast a turn drops the old heading. The mouse still aims directly.");
             if (ImGui::DragFloat("Air Control##fp", &fp->airControl, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Coyote Time##fp", &fp->coyoteTime, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
             if (ImGui::DragFloat("Jump Buffer##fp", &fp->jumpBufferTime, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
@@ -32296,11 +32389,11 @@ void DrawInspector(EditorState& ed) {
             SectionHeader("Head Bob");
             if (ImGui::Checkbox("Head Bob##fp", &fp->headBob)) ed.dirty = true;
             if (fp->headBob) {
-                if (ImGui::DragFloat("Bob Amount##fp", &fp->bobAmount, 0.001f, 0.0f, 0.3f, "%.3f m")) ed.dirty = true;
+                if (ImGui::DragFloat("Bob##fp", &fp->bobAmount, 0.001f, 0.0f, 0.3f, "%.3f m")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Camera bob height. At a walk it follows the footstep cycle.");
                 if (ImGui::DragFloat("Bob Speed##fp", &fp->bobSpeed, 0.1f, 0.0f, 30.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bob cadence at walking speed (it speeds up with you).");
-                if (ImGui::DragFloat("Bob Sway##fp", &fp->bobSway, 0.001f, 0.0f, 0.2f, "%.3f m")) ed.dirty = true;
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sideways sway, at half the bob's rate (0 = none).");
+                ImGui::TextDisabled("Up and down only. The stride does not sway or roll the view.");
                 if (ImGui::DragFloat("Bob Run Scale##fp", &fp->bobRunScale, 0.01f, 0.0f, 2.0f, "x%.2f")) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bob size at run speed, times the walking bob.");
                 if (ImGui::DragFloat("Bob Blend##fp", &fp->bobBlend, 0.1f, 0.0f, 40.0f)) ed.dirty = true;
@@ -32336,17 +32429,20 @@ void DrawInspector(EditorState& ed) {
                     switch (which) {
                         case 0:   // Grounded: weighty adventure movement
                             T.walkSpeed = 3.0f; T.runSpeed = 5.5f; T.jumpForce = 5.0f;
-                            T.acceleration = 30.0f; T.deceleration = 35.0f; T.airControl = 0.2f;
+                            T.walkAcceleration = 22.0f; T.acceleration = 30.0f; T.steerRate = 90.0f; T.turnSpeed = 10.0f;
+                            T.deceleration = 35.0f; T.airControl = 0.2f;
                             T.coyoteTime = 0.08f;
                             break;
                         case 1:   // Arcade: snappy platform-runner
                             T.walkSpeed = 5.0f; T.runSpeed = 8.5f; T.jumpForce = 7.0f;
-                            T.acceleration = 90.0f; T.deceleration = 100.0f; T.airControl = 0.7f;
+                            T.walkAcceleration = 70.0f; T.acceleration = 90.0f; T.steerRate = 280.0f; T.turnSpeed = 30.0f;
+                            T.deceleration = 100.0f; T.airControl = 0.7f;
                             T.coyoteTime = 0.12f;
                             break;
                         case 2:   // Floaty: big airy jumps
                             T.walkSpeed = 4.0f; T.runSpeed = 7.0f; T.jumpForce = 9.5f;
-                            T.acceleration = 40.0f; T.deceleration = 25.0f; T.airControl = 0.85f;
+                            T.walkAcceleration = 28.0f; T.acceleration = 40.0f; T.steerRate = 80.0f; T.turnSpeed = 12.0f;
+                            T.deceleration = 25.0f; T.airControl = 0.85f;
                             T.coyoteTime = 0.15f;
                             break;
                     }
@@ -32363,10 +32459,14 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Walk Speed##tp", &tp->walkSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Run Speed##tp", &tp->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Jump Force##tp", &tp->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
-            if (ImGui::DragFloat("Turn Speed##tp", &tp->turnSpeed, 0.1f, 0.0f, 40.0f)) ed.dirty = true;
-            if (ImGui::DragFloat("Acceleration##tp", &tp->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Turn Rate##tp", &tp->turnSpeed, 0.1f, 0.0f, 40.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast the body rotates toward the way it is moving.");
+            if (ImGui::DragFloat("Walk Accel##tp", &tp->walkAcceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Run Accel##tp", &tp->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Higher = snappier starts; very high ~= instant (no momentum)");
-            if (ImGui::DragFloat("Deceleration##tp", &tp->deceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Decel##tp", &tp->deceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Steer##tp", &tp->steerRate, 1.0f, 1.0f, 600.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast a turn drops the old velocity heading.");
             if (ImGui::DragFloat("Air Control##tp", &tp->airControl, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Coyote Time##tp", &tp->coyoteTime, 0.005f, 0.0f, 0.5f, "%.3f s")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Grace window to still jump just after leaving a ledge");
@@ -32518,8 +32618,19 @@ void DrawInspector(EditorState& ed) {
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gamepad button that switches view. Back is the right-stick stand-in (the engine has no stick-click id).");
             }
-            if (ImGui::DragFloat("Blend Time##pv", &pv->blendTime, 0.01f, 0.0f, 3.0f, "%.2f s")) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How long a full switch takes. Reversing starts from wherever the camera is.");
+            if (ImGui::DragFloat("Switch Blend Time##pv", &pv->blendTime, 0.01f, 0.0f, 3.0f, "%.2f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How long a full switch takes. Reversing starts from wherever the camera is. Zero snaps.");
+            {
+                int ease = (int)pv->switchEase;
+                const char* eases[] = {"Linear", "Smooth", "Ease In", "Ease Out"};
+                if (ImGui::Combo("Easing##pv", &ease, eases, 4)) {
+                    pv->switchEase = (PlayerView::SwitchEase)ease;
+                    ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How the camera, the hands and a held item move between the eyes and the orbit.");
+            }
+            if (ImGui::Checkbox("Snap##pv", &pv->snapSwitch)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Jump between first and third person in one frame.");
             {
                 float eye[3] = {pv->eyeOffset.x, pv->eyeOffset.y, pv->eyeOffset.z};
                 if (ImGui::DragFloat3("Eye Offset##pv", eye, 0.01f)) {
@@ -32978,7 +33089,11 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Jump Force##tps", &ts->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             if (ImGui::DragInt("Max Jumps##tps", &ts->maxJumps, 0.1f, 1, 5)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("1 = single, 2 = double jump, ...");
-            if (ImGui::DragFloat("Acceleration##tps", &ts->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Walk Accel##tps", &ts->walkAcceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Run Accel##tps", &ts->acceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Decel##tps", &ts->deceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Turn Rate##tps", &ts->turnSpeed, 0.1f, 0.0f, 60.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Steer##tps", &ts->steerRate, 1.0f, 1.0f, 600.0f)) ed.dirty = true;
             if (ImGui::DragFloat("Air Control##tps", &ts->airControl, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
             if (ImGui::Checkbox("Foot IK##tps", &ts->footIK)) ed.dirty = true;
             SectionHeader("Look / Camera");
@@ -35738,6 +35853,8 @@ void DrawInspector(EditorState& ed) {
                 s_acRecent.erase(std::remove(s_acRecent.begin(), s_acRecent.end(), std::string(label)), s_acRecent.end());
                 s_acRecent.insert(s_acRecent.begin(), label);
                 if (s_acRecent.size() > 10) s_acRecent.resize(10);
+                // The row lives in a child, so Selectable does not close the popup.
+                ImGui::CloseCurrentPopup();
             }
             return clicked;
         };
@@ -35763,7 +35880,8 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<VoxelDigger>(), "Voxel Digger")) { go->AddComponent<VoxelDigger>(); ed.dirty = true; }
             if (item(!go->GetComponent<Water>(), "Water")) { go->AddComponent<Water>()->Apply(); ed.view3D = true; ed.dirty = true; }
             if (item(!go->GetComponent<Flashlight>(), "Flashlight")) { go->AddComponent<Flashlight>(); ed.dirty = true; }
-            if (item(!go->GetComponent<FirstPersonHand>(), "First Person Hand")) { go->AddComponent<FirstPersonHand>(); ed.view3D = true; ed.dirty = true; }
+            if (item(!go->GetComponent<FirstPersonHand>(), "Hand (legacy)")) { go->AddComponent<FirstPersonHand>(); ed.view3D = true; ed.dirty = true; }
+            if (item(!go->GetComponent<FirstPersonHands>(), "First Person Hands")) { go->AddComponent<FirstPersonHands>(); ed.view3D = true; ed.dirty = true; }
             if (item(!go->GetComponent<PauseMenu>(), "Pause Menu")) { go->AddComponent<PauseMenu>()->EnsureBuilt(); ed.dirty = true; }
             if (item(!go->GetComponent<WorldStreamer>(), "World Streamer (partition)")) { go->AddComponent<WorldStreamer>(); ed.dirty = true; }
             if (item(!go->GetComponent<Destructible>(), "Destructible (Chaos)")) { go->AddComponent<Destructible>(); ed.dirty = true; }
@@ -35795,6 +35913,9 @@ void DrawInspector(EditorState& ed) {
             }
             if (item(!go->GetComponent<ProceduralObjectHolding>(), "Procedural Object Holding (pick up + hold with IK hands)")) {
                 go->AddComponent<ProceduralObjectHolding>(); ed.dirty = true;
+            }
+            if (item(!go->GetComponent<HoldPrompt>(), "Hold Prompt (E to pick up, E or G to drop)")) {
+                go->AddComponent<HoldPrompt>(); ed.dirty = true;
             }
             if (item(!go->GetComponent<HoldableObject>(), "Holdable Object (grip points, style, weight)")) {
                 go->AddComponent<HoldableObject>(); ed.dirty = true;
@@ -38528,16 +38649,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     const GameObject* viewIgnore = nullptr;
     if (gameView) {
         if (Camera* gc = SceneCamera(ed.scene())) {
-            viewIgnore = gc->ignoreObject;   // set at runtime by the controller (Play)
-            // In edit mode the controller hasn't run yet, so the Game preview would
-            // still show the body. Derive it: a first-person camera's owner (parent)
-            // with "Show Body" off should be ignored, matching how Play looks.
-            if (!viewIgnore && gc->transform && gc->transform->Parent() &&
-                gc->transform->Parent()->gameObject) {
-                GameObject* owner = gc->transform->Parent()->gameObject;
-                if (auto* fpc = owner->GetComponent<FirstPersonController>())
-                    if (!fpc->showBody) viewIgnore = owner;
-            }
+            // While playing, trust ignoreObject. Guessing a hide from Show Body
+            // during play made a third-person toggle erase the whole character.
+            viewIgnore = GameViewBodyIgnore(gc, ed.isPlaying());
         }
     }
     // Render the 3D view at the display's TRUE physical pixel resolution. On a
@@ -42956,6 +43070,10 @@ int main(int argc, char** argv) {
         // in the standalone player ("can't move" was because the editor never fed
         // input during Play). Gated on !WantTextInput so typing in a field (script
         // editor, name box) doesn't also drive the game.
+        // The look baseline. Capture switches from canvas pixels to a virtual
+        // cursor; the lock's warp is not a look, or Play opens pitched at the sky.
+        static bool s_playLookLocked = false;
+        static Vec2 s_playLookAnchor{0, 0};
         if (ed.isPlaying() && !io.WantTextInput) {
             const Uint8* ks = SDL_GetKeyboardState(nullptr);
             std::vector<char> down;
@@ -43013,16 +43131,30 @@ int main(int argc, char** argv) {
             bool capture = (g_gameMouseCapture || Cursor::IsLocked()) && !gameModal && !g_gameCursorReleased;
             static Vec2 s_gameVMouse{0, 0};
             if (capture) {
-                SDL_SetRelativeMouseMode(SDL_TRUE);
-                int dxp, dyp; Uint32 rmb = SDL_GetRelativeMouseState(&dxp, &dyp);
-                s_gameVMouse.x += (float)dxp; s_gameVMouse.y += (float)dyp;   // accumulate look motion
+                // Relative mode only on the transition. Calling it every frame
+                // re-warps, and that warp was added on top of the real delta.
+                if (!s_playLookLocked)
+                    SDL_SetRelativeMouseMode(SDL_TRUE);
+                int dxp = 0, dyp = 0;
+                Uint32 rmb = SDL_GetRelativeMouseState(&dxp, &dyp);
+                if (!s_playLookLocked) {
+                    // First locked frame: throw away the warp and stay on the
+                    // canvas sample the controller already took as its baseline.
+                    s_gameVMouse = s_playLookAnchor;
+                    s_playLookLocked = true;
+                } else if (std::abs(dxp) + std::abs(dyp) <= 600) {
+                    s_gameVMouse.x += (float)dxp;
+                    s_gameVMouse.y += (float)dyp;
+                }
                 unsigned mask = 0;
                 if (rmb & SDL_BUTTON(SDL_BUTTON_LEFT))   mask |= 1u << 0;
                 if (rmb & SDL_BUTTON(SDL_BUTTON_RIGHT))  mask |= 1u << 1;
                 if (rmb & SDL_BUTTON(SDL_BUTTON_MIDDLE)) mask |= 1u << 2;
                 Input::FeedMouse(s_gameVMouse, mask);
             } else {
-                SDL_SetRelativeMouseMode(SDL_FALSE);
+                if (s_playLookLocked)
+                    SDL_SetRelativeMouseMode(SDL_FALSE);
+                s_playLookLocked = false;
                 // Mouse, relative to the Game/Scene canvas so UI buttons hit-test
                 // against the same coordinates the preview draws with.
                 ImVec2 mp = ImGui::GetMousePos();
@@ -43045,10 +43177,12 @@ int main(int argc, char** argv) {
                     if (ImGui::IsMouseClicked(kButtons[b])) s_heldFromGame[b] = overGame;
                     if (s_heldFromGame[b]) mask |= 1u << b;
                 }
+                s_playLookAnchor = {rx, ry};
                 Input::FeedMouse(Vec2{rx, ry}, mask);
             }
             InputActions::Tick();
         } else if (!ed.isPlaying()) {
+            s_playLookLocked = false;
             Input::FeedKeys({}); // release everything in edit mode
             // Keep the Capture mouse choice for the next Play; just free the pointer and
             // forget the last run's cursor lock.
@@ -43592,6 +43726,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.GameView"); if (g_showGame)      DrawGameView(ed); }
         { OKAY_PROFILE("UI.Profiler"); if (g_showProfiler)  DrawProfiler(ed); }
         { OKAY_PROFILE("UI.Inspector"); if (g_showInspector) DrawInspector(ed); }
+        DrawFpHandsPreviewWindow(ed);
         { OKAY_PROFILE("UI.Console"); if (g_showConsole)   DrawConsole(); }
         { OKAY_PROFILE("UI.CrashLog"); if (g_showCrashLog)  DrawCrashLog(); }
         { OKAY_PROFILE("UI.AudioMixer"); if (g_showAudioMixer) DrawAudioMixer(); }

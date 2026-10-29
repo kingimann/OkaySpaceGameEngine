@@ -1298,3 +1298,14 @@ add_test(NAME ragdoll COMMAND test_ragdoll)
 add_executable(test_fixed_step test_fixed_step.cpp)
 target_link_libraries(test_fixed_step PRIVATE okay::engine)
 add_test(NAME fixed_step COMMAND test_fixed_step)
+
+# Dialogue graphs: parse / write, traversal (lines, choices, conditions, sets, events,
+# items, quests), validation, the runner's Advance / Choose, the StoryState record
+add_executable(test_dialogue test_dialogue.cpp)
+target_link_libraries(test_dialogue PRIVATE okay::engine)
+add_test(NAME dialogue COMMAND test_dialogue)
+
+# Quests: objectives from every source, prerequisites, rewards once, scene + save-game round trips
+add_executable(test_quests test_quests.cpp)
+target_link_libraries(test_quests PRIVATE okay::engine)
+add_test(NAME quests COMMAND test_quests)

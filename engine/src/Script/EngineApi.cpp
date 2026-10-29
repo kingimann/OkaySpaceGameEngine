@@ -30,6 +30,9 @@
 #include "okay/Components/UIButton.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/SaveGame.hpp"
+#include "okay/Components/DialogueRunner.hpp"   // Dialogue / Story / Quest statics
+#include "okay/Components/QuestLog.hpp"
+#include "okay/Components/StoryState.hpp"
 #include <cmath>
 #include <set>
 
@@ -933,6 +936,112 @@ EngineApi Build() {
             [](const Value&, CallContext&) { return Value{SaveGame::PlayTime()}; },
             "Seconds played, counting the time in the save that was loaded."));
         api.types.push_back(std::move(sg));
+    }
+    // ---- Dialogue / Story / Quest ----
+    {
+        auto sceneOf = [](CallContext& c) -> Scene* { return c.self ? c.self->scene() : nullptr; };
+        ApiType dg; dg.name = "Dialogue"; dg.isStatic = true;
+        dg.doc = "Conversations: start an object's Dialogue Runner (by the object's or the graph's name) and ask whether one runs.";
+        dg.staticMethods.push_back(method("Start", {tString}, {"name"}, tBool,
+            [sceneOf](const Value&, std::vector<Value>& a, CallContext& c) {
+                DialogueRunner* r = nullptr;
+                if (S(a[0]).empty() && c.self) r = c.self->GetComponent<DialogueRunner>();
+                if (!r) r = DialogueRunner::FindByName(sceneOf(c), S(a[0]));
+                if (!r) { Log::Warning("[script] Dialogue.Start: no Dialogue Runner named ", S(a[0])); return Value{false}; }
+                return Value{r->StartDialogue()};
+            }, "Start the conversation on the object (or graph) with this name; \"\" means this object's runner. False when there is none."));
+        dg.staticMethods.push_back(method("Stop", {}, {}, tVoid,
+            [sceneOf](const Value&, std::vector<Value>&, CallContext& c) { if (DialogueRunner* r = DialogueRunner::ActiveIn(sceneOf(c))) r->Stop(); return Value{}; },
+            "End the running conversation."));
+        dg.staticMethods.push_back(method("IsActive", {}, {}, tBool,
+            [sceneOf](const Value&, std::vector<Value>&, CallContext& c) { return Value{DialogueRunner::ActiveIn(sceneOf(c)) != nullptr}; },
+            "True while a conversation runs."));
+        dg.staticMethods.back().pure = true;
+        api.types.push_back(std::move(dg));
+
+        ApiType st; st.name = "Story"; st.isStatic = true;
+        st.doc = "The story's global variables and flags (the scene's Story State; saved with the game).";
+        st.staticMethods.push_back(method("Set", {tString, tFloat}, {"name", "value"}, tVoid,
+            [sceneOf](const Value&, std::vector<Value>& a, CallContext& c) {
+                if (StoryState* s = StoryState::Get(sceneOf(c), true)) s->Set(S(a[0]), vs::VsValue(F(a[1])));
+                return Value{};
+            }, "Set a number variable."));
+        st.staticMethods.push_back(method("SetText", {tString, tString}, {"name", "value"}, tVoid,
+            [sceneOf](const Value&, std::vector<Value>& a, CallContext& c) {
+                if (StoryState* s = StoryState::Get(sceneOf(c), true)) s->Set(S(a[0]), vs::VsValue(S(a[1])));
+                return Value{};
+            }, "Set a text variable."));
+        st.staticMethods.push_back(method("Get", {tString}, {"name"}, tFloat,
+            [sceneOf](const Value&, std::vector<Value>& a, CallContext& c) {
+                StoryState* s = StoryState::Get(sceneOf(c), false);
+                return Value{s ? s->Get(S(a[0])).AsFloat() : 0.0f};
+            }, "A variable as a number (0 when unset)."));
+        st.staticMethods.back().pure = true;
+        st.staticMethods.push_back(method("GetText", {tString}, {"name"}, tString,
+            [sceneOf](const Value&, std::vector<Value>& a, CallContext& c) {
+                StoryState* s = StoryState::Get(sceneOf(c), false);
+                return Value{s ? s->Get(S(a[0])).AsString() : std::string()};
+            }, "A variable as text (\"\" when unset)."));
+        st.staticMethods.back().pure = true;
+        st.staticMethods.push_back(method("Has", {tString}, {"name"}, tBool,
+            [sceneOf](const Value&, std::vector<Value>& a, CallContext& c) {
+                StoryState* s = StoryState::Get(sceneOf(c), false);
+                return Value{s && s->Has(S(a[0]))};
+            }, "True once the variable was set."));
+        st.staticMethods.back().pure = true;
+        st.staticMethods.push_back(method("SetFlag", {tString, tBool}, {"name", "on"}, tVoid,
+            [sceneOf](const Value&, std::vector<Value>& a, CallContext& c) {
+                if (StoryState* s = StoryState::Get(sceneOf(c), true)) s->SetFlag(S(a[0]), std::get<bool>(a[1]));
+                return Value{};
+            }, "Set or clear a flag."));
+        st.staticMethods.push_back(method("HasFlag", {tString}, {"name"}, tBool,
+            [sceneOf](const Value&, std::vector<Value>& a, CallContext& c) {
+                StoryState* s = StoryState::Get(sceneOf(c), false);
+                return Value{s && s->HasFlag(S(a[0]))};
+            }, "True while the flag is set."));
+        st.staticMethods.back().pure = true;
+        api.types.push_back(std::move(st));
+
+        ApiType q; q.name = "Quest"; q.isStatic = true;
+        q.doc = "Quests in the scene's Quest Log: start, complete objectives, read states.";
+        q.staticMethods.push_back(method("Start", {tString}, {"id"}, tBool,
+            [sceneOf](const Value&, std::vector<Value>& a, CallContext& c) {
+                QuestLog* l = QuestLog::Get(sceneOf(c), true);
+                return Value{l && l->StartQuest(S(a[0]))};
+            }, "Start a quest. False when it is unknown, already active or its prerequisites aren't done."));
+        q.staticMethods.push_back(method("Complete", {tString}, {"id"}, tBool,
+            [sceneOf](const Value&, std::vector<Value>& a, CallContext& c) {
+                QuestLog* l = QuestLog::Get(sceneOf(c), false);
+                return Value{l && l->CompleteQuest(S(a[0]))};
+            }, "Complete an active quest outright (its rewards are granted)."));
+        q.staticMethods.push_back(method("CompleteObjective", {tString, tInt}, {"id", "index"}, tBool,
+            [sceneOf](const Value&, std::vector<Value>& a, CallContext& c) {
+                QuestLog* l = QuestLog::Get(sceneOf(c), true);
+                return Value{l && l->CompleteObjective(S(a[0]), I(a[1]))};
+            }, "Mark one objective (0-based) of an active quest done."));
+        q.staticMethods.push_back(method("AddProgress", {tString, tInt, tInt}, {"id", "index", "amount"}, tBool,
+            [sceneOf](const Value&, std::vector<Value>& a, CallContext& c) {
+                QuestLog* l = QuestLog::Get(sceneOf(c), true);
+                return Value{l && l->AddProgress(S(a[0]), I(a[1]), I(a[2]))};
+            }, "Count toward a collect / kill style objective."));
+        q.staticMethods.push_back(method("Fail", {tString}, {"id"}, tBool,
+            [sceneOf](const Value&, std::vector<Value>& a, CallContext& c) {
+                QuestLog* l = QuestLog::Get(sceneOf(c), false);
+                return Value{l && l->FailQuest(S(a[0]))};
+            }, "Fail an active quest."));
+        q.staticMethods.push_back(method("State", {tString}, {"id"}, tString,
+            [sceneOf](const Value&, std::vector<Value>& a, CallContext& c) {
+                QuestLog* l = QuestLog::Get(sceneOf(c), false);
+                return Value{std::string(l ? l->StatusName(S(a[0])) : "inactive")};
+            }, "\"inactive\", \"active\", \"completed\" or \"failed\"."));
+        q.staticMethods.back().pure = true;
+        q.staticMethods.push_back(method("IsActive", {tString}, {"id"}, tBool,
+            [sceneOf](const Value&, std::vector<Value>& a, CallContext& c) {
+                QuestLog* l = QuestLog::Get(sceneOf(c), false);
+                return Value{l && l->IsActive(S(a[0]))};
+            }, "True while the quest is active."));
+        q.staticMethods.back().pure = true;
+        api.types.push_back(std::move(q));
     }
     // ---- Mathf ----
     {

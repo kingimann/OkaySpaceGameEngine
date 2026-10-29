@@ -520,6 +520,7 @@ the rest join over LAN or a forwarded port.
 - [`docs/vehicle_controller.md`](docs/vehicle_controller.md) — arcade **vehicle/car controller**.
 - [`docs/ui_world_space.md`](docs/ui_world_space.md) — **in-world (3D) UI**: world canvases and standalone 3D widgets.
 - [`docs/ui_html.md`](docs/ui_html.md) — author menus/HUDs in an **HTML + CSS** subset (UIDocument).
+- [`docs/dialogue_quests.md`](docs/dialogue_quests.md) — **dialogue graphs** (`.okaydialog`, the Dialogue window), **story variables** and **quests** (`.okayquest`, objectives, rewards, tracker and journal).
 - [`docs/steam_release.md`](docs/steam_release.md) — shipping on Steam.
 
 ## Extending it

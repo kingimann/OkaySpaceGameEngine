@@ -9,6 +9,7 @@
 #include "okay/VisualScript/NodesBuild.hpp"
 #include "okay/VisualScript/NodesActions.hpp"
 #include "okay/VisualScript/NodesPhysics.hpp"
+#include "okay/VisualScript/NodesStory.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Scene/GameObject.hpp"
 
@@ -309,7 +310,9 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         type == "OnObjectPlaced" || type == "OnObjectRemoved" || type == "OnLogicSignal" ||
         type == "OnCheatDetected" || type == "OnValidateRpc" || type == "OnValidateHit" ||
         type == "OnItemAdded" || type == "OnItemRemoved" || type == "OnInventoryFull" ||
-        type == "OnItemUsed" || type == "OnEquip" || type == "OnCraft")
+        type == "OnItemUsed" || type == "OnEquip" || type == "OnCraft" ||
+        type == "OnDialogueEvent" || type == "OnDialogueEnd" || type == "OnQuestStarted" ||
+        type == "OnQuestCompleted" || type == "OnQuestFailed" || type == "OnObjectiveCompleted" || type == "OnQuestEvent")
         return std::make_unique<EventNode>();
     if (type == "OnEvent" || type == "OnNetRpc") return std::make_unique<CustomEventNode>();
     // ---- Actions steps (the no-code library) ----
@@ -638,6 +641,13 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "AnimSetBool")     return std::make_unique<AnimParamNode>(AnimParamNode::Op::SetBool, argOr(""));
     if (type == "AnimState")       return std::make_unique<AnimStateNode>();
     if (type == "IkLook")          return std::make_unique<IkLookNode>();
+    // Story: dialogues, story variables, quests (okay/VisualScript/NodesStory.hpp).
+    if (type == "StartDialogue")     return std::make_unique<StartDialogueNode>(argOr(""));
+    if (type == "SetStoryVar")       return std::make_unique<SetStoryVarNode>(argOr(""));
+    if (type == "GetStoryVar")       return std::make_unique<GetStoryVarNode>(argOr(""));
+    if (type == "StartQuest")        return std::make_unique<StartQuestNode>(argOr(""));
+    if (type == "CompleteObjective") return std::make_unique<CompleteObjectiveNode>(argOr(""));
+    if (type == "QuestState")        return std::make_unique<QuestStateNode>(argOr(""));
     if (type == "IkHand") {
         std::string side = argOr("right");
         return std::make_unique<IkHandNode>(!side.empty() && (side[0] == 'l' || side[0] == 'L'));

@@ -1088,7 +1088,12 @@ elbows bend down and out, and the object moves with the body.
   come back as a top-down camera. The near plane comes back with the head.
   Another camera still sees the whole character. The first-person
   controller does not put the hide back, and the editor Game view does not
-  invent one while the game is playing.
+  invent one while the game is playing. The First Person and Third Person
+  starters put both controllers on the player, so the view you switch to is
+  the one that moves the body: first person is the eye controller, third
+  person the orbit. A scene saved by an older starter, whose player had only
+  one of the two, gets the other when it loads, with its camera mounted on
+  the player, so its V runs the same way.
 - **Socket**: hold it at a named object inside the character (a holster, a back
   slot) instead of in front of the chest.
 - The hands never stretch: when a grip is out of reach the object comes closer

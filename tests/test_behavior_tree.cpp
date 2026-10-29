@@ -3,6 +3,8 @@
 #include "okay/AI/BehaviorTree.hpp"
 #include "okay/AI/Navigation.hpp"
 #include "okay/Components/BehaviorTreeRunner.hpp"
+#include "okay/Components/DialogueGraph.hpp"
+#include "okay/Components/DialogueRunner.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
 #include "okay/Components/NavMeshSurface.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
@@ -742,6 +744,82 @@ int main() {
         CHECK(SceneSerializer::Deserialize(c, older, &err));
         CHECK(c.Find("Guard") && !c.Find("Guard")->GetComponent<BehaviorTreeRunner>());
         CHECK(c.Find("Plain") != nullptr);
+    }
+
+    // ---- Start Dialogue: the NPC's Dialogue Runner, waited on until it ends ----------
+    {
+        Scene s("talk");
+        s.physicsEnabled = false;
+        GameObject* npc = s.CreateGameObject("Smith");
+        auto* dr = npc->AddComponent<DialogueRunner>();
+        dr->startMode = 1;          // scripts only: no interact key
+        dr->drawUI = false;
+        dr->pausePlayer = false;
+        dr->typewriterSpeed = 0.0f;
+        DialogueGraph g;
+        auto& hello = g.Add(DialogueNode::Kind::Line, 0, 0);
+        hello.speaker = "Smith"; hello.text = "Hello."; hello.next = 1;
+        auto& bye = g.Add(DialogueNode::Kind::Line, 200, 0);
+        bye.speaker = "Smith"; bye.text = "Goodbye.";
+        dr->SetGraph(g);
+        auto* r = npc->AddComponent<BehaviorTreeRunner>();
+        auto t = std::make_shared<BehaviorTree>();
+        const int seq = t->AddNode(BtNodeType::Sequence);
+        const int talk = t->AddNode(BtNodeType::StartDialogue, seq);
+        r->SetTree(t);
+        s.Start();
+        s.Update(0.1f);
+        CHECK(dr->IsActive());
+        CHECK(r->State(talk) && r->State(talk)->status == BtStatus::Running);
+        dr->Advance();               // on to the second line: still talking
+        s.Update(0.1f);
+        CHECK(dr->IsActive());
+        CHECK(r->State(talk)->status == BtStatus::Running);
+        dr->Advance();               // the end of the graph
+        s.Update(0.1f);
+        CHECK(!dr->IsActive());
+        CHECK(r->LastResult() == BtStatus::Success);
+        // Without Wait it succeeds as soon as the conversation starts.
+        t->Find(talk)->Set("wait", false);
+        r->Run();
+        s.Update(0.1f);
+        CHECK(dr->IsActive());
+        CHECK(r->LastResult() == BtStatus::Success);
+        dr->Stop();
+        // A conversation already running is waited on, not restarted.
+        t->Find(talk)->Set("wait", true);
+        CHECK(dr->StartDialogue());
+        dr->Advance();               // the player is on the second line
+        r->Run();
+        s.Update(0.1f);
+        CHECK(dr->IsActive() && dr->CurrentLine().text == "Goodbye.");
+        // Stopping the tree leaves a conversation it did not start alone...
+        r->Stop();
+        CHECK(dr->IsActive());
+        dr->Stop();
+        // ...and ends one it started.
+        r->Run();
+        s.Update(0.1f);
+        CHECK(dr->IsActive());
+        r->Stop();
+        CHECK(!dr->IsActive());
+        // No Dialogue Runner: the task fails.
+        GameObject* mute = s.CreateGameObject("Mute");
+        auto* r2 = mute->AddComponent<BehaviorTreeRunner>();
+        auto t2 = std::make_shared<BehaviorTree>();
+        t2->AddNode(BtNodeType::StartDialogue);
+        r2->SetTree(t2);
+        r2->Run();
+        s.Update(0.1f);
+        CHECK(r2->LastResult() == BtStatus::Failure);
+        // The task and its settings survive a file round trip.
+        t->Find(talk)->Set("graph", "Assets/smith.okaydialog");
+        BehaviorTree back;
+        CHECK(back.Deserialize(t->Serialize()));
+        const BtNode* bt = back.Find(talk);
+        CHECK(bt && bt->type == BtNodeType::StartDialogue && bt->Str("graph") == "Assets/smith.okaydialog" && bt->Flag("wait"));
+        CHECK(BtDefOf(BtNodeType::StartDialogue).type == BtNodeType::StartDialogue);
+        CHECK(BtDefOf(BtNodeType::Custom).type == BtNodeType::Custom);
     }
 
     TEST_MAIN_RESULT();

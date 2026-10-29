@@ -104,7 +104,7 @@ enum class BtNodeType {
     Inverter, Succeeder, Repeat, UntilFail, Cooldown, TimeLimit, Condition, Guard,
     // ---- tasks ----
     Wait, MoveTo, Patrol, Wander, Chase, Flee, LookAt, PlayAnimation, Attack,
-    SetBlackboard, SendEvent, RunScript, PlayAudio, Custom,   // PlayAudio: windows.h defines PlaySound
+    SetBlackboard, SendEvent, RunScript, PlayAudio, StartDialogue, Custom,   // PlayAudio: windows.h defines PlaySound
     // ---- services ----
     Perception, HealthWatcher,
     Count
@@ -133,7 +133,7 @@ struct BtParamDef {
     Kind kind;
     const char* def;        ///< the default, as text
     const char* hint;       ///< tooltip
-    const char* choices;    ///< Choice: "a|b|c"; Key: accepted types "number|bool|string|vector|object"
+    const char* choices;    ///< Choice: "a|b|c"; Key: accepted types "number|bool|string|vector|object"; File: the file pattern (null: sounds)
 };
 
 struct BtNodeDef {

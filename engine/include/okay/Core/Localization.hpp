@@ -171,7 +171,6 @@ public:
     /// A name as part of a key: lower case, letters, digits, '_' and '-' kept,
     /// anything else '_' ("Old Smith" -> "old_smith").
     static std::string KeyPart(const std::string& name);
-    static bool Has(const std::string& key) { return Table().Has(key); }
     /// Get(key) with its {0} / {name} / plural placeholders filled in.
     static std::string LocalizeArgs(const std::string& key, const std::vector<LocArg>& args);
     template <class... A> static std::string Localize(const std::string& key, A&&... args) {

@@ -470,7 +470,10 @@ void DrawTable(EditorState& ed, float height) {
                 }
                 if (ImGui::IsItemActivated()) SelectKey(key);
                 if (ImGui::IsItemDeactivatedAfterEdit()) EndEdit(ed);
-                if (cur && cur->find('\n') != std::string::npos && ImGui::IsItemHovered() && !ImGui::IsItemActive())
+                cur = t.Text(key, code);   // (an edit may have changed or cleared it)
+                if (cur && ImGui::IsItemHovered() && !ImGui::IsItemActive() &&   // the whole text when the cell cuts it
+                    (cur->find('\n') != std::string::npos ||
+                     ImGui::CalcTextSize(cell.c_str()).x > ImGui::GetItemRectSize().x - ImGui::GetStyle().FramePadding.x * 2.0f))
                     ImGui::SetTooltip("%s", cur->c_str());
                 ImGui::PopID();
             }

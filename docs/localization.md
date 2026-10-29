@@ -28,8 +28,8 @@ key shop.coins
 text en menu.start "Start"
 text fr menu.start "Commencer"
 text ja menu.start "スタート"
-text en shop.coins "{count, plural, one {# coin} other {# coins}}"
-text fr shop.coins "{count, plural, one {# pièce} other {# pièces}}"
+text en shop.coins "{0, plural, one {# coin} other {# coins}}"
+text fr shop.coins "{0, plural, one {# pièce} other {# pièces}}"
 ```
 
 - `language <code> "<name>"` adds a language. `default` marks the language
@@ -50,7 +50,7 @@ still load. Windows line endings and a byte order mark are fine.
 `Localization::Get("key")` returns the key's text in the current language. When
 that language has no text, it shows the default language's text; when that is
 missing too, it shows the key itself. Each miss is logged once (per language and
-key), as a warning: `Localization: "shop.coins" has no fr text; showing the en one`.
+key), as a warning: `Localization: "menu.quit" has no fr text; showing the en one`.
 
 ## Arguments and plurals
 
@@ -61,9 +61,10 @@ Placeholders are filled from the arguments a text is asked for with:
 - `{name}` is a named argument: in OkayScript pass a map,
   `loc("greet", map_set(map(), "player", "Ana"))` with `"Hello, {player}!"`.
   In C++, `LocArg::Named("player", "Ana")`.
-- `{n, plural, one {...} other {...}}` picks a form by the number: `#` inside
-  it is the number. `=0 {...}`, `=1 {...}` match exact numbers first. The forms
-  are `zero`, `one`, `two`, `few`, `many` and `other`.
+- `{0, plural, one {...} other {...}}` (or `{count, plural, ...}` with a named
+  argument) picks a form by the argument's number: `#` inside it is the number.
+  `=0 {...}`, `=1 {...}` match exact numbers first. The forms are `zero`, `one`,
+  `two`, `few`, `many` and `other`.
 - `{{` and `}}` are literal braces. A placeholder without an argument stays as
   written, so a missing argument is easy to spot.
 
@@ -173,7 +174,8 @@ OkayScript:
 ```
 start() {
     title = loc("menu.start")
-    coins = loc("shop.coins", map_set(map(), "count", 3))   // "3 coins"
+    coins = loc("shop.coins", 3)   // "3 coins"
+    hello = loc("greet", map_set(map(), "player", "Ana"))   // "Hello, {player}!" -> "Hello, Ana!"
     for c in languages() { log(c + " " + language_name(c)) }
     set_language("fr")   // true when the table has it; remembered for the next run
 }
@@ -189,7 +191,7 @@ C#-style scripts:
 class LanguageMenu : Behaviour {
     void Start() {
         string title = Localization.Get("menu.title");
-        string coins = Localization.Get("shop.coins", 3);   // up to three arguments
+        string coins = Localization.Get("shop.coins", 3);   // "3 coins"; up to three arguments
         foreach (string code in Localization.Languages)
             Debug.Log(code + " " + Localization.LanguageName(code));
         Localization.SetLanguage("ja");   // true when the table has it; remembered

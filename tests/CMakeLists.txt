@@ -1264,6 +1264,10 @@ add_executable(test_save_game test_save_game.cpp)
 target_link_libraries(test_save_game PRIVATE okay::engine)
 add_test(NAME save_game COMMAND test_save_game)
 
+add_executable(test_ragdoll test_ragdoll.cpp)
+target_link_libraries(test_ragdoll PRIVATE okay::engine)
+add_test(NAME ragdoll COMMAND test_ragdoll)
+
 # Fixed-step physics: same result at any frame rate, catch-up limit, render interpolation
 add_executable(test_fixed_step test_fixed_step.cpp)
 target_link_libraries(test_fixed_step PRIVATE okay::engine)

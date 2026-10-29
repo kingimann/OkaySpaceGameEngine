@@ -54,6 +54,7 @@
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
 #include "okay/Components/TopDownShooterController.hpp"
+#include "okay/Components/Ragdoll.hpp"
 #include "okay/Components/Platformer25DController.hpp"
 #include "okay/Components/Projectile3D.hpp"
 #include "okay/Components/TopDownController2D.hpp"
@@ -2029,6 +2030,15 @@ void WriteComponents(std::ostream& out, GameObject* go) {
          ("camDist", ts->cameraDistance)("camPitch", ts->cameraPitch)("camYaw", ts->cameraYaw)("camDamp", ts->cameraDamping)
          ("lead", ts->aimLookAhead)("maxLead", ts->maxLookAhead).b("zoom", ts->wheelZoom)("minDist", ts->minDistance)
          ("maxDist", ts->maxDistance)("shake", ts->fireShake).str("proj", ts->projectile);
+        out << "\n";
+    }
+    if (auto* rd = go->GetComponent<Ragdoll>()) {
+        out << "  ragdoll";
+        KvOut k{out};
+        k("grav", rd->gravity)("damp", rd->damping)("fric", rd->friction)("radius", rd->radius)
+         ("iters", rd->iterations)("maxSpeed", rd->maxSpeed).b("onDeath", rd->ragdollOnDeath)
+         ("deathPush", rd->deathImpulse).b("hits", rd->hitReactions)("hitPush", rd->hitImpulse)
+         ("recover", rd->hitRecover);
         out << "\n";
     }
     if (auto* pc = go->GetComponent<Platformer25DController>()) {
@@ -5186,6 +5196,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     k.f("camDamp", ts->cameraDamping); k.f("lead", ts->aimLookAhead); k.f("maxLead", ts->maxLookAhead);
                     k.b("zoom", ts->wheelZoom); k.f("minDist", ts->minDistance); k.f("maxDist", ts->maxDistance);
                     k.f("shake", ts->fireShake); k.str("proj", ts->projectile);
+                } else if (field == "ragdoll") {
+                    auto* rd = go->AddComponent<Ragdoll>();
+                    KvIn k(in);
+                    k.f("grav", rd->gravity); k.f("damp", rd->damping); k.f("fric", rd->friction);
+                    k.f("radius", rd->radius); k.i("iters", rd->iterations); k.f("maxSpeed", rd->maxSpeed);
+                    k.b("onDeath", rd->ragdollOnDeath); k.f("deathPush", rd->deathImpulse);
+                    k.b("hits", rd->hitReactions); k.f("hitPush", rd->hitImpulse); k.f("recover", rd->hitRecover);
                 } else if (field == "fpstance" || field == "tpstance") {
                     // Stance options for the controller declared just above (crouch/prone body).
                     KvIn k(in);

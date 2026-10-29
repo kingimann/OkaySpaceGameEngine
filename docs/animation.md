@@ -977,7 +977,9 @@ elbows bend down and out, and the object moves with the body.
 
 - States have **Enter / Exit events** (sent like clip events, so `OnAnimEvent`
   nodes and script handlers receive them).
-- Transitions have an **Offset** (start the next clip part-way through) and a
+- Transitions have an **Offset** (start the next clip part-way through), a
+  **Keep phase** checkbox (start the next state where the current one is in its
+  cycle, so walk ↔ run between two looping states keeps the feet in step) and a
   **Mute** checkbox (muted transitions are dimmed and never fire). Outgoing
   transitions are listed in priority order with up/down buttons.
 - In Play mode the graph flashes the transition that just fired and lists the

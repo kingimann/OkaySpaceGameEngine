@@ -64,6 +64,10 @@ public:
     /// bone doesn't re-decide the bend (minBend/maxBend do); it stops the twist.
     IKJointLimit upperLimit, lowerLimit;
     float softness = 0.0f;             ///< ease the last stretch to full reach over this distance (no snap straight)
+    /// Let the limb lengthen by up to this fraction (0.15 = 15 %) when the target
+    /// is beyond its reach, instead of stopping short: a ledge grab, a long reach.
+    /// The animated bone lengths come back with the next pose.
+    float stretch  = 0.0f;
     bool  matchTargetRotation = false; ///< align the end bone to the target's rotation (grab)
     bool  orient   = false;            ///< joints not in a chain: also turn the upper/lower bones toward
                                        ///< the moved joints (a chain always turns)
@@ -98,8 +102,16 @@ public:
 
         const Vec3 bendDir = m_pole.Direction(root, oldMid, oldEnd, transform ? transform->Rotation() : Quat::Identity,
                                               static_cast<IKPoleMode>(static_cast<int>(poleMode)), pole, poleObject);
+        // Beyond reach, the bones stretch (up to `stretch`) so the hand still gets
+        // there; a chain moves its joints out along the bones by the same factor.
+        float s = 1.0f;
+        if (stretch > 0.0f) {
+            const float reach = upLen + loLen, dist = (tgt - root).Magnitude();
+            if (dist > reach) s = Mathf::Min(dist / reach, 1.0f + stretch);
+        }
+        const float grow = 1.0f + (s - 1.0f) * w;   // the stretch blends by the weight like the turn
         Vec3 mid, e;
-        SolveTwoBoneIKSoft(root, upLen, loLen, tgt, bendDir, softness, mid, e, minBend, maxBend);
+        SolveTwoBoneIKSoft(root, upLen * s, loLen * s, tgt, bendDir, softness, mid, e, minBend, maxBend);
         m_restore.Touch(upper); m_restore.Touch(lower); m_restore.Touch(end);
         if (Chained()) {
             // Turn the bones (rotations blend by the weight, so lengths stay): the
@@ -111,10 +123,12 @@ public:
             upper->SetRotation(AimBone(upper, oldMid, mid));
             if (upperLimit.Active())
                 upper->localRotation = ApplyLimit(upper->localRotation, m_upFrame, upperLimit);
+            if (grow != 1.0f) lower->localPosition = lower->localPosition * grow;
             lower->SetRotation(AimBone(lower, end->Position(), e));
             if (lowerLimit.Active())
                 lower->localRotation = ApplyLimit(lower->localRotation, m_loFrame, lowerLimit,
                                                   lowerLimit.type == IKJointLimit::Type::Hinge);
+            if (grow != 1.0f) end->localPosition = end->localPosition * grow;
             const Quat rlSolved = lower->Rotation();
             BlendWorldRotation(upper, ru, upper->Rotation(), w);
             BlendWorldRotation(lower, rl, rlSolved, w);

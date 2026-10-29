@@ -6,6 +6,11 @@
 // clamped so it eases in and never snaps the neck past a believable limit.
 //
 // Assign `chain` root-to-tip and either `target` (world point) or `targetObject`.
+// Each bone takes a share of the turn (`boneWeights`, a ramp by default) and the
+// tip finishes it; `clampAngle` keeps the whole look within a cone of where the
+// animation points the chain root, so a target behind the character is watched
+// from the corner of the eye instead of the head turning round. Optional `eyes`
+// aim straight at the target ahead of the head (no easing), within eyeMaxAngle.
 //
 // Smoothing lives on the component (a world look direction per bone), not in the
 // bone. An animated bone is a fresh pose every frame, so easing the bone's own
@@ -47,6 +52,29 @@ public:
     /// still reaches the target at any frame rate; only the swing takes time.
     /// 0 = instant. ~10 reads like a natural head turn.
     float smoothing = 10.0f;
+    /// How much of its own turn each bone takes, root..tip (0..1). The tip always
+    /// finishes the look; bones without an entry ramp up to it, so an empty list
+    /// spreads a spine/neck/head turn a third, two thirds, the rest.
+    std::vector<float> boneWeights;
+    /// Furthest the look swings from where the animation points the chain root
+    /// (degrees; 0 = no limit). A target behind the character is then watched
+    /// from the corner of the eye instead of the head turning round.
+    float clampAngle = 120.0f;
+    /// Eye bones (optional). They aim straight at the target with no easing —
+    /// the eyes lead, the head follows — within eyeMaxAngle of where the
+    /// animation points them.
+    std::vector<Transform*> eyes;
+    std::vector<std::string> eyeNames; ///< editor/serialized: resolve `eyes` by object names
+    float eyeMaxAngle = 35.0f;
+    float eyeWeight = 1.0f;
+
+    /// The share of its turn bone `i` of `n` takes: its boneWeights entry, else a
+    /// ramp up to the tip, which always finishes the look.
+    static float ShareOf(const std::vector<float>& weights, std::size_t i, std::size_t n) {
+        if (n == 0 || i + 1 >= n) return 1.0f;
+        if (i < weights.size()) return Mathf::Clamp01(weights[i]);
+        return (float)(i + 1) / (float)n;
+    }
 
     void Start() override {
         // Names resolve inside this character first (two copies of one model
@@ -55,6 +83,9 @@ public:
         if (chain.empty() && !chainNames.empty())
             for (const std::string& n : chainNames)
                 if (Transform* t = ResolveBone(s, gameObject, n)) chain.push_back(t);
+        if (eyes.empty() && !eyeNames.empty())
+            for (const std::string& n : eyeNames)
+                if (Transform* t = ResolveBone(s, gameObject, n)) eyes.push_back(t);
         if (!targetObject) targetObject = ResolveBone(s, gameObject, targetName);
     }
 
@@ -68,7 +99,7 @@ public:
         // clip) shows the animated pose before this solve. Weight 0 leaves it there.
         m_restore.Restore();
         const float w = weight * m_fade.Step(ikActive, fadeTime, dt);
-        if (w <= 0.0f || chain.empty()) { ForgetAim(); return; }
+        if (w <= 0.0f || (chain.empty() && eyes.empty())) { ForgetAim(); return; }
 
         if (m_smooth.size() != chain.size()) { m_smooth.assign(chain.size(), {}); m_haveTgt = false; }
 
@@ -77,6 +108,11 @@ public:
         const Vec3 tgtChar = InCharacter(tgt);
         const bool tgtJump = m_haveTgt && Jumped(tgtChar, m_tgtChar);
         const float ease = smoothing > 0.0f ? (1.0f - std::exp(-smoothing * dt)) : 1.0f;
+
+        // The cone the look stays in: around where the animation points the
+        // chain root (the body's forward for a spine..head chain).
+        const Transform* rootBone = chain.empty() ? nullptr : chain.front();
+        const Vec3 bodyFwd = rootBone ? SafeNormalize(rootBone->Rotation() * forwardAxis, Vec3::Forward) : Vec3::Forward;
 
         // Root-to-tip: each bone aims its forward at the target. Later bones see
         // the positions their parents just moved them to.
@@ -88,25 +124,58 @@ public:
 
             const Vec3 raw = tgt - b->Position();
             if (!Finite(raw) || raw.SqrMagnitude() < 1e-8f) continue;
-            const Vec3 goal = SafeNormalize(raw, Vec3::Forward);
+            const Quat animated = b->Rotation();
+            const Vec3 fwd = SafeNormalize(animated * forwardAxis, Vec3::Forward);
+            Vec3 goal = SafeNormalize(raw, Vec3::Forward);
+            // A target straight behind has no nearer side: keep coming round the
+            // way the look already points.
+            if (clampAngle > 0.0f) goal = ClampDir(goal, bodyFwd, clampAngle, s.have ? s.dir : fwd);
             const Vec3 boneChar = InCharacter(b->Position());
             const bool snap = !s.have || smoothing <= 0.0f || tgtJump || (s.have && Jumped(boneChar, s.boneChar));
             s.dir = snap ? goal : SafeNormalize(Vec3::LerpUnclamped(s.dir, goal, ease), goal);
             s.have = true;
             s.boneChar = boneChar;
 
-            const Quat animated = b->Rotation();
-            const Vec3 fwd = SafeNormalize(animated * forwardAxis, Vec3::Forward);
             Quat desired = (Quat::FromToRotation(fwd, s.dir) * animated).Normalized();
             if (!Finite(desired)) continue;
+            const float share = ShareOf(boneWeights, i, chain.size());
+            if (share < 1.0f) desired = Quat::Slerp(animated, desired, share);
             const float total = Quat::Angle(animated, desired);
             if (total > maxAngle && total > 1e-4f) desired = Quat::Slerp(animated, desired, maxAngle / total);
             m_restore.Touch(b);
             BlendWorldRotation(b, animated, desired, w);
         }
+        // Eyes: straight at the target, no easing (the eyes lead, the head
+        // follows), within eyeMaxAngle of where the animation points them.
+        for (Transform* e : eyes) {
+            if (!e) continue;
+            const Vec3 raw = tgt - e->Position();
+            if (!Finite(raw) || raw.SqrMagnitude() < 1e-8f) continue;
+            const Quat animated = e->Rotation();
+            const Vec3 fwd = SafeNormalize(animated * forwardAxis, Vec3::Forward);
+            const Vec3 dir = ClampDir(SafeNormalize(raw, fwd), fwd, eyeMaxAngle, Vec3::Up);
+            const Quat desired = (Quat::FromToRotation(fwd, dir) * animated).Normalized();
+            if (!Finite(desired)) continue;
+            m_restore.Touch(e);
+            BlendWorldRotation(e, animated, desired, w * eyeWeight);
+        }
         m_tgtChar = tgtChar;
         m_haveTgt = true;
         m_restore.Commit();
+    }
+
+    /// `dir` pulled back to within `maxDeg` of `ref` (both unit). A direction
+    /// straight behind `ref` has no nearest side: it comes round via `side`.
+    static Vec3 ClampDir(const Vec3& dir, const Vec3& ref, float maxDeg, const Vec3& side) {
+        if (maxDeg >= 180.0f) return dir;
+        if (maxDeg <= 0.0f) return ref;
+        const float ang = std::acos(Mathf::Clamp(Vec3::Dot(dir, ref), -1.0f, 1.0f)) * Mathf::Rad2Deg;
+        if (ang <= maxDeg) return dir;
+        // Within ~5 degrees of straight behind there is no nearer side: come
+        // round the way the look already points, else level about the up axis.
+        Vec3 axis = Vec3::Dot(dir, ref) < -0.996f ? Vec3::Cross(ref, side) : Vec3::Cross(ref, dir);
+        if (axis.SqrMagnitude() < 1e-8f) axis = std::fabs(Vec3::Dot(ref, Vec3::Up)) < 0.9f ? Vec3::Up : Vec3::Right;
+        return SafeNormalize(Quat::AngleAxis(maxDeg, axis.Normalized()) * ref, ref);
     }
 private:
     /// A goal or bone that leaps this far in one frame (character space, metres

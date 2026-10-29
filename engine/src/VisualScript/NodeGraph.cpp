@@ -652,6 +652,9 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "StartQuest")        return std::make_unique<StartQuestNode>(argOr(""));
     if (type == "CompleteObjective") return std::make_unique<CompleteObjectiveNode>(argOr(""));
     if (type == "QuestState")        return std::make_unique<QuestStateNode>(argOr(""));
+    if (type == "SetWeather")      return std::make_unique<SetWeatherNode>(argOr("rain"));
+    if (type == "SetFog")          return std::make_unique<SetFogNode>();
+    if (type == "SetPostEffect")   return std::make_unique<SetPostEffectNode>(argOr("bloom"));
     if (type == "IkHand") {
         std::string side = argOr("right");
         return std::make_unique<IkHandNode>(!side.empty() && (side[0] == 'l' || side[0] == 'L'));

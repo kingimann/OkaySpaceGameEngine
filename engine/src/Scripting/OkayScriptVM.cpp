@@ -97,6 +97,8 @@
 #include "okay/Components/DialogueRunner.hpp"   // dialogue / story / quest builtins
 #include "okay/Components/QuestLog.hpp"
 #include "okay/Components/StoryState.hpp"
+#include "okay/Render/Atmosphere.hpp"          // post_set / fog_set / weather_set
+#include "okay/Components/DayNightCycle.hpp"   // time_of_day
 #include "okay/Math/Mathf.hpp"
 #include "okay/Core/Random.hpp"
 #include "okay/Core/Prefs.hpp"
@@ -5281,6 +5283,53 @@ struct OkayScriptVM::Impl {
             return Value{q && q->IsCompleted(a[0].AsString())};
         };
         b["toggle_journal"] = [sceneOf](std::vector<Value>&) { if (QuestLog* q = QuestLog::Get(sceneOf(), false)) q->ToggleJournal(); return Value{}; };
+        // The scene's look (docs/rendering.md): post_set("bloom", 1) / post_set("tonemap", "filmic"),
+        // fog_set(on [, "#rrggbb"] [, start, end] [, mode [, density]]), weather_set("rain" [, intensity]),
+        // time_of_day([hours]) on the scene's DayNightCycle.
+        b["post_set"] = [sceneOf](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            if (!s || a.size() < 2) return Value{false};
+            const std::string name = a[0].AsString();
+            const float v = a[1].IsString() ? (float)TonemapFromName(a[1].AsString()) : a[1].AsFloat();
+            const bool ok = PostSet(s->renderSettings, name, v);
+            if (!ok) Log::Warning("[script] post_set: unknown setting '", name, "'");
+            return Value{ok};
+        };
+        b["fog_set"] = [sceneOf](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            if (!s || a.empty()) return Value{};
+            auto& rs = s->renderSettings;
+            rs.fog = a[0].AsBool();
+            std::size_t i = 1;
+            if (i < a.size() && a[i].IsString()) {   // an optional "#rrggbb" colour
+                std::string hex = a[i].AsString(); ++i;
+                if (!hex.empty() && hex[0] == '#') hex.erase(0, 1);
+                if (hex.size() == 6) {
+                    const unsigned long v = std::strtoul(hex.c_str(), nullptr, 16);
+                    rs.fogColor = Color::FromBytes((int)((v >> 16) & 0xFF), (int)((v >> 8) & 0xFF), (int)(v & 0xFF));
+                    rs.fogMatchSky = false;
+                }
+            }
+            if (i + 1 < a.size()) { rs.fogStart = a[i].AsFloat(); rs.fogEnd = a[i + 1].AsFloat(); i += 2; }
+            if (i < a.size()) { rs.fogMode = a[i].IsString() ? FogModeFromName(a[i].AsString()) : (int)Mathf::Clamp(a[i].AsFloat(), 0.0f, 2.0f); ++i; }
+            if (i < a.size()) rs.fogDensity = Mathf::Clamp(a[i].AsFloat(), 0.0f, 10.0f);
+            return Value{};
+        };
+        b["weather_set"] = [sceneOf](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            if (!s || a.empty()) return Value{};
+            auto& w = s->renderSettings.weather;
+            w.preset = a[0].IsString() ? WeatherPresetFromName(a[0].AsString()) : (int)Mathf::Clamp(a[0].AsFloat(), 0.0f, 3.0f);
+            if (a.size() > 1) w.intensity = Mathf::Clamp01(a[1].AsFloat());
+            return Value{};
+        };
+        b["time_of_day"] = [sceneOf](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            DayNightCycle* dn = s ? s->FindObjectOfType<DayNightCycle>() : nullptr;
+            if (!dn) return Value{-1.0f};
+            if (!a.empty()) dn->SetTime(a[0].AsFloat());
+            return Value{dn->Hour()};
+        };
         // Keep the current volumes as the player's settings (also saved on quit).
         b["save_audio_settings"] = [](std::vector<Value>&) { AudioMixer::SaveSettings(); return Value{}; };
         // ---- Navigation: the Nav Mesh Agent on this object (or a named one) --------

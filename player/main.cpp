@@ -2017,12 +2017,21 @@ int main(int argc, char** argv) {
         // horizontal strips (SDL_RenderFillRect) rather than SDL_RenderGeometry so
         // it renders on every driver — RenderGeometry can silently no-op on some
         // GPUs/backends, which left the game showing a black sky.
+        // The GPU renderers draw the Procedural sky themselves under the same conditions.
+        okay::SkyPassEnabled() = perspective && scene.renderSettings.skybox && !solidClear;
         if (perspective && scene.renderSettings.skybox && !solidClear && w > 0 && h > 0) {
             const auto& rs = scene.renderSettings;
             auto lerp = [](const Color& a, const Color& b, float t) {
                 return Color{a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t,
                              a.b + (b.b - a.b) * t, 1.0f};
             };
+            // The gradient colours: the authored ones, or the sun's palette in
+            // Procedural mode (what shows behind the scene on the software renderer).
+            Vec3 topV, horV, botV;
+            okay::EffectiveSkyColors(rs, topV, horV, botV);
+            const Color skyTop{topV.x, topV.y, topV.z, 1.0f}, skyHorizon{horV.x, horV.y, horV.z, 1.0f},
+                        skyBottom{botV.x, botV.y, botV.z, 1.0f};
+            const bool procedural = rs.skyMode == Scene::RenderSettings::SkyProcedural;
             SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
             float hp = rs.skyHorizonPos < 0.05f ? 0.05f : (rs.skyHorizonPos > 0.95f ? 0.95f : rs.skyHorizonPos);
             const int strips = h < 128 ? h : 128;     // smooth enough, cheap
@@ -2030,15 +2039,15 @@ int main(int argc, char** argv) {
                 float t = (float)s / (float)(strips - 1);   // 0 (top) .. 1 (bottom)
                 // Two-stop gradient with the horizon band at `hp` (top->horizon above
                 // it, horizon->bottom below it).
-                Color c = (t < hp) ? lerp(rs.skyTop, rs.skyHorizon, t / hp)
-                                   : lerp(rs.skyHorizon, rs.skyBottom, (t - hp) / (1.0f - hp));
+                Color c = (t < hp) ? lerp(skyTop, skyHorizon, t / hp)
+                                   : lerp(skyHorizon, skyBottom, (t - hp) / (1.0f - hp));
                 // Atmospheric horizon haze: pale/warm brightening centered on the
                 // horizon line (matches the editor preview).
                 float hz = 1.0f - std::fabs(t - hp) / 0.10f;
                 if (hz > 0.0f) {
-                    Color haze{std::fmin(rs.skyHorizon.r * 1.15f + 0.12f, 1.0f),
-                               std::fmin(rs.skyHorizon.g * 1.15f + 0.12f, 1.0f),
-                               std::fmin(rs.skyHorizon.b * 1.10f + 0.10f, 1.0f), 1.0f};
+                    Color haze{std::fmin(skyHorizon.r * 1.15f + 0.12f, 1.0f),
+                               std::fmin(skyHorizon.g * 1.15f + 0.12f, 1.0f),
+                               std::fmin(skyHorizon.b * 1.10f + 0.10f, 1.0f), 1.0f};
                     c = lerp(c, haze, hz * 0.5f);
                 }
                 SDL_SetRenderDrawColor(renderer, (Uint8)(c.r * 255), (Uint8)(c.g * 255),
@@ -2048,8 +2057,9 @@ int main(int argc, char** argv) {
                 SDL_Rect rrect{0, y0, w, (y1 > y0 ? y1 - y0 : 1)};
                 SDL_RenderFillRect(renderer, &rrect);
             }
-            // Optional star field in the upper sky (above the horizon band).
-            if (rs.skyStars) {
+            // Optional star field in the upper sky (above the horizon band). The
+            // procedural sky draws its own stars and sun.
+            if (rs.skyStars && !procedural) {
                 int horizonPx = (int)(hp * h);
                 SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
                 for (const auto& st : okay::SkyStars((float)w, (float)h, (float)horizonPx,
@@ -2062,7 +2072,7 @@ int main(int argc, char** argv) {
                 SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
             }
             // Optional sun disc: a filled circle + soft glow at a screen-space position.
-            if (rs.skySun) {
+            if (rs.skySun && !procedural) {
                 int cx = (int)(rs.skySunX * w), cy = (int)(rs.skySunY * h);
                 int rad = (int)((rs.skySunSize < 0.005f ? 0.005f : rs.skySunSize) * h);
                 const Color& sk = rs.skySunColor;
@@ -2483,8 +2493,9 @@ int main(int argc, char** argv) {
             DrawOverlayCmds(renderer, SequencePlayer::BuildOverlay(sp->Overlay(), (float)W, (float)H), baseDir, textureCache);
             ui2d::SetUIDefaultFont(nullptr);
         }
-        // Post: screen-space vignette (on top of the scene + UI, under nothing).
-        DrawVignette(renderer, scene.renderSettings.vignette);
+        // Post: screen-space vignette (on top of the scene + UI, under nothing),
+        // unless the GPU post chain already drew it into the frame.
+        if (!okay::PostVignetteHandled()) DrawVignette(renderer, scene.renderSettings.vignette);
         SDL_RenderPresent(renderer);
 
         // Optional frame-rate cap: sleep the remainder of the frame budget.

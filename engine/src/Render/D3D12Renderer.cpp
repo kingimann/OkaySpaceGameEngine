@@ -12,6 +12,7 @@
 
 #include "okay/Render/D3D12Renderer.hpp"
 #include "okay/Render/Lighting.hpp"
+#include "okay/Render/Atmosphere.hpp"   // fog modes, sky colours
 #include "okay/Render/SoftwareRenderer.hpp"   // GetCachedTexture, EnvSky, SceneLights
 #include "okay/Scene/Transform.hpp"
 #include "okay/Core/Log.hpp"
@@ -48,10 +49,11 @@ const char* kHLSL12 =
     "  float4 uSky[3];\n"
     "  float4 uLightCount;\n"
     "  float4 uLights[64];\n"
-    "  float4 uFog;\n"
-    "  float4 uFogCol;\n"
+    "  float4 uFog;\n"                        // x=on y=start z=end w=mode (0 linear, 1 exponential, 2 height)
+    "  float4 uFogCol;\n"                     // xyz=colour w=density
     "  float4x4 uLightVP;\n"                  // directional shadow-map view-projection
     "  float4 uShadow;\n"                     // x=on y=texelWorld z=mapSize w=unused
+    "  float4 uFog2;\n"                       // x=height y=falloff (height fog)
     "};\n"
     "Texture2D uTex : register(t0);\n"
     "Texture2D uNormalTex : register(t1);\n"
@@ -175,9 +177,14 @@ const char* kHLSL12 =
     "    float kk = reflK + (1.0 - reflK) * fr2;\n"
     "    col = col * (1.0 - kk) + env * f0 * kk;\n"
     "  }\n"
-    "  if (uFog.x > 0.5) {\n"
+    "  if (uFog.x > 0.5) {\n"                                     // fog (Atmosphere.hpp FogFactor, same maths)
     "    float fd = length(uEye - i.world);\n"
-    "    float ff = saturate((fd - uFog.y) / max(uFog.z - uFog.y, 1e-3));\n"
+    "    float ff;\n"
+    "    if (uFog.w < 0.5) ff = saturate((fd - uFog.y) / max(uFog.z - uFog.y, 1e-3));\n"
+    "    else if (uFog.w < 1.5) ff = 1.0 - exp(-uFogCol.w * fd);\n"
+    "    else { float te = exp(-max(uEye.y - uFog2.x, 0.0) * uFog2.y);\n"
+    "           float tw = exp(-max(i.world.y - uFog2.x, 0.0) * uFog2.y);\n"
+    "           ff = 1.0 - exp(-uFogCol.w * fd * 0.5 * (te + tw)); }\n"
     "    col = lerp(col, uFogCol.xyz, ff);\n"
     "  }\n"
     "  return float4(col, uAlpha);\n"
@@ -206,6 +213,7 @@ struct CB {
     float fogCol[4];
     float lightVP[16];         // directional shadow-map view-projection
     float shadowP[4];          // x=on y=texelWorld z=mapSize w=unused
+    float fog2[4];             // x=height y=falloff (height fog)
 };
 
 inline UINT Align(UINT v, UINT a) { return (v + a - 1) & ~(a - 1); }
@@ -785,9 +793,7 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
     {
         const auto& rs = scene.renderSettings;
         EnvSky().enabled = rs.skybox;
-        EnvSky().top = {rs.skyTop.r, rs.skyTop.g, rs.skyTop.b};
-        EnvSky().horizon = {rs.skyHorizon.r, rs.skyHorizon.g, rs.skyHorizon.b};
-        EnvSky().bottom = {rs.skyBottom.r, rs.skyBottom.g, rs.skyBottom.b};
+        EffectiveSkyColors(rs, EnvSky().top, EnvSky().horizon, EnvSky().bottom);   // gradient, or the sun's palette
     }
     auto& sky = EnvSky();
 
@@ -907,9 +913,10 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
         std::memcpy(cb.lights, frameLights, sizeof(frameLights));
         {
             const auto& rs = scene.renderSettings;
-            bool fogOn = rs.fog && rs.fogEnd > rs.fogStart;
-            cb.fog[0] = fogOn ? 1.0f : 0.0f; cb.fog[1] = rs.fogStart; cb.fog[2] = rs.fogEnd; cb.fog[3] = 0.0f;
-            cb.fogCol[0] = rs.fogColor.r; cb.fogCol[1] = rs.fogColor.g; cb.fogCol[2] = rs.fogColor.b; cb.fogCol[3] = 1.0f;
+            const Vec3 fc = EffectiveFogColor(rs);
+            cb.fog[0] = FogActive(rs) ? 1.0f : 0.0f; cb.fog[1] = rs.fogStart; cb.fog[2] = rs.fogEnd; cb.fog[3] = (float)rs.fogMode;
+            cb.fogCol[0] = fc.x; cb.fogCol[1] = fc.y; cb.fogCol[2] = fc.z; cb.fogCol[3] = rs.fogDensity;
+            cb.fog2[0] = rs.fogHeight; cb.fog2[1] = rs.fogFalloff; cb.fog2[2] = 0.0f; cb.fog2[3] = 0.0f;
         }
         std::memcpy(cb.lightVP, lightVP.m, sizeof(cb.lightVP));
         cb.shadowP[0] = shadowOn ? 1.0f : 0.0f; cb.shadowP[1] = shadowTexel;

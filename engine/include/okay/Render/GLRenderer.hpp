@@ -23,8 +23,10 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Math/Mat4.hpp"
+#include "okay/Math/Vec2.hpp"
 #include "okay/Math/Vec3.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <vector>
 #include <string>
@@ -74,8 +76,19 @@ private:
     bool EnsureDepthTarget(unsigned int& fbo, unsigned int& tex, int& curW, int& curH, int w, int h);
     void DrawShadowCasters(const Scene& scene, const Mat4& lightVP, const GameObject* ignore,
                            const struct LightSample* local);
-    bool EnsureTargets(int w, int h, int samples);
+    bool EnsureTargets(int w, int h, int samples, bool hdr);
     void DestroyTargets();   // free ONLY the size-dependent FBO/renderbuffers/resolve
+    // Procedural sky (a fullscreen pass behind the meshes) and the scene's post
+    // chain (HDR resolve -> SSAO -> bloom -> exposure/tonemap/grading/vignette ->
+    // depth of field -> FXAA -> an RGBA8 output), see Atmosphere.hpp.
+    bool EnsureQuad();
+    void DrawQuad();                      // the fullscreen quad with attribute 0 bound
+    bool EnsureSkyProgram();
+    bool EnsurePostChain();               // uber / FXAA / DoF / downsample programs
+    bool EnsurePostTargets(int w, int h, bool hdr);
+    void DestroyPostTargets();
+    void DrawLinearDepth(const Scene& scene, const Mat4& vp, const Vec3& eye, const GameObject* ignore,
+                         const struct Frustum& viewFr);   // the half-res packed-depth pass (SSAO, DoF)
     void DestroyShadow();
     bool EnsurePostProgs();               // fullscreen-quad programs (bloom chain)
     bool EnsureBloomTargets(int w, int h);
@@ -114,12 +127,38 @@ private:
     int m_usDepth = -1, m_usTexel = -1, m_usRadius = -1, m_usFar = -1;  // AO pass
     int m_umSrc = -1, m_umStrength = -1;                                // multiply
     int m_w = 0, m_h = 0, m_samples = 0;
+    bool m_hdr = false;               // the live target set is RGBA16F (post chain active)
+    bool m_hdrUnsupported = false;    // float targets failed to build once: stay on RGBA8
+    unsigned int m_skyProg = 0;
+    int m_uskInvVP = -1, m_uskEye = -1, m_uskSun = -1, m_uskZenith = -1, m_uskHorizon = -1, m_uskGround = -1,
+        m_uskSunColor = -1, m_uskSunSize = -1, m_uskSunHalo = -1, m_uskSunDisc = -1, m_uskHaze = -1, m_uskNight = -1,
+        m_uskStarDensity = -1, m_uskStarBright = -1, m_uskCloudCover = -1, m_uskCloudDensity = -1,
+        m_uskCloudScale = -1, m_uskCloudOffset = -1, m_uskTime = -1, m_uskLin = -1,
+        m_uskMode = -1, m_uskTop = -1, m_uskHor = -1, m_uskBot = -1, m_uskHorizonPos = -1,
+        m_uskSunOn = -1, m_uskSunPos = -1, m_uskSunRad = -1, m_uskStarsOn = -1, m_uskViewSize = -1;
+    unsigned int m_uberProg = 0, m_fxaaProg = 0, m_dofProg = 0, m_downProg = 0;
+    int m_uuSrc = -1, m_uuBloomA = -1, m_uuBloomC = -1, m_uuExposure = -1, m_uuLinearIn = -1, m_uuTonemap = -1,
+        m_uuBloomOn = -1, m_uuBloomIntensity = -1, m_uuGradeOn = -1, m_uuTemperature = -1, m_uuTint = -1,
+        m_uuSaturation = -1, m_uuContrast = -1, m_uuLift = -1, m_uuGamma = -1, m_uuGain = -1,
+        m_uuVignette = -1, m_uuVignetteSmooth = -1, m_uuAspect = -1;
+    int m_ufSrc = -1, m_ufTexel = -1;                                   // FXAA
+    int m_udfSrc = -1, m_udfBlur = -1, m_udfDepth = -1, m_udfFocus = -1, m_udfRange = -1, m_udfFar = -1;   // DoF
+    int m_udnSrc = -1, m_udnTexel = -1, m_udnThresh = -1, m_udnRadius = -1;                                 // downsample
+    unsigned int m_outFbo = 0, m_outTex = 0;                            // RGBA8 result of the chain
+    unsigned int m_pingFbo[2] = {0, 0}, m_pingTex[2] = {0, 0};          // full-res RGBA8 pair (DoF / FXAA)
+    unsigned int m_bloomFboC = 0, m_bloomTexC = 0, m_bloomFboD = 0, m_bloomTexD = 0;   // quarter-res bloom pair
+    int m_postW = 0, m_postH = 0; bool m_postHdr = false;
+    std::chrono::steady_clock::time_point m_clock0;                     // cloud drift clock
+    bool m_clockSet = false;
+    float m_skyTime = 0.0f;
+    Vec2  m_cloudOffset{0.0f, 0.0f};                                    // accumulated cloud drift
     // Render targets for the OTHER view sizes in use (Scene view, Game view, Camera
     // Preview, Animation preview all differ): parked and swapped back in instead of
     // deleting + re-creating the MSAA / resolve / bloom / SSAO targets every view.
     struct SizeSet {
-        int w = 0, h = 0, samples = 0, bloomW = 0, bloomH = 0, ssaoW = 0, ssaoH = 0;
-        unsigned int ids[16] = {};
+        int w = 0, h = 0, samples = 0, bloomW = 0, bloomH = 0, ssaoW = 0, ssaoH = 0, postW = 0, postH = 0;
+        bool hdr = false, postHdr = false;
+        unsigned int ids[26] = {};
         unsigned lastUse = 0;
     };
     std::vector<SizeSet> m_parkedSets;
@@ -140,6 +179,7 @@ private:
         m_uMetallic = -1, m_uReflectivity = -1,
         m_uSkyTop = -1, m_uSkyHor = -1, m_uSkyBot = -1, m_uEnvOn = -1,
         m_uFogOn = -1, m_uFogColor = -1, m_uFogStart = -1, m_uFogEnd = -1, m_uTonemap = -1,
+        m_uFogMode = -1, m_uFogDensity = -1, m_uFogHeight = -1, m_uFogFalloff = -1, m_uHdrOut = -1,
         m_uShadowTex = -1, m_uShadowOn = -1, m_uDepthMVP = -1,
         m_uCasVP = -1, m_uCasSphere = -1, m_uCasTexel = -1, m_uCasCount = -1, m_uCasSize = -1,
         m_uShadowSoft = -1, m_uSunIndex = -1, m_uSunStrength = -1, m_uSunBias = -1,

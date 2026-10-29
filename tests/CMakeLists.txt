@@ -1303,3 +1303,8 @@ add_test(NAME ragdoll COMMAND test_ragdoll)
 add_executable(test_fixed_step test_fixed_step.cpp)
 target_link_libraries(test_fixed_step PRIVATE okay::engine)
 add_test(NAME fixed_step COMMAND test_fixed_step)
+
+# Navigation mesh: bake (walls, doorways, slopes, steps, bridges), queries, agents, files, records
+add_executable(test_navmesh test_navmesh.cpp)
+target_link_libraries(test_navmesh PRIVATE okay::engine)
+add_test(NAME navmesh COMMAND test_navmesh)

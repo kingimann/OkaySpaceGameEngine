@@ -13,6 +13,7 @@
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/SequencePlayer.hpp"
 #include "okay/Components/FullBodyIK.hpp"
+#include "okay/Components/NavMeshAgent.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/MeshRenderer.hpp"
@@ -350,6 +351,29 @@ struct StopSequenceNode : VsNode {
     int Exec(NodeGraph&, VsContext& ctx) override {
         if (ctx.gameObject && ctx.gameObject->scene()) SequencePlayer::StopAll(*ctx.gameObject->scene());
         return 0;
+    }
+};
+// Navigation: the NavMeshAgent on this object (or the Target) walks the navmesh.
+struct NavMoveToNode : VsNode {   // in0 = Vec3 destination
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (ctx.gameObject)
+            if (auto* a = ctx.gameObject->GetComponent<NavMeshAgent>()) a->SetDestination(In(0, g, ctx).AsVec3());
+        return 0;
+    }
+};
+struct NavStopNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        if (ctx.gameObject)
+            if (auto* a = ctx.gameObject->GetComponent<NavMeshAgent>()) a->Stop();
+        return 0;
+    }
+};
+struct NavArrivedNode : VsNode {   // true once the last Nav Move To point was reached
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        auto* a = ctx.gameObject ? ctx.gameObject->GetComponent<NavMeshAgent>() : nullptr;
+        return a != nullptr && a->Arrived();
     }
 };
 struct IkHandNode : VsNode {   // arg "left"/"right"; in0 = Vec3 point, in1 = weight (0 releases)

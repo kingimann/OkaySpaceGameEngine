@@ -12,6 +12,7 @@
 #include "FpHandsWindow.hpp"
 #include "AnimatorWindow.hpp"          // the Animator window (state-machine graph editor)
 #include "TimelineWindow.hpp"          // the Timeline window (cutscene sequences)
+#include "NavigationWindow.hpp"        // the Navigation window (navmesh bake, overlays, agent inspectors)
 #include "okay/Components/HoldPrompt.hpp"
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
@@ -4375,6 +4376,7 @@ static const DockPanelDef* DockPanels(int& n) {
         {"Animation",     "Animation###AnimationDock", &g_showAnimation,     "Editors & Tools", PI_Animation},
         {"Animator",      "Animator",                  &g_showAnimatorGraph, "Editors & Tools", PI_Animator},
         {"Timeline",      "Timeline",                  &g_showTimeline,      "Editors & Tools", PI_Animation},
+        {"Navigation",    "Navigation",                &g_showNavigation,    "Editors & Tools", PI_Scene},
         {"Modeling",      "Modeling",                  &g_showModeling,      "Editors & Tools", PI_Modeling},
         {"UV Editor",     "UV Editor",                 &g_showUVEditor,      "Editors & Tools", PI_Modeling},
         {"Sprite Editor", "Sprite Editor",             &g_showSpriteEditor,  "Editors & Tools", PI_Sprite},
@@ -5675,6 +5677,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
             ImGui::MenuItem("Animator (state graph)", nullptr, &g_showAnimatorGraph);
             ImGui::MenuItem("Timeline (cutscenes)", nullptr, &g_showTimeline);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Author cutscene sequences: camera shots, object keys, animation and audio cues, events and subtitles on one timeline.");
+            ImGui::MenuItem("Navigation", nullptr, &g_showNavigation);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Bake the scene's colliders into a navigation mesh NPCs and Nav Mesh Agents path over, and see it in the Scene view.");
             ImGui::Separator();
             ImGui::MenuItem("Modeling", nullptr, &g_showModeling);
             ImGui::MenuItem("UV Editor", nullptr, &g_showUVEditor);
@@ -6294,6 +6298,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed); StopTimelinePreview();   // previews must not override Play
             okay::editor::apreview::Stop(ed.scene());   // before the snapshot, so Play doesn't save the preview pose
             CompileOpenScriptBuffers(ed.scene());
+            NavigationBeforePlay(ed);   // surfaces set to bake before Play
             ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
             g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
         } else {
@@ -10735,6 +10740,8 @@ void DrawScriptDocs() {
         fapi("dist_to(\"n\")", "distance to a named object");
         fapi("npc_goto(\"n\", x, y, z)", "send an NPC Controller to a point (npc_arrived on arrival)");
         fapi("npc_stop(\"n\") / npc_busy(\"n\") / npc_state(\"n\")", "cancel / query the NPC");
+        fapi("nav_move_to(x, y, z) / nav_stop()", "walk this object's Nav Mesh Agent over the navmesh / stop it");
+        fapi("nav_arrived() / nav_remaining()", "reached the point? / path length left");
         fapi("spawner_start(\"n\") / spawner_stop(\"n\")", "run / pause a Spawner's waves");
         fapi("spawner_alive(\"n\")", "live objects a Spawner created (enemies left)");
         fapi("build_enter() / build_exit() / build_toggle()", "in-game build mode on / off (Build Mode component)");
@@ -11147,6 +11154,7 @@ static const std::vector<std::string>& ScriptCompletions() {
         "name","set_name","tag","set_tag","has_tag","set_active","self_active","destroy",
         "set_parent","exists","is_active","obj_x","obj_y","dist_to","destroy_obj","count_tag",
         "npc_goto","npc_stop","npc_busy","npc_state",
+        "nav_move_to","nav_stop","nav_arrived","nav_remaining",
         "spawner_start","spawner_stop","spawner_alive",
         "build_enter","build_exit","build_toggle","build_active","build_link_mode","build_palette_clear",
         "build_palette_add","build_palette_select","build_selected","build_save","build_load","build_exists",
@@ -11259,6 +11267,7 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"count_tag","count_tag(\"tag\")"}, {"nearest_tag","nearest_tag(\"tag\")"}, {"load_scene","load_scene(\"file\")"},
         {"npc_goto","npc_goto(\"name\", x, y, z)"}, {"npc_stop","npc_stop(\"name\")"},
         {"npc_busy","npc_busy(\"name\")"}, {"npc_state","npc_state(\"name\")"},
+        {"nav_move_to","nav_move_to(x, y, z)"}, {"nav_stop","nav_stop()"}, {"nav_arrived","nav_arrived()"}, {"nav_remaining","nav_remaining()"},
         {"spawner_start","spawner_start(\"name\")"}, {"spawner_stop","spawner_stop(\"name\")"},
         {"spawner_alive","spawner_alive(\"name\")"},
         {"build_enter","build_enter()"}, {"build_exit","build_exit()"}, {"build_toggle","build_toggle()"},
@@ -15191,6 +15200,7 @@ void HandleShortcuts(EditorState& ed) {
             StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed); StopTimelinePreview();   // previews must not override Play
             okay::editor::apreview::Stop(ed.scene());
             CompileOpenScriptBuffers(ed.scene());
+            NavigationBeforePlay(ed);   // surfaces set to bake before Play
             ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
             g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
         }
@@ -35939,6 +35949,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##sp")) toRemove = sp;
         }
     }
+    DrawNavigationInspector(ed, go, curComp, toRemove, &CompHeader);   // Nav Mesh Surface / Agent / Obstacle
     } // end component-order loop
 
     // Apply a queued component removal (undoable).
@@ -36291,6 +36302,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Spinner>(), "Spinner")) { go->AddComponent<Spinner>(); ed.dirty = true; }
             if (item(!go->GetComponent<Lifetime>(), "Lifetime")) { go->AddComponent<Lifetime>(); ed.dirty = true; }
             if (item(!go->GetComponent<SequencePlayer>(), "Sequence Player (cutscene)")) { go->AddComponent<SequencePlayer>(); ed.dirty = true; }
+            NavigationAddComponentItems(ed, go, item);   // Nav Mesh Surface / Agent / Obstacle
           } EndCat(o); }
 
         { bool o = BeginCat("No-Code Mechanics");
@@ -38926,6 +38938,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // overlay below: the rig at the keys around the playhead.
     if (!gameView && g_showGizmos)
         for (const AnimSceneLine& l : g_animSceneLines) clipLine(vp * Vec4{l.a, 1}, vp * Vec4{l.b, 1}, l.col, l.th);
+    // The Navigation window's overlay (navmesh polygons, agent paths, obstacles), on top of the meshes too.
+    if (!gameView && g_showGizmos)
+        DrawNavigationOverlay(ed, dl, vp, center, canvasSize, canvasPos,
+                              hovered && !g_uiHandled && !g_gizmoGrab && ed.view3D, io);
     // Skeleton overlay on top of the meshes (built with the gizmos above).
     if (!gameView) {
         for (const SkelDraw& d : g_skelDraw) {
@@ -43757,6 +43773,7 @@ int main(int argc, char** argv) {
                 if (std::strcmp(tl, "1") != 0) OpenTimelineFile(tl);
                 g_showTimeline = true;
             }
+            NavigationDevHooks(ed);   // OKAY_UI_NAV / NAVBAKE / NAVAGENT / NAVSEND / NAVDEST
             // OKAY_UI_PLAY=1: enter Play once the scene is up (screenshots of the
             // Animator and Animation windows while the game runs).
             if (std::getenv("OKAY_UI_PLAY") && s_focusFrames == 60 && !ed.isPlaying()) {
@@ -44017,6 +44034,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.AnimationEditor"); DrawAnimationEditor(ed); }
         { OKAY_PROFILE("UI.AnimatorGraph"); DrawAnimatorGraph(ed); }
         { OKAY_PROFILE("UI.Timeline"); DrawTimeline(ed); }
+        { OKAY_PROFILE("UI.Navigation"); DrawNavigationWindow(ed); }
         { OKAY_PROFILE("UI.History"); DrawHistory(ed); }
         { OKAY_PROFILE("UI.Stats"); if (g_showStats)     DrawStats(ed); }
         { OKAY_PROFILE("UI.SceneSettings"); if (g_showSceneSettings) DrawSceneSettings(ed); }

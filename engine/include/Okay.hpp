@@ -175,6 +175,9 @@
 
 // AI
 #include "okay/AI/Pathfinding.hpp"
+#include "okay/AI/NavMesh.hpp"
+#include "okay/AI/NavMeshBake.hpp"
+#include "okay/AI/Navigation.hpp"
 
 // Starter scene templates
 #include "okay/Scene/SceneTemplates.hpp"
@@ -243,6 +246,9 @@
 #include "okay/Components/TopDownController2D.hpp"
 #include "okay/Components/FreeRoamController.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
+#include "okay/Components/NavMeshSurface.hpp"
+#include "okay/Components/NavMeshAgent.hpp"
+#include "okay/Components/NavMeshObstacle.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Audio/AudioLoad.hpp"

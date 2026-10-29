@@ -92,6 +92,7 @@
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputActions.hpp"
 #include "okay/Core/SaveGame.hpp"
+#include "okay/Components/SequencePlayer.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Core/Random.hpp"
 #include "okay/Core/Prefs.hpp"
@@ -5191,6 +5192,24 @@ struct OkayScriptVM::Impl {
         b["delete_save"] = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Delete(slotArg(a)) ? 1.0f : 0.0f}; };
         b["save_label"]  = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Info(slotArg(a)).label}; };
         b["play_time"]   = [](std::vector<Value>&) { return Value{SaveGame::PlayTime()}; };
+        // Cutscenes (SequencePlayer): play_sequence("Intro") plays the Sequence Player
+        // whose file is Intro (or the first one, loading Assets/Intro.okayseq),
+        // stop_sequence() stops every one, sequence_playing(), sequence_time().
+        b["play_sequence"] = [sceneOf, this](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            const bool ok = s && !a.empty() && SequencePlayer::PlayByName(*s, rt.host ? rt.host->gameObject : nullptr, a[0].AsString());
+            return Value{ok ? 1.0f : 0.0f};
+        };
+        b["stop_sequence"] = [sceneOf](std::vector<Value>&) { if (Scene* s = sceneOf()) SequencePlayer::StopAll(*s); return Value{}; };
+        b["sequence_playing"] = [sceneOf](std::vector<Value>&) {
+            Scene* s = sceneOf();
+            return Value{(s && SequencePlayer::Playing(*s)) ? 1.0f : 0.0f};
+        };
+        b["sequence_time"] = [sceneOf](std::vector<Value>&) {
+            Scene* s = sceneOf();
+            SequencePlayer* sp = s ? SequencePlayer::Playing(*s) : nullptr;
+            return Value{sp ? sp->Time() : 0.0f};
+        };
         // Keep the current volumes as the player's settings (also saved on quit).
         b["save_audio_settings"] = [](std::vector<Value>&) { AudioMixer::SaveSettings(); return Value{}; };
         // ---- Navigation: the Nav Mesh Agent on this object (or a named one) --------
@@ -9773,6 +9792,10 @@ const std::unordered_map<std::string, std::vector<std::string>>& EventAliases() 
         {"on_cheat_detected", {"OnCheatDetected"}},
         {"on_validate_rpc",   {"OnValidateRpc"}},
         {"on_validate_hit",   {"OnValidateHit"}},
+        // Cutscenes (SequencePlayer).
+        {"on_sequence_event",    {"OnSequenceEvent"}},
+        {"on_sequence_started",  {"OnSequenceStarted"}},
+        {"on_sequence_finished", {"OnSequenceFinished"}},
     };
     return kAliases;
 }

@@ -310,7 +310,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         type == "OnObjectPlaced" || type == "OnObjectRemoved" || type == "OnLogicSignal" ||
         type == "OnCheatDetected" || type == "OnValidateRpc" || type == "OnValidateHit" ||
         type == "OnItemAdded" || type == "OnItemRemoved" || type == "OnInventoryFull" ||
-        type == "OnItemUsed" || type == "OnEquip" || type == "OnCraft")
+        type == "OnItemUsed" || type == "OnEquip" || type == "OnCraft" || type == "OnSequenceEvent")
         return std::make_unique<EventNode>();
     if (type == "OnEvent" || type == "OnNetRpc") return std::make_unique<CustomEventNode>();
     // ---- Actions steps (the no-code library) ----
@@ -639,6 +639,8 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "AnimSetBool")     return std::make_unique<AnimParamNode>(AnimParamNode::Op::SetBool, argOr(""));
     if (type == "AnimState")       return std::make_unique<AnimStateNode>();
     if (type == "IkLook")          return std::make_unique<IkLookNode>();
+    if (type == "PlaySequence")    return std::make_unique<PlaySequenceNode>(argOr(""));
+    if (type == "StopSequence")    return std::make_unique<StopSequenceNode>();
     if (type == "IkHand") {
         std::string side = argOr("right");
         return std::make_unique<IkHandNode>(!side.empty() && (side[0] == 'l' || side[0] == 'L'));

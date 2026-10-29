@@ -347,6 +347,18 @@ Whole-game saves in named slots: every object, the player, inventories, script v
 | `SaveGame.Delete(slot)` | `SaveGame.Delete/1` | step | slot (Text) | Result (Bool) | Delete the save in a slot. |
 | `SaveGame.Label(slot)` | `SaveGame.Label/1` | value | slot (Text) | Result (Text) | The label a slot was saved with ("" if empty). |
 
+## Sequence
+
+Cutscenes: play a .okayseq timeline through a Sequence Player in the scene.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `Sequence.isPlaying` | `Sequence.isPlaying` | value | - | isPlaying (Bool) | True while a sequence plays. |
+| `Sequence.time` | `Sequence.time` | value | - | time (Number) | Seconds into the playing sequence (0 when none plays). |
+| `Sequence.lastEvent` | `Sequence.lastEvent` | value | - | lastEvent (Text) | The event being delivered: read it in OnSequenceEvent(). |
+| `Sequence.Play(name)` | `Sequence.Play/1` | step | name (Text) | Result (Bool) | Play the sequence named like this (a Sequence Player's file, or Assets/<name>.okayseq). False if there is none. |
+| `Sequence.Stop()` | `Sequence.Stop/0` | step | - | - | Stop every playing sequence; the camera goes back to the game. |
+
 ## NavMeshAgent
 
 Walks the object along the scene's navigation mesh (the grid when none is baked). The object needs a Nav Mesh Agent.

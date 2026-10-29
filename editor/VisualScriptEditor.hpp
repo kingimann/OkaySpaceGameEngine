@@ -390,6 +390,10 @@ inline const std::vector<VsDef>& Registry() {
         {"OnItemUsed", "On Item Used", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnEquip", "On Equip", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnCraft", "On Craft", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        // Cutscenes (a Sequence Player plays a .okayseq; Event Name = the event).
+        {"OnSequenceEvent", "On Sequence Event", CAT_EVENT, false, {""}, {}, {}, 1, "event (blank = any)"},
+        {"PlaySequence",    "Play Sequence",     CAT_ACTION, true, {""}, {}, {}, 1, "name"},
+        {"StopSequence",    "Stop Sequence",     CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         // Anti-cheat (server; needs an Anti-Cheat Config in the scene).
         {"OnCheatDetected", "On Cheat Detected",CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnValidateRpc",   "On Validate Rpc",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
@@ -643,6 +647,7 @@ inline std::string VsEntryName(const std::string& type, const std::string& arg) 
         type == "OnItemAdded" || type == "OnItemRemoved" || type == "OnInventoryFull" ||
         type == "OnItemUsed" || type == "OnEquip" || type == "OnCraft") return type;
     if (type == "OnAnimEvent") return arg.empty() ? std::string("OnAnimEvent") : "OnAnimEvent:" + tok(arg, "");
+    if (type == "OnSequenceEvent") return arg.empty() ? std::string("OnSequenceEvent") : "OnSequenceEvent:" + tok(arg, "");
     if (type == "OnKey")   return "OnKey:" + tok(arg, "space");
     if (type == "OnKeyUp") return "OnKeyUp:" + tok(arg, "space");
     if (type == "OnTimer") return "OnTimer:" + tok(arg, "1");
@@ -1263,6 +1268,8 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="SetActive")   out += ind + "set_active_of(" + q(arg("self")) + ", " + in(0, "true") + ")\n";
     else if (t=="SetText")     out += ind + "set_text_of(" + q(arg("self")) + ", " + in(0, "\"\"") + ")\n";
     else if (t=="LoadScene")   out += ind + "load_scene_name(" + q(arg("")) + ")\n";
+    else if (t=="PlaySequence") out += ind + "play_sequence(" + q(arg("")) + ")\n";
+    else if (t=="StopSequence") out += ind + "stop_sequence()\n";
     else if (t=="AnimTrigger") out += ind + "anim_trigger(" + q(arg("")) + ")\n";
     else if (t=="AnimSetFloat")out += ind + "anim_set_float(" + q(arg("")) + ", " + in(0) + ")\n";
     else if (t=="AnimSetBool") out += ind + "anim_set_bool(" + q(arg("")) + ", " + in(0) + ")\n";
@@ -1628,6 +1635,21 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
             if (n.arg.empty()) chain(n.id, "        ");
             else {
                 out += "        if (anim_event == " + VsStrLit(n.arg) + ") {\n";   // brace on this line: the terminator pass would put a ; after a bare if (...)
+                chain(n.id, "            ");
+                out += "        }\n";
+            }
+        }
+        if (opened) out += "    }\n";
+    }
+    // Sequence events: one OnSequenceEvent(event_name) handler; named nodes check the name.
+    {
+        bool opened = false;
+        for (const auto& n : g.nodes) {
+            if (n.type != "OnSequenceEvent") continue;
+            if (!opened) { open("void OnSequenceEvent(string event_name)"); opened = true; }
+            if (n.arg.empty()) chain(n.id, "        ");
+            else {
+                out += "        if (event_name == " + VsStrLit(n.arg) + ") {\n";
                 chain(n.id, "            ");
                 out += "        }\n";
             }

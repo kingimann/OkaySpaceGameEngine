@@ -219,6 +219,8 @@ has the full list, plus the **Tween Animation** component for tweens without cod
 | `tween_shake(intensity, dur)` | Random shake that decays to a stop |
 | `save_game([slot] [, label])` / `load_game([slot])` | Save / load the whole game (see docs/save_games.md) |
 | `save_exists([slot])` / `delete_save([slot])` | Manage save slots |
+| `play_sequence("name")` / `stop_sequence()` | Play / stop a cutscene sequence (see docs/cutscenes.md) |
+| `sequence_playing()` / `sequence_time()` | 1 while a sequence plays / seconds into it; events reach `on_sequence_event(name)` |
 
 Easings: `linear`, `in/out/in_out_quad`, `..._cubic`, `..._sine`, `..._expo`,
 `in_back`/`out_back`, `out_elastic`, `out_bounce`.

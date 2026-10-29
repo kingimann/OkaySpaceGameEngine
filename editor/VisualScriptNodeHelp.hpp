@@ -378,6 +378,9 @@ inline const char* VsNodeHelp(const char* type) {
         {"SteamSetStat",   "Sets a Steam stat. Use Store Stats afterwards to upload it."},
         {"SteamStore",     "Uploads changed Steam stats and achievements."},
         {"SteamLeaderboard","Submits a score to a Steam leaderboard."},
+        {"OnSequenceEvent","Runs when a playing sequence (cutscene) crosses an event on its event track. Leave the name blank to catch every event; Event Name reads it."},
+        {"PlaySequence",   "Plays a cutscene: the Sequence Player whose file has this name, or Assets/<name>.okayseq."},
+        {"StopSequence",   "Stops every playing sequence; the camera goes back to the game."},
     };
     if (!type) return nullptr;
     auto it = help.find(type);

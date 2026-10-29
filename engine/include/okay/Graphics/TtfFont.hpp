@@ -65,7 +65,8 @@ public:
     /// The glyph for any code point, baked on first use; nullptr when the font has
     /// no glyph for it (or its atlas is full).
     const Glyph* GlyphFor(std::uint32_t cp) const;
-    /// True when the font has a glyph for `cp`.
+    /// True when the font has a glyph for `cp` (ASCII too: some CJK fonts have no
+    /// Latin letters; their ASCII cells hold the font's "missing" box).
     bool Has(std::uint32_t cp) const;
     /// True when the font has every visible character of UTF-8 `text`.
     bool HasAll(const std::string& text) const;

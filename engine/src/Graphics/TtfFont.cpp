@@ -174,8 +174,8 @@ const TtfFont::Glyph* TtfFont::GlyphFor(std::uint32_t cp) const {
 }
 
 bool TtfFont::Has(std::uint32_t cp) const {
-    if (cp <= (std::uint32_t)kLast) return true;   // ASCII is baked at load (controls draw nothing)
-    if (!m_valid || !m_info) return false;
+    if (cp <= (std::uint32_t)kFirst) return true;   // space and controls draw nothing
+    if (!m_valid || !m_info) return false;          // (some CJK fonts have no Latin letters)
     auto it = m_has.find(cp);
     if (it != m_has.end()) return it->second;
     const bool has = stbtt_FindGlyphIndex(&m_info->info, (int)cp) != 0;
@@ -184,10 +184,8 @@ bool TtfFont::Has(std::uint32_t cp) const {
 }
 
 bool TtfFont::HasAll(const std::string& text) const {
-    for (std::size_t i = 0; i < text.size();) {
-        const std::uint32_t cp = utf8::Next(text, i);
-        if (cp > (std::uint32_t)kLast && !Has(cp)) return false;
-    }
+    for (std::size_t i = 0; i < text.size();)
+        if (!Has(utf8::Next(text, i))) return false;
     return true;
 }
 
@@ -299,13 +297,16 @@ TtfFont* FontForText(TtfFont* wanted, const std::string& text) {
     const std::string langFont = Localization::LanguageFont();
     if (TtfFont* f = GetFont(langFont); f && f != wanted && f->HasAll(text)) return use(f);
     if (TtfFont* f = BuiltinUIFont(); f && f != wanted && f->HasAll(text)) return use(f);
-    for (const std::string& path : SystemFallbackFonts())
-        if (TtfFont* f = GetFont(path); f && f != wanted && f->HasAll(text)) return use(f);
+    // Installed fonts with Latin letters first, so a language's texts keep one look
+    // whether or not they mix in digits and Latin words.
+    for (int pass = 0; pass < 2; ++pass)
+        for (const std::string& path : SystemFallbackFonts())
+            if (TtfFont* f = GetFont(path); f && f != wanted && (pass == 1 || f->Has('A')) && f->HasAll(text)) return use(f);
     // Nothing has every character: say which one, once.
     std::uint32_t missing = 0;
     for (std::size_t i = 0; i < text.size() && !missing;) {
         const std::uint32_t cp = utf8::Next(text, i);
-        if (cp > (std::uint32_t)TtfFont::kLast && !(wanted && wanted->Has(cp))) missing = cp;
+        if (!(wanted ? wanted->Has(cp) : cp <= (std::uint32_t)TtfFont::kLast)) missing = cp;
     }
     std::string ch;
     utf8::Append(ch, missing);

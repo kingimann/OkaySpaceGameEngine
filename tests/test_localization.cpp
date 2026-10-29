@@ -647,6 +647,7 @@ int main() {
             CHECK(ui->GlyphFor(0xE7) == cedilla);                      // baked once
             CHECK(ui->Atlas().Height() >= h0);
             CHECK(ui->Measure("ç", 16.0f) > 0.0f && ui->Measure("aç", 16.0f) > ui->Measure("a", 16.0f));
+            CHECK(ui->Has('E') && ui->Has(' ') && ui->Has('\n'));
             CHECK(ui->Has(0x0416) && ui->HasAll("Жизнь"));             // Cyrillic is in the UI font
             CHECK(!ui->Has(0x65E5));                                   // CJK is not
             // A CJK text goes to a font that has it: the language's own font when it names one.
@@ -662,6 +663,10 @@ int main() {
                 Localization::SetLanguage("ja");
                 CHECK(Localization::LanguageFont() == cjk);
                 CHECK(FontForText(ui, "メインメニュー") == GetFont(cjk));
+                // Mixed with Latin letters and digits, only a font that has both will do.
+                Localization::Reset();
+                TtfFont* mixed = FontForText(ui, "E で拾う (10)");
+                CHECK(mixed && mixed->Has('E') && mixed->Has('1') && mixed->HasAll("E で拾う (10)"));
             } else {
                 std::printf("[test_localization] no CJK system font here; skipping that part\n");
             }

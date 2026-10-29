@@ -53,6 +53,8 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     AnimatorWindow.cpp                                                 # the Animator window (state-machine graph)
     TimelineWindow.cpp                                                 # the Timeline window (cutscene sequences)
     NavigationWindow.cpp                                               # the Navigation window (navmesh bake + overlays)
+    DialogueWindow.cpp                                                 # the Dialogue window (dialogue graphs + quests)
+    BehaviorTreeWindow.cpp                                             # the Behavior Tree window (NPC AI trees)
     SplineTools.cpp                                                    # splines: Scene-view editing, inspectors, lines / trails
     EditorWidgets.cpp                                                  # shared widgets (accent, icons, search field)
     ConsolePanel.cpp                                                   # ConsoleLog + Console panel

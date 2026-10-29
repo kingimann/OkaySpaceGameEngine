@@ -49,7 +49,25 @@ struct ScriptUIBridge {
     virtual void  Spacing(float h) { (void)h; }
     /// "launcher" (the OkaySpace look) or "classic".
     virtual void  Style(const char* name) { (void)name; }
+    /// An image file at the cursor, `w` x `h` pixels. False when the host can't
+    /// draw images (the caller then draws something else, e.g. an Avatar).
+    virtual bool  Image(const char* path, float w, float h) { (void)path; (void)w; (void)h; return false; }
+    /// A window pinned at (x, y) every frame (not draggable): the built-in overlays
+    /// anchored to the screen. Hosts without pinning get an ordinary Begin().
+    virtual void  BeginAt(const char* title, float x, float y, float w, float h) { Begin(title, x, y, w, h); }
 };
+
+// Where the game's canvas sits on the host window: (0, 0) in the player, the
+// Game view's top-left in the editor. The built-in overlays (dialogue box, quest
+// tracker, journal) add it to their canvas positions so they land on the game.
+inline float& ScriptUIOriginX() { static float x = 0.0f; return x; }
+inline float& ScriptUIOriginY() { static float y = 0.0f; return y; }
+// The size of that canvas when the host draws the game inside a larger window
+// (the editor's Game view); 0 means the UI canvas size (UICanvas) applies.
+inline float& ScriptUICanvasW() { static float w = 0.0f; return w; }
+inline float& ScriptUICanvasH() { static float h = 0.0f; return h; }
+inline float ScriptUIWidth(float uiCanvasW) { return ScriptUICanvasW() > 0.0f ? ScriptUICanvasW() : uiCanvasW; }
+inline float ScriptUIHeight(float uiCanvasH) { return ScriptUICanvasH() > 0.0f ? ScriptUICanvasH() : uiCanvasH; }
 
 // The active bridge (null = no UI host installed; the ui_* builtins become no-ops).
 inline ScriptUIBridge*& ScriptUIRef() { static ScriptUIBridge* p = nullptr; return p; }

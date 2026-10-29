@@ -291,6 +291,9 @@ inline const char* VsNodeHelp(const char* type) {
         {"NavMoveTo",      "Sends this object's Nav Mesh Agent walking to a point over the navmesh."},
         {"NavStop",        "Stops this object's Nav Mesh Agent where it is."},
         {"NavArrived",     "True once the Nav Mesh Agent reached its last Nav Move To point."},
+        {"BtSet",          "Writes a value into the Behavior Tree Runner's blackboard (the key is the setting)."},
+        {"BtGet",          "Reads a value from the Behavior Tree Runner's blackboard."},
+        {"BtRun",          "Loads a .okaybt behavior tree on this object's Behavior Tree Runner and starts it (empty: starts the current one over)."},
         {"GetSplinePoint", "The world point a fraction T (0 to 1) of the way along the Spline on this object or the Target. Even steps of T are even steps on the curve."},
         {"SplineLength",   "The length of the Spline on this object or the Target, in world units."},
         {"SetLinePoints",  "Replaces the points of the Line Renderer on this object or the Target with a list of vectors (a laser from the gun to what it hits, a rope)."},
@@ -385,6 +388,20 @@ inline const char* VsNodeHelp(const char* type) {
         {"OnSequenceEvent","Runs when a playing sequence (cutscene) crosses an event on its event track. Leave the name blank to catch every event; Event Name reads it."},
         {"PlaySequence",   "Plays a cutscene: the Sequence Player whose file has this name, or Assets/<name>.okayseq."},
         {"StopSequence",   "Stops every playing sequence; the camera goes back to the game."},
+        // Dialogue and quests.
+        {"StartDialogue",     "Starts the conversation on the named object's Dialogue Runner (or the graph with that name; empty = this object's runner)."},
+        {"OnDialogueEvent",   "Runs when a dialogue reaches an Event node on this object (the NPC) or on the player. Event Name is the event's name."},
+        {"OnDialogueEnd",     "Runs when a conversation on this object (or with the player) ends. Event Name is the graph's name."},
+        {"SetStoryVar",       "Sets a global story variable (the scene's Story State; saved with the game)."},
+        {"GetStoryVar",       "Reads a global story variable (0 / empty when it was never set)."},
+        {"StartQuest",        "Starts a quest from the scene's Quest Log (its prerequisites must be completed)."},
+        {"CompleteObjective", "Marks one objective (Index, 0-based) of an active quest done; the quest completes when every required objective is."},
+        {"QuestState",        "A quest's state: inactive, active, completed or failed."},
+        {"OnQuestStarted",    "Runs when a quest starts (on the Quest Log's object and on the player). Event Name is the quest id."},
+        {"OnQuestCompleted",  "Runs when a quest completes. Event Name is the quest id; Event Value how many times it has been completed."},
+        {"OnQuestFailed",     "Runs when a quest fails. Event Name is the quest id."},
+        {"OnObjectiveCompleted", "Runs when an objective completes. Event Name is the quest id; Event Value the objective index."},
+        {"OnQuestEvent",      "Runs when a completed quest's reward names an event. Event Name is that event."},
     };
     if (!type) return nullptr;
     auto it = help.find(type);

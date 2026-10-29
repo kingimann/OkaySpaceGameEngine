@@ -400,6 +400,10 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `nav_stop()` | stop the Nav Mesh Agent where it is |
 | `nav_arrived()` | 1 once the last `nav_move_to` point was reached |
 | `nav_remaining()` | path length left to the destination (0 when idle) |
+| `bt_set(key, value)` | write a value into this object's Behavior Tree blackboard (`bt_set("Name", key, value)` for another object); see [behavior_trees.md](behavior_trees.md) |
+| `bt_get(key)` | read a blackboard value (a number, bool, string, vector or object) |
+| `bt_run("Assets/Guard.okaybt")` | load a behavior tree on this object's Behavior Tree Runner (added when missing) and start it; `bt_run()` starts the current tree over |
+| `bt_stop()` | stop the tree; running tasks are aborted and the NPC stops |
 | `spline_point(name, t)` | the world point a fraction `t` (0..1) of the way along a named object's Spline, by length (`spline_point(t)` for this object's); see [splines.md](splines.md) |
 | `spline_length(name)` | that Spline's length in world units |
 | `follower_set_speed(speed)` | set this object's Spline Follower speed (`follower_set_speed("Name", speed)` for another object) |

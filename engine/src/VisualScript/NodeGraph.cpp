@@ -9,6 +9,7 @@
 #include "okay/VisualScript/NodesBuild.hpp"
 #include "okay/VisualScript/NodesActions.hpp"
 #include "okay/VisualScript/NodesPhysics.hpp"
+#include "okay/VisualScript/NodesStory.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Scene/GameObject.hpp"
 
@@ -236,6 +237,7 @@ int TargetPinFor(const std::string& type) {
         {"AnimTrigger", 0}, {"AnimSetFloat", 1}, {"AnimSetBool", 1}, {"AnimState", 0},
         {"SetBlendShape", 1}, {"GetBlendShape", 0}, {"IkLook", 2}, {"IkHand", 2},
         {"NavMoveTo", 1}, {"NavStop", 0}, {"NavArrived", 0},
+        {"BtSet", 1}, {"BtGet", 0}, {"BtRun", 0},
         {"GetSplinePoint", 1}, {"SplineLength", 0}, {"SetLinePoints", 1}, {"ClearTrail", 0},
         {"GetName", 0}, {"GetTag", 0}};
     auto it = kPins.find(type);
@@ -311,7 +313,9 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         type == "OnObjectPlaced" || type == "OnObjectRemoved" || type == "OnLogicSignal" ||
         type == "OnCheatDetected" || type == "OnValidateRpc" || type == "OnValidateHit" ||
         type == "OnItemAdded" || type == "OnItemRemoved" || type == "OnInventoryFull" ||
-        type == "OnItemUsed" || type == "OnEquip" || type == "OnCraft" || type == "OnSequenceEvent")
+        type == "OnItemUsed" || type == "OnEquip" || type == "OnCraft" || type == "OnSequenceEvent" ||
+        type == "OnDialogueEvent" || type == "OnDialogueEnd" || type == "OnQuestStarted" ||
+        type == "OnQuestCompleted" || type == "OnQuestFailed" || type == "OnObjectiveCompleted" || type == "OnQuestEvent")
         return std::make_unique<EventNode>();
     if (type == "OnEvent" || type == "OnNetRpc") return std::make_unique<CustomEventNode>();
     // ---- Actions steps (the no-code library) ----
@@ -642,6 +646,13 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "IkLook")          return std::make_unique<IkLookNode>();
     if (type == "PlaySequence")    return std::make_unique<PlaySequenceNode>(argOr(""));
     if (type == "StopSequence")    return std::make_unique<StopSequenceNode>();
+    // Story: dialogues, story variables, quests (okay/VisualScript/NodesStory.hpp).
+    if (type == "StartDialogue")     return std::make_unique<StartDialogueNode>(argOr(""));
+    if (type == "SetStoryVar")       return std::make_unique<SetStoryVarNode>(argOr(""));
+    if (type == "GetStoryVar")       return std::make_unique<GetStoryVarNode>(argOr(""));
+    if (type == "StartQuest")        return std::make_unique<StartQuestNode>(argOr(""));
+    if (type == "CompleteObjective") return std::make_unique<CompleteObjectiveNode>(argOr(""));
+    if (type == "QuestState")        return std::make_unique<QuestStateNode>(argOr(""));
     if (type == "IkHand") {
         std::string side = argOr("right");
         return std::make_unique<IkHandNode>(!side.empty() && (side[0] == 'l' || side[0] == 'L'));
@@ -649,6 +660,9 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "NavMoveTo")       return std::make_unique<NavMoveToNode>();
     if (type == "NavStop")         return std::make_unique<NavStopNode>();
     if (type == "NavArrived")      return std::make_unique<NavArrivedNode>();
+    if (type == "BtSet")           return std::make_unique<BtSetNode>(argOr("x"));
+    if (type == "BtGet")           return std::make_unique<BtGetNode>(argOr("x"));
+    if (type == "BtRun")           return std::make_unique<BtRunNode>(argOr(""));
     if (type == "GetSplinePoint")  return std::make_unique<SplinePointNode>();
     if (type == "SplineLength")    return std::make_unique<SplineLengthNode>();
     if (type == "SetLinePoints")   return std::make_unique<SetLinePointsNode>();

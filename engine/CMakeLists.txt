@@ -94,6 +94,9 @@ add_library(okay_engine
     src/Components/SplineMesh.cpp
     src/Components/LineRenderer.cpp
     src/Components/BuildMode.cpp
+    src/Components/DialogueGraph.cpp
+    src/Components/DialogueRunner.cpp
+    src/Components/QuestLog.cpp
     src/Platform/Steam/NullSteamService.cpp
     src/Platform/Steam/Steam.cpp
     src/Components/SteamManager.cpp
@@ -109,6 +112,8 @@ add_library(okay_engine
     src/AI/NavMeshSurface.cpp
     src/AI/NavMeshAgent.cpp
     src/AI/Navigation.cpp
+    src/AI/BehaviorTree.cpp
+    src/AI/BehaviorTreeRunner.cpp
     src/Graphics/Image.cpp
     src/Graphics/Font.cpp
     src/Graphics/TtfFont.cpp

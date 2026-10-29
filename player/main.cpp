@@ -1362,6 +1362,7 @@ int main(int argc, char** argv) {
     Prefs::Load(prefsPath);
     DataAsset::SetBaseDir(baseDir);   // read-only .okaydata assets stay beside the game
     Character::SetAssetBaseDir(baseDir);   // a Character's relative clips file, too
+    BehaviorTreeRunner::SetAssetBaseDir(baseDir);   // a Behavior Tree Runner's relative .okaybt
     ItemDatabase::Get().Load(baseDir + "items.okayitems");   // the project's item definitions (shipped by Build Game)
 
     // Anti-cheat (okayac::DecideStart). Without trusted keys built in: off unless
@@ -1631,6 +1632,7 @@ int main(int argc, char** argv) {
     float g_uiWheel = 0.0f;           // mouse-wheel delta routed to OkayUI this frame
     // Let game scripts draw OkayUI via the ui_* builtins.
     static okay::OkayUIScriptBridge g_uiBridge;
+    g_uiBridge.renderer = renderer;   // dialogue portraits as textures
     okay::SetScriptUI(&g_uiBridge);
 #endif
     // Rich presence + the launcher link (okay/Platform/GameIpc.hpp): once a second,
@@ -1830,6 +1832,7 @@ int main(int argc, char** argv) {
             // The fullscreen pause-map is modal too: free + show the cursor so it can be
             // clicked to drop a waypoint (GTA-style), and pause look/move.
             if (auto* mm = up->GetComponent<Minimap>()) { if (mm->fullscreen) invModal = true; }
+            if (StoryUIModal(up.get())) invModal = true;   // a running dialogue or an open quest journal
         }
         // A cutscene with Lock Player on holds the controllers the same way.
         Input::SetUICaptured(invModal || SequencePlayer::AnyLocksInput(scene));

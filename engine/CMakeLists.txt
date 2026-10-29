@@ -88,7 +88,12 @@ add_library(okay_engine
     src/Animation/HumanoidLibrary.cpp
     src/Animation/HumanoidActions.cpp
     src/Components/AnimClip.cpp
+    src/Components/Sequence.cpp
+    src/Components/SequencePlayer.cpp
     src/Components/BuildMode.cpp
+    src/Components/DialogueGraph.cpp
+    src/Components/DialogueRunner.cpp
+    src/Components/QuestLog.cpp
     src/Platform/Steam/NullSteamService.cpp
     src/Platform/Steam/Steam.cpp
     src/Components/SteamManager.cpp

@@ -860,6 +860,11 @@ add_executable(test_anim_state_machine test_anim_state_machine.cpp)
 target_link_libraries(test_anim_state_machine PRIVATE okay::engine)
 add_test(NAME anim_state_machine COMMAND test_anim_state_machine)
 
+# Cutscene sequences: the .okayseq text, evaluation, the SequencePlayer's events and actions
+add_executable(test_sequence test_sequence.cpp)
+target_link_libraries(test_sequence PRIVATE okay::engine)
+add_test(NAME sequence COMMAND test_sequence)
+
 add_executable(test_ik_core test_ik_core.cpp)
 target_link_libraries(test_ik_core PRIVATE okay::engine)
 add_test(NAME ik_core COMMAND test_ik_core)
@@ -1303,6 +1308,17 @@ add_test(NAME fixed_step COMMAND test_fixed_step)
 add_executable(test_navmesh test_navmesh.cpp)
 target_link_libraries(test_navmesh PRIVATE okay::engine)
 add_test(NAME navmesh COMMAND test_navmesh)
+# Dialogue graphs: parse / write, traversal (lines, choices, conditions, sets, events,
+# items, quests), validation, the runner's Advance / Choose, the StoryState record
+add_executable(test_dialogue test_dialogue.cpp)
+target_link_libraries(test_dialogue PRIVATE okay::engine)
+add_test(NAME dialogue COMMAND test_dialogue)
+
+# Quests: objectives from every source, prerequisites, rewards once, scene + save-game round trips
+add_executable(test_quests test_quests.cpp)
+target_link_libraries(test_quests PRIVATE okay::engine)
+add_test(NAME quests COMMAND test_quests)
+
 # Behavior trees: file round trip, composites, decorators, guards, blackboard, perception, navigation tasks, scripts, scene record
 add_executable(test_behavior_tree test_behavior_tree.cpp)
 target_link_libraries(test_behavior_tree PRIVATE okay::engine)

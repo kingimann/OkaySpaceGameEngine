@@ -93,6 +93,10 @@
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputActions.hpp"
 #include "okay/Core/SaveGame.hpp"
+#include "okay/Components/SequencePlayer.hpp"
+#include "okay/Components/DialogueRunner.hpp"   // dialogue / story / quest builtins
+#include "okay/Components/QuestLog.hpp"
+#include "okay/Components/StoryState.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Core/Random.hpp"
 #include "okay/Core/Prefs.hpp"
@@ -5192,6 +5196,91 @@ struct OkayScriptVM::Impl {
         b["delete_save"] = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Delete(slotArg(a)) ? 1.0f : 0.0f}; };
         b["save_label"]  = [slotArg](std::vector<Value>& a) { return Value{SaveGame::Info(slotArg(a)).label}; };
         b["play_time"]   = [](std::vector<Value>&) { return Value{SaveGame::PlayTime()}; };
+        // Cutscenes (SequencePlayer): play_sequence("Intro") plays the Sequence Player
+        // whose file is Intro (or the first one, loading Assets/Intro.okayseq),
+        // stop_sequence() stops every one, sequence_playing(), sequence_time().
+        b["play_sequence"] = [sceneOf, this](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            const bool ok = s && !a.empty() && SequencePlayer::PlayByName(*s, rt.host ? rt.host->gameObject : nullptr, a[0].AsString());
+            return Value{ok ? 1.0f : 0.0f};
+        };
+        b["stop_sequence"] = [sceneOf](std::vector<Value>&) { if (Scene* s = sceneOf()) SequencePlayer::StopAll(*s); return Value{}; };
+        b["sequence_playing"] = [sceneOf](std::vector<Value>&) {
+            Scene* s = sceneOf();
+            return Value{(s && SequencePlayer::Playing(*s)) ? 1.0f : 0.0f};
+        };
+        b["sequence_time"] = [sceneOf](std::vector<Value>&) {
+            Scene* s = sceneOf();
+            SequencePlayer* sp = s ? SequencePlayer::Playing(*s) : nullptr;
+            return Value{sp ? sp->Time() : 0.0f};
+        };
+        // Dialogue, story variables and quests (DialogueRunner / StoryState / QuestLog):
+        //   start_dialogue("Smith") (an object with a Dialogue Runner, else a graph name;
+        //   no name = this object's runner), dialogue_active(), set_story(name, value),
+        //   get_story(name), story_flag(name) / set_story_flag(name, on), start_quest(id),
+        //   complete_objective(id, index), fail_quest(id), quest_state(id), quest_active(id).
+        b["start_dialogue"] = [sceneOf, go](std::vector<Value>& a) {
+            DialogueRunner* r = nullptr;
+            if (a.empty() || a[0].AsString().empty()) { if (GameObject* g = go()) r = g->GetComponent<DialogueRunner>(); }
+            if (!r && !a.empty()) r = DialogueRunner::FindByName(sceneOf(), a[0].AsString());
+            if (!r) { Log::Warning("[script] start_dialogue: no Dialogue Runner named ", a.empty() ? std::string() : a[0].AsString()); return Value{false}; }
+            return Value{r->StartDialogue(a.size() > 1 ? (int)a[1].AsFloat() : -1)};
+        };
+        b["stop_dialogue"]   = [sceneOf](std::vector<Value>&) { if (DialogueRunner* r = DialogueRunner::ActiveIn(sceneOf())) r->Stop(); return Value{}; };
+        b["dialogue_active"] = [sceneOf](std::vector<Value>&) { return Value{DialogueRunner::ActiveIn(sceneOf()) != nullptr}; };
+        b["set_story"] = [sceneOf](std::vector<Value>& a) {
+            if (a.size() >= 2) if (StoryState* st = StoryState::Get(sceneOf(), true)) st->Set(a[0].AsString(), a[1]);
+            return Value{};
+        };
+        b["get_story"] = [sceneOf](std::vector<Value>& a) {
+            StoryState* st = StoryState::Get(sceneOf(), false);
+            return (st && !a.empty()) ? Value{st->Get(a[0].AsString())} : Value{};
+        };
+        b["has_story"] = [sceneOf](std::vector<Value>& a) {
+            StoryState* st = StoryState::Get(sceneOf(), false);
+            return Value{st && !a.empty() && st->Has(a[0].AsString())};
+        };
+        b["set_story_flag"] = [sceneOf](std::vector<Value>& a) {
+            if (!a.empty()) if (StoryState* st = StoryState::Get(sceneOf(), true)) st->SetFlag(a[0].AsString(), a.size() < 2 || a[1].AsBool());
+            return Value{};
+        };
+        b["story_flag"] = [sceneOf](std::vector<Value>& a) {
+            StoryState* st = StoryState::Get(sceneOf(), false);
+            return Value{st && !a.empty() && st->HasFlag(a[0].AsString())};
+        };
+        b["start_quest"] = [sceneOf](std::vector<Value>& a) {
+            QuestLog* q = a.empty() ? nullptr : QuestLog::Get(sceneOf(), true);
+            return Value{q && q->StartQuest(a[0].AsString())};
+        };
+        b["complete_objective"] = [sceneOf](std::vector<Value>& a) {
+            QuestLog* q = a.empty() ? nullptr : QuestLog::Get(sceneOf(), true);
+            return Value{q && q->CompleteObjective(a[0].AsString(), a.size() > 1 ? (int)a[1].AsFloat() : 0)};
+        };
+        b["add_quest_progress"] = [sceneOf](std::vector<Value>& a) {
+            QuestLog* q = a.empty() ? nullptr : QuestLog::Get(sceneOf(), true);
+            return Value{q && q->AddProgress(a[0].AsString(), a.size() > 1 ? (int)a[1].AsFloat() : 0, a.size() > 2 ? (int)a[2].AsFloat() : 1)};
+        };
+        b["complete_quest"] = [sceneOf](std::vector<Value>& a) {
+            QuestLog* q = a.empty() ? nullptr : QuestLog::Get(sceneOf(), false);
+            return Value{q && q->CompleteQuest(a[0].AsString())};
+        };
+        b["fail_quest"] = [sceneOf](std::vector<Value>& a) {
+            QuestLog* q = a.empty() ? nullptr : QuestLog::Get(sceneOf(), false);
+            return Value{q && q->FailQuest(a[0].AsString())};
+        };
+        b["quest_state"] = [sceneOf](std::vector<Value>& a) {
+            QuestLog* q = a.empty() ? nullptr : QuestLog::Get(sceneOf(), false);
+            return Value{std::string(q ? q->StatusName(a[0].AsString()) : "inactive")};
+        };
+        b["quest_active"] = [sceneOf](std::vector<Value>& a) {
+            QuestLog* q = a.empty() ? nullptr : QuestLog::Get(sceneOf(), false);
+            return Value{q && q->IsActive(a[0].AsString())};
+        };
+        b["quest_completed"] = [sceneOf](std::vector<Value>& a) {
+            QuestLog* q = a.empty() ? nullptr : QuestLog::Get(sceneOf(), false);
+            return Value{q && q->IsCompleted(a[0].AsString())};
+        };
+        b["toggle_journal"] = [sceneOf](std::vector<Value>&) { if (QuestLog* q = QuestLog::Get(sceneOf(), false)) q->ToggleJournal(); return Value{}; };
         // Keep the current volumes as the player's settings (also saved on quit).
         b["save_audio_settings"] = [](std::vector<Value>&) { AudioMixer::SaveSettings(); return Value{}; };
         // ---- Navigation: the Nav Mesh Agent on this object (or a named one) --------
@@ -9818,6 +9907,10 @@ const std::unordered_map<std::string, std::vector<std::string>>& EventAliases() 
         {"on_cheat_detected", {"OnCheatDetected"}},
         {"on_validate_rpc",   {"OnValidateRpc"}},
         {"on_validate_hit",   {"OnValidateHit"}},
+        // Cutscenes (SequencePlayer).
+        {"on_sequence_event",    {"OnSequenceEvent"}},
+        {"on_sequence_started",  {"OnSequenceStarted"}},
+        {"on_sequence_finished", {"OnSequenceFinished"}},
     };
     return kAliases;
 }

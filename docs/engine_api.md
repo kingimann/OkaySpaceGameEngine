@@ -347,6 +347,18 @@ Whole-game saves in named slots: every object, the player, inventories, script v
 | `SaveGame.Delete(slot)` | `SaveGame.Delete/1` | step | slot (Text) | Result (Bool) | Delete the save in a slot. |
 | `SaveGame.Label(slot)` | `SaveGame.Label/1` | value | slot (Text) | Result (Text) | The label a slot was saved with ("" if empty). |
 
+## Sequence
+
+Cutscenes: play a .okayseq timeline through a Sequence Player in the scene.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `Sequence.isPlaying` | `Sequence.isPlaying` | value | - | isPlaying (Bool) | True while a sequence plays. |
+| `Sequence.time` | `Sequence.time` | value | - | time (Number) | Seconds into the playing sequence (0 when none plays). |
+| `Sequence.lastEvent` | `Sequence.lastEvent` | value | - | lastEvent (Text) | The event being delivered: read it in OnSequenceEvent(). |
+| `Sequence.Play(name)` | `Sequence.Play/1` | step | name (Text) | Result (Bool) | Play the sequence named like this (a Sequence Player's file, or Assets/<name>.okayseq). False if there is none. |
+| `Sequence.Stop()` | `Sequence.Stop/0` | step | - | - | Stop every playing sequence; the camera goes back to the game. |
+
 ## NavMeshAgent
 
 Walks the object along the scene's navigation mesh (the grid when none is baked). The object needs a Nav Mesh Agent.
@@ -366,6 +378,44 @@ Walks the object along the scene's navigation mesh (the grid when none is baked)
 | `GetComponent<NavMeshAgent>().HasPath()` | `NavMeshAgent.HasPath/0` | value | Target (Object) | Result (Bool) | True while it is walking to a destination. |
 | `GetComponent<NavMeshAgent>().RemainingDistance()` | `NavMeshAgent.RemainingDistance/0` | value | Target (Object) | Result (Number) | Path length left to the destination (0 when there is none). |
 | `GetComponent<NavMeshAgent>().Arrived()` | `NavMeshAgent.Arrived/0` | value | Target (Object) | Result (Bool) | True once the last destination was reached (until the next SetDestination). |
+
+## Dialogue
+
+Conversations: start an object's Dialogue Runner (by the object's or the graph's name) and ask whether one runs.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `Dialogue.Start(name)` | `Dialogue.Start/1` | step | name (Text) | Result (Bool) | Start the conversation on the object (or graph) with this name; "" means this object's runner. False when there is none. |
+| `Dialogue.Stop()` | `Dialogue.Stop/0` | step | - | - | End the running conversation. |
+| `Dialogue.IsActive()` | `Dialogue.IsActive/0` | value | - | Result (Bool) | True while a conversation runs. |
+
+## Story
+
+The story's global variables and flags (the scene's Story State; saved with the game).
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `Story.Set(name, value)` | `Story.Set/2` | step | name (Text), value (Number) | - | Set a number variable. |
+| `Story.SetText(name, value)` | `Story.SetText/2` | step | name (Text), value (Text) | - | Set a text variable. |
+| `Story.Get(name)` | `Story.Get/1` | value | name (Text) | Result (Number) | A variable as a number (0 when unset). |
+| `Story.GetText(name)` | `Story.GetText/1` | value | name (Text) | Result (Text) | A variable as text ("" when unset). |
+| `Story.Has(name)` | `Story.Has/1` | value | name (Text) | Result (Bool) | True once the variable was set. |
+| `Story.SetFlag(name, on)` | `Story.SetFlag/2` | step | name (Text), on (Bool) | - | Set or clear a flag. |
+| `Story.HasFlag(name)` | `Story.HasFlag/1` | value | name (Text) | Result (Bool) | True while the flag is set. |
+
+## Quest
+
+Quests in the scene's Quest Log: start, complete objectives, read states.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `Quest.Start(id)` | `Quest.Start/1` | step | id (Text) | Result (Bool) | Start a quest. False when it is unknown, already active or its prerequisites aren't done. |
+| `Quest.Complete(id)` | `Quest.Complete/1` | step | id (Text) | Result (Bool) | Complete an active quest outright (its rewards are granted). |
+| `Quest.CompleteObjective(id, index)` | `Quest.CompleteObjective/2` | step | id (Text), index (Number) | Result (Bool) | Mark one objective (0-based) of an active quest done. |
+| `Quest.AddProgress(id, index, amount)` | `Quest.AddProgress/3` | step | id (Text), index (Number), amount (Number) | Result (Bool) | Count toward a collect / kill style objective. |
+| `Quest.Fail(id)` | `Quest.Fail/1` | step | id (Text) | Result (Bool) | Fail an active quest. |
+| `Quest.State(id)` | `Quest.State/1` | value | id (Text) | Result (Text) | "inactive", "active", "completed" or "failed". |
+| `Quest.IsActive(id)` | `Quest.IsActive/1` | value | id (Text) | Result (Bool) | True while the quest is active. |
 
 ## BehaviorTree
 

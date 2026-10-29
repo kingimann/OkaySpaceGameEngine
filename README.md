@@ -513,6 +513,7 @@ the rest join over LAN or a forwarded port.
 - [`docs/editor.md`](docs/editor.md) — the desktop editor and **Build Game**.
 - [`docs/modeling.md`](docs/modeling.md) — the built-in **mesh editor**: primitives, modifiers, sculpting, UV unwrap.
 - [`docs/animation.md`](docs/animation.md) — keyframe clips, **imported (FBX/GLB) animation**, state machine, IK.
+- [`docs/cutscenes.md`](docs/cutscenes.md) — **cutscenes**: sequences of camera shots, keys, cues, events and subtitles, the Timeline window, the Sequence Player.
 - [`docs/scripting.md`](docs/scripting.md) — the OkayScript language + builtins.
 - [`docs/visual_scripting.md`](docs/visual_scripting.md) — the node-graph runtime + no-code Action Lists (incl. **raycasting**).
 - [`docs/survival_kit.md`](docs/survival_kit.md) — ready-made **health / hunger / thirst / stamina / oxygen / temperature** scripts.
@@ -522,6 +523,7 @@ the rest join over LAN or a forwarded port.
 - [`docs/behavior_trees.md`](docs/behavior_trees.md) — **behavior trees**: author NPC AI visually (patrol, perception, chase, attack, scripts), a blackboard, a live view in Play.
 - [`docs/ui_world_space.md`](docs/ui_world_space.md) — **in-world (3D) UI**: world canvases and standalone 3D widgets.
 - [`docs/ui_html.md`](docs/ui_html.md) — author menus/HUDs in an **HTML + CSS** subset (UIDocument).
+- [`docs/dialogue_quests.md`](docs/dialogue_quests.md) — **dialogue graphs** (`.okaydialog`, the Dialogue window), **story variables** and **quests** (`.okayquest`, objectives, rewards, tracker and journal).
 - [`docs/steam_release.md`](docs/steam_release.md) — shipping on Steam.
 
 ## Extending it

@@ -523,6 +523,7 @@ the rest join over LAN or a forwarded port.
 - [`docs/ui_world_space.md`](docs/ui_world_space.md) — **in-world (3D) UI**: world canvases and standalone 3D widgets.
 - [`docs/ui_html.md`](docs/ui_html.md) — author menus/HUDs in an **HTML + CSS** subset (UIDocument).
 - [`docs/dialogue_quests.md`](docs/dialogue_quests.md) — **dialogue graphs** (`.okaydialog`, the Dialogue window), **story variables** and **quests** (`.okayquest`, objectives, rewards, tracker and journal).
+- [`docs/localization.md`](docs/localization.md) — **localization**: the string table (`strings.okayloc`), the Localization window, CSV for translators, plurals, the player's language and fonts for every script.
 - [`docs/steam_release.md`](docs/steam_release.md) — shipping on Steam.
 
 ## Extending it

@@ -42854,6 +42854,11 @@ static int RunBuildGameCli(int argc, char** argv) {
     EditorState ed;
     std::string err;
     if (!ed.Load(scene, &err)) { std::fprintf(stderr, "build-game: couldn't open %s: %s\n", scene.c_str(), err.c_str()); return 1; }
+    {   // the project folder (the scene's, or its parent for <project>/Assets), as --open finds it: its string table ships
+        std::filesystem::path dir = std::filesystem::path(scene).parent_path();
+        if (dir.filename() == "Assets") dir = dir.parent_path();
+        if (!dir.empty()) ed.setProjectDir(dir.string());
+    }
     const std::string msg = builder::Build(ed, out, name);
     const bool ok = msg.rfind("Built '", 0) == 0;
     std::fprintf(ok ? stdout : stderr, "%s\n", msg.c_str());

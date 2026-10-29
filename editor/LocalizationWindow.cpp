@@ -440,6 +440,7 @@ void DrawTable(EditorState& ed, float height) {
             ImGui::TableNextRow();
             ImGui::PushID(key.c_str());
             ImGui::TableSetColumnIndex(0);
+            ImGui::AlignTextToFramePadding();
             if (ImGui::Selectable(key.c_str(), s_selected == key)) SelectKey(key);
             if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) renameKey = key;
             if (ImGui::BeginPopupContextItem("##keymenu")) {

@@ -221,6 +221,8 @@ has the full list, plus the **Tween Animation** component for tweens without cod
 | `save_exists([slot])` / `delete_save([slot])` | Manage save slots |
 | `play_sequence("name")` / `stop_sequence()` | Play / stop a cutscene sequence (see docs/cutscenes.md) |
 | `sequence_playing()` / `sequence_time()` | 1 while a sequence plays / seconds into it; events reach `on_sequence_event(name)` |
+| `spline_point([name,] t)` / `spline_length([name])` | A point a fraction t along a Spline, by length / its length (see docs/splines.md); a follower at an end calls `on_spline_end(which)` |
+| `follower_set_speed([name,] s)` / `line_set_points([name,] points)` / `trail_clear([name])` | Spline Follower speed / Line Renderer points / clear a Trail Renderer |
 
 Easings: `linear`, `in/out/in_out_quad`, `..._cubic`, `..._sine`, `..._expo`,
 `in_back`/`out_back`, `out_elastic`, `out_bounce`.

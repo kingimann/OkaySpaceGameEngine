@@ -83,20 +83,27 @@ void EditorState::Achievement(const std::string& id) {
 void EditorState::RestoreKeepingSelection(const std::string& snapshot) {
     if (finishFrozenTick) finishFrozenTick();   // never rebuild a scene frozen mid-frame
     std::vector<std::pair<int, std::string>> keep;
+    // Positions among the saved objects: transient ones (a Spline Instancer's copies,
+    // generated buttons) are not in the snapshot, so they must not shift the count.
+    auto saved = [&] {
+        std::vector<GameObject*> v;
+        for (const auto& up : m_scene.Objects()) if (!up->transient) v.push_back(up.get());
+        return v;
+    };
+    std::vector<GameObject*> objs = saved();
     auto indexOf = [&](GameObject* g) {
-        int i = 0;
-        for (const auto& up : m_scene.Objects()) { if (up.get() == g) return i; ++i; }
+        for (int i = 0; i < (int)objs.size(); ++i) if (objs[(std::size_t)i] == g) return i;
         return -1;
     };
     for (GameObject* g : m_multi) if (g) keep.push_back({indexOf(g), g->name});
     int primary = m_selected ? indexOf(m_selected) : -1;
     SceneSerializer::Deserialize(m_scene, snapshot);
     Select(nullptr);   // Deserialize freed every object; clear m_multi too (no dangling ptrs)
-    const auto& objs = m_scene.Objects();
+    objs = saved();
     GameObject* prim = nullptr;
     for (const auto& k : keep) {
         GameObject* g = nullptr;
-        if (k.first >= 0 && k.first < (int)objs.size() && objs[k.first]->name == k.second) g = objs[k.first].get();
+        if (k.first >= 0 && k.first < (int)objs.size() && objs[(std::size_t)k.first]->name == k.second) g = objs[(std::size_t)k.first];
         if (!g) continue;
         if (m_multi.empty()) Select(g); else ToggleSelect(g);
         if (k.first == primary) prim = g;

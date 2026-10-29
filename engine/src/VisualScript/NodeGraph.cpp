@@ -236,6 +236,7 @@ int TargetPinFor(const std::string& type) {
         {"AnimTrigger", 0}, {"AnimSetFloat", 1}, {"AnimSetBool", 1}, {"AnimState", 0},
         {"SetBlendShape", 1}, {"GetBlendShape", 0}, {"IkLook", 2}, {"IkHand", 2},
         {"NavMoveTo", 1}, {"NavStop", 0}, {"NavArrived", 0},
+        {"GetSplinePoint", 1}, {"SplineLength", 0}, {"SetLinePoints", 1}, {"ClearTrail", 0},
         {"GetName", 0}, {"GetTag", 0}};
     auto it = kPins.find(type);
     if (it != kPins.end()) return it->second;
@@ -648,6 +649,10 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "NavMoveTo")       return std::make_unique<NavMoveToNode>();
     if (type == "NavStop")         return std::make_unique<NavStopNode>();
     if (type == "NavArrived")      return std::make_unique<NavArrivedNode>();
+    if (type == "GetSplinePoint")  return std::make_unique<SplinePointNode>();
+    if (type == "SplineLength")    return std::make_unique<SplineLengthNode>();
+    if (type == "SetLinePoints")   return std::make_unique<SetLinePointsNode>();
+    if (type == "ClearTrail")      return std::make_unique<ClearTrailNode>();
     // ---- Third wave: loops, switch, 3D transform, colour, clips, shapes ----
     if (type == "ForLoop")    return std::make_unique<ForLoopNode>();
     if (type == "Gate")       return std::make_unique<GateNode>();

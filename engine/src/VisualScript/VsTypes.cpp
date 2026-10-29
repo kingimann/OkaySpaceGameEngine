@@ -361,6 +361,11 @@ const Row kRows[] = {
         {"OnSequenceEvent", false, "", ""},
         {"PlaySequence", true, "", ""},
         {"StopSequence", true, "", ""},
+        // Splines, lines and trails.
+        {"GetSplinePoint", false, "N", "V"},
+        {"SplineLength", false, "", "N"},
+        {"SetLinePoints", true, "L", ""},
+        {"ClearTrail", true, "", ""},
 };
 
 const std::unordered_map<std::string, NodeSignature>& Table() {

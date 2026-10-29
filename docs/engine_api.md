@@ -379,6 +379,58 @@ Walks the object along the scene's navigation mesh (the grid when none is baked)
 | `GetComponent<NavMeshAgent>().RemainingDistance()` | `NavMeshAgent.RemainingDistance/0` | value | Target (Object) | Result (Number) | Path length left to the destination (0 when there is none). |
 | `GetComponent<NavMeshAgent>().Arrived()` | `NavMeshAgent.Arrived/0` | value | Target (Object) | Result (Bool) | True once the last destination was reached (until the next SetDestination). |
 
+## Spline
+
+A curve through control points (the object's Spline). t is a fraction of the length, 0 to 1.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<Spline>().pointCount` | `Spline.pointCount` | value | Target (Object) | pointCount (Number) | How many control points it has. |
+| `GetComponent<Spline>().closed` | `Spline.closed` | value | Target (Object) | closed (Bool) | Whether the last point joins back to the first. |
+| `GetComponent<Spline>().closed = closed` | `Spline.closed=` | step | closed (Bool), Target (Object) | - | Whether the last point joins back to the first. |
+| `GetComponent<Spline>().EvaluatePosition(t)` | `Spline.EvaluatePosition/1` | value | t (Number), Target (Object) | Result (Vector3) | The world point a fraction t (0 to 1) of the way along. Even steps of t are even steps on the curve. |
+| `GetComponent<Spline>().EvaluateTangent(t)` | `Spline.EvaluateTangent/1` | value | t (Number), Target (Object) | Result (Vector3) | The direction of travel a fraction t of the way along (a unit vector). |
+| `GetComponent<Spline>().Length()` | `Spline.Length/0` | value | Target (Object) | Result (Number) | The length of the curve in world units. |
+| `GetComponent<Spline>().NearestPoint(position)` | `Spline.NearestPoint/1` | value | position (Vector3), Target (Object) | Result (Vector3) | The point on the curve closest to a world position. |
+
+## SplineFollower
+
+Moves the object along a Spline (platforms, rails, carts, patrols). The object needs a Spline Follower.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<SplineFollower>().speed` | `SplineFollower.speed` | value | Target (Object) | speed (Number) | Units per second along the curve (negative runs backwards). |
+| `GetComponent<SplineFollower>().speed = speed` | `SplineFollower.speed=` | step | speed (Number), Target (Object) | - | Units per second along the curve (negative runs backwards). |
+| `GetComponent<SplineFollower>().distance` | `SplineFollower.distance` | value | Target (Object) | distance (Number) | How far along the curve it is (setting it jumps there). |
+| `GetComponent<SplineFollower>().distance = distance` | `SplineFollower.distance=` | step | distance (Number), Target (Object) | - | How far along the curve it is (setting it jumps there). |
+| `GetComponent<SplineFollower>().isPlaying` | `SplineFollower.isPlaying` | value | Target (Object) | isPlaying (Bool) | True while it moves. |
+| `GetComponent<SplineFollower>().Play()` | `SplineFollower.Play/0` | step | Target (Object) | - | Start (or carry on) moving. |
+| `GetComponent<SplineFollower>().Stop()` | `SplineFollower.Stop/0` | step | Target (Object) | - | Stop where it is. |
+
+## LineRenderer
+
+Draws a line through points (lasers, ropes, aiming arcs). The object needs a Line Renderer.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<LineRenderer>().positionCount` | `LineRenderer.positionCount` | value | Target (Object) | positionCount (Number) | How many points the line has (setting it adds or drops points at the end). |
+| `GetComponent<LineRenderer>().positionCount = positionCount` | `LineRenderer.positionCount=` | step | positionCount (Number), Target (Object) | - | How many points the line has (setting it adds or drops points at the end). |
+| `GetComponent<LineRenderer>().width` | `LineRenderer.width` | value | Target (Object) | width (Number) | Width in world units (times the width curve). |
+| `GetComponent<LineRenderer>().width = width` | `LineRenderer.width=` | step | width (Number), Target (Object) | - | Width in world units (times the width curve). |
+| `GetComponent<LineRenderer>().SetPosition(index, position)` | `LineRenderer.SetPosition/2` | step | index (Number), position (Vector3), Target (Object) | - | Move one point (the line grows to reach a new index). |
+| `GetComponent<LineRenderer>().SetPositions(positions)` | `LineRenderer.SetPositions/1` | step | positions (Any), Target (Object) | - | Replace every point with an array or List of Vector3. |
+| `GetComponent<LineRenderer>().GetPosition(index)` | `LineRenderer.GetPosition/1` | value | index (Number), Target (Object) | Result (Vector3) | One point of the line. |
+
+## TrailRenderer
+
+Leaves a fading ribbon behind the moving object. The object needs a Trail Renderer.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<TrailRenderer>().emitting` | `TrailRenderer.emitting` | value | Target (Object) | emitting (Bool) | Whether new points are added as it moves (off: the trail fades away). |
+| `GetComponent<TrailRenderer>().emitting = emitting` | `TrailRenderer.emitting=` | step | emitting (Bool), Target (Object) | - | Whether new points are added as it moves (off: the trail fades away). |
+| `GetComponent<TrailRenderer>().Clear()` | `TrailRenderer.Clear/0` | step | Target (Object) | - | Remove the trail at once (it starts again from where the object is). |
+
 ## Mathf
 
 Maths helpers.

@@ -13,6 +13,7 @@
 #include "AnimatorWindow.hpp"          // the Animator window (state-machine graph editor)
 #include "TimelineWindow.hpp"          // the Timeline window (cutscene sequences)
 #include "NavigationWindow.hpp"        // the Navigation window (navmesh bake, overlays, agent inspectors)
+#include "SplineTools.hpp"             // splines: Scene-view editing, inspectors, line / trail drawing
 #include "okay/Components/HoldPrompt.hpp"
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
@@ -6075,6 +6076,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
             ConsoleLog("Created Particle System (press Play to see it)");
             created = true;
         }
+        if (ImGui::MenuItem("Spline")) { CreateSplineFromMenu(ed); created = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A curve of three points in front of the camera: roads, rails, fences, paths.");
         if (ImGui::MenuItem("Create Tilemap")) {
             GameObject* go = ed.CreateEmpty("Tilemap");
             auto* tm = go->AddComponent<Tilemap>();
@@ -10742,6 +10745,8 @@ void DrawScriptDocs() {
         fapi("npc_stop(\"n\") / npc_busy(\"n\") / npc_state(\"n\")", "cancel / query the NPC");
         fapi("nav_move_to(x, y, z) / nav_stop()", "walk this object's Nav Mesh Agent over the navmesh / stop it");
         fapi("nav_arrived() / nav_remaining()", "reached the point? / path length left");
+        fapi("spline_point(\"n\", t) / spline_length(\"n\")", "a point t (0-1) along a Spline / its length");
+        fapi("follower_set_speed(speed) / line_set_points(points) / trail_clear()", "this object's Spline Follower, Line, Trail");
         fapi("spawner_start(\"n\") / spawner_stop(\"n\")", "run / pause a Spawner's waves");
         fapi("spawner_alive(\"n\")", "live objects a Spawner created (enemies left)");
         fapi("build_enter() / build_exit() / build_toggle()", "in-game build mode on / off (Build Mode component)");
@@ -11155,6 +11160,7 @@ static const std::vector<std::string>& ScriptCompletions() {
         "set_parent","exists","is_active","obj_x","obj_y","dist_to","destroy_obj","count_tag",
         "npc_goto","npc_stop","npc_busy","npc_state",
         "nav_move_to","nav_stop","nav_arrived","nav_remaining",
+        "spline_point","spline_length","follower_set_speed","line_set_points","trail_clear",
         "spawner_start","spawner_stop","spawner_alive",
         "build_enter","build_exit","build_toggle","build_active","build_link_mode","build_palette_clear",
         "build_palette_add","build_palette_select","build_selected","build_save","build_load","build_exists",
@@ -11268,6 +11274,8 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"npc_goto","npc_goto(\"name\", x, y, z)"}, {"npc_stop","npc_stop(\"name\")"},
         {"npc_busy","npc_busy(\"name\")"}, {"npc_state","npc_state(\"name\")"},
         {"nav_move_to","nav_move_to(x, y, z)"}, {"nav_stop","nav_stop()"}, {"nav_arrived","nav_arrived()"}, {"nav_remaining","nav_remaining()"},
+        {"spline_point","spline_point(\"name\", t)"}, {"spline_length","spline_length(\"name\")"},
+        {"follower_set_speed","follower_set_speed(speed)"}, {"line_set_points","line_set_points(points)"}, {"trail_clear","trail_clear()"},
         {"spawner_start","spawner_start(\"name\")"}, {"spawner_stop","spawner_stop(\"name\")"},
         {"spawner_alive","spawner_alive(\"name\")"},
         {"build_enter","build_enter()"}, {"build_exit","build_exit()"}, {"build_toggle","build_toggle()"},
@@ -15186,7 +15194,8 @@ void HandleShortcuts(EditorState& ed) {
         }
     }
     if (!animKeys && ImGui::IsKeyPressed(ImGuiKey_Delete, false) && ed.selected()) {
-        ed.DeleteSelected(); ConsoleLog("Deleted selection");
+        if (SplineDeletePickedPoint(ed)) ConsoleLog("Deleted spline point");   // a picked spline point goes first
+        else { ed.DeleteSelected(); ConsoleLog("Deleted selection"); }
     }
     // Play/Stop toggle is Ctrl+P. It used to be plain Space, which
     // clashed with the in-game jump — pressing Space in play mode stopped the game.
@@ -35950,6 +35959,7 @@ void DrawInspector(EditorState& ed) {
         }
     }
     DrawNavigationInspector(ed, go, curComp, toRemove, &CompHeader);   // Nav Mesh Surface / Agent / Obstacle
+    DrawSplineInspector(ed, go, curComp, toRemove, &CompHeader);       // Spline family, Line / Trail Renderer
     } // end component-order loop
 
     // Apply a queued component removal (undoable).
@@ -36101,6 +36111,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Destructible>(), "Destructible (Chaos)")) { go->AddComponent<Destructible>(); ed.dirty = true; }
             if (item(!go->GetComponent<Draggable>(), "Draggable (item)")) { go->AddComponent<Draggable>(); ed.dirty = true; }
             if (item(!go->GetComponent<DropZone>(), "Drop Zone (item)")) { go->AddComponent<DropZone>(); ed.dirty = true; }
+            SplineAddComponentItems(ed, go, item, true);   // Line / Trail Renderer, Spline Mesh
           } EndCat(o); }
 
         { bool o = BeginCat("Animation");
@@ -36303,6 +36314,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Lifetime>(), "Lifetime")) { go->AddComponent<Lifetime>(); ed.dirty = true; }
             if (item(!go->GetComponent<SequencePlayer>(), "Sequence Player (cutscene)")) { go->AddComponent<SequencePlayer>(); ed.dirty = true; }
             NavigationAddComponentItems(ed, go, item);   // Nav Mesh Surface / Agent / Obstacle
+            SplineAddComponentItems(ed, go, item, false);  // Spline, Spline Follower, Spline Instancer
           } EndCat(o); }
 
         { bool o = BeginCat("No-Code Mechanics");
@@ -38023,6 +38035,9 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             dl->AddCircleFilled(sp, Mathf::Max(1.0f, p.size * scale * 0.5f), ToColor(p.color));
         }
     }
+    // Lines and trails, on the same mapping as the sprites.
+    DrawLinesAndTrails(ed, dl, LineView2D(Vec3{camPos, 0.0f}, scale, canvasSize.x, canvasSize.y), Vec3{camPos, -1000.0f},
+                       canvasPos, canvasEnd, nullptr, ~0, nullptr);
 
     // World-anchored text (screen-space text is drawn by the shared UI overlay).
     for (const auto& up : objs) {
@@ -38942,6 +38957,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     if (!gameView && g_showGizmos)
         DrawNavigationOverlay(ed, dl, vp, center, canvasSize, canvasPos,
                               hovered && !g_uiHandled && !g_gizmoGrab && ed.view3D, io);
+    // Splines: every curve, and the selected one's points, handles and point gizmo.
+    if (!gameView && g_showGizmos)
+        DrawSplineOverlay(ed, dl, vp, eye, center, canvasSize, canvasPos,
+                          hovered && !g_uiHandled && !g_gizmoGrab && ed.view3D, io);
     // Skeleton overlay on top of the meshes (built with the gizmos above).
     if (!gameView) {
         for (const SkelDraw& d : g_skelDraw) {
@@ -39246,6 +39265,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             }
         }
     }
+    // Line and Trail Renderers: ribbons built on the CPU, blended over the image like the particles.
+    DrawLinesAndTrails(ed, dl, vp, eye, view3dMin, view3dMax, viewIgnore, RenderCullingMask(),
+                       okay::SceneOcclusionDepth().valid ? &ParticleOccluded : nullptr);
 
     dl->PopClipRect();
 
@@ -40172,7 +40194,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // ---- Transform gizmo: 3 colored axis handles at the selected object
     //. Grab a handle and drag to move/rotate/scale on that
     //      axis. X=red, Y=green, Z=blue. ----
-    GameObject* sel = (meshEditActive || colliderEditActive) ? nullptr : ed.selected();
+    GameObject* sel = (meshEditActive || colliderEditActive || SplinePointPicked(ed)) ? nullptr : ed.selected();
     bool grabbedThisClick = false;
     // The transform gizmo works in Play too, so you can move/rotate/scale a
     // selection live.
@@ -43246,6 +43268,7 @@ int main(int argc, char** argv) {
                     if (auto* ch = up->GetComponent<okay::Character>()) chars.push_back(ch);
                     if (auto* pm = up->GetComponent<okay::PauseMenu>()) pauseMenus.push_back(pm);
                 }
+            SplineEditTick(ed, pdt);   // spline meshes / instancers follow edits, trails preview
             // Live built-in animation preview: sample the chosen built-in each
             // frame and pose the character — blocky body, custom-rigged mesh, or
             // (through the HumanoidRetarget) a swapped imported model — right in
@@ -43774,6 +43797,7 @@ int main(int argc, char** argv) {
                 g_showTimeline = true;
             }
             NavigationDevHooks(ed);   // OKAY_UI_NAV / NAVBAKE / NAVAGENT / NAVSEND / NAVDEST
+            SplineDevHooks(ed);       // OKAY_UI_SPLINE / SPLINESEL / SPLINECAM
             // OKAY_UI_PLAY=1: enter Play once the scene is up (screenshots of the
             // Animator and Animation windows while the game runs).
             if (std::getenv("OKAY_UI_PLAY") && s_focusFrames == 60 && !ed.isPlaying()) {

@@ -14,6 +14,8 @@
 #include "okay/Components/SequencePlayer.hpp"
 #include "okay/Components/FullBodyIK.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
+#include "okay/Components/Spline.hpp"
+#include "okay/Components/LineRenderer.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/MeshRenderer.hpp"
@@ -374,6 +376,38 @@ struct NavArrivedNode : VsNode {   // true once the last Nav Move To point was r
     VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
         auto* a = ctx.gameObject ? ctx.gameObject->GetComponent<NavMeshAgent>() : nullptr;
         return a != nullptr && a->Arrived();
+    }
+};
+// Splines, lines and trails: the component on this object (or the Target).
+struct SplinePointNode : VsNode {   // in0 = t, a fraction (0..1) of the length; out0 = the world point
+    VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
+        const Spline* sp = ctx.gameObject ? ctx.gameObject->GetComponent<Spline>() : nullptr;
+        if (!sp) return Vec3::Zero;
+        return sp->SampleAtDistance(In(0, g, ctx).AsFloat() * sp->Length()).position;
+    }
+};
+struct SplineLengthNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        const Spline* sp = ctx.gameObject ? ctx.gameObject->GetComponent<Spline>() : nullptr;
+        return sp ? sp->Length() : 0.0f;
+    }
+};
+struct SetLinePointsNode : VsNode {   // in0 = a list of points
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (auto* lr = ctx.gameObject ? ctx.gameObject->GetComponent<LineRenderer>() : nullptr) {
+            std::vector<Vec3> pts;
+            if (auto list = In(0, g, ctx).AsArray()) for (const VsValue& p : *list) pts.push_back(p.AsVec3());
+            lr->positions = std::move(pts);
+        }
+        return 0;
+    }
+};
+struct ClearTrailNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        if (auto* tr = ctx.gameObject ? ctx.gameObject->GetComponent<TrailRenderer>() : nullptr) tr->Clear();
+        return 0;
     }
 };
 struct IkHandNode : VsNode {   // arg "left"/"right"; in0 = Vec3 point, in1 = weight (0 releases)

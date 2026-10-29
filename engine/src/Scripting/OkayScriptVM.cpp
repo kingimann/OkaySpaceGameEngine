@@ -93,6 +93,8 @@
 #include "okay/Input/InputActions.hpp"
 #include "okay/Core/SaveGame.hpp"
 #include "okay/Components/SequencePlayer.hpp"
+#include "okay/Components/Spline.hpp"
+#include "okay/Components/LineRenderer.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Core/Random.hpp"
 #include "okay/Core/Prefs.hpp"
@@ -5245,6 +5247,59 @@ struct OkayScriptVM::Impl {
             std::size_t i = 0; NavMeshAgent* n = navOf(a, i);
             return Value{n ? n->RemainingDistance() : 0.0f};
         };
+        // ---- Splines, lines and trails: this object's, or a named object's -----------
+        // spline_point("Rail", t): the world point a fraction t (0..1) of the way along
+        // the Spline (by length, so even steps of t are even steps on the curve);
+        // spline_length("Rail"); follower_set_speed([name,] speed);
+        // line_set_points([name,] points) with a list of vectors or several vectors;
+        // trail_clear([name]).
+        auto objOf = [this, sceneOf](std::vector<Value>& a, std::size_t& first) -> GameObject* {
+            first = 0;
+            GameObject* g = rt.host ? rt.host->gameObject : nullptr;
+            if (!a.empty() && a[0].IsString()) {
+                first = 1;
+                Scene* s = sceneOf();
+                g = s ? s->Find(a[0].AsString()) : nullptr;
+            }
+            return g;
+        };
+        b["spline_point"] = [objOf](std::vector<Value>& a) {
+            std::size_t i = 0; GameObject* g = objOf(a, i);
+            const Spline* sp = g ? g->GetComponent<Spline>() : nullptr;
+            if (!sp) return Value{Vec3::Zero};
+            const float t = a.size() > i ? a[i].AsFloat() : 0.0f;
+            return Value{sp->SampleAtDistance(t * sp->Length()).position};
+        };
+        b["spline_length"] = [objOf](std::vector<Value>& a) {
+            std::size_t i = 0; GameObject* g = objOf(a, i);
+            const Spline* sp = g ? g->GetComponent<Spline>() : nullptr;
+            return Value{sp ? sp->Length() : 0.0f};
+        };
+        b["follower_set_speed"] = [objOf](std::vector<Value>& a) {
+            std::size_t i = 0; GameObject* g = objOf(a, i);
+            SplineFollower* f = g ? g->GetComponent<SplineFollower>() : nullptr;
+            if (!f || a.size() <= i) return Value{0.0f};
+            f->speed = a[i].AsFloat();
+            return Value{1.0f};
+        };
+        b["line_set_points"] = [objOf](std::vector<Value>& a) {
+            std::size_t i = 0; GameObject* g = objOf(a, i);
+            LineRenderer* lr = g ? g->GetComponent<LineRenderer>() : nullptr;
+            if (!lr) return Value{0.0f};
+            std::vector<Vec3> pts;
+            for (std::size_t k = i; k < a.size(); ++k) {
+                if (auto arr = a[k].AsArray()) for (const Value& v : *arr) pts.push_back(v.AsVec3());
+                else pts.push_back(a[k].AsVec3());
+            }
+            lr->positions = std::move(pts);
+            return Value{(float)lr->positions.size()};
+        };
+        b["trail_clear"] = [objOf](std::vector<Value>& a) {
+            std::size_t i = 0; GameObject* g = objOf(a, i);
+            TrailRenderer* tr = g ? g->GetComponent<TrailRenderer>() : nullptr;
+            if (tr) tr->Clear();
+            return Value{tr ? 1.0f : 0.0f};
+        };
         // Music: the scene's MusicPlayer. music_play(index or "file"), music_next(),
         // music_previous(), music_stop([fade seconds]), music_pause(), music_resume().
         auto music = [go]() -> MusicPlayer* {
@@ -9796,6 +9851,8 @@ const std::unordered_map<std::string, std::vector<std::string>>& EventAliases() 
         {"on_sequence_event",    {"OnSequenceEvent"}},
         {"on_sequence_started",  {"OnSequenceStarted"}},
         {"on_sequence_finished", {"OnSequenceFinished"}},
+        // Splines (SplineFollower: "end" or "start").
+        {"on_spline_end",        {"OnSplineEnd"}},
     };
     return kAliases;
 }

@@ -258,6 +258,11 @@ inline const std::vector<VsDef>& Registry() {
         {"NavMoveTo",    "Nav Move To",    CAT_ACTION, true, {""}, {"Point"}, {}, 0, nullptr},
         {"NavStop",      "Nav Stop",       CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         {"NavArrived",   "Nav Arrived",    CAT_DATA, false, {}, {}, {"Bool"}, 0, nullptr},
+        // --- Splines, lines and trails (the component on this object or the Target) ---
+        {"GetSplinePoint", "Get Point On Spline", CAT_DATA, false, {}, {"T (0-1)"}, {"Point"}, 0, nullptr},
+        {"SplineLength",   "Spline Length",       CAT_DATA, false, {}, {}, {"Length"}, 0, nullptr},
+        {"SetLinePoints",  "Set Line Points",     CAT_ACTION, true, {""}, {"Points"}, {}, 0, nullptr},
+        {"ClearTrail",     "Clear Trail",         CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         // --- Flow: loops, gates, switches ---
         {"ForLoop",   "For Loop",      CAT_FLOW, true, {"Body","Done"}, {"First","Last"}, {"Index"}, 0, nullptr},
         {"Repeat",    "Repeat N",      CAT_FLOW, true, {"Body"}, {}, {}, 1, "count"},
@@ -1104,6 +1109,8 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
     if (t == "MouseButtonDown")return "mouse_down(" + VsNum(lit("0"), "0") + ")";
     if (t == "AnimState")      return "anim_state()";
     if (t == "NavArrived")     return "nav_arrived()";
+    if (t == "GetSplinePoint") return "spline_point(" + A() + ")";
+    if (t == "SplineLength")   return "spline_length()";
     if (t == "IsInAction")     return "is_in_action()";
     if (t == "IsSitting")      return "is_sitting()";
     if (t == "SeatPrompt")     return "seat_prompt()";
@@ -1277,6 +1284,8 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="IkHand")      out += ind + "ik_hand(" + q(arg("right")) + ", vec_x(" + in(0) + "), vec_y(" + in(0) + "), vec_z(" + in(0) + "), " + in(1, "1") + ")\n";
     else if (t=="NavMoveTo")   out += ind + "nav_move_to(vec_x(" + in(0) + "), vec_y(" + in(0) + "), vec_z(" + in(0) + "))\n";
     else if (t=="NavStop")     out += ind + "nav_stop()\n";
+    else if (t=="SetLinePoints") out += ind + "line_set_points(" + in(0, "[]") + ")\n";
+    else if (t=="ClearTrail")  out += ind + "trail_clear()\n";
     else if (t=="Cooldown")    out += ind + "// Cooldown (" + VsCommentText(arg("1")) + "s): gate the actions after this with a timer\n";
     else if (t=="ForLoop") {
         const std::string v = "_i" + std::to_string(nodeId);

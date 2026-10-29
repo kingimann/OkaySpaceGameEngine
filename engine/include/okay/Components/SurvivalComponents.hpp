@@ -11,6 +11,7 @@
 #include "okay/Math/Mathf.hpp"
 #include "okay/Animation/HumanoidActions.hpp"
 #include <cmath>
+#include <functional>
 #include <string>
 
 namespace okay {
@@ -71,6 +72,10 @@ protected:
     }
     static float Frac(float v, float mx) { return mx > 0.0f ? Mathf::Clamp01(v / mx) : 0.0f; }
 };
+
+/// Called with the object whose Health Stat just died, before the body reacts
+/// (the Quest Log counts kills for its objectives here).
+inline std::function<void(GameObject*)>& HealthDeathHook() { static std::function<void(GameObject*)> f; return f; }
 
 /// HP with flat armor, optional delayed regen, low/death flags. On death it
 /// broadcasts `died`, plays a sibling AudioSource, and deactivates the object.
@@ -197,6 +202,7 @@ private:
         health = 0.0f; dead = true;
         m_settled = false; m_deathAge = 0.0f; m_deathPlayed = false; m_waitDeath = false;
         Broadcast("died");
+        if (auto& hook = HealthDeathHook()) hook(gameObject);
         if (gameObject) { if (auto* au = gameObject->GetComponent<AudioSource>()) au->Play(); }
         if (playDeathAnim)
             m_deathPlayed = HumanoidActions::PlayDeath(gameObject, hasLastHit ? &lastHitFrom : nullptr);

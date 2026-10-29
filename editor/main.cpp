@@ -13,6 +13,7 @@
 #include "AnimatorWindow.hpp"          // the Animator window (state-machine graph editor)
 #include "TimelineWindow.hpp"          // the Timeline window (cutscene sequences)
 #include "NavigationWindow.hpp"        // the Navigation window (navmesh bake, overlays, agent inspectors)
+#include "DialogueWindow.hpp"          // the Dialogue window (graph editor + Quests tab) and the story inspectors
 #include "okay/Components/HoldPrompt.hpp"
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
@@ -4377,6 +4378,7 @@ static const DockPanelDef* DockPanels(int& n) {
         {"Animator",      "Animator",                  &g_showAnimatorGraph, "Editors & Tools", PI_Animator},
         {"Timeline",      "Timeline",                  &g_showTimeline,      "Editors & Tools", PI_Animation},
         {"Navigation",    "Navigation",                &g_showNavigation,    "Editors & Tools", PI_Scene},
+        {"Dialogue",      "Dialogue",                  &g_showDialogue,      "Editors & Tools", PI_Nodes},
         {"Modeling",      "Modeling",                  &g_showModeling,      "Editors & Tools", PI_Modeling},
         {"UV Editor",     "UV Editor",                 &g_showUVEditor,      "Editors & Tools", PI_Modeling},
         {"Sprite Editor", "Sprite Editor",             &g_showSpriteEditor,  "Editors & Tools", PI_Sprite},
@@ -5679,6 +5681,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Author cutscene sequences: camera shots, object keys, animation and audio cues, events and subtitles on one timeline.");
             ImGui::MenuItem("Navigation", nullptr, &g_showNavigation);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Bake the scene's colliders into a navigation mesh NPCs and Nav Mesh Agents path over, and see it in the Scene view.");
+            ImGui::MenuItem("Dialogue & Quests", nullptr, &g_showDialogue);
             ImGui::Separator();
             ImGui::MenuItem("Modeling", nullptr, &g_showModeling);
             ImGui::MenuItem("UV Editor", nullptr, &g_showUVEditor);
@@ -6911,6 +6914,8 @@ static AssetKind KindOf(const std::string& extLower, bool isDir) {
     if (extLower == ".obj")        return {IM_COL32(150, 175, 210, 255), "OBJ", AssetIcon::Mesh};
     if (extLower == ".okayvs")     return {IM_COL32(150, 200, 170, 255), "VS",  AssetIcon::Visual};
     if (extLower == ".okayseq")    return {IM_COL32(200, 130, 230, 255), "SEQ", AssetIcon::Visual};
+    if (extLower == ".okaydialog") return {IM_COL32(220, 170, 110, 255), "DLG", AssetIcon::Visual};
+    if (extLower == ".okayquest")  return {IM_COL32(170, 190, 110, 255), "QST", AssetIcon::Data};
     return {IM_COL32(150, 152, 162, 255), "FILE", AssetIcon::Generic};
 }
 
@@ -8991,6 +8996,9 @@ void DrawProject(EditorState& ed) {
             g_showVisualScript = true;
         } else if (ext == ".okayseq") {
             OpenTimelineFile(full);               // open in the Timeline window
+        } else if (ext == ".okaydialog" || ext == ".okayquest") {
+            OpenStoryAsset(full);                 // the Dialogue window (the graph, or the Quests tab)
+            g_showDialogue = true;
         } else if (const char* k = ImportKindLabel(ext); k && std::strcmp(k, "model") == 0) {
             // Double-click a model: import it into the scene (hierarchy, textures,
             // rig + clips, size normalization — same path as drag-drop).
@@ -15098,7 +15106,7 @@ void HandleShortcuts(EditorState& ed) {
     ImGuiIO& io = ImGui::GetIO();
     if (io.WantTextInput || OwnShortcutsWindowFocused()) return;
     bool ctrl = io.KeyCtrl;
-    const bool animKeys = AnimationTabFocused() || AnimatorGraphFocused() || TimelineFocused();   // those windows own Delete, Ctrl+C/V/D and F
+    const bool animKeys = AnimationTabFocused() || AnimatorGraphFocused() || TimelineFocused() || DialogueWindowFocused();   // those windows own Delete, Ctrl+C/V/D and F
     // Ctrl+Z undoes; Ctrl+Shift+Z and Ctrl+Y redo. (Guard the undo with !Shift
     // so Ctrl+Shift+Z doesn't undo and redo in the same frame.)
     if (ctrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
@@ -32749,6 +32757,11 @@ void DrawInspector(EditorState& ed) {
         }
     }
     // grok/view-toggle: one player, first person or third, switched at play.
+    // Dialogue and quests (bodies in DialogueWindow.cpp).
+    if (auto* dr = dynamic_cast<DialogueRunner*>(curComp)) { if (CompHeader("Dialogue Runner", dr, &toRemove)) DialogueRunnerInspector(ed, *dr); }
+    if (auto* ql = dynamic_cast<QuestLog*>(curComp)) { if (CompHeader("Quest Log", ql, &toRemove)) QuestLogInspector(ed, *ql); }
+    if (auto* qt = dynamic_cast<QuestTrigger*>(curComp)) { if (CompHeader("Quest Trigger", qt, &toRemove)) QuestTriggerInspector(ed, *qt); }
+    if (auto* ss = dynamic_cast<StoryState*>(curComp)) { if (CompHeader("Story State", ss, &toRemove)) StoryStateInspector(ed, *ss); }
     if (auto* pv = dynamic_cast<PlayerView*>(curComp)) {
         if (CompHeader("Player View", pv, &toRemove)) {
             if (ImGui::Checkbox("Allow Toggle##pv", &pv->allowToggle)) ed.dirty = true;
@@ -36303,6 +36316,18 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Lifetime>(), "Lifetime")) { go->AddComponent<Lifetime>(); ed.dirty = true; }
             if (item(!go->GetComponent<SequencePlayer>(), "Sequence Player (cutscene)")) { go->AddComponent<SequencePlayer>(); ed.dirty = true; }
             NavigationAddComponentItems(ed, go, item);   // Nav Mesh Surface / Agent / Obstacle
+            // Dialogue and quests (View > Editors & Tools > Dialogue & Quests edits the files).
+            if (item(!go->GetComponent<DialogueRunner>(), "Dialogue Runner (talk with E)")) { ed.PushUndo(); go->AddComponent<DialogueRunner>(); ed.dirty = true; }
+            if (item(!go->GetComponent<QuestLog>(), "Quest Log (one per scene)")) { ed.PushUndo(); go->AddComponent<QuestLog>(); ed.dirty = true; }
+            if (item(!go->GetComponent<QuestTrigger>(), "Quest Trigger (reach zone)")) {
+                ed.PushUndo(); go->AddComponent<QuestTrigger>();
+                if (!go->GetComponent<Collider2D>() && !go->GetComponent<Collider3D>()) {
+                    if (ed.view3D) { auto* c = go->AddComponent<BoxCollider3D>(); c->isTrigger = true; c->autoFit = true; }
+                    else           { auto* c = go->AddComponent<BoxCollider2D>(); c->isTrigger = true; }
+                }
+                ed.dirty = true;
+            }
+            if (item(!go->GetComponent<StoryState>(), "Story State (story variables)")) { ed.PushUndo(); go->AddComponent<StoryState>(); ed.dirty = true; }
           } EndCat(o); }
 
         { bool o = BeginCat("No-Code Mechanics");
@@ -42197,6 +42222,11 @@ void DrawGameView(EditorState& ed) {
     ImGuiIO& io = ImGui::GetIO();
     // Publish the canvas size so anchored UI resolves to this view.
     UICanvas::Set(canvasSize.x, canvasSize.y);
+    // Built-in OkayUI overlays (dialogue box, quest tracker) land on the game image.
+    // OkayUI draws in window pixels; with viewports on, ImGui positions are desktop ones.
+    okay::ScriptUIOriginX() = canvasPos.x - ImGui::GetMainViewport()->Pos.x;
+    okay::ScriptUIOriginY() = canvasPos.y - ImGui::GetMainViewport()->Pos.y;
+    okay::ScriptUICanvasW() = canvasSize.x; okay::ScriptUICanvasH() = canvasSize.y;
 
     // Preview a fixed-resolution HUD at the picked resolution: a Constant-Pixel-Size
     // canvas authored for the target height should shrink/grow with the on-screen size,
@@ -43050,6 +43080,7 @@ int main(int argc, char** argv) {
     // here in the editor during Play — the same code path the shipped player uses.
     // The editor brackets each frame with OkayUI::BeginFrame()/EndFrame() below.
     static okay::OkayUIScriptBridge g_editorUIBridge;
+    g_editorUIBridge.renderer = renderer;   // dialogue portraits as textures
     okay::SetScriptUI(&g_editorUIBridge);
 #endif
 
@@ -43492,6 +43523,7 @@ int main(int argc, char** argv) {
                     if (auto* cs = up->GetComponent<okay::CraftingStation>()) if (cs->open) { invModal = true; break; }
                     if (auto* ce = up->GetComponent<okay::ChestInventory>()) if (ce->open) { invModal = true; break; }
                     if (auto* mm = up->GetComponent<okay::Minimap>()) if (mm->fullscreen) { invModal = true; break; }
+                    if (okay::StoryUIModal(up.get())) { invModal = true; break; }   // a running dialogue or an open quest journal
                 }
             // A cutscene with Lock Player on holds the controllers the same way.
             okay::Input::SetUICaptured(invModal || (ed.isPlaying() && okay::SequencePlayer::AnyLocksInput(ed.scene())));
@@ -43774,6 +43806,7 @@ int main(int argc, char** argv) {
                 g_showTimeline = true;
             }
             NavigationDevHooks(ed);   // OKAY_UI_NAV / NAVBAKE / NAVAGENT / NAVSEND / NAVDEST
+            if (std::getenv("OKAY_UI_DIALOGUE")) g_showDialogue = true;   // dev screenshots of the Dialogue window
             // OKAY_UI_PLAY=1: enter Play once the scene is up (screenshots of the
             // Animator and Animation windows while the game runs).
             if (std::getenv("OKAY_UI_PLAY") && s_focusFrames == 60 && !ed.isPlaying()) {
@@ -44035,6 +44068,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.AnimatorGraph"); DrawAnimatorGraph(ed); }
         { OKAY_PROFILE("UI.Timeline"); DrawTimeline(ed); }
         { OKAY_PROFILE("UI.Navigation"); DrawNavigationWindow(ed); }
+        { OKAY_PROFILE("UI.Dialogue"); DrawDialogueWindow(ed); }
         { OKAY_PROFILE("UI.History"); DrawHistory(ed); }
         { OKAY_PROFILE("UI.Stats"); if (g_showStats)     DrawStats(ed); }
         { OKAY_PROFILE("UI.SceneSettings"); if (g_showSceneSettings) DrawSceneSettings(ed); }

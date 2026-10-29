@@ -773,6 +773,12 @@ add_executable(test_anim_layers test_anim_layers.cpp)
 target_link_libraries(test_anim_layers PRIVATE okay::engine)
 add_test(NAME anim_layers COMMAND test_anim_layers)
 
+# Clip editing tools behind the Animation window: per-key easing (file + scene
+# round-trips, older files), retiming, insert / remove time, mirror, pose values.
+add_executable(test_anim_edit test_anim_edit.cpp)
+target_link_libraries(test_anim_edit PRIVATE okay::engine)
+add_test(NAME anim_edit COMMAND test_anim_edit)
+
 add_executable(test_obj_import test_obj_import.cpp)
 target_link_libraries(test_obj_import PRIVATE okay::engine)
 add_test(NAME obj_import COMMAND test_obj_import)

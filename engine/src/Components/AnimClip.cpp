@@ -1,5 +1,6 @@
 #include "okay/Components/AnimClip.hpp"
 #include "okay/Math/Quat.hpp"
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <sstream>
@@ -82,11 +83,24 @@ float Cubic(float p0, float p1, float p2, float p3, const CubicSpan& s) {
 }
 } // namespace
 
+float AnimClip::EaseFrom(const AnimKey& from, float u) const {
+    if (from.ease == AnimKeyEase::Clip) return Ease(u);
+    if (u < 0.0f) u = 0.0f; else if (u > 1.0f) u = 1.0f;
+    switch (from.ease) {
+        case AnimKeyEase::Smooth:  return u * u * (3.0f - 2.0f * u);
+        case AnimKeyEase::Step:    return u >= 1.0f ? 1.0f : 0.0f;
+        case AnimKeyEase::EaseIn:  return u * u;                              // starts slow
+        case AnimKeyEase::EaseOut: return 1.0f - (1.0f - u) * (1.0f - u);     // ends slow
+        case AnimKeyEase::Linear: default: return u;
+    }
+}
+
 std::vector<Vec3> AnimClip::Sample(float t) const {
     if (keys.empty()) return {};
     if (interp == AnimInterp::Cubic) {
         CubicSpan s;
-        if (t > keys.front().time && FindCubicSpan(*this, t, s)) {
+        // A key with its own easing takes its span out of the curve.
+        if (t > keys.front().time && FindCubicSpan(*this, t, s) && s.k[1]->ease == AnimKeyEase::Clip) {
             std::size_t n = 0;
             for (const AnimKey* k : s.k) n = k->pose.size() > n ? k->pose.size() : n;
             std::vector<Vec3> out(n, Vec3{0, 0, 0});
@@ -109,7 +123,7 @@ std::vector<Vec3> AnimClip::Sample(float t) const {
         const float last = keys.back().time;
         if (!loop || length <= last || keys.size() < 2) return keys.back().pose;
         float u = (t - last) / (length - last);
-        return BlendPose(keys.back(), keys.front(), Ease(u));
+        return BlendPose(keys.back(), keys.front(), EaseFrom(keys.back(), u));
     }
     for (std::size_t i = 0; i + 1 < keys.size(); ++i) {
         const AnimKey& a = keys[i];
@@ -117,7 +131,7 @@ std::vector<Vec3> AnimClip::Sample(float t) const {
         if (t < a.time || t > b.time) continue;
         float span = b.time - a.time;
         float u = span > 1e-6f ? (t - a.time) / span : 0.0f;
-        return BlendPose(a, b, Ease(u));   // eased by the clip's mode (linear / smooth / step)
+        return BlendPose(a, b, EaseFrom(a, u));   // the key's own easing, else the clip's mode
     }
     return keys.back().pose;
 }
@@ -126,7 +140,7 @@ Vec3 AnimClip::SampleRoot(float t) const {
     if (!hasRoot || keys.empty()) return Vec3{0, 0, 0};
     if (interp == AnimInterp::Cubic) {
         CubicSpan s;
-        if (t > keys.front().time && FindCubicSpan(*this, t, s)) {
+        if (t > keys.front().time && FindCubicSpan(*this, t, s) && s.k[1]->ease == AnimKeyEase::Clip) {
             const Vec3 &a = s.k[0]->root, &b = s.k[1]->root, &c = s.k[2]->root, &d = s.k[3]->root;
             return Vec3{Cubic(a.x, b.x, c.x, d.x, s), Cubic(a.y, b.y, c.y, d.y, s), Cubic(a.z, b.z, c.z, d.z, s)};
         }
@@ -147,8 +161,135 @@ Vec3 AnimClip::SampleRoot(float t) const {
             break;
         }
     }
-    return a->root + (b->root - a->root) * Ease(u);
+    return a->root + (b->root - a->root) * EaseFrom(*a, u);
 }
+
+// ---- Editing -------------------------------------------------------------------
+namespace {
+// Give the keys at `indices` the times `newTime` says and merge them back in
+// order. A moved key replaces any unmoved key it lands on (two moved keys that
+// meet keep the earlier one). Returns the moved keys' new indices, ascending.
+std::vector<int> RetimeKeys(std::vector<AnimKey>& keys, const std::vector<int>& indices,
+                            const std::function<float(float)>& newTime) {
+    struct Slot { AnimKey key; bool moved; };
+    std::vector<Slot> slots;
+    slots.reserve(keys.size());
+    for (int i = 0; i < (int)keys.size(); ++i) slots.push_back({keys[i], false});
+    for (int i : indices)
+        if (i >= 0 && i < (int)slots.size()) {
+            slots[i].moved = true;
+            slots[i].key.time = std::max(0.0f, newTime(keys[i].time));
+        }
+    std::stable_sort(slots.begin(), slots.end(), [](const Slot& a, const Slot& b) { return a.key.time < b.key.time; });
+    keys.clear();
+    std::vector<bool> moved;
+    for (Slot& s : slots) {
+        if (!keys.empty() && std::fabs(keys.back().time - s.key.time) < 1e-3f) {
+            if (s.moved && !moved.back()) { keys.back() = std::move(s.key); moved.back() = true; }
+            continue;
+        }
+        keys.push_back(std::move(s.key));
+        moved.push_back(s.moved);
+    }
+    std::vector<int> out;
+    for (int i = 0; i < (int)keys.size(); ++i) if (moved[i]) out.push_back(i);
+    return out;
+}
+// A loop length the keys have reached or passed means nothing: loop at the last key.
+void DropPassedLength(AnimClip& c) {
+    const float last = c.keys.empty() ? 0.0f : c.keys.back().time;
+    if (c.length > 0.0f && c.length <= last + 1e-4f) c.length = 0.0f;
+}
+} // namespace
+
+std::vector<int> AnimClip::MoveKeys(const std::vector<int>& indices, float dt) {
+    float first = 1e30f;
+    for (int i : indices) if (i >= 0 && i < (int)keys.size()) first = std::min(first, keys[i].time);
+    if (first == 1e30f) return {};
+    if (first + dt < 0.0f) dt = -first;   // the earliest key stops at 0; the rest keep their spacing
+    std::vector<int> out = RetimeKeys(keys, indices, [dt](float t) { return t + dt; });
+    DropPassedLength(*this);
+    return out;
+}
+
+std::vector<int> AnimClip::ScaleKeyTimes(const std::vector<int>& indices, float pivot, float factor) {
+    if (factor <= 0.0f) factor = 1.0f;   // nothing sensible to do; keep the keys where they are
+    std::vector<int> out = RetimeKeys(keys, indices, [=](float t) { return pivot + (t - pivot) * factor; });
+    DropPassedLength(*this);
+    return out;
+}
+
+void AnimClip::InsertTime(float at, float dt) {
+    if (dt <= 0.0f) return;
+    for (AnimKey& k : keys) if (k.time >= at - 1e-4f) k.time += dt;
+    for (AnimEvent& e : events) if (e.time >= at - 1e-4f) e.time += dt;
+    if (length > 0.0f && length >= at) length += dt;
+}
+
+void AnimClip::RemoveTime(float at, float dt) {
+    if (dt <= 0.0f) return;
+    const float end = at + dt;
+    auto inside = [&](float t) { return t >= at - 1e-4f && t < end - 1e-4f; };
+    keys.erase(std::remove_if(keys.begin(), keys.end(), [&](const AnimKey& k) { return inside(k.time); }), keys.end());
+    events.erase(std::remove_if(events.begin(), events.end(), [&](const AnimEvent& e) { return inside(e.time); }), events.end());
+    for (AnimKey& k : keys) if (k.time >= end - 1e-4f) k.time -= dt;
+    for (AnimEvent& e : events) if (e.time >= end - 1e-4f) e.time -= dt;
+    if (length > 0.0f) {
+        if (length >= end) length -= dt;
+        else if (length > at) length = at;
+    }
+    DropPassedLength(*this);
+}
+
+void AnimClip::Mirror(const std::function<void(std::vector<Vec3>&)>& mirrorPose) {
+    for (AnimKey& k : keys) {
+        mirrorPose(k.pose);
+        k.root.x = -k.root.x;
+    }
+}
+
+void AnimClip::OffsetPose(const std::vector<int>& indices, int bone, const Vec3& delta) {
+    for (int i : indices) {
+        if (i < 0 || i >= (int)keys.size()) continue;
+        std::vector<Vec3>& p = keys[i].pose;
+        if (bone < 0) { for (Vec3& v : p) v = v + delta; continue; }
+        if (bone >= (int)p.size()) p.resize(bone + 1, Vec3{0, 0, 0});
+        p[bone] = p[bone] + delta;
+    }
+}
+
+void AnimClip::ScalePose(const std::vector<int>& indices, int bone, float factor) {
+    if (keys.empty()) return;
+    // The pivot is the clip's mean pose, so a swing grows about its centre
+    // instead of the whole limb drifting away from rest.
+    std::size_t nb = 0;
+    for (const AnimKey& k : keys) nb = std::max(nb, k.pose.size());
+    std::vector<Vec3> mean(nb, Vec3{0, 0, 0});
+    for (const AnimKey& k : keys) for (std::size_t b = 0; b < k.pose.size(); ++b) mean[b] = mean[b] + k.pose[b];
+    for (Vec3& m : mean) m = m * (1.0f / (float)keys.size());
+    for (int i : indices) {
+        if (i < 0 || i >= (int)keys.size()) continue;
+        std::vector<Vec3>& p = keys[i].pose;
+        for (std::size_t b = 0; b < p.size(); ++b)
+            if (bone < 0 || (int)b == bone) p[b] = mean[b] + (p[b] - mean[b]) * factor;
+    }
+}
+
+namespace {
+// The easing words a `key` line may end with (none = the clip's mode).
+const struct { AnimKeyEase ease; const char* word; } kEaseWords[] = {
+    {AnimKeyEase::Linear, "linear"}, {AnimKeyEase::Smooth, "smooth"},   {AnimKeyEase::Step, "step"},
+    {AnimKeyEase::EaseIn, "easein"}, {AnimKeyEase::EaseOut, "easeout"},
+};
+const char* EaseWord(AnimKeyEase e) {
+    for (const auto& w : kEaseWords) if (w.ease == e) return w.word;
+    return nullptr;
+}
+bool EaseFromWord(const std::string& s, AnimKeyEase& out) {
+    for (const auto& w : kEaseWords) if (s == w.word) { out = w.ease; return true; }
+    return false;
+}
+} // namespace
 
 std::vector<AnimClip> AnimClip::ParseAll(const std::string& text,
                                          const std::function<int(const std::string&)>& resolveBone,
@@ -204,6 +345,10 @@ std::vector<AnimClip> AnimClip::ParseAll(const std::string& text,
             if (clips.empty()) return fail("key before any clip");
             AnimKey k;
             if (!(ls >> k.time)) return fail("key needs a time");
+            // An optional easing word for the span out of this key (older files
+            // have none, so their keys keep the clip's mode).
+            std::string w;
+            if (ls >> w && !EaseFromWord(w, k.ease)) return fail("unknown key easing '" + w + "'");
             k.pose.assign(boneCount, Vec3{0, 0, 0});
             clips.back().keys.push_back(std::move(k));
         } else if (tok == "root") {
@@ -243,7 +388,9 @@ std::string AnimClip::WriteAll(const std::vector<AnimClip>& clips,
         if (c.length > 0.0f) out << "length " << c.length << "\n";
         for (const AnimEvent& e : c.events) out << "event " << e.time << " " << e.name << "\n";
         for (const AnimKey& k : c.keys) {
-            out << "key " << k.time << "\n";
+            out << "key " << k.time;
+            if (const char* w = EaseWord(k.ease)) out << " " << w;   // only keys with their own easing
+            out << "\n";
             for (std::size_t bi = 0; bi < k.pose.size(); ++bi) {
                 const Vec3& p = k.pose[bi];
                 if (p.x == 0.0f && p.y == 0.0f && p.z == 0.0f) continue;   // omit zero poses

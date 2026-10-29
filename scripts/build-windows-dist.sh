@@ -75,7 +75,10 @@ cmake -S . -B "$BUILD_DIR" \
       -DCMAKE_PREFIX_PATH="$SDL2_MINGW_PREFIX" \
       -DCMAKE_FIND_ROOT_PATH="/usr/x86_64-w64-mingw32;$SDL2_MINGW_PREFIX" \
       "${EXTRA[@]}"
-cmake --build "$BUILD_DIR" -j
+# One job per core: a bare -j lets make start every editor file at once, and the
+# big ones (editor and player main.cpp) together run a CI runner out of memory.
+JOBS="${JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
+cmake --build "$BUILD_DIR" -j "$JOBS"
 
 # ---- Distribution layout ------------------------------------------------------
 # Keep the thing you double-click at the top and tuck the rest away:

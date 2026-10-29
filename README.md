@@ -518,6 +518,7 @@ the rest join over LAN or a forwarded port.
 - [`docs/survival_kit.md`](docs/survival_kit.md) — ready-made **health / hunger / thirst / stamina / oxygen / temperature** scripts.
 - [`docs/build_mode.md`](docs/build_mode.md) — let **players build** in your game, wire buttons to doors with **logic links**, and save their creations.
 - [`docs/vehicle_controller.md`](docs/vehicle_controller.md) — arcade **vehicle/car controller**.
+- [`docs/navigation.md`](docs/navigation.md) — **navigation meshes**: bake walkable polygons, Nav Mesh Agents, local avoidance, the grid fallback.
 - [`docs/ui_world_space.md`](docs/ui_world_space.md) — **in-world (3D) UI**: world canvases and standalone 3D widgets.
 - [`docs/ui_html.md`](docs/ui_html.md) — author menus/HUDs in an **HTML + CSS** subset (UIDocument).
 - [`docs/steam_release.md`](docs/steam_release.md) — shipping on Steam.

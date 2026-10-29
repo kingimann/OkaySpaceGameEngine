@@ -76,6 +76,7 @@
 #include "okay/Components/UITooltip.hpp"
 #include "okay/Components/Tilemap.hpp"
 #include "okay/Components/NPCController.hpp"
+#include "okay/Components/NavMeshAgent.hpp"
 #include "okay/Components/Spawner.hpp"
 #include "okay/Components/BuildMode.hpp"
 #include "okay/Components/LogicLinks.hpp"
@@ -5192,6 +5193,39 @@ struct OkayScriptVM::Impl {
         b["play_time"]   = [](std::vector<Value>&) { return Value{SaveGame::PlayTime()}; };
         // Keep the current volumes as the player's settings (also saved on quit).
         b["save_audio_settings"] = [](std::vector<Value>&) { AudioMixer::SaveSettings(); return Value{}; };
+        // ---- Navigation: the Nav Mesh Agent on this object (or a named one) --------
+        // nav_move_to(x, y, z) / nav_move_to("Name", x, y, z): walk there over the
+        // navmesh; nav_stop(), nav_arrived() -> 1 once the point was reached,
+        // nav_remaining() -> path length left (0 when idle).
+        auto navOf = [this, sceneOf](std::vector<Value>& a, std::size_t& first) -> NavMeshAgent* {
+            first = 0;
+            GameObject* g = rt.host ? rt.host->gameObject : nullptr;
+            if (!a.empty() && a[0].IsString()) {
+                first = 1;
+                Scene* s = sceneOf();
+                g = s ? s->Find(a[0].AsString()) : nullptr;
+            }
+            return g ? g->GetComponent<NavMeshAgent>() : nullptr;
+        };
+        b["nav_move_to"] = [navOf](std::vector<Value>& a) {
+            std::size_t i = 0; NavMeshAgent* n = navOf(a, i);
+            if (!n || a.size() < i + 3) return Value{0.0f};
+            n->SetDestination({a[i].AsFloat(), a[i + 1].AsFloat(), a[i + 2].AsFloat()});
+            return Value{1.0f};
+        };
+        b["nav_stop"] = [navOf](std::vector<Value>& a) {
+            std::size_t i = 0; NavMeshAgent* n = navOf(a, i);
+            if (!n) return Value{0.0f};
+            n->Stop(); return Value{1.0f};
+        };
+        b["nav_arrived"] = [navOf](std::vector<Value>& a) {
+            std::size_t i = 0; NavMeshAgent* n = navOf(a, i);
+            return Value{n && n->Arrived() ? 1.0f : 0.0f};
+        };
+        b["nav_remaining"] = [navOf](std::vector<Value>& a) {
+            std::size_t i = 0; NavMeshAgent* n = navOf(a, i);
+            return Value{n ? n->RemainingDistance() : 0.0f};
+        };
         // Music: the scene's MusicPlayer. music_play(index or "file"), music_next(),
         // music_previous(), music_stop([fade seconds]), music_pause(), music_resume().
         auto music = [go]() -> MusicPlayer* {

@@ -37,6 +37,10 @@ key 0.6
   `override` (movement can't interrupt the clip, see below).
 - `speed 1.5` plays the clip faster; `length 1.2` sets a loop's length past its
   last key, so the last key eases back into the first (a seamless loop).
+- A `key` line may end with an easing word for the span out of that key:
+  `key 0.4 step` holds that pose until the next key, `easein` / `easeout` ease
+  that one move, and `smooth` / `linear` override the clip's easing for it. A
+  key without a word keeps the clip's easing, so older files play as before.
 - Each bone turns along the short arc between keys (the rotations are slerped),
   so -150° to 150° swings 60° rather than spinning the long way round.
 - `root x y z` inside a key moves the whole body (in the rig's units, before the
@@ -81,7 +85,35 @@ one, or "Walk (from built-in)" (Idle, Walk, Run, Jump) to start from a copy of a
 built-in animation, sampled into keys you can tweak. Key Pose, deleting a key,
 bone nudges, renames and Apply all undo with Ctrl+Z. **Apply** adds the clip to
 the character without playing it; tick **Play on start (overrides movement)** to
-make it the start animation.
+make it the start animation. **Easing**, **Length** and **Speed** next to the
+name set the clip-wide easing (linear, smooth, step or cubic), the loop length
+(room past the last key lets a loop ease back into its first key) and the
+playback rate.
+
+The **key lane** shows every key as a diamond on a ruler, with event markers
+as yellow flags. Click or drag the ruler to scrub; the pose at that time is
+loaded for editing. Click a key to select it and load its pose, Shift+click to
+add to the selection, drag across empty space to box-select, and drag a
+selected key to move the whole selection (a moved key replaces any key it lands
+on). **Del** deletes the selected keys, the **arrow keys** nudge them by a
+frame (1/30 s; hold Shift for ten) and **Ctrl+A** selects all.
+
+With keys selected, **Time** moves the first one (the others keep their
+distance), **Ease** sets how the clip leaves those keys for the next one (Clip
+default, Linear, Smooth, Step to hold a pose, Ease in or Ease out; a key with
+its own easing shows a dot under its diamond), and **Adjust...** retimes the
+selection about the playhead (x2 makes it take twice as long), amplifies it
+(angles move away from, or toward, the clip's average pose, for an exaggerated
+or a damped motion) or offsets it by some degrees, for just the bone in the
+Bone dropdown or for every bone.
+
+Under the lane, **Copy Pose** / **Paste Pose** (Ctrl+C / Ctrl+V) key the copied
+pose at the playhead, on any character; **Paste Mirrored** keys it flipped
+left<->right, which gives the second half of a walk cycle from the first;
+**Mirror Pose** flips the pose being authored and **Mirror Clip** flips every
+key. **Insert** / **Remove** open or close a gap of the given length at the
+playhead, moving the keys and events after it. Right-clicking the lane offers
+the same tools, and all of them undo with Ctrl+Z.
 
 From C++ / a script-driven flow:
 

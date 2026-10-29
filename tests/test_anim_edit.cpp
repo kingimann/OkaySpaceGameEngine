@@ -1,0 +1,245 @@
+#include "test_framework.hpp"
+#include <Okay.hpp>
+#include <cmath>
+#include <cstdio>
+#include <string>
+
+using namespace okay;
+
+// The Animation window's clip editing tools, which live on AnimClip: per-key
+// easing (and its .okayanim and scene round-trips, plus older files without it),
+// moving and retiming selected keys, inserting / removing time, mirroring, and
+// offsetting / amplifying pose values.
+int main() {
+    RUN_SUITE("anim_edit");
+
+    const int NB = Character::BoneCount();
+    const int RU = Character::BoneIndex("r_uparm");
+    const int LU = Character::BoneIndex("l_uparm");
+    // A key that turns r_uparm to `z` degrees about Z at time `t`.
+    auto key = [&](float t, float z, AnimKeyEase e = AnimKeyEase::Clip) {
+        AnimKey k; k.time = t; k.ease = e;
+        k.pose.assign(NB, Vec3{0, 0, 0});
+        k.pose[RU] = Vec3{0, 0, z};
+        return k;
+    };
+    auto times = [](const AnimClip& c) {
+        std::string s;
+        for (const AnimKey& k : c.keys) { char b[16]; std::snprintf(b, sizeof(b), "%.2f ", k.time); s += b; }
+        return s;
+    };
+
+    // ---- A key's own easing shapes only the span out of that key ----
+    {
+        AnimClip c; c.loop = false;   // clip mode: linear
+        c.keys = {key(0, 0, AnimKeyEase::Step), key(1, 10), key(2, 20, AnimKeyEase::EaseIn),
+                  key(3, 30, AnimKeyEase::EaseOut), key(4, 40, AnimKeyEase::Smooth), key(5, 50)};
+        CHECK_NEAR(c.Sample(0.5f)[RU].z, 0.0f, 1e-3f);       // step holds key 0 until key 1
+        CHECK_NEAR(c.Sample(1.25f)[RU].z, 12.5f, 0.05f);     // the clip's (linear) mode
+        CHECK_NEAR(c.Sample(2.5f)[RU].z, 22.5f, 0.05f);      // ease in: u^2 = 0.25
+        CHECK_NEAR(c.Sample(3.5f)[RU].z, 37.5f, 0.05f);      // ease out: 1 - (1-u)^2 = 0.75
+        CHECK_NEAR(c.Sample(4.25f)[RU].z, 41.5625f, 0.05f);  // smoothstep(0.25)
+        CHECK_NEAR(c.Sample(0.999f)[RU].z, 0.0f, 1e-3f);
+        CHECK_NEAR(c.Sample(1.0f)[RU].z, 10.0f, 1e-3f);      // keys themselves come back exactly
+
+        // A Linear key overrides a Smooth clip, and a Step key holds inside a
+        // Cubic clip (its span is taken out of the curve; the others stay cubic).
+        AnimClip s; s.loop = false; s.interp = AnimInterp::Smooth;
+        s.keys = {key(0, 0, AnimKeyEase::Linear), key(1, 10)};
+        CHECK_NEAR(s.Sample(0.25f)[RU].z, 2.5f, 0.05f);
+        AnimClip q; q.loop = false; q.interp = AnimInterp::Cubic;
+        q.keys = {key(0, 0, AnimKeyEase::Step), key(1, 10), key(2, 20), key(3, 30)};
+        CHECK_NEAR(q.Sample(0.5f)[RU].z, 0.0f, 1e-3f);
+        CHECK_NEAR(q.Sample(1.5f)[RU].z, 15.0f, 0.05f);      // a straight ramp stays straight
+        CHECK_NEAR(q.Sample(2.5f)[RU].z, 25.0f, 0.05f);
+
+        // The root track follows the same per-key easing, and so does the wrap of
+        // a seamless loop (the last key's easing).
+        AnimClip r; r.loop = true; r.length = 2.0f; r.hasRoot = true;
+        r.keys = {key(0, 0), key(1, 10, AnimKeyEase::Step)};
+        r.keys[1].root = Vec3{0, 1, 0};
+        CHECK_NEAR(r.SampleRoot(0.5f).y, 0.5f, 1e-3f);
+        CHECK_NEAR(r.Sample(1.5f)[RU].z, 10.0f, 1e-3f);      // held, not eased back to key 0
+        CHECK_NEAR(r.SampleRoot(1.5f).y, 1.0f, 1e-3f);
+    }
+
+    // ---- .okayanim: older files load unchanged; easing words round-trip ----
+    {
+        std::string err;
+        auto old = AnimClip::ParseAll("clip wave loop smooth\nkey 0\n  r_uparm 0 0 0\nkey 1\n  r_uparm 0 0 -90\n",
+                                      &Character::BoneIndex, NB, &err);
+        CHECK(err.empty());
+        CHECK(old.size() == 1 && old[0].keys.size() == 2);
+        for (const AnimKey& k : old[0].keys) CHECK(k.ease == AnimKeyEase::Clip);
+        CHECK_NEAR(old[0].Sample(0.5f)[RU].z, -45.0f, 0.05f);   // smooth, as before
+
+        const char* src = "clip hold once\nkey 0 step\n  r_uparm 0 0 10\nkey 0.5 easein\nkey 1 easeout\n"
+                          "key 1.5 smooth\nkey 2 linear\nkey 2.5\n";
+        auto clips = AnimClip::ParseAll(src, &Character::BoneIndex, NB, &err);
+        CHECK(err.empty());
+        CHECK(clips.size() == 1 && clips[0].keys.size() == 6);
+        const AnimKeyEase want[] = {AnimKeyEase::Step, AnimKeyEase::EaseIn, AnimKeyEase::EaseOut,
+                                    AnimKeyEase::Smooth, AnimKeyEase::Linear, AnimKeyEase::Clip};
+        for (int i = 0; i < 6; ++i) CHECK(clips[0].keys[i].ease == want[i]);
+
+        std::string text = AnimClip::WriteAll(clips, &Character::BoneToken);
+        CHECK(text.find("key 0 step\n") != std::string::npos);
+        CHECK(text.find("key 0.5 easein\n") != std::string::npos);
+        CHECK(text.find("key 1 easeout\n") != std::string::npos);
+        CHECK(text.find("key 1.5 smooth\n") != std::string::npos);
+        CHECK(text.find("key 2 linear\n") != std::string::npos);
+        CHECK(text.find("key 2.5\n") != std::string::npos);   // no word for the clip's mode
+        auto again = AnimClip::ParseAll(text, &Character::BoneIndex, NB, &err);
+        CHECK(err.empty());
+        CHECK(again.size() == 1 && again[0].keys.size() == 6);
+        for (int i = 0; i < 6; ++i) CHECK(again[0].keys[i].ease == want[i]);
+        CHECK_NEAR(again[0].keys[0].pose[RU].z, 10.0f, 1e-4f);
+
+        // A misspelt easing word is reported, like a misspelt bone.
+        AnimClip::ParseAll("clip x\nkey 0 smoth\n", &Character::BoneIndex, NB, &err);
+        CHECK(!err.empty());
+    }
+
+    // ---- Scene save/load keeps per-key easing (and a clip's cubic mode) ----
+    {
+        Character a;
+        AnimClip c; c.name = "hold"; c.interp = AnimInterp::Cubic;
+        c.keys = {key(0, 0, AnimKeyEase::Step), key(1, 10), key(2, 20, AnimKeyEase::EaseOut)};
+        a.AddClip(c);
+        Character b;
+        b.FromText(a.ToText());
+        const AnimClip* r = b.FindClip("hold");
+        CHECK(r != nullptr);
+        if (r) {
+            CHECK(r->interp == AnimInterp::Cubic);
+            CHECK(r->keys.size() == 3);
+            CHECK(r->keys[0].ease == AnimKeyEase::Step);
+            CHECK(r->keys[1].ease == AnimKeyEase::Clip);
+            CHECK(r->keys[2].ease == AnimKeyEase::EaseOut);
+        }
+        // An older save ends before the easing section: drop that trailing count.
+        Character plain;
+        AnimClip p; p.name = "plain"; p.keys = {key(0, 0), key(1, 10)};
+        plain.AddClip(p);
+        std::string legacy = plain.ToText();
+        legacy.erase(legacy.find_last_of(' '));
+        Character d;
+        d.FromText(legacy);
+        const AnimClip* pr = d.FindClip("plain");
+        CHECK(pr != nullptr && pr->keys.size() == 2);
+        if (pr) for (const AnimKey& k : pr->keys) CHECK(k.ease == AnimKeyEase::Clip);
+    }
+
+    // ---- Moving keys: spacing kept, stops at 0, lands on and replaces a key ----
+    {
+        AnimClip c;
+        c.keys = {key(0, 0), key(0.5f, 10), key(1, 20), key(1.5f, 30)};
+        std::vector<int> idx = c.MoveKeys({1, 2}, 0.25f);
+        CHECK(times(c) == "0.00 0.75 1.25 1.50 ");
+        CHECK(idx.size() == 2 && idx[0] == 1 && idx[1] == 2);
+        CHECK_NEAR(c.keys[1].pose[RU].z, 10.0f, 1e-4f);
+        // Too far left: the earliest moved key stops at 0 and replaces the key
+        // there; the other keeps its distance from it.
+        idx = c.MoveKeys({1, 2}, -5.0f);
+        CHECK(times(c) == "0.00 0.50 1.50 ");
+        CHECK(idx.size() == 2 && idx[0] == 0 && idx[1] == 1);
+        CHECK_NEAR(c.keys[0].pose[RU].z, 10.0f, 1e-4f);
+        CHECK_NEAR(c.keys[1].pose[RU].z, 20.0f, 1e-4f);
+        CHECK(c.MoveKeys({}, 1.0f).empty());
+        CHECK(times(c) == "0.00 0.50 1.50 ");
+        // A loop length the keys move past is dropped (loop at the last key).
+        c.loop = true; c.length = 1.6f;
+        c.MoveKeys({2}, 0.05f);
+        CHECK_NEAR(c.length, 1.6f, 1e-4f);
+        c.MoveKeys({2}, 0.1f);
+        CHECK_NEAR(c.length, 0.0f, 1e-4f);
+    }
+
+    // ---- Retiming about a pivot ----
+    {
+        AnimClip c;
+        c.keys = {key(0, 0), key(0.5f, 10), key(1, 20), key(1.5f, 30)};
+        std::vector<int> idx = c.ScaleKeyTimes({1, 2, 3}, 0.0f, 2.0f);    // twice as slow from the start
+        CHECK(times(c) == "0.00 1.00 2.00 3.00 ");
+        CHECK(idx.size() == 3 && idx[0] == 1 && idx[2] == 3);
+        idx = c.ScaleKeyTimes({0, 1, 2, 3}, 3.0f, 0.5f);                  // twice as fast, ending where it did
+        CHECK(times(c) == "1.50 2.00 2.50 3.00 ");
+        CHECK(idx.size() == 4);
+        c.ScaleKeyTimes({0, 1, 2, 3}, 0.0f, 0.0f);                        // no factor: nothing moves
+        CHECK(times(c) == "1.50 2.00 2.50 3.00 ");
+    }
+
+    // ---- Insert / remove time ripples keys, events and the loop length ----
+    {
+        AnimClip c; c.loop = true; c.length = 1.5f;
+        c.keys = {key(0, 0), key(0.5f, 10), key(1, 20)};
+        c.AddEvent(0.5f, "a"); c.AddEvent(1.0f, "b");
+        c.InsertTime(0.5f, 0.25f);
+        CHECK(times(c) == "0.00 0.75 1.25 ");
+        CHECK(c.events.size() == 2);
+        CHECK_NEAR(c.events[0].time, 0.75f, 1e-4f);
+        CHECK_NEAR(c.events[1].time, 1.25f, 1e-4f);
+        CHECK_NEAR(c.length, 1.75f, 1e-4f);
+        c.RemoveTime(0.5f, 0.5f);          // the key and event at 0.75 go; 1.25 slides to 0.75
+        CHECK(times(c) == "0.00 0.75 ");
+        CHECK(c.events.size() == 1 && c.events[0].name == "b");
+        CHECK_NEAR(c.events[0].time, 0.75f, 1e-4f);
+        CHECK_NEAR(c.length, 1.25f, 1e-4f);
+        CHECK_NEAR(c.keys[1].pose[RU].z, 20.0f, 1e-4f);
+        c.RemoveTime(0.6f, 10.0f);         // cuts the tail: the loop length ends where the cut began
+        CHECK(times(c) == "0.00 ");
+        CHECK(c.events.empty());
+        CHECK_NEAR(c.length, 0.6f, 1e-4f);
+        c.RemoveTime(0.0f, 1.0f);          // nothing left past the last key: loop at it
+        CHECK(c.keys.empty());
+        CHECK_NEAR(c.length, 0.0f, 1e-4f);
+    }
+
+    // ---- Mirror swaps the sides, flips yaw / roll and the root's sideways offset ----
+    {
+        AnimClip c; c.hasRoot = true;
+        c.keys = {key(0, 0), key(1, 0)};
+        c.keys[1].pose[RU] = Vec3{30, 10, 5};
+        c.keys[1].root = Vec3{0.1f, 0.2f, 0.0f};
+        c.Mirror(&Character::MirrorPose);
+        CHECK_NEAR(c.keys[1].pose[LU].x, 30.0f, 1e-4f);
+        CHECK_NEAR(c.keys[1].pose[LU].y, -10.0f, 1e-4f);
+        CHECK_NEAR(c.keys[1].pose[LU].z, -5.0f, 1e-4f);
+        CHECK_NEAR(c.keys[1].pose[RU].x, 0.0f, 1e-4f);
+        CHECK_NEAR(c.keys[1].root.x, -0.1f, 1e-4f);
+        CHECK_NEAR(c.keys[1].root.y, 0.2f, 1e-4f);
+        c.Mirror(&Character::MirrorPose);  // and back
+        CHECK_NEAR(c.keys[1].pose[RU].y, 10.0f, 1e-4f);
+        CHECK_NEAR(c.keys[1].root.x, 0.1f, 1e-4f);
+    }
+
+    // ---- Offset one bone (or all) on chosen keys; amplify about the mean pose ----
+    {
+        AnimClip c;
+        c.keys = {key(0, 0), key(1, 20), key(2, 40)};
+        c.OffsetPose({0, 2}, RU, Vec3{5, 0, 0});
+        CHECK_NEAR(c.keys[0].pose[RU].x, 5.0f, 1e-4f);
+        CHECK_NEAR(c.keys[1].pose[RU].x, 0.0f, 1e-4f);
+        CHECK_NEAR(c.keys[2].pose[RU].x, 5.0f, 1e-4f);
+        CHECK_NEAR(c.keys[2].pose[RU].z, 40.0f, 1e-4f);     // the other angles stay
+        c.OffsetPose({1}, -1, Vec3{0, 0, 1});
+        CHECK_NEAR(c.keys[1].pose[RU].z, 21.0f, 1e-4f);
+        CHECK_NEAR(c.keys[1].pose[LU].z, 1.0f, 1e-4f);
+        CHECK_NEAR(c.keys[0].pose[LU].z, 0.0f, 1e-4f);
+
+        AnimClip s;
+        s.keys = {key(0, 0), key(1, 20), key(2, 40)};      // mean z = 20
+        s.ScalePose({0, 1, 2}, RU, 1.5f);
+        CHECK_NEAR(s.keys[0].pose[RU].z, -10.0f, 1e-4f);   // the swing grows about its centre
+        CHECK_NEAR(s.keys[1].pose[RU].z, 20.0f, 1e-4f);
+        CHECK_NEAR(s.keys[2].pose[RU].z, 50.0f, 1e-4f);
+        AnimClip d;
+        d.keys = {key(0, 0), key(1, 20), key(2, 40)};
+        d.ScalePose({0}, -1, 0.5f);                        // dampen one key, every bone
+        CHECK_NEAR(d.keys[0].pose[RU].z, 10.0f, 1e-4f);
+        CHECK_NEAR(d.keys[0].pose[LU].z, 0.0f, 1e-4f);     // a bone at rest everywhere stays there
+        CHECK_NEAR(d.keys[1].pose[RU].z, 20.0f, 1e-4f);
+    }
+
+    TEST_MAIN_RESULT();
+}

@@ -2474,6 +2474,20 @@ std::string Character::ToText() const {
     }
     // How fast the stride follows the ground (trailing, so older saves keep the default).
     o << ' ' << gaitSpeedSmoothing;
+    // Per-key easing, for the clips that set it on any key (trailing, count-prefixed).
+    auto hasKeyEase = [](const AnimClip& c) {
+        for (const auto& k : c.keys) if (k.ease != AnimKeyEase::Clip) return true;
+        return false;
+    };
+    int withEase = 0;
+    for (const auto& kv : m_clips) if (hasKeyEase(kv.second)) ++withEase;
+    o << ' ' << withEase;
+    for (const auto& kv : m_clips) {
+        const AnimClip& c = kv.second;
+        if (!hasKeyEase(c)) continue;
+        o << ' ' << (c.name.empty() ? "-" : c.name) << ' ' << c.keys.size();
+        for (const auto& k : c.keys) o << ' ' << (int)k.ease;
+    }
     return o.str();
 }
 
@@ -2554,7 +2568,8 @@ void Character::FromText(const std::string& text) {
             if (!(in >> cn >> ip >> spd >> len >> ov)) break;
             auto it = m_clips.find(cn == "-" ? "" : cn);
             if (it == m_clips.end()) continue;
-            it->second.interp = (ip == 1) ? AnimInterp::Smooth : (ip == 2) ? AnimInterp::Step : AnimInterp::Linear;
+            it->second.interp = (ip == 1) ? AnimInterp::Smooth : (ip == 2) ? AnimInterp::Step
+                              : (ip == 3) ? AnimInterp::Cubic  : AnimInterp::Linear;
             it->second.speed = spd > 1e-4f ? spd : 1.0f;
             it->second.length = len > 0.0f ? len : 0.0f;
             it->second.overrideMovement = (ov != 0);
@@ -2577,6 +2592,20 @@ void Character::FromText(const std::string& text) {
     }
     float gs = gaitSpeedSmoothing;
     if (in >> gs) gaitSpeedSmoothing = gs > 0.0f ? gs : 0.0f;
+    // Optional trailing per-key easing.
+    int ne = 0;
+    if (in >> ne) {
+        for (int i = 0; i < ne; ++i) {
+            std::string cn; std::size_t nk = 0;
+            if (!(in >> cn >> nk)) break;
+            auto it = m_clips.find(cn == "-" ? "" : cn);
+            AnimClip* clip = (it != m_clips.end() && it->second.keys.size() == nk) ? &it->second : nullptr;
+            for (std::size_t k = 0; k < nk && in; ++k) {
+                int e = 0; in >> e;
+                if (clip && e >= 0 && e <= (int)AnimKeyEase::EaseOut) clip->keys[k].ease = (AnimKeyEase)e;
+            }
+        }
+    }
     m_built = false;
 }
 

@@ -6,6 +6,11 @@
 
 namespace okay {
 
+/// Easing out of one key, for the span from that key to the next: hold a pose
+/// (Step), or ease one move in (starts slow) or out (ends slow). `Clip` keeps the
+/// clip-wide mode, and is what every key of an older file has.
+enum class AnimKeyEase { Clip, Linear, Smooth, Step, EaseIn, EaseOut };
+
 /// One keyframe of a character animation: a time (seconds) and a per-bone local
 /// rotation (Euler degrees, indexed by the rig's bone order). Bones left unset are
 /// zero (rest), so a keyframe only has to mention the bones it moves.
@@ -13,6 +18,7 @@ struct AnimKey {
     float time = 0.0f;
     std::vector<Vec3> pose;   // sized to the rig's bone count
     Vec3  root{0, 0, 0};      // body offset (rig units) when the clip has a root track
+    AnimKeyEase ease = AnimKeyEase::Clip;   // easing from this key to the next
 };
 
 /// A named marker at a point in a clip. As the clip plays past `time`, the Character
@@ -32,8 +38,8 @@ struct AnimEvent {
 ///   clip wave loop          # name + optional loop|once (default loop)
 ///   key 0.0                 # a keyframe at t=0s
 ///     r_uparm 0 0 -150      # <bone> <x> <y> <z>  (Euler degrees)
-///   key 0.4
-///     r_uparm 0 0 -150
+///   key 0.4 step            # optional easing word for the span out of this key:
+///     r_uparm 0 0 -150      #   linear | smooth | step | easein | easeout
 ///     r_fore  0 0 -30
 ///     root 0 -0.17 0        # optional: the whole body's offset (a crouch's hip drop)
 /// How a clip eases between keyframes:
@@ -43,6 +49,7 @@ struct AnimEvent {
 ///  - Cubic:  a Catmull-Rom curve through the keys: no kink where one key hands
 ///            over to the next (a densely sampled cycle such as a walk plays
 ///            smoothly instead of changing speed at every key).
+/// A key's own `ease` overrides the mode for the span out of that key.
 enum class AnimInterp { Linear, Smooth, Step, Cubic };
 
 struct AnimClip {
@@ -76,11 +83,40 @@ struct AnimClip {
         if (u < 0.0f) u = 0.0f; else if (u > 1.0f) u = 1.0f;
         switch (interp) {
             case AnimInterp::Smooth: return u * u * (3.0f - 2.0f * u);
-            case AnimInterp::Step:   return 0.0f;   // hold the earlier key until the next
+            case AnimInterp::Step:   return u >= 1.0f ? 1.0f : 0.0f;   // hold the earlier key until the next
             case AnimInterp::Cubic:  return u;      // (Sample curves through the neighbours itself)
             case AnimInterp::Linear: default: return u;
         }
     }
+    /// Shape a 0..1 fraction by the easing that applies when leaving `from`: the
+    /// key's own override, or else the clip's mode.
+    float EaseFrom(const AnimKey& from, float u) const;
+
+    // ---- Editing (the Animation window's tools; keys stay sorted by time) ----
+    /// Move the keys at `indices` by `dt` seconds. The earliest one stops at 0
+    /// and the rest keep their spacing; a moved key replaces any key it lands
+    /// on. Returns the moved keys' new indices, ascending.
+    std::vector<int> MoveKeys(const std::vector<int>& indices, float dt);
+    /// Retime the keys at `indices` about `pivot` (seconds): each key's offset
+    /// from it is multiplied by `factor` (2 = that stretch takes twice as long).
+    /// Lands and returns like MoveKeys.
+    std::vector<int> ScaleKeyTimes(const std::vector<int>& indices, float pivot, float factor);
+    /// Open a gap of `dt` seconds at `at`: keys and events from there on (and a
+    /// loop length past it) move later.
+    void InsertTime(float at, float dt);
+    /// Close the gap [at, at + dt): keys and events inside it go, and everything
+    /// after moves earlier by `dt` (a loop length past it shrinks with it).
+    void RemoveTime(float at, float dt);
+    /// Mirror the clip left<->right: `mirrorPose` flips each key's pose (a rig's
+    /// MirrorPose) and the root track's sideways offset changes sign.
+    void Mirror(const std::function<void(std::vector<Vec3>&)>& mirrorPose);
+    /// Add `delta` (Euler degrees) to one bone (every bone when `bone` < 0) on
+    /// the keys at `indices`.
+    void OffsetPose(const std::vector<int>& indices, int bone, const Vec3& delta);
+    /// Exaggerate (factor > 1) or dampen (< 1) the motion on the keys at
+    /// `indices`: one bone's angles (every bone's when `bone` < 0) move away
+    /// from, or toward, the clip's mean pose over all its keys.
+    void ScalePose(const std::vector<int>& indices, int bone, float factor);
 
     /// Register an event marker at `time` seconds (kept sorted by time).
     void AddEvent(float time, const std::string& name) {

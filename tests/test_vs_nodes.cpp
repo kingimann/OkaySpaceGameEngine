@@ -59,7 +59,8 @@ int main() {
                           "Vec3Add", "Vec3Sub", "Vec3Scale", "Vec3Length", "Vec3Normalize", "Vec3Dot", "ToString",
                           "TextLength", "Contains", "Upper", "Lower", "ObjectExists", "ObjectPosition", "SelfName",
                           "MouseButton", "MouseButtonDown", "LookAt", "MoveTowards", "SetText", "LoadScene", "Cooldown",
-                          "AnimTrigger", "AnimSetFloat", "AnimSetBool", "AnimState", "IkLook", "IkHand", "OnTrigger", "OnClick"}) {
+                          "AnimTrigger", "AnimSetFloat", "AnimSetBool", "AnimState", "IkLook", "IkHand", "OnTrigger", "OnClick",
+                          "NavMoveTo", "NavStop", "NavArrived"}) {
         std::string e;
         auto n = vs::MakeNode(t, {"x"}, &e);
         CHECK(n != nullptr);

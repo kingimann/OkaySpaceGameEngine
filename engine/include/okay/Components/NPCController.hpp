@@ -1,6 +1,6 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
-#include "okay/AI/NavGrid3D.hpp"
+#include "okay/AI/Navigation.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -56,9 +56,9 @@ public:
     float acceleration = 14.0f;    ///< how quickly velocity eases to the target (per sec; <=0 = instant)
     float stopDistance = 0.0f;     ///< extra buffer added to the arrival distance
     bool  faceMovement = true;     ///< turn to face the direction of travel
-    /// Route around obstacles with grid A* (walls, props, terrain holes)
-    /// instead of walking straight lines into them. Recomputes every
-    /// `repathInterval` seconds while moving toward a goal.
+    /// Route around obstacles (walls, props, terrain holes) instead of walking
+    /// straight lines into them: over the scene's baked NavMesh when it has one,
+    /// else grid A*. Recomputes every `repathInterval` seconds while moving toward a goal.
     bool  usePathfinding = false;
     float repathInterval = 0.6f;
 
@@ -267,7 +267,7 @@ public:
             m_repath -= dt;
             float goalMoved = Dist2D(goal, m_pathGoal);
             if (m_repath <= 0.0f || m_path.empty() || goalMoved > 1.5f) {
-                m_path = NavGrid3D::FindPath(*gameObject->scene(), pos, goal, gameObject);
+                m_path = Navigation::FindPath(*gameObject->scene(), pos, goal, 0.4f, gameObject);
                 m_pathIdx = 0; m_pathGoal = goal; m_repath = repathInterval;
             }
             while (m_pathIdx < (int)m_path.size() && Dist2D(pos, m_path[m_pathIdx]) < 0.5f)

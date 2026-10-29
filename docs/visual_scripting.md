@@ -1086,6 +1086,9 @@ The **Engine API** group is the generated list in [engine_api.md](engine_api.md)
 - **Set Weather** (`SetWeather`) — in Intensity; setting: none / rain / snow / storm
 - **Set Fog** (`SetFog`) — in On, Start, End
 - **Set Post Effect** (`SetPostEffect`) — in Value; setting: effect name (bloom, exposure, saturation, ...)
+- **Nav Move To** (`NavMoveTo`) — in Point: the object's Nav Mesh Agent walks there (see docs/navigation.md)
+- **Nav Stop** (`NavStop`) — stops the Nav Mesh Agent
+- **Nav Arrived** (`NavArrived`) — out Bool: true once the last Nav Move To point was reached
 - **Set Color** (`SetColor`) — in R, G, B, A
 - **Play Clip** (`PlayClip`) — setting: clip name
 - **Set Time Scale** (`SetTimeScale`) — in Scale

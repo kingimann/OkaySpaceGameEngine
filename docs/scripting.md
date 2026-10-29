@@ -395,6 +395,10 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `npc_stop(name)` | cancel an `npc_goto` order |
 | `npc_busy(name)` | true while the NPC is still walking to its ordered point |
 | `npc_state(name)` | the NPC's AI state name: `Idle`/`Wander`/`Patrol`/`Follow`/`Flee`/`Chase`/`Search`/`Return` |
+| `nav_move_to(x, y, z)` | send this object's Nav Mesh Agent walking to a world point over the baked navmesh (`nav_move_to("Name", x, y, z)` for another object); see [navigation.md](navigation.md) |
+| `nav_stop()` | stop the Nav Mesh Agent where it is |
+| `nav_arrived()` | 1 once the last `nav_move_to` point was reached |
+| `nav_remaining()` | path length left to the destination (0 when idle) |
 | `spawner_start(name)` / `spawner_stop(name)` | run / pause a Spawner component's waves (`""` targets a sibling Spawner) |
 | `spawner_alive(name)` | how many objects that Spawner created are still alive (wave HUDs) |
 | `build_enter()` / `build_exit()` / `build_toggle()` / `build_active()` | turn the player's in-game build mode on / off, or ask whether it's on (see [build_mode.md](build_mode.md)) |

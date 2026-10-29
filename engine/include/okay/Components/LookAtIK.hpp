@@ -67,6 +67,10 @@ public:
     std::vector<std::string> eyeNames; ///< editor/serialized: resolve `eyes` by object names
     float eyeMaxAngle = 35.0f;
     float eyeWeight = 1.0f;
+    /// Stop looking at a target further than this (metres; 0 = any distance).
+    /// The look fades out over the last fadeDistance of it, so nothing pops.
+    float maxDistance = 0.0f;
+    float fadeDistance = 1.0f;
 
     /// The share of its turn bone `i` of `n` takes: its boneWeights entry, else a
     /// ramp up to the tip, which always finishes the look.
@@ -98,12 +102,13 @@ public:
         // Last frame's writes come off first, so a still bone (and a rotation-only
         // clip) shows the animated pose before this solve. Weight 0 leaves it there.
         m_restore.Restore();
-        const float w = weight * m_fade.Step(ikActive, fadeTime, dt);
+        float w = weight * m_fade.Step(ikActive, fadeTime, dt);
+        const Vec3 tgt = targetObject ? targetObject->Position() : target;
+        if (w > 0.0f && maxDistance > 0.0f && Finite(tgt)) w *= RangeWeight(tgt);
         if (w <= 0.0f || (chain.empty() && eyes.empty())) { ForgetAim(); return; }
 
         if (m_smooth.size() != chain.size()) { m_smooth.assign(chain.size(), {}); m_haveTgt = false; }
 
-        const Vec3 tgt = targetObject ? targetObject->Position() : target;
         if (!Finite(tgt)) return;
         const Vec3 tgtChar = InCharacter(tgt);
         const bool tgtJump = m_haveTgt && Jumped(tgtChar, m_tgtChar);
@@ -162,6 +167,16 @@ public:
         m_tgtChar = tgtChar;
         m_haveTgt = true;
         m_restore.Commit();
+    }
+
+    /// 1 inside maxDistance less the fade band, 0 beyond maxDistance, measured
+    /// from the chain root (else this object).
+    float RangeWeight(const Vec3& tgt) const {
+        const Transform* from = (!chain.empty() && chain.front()) ? chain.front() : transform;
+        if (!from) return 1.0f;
+        const float d = (tgt - from->Position()).Magnitude();
+        if (!std::isfinite(d)) return 0.0f;
+        return Mathf::Clamp01((maxDistance - d) / Mathf::Max(fadeDistance, 1e-4f));
     }
 
     /// `dir` pulled back to within `maxDeg` of `ref` (both unit). A direction

@@ -118,6 +118,8 @@ same at 30 and 144 fps.
   the target with no easing — the eyes lead, the head follows — within **Eye
   Max Angle** of where the animation points them.
 - **Smoothing** eases the head over to a new target (per second; 0 snaps).
+- **Max Distance** stops the look at targets further away (0 = any distance);
+  it fades out over the last **Fade** metres of it, so nothing pops.
 
 ## Limb IK
 
@@ -140,6 +142,11 @@ same at 30 and 144 fps.
 - **Align To Slope** tilts the feet to the ground. **Sole Up L / R** are each
   foot's up axis; left at Up, each foot reads it from its own rest pose, so both
   soles of a mirrored rig lie flat.
+- **Toe & Heel Rays** also probe the ground under the toes and the heel: on a
+  stair edge the foot rests on the higher step and tilts over it instead of
+  sinking its toes in, and a slope tilts the sole from heel to toe. **Toe /
+  Heel Reach** are how far from the ankle the probes sit; a contact more than
+  35 cm above the one under the ankle is a wall, not a step, and is ignored.
 - **Foot lock** pins a planted foot while it is still, so feet don't skate.
 
 ## Full Body IK
@@ -155,7 +162,9 @@ Bones map automatically from common rig names (Mixamo, Blender-style `.L/.R`,
   them. **Spine Reach** / **Max Spine Angle**: what the hips can't cover, the
   chest leans for, spread over the spine bones.
 - **Soft Reach** eases a limb into full stretch instead of snapping straight.
-  **Elbow / Knee Min Bend** stop limbs locking straight.
+  **Elbow / Knee Min Bend** stop limbs locking straight. **Stretch** lets a
+  limb lengthen by up to that fraction to reach a goal beyond it (the animated
+  lengths come back with the next pose).
 - **Look At**: the chest turns its share before the hands are placed (so they
   stay on their goals), then the head turns the rest, clamped to *Max Look
   Angle*.

@@ -859,6 +859,11 @@ add_executable(test_ik_look_stretch test_ik_look_stretch.cpp)
 target_link_libraries(test_ik_look_stretch PRIVATE okay::engine)
 add_test(NAME ik_look_stretch COMMAND test_ik_look_stretch)
 
+# Foot IK toe/heel probes on a step, Look-At IK distance fade, Full Body IK stretch.
+add_executable(test_ik_probes test_ik_probes.cpp)
+target_link_libraries(test_ik_probes PRIVATE okay::engine)
+add_test(NAME ik_probes COMMAND test_ik_probes)
+
 add_executable(test_vs_nodes test_vs_nodes.cpp)
 target_link_libraries(test_vs_nodes PRIVATE okay::engine)
 add_test(NAME vs_nodes COMMAND test_vs_nodes)

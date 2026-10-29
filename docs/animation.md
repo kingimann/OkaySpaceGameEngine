@@ -188,7 +188,10 @@ The whole IK suite works on imported skeletons, and every solve runs AFTER
 animation (state machine, blending, crossfades), correcting the final pose:
 
 - **Look-At IK** — head tracking. **Auto-Detect Chain** maps spine → neck →
-  head from the bone names; set a target object (the player, the camera).
+  head (and the eye bones) from the bone names; set a target object (the
+  player, the camera). Each bone takes a share of the turn, a **Clamp** keeps
+  the look from going round the back, and **Max Distance** stops it watching
+  targets far away (see `docs/ik.md`).
 - **Aim IK** — point one bone at a target (weapon, turret, head). **Auto:
   Head** finds the head bone.
 - **Limb IK** — arm reach/grab. **Auto: L Arm / R Arm** map

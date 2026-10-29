@@ -10,7 +10,10 @@
 #include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Core/Localization.hpp"
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace okay {
 
@@ -19,6 +22,17 @@ public:
     char dropKey = 'e';                 ///< press again to let go (0 = off)
     char altDropKey = 'g';              ///< the same let-go on G, the build-tool convention
     std::string promptObject = "Hold Prompt";
+    /// Localized: the prompts come from the string table (LocKeys), so they read
+    /// in the player's language. Off = the built-in English lines.
+    bool localized = false;
+
+    /// The string-table keys a localized prompt uses, with their English text
+    /// ({0} / {1} are key names).
+    static const std::vector<std::pair<std::string, std::string>>& LocKeys() {
+        static const std::vector<std::pair<std::string, std::string>> k = {
+            {"hold.pickup", "{0} to pick up"}, {"hold.drop", "{0} to drop"}, {"hold.either", "{0} or {1}"}};
+        return k;
+    }
 
     void Update(float) override {
         ProceduralObjectHolding* hold = gameObject ? gameObject->GetComponent<ProceduralObjectHolding>() : nullptr;
@@ -72,14 +86,16 @@ private:
         if (!tr) return;
         std::string msg;
         if (hold && hold->IsHolding() && (dropKey || altDropKey)) {
-            if (dropKey) msg += Input::KeyName(dropKey);
+            std::string keys = dropKey ? Input::KeyName(dropKey) : std::string();
             if (altDropKey && altDropKey != dropKey) {
-                if (!msg.empty()) msg += " or ";
-                msg += Input::KeyName(altDropKey);
+                const std::string alt = Input::KeyName(altDropKey);
+                if (keys.empty()) keys = alt;
+                else keys = localized ? Localize("hold.either", keys, alt) : keys + " or " + alt;
             }
-            msg += " to drop";
+            msg = localized ? Localize("hold.drop", keys) : keys + " to drop";
         } else if (ItemPickup* pk = Nearest(gameObject)) {
-            msg = Input::KeyName(pk->interactKey) + " to pick up";
+            msg = localized ? Localize("hold.pickup", Input::KeyName(pk->interactKey))
+                            : Input::KeyName(pk->interactKey) + " to pick up";
         }
         tr->text = msg;
         tr->background = !msg.empty();

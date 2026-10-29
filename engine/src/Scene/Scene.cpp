@@ -7,6 +7,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
+#include "okay/Scene/SceneLocalization.hpp"
 #include "okay/Components/ActionList.hpp"   // per-scene variable pools follow this scene
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
@@ -139,6 +140,7 @@ void Scene::Update(float deltaTime) {
     // Drop any components removed last frame (their slots were nulled).
     m_active.erase(std::remove(m_active.begin(), m_active.end(), nullptr), m_active.end());
     DispatchActivation();
+    LocalizeScene(*this);   // localized text follows the language (a no-op when nothing changed)
 
     // Physics debug view: this frame's rays / contacts replace last frame's.
     m_physics.BeginDebugFrame();

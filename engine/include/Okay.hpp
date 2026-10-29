@@ -20,6 +20,7 @@
 #include "okay/Core/DataAsset.hpp"
 #include "okay/Core/SaveData.hpp"
 #include "okay/Core/SaveGame.hpp"
+#include "okay/Core/Localization.hpp"
 #include "okay/Core/Application.hpp"
 
 // Input
@@ -49,6 +50,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
+#include "okay/Scene/SceneLocalization.hpp"
 #include "okay/Scene/SceneManager.hpp"
 
 // Graphics assets

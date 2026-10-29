@@ -2,6 +2,7 @@
 // loop (player/main.cpp) onto the ui2d::Painter interface. See UIRenderer.hpp.
 #include "okay/UI/UIRenderer.hpp"
 #include <Okay.hpp>
+#include "okay/Core/Utf8.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -211,6 +212,7 @@ void MMFillPoly(Painter& r, const std::vector<Point>& pts, RGBA col) {
 // Draw a string with a TTF font (a textured glyph quad per character), tinted by col.
 void DrawTtfText(Painter& r, okay::TtfFont* f, const std::string& text,
                  float ox, float oy, float px, RGBA col, float letterSp, float lineSp) {
+    f->Prepare(text);   // bake new characters before the atlas is uploaded
     Tex tex = r.FontAtlas(f);
     if (!tex) return;
     r.SetTextureColorMod(tex, col.r, col.g, col.b);
@@ -218,10 +220,11 @@ void DrawTtfText(Painter& r, okay::TtfFont* f, const std::string& text,
     const float s = px * (float)okay::Font8x8::Height / f->BakeHeight();
     const float baseline = f->Ascent((float)okay::Font8x8::Height) * px;
     float penX = ox, penY = oy;
-    for (char ch : text) {
+    for (std::size_t i = 0; i < text.size();) {
+        const std::uint32_t ch = okay::utf8::Next(text, i);
         if (ch == '\n') { penY += f->LineHeight((float)okay::Font8x8::Height) * px + lineSp * px; penX = ox; continue; }
-        const okay::TtfFont::Glyph* g = f->Get(ch);
-        if (!g) { penX += px * 4.0f; continue; }
+        const okay::TtfFont::Glyph* g = f->GlyphFor(ch);
+        if (!g) { if (ch >= ' ') penX += px * 4.0f; continue; }
         int gw = g->x1 - g->x0, gh = g->y1 - g->y0;
         if (gw > 0 && gh > 0) {
             Rect src{g->x0, g->y0, gw, gh};
@@ -241,8 +244,9 @@ TtfFont* UIDefaultFont() { return g_uiDefaultFont; }
 // Width of `text` in screen pixels at font-pixel size `px`, in the font DrawUIText will
 // use (the scene's UI font during the UI pass, else the 8x8 bitmap font).
 float UITextW(const std::string& text, float px) {
-    if (g_uiDefaultFont && g_uiDefaultFont->Valid()) return g_uiDefaultFont->Measure(text.c_str(), (float)Font8x8::Height) * px;
-    return (float)text.size() * (Font8x8::Width + 1) * px;
+    TtfFont* f = FontForText(g_uiDefaultFont, text);
+    if (f && f->Valid()) return f->Measure(text.c_str(), (float)Font8x8::Height) * px;
+    return (float)okay::utf8::Length(text) * (Font8x8::Width + 1) * px;
 }
 
 // Draw a string with the built-in 8x8 font as filled rects, top-left at (ox, oy)
@@ -252,13 +256,16 @@ void DrawUIText(Painter& r, const std::string& text, float ox, float oy,
                 float px, RGBA col, float letterSp, float lineSp,
                 bool italic, bool gradient, RGBA col2, TtfFont* ttf) {
     if (!ttf) ttf = g_uiDefaultFont;   // scene-wide default UI font (set during the UI pass)
+    ttf = FontForText(ttf, text);      // a font with the text's characters (other languages)
     if (px < 0.15f) px = 0.15f;   // a smooth font scales below one font pixel; the 8x8 font can't
     if (ttf && ttf->Valid()) { DrawTtfText(r, ttf, text, ox, oy, px, col, letterSp, lineSp); return; }
     if (px < 1.0f) px = 1.0f;
     if (!gradient) r.SetDrawColor(col.r, col.g, col.b, col.a);
     const float slant = italic ? 0.30f : 0.0f;   // px shift per row up from the baseline
     float cx = ox;
-    for (char ch : text) {
+    for (std::size_t i = 0; i < text.size();) {
+        const std::uint32_t cp = okay::utf8::Next(text, i);
+        const char ch = cp < 0x80 ? (char)cp : '\0';   // the 8x8 font has ASCII only
         if (ch == '\n') { oy += (Font8x8::Height + 1 + lineSp) * px; cx = ox; continue; }
         for (int y = 0; y < Font8x8::Height; ++y) {
             if (gradient) {   // top row uses col, bottom row uses col2
@@ -1407,7 +1414,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         // — that child draws itself in the text pass.
         if (!UIButtonTextChild(up.get())) {
             float px = btn->fontScale * bk;
-            okay::TtfFont* fnt = btn->fontPath.empty() ? g_uiDefaultFont : okay::GetFont(btn->fontPath);
+            okay::TtfFont* fnt = okay::FontForText(btn->fontPath.empty() ? g_uiDefaultFont : okay::GetFont(btn->fontPath), btn->label);
             float tw = fnt ? fnt->Measure(btn->label.c_str(), (float)Font8x8::Height) * px
                            : UITextW(btn->label, px);
             float left  = o.x + (isz > 0.0f && !btn->iconRight ? isz + 12.0f * bk : 0.0f);

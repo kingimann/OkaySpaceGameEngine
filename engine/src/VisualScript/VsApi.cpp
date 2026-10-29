@@ -29,6 +29,7 @@ PinType PinOf(const script::Type& t) {
         case TK::String:  return PinType::Text;
         case TK::Vector3: return PinType::Vec3;
         case TK::Object:  return PinType::Object;
+        case TK::Array:   return PinType::List;
         default:          return PinType::Any;
     }
 }
@@ -157,6 +158,11 @@ VsValue ToVs(const Value& v, const script::Type& t) {
     if (auto* s = std::get_if<std::string>(&v)) return VsValue(*s);
     if (auto* x = std::get_if<Vec3>(&v)) return VsValue(*x);
     if (auto* r = std::get_if<script::ObjRef>(&v)) return VsValue::Object(r->go);
+    if (auto* a = std::get_if<script::ArrayRef>(&v)) {   // a list (Localization.Languages)
+        VsValue list = VsValue::MakeArray();
+        if (*a) for (const Value& item : (*a)->items) list.AsArray()->push_back(ToVs(item, script::Type::Of(TK::Any)));
+        return list;
+    }
     return t.kind == TK::Object ? VsValue::Object(0) : VsValue();
 }
 

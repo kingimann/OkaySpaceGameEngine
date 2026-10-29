@@ -8,6 +8,7 @@
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Core/Localization.hpp"
 #include <string>
 
 namespace okay {
@@ -32,6 +33,8 @@ public:
     Color placeholderColor = Color::FromBytes(140, 150, 171);
     std::string text;
     std::string placeholder = "Type...";
+    /// Localized: a string-table key whose text replaces `placeholder` in the current language.
+    LocalizedText loc;
     int  maxLength = 64;
     ContentType contentType = ContentType::Standard;
     char passwordChar = '*';

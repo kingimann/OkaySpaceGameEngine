@@ -2947,6 +2947,23 @@ void WriteComponents(std::ostream& out, GameObject* go) {
          .key("skip", sp->skipKey).b("lock", sp->lockPlayer);
         out << "\n";
     }
+    // Localization: the string-table keys of localized text and the Localized
+    // switches, after the components they belong to. Its own key=value record, so
+    // older scenes load unchanged; nothing is written for literal text.
+    {
+        std::ostringstream ls;
+        KvOut k{ls};
+        if (auto* tr = go->GetComponent<TextRenderer>(); tr && !tr->loc.key.empty()) k.str("text", tr->loc.key);
+        if (auto* b = go->GetComponent<UIButton>(); b && !b->loc.key.empty()) k.str("button", b->loc.key);
+        if (auto* t = go->GetComponent<UIToggle>(); t && !t->loc.key.empty()) k.str("toggle", t->loc.key);
+        if (auto* tt = go->GetComponent<UITooltip>(); tt && !tt->loc.key.empty()) k.str("tooltip", tt->loc.key);
+        if (auto* w = go->GetComponent<WorldUI>(); w && !w->loc.key.empty()) k.str("world", w->loc.key);
+        if (auto* in = go->GetComponent<UIInputField>(); in && !in->loc.key.empty()) k.str("input", in->loc.key);
+        if (auto* hp = go->GetComponent<HoldPrompt>(); hp && hp->localized) k.b("hold", true);
+        if (auto* pm = go->GetComponent<PauseMenu>(); pm && pm->localized) k.b("pause", true);
+        if (auto* ls2 = go->GetComponent<LoadingScreen>(); ls2 && ls2->localized) k.b("loading", true);
+        if (!ls.str().empty()) out << "  loc" << ls.str() << "\n";
+    }
     // Navigation: key=value records of their own, so older scenes load unchanged.
     // The baked mesh stays in the .okaynav file the surface points at.
     if (auto* ns = go->GetComponent<NavMeshSurface>()) {
@@ -7170,6 +7187,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     k.f("speed", sp->timeScale);
                     k.key("skip", sp->skipKey);
                     k.b("lock", sp->lockPlayer);
+                } else if (field == "loc") {
+                    // Localized text: string-table keys for the components read above.
+                    KvIn k(in);
+                    if (auto* tr = go->GetComponent<TextRenderer>()) k.str("text", tr->loc.key);
+                    if (auto* b = go->GetComponent<UIButton>()) k.str("button", b->loc.key);
+                    if (auto* t = go->GetComponent<UIToggle>()) k.str("toggle", t->loc.key);
+                    if (auto* tt = go->GetComponent<UITooltip>()) k.str("tooltip", tt->loc.key);
+                    if (auto* w = go->GetComponent<WorldUI>()) k.str("world", w->loc.key);
+                    if (auto* inf = go->GetComponent<UIInputField>()) k.str("input", inf->loc.key);
+                    if (auto* hp = go->GetComponent<HoldPrompt>()) k.b("hold", hp->localized);
+                    if (auto* pm = go->GetComponent<PauseMenu>()) k.b("pause", pm->localized);
+                    if (auto* lsc = go->GetComponent<LoadingScreen>()) k.b("loading", lsc->localized);
                 } else if (field == "navsurface") {
                     auto* ns = go->AddComponent<NavMeshSurface>();
                     KvIn k(in);

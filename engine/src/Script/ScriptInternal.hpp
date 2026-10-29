@@ -60,6 +60,9 @@ struct Type {
     bool IsNumeric() const { return kind == TK::Int || kind == TK::Float; }
     static Type Of(TK k) { return Type{k, -1}; }
     static Type Obj(int apiType) { return Type{TK::Object, apiType}; }
+    /// string[] as an engine binding's type (Localization.Languages): the checker
+    /// turns it into the program's own array type.
+    static Type ApiStrings() { return Type{TK::Array, -2}; }
 };
 
 // ---- Runtime values -------------------------------------------------------

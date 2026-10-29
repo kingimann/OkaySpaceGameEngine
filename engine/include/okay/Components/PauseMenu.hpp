@@ -13,7 +13,9 @@
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Input/Cursor.hpp"
+#include "okay/Core/Localization.hpp"
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace okay {
@@ -39,6 +41,45 @@ public:
     std::string mainMenuScene;
     Color dimColor   = Color::FromBytes(8, 10, 16, 180);   ///< backdrop tint
     Color panelColor = Color::FromBytes(28, 32, 44, 235);
+    /// Localized: the menu's title, buttons, slider labels and hint show the
+    /// string-table keys of LocKeys(), in the player's language.
+    bool  localized  = false;
+
+    /// The keys a localized menu uses, with their English text, by the object they
+    /// label (the title and hint start from `title` / `hint`).
+    struct LocKey { const char* object; const char* key; const char* english; };
+    static const std::vector<LocKey>& LocKeys() {
+        static const std::vector<LocKey> k = {
+            {"Pause_Title", "pause.title", "Paused"},         {"Pause_Resume", "pause.resume", "Resume"},
+            {"Pause_Restart", "pause.restart", "Restart"},    {"Pause_Main Menu", "pause.main_menu", "Main Menu"},
+            {"Pause_Quit", "pause.quit", "Quit"},             {"Pause_VolumeLabel", "pause.volume", "Volume"},
+            {"Pause_MusicLabel", "pause.music", "Music"},     {"Pause_EffectsLabel", "pause.effects", "Effects"},
+            {"Pause_Hint", "pause.hint", "Press Esc to resume"}};
+        return k;
+    }
+    /// The English (literal) words of one LocKeys() entry for this menu.
+    std::string LiteralFor(const LocKey& k) const {
+        if (std::string(k.key) == "pause.title") return title;
+        if (std::string(k.key) == "pause.hint") return hint;
+        return k.english;
+    }
+    /// Give the menu's labels and buttons their keys (localized), or take the keys
+    /// back off and restore the literal words (not localized). A label with a key
+    /// of its own (not a pause.* one) is left alone.
+    void ApplyLocalization() {
+        for (GameObject* o : m_objects) {
+            if (!o) continue;
+            for (const LocKey& k : LocKeys()) {
+                if (o->name != k.object) continue;
+                auto apply = [&](LocalizedText& loc, std::string& field) {
+                    if (localized) { if (loc.key.empty() || loc.key.rfind("pause.", 0) == 0) loc.key = k.key; }
+                    else if (loc.key == k.key) { loc.key.clear(); field = LiteralFor(k); }
+                };
+                if (auto* tr = o->GetComponent<TextRenderer>()) apply(tr->loc, tr->text);
+                if (auto* b = o->GetComponent<UIButton>()) apply(b->loc, b->label);
+            }
+        }
+    }
 
     // Build the overlay up front (hidden), so pausing is an instant show/hide instead
     // of creating UI objects mid-frame (which popped in a frame late and read as a
@@ -137,6 +178,7 @@ private:
             else if (o->name == "Pause_Music")     m_music   = o->GetComponent<UISlider>();
             else if (o->name == "Pause_Effects")   m_effects = o->GetComponent<UISlider>();
         }
+        ApplyLocalization();
         m_built = true;   // adopt visibility as-is; Start() hides at Play
     }
 
@@ -294,6 +336,7 @@ private:
             AddLabel(*s, root, "Pause_Hint", hint, y, kHintH, 1.4f, Color::FromBytes(170, 175, 190), false);
         }
 
+        ApplyLocalization();
         m_built = true;   // created visible (for editing); Start() hides it at Play
     }
 };

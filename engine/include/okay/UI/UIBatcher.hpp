@@ -94,6 +94,7 @@ private:
     std::deque<Entry> m_entries;
     std::unordered_map<std::string, Entry*> m_byPath;   // null = could not load
     std::unordered_map<TtfFont*, Entry*> m_byFont;
+    std::unordered_map<TtfFont*, std::uint32_t> m_fontGen;   // the font atlas generation copied
     std::vector<Vertex> m_v;
     std::vector<int> m_i;
     std::vector<Vertex> m_scaled;         // geometry on a texture of its own, scaled

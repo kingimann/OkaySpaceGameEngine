@@ -864,6 +864,12 @@ add_executable(test_ik_probes test_ik_probes.cpp)
 target_link_libraries(test_ik_probes PRIVATE okay::engine)
 add_test(NAME ik_probes COMMAND test_ik_probes)
 
+# Look-At IK on imported rigs: the head's forward axis read off the rest pose.
+add_executable(test_ik_rigs test_ik_rigs.cpp)
+target_link_libraries(test_ik_rigs PRIVATE okay::engine)
+target_compile_definitions(test_ik_rigs PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ik_rigs COMMAND test_ik_rigs)
+
 add_executable(test_vs_nodes test_vs_nodes.cpp)
 target_link_libraries(test_vs_nodes PRIVATE okay::engine)
 add_test(NAME vs_nodes COMMAND test_vs_nodes)

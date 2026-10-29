@@ -102,7 +102,10 @@ same at 30 and 144 fps.
 
 ## Look-At IK
 
-- **Chain** root to tip (spine, neck, head; *Auto-Detect Chain* finds them).
+- **Chain** root to tip (spine, neck, head; *Auto-Detect Chain* finds them, and
+  sets **Forward Axis** from the rig's rest pose — rigs disagree on which local
+  axis of the head bone points at the face, and a wrong one turns the head away
+  from the target).
   Each bone takes a **share** of its turn and the last bone always finishes the
   look. Left alone the shares ramp up the chain — three bones split a turn a
   third, two thirds of what's left, the rest — so the body leans a little, the

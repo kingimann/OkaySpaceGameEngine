@@ -29825,7 +29825,12 @@ void DrawInspector(EditorState& ed) {
                 if (GameObject* head = FindBone(ed, go, {"head"}, 0)) {
                     ed.PushUndo();
                     a->boneName = head->name; a->bone = nullptr; ed.dirty = true;
-                    ConsoleLog("Aim IK: bone set to '" + head->name + "'");
+                    // The axis that points at the face, read off the rest pose (see Look-At IK).
+                    const Transform* root = CharacterRootOf(go->transform);
+                    const Transform* body = root ? root : go->transform;
+                    a->aimAxis = LookAtIK::RestForwardAxis(head->transform, SafeNormalize(body->Rotation() * Vec3{0, 0, -1}, Vec3{0, 0, -1}));
+                    char axis[64]; std::snprintf(axis, sizeof(axis), ", aim axis (%.2f %.2f %.2f)", a->aimAxis.x, a->aimAxis.y, a->aimAxis.z);
+                    ConsoleLog("Aim IK: bone set to '" + head->name + "'" + axis);
                 } else ConsoleLog("Aim IK: no head bone found under " + go->name, 1);
             }
             char bn[64]; std::strncpy(bn, a->boneName.c_str(), sizeof(bn) - 1); bn[sizeof(bn) - 1] = '\0';
@@ -29872,13 +29877,22 @@ void DrawInspector(EditorState& ed) {
                     }
                     std::reverse(chain.begin(), chain.end());
                     l->chainNames = chain; l->chain.clear(); ed.dirty = true;
+                    // The axis the head bone points at the character's front: read
+                    // off the rest pose, since rigs disagree on which local axis it is.
+                    {
+                        const Transform* root = CharacterRootOf(go->transform);
+                        const Transform* body = root ? root : go->transform;
+                        const Vec3 facing = SafeNormalize(body->Rotation() * Vec3{0, 0, -1}, Vec3{0, 0, -1});
+                        l->forwardAxis = LookAtIK::RestForwardAxis(head->transform, facing);
+                    }
                     // Eye bones too, when the rig has them (not lids or brows).
                     l->eyeNames.clear(); l->eyes.clear();
                     for (int side : {-1, +1})
                         if (GameObject* eye = FindBone(ed, go, {"eye"}, side, {"lid", "brow", "lash"}))
                             l->eyeNames.push_back(eye->name);
+                    char axis[64]; std::snprintf(axis, sizeof(axis), ", forward axis (%.2f %.2f %.2f)", l->forwardAxis.x, l->forwardAxis.y, l->forwardAxis.z);
                     ConsoleLog("Look-At IK: chain of " + std::to_string((int)chain.size()) + " bone(s), tip '" + head->name + "'" +
-                               (l->eyeNames.empty() ? "" : ", " + std::to_string((int)l->eyeNames.size()) + " eye(s)"));
+                               (l->eyeNames.empty() ? "" : ", " + std::to_string((int)l->eyeNames.size()) + " eye(s)") + axis);
                 } else ConsoleLog("Look-At IK: no head bone found under " + go->name, 1);
             }
             char tn[64]; std::strncpy(tn, l->targetName.c_str(), sizeof(tn) - 1); tn[sizeof(tn) - 1] = '\0';

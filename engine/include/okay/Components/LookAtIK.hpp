@@ -72,6 +72,16 @@ public:
     float maxDistance = 0.0f;
     float fadeDistance = 1.0f;
 
+    /// The bone-local axis that points where the character faces (`facingWorld`,
+    /// a unit vector) in the bone's current pose: the `forwardAxis` a rig needs.
+    /// Rigs differ here — one head bone points its +Z at the character's front,
+    /// another's +Z points out the back of the skull — so the editor's
+    /// Auto-Detect reads it off the rest pose instead of assuming +Z.
+    static Vec3 RestForwardAxis(const Transform* bone, const Vec3& facingWorld) {
+        if (!bone) return Vec3::Forward;
+        return SafeNormalize(bone->Rotation().Inverse() * facingWorld, Vec3::Forward);
+    }
+
     /// The share of its turn bone `i` of `n` takes: its boneWeights entry, else a
     /// ramp up to the tip, which always finishes the look.
     static float ShareOf(const std::vector<float>& weights, std::size_t i, std::size_t n) {

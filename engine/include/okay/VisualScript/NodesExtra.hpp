@@ -15,12 +15,14 @@
 #include "okay/Components/SequencePlayer.hpp"
 #include "okay/Components/FullBodyIK.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
+#include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/AnimControl.hpp"
+#include "okay/Render/Atmosphere.hpp"   // weather / fog / post-processing nodes
 #include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Components/Seat.hpp"
 #include "okay/Components/BlendShapes.hpp"
@@ -383,6 +385,44 @@ struct SetLanguageNode : VsNode {   // in0 = the language code, else the arg; th
 struct GetLanguageNode : VsNode {
     VsValue Eval(int, NodeGraph&, VsContext&) override { return VsValue(Localization::Language()); }
 };
+// ---- The scene's look: weather, fog and post-processing (Atmosphere.hpp) ----
+struct SetWeatherNode : VsNode {   // arg = none / rain / snow / storm; in0 = intensity (unwired: keep)
+    std::string preset;
+    explicit SetWeatherNode(std::string p) : preset(std::move(p)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (Scene* s = ctx.gameObject ? ctx.gameObject->scene() : nullptr) {
+            auto& w = s->renderSettings.weather;
+            w.preset = WeatherPresetFromName(preset);
+            const float in = In(0, g, ctx, VsValue{-1.0f}).AsFloat();
+            if (in >= 0.0f) w.intensity = Mathf::Clamp01(in);
+        }
+        return 0;
+    }
+};
+struct SetFogNode : VsNode {   // in0 = on, in1 = start, in2 = end (unwired: keep the scene's)
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (Scene* s = ctx.gameObject ? ctx.gameObject->scene() : nullptr) {
+            auto& rs = s->renderSettings;
+            rs.fog = In(0, g, ctx, VsValue{true}).AsBool();
+            const float start = In(1, g, ctx, VsValue{-1.0f}).AsFloat(), end = In(2, g, ctx, VsValue{-1.0f}).AsFloat();
+            if (start >= 0.0f) rs.fogStart = start;
+            if (end >= 0.0f) rs.fogEnd = end;
+        }
+        return 0;
+    }
+};
+struct SetPostEffectNode : VsNode {   // arg = the setting's name (PostSet); in0 = value
+    std::string name;
+    explicit SetPostEffectNode(std::string n) : name(std::move(n)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (Scene* s = ctx.gameObject ? ctx.gameObject->scene() : nullptr)
+            PostSet(s->renderSettings, name, In(0, g, ctx, VsValue{1.0f}).AsFloat());
+        return 0;
+    }
+};
 // Navigation: the NavMeshAgent on this object (or the Target) walks the navmesh.
 struct NavMoveToNode : VsNode {   // in0 = Vec3 destination
     int ExecOutCount() const override { return 1; }
@@ -404,6 +444,42 @@ struct NavArrivedNode : VsNode {   // true once the last Nav Move To point was r
     VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
         auto* a = ctx.gameObject ? ctx.gameObject->GetComponent<NavMeshAgent>() : nullptr;
         return a != nullptr && a->Arrived();
+    }
+};
+// Behavior trees: the Behavior Tree Runner on this object (or the Target).
+struct BtSetNode : VsNode {   // arg = blackboard key; in0 = the value
+    std::string key;
+    explicit BtSetNode(std::string k) : key(std::move(k)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (ctx.gameObject)
+            if (auto* r = ctx.gameObject->GetComponent<BehaviorTreeRunner>()) r->blackboard.Set(key, BtValue::FromVs(In(0, g, ctx)));
+        return 0;
+    }
+};
+struct BtGetNode : VsNode {   // arg = blackboard key; out0 = the value
+    std::string key;
+    explicit BtGetNode(std::string k) : key(std::move(k)) {}
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        auto* r = ctx.gameObject ? ctx.gameObject->GetComponent<BehaviorTreeRunner>() : nullptr;
+        const BtValue* v = r ? r->blackboard.Find(key) : nullptr;
+        return v ? v->ToVs() : VsValue{};
+    }
+};
+struct BtRunNode : VsNode {   // arg = the .okaybt file ("" = start the current tree over)
+    std::string tree;
+    explicit BtRunNode(std::string t) : tree(std::move(t)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        if (!ctx.gameObject) return 0;
+        auto* r = ctx.gameObject->GetComponent<BehaviorTreeRunner>();
+        if (!r) r = ctx.gameObject->AddComponent<BehaviorTreeRunner>();
+        if (!tree.empty()) {
+            std::string err;
+            if (!r->LoadTree(tree, &err)) { Log::Warning("Run Tree: ", err); return 0; }
+        }
+        r->Run();
+        return 0;
     }
 };
 struct IkHandNode : VsNode {   // arg "left"/"right"; in0 = Vec3 point, in1 = weight (0 releases)

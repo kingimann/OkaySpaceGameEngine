@@ -399,6 +399,10 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `nav_stop()` | stop the Nav Mesh Agent where it is |
 | `nav_arrived()` | 1 once the last `nav_move_to` point was reached |
 | `nav_remaining()` | path length left to the destination (0 when idle) |
+| `bt_set(key, value)` | write a value into this object's Behavior Tree blackboard (`bt_set("Name", key, value)` for another object); see [behavior_trees.md](behavior_trees.md) |
+| `bt_get(key)` | read a blackboard value (a number, bool, string, vector or object) |
+| `bt_run("Assets/Guard.okaybt")` | load a behavior tree on this object's Behavior Tree Runner (added when missing) and start it; `bt_run()` starts the current tree over |
+| `bt_stop()` | stop the tree; running tasks are aborted and the NPC stops |
 | `spawner_start(name)` / `spawner_stop(name)` | run / pause a Spawner component's waves (`""` targets a sibling Spawner) |
 | `spawner_alive(name)` | how many objects that Spawner created are still alive (wave HUDs) |
 | `build_enter()` / `build_exit()` / `build_toggle()` / `build_active()` | turn the player's in-game build mode on / off, or ask whether it's on (see [build_mode.md](build_mode.md)) |
@@ -502,6 +506,26 @@ Absolute paths (`/…`, `C:\…`) and `..` are refused: the call returns false (
 the default you passed) and the Console says why. In an exported game, saves
 and prefs go into the game's own save folder; files a game saved beside itself
 before that still load.
+
+### Rendering: post-processing, fog, weather, time of day
+
+The scene's look (the Lighting panel's Post-processing, Sky, Fog and Weather
+sections, see [rendering.md](rendering.md)) at runtime:
+
+| Function | Effect |
+| --- | --- |
+| `post_set(name, value)` | one post-processing value: `"exposure"`, `"tonemap"` (0 none / 1 ACES / 2 filmic, or the name), `"bloom"`, `"bloom_threshold"`, `"bloom_intensity"`, `"bloom_radius"`, `"grading"`, `"temperature"`, `"tint"`, `"saturation"`, `"contrast"`, `"vignette"`, `"vignette_smoothness"`, `"fxaa"`, `"ssao"`, `"ssao_radius"`, `"ssao_intensity"`, `"dof"`, `"dof_focus"`, `"dof_range"` (0 / 1 for switches); false for an unknown name |
+| `fog_set(on[, "#rrggbb"][, start, end][, mode[, density]])` | fog on/off, its colour, the linear start / end, and a mode (`"linear"`, `"exponential"`, `"height"`) with its density |
+| `weather_set(preset[, intensity])` | `"none"`, `"rain"`, `"snow"` or `"storm"` at an intensity 0..1; cross-fades over the scene's fade time |
+| `time_of_day([hours])` | the Day/Night Cycle's clock (0..24); with an argument sets it. -1 when the scene has none |
+
+```cs
+post_set("bloom", 1);
+post_set("exposure", 1.2);
+fog_set(true, "#c8d8e6", 20, 90);
+weather_set("rain", 0.6);
+if (time_of_day() > 20) weather_set("storm", 0.9);
+```
 
 ### Math
 `abs sin cos tan asin acos atan atan2 sqrt pow exp log floor ceil round sign

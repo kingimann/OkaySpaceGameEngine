@@ -48,6 +48,7 @@
 #include "okay/Components/Consumables.hpp"
 #include "okay/Components/DayNightCycle.hpp"
 #include "okay/Components/NPCController.hpp"
+#include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Components/Crafting.hpp"
 #include "okay/Components/MeleeAttacker.hpp"
 #include "okay/Components/Spawner.hpp"
@@ -2941,6 +2942,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             for (int i = 0; i < c->count; ++i) out << " " << c->keys[i].time << " " << c->keys[i].value;
         }
         out << "\n";
+        // How much the scene's wind carries the particles (own record; 1 = the default).
+        if (ps->windInfluence != 1.0f) out << "  particleswind " << ps->windInfluence << "\n";
     }
     // Sequence player (cutscenes). key=value record; the playback state is not saved.
     if (auto* sp = go->GetComponent<SequencePlayer>()) {
@@ -3067,6 +3070,20 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         KvOut{out}.str("zone", qt->zone).str("tag", qt->triggerTag).b("once", qt->once).str("quest", qt->questId)("obj", qt->objective);
         out << "\n";
     }
+    // Behavior tree runner: a key=value record of its own, so older scenes load
+    // unchanged. The tree itself stays in the .okaybt file it points at.
+    if (auto* bt = go->GetComponent<BehaviorTreeRunner>()) {
+        out << "  btrunner";
+        KvOut k{out};
+        k.str("tree", bt->treePath)("rate", bt->tickRate).b("auto", bt->runOnStart).b("debug", bt->debug)
+         .b("homeset", bt->homeOverride)("hx", bt->homePoint.x)("hy", bt->homePoint.y)("hz", bt->homePoint.z)
+         ("n", (int)bt->overrides.size());
+        for (std::size_t i = 0; i < bt->overrides.size(); ++i) {
+            const std::string kk = "k" + std::to_string(i), vk = "v" + std::to_string(i);
+            k.str(kk.c_str(), bt->overrides[i].first).str(vk.c_str(), bt->overrides[i].second);
+        }
+        out << "\n";
+    }
 }
 } // namespace
 
@@ -3100,6 +3117,47 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
             out << "skystars 1 " << rs.skyStarDensity << " " << rs.skyStarBright << "\n";
         if (rs.ambientMode != Scene::RenderSettings::AmbientHemisphere || rs.ambientSkyTint != 0.7f)
             out << "ambientmode " << rs.ambientMode << " " << rs.ambientSkyTint << "\n";
+        // Fog modes, the procedural sky, post-processing and weather: each an
+        // append-only record of its own, written only when it differs from the
+        // defaults, so an untouched scene's text stays exactly as it was.
+        {
+            const Scene::RenderSettings d;
+            if (rs.fogMode != d.fogMode || rs.fogDensity != d.fogDensity || rs.fogHeight != d.fogHeight ||
+                rs.fogFalloff != d.fogFalloff || rs.fogMatchSky != d.fogMatchSky)
+                out << "fogmode " << rs.fogMode << " " << rs.fogDensity << " " << rs.fogHeight << " "
+                    << rs.fogFalloff << " " << (rs.fogMatchSky ? 1 : 0) << "\n";
+            if (rs.skyMode != d.skyMode || rs.skySunDisc != d.skySunDisc || rs.skySunHalo != d.skySunHalo ||
+                rs.skyHaze != d.skyHaze || rs.cloudCover != d.cloudCover || rs.cloudDensity != d.cloudDensity ||
+                rs.cloudSpeed != d.cloudSpeed || rs.cloudScale != d.cloudScale)
+                out << "skyproc " << rs.skyMode << " " << rs.skySunDisc << " " << rs.skySunHalo << " " << rs.skyHaze << " "
+                    << rs.cloudCover << " " << rs.cloudDensity << " " << rs.cloudSpeed << " " << rs.cloudScale << "\n";
+            const auto& p = rs.post; const auto& q = d.post;
+            auto same3 = [](const Vec3& a, const Vec3& b) { return a.x == b.x && a.y == b.y && a.z == b.z; };
+            const bool postDefault =
+                p.exposure == q.exposure && p.tonemap == q.tonemap && p.bloom == q.bloom &&
+                p.bloomThreshold == q.bloomThreshold && p.bloomIntensity == q.bloomIntensity && p.bloomRadius == q.bloomRadius &&
+                p.grading == q.grading && p.temperature == q.temperature && p.tint == q.tint &&
+                p.saturation == q.saturation && p.contrast == q.contrast &&
+                same3(p.lift, q.lift) && same3(p.gamma, q.gamma) && same3(p.gain, q.gain) &&
+                p.vignetteSmooth == q.vignetteSmooth && p.fxaa == q.fxaa &&
+                p.ssao == q.ssao && p.ssaoRadius == q.ssaoRadius && p.ssaoIntensity == q.ssaoIntensity &&
+                p.dof == q.dof && p.dofFocus == q.dofFocus && p.dofRange == q.dofRange;
+            if (!postDefault)
+                out << "post " << p.exposure << " " << p.tonemap << " " << (p.bloom ? 1 : 0) << " "
+                    << p.bloomThreshold << " " << p.bloomIntensity << " " << p.bloomRadius << " "
+                    << (p.grading ? 1 : 0) << " " << p.temperature << " " << p.tint << " " << p.saturation << " " << p.contrast << " "
+                    << p.lift.x << " " << p.lift.y << " " << p.lift.z << " "
+                    << p.gamma.x << " " << p.gamma.y << " " << p.gamma.z << " "
+                    << p.gain.x << " " << p.gain.y << " " << p.gain.z << " "
+                    << p.vignetteSmooth << " " << (p.fxaa ? 1 : 0) << " "
+                    << (p.ssao ? 1 : 0) << " " << p.ssaoRadius << " " << p.ssaoIntensity << " "
+                    << (p.dof ? 1 : 0) << " " << p.dofFocus << " " << p.dofRange << "\n";
+            const auto& w = rs.weather; const auto& dw = d.weather;
+            if (w.preset != dw.preset || w.intensity != dw.intensity || w.fade != dw.fade ||
+                !same3(w.wind, dw.wind) || !w.thunderSound.empty())
+                out << "weather " << w.preset << " " << w.intensity << " " << w.fade << " "
+                    << w.wind.x << " " << w.wind.y << " " << w.wind.z << " " << Quote(w.thunderSound) << "\n";
+        }
     }
     const auto& objs = scene.Objects();
     for (std::size_t i = 0; i < objs.size(); ++i) {
@@ -3287,6 +3345,40 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
             int m = Scene::RenderSettings::AmbientHemisphere; float tint = 0.7f; in >> m >> tint;
             if (m < 0 || m > 2) m = Scene::RenderSettings::AmbientHemisphere;
             if (clear) { scene.renderSettings.ambientMode = m; scene.renderSettings.ambientSkyTint = tint; }
+        } else if (token == "fogmode") {
+            Scene::RenderSettings v;   // defaults for anything the record leaves out
+            int ms = 0; in >> v.fogMode >> v.fogDensity >> v.fogHeight >> v.fogFalloff >> ms;
+            if (v.fogMode < 0 || v.fogMode > 2) v.fogMode = Scene::RenderSettings::FogLinear;
+            if (clear) {
+                auto& rs = scene.renderSettings;
+                rs.fogMode = v.fogMode; rs.fogDensity = v.fogDensity; rs.fogHeight = v.fogHeight;
+                rs.fogFalloff = v.fogFalloff; rs.fogMatchSky = (ms != 0);
+            }
+        } else if (token == "skyproc") {
+            Scene::RenderSettings v;
+            in >> v.skyMode >> v.skySunDisc >> v.skySunHalo >> v.skyHaze >> v.cloudCover >> v.cloudDensity >> v.cloudSpeed >> v.cloudScale;
+            if (v.skyMode < 0 || v.skyMode > 1) v.skyMode = Scene::RenderSettings::SkyColour;
+            if (clear) {
+                auto& rs = scene.renderSettings;
+                rs.skyMode = v.skyMode; rs.skySunDisc = v.skySunDisc; rs.skySunHalo = v.skySunHalo; rs.skyHaze = v.skyHaze;
+                rs.cloudCover = v.cloudCover; rs.cloudDensity = v.cloudDensity; rs.cloudSpeed = v.cloudSpeed; rs.cloudScale = v.cloudScale;
+            }
+        } else if (token == "post") {
+            Scene::RenderSettings::PostSettings p;
+            int bloom = 0, grading = 0, fxaa = 0, ssao = 0, dof = 0;
+            in >> p.exposure >> p.tonemap >> bloom >> p.bloomThreshold >> p.bloomIntensity >> p.bloomRadius
+               >> grading >> p.temperature >> p.tint >> p.saturation >> p.contrast
+               >> p.lift.x >> p.lift.y >> p.lift.z >> p.gamma.x >> p.gamma.y >> p.gamma.z >> p.gain.x >> p.gain.y >> p.gain.z
+               >> p.vignetteSmooth >> fxaa >> ssao >> p.ssaoRadius >> p.ssaoIntensity >> dof >> p.dofFocus >> p.dofRange;
+            p.bloom = bloom != 0; p.grading = grading != 0; p.fxaa = fxaa != 0; p.ssao = ssao != 0; p.dof = dof != 0;
+            if (p.tonemap < 0 || p.tonemap > 2) p.tonemap = Scene::RenderSettings::PostSettings::TonemapACES;
+            if (clear) scene.renderSettings.post = p;
+        } else if (token == "weather") {
+            Scene::RenderSettings::WeatherSettings w;
+            in >> w.preset >> w.intensity >> w.fade >> w.wind.x >> w.wind.y >> w.wind.z;
+            w.thunderSound = ReadQuoted(in);
+            if (w.preset < 0 || w.preset > 3) w.preset = Scene::RenderSettings::WeatherSettings::None;
+            if (clear) scene.renderSettings.weather = w;
         } else if (token == "gameobject") {
             int idx = -1;
             in >> idx;
@@ -7215,6 +7307,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             }
                         }
                     }
+                } else if (field == "particleswind") {
+                    auto* ps = go->GetComponent<ParticleSystem>();
+                    if (!ps) ps = go->AddComponent<ParticleSystem>();
+                    in >> ps->windInfluence;
                 } else if (field == "particlesfx") {
                     // Gradients/curves + motion modules (follows the "particles" line).
                     auto* ps = go->GetComponent<ParticleSystem>();
@@ -7386,6 +7482,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* qt = go->AddComponent<QuestTrigger>();
                     KvIn k(in);
                     k.str("zone", qt->zone); k.str("tag", qt->triggerTag); k.b("once", qt->once); k.str("quest", qt->questId); k.i("obj", qt->objective);
+                } else if (field == "btrunner") {
+                    auto* bt = go->AddComponent<BehaviorTreeRunner>();
+                    KvIn k(in);
+                    k.str("tree", bt->treePath); k.f("rate", bt->tickRate); k.b("auto", bt->runOnStart); k.b("debug", bt->debug);
+                    k.b("homeset", bt->homeOverride); k.f("hx", bt->homePoint.x); k.f("hy", bt->homePoint.y); k.f("hz", bt->homePoint.z);
+                    int n = 0; k.i("n", n);
+                    for (int i = 0; i < n && i < 256; ++i) {
+                        const std::string kk = "k" + std::to_string(i), vk = "v" + std::to_string(i);
+                        std::string key, val;
+                        k.str(kk.c_str(), key); k.str(vk.c_str(), val);
+                        if (!key.empty()) bt->overrides.emplace_back(key, val);
+                    }
                 } else {
                     if (error) *error = "unknown field '" + field + "'";
                     return false;
@@ -7548,6 +7656,7 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         if (auto* lt = go->GetComponent<LogicTarget>()) add(lt->spawnPrefab);
         if (auto* ls = go->GetComponent<LootSource>()) add(ls->table);
         if (auto* ns = go->GetComponent<NavMeshSurface>()) add(ns->navPath);   // the baked navmesh ships with the scene
+        if (auto* bt = go->GetComponent<BehaviorTreeRunner>()) add(bt->treePath);   // the tree ships with the scene
     }
     // The item database (and its icons / drop prefabs) ships with any scene that has items.
     bool hasItems = false;

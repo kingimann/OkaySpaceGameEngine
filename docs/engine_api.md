@@ -374,6 +374,38 @@ Cutscenes: play a .okayseq timeline through a Sequence Player in the scene.
 | `Sequence.Play(name)` | `Sequence.Play/1` | step | name (Text) | Result (Bool) | Play the sequence named like this (a Sequence Player's file, or Assets/<name>.okayseq). False if there is none. |
 | `Sequence.Stop()` | `Sequence.Stop/0` | step | - | - | Stop every playing sequence; the camera goes back to the game. |
 
+## PostProcess
+
+The scene's post-processing: exposure, tonemap, bloom, colour grading, vignette, FXAA, SSAO and depth of field (saved with the scene; the Lighting panel edits the same values).
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `PostProcess.exposure` | `PostProcess.exposure` | value | - | exposure (Number) | Scene brightness multiplier (1 = as lit). |
+| `PostProcess.exposure = exposure` | `PostProcess.exposure=` | step | exposure (Number) | - | Scene brightness multiplier (1 = as lit). |
+| `PostProcess.Set(name, value)` | `PostProcess.Set/2` | step | name (Text), value (Number) | Result (Bool) | Set one value by name: "exposure", "tonemap" (0 none, 1 ACES, 2 filmic), "bloom" (0/1), "bloom_threshold", "bloom_intensity", "bloom_radius", "grading", "temperature", "tint", "saturation", "contrast", "vignette", "vignette_smoothness", "fxaa", "ssao", "ssao_radius", "ssao_intensity", "dof", "dof_focus", "dof_range". False for a name it doesn't know. |
+
+## Fog
+
+The scene's fog: linear (start / end), exponential or height fog, in the colour you set or the sky's.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `Fog.enabled` | `Fog.enabled` | value | - | enabled (Bool) | Whether the fog is on. |
+| `Fog.enabled = enabled` | `Fog.enabled=` | step | enabled (Bool) | - | Whether the fog is on. |
+| `Fog.Set(enabled, start, end)` | `Fog.Set/3` | step | enabled (Bool), start (Number), end (Number) | - | Turn the fog on or off, fading from start to end (world units from the camera) in Linear mode. |
+| `Fog.SetColor(r, g, b)` | `Fog.SetColor/3` | step | r (Number), g (Number), b (Number) | - | The fog colour (0 to 1 each). Stops matching the sky's horizon. |
+| `Fog.SetMode(mode, density)` | `Fog.SetMode/2` | step | mode (Text), density (Number) | - | "linear", "exponential" or "height", with the density the last two thicken by per unit of distance. |
+
+## Weather
+
+Rain, snow and storms falling around the camera, and the wind particles and water follow.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `Weather.preset` | `Weather.preset` | value | - | preset (Text) | The current preset's name. |
+| `Weather.Set(preset, intensity)` | `Weather.Set/2` | step | preset (Text), intensity (Number) | - | "none", "rain", "snow" or "storm" at an intensity from 0 to 1; it cross-fades over the scene's weather fade time. |
+| `Weather.SetWind(x, y, z)` | `Weather.SetWind/3` | step | x (Number), y (Number), z (Number) | - | The wind (world units per second) that particles drift with and water waves follow. |
+
 ## NavMeshAgent
 
 Walks the object along the scene's navigation mesh (the grid when none is baked). The object needs a Nav Mesh Agent.
@@ -431,6 +463,23 @@ Quests in the scene's Quest Log: start, complete objectives, read states.
 | `Quest.Fail(id)` | `Quest.Fail/1` | step | id (Text) | Result (Bool) | Fail an active quest. |
 | `Quest.State(id)` | `Quest.State/1` | value | id (Text) | Result (Text) | "inactive", "active", "completed" or "failed". |
 | `Quest.IsActive(id)` | `Quest.IsActive/1` | value | id (Text) | Result (Bool) | True while the quest is active. |
+
+## BehaviorTree
+
+This object's Behavior Tree Runner: its blackboard, and starting or stopping its tree.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `BehaviorTree.isRunning` | `BehaviorTree.isRunning` | value | - | isRunning (Bool) | True while the tree is being ticked. |
+| `BehaviorTree.Set(key, value)` | `BehaviorTree.Set/2` | step | key (Text), value (Any) | - | Write a blackboard value: a number, bool, string, Vector3 or GameObject. |
+| `BehaviorTree.Get(key)` | `BehaviorTree.Get/1` | value | key (Text) | Result (Any) | Read a blackboard value as whatever it is (use GetFloat / GetBool / GetString / GetVector / GetObject for a typed one). |
+| `BehaviorTree.GetFloat(key)` | `BehaviorTree.GetFloat/1` | value | key (Text) | Result (Number) | A blackboard number (0 when the key is missing). |
+| `BehaviorTree.GetBool(key)` | `BehaviorTree.GetBool/1` | value | key (Text) | Result (Bool) | A blackboard bool (false when the key is missing). |
+| `BehaviorTree.GetString(key)` | `BehaviorTree.GetString/1` | value | key (Text) | Result (Text) | A blackboard string ("" when the key is missing). |
+| `BehaviorTree.GetVector(key)` | `BehaviorTree.GetVector/1` | value | key (Text) | Result (Vector3) | A blackboard vector, or an object key's position. |
+| `BehaviorTree.GetObject(key)` | `BehaviorTree.GetObject/1` | value | key (Text) | Result (Object) | The object a blackboard key refers to, or null. |
+| `BehaviorTree.Run(tree)` | `BehaviorTree.Run/1` | step | tree (Text) | Result (Bool) | Load a .okaybt file and start it ("" starts the current tree over). False when the file can't be read. |
+| `BehaviorTree.Stop()` | `BehaviorTree.Stop/0` | step | - | - | Stop the tree; running tasks are aborted and the NPC stops. |
 
 ## Mathf
 

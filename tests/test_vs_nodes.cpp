@@ -60,7 +60,7 @@ int main() {
                           "TextLength", "Contains", "Upper", "Lower", "ObjectExists", "ObjectPosition", "SelfName",
                           "MouseButton", "MouseButtonDown", "LookAt", "MoveTowards", "SetText", "LoadScene", "Cooldown",
                           "AnimTrigger", "AnimSetFloat", "AnimSetBool", "AnimState", "IkLook", "IkHand", "OnTrigger", "OnClick",
-                          "NavMoveTo", "NavStop", "NavArrived"}) {
+                          "NavMoveTo", "NavStop", "NavArrived", "BtSet", "BtGet", "BtRun"}) {
         std::string e;
         auto n = vs::MakeNode(t, {"x"}, &e);
         CHECK(n != nullptr);

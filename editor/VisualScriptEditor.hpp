@@ -254,10 +254,18 @@ inline const std::vector<VsDef>& Registry() {
         {"AnimState",    "Anim State",     CAT_DATA, false, {}, {}, {"State"}, 0, nullptr},
         {"IkLook",       "IK Look At",     CAT_ACTION, true, {""}, {"Point","Weight"}, {}, 0, nullptr},
         {"IkHand",       "IK Hand Reach",  CAT_ACTION, true, {""}, {"Point","Weight"}, {}, 1, "left / right"},
+        // --- Look: weather, fog, post-processing (docs/rendering.md) ---
+        {"SetWeather",    "Set Weather",     CAT_ACTION, true, {""}, {"Intensity"}, {}, 1, "none / rain / snow / storm"},
+        {"SetFog",        "Set Fog",         CAT_ACTION, true, {""}, {"On","Start","End"}, {}, 0, nullptr},
+        {"SetPostEffect", "Set Post Effect", CAT_ACTION, true, {""}, {"Value"}, {}, 1, "bloom / exposure / saturation / ..."},
         // --- Navigation (Nav Mesh Agent) ---
         {"NavMoveTo",    "Nav Move To",    CAT_ACTION, true, {""}, {"Point"}, {}, 0, nullptr},
         {"NavStop",      "Nav Stop",       CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         {"NavArrived",   "Nav Arrived",    CAT_DATA, false, {}, {}, {"Bool"}, 0, nullptr},
+        // --- Behavior trees (Behavior Tree Runner) ---
+        {"BtSet",        "Set Blackboard", CAT_ACTION, true, {""}, {"Value"}, {}, 1, "key"},
+        {"BtGet",        "Get Blackboard", CAT_DATA, false, {}, {}, {"Value"}, 1, "key"},
+        {"BtRun",        "Run Tree",       CAT_ACTION, true, {""}, {}, {}, 1, "tree file"},
         // --- Flow: loops, gates, switches ---
         {"ForLoop",   "For Loop",      CAT_FLOW, true, {"Body","Done"}, {"First","Last"}, {"Index"}, 0, nullptr},
         {"Repeat",    "Repeat N",      CAT_FLOW, true, {"Body"}, {}, {}, 1, "count"},
@@ -1128,6 +1136,7 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
     if (t == "NavArrived")     return "nav_arrived()";
     if (t == "GetStoryVar")    return "get_story(" + q(lit("")) + ")";
     if (t == "QuestState")     return "quest_state(" + q(lit("")) + ")";
+    if (t == "BtGet")          return "bt_get(" + q(lit("x")) + ")";
     if (t == "IsInAction")     return "is_in_action()";
     if (t == "IsSitting")      return "is_sitting()";
     if (t == "SeatPrompt")     return "seat_prompt()";
@@ -1312,8 +1321,13 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="CompleteObjective") out += ind + "complete_objective(" + q(arg("")) + ", " + in(0, "0") + ")\n";
     else if (t=="IkLook")      out += ind + "ik_look(vec_x(" + in(0) + "), vec_y(" + in(0) + "), vec_z(" + in(0) + "), " + in(1, "1") + ")\n";
     else if (t=="IkHand")      out += ind + "ik_hand(" + q(arg("right")) + ", vec_x(" + in(0) + "), vec_y(" + in(0) + "), vec_z(" + in(0) + "), " + in(1, "1") + ")\n";
+    else if (t=="SetWeather")  out += ind + "weather_set(" + q(arg("rain")) + ", " + in(0, "1") + ")\n";
+    else if (t=="SetFog")      out += ind + "fog_set(" + in(0, "true") + ", " + in(1, "20") + ", " + in(2, "90") + ")\n";
+    else if (t=="SetPostEffect") out += ind + "post_set(" + q(arg("bloom")) + ", " + in(0, "1") + ")\n";
     else if (t=="NavMoveTo")   out += ind + "nav_move_to(vec_x(" + in(0) + "), vec_y(" + in(0) + "), vec_z(" + in(0) + "))\n";
     else if (t=="NavStop")     out += ind + "nav_stop()\n";
+    else if (t=="BtSet")       out += ind + "bt_set(" + q(arg("x")) + ", " + in(0) + ")\n";
+    else if (t=="BtRun")       out += ind + "bt_run(" + q(arg("")) + ")\n";
     else if (t=="Cooldown")    out += ind + "// Cooldown (" + VsCommentText(arg("1")) + "s): gate the actions after this with a timer\n";
     else if (t=="ForLoop") {
         const std::string v = "_i" + std::to_string(nodeId);

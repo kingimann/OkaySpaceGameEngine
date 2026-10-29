@@ -32,10 +32,12 @@
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/SaveGame.hpp"
 #include "okay/Components/SequencePlayer.hpp"
+#include "okay/Render/Atmosphere.hpp"   // PostProcess / Fog / Weather
 #include "okay/Components/NavMeshAgent.hpp"
 #include "okay/Components/DialogueRunner.hpp"   // Dialogue / Story / Quest statics
 #include "okay/Components/QuestLog.hpp"
 #include "okay/Components/StoryState.hpp"
+#include "okay/Components/BehaviorTreeRunner.hpp"
 #include <cmath>
 #include <set>
 
@@ -1017,6 +1019,65 @@ EngineApi Build() {
             "The event being delivered: read it in OnSequenceEvent()."));
         api.types.push_back(std::move(sq));
     }
+    // ---- PostProcess / Fog / Weather: the scene's look (docs/rendering.md) ----
+    {
+        auto look = [](CallContext& c) -> Scene::RenderSettings& {
+            Scene* s = c.self ? c.self->scene() : nullptr;
+            if (!s) throw RuntimeError("This needs a script running in a scene", c.loc);
+            return s->renderSettings;
+        };
+        ApiType pp; pp.name = "PostProcess"; pp.isStatic = true;
+        pp.doc = "The scene's post-processing: exposure, tonemap, bloom, colour grading, vignette, FXAA, SSAO and depth of field (saved with the scene; the Lighting panel edits the same values).";
+        pp.staticMethods.push_back(method("Set", {tString, tFloat}, {"name", "value"}, tBool,
+            [look](const Value&, std::vector<Value>& a, CallContext& c) {
+                const bool ok = PostSet(look(c), S(a[0]), F(a[1]));
+                if (!ok) Log::Warning("[script] PostProcess.Set: unknown setting \"", S(a[0]), "\"");
+                return Value{ok};
+            }, "Set one value by name: \"exposure\", \"tonemap\" (0 none, 1 ACES, 2 filmic), \"bloom\" (0/1), \"bloom_threshold\", "
+               "\"bloom_intensity\", \"bloom_radius\", \"grading\", \"temperature\", \"tint\", \"saturation\", \"contrast\", "
+               "\"vignette\", \"vignette_smoothness\", \"fxaa\", \"ssao\", \"ssao_radius\", \"ssao_intensity\", \"dof\", "
+               "\"dof_focus\", \"dof_range\". False for a name it doesn't know."));
+        pp.staticProps.push_back(prop("exposure", tFloat,
+            [look](const Value&, CallContext& c) { return Value{look(c).post.exposure}; },
+            [look](const Value&, const Value& v, CallContext& c) { PostSet(look(c), "exposure", F(v)); },
+            "Scene brightness multiplier (1 = as lit)."));
+        api.types.push_back(std::move(pp));
+
+        ApiType fg; fg.name = "Fog"; fg.isStatic = true;
+        fg.doc = "The scene's fog: linear (start / end), exponential or height fog, in the colour you set or the sky's.";
+        fg.staticMethods.push_back(method("Set", {tBool, tFloat, tFloat}, {"enabled", "start", "end"}, tVoid,
+            [look](const Value&, std::vector<Value>& a, CallContext& c) {
+                auto& rs = look(c); rs.fog = std::get<bool>(a[0]); rs.fogStart = F(a[1]); rs.fogEnd = F(a[2]); return Value{}; },
+            "Turn the fog on or off, fading from start to end (world units from the camera) in Linear mode."));
+        fg.staticMethods.push_back(method("SetColor", {tFloat, tFloat, tFloat}, {"r", "g", "b"}, tVoid,
+            [look](const Value&, std::vector<Value>& a, CallContext& c) {
+                auto& rs = look(c); rs.fogColor = {Mathf::Clamp01(F(a[0])), Mathf::Clamp01(F(a[1])), Mathf::Clamp01(F(a[2])), 1.0f};
+                rs.fogMatchSky = false; return Value{}; },
+            "The fog colour (0 to 1 each). Stops matching the sky's horizon."));
+        fg.staticMethods.push_back(method("SetMode", {tString, tFloat}, {"mode", "density"}, tVoid,
+            [look](const Value&, std::vector<Value>& a, CallContext& c) {
+                auto& rs = look(c); rs.fogMode = FogModeFromName(S(a[0])); rs.fogDensity = Mathf::Clamp(F(a[1]), 0.0f, 10.0f); return Value{}; },
+            "\"linear\", \"exponential\" or \"height\", with the density the last two thicken by per unit of distance."));
+        fg.staticProps.push_back(prop("enabled", tBool,
+            [look](const Value&, CallContext& c) { return Value{look(c).fog}; },
+            [look](const Value&, const Value& v, CallContext& c) { look(c).fog = std::get<bool>(v); },
+            "Whether the fog is on."));
+        api.types.push_back(std::move(fg));
+
+        ApiType we; we.name = "Weather"; we.isStatic = true;
+        we.doc = "Rain, snow and storms falling around the camera, and the wind particles and water follow.";
+        we.staticMethods.push_back(method("Set", {tString, tFloat}, {"preset", "intensity"}, tVoid,
+            [look](const Value&, std::vector<Value>& a, CallContext& c) {
+                auto& w = look(c).weather; w.preset = WeatherPresetFromName(S(a[0])); w.intensity = Mathf::Clamp01(F(a[1])); return Value{}; },
+            "\"none\", \"rain\", \"snow\" or \"storm\" at an intensity from 0 to 1; it cross-fades over the scene's weather fade time."));
+        we.staticMethods.push_back(method("SetWind", {tFloat, tFloat, tFloat}, {"x", "y", "z"}, tVoid,
+            [look](const Value&, std::vector<Value>& a, CallContext& c) { look(c).weather.wind = {F(a[0]), F(a[1]), F(a[2])}; return Value{}; },
+            "The wind (world units per second) that particles drift with and water waves follow."));
+        we.staticProps.push_back(ro("preset", tString,
+            [look](const Value&, CallContext& c) { return Value{std::string(WeatherPresetName(look(c).weather.preset))}; },
+            "The current preset's name."));
+        api.types.push_back(std::move(we));
+    }
     // ---- NavMeshAgent ----
     {
         ApiType na; na.name = "NavMeshAgent"; na.isComponent = true;
@@ -1173,6 +1234,85 @@ EngineApi Build() {
             }, "True while the quest is active."));
         q.staticMethods.back().pure = true;
         api.types.push_back(std::move(q));
+    }
+    // ---- BehaviorTree ----
+    {
+        ApiType bt; bt.name = "BehaviorTree"; bt.isStatic = true;
+        bt.doc = "This object's Behavior Tree Runner: its blackboard, and starting or stopping its tree.";
+        auto runnerOf = [](CallContext& c) -> BehaviorTreeRunner* {
+            auto* r = c.self ? c.self->GetComponent<BehaviorTreeRunner>() : nullptr;
+            if (!r) throw RuntimeError("'" + (c.self ? c.self->name : std::string("?")) + "' has no Behavior Tree Runner (add one in the Inspector)", c.loc);
+            return r;
+        };
+        auto toBt = [](const Value& v) -> BtValue {
+            if (auto* b = std::get_if<bool>(&v)) return BtValue::Bool(*b);
+            if (auto* i = std::get_if<std::int32_t>(&v)) return BtValue::Number((float)*i);
+            if (auto* f = std::get_if<float>(&v)) return BtValue::Number(*f);
+            if (auto* s = std::get_if<std::string>(&v)) return BtValue::String(*s);
+            if (auto* x = std::get_if<Vec3>(&v)) return BtValue::Vector(*x);
+            if (auto* o = std::get_if<ObjRef>(&v)) {
+                GameObject* g = o->go ? GameObject::FromInstanceId(o->go) : nullptr;
+                return BtValue::Object(g ? g->name : std::string(), o->go);
+            }
+            return BtValue::String(ValueToString(v));
+        };
+        auto fromBt = [goIdx](const BtValue& v, CallContext& c) -> Value {
+            switch (v.type) {
+                case BtValue::Type::Number: return Value{v.number};
+                case BtValue::Type::Bool:   return Value{v.boolean};
+                case BtValue::Type::String: return Value{v.text};
+                case BtValue::Type::Vector: return Value{v.vector};
+                case BtValue::Type::Object: return MakeRef(v.AsObject(c.self ? c.self->scene() : nullptr), goIdx);
+            }
+            return Value{};
+        };
+        bt.staticMethods.push_back(method("Set", {tString, tAny}, {"key", "value"}, tVoid,
+            [runnerOf, toBt](const Value&, std::vector<Value>& a, CallContext& c) { runnerOf(c)->blackboard.Set(S(a[0]), toBt(a[1])); return Value{}; },
+            "Write a blackboard value: a number, bool, string, Vector3 or GameObject."));
+        bt.staticMethods.push_back(method("Get", {tString}, {"key"}, tAny,
+            [runnerOf, fromBt](const Value&, std::vector<Value>& a, CallContext& c) {
+                const BtValue* v = runnerOf(c)->blackboard.Find(S(a[0]));
+                return v ? fromBt(*v, c) : Value{};
+            }, "Read a blackboard value as whatever it is (use GetFloat / GetBool / GetString / GetVector / GetObject for a typed one)."));
+        bt.staticMethods.back().pure = true;
+        bt.staticMethods.push_back(method("GetFloat", {tString}, {"key"}, tFloat,
+            [runnerOf](const Value&, std::vector<Value>& a, CallContext& c) { return Value{runnerOf(c)->blackboard.GetNumber(S(a[0]))}; },
+            "A blackboard number (0 when the key is missing)."));
+        bt.staticMethods.back().pure = true;
+        bt.staticMethods.push_back(method("GetBool", {tString}, {"key"}, tBool,
+            [runnerOf](const Value&, std::vector<Value>& a, CallContext& c) { return Value{runnerOf(c)->blackboard.GetBool(S(a[0]))}; },
+            "A blackboard bool (false when the key is missing)."));
+        bt.staticMethods.back().pure = true;
+        bt.staticMethods.push_back(method("GetString", {tString}, {"key"}, tString,
+            [runnerOf](const Value&, std::vector<Value>& a, CallContext& c) { return Value{runnerOf(c)->blackboard.GetString(S(a[0]))}; },
+            "A blackboard string (\"\" when the key is missing)."));
+        bt.staticMethods.back().pure = true;
+        bt.staticMethods.push_back(method("GetVector", {tString}, {"key"}, tVec,
+            [runnerOf](const Value&, std::vector<Value>& a, CallContext& c) { return Value{runnerOf(c)->blackboard.GetVector(S(a[0]))}; },
+            "A blackboard vector, or an object key's position."));
+        bt.staticMethods.back().pure = true;
+        bt.staticMethods.push_back(method("GetObject", {tString}, {"key"}, tGO,
+            [runnerOf, goIdx](const Value&, std::vector<Value>& a, CallContext& c) {
+                return MakeRef(runnerOf(c)->blackboard.GetGameObject(S(a[0]), c.self ? c.self->scene() : nullptr), goIdx);
+            }, "The object a blackboard key refers to, or null."));
+        bt.staticMethods.back().pure = true;
+        bt.staticMethods.push_back(method("Run", {tString}, {"tree"}, tBool,
+            [runnerOf](const Value&, std::vector<Value>& a, CallContext& c) {
+                BehaviorTreeRunner* r = runnerOf(c);
+                if (!S(a[0]).empty()) {
+                    std::string err;
+                    if (!r->LoadTree(S(a[0]), &err)) { Log::Warning("[script] BehaviorTree.Run: ", err); return Value{false}; }
+                }
+                r->Run();
+                return Value{r->IsRunning()};
+            }, "Load a .okaybt file and start it (\"\" starts the current tree over). False when the file can't be read."));
+        bt.staticMethods.push_back(method("Stop", {}, {}, tVoid,
+            [runnerOf](const Value&, std::vector<Value>&, CallContext& c) { runnerOf(c)->Stop(); return Value{}; },
+            "Stop the tree; running tasks are aborted and the NPC stops."));
+        bt.staticProps.push_back(ro("isRunning", tBool,
+            [runnerOf](const Value&, CallContext& c) { return Value{runnerOf(c)->IsRunning()}; },
+            "True while the tree is being ticked."));
+        api.types.push_back(std::move(bt));
     }
     // ---- Mathf ----
     {

@@ -237,6 +237,7 @@ int TargetPinFor(const std::string& type) {
         {"AnimTrigger", 0}, {"AnimSetFloat", 1}, {"AnimSetBool", 1}, {"AnimState", 0},
         {"SetBlendShape", 1}, {"GetBlendShape", 0}, {"IkLook", 2}, {"IkHand", 2},
         {"NavMoveTo", 1}, {"NavStop", 0}, {"NavArrived", 0},
+        {"BtSet", 1}, {"BtGet", 0}, {"BtRun", 0},
         {"GetName", 0}, {"GetTag", 0}};
     auto it = kPins.find(type);
     if (it != kPins.end()) return it->second;
@@ -655,6 +656,9 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "StartQuest")        return std::make_unique<StartQuestNode>(argOr(""));
     if (type == "CompleteObjective") return std::make_unique<CompleteObjectiveNode>(argOr(""));
     if (type == "QuestState")        return std::make_unique<QuestStateNode>(argOr(""));
+    if (type == "SetWeather")      return std::make_unique<SetWeatherNode>(argOr("rain"));
+    if (type == "SetFog")          return std::make_unique<SetFogNode>();
+    if (type == "SetPostEffect")   return std::make_unique<SetPostEffectNode>(argOr("bloom"));
     if (type == "IkHand") {
         std::string side = argOr("right");
         return std::make_unique<IkHandNode>(!side.empty() && (side[0] == 'l' || side[0] == 'L'));
@@ -662,6 +666,9 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "NavMoveTo")       return std::make_unique<NavMoveToNode>();
     if (type == "NavStop")         return std::make_unique<NavStopNode>();
     if (type == "NavArrived")      return std::make_unique<NavArrivedNode>();
+    if (type == "BtSet")           return std::make_unique<BtSetNode>(argOr("x"));
+    if (type == "BtGet")           return std::make_unique<BtGetNode>(argOr("x"));
+    if (type == "BtRun")           return std::make_unique<BtRunNode>(argOr(""));
     // ---- Third wave: loops, switch, 3D transform, colour, clips, shapes ----
     if (type == "ForLoop")    return std::make_unique<ForLoopNode>();
     if (type == "Gate")       return std::make_unique<GateNode>();

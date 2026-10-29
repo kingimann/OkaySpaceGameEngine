@@ -77,6 +77,7 @@
 #include "okay/Components/Tilemap.hpp"
 #include "okay/Components/NPCController.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
+#include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Components/Spawner.hpp"
 #include "okay/Components/BuildMode.hpp"
 #include "okay/Components/LogicLinks.hpp"
@@ -97,6 +98,8 @@
 #include "okay/Components/DialogueRunner.hpp"   // dialogue / story / quest builtins
 #include "okay/Components/QuestLog.hpp"
 #include "okay/Components/StoryState.hpp"
+#include "okay/Render/Atmosphere.hpp"          // post_set / fog_set / weather_set
+#include "okay/Components/DayNightCycle.hpp"   // time_of_day
 #include "okay/Math/Mathf.hpp"
 #include "okay/Core/Random.hpp"
 #include "okay/Core/Prefs.hpp"
@@ -5312,6 +5315,53 @@ struct OkayScriptVM::Impl {
             return Value{q && q->IsCompleted(a[0].AsString())};
         };
         b["toggle_journal"] = [sceneOf](std::vector<Value>&) { if (QuestLog* q = QuestLog::Get(sceneOf(), false)) q->ToggleJournal(); return Value{}; };
+        // The scene's look (docs/rendering.md): post_set("bloom", 1) / post_set("tonemap", "filmic"),
+        // fog_set(on [, "#rrggbb"] [, start, end] [, mode [, density]]), weather_set("rain" [, intensity]),
+        // time_of_day([hours]) on the scene's DayNightCycle.
+        b["post_set"] = [sceneOf](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            if (!s || a.size() < 2) return Value{false};
+            const std::string name = a[0].AsString();
+            const float v = a[1].IsString() ? (float)TonemapFromName(a[1].AsString()) : a[1].AsFloat();
+            const bool ok = PostSet(s->renderSettings, name, v);
+            if (!ok) Log::Warning("[script] post_set: unknown setting '", name, "'");
+            return Value{ok};
+        };
+        b["fog_set"] = [sceneOf](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            if (!s || a.empty()) return Value{};
+            auto& rs = s->renderSettings;
+            rs.fog = a[0].AsBool();
+            std::size_t i = 1;
+            if (i < a.size() && a[i].IsString()) {   // an optional "#rrggbb" colour
+                std::string hex = a[i].AsString(); ++i;
+                if (!hex.empty() && hex[0] == '#') hex.erase(0, 1);
+                if (hex.size() == 6) {
+                    const unsigned long v = std::strtoul(hex.c_str(), nullptr, 16);
+                    rs.fogColor = Color::FromBytes((int)((v >> 16) & 0xFF), (int)((v >> 8) & 0xFF), (int)(v & 0xFF));
+                    rs.fogMatchSky = false;
+                }
+            }
+            if (i + 1 < a.size()) { rs.fogStart = a[i].AsFloat(); rs.fogEnd = a[i + 1].AsFloat(); i += 2; }
+            if (i < a.size()) { rs.fogMode = a[i].IsString() ? FogModeFromName(a[i].AsString()) : (int)Mathf::Clamp(a[i].AsFloat(), 0.0f, 2.0f); ++i; }
+            if (i < a.size()) rs.fogDensity = Mathf::Clamp(a[i].AsFloat(), 0.0f, 10.0f);
+            return Value{};
+        };
+        b["weather_set"] = [sceneOf](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            if (!s || a.empty()) return Value{};
+            auto& w = s->renderSettings.weather;
+            w.preset = a[0].IsString() ? WeatherPresetFromName(a[0].AsString()) : (int)Mathf::Clamp(a[0].AsFloat(), 0.0f, 3.0f);
+            if (a.size() > 1) w.intensity = Mathf::Clamp01(a[1].AsFloat());
+            return Value{};
+        };
+        b["time_of_day"] = [sceneOf](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            DayNightCycle* dn = s ? s->FindObjectOfType<DayNightCycle>() : nullptr;
+            if (!dn) return Value{-1.0f};
+            if (!a.empty()) dn->SetTime(a[0].AsFloat());
+            return Value{dn->Hour()};
+        };
         // Keep the current volumes as the player's settings (also saved on quit).
         b["save_audio_settings"] = [](std::vector<Value>&) { AudioMixer::SaveSettings(); return Value{}; };
         // ---- Navigation: the Nav Mesh Agent on this object (or a named one) --------
@@ -5346,6 +5396,50 @@ struct OkayScriptVM::Impl {
         b["nav_remaining"] = [navOf](std::vector<Value>& a) {
             std::size_t i = 0; NavMeshAgent* n = navOf(a, i);
             return Value{n ? n->RemainingDistance() : 0.0f};
+        };
+        // ---- Behavior trees: the Behavior Tree Runner on this object (or a named one) ----
+        // bt_set(key, value) / bt_set("Name", key, value) writes the blackboard,
+        // bt_get(key) / bt_get("Name", key) reads it, bt_run("Assets/Guard.okaybt")
+        // loads and starts a tree (bt_run() starts the current one over), bt_stop().
+        auto btOf = [sceneOf, go](std::vector<Value>& a, std::size_t need, std::size_t& first) -> BehaviorTreeRunner* {
+            first = 0;
+            GameObject* g = go();
+            if (a.size() > need && a[0].IsString()) {
+                first = 1;
+                Scene* s = sceneOf();
+                g = s ? s->Find(a[0].AsString()) : nullptr;
+            }
+            return g ? g->GetComponent<BehaviorTreeRunner>() : nullptr;
+        };
+        b["bt_set"] = [btOf](std::vector<Value>& a) {
+            std::size_t i = 0; BehaviorTreeRunner* r = btOf(a, 2, i);
+            if (!r || a.size() < i + 2) return Value{0.0f};
+            r->blackboard.Set(a[i].AsString(), BtValue::FromVs(a[i + 1]));
+            return Value{1.0f};
+        };
+        b["bt_get"] = [btOf](std::vector<Value>& a) -> Value {
+            std::size_t i = 0; BehaviorTreeRunner* r = btOf(a, 1, i);
+            if (!r || a.size() < i + 1) return Value{};
+            const BtValue* v = r->blackboard.Find(a[i].AsString());
+            return v ? v->ToVs() : Value{};
+        };
+        b["bt_run"] = [go](std::vector<Value>& a) {
+            GameObject* g = go();
+            if (!g) return Value{0.0f};
+            auto* r = g->GetComponent<BehaviorTreeRunner>();
+            if (!r) r = g->AddComponent<BehaviorTreeRunner>();
+            if (!a.empty() && !a[0].AsString().empty()) {
+                std::string err;
+                if (!r->LoadTree(a[0].AsString(), &err)) { Log::Warning("[script] bt_run: ", err); return Value{0.0f}; }
+            }
+            r->Run();
+            return Value{r->IsRunning() ? 1.0f : 0.0f};
+        };
+        b["bt_stop"] = [go](std::vector<Value>&) {
+            GameObject* g = go();
+            auto* r = g ? g->GetComponent<BehaviorTreeRunner>() : nullptr;
+            if (r) r->Stop();
+            return Value{r ? 1.0f : 0.0f};
         };
         // Music: the scene's MusicPlayer. music_play(index or "file"), music_next(),
         // music_previous(), music_stop([fade seconds]), music_pause(), music_resume().

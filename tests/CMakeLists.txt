@@ -1303,3 +1303,7 @@ add_test(NAME fixed_step COMMAND test_fixed_step)
 add_executable(test_navmesh test_navmesh.cpp)
 target_link_libraries(test_navmesh PRIVATE okay::engine)
 add_test(NAME navmesh COMMAND test_navmesh)
+# Behavior trees: file round trip, composites, decorators, guards, blackboard, perception, navigation tasks, scripts, scene record
+add_executable(test_behavior_tree test_behavior_tree.cpp)
+target_link_libraries(test_behavior_tree PRIVATE okay::engine)
+add_test(NAME behavior_tree COMMAND test_behavior_tree)

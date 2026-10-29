@@ -47,6 +47,7 @@
 #include "okay/Components/Consumables.hpp"
 #include "okay/Components/DayNightCycle.hpp"
 #include "okay/Components/NPCController.hpp"
+#include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Components/Crafting.hpp"
 #include "okay/Components/MeleeAttacker.hpp"
 #include "okay/Components/Spawner.hpp"
@@ -2964,6 +2965,20 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  navobstacle";
         KvOut k{out};
         k("sx", no->size.x)("sy", no->size.y)("sz", no->size.z)("cx", no->center.x)("cy", no->center.y)("cz", no->center.z);
+        out << "\n";
+    }
+    // Behavior tree runner: a key=value record of its own, so older scenes load
+    // unchanged. The tree itself stays in the .okaybt file it points at.
+    if (auto* bt = go->GetComponent<BehaviorTreeRunner>()) {
+        out << "  btrunner";
+        KvOut k{out};
+        k.str("tree", bt->treePath)("rate", bt->tickRate).b("auto", bt->runOnStart).b("debug", bt->debug)
+         .b("homeset", bt->homeOverride)("hx", bt->homePoint.x)("hy", bt->homePoint.y)("hz", bt->homePoint.z)
+         ("n", (int)bt->overrides.size());
+        for (std::size_t i = 0; i < bt->overrides.size(); ++i) {
+            const std::string kk = "k" + std::to_string(i), vk = "v" + std::to_string(i);
+            k.str(kk.c_str(), bt->overrides[i].first).str(vk.c_str(), bt->overrides[i].second);
+        }
         out << "\n";
     }
 }
@@ -7175,6 +7190,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     KvIn k(in);
                     k.f("sx", no->size.x); k.f("sy", no->size.y); k.f("sz", no->size.z);
                     k.f("cx", no->center.x); k.f("cy", no->center.y); k.f("cz", no->center.z);
+                } else if (field == "btrunner") {
+                    auto* bt = go->AddComponent<BehaviorTreeRunner>();
+                    KvIn k(in);
+                    k.str("tree", bt->treePath); k.f("rate", bt->tickRate); k.b("auto", bt->runOnStart); k.b("debug", bt->debug);
+                    k.b("homeset", bt->homeOverride); k.f("hx", bt->homePoint.x); k.f("hy", bt->homePoint.y); k.f("hz", bt->homePoint.z);
+                    int n = 0; k.i("n", n);
+                    for (int i = 0; i < n && i < 256; ++i) {
+                        const std::string kk = "k" + std::to_string(i), vk = "v" + std::to_string(i);
+                        std::string key, val;
+                        k.str(kk.c_str(), key); k.str(vk.c_str(), val);
+                        if (!key.empty()) bt->overrides.emplace_back(key, val);
+                    }
                 } else {
                     if (error) *error = "unknown field '" + field + "'";
                     return false;
@@ -7331,6 +7358,7 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         if (auto* lt = go->GetComponent<LogicTarget>()) add(lt->spawnPrefab);
         if (auto* ls = go->GetComponent<LootSource>()) add(ls->table);
         if (auto* ns = go->GetComponent<NavMeshSurface>()) add(ns->navPath);   // the baked navmesh ships with the scene
+        if (auto* bt = go->GetComponent<BehaviorTreeRunner>()) add(bt->treePath);   // the tree ships with the scene
     }
     // The item database (and its icons / drop prefabs) ships with any scene that has items.
     bool hasItems = false;

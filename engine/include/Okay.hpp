@@ -178,6 +178,7 @@
 #include "okay/AI/NavMesh.hpp"
 #include "okay/AI/NavMeshBake.hpp"
 #include "okay/AI/Navigation.hpp"
+#include "okay/AI/BehaviorTree.hpp"
 
 // Starter scene templates
 #include "okay/Scene/SceneTemplates.hpp"
@@ -231,6 +232,7 @@
 #include "okay/Components/Consumables.hpp"
 #include "okay/Components/DayNightCycle.hpp"
 #include "okay/Components/NPCController.hpp"
+#include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Components/Crafting.hpp"
 #include "okay/Components/MeleeAttacker.hpp"
 #include "okay/Components/Spawner.hpp"

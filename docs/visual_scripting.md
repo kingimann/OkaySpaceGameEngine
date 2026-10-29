@@ -1082,6 +1082,9 @@ The **Engine API** group is the generated list in [engine_api.md](engine_api.md)
 - **Nav Move To** (`NavMoveTo`) — in Point: the object's Nav Mesh Agent walks there (see docs/navigation.md)
 - **Nav Stop** (`NavStop`) — stops the Nav Mesh Agent
 - **Nav Arrived** (`NavArrived`) — out Bool: true once the last Nav Move To point was reached
+- **Set Blackboard** (`BtSet`) — in Value; setting: key: writes the Behavior Tree Runner's blackboard (see docs/behavior_trees.md)
+- **Get Blackboard** (`BtGet`) — out Value; setting: key
+- **Run Tree** (`BtRun`) — setting: tree file: loads a .okaybt on the Behavior Tree Runner and starts it
 - **Set Color** (`SetColor`) — in R, G, B, A
 - **Play Clip** (`PlayClip`) — setting: clip name
 - **Set Time Scale** (`SetTimeScale`) — in Scale

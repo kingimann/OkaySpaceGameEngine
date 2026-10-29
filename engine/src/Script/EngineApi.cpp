@@ -35,6 +35,7 @@
 #include "okay/Components/DialogueRunner.hpp"   // Dialogue / Story / Quest statics
 #include "okay/Components/QuestLog.hpp"
 #include "okay/Components/StoryState.hpp"
+#include "okay/Components/BehaviorTreeRunner.hpp"
 #include <cmath>
 #include <set>
 
@@ -1122,6 +1123,85 @@ EngineApi Build() {
             }, "True while the quest is active."));
         q.staticMethods.back().pure = true;
         api.types.push_back(std::move(q));
+    }
+    // ---- BehaviorTree ----
+    {
+        ApiType bt; bt.name = "BehaviorTree"; bt.isStatic = true;
+        bt.doc = "This object's Behavior Tree Runner: its blackboard, and starting or stopping its tree.";
+        auto runnerOf = [](CallContext& c) -> BehaviorTreeRunner* {
+            auto* r = c.self ? c.self->GetComponent<BehaviorTreeRunner>() : nullptr;
+            if (!r) throw RuntimeError("'" + (c.self ? c.self->name : std::string("?")) + "' has no Behavior Tree Runner (add one in the Inspector)", c.loc);
+            return r;
+        };
+        auto toBt = [](const Value& v) -> BtValue {
+            if (auto* b = std::get_if<bool>(&v)) return BtValue::Bool(*b);
+            if (auto* i = std::get_if<std::int32_t>(&v)) return BtValue::Number((float)*i);
+            if (auto* f = std::get_if<float>(&v)) return BtValue::Number(*f);
+            if (auto* s = std::get_if<std::string>(&v)) return BtValue::String(*s);
+            if (auto* x = std::get_if<Vec3>(&v)) return BtValue::Vector(*x);
+            if (auto* o = std::get_if<ObjRef>(&v)) {
+                GameObject* g = o->go ? GameObject::FromInstanceId(o->go) : nullptr;
+                return BtValue::Object(g ? g->name : std::string(), o->go);
+            }
+            return BtValue::String(ValueToString(v));
+        };
+        auto fromBt = [goIdx](const BtValue& v, CallContext& c) -> Value {
+            switch (v.type) {
+                case BtValue::Type::Number: return Value{v.number};
+                case BtValue::Type::Bool:   return Value{v.boolean};
+                case BtValue::Type::String: return Value{v.text};
+                case BtValue::Type::Vector: return Value{v.vector};
+                case BtValue::Type::Object: return MakeRef(v.AsObject(c.self ? c.self->scene() : nullptr), goIdx);
+            }
+            return Value{};
+        };
+        bt.staticMethods.push_back(method("Set", {tString, tAny}, {"key", "value"}, tVoid,
+            [runnerOf, toBt](const Value&, std::vector<Value>& a, CallContext& c) { runnerOf(c)->blackboard.Set(S(a[0]), toBt(a[1])); return Value{}; },
+            "Write a blackboard value: a number, bool, string, Vector3 or GameObject."));
+        bt.staticMethods.push_back(method("Get", {tString}, {"key"}, tAny,
+            [runnerOf, fromBt](const Value&, std::vector<Value>& a, CallContext& c) {
+                const BtValue* v = runnerOf(c)->blackboard.Find(S(a[0]));
+                return v ? fromBt(*v, c) : Value{};
+            }, "Read a blackboard value as whatever it is (use GetFloat / GetBool / GetString / GetVector / GetObject for a typed one)."));
+        bt.staticMethods.back().pure = true;
+        bt.staticMethods.push_back(method("GetFloat", {tString}, {"key"}, tFloat,
+            [runnerOf](const Value&, std::vector<Value>& a, CallContext& c) { return Value{runnerOf(c)->blackboard.GetNumber(S(a[0]))}; },
+            "A blackboard number (0 when the key is missing)."));
+        bt.staticMethods.back().pure = true;
+        bt.staticMethods.push_back(method("GetBool", {tString}, {"key"}, tBool,
+            [runnerOf](const Value&, std::vector<Value>& a, CallContext& c) { return Value{runnerOf(c)->blackboard.GetBool(S(a[0]))}; },
+            "A blackboard bool (false when the key is missing)."));
+        bt.staticMethods.back().pure = true;
+        bt.staticMethods.push_back(method("GetString", {tString}, {"key"}, tString,
+            [runnerOf](const Value&, std::vector<Value>& a, CallContext& c) { return Value{runnerOf(c)->blackboard.GetString(S(a[0]))}; },
+            "A blackboard string (\"\" when the key is missing)."));
+        bt.staticMethods.back().pure = true;
+        bt.staticMethods.push_back(method("GetVector", {tString}, {"key"}, tVec,
+            [runnerOf](const Value&, std::vector<Value>& a, CallContext& c) { return Value{runnerOf(c)->blackboard.GetVector(S(a[0]))}; },
+            "A blackboard vector, or an object key's position."));
+        bt.staticMethods.back().pure = true;
+        bt.staticMethods.push_back(method("GetObject", {tString}, {"key"}, tGO,
+            [runnerOf, goIdx](const Value&, std::vector<Value>& a, CallContext& c) {
+                return MakeRef(runnerOf(c)->blackboard.GetGameObject(S(a[0]), c.self ? c.self->scene() : nullptr), goIdx);
+            }, "The object a blackboard key refers to, or null."));
+        bt.staticMethods.back().pure = true;
+        bt.staticMethods.push_back(method("Run", {tString}, {"tree"}, tBool,
+            [runnerOf](const Value&, std::vector<Value>& a, CallContext& c) {
+                BehaviorTreeRunner* r = runnerOf(c);
+                if (!S(a[0]).empty()) {
+                    std::string err;
+                    if (!r->LoadTree(S(a[0]), &err)) { Log::Warning("[script] BehaviorTree.Run: ", err); return Value{false}; }
+                }
+                r->Run();
+                return Value{r->IsRunning()};
+            }, "Load a .okaybt file and start it (\"\" starts the current tree over). False when the file can't be read."));
+        bt.staticMethods.push_back(method("Stop", {}, {}, tVoid,
+            [runnerOf](const Value&, std::vector<Value>&, CallContext& c) { runnerOf(c)->Stop(); return Value{}; },
+            "Stop the tree; running tasks are aborted and the NPC stops."));
+        bt.staticProps.push_back(ro("isRunning", tBool,
+            [runnerOf](const Value&, CallContext& c) { return Value{runnerOf(c)->IsRunning()}; },
+            "True while the tree is being ticked."));
+        api.types.push_back(std::move(bt));
     }
     // ---- Mathf ----
     {

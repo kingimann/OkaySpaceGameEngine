@@ -109,6 +109,8 @@ add_library(okay_engine
     src/AI/NavMeshSurface.cpp
     src/AI/NavMeshAgent.cpp
     src/AI/Navigation.cpp
+    src/AI/BehaviorTree.cpp
+    src/AI/BehaviorTreeRunner.cpp
     src/Graphics/Image.cpp
     src/Graphics/Font.cpp
     src/Graphics/TtfFont.cpp

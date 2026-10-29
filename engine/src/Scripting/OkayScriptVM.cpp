@@ -77,6 +77,7 @@
 #include "okay/Components/Tilemap.hpp"
 #include "okay/Components/NPCController.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
+#include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Components/Spawner.hpp"
 #include "okay/Components/BuildMode.hpp"
 #include "okay/Components/LogicLinks.hpp"
@@ -5314,6 +5315,50 @@ struct OkayScriptVM::Impl {
         b["nav_remaining"] = [navOf](std::vector<Value>& a) {
             std::size_t i = 0; NavMeshAgent* n = navOf(a, i);
             return Value{n ? n->RemainingDistance() : 0.0f};
+        };
+        // ---- Behavior trees: the Behavior Tree Runner on this object (or a named one) ----
+        // bt_set(key, value) / bt_set("Name", key, value) writes the blackboard,
+        // bt_get(key) / bt_get("Name", key) reads it, bt_run("Assets/Guard.okaybt")
+        // loads and starts a tree (bt_run() starts the current one over), bt_stop().
+        auto btOf = [sceneOf, go](std::vector<Value>& a, std::size_t need, std::size_t& first) -> BehaviorTreeRunner* {
+            first = 0;
+            GameObject* g = go();
+            if (a.size() > need && a[0].IsString()) {
+                first = 1;
+                Scene* s = sceneOf();
+                g = s ? s->Find(a[0].AsString()) : nullptr;
+            }
+            return g ? g->GetComponent<BehaviorTreeRunner>() : nullptr;
+        };
+        b["bt_set"] = [btOf](std::vector<Value>& a) {
+            std::size_t i = 0; BehaviorTreeRunner* r = btOf(a, 2, i);
+            if (!r || a.size() < i + 2) return Value{0.0f};
+            r->blackboard.Set(a[i].AsString(), BtValue::FromVs(a[i + 1]));
+            return Value{1.0f};
+        };
+        b["bt_get"] = [btOf](std::vector<Value>& a) -> Value {
+            std::size_t i = 0; BehaviorTreeRunner* r = btOf(a, 1, i);
+            if (!r || a.size() < i + 1) return Value{};
+            const BtValue* v = r->blackboard.Find(a[i].AsString());
+            return v ? v->ToVs() : Value{};
+        };
+        b["bt_run"] = [go](std::vector<Value>& a) {
+            GameObject* g = go();
+            if (!g) return Value{0.0f};
+            auto* r = g->GetComponent<BehaviorTreeRunner>();
+            if (!r) r = g->AddComponent<BehaviorTreeRunner>();
+            if (!a.empty() && !a[0].AsString().empty()) {
+                std::string err;
+                if (!r->LoadTree(a[0].AsString(), &err)) { Log::Warning("[script] bt_run: ", err); return Value{0.0f}; }
+            }
+            r->Run();
+            return Value{r->IsRunning() ? 1.0f : 0.0f};
+        };
+        b["bt_stop"] = [go](std::vector<Value>&) {
+            GameObject* g = go();
+            auto* r = g ? g->GetComponent<BehaviorTreeRunner>() : nullptr;
+            if (r) r->Stop();
+            return Value{r ? 1.0f : 0.0f};
         };
         // Music: the scene's MusicPlayer. music_play(index or "file"), music_next(),
         // music_previous(), music_stop([fade seconds]), music_pause(), music_resume().

@@ -1336,6 +1336,7 @@ int main(int argc, char** argv) {
     Prefs::Load(prefsPath);
     DataAsset::SetBaseDir(baseDir);   // read-only .okaydata assets stay beside the game
     Character::SetAssetBaseDir(baseDir);   // a Character's relative clips file, too
+    BehaviorTreeRunner::SetAssetBaseDir(baseDir);   // a Behavior Tree Runner's relative .okaybt
     ItemDatabase::Get().Load(baseDir + "items.okayitems");   // the project's item definitions (shipped by Build Game)
 
     // Anti-cheat (okayac::DecideStart). Without trusted keys built in: off unless

@@ -7,6 +7,7 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Render/Mesh.hpp"
 #include "okay/Render/Color.hpp"
+#include "okay/Environment/Wind.hpp"
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -52,7 +53,13 @@ public:
     void Start() override { Apply(); }
 
     void Update(float dt) override {
-        m_time += dt * waveSpeed;
+        // The scene's wind (weather) quickens the swell and adds a wave running
+        // downwind; no wind leaves the surface exactly as authored.
+        const Vec3 wind = WindVector();
+        const float ws = std::sqrt(wind.x * wind.x + wind.z * wind.z);
+        m_windStrength = ws;
+        if (ws > 1e-4f) { m_windDir = {wind.x / ws, wind.z / ws}; }
+        m_time += dt * waveSpeed * (1.0f + 0.1f * ws);
         Animate();
         if (dt > 0.0f && depth > 0.0f) BuoyBodies();
     }
@@ -114,6 +121,8 @@ private:
     std::vector<Vec3> m_base;   ///< flat grid positions (waves are added on top)
     int m_dim = 0;
     float m_time = 0.0f;
+    float m_windStrength = 0.0f;   ///< horizontal wind speed last Update
+    Vec2  m_windDir{1.0f, 0.0f};
 
     int Dim() const { return resolution + 1; }
 
@@ -134,7 +143,12 @@ private:
         float a = std::sin(x * k + m_time);
         float b = std::sin((x * 0.6f + z * 0.8f) * k + m_time * 1.3f);
         float c = std::sin((x * 1.7f - z * 1.3f) * k * 2.1f + m_time * 2.2f) * 0.35f;
-        return (a + b + c) * 0.42f * waveHeight;
+        float w = 0.0f;
+        if (m_windStrength > 1e-4f) {   // a wave running downwind, up to half the crest height at a gale
+            const float along = x * m_windDir.x + z * m_windDir.y;
+            w = std::sin(along * k * 1.3f - m_time * 1.8f) * std::fmin(m_windStrength * 0.08f, 1.2f);
+        }
+        return (a + b + c + w) * 0.42f * waveHeight;
     }
 
     void Animate() {

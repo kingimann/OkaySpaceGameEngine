@@ -4,6 +4,7 @@
 #include "okay/Math/Mat4.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Render/Lighting.hpp"
+#include "okay/Render/Atmosphere.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/MeshRenderer.hpp"
@@ -1100,9 +1101,9 @@ inline void SceneAmbientColors(const Scene::RenderSettings& rs, const Vec3& amb,
     if (rs.ambientMode != Scene::RenderSettings::AmbientSky) {
         sky = amb * 1.15f; ground = amb * 0.55f; return;
     }
-    Vec3 skyC{(rs.skyTop.r + rs.skyHorizon.r) * 0.5f, (rs.skyTop.g + rs.skyHorizon.g) * 0.5f,
-              (rs.skyTop.b + rs.skyHorizon.b) * 0.5f};
-    Vec3 grdC{rs.skyBottom.r, rs.skyBottom.g, rs.skyBottom.b};
+    Vec3 top, hor, grdC;
+    EffectiveSkyColors(rs, top, hor, grdC);   // the gradient, or the sun's palette (Procedural sky)
+    Vec3 skyC = (top + hor) * 0.5f;
     Vec3 mid = (skyC + grdC) * 0.5f;
     float k = rs.ambientSkyTint;
     sky    = {cl(amb.x + (skyC.x - mid.x) * k), cl(amb.y + (skyC.y - mid.y) * k), cl(amb.z + (skyC.z - mid.z) * k)};
@@ -1502,13 +1503,13 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                          const GameObject* ignore = nullptr) {
     const float W = (float)r.width, H = (float)r.height;
     const auto& rs = scene.renderSettings;
-    const bool  fogOn = rs.fog && rs.fogEnd > rs.fogStart;
-    const float fogR = rs.fogColor.r, fogG = rs.fogColor.g, fogB = rs.fogColor.b;
-    // Refresh the environment sky (for reflective materials) from the scene.
+    const bool  fogOn = FogActive(rs);
+    const Vec3  fogC = EffectiveFogColor(rs);   // authored, or the sky's horizon (Match Sky)
+    const float fogR = fogC.x, fogG = fogC.y, fogB = fogC.z;
+    // Refresh the environment sky (for reflective materials) from the scene: the
+    // authored gradient, or the sun's palette when the sky is Procedural.
     EnvSky().enabled = rs.skybox;
-    EnvSky().top     = {rs.skyTop.r, rs.skyTop.g, rs.skyTop.b};
-    EnvSky().horizon = {rs.skyHorizon.r, rs.skyHorizon.g, rs.skyHorizon.b};
-    EnvSky().bottom  = {rs.skyBottom.r, rs.skyBottom.g, rs.skyBottom.b};
+    EffectiveSkyColors(rs, EnvSky().top, EnvSky().horizon, EnvSky().bottom);
     // Hemisphere ambient: split the flat ambient into a sky-tinted (up) and
     // ground-tinted (down) term, keeping the midpoint equal to the current
     // ambient so the overall level is unchanged — only its direction is added.
@@ -1704,11 +1705,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 // the triangle by the rasterizer. A single per-triangle factor made a
                 // hard diagonal seam on big quads (e.g. the ground) when fog was on.
                 float fok = 0.0f;
-                if (fogOn) {
-                    float dd = (wp[k] - eye).Magnitude();
-                    fok = (dd - rs.fogStart) / (rs.fogEnd - rs.fogStart);
-                    fok = fok < 0.0f ? 0.0f : (fok > 1.0f ? 1.0f : fok);
-                }
+                if (fogOn) fok = FogFactor(rs, (wp[k] - eye).Magnitude(), eye.y, wp[k].y);   // linear / exponential / height
                 // Per-vertex Blinn-Phong specular, interpolated by the rasterizer. A
                 // single per-triangle value (from the centroid) made a hard diagonal
                 // highlight seam on big quads like a shiny ground.
@@ -1791,9 +1788,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             // triangle is, between fogStart and fogEnd (per-tri factor).
             float fogF = 0.0f;
             if (fogOn) {
-                float dist = (centroid - eye).Magnitude();
-                fogF = (dist - rs.fogStart) / (rs.fogEnd - rs.fogStart);
-                fogF = fogF < 0.0f ? 0.0f : (fogF > 1.0f ? 1.0f : fogF);
+                fogF = FogFactor(rs, (centroid - eye).Magnitude(), eye.y, centroid.y);
                 cr = cr * (1.0f - fogF) + fogR * fogF;
                 cg = cg * (1.0f - fogF) + fogG * fogF;
                 cb = cb * (1.0f - fogF) + fogB * fogF;
@@ -1896,6 +1891,7 @@ inline const std::uint32_t* RenderMeshesSS(Raster& work, std::vector<std::uint32
                                            int w, int h, int ss, const GameObject* ignore = nullptr) {
     if (w < 1) w = 1; if (h < 1) h = 1; if (ss < 1) ss = 1;
     while (ss > 1 && ((long)w * ss > 4096 || (long)h * ss > 4096)) --ss;
+    PostVignetteHandled() = false;   // the host paints the vignette over a software frame
     const int iw = w * ss, ih = h * ss;
     work.Resize(iw, ih);
     work.Clear(0u);

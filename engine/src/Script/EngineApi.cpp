@@ -31,6 +31,7 @@
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/SaveGame.hpp"
 #include "okay/Components/SequencePlayer.hpp"
+#include "okay/Render/Atmosphere.hpp"   // PostProcess / Fog / Weather
 #include "okay/Components/NavMeshAgent.hpp"
 #include "okay/Components/DialogueRunner.hpp"   // Dialogue / Story / Quest statics
 #include "okay/Components/QuestLog.hpp"
@@ -968,6 +969,65 @@ EngineApi Build() {
             [](const Value&, CallContext&) { return Value{SequencePlayer::LastEvent()}; },
             "The event being delivered: read it in OnSequenceEvent()."));
         api.types.push_back(std::move(sq));
+    }
+    // ---- PostProcess / Fog / Weather: the scene's look (docs/rendering.md) ----
+    {
+        auto look = [](CallContext& c) -> Scene::RenderSettings& {
+            Scene* s = c.self ? c.self->scene() : nullptr;
+            if (!s) throw RuntimeError("This needs a script running in a scene", c.loc);
+            return s->renderSettings;
+        };
+        ApiType pp; pp.name = "PostProcess"; pp.isStatic = true;
+        pp.doc = "The scene's post-processing: exposure, tonemap, bloom, colour grading, vignette, FXAA, SSAO and depth of field (saved with the scene; the Lighting panel edits the same values).";
+        pp.staticMethods.push_back(method("Set", {tString, tFloat}, {"name", "value"}, tBool,
+            [look](const Value&, std::vector<Value>& a, CallContext& c) {
+                const bool ok = PostSet(look(c), S(a[0]), F(a[1]));
+                if (!ok) Log::Warning("[script] PostProcess.Set: unknown setting \"", S(a[0]), "\"");
+                return Value{ok};
+            }, "Set one value by name: \"exposure\", \"tonemap\" (0 none, 1 ACES, 2 filmic), \"bloom\" (0/1), \"bloom_threshold\", "
+               "\"bloom_intensity\", \"bloom_radius\", \"grading\", \"temperature\", \"tint\", \"saturation\", \"contrast\", "
+               "\"vignette\", \"vignette_smoothness\", \"fxaa\", \"ssao\", \"ssao_radius\", \"ssao_intensity\", \"dof\", "
+               "\"dof_focus\", \"dof_range\". False for a name it doesn't know."));
+        pp.staticProps.push_back(prop("exposure", tFloat,
+            [look](const Value&, CallContext& c) { return Value{look(c).post.exposure}; },
+            [look](const Value&, const Value& v, CallContext& c) { PostSet(look(c), "exposure", F(v)); },
+            "Scene brightness multiplier (1 = as lit)."));
+        api.types.push_back(std::move(pp));
+
+        ApiType fg; fg.name = "Fog"; fg.isStatic = true;
+        fg.doc = "The scene's fog: linear (start / end), exponential or height fog, in the colour you set or the sky's.";
+        fg.staticMethods.push_back(method("Set", {tBool, tFloat, tFloat}, {"enabled", "start", "end"}, tVoid,
+            [look](const Value&, std::vector<Value>& a, CallContext& c) {
+                auto& rs = look(c); rs.fog = std::get<bool>(a[0]); rs.fogStart = F(a[1]); rs.fogEnd = F(a[2]); return Value{}; },
+            "Turn the fog on or off, fading from start to end (world units from the camera) in Linear mode."));
+        fg.staticMethods.push_back(method("SetColor", {tFloat, tFloat, tFloat}, {"r", "g", "b"}, tVoid,
+            [look](const Value&, std::vector<Value>& a, CallContext& c) {
+                auto& rs = look(c); rs.fogColor = {Mathf::Clamp01(F(a[0])), Mathf::Clamp01(F(a[1])), Mathf::Clamp01(F(a[2])), 1.0f};
+                rs.fogMatchSky = false; return Value{}; },
+            "The fog colour (0 to 1 each). Stops matching the sky's horizon."));
+        fg.staticMethods.push_back(method("SetMode", {tString, tFloat}, {"mode", "density"}, tVoid,
+            [look](const Value&, std::vector<Value>& a, CallContext& c) {
+                auto& rs = look(c); rs.fogMode = FogModeFromName(S(a[0])); rs.fogDensity = Mathf::Clamp(F(a[1]), 0.0f, 10.0f); return Value{}; },
+            "\"linear\", \"exponential\" or \"height\", with the density the last two thicken by per unit of distance."));
+        fg.staticProps.push_back(prop("enabled", tBool,
+            [look](const Value&, CallContext& c) { return Value{look(c).fog}; },
+            [look](const Value&, const Value& v, CallContext& c) { look(c).fog = std::get<bool>(v); },
+            "Whether the fog is on."));
+        api.types.push_back(std::move(fg));
+
+        ApiType we; we.name = "Weather"; we.isStatic = true;
+        we.doc = "Rain, snow and storms falling around the camera, and the wind particles and water follow.";
+        we.staticMethods.push_back(method("Set", {tString, tFloat}, {"preset", "intensity"}, tVoid,
+            [look](const Value&, std::vector<Value>& a, CallContext& c) {
+                auto& w = look(c).weather; w.preset = WeatherPresetFromName(S(a[0])); w.intensity = Mathf::Clamp01(F(a[1])); return Value{}; },
+            "\"none\", \"rain\", \"snow\" or \"storm\" at an intensity from 0 to 1; it cross-fades over the scene's weather fade time."));
+        we.staticMethods.push_back(method("SetWind", {tFloat, tFloat, tFloat}, {"x", "y", "z"}, tVoid,
+            [look](const Value&, std::vector<Value>& a, CallContext& c) { look(c).weather.wind = {F(a[0]), F(a[1]), F(a[2])}; return Value{}; },
+            "The wind (world units per second) that particles drift with and water waves follow."));
+        we.staticProps.push_back(ro("preset", tString,
+            [look](const Value&, CallContext& c) { return Value{std::string(WeatherPresetName(look(c).weather.preset))}; },
+            "The current preset's name."));
+        api.types.push_back(std::move(we));
     }
     // ---- NavMeshAgent ----
     {

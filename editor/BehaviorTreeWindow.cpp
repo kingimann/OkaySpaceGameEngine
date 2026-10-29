@@ -160,6 +160,7 @@ std::string Summary(const BehaviorTree& t, const BtNode& n) {
         case BtNodeType::RunScript:
         case BtNodeType::Custom: return s("function") + "()";
         case BtNodeType::PlayAudio: return s("clip").empty() ? "the Audio Source" : s("clip");
+        case BtNodeType::StartDialogue: return (s("graph").empty() ? std::string("the Dialogue Runner") : s("graph")) + (n.Flag("wait") ? ", wait" : "");
         case BtNodeType::Perception: return s("targetName") + Fmt("  %g m", n.Num("range"));
         case BtNodeType::HealthWatcher: return "-> " + s("healthKey");
         default: {
@@ -1072,10 +1073,13 @@ bool ParamField(Ctx& c, BtNode& n, const BtParamDef& p) {
                 ImGui::SameLine(0, 4);
                 const std::string pid = "...##pick_" + std::string(p.key);
                 if (ImGui::SmallButton(pid.c_str())) {
-                    if (p.kind == BtParamDef::File) {
-                        const char* filt[] = {"*.wav", "*.ogg", "*.mp3"};
+                    if (p.kind == BtParamDef::File) {   // `choices` names the file pattern (default: sounds)
+                        const char* sounds[] = {"*.wav", "*.ogg", "*.mp3"};
+                        const char* one[] = {p.choices};
+                        const bool own = p.choices && *p.choices;
                         const std::string dir = ProjectAssetsDir(c.ed);
-                        if (const char* f = tinyfd_openFileDialog("Pick a sound", dir.empty() ? nullptr : (dir + "/").c_str(), 3, filt, "sounds", 0))
+                        if (const char* f = tinyfd_openFileDialog(own ? "Pick a file" : "Pick a sound", dir.empty() ? nullptr : (dir + "/").c_str(),
+                                                                  own ? 1 : 3, own ? one : sounds, own ? p.choices : "sounds", 0))
                             set(ProjectRelative(c.ed, f));
                     } else ImGui::OpenPopup(("##pickpop_" + std::string(p.key)).c_str());
                 }

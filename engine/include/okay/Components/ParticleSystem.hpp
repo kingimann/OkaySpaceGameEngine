@@ -2,6 +2,7 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Core/Random.hpp"
+#include "okay/Environment/Wind.hpp"
 #include "okay/Render/Color.hpp"
 #include <vector>
 #include <string>
@@ -208,6 +209,9 @@ public:
     Vec3  gravity{0.0f, -2.0f, 0.0f};   // 3D gravity/wind acceleration
     float gravityModifier = 1.0f;       // scales gravity
     float damping = 0.0f;               // linear drag per second (0 = none)
+    /// How much the scene's wind (WindVector(): the weather's wind + gusts) carries
+    /// these particles: 1 = they drift at the wind's speed, 0 = ignore it.
+    float windInfluence = 1.0f;
 
     // ---- Motion ----
     /// World = particles stay where they were born when the emitter moves (a
@@ -452,11 +456,21 @@ public:
         const float orbitRad = orbitSpeed * 0.0174532925f * dt;
         const float orbitC = std::cos(orbitRad), orbitS = std::sin(orbitRad);
         const bool useSpeedCurve = speedOverLife && speedCurve.Active();
+        // Wind: the sideways velocity relaxes toward the wind's, so rain leans
+        // and snow drifts without piling up speed over a long life.
+        const Vec3 wind = WindVector() * windInfluence;
+        const bool windy = wind.SqrMagnitude() > 1e-6f;
+        const float windK = dt * 1.5f > 1.0f ? 1.0f : dt * 1.5f;
         for (Particle& p : m_particles) {
             if (!p.alive) continue;
             p.life -= dt;
             if (p.life <= 0.0f) { p.alive = false; continue; }
             p.velocity += gravity * (gravityModifier * dt);
+            if (windy) {
+                p.velocity.x += (wind.x - p.velocity.x) * windK;
+                p.velocity.z += (wind.z - p.velocity.z) * windK;
+                p.velocity.y += wind.y * dt;
+            }
             if (swirl && (vortexStrength != 0.0f || vortexPull != 0.0f)) {
                 // Radial offset from the axis line through the emitter.
                 Vec3 d = p.position - origin;

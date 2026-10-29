@@ -8,6 +8,7 @@
 #include "okay/Render/Lighting.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"   // GetCachedTexture: shared texture cache
 #include "okay/Render/ShadowSetup.hpp"
+#include "okay/Render/Atmosphere.hpp"   // sky palette, fog modes, post settings
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/SkinnedMesh.hpp"    // skinned meshes: VB cache keyed on SkinnedMesh::version
 #include "okay/Components/Character.hpp"
@@ -50,7 +51,9 @@ const char* kHLSL =
     "  float4 uLightCount;\n"                 // .x = number of scene lights (0 = use uLightDir)
     "  float4 uLights[64];\n"                 // 16 lights x 4: [dir,type][pos,range][col,cosOut][cosIn,..]
     "  float4 uFog;\n"                        // x=on y=start z=end (distance fog) w=receive shadows
-    "  float4 uFogCol;\n"                     // xyz = fog colour
+    "  float4 uFogCol;\n"                     // xyz = fog colour, w = filmic pipeline flag
+    "  float4 uFog2;\n"                       // x=mode (0 linear 1 exponential 2 height) y=density z=height w=falloff
+    "  float4 uPost;\n"                       // x=1: leave the colour linear for the post chain
     "};\n"
     // Shadows + ambient: once per frame (b2). Sun = cascades side by side in t4;
     // spot/point lights = a 4x4 tile atlas in t5 (see ShadowSetup.hpp).
@@ -288,16 +291,189 @@ const char* kHLSL =
     "    float kk = reflK + (1.0 - reflK) * fr2;\n"
     "    col = col * (1.0 - kk) + env * f0 * kk;\n"
     "  }\n"
-    "  if (uFog.x > 0.5) {\n"                                    // distance fog
+    "  if (uFog.x > 0.5) {\n"                                    // fog (Atmosphere.hpp FogFactor, same maths)
     "    float fd = length(uEye - i.world);\n"
-    "    float ff = saturate((fd - uFog.y) / max(uFog.z - uFog.y, 1e-3));\n"
+    "    float ff;\n"
+    "    if (uFog2.x < 0.5) ff = saturate((fd - uFog.y) / max(uFog.z - uFog.y, 1e-3));\n"   // linear
+    "    else if (uFog2.x < 1.5) ff = 1.0 - exp(-uFog2.y * fd);\n"                            // exponential
+    "    else { float te = exp(-max(uEye.y - uFog2.z, 0.0) * uFog2.w);\n"                      // height: thins above fogHeight
+    "           float tw = exp(-max(i.world.y - uFog2.z, 0.0) * uFog2.w);\n"
+    "           ff = 1.0 - exp(-uFog2.y * fd * 0.5 * (te + tw)); }\n"
     "    float3 fc = uFogCol.xyz;\n"
     "    if (lin) fc = pow(max(fc, 0.0), 2.2);\n"                 // fog is authored sRGB too
     "    col = lerp(col, fc, ff);\n"
     "  }\n"
-    // Filmic output: ACES roll-off in linear light, then encode back to sRGB.
-    "  if (lin) { col = aces(col); col = pow(max(col, 0.0), 1.0/2.2); }\n"
+    // Filmic output: ACES roll-off in linear light, then encode back to sRGB. With
+    // the post chain running the colour stays linear: the chain exposes, tonemaps
+    // and encodes it.
+    "  if (lin && uPost.x < 0.5) { col = aces(col); col = pow(max(col, 0.0), 1.0/2.2); }\n"
     "  return float4(col, uAlpha);\n"
+    "}\n"
+    // ---- Procedural sky + the post chain (mirrors the GLSL in GLRenderer.cpp) ----
+    "cbuffer PC : register(b3) {\n"
+    "  float4x4 uInvVP;\n"
+    "  float4 uEyeSz;\n"                      // xyz eye, w sun disc radius (radians)
+    "  float4 uSunDirHalo;\n"                 // xyz toward the sun, w halo
+    "  float4 uZenithDisc;\n"                 // xyz zenith colour, w disc visibility
+    "  float4 uHorizonHaze;\n"                // xyz horizon colour, w haze
+    "  float4 uGroundNight;\n"                // xyz ground colour, w night (0..1)
+    "  float4 uSunColorStar;\n"               // xyz sun colour, w star density
+    "  float4 uCloud;\n"                      // cover, density, scale, star brightness
+    "  float4 uCloudOffTL;\n"                 // xy cloud offset, z time, w linear output
+    "  float4 uP0;\n"                         // exposure, linearIn, tonemap, bloomOn
+    "  float4 uP1;\n"                         // bloomIntensity, gradeOn, temperature, tint
+    "  float4 uP2;\n"                         // saturation, contrast, vignette, vignetteSmooth
+    "  float4 uLiftAspect;\n"                 // xyz lift, w aspect
+    "  float4 uGammaThresh;\n"                // xyz gamma, w bloom threshold
+    "  float4 uGainRadius;\n"                 // xyz gain, w blur / downsample radius
+    "  float4 uTexelDir;\n"                   // xy source texel, zw blur direction (uv)
+    "  float4 uP7;\n"                         // x strength
+    "  float4 uTopMode;\n"                    // Colour sky: xyz top, w mode (0 colour, 1 procedural)
+    "  float4 uHorHp;\n"                      // xyz horizon, w horizon position
+    "  float4 uBotStars;\n"                   // xyz bottom, w stars on
+    "  float4 uSunPosRad;\n"                  // xy sun position (uv), z radius (of height), w sun on
+    "  float4 uViewSize;\n"                   // xy pixels
+    "};\n"
+    "SamplerState uSampClamp : register(s2);\n"
+    "struct PSQuad { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };\n"
+    "PSQuad VSQuad(uint id : SV_VertexID) {\n"                   // one fullscreen triangle, no vertex buffer
+    "  PSQuad o; float2 uv = float2((id << 1) & 2, id & 2);\n"
+    "  o.pos = float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0); o.uv = uv; return o;\n"
+    "}\n"
+    "float hash21(float2 p){ p = frac(p * float2(123.34, 456.21)); p += dot(p, p + 45.32); return frac(p.x * p.y); }\n"
+    "float vnoise(float2 p){ float2 i = floor(p), f = frac(p); f = f * f * (3.0 - 2.0 * f);\n"
+    "  float a = hash21(i), b = hash21(i + float2(1.0, 0.0)), c = hash21(i + float2(0.0, 1.0)), d = hash21(i + float2(1.0, 1.0));\n"
+    "  return lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y); }\n"
+    "float fbm(float2 p){ float s = 0.0, a = 0.5; [unroll] for (int k = 0; k < 5; k++) { s += a * vnoise(p); p = p * 2.03 + float2(17.1, 9.7); a *= 0.5; } return s; }\n"
+    "float4 PSSky(PSQuad i) : SV_TARGET {\n"
+    "  if (uTopMode.w < 0.5) {\n"                                     // Colour mode: the host's screen-space gradient, in-frame
+    "    float t = i.uv.y; float hp = clamp(uHorHp.w, 0.05, 0.95);\n"
+    "    float3 col = t < hp ? lerp(uTopMode.xyz, uHorHp.xyz, t / hp) : lerp(uHorHp.xyz, uBotStars.xyz, (t - hp) / (1.0 - hp));\n"
+    "    float hz = 1.0 - abs(t - hp) / 0.10;\n"
+    "    if (hz > 0.0) col = lerp(col, min(uHorHp.xyz * float3(1.15, 1.15, 1.10) + float3(0.12, 0.12, 0.10), 1.0), hz * 0.5);\n"
+    "    if (uBotStars.w > 0.5 && t < hp) {\n"
+    "      float2 g = i.uv * uViewSize.xy / 22.0; float2 cell = floor(g), cf = frac(g);\n"
+    "      float h = hash21(cell); float2 sp = float2(hash21(cell + 3.1), hash21(cell + 9.7)) * 0.8 + 0.1;\n"
+    "      col += (h > 1.0 - 0.5 * uSunColorStar.w ? 1.0 : 0.0) * smoothstep(0.12, 0.0, length(cf - sp)) * uCloud.w;\n"
+    "    }\n"
+    "    if (uSunPosRad.w > 0.5) {\n"
+    "      float dp = length((i.uv - uSunPosRad.xy) * uViewSize.xy);\n"
+    "      float r = max(uSunPosRad.z, 0.005) * uViewSize.y; float glowR = 0.45 * uViewSize.y;\n"
+    "      [unroll] for (int k = 12; k >= 1; --k) { float fr = (float)k / 12.0; if (dp < glowR * fr) col = lerp(col, uSunColorStar.xyz, (34.0 / 255.0) * (1.0 - fr) * (1.0 - fr)); }\n"
+    "      [unroll] for (int gi = 4; gi >= 1; --gi) { if (dp < r * (1.0 + (float)gi * 0.7)) col = lerp(col, uSunColorStar.xyz, (40.0 - (float)gi * 6.0) / 255.0); }\n"
+    "      if (dp < r) col = uSunColorStar.xyz;\n"
+    "    }\n"
+    "    if (uCloudOffTL.w > 0.5) col = pow(max(col, 0.0), 2.2);\n"
+    "    return float4(col, 1.0);\n"
+    "  }\n"
+    "  float2 ndc = float2(i.uv.x * 2.0 - 1.0, 1.0 - i.uv.y * 2.0);\n"
+    "  float4 p0 = mul(uInvVP, float4(ndc, -1.0, 1.0)); float4 p1 = mul(uInvVP, float4(ndc, 1.0, 1.0));\n"
+    "  float3 dir = normalize(p1.xyz / p1.w - p0.xyz / p0.w);\n"
+    "  float y = dir.y;\n"
+    "  float3 zen = uZenithDisc.xyz, hor = uHorizonHaze.xyz, grd = uGroundNight.xyz, sunC = uSunColorStar.xyz, sunD = uSunDirHalo.xyz;\n"
+    "  float haze = uHorizonHaze.w, night = uGroundNight.w, disc = uZenithDisc.w;\n"
+    "  float3 col = (y >= 0.0) ? lerp(hor, zen, pow(max(y, 0.0), 0.55)) : lerp(hor, grd, smoothstep(0.0, 0.25, -y));\n"
+    "  float3 hazeCol = hor * 1.12 + 0.06;\n"
+    "  col = lerp(col, hazeCol, haze * 0.6 * exp(-abs(y) * 5.0));\n"
+    "  float3 flatD = normalize(float3(dir.x, 0.0, dir.z) + 1e-5); float3 flatS = normalize(float3(sunD.x, 0.0, sunD.z) + 1e-5);\n"
+    "  col += sunC * (0.14 * haze * disc * exp(-abs(y) * 4.0) * pow(max(dot(flatD, flatS), 0.0), 3.0));\n"
+    "  float ang = acos(clamp(dot(dir, sunD), -1.0, 1.0));\n"
+    "  float dsc = (1.0 - smoothstep(uEyeSz.w * 0.85, uEyeSz.w * 1.15, ang)) * disc;\n"
+    "  float halo = uSunDirHalo.w * disc * (0.6 * exp(-ang * 4.0) + 0.3 * exp(-ang * 1.2));\n"
+    "  col += sunC * (dsc * 1.2 + halo);\n"
+    "  if (night > 0.0 && y > 0.0) {\n"
+    "    float az = atan2(dir.z, dir.x); float el = asin(clamp(y, -1.0, 1.0));\n"
+    "    float2 sc = float2(az, el) * (64.0 * (0.5 + uSunColorStar.w));\n"
+    "    float2 ci = floor(sc), cf = frac(sc);\n"
+    "    float h = hash21(ci);\n"
+    "    float2 sp = float2(hash21(ci + 7.3), hash21(ci + 13.7)) * 0.8 + 0.1;\n"
+    "    float d = length(cf - sp);\n"
+    "    float star = (h > 1.0 - 0.35 * uSunColorStar.w ? 1.0 : 0.0) * smoothstep(0.09, 0.0, d);\n"
+    "    float tw = 0.7 + 0.3 * sin(uCloudOffTL.z * 3.0 + h * 40.0);\n"
+    "    col += star * uCloud.w * night * tw * smoothstep(0.0, 0.15, y);\n"
+    "  }\n"
+    "  if (uCloud.x > 0.0 && y > 0.01) {\n"
+    "    float2 uv = dir.xz / (y + 0.12) * (0.6 / max(uCloud.z, 0.05)) + uCloudOffTL.xy;\n"
+    "    float n = fbm(uv);\n"
+    "    float cov = smoothstep(1.0 - uCloud.x, 1.0 - uCloud.x * 0.6 + 0.05, n);\n"
+    "    float lit = saturate(0.5 + (fbm(uv + flatS.xz * 0.06) - n) * 7.0);\n"
+    "    float3 bright = lerp(float3(1, 1, 1), sunC, 0.35) * (0.95 - 0.8 * night);\n"
+    "    float3 shade = lerp(hor, zen, 0.5) * (0.8 - 0.3 * night);\n"
+    "    float3 cc = lerp(shade, bright, lit);\n"
+    "    float a = cov * uCloud.y * smoothstep(0.0, 0.2, y);\n"
+    "    col = lerp(col, cc, a);\n"
+    "  }\n"
+    "  if (uCloudOffTL.w > 0.5) col = pow(max(col, 0.0), 2.2);\n"
+    "  return float4(col, 1.0);\n"
+    "}\n"
+    "float3 brightTap(float2 uv){ float3 c = uTex.Sample(uSampClamp, uv).rgb; float l = dot(c, float3(0.2126, 0.7152, 0.0722));\n"
+    "  float k = max(l - uGammaThresh.w, 0.0) / max(l, 1e-4); return c * k; }\n"
+    "float4 PSDown(PSQuad i) : SV_TARGET {\n"                      // bright-pass + 2x2 box downsample
+    "  float2 o = uTexelDir.xy * uGainRadius.w;\n"
+    "  float3 s = brightTap(i.uv + float2(-o.x, -o.y)) + brightTap(i.uv + float2(o.x, -o.y)) + brightTap(i.uv + float2(-o.x, o.y)) + brightTap(i.uv + float2(o.x, o.y));\n"
+    "  return float4(s * 0.25, 1.0);\n"
+    "}\n"
+    "float4 PSBlur(PSQuad i) : SV_TARGET {\n"                      // 9-tap gaussian (linear-sampled 5-tap)
+    "  float2 d = uTexelDir.zw;\n"
+    "  float3 s = uTex.Sample(uSampClamp, i.uv).rgb * 0.227027;\n"
+    "  s += (uTex.Sample(uSampClamp, i.uv + d * 1.384615).rgb + uTex.Sample(uSampClamp, i.uv - d * 1.384615).rgb) * 0.316216;\n"
+    "  s += (uTex.Sample(uSampClamp, i.uv + d * 3.230769).rgb + uTex.Sample(uSampClamp, i.uv - d * 3.230769).rgb) * 0.070270;\n"
+    "  return float4(s, 1.0);\n"
+    "}\n"
+    "float3 hable(float3 v){ float A = 0.15, B = 0.50, C = 0.10, D = 0.20, E = 0.02, F = 0.30;\n"
+    "  return ((v*(A*v+C*B)+D*E)/(v*(A*v+B)+D*F))-E/F; }\n"
+    "float3 filmic(float3 x){ return saturate(hable(x * 2.0) / hable(float3(11.2, 11.2, 11.2))); }\n"
+    "float4 PSUber(PSQuad i) : SV_TARGET {\n"                      // exposure, bloom, tonemap, grading, vignette
+    "  float4 s = uTex.Sample(uSampClamp, i.uv);\n"
+    "  float3 c = s.rgb * uP0.x;\n"
+    "  float blLum = 0.0;\n"
+    "  if (uP0.w > 0.5) {\n"
+    "    float3 bl = (uNormalTex.Sample(uSampClamp, i.uv).rgb + uSpecTex.Sample(uSampClamp, i.uv).rgb) * (0.5 * uP1.x * uP0.x);\n"
+    "    c += bl; blLum = dot(bl, float3(0.2126, 0.7152, 0.0722));\n"
+    "  }\n"
+    "  if (uP0.y > 0.5) {\n"
+    "    if (uP0.z > 1.5) c = filmic(c); else if (uP0.z > 0.5) c = aces(c); else c = saturate(c);\n"
+    "    c = pow(max(c, 0.0), 1.0 / 2.2);\n"
+    "  } else c = saturate(c);\n"
+    "  if (uP1.y > 0.5) {\n"
+    "    c *= float3(1.0 + 0.25 * uP1.z, 1.0 + 0.2 * uP1.w, 1.0 - 0.25 * uP1.z);\n"
+    "    float l = dot(c, float3(0.2126, 0.7152, 0.0722));\n"
+    "    c = l + (c - l) * uP2.x;\n"
+    "    c = (c - 0.5) * uP2.y + 0.5;\n"
+    "    c = c * (1.0 + uGainRadius.xyz) + uLiftAspect.xyz * (1.0 - c);\n"
+    "    c = pow(max(c, 0.0), 1.0 / max(1.0 + uGammaThresh.xyz * 0.75, 0.1));\n"
+    "  }\n"
+    "  float cov = saturate(s.a + blLum * 2.0);\n"
+    "  float v = 0.0;\n"
+    "  if (uP2.z > 0.0) {\n"
+    "    float2 d = (i.uv - 0.5) * float2(uLiftAspect.w, 1.0) * 2.0;\n"
+    "    float r = length(d) / sqrt(uLiftAspect.w * uLiftAspect.w + 1.0);\n"
+    "    v = 0.8 * uP2.z * smoothstep(max(1.0 - uP2.w * 1.3, 0.0), 1.05, r);\n"
+    "  }\n"
+    "  float3 pc = c * cov * (1.0 - v);\n"
+    "  float oa = 1.0 - (1.0 - v) * (1.0 - cov);\n"
+    "  return float4(oa > 1e-4 ? pc / oa : float3(0, 0, 0), oa);\n"
+    "}\n"
+    "float lumaF(float3 c){ return dot(c, float3(0.299, 0.587, 0.114)); }\n"
+    "float4 PSFxaa(PSQuad i) : SV_TARGET {\n"
+    "  float2 px = uTexelDir.xy;\n"
+    "  float4 c = uTex.Sample(uSampClamp, i.uv);\n"
+    "  float lM = lumaF(c.rgb);\n"
+    "  float lNW = lumaF(uTex.Sample(uSampClamp, i.uv + float2(-1.0, -1.0) * px).rgb);\n"
+    "  float lNE = lumaF(uTex.Sample(uSampClamp, i.uv + float2( 1.0, -1.0) * px).rgb);\n"
+    "  float lSW = lumaF(uTex.Sample(uSampClamp, i.uv + float2(-1.0,  1.0) * px).rgb);\n"
+    "  float lSE = lumaF(uTex.Sample(uSampClamp, i.uv + float2( 1.0,  1.0) * px).rgb);\n"
+    "  float lMin = min(lM, min(min(lNW, lNE), min(lSW, lSE)));\n"
+    "  float lMax = max(lM, max(max(lNW, lNE), max(lSW, lSE)));\n"
+    "  if (lMax - lMin < max(0.0312, lMax * 0.125)) return c;\n"
+    "  float2 dir = float2(-((lNW + lNE) - (lSW + lSE)), ((lNW + lSW) - (lNE + lSE)));\n"
+    "  float dirReduce = max((lNW + lNE + lSW + lSE) * (0.25 * 0.125), 1.0 / 128.0);\n"
+    "  float rcpDirMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);\n"
+    "  dir = clamp(dir * rcpDirMin, -8.0, 8.0) * px;\n"
+    "  float4 rgbA = 0.5 * (uTex.Sample(uSampClamp, i.uv + dir * (1.0 / 3.0 - 0.5)) + uTex.Sample(uSampClamp, i.uv + dir * (2.0 / 3.0 - 0.5)));\n"
+    "  float4 rgbB = rgbA * 0.5 + 0.25 * (uTex.Sample(uSampClamp, i.uv + dir * -0.5) + uTex.Sample(uSampClamp, i.uv + dir * 0.5));\n"
+    "  float lB = lumaF(rgbB.rgb);\n"
+    "  return (lB < lMin || lB > lMax) ? rgbA : rgbB;\n"
     "}\n";
 
 // Constant-buffer layout mirrored on the C++ side (must match the cbuffer, 16-byte
@@ -322,6 +498,33 @@ struct CB {
     float lights[256];         // 64 float4: 16 lights x 4 rows
     float fog[4];              // x=on y=start z=end w=receive shadows
     float fogCol[4];           // xyz = fog colour, w = filmic pipeline flag (linear + ACES + gamma)
+    float fog2[4];             // mode, density, height, falloff
+    float post[4];             // x = leave the colour linear for the post chain
+};
+// Sky + post-chain constants (cbuffer PC, b3); see the HLSL for each slot.
+struct PostCB {
+    float invVP[16];
+    float eye[3], sunSize;
+    float sunDir[3], sunHalo;
+    float zenith[3], sunDisc;
+    float horizon[3], haze;
+    float ground[3], night;
+    float sunColor[3], starDensity;
+    float cloud[4];
+    float cloudOff[2], time, lin;
+    float p0[4];
+    float p1[4];
+    float p2[4];
+    float lift[3], aspect;
+    float gamma[3], thresh;
+    float gain[3], radius;
+    float texel[2], dir[2];
+    float p7[4];
+    float top[3], mode;
+    float hor[3], horizonPos;
+    float bot[3], starsOn;
+    float sunPos[2], sunRad, sunOn;
+    float viewSize[4];
 };
 // Per-frame shadow + ambient constants (cbuffer SH, b2).
 struct ShadowCB {
@@ -388,10 +591,34 @@ struct D3D11Renderer::Impl {
     ID3D11Texture2D*        colorTex = nullptr;  ID3D11RenderTargetView* rtv = nullptr;
     ID3D11Texture2D*        depthTex = nullptr;  ID3D11DepthStencilView* dsv = nullptr;
     ID3D11Texture2D*        resolveTex = nullptr;
-    ID3D11Texture2D*        staging = nullptr;
+    ID3D11ShaderResourceView* resolveSrv = nullptr;   // the resolve as the post chain's input
+    ID3D11Texture2D*        staging = nullptr;         // always RGBA8 (the read-back format)
     int reqSamples = 0;   // the MSAA count asked for (`samples` is what the device gave)
     DXGI_FORMAT fmt = DXGI_FORMAT_R8G8B8A8_UNORM;      // colour format of the live set
     DXGI_FORMAT wantFmt = DXGI_FORMAT_R8G8B8A8_UNORM;  // what the next EnsureTargets should build
+    DXGI_FORMAT directFmt = DXGI_FORMAT_R8G8B8A8_UNORM;   // RenderToTexture: the host texture's format
+    // Post chain targets (Atmosphere.hpp PostActive): an RGBA8 output + ping-pong
+    // pair at full res, half- and quarter-res bloom pairs in the frame's format.
+    struct RT {
+        ID3D11Texture2D* tex = nullptr; ID3D11RenderTargetView* rtv = nullptr; ID3D11ShaderResourceView* srv = nullptr;
+        int w = 0, h = 0;
+        void Release() { if (srv) srv->Release(); if (rtv) rtv->Release(); if (tex) tex->Release(); srv = nullptr; rtv = nullptr; tex = nullptr; w = h = 0; }
+    };
+    RT out, ping[2], bloom[4];
+    bool MakeRT(RT& t, int W, int H, DXGI_FORMAT f);
+    bool EnsurePostTargets();                  // for the live w/h/fmt (parked with the set)
+    void ReleasePostTargets();
+    // Post chain / sky pipeline objects, compiled on first use.
+    ID3D11VertexShader* vsQuad = nullptr;
+    ID3D11PixelShader *psSky = nullptr, *psDown = nullptr, *psBlur = nullptr, *psUber = nullptr, *psFxaa = nullptr;
+    ID3D11Buffer* postCB = nullptr;
+    ID3D11SamplerState* sampClamp = nullptr;
+    ID3D11DepthStencilState* depthOff = nullptr;
+    bool postReady = false, postTried = false;
+    bool EnsurePost();
+    bool hdrUnsupported = false;
+    std::chrono::steady_clock::time_point clock0; bool clockSet = false; float skyTime = 0.0f;
+    float cloudOff[2] = {0.0f, 0.0f};
     // Target sets for the OTHER sizes in use. The editor renders the Scene view,
     // Game view, Camera Preview and Animation preview at different sizes every
     // frame; one shared set meant destroying + re-creating MSAA, depth, resolve and
@@ -401,7 +628,9 @@ struct D3D11Renderer::Impl {
         DXGI_FORMAT fmt = DXGI_FORMAT_R8G8B8A8_UNORM;
         ID3D11Texture2D* colorTex = nullptr; ID3D11RenderTargetView* rtv = nullptr;
         ID3D11Texture2D* depthTex = nullptr; ID3D11DepthStencilView* dsv = nullptr;
-        ID3D11Texture2D* resolveTex = nullptr; ID3D11Texture2D* staging = nullptr;
+        ID3D11Texture2D* resolveTex = nullptr; ID3D11ShaderResourceView* resolveSrv = nullptr;
+        ID3D11Texture2D* staging = nullptr;
+        RT out, ping[2], bloom[4];
         unsigned lastUse = 0;
     };
     std::vector<TargetSet> parked;
@@ -615,7 +844,10 @@ void D3D11Renderer::Impl::ReleaseSet(TargetSet& t) {
     if (t.colorTex)   t.colorTex->Release();
     if (t.depthTex)   t.depthTex->Release();
     if (t.resolveTex) t.resolveTex->Release();
+    if (t.resolveSrv) t.resolveSrv->Release();
     if (t.staging)    t.staging->Release();
+    t.out.Release(); t.ping[0].Release(); t.ping[1].Release();
+    for (RT& b : t.bloom) b.Release();
     t = TargetSet{};
 }
 
@@ -625,8 +857,83 @@ void D3D11Renderer::Impl::DestroyTargets() {
     if (colorTex)   { colorTex->Release(); colorTex = nullptr; }
     if (depthTex)   { depthTex->Release(); depthTex = nullptr; }
     if (resolveTex) { resolveTex->Release(); resolveTex = nullptr; }
+    if (resolveSrv) { resolveSrv->Release(); resolveSrv = nullptr; }
     if (staging)    { staging->Release(); staging = nullptr; }
+    ReleasePostTargets();
     w = h = samples = reqSamples = 0;
+}
+
+void D3D11Renderer::Impl::ReleasePostTargets() {
+    out.Release(); ping[0].Release(); ping[1].Release();
+    for (RT& b : bloom) b.Release();
+}
+
+bool D3D11Renderer::Impl::MakeRT(RT& t, int W, int H, DXGI_FORMAT f) {
+    t.Release();
+    D3D11_TEXTURE2D_DESC td; std::memset(&td, 0, sizeof(td));
+    td.Width = W; td.Height = H; td.MipLevels = 1; td.ArraySize = 1;
+    td.Format = f; td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_DEFAULT; td.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    if (FAILED(dev->CreateTexture2D(&td, nullptr, &t.tex))) { t.Release(); return false; }
+    if (FAILED(dev->CreateRenderTargetView(t.tex, nullptr, &t.rtv)) ||
+        FAILED(dev->CreateShaderResourceView(t.tex, nullptr, &t.srv))) { t.Release(); return false; }
+    t.w = W; t.h = H;
+    return true;
+}
+
+bool D3D11Renderer::Impl::EnsurePostTargets() {
+    if (out.tex && out.w == w && out.h == h) return true;
+    const int hw = w / 2 > 0 ? w / 2 : 1, hh = h / 2 > 0 ? h / 2 : 1;
+    const int qw = w / 4 > 0 ? w / 4 : 1, qh = h / 4 > 0 ? h / 4 : 1;
+    const bool ok = MakeRT(out, w, h, DXGI_FORMAT_R8G8B8A8_UNORM) &&
+                    MakeRT(ping[0], w, h, DXGI_FORMAT_R8G8B8A8_UNORM) && MakeRT(ping[1], w, h, DXGI_FORMAT_R8G8B8A8_UNORM) &&
+                    MakeRT(bloom[0], hw, hh, fmt) && MakeRT(bloom[1], hw, hh, fmt) &&
+                    MakeRT(bloom[2], qw, qh, fmt) && MakeRT(bloom[3], qw, qh, fmt);
+    if (!ok) ReleasePostTargets();
+    return ok;
+}
+
+// The fullscreen-pass shaders, the sky / post constants, a clamp sampler and a
+// depth-off state. Compiled once; a failure leaves the renderer on its plain path.
+bool D3D11Renderer::Impl::EnsurePost() {
+    if (postTried) return postReady;
+    postTried = true;
+    const SIZE_T n = (SIZE_T)std::strlen(kHLSL);
+    auto ps = [&](const char* entry, ID3D11PixelShader*& outPs) {
+        ID3DBlob* b = nullptr; ID3DBlob* e = nullptr;
+        const bool ok = SUCCEEDED(D3DCompile(kHLSL, n, "okay3d", nullptr, nullptr, entry, "ps_4_0", 0, 0, &b, &e)) && b &&
+                        SUCCEEDED(dev->CreatePixelShader(b->GetBufferPointer(), b->GetBufferSize(), nullptr, &outPs));
+        if (!ok && e) Log::Warning(std::string("[d3d11] post shader ") + entry + ": " + (const char*)e->GetBufferPointer());
+        if (b) b->Release(); if (e) e->Release();
+        return ok;
+    };
+    ID3DBlob* vb = nullptr; ID3DBlob* ve = nullptr;
+    bool ok = SUCCEEDED(D3DCompile(kHLSL, n, "okay3d", nullptr, nullptr, "VSQuad", "vs_4_0", 0, 0, &vb, &ve)) && vb &&
+              SUCCEEDED(dev->CreateVertexShader(vb->GetBufferPointer(), vb->GetBufferSize(), nullptr, &vsQuad));
+    if (!ok && ve) Log::Warning(std::string("[d3d11] quad shader: ") + (const char*)ve->GetBufferPointer());
+    if (vb) vb->Release(); if (ve) ve->Release();
+    ok = ok && ps("PSSky", psSky) && ps("PSDown", psDown) && ps("PSBlur", psBlur) && ps("PSUber", psUber) && ps("PSFxaa", psFxaa);
+    if (ok) {
+        D3D11_BUFFER_DESC cbd; std::memset(&cbd, 0, sizeof(cbd));
+        cbd.ByteWidth = sizeof(PostCB); cbd.Usage = D3D11_USAGE_DYNAMIC;
+        cbd.BindFlags = D3D11_BIND_CONSTANT_BUFFER; cbd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        ok = SUCCEEDED(dev->CreateBuffer(&cbd, nullptr, &postCB));
+    }
+    if (ok) {
+        D3D11_SAMPLER_DESC sd; std::memset(&sd, 0, sizeof(sd));
+        sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+        sd.AddressU = sd.AddressV = sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+        sd.MaxLOD = D3D11_FLOAT32_MAX;
+        ok = SUCCEEDED(dev->CreateSamplerState(&sd, &sampClamp));
+    }
+    if (ok) {
+        D3D11_DEPTH_STENCIL_DESC dd; std::memset(&dd, 0, sizeof(dd));
+        dd.DepthEnable = FALSE; dd.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO; dd.DepthFunc = D3D11_COMPARISON_ALWAYS;
+        ok = SUCCEEDED(dev->CreateDepthStencilState(&dd, &depthOff));
+    }
+    postReady = ok;
+    if (!ok) Log::Warning("[d3d11] sky / post-processing unavailable on this device");
+    return ok;
 }
 
 bool D3D11Renderer::Impl::EnsureTargets(int W, int H, int S) {
@@ -642,8 +949,10 @@ bool D3D11Renderer::Impl::EnsureTargets(int W, int H, int S) {
         TargetSet t;
         t.w = w; t.h = h; t.samples = samples; t.reqSamples = reqSamples; t.fmt = fmt;
         t.colorTex = colorTex; t.rtv = rtv; t.depthTex = depthTex; t.dsv = dsv;
-        t.resolveTex = resolveTex; t.staging = staging; t.lastUse = targetUse;
-        colorTex = depthTex = resolveTex = staging = nullptr; rtv = nullptr; dsv = nullptr;
+        t.resolveTex = resolveTex; t.resolveSrv = resolveSrv; t.staging = staging; t.lastUse = targetUse;
+        t.out = out; t.ping[0] = ping[0]; t.ping[1] = ping[1]; for (int k = 0; k < 4; ++k) t.bloom[k] = bloom[k];
+        colorTex = depthTex = resolveTex = staging = nullptr; rtv = nullptr; dsv = nullptr; resolveSrv = nullptr;
+        out = RT{}; ping[0] = RT{}; ping[1] = RT{}; for (RT& b : bloom) b = RT{};
         parked.push_back(t);
     }
     for (std::size_t i = 0; i < parked.size(); ++i) {
@@ -652,7 +961,8 @@ bool D3D11Renderer::Impl::EnsureTargets(int W, int H, int S) {
         DestroyTargets();
         w = t.w; h = t.h; samples = t.samples; reqSamples = t.reqSamples; fmt = t.fmt;
         colorTex = t.colorTex; rtv = t.rtv; depthTex = t.depthTex; dsv = t.dsv;
-        resolveTex = t.resolveTex; staging = t.staging;
+        resolveTex = t.resolveTex; resolveSrv = t.resolveSrv; staging = t.staging;
+        out = t.out; ping[0] = t.ping[0]; ping[1] = t.ping[1]; for (int k = 0; k < 4; ++k) bloom[k] = t.bloom[k];
         parked.erase(parked.begin() + (std::ptrdiff_t)i);
         return true;
     }
@@ -696,10 +1006,14 @@ bool D3D11Renderer::Impl::EnsureTargets(int W, int H, int S) {
     if (FAILED(dev->CreateDepthStencilView(depthTex, nullptr, &dsv))) return false;
 
     D3D11_TEXTURE2D_DESC tr = td;
-    tr.SampleDesc.Count = 1; tr.BindFlags = 0;
+    tr.SampleDesc.Count = 1; tr.BindFlags = D3D11_BIND_SHADER_RESOURCE;   // the post chain samples the resolve
     if (FAILED(dev->CreateTexture2D(&tr, nullptr, &resolveTex))) return false;
+    if (FAILED(dev->CreateShaderResourceView(resolveTex, nullptr, &resolveSrv))) return false;
 
+    // Read-back staging: always RGBA8 (the chain's output format; a float frame
+    // never reaches the CPU directly).
     D3D11_TEXTURE2D_DESC ts = tr;
+    ts.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     ts.Usage = D3D11_USAGE_STAGING; ts.BindFlags = 0; ts.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     if (FAILED(dev->CreateTexture2D(&ts, nullptr, &staging))) return false;
     fr.ok = true;   // fully built — keep the cache
@@ -1026,7 +1340,19 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         delete backup;
         return r;
     }
+    // The scene's post chain wants a float target and linear colour out of the mesh
+    // shader; with everything off the frame takes the plain RGBA8 path as before.
+    const auto& rsTop = scene.renderSettings;
+    const bool chain = PostActive(rsTop) && p->EnsurePost();
+    const bool hdr = chain && rsTop.tonemap && !p->hdrUnsupported;
+    p->wantFmt = hdr ? DXGI_FORMAT_R16G16B16A16_FLOAT : (p->directDst ? p->directFmt : DXGI_FORMAT_R8G8B8A8_UNORM);
+    if (hdr && !p->EnsureTargets(w, h, samples)) {   // no float targets here: stay on RGBA8 for good
+        p->hdrUnsupported = true;
+        p->wantFmt = p->directDst ? p->directFmt : DXGI_FORMAT_R8G8B8A8_UNORM;
+        Log::Warning("[d3d11] float render target unavailable; post-processing runs on RGBA8");
+    }
     if (!p->EnsureTargets(w, h, samples)) return nullptr;
+    const bool hdrOut = chain && p->fmt == DXGI_FORMAT_R16G16B16A16_FLOAT;
     if (!p->rtv || !p->dsv || !p->ctx) return nullptr;   // never bind a null target
     ID3D11DeviceContext* c = p->ctx;
 
@@ -1190,6 +1516,62 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
     c->ClearRenderTargetView(p->rtv, clear);
     c->ClearDepthStencilView(p->dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
 
+    // Sky + post constants, filled per pass from here on.
+    PostCB pc; std::memset(&pc, 0, sizeof(pc));
+    auto uploadPc = [&]() {
+        D3D11_MAPPED_SUBRESOURCE pm;
+        if (p->postCB && SUCCEEDED(c->Map(p->postCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &pm))) {
+            std::memcpy(pm.pData, &pc, sizeof(pc)); c->Unmap(p->postCB, 0);
+        }
+    };
+    // A fullscreen triangle with the quad vertex shader (no vertex buffer).
+    auto beginQuadPasses = [&]() {
+        c->IASetInputLayout(nullptr);
+        c->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        c->VSSetShader(p->vsQuad, nullptr, 0);
+        c->RSSetState(p->raster);
+        c->OMSetDepthStencilState(p->depthOff, 0);
+        const float bf[4] = {0, 0, 0, 0};
+        c->OMSetBlendState(nullptr, bf, 0xffffffff);
+        c->PSSetSamplers(2, 1, &p->sampClamp);
+        c->PSSetConstantBuffers(3, 1, &p->postCB);
+    };
+    // Procedural sky: a fullscreen pass behind everything (depth off), coloured
+    // by the sun's height, with the disc, haze, stars and clouds.
+    const bool procedural = rsTop.skyMode == Scene::RenderSettings::SkyProcedural;
+    if (rsTop.skybox && SkyPassEnabled() && (procedural || chain) && p->EnsurePost()) {
+        const auto now = std::chrono::steady_clock::now();
+        if (!p->clockSet) { p->clock0 = now; p->clockSet = true; }
+        const float t = std::chrono::duration<float>(now - p->clock0).count();
+        const float sdt = t - p->skyTime; p->skyTime = t;
+        const Vec3 wind = WindVector();
+        p->cloudOff[0] += (0.012f * rsTop.cloudSpeed + wind.x * 0.004f) * sdt;
+        p->cloudOff[1] += (0.005f * rsTop.cloudSpeed + wind.z * 0.004f) * sdt;
+        const Vec3 sun = SunDirection();
+        const SkyPalette pal = SkyPaletteFor(sun.y);
+        const Mat4 inv = vp.Inverse();
+        std::memcpy(pc.invVP, inv.m, sizeof(pc.invVP));
+        pc.eye[0] = eye.x; pc.eye[1] = eye.y; pc.eye[2] = eye.z; pc.sunSize = rsTop.skySunDisc * 0.0174532925f;
+        pc.sunDir[0] = sun.x; pc.sunDir[1] = sun.y; pc.sunDir[2] = sun.z; pc.sunHalo = rsTop.skySunHalo;
+        pc.zenith[0] = pal.zenith.x; pc.zenith[1] = pal.zenith.y; pc.zenith[2] = pal.zenith.z; pc.sunDisc = pal.sunDisc;
+        pc.horizon[0] = pal.horizon.x; pc.horizon[1] = pal.horizon.y; pc.horizon[2] = pal.horizon.z; pc.haze = rsTop.skyHaze;
+        pc.ground[0] = pal.ground.x; pc.ground[1] = pal.ground.y; pc.ground[2] = pal.ground.z; pc.night = pal.night;
+        pc.sunColor[0] = pal.sun.x; pc.sunColor[1] = pal.sun.y; pc.sunColor[2] = pal.sun.z; pc.starDensity = rsTop.skyStarDensity;
+        pc.cloud[0] = rsTop.cloudCover; pc.cloud[1] = rsTop.cloudDensity; pc.cloud[2] = rsTop.cloudScale; pc.cloud[3] = rsTop.skyStarBright;
+        pc.cloudOff[0] = p->cloudOff[0]; pc.cloudOff[1] = p->cloudOff[1]; pc.time = t; pc.lin = hdrOut ? 1.0f : 0.0f;
+        pc.mode = procedural ? 1.0f : 0.0f;
+        pc.top[0] = rsTop.skyTop.r; pc.top[1] = rsTop.skyTop.g; pc.top[2] = rsTop.skyTop.b;
+        pc.hor[0] = rsTop.skyHorizon.r; pc.hor[1] = rsTop.skyHorizon.g; pc.hor[2] = rsTop.skyHorizon.b; pc.horizonPos = rsTop.skyHorizonPos;
+        pc.bot[0] = rsTop.skyBottom.r; pc.bot[1] = rsTop.skyBottom.g; pc.bot[2] = rsTop.skyBottom.b; pc.starsOn = rsTop.skyStars ? 1.0f : 0.0f;
+        pc.sunPos[0] = rsTop.skySunX; pc.sunPos[1] = rsTop.skySunY; pc.sunRad = rsTop.skySunSize; pc.sunOn = rsTop.skySun ? 1.0f : 0.0f;
+        pc.viewSize[0] = (float)w; pc.viewSize[1] = (float)h;
+        if (!procedural) { pc.sunColor[0] = rsTop.skySunColor.r; pc.sunColor[1] = rsTop.skySunColor.g; pc.sunColor[2] = rsTop.skySunColor.b; }
+        uploadPc();
+        beginQuadPasses();
+        c->PSSetShader(p->psSky, nullptr, 0);
+        c->Draw(3, 0);
+    }
+
     c->IASetInputLayout(p->layout);
     c->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     c->VSSetShader(p->vs, nullptr, 0);
@@ -1272,9 +1654,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
     {
         const auto& rs = scene.renderSettings;
         EnvSky().enabled = rs.skybox;
-        EnvSky().top     = {rs.skyTop.r, rs.skyTop.g, rs.skyTop.b};
-        EnvSky().horizon = {rs.skyHorizon.r, rs.skyHorizon.g, rs.skyHorizon.b};
-        EnvSky().bottom  = {rs.skyBottom.r, rs.skyBottom.g, rs.skyBottom.b};
+        EffectiveSkyColors(rs, EnvSky().top, EnvSky().horizon, EnvSky().bottom);   // gradient, or the sun's palette
     }
 
     // Skip what the camera can't see.
@@ -1383,12 +1763,14 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         std::memcpy(cb.lights, frameLights, sizeof(frameLights));
         {
             const auto& rs = scene.renderSettings;
-            bool fogOn = rs.fog && rs.fogEnd > rs.fogStart;
-            cb.fog[0] = fogOn ? 1.0f : 0.0f; cb.fog[1] = rs.fogStart; cb.fog[2] = rs.fogEnd;
+            const Vec3 fc = EffectiveFogColor(rs);
+            cb.fog[0] = FogActive(rs) ? 1.0f : 0.0f; cb.fog[1] = rs.fogStart; cb.fog[2] = rs.fogEnd;
             cb.fog[3] = mr->receiveShadows ? 1.0f : 0.0f;   // receive shadows
             // fogCol.w carries the filmic (linear + ACES + gamma) pipeline flag.
-            cb.fogCol[0] = rs.fogColor.r; cb.fogCol[1] = rs.fogColor.g; cb.fogCol[2] = rs.fogColor.b;
+            cb.fogCol[0] = fc.x; cb.fogCol[1] = fc.y; cb.fogCol[2] = fc.z;
             cb.fogCol[3] = rs.tonemap ? 1.0f : 0.0f;
+            cb.fog2[0] = (float)rs.fogMode; cb.fog2[1] = rs.fogDensity; cb.fog2[2] = rs.fogHeight; cb.fog2[3] = rs.fogFalloff;
+            cb.post[0] = hdrOut ? 1.0f : 0.0f;   // leave the colour linear for the post chain
         }
         if (SUCCEEDED(c->Map(p->cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
             std::memcpy(ms.pData, &cb, sizeof(cb)); c->Unmap(p->cb, 0);
@@ -1449,17 +1831,92 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
     }
     LastCullCounters().drawn = drawnN; LastCullCounters().culled = culledN;
 
-    // RenderToTexture: resolve straight into the host's texture and stop here.
-    if (p->directDst) {
+    const bool useChain = chain && p->EnsurePostTargets();
+    PostVignetteHandled() = useChain && rsTop.vignette > 0.0f;
+    // RenderToTexture without the chain: resolve straight into the host's texture and stop here.
+    if (p->directDst && !useChain) {
         if (p->samples > 1) c->ResolveSubresource(p->directDst, 0, p->colorTex, 0, p->fmt);
         else                c->CopyResource(p->directDst, p->colorTex);
         { ID3D11ShaderResourceView* nullsrv[2] = {nullptr, nullptr}; c->PSSetShaderResources(4, 2, nullsrv); }
         return reinterpret_cast<const std::uint32_t*>(p->directDst);   // non-null = success (no pixels)
     }
-    // Resolve MSAA (or copy) -> staging -> read back. D3D textures are top-left, so
-    // no row flip is needed (unlike GL).
+    // Resolve MSAA (or copy) -> [post chain] -> staging -> read back. D3D textures
+    // are top-left, so no row flip is needed (unlike GL).
     if (p->samples > 1) c->ResolveSubresource(p->resolveTex, 0, p->colorTex, 0, p->fmt);
     else                c->CopyResource(p->resolveTex, p->colorTex);
+    ID3D11Texture2D* readTex = p->resolveTex;   // what the staging copy reads
+    if (useChain) {
+        const auto& ps = rsTop.post;
+        beginQuadPasses();
+        ID3D11ShaderResourceView* nulls[3] = {nullptr, nullptr, nullptr};
+        auto pass = [&](ID3D11PixelShader* shader, ID3D11RenderTargetView* rtv, int vw, int vh,
+                        ID3D11ShaderResourceView* src, ID3D11ShaderResourceView* src1, ID3D11ShaderResourceView* src2) {
+            c->PSSetShaderResources(0, 3, nulls);          // never bound as SRV + RT at once
+            c->OMSetRenderTargets(1, &rtv, nullptr);
+            D3D11_VIEWPORT v; std::memset(&v, 0, sizeof(v));
+            v.Width = (FLOAT)vw; v.Height = (FLOAT)vh; v.MaxDepth = 1.0f;
+            c->RSSetViewports(1, &v);
+            c->PSSetShader(shader, nullptr, 0);
+            ID3D11ShaderResourceView* in[3] = {src, src1, src2};
+            c->PSSetShaderResources(0, 3, in);
+            uploadPc();
+            c->Draw(3, 0);
+        };
+        // 1) Bloom: bright-pass to half res, blur, down to quarter, blur (the uber pass adds both).
+        const bool bloomOn = ps.bloom || BloomEnabled();
+        const float bloomThresh = ps.bloom ? ps.bloomThreshold : BloomThreshold();
+        const float bloomIntensity = ps.bloom ? ps.bloomIntensity : BloomIntensity();
+        const float bloomRadius = ps.bloom ? ps.bloomRadius : 1.0f;
+        Impl::RT& bA = p->bloom[0]; Impl::RT& bB = p->bloom[1]; Impl::RT& bC = p->bloom[2]; Impl::RT& bD = p->bloom[3];
+        if (bloomOn) {
+            pc.texel[0] = 1.0f / (float)w; pc.texel[1] = 1.0f / (float)h; pc.thresh = bloomThresh; pc.radius = 1.0f;
+            pass(p->psDown, bA.rtv, bA.w, bA.h, p->resolveSrv, nullptr, nullptr);
+            for (int it = 0; it < 2; ++it) {
+                pc.dir[0] = bloomRadius / (float)bA.w; pc.dir[1] = 0.0f;
+                pass(p->psBlur, bB.rtv, bB.w, bB.h, bA.srv, nullptr, nullptr);
+                pc.dir[0] = 0.0f; pc.dir[1] = bloomRadius / (float)bA.h;
+                pass(p->psBlur, bA.rtv, bA.w, bA.h, bB.srv, nullptr, nullptr);
+            }
+            pc.texel[0] = 1.0f / (float)bA.w; pc.texel[1] = 1.0f / (float)bA.h; pc.thresh = 0.0f; pc.radius = 1.0f;
+            pass(p->psDown, bC.rtv, bC.w, bC.h, bA.srv, nullptr, nullptr);
+            for (int it = 0; it < 2; ++it) {
+                pc.dir[0] = bloomRadius * 1.5f / (float)bC.w; pc.dir[1] = 0.0f;
+                pass(p->psBlur, bD.rtv, bD.w, bD.h, bC.srv, nullptr, nullptr);
+                pc.dir[0] = 0.0f; pc.dir[1] = bloomRadius * 1.5f / (float)bC.h;
+                pass(p->psBlur, bC.rtv, bC.w, bC.h, bD.srv, nullptr, nullptr);
+            }
+        }
+        // 2) Exposure, bloom composite, tonemap, grading, vignette -> the output
+        //    (or the ping texture when FXAA follows).
+        ID3D11RenderTargetView* directRtv = nullptr;
+        if (p->directDst) p->dev->CreateRenderTargetView(p->directDst, nullptr, &directRtv);   // may fail: copied below instead
+        ID3D11RenderTargetView* finalRtv = directRtv ? directRtv : p->out.rtv;
+        pc.p0[0] = ExposureScale(rsTop); pc.p0[1] = hdrOut ? 1.0f : 0.0f; pc.p0[2] = (float)ps.tonemap; pc.p0[3] = bloomOn ? 1.0f : 0.0f;
+        pc.p1[0] = bloomIntensity; pc.p1[1] = ps.grading ? 1.0f : 0.0f; pc.p1[2] = ps.temperature; pc.p1[3] = ps.tint;
+        pc.p2[0] = ps.saturation; pc.p2[1] = ps.contrast; pc.p2[2] = rsTop.vignette > 1.0f ? 1.0f : rsTop.vignette; pc.p2[3] = ps.vignetteSmooth;
+        pc.lift[0] = ps.lift.x; pc.lift[1] = ps.lift.y; pc.lift[2] = ps.lift.z; pc.aspect = (float)w / (float)h;
+        pc.gamma[0] = ps.gamma.x; pc.gamma[1] = ps.gamma.y; pc.gamma[2] = ps.gamma.z;
+        pc.gain[0] = ps.gain.x; pc.gain[1] = ps.gain.y; pc.gain[2] = ps.gain.z;
+        pass(p->psUber, ps.fxaa ? p->ping[0].rtv : finalRtv, w, h, p->resolveSrv, bA.srv, bC.srv);
+        // 3) FXAA last, on the display image.
+        if (ps.fxaa) {
+            pc.texel[0] = 1.0f / (float)w; pc.texel[1] = 1.0f / (float)h;
+            pass(p->psFxaa, finalRtv, w, h, p->ping[0].srv, nullptr, nullptr);
+        }
+        c->PSSetShaderResources(0, 3, nulls);
+        c->OMSetRenderTargets(0, nullptr, nullptr);
+        if (directRtv) directRtv->Release();
+        if (p->directDst) {
+            if (!directRtv) {   // couldn't target the host texture: copy the output (same format only)
+                D3D11_TEXTURE2D_DESC dd; p->directDst->GetDesc(&dd);
+                if (dd.Format != DXGI_FORMAT_R8G8B8A8_UNORM) return nullptr;
+                c->CopyResource(p->directDst, p->out.tex);
+            }
+            { ID3D11ShaderResourceView* nullsrv[2] = {nullptr, nullptr}; c->PSSetShaderResources(4, 2, nullsrv); }
+            return reinterpret_cast<const std::uint32_t*>(p->directDst);
+        }
+        readTex = p->out.tex;
+    }
     ID3D11Texture2D* readFrom = p->staging;
     if (p->stream >= 0) {
         Impl::Pipe& pp = p->pipes[p->stream];
@@ -1478,13 +1935,13 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         }
         if (pp.w == w && pp.h == h) {
             const int cur = pp.idx, prev = pp.idx ^ 1;
-            c->CopyResource(pp.st[cur], p->resolveTex);
+            c->CopyResource(pp.st[cur], readTex);
             pp.filled[cur] = true;
             readFrom = (fresh && pp.filled[prev]) ? pp.st[prev] : pp.st[cur];
             pp.idx = prev;
-        } else c->CopyResource(p->staging, p->resolveTex);   // couldn't make the ring: synchronous
+        } else c->CopyResource(p->staging, readTex);   // couldn't make the ring: synchronous
     } else {
-        c->CopyResource(p->staging, p->resolveTex);
+        c->CopyResource(p->staging, readTex);
     }
 
     p->pixels.assign((std::size_t)w * h, 0u);
@@ -1532,7 +1989,7 @@ bool D3D11Renderer::RenderToTexture(const Scene& scene, const Mat4& vp, const Ve
     backup->Save(p->ctx);
     p->stateSaved = true;
     p->directDst = static_cast<ID3D11Texture2D*>(dstTexture);
-    p->wantFmt = dd.Format;
+    p->directFmt = dd.Format;
     const bool ok = RenderToPixels(scene, vp, eye, w, h, samples, clearR, clearG, clearB, clearA, ignore) != nullptr;
     p->directDst = nullptr;
     p->wantFmt = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -1557,6 +2014,11 @@ void D3D11Renderer::Destroy() {
     p->sunAtlas.Release();
     p->localAtlas.Release();
     if (p->shCB) p->shCB->Release();
+    if (p->postCB) p->postCB->Release();
+    if (p->sampClamp) p->sampClamp->Release();
+    if (p->depthOff) p->depthOff->Release();
+    if (p->vsQuad) p->vsQuad->Release();
+    for (ID3D11PixelShader* s : {p->psSky, p->psDown, p->psBlur, p->psUber, p->psFxaa}) if (s) s->Release();
     if (p->depthPlanar) p->depthPlanar->Release();
     if (p->vbDepth)   p->vbDepth->Release();
     if (p->layoutDepth) p->layoutDepth->Release();

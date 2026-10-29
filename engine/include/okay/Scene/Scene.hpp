@@ -212,6 +212,70 @@ public:
         enum AmbientMode { AmbientFlat = 0, AmbientHemisphere = 1, AmbientSky = 2 };
         int   ambientMode = AmbientHemisphere;
         float ambientSkyTint = 0.7f;    // Sky mode: how strongly the sky colours tint (0..1.5)
+
+        // ---- Fog modes (extend the distance fog above) ----
+        // Linear uses fogStart/fogEnd. Exponential thickens with `fogDensity` per
+        // unit of distance. Height adds a layer that thins above `fogHeight` by
+        // `fogFalloff` per unit of altitude (valley mist, a low morning fog).
+        // fogMatchSky takes the fog colour from the sky's horizon, so distant
+        // geometry dissolves into the sky instead of a flat band.
+        enum FogMode { FogLinear = 0, FogExponential = 1, FogHeight = 2 };
+        int   fogMode     = FogLinear;
+        float fogDensity  = 0.02f;
+        float fogHeight   = 0.0f;
+        float fogFalloff  = 0.15f;
+        bool  fogMatchSky = false;
+
+        // ---- Sky mode ----
+        // Colour = the gradient above (painted screen-space by the editor / player).
+        // Procedural = a sun-driven sky drawn by the GPU renderers behind
+        // everything: colours follow the sun's height (the scene's directional
+        // light, so a DayNightCycle drives it), a sun disc with a halo, horizon
+        // haze, stars at night (skyStarDensity / skyStarBright) and a cloud layer.
+        enum SkyMode { SkyColour = 0, SkyProcedural = 1 };
+        int   skyMode      = SkyColour;
+        float skySunDisc   = 2.5f;    // sun disc angular radius, degrees
+        float skySunHalo   = 0.6f;    // 0..1 halo / glow around the sun
+        float skyHaze      = 0.5f;    // 0..1 horizon haze brightness
+        float cloudCover   = 0.0f;    // 0 = clear .. 1 = overcast
+        float cloudDensity = 0.6f;    // 0..1 opacity of the cloud layer
+        float cloudSpeed   = 1.0f;    // drift speed multiplier
+        float cloudScale   = 1.0f;    // noise scale (bigger = larger clouds)
+
+        // ---- Post-processing (GPU renderers; the software renderer keeps its
+        // own output). With everything off / neutral the frame is untouched. ----
+        struct PostSettings {
+            float exposure = 1.0f;                                   // scene brightness multiplier
+            enum Tonemap { TonemapNone = 0, TonemapACES = 1, TonemapFilmic = 2 };
+            int   tonemap = TonemapACES;                             // curve for the linear pipeline
+            bool  bloom = false;
+            float bloomThreshold = 1.0f, bloomIntensity = 0.6f, bloomRadius = 1.0f;
+            bool  grading = false;
+            float temperature = 0.0f, tint = 0.0f;                  // -1..1 white balance
+            float saturation = 1.0f, contrast = 1.0f;
+            Vec3  lift{0, 0, 0}, gamma{0, 0, 0}, gain{0, 0, 0};     // -1..1 per channel (0 = neutral)
+            float vignetteSmooth = 0.5f;                             // intensity is RenderSettings::vignette
+            bool  fxaa = false;
+            bool  ssao = false;
+            float ssaoRadius = 0.5f, ssaoIntensity = 0.8f;
+            bool  dof = false;
+            float dofFocus = 10.0f, dofRange = 8.0f;
+        };
+        PostSettings post;
+
+        // ---- Weather ----
+        // Presets spawn rain / snow particle systems that follow the active camera;
+        // storm adds gusts and lightning. `wind` is the global wind vector that
+        // particle systems and Water read. Changes fade over `weatherFade` seconds.
+        struct WeatherSettings {
+            enum Preset { None = 0, Rain = 1, Snow = 2, Storm = 3 };
+            int   preset = None;
+            float intensity = 0.5f;      // 0..1
+            float fade = 2.0f;           // seconds to blend between presets
+            Vec3  wind{0, 0, 0};         // world units / second
+            std::string thunderSound;    // optional clip played on a lightning strike
+        };
+        WeatherSettings weather;
     };
     RenderSettings renderSettings;
 

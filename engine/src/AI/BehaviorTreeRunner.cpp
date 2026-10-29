@@ -8,6 +8,7 @@
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/DialogueRunner.hpp"
 #include "okay/Components/MeleeAttacker.hpp"
 #include "okay/Components/NPCController.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
@@ -261,6 +262,9 @@ void BehaviorTreeRunner::Abort(int idx) {
             break;
         case BtNodeType::PlayAnimation:
             if (n.Flag("wait")) StopClipFrom(gameObject);
+            break;
+        case BtNodeType::StartDialogue:   // end the conversation this task started
+            if (r.flag) if (auto* dr = gameObject->GetComponent<DialogueRunner>(); dr && dr->IsActive()) dr->Stop();
             break;
         default: break;
     }
@@ -860,6 +864,21 @@ BtStatus BehaviorTreeRunner::TickTask(int idx, float dt, bool first) {
             }
             if (!n.Flag("wait")) return BtStatus::Success;
             return (au->IsPlaying() && au->RemainingSeconds() > 0.0f && m_time < r.stamp) ? BtStatus::Running : BtStatus::Success;
+        }
+        case BtNodeType::StartDialogue: {
+            DialogueRunner* dr = gameObject->GetComponent<DialogueRunner>();
+            if (!dr) return BtStatus::Failure;
+            if (first && !dr->IsActive()) {   // one the player already started is only waited on
+                if (const std::string g = n.Str("graph"); !g.empty() && g != dr->graphFile) {
+                    dr->graphFile = g;
+                    std::string err;
+                    if (!dr->LoadGraph(&err)) { Log::Warning("[bt] Start Dialogue: ", err); return BtStatus::Failure; }
+                }
+                if (!dr->StartDialogue()) return BtStatus::Failure;
+                r.flag = true;
+            }
+            if (!n.Flag("wait")) return BtStatus::Success;
+            return dr->IsActive() ? BtStatus::Running : BtStatus::Success;
         }
         case BtNodeType::Custom:
             return CallCustom(n, r, first ? "enter" : "tick");

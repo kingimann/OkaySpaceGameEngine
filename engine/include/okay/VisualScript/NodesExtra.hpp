@@ -23,6 +23,7 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/AnimControl.hpp"
+#include "okay/Render/Atmosphere.hpp"   // weather / fog / post-processing nodes
 #include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Components/Seat.hpp"
 #include "okay/Components/BlendShapes.hpp"
@@ -353,6 +354,44 @@ struct StopSequenceNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph&, VsContext& ctx) override {
         if (ctx.gameObject && ctx.gameObject->scene()) SequencePlayer::StopAll(*ctx.gameObject->scene());
+        return 0;
+    }
+};
+// ---- The scene's look: weather, fog and post-processing (Atmosphere.hpp) ----
+struct SetWeatherNode : VsNode {   // arg = none / rain / snow / storm; in0 = intensity (unwired: keep)
+    std::string preset;
+    explicit SetWeatherNode(std::string p) : preset(std::move(p)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (Scene* s = ctx.gameObject ? ctx.gameObject->scene() : nullptr) {
+            auto& w = s->renderSettings.weather;
+            w.preset = WeatherPresetFromName(preset);
+            const float in = In(0, g, ctx, VsValue{-1.0f}).AsFloat();
+            if (in >= 0.0f) w.intensity = Mathf::Clamp01(in);
+        }
+        return 0;
+    }
+};
+struct SetFogNode : VsNode {   // in0 = on, in1 = start, in2 = end (unwired: keep the scene's)
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (Scene* s = ctx.gameObject ? ctx.gameObject->scene() : nullptr) {
+            auto& rs = s->renderSettings;
+            rs.fog = In(0, g, ctx, VsValue{true}).AsBool();
+            const float start = In(1, g, ctx, VsValue{-1.0f}).AsFloat(), end = In(2, g, ctx, VsValue{-1.0f}).AsFloat();
+            if (start >= 0.0f) rs.fogStart = start;
+            if (end >= 0.0f) rs.fogEnd = end;
+        }
+        return 0;
+    }
+};
+struct SetPostEffectNode : VsNode {   // arg = the setting's name (PostSet); in0 = value
+    std::string name;
+    explicit SetPostEffectNode(std::string n) : name(std::move(n)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (Scene* s = ctx.gameObject ? ctx.gameObject->scene() : nullptr)
+            PostSet(s->renderSettings, name, In(0, g, ctx, VsValue{1.0f}).AsFloat());
         return 0;
     }
 };

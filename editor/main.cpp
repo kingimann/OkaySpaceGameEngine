@@ -10059,6 +10059,160 @@ void DrawStats(EditorState& ed) {
     ImGui::End();
 }
 
+// Apply a look preset (Atmosphere.hpp) to the scene, aiming the first directional
+// light where the preset wants the sun (Sunset low, Night below the horizon, ...).
+static void ApplyLookPresetToScene(EditorState& ed, const std::string& name) {
+    ed.PushUndo();
+    float sunDeg = -1000.0f;
+    if (!okay::ApplyLookPreset(ed.scene().renderSettings, name, &sunDeg)) return;
+    if (sunDeg > -999.0f) {
+        for (const auto& up : ed.scene().Objects()) {
+            auto* l = up->GetComponent<Light>();
+            if (!l || !up->active || l->type != Light::Type::Directional) continue;
+            const Vec3 f = up->transform->Forward();
+            const float yaw = Mathf::Atan2(f.x, f.z) * Mathf::Rad2Deg;   // keep the sun's compass heading
+            up->transform->localRotation = Quat::Euler({sunDeg, yaw, 0.0f});
+            break;
+        }
+    }
+    ed.dirty = true;
+}
+
+// The scene's look, saved with it: sky mode, fog, post-processing and weather.
+// Every edit previews live in the Scene and Game views.
+static void DrawLookSections(EditorState& ed) {
+    auto& rs = ed.scene().renderSettings;
+    auto& post = rs.post;
+    auto tip = [](const char* t) { if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", t); };
+
+    if (ImGui::CollapsingHeader("Post-processing", ImGuiTreeNodeFlags_DefaultOpen)) {
+        // Look presets fill sky / fog / post / weather in one go; Reset puts them back.
+        int presetCount = 0;
+        const char* const* presets = okay::LookPresetNames(presetCount);
+        if (ImGui::BeginCombo("Look Preset", "Choose...")) {
+            for (int i = 0; i < presetCount; ++i)
+                if (ImGui::Selectable(presets[i])) ApplyLookPresetToScene(ed, presets[i]);
+            ImGui::EndCombo();
+        }
+        tip("Ready-made looks: fills the post-processing, sky, fog and weather settings\n(Sunset / Night / Foggy morning / Storm also aim the sun light).");
+        ImGui::SameLine();
+        if (ImGui::Button("Reset##look")) { ed.PushUndo(); okay::ResetLook(rs); ed.dirty = true; }
+        tip("Post-processing off, Colour sky, no fog, no weather. The sky gradient colours are kept.");
+        ImGui::TextDisabled(okay::PostActive(rs) ? "GPU post chain: on" : "GPU post chain: off (the frame is untouched)");
+
+        if (ImGui::Checkbox("Filmic Rendering (linear lighting + tonemap)", &rs.tonemap)) ed.dirty = true;
+        tip("Gamma-correct pipeline: lighting in linear space, a tonemap roll-off and sRGB output.\nOn by default; off gives the legacy flat response (and no tonemap curve).");
+        if (ImGui::SliderFloat("Exposure", &post.exposure, 0.1f, 4.0f, "%.2f")) ed.dirty = true;
+        {
+            const char* curves[] = {"None", "ACES", "Filmic"};
+            if (ImGui::Combo("Tonemap", &post.tonemap, curves, 3)) ed.dirty = true;
+            tip("How highlights above white roll off (needs Filmic Rendering).\nACES = punchy, Filmic = a softer shoulder, None = clip.");
+        }
+        if (ImGui::Checkbox("Bloom", &post.bloom)) ed.dirty = true;
+        if (post.bloom) {
+            if (ImGui::SliderFloat("Threshold##bloom", &post.bloomThreshold, 0.0f, 3.0f, "%.2f")) ed.dirty = true;
+            tip("Brightness a pixel must exceed to glow (with Filmic Rendering, 1 = white).");
+            if (ImGui::SliderFloat("Intensity##bloom", &post.bloomIntensity, 0.0f, 3.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::SliderFloat("Radius##bloom", &post.bloomRadius, 0.25f, 3.0f, "%.2f")) ed.dirty = true;
+        }
+        if (ImGui::Checkbox("Colour Grading", &post.grading)) ed.dirty = true;
+        if (post.grading) {
+            if (ImGui::SliderFloat("Temperature", &post.temperature, -1.0f, 1.0f, "%.2f")) ed.dirty = true;
+            tip("Cool (blue) to warm (orange).");
+            if (ImGui::SliderFloat("Tint", &post.tint, -1.0f, 1.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::SliderFloat("Saturation", &post.saturation, 0.0f, 2.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::SliderFloat("Contrast", &post.contrast, 0.5f, 2.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::SliderFloat3("Lift", &post.lift.x, -0.5f, 0.5f, "%.2f")) ed.dirty = true;
+            tip("Raises or lowers the blacks, per channel.");
+            if (ImGui::SliderFloat3("Gamma", &post.gamma.x, -1.0f, 1.0f, "%.2f")) ed.dirty = true;
+            tip("Brightens or darkens the mid-tones, per channel.");
+            if (ImGui::SliderFloat3("Gain", &post.gain.x, -0.5f, 0.5f, "%.2f")) ed.dirty = true;
+            tip("Scales the whites, per channel.");
+        }
+        if (ImGui::SliderFloat("Vignette", &rs.vignette, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+        tip("Darken the frame's edges and corners. 0 = off. Drawn by the post chain when it runs,\notherwise as an overlay that looks the same on every renderer.");
+        if (rs.vignette > 0.0f)
+            if (ImGui::SliderFloat("Vignette Smoothness", &post.vignetteSmooth, 0.05f, 1.0f, "%.2f")) ed.dirty = true;
+        if (ImGui::Checkbox("Anti-aliasing (FXAA)", &post.fxaa)) ed.dirty = true;
+        if (ImGui::Checkbox("Ambient Occlusion (SSAO)", &post.ssao)) ed.dirty = true;
+        if (post.ssao) {
+            if (ImGui::SliderFloat("Radius##ssao", &post.ssaoRadius, 0.05f, 3.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::SliderFloat("Intensity##ssao", &post.ssaoIntensity, 0.0f, 2.0f, "%.2f")) ed.dirty = true;
+        }
+        if (ImGui::Checkbox("Depth of Field", &post.dof)) ed.dirty = true;
+        if (post.dof) {
+            if (ImGui::DragFloat("Focus Distance", &post.dofFocus, 0.1f, 0.1f, 500.0f, "%.1f")) ed.dirty = true;
+            if (ImGui::DragFloat("Focus Range", &post.dofRange, 0.1f, 0.1f, 500.0f, "%.1f")) ed.dirty = true;
+            tip("How far either side of the focus distance stays sharp.");
+        }
+        ImGui::TextDisabled("Applied by the GPU renderers; the software renderer keeps its own output.");
+    }
+
+    if (ImGui::CollapsingHeader("Sky", ImGuiTreeNodeFlags_DefaultOpen)) {
+        const char* modes[] = {"Colour (gradient)", "Procedural (sun-driven)"};
+        if (ImGui::Combo("Sky Mode", &rs.skyMode, modes, 2)) ed.dirty = true;
+        tip("Colour = the gradient in Environment above.\nProcedural = a sky drawn behind everything from the sun's height (the scene's\ndirectional light; a Day/Night Cycle moves it): day blue, dusk orange, night with stars.");
+        if (rs.skyMode == Scene::RenderSettings::SkyProcedural) {
+            const okay::SkyPalette pal = okay::SkyPaletteFor(okay::SunDirection().y);
+            ImGui::TextDisabled("Sun height %.2f  (%s)", okay::SunDirection().y,
+                                pal.night > 0.5f ? "night" : okay::SunDirection().y < 0.25f ? "dusk / dawn" : "day");
+            if (ImGui::SliderFloat("Sun Disc", &rs.skySunDisc, 0.5f, 10.0f, "%.1f deg")) ed.dirty = true;
+            if (ImGui::SliderFloat("Sun Halo", &rs.skySunHalo, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::SliderFloat("Horizon Haze", &rs.skyHaze, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::SliderFloat("Cloud Cover", &rs.cloudCover, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+            if (rs.cloudCover > 0.0f) {
+                if (ImGui::SliderFloat("Cloud Density", &rs.cloudDensity, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+                if (ImGui::SliderFloat("Cloud Speed", &rs.cloudSpeed, 0.0f, 5.0f, "%.2f")) ed.dirty = true;
+                if (ImGui::SliderFloat("Cloud Scale", &rs.cloudScale, 0.25f, 4.0f, "%.2f")) ed.dirty = true;
+            }
+            if (ImGui::SliderFloat("Star Density##proc", &rs.skyStarDensity, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::SliderFloat("Star Brightness##proc", &rs.skyStarBright, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+            tip("Stars show once the sun has set.");
+            ImGui::TextDisabled("Drawn by the GPU renderers; the software renderer shows the sun's colours as a gradient.");
+        }
+    }
+
+    if (ImGui::CollapsingHeader("Fog", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::Checkbox("Enable Fog", &rs.fog)) ed.dirty = true;
+        if (rs.fog) {
+            const char* modes[] = {"Linear", "Exponential", "Height"};
+            if (ImGui::Combo("Fog Mode", &rs.fogMode, modes, 3)) ed.dirty = true;
+            tip("Linear fades between Start and End. Exponential thickens with distance by Density.\nHeight is a layer that thins above Height by Falloff (valley mist).");
+            if (ImGui::Checkbox("Match Sky Colour", &rs.fogMatchSky)) ed.dirty = true;
+            tip("Use the sky's horizon colour, so distant geometry dissolves into the sky.");
+            if (!rs.fogMatchSky) {
+                float fc[3] = {rs.fogColor.r, rs.fogColor.g, rs.fogColor.b};
+                if (ImGui::ColorEdit3("Fog Color", fc)) { rs.fogColor = {fc[0], fc[1], fc[2], 1}; ed.dirty = true; }
+            }
+            if (rs.fogMode == Scene::RenderSettings::FogLinear) {
+                if (ImGui::DragFloat("Fog Start", &rs.fogStart, 0.5f, 0.0f, 4000.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Fog End", &rs.fogEnd, 0.5f, 0.0f, 8000.0f)) ed.dirty = true;
+            } else {
+                if (ImGui::SliderFloat("Density", &rs.fogDensity, 0.0f, 0.2f, "%.3f")) ed.dirty = true;
+            }
+            if (rs.fogMode == Scene::RenderSettings::FogHeight) {
+                if (ImGui::DragFloat("Height", &rs.fogHeight, 0.1f, -1000.0f, 1000.0f, "%.1f")) ed.dirty = true;
+                tip("World height the fog layer sits at; above it the fog thins out.");
+                if (ImGui::SliderFloat("Falloff", &rs.fogFalloff, 0.01f, 2.0f, "%.2f")) ed.dirty = true;
+            }
+        }
+    }
+
+    if (ImGui::CollapsingHeader("Weather", ImGuiTreeNodeFlags_DefaultOpen)) {
+        auto& w = rs.weather;
+        const char* presets[] = {"None", "Rain", "Snow", "Storm"};
+        if (ImGui::Combo("Weather Preset", &w.preset, presets, 4)) ed.dirty = true;
+        tip("Particles that follow the active camera. Storm adds gusts and lightning.\nChanges cross-fade over the Fade time (scripts: weather_set / Weather.Set).");
+        if (ImGui::SliderFloat("Intensity##weather", &w.intensity, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+        if (ImGui::SliderFloat("Fade (s)", &w.fade, 0.0f, 10.0f, "%.1f")) ed.dirty = true;
+        if (ImGui::DragFloat3("Wind", &w.wind.x, 0.1f, -50.0f, 50.0f, "%.1f")) ed.dirty = true;
+        tip("World units per second. Particle systems drift with it and Water's waves follow it.");
+        ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("Thunder Sound"); ImGui::SameLine();
+        if (AssetSlot("thundersound", w.thunderSound, "Clip", {".wav", ".ogg", ".mp3"})) ed.dirty = true;
+        tip("Played a moment after each lightning strike in a storm (drag a clip from the Project panel).");
+    }
+}
+
 // Lighting: the scene's look (UI font, sky, fog, lightmaps) plus the global
 // render pipeline switches and Scene-view debug overlays. Split out of Stats so
 // Stats stays a clean read-out.
@@ -10174,21 +10328,7 @@ void DrawSceneSettings(EditorState& ed) {
             if (rs.ambientMode == Scene::RenderSettings::AmbientSky)
                 if (ImGui::SliderFloat("Sky Tint", &rs.ambientSkyTint, 0.0f, 1.5f, "%.2f")) ed.dirty = true;
         }
-        ImGui::Spacing();
-        if (ImGui::Checkbox("Distance Fog", &rs.fog)) ed.dirty = true;
-        if (rs.fog) {
-            float fc[3] = {rs.fogColor.r, rs.fogColor.g, rs.fogColor.b};
-            if (ImGui::ColorEdit3("Fog Color", fc)) { rs.fogColor = {fc[0], fc[1], fc[2], 1}; ed.dirty = true; }
-            if (ImGui::DragFloat("Fog Start", &rs.fogStart, 0.5f, 0.0f, 4000.0f)) ed.dirty = true;
-            if (ImGui::DragFloat("Fog End", &rs.fogEnd, 0.5f, 0.0f, 8000.0f)) ed.dirty = true;
-        }
-        ImGui::Spacing();
-        // Screen-space vignette: a post overlay darkening the frame edges. Saved with
-        // the scene; the shipped player draws the same effect. 0 = off.
-        if (ImGui::SliderFloat("Vignette", &rs.vignette, 0.0f, 1.0f)) ed.dirty = true;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Darken the frame's edges/corners (focus/mood).\nA post overlay — identical on every renderer backend. 0 = off.");
-        if (ImGui::Checkbox("Filmic Rendering (linear + ACES)", &rs.tonemap)) ed.dirty = true;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gamma-correct pipeline: lighting computed in linear space with an ACES filmic\nroll-off and proper sRGB output — richer shading, natural highlights.\nOn by default; turn off for the legacy flat response.");
+        ImGui::TextDisabled("Fog, the procedural sky, post-processing and weather have their own sections below.");
 
         ImGui::Spacing();
         ImGui::SeparatorText("Lightmap Baking");
@@ -10239,9 +10379,12 @@ void DrawSceneSettings(EditorState& ed) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove baked face colors and return meshes to real-time lighting.");
     }
 
+    DrawLookSections(ed);
+
     // Global renderer pipeline switches (process-wide, not per-scene). These let
     // you toggle/tune the 3D post-processing & lighting features live.
     if (ImGui::CollapsingHeader("Rendering (Lighting & Post FX)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::TextDisabled("Process-wide editor switches. The scene's own look (saved with it) is in the sections above.");
         ImGui::TextDisabled("Performance");
         if (ImGui::SliderFloat("Render scale", &g_renderScale, 0.25f, 1.0f, "%.2fx")) SaveSettings();
         if (ImGui::IsItemHovered())
@@ -38434,16 +38577,22 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         if (Camera* gmc = SceneCamera(ed.scene()))
             solidClear = gmc->clearFlags == Camera::ClearFlags::SolidColor;
     }
+    okay::SkyPassEnabled() = rs.skybox && !solidClear && (gameView || g_sceneSkybox);   // the GPU's procedural sky
+    // The gradient colours: the authored ones, or the sun's palette in Procedural
+    // mode (what the software renderer and GPU-less views show behind the scene).
+    Vec3 skyTopC, skyHorC, skyBotC;
+    okay::EffectiveSkyColors(rs, skyTopC, skyHorC, skyBotC);
+    const Color skyHorizonCol{skyHorC.x, skyHorC.y, skyHorC.z, 1.0f};
     if (rs.skybox && !solidClear && (gameView || g_sceneSkybox)) {
-        ImU32 top = ToColor(rs.skyTop);
-        ImU32 mid = ToColor(rs.skyHorizon);
-        ImU32 bot = ToColor(rs.skyBottom);
+        ImU32 top = ToColor(Color{skyTopC.x, skyTopC.y, skyTopC.z, 1.0f});
+        ImU32 mid = ToColor(skyHorizonCol);
+        ImU32 bot = ToColor(Color{skyBotC.x, skyBotC.y, skyBotC.z, 1.0f});
         float hp = rs.skyHorizonPos < 0.05f ? 0.05f : (rs.skyHorizonPos > 0.95f ? 0.95f : rs.skyHorizonPos);
         float midY = canvasPos.y + (canvasEnd.y - canvasPos.y) * hp;   // horizon band position
         ImVec2 cmid(canvasEnd.x, midY);
         dl->AddRectFilledMultiColor(canvasPos, cmid, top, top, mid, mid);
         dl->AddRectFilledMultiColor(ImVec2(canvasPos.x, cmid.y), canvasEnd, mid, mid, bot, bot);
-        if (rs.skyStars) {
+        if (rs.skyStars && rs.skyMode != Scene::RenderSettings::SkyProcedural) {
             float H = canvasEnd.y - canvasPos.y, W = canvasEnd.x - canvasPos.x;
             for (const auto& st : okay::SkyStars(W, H, midY - canvasPos.y, rs.skyStarDensity, rs.skyStarBright))
                 dl->AddCircleFilled(ImVec2(canvasPos.x + st.x, canvasPos.y + st.y),
@@ -38454,9 +38603,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         {
             float H = canvasEnd.y - canvasPos.y;
             ImU32 haze = ToColor(Color{
-                std::fmin(rs.skyHorizon.r * 1.15f + 0.12f, 1.0f),
-                std::fmin(rs.skyHorizon.g * 1.15f + 0.12f, 1.0f),
-                std::fmin(rs.skyHorizon.b * 1.10f + 0.10f, 1.0f), 1.0f});
+                std::fmin(skyHorizonCol.r * 1.15f + 0.12f, 1.0f),
+                std::fmin(skyHorizonCol.g * 1.15f + 0.12f, 1.0f),
+                std::fmin(skyHorizonCol.b * 1.10f + 0.10f, 1.0f), 1.0f});
             ImU32 haze0 = (haze & 0x00FFFFFF);              // same color, alpha 0
             float band = H * 0.10f;
             ImVec2 a0(canvasPos.x, midY - band), a1(canvasEnd.x, midY);
@@ -38464,7 +38613,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             dl->AddRectFilledMultiColor(a0, a1, haze0, haze0, haze, haze);   // fade up into haze
             dl->AddRectFilledMultiColor(b0, b1, haze, haze, haze0, haze0);   // fade down out of haze
         }
-        if (rs.skySun) {
+        if (rs.skySun && rs.skyMode != Scene::RenderSettings::SkyProcedural) {
             float H = canvasEnd.y - canvasPos.y, W = canvasEnd.x - canvasPos.x;
             ImVec2 sc(canvasPos.x + rs.skySunX * W, canvasPos.y + rs.skySunY * H);
             float r = (rs.skySunSize < 0.005f ? 0.005f : rs.skySunSize) * H;
@@ -42283,7 +42432,7 @@ void DrawGameView(EditorState& ed) {
 
     // Screen-space vignette preview (RenderSettings.vignette) — mirrors what the
     // shipped player draws, using four edge gradient bands that fade inward.
-    if (ed.scene().renderSettings.vignette > 0.0f) {
+    if (ed.scene().renderSettings.vignette > 0.0f && !okay::PostVignetteHandled()) {   // the GPU post chain may have drawn it
         float s = ed.scene().renderSettings.vignette; if (s > 1.0f) s = 1.0f;
         ImU32 edge = IM_COL32(0, 0, 0, (int)(s * 160.0f)), clr = IM_COL32(0, 0, 0, 0);
         float bw = canvasSize.x * 0.30f, bh = canvasSize.y * 0.30f;
@@ -43303,6 +43452,8 @@ int main(int argc, char** argv) {
         // normal scene tick drives them, so only do this while stopped.
         if (!ed.isPlaying()) {
             float pdt = dt > 0.05f ? 0.05f : dt;   // clamp so a hitch doesn't burst-spawn
+            // Weather preview: the rig follows the Scene camera (Play uses the game camera).
+            okay::UpdateWeather(ed.scene(), pdt, g_lastSceneW > 0 ? &g_lastSceneEye : nullptr);
             std::vector<okay::Character*> chars;
             std::vector<okay::PauseMenu*> pauseMenus;
             for (const auto& up : ed.scene().Objects())
@@ -43840,6 +43991,32 @@ int main(int argc, char** argv) {
             if (const char* tl = std::getenv("OKAY_UI_TIMELINE"); tl && s_focusFrames == 31) {
                 if (std::strcmp(tl, "1") != 0) OpenTimelineFile(tl);
                 g_showTimeline = true;
+            }
+            // OKAY_UI_LIGHTING=1: the Lighting panel in front; OKAY_UI_PRESET=<look>:
+            // apply that look preset once the scene is up (screenshots of the look sections).
+            if (std::getenv("OKAY_UI_LIGHTING")) {
+                g_showSceneSettings = true;
+                if (s_focusFrames > 30 && s_focusFrames < 90) ImGui::SetWindowFocus("Lighting");
+            }
+            if (const char* lp = std::getenv("OKAY_UI_PRESET"); lp && s_focusFrames == 33) ApplyLookPresetToScene(ed, lp);
+            // OKAY_UI_POST="bloom=1;exposure=1.2" (PostSet names), OKAY_UI_SKY=<cloud cover>
+            // (the Procedural sky), OKAY_UI_WEATHER=rain|snow|storm: one look for a screenshot.
+            if (const char* pp = std::getenv("OKAY_UI_POST"); pp && s_focusFrames == 34) {
+                std::string all = pp, cur;
+                for (char ch : all + ";") {
+                    if (ch != ';') { cur += ch; continue; }
+                    const std::size_t eq = cur.find('=');
+                    if (eq != std::string::npos) okay::PostSet(ed.scene().renderSettings, cur.substr(0, eq), (float)std::atof(cur.c_str() + eq + 1));
+                    cur.clear();
+                }
+            }
+            if (const char* sk = std::getenv("OKAY_UI_SKY"); sk && s_focusFrames == 34) {
+                ed.scene().renderSettings.skyMode = Scene::RenderSettings::SkyProcedural;
+                ed.scene().renderSettings.cloudCover = (float)std::atof(sk);
+            }
+            if (const char* wp = std::getenv("OKAY_UI_WEATHER"); wp && s_focusFrames == 34) {
+                ed.scene().renderSettings.weather.preset = okay::WeatherPresetFromName(wp);
+                ed.scene().renderSettings.weather.intensity = 1.0f;
             }
             NavigationDevHooks(ed);   // OKAY_UI_NAV / NAVBAKE / NAVAGENT / NAVSEND / NAVDEST
             if (std::getenv("OKAY_UI_DIALOGUE")) g_showDialogue = true;   // dev screenshots of the Dialogue window

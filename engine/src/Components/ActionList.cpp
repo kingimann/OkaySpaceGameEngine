@@ -661,6 +661,9 @@ bool ActionList::EvalConditions(const std::vector<Item>& conds) {
         else if (op == "has_tag")  ok = gameObject && gameObject->tag == Str(c, 0);
         else if (op == "is_in_action") ok = HumanoidActions::IsInAction(gameObject);
         else if (op == "is_dead") ok = HumanoidActions::IsDead(gameObject);
+        else if (op == "can_dive") ok = HumanoidActions::CanDive(gameObject);
+        else if (op == "is_sitting") ok = HumanoidActions::IsSitting(gameObject);
+        else if (op == "is_hanging") ok = HumanoidActions::IsHanging(gameObject);
         else if (op == "is_active")ok = gameObject && gameObject->active;
         else if (op == "has_item") {      // item [count] [object]: the inventory holds at least count
             Inventory* inv = ItemInv(c, gameObject, GetScene());
@@ -1280,6 +1283,49 @@ void ActionList::Update(float dt) {
             HumanoidActions::RequestDeath(gameObject, dir, hit);
         }
         else if (op == "revive") HumanoidActions::RequestRevive(gameObject);
+        else if (op == "dive") HumanoidActions::RequestDive(gameObject);
+        else if (op == "sit") {
+            GameObject* seat = nullptr;
+            int type = 1;
+            if (!it.args.empty()) {
+                const std::string s = Str(it, 0);
+                const bool num = !s.empty() && (std::isdigit((unsigned char)s[0]) || s[0] == '-' || s[0] == '.');
+                if (num) type = (int)Num(it, 0);
+                else if (gameObject && gameObject->scene()) {
+                    seat = gameObject->scene()->Find(s);
+                    if (!seat) {
+                        std::string k = s;
+                        for (char& c : k) c = (char)std::tolower((unsigned char)c);
+                        if (k == "chair" || k == "bench") type = 0;
+                        else if (k == "knees") type = 2;
+                    }
+                }
+            }
+            HumanoidActions::RequestSit(gameObject, seat, type);
+        }
+        else if (op == "stand_up") HumanoidActions::RequestStandUp(gameObject);
+        else if (op == "interact") HumanoidActions::Interact(gameObject);
+        else if (op == "hit_react") {
+            int dir = 0; bool heavy = false;
+            if (it.args.size() >= 3) {
+                dir = HumanoidActions::HitDirFromWorld(gameObject, Vec3{Num(it, 0), Num(it, 1), Num(it, 2)});
+                if (it.args.size() >= 4) heavy = Num(it, 3) != 0.0f;
+            } else if (!it.args.empty()) {
+                dir = HumanoidActions::DirFromName(Str(it, 0));
+                if (it.args.size() >= 2) heavy = Num(it, 1) != 0.0f;
+            }
+            HumanoidActions::HitReact(gameObject, dir, heavy);
+        }
+        else if (op == "roll")
+            HumanoidActions::RequestRoll(gameObject, it.args.empty() ? 0 : HumanoidActions::DirFromName(Str(it, 0)));
+        else if (op == "dodge")
+            HumanoidActions::RequestDodge(gameObject, it.args.empty() ? 0 : HumanoidActions::DirFromName(Str(it, 0)));
+        else if (op == "vault") HumanoidActions::RequestVault(gameObject);
+        else if (op == "mantle") HumanoidActions::RequestMantle(gameObject);
+        else if (op == "ledge_grab") HumanoidActions::RequestLedgeGrab(gameObject);
+        else if (op == "climb_up") HumanoidActions::RequestClimbUp(gameObject);
+        else if (op == "let_go") HumanoidActions::RequestLetGo(gameObject);
+        else if (op == "shimmy") HumanoidActions::SetShimmy(gameObject, Num(it, 0));
         else if (op == "set_cam") {
             if (scene && scene->mainCamera) {
                 Transform* ct = scene->mainCamera->gameObject->transform;

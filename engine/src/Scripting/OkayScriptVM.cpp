@@ -5570,6 +5570,103 @@ struct OkayScriptVM::Impl {
         b["is_dead"] = [selfObj](std::vector<Value>&) {
             return Value{HumanoidActions::IsDead(selfObj()) ? 1.0f : 0.0f};
         };
+        b["dive"] = [selfObj](std::vector<Value>&) {
+            HumanoidActions::RequestDive(selfObj());
+            return Value{};
+        };
+        b["can_dive"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::CanDive(selfObj()) ? 1.0f : 0.0f};
+        };
+        // sit() ground, sit("Chair") a Seat by name, sit("knees") / sit(2) a kneel.
+        // sit(0) is a chair pose with no Seat (the body stays where it is).
+        b["sit"] = [selfObj](std::vector<Value>& a) {
+            GameObject* go = selfObj();
+            if (!go) return Value{0.0f};
+            GameObject* seat = nullptr;
+            int type = 1;
+            if (!a.empty()) {
+                if (a[0].IsNumber()) type = (int)a[0].AsFloat();
+                else if (go->scene()) {
+                    const std::string name = a[0].AsString();
+                    seat = go->scene()->Find(name);
+                    if (!seat) {
+                        std::string k = name;
+                        for (char& c : k) c = (char)std::tolower((unsigned char)c);
+                        if (k == "chair" || k == "bench") type = 0;
+                        else if (k == "knees") type = 2;
+                    }
+                }
+            }
+            return Value{HumanoidActions::RequestSit(go, seat, type) ? 1.0f : 0.0f};
+        };
+        b["stand_up"] = [selfObj](std::vector<Value>&) {
+            HumanoidActions::RequestStandUp(selfObj());
+            return Value{};
+        };
+        b["is_sitting"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::IsSitting(selfObj()) ? 1.0f : 0.0f};
+        };
+        b["interact"] = [selfObj](std::vector<Value>&) {
+            HumanoidActions::Interact(selfObj());
+            return Value{};
+        };
+        b["seat_prompt"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::SeatPrompt(selfObj())};
+        };
+        // hit_react("back") light, hit_react("left", 1) heavy, or hit_react(x, y, z [, heavy]).
+        b["hit_react"] = [selfObj](std::vector<Value>& a) {
+            GameObject* go = selfObj();
+            int dir = 0;
+            bool heavy = false;
+            if (a.size() >= 3 && a[0].IsNumber()) {
+                dir = HumanoidActions::HitDirFromWorld(go, Vec3{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()});
+                if (a.size() >= 4) heavy = a[3].AsFloat() != 0.0f;
+            } else if (!a.empty() && a[0].IsVec3()) {
+                dir = HumanoidActions::HitDirFromWorld(go, a[0].AsVec3());
+                if (a.size() >= 2) heavy = a[1].AsFloat() != 0.0f;
+            } else {
+                if (!a.empty() && a[0].IsString()) dir = HumanoidActions::DirFromName(a[0].AsString());
+                else if (!a.empty() && a[0].IsNumber()) dir = (int)a[0].AsFloat();
+                if (a.size() >= 2) heavy = a[1].AsFloat() != 0.0f;
+            }
+            return Value{HumanoidActions::HitReact(go, dir, heavy) ? 1.0f : 0.0f};
+        };
+        auto dirArg = [](const Value& v) {
+            if (v.IsString()) return HumanoidActions::DirFromName(v.AsString());
+            return (int)v.AsFloat();
+        };
+        b["roll"] = [selfObj, dirArg](std::vector<Value>& a) {
+            const int dir = a.empty() ? 0 : dirArg(a[0]);
+            return Value{HumanoidActions::RequestRoll(selfObj(), dir) ? 1.0f : 0.0f};
+        };
+        b["dodge"] = [selfObj, dirArg](std::vector<Value>& a) {
+            const int dir = a.empty() ? 0 : dirArg(a[0]);
+            return Value{HumanoidActions::RequestDodge(selfObj(), dir) ? 1.0f : 0.0f};
+        };
+        // Vault / mantle / ledge. These probe even when the controller flags are off.
+        b["vault"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::RequestVault(selfObj()) ? 1.0f : 0.0f};
+        };
+        b["mantle"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::RequestMantle(selfObj()) ? 1.0f : 0.0f};
+        };
+        b["ledge_grab"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::RequestLedgeGrab(selfObj()) ? 1.0f : 0.0f};
+        };
+        b["climb_up"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::RequestClimbUp(selfObj()) ? 1.0f : 0.0f};
+        };
+        b["let_go"] = [selfObj](std::vector<Value>&) {
+            HumanoidActions::RequestLetGo(selfObj());
+            return Value{};
+        };
+        b["is_hanging"] = [selfObj](std::vector<Value>&) {
+            return Value{HumanoidActions::IsHanging(selfObj()) ? 1.0f : 0.0f};
+        };
+        b["shimmy"] = [selfObj](std::vector<Value>& a) {
+            HumanoidActions::SetShimmy(selfObj(), a.empty() ? 0.0f : a[0].AsFloat());
+            return Value{};
+        };
         // ---- Blend shapes (morph targets) on this object and everything under it ----
         //   blend_shape("Smile", 0.8)   set a shape's weight 0..1 on every mesh that has it
         //   blend_shape_get("Smile")    read it back (0 if no mesh has it)

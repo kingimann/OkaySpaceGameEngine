@@ -26,6 +26,11 @@ struct StanceControl {
     bool  resizeBody = true;            ///< crouch / prone shrink the collider (fit under low things)
     float crouchSpeed = 2.2f, proneSpeed = 1.1f;
     float crouchHeight = 0.65f, proneHeight = 0.33f;   ///< fractions of the standing body
+    /// Sprint, then prone: a dolphin dive. Default on. Controllers that don't
+    /// call TickDive ignore it. Saved with the stance record.
+    bool  diveOnProne = true;
+    float diveHop = 0.25f;
+    float diveSlideTime = 0.45f;
 
     /// Ask for a stance (0 stand, 1 crouch, 2 prone): a script, an NPC, a cutscene.
     /// It's kept until changed, so a blocked stand-up happens once there's room.
@@ -55,6 +60,14 @@ struct StanceControl {
         if (!allowProne && m_want == 2) m_want = 0;
         m_stance = resizeBody && go ? SettleStance(go, m_body, m_stance, m_want, crouchHeight, proneHeight) : m_want;
         EaseStance(go, m_body, m_level, m_stance, dt, StanceTimesOf(go), resizeBody, crouchHeight, proneHeight);
+    }
+    /// Pin the body at a stance while a dive owns it (keys resume next frame).
+    void ApplyPose(int stance, float level, GameObject* go) {
+        m_want = m_stance = std::clamp(stance, 0, 2);
+        m_level = std::clamp(level, 0.0f, 2.0f);
+        if (!resizeBody || !go) return;
+        CaptureStance(go, m_body);
+        ApplyStanceHeight(go, m_body, m_body.standH * StanceValue(m_level, 1.0f, crouchHeight, proneHeight));
     }
     /// The speed cap for the body now, given the standing one.
     float Speed(float standing) const { return StanceValue(m_level, standing, crouchSpeed, proneSpeed); }

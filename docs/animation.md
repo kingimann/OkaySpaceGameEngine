@@ -305,7 +305,7 @@ Disable the Animator and the built-in animation plays the body as before.
 
 ## Actions
 
-Built-in actions (death, and later dive, sit, hits, and the rest) are clips baked
+Built-in actions (death, dive, sitting, hits, roll / dodge / slide, vault and ledge, swim, and emotes) are clips baked
 by `HumanoidActions` and states on the default Animator. They are not new
 `Character::anim` numbers. A scene saved with the default graph (it has Idle,
 Walk, Run and Jump) gains each action once. A state you renamed or deleted stays
@@ -330,6 +330,59 @@ their input while `Health` says the body is dead. `Damage` does not know where a
 hit came from; `Damage(amount, fromWorld)` and `die(x, y, z)` do, and the body
 falls away from that point. With no direction, it falls forward.
 
+Hit clips: `Hit_F`, `Hit_B`, `Hit_L`, `Hit_R` (about 0.35s, upper body) and
+`Hit_Heavy_F`, `Hit_Heavy_B` (about 0.8s, full body), plus `Hit_Crouch` and
+`Hit_Prone`. Light hits play on a torso layer (`maskBone` Torso) so the legs
+keep walking. That layer rests on `Off` at weight 0; the enter callback that
+raises the weight is not saved, and it is put back whenever the built-in
+actions are merged. Heavy, crouch and prone hits play on the base layer and
+return to Idle, Crouch or Prone. They are interruptible, so death can cut
+them. The Any-State `hit` blend uses interruption None and may re-enter itself
+(`canInterruptSelf`), but `hit_react` refuses a second hit within 0.1s and
+does not leave the trigger set. `hitDir` is 0 forward, 1 back, 2 left, 3
+right — where the hit came from, the opposite of the death fall. A heavy side
+uses the front or back stumble (only those two heavy clips exist). While a
+heavy, crouch or prone hit is playing, movement speed is multiplied by the
+Animator float `staggerScale`, which is 1 until a game sets it lower.
+
+`Health` plays a light flinch only when **Play Hit Anim** is on (off by
+default, so existing games do not change) and `Damage` was given a source.
+A killing blow plays death instead.
+
+Script: `hit_react("forward"|"back"|"left"|"right" [, heavy])`,
+`hit_react(x, y, z [, heavy])`. Visual script: Hit React (Heavy pin).
+
+Roll and dodge clips: `Roll_F`, `Dodge_L`, `Dodge_R`, `Dodge_B`. `roll(dir)` only
+plays the clip (`dir` 0 is the forward roll, anything else is that dodge).
+`dodge(dir)` plays it and, on a first- or third-person controller, bursts that
+way. The burst spends stamina when a Stamina stat is on the body, then waits
+out a cooldown. **Can Dodge** and the dodge key are off, so holding a key does
+nothing until a game turns them on. **I-Frames** are off: Health still applies
+damage during a dodge unless that box is on. The existing slide burst (sprint,
+then crouch) is unchanged. While that slide is on, the Animator bool `slide`
+plays `Slide` (feet first, looping) and leaves through `SlideEnd` into Crouch,
+or into Run when still sprinting and not crouched.
+
+Script: `roll(["forward"|"back"|"left"|"right"])`, `dodge(...)`. Visual
+scripts: Roll, Dodge.
+
+Vault, mantle and ledge clips: `Vault`, `Mantle_Low`, `Mantle_High`, `LedgeGrab`
+(into the existing Hang pose), `Hang_Shimmy_L`, `Hang_Shimmy_R`, `ClimbUp`, `LetGo`.
+States `Vault`, `MantleLow`, `MantleHigh`, `LedgeGrab`, `ClimbUp` and `LetGo` play
+once and are not interruptible, so Fall cannot cut the blend; each still has its
+own `die` edge. `HangShimmy` is a 1D tree on `shimmy` (-1 left, +1 right) and
+returns to Hang when the float is near 0. Hang keeps the transitions it already
+had and gains `hanging` false → Fall. IK weight is 0. Hands-on-ledge Limb IK is
+not wired. The move itself is a short curve: the body's colliders turn off and
+gravity is 0 until it ends. A ledge leaves the body hanging (gravity stays 0)
+and remembers the lip for `climb_up()`. `let_go()` drops without teleporting.
+`canVault`, `canMantle` and `canLedgeGrab` on the first- and third-person
+controllers default off, so walking into a wall does nothing until a game opts
+in. `vault()` and `mantle()` still probe. The 2.5D platformer keeps its own
+ledge motion and only sets the `hanging` bool. These flags are trailing ints on
+`fpfeel` and `tpfeel`; a build from before this change will not load a scene
+that saved them.
+
 Script: `play_action("Death" [, blend])` (0 if that state is missing),
 `is_in_action()`, `action_time()`, `die(["forward"|"back"|"left"|"right"])`,
 `die(x, y, z)`, `revive()`, `is_dead()`. `on_action_end` is the anim event
@@ -337,6 +390,61 @@ Script: `play_action("Death" [, blend])` (0 if that state is missing),
 `play_action`, which also falls back to `play_clip` (and logs once) when the
 name is not a state or a blend-tree motion. Visual scripts: Play Action, Is In
 Action, Die, Revive.
+
+Dolphin dive (`Dive`, about 0.7s, then `DiveLand` if still in the air) is the
+second built-in action. Sprint, then press prone (first person, third person,
+and the third-person shooter; **Dive on prone while sprinting**, default on).
+That is separate from crouch-to-slide, which is unchanged. The launch is the
+current speed × 1.15, capped, plus a 0.25 m hop, with air steering off. The
+body eases down to the prone capsule while it flies and glides into prone on
+landing. A wall close in front keeps the crouch height and does not launch.
+`die` is the only thing that interrupts it. Script: `dive()`, `can_dive()`.
+Visual script: Dive. Animators also get a `dived` trigger. A Character can
+bind `clipDive` the same way as `clipJump`; a model with no Animator clip of
+that name still gets the movement.
+
+Sitting clips: `SitDown_Chair` → `Sit_Chair` (a breathing loop) → `StandUp_Chair`,
+and `SitDown_Ground` → `Sit_Ground` or `Sit_Ground_Knees` → `StandUp_Ground`.
+`sitType` is 0 chair, 1 ground, 2 knees. A bench Seat uses the chair clips.
+The chair pose is baked for a 0.45 m seat; a Seat moves the body onto
+`sitPoint` (the clip's hip height is only the visual). Hands stay on full-body
+IK so they can still hold something. The states are interruptible, so death
+and jump can cut them. The Any-State `sit` blend uses interruption None, so
+Walk cannot cancel it. `sitting` false leaves through Stand Up, which ends on
+Idle. Entering Sit fires `sit`; entering Stand Up fires `stand` (On Sit / On
+Stand). `action_end` is at the end of the sit-down and stand-up clips.
+
+A **Seat** (seat height, sit point, facing, type, exit point, use radius,
+prompt) claims the nearest locally controlled character on E. There is no
+shared interact key; first-person lean-right is also E, so a press in range
+sits and can start a lean. Gravity is zero while seated and comes back on
+standing or on death. Death does not teleport to the exit point. With no Seat,
+`sit()` sits on the ground when the floor normal is steeper than 0.75. Move or
+jump on a first-person, third-person, or shooter controller stands up and
+stays locked until the stand-up clip finishes. Look still works.
+
+Script: `sit()`, `sit("Chair")`, `sit("ground"|"knees"|"chair")`, `sit(0|1|2)`,
+`stand_up()`, `is_sitting()`, `interact()`, `seat_prompt()`. Visual scripts:
+Sit, Stand Up, Is Sitting, Interact, Seat Prompt.
+
+Swim clips: looping `Swim_Tread` and `Swim_Fwd`, both on the prone pose so the
+body stays low in the water. Tread sculls the arms out and back in. The forward
+stroke reaches further and pulls, with a small visual root pulse that returns
+to zero at the loop so the mesh does not drift. `Swim` is a 1D tree on
+`swimSpeed` (0 tread, about 1.5 the stroke). Foot and full-body IK are off.
+The state is not interruptible, so jump and fall cannot cut a stroke; its own
+`die` edge still reaches Death. Any State enters Swim when `swimming` is true
+(that edge is first, so it wins over jump and fall) with interruption None, so
+the state being left cannot cancel the blend. `swimming` false goes to Idle.
+`anim_set_bool("swimming", 1)` and `play_action("Swim")` both enter it. There
+is no water volume in this set: movement stays on the controllers.
+
+Emote clips: one-shot `Emote_Nod`, `Emote_Shake` and `Emote_Shrug`, each starting
+and ending on the idle pose. These are not the looping Wave / Cheer gestures,
+which hold until the body moves. An emote plays out and goes to Idle. Speed
+above a walk leaves it for Walk or Run. Jump, fall and death can still cut it.
+Any State enters one when `emote` fires and `emoteId` is 0 (nod), 1 (shake) or
+2 (shrug). `play_action("Emote_Nod")` goes there directly.
 
 In the Inspector the Animator lists its states, what each plays (a clip, or a
 blend tree's clip count) and its transitions (folded; click to open). On a

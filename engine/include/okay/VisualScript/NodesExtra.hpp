@@ -19,8 +19,10 @@
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/AnimControl.hpp"
 #include "okay/Animation/HumanoidActions.hpp"
+#include "okay/Components/Seat.hpp"
 #include "okay/Components/BlendShapes.hpp"
 #include "okay/Input/Input.hpp"
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -507,10 +509,125 @@ struct DieNode : VsNode {
         return 0;
     }
 };
+struct DiveNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        HumanoidActions::RequestDive(ctx.gameObject);
+        return 0;
+    }
+};
+struct HitReactNode : VsNode {
+    std::string dir;
+    explicit HitReactNode(std::string d) : dir(std::move(d)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        const int d = HumanoidActions::DirFromName(dir.empty() ? "forward" : dir);
+        const bool heavy = In(0, g, ctx, VsValue{0.0f}).AsFloat() != 0.0f;
+        HumanoidActions::HitReact(ctx.gameObject, d, heavy);
+        return 0;
+    }
+};
+struct RollNode : VsNode {
+    std::string dir;
+    explicit RollNode(std::string d) : dir(std::move(d)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        HumanoidActions::RequestRoll(ctx.gameObject, HumanoidActions::DirFromName(dir.empty() ? "forward" : dir));
+        return 0;
+    }
+};
+struct DodgeNode : VsNode {
+    std::string dir;
+    explicit DodgeNode(std::string d) : dir(std::move(d)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        HumanoidActions::RequestDodge(ctx.gameObject, HumanoidActions::DirFromName(dir.empty() ? "forward" : dir));
+        return 0;
+    }
+};
 struct ReviveNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph&, VsContext& ctx) override {
         HumanoidActions::RequestRevive(ctx.gameObject);
+        return 0;
+    }
+};
+// arg: a Seat's name, or ground / knees / chair. Empty sits on a flat floor.
+struct SitNode : VsNode {
+    std::string which;
+    explicit SitNode(std::string w) : which(std::move(w)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        if (!ctx.gameObject) return 0;
+        GameObject* seat = nullptr;
+        int type = 1;
+        if (!which.empty()) {
+            seat = VsFindObject(ctx, which);
+            if (!seat || !seat->GetComponent<Seat>()) {
+                seat = nullptr;
+                std::string k = which;
+                for (char& c : k) c = (char)std::tolower((unsigned char)c);
+                if (k == "chair" || k == "bench") type = 0;
+                else if (k == "knees") type = 2;
+            }
+        }
+        HumanoidActions::RequestSit(ctx.gameObject, seat, type);
+        return 0;
+    }
+};
+struct StandUpNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        HumanoidActions::RequestStandUp(ctx.gameObject);
+        return 0;
+    }
+};
+struct IsSittingNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        return HumanoidActions::IsSitting(ctx.gameObject) ? 1.0f : 0.0f;
+    }
+};
+struct InteractNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        HumanoidActions::Interact(ctx.gameObject);
+        return 0;
+    }
+};
+struct SeatPromptNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        return HumanoidActions::SeatPrompt(ctx.gameObject);
+    }
+};
+struct VaultNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override { HumanoidActions::RequestVault(ctx.gameObject); return 0; }
+};
+struct MantleNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override { HumanoidActions::RequestMantle(ctx.gameObject); return 0; }
+};
+struct LedgeGrabNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override { HumanoidActions::RequestLedgeGrab(ctx.gameObject); return 0; }
+};
+struct ClimbUpNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override { HumanoidActions::RequestClimbUp(ctx.gameObject); return 0; }
+};
+struct LetGoNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override { HumanoidActions::RequestLetGo(ctx.gameObject); return 0; }
+};
+struct IsHangingNode : VsNode {
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        return HumanoidActions::IsHanging(ctx.gameObject) ? 1.0f : 0.0f;
+    }
+};
+struct ShimmyNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        HumanoidActions::SetShimmy(ctx.gameObject, In(0, g, ctx, VsValue{0.0f}).AsFloat());
         return 0;
     }
 };

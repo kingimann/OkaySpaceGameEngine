@@ -11,6 +11,8 @@
 #include "okay/Components/CharacterIK.hpp"
 #include "okay/Components/ControllerFeel.hpp"
 #include "okay/Components/DeathLock.hpp"
+#include "okay/Components/DiveAction.hpp"
+#include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Components/StanceControl.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Input/Input.hpp"
@@ -132,6 +134,15 @@ public:
         // camera doesn't snap on the first frame after the panel closes.
         m_lastMouse = mp; m_haveMouse = !uiBlocked;
 
+        // Look already applied. The orbit is LateUpdate. Move or jump stands up.
+        if (HumanoidActions::IsSitting(gameObject)) {
+            Vec2 axis = uiBlocked ? Vec2{0, 0} : Input::AxisWASD();
+            const bool wantMove = axis.x * axis.x + axis.y * axis.y > 1e-4f;
+            if (wantMove || (!uiBlocked && Input::GetKeyDown(' ')))
+                HumanoidActions::RequestStandUp(gameObject);
+            return;
+        }
+
         // ---- Aim blend (right mouse) ----
         m_aiming = !uiBlocked && Input::GetMouseButton(aimButton);
         float aimT = 1.0f - std::exp(-aimSpeed * dt);
@@ -200,6 +211,22 @@ public:
         } else if (moving) {
             transform->Translate(dir * (speed * dt));
         }
+        {
+            const float hsNow = rb ? std::sqrt(rb->velocity.x * rb->velocity.x + rb->velocity.z * rb->velocity.z) : 0.0f;
+            DiveTune tune;
+            tune.enabled = stanceControl.diveOnProne;
+            tune.hop = stanceControl.diveHop;
+            tune.slideTime = stanceControl.diveSlideTime;
+            tune.proneSpeed = stanceControl.proneSpeed;
+            tune.crouchFrac = stanceControl.crouchHeight;
+            tune.proneFrac = stanceControl.proneHeight;
+            tune.resize = stanceControl.resizeBody;
+            tune.speedCap = runSpeed * 1.5f;
+            StanceBody shape = stanceControl.Body();
+            const DiveOut d = TickDive(gameObject, rb, m_dive, shape, tune, grounded, m_wasRunning,
+                                       stanceControl.Want(), fwd, hsNow, dt);
+            if (d.pose.drive) stanceControl.ApplyPose(d.pose.stance, d.pose.level, gameObject);
+        }
         // Stairs: a grounded body blocked by a low face steps up onto it
         // instead of stopping (stepOffset = max step height). The camera
         // already orbits the smoothed shoulder pivot, so the lift eases.
@@ -246,6 +273,8 @@ public:
                 }
                 ch->bodyLean  = m_lean * leanAngle;   // body peeks with the camera
             }
+        m_wasRunning = running && (rb ? std::sqrt(rb->velocity.x * rb->velocity.x + rb->velocity.z * rb->velocity.z)
+                                      : (moving ? speed : 0.0f)) > walkSpeed * 0.8f;
     }
 
     void LateUpdate(float dt) override {
@@ -329,6 +358,8 @@ private:
     GroundLatch m_ground;         // apex of a jump is not ground
     float m_fireCooldown = 0.0f;
     float m_groundContact = 0.0f, m_coyote = 0.0f, m_jumpBuf = 0.0f;
+    bool  m_wasRunning = false;
+    DiveMotion m_dive;
 };
 
 } // namespace okay

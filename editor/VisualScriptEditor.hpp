@@ -292,6 +292,22 @@ inline const std::vector<VsDef>& Registry() {
         {"IsInAction",    "Is In Action",   CAT_DATA, false, {}, {}, {"In Action"}, 0, nullptr},
         {"Die",           "Die",            CAT_ACTION, true, {""}, {}, {}, 1, "forward / back / left / right"},
         {"Revive",        "Revive",         CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"Dive",          "Dive",           CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"Sit",           "Sit",            CAT_ACTION, true, {""}, {}, {}, 1, "seat name, ground, knees, chair"},
+        {"StandUp",       "Stand Up",       CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"IsSitting",     "Is Sitting",     CAT_DATA, false, {}, {}, {"Sitting"}, 0, nullptr},
+        {"Interact",      "Interact",       CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"SeatPrompt",    "Seat Prompt",    CAT_DATA, false, {}, {}, {"Prompt"}, 0, nullptr},
+        {"HitReact",      "Hit React",      CAT_ACTION, true, {""}, {"Heavy"}, {}, 1, "forward / back / left / right"},
+        {"Roll",          "Roll",           CAT_ACTION, true, {""}, {}, {}, 1, "forward / back / left / right"},
+        {"Dodge",         "Dodge",          CAT_ACTION, true, {""}, {}, {}, 1, "forward / back / left / right"},
+        {"Vault",         "Vault",          CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"Mantle",        "Mantle",         CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"LedgeGrab",     "Ledge Grab",     CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"ClimbUp",       "Climb Up",       CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"LetGo",         "Let Go",         CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"IsHanging",     "Is Hanging",     CAT_DATA, false, {}, {}, {"Hanging"}, 0, nullptr},
+        {"Shimmy",        "Shimmy",         CAT_ACTION, true, {""}, {"Amount"}, {}, 0, nullptr},
         {"SetTimeScale",  "Set Time Scale", CAT_ACTION, true, {""}, {"Scale"}, {}, 0, nullptr},
         {"SetBlendShape", "Set Blend Shape",CAT_ACTION, true, {""}, {"Weight"}, {}, 1, "shape name"},
         {"GetBlendShape", "Blend Shape",    CAT_DATA,  false, {}, {}, {"Weight"}, 1, "shape name"},
@@ -1079,6 +1095,9 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
     if (t == "MouseButtonDown")return "mouse_down(" + VsNum(lit("0"), "0") + ")";
     if (t == "AnimState")      return "anim_state()";
     if (t == "IsInAction")     return "is_in_action()";
+    if (t == "IsSitting")      return "is_sitting()";
+    if (t == "SeatPrompt")     return "seat_prompt()";
+    if (t == "IsHanging")      return "is_hanging()";
     // Third wave.
     const std::string id = std::to_string(nodeId);
     if (t == "ForLoop")    return "_i" + id;
@@ -1308,6 +1327,22 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="PlayAction")    out += ind + "play_action(" + q(arg("Death")) + ", " + in(0, "0.2") + ")\n";
     else if (t=="Die")           out += ind + "die(" + q(arg("forward")) + ")\n";
     else if (t=="Revive")        out += ind + "revive()\n";
+    else if (t=="Dive")          out += ind + "dive()\n";
+    else if (t=="Sit") {
+        if (n->arg.empty()) out += ind + "sit()\n";
+        else out += ind + "sit(" + q(n->arg) + ")\n";
+    }
+    else if (t=="StandUp")     out += ind + "stand_up()\n";
+    else if (t=="Interact")    out += ind + "interact()\n";
+    else if (t=="HitReact")      out += ind + "hit_react(" + q(arg("forward")) + ", " + in(0, "0") + ")\n";
+    else if (t=="Roll")          out += ind + "roll(" + q(arg("forward")) + ")\n";
+    else if (t=="Dodge")         out += ind + "dodge(" + q(arg("forward")) + ")\n";
+    else if (t=="Vault")         out += ind + "vault()\n";
+    else if (t=="Mantle")        out += ind + "mantle()\n";
+    else if (t=="LedgeGrab")     out += ind + "ledge_grab()\n";
+    else if (t=="ClimbUp")       out += ind + "climb_up()\n";
+    else if (t=="LetGo")         out += ind + "let_go()\n";
+    else if (t=="Shimmy")        out += ind + "shimmy(" + in(0, "0") + ")\n";
     else if (t=="SetTimeScale")  out += ind + "set_timescale(" + in(0, "1") + ")\n";
     else if (t=="SetBlendShape") out += ind + "blend_shape(" + q(arg("")) + ", " + in(0, "1") + ")\n";
     else if (t=="NetHost")       out += ind + "net_host(" + VsNum(arg("45000"), "45000") + ")\n";

@@ -102,6 +102,7 @@ public:
     float respawnDelay = 3.0f;
     int   lives = 0;               // respawns allowed (0 = unlimited)
     bool  playDeathAnim = true;   // play Death and stay active until it settles
+    bool  playHitAnim = false;    // light flinch when Damage was given a source. Off so games don't change.
 
     bool  dead = false, lowHealth = false;
 
@@ -159,6 +160,7 @@ public:
 
     void ApplyDamage(float amount) {
         if (dead || godMode || m_iframes > 0.0f || amount <= 0.0f) return;
+        if (HumanoidActions::DodgeIFrames(gameObject)) return;
         float dmg = Mathf::Max(0.0f, amount - (armor + equipArmor));
         dmg *= (1.0f - Mathf::Clamp01(resistance));
         if (dmg < minDamage) dmg = Mathf::Min(minDamage, amount);   // mitigation never fully nullifies a hit
@@ -166,6 +168,8 @@ public:
         m_timer = regenDelay;
         m_iframes = invincibleTime;
         if (health <= 0.0f) OnDeath();
+        else if (playHitAnim && hasLastHit)
+            HumanoidActions::HitReact(gameObject, HumanoidActions::HitDirFromWorld(gameObject, lastHitFrom), false);
         Publish();
     }
     void Heal(float a) {
@@ -364,6 +368,13 @@ public:
     bool TryJump() {
         if (stamina < jumpCost) return false;
         stamina -= jumpCost; m_timer = regenDelay; Publish();
+        return true;
+    }
+    /// Spend `cost` stamina, or refuse when there isn't enough. 0 always succeeds.
+    bool TrySpend(float cost) {
+        if (cost <= 0.0f) return true;
+        if (stamina < cost) return false;
+        stamina -= cost; m_timer = regenDelay; Publish();
         return true;
     }
     void SetSprinting(bool on) { sprinting = on; }

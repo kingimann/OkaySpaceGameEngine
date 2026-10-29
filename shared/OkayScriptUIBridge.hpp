@@ -4,7 +4,9 @@
 // each frame with OkayUI::BeginFrame()/EndFrame() around the scene update.
 #include "okay/Scripting/ScriptUI.hpp"
 #include "okay/UI/OkayUI.hpp"
+#include "okay/Graphics/Image.hpp"
 
+#include <SDL.h>
 #include <cstring>
 #include <map>
 #include <string>
@@ -14,6 +16,7 @@ namespace okay {
 
 struct OkayUIScriptBridge : ScriptUIBridge {
     void  Begin(const char* t, float x, float y, float w, float h) override { OkayUI::Begin(t ? t : "", x, y, w, h); }
+    void  BeginAt(const char* t, float x, float y, float w, float h) override { OkayUI::PinNextWindow(); OkayUI::Begin(t ? t : "", x, y, w, h); }
     void  End() override { OkayUI::End(); }
     void  Text(const char* s) override { OkayUI::Text(s); }
     bool  Button(const char* l) override { return OkayUI::Button(l); }
@@ -57,9 +60,32 @@ struct OkayUIScriptBridge : ScriptUIBridge {
     }
     void  Spacing(float h) override { OkayUI::Spacing(h); }
     void  Style(const char* name) override { OkayUI::UseLauncherLook(!(name && std::strcmp(name, "classic") == 0)); }
+    /// Image files (dialogue portraits) as textures, loaded once per path. Needs the
+    /// host's renderer; without one this reports false and the caller draws a stand-in.
+    bool  Image(const char* path, float w, float h) override {
+        if (!renderer || !path || !*path) return false;
+        auto it = m_textures.find(path);
+        if (it == m_textures.end()) {
+            SDL_Texture* tex = nullptr;
+            okay::Image img;
+            if (img.Load(path) && img.Valid()) {
+                tex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, img.Width(), img.Height());
+                if (tex) {
+                    SDL_UpdateTexture(tex, nullptr, img.Data(), img.Width() * 4);
+                    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+                }
+            }
+            it = m_textures.emplace(path, tex).first;   // a failed load is remembered too
+        }
+        if (!it->second) return false;
+        OkayUI::Image(it->second, w, h);
+        return true;
+    }
+    SDL_Renderer* renderer = nullptr;   ///< set by the host; lets Image() make textures
 private:
     struct Field { char buf[256] = ""; std::string lastOut; };
     std::map<std::string, Field> m_fields;
+    std::map<std::string, SDL_Texture*> m_textures;
 };
 
 } // namespace okay

@@ -237,6 +237,11 @@
 #include "okay/Components/MeleeAttacker.hpp"
 #include "okay/Components/Spawner.hpp"
 #include "okay/Components/CraftingMenu.hpp"
+// Dialogue and quests
+#include "okay/Components/DialogueGraph.hpp"
+#include "okay/Components/StoryState.hpp"
+#include "okay/Components/QuestLog.hpp"
+#include "okay/Components/DialogueRunner.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
 #include "okay/Components/TopDownShooterController.hpp"

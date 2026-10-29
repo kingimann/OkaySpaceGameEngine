@@ -2796,7 +2796,7 @@ void DrawAnimatorGraph(EditorState& ed) {
         if (!s_devSel) {
             if (const char* e = std::getenv("OKAY_UI_AGSEL"))
                 for (int i = 0; i < (int)sm->states.size(); ++i)
-                    if (sm->states[i].name == e) { SelectState(u, i); s_devSel = true; break; }
+                    if (sm->states[i].name == e) { SelectState(u, i); u.lastFocusX = 1.0f; s_devSel = true; break; }
             if (const char* e = std::getenv("OKAY_UI_AGTR")) {
                 const std::string s = e;
                 const std::size_t colon = s.find(':');

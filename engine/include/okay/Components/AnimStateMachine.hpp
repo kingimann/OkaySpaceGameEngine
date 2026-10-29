@@ -161,9 +161,12 @@ public:
     /// Character clips are offsets from rest, so this is a recoil or aim layer.
     /// Imported clips add their change from the clip's first frame.
     bool        additive = false;
+    /// The layer's name in the Animator window ("" = "Layer N"). Serialized.
+    std::string layerName;
 
     std::vector<State> states;
     std::string entry;              ///< starting state ("" = first state)
+    float anyX = 0.0f, anyY = 0.0f; ///< Animator graph position of the Any State node (editor; 0,0 = auto)
     /// "Any State" transitions: tested every frame from whatever state is playing,
     /// before that state's own transitions (hit reactions, death, ...).
     std::vector<Transition> anyState;
@@ -186,8 +189,137 @@ public:
     /// editor — transitions pick from this list instead of retyping names, and
     /// Play mode shows their live values. The runtime maps stay name-keyed, so
     /// undeclared names still work from scripts. Serialized.
-    struct Param { std::string name; int type = 0; };   ///< type: 0 float, 1 bool, 2 trigger, 3 int
+    /// `def` is the value the parameter starts with when the machine starts
+    /// (floats and ints as is, bools when not 0; triggers have none), unless
+    /// gameplay already set it.
+    struct Param { std::string name; int type = 0; float def = 0.0f; };   ///< type: 0 float, 1 bool, 2 trigger, 3 int
     std::vector<Param> params;
+    /// Declared parameters' defaults, for those nothing has set yet (the base
+    /// layer's list; layers share its values).
+    void ApplyParamDefaults() {
+        if (layer != 0) return;
+        for (const Param& p : params) {
+            if (p.name.empty() || p.type == 2) continue;
+            if (p.type == 1) { if (!m_bools.count(p.name)) m_bools[p.name] = p.def != 0.0f; }
+            else if (!m_floats.count(p.name)) m_floats[p.name] = p.def;
+        }
+    }
+    /// True when a transition (a state's or Any State) tests the parameter, a
+    /// blend tree is driven by it, or a state's speed multiplier reads it.
+    bool UsesParam(const std::string& name) const {
+        if (name.empty()) return false;
+        auto tests = [&](const Transition& tr) {
+            if (tr.param == name && tr.cond != Cond::OnClipEnd && tr.cond != Cond::Always) return true;
+            for (const Condition& c : tr.extra)
+                if (c.param == name && c.cond != Cond::OnClipEnd && c.cond != Cond::Always) return true;
+            return false;
+        };
+        for (const Transition& tr : anyState) if (tests(tr)) return true;
+        for (const State& st : states) {
+            if (st.speedParam == name) return true;
+            if (st.blendTree && (st.blendParam == name || (st.blendDims == 2 && st.blendParamY == name))) return true;
+            for (const Transition& tr : st.transitions) if (tests(tr)) return true;
+        }
+        return false;
+    }
+
+    /// Something the Animator window flags: a state with no clip, one nothing
+    /// leads to, a transition that fires at once, ... `state` is an index into
+    /// `states` (-1 for machine-wide), `transition` one into that state's
+    /// transitions, or into `anyState` when `any` is set.
+    struct Issue {
+        int severity = 1;         ///< 0 note, 1 warning, 2 error
+        std::string text;
+        int state = -1;
+        int transition = -1;
+        bool any = false;
+    };
+    /// Check the graph. `clipExists` says whether a clip name can play on this
+    /// machine (empty = don't check clip names). The order is states first (by
+    /// index), then Any State transitions.
+    std::vector<Issue> Validate(const std::function<bool(const std::string&)>& clipExists = {}) const {
+        std::vector<Issue> out;
+        auto add = [&](int sev, std::string text, int st = -1, int tr = -1, bool any = false) {
+            out.push_back({sev, std::move(text), st, tr, any});
+        };
+        const int n = (int)states.size();
+        auto stateIndex = [&](const std::string& nm) {
+            for (int i = 0; i < n; ++i) if (states[i].name == nm) return i;
+            return -1;
+        };
+        if (!entry.empty() && stateIndex(entry) < 0) add(2, "entry state \"" + entry + "\" does not exist");
+        for (int i = 0; i < n; ++i)
+            for (int j = 0; j < i; ++j)
+                if (states[j].name == states[i].name) { add(2, "two states are named \"" + states[i].name + "\"", i); break; }
+        // Which states something leads to: the entry, a transition from another
+        // state, or an Any State transition.
+        std::vector<char> reached(n, 0);
+        const int entryIdx = entry.empty() ? (n > 0 ? 0 : -1) : stateIndex(entry);
+        if (entryIdx >= 0) reached[entryIdx] = 1;
+        for (const Transition& tr : anyState) if (!tr.muted) { int t = stateIndex(tr.to); if (t >= 0) reached[t] = 1; }
+        for (int i = 0; i < n; ++i)
+            for (const Transition& tr : states[i].transitions) {
+                if (tr.muted) continue;
+                int t = stateIndex(tr.to);
+                if (t >= 0 && t != i) reached[t] = 1;
+            }
+        const bool declared = !Base()->params.empty();
+        auto paramDeclared = [&](const std::string& p) {
+            for (const Param& d : Base()->params) if (d.name == p) return true;
+            return false;
+        };
+        auto needsParam = [](Cond c) { return c != Cond::OnClipEnd && c != Cond::Always; };
+        auto checkTransition = [&](const Transition& tr, int st, int ti, bool any) {
+            const std::string where = any ? "Any State -> " + tr.to : states[st].name + " -> " + tr.to;
+            if (tr.to.empty() || stateIndex(tr.to) < 0) {
+                add(2, where + ": no such target state", st, ti, any);
+                return;
+            }
+            if (needsParam(tr.cond) && tr.param.empty()) add(2, where + ": the condition has no parameter", st, ti, any);
+            else if (declared && needsParam(tr.cond) && !paramDeclared(tr.param))
+                add(1, where + ": parameter \"" + tr.param + "\" is not declared", st, ti, any);
+            for (const Condition& c : tr.extra) {
+                if (needsParam(c.cond) && c.param.empty()) add(2, where + ": an extra condition has no parameter", st, ti, any);
+                else if (declared && needsParam(c.cond) && !paramDeclared(c.param))
+                    add(1, where + ": parameter \"" + c.param + "\" is not declared", st, ti, any);
+            }
+            if (tr.cond == Cond::Always && tr.extra.empty() && !tr.hasExitTime && !tr.muted)
+                add(1, where + ": fires at once (no condition and no exit time)", st, ti, any);
+        };
+        for (int i = 0; i < n; ++i) {
+            const State& st = states[i];
+            if (st.blendTree) {
+                if (st.motions.empty()) add(1, st.name + ": the blend tree has no motions", i);
+                if (st.blendParam.empty()) add(1, st.name + ": the blend tree has no parameter", i);
+                else if (declared && !paramDeclared(st.blendParam)) add(1, st.name + ": parameter \"" + st.blendParam + "\" is not declared", i);
+                if (st.blendDims == 2) {
+                    if (st.blendParamY.empty()) add(1, st.name + ": the 2D blend tree has no second parameter", i);
+                    else if (declared && !paramDeclared(st.blendParamY)) add(1, st.name + ": parameter \"" + st.blendParamY + "\" is not declared", i);
+                }
+                for (const Motion& m : st.motions) {
+                    if (m.clip.empty()) add(1, st.name + ": a motion has no clip", i);
+                    else if (clipExists && !clipExists(m.clip) && (st.fallbackClip.empty() || !clipExists(st.fallbackClip)))
+                        add(1, st.name + ": motion clip \"" + m.clip + "\" is missing", i);
+                }
+            } else if (st.clip.empty()) {
+                if (layer == 0) add(1, st.name + ": plays no clip", i);
+            } else if (clipExists && !clipExists(st.clip) && (st.fallbackClip.empty() || !clipExists(st.fallbackClip))) {
+                add(1, st.name + ": clip \"" + st.clip + "\" is missing", i);
+            }
+            if (!st.speedParam.empty() && declared && !paramDeclared(st.speedParam))
+                add(1, st.name + ": speed parameter \"" + st.speedParam + "\" is not declared", i);
+            if (!reached[i]) add(0, st.name + ": nothing leads here (not the entry, no transition targets it; a script's anim_goto still can)", i);
+            bool shadowed = false;
+            for (int t = 0; t < (int)st.transitions.size(); ++t) {
+                const Transition& tr = st.transitions[t];
+                if (shadowed && !tr.muted) add(1, st.name + " -> " + tr.to + ": never tested, an earlier transition always fires first", i, t);
+                else checkTransition(tr, i, t, false);
+                if (!tr.muted && tr.cond == Cond::Always && tr.extra.empty() && !tr.hasExitTime) shadowed = true;
+            }
+        }
+        for (int t = 0; t < (int)anyState.size(); ++t) checkTransition(anyState[t], -1, t, true);
+        return out;
+    }
 
     // ---- Parameters (runtime; set from gameplay). Layers share the base's. ----
     void SetFloat(const std::string& name, float v)  { Base()->m_floats[name] = v; }
@@ -334,6 +466,7 @@ public:
 
     void Start() override {
         m_current.clear();
+        ApplyParamDefaults();
         if (layer == 0) if (AnimBackend* ma = Anim()) ma->SetStateMachine(this);   // driveByMovement waits while we're enabled
     }
     void OnDestroy() override {

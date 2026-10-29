@@ -170,6 +170,7 @@
 #include <sstream>
 #include <type_traits>
 #include <unordered_map>
+#include <algorithm>
 #include <vector>
 
 namespace okay {
@@ -705,6 +706,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
                 for (const std::string& b : asm2->maskBones) out << " " << Quote(b);
                 out << "\n";
             }
+            if (!asm2->layerName.empty()) out << "  animsmlname " << Quote(asm2->layerName) << "\n";
         }
         out << "  animsm " << Quote(asm2->entry) << " " << asm2->states.size();
         for (const auto& st : asm2->states) {
@@ -720,10 +722,19 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  animsmpos " << asm2->states.size();
         for (const auto& st : asm2->states) out << " " << st.nx << " " << st.ny;
         out << "\n";
+        if (asm2->anyX != 0.0f || asm2->anyY != 0.0f) out << "  animsmanypos " << asm2->anyX << " " << asm2->anyY << "\n";
         if (!asm2->params.empty()) {
             out << "  animsmparams " << asm2->params.size();
             for (const auto& p : asm2->params) out << " " << Quote(p.name) << " " << p.type;
             out << "\n";
+            // Parameter defaults (index-matched; only when one is set).
+            bool anyDef = false;
+            for (const auto& p : asm2->params) anyDef = anyDef || p.def != 0.0f;
+            if (anyDef) {
+                out << "  animsmpdef " << asm2->params.size();
+                for (const auto& p : asm2->params) out << " " << p.def;
+                out << "\n";
+            }
         }
         // Extended transition/state data (exit time, extra conditions, blend trees)
         // and Any State transitions — separate records so older builds still load.
@@ -2929,7 +2940,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
 
 std::string SceneSerializer::Serialize(const Scene& scene) {
     std::ostringstream out;
-    out << "okayscene 2\n";
+    out << "okayscene 3\n";
     out << "name " << Quote(scene.Name()) << "\n";
     if (!scene.uiFont.empty()) out << "uifont " << Quote(scene.uiFont) << "\n";
     out << "gravity " << scene.physics().gravity.x << " " << scene.physics().gravity.y << "\n";
@@ -3008,6 +3019,54 @@ bool SceneSerializer::SaveToFile(const Scene& scene, const std::string& path) {
         return !ce;
     }
     return true;
+}
+
+// Files from before version 3 came from starters whose First Person and Third
+// Person players carried one controller each, and the view toggle faked the
+// other view from it: a level orbit at eye height that still strafed like first
+// person, or an eye that still steered like the orbit. A toggle on such a
+// player gets the other controller, and the camera it will blend is mounted on
+// the player where both controllers look for it, so the switch runs as it does
+// on the current starters: first person is the eye controller, third person
+// the orbit. A player that already has both, or neither, is left alone.
+static void CompleteViewToggle(Scene& scene, GameObject* go) {
+    auto* view = go ? go->GetComponent<PlayerView>() : nullptr;
+    if (!view || !view->allowToggle || !go->transform) return;
+    auto* fp = go->GetComponent<FirstPersonController>();
+    auto* tp = go->GetComponent<ThirdPersonController>();
+    if ((fp != nullptr) == (tp != nullptr)) return;
+    const bool wasThird = tp != nullptr;
+    if (!fp) fp = go->AddComponent<FirstPersonController>();
+    if (!tp) tp = go->AddComponent<ThirdPersonController>();
+
+    // A camera already under the player serves both controllers.
+    for (Transform* c : go->transform->Children())
+        if (c && c->gameObject && c->gameObject->GetComponent<Camera>()) return;
+    // The old third-person starter left its camera loose in the scene: the main
+    // one, else the first. One that already sits on another player stays there.
+    Camera* cam = nullptr;
+    for (const auto& obj : scene.Objects()) {
+        auto* c = obj ? obj->GetComponent<Camera>() : nullptr;
+        if (!c || !c->transform) continue;
+        Transform* parent = c->transform->Parent();
+        if (parent && parent->gameObject && parent->gameObject->GetComponent<PlayerView>()) continue;
+        if (!cam || (c->main && !cam->main)) cam = c;
+    }
+    if (!cam) return;
+    for (Transform* t = go->transform; t; t = t->Parent())
+        if (t == cam->transform) return;   // the player hangs under this camera
+    if (!cam->transform->SetParent(go->transform, /*worldPositionStays=*/false)) return;
+    if (wasThird) {
+        // The resting orbit, as the third-person starter poses it; the controller
+        // writes the same pose on the first frame.
+        const float rest = tp->pitch * Mathf::Deg2Rad;
+        const float dist = tp->distance > 0.0f ? tp->distance : 5.0f;
+        cam->transform->localPosition = {view->shoulderOffset, tp->cameraHeight + std::sin(rest) * dist, std::cos(rest) * dist};
+        cam->transform->localRotation = Quat::Euler(-tp->pitch, 0.0f, 0.0f);
+    } else {
+        cam->transform->localPosition = {0.0f, fp->standEyeHeight, -0.20f};   // the eye, just in front of the face
+        cam->transform->localRotation = Quat::Identity;
+    }
 }
 
 // Parse a document into `scene`. If `clear` is false, objects are appended
@@ -3716,6 +3775,22 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         p.name = ReadQuoted(in); in >> p.type;
                         if (sm2) sm2->params.push_back(std::move(p));
                     }
+                } else if (field == "animsmpdef") {
+                    // Parameter defaults (index-matched to animsmparams).
+                    auto* sm2 = smFor();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n && in; ++i) {
+                        float d = 0.0f; in >> d;
+                        if (sm2 && i < (long)sm2->params.size()) sm2->params[i].def = d;
+                    }
+                } else if (field == "animsmlname") {
+                    auto* sm2 = smFor();
+                    std::string nm = ReadQuoted(in);
+                    if (sm2) sm2->layerName = std::move(nm);
+                } else if (field == "animsmanypos") {
+                    auto* sm2 = smFor();
+                    float x = 0, y = 0; in >> x >> y;
+                    if (sm2) { sm2->anyX = x; sm2->anyY = y; }
                 } else if (field == "animsmpos") {
                     // Animator graph node positions (index-matched to animsm's states).
                     auto* sm2 = smFor();
@@ -7072,6 +7147,17 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
     // itself: give it the Animator that plays it now (its state clips carried over).
     if (version < 2)
         for (auto& [idx, go] : byIndex) { (void)idx; HumanoidLibrary::EnsureAnimator(go); }
+    // Version 3 starters put both view controllers on a switchable player. A
+    // whole scene only: a clone made at play keeps the layout it was given.
+    // In file order, so the first player in the file is the one a loose
+    // camera goes to.
+    if (version < 3 && clear) {
+        std::vector<int> order;
+        order.reserve(byIndex.size());
+        for (auto& [idx, go] : byIndex) { (void)go; order.push_back(idx); }
+        std::sort(order.begin(), order.end());
+        for (int idx : order) CompleteViewToggle(scene, byIndex[idx]);
+    }
     // Default graphs saved before a built-in action existed gain that action once.
     for (auto& [idx, go] : byIndex) {
         (void)idx;
@@ -7103,7 +7189,7 @@ std::string SceneSerializer::SerializeObject(const GameObject& root) {
     for (std::size_t i = 0; i < subtree.size(); ++i) localIndex[subtree[i]] = (int)i;
 
     std::ostringstream out;
-    out << "okayscene 2\n";
+    out << "okayscene 3\n";
     for (std::size_t i = 0; i < subtree.size(); ++i) {
         GameObject* go = subtree[i];
         if (go->transient || IsGeneratedRig(go) || IsGeneratedViewmodel(go) || IsBuildModeRuntime(go)) continue;   // a Character's part rig (and the FP viewmodel arm) is regenerated on load

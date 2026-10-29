@@ -42,6 +42,13 @@ struct Preview {
     std::string label;                  // state name, or the clip name
     std::string clip;
     std::vector<std::string> motions;   // blend-tree choices; empty otherwise
+    // A transition preview: `clip` plays from `t0`; at `mixStart` `mixClip`
+    // fades in over `mixDur` seconds, starting `mixOffset` into itself. Empty
+    // mixClip = an ordinary one-clip preview.
+    std::string mixClip;
+    float t0 = 0.0f;
+    float mixStart = 0.0f, mixDur = 0.0f, mixOffset = 0.0f;
+    bool mixLoop = true;                // the second clip loops
     std::vector<BoneSnap> bones;
     std::vector<ShapeSnap> shapes;
 };
@@ -318,6 +325,50 @@ inline bool StartModelState(Scene& sc, ModelAnimator* ma, const AnimStateMachine
     return true;
 }
 
+/// Preview a transition on `target` (a Character body or an imported model):
+/// `from` plays, and at `startAt` seconds into it `to` fades in over `blend`
+/// seconds, starting `offset` (normalized) into itself. The preview loops over
+/// a window around the blend. False when either clip is not there.
+inline bool StartTransition(Scene& sc, GameObject* target, const std::string& label, const std::string& from,
+                            const std::string& to, bool loopFrom, bool loopTo, float startAt, float blend,
+                            float offset, float speed, bool inPlay) {
+    if (!target) return false;
+    Character* ch = target->GetComponent<Character>();
+    ModelAnimator* ma = target->GetComponent<ModelAnimator>();
+    float lenA = 0.0f, lenB = 0.0f;
+    if (ma && !ch) {
+        const int a = ma->FindClip(from), b = ma->FindClip(to);
+        if (a < 0 || b < 0) return false;
+        lenA = ma->ClipLength(a); lenB = ma->ClipLength(b);
+        Begin(sc, target, Kind::Model, label, true, speed, inPlay);
+    } else if (ch) {
+        const AnimClip* a = BodyClip(ch, from);
+        const AnimClip* b = BodyClip(ch, to);
+        if (!a || !b) return false;
+        lenA = a->Duration(); lenB = b->Duration();
+        Begin(sc, target, Kind::State, label, true, speed, inPlay);
+        AdoptClip(ch, from, Cur());
+    } else return false;
+    Preview& p = Cur();
+    p.clip = from;
+    p.mixClip = to;
+    p.mixLoop = loopTo;
+    p.mixDur = std::max(blend, 0.0f);
+    p.mixOffset = std::min(std::max(offset, 0.0f), 0.999f) * lenB;
+    // The window: a lead-in on the first clip, the blend, and a tail on the second.
+    const float lead = std::min(0.6f, lenA * 0.5f), tail = std::min(0.6f, std::max(lenB, 0.1f));
+    p.mixStart = loopFrom || lenA <= 0.0f ? startAt : std::min(startAt, lenA);
+    p.t0 = std::max(0.0f, p.mixStart - lead);
+    p.length = p.mixStart + p.mixDur + tail;
+    p.t = p.t0;
+    p.loop = true;
+    return true;
+}
+inline bool IsTransition(GameObject* go, const std::string& label) {
+    const Preview& p = Cur();
+    return !p.mixClip.empty() && p.target == go && p.label == label;
+}
+
 inline void UseMotion(const std::string& clip) {
     Preview& p = Cur();
     if (p.kind == Kind::None || clip.empty() || clip == p.clip) return;
@@ -352,6 +403,26 @@ inline void NoteSelection(Scene& sc, GameObject* sel) {
     if (!InFamily(sel, p.target)) Stop(sc);
 }
 
+// The preview poses through the Model Animator: a Model preview, or a state
+// preview on an imported model that has no Character of its own.
+inline bool PosesModel(GameObject* go, const Preview& p) {
+    if (p.kind == Kind::Model) return true;
+    return go && go->GetComponent<ModelAnimator>() && !go->GetComponent<Character>();
+}
+
+/// How far a transition preview has faded into its second clip at `t` (0..1).
+inline float MixWeight(const Preview& p, float t) {
+    if (p.mixClip.empty()) return 0.0f;
+    if (p.mixDur <= 1e-4f) return t >= p.mixStart ? 1.0f : 0.0f;
+    return std::min(std::max((t - p.mixStart) / p.mixDur, 0.0f), 1.0f);
+}
+/// Where the second clip is at preview time `t`.
+inline float MixTime(const Preview& p, float t, float length) {
+    float s = p.mixOffset + std::max(0.0f, t - p.mixStart);
+    if (length > 1e-4f) s = p.mixLoop ? std::fmod(s, length) : std::min(s, length);
+    return s;
+}
+
 inline void PoseCharacter(Scene& sc, Character* ch, const Preview& p) {
     const AnimClip* pc = BodyClip(ch, p.clip);
     if (!pc) return;
@@ -360,8 +431,20 @@ inline void PoseCharacter(Scene& sc, Character* ch, const Preview& p) {
         const float hold = pc->keys.empty() ? 0.0f : pc->keys.back().time;
         if (sample > hold) sample = hold;
     }
+    std::vector<Vec3> pose = pc->Sample(sample);
+    Vec3 root = pc->SampleRoot(sample);
+    const float u = MixWeight(p, p.t);
+    if (u > 0.0f) {
+        if (const AnimClip* mc = BodyClip(ch, p.mixClip)) {
+            const float lenB = p.mixLoop ? mc->Duration() : (mc->keys.empty() ? 0.0f : mc->keys.back().time);
+            const float tb = MixTime(p, p.t, lenB);
+            const std::vector<Vec3> b = mc->Sample(tb);
+            for (std::size_t i = 0; i < pose.size() && i < b.size(); ++i) pose[i] = AnimClip::BlendEuler(pose[i], b[i], u);
+            root = root + (mc->SampleRoot(tb) - root) * u;
+        }
+    }
     const int keep = ch->anim;
-    ch->PreviewPose(pc->Sample(sample), pc->SampleRoot(sample) * ch->height);
+    ch->PreviewPose(pose, root * ch->height);
     if (ch->driveExternal && ch->gameObject) {
         if (auto* rt = ch->gameObject->GetComponent<HumanoidRetarget>()) rt->LateUpdate(0.0f);
         ReskinUnder(sc, ch->gameObject);
@@ -374,11 +457,62 @@ inline void PoseCharacter(Scene& sc, Character* ch, const Preview& p) {
     }
 }
 
+// Pose every node of `clip` at `t`, then blend `mix` in at `u` on the union of
+// their nodes (position and scale lerped, rotation slerped). Blend shapes
+// follow the first clip.
+inline void PoseModelMixed(Scene& sc, ModelAnimator* ma, const ModelAnimator::Clip& clip, float t, bool loop,
+                           const ModelAnimator::Clip& mix, float tb, bool loopB, float u) {
+    struct Node { Transform* tr; Vec3 p0, s0; Quat r0; Vec3 pa, sa; Quat ra; };
+    std::vector<Node> nodes;
+    auto find = [&](const std::string& name) -> Transform* {
+        for (const auto& up : sc.Objects()) {
+            GameObject* g = up.get();
+            if (!g || g->name != name || !g->IsSelfOrDescendantOf(ma->gameObject)) continue;
+            return g->transform;
+        }
+        return nullptr;
+    };
+    auto slot = [&](Transform* tr) -> Node& {
+        for (Node& n : nodes) if (n.tr == tr) return n;
+        nodes.push_back({tr, tr->localPosition, tr->localScale, tr->localRotation,
+                         tr->localPosition, tr->localScale, tr->localRotation});
+        return nodes.back();
+    };
+    for (const auto& nc : clip.nodes) {
+        Transform* tr = find(nc.node);
+        if (!tr) continue;
+        Node& n = slot(tr);
+        ApplyNodeClip(nc.clip, tr, t, loop);
+        n.pa = tr->localPosition; n.sa = tr->localScale; n.ra = tr->localRotation;
+        tr->localPosition = n.p0; tr->localScale = n.s0; tr->localRotation = n.r0;
+    }
+    for (const auto& nc : mix.nodes) {
+        Transform* tr = find(nc.node);
+        if (!tr) continue;
+        Node& n = slot(tr);
+        ApplyNodeClip(nc.clip, tr, tb, loopB);
+        n.p0 = tr->localPosition; n.s0 = tr->localScale; n.r0 = tr->localRotation;   // B's pose (rest when A alone drove it)
+    }
+    for (const Node& n : nodes) {
+        n.tr->localPosition = n.pa + (n.p0 - n.pa) * u;
+        n.tr->localScale = n.sa + (n.s0 - n.sa) * u;
+        n.tr->localRotation = Quat::Slerp(n.ra, n.r0, u);
+    }
+}
+
 inline void PoseModel(Scene& sc, ModelAnimator* ma, const Preview& p) {
     const int idx = ma->FindClip(p.clip);
     if (idx < 0 || !ma->gameObject) return;
     RestoreBones(sc, Cur());
     const ModelAnimator::Clip& clip = ma->clips[idx];
+    const float u = MixWeight(p, p.t);
+    const int mixIdx = u > 0.0f ? ma->FindClip(p.mixClip) : -1;
+    if (mixIdx >= 0) {
+        const float tb = MixTime(p, p.t, ma->ClipLength(mixIdx));
+        PoseModelMixed(sc, ma, clip, p.t, p.loop, ma->clips[mixIdx], tb, p.mixLoop, u);
+        ReskinUnder(sc, ma->gameObject);
+        return;
+    }
     for (const auto& nc : clip.nodes) {
         GameObject* node = nullptr;
         for (const auto& up : sc.Objects()) {
@@ -412,7 +546,7 @@ inline void Tick(Scene& sc, float dt) {
     if (!p.snapped) {
         // Other previews restore in the editor tick before this runs, so the
         // snapshot is the pose that was really on screen.
-        if (p.kind == Kind::Model) {
+        if (PosesModel(go, p)) {
             if (ModelAnimator* ma = go->GetComponent<ModelAnimator>()) SnapshotModel(sc, ma, p);
         } else if (Character* ch = go->GetComponent<Character>()) SnapshotCharacter(sc, ch, p);
         p.snapped = true;
@@ -420,14 +554,17 @@ inline void Tick(Scene& sc, float dt) {
     if (p.playing) {
         p.t += dt * p.speed * p.clipRate;
         if (p.loop && p.length > 1e-4f) {
-            p.t = std::fmod(p.t, p.length);
-            if (p.t < 0.0f) p.t += p.length;
+            const float span = std::max(p.length - p.t0, 1e-4f);
+            if (p.t >= p.length || p.t < p.t0) {
+                p.t = p.t0 + std::fmod(p.t - p.t0, span);
+                if (p.t < p.t0) p.t += span;
+            }
         } else if (p.length > 0.0f && p.t > p.length) {
             p.t = p.length;
             p.playing = false;
         }
     }
-    if (p.kind == Kind::Model) {
+    if (PosesModel(go, p)) {
         if (ModelAnimator* ma = go->GetComponent<ModelAnimator>()) PoseModel(sc, ma, p);
     } else if (Character* ch = go->GetComponent<Character>()) {
         PoseCharacter(sc, ch, p);

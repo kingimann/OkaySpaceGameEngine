@@ -319,7 +319,7 @@ void BehaviorTreeRunner::RunService(int idx, float elapsed) {
         GameObject* tgt = nullptr;
         const std::string tn = n.Str("targetName");
         if (sc && !tn.empty()) tgt = sc->Find(tn);
-        if (!tgt && !tk.empty()) tgt = blackboard.GetObject(tk, sc);
+        if (!tgt && !tk.empty()) tgt = blackboard.GetGameObject(tk, sc);
         bool noticed = false;
         if (tgt && tgt->transform && tgt != gameObject) {
             const Vec3 pos = Position(), tp = tgt->transform->Position();
@@ -847,7 +847,7 @@ BtStatus BehaviorTreeRunner::TickTask(int idx, float dt, bool first) {
             }
             return (found && !failed) ? BtStatus::Success : BtStatus::Failure;
         }
-        case BtNodeType::PlaySound: {
+        case BtNodeType::PlayAudio: {
             AudioSource* au = FindAudio(gameObject);
             if (!au) return BtStatus::Failure;
             if (first) {

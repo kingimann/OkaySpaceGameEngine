@@ -159,7 +159,7 @@ std::string Summary(const BehaviorTree& t, const BtNode& n) {
         case BtNodeType::SendEvent: return s("event") + (n.Flag("broadcast") ? " (broadcast)" : s("target").empty() ? "" : " -> " + s("target"));
         case BtNodeType::RunScript:
         case BtNodeType::Custom: return s("function") + "()";
-        case BtNodeType::PlaySound: return s("clip").empty() ? "the Audio Source" : s("clip");
+        case BtNodeType::PlayAudio: return s("clip").empty() ? "the Audio Source" : s("clip");
         case BtNodeType::Perception: return s("targetName") + Fmt("  %g m", n.Num("range"));
         case BtNodeType::HealthWatcher: return "-> " + s("healthKey");
         default: {
@@ -341,21 +341,21 @@ void Tidy(Ctx& c) { if (U().tidy) Layout(c); }
 
 // Add a node of `type` relative to the selection: under a composite / decorator,
 // beside a task, attached to any node when it is a service.
-int AddFromPalette(Ctx& c, BtNodeType type, int near) {
+int AddFromPalette(Ctx& c, BtNodeType type, int anchor) {
     BehaviorTree& t = c.t;
     DocPush();
     int parent = -1, at = -1;
-    if (const BtNode* n = t.Find(near)) {
-        if (BtIsService(type)) parent = near;
-        else if (n->Kind() == BtNodeKind::Composite || n->Kind() == BtNodeKind::Decorator) parent = near;
+    if (const BtNode* n = t.Find(anchor)) {
+        if (BtIsService(type)) parent = anchor;
+        else if (n->Kind() == BtNodeKind::Composite || n->Kind() == BtNodeKind::Decorator) parent = anchor;
         else if (n->parent >= 0) {
             parent = n->parent;
             const std::vector<int> kids = t.FlowChildren(parent);
-            auto it = std::find(kids.begin(), kids.end(), near);
+            auto it = std::find(kids.begin(), kids.end(), anchor);
             at = it == kids.end() ? -1 : (int)(it - kids.begin()) + 1;
             if (at >= 0) {   // position among all children (services included)
                 const BtNode* p = t.Find(parent);
-                auto pit = std::find(p->children.begin(), p->children.end(), near);
+                auto pit = std::find(p->children.begin(), p->children.end(), anchor);
                 at = pit == p->children.end() ? -1 : (int)(pit - p->children.begin()) + 1;
             }
         }

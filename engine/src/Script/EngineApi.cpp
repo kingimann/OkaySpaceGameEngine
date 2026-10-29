@@ -1045,7 +1045,7 @@ EngineApi Build() {
         bt.staticMethods.back().pure = true;
         bt.staticMethods.push_back(method("GetObject", {tString}, {"key"}, tGO,
             [runnerOf, goIdx](const Value&, std::vector<Value>& a, CallContext& c) {
-                return MakeRef(runnerOf(c)->blackboard.GetObject(S(a[0]), c.self ? c.self->scene() : nullptr), goIdx);
+                return MakeRef(runnerOf(c)->blackboard.GetGameObject(S(a[0]), c.self ? c.self->scene() : nullptr), goIdx);
             }, "The object a blackboard key refers to, or null."));
         bt.staticMethods.back().pure = true;
         bt.staticMethods.push_back(method("Run", {tString}, {"tree"}, tBool,

@@ -83,7 +83,7 @@ public:
     bool  GetBool(const std::string& name, bool fallback = false) const;
     std::string GetString(const std::string& name, const std::string& fallback = std::string()) const;
     Vec3  GetVector(const std::string& name, const Vec3& fallback = Vec3{0, 0, 0}) const;
-    GameObject* GetObject(const std::string& name, Scene* scene) const;
+    GameObject* GetGameObject(const std::string& name, Scene* scene) const;   // not GetObject: a windows.h macro
     /// A position from a key: a vector, or an object's position (false when neither).
     bool GetPosition(const std::string& name, Scene* scene, Vec3& out) const;
 
@@ -104,7 +104,7 @@ enum class BtNodeType {
     Inverter, Succeeder, Repeat, UntilFail, Cooldown, TimeLimit, Condition, Guard,
     // ---- tasks ----
     Wait, MoveTo, Patrol, Wander, Chase, Flee, LookAt, PlayAnimation, Attack,
-    SetBlackboard, SendEvent, RunScript, PlaySound, Custom,
+    SetBlackboard, SendEvent, RunScript, PlayAudio, Custom,   // PlayAudio: windows.h defines PlaySound
     // ---- services ----
     Perception, HealthWatcher,
     Count

@@ -241,7 +241,7 @@ float Blackboard::GetNumber(const std::string& name, float fallback) const { con
 bool Blackboard::GetBool(const std::string& name, bool fallback) const { const BtValue* v = Find(name); return v ? v->AsBool() : fallback; }
 std::string Blackboard::GetString(const std::string& name, const std::string& fallback) const { const BtValue* v = Find(name); return v ? v->AsString() : fallback; }
 Vec3 Blackboard::GetVector(const std::string& name, const Vec3& fallback) const { const BtValue* v = Find(name); return v ? v->AsVector() : fallback; }
-GameObject* Blackboard::GetObject(const std::string& name, Scene* scene) const { const BtValue* v = Find(name); return v ? v->AsObject(scene) : nullptr; }
+GameObject* Blackboard::GetGameObject(const std::string& name, Scene* scene) const { const BtValue* v = Find(name); return v ? v->AsObject(scene) : nullptr; }
 bool Blackboard::GetPosition(const std::string& name, Scene* scene, Vec3& out) const {
     const BtValue* v = Find(name);
     if (!v) return false;
@@ -379,7 +379,7 @@ const std::vector<BtNodeDef>& Defs() {
          "Calls a function of this NPC's scripts. Fails when no script has it or it returns false.",
          {{"function", "Function", K::Function, "", "The function's name.", nullptr},
           {"arg", "Argument", K::Text, "", "Passed to the function when it takes one.", nullptr}}},
-        {BtNodeType::PlaySound, "PlaySound", "Play Sound", BtNodeKind::Task,
+        {BtNodeType::PlayAudio, "PlaySound", "Play Sound", BtNodeKind::Task,
          "Plays this object's Audio Source (a file when given).",
          {{"clip", "File", K::File, "", "A sound file to play (empty: the Audio Source's clip).", nullptr},
           {"oneShot", "One Shot", K::Bool, "0", "Play on top of what is playing instead of restarting it.", nullptr},

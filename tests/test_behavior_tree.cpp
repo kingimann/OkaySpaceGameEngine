@@ -445,7 +445,7 @@ int main() {
         CHECK(L.r->blackboard.GetNumber("hp") == 35.0f && L.r->blackboard.Find("hp")->type == BtValue::Type::Number);
         CHECK(L.r->blackboard.GetBool("brave"));
         CHECK(L.r->blackboard.GetVector("post").y == 2.0f);
-        CHECK(L.r->blackboard.GetObject("boss", &L.s) == player);
+        CHECK(L.r->blackboard.GetGameObject("boss", &L.s) == player);
         Vec3 bp;
         CHECK(L.r->blackboard.GetPosition("boss", &L.s, bp) && bp.x == 9.0f);
         CHECK(L.r->blackboard.GetString("name") == "guard");
@@ -487,7 +487,7 @@ int main() {
             Scene s("see");
             BehaviorTreeRunner* r = build(s, {0, 0, 5}, false, 120.0f, 0.0f);
             CHECK(r->blackboard.GetBool("canSee"));
-            CHECK(r->blackboard.GetObject("target", &s) == s.Find("Player"));
+            CHECK(r->blackboard.GetGameObject("target", &s) == s.Find("Player"));
             CHECK(r->blackboard.GetVector("lastSeen").z == 5.0f);
             CHECK(r->blackboard.GetNumber("sinceSeen") == 0.0f);
             // The player leaves: the clock since the last sighting runs.
@@ -495,7 +495,7 @@ int main() {
             for (int i = 0; i < 10; ++i) s.Update(0.1f);
             CHECK(!r->blackboard.GetBool("canSee"));
             CHECK_NEAR(r->blackboard.GetNumber("sinceSeen"), 1.0f, 0.15f);
-            CHECK(r->blackboard.GetObject("target", &s) == s.Find("Player"));   // still remembered
+            CHECK(r->blackboard.GetGameObject("target", &s) == s.Find("Player"));   // still remembered
         }
         {   // a wall in the way: not seen
             Scene s("wall");

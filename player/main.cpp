@@ -1383,6 +1383,7 @@ int main(int argc, char** argv) {
     const bool acHaveManifest = !acManifest.files.empty();
 
     Scene scene("Game");
+    scene.UseFixedStepPhysics(true);   // same physics at any frame rate, drawn smoothly
     std::string err;
     if (!SceneSerializer::LoadFromFile(scene, scenePath, &err)) {
         SDL_Log("Could not load %s: %s", scenePath.c_str(), err.c_str());
@@ -1392,6 +1393,7 @@ int main(int argc, char** argv) {
         std::printf("[server] scene %s\n", scenePath.c_str());
         if (serverOpts.game.empty())   // what the server browser shows as the game
             serverOpts.game = !cfg.title.empty() && cfg.title != "OkaySpace Game" ? cfg.title : scene.Name();
+        scene.interpolatePhysics = false;   // nothing is drawn; snapshots send the real physics poses
         const int rc = okay::RunDedicatedServer(scene, serverOpts);
         Prefs::Save(prefsPath);
         SDL_Quit();

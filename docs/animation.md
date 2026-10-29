@@ -659,12 +659,26 @@ and transitions. Beyond single conditions:
   clip (0.9 = 90%). With the *Always* condition it fires purely on time: an attack
   returning to locomotion when it's nearly done.
 - **Any State** — transitions checked from every state first (hit reactions, death).
+- **Layers** — a layer plays on a bone and the bones under it (the mask), over the
+  base pose. **+ Mask bone** adds more subtrees (arms and the head, not the
+  whole spine). **Additive** adds the clip on top of the base pose instead of
+  replacing those bones, for a recoil or aim offset while the body keeps walking.
 - **If missing** — when the state's clip is not in this Animator's library, play
   the fallback clip instead. A name that exists only on a child model's imported
   clips plays there (Humanoid Retarget yields until the state changes).
   **Import into clip** / **Import as fallback** load a file into that slot
   (`.okayanim` on a character, FBX / glTF / BVH on an imported model). The Clip
   list also includes the built-in library and those imported takes.
+- **Mirror** — the state plays with left and right swapped, so one authored side
+  covers the other. It applies to a single clip, a blend tree, and a layer
+  (the layer mirrors only its own overlay). **Root motion** per state is Inherit
+  (the Model Animator's toggle), Off, or On. A layer does not change root motion.
+- **IK weight curve** — under a state's IK weight, **Add curve** shapes foot planting
+  over the clip (click to add a key, drag to move it, right-click to remove it).
+  The curve is multiplied by the IK weight slider. Full Body IK can have its own
+  curve when it does not follow the foot weight. Foot IK and Full Body IK read
+  the sampled weight; their solvers are unchanged. `SampleIkCurve` evaluates a
+  curve the same way.
 
 Scripts: `anim_set_float`, `anim_set_bool`, `anim_trigger`, `anim_state()`,
 `anim_prev_state()`, `anim_state_time()`, `anim_normalized_time()`.
@@ -683,7 +697,8 @@ Full Body IK settings, troubleshooting) is in [ik.md](ik.md).
 | Look-At IK / Aim IK | Head/spine tracking; point a bone (gun, torch) at a target. |
 
 Every IK component has **IK Active** and **Fade** so switching IK on or off blends
-instead of popping. Scripts: `ik_enable(on)`, `ik_set_weight(w)`,
+instead of popping. The Animator's per-state IK weight (and its curve over the
+clip) is what those components read as their state weight. Scripts: `ik_enable(on)`, `ik_set_weight(w)`,
 `ik_set_target(x, y, z)`, `ik_set_pole(x, y, z)`, and for Full Body IK
 `ik_hand("left", x, y, z [, weight])`, `ik_foot(...)`, `ik_look(x, y, z)`,
 `ik_release()`.

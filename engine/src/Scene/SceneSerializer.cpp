@@ -20,6 +20,7 @@
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/PlayerView.hpp"
 #include "okay/Components/UITheme.hpp"          // grok/ui-theme
+#include "okay/Components/SequencePlayer.hpp"
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/BlockBuilder.hpp"
@@ -2933,6 +2934,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             out << " " << c->count << " " << (c->smooth ? 1 : 0);
             for (int i = 0; i < c->count; ++i) out << " " << c->keys[i].time << " " << c->keys[i].value;
         }
+        out << "\n";
+    }
+    // Sequence player (cutscenes). key=value record; the playback state is not saved.
+    if (auto* sp = go->GetComponent<SequencePlayer>()) {
+        out << "  sequenceplayer";
+        KvOut k{out};
+        k.str("path", sp->sequencePath).b("auto", sp->playOnStart).b("loop", sp->loop)("speed", sp->timeScale)
+         .key("skip", sp->skipKey).b("lock", sp->lockPlayer);
         out << "\n";
     }
 }
@@ -7120,6 +7129,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             c->keys[c->count++] = k;
                         }
                     }
+                } else if (field == "sequenceplayer") {
+                    // Cutscene player. Missing keys keep the defaults.
+                    auto* sp = go->AddComponent<SequencePlayer>();
+                    KvIn k(in);
+                    k.str("path", sp->sequencePath);
+                    k.b("auto", sp->playOnStart);
+                    k.b("loop", sp->loop);
+                    k.f("speed", sp->timeScale);
+                    k.key("skip", sp->skipKey);
+                    k.b("lock", sp->lockPlayer);
                 } else {
                     if (error) *error = "unknown field '" + field + "'";
                     return false;
@@ -7273,6 +7292,12 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         }
         if (auto* bm = go->GetComponent<BuildMode>())
             for (const auto& it : bm->palette) { add(it.prefab); add(it.icon); }
+        if (auto* sp = go->GetComponent<SequencePlayer>()) {
+            add(sp->sequencePath);
+            Sequence seq;   // the sounds its audio cues play ship with it
+            if (Sequence::LoadFromFile(sp->ResolvedPath(), seq))
+                for (const auto& tr : seq.audio) for (const auto& c : tr.cues) add(c.file);
+        }
         if (auto* lt = go->GetComponent<LogicTarget>()) add(lt->spawnPrefab);
         if (auto* ls = go->GetComponent<LootSource>()) add(ls->table);
     }

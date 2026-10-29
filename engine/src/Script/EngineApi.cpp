@@ -30,6 +30,7 @@
 #include "okay/Components/UIButton.hpp"
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Core/SaveGame.hpp"
+#include "okay/Components/SequencePlayer.hpp"
 #include <cmath>
 #include <set>
 
@@ -933,6 +934,33 @@ EngineApi Build() {
             [](const Value&, CallContext&) { return Value{SaveGame::PlayTime()}; },
             "Seconds played, counting the time in the save that was loaded."));
         api.types.push_back(std::move(sg));
+    }
+    // ---- Sequence (cutscenes) ----
+    {
+        ApiType sq; sq.name = "Sequence"; sq.isStatic = true;
+        sq.doc = "Cutscenes: play a .okayseq timeline through a Sequence Player in the scene.";
+        auto sceneOf = [](CallContext& c) -> Scene* { return c.self ? c.self->scene() : nullptr; };
+        sq.staticMethods.push_back(method("Play", {tString}, {"name"}, tBool,
+            [sceneOf](const Value&, std::vector<Value>& a, CallContext& c) {
+                Scene* s = sceneOf(c);
+                return Value{s && SequencePlayer::PlayByName(*s, c.self, S(a[0]))};
+            }, "Play the sequence named like this (a Sequence Player's file, or Assets/<name>.okayseq). False if there is none."));
+        sq.staticMethods.push_back(method("Stop", {}, {}, tVoid,
+            [sceneOf](const Value&, std::vector<Value>&, CallContext& c) { if (Scene* s = sceneOf(c)) SequencePlayer::StopAll(*s); return Value{}; },
+            "Stop every playing sequence; the camera goes back to the game."));
+        sq.staticProps.push_back(ro("isPlaying", tBool,
+            [sceneOf](const Value&, CallContext& c) { Scene* s = sceneOf(c); return Value{s && SequencePlayer::Playing(*s) != nullptr}; },
+            "True while a sequence plays."));
+        sq.staticProps.push_back(ro("time", tFloat,
+            [sceneOf](const Value&, CallContext& c) {
+                Scene* s = sceneOf(c);
+                SequencePlayer* sp = s ? SequencePlayer::Playing(*s) : nullptr;
+                return Value{sp ? sp->Time() : 0.0f};
+            }, "Seconds into the playing sequence (0 when none plays)."));
+        sq.staticProps.push_back(ro("lastEvent", tString,
+            [](const Value&, CallContext&) { return Value{SequencePlayer::LastEvent()}; },
+            "The event being delivered: read it in OnSequenceEvent()."));
+        api.types.push_back(std::move(sq));
     }
     // ---- Mathf ----
     {

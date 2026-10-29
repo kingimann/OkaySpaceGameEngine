@@ -11,6 +11,7 @@
 #include "okay/Input/SdlGamepad.hpp"   // controller -> Input (sticks, triggers, rumble)
 #include "FpHandsWindow.hpp"
 #include "AnimatorWindow.hpp"          // the Animator window (state-machine graph editor)
+#include "TimelineWindow.hpp"          // the Timeline window (cutscene sequences)
 #include "okay/Components/HoldPrompt.hpp"
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
@@ -4373,6 +4374,7 @@ static const DockPanelDef* DockPanels(int& n) {
         {"Custom Actions","Custom Actions",            &g_showCustomActions, "Editors & Tools", PI_Bolt},
         {"Animation",     "Animation###AnimationDock", &g_showAnimation,     "Editors & Tools", PI_Animation},
         {"Animator",      "Animator",                  &g_showAnimatorGraph, "Editors & Tools", PI_Animator},
+        {"Timeline",      "Timeline",                  &g_showTimeline,      "Editors & Tools", PI_Animation},
         {"Modeling",      "Modeling",                  &g_showModeling,      "Editors & Tools", PI_Modeling},
         {"UV Editor",     "UV Editor",                 &g_showUVEditor,      "Editors & Tools", PI_Modeling},
         {"Sprite Editor", "Sprite Editor",             &g_showSpriteEditor,  "Editors & Tools", PI_Sprite},
@@ -5671,6 +5673,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
             ImGui::Separator();
             ImGui::MenuItem("Animation", nullptr, &g_showAnimation);
             ImGui::MenuItem("Animator (state graph)", nullptr, &g_showAnimatorGraph);
+            ImGui::MenuItem("Timeline (cutscenes)", nullptr, &g_showTimeline);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Author cutscene sequences: camera shots, object keys, animation and audio cues, events and subtitles on one timeline.");
             ImGui::Separator();
             ImGui::MenuItem("Modeling", nullptr, &g_showModeling);
             ImGui::MenuItem("UV Editor", nullptr, &g_showUVEditor);
@@ -6287,7 +6291,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
     if (playHit) {
         if (!playing) {
             if (g_clearConsoleOnPlay) ConsoleClear();
-            StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed);   // previews must not override Play
+            StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed); StopTimelinePreview();   // previews must not override Play
             okay::editor::apreview::Stop(ed.scene());   // before the snapshot, so Play doesn't save the preview pose
             CompileOpenScriptBuffers(ed.scene());
             ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
@@ -6901,6 +6905,7 @@ static AssetKind KindOf(const std::string& extLower, bool isDir) {
     if (extLower == ".okaydata")   return {IM_COL32(110, 205, 190, 255), "DAT", AssetIcon::Data};
     if (extLower == ".obj")        return {IM_COL32(150, 175, 210, 255), "OBJ", AssetIcon::Mesh};
     if (extLower == ".okayvs")     return {IM_COL32(150, 200, 170, 255), "VS",  AssetIcon::Visual};
+    if (extLower == ".okayseq")    return {IM_COL32(200, 130, 230, 255), "SEQ", AssetIcon::Visual};
     return {IM_COL32(150, 152, 162, 255), "FILE", AssetIcon::Generic};
 }
 
@@ -8979,6 +8984,8 @@ void DrawProject(EditorState& ed) {
         } else if (ext == ".okayvs") {
             okay::editor::vsed::OpenFile(full);   // open in the in-app node editor
             g_showVisualScript = true;
+        } else if (ext == ".okayseq") {
+            OpenTimelineFile(full);               // open in the Timeline window
         } else if (const char* k = ImportKindLabel(ext); k && std::strcmp(k, "model") == 0) {
             // Double-click a model: import it into the scene (hierarchy, textures,
             // rig + clips, size normalization — same path as drag-drop).
@@ -15082,16 +15089,18 @@ void HandleShortcuts(EditorState& ed) {
     ImGuiIO& io = ImGui::GetIO();
     if (io.WantTextInput || OwnShortcutsWindowFocused()) return;
     bool ctrl = io.KeyCtrl;
-    const bool animKeys = AnimationTabFocused() || AnimatorGraphFocused();   // those windows own Delete, Ctrl+C/V/D and F
+    const bool animKeys = AnimationTabFocused() || AnimatorGraphFocused() || TimelineFocused();   // those windows own Delete, Ctrl+C/V/D and F
     // Ctrl+Z undoes; Ctrl+Shift+Z and Ctrl+Y redo. (Guard the undo with !Shift
     // so Ctrl+Shift+Z doesn't undo and redo in the same frame.)
     if (ctrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
-        if (MeshUndo(false)) { ConsoleLog("Undo (mesh edit)"); ed.dirty = true; }
+        if (TimelineFocused() && TimelineUndo(false)) ConsoleLog("Undo (timeline)");
+        else if (MeshUndo(false)) { ConsoleLog("Undo (mesh edit)"); ed.dirty = true; }
         else if (ed.Undo()) ConsoleLog("Undo");
     }
     if (ctrl && (ImGui::IsKeyPressed(ImGuiKey_Y, false) ||
                  (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)))) {
-        if (MeshUndo(true)) { ConsoleLog("Redo (mesh edit)"); ed.dirty = true; }
+        if (TimelineFocused() && TimelineUndo(true)) ConsoleLog("Redo (timeline)");
+        else if (MeshUndo(true)) { ConsoleLog("Redo (mesh edit)"); ed.dirty = true; }
         else if (ed.Redo()) ConsoleLog("Redo");
     }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_O, false)) g_showOpen = true;
@@ -15179,7 +15188,7 @@ void HandleShortcuts(EditorState& ed) {
         }
         else {
             if (g_clearConsoleOnPlay) ConsoleClear();
-            StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed);   // previews must not override Play
+            StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed); StopTimelinePreview();   // previews must not override Play
             okay::editor::apreview::Stop(ed.scene());
             CompileOpenScriptBuffers(ed.scene());
             ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
@@ -19119,7 +19128,7 @@ static void DrawAnimPreview(EditorState& ed, GameObject* go,
 // 3 go to start, 4 previous key, 5 next key, 6 add key, 7 preview, 8 event flag,
 // 9 curves, 10 more, 11 presets, 12 go to end, 13 loop, 14 onion skin, 15 fit,
 // 16 key rows. An active button uses the accent, or `activeCol` when given.
-static bool AnimGlyphButton(const char* id, int kind, const char* tip, bool active, ImU32 activeCol = 0) {
+bool AnimGlyphButton(const char* id, int kind, const char* tip, bool active, ImU32 activeCol) {
     const float fh = ImGui::GetFrameHeight();
     if (active && activeCol) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(activeCol));
@@ -19185,7 +19194,7 @@ static bool AnimGlyphButton(const char* id, int kind, const char* tip, bool acti
 
 // The transport: go to start, previous key, play / pause, next key, go to end.
 // Returns 0..4 for the button pressed (in that order), -1 for none.
-static int AnimTransport(bool playing) {
+int AnimTransport(bool playing) {
     const ImGuiStyle& sty = ImGui::GetStyle();
     int hit = -1;
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, sty.ItemSpacing.y));
@@ -19204,11 +19213,10 @@ static int AnimTransport(bool playing) {
 
 // The visible stretch of a timeline: `start` seconds at the left edge and `len`
 // seconds across (0 = not set yet: fit the clip).
-struct AnimTimeView { float start = 0.0f, len = 0.0f; };
-static void AnimTimeViewFit(AnimTimeView& v, float clipLen) { v.start = 0.0f; v.len = std::max(2.0f, clipLen * 1.15f); }
+void AnimTimeViewFit(AnimTimeView& v, float clipLen) { v.start = 0.0f; v.len = std::max(2.0f, clipLen * 1.15f); }
 // Wheel zooms about the cursor (`mouseT` is the time under it), middle-drag pans.
 // Shift+wheel is left alone, so a caller can scroll rows with it.
-static void AnimTimeViewInput(AnimTimeView& v, float pxPerSec, float mouseT) {
+void AnimTimeViewInput(AnimTimeView& v, float pxPerSec, float mouseT) {
     ImGuiIO& io = ImGui::GetIO();
     if (io.MouseWheel != 0.0f && !io.KeyShift) {
         float nl = Mathf::Clamp(v.len * (io.MouseWheel > 0 ? 0.85f : 1.18f), 0.25f, 600.0f);
@@ -19223,7 +19231,7 @@ static void AnimTimeViewInput(AnimTimeView& v, float pxPerSec, float mouseT) {
 // readable step, frame ticks when `fps` is set and they are far enough apart,
 // grid lines down to `gridBottom` and the stretch past `clipLen` shaded. `pad`
 // is the margin the times are inset by (the caller's tToX uses the same one).
-static void AnimDrawRuler(ImDrawList* dl, ImVec2 o, float W, float h, float gridBottom,
+void AnimDrawRuler(ImDrawList* dl, ImVec2 o, float W, float h, float gridBottom,
                           const AnimTimeView& v, float pad, float clipLen, int fps) {
     auto tToX = [&](float t) { return o.x + pad + ((t - v.start) / v.len) * (W - pad * 2.0f); };
     dl->PushClipRect(ImVec2(o.x, o.y), ImVec2(o.x + W, std::max(gridBottom, o.y + h)), true);   // a zoomed view's first tick can start left of the ruler
@@ -19255,7 +19263,7 @@ static void AnimDrawRuler(ImDrawList* dl, ImVec2 o, float W, float h, float grid
 }
 
 // The playhead: a line from `top` to `bottom` with a flag at the top; red while recording.
-static void AnimDrawPlayhead(ImDrawList* dl, float x, float top, float bottom, bool recording) {
+void AnimDrawPlayhead(ImDrawList* dl, float x, float top, float bottom, bool recording) {
     const ImU32 c = recording ? IM_COL32(235, 70, 70, 255) : IM_COL32(255, 200, 60, 255);
     dl->AddLine(ImVec2(x, top), ImVec2(x, bottom), c, 1.5f);
     dl->AddTriangleFilled(ImVec2(x - 5.0f, top), ImVec2(x + 5.0f, top), ImVec2(x, top + 7.0f), c);
@@ -19264,7 +19272,7 @@ static void AnimDrawPlayhead(ImDrawList* dl, float x, float top, float bottom, b
 // A key diamond of radius `r` at `c`: filled in the row's colour, or hollow when
 // the row's value holds still across the key; white while hovered or selected,
 // outlined when it sits under the playhead.
-static void AnimDrawDiamond(ImDrawList* dl, ImVec2 c, float r, ImU32 col, bool filled, bool hot, bool selected, bool atHead) {
+void AnimDrawDiamond(ImDrawList* dl, ImVec2 c, float r, ImU32 col, bool filled, bool hot, bool selected, bool atHead) {
     const ImVec2 d[4] = {{c.x, c.y - r}, {c.x + r, c.y}, {c.x, c.y + r}, {c.x - r, c.y}};
     if (filled) dl->AddConvexPolyFilled(d, 4, hot ? IM_COL32(255, 255, 255, 255) : col);
     else {
@@ -35878,6 +35886,59 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##anm-comp")) toRemove = anm;
         }
     }
+    // Cutscenes: a Sequence Player plays a .okayseq timeline (the Timeline window makes them).
+    if (auto* sp = dynamic_cast<SequencePlayer*>(curComp)) {
+        if (CompHeader("Sequence Player", sp, &toRemove)) {
+            static std::vector<std::string> s_seqFiles;   // the project's .okayseq files, scanned when the picker opens
+            if (ImGui::BeginCombo("Sequence##sp", sp->sequencePath.empty() ? "(none)" : sp->sequencePath.c_str())) {
+                if (ImGui::IsWindowAppearing()) {
+                    s_seqFiles.clear();
+                    std::error_code ec;
+                    const std::filesystem::path root(ed.projectDir());
+                    if (!ed.projectDir().empty())
+                        for (const auto& e : std::filesystem::recursive_directory_iterator(root, std::filesystem::directory_options::skip_permission_denied, ec))
+                            if (e.is_regular_file(ec) && e.path().extension() == ".okayseq")
+                                s_seqFiles.push_back(std::filesystem::relative(e.path(), root, ec).generic_string());
+                    std::sort(s_seqFiles.begin(), s_seqFiles.end());
+                }
+                if (ImGui::Selectable("(none)", sp->sequencePath.empty())) { sp->sequencePath.clear(); ed.dirty = true; }
+                for (const auto& f : s_seqFiles)
+                    if (ImGui::Selectable(f.c_str(), f == sp->sequencePath)) { sp->sequencePath = f; ed.dirty = true; }
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A .okayseq file in the project (View > Editors & Tools > Timeline makes them).");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Timeline##sp")) { if (!sp->sequencePath.empty()) OpenTimelineFile(sp->ResolvedPath()); g_showTimeline = true; }
+            if (ImGui::Checkbox("Play On Start##sp", &sp->playOnStart)) ed.dirty = true;
+            if (ImGui::Checkbox("Loop##sp", &sp->loop)) ed.dirty = true;
+            if (ImGui::DragFloat("Time Scale##sp", &sp->timeScale, 0.01f, 0.0f, 10.0f, "x%.2f")) ed.dirty = true;
+            {
+                struct Opt { const char* name; char code; };
+                static const Opt opts[] = {{"(none)", 0}, {"Escape", 27}, {"Space", ' '}, {"Enter", '\r'}, {"Tab", '\t'}, {"Backspace", 8}, {"E", 'e'}, {"Q", 'q'}, {"F", 'f'}};
+                int cur = 0;
+                for (int i = 0; i < (int)(sizeof(opts) / sizeof(opts[0])); ++i) if (opts[i].code == sp->skipKey) cur = i;
+                ImGui::SetNextItemWidth(110);
+                if (ImGui::BeginCombo("Skip Key##sp", opts[cur].name)) {
+                    for (int i = 0; i < (int)(sizeof(opts) / sizeof(opts[0])); ++i)
+                        if (ImGui::Selectable(opts[i].name, cur == i)) { sp->skipKey = opts[i].code; ed.dirty = true; }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Jumps to the end of the sequence; the remaining actions still apply.");
+            }
+            if (ImGui::Checkbox("Lock Player##sp", &sp->lockPlayer)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The player's controllers ignore input while it plays, like an open menu.");
+            if (ed.isPlaying()) {
+                if (sp->IsPlaying()) {
+                    ImGui::TextColored(AccentCol(1.0f), "playing %.2f / %.2f s%s", sp->Time(), sp->Length(), sp->IsWaiting() ? "  (waiting for input)" : "");
+                    if (ImGui::SmallButton("Stop##sp")) sp->Stop();
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Skip##sp")) sp->Skip();
+                } else if (ImGui::SmallButton("Play##sp")) sp->Play();
+            }
+            ImGui::TextDisabled("Scripts: play_sequence(\"name\") / Sequence.Play(\"name\"). Plays on each client.");
+            if (ImGui::SmallButton("Remove##sp")) toRemove = sp;
+        }
+    }
     } // end component-order loop
 
     // Apply a queued component removal (undoable).
@@ -36229,6 +36290,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }
             if (item(!go->GetComponent<Spinner>(), "Spinner")) { go->AddComponent<Spinner>(); ed.dirty = true; }
             if (item(!go->GetComponent<Lifetime>(), "Lifetime")) { go->AddComponent<Lifetime>(); ed.dirty = true; }
+            if (item(!go->GetComponent<SequencePlayer>(), "Sequence Player (cutscene)")) { go->AddComponent<SequencePlayer>(); ed.dirty = true; }
           } EndCat(o); }
 
         { bool o = BeginCat("No-Code Mechanics");
@@ -36575,15 +36637,16 @@ static Camera* SceneCamera(Scene& s) {
 }
 // Draw a LoadingScreen in the Game view: the same commands the built player draws
 // (okay::BuildLoadingScreen), so every layout previews exactly.
-static void DrawLoadingScreenCmds(ImDrawList* dl, const okay::LoadingScreen& ls, ImVec2 pos, ImVec2 size,
-                                  float previewTime) {
+// Draw an overlay's command list (a loading screen, a cutscene's fade and
+// subtitle) into the rect at `pos`: the same list the built player draws.
+static void DrawOverlayCmds(ImDrawList* dl, const std::vector<okay::LoadingDrawCmd>& cmds, ImVec2 pos, ImVec2 size) {
     using K = okay::LoadingDrawCmd::Kind;
     auto col = [](const okay::Color& c, float a) {
         return IM_COL32((int)(c.r * 255), (int)(c.g * 255), (int)(c.b * 255),
                         (int)(std::clamp(a * c.a, 0.0f, 1.0f) * 255));
     };
     dl->PushClipRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), true);
-    for (const okay::LoadingDrawCmd& d : okay::BuildLoadingScreen(ls, size.x, size.y, previewTime)) {
+    for (const okay::LoadingDrawCmd& d : cmds) {
         const ImVec2 p0(pos.x + d.x, pos.y + d.y), p1(pos.x + d.x + d.w, pos.y + d.y + d.h);
         switch (d.kind) {
         case K::Rect:     dl->AddRectFilled(p0, p1, col(d.color, d.alpha), d.radius); break;
@@ -36615,6 +36678,10 @@ static void DrawLoadingScreenCmds(ImDrawList* dl, const okay::LoadingScreen& ls,
         }
     }
     dl->PopClipRect();
+}
+static void DrawLoadingScreenCmds(ImDrawList* dl, const okay::LoadingScreen& ls, ImVec2 pos, ImVec2 size,
+                                  float previewTime) {
+    DrawOverlayCmds(dl, okay::BuildLoadingScreen(ls, size.x, size.y, previewTime), pos, size);
 }
 
 
@@ -37157,6 +37224,15 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         if (!ls || !ls->Active()) continue;
         DrawLoadingScreenCmds(dl, *ls, canvasPos, canvasSize);
         break;
+    }
+    // Cutscene overlay (the fade and the subtitle): a sequence playing in Play,
+    // or the Timeline window's preview while editing. The Game view only.
+    if (gameView) {
+        okay::SeqOverlay ov;
+        bool have = false;
+        if (auto* sp = okay::SequencePlayer::Playing(ed.scene())) { ov = sp->Overlay(); have = true; }
+        else have = TimelinePreviewOverlay(ov);
+        if (have) DrawOverlayCmds(dl, okay::SequencePlayer::BuildOverlay(ov, canvasSize.x, canvasSize.y), canvasPos, canvasSize);
     }
     UIWorld().active = false;   // end world-space UI projection for this overlay
 }
@@ -42939,7 +43015,7 @@ int main(int argc, char** argv) {
         v.graph = nullptr;
         v.resume = false;
     };
-    EditorState::finishFrozenTick = FinishFrozenTick;
+    EditorState::finishFrozenTick = []() { StopTimelinePreview(); FinishFrozenTick(); };   // the preview hands back before a scene is rebuilt
     // Saving rewrote an edited mesh asset and re-triangulated it: vertex numbers are
     // kept (so vertex and edge selections stay), triangle numbers aren't.
     EditorState::onMeshTrianglesReordered = [](GameObject* go) { if (go == g_meshEditObj) g_meshSelFaces.clear(); };
@@ -43401,7 +43477,8 @@ int main(int argc, char** argv) {
                     if (auto* ce = up->GetComponent<okay::ChestInventory>()) if (ce->open) { invModal = true; break; }
                     if (auto* mm = up->GetComponent<okay::Minimap>()) if (mm->fullscreen) { invModal = true; break; }
                 }
-            okay::Input::SetUICaptured(invModal);
+            // A cutscene with Lock Player on holds the controllers the same way.
+            okay::Input::SetUICaptured(invModal || (ed.isPlaying() && okay::SequencePlayer::AnyLocksInput(ed.scene())));
         }
         // Pause freezes the sim (Step advances it). A PauseMenu pausing the game
         // (Game::Paused) also freezes gameplay — tick with dt=0 so the menu's UI
@@ -43674,10 +43751,16 @@ int main(int argc, char** argv) {
             if (const char* sn = std::getenv("OKAY_UI_SELECT"); sn && (s_focusFrames == 31 || s_focusFrames == 40))
                 for (const auto& up : ed.scene().Objects()) if (up->name == sn) { ed.Select(up.get()); break; }
             if (std::getenv("OKAY_UI_ANIMGRAPH")) g_showAnimatorGraph = true;
+            // OKAY_UI_TIMELINE=1 opens the Timeline window once the scene is up; a
+            // .okayseq path opens that file in it.
+            if (const char* tl = std::getenv("OKAY_UI_TIMELINE"); tl && s_focusFrames == 31) {
+                if (std::strcmp(tl, "1") != 0) OpenTimelineFile(tl);
+                g_showTimeline = true;
+            }
             // OKAY_UI_PLAY=1: enter Play once the scene is up (screenshots of the
             // Animator and Animation windows while the game runs).
             if (std::getenv("OKAY_UI_PLAY") && s_focusFrames == 60 && !ed.isPlaying()) {
-                StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed);
+                StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed); StopTimelinePreview();
                 okay::editor::apreview::Stop(ed.scene());
                 CompileOpenScriptBuffers(ed.scene());
                 ed.Play(); g_paused = false; ConsoleLog("Play");
@@ -43933,6 +44016,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.VarWatch"); DrawVarWatch(); }
         { OKAY_PROFILE("UI.AnimationEditor"); DrawAnimationEditor(ed); }
         { OKAY_PROFILE("UI.AnimatorGraph"); DrawAnimatorGraph(ed); }
+        { OKAY_PROFILE("UI.Timeline"); DrawTimeline(ed); }
         { OKAY_PROFILE("UI.History"); DrawHistory(ed); }
         { OKAY_PROFILE("UI.Stats"); if (g_showStats)     DrawStats(ed); }
         { OKAY_PROFILE("UI.SceneSettings"); if (g_showSceneSettings) DrawSceneSettings(ed); }

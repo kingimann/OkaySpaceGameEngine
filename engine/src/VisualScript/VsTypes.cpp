@@ -354,6 +354,10 @@ const Row kRows[] = {
         {"FindObject", false, "", "O"},
         {"GetName", false, "", "T"},
         {"GetTag", false, "", "T"},
+        // Cutscenes (SequencePlayer).
+        {"OnSequenceEvent", false, "", ""},
+        {"PlaySequence", true, "", ""},
+        {"StopSequence", true, "", ""},
 };
 
 const std::unordered_map<std::string, NodeSignature>& Table() {

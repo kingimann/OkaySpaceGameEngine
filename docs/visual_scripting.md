@@ -763,6 +763,9 @@ These are in the node search. The [palette index](#palette-index) at the end lis
 | On Equip | An item was equipped. Event Name is the slot, Event Value the item. Taking it off does not fire this node. |
 | On Craft | A recipe finished. Event Name is the output item. |
 
+**Cutscenes** (a Sequence Player plays a `.okayseq`, see docs/cutscenes.md): **Play Sequence** and **Stop Sequence** steps, and
+**On Sequence Event** (blank catches every event; Event Name reads it).
+
 **Anti-cheat** (the server; the scene needs an Anti-Cheat Config):
 
 | Node | What it does |
@@ -862,6 +865,7 @@ The **Engine API** group is the generated list in [engine_api.md](engine_api.md)
 - **On Item Used** (`OnItemUsed`)
 - **On Equip** (`OnEquip`)
 - **On Craft** (`OnCraft`)
+- **On Sequence Event** (`OnSequenceEvent`, optional name)
 - **On Cheat Detected** (`OnCheatDetected`)
 - **On Validate Rpc** (`OnValidateRpc`)
 - **On Validate Hit** (`OnValidateHit`)

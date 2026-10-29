@@ -11,6 +11,7 @@
 #include "okay/Core/SaveData.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
+#include "okay/Components/SequencePlayer.hpp"
 #include "okay/Components/FullBodyIK.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
@@ -332,6 +333,22 @@ struct IkLookNode : VsNode {   // in0 = Vec3 point (Full Body IK look-at), in1 =
                 f->lookTarget = nullptr; f->lookPosition = In(0, g, ctx).AsVec3();
                 f->lookWeight = In(1, g, ctx, VsValue{1.0f}).AsFloat(); f->lookEnabled = f->lookWeight > 0.0f;
             }
+        return 0;
+    }
+};
+struct PlaySequenceNode : VsNode {   // arg = the sequence (a Sequence Player's file, or Assets/<name>.okayseq)
+    std::string name;
+    explicit PlaySequenceNode(std::string n) : name(std::move(n)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        if (ctx.gameObject && ctx.gameObject->scene()) SequencePlayer::PlayByName(*ctx.gameObject->scene(), ctx.gameObject, name);
+        return 0;
+    }
+};
+struct StopSequenceNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        if (ctx.gameObject && ctx.gameObject->scene()) SequencePlayer::StopAll(*ctx.gameObject->scene());
         return 0;
     }
 };

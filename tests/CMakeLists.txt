@@ -860,6 +860,11 @@ add_executable(test_anim_state_machine test_anim_state_machine.cpp)
 target_link_libraries(test_anim_state_machine PRIVATE okay::engine)
 add_test(NAME anim_state_machine COMMAND test_anim_state_machine)
 
+# Cutscene sequences: the .okayseq text, evaluation, the SequencePlayer's events and actions
+add_executable(test_sequence test_sequence.cpp)
+target_link_libraries(test_sequence PRIVATE okay::engine)
+add_test(NAME sequence COMMAND test_sequence)
+
 add_executable(test_ik_core test_ik_core.cpp)
 target_link_libraries(test_ik_core PRIVATE okay::engine)
 add_test(NAME ik_core COMMAND test_ik_core)

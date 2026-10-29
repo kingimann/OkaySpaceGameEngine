@@ -200,6 +200,8 @@
 #include "okay/Components/BuildMode.hpp"
 #include "okay/Components/LoadingScreen.hpp"
 #include "okay/Components/LoadingScreenLayout.hpp"
+#include "okay/Components/Sequence.hpp"
+#include "okay/Components/SequencePlayer.hpp"
 #include "okay/Components/TweenAnimation.hpp"
 #include "okay/Components/UIRawImage.hpp"
 #include "okay/Components/UISafeArea.hpp"

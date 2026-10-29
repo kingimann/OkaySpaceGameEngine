@@ -1267,7 +1267,7 @@ void GLRenderer::DrawShadowCasters(const Scene& scene, const Mat4& lightVP, cons
     const Frustum lightFr = Frustum::FromVP(lightVP);   // only casters inside the light's view
     for (const auto& up : scene.Objects()) {
         GameObject* go = up.get();
-        if (!go || !go->active || (ignore && go->IsSelfOrDescendantOf(ignore) && !go->firstPersonViewmodel)) continue;
+        if (!go || !go->active || go->firstPersonOnly || go->HiddenFromCamera(ignore)) continue;
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || mr->wireframe || !mr->enabled || !mr->castShadows) continue;
         if (mr->color.a < 0.999f) continue;   // transparent meshes don't cast
@@ -1534,7 +1534,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
     int drawn = 0, culled = 0;
     for (const auto& up : scene.Objects()) {
         GameObject* go = up.get();
-        if (!go || !go->active || (ignore && go->IsSelfOrDescendantOf(ignore) && !go->firstPersonViewmodel)) continue;
+        if (!go || !go->active || go->HiddenFromCamera(ignore)) continue;
         if (!(RenderCullingMask() & (1 << (go->layer & 31)))) continue;   // camera layer cull
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || mr->wireframe || !mr->enabled) continue;
@@ -1685,7 +1685,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         // the object reads as sitting on the ground instead of floating.
         // Only a fallback: with real shadow maps on, it would double-darken the
         // shadow and show through anything between the object and the plane.
-        if (planarShadows && mr->groundShadow && mr->castShadows && mr->groundShadowStrength > 0.001f) {
+        if (planarShadows && !go->firstPersonOnly && mr->groundShadow && mr->castShadows && mr->groundShadowStrength > 0.001f) {
             Mat4 shadowModel = Mat4::PlanarShadow(mr->groundShadowY + 0.01f, lightTravel) * model;
             Mat4 smvp = vp * shadowModel;
             g.UniformMatrix4fv(m_uMVP, 1, GL_FALSE, smvp.m);
@@ -1729,7 +1729,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         g.DisableVertexAttribArray(3); g.DisableVertexAttribArray(4);
         for (const auto& up : scene.Objects()) {
             GameObject* go = up.get();
-            if (!go || !go->active || (ignore && go->IsSelfOrDescendantOf(ignore) && !go->firstPersonViewmodel)) continue;
+            if (!go || !go->active || go->HiddenFromCamera(ignore)) continue;
             auto* mr = go->GetComponent<MeshRenderer>();
             if (!mr || mr->wireframe || !mr->enabled) continue;
             if (mr->color.a < 0.999f) continue;           // transparents don't occlude

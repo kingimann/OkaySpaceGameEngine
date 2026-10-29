@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/Scene/Scene.hpp"
+#include <cmath>
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/Camera.hpp"
@@ -22,6 +23,7 @@
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/PlayerView.hpp"
+#include "okay/Components/FirstPersonHand.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
 #include "okay/Components/TopDownShooterController.hpp"
@@ -56,6 +58,9 @@
 #include "okay/Components/Light.hpp"
 #include "okay/Components/HoldableObject.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
+#include "okay/Components/FirstPersonHands.hpp"
+#include "okay/Components/ItemPickup.hpp"
+#include "okay/Components/HoldPrompt.hpp"
 
 namespace okay {
 
@@ -105,29 +110,124 @@ inline PlayerView* AddViewToggle(GameObject* player, PlayerView::View view, floa
     pv->defaultView = view;
     pv->shoulderOffset = shoulder;
     pv->thirdPersonDistance = -1.0f;
+    pv->blendTime = 0.30f;
+    pv->switchEase = PlayerView::SwitchEase::Smooth;
+    pv->snapSwitch = false;
     return pv;
 }
 
-/// Add a third-person player (orbit camera positioned by the controller).
-inline GameObject* AddThirdPersonPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
-    GameObject* player = BuildPlayerBody(scene, pos, "Player");
-    player->AddComponent<ThirdPersonController>();
-    AddViewToggle(player, PlayerView::View::Third);
-    EnsureMainCamera(scene);
-    return player;
+/// Hands, a one-handed block and a two-handed crate on a switchable player
+/// (the First Person and Third Person starters both toggle with V). E picks a
+/// prop up into the hands; E again or G drops it. The line at the bottom of the
+/// screen is the Hold Prompt text.
+inline void AddTemplateHoldables(Scene& scene, GameObject* player) {
+    if (!player) return;
+    if (player->tag.empty()) player->tag = "Player";
+    if (!player->GetComponent<FirstPersonHands>()) player->AddComponent<FirstPersonHands>();
+    if (!player->GetComponent<ProceduralObjectHolding>()) player->AddComponent<ProceduralObjectHolding>();
+    if (!player->GetComponent<HoldPrompt>()) {
+        auto* prompt = player->AddComponent<HoldPrompt>();
+        prompt->dropKey = 'e';
+        prompt->altDropKey = 'g';
+    }
+
+    auto prop = [&](const char* name, const Vec3& pos, const Vec3& scale, Color color, bool twoHanded) {
+        GameObject* g = scene.CreateGameObject(name);
+        g->transform->localPosition = pos;
+        g->transform->localScale = scale;
+        auto* mr = g->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube();
+        mr->color = color;
+        g->AddComponent<BoxCollider3D>();
+        g->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Dynamic;
+        auto* ho = g->AddComponent<HoldableObject>();
+        if (twoHanded) {
+            ho->ApplyPreset(HoldableObject::Preset::CarryFront);
+            ho->weight = 3.0f;
+        } else {
+            ho->ApplyPreset(HoldableObject::Preset::OneHandRight);
+            ho->weight = 0.3f;   // small enough to stay one hand (a "crate" name would not)
+        }
+        auto* pk = g->AddComponent<ItemPickup>();
+        pk->item = twoHanded ? "crate" : "block";
+        pk->holdInHands = true;
+        pk->interactKey = 'e';
+        pk->pickupOnTouch = false;
+        pk->autoRadius = 0.0f;
+        pk->interactRange = 3.0f;
+    };
+    // In front of the spawn (yaw 0 looks down -Z), a few metres apart so aiming
+    // at one does not land on the other. The block sits nearer the centre line.
+    prop("Block", {0.55f, 0.16f, -2.4f}, {0.28f, 0.28f, 0.28f}, Color::FromBytes(214, 140, 48), false);
+    prop("Carry Crate", {-2.8f, 0.26f, -2.6f}, {0.62f, 0.48f, 0.48f}, Color::FromBytes(176, 122, 72), true);
+
+    if (!scene.Find("Hold Prompt")) {
+        GameObject* label = scene.CreateGameObject("Hold Prompt");
+        auto* tr = label->AddComponent<TextRenderer>();
+        tr->text.clear();
+        tr->screenSpace = true;
+        tr->anchor = UIAnchor::BottomCenter;
+        tr->align = 1;
+        tr->vcenter = true;
+        tr->screenPos = {0.0f, -72.0f};
+        tr->size = {420.0f, 40.0f};
+        tr->pixelSize = 2.0f;
+        tr->color = Color::White;
+        tr->outline = true;
+        tr->shadow = true;
+        tr->background = false;
+        tr->backgroundColor = Color::FromBytes(0, 0, 0, 170);
+    }
 }
 
-/// Add a first-person player (camera mounted as a child at eye height).
-inline GameObject* AddFirstPersonPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
-    GameObject* player = BuildPlayerBody(scene, pos, "Player");
-    player->AddComponent<FirstPersonController>();
-    AddViewToggle(player, PlayerView::View::First);
-    GameObject* camObj = scene.CreateGameObject("Player Camera");
+/// Both view controllers, one view toggle, and First Person Hands. First person
+/// is the eye controller either way; `start` is only which view a fresh play
+/// begins in. The legacy single hand is not mounted.
+inline PlayerView* AddSharedView(GameObject* player, PlayerView::View start, float shoulder = 0.0f) {
+    if (!player->GetComponent<FirstPersonController>()) player->AddComponent<FirstPersonController>();
+    if (!player->GetComponent<ThirdPersonController>()) player->AddComponent<ThirdPersonController>();
+    if (!player->GetComponent<FirstPersonHands>()) player->AddComponent<FirstPersonHands>();
+    if (auto* existing = player->GetComponent<PlayerView>()) return existing;
+    return AddViewToggle(player, start, shoulder);
+}
+
+/// The eye camera both views share. The orbit repositions this same camera
+/// while the view is third person. It starts at the standing eye, just in
+/// front of the face, looking level. No legacy hand.
+inline GameObject* MountEyeCamera(Scene& scene, GameObject* player, const char* name) {
+    GameObject* camObj = scene.CreateGameObject(name);
     auto* cam = camObj->AddComponent<Camera>();
     cam->projection = Camera::Projection::Perspective;
     cam->main = true;
     camObj->transform->SetParent(player->transform, false);
-    camObj->transform->localPosition = {0, 1.62f, 0.0f};   // eye height
+    camObj->transform->localPosition = {0.0f, 1.6f, -0.20f};
+    camObj->transform->localRotation = Quat::Identity;
+    return camObj;
+}
+
+/// Resting over-the-shoulder orbit in the player's space (pitch 18 looks
+/// slightly down). The controller writes the same pose on the first frame.
+inline void PoseRestingOrbit(GameObject* camObj) {
+    const float rest = 18.0f * 0.0174532925f;
+    camObj->transform->localPosition = {0.45f, 1.5f + std::sin(rest) * 5.0f, std::cos(rest) * 5.0f};
+    camObj->transform->localRotation = Quat::Euler(-18.0f, 0.0f, 0.0f);
+}
+
+/// Add a third-person player. Same controllers and eye camera as first person;
+/// play starts on the orbit. V switches to the eyes.
+inline GameObject* AddThirdPersonPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
+    GameObject* player = BuildPlayerBody(scene, pos, "Player");
+    AddSharedView(player, PlayerView::View::Third);
+    PoseRestingOrbit(MountEyeCamera(scene, player, "Main Camera"));
+    return player;
+}
+
+/// Add a first-person player. Same controllers and eye camera as third person;
+/// play starts at the eyes. V switches to the orbit.
+inline GameObject* AddFirstPersonPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
+    GameObject* player = BuildPlayerBody(scene, pos, "Player");
+    AddSharedView(player, PlayerView::View::First);
+    MountEyeCamera(scene, player, "Player Camera");
     return player;
 }
 
@@ -398,15 +498,9 @@ inline void ThirdPerson(Scene& scene) {
         col->size = {0.6f, 1.8f, 0.6f};
         col->offset = {0.0f, 0.9f, 0.0f};   // wrap the body feet->head
     }
-    player->AddComponent<ThirdPersonController>();
-    AddViewToggle(player, PlayerView::View::Third, 0.45f);   // V switches to the eyes
-
-    // The controller positions this camera behind the player each frame.
-    GameObject* camObj = scene.CreateGameObject("Main Camera");
-    auto* cam = camObj->AddComponent<Camera>();
-    cam->projection = Camera::Projection::Perspective;
-    cam->main = true;
-    camObj->transform->localPosition = {0, 3, 6};
+    AddSharedView(player, PlayerView::View::Third, 0.45f);   // V switches to the eyes
+    PoseRestingOrbit(MountEyeCamera(scene, player, "Main Camera"));
+    AddTemplateHoldables(scene, player);
 }
 
 /// A "drop-in humanoid" starter: the same third-person scene, but the player is a
@@ -605,17 +699,11 @@ inline void FPS(Scene& scene) {
         col->offset = {0.0f, 0.9f, 0.0f};   // the character's origin is at its feet,
                                             // so lift the box to wrap feet->head
     }
-    player->AddComponent<FirstPersonController>();
-    AddViewToggle(player, PlayerView::View::First, 0.45f);   // V switches to over the shoulder
-
-    // Camera mounted on the player at eye height, just in front of the face so you
-    // don't see the inside of your own head.
-    GameObject* camObj = scene.CreateGameObject("FPS Camera");
-    auto* cam = camObj->AddComponent<Camera>();
-    cam->projection = Camera::Projection::Perspective;
-    cam->main = true;
-    camObj->transform->SetParent(player->transform, false);
-    camObj->transform->localPosition = {0, 1.62f, 0.0f};   // eye height (body hidden in first person)
+    AddSharedView(player, PlayerView::View::First, 0.45f);   // V switches to over the shoulder
+    // Same eye camera as the third-person template. Starting here only means
+    // the view begins at the eyes, level, just in front of the face.
+    MountEyeCamera(scene, player, "FPS Camera");
+    AddTemplateHoldables(scene, player);
 }
 
 /// A top-down starter: a follow camera and a script-driven player that walks
@@ -1429,7 +1517,7 @@ inline void VoxelSandbox(Scene& scene) {
     GameObject* player = scene.CreateGameObject("Player");
     float surfY = 0.0f; vox->SurfaceY(0, 0, surfY);
     player->transform->localPosition = {0, surfY + 3.0f, 0};
-    { auto* pc = player->AddComponent<Character>(); pc->Apply(); pc->separateParts = true; }   // part rig: the FP hand raises your real arm and hides the rest of the body from your own camera only
+    { auto* pc = player->AddComponent<Character>(); pc->Apply(); pc->separateParts = true; }   // part rig: the owner's camera skips the head and neck; the body stays solid
     HumanoidLibrary::EnsureAnimator(player);
     player->AddComponent<Rigidbody3D>();
     {

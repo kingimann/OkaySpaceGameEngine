@@ -119,6 +119,7 @@
 #include "okay/Components/Water.hpp"
 #include "okay/Components/Flashlight.hpp"
 #include "okay/Components/FirstPersonHand.hpp"
+#include "okay/Components/FirstPersonHands.hpp"
 #include "okay/Components/NetworkSync.hpp"
 #include "okay/Components/NetworkObject.hpp"
 #include "okay/Components/AntiCheatConfig.hpp"
@@ -139,6 +140,7 @@
 #include "okay/Components/ChainIK.hpp"
 #include "okay/Components/FullBodyIK.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
+#include "okay/Components/HoldPrompt.hpp"
 #include "okay/Components/RootMotion.hpp"
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/Character.hpp"
@@ -380,7 +382,13 @@ static bool IsGeneratedRig(GameObject* go) {
 // child of the camera). Like the rig, it's regenerated each run, so it must not be
 // written to the scene file — otherwise it would reload as a stale duplicate.
 static bool IsGeneratedViewmodel(GameObject* go) {
-    if (!go || go->name != "FP_Arm" || !go->transform) return false;
+    if (!go) return false;
+    // The owner's arm copy is spawned beside the rig and rebuilt every run.
+    if (go->name == "FP_OwnerArm" || go->name == "FP_OwnerFore" || go->name == "FP_OwnerHand"
+        || go->name == "FP_OwnerArm2" || go->name == "FP_OwnerFore2" || go->name == "FP_OwnerHand2"
+        || go->name == "FP_OwnerItem")
+        return true;
+    if (go->name != "FP_Arm" || !go->transform) return false;
     Transform* par = go->transform->Parent();
     return par && par->gameObject && par->gameObject->GetComponent<FirstPersonHand>();
 }
@@ -926,7 +934,50 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  fphand " << fh->attackButton << " " << (fh->holdToSwing ? 1 : 0)
             << " " << (fh->showLeftArm ? 1 : 0)
             << " " << (fh->followPitch ? 1 : 0) << " " << (fh->bobbing ? 1 : 0)
-            << " " << (fh->steadyArm ? 1 : 0) << " " << fh->armRaise << " " << fh->armElbow << "\n";
+            << " " << (fh->steadyArm ? 1 : 0) << " " << fh->armRaise << " " << fh->armElbow
+            << " " << (fh->showWhileRunning ? 1 : 0) << "\n";
+    }
+    if (auto* hh = go->GetComponent<FirstPersonHands>()) {
+        auto side = [&](const FirstPersonHands::HandSide& s) {
+            out << " " << (s.enabled ? 1 : 0)
+                << " " << s.position.x << " " << s.position.y << " " << s.position.z
+                << " " << s.rotation.x << " " << s.rotation.y << " " << s.rotation.z
+                << " " << s.uniformScale
+                << " " << s.scale.x << " " << s.scale.y << " " << s.scale.z
+                << " " << s.size.x << " " << s.size.y << " " << s.size.z
+                << " " << (s.useColour ? 1 : 0)
+                << " " << s.colour.r << " " << s.colour.g << " " << s.colour.b
+                << " " << (s.sleeve ? 1 : 0) << " " << s.sleeveLength
+                << " " << s.sleeveColour.r << " " << s.sleeveColour.g << " " << s.sleeveColour.b;
+        };
+        out << "  fphands " << (hh->showWhenEmpty ? 1 : 0) << " " << (hh->showWhileRunning ? 1 : 0)
+            << " " << hh->bobAmount << " " << hh->swayAmount << " " << hh->punchAmount << " " << hh->handFov
+            << " " << hh->itemOffset.x << " " << hh->itemOffset.y << " " << hh->itemOffset.z
+            << " " << hh->itemRotation.x << " " << hh->itemRotation.y << " " << hh->itemRotation.z
+            << " " << hh->itemScale << " " << (int)hh->holdMode;
+        side(hh->right);
+        side(hh->left);
+        out << " " << hh->othersItemOffset.x << " " << hh->othersItemOffset.y << " " << hh->othersItemOffset.z
+            << " " << hh->othersItemRotation.x << " " << hh->othersItemRotation.y << " " << hh->othersItemRotation.z
+            << " " << hh->othersArmLift << " " << hh->othersArmForward << "\n";
+        auto extra = [&](const FirstPersonHands::HandSide& s) {
+            out << " " << (s.forearm ? 1 : 0) << " " << s.forearmLength << " " << s.forearmThickness
+                << " " << s.forearmColour.r << " " << s.forearmColour.g << " " << s.forearmColour.b
+                << " " << s.wristOffset.x << " " << s.wristOffset.y << " " << s.wristOffset.z
+                << " " << s.wristRotation.x << " " << s.wristRotation.y << " " << s.wristRotation.z
+                << " " << s.elbowBend << " " << s.reach;
+        };
+        auto oarm = [&](const FirstPersonHands::OthersArm& a) {
+            out << " " << (a.forearm ? 1 : 0) << " " << a.forearmLength << " " << a.forearmThickness
+                << " " << a.forearmColour.r << " " << a.forearmColour.g << " " << a.forearmColour.b
+                << " " << a.handSize.x << " " << a.handSize.y << " " << a.handSize.z
+                << " " << a.wristOffset.x << " " << a.wristOffset.y << " " << a.wristOffset.z
+                << " " << a.wristRotation.x << " " << a.wristRotation.y << " " << a.wristRotation.z
+                << " " << a.elbowBend << " " << a.reach;
+        };
+        out << "  fphands2";
+        extra(hh->right); extra(hh->left); oarm(hh->othersRight); oarm(hh->othersLeft);
+        out << "\n";
     }
     if (auto* ps = go->GetComponent<NetworkPlayerSpawner>()) {
         out << "  npspawner " << Quote(ps->playerTemplate) << " " << Quote(ps->prefabFile)
@@ -1256,9 +1307,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     if (auto* h = go->GetComponent<HoldableObject>()) {
         out << "  holdable";
         KvOut k{out};
-        k("style", (int)h->style).b("support", h->supportHand)("weight", h->weight).str("socket", h->socket)
+        k("style", (int)h->style).b("support", h->supportHand).b("two", h->twoHanded)("weight", h->weight).str("socket", h->socket)
          ("offX", h->holdOffset.x)("offY", h->holdOffset.y)("offZ", h->holdOffset.z)
-         ("rotX", h->holdRotation.x)("rotY", h->holdRotation.y)("rotZ", h->holdRotation.z);
+         ("rotX", h->holdRotation.x)("rotY", h->holdRotation.y)("rotZ", h->holdRotation.z)
+         ("handScale", h->inHandScale)
+         ("fpX", h->fpOffset.x)("fpY", h->fpOffset.y)("fpZ", h->fpOffset.z)
+         ("fpRX", h->fpRotation.x)("fpRY", h->fpRotation.y)("fpRZ", h->fpRotation.z)("fpS", h->fpScale)
+         ("tpX", h->tpOffset.x)("tpY", h->tpOffset.y)("tpZ", h->tpOffset.z)
+         ("tpRX", h->tpRotation.x)("tpRY", h->tpRotation.y)("tpRZ", h->tpRotation.z);
         const HoldableObject::Grip* grips[2] = {&h->leftGrip, &h->rightGrip};
         for (int g = 0; g < 2; ++g) {
             const std::string p = g == 0 ? "l" : "r";
@@ -1279,6 +1335,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
          ("charge", ph->throwChargeTime)("tmin", ph->throwMinSpeed)("tmax", ph->throwMaxSpeed)("reach", ph->pickupRange);
         out << "\n";
     }
+    if (auto* hp = go->GetComponent<HoldPrompt>()) {
+        out << "  holdprompt";
+        KvOut k{out};
+        k.key("drop", hp->dropKey).key("alt", hp->altDropKey).str("prompt", hp->promptObject);
+        out << "\n";
+    }
     if (auto* rm = go->GetComponent<RootMotion>()) {
         out << "  rootmotion " << Quote(rm->rootNodeName) << " " << rm->mode
             << " " << (rm->lockHeight ? 1 : 0) << " " << (rm->applyToRigidbody ? 1 : 0)
@@ -1297,15 +1359,30 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << (cy->isTrigger ? 1 : 0) << " " << cy->layer << " " << (cy->autoFit ? 1 : 0) << "\n";
     }
     // A crouched / prone player has a shrunken collider; save the standing one.
+    // When both view controllers are present, the one that isn't running still
+    // has a standing record — save the body the active view actually resized.
     const StanceBody* stance = nullptr;
-    if (auto* fpc = go->GetComponent<FirstPersonController>()) stance = &fpc->stanceBody();
-    else if (auto* tpc = go->GetComponent<ThirdPersonController>()) stance = &tpc->stanceBody();
-    else if (auto* p25 = go->GetComponent<Platformer25DController>()) stance = &p25->stanceBody();
-    else if (auto* c3 = go->GetComponent<CharacterController3D>()) stance = &c3->stanceControl.Body();
-    else if (auto* tps = go->GetComponent<ThirdPersonShooterController>()) stance = &tps->stanceControl.Body();
-    else if (auto* tdc = go->GetComponent<TopDownController>()) stance = &tdc->stanceControl.Body();
-    else if (auto* ctm = go->GetComponent<ClickToMoveController>()) stance = &ctm->stanceControl.Body();
-    else if (auto* npc = go->GetComponent<NPCController>()) stance = &npc->stanceControl.Body();
+    auto* fpcStance = go->GetComponent<FirstPersonController>();
+    auto* tpcStance = go->GetComponent<ThirdPersonController>();
+    auto captured = [](const FirstPersonController* c) { return c && c->stanceBody().captured; };
+    auto capturedTp = [](const ThirdPersonController* c) { return c && c->stanceBody().captured; };
+    if (fpcStance && tpcStance) {
+        const bool fp = FirstPersonOwns(go);
+        if (fp && captured(fpcStance)) stance = &fpcStance->stanceBody();
+        else if (!fp && capturedTp(tpcStance)) stance = &tpcStance->stanceBody();
+    }
+    if (!stance && captured(fpcStance)) stance = &fpcStance->stanceBody();
+    if (!stance && capturedTp(tpcStance)) stance = &tpcStance->stanceBody();
+    if (!stance && fpcStance) stance = &fpcStance->stanceBody();
+    if (!stance && tpcStance) stance = &tpcStance->stanceBody();
+    if (!stance) {
+        if (auto* p25 = go->GetComponent<Platformer25DController>()) stance = &p25->stanceBody();
+        else if (auto* c3 = go->GetComponent<CharacterController3D>()) stance = &c3->stanceControl.Body();
+        else if (auto* tps = go->GetComponent<ThirdPersonShooterController>()) stance = &tps->stanceControl.Body();
+        else if (auto* tdc = go->GetComponent<TopDownController>()) stance = &tdc->stanceControl.Body();
+        else if (auto* ctm = go->GetComponent<ClickToMoveController>()) stance = &ctm->stanceControl.Body();
+        else if (auto* npc = go->GetComponent<NPCController>()) stance = &npc->stanceControl.Body();
+    }
     const bool resized = stance && stance->captured && std::fabs(stance->curH - stance->standH) > 1e-4f;
     const float standOffY = resized ? stance->feetY + stance->standH * 0.5f : 0.0f;
     if (auto* bc = go->GetComponent<BoxCollider3D>(); bc && bc->shape() == Collider3D::Shape::Box) {
@@ -1818,7 +1895,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  fpstance";
         KvOut k{out};
         k.b("prone", fp->allowProne).b("resize", fp->resizeBody)("crouchH", fp->crouchHeight)("proneH", fp->proneHeight)
-         ("pad", fp->stanceGamepadButton)("hold", fp->proneHoldTime);
+         ("pad", fp->stanceGamepadButton)("hold", fp->proneHoldTime)
+         ("walkA", fp->walkAcceleration)("steer", fp->steerRate);
         if (fp->stance() != std::remove_pointer_t<decltype(fp)>::Stance::Stand) k("stance", (int)fp->stance());   // saved crouched / prone
         out << "\n";
     }
@@ -1855,7 +1933,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  tpstance";
         KvOut k{out};
         k.b("prone", tp->allowProne).b("resize", tp->resizeBody)("crouchH", tp->crouchHeight)("proneH", tp->proneHeight)
-         ("pad", tp->stanceGamepadButton)("hold", tp->proneHoldTime);
+         ("pad", tp->stanceGamepadButton)("hold", tp->proneHoldTime)
+         ("walkA", tp->walkAcceleration)("steer", tp->steerRate);
         if (tp->stance() != std::remove_pointer_t<decltype(tp)>::Stance::Stand) k("stance", (int)tp->stance());   // saved crouched / prone
         out << "\n";
     }
@@ -1875,6 +1954,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         KvOut k{out};
         k.b("allow", pv->allowToggle)("view", (int)pv->defaultView).key("key", pv->toggleKey)
          ("pad", pv->toggleGamepadButton)("blend", pv->blendTime)
+         ("ease", (int)pv->switchEase).b("snap", pv->snapSwitch)
          ("ex", pv->eyeOffset.x)("ey", pv->eyeOffset.y)("ez", pv->eyeOffset.z)
          ("dist", pv->thirdPersonDistance)("shoulder", pv->shoulderOffset);
         out << "\n";
@@ -1999,7 +2079,8 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << ts->pivotDampingXZ << " " << ts->pivotDampingY << " " << ts->maxPivotLag
             << " " << ts->cameraCollisionRadius << " " << ts->cameraCollisionMask
             << " " << ts->cameraCollisionPullIn << " " << ts->cameraCollisionRecover
-            << " " << ts->stepOffset << "\n";
+            << " " << ts->stepOffset
+            << " " << ts->walkAcceleration << " " << ts->steerRate << "\n";
     }
     if (auto* cm = go->GetComponent<ClickToMoveController>()) {
         out << "  ctmctrl " << cm->walkSpeed << " " << cm->runSpeed << " "
@@ -3952,10 +4033,15 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     auto* h = go->AddComponent<HoldableObject>();
                     KvIn k(in);
                     int st = 0; k.i("style", st);
-                    h->style = st >= 0 && st <= (int)HoldableObject::Style::Heavy ? (HoldableObject::Style)st : HoldableObject::Style::Automatic;
-                    k.b("support", h->supportHand); k.f("weight", h->weight); k.str("socket", h->socket);
+                    h->style = st >= 0 && st <= (int)HoldableObject::Style::OverShoulder ? (HoldableObject::Style)st : HoldableObject::Style::Automatic;
+                    k.b("support", h->supportHand); k.b("two", h->twoHanded); k.f("weight", h->weight); k.str("socket", h->socket);
                     k.f("offX", h->holdOffset.x); k.f("offY", h->holdOffset.y); k.f("offZ", h->holdOffset.z);
                     k.f("rotX", h->holdRotation.x); k.f("rotY", h->holdRotation.y); k.f("rotZ", h->holdRotation.z);
+                    k.f("handScale", h->inHandScale);
+                    k.f("fpX", h->fpOffset.x); k.f("fpY", h->fpOffset.y); k.f("fpZ", h->fpOffset.z);
+                    k.f("fpRX", h->fpRotation.x); k.f("fpRY", h->fpRotation.y); k.f("fpRZ", h->fpRotation.z); k.f("fpS", h->fpScale);
+                    k.f("tpX", h->tpOffset.x); k.f("tpY", h->tpOffset.y); k.f("tpZ", h->tpOffset.z);
+                    k.f("tpRX", h->tpRotation.x); k.f("tpRY", h->tpRotation.y); k.f("tpRZ", h->tpRotation.z);
                     HoldableObject::Grip* grips[2] = {&h->leftGrip, &h->rightGrip};
                     for (int g = 0; g < 2; ++g) {
                         const std::string p = g == 0 ? "l" : "r";
@@ -3979,6 +4065,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     // older objholding line still loads.
                     k.key("throwKey", ph->throwKey); k.i("throwMouse", ph->throwMouseButton); k.i("throwPad", ph->throwGamepadButton);
                     k.f("charge", ph->throwChargeTime); k.f("tmin", ph->throwMinSpeed); k.f("tmax", ph->throwMaxSpeed); k.f("reach", ph->pickupRange);
+                } else if (field == "holdprompt") {
+                    auto* hp = go->AddComponent<HoldPrompt>();
+                    KvIn k(in);
+                    k.key("drop", hp->dropKey); k.key("alt", hp->altDropKey); k.str("prompt", hp->promptObject);
                 } else if (field == "fbikx") {
                     if (auto* fb = go->GetComponent<FullBodyIK>()) {
                         in >> fb->blendSpeed >> fb->goalSmoothing >> fb->lookSmoothing >> fb->armMinBend >> fb->legMinBend;
@@ -4841,6 +4931,12 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     k.key("key", pv->toggleKey);
                     k.i("pad", pv->toggleGamepadButton);
                     k.f("blend", pv->blendTime);
+                    int ease = (int)pv->switchEase;
+                    k.i("ease", ease);
+                    if (ease < 0) ease = 0;
+                    if (ease > 3) ease = 3;
+                    pv->switchEase = (PlayerView::SwitchEase)ease;
+                    k.b("snap", pv->snapSwitch);
                     k.f("ex", pv->eyeOffset.x); k.f("ey", pv->eyeOffset.y); k.f("ez", pv->eyeOffset.z);
                     k.f("dist", pv->thirdPersonDistance);
                     k.f("shoulder", pv->shoulderOffset);
@@ -5035,6 +5131,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         if (!c) return;
                         k.b("prone", c->allowProne); k.b("resize", c->resizeBody); k.f("crouchH", c->crouchHeight);
                         k.f("proneH", c->proneHeight); k.i("pad", c->stanceGamepadButton); k.f("hold", c->proneHoldTime);
+                        k.f("walkA", c->walkAcceleration); k.f("steer", c->steerRate);
                         // Saved crouched / prone: start that way (the collider was saved standing).
                         int st = 0; k.i("stance", st);
                         using S = typename std::remove_pointer_t<decltype(c)>::Stance;
@@ -5153,8 +5250,14 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                                     // Optional trailing step height (older scenes keep 0.35).
                                     float so = ts->stepOffset;
                                     in >> std::ws;
-                                    if ((std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') && (in >> so))
+                                    if ((std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') && (in >> so)) {
                                         ts->stepOffset = so;
+                                        float wa = ts->walkAcceleration, st = ts->steerRate;
+                                        in >> std::ws;
+                                        if ((std::isdigit(in.peek()) || in.peek() == '-' || in.peek() == '.') && (in >> wa >> st)) {
+                                            ts->walkAcceleration = wa; ts->steerRate = st;
+                                        }
+                                    }
                                 }
                             } }
                     }
@@ -5727,6 +5830,62 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (v.size() >= 4) fh->steadyArm   = (v[3] != 0.0f);
                     if (v.size() >= 5) fh->armRaise    = v[4];
                     if (v.size() >= 6) fh->armElbow    = v[5];
+                    if (v.size() >= 7) fh->showWhileRunning = (v[6] != 0.0f);
+                } else if (field == "fphands") {
+                    auto* hh = go->AddComponent<FirstPersonHands>();
+                    auto side = [&](FirstPersonHands::HandSide& s, std::istringstream& rs) {
+                        int en = 1, col = 0, sl = 0;
+                        rs >> en >> s.position.x >> s.position.y >> s.position.z
+                           >> s.rotation.x >> s.rotation.y >> s.rotation.z >> s.uniformScale
+                           >> s.scale.x >> s.scale.y >> s.scale.z
+                           >> s.size.x >> s.size.y >> s.size.z >> col
+                           >> s.colour.r >> s.colour.g >> s.colour.b >> sl >> s.sleeveLength
+                           >> s.sleeveColour.r >> s.sleeveColour.g >> s.sleeveColour.b;
+                        s.enabled = en != 0; s.useColour = col != 0; s.sleeve = sl != 0;
+                    };
+                    int empty = 0, run = 0, mode = 0;
+                    in >> empty >> run >> hh->bobAmount >> hh->swayAmount >> hh->punchAmount >> hh->handFov
+                       >> hh->itemOffset.x >> hh->itemOffset.y >> hh->itemOffset.z
+                       >> hh->itemRotation.x >> hh->itemRotation.y >> hh->itemRotation.z
+                       >> hh->itemScale >> mode;
+                    hh->showWhenEmpty = empty != 0;
+                    hh->showWhileRunning = run != 0;
+                    hh->holdMode = mode == 1 ? FirstPersonHands::HoldMode::Left
+                                 : mode == 2 ? FirstPersonHands::HoldMode::Two
+                                             : FirstPersonHands::HoldMode::Right;
+                    std::string rest; std::getline(in, rest);
+                    std::istringstream rs(rest);
+                    side(hh->right, rs);
+                    side(hh->left, rs);
+                    rs >> hh->othersItemOffset.x >> hh->othersItemOffset.y >> hh->othersItemOffset.z
+                       >> hh->othersItemRotation.x >> hh->othersItemRotation.y >> hh->othersItemRotation.z
+                       >> hh->othersArmLift >> hh->othersArmForward;
+                } else if (field == "fphands2") {
+                    auto* hh = go->GetComponent<FirstPersonHands>();
+                    if (!hh) hh = go->AddComponent<FirstPersonHands>();
+                    auto extra = [&](FirstPersonHands::HandSide& s, std::istringstream& rs) {
+                        int on = 0;
+                        rs >> on >> s.forearmLength >> s.forearmThickness
+                           >> s.forearmColour.r >> s.forearmColour.g >> s.forearmColour.b
+                           >> s.wristOffset.x >> s.wristOffset.y >> s.wristOffset.z
+                           >> s.wristRotation.x >> s.wristRotation.y >> s.wristRotation.z
+                           >> s.elbowBend >> s.reach;
+                        s.forearm = on != 0;
+                    };
+                    auto oarm = [&](FirstPersonHands::OthersArm& a, std::istringstream& rs) {
+                        int on = 1;
+                        rs >> on >> a.forearmLength >> a.forearmThickness
+                           >> a.forearmColour.r >> a.forearmColour.g >> a.forearmColour.b
+                           >> a.handSize.x >> a.handSize.y >> a.handSize.z
+                           >> a.wristOffset.x >> a.wristOffset.y >> a.wristOffset.z
+                           >> a.wristRotation.x >> a.wristRotation.y >> a.wristRotation.z
+                           >> a.elbowBend >> a.reach;
+                        a.forearm = on != 0;
+                    };
+                    std::string rest; std::getline(in, rest);
+                    std::istringstream rs(rest);
+                    extra(hh->right, rs); extra(hh->left, rs);
+                    oarm(hh->othersRight, rs); oarm(hh->othersLeft, rs);
                 } else if (field == "npspawner") {
                     auto* ps = go->AddComponent<NetworkPlayerSpawner>();
                     ps->playerTemplate = ReadQuoted(in);

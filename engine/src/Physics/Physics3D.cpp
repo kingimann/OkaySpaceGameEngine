@@ -330,6 +330,44 @@ bool TriggerAccepts(const Collider3D* trig, const Collider3D* other) {
 
 bool Alive(Collider3D* c) { return c->enabled && c->gameObject && c->gameObject->active; }
 
+/// A fast fall or a low frame rate can step a body through a thin floor. The
+/// voxel and mesh paths already march their own probes; a box floor does not.
+/// If the feet dropped through a static surface they were just standing on,
+/// put them back on it. A miss (walked off the edge) and a jump that is still
+/// above the hit are left alone.
+void CatchTunneledFloor(Scene& scene, Rigidbody3D* rb) {
+    if (!rb || !rb->hasPrevPos || !rb->transform || !rb->gameObject) return;
+    if (!rb->enabled || !rb->gameObject->active) return;
+    if (rb->bodyType != Rigidbody3D::BodyType::Dynamic || rb->freezeY) return;
+    Collider3D* col = rb->gameObject->GetComponent<Collider3D>();
+    if (!col || !col->enabled || col->isTrigger) return;
+    Vec3 mn, mx;
+    col->WorldAABB(mn, mx);
+    const Vec3 pos = rb->transform->Position();
+    if (!std::isfinite(pos.x) || !std::isfinite(pos.y) || !std::isfinite(pos.z)) return;
+    if (!std::isfinite(mn.y)) return;
+    float footOff = pos.y - mn.y;
+    if (footOff < 0.0f) footOff = 0.0f;
+    const float curFoot = mn.y;
+    const float prevFoot = rb->prevPos.y - footOff;
+    if (!(curFoot < prevFoot - 1.0e-4f)) return;
+    const float startY = std::max(prevFoot, curFoot) + 1.25f;
+    const float reach = startY - curFoot + 0.05f;
+    if (!(reach > 0.05f)) return;
+    Physics3D::IgnoreHierarchy own(rb->gameObject);
+    const RaycastHit3D hit = scene.physics3D().Raycast(
+        scene, Vec3{pos.x, startY, pos.z}, Vec3{0.0f, -1.0f, 0.0f},
+        reach, rb->gameObject, Physics3D::kAllLayers, /*queryTriggers=*/false);
+    if (!hit.hit || hit.normal.y <= 0.55f) return;
+    if (!(curFoot < hit.point.y - 0.02f)) return;
+    if (!(prevFoot >= hit.point.y - 0.35f)) return;
+    const float lift = hit.point.y - curFoot;
+    if (!(lift > 0.0f && lift <= 2.5f)) return;
+    rb->transform->localPosition.y += lift;
+    if (rb->velocity.y < 0.0f) rb->velocity.y = 0.0f;
+    if (rb->sleeping) rb->WakeUp();
+}
+
 } // namespace
 
 void Physics3D::Step(Scene& scene, float dt) {
@@ -962,6 +1000,13 @@ void Physics3D::Step(Scene& scene, float dt) {
         } else {
             rb->m_sleepTimer = 0.0f;
         }
+    }
+
+    // A box floor has no swept catch of its own. Do this before prevPos is stored
+    // so the next step sees the recovered feet.
+    for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
+        if (gone.Gone(rb)) continue;
+        CatchTunneledFloor(scene, rb);
     }
 
     // Record where every dynamic body ended up, for next step's swept collision.

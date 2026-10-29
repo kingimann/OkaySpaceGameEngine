@@ -35,6 +35,7 @@
 #include "okay/Components/CharacterController3D.hpp"
 #include "okay/Components/FirstPersonHand.hpp"
 #include "okay/Components/Flashlight.hpp"
+#include "okay/Components/PlayerView.hpp"
 #include <string>
 
 namespace okay {
@@ -110,6 +111,7 @@ private:
         go->RemoveComponent<CharacterController3D>();
         go->RemoveComponent<FirstPersonHand>();
         go->RemoveComponent<Flashlight>();
+        go->RemoveComponent<PlayerView>();
         if (go->transform)
             for (Transform* c : go->transform->Children())
                 if (c) StripInput(c->gameObject);

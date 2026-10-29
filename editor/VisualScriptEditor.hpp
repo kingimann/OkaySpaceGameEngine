@@ -262,6 +262,10 @@ inline const std::vector<VsDef>& Registry() {
         {"NavMoveTo",    "Nav Move To",    CAT_ACTION, true, {""}, {"Point"}, {}, 0, nullptr},
         {"NavStop",      "Nav Stop",       CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         {"NavArrived",   "Nav Arrived",    CAT_DATA, false, {}, {}, {"Bool"}, 0, nullptr},
+        // --- Behavior trees (Behavior Tree Runner) ---
+        {"BtSet",        "Set Blackboard", CAT_ACTION, true, {""}, {"Value"}, {}, 1, "key"},
+        {"BtGet",        "Get Blackboard", CAT_DATA, false, {}, {}, {"Value"}, 1, "key"},
+        {"BtRun",        "Run Tree",       CAT_ACTION, true, {""}, {}, {}, 1, "tree file"},
         // --- Flow: loops, gates, switches ---
         {"ForLoop",   "For Loop",      CAT_FLOW, true, {"Body","Done"}, {"First","Last"}, {"Index"}, 0, nullptr},
         {"Repeat",    "Repeat N",      CAT_FLOW, true, {"Body"}, {}, {}, 1, "count"},
@@ -394,6 +398,24 @@ inline const std::vector<VsDef>& Registry() {
         {"OnItemUsed", "On Item Used", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnEquip", "On Equip", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnCraft", "On Craft", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        // Cutscenes (a Sequence Player plays a .okayseq; Event Name = the event).
+        {"OnSequenceEvent", "On Sequence Event", CAT_EVENT, false, {""}, {}, {}, 1, "event (blank = any)"},
+        {"PlaySequence",    "Play Sequence",     CAT_ACTION, true, {""}, {}, {}, 1, "name"},
+        {"StopSequence",    "Stop Sequence",     CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        // Dialogue, story variables and quests (Event Name = the event / quest id, Event Value = the objective / count).
+        {"StartDialogue",     "Start Dialogue",     CAT_ACTION, true, {""}, {}, {}, 1, "object / graph name"},
+        {"OnDialogueEvent",   "On Dialogue Event",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnDialogueEnd",     "On Dialogue End",    CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"SetStoryVar",       "Set Story Var",      CAT_VAR, true, {""}, {"Value"}, {}, 1, "variable"},
+        {"GetStoryVar",       "Get Story Var",      CAT_VAR, false, {}, {}, {"Value"}, 1, "variable"},
+        {"StartQuest",        "Start Quest",        CAT_ACTION, true, {""}, {}, {}, 1, "quest id"},
+        {"CompleteObjective", "Complete Objective", CAT_ACTION, true, {""}, {"Index"}, {}, 1, "quest id"},
+        {"QuestState",        "Quest State",        CAT_DATA, false, {}, {}, {"State"}, 1, "quest id"},
+        {"OnQuestStarted",    "On Quest Started",   CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnQuestCompleted",  "On Quest Completed", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnQuestFailed",     "On Quest Failed",    CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnObjectiveCompleted", "On Objective Completed", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
+        {"OnQuestEvent",      "On Quest Event",     CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         // Anti-cheat (server; needs an Anti-Cheat Config in the scene).
         {"OnCheatDetected", "On Cheat Detected",CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnValidateRpc",   "On Validate Rpc",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
@@ -645,8 +667,11 @@ inline std::string VsEntryName(const std::string& type, const std::string& arg) 
         type == "OnObjectPlaced" || type == "OnObjectRemoved" || type == "OnLogicSignal" ||
         type == "OnCheatDetected" || type == "OnValidateRpc" || type == "OnValidateHit" ||
         type == "OnItemAdded" || type == "OnItemRemoved" || type == "OnInventoryFull" ||
-        type == "OnItemUsed" || type == "OnEquip" || type == "OnCraft") return type;
+        type == "OnItemUsed" || type == "OnEquip" || type == "OnCraft" ||
+        type == "OnDialogueEvent" || type == "OnDialogueEnd" || type == "OnQuestStarted" || type == "OnQuestCompleted" ||
+        type == "OnQuestFailed" || type == "OnObjectiveCompleted" || type == "OnQuestEvent") return type;
     if (type == "OnAnimEvent") return arg.empty() ? std::string("OnAnimEvent") : "OnAnimEvent:" + tok(arg, "");
+    if (type == "OnSequenceEvent") return arg.empty() ? std::string("OnSequenceEvent") : "OnSequenceEvent:" + tok(arg, "");
     if (type == "OnKey")   return "OnKey:" + tok(arg, "space");
     if (type == "OnKeyUp") return "OnKeyUp:" + tok(arg, "space");
     if (type == "OnTimer") return "OnTimer:" + tok(arg, "1");
@@ -1103,6 +1128,9 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
     if (t == "MouseButtonDown")return "mouse_down(" + VsNum(lit("0"), "0") + ")";
     if (t == "AnimState")      return "anim_state()";
     if (t == "NavArrived")     return "nav_arrived()";
+    if (t == "GetStoryVar")    return "get_story(" + q(lit("")) + ")";
+    if (t == "QuestState")     return "quest_state(" + q(lit("")) + ")";
+    if (t == "BtGet")          return "bt_get(" + q(lit("x")) + ")";
     if (t == "IsInAction")     return "is_in_action()";
     if (t == "IsSitting")      return "is_sitting()";
     if (t == "SeatPrompt")     return "seat_prompt()";
@@ -1267,9 +1295,15 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="SetActive")   out += ind + "set_active_of(" + q(arg("self")) + ", " + in(0, "true") + ")\n";
     else if (t=="SetText")     out += ind + "set_text_of(" + q(arg("self")) + ", " + in(0, "\"\"") + ")\n";
     else if (t=="LoadScene")   out += ind + "load_scene_name(" + q(arg("")) + ")\n";
+    else if (t=="PlaySequence") out += ind + "play_sequence(" + q(arg("")) + ")\n";
+    else if (t=="StopSequence") out += ind + "stop_sequence()\n";
     else if (t=="AnimTrigger") out += ind + "anim_trigger(" + q(arg("")) + ")\n";
     else if (t=="AnimSetFloat")out += ind + "anim_set_float(" + q(arg("")) + ", " + in(0) + ")\n";
     else if (t=="AnimSetBool") out += ind + "anim_set_bool(" + q(arg("")) + ", " + in(0) + ")\n";
+    else if (t=="StartDialogue")     out += ind + "start_dialogue(" + q(arg("")) + ")\n";
+    else if (t=="SetStoryVar")       out += ind + "set_story(" + q(arg("")) + ", " + in(0, "0") + ")\n";
+    else if (t=="StartQuest")        out += ind + "start_quest(" + q(arg("")) + ")\n";
+    else if (t=="CompleteObjective") out += ind + "complete_objective(" + q(arg("")) + ", " + in(0, "0") + ")\n";
     else if (t=="IkLook")      out += ind + "ik_look(vec_x(" + in(0) + "), vec_y(" + in(0) + "), vec_z(" + in(0) + "), " + in(1, "1") + ")\n";
     else if (t=="IkHand")      out += ind + "ik_hand(" + q(arg("right")) + ", vec_x(" + in(0) + "), vec_y(" + in(0) + "), vec_z(" + in(0) + "), " + in(1, "1") + ")\n";
     else if (t=="SetWeather")  out += ind + "weather_set(" + q(arg("rain")) + ", " + in(0, "1") + ")\n";
@@ -1277,6 +1311,8 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="SetPostEffect") out += ind + "post_set(" + q(arg("bloom")) + ", " + in(0, "1") + ")\n";
     else if (t=="NavMoveTo")   out += ind + "nav_move_to(vec_x(" + in(0) + "), vec_y(" + in(0) + "), vec_z(" + in(0) + "))\n";
     else if (t=="NavStop")     out += ind + "nav_stop()\n";
+    else if (t=="BtSet")       out += ind + "bt_set(" + q(arg("x")) + ", " + in(0) + ")\n";
+    else if (t=="BtRun")       out += ind + "bt_run(" + q(arg("")) + ")\n";
     else if (t=="Cooldown")    out += ind + "// Cooldown (" + VsCommentText(arg("1")) + "s): gate the actions after this with a timer\n";
     else if (t=="ForLoop") {
         const std::string v = "_i" + std::to_string(nodeId);
@@ -1592,7 +1628,15 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
         {"OnInventoryFull", "void OnInventoryFull(string event_name, float value)"},
         {"OnItemUsed", "void OnItemUsed(string event_name)"},
         {"OnEquip", "void OnEquip(string event_name, string value)"},
-        {"OnCraft", "void OnCraft(string event_name)"}};
+        {"OnCraft", "void OnCraft(string event_name)"},
+        // Dialogue and quests: Event Name is the event / quest id, Event Value the objective or count.
+        {"OnDialogueEvent", "void OnDialogueEvent(string event_name)"},
+        {"OnDialogueEnd", "void OnDialogueEnd(string event_name)"},
+        {"OnQuestStarted", "void OnQuestStarted(string event_name)"},
+        {"OnQuestCompleted", "void OnQuestCompleted(string event_name, float value)"},
+        {"OnQuestFailed", "void OnQuestFailed(string event_name)"},
+        {"OnObjectiveCompleted", "void OnObjectiveCompleted(string event_name, float value)"},
+        {"OnQuestEvent", "void OnQuestEvent(string event_name)"}};
     // Events sharing a handler (On Click + On Mouse Down) go into one method.
     std::set<std::string> doneSig;
     for (const auto& ev : kEvents) {
@@ -1635,6 +1679,21 @@ inline std::string CompileToOkayScript(const VsEditGraph& g) {
             if (n.arg.empty()) chain(n.id, "        ");
             else {
                 out += "        if (anim_event == " + VsStrLit(n.arg) + ") {\n";   // brace on this line: the terminator pass would put a ; after a bare if (...)
+                chain(n.id, "            ");
+                out += "        }\n";
+            }
+        }
+        if (opened) out += "    }\n";
+    }
+    // Sequence events: one OnSequenceEvent(event_name) handler; named nodes check the name.
+    {
+        bool opened = false;
+        for (const auto& n : g.nodes) {
+            if (n.type != "OnSequenceEvent") continue;
+            if (!opened) { open("void OnSequenceEvent(string event_name)"); opened = true; }
+            if (n.arg.empty()) chain(n.id, "        ");
+            else {
+                out += "        if (event_name == " + VsStrLit(n.arg) + ") {\n";
                 chain(n.id, "            ");
                 out += "        }\n";
             }

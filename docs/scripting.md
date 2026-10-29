@@ -399,6 +399,10 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `nav_stop()` | stop the Nav Mesh Agent where it is |
 | `nav_arrived()` | 1 once the last `nav_move_to` point was reached |
 | `nav_remaining()` | path length left to the destination (0 when idle) |
+| `bt_set(key, value)` | write a value into this object's Behavior Tree blackboard (`bt_set("Name", key, value)` for another object); see [behavior_trees.md](behavior_trees.md) |
+| `bt_get(key)` | read a blackboard value (a number, bool, string, vector or object) |
+| `bt_run("Assets/Guard.okaybt")` | load a behavior tree on this object's Behavior Tree Runner (added when missing) and start it; `bt_run()` starts the current tree over |
+| `bt_stop()` | stop the tree; running tasks are aborted and the NPC stops |
 | `spawner_start(name)` / `spawner_stop(name)` | run / pause a Spawner component's waves (`""` targets a sibling Spawner) |
 | `spawner_alive(name)` | how many objects that Spawner created are still alive (wave HUDs) |
 | `build_enter()` / `build_exit()` / `build_toggle()` / `build_active()` | turn the player's in-game build mode on / off, or ask whether it's on (see [build_mode.md](build_mode.md)) |

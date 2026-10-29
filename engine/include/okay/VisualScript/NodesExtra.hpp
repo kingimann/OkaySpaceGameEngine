@@ -11,8 +11,10 @@
 #include "okay/Core/SaveData.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
+#include "okay/Components/SequencePlayer.hpp"
 #include "okay/Components/FullBodyIK.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
+#include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/MeshRenderer.hpp"
@@ -337,6 +339,22 @@ struct IkLookNode : VsNode {   // in0 = Vec3 point (Full Body IK look-at), in1 =
         return 0;
     }
 };
+struct PlaySequenceNode : VsNode {   // arg = the sequence (a Sequence Player's file, or Assets/<name>.okayseq)
+    std::string name;
+    explicit PlaySequenceNode(std::string n) : name(std::move(n)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        if (ctx.gameObject && ctx.gameObject->scene()) SequencePlayer::PlayByName(*ctx.gameObject->scene(), ctx.gameObject, name);
+        return 0;
+    }
+};
+struct StopSequenceNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        if (ctx.gameObject && ctx.gameObject->scene()) SequencePlayer::StopAll(*ctx.gameObject->scene());
+        return 0;
+    }
+};
 // ---- The scene's look: weather, fog and post-processing (Atmosphere.hpp) ----
 struct SetWeatherNode : VsNode {   // arg = none / rain / snow / storm; in0 = intensity (unwired: keep)
     std::string preset;
@@ -396,6 +414,42 @@ struct NavArrivedNode : VsNode {   // true once the last Nav Move To point was r
     VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
         auto* a = ctx.gameObject ? ctx.gameObject->GetComponent<NavMeshAgent>() : nullptr;
         return a != nullptr && a->Arrived();
+    }
+};
+// Behavior trees: the Behavior Tree Runner on this object (or the Target).
+struct BtSetNode : VsNode {   // arg = blackboard key; in0 = the value
+    std::string key;
+    explicit BtSetNode(std::string k) : key(std::move(k)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (ctx.gameObject)
+            if (auto* r = ctx.gameObject->GetComponent<BehaviorTreeRunner>()) r->blackboard.Set(key, BtValue::FromVs(In(0, g, ctx)));
+        return 0;
+    }
+};
+struct BtGetNode : VsNode {   // arg = blackboard key; out0 = the value
+    std::string key;
+    explicit BtGetNode(std::string k) : key(std::move(k)) {}
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        auto* r = ctx.gameObject ? ctx.gameObject->GetComponent<BehaviorTreeRunner>() : nullptr;
+        const BtValue* v = r ? r->blackboard.Find(key) : nullptr;
+        return v ? v->ToVs() : VsValue{};
+    }
+};
+struct BtRunNode : VsNode {   // arg = the .okaybt file ("" = start the current tree over)
+    std::string tree;
+    explicit BtRunNode(std::string t) : tree(std::move(t)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        if (!ctx.gameObject) return 0;
+        auto* r = ctx.gameObject->GetComponent<BehaviorTreeRunner>();
+        if (!r) r = ctx.gameObject->AddComponent<BehaviorTreeRunner>();
+        if (!tree.empty()) {
+            std::string err;
+            if (!r->LoadTree(tree, &err)) { Log::Warning("Run Tree: ", err); return 0; }
+        }
+        r->Run();
+        return 0;
     }
 };
 struct IkHandNode : VsNode {   // arg "left"/"right"; in0 = Vec3 point, in1 = weight (0 releases)

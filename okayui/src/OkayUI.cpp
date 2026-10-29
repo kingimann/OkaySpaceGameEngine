@@ -1106,13 +1106,20 @@ const Font* FontBold()      { return &kFontBold; }
 
 // ---- Auto-layout window + ImGui-style overloads --------------------------------
 
+static bool g_pinNext = false;   // PinNextWindow: the next Begin sits where it is told
+void PinNextWindow() { g_pinNext = true; }
+
 bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) {
     g_lay.seed = 0;                    // hash the window id from a FIXED seed so it (and
     const int id = hashLabel(title);   // every widget id under it) is stable across frames
     WinSlot* slot = nullptr;
     for (WinSlot& ws : g_wins) if (ws.used && ws.id == id) { slot = &ws; break; }
     if (!slot) for (WinSlot& ws : g_wins) if (!ws.used) { ws.used = true; ws.id = id; ws.x = x; ws.y = y; slot = &ws; break; }
+    const bool pinned = g_pinNext;
+    g_pinNext = false;
+    if (pinned && slot) { slot->x = x; slot->y = y; }
     float wx = slot ? slot->x : x, wy = slot ? slot->y : y;
+    if (pinned) { wx = x; wy = y; }
     const float titleH = rowH();
     bool* collapsed = openState(id ^ 0x5c01, false);   // per-window collapsed flag
 
@@ -1143,7 +1150,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     if (overDrag) g_hot = id;
     if (g_active == id) {
         if (!g_in.mouseDown) g_active = 0;
-        else if (slot) { slot->x += g_mouseDX; slot->y += g_mouseDY; wx = slot->x; wy = slot->y; }
+        else if (slot && !pinned) { slot->x += g_mouseDX; slot->y += g_mouseDY; wx = slot->x; wy = slot->y; }
     } else if (overDrag && g_pressed) {
         g_active = id; g_focusClaimed = true;
     }

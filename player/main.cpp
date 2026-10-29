@@ -218,19 +218,17 @@ static void DrawVignette(SDL_Renderer* r, float strength) {
     SDL_SetRenderDrawBlendMode(r, prev);
 }
 
-// Full-screen loading-screen overlay: draws the layout BuildLoadingScreen() makes
-// (the editor's Play view draws the same list, so both look the same).
-static void DrawLoadingScreen(SDL_Renderer* r, okay::LoadingScreen& ls, const std::string& baseDir,
-                              std::unordered_map<std::string, SDL_Texture*>& cache) {
-    int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
-    if (W <= 0 || H <= 0) return;
+// Draw an overlay's command list (a loading screen, a cutscene's fade and
+// subtitle); the editor's Play view draws the same list, so both look the same.
+static void DrawOverlayCmds(SDL_Renderer* r, const std::vector<okay::LoadingDrawCmd>& cmds, const std::string& baseDir,
+                            std::unordered_map<std::string, SDL_Texture*>& cache) {
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
     auto sc = [](const Color& c, float a) {
         return SDL_Color{(Uint8)(c.r * 255), (Uint8)(c.g * 255), (Uint8)(c.b * 255),
                          (Uint8)(std::clamp(a * c.a, 0.0f, 1.0f) * 255)};
     };
     using K = okay::LoadingDrawCmd::Kind;
-    for (const okay::LoadingDrawCmd& d : okay::BuildLoadingScreen(ls, (float)W, (float)H)) {
+    for (const okay::LoadingDrawCmd& d : cmds) {
         SDL_Rect box{(int)std::lround(d.x), (int)std::lround(d.y), (int)std::lround(d.w), (int)std::lround(d.h)};
         switch (d.kind) {
         case K::Rect: {
@@ -303,6 +301,14 @@ static void DrawLoadingScreen(SDL_Renderer* r, okay::LoadingScreen& ls, const st
         }
         }
     }
+}
+
+// Full-screen loading-screen overlay: the layout BuildLoadingScreen() makes.
+static void DrawLoadingScreen(SDL_Renderer* r, okay::LoadingScreen& ls, const std::string& baseDir,
+                              std::unordered_map<std::string, SDL_Texture*>& cache) {
+    int W = 0, H = 0; SDL_GetRendererOutputSize(r, &W, &H);
+    if (W <= 0 || H <= 0) return;
+    DrawOverlayCmds(r, okay::BuildLoadingScreen(ls, (float)W, (float)H), baseDir, cache);
 }
 
 // "okay://match?mode=duel&players=2&min=2&region=EU" — the launcher's "Find match"
@@ -1330,6 +1336,7 @@ int main(int argc, char** argv) {
     Prefs::Load(prefsPath);
     DataAsset::SetBaseDir(baseDir);   // read-only .okaydata assets stay beside the game
     Character::SetAssetBaseDir(baseDir);   // a Character's relative clips file, too
+    BehaviorTreeRunner::SetAssetBaseDir(baseDir);   // a Behavior Tree Runner's relative .okaybt
     ItemDatabase::Get().Load(baseDir + "items.okayitems");   // the project's item definitions (shipped by Build Game)
 
     // Anti-cheat (okayac::DecideStart). Without trusted keys built in: off unless
@@ -1599,6 +1606,7 @@ int main(int argc, char** argv) {
     float g_uiWheel = 0.0f;           // mouse-wheel delta routed to OkayUI this frame
     // Let game scripts draw OkayUI via the ui_* builtins.
     static okay::OkayUIScriptBridge g_uiBridge;
+    g_uiBridge.renderer = renderer;   // dialogue portraits as textures
     okay::SetScriptUI(&g_uiBridge);
 #endif
     // Rich presence + the launcher link (okay/Platform/GameIpc.hpp): once a second,
@@ -1798,8 +1806,10 @@ int main(int argc, char** argv) {
             // The fullscreen pause-map is modal too: free + show the cursor so it can be
             // clicked to drop a waypoint (GTA-style), and pause look/move.
             if (auto* mm = up->GetComponent<Minimap>()) { if (mm->fullscreen) invModal = true; }
+            if (StoryUIModal(up.get())) invModal = true;   // a running dialogue or an open quest journal
         }
-        Input::SetUICaptured(invModal);   // controllers pause look/move while a bag is open
+        // A cutscene with Lock Player on holds the controllers the same way.
+        Input::SetUICaptured(invModal || SequencePlayer::AnyLocksInput(scene));
 
         // Apply the game's requested cursor state.
         static Vec2 s_virtualMouse{0, 0};
@@ -2475,6 +2485,13 @@ int main(int argc, char** argv) {
             DrawLoadingScreen(renderer, *ls, baseDir, textureCache);
             ui2d::SetUIDefaultFont(nullptr);
             break;
+        }
+        // Cutscene overlay (the fade to black and the subtitle) of a playing sequence.
+        if (SequencePlayer* sp = SequencePlayer::Playing(scene)) {
+            int W = 0, H = 0; SDL_GetRendererOutputSize(renderer, &W, &H);
+            ui2d::SetUIDefaultFont(okay::SceneUIFont(scene.uiFont));
+            DrawOverlayCmds(renderer, SequencePlayer::BuildOverlay(sp->Overlay(), (float)W, (float)H), baseDir, textureCache);
+            ui2d::SetUIDefaultFont(nullptr);
         }
         // Post: screen-space vignette (on top of the scene + UI, under nothing),
         // unless the GPU post chain already drew it into the frame.

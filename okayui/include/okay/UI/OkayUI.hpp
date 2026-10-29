@@ -151,6 +151,9 @@ void EndFrameData();
 /// Pass `p_open` to add a close [x] button that sets *p_open = false when clicked.
 bool Begin(const char* title, float x, float y, float w, float h, bool* p_open = nullptr);
 void End();
+/// Pin the next Begin() at its (x, y) this frame (it can't be dragged away): for
+/// overlays anchored to the screen, such as a dialogue box or a quest tracker.
+void PinNextWindow();
 
 /// A scrolling sub-region of `w`*`h` at the cursor. Widgets called until EndChild()
 /// stack inside it and are CLIPPED to the box; if they overflow vertically the region

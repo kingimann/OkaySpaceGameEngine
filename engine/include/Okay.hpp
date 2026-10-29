@@ -178,6 +178,7 @@
 #include "okay/AI/NavMesh.hpp"
 #include "okay/AI/NavMeshBake.hpp"
 #include "okay/AI/Navigation.hpp"
+#include "okay/AI/BehaviorTree.hpp"
 
 // Starter scene templates
 #include "okay/Scene/SceneTemplates.hpp"
@@ -203,6 +204,8 @@
 #include "okay/Components/BuildMode.hpp"
 #include "okay/Components/LoadingScreen.hpp"
 #include "okay/Components/LoadingScreenLayout.hpp"
+#include "okay/Components/Sequence.hpp"
+#include "okay/Components/SequencePlayer.hpp"
 #include "okay/Components/TweenAnimation.hpp"
 #include "okay/Components/UIRawImage.hpp"
 #include "okay/Components/UISafeArea.hpp"
@@ -233,10 +236,16 @@
 #include "okay/Render/Atmosphere.hpp"
 #include "okay/Environment/Weather.hpp"
 #include "okay/Components/NPCController.hpp"
+#include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Components/Crafting.hpp"
 #include "okay/Components/MeleeAttacker.hpp"
 #include "okay/Components/Spawner.hpp"
 #include "okay/Components/CraftingMenu.hpp"
+// Dialogue and quests
+#include "okay/Components/DialogueGraph.hpp"
+#include "okay/Components/StoryState.hpp"
+#include "okay/Components/QuestLog.hpp"
+#include "okay/Components/DialogueRunner.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
 #include "okay/Components/TopDownShooterController.hpp"

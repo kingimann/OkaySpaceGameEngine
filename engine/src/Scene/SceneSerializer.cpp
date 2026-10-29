@@ -20,6 +20,7 @@
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/PlayerView.hpp"
 #include "okay/Components/UITheme.hpp"          // grok/ui-theme
+#include "okay/Components/SequencePlayer.hpp"
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/BlockBuilder.hpp"
@@ -47,6 +48,7 @@
 #include "okay/Components/Consumables.hpp"
 #include "okay/Components/DayNightCycle.hpp"
 #include "okay/Components/NPCController.hpp"
+#include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Components/Crafting.hpp"
 #include "okay/Components/MeleeAttacker.hpp"
 #include "okay/Components/Spawner.hpp"
@@ -97,6 +99,9 @@
 #include "okay/Components/UIFrame.hpp"
 #include "okay/Components/UIModal.hpp"
 #include "okay/Components/UIToast.hpp"   // grok/ui-toast
+#include "okay/Components/StoryState.hpp"      // dialogue + quests: story variables
+#include "okay/Components/DialogueRunner.hpp"
+#include "okay/Components/QuestLog.hpp"
 #include "okay/Components/UIContextMenu.hpp"
 #include "okay/Components/UIKeybindField.hpp"
 #include "okay/Components/UIElement.hpp"   // GetUIRect: settle loaded UIFrames
@@ -2940,6 +2945,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         // How much the scene's wind carries the particles (own record; 1 = the default).
         if (ps->windInfluence != 1.0f) out << "  particleswind " << ps->windInfluence << "\n";
     }
+    // Sequence player (cutscenes). key=value record; the playback state is not saved.
+    if (auto* sp = go->GetComponent<SequencePlayer>()) {
+        out << "  sequenceplayer";
+        KvOut k{out};
+        k.str("path", sp->sequencePath).b("auto", sp->playOnStart).b("loop", sp->loop)("speed", sp->timeScale)
+         .key("skip", sp->skipKey).b("lock", sp->lockPlayer);
+        out << "\n";
+    }
     // Navigation: key=value records of their own, so older scenes load unchanged.
     // The baked mesh stays in the .okaynav file the surface points at.
     if (auto* ns = go->GetComponent<NavMeshSurface>()) {
@@ -2966,6 +2979,92 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "  navobstacle";
         KvOut k{out};
         k("sx", no->size.x)("sy", no->size.y)("sz", no->size.z)("cx", no->center.x)("cy", no->center.y)("cz", no->center.z);
+        out << "\n";
+    }
+    // ---- Dialogue and quests: own key=value records, so older scenes skip nothing
+    // they don't have and newer keys are ignored by older builds. ----
+    if (auto* st = go->GetComponent<StoryState>()) {
+        out << "  storystate";
+        KvOut k{out};
+        k("n", (int)st->vars.size());
+        int i = 0;
+        for (const auto& kv : st->vars) {
+            const std::string p = std::to_string(i++);
+            const char* type = kv.second.IsBool() ? "b" : kv.second.IsString() ? "s" : "n";
+            k.str(("k" + p).c_str(), kv.first).str(("t" + p).c_str(), type).str(("v" + p).c_str(), kv.second.AsString());
+        }
+        k("f", (int)st->flags.size());
+        i = 0;
+        for (const auto& f : st->flags) k.str(("f" + std::to_string(i++)).c_str(), f);
+        out << "\n";
+    }
+    if (auto* dr = go->GetComponent<DialogueRunner>()) {
+        out << "  dialoguerunner";
+        KvOut k{out};
+        k.str("file", dr->graphFile)("mode", dr->startMode).key("key", dr->interactKey)("range", dr->interactRange)
+         .str("prompt", dr->promptText).str("pobj", dr->promptObject).b("pause", dr->pausePlayer)
+         ("type", dr->typewriterSpeed)("auto", dr->autoAdvance).b("ui", dr->drawUI).b("cancel", dr->canCancel)
+         ("start", dr->startNode).str("player", dr->playerName);
+        out << "\n";
+    }
+    if (auto* ql = go->GetComponent<QuestLog>()) {
+        out << "  questlog";
+        KvOut k{out};
+        k.str("file", ql->questFile).b("tracker", ql->showTracker).b("journal", ql->allowJournal).key("jkey", ql->journalKey)
+         .b("notify", ql->showNotifications).b("ui", ql->drawUI).str("tracked", ql->tracked).str("player", ql->playerName)
+         ("n", (int)ql->records.size());
+        for (std::size_t i = 0; i < ql->records.size(); ++i) {
+            const QuestRecord& r = ql->records[i];
+            const std::string p = "q" + std::to_string(i);
+            k.str((p + "id").c_str(), r.id)((p + "st").c_str(), (int)r.status)((p + "c").c_str(), r.completions)
+             ((p + "n").c_str(), (int)r.progress.size());
+            for (std::size_t o = 0; o < r.progress.size(); ++o) {
+                const std::string q = p + "p" + std::to_string(o);
+                k(q.c_str(), r.progress[o])((p + "d" + std::to_string(o)).c_str(), o < r.done.size() ? r.done[o] : 0);
+            }
+        }
+        out << "\n";
+        // The quests typed into the inspector, one record each, right after the log.
+        for (const QuestDef& q : ql->quests) {
+            out << "  questlogdef";
+            KvOut kq{out};
+            std::string pre;
+            for (const auto& x : q.prerequisites) { if (!pre.empty()) pre += ','; pre += x; }
+            kq.str("id", q.id).str("title", q.title).str("desc", q.description).b("rep", q.repeatable).str("pre", pre)
+              ("nobj", (int)q.objectives.size());
+            for (std::size_t i = 0; i < q.objectives.size(); ++i) {
+                const auto& ob = q.objectives[i];
+                const std::string p = "o" + std::to_string(i);
+                kq.str((p + "k").c_str(), QuestObjective::KindName(ob.kind)).str((p + "d").c_str(), ob.description)
+                  .str((p + "t").c_str(), ob.target)((p + "n").c_str(), ob.count).b((p + "opt").c_str(), ob.optional);
+            }
+            kq("nri", (int)q.reward.items.size());
+            for (std::size_t i = 0; i < q.reward.items.size(); ++i)
+                kq.str(("r" + std::to_string(i) + "i").c_str(), q.reward.items[i].first)(("r" + std::to_string(i) + "n").c_str(), q.reward.items[i].second);
+            kq("nrv", (int)q.reward.vars.size());
+            for (std::size_t i = 0; i < q.reward.vars.size(); ++i)
+                kq.str(("v" + std::to_string(i) + "k").c_str(), q.reward.vars[i].first).str(("v" + std::to_string(i) + "v").c_str(), q.reward.vars[i].second);
+            kq.str("revent", q.reward.event);
+            out << "\n";
+        }
+    }
+    if (auto* qt = go->GetComponent<QuestTrigger>()) {
+        out << "  questtrigger";
+        KvOut{out}.str("zone", qt->zone).str("tag", qt->triggerTag).b("once", qt->once).str("quest", qt->questId)("obj", qt->objective);
+        out << "\n";
+    }
+    // Behavior tree runner: a key=value record of its own, so older scenes load
+    // unchanged. The tree itself stays in the .okaybt file it points at.
+    if (auto* bt = go->GetComponent<BehaviorTreeRunner>()) {
+        out << "  btrunner";
+        KvOut k{out};
+        k.str("tree", bt->treePath)("rate", bt->tickRate).b("auto", bt->runOnStart).b("debug", bt->debug)
+         .b("homeset", bt->homeOverride)("hx", bt->homePoint.x)("hy", bt->homePoint.y)("hz", bt->homePoint.z)
+         ("n", (int)bt->overrides.size());
+        for (std::size_t i = 0; i < bt->overrides.size(); ++i) {
+            const std::string kk = "k" + std::to_string(i), vk = "v" + std::to_string(i);
+            k.str(kk.c_str(), bt->overrides[i].first).str(vk.c_str(), bt->overrides[i].second);
+        }
         out << "\n";
     }
 }
@@ -7232,6 +7331,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             c->keys[c->count++] = k;
                         }
                     }
+                } else if (field == "sequenceplayer") {
+                    // Cutscene player. Missing keys keep the defaults.
+                    auto* sp = go->AddComponent<SequencePlayer>();
+                    KvIn k(in);
+                    k.str("path", sp->sequencePath);
+                    k.b("auto", sp->playOnStart);
+                    k.b("loop", sp->loop);
+                    k.f("speed", sp->timeScale);
+                    k.key("skip", sp->skipKey);
+                    k.b("lock", sp->lockPlayer);
                 } else if (field == "navsurface") {
                     auto* ns = go->AddComponent<NavMeshSurface>();
                     KvIn k(in);
@@ -7256,6 +7365,106 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     KvIn k(in);
                     k.f("sx", no->size.x); k.f("sy", no->size.y); k.f("sz", no->size.z);
                     k.f("cx", no->center.x); k.f("cy", no->center.y); k.f("cz", no->center.z);
+                } else if (field == "storystate") {
+                    // Dialogue + quests: the story's global variables and flags.
+                    auto* st = go->AddComponent<StoryState>();
+                    KvIn k(in);
+                    int n = 0, f = 0;
+                    k.i("n", n); k.i("f", f);
+                    for (int i = 0; i < n && i < 100000; ++i) {
+                        const std::string p = std::to_string(i);
+                        std::string key, type = "n", val;
+                        k.str(("k" + p).c_str(), key); k.str(("t" + p).c_str(), type); k.str(("v" + p).c_str(), val);
+                        if (key.empty()) continue;
+                        if (type == "b") st->vars[key] = vs::VsValue(val == "true" || val == "1");
+                        else if (type == "s") st->vars[key] = vs::VsValue(val);
+                        else st->vars[key] = vs::VsValue(std::strtof(val.c_str(), nullptr));
+                    }
+                    for (int i = 0; i < f && i < 100000; ++i) {
+                        std::string flag;
+                        k.str(("f" + std::to_string(i)).c_str(), flag);
+                        if (!flag.empty()) st->flags.insert(flag);
+                    }
+                } else if (field == "dialoguerunner") {
+                    auto* dr = go->AddComponent<DialogueRunner>();
+                    KvIn k(in);
+                    k.str("file", dr->graphFile); k.i("mode", dr->startMode); k.key("key", dr->interactKey); k.f("range", dr->interactRange);
+                    k.str("prompt", dr->promptText); k.str("pobj", dr->promptObject); k.b("pause", dr->pausePlayer);
+                    k.f("type", dr->typewriterSpeed); k.f("auto", dr->autoAdvance); k.b("ui", dr->drawUI); k.b("cancel", dr->canCancel);
+                    k.i("start", dr->startNode); k.str("player", dr->playerName);
+                } else if (field == "questlog") {
+                    auto* ql = go->AddComponent<QuestLog>();
+                    KvIn k(in);
+                    k.str("file", ql->questFile); k.b("tracker", ql->showTracker); k.b("journal", ql->allowJournal); k.key("jkey", ql->journalKey);
+                    k.b("notify", ql->showNotifications); k.b("ui", ql->drawUI); k.str("tracked", ql->tracked); k.str("player", ql->playerName);
+                    int n = 0;
+                    k.i("n", n);
+                    for (int i = 0; i < n && i < 100000; ++i) {
+                        const std::string p = "q" + std::to_string(i);
+                        QuestRecord r;
+                        int st = 0, no = 0;
+                        k.str((p + "id").c_str(), r.id); k.i((p + "st").c_str(), st); k.i((p + "c").c_str(), r.completions); k.i((p + "n").c_str(), no);
+                        if (r.id.empty()) continue;
+                        r.status = (QuestStatus)std::max(0, std::min(st, 3));
+                        for (int o = 0; o < no && o < 1000; ++o) {
+                            int prog = 0, done = 0;
+                            k.i((p + "p" + std::to_string(o)).c_str(), prog); k.i((p + "d" + std::to_string(o)).c_str(), done);
+                            r.progress.push_back(prog); r.done.push_back(done ? 1 : 0);
+                        }
+                        ql->records.push_back(r);
+                    }
+                } else if (field == "questlogdef") {
+                    // One inline quest of the Quest Log read just before it.
+                    KvIn k(in);
+                    auto* ql = go->GetComponent<QuestLog>();
+                    if (ql) {
+                        QuestDef q;
+                        std::string pre;
+                        int nobj = 0, nri = 0, nrv = 0;
+                        k.str("id", q.id); k.str("title", q.title); k.str("desc", q.description); k.b("rep", q.repeatable); k.str("pre", pre);
+                        {
+                            std::string cur;
+                            for (char c : pre + ",") { if (c == ',') { if (!cur.empty()) q.prerequisites.push_back(cur); cur.clear(); } else if (c != ' ') cur += c; }
+                        }
+                        k.i("nobj", nobj); k.i("nri", nri); k.i("nrv", nrv);
+                        for (int i = 0; i < nobj && i < 1000; ++i) {
+                            const std::string p = "o" + std::to_string(i);
+                            QuestObjective ob;
+                            std::string kind;
+                            k.str((p + "k").c_str(), kind); k.str((p + "d").c_str(), ob.description); k.str((p + "t").c_str(), ob.target);
+                            k.i((p + "n").c_str(), ob.count); k.b((p + "opt").c_str(), ob.optional);
+                            QuestObjective::KindFromName(kind, ob.kind);
+                            q.objectives.push_back(ob);
+                        }
+                        for (int i = 0; i < nri && i < 1000; ++i) {
+                            std::string item; int cnt = 1;
+                            k.str(("r" + std::to_string(i) + "i").c_str(), item); k.i(("r" + std::to_string(i) + "n").c_str(), cnt);
+                            if (!item.empty()) q.reward.items.push_back({item, cnt});
+                        }
+                        for (int i = 0; i < nrv && i < 1000; ++i) {
+                            std::string key, val;
+                            k.str(("v" + std::to_string(i) + "k").c_str(), key); k.str(("v" + std::to_string(i) + "v").c_str(), val);
+                            if (!key.empty()) q.reward.vars.push_back({key, val});
+                        }
+                        k.str("revent", q.reward.event);
+                        ql->quests.push_back(q);
+                    }
+                } else if (field == "questtrigger") {
+                    auto* qt = go->AddComponent<QuestTrigger>();
+                    KvIn k(in);
+                    k.str("zone", qt->zone); k.str("tag", qt->triggerTag); k.b("once", qt->once); k.str("quest", qt->questId); k.i("obj", qt->objective);
+                } else if (field == "btrunner") {
+                    auto* bt = go->AddComponent<BehaviorTreeRunner>();
+                    KvIn k(in);
+                    k.str("tree", bt->treePath); k.f("rate", bt->tickRate); k.b("auto", bt->runOnStart); k.b("debug", bt->debug);
+                    k.b("homeset", bt->homeOverride); k.f("hx", bt->homePoint.x); k.f("hy", bt->homePoint.y); k.f("hz", bt->homePoint.z);
+                    int n = 0; k.i("n", n);
+                    for (int i = 0; i < n && i < 256; ++i) {
+                        const std::string kk = "k" + std::to_string(i), vk = "v" + std::to_string(i);
+                        std::string key, val;
+                        k.str(kk.c_str(), key); k.str(vk.c_str(), val);
+                        if (!key.empty()) bt->overrides.emplace_back(key, val);
+                    }
                 } else {
                     if (error) *error = "unknown field '" + field + "'";
                     return false;
@@ -7409,9 +7618,16 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         }
         if (auto* bm = go->GetComponent<BuildMode>())
             for (const auto& it : bm->palette) { add(it.prefab); add(it.icon); }
+        if (auto* sp = go->GetComponent<SequencePlayer>()) {
+            add(sp->sequencePath);
+            Sequence seq;   // the sounds its audio cues play ship with it
+            if (Sequence::LoadFromFile(sp->ResolvedPath(), seq))
+                for (const auto& tr : seq.audio) for (const auto& c : tr.cues) add(c.file);
+        }
         if (auto* lt = go->GetComponent<LogicTarget>()) add(lt->spawnPrefab);
         if (auto* ls = go->GetComponent<LootSource>()) add(ls->table);
         if (auto* ns = go->GetComponent<NavMeshSurface>()) add(ns->navPath);   // the baked navmesh ships with the scene
+        if (auto* bt = go->GetComponent<BehaviorTreeRunner>()) add(bt->treePath);   // the tree ships with the scene
     }
     // The item database (and its icons / drop prefabs) ships with any scene that has items.
     bool hasItems = false;

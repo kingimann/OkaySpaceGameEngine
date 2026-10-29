@@ -20,6 +20,10 @@ public:
     char altDropKey = 'g';              ///< the same let-go on G, the build-tool convention
     std::string promptObject = "Hold Prompt";
 
+    /// Another prompt for the same line, shown when there is nothing to pick up or
+    /// drop (a Dialogue Runner's "E to talk" while its NPC is in range).
+    static std::string& ExtraPrompt() { static std::string s; return s; }
+
     void Update(float) override {
         ProceduralObjectHolding* hold = gameObject ? gameObject->GetComponent<ProceduralObjectHolding>() : nullptr;
         const bool holding = hold && hold->IsHolding();
@@ -80,7 +84,7 @@ private:
             msg += " to drop";
         } else if (ItemPickup* pk = Nearest(gameObject)) {
             msg = Input::KeyName(pk->interactKey) + " to pick up";
-        }
+        } else msg = ExtraPrompt();
         tr->text = msg;
         tr->background = !msg.empty();
     }

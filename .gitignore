@@ -33,3 +33,6 @@ winbuild.log
 
 # Claude Code agent worktrees (temporary, local only)
 .claude/worktrees/
+
+# Mixamo sample rigs fetched by GameObject > Spawn Mixamo Player
+mixamo-cache/

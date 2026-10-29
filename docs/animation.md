@@ -972,10 +972,10 @@ elbows bend down and out, and the object moves with the body.
   - *Flashlight*: one hand, beam forward.
   - *Sword*: one hand on the hilt, blade up and forward. *Support Hand* makes it
     two-handed.
-  - *Cup*: one hand, fingers through the handle.
+  - *Cup*: one hand on the handle.
   - *Heavy*: both hands under its bottom edges, hanging low.
   - *Custom*: the hands go on the **Left / Right Grip** points (object-local
-    position and rotation; rotation 0 = palm down, fingers along -Z), and the
+    position and rotation; rotation 0 = palm down, the hand along -Z), and the
     object sits at **Hold Offset / Hold Rotation** from the chest. A one-hand
     object authored for the right hand is mirrored when the primary hand is the
     left.
@@ -988,10 +988,72 @@ elbows bend down and out, and the object moves with the body.
   and lights point along local -Z, a sword's blade along +Y, a cup's handle
   along +X. For a model built another way, **Hold Rotation** turns it
   (0, 180, 0 for a gun facing backwards).
-- Fingers close around the grip on rigs that have finger bones. The amount
-  depends on the style: a fist on a sword, an open hand on a box, the index
-  finger off the trigger. A custom grip has its own **Finger Curl**. The
-  fingers open again when the object is dropped.
+- Hands are the single block the rig had before the finger mesh: one 12×12×17 cm
+  box on the hand bone, and no finger bones. Holding aims that hand at the grip.
+  Finger joints are not posed, including on a rig that happens to have them. A run
+  (sprint, or fast enough to use the run
+  style) keeps those hands out of the first-person view unless **Show While Running**
+  is on. The held object stays on its grip.
+- First person draws no hand until the player is holding an item. **First Person
+  Hands** (on the player) is the panel for that view and for what everyone else
+  sees. **Show When Empty** draws the hands with nothing in them. **Hold mode**
+  is one hand on the right, one hand on the left, or both. A two-handed item
+  (its **Two Handed** flag, both grip points, or a rifle, box, or heavy style,
+  or a pistol or sword with the support hand) uses both hands anyway, at that
+  item's grip points. Each hand has its own position, rotation, scale, size,
+  colour, and an optional sleeve. Bob, sway, punch, the hand field of view, and
+  the held item's offset, rotation, and scale are shared. **Others View** moves
+  the real held object (side / up / forward, plus a lift and a reach) so the
+  arms on the full body follow, and edits the item's grip points. **Reset**
+  clears one section. **Apply** copies Play-mode edits back when Stop reloads
+  the scene. **Open Preview** shows the owner's camera and a front view of the
+  same character, in Edit mode and in Play, and can switch between a one-handed
+  block, a two-handed crate, and empty hands.
+- While a hand is up, it is a copy of the character's own hand brick on the
+  owner's camera only, in the lower corner, fully on screen. The sleeve is off
+  unless that hand turns it on. The brick is angled so the top and the inner
+  end both show, and it stays past the near plane. It does not cast a shadow.
+  The pose is in the camera, so looking down keeps it in that corner instead
+  of pushing it into the lens. Walking bobs and sways it. A mouse turn lags it
+  slightly. A punch swings it toward the middle. A one-handed hold puts a copy
+  of the item in the palm (or on that hand's grip, when the grip is enabled).
+  A two-handed hold puts the item in front and a hand on each grip. Everyone
+  else still sees the real hands on the body. A run eases the copy off the
+  corner and a stop eases it back. The real arm bones stay on the animation,
+  so another camera and another player see the blocky hands on the idle, the
+  walk, the run, a crouch and a prone, including while this player looks down.
+  That look does not pitch the shared bones. None of the first-person pose is
+  in the network message. A remote copy of the player does not keep the view
+  toggle, so a key press on this machine cannot hide someone else's body. The
+  run bob moves the eye up and down only; it does not sway sideways or roll
+  the horizon.
+- The owner's first-person camera does not draw the head or the neck. The
+  head is not scaled away and not deleted from the mesh: it stays active, so
+  it still casts a shadow and any other camera still sees it. The neck is
+  skipped with the head. The shirt's lid stays on the body. The eye sits just
+  in front of the face (further forward and up as you look down) so the neck
+  is behind the lens. The body is drawn from the outside only, so
+  looking down shows the shirt from the outside, the hips, the legs, or the
+  ground, not the inside of the cloth and not a crate through it. The eye sits
+  in front of the chest and steps further forward and up as you look down, and
+  the shirt's lid stays on the body so that view is a solid surface. One
+  plain hand stays in the lower right while standing, walking, and looking
+  down: one cube, not the full arm. A run eases both arms
+  off the owner's camera.   Switching view (V, on the first-person template and the third-person one)
+  eases the camera between the orbit and the eyes over **Switch Blend Time**
+  (0.30 seconds) with **Easing** (Smooth by default; also Linear, Ease In,
+  Ease Out). **Snap** jumps in one frame. The slide stops at a wall. The head
+  and the neck stay until the lens is near the eyes, and they come back as
+  soon as it pulls away, including when V is reversed halfway. The body does
+  not vanish and does not drop into a bind pose for that frame. Walk, run,
+  crouch, prone, lean and the current action keep their phase. A held item
+  moves from the grip to the first-person placement over the same blend, and
+  the hands ease in and out with it. A look that third person cannot hold
+  eases back to the orbit pitch you started with, so a look down does not
+  come back as a top-down camera. The near plane comes back with the head.
+  Another camera still sees the whole character. The first-person
+  controller does not put the hide back, and the editor Game view does not
+  invent one while the game is playing.
 - **Socket**: hold it at a named object inside the character (a holster, a back
   slot) instead of in front of the chest.
 - The hands never stretch: when a grip is out of reach the object comes closer

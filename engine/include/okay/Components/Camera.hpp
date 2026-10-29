@@ -27,6 +27,10 @@ public:
     float fieldOfView = 60.0f;
     bool  fovAxisHorizontal = false;   // false = vertical FOV, true = horizontal
     float nearClip = 0.3f;   // near plane
+    /// Last aspect passed to ProjectionMatrix (width / height). The viewmodel
+    /// arm reads it so the same pose sits in the corner at 16:9 and at other
+    /// ratios. The first frame, before any projection, is 16:9.
+    mutable float viewportAspect = 16.0f / 9.0f;
     float farClip  = 4000.0f; // generous default so large voxel worlds / open terrain stay visible to the horizon
 
     /// Physical camera: derive the field of view from a

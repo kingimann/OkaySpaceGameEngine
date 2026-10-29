@@ -48,10 +48,11 @@ public:
     int   maxJumps = 1;                  // 1 = single jump, 2 = double jump, etc.
     bool  driveAnimation = true;
     bool  footIK = false;                // plant the Character's feet on the ground
-    float acceleration = 60.0f, deceleration = 55.0f, airControl = 0.4f;
+    float walkAcceleration = 64.0f;
+    float acceleration = 130.0f, deceleration = 90.0f, steerRate = 260.0f, airControl = 0.78f;
     float stepOffset = 0.35f;            // max stair / curb height (0 = no step-up)
     float coyoteTime = 0.12f, jumpBufferTime = 0.12f;
-    float turnSpeed = 18.0f;             // body snaps to the aim direction
+    float turnSpeed = 28.0f;             // body snaps to the aim direction (1/s)
 
     // ---- Look / camera ----
     float mouseSensitivity = 0.18f;
@@ -192,13 +193,11 @@ public:
         bool jumped = false;
 
         if (rb) {
-            Vec3 cur{rb->velocity.x, 0.0f, rb->velocity.z};
-            Vec3 dv{dir.x * speed - cur.x, 0.0f, dir.z * speed - cur.z};
-            float rate = (moving ? acceleration : deceleration) * (grounded ? 1.0f : airControl);
-            if (!moving) rate = StopSettleRate(rate, grounded, std::sqrt(cur.x * cur.x + cur.z * cur.z));
-            float dl = std::sqrt(dv.x * dv.x + dv.z * dv.z), step = rate * dt;
-            if (dl > 1e-5f && dl > step) { dv.x = dv.x / dl * step; dv.z = dv.z / dl * step; }
-            rb->velocity.x = cur.x + dv.x; rb->velocity.z = cur.z + dv.z;
+            const float auth = grounded ? 1.0f : airControl;
+            const float accel = (running ? acceleration : walkAcceleration) * auth;
+            StepPlanarVelocity(rb->velocity.x, rb->velocity.z,
+                               moving ? dir.x * speed : 0.0f, moving ? dir.z * speed : 0.0f,
+                               moving, grounded, accel, deceleration * auth, steerRate * auth, dt);
             if (canJump && standing && m_jumpBuf > 0.0f) {
                 bool firstOk = (m_jumpsUsed == 0) && (grounded || m_coyote > 0.0f);
                 bool extraOk = (m_jumpsUsed >= 1) && (m_jumpsUsed < Mathf::Max(1, maxJumps));
@@ -262,6 +261,7 @@ public:
                 lo.prone     = stanceControl.Stance() == 2;
                 lo.stance    = stanceControl.Level();
                 lo.walkSpeed = walkSpeed;
+                lo.runSpeed = runSpeed;
                 lo.dt = dt;
                 ch->DriveLocomotion(lo);
                 // The body already faces the aim yaw, so the head only tilts up/down

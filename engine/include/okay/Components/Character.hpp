@@ -86,6 +86,10 @@ public:
     float gaitSpeedSmoothing = 0.05f;
     /// Where the gait cycle is, 0..1 (0 = left foot touching down, 0.5 = right foot).
     float GaitPhase() const;
+    /// True while the body is in the run pose, including the short blend back to a walk.
+    bool SprintingPose() const;
+    /// Hide or show the held item on the owner's camera only. Others still see it.
+    void SetHeldHiddenFromOwner(bool hide);
 
     /// What a movement controller knows about the body this frame.
     struct Locomotion {
@@ -97,6 +101,7 @@ public:
         float stance = -1.0f;      ///< the eased stance level, 0 stand .. 1 crouch .. 2 prone (< 0 = from crouch / prone)
         bool  sprint = false;      ///< the run input is held
         float walkSpeed = 4.5f;    ///< the controller's walk speed (run/walk split)
+        float runSpeed = 8.0f;     ///< the controller's run speed (walk/run style blend)
         float dt = 0.0f;
         bool  swim = false;        ///< supported by water. No swim clip yet: idle or walk stands in.
         /// Movement along this axis isn't walking (2.5D: the hop between depth
@@ -125,36 +130,74 @@ public:
     void  Punch() { if (m_punchT < 0.0f || m_punchT >= 1.0f) m_punchT = 0.0f; }
     bool  Punching() const { return m_punchT >= 0.0f && m_punchT < 1.0f; }
 
-    // ---- First-person arm (driven by FirstPersonHand) ----
-    // When firstPersonArm is on, the body is frozen (so walking never brings your
-    // torso/legs into view) and your own arm is raised into the first-person camera —
-    // it's literally your character's arm, not a separate viewmodel. fpArmUp eases
-    // 0 (lowered, empty-handed) .. 1 (raised, holding). fpRaise / fpElbow let the
-    // FirstPersonHand inspector tune where the hand sits.
+    // ---- First-person arm (driven by FirstPersonHand / PlayerView) ----
+    // firstPersonArm shows a COPY of the character's hand brick on the owner's
+    // camera only. Nothing is drawn until the player is holding an item, unless
+    // FirstPersonHands asks for empty hands. A hold can show one hand or both.
+    // The pose lives in the camera, so a look down keeps it in the corner. A run
+    // eases it off unless FirstPersonHands says otherwise. The real arm bones
+    // stay on the animation. fpArmUp eases 0 (copy hidden) .. 1 (copy shown).
+    // Nothing here is replicated.
     bool  firstPersonArm = false;
-    /// Runtime only (not saved): the view toggle shrinks this character's head
-    /// and neck in the baked mesh so a first-person camera at the eyes doesn't
-    /// clip them, while the body stays visible looking down. A separated rig
-    /// hides the head part from the owner's camera instead.
+    /// 0 at the orbit, 1 at the eyes, while a Player View blend owns the viewmodel.
+    /// Negative: the copy eases on its own timer (a run, a punch, no view toggle).
+    float fpViewWeight = -1.0f;
+    /// Runtime only (not saved). Kept so older scenes load. It does not remove
+    /// the head: a first-person camera skips the head and neck parts, and the
+    /// mesh itself stays whole for shadows and every other camera.
     bool  hideOwnHead = false;
     float fpArmUp = 1.0f;
-    float fpRaise = -96.0f;   // raised upper-arm forward angle
+    float fpRaise = -96.0f;   // -96 = natural corner hang; the slider nudges the hand up
     float fpElbow = 16.0f;    // elbow bend in degrees (positive folds the forearm; 0 = straight)
-    /// Which 3-bone arm the first-person view raises into frame (the base bone index,
-    /// e.g. 3 = the +X / screen-right arm). -1 = none. Set by FirstPersonHand; the
-    /// separated-rig DriveParts poses these bones up like a Minecraft hand and routes
-    /// the punch onto them so the VISIBLE arm is the one that swings. Not serialized.
+    /// Which 3-bone arm the owner's copy is taken from (the base bone index,
+    /// e.g. 3 = the +X / screen-right arm). -1 = none. Set by FirstPersonHand.
+    /// The copy is posed from these bones. The bones themselves are not. Not serialized.
     int   fpArmBase = -1;
-    /// Camera pitch (degrees) fed in by FirstPersonHand so the first-person arm tilts
-    /// up/down with your view (Minecraft-style). 0 = level. Not serialized.
+    /// Camera pitch (degrees) fed in so the owner's arm copy tilts with the view.
+    /// 0 = level. Applied only to the copy. Not serialized.
     float fpPitch = 0.0f;
     /// Let the walk/run cycle bob the first-person arm (the arm inherits the body's
     /// sway). Turn off for a rock-steady arm. Set by FirstPersonHand. Not serialized.
     bool  fpArmBob = true;
-    /// Fully decouple the first-person arm from the body: ignore lean, crouch and prone
-    /// (zero the hips/torso the arm hangs from and skip the stance height drop) so the
-    /// arm stays put in view no matter what the body does. Set by FirstPersonHand.
+    /// Keep the owner's arm copy off the hips and torso, so a crouch or a lean
+    /// does not drag it. The shared hips and torso are never zeroed for this.
+    /// Set by FirstPersonHand.
     bool  fpSteady = false;
+
+    /// True while this character is holding an object, so the real hands (the
+    /// ones the hold poses) stay the hands everyone sees, including the owner.
+    bool HandsOnAHold() const;
+
+    /// A run pumps the arms up into the owner's camera. Sprint and the run
+    /// style (including the blend into it) keep the first-person hands off
+    /// screen. Walk, idle and a raised hold do not.
+    bool HideFirstPersonHands() const {
+        if (anim == 3) return true;
+        return RunWeight(anim) > 0.35f;
+    }
+
+    /// What the owner's first-person camera may draw of the REAL rig. The head
+    /// is never in that view. The shirt is: the eye sits in front of it, and
+    /// the lid has to be there or a look down sees through the open top. While
+    /// the raised-arm copy is up, the real arms are not — the owner sees the
+    /// copy, and every other camera sees the real arms on the animation. A run
+    /// drops both. A hold keeps the real hands, because that pose is the grip.
+    /// Empty hands draw no copy: the real arms would be stubs with no hands,
+    /// so they stay off this camera too and the torso reads as a solid shoulder.
+    /// The neck is not a bone — it is a child of the torso, and the owner
+    /// camera skips that child on its own.
+    bool ShowsToOwnerCamera(int bone) const {
+        if (bone == HumanoidMotion::B_HEAD) return false;
+        if (bone >= HumanoidMotion::B_LUPARM && bone <= HumanoidMotion::B_RHAND) {
+            if (HideFirstPersonHands()) return false;
+            // The owner sees the viewmodel, including while a hold puts the
+            // item in that hand. The real arms stay on the animation.
+            if (firstPersonArm && fpArmBase >= 0 && m_fpShown > 0.05f) return false;
+            if (firstPersonArm && fpArmUp <= 0.05f) return false;
+            return true;
+        }
+        return true;
+    }
 
     // ---- External rig (retargeting) ----
     /// Compute the animation pose but render NOTHING — no baked mesh, no part
@@ -168,8 +211,9 @@ public:
     // GameObjects (one per bone: Hips, Torso, Head, arms, legs) you can select,
     // recolour, attach things to (a sword in the Hand), and animate part-by-part.
     // The built-in animations still play (they drive the part transforms) unless you
-    // turn `animateParts` off to author your own. The first-person hand just hides
-    // the non-arm parts. Call BuildParts() (or the editor's "Separate Into Parts").
+    // turn `animateParts` off to author your own. The owner's first-person camera
+    // skips the head and the neck and draws the rest from the outside.
+    // Call BuildParts() (or the editor's "Separate Into Parts").
     bool separateParts = false;   ///< serialized: rebuild the part rig on load
     bool animateParts  = true;    ///< let the built-in animation drive the parts
     /// Create the part rig as REAL child objects (a "Rig" node with one object per
@@ -179,6 +223,19 @@ public:
     /// new ones at Play. Call from the editor's "Separate Into Parts" so the parts are
     /// in the scene to customize, not spawned when you press Play.
     void BuildParts();
+    /// Pose the part rig from the animation that is already playing. A view switch
+    /// calls this the frame the rig is built, so that frame is not a bind pose.
+    void PoseBuiltParts();
+    /// `weight` < 0 releases the viewmodel to its own ease. 0..1 follows the
+    /// camera blend (0 hidden at the orbit, 1 the first-person placement).
+    void SetViewmodelBlend(float weight);
+    /// Empty child the owner's viewmodel hangs from. A blend can point the
+    /// camera at it so the copy draws without hiding the body.
+    GameObject* EnsureViewAnchor();
+    /// True once the copy is far enough along the blend to be worth drawing.
+    bool OwnerCopyVisible() const {
+        return firstPersonArm && fpArmBase >= 0 && m_fpShown > 0.02f;
+    }
     /// Tear the rig back down (destroy the "Rig" child) and show the baked mesh again.
     void RemoveParts();
     /// Edit-time: ensure the rig exists and push the current/preview pose onto it, so
@@ -186,6 +243,29 @@ public:
     void EditorPreviewTick();
     bool PartsBuilt() const { return m_partsBuilt; }
     GameObject* Part(int bone) const { return (bone >= 0 && bone < (int)m_parts.size()) ? m_parts[bone] : nullptr; }
+    /// The owner's first-person arm copy (the upper arm). Only the camera that
+    /// hides this player draws it. Null until first person has built it.
+    GameObject* OwnerViewArm() const { return m_ownerArm; }
+    /// The other hand's copy, when a two-handed hold (or hold mode) shows both.
+    GameObject* OwnerViewArm2() const { return m_ownerArm2; }
+    /// Hide the copy unless this character is holding something. FirstPersonHands
+    /// on the player can show empty hands, pick the hand, and keep them while running.
+    /// `showLeftArm` is the fallback when that component is absent.
+    /// `showWhileRunning` is the same fallback for a legacy First Person Hand.
+    void ApplyFirstPersonHandDrive(bool showLeftArm, bool showWhileRunning = false);
+    /// Place that copy for the camera as it stands right now. The view and the
+    /// first-person controller call this after they have moved the lens.
+    void RefreshOwnerArm();
+    /// Flag the rig for one camera. `firstPerson` draws every part the owner
+    /// should see and leaves the head and neck active but unflagged, so this
+    /// camera skips them while shadows and every other camera still get them.
+    void ApplyOwnerVisibility(bool firstPerson);
+    /// Pull the neck box out of the torso mesh into a child named "Neck", once.
+    void SplitNeckFromTorso();
+    /// If `eye` (world space) sits inside a body part the owner can see, step it
+    /// forward and up until it is outside. Head, neck and arms are not walls:
+    /// the first two are hidden from this camera and the arms sit near the view.
+    Vec3 ClearFirstPersonEye(Vec3 eye) const;
 
     // ---- Animation authoring (the editor's Animation window uses these) ----
     std::vector<Vec3> CurrentPose() const;  ///< the pose being shown right now (per-bone euler)
@@ -560,6 +640,8 @@ private:
     float m_gaitPhase = 0.0f;      // the stride cycle, 0..1 (0 = left touchdown); one clock for every gait state
     float m_gaitFreq = 0.0f;       // cycles/s the phase is advancing at (signed: < 0 backpedalling)
     float m_runW = 0.0f;           // 0 walking style .. 1 running style (eased over ~0.2 s)
+    float m_runWant = 0.0f;        // the style DriveLocomotion asked for this step
+    bool  m_haveRunWant = false;
     float GaitPhaseAt(float t, int state) const;       // the gait phase at clock time t
     float RunWeight(int state) const;                  // walk/run style weight for a state
     HumanoidMotion::Inputs MotionInputs(int state, float t) const;   // the built-in motion's inputs
@@ -572,11 +654,37 @@ private:
     float m_fpShown = 0.0f;        // eased 0..1 raise of the first-person arm (tracks fpArmUp)
     void BuildFpArm(const Mesh& full);   // extract the arm bones into m_fpArm
     void EaseFirstPersonArm(float dt);
+    void BlendHeldTowardGrip();
+    GameObject* OwnerHideTarget() const;
     bool m_partsBuilt = false;
     GameObject* m_rigRoot = nullptr;
     std::vector<GameObject*> m_parts;    // one object per bone (B_COUNT)
     std::vector<Vec3> m_partRest;        // each part's joint offset from its parent
+    GameObject* m_ownerArm = nullptr;    // raised-arm copy, owner camera only
+    GameObject* m_ownerFore = nullptr;
+    GameObject* m_ownerHand = nullptr;
+    GameObject* m_ownerItem = nullptr;   // viewmodel copy of a held prop
+    GameObject* m_fpHiddenHeld = nullptr;
+    GameObject* m_viewAnchor = nullptr;  // FP_ViewAnchor, parent of the owner copies
+    int m_ownerArmBase = -2;
+    GameObject* m_ownerArm2 = nullptr;   // the other hand, two-handed holds only
+    GameObject* m_ownerFore2 = nullptr;
+    GameObject* m_ownerHand2 = nullptr;
+    int m_ownerArmBase2 = -2;
+    bool m_fpSecond = false;
+    float m_fpDt = 0.016f;
+    float m_fpPrevYaw = 0.0f, m_fpPrevPitch = 0.0f;
+    float m_fpTrailYaw = 0.0f, m_fpTrailPitch = 0.0f;
+    bool  m_fpTrailInit = false;
     void RememberPartRest();
+    void ReleaseOwnerArm();
+    void ReleaseOwnerArm2();
+    void EnsureOwnerArm(int base);
+    void EnsureOwnerArm2(int base);
+    void DeactivateOwnerArm2();
+    void PoseOwnerArm(const std::vector<Vec3>& animPose);
+    void FinishTwoHands(class Camera* cam, float depth, float snap, float bobS, float bobC);
+    void SetOwnerArmActive(bool on);
     GameObject* FindRig() const;         // an existing "Rig" child, or null
     bool AdoptParts(GameObject* rig);    // reuse an existing rig instead of rebuilding
     void DriveParts();                   // pose the part transforms from the animation

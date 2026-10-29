@@ -142,7 +142,8 @@ private:
             Character* c = m_char; NetworkSync* self = this;
             // "<anim> <punchSeq> [<moveSpeed> <moveAngle>]". The gait fields came
             // later: older peers stop reading after the punch counter, and a
-            // message without them still reads here.
+            // message without them still reads here. First-person pitch, the
+            // raised arm and the camera hide are not in this message.
             m_nm->SetSyncExtra(m_id,
                 [c, self]() {
                     std::ostringstream o;

@@ -129,6 +129,7 @@ float Camera::VerticalFovDegrees(float aspect) const {
 }
 
 Mat4 Camera::ProjectionMatrix(float aspect) const {
+    if (aspect > 0.05f) viewportAspect = aspect;
     if (projection == Projection::Perspective) {
         Mat4 p = Mat4::Perspective(VerticalFovDegrees(aspect), aspect, nearClip, farClip);
         p.at(2, 0) = lensShiftX * 2.0f;   // off-axis lens shift

@@ -86,6 +86,11 @@ int main() {
         CHECK(FullBodyIK::Classify("calf_l") == FullBodyIK::LShin);
         CHECK(FullBodyIK::Classify("L Hand") == FullBodyIK::LHand);
         CHECK(FullBodyIK::Classify("mixamorig:LeftHandIndex1") == -1);
+        CHECK(FullBodyIK::Classify("mixamorig:LeftHandMiddle1") == -1);
+        CHECK(FullBodyIK::Classify("mixamorig:LeftHand") == FullBodyIK::LHand);
+        CHECK(FullBodyIK::Classify("mixamorig:LeftUpLeg") == FullBodyIK::LThigh);
+        CHECK(FullBodyIK::Classify("mixamorig:LeftLeg") == FullBodyIK::LShin);
+        CHECK(FullBodyIK::Classify("mixamorig:Spine2") == FullBodyIK::Chest);
         CHECK(FullBodyIK::Classify("mixamorig:Hips") == FullBodyIK::Hips);
         CHECK(FullBodyIK::Classify("mixamorig:Head") == FullBodyIK::Head);
 

@@ -95,12 +95,14 @@ public:
     float leanOffset = 0.5f;            // sideways camera shift while leaning (units)
     float leanSpeed  = 10.0f;           // how fast the lean eases in/out
     float lean() const { return m_lean; }
-    float turnSpeed = 12.0f;            // how fast the body turns toward movement
+    float turnSpeed = 24.0f;            // how fast the body turns toward movement (1/s)
     // Momentum: instead of snapping velocity, ramp toward the target so starts/stops
     // feel weighty (units/s^2). Higher = snappier; very high ~= the old instant feel.
-    float acceleration = 60.0f;
-    float deceleration = 55.0f;
-    float airControl   = 0.40f;         // accel multiplier while airborne (0..1)
+    float walkAcceleration = 64.0f;     ///< accel while walking (m/s^2). Run uses `acceleration`.
+    float acceleration = 130.0f;        ///< accel while running (m/s^2)
+    float deceleration = 90.0f;
+    float steerRate = 260.0f;           ///< how fast a turn drops the old heading (m/s^2)
+    float airControl   = 0.78f;         // authority multiplier while airborne (0..1)
     // Forgiving jump timing (platformer-grade): coyote time lets you jump just after
     // walking off a ledge; jump buffer remembers a press made just before landing.
     float coyoteTime     = 0.12f;
@@ -185,6 +187,28 @@ public:
     bool  IsAiming() const { return m_aim; }
     bool  IsSliding() const { return m_slideT > 0.0f; }
     bool  IsGrounded() const { return m_grounded; }
+    /// Orbit pitch at Start. A first-person handoff treats this as the camera's
+    /// rest tilt, so a view that was never looked away from rest arrives level.
+    float restPitch() const { return m_restPitch; }
+    bool  HasDriven() const { return m_drove; }
+    bool  HasPresentedOrbit() const { return m_haveOrbit; }
+    Vec3  PresentedOrbitPosition() const { return m_orbitPos; }
+    Quat  PresentedOrbitRotation() const { return m_orbitRot; }
+    void AcceptHandoff(float newYaw, float newPitch, int stanceIndex, float leanAmount, bool wasGrounded) {
+        yaw = newYaw;
+        pitch = Mathf::Clamp(newPitch, -89.0f, 89.0f);
+        Stance s = Stance::Stand;
+        if (stanceIndex == (int)Stance::Crouch) s = Stance::Crouch;
+        else if (stanceIndex == (int)Stance::Prone) s = Stance::Prone;
+        RestoreStance(s);
+        m_lean = Mathf::Clamp(leanAmount, -1.0f, 1.0f);
+        if (!wasGrounded) {
+            if (m_jumpsUsed < 1) m_jumpsUsed = 1;
+            m_jumpBuf = 0.0f;
+            m_coyote = 0.0f;
+        }
+    }
+    bool SimActive() const override { return !FirstPersonOwns(gameObject); }
 
 
     /// Safety net: falling below this world Y teleports the player back to its
@@ -203,9 +227,12 @@ public:
     /// back down. 0 = no limit.
     float slopeLimit = 50.0f;
     void Start() override {
+        m_restPitch = pitch;
         if (footIK) AttachCharacterFootIK(gameObject);
         if (transform) { m_spawn = transform->Position(); m_haveSpawn = true; }
-        ApplyRestoredStance();
+        // With a first-person controller on the same body, only the view that
+        // is actually running sizes the collider. The other stays at its saved stance.
+        if (!FirstPersonOwns(gameObject)) ApplyRestoredStance();
     }
 
     void Update(float dt) override {
@@ -227,6 +254,19 @@ public:
         m_lookDt = dt;   // also for a client's ReadLocalInput in authoritative movement
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
         if (DeathLocksInput(gameObject)) { StopDeadSlide(gameObject); return; }
+        // First person owns the body while the view is at the eyes. Keep the
+        // mouse baseline so orbiting again doesn't spike on the first frame.
+        if (!SimActive()) {
+            m_lastMouse = Input::MousePosition();
+            m_haveMouse = !Input::UICaptured();
+            m_owned = false;
+            return;
+        }
+        if (!m_owned) {
+            HandOffToThirdPerson(gameObject);
+            m_owned = true;
+        }
+        m_drove = true;
         // Optionally hide + lock the cursor while playing (re-assert if freed).
         if (lockCursor && !Cursor::IsLocked()) Cursor::Capture(true);
         Simulate(ReadLocalInput(), dt);
@@ -247,8 +287,12 @@ public:
         in.yaw = yaw; in.pitch = pitch;
         if (m_haveMouse && !uiBlocked) {
             float sens = mouseSensitivity * (aimWithRightMouse && aim ? aimSensitivity : 1.0f);
-            float dx = (mp.x - m_lastMouse.x) * sens, dy = (mp.y - m_lastMouse.y) * sens;
-            if (std::fabs(mp.x - m_lastMouse.x) + std::fabs(mp.y - m_lastMouse.y) > 0.5f) m_mouseIdle = 0.0f;
+            // Pixels, then degrees. m_lookDt is only the idle timer below; it
+            // does not scale the look, so a hitch cannot swing the orbit.
+            float pdx = mp.x - m_lastMouse.x, pdy = mp.y - m_lastMouse.y;
+            LookPixels(pdx, pdy);
+            float dx = pdx * sens, dy = pdy * sens;
+            if (std::fabs(pdx) + std::fabs(pdy) > 0.5f) m_mouseIdle = 0.0f;
             else m_mouseIdle += m_lookDt;
             in.yaw   += (invertX ? 1.0f : -1.0f) * dx;
             in.pitch += (invertY ? -1.0f : 1.0f) * dy;
@@ -258,8 +302,9 @@ public:
             if (gameObject)
                 if (auto* view = gameObject->GetComponent<PlayerView>())
                     view->LookLimits(true, minPitch, maxPitch, lo, hi);
+            ClampPitchWindow(lo, hi);
             yaw = in.yaw;
-            pitch = in.pitch = Mathf::Clamp(in.pitch, lo, hi);
+            pitch = in.pitch = ClampLookPitch(Mathf::Clamp(in.pitch, lo, hi));
         }
         // Drop the baseline while a bag is open (locked/free mouse space switch) so the
         // camera doesn't snap on the first frame after the panel closes.
@@ -300,7 +345,8 @@ public:
             if (gameObject)
                 if (auto* view = gameObject->GetComponent<PlayerView>())
                     view->LookLimits(true, minPitch, maxPitch, lo, hi);
-            if (in.pitch != pitch) pitch = Mathf::Clamp(in.pitch, lo, hi);
+            ClampPitchWindow(lo, hi);
+            if (in.pitch != pitch) pitch = ClampLookPitch(Mathf::Clamp(in.pitch, lo, hi));
             if (gameObject)
                 if (auto* view = gameObject->GetComponent<PlayerView>())
                     view->ConformPitch(pitch, true, minPitch, maxPitch, dt);
@@ -373,18 +419,14 @@ public:
         // gravity) is always grounded for animation purposes.
         bool airborne = rb ? !grounded : false;
         if (rb) {
-            // Momentum: ease the horizontal velocity toward the target so starts and
-            // stops have weight; reduced authority in the air.
-            Vec3 tgt{dir.x * speed, 0.0f, dir.z * speed};
-            Vec3 cur{rb->velocity.x, 0.0f, rb->velocity.z};
-            float rate = (moving ? acceleration : deceleration) * ((grounded || m_swimming) ? 1.0f : airControl);
-            if (!moving) rate = StopSettleRate(rate, grounded || m_swimming, std::sqrt(cur.x * cur.x + cur.z * cur.z));
-            Vec3 dv{tgt.x - cur.x, 0.0f, tgt.z - cur.z};
-            float dl = std::sqrt(dv.x * dv.x + dv.z * dv.z);
-            float step = rate * dt;
-            if (dl > 1e-5f && dl > step) { dv.x = dv.x / dl * step; dv.z = dv.z / dl * step; }
-            rb->velocity.x = cur.x + dv.x;
-            rb->velocity.z = cur.z + dv.z;
+            // One step toward the wish. Steering kills the old heading on its own
+            // rate, so a sprint can turn without a second smoother on the input.
+            const bool plant = grounded || m_swimming;
+            const float auth = plant ? 1.0f : airControl;
+            const float accel = (running ? acceleration : walkAcceleration) * auth;
+            StepPlanarVelocity(rb->velocity.x, rb->velocity.z,
+                               moving ? dir.x * speed : 0.0f, moving ? dir.z * speed : 0.0f,
+                               moving, plant, accel, deceleration * auth, steerRate * auth, dt);
             if (m_slideT > 0.0f && grounded) {
                 float k = Mathf::Clamp(m_slideT / Mathf::Max(0.01f, slideTime), 0.0f, 1.0f);
                 float sp = crouchSpeed + (slideSpeed - crouchSpeed) * k * k;
@@ -543,6 +585,7 @@ public:
                 lo.stance   = m_swimming ? 0.0f : m_stanceLevel;
                 lo.sprint   = m_swimming ? false : running;
                 lo.walkSpeed = walkSpeed;
+                lo.runSpeed = runSpeed;
                 lo.dt = dt;
                 ch->DriveLocomotion(lo);
                 // The head turns to keep looking where the camera points (relative to
@@ -615,13 +658,23 @@ public:
             m_pivot, pivotDampingXZ, pivotDampingY, maxPivotLag,
             cameraCollision, m_arm, cameraCollisionRadius, cameraCollisionSkin, cameraCollisionMask,
             cameraCollisionPullIn, cameraCollisionRecover, applyShake, dt);
-        cam->SetPosition(orbit.position);
-        // No roll: the horizon stays level. Leaning turns the body, not this camera.
-        cam->localRotation = orbit.rotation;
-        m_fov.Update(sc->mainCamera, m_running && m_lastSpeed > walkSpeed * 0.9f, sprintFovBoost,
-                     m_aimT > 0.5f, aimFov, fovLerp, dt);
+        m_orbitPos = orbit.position;
+        m_orbitRot = orbit.rotation;
+        m_haveOrbit = true;
+        // During a blend the first-person eye stays on the camera and Player View
+        // lerps to this orbit. A child eye uses a world rotation either way.
+        if (ThirdPersonWritesCamera(gameObject)) {
+            cam->SetPosition(orbit.position);
+            cam->SetRotation(orbit.rotation);
+        }
+        if (SimActive()) {
+            m_fov.Update(sc->mainCamera, m_running && m_lastSpeed > walkSpeed * 0.9f, sprintFovBoost,
+                         m_aimT > 0.5f, aimFov, fovLerp, dt, !PlayerHasBothViews(gameObject));
+        }
         // Full Body IK: look where the camera looks (a point well ahead of it).
-        if (ikLook)
+        // Only while this controller is driving — in first person the eye controller
+        // aims the head, and overwriting it from the orbit pulled the gaze back.
+        if (SimActive() && ikLook)
             if (FullBodyIK* fb = FindInTree<FullBodyIK>(gameObject)) {
                 fb->lookEnabled = true; fb->lookTarget = nullptr;
                 fb->lookPosition = cam->Position() + (cam->Rotation() * Vec3{0, 0, -1}) * 20.0f;
@@ -714,6 +767,12 @@ private:
     bool m_haveMouse = false;
     bool m_runToggled = false;
     float m_lean = 0.0f;             // eased lean amount (-1..+1)
+    float m_restPitch = 18.0f;       // orbit pitch at Start (the camera's rest tilt)
+    bool  m_drove = false;
+    bool  m_owned = false;
+    bool  m_haveOrbit = false;
+    Vec3  m_orbitPos{0, 0, 0};
+    Quat  m_orbitRot = Quat::Identity;
     int   m_jumpsUsed = 0;          // jumps since last grounded (for double-jump)
     Stance m_stance = Stance::Stand;
     Stance m_wantStance = Stance::Stand;   // what the input asks for (m_stance may wait for headroom)

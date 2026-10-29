@@ -1,5 +1,22 @@
 OkaySpace Game Engine — Changelog
 
+v2.839.0
+  Animation
+  - The built-in character's walk is smooth at full speed: walking at the
+    controllers' 4.5 m/s used to whip the feet forward and slap them down.
+    A fast walk now eases into a jog, about where people break into one,
+    and the built-in clips play on a smooth curve through their poses
+    (#500).
+  - Imported characters that bring their own animations can get a full
+    Animator graph: select one and click Create Animator. Idle, walk and
+    run blend at the speeds your player moves, with crouch, prone, crawl,
+    get up, jump, fall and land, all editable and previewable in the
+    Animator window (#499).
+  Multiplayer
+  - Other players' objects no longer lag almost a second behind after
+    standing still: a pause in an object's updates was taken for a slow
+    network (#502).
+
 v2.838.0
   Audio
   - Sounds play in stereo with pitch, pan, 3D panning that follows the

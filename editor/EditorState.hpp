@@ -114,9 +114,13 @@ public:
         m_projectDir = d;
         okay::ItemDatabase::Get().Clear();   // each project has its own item definitions
         if (!d.empty()) okay::ItemDatabase::Get().Load(ItemDatabasePath());
+        okay::Localization::Reset();         // ... and its own string table
+        if (!d.empty()) okay::Localization::LoadTable(StringTablePath());
     }
     /// The project's item definitions file (<project>/items.okayitems).
     std::string ItemDatabasePath() const { return m_projectDir.empty() ? std::string() : m_projectDir + "/items.okayitems"; }
+    /// The project's string table (<project>/strings.okayloc; the Localization window).
+    std::string StringTablePath() const { return m_projectDir.empty() ? std::string() : m_projectDir + "/strings.okayloc"; }
 
     // ---- Online services (built into the engine) ----------------------
     ISteamService*   steam()   { return m_steam.get(); }

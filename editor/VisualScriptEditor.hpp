@@ -266,6 +266,11 @@ inline const std::vector<VsDef>& Registry() {
         {"BtSet",        "Set Blackboard", CAT_ACTION, true, {""}, {"Value"}, {}, 1, "key"},
         {"BtGet",        "Get Blackboard", CAT_DATA, false, {}, {}, {"Value"}, 1, "key"},
         {"BtRun",        "Run Tree",       CAT_ACTION, true, {""}, {}, {}, 1, "tree file"},
+        // --- Splines, lines and trails (the component on this object or the Target) ---
+        {"GetSplinePoint", "Get Point On Spline", CAT_DATA, false, {}, {"T (0-1)"}, {"Point"}, 0, nullptr},
+        {"SplineLength",   "Spline Length",       CAT_DATA, false, {}, {}, {"Length"}, 0, nullptr},
+        {"SetLinePoints",  "Set Line Points",     CAT_ACTION, true, {""}, {"Points"}, {}, 0, nullptr},
+        {"ClearTrail",     "Clear Trail",         CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
         // --- Flow: loops, gates, switches ---
         {"ForLoop",   "For Loop",      CAT_FLOW, true, {"Body","Done"}, {"First","Last"}, {"Index"}, 0, nullptr},
         {"Repeat",    "Repeat N",      CAT_FLOW, true, {"Body"}, {}, {}, 1, "count"},
@@ -1137,6 +1142,8 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
     if (t == "GetStoryVar")    return "get_story(" + q(lit("")) + ")";
     if (t == "QuestState")     return "quest_state(" + q(lit("")) + ")";
     if (t == "BtGet")          return "bt_get(" + q(lit("x")) + ")";
+    if (t == "GetSplinePoint") return "spline_point(" + A() + ")";
+    if (t == "SplineLength")   return "spline_length()";
     if (t == "IsInAction")     return "is_in_action()";
     if (t == "IsSitting")      return "is_sitting()";
     if (t == "SeatPrompt")     return "seat_prompt()";
@@ -1328,6 +1335,8 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="NavStop")     out += ind + "nav_stop()\n";
     else if (t=="BtSet")       out += ind + "bt_set(" + q(arg("x")) + ", " + in(0) + ")\n";
     else if (t=="BtRun")       out += ind + "bt_run(" + q(arg("")) + ")\n";
+    else if (t=="SetLinePoints") out += ind + "line_set_points(" + in(0, "[]") + ")\n";
+    else if (t=="ClearTrail")  out += ind + "trail_clear()\n";
     else if (t=="Cooldown")    out += ind + "// Cooldown (" + VsCommentText(arg("1")) + "s): gate the actions after this with a timer\n";
     else if (t=="ForLoop") {
         const std::string v = "_i" + std::to_string(nodeId);

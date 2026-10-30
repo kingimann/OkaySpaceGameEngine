@@ -3,6 +3,9 @@
 #include "okay/Animation/HumanoidBones.hpp"
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/FullBodyIK.hpp"
+#include "okay/Components/HumanoidRetarget.hpp"
+#include "okay/Scene/SceneSerializer.hpp"
+#include <cstdio>
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Render/ModelImport.hpp"
 #include <cmath>
@@ -272,6 +275,52 @@ int main() {
             const float ang = 2.0f * std::acos(std::fmin(1.0f, std::fabs(Quat::Dot(q0, q1)))) * 57.2957795f;
             CHECK(std::fabs(ang - 90.0f) < 2.0f);
         }
+    }
+
+    // ---- Bones picked by hand: a rig whose names say nothing ----
+    {
+        Scene s; s.physicsEnabled = false;
+        GameObject* model = Mixamo(s);
+        // Rename every bone "Bone.NNN", remembering which slot each one was.
+        const hb::BoneMap named = hb::MapHumanoidBones(model);
+        std::string byHand[hb::BoneCount];
+        int k = 0;
+        for (const auto& up : s.Objects()) {
+            GameObject* g = up.get();
+            if (!g || g == model || !g->IsSelfOrDescendantOf(model)) continue;
+            char nm[16]; std::snprintf(nm, sizeof nm, "Bone.%03d", k++);
+            for (int b = 0; b < hb::BoneCount; ++b) if (named.bone[b] == g) byHand[b] = nm;
+            g->name = nm;
+        }
+        const hb::BoneMap bare = hb::MapHumanoidBones(model);
+        CHECK(!bare.humanoid && bare.found == 0);           // nothing to go on by name
+        CHECK(CountHumanoidBones(s, model) == 0);
+        const hb::BoneMap picked = hb::MapHumanoidBones(model, byHand);
+        CHECK(picked.humanoid && picked.found == 15);
+        CHECK(picked.bone[hb::LHand] && picked.bone[hb::LHand]->name == byHand[hb::LHand]);
+        CHECK(CountHumanoidBones(s, model, nullptr, byHand) == 15);
+        // A wrong pick says why: the left thigh set to the right arm's bone.
+        std::string wrong[hb::BoneCount];
+        for (int b = 0; b < hb::BoneCount; ++b) wrong[b] = byHand[b];
+        wrong[hb::LThigh] = byHand[hb::RUpperArm];
+        const hb::BoneMap bad = hb::MapHumanoidBones(model, wrong);
+        CHECK(!bad.humanoid && !bad.why.empty());
+        // "-" empties a slot.
+        std::string none[hb::BoneCount];
+        none[hb::Head] = "-";
+        CHECK(hb::MapHumanoidBones(Mixamo(s), none).bone[hb::Head] == nullptr);
+
+        // The built-in animations take the map, and it saves with the scene.
+        std::string log;
+        CHECK(EnableBuiltinAnimations(s, model, &log, byHand) == 15);
+        auto* rt = model->GetComponent<HumanoidRetarget>();
+        CHECK(rt && rt->boneMap[hb::LFoot] == byHand[hb::LFoot] && rt->HasBoneMap());
+        Scene loaded;
+        CHECK(SceneSerializer::Deserialize(loaded, SceneSerializer::Serialize(s)));
+        HumanoidRetarget* rt2 = nullptr;
+        for (const auto& up : loaded.Objects()) if (auto* r = up->GetComponent<HumanoidRetarget>()) rt2 = r;
+        CHECK(rt2 != nullptr);
+        if (rt2) for (int b = 0; b < hb::BoneCount; ++b) CHECK(rt2->boneMap[b] == byHand[b]);
     }
 
     Log::sink = sink;

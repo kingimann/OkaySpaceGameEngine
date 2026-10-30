@@ -79,6 +79,9 @@
 #include "okay/Components/TurnManager.hpp"
 #include "okay/Components/CameraFollow.hpp"
 #include "okay/Components/DollyPath.hpp"
+#include "okay/Components/Spline.hpp"
+#include "okay/Components/SplineMesh.hpp"
+#include "okay/Components/LineRenderer.hpp"
 #include "okay/Components/VirtualCamera.hpp"
 #include "okay/Components/CinemachineBrain.hpp"
 #include "okay/Components/TextRenderer.hpp"
@@ -351,6 +354,59 @@ void ReadStanceControl(std::istream& in, StanceControl* sc) {
     if (st == 1 || st == 2) sc->Restore(st);
 }
 
+// Point lists inside one quoted key=value (line points, profile points).
+std::string PointList(const std::vector<Vec2>& v) {
+    std::ostringstream o;
+    for (std::size_t i = 0; i < v.size(); ++i) o << (i ? " " : "") << v[i].x << ' ' << v[i].y;
+    return o.str();
+}
+std::string PointList(const std::vector<Vec3>& v) {
+    std::ostringstream o;
+    for (std::size_t i = 0; i < v.size(); ++i) o << (i ? " " : "") << v[i].x << ' ' << v[i].y << ' ' << v[i].z;
+    return o.str();
+}
+std::vector<float> ReadNumberList(const KvIn& k, const char* key) {
+    std::vector<float> out;
+    if (const std::string* s = k.find(key)) {
+        std::istringstream in(*s);
+        float f;
+        while (in >> f) out.push_back(f);
+    }
+    return out;
+}
+// A width curve / colour gradient as `<p>n= <p>s= <p>0t= <p>0v= ...` keys.
+void WriteCurveKv(KvOut& k, const std::string& p, const ParticleCurve& c) {
+    k((p + "n").c_str(), c.count).b((p + "s").c_str(), c.smooth);
+    for (int i = 0; i < c.count; ++i)
+        k((p + std::to_string(i) + "t").c_str(), c.keys[i].time)((p + std::to_string(i) + "v").c_str(), c.keys[i].value);
+}
+void ReadCurveKv(const KvIn& k, const std::string& p, ParticleCurve& c) {
+    if (!k.find((p + "n").c_str())) return;
+    int n = 0; k.i((p + "n").c_str(), n);
+    k.b((p + "s").c_str(), c.smooth);
+    c.Clear();
+    for (int i = 0; i < std::clamp(n, 0, ParticleCurve::kMaxKeys); ++i) {
+        float t = 0.0f, v = 1.0f;
+        k.f((p + std::to_string(i) + "t").c_str(), t); k.f((p + std::to_string(i) + "v").c_str(), v);
+        c.Add(t, v);
+    }
+}
+void WriteGradientKv(KvOut& k, const std::string& p, const ParticleGradient& g) {
+    k((p + "n").c_str(), g.count);
+    for (int i = 0; i < g.count; ++i)
+        k((p + std::to_string(i) + "t").c_str(), g.stops[i].time).col((p + std::to_string(i)).c_str(), g.stops[i].color);
+}
+void ReadGradientKv(const KvIn& k, const std::string& p, ParticleGradient& g) {
+    if (!k.find((p + "n").c_str())) return;
+    int n = 0; k.i((p + "n").c_str(), n);
+    g.Clear();
+    for (int i = 0; i < std::clamp(n, 0, ParticleGradient::kMaxStops); ++i) {
+        float t = 0.0f; Color c;
+        k.f((p + std::to_string(i) + "t").c_str(), t); k.col((p + std::to_string(i)).c_str(), c);
+        g.Add(t, c);
+    }
+}
+
 
 // Read the three shared publish toggles trailing every stat_* line.
 void ReadStatTail(std::istream& in, StatComponent* c) {
@@ -483,8 +539,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             }
             editedFromFile = modeling::GeometryHash(mr->mesh) != mr->meshPathHash;
         }
+        // A Spline Mesh builds its renderer's mesh again on load: none of it is saved.
+        const bool generated = go->GetComponent<SplineMesh>() != nullptr;
         if (mr->mesh.name.empty() && (mr->meshPath.empty() || editedFromFile) && !mr->mesh.vertices.empty()
-            && !go->GetComponent<SkinnedMesh>()) {
+            && !go->GetComponent<SkinnedMesh>() && !generated) {
             // A mesh in edit mode is welded with its exact UVs per corner: write it
             // split at the UV seams, the form it's drawn and loaded in.
             Mesh split;
@@ -530,7 +588,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         // Per-face colors (vertex-painting / baked lightmap) — separate record so
         // older scenes still load. Written whenever populated, for named primitives
         // too (a baked cube carries its baked lighting).
-        if (mr->mesh.HasFaceColors()) {
+        if (mr->mesh.HasFaceColors() && !generated) {
             out << "  meshcolors " << mr->mesh.triColors.size();
             for (const Color& c : mr->mesh.triColors)
                 out << " " << c.r << " " << c.g << " " << c.b << " " << c.a;
@@ -1254,7 +1312,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     // the retarget must pose the rig before FootIK plants the feet on it.
     if (auto* hr = go->GetComponent<HumanoidRetarget>()) {
         out << "  humretarget " << hr->weight;
-        if (hr->leanScale != 1.0f) out << " " << hr->leanScale;
+        if (hr->leanScale != 1.0f) out << " lean " << hr->leanScale;
+        // Bones picked by hand: "map <slot> <name>" pairs after the weight (older
+        // builds read the weight and ignore the rest of the line).
+        for (int b = 0; b < humanoid::BoneCount; ++b)
+            if (!hr->boneMap[b].empty()) out << " map " << b << " " << Quote(hr->boneMap[b]);
         out << "\n";
     }
     if (auto* f = go->GetComponent<FootIK>()) {
@@ -3095,6 +3157,70 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             const std::string kk = "k" + std::to_string(i), vk = "v" + std::to_string(i);
             k.str(kk.c_str(), bt->overrides[i].first).str(vk.c_str(), bt->overrides[i].second);
         }
+        out << "\n";
+    }
+    // Splines and what builds on them, lines and trails: key=value records of their
+    // own (a spline's points one per line), so older scenes load unchanged. Generated
+    // meshes and placed items are not saved: they are built again from these.
+    if (auto* sp = go->GetComponent<Spline>()) {
+        out << "  spline";
+        KvOut{out}("type", (int)sp->type).b("closed", sp->closed)("up", (int)sp->upMode)("res", sp->resolution);
+        out << "\n";
+        for (const SplinePoint& p : sp->points) {
+            out << "  splinept";
+            KvOut{out}("x", p.position.x)("y", p.position.y)("z", p.position.z)
+                ("ix", p.tangentIn.x)("iy", p.tangentIn.y)("iz", p.tangentIn.z)
+                ("ox", p.tangentOut.x)("oy", p.tangentOut.y)("oz", p.tangentOut.z)
+                ("mode", (int)p.mode)("roll", p.roll)("sx", p.scale.x)("sy", p.scale.y);
+            out << "\n";
+        }
+    }
+    if (auto* sf = go->GetComponent<SplineFollower>()) {
+        out << "  splinefollower";
+        KvOut{out}.str("spline", sf->spline)("drive", (int)sf->drive)("wrap", (int)sf->wrap)("speed", sf->speed)
+            ("dur", sf->duration)("start", sf->startAt).b("auto", sf->playOnStart).b("orient", sf->orient)
+            ("offx", sf->offset.x)("offy", sf->offset.y)("offz", sf->offset.z);
+        out << "\n";
+    }
+    if (auto* sm = go->GetComponent<SplineMesh>()) {
+        out << "  splinemesh";
+        KvOut{out}.str("spline", sm->spline)("mode", (int)sm->mode)("profile", (int)sm->profile)("width", sm->width)
+            ("height", sm->height)("sides", sm->sides)
+            .str("custom", PointList(sm->customProfile))
+            .b("cclosed", sm->closedProfile)("seg", sm->segmentLength)("uv", sm->uvTileLength).str("src", sm->sourceMesh)
+            ("axis", (int)sm->meshAxis)("spacing", sm->spacing)("msx", sm->meshScale.x)("msy", sm->meshScale.y)
+            ("msz", sm->meshScale.z).b("fit", sm->stretchToFit).b("collider", sm->generateCollider);
+        out << "\n";
+    }
+    if (auto* si = go->GetComponent<SplineInstancer>()) {
+        out << "  splineinstancer";
+        KvOut{out}.str("spline", si->spline).str("tmpl", si->templateName).str("prefab", si->prefabPath)
+            .str("mesh", si->meshName)("spacing", si->spacing)("start", si->startOffset)("side", si->sideOffset)
+            .b("both", si->bothSides)("jitter", si->jitter)("rotj", si->rotationJitter)("smin", si->scaleMin)
+            ("smax", si->scaleMax)("seed", si->seed)("align", (int)si->align)("rx", si->rotationOffset.x)
+            ("ry", si->rotationOffset.y)("rz", si->rotationOffset.z)("max", si->maxCount);
+        out << "\n";
+    }
+    if (auto* lr = go->GetComponent<LineRenderer>()) {
+        out << "  linerenderer";
+        KvOut k{out};
+        k.str("pts", PointList(lr->positions))
+         .b("world", lr->useWorldSpace).b("loop", lr->loop)("width", lr->width).col("c", lr->color)
+         ("corner", lr->cornerVertices)("cap", lr->capVertices)("align", (int)lr->alignment)
+         ("texmode", (int)lr->textureMode)("tile", lr->tileLength).str("tex", lr->texture)
+         .str("spline", lr->spline)("samples", lr->splineSamples);
+        WriteCurveKv(k, "w", lr->widthCurve);
+        WriteGradientKv(k, "g", lr->colorGradient);
+        out << "\n";
+    }
+    if (auto* tr = go->GetComponent<TrailRenderer>()) {
+        out << "  trailrenderer";
+        KvOut k{out};
+        k("time", tr->time)("mindist", tr->minVertexDistance)("width", tr->width).col("c", tr->color)
+         .b("emit", tr->emitting)("align", (int)tr->alignment)("texmode", (int)tr->textureMode)
+         ("tile", tr->tileLength).str("tex", tr->texture)("teleport", tr->teleportDistance);
+        WriteCurveKv(k, "w", tr->widthCurve);
+        WriteGradientKv(k, "g", tr->colorGradient);
         out << "\n";
     }
 }
@@ -6524,9 +6650,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "humretarget") {
                     auto* hr = go->AddComponent<HumanoidRetarget>();
                     in >> hr->weight;   // bones re-detect + rest re-captures on first play frame
-                    { std::string rest; std::getline(in, rest);   // optional trailing field (newer files): lean
-                      std::istringstream rs(rest); float ls;
-                      if (rs >> ls) hr->leanScale = ls; }
+                    // The rest of this line only: "lean <scale>" and "map <slot> <name>" pairs.
+                    std::string rest; std::getline(in, rest);
+                    std::istringstream ls(rest);
+                    std::string tag;
+                    while (ls >> tag) {
+                        if (tag == "lean") { if (!(ls >> hr->leanScale)) break; continue; }
+                        if (tag != "map") break;
+                        int b = -1;
+                        if (!(ls >> b)) break;
+                        const std::string name = ReadQuoted(ls);
+                        if (b >= 0 && b < humanoid::BoneCount) hr->boneMap[b] = name;
+                    }
                 } else if (field == "charbind") {
                     // Auto-rigged custom mesh: restore the bind geometry and re-rig.
                     Mesh bm;
@@ -7517,6 +7652,91 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         k.str(kk.c_str(), key); k.str(vk.c_str(), val);
                         if (!key.empty()) bt->overrides.emplace_back(key, val);
                     }
+                } else if (field == "spline") {
+                    auto* sp = go->GetComponent<Spline>();
+                    if (!sp) sp = go->AddComponent<Spline>();
+                    KvIn k(in);
+                    int type = 0, up = 0;
+                    k.i("type", type); k.i("up", up);
+                    sp->type = type == 1 ? Spline::Type::CatmullRom : Spline::Type::Bezier;
+                    sp->upMode = up == 1 ? Spline::UpMode::World : Spline::UpMode::Minimal;
+                    k.b("closed", sp->closed); k.i("res", sp->resolution);
+                } else if (field == "splinept") {
+                    auto* sp = go->GetComponent<Spline>();
+                    if (!sp) sp = go->AddComponent<Spline>();
+                    KvIn k(in);
+                    SplinePoint p;
+                    k.f("x", p.position.x); k.f("y", p.position.y); k.f("z", p.position.z);
+                    k.f("ix", p.tangentIn.x); k.f("iy", p.tangentIn.y); k.f("iz", p.tangentIn.z);
+                    k.f("ox", p.tangentOut.x); k.f("oy", p.tangentOut.y); k.f("oz", p.tangentOut.z);
+                    int mode = 0; k.i("mode", mode);
+                    p.mode = (SplinePoint::Mode)std::clamp(mode, 0, 3);
+                    k.f("roll", p.roll); k.f("sx", p.scale.x); k.f("sy", p.scale.y);
+                    sp->points.push_back(p);
+                } else if (field == "splinefollower") {
+                    auto* sf = go->AddComponent<SplineFollower>();
+                    KvIn k(in);
+                    int drive = 0, wrap = 0;
+                    k.str("spline", sf->spline); k.i("drive", drive); k.i("wrap", wrap);
+                    sf->drive = drive == 1 ? SplineFollower::Drive::Time : SplineFollower::Drive::Speed;
+                    sf->wrap = (SplineFollower::Wrap)std::clamp(wrap, 0, 2);
+                    k.f("speed", sf->speed); k.f("dur", sf->duration); k.f("start", sf->startAt);
+                    k.b("auto", sf->playOnStart); k.b("orient", sf->orient);
+                    k.f("offx", sf->offset.x); k.f("offy", sf->offset.y); k.f("offz", sf->offset.z);
+                } else if (field == "splinemesh") {
+                    auto* sm = go->AddComponent<SplineMesh>();
+                    KvIn k(in);
+                    int mode = 0, profile = 0, axis = 0;
+                    k.str("spline", sm->spline); k.i("mode", mode); k.i("profile", profile);
+                    sm->mode = mode == 1 ? SplineMesh::Mode::Repeat : SplineMesh::Mode::Extrude;
+                    sm->profile = (SplineMesh::Profile)std::clamp(profile, 0, 4);
+                    k.f("width", sm->width); k.f("height", sm->height); k.i("sides", sm->sides);
+                    const std::vector<float> cp = ReadNumberList(k, "custom");
+                    sm->customProfile.clear();
+                    for (std::size_t i = 0; i + 1 < cp.size(); i += 2) sm->customProfile.push_back({cp[i], cp[i + 1]});
+                    k.b("cclosed", sm->closedProfile); k.f("seg", sm->segmentLength); k.f("uv", sm->uvTileLength);
+                    k.str("src", sm->sourceMesh); k.i("axis", axis);
+                    sm->meshAxis = axis == 2 ? SplineMesh::Axis::Z : SplineMesh::Axis::X;
+                    k.f("spacing", sm->spacing);
+                    k.f("msx", sm->meshScale.x); k.f("msy", sm->meshScale.y); k.f("msz", sm->meshScale.z);
+                    k.b("fit", sm->stretchToFit); k.b("collider", sm->generateCollider);
+                } else if (field == "splineinstancer") {
+                    auto* si = go->AddComponent<SplineInstancer>();
+                    KvIn k(in);
+                    int align = 0;
+                    k.str("spline", si->spline); k.str("tmpl", si->templateName); k.str("prefab", si->prefabPath);
+                    k.str("mesh", si->meshName); k.f("spacing", si->spacing); k.f("start", si->startOffset);
+                    k.f("side", si->sideOffset); k.b("both", si->bothSides); k.f("jitter", si->jitter);
+                    k.f("rotj", si->rotationJitter); k.f("smin", si->scaleMin); k.f("smax", si->scaleMax);
+                    k.u("seed", si->seed); k.i("align", align);
+                    si->align = align == 1 ? SplineInstancer::Align::Curve : SplineInstancer::Align::Upright;
+                    k.f("rx", si->rotationOffset.x); k.f("ry", si->rotationOffset.y); k.f("rz", si->rotationOffset.z);
+                    k.i("max", si->maxCount);
+                } else if (field == "linerenderer") {
+                    auto* lr = go->AddComponent<LineRenderer>();
+                    KvIn k(in);
+                    const std::vector<float> pts = ReadNumberList(k, "pts");
+                    for (std::size_t i = 0; i + 2 < pts.size(); i += 3) lr->positions.push_back({pts[i], pts[i + 1], pts[i + 2]});
+                    int align = 0, texmode = 0;
+                    k.b("world", lr->useWorldSpace); k.b("loop", lr->loop); k.f("width", lr->width); k.col("c", lr->color);
+                    k.i("corner", lr->cornerVertices); k.i("cap", lr->capVertices); k.i("align", align); k.i("texmode", texmode);
+                    lr->alignment = align == 1 ? LineAlignment::Flat : LineAlignment::View;
+                    lr->textureMode = texmode == 1 ? LineTextureMode::Tile : LineTextureMode::Stretch;
+                    k.f("tile", lr->tileLength); k.str("tex", lr->texture); k.str("spline", lr->spline);
+                    k.i("samples", lr->splineSamples);
+                    ReadCurveKv(k, "w", lr->widthCurve);
+                    ReadGradientKv(k, "g", lr->colorGradient);
+                } else if (field == "trailrenderer") {
+                    auto* tr = go->AddComponent<TrailRenderer>();
+                    KvIn k(in);
+                    int align = 0, texmode = 0;
+                    k.f("time", tr->time); k.f("mindist", tr->minVertexDistance); k.f("width", tr->width);
+                    k.col("c", tr->color); k.b("emit", tr->emitting); k.i("align", align); k.i("texmode", texmode);
+                    tr->alignment = align == 1 ? LineAlignment::Flat : LineAlignment::View;
+                    tr->textureMode = texmode == 1 ? LineTextureMode::Tile : LineTextureMode::Stretch;
+                    k.f("tile", tr->tileLength); k.str("tex", tr->texture); k.f("teleport", tr->teleportDistance);
+                    ReadCurveKv(k, "w", tr->widthCurve);
+                    ReadGradientKv(k, "g", tr->colorGradient);
                 } else {
                     if (error) *error = "unknown field '" + field + "'";
                     return false;
@@ -7680,6 +7900,10 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         if (auto* ls = go->GetComponent<LootSource>()) add(ls->table);
         if (auto* ns = go->GetComponent<NavMeshSurface>()) add(ns->navPath);   // the baked navmesh ships with the scene
         if (auto* bt = go->GetComponent<BehaviorTreeRunner>()) add(bt->treePath);   // the tree ships with the scene
+        if (auto* sm = go->GetComponent<SplineMesh>()) { const std::string& m = sm->sourceMesh; if (m.find('.') != std::string::npos) add(m); }
+        if (auto* si = go->GetComponent<SplineInstancer>()) add(si->prefabPath);
+        if (auto* lr = go->GetComponent<LineRenderer>()) add(lr->texture);
+        if (auto* tr = go->GetComponent<TrailRenderer>()) add(tr->texture);
     }
     // The item database (and its icons / drop prefabs) ships with any scene that has items.
     bool hasItems = false;

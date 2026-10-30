@@ -238,6 +238,7 @@ int TargetPinFor(const std::string& type) {
         {"SetBlendShape", 1}, {"GetBlendShape", 0}, {"IkLook", 2}, {"IkHand", 2},
         {"NavMoveTo", 1}, {"NavStop", 0}, {"NavArrived", 0},
         {"BtSet", 1}, {"BtGet", 0}, {"BtRun", 0},
+        {"GetSplinePoint", 1}, {"SplineLength", 0}, {"SetLinePoints", 1}, {"ClearTrail", 0},
         {"GetName", 0}, {"GetTag", 0}};
     auto it = kPins.find(type);
     if (it != kPins.end()) return it->second;
@@ -669,6 +670,10 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "BtSet")           return std::make_unique<BtSetNode>(argOr("x"));
     if (type == "BtGet")           return std::make_unique<BtGetNode>(argOr("x"));
     if (type == "BtRun")           return std::make_unique<BtRunNode>(argOr(""));
+    if (type == "GetSplinePoint")  return std::make_unique<SplinePointNode>();
+    if (type == "SplineLength")    return std::make_unique<SplineLengthNode>();
+    if (type == "SetLinePoints")   return std::make_unique<SetLinePointsNode>();
+    if (type == "ClearTrail")      return std::make_unique<ClearTrailNode>();
     // ---- Third wave: loops, switch, 3D transform, colour, clips, shapes ----
     if (type == "ForLoop")    return std::make_unique<ForLoopNode>();
     if (type == "Gate")       return std::make_unique<GateNode>();

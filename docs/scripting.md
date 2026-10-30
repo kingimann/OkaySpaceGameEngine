@@ -254,6 +254,7 @@ sprite (or 2D collider) bounds under the cursor, using the main camera.
 | `on_mouse_down()` / `on_mouse_up()` | The left button is pressed / released over it |
 | `on_click()` | A full press-and-release on the same object (or a UI Button press) |
 | `on_change()` / `on_toggle()` | A sibling UI Slider is dragged / UI Toggle is clicked |
+| `on_spline_end(which)` | A Spline Follower on the object reaches an end of its curve (`which` is `"end"` or `"start"`) |
 
 The older `on_trigger()` and `on_collision()` names still work — they're treated
 as the *enter* handlers.
@@ -403,6 +404,11 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `bt_get(key)` | read a blackboard value (a number, bool, string, vector or object) |
 | `bt_run("Assets/Guard.okaybt")` | load a behavior tree on this object's Behavior Tree Runner (added when missing) and start it; `bt_run()` starts the current tree over |
 | `bt_stop()` | stop the tree; running tasks are aborted and the NPC stops |
+| `spline_point(name, t)` | the world point a fraction `t` (0..1) of the way along a named object's Spline, by length (`spline_point(t)` for this object's); see [splines.md](splines.md) |
+| `spline_length(name)` | that Spline's length in world units |
+| `follower_set_speed(speed)` | set this object's Spline Follower speed (`follower_set_speed("Name", speed)` for another object) |
+| `line_set_points(points)` | replace this object's Line Renderer points with an array of vectors, or several vectors (`line_set_points("Name", ...)`) |
+| `trail_clear()` | remove this object's Trail Renderer trail at once (`trail_clear("Name")`) |
 | `spawner_start(name)` / `spawner_stop(name)` | run / pause a Spawner component's waves (`""` targets a sibling Spawner) |
 | `spawner_alive(name)` | how many objects that Spawner created are still alive (wave HUDs) |
 | `build_enter()` / `build_exit()` / `build_toggle()` / `build_active()` | turn the player's in-game build mode on / off, or ask whether it's on (see [build_mode.md](build_mode.md)) |

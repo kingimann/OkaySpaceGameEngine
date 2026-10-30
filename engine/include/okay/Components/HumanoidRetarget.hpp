@@ -47,6 +47,10 @@ public:
     float LeanRoll() const { return m_leanRoll; }
     /// True while the built-in pose is easing in from an imported clip's pose.
     bool Blending() const { return m_fade < m_fadeDur; }
+    /// Bones picked by hand, per engine bone (Animation/HumanoidBones.hpp's
+    /// MapHumanoidBones): a bone name, "-" for none, "" for the automatic pick.
+    std::string boneMap[humanoid::BoneCount];
+    bool HasBoneMap() const { for (const auto& n : boneMap) if (!n.empty()) return true; return false; }
 
     /// How many of the 15 humanoid bones the last Wire() mapped (0 = not wired).
     int MappedBones() const { return m_mapped; }
@@ -58,6 +62,8 @@ public:
     }
     /// Drop the wiring so the next frame re-detects (after a model swap).
     void Rewire() { m_init = false; m_mapped = 0; m_map.clear(); }
+    /// The imported rig it drives (null until wired).
+    GameObject* RigRoot() const { return m_rig && !m_rig->IsDestroyed() ? m_rig : nullptr; }
     void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying) override {
         if (dying.count(m_animGo)) m_animGo = nullptr;   // the cached animator holder is going away
     }
@@ -147,7 +153,7 @@ public:
 
         // ---- 1. name-match the imported bones (Animation/HumanoidBones.hpp) --
         const int N = Character::BoneCount();
-        const humanoid::BoneMap bm = humanoid::MapHumanoidBones(rigRoot);
+        const humanoid::BoneMap bm = humanoid::MapHumanoidBones(rigRoot, boneMap);
         std::vector<GameObject*> node(N, nullptr);
         for (int b = 0; b < N && b < humanoid::BoneCount; ++b) node[b] = bm.bone[b];
 

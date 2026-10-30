@@ -172,6 +172,9 @@
 #include "okay/Components/TurnManager.hpp"
 #include "okay/Components/CameraFollow.hpp"
 #include "okay/Components/DollyPath.hpp"
+#include "okay/Components/Spline.hpp"
+#include "okay/Components/SplineMesh.hpp"
+#include "okay/Components/LineRenderer.hpp"
 #include "okay/Components/VirtualCamera.hpp"
 #include "okay/Components/CinemachineBrain.hpp"
 

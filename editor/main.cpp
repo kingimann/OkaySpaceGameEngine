@@ -17,6 +17,7 @@
 #include "BehaviorTreeWindow.hpp"      // the Behavior Tree window (NPC AI trees, runner inspector)
 #include "LocalizationWindow.hpp"      // the Localization window (string table), preview language, Localized fields
 #include "okay/Core/Utf8.hpp"
+#include "SplineTools.hpp"             // splines: Scene-view editing, inspectors, line / trail drawing
 #include "okay/Components/HoldPrompt.hpp"
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
@@ -2379,7 +2380,7 @@ struct ImportScan {
     bool hasLoco = false;    // carries its own idle + walk clips
 };
 ImportScan g_importScan;
-int   g_importMode = 0;      // 0 as is, 1 built-in anims on its own skeleton, 2 auto-rig (merge + bind)
+int   g_importMode = 0;      // 0 as is, 1 built-in anims on its own skeleton, 2 auto-rig (merge + bind), 3 map bones by hand
 bool  g_importCopy = true;   // copy the file into the project's Assets first
 bool  g_importResize = false;
 float g_importHeight = 1.8f;
@@ -6089,6 +6090,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
             ConsoleLog("Created Particle System (press Play to see it)");
             created = true;
         }
+        if (ImGui::MenuItem("Spline")) { CreateSplineFromMenu(ed); created = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A curve of three points in front of the camera: roads, rails, fences, paths.");
         if (ImGui::MenuItem("Create Tilemap")) {
             GameObject* go = ed.CreateEmpty("Tilemap");
             auto* tm = go->AddComponent<Tilemap>();
@@ -8364,6 +8367,84 @@ static void DrawPluginsMenu(EditorState& ed) {
     }
     ImGui::EndMenu();
 }
+// ---------------------------------------------------------------------------
+// Map Humanoid Bones — pick the 15 humanoid bones by hand, for rigs whose bone
+// names say nothing ("Bone.001", "joint12"). The shared mapper's shape checks
+// run live, so a wrong pick (a leg under an arm, sides swapped) says why.
+// ---------------------------------------------------------------------------
+static bool g_showBoneMap = false;
+static GameObject* g_boneMapRoot = nullptr;          // the model whose bones are mapped
+static HumanoidRetarget* g_boneMapRetarget = nullptr; // opened from a retarget: write its map
+static std::string g_boneMap[humanoid::BoneCount];
+static void OpenBoneMap(GameObject* root, HumanoidRetarget* hr) {
+    g_boneMapRoot = root; g_boneMapRetarget = hr; g_showBoneMap = true;
+    for (int b = 0; b < humanoid::BoneCount; ++b) g_boneMap[b] = hr ? hr->boneMap[b] : std::string();
+}
+static void DrawBoneMap(EditorState& ed) {
+    if (!g_showBoneMap) return;
+    ImGui::SetNextWindowSize(ImVec2(460, 560), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Map Humanoid Bones", &g_showBoneMap)) { ImGui::End(); return; }
+    GameObject* root = g_boneMapRoot;
+    bool alive = false;
+    for (const auto& up : ed.scene().Objects()) if (up.get() == root) { alive = true; break; }
+    if (!root || !alive || !root->transform) {
+        ImGui::TextDisabled("Select an imported model and choose Map Humanoid Bones.");
+        ImGui::End(); return;
+    }
+    ImGui::Text("Model: %s", root->name.c_str());
+    ImGui::TextDisabled("Pick each body bone. Auto keeps the bone found by its name.");
+    std::vector<std::string> names;
+    for (const auto& up : ed.scene().Objects())
+        if (up && up.get() != root && up->IsSelfOrDescendantOf(root) && up->transform) names.push_back(up->name);
+    const humanoid::BoneMap autoMap = humanoid::MapHumanoidBones(root);
+    static const char* kSlot[humanoid::BoneCount] = {"Hips", "Spine / chest", "Head",
+        "Left upper arm", "Left forearm", "Left hand", "Right upper arm", "Right forearm", "Right hand",
+        "Left thigh", "Left shin", "Left foot", "Right thigh", "Right shin", "Right foot"};
+    if (ImGui::BeginTable("##bonemap", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+        for (int b = 0; b < humanoid::BoneCount; ++b) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn(); ImGui::TextUnformatted(kSlot[b]);
+            ImGui::TableNextColumn();
+            std::string& pick = g_boneMap[b];
+            const std::string autoName = autoMap.bone[b] ? autoMap.bone[b]->name : std::string("none");
+            const std::string shown = pick.empty() ? "Auto (" + autoName + ")" : pick == "-" ? std::string("None") : pick;
+            ImGui::SetNextItemWidth(-1);
+            if (ImGui::BeginCombo(("##bm" + std::to_string(b)).c_str(), shown.c_str())) {
+                if (ImGui::Selectable(("Auto (" + autoName + ")").c_str(), pick.empty())) pick.clear();
+                if (ImGui::Selectable("None", pick == "-")) pick = "-";
+                for (const std::string& n : names)
+                    if (ImGui::Selectable((n + "##bmn" + std::to_string(b)).c_str(), pick == n)) pick = n;
+                ImGui::EndCombo();
+            }
+        }
+        ImGui::EndTable();
+    }
+    const humanoid::BoneMap m = humanoid::MapHumanoidBones(root, g_boneMap);
+    if (m.humanoid) ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1), "Humanoid: %d/15 bones mapped", m.found);
+    else ImGui::TextColored(ImVec4(0.95f, 0.6f, 0.35f, 1), "Not a humanoid yet: %s", m.why.c_str());
+    if (ImGui::Button("Clear (all Auto)")) for (auto& n : g_boneMap) n.clear();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!m.humanoid);
+    if (g_boneMapRetarget) {
+        if (ImGui::Button("Apply to Humanoid Retarget")) {
+            ed.PushUndo();
+            for (int b = 0; b < humanoid::BoneCount; ++b) g_boneMapRetarget->boneMap[b] = g_boneMap[b];
+            g_boneMapRetarget->Rewire();
+            ed.dirty = true;
+            ConsoleLog("Humanoid Retarget: bone map saved (" + std::to_string(m.found) + "/15) - press Play");
+        }
+    } else if (ImGui::Button("Use Built-in Animations")) {
+        ed.PushUndo();
+        std::string log;
+        const int found = okay::EnableBuiltinAnimations(ed.scene(), root, &log, g_boneMap);
+        ConsoleLog(log + (found >= 8 ? " - press Play, or pick a clip on its Character" : ""), found >= 8 ? 0 : 1);
+        if (found >= 8) { ed.Select(root); g_showBoneMap = false; }
+        ed.dirty = true;
+    }
+    ImGui::EndDisabled();
+    ImGui::End();
+}
+
 static void DrawPluginManager(EditorState& ed) {
     if (!g_showPluginManager) return;
     ImGui::SetNextWindowSize(ImVec2(560, 360), ImGuiCond_FirstUseEver);
@@ -11062,6 +11143,8 @@ void DrawScriptDocs() {
         fapi("nav_arrived() / nav_remaining()", "reached the point? / path length left");
         fapi("bt_set(\"key\", value) / bt_get(\"key\")", "write / read this object's Behavior Tree blackboard (bt_set(\"Name\", key, value) for another object)");
         fapi("bt_run(\"Assets/Guard.okaybt\") / bt_stop()", "load and start a behavior tree on this object / stop it; on_bt_event(name) hears Send Event tasks");
+        fapi("spline_point(\"n\", t) / spline_length(\"n\")", "a point t (0-1) along a Spline / its length");
+        fapi("follower_set_speed(speed) / line_set_points(points) / trail_clear()", "this object's Spline Follower, Line, Trail");
         fapi("spawner_start(\"n\") / spawner_stop(\"n\")", "run / pause a Spawner's waves");
         fapi("spawner_alive(\"n\")", "live objects a Spawner created (enemies left)");
         fapi("build_enter() / build_exit() / build_toggle()", "in-game build mode on / off (Build Mode component)");
@@ -11478,6 +11561,7 @@ static const std::vector<std::string>& ScriptCompletions() {
         "npc_goto","npc_stop","npc_busy","npc_state",
         "nav_move_to","nav_stop","nav_arrived","nav_remaining",
         "bt_set","bt_get","bt_run","bt_stop",
+        "spline_point","spline_length","follower_set_speed","line_set_points","trail_clear",
         "spawner_start","spawner_stop","spawner_alive",
         "build_enter","build_exit","build_toggle","build_active","build_link_mode","build_palette_clear",
         "build_palette_add","build_palette_select","build_selected","build_save","build_load","build_exists",
@@ -11592,6 +11676,8 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"npc_busy","npc_busy(\"name\")"}, {"npc_state","npc_state(\"name\")"},
         {"nav_move_to","nav_move_to(x, y, z)"}, {"nav_stop","nav_stop()"}, {"nav_arrived","nav_arrived()"}, {"nav_remaining","nav_remaining()"},
         {"bt_set","bt_set(\"key\", value)"}, {"bt_get","bt_get(\"key\")"}, {"bt_run","bt_run(\"file.okaybt\")"}, {"bt_stop","bt_stop()"},
+        {"spline_point","spline_point(\"name\", t)"}, {"spline_length","spline_length(\"name\")"},
+        {"follower_set_speed","follower_set_speed(speed)"}, {"line_set_points","line_set_points(points)"}, {"trail_clear","trail_clear()"},
         {"spawner_start","spawner_start(\"name\")"}, {"spawner_stop","spawner_stop(\"name\")"},
         {"spawner_alive","spawner_alive(\"name\")"},
         {"build_enter","build_enter()"}, {"build_exit","build_exit()"}, {"build_toggle","build_toggle()"},
@@ -15512,7 +15598,8 @@ void HandleShortcuts(EditorState& ed) {
         }
     }
     if (!animKeys && ImGui::IsKeyPressed(ImGuiKey_Delete, false) && ed.selected()) {
-        ed.DeleteSelected(); ConsoleLog("Deleted selection");
+        if (SplineDeletePickedPoint(ed)) ConsoleLog("Deleted spline point");   // a picked spline point goes first
+        else { ed.DeleteSelected(); ConsoleLog("Deleted selection"); }
     }
     // Play/Stop toggle is Ctrl+P. It used to be plain Space, which
     // clashed with the in-game jump — pressing Space in play mode stopped the game.
@@ -15628,6 +15715,12 @@ void DrawFileDialogs(EditorState& ed) {
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 ImGui::SetTooltip(canBuiltin ? "The engine's idle / walk / run / jump / gesture animations play on this\nmodel's own skeleton (bones matched by name). Best for rigged characters\nwithout clips of their own."
                                              : "Needs a skinned humanoid skeleton (8+ recognisable body bones).");
+            if (!canBuiltin && r.skinnedMeshes > 0) {
+                ImGui::RadioButton("Map the body bones by hand, then use built-in animations", &g_importMode, 3);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("For a rigged character whose bone names aren't recognised (\"Bone.001\"):\n"
+                                      "opens Map Humanoid Bones after the import.");
+            }
             ImGui::RadioButton("Auto-rig to the built-in humanoid (merges meshes)", &g_importMode, 2);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("For UNRIGGED people/animals: merge the meshes and bind them to the engine's\nhumanoid skeleton with automatic weights. Stand it upright facing +Z.");
             if (g_importMode == 1 && !canBuiltin) g_importMode = 0;
@@ -15670,6 +15763,8 @@ void DrawFileDialogs(EditorState& ed) {
                         ConsoleLog(log + " - press Play to see it move");
                     } else if (g_importMode == 2) {
                         RigModelHumanoid(ed, root);
+                    } else if (g_importMode == 3) {
+                        OpenBoneMap(root, nullptr);
                     }
                     LogModelReport(ed, root);
                     // Frame the whole model (its root has no mesh of its own to focus on).
@@ -17570,6 +17665,8 @@ void DrawHierarchy(EditorState& ed) {
                         ed.Select(node); ed.dirty = true;
                     }
                     if (hb >= 8 && ImGui::IsItemHovered()) ImGui::SetTooltip("Play the engine's built-in idle / walk / run / jump / gesture animations\non this model's OWN skeleton and skin. Best for rigged models with\nno clips of their own.", hb);
+                    if (ImGui::MenuItem("Map Humanoid Bones...")) OpenBoneMap(node, nullptr);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pick the body bones by hand when the names don't say\nwhich is which (\"Bone.001\"), then use the built-in animations.");
                     if (ImGui::MenuItem("Rig Model (Humanoid)")) RigModelHumanoid(ed, node);
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bind this model's mesh to the humanoid skeleton (auto weights):\nevery built-in animation, authored clip, movement state, controller\nand the Animation window then work on it. The model should stand\nupright facing +Z, in a T/A/rest pose.");
                 }
@@ -30329,6 +30426,9 @@ void DrawInspector(EditorState& ed) {
                     ImGui::Text("Mapped %d/15 humanoid bones", hr->MappedBones());
                 else
                     ImGui::TextDisabled("Bones map automatically on Play (or Re-Detect).");
+                if (ImGui::SmallButton("Map Bones by Hand...##hrt"))
+                    OpenBoneMap(hr->RigRoot() ? hr->RigRoot() : go, hr);
+                if (hr->HasBoneMap()) { ImGui::SameLine(); ImGui::TextDisabled("(bones picked by hand)"); }
                 if (ImGui::SmallButton("Re-Detect Bones##hrt")) {
                     ed.PushUndo();
                     hr->Rewire();
@@ -36310,6 +36410,7 @@ void DrawInspector(EditorState& ed) {
     }
     DrawNavigationInspector(ed, go, curComp, toRemove, &CompHeader);   // Nav Mesh Surface / Agent / Obstacle
     DrawBehaviorTreeInspector(ed, go, curComp, toRemove, &CompHeader);   // Behavior Tree Runner
+    DrawSplineInspector(ed, go, curComp, toRemove, &CompHeader);       // Spline family, Line / Trail Renderer
     } // end component-order loop
 
     // Apply a queued component removal (undoable).
@@ -36461,6 +36562,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<Destructible>(), "Destructible (Chaos)")) { go->AddComponent<Destructible>(); ed.dirty = true; }
             if (item(!go->GetComponent<Draggable>(), "Draggable (item)")) { go->AddComponent<Draggable>(); ed.dirty = true; }
             if (item(!go->GetComponent<DropZone>(), "Drop Zone (item)")) { go->AddComponent<DropZone>(); ed.dirty = true; }
+            SplineAddComponentItems(ed, go, item, true);   // Line / Trail Renderer, Spline Mesh
           } EndCat(o); }
 
         { bool o = BeginCat("Animation");
@@ -36676,6 +36778,7 @@ void DrawInspector(EditorState& ed) {
             }
             if (item(!go->GetComponent<StoryState>(), "Story State (story variables)")) { ed.PushUndo(); go->AddComponent<StoryState>(); ed.dirty = true; }
             BehaviorTreeAddComponentItems(ed, go, item);   // Behavior Tree Runner
+            SplineAddComponentItems(ed, go, item, false);  // Spline, Spline Follower, Spline Instancer
           } EndCat(o); }
 
         { bool o = BeginCat("No-Code Mechanics");
@@ -38392,6 +38495,9 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             dl->AddCircleFilled(sp, Mathf::Max(1.0f, p.size * scale * 0.5f), ToColor(p.color));
         }
     }
+    // Lines and trails, on the same mapping as the sprites.
+    DrawLinesAndTrails(ed, dl, LineView2D(Vec3{camPos, 0.0f}, scale, canvasSize.x, canvasSize.y), Vec3{camPos, -1000.0f},
+                       canvasPos, canvasEnd, nullptr, ~0, nullptr);
 
     // World-anchored text (screen-space text is drawn by the shared UI overlay).
     for (const auto& up : objs) {
@@ -39317,6 +39423,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     if (!gameView && g_showGizmos)
         DrawNavigationOverlay(ed, dl, vp, center, canvasSize, canvasPos,
                               hovered && !g_uiHandled && !g_gizmoGrab && ed.view3D, io);
+    // Splines: every curve, and the selected one's points, handles and point gizmo.
+    if (!gameView && g_showGizmos)
+        DrawSplineOverlay(ed, dl, vp, eye, center, canvasSize, canvasPos,
+                          hovered && !g_uiHandled && !g_gizmoGrab && ed.view3D, io);
     // Skeleton overlay on top of the meshes (built with the gizmos above).
     if (!gameView) {
         for (const SkelDraw& d : g_skelDraw) {
@@ -39621,6 +39731,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             }
         }
     }
+    // Line and Trail Renderers: ribbons built on the CPU, blended over the image like the particles.
+    DrawLinesAndTrails(ed, dl, vp, eye, view3dMin, view3dMax, viewIgnore, RenderCullingMask(),
+                       okay::SceneOcclusionDepth().valid ? &ParticleOccluded : nullptr);
 
     dl->PopClipRect();
 
@@ -40547,7 +40660,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // ---- Transform gizmo: 3 colored axis handles at the selected object
     //. Grab a handle and drag to move/rotate/scale on that
     //      axis. X=red, Y=green, Z=blue. ----
-    GameObject* sel = (meshEditActive || colliderEditActive) ? nullptr : ed.selected();
+    GameObject* sel = (meshEditActive || colliderEditActive || SplinePointPicked(ed)) ? nullptr : ed.selected();
     bool grabbedThisClick = false;
     // The transform gizmo works in Play too, so you can move/rotate/scale a
     // selection live.
@@ -43635,6 +43748,7 @@ int main(int argc, char** argv) {
                     if (auto* ch = up->GetComponent<okay::Character>()) chars.push_back(ch);
                     if (auto* pm = up->GetComponent<okay::PauseMenu>()) pauseMenus.push_back(pm);
                 }
+            SplineEditTick(ed, pdt);   // spline meshes / instancers follow edits, trails preview
             // Live built-in animation preview: sample the chosen built-in each
             // frame and pose the character — blocky body, custom-rigged mesh, or
             // (through the HumanoidRetarget) a swapped imported model — right in
@@ -44193,6 +44307,7 @@ int main(int argc, char** argv) {
             if (std::getenv("OKAY_UI_DIALOGUE")) g_showDialogue = true;   // dev screenshots of the Dialogue window
             BehaviorTreeDevHooks(ed);   // OKAY_UI_BT / BTGUARD / BTSEL / BTTAB
             LocalizationDevHooks(ed);   // OKAY_UI_LOC / OKAY_UI_LANG / OKAY_UI_LOCKEY
+            SplineDevHooks(ed);       // OKAY_UI_SPLINE / SPLINESEL / SPLINECAM
             // OKAY_UI_PLAY=1: enter Play once the scene is up (screenshots of the
             // Animator and Animation windows while the game runs).
             if (std::getenv("OKAY_UI_PLAY") && s_focusFrames == 60 && !ed.isPlaying()) {
@@ -44467,6 +44582,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.VarWatch"); DrawVarWatch(); }
         { OKAY_PROFILE("UI.AnimationEditor"); DrawAnimationEditor(ed); }
         { OKAY_PROFILE("UI.AnimatorGraph"); DrawAnimatorGraph(ed); }
+        DrawBoneMap(ed);
         { OKAY_PROFILE("UI.Timeline"); DrawTimeline(ed); }
         { OKAY_PROFILE("UI.Navigation"); DrawNavigationWindow(ed); }
         { OKAY_PROFILE("UI.Dialogue"); DrawDialogueWindow(ed); }

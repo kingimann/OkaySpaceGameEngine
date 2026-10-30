@@ -6,6 +6,7 @@
 #include <string>
 
 namespace okay { class GameObject; namespace editor { class EditorState; } }
+struct SDL_Texture;
 
 namespace oked {
 
@@ -49,5 +50,13 @@ void OpenScriptFileInEditorAt(const std::string& path, int line);
 // "Add animations from file...": pick clip files (FBX, glTF, DAE, BVH) and add
 // every clip to the Model Animator on `modelRoot`.
 void AddAnimationsFromFilesUI(okay::editor::EditorState& ed, okay::GameObject* modelRoot);
+
+// Scene-view snapping (Snap toggle, or Ctrl held) and gizmo axes; the spline point
+// gizmo follows them like the move gizmo does.
+extern bool  g_snap;
+extern float g_snapSize;
+extern bool  g_gizmoLocal;
+// An image file (or "proc:" texture) as a cached SDL texture, null when it can't load.
+SDL_Texture* GetThumb(const std::string& path);
 
 } // namespace oked

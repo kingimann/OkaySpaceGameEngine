@@ -1890,13 +1890,13 @@ int AddAnimationsFromFile(Scene& scene, GameObject* modelRoot, const std::string
     return added;
 }
 
-int CountHumanoidBones(Scene&, GameObject* modelRoot, std::string* why) {
-    const humanoid::BoneMap m = humanoid::MapHumanoidBones(modelRoot);
+int CountHumanoidBones(Scene&, GameObject* modelRoot, std::string* why, const std::string* byHand) {
+    const humanoid::BoneMap m = humanoid::MapHumanoidBones(modelRoot, byHand);
     if (!m.humanoid) { if (why) *why = m.why; return 0; }
     return m.found;
 }
 
-int EnableBuiltinAnimations(Scene& scene, GameObject* modelRoot, std::string* outLog) {
+int EnableBuiltinAnimations(Scene& scene, GameObject* modelRoot, std::string* outLog, const std::string* byHand) {
     auto say = [&](const std::string& m) { if (outLog) *outLog = m; };
     if (!modelRoot || !modelRoot->transform) { say("Select an imported model first."); return 0; }
     if (auto* mr = modelRoot->GetComponent<MeshRenderer>(); mr && !mr->mesh.vertices.empty() &&
@@ -1905,7 +1905,7 @@ int EnableBuiltinAnimations(Scene& scene, GameObject* modelRoot, std::string* ou
         return 0;
     }
     std::string why;
-    const int bones = CountHumanoidBones(scene, modelRoot, &why);
+    const int bones = CountHumanoidBones(scene, modelRoot, &why, byHand);
     if (bones < 8) {
         say("'" + modelRoot->name + "' isn't a humanoid skeleton" +
             (why.empty() ? " (" + std::to_string(bones) + "/15 bones recognised)" : ": " + why) +
@@ -1921,6 +1921,7 @@ int EnableBuiltinAnimations(Scene& scene, GameObject* modelRoot, std::string* ou
     auto* rt = modelRoot->GetComponent<HumanoidRetarget>();
     if (!rt) rt = modelRoot->AddComponent<HumanoidRetarget>();
     rt->Rewire();
+    for (int b = 0; b < humanoid::BoneCount; ++b) rt->boneMap[b] = byHand ? byHand[b] : std::string();
     const int found = rt->DetectAndWire(scene, modelRoot);
     if (found < 8) {
         if (addedCh) ch->enabled = false;
@@ -2380,7 +2381,7 @@ bool DescribeCharacterModel(Scene& scene, GameObject* player, CharacterModelInfo
     auto* hr = player->GetComponent<HumanoidRetarget>();
     out.characterOff = ch && !ch->enabled;
     out.builtinAvailable = ch && ch->enabled && ch->driveExternal && hr && hr->weight > 0.0f;
-    out.mappedBones = hr && hr->Wired() && hr->MappedBones() > 0 ? hr->MappedBones() : humanoid::MapHumanoidBones(root).found;
+    out.mappedBones = hr && hr->Wired() && hr->MappedBones() > 0 ? hr->MappedBones() : humanoid::MapHumanoidBones(root, hr ? hr->boneMap : nullptr).found;
     for (int s = 0; s < ModelAnimator::SlotCount; ++s) {
         CharacterModelInfo::Slot sl;
         sl.slot = s;
@@ -2409,6 +2410,8 @@ std::string FixCharacterAnimations(Scene& scene, GameObject* player) {
     if (player->GetComponent<Character>()) {
         HumanoidRetarget probe;
         probe.gameObject = player;
+        if (auto* hr = player->GetComponent<HumanoidRetarget>())   // bones the user mapped by hand count
+            for (int b = 0; b < humanoid::BoneCount; ++b) probe.boneMap[b] = hr->boneMap[b];
         found = probe.DetectAndWire(scene, root);
     }
     if (found >= 8) {

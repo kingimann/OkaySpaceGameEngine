@@ -650,20 +650,77 @@ authored `.okayanim` clips — everything the blocky character can do —
 with its bones matched by name (Mixamo and common humanoid naming) and
 its rest stance aligned, so a T-pose rig stands and moves naturally.
 
-- Works out of the box on **Set Character Model** / drag-drop: if the
-  file has no clips named *idle* and *walk*, retargeting switches on
-  (the import log tells you: "built-in animations retargeted (15/15
-  bones)").
+- Works out of the box on **Set Character Model** / drag-drop for any
+  humanoid skeleton the bone names map (8 or more of the 15 engine bones):
+  every locomotion slot the file has no clip for plays the built-in
+  animation. The import log says which ("walking='Walking', built-in
+  animations retargeted (15/15 bones)").
 - The **Humanoid Retarget** component (on the player, next to the
   Character) has a **Weight** slider (blend against the model's bind
-  pose) and a **Re-Detect Bones** button after a model change. Add it
-  manually (Add Component > Animation) to prefer built-ins even when the
-  model has its own clips.
+  pose), a **Body lean** amount and a **Re-Detect Bones** button after a
+  model change. Add it manually (Add Component > Animation) to prefer
+  built-ins even when the model has its own clips.
 - The model's own imported clips stay in the Model Animator's library —
   play one as a one-shot from a script (`play_clip_once("dance")`) and
   the retarget yields until it finishes.
-- Files that DO carry idle+walk clips keep the previous behavior (their
-  own clips drive locomotion).
+- A file that carries a full set of clips (idle, walk, run, jump...) plays
+  its own clips in every slot; the built-in animation only covers the slots
+  that stay empty (see "Mixed animation" below).
+
+## Which components do I edit?
+
+A player with an imported model shows several components. Only the first
+two rows are yours; the rest are set up for you and start folded, with a
+header tooltip and a one-line note saying what they do.
+
+| Component | Edit it? | What it does |
+|---|---|---|
+| **Character Model** panel (top of the Inspector) | Yes | Which clip fills each slot (Idle, Walk, Run, Jump, Fall, Land, Crouch...), imported or built-in, Stride Match, clip speeds, Body lean, **Fix animations** |
+| The controller (Third Person, First Person...) | Yes | How the player moves: speeds, jump, camera, **Set Character Model...** |
+| Model Animator (on the model) | Rarely | Holds the model's clips and switches them by how fast the player moves. The panel above edits its slots |
+| Humanoid Retarget | Rarely | Copies the built-in animation onto the model's bones for every empty slot. Weight and Re-Detect Bones live here |
+| Foot IK | Rarely | Plants the feet on slopes and steps |
+| Character (disabled or hidden) | No | The blocky body is off because your model replaced it; when on, it only computes the built-in pose for the retarget |
+| Animator / Animation State Machine | Only for custom graphs | Replaces the automatic locomotion with your own graph |
+
+## Mixed animation: stride matching and the built-in fallback
+
+Mixamo downloads one animation per file, so a character often arrives
+with a Walking clip and nothing else, or Walking and Running with no
+idle. Every locomotion slot is filled on its own:
+
+- **Slots.** Idle, Walk, Run, Jump, Fall, Land, Crouch, Crouch Walk, Prone,
+  Crawl and Get Up. Clips are matched by name (Add animation files from the
+  Character Model panel puts each Mixamo file in its slot). A slot with no
+  clip plays the engine's built-in animation on the same skeleton: a
+  walk-only file still gets an idle with breathing and a weight shift, a
+  run, a jump, a landing and crouching. Clear a slot (**Built-in**) to use
+  the built-in animation even when the file has a clip.
+- **Stride matching** (Model Animator > Stride Match, on by default).
+  A walk clip is made for about 1.4 m/s and a run clip for about 4 m/s.
+  The clip's playback rate is the body's real speed over that speed,
+  limited to 0.6x..1.6x, so feet don't slide and the walk never speeds
+  up into a jog: when the body is faster than the walk clip can follow,
+  the run takes over. A clip that travels (root bone ground motion) is
+  measured; an in-place clip uses the nominal speed in **Clip speeds**,
+  per slot (walk 1.4, run 4.0, crouch walk 0.9, crawl 0.5). The Walk and
+  Run Thresholds still work: they cap where idle turns into walk and walk
+  into run.
+- **Blends.** Between walk and run both clips are sampled at one shared
+  normalized phase, so the feet stay in step through the blend; stepping
+  off from a stand starts the walk on the same foot each time. Switching
+  between a clip and the built-in animation eases over the Model
+  Animator's Blend time (the hips return to their rest height too).
+- **Lean.** The built-in pose leans a few degrees into a start (forward),
+  a stop (back) and a turn (toward the inside), eased over about a tenth
+  of a second (**Body lean** in the panel, 0 = upright). Imported clips
+  carry their own lean and are left alone.
+- **Fix animations** re-runs the name matching, clears slots that name
+  clips the model no longer has, and lets the built-in animation fill
+  every slot still empty.
+- Saved scenes: the new settings are written only when changed from their
+  defaults (`modelanimstride`, an extra value on `humretarget`), so scenes
+  from older versions load unchanged.
 
 ## Custom character models (drag & drop)
 

@@ -992,6 +992,11 @@ target_link_libraries(test_imported_glitches PRIVATE okay::engine)
 target_compile_definitions(test_imported_glitches PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME imported_glitches COMMAND test_imported_glitches)
 
+add_executable(test_mixamo_locomotion test_mixamo_locomotion.cpp)
+target_link_libraries(test_mixamo_locomotion PRIVATE okay::engine)
+target_compile_definitions(test_mixamo_locomotion PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME mixamo_locomotion COMMAND test_mixamo_locomotion)
+
 add_executable(test_scene_defaults test_scene_defaults.cpp)
 target_link_libraries(test_scene_defaults PRIVATE okay::engine)
 add_test(NAME scene_defaults COMMAND test_scene_defaults)

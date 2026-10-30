@@ -7189,6 +7189,158 @@ static void CharacterModelTools(EditorState& ed, GameObject* go, const char* id)
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Size the player's collider around the model (adds a capsule +\nRigidbody 3D when missing).");
 }
 
+// The player this object belongs to when it is part of a player's imported
+// character model (the player itself, or an object inside the model), else nullptr.
+// Cached per frame: every component header on the selected object asks.
+static GameObject* CharacterModelOwner(EditorState& ed, GameObject* go) {
+    static int s_frame = -1;
+    static GameObject* s_go = nullptr;
+    static GameObject* s_owner = nullptr;
+    if (s_frame == ImGui::GetFrameCount() && s_go == go) return s_owner;
+    s_frame = ImGui::GetFrameCount(); s_go = go; s_owner = nullptr;
+    for (Transform* t = go ? go->transform : nullptr; t && !s_owner; t = t->Parent()) {
+        GameObject* p = t->gameObject;
+        if (!p || !ObjectIsCharacterTarget(p)) continue;
+        GameObject* m = okay::FindCharacterModelRoot(ed.scene(), p);
+        if (m && m != p && (go == p || go->IsSelfOrDescendantOf(m))) s_owner = p;
+    }
+    return s_owner;
+}
+
+// What a component set up by the Character Model does, in one line - or nullptr
+// when `comp` is not one of them. Set per component by the Inspector loop; the
+// component header collapses it by default and says who manages it.
+static const char* sManagedNote = nullptr;
+static const Component* sManagedFor = nullptr;
+static const char* ManagedNoteFor(EditorState& ed, GameObject* go, Component* comp) {
+    const GameObject* owner = CharacterModelOwner(ed, go);
+    if (!owner) return nullptr;
+    if (dynamic_cast<Character*>(comp) && go == owner)
+        return !comp->enabled ? "Off on purpose: your imported model replaced the blocky body. Turn it on only to go back to it."
+                              : "Runs hidden: works out the built-in walk, run, jump and crouch that the Humanoid Retarget copies onto your model.";
+    if (dynamic_cast<HumanoidRetarget*>(comp) && go == owner)
+        return "Copies the built-in animation onto the model's bones for every slot the model has no clip of its own.";
+    if (dynamic_cast<FootIK*>(comp) && go == owner)
+        return "Plants the model's feet on slopes and steps.";
+    if (dynamic_cast<MeshRenderer*>(comp) && go == owner && owner->GetComponent<Character>())
+        return "The blocky default body. It stays off while your model is the character.";
+    if (dynamic_cast<AnimStateMachine*>(comp) && go == owner && owner->GetComponent<Character>())
+        return "The built-in animation graph (Idle, Walk, Run, Jump...) the Character follows. Change it only to customize the built-in states.";
+    if (dynamic_cast<ModelAnimator*>(comp) && go != owner)
+        return "Plays the model's own clips by how fast the player moves. Pick the clips in the Character Model panel on the player.";
+    return nullptr;
+}
+
+// The one place to look for a player's imported model: where its animation comes
+// from, slot by slot, with the knobs that matter. Everything else the model
+// brings (Model Animator, Humanoid Retarget, Foot IK, the hidden Character) is set
+// up by this and folded away below.
+static void CharacterModelPanel(EditorState& ed, GameObject* go) {
+    okay::CharacterModelInfo info;
+    if (!ObjectIsCharacterTarget(go) || !okay::DescribeCharacterModel(ed.scene(), go, info)) return;
+    ImGui::PushID("charmodel");
+    const bool open = ImGui::CollapsingHeader("Character Model", ImGuiTreeNodeFlags_DefaultOpen);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Everything about this player's imported model in one place. The components\nbelow it (Model Animator, Humanoid Retarget, Foot IK, the hidden Character)\nare managed from here - you normally edit this panel and the controller.");
+    if (!open) { ImGui::PopID(); return; }
+    ModelAnimator* ma = info.animator;
+    const ImVec4 good(0.45f, 0.85f, 0.55f, 1.0f), warn(0.95f, 0.75f, 0.35f, 1.0f), dim(0.62f, 0.64f, 0.70f, 1.0f);
+    ImGui::Text("Model: %s", info.model.c_str());
+    ImGui::TextUnformatted("Skeleton:");
+    ImGui::SameLine();
+    ImGui::TextColored(info.mappedBones >= 12 ? good : warn, "mapped %d/%d bones", info.mappedBones, info.totalBones);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Humanoid bones found by name (hips, spine, arms, legs...).\nThe built-in animations need at least 8.");
+    ImGui::TextUnformatted("Animation source:");
+    ImGui::SameLine();
+    ImGui::TextColored(info.source == 1 ? good : (info.source == 0 ? warn : ImVec4(0.55f, 0.75f, 1.0f, 1.0f)),
+                       "%s", okay::CharacterAnimationSourceName(info.source));
+    ImGui::TextDisabled("%d slot%s from clips, %d built-in", info.importedSlots, info.importedSlots == 1 ? "" : "s", info.builtinSlots);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Imported clips: every slot plays one of the model's own clips.\nBuilt-in retargeted: the engine's animations pose the model's skeleton.\nMixed: clips where the model has them, built-in everywhere else.");
+    ImGui::Spacing();
+
+    if (ImGui::BeginTable("##slots", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Slot", ImGuiTableColumnFlags_WidthFixed, 86.0f);
+        ImGui::TableSetupColumn("Plays", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableHeadersRow();
+        std::vector<std::string> names = ma ? ma->ClipNames() : std::vector<std::string>();
+        const ImVec4 builtinCol(0.55f, 0.75f, 1.0f, 1.0f);
+        for (const auto& sl : info.slots) {
+            ImGui::TableNextRow();
+            ImGui::PushID(sl.slot);
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted(sl.label);
+            ImGui::TableSetColumnIndex(1);
+            ImGui::SetNextItemWidth(-1.0f);
+            const char* none = info.builtinAvailable ? "Built-in" : "(none)";
+            int cur = 0;
+            for (int i = 0; i < (int)names.size(); ++i) if (names[i] == sl.clip) cur = i + 1;
+            ImGui::PushStyleColor(ImGuiCol_Text, sl.source == 1 ? good : (sl.source == 2 ? builtinCol : dim));
+            const bool comboOpen = ImGui::BeginCombo("##clip", sl.source == 1 && cur ? names[cur - 1].c_str() : none);
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(sl.source == 1 ? "Plays the model's own clip (imported)."
+                                  : sl.source == 2 ? "No clip here: the engine's built-in animation plays on the skeleton."
+                                                   : "Nothing plays in this slot.");
+            if (comboOpen) {
+                if (ImGui::Selectable(none, cur == 0) && ma && cur != 0) {
+                    ed.PushUndo(); ma->SlotClip(sl.slot).clear(); okay::SettleCharacterLocomotion(ma); ed.dirty = true;
+                }
+                for (int i = 0; i < (int)names.size(); ++i)
+                    if (ImGui::Selectable(names[i].c_str(), cur == i + 1) && ma) {
+                        ed.PushUndo(); ma->SlotClip(sl.slot) = names[i]; okay::SettleCharacterLocomotion(ma); ed.dirty = true;
+                    }
+                ImGui::EndCombo();
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::TextColored(good, "Imported clip"); ImGui::SameLine(0.0f, 14.0f);
+    ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.0f, 1.0f), "Built-in animation");
+    ImGui::PushStyleColor(ImGuiCol_Text, dim);
+    ImGui::TextWrapped("A slot with no clip plays the built-in animation on this skeleton, so the character always moves. Pick a clip to use your own.");
+    ImGui::PopStyleColor();
+
+    if (ma) {
+        if (ImGui::Checkbox("Stride Match##cm", &ma->strideMatch)) ed.dirty = true;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Play walk and run clips at the pace the body really moves (so feet don't\nslide and a walk never turns into a jog), and pick walk or run by that pace.\nOff: clips play at their authored rate.");
+        if (ma->strideMatch && ImGui::TreeNode("Clip speeds (m/s)##cm")) {
+            auto speedRow = [&](const char* label, int slot, float* v, const char* tip) {
+                if (ImGui::DragFloat(label, v, 0.05f, 0.1f, 20.0f, "%.2f")) ed.dirty = true;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s\nA clip that travels is measured from its root bone (now %.2f m/s);\nthis is used for in-place clips.", tip, ma->SlotClipSpeed(slot));
+            };
+            speedRow("Walk##cmspd", okay::ModelAnimator::SlotWalk, &ma->walkClipSpeed, "How fast the Walk clip's feet are made to move the body.");
+            speedRow("Run##cmspd", okay::ModelAnimator::SlotRun, &ma->runClipSpeed, "How fast the Run clip's feet are made to move the body.");
+            speedRow("Crouch walk##cmspd", okay::ModelAnimator::SlotCrouchWalk, &ma->crouchWalkClipSpeed, "Pace of the Crouch Walk clip.");
+            speedRow("Crawl##cmspd", okay::ModelAnimator::SlotCrawl, &ma->crawlClipSpeed, "Pace of the Crawl clip.");
+            ImGui::TreePop();
+        }
+    }
+    if (auto* hr = go->GetComponent<HumanoidRetarget>()) {
+        if (ImGui::SliderFloat("Body lean##cm", &hr->leanScale, 0.0f, 2.0f, "%.2f")) ed.dirty = true;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("How far the built-in animation leans the body into starts, stops and turns\n(a few degrees on the hips and spine). 0 = upright.");
+    }
+    if (ImGui::Button("Fix animations##cm")) {
+        ed.PushUndo();
+        ConsoleLog(okay::FixCharacterAnimations(ed.scene(), go));
+        ed.dirty = true;
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Match the model's clips to the slots again by name, clear slots that point\nat clips the model no longer has, and let the built-in animation fill every\nslot that is still empty.");
+    ImGui::SameLine();
+    if (ImGui::Button("+ Add clips...##cm")) {
+        if (GameObject* m = okay::FindCharacterModelRoot(ed.scene(), go)) AddAnimationsFromFilesUI(ed, m);
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Mixamo gives one file per animation: add each (Walking, Running, Idle...)\nand they land in their slots by name.");
+    ImGui::PopID();
+    ImGui::Spacing();
+}
+
 // A controller added from Add Component: give it a physics body right away
 // (it walks through walls and falls through floors without one) and, when it
 // went straight onto an imported model, face that model forward.
@@ -25155,6 +25307,7 @@ static bool ParticleCurveEditor(EditorState& ed, const char* id, okay::ParticleC
 static const char* sCompHeaderTip = nullptr;
 static bool CompHeader(const char* label, okay::Component* comp, okay::Component** toRemove,
                        bool removable = true) {
+    const char* managed = sManagedFor == comp ? sManagedNote : nullptr;   // set by the Inspector loop for components the Character Model manages
     ImGui::PushID(comp);
     bool en = comp->enabled;
     const float fh = ImGui::GetFrameHeight();
@@ -25179,7 +25332,7 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
     // toggled it to (per INSTANCE, so several Actions don't fold together).
     char okey[32]; std::snprintf(okey, sizeof(okey), "%p", (void*)comp);
     auto it = sCompOpen.find(okey);
-    bool want = it == sCompOpen.end() ? true : it->second;
+    bool want = it == sCompOpen.end() ? managed == nullptr : it->second;   // managed ones start folded
     if (sCompForceOpen != -1) want = sCompForceOpen == 1;   // Expand/Collapse All
     ImGui::SetNextItemOpen(want, ImGuiCond_Always);
     if (!en) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.62f, 0.66f, 1.0f));
@@ -25197,6 +25350,8 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
     }
     if (!en) ImGui::PopStyleColor();
     sCompOpen[okey] = open;
+    if (managed && ImGui::IsItemHovered())
+        ImGui::SetTooltip("Managed by Character Model: you normally don't edit this.\n%s", managed);
     const ImVec2 hmn = ImGui::GetItemRectMin(), hmx = ImGui::GetItemRectMax();
     {   // accent bar down the left edge: each component reads as a titled card
         ImVec4 barCol = CategoryColor(label); barCol.w = 0.95f;
@@ -25273,6 +25428,10 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
         ImGui::EndPopup();
     }
     ImGui::PopID();
+    if (open && managed) {
+        ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f), "Managed by Character Model - you normally don't edit this.");
+        ImGui::TextDisabled("%s", managed);
+    }
     return open;
 }
 
@@ -27607,6 +27766,7 @@ void DrawInspector(EditorState& ed) {
         ImGui::Spacing();
     }
 
+    CharacterModelPanel(ed, go);
     bool tfOpen = ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen);
     if (ImGui::BeginDragDropSource()) {
         const char* payload = "component\nTransform";
@@ -27732,6 +27892,7 @@ void DrawInspector(EditorState& ed) {
     for (const auto& upc : go->Components()) {
         Component* curComp = upc.get();
         if (curComp == go->transform) continue;
+        sManagedNote = ManagedNoteFor(ed, go, curComp); sManagedFor = curComp;
     if (auto* sr = dynamic_cast<SpriteRenderer*>(curComp)) {
         if (CompHeader("Sprite Renderer", sr, &toRemove)) {
             float col[4] = {sr->color.r, sr->color.g, sr->color.b, sr->color.a};
@@ -28778,6 +28939,11 @@ void DrawInspector(EditorState& ed) {
                 clipCombo("Idle clip##ma", ma->idleClip);
                 clipCombo("Walk clip##ma", ma->walkClip);
                 clipCombo("Run clip##ma",  ma->runClip);
+                if (ImGui::Checkbox("Stride match##ma", &ma->strideMatch)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play walk / run clips at the pace the body really moves and pick walk or run by it.\nSet the clips' own speeds in the Character Model panel on the player.");
+                ImGui::SameLine();
+                if (ImGui::Checkbox("Built-in for empty slots##ma", &ma->builtinFallback)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("On a retargeted player (Humanoid Retarget), a slot with no clip plays the\nbuilt-in animation instead of freezing the pose.");
                 if (ImGui::DragFloat("Walk threshold##ma", &ma->walkThreshold, 0.05f, 0.0f, 20.0f)) ed.dirty = true;
                 if (ImGui::DragFloat("Run threshold##ma",  &ma->runThreshold,  0.1f,  0.0f, 50.0f)) ed.dirty = true;
                 clipCombo("Jump clip##ma", ma->jumpClip);
@@ -30279,6 +30445,8 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TextDisabled("Plays the BUILT-IN animations (walk/run/jump/crouch,\ngestures, .okayanim clips) on an imported humanoid rig.");
                 if (ImGui::DragFloat("Weight##hrt", &hr->weight, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = the model's own pose, 1 = full built-in animation.");
+                if (ImGui::DragFloat("Body lean##hrt", &hr->leanScale, 0.01f, 0.0f, 2.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lean into starts, stops and turns, a few degrees on the hips and spine.\n0 = upright. Built-in poses only: imported clips carry their own.");
                 if (hr->Wired())
                     ImGui::Text("Mapped %d/15 humanoid bones", hr->MappedBones());
                 else
@@ -44321,6 +44489,21 @@ int main(int argc, char** argv) {
             if (const char* cm = std::getenv("OKAY_UI_CHARMODEL"); cm && s_focusFrames == 31) {
                 GameObject* p = okay::Templates::AddThirdPersonPlayer(ed.scene(), ed.camTarget);
                 EditorAttachCharacterModel(ed, p, cm);
+                // OKAY_UI_CHARFLOOR=1: a floor under the player so Play shows the locomotion, not a fall.
+                if (std::getenv("OKAY_UI_CHARFLOOR"))
+                    okay::Templates::detail::Block(ed.scene(), "Floor", {0, -0.5f, 0}, {80, 1, 80}, Color::FromBytes(96, 104, 92));
+                // OKAY_UI_CHARKEEP=Walking: as if the download held only the clips whose name has that text.
+                if (const char* keep = std::getenv("OKAY_UI_CHARKEEP")) {
+                    okay::CharacterModelInfo ci;
+                    if (okay::DescribeCharacterModel(ed.scene(), p, ci) && ci.animator) {
+                        auto& cl = ci.animator->clips;
+                        cl.erase(std::remove_if(cl.begin(), cl.end(),
+                                                [&](const ModelAnimator::Clip& c) { return c.name.find(keep) == std::string::npos; }),
+                                 cl.end());
+                        ci.animator->active = 0;
+                        ConsoleLog(okay::FixCharacterAnimations(ed.scene(), p));
+                    }
+                }
                 ed.camYaw = 215.0f; ed.camPitch = 12.0f; ed.camDist = 4.5f;
                 ed.camTarget = p->transform->Position() + Vec3{0, 0.9f, 0};
             }

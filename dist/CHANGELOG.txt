@@ -1,5 +1,24 @@
 OkaySpace Game Engine — Changelog
 
+v2.842.0
+  Characters
+  - One Player Controller for first and third person. Pick First Person,
+    Third Person or Both in its View setting; with Both, V switches the view.
+    Turning a view off removes its settings, and the old separate
+    controllers no longer show up in Add Component. Scenes saved with the
+    old controllers load as one Player Controller, and scripts get
+    set_view, get_view and a PlayerController type (#523; see
+    docs/making_a_game.md).
+  - Downloaded Mixamo-style characters now move naturally. Walk and run
+    clips play at the pace the body really moves, so a walk no longer looks
+    like a jog and a run is a real run clip rather than a faster walk.
+    Every missing animation (idle, walk, run, jump, fall, land, crouch,
+    crawl and the rest) falls back to the built-in one retargeted onto the
+    skeleton, and the body leans a little into starts, stops and turns.
+    A new Character Model panel at the top of the Inspector shows which
+    animation comes from the file and which is built in, and says which
+    components to edit (#524; see docs/animation.md).
+
 v2.841.0
   Game systems
   - Navigation meshes: bake a walkable surface, ask for paths, and move

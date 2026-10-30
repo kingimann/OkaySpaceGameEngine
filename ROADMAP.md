@@ -4,12 +4,13 @@ What is being worked on right now and what comes next. Kept current by the main
 (coordinating) Claude session; each item links its PR once one exists. Every PR
 merges once its five CI jobs are green, and a release follows.
 
-_Last updated: 2026-10-29 05:37 UTC_
+_Last updated: 2026-10-30 20:05 UTC_
 
 ## Releases
 
 | Version | What's in it |
 |---|---|
+| 2.842.0 | One Player Controller for first and third person (#523); stride-matched Mixamo locomotion, per-slot built-in fallback and the Character Model panel (#524) |
 | 2.841.0 | Navigation meshes (#514); cutscenes (#515); dialogue and quests (#516); behavior trees (#517, #519); post-processing, sky, fog and weather (#518); localization (#520); map a rig's body bones by hand (#522, IK plan item 8) |
 | 2.840.0 | First-person hands, view switch and the third-person head fix (#505); save games (#498); built-in action clips (#506); ragdolls (#501); IK batches 1–2: Look-At shares, clamp, eyes and range, Limb and Full Body stretch, foot toe/heel rays, keep-phase transitions (#507, #508); Animation window key lane (#509); older starter projects get both view controllers on load (#510); Animation tab clip editor: dope sheet, curves, record, onion skin, clip list (#511); Animator window: canvas, parameters, blend trees, inspectors, layers (#512) |
 | 2.839.0 | Smoother built-in walk: fast walks ease into a jog, baked cycles on a curve (#500); an Animator graph for imported characters' own clips (#499, IK plan item 7); net_interp fix: no near-second lag after an object stands still (#502) |

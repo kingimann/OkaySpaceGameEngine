@@ -684,6 +684,17 @@ void WriteComponents(std::ostream& out, GameObject* go) {
                 << " " << ma->rootMotionApplyTo << "\n";
         if (ma->smoothLocomotion)
             out << "  modelanimsmooth 1\n";
+        // Stride matching + built-in fallback: only written when changed from the defaults,
+        // so older scenes (which lack the record) and untouched models stay as they were.
+        {
+            const ModelAnimator d;
+            if (ma->strideMatch != d.strideMatch || ma->builtinFallback != d.builtinFallback ||
+                ma->walkClipSpeed != d.walkClipSpeed || ma->runClipSpeed != d.runClipSpeed ||
+                ma->crouchWalkClipSpeed != d.crouchWalkClipSpeed || ma->crawlClipSpeed != d.crawlClipSpeed)
+                out << "  modelanimstride " << (ma->strideMatch ? 1 : 0) << " " << (ma->builtinFallback ? 1 : 0)
+                    << " " << ma->walkClipSpeed << " " << ma->runClipSpeed << " " << ma->crouchWalkClipSpeed
+                    << " " << ma->crawlClipSpeed << "\n";
+        }
         // Clips with smooth (cubic) keys; the rest are linear, as imported.
         {
             std::vector<std::size_t> smoothClips;
@@ -1242,7 +1253,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     // Written BEFORE footik on purpose: components load in record order, and
     // the retarget must pose the rig before FootIK plants the feet on it.
     if (auto* hr = go->GetComponent<HumanoidRetarget>()) {
-        out << "  humretarget " << hr->weight << "\n";
+        out << "  humretarget " << hr->weight;
+        if (hr->leanScale != 1.0f) out << " " << hr->leanScale;
+        out << "\n";
     }
     if (auto* f = go->GetComponent<FootIK>()) {
         out << "  footik " << Quote(f->leftHipName) << " " << Quote(f->leftKneeName) << " " << Quote(f->leftFootName)
@@ -3744,6 +3757,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     if (!ma) ma = go->AddComponent<ModelAnimator>();
                     int sm = 0; in >> sm;
                     ma->smoothLocomotion = (sm != 0);
+                } else if (field == "modelanimstride") {
+                    auto* ma = go->GetComponent<ModelAnimator>();
+                    if (!ma) ma = go->AddComponent<ModelAnimator>();
+                    int sm = 1, bf = 1; in >> sm >> bf;
+                    ma->strideMatch = (sm != 0);
+                    ma->builtinFallback = (bf != 0);
+                    in >> ma->walkClipSpeed >> ma->runClipSpeed >> ma->crouchWalkClipSpeed >> ma->crawlClipSpeed;
                 } else if (field == "modelanimcubic") {
                     auto* ma = go->GetComponent<ModelAnimator>();
                     long cnt = 0; in >> cnt;
@@ -6504,6 +6524,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "humretarget") {
                     auto* hr = go->AddComponent<HumanoidRetarget>();
                     in >> hr->weight;   // bones re-detect + rest re-captures on first play frame
+                    { std::string rest; std::getline(in, rest);   // optional trailing field (newer files): lean
+                      std::istringstream rs(rest); float ls;
+                      if (rs >> ls) hr->leanScale = ls; }
                 } else if (field == "charbind") {
                     // Auto-rigged custom mesh: restore the bind geometry and re-rig.
                     Mesh bm;

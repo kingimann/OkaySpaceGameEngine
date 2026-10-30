@@ -140,6 +140,78 @@ public:
     /// The stance whose clips play (0 stand, 1 crouch, 2 prone).
     int StanceClips() const { return m_stance; }
 
+    // ---- Locomotion slots: the named clip slots above, as one list ----
+    enum Slot { SlotIdle, SlotWalk, SlotRun, SlotJump, SlotFall, SlotLand, SlotCrouch,
+                SlotCrouchWalk, SlotProne, SlotCrawl, SlotGetUp, SlotCount };
+    static const char* SlotName(int s) {
+        static const char* const n[SlotCount] = {"Idle", "Walk", "Run", "Jump", "Fall", "Land", "Crouch",
+                                                 "Crouch Walk", "Prone", "Crawl", "Get Up"};
+        return s >= 0 && s < SlotCount ? n[s] : "";
+    }
+    /// The clip name a slot plays ("" = empty).
+    std::string& SlotClip(int s) {
+        std::string* p[SlotCount] = {&idleClip, &walkClip, &runClip, &jumpClip, &fallClip, &landClip,
+                                     &crouchClip, &crouchWalkClip, &proneClip, &crawlClip, &getUpClip};
+        static std::string none;
+        if (s < 0 || s >= SlotCount) { none.clear(); return none; }
+        return *p[s];
+    }
+    const std::string& SlotClip(int s) const { return const_cast<ModelAnimator*>(this)->SlotClip(s); }
+    /// True when the slot names a clip this model really has (with some length).
+    bool SlotFilled(int s) const {
+        const int i = FindClip(SlotClip(s));
+        return i >= 0 && ClipLength(i) > 0.0f;
+    }
+
+    // ---- Stride matching: playback pace follows how fast the body really moves ----
+    /// Scale the walk / run (and crouch-walk, crawl) clips' playback by the
+    /// body's real speed over the speed the clip was made for, so feet don't
+    /// slide, and let that pace choose between walk and run. Off = clips play at
+    /// their authored rate. (Ignored with root motion: the clip sets the pace.)
+    bool  strideMatch = true;
+    /// The ground speed (m/s) of a clip that travels in place, by slot. A clip
+    /// that does travel is measured from its root bone instead.
+    float walkClipSpeed = 1.4f, runClipSpeed = 4.0f, crouchWalkClipSpeed = 0.9f, crawlClipSpeed = 0.5f;
+    static constexpr float kStrideMinRate = 0.6f, kStrideMaxRate = 1.6f;
+    /// The speed (m/s) a slot's clip is made for: its measured root travel when
+    /// it has a plausible one, else the slot's nominal speed.
+    float SlotClipSpeed(int s) const {
+        const float nominal = s == SlotRun ? runClipSpeed : s == SlotCrouchWalk ? crouchWalkClipSpeed
+                            : s == SlotCrawl ? crawlClipSpeed : walkClipSpeed;
+        const int ci = FindClip(SlotClip(s));
+        if (ci >= 0) {
+            const float v = ClipRootSpeed(ci);
+            if (v >= 0.25f * nominal && v <= 4.0f * nominal) return v;
+        }
+        return nominal > 1e-3f ? nominal : 1.0f;
+    }
+    /// Playback rate that makes slot `s`'s clip step at body speed `spd`
+    /// (1 for slots that don't stride).
+    float StrideRate(int s, float spd) const {
+        if (s != SlotWalk && s != SlotRun && s != SlotCrouchWalk && s != SlotCrawl) return 1.0f;
+        return std::fmin(kStrideMaxRate, std::fmax(kStrideMinRate, spd / SlotClipSpeed(s)));
+    }
+    /// The rate the playing locomotion clip is running at now (1 = authored pace).
+    float CurrentStrideRate() const { return m_strideRate; }
+
+    // ---- Built-in fallback: a slot with no clip uses the engine's own animation ----
+    /// With a Character in external-rig mode on the player (a Humanoid Retarget
+    /// then poses this skeleton), every locomotion slot with no usable clip is
+    /// played by the built-in animation instead of freezing the pose.
+    bool builtinFallback = true;
+    /// True when this model's skeleton can be posed by the built-in animations.
+    bool BuiltinRigPresent() const {
+        for (Transform* t = transform; t; t = t->Parent())
+            if (auto* ch = t->gameObject ? t->gameObject->GetComponent<Character>() : nullptr)
+                return ch->enabled && ch->driveExternal;
+        return false;
+    }
+    /// True while the built-in animation (not a clip) is posing the model.
+    bool BuiltinOwnsPose() const { return m_builtinOwns; }
+    /// The slot the locomotion currently shows (clip or built-in).
+    int  ActiveSlot() const { return m_slot; }
+    bool BuiltinFallbackUsable() const { return builtinFallback && driveByMovement && BuiltinRigPresent(); }
+
     void Start() override {
         if (transform) { m_lastPos = transform->Position(); m_haveLast = true; }
         if (autoPlay && !clips.empty()) PlayIndex(active);
@@ -176,11 +248,13 @@ public:
             // tracked, so it resumes without a speed spike).
             if (m_held || StateMachineDrives()) spd = -1.0f;
         }
+        const bool bi = spd >= 0.0f && BuiltinFallbackUsable();   // empty slots are played by the built-in animation
+        bool builtinNow = false;                                   // ...and does so this frame
 
         // Air states: launch -> jump clip, past the apex -> fall clip, touchdown
         // -> land one-shot; locomotion stands down while airborne. Driven purely
         // by the capsule's vertical motion, so every controller "just works".
-        if (spd >= 0.0f && (!jumpClip.empty() || !fallClip.empty())) {
+        if (spd >= 0.0f && (!jumpClip.empty() || !fallClip.empty() || bi)) {
             if (!m_inAir) {
                 // Rising two frames running: a step up a curb or stair lifts the
                 // body in a single frame, which read as a jump.
@@ -188,12 +262,15 @@ public:
                 if (vy < -airDownVel) m_airT += dt; else m_airT = 0.0f;
                 if (launch || m_airT > 0.12f) {          // brief drops (steps) don't count
                     m_inAir = true; m_airT = 0.0f; m_fell = !launch;
-                    const std::string& c = (launch && !jumpClip.empty()) ? jumpClip : fallClip;
-                    if (!c.empty()) Play(c);
+                    m_airSlot = (launch && (SlotFilled(SlotJump) || bi)) ? SlotJump : SlotFall;
+                    if (SlotFilled(m_airSlot)) Play(SlotClip(m_airSlot));
                 }
             } else {
                 // Apex: a jump turns into a fall once we're heading down.
-                if (vy < -1.0f && !fallClip.empty() && CurrentName() == jumpClip) Play(fallClip);
+                if (vy < -1.0f && m_airSlot == SlotJump) {
+                    m_airSlot = SlotFall;
+                    if (SlotFilled(SlotFall) && CurrentName() == jumpClip) Play(fallClip);
+                }
                 // Touchdown: vertical motion dies out (the ground stops us). A jump's
                 // apex also passes zero, so that counts only once we've been
                 // falling, or with ground right under the feet (landing on a ledge
@@ -205,6 +282,7 @@ public:
                     if (!landClip.empty()) PlayOnce(landClip);   // locomotion resumes after
                 }
             }
+            builtinNow = bi && m_inAir && !m_once && !SlotFilled(m_airSlot);
         }
 
         // Stance: the player's crouch / prone picks the clip set.
@@ -227,7 +305,7 @@ public:
         // with no clip for it, e.g. walking off a ledge with no fall clip, it
         // carries on: stopping it snapped the body to a stale frame of the walk.)
         const bool airClip = m_inAir && (CurrentName() == jumpClip || CurrentName() == fallClip);
-        if (spd >= 0.0f && smoothLocomotion && !m_once && !airClip) {
+        if (spd >= 0.0f && smoothLocomotion && !m_once && !airClip && !builtinNow) {
             // Blend by the speed eased over ~0.1 s: a body stopped dead by a wall
             // (or a respawn) snapped from the walk to the idle in one frame.
             m_blendSpd += (spd - m_blendSpd) * (1.0f - std::exp(-dt / 0.1f));
@@ -236,9 +314,11 @@ public:
 
         // Fire clip events crossed by this frame's playback window. The clock
         // mirrors the node Animators' time (reset together in PlayIndex).
-        if (dt > 0.0f && active >= 0 && active < (int)clips.size()) {
+        if (dt > 0.0f && active >= 0 && active < (int)clips.size() && !m_builtinOwns && !builtinNow) {
             float len = ClipLength(active);
-            float t0 = m_clock, t1 = m_clock + dt * speed;
+            // Stride matching: the walk / run clips step at the pace the body moves.
+            const float rate = (strideMatch && !rootMotion && spd >= 0.0f && !m_once && !m_inAir) ? m_strideRate : 1.0f;
+            float t0 = m_clock, t1 = m_clock + dt * speed * rate;
             const bool first = m_fromStart && t1 > t0;
             if (t1 > t0) m_fromStart = false;
             // A jump clip holds its last frame when the body is still in the air.
@@ -263,6 +343,7 @@ public:
                 ApplyRootMotion(d, yaw, dt);
             }
             m_clock = len > 0.0f ? (wrap ? std::fmod(t1, len) : std::fmin(t1, len)) : t1;
+            if (len > 0.0f) m_phase = m_clock / len;   // a hand-over to the smooth blend keeps the step
             ApplyPose(active, m_clock);
             // A finished one-shot returns to the clip that was playing before it
             // (crossfaded like any switch).
@@ -276,23 +357,75 @@ public:
         // Discrete locomotion: switch to the clip for this speed band (crossfaded
         // by blendTime, since Play goes through PlayIndex). Suspended by a
         // one-shot or while airborne (the jump/fall clip owns the body).
-        if (spd < 0.0f || m_once || m_inAir) return;
-        // 10% hysteresis: a speed hovering on a threshold doesn't flicker clips.
-        const std::string cur = CurrentName();
-        const float runAt  = cur == runClip ? runThreshold * 0.9f : runThreshold;
-        const float walkAt = (cur == walkClip || cur == runClip) ? walkThreshold * 0.9f : walkThreshold;
-        const std::string* want = &idleClip;
-        if (m_stance != 0) {
-            const std::string *still, *moving;
-            StanceSet(still, moving);
-            want = spd > walkAt * (m_stance == 1 ? 0.5f : 0.25f) ? moving : still;
+        if (spd < 0.0f || m_once) { m_builtinOwns = false; return; }
+        if (m_inAir) { m_builtinOwns = builtinNow; return; }
+        const int slot = GroundSlot(spd, bi);
+        m_slot = slot;
+        m_strideRate = StrideRate(slot, spd);
+        if (bi && !SlotFilled(slot)) {   // this slot has no clip: the built-in animation poses the model
+            m_builtinOwns = true;
+            m_stanceFade = -1.0f;
+            return;
         }
-        else if (spd >= runAt && !runClip.empty())   want = &runClip;
-        else if (spd > walkAt && !walkClip.empty())  want = &walkClip;
-        if (!want->empty() && *want != CurrentName()) {   // switch only on change
-            Play(*want, m_stanceFade);
+        const std::string& want = SlotClip(slot);
+        const bool handBack = m_builtinOwns;   // the clip takes over from the built-in animation: ease in
+        m_builtinOwns = false;
+        if (!want.empty() && (want != CurrentName() || handBack)) {   // switch only on change
+            // Stride clips swap at the same point of their step (walk <-> run keeps the feet in step).
+            const int prev = active, to = FindClip(want);
+            const bool stepToStep = !handBack && prev >= 0 && to >= 0 && IsStrideSlot(m_prevSlot) && IsStrideSlot(slot) &&
+                                    ClipLength(prev) > 0.0f && ClipLength(to) > 0.0f;
+            const float phase = stepToStep ? m_clock / ClipLength(prev) : 0.0f;
+            Play(want, m_stanceFade);
+            if (stepToStep) { m_clock = phase * ClipLength(to); ApplyPose(to, m_clock); }
             m_stanceFade = -1.0f;
         }
+        m_prevSlot = slot;
+    }
+
+    static bool IsStrideSlot(int s) { return s == SlotWalk || s == SlotRun || s == SlotCrouchWalk || s == SlotCrawl; }
+
+    /// The locomotion slot for ground speed `spd` and the current stance, with a
+    /// 10% hysteresis so a speed hovering on a threshold doesn't flicker clips.
+    /// Without the built-in animation an empty slot is skipped (the nearest
+    /// slower one plays); with it every slot is selectable.
+    int GroundSlot(float spd, bool builtin) const {
+        auto ok = [&](int s) { return builtin || !SlotClip(s).empty(); };
+        const bool wasRun = m_slot == SlotRun, wasWalk = m_slot == SlotWalk || m_slot == SlotRun;
+        float runAt  = wasRun ? RunSwitchSpeed() * 0.9f : RunSwitchSpeed();
+        float walkAt = wasWalk ? WalkStartSpeed() * 0.9f : WalkStartSpeed();
+        if (m_stance != 0) {
+            const int a = m_stance == 2 ? SlotProne : SlotCrouch, b = m_stance == 2 ? SlotCrawl : SlotCrouchWalk;
+            const bool moving = spd > walkAt * (m_stance == 1 ? 0.5f : 0.25f);
+            int want = moving ? b : a;
+            if (!builtin && SlotClip(want).empty()) want = moving ? a : b;   // one stands in for a missing other
+            return want;
+        }
+        if (spd >= runAt && ok(SlotRun)) return SlotRun;
+        if (spd > walkAt && ok(SlotWalk)) return SlotWalk;
+        return SlotIdle;
+    }
+    /// Ground speed above which idle becomes walk (and where the blend is fully
+    /// walk): with stride matching, no further than the pace of the walk clip's
+    /// own steps, so a controller's 4.5 m/s "walk speed" threshold can't hold the
+    /// model standing until then.
+    float WalkStartSpeed() const {
+        if (!strideMatch || rootMotion) return walkThreshold;
+        return std::fmin(walkThreshold, 0.6f * SlotClipSpeed(SlotWalk));
+    }
+    /// Ground speed where the walk clip hands over to the run clip. Stride matching
+    /// puts it midway between the speeds the two clips are made for (never above
+    /// the Run Threshold): a walk clip is never stretched into a jog.
+    float RunSwitchSpeed() const {
+        if (!strideMatch || rootMotion) return runThreshold;
+        return std::fmin(runThreshold, 0.5f * (WalkEndSpeed() + RunStartSpeed()));
+    }
+    float WalkEndSpeed() const { return 1.25f * SlotClipSpeed(SlotWalk); }          ///< walk alone up to here
+    float RunStartSpeed() const {                                                      ///< run alone from here
+        const float lo = WalkEndSpeed() + 0.3f;
+        float hi = 0.85f * SlotClipSpeed(SlotRun);
+        if (runThreshold > lo) hi = std::fmin(hi, runThreshold);
+        return std::fmax(hi, lo);
     }
 
     /// Crossfade: eases the pose captured at the moment of a clip switch into the
@@ -380,7 +513,10 @@ public:
     }
     /// True while the model's own clip owns the pose: a held clip or a one-shot
     /// (HumanoidRetarget yields until it ends).
-    bool ClipOverridesPose() const { return m_held || m_once; }
+    bool ClipOverridesPose() const {
+        // With the built-in fallback the clips own the pose except while a slot has none.
+        return m_held || m_once || (!m_builtinOwns && BuiltinFallbackUsable());
+    }
 
     /// An AnimStateMachine on this object registers itself here: while it's on
     /// the object and enabled it picks the clips, and driveByMovement waits.
@@ -588,6 +724,7 @@ public:
         int st = 0;
         for (Transform* t = transform; t; t = t->Parent())
             if (auto* ch = t->gameObject ? t->gameObject->GetComponent<Character>() : nullptr) { st = ch->StanceTarget(); break; }
+        if (BuiltinFallbackUsable()) return st;   // a stance with no clips is played by the built-in animation
         if (st == 2 && proneClip.empty() && crawlClip.empty()) st = 1;
         if (st == 1 && crouchClip.empty() && crouchWalkClip.empty()) st = 0;
         return st;
@@ -609,38 +746,87 @@ public:
     }
 
     /// One frame of continuous locomotion blending. Returns false when it can't
-    /// run (no scene / no usable clips) so the caller falls back to discrete mode.
+    /// run (no scene / no usable clips, or a slot left to the built-in animation)
+    /// so the caller falls back to discrete mode.
     bool SmoothBlendStep(float dt, float spd) {
         if (!gameObject || !gameObject->scene()) return false;
-        // The two clips around this speed + the blend weight between them.
-        int A, B; float w, lo, hi;   // lo/hi: the ground speed each clip is made for
+        const bool bi = BuiltinFallbackUsable();
+        const bool stride = strideMatch && !rootMotion;
+        // The two clips around this speed + the blend weight between them, and
+        // the rate that makes the steps match the ground speed.
+        int A, B, slotA, slotB; float w, rate = 1.0f;
         // A clip's own root travel when it has one, else the threshold it's full at.
         auto clipSpeed = [&](int ci, float thr) { float v = ClipRootSpeed(ci); return v > 1e-3f ? v : thr; };
-        const bool still = m_stance != 0 || spd <= walkThreshold;   // A is a standing-still clip
         if (m_stance != 0) {   // crouched / prone: still <-> moving up to that stance's pace
-            const std::string *a, *b;
-            StanceSet(a, b);
+            slotA = m_stance == 2 ? SlotProne : SlotCrouch;
+            slotB = m_stance == 2 ? SlotCrawl : SlotCrouchWalk;
+            if (!bi) {   // one stands in for a missing other
+                if (SlotClip(slotA).empty()) slotA = slotB;
+                if (SlotClip(slotB).empty()) slotB = slotA;
+            }
             const float full = walkThreshold * (m_stance == 1 ? 0.5f : 0.25f);
-            A = FindClip(*a); B = FindClip(*b);
+            A = FindClip(SlotClip(slotA)); B = FindClip(SlotClip(slotB));
             w = full > 1e-4f ? spd / full : 1.0f;
-            lo = 0.0f; hi = clipSpeed(B, full);
-        } else if (spd <= walkThreshold) {
-            A = FindClip(idleClip); B = FindClip(walkClip);
-            w = walkThreshold > 1e-4f ? spd / walkThreshold : 1.0f;
-            lo = 0.0f; hi = clipSpeed(B, walkThreshold);
+            const float hi = stride ? SlotClipSpeed(slotB) : clipSpeed(B, full);
+            const float clipSpd = hi * (w < 0.0f ? 0.0f : (w > 1.0f ? 1.0f : w));
+            if (!rootMotion && clipSpd > 1e-3f) rate = std::fmin(2.0f, std::fmax(0.5f, spd / clipSpd));
+            rate = 1.0f + (rate - 1.0f) * (w < 0.0f ? 0.0f : (w > 1.0f ? 1.0f : w));
+        } else if (stride) {
+            // Anchors from the clips' own pace: idle -> walk over the first steps,
+            // walk alone, a phase-matched walk -> run blend, then run alone.
+            const float W = SlotClipSpeed(SlotWalk), R = SlotClipSpeed(SlotRun);
+            const float idleFull = std::fmax(0.05f, WalkStartSpeed()), walkEnd = WalkEndSpeed(), runStart = RunStartSpeed();
+            auto clampRate = [&](float r) { return std::fmin(kStrideMaxRate, std::fmax(kStrideMinRate, r)); };
+            if (spd <= idleFull) {
+                slotA = SlotIdle; slotB = SlotWalk; w = spd / idleFull;
+                rate = 1.0f + (clampRate(spd / W) - 1.0f) * w;   // idle plays at its own pace
+            } else if (spd <= walkEnd || (!bi && SlotClip(SlotRun).empty())) {
+                slotA = slotB = SlotWalk; w = 0.0f; rate = clampRate(spd / W);
+            } else if (spd < runStart) {
+                slotA = SlotWalk; slotB = SlotRun; w = (spd - walkEnd) / std::fmax(runStart - walkEnd, 1e-4f);
+                rate = clampRate(spd / (W + (R - W) * w));
+            } else {
+                slotA = slotB = SlotRun; w = 0.0f; rate = clampRate(spd / R);
+            }
+            A = FindClip(SlotClip(slotA)); B = FindClip(SlotClip(slotB));
         } else {
-            A = FindClip(walkClip); B = FindClip(runClip);
-            w = (spd - walkThreshold) / std::fmax(runThreshold - walkThreshold, 1e-4f);
-            lo = clipSpeed(A, walkThreshold); hi = clipSpeed(B, runThreshold);
+            float lo, hi;   // the ground speed each clip is made for
+            if (spd <= walkThreshold) {
+                slotA = SlotIdle; slotB = SlotWalk;
+                w = walkThreshold > 1e-4f ? spd / walkThreshold : 1.0f;
+                lo = 0.0f; hi = clipSpeed(FindClip(walkClip), walkThreshold);
+            } else {
+                slotA = SlotWalk; slotB = SlotRun;
+                w = (spd - walkThreshold) / std::fmax(runThreshold - walkThreshold, 1e-4f);
+                lo = clipSpeed(FindClip(walkClip), walkThreshold); hi = clipSpeed(FindClip(runClip), runThreshold);
+            }
+            A = FindClip(SlotClip(slotA)); B = FindClip(SlotClip(slotB));
+            const float cw = w < 0.0f ? 0.0f : (w > 1.0f ? 1.0f : w);
+            const float clipSpd = lo + (hi - lo) * cw;
+            if (!rootMotion && clipSpd > 1e-3f) rate = std::fmin(2.0f, std::fmax(0.5f, spd / clipSpd));
+            if (spd <= walkThreshold) rate = 1.0f + (rate - 1.0f) * cw;
         }
-        if (w < 0.0f) w = 0.0f; if (w > 1.0f) w = 1.0f;
-        // Play the steps as fast as the body actually moves, so feet don't skate
-        // (unless root motion is what moves it: then the clip sets the pace).
-        float clipSpd = lo + (hi - lo) * w, rate = 1.0f;
-        if (!rootMotion && clipSpd > 1e-3f) rate = std::fmin(2.0f, std::fmax(0.5f, spd / clipSpd));
-        if (still) rate = 1.0f + (rate - 1.0f) * w;   // idle plays at its own pace
-        if (m_stanceFade >= 0.0f) { CaptureFade(A >= 0 ? A : B, m_stanceFade); m_stanceFade = -1.0f; }   // ease into the stance's clips
-        return BlendClips(dt * rate, A, B, w);
+        // A slot with no clip belongs to the built-in animation: leave the blend to it.
+        if (bi && (!SlotFilled(slotA) || !SlotFilled(slotB))) return false;
+        w = std::fmin(1.0f, std::fmax(0.0f, w));
+        if (m_builtinOwns) {   // a clip takes over from the built-in animation: ease in
+            CaptureFade(A >= 0 ? A : B, blendTime);
+            m_builtinOwns = false;
+        } else if (m_stanceFade >= 0.0f) {
+            CaptureFade(A >= 0 ? A : B, m_stanceFade);   // ease into the stance's clips
+        }
+        m_stanceFade = -1.0f;
+        // Stepping off from a stand starts the walk on the same foot every time.
+        if (slotA == SlotIdle && m_smoothW <= 0.001f && w > 0.001f) m_phase = 0.0f;
+        m_smoothW = slotA == SlotIdle ? w : 1.0f;
+        m_slot = w < 0.5f ? slotA : slotB;
+        m_prevSlot = m_slot;
+        m_strideRate = rate;
+        const bool posed = BlendClips(dt * rate, A, B, w);
+        // Keep the single-clip clock on the blend's phase, so a hand-over to the discrete
+        // path (a slot left to the built-in animation) carries on from the same step.
+        if (posed && active >= 0 && active < (int)clips.size()) m_clock = m_phase * ClipLength(active);
+        return posed;
     }
 
     /// Set by a driver (e.g. an AnimStateMachine blend-tree state) that poses the
@@ -1287,6 +1473,12 @@ private:
     std::vector<std::string> m_firedEvents;   ///< event names fired since the last consume
     float                    m_clock = 0.0f;  ///< playback clock for event firing
     float                    m_phase = 0.0f;  ///< shared normalized cycle for smooth locomotion
+    float                    m_smoothW = 0.0f;      ///< last idle -> walk blend weight (a step-off restarts the walk cycle)
+    float                    m_strideRate = 1.0f;   ///< playback rate that matches the clip's steps to the ground speed
+    bool                     m_builtinOwns = false; ///< the built-in animation (not a clip) poses the model
+    int                      m_slot = SlotIdle;     ///< the locomotion slot showing (clip or built-in)
+    int                      m_prevSlot = SlotIdle; ///< the slot before the last switch
+    int                      m_airSlot = SlotFall;  ///< Jump or Fall: the air slot in use
     bool                     m_once = false;        ///< current playback is a one-shot
     bool                     m_held = false;        ///< a script holds the current clip (PlayHeld)
     int                      m_heldReturnTo = -1;   ///< clip to return to after the hold

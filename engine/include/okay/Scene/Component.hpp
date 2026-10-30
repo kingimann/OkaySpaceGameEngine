@@ -1,6 +1,7 @@
 #pragma once
 #include <unordered_set>
 #include <string>
+#include <vector>
 
 namespace okay {
 
@@ -81,6 +82,10 @@ public:
     /// creation order within the same value). IK returns 100 so it corrects the
     /// pose after every animation driver, crossfade and layer has written it.
     virtual int ExecutionOrder() const { return 0; }
+
+    /// Components that exist only to serve this one (a controller made of
+    /// parts). Removing this component removes them with it.
+    virtual void CollectOwnedParts(std::vector<Component*>& /*out*/) const {}
 
     /// Player motors return true: a water volume does not also push them.
     /// Swimming is the controller's job.

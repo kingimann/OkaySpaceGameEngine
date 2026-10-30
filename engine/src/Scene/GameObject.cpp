@@ -60,6 +60,9 @@ void GameObject::MoveComponent(Component* component, int delta) {
 
 bool GameObject::RemoveComponent(Component* component) {
     if (!component || component == transform) return false; // Transform is permanent
+    std::vector<Component*> parts;
+    component->CollectOwnedParts(parts);
+    for (Component* part : parts) RemoveComponent(part);
     for (auto it = m_components.begin(); it != m_components.end(); ++it) {
         if (it->get() == component) {
             component->OnDestroy();

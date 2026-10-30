@@ -76,9 +76,44 @@ Full reference: [`scripting.md`](scripting.md).
 - [`visual_scripting.md`](visual_scripting.md) — node-graph scripting.
 - [`steam_release.md`](steam_release.md) — shipping on Steam.
 
+## The Player Controller
+
+A first- or third-person character has exactly one controller component:
+**Player Controller** (*Add Component > Gameplay > Player Controller (first /
+third person)*). The **View** setting at the top of its Inspector panel says
+which views the player has:
+
+- **First Person only**: the eye camera. No toggle.
+- **Third Person only**: the orbit camera. No toggle.
+- **Both (toggle between them)**: a key (V by default, or the gamepad Back
+  button) switches, and the camera blends. The Both section holds the start
+  view, whether the toggle is allowed, the key, **Switch Blend Time**, easing,
+  **Snap**, **Eye Offset**, **Third Person Distance** and **Shoulder Offset**.
+
+Disabling a view is that one choice: there is no second component to remove.
+A view that is off has no settings in the panel and nothing of it is saved, so
+switching back to Both gives that view its defaults again (Undo, Ctrl+Z, brings
+the old ones back). Everything else lives in sections of the same panel:
+movement, jump, sprint, crouch, prone, lean, slide, dodge, vault and mantle,
+foot IK, the first-person eye, bob and zoom, the third-person orbit, aim and
+spring arm, and **Set Character Model...**. First Person Hands, head hiding,
+ragdolls, multiplayer ownership and the scripting calls work as before.
+
+Scripts: `set_view(0 or 1)` and `get_view()` (and the Player Controller type's
+`SetView`, `GetView`, `SetViewMode(0 first only, 1 third only, 2 both)`).
+`set_view` only switches when the View is Both.
+
+**Older scenes.** A scene saved with the separate First Person Controller,
+Third Person Controller and Player View components loads into one Player
+Controller with the same settings. One controller gives that view only; both
+give Both, with the Player View's start view, key and toggle setting. A player
+with one controller and the toggle on becomes Both. Saving writes only the new
+`playercontroller` record, and its `pcfirst...` and `pcthird...` sections, so a
+build from before this change cannot open that scene.
+
 ## Controller movement extras
 
-All three controllers (First-Person, Third-Person, Character Controller 3D)
+The Player Controller and Character Controller 3D
 share these movement niceties:
 
 - **Step Offset** (default 0.35): stairs and curbs up to this height are

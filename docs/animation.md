@@ -446,11 +446,12 @@ had and gains `hanging` false → Fall. IK weight is 0. Hands-on-ledge Limb IK i
 not wired. The move itself is a short curve: the body's colliders turn off and
 gravity is 0 until it ends. A ledge leaves the body hanging (gravity stays 0)
 and remembers the lip for `climb_up()`. `let_go()` drops without teleporting.
-`canVault`, `canMantle` and `canLedgeGrab` on the first- and third-person
-controllers default off, so walking into a wall does nothing until a game opts
+`canVault`, `canMantle` and `canLedgeGrab` on the Player Controller's
+first- and third-person settings default off, so walking into a wall does nothing until a game opts
 in. `vault()` and `mantle()` still probe. The 2.5D platformer keeps its own
 ledge motion and only sets the `hanging` bool. These flags are trailing ints on
-`fpfeel` and `tpfeel`; a build from before this change will not load a scene
+the first- and third-person feel records (`pcfirstfeel` and `pcthirdfeel`, once
+`fpfeel` and `tpfeel`); a build from before this change will not load a scene
 that saved them.
 
 Script: `play_action("Death" [, blend])` (0 if that state is missing),
@@ -728,7 +729,7 @@ Any imported model can BE your playable character — no rigging setup:
 - **Drop a model asset** (.glb/.gltf/.fbx/.obj...) from the Project panel
   **onto a player in the Hierarchy** (any object with a controller or a
   Character), or press **Set Character Model...** on the Character /
-  First-Person / Third-Person Controller in the Inspector.
+  Player Controller in the Inspector.
 - The model imports as a child of the player, auto-sized to the
   character's height and feet grounded on the capsule's origin.
 - **Facing is read from the skeleton** (its left/right thighs, arms and
@@ -739,7 +740,7 @@ Any imported model can BE your playable character — no rigging setup:
 - **The collider follows the model**: the player's Box / Capsule Collider
   is refitted around the model you see (a capsule + Rigidbody 3D are added
   when the player had none). **Fit Collider** redoes it after you rescale.
-  Adding a First/Third-Person (or other) controller from *Add Component*
+  Adding a Player Controller (or another controller) from *Add Component*
   also gives the object a fitted collider + rigidbody straight away.
 - Its animation clips are wired to locomotion automatically: clips named
   *idle/stand*, *walk*, and *run/sprint/jog* map to the auto
@@ -1265,11 +1266,12 @@ elbows bend down and out, and the object moves with the body.
   Another camera still sees the whole character. The first-person
   controller does not put the hide back, and the editor Game view does not
   invent one while the game is playing. The First Person and Third Person
-  starters put both controllers on the player, so the view you switch to is
-  the one that moves the body: first person is the eye controller, third
-  person the orbit. A scene saved by an older starter, whose player had only
-  one of the two, gets the other when it loads, with its camera mounted on
-  the player, so its V runs the same way.
+  starters put one **Player Controller** on the player with **View** set to
+  **Both**, so the view you switch to is the one that moves the body: first
+  person is the eye movement, third person the orbit. A scene saved by an
+  older starter, whose player had only one of the two, gets the other when it
+  loads, with its camera mounted on the player, so its V runs the same way.
+  See [The Player Controller](making_a_game.md#the-player-controller).
 - **Socket**: hold it at a named object inside the character (a holster, a back
   slot) instead of in front of the chest.
 - The hands never stretch: when a grip is out of reach the object comes closer

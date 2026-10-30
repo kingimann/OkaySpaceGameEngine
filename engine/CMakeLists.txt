@@ -85,6 +85,7 @@ add_library(okay_engine
     src/Components/VoxelTerrain.cpp
     src/Components/Character.cpp
     src/Components/PlayerView.cpp
+    src/Components/PlayerController.cpp
     src/Components/CharacterAnimBackend.cpp
     src/Animation/HumanoidMotion.cpp
     src/Animation/HumanoidLibrary.cpp

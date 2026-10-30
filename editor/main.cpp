@@ -25302,6 +25302,9 @@ static bool ParticleCurveEditor(EditorState& ed, const char* id, okay::ParticleC
     ImGui::PopID();
     return changed;
 }
+// Text the next CompHeader shows when its bar is hovered (a function pointer
+// takes CompHeader elsewhere, so this is not a parameter).
+static const char* sCompHeaderTip = nullptr;
 static bool CompHeader(const char* label, okay::Component* comp, okay::Component** toRemove,
                        bool removable = true) {
     const char* managed = sManagedFor == comp ? sManagedNote : nullptr;   // set by the Inspector loop for components the Character Model manages
@@ -25334,6 +25337,10 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
     ImGui::SetNextItemOpen(want, ImGuiCond_Always);
     if (!en) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.62f, 0.66f, 1.0f));
     bool open = ImGui::CollapsingHeader(title.c_str(), ImGuiTreeNodeFlags_AllowOverlap);
+    if (sCompHeaderTip) {
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", sCompHeaderTip);
+        sCompHeaderTip = nullptr;
+    }
     if (ImGui::BeginDragDropSource()) {
         const std::string payload = std::string("component\n") + label;
         ImGui::SetDragDropPayload("VS_INSPECTOR", payload.c_str(), payload.size() + 1);
@@ -25425,6 +25432,24 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
         ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f), "Managed by Character Model - you normally don't edit this.");
         ImGui::TextDisabled("%s", managed);
     }
+    return open;
+}
+
+// A Player Controller's first-person, third-person and toggle sections: parts
+// of the one panel. They draw only while that panel is open, and have no
+// Remove of their own. A bare controller (no Player Controller) keeps its header.
+static bool sPlayerControllerOpen = false;
+static okay::PlayerController* sPendingViewModeCtrl = nullptr;
+static int sPendingViewMode = 0;
+static bool PlayerPartHeader(GameObject* go, const char* label, okay::Component* part, okay::Component** toRemove,
+                             bool* owned) {
+    *owned = okay::PlayerController::Of(go) != nullptr;
+    if (!*owned) return CompHeader(label, part, toRemove);
+    if (!sPlayerControllerOpen) return false;
+    ImGui::PushID(part);
+    ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+    const bool open = ImGui::CollapsingHeader(label);
+    ImGui::PopID();
     return open;
 }
 
@@ -32826,8 +32851,9 @@ void DrawInspector(EditorState& ed) {
         }
     }
     if (auto* fp = dynamic_cast<FirstPersonController*>(curComp)) {
-        if (CompHeader("First Person Controller", fp, &toRemove)) {
-            CharacterModelTools(ed, go, "fp");
+        bool owned = false;
+        if (PlayerPartHeader(go, "First-person settings", fp, &toRemove, &owned)) {
+            if (!owned) CharacterModelTools(ed, go, "fp");
             // Movement-feel presets: speed/accel/air-control/jump tuned together.
             {
                 auto fpre = [&](int which) {
@@ -32992,12 +33018,13 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Full Body IK looks with camera##fp", &fp->ikLook)) ed.dirty = true;
 
             ImGui::TextDisabled("Mouse look + WASD. Put a Camera as a child (eye height).");
-            if (ImGui::SmallButton("Remove##fp")) toRemove = fp;
+            if (!owned && ImGui::SmallButton("Remove##fp")) toRemove = fp;
         }
     }
     if (auto* tp = dynamic_cast<ThirdPersonController*>(curComp)) {
-        if (CompHeader("Third Person Controller", tp, &toRemove)) {
-            CharacterModelTools(ed, go, "tp");
+        bool owned = false;
+        if (PlayerPartHeader(go, "Third-person settings", tp, &toRemove, &owned)) {
+            if (!owned) CharacterModelTools(ed, go, "tp");
             SectionHeader("Movement");
             // Same movement-feel presets as the First Person controller.
             {
@@ -33193,7 +33220,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Full Body IK looks with camera##tp", &tp->ikLook)) ed.dirty = true;
 
             ImGui::TextDisabled("Orbit camera (mouse/wheel) + WASD/stick. Uses the main Camera.");
-            if (ImGui::SmallButton("Remove##tp")) toRemove = tp;
+            if (!owned && ImGui::SmallButton("Remove##tp")) toRemove = tp;
         }
     }
     // grok/view-toggle: one player, first person or third, switched at play.
@@ -33202,8 +33229,29 @@ void DrawInspector(EditorState& ed) {
     if (auto* ql = dynamic_cast<QuestLog*>(curComp)) { if (CompHeader("Quest Log", ql, &toRemove)) QuestLogInspector(ed, *ql); }
     if (auto* qt = dynamic_cast<QuestTrigger*>(curComp)) { if (CompHeader("Quest Trigger", qt, &toRemove)) QuestTriggerInspector(ed, *qt); }
     if (auto* ss = dynamic_cast<StoryState*>(curComp)) { if (CompHeader("Story State", ss, &toRemove)) StoryStateInspector(ed, *ss); }
+    if (auto* pc = dynamic_cast<PlayerController*>(curComp)) {
+        sCompHeaderTip = "The one controller for a first / third person character. View chooses which views the player has; "
+                         "a view that is off has no settings here and nothing of it is saved.";
+        sPlayerControllerOpen = CompHeader("Player Controller", pc, &toRemove);
+        pc->SyncEnabled();
+        if (sPlayerControllerOpen) {
+            int mode = (int)pc->viewMode();
+            const char* modes[] = {"First Person only", "Third Person only", "Both"};
+            if (ImGui::Combo("View##pc", &mode, modes, 3) && mode != (int)pc->viewMode()) {
+                sPendingViewModeCtrl = pc; sPendingViewMode = mode;
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Which views the player has.\nBoth: a key switches between them and the camera blends.\n"
+                                  "One view only: no toggle, and the other view's settings are dropped.");
+            CharacterModelTools(ed, go, "pc");
+            if (pc->viewMode() != PlayerController::ViewMode::Both)
+                ImGui::TextDisabled("%s only. Pick Both to let the player switch.",
+                                    pc->viewMode() == PlayerController::ViewMode::First ? "First person" : "Third person");
+        }
+    }
     if (auto* pv = dynamic_cast<PlayerView*>(curComp)) {
-        if (CompHeader("Player View", pv, &toRemove)) {
+        bool owned = false;
+        if (PlayerPartHeader(go, "View toggle", pv, &toRemove, &owned)) {
             if (ImGui::Checkbox("Allow Toggle##pv", &pv->allowToggle)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("V (or the gamepad button) switches first and third person. Off leaves the controller's camera alone.");
             {
@@ -33249,8 +33297,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Orbit distance while this view is driving. -1 uses the controller's own distance.");
             if (ImGui::DragFloat("Shoulder Offset##pv", &pv->shoulderOffset, 0.01f, -3.0f, 3.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Over-the-shoulder shift while this view is driving.");
-            ImGui::TextDisabled("Sits on a First Person or Third Person controller. V eases between the eyes and the orbit.");
-            if (ImGui::SmallButton("Remove##pv")) toRemove = pv;
+            ImGui::TextDisabled("V eases between the eyes and the orbit.");
+            if (!owned && ImGui::SmallButton("Remove##pv")) toRemove = pv;
         }
     }
     // grok/ui-theme: a saved skin. Apply bakes it; existing widgets stay put until then.
@@ -36413,6 +36461,15 @@ void DrawInspector(EditorState& ed) {
     DrawSplineInspector(ed, go, curComp, toRemove, &CompHeader);       // Spline family, Line / Trail Renderer
     } // end component-order loop
 
+    // A View change adds and removes the controller's parts: after the loop that walks them.
+    if (sPendingViewModeCtrl) {
+        ed.PushUndo();
+        sPendingViewModeCtrl->SetViewMode(sPendingViewMode <= 0 ? PlayerController::ViewMode::First
+                                          : sPendingViewMode == 1 ? PlayerController::ViewMode::Third
+                                                                  : PlayerController::ViewMode::Both);
+        sPendingViewModeCtrl = nullptr;
+        ed.dirty = true;
+    }
     // Apply a queued component removal (undoable).
     if (toRemove) { ed.PushUndo(); go->RemoveComponent(toRemove); ed.dirty = true; }
 
@@ -36700,15 +36757,11 @@ void DrawInspector(EditorState& ed) {
           if (o) {
             if (item(!go->GetComponent<CharacterController2D>(), "Character Controller 2D")) { go->AddComponent<CharacterController2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<CharacterController3D>(), "Character Controller 3D")) { ed.PushUndo(); go->AddComponent<CharacterController3D>(); SetupControllerBody(ed, go); ed.dirty = true; }
-            if (item(!go->GetComponent<FirstPersonController>(), "First Person Controller")) { ed.PushUndo(); go->AddComponent<FirstPersonController>(); SetupControllerBody(ed, go); ed.dirty = true; }
-            if (item(!go->GetComponent<ThirdPersonController>(), "Third Person Controller")) { ed.PushUndo(); go->AddComponent<ThirdPersonController>(); SetupControllerBody(ed, go); ed.dirty = true; }
-            // grok/view-toggle
-            if (item(!go->GetComponent<PlayerView>(), "Player View (first / third toggle)")) {
+            if (item(!PlayerController::Of(go) && !go->GetComponent<FirstPersonController>() && !go->GetComponent<ThirdPersonController>(),
+                     "Player Controller (first / third person)")) {
                 ed.PushUndo();
-                auto* pv = go->AddComponent<PlayerView>();
-                pv->allowToggle = true;
-                if (go->GetComponent<FirstPersonController>() && !go->GetComponent<ThirdPersonController>())
-                    pv->defaultView = PlayerView::View::First;
+                PlayerController::Add(go);
+                SetupControllerBody(ed, go);
                 ed.dirty = true;
             }
             if (item(!go->GetComponent<TopDownController>(), "Top Down Controller (3D)")) { ed.PushUndo(); go->AddComponent<TopDownController>(); SetupControllerBody(ed, go); ed.dirty = true; }

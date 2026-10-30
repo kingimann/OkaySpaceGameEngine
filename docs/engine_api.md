@@ -99,12 +99,22 @@ A physics body: velocity, mass and forces. The object needs a Rigidbody componen
 
 ## PlayerView
 
-Switches one player between first person and third person. The object needs a Player View.
+Switches one player between first person and third person. A Player Controller with View set to Both has one; PlayerController has the same calls.
 
 | In a script | Node | Kind | Inputs | Gives | What it does |
 |---|---|---|---|---|---|
 | `GetComponent<PlayerView>().SetView(view)` | `PlayerView.SetView/1` | step | view (Number), Target (Object) | - | Ease to a view: 0 first person (camera at the eyes), 1 third person (over the shoulder). |
 | `GetComponent<PlayerView>().GetView()` | `PlayerView.GetView/0` | value | Target (Object) | Result (Number) | The view asked for: 0 first person, 1 third person. The camera may still be on its way there. |
+
+## PlayerController
+
+The first / third person controller. Its View says which views the player has; SetView only switches when it is Both.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<PlayerController>().SetView(view)` | `PlayerController.SetView/1` | step | view (Number), Target (Object) | - | Ease to a view: 0 first person, 1 third person. Does nothing unless the View is Both. |
+| `GetComponent<PlayerController>().GetView()` | `PlayerController.GetView/0` | value | Target (Object) | Result (Number) | The view the player is in: 0 first person, 1 third person. |
+| `GetComponent<PlayerController>().SetViewMode(mode)` | `PlayerController.SetViewMode/1` | step | mode (Number), Target (Object) | - | Which views the player has: 0 first person only, 1 third person only, 2 both. |
 
 ## UIColorPicker
 

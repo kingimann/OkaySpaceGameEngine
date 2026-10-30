@@ -23,6 +23,7 @@
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/PlayerView.hpp"
+#include "okay/Components/PlayerController.hpp"
 #include "okay/Components/FirstPersonHand.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/TopDownController.hpp"
@@ -180,15 +181,16 @@ inline void AddTemplateHoldables(Scene& scene, GameObject* player) {
     }
 }
 
-/// Both view controllers, one view toggle, and First Person Hands. First person
-/// is the eye controller either way; `start` is only which view a fresh play
-/// begins in. The legacy single hand is not mounted.
+/// One Player Controller with both views (the V toggle), and First Person
+/// Hands. First person is the eye controller either way; `start` is only which
+/// view a fresh play begins in. The legacy single hand is not mounted.
 inline PlayerView* AddSharedView(GameObject* player, PlayerView::View start, float shoulder = 0.0f) {
-    if (!player->GetComponent<FirstPersonController>()) player->AddComponent<FirstPersonController>();
-    if (!player->GetComponent<ThirdPersonController>()) player->AddComponent<ThirdPersonController>();
+    auto* pc = PlayerController::Of(player);
+    if (!pc) pc = PlayerController::Add(player, PlayerController::ViewMode::Both, start);
     if (!player->GetComponent<FirstPersonHands>()) player->AddComponent<FirstPersonHands>();
-    if (auto* existing = player->GetComponent<PlayerView>()) return existing;
-    return AddViewToggle(player, start, shoulder);
+    PlayerView* pv = pc->toggle();
+    if (pv) { pv->defaultView = start; pv->shoulderOffset = shoulder; }
+    return pv;
 }
 
 /// The eye camera both views share. The orbit repositions this same camera
@@ -355,7 +357,7 @@ inline GameObject* BuildHumanoidBody(Scene& scene, const Vec3& pos, const char* 
 /// all wired. This is the "model.transform just works" row made real.
 inline GameObject* AddHumanoidPlayer(Scene& scene, const Vec3& pos = {0, 1, 0}) {
     GameObject* player = BuildHumanoidBody(scene, pos, "Player");
-    player->AddComponent<ThirdPersonController>();
+    PlayerController::Add(player, PlayerController::ViewMode::Third);
     EnsureMainCamera(scene);
     return player;
 }
@@ -1411,8 +1413,7 @@ inline void TerrainSandbox(Scene& scene) {
     }
     // Right mouse raises terrain (TerrainDigger). Aim-down-sights zoom uses that
     // same button, and it pulled the view in while building up ground.
-    auto* fp = player->AddComponent<FirstPersonController>();
-    fp->zoomWithRightMouse = false;
+    PlayerController::Add(player, PlayerController::ViewMode::First)->first()->zoomWithRightMouse = false;
 
     GameObject* camObj = scene.CreateGameObject("FPS Camera");
     auto* cam = camObj->AddComponent<Camera>();
@@ -1527,8 +1528,7 @@ inline void VoxelSandbox(Scene& scene) {
     }
     // Right mouse fills terrain (VoxelDigger). The controller's aim-down-sights
     // zoom is the same button, and it pulled the view from 60° to 40° while placing.
-    auto* fp = player->AddComponent<FirstPersonController>();
-    fp->zoomWithRightMouse = false;
+    PlayerController::Add(player, PlayerController::ViewMode::First)->first()->zoomWithRightMouse = false;
     player->AddComponent<ProceduralObjectHolding>();   // G / middle mouse / pad X: pick up, hold to throw
 
     // Something to pick up and throw, a step in front of the spawn.

@@ -640,6 +640,10 @@ add_executable(test_view_upgrade test_view_upgrade.cpp)
 target_link_libraries(test_view_upgrade PRIVATE okay::engine)
 add_test(NAME view_upgrade COMMAND test_view_upgrade)
 
+add_executable(test_player_controller test_player_controller.cpp)
+target_link_libraries(test_player_controller PRIVATE okay::engine)
+add_test(NAME player_controller COMMAND test_player_controller)
+
 # The account service core is header-only, so this test just needs the engine's
 # public include path and C++17 — no engine link required.
 add_executable(test_account test_account.cpp)

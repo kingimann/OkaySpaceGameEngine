@@ -36,6 +36,7 @@
 #include "okay/Components/FirstPersonHand.hpp"
 #include "okay/Components/Flashlight.hpp"
 #include "okay/Components/PlayerView.hpp"
+#include "okay/Components/PlayerController.hpp"
 #include <string>
 
 namespace okay {
@@ -97,6 +98,7 @@ private:
     static void StripInput(GameObject* go) {
         if (!go) return;
         go->RemoveComponent<Camera>();
+        go->RemoveComponent<PlayerController>();   // takes its first / third person parts with it
         go->RemoveComponent<FirstPersonController>();
         go->RemoveComponent<ThirdPersonController>();
         go->RemoveComponent<ThirdPersonShooterController>();

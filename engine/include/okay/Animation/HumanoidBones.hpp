@@ -153,8 +153,11 @@ inline void Collect(Transform* t, std::vector<Transform*>& out) {
 } // namespace detail
 
 /// Map the humanoid bones under `root` (its strict descendants) and check the
-/// skeleton's shape.
-inline BoneMap MapHumanoidBones(GameObject* root) {
+/// skeleton's shape. `byHand` (BoneCount names, or null) pins slots to bones
+/// chosen by hand, for rigs whose names say nothing ("Bone.001", "joint12"):
+/// a name maps that slot to the descendant with exactly that name, "-" leaves
+/// the slot empty, "" keeps the automatic pick. The shape checks still apply.
+inline BoneMap MapHumanoidBones(GameObject* root, const std::string* byHand = nullptr) {
     using namespace detail;
     BoneMap m;
     if (!root || !root->transform) return m;
@@ -175,10 +178,6 @@ inline BoneMap MapHumanoidBones(GameObject* root) {
             if (IsNeckName(g->name) && (!m.neck || d < neckDepth)) { m.neck = g; neckDepth = d; }
             continue;
         }
-        if (b >= LThigh) {   // "front_leg_l", "hind_thigh_r": more than two legs
-            const std::string nm = StripBoneName(g->name);
-            for (const char* w : {"front", "back", "hind", "rear"}) if (nm.find(w) != std::string::npos) fourLegged = true;
-        }
         if (b == Torso) torso.push_back({d, g});
         // Better score wins; on a tie the torso keeps the DEEPEST spine link
         // (spine_03 over spine_01, the one the arms hang from), everything else the shallowest.
@@ -188,11 +187,27 @@ inline BoneMap MapHumanoidBones(GameObject* root) {
         }
         m.bone[b] = g; score[b] = sc; depth[b] = d;
     }
+    if (byHand)
+        for (int b = 0; b < BoneCount; ++b) {
+            const std::string& want = byHand[b];
+            if (want.empty()) continue;
+            m.bone[b] = nullptr;
+            if (want == "-") continue;
+            for (Transform* t : all)
+                if (t != root->transform && t->gameObject && t->gameObject->name == want) { m.bone[b] = t->gameObject; break; }
+        }
+    // "front_leg_l", "hind_thigh_r": the legs picked are a quadruped's.
+    for (int b = LThigh; b <= RFoot; ++b)
+        if (m.bone[b]) {
+            const std::string nm = StripBoneName(m.bone[b]->name);
+            for (const char* w : {"front", "back", "hind", "rear"}) if (nm.find(w) != std::string::npos) fourLegged = true;
+        }
     for (GameObject* g : m.bone) m.found += g != nullptr;
     // The spine chain: the torso link and the spine links above it, shallowest first.
     if (GameObject* chest = m.bone[Torso]) {
+        m.spine.push_back(chest);
         for (const auto& e : torso)
-            if (e.second == chest || Under(chest, e.second)) m.spine.push_back(e.second);
+            if (e.second != chest && Under(chest, e.second)) m.spine.push_back(e.second);
         std::sort(m.spine.begin(), m.spine.end(), [&](GameObject* a, GameObject* b) {
             return Depth(a->transform, root->transform) < Depth(b->transform, root->transform);
         });

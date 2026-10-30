@@ -63,9 +63,12 @@ ModelReport AnalyzeModel(Scene& scene, GameObject* root);
 /// matching bones by name.
 /// Returns how many of the 15 humanoid bones were found (< 8 = not set up;
 /// `outLog` says why).
-int EnableBuiltinAnimations(Scene& scene, GameObject* modelRoot, std::string* outLog = nullptr);
+/// `byHand`: bones picked by hand (HumanoidRetarget::boneMap, BoneCount names), or null.
+int EnableBuiltinAnimations(Scene& scene, GameObject* modelRoot, std::string* outLog = nullptr,
+                            const std::string* byHand = nullptr);
 /// How many of the 15 humanoid bones a model's skeleton has (0 = not a humanoid rig).
-int CountHumanoidBones(Scene& scene, GameObject* modelRoot, std::string* why = nullptr);
+int CountHumanoidBones(Scene& scene, GameObject* modelRoot, std::string* why = nullptr,
+                       const std::string* byHand = nullptr);
 
 /// World-space bounds of every mesh under `root` as currently posed (skinned
 /// meshes deformed from their joints, whatever the renderer's skinning mode).

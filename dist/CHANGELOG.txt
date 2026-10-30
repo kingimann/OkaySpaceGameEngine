@@ -1,5 +1,25 @@
 OkaySpace Game Engine — Changelog
 
+v2.841.0
+  Game systems
+  - Navigation meshes: bake a walkable surface, ask for paths, and move
+    agents along them, with an editor window (#514).
+  - Cutscenes: sequences of camera, animation, audio and script steps, a
+    Sequence Player and a Timeline window (#515).
+  - Dialogue and quests: dialogue graphs, a runner, story state, a quest
+    log and an editor window (#516).
+  - Behavior trees: assets, blackboards, a runner, script commands and an
+    editor window, with a Start Dialogue task (#517, #519).
+  - Localization: string tables, a Localization window, localized text,
+    dialogue and fonts (#520).
+  Look
+  - Post-processing, a procedural sky, fog modes and weather (#518).
+  Characters
+  - Imported characters whose bones have names the engine can't read
+    ("Bone.001") can now be mapped by hand: right-click the model, choose
+    Map Humanoid Bones, and pick each body bone. The built-in animations
+    then play on it, and the choice is saved with the scene (#522).
+
 v2.840.0
   Characters and view
   - Switching to third person with V no longer hides the character's head

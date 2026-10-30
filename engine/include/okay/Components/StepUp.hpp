@@ -98,9 +98,17 @@ struct PlatformRide {
     GameObject* platform = nullptr;
     Vec3 lastPos{0.0f, 0.0f, 0.0f};
     Vec3 applied{0.0f, 0.0f, 0.0f};   ///< translation added to the rider this call
+    Quat lastRot = Quat::Identity;    ///< the platform's rotation last call
+    float appliedYaw = 0.0f;          ///< degrees the platform turned about Y this call
 };
+/// The turn about the up axis (degrees) carried by `q` (its twist about Y).
+inline float TwistYawDeg(Quat q) {
+    if (q.w < 0.0f) { q.x = -q.x; q.y = -q.y; q.z = -q.z; q.w = -q.w; }   // q and -q are one rotation: take the short way
+    return 2.0f * std::atan2(q.y, q.w) * Mathf::Rad2Deg;
+}
 inline void RideMovingPlatform(Scene& sc, GameObject* go, PlatformRide& st, bool grounded) {
     st.applied = {0.0f, 0.0f, 0.0f};
+    st.appliedYaw = 0.0f;
     if (!go || !go->transform) { st.platform = nullptr; return; }
     GameObject* plat = nullptr;
     if (grounded) {
@@ -115,15 +123,27 @@ inline void RideMovingPlatform(Scene& sc, GameObject* go, PlatformRide& st, bool
     }
     if (plat && plat == st.platform) {
         Vec3 cur = plat->transform->Position();
+        Quat rot = plat->transform->Rotation();
+        // A turntable carries the rider round its pivot: swing the rider's
+        // position about the platform by the platform's turn since last call.
+        float yaw = TwistYawDeg(rot * st.lastRot.Inverse());
+        if (std::fabs(yaw) > 1e-4f) {
+            Vec3 rel = go->transform->Position() - st.lastPos;
+            Vec3 turned = Quat::AngleAxis(yaw, Vec3::Up) * rel;
+            go->transform->SetPosition(st.lastPos + turned);
+            st.appliedYaw = yaw;
+        }
         Vec3 d{cur.x - st.lastPos.x, cur.y - st.lastPos.y, cur.z - st.lastPos.z};
         if (d.x != 0.0f || d.y != 0.0f || d.z != 0.0f) {
             go->transform->SetPosition(go->transform->Position() + d);
             st.applied = d;
         }
         st.lastPos = cur;
+        st.lastRot = rot;
     } else if (plat) {
         st.platform = plat;
         st.lastPos = plat->transform->Position();
+        st.lastRot = plat->transform->Rotation();
     } else {
         st.platform = nullptr;
     }

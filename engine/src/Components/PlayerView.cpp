@@ -1,4 +1,5 @@
 #include "okay/Components/PlayerView.hpp"
+#include "okay/Components/PlayerController.hpp"
 #include "okay/Components/PlayerCamera.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
@@ -374,6 +375,8 @@ void PlayerView::ConformPitch(float& pitch, bool thirdController, float nativeMi
 }
 
 PlayerView* PlayerView::FindForScript(GameObject* self, bool create) {
+    // A Player Controller owns its toggle: its View setting decides, not a script.
+    if (PlayerController* pc = PlayerController::Of(self)) return pc->toggle();
     auto climb = [](GameObject* g) -> PlayerView* {
         for (int n = 0; g && n < 8; ++n) {
             if (auto* v = g->GetComponent<PlayerView>()) return v;
@@ -400,7 +403,7 @@ PlayerView* PlayerView::FindForScript(GameObject* self, bool create) {
             for (auto* c : sc->FindObjectsOfType<FirstPersonController>())
                 if (c && c->gameObject) { host = c->gameObject; break; }
     }
-    if (!host) return nullptr;
+    if (!host || PlayerController::Of(host)) return nullptr;
     PlayerView* v = host->AddComponent<PlayerView>();
     v->allowToggle = true;
     if (host->GetComponent<FirstPersonController>() && !host->GetComponent<ThirdPersonController>())

@@ -19,6 +19,7 @@
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/PlayerView.hpp"
+#include "okay/Components/PlayerController.hpp"
 #include "okay/Components/UITheme.hpp"          // grok/ui-theme
 #include "okay/Components/SequencePlayer.hpp"
 #include "okay/Components/VehicleController.hpp"
@@ -1984,8 +1985,27 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         WriteRecipeExtras(out, c->recipes);
         out << "\n";
     }
+    // A Player Controller is one record plus a section per view it has. Bare
+    // controllers (code that adds them by hand) keep their own records, which
+    // load back into a Player Controller.
+    const auto* pcOwner = go->GetComponent<PlayerController>();
+    if (pcOwner) {
+        out << "  playercontroller";
+        KvOut k{out};
+        k("view", (int)pcOwner->viewMode());
+        if (auto* pv = pcOwner->toggle()) {
+            k.b("allow", pv->allowToggle)("start", (int)pv->defaultView).key("key", pv->toggleKey)
+             ("pad", pv->toggleGamepadButton)("blend", pv->blendTime)
+             ("ease", (int)pv->switchEase).b("snap", pv->snapSwitch)
+             ("ex", pv->eyeOffset.x)("ey", pv->eyeOffset.y)("ez", pv->eyeOffset.z)
+             ("dist", pv->thirdPersonDistance)("shoulder", pv->shoulderOffset);
+        }
+        out << "\n";
+    }
+    const char* fpName = pcOwner ? "pcfirst" : "fpctrl";
+    const char* tpName = pcOwner ? "pcthird" : "tpctrl";
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
-        out << "  fpctrl " << fp->walkSpeed << " " << fp->runSpeed << " " << fp->jumpForce << " "
+        out << "  " << fpName << " " << fp->walkSpeed << " " << fp->runSpeed << " " << fp->jumpForce << " "
             << fp->mouseSensitivity << " " << (fp->canJump ? 1 : 0) << " " << (fp->driveAnimation ? 1 : 0)
             << " " << (fp->invertY ? 1 : 0)
             // extended (back-compatible trailing fields): momentum + jump feel
@@ -2006,7 +2026,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     if (auto* fp = go->GetComponent<FirstPersonController>()) {
         // Feel / slide / hooks (separate record: older builds skip it).
-        out << "  fpfeel " << fp->lookSmoothing << " " << fp->sprintFovBoost << " " << fp->fovLerp
+        out << "  " << (pcOwner ? "pcfirstfeel" : "fpfeel") << " " << fp->lookSmoothing << " " << fp->sprintFovBoost << " " << fp->fovLerp
             << " " << (fp->zoomWithRightMouse ? 1 : 0) << " " << fp->zoomFov << " " << fp->zoomSensitivity
             << " " << fp->landDip << " " << (fp->canSlide ? 1 : 0) << " " << fp->slideSpeed << " " << fp->slideTime
             << " " << fp->slideEyeHeight << " " << (fp->driveStateMachine ? 1 : 0) << " " << (fp->ikLook ? 1 : 0)
@@ -2018,7 +2038,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << fp->dodge.stamina << " " << (fp->dodge.iFrames ? 1 : 0)
             // Traversal flags. Older loaders do not skip these trailing ints.
             << " " << (fp->canVault ? 1 : 0) << " " << (fp->canMantle ? 1 : 0) << " " << (fp->canLedgeGrab ? 1 : 0) << "\n";
-        out << "  fpstance";
+        out << "  " << (pcOwner ? "pcfirststance" : "fpstance");
         KvOut k{out};
         k.b("prone", fp->allowProne).b("resize", fp->resizeBody)("crouchH", fp->crouchHeight)("proneH", fp->proneHeight)
          ("pad", fp->stanceGamepadButton)("hold", fp->proneHoldTime)
@@ -2028,7 +2048,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "\n";
     }
     if (auto* tp = go->GetComponent<ThirdPersonController>()) {
-        out << "  tpctrl " << tp->walkSpeed << " " << tp->runSpeed << " " << tp->jumpForce << " "
+        out << "  " << tpName << " " << tp->walkSpeed << " " << tp->runSpeed << " " << tp->jumpForce << " "
             << tp->mouseSensitivity << " " << tp->turnSpeed << " " << tp->distance << " "
             << tp->cameraHeight << " " << (tp->canJump ? 1 : 0) << " " << (tp->driveAnimation ? 1 : 0)
             // extended (optional, back-compatible trailing fields)
@@ -2057,7 +2077,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << tp->pivotDampingXZ << " " << tp->pivotDampingY << " " << tp->maxPivotLag
             << " " << tp->orbitSmoothing << " " << tp->cameraCollisionRadius << " " << tp->cameraCollisionMask
             << " " << tp->cameraCollisionPullIn << " " << tp->cameraCollisionRecover << "\n";
-        out << "  tpstance";
+        out << "  " << (pcOwner ? "pcthirdstance" : "tpstance");
         KvOut k{out};
         k.b("prone", tp->allowProne).b("resize", tp->resizeBody)("crouchH", tp->crouchHeight)("proneH", tp->proneHeight)
          ("pad", tp->stanceGamepadButton)("hold", tp->proneHoldTime)
@@ -2067,7 +2087,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         out << "\n";
     }
     if (auto* tp = go->GetComponent<ThirdPersonController>()) {
-        out << "  tpfeel " << tp->lookSmoothing << " " << tp->sprintFovBoost << " " << tp->fovLerp
+        out << "  " << (pcOwner ? "pcthirdfeel" : "tpfeel") << " " << tp->lookSmoothing << " " << tp->sprintFovBoost << " " << tp->fovLerp
             << " " << (tp->aimWithRightMouse ? 1 : 0) << " " << tp->aimDistance << " " << tp->aimShoulder
             << " " << tp->aimFov << " " << tp->aimSensitivity << " " << tp->aimLerp
             << " " << (tp->autoRecenter ? 1 : 0) << " " << tp->recenterDelay << " " << tp->recenterSpeed
@@ -2082,7 +2102,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     }
     // Player view toggle (grok/view-toggle). Its own record, so older scenes skip it.
     // Fields: allow, view (0 first / 1 third), key, pad, blend, ex ey ez, dist, shoulder.
-    if (auto* pv = go->GetComponent<PlayerView>()) {
+    if (auto* pv = pcOwner ? nullptr : go->GetComponent<PlayerView>()) {
         out << "  playerview";
         KvOut k{out};
         k.b("allow", pv->allowToggle)("view", (int)pv->defaultView).key("key", pv->toggleKey)
@@ -3336,6 +3356,27 @@ bool SceneSerializer::SaveToFile(const Scene& scene, const std::string& path) {
         return !ce;
     }
     return true;
+}
+
+// The view-toggle keys of a PlayerView. `viewKey` names the start view: the
+// legacy "playerview" record calls it "view", the Player Controller "start".
+static void ReadPlayerViewKeys(KvIn& k, PlayerView* pv, const char* viewKey) {
+    k.b("allow", pv->allowToggle);
+    int view = (int)pv->defaultView;
+    k.i(viewKey, view);
+    pv->defaultView = (view == 0) ? PlayerView::View::First : PlayerView::View::Third;
+    k.key("key", pv->toggleKey);
+    k.i("pad", pv->toggleGamepadButton);
+    k.f("blend", pv->blendTime);
+    int ease = (int)pv->switchEase;
+    k.i("ease", ease);
+    if (ease < 0) ease = 0;
+    if (ease > 3) ease = 3;
+    pv->switchEase = (PlayerView::SwitchEase)ease;
+    k.b("snap", pv->snapSwitch);
+    k.f("ex", pv->eyeOffset.x); k.f("ey", pv->eyeOffset.y); k.f("ez", pv->eyeOffset.z);
+    k.f("dist", pv->thirdPersonDistance);
+    k.f("shoulder", pv->shoulderOffset);
 }
 
 // Files from before version 3 came from starters whose First Person and Third
@@ -5425,7 +5466,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     }
                     in >> std::ws;   // optional recipe book + recipe extras
                     if (in.peek() == '"') { c->recipeBook = ReadQuoted(in); ReadRecipeExtras(in, c->recipes); }
-                } else if (field == "fpfeel") {
+                } else if (field == "fpfeel" || field == "pcfirstfeel") {
                     if (auto* fp = go->GetComponent<FirstPersonController>()) {
                         int z = 1, sl = 1, sm = 1, ik = 1;
                         in >> fp->lookSmoothing >> fp->sprintFovBoost >> fp->fovLerp >> z >> fp->zoomFov >> fp->zoomSensitivity
@@ -5453,7 +5494,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             fp->canVault = cv != 0; fp->canMantle = cm != 0; fp->canLedgeGrab = cl != 0;
                         }
                     }
-                } else if (field == "tpfeel") {
+                } else if (field == "tpfeel" || field == "pcthirdfeel") {
                     if (auto* tp = go->GetComponent<ThirdPersonController>()) {
                         int a = 1, rc = 0, sl = 1, sm = 1, ik = 1;
                         in >> tp->lookSmoothing >> tp->sprintFovBoost >> tp->fovLerp >> a >> tp->aimDistance >> tp->aimShoulder
@@ -5474,26 +5515,24 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             tp->canVault = cv != 0; tp->canMantle = cm != 0; tp->canLedgeGrab = cl != 0;
                         }
                     }
+                } else if (field == "playercontroller") {
+                    // One controller for both views. Its sections (pcfirst..., pcthird...)
+                    // follow; a view the player does not have has none.
+                    KvIn k(in);
+                    int mode = (int)PlayerController::ViewMode::Both;
+                    k.i("view", mode);
+                    auto* pc = go->AddComponent<PlayerController>(
+                        mode <= 0 ? PlayerController::ViewMode::First
+                        : mode == 1 ? PlayerController::ViewMode::Third : PlayerController::ViewMode::Both);
+                    if (pc->viewMode() == PlayerController::ViewMode::Both) {
+                        auto* pv = go->AddComponent<PlayerView>();
+                        ReadPlayerViewKeys(k, pv, "start");
+                    }
                 } else if (field == "playerview") {
                     // grok/view-toggle. key=value record; missing keys keep the defaults.
                     auto* pv = go->AddComponent<PlayerView>();
                     KvIn k(in);
-                    k.b("allow", pv->allowToggle);
-                    int view = (int)pv->defaultView;
-                    k.i("view", view);
-                    pv->defaultView = (view == 0) ? PlayerView::View::First : PlayerView::View::Third;
-                    k.key("key", pv->toggleKey);
-                    k.i("pad", pv->toggleGamepadButton);
-                    k.f("blend", pv->blendTime);
-                    int ease = (int)pv->switchEase;
-                    k.i("ease", ease);
-                    if (ease < 0) ease = 0;
-                    if (ease > 3) ease = 3;
-                    pv->switchEase = (PlayerView::SwitchEase)ease;
-                    k.b("snap", pv->snapSwitch);
-                    k.f("ex", pv->eyeOffset.x); k.f("ey", pv->eyeOffset.y); k.f("ez", pv->eyeOffset.z);
-                    k.f("dist", pv->thirdPersonDistance);
-                    k.f("shoulder", pv->shoulderOffset);
+                    ReadPlayerViewKeys(k, pv, "view");
                 } else if (field == "uitheme") {
                     // grok/ui-theme. Missing keys keep the Studio defaults.
                     auto* th = go->AddComponent<UITheme>();
@@ -5533,7 +5572,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     k.col("edge", th->border);
                     k.col("sh", th->shadowCol);
                     k.col("glowc", th->glowColor);
-                } else if (field == "fpctrl") {
+                } else if (field == "fpctrl" || field == "pcfirst") {
                     float ws = 4.5f, rs = 8, jf = 6, ms = 0.15f; int cj = 1, da = 1, iy = 0;
                     in >> ws >> rs >> jf >> ms >> cj >> da;
                     in >> std::ws; if (std::isdigit(in.peek())) in >> iy;   // optional invertY
@@ -5576,7 +5615,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                             }
                         }
                     }
-                } else if (field == "tpctrl") {
+                } else if (field == "tpctrl" || field == "pcthird") {
                     float ws = 4.5f, rs = 8, jf = 6, ms = 0.2f, ts = 12, ds = 5, ch = 1.5f; int cj = 1, da = 1;
                     in >> ws >> rs >> jf >> ms >> ts >> ds >> ch >> cj >> da;
                     auto* tp = go->AddComponent<ThirdPersonController>();
@@ -5685,7 +5724,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     k.f("radius", rd->radius); k.i("iters", rd->iterations); k.f("maxSpeed", rd->maxSpeed);
                     k.b("onDeath", rd->ragdollOnDeath); k.f("deathPush", rd->deathImpulse);
                     k.b("hits", rd->hitReactions); k.f("hitPush", rd->hitImpulse); k.f("recover", rd->hitRecover);
-                } else if (field == "fpstance" || field == "tpstance") {
+                } else if (field == "fpstance" || field == "pcfirststance" || field == "tpstance" || field == "pcthirdstance") {
                     // Stance options for the controller declared just above (crouch/prone body).
                     KvIn k(in);
                     auto load = [&](auto* c) {
@@ -5699,7 +5738,7 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                         using S = typename std::remove_pointer_t<decltype(c)>::Stance;
                         if (st == (int)S::Crouch || st == (int)S::Prone) c->RestoreStance(static_cast<S>(st));
                     };
-                    if (field == "fpstance") load(go->GetComponent<FirstPersonController>());
+                    if (field == "fpstance" || field == "pcfirststance") load(go->GetComponent<FirstPersonController>());
                     else                     load(go->GetComponent<ThirdPersonController>());
                 } else if (field == "cc3dstance") {
                     auto* c = go->GetComponent<CharacterController3D>(); ReadStanceControl(in, c ? &c->stanceControl : nullptr);
@@ -7754,6 +7793,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
         std::sort(order.begin(), order.end());
         for (int idx : order) CompleteViewToggle(scene, byIndex[idx]);
     }
+    // Bare first / third person controllers and view toggles (every scene saved
+    // before the Player Controller) move under one. Whole scenes and clones alike.
+    for (auto& [idx, go] : byIndex) { (void)idx; PlayerController::Adopt(go); }
     // Default graphs saved before a built-in action existed gain that action once.
     for (auto& [idx, go] : byIndex) {
         (void)idx;

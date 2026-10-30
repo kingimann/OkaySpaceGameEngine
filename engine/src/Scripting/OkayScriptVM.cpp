@@ -25,6 +25,7 @@
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/PlayerView.hpp"
+#include "okay/Components/PlayerController.hpp"
 #include "okay/Components/UITheme.hpp"          // grok/ui-theme
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/AnimControl.hpp"
@@ -5749,6 +5750,7 @@ struct OkayScriptVM::Impl {
         };
         b["get_view"] = [selfObj](std::vector<Value>&) {
             GameObject* g = selfObj();
+            if (PlayerController* pc = PlayerController::Of(g)) return Value{(float)pc->CurrentView()};
             PlayerView* v = g ? PlayerView::FindForScript(g, false) : nullptr;
             return Value{v ? (float)v->GetView() : -1.0f};
         };

@@ -282,8 +282,8 @@ players itself. A dedicated server can do the same with `--authoritative` or
 
 - Each client names the object its inputs drive: its own SpawnOwned player
   (`SetPawn(obj)`, `net_set_pawn("Player")`). The object needs a controller that
-  can be driven by inputs: Character Controller 3D, First Person Controller,
-  Third Person Controller, Character Controller 2D and Top Down Controller 2D
+  can be driven by inputs: Character Controller 3D, Player Controller (first and
+  third person), Character Controller 2D and Top Down Controller 2D
   can. Look (yaw, pitch), stance, lean, sprint, jump, dash, fire and aim/zoom
   all travel in the input. A Top Down Controller 2D facing the mouse sends its
   aim as an angle, so the host turns and shoots the same way.

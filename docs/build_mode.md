@@ -89,7 +89,7 @@ act on.
 The default keys avoid the ones the stock controllers use (Q / E lean, Z prone,
 C crafting menu, F flashlight). Two overlaps remain:
 
-- **Right click** also zooms the First Person Controller while it's held. Use
+- **Right click** also zooms the Player Controller's first-person view while it's held. Use
   **X** to delete, or turn off the controller's **Right-mouse Zoom**.
 - **E** presses buttons and also leans right. Set a button's **Press Key** if
   your game uses E for something else.

@@ -167,13 +167,16 @@ int main() {
         CHECK(cam->ignoreObject == nullptr);
     }
 
-    // --- Only old files: the same layout saved by this version keeps its one controller ---
+    // --- A file saved by this version with one controller and the toggle on is a switchable
+    //     player all the same: the Player Controller gives it both views, the camera stays put ---
     {
         Scene saved("kept"); OldFirstPerson(saved);
         Scene sc("kept2");
         CHECK(SceneSerializer::Deserialize(sc, SceneSerializer::Serialize(saved)));
         GameObject* p = sc.Find("Player");
-        CHECK(p && p->GetComponent<FirstPersonController>() && !p->GetComponent<ThirdPersonController>());
+        CHECK(p && p->GetComponent<FirstPersonController>() && p->GetComponent<ThirdPersonController>());
+        CHECK(p && PlayerController::Of(p) && PlayerController::Of(p)->viewMode() == PlayerController::ViewMode::Both);
+        CHECK(p && ChildCamera(p) && ChildCamera(p)->gameObject->name == "FPS Camera");
     }
 
     // --- A toggle that is off is not a switchable player: left alone ---

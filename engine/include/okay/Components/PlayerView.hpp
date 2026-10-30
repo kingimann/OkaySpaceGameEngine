@@ -1,7 +1,7 @@
 #pragma once
-// One player, two views. Sits next to a First Person controller, a Third Person
-// controller, or both, and blends the camera between them (GTA-style). When both
-// are on the player, the view you are going to is the only one that moves the
+// One player, two views. A part of the Player Controller (View = Both): it sits
+// next to the First Person and Third Person controllers and blends the camera
+// between them (GTA-style). When both are on the player, the view you are going to is the only one that moves the
 // body: first person is always the FirstPersonController (eye, bob, zoom), and
 // third person is always the orbit. The template only chooses the starting view.
 // With Allow Toggle off, and until a script calls SetView, the controller's own

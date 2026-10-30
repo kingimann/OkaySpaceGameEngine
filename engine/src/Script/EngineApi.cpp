@@ -14,6 +14,7 @@
 #include "okay/Math/Quat.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Components/PlayerView.hpp"
+#include "okay/Components/PlayerController.hpp"
 #include "okay/Components/UIColorPicker.hpp"   // grok/ui-color
 #include "okay/Components/Crosshair.hpp"          // grok/ui-hud
 #include "okay/Components/UIRadialProgress.hpp"   // grok/ui-hud
@@ -320,12 +321,12 @@ EngineApi Build() {
     // ---- PlayerView (grok/view-toggle). Visual-script nodes come from this type. ----
     {
         ApiType pv; pv.name = "PlayerView"; pv.isComponent = true;
-        pv.doc = "Switches one player between first person and third person. The object needs a Player View.";
+        pv.doc = "Switches one player between first person and third person. A Player Controller with View set to Both has one; PlayerController has the same calls.";
         pv.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<PlayerView>() : nullptr; };
         auto viewOf = [](const Value& self, CallContext& c) -> PlayerView* {
             GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
             auto* v = g->GetComponent<PlayerView>();
-            if (!v) throw RuntimeError("'" + g->name + "' has no Player View (add one in the Inspector)", c.loc);
+            if (!v) throw RuntimeError("'" + g->name + "' has no view toggle (set its Player Controller's View to Both)", c.loc);
             return v;
         };
         pv.methods.push_back(method("SetView", {tInt}, {"view"}, tVoid,
@@ -340,6 +341,40 @@ EngineApi Build() {
         get.pure = true;
         pv.methods.push_back(std::move(get));
         api.types.push_back(std::move(pv));
+    }
+    // ---- PlayerController: the one first / third person controller. ----
+    {
+        ApiType pc; pc.name = "PlayerController"; pc.isComponent = true;
+        pc.doc = "The first / third person controller. Its View says which views the player has; "
+                 "SetView only switches when it is Both.";
+        pc.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<PlayerController>() : nullptr; };
+        auto ctrlOf = [](const Value& self, CallContext& c) -> PlayerController* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* p = g->GetComponent<PlayerController>();
+            if (!p) throw RuntimeError("'" + g->name + "' has no Player Controller (add one in the Inspector)", c.loc);
+            return p;
+        };
+        pc.methods.push_back(method("SetView", {tInt}, {"view"}, tVoid,
+            [ctrlOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                PlayerController* p = ctrlOf(s, c);
+                if (PlayerView* v = p->toggle()) v->SetView(I(a[0]));
+                return Value{};
+            }, "Ease to a view: 0 first person, 1 third person. Does nothing unless the View is Both."));
+        ApiMethod get = method("GetView", {}, {}, tInt,
+            [ctrlOf](const Value& s, std::vector<Value>&, CallContext& c) {
+                return Value{(std::int32_t)ctrlOf(s, c)->CurrentView()};
+            }, "The view the player is in: 0 first person, 1 third person.");
+        get.pure = true;
+        pc.methods.push_back(std::move(get));
+        pc.methods.push_back(method("SetViewMode", {tInt}, {"mode"}, tVoid,
+            [ctrlOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                const int m = I(a[0]);
+                ctrlOf(s, c)->SetViewMode(m <= 0 ? PlayerController::ViewMode::First
+                                        : m == 1 ? PlayerController::ViewMode::Third
+                                                 : PlayerController::ViewMode::Both);
+                return Value{};
+            }, "Which views the player has: 0 first person only, 1 third person only, 2 both."));
+        api.types.push_back(std::move(pc));
     }
     // ---- grok/ui-color ----
     {

@@ -8,10 +8,12 @@
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/SkinnedMesh.hpp"
 #include "okay/Animation/HumanoidBones.hpp"
+#include "okay/Animation/HumanoidMotion.hpp"
 #include "okay/Math/Quat.hpp"
 #include <string>
 #include <vector>
 #include <cctype>
+#include <cmath>
 
 namespace okay {
 
@@ -35,6 +37,16 @@ namespace okay {
 class HumanoidRetarget : public Component {
 public:
     float weight = 1.0f;   ///< 0 = off, 1 = full pose transfer (blend vs the bind pose)
+    /// Body lean into acceleration and turns, as a multiple of the default (a few
+    /// degrees on the hips and spine; 0 = upright). Starting off leans forward,
+    /// stopping leans back, a turn leans into the curve. Built-in poses only: an
+    /// imported clip carries its own.
+    float leanScale = 1.0f;
+    /// The lean currently applied (degrees: pitch forward, roll to the body's right).
+    float LeanPitch() const { return m_leanPitch; }
+    float LeanRoll() const { return m_leanRoll; }
+    /// True while the built-in pose is easing in from an imported clip's pose.
+    bool Blending() const { return m_fade < m_fadeDur; }
     /// Bones picked by hand, per engine bone (Animation/HumanoidBones.hpp's
     /// MapHumanoidBones): a bone name, "-" for none, "" for the automatic pick.
     std::string boneMap[humanoid::BoneCount];
@@ -68,8 +80,20 @@ public:
         if (!rig || !rig->transform) return;
         // The model's own clips take priority while a script holds one (play_clip /
         // the Play Clip node) or a one-shot plays (play_clip_once: attack, emote).
-        if (ModelAnimator* ma = CachedAnimator(*sc, rig, dt))
-            if (ma->ClipOverridesPose()) return;
+        ModelAnimator* ma = CachedAnimator(*sc, rig, dt);
+        if (ma && ma->ClipOverridesPose()) { m_clipHadPose = true; return; }
+        // The built-in pose takes over from an imported clip: ease from the pose
+        // the clip left (a one-shot ending, a slot with no clip of its own).
+        if (m_clipHadPose) {
+            m_clipHadPose = false;
+            m_fade = 0.0f;
+            m_fadeDur = ma ? ma->blendTime : 0.25f;
+            for (MapEntry& e : m_map)
+                if (e.go && e.go->transform) { e.snapRot = e.go->transform->localRotation; e.snapPos = e.go->transform->localPosition; }
+        }
+        if (m_fade < m_fadeDur) m_fade += dt;
+        const float fadeW = m_fade >= m_fadeDur ? 1.0f : m_fade / m_fadeDur;
+        const float fadeE = fadeW * fadeW * (3.0f - 2.0f * fadeW);
 
         // Engine pose: per-bone Euler (local deltas, identity rest frames) —
         // accumulate down the engine hierarchy into root-frame rotations.
@@ -79,6 +103,12 @@ public:
         if ((int)pose.size() < n) pose.resize(n, Vec3{0, 0, 0});
         std::vector<Quat>& Re = m_rootRot;   // reused every frame (no per-frame allocation)
         Re.assign(n, Quat::Identity);
+        UpdateLean(dt);
+        if (m_leanPitch != 0.0f || m_leanRoll != 0.0f) {
+            // Spread over the hips and spine so it reads as the whole body leaning.
+            pose[HumanoidMotion::B_HIPS].x  += m_leanPitch * 0.3f;  pose[HumanoidMotion::B_HIPS].z  += m_leanRoll * 0.3f;
+            pose[HumanoidMotion::B_TORSO].x += m_leanPitch * 0.7f;  pose[HumanoidMotion::B_TORSO].z += m_leanRoll * 0.7f;
+        }
         for (int b = 0; b < n; ++b) {
             Quat q = Quat::Euler(pose[b]);
             Re[b] = sk[b].parent >= 0 ? Re[sk[b].parent] * q : q;
@@ -91,9 +121,14 @@ public:
             Quat desired = Re[e.bone] * e.align * e.restRootRel;      // root-frame target
             Quat rp = ChainRotation(g->transform->Parent(), rig);     // parent chain, current
             Quat local = rp.Inverse() * desired;
-            g->transform->localRotation = weight >= 1.0f
-                ? local.Normalized()
-                : Quat::Slerp(e.restLocal, local.Normalized(), weight);
+            Quat out = weight >= 1.0f ? local.Normalized() : Quat::Slerp(e.restLocal, local.Normalized(), weight);
+            if (fadeW < 1.0f) {
+                out = Quat::Slerp(e.snapRot, out, fadeE);
+                // A clip leaves the hips wherever its walk had them: ease them back to the rest.
+                if (e.bone == HumanoidMotion::B_HIPS && e.hasRestPos)
+                    g->transform->localPosition = e.snapPos + (e.restPos - e.snapPos) * fadeE;
+            }
+            g->transform->localRotation = out;
         }
         // Crouch / prone / landing dip: lower the whole model like the blocky
         // rig lowers its root (StanceOffset is in player-local units already).
@@ -136,7 +171,7 @@ public:
         // Bind pose from the skin's inverse bind, when this bone is a joint.
         // The transform in a scene saved mid-play is the animated pose.
         Mat4 rootInv = rigRoot->transform->LocalToWorldMatrix().Inverse();
-        auto bindOf = [&](GameObject* g, Quat& local, Vec3& rootPos) -> bool {
+        auto bindOf = [&](GameObject* g, Quat& local, Vec3& rootPos, Vec3* localPos = nullptr) -> bool {
             if (!g || !g->transform) return false;
             for (const auto& up : s.Objects()) {
                 if (!up || !up->IsSelfOrDescendantOf(rigRoot)) continue;
@@ -145,6 +180,7 @@ public:
                 Quat lr; Vec3 lp, meshPos;
                 if (!sm->BindJoint(g->transform, lr, lp, meshPos)) continue;
                 local = lr;
+                if (localPos) *localPos = lp;
                 rootPos = rootInv.MultiplyPoint(sm->transform->LocalToWorldMatrix().MultiplyPoint(meshPos));
                 return true;
             }
@@ -179,8 +215,8 @@ public:
             e.bone = b;
             e.node = node[b]->name;
             e.go = node[b];
-            Quat bindLocal; Vec3 bindRoot;
-            if (bindOf(node[b], bindLocal, bindRoot)) e.restLocal = bindLocal;
+            Quat bindLocal; Vec3 bindRoot, bindPos;
+            if (bindOf(node[b], bindLocal, bindRoot, &bindPos)) { e.restLocal = bindLocal; e.restPos = bindPos; e.hasRestPos = true; }
             else e.restLocal = node[b]->transform->localRotation;
             // Parents saved mid-play are animated too: accumulate each bone's
             // bind local, and only fall back to the transform when it isn't a joint.
@@ -215,6 +251,10 @@ private:
         Quat restLocal;          ///< bind local rotation (weight blend target)
         Quat restRootRel;        ///< bind rotation relative to the rig root
         Quat align;              ///< rest-stance alignment (imported dir -> engine dir)
+        Vec3 restPos{0, 0, 0};   ///< bind local position (the hips are eased back to it after a clip)
+        bool hasRestPos = false;
+        Quat snapRot;            ///< the pose an imported clip left, the fade-in's start
+        Vec3 snapPos{0, 0, 0};
     };
     std::vector<MapEntry> m_map;
     std::vector<Quat> m_rootRot;            // per-frame scratch (root-frame bone rotations)
@@ -225,6 +265,42 @@ private:
     Vec3 m_rigRestPos{0, 0, 0};
     int  m_mapped = 0;
     bool m_init = false;
+    bool  m_clipHadPose = false;   // last frame an imported clip owned the pose
+    float m_fade = 1.0f, m_fadeDur = 0.0f;   // ease-in from that clip's pose (done when m_fade >= m_fadeDur)
+    // Lean: the body's smoothed velocity and acceleration, from how the player moves.
+    Vec3  m_leanPos{0, 0, 0}, m_leanVel{0, 0, 0}, m_leanAcc{0, 0, 0};
+    bool  m_haveLean = false;
+    float m_leanPitch = 0.0f, m_leanRoll = 0.0f;
+
+    /// Lean into acceleration and turns, eased: a push forward from a standstill
+    /// tips the body ahead, braking tips it back, a curve rolls it toward the
+    /// centre. Capped at a few degrees so it never reads as a stagger.
+    void UpdateLean(float dt) {
+        Transform* t = gameObject ? gameObject->transform : nullptr;
+        if (!t || dt <= 1e-5f) return;
+        const Vec3 p = t->Position();
+        if (m_haveLean) {
+            Vec3 d = p - m_leanPos; d.y = 0.0f;
+            Vec3 v = d.SqrMagnitude() > 4.0f ? m_leanVel : d * (1.0f / dt);   // a teleport isn't speed
+            const Vec3 vPrev = m_leanVel;
+            m_leanVel = m_leanVel + (v - m_leanVel) * (1.0f - std::exp(-dt / 0.08f));
+            const Vec3 a = (m_leanVel - vPrev) * (1.0f / dt);
+            m_leanAcc = m_leanAcc + (a - m_leanAcc) * (1.0f - std::exp(-dt / 0.15f));
+        }
+        m_leanPos = p; m_haveLean = true;
+        const Quat q = t->Rotation();
+        const Vec3 fwd = q * Vec3{0.0f, 0.0f, -1.0f}, right = q * Vec3{1.0f, 0.0f, 0.0f};   // controllers walk along local -Z
+        const float along = Vec3::Dot(m_leanAcc, fwd), across = Vec3::Dot(m_leanAcc, right);
+        auto cap = [](float v, float m) { return v > m ? m : (v < -m ? -m : v); };
+        // Moving only: a body standing still doesn't tip because something shoved the capsule.
+        const float moving = std::fmin(1.0f, std::sqrt(m_leanVel.x * m_leanVel.x + m_leanVel.z * m_leanVel.z) / 0.8f);
+        const float k = leanScale > 0.0f ? leanScale : 0.0f;
+        const float wantPitch = cap(along * 0.9f, 5.0f) * k;
+        const float wantRoll  = cap(across * 1.2f, 6.0f) * k * moving;
+        const float e = 1.0f - std::exp(-dt / 0.1f);
+        m_leanPitch += (wantPitch - m_leanPitch) * e;
+        m_leanRoll  += (wantRoll  - m_leanRoll)  * e;
+    }
 
     /// Accumulated rotation of the parent chain from (exclusive) rigRoot down
     /// to `t` (inclusive) using the CURRENT local rotations.

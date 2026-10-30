@@ -1609,6 +1609,51 @@ void AutoMapLocomotion(ModelAnimator* ma) {
             if (!used[ci] && roles[role](ci)) { *stanceSlot[role] = ma->clips[ci].name; used[ci] = true; }
 }
 
+// Switch a retargeted model's locomotion between its clips and the built-in
+// animation to match which slots have a clip: none = pure built-in (the
+// HumanoidRetarget owns every frame), any = clips drive the slots they fill and
+// the built-in animation covers the rest. Inert for a model that isn't retargeted.
+void SettleCharacterLocomotion(ModelAnimator* ma) {
+    if (!ma || !ma->BuiltinRigPresent()) return;
+    bool any = false;
+    for (int s = 0; s < ModelAnimator::SlotCount; ++s) any = any || ma->SlotFilled(s);
+    if (any && !ma->driveByMovement) ma->smoothLocomotion = true;
+    ma->driveByMovement = any;
+    ma->inPlace = true;     // the controller moves the capsule: clips only cycle the limbs
+    ma->autoPlay = false;   // the slots decide what plays (a clip 0 on the first frame would show the wrong pose)
+}
+
+// "idle='Idle' walk='Walking'" - the clip names in the slots a model's clips fill.
+static std::string SlotSummary(const ModelAnimator* ma) {
+    std::string out;
+    if (!ma) return out;
+    for (int s = 0; s < ModelAnimator::SlotCount; ++s) {
+        if (!ma->SlotFilled(s)) continue;
+        std::string label = ModelAnimator::SlotName(s);
+        for (char& c : label) c = (char)std::tolower((unsigned char)c);
+        out += (out.empty() ? "" : " ") + label + "='" + ma->SlotClip(s) + "'";
+    }
+    return out;
+}
+
+// Put the built-in animation on the model under `root` (the player's Character in
+// drive-external mode + a HumanoidRetarget wired to the bones). Returns how many
+// of the 15 bones matched, or -1 when the player has no Character.
+static int EnableBuiltinFallback(Scene& scene, GameObject* player, GameObject* root) {
+    auto* ch = player->GetComponent<Character>();
+    if (!ch) return -1;
+    HumanoidRetarget* rt = player->GetComponent<HumanoidRetarget>();
+    if (!rt) rt = player->AddComponent<HumanoidRetarget>();
+    rt->Rewire();
+    const int found = rt->DetectAndWire(scene, root);
+    ch->driveExternal = true;
+    ch->enabled = true;
+    if (auto* mr = player->GetComponent<MeshRenderer>()) mr->enabled = false;
+    for (const auto& up : scene.Objects())   // the blocky part rig
+        if (up->name == "Rig" && up->transform && up->transform->Parent() == player->transform) up->active = false;
+    return found;
+}
+
 // One clip through the rest poses (see "Rest poses" in AddAnimationsFromFile):
 // sampled at every key time, each mapped target bone gets the local rotation
 // that puts it at (source root-space rotation) * conv; the hips also get the
@@ -1836,6 +1881,7 @@ int AddAnimationsFromFile(Scene& scene, GameObject* modelRoot, const std::string
     }
     if (!added) { say("None of the bones in " + BaseName(path) + " match this model's skeleton."); return 0; }
     AutoMapLocomotion(ma);
+    SettleCharacterLocomotion(ma);   // a retargeted player starts using the new clips in their slots
     char buf[200];
     std::snprintf(buf, sizeof(buf), " (%d/%d bone tracks matched%s)", matched, total,
                   bySlot ? ", paired by humanoid bone and converted to this model's rest pose" :
@@ -2147,29 +2193,24 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
             if (up->IsSelfOrDescendantOf(root))
                 if ((ma = up->GetComponent<ModelAnimator>())) break;
     std::string mapped;
-    bool genuineIdle = false, genuineWalk = false;
-    if (ma && !ma->clips.empty()) {
-        AutoMapLocomotion(ma);
-        genuineIdle = !ma->idleClip.empty();
-        genuineWalk = !ma->walkClip.empty();
+    if (ma && !ma->clips.empty()) AutoMapLocomotion(ma);
+    // A humanoid skeleton (enough recognisable bones, on a player with a Character)
+    // gets the BUILT-IN animations on every locomotion slot its clips don't fill:
+    // the Character stays ON in drive-external mode and a HumanoidRetarget plays
+    // the engine's walk, run, jump, crouch... on the imported bones, while the
+    // clips the file does carry (a Mixamo walk, an idle) play in their own slots.
+    // A file with no usable clips at all is the plain built-in case. Without a
+    // humanoid skeleton the clips drive locomotion alone. Decided HERE so the clip
+    // path below (including its animated re-grounding) runs when it should.
+    bool wantRetarget = false;
+    if (player->GetComponent<Character>()) {
+        HumanoidRetarget probe;
+        probe.gameObject = player;
+        wantRetarget = probe.DetectAndWire(scene, root) >= 8;
     }
-    // Retarget instead of clips when the file doesn't carry a usable locomotion
-    // set (a single Mixamo dance, a rigged model with no takes at all...): the
-    // Character stays ON in drive-external mode and a HumanoidRetarget plays
-    // the BUILT-IN animations on the imported skeleton — so the model walks,
-    // runs, jumps, crouches and gestures out of the box. Only when enough
-    // humanoid bones are recognizable (decided HERE so the clip path below —
-    // including its animated re-grounding — runs whenever retarget doesn't).
-    bool wantRetarget = !(ma && !ma->clips.empty() && genuineIdle && genuineWalk);
-    if (wantRetarget) {
-        wantRetarget = false;
-        if (player->GetComponent<Character>()) {
-            HumanoidRetarget probe;
-            probe.gameObject = player;
-            wantRetarget = probe.DetectAndWire(scene, root) >= 8;
-        }
-    }
-    if (ma && !ma->clips.empty() && !wantRetarget) {
+    const bool hasIdleClip = ma && ma->SlotFilled(ModelAnimator::SlotIdle);
+    if (ma && !ma->clips.empty() && (!wantRetarget || hasIdleClip)) {
+      if (!wantRetarget) {
         if (ma->idleClip.empty()) ma->idleClip = ma->clips.front().name;  // something is better than T-pose
         if (ma->walkClip.empty()) ma->walkClip = !ma->runClip.empty() ? ma->runClip : ma->idleClip;
         ma->driveByMovement = true;
@@ -2189,6 +2230,7 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
                                           {"crouch walk", &ma->crouchWalkClip}, {"prone", &ma->proneClip},
                                           {"crawl", &ma->crawlClip}, {"get up", &ma->getUpClip}})
             if (!clip->empty()) mapped += std::string(" ") + label + "='" + *clip + "'";
+      }
 
         // Re-ground and re-center on the ANIMATED pose. Some rigs' clips sit at
         // a constant offset from the bind pose (glTF CesiumMan-style skeleton
@@ -2243,19 +2285,12 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
     // and the feet plant on top of it.
     bool retargeted = false;
     if (wantRetarget) {
-        if (auto* ch = player->GetComponent<Character>()) {
-            HumanoidRetarget* rt = player->GetComponent<HumanoidRetarget>();
-            if (!rt) rt = player->AddComponent<HumanoidRetarget>();
-            rt->Rewire();
-            int found = rt->DetectAndWire(scene, root);
-            retargeted = true;
-            ch->driveExternal = true;
-            // The retarget owns the pose: no locomotion switching and no
-            // auto-play (the import turns clip 0 on for the T-pose fix; here
-            // it would fight the retarget every frame). One-shots still work.
-            if (ma) { ma->driveByMovement = false; ma->inPlace = true; ma->autoPlay = false; }
-            mapped += (mapped.empty() ? "" : ", ") + std::string("built-in animations retargeted (") +
-                      std::to_string(found) + "/15 bones)";
+        const int found = EnableBuiltinFallback(scene, player, root);
+        retargeted = found >= 0;
+        if (retargeted) {
+            SettleCharacterLocomotion(ma);
+            mapped = SlotSummary(ma) + (mapped.empty() ? "" : ", ") + "built-in animations retargeted (" +
+                     std::to_string(found) + "/15 bones)";
         }
     }
 
@@ -2322,6 +2357,78 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
                   (phys.empty() ? "" : ", " + phys) + ")";
     }
     return root;
+}
+
+
+const char* CharacterAnimationSourceName(int source) {
+    static const char* const n[] = {"None", "Imported clips", "Built-in retargeted", "Mixed"};
+    return source >= 0 && source < 4 ? n[source] : n[0];
+}
+
+bool DescribeCharacterModel(Scene& scene, GameObject* player, CharacterModelInfo& out) {
+    out = CharacterModelInfo{};
+    if (!player || !player->transform) return false;
+    GameObject* root = FindCharacterModelRoot(scene, player);
+    if (!root || root == player) return false;
+    out.valid = true;
+    out.model = root->name;
+    ModelAnimator* ma = root->GetComponent<ModelAnimator>();
+    if (!ma)
+        for (const auto& up : scene.Objects())
+            if (up->IsSelfOrDescendantOf(root) && (ma = up->GetComponent<ModelAnimator>())) break;
+    out.animator = ma;
+    auto* ch = player->GetComponent<Character>();
+    auto* hr = player->GetComponent<HumanoidRetarget>();
+    out.characterOff = ch && !ch->enabled;
+    out.builtinAvailable = ch && ch->enabled && ch->driveExternal && hr && hr->weight > 0.0f;
+    out.mappedBones = hr && hr->Wired() && hr->MappedBones() > 0 ? hr->MappedBones() : humanoid::MapHumanoidBones(root, hr ? hr->boneMap : nullptr).found;
+    for (int s = 0; s < ModelAnimator::SlotCount; ++s) {
+        CharacterModelInfo::Slot sl;
+        sl.slot = s;
+        sl.label = ModelAnimator::SlotName(s);
+        if (ma) sl.clip = ma->SlotClip(s);
+        if (ma && ma->driveByMovement && ma->SlotFilled(s)) { sl.source = 1; ++out.importedSlots; }
+        else if (out.builtinAvailable && (!ma || !ma->driveByMovement || ma->builtinFallback)) { sl.source = 2; ++out.builtinSlots; }
+        out.slots.push_back(std::move(sl));
+    }
+    out.source = out.importedSlots && out.builtinSlots ? 3 : (out.importedSlots ? 1 : (out.builtinSlots ? 2 : 0));
+    return true;
+}
+
+std::string FixCharacterAnimations(Scene& scene, GameObject* player) {
+    CharacterModelInfo before;
+    if (!DescribeCharacterModel(scene, player, before)) return "No imported character model on '" + (player ? player->name : std::string()) + "'.";
+    GameObject* root = FindCharacterModelRoot(scene, player);
+    ModelAnimator* ma = before.animator;
+    int cleared = 0;
+    if (ma) {
+        for (int s = 0; s < ModelAnimator::SlotCount; ++s)   // a slot naming a clip the model doesn't have
+            if (!ma->SlotClip(s).empty() && ma->FindClip(ma->SlotClip(s)) < 0) { ma->SlotClip(s).clear(); ++cleared; }
+        AutoMapLocomotion(ma);
+    }
+    int found = 0;
+    if (player->GetComponent<Character>()) {
+        HumanoidRetarget probe;
+        probe.gameObject = player;
+        if (auto* hr = player->GetComponent<HumanoidRetarget>())   // bones the user mapped by hand count
+            for (int b = 0; b < humanoid::BoneCount; ++b) probe.boneMap[b] = hr->boneMap[b];
+        found = probe.DetectAndWire(scene, root);
+    }
+    if (found >= 8) {
+        EnableBuiltinFallback(scene, player, root);
+        if (ma) { ma->builtinFallback = true; SettleCharacterLocomotion(ma); }
+    } else if (ma && !ma->clips.empty()) {   // no humanoid skeleton: the clips alone
+        if (ma->idleClip.empty()) ma->idleClip = ma->clips.front().name;
+        if (ma->walkClip.empty()) ma->walkClip = !ma->runClip.empty() ? ma->runClip : ma->idleClip;
+        ma->driveByMovement = true; ma->inPlace = true;
+    }
+    CharacterModelInfo after;
+    DescribeCharacterModel(scene, player, after);
+    std::string log = "Animations on '" + after.model + "': " + CharacterAnimationSourceName(after.source) + " (" +
+                      std::to_string(after.importedSlots) + " slot" + (after.importedSlots == 1 ? "" : "s") + " from clips, " +
+                      std::to_string(after.builtinSlots) + " built-in";
+    if (cleared) log += ", " + std::to_string(cleared) + " stale slot" + (cleared == 1 ? "" : "s") + " cleared";
+    return log + ")";
 }
 
 } // namespace okay

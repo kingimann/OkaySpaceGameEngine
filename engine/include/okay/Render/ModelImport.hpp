@@ -98,6 +98,38 @@ std::string FitCharacterCollider(Scene& scene, GameObject* player, GameObject* m
 GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
                                  const std::string& path, std::string* outLog = nullptr);
 
+/// What drives a player's imported model: which locomotion slots (Idle, Walk,
+/// Run, Jump...) play one of the model's own clips and which play the engine's
+/// built-in animation retargeted onto the skeleton.
+struct CharacterModelInfo {
+    struct Slot {
+        int slot = 0;                 ///< ModelAnimator::Slot
+        const char* label = "";
+        std::string clip;             ///< the clip named in the slot ("" = none)
+        int source = 0;               ///< 0 empty, 1 imported clip, 2 built-in animation
+    };
+    bool valid = false;               ///< the player has an imported model
+    std::string model;                ///< the model object's name
+    int mappedBones = 0, totalBones = 15;   ///< humanoid bones the built-in animation can pose
+    int source = 0;                   ///< 0 none, 1 imported clips, 2 built-in retargeted, 3 mixed
+    int importedSlots = 0, builtinSlots = 0;
+    bool builtinAvailable = false;    ///< a retargeted Character is ready to fill empty slots
+    bool characterOff = false;        ///< the default blocky Character is disabled (the model replaced it)
+    ModelAnimator* animator = nullptr;
+    std::vector<Slot> slots;
+};
+const char* CharacterAnimationSourceName(int source);
+/// Read how `player`'s imported model is animated. False when it has none.
+bool DescribeCharacterModel(Scene& scene, GameObject* player, CharacterModelInfo& out);
+/// After a locomotion slot's clip changed on a retargeted model: clips drive the
+/// slots that have one (movement-driven, in place) and the built-in animation
+/// covers the rest. Does nothing for a model that isn't retargeted.
+void SettleCharacterLocomotion(ModelAnimator* ma);
+/// Re-run the clip auto-mapping on `player`'s model and switch the built-in
+/// animation on for every locomotion slot still without a clip. Returns a
+/// one-line summary for the console.
+std::string FixCharacterAnimations(Scene& scene, GameObject* player);
+
 /// Add the animation clips stored in `path` (Mixamo "without skin" downloads,
 /// any FBX/glTF with takes) to the model under `modelRoot`. Bones are matched
 /// by name, ignoring rig prefixes ("mixamorig:LeftArm" == "LeftArm"). When the

@@ -347,6 +347,21 @@ Whole-game saves in named slots: every object, the player, inventories, script v
 | `SaveGame.Delete(slot)` | `SaveGame.Delete/1` | step | slot (Text) | Result (Bool) | Delete the save in a slot. |
 | `SaveGame.Label(slot)` | `SaveGame.Label/1` | value | slot (Text) | Result (Text) | The label a slot was saved with ("" if empty). |
 
+## Localization
+
+Text in the player's language from the project's string table (docs/localization.md). A script hears a change of language in OnLanguageChanged().
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `Localization.Language` | `Localization.Language` | value | - | Language (Text) | The current language's code ("en", "fr"...). |
+| `Localization.Languages` | `Localization.Languages` | value | - | Languages (List) | The codes of the string table's languages, in the table's order. |
+| `Localization.Get(key)` | `Localization.Get/1` | value | key (Text) | Result (Text) | The key's text in the player's language (the default language's when it has none, else the key). |
+| `Localization.Get(key, arg0)` | `Localization.Get/2` | value | key (Text), arg0 (Any) | Result (Text) | The key's text with {0} filled in; a number also picks the plural form. |
+| `Localization.Get(key, arg0, arg1)` | `Localization.Get/3` | value | key (Text), arg0 (Any), arg1 (Any) | Result (Text) | The key's text with {0} and {1} filled in. |
+| `Localization.Get(key, arg0, arg1, arg2)` | `Localization.Get/4` | value | key (Text), arg0 (Any), arg1 (Any), arg2 (Any) | Result (Text) | The key's text with {0}, {1} and {2} filled in. |
+| `Localization.SetLanguage(code)` | `Localization.SetLanguage/1` | step | code (Text) | Result (Bool) | Show every localized text in a language of the string table ("fr") and remember it for the next run. False when the table doesn't have it. |
+| `Localization.LanguageName(code)` | `Localization.LanguageName/1` | value | code (Text) | Result (Text) | A language's name for a menu ("Français" for "fr"). |
+
 ## Sequence
 
 Cutscenes: play a .okayseq timeline through a Sequence Player in the scene.

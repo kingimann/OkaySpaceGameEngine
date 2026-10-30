@@ -2,6 +2,7 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
+#include "okay/Core/Localization.hpp"
 #include <string>
 
 namespace okay {
@@ -14,6 +15,8 @@ namespace okay {
 class UITooltip : public Behaviour {
 public:
     std::string text = "Tooltip";
+    /// Localized: a string-table key whose text replaces `text` in the current language.
+    LocalizedText loc;
     float delay = 0.5f;                              // hover seconds before showing
     Color background = Color::FromBytes(38, 42, 51, 250);
     Color textColor  = Color::White;

@@ -14,6 +14,7 @@
 #include "okay/Components/WorldSpaceUI.hpp"
 #include "okay/Components/Canvas.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Core/Localization.hpp"
 #include <string>
 
 namespace okay {
@@ -27,6 +28,8 @@ public:
     Vec2 position{20.0f, 20.0f};
     Vec2 size{160.0f, 48.0f};
     std::string label = "Button";
+    /// Localized: a string-table key whose text replaces `label` in the current language.
+    LocalizedText loc;
     /// Optional TTF/OTF font for the label (e.g. "Assets/MyFont.ttf"). Empty = the
     /// built-in 8x8 bitmap font.
     std::string fontPath;

@@ -15,6 +15,8 @@
 #include "NavigationWindow.hpp"        // the Navigation window (navmesh bake, overlays, agent inspectors)
 #include "DialogueWindow.hpp"          // the Dialogue window (graph editor + Quests tab) and the story inspectors
 #include "BehaviorTreeWindow.hpp"      // the Behavior Tree window (NPC AI trees, runner inspector)
+#include "LocalizationWindow.hpp"      // the Localization window (string table), preview language, Localized fields
+#include "okay/Core/Utf8.hpp"
 #include "okay/Components/HoldPrompt.hpp"
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
@@ -3842,6 +3844,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         if (fs::exists(bsrc, be) && fs::is_regular_file(bsrc, be))
             fs::copy_file(bsrc, data / bsrc.filename(), fs::copy_options::overwrite_existing, be);
     }
+    CopyLocalizationFiles(ed, data.u8string());   // strings.okayloc and its languages' fonts
 
     // Data/manifest.json: every shipped file's SHA-256, signed when a key is set
     // up (shared/AntiCheatIntegrity.hpp). Unsigned and unused unless anti-cheat is on.
@@ -3926,6 +3929,7 @@ std::string ExportForPlatform(EditorState& ed, const std::string& outDir,
         fs::copy_file(src, dst, fs::copy_options::overwrite_existing, aec);
         if (!aec) ++copied;
     }
+    CopyLocalizationFiles(ed, data.u8string());   // strings.okayloc and its languages' fonts
 
     if (target == 1) {   // ---- Web (Emscripten / WebGL) ----
         std::ofstream sh((dir / "build-web.sh").string());
@@ -4386,6 +4390,7 @@ static const DockPanelDef* DockPanels(int& n) {
         {"Sprite Editor", "Sprite Editor",             &g_showSpriteEditor,  "Editors & Tools", PI_Sprite},
         {"UI Theme",      "UI Theme",                  &g_showUIThemer,      "Editors & Tools", PI_Palette},
         {"Item Database", "Item Database",             &g_showItemDatabase,  "Editors & Tools", PI_Package},
+        {"Localization",  "Localization",              &g_showLocalization,  "Editors & Tools", PI_Generic},
         {"UI Editor",     "UI",                        &g_showUIEditor,      "Editors & Tools", PI_UI},
     };
     n = (int)(sizeof(k) / sizeof(k[0]));
@@ -5700,6 +5705,8 @@ void DrawMenuAndToolbar(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Define a reusable UI style (colors, corners, borders) and apply it to every widget at once — pick a preset or make your own, then restyle the whole UI in one click.");
             ImGui::MenuItem("Item Database", nullptr, &g_showItemDatabase);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Define every item once (name, icon, stack size, weight, grid size, rarity, what using it does). Inventories, chests, recipes and builders all use these.");
+            ImGui::MenuItem("Localization", nullptr, &g_showLocalization);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "The project's string table: every text key in every language, how complete each language is, CSV for translators and a pseudo-localized preview.");
             ImGui::EndMenu();
         }
         ImGui::Separator();
@@ -6361,6 +6368,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
     ImGui::PopStyleColor(2);
     ImGui::PopStyleVar();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Build Game (Ctrl+B) — export a standalone exe");
+    DrawLanguageToolbar(ed);   // the preview language (once the project has languages)
 
     // Right-aligned status: a coloured state dot + a v<version> · MODE · FPS readout.
     char status[96];
@@ -11215,6 +11223,8 @@ void DrawScriptDocs() {
         fapi("substr char_at replace split join", "extract / edit / split / join");
         fapi("repeat pad_left pad_right format", "repeat / pad / format");
         fapi("to_str / str / to_num / num", "convert between text and numbers");
+        fapi("loc(\"key\"[, args...])", "the key's text in the player's language ({0}, {name}, plurals)");
+        fapi("set_language(\"fr\") / get_language() / languages()", "switch / read the language (on_language_changed(code) runs)");
     }
 
     if (sec("Timers & spawning")) {
@@ -15265,12 +15275,14 @@ void HandleShortcuts(EditorState& ed) {
     // so Ctrl+Shift+Z doesn't undo and redo in the same frame.)
     if (ctrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
         if (TimelineFocused() && TimelineUndo(false)) ConsoleLog("Undo (timeline)");
+        else if (LocalizationFocused() && LocalizationUndo(false)) ConsoleLog("Undo (string table)");
         else if (MeshUndo(false)) { ConsoleLog("Undo (mesh edit)"); ed.dirty = true; }
         else if (ed.Undo()) ConsoleLog("Undo");
     }
     if (ctrl && (ImGui::IsKeyPressed(ImGuiKey_Y, false) ||
                  (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)))) {
         if (TimelineFocused() && TimelineUndo(true)) ConsoleLog("Redo (timeline)");
+        else if (LocalizationFocused() && LocalizationUndo(true)) ConsoleLog("Redo (string table)");
         else if (MeshUndo(true)) { ConsoleLog("Redo (mesh edit)"); ed.dirty = true; }
         else if (ed.Redo()) ConsoleLog("Redo");
     }
@@ -29087,8 +29099,9 @@ void DrawInspector(EditorState& ed) {
                 ImGui::TextDisabled("Editable UI is under 'PauseMenu UI' — select its parts to restyle.");
             }
             ImGui::TextDisabled("Press the toggle key in Play to pause; Resume / Quit buttons appear.");
+            const bool pmLoc = LocalizedSwitch(ed, pm);   // its words from the pause.* keys
             char tbuf[128]; std::snprintf(tbuf, sizeof(tbuf), "%s", pm->title.c_str());
-            if (ImGui::InputText("Title##pm", tbuf, sizeof(tbuf))) { pm->title = tbuf; ed.dirty = true; }
+            if (!pmLoc && ImGui::InputText("Title##pm", tbuf, sizeof(tbuf))) { pm->title = tbuf; ed.dirty = true; }
             const char* keys[] = {"Escape", "P", "Tab"};
             const char kcodes[] = {27, 'p', 9};
             int ki = 0; for (int i = 0; i < 3; ++i) if (pm->toggleKey == kcodes[i]) ki = i;
@@ -30475,6 +30488,7 @@ void DrawInspector(EditorState& ed) {
                 char pn[64]; std::snprintf(pn, sizeof(pn), "%s", hp->promptObject.c_str());
                 if (ImGui::InputText("Prompt Object##hp", pn, sizeof(pn))) { hp->promptObject = pn; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("A screen-space Text named this shows \"E to pick up\" and \"E or G to drop\".");
+                LocalizedSwitch(ed, hp);   // the prompts from the hold.* keys
                 if (ImGui::SmallButton("Remove##hp")) toRemove = hp;
             }
         }
@@ -31231,10 +31245,13 @@ void DrawInspector(EditorState& ed) {
             }
             if (ImGui::Combo("Layout##ls", &ls->layout, kLsLayouts, IM_ARRAYSIZE(kLsLayouts))) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Change only the arrangement (keeps your colours).");
+            const bool lsLoc = LocalizedSwitch(ed, ls);   // title, subtitle and tips as string-table keys
             char tb[128]; std::snprintf(tb, sizeof(tb), "%s", ls->title.c_str());
-            if (ImGui::InputText("Title##ls", tb, sizeof(tb))) { ls->title = tb; ed.dirty = true; }
+            if (lsLoc) LocKeyInput(ed, "Title key", ls->title);
+            else if (ImGui::InputText("Title##ls", tb, sizeof(tb))) { ls->title = tb; ed.dirty = true; }
             char stb[128]; std::snprintf(stb, sizeof(stb), "%s", ls->subtitle.c_str());
-            if (ImGui::InputTextWithHint("Subtitle##ls", "level name, chapter...", stb, sizeof(stb))) { ls->subtitle = stb; ed.dirty = true; }
+            if (lsLoc) LocKeyInput(ed, "Subtitle key", ls->subtitle);
+            else if (ImGui::InputTextWithHint("Subtitle##ls", "level name, chapter...", stb, sizeof(stb))) { ls->subtitle = stb; ed.dirty = true; }
             if (ImGui::Checkbox("Show title##ls", &ls->showTitle)) ed.dirty = true; ImGui::SameLine();
             if (ImGui::Checkbox("Show bar##ls", &ls->showBar)) ed.dirty = true;
             if (ImGui::Checkbox("Show on scene start##ls", &ls->showOnStart)) ed.dirty = true;
@@ -31272,7 +31289,8 @@ void DrawInspector(EditorState& ed) {
                 for (std::size_t i = 0; i < ls->tips.size(); ++i) {
                     char tipb[160]; std::snprintf(tipb, sizeof(tipb), "%s", ls->tips[i].c_str());
                     ImGui::SetNextItemWidth(-30);
-                    if (ImGui::InputText((std::string("##tip") + std::to_string(i)).c_str(), tipb, sizeof(tipb))) { ls->tips[i] = tipb; ed.dirty = true; }
+                    if (lsLoc) LocKeyInput(ed, (std::string("##tipkey") + std::to_string(i)).c_str(), ls->tips[i]);
+                    else if (ImGui::InputText((std::string("##tip") + std::to_string(i)).c_str(), tipb, sizeof(tipb))) { ls->tips[i] = tipb; ed.dirty = true; }
                     ImGui::SameLine();
                     if (ImGui::SmallButton((std::string("x##tipdel") + std::to_string(i)).c_str())) { ls->tips.erase(ls->tips.begin() + i); ed.dirty = true; break; }
                 }
@@ -34028,11 +34046,12 @@ void DrawInspector(EditorState& ed) {
     if (auto* tr = dynamic_cast<TextRenderer*>(curComp)) {
         if (CompHeader("Text", tr, &toRemove)) {
             UIStyleBar(ed, tr);
+            const bool trLoc = LocalizedTextField(ed, "txtloc", tr->loc, tr->text, go);   // or a string-table key
             char buf[512];
             std::strncpy(buf, tr->text.c_str(), sizeof(buf) - 1);
             buf[sizeof(buf) - 1] = '\0';
             // Multi-line box so '\n' / Enter make several lines.
-            if (ImGui::InputTextMultiline("Text##txt", buf, sizeof(buf),
+            if (!trLoc && ImGui::InputTextMultiline("Text##txt", buf, sizeof(buf),
                     ImVec2(-1.0f, ImGui::GetTextLineHeight() * 3.0f))) { tr->text = buf; ed.dirty = true; }
             float col[4] = {tr->color.r, tr->color.g, tr->color.b, tr->color.a};
             if (ImGui::ColorEdit4("Color##txt", col)) { tr->color = {col[0], col[1], col[2], col[3]}; ed.dirty = true; }
@@ -34388,8 +34407,9 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* wu = dynamic_cast<WorldUI*>(curComp)) {
         if (CompHeader("World UI (3D label)", wu, &toRemove)) {
+            const bool wuLoc = LocalizedTextField(ed, "wuloc", wu->loc, wu->text, go);   // or a string-table key
             char tb[160]; std::strncpy(tb, wu->text.c_str(), sizeof(tb)-1); tb[sizeof(tb)-1]='\0';
-            if (ImGui::InputText("Text##wu", tb, sizeof(tb))) { wu->text = tb; ed.dirty = true; }
+            if (!wuLoc && ImGui::InputText("Text##wu", tb, sizeof(tb))) { wu->text = tb; ed.dirty = true; }
             float c[4] = {wu->color.r, wu->color.g, wu->color.b, wu->color.a};
             if (ImGui::ColorEdit4("Text Color##wu", c)) { wu->color = {c[0],c[1],c[2],c[3]}; ed.dirty = true; }
             float bg[4] = {wu->background.r, wu->background.g, wu->background.b, wu->background.a};
@@ -34426,11 +34446,12 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Select the child Text object to edit/style/position the label.");
             } else {
+                const bool lbLoc = LocalizedTextField(ed, "uibloc", btn->loc, btn->label, go);   // or a string-table key
                 char lb[128];
                 std::strncpy(lb, btn->label.c_str(), sizeof(lb) - 1);
                 lb[sizeof(lb) - 1] = '\0';
-                if (ImGui::InputText("Label##uib", lb, sizeof(lb))) { btn->label = lb; ed.dirty = true; }
-                ImGui::SameLine();
+                if (!lbLoc && ImGui::InputText("Label##uib", lb, sizeof(lb))) { btn->label = lb; ed.dirty = true; }
+                if (!lbLoc) ImGui::SameLine();
                 if (ImGui::SmallButton("Text as Child##uib")) {
                     ed.PushUndo();
                     ed.Select(MakeButtonTextChild(ed, go));
@@ -34636,8 +34657,9 @@ void DrawInspector(EditorState& ed) {
             UIStyleBar(ed, in);
             char tb[128]; std::strncpy(tb, in->text.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
             if (ImGui::InputText("Text##uif", tb, sizeof(tb))) { in->text = tb; ed.dirty = true; }
+            const bool phLoc = LocalizedTextField(ed, "uifloc", in->loc, in->placeholder, go);   // the placeholder from a string-table key
             char ph[96]; std::strncpy(ph, in->placeholder.c_str(), sizeof(ph) - 1); ph[sizeof(ph)-1] = '\0';
-            if (ImGui::InputText("Placeholder##uif", ph, sizeof(ph))) { in->placeholder = ph; ed.dirty = true; }
+            if (!phLoc && ImGui::InputText("Placeholder##uif", ph, sizeof(ph))) { in->placeholder = ph; ed.dirty = true; }
             float pos[2] = {in->position.x, in->position.y};
             if (ImGui::DragFloat2("Pos (px)##uif", pos, 1.0f)) { in->position = {pos[0], pos[1]}; ed.dirty = true; }
             float sz[2] = {in->size.x, in->size.y};
@@ -34887,8 +34909,9 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* tt = dynamic_cast<UITooltip*>(curComp)) {
         if (CompHeader("UI Tooltip", tt, &toRemove)) {
+            const bool ttLoc = LocalizedTextField(ed, "uttloc", tt->loc, tt->text, go);   // or a string-table key
             char tb[256]; std::strncpy(tb, tt->text.c_str(), sizeof(tb) - 1); tb[sizeof(tb)-1] = '\0';
-            if (ImGui::InputText("Text##utt", tb, sizeof(tb))) { tt->text = tb; ed.dirty = true; }
+            if (!ttLoc && ImGui::InputText("Text##utt", tb, sizeof(tb))) { tt->text = tb; ed.dirty = true; }
             if (ImGui::DragFloat("Delay (s)##utt", &tt->delay, 0.05f, 0.0f, 5.0f)) ed.dirty = true;
             float bg[4] = {tt->background.r, tt->background.g, tt->background.b, tt->background.a};
             if (ImGui::ColorEdit4("Background##utt", bg)) { tt->background = {bg[0],bg[1],bg[2],bg[3]}; ed.dirty = true; }
@@ -35720,10 +35743,11 @@ void DrawInspector(EditorState& ed) {
     if (auto* tg = dynamic_cast<UIToggle*>(curComp)) {
         if (CompHeader("UI Toggle", tg, &toRemove)) {
             UIStyleBar(ed, tg);
+            const bool tgLoc = LocalizedTextField(ed, "utgloc", tg->loc, tg->label, go);   // or a string-table key
             char lb[128];
             std::strncpy(lb, tg->label.c_str(), sizeof(lb) - 1);
             lb[sizeof(lb) - 1] = '\0';
-            if (ImGui::InputText("Label##utg", lb, sizeof(lb))) { tg->label = lb; ed.dirty = true; }
+            if (!tgLoc && ImGui::InputText("Label##utg", lb, sizeof(lb))) { tg->label = lb; ed.dirty = true; }
             if (ImGui::Checkbox("On##utg", &tg->on)) ed.dirty = true;
             float pos[2] = {tg->position.x, tg->position.y};
             if (ImGui::DragFloat2("Pos (px)##utg", pos, 1.0f)) { tg->position = {pos[0], pos[1]}; ed.dirty = true; }
@@ -36686,23 +36710,10 @@ void DrawInspector(EditorState& ed) {
     ImGui::End();
 }
 
-// Upload a TTF font's glyph atlas as an SDL texture (once) for the editor's ImGui
-// draw lists. Cached per font; returns nullptr if it can't be created.
+// A TTF font's glyph atlas as an SDL texture for the editor's ImGui draw lists
+// (uploaded again when the font bakes new characters). nullptr if it can't be created.
 static SDL_Texture* TtfAtlasTexture(okay::TtfFont* f) {
-    if (!f || !f->Valid() || !g_sdlRenderer) return nullptr;
-    static std::unordered_map<okay::TtfFont*, SDL_Texture*> cache;
-    auto it = cache.find(f);
-    if (it != cache.end()) return it->second;
-    const okay::Image& a = f->Atlas();
-    SDL_Texture* tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
-                                         SDL_TEXTUREACCESS_STATIC, a.Width(), a.Height());
-    if (tex) {
-        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
-        SDL_UpdateTexture(tex, nullptr, a.Data(), a.Width() * 4);
-    }
-    cache[f] = tex;
-    return tex;
+    return oked::PreviewFontAtlas(g_sdlRenderer, f);
 }
 
 // Draw a string with a TTF font into an ImGui draw list (a textured quad per glyph,
@@ -36716,9 +36727,12 @@ static void DrawTtfText(ImDrawList* dl, okay::TtfFont* f, SDL_Texture* tex,
     const float baseline = f->Ascent((float)okay::Font8x8::Height) * px; // top -> baseline, screen px
     const float slant = italic ? 0.30f : 0.0f;
     float penX = ox, penY = oy;
-    for (char ch : text) {
-        if (ch == '\n') { penY += f->LineHeight((float)okay::Font8x8::Height) * px + lineSp * px; penX = ox; continue; }
-        const okay::TtfFont::Glyph* g = f->Get(ch);
+    const char* p = text.c_str();
+    const char* const end = p + text.size();
+    while (p < end) {   // UTF-8: accented letters, Cyrillic, CJK... (DrawBitmapText baked them)
+        const std::uint32_t cp = okay::utf8::Next(p, end);
+        if (cp == '\n') { penY += f->LineHeight((float)okay::Font8x8::Height) * px + lineSp * px; penX = ox; continue; }
+        const okay::TtfFont::Glyph* g = f->GlyphFor(cp);
         if (!g) { penX += px * 4.0f; continue; }
         int gw = g->x1 - g->x0, gh = g->y1 - g->y0;
         if (gw > 0 && gh > 0) {
@@ -36747,10 +36761,12 @@ void DrawBitmapText(ImDrawList* dl, const std::string& text, float ox, float oy,
                     bool italic = false, bool gradient = false, ImU32 col2 = 0,
                     okay::TtfFont* ttf = nullptr) {
     if (!ttf) ttf = g_uiDefaultFont;   // scene-wide default UI font (set during the UI pass)
+    ttf = okay::FontForText(ttf, text);   // one with every character of the text (a language's letters)
     // A smooth font scales below one font pixel (a phone preview, a small window), so
     // text keeps its size relative to its box; only the 8x8 pixel font needs >= 1.
     if (px < 0.15f) px = 0.15f;
     if (ttf && ttf->Valid()) {
+        ttf->Prepare(text);   // bake new characters before the atlas is uploaded
         if (SDL_Texture* tex = TtfAtlasTexture(ttf)) {
             DrawTtfText(dl, ttf, tex, text, ox, oy, px, col, letterSp, lineSp, italic);
             return;
@@ -36763,8 +36779,12 @@ void DrawBitmapText(ImDrawList* dl, const std::string& text, float ox, float oy,
     int ba = (col2 >> IM_COL32_A_SHIFT) & 0xFF, br = (col2 >> IM_COL32_R_SHIFT) & 0xFF;
     int bg = (col2 >> IM_COL32_G_SHIFT) & 0xFF, bb = (col2 >> IM_COL32_B_SHIFT) & 0xFF;
     float cx = ox;
-    for (char ch : text) {
-        if (ch == '\n') { oy += (Font8x8::Height + 1 + lineSp) * px; cx = ox; continue; }
+    const char* p = text.c_str();
+    const char* const end = p + text.size();
+    while (p < end) {
+        const std::uint32_t cp = okay::utf8::Next(p, end);
+        if (cp == '\n') { oy += (Font8x8::Height + 1 + lineSp) * px; cx = ox; continue; }
+        const char ch = cp < 128 ? (char)cp : ' ';   // the 8x8 font has ASCII only: other characters leave a gap
         for (int y = 0; y < Font8x8::Height; ++y) {
             ImU32 rc = col;
             if (gradient) {
@@ -42996,6 +43016,11 @@ static int RunBuildGameCli(int argc, char** argv) {
     EditorState ed;
     std::string err;
     if (!ed.Load(scene, &err)) { std::fprintf(stderr, "build-game: couldn't open %s: %s\n", scene.c_str(), err.c_str()); return 1; }
+    {   // the project folder (the scene's, or its parent for <project>/Assets), as --open finds it: its string table ships
+        std::filesystem::path dir = std::filesystem::path(scene).parent_path();
+        if (dir.filename() == "Assets") dir = dir.parent_path();
+        if (!dir.empty()) ed.setProjectDir(dir.string());
+    }
     const std::string msg = builder::Build(ed, out, name);
     const bool ok = msg.rfind("Built '", 0) == 0;
     std::fprintf(ok ? stdout : stderr, "%s\n", msg.c_str());
@@ -43164,6 +43189,7 @@ int main(int argc, char** argv) {
         if (!io.Fonts->AddFontFromMemoryCompressedBase85TTF(
                 RobotoMedium_compressed_data_base85, 16.0f, &fc))
             io.Fonts->AddFontDefault();
+        MergeLocalizationFonts(16.0f);   // Japanese, Chinese, Korean text in the string table
         // A slightly larger heading face for section titles (visual hierarchy).
         g_headingFont = io.Fonts->AddFontFromMemoryCompressedBase85TTF(
                 RobotoMedium_compressed_data_base85, 18.5f, &fc);
@@ -43998,6 +44024,7 @@ int main(int argc, char** argv) {
             NavigationDevHooks(ed);   // OKAY_UI_NAV / NAVBAKE / NAVAGENT / NAVSEND / NAVDEST
             if (std::getenv("OKAY_UI_DIALOGUE")) g_showDialogue = true;   // dev screenshots of the Dialogue window
             BehaviorTreeDevHooks(ed);   // OKAY_UI_BT / BTGUARD / BTSEL / BTTAB
+            LocalizationDevHooks(ed);   // OKAY_UI_LOC / OKAY_UI_LANG / OKAY_UI_LOCKEY
             // OKAY_UI_PLAY=1: enter Play once the scene is up (screenshots of the
             // Animator and Animation windows while the game runs).
             if (std::getenv("OKAY_UI_PLAY") && s_focusFrames == 60 && !ed.isPlaying()) {
@@ -44261,6 +44288,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.Navigation"); DrawNavigationWindow(ed); }
         { OKAY_PROFILE("UI.Dialogue"); DrawDialogueWindow(ed); }
         { OKAY_PROFILE("UI.BehaviorTree"); DrawBehaviorTreeWindow(ed); }
+        { OKAY_PROFILE("UI.Localization"); LocalizationTick(ed); DrawLocalizationWindow(ed); }
         { OKAY_PROFILE("UI.History"); DrawHistory(ed); }
         { OKAY_PROFILE("UI.Stats"); if (g_showStats)     DrawStats(ed); }
         { OKAY_PROFILE("UI.SceneSettings"); if (g_showSceneSettings) DrawSceneSettings(ed); }

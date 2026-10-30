@@ -10,6 +10,7 @@
 #include "okay/Components/SurvivalComponents.hpp" // HealthDeathHook
 #include "okay/Components/UIAnchor.hpp"           // UICanvas
 #include "okay/Components/UIToast.hpp"
+#include "okay/Core/Localization.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Inventory/InventoryEvents.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
@@ -21,6 +22,54 @@
 #include <sstream>
 
 namespace okay {
+
+// ---------------------------------------------------------------------------
+// Localization keys
+// ---------------------------------------------------------------------------
+std::string QuestTitleKey(const std::string& id) { return "quest." + Localization::KeyPart(id) + ".title"; }
+std::string QuestDescriptionKey(const std::string& id) { return "quest." + Localization::KeyPart(id) + ".desc"; }
+std::string QuestObjectiveKey(const std::string& id, int objective) {
+    return "quest." + Localization::KeyPart(id) + ".obj" + std::to_string(objective);
+}
+std::string QuestTitle(const QuestDef& q) { return Localization::GetOr(QuestTitleKey(q.id), q.title.empty() ? q.id : q.title); }
+std::string QuestDescription(const QuestDef& q) { return Localization::GetOr(QuestDescriptionKey(q.id), q.description); }
+std::string QuestObjectiveText(const QuestDef& q, int index) {
+    if (index < 0 || index >= (int)q.objectives.size()) return {};
+    return Localization::GetOr(QuestObjectiveKey(q.id, index + 1), q.objectives[(std::size_t)index].description);
+}
+std::vector<std::pair<std::string, std::string>> QuestStrings(const QuestDef& q) {
+    std::vector<std::pair<std::string, std::string>> out;
+    if (!q.title.empty()) out.push_back({QuestTitleKey(q.id), q.title});
+    if (!q.description.empty()) out.push_back({QuestDescriptionKey(q.id), q.description});
+    for (std::size_t i = 0; i < q.objectives.size(); ++i)
+        if (!q.objectives[i].description.empty()) out.push_back({QuestObjectiveKey(q.id, (int)i + 1), q.objectives[i].description});
+    return out;
+}
+
+const std::vector<std::pair<std::string, std::string>>& QuestLog::LocKeys() {
+    static const std::vector<std::pair<std::string, std::string>> k = {
+        {"quest.started", "Quest started"}, {"quest.completed", "Quest completed"}, {"quest.failed", "Quest failed"},
+        {"quest.objective", "Objective {0}"}, {"quest.objective_done", "{0} - done"}, {"quest.optional", "(optional)"},
+        {"quest.tracker", "Quests"}, {"quest.journal", "Journal"}, {"quest.tabs", "Active|Completed|All"},
+        {"quest.badge.active", "active"}, {"quest.badge.tracked", "tracked"}, {"quest.badge.completed", "completed"},
+        {"quest.badge.failed", "failed"}, {"quest.track", "Track {0}"}, {"quest.none_active", "No active quests."},
+        {"quest.none", "Nothing here yet."}, {"quest.close", "Close"}};
+    return k;
+}
+
+namespace {
+// The quest UI's own words: the string table's text for the key, else the English of LocKeys().
+std::string Ui(const char* key) {
+    for (const auto& kv : QuestLog::LocKeys()) if (kv.first == key) return Localization::GetOr(key, kv.second);
+    return key;
+}
+std::string Ui(const char* key, const LocArg& arg) { return Localization::Format(Ui(key), {arg}); }
+// An objective as a line: its description, else `orElse`.
+std::string ObjectiveLine(const QuestDef& q, int index, const std::string& orElse) {
+    const std::string t = QuestObjectiveText(q, index);
+    return t.empty() ? orElse : t;
+}
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Names
@@ -291,7 +340,7 @@ bool QuestLog::StartQuest(const std::string& id) {
     r.progress.assign(q->objectives.size(), 0);
     r.done.assign(q->objectives.size(), 0);
     if (tracked.empty()) tracked = id;
-    Notify("Quest started", q->title.empty() ? id : q->title, 0);
+    Notify(Ui("quest.started"), QuestTitle(*q), 0);
     FireEvent("on_quest_started", "OnQuestStarted", id, 0.0f);
     CheckCompletion(id);   // a quest with no required objectives completes at once
     return true;
@@ -307,7 +356,7 @@ bool QuestLog::CompleteQuest(const std::string& id) {
     ++r->completions;
     if (tracked == id) { tracked.clear(); for (const auto& x : records) if (x.status == QuestStatus::Active) { tracked = x.id; break; } }
     GrantRewards(*q);
-    Notify("Quest completed", q->title.empty() ? id : q->title, 1);
+    Notify(Ui("quest.completed"), QuestTitle(*q), 1);
     FireEvent("on_quest_completed", "OnQuestCompleted", id, (float)r->completions);
     return true;
 }
@@ -319,7 +368,7 @@ bool QuestLog::FailQuest(const std::string& id) {
     r->status = QuestStatus::Failed;
     if (tracked == id) tracked.clear();
     const QuestDef* q = Def(id);
-    Notify("Quest failed", q && !q->title.empty() ? q->title : id, 2);
+    Notify(Ui("quest.failed"), q ? QuestTitle(*q) : id, 2);
     FireEvent("on_quest_failed", "OnQuestFailed", id, 0.0f);
     return true;
 }
@@ -341,9 +390,8 @@ bool QuestLog::CompleteObjective(const std::string& id, int index) {
     if (r->done[index]) return true;
     r->done[index] = 1;
     r->progress[index] = std::max(r->progress[index], q->objectives[index].count);
-    const std::string title = q->title.empty() ? id : q->title;
-    const std::string what = q->objectives[index].description.empty() ? "Objective " + std::to_string(index + 1) : q->objectives[index].description;
-    Notify(title, what + " - done", 1);
+    const std::string what = ObjectiveLine(*q, index, Ui("quest.objective", LocArg(index + 1)));
+    Notify(QuestTitle(*q), Ui("quest.objective_done", LocArg(what)), 1);
     FireEvent("on_objective_completed", "OnObjectiveCompleted", id, (float)index);
     CheckCompletion(id);
     return true;
@@ -361,9 +409,8 @@ bool QuestLog::AddProgress(const std::string& id, int index, int amount) {
     const int need = std::max(1, q->objectives[index].count);
     r->progress[index] = std::min(need, r->progress[index] + amount);
     if (r->progress[index] >= need) return CompleteObjective(id, index);
-    const std::string title = q->title.empty() ? id : q->title;
-    const std::string what = q->objectives[index].description.empty() ? "Objective " + std::to_string(index + 1) : q->objectives[index].description;
-    Notify(title, what + "  " + std::to_string(r->progress[index]) + " / " + std::to_string(need), 0);
+    const std::string what = ObjectiveLine(*q, index, Ui("quest.objective", LocArg(index + 1)));
+    Notify(QuestTitle(*q), what + "  " + std::to_string(r->progress[index]) + " / " + std::to_string(need), 0);
     return true;
 }
 
@@ -504,18 +551,18 @@ void QuestLog::DrawTracker() {
     for (const auto& id : ids) if (const QuestDef* q = Def(id)) rows += 1 + (int)q->objectives.size();
     const float w = 300.0f, h = 44.0f + 24.0f * (float)rows;
     const float x = ScriptUIOriginX() + ScriptUIWidth(UICanvas::Width()) - w - 16.0f, y = ScriptUIOriginY() + 16.0f;
-    ui->BeginAt("Quests", x, y, w, h);
+    ui->BeginAt(Ui("quest.tracker").c_str(), x, y, w, h);
     for (const auto& id : ids) {
         const QuestDef* q = Def(id);
         if (!q) continue;
-        ui->Caption((q->title.empty() ? id : q->title).c_str(), 115, 209, 143);
+        ui->Caption(QuestTitle(*q).c_str(), 115, 209, 143);
         for (std::size_t i = 0; i < q->objectives.size(); ++i) {
             const auto& ob = q->objectives[i];
             std::string line = ObjectiveDone(id, (int)i) ? "[x] " : "[ ] ";
-            line += ob.description.empty() ? ob.target : ob.description;
+            line += ObjectiveLine(*q, (int)i, ob.target);
             if (ob.kind == QuestObjective::Kind::Collect || ob.kind == QuestObjective::Kind::Kill)
                 line += "  " + std::to_string(std::min(Progress(id, (int)i), ob.count)) + "/" + std::to_string(ob.count);
-            if (ob.optional) line += " (optional)";
+            if (ob.optional) line += " " + Ui("quest.optional");
             if (ObjectiveDone(id, (int)i)) ui->TextDim(line.c_str()); else ui->Text(line.c_str());
         }
     }
@@ -527,8 +574,8 @@ void QuestLog::DrawJournal() {
     if (!ui) return;
     const float W = ScriptUIWidth(UICanvas::Width()), H = ScriptUIHeight(UICanvas::Height());
     const float w = std::min(620.0f, W - 32.0f), h = std::min(460.0f, H - 32.0f);
-    ui->BeginAt("Journal", ScriptUIOriginX() + (W - w) * 0.5f, ScriptUIOriginY() + (H - h) * 0.5f, w, h);
-    m_journalTab = ui->Tabs("Active|Completed|All", m_journalTab);
+    ui->BeginAt(Ui("quest.journal").c_str(), ScriptUIOriginX() + (W - w) * 0.5f, ScriptUIOriginY() + (H - h) * 0.5f, w, h);
+    m_journalTab = ui->Tabs(Ui("quest.tabs").c_str(), m_journalTab);
     int shown = 0;
     for (const QuestDef* q : Defs()) {
         const QuestStatus st = Status(q->id);
@@ -536,27 +583,28 @@ void QuestLog::DrawJournal() {
         if (m_journalTab == 1 && st != QuestStatus::Completed) continue;
         if (m_journalTab == 2 && st == QuestStatus::Inactive) continue;
         ++shown;
-        ui->Text((q->title.empty() ? q->id : q->title).c_str());
+        ui->Text(QuestTitle(*q).c_str());
         ui->SameLine();
-        if (st == QuestStatus::Completed) ui->Badge("completed", 72, 160, 110);
-        else if (st == QuestStatus::Failed) ui->Badge("failed", 190, 70, 70);
-        else ui->Badge(tracked == q->id ? "tracked" : "active", 0, 0, 0);
-        if (!q->description.empty()) ui->TextDim(q->description.c_str());
+        if (st == QuestStatus::Completed) ui->Badge(Ui("quest.badge.completed").c_str(), 72, 160, 110);
+        else if (st == QuestStatus::Failed) ui->Badge(Ui("quest.badge.failed").c_str(), 190, 70, 70);
+        else ui->Badge(tracked == q->id ? Ui("quest.badge.tracked").c_str() : Ui("quest.badge.active").c_str(), 0, 0, 0);
+        const std::string desc = QuestDescription(*q);
+        if (!desc.empty()) ui->TextDim(desc.c_str());
         for (std::size_t i = 0; i < q->objectives.size(); ++i) {
             const auto& ob = q->objectives[i];
             std::string line = ObjectiveDone(q->id, (int)i) ? "  [x] " : "  [ ] ";
-            line += ob.description.empty() ? ob.target : ob.description;
+            line += ObjectiveLine(*q, (int)i, ob.target);
             if (ob.kind == QuestObjective::Kind::Collect || ob.kind == QuestObjective::Kind::Kill)
                 line += "  " + std::to_string(std::min(Progress(q->id, (int)i), ob.count)) + "/" + std::to_string(ob.count);
             if (ObjectiveDone(q->id, (int)i)) ui->TextDim(line.c_str()); else ui->Text(line.c_str());
         }
         if (st == QuestStatus::Active && tracked != q->id) {
-            if (ui->Button(("Track " + q->id).c_str())) tracked = q->id;
+            if (ui->Button(Ui("quest.track", LocArg(q->id)).c_str())) tracked = q->id;
         }
         ui->Separator();
     }
-    if (shown == 0) ui->TextDim(m_journalTab == 0 ? "No active quests." : "Nothing here yet.");
-    if (ui->PrimaryButton("Close")) journalOpen = false;
+    if (shown == 0) ui->TextDim(m_journalTab == 0 ? Ui("quest.none_active").c_str() : Ui("quest.none").c_str());
+    if (ui->PrimaryButton(Ui("quest.close").c_str())) journalOpen = false;
     ui->End();
 }
 

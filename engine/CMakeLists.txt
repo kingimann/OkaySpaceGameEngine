@@ -6,6 +6,7 @@ add_library(okay_engine
     src/Core/Tween.cpp
     src/Core/Prefs.cpp
     src/Core/DataAsset.cpp
+    src/Core/Localization.cpp
     src/Input/Input.cpp
     src/Input/InputActions.cpp
     src/Render/ConsoleRenderer.cpp
@@ -18,6 +19,7 @@ add_library(okay_engine
     src/Scene/Scene.cpp
     src/Scene/SceneManager.cpp
     src/Scene/SceneSerializer.cpp
+    src/Scene/SceneLocalization.cpp
     src/Components/Camera.cpp
     src/Components/SpriteRenderer.cpp
     src/Net/UdpSocket.cpp

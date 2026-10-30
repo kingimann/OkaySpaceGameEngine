@@ -40,23 +40,28 @@ inline SDL_Texture* LoadSDLTexture(SDL_Renderer* r, const std::string& path, con
     return tex;
 }
 
-/// Upload a TTF glyph atlas as an SDL texture (once per font, cached for the
-/// process; one renderer per process, as in the player).
+/// Upload a TTF glyph atlas as an SDL texture (cached per font for the process;
+/// one renderer per process, as in the player). Uploaded again when the font
+/// baked new characters (TtfFont::Generation).
 inline SDL_Texture* SDLFontAtlas(SDL_Renderer* r, TtfFont* f) {
     if (!f || !f->Valid()) return nullptr;
-    static std::unordered_map<TtfFont*, SDL_Texture*> cache;
-    auto it = cache.find(f);
-    if (it != cache.end()) return it->second;
+    struct Up { SDL_Texture* tex = nullptr; std::uint32_t gen = 0; int w = 0, h = 0; };
+    static std::unordered_map<TtfFont*, Up> cache;
+    Up& u = cache[f];
     const Image& a = f->Atlas();
-    SDL_Texture* tex = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888,
-                                         SDL_TEXTUREACCESS_STATIC, a.Width(), a.Height());
-    if (tex) {
-        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
-        SDL_UpdateTexture(tex, nullptr, a.Data(), a.Width() * 4);
+    if (u.tex && u.gen == f->Generation()) return u.tex;
+    if (u.tex && (u.w != a.Width() || u.h != a.Height())) { SDL_DestroyTexture(u.tex); u.tex = nullptr; }
+    if (!u.tex) {
+        u.tex = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, a.Width(), a.Height());
+        if (u.tex) {
+            SDL_SetTextureBlendMode(u.tex, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureScaleMode(u.tex, SDL_ScaleModeLinear);
+        }
+        u.w = a.Width(); u.h = a.Height();
     }
-    cache[f] = tex;
-    return tex;
+    if (u.tex) SDL_UpdateTexture(u.tex, nullptr, a.Data(), a.Width() * 4);
+    u.gen = f->Generation();
+    return u.tex;
 }
 
 class SDLPainter final : public Painter {

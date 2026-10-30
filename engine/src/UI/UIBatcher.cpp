@@ -107,10 +107,25 @@ Tex BatchPainter::LoadTexture(const std::string& path) {
 Tex BatchPainter::FontAtlas(TtfFont* font) {
     if (!font || !font->Valid()) return nullptr;
     if (m_passthrough) return m_b.FontAtlas(font);
-    auto it = m_byFont.find(font);
-    if (it != m_byFont.end()) return it->second;
-    Entry* e = nullptr;
     const Image& a = font->Atlas();
+    auto it = m_byFont.find(font);
+    if (it != m_byFont.end()) {
+        Entry* e = it->second;
+        std::uint32_t& gen = m_fontGen[font];
+        if (!e || gen == font->Generation()) return e;
+        gen = font->Generation();   // the font baked new characters: copy its atlas again
+        int x = 0, y = 0;
+        if (e->page == 0 && e->w == a.Width() && e->h == a.Height()) Blit(m_pages[0], a, e->x, e->y);
+        else if (e->page == 0 && Place(0, a.Width(), a.Height(), x, y)) {   // it grew: a new spot
+            e->x = x; e->y = y; e->w = a.Width(); e->h = a.Height();
+            Blit(m_pages[0], a, x, y);
+        } else {   // too big for the page now: the backend's own texture
+            e->page = -1; e->own = m_b.FontAtlas(font); e->w = a.Width(); e->h = a.Height();
+        }
+        return e;
+    }
+    m_fontGen[font] = font->Generation();
+    Entry* e = nullptr;
     int x = 0, y = 0;
     if (EnsurePage(0) && Place(0, a.Width(), a.Height(), x, y)) {
         m_entries.push_back(Entry{});

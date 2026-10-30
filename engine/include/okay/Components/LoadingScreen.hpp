@@ -4,6 +4,7 @@
 #include "okay/Scene/SceneManager.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Core/Localization.hpp"
 #include <string>
 #include <vector>
 
@@ -54,6 +55,13 @@ public:
     std::string title           = "Loading...";
     std::vector<std::string> tips;               ///< a different one is shown each time
     Color       textColor       = Color::White;
+    /// Localized: `title`, `subtitle` and each tip are string-table keys, shown in
+    /// the player's language.
+    bool        localized       = false;
+    /// A text field as players read it: its string-table text when localized.
+    std::string Shown(const std::string& field) const {
+        return localized && !field.empty() ? Localization::Get(field) : field;
+    }
 
     // ---- Title ----
     bool        showTitle       = true;

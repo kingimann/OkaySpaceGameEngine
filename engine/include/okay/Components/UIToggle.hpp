@@ -7,6 +7,7 @@
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Core/Localization.hpp"
 #include <string>
 
 namespace okay {
@@ -21,6 +22,8 @@ public:
     Vec2  size{28.0f, 28.0f};
     bool  on = false;
     std::string label = "Toggle";
+    /// Localized: a string-table key whose text replaces `label` in the current language.
+    LocalizedText loc;
     Color boxColor   = Color::FromBytes(41, 46, 59);
     Color checkColor = Color::FromBytes(66, 150, 250);
     Color textColor  = Color::White;

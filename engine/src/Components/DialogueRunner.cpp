@@ -11,7 +11,9 @@
 #include "okay/Components/StoryState.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/UIAnchor.hpp"        // UICanvas
+#include "okay/Core/Localization.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Core/Utf8.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Inventory/InventoryEvents.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -21,6 +23,35 @@
 #include <filesystem>
 
 namespace okay {
+
+namespace {
+// What players read: the string table's text for a line's, choice's or speaker's
+// key (docs/localization.md), else the text in the graph.
+std::string LineText(const std::string& graph, const DialogueNode& n) {
+    return Localization::GetOr(DialogueLineKey(graph, n.id), n.text);
+}
+std::string SpeakerText(const std::string& speaker) {
+    return speaker.empty() ? speaker : Localization::GetOr(DialogueSpeakerKey(speaker), speaker);
+}
+std::string ChoiceText(const std::string& graph, const DialogueNode& n, const DialogueChoice& c) {
+    for (std::size_t i = 0; i < n.choices.size(); ++i)   // the visible choices skip hidden ones
+        if (n.choices[i].text == c.text && n.choices[i].target == c.target)
+            return Localization::GetOr(DialogueChoiceKey(graph, n.id, (int)i + 1), c.text);
+    return c.text;
+}
+// The box's own words (the English of LocKeys() until the table has the key).
+std::string UiText(const char* key, const std::string& keyName = "") {
+    for (const auto& kv : DialogueRunner::LocKeys())
+        if (kv.first == key) return Localization::Format(Localization::GetOr(key, kv.second), {LocArg(keyName)});
+    return key;
+}
+} // namespace
+
+const std::vector<std::pair<std::string, std::string>>& DialogueRunner::LocKeys() {
+    static const std::vector<std::pair<std::string, std::string>> k = {
+        {"dialogue.talk", "{0} to talk"}, {"dialogue.continue", "{0} / click to continue"}, {"dialogue.title", "Dialogue"}};
+    return k;
+}
 
 // ---------------------------------------------------------------------------
 // The host: story variables, items and quests from the scene
@@ -190,7 +221,7 @@ void DialogueRunner::Present() {
 void DialogueRunner::Advance() {
     if (!IsActive()) return;
     const DialogueNode* n = m_session.Node();
-    if (n && n->kind == DialogueNode::Kind::Line && m_shown < (float)n->text.size()) { m_shown = 1e9f; return; }
+    if (n && n->kind == DialogueNode::Kind::Line && m_shown < (float)utf8::Length(LineText(GraphName(), *n))) { m_shown = 1e9f; return; }
     m_session.Advance();
     if (m_session.Active()) Present(); else Ended();
 }
@@ -228,20 +259,24 @@ DialogueRunner::Line DialogueRunner::CurrentLine() const {
     if (n->kind == DialogueNode::Kind::Choice) {
         l.choice = true;
         l.complete = true;
-        for (const auto& c : m_session.Choices()) l.choices.push_back(c.text);
+        for (const auto& c : m_session.Choices()) l.choices.push_back(ChoiceText(GraphName(), *n, c));
         // A choice shows the line before it (the question) when one led here.
         const auto& trail = m_session.Trail();
         for (std::size_t i = trail.size(); i-- > 0;) {
             const DialogueNode* prev = m_graph.Find(trail[i]);
-            if (prev && prev->kind == DialogueNode::Kind::Line) { l.speaker = prev->speaker; l.text = prev->text; l.portrait = prev->portrait; break; }
+            if (prev && prev->kind == DialogueNode::Kind::Line) {
+                l.speaker = SpeakerText(prev->speaker); l.text = LineText(GraphName(), *prev); l.portrait = prev->portrait;
+                break;
+            }
         }
         l.shownText = l.text;
         return l;
     }
-    l.speaker = n->speaker; l.text = n->text; l.portrait = n->portrait;
-    const std::size_t shown = std::min(n->text.size(), (std::size_t)std::max(0.0f, m_shown));
-    l.shownText = n->text.substr(0, shown);
-    l.complete = shown >= n->text.size();
+    l.speaker = SpeakerText(n->speaker); l.text = LineText(GraphName(), *n); l.portrait = n->portrait;
+    const std::size_t len = utf8::Length(l.text);   // the typewriter counts characters
+    const std::size_t shown = std::min(len, (std::size_t)std::max(0.0f, m_shown));
+    l.shownText = l.text.substr(0, utf8::Offset(l.text, shown));
+    l.complete = shown >= len;
     return l;
 }
 
@@ -274,7 +309,7 @@ void DialogueRunner::Update(float dt) {
         ItemPickup::BlockInteract();   // E advances the conversation; no crate takes the press
         const DialogueNode* n = m_session.Node();
         if (n && n->kind == DialogueNode::Kind::Line) {
-            const float len = (float)n->text.size();
+            const float len = (float)utf8::Length(LineText(GraphName(), *n));
             if (m_shown < len) m_shown = std::min(len, m_shown + typewriterSpeed * dt);
             else {
                 m_lineTime += dt;
@@ -291,7 +326,7 @@ void DialogueRunner::Update(float dt) {
     // Not talking: the prompt and the interact key.
     const bool near = startMode == 0 && interactKey && enabled && InRange();
     if (near) {
-        SetPrompt(promptText.empty() ? Input::KeyName(interactKey) + " to talk" : promptText);
+        SetPrompt(promptText.empty() ? UiText("dialogue.talk", Input::KeyName(interactKey)) : promptText);
         if (Input::GetKeyDown(interactKey) && !Input::UICaptured()) {
             ItemPickup::BlockInteract();
             StartDialogue();
@@ -324,7 +359,7 @@ void DialogueRunner::DrawUI() {
     const float w = std::min(760.0f, std::max(320.0f, W - 32.0f));
     const float h = 150.0f + 40.0f * (float)nChoices;
     const float x = ScriptUIOriginX() + (W - w) * 0.5f, y = ScriptUIOriginY() + H - h - 20.0f;
-    const std::string title = l.speaker.empty() ? std::string("Dialogue") : l.speaker;
+    const std::string title = l.speaker.empty() ? UiText("dialogue.title") : l.speaker;
     ui->BeginAt(title.c_str(), x, y, w, h);
     bool drewPortrait = false;
     if (!l.portrait.empty()) drewPortrait = ui->Image(ResolveAsset(l.portrait).c_str(), 64.0f, 64.0f);
@@ -337,7 +372,7 @@ void DialogueRunner::DrawUI() {
             if (ui->PrimaryButton(label.c_str())) { Choose((int)i); break; }
         }
     } else {
-        const std::string hint = l.complete ? Input::KeyName(interactKey ? interactKey : '\r') + " / click to continue" : "...";
+        const std::string hint = l.complete ? UiText("dialogue.continue", Input::KeyName(interactKey ? interactKey : '\r')) : "...";
         ui->TextDim(hint.c_str());
     }
     ui->End();

@@ -302,6 +302,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     }
     if (type == "OnFixedUpdate" || type == "OnDestroy" || type == "OnEnable" || type == "OnDisable")
         return std::make_unique<EventNode>();
+    if (type == "OnLanguageChanged") return std::make_unique<EventNode>();   // Event Name = the new language
     // Engine-API nodes ("Transform.Translate/3"): generated from the script bindings.
     if (auto api = MakeApiNode(type)) return api;
     if (type == "OnStart" || type == "OnUpdate" || type == "OnCollision" || type == "OnTrigger" || type == "OnClick" || type == "OnAnimEvent" ||
@@ -364,6 +365,9 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         if (type == "EndsWith")       return std::make_unique<TextFnNode>(TextFnNode::Op::EndsWith);
         if (type == "Trim")           return std::make_unique<TextFnNode>(TextFnNode::Op::Trim);
         if (type == "IndexOf")        return std::make_unique<TextFnNode>(TextFnNode::Op::IndexOf);
+        if (type == "Localize")       return std::make_unique<LocalizeNode>(a0(""));
+        if (type == "SetLanguage")    return std::make_unique<SetLanguageNode>(a0(""));
+        if (type == "GetLanguage")    return std::make_unique<GetLanguageNode>();
         if (type == "Noise")          return std::make_unique<MathFn4Node>(MathFn4Node::Op::Noise);
         if (type == "Snap")           return std::make_unique<MathFn4Node>(MathFn4Node::Op::Snap);
         if (type == "Wrap")           return std::make_unique<MathFn4Node>(MathFn4Node::Op::Wrap);

@@ -221,6 +221,8 @@ has the full list, plus the **Tween Animation** component for tweens without cod
 | `save_exists([slot])` / `delete_save([slot])` | Manage save slots |
 | `play_sequence("name")` / `stop_sequence()` | Play / stop a cutscene sequence (see docs/cutscenes.md) |
 | `sequence_playing()` / `sequence_time()` | 1 while a sequence plays / seconds into it; events reach `on_sequence_event(name)` |
+| `loc("key" [, args...])` | The key's text in the player's language; `{0}`, `{1}`... from the arguments, `{name}` from a map (see docs/localization.md) |
+| `set_language("fr")` / `get_language()` / `languages()` / `language_name("fr")` | Switch (remembered for the next run) / read the language; a change runs `on_language_changed(code)` |
 
 Easings: `linear`, `in/out/in_out_quad`, `..._cubic`, `..._sine`, `..._expo`,
 `in_back`/`out_back`, `out_elastic`, `out_bounce`.

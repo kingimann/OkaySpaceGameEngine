@@ -1338,6 +1338,24 @@ int main(int argc, char** argv) {
     Character::SetAssetBaseDir(baseDir);   // a Character's relative clips file, too
     BehaviorTreeRunner::SetAssetBaseDir(baseDir);   // a Behavior Tree Runner's relative .okaybt
     ItemDatabase::Get().Load(baseDir + "items.okayitems");   // the project's item definitions (shipped by Build Game)
+    // The project's strings in every language (shipped by Build Game), and the
+    // language to show: the one the player chose before, else the OS language
+    // when the game has it, else the table's default.
+    if (std::ifstream(baseDir + "strings.okayloc").good()) {
+        std::string locErr;
+        if (!Localization::LoadTable(baseDir + "strings.okayloc", &locErr)) SDL_Log("strings.okayloc: %s", locErr.c_str());
+    }
+    {
+        std::vector<std::string> osLocales;
+#if SDL_VERSION_ATLEAST(2, 0, 14)
+        if (SDL_Locale* locs = SDL_GetPreferredLocales()) {
+            for (const SDL_Locale* l = locs; l->language; ++l)
+                osLocales.push_back(l->country ? std::string(l->language) + "-" + l->country : std::string(l->language));
+            SDL_free(locs);
+        }
+#endif
+        Localization::LoadSettings(osLocales);
+    }
 
     // Anti-cheat (okayac::DecideStart). Without trusted keys built in: off unless
     // the build (anticheat=) or OKAY_ANTICHEAT turns it on (either only makes it

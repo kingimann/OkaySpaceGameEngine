@@ -1,6 +1,7 @@
 #include "OkayUI_FontAtlas.hpp"
 #include "stb_truetype.h"   // the implementation is compiled into the engine (TtfFont.cpp)
 #include "okay/Graphics/TtfFont.hpp"   // EmbeddedUIFontData: the launcher's font (Roboto)
+#include "okay/UI/UIPainterSDL.hpp"    // SDLFontAtlas
 
 #include <cstdlib>
 #include <cstring>
@@ -111,6 +112,22 @@ const Atlas& Get() {
     if (!g_built) Build();
     return g_atlas;
 }
+
+okay::TtfFont* FallbackFont(const char* s) {
+    const Atlas& a = Get();
+    if (!a.ok || !s) return nullptr;
+    const Size& z = a.Pick(16.0f);
+    bool lacks = false;
+    for (const char* p = s; *p && !lacks;) {
+        const unsigned cp = NextCodepoint(&p);
+        lacks = cp >= 0x80 && !z.Find(cp);
+    }
+    if (!lacks) return nullptr;
+    okay::TtfFont* f = okay::FontForText(okay::BuiltinUIFont(), s);
+    return f && f->Valid() ? f : nullptr;
+}
+
+SDL_Texture* FallbackTexture(SDL_Renderer* r, okay::TtfFont* f) { return okay::ui2d::SDLFontAtlas(r, f); }
 
 unsigned NextCodepoint(const char** sp) {
     const unsigned char* s = (const unsigned char*)*sp;

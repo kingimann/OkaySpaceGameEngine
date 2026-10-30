@@ -1,7 +1,10 @@
 #include "UIPreviewPainter.hpp"
-#include "okay/UI/UIPainterSDL.hpp"   // SDLFontAtlas
+#include "okay/Graphics/TtfFont.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <utility>
+#include <vector>
 
 namespace oked {
 
@@ -68,7 +71,36 @@ Tex UIPreviewPainter::LoadTexture(const std::string& path) {
 }
 
 Tex UIPreviewPainter::FontAtlas(okay::TtfFont* font) {
-    return m_renderer ? (Tex)SDLFontAtlas(m_renderer, font) : nullptr;
+    return (Tex)PreviewFontAtlas(m_renderer, font);
+}
+
+SDL_Texture* PreviewFontAtlas(SDL_Renderer* r, okay::TtfFont* f) {
+    if (!r || !f || !f->Valid()) return nullptr;
+    struct Up { SDL_Texture* tex = nullptr; std::uint32_t gen = 0; int w = 0, h = 0; };
+    static std::unordered_map<okay::TtfFont*, Up> cache;
+    static std::vector<std::pair<SDL_Texture*, int>> retired;   // texture, the frame it was replaced in
+    const int frame = ImGui::GetFrameCount();
+    for (std::size_t i = 0; i < retired.size();) {
+        if (frame - retired[i].second < 2) { ++i; continue; }
+        SDL_DestroyTexture(retired[i].first);
+        retired[i] = retired.back();
+        retired.pop_back();
+    }
+    Up& u = cache[f];
+    if (u.tex && u.gen == f->Generation()) return u.tex;
+    const okay::Image& a = f->Atlas();
+    if (u.tex && (u.w != a.Width() || u.h != a.Height())) { retired.push_back({u.tex, frame}); u.tex = nullptr; }
+    if (!u.tex) {
+        u.tex = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, a.Width(), a.Height());
+        if (!u.tex) return nullptr;
+        SDL_SetTextureBlendMode(u.tex, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(u.tex, SDL_ScaleModeLinear);
+        u.w = a.Width();
+        u.h = a.Height();
+    }
+    SDL_UpdateTexture(u.tex, nullptr, a.Data(), a.Width() * 4);   // glyphs only get added: queued text stays right
+    u.gen = f->Generation();
+    return u.tex;
 }
 
 void UIPreviewPainter::QueryTexture(Tex t, int* w, int* h) {

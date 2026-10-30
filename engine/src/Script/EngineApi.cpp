@@ -9,6 +9,7 @@
 #include "okay/Input/InputActions.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Core/Localization.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
@@ -940,6 +941,56 @@ EngineApi Build() {
             [](const Value&, CallContext&) { return Value{SaveGame::PlayTime()}; },
             "Seconds played, counting the time in the save that was loaded."));
         api.types.push_back(std::move(sg));
+    }
+    // ---- Localization ----
+    {
+        ApiType lo; lo.name = "Localization"; lo.isStatic = true;
+        lo.doc = "Text in the player's language from the project's string table (docs/localization.md). "
+                 "A script hears a change of language in OnLanguageChanged().";
+        auto args = [](const std::vector<Value>& a) {
+            std::vector<LocArg> out;
+            for (std::size_t i = 1; i < a.size(); ++i) {
+                if (auto* f = std::get_if<float>(&a[i])) out.push_back(LocArg((double)*f));
+                else if (auto* n = std::get_if<std::int32_t>(&a[i])) out.push_back(LocArg((double)*n));
+                else out.push_back(LocArg(ValueToString(a[i])));
+            }
+            return out;
+        };
+        auto get = [args](const Value&, std::vector<Value>& a, CallContext&) {
+            return Value{Localization::LocalizeArgs(S(a[0]), args(a))};
+        };
+        lo.staticMethods.push_back(method("Get", {tString}, {"key"}, tString, get,
+            "The key's text in the player's language (the default language's when it has none, else the key)."));
+        lo.staticMethods.push_back(method("Get", {tString, tAny}, {"key", "arg0"}, tString, get,
+            "The key's text with {0} filled in; a number also picks the plural form."));
+        lo.staticMethods.push_back(method("Get", {tString, tAny, tAny}, {"key", "arg0", "arg1"}, tString, get,
+            "The key's text with {0} and {1} filled in."));
+        lo.staticMethods.push_back(method("Get", {tString, tAny, tAny, tAny}, {"key", "arg0", "arg1", "arg2"}, tString, get,
+            "The key's text with {0}, {1} and {2} filled in."));
+        for (auto& m : lo.staticMethods) m.pure = true;
+        lo.staticMethods.push_back(method("SetLanguage", {tString}, {"code"}, tBool,
+            [](const Value&, std::vector<Value>& a, CallContext&) {
+                const bool ok = Localization::SetLanguage(S(a[0]));
+                if (ok) Localization::SaveSettings();
+                else Log::Warning("[script] Localization.SetLanguage: the string table has no language \"", S(a[0]), "\"");
+                return Value{ok};
+            }, "Show every localized text in a language of the string table (\"fr\") and remember it for the next run. "
+               "False when the table doesn't have it."));
+        ApiMethod name = method("LanguageName", {tString}, {"code"}, tString,
+            [](const Value&, std::vector<Value>& a, CallContext&) { return Value{Localization::LanguageName(S(a[0]))}; },
+            "A language's name for a menu (\"Français\" for \"fr\").");
+        name.pure = true; lo.staticMethods.push_back(std::move(name));
+        lo.staticProps.push_back(ro("Language", tString,
+            [](const Value&, CallContext&) { return Value{Localization::Language()}; },
+            "The current language's code (\"en\", \"fr\"...)."));
+        lo.staticProps.push_back(ro("Languages", Type::ApiStrings(),
+            [](const Value&, CallContext&) {
+                auto list = std::make_shared<ArrayObj>();
+                list->typeName = "string[]";
+                for (const std::string& c : Localization::Languages()) list->items.push_back(Value{c});
+                return Value{list};
+            }, "The codes of the string table's languages, in the table's order."));
+        api.types.push_back(std::move(lo));
     }
     // ---- Sequence (cutscenes) ----
     {

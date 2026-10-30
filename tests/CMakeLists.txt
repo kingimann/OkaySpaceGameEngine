@@ -1332,3 +1332,8 @@ add_test(NAME quests COMMAND test_quests)
 add_executable(test_behavior_tree test_behavior_tree.cpp)
 target_link_libraries(test_behavior_tree PRIVATE okay::engine)
 add_test(NAME behavior_tree COMMAND test_behavior_tree)
+
+# Splines, spline meshes / instancers / followers, line and trail renderers: evaluation, records, scripts
+add_executable(test_splines test_splines.cpp)
+target_link_libraries(test_splines PRIVATE okay::engine)
+add_test(NAME splines COMMAND test_splines)

@@ -125,6 +125,32 @@ static SDL_Texture* GetTexture(SDL_Renderer* r, const std::string& path,
     return ui2d::LoadSDLTexture(r, path, baseDir, cache);
 }
 
+// Line and Trail Renderers seen through `vp`, in the view rect: SDL geometry with a
+// colour per vertex, alpha-blended like the particles (the same on every backend).
+static void DrawLineDraws(SDL_Renderer* r, const Scene& scene, const Mat4& vp, const Vec3& eye, float vx, float vy,
+                          float vw, float vh, const GameObject* ignore, int cullingMask, LineOcclusionFn occluded,
+                          const std::string& baseDir, std::unordered_map<std::string, SDL_Texture*>& cache) {
+    static std::vector<LineDraw> draws;
+    static std::vector<SDL_Vertex> verts;
+    CollectLineDraws(scene, vp, eye, vx, vy, vw, vh, draws, ignore, cullingMask, occluded);
+    if (draws.empty()) return;
+    auto byte = [](float c) { return (Uint8)(c <= 0.0f ? 0 : c >= 1.0f ? 255 : (int)(c * 255.0f + 0.5f)); };
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    for (const LineDraw& d : draws) {
+        SDL_Texture* tex = d.texture.empty() ? nullptr : GetTexture(r, d.texture, baseDir, cache);
+        if (tex) {   // the vertex colours tint it
+            SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureColorMod(tex, 255, 255, 255);
+            SDL_SetTextureAlphaMod(tex, 255);
+        }
+        verts.clear();
+        for (const LineDrawVertex& q : d.tris)
+            verts.push_back(SDL_Vertex{SDL_FPoint{q.x, q.y}, SDL_Color{byte(q.color.r), byte(q.color.g), byte(q.color.b), byte(q.color.a)},
+                                       SDL_FPoint{q.u, q.v}});
+        SDL_RenderGeometry(r, tex, verts.data(), (int)verts.size(), nullptr, 0);
+    }
+}
+
 // An item's icon (okay::ItemIconPath), or null when it has none (the name is drawn).
 static SDL_Texture* IconTexture(SDL_Renderer* r, const std::string& path, const std::string& baseDir,
                                 std::unordered_map<std::string, SDL_Texture*>& cache) {
@@ -2194,9 +2220,10 @@ int main(int argc, char** argv) {
                 // HALF-resolution software depth pre-pass to fill the occlusion buffer so
                 // particles still hide behind geometry. Only pay it when particles exist.
                 if (!SceneOcclusionDepth().valid) {
-                    bool anyParticles = false;
+                    bool anyParticles = false;   // (or lines / trails: they hide behind geometry the same way)
                     for (const auto& up : scene.Objects())
-                        if (up && up->active && up->GetComponent<ParticleSystem>()) { anyParticles = true; break; }
+                        if (up && up->active && (up->GetComponent<ParticleSystem>() || up->GetComponent<LineRenderer>() ||
+                                                 up->GetComponent<TrailRenderer>())) { anyParticles = true; break; }
                     if (anyParticles) {
                         static Raster occWork; static std::vector<std::uint32_t> occDown;
                         int hw = w > 1 ? w / 2 : 1, hh = h > 1 ? h / 2 : 1;
@@ -2267,6 +2294,10 @@ int main(int argc, char** argv) {
                         }
                     }
                 }
+                // Line and Trail Renderers: ribbons built on the CPU, blended over the image like the particles.
+                DrawLineDraws(renderer, scene, vp, camPos, (float)vx, (float)vy, (float)vw, (float)vh, ignore,
+                              RenderCullingMask(), SceneOcclusionDepth().valid ? &ParticleOccluded : nullptr,
+                              baseDir, textureCache);
             }
         } else {
             float ortho = cam ? cam->EffectiveOrthoSize() : 5.0f;
@@ -2349,6 +2380,9 @@ int main(int argc, char** argv) {
                                   camPos, scale, w, h, col);
                 }
             }
+            // Lines and trails in 2D, on the same mapping as the sprites.
+            DrawLineDraws(renderer, scene, LineView2D(camPos, scale, (float)w, (float)h), camPos - Vec3{0, 0, 1000.0f},
+                          0.0f, 0.0f, (float)w, (float)h, nullptr, cam ? cam->cullingMask : ~0, nullptr, baseDir, textureCache);
         }
 
         // World-space text only (sits with the 2D scene). Screen-space HUD text is

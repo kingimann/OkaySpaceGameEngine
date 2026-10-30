@@ -102,7 +102,8 @@ struct PlatformRide {
     float appliedYaw = 0.0f;          ///< degrees the platform turned about Y this call
 };
 /// The turn about the up axis (degrees) carried by `q` (its twist about Y).
-inline float TwistYawDeg(const Quat& q) {
+inline float TwistYawDeg(Quat q) {
+    if (q.w < 0.0f) { q.x = -q.x; q.y = -q.y; q.z = -q.z; q.w = -q.w; }   // q and -q are one rotation: take the short way
     return 2.0f * std::atan2(q.y, q.w) * Mathf::Rad2Deg;
 }
 inline void RideMovingPlatform(Scene& sc, GameObject* go, PlatformRide& st, bool grounded) {

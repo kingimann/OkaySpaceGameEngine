@@ -105,6 +105,7 @@ int main() {
         CHECK_NEAR(std::fabs(p.z), 2.0f, 0.01f);             // same radius, a quarter turn on
         RideMovingPlatform(s, rider, ride, true);            // no further turn
         CHECK_NEAR(ride.appliedYaw, 0.0f, 1e-3f);
+        CHECK_NEAR(TwistYawDeg(Quat{0.0f, -0.0087265f, 0.0f, -0.99996f}), 1.0f, 0.01f);   // -q is the same turn: 1 degree, not 359
     }
 
     TEST_MAIN_RESULT();

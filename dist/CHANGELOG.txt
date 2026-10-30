@@ -18,6 +18,8 @@ v2.842.0
     A new Character Model panel at the top of the Inspector shows which
     animation comes from the file and which is built in, and says which
     components to edit (#524; see docs/animation.md).
+  - Characters standing on a rotating platform now turn with it instead of
+    keeping their old facing (#526).
 
 v2.841.0
   Game systems

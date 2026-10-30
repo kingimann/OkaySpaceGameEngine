@@ -58,7 +58,7 @@ public:
 // Player ship: WASD movement when interactive, with a gentle autopilot
 // fallback so the demo still animates in a headless terminal.
 // ---------------------------------------------------------------------------
-class PlayerController : public Behaviour {
+class ShipController : public Behaviour {
 public:
     float speed = 6.0f;
 
@@ -138,7 +138,7 @@ int main(int argc, char** argv) {
 
     // The player ship.
     GameObject* ship = MakeBody(scene, "Ship", 0.8f, 'A', Color::Green);
-    ship->AddComponent<PlayerController>();
+    ship->AddComponent<ShipController>();
 
     app.Run(scene);
 

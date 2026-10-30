@@ -543,8 +543,10 @@ public:
         if (rb && moving && gameObject && gameObject->scene() && (grounded || m_swimming))
             TryStepUp(*gameObject->scene(), gameObject, rb, dir, grounded || m_swimming, moving, stepOffset);
         // Moving platforms: ride whatever we stand on (elevators, movers).
-        if (gameObject && gameObject->scene())
+        if (gameObject && gameObject->scene()) {
             RideMovingPlatform(*gameObject->scene(), gameObject, m_platRide, grounded);
+            yaw += m_platRide.appliedYaw;   // a turntable turns the rider with it
+        }
 
         // Dodge overwrites the horizontal velocity just written. Slide physics above is unchanged.
         if (m_dodgeEdge && grounded) {

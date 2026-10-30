@@ -84,5 +84,28 @@ int main() {
         if (c2) CHECK_NEAR(c2->jumpForce, 6.0f, 1e-4f);
     }
 
+    // Rotating platform: a rider is carried round the pivot and told how far it turned.
+    {
+        Scene s("R"); s.physicsEnabled = true;
+        GameObject* plat = s.CreateGameObject("Turntable");
+        plat->AddComponent<BoxCollider3D>()->size = {10.0f, 1.0f, 10.0f};
+        auto* prb = plat->AddComponent<Rigidbody3D>();
+        prb->bodyType = Rigidbody3D::BodyType::Kinematic;
+        GameObject* rider = s.CreateGameObject("Rider");
+        rider->transform->SetPosition({2.0f, 0.5f, 0.0f});
+        s.Start();
+        PlatformRide ride;
+        RideMovingPlatform(s, rider, ride, true);            // latch on
+        CHECK(ride.platform == plat);
+        plat->transform->SetRotation(Quat::AngleAxis(90.0f, Vec3::Up));
+        RideMovingPlatform(s, rider, ride, true);
+        Vec3 p = rider->transform->Position();
+        CHECK_NEAR(ride.appliedYaw, 90.0f, 0.01f);
+        CHECK_NEAR(p.x, 0.0f, 0.01f);
+        CHECK_NEAR(std::fabs(p.z), 2.0f, 0.01f);             // same radius, a quarter turn on
+        RideMovingPlatform(s, rider, ride, true);            // no further turn
+        CHECK_NEAR(ride.appliedYaw, 0.0f, 1e-3f);
+    }
+
     TEST_MAIN_RESULT();
 }

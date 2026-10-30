@@ -2379,7 +2379,7 @@ struct ImportScan {
     bool hasLoco = false;    // carries its own idle + walk clips
 };
 ImportScan g_importScan;
-int   g_importMode = 0;      // 0 as is, 1 built-in anims on its own skeleton, 2 auto-rig (merge + bind)
+int   g_importMode = 0;      // 0 as is, 1 built-in anims on its own skeleton, 2 auto-rig (merge + bind), 3 map bones by hand
 bool  g_importCopy = true;   // copy the file into the project's Assets first
 bool  g_importResize = false;
 float g_importHeight = 1.8f;
@@ -8212,6 +8212,84 @@ static void DrawPluginsMenu(EditorState& ed) {
     }
     ImGui::EndMenu();
 }
+// ---------------------------------------------------------------------------
+// Map Humanoid Bones — pick the 15 humanoid bones by hand, for rigs whose bone
+// names say nothing ("Bone.001", "joint12"). The shared mapper's shape checks
+// run live, so a wrong pick (a leg under an arm, sides swapped) says why.
+// ---------------------------------------------------------------------------
+static bool g_showBoneMap = false;
+static GameObject* g_boneMapRoot = nullptr;          // the model whose bones are mapped
+static HumanoidRetarget* g_boneMapRetarget = nullptr; // opened from a retarget: write its map
+static std::string g_boneMap[humanoid::BoneCount];
+static void OpenBoneMap(GameObject* root, HumanoidRetarget* hr) {
+    g_boneMapRoot = root; g_boneMapRetarget = hr; g_showBoneMap = true;
+    for (int b = 0; b < humanoid::BoneCount; ++b) g_boneMap[b] = hr ? hr->boneMap[b] : std::string();
+}
+static void DrawBoneMap(EditorState& ed) {
+    if (!g_showBoneMap) return;
+    ImGui::SetNextWindowSize(ImVec2(460, 560), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Map Humanoid Bones", &g_showBoneMap)) { ImGui::End(); return; }
+    GameObject* root = g_boneMapRoot;
+    bool alive = false;
+    for (const auto& up : ed.scene().Objects()) if (up.get() == root) { alive = true; break; }
+    if (!root || !alive || !root->transform) {
+        ImGui::TextDisabled("Select an imported model and choose Map Humanoid Bones.");
+        ImGui::End(); return;
+    }
+    ImGui::Text("Model: %s", root->name.c_str());
+    ImGui::TextDisabled("Pick each body bone. Auto keeps the bone found by its name.");
+    std::vector<std::string> names;
+    for (const auto& up : ed.scene().Objects())
+        if (up && up.get() != root && up->IsSelfOrDescendantOf(root) && up->transform) names.push_back(up->name);
+    const humanoid::BoneMap autoMap = humanoid::MapHumanoidBones(root);
+    static const char* kSlot[humanoid::BoneCount] = {"Hips", "Spine / chest", "Head",
+        "Left upper arm", "Left forearm", "Left hand", "Right upper arm", "Right forearm", "Right hand",
+        "Left thigh", "Left shin", "Left foot", "Right thigh", "Right shin", "Right foot"};
+    if (ImGui::BeginTable("##bonemap", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+        for (int b = 0; b < humanoid::BoneCount; ++b) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn(); ImGui::TextUnformatted(kSlot[b]);
+            ImGui::TableNextColumn();
+            std::string& pick = g_boneMap[b];
+            const std::string autoName = autoMap.bone[b] ? autoMap.bone[b]->name : std::string("none");
+            const std::string shown = pick.empty() ? "Auto (" + autoName + ")" : pick == "-" ? std::string("None") : pick;
+            ImGui::SetNextItemWidth(-1);
+            if (ImGui::BeginCombo(("##bm" + std::to_string(b)).c_str(), shown.c_str())) {
+                if (ImGui::Selectable(("Auto (" + autoName + ")").c_str(), pick.empty())) pick.clear();
+                if (ImGui::Selectable("None", pick == "-")) pick = "-";
+                for (const std::string& n : names)
+                    if (ImGui::Selectable((n + "##bmn" + std::to_string(b)).c_str(), pick == n)) pick = n;
+                ImGui::EndCombo();
+            }
+        }
+        ImGui::EndTable();
+    }
+    const humanoid::BoneMap m = humanoid::MapHumanoidBones(root, g_boneMap);
+    if (m.humanoid) ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1), "Humanoid: %d/15 bones mapped", m.found);
+    else ImGui::TextColored(ImVec4(0.95f, 0.6f, 0.35f, 1), "Not a humanoid yet: %s", m.why.c_str());
+    if (ImGui::Button("Clear (all Auto)")) for (auto& n : g_boneMap) n.clear();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!m.humanoid);
+    if (g_boneMapRetarget) {
+        if (ImGui::Button("Apply to Humanoid Retarget")) {
+            ed.PushUndo();
+            for (int b = 0; b < humanoid::BoneCount; ++b) g_boneMapRetarget->boneMap[b] = g_boneMap[b];
+            g_boneMapRetarget->Rewire();
+            ed.dirty = true;
+            ConsoleLog("Humanoid Retarget: bone map saved (" + std::to_string(m.found) + "/15) - press Play");
+        }
+    } else if (ImGui::Button("Use Built-in Animations")) {
+        ed.PushUndo();
+        std::string log;
+        const int found = okay::EnableBuiltinAnimations(ed.scene(), root, &log, g_boneMap);
+        ConsoleLog(log + (found >= 8 ? " - press Play, or pick a clip on its Character" : ""), found >= 8 ? 0 : 1);
+        if (found >= 8) { ed.Select(root); g_showBoneMap = false; }
+        ed.dirty = true;
+    }
+    ImGui::EndDisabled();
+    ImGui::End();
+}
+
 static void DrawPluginManager(EditorState& ed) {
     if (!g_showPluginManager) return;
     ImGui::SetNextWindowSize(ImVec2(560, 360), ImGuiCond_FirstUseEver);
@@ -15476,6 +15554,12 @@ void DrawFileDialogs(EditorState& ed) {
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 ImGui::SetTooltip(canBuiltin ? "The engine's idle / walk / run / jump / gesture animations play on this\nmodel's own skeleton (bones matched by name). Best for rigged characters\nwithout clips of their own."
                                              : "Needs a skinned humanoid skeleton (8+ recognisable body bones).");
+            if (!canBuiltin && r.skinnedMeshes > 0) {
+                ImGui::RadioButton("Map the body bones by hand, then use built-in animations", &g_importMode, 3);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("For a rigged character whose bone names aren't recognised (\"Bone.001\"):\n"
+                                      "opens Map Humanoid Bones after the import.");
+            }
             ImGui::RadioButton("Auto-rig to the built-in humanoid (merges meshes)", &g_importMode, 2);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("For UNRIGGED people/animals: merge the meshes and bind them to the engine's\nhumanoid skeleton with automatic weights. Stand it upright facing +Z.");
             if (g_importMode == 1 && !canBuiltin) g_importMode = 0;
@@ -15518,6 +15602,8 @@ void DrawFileDialogs(EditorState& ed) {
                         ConsoleLog(log + " - press Play to see it move");
                     } else if (g_importMode == 2) {
                         RigModelHumanoid(ed, root);
+                    } else if (g_importMode == 3) {
+                        OpenBoneMap(root, nullptr);
                     }
                     LogModelReport(ed, root);
                     // Frame the whole model (its root has no mesh of its own to focus on).
@@ -17418,6 +17504,8 @@ void DrawHierarchy(EditorState& ed) {
                         ed.Select(node); ed.dirty = true;
                     }
                     if (hb >= 8 && ImGui::IsItemHovered()) ImGui::SetTooltip("Play the engine's built-in idle / walk / run / jump / gesture animations\non this model's OWN skeleton and skin. Best for rigged models with\nno clips of their own.", hb);
+                    if (ImGui::MenuItem("Map Humanoid Bones...")) OpenBoneMap(node, nullptr);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pick the body bones by hand when the names don't say\nwhich is which (\"Bone.001\"), then use the built-in animations.");
                     if (ImGui::MenuItem("Rig Model (Humanoid)")) RigModelHumanoid(ed, node);
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bind this model's mesh to the humanoid skeleton (auto weights):\nevery built-in animation, authored clip, movement state, controller\nand the Animation window then work on it. The model should stand\nupright facing +Z, in a T/A/rest pose.");
                 }
@@ -30161,6 +30249,9 @@ void DrawInspector(EditorState& ed) {
                     ImGui::Text("Mapped %d/15 humanoid bones", hr->MappedBones());
                 else
                     ImGui::TextDisabled("Bones map automatically on Play (or Re-Detect).");
+                if (ImGui::SmallButton("Map Bones by Hand...##hrt"))
+                    OpenBoneMap(hr->RigRoot() ? hr->RigRoot() : go, hr);
+                if (hr->HasBoneMap()) { ImGui::SameLine(); ImGui::TextDisabled("(bones picked by hand)"); }
                 if (ImGui::SmallButton("Re-Detect Bones##hrt")) {
                     ed.PushUndo();
                     hr->Rewire();
@@ -44284,6 +44375,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.VarWatch"); DrawVarWatch(); }
         { OKAY_PROFILE("UI.AnimationEditor"); DrawAnimationEditor(ed); }
         { OKAY_PROFILE("UI.AnimatorGraph"); DrawAnimatorGraph(ed); }
+        DrawBoneMap(ed);
         { OKAY_PROFILE("UI.Timeline"); DrawTimeline(ed); }
         { OKAY_PROFILE("UI.Navigation"); DrawNavigationWindow(ed); }
         { OKAY_PROFILE("UI.Dialogue"); DrawDialogueWindow(ed); }

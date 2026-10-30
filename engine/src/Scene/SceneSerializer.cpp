@@ -1242,7 +1242,12 @@ void WriteComponents(std::ostream& out, GameObject* go) {
     // Written BEFORE footik on purpose: components load in record order, and
     // the retarget must pose the rig before FootIK plants the feet on it.
     if (auto* hr = go->GetComponent<HumanoidRetarget>()) {
-        out << "  humretarget " << hr->weight << "\n";
+        out << "  humretarget " << hr->weight;
+        // Bones picked by hand: "map <slot> <name>" pairs after the weight (older
+        // builds read the weight and ignore the rest of the line).
+        for (int b = 0; b < humanoid::BoneCount; ++b)
+            if (!hr->boneMap[b].empty()) out << " map " << b << " " << Quote(hr->boneMap[b]);
+        out << "\n";
     }
     if (auto* f = go->GetComponent<FootIK>()) {
         out << "  footik " << Quote(f->leftHipName) << " " << Quote(f->leftKneeName) << " " << Quote(f->leftFootName)
@@ -6504,6 +6509,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "humretarget") {
                     auto* hr = go->AddComponent<HumanoidRetarget>();
                     in >> hr->weight;   // bones re-detect + rest re-captures on first play frame
+                    // The rest of this line only: "map <slot> <name>" pairs.
+                    std::string rest; std::getline(in, rest);
+                    std::istringstream ls(rest);
+                    std::string tag;
+                    while (ls >> tag && tag == "map") {
+                        int b = -1;
+                        if (!(ls >> b)) break;
+                        const std::string name = ReadQuoted(ls);
+                        if (b >= 0 && b < humanoid::BoneCount) hr->boneMap[b] = name;
+                    }
                 } else if (field == "charbind") {
                     // Auto-rigged custom mesh: restore the bind geometry and re-rig.
                     Mesh bm;

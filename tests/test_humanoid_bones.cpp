@@ -248,6 +248,25 @@ int main() {
         CHECK(hb::ClassifyBone("hip.L", sc) == hb::LThigh);   // Blender's sided "hip" is the thigh
         CHECK(hb::ClassifyBone("Hip", sc) == hb::Hips);
         CHECK(hb::ClassifyBone("mixamorig:LeftToeBase", sc) < 0);
+        // VRoid, Character Creator and Daz name the side in the middle or as a bare letter.
+        CHECK(hb::ClassifyBone("J_Bip_C_Hips", sc) == hb::Hips);
+        CHECK(hb::ClassifyBone("J_Bip_L_UpperLeg", sc) == hb::LThigh);
+        CHECK(hb::ClassifyBone("J_Bip_L_LowerLeg", sc) == hb::LShin);
+        CHECK(hb::ClassifyBone("J_Bip_R_Foot", sc) == hb::RFoot);
+        CHECK(hb::ClassifyBone("J_Bip_L_UpperArm", sc) == hb::LUpperArm);
+        CHECK(hb::ClassifyBone("J_Bip_R_LowerArm", sc) == hb::RForeArm);
+        CHECK(hb::ClassifyBone("J_Bip_L_Shoulder", sc) < 0);
+        CHECK(hb::ClassifyBone("CC_Base_Hip", sc) == hb::Hips);
+        CHECK(hb::ClassifyBone("CC_Base_Waist", sc) == hb::Torso);
+        CHECK(hb::ClassifyBone("CC_Base_L_Thigh", sc) == hb::LThigh);
+        CHECK(hb::ClassifyBone("CC_Base_R_Calf", sc) == hb::RShin);
+        CHECK(hb::ClassifyBone("CC_Base_R_Forearm", sc) == hb::RForeArm);
+        CHECK(hb::ClassifyBone("CC_Base_L_ToeBase", sc) < 0);
+        CHECK(hb::ClassifyBone("lThighBend", sc) == hb::LThigh);
+        CHECK(hb::ClassifyBone("rShldrBend", sc) == hb::RUpperArm);
+        CHECK(hb::ClassifyBone("lForearmBend", sc) == hb::LForeArm);
+        CHECK(hb::ClassifyBone("abdomenLower", sc) == hb::Torso);
+        CHECK(hb::ClassifyBone("lThighTwist", sc) < 0);
         CHECK(hb::IsNeckName("neck_01") && !hb::IsNeckName("spine_01"));
         CHECK(FullBodyIK::Classify("neck_01") == FullBodyIK::Neck);
         CHECK(FullBodyIK::Classify("spine_01") == FullBodyIK::Chest);   // as before

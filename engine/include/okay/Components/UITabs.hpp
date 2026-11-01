@@ -502,21 +502,26 @@ public:
     /// Which tab a local x (pixels from the bar's left edge, at scale 1) falls in, or
     /// -1. Kept for scripts/tests written against the classic segmented control.
     int SegmentAt(float localX) const {
-        if (Count() <= 0 || size.x <= 0.0f) return -1;
-        int i = HitTest(Layout(size.x, size.y), localX, size.y * 0.5f);
+        Vec2 o, sz; UIControlRect(anchor, position, size, o, sz);
+        if (Count() <= 0 || sz.x <= 0.0f) return -1;
+        int i = HitTest(Layout(sz.x, sz.y), localX, sz.y * 0.5f);
         return i >= 0 ? i : -1;
     }
 
     /// The pixel rect (relative to the bar's top-left, at scale 1) of tab `i`.
     void SegmentRect(int i, float& ox, float& oy, float& w, float& h) const {
-        UITabsLayout L = Layout(size.x, size.y);
+        Vec2 o, sz; UIControlRect(anchor, position, size, o, sz);
+        UITabsLayout L = Layout(sz.x, sz.y);
         if (i < 0 || i >= (int)L.tabs.size()) { ox = oy = w = h = 0.0f; return; }
         ox = L.tabs[i].x; oy = L.tabs[i].y; w = L.tabs[i].w; h = L.tabs[i].h;
     }
 
     /// A screen point mapped into this widget's own frame (where it is really drawn:
     /// inside its UI parent, at the Canvas scale). See UIToLocal.
-    Vec2 ToLocal(const Vec2& p) const { return UIToLocal(gameObject, ResolveAnchor(anchor, position, size), size, p); }
+    Vec2 ToLocal(const Vec2& p) const {
+        Vec2 o, sz;
+        return UIControlPoint(gameObject, anchor, position, size, p, o, sz);
+    }
     bool Contains(const Vec2& sp) const {
         Vec2 o, sz; float k;
         if (!ScreenFrame(o, sz, k)) return false;

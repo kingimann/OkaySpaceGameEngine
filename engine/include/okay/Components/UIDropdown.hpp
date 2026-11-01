@@ -105,14 +105,19 @@ public:
 
     /// A screen point mapped into this widget's own frame (where it is really drawn:
     /// inside its UI parent, at the Canvas scale). See UIToLocal.
-    Vec2 ToLocal(const Vec2& p) const { return UIToLocal(gameObject, ResolveAnchor(anchor, position, size), size, p); }
+    Vec2 ToLocal(const Vec2& p) const {
+        Vec2 o, sz;
+        return UIControlPoint(gameObject, anchor, position, size, p, o, sz);
+    }
+    /// Header rectangle (resolved, so a stretch dropdown is the real bar).
+    void HeaderBox(Vec2& o, Vec2& sz) const { UIControlRect(anchor, position, size, o, sz); }
     /// Header rectangle origin (resolved against the anchor).
-    Vec2 Origin() const { return ResolveAnchor(anchor, position, size); }
+    Vec2 Origin() const { Vec2 o, sz; HeaderBox(o, sz); return o; }
 
     bool HeaderContains(const Vec2& p) const {
-        Vec2 o = Origin();
+        Vec2 o, sz; HeaderBox(o, sz);
         return p.x >= o.x && p.y >= o.y &&
-               p.x <= o.x + size.x && p.y <= o.y + size.y;
+               p.x <= o.x + sz.x && p.y <= o.y + sz.y;
     }
 
     /// Search row of an open searchable list (not an option index).
@@ -122,28 +127,29 @@ public:
     /// A searchable list returns kSearchRow for the filter row.
     int OptionAt(const Vec2& p) const {
         if (!open) return -1;
-        Vec2 o = Origin();
-        if (p.x < o.x || p.x > o.x + size.x) return -1;
-        float top = o.y + size.y;
+        Vec2 o, sz; HeaderBox(o, sz);
+        if (sz.y <= 0.0f) return -1;
+        if (p.x < o.x || p.x > o.x + sz.x) return -1;
+        float top = o.y + sz.y;
         if (!ListExtras()) {
             for (int i = 0; i < (int)options.size(); ++i) {
-                float y = top + i * size.y;
-                if (p.y >= y && p.y <= y + size.y) return i;
+                float y = top + i * sz.y;
+                if (p.y >= y && p.y <= y + sz.y) return i;
             }
             return -1;
         }
         if (searchable) {
-            if (p.y >= top && p.y <= top + size.y) return kSearchRow;
-            top += size.y;
+            if (p.y >= top && p.y <= top + sz.y) return kSearchRow;
+            top += sz.y;
         }
         int slot = 0;
         const int cap = maxVisible > 0 ? maxVisible : 1000000;
         for (int i = 0; i < (int)options.size(); ++i) {
             if (!PassesFilter(i)) continue;
             if (slot >= cap) break;
-            float y = top + slot * size.y;
+            float y = top + slot * sz.y;
             ++slot;
-            if (p.y >= y && p.y <= y + size.y) return i;
+            if (p.y >= y && p.y <= y + sz.y) return i;
         }
         return -1;
     }

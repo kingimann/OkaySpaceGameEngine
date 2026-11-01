@@ -162,14 +162,14 @@ public:
     }
 
     bool Contains(const Vec2& sp) const {
-        // Map the screen point into the button's own frame: UIToLocal uses the rect
-        // the host actually draws it at (inside its UI parent, at the Canvas scale,
-        // or projected for a world-space button), so it's clickable where it appears.
-        Vec2 o = ResolveAnchor(anchor, position, size);
-        Vec2 p = UIToLocal(gameObject, o, size, sp);
+        // Map the screen point into the button's own frame: UIControlPoint uses the
+        // resolved rect (stretch margins become a real width and height) and, when
+        // the host installed rectOf, the rect it actually draws.
+        Vec2 o, sz;
+        Vec2 p = UIControlPoint(gameObject, anchor, position, size, sp, o, sz);
         // Hit-test the actual silhouette so corners of a rounded/circle/pill button
         // aren't clickable where there's no pixel.
-        return UIShapeContains(shape, size.x, size.y, cornerRadius, p.x - o.x, p.y - o.y);
+        return UIShapeContains(shape, sz.x, sz.y, cornerRadius, p.x - o.x, p.y - o.y);
     }
 
     void Update(float dt) override {

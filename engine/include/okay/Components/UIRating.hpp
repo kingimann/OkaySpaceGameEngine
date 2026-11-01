@@ -31,16 +31,22 @@ public:
     bool IsFocused() const { return m_focused; }
     void SetFocused(bool f) { m_focused = f; }
 
-    float CellWidth() const { return count > 0 ? size.x / (float)count : size.x; }
+    float CellWidth() const {
+        Vec2 o, sz; UIControlRect(anchor, position, size, o, sz);
+        return count > 0 ? sz.x / (float)count : sz.x;
+    }
 
     /// A screen point mapped into this widget's own frame (where it is really drawn:
     /// inside its UI parent, at the Canvas scale). See UIToLocal.
-    Vec2 ToLocal(const Vec2& p) const { return UIToLocal(gameObject, ResolveAnchor(anchor, position, size), size, p); }
+    Vec2 ToLocal(const Vec2& p) const {
+        Vec2 o, sz;
+        return UIControlPoint(gameObject, anchor, position, size, p, o, sz);
+    }
     /// Star index (0..count-1) under the anchored point, or -1 if outside.
     int StarAt(const Vec2& p) const {
-        Vec2 o = ResolveAnchor(anchor, position, size);
-        if (p.x < o.x || p.y < o.y || p.x > o.x + size.x || p.y > o.y + size.y) return -1;
-        float cw = CellWidth();
+        Vec2 o, sz; UIControlRect(anchor, position, size, o, sz);
+        if (p.x < o.x || p.y < o.y || p.x > o.x + sz.x || p.y > o.y + sz.y) return -1;
+        float cw = count > 0 ? sz.x / (float)count : sz.x;
         if (cw <= 0.0f) return -1;
         int i = (int)((p.x - o.x) / cw);
         return Mathf::Clamp(i, 0, count - 1);
@@ -66,8 +72,8 @@ public:
         if (i < 0) return value;
         float v = (float)(i + 1);
         if (allowHalf) {
-            Vec2 o = ResolveAnchor(anchor, position, size);
-            float cw = CellWidth();
+            Vec2 o, box; UIControlRect(anchor, position, size, o, box);
+            float cw = count > 0 ? box.x / (float)count : box.x;
             float local = (p.x - o.x) - (float)i * cw;
             if (local < cw * 0.5f) v -= 0.5f;            // left half = half star
         }

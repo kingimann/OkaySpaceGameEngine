@@ -1,6 +1,7 @@
 #pragma once
 #include "okay/Math/Vec2.hpp"
 #include "okay/Math/Vec3.hpp"
+#include "okay/Components/UIAnchor.hpp"
 #include <functional>
 
 namespace okay {
@@ -48,6 +49,25 @@ inline Vec2 UIToLocal(GameObject* go, const Vec2& designOrigin, const Vec2& size
     const float kx = sz.x > 1e-4f ? size.x / sz.x : 1.0f;
     const float ky = sz.y > 1e-4f ? size.y / sz.y : 1.0f;
     return Vec2{designOrigin.x + (p.x - o.x) * kx, designOrigin.y + (p.y - o.y) * ky};
+}
+
+/// The widget's real rectangle. Stretch anchors store margins in `position` /
+/// `authored`, so a fill-all button with zero margins has an authored size of
+/// 0×0 and would otherwise have no click area. This resolves that once; hit
+/// tests and drag math use `origin` + `extent`, never the raw margin size.
+/// Fixed anchors pass `authored` through unchanged.
+inline void UIControlRect(UIAnchor anchor, const Vec2& position, const Vec2& authored,
+                          Vec2& origin, Vec2& extent) {
+    ResolveAnchorRect(anchor, position, authored, UICanvas::Width(), UICanvas::Height(), origin, extent);
+}
+
+/// Map `p` into the resolved control rect and report that rect. Widgets hit-test
+/// and drag in this frame (the same one UIToLocal uses when a host installed
+/// `rectOf`).
+inline Vec2 UIControlPoint(GameObject* go, UIAnchor anchor, const Vec2& position, const Vec2& authored,
+                           const Vec2& p, Vec2& origin, Vec2& extent) {
+    UIControlRect(anchor, position, authored, origin, extent);
+    return UIToLocal(go, origin, extent, p);
 }
 
 } // namespace okay

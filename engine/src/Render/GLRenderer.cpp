@@ -780,7 +780,7 @@ const char* kBlurFrag =
 const char* kAddFrag =
     "#version 120\n"
     "uniform sampler2D uSrc; uniform float uStrength; varying vec2 vUV;\n"
-    "void main(){ gl_FragColor = vec4(texture2D(uSrc, vUV).rgb * uStrength, 1.0); }\n";
+    "void main(){ gl_FragColor = vec4(texture2D(uSrc, vUV).rgb * uStrength, 0.0); }\n";
 } // namespace
 
 bool GLRenderer::EnsurePostProgs() {
@@ -2381,11 +2381,13 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
                 g.Uniform2f(m_ublDir, 0.0f, 1.0f / (float)m_bloomH);
                 DrawQuad();
             }
-            // 3) additive composite onto the resolved frame
+            // 3) additive composite onto the resolved frame. Alpha stays as it
+            //    was: the editor paints the sky behind pixels the 3D pass left
+            //    clear, and an opaque add turned that sky black and hazy.
             quadPass(m_addProg, m_resolveFbo, w, h, m_bloomTexA, m_uaSrc);
             g.Uniform1f(m_uaStrength, BloomIntensity());
             g.Enable(GL_BLEND);
-            g.BlendFunc(GL_ONE, GL_ONE);
+            g.BlendFunc(GL_ONE, GL_ONE);   // shader alpha is 0, so the clear/sky alpha is kept
             DrawQuad();
             g.Disable(GL_BLEND);
             g.Enable(GL_DEPTH_TEST);

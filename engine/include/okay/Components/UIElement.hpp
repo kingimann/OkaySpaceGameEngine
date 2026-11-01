@@ -331,6 +331,23 @@ inline bool UIHidden(GameObject* go) {
     return false;
 }
 
+/// A focus ring is only for a widget the player can still use. Hiding the menu
+/// (an inactive ancestor) or disabling the control drops the ring even when the
+/// focus flag was set the frame the widget closed.
+inline bool UIShowsFocusRing(GameObject* go) {
+    if (!go || !go->active || UIHidden(go)) return false;
+    auto on = [](auto* c) { return c && c->enabled && c->IsFocused(); };
+    if (auto* b = go->GetComponent<UIButton>())   return on(b);
+    if (auto* t = go->GetComponent<UIToggle>())   return on(t);
+    if (auto* s = go->GetComponent<UISlider>())   return on(s);
+    if (auto* p = go->GetComponent<UIStepper>())  return on(p);
+    if (auto* r = go->GetComponent<UIRating>())   return on(r);
+    if (auto* d = go->GetComponent<UIDropdown>()) return on(d);
+    if (auto* tb = go->GetComponent<UITabs>())    return on(tb);
+    if (auto* kb = go->GetComponent<UIKeybindField>()) return on(kb);
+    return false;
+}
+
 /// The sort order of a widget's owning Canvas (0 if it has none). Higher draws on
 /// top — renderers iterate UI in this order so a popup/HUD Canvas can sit above the
 /// rest. A stable sort by this keeps same-Canvas widgets in their authored order.
@@ -887,6 +904,7 @@ inline bool UIClipContains(GameObject* go, const Vec2& p, float screenW, float s
 inline bool UIClipHitTest(GameObject* go, const Vec2& p, float screenW, float screenH) {
     if (UIModal::Blocks(go)) return false;   // an open modal takes all input
     if (UIContextMenu::OpenMenuAt(go, p)) return false;   // under an open menu (the menu handles its own clicks)
+    if (UIDropdown::HoldsClick(go)) return false;         // an open dropdown list is on top
     if (Input::GetMouseButton(0) && !Input::GetMouseButtonDown(0)) return true;
     return UIClipContains(go, p, screenW, screenH);
 }

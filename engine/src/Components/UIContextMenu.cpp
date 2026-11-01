@@ -1,4 +1,5 @@
 #include "okay/Components/UIContextMenu.hpp"
+#include "okay/Components/UIDropdown.hpp"   // ClaimClick: the open menu swallows the click
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/UIElement.hpp"
 #include "okay/Components/UIModal.hpp"
@@ -59,6 +60,7 @@ void UIContextMenu::Update(float) {
     const float sw = UIWorld().screenW > 0.0f ? UIWorld().screenW : UICanvas::Width();
     const float sh = UIWorld().screenH > 0.0f ? UIWorld().screenH : UICanvas::Height();
     if (m_open) {
+        if (Input::GetMouseButtonDown(0) || Input::GetMouseButtonDown(1)) UIDropdown::ClaimClick(gameObject);
         m_hover = ItemAt(mouse);
         if (m_openedFrame > 0) { --m_openedFrame; return; }
         if (Input::GetKeyDown((char)27)) { Close(); return; }

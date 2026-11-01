@@ -5,6 +5,7 @@
 #include "okay/Components/UIToggle.hpp"
 #include "okay/Components/UISlider.hpp"
 #include "okay/Components/UIDropdown.hpp"
+#include "okay/Components/UIKeybindField.hpp"
 #include "okay/Components/UIElement.hpp"
 #include "okay/Components/UIListView.hpp"
 #include "okay/Components/UIScrollView.hpp"
@@ -42,14 +43,29 @@ inline GameObject* NavigateUI(Scene& scene) {
             return nullptr;                                  // the keys are being captured
     }
     for (const auto& go : scene.Objects()) {
-        if (!go->active || UIHidden(go.get())) continue;   // hidden pages/menus can't take focus
+        const bool hidden = !go->active || UIHidden(go.get());
+        // A hidden or disabled widget must not keep a focus ring after its menu closes.
+        auto drop = [&](auto* c, bool usable) {
+            if (c && c->IsFocused() && (hidden || !usable)) c->SetFocused(false);
+        };
+        if (auto* b = go->GetComponent<UIButton>())        drop(b, b->enabled && b->interactable && b->focusable);
+        if (auto* t = go->GetComponent<UIToggle>())        drop(t, t->enabled && t->focusable);
+        if (auto* s = go->GetComponent<UISlider>())        drop(s, s->enabled && s->focusable);
+        if (auto* d = go->GetComponent<UIDropdown>())      drop(d, d->enabled && d->focusable);
+        if (auto* st = go->GetComponent<UIStepper>())      drop(st, st->enabled && st->focusable);
+        if (auto* rt = go->GetComponent<UIRating>())       drop(rt, rt->enabled && rt->focusable);
+        if (auto* tb = go->GetComponent<UITabs>())         drop(tb, tb->enabled && tb->interactable && tb->focusable);
+        if (auto* kb = go->GetComponent<UIKeybindField>()) drop(kb, kb->enabled && kb->interactable && kb->focusable);
+        if (hidden) continue;   // hidden pages/menus can't take focus
         if (UIModal::Blocks(go.get())) continue;            // behind an open modal
-        if (auto* b = go->GetComponent<UIButton>())   { if (b->focusable && b->interactable) items.push_back({go.get(), Button, {}, {}, {}}); continue; }
-        if (auto* t = go->GetComponent<UIToggle>())   { if (t->focusable) items.push_back({go.get(), Toggle, {}, {}, {}}); continue; }
-        if (auto* s = go->GetComponent<UISlider>())   { if (s->focusable) items.push_back({go.get(), Slider, {}, {}, {}}); continue; }
-        if (auto* d = go->GetComponent<UIDropdown>()) { if (d->focusable) items.push_back({go.get(), Dropdown, {}, {}, {}}); continue; }
-        if (auto* tb = go->GetComponent<UITabs>())    { if (tb->focusable && tb->interactable && tb->Count() > 0) items.push_back({go.get(), Tabs, {}, {}, {}}); continue; }
-        if (auto* kb = go->GetComponent<UIKeybindField>()) { if (kb->focusable && kb->interactable) items.push_back({go.get(), Keybind, {}, {}, {}}); continue; }
+        // Disabled widgets were dropped above. Leaving them in the list made the
+        // "nothing focused" path hand focus straight back, so the ring stayed.
+        if (auto* b = go->GetComponent<UIButton>())   { if (b->enabled && b->focusable && b->interactable) items.push_back({go.get(), Button, {}, {}, {}}); continue; }
+        if (auto* t = go->GetComponent<UIToggle>())   { if (t->enabled && t->focusable) items.push_back({go.get(), Toggle, {}, {}, {}}); continue; }
+        if (auto* s = go->GetComponent<UISlider>())   { if (s->enabled && s->focusable) items.push_back({go.get(), Slider, {}, {}, {}}); continue; }
+        if (auto* d = go->GetComponent<UIDropdown>()) { if (d->enabled && d->focusable) items.push_back({go.get(), Dropdown, {}, {}, {}}); continue; }
+        if (auto* tb = go->GetComponent<UITabs>())    { if (tb->enabled && tb->focusable && tb->interactable && tb->Count() > 0) items.push_back({go.get(), Tabs, {}, {}, {}}); continue; }
+        if (auto* kb = go->GetComponent<UIKeybindField>()) { if (kb->enabled && kb->focusable && kb->interactable) items.push_back({go.get(), Keybind, {}, {}, {}}); continue; }
     }
     if (items.empty()) return nullptr;
 

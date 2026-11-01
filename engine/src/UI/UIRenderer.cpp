@@ -442,7 +442,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         const UISlot& _slot = cache.slots[_it.slot];
         const auto& up = scene.Objects()[_slot.index];
         // Every UI object carries a focus-ring item; skip it outright unless focused.
-        if (_it.kind == K_FocusRing && (!up->active || !IsUIFocused(up.get()))) continue;
+        if (_it.kind == K_FocusRing && !UIShowsFocusRing(up.get())) continue;
         // A mask with its graphic hidden only clips: its own widget doesn't draw.
         if (const UIMask* mk = up->GetComponent<UIMask>(); mk && !mk->showGraphic && _it.kind != K_FocusRing) continue;
         {
@@ -1203,8 +1203,11 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
             float px = 2.0f;
             RGBA tc{(std::uint8_t)(sl->textColor.r * 255), (std::uint8_t)(sl->textColor.g * 255),
                          (std::uint8_t)(sl->textColor.b * 255), (std::uint8_t)(sl->textColor.a * 255 * op)};
-            DrawUIText(p, vbuf, o.x + sl->size.x + 8.0f,
-                     o.y + (sl->size.y - Font8x8::Height * px) * 0.5f, px, tc);
+            // Inside the track. Drawing past the right edge hung "0.80" off the card.
+            const float tw = UITextW(vbuf, px);
+            float tx = o.x + sl->size.x - tw - 4.0f;
+            if (tx < o.x + 2.0f) tx = o.x + 2.0f;
+            DrawUIText(p, vbuf, tx, o.y + (sl->size.y - Font8x8::Height * px) * 0.5f, px, tc);
         }
         if (!sl->interactable) { Rect dr{(int)o.x, (int)o.y, (int)sl->size.x, (int)sl->size.y};
             p.SetDrawColor(30, 30, 35, 150); p.FillRect(&dr); }
@@ -1646,7 +1649,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         }
     }
         else if (_it.kind == K_FocusRing) {   // keyboard/gamepad focus ring
-        if (!up->active || !IsUIFocused(up.get())) continue;
+        if (!UIShowsFocusRing(up.get())) continue;
         p.SetClipRect(nullptr);   // overlay — never scroll-clipped
         UIRect r = GetUIRect(up.get());
         if (!r.valid || !r.position) continue;

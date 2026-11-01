@@ -1043,11 +1043,11 @@ inline void MainMenu(Scene& scene) {
     GameObject* canvas = scene.CreateGameObject("Canvas");
     auto* cv = canvas->AddComponent<Canvas>();
     cv->scaleMode = Canvas::ScaleMode::ScaleWithScreenSize;
-    cv->referenceResolution = {1280.0f, 720.0f};
-    // Follow the height. Expand (the narrower axis) shrinks a 1280-wide layout
-    // to about a third on a portrait Game view and pins a top-left card in the corner.
-    cv->screenMatch = Canvas::ScreenMatch::MatchWidthOrHeight;
-    cv->matchWidthOrHeight = 1.0f;
+    // The reference is the card plus padding, not a 1280-wide HUD. Expand then
+    // shrinks only as far as a narrow (9:16) view needs, and the card stays
+    // inside 16:9 and 4:3 without filling the whole portrait width.
+    cv->referenceResolution = {480.0f, 560.0f};
+    cv->screenMatch = Canvas::ScreenMatch::Expand;
     scene.CreateGameObject("EventSystem")->AddComponent<EventSystem>();
 
     // A styled card, centred. Center + {0,0} is the card's centre on the screen centre.
@@ -1584,7 +1584,8 @@ inline void VoxelSandbox(Scene& scene) {
     ht->text = "WASD + mouse. Dig: LMB. Fill: RMB. Jump / swim up: Space. Swim down: Ctrl. Throw: hold G. Light: F. Pause: Esc.";
     ht->screenSpace = true;
     ht->anchor = UIAnchor::StretchHorizontal;
-    ht->screenPos = {16, 12}; ht->size = {16, 72};
+    // Below the editor's PLAYING badge, which sits on the top of the Game view.
+    ht->screenPos = {16, 44}; ht->size = {16, 72};
     ht->wrap = true; ht->pixelSize = 2.4f; ht->outline = true;
 
     scene.CreateGameObject("Pause Menu")->AddComponent<PauseMenu>();

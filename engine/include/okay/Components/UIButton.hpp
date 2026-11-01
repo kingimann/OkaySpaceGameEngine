@@ -11,6 +11,7 @@
 #include "okay/Math/Vec2.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Components/UIWorldContext.hpp"
+#include "okay/Components/UIDropdown.hpp"   // an open list swallows the click
 #include "okay/Components/WorldSpaceUI.hpp"
 #include "okay/Components/Canvas.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -174,6 +175,12 @@ public:
 
     void Update(float dt) override {
         if (!interactable) { m_hover = m_pressed = m_clicked = m_tapArmed = false; EaseColor(dt); return; }
+        // An open dropdown or context menu is drawn above this button and owns the click.
+        if (UIDropdown::HoldsClick(gameObject)) {
+            m_hover = m_pressed = m_clicked = m_tapArmed = false;
+            EaseColor(dt);
+            return;
+        }
         Vec2 m = Input::MousePosition();
         m_hover = Contains(m);
         m_pressed = m_hover && Input::GetMouseButton(0);

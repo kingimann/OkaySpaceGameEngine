@@ -212,6 +212,59 @@ int main() {
         Input::FeedMouse({0, 0}, 0);
     }
 
+    // --- An open dropdown list swallows the click under it. ---
+    {
+        UICanvas::Set(400, 300);
+        UIWorld().rectOf = nullptr;
+        Scene s("Drop");
+        auto* dd = s.CreateGameObject("Quality")->AddComponent<UIDropdown>();
+        dd->position = {10, 10};
+        dd->size = {120, 24};
+        dd->options = {"Low", "Medium", "High"};
+        dd->value = 1;
+        dd->open = true;
+        auto* done = s.CreateGameObject("Done")->AddComponent<UIButton>();
+        done->position = {10, 82};          // the third row, "High"
+        done->size = {120, 24};
+        auto clickHigh = [&]() {
+            Input::FeedMouse({40, 90}, 0);
+            Input::FeedMouse({40, 90}, 1u);
+        };
+        clickHigh();
+        done->Update(0.016f);               // button first: the list is still open
+        dd->Update(0.016f);
+        CHECK(dd->value == 2);
+        CHECK(!dd->open);
+        CHECK(!done->WasClicked());
+
+        dd->open = true;
+        dd->value = 1;
+        clickHigh();
+        dd->Update(0.016f);                 // list closes first
+        done->Update(0.016f);
+        CHECK(dd->value == 2);
+        CHECK(!done->WasClicked());
+        Input::FeedMouse({0, 0}, 0);
+    }
+
+    // --- Hiding or disabling a widget drops its focus ring. ---
+    {
+        Scene s("Focus");
+        auto* panel = s.CreateGameObject("Panel");
+        auto* start = s.CreateGameObject("Start");
+        start->transform->SetParent(panel->transform, false);
+        auto* b = start->AddComponent<UIButton>();
+        b->SetFocused(true);
+        panel->active = false;
+        NavigateUI(s);
+        CHECK(!b->IsFocused());
+        panel->active = true;
+        b->SetFocused(true);
+        b->enabled = false;
+        NavigateUI(s);
+        CHECK(!b->IsFocused());
+    }
+
     // --- Pause card at three aspects: centred, sliders inside, fully on screen. ---
     CheckPauseLayout(1280, 720);    // 16:9
     CheckPauseLayout(960, 720);     // 4:3

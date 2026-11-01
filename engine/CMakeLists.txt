@@ -9,6 +9,8 @@ add_library(okay_engine
     src/Core/Localization.cpp
     src/Input/Input.cpp
     src/Input/InputActions.cpp
+    src/Input/GameInput.cpp
+    src/Core/DisplaySettings.cpp
     src/Render/ConsoleRenderer.cpp
     src/Render/GLRenderer.cpp
     src/Render/D3D11Renderer.cpp

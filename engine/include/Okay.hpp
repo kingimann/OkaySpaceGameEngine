@@ -22,10 +22,12 @@
 #include "okay/Core/SaveGame.hpp"
 #include "okay/Core/Localization.hpp"
 #include "okay/Core/Application.hpp"
+#include "okay/Core/DisplaySettings.hpp"
 
 // Input
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputActions.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Input/Cursor.hpp"
 
 // Rendering

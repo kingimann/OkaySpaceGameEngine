@@ -33,6 +33,9 @@
 #include "okay/Animation/HumanoidLibrary.hpp"  // built-in clip names in the Animator clip slot
 #include "okay/Animation/ClipGraph.hpp"       // an Animator graph from an imported model's clips
 #include "okay/Scene/UITemplates.hpp"    // prebuilt, droppable UI screens (UI > Prebuilt Screens)
+#include "okay/Components/SettingsScreen.hpp"
+#include "okay/UI/TooltipPlace.hpp"
+#include "okay/Core/DisplaySettings.hpp"
 #include "okay/Scene/UIStyles.hpp"       // one-click looks + copy / paste style for UI components
 #include "okay/Scene/UILayoutTools.hpp"  // wrap in panel, fit to children, match size, stack
 #include "okay/Platform/PlayFab/PlayFab.hpp" // PlayFab cloud services (Services panel)
@@ -1013,13 +1016,20 @@ static void DrawItemIconIm(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const std::stri
 }
 
 static void DrawItemTipIm(ImDrawList* dl, ImVec2 origin, okay::Vec2 m, const okay::ItemTip& tip,
-                          ImU32 bg, ImU32 text) {
+                          ImU32 bg, ImU32 text, float viewW = 0.0f, float viewH = 0.0f) {
     if (tip.lines.empty()) return;
     const float lh = ImGui::GetTextLineHeight();
     float maxW = 0;
     for (const auto& ln : tip.lines) maxW = std::max(maxW, ImGui::CalcTextSize(ln.text.c_str()).x);
-    ImVec2 p0(origin.x + m.x + 14, origin.y + m.y + 14);
-    ImVec2 p1(p0.x + maxW + 12, p0.y + lh * (float)tip.lines.size() + 10);
+    float bw = maxW + 12, bh = lh * (float)tip.lines.size() + 10;
+    float x = origin.x + m.x + 14, y = origin.y + m.y + 14;
+    if (viewW > 1.0f && viewH > 1.0f) {
+        const okay::TooltipBox box = okay::PlaceTooltip(origin.x + m.x, origin.y + m.y, bw, bh,
+                           origin.x, origin.y, origin.x + viewW, origin.y + viewH);
+        x = box.x; y = box.y; bw = box.w; bh = box.h;
+    }
+    ImVec2 p0(x, y);
+    ImVec2 p1(p0.x + bw, p0.y + bh);
     dl->AddRectFilled(p0, p1, bg, 4.0f);
     for (std::size_t i = 0; i < tip.lines.size(); ++i) {
         ImU32 tc = text;
@@ -27622,7 +27632,12 @@ void DrawInspector(EditorState& ed) {
     if (IsUIElement(go)) {
         GameObject* uiParent = OwningUIParent(go);   // a UI child anchors within its parent
         float refW = UICanvas::Width(), refH = UICanvas::Height(); bool hasParent = false;
-        if (uiParent) { UIRect pr = GetUIRect(uiParent); if (pr.valid) { refW = pr.size.x; refH = pr.size.y; hasParent = true; } }
+        if (uiParent) {
+            // Resolved size: a stretch parent stores margins in size, which would
+            // make Fill Width produce a 0×0 widget.
+            Vec2 ps = UIResolveSize(uiParent, UICanvas::Width(), UICanvas::Height());
+            if (ps.x > 1.0f && ps.y > 1.0f) { refW = ps.x; refH = ps.y; hasParent = true; }
+        }
         UIRect ar = GetUIRect(go);
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.16f, 0.17f, 0.20f, 1.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 6));
@@ -27689,12 +27704,27 @@ void DrawInspector(EditorState& ed) {
         }
         // -- Size: stretch to the parent / screen on an axis. --
         if (ar.sizePtr && ar.position && ar.anchorPtr) {
+            // Fill switches to a stretch anchor and zeroes the margins on that
+            // axis. Writing the canvas size into `size` would be a margin, so a
+            // Fill All button resolved to 0×0 and could not be clicked.
             auto fill = [&](bool x, bool y) {
-                if (x) ar.sizePtr->x = refW;
-                if (y) ar.sizePtr->y = refH;
-                const Vec2 term = ResolveAnchor(*ar.anchorPtr, Vec2{0, 0}, *ar.sizePtr, refW, refH);
-                if (x) ar.position->x = -term.x;
-                if (y) ar.position->y = -term.y;
+                UIAnchor a = *ar.anchorPtr;
+                const bool wasH = a == UIAnchor::StretchHorizontal || a == UIAnchor::StretchFull;
+                const bool wasV = a == UIAnchor::StretchVertical || a == UIAnchor::StretchFull;
+                if ((x && y) || (x && wasV) || (y && wasH)) a = UIAnchor::StretchFull;
+                else if (x) a = UIAnchor::StretchHorizontal;
+                else if (y) a = UIAnchor::StretchVertical;
+                Vec2 pos = *ar.position;
+                Vec2 sz = *ar.sizePtr;
+                // Fixed-anchor size is a length, so the axis we don't stretch keeps
+                // it. A stretched axis stores a margin; zero fills that axis.
+                if (a == UIAnchor::StretchFull) { pos = {0, 0}; sz = {0, 0}; }
+                else if (a == UIAnchor::StretchHorizontal) { pos.x = 0.0f; sz.x = 0.0f; }
+                else if (a == UIAnchor::StretchVertical) { pos.y = 0.0f; sz.y = 0.0f; }
+                *ar.anchorPtr = a;
+                *ar.position = pos;
+                *ar.sizePtr = sz;
+                (void)refW; (void)refH;
                 ed.dirty = true;
             };
             caption("SIZE");
@@ -37444,14 +37474,14 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 const auto& it = inv->slots[hov];
                 const okay::Equipment* worn = okay::Equipment::Of(inv->gameObject);
                 DrawItemTipIm(dl, canvasPos, m, okay::DescribeItem(it.item, it.count, &it.data, worn),
-                              col(ui->tooltipColor), col(ui->tooltipText));
+                              col(ui->tooltipColor), col(ui->tooltipText), canvasSize.x, canvasSize.y);
             }
             if (L.equip && ui->dragIndex < 0) {
                 const int eq = L.PickEquip(m.x, m.y);
                 if (eq >= 0 && !L.equip->ItemIn(eq).empty()) {
                     const auto& slot = L.equip->slots[eq];
                     DrawItemTipIm(dl, canvasPos, m, okay::DescribeItem(slot.item, 1, &slot.data, nullptr),
-                                  col(ui->tooltipColor), col(ui->tooltipText));
+                                  col(ui->tooltipColor), col(ui->tooltipText), canvasSize.x, canvasSize.y);
                 }
             }
         }
@@ -37625,7 +37655,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 const auto& it = inv->items[hov];
                 DrawItemTipIm(dl, canvasPos, m,
                               okay::DescribeItem(it.name, it.count, &it.data, nullptr, it.weight, it.w, it.h),
-                              col(gui->tooltipColor), col(gui->tooltipText));
+                              col(gui->tooltipColor), col(gui->tooltipText), canvasSize.x, canvasSize.y);
             }
         }
         // Rotate (applied only on a good drop), pick up, right-click split, drop / transfer /
@@ -37738,7 +37768,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                 const auto& it = hinv->slots[hovIdx];
                 const okay::Equipment* worn = L.player ? okay::Equipment::Of(L.player->gameObject) : nullptr;
                 DrawItemTipIm(dl, canvasPos, m, okay::DescribeItem(it.item, it.count, &it.data, hovSide == 1 ? worn : nullptr),
-                              col(ch->panelColor), col(ch->textColor));
+                              col(ch->panelColor), col(ch->textColor), canvasSize.x, canvasSize.y);
             }
         }
         if (gameView) {
@@ -44050,8 +44080,21 @@ int main(int argc, char** argv) {
                     if (auto* mm = up->GetComponent<okay::Minimap>()) if (mm->fullscreen) { invModal = true; break; }
                     if (okay::StoryUIModal(up.get())) { invModal = true; break; }   // a running dialogue or an open quest journal
                 }
-            // A cutscene with Lock Player on holds the controllers the same way.
-            okay::Input::SetUICaptured(invModal || (ed.isPlaying() && okay::SequencePlayer::AnyLocksInput(ed.scene())));
+            // Pause, typing, a modal and a click on UI, independent of PauseMenu's Update.
+            if (ed.isPlaying()) okay::SettingsScreen::Ensure(ed.scene());
+            const bool gameModal = invModal || (ed.isPlaying() && (okay::Game::Paused() || okay::SettingsScreen::AnyOpen(&ed.scene())));
+            okay::Input::SetUICaptured(gameModal || (ed.isPlaying() && okay::GameInputBlocked(&ed.scene(), (unsigned)okay::GameInputMask::World)));
+            {
+                static int s_dispGen = 0;
+                const int gen = okay::DisplaySettings::Generation();
+                if (gen != s_dispGen) {
+                    s_dispGen = gen;
+                    if (window) SDL_SetWindowFullscreen(window, okay::DisplaySettings::Fullscreen() ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+                    g_vsync = okay::DisplaySettings::VSync();
+                    if (renderer) SDL_RenderSetVSync(renderer, g_vsync ? 1 : 0);
+                    okay::DisplaySettings::ApplyQuality();
+                }
+            }
         }
         // Pause freezes the sim (Step advances it). A PauseMenu pausing the game
         // (Game::Paused) also freezes gameplay — tick with dt=0 so the menu's UI

@@ -8,6 +8,7 @@
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Render/Mesh.hpp"
 #include <cmath>
 #include <string>
@@ -59,6 +60,7 @@ public:
         if (showPreview) UpdatePreview(*s, origin, dir, r);
         else if (preview_) preview_->active = false;
 
+        if (GameInputBlocked(s)) return;
         const bool place  = Input::GetMouseButtonDown(placeButton);
         const bool remove = Input::GetMouseButtonDown(removeButton);
         if (!place && !remove) return;

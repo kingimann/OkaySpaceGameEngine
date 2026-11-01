@@ -135,9 +135,15 @@ public:
         const std::size_t cutAt = vis >= 0 ? utf8::Offset(text, (std::size_t)vis) : text.size();   // whole characters
         const bool cut = cutAt < text.size();
         int maxChars = 0;
-        if (wrap && size.x > 0.0f && pixelSize > 0.0f) {
+        float boxW = size.x;
+        if (screenSpace) {
+            Vec2 o, sz;
+            ResolveAnchorRect(anchor, screenPos, size, UICanvas::Width(), UICanvas::Height(), o, sz);
+            boxW = sz.x;
+        }
+        if (wrap && boxW > 0.0f && pixelSize > 0.0f) {
             float glyphW = Advance() * pixelSize;
-            maxChars = glyphW > 0.0f ? (int)(size.x / glyphW) : 0;
+            maxChars = glyphW > 0.0f ? (int)(boxW / glyphW) : 0;
         }
         if (!cut && !uppercase && maxChars < 1) return text;
         scratch.assign(text, 0, cutAt);
@@ -214,23 +220,41 @@ public:
         return out;
     }
 
+    /// The text box after stretch anchors (margins, not a 0-wide box) and, when
+    /// `wrap` is on, pulled fully onto the canvas so a long help line can't clip.
+    void ResolveBox(float canvasW, float canvasH, float scale, Vec2& origin, Vec2& extent) const {
+        ResolveAnchorRect(anchor, screenPos * scale, size * scale, canvasW, canvasH, origin, extent);
+        if (!wrap || canvasW < 16.0f) return;
+        const float m = 8.0f * (scale > 0.0f ? scale : 1.0f);
+        if (extent.x > canvasW - 2.0f * m) extent.x = canvasW - 2.0f * m;
+        if (extent.x < 16.0f) extent.x = 16.0f;
+        if (origin.x < m) origin.x = m;
+        if (origin.x + extent.x > canvasW - m) origin.x = std::max(m, canvasW - m - extent.x);
+        if (origin.y < 0.0f) origin.y = 0.0f;
+        if (extent.y > 0.0f && origin.y + extent.y > canvasH)
+            origin.y = std::max(0.0f, canvasH - extent.y);
+    }
+
     /// Top-left pixel of the text BOX (screen space), anchored and sized by `size`.
     Vec2 BoxTopLeft(float canvasW, float canvasH, float scale = 1.0f) const {
-        return ResolveAnchor(anchor, screenPos * scale, size * scale, canvasW, canvasH);
+        Vec2 o, sz;
+        ResolveBox(canvasW, canvasH, scale, o, sz);
+        return o;
     }
 
     /// Resolve the top-left draw pixel for screen-space text inside its box,
     /// honoring horizontal `align` and vertical centering. `scale` is the canvas
     /// scale; the returned point is in canvas pixels (relative to the canvas).
     Vec2 ResolvedScreenPos(float canvasW, float canvasH, float scale = 1.0f) const {
-        Vec2 box = BoxTopLeft(canvasW, canvasH, scale);
+        Vec2 box, sz;
+        ResolveBox(canvasW, canvasH, scale, box, sz);
         float eps = EffectivePixelSize();
         float tw = PixelWidth() * eps * scale, th = PixelHeight() * eps * scale;
         float x = box.x;
-        if (align == 1)      x += (size.x * scale - tw) * 0.5f;
-        else if (align == 2) x +=  size.x * scale - tw;
-        float y = box.y + (alignBottom ? (size.y * scale - th)
-                                       : vcenter ? (size.y * scale - th) * 0.5f : 0.0f);
+        if (align == 1)      x += (sz.x - tw) * 0.5f;
+        else if (align == 2) x +=  sz.x - tw;
+        float y = box.y + (alignBottom ? (sz.y - th)
+                                       : vcenter ? (sz.y - th) * 0.5f : 0.0f);
         return {x, y};
     }
 

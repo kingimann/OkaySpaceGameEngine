@@ -12,6 +12,7 @@
 #include "okay/Physics/PlayerCollision.hpp"
 #include "okay/Components/UIAnchor.hpp"     // UICanvas::Width/Height (viewport)
 #include "okay/Input/Input.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Input/Cursor.hpp"
 #include "okay/AI/Navigation.hpp"
 #include "okay/Net/NetOwnership.hpp"
@@ -103,7 +104,7 @@ public:
         // ---- Set a destination from a click on the ground plane ----
         bool clicked = holdToMove ? Input::GetMouseButton(mouseButton)
                                   : Input::GetMouseButtonDown(mouseButton);
-        if (clicked) {
+        if (clicked && !GameInputBlocked(&scene)) {
             Vec3 hit;
             if (GroundPick(scene, hit)) {
                 m_dest = hit; m_hasDest = true;

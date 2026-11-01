@@ -1,6 +1,7 @@
 // The in-game UI pass and its drawing helpers, moved verbatim from the player's main
 // loop (player/main.cpp) onto the ui2d::Painter interface. See UIRenderer.hpp.
 #include "okay/UI/UIRenderer.hpp"
+#include "okay/UI/TooltipPlace.hpp"
 #include <Okay.hpp>
 #include "okay/Core/Utf8.hpp"
 #include <algorithm>
@@ -1750,7 +1751,13 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         const std::string visible = tt->richText ? plain(tt->text) : tt->text;
         float tw = UITextW(visible, px);
         float th = Font8x8::Height * px;
-        Rect box{(int)(m.x + ox), (int)(m.y + oy), (int)(tw + 12), (int)(th + 10)};
+        const TooltipBox placed = PlaceTooltip(m.x, m.y, tw + 12, th + 10, 0.0f, 0.0f, (float)w, (float)h);
+        float bw = placed.w, bh = placed.h, bx = placed.x + ox, by = placed.y + oy;
+        if (bx < 4) bx = 4;
+        if (by < 4) by = 4;
+        if (bx + bw > w - 4) bx = std::max(4.0f, (float)w - 4 - bw);
+        if (by + bh > h - 4) by = std::max(4.0f, (float)h - 4 - bh);
+        Rect box{(int)bx, (int)by, (int)bw, (int)bh};
         p.SetDrawColor((std::uint8_t)(tt->background.r * 255), (std::uint8_t)(tt->background.g * 255),
                                (std::uint8_t)(tt->background.b * 255), (std::uint8_t)(tt->background.a * 255));
         p.FillRect(&box);
@@ -1760,7 +1767,7 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
         RGBA tc{(std::uint8_t)(tt->textColor.r * 255), (std::uint8_t)(tt->textColor.g * 255),
                      (std::uint8_t)(tt->textColor.b * 255), (std::uint8_t)(tt->textColor.a * 255)};
         if (!tt->richText) {
-            DrawUIText(p, tt->text, m.x + ox + 6.0f, m.y + oy + 5.0f, px, tc);
+            DrawUIText(p, tt->text, bx + 6.0f, by + 5.0f, px, tc);
         } else {
             auto nib = [](char c) -> int {
                 if (c >= '0' && c <= '9') return c - '0';
@@ -1768,8 +1775,8 @@ void RenderSceneUI(Scene& scene, Painter& p, int w, int h, const UIRenderOptions
                 if (c >= 'A' && c <= 'F') return c - 'A' + 10;
                 return -1;
             };
-            float x = m.x + ox + 6.0f;
-            const float y = m.y + oy + 5.0f;
+            float x = bx + 6.0f;
+            const float y = by + 5.0f;
             RGBA cur = tc;
             bool bold = false;
             const std::string& s = tt->text;

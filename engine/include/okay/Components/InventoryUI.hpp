@@ -8,6 +8,7 @@
 #include "okay/Components/ItemPickup.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Render/Color.hpp"
 #include <string>
 #include <utility>
@@ -302,26 +303,36 @@ public:
     void ApplyDrag(int from, int to) { Inventory* inv = Inv(); InventoryOps::Move(inv, from, inv, to, dragAmount, SlotCount()); }
 
     void Update(float) override {
-        if (selectHotkeys) {
+        // Pause, a focused text field, a modal or a dialogue own the keyboard.
+        // Checked here (not via UICaptured) so it does not matter whether the
+        // pause menu's Update has run yet this frame.
+        const bool keysBlocked = GameInputBlocked(gameObject ? gameObject->scene() : nullptr,
+                                                  (unsigned)GameInputMask::Keys);
+        if (!keysBlocked && selectHotkeys) {
             for (int k = 0; k < hotbarSlots && k < 9; ++k)
                 if (Input::GetKeyDown((char)('1' + k))) selected = k;
         }
-        if (scrollSelect && hotbarSlots > 0) {
+        if (!keysBlocked && scrollSelect && hotbarSlots > 0) {
             float w = Input::MouseWheel();
             if (w > 0.5f)      selected = (selected - 1 + hotbarSlots) % hotbarSlots;
             else if (w < -0.5f) selected = (selected + 1) % hotbarSlots;
         }
-        if (toggleKey && Input::GetKeyDown(toggleKey)) {
+        // Pickup or drop takes the shared key when something is in range or in
+        // the hands. Otherwise this press opens or closes the bag.
+        if (!keysBlocked && toggleKey && Input::GetKeyDown(toggleKey) &&
+            !InteractClaimsKey(gameObject ? gameObject->scene() : nullptr, toggleKey)) {
             bool wasOpen = open;
             open = !open;
             if (wasOpen && !open && sortOnClose) Sort();   // auto-tidy on close
         }
-        if (sortKey && Input::GetKeyDown(sortKey)) Sort();
-        if (dropKey && Input::GetKeyDown(dropKey)) DropSelectedItem();
-        if ((useKey && Input::GetKeyDown(useKey)) || (clickToUse && !open && Input::GetMouseButtonDown(0))) UseSelected();
+        if (!keysBlocked && sortKey && Input::GetKeyDown(sortKey)) Sort();
+        if (!keysBlocked && dropKey && Input::GetKeyDown(dropKey)) DropSelectedItem();
+        const bool useClick = clickToUse && !open && Input::GetMouseButtonDown(0) &&
+            !GameInputBlocked(gameObject ? gameObject->scene() : nullptr);
+        if (!keysBlocked && ((useKey && Input::GetKeyDown(useKey)) || useClick)) UseSelected();
         if (selected < 0) selected = 0;
         if (selected >= hotbarSlots) selected = hotbarSlots - 1;
-        if (open && gamepadNav) Navigate();
+        if (!keysBlocked && open && gamepadNav) Navigate();
         else navSlot = -1;
     }
 

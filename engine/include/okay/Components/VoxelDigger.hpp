@@ -10,6 +10,7 @@
 #include "okay/Components/ParticleSystem.hpp"
 #include "okay/Render/Mesh.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Core/Game.hpp"
 #include <cmath>
 #include <algorithm>
@@ -77,7 +78,8 @@ public:
     }
 
     void Update(float dt) override {
-        if (Game::Paused()) { HideBrush(); DigSound(false); return; }   // no aim marker / digging while paused
+        // Pause, an open bag/chest/menu, typing, or a click on UI: no aim marker and no digging.
+        if (GameInputBlocked(GetScene())) { HideBrush(); DigSound(false); return; }
         VoxelTerrain* vox = FindVoxel();
         if (!vox) { HideBrush(); DigSound(false); return; }
         Vec3 local;

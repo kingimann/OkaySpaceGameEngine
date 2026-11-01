@@ -60,8 +60,19 @@ HotbarLayout LayoutHotbar(const InventoryUI& ui, float W, float H) {
     L.scale = (ui.scaleToScreen && ui.referenceHeight > 1.0f) ? H / ui.referenceHeight : 1.0f;
     L.sz = ui.slotSize * L.scale;
     L.gap = ui.slotGap * L.scale;
-    const float marginX = ui.marginX * L.scale, marginY = ui.marginY * L.scale;
     L.rowW = L.hotbar * L.sz + (L.hotbar - 1) * L.gap;
+    // A portrait Game view is narrower than the reference height implies, so a
+    // 9-slot bar scaled only by height runs off both edges (the wide Scene view
+    // still shows every slot). Fit the row to the width and keep every slot.
+    const float maxW = std::max(32.0f, W - 16.0f);
+    if (L.rowW > maxW && L.rowW > 1.0f) {
+        const float fit = maxW / L.rowW;
+        L.scale *= fit;
+        L.sz *= fit;
+        L.gap *= fit;
+        L.rowW = L.hotbar * L.sz + (L.hotbar - 1) * L.gap;
+    }
+    const float marginX = ui.marginX * L.scale, marginY = ui.marginY * L.scale;
     L.hx = (ui.hAlign == InventoryUI::HAlign::Left)  ? marginX
          : (ui.hAlign == InventoryUI::HAlign::Right) ? (W - L.rowW - marginX)
          : (W - L.rowW) * 0.5f + marginX;
@@ -162,6 +173,14 @@ ChestLayout LayoutChest(ChestInventory& ch, float W, float H) {
     L.ps = pui ? pui->slotSize : L.cs;
     L.pg = pui ? pui->slotGap : L.cg;
     L.pc = pui ? (pui->hotbarSlots < 1 ? 1 : pui->hotbarSlots) : L.cc;
+    {
+        const float raw = std::max(L.cc * L.cs + (L.cc - 1) * L.cg, L.pc * L.ps + (L.pc - 1) * L.pg);
+        const float maxW = std::max(32.0f, W - 24.0f);
+        if (raw > maxW && raw > 1.0f) {
+            const float fit = maxW / raw;
+            L.cs *= fit; L.cg *= fit; L.ps *= fit; L.pg *= fit;
+        }
+    }
     L.chestN = L.chest ? (L.chest->capacity > 0 ? L.chest->capacity : (int)L.chest->slots.size()) : 0;
     L.playN = L.player ? (L.player->capacity > 0 ? L.player->capacity : (int)L.player->slots.size()) : 0;
     const int chestRows = (L.chestN + L.cc - 1) / L.cc, playRows = L.playN > 0 ? (L.playN + L.pc - 1) / L.pc : 0;

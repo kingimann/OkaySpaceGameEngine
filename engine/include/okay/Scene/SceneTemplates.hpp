@@ -71,6 +71,12 @@ namespace okay {
 /// editor and tests can both use them.
 namespace Templates {
 
+// The editor paints a PLAYING pill over the top-left of the Game view (about
+// 32px). Top-left HUD text starts below it, and is top-aligned: a wrapped line
+// on a narrow view is taller than its box, and vertical centering pulls the
+// first line back up under the pill.
+constexpr float kHudTop = 48.0f;
+
 // ---- Premade players (added to an EXISTING scene) --------------------------
 // These drop a ready-to-play player into the current scene (rather than building
 // a whole new scene), so the editor can offer "Add > Player" shortcuts. Each
@@ -956,12 +962,12 @@ inline void Multiplayer(Scene& scene) {
     GameObject* help = scene.CreateGameObject("Help");
     auto* htr = help->AddComponent<TextRenderer>();
     htr->text = "H = host    J = join 127.0.0.1    WASD = move";
-    htr->screenSpace = true; htr->screenPos = {12, 12}; htr->pixelSize = 2.0f;
+    htr->screenSpace = true; htr->screenPos = {12, kHudTop}; htr->pixelSize = 2.0f; htr->vcenter = false;
 
     // Live status line driven by the net_* builtins — a ready-made connection HUD.
     GameObject* status = scene.CreateGameObject("NetStatus");
     auto* str = status->AddComponent<TextRenderer>();
-    str->text = "Net: offline"; str->screenSpace = true; str->screenPos = {12, 40}; str->pixelSize = 2.0f;
+    str->text = "Net: offline"; str->screenSpace = true; str->screenPos = {12, kHudTop + 28.0f}; str->pixelSize = 2.0f; str->vcenter = false;
     auto* ssc = status->AddComponent<ScriptComponent>("okayscript");
     ssc->LoadSource(
         "function update(d) {\n"
@@ -1002,8 +1008,9 @@ inline void CoinCollector(Scene& scene) {
     GameObject* hud = scene.CreateGameObject("HUD");
     auto* txt = hud->AddComponent<TextRenderer>();
     txt->screenSpace = true;
-    txt->screenPos = {16, 16};
+    txt->screenPos = {16, kHudTop};
     txt->pixelSize = 3.0f;
+    txt->vcenter = false;
     txt->text = "Score: 0";
     hud->AddComponent<ScriptComponent>("okayscript")->LoadSource(
         "function update(d) { set_text(\"Score: \" + prefs_get(\"score\")); }\n");
@@ -1182,8 +1189,9 @@ inline void Inventory(Scene& scene) {
     ht->text = "WASD to move. E: bag. Walk to the chest and press F, to the bench and press C.";
     ht->screenSpace = true;
     ht->anchor = UIAnchor::StretchHorizontal;
-    ht->screenPos = {16, 16};
+    ht->screenPos = {16, kHudTop};
     ht->size = {16, 64};
+    ht->vcenter = false;
     ht->wrap = true;
     ht->pixelSize = 2.4f;
     ht->outline = true;
@@ -1272,7 +1280,7 @@ function update(d) {
 
     GameObject* hud = scene.CreateGameObject("HUD");
     auto* tr = hud->AddComponent<TextRenderer>();
-    tr->screenSpace = true; tr->screenPos = {12, 12}; tr->pixelSize = 3.0f;
+    tr->screenSpace = true; tr->screenPos = {12, kHudTop}; tr->pixelSize = 3.0f; tr->vcenter = false;
     tr->text = "Score: 0";
     hud->AddComponent<ScriptComponent>("okayscript")->LoadSource(
         "function update(d) { set_text(\"Score: \" + prefs_get(\"score\")); }\n");
@@ -1376,7 +1384,7 @@ inline void BrickBreaker(Scene& scene) {
 
     GameObject* hud = scene.CreateGameObject("HUD");
     auto* tr = hud->AddComponent<TextRenderer>();
-    tr->screenSpace = true; tr->screenPos = {12, 12}; tr->pixelSize = 3.0f;
+    tr->screenSpace = true; tr->screenPos = {12, kHudTop}; tr->pixelSize = 3.0f; tr->vcenter = false;
     tr->text = "Score: 0";
     hud->AddComponent<ScriptComponent>("okayscript")->LoadSource(
         "function update(d) {\n"
@@ -1388,7 +1396,7 @@ inline void BrickBreaker(Scene& scene) {
     GameObject* help = scene.CreateGameObject("Help");
     auto* ht = help->AddComponent<TextRenderer>();
     ht->text = "A / D move the paddle. Clear the bricks.";
-    ht->screenSpace = true; ht->screenPos = {12, 48}; ht->pixelSize = 2.0f;
+    ht->screenSpace = true; ht->screenPos = {12, kHudTop + 32.0f}; ht->pixelSize = 2.0f; ht->vcenter = false;
 }
 
 /// A terrain-digging sandbox: a procedurally generated, eroded hilly terrain you
@@ -1457,7 +1465,8 @@ inline void TerrainSandbox(Scene& scene) {
     ht->text = "WASD + mouse to move    Left Mouse dig / Right Mouse raise    Space jump";
     ht->screenSpace = true;
     ht->anchor = UIAnchor::StretchHorizontal;
-    ht->screenPos = {16, 12}; ht->size = {16, 56};
+    ht->screenPos = {16, kHudTop}; ht->size = {16, 56};
+    ht->vcenter = false;
     ht->wrap = true; ht->pixelSize = 2.4f; ht->outline = true;
 
     scene.CreateGameObject("Pause Menu")->AddComponent<PauseMenu>();   // Esc to pause / quit
@@ -1584,8 +1593,10 @@ inline void VoxelSandbox(Scene& scene) {
     ht->text = "WASD + mouse. Dig: LMB. Fill: RMB. Jump / swim up: Space. Swim down: Ctrl. Throw: hold G. Light: F. Pause: Esc.";
     ht->screenSpace = true;
     ht->anchor = UIAnchor::StretchHorizontal;
-    // Below the editor's PLAYING badge, which sits on the top of the Game view.
-    ht->screenPos = {16, 44}; ht->size = {16, 72};
+    // Top-aligned under the PLAYING badge. Centering a wrapped line in this
+    // short box pulled "WASD + mouse" back to the top of a 9:16 view.
+    ht->screenPos = {16, kHudTop}; ht->size = {16, 72};
+    ht->vcenter = false;
     ht->wrap = true; ht->pixelSize = 2.4f; ht->outline = true;
 
     scene.CreateGameObject("Pause Menu")->AddComponent<PauseMenu>();

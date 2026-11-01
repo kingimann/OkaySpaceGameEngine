@@ -265,6 +265,25 @@ int main() {
         CHECK(!b->IsFocused());
     }
 
+    // --- Top-left HUD text clears the PLAYING badge, including a wrapped 9:16 line. ---
+    {
+        auto firstLine = [](void (*build)(Scene&), float W, float H) {
+            UICanvas::Set(W, H);
+            Scene s("Hud");
+            build(s);
+            auto* tr = s.Find("Help") ? s.Find("Help")->GetComponent<TextRenderer>()
+                                      : s.Find("HUD")->GetComponent<TextRenderer>();
+            CHECK(tr && !tr->vcenter);
+            return tr ? tr->ResolvedScreenPos(W, H).y : -1.0f;
+        };
+        // 9:16 wraps the Sandbox line past its box. Centering used to pull it to y≈0.
+        CHECK(firstLine(&Templates::VoxelSandbox, 405, 720) >= 40.0f);
+        CHECK(firstLine(&Templates::TerrainSandbox, 405, 720) >= 40.0f);
+        CHECK(firstLine(&Templates::Inventory, 405, 720) >= 40.0f);
+        CHECK(firstLine(&Templates::VoxelSandbox, 1280, 720) >= 40.0f);
+        CHECK(firstLine(&Templates::VoxelSandbox, 960, 720) >= 40.0f);
+    }
+
     // --- Pause card at three aspects: centred, sliders inside, fully on screen. ---
     CheckPauseLayout(1280, 720);    // 16:9
     CheckPauseLayout(960, 720);     // 4:3

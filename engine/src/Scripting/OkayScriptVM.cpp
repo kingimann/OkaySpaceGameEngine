@@ -5833,6 +5833,24 @@ struct OkayScriptVM::Impl {
             if (AnimStateMachine* m = smSelf(); m && a.size() >= 2) m->SetFloat(a[0].AsString(), a[1].AsFloat());
             return Value{};
         };
+        b["anim_get_float"] = [smSelf](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            AnimStateMachine* m = smSelf();
+            return Value{m ? m->GetFloat(a[0].AsString()) : 0.0f};
+        };
+        b["anim_get_bool"] = [smSelf](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            AnimStateMachine* m = smSelf();
+            return Value{(m && m->GetBool(a[0].AsString())) ? 1.0f : 0.0f};
+        };
+        b["anim_set_layer_weight"] = [selfObj](std::vector<Value>& a) {
+            GameObject* go = selfObj();
+            if (!go || a.empty()) return Value{0.0f};
+            const int want = a.size() >= 2 ? (int)std::lround(a[1].AsFloat()) : 1;
+            for (AnimStateMachine* sm : go->GetComponents<AnimStateMachine>())
+                if (sm->layer == want) { sm->layerWeight = a[0].AsFloat(); return Value{1.0f}; }
+            return Value{0.0f};
+        };
         b["anim_set_bool"] = [smSelf](std::vector<Value>& a) {
             if (AnimStateMachine* m = smSelf(); m && a.size() >= 2) m->SetBool(a[0].AsString(), a[1].AsFloat() != 0.0f);
             return Value{};

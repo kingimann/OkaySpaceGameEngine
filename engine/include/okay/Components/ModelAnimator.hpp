@@ -137,21 +137,31 @@ public:
     // getting up from prone plays `getUpClip` once. A stance with no clips of
     // its own keeps the standing ones. Active only with driveByMovement.
     std::string crouchClip, crouchWalkClip, proneClip, crawlClip, getUpClip;
+    /// Optional directional locomotion. Empty slots keep the forward walk/run blend.
+    std::string strafeLeftClip, strafeRightClip, walkBackClip, runBackClip;
     /// The stance whose clips play (0 stand, 1 crouch, 2 prone).
     int StanceClips() const { return m_stance; }
 
     // ---- Locomotion slots: the named clip slots above, as one list ----
     enum Slot { SlotIdle, SlotWalk, SlotRun, SlotJump, SlotFall, SlotLand, SlotCrouch,
-                SlotCrouchWalk, SlotProne, SlotCrawl, SlotGetUp, SlotCount };
+                SlotCrouchWalk, SlotProne, SlotCrawl, SlotGetUp,
+                SlotStrafeLeft, SlotStrafeRight, SlotWalkBack, SlotRunBack, SlotCount };
     static const char* SlotName(int s) {
         static const char* const n[SlotCount] = {"Idle", "Walk", "Run", "Jump", "Fall", "Land", "Crouch",
-                                                 "Crouch Walk", "Prone", "Crawl", "Get Up"};
+                                                 "Crouch Walk", "Prone", "Crawl", "Get Up",
+                                                 "Strafe Left", "Strafe Right", "Walk Back", "Run Back"};
         return s >= 0 && s < SlotCount ? n[s] : "";
+    }
+    /// True when any strafe or backward clip is mapped. Otherwise locomotion stays
+    /// the forward speed blend.
+    bool HasDirectionalClips() const {
+        return !strafeLeftClip.empty() || !strafeRightClip.empty() || !walkBackClip.empty() || !runBackClip.empty();
     }
     /// The clip name a slot plays ("" = empty).
     std::string& SlotClip(int s) {
         std::string* p[SlotCount] = {&idleClip, &walkClip, &runClip, &jumpClip, &fallClip, &landClip,
-                                     &crouchClip, &crouchWalkClip, &proneClip, &crawlClip, &getUpClip};
+                                     &crouchClip, &crouchWalkClip, &proneClip, &crawlClip, &getUpClip,
+                                     &strafeLeftClip, &strafeRightClip, &walkBackClip, &runBackClip};
         static std::string none;
         if (s < 0 || s >= SlotCount) { none.clear(); return none; }
         return *p[s];
@@ -439,6 +449,7 @@ public:
     /// just wrote this frame (Update order between objects doesn't matter).
     void LateUpdate(float dt) override {
         CrossfadeStep(dt);
+        YawLowerBody();
         // Layers (and anything else that poses on top of the base pose) run
         // after the base pose and its crossfade are final.
         // (Owners unregister in their OnDestroy — RemoveComponent and object
@@ -456,6 +467,25 @@ public:
             if (m_postPose[i].owner == owner) { m_postPose.erase(m_postPose.begin() + i); return; }
     }
 
+    /// No strafe clips: turn the hips a little toward the way the body is moving
+    /// so a forward walk doesn't read as a moonwalk while strafing. The animator
+    /// rewrites the hip each Update, so this is one extra yaw on that pose.
+    void YawLowerBody() {
+        if (HasDirectionalClips() || !transform) return;
+        Character* ch = nullptr;
+        for (Transform* t = transform; t && !ch; t = t->Parent())
+            if (t->gameObject) ch = t->gameObject->GetComponent<Character>();
+        if (!ch || ch->moveSpeed < 0.2f) return;
+        float ang = std::fmod(ch->moveAngle + 540.0f, 360.0f) - 180.0f;
+        if (ang > 50.0f) ang = 50.0f;
+        if (ang < -50.0f) ang = -50.0f;
+        if (std::fabs(ang) < 1.0f) return;
+        Transform* hips = NodeT("Hips");
+        if (!hips) hips = NodeT("mixamorig:Hips");
+        if (!hips) hips = NodeT("hip");
+        if (!hips) return;
+        hips->localRotation = (Quat::AngleAxis(ang, Vec3::Up) * hips->localRotation).Normalized();
+    }
     void CrossfadeStep(float dt) {
         if (m_blend.empty() || !gameObject) return;
         Scene* sc = gameObject->scene();

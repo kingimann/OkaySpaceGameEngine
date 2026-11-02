@@ -1557,6 +1557,7 @@ void AutoMapLocomotion(ModelAnimator* ma) {
         {"jump", "jumping", "leap"}, {"fall", "falling", "air", "inair", "drop"}, {"land", "landing"}};
     std::string* slot[6] = {&ma->idleClip, &ma->walkClip, &ma->runClip, &ma->jumpClip, &ma->fallClip, &ma->landClip};
     std::string* stanceSlot[5] = {&ma->crouchClip, &ma->crouchWalkClip, &ma->proneClip, &ma->crawlClip, &ma->getUpClip};
+    std::string* dirSlot[4] = {&ma->strafeLeftClip, &ma->strafeRightClip, &ma->walkBackClip, &ma->runBackClip};
     auto is = [&](int role, const std::string& w) {
         for (const std::string& k : kWords[role]) if (k == w) return true;
         return false;
@@ -1571,6 +1572,7 @@ void AutoMapLocomotion(ModelAnimator* ma) {
     for (std::size_t ci = 0; ci < ma->clips.size(); ++ci) {   // clips already given a state
         for (const std::string* sl : slot) if (*sl == ma->clips[ci].name) used[ci] = true;
         for (const std::string* sl : stanceSlot) if (*sl == ma->clips[ci].name) used[ci] = true;
+        for (const std::string* sl : dirSlot) if (*sl == ma->clips[ci].name) used[ci] = true;
     }
     // Crouch / prone clips, and changes between stances ("Crouch To Stand", "Get Up").
     auto crouchy = [&](std::size_t ci) { return any(words[ci], {"crouch", "crouched", "crouching", "sneak", "sneaking", "squat", "squatting"}); };
@@ -1599,7 +1601,9 @@ void AutoMapLocomotion(ModelAnimator* ma) {
                 }
                 // A crouch walk, a drop to prone or a get-up is a stance clip (below).
                 const bool stance = crouchy(ci) || proney(ci) || getUp(ci);
-                if (hit && !stance && !(role < 3 && air)) { *slot[role] = ma->clips[ci].name; used[ci] = true; }
+                const bool backward = any(words[ci], {"back", "backward", "backwards"});
+                const bool sideways = any(words[ci], {"left", "right", "strafe", "strafing"});
+                if (hit && !stance && !backward && !sideways && !(role < 3 && air)) { *slot[role] = ma->clips[ci].name; used[ci] = true; }
             }
     const std::function<bool(std::size_t)> roles[5] = {
         [&](std::size_t ci) { return crouchy(ci) && !change(ci) && !moving(ci) && !any(words[ci], {"sneak", "sneaking"}); },
@@ -1610,6 +1614,20 @@ void AutoMapLocomotion(ModelAnimator* ma) {
     for (int role = 0; role < 5; ++role)
         for (std::size_t ci = 0; ci < ma->clips.size() && stanceSlot[role]->empty(); ++ci)
             if (!used[ci] && roles[role](ci)) { *stanceSlot[role] = ma->clips[ci].name; used[ci] = true; }
+    auto back = [&](std::size_t ci) { return any(words[ci], {"back", "backward", "backwards"}); };
+    auto left = [&](std::size_t ci) { return any(words[ci], {"left"}); };
+    auto right = [&](std::size_t ci) { return any(words[ci], {"right"}); };
+    auto runny = [&](std::size_t ci) { return any(words[ci], {"run", "running", "sprint", "sprinting"}); };
+    auto side = [&](std::size_t ci) { return any(words[ci], {"strafe", "strafing", "sidestep", "side", "walk", "walking"}); };
+    const std::function<bool(std::size_t)> dirRoles[4] = {
+        [&](std::size_t ci) { return left(ci) && side(ci) && !back(ci); },
+        [&](std::size_t ci) { return right(ci) && side(ci) && !back(ci); },
+        [&](std::size_t ci) { return back(ci) && !runny(ci); },
+        [&](std::size_t ci) { return back(ci) && runny(ci); },
+    };
+    for (int role = 0; role < 4; ++role)
+        for (std::size_t ci = 0; ci < ma->clips.size() && dirSlot[role]->empty(); ++ci)
+            if (!used[ci] && dirRoles[role](ci)) { *dirSlot[role] = ma->clips[ci].name; used[ci] = true; }
 }
 
 // Switch a retargeted model's locomotion between its clips and the built-in

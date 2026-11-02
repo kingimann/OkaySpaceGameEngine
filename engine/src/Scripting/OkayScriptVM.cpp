@@ -28,6 +28,8 @@
 #include "okay/Components/PlayerController.hpp"
 #include "okay/Components/UITheme.hpp"          // grok/ui-theme
 #include "okay/Components/ModelAnimator.hpp"
+#include "okay/Render/ModelImport.hpp"
+#include "okay/Script/AnimIkTools.hpp"
 #include "okay/Components/AnimControl.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Animation/HumanoidActions.hpp"
@@ -5841,6 +5843,47 @@ struct OkayScriptVM::Impl {
             if (AnimStateMachine* m = smSelf(); m && !a.empty()) m->SetTrigger(a[0].AsString());
             return Value{};
         };
+        b["anim_get_float"] = [smSelf](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            AnimStateMachine* m = smSelf();
+            return Value{m ? m->GetFloat(a[0].AsString()) : 0.0f};
+        };
+        b["anim_get_bool"] = [smSelf](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            AnimStateMachine* m = smSelf();
+            return Value{(m && m->GetBool(a[0].AsString())) ? 1.0f : 0.0f};
+        };
+        b["anim_get_int"] = [smSelf](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            AnimStateMachine* m = smSelf();
+            return Value{m ? (float)m->GetInt(a[0].AsString()) : 0.0f};
+        };
+        auto layerOf = [selfObj](const Value& which) -> AnimStateMachine* {
+            GameObject* g = selfObj();
+            if (!g) return nullptr;
+            if (which.IsString()) return FindAnimLayer(g, true, which.AsString(), 0);
+            return FindAnimLayer(g, false, {}, (int)std::lround(which.AsFloat()));
+        };
+        b["anim_set_layer_weight"] = [layerOf](std::vector<Value>& a) {
+            if (a.size() < 2) return Value{0.0f};
+            AnimStateMachine* sm = layerOf(a[0]);
+            if (!sm) return Value{0.0f};
+            sm->layerWeight = a[1].AsFloat();
+            return Value{1.0f};
+        };
+        b["anim_get_layer_weight"] = [layerOf](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            AnimStateMachine* sm = layerOf(a[0]);
+            return Value{sm ? sm->layerWeight : 0.0f};
+        };
+        b["set_root_motion"] = [selfObj](std::vector<Value>& a) {
+            const bool on = a.empty() || a[0].AsFloat() != 0.0f;
+            return Value{SetRootMotionOn(selfObj(), on) ? 1.0f : 0.0f};
+        };
+        b["set_character_model"] = [selfObj](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            return Value{SetCharacterModelPath(selfObj(), a[0].AsString()) ? 1.0f : 0.0f};
+        };
         // Actions (HumanoidActions): play_action goes to a state, or a blend-tree
         // motion of that clip name, else play_clip. die/revive drive Death.
         b["play_action"] = [selfObj](std::vector<Value>& a) {
@@ -6025,8 +6068,12 @@ struct OkayScriptVM::Impl {
         // (0..1 per loop; keeps counting past 1 on loops) — for gameplay timing.
         // ---- IK control on this object (any of LimbIK / ChainIK / LookAtIK / AimIK) ----
         //   ik_enable(on)            switch IK on/off (eases over each component's fadeTime)
-        //   ik_set_weight(w)         0..1 influence
-        //   ik_set_target(x, y, z)   world point to reach / look at / aim at
+        //   ik_set_weight(w)         0..1 on every IK component on this object
+        //   ik_set_weight(kind, w)   one of foot, look, aim, hand_l, hand_r, full
+        //                            (also foot_l, foot_r). Looks on this object and its children.
+        //   ik_set_target(x, y, z)   world point on Limb / Chain / Look / Aim
+        //   ik_set_target(limb, "Name") or ik_set_target(limb, x, y, z)
+        //   ik_clear_target(limb)    drop that goal
         //   ik_set_pole(x, y, z)     bend direction point (LimbIK pole / ChainIK pole)
         auto ikEach = [this](auto fn) {
             GameObject* g = rt.host ? rt.host->gameObject : nullptr;
@@ -6046,16 +6093,35 @@ struct OkayScriptVM::Impl {
             ikToggle([&](auto* c) { c->ikActive = on; });
             return Value{};
         };
-        b["ik_set_weight"] = [ikEach, ikToggle](std::vector<Value>& a) {
+        b["ik_set_weight"] = [selfObj, ikEach, ikToggle](std::vector<Value>& a) {
+            if (!a.empty() && a[0].IsString()) {
+                const float w = a.size() > 1 ? a[1].AsFloat() : 1.0f;
+                return Value{SetIkKindWeight(selfObj(), a[0].AsString(), w) ? 1.0f : 0.0f};
+            }
             float w = a.empty() ? 1.0f : a[0].AsFloat();
             ikEach([&](auto* c) { c->weight = w; });
             ikToggle([&](auto* c) { c->weight = w; });
             return Value{};
         };
-        b["ik_set_target"] = [ikEach](std::vector<Value>& a) {
+        b["ik_set_target"] = [selfObj, ikEach](std::vector<Value>& a) {
+            if (!a.empty() && a[0].IsString()) {
+                GameObject* g = selfObj();
+                if (a.size() >= 2 && a[1].IsString()) {
+                    GameObject* named = (g && g->scene()) ? g->scene()->Find(a[1].AsString()) : nullptr;
+                    if (!named) return Value{0.0f};
+                    return Value{SetIkLimbTarget(g, a[0].AsString(), named, nullptr) ? 1.0f : 0.0f};
+                }
+                Vec3 t{a.size() > 1 ? a[1].AsFloat() : 0.0f, a.size() > 2 ? a[2].AsFloat() : 0.0f,
+                       a.size() > 3 ? a[3].AsFloat() : 0.0f};
+                return Value{SetIkLimbTarget(g, a[0].AsString(), nullptr, &t) ? 1.0f : 0.0f};
+            }
             Vec3 t{a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f, a.size() > 2 ? a[2].AsFloat() : 0.0f};
             ikEach([&](auto* c) { c->targetObject = nullptr; c->target = t; });
             return Value{};
+        };
+        b["ik_clear_target"] = [selfObj](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            return Value{ClearIkLimbTarget(selfObj(), a[0].AsString()) ? 1.0f : 0.0f};
         };
         // Full Body IK goals on this object:
         //   ik_hand("left"|"right", x, y, z [, weight])   reach a point (weight 0 releases)
@@ -9680,6 +9746,7 @@ struct OkayScriptVM::Impl {
             if (t == "SyncVar") return g->GetComponent<SyncVar>();
             if (t == "FirstPersonHands") return g->GetComponent<FirstPersonHands>() != nullptr;
             if (t == "Animator" || t == "Animation") return true;   // resolved by the anim_* builtins
+            if (t == "IK") return true;                              // resolved by the ik_* builtins
             return false;
         };
         // The engine component a C# type name refers to (for .enabled).
@@ -9802,11 +9869,26 @@ struct OkayScriptVM::Impl {
                 if (m == "SetTrigger") { std::vector<Value> x{arg(0)}; return rt.Call("anim_trigger", x); }
                 if (m == "SetBool")    { std::vector<Value> x{arg(0), Value{arg(1).AsBool() ? 1.0f : 0.0f}}; return rt.Call("anim_set_bool", x); }
                 if (m == "SetFloat" || m == "SetInteger") { std::vector<Value> x{arg(0), arg(1)}; return rt.Call("anim_set_float", x); }
+                if (m == "GetFloat") return rt.Call("anim_get_float", rest);
+                if (m == "GetBool") return rt.Call("anim_get_bool", rest);
+                if (m == "GetInt" || m == "GetInteger") return rt.Call("anim_get_int", rest);
+                if (m == "SetLayerWeight") return rt.Call("anim_set_layer_weight", rest);
+                if (m == "GetLayerWeight") return rt.Call("anim_get_layer_weight", rest);
+                if (m == "SetRootMotion") return rt.Call("set_root_motion", rest);
+                if (m == "SetCharacterModel") return rt.Call("set_character_model", rest);
                 if (m == "Play" || m == "CrossFade" || m == "CrossFadeInFixedTime") {
                     std::vector<Value> x{arg(0)};
                     if (m != "Play" && rest.size() >= 2) x.push_back(arg(1));
                     return rt.Call("play_action", x);
                 }
+                return Value{};
+            }
+            if (t == "IK") {
+                if (m == "SetKindWeight") return rt.Call("ik_set_weight", rest);
+                if (m == "SetLimbTarget") return rt.Call("ik_set_target", rest);
+                if (m == "ClearLimbTarget") return rt.Call("ik_clear_target", rest);
+                if (m == "LookAt") return rt.Call("ik_look_at", rest);
+                if (m == "SetWeight") return rt.Call("ik_set_weight", rest);
                 return Value{};
             }
             if (t == "Rigidbody2D") if (auto* rb = g->GetComponent<Rigidbody2D>()) {

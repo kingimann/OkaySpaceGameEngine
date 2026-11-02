@@ -17,6 +17,7 @@
 #include "BehaviorTreeWindow.hpp"      // the Behavior Tree window (NPC AI trees, runner inspector)
 #include "LocalizationWindow.hpp"      // the Localization window (string table), preview language, Localized fields
 #include "okay/Core/Utf8.hpp"
+#include <cstdio>
 #include "SplineTools.hpp"             // splines: Scene-view editing, inspectors, line / trail drawing
 #include "okay/Components/HoldPrompt.hpp"
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
@@ -39289,12 +39290,18 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             // name (component pointers are only wired at play time).
             if (up.get() == ed.selected() &&
                 (up->GetComponent<LimbIK>() || up->GetComponent<ChainIK>() || up->GetComponent<FullBodyIK>() ||
-                 up->GetComponent<LookAtIK>() || up->GetComponent<AimIK>())) {
+                 up->GetComponent<LookAtIK>() || up->GetComponent<AimIK>() || up->GetComponent<FootIK>())) {
                 auto scenePos = [&](const std::string& nm, Vec3& out) -> bool {
                     if (nm.empty()) return false;
                     for (const auto& o : objs)
                         if (o->transform && o->name == nm) { out = o->transform->Position(); return true; }
                     return false;
+                };
+                auto sceneTf = [&](const std::string& nm) -> Transform* {
+                    if (nm.empty()) return nullptr;
+                    for (const auto& o : objs)
+                        if (o->transform && o->name == nm) return o->transform;
+                    return nullptr;
                 };
                 auto boneP = [&](const std::string& nm, Vec3 fb) -> Vec3 { Vec3 o; return scenePos(nm, o) ? o : fb; };
                 const ImU32 kBoneCol = IM_COL32(120, 220, 160, 255);
@@ -39378,6 +39385,72 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 if (auto* la = up->GetComponent<LookAtIK>()) {
                     chain(la->chainNames);
                     Vec3 tgt; marker(scenePos(la->targetName, tgt) ? tgt : la->target, kTgtCol, 7.0f);
+                    Transform* rootB = (!la->chain.empty() && la->chain.front()) ? la->chain.front()
+                                     : (!la->chainNames.empty() ? sceneTf(la->chainNames.front()) : nullptr);
+                    if (!rootB) rootB = t;
+                    const Vec3 origin = rootB->Position();
+                    Vec3 fwd = rootB->Rotation() * la->forwardAxis;
+                    if (fwd.SqrMagnitude() > 1e-8f && la->clampAngle > 1.0f && la->clampAngle < 179.0f) {
+                        fwd = fwd.Normalized();
+                        Vec3 side = Vec3::Cross(fwd, Vec3::Up);
+                        if (side.SqrMagnitude() < 1e-6f) side = Vec3::Cross(fwd, Vec3::Right);
+                        side = side.Normalized();
+                        const Vec3 up2 = Vec3::Cross(fwd, side);
+                        const float sw = la->clampAngle * 0.01745329f;
+                        const float len = 0.45f;
+                        const float rad = len * std::sin(sw), h = len * std::cos(sw);
+                        const ImU32 kCone = IM_COL32(190, 150, 255, 220);
+                        Vec3 prev2; const int N = 20;
+                        for (int s2 = 0; s2 <= N; ++s2) {
+                            const float a2 = 6.2831853f * s2 / N;
+                            const Vec3 p2 = origin + fwd * h + (side * std::cos(a2) + up2 * std::sin(a2)) * rad;
+                            if (s2) line(prev2, p2, kCone, 1.2f);
+                            if (s2 % 5 == 0) line(origin, p2, kCone, 1.0f);
+                            prev2 = p2;
+                        }
+                    }
+                    ImVec2 lsp;
+                    if (project(origin, lsp)) {
+                        char buf[48];
+                        std::snprintf(buf, sizeof(buf), "look %d%%", (int)std::lround(la->weight * 100.0f));
+                        dl->AddText(ImVec2(lsp.x + 8.0f, lsp.y - 14.0f), IM_COL32(210, 180, 255, 255), buf);
+                    }
+                }
+                if (auto* ft = up->GetComponent<FootIK>()) {
+                    const ImU32 kRay = IM_COL32(120, 210, 255, 230);
+                    const ImU32 kPlant = IM_COL32(80, 230, 140, 255);
+                    const ImU32 kLock = IM_COL32(255, 210, 80, 255);
+                    const char* sides[2] = {"L", "R"};
+                    Transform* bones[2] = {ft->leftFoot, ft->rightFoot};
+                    const std::string* names[2] = {&ft->leftFootName, &ft->rightFootName};
+                    for (int leg = 0; leg < 2; ++leg) {
+                        Vec3 foot;
+                        bool have = false;
+                        if (bones[leg]) { foot = bones[leg]->Position(); have = true; }
+                        else have = scenePos(*names[leg], foot);
+                        if (!have) continue;
+                        line(Vec3{foot.x, foot.y + ft->maxRayUp, foot.z},
+                             Vec3{foot.x, foot.y - ft->maxRayDown, foot.z}, kRay, 1.5f);
+                        if (ft->stepProbes && bones[leg]) {
+                            Vec3 along = bones[leg]->Rotation() * Vec3{0, 0, 1};
+                            if (along.SqrMagnitude() > 1e-6f) {
+                                along = along.Normalized();
+                                auto probe = [&](const Vec3& at) {
+                                    line(Vec3{at.x, at.y + ft->maxRayUp, at.z},
+                                         Vec3{at.x, at.y - ft->maxRayDown, at.z}, kRay, 1.0f);
+                                };
+                                probe(foot + along * ft->toeReach);
+                                probe(foot - along * ft->heelReach);
+                            }
+                        }
+                        if (ft->FootPlanted(leg)) marker(ft->FootPlantPos(leg), kPlant, 5.0f);
+                        ImVec2 sp;
+                        if (project(foot, sp)) {
+                            char buf[32];
+                            std::snprintf(buf, sizeof(buf), "%s %s", sides[leg], ft->FootLocked(leg) ? "locked" : "free");
+                            dl->AddText(ImVec2(sp.x + 6.0f, sp.y), ft->FootLocked(leg) ? kLock : kRay, buf);
+                        }
+                    }
                 }
                 if (auto* ai = up->GetComponent<AimIK>()) {
                     Vec3 b = boneP(ai->boneName, p);

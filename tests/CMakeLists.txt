@@ -890,6 +890,11 @@ add_executable(test_ik_core test_ik_core.cpp)
 target_link_libraries(test_ik_core PRIVATE okay::engine)
 add_test(NAME ik_core COMMAND test_ik_core)
 
+# Animator getters, layer weight, root motion, per-kind IK, and the matching Engine API nodes.
+add_executable(test_anim_ik_tools test_anim_ik_tools.cpp)
+target_link_libraries(test_anim_ik_tools PRIVATE okay::engine)
+add_test(NAME anim_ik_tools COMMAND test_anim_ik_tools)
+
 # Look-At IK shares, clamp and eyes; Limb IK stretch.
 add_executable(test_ik_look_stretch test_ik_look_stretch.cpp)
 target_link_libraries(test_ik_look_stretch PRIVATE okay::engine)

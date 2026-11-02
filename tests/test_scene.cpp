@@ -126,5 +126,37 @@ int main() {
     for (char c : fb) if (c == 'X') { drewSomething = true; break; }
     CHECK(drewSomething);
 
+    // Adding components reallocates the component vector once it is full.
+    // A copied pointer list stays valid across that growth, and a walk that
+    // stops when the count changes does not keep reading the live vector.
+    {
+        Scene pile("Pile");
+        GameObject* g = pile.CreateGameObject("Pile");
+        // Fill until the vector is exactly at capacity and holds several
+        // components, so the next AddComponent has to reallocate.
+        while (g->Components().size() < 8 || g->Components().size() < g->Components().capacity())
+            g->AddComponent<Probe>();
+        CHECK(g->Components().size() == g->Components().capacity());
+        CHECK(g->Components().size() >= 8);
+        std::vector<Component*> snap;
+        g->CopyComponentPointers(snap);
+        const std::size_t before = snap.size();
+        int visited = 0;
+        for (Component* c : snap) {
+            if (g->Components().size() != before) break;
+            CHECK(c && c->gameObject == g);
+            ++visited;
+            if (visited == 1) {
+                g->AddComponent<Probe>();
+                g->AddComponent<Probe>();
+                g->AddComponent<Probe>();
+            }
+        }
+        CHECK(visited == 1);
+        CHECK(g->Components().size() == before + 3);
+        CHECK(g->Components().capacity() > before);
+        for (Component* c : snap) CHECK(c && c->gameObject == g);
+    }
+
     TEST_MAIN_RESULT();
 }

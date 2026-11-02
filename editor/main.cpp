@@ -7140,6 +7140,24 @@ static bool ObjectIsCharacterTarget(GameObject* go) {
                   go->GetComponent<NPCController>() ||
                   go->GetComponent<Character>());
 }
+// Component adds are applied after DrawInspector's component walk. Doing them
+// inside that walk reallocates GameObject's component vector (capacity 16 on
+// a Third Person player once Look-At IK is added) and the next dynamic_cast
+// reads freed storage. Same shape as sPendingViewModeCtrl.
+struct PendingCharacterModel { GameObject* go = nullptr; std::string path; };
+static std::vector<PendingCharacterModel> sPendingCharacterModels;
+static bool sPendingPlayable = false;
+static std::string sPendingPlayablePath;
+static GameObject* sPendingPlayableOnto = nullptr;
+static GameObject* sPendingFitCollider = nullptr;
+static GameObject* sPendingMeshPhysics = nullptr;
+static GameObject* sPendingHumanoidIK = nullptr;
+
+static void QueueCharacterModel(GameObject* go, const std::string& path) {
+    if (!go || path.empty()) return;
+    sPendingCharacterModels.push_back({go, path});
+}
+
 // Editor wrapper over okay::AttachCharacterModel: undo, selection, console log.
 static void EditorAttachCharacterModel(EditorState& ed, GameObject* target, const std::string& path) {
     if (!target) return;
@@ -7160,6 +7178,35 @@ static void EditorAttachCharacterModel(EditorState& ed, GameObject* target, cons
         ConsoleLog(log + " — press Play to try it");
 }
 
+// The one selected object that is a playable avatar, or nullptr when the
+// selection is empty, mixed, or holds more than one avatar.
+static GameObject* SelectedPlayableAvatar(EditorState& ed) {
+    GameObject* found = nullptr;
+    int n = 0;
+    const std::vector<GameObject*>& sel = ed.MultiSelection();
+    if (sel.empty()) return okay::IsPlayableAvatar(ed.selected()) ? ed.selected() : nullptr;
+    for (GameObject* g : sel)
+        if (okay::IsPlayableAvatar(g)) { found = g; ++n; }
+    return n == 1 ? found : nullptr;
+}
+
+// Make Playable Character, after the inspector has finished walking components.
+// One selected avatar wears the model. Otherwise a new player is created and
+// the other active avatars are deactivated (undo is the snapshot taken here).
+static void EditorApplyMakePlayable(EditorState& ed, const std::string& path, GameObject* onto) {
+    if (onto && (onto->IsDestroyed() || !okay::IsPlayableAvatar(onto))) onto = nullptr;
+    if (onto) {
+        EditorAttachCharacterModel(ed, onto, path);
+        return;
+    }
+    ed.PushUndo();
+    std::string log;
+    if (GameObject* player = okay::MakePlayableCharacter(ed.scene(), path, &log)) {
+        ed.Select(player); ed.dirty = true;
+        ConsoleLog(log.empty() ? ("Playable character from " + path) : log);
+    } else ConsoleLog("Couldn't make a character from " + path, 2);
+}
+
 // Inspector row shared by the player controllers and Character: swap the
 // body model, re-detect / turn its facing, and refit the physics body to it.
 static void CharacterModelTools(EditorState& ed, GameObject* go, const char* id) {
@@ -7167,7 +7214,7 @@ static void CharacterModelTools(EditorState& ed, GameObject* go, const char* id)
     std::snprintf(lbl, sizeof(lbl), "Set Character Model...##%s", id);
     if (ImGui::Button(lbl)) {
         if (const char* p = OpenModelFileDialog("Set character model"))
-            EditorAttachCharacterModel(ed, go, p);
+            QueueCharacterModel(go, p);
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Import a 3D model and use it as this player's body: auto-sized,\nfeet grounded, turned to face forward, collider fitted and its\nidle/walk/run clips wired. Or drop a model asset onto this object.");
     GameObject* model = okay::FindCharacterModelRoot(ed.scene(), go);
@@ -7191,11 +7238,7 @@ static void CharacterModelTools(EditorState& ed, GameObject* go, const char* id)
     if (ImGui::SmallButton(lbl)) { ed.PushUndo(); okay::FaceCharacterModel(ed.scene(), go, model, 90.0f); ed.dirty = true; }
     ImGui::SameLine();
     std::snprintf(lbl, sizeof(lbl), "Fit Collider##%s", id);
-    if (ImGui::SmallButton(lbl)) {
-        ed.PushUndo();
-        ConsoleLog(go->name + ": " + okay::FitCharacterCollider(ed.scene(), go, model));
-        ed.dirty = true;
-    }
+    if (ImGui::SmallButton(lbl)) sPendingFitCollider = go;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Size the player's collider around the model (adds a capsule +\nRigidbody 3D when missing).");
 }
 
@@ -9143,6 +9186,13 @@ void DrawProject(EditorState& ed) {
             if (s_multi.size() > 1)
                 ImGui::TextDisabled("%d selected", (int)s_multi.size());
             if (ImGui::MenuItem("Open")) wantOpen = true;
+            if (!isDir && IsModelExt(ext) && ImGui::MenuItem("Make Playable Character")) {
+                sPendingPlayable = true;
+                sPendingPlayablePath = full;
+                sPendingPlayableOnto = SelectedPlayableAvatar(ed);
+            }
+            if (!isDir && IsModelExt(ext) && ImGui::IsItemHovered())
+                ImGui::SetTooltip("Add a Third Person player wearing this model, with humanoid IK.\nIf one player is selected, the model is attached to it.\nOtherwise other active players are deactivated (not deleted).");
             if (!isDir && ext == ".okayscene" && ImGui::MenuItem("Add to Open Scene")) MergeSceneIntoCurrent(ed, full);
             if (!isDir && ext == ".okayscene" && ImGui::IsItemHovered())
                 ImGui::SetTooltip("Load its objects into the scene you have open (additive), instead of switching scenes.");
@@ -17603,7 +17653,7 @@ void DrawHierarchy(EditorState& ed) {
                         // Drop a model onto a player/NPC: it becomes THE character —
                         // imported as a child, sized/grounded/faced, locomotion clips
                         // wired, and the blocky body hidden.
-                        if (ObjectIsCharacterTarget(node)) EditorAttachCharacterModel(ed, node, path);
+                        if (ObjectIsCharacterTarget(node)) QueueCharacterModel(node, path);
                         else ConsoleLog(node->name + " has no controller/Character — dropping the model into the scene instead adds it standalone (drag to the viewport).", 1);
                     }
                 }
@@ -18271,6 +18321,50 @@ static void FitBox(GameObject* go, BoxCollider3D* bc) {
     Vec3 lo, hi; if (!MeshBounds(go, lo, hi)) return;
     bc->size = {hi.x - lo.x, hi.y - lo.y, hi.z - lo.z};
     bc->offset = {(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
+}
+
+// Run the component adds the inspector (and the panels drawn around it) queued.
+// Safe to call more than once a frame: each queue is cleared as it is applied.
+static void ApplyPendingInspectorAdds(EditorState& ed) {
+    if (sPendingHumanoidIK) {
+        GameObject* root = sPendingHumanoidIK;
+        sPendingHumanoidIK = nullptr;
+        if (root && !root->IsDestroyed()) SetupHumanoidIK(ed, root);
+    }
+    if (sPendingMeshPhysics) {
+        GameObject* go = sPendingMeshPhysics;
+        sPendingMeshPhysics = nullptr;
+        if (go && !go->IsDestroyed()) {
+            if (!go->GetComponent<Rigidbody3D>()) go->AddComponent<Rigidbody3D>();
+            BoxCollider3D* bc = go->GetComponent<BoxCollider3D>();
+            if (!bc) bc = go->AddComponent<BoxCollider3D>();
+            FitBox(go, bc);
+            ed.dirty = true;
+            ConsoleLog("Added Rigidbody3D + fitted BoxCollider3D");
+        }
+    }
+    if (sPendingFitCollider) {
+        GameObject* go = sPendingFitCollider;
+        sPendingFitCollider = nullptr;
+        if (go && !go->IsDestroyed()) {
+            ed.PushUndo();
+            GameObject* model = okay::FindCharacterModelRoot(ed.scene(), go);
+            ConsoleLog(go->name + ": " + okay::FitCharacterCollider(ed.scene(), go, model));
+            ed.dirty = true;
+        }
+    }
+    std::vector<PendingCharacterModel> models;
+    models.swap(sPendingCharacterModels);
+    for (const PendingCharacterModel& m : models)
+        if (m.go && !m.go->IsDestroyed()) EditorAttachCharacterModel(ed, m.go, m.path);
+    if (sPendingPlayable) {
+        std::string path = std::move(sPendingPlayablePath);
+        GameObject* onto = sPendingPlayableOnto;
+        sPendingPlayable = false;
+        sPendingPlayablePath.clear();
+        sPendingPlayableOnto = nullptr;
+        EditorApplyMakePlayable(ed, path, onto);
+    }
 }
 static void FitSphere(GameObject* go, SphereCollider3D* sc) {
     Vec3 lo, hi; if (!MeshBounds(go, lo, hi)) return;
@@ -27919,9 +28013,16 @@ void DrawInspector(EditorState& ed) {
 
     // Draw the remaining components in their stored order so the user-controlled
     // arrangement is honored. Transform is drawn above (fixed at index 0) and skipped.
-    for (const auto& upc : go->Components()) {
-        Component* curComp = upc.get();
-        if (curComp == go->transform) continue;
+    // Walk a copy. A button in this loop can AddComponent, and the vector
+    // reallocates once it passes its capacity; a live range-for would then
+    // dynamic_cast freed storage. The copied pointers stay valid across growth.
+    // If the count still changes (a component was removed), stop.
+    static std::vector<Component*> compSnap;
+    go->CopyComponentPointers(compSnap);
+    const std::size_t compCountAtDraw = compSnap.size();
+    for (Component* curComp : compSnap) {
+        if (go->Components().size() != compCountAtDraw) break;
+        if (!curComp || curComp == go->transform) continue;
         sManagedNote = ManagedNoteFor(ed, go, curComp); sManagedFor = curComp;
     if (auto* sr = dynamic_cast<SpriteRenderer*>(curComp)) {
         if (CompHeader("Sprite Renderer", sr, &toRemove)) {
@@ -28397,14 +28498,8 @@ void DrawInspector(EditorState& ed) {
             // One-click physics: add a Rigidbody3D + a box collider fitted to the
             // mesh, so a primitive drops and collides immediately on Play.
             if (!go->GetComponent<Rigidbody3D>() || !go->GetComponent<BoxCollider3D>()) {
-                if (ImGui::SmallButton("Add Physics (Rigidbody + Box)##mesh")) {
-                    if (!go->GetComponent<Rigidbody3D>()) go->AddComponent<Rigidbody3D>();
-                    BoxCollider3D* bc = go->GetComponent<BoxCollider3D>();
-                    if (!bc) bc = go->AddComponent<BoxCollider3D>();
-                    FitBox(go, bc);
-                    ed.dirty = true;
-                    ConsoleLog("Added Rigidbody3D + fitted BoxCollider3D");
-                }
+                if (ImGui::SmallButton("Add Physics (Rigidbody + Box)##mesh"))
+                    sPendingMeshPhysics = go;
             }
         }
     }
@@ -28876,7 +28971,7 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Model Animator", ma, &toRemove)) {
             ImGui::TextDisabled("Animation clips imported with this model. Pick one to play.");
             if (!ma->gameObject->GetComponent<FootIK>() || !ma->gameObject->GetComponent<FullBodyIK>()) {
-                if (ImGui::SmallButton("Set up humanoid IK##ma")) SetupHumanoidIK(ed, ma->gameObject);
+                if (ImGui::SmallButton("Set up humanoid IK##ma")) sPendingHumanoidIK = ma->gameObject;
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Feet on the ground (bending the legs, tilting to slopes, no sliding)\n"
                                       "and Full Body IK with hand targets, mapped from the bone names.");
@@ -36503,6 +36598,11 @@ void DrawInspector(EditorState& ed) {
     DrawBehaviorTreeInspector(ed, go, curComp, toRemove, &CompHeader);   // Behavior Tree Runner
     DrawSplineInspector(ed, go, curComp, toRemove, &CompHeader);       // Spline family, Line / Trail Renderer
     } // end component-order loop
+    compSnap.clear();
+
+    // Adds queued by buttons in the loop above (Set Character Model, Fit Collider,
+    // Add Physics, humanoid IK) and by panels that drew earlier this frame.
+    ApplyPendingInspectorAdds(ed);
 
     // A View change adds and removes the controller's parts: after the loop that walks them.
     if (sPendingViewModeCtrl) {
@@ -44679,6 +44779,11 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.UIThemer"); if (g_showUIThemer)     DrawUIThemer(ed); }
         { OKAY_PROFILE("UI.ItemDatabase"); if (g_showItemDatabase) DrawItemDatabase(ed); }
         { OKAY_PROFILE("UI.Project"); if (g_showProject)   DrawProject(ed); }
+        // Make Playable Character is queued from the Project panel, which draws
+        // after the Inspector. A drop onto a player is queued from the Hierarchy,
+        // which draws before it; the Inspector apply already ran that one when
+        // the Inspector is open. This catches whichever queue is still pending.
+        ApplyPendingInspectorAdds(ed);
         { OKAY_PROFILE("UI.Services"); if (g_showServices)  DrawServices(ed); }
         { OKAY_PROFILE("UI.ScriptEditor"); if (g_showScriptEditor) DrawScriptEditor(ed); }
         { OKAY_PROFILE("UI.VisualScript"); if (g_showVisualScript) okay::editor::vsed::Draw(ed, &g_showVisualScript); }

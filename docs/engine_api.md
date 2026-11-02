@@ -533,6 +533,27 @@ Draws a line through points (lasers, ropes, aiming arcs). The object needs a Lin
 | `GetComponent<LineRenderer>().SetPositions(positions)` | `LineRenderer.SetPositions/1` | step | positions (Any), Target (Object) | - | Replace every point with an array or List of Vector3. |
 | `GetComponent<LineRenderer>().GetPosition(index)` | `LineRenderer.GetPosition/1` | value | index (Number), Target (Object) | Result (Vector3) | One point of the line. |
 
+## Animator
+
+The animation graph. On a player it is often on the imported model, and these calls find it.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<Animator>().state` | `Animator.state` | value | Target (Object) | state (Text) | Name of the state the graph is in. |
+| `GetComponent<Animator>().SetTrigger(name)` | `Animator.SetTrigger/1` | step | name (Text), Target (Object) | - | Fire a trigger parameter (jump, for example). |
+| `GetComponent<Animator>().SetBool(name, on)` | `Animator.SetBool/2` | step | name (Text), on (Bool), Target (Object) | - | Set a bool parameter (crouch, prone, grounded). |
+| `GetComponent<Animator>().SetFloat(name, value)` | `Animator.SetFloat/2` | step | name (Text), value (Number), Target (Object) | - | Set a float parameter (speed). |
+| `GetComponent<Animator>().Play(clip)` | `Animator.Play/1` | step | clip (Text), Target (Object) | - | Play one of the model's clips by name. |
+
+## IK
+
+Look-At, feet and full-body IK on this object.
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<IK>().LookAt(objectName)` | `IK.LookAt/1` | step | objectName (Text), Target (Object) | - | Aim Look-At IK at the object with this name. |
+| `GetComponent<IK>().SetWeight(weight)` | `IK.SetWeight/1` | step | weight (Number), Target (Object) | - | Set the weight (0..1) of Look-At, Foot and Full Body IK on this object. |
+
 ## TrailRenderer
 
 Leaves a fading ribbon behind the moving object. The object needs a Trail Renderer.

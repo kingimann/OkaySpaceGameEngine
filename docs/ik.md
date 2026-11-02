@@ -19,6 +19,24 @@ The quickest start on an imported humanoid is **Set up humanoid IK** in the Mode
 Animator inspector. It adds Foot IK and Full Body IK with the bones found by
 name, sensible joint limits, and hand and look target objects to move around.
 
+Right-click a model file in the Project panel and choose **Make Playable
+Character**. That adds a Third Person player, attaches the model, and wires
+humanoid IK: feet on the ground, the built-in animations where the file has no
+clip, and Look-At IK on the head. Look-At stays quiet until something tells it
+where to look, so the head does not stare at the world origin. If the scene
+already has a player, that player is deactivated (not deleted) and the console
+names it, so the new character is the one that's played. If one player is
+selected, the model is attached to that player instead.
+
+From a script on the player:
+
+- `ik_look_at("Guard")` aims Look-At IK at that object. A second argument is the weight. (`look_at` still turns the whole object.)
+- `crouch()`, `prone()` and `stand()`, or `set_stance(0|1|2)`, change the stance.
+- `ik_look(x, y, z)` aims at a point.
+
+Typed scripts and visual-script Engine API nodes use `Animator` (SetTrigger,
+SetBool, SetFloat, Play, state) and `IK` (LookAt, SetWeight) on the player.
+
 ## How the solvers work
 
 - **Bones turn, they don't stretch.** In a parented bone chain (an imported

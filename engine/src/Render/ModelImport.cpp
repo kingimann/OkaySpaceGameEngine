@@ -13,7 +13,10 @@
 #include "okay/Animation/HumanoidLibrary.hpp"
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/HumanoidRetarget.hpp"
+#include "okay/Components/LookAtIK.hpp"
+#include "okay/Scene/SceneTemplates.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/PlayerController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Components/FirstPersonController.hpp"
@@ -2349,6 +2352,27 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
     // Fit (or add) the collider + rigidbody around the model actually shown.
     std::string phys = FitCharacterCollider(scene, player, root);
 
+    // Look-At IK is on for every imported player: the head (and spine, when
+    // one was found) is wired, and it waits until a script gives it something
+    // to look at, so the head does not stare at the world origin.
+    {
+        const humanoid::BoneMap bm = humanoid::MapHumanoidBones(root, nullptr);
+        GameObject* head = bm.bone[humanoid::Head];
+        GameObject* torso = bm.bone[humanoid::Torso];
+        if (head) {
+            LookAtIK* look = player->GetComponent<LookAtIK>();
+            if (!look) look = player->AddComponent<LookAtIK>();
+            look->weight = 1.0f;
+            look->ikActive = true;
+            look->aimAtPoint = false;
+            look->chainNames.clear();
+            if (torso) look->chainNames.push_back(torso->name);
+            look->chainNames.push_back(head->name);
+            look->chain.clear();
+            mapped += mapped.empty() ? "look-at IK on" : ", look-at IK on";
+        }
+    }
+
     if (outLog) {
         *outLog = "Character model '" + root->name + "' on " + player->name +
                   " (height " + std::to_string(want).substr(0, 4) + "u" +
@@ -2359,6 +2383,44 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
     return root;
 }
 
+bool IsPlayableAvatar(GameObject* go) {
+    if (!go) return false;
+    return go->GetComponent<PlayerController>()
+        || go->GetComponent<FirstPersonController>()
+        || go->GetComponent<ThirdPersonController>()
+        || go->GetComponent<ThirdPersonShooterController>()
+        || go->GetComponent<TopDownController>()
+        || go->GetComponent<TopDownShooterController>()
+        || go->GetComponent<Platformer25DController>()
+        || go->GetComponent<ClickToMoveController>()
+        || go->GetComponent<CharacterController3D>();
+}
+
+GameObject* MakePlayableCharacter(Scene& scene, const std::string& path, std::string* outLog,
+                                  GameObject* onto) {
+    if (onto && IsPlayableAvatar(onto)) {
+        GameObject* model = AttachCharacterModel(scene, onto, path, outLog);
+        return model ? onto : nullptr;
+    }
+    GameObject* player = Templates::AddThirdPersonPlayer(scene, {0.0f, 1.0f, 0.0f});
+    if (!player) return nullptr;
+    GameObject* model = AttachCharacterModel(scene, player, path, outLog);
+    if (!model) { scene.Destroy(player); return nullptr; }
+    // One played character. Other active avatars are switched off, not deleted,
+    // so the template player they overlapped stays in the scene for undo.
+    std::string parked;
+    for (const auto& up : scene.Objects()) {
+        GameObject* g = up.get();
+        if (!g || g == player || !g->active || g->IsSelfOrDescendantOf(player)) continue;
+        if (!IsPlayableAvatar(g)) continue;
+        g->active = false;
+        if (!parked.empty()) parked += ", ";
+        parked += "'" + g->name + "'";
+    }
+    if (outLog && !parked.empty())
+        *outLog += " Deactivated " + parked + " so this character is the one that's played.";
+    return player;
+}
 
 const char* CharacterAnimationSourceName(int source) {
     static const char* const n[] = {"None", "Imported clips", "Built-in retargeted", "Mixed"};

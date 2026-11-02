@@ -1305,6 +1305,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         KvOut k{out};
         k("clamp", l->clampAngle)("eyeMax", l->eyeMaxAngle)("eyeW", l->eyeWeight)
          ("maxDist", l->maxDistance)("fadeDist", l->fadeDistance);
+        if (!l->aimAtPoint) k("point", 0.0f);
         for (std::size_t i = 0; i < l->boneWeights.size(); ++i) k(("sh" + std::to_string(i)).c_str(), l->boneWeights[i]);
         for (std::size_t i = 0; i < l->eyeNames.size(); ++i) k.str(("eye" + std::to_string(i)).c_str(), l->eyeNames[i]);
         out << "\n";
@@ -4469,6 +4470,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                       KvIn k(rs);
                       l->clampAngle = 0.0f;
                       k.f("clamp", l->clampAngle); k.f("eyeMax", l->eyeMaxAngle); k.f("eyeW", l->eyeWeight);
+                      float point = l->aimAtPoint ? 1.0f : 0.0f;
+                      if (k.find("point")) { k.f("point", point); l->aimAtPoint = point != 0.0f; }
                       k.f("maxDist", l->maxDistance); k.f("fadeDist", l->fadeDistance);
                       for (int i = 0; ; ++i) {
                           const std::string key = "sh" + std::to_string(i);

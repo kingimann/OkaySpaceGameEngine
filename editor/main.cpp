@@ -39471,7 +39471,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     ImVec2 lsp;
                     if (project(origin, lsp)) {
                         char buf[48];
-                        std::snprintf(buf, sizeof(buf), "look %d%%", (int)std::lround(la->weight * 100.0f));
+                        std::snprintf(buf, sizeof(buf), "look %d%%", (int)std::lround(la->EffectiveWeight() * 100.0f));
                         dl->AddText(ImVec2(lsp.x + 8.0f, lsp.y - 14.0f), IM_COL32(210, 180, 255, 255), buf);
                     }
                 }

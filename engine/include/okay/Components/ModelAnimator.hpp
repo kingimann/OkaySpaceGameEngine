@@ -218,9 +218,10 @@ public:
     }
 
     void Update(float dt) override {
-        if (externalDrive) return;   // a state machine blend tree is posing the model
         // Locomotion speed (world XZ units/sec) + vertical speed, measured from
-        // how the object moved.
+        // how the object moved. A blend tree poses the bones itself (externalDrive);
+        // the speed is still read first so empty slots and stride matching keep
+        // working under a graph.
         float spd = -1.0f, vy = 0.0f;
         const float prevVy = m_lastVy;
         if (driveByMovement && dt > 0.0f && transform) {
@@ -243,11 +244,13 @@ public:
                 m_lastSpd = spd; m_lastVy = vy;
             }
             m_lastPos = p; m_haveLast = true; m_lastDt = dt;
-            // A held clip (script / visual script Play) or an AnimStateMachine picks
-            // the clips: movement-driven selection waits (the position keeps being
-            // tracked, so it resumes without a speed spike).
-            if (m_held || StateMachineDrives()) spd = -1.0f;
+            // A held clip (script / visual script Play) picks the clip: movement-driven
+            // selection waits (the position keeps being tracked, so it resumes without
+            // a speed spike). A graph also picks the clips, but the speed stays — empty
+            // slots still fall back to the built-in animation and walk/run still stride.
+            if (m_held) spd = -1.0f;
         }
+        const bool graph = StateMachineDrives();   // the graph picks clips; this still reads speed
         const bool bi = spd >= 0.0f && BuiltinFallbackUsable();   // empty slots are played by the built-in animation
         bool builtinNow = false;                                   // ...and does so this frame
 
@@ -263,13 +266,13 @@ public:
                 if (launch || m_airT > 0.12f) {          // brief drops (steps) don't count
                     m_inAir = true; m_airT = 0.0f; m_fell = !launch;
                     m_airSlot = (launch && (SlotFilled(SlotJump) || bi)) ? SlotJump : SlotFall;
-                    if (SlotFilled(m_airSlot)) Play(SlotClip(m_airSlot));
+                    if (!graph && SlotFilled(m_airSlot)) Play(SlotClip(m_airSlot));
                 }
             } else {
                 // Apex: a jump turns into a fall once we're heading down.
                 if (vy < -1.0f && m_airSlot == SlotJump) {
                     m_airSlot = SlotFall;
-                    if (SlotFilled(SlotFall) && CurrentName() == jumpClip) Play(fallClip);
+                    if (!graph && SlotFilled(SlotFall) && CurrentName() == jumpClip) Play(fallClip);
                 }
                 // Touchdown: vertical motion dies out (the ground stops us). A jump's
                 // apex also passes zero, so that counts only once we've been
@@ -279,7 +282,7 @@ public:
                 if (std::fabs(vy) < 0.4f && (m_fell || GroundUnderFeet())) m_airT += dt; else m_airT = 0.0f;
                 if (m_airT > 0.06f) {
                     m_inAir = false; m_airT = 0.0f;
-                    if (!landClip.empty()) PlayOnce(landClip);   // locomotion resumes after
+                    if (!graph && !landClip.empty()) PlayOnce(landClip);   // locomotion resumes after
                 }
             }
             builtinNow = bi && m_inAir && !m_once && !SlotFilled(m_airSlot);
@@ -292,7 +295,7 @@ public:
                 const int from = m_stance;
                 m_stance = st;
                 m_stanceFade = StanceChangeTime(from, st);
-                if (from == 2 && st == 0 && !getUpClip.empty() && !m_inAir && PlayOnce(getUpClip)) {
+                if (!graph && from == 2 && st == 0 && !getUpClip.empty() && !m_inAir && PlayOnce(getUpClip)) {
                     m_onceReturnTo = FindClip(idleClip);   // the get-up hands over to standing
                     m_stanceFade = -1.0f;
                 }
@@ -305,7 +308,9 @@ public:
         // with no clip for it, e.g. walking off a ledge with no fall clip, it
         // carries on: stopping it snapped the body to a stale frame of the walk.)
         const bool airClip = m_inAir && (CurrentName() == jumpClip || CurrentName() == fallClip);
-        if (spd >= 0.0f && smoothLocomotion && !m_once && !airClip && !builtinNow) {
+        // A graph (or its blend tree) already poses the model. The smooth blend
+        // would pick clips on its own and fight that.
+        if (!graph && !externalDrive && spd >= 0.0f && smoothLocomotion && !m_once && !airClip && !builtinNow) {
             // Blend by the speed eased over ~0.1 s: a body stopped dead by a wall
             // (or a respawn) snapped from the walk to the idle in one frame.
             m_blendSpd += (spd - m_blendSpd) * (1.0f - std::exp(-dt / 0.1f));
@@ -314,7 +319,7 @@ public:
 
         // Fire clip events crossed by this frame's playback window. The clock
         // mirrors the node Animators' time (reset together in PlayIndex).
-        if (dt > 0.0f && active >= 0 && active < (int)clips.size() && !m_builtinOwns && !builtinNow) {
+        if (!externalDrive && dt > 0.0f && active >= 0 && active < (int)clips.size() && !m_builtinOwns && !builtinNow) {
             float len = ClipLength(active);
             // Stride matching: the walk / run clips step at the pace the body moves.
             const float rate = (strideMatch && !rootMotion && spd >= 0.0f && !m_once && !m_inAir) ? m_strideRate : 1.0f;
@@ -370,6 +375,7 @@ public:
         const std::string& want = SlotClip(slot);
         const bool handBack = m_builtinOwns;   // the clip takes over from the built-in animation: ease in
         m_builtinOwns = false;
+        if (graph) { m_prevSlot = slot; return; }   // the graph holds the clip; the rate above is for its playback
         if (!want.empty() && (want != CurrentName() || handBack)) {   // switch only on change
             // Stride clips swap at the same point of their step (walk <-> run keeps the feet in step).
             const int prev = active, to = FindClip(want);
@@ -855,7 +861,12 @@ public:
         // cycle, so left/right footfalls stay aligned through the blend.
         float prevPhase = m_phase;
         float cycle = lenA + (lenB - lenA) * w;
-        m_phase = AdvanceBlendPhase(prevPhase, dt * speed / std::fmax(cycle, 1e-4f));
+        // A graph blend tree poses through here. Smooth locomotion already scaled
+        // `dt` by the stride rate, so only the tree (externalDrive) applies it.
+        float step = dt * speed;
+        if (externalDrive && strideMatch && !rootMotion && !m_inAir && !m_builtinOwns)
+            step *= m_strideRate;
+        m_phase = AdvanceBlendPhase(prevPhase, step / std::fmax(cycle, 1e-4f));
         float tA = m_phase * lenA, tB = m_phase * lenB;
         active = w < 0.5f ? A : B;   // the dominant clip (UI + events)
 

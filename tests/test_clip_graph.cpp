@@ -47,7 +47,7 @@ int main() {
         AnimStateMachine* sm = ClipGraph::Ensure(model);
         CHECK(sm != nullptr);
         if (!sm) { TEST_MAIN_RESULT(); }
-        CHECK(!ma->driveByMovement);   // the graph picks the clips now
+        CHECK(ma->driveByMovement);   // still measured: empty slots and stride stay on
         CHECK(ClipGraph::Ensure(model) == sm);   // a second call keeps it
         for (const char* n : {"Locomotion", "Crouch", "Prone", "GetUp", "Jump", "Fall", "Land"}) CHECK(Find(*sm, n) != nullptr);
         const auto* loco = Find(*sm, "Locomotion");
@@ -98,6 +98,65 @@ int main() {
         model->AddComponent<ModelAnimator>();
         CHECK(ClipGraph::Ensure(model) == nullptr);
         CHECK(model->GetComponent<AnimStateMachine>() == nullptr);
+    }
+
+    // ---- Walk-only model under a graph: built-in idle/run/jump, stride-matched walk.
+    // The same model with no graph (drive-by-movement) is the control.
+    {
+        const float dt = 1.0f / 60.0f;
+        auto make = [](Scene& scene, bool graph) {
+            scene.physicsEnabled = false;
+            GameObject* go = scene.CreateGameObject("Model");
+            auto* ch = go->AddComponent<Character>();
+            ch->driveExternal = true;
+            auto* ma = go->AddComponent<ModelAnimator>();
+            ma->autoPlay = false;
+            ma->driveByMovement = true;
+            ma->smoothLocomotion = true;
+            ma->inPlace = true;
+            ma->builtinFallback = true;
+            ma->strideMatch = true;
+            ma->walkClipSpeed = 1.4f;
+            ma->runClipSpeed = 4.0f;
+            ma->clips = {Hold("Walking", 1.0f, 1.0f)};
+            ma->walkClip = "Walking";
+            if (graph) ClipGraph::Ensure(go);
+            return ma;
+        };
+        auto run = [&](bool graph) {
+            Scene scene;
+            ModelAnimator* ma = make(scene, graph);
+            CHECK(ma->driveByMovement);
+            CHECK(ma->BuiltinFallbackUsable());
+            scene.Start();
+            auto move = [&](float spd, float vy, int frames) {
+                for (int i = 0; i < frames; ++i) {
+                    Vec3 p = ma->gameObject->transform->localPosition;
+                    p.z -= spd * dt;
+                    p.y += vy * dt;
+                    ma->gameObject->transform->localPosition = p;
+                    scene.Update(dt);
+                }
+            };
+            move(0.0f, 0.0f, 30);
+            CHECK(ma->BuiltinOwnsPose());
+            CHECK(ma->ActiveSlot() == ModelAnimator::SlotIdle);
+            move(1.4f, 0.0f, 60);
+            CHECK(!ma->BuiltinOwnsPose());
+            CHECK(ma->ActiveSlot() == ModelAnimator::SlotWalk);
+            CHECK_NEAR(ma->CurrentStrideRate(), 1.0f, 0.08f);
+            move(2.0f, 0.0f, 60);
+            CHECK(ma->ActiveSlot() == ModelAnimator::SlotWalk);
+            CHECK_NEAR(ma->CurrentStrideRate(), 2.0f / 1.4f, 0.1f);
+            move(4.0f, 0.0f, 60);
+            CHECK(ma->BuiltinOwnsPose());
+            CHECK(ma->ActiveSlot() == ModelAnimator::SlotRun);
+            move(0.0f, 4.0f, 8);   // two rising frames past airUpVel: a jump
+            CHECK(ma->InAir());
+            CHECK(ma->BuiltinOwnsPose());
+        };
+        run(false);   // drive-by-movement, no graph
+        run(true);    // the same readings under a graph
     }
 
     TEST_MAIN_RESULT();

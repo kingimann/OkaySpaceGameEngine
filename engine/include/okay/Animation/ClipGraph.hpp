@@ -125,8 +125,10 @@ inline int Build(AnimStateMachine& sm, const ModelAnimator& ma) {
 }
 
 /// The model's base-layer Animator: the one already on `go`, else a new one built
-/// from its ModelAnimator's clips (which then stops picking clips by itself).
-/// Null when `go` has no ModelAnimator with clips.
+/// from its ModelAnimator's clips. The graph picks the states. `driveByMovement`
+/// stays as it was, so a walk-only model still measures speed: empty slots keep
+/// the built-in fallback and walk/run still match stride. Null when `go` has no
+/// ModelAnimator with clips.
 inline AnimStateMachine* Ensure(GameObject* go) {
     ModelAnimator* ma = go ? go->GetComponent<ModelAnimator>() : nullptr;
     if (!ma || ma->clips.empty()) return nullptr;
@@ -134,7 +136,6 @@ inline AnimStateMachine* Ensure(GameObject* go) {
         if (sm->layer == 0) return sm;
     AnimStateMachine* sm = go->AddComponent<AnimStateMachine>();
     Build(*sm, *ma);
-    ma->driveByMovement = false;   // the graph picks the clips now
     return sm;
 }
 

@@ -124,6 +124,29 @@ int main() {
         CHECK(cb == 4);
     }
 
+    // ---- A looping Animator keeps its phase; the clock does not grow without bound.
+    {
+        Scene scene; scene.physicsEnabled = false;
+        GameObject* go = scene.CreateGameObject("Spin");
+        auto* an = go->AddComponent<Animator>();
+        an->clip.AddKey("position.y", 0.0f, 0.0f);
+        an->clip.AddKey("position.y", 1.0f, 1.0f);
+        an->clip.loop = true;
+        scene.Update(1000.25f);
+        CHECK(an->Time() >= 0.0f && an->Time() < 1.0f);
+        CHECK_NEAR(an->Time(), 0.25f, 1e-4f);
+        bool found = false;
+        const float sampled = an->clip.Evaluate("position.y", an->Time(), found);
+        CHECK(found);
+        CHECK_NEAR(go->transform->localPosition.y, sampled, 1e-3f);
+        for (int i = 0; i < 4000; ++i) scene.Update(1.0f / 60.0f);
+        CHECK(an->Time() >= 0.0f && an->Time() < 1.0f);
+        an->clip.loop = false;
+        an->SetTime(0.0f);
+        scene.Update(3.0f);
+        CHECK(an->Time() > 1.5f);   // a one-shot keeps the raw time past the end
+    }
+
     // ---- Events reach OkayScript (named handler + on_anim_event) and visual scripts.
     {
         Scene scene("Events"); scene.physicsEnabled = false;

@@ -2664,7 +2664,8 @@ void DrawToolbar(Ctx& c, Ui& u) {
                 ed.PushUndo();
                 okay::AutoMapLocomotion(ma);   // fills only the clip slots that are still empty
                 ClipGraph::Build(sm, *ma);
-                ma->driveByMovement = false;   // the machine drives the clips now
+                // Movement stays measured: empty slots keep the built-in fallback
+                // and walk/run keep their stride. The graph picks the clips.
                 ClearSel(u);
                 u.frameReq = true;
                 ed.dirty = true;

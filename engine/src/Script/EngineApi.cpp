@@ -41,6 +41,13 @@
 #include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Components/Spline.hpp"
 #include "okay/Components/LineRenderer.hpp"
+#include "okay/Components/AnimStateMachine.hpp"
+#include "okay/Components/ModelAnimator.hpp"
+#include "okay/Components/LookAtIK.hpp"
+#include "okay/Components/FootIK.hpp"
+#include "okay/Components/FullBodyIK.hpp"
+#include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/FirstPersonController.hpp"
 #include <cmath>
 #include <set>
 
@@ -1461,6 +1468,100 @@ EngineApi Build() {
             [lineOf](const Value& s, const Value& v, CallContext& c) { lineOf(s, c)->width = std::max(0.0f, F(v)); },
             "Width in world units (times the width curve)."));
         api.types.push_back(std::move(lr));
+    }
+    // ---- Animator (graph on this object or its model) ----
+    {
+        ApiType an; an.name = "Animator"; an.isComponent = true;
+        an.doc = "The animation graph. On a player it is often on the imported model, and these calls find it.";
+        auto graphOf = [](GameObject* go) -> AnimStateMachine* {
+            if (!go || !go->scene()) return nullptr;
+            if (auto* sm = go->GetComponent<AnimStateMachine>()) if (sm->layer == 0) return sm;
+            for (const auto& up : go->scene()->Objects())
+                if (up && up->IsSelfOrDescendantOf(go))
+                    if (auto* sm = up->GetComponent<AnimStateMachine>())
+                        if (sm->layer == 0) return sm;
+            return nullptr;
+        };
+        auto modelOf = [](GameObject* go) -> ModelAnimator* {
+            if (!go || !go->scene()) return nullptr;
+            if (auto* m = go->GetComponent<ModelAnimator>()) return m;
+            for (const auto& up : go->scene()->Objects())
+                if (up && up->IsSelfOrDescendantOf(go))
+                    if (auto* m = up->GetComponent<ModelAnimator>()) return m;
+            return nullptr;
+        };
+        an.find = [](GameObject* go) -> Component* {
+            if (!go) return nullptr;
+            if (auto* sm = go->GetComponent<AnimStateMachine>()) return sm;
+            return go->GetComponent<ModelAnimator>();
+        };
+        an.methods.push_back(method("SetTrigger", {tString}, {"name"}, tVoid,
+            [graphOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                AnimStateMachine* sm = graphOf(Resolve(std::get<ObjRef>(s), c.loc));
+                if (!sm) throw RuntimeError("This object has no Animator graph", c.loc);
+                sm->SetTrigger(S(a[0])); return Value{}; },
+            "Fire a trigger parameter (jump, for example)."));
+        an.methods.push_back(method("SetBool", {tString, tBool}, {"name", "on"}, tVoid,
+            [graphOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                AnimStateMachine* sm = graphOf(Resolve(std::get<ObjRef>(s), c.loc));
+                if (!sm) throw RuntimeError("This object has no Animator graph", c.loc);
+                bool on = false;
+                if (auto* b = std::get_if<bool>(&a[1])) on = *b; else on = F(a[1]) != 0.0f;
+                sm->SetBool(S(a[0]), on); return Value{}; },
+            "Set a bool parameter (crouch, prone, grounded)."));
+        an.methods.push_back(method("SetFloat", {tString, tFloat}, {"name", "value"}, tVoid,
+            [graphOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                AnimStateMachine* sm = graphOf(Resolve(std::get<ObjRef>(s), c.loc));
+                if (!sm) throw RuntimeError("This object has no Animator graph", c.loc);
+                sm->SetFloat(S(a[0]), F(a[1])); return Value{}; },
+            "Set a float parameter (speed)."));
+        an.methods.push_back(method("Play", {tString}, {"clip"}, tVoid,
+            [modelOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                ModelAnimator* m = modelOf(Resolve(std::get<ObjRef>(s), c.loc));
+                if (!m || !m->Play(S(a[0]))) throw RuntimeError("This object has no clip by that name", c.loc);
+                return Value{}; },
+            "Play one of the model's clips by name."));
+        an.props.push_back(ro("state", tString,
+            [graphOf](const Value& s, CallContext& c) {
+                AnimStateMachine* sm = graphOf(Resolve(std::get<ObjRef>(s), c.loc));
+                return Value{sm ? sm->Current() : std::string{}}; },
+            "Name of the state the graph is in."));
+        api.types.push_back(std::move(an));
+    }
+    // ---- IK ----
+    {
+        ApiType ik; ik.name = "IK"; ik.isComponent = true;
+        ik.doc = "Look-At, feet and full-body IK on this object.";
+        ik.find = [](GameObject* go) -> Component* {
+            if (!go) return nullptr;
+            if (auto* l = go->GetComponent<LookAtIK>()) return l;
+            if (auto* f = go->GetComponent<FootIK>()) return f;
+            return go->GetComponent<FullBodyIK>();
+        };
+        ik.methods.push_back(method("LookAt", {tString}, {"objectName"}, tVoid,
+            [](const Value& s, std::vector<Value>& a, CallContext& c) {
+                GameObject* g = Resolve(std::get<ObjRef>(s), c.loc);
+                if (!g->scene()) throw RuntimeError("This object is not in a scene", c.loc);
+                GameObject* tgt = g->scene()->Find(S(a[0]));
+                if (!tgt) throw RuntimeError("No object named '" + S(a[0]) + "'", c.loc);
+                LookAtIK* look = g->GetComponent<LookAtIK>();
+                if (!look) look = g->AddComponent<LookAtIK>();
+                look->targetObject = tgt->transform;
+                look->targetName = tgt->name;
+                look->ikActive = true;
+                look->weight = look->weight > 0.0f ? look->weight : 1.0f;
+                return Value{}; },
+            "Aim Look-At IK at the object with this name."));
+        ik.methods.push_back(method("SetWeight", {tFloat}, {"weight"}, tVoid,
+            [](const Value& s, std::vector<Value>& a, CallContext& c) {
+                GameObject* g = Resolve(std::get<ObjRef>(s), c.loc);
+                const float w = F(a[0]);
+                if (auto* l = g->GetComponent<LookAtIK>()) l->weight = w;
+                if (auto* f = g->GetComponent<FootIK>()) f->weight = w;
+                if (auto* b = g->GetComponent<FullBodyIK>()) b->weight = w;
+                return Value{}; },
+            "Set the weight (0..1) of Look-At, Foot and Full Body IK on this object."));
+        api.types.push_back(std::move(ik));
     }
     // ---- TrailRenderer ----
     {

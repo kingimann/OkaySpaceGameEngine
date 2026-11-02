@@ -6081,12 +6081,65 @@ struct OkayScriptVM::Impl {
         };
         b["ik_hand"] = [setGoal](std::vector<Value>& a) { return setGoal(a, true); };
         b["ik_foot"] = [setGoal](std::vector<Value>& a) { return setGoal(a, false); };
-        b["ik_look"] = [fbik](std::vector<Value>& a) {
+        // ik_look_at("Guard") aims this object's Look-At IK at that object.
+        // set_stance(0 stand, 1 crouch, 2 prone); crouch / prone / stand are the same.
+        // (look_at is the transform turn; this one is the head IK.)
+        b["ik_look_at"] = [selfObj](std::vector<Value>& a) {
+            GameObject* g = selfObj();
+            if (!g || !g->scene() || a.empty()) return Value{0.0f};
+            GameObject* tgt = g->scene()->Find(a[0].AsString());
+            if (!tgt) return Value{0.0f};
+            GameObject* host = g;
+            for (Transform* t = g->transform; t; t = t->Parent()) {
+                if (!t->gameObject) continue;
+                if (t->gameObject->GetComponent<LookAtIK>() || t->gameObject->GetComponent<Character>())
+                    host = t->gameObject;
+            }
+            LookAtIK* look = host->GetComponent<LookAtIK>();
+            if (!look) look = host->AddComponent<LookAtIK>();
+            look->targetObject = tgt->transform;
+            look->targetName = tgt->name;
+            look->ikActive = true;
+            if (a.size() > 1) look->weight = a[1].AsFloat();
+            return Value{1.0f};
+        };
+        auto setStance = [selfObj](int s) {
+            if (s < 0) s = 0;
+            if (s > 2) s = 2;
+            GameObject* g = selfObj();
+            for (Transform* t = g ? g->transform : nullptr; t; t = t->Parent()) {
+                GameObject* p = t->gameObject;
+                if (!p) continue;
+                if (auto* c = p->GetComponent<ThirdPersonController>()) {
+                    c->SetStance((ThirdPersonController::Stance)s); return true;
+                }
+                if (auto* c = p->GetComponent<FirstPersonController>()) {
+                    c->SetStance((FirstPersonController::Stance)s); return true;
+                }
+            }
+            return false;
+        };
+        b["set_stance"] = [setStance](std::vector<Value>& a) {
+            return Value{setStance(a.empty() ? 0 : (int)a[0].AsFloat()) ? 1.0f : 0.0f};
+        };
+        b["crouch"] = [setStance](std::vector<Value>&) { return Value{setStance(1) ? 1.0f : 0.0f}; };
+        b["prone"]  = [setStance](std::vector<Value>&) { return Value{setStance(2) ? 1.0f : 0.0f}; };
+        b["stand"]  = [setStance](std::vector<Value>&) { return Value{setStance(0) ? 1.0f : 0.0f}; };
+        b["ik_look"] = [fbik, selfObj](std::vector<Value>& a) {
             if (FullBodyIK* f = fbik()) {
                 f->lookTarget = nullptr;
                 f->lookPosition = {a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f, a.size() > 2 ? a[2].AsFloat() : 0.0f};
                 f->lookWeight = a.size() > 3 ? a[3].AsFloat() : 1.0f;
                 f->lookEnabled = f->lookWeight > 0.0f;
+            }
+            GameObject* g = selfObj();
+            if (g) if (auto* look = g->GetComponent<LookAtIK>()) {
+                look->targetObject = nullptr;
+                look->aimAtPoint = true;
+                look->target = {a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f,
+                                a.size() > 2 ? a[2].AsFloat() : 0.0f};
+                if (a.size() > 3) look->weight = a[3].AsFloat();
+                look->ikActive = true;
             }
             return Value{};
         };

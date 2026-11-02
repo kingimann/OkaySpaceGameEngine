@@ -43,6 +43,9 @@ public:
     std::vector<std::string> chainNames; ///< editor/serialized: resolve `chain` by object names
     std::string targetName;            ///< editor/serialized: resolve `targetObject` by name
     Vec3  target{0, 0, 0};             ///< world point to look at (if no targetObject)
+    /// False: ignore `target` until a script sets a point. An imported player
+    /// starts this way, so the head is wired but does not stare at the origin.
+    bool  aimAtPoint = true;
     Vec3  forwardAxis = Vec3::Forward; ///< the bones' local "forward"
     float weight   = 1.0f;             ///< 0 = off, 1 = full look
     bool  ikActive = true;             ///< switch IK on/off; the change eases over fadeTime
@@ -116,6 +119,7 @@ public:
         const Vec3 tgt = targetObject ? targetObject->Position() : target;
         if (w > 0.0f && maxDistance > 0.0f && Finite(tgt)) w *= RangeWeight(tgt);
         if (w <= 0.0f || (chain.empty() && eyes.empty())) { ForgetAim(); return; }
+        if (!targetObject && !aimAtPoint) { ForgetAim(); return; }
 
         if (m_smooth.size() != chain.size()) { m_smooth.assign(chain.size(), {}); m_haveTgt = false; }
 

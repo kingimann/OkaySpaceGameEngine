@@ -9143,6 +9143,16 @@ void DrawProject(EditorState& ed) {
             if (s_multi.size() > 1)
                 ImGui::TextDisabled("%d selected", (int)s_multi.size());
             if (ImGui::MenuItem("Open")) wantOpen = true;
+            if (!isDir && IsModelExt(ext) && ImGui::MenuItem("Make Playable Character")) {
+                ed.PushUndo();
+                std::string log;
+                if (GameObject* player = okay::MakePlayableCharacter(ed.scene(), full, &log)) {
+                    ed.Select(player); ed.dirty = true;
+                    ConsoleLog(log.empty() ? ("Playable character from " + name) : log);
+                } else ConsoleLog("Couldn't make a character from " + name, 2);
+            }
+            if (!isDir && IsModelExt(ext) && ImGui::IsItemHovered())
+                ImGui::SetTooltip("Add a Third Person player wearing this model, with humanoid IK.");
             if (!isDir && ext == ".okayscene" && ImGui::MenuItem("Add to Open Scene")) MergeSceneIntoCurrent(ed, full);
             if (!isDir && ext == ".okayscene" && ImGui::IsItemHovered())
                 ImGui::SetTooltip("Load its objects into the scene you have open (additive), instead of switching scenes.");

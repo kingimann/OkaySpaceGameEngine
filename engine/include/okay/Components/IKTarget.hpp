@@ -133,7 +133,12 @@ private:
         e.targetName = gameObject ? gameObject->name : std::string{};
         e.enabled = m_w > 0.001f;
         e.positionWeight = m_w;
-        if (blendTime > 0.0f) e.targetBlendTime = blendTime;
+        e.exactReach = true;
+        const float goalW = weight < 0.0f ? 0.0f : weight;
+        if (blendTime <= 1e-3f || std::fabs(m_w - goalW) < 0.02f) {
+            e.targetBlendTime = 0.0f;
+            fb->SnapEffector(li);
+        } else e.targetBlendTime = blendTime;
     }
 
     static Transform* FindClassified(GameObject* host, int boneId) {

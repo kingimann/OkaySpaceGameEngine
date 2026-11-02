@@ -3,6 +3,7 @@
 #include "okay/Scripting/OkayScriptVM.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include <cmath>
+#include <fstream>
 #include <string>
 
 using namespace okay;
@@ -75,6 +76,32 @@ int main() {
         CHECK(ik->ShownWeight() > 0.02f && ik->ShownWeight() < 0.5f);
     }
 
+    // A reachable point is where the hand ends, including near full stretch.
+    {
+        Scene sc;
+        GameObject* hero = sc.CreateGameObject("Hero");
+        GameObject* chest = Bone(sc, "Chest", hero, {0, 1.2f, 0});
+        GameObject* arm = Bone(sc, "LeftArm", chest, {0.2f, 0.1f, 0});
+        GameObject* fore = Bone(sc, "LeftForeArm", arm, {0.3f, 0, 0});
+        GameObject* hand = Bone(sc, "LeftHand", fore, {0.3f, 0, 0});
+        auto* fb = hero->AddComponent<FullBodyIK>();
+        fb->autoMap = false;
+        fb->bones[FullBodyIK::Chest] = chest->transform;
+        fb->bones[FullBodyIK::LUpperArm] = arm->transform;
+        fb->bones[FullBodyIK::LForeArm] = fore->transform;
+        fb->bones[FullBodyIK::LHand] = hand->transform;
+        sc.Start();
+        const Vec3 shoulder = arm->transform->Position();
+        const Vec3 goal = shoulder + Vec3{0.55f, -0.05f, 0.1f};
+        GameObject* tgt = IKTarget::Spawn(sc, hero, IKTarget::LeftHand);
+        tgt->transform->SetPosition(goal);
+        auto* ik = tgt->GetComponent<IKTarget>();
+        ik->blendTime = 0.15f;
+        ik->weight = 1.0f;
+        for (int i = 0; i < 45; ++i) sc.Update(1.0f / 60.0f);
+        CHECK(Dist(hand->transform->Position(), tgt->transform->Position()) < 0.05f);
+    }
+
     // ---- Aim Offset: the chest yaws toward a target, recoil kicks and recovers.
     {
         Scene sc;
@@ -119,6 +146,32 @@ int main() {
         CHECK(aim->RecoilPitch() > 20.0f);
     }
 
+    // Several spine bones share one turn. A target 25° up lifts the chest about that far.
+    {
+        Scene sc;
+        GameObject* hero = sc.CreateGameObject("Hero");
+        GameObject* s0 = Bone(sc, "Spine", hero, {0, 1.0f, 0});
+        GameObject* s1 = Bone(sc, "Spine1", s0, {0, 0.12f, 0});
+        GameObject* s2 = Bone(sc, "Spine2", s1, {0, 0.12f, 0});
+        GameObject* chest = Bone(sc, "Chest", s2, {0, 0.12f, 0});
+        auto* aim = hero->AddComponent<AimOffset>();
+        aim->useCamera = false;
+        aim->armWeight = 0.85f;
+        aim->spineWeight = 0.35f;
+        aim->chestWeight = 0.7f;
+        aim->pitchClamp = 80.0f;
+        GameObject* mark = sc.CreateGameObject("Up");
+        sc.Start();
+        const Vec3 from = chest->transform->Position();
+        const float rad = 25.0f * 0.017453292f;
+        mark->transform->SetPosition(from + Vec3{0.0f, std::sin(rad), -std::cos(rad)} * 4.0f);
+        aim->target = mark->transform;
+        aim->LateUpdate(0.016f);
+        const Vec3 f = chest->transform->Rotation() * Vec3{0, 0, -1};
+        const float got = std::atan2(f.y, std::sqrt(f.x * f.x + f.z * f.z)) * 57.29578f;
+        CHECK(got > 15.0f && got < 35.0f);
+    }
+
     // ---- Pose Capture: one frame, a short recording, and a script call.
     {
         Scene sc;
@@ -128,7 +181,19 @@ int main() {
         arm->transform->localRotation = Quat::Euler(0, 25, 0);
         auto* cap = hero->AddComponent<PoseCapture>();
         cap->clipName = "WavePose";
+        PoseCapture::SetAssetBaseDir("/tmp/okay-pose-capture-d5f6");
         const int idx = cap->CaptureFrame();
+        CHECK(!cap->LastFile().empty());
+        {
+            std::ifstream file(cap->LastFile());
+            CHECK(file.good());
+        }
+        ModelAnimator::Clip fromFile;
+        CHECK(PoseCapture::LoadClip(cap->LastFile(), fromFile));
+        CHECK(fromFile.name == "WavePose");
+        bool armInFile = false;
+        for (const auto& n : fromFile.nodes) if (n.node == "LeftArm" && n.clip.Length() > 0.0f) armInFile = true;
+        CHECK(armInFile);
         CHECK(idx == 0);
         CHECK(ma->clips.size() == 1 && ma->clips[0].name == "WavePose");
         CHECK(ma->ActiveClip() == 0);

@@ -9,6 +9,10 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/ModelAnimator.hpp"
+#include <algorithm>
+#include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -22,6 +26,57 @@ public:
     bool IsRecording() const { return m_recording; }
     float RecordedTime() const { return m_time; }
     int LastClip() const { return m_last; }
+    /// The clip file written by the last capture (empty until one is saved).
+    const std::string& LastFile() const { return m_file; }
+
+    /// Where clip files go. The editor sets this to the project's Assets folder
+    /// when Play starts, so a capture is still there after Stop.
+    static void SetAssetBaseDir(const std::string& dir) { AssetDir() = dir; }
+    static const std::string& AssetBaseDir() { return AssetDir(); }
+
+    /// Read a clip file written by CaptureFrame. False if it is missing or not a clip.
+    static bool LoadClip(const std::string& path, ModelAnimator::Clip& clip) {
+        std::ifstream in(path);
+        if (!in) return false;
+        std::string tag;
+        int ver = 0;
+        in >> tag >> ver;
+        if (!in || tag != "okayclip") return false;
+        std::string key;
+        in >> key;
+        clip.name = ReadToken(in);
+        int nodes = 0;
+        in >> key >> nodes;
+        clip.nodes.clear();
+        for (int n = 0; n < nodes && in; ++n) {
+            in >> key;
+            ModelAnimator::NodeClip node;
+            node.node = ReadToken(in);
+            node.clip.smoothKeys = false;
+            node.clip.loop = false;
+            int keys = 0;
+            in >> key >> keys;
+            for (int k = 0; k < keys && in; ++k) {
+                float t = 0.0f;
+                Vec3 p{0, 0, 0};
+                Quat q = Quat::Identity;
+                Vec3 s{1, 1, 1};
+                in >> t >> p.x >> p.y >> p.z >> q.x >> q.y >> q.z >> q.w >> s.x >> s.y >> s.z;
+                node.clip.AddKey("position.x", t, p.x);
+                node.clip.AddKey("position.y", t, p.y);
+                node.clip.AddKey("position.z", t, p.z);
+                node.clip.AddKey("rotation.qx", t, q.x);
+                node.clip.AddKey("rotation.qy", t, q.y);
+                node.clip.AddKey("rotation.qz", t, q.z);
+                node.clip.AddKey("rotation.qw", t, q.w);
+                node.clip.AddKey("scale.x", t, s.x);
+                node.clip.AddKey("scale.y", t, s.y);
+                node.clip.AddKey("scale.z", t, s.z);
+            }
+            clip.nodes.push_back(std::move(node));
+        }
+        return !clip.nodes.empty();
+    }
 
     /// One frame of the current pose, stored on the Model Animator. -1 if there
     /// is no model. Replaces a clip that already has this name.
@@ -32,7 +87,7 @@ public:
         clip.name = clipName.empty() ? "Captured" : clipName;
         Sample(clip, 0.0f);
         Sample(clip, 1.0f / 60.0f);
-        m_last = Store(ma, std::move(clip));
+        m_last = Store(ma, clip);
         if (m_last >= 0) ma->PlayIndex(m_last, true, 0.0f);
         return m_last;
     }
@@ -56,10 +111,25 @@ public:
         ModelAnimator* ma = FindModel();
         if (!ma || m_build.nodes.empty()) return -1;
         if (m_time < 1.0f / 60.0f) Sample(m_build, 1.0f / 60.0f);
-        m_last = Store(ma, std::move(m_build));
+        m_last = Store(ma, m_build);
         m_build = {};
         if (m_last >= 0) ma->PlayIndex(m_last, true, 0.0f);
         return m_last;
+    }
+
+    void Start() override {
+        if (AssetDir().empty()) return;
+        ModelAnimator* ma = FindModel();
+        if (!ma) return;
+        const std::string path = FilePath();
+        for (const auto& c : ma->clips) if (c.name == (clipName.empty() ? "Captured" : clipName)) return;
+        ModelAnimator::Clip clip;
+        if (!LoadClip(path, clip)) return;
+        m_file = path;
+        for (int i = 0; i < (int)ma->clips.size(); ++i)
+            if (ma->clips[i].name == clip.name) { ma->clips[i] = std::move(clip); m_last = i; return; }
+        ma->clips.push_back(std::move(clip));
+        m_last = (int)ma->clips.size() - 1;
     }
 
     void Update(float dt) override {
@@ -76,7 +146,70 @@ private:
     float m_time = 0.0f;
     float m_left = 0.0f;
     int m_last = -1;
+    std::string m_file;
     ModelAnimator::Clip m_build;
+
+    static std::string& AssetDir() { static std::string d; return d; }
+
+    static std::string ReadToken(std::istream& in) {
+        in >> std::ws;
+        if (in.peek() == '"') {
+            in.get();
+            std::string s;
+            std::getline(in, s, '"');
+            return s;
+        }
+        std::string s;
+        in >> s;
+        return s;
+    }
+    static std::string SafeName(const std::string& n) {
+        std::string o = n.empty() ? "Captured" : n;
+        for (char& c : o)
+            if (c == '/' || c == '\\' || c == ':' || c == ' ') c = '_';
+        return o;
+    }
+    std::string FilePath() const {
+        if (AssetDir().empty()) return {};
+        return AssetDir() + "/" + SafeName(clipName) + ".okayclip";
+    }
+    static std::string Quote(const std::string& s) {
+        std::string o = "\"";
+        for (char c : s) { if (c == '"') o.push_back('\\'); o.push_back(c); }
+        o.push_back('"');
+        return o;
+    }
+    std::string WriteClip(const ModelAnimator::Clip& clip) {
+        const std::string path = FilePath();
+        if (path.empty()) return {};
+        std::error_code ec;
+        std::filesystem::create_directories(AssetDir(), ec);
+        std::ofstream out(path);
+        if (!out) return {};
+        out << "okayclip 1\n";
+        out << "name " << Quote(clip.name) << "\n";
+        out << "nodes " << clip.nodes.size() << "\n";
+        for (const auto& n : clip.nodes) {
+            out << "node " << Quote(n.node) << "\n";
+            std::vector<float> times;
+            for (const auto& kv : n.clip.Tracks())
+                for (const auto& k : kv.second.Keys()) times.push_back(k.time);
+            std::sort(times.begin(), times.end());
+            times.erase(std::unique(times.begin(), times.end(),
+                                    [](float a, float b) { return std::fabs(a - b) < 1e-4f; }), times.end());
+            out << "keys " << times.size() << "\n";
+            for (float t : times) {
+                Vec3 p{0, 0, 0};
+                Quat q = Quat::Identity;
+                Vec3 s{1, 1, 1};
+                n.clip.SampleTRS(t, p, q, s);
+                out << t << ' ' << p.x << ' ' << p.y << ' ' << p.z << ' '
+                    << q.x << ' ' << q.y << ' ' << q.z << ' ' << q.w << ' '
+                    << s.x << ' ' << s.y << ' ' << s.z << '\n';
+            }
+        }
+        return out ? path : std::string{};
+    }
 
     ModelAnimator* FindModel() const {
         if (!gameObject) return nullptr;
@@ -121,11 +254,12 @@ private:
         }
     }
 
-    static int Store(ModelAnimator* ma, ModelAnimator::Clip clip) {
+    int Store(ModelAnimator* ma, const ModelAnimator::Clip& clip) {
+        m_file = WriteClip(clip);
         for (int i = 0; i < (int)ma->clips.size(); ++i) {
-            if (ma->clips[i].name == clip.name) { ma->clips[i] = std::move(clip); return i; }
+            if (ma->clips[i].name == clip.name) { ma->clips[i] = clip; return i; }
         }
-        ma->clips.push_back(std::move(clip));
+        ma->clips.push_back(clip);
         return (int)ma->clips.size() - 1;
     }
 };

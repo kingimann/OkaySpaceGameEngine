@@ -30479,6 +30479,7 @@ void DrawInspector(EditorState& ed) {
                 else pc->StartRecord(pc->recordSeconds);
             }
             if (pc->IsRecording()) ImGui::Text("Recording %.2fs", pc->RecordedTime());
+            if (!pc->LastFile().empty()) ImGui::TextDisabled("%s", pc->LastFile().c_str());
             if (ImGui::SmallButton("Remove##pc")) toRemove = pc;
         }
     }

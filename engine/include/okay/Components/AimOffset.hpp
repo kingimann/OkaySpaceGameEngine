@@ -60,32 +60,53 @@ public:
 private:
     struct Bone { Transform* t = nullptr; float w = 0.0f; };
     std::vector<Bone> m_bones;
+    Transform* m_aimFrom = nullptr;   ///< chest, else the head: pitch is measured from here
     IKRestore m_restore;
     float m_recoil = 0.0f;
     bool m_gathered = false;
 
     void Gather() {
         m_bones.clear();
+        m_aimFrom = nullptr;
         m_gathered = true;
         if (!gameObject || !gameObject->scene()) return;
+        std::vector<Transform*> spines, chests, arms;
+        Transform* head = nullptr;
         for (const auto& up : gameObject->scene()->Objects()) {
             if (!up || !up->transform || !up->IsSelfOrDescendantOf(gameObject)) continue;
             const int id = FullBodyIK::Classify(up->name);
-            float w = 0.0f;
-            if (id == FullBodyIK::Spine) w = spineWeight;
-            else if (id == FullBodyIK::Chest) w = chestWeight;
-            else if (id == FullBodyIK::LUpperArm || id == FullBodyIK::RUpperArm) w = armWeight;
-            if (w > 0.0f) m_bones.push_back({up->transform, w});
+            if (id == FullBodyIK::Spine) spines.push_back(up->transform);
+            else if (id == FullBodyIK::Chest) chests.push_back(up->transform);
+            else if (id == FullBodyIK::LUpperArm || id == FullBodyIK::RUpperArm) arms.push_back(up->transform);
+            else if (id == FullBodyIK::Head) head = up->transform;
         }
+        // Several spine links used to each take the full spine weight, so the
+        // chest turned by the sum (and the arms by that plus the arm weight).
+        // Split the spine share, then keep spine + chest from stacking past 1.
+        const float spineSum = std::fmax(0.0f, spineWeight);
+        const float chestSum = std::fmax(0.0f, chestWeight);
+        const float chain = spineSum + chestSum;
+        const float scale = chain > 1.0f ? 1.0f / chain : 1.0f;
+        if (!spines.empty() && spineSum > 0.0f) {
+            const float w = spineSum * scale / (float)spines.size();
+            for (Transform* t : spines) m_bones.push_back({t, w});
+        }
+        if (!chests.empty() && chestSum > 0.0f) {
+            const float w = chestSum * scale / (float)chests.size();
+            for (Transform* t : chests) m_bones.push_back({t, w});
+        }
+        const float inherited = std::fmin(1.0f, chain);
+        const float extra = std::fmax(0.0f, armWeight - inherited);
+        for (Transform* t : arms) if (extra > 0.0f) m_bones.push_back({t, extra});
+        m_aimFrom = !chests.empty() ? chests.back() : head;
+        if (!m_aimFrom && !spines.empty()) m_aimFrom = spines.back();
+        if (!m_aimFrom) m_aimFrom = head;
     }
 
     Transform* CameraTransform() const {
-        if (!gameObject || !gameObject->scene()) return nullptr;
-        for (const auto& up : gameObject->scene()->Objects()) {
-            if (!up || !up->active || !up->transform) continue;
-            if (up->GetComponent<Camera>()) return up->transform;
-        }
-        return nullptr;
+        Scene* sc = gameObject ? gameObject->scene() : nullptr;
+        if (!sc || !sc->mainCamera || !sc->mainCamera->transform) return nullptr;
+        return sc->mainCamera->transform;
     }
 
     void Solve(float dt) {
@@ -100,7 +121,8 @@ private:
 
         const Vec3 facing = transform->Rotation() * Vec3{0, 0, -1};
         const Vec3 right = transform->Rotation() * Vec3{1, 0, 0};
-        Vec3 aim = transform->Position() + facing * 8.0f;
+        const Vec3 from = m_aimFrom ? m_aimFrom->Position() : transform->Position();
+        Vec3 aim = from + facing * 8.0f;
         if (target) aim = target->Position();
         else if (useCamera) {
             if (Transform* cam = CameraTransform()) {
@@ -108,7 +130,7 @@ private:
                 aim = cam->Position() + dir * 12.0f;
             }
         }
-        Vec3 to = aim - transform->Position();
+        Vec3 to = aim - from;
         if (to.SqrMagnitude() < 1e-8f) { m_restore.Commit(); return; }
         const float yaw = Mathf::Clamp(std::atan2(Vec3::Dot(to, right), Vec3::Dot(to, facing)) * Mathf::Rad2Deg,
                                         -std::fabs(yawClamp), std::fabs(yawClamp));
@@ -122,7 +144,7 @@ private:
             m_restore.Touch(b.t);
             const float w = wAll * b.w;
             if (w <= 0.0f) continue;
-            const Quat add = Quat::AngleAxis(yaw * w, Vec3::Up) * Quat::AngleAxis(-pitch * w, right);
+            const Quat add = Quat::AngleAxis(yaw * w, Vec3::Up) * Quat::AngleAxis(pitch * w, right);
             b.t->SetRotation((add * b.t->Rotation()).Normalized());
         }
         m_restore.Commit();

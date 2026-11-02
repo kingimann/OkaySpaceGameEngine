@@ -114,6 +114,55 @@ int main() {
         CHECK(Dist(hand->transform->Position(), tgt->transform->Position()) < 0.05f);
     }
 
+    // Look-At on the spine must not pull a reached hand off its target.
+    {
+        Scene sc;
+        GameObject* hero = sc.CreateGameObject("Hero");
+        GameObject* hips = Bone(sc, "Hips", hero, {0, 1.0f, 0});
+        GameObject* spine = Bone(sc, "Spine", hips, {0, 0.1f, 0});
+        GameObject* spine2 = Bone(sc, "Spine2", spine, {0, 0.15f, 0});
+        GameObject* neck = Bone(sc, "Neck", spine2, {0, 0.15f, 0});
+        GameObject* head = Bone(sc, "Head", neck, {0, 0.12f, 0});
+        GameObject* arm = Bone(sc, "LeftArm", spine2, {0.2f, 0.0f, 0});
+        GameObject* fore = Bone(sc, "LeftForeArm", arm, {0.3f, 0, 0});
+        GameObject* hand = Bone(sc, "LeftHand", fore, {0.3f, 0, 0});
+        auto* fb = hero->AddComponent<FullBodyIK>();
+        fb->autoMap = false;
+        fb->softness = 0.0f;
+        fb->bodyPull = 0.0f;
+        fb->spineReach = 0.0f;
+        fb->armMinBend = 0.0f;
+        fb->blendSpeed = 0.0f;
+        fb->bones[FullBodyIK::Hips] = hips->transform;
+        fb->bones[FullBodyIK::Spine] = spine->transform;
+        fb->bones[FullBodyIK::Chest] = spine2->transform;
+        fb->bones[FullBodyIK::Neck] = neck->transform;
+        fb->bones[FullBodyIK::Head] = head->transform;
+        fb->bones[FullBodyIK::LUpperArm] = arm->transform;
+        fb->bones[FullBodyIK::LForeArm] = fore->transform;
+        fb->bones[FullBodyIK::LHand] = hand->transform;
+        auto* look = hero->AddComponent<LookAtIK>();
+        look->chain = {spine->transform, spine2->transform, neck->transform, head->transform};
+        look->weight = 1.0f;
+        look->smoothing = 0.0f;
+        look->maxAngle = 80.0f;
+        look->clampAngle = 120.0f;
+        look->forwardAxis = Vec3{0, 0, -1};
+        GameObject* seen = sc.CreateGameObject("Seen");
+        seen->transform->SetPosition(head->transform->Position() + Vec3{2.0f, 0.2f, -0.4f});
+        look->targetObject = seen->transform;
+        look->aimAtPoint = true;
+        sc.Start();
+        const Vec3 shoulder = arm->transform->Position();
+        GameObject* tgt = IKTarget::Spawn(sc, hero, IKTarget::LeftHand);
+        tgt->transform->SetPosition(shoulder + Vec3{0.35f, -0.05f, 0.15f});
+        auto* ik = tgt->GetComponent<IKTarget>();
+        ik->blendTime = 0.0f;
+        ik->weight = 1.0f;
+        for (int i = 0; i < 45; ++i) sc.Update(1.0f / 60.0f);
+        CHECK(Dist(hand->transform->Position(), tgt->transform->Position()) < 0.01f);
+    }
+
     // ---- Aim Offset: the chest yaws toward a target, recoil kicks and recovers.
     {
         Scene sc;

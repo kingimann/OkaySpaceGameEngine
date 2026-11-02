@@ -158,6 +158,30 @@ int main() {
         CHECK(ma->LocomotionSign() > 0);
     }
 
+    // Strafe clips and no back clip: backward still reverses the forward walk.
+    {
+        Scene s("strafe-back"); s.physicsEnabled = false;
+        GameObject* player = s.CreateGameObject("Player");
+        auto* ch = player->AddComponent<Character>();
+        GameObject* model = s.CreateGameObject("Model");
+        model->transform->SetParent(player->transform, false);
+        auto* ma = model->AddComponent<ModelAnimator>();
+        ma->clips = {ClipNamed("Idle"), ClipNamed("Walk"), ClipNamed("Strafe Left"), ClipNamed("Strafe Right")};
+        ma->idleClip = "Idle"; ma->walkClip = "Walk";
+        ma->strafeLeftClip = "Strafe Left"; ma->strafeRightClip = "Strafe Right";
+        ma->driveByMovement = true;
+        ma->walkThreshold = 0.4f;
+        ch->moveAngle = 180.0f;
+        s.Start();
+        for (int i = 0; i < 20; ++i) {
+            ch->moveAngle = 180.0f;
+            model->transform->SetPosition(model->transform->Position() + Vec3{0, 0, 0.05f});
+            s.Update(1.0f / 60.0f);
+        }
+        CHECK(ma->CurrentName() == "Walk");
+        CHECK(ma->LocomotionSign() < 0);
+    }
+
     // Build it on a character graph adds Locomotion and keeps the other states.
     {
         AnimStateMachine sm;

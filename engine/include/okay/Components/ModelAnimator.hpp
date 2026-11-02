@@ -545,6 +545,13 @@ public:
         if (!gameObject || !gameObject->scene()) return false;
         float ang = 0.0f;
         TravelDeg(ang);
+        // Strafe clips with no back clip: the back sector is the walk-only path,
+        // the forward walk played in reverse. The 2D blend has nothing behind it.
+        if (std::fabs(ang) > 100.0f && !SlotFilled(SlotWalkBack) && !SlotFilled(SlotRunBack)) {
+            m_cycleSign = -1;
+            m_appliedSign = spd > 0.2f ? -1 : 0;
+            return false;
+        }
         const float rad = ang * 0.017453292f;
         const float mx = spd * std::sin(rad);
         const float mz = -spd * std::cos(rad);

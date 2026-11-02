@@ -136,7 +136,7 @@ private:
                                         -std::fabs(yawClamp), std::fabs(yawClamp));
         const float flat = std::sqrt(to.x * to.x + to.z * to.z);
         float pitch = Mathf::Clamp(std::atan2(to.y, flat) * Mathf::Rad2Deg, -std::fabs(pitchClamp), std::fabs(pitchClamp));
-        pitch = Mathf::Clamp(pitch - m_recoil, -89.0f, 89.0f);
+        pitch = Mathf::Clamp(pitch + m_recoil, -89.0f, 89.0f);
 
         const float wAll = Mathf::Clamp01(weight);
         for (const Bone& b : m_bones) {

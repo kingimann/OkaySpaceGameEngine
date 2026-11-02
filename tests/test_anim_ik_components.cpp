@@ -3,6 +3,7 @@
 #include "okay/Scripting/OkayScriptVM.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <string>
 
@@ -128,11 +129,17 @@ int main() {
         CHECK(std::fabs(Quat::Dot(chest->transform->Rotation(), before)) < 0.999f);
 
         aim->recovery = 0.0f;
+        aim->LateUpdate(0.016f);
+        const Vec3 aimed = chest->transform->Rotation() * Vec3{0, 0, -1};
+        const float pitchBefore = std::atan2(aimed.y, std::sqrt(aimed.x * aimed.x + aimed.z * aimed.z)) * 57.29578f;
         aim->Recoil(1.0f);
         CHECK(aim->RecoilPitch() > 10.0f);
         const Quat kickedFrom = chest->transform->Rotation();
         aim->LateUpdate(0.001f);
         CHECK(std::fabs(Quat::Dot(chest->transform->Rotation(), kickedFrom)) < 0.999f);
+        const Vec3 kicked = chest->transform->Rotation() * Vec3{0, 0, -1};
+        const float pitchAfter = std::atan2(kicked.y, std::sqrt(kicked.x * kicked.x + kicked.z * kicked.z)) * 57.29578f;
+        CHECK(pitchAfter > pitchBefore + 5.0f);
         aim->recovery = 30.0f;
         aim->LateUpdate(1.0f);
         CHECK(std::fabs(aim->RecoilPitch()) < 0.5f);
@@ -237,6 +244,38 @@ int main() {
         arm->transform->localPosition = {0, 0, 0};
         ma->SetTime(0.0f);
         CHECK_NEAR(arm->transform->localPosition.y, 2.0f, 1e-3f);
+    }
+
+    // Default captures get unique files, and a fresh model loads both back.
+    {
+        const std::string dir = "/tmp/okay-pose-unique-d5f6";
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
+        PoseCapture::SetAssetBaseDir(dir);
+        Scene sc;
+        GameObject* hero = sc.CreateGameObject("Hero");
+        auto* ma = hero->AddComponent<ModelAnimator>();
+        Bone(sc, "LeftArm", hero, {0.2f, 1.0f, 0});
+        auto* cap = hero->AddComponent<PoseCapture>();
+        cap->clipName = "Captured";
+        const int a = cap->CaptureFrame();
+        const int b = cap->CaptureFrame();
+        CHECK(a >= 0 && b >= 0 && a != b);
+        CHECK(ma->clips[a].name == "Captured");
+        CHECK(ma->clips[b].name == "Captured_1");
+        CHECK(cap->LastFile().find("Captured_1.okayclip") != std::string::npos);
+
+        Scene again;
+        auto* ma2 = again.CreateGameObject("Hero")->AddComponent<ModelAnimator>();
+        again.CreateGameObject("Loader")->AddComponent<PoseCapture>();
+        again.Start();
+        CHECK(PoseCapture::ImportFolder(*ma2, dir) == 2 || ma2->clips.size() >= 2);
+        bool first = false, second = false;
+        for (const auto& c : ma2->clips) {
+            if (c.name == "Captured") first = true;
+            if (c.name == "Captured_1") second = true;
+        }
+        CHECK(first && second);
     }
 
     // ---- The three components survive a scene save.

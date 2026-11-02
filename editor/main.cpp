@@ -29107,6 +29107,14 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Strip the clips' baked forward travel so the CONTROLLER moves the\nbody and the clip only cycles the limbs. Fixes a walking model sliding\naway from its collider and snapping back every loop. On automatically\nfor models set as a player's character.");
             }
             ImGui::TextDisabled("%d clip(s)", ma->ClipCount());
+            if (ImGui::SmallButton("Add clips from Assets##ma")) {
+                const std::string dir = ed.projectDir().empty() ? PoseCapture::AssetBaseDir()
+                                                                : ed.projectDir() + "/Assets";
+                const int n = PoseCapture::ImportFolder(*ma, dir);
+                ConsoleLog(n > 0 ? "Added " + std::to_string(n) + " clip(s) from Assets" : "No new .okayclip files in Assets", n > 0 ? 0 : 1);
+                if (n > 0) ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Load .okayclip files saved by Pose Capture so they can be played.");
             if (ma->ClipCount() == 0) {
                 ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f),
                                    "This model has NO animation clips - it will hold its pose.");

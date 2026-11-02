@@ -711,6 +711,10 @@ bool EditorState::Load(const std::string& path, std::string* error) {
         }
     }
     Select(nullptr);   // load rebuilt the scene; clear m_multi too (no dangling ptrs)
+    PoseCapture::SetAssetBaseDir(m_projectDir.empty() ? std::string() : m_projectDir + "/Assets");
+    for (const auto& up : m_scene.Objects())
+        if (auto* ma = up->GetComponent<ModelAnimator>())
+            PoseCapture::ImportFolder(*ma, PoseCapture::AssetBaseDir());
     dirty = false;
     return true;
 }
@@ -721,6 +725,9 @@ void EditorState::Play() {
     m_scene.UseFixedStepPhysics(true);   // physics as the game runs it: fixed steps, drawn smoothly
     Character::SetAssetBaseDir(m_projectDir);   // a Character's project-relative clips file
     PoseCapture::SetAssetBaseDir(m_projectDir.empty() ? std::string() : m_projectDir + "/Assets");
+    for (const auto& up : m_scene.Objects())
+        if (auto* ma = up->GetComponent<ModelAnimator>())
+            PoseCapture::ImportFolder(*ma, PoseCapture::AssetBaseDir());
     BehaviorTreeRunner::SetAssetBaseDir(m_projectDir);   // a runner's project-relative .okaybt
     Select(nullptr);   // Start()/reset may rebuild; clear m_multi too (no dangling ptrs)
     ActionList::ResetVars();   // clear visual-script variables each Play session
@@ -766,6 +773,9 @@ void EditorState::Stop() {
     Matchmaker::Shared().Cancel();   // a search started in play mode ends with it
     m_scene.runScripts = false;
     SceneSerializer::Deserialize(m_scene, m_snapshot); // restore edit state
+    for (const auto& up : m_scene.Objects())
+        if (auto* ma = up->GetComponent<ModelAnimator>())
+            PoseCapture::ImportFolder(*ma, PoseCapture::AssetBaseDir());
     if (okay::FirstPersonHands::RestoreApplied(m_scene)) dirty = true;   // Apply during Play
     Select(nullptr);   // Deserialize freed every object; clear m_multi too (no dangling ptrs)
 }

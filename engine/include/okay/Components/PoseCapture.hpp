@@ -34,6 +34,28 @@ public:
     static void SetAssetBaseDir(const std::string& dir) { AssetDir() = dir; }
     static const std::string& AssetBaseDir() { return AssetDir(); }
 
+    /// Load every .okayclip in `dir` onto `ma`. A clip already on the animator is left as it is.
+    /// Returns how many clips were added.
+    static int ImportFolder(ModelAnimator& ma, const std::string& dir) {
+        if (dir.empty()) return 0;
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        if (!fs::is_directory(dir, ec)) return 0;
+        int added = 0;
+        for (fs::directory_iterator it(dir, ec); !ec && it != fs::directory_iterator(); it.increment(ec)) {
+            if (!it->is_regular_file(ec)) continue;
+            if (it->path().extension() != ".okayclip") continue;
+            ModelAnimator::Clip clip;
+            if (!LoadClip(it->path().string(), clip) || clip.name.empty()) continue;
+            bool have = false;
+            for (const auto& c : ma.clips) if (c.name == clip.name) { have = true; break; }
+            if (have) continue;
+            ma.clips.push_back(std::move(clip));
+            ++added;
+        }
+        return added;
+    }
+
     /// Read a clip file written by CaptureFrame. False if it is missing or not a clip.
     static bool LoadClip(const std::string& path, ModelAnimator::Clip& clip) {
         std::ifstream in(path);
@@ -84,7 +106,7 @@ public:
         ModelAnimator* ma = FindModel();
         if (!ma) return -1;
         ModelAnimator::Clip clip;
-        clip.name = clipName.empty() ? "Captured" : clipName;
+        clip.name = AllocateName(ma);
         Sample(clip, 0.0f);
         Sample(clip, 1.0f / 60.0f);
         m_last = Store(ma, clip);
@@ -98,7 +120,7 @@ public:
         if (seconds <= 0.0f) seconds = recordSeconds;
         if (seconds <= 0.0f) seconds = 1.0f;
         m_build = ModelAnimator::Clip{};
-        m_build.name = clipName.empty() ? "Captured" : clipName;
+        m_build.name = AllocateName(FindModel());
         m_time = 0.0f;
         m_left = seconds;
         m_recording = true;
@@ -118,18 +140,8 @@ public:
     }
 
     void Start() override {
-        if (AssetDir().empty()) return;
         ModelAnimator* ma = FindModel();
-        if (!ma) return;
-        const std::string path = FilePath();
-        for (const auto& c : ma->clips) if (c.name == (clipName.empty() ? "Captured" : clipName)) return;
-        ModelAnimator::Clip clip;
-        if (!LoadClip(path, clip)) return;
-        m_file = path;
-        for (int i = 0; i < (int)ma->clips.size(); ++i)
-            if (ma->clips[i].name == clip.name) { ma->clips[i] = std::move(clip); m_last = i; return; }
-        ma->clips.push_back(std::move(clip));
-        m_last = (int)ma->clips.size() - 1;
+        if (ma && !AssetDir().empty()) ImportFolder(*ma, AssetDir());
     }
 
     void Update(float dt) override {
@@ -169,9 +181,26 @@ private:
             if (c == '/' || c == '\\' || c == ':' || c == ' ') c = '_';
         return o;
     }
-    std::string FilePath() const {
+    bool AutoName() const { return clipName.empty() || clipName == "Captured"; }
+    std::string FilePathFor(const std::string& name) const {
         if (AssetDir().empty()) return {};
-        return AssetDir() + "/" + SafeName(clipName) + ".okayclip";
+        return AssetDir() + "/" + SafeName(name) + ".okayclip";
+    }
+    bool NameTaken(const ModelAnimator* ma, const std::string& name) const {
+        if (ma) for (const auto& c : ma->clips) if (c.name == name) return true;
+        if (AssetDir().empty()) return false;
+        std::error_code ec;
+        return std::filesystem::exists(FilePathFor(name), ec);
+    }
+    /// Default "Captured" becomes Captured, Captured_1, ... A name the user typed is kept.
+    std::string AllocateName(const ModelAnimator* ma) const {
+        if (!AutoName()) return clipName;
+        if (!NameTaken(ma, "Captured")) return "Captured";
+        for (int i = 1; i < 10000; ++i) {
+            const std::string n = "Captured_" + std::to_string(i);
+            if (!NameTaken(ma, n)) return n;
+        }
+        return "Captured";
     }
     static std::string Quote(const std::string& s) {
         std::string o = "\"";
@@ -180,7 +209,7 @@ private:
         return o;
     }
     std::string WriteClip(const ModelAnimator::Clip& clip) {
-        const std::string path = FilePath();
+        const std::string path = FilePathFor(clip.name);
         if (path.empty()) return {};
         std::error_code ec;
         std::filesystem::create_directories(AssetDir(), ec);

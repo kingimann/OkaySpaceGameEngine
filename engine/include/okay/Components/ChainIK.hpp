@@ -42,6 +42,7 @@ public:
     std::string targetName;            ///< editor/serialized: resolve `targetObject` by name
     Vec3  target{0, 0, 0};
     float weight = 1.0f;               ///< blend IK over the animated pose
+    float stateWeight = 1.0f;          ///< x weight; set per state by the Animator state machine
     bool  ikActive = true;             ///< switch IK on/off; the change eases over fadeTime
     float fadeTime = 0.0f;             ///< seconds to blend IK in/out (0 = instant)
     // The pole: which way the chain bends. poleObject overrides everything;
@@ -90,7 +91,7 @@ public:
     void LateUpdate(float dt) override {
         m_restore.Restore();
         const int n = static_cast<int>(bones.size());
-        const float w = weight * m_fade.Step(ikActive, fadeTime, dt);
+        const float w = weight * stateWeight * m_fade.Step(ikActive, fadeTime, dt);
         if (w <= 0.0f || n < 2) { m_goal.Reset(); return; }
         for (Transform* b : bones) if (!b) { m_goal.Reset(); return; }
 

@@ -520,7 +520,16 @@ public:
         if (!hips) hips = NodeT("mixamorig:Hips");
         if (!hips) hips = NodeT("hip");
         if (!hips) return;
-        hips->localRotation = (Quat::AngleAxis(yaw, Vec3::Up) * hips->localRotation).Normalized();
+        // World up, written in the hips' parent space. Parent-space up is not
+        // vertical on a tilted armature, and yawing around it tips the pelvis.
+        // local' = AngleAxis(θ, parent⁻¹ · worldUp) · local is a pure world yaw.
+        Transform* parent = hips->Parent();
+        Vec3 axis = parent ? parent->Rotation().Inverse() * Vec3::Up : Vec3::Up;
+        if (axis.SqrMagnitude() < 1e-8f) axis = Vec3::Up;
+        // Positive moveAngle is toward the body's right (+X when facing -Z).
+        // A positive turn about up swings that facing toward -X, so the sign flips
+        // and the legs turn toward the travel instead of away from it.
+        hips->localRotation = (Quat::AngleAxis(-yaw, axis) * hips->localRotation).Normalized();
     }
     /// Travel direction relative to facing, degrees, -180..180. False with no Character.
     bool TravelDeg(float& out) const {

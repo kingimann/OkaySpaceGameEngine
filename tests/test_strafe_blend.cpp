@@ -111,6 +111,53 @@ int main() {
         CHECK(Quat::Angle(forward, hips->transform->localRotation) > 5.0f);
     }
 
+    // Strafe hip yaw follows travel (right = +X) and stays upright, including
+    // when the hips' parent is rotated so its own up is not world up.
+    {
+        auto measure = [](bool tilted, float angle, float& faceX, float& tiltDeg) {
+            Scene s(tilted ? "yaw-tilt" : "yaw-up"); s.physicsEnabled = false;
+            GameObject* player = s.CreateGameObject("Player");
+            auto* ch = player->AddComponent<Character>();
+            ch->Apply();
+            GameObject* model = s.CreateGameObject("Model");
+            model->transform->SetParent(player->transform, false);
+            Transform* hipParent = model->transform;
+            if (tilted) {
+                GameObject* arm = s.CreateGameObject("Armature");
+                arm->transform->SetParent(model->transform, false);
+                arm->transform->localRotation = Quat::AngleAxis(65.0f, Vec3::Right);
+                hipParent = arm->transform;
+            }
+            GameObject* hips = s.CreateGameObject("Hips");
+            hips->transform->SetParent(hipParent, false);
+            if (tilted) hips->transform->localRotation = hipParent->Rotation().Inverse();
+            auto* ma = model->AddComponent<ModelAnimator>();
+            ma->clips = {ClipNamed("Idle"), ClipNamed("Walk")};
+            ma->idleClip = "Idle"; ma->walkClip = "Walk";
+            ch->moveSpeed = 2.0f;
+            ch->moveAngle = angle;
+            s.Start();
+            s.Update(1.0f / 60.0f);
+            const Vec3 face = hips->transform->Rotation() * Vec3{0.0f, 0.0f, -1.0f};
+            Vec3 up = hips->transform->Rotation() * Vec3::Up;
+            up = up.Normalized();
+            float d = Vec3::Dot(up, Vec3::Up);
+            if (d > 1.0f) d = 1.0f;
+            if (d < -1.0f) d = -1.0f;
+            faceX = face.x;
+            tiltDeg = std::acos(d) * 57.2957795f;
+        };
+        float faceX = 0.0f, tilt = 90.0f;
+        for (bool tilted : {false, true}) {
+            measure(tilted, 70.0f, faceX, tilt);
+            CHECK(faceX > 0.5f);
+            CHECK(tilt < 15.0f);
+            measure(tilted, -70.0f, faceX, tilt);
+            CHECK(faceX < -0.5f);
+            CHECK(tilt < 15.0f);
+        }
+    }
+
     // A walk-only rig moving backward does not play that walk forward.
     {
         Scene s("moon"); s.physicsEnabled = false;

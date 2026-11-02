@@ -95,7 +95,18 @@ public:
     void CollectComponents(std::vector<T*>& out) const;
 
     /// Iterate the attached components in their stored order.
+    /// The reference is into this object's storage: do not AddComponent or
+    /// RemoveComponent while a range-for is walking it. CopyComponentPointers
+    /// is the list to walk when a callback might add components.
     const std::vector<std::unique_ptr<Component>>& Components() const { return m_components; }
+    /// Pointers to the components in stored order, copied out of the vector.
+    /// Adding a component can reallocate that vector; these pointers still
+    /// refer to the component objects (they are individually heap-allocated).
+    void CopyComponentPointers(std::vector<Component*>& out) const {
+        out.clear();
+        out.reserve(m_components.size());
+        for (const auto& c : m_components) out.push_back(c.get());
+    }
     /// Free every component except the Transform (used when the scene destroys
     /// the object: the shell stays alive so stale pointers never dangle).
     void StripToTransform() {

@@ -23,7 +23,10 @@ Right-click a model file in the Project panel and choose **Make Playable
 Character**. That adds a Third Person player, attaches the model, and wires
 humanoid IK: feet on the ground, the built-in animations where the file has no
 clip, and Look-At IK on the head. Look-At stays quiet until something tells it
-where to look, so the head does not stare at the world origin.
+where to look, so the head does not stare at the world origin. If the scene
+already has a player, that player is deactivated (not deleted) and the console
+names it, so the new character is the one that's played. If one player is
+selected, the model is attached to that player instead.
 
 From a script on the player:
 

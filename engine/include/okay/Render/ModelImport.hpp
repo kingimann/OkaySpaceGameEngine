@@ -98,11 +98,19 @@ std::string FitCharacterCollider(Scene& scene, GameObject* player, GameObject* m
 GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
                                  const std::string& path, std::string* outLog = nullptr);
 
+/// True when `go` reads player input (a person controller). An NPC or a bare
+/// Character is not one.
+bool IsPlayableAvatar(GameObject* go);
+
 /// A third-person player wearing the model at `path`, with humanoid IK
 /// (feet, built-in fallback when the skeleton matches, and Look-At IK on the
 /// head). Returns the player, or nullptr if the file does not import.
+/// `onto`, when it is a playable avatar, receives the model and no second
+/// player is created. Otherwise a new player is added and every other active
+/// playable avatar is deactivated (not destroyed); `outLog` names them.
 GameObject* MakePlayableCharacter(Scene& scene, const std::string& path,
-                                  std::string* outLog = nullptr);
+                                  std::string* outLog = nullptr,
+                                  GameObject* onto = nullptr);
 
 /// What drives a player's imported model: which locomotion slots (Idle, Walk,
 /// Run, Jump...) play one of the model's own clips and which play the engine's

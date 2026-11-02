@@ -71,6 +71,12 @@ namespace okay {
 /// editor and tests can both use them.
 namespace Templates {
 
+// The editor paints a PLAYING pill over the top-left of the Game view (about
+// 32px). Top-left HUD text starts below it, and is top-aligned: a wrapped line
+// on a narrow view is taller than its box, and vertical centering pulls the
+// first line back up under the pill.
+constexpr float kHudTop = 48.0f;
+
 // ---- Premade players (added to an EXISTING scene) --------------------------
 // These drop a ready-to-play player into the current scene (rather than building
 // a whole new scene), so the editor can offer "Add > Player" shortcuts. Each
@@ -170,9 +176,10 @@ inline void AddTemplateHoldables(Scene& scene, GameObject* player) {
         tr->anchor = UIAnchor::BottomCenter;
         tr->align = 1;
         tr->vcenter = true;
+        tr->wrap = true;
         tr->screenPos = {0.0f, -72.0f};
-        tr->size = {420.0f, 40.0f};
-        tr->pixelSize = 2.0f;
+        tr->size = {640.0f, 48.0f};
+        tr->pixelSize = 2.4f;
         tr->color = Color::White;
         tr->outline = true;
         tr->shadow = true;
@@ -955,12 +962,12 @@ inline void Multiplayer(Scene& scene) {
     GameObject* help = scene.CreateGameObject("Help");
     auto* htr = help->AddComponent<TextRenderer>();
     htr->text = "H = host    J = join 127.0.0.1    WASD = move";
-    htr->screenSpace = true; htr->screenPos = {12, 12}; htr->pixelSize = 2.0f;
+    htr->screenSpace = true; htr->screenPos = {12, kHudTop}; htr->pixelSize = 2.0f; htr->vcenter = false;
 
     // Live status line driven by the net_* builtins — a ready-made connection HUD.
     GameObject* status = scene.CreateGameObject("NetStatus");
     auto* str = status->AddComponent<TextRenderer>();
-    str->text = "Net: offline"; str->screenSpace = true; str->screenPos = {12, 40}; str->pixelSize = 2.0f;
+    str->text = "Net: offline"; str->screenSpace = true; str->screenPos = {12, kHudTop + 28.0f}; str->pixelSize = 2.0f; str->vcenter = false;
     auto* ssc = status->AddComponent<ScriptComponent>("okayscript");
     ssc->LoadSource(
         "function update(d) {\n"
@@ -1001,8 +1008,9 @@ inline void CoinCollector(Scene& scene) {
     GameObject* hud = scene.CreateGameObject("HUD");
     auto* txt = hud->AddComponent<TextRenderer>();
     txt->screenSpace = true;
-    txt->screenPos = {16, 16};
+    txt->screenPos = {16, kHudTop};
     txt->pixelSize = 3.0f;
+    txt->vcenter = false;
     txt->text = "Score: 0";
     hud->AddComponent<ScriptComponent>("okayscript")->LoadSource(
         "function update(d) { set_text(\"Score: \" + prefs_get(\"score\")); }\n");
@@ -1041,15 +1049,20 @@ inline void MainMenu(Scene& scene) {
     // UI root: a Canvas holding the widgets, plus an Event System.
     GameObject* canvas = scene.CreateGameObject("Canvas");
     auto* cv = canvas->AddComponent<Canvas>();
-    cv->screenMatch = Canvas::ScreenMatch::Expand;
     cv->scaleMode = Canvas::ScaleMode::ScaleWithScreenSize;
+    // The reference is the card plus padding, not a 1280-wide HUD. Expand then
+    // shrinks only as far as a narrow (9:16) view needs, and the card stays
+    // inside 16:9 and 4:3 without filling the whole portrait width.
+    cv->referenceResolution = {480.0f, 560.0f};
+    cv->screenMatch = Canvas::ScreenMatch::Expand;
     scene.CreateGameObject("EventSystem")->AddComponent<EventSystem>();
 
-    // A styled card panel (rounded, subtle border, vertical gradient).
+    // A styled card, centred. Center + {0,0} is the card's centre on the screen centre.
     GameObject* panel = scene.CreateGameObject("Panel");
     auto* pn = panel->AddComponent<UIPanel>();
-    pn->position = {40, 40};
-    pn->size = {360, 380};
+    pn->anchor = UIAnchor::Center;
+    pn->position = {0, 0};
+    pn->size = {400, 460};
     pn->color = Color::FromBytes(34, 40, 58, 235);
     pn->cornerRadius = 14.0f;
     pn->borderWidth = 1.0f;
@@ -1061,53 +1074,65 @@ inline void MainMenu(Scene& scene) {
     auto* tr = title->AddComponent<TextRenderer>();
     tr->text = "MY GAME";
     tr->screenSpace = true;
-    tr->screenPos = {70, 70};
+    tr->anchor = UIAnchor::TopLeft;
+    tr->screenPos = {24, 28};
+    tr->size = {352, 56};
+    tr->align = 1;
     tr->pixelSize = 5.0f;
-    tr->outline = true;                       // reads on any background
-    title->transform->SetParent(canvas->transform, false);
+    tr->outline = true;
+    title->transform->SetParent(panel->transform, false);
 
     GameObject* start = scene.CreateGameObject("StartButton");
     auto* b = start->AddComponent<UIButton>();
     b->label = "Start";
-    b->position = {70, 150};
-    b->size = {300, 56};
+    b->anchor = UIAnchor::TopLeft;
+    b->position = {32, 110};
+    b->size = {336, 56};
     b->cornerRadius = 10.0f;
     b->fontScale = 3.0f;
     start->AddComponent<ScriptComponent>("okayscript")->LoadSource(
-        "function on_click() { load_scene(\"game.okayscene\"); }\n");
-    start->AddComponent<UITooltip>()->text = "Begin the game";
-    start->transform->SetParent(canvas->transform, false);
+        "function on_click() {\n"
+        "  print(\"Start: loading game.okayscene\");\n"
+        "  load_scene(\"game.okayscene\");\n"
+        "  print(\"If the menu is still here, this project has no game.okayscene. Save your game under that name, or point the Start button at your scene.\");\n"
+        "  set_active_of(\"Panel\", 0);\n"
+        "}\n");
+    start->AddComponent<UITooltip>()->text = "Load game.okayscene";
+    start->transform->SetParent(panel->transform, false);
 
-    // Volume slider with a live value readout, bound to a pref.
     GameObject* vol = scene.CreateGameObject("Volume");
     auto* sl = vol->AddComponent<UISlider>();
-    sl->position = {70, 230}; sl->size = {300, 18};
+    sl->anchor = UIAnchor::TopLeft;
+    sl->position = {32, 190}; sl->size = {336, 18};
     sl->value = 0.8f; sl->showValue = true; sl->cornerRadius = 6.0f;
     vol->AddComponent<ScriptComponent>("okayscript")->LoadSource(
         "function on_change() { prefs_set(\"volume\", ui_slider_value(\"Volume\")); }\n");
-    vol->transform->SetParent(canvas->transform, false);
+    vol->transform->SetParent(panel->transform, false);
 
-    // Fullscreen toggle.
     GameObject* fs = scene.CreateGameObject("Fullscreen");
     auto* tg = fs->AddComponent<UIToggle>();
-    tg->position = {70, 270}; tg->size = {26, 26};
+    tg->anchor = UIAnchor::TopLeft;
+    tg->position = {32, 230}; tg->size = {26, 26};
     tg->label = "Fullscreen"; tg->cornerRadius = 5.0f;
-    fs->transform->SetParent(canvas->transform, false);
+    fs->transform->SetParent(panel->transform, false);
 
-    // Quality dropdown.
     GameObject* q = scene.CreateGameObject("Quality");
     auto* dd = q->AddComponent<UIDropdown>();
-    dd->position = {70, 310}; dd->size = {200, 30};
+    dd->anchor = UIAnchor::TopLeft;
+    dd->position = {32, 276}; dd->size = {220, 32};
     dd->options = {"Low", "Medium", "High"}; dd->value = 2;
-    q->transform->SetParent(canvas->transform, false);
+    q->transform->SetParent(panel->transform, false);
 
-    // Quit button.
     GameObject* quit = scene.CreateGameObject("QuitButton");
     auto* qb = quit->AddComponent<UIButton>();
-    qb->label = "Quit"; qb->position = {70, 350}; qb->size = {300, 44};
+    qb->label = "Quit";
+    qb->anchor = UIAnchor::TopLeft;
+    qb->position = {32, 360}; qb->size = {336, 48};
     qb->cornerRadius = 10.0f;
     qb->color = Color::FromBytes(110, 60, 70);
-    quit->transform->SetParent(canvas->transform, false);
+    quit->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+        "function on_click() { print(\"Quit\"); quit(); }\n");
+    quit->transform->SetParent(panel->transform, false);
 }
 
 /// A ready-made survival inventory on the real components: a 2D top-down Player
@@ -1163,8 +1188,14 @@ inline void Inventory(Scene& scene) {
     auto* ht = help->AddComponent<TextRenderer>();
     ht->text = "WASD to move. E: bag. Walk to the chest and press F, to the bench and press C.";
     ht->screenSpace = true;
-    ht->screenPos = {20, 20}; ht->pixelSize = 1.5f;
-    help->transform->SetParent(canvas->transform, false);
+    ht->anchor = UIAnchor::StretchHorizontal;
+    ht->screenPos = {16, kHudTop};
+    ht->size = {16, 64};
+    ht->vcenter = false;
+    ht->wrap = true;
+    ht->pixelSize = 2.4f;
+    ht->outline = true;
+    ht->color = Color::FromBytes(235, 238, 245);
 }
 
 /// A complete, playable game of Snake — written entirely in OkayScript on a
@@ -1249,7 +1280,7 @@ function update(d) {
 
     GameObject* hud = scene.CreateGameObject("HUD");
     auto* tr = hud->AddComponent<TextRenderer>();
-    tr->screenSpace = true; tr->screenPos = {12, 12}; tr->pixelSize = 3.0f;
+    tr->screenSpace = true; tr->screenPos = {12, kHudTop}; tr->pixelSize = 3.0f; tr->vcenter = false;
     tr->text = "Score: 0";
     hud->AddComponent<ScriptComponent>("okayscript")->LoadSource(
         "function update(d) { set_text(\"Score: \" + prefs_get(\"score\")); }\n");
@@ -1353,7 +1384,7 @@ inline void BrickBreaker(Scene& scene) {
 
     GameObject* hud = scene.CreateGameObject("HUD");
     auto* tr = hud->AddComponent<TextRenderer>();
-    tr->screenSpace = true; tr->screenPos = {12, 12}; tr->pixelSize = 3.0f;
+    tr->screenSpace = true; tr->screenPos = {12, kHudTop}; tr->pixelSize = 3.0f; tr->vcenter = false;
     tr->text = "Score: 0";
     hud->AddComponent<ScriptComponent>("okayscript")->LoadSource(
         "function update(d) {\n"
@@ -1365,7 +1396,7 @@ inline void BrickBreaker(Scene& scene) {
     GameObject* help = scene.CreateGameObject("Help");
     auto* ht = help->AddComponent<TextRenderer>();
     ht->text = "A / D move the paddle. Clear the bricks.";
-    ht->screenSpace = true; ht->screenPos = {12, 48}; ht->pixelSize = 2.0f;
+    ht->screenSpace = true; ht->screenPos = {12, kHudTop + 32.0f}; ht->pixelSize = 2.0f; ht->vcenter = false;
 }
 
 /// A terrain-digging sandbox: a procedurally generated, eroded hilly terrain you
@@ -1432,7 +1463,11 @@ inline void TerrainSandbox(Scene& scene) {
     GameObject* help = scene.CreateGameObject("Help");
     auto* ht = help->AddComponent<TextRenderer>();
     ht->text = "WASD + mouse to move    Left Mouse dig / Right Mouse raise    Space jump";
-    ht->screenSpace = true; ht->screenPos = {12, 12}; ht->pixelSize = 2.0f;
+    ht->screenSpace = true;
+    ht->anchor = UIAnchor::StretchHorizontal;
+    ht->screenPos = {16, kHudTop}; ht->size = {16, 56};
+    ht->vcenter = false;
+    ht->wrap = true; ht->pixelSize = 2.4f; ht->outline = true;
 
     scene.CreateGameObject("Pause Menu")->AddComponent<PauseMenu>();   // Esc to pause / quit
 }
@@ -1555,8 +1590,14 @@ inline void VoxelSandbox(Scene& scene) {
 
     GameObject* help = scene.CreateGameObject("Help");
     auto* ht = help->AddComponent<TextRenderer>();
-    ht->text = "WASD + mouse   Dig: LMB   Fill: RMB   Jump / swim up: Space   Swim down: Ctrl   Throw: hold G   Light: F   Pause: Esc";
-    ht->screenSpace = true; ht->screenPos = {12, 12}; ht->pixelSize = 2.0f;
+    ht->text = "WASD + mouse. Dig: LMB. Fill: RMB. Jump / swim up: Space. Swim down: Ctrl. Throw: hold G. Light: F. Pause: Esc.";
+    ht->screenSpace = true;
+    ht->anchor = UIAnchor::StretchHorizontal;
+    // Top-aligned under the PLAYING badge. Centering a wrapped line in this
+    // short box pulled "WASD + mouse" back to the top of a 9:16 view.
+    ht->screenPos = {16, kHudTop}; ht->size = {16, 72};
+    ht->vcenter = false;
+    ht->wrap = true; ht->pixelSize = 2.4f; ht->outline = true;
 
     scene.CreateGameObject("Pause Menu")->AddComponent<PauseMenu>();
 }

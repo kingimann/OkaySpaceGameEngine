@@ -709,6 +709,10 @@ add_executable(test_pause_menu test_pause_menu.cpp)
 target_link_libraries(test_pause_menu PRIVATE okay::engine)
 add_test(NAME pause_menu COMMAND test_pause_menu)
 
+add_executable(test_ui_input_guard test_ui_input_guard.cpp)
+target_link_libraries(test_ui_input_guard PRIVATE okay::engine)
+add_test(NAME ui_input_guard COMMAND test_ui_input_guard)
+
 add_executable(test_char_anim test_char_anim.cpp)
 target_link_libraries(test_char_anim PRIVATE okay::engine)
 add_test(NAME char_anim COMMAND test_char_anim)

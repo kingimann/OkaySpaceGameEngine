@@ -11,6 +11,7 @@
 #include "okay/Math/Vec2.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Components/UIWorldContext.hpp"
+#include "okay/Components/UIDropdown.hpp"   // an open list swallows the click
 #include "okay/Components/WorldSpaceUI.hpp"
 #include "okay/Components/Canvas.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -162,18 +163,24 @@ public:
     }
 
     bool Contains(const Vec2& sp) const {
-        // Map the screen point into the button's own frame: UIToLocal uses the rect
-        // the host actually draws it at (inside its UI parent, at the Canvas scale,
-        // or projected for a world-space button), so it's clickable where it appears.
-        Vec2 o = ResolveAnchor(anchor, position, size);
-        Vec2 p = UIToLocal(gameObject, o, size, sp);
+        // Map the screen point into the button's own frame: UIControlPoint uses the
+        // resolved rect (stretch margins become a real width and height) and, when
+        // the host installed rectOf, the rect it actually draws.
+        Vec2 o, sz;
+        Vec2 p = UIControlPoint(gameObject, anchor, position, size, sp, o, sz);
         // Hit-test the actual silhouette so corners of a rounded/circle/pill button
         // aren't clickable where there's no pixel.
-        return UIShapeContains(shape, size.x, size.y, cornerRadius, p.x - o.x, p.y - o.y);
+        return UIShapeContains(shape, sz.x, sz.y, cornerRadius, p.x - o.x, p.y - o.y);
     }
 
     void Update(float dt) override {
         if (!interactable) { m_hover = m_pressed = m_clicked = m_tapArmed = false; EaseColor(dt); return; }
+        // An open dropdown or context menu is drawn above this button and owns the click.
+        if (UIDropdown::HoldsClick(gameObject)) {
+            m_hover = m_pressed = m_clicked = m_tapArmed = false;
+            EaseColor(dt);
+            return;
+        }
         Vec2 m = Input::MousePosition();
         m_hover = Contains(m);
         m_pressed = m_hover && Input::GetMouseButton(0);

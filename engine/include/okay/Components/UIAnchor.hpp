@@ -61,6 +61,12 @@ inline Vec2 ResolveAnchor(UIAnchor a, const Vec2& position, const Vec2& size,
         case UIAnchor::BottomLeft:                                  y += canvasH - size.y;       break;
         case UIAnchor::BottomCenter: x += (canvasW - size.x) * 0.5f; y += canvasH - size.y;      break;
         case UIAnchor::BottomRight:  x += canvasW - size.x;          y += canvasH - size.y;      break;
+        // Stretch origins are the top-left margin. The extent is not `size` (those
+        // fields are the other margins) — callers that need the real rect use
+        // ResolveAnchorRect.
+        case UIAnchor::StretchHorizontal:
+        case UIAnchor::StretchVertical:
+        case UIAnchor::StretchFull:                                                             break;
     }
     return {x, y};
 }

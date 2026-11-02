@@ -40,8 +40,14 @@ public:
 
     bool  ScrollsY() const { return axis != Axis::Horizontal; }
     bool  ScrollsX() const { return axis != Axis::Vertical; }
-    float ScrollMax() const { return ScrollsY() ? Mathf::Max(0.0f, contentHeight - size.y) : 0.0f; }
-    float ScrollMaxX() const { return ScrollsX() ? Mathf::Max(0.0f, contentWidth - size.x) : 0.0f; }
+    /// Viewport in pixels. Stretch anchors store margins in `size`, so the scroll
+    /// range and the hit box both use the resolved rect.
+    Vec2 Viewport() const {
+        Vec2 o, sz; UIControlRect(anchor, position, size, o, sz);
+        return sz;
+    }
+    float ScrollMax() const { return ScrollsY() ? Mathf::Max(0.0f, contentHeight - Viewport().y) : 0.0f; }
+    float ScrollMaxX() const { return ScrollsX() ? Mathf::Max(0.0f, contentWidth - Viewport().x) : 0.0f; }
     void  ScrollBy(float delta) { scroll = Mathf::Clamp(scroll + delta, 0.0f, ScrollMax()); }
     void  SetScroll(float v)    { scroll = Mathf::Clamp(v, 0.0f, ScrollMax()); }
     void  ScrollByX(float delta) { scrollX = Mathf::Clamp(scrollX + delta, 0.0f, ScrollMaxX()); }
@@ -72,21 +78,24 @@ public:
 
     /// A screen point mapped into this widget's own frame (where it is really drawn:
     /// inside its UI parent, at the Canvas scale). See UIToLocal.
-    Vec2 ToLocal(const Vec2& p) const { return UIToLocal(gameObject, ResolveAnchor(anchor, position, size), size, p); }
+    Vec2 ToLocal(const Vec2& p) const {
+        Vec2 o, sz;
+        return UIControlPoint(gameObject, anchor, position, size, p, o, sz);
+    }
     bool LocalContains(const Vec2& p) const {
-        Vec2 o = ResolveAnchor(anchor, position, size);
-        return p.x >= o.x && p.y >= o.y && p.x <= o.x + size.x && p.y <= o.y + size.y;
+        Vec2 o, sz; UIControlRect(anchor, position, size, o, sz);
+        return p.x >= o.x && p.y >= o.y && p.x <= o.x + sz.x && p.y <= o.y + sz.y;
     }
     bool Contains(const Vec2& sp) const { return LocalContains(ToLocal(sp)); }
 
     // Wheel-scroll when the pointer is over the viewport, and let the player grab a
     // scrollbar (right edge / bottom edge) and drag it (built game and play mode).
     void Update(float dt) override {
-        Vec2 m = ToLocal(Input::MousePosition());   // the viewport's own frame
-        Vec2 o = ResolveAnchor(anchor, position, size);
+        Vec2 o, view;
+        Vec2 m = UIControlPoint(gameObject, anchor, position, size, Input::MousePosition(), o, view);
         auto onBars = [&](const Vec2& p) {
-            return (ScrollsY() && p.x >= o.x + size.x - barWidth - 4.0f && p.x <= o.x + size.x) ||
-                   (ScrollsX() && p.y >= o.y + size.y - barWidth - 4.0f && p.y <= o.y + size.y);
+            return (ScrollsY() && p.x >= o.x + view.x - barWidth - 4.0f && p.x <= o.x + view.x) ||
+                   (ScrollsX() && p.y >= o.y + view.y - barWidth - 4.0f && p.y <= o.y + view.y);
         };
         float wheel = Input::MouseWheel();
         if (wheel != 0.0f && LocalContains(m)) {
@@ -95,8 +104,8 @@ public:
                 if (horiz) ScrollByX(-wheel * wheelSpeed);
                 else       ScrollBy(-wheel * wheelSpeed);
             } else if (inertia <= 0.0f) {
-                if (horiz) Nudge(scrollX, -wheel * wheelSpeed, ScrollMaxX(), size.x);
-                else       Nudge(scroll, -wheel * wheelSpeed, ScrollMax(), size.y);
+                if (horiz) Nudge(scrollX, -wheel * wheelSpeed, ScrollMaxX(), view.x);
+                else       Nudge(scroll, -wheel * wheelSpeed, ScrollMax(), view.y);
             } else if (horiz) {
                 m_velX += -wheel * wheelSpeed * 18.0f;
             } else {
@@ -107,23 +116,23 @@ public:
 
         // Scrollbar drag: grab anywhere in a bar's strip, then track the pointer
         // (clamped); clicking the track also jumps the thumb to that spot.
-        bool onBar = ScrollsY() && m.x >= o.x + size.x - barWidth - 4.0f && m.x <= o.x + size.x &&
-                     m.y >= o.y && m.y <= o.y + size.y;
-        bool onBarX = ScrollsX() && m.y >= o.y + size.y - barWidth - 4.0f && m.y <= o.y + size.y &&
-                      m.x >= o.x && m.x <= o.x + size.x;
+        bool onBar = ScrollsY() && m.x >= o.x + view.x - barWidth - 4.0f && m.x <= o.x + view.x &&
+                     m.y >= o.y && m.y <= o.y + view.y;
+        bool onBarX = ScrollsX() && m.y >= o.y + view.y - barWidth - 4.0f && m.y <= o.y + view.y &&
+                      m.x >= o.x && m.x <= o.x + view.x;
         if (Input::GetMouseButtonDown(0)) {
             if (onBar && ScrollMax() > 0.0f) m_dragBar = true;
             else if (onBarX && ScrollMaxX() > 0.0f) m_dragBarX = true;
         }
         if (!Input::GetMouseButton(0)) m_dragBar = m_dragBarX = false;
-        if (m_dragBar && size.y > 0.0f) {
-            float thumb = size.y * (contentHeight > 1.0f ? size.y / contentHeight : 1.0f);
-            float t = Mathf::Clamp01((m.y - o.y - thumb * 0.5f) / Mathf::Max(1.0f, size.y - thumb));
+        if (m_dragBar && view.y > 0.0f) {
+            float thumb = view.y * (contentHeight > 1.0f ? view.y / contentHeight : 1.0f);
+            float t = Mathf::Clamp01((m.y - o.y - thumb * 0.5f) / Mathf::Max(1.0f, view.y - thumb));
             SetScroll(t * ScrollMax());
         }
-        if (m_dragBarX && size.x > 0.0f) {
-            float thumb = size.x * (contentWidth > 1.0f ? size.x / contentWidth : 1.0f);
-            float t = Mathf::Clamp01((m.x - o.x - thumb * 0.5f) / Mathf::Max(1.0f, size.x - thumb));
+        if (m_dragBarX && view.x > 0.0f) {
+            float thumb = view.x * (contentWidth > 1.0f ? view.x / contentWidth : 1.0f);
+            float t = Mathf::Clamp01((m.x - o.x - thumb * 0.5f) / Mathf::Max(1.0f, view.x - thumb));
             SetScrollX(t * ScrollMaxX());
         }
 
@@ -134,8 +143,8 @@ public:
             [&](const Vec2& sp) { return ToLocal(sp); });
         if (d.x != 0.0f || d.y != 0.0f) {
             const Vec2 before = Offset();
-            if (ScrollsY()) { if (elastic) Nudge(scroll, d.y, ScrollMax(), size.y); else ScrollBy(d.y); }
-            if (ScrollsX()) { if (elastic) Nudge(scrollX, d.x, ScrollMaxX(), size.x); else ScrollByX(d.x); }
+            if (ScrollsY()) { if (elastic) Nudge(scroll, d.y, ScrollMax(), view.y); else ScrollBy(d.y); }
+            if (ScrollsX()) { if (elastic) Nudge(scrollX, d.x, ScrollMaxX(), view.x); else ScrollByX(d.x); }
             if (!m_touch.tracking && Offset().x == before.x && Offset().y == before.y) m_touch.Stop();   // hit the end
             m_barHold = 0.75f;
         }
@@ -150,10 +159,10 @@ public:
                 m_barHold = 0.75f;
             };
             if (ScrollsY()) coast(m_velY, scroll, [&](float dlt) {
-                if (elastic) Nudge(scroll, dlt, ScrollMax(), size.y); else ScrollBy(dlt);
+                if (elastic) Nudge(scroll, dlt, ScrollMax(), view.y); else ScrollBy(dlt);
             });
             if (ScrollsX()) coast(m_velX, scrollX, [&](float dlt) {
-                if (elastic) Nudge(scrollX, dlt, ScrollMaxX(), size.x); else ScrollByX(dlt);
+                if (elastic) Nudge(scrollX, dlt, ScrollMaxX(), view.x); else ScrollByX(dlt);
             });
         }
         if (elastic && !m_dragBar && !m_dragBarX && !m_touch.tracking) {

@@ -44,6 +44,7 @@
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/UIModal.hpp"     // grok/ui-toast
+#include "okay/Components/SettingsScreen.hpp"
 #include "okay/Components/UIToast.hpp"     // grok/ui-toast
 #include "okay/Components/UIAnchor.hpp"
 #include "okay/Render/Color.hpp"
@@ -364,7 +365,12 @@ inline GameObject* AddPauseMenu(Scene& scene) {
     Caption(scene, card, "Caption", "GAME", UIAnchor::TopLeft, {32, 28}, 296);
     Text(scene, card, "Title", "Paused", UIAnchor::TopLeft, {32, 46}, {296, 40}, 32.0f, slate::Text(), 0, true);
     Button(scene, card, "ResumeButton",   "Resume",       UIAnchor::TopLeft, {32, 110}, {296, 50});
-    Button(scene, card, "SettingsButton", "Settings",     UIAnchor::TopLeft, {32, 172}, {296, 46}, ButtonKind::Secondary);
+    GameObject* settingsBtn = Button(scene, card, "SettingsButton", "Settings", UIAnchor::TopLeft, {32, 172}, {296, 46}, ButtonKind::Secondary);
+    settingsBtn->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+        "function on_click() {\n"
+        "  set_active_of(\"Pause Menu\", 0);\n"
+        "  set_active_of(\"Settings\", 1);\n"
+        "}\n");
     Button(scene, card, "QuitButton",     "Quit to menu", UIAnchor::TopLeft, {32, 230}, {296, 46}, ButtonKind::Ghost);
     IntroAnim(card, UIAnimation::Intro::Pop);
     return root;
@@ -402,6 +408,7 @@ inline GameObject* AddSettings(Scene& scene) {
       dd->anchor = UIAnchor::TopLeft; dd->position = {208, 306}; dd->size = {200, 32};
       dd->options = {"Low", "Medium", "High"}; dd->value = 2; }
     Button(scene, root, "BackButton", "Done", UIAnchor::BottomLeft, {32, -28}, {376, 48});
+    root->AddComponent<SettingsScreen>();
     return root;
 }
 

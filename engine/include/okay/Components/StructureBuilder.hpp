@@ -11,6 +11,7 @@
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Render/Mesh.hpp"
 #include "okay/Math/Quat.hpp"
 #include <cmath>
@@ -109,8 +110,9 @@ public:
         if (showPreview) UpdatePreview(*s, p);
         else if (preview_) preview_->active = false;
 
-        if (Input::GetMouseButtonDown(placeButton) && p.valid) PlacePiece(*s, p);
-        else if (Input::GetMouseButtonDown(removeButton))      Demolish(*s, origin, dir, r);
+        const bool uiBlock = GameInputBlocked(s);
+        if (!uiBlock && Input::GetMouseButtonDown(placeButton) && p.valid) PlacePiece(*s, p);
+        else if (!uiBlock && Input::GetMouseButtonDown(removeButton))      Demolish(*s, origin, dir, r);
     }
 
     /// Resolve where the current piece snaps along a ray (camera-independent → testable).

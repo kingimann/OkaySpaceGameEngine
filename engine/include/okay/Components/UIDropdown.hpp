@@ -9,7 +9,9 @@
 #include "okay/Math/Vec2.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Scene/Scene.hpp"
+#include "okay/Scene/Transform.hpp"
 #include "okay/Components/UIInputField.hpp"
+#include "okay/Components/UIContextMenu.hpp"
 #include <cctype>
 #include <string>
 #include <vector>
@@ -105,14 +107,19 @@ public:
 
     /// A screen point mapped into this widget's own frame (where it is really drawn:
     /// inside its UI parent, at the Canvas scale). See UIToLocal.
-    Vec2 ToLocal(const Vec2& p) const { return UIToLocal(gameObject, ResolveAnchor(anchor, position, size), size, p); }
+    Vec2 ToLocal(const Vec2& p) const {
+        Vec2 o, sz;
+        return UIControlPoint(gameObject, anchor, position, size, p, o, sz);
+    }
+    /// Header rectangle (resolved, so a stretch dropdown is the real bar).
+    void HeaderBox(Vec2& o, Vec2& sz) const { UIControlRect(anchor, position, size, o, sz); }
     /// Header rectangle origin (resolved against the anchor).
-    Vec2 Origin() const { return ResolveAnchor(anchor, position, size); }
+    Vec2 Origin() const { Vec2 o, sz; HeaderBox(o, sz); return o; }
 
     bool HeaderContains(const Vec2& p) const {
-        Vec2 o = Origin();
+        Vec2 o, sz; HeaderBox(o, sz);
         return p.x >= o.x && p.y >= o.y &&
-               p.x <= o.x + size.x && p.y <= o.y + size.y;
+               p.x <= o.x + sz.x && p.y <= o.y + sz.y;
     }
 
     /// Search row of an open searchable list (not an option index).
@@ -122,28 +129,29 @@ public:
     /// A searchable list returns kSearchRow for the filter row.
     int OptionAt(const Vec2& p) const {
         if (!open) return -1;
-        Vec2 o = Origin();
-        if (p.x < o.x || p.x > o.x + size.x) return -1;
-        float top = o.y + size.y;
+        Vec2 o, sz; HeaderBox(o, sz);
+        if (sz.y <= 0.0f) return -1;
+        if (p.x < o.x || p.x > o.x + sz.x) return -1;
+        float top = o.y + sz.y;
         if (!ListExtras()) {
             for (int i = 0; i < (int)options.size(); ++i) {
-                float y = top + i * size.y;
-                if (p.y >= y && p.y <= y + size.y) return i;
+                float y = top + i * sz.y;
+                if (p.y >= y && p.y <= y + sz.y) return i;
             }
             return -1;
         }
         if (searchable) {
-            if (p.y >= top && p.y <= top + size.y) return kSearchRow;
-            top += size.y;
+            if (p.y >= top && p.y <= top + sz.y) return kSearchRow;
+            top += sz.y;
         }
         int slot = 0;
         const int cap = maxVisible > 0 ? maxVisible : 1000000;
         for (int i = 0; i < (int)options.size(); ++i) {
             if (!PassesFilter(i)) continue;
             if (slot >= cap) break;
-            float y = top + slot * size.y;
+            float y = top + slot * sz.y;
             ++slot;
-            if (p.y >= y && p.y <= y + size.y) return i;
+            if (p.y >= y && p.y <= y + sz.y) return i;
         }
         return -1;
     }
@@ -163,8 +171,63 @@ public:
 
     bool interactable = true;   // when false: greyed out, ignores clicks
 
+    /// Rows in the open list (search row included). 0 when closed.
+    int OpenRowCount() const {
+        if (!open) return 0;
+        if (!ListExtras()) return (int)options.size();
+        int n = searchable ? 1 : 0;
+        int shown = 0;
+        const int cap = maxVisible > 0 ? maxVisible : 1000000;
+        for (int i = 0; i < (int)options.size() && shown < cap; ++i)
+            if (ShownSlot(i) >= 0) { ++shown; ++n; }
+        return n;
+    }
+
+    /// The open list in the same pixel space as the mouse. The header is not included.
+    bool ListScreenRect(Vec2& origin, Vec2& extent) const {
+        if (!open) return false;
+        const int rows = OpenRowCount();
+        if (rows <= 0) return false;
+        Vec2 ho, hs;
+        if (gameObject && UIWorld().rectOf && UIWorld().rectOf(gameObject, ho, hs)) {
+            origin = {ho.x, ho.y + hs.y};
+            extent = {hs.x, hs.y * (float)rows};
+            return extent.x > 0.0f && extent.y > 0.0f;
+        }
+        UIControlRect(anchor, position, size, ho, hs);
+        origin = {ho.x, ho.y + hs.y};
+        extent = {hs.x, hs.y * (float)rows};
+        return extent.x > 0.0f && extent.y > 0.0f;
+    }
+
+    /// An open dropdown list or context menu owns this click, so widgets under
+    /// the popup must not take it. `self` is the popup's own object (it still
+    /// receives the click). Order-independent: the list is open until the
+    /// dropdown's Update closes it, and a flag covers the rest of that frame.
+    static bool HoldsClick(GameObject* self) {
+        if (!Input::GetMouseButton(0)) { ClickClaim() = nullptr; return false; }
+        if (ClickClaim() && ClickClaim() != self) return true;
+        Scene* sc = self ? self->scene() : nullptr;
+        if (!sc) return false;
+        for (auto* d : sc->FindObjectsOfType<UIDropdown>()) {
+            if (!d || !d->open || !d->enabled || !d->gameObject || d->gameObject == self) continue;
+            if (!BranchActive(d->gameObject)) continue;
+            return true;
+        }
+        for (auto* m : sc->FindObjectsOfType<UIContextMenu>()) {
+            if (!m || !m->IsOpen() || !m->gameObject || m->gameObject == self) continue;
+            if (!BranchActive(m->gameObject)) continue;
+            return true;
+        }
+        return false;
+    }
+    static void ClaimClick(GameObject* self) { if (Input::GetMouseButton(0)) ClickClaim() = self; }
+
     void Update(float) override {
         if (!interactable) { m_hover = false; m_hoverOption = -1; open = false; return; }
+        // Claim before the list closes, so a button that updates later this frame
+        // still sees the popup as the owner of the click.
+        if (open && Input::GetMouseButtonDown(0)) ClaimClick(gameObject);
         Vec2 m = ToLocal(Input::MousePosition());   // header / option tests work in the widget's frame
         m_hover = HeaderContains(m);
         m_hoverOption = OptionAt(m);
@@ -228,6 +291,13 @@ private:
     bool m_focused = false;
     int  m_hoverOption = -1;
     std::string m_filter;   // runtime only; cleared when the list closes
+
+    static GameObject*& ClickClaim() { static GameObject* g = nullptr; return g; }
+    static bool BranchActive(GameObject* go) {
+        for (Transform* t = go ? go->transform : nullptr; t; t = t->Parent())
+            if (!t->gameObject || !t->gameObject->active) return false;
+        return go != nullptr;
+    }
 };
 
 } // namespace okay

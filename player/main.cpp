@@ -9,6 +9,7 @@
 #include <SDL.h>
 
 #include <Okay.hpp>
+#include "okay/Components/SettingsScreen.hpp"
 #include "okay/Input/SdlGamepad.hpp"   // controller -> Input (sticks, triggers, rumble)
 #include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Net/DedicatedServer.hpp"
@@ -29,6 +30,7 @@
 #include "okay/Render/D3D12Renderer.hpp" // optional GPU (Direct3D 12) 3D renderer (Windows, opt-in)
 #include "Splash.hpp"                   // branded boot loading frame (no black screen at launch)
 #include "okay/UI/UIRenderer.hpp"       // the in-game UI pass (engine)
+#include "okay/UI/TooltipPlace.hpp"
 #include "okay/UI/UIPainterSDL.hpp"     // ...drawn through this SDL backend
 #include "okay/UI/UIBatcher.hpp"        // ...batched into a few geometry calls
 #include "AntiCheatChecks.hpp"          // opt-in anti-cheat: integrity manifest + runtime checks
@@ -199,12 +201,9 @@ static void DrawItemTip(SDL_Renderer* r, const okay::ItemTip& tip, float mx, flo
     for (const auto& ln : tip.lines) maxW = std::max(maxW, UITextW(ln.text, px));
     const float lineH = (Font8x8::Height + 2) * px, pad = 6.0f;
     const float bw = maxW + pad * 2, bh = lineH * (float)tip.lines.size() + pad * 2;
-    float x = mx + 14, y = my + 14;
-    if (x + bw > W - 4) x = mx - bw - 8;
-    if (y + bh > H - 4) y = my - bh - 8;
-    if (x < 4) x = 4;
-    if (y < 4) y = 4;
-    SDL_Rect box{(int)x, (int)y, (int)bw, (int)bh};
+    const okay::TooltipBox tipBox = okay::PlaceTooltip(mx, my, bw, bh, 0.0f, 0.0f, (float)W, (float)H);
+    const float x = tipBox.x, y = tipBox.y;
+    SDL_Rect box{(int)x, (int)y, (int)tipBox.w, (int)tipBox.h};
     FillUIShape(r, box, UIShape::Rounded, 4.0f, bg, bg, false, false, 1.0f);
     for (std::size_t i = 0; i < tip.lines.size(); ++i) {
         const Color c = tip.lines[i].useTint ? tip.lines[i].tint : text;
@@ -1783,6 +1782,7 @@ int main(int argc, char** argv) {
                  ((e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) && (e.key.keysym.mod & KMOD_ALT)))) {
                 const bool fs = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
                 SDL_SetWindowFullscreen(window, fs ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
+                okay::DisplaySettings::SetFullscreen(!fs);
                 continue;
             }
             // Esc quits only when no input field is focused (otherwise it cancels it).
@@ -1852,28 +1852,32 @@ int main(int argc, char** argv) {
             if (auto* mm = up->GetComponent<Minimap>()) { if (mm->fullscreen) invModal = true; }
             if (StoryUIModal(up.get())) invModal = true;   // a running dialogue or an open quest journal
         }
-        // A cutscene with Lock Player on holds the controllers the same way.
-        Input::SetUICaptured(invModal || SequencePlayer::AnyLocksInput(scene));
+        // Pause, a focused field, a modal, dialogue and a click on UI count here
+        // too, before any component Update. PauseMenu used to set the flag itself,
+        // which components that ran first that frame never saw.
+        okay::SettingsScreen::Ensure(scene);
+        const bool gameModal = invModal || okay::Game::Paused() || okay::SettingsScreen::AnyOpen(&scene);
+        Input::SetUICaptured(gameModal || okay::GameInputBlocked(&scene, (unsigned)okay::GameInputMask::World));
 
         // Apply the game's requested cursor state.
         static Vec2 s_virtualMouse{0, 0};
-        bool locked = Cursor::IsLocked() && !invModal && !cursorReleased;
+        bool locked = Cursor::IsLocked() && !gameModal && !cursorReleased;
         // hand-off: when a bag opens (mouselook was locked) free the pointer
         // AT SCREEN CENTRE, and when it closes warp back to centre before re-locking, so
         // the cursor always appears in the middle and the look anchor resets cleanly.
         static bool s_prevInvModal = false;
-        if (invModal != s_prevInvModal && Cursor::IsLocked()) {
+        if (gameModal != s_prevInvModal && Cursor::IsLocked()) {
             int ww = 0, wh = 0; SDL_GetWindowSize(window, &ww, &wh);
             SDL_WarpMouseInWindow(window, ww / 2, wh / 2);
         }
-        s_prevInvModal = invModal;
+        s_prevInvModal = gameModal;
         SDL_SetRelativeMouseMode(locked ? SDL_TRUE : SDL_FALSE);
         // While actively dragging a stack, hide the OS arrow: the dragged icon (drawn
         // centred on the mouse) becomes the pointer. The arrow's hotspot sits at its
         // tip — ~half a slot above where it looks like it's pointing — which biased the
         // nearest-slot drop to the slot above. Hiding it makes the icon centre the only
         // reference, so "drop where the item is" lines up with the slot under it.
-        bool showCursor = (Cursor::visible || invModal || cursorReleased) && !itemDragging;
+        bool showCursor = (Cursor::visible || gameModal || cursorReleased) && !itemDragging;
         SDL_ShowCursor(showCursor ? SDL_ENABLE : SDL_DISABLE);
 
         // Feed the mouse (position in pixels + left/right/middle button state). When
@@ -1900,6 +1904,19 @@ int main(int argc, char** argv) {
         if (mb & SDL_BUTTON(SDL_BUTTON_MIDDLE)) mask |= 1u << 2;
         Input::FeedMouse(s_virtualMouse, mask);
         InputActions::Tick();   // after every device is fed: Jump, Move, Fire... for this frame
+
+        // The Settings screen asked for a window or quality change.
+        {
+            static int s_dispGen = 0;
+            const int gen = okay::DisplaySettings::Generation();
+            if (gen != s_dispGen) {
+                s_dispGen = gen;
+                SDL_SetWindowFullscreen(window, okay::DisplaySettings::Fullscreen() ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+                cfg.vsync = okay::DisplaySettings::VSync();
+                SDL_RenderSetVSync(renderer, cfg.vsync ? 1 : 0);
+                okay::DisplaySettings::ApplyQuality();
+            }
+        }
 
         Uint64 now = SDL_GetPerformanceCounter();
         float dt = (float)((now - last) / (double)SDL_GetPerformanceFrequency());

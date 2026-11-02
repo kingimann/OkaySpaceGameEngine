@@ -217,9 +217,11 @@ private:
         GameObject* b = s.CreateGameObject(std::string("Pause_") + label);
         auto* btn = b->AddComponent<UIButton>();
         btn->label = label;
-        btn->anchor = UIAnchor::Center;
+        // Top-left inside the card. Center-anchoring and then also subtracting
+        // half the size shoved every control up and left of the card.
+        btn->anchor = UIAnchor::TopLeft;
         btn->size = {kBtnW, kBtnH};
-        btn->position = {-kBtnW * 0.5f, y};     // centred horizontally, stacked vertically
+        btn->position = {(kCardW - kBtnW) * 0.5f, y};
         btn->cornerRadius = 10.0f;
         btn->fontScale = 2.2f;
         btn->color = col;
@@ -238,9 +240,9 @@ private:
                   float y, float h, float px, Color colr, bool outline) {
         GameObject* t = s.CreateGameObject(name);
         auto* tr = t->AddComponent<TextRenderer>();
-        tr->text = text; tr->screenSpace = true; tr->anchor = UIAnchor::Center;
+        tr->text = text; tr->screenSpace = true; tr->anchor = UIAnchor::TopLeft;
         tr->size = {kCardW - kPad * 2, h};
-        tr->screenPos = {-(kCardW - kPad * 2) * 0.5f, y};
+        tr->screenPos = {kPad, y};
         tr->align = 1; tr->vcenter = true; tr->pixelSize = px; tr->color = colr; tr->outline = outline;
         t->transform->SetParent(parent->transform, false);
         m_objects.push_back(t);
@@ -252,8 +254,8 @@ private:
         y += kVolLblH + kVolGap;
         GameObject* o = s.CreateGameObject(name);
         auto* sl = o->AddComponent<UISlider>();
-        sl->anchor = UIAnchor::Center;
-        sl->size = {kBtnW, kVolBarH}; sl->position = {-kBtnW * 0.5f, y};
+        sl->anchor = UIAnchor::TopLeft;
+        sl->size = {kBtnW, kVolBarH}; sl->position = {(kCardW - kBtnW) * 0.5f, y};
         sl->value = value;
         sl->cornerRadius = 6.0f;
         o->transform->SetParent(root->transform, false);
@@ -272,18 +274,24 @@ private:
         bool wantMenu    = !mainMenuScene.empty();
         int  nBtn = (showResume ? 1 : 0) + (wantRestart ? 1 : 0) + (wantMenu ? 1 : 0) + (showQuit ? 1 : 0);
 
-        float bodyH = kTitleH;
+        // Content is laid out from the card's top, so the card height is that
+        // stack plus padding. The sliders are inside this height.
+        float bodyH = kPad + kTitleH;
         if (nBtn > 0) bodyH += kSection + nBtn * kBtnH + (nBtn - 1) * kBtnGap;
         if (showVolume) bodyH += kSection + 3 * (kVolLblH + kVolGap + kVolBarH) + 2 * kVolGap;
         if (!hint.empty()) bodyH += kSection + kHintH;
-        float cardH = bodyH + kPad * 2.0f;
+        float cardH = bodyH + kPad;
 
         // UI root: a Canvas that scales with the screen, sorted on top of the HUD,
         // plus an Event System (button input) if the scene doesn't already have one.
         GameObject* root = s->CreateGameObject("PauseMenu UI");
         auto* cv = root->AddComponent<Canvas>();
-        cv->screenMatch = Canvas::ScreenMatch::Expand;
         cv->scaleMode = Canvas::ScaleMode::ScaleWithScreenSize;
+        cv->referenceResolution = {1280.0f, 720.0f};
+        // Match the height so a portrait Game view doesn't shrink the card to a
+        // third (Expand follows the narrow width). A 360px card still fits 9:16.
+        cv->screenMatch = Canvas::ScreenMatch::MatchWidthOrHeight;
+        cv->matchWidthOrHeight = 1.0f;
         cv->sortOrder = 1000;
         if (gameObject && gameObject->transform) root->transform->SetParent(gameObject->transform, false);
         m_root = root;
@@ -294,46 +302,48 @@ private:
         // Full-screen dim backdrop (created first so it draws behind the card).
         GameObject* dim = s->CreateGameObject("Pause_Dim");
         auto* dp = dim->AddComponent<UIPanel>();
-        dp->anchor = UIAnchor::Center; dp->size = {8000, 8000}; dp->position = {-4000, -4000};
+        dp->anchor = UIAnchor::StretchFull; dp->size = {0, 0}; dp->position = {0, 0};
         dp->color = dimColor;
         dim->transform->SetParent(root->transform, false);
         m_objects.push_back(dim);
 
-        // The menu card, centred and sized to its content.
+        // The menu card. Center + position {0,0} puts the card's centre on the
+        // screen centre (position is the centre's offset, not a top-left).
         GameObject* card = s->CreateGameObject("Pause_Card");
         auto* pn = card->AddComponent<UIPanel>();
         pn->anchor = UIAnchor::Center; pn->size = {kCardW, cardH};
-        pn->position = {-kCardW * 0.5f, -cardH * 0.5f};
+        pn->position = {0, 0};
         pn->color = panelColor; pn->cornerRadius = 14.0f; pn->borderWidth = 1.0f;
         card->transform->SetParent(root->transform, false);
         m_objects.push_back(card);
 
-        // Lay everything out top-down, centred about the screen centre.
-        float y = -bodyH * 0.5f;
-        AddLabel(*s, root, "Pause_Title", title, y, kTitleH, 3.6f, Color::FromBytes(245, 247, 255), true);
+        // Everything below is a child of the card, in the card's own pixels,
+        // so the sliders cannot hang out of the panel.
+        float y = kPad;
+        AddLabel(*s, card, "Pause_Title", title, y, kTitleH, 3.6f, Color::FromBytes(245, 247, 255), true);
         y += kTitleH;
 
         if (nBtn > 0) {
             y += kSection;
-            if (showResume)  { m_resume  = AddButton(*s, root, "Resume",    y, Color::FromBytes(60, 130, 90));  y += kBtnH + kBtnGap; }
-            if (wantRestart) { m_restart = AddButton(*s, root, "Restart",   y, Color::FromBytes(70, 110, 150)); y += kBtnH + kBtnGap; }
-            if (wantMenu)    { m_menu    = AddButton(*s, root, "Main Menu", y, Color::FromBytes(70, 90, 140));  y += kBtnH + kBtnGap; }
-            if (showQuit)    { m_quit    = AddButton(*s, root, "Quit",      y, Color::FromBytes(150, 70, 70));  y += kBtnH + kBtnGap; }
+            if (showResume)  { m_resume  = AddButton(*s, card, "Resume",    y, Color::FromBytes(60, 130, 90));  y += kBtnH + kBtnGap; }
+            if (wantRestart) { m_restart = AddButton(*s, card, "Restart",   y, Color::FromBytes(70, 110, 150)); y += kBtnH + kBtnGap; }
+            if (wantMenu)    { m_menu    = AddButton(*s, card, "Main Menu", y, Color::FromBytes(70, 90, 140));  y += kBtnH + kBtnGap; }
+            if (showQuit)    { m_quit    = AddButton(*s, card, "Quit",      y, Color::FromBytes(150, 70, 70));  y += kBtnH + kBtnGap; }
             y -= kBtnGap;
         }
 
         if (showVolume) {
             y += kSection;
-            m_volume  = AddSlider(*s, root, "Volume",  "Pause_Volume",  AudioMixer::masterVolume, y);
+            m_volume  = AddSlider(*s, card, "Volume",  "Pause_Volume",  AudioMixer::masterVolume, y);
             y += kVolGap;
-            m_music   = AddSlider(*s, root, "Music",   "Pause_Music",   AudioMixer::groupVolume[(int)AudioGroup::Music], y);
+            m_music   = AddSlider(*s, card, "Music",   "Pause_Music",   AudioMixer::groupVolume[(int)AudioGroup::Music], y);
             y += kVolGap;
-            m_effects = AddSlider(*s, root, "Effects", "Pause_Effects", AudioMixer::groupVolume[(int)AudioGroup::SFX], y);
+            m_effects = AddSlider(*s, card, "Effects", "Pause_Effects", AudioMixer::groupVolume[(int)AudioGroup::SFX], y);
         }
 
         if (!hint.empty()) {
             y += kSection;
-            AddLabel(*s, root, "Pause_Hint", hint, y, kHintH, 1.4f, Color::FromBytes(170, 175, 190), false);
+            AddLabel(*s, card, "Pause_Hint", hint, y, kHintH, 1.6f, Color::FromBytes(170, 175, 190), false);
         }
 
         ApplyLocalization();

@@ -56,10 +56,13 @@ public:
     /// Bind an InputActions binding ("key:e", "pad:rt", "mouse:right").
     void BindAction(const std::string& binding);
 
-    Vec2 ToLocal(const Vec2& p) const { return UIToLocal(gameObject, ResolveAnchor(anchor, position, size), size, p); }
+    Vec2 ToLocal(const Vec2& p) const {
+        Vec2 o, sz;
+        return UIControlPoint(gameObject, anchor, position, size, p, o, sz);
+    }
     bool Contains(const Vec2& sp) const {
-        Vec2 o = ResolveAnchor(anchor, position, size), p = ToLocal(sp);
-        return p.x >= o.x && p.y >= o.y && p.x <= o.x + size.x && p.y <= o.y + size.y;
+        Vec2 o, sz, p = UIControlPoint(gameObject, anchor, position, size, sp, o, sz);
+        return p.x >= o.x && p.y >= o.y && p.x <= o.x + sz.x && p.y <= o.y + sz.y;
     }
 
     void Start() override;

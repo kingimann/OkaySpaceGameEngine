@@ -10,6 +10,7 @@
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Render/Mesh.hpp"
 #include "okay/Math/Quat.hpp"
 #include <cmath>
@@ -104,13 +105,14 @@ public:
             }
             if (preview_) preview_->active = false;
             // A click (or grab key, handled above) drops it in place.
-            if (Input::GetMouseButtonDown(placeButton)) grabbed_ = nullptr;
+            if (!GameInputBlocked(s) && Input::GetMouseButtonDown(placeButton)) grabbed_ = nullptr;
             return;
         }
 
         if (showPreview) UpdatePreview(*s, origin, dir, r);
         else if (preview_) preview_->active = false;
 
+        if (GameInputBlocked(s)) return;
         if (Input::GetMouseButtonDown(placeButton))  PlaceAt(*s, origin, dir, r);
         else if (Input::GetMouseButtonDown(removeButton)) RemoveAt(*s, origin, dir, r);
     }

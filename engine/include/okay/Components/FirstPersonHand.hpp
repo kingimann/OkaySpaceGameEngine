@@ -22,6 +22,7 @@
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Core/Game.hpp"
 
 namespace okay {
@@ -47,6 +48,7 @@ public:
         Apply();
         // Third person keeps a normal body. The swing is the first-person arm.
         if (!ShowingToOwner()) return;
+        if (GameInputBlocked(gameObject ? gameObject->scene() : nullptr)) return;
         bool fire = holdToSwing ? Input::GetMouseButton(attackButton)
                                 : Input::GetMouseButtonDown(attackButton);
         if (fire) if (Character* c = FindCharacter()) if (!c->Punching()) c->Punch();

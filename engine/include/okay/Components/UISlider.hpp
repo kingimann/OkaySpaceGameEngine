@@ -103,11 +103,14 @@ public:
 
     /// A screen point mapped into this widget's own frame (where it is really drawn:
     /// inside its UI parent, at the Canvas scale). See UIToLocal.
-    Vec2 ToLocal(const Vec2& p) const { return UIToLocal(gameObject, ResolveAnchor(anchor, position, size), size, p); }
+    Vec2 ToLocal(const Vec2& p) const {
+        Vec2 o, sz;
+        return UIControlPoint(gameObject, anchor, position, size, p, o, sz);
+    }
     bool Contains(const Vec2& sp) const {
-        Vec2 o = ResolveAnchor(anchor, position, size), p = ToLocal(sp);
+        Vec2 o, sz, p = UIControlPoint(gameObject, anchor, position, size, sp, o, sz);
         return p.x >= o.x && p.y >= o.y &&
-               p.x <= o.x + size.x && p.y <= o.y + size.y;
+               p.x <= o.x + sz.x && p.y <= o.y + sz.y;
     }
 
     bool interactable = true;   // when false: greyed out, ignores drag
@@ -117,11 +120,13 @@ public:
         Vec2 m = Input::MousePosition();
         if (Input::GetMouseButtonDown(0) && Contains(m)) m_dragging = true;
         if (!Input::GetMouseButton(0)) m_dragging = false;
-        if (m_dragging && size.x > 0.0f && size.y > 0.0f) {
-            Vec2 o = ResolveAnchor(anchor, position, size), lm = ToLocal(m);
+        Vec2 trackO, trackSz;
+        UIControlRect(anchor, position, size, trackO, trackSz);
+        if (m_dragging && trackSz.x > 0.0f && trackSz.y > 0.0f) {
+            Vec2 lm = UIToLocal(gameObject, trackO, trackSz, m);
             // Horizontal: left->right. Vertical: bottom->top (natural for volume).
-            float frac = vertical ? Mathf::Clamp01((o.y + size.y - lm.y) / size.y)
-                                  : Mathf::Clamp01((lm.x - o.x) / size.x);
+            float frac = vertical ? Mathf::Clamp01((trackO.y + trackSz.y - lm.y) / trackSz.y)
+                                  : Mathf::Clamp01((lm.x - trackO.x) / trackSz.x);
             float nv = Snap(minValue + frac * (maxValue - minValue));
             if (nv != value) {
                 value = nv;

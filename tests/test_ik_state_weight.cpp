@@ -106,6 +106,12 @@ int main() {
         CHECK(std::fabs(chain->stateWeight - 0.25f) < 1e-3f);
         CHECK(std::fabs(sm->IKWeight() - 0.25f) < 1e-3f);
         CHECK(std::fabs(sm->LookIKWeight() - 0.25f) < 1e-3f);
+        AnimStateMachine::State sit; sit.name = "SitHands"; sit.clip = "Idle"; sit.ikWeight = 0.0f; sit.fullBodyIkWeight = 1.0f;
+        sm->states.push_back(sit);
+        sm->GoTo("SitHands", 0.0f); Tick(s, 2);
+        CHECK(sm->IKWeight() < 1e-3f);
+        CHECK(limb->stateWeight > 0.9f);
+        CHECK(chain->stateWeight > 0.9f);
     }
 
     // ---- Built-in graph: gestures and the action states zero look / aim ----

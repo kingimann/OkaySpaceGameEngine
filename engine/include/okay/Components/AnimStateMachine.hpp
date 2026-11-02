@@ -913,8 +913,10 @@ private:
             if (auto* b = gameObject->GetComponent<FullBodyIK>()) b->stateWeight = m_fbW;
             for (LookAtIK* l : gameObject->GetComponents<LookAtIK>()) l->stateWeight = m_lookW;
             for (AimIK* a : gameObject->GetComponents<AimIK>()) a->stateWeight = m_lookW;
-            for (LimbIK* limb : gameObject->GetComponents<LimbIK>()) limb->stateWeight = m_ikW;
-            for (ChainIK* c : gameObject->GetComponents<ChainIK>()) c->stateWeight = m_ikW;
+            // Hands and chains follow the upper body, not the feet: a jump or a
+            // sit drops foot IK without dropping a reach.
+            for (LimbIK* limb : gameObject->GetComponents<LimbIK>()) limb->stateWeight = m_fbW;
+            for (ChainIK* c : gameObject->GetComponents<ChainIK>()) c->stateWeight = m_fbW;
             m_ikWritten = m_ikW; m_fbWritten = m_fbW; m_lookWritten = m_lookW; m_ikRefresh = 0.5f;
         }
     }

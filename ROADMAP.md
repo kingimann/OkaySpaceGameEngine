@@ -10,6 +10,7 @@ _Last updated: 2026-11-02 00:20 UTC_
 
 | Version | What's in it |
 |---|---|
+| 2.843.0 | In-game UI fixes: one press does one thing, clickable stretch widgets, a working Settings screen, menus and HUD that fit 16:9, 4:3 and 9:16, Quality High keeps the sky (#529) |
 | 2.842.0 | One Player Controller for first and third person (#523); stride-matched Mixamo locomotion, per-slot built-in fallback and the Character Model panel (#524); riders turn with rotating platforms (#526) |
 | 2.841.0 | Navigation meshes (#514); cutscenes (#515); dialogue and quests (#516); behavior trees (#517, #519); post-processing, sky, fog and weather (#518); localization (#520); map a rig's body bones by hand (#522, IK plan item 8) |
 | 2.840.0 | First-person hands, view switch and the third-person head fix (#505); save games (#498); built-in action clips (#506); ragdolls (#501); IK batches 1–2: Look-At shares, clamp, eyes and range, Limb and Full Body stretch, foot toe/heel rays, keep-phase transitions (#507, #508); Animation window key lane (#509); older starter projects get both view controllers on load (#510); Animation tab clip editor: dope sheet, curves, record, onion skin, clip list (#511); Animator window: canvas, parameters, blend trees, inspectors, layers (#512) |

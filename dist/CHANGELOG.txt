@@ -1,5 +1,27 @@
 OkaySpace Game Engine — Changelog
 
+v2.843.0
+  In-game UI
+  - One press does one thing. Pressing E to pick something up, or to drop
+    what you are holding, no longer also opens the bag. While the pause
+    menu, the inventory, a dialogue or a text field is open, that click and
+    those keys stay in the menu instead of digging, punching or using the
+    hotbar.
+  - A button or slider set to fill the screen can be clicked. A control
+    stretched across the view used to end up with no click area.
+  - The Settings screen works. Music and effects change the mixer,
+    fullscreen and VSync change the window, and Quality changes the picture.
+    Done closes it and, when you opened it from the pause menu, takes you
+    back there. Picking High in the Quality list no longer also presses the
+    button sitting under the open list.
+  - Menus and the HUD stay on screen at 16:9, 4:3 and a tall 9:16 view. The
+    pause card is centred with its sliders inside it, the main menu fits
+    and the volume number stays on the slider, the hotbar fits, and help
+    text starts below the editor's PLAYING badge. Closing a menu no longer
+    leaves a focus outline where the button was.
+  - Quality High keeps the sky. The extra glow no longer turns the clear
+    background black and hazy (#529).
+
 v2.842.0
   Characters
   - One Player Controller for first and third person. Pick First Person,

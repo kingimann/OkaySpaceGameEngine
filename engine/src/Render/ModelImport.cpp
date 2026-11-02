@@ -1614,7 +1614,12 @@ void AutoMapLocomotion(ModelAnimator* ma) {
     for (int role = 0; role < 5; ++role)
         for (std::size_t ci = 0; ci < ma->clips.size() && stanceSlot[role]->empty(); ++ci)
             if (!used[ci] && roles[role](ci)) { *stanceSlot[role] = ma->clips[ci].name; used[ci] = true; }
-    auto back = [&](std::size_t ci) { return any(words[ci], {"back", "backward", "backwards"}); };
+    // "Walk Back" / "Run Back" are locomotion. "Back Flip" and similar tricks are not.
+    auto locomotes = [&](std::size_t ci) { return any(words[ci], {"walk", "walking", "run", "running", "strafe", "strafing", "move", "moving"}); };
+    auto trick = [&](std::size_t ci) { return any(words[ci], {"flip", "flipping", "dodge", "roll", "rolling", "attack", "kick", "punch"}); };
+    auto back = [&](std::size_t ci) {
+        return any(words[ci], {"back", "backward", "backwards"}) && locomotes(ci) && !trick(ci);
+    };
     auto left = [&](std::size_t ci) { return any(words[ci], {"left"}); };
     auto right = [&](std::size_t ci) { return any(words[ci], {"right"}); };
     auto runny = [&](std::size_t ci) { return any(words[ci], {"run", "running", "sprint", "sprinting"}); };

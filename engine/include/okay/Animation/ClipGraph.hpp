@@ -143,6 +143,41 @@ inline int Build(AnimStateMachine& sm, const ModelAnimator& ma) {
     return (int)sm.states.size();
 }
 
+/// Put this model's locomotion blend into `sm` without removing the other states.
+/// An existing Locomotion state keeps its transitions; otherwise one is added.
+/// The Character's action graph (death, sit, gestures) stays.
+inline int InsertLocomotion(AnimStateMachine& sm, const ModelAnimator& ma) {
+    using SM = AnimStateMachine;
+    AnimStateMachine built;
+    if (Build(built, ma) <= 0) return (int)sm.states.size();
+    const SM::State* loco = nullptr;
+    for (const auto& st : built.states) if (st.name == "Locomotion") loco = &st;
+    if (!loco) return (int)sm.states.size();
+    for (const auto& p : built.params) {
+        bool have = false;
+        for (const auto& e : sm.params) if (e.name == p.name) have = true;
+        if (!have) sm.params.push_back(p);
+    }
+    for (auto& st : sm.states) if (st.name == "Locomotion") {
+        const auto transitions = st.transitions;
+        const float nx = st.nx, ny = st.ny;
+        st.blendTree = loco->blendTree;
+        st.blendDims = loco->blendDims;
+        st.blendParam = loco->blendParam;
+        st.blendParamY = loco->blendParamY;
+        st.motions = loco->motions;
+        st.clip = loco->clip;
+        st.transitions = transitions;
+        st.nx = nx; st.ny = ny;
+        return (int)sm.states.size();
+    }
+    SM::State add = *loco;
+    add.transitions.clear();
+    if (!sm.states.empty()) { add.nx = sm.states.front().nx + 220.0f; add.ny = sm.states.front().ny; }
+    sm.states.push_back(std::move(add));
+    return (int)sm.states.size();
+}
+
 /// The model's base-layer Animator: the one already on `go`, else a new one built
 /// from its ModelAnimator's clips. The graph picks the states. `driveByMovement`
 /// stays as it was, so a walk-only model still measures speed: empty slots keep

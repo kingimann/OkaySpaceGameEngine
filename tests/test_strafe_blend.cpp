@@ -37,6 +37,16 @@ int main() {
         AutoMapLocomotion(ma);
         CHECK(ma->walkClip == "Walk");
         CHECK(ma->walkBackClip == "Walk Back");
+        ma->clips.push_back(ClipNamed("Back Flip"));
+        AutoMapLocomotion(ma);
+        CHECK(ma->walkBackClip == "Walk Back");
+        CHECK(ma->walkClip == "Walk");
+        Scene only("flip");
+        auto* flip = only.CreateGameObject("F")->AddComponent<ModelAnimator>();
+        flip->clips = {ClipNamed("Idle"), ClipNamed("Walk"), ClipNamed("Back Flip")};
+        AutoMapLocomotion(flip);
+        CHECK(flip->walkClip == "Walk");
+        CHECK(flip->walkBackClip.empty());
         CHECK(ma->strafeLeftClip == "Strafe Left");
         CHECK(ma->runBackClip == "Run Back");
         CHECK(ma->HasDirectionalClips());
@@ -99,6 +109,71 @@ int main() {
         ch->moveAngle = 40.0f;
         s.Update(1.0f / 60.0f);
         CHECK(Quat::Angle(forward, hips->transform->localRotation) > 5.0f);
+    }
+
+    // A walk-only rig moving backward does not play that walk forward.
+    {
+        Scene s("moon"); s.physicsEnabled = false;
+        GameObject* player = s.CreateGameObject("Player");
+        auto* ch = player->AddComponent<Character>();
+        GameObject* model = s.CreateGameObject("Model");
+        model->transform->SetParent(player->transform, false);
+        auto* ma = model->AddComponent<ModelAnimator>();
+        ma->clips = {ClipNamed("Idle"), ClipNamed("Walk")};
+        ma->idleClip = "Idle"; ma->walkClip = "Walk";
+        ma->driveByMovement = true;
+        ma->smoothLocomotion = true;
+        ma->walkThreshold = 0.4f;
+        ch->moveAngle = 180.0f;
+        s.Start();
+        for (int i = 0; i < 20; ++i) {
+            ch->moveAngle = 180.0f;
+            model->transform->SetPosition(model->transform->Position() + Vec3{0, 0, 0.05f});
+            s.Update(1.0f / 60.0f);
+        }
+        CHECK(ma->CurrentName() == "Walk");
+        CHECK(ma->LocomotionSign() < 0);
+    }
+
+    // A back clip plays itself, forward, instead of reversing the forward walk.
+    {
+        Scene s("backclip"); s.physicsEnabled = false;
+        GameObject* player = s.CreateGameObject("Player");
+        auto* ch = player->AddComponent<Character>();
+        GameObject* model = s.CreateGameObject("Model");
+        model->transform->SetParent(player->transform, false);
+        auto* ma = model->AddComponent<ModelAnimator>();
+        ma->clips = {ClipNamed("Idle"), ClipNamed("Walk"), ClipNamed("Walk Back")};
+        ma->idleClip = "Idle"; ma->walkClip = "Walk"; ma->walkBackClip = "Walk Back";
+        ma->driveByMovement = true;
+        ma->walkThreshold = 0.4f;
+        ch->moveAngle = 180.0f;
+        s.Start();
+        for (int i = 0; i < 12; ++i) {
+            ch->moveAngle = 180.0f;
+            model->transform->SetPosition(model->transform->Position() + Vec3{0, 0, 0.05f});
+            s.Update(1.0f / 60.0f);
+        }
+        CHECK(ma->CurrentName() == "Walk Back");
+        CHECK(ma->LocomotionSign() > 0);
+    }
+
+    // Build it on a character graph adds Locomotion and keeps the other states.
+    {
+        AnimStateMachine sm;
+        sm.states.push_back({}); sm.states.back().name = "Idle";
+        sm.states.push_back({}); sm.states.back().name = "Death";
+        ModelAnimator ma;
+        ma.clips = {ClipNamed("Idle"), ClipNamed("Walk"), ClipNamed("Walk Back")};
+        ma.idleClip = "Idle"; ma.walkClip = "Walk"; ma.walkBackClip = "Walk Back";
+        const int n = ClipGraph::InsertLocomotion(sm, ma);
+        CHECK(n == 3);
+        bool death = false, loco = false;
+        for (const auto& st : sm.states) {
+            if (st.name == "Death") death = true;
+            if (st.name == "Locomotion") { loco = true; CHECK(st.blendDims == 2); }
+        }
+        CHECK(death && loco);
     }
 
     TEST_MAIN_RESULT();

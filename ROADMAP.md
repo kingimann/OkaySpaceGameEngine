@@ -68,7 +68,7 @@ _Last updated: 2026-11-02 00:20 UTC_
 4. [x] Controllers: ground probe (no apex double jump), eased step-up, rotating platforms, 2D one-shot clips (#409, #411, #436, #526).
 5. [x] One shared humanoid bone mapper that rejects non-humanoids (#493, #522).
 6. [ ] Rest-pose normalisation and retargeting by avatar slot.
-7. [x] Animator graph and preview for every character; import a clip into a state (#499). A graph still uses the built-in fallback and stride matching for empty slots.
+7. [x] Animator graph and preview for every character; import a clip into a state (#499, #531). A graph still uses the built-in fallback and stride matching for empty slots.
 8. [ ] One-click humanoid import with the default library on any rig; character script API.
 
 ### Inventory (Robustness)

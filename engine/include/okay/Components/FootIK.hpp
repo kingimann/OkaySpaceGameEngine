@@ -107,6 +107,13 @@ public:
     float lockRelease = 0.3f;      ///< let go once the animated foot is this far from the pin
     /// Whether each foot is pinned right now (0 left, 1 right) — for debugging / UI.
     bool FootLocked(int leg) const { return leg == 0 ? m_leg[0].locked : m_leg[1].locked; }
+    /// Drop both pins and keep them off for `seconds` (a turn-in-place step).
+    void ReleaseLocks(float seconds) {
+        if (seconds > m_lockHold) m_lockHold = seconds;
+        m_leg[0].locked = m_leg[1].locked = false;
+        m_leg[0].lockW = m_leg[1].lockW = 0.0f;
+    }
+    bool LockSuppressed() const { return m_lockHold > 0.0f; }
 
     void Start() override {
         m_restore.Clear();   // bones may be re-resolved below: forget the old ones
@@ -174,6 +181,7 @@ public:
     // Update let those Animators clobber the correction the same frame.
     void Update(float) override { m_restore.Restore(); }   // before the animator blends (see IKRestore.hpp)
     void LateUpdate(float dt) override {
+        if (m_lockHold > 0.0f) m_lockHold = std::max(0.0f, m_lockHold - dt);
         m_restore.Restore();   // last frame's corrections off before anything reads the pose
         m_leg[0].planted = m_leg[1].planted = false;
         if (EffWeight() <= 0.0f) return;
@@ -249,6 +257,7 @@ private:
         Vec3  plantPos; Quat plantRot;
     };
     bool m_air = false;
+    float m_lockHold = 0.0f;   // seconds left with the foot pins forced off
     LegState m_leg[2];
     float m_pelvisOff = 0.0f;
     IKRestore m_restore;          ///< pelvis + each leg's bones (local space; see IKRestore.hpp)
@@ -380,8 +389,9 @@ private:
         float wantLift = apply ? want : 0.0f;
         L.lift += (wantLift - L.lift) * ease;
 
-        // Foot locking: pin a planted foot where it landed.
-        if (footLock && dt > 0.0f) {
+        // Foot locking: pin a planted foot where it landed. A turn step holds this off.
+        if (m_lockHold > 0.0f) { L.locked = false; L.lockW = 0.0f; }
+        else if (footLock && dt > 0.0f) {
             float spd = 0.0f;
             if (L.havePrev) { Vec3 d = animFoot - L.prevAnim; d.y = 0.0f; spd = d.Magnitude() / dt; }
             L.prevAnim = animFoot; L.havePrev = true;

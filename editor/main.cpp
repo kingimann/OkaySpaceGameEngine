@@ -29643,6 +29643,19 @@ void DrawInspector(EditorState& ed) {
               if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional: name of an object to look at instead of the camera (e.g. the player). Leave blank to use the camera."); }
             if (ImGui::SliderFloat("Head Turn Speed##char", &ch->headTurnSpeed, 0.0f, 20.0f)) ed.dirty = true;
 
+            SectionHeader("Feel");
+            if (ImGui::SliderFloat("Jump Crouch (s)##char", &ch->jumpCrouchTime, 0.0f, 0.4f, "%.2f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How long the knees dip as a jump starts. The jump is not delayed.");
+            if (ImGui::SliderFloat("Jump Crouch Bend##char", &ch->jumpCrouchBend, 0.0f, 60.0f, "%.0f deg")) ed.dirty = true;
+            if (ImGui::SliderFloat("Turn Step Angle##char", &ch->turnStepAngle, 0.0f, 120.0f, "%.0f deg")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Standing still, the body can twist this far before a foot steps.");
+            if (ImGui::SliderFloat("Turn Step Time##char", &ch->turnStepTime, 0.05f, 0.6f, "%.2f")) ed.dirty = true;
+            if (ImGui::SliderFloat("Turn Step Lift##char", &ch->turnStepLift, 0.0f, 70.0f, "%.0f deg")) ed.dirty = true;
+            if (ImGui::SliderFloat("Turn Still Speed##char", &ch->turnStillSpeed, 0.0f, 2.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::SliderFloat("Motion Lean##char", &ch->motionLean, 0.0f, 2.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lean into speeding up and turning. 0 turns it off.");
+            if (ImGui::SliderFloat("Motion Lean Max##char", &ch->motionLeanMax, 0.0f, 15.0f, "%.0f deg")) ed.dirty = true;
+
             if (c) { ch->Apply(); ed.dirty = true; }
         }
     }

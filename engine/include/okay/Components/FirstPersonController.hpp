@@ -629,6 +629,10 @@ public:
                 lo.walkSpeed = walkSpeed;
                 lo.runSpeed = runSpeed;
                 lo.dt = dt;
+                {
+                    float bodyYaw = Mathf::Atan2(flat.x, -flat.z) * Mathf::Rad2Deg;
+                    lo.yawRate = Character::YawRateOf(bodyYaw, m_prevBodyYaw, m_haveBodyYaw, dt);
+                }
                 ch->DriveLocomotion(lo);
                 // The body turns with yaw, so the head only needs to tilt with the
                 // look pitch (visible to other players / shadows in first person).
@@ -746,6 +750,8 @@ public:
 private:
     PlatformRide m_platRide;   // moving-platform tracking
     GroundLatch  m_ground;     // apex of a jump is not ground
+    float m_prevBodyYaw = 0.0f;
+    bool  m_haveBodyYaw = false;
 
     Vec3 m_spawn{0, 0, 0}; bool m_haveSpawn = false;   // fall-reset home position
 

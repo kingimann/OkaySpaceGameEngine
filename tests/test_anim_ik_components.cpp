@@ -11,6 +11,16 @@ using namespace okay;
 
 static float Dist(const Vec3& a, const Vec3& b) { return (a - b).Magnitude(); }
 
+static void RemovePoseTemps() {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::remove_all("/tmp/okay-pose-capture-d5f6", ec);
+    for (fs::directory_iterator it("/tmp", ec); !ec && it != fs::directory_iterator(); it.increment(ec)) {
+        const std::string name = it->path().filename().string();
+        if (name.rfind("okay-pose-unique-", 0) == 0) fs::remove_all(it->path(), ec);
+    }
+}
+
 static GameObject* Bone(Scene& sc, const char* name, GameObject* parent, Vec3 local) {
     GameObject* o = sc.CreateGameObject(name);
     o->transform->SetParent(parent->transform, false);
@@ -244,9 +254,11 @@ int main() {
         arm->transform->localPosition = {0, 0, 0};
         ma->SetTime(0.0f);
         CHECK_NEAR(arm->transform->localPosition.y, 2.0f, 1e-3f);
+        RemovePoseTemps();
     }
 
-    // Default captures get unique files, and a fresh model loads both back.
+    // Default captures get unique files. A rig with the same nodes loads both
+    // back; a different rig in the scene does not.
     {
         const std::string dir = "/tmp/okay-pose-unique-d5f6";
         std::error_code ec;
@@ -266,16 +278,24 @@ int main() {
         CHECK(cap->LastFile().find("Captured_1.okayclip") != std::string::npos);
 
         Scene again;
-        auto* ma2 = again.CreateGameObject("Hero")->AddComponent<ModelAnimator>();
+        GameObject* hero2 = again.CreateGameObject("Hero");
+        auto* ma2 = hero2->AddComponent<ModelAnimator>();
+        Bone(again, "LeftArm", hero2, {0.2f, 1.0f, 0});
+        GameObject* other = again.CreateGameObject("Other");
+        auto* maOther = other->AddComponent<ModelAnimator>();
+        Bone(again, "Spine", other, {0, 1.0f, 0});
         again.CreateGameObject("Loader")->AddComponent<PoseCapture>();
         again.Start();
-        CHECK(PoseCapture::ImportFolder(*ma2, dir) == 2 || ma2->clips.size() >= 2);
+        CHECK(PoseCapture::ImportFolder(*ma2, dir) == 2);
+        CHECK(PoseCapture::ImportFolder(*maOther, dir) == 0);
+        CHECK(maOther->clips.empty());
         bool first = false, second = false;
         for (const auto& c : ma2->clips) {
             if (c.name == "Captured") first = true;
             if (c.name == "Captured_1") second = true;
         }
         CHECK(first && second);
+        RemovePoseTemps();
     }
 
     // ---- The three components survive a scene save.

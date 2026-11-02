@@ -34,8 +34,9 @@ public:
     static void SetAssetBaseDir(const std::string& dir) { AssetDir() = dir; }
     static const std::string& AssetBaseDir() { return AssetDir(); }
 
-    /// Load every .okayclip in `dir` onto `ma`. A clip already on the animator is left as it is.
-    /// Returns how many clips were added.
+    /// Load .okayclip files in `dir` onto `ma` when this rig has every node the
+    /// clip poses. A clip for another skeleton in the same scene is left alone,
+    /// and a clip already on the animator is left as it is. Returns how many were added.
     static int ImportFolder(ModelAnimator& ma, const std::string& dir) {
         if (dir.empty()) return 0;
         namespace fs = std::filesystem;
@@ -47,6 +48,7 @@ public:
             if (it->path().extension() != ".okayclip") continue;
             ModelAnimator::Clip clip;
             if (!LoadClip(it->path().string(), clip) || clip.name.empty()) continue;
+            if (!RigHasClipNodes(ma, clip)) continue;
             bool have = false;
             for (const auto& c : ma.clips) if (c.name == clip.name) { have = true; break; }
             if (have) continue;
@@ -162,6 +164,25 @@ private:
     ModelAnimator::Clip m_build;
 
     static std::string& AssetDir() { static std::string d; return d; }
+
+    /// True when every node the clip poses is on this animator, not some other rig.
+    static bool RigHasClipNodes(const ModelAnimator& ma, const ModelAnimator::Clip& clip) {
+        if (clip.nodes.empty() || !ma.gameObject || !ma.gameObject->transform) return false;
+        auto onRig = [&](const std::string& name) {
+            if (name.empty()) return false;
+            std::vector<Transform*> stack{ma.gameObject->transform};
+            while (!stack.empty()) {
+                Transform* t = stack.back();
+                stack.pop_back();
+                if (t->gameObject && t->gameObject->name == name) return true;
+                for (Transform* c : t->Children()) if (c) stack.push_back(c);
+            }
+            return false;
+        };
+        for (const auto& n : clip.nodes)
+            if (!onRig(n.node)) return false;
+        return true;
+    }
 
     static std::string ReadToken(std::istream& in) {
         in >> std::ws;

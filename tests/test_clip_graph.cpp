@@ -2,11 +2,14 @@
 // every mapped clip has its state, and the parameters the player controllers
 // send (speed, grounded, crouch, prone, jump) move it between them.
 #include "test_framework.hpp"
+#include "rig_harness.hpp"
+#include "okay/Animation/HumanoidBones.hpp"
 #include <Okay.hpp>
 #include "okay/Animation/ClipGraph.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include <cmath>
+#include <cstdio>
 #include <string>
 
 using namespace okay;
@@ -157,6 +160,52 @@ int main() {
         };
         run(false);   // drive-by-movement, no graph
         run(true);    // the same readings under a graph
+    }
+
+    // ---- A real walk-only rig (no idle, run or jump clip) jumps on a third-person
+    // player: the air frames take the built-in jump / fall pose, never the bind
+    // T-pose. As attached, and again after "Create Animator from this model's clips".
+    for (int graph = 0; graph < 2; ++graph) {
+        righarness::Rig r = righarness::PlayableFromFile("mixamo_t_walk_only.glb");
+        CHECK(r);
+        if (!r) continue;
+        auto* ma = r.model->GetComponent<ModelAnimator>();
+        CHECK(ma != nullptr);
+        if (!ma) continue;
+        CHECK(ma->clips.size() == 1u);
+        CHECK(ma->jumpClip.empty());
+        CHECK(ma->BuiltinFallbackUsable());
+        if (graph) CHECK(ClipGraph::Ensure(r.model) != nullptr);
+        Transform* ua[2] = {r.Bone(humanoid::LUpperArm), r.Bone(humanoid::RUpperArm)};
+        Transform* fa[2] = {r.Bone(humanoid::LForeArm), r.Bone(humanoid::RForeArm)};
+        CHECK(ua[0] && ua[1] && fa[0] && fa[1]);
+        if (!ua[0] || !ua[1] || !fa[0] || !fa[1]) continue;
+        // Upper arm -> forearm, world y: ~0 with the arms straight out (T-pose),
+        // well below 0 with the arms lowered.
+        auto armY = [&](int s) { return (fa[s]->Position() - ua[s]->Position()).Normalized().y; };
+        CHECK(std::fabs(armY(0)) < 0.1f && std::fabs(armY(1)) < 0.1f);   // the file's bind pose reads as a T-pose
+        const float dt = 1.0f / 60.0f;
+        r.Step(dt, {}, 60);   // settle on the ground
+        const float y0 = r.player->transform->Position().y;
+        r.Step(dt, {' '}, 3);
+        int air = 0, owned = 0, tpose = 0;
+        float rise = 0.0f;
+        for (int f = 0; f < 150; ++f) {
+            r.Step(dt, {});
+            const float h = r.player->transform->Position().y - y0;
+            rise = std::fmax(rise, h);
+            if (!ma->InAir() || h < 0.05f) continue;
+            ++air;
+            if (ma->BuiltinOwnsPose()) ++owned;
+            if (armY(0) > -0.2f || armY(1) > -0.2f) ++tpose;
+        }
+        std::printf("  walk-only jump (graph=%d): rise %.2f m, %d air frames, built-in %d, T-pose %d\n",
+                    graph, rise, air, owned, tpose);
+        CHECK(rise > 0.8f && rise < 3.0f);
+        CHECK(air > 20);
+        CHECK(owned == air);   // no jump clip: the built-in jump owns every air frame
+        CHECK(tpose == 0);     // and the arms are never left out straight
+        CHECK(std::fabs(r.player->transform->Position().y - y0) < 0.05f);   // landed again
     }
 
     TEST_MAIN_RESULT();

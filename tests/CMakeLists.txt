@@ -947,6 +947,7 @@ add_test(NAME anim_sm_realloc COMMAND test_anim_sm_realloc)
 
 add_executable(test_clip_graph test_clip_graph.cpp)
 target_link_libraries(test_clip_graph PRIVATE okay::engine)
+target_compile_definitions(test_clip_graph PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME clip_graph COMMAND test_clip_graph)
 
 add_executable(test_foot_planting test_foot_planting.cpp)

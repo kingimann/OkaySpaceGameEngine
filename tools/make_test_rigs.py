@@ -458,6 +458,7 @@ def main():
         ("mixamo_t_cm_clips.glb",      MIXAMO,   "T", 1.0,  1.0, 1.0,  "identity", 0.01, True),
         ("mixamo_t_stance_clips.glb",  MIXAMO,   "T", 1.0,  1.0, 1.0,  "identity", 1.0,  STANCE_CLIPS),
         ("mixamo_t_noclips.glb",       MIXAMO,   "T", 1.0,  1.0, 1.0,  "identity", 1.0,  False),
+        ("mixamo_t_walk_only.glb",     MIXAMO,   "T", 1.0,  1.0, 1.0,  "identity", 1.0,  CLIPS[1:2]),
         ("ue_a_blender.glb",           UE,       "A", 1.15, 0.9, 1.0,  "y_bone_ue", 1.0, False),
         ("mixamo_a_blender_short.glb", MIXAMO,   "A", 1.0,  1.0, 0.8,  "y_bone",   1.0,  False),
         ("vroid_t.glb",                VROID,    "T", 1.0,  1.0, 1.0,  "identity", 1.0,  False),

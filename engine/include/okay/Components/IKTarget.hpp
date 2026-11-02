@@ -81,6 +81,7 @@ public:
 private:
     float m_w = 0.0f;
     bool m_have = false;
+    bool m_pullSet = false;
 
     void Resolve() {
         if (character || characterName.empty() || !gameObject || !gameObject->scene()) return;
@@ -123,7 +124,12 @@ private:
         if (!fb) {
             fb = host->AddComponent<FullBodyIK>();
             fb->MapBones(false);
+            fb->bodyPull = 0.2f;
+        } else if (!m_pullSet && std::fabs(fb->bodyPull - 0.6f) < 1e-4f) {
+            // The stock pull dips the whole body for a target just past the hand.
+            fb->bodyPull = 0.2f;
         }
+        m_pullSet = true;
         const int li = limb == LeftHand ? FullBodyIK::LeftHand
                      : limb == RightHand ? FullBodyIK::RightHand
                      : limb == LeftFoot ? FullBodyIK::LeftFoot

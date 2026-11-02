@@ -10,8 +10,12 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/Character.hpp"
 #include "okay/Components/FullBodyIK.hpp"
 #include "okay/Components/IKRestore.hpp"
+#include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/ThirdPersonShooterController.hpp"
+#include "okay/Physics/Physics3D.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Mathf.hpp"
@@ -109,6 +113,41 @@ private:
         return sc->mainCamera->transform;
     }
 
+    /// Orbit pitch the third-person camera rests at (degrees, looking down is
+    /// positive). 0 when this is not a third-person orbit.
+    float RestOrbitPitch() const {
+        auto read = [](GameObject* g, float& out) -> bool {
+            if (!g) return false;
+            if (auto* tp = g->GetComponent<ThirdPersonController>()) { out = tp->restPitch(); return true; }
+            if (auto* sh = g->GetComponent<ThirdPersonShooterController>()) { out = sh->restPitch(); return true; }
+            return false;
+        };
+        auto walk = [&](Transform* t, float& out) -> bool {
+            for (; t; t = t->Parent())
+                if (t->gameObject && read(t->gameObject, out)) return true;
+            return false;
+        };
+        float rest = 0.0f;
+        if (walk(transform, rest)) return rest;
+        if (Transform* cam = CameraTransform())
+            if (walk(cam, rest)) return rest;
+        return 0.0f;
+    }
+
+    /// The player the camera should not hit: this object, or the ancestor that
+    /// owns the third-person controller / character.
+    GameObject* AimSelf() const {
+        GameObject* self = gameObject;
+        for (Transform* t = transform; t; t = t->Parent()) {
+            if (!t->gameObject) continue;
+            if (t->gameObject->GetComponent<ThirdPersonController>() ||
+                t->gameObject->GetComponent<ThirdPersonShooterController>() ||
+                t->gameObject->GetComponent<Character>())
+                self = t->gameObject;
+        }
+        return self;
+    }
+
     void Solve(float dt) {
         m_restore.Restore();
         if (!m_gathered) Gather();
@@ -123,11 +162,31 @@ private:
         const Vec3 right = transform->Rotation() * Vec3{1, 0, 0};
         const Vec3 from = m_aimFrom ? m_aimFrom->Position() : transform->Position();
         Vec3 aim = from + facing * 8.0f;
+        bool haveCamPitch = false;
+        float camRelPitch = 0.0f;
         if (target) aim = target->Position();
         else if (useCamera) {
             if (Transform* cam = CameraTransform()) {
-                const Vec3 dir = cam->Rotation() * Vec3{0, 0, -1};
-                aim = cam->Position() + dir * 12.0f;
+                Vec3 dir = cam->Rotation() * Vec3{0, 0, -1};
+                const float dlen = std::sqrt(dir.SqrMagnitude());
+                if (dlen > 1e-6f) {
+                    dir = dir * (1.0f / dlen);
+                    // Crosshair: a hit along the view, otherwise a point far enough
+                    // that the shoulder offset does not tilt the aim.
+                    const float reach = 80.0f;
+                    aim = cam->Position() + dir * reach;
+                    if (Scene* sc = gameObject->scene()) {
+                        Physics3D::IgnoreHierarchy own(AimSelf());
+                        const RaycastHit3D hit = sc->physics3D().Raycast(*sc, cam->Position(), dir, reach);
+                        if (hit.hit) aim = hit.point;
+                    }
+                    // A third-person orbit rests looking down. Pitch is how far the
+                    // view has left that rest, so a level look does not bend the chest.
+                    const float flatD = std::sqrt(dir.x * dir.x + dir.z * dir.z);
+                    const float down = -std::atan2(dir.y, std::max(flatD, 1e-4f)) * Mathf::Rad2Deg;
+                    camRelPitch = RestOrbitPitch() - down;
+                    haveCamPitch = true;
+                }
             }
         }
         Vec3 to = aim - from;
@@ -135,7 +194,8 @@ private:
         const float yaw = Mathf::Clamp(std::atan2(Vec3::Dot(to, right), Vec3::Dot(to, facing)) * Mathf::Rad2Deg,
                                         -std::fabs(yawClamp), std::fabs(yawClamp));
         const float flat = std::sqrt(to.x * to.x + to.z * to.z);
-        float pitch = Mathf::Clamp(std::atan2(to.y, flat) * Mathf::Rad2Deg, -std::fabs(pitchClamp), std::fabs(pitchClamp));
+        float pitch = haveCamPitch ? camRelPitch : std::atan2(to.y, flat) * Mathf::Rad2Deg;
+        pitch = Mathf::Clamp(pitch, -std::fabs(pitchClamp), std::fabs(pitchClamp));
         pitch = Mathf::Clamp(pitch + m_recoil, -89.0f, 89.0f);
 
         const float wAll = Mathf::Clamp01(weight);

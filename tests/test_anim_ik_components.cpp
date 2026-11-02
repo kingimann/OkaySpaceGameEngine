@@ -64,6 +64,7 @@ int main() {
         CHECK(fb->effectors[FullBodyIK::LeftHand].enabled);
         CHECK(fb->effectors[FullBodyIK::LeftHand].target == tgt->transform);
         CHECK_NEAR(fb->effectors[FullBodyIK::LeftHand].positionWeight, 1.0f, 1e-4f);
+        CHECK_NEAR(fb->bodyPull, 0.2f, 1e-3f);
         sc.Update(1.0f / 60.0f);
         CHECK(Dist(hand->transform->Position(), goal) < 0.05f);
 
@@ -187,6 +188,34 @@ int main() {
         const Vec3 f = chest->transform->Rotation() * Vec3{0, 0, -1};
         const float got = std::atan2(f.y, std::sqrt(f.x * f.x + f.z * f.z)) * 57.29578f;
         CHECK(got > 15.0f && got < 35.0f);
+    }
+
+    // A third-person camera at its resting downward pitch does not bend the chest.
+    {
+        Scene sc;
+        GameObject* hero = sc.CreateGameObject("Hero");
+        auto* tp = hero->AddComponent<ThirdPersonController>();
+        tp->pitch = 20.0f;
+        GameObject* spine = Bone(sc, "Spine", hero, {0, 1.0f, 0});
+        GameObject* chest = Bone(sc, "Chest", spine, {0, 0.3f, 0});
+        auto* aim = hero->AddComponent<AimOffset>();
+        aim->useCamera = true;
+        aim->spineWeight = 0.0f;
+        aim->armWeight = 0.0f;
+        aim->chestWeight = 1.0f;
+        aim->weight = 1.0f;
+        GameObject* camGo = sc.CreateGameObject("Cam");
+        auto* cam = camGo->AddComponent<Camera>();
+        cam->main = true;
+        camGo->transform->SetPosition({0.0f, 2.8f, 4.0f});
+        camGo->transform->SetRotation(Quat::Euler(-20.0f, 0.0f, 0.0f));
+        sc.Start();
+        sc.mainCamera = cam;
+        aim->LateUpdate(0.016f);
+        const Vec3 f = chest->transform->Rotation() * Vec3{0, 0, -1};
+        const float got = std::atan2(f.y, std::sqrt(f.x * f.x + f.z * f.z)) * 57.29578f;
+        CHECK(std::fabs(got) < 2.0f);
+        CHECK_NEAR(tp->restPitch(), 20.0f, 0.01f);
     }
 
     // ---- Pose Capture: one frame, a short recording, and a script call.

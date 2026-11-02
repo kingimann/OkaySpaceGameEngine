@@ -30454,6 +30454,8 @@ void DrawInspector(EditorState& ed) {
             char tn[64]; std::strncpy(tn, ao->targetName.c_str(), sizeof(tn) - 1); tn[sizeof(tn) - 1] = '\0';
             if (ImGui::InputText("Target object##ao", tn, sizeof(tn))) { ao->targetName = tn; ao->target = nullptr; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("When set, the body aims at this object instead of the camera.");
+            if (!ao->targetName.empty() && !ed.scene().Find(ao->targetName))
+                ImGui::TextColored(ImVec4(0.95f, 0.6f, 0.35f, 1.0f), "Target object '%s' doesn't match any object.", ao->targetName.c_str());
             ImGui::DragFloat("Weight##ao", &ao->weight, 0.01f, 0.0f, 1.0f);
             ImGui::DragFloat("Pitch clamp##ao", &ao->pitchClamp, 1.0f, 0.0f, 89.0f);
             ImGui::DragFloat("Yaw clamp##ao", &ao->yawClamp, 1.0f, 0.0f, 180.0f);

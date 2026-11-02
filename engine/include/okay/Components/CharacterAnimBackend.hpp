@@ -104,6 +104,7 @@ private:
     const Component* m_machine = nullptr;            // the state machine playing through us
     AnimStateMachine* m_sm = nullptr;                // the same, for its parameters and state
     int   m_published = -1;                          // the `anim` we last wrote (-1 = not yet; the starting value is not a hold)
+    int   m_sentAction = -1;                         // last action id published on Character::netActionId
     bool  m_forced = false;                          // a later outside `anim` write holds the state until anim changes
     bool  m_forcedLoops = false;                     // that state loops or is a blend tree: it does not end with the clip
     bool  m_off = false;                             // `anim` 0: the body holds its own pose

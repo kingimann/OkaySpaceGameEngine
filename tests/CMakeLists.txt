@@ -464,6 +464,10 @@ add_executable(test_net_proxy_gait test_net_proxy_gait.cpp)
 target_link_libraries(test_net_proxy_gait PRIVATE okay::engine)
 add_test(NAME net_proxy_gait COMMAND test_net_proxy_gait)
 
+add_executable(test_net_anim_actions test_net_anim_actions.cpp)
+target_link_libraries(test_net_anim_actions PRIVATE okay::engine)
+add_test(NAME net_anim_actions COMMAND test_net_anim_actions)
+
 add_executable(test_net_spawn test_net_spawn.cpp)
 target_link_libraries(test_net_spawn PRIVATE okay::engine)
 add_test(NAME net_spawn COMMAND test_net_spawn)

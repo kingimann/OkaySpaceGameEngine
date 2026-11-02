@@ -17712,6 +17712,25 @@ void DrawHierarchy(EditorState& ed) {
                 if (ImGui::MenuItem(g_isolate == node ? "Exit Isolation" : "Isolate", "Shift+I"))
                     g_isolate = (g_isolate == node) ? nullptr : node;
                 if (ImGui::MenuItem("Delete", "Del"))    { ed.DeleteSelected(); ConsoleLog("Deleted"); }
+                if (node->GetComponent<Character>() || node->GetComponent<ModelAnimator>() || node->GetComponent<FullBodyIK>()) {
+                    if (ImGui::BeginMenu("Add IK Target")) {
+                        auto addLimb = [&](int limb, const char* label) {
+                            if (ImGui::MenuItem(label)) {
+                                ed.PushUndo();
+                                if (GameObject* g = IKTarget::Spawn(ed.scene(), node, limb)) {
+                                    ed.Select(g); ed.dirty = true;
+                                    ConsoleLog(std::string("IK Target: ") + label + " on '" + node->name + "'");
+                                }
+                            }
+                        };
+                        addLimb(IKTarget::LeftHand, "Left Hand");
+                        addLimb(IKTarget::RightHand, "Right Hand");
+                        addLimb(IKTarget::LeftFoot, "Left Foot");
+                        addLimb(IKTarget::RightFoot, "Right Foot");
+                        addLimb(IKTarget::Head, "Head");
+                        ImGui::EndMenu();
+                    }
+                }
                 if (!node->GetComponent<Character>()) {
                     ImGui::Separator();
                     // A skinned humanoid keeps its own mesh + weights: the built-in
@@ -30405,6 +30424,64 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##aim")) toRemove = a;
         }
     }
+    if (auto* ikt = dynamic_cast<IKTarget*>(curComp)) {
+        if (CompHeader("IK Target", ikt, &toRemove)) {
+            ImGui::TextDisabled("This object is where a hand, foot, or the head reaches.");
+            char cn[64]; std::strncpy(cn, ikt->characterName.c_str(), sizeof(cn) - 1); cn[sizeof(cn) - 1] = '\0';
+            if (ImGui::InputText("Character##ikt", cn, sizeof(cn))) { ikt->characterName = cn; ikt->character = nullptr; ed.dirty = true; }
+            const char* limbs[] = {"Left Hand", "Right Hand", "Left Foot", "Right Foot", "Head"};
+            int limb = ikt->limb;
+            if (limb < 0 || limb > 4) limb = 0;
+            if (ImGui::Combo("Limb##ikt", &limb, limbs, 5)) { ikt->limb = limb; ed.dirty = true; }
+            ImGui::DragFloat("Weight##ikt", &ikt->weight, 0.01f, 0.0f, 1.0f);
+            ImGui::DragFloat("Blend time##ikt", &ikt->blendTime, 0.01f, 0.0f, 2.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to ease the limb onto this object.");
+            if (ImGui::SmallButton("Remove##ikt")) toRemove = ikt;
+        }
+    }
+    if (auto* ao = dynamic_cast<AimOffset*>(curComp)) {
+        if (CompHeader("Aim Offset", ao, &toRemove)) {
+            ImGui::TextDisabled("Pitch and yaw on the spine, chest, and arms. Sits on top of item grips.");
+            ImGui::Checkbox("Aim with the camera##ao", &ao->useCamera);
+            char tn[64]; std::strncpy(tn, ao->targetName.c_str(), sizeof(tn) - 1); tn[sizeof(tn) - 1] = '\0';
+            if (ImGui::InputText("Target object##ao", tn, sizeof(tn))) { ao->targetName = tn; ao->target = nullptr; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("When set, the body aims at this object instead of the camera.");
+            ImGui::DragFloat("Weight##ao", &ao->weight, 0.01f, 0.0f, 1.0f);
+            ImGui::DragFloat("Pitch clamp##ao", &ao->pitchClamp, 1.0f, 0.0f, 89.0f);
+            ImGui::DragFloat("Yaw clamp##ao", &ao->yawClamp, 1.0f, 0.0f, 180.0f);
+            ImGui::DragFloat("Spine weight##ao", &ao->spineWeight, 0.01f, 0.0f, 1.0f);
+            ImGui::DragFloat("Chest weight##ao", &ao->chestWeight, 0.01f, 0.0f, 1.0f);
+            ImGui::DragFloat("Arm weight##ao", &ao->armWeight, 0.01f, 0.0f, 1.0f);
+            ImGui::DragFloat("Recoil kick##ao", &ao->kick, 0.1f, 0.0f, 45.0f);
+            ImGui::DragFloat("Recoil recovery##ao", &ao->recovery, 0.1f, 0.0f, 40.0f);
+            if (ImGui::SmallButton("Recoil##ao")) ao->Recoil(1.0f);
+            if (ImGui::SmallButton("Remove##ao")) toRemove = ao;
+        }
+    }
+    if (auto* pc = dynamic_cast<PoseCapture*>(curComp)) {
+        if (CompHeader("Pose Capture", pc, &toRemove)) {
+            ImGui::TextDisabled("In Play, save the pose on the model as a clip the Animator can play.");
+            char nm[64]; std::strncpy(nm, pc->clipName.c_str(), sizeof(nm) - 1); nm[sizeof(nm) - 1] = '\0';
+            if (ImGui::InputText("Clip name##pc", nm, sizeof(nm))) { pc->clipName = nm; ed.dirty = true; }
+            ImGui::DragFloat("Record seconds##pc", &pc->recordSeconds, 0.05f, 0.05f, 30.0f);
+            if (!ed.isPlaying()) ImGui::TextDisabled("Press Play, then save or record.");
+            if (ImGui::Button("Save pose##pc")) {
+                if (!ed.isPlaying()) ConsoleLog("Pose Capture: press Play first.", 1);
+                else {
+                    const int i = pc->CaptureFrame();
+                    ConsoleLog(i >= 0 ? "Saved pose as '" + pc->clipName + "'" : "Pose Capture: this object has no model animator.", i >= 0 ? 0 : 1);
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(pc->IsRecording() ? "Stop##pc" : "Record##pc")) {
+                if (!ed.isPlaying()) ConsoleLog("Pose Capture: press Play first.", 1);
+                else if (pc->IsRecording()) pc->StopRecord();
+                else pc->StartRecord(pc->recordSeconds);
+            }
+            if (pc->IsRecording()) ImGui::Text("Recording %.2fs", pc->RecordedTime());
+            if (ImGui::SmallButton("Remove##pc")) toRemove = pc;
+        }
+    }
     if (auto* l = dynamic_cast<LookAtIK*>(curComp)) {
         if (CompHeader("Look-At IK", l, &toRemove)) {
             ImGui::TextDisabled("Aim a spine/neck/head chain at a target (head tracking).");
@@ -36771,6 +36848,9 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<AnimStateMachine>(), "Animator (states + transitions)")) { go->AddComponent<AnimStateMachine>(); ed.dirty = true; }
             if (item(!go->GetComponent<SpriteAnimator>(), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
             if (item(!go->GetComponent<AimIK>(), "Aim IK (point a bone at a target)")) { go->AddComponent<AimIK>(); ed.dirty = true; }
+            if (item(!go->GetComponent<IKTarget>(), "IK Target (a hand, foot, or the head reaches this)")) { go->AddComponent<IKTarget>(); ed.dirty = true; }
+            if (item(!go->GetComponent<AimOffset>(), "Aim Offset (spine/chest/arms + recoil)")) { go->AddComponent<AimOffset>(); ed.dirty = true; }
+            if (item(!go->GetComponent<PoseCapture>(), "Pose Capture (save the pose as a clip)")) { go->AddComponent<PoseCapture>(); ed.dirty = true; }
             if (item(!go->GetComponent<LookAtIK>(), "Look-At IK (head/eye tracking)")) { go->AddComponent<LookAtIK>(); ed.dirty = true; }
             if (item(!go->GetComponent<FootIK>(), "Foot IK (plant feet on ground)")) { go->AddComponent<FootIK>(); ed.dirty = true; }
             if (item(!go->GetComponent<HumanoidRetarget>(), "Humanoid Retarget (built-in anims on an imported rig)")) {
@@ -39281,6 +39361,14 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             if (g_isolate && !up->IsSelfOrDescendantOf(g_isolate)) continue;
             Transform* t = up->transform;
             Vec3 p = t->Position();
+
+            // Edit mode: an IK Target and an Aim Offset keep showing the pose
+            // while their object is moved. Play mode runs them with the scene.
+            if (!ed.isPlaying()) {
+                const float pdt = ImGui::GetIO().DeltaTime;
+                if (auto* ikt = up->GetComponent<IKTarget>()) ikt->Preview(pdt);
+                if (auto* ao = up->GetComponent<AimOffset>()) ao->Preview(pdt);
+            }
 
             // ---- IK visualization for the selected object -------------------
             // Draw the IK bone chain, the target (orange crosshair) and the pole

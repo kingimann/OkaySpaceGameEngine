@@ -4,7 +4,7 @@ What is being worked on right now and what comes next. Kept current by the main
 (coordinating) Claude session; each item links its PR once one exists. Every PR
 merges once its five CI jobs are green, and a release follows.
 
-_Last updated: 2026-11-02 00:09 UTC_
+_Last updated: 2026-11-02 00:20 UTC_
 
 ## Releases
 
@@ -47,7 +47,7 @@ _Last updated: 2026-11-02 00:09 UTC_
 |---|---|---|
 | Main | Coordination, merges, releases | Merging and releasing as PRs go green |
 | QA | Anti-cheat hardening, PRs 1–4, 6, 8–14 | PRs 8, 9, 10, 12 (#363, #365, #368, #376) merging main back in after #372; PR 6 (#360) waits on Iman's OK; PR 13 next |
-| Humanoid | IK, animation and humanoid rigging, PRs 1–8 | PR 2b–2d up (#371, #375, #385); PR 3 next |
+| Humanoid | IK, animation and humanoid rigging, PRs 1–8 | Items 1–5 and 7 done; item 6 (rest-pose normalisation) is next |
 | Release | Anti-cheat hardening, PRs 5 and 7 | PR 7 merged; relay follow-ups (voice calls on v3 hellos, sessions per address); PR 5 (#350) waits on Iman's OK |
 | Robustness | Inventory, PRs 1–9 | PR 6a–6c (#359, #367, #378): pickups and drops, bag between scenes, equipment |
 | UI | In-game UI plan and component library | P1a UIFrame (#381), then P1c: modals, context menu, keybind field, 2-D navigation, touch |
@@ -64,12 +64,12 @@ _Last updated: 2026-11-02 00:09 UTC_
 
 ### IK, animation and rigging (Humanoid)
 1. [x] Animator component on the built-in players; procedural animation baked into clips: 1a backend (#340), 1b default graph and baked clips (#346), 1c inspector (#348).
-2. [ ] Smooth stance changes: stand, crouch and prone, moving in any direction. 2a core (#364, done); 2b animation (#371); 2c every controller (#375); 2d imported humanoids (#385).
-3. [ ] IK core correctness: LimbIK, ChainIK, FootIK, FullBodyIK.
-4. [ ] Controllers: ground probe (no apex double jump), eased step-up, rotating platforms, 2D one-shot clips.
-5. [ ] One shared humanoid bone mapper that rejects non-humanoids.
+2. [x] Smooth stance changes: stand, crouch and prone, moving in any direction. 2a core (#364); 2b animation (#371); 2c every controller (#375); 2d imported humanoids (#385).
+3. [x] IK core correctness: LimbIK, ChainIK, FootIK, FullBodyIK (#417, #507, #508).
+4. [x] Controllers: ground probe (no apex double jump), eased step-up, rotating platforms, 2D one-shot clips (#409, #411, #436, #526).
+5. [x] One shared humanoid bone mapper that rejects non-humanoids (#493, #522).
 6. [ ] Rest-pose normalisation and retargeting by avatar slot.
-7. [ ] Animator graph and preview for every character; import a clip into a state.
+7. [x] Animator graph and preview for every character; import a clip into a state (#499, #531). A graph still uses the built-in fallback and stride matching for empty slots.
 8. [ ] One-click humanoid import with the default library on any rig; character script API.
 
 ### Inventory (Robustness)

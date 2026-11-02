@@ -652,6 +652,11 @@ public:
                 lo.walkSpeed = walkSpeed;
                 lo.runSpeed = runSpeed;
                 lo.dt = dt;
+                {
+                    Vec3 bf = transform->localRotation * Vec3{0, 0, -1};
+                    float bodyYaw = Mathf::Atan2(bf.x, -bf.z) * Mathf::Rad2Deg;
+                    lo.yawRate = Character::YawRateOf(bodyYaw, m_prevBodyYaw, m_haveBodyYaw, dt);
+                }
                 ch->DriveLocomotion(lo);
                 // The head turns to keep looking where the camera points (relative to
                 // the body's current facing) AND tilts up/down with the orbit pitch,
@@ -832,6 +837,8 @@ private:
     bool m_haveMouse = false;
     bool m_runToggled = false;
     float m_lean = 0.0f;             // eased lean amount (-1..+1)
+    float m_prevBodyYaw = 0.0f;      // last body heading, for the yaw rate sent to Character
+    bool  m_haveBodyYaw = false;
     float m_restPitch = 18.0f;       // orbit pitch at Start (the camera's rest tilt)
     bool  m_drove = false;
     bool  m_owned = false;

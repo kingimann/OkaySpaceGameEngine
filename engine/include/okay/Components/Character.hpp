@@ -6,6 +6,7 @@
 #include "okay/Components/AnimClip.hpp"
 #include "okay/Animation/HumanoidMotion.hpp"
 #include <cctype>
+#include <cmath>
 #include <unordered_map>
 #include <vector>
 #include <string>
@@ -84,6 +85,19 @@ public:
     /// How quickly the stride follows a change of speed (seconds to close ~63%).
     /// The measured ground speed is smoothed once, by this. Serialized.
     float gaitSpeedSmoothing = 0.05f;
+    /// Visual takeoff crouch. The jump is not delayed: the knees dip for this
+    /// long as the body leaves the ground.
+    float jumpCrouchTime = 0.12f;
+    float jumpCrouchBend = 28.0f;    ///< deepest knee bend of that dip, degrees
+    /// Standing still, body yaw past this (degrees) takes one foot step.
+    float turnStepAngle = 50.0f;
+    float turnStepTime = 0.22f;      ///< how long that step lasts
+    float turnStepLift = 32.0f;      ///< how far the stepping thigh lifts, degrees
+    float turnStillSpeed = 0.45f;    ///< ground speed below which turning twists the feet
+    /// Lean into speeding up and turning (0 = off), the same idea as an imported
+    /// rig's lean. motionLeanMax is the cap in degrees.
+    float motionLean = 1.0f;
+    float motionLeanMax = 5.0f;
     /// Where the gait cycle is, 0..1 (0 = left foot touching down, 0.5 = right foot).
     float GaitPhase() const;
     /// True while the body is in the run pose, including the short blend back to a walk.
@@ -104,6 +118,7 @@ public:
         float runSpeed = 8.0f;     ///< the controller's run speed (walk/run style blend)
         float dt = 0.0f;
         bool  swim = false;        ///< supported by water. No swim clip yet: idle or walk stands in.
+        float yawRate = 0.0f;      ///< body yaw change, degrees per second (+ = turning right)
         /// Movement along this axis isn't walking (2.5D: the hop between depth
         /// layers slides along Z); zero = count every direction.
         Vec3  ignoreAxis{0, 0, 0};
@@ -118,6 +133,28 @@ public:
     /// and its eased level: an imported model's own clips follow it.
     int   StanceTarget() const { return m_stanceTarget; }
     float StanceLevel() const { return m_stanceLevel; }
+    /// 0..1 weight of the takeoff crouch (peaks in the middle of jumpCrouchTime).
+    float JumpCrouchWeight() const { return m_jumpCrouchW; }
+    /// True while a turn-in-place foot step is playing.
+    bool  TurnStepping() const { return m_stepT >= 0.0f; }
+    /// Which leg is stepping (0 left, 1 right).
+    int   TurnStepLeg() const { return m_stepLeg; }
+    /// Twist still stored in the feet, degrees, before the next step.
+    float BodyTwist() const { return m_twist; }
+    /// Smoothed lean from speeding up (pitch) and turning (roll), degrees.
+    float MotionPitch() const { return m_motionPitch; }
+    float MotionRoll() const { return m_motionRoll; }
+    /// Body heading change since the last sample, in degrees per second.
+    static float YawRateOf(float bodyYawDeg, float& prev, bool& have, float dt) {
+        float rate = 0.0f;
+        if (have && dt > 1e-5f) {
+            float d = std::fmod(bodyYawDeg - prev + 540.0f, 360.0f) - 180.0f;
+            rate = d / dt;
+        }
+        prev = bodyYawDeg;
+        have = true;
+        return rate;
+    }
     /// True while the last DriveLocomotion said the body was swimming.
     bool  Swimming() const { return m_swimming; }
 
@@ -659,6 +696,16 @@ private:
     HumanoidMotion::Inputs MotionInputs(int state, float t) const;   // the built-in motion's inputs
     void  AdvanceAnimClock(float dt);                  // animTime + the gait phase at the real cadence
     float m_landT = -1.0f;         // landing-recovery progress 0..1 (<0 = idle)
+    float m_anticipation = 0.0f;   // seconds of takeoff crouch still to play
+    float m_jumpCrouchW = 0.0f;    // 0..1 visual weight this frame
+    float m_twist = 0.0f;          // degrees the body has turned ahead of the feet
+    float m_stepT = -1.0f;         // turn-in-place step progress 0..1 (<0 = none)
+    int   m_stepLeg = 0;
+    float m_motionPitch = 0.0f, m_motionRoll = 0.0f;
+    Vec3  m_leanPos{0, 0, 0}, m_leanVel{0, 0, 0}, m_leanAcc{0, 0, 0};
+    bool  m_haveMotionLean = false;
+    void  TickFeel(float dt);
+    void  UpdateMotionLean(float dt);
     float m_landK = 0.0f;          // landing knee-bend envelope 0..1 (sin arc)
     float m_punchT = -1.0f;        // punch progress 0..1 (<0 = not punching)
     Mesh m_fpArm;                  // first-person arm-only mesh (rebuilt each frame)

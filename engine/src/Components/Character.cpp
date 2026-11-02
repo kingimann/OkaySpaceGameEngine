@@ -6,6 +6,7 @@
 #include "okay/Components/FirstPersonHands.hpp"
 #include "okay/Components/HoldableObject.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/FootIK.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -516,6 +517,18 @@ void Character::DriveLocomotion(const Locomotion& l) {
     if (l.swim) ground = true;                                 // water is holding the body
     m_airT = (ground && !l.jumped) ? 0.0f : m_airT + l.dt;
     if (l.jumped) m_airT = 1.0f;                               // leave the ground pose at once
+    if (l.jumped && jumpCrouchTime > 0.0f) m_anticipation = jumpCrouchTime;
+    // Standing still, turning the body twists the feet until they step.
+    if (!l.jumped && m_airT <= 0.0f && hs < turnStillSpeed && l.dt > 0.0f) {
+        m_twist += l.yawRate * l.dt;
+        if (m_stepT < 0.0f && turnStepAngle > 1.0f && std::fabs(m_twist) >= turnStepAngle) {
+            m_stepLeg = m_twist > 0.0f ? 1 : 0;
+            m_stepT = 0.0f;
+            m_twist = 0.0f;
+        }
+    } else if (l.dt > 0.0f) {
+        m_twist *= std::exp(-l.dt / 0.12f);
+    }
     if (l.swim) m_airT = 0.0f;
     m_swimming = l.swim;
     const float runAt = l.walkSpeed * (anim == 3 ? 1.05f : 1.15f);
@@ -578,6 +591,74 @@ void Character::ApplyLookAndLean(std::vector<Vec3>& r) const {
     float lean = Mathf::Clamp(m_bodyLean, -40.0f, 40.0f);
     r[B_TORSO].z += lean * 0.7f;
     r[B_HIPS].z  += lean * 0.3f;
+    // Speeding up tips the chest forward; a turn rolls it into the curve.
+    r[B_TORSO].x += m_motionPitch * 0.7f;
+    r[B_HIPS].x  += m_motionPitch * 0.3f;
+    r[B_TORSO].z += m_motionRoll * 0.7f;
+    r[B_HIPS].z  += m_motionRoll * 0.3f;
+    // Takeoff crouch: a short knee dip on top of the jump, which has already started.
+    if (m_jumpCrouchW > 0.0f && jumpCrouchBend > 0.0f) {
+        const float bend = jumpCrouchBend * m_jumpCrouchW;
+        r[B_LTHIGH].x += bend;       r[B_RTHIGH].x += bend;
+        r[B_LSHIN].x  -= bend * 1.3f; r[B_RSHIN].x  -= bend * 1.3f;
+    }
+    // One foot lifts through a turn-in-place step.
+    if (m_stepT >= 0.0f && turnStepLift > 0.0f) {
+        const float lift = turnStepLift * std::sin(m_stepT * 3.14159265f);
+        if (m_stepLeg == 0) { r[B_LTHIGH].x += lift; r[B_LSHIN].x -= lift * 0.6f; }
+        else                { r[B_RTHIGH].x += lift; r[B_RSHIN].x -= lift * 0.6f; }
+    }
+}
+
+void Character::TickFeel(float dt) {
+    if (jumpCrouchTime > 1e-4f && m_anticipation > 0.0f) {
+        const float u = std::min(1.0f, m_anticipation / jumpCrouchTime);
+        m_jumpCrouchW = std::sin(u * 1.5707963f);   // 1 at the takeoff, 0 as it ends
+        m_anticipation = std::max(0.0f, m_anticipation - dt);
+        if (m_anticipation <= 0.0f) m_jumpCrouchW = 0.0f;
+    } else {
+        m_jumpCrouchW = 0.0f;
+    }
+    if (m_stepT >= 0.0f) {
+        m_stepT += dt / std::max(turnStepTime, 1e-3f);
+        if (gameObject)
+            if (auto* fik = gameObject->GetComponent<FootIK>())
+                fik->ReleaseLocks(std::max(dt, 0.02f) + 0.02f);
+        if (m_stepT >= 1.0f) m_stepT = -1.0f;
+    }
+    UpdateMotionLean(dt);
+}
+
+void Character::UpdateMotionLean(float dt) {
+    auto ease = [&](float& v, float want) {
+        const float e = dt > 1e-5f ? 1.0f - std::exp(-dt / 0.1f) : 1.0f;
+        v += (want - v) * e;
+    };
+    Transform* t = gameObject ? gameObject->transform : nullptr;
+    if (!t || dt <= 1e-5f || motionLean <= 0.0f) {
+        ease(m_motionPitch, 0.0f);
+        ease(m_motionRoll, 0.0f);
+        return;
+    }
+    const Vec3 p = t->Position();
+    if (m_haveMotionLean) {
+        Vec3 d = p - m_leanPos; d.y = 0.0f;
+        Vec3 v = d.SqrMagnitude() > 4.0f ? m_leanVel : d * (1.0f / dt);
+        const Vec3 vPrev = m_leanVel;
+        m_leanVel = m_leanVel + (v - m_leanVel) * (1.0f - std::exp(-dt / 0.08f));
+        const Vec3 a = (m_leanVel - vPrev) * (1.0f / dt);
+        m_leanAcc = m_leanAcc + (a - m_leanAcc) * (1.0f - std::exp(-dt / 0.15f));
+    }
+    m_leanPos = p; m_haveMotionLean = true;
+    const Quat q = t->Rotation();
+    const Vec3 fwd = q * Vec3{0.0f, 0.0f, -1.0f}, right = q * Vec3{1.0f, 0.0f, 0.0f};
+    const float along = Vec3::Dot(m_leanAcc, fwd), across = Vec3::Dot(m_leanAcc, right);
+    auto cap = [](float v, float m) { return v > m ? m : (v < -m ? -m : v); };
+    const float moving = std::fmin(1.0f, std::sqrt(m_leanVel.x * m_leanVel.x + m_leanVel.z * m_leanVel.z) / 0.8f);
+    const float k = motionLean;
+    const float capD = motionLeanMax > 0.0f ? motionLeanMax : 0.0f;
+    ease(m_motionPitch, cap(along * 0.9f, capD) * k);
+    ease(m_motionRoll,  cap(across * 1.2f, capD) * k * moving);
 }
 
 bool Character::AnimatorSample(std::vector<Vec3>& pose, Vec3& root) const {
@@ -933,6 +1014,7 @@ void Character::CaptureLeavingPose() {
 }
 
 void Character::Update(float dt) {
+    TickFeel(dt);
     NoteStateChange();
     if (m_landT >= 0.0f) {
         m_landT += dt / 0.28f;                       // ~0.28s dip-and-spring
@@ -2518,6 +2600,9 @@ std::string Character::ToText() const {
     }
     // How fast the stride follows the ground (trailing, so older saves keep the default).
     o << ' ' << gaitSpeedSmoothing;
+    o << ' ' << jumpCrouchTime << ' ' << jumpCrouchBend
+      << ' ' << turnStepAngle << ' ' << turnStepTime << ' ' << turnStepLift
+      << ' ' << turnStillSpeed << ' ' << motionLean << ' ' << motionLeanMax;
     o << ' ' << (clipDive.empty() ? "-" : clipDive);
     // Per-key easing, for the clips that set it on any key (trailing, count-prefixed).
     auto hasKeyEase = [](const AnimClip& c) {
@@ -2637,6 +2722,16 @@ void Character::FromText(const std::string& text) {
     }
     float gs = gaitSpeedSmoothing;
     if (in >> gs) gaitSpeedSmoothing = gs > 0.0f ? gs : 0.0f;
+    float jct = jumpCrouchTime, jcb = jumpCrouchBend, tsa = turnStepAngle, tst = turnStepTime;
+    float tsl = turnStepLift, tss = turnStillSpeed, ml = motionLean, mlm = motionLeanMax;
+    if (in >> jct) jumpCrouchTime = std::max(0.0f, jct);
+    if (in >> jcb) jumpCrouchBend = std::max(0.0f, jcb);
+    if (in >> tsa) turnStepAngle = std::max(0.0f, tsa);
+    if (in >> tst) turnStepTime = std::max(0.05f, tst);
+    if (in >> tsl) turnStepLift = std::max(0.0f, tsl);
+    if (in >> tss) turnStillSpeed = std::max(0.0f, tss);
+    if (in >> ml)  motionLean = std::max(0.0f, ml);
+    if (in >> mlm) motionLeanMax = std::max(0.0f, mlm);
     // Optional trailing dive binding (absent in older saves).
     std::string sdive;
     if (in >> sdive) clipDive = (sdive == "-" ? "" : sdive);

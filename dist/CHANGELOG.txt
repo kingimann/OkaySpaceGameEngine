@@ -1,5 +1,21 @@
 OkaySpace Game Engine — Changelog
 
+v2.844.0
+  Characters
+  - An Animator graph on a walk-only model keeps the built-in idle, run and
+    jump, and still matches the walk clip to the body's stride. A walk file
+    no longer loses those poses when you create an Animator from its clips
+    (#531).
+  - The blocky character crouches into a jump, takes a step when it turns in
+    place, and leans into acceleration and turns (#532).
+  - Right-click a model in the Project panel and choose Make Playable
+    Character. If one player is selected, the model is attached to it;
+    otherwise the new character is the one that's played and the other
+    active players are deactivated. Set Character Model no longer crashes
+    the Inspector. Scripts can call ik_look_at, crouch and stand (#533).
+  - A walk-only jump test checks that every frame in the air uses the
+    built-in pose with the arms lowered, not a T-pose.
+
 v2.843.0
   In-game UI
   - One press does one thing. Pressing E to pick something up, or to drop

@@ -1728,6 +1728,30 @@ GameObject* g_hoverBone = nullptr;   // bone under the cursor (picked before mes
 // of the meshes they're inside).
 struct SkelDraw { ImVec2 q[4]; ImVec2 head; bool shape; ImU32 fill, edge; float thick, dot; };
 static std::vector<SkelDraw> g_skelDraw;
+// Look-at cone / label and foot rays, queued with the gizmos and drawn after
+// the scene image so the character mesh does not cover them.
+struct IkOverlay {
+    int kind = 0;   // 0 line, 1 text, 2 marker
+    okay::Vec3 a{}, b{};
+    ImU32 col = 0;
+    float th = 1.0f;
+    float dx = 0.0f, dy = 0.0f;
+    char text[48]{};
+};
+static std::vector<IkOverlay> g_ikOverlay;
+static void QueueIkLine(const okay::Vec3& a, const okay::Vec3& b, ImU32 col, float th) {
+    IkOverlay o; o.kind = 0; o.a = a; o.b = b; o.col = col; o.th = th;
+    g_ikOverlay.push_back(o);
+}
+static void QueueIkText(const okay::Vec3& at, ImU32 col, float dx, float dy, const char* s) {
+    IkOverlay o; o.kind = 1; o.a = at; o.col = col; o.dx = dx; o.dy = dy;
+    std::snprintf(o.text, sizeof(o.text), "%s", s ? s : "");
+    g_ikOverlay.push_back(o);
+}
+static void QueueIkMarker(const okay::Vec3& at, ImU32 col, float r) {
+    IkOverlay o; o.kind = 2; o.a = at; o.col = col; o.th = r;
+    g_ikOverlay.push_back(o);
+}
 // Isolate mode: the Scene view shows ONLY this object
 // and its children (lights stay on for shading). View-only — nothing in the
 // scene is modified, and the Game view / Play mode are unaffected.
@@ -30493,7 +30517,7 @@ void DrawInspector(EditorState& ed) {
                 } else ConsoleLog("Look-At IK: no head bone found under " + go->name, 1);
             }
             char tn[64]; std::strncpy(tn, l->targetName.c_str(), sizeof(tn) - 1); tn[sizeof(tn) - 1] = '\0';
-            if (ImGui::InputText("Target object##look", tn, sizeof(tn))) { l->targetName = tn; ed.dirty = true; }
+            if (ImGui::InputText("Target object##look", tn, sizeof(tn))) { l->targetName = tn; l->targetObject = nullptr; ed.dirty = true; }
             ImGui::SameLine();
             if (ImGui::SmallButton("Create##looktgt")) {
                 std::string tip = l->chainNames.empty() ? std::string() : l->chainNames.back();
@@ -39262,6 +39286,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         // and are picked before meshes (the mesh box covers the whole character).
         g_hoverBone = nullptr;
         g_skelDraw.clear();
+        g_ikOverlay.clear();
         if (g_skeletonMode > 0 && g_showGizmos) {
             auto topOf = [](Transform* t) { while (t && t->Parent()) t = t->Parent(); return t; };
             Transform* selTop = ed.selected() ? topOf(ed.selected()->transform) : nullptr;
@@ -39463,17 +39488,14 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         for (int s2 = 0; s2 <= N; ++s2) {
                             const float a2 = 6.2831853f * s2 / N;
                             const Vec3 p2 = origin + fwd * h + (side * std::cos(a2) + up2 * std::sin(a2)) * rad;
-                            if (s2) line(prev2, p2, kCone, 1.2f);
-                            if (s2 % 5 == 0) line(origin, p2, kCone, 1.0f);
+                            if (s2) QueueIkLine(prev2, p2, kCone, 1.2f);
+                            if (s2 % 5 == 0) QueueIkLine(origin, p2, kCone, 1.0f);
                             prev2 = p2;
                         }
                     }
-                    ImVec2 lsp;
-                    if (project(origin, lsp)) {
-                        char buf[48];
-                        std::snprintf(buf, sizeof(buf), "look %d%%", (int)std::lround(la->EffectiveWeight() * 100.0f));
-                        dl->AddText(ImVec2(lsp.x + 8.0f, lsp.y - 14.0f), IM_COL32(210, 180, 255, 255), buf);
-                    }
+                    char buf[48];
+                    std::snprintf(buf, sizeof(buf), "look %d%%", (int)std::lround(la->EffectiveWeight() * 100.0f));
+                    QueueIkText(origin, IM_COL32(210, 180, 255, 255), 8.0f, -14.0f, buf);
                 }
                 if (auto* ft = up->GetComponent<FootIK>()) {
                     const ImU32 kRay = IM_COL32(120, 210, 255, 230);
@@ -39488,27 +39510,24 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         if (bones[leg]) { foot = bones[leg]->Position(); have = true; }
                         else have = scenePos(*names[leg], foot);
                         if (!have) continue;
-                        line(Vec3{foot.x, foot.y + ft->maxRayUp, foot.z},
-                             Vec3{foot.x, foot.y - ft->maxRayDown, foot.z}, kRay, 1.5f);
+                        QueueIkLine(Vec3{foot.x, foot.y + ft->maxRayUp, foot.z},
+                                    Vec3{foot.x, foot.y - ft->maxRayDown, foot.z}, kRay, 1.5f);
                         if (ft->stepProbes && bones[leg]) {
                             Vec3 along = bones[leg]->Rotation() * Vec3{0, 0, 1};
                             if (along.SqrMagnitude() > 1e-6f) {
                                 along = along.Normalized();
                                 auto probe = [&](const Vec3& at) {
-                                    line(Vec3{at.x, at.y + ft->maxRayUp, at.z},
-                                         Vec3{at.x, at.y - ft->maxRayDown, at.z}, kRay, 1.0f);
+                                    QueueIkLine(Vec3{at.x, at.y + ft->maxRayUp, at.z},
+                                                Vec3{at.x, at.y - ft->maxRayDown, at.z}, kRay, 1.0f);
                                 };
                                 probe(foot + along * ft->toeReach);
                                 probe(foot - along * ft->heelReach);
                             }
                         }
-                        if (ft->FootPlanted(leg)) marker(ft->FootPlantPos(leg), kPlant, 5.0f);
-                        ImVec2 sp;
-                        if (project(foot, sp)) {
-                            char buf[32];
-                            std::snprintf(buf, sizeof(buf), "%s %s", sides[leg], ft->FootLocked(leg) ? "locked" : "free");
-                            dl->AddText(ImVec2(sp.x + 6.0f, sp.y), ft->FootLocked(leg) ? kLock : kRay, buf);
-                        }
+                        if (ft->FootPlanted(leg)) QueueIkMarker(ft->FootPlantPos(leg), kPlant, 5.0f);
+                        char buf[32];
+                        std::snprintf(buf, sizeof(buf), "%s %s", sides[leg], ft->FootLocked(leg) ? "locked" : "free");
+                        QueueIkText(foot, ft->FootLocked(leg) ? kLock : kRay, 6.0f, 0.0f, buf);
                     }
                 }
                 if (auto* ai = up->GetComponent<AimIK>()) {
@@ -39763,6 +39782,22 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 dl->AddPolyline(d.q, 4, d.edge, ImDrawFlags_Closed, d.thick);
             }
             dl->AddCircleFilled(d.head, d.dot, d.edge);
+        }
+        for (const IkOverlay& o : g_ikOverlay) {
+            if (o.kind == 0) {
+                clipLine(vp * Vec4{o.a, 1}, vp * Vec4{o.b, 1}, o.col, o.th);
+                continue;
+            }
+            Vec4 c = vp * Vec4{o.a, 1};
+            if (c.z + c.w <= 0.0001f) continue;
+            ImVec2 s = projClip(c);
+            if (o.kind == 1) {
+                dl->AddText(ImVec2(s.x + o.dx, s.y + o.dy), o.col, o.text);
+            } else {
+                dl->AddCircle(s, o.th, o.col, 20, 2.0f);
+                dl->AddLine(ImVec2(s.x - o.th - 3.0f, s.y), ImVec2(s.x + o.th + 3.0f, s.y), o.col, 1.4f);
+                dl->AddLine(ImVec2(s.x, s.y - o.th - 3.0f), ImVec2(s.x, s.y + o.th + 3.0f), o.col, 1.4f);
+            }
         }
     }
     // Banner so an "empty" viewport is never a mystery.

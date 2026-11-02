@@ -121,6 +121,10 @@ public:
     // has posed the bones this frame (imported rigs create their per-node
     // Animators lazily, which puts them late in the Update order).
     void LateUpdate(float dt) override {
+        // Start binds the name once. A target set or changed during Play has a
+        // name and no object yet, so resolve it again here.
+        if (!targetObject && !targetName.empty())
+            targetObject = ResolveBone(GetScene(), gameObject, targetName);
         // Last frame's writes come off first, so a still bone (and a rotation-only
         // clip) shows the animated pose before this solve. Weight 0 leaves it there.
         m_restore.Restore();

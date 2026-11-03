@@ -267,6 +267,38 @@ int main() {
         CHECK_NEAR(tp->restPitch(), 20.0f, 0.01f);
     }
 
+    // Mixamo-like rig (model yawed 180, spine along +Y, head a little +Z):
+    // recoil moves the head back and up, not forward into a bow.
+    {
+        Scene sc;
+        GameObject* player = sc.CreateGameObject("Player");
+        player->AddComponent<Character>();
+        GameObject* model = sc.CreateGameObject("Xbot");
+        model->transform->SetParent(player->transform, false);
+        model->transform->localRotation = Quat::AngleAxis(180.0f, Vec3::Up);
+        GameObject* hips = Bone(sc, "Hips", model, {0, 1.0f, 0});
+        GameObject* spine = Bone(sc, "Spine", hips, {0, 0.15f, 0});
+        GameObject* spine2 = Bone(sc, "Spine2", spine, {0, 0.2f, 0});
+        GameObject* head = Bone(sc, "Head", spine2, {0, 0.25f, 0.08f});
+        auto* aim = model->AddComponent<AimOffset>();
+        aim->useCamera = false;
+        aim->spineWeight = 0.0f;
+        aim->armWeight = 0.0f;
+        aim->chestWeight = 1.0f;
+        aim->weight = 1.0f;
+        aim->kick = 28.0f;
+        aim->recovery = 0.0f;
+        aim->pitchClamp = 80.0f;
+        sc.Start();
+        aim->LateUpdate(0.016f);
+        const Vec3 before = head->transform->Position();
+        aim->Recoil(1.0f);
+        aim->LateUpdate(0.016f);
+        const Vec3 d = head->transform->Position() - before;
+        CHECK(d.y > 0.002f);
+        CHECK(d.z > 0.01f);
+    }
+
     // ---- Pose Capture: one frame, a short recording, and a script call.
     {
         Scene sc;

@@ -158,8 +158,11 @@ private:
         if (!target && !targetName.empty() && gameObject->scene())
             if (GameObject* g = gameObject->scene()->Find(targetName)) target = g->transform;
 
-        const Vec3 facing = transform->Rotation() * Vec3{0, 0, -1};
-        const Vec3 right = transform->Rotation() * Vec3{1, 0, 0};
+        // The body's facing, not this object's local -Z. An imported Mixamo
+        // model is yawed 180 so its mesh faces -Z, and its local +X is then the
+        // body's left: pitching about that axis bows the chest forward.
+        Vec3 facing, right;
+        BodyAxes(facing, right);
         const Vec3 from = m_aimFrom ? m_aimFrom->Position() : transform->Position();
         Vec3 aim = from + facing * 8.0f;
         bool haveCamPitch = false;
@@ -204,10 +207,35 @@ private:
             m_restore.Touch(b.t);
             const float w = wAll * b.w;
             if (w <= 0.0f) continue;
-            const Quat add = Quat::AngleAxis(yaw * w, Vec3::Up) * Quat::AngleAxis(pitch * w, right);
-            b.t->SetRotation((add * b.t->Rotation()).Normalized());
+            // World yaw and pitch, written in this bone's parent space.
+            // Positive pitch is about the body's right: the head goes back and up.
+            // Recoil is degrees added to that pitch, not a scale on the aim vector.
+            Transform* parent = b.t->Parent();
+            const Quat parentRot = parent ? parent->Rotation() : Quat::Identity;
+            Vec3 upAxis = parentRot.Inverse() * Vec3::Up;
+            Vec3 rightAxis = parentRot.Inverse() * right;
+            if (upAxis.SqrMagnitude() < 1e-8f) upAxis = Vec3::Up;
+            if (rightAxis.SqrMagnitude() < 1e-8f) rightAxis = Vec3{1, 0, 0};
+            b.t->localRotation = (Quat::AngleAxis(yaw * w, upAxis) *
+                                  Quat::AngleAxis(pitch * w, rightAxis) *
+                                  b.t->localRotation).Normalized();
         }
         m_restore.Commit();
+    }
+
+    /// Visual forward (-Z) and right of the character that owns this aim.
+    void BodyAxes(Vec3& facing, Vec3& right) const {
+        const Character* ch = nullptr;
+        for (Transform* t = transform; t && !ch; t = t->Parent())
+            if (t->gameObject) ch = t->gameObject->GetComponent<Character>();
+        const Transform* src = (ch && ch->transform) ? ch->transform : transform;
+        facing = src ? src->Rotation() * Vec3{0, 0, -1} : Vec3{0, 0, -1};
+        facing.y = 0.0f;
+        if (facing.SqrMagnitude() < 1e-6f) facing = Vec3{0, 0, -1};
+        else facing = facing.Normalized();
+        right = Vec3{-facing.z, 0.0f, facing.x};
+        if (right.SqrMagnitude() < 1e-6f) right = Vec3{1, 0, 0};
+        else right = right.Normalized();
     }
 };
 

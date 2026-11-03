@@ -530,6 +530,18 @@ public:
         // A positive turn about up swings that facing toward -X, so the sign flips
         // and the legs turn toward the travel instead of away from it.
         hips->localRotation = (Quat::AngleAxis(-yaw, axis) * hips->localRotation).Normalized();
+        // The hip yaw turns the chest with the legs. Twist the spine back by the
+        // same world yaw so the upper body keeps facing the aim.
+        Transform* spine = NodeT("Spine");
+        if (!spine) spine = NodeT("mixamorig:Spine");
+        if (!spine) spine = NodeT("spine");
+        if (!spine) spine = NodeT("Chest");
+        if (!spine) spine = NodeT("mixamorig:Chest");
+        if (!spine) return;
+        Transform* sp = spine->Parent();
+        Vec3 saxis = sp ? sp->Rotation().Inverse() * Vec3::Up : Vec3::Up;
+        if (saxis.SqrMagnitude() < 1e-8f) saxis = Vec3::Up;
+        spine->localRotation = (Quat::AngleAxis(yaw, saxis) * spine->localRotation).Normalized();
     }
     /// Travel direction relative to facing, degrees, -180..180. False with no Character.
     bool TravelDeg(float& out) const {

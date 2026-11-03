@@ -158,6 +158,41 @@ int main() {
         }
     }
 
+    // A pure strafe turns the hips, and the chest stays with the body's facing.
+    {
+        auto chestYaw = [](float angle) {
+            Scene s("chest"); s.physicsEnabled = false;
+            GameObject* player = s.CreateGameObject("Player");
+            auto* ch = player->AddComponent<Character>();
+            ch->Apply();
+            GameObject* model = s.CreateGameObject("Model");
+            model->transform->SetParent(player->transform, false);
+            GameObject* hips = s.CreateGameObject("Hips");
+            hips->transform->SetParent(model->transform, false);
+            GameObject* spine = s.CreateGameObject("Spine");
+            spine->transform->SetParent(hips->transform, false);
+            GameObject* chest = s.CreateGameObject("Chest");
+            chest->transform->SetParent(spine->transform, false);
+            auto* ma = model->AddComponent<ModelAnimator>();
+            ma->clips = {ClipNamed("Idle"), ClipNamed("Walk")};
+            ma->idleClip = "Idle"; ma->walkClip = "Walk";
+            ch->moveSpeed = 2.0f;
+            ch->moveAngle = angle;
+            s.Start();
+            s.Update(1.0f / 60.0f);
+            const Vec3 body = player->transform->Rotation() * Vec3{0.0f, 0.0f, -1.0f};
+            const Vec3 face = chest->transform->Rotation() * Vec3{0.0f, 0.0f, -1.0f};
+            const float by = std::atan2(body.x, -body.z);
+            const float cy = std::atan2(face.x, -face.z);
+            float rel = (cy - by) * 57.2957795f;
+            while (rel > 180.0f) rel -= 360.0f;
+            while (rel < -180.0f) rel += 360.0f;
+            return rel;
+        };
+        CHECK(std::fabs(chestYaw(90.0f)) < 10.0f);
+        CHECK(std::fabs(chestYaw(-90.0f)) < 10.0f);
+    }
+
     // A walk-only rig moving backward does not play that walk forward.
     {
         Scene s("moon"); s.physicsEnabled = false;

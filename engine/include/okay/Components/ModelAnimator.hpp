@@ -519,10 +519,16 @@ public:
     }
     /// True while the model's own clip owns the pose: a held clip or a one-shot
     /// (HumanoidRetarget yields until it ends).
+    /// A base-state action with no clip on this rig (death, wave, emotes, sit,
+    /// roll) does not: the built-in pose is retargeted onto the bones.
     bool ClipOverridesPose() const {
-        // With the built-in fallback the clips own the pose except while a slot has none.
-        return m_held || m_once || (!m_builtinOwns && BuiltinFallbackUsable());
+        if (m_held || m_once) return true;
+        if (m_builtinOwns || !BuiltinFallbackUsable()) return false;
+        if (ActionPoseUncovered()) return false;
+        return true;
     }
+    /// The base state machine is in a state this rig has no clip for.
+    bool ActionPoseUncovered() const;
 
     /// An AnimStateMachine on this object registers itself here: while it's on
     /// the object and enabled it picks the clips, and driveByMovement waits.

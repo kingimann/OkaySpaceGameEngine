@@ -950,6 +950,10 @@ target_link_libraries(test_clip_graph PRIVATE okay::engine)
 target_compile_definitions(test_clip_graph PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME clip_graph COMMAND test_clip_graph)
 
+add_executable(test_strafe_blend test_strafe_blend.cpp)
+target_link_libraries(test_strafe_blend PRIVATE okay::engine)
+add_test(NAME strafe_blend COMMAND test_strafe_blend)
+
 add_executable(test_foot_planting test_foot_planting.cpp)
 target_link_libraries(test_foot_planting PRIVATE okay::engine)
 add_test(NAME foot_planting COMMAND test_foot_planting)

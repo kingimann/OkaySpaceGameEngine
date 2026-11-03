@@ -272,7 +272,11 @@ public:
                 // Apex: a jump turns into a fall once we're heading down.
                 if (vy < -1.0f && m_airSlot == SlotJump) {
                     m_airSlot = SlotFall;
-                    if (!graph && SlotFilled(SlotFall) && CurrentName() == jumpClip) Play(fallClip);
+                    // An empty jump slot never played the jump clip, so the body is
+                    // still on idle. The fall clip still takes over on the way down.
+                    if (!graph && SlotFilled(SlotFall) &&
+                        (jumpClip.empty() || CurrentName() == jumpClip))
+                        Play(fallClip);
                 }
                 // Touchdown: vertical motion dies out (the ground stops us). A jump's
                 // apex also passes zero, so that counts only once we've been

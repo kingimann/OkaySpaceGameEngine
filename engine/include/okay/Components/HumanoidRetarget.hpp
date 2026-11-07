@@ -81,7 +81,20 @@ public:
         // The model's own clips take priority while a script holds one (play_clip /
         // the Play Clip node) or a one-shot plays (play_clip_once: attack, emote).
         ModelAnimator* ma = CachedAnimator(*sc, rig, dt);
-        if (ma && ma->ClipOverridesPose()) { m_clipHadPose = true; return; }
+        if (ma && ma->ClipOverridesPose()) {
+            // The clip owns the bones AND the height (a file's crouch clip already
+            // lowers the hips), so the model's stance drop goes back to rest. Returning
+            // here without that left a crouch's drop on the model after standing up,
+            // once the file's Idle took over. It eases back, never snaps.
+            if (rig != gameObject) {
+                Vec3 p = rig->transform->localPosition;
+                const float blend = std::fmax(0.05f, ma->blendTime);
+                p.y += (m_rigRestPos.y - p.y) * std::fmin(1.0f, dt / blend);
+                rig->transform->localPosition = p;
+            }
+            m_clipHadPose = true;
+            return;
+        }
         // The built-in pose takes over from an imported clip: ease from the pose
         // the clip left (a one-shot ending, a slot with no clip of its own).
         if (m_clipHadPose) {
@@ -134,10 +147,14 @@ public:
         // rig lowers its root (StanceOffset is in player-local units already).
         // (When the rig IS this object — built-in animations on a standalone
         // model — leave its position alone: that's where you placed it.)
-        if (rig != gameObject) {
-            Vec3 so = ch->StanceOffset();
-            rig->transform->localPosition = m_rigRestPos + Vec3{0.0f, so.y * weight, 0.0f};
-        }
+        ApplyStanceDrop(rig, ch);
+    }
+    /// Crouch / prone / landing dip: lower the whole model like the blocky rig
+    /// lowers its root (StanceOffset is in player-local units already).
+    void ApplyStanceDrop(GameObject* rig, Character* ch) {
+        if (rig == gameObject) return;
+        Vec3 so = ch->StanceOffset();
+        rig->transform->localPosition = m_rigRestPos + Vec3{0.0f, so.y * weight, 0.0f};
     }
 
     /// Detect the humanoid bones by name under `rigRoot` and capture the rest

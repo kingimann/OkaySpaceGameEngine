@@ -136,17 +136,24 @@ FootState FootAt(float p, float beta, float reach, float lift, float speed, bool
 
 float GaitHipYFor(const Gait& g, float ph) {
     const float maxLeg = kHipToAnkle * 0.998f;
-    // How far the hips must come down for a planted foot to reach the ground.
+    // How far the hips must come down for this foot to reach the ground. A
+    // swinging foot counts too, with its lift: the need is continuous across
+    // lift-off and touch-down, so taking the largest over BOTH feet keeps the
+    // hip height continuous. Counting only the planted feet dropped a foot from
+    // the set at the very moment its need was the largest, and the hips jumped
+    // 3-10 cm at every step (the jitter in a slow walk).
     auto need = [&](const FootState& f) {
         float n = kHipToAnkle - std::sqrt(std::fmax(0.0f, maxLeg * maxLeg - f.fwd * f.fwd)) - f.lift;
-        return n + g.sag * std::sin(kPi * f.u);
+        return f.planted ? n + g.sag * std::sin(kPi * f.u) : n;
     };
     float drop = -1.0f;
+    bool anyPlanted = false;
     for (int leg = 0; leg < 2; ++leg) {
         FootState f = FootAt(ph + 0.5f * leg, g.beta, g.reach, g.lift, g.speed, g.crouch, g.run);
-        if (f.planted) drop = std::fmax(drop, need(f));
+        anyPlanted = anyPlanted || f.planted;
+        drop = std::fmax(drop, need(f));
     }
-    if (drop < -0.5f) {
+    if (!anyPlanted) {
         // Both feet off the ground (running): a short ballistic arc that leaves
         // exactly where the last foot pushed off and lands exactly where the next
         // one touches down, so the hips never jump and the feet never dip.

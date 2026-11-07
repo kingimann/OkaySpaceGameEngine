@@ -55,6 +55,7 @@ public:
     std::string upperName, lowerName, endName, targetName, poleName;
 
     float weight   = 1.0f;
+    float stateWeight = 1.0f;          ///< x weight; set per state by the Animator state machine
     bool  ikActive = true;             ///< switch IK on/off; the change eases over fadeTime
     float fadeTime = 0.0f;             ///< seconds to blend IK in/out (0 = instant)
     float minBend  = 0.0f;             ///< joint limits (interior angle, degrees)
@@ -91,7 +92,7 @@ public:
     void Update(float) override { m_restore.Restore(); }   // before the animator blends (see IKRestore.hpp)
     void LateUpdate(float dt) override {
         m_restore.Restore();
-        const float w = weight * m_fade.Step(ikActive, fadeTime, dt);
+        const float w = weight * stateWeight * m_fade.Step(ikActive, fadeTime, dt);
         if (w <= 0.0f || !upper || !lower || !end) { m_goal.Reset(); return; }
         const Vec3 root = upper->Position(), oldMid = lower->Position(), oldEnd = end->Position();
         const Vec3 tgt = m_goal.Step(targetObject ? targetObject->Position() : target, (std::uintptr_t)targetObject,

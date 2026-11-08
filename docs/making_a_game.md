@@ -5,9 +5,10 @@ minutes. It uses only what ships in the box — no plugins, no external tools.
 
 ## 1. Open the engine
 
-Run **`dist/OkayEngine.exe`** (Windows). That single self-contained `.exe`
-*is* the editor: docked Hierarchy, Scene, Inspector, Console, Project, Services,
-and Script Editor panels around a 2D/3D viewport.
+Run **`OkaySpace.exe`** (Windows), the launcher. Creating or opening a project
+there starts the editor (`Tools/OkayEngine.exe`): docked Hierarchy, Scene,
+Inspector, Console, Project, Services, and Script Editor panels around a 2D/3D
+viewport. The folder layout is in [packaging.md](packaging.md).
 
 ## 2. Start a project
 
@@ -63,7 +64,7 @@ Full reference: [`scripting.md`](scripting.md).
 ## 5. Play, then ship
 
 - **▶ Play** runs the real lifecycle — scripts, physics, audio, particles.
-- **File → Build Game** (Ctrl+B): pick a name and folder. The editor writes
+- **File → Build Settings…** (Ctrl+B): pick a name and folder. The editor writes
   `game.okayscene`, copies the player runtime as `<YourGame>.exe`, and copies
   every texture / sound / animation frame the scene uses.
 - The output folder is a self-contained game: double-click `<YourGame>.exe`.

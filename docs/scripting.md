@@ -694,7 +694,7 @@ a basic inventory.
 
 ### Scriptable Objects (Data Assets)
 Reusable `.okaydata` files of named fields (item/enemy/level definitions,
-config). Create with **Project → New Data Asset**.
+config). Create one by right-clicking in the Project panel: **Create → Data Asset**.
 
 | Function | Effect |
 | --- | --- |

@@ -428,9 +428,9 @@ Wrap risky code in `try` / `catch`, and raise your own errors with `throw`:
 
 ```
 try {
-    var data = from_json(load_prefs("save", "{}"));
+    var data = from_json(prefs_get_str("save", "{}"));
     if (map_count(data) == 0) { throw "no save data"; }
-    load_level(map_get(data, "level"));
+    print("Level: " + map_get(data, "level"));
 } catch (e) {
     print("Load failed: " + e);   // e is the error message
 }

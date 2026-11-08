@@ -58,8 +58,8 @@ Color ParseColor(const std::string& v) {
     int c[4] = {255, 255, 255, 255};
     std::stringstream ss(v); std::string tok; int i = 0;
     while (i < 4 && std::getline(ss, tok, ',')) c[i++] = std::atoi(tok.c_str());
-    return Color::FromBytes((std::uint8_t)c[0], (std::uint8_t)c[1],
-                            (std::uint8_t)c[2], (std::uint8_t)c[3]);
+    auto byte = [](int v) { return v < 0 ? 0 : (v > 255 ? 255 : v); };   // clamp: 300 is not 44
+    return Color::FromBytes(byte(c[0]), byte(c[1]), byte(c[2]), byte(c[3]));
 }
 
 UIAnchor ParseAnchor(const std::string& v) {

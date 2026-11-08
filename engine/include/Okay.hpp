@@ -12,6 +12,7 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Random.hpp"
+#include "okay/Core/Rng.hpp"
 #include "okay/Core/DataPack.hpp"
 #include "okay/Core/EventBus.hpp"
 #include "okay/Core/Scheduler.hpp"
@@ -22,6 +23,14 @@
 #include "okay/Core/SaveGame.hpp"
 #include "okay/Core/Localization.hpp"
 #include "okay/Core/Application.hpp"
+#include "okay/Core/BuildInfo.hpp"
+#include "okay/Core/CommandLine.hpp"
+#include "okay/Core/Paths.hpp"
+#include "okay/Core/Stopwatch.hpp"
+#include "okay/Core/StateMachine.hpp"
+#include "okay/Core/Cvar.hpp"
+#include "okay/Core/Console.hpp"
+#include "okay/Core/DebugOverlay.hpp"
 #include "okay/Core/DisplaySettings.hpp"
 
 // Input

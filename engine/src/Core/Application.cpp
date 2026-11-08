@@ -28,6 +28,7 @@ void Application::SetRenderer(std::unique_ptr<IRenderer> renderer) {
 
 void Application::Run(Scene& scene) {
     m_running = true;
+    Game::Reset();   // a quit/pause left over from an earlier run must not leak in
     Input::BeginSession();
 
     OKAY_INFO("Entering main loop for scene '", scene.Name(), "'");
@@ -52,7 +53,7 @@ void Application::Run(Scene& scene) {
         scene.Update(Time::DeltaTime());
         scene.Render(*m_renderer);
 
-        if (ShouldQuit(m_config, Input::GetKeyDown('q'), Game::QuitRequested())) m_running = false;
+        if (ShouldQuit(m_config, m_config.quitKey != 0 && Input::GetKeyDown(m_config.quitKey), Game::QuitRequested())) m_running = false;
 
         ++frame;
         if (m_config.maxFrames > 0 && frame >= m_config.maxFrames) m_running = false;

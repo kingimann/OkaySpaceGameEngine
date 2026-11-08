@@ -1,6 +1,7 @@
 #include "okay/Input/Input.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cctype>
+#include <cmath>
 
 #if defined(__unix__) || defined(__APPLE__)
 #  include <termios.h>
@@ -18,12 +19,8 @@ Vec2     Input::s_mousePos;
 Vec2     Input::s_mousePrevPos;
 bool     Input::s_mouseFed = false;
 unsigned Input::s_mouseCurrent = 0;
-Vec2     Input::s_padAxis;
-Vec2     Input::s_padRight;
-float    Input::s_padTrigger[2] = {0.0f, 0.0f};
-bool     Input::s_padConnected = false;
-unsigned Input::s_padCurrent = 0;
-unsigned Input::s_padPrevious = 0;
+Input::PadState Input::s_pads[Input::kMaxGamepads];
+Input::PadSettings Input::s_padSettings[Input::kMaxGamepads];
 unsigned Input::s_mousePrevious = 0;
 std::string Input::s_typedText;
 float Input::s_mouseWheel = 0.0f;
@@ -91,6 +88,11 @@ void Input::FeedKeys(const std::vector<char>& downKeys) {
     s_current.clear();
     for (char k : downKeys)
         s_current[static_cast<char>(std::tolower(static_cast<unsigned char>(k)))] = true;
+    // The generic modifier reads true while either side is held.
+    auto held = [](char c) { auto it = s_current.find(c); return it != s_current.end() && it->second; };
+    if (held(KeyLShift) || held(KeyRShift)) s_current[KeyShift] = true;
+    if (held(KeyLCtrl) || held(KeyRCtrl))   s_current[KeyCtrl] = true;
+    if (held(KeyLAlt) || held(KeyRAlt))     s_current[KeyAlt] = true;
 }
 
 void Input::FeedMouse(const Vec2& position, unsigned buttonMask) {
@@ -121,21 +123,79 @@ bool Input::GetMouseButtonUp(int button) {
     return !(s_mouseCurrent & bit) && (s_mousePrevious & bit);
 }
 
-void Input::FeedGamepad(const Vec2& axis, unsigned buttonMask) {
-    s_padAxis = axis;
-    s_padPrevious = s_padCurrent;
-    s_padCurrent = buttonMask;
+namespace {
+int PadIndex(int player) { return player >= 0 && player < Input::kMaxGamepads ? player : -1; }
+float Clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
+float Curve(float t, float curve) { return curve > 0.0f && curve != 1.0f ? std::pow(t, curve) : t; }
+// Dead zone and outer zone as a 0..1 ramp for a magnitude.
+float Ramp(float mag, float dead, float outer) {
+    if (dead < 0.0f) dead = 0.0f;
+    if (dead > 0.95f) dead = 0.95f;
+    if (outer > 1.0f) outer = 1.0f;
+    if (outer < dead + 0.01f) outer = dead + 0.01f;
+    if (mag <= dead) return 0.0f;
+    return Clamp01((mag - dead) / (outer - dead));
 }
-void Input::FeedGamepadExtra(const Vec2& rightAxis, float leftTrigger, float rightTrigger, bool connected) {
-    s_padRight = rightAxis;
-    s_padTrigger[0] = leftTrigger < 0.0f ? 0.0f : (leftTrigger > 1.0f ? 1.0f : leftTrigger);
-    s_padTrigger[1] = rightTrigger < 0.0f ? 0.0f : (rightTrigger > 1.0f ? 1.0f : rightTrigger);
-    s_padConnected = connected;
+} // namespace
+
+Vec2 Input::ProcessStick(const Vec2& raw, const StickSettings& s) {
+    if (s.shape == StickSettings::Shape::Axial) {
+        auto axis = [&](float v) {
+            const float t = Curve(Ramp(std::fabs(v), s.deadZone, s.outerZone), s.curve);
+            return v < 0.0f ? -t : t;
+        };
+        return {axis(raw.x), axis(raw.y)};
+    }
+    const float len = std::sqrt(raw.x * raw.x + raw.y * raw.y);
+    const float t = Curve(Ramp(len, s.deadZone, s.outerZone), s.curve);
+    if (t <= 0.0f || len <= 0.0f) return {0.0f, 0.0f};
+    return {raw.x / len * t, raw.y / len * t};
+}
+float Input::ProcessTrigger(float raw, const TriggerSettings& s) {
+    return Curve(Ramp(Clamp01(raw), s.deadZone, 1.0f), s.curve);
+}
+Input::PadSettings& Input::GamepadSettings(int player) {
+    const int i = PadIndex(player);
+    return s_padSettings[i < 0 ? 0 : i];
+}
+
+void Input::FeedGamepad(const Vec2& axis, unsigned buttonMask) { FeedGamepadAt(0, axis, buttonMask); }
+void Input::FeedGamepadExtra(const Vec2& rightAxis, float lt, float rt, bool connected) {
+    FeedGamepadExtraAt(0, rightAxis, lt, rt, connected);
+}
+void Input::FeedGamepadAt(int player, const Vec2& axis, unsigned buttonMask) {
+    const int i = PadIndex(player);
+    if (i < 0) return;
+    PadState& p = s_pads[i];
+    p.axis = axis;
+    p.previous = p.current;
+    p.current = buttonMask;
+}
+void Input::FeedGamepadExtraAt(int player, const Vec2& rightAxis, float lt, float rt, bool connected) {
+    const int i = PadIndex(player);
+    if (i < 0) return;
+    PadState& p = s_pads[i];
+    p.right = rightAxis;
+    p.trigger[0] = Clamp01(lt);
+    p.trigger[1] = Clamp01(rt);
+    p.connected = connected;
+}
+void Input::FeedGamepadRaw(int player, const Vec2& rawLeft, const Vec2& rawRight, float rawLT, float rawRT,
+                           unsigned buttonMask, bool connected) {
+    const int i = PadIndex(player);
+    if (i < 0) return;
+    const PadSettings& cfg = s_padSettings[i];
+    const float lt = ProcessTrigger(rawLT, cfg.triggers), rt = ProcessTrigger(rawRT, cfg.triggers);
+    buttonMask &= ~((1u << PadLT) | (1u << PadRT));
+    if (lt >= cfg.triggers.threshold && lt > 0.0f) buttonMask |= 1u << PadLT;
+    if (rt >= cfg.triggers.threshold && rt > 0.0f) buttonMask |= 1u << PadRT;
+    FeedGamepadAt(i, ProcessStick(rawLeft, cfg.left), buttonMask);
+    FeedGamepadExtraAt(i, ProcessStick(rawRight, cfg.right), lt, rt, connected);
 }
 
 namespace {
 struct RumbleRequest { float low = 0, high = 0, seconds = 0; bool pending = false; };
-RumbleRequest& PendingRumble() { static RumbleRequest r; return r; }
+RumbleRequest& PendingRumble(int p) { static RumbleRequest r[Input::kMaxGamepads]; return r[p]; }
 const char* const kPadNames[Input::PadButtonCount] = {
     "a", "b", "x", "y", "back", "start", "lb", "rb", "up", "down", "left", "right", "ls", "rs", "lt", "rt"};
 const char* const kPadLabels[Input::PadButtonCount] = {
@@ -143,12 +203,16 @@ const char* const kPadLabels[Input::PadButtonCount] = {
     "Left Stick", "Right Stick", "LT", "RT"};
 } // namespace
 
-void Input::Rumble(float low, float high, float seconds) {
+void Input::Rumble(float low, float high, float seconds, int player) {
+    const int i = PadIndex(player);
+    if (i < 0) return;
     auto clamp01 = [](float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); };
-    PendingRumble() = {clamp01(low), clamp01(high), seconds > 0.0f ? seconds : 0.0f, true};
+    PendingRumble(i) = {clamp01(low), clamp01(high), seconds > 0.0f ? seconds : 0.0f, true};
 }
-bool Input::TakeRumble(float& low, float& high, float& seconds) {
-    RumbleRequest& r = PendingRumble();
+bool Input::TakeRumble(float& low, float& high, float& seconds, int player) {
+    const int i = PadIndex(player);
+    if (i < 0) return false;
+    RumbleRequest& r = PendingRumble(i);
     if (!r.pending) return false;
     low = r.low; high = r.high; seconds = r.seconds; r.pending = false;
     return true;
@@ -166,8 +230,8 @@ std::string Input::GamepadButtonKey(int button) {
 std::string Input::GamepadButtonName(int button) {
     return button >= 0 && button < PadButtonCount ? kPadLabels[button] : "?";
 }
-int Input::FirstGamepadButtonDown() {
-    for (int i = 0; i < PadButtonCount; ++i) if (GetGamepadButtonDown(i)) return i;
+int Input::FirstGamepadButtonDown(int player) {
+    for (int i = 0; i < PadButtonCount; ++i) if (GetGamepadButtonDown(i, player)) return i;
     return -1;
 }
 
@@ -218,35 +282,44 @@ void Input::FeedMouseWheel(float delta) { s_mouseWheel += delta; }
 bool Input::UICaptured() { return s_uiCaptured; }
 void Input::SetUICaptured(bool captured) { s_uiCaptured = captured; }
 
-Vec2 Input::GamepadAxis() { return s_padAxis; }
-Vec2 Input::GamepadRightAxis() { return s_padRight; }
-float Input::GamepadTrigger(int side) { return side == 0 || side == 1 ? s_padTrigger[side] : 0.0f; }
-bool Input::GamepadConnected() { return s_padConnected; }
-bool Input::GetGamepadButton(int button) {
-    if (button < 0 || button > 31) return false;
-    return (s_padCurrent & (1u << button)) != 0;
+Vec2 Input::GamepadAxis(int player) { const int i = PadIndex(player); return i < 0 ? Vec2{} : s_pads[i].axis; }
+Vec2 Input::GamepadRightAxis(int player) { const int i = PadIndex(player); return i < 0 ? Vec2{} : s_pads[i].right; }
+float Input::GamepadTrigger(int side, int player) {
+    const int i = PadIndex(player);
+    return i >= 0 && (side == 0 || side == 1) ? s_pads[i].trigger[side] : 0.0f;
+}
+bool Input::GamepadConnected(int player) { const int i = PadIndex(player); return i >= 0 && s_pads[i].connected; }
+int Input::GamepadCount() { int n = 0; for (const PadState& p : s_pads) if (p.connected) ++n; return n; }
+bool Input::GetGamepadButton(int button, int player) {
+    const int i = PadIndex(player);
+    if (i < 0 || button < 0 || button > 31) return false;
+    return (s_pads[i].current & (1u << button)) != 0;
 }
 bool Input::AnyKey() {
     for (const auto& kv : s_current) if (kv.second) return true;
-    return (s_mouseCurrent != 0) || (s_padCurrent != 0);
+    if (s_mouseCurrent != 0) return true;
+    for (const PadState& p : s_pads) if (p.current != 0) return true;
+    return false;
 }
 bool Input::AnyKeyDown() {
     for (const auto& kv : s_current)        // a key held now that wasn't held last frame
         if (kv.second) { auto it = s_previous.find(kv.first); if (it == s_previous.end() || !it->second) return true; }
     if (s_mouseCurrent & ~s_mousePrevious) return true;
-    if (s_padCurrent & ~s_padPrevious) return true;
+    for (const PadState& p : s_pads) if (p.current & ~p.previous) return true;
     return false;
 }
 
-bool Input::GetGamepadButtonUp(int button) {
-    if (button < 0 || button > 31) return false;
+bool Input::GetGamepadButtonUp(int button, int player) {
+    const int i = PadIndex(player);
+    if (i < 0 || button < 0 || button > 31) return false;
     unsigned bit = 1u << button;
-    return !(s_padCurrent & bit) && (s_padPrevious & bit);
+    return !(s_pads[i].current & bit) && (s_pads[i].previous & bit);
 }
-bool Input::GetGamepadButtonDown(int button) {
-    if (button < 0 || button > 31) return false;
+bool Input::GetGamepadButtonDown(int button, int player) {
+    const int i = PadIndex(player);
+    if (i < 0 || button < 0 || button > 31) return false;
     unsigned bit = 1u << button;
-    return (s_padCurrent & bit) && !(s_padPrevious & bit);
+    return (s_pads[i].current & bit) && !(s_pads[i].previous & bit);
 }
 
 bool Input::GetKey(char key) {
@@ -280,8 +353,22 @@ std::string Input::KeyName(char key) {
         case KeyDown:  return "Down";
         case KeyLeft:  return "Left";
         case KeyRight: return "Right";
+        case KeyInsert:   return "Insert";
+        case KeyDelete:   return "Delete";
+        case KeyHome:     return "Home";
+        case KeyEnd:      return "End";
+        case KeyPageUp:   return "Page Up";
+        case KeyPageDown: return "Page Down";
+        case KeyLShift:   return "Left Shift";
+        case KeyRShift:   return "Right Shift";
+        case KeyLCtrl:    return "Left Ctrl";
+        case KeyRCtrl:    return "Right Ctrl";
+        case KeyAlt:      return "Alt";
+        case KeyLAlt:     return "Left Alt";
+        case KeyRAlt:     return "Right Alt";
         default: break;
     }
+    if (key >= KeyF1 && key <= KeyF12) return "F" + std::to_string(key - KeyF1 + 1);
     if (key >= 'a' && key <= 'z') return std::string(1, (char)(key - 'a' + 'A'));
     return std::string(1, key);
 }

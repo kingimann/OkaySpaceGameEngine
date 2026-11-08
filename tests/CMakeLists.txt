@@ -939,6 +939,21 @@ add_executable(test_localization test_localization.cpp)
 target_link_libraries(test_localization PRIVATE okay::engine)
 add_test(NAME localization COMMAND test_localization)
 
+# Localization tools: translation grid, CSV / JSON, checker, key scanner, previews, font coverage
+add_executable(test_loc_tools test_loc_tools.cpp)
+target_link_libraries(test_loc_tools PRIVATE okay::engine)
+add_test(NAME loc_tools COMMAND test_loc_tools)
+
+# Accessibility: colour vision, safe palette, subtitles and captions, settings
+add_executable(test_accessibility test_accessibility.cpp)
+target_link_libraries(test_accessibility PRIVATE okay::engine)
+add_test(NAME accessibility COMMAND test_accessibility)
+
+# Focus graph (gamepad / keyboard UI navigation), the scene adapter, and the controls-screen model
+add_executable(test_focus_remap test_focus_remap.cpp)
+target_link_libraries(test_focus_remap PRIVATE okay::engine)
+add_test(NAME focus_remap COMMAND test_focus_remap)
+
 add_executable(test_ik_core test_ik_core.cpp)
 target_link_libraries(test_ik_core PRIVATE okay::engine)
 add_test(NAME ik_core COMMAND test_ik_core)

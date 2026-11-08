@@ -55,6 +55,8 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [ui_html.md](ui_html.md): menus and HUDs in an HTML and CSS subset.
 - [ui_world_space.md](ui_world_space.md): in-world (3D) UI.
 - [localization.md](localization.md): string tables, translators and fonts.
+- [localization_tools.md](localization_tools.md): translation grid, CSV and JSON, the table checker, key scanner, language previews and font coverage.
+- [accessibility.md](accessibility.md): subtitles and captions, colour vision, controller navigation, remapping and accessibility settings.
 
 ## Multiplayer, accounts and servers
 - [launcher-multiplayer.md](launcher-multiplayer.md): multiplayer from the launcher.

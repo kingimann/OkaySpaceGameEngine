@@ -8,6 +8,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [prefabs.md](prefabs.md): prefab instances, overrides and persistent object ids.
 - [scene_serializer.md](scene_serializer.md): what a scene round trip keeps, and the component serializer registry.
 - [editor.md](editor.md): the editor, its panels and Build Game.
+- [undo_recovery.md](undo_recovery.md): command based undo, autosave and crash recovery, rolling file backups.
 - [web_mobile.md](web_mobile.md): web (WASM) and mobile builds.
 - [packaging.md](packaging.md): how a build is laid out for distribution.
 - [releasing.md](releasing.md): releasing an update to players.

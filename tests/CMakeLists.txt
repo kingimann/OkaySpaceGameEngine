@@ -563,6 +563,20 @@ add_executable(test_savedata test_savedata.cpp)
 target_link_libraries(test_savedata PRIVATE okay::engine)
 add_test(NAME savedata COMMAND test_savedata)
 
+# Undo/redo and recovery: command based undo stack (groups, merge, caps, dirty tracking),
+# autosave + crash recovery, rolling file backups
+add_executable(test_undo test_undo.cpp)
+target_link_libraries(test_undo PRIVATE okay::engine)
+add_test(NAME undo COMMAND test_undo)
+
+add_executable(test_recovery test_recovery.cpp)
+target_link_libraries(test_recovery PRIVATE okay::engine)
+add_test(NAME recovery COMMAND test_recovery)
+
+add_executable(test_backup test_backup.cpp)
+target_link_libraries(test_backup PRIVATE okay::engine)
+add_test(NAME backup COMMAND test_backup)
+
 add_executable(test_animator test_animator.cpp)
 target_link_libraries(test_animator PRIVATE okay::engine)
 add_test(NAME animator COMMAND test_animator)

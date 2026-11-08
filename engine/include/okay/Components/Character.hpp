@@ -433,8 +433,12 @@ public:
     float lookPitch = 0.0f;       // + lifts the gaze up
     /// Replicated action (0 none, 1 death, 2 roll, 3 sit, 4 swim). `netActionSeq`
     /// bumps each time it changes so a proxy can replay it. Not saved.
+    /// `netActionParam` is that action's direction or swim speed (sit: 10 + type
+    /// while standing up). An older peer that stops before this field still
+    /// reads the look. Dive, hit, vault and emotes are not replicated here.
     int netActionId = 0;
     int netActionSeq = 0;
+    float netActionParam = 0.0f;
     float headTurnSpeed = 9.0f;   // how fast the head eases toward the look target
     float HeadYaw()   const { return m_headYaw; }
     float HeadPitch() const { return m_headPitch; }

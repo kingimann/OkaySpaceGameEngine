@@ -287,6 +287,36 @@ add_executable(test_log test_log.cpp)
 target_link_libraries(test_log PRIVATE okay::engine)
 add_test(NAME log COMMAND test_log)
 
+# Profiling & debugging data layers (okay/Debug): frame history, GPU/render stats, memory, frame debugger, console, overlay
+add_executable(test_debug_frame_history test_debug_frame_history.cpp)
+target_link_libraries(test_debug_frame_history PRIVATE okay::engine)
+add_test(NAME debug_frame_history COMMAND test_debug_frame_history)
+
+add_executable(test_debug_gpu_stats test_debug_gpu_stats.cpp)
+target_link_libraries(test_debug_gpu_stats PRIVATE okay::engine)
+add_test(NAME debug_gpu_stats COMMAND test_debug_gpu_stats)
+
+add_executable(test_debug_memory test_debug_memory.cpp)
+target_link_libraries(test_debug_memory PRIVATE okay::engine)
+add_test(NAME debug_memory COMMAND test_debug_memory)
+
+# The one test that turns the opt-in operator new/delete hooks on (OKAY_ENABLE_MEMORY_HOOKS, defined in the file itself)
+add_executable(test_debug_memory_hooks test_debug_memory_hooks.cpp)
+target_link_libraries(test_debug_memory_hooks PRIVATE okay::engine)
+add_test(NAME debug_memory_hooks COMMAND test_debug_memory_hooks)
+
+add_executable(test_debug_draw_calls test_debug_draw_calls.cpp)
+target_link_libraries(test_debug_draw_calls PRIVATE okay::engine)
+add_test(NAME debug_draw_calls COMMAND test_debug_draw_calls)
+
+add_executable(test_debug_console test_debug_console.cpp)
+target_link_libraries(test_debug_console PRIVATE okay::engine)
+add_test(NAME debug_console COMMAND test_debug_console)
+
+add_executable(test_debug_overlay test_debug_overlay.cpp)
+target_link_libraries(test_debug_overlay PRIVATE okay::engine)
+add_test(NAME debug_overlay COMMAND test_debug_overlay)
+
 add_executable(test_datapack test_datapack.cpp)
 target_link_libraries(test_datapack PRIVATE okay::engine)
 add_test(NAME datapack COMMAND test_datapack)

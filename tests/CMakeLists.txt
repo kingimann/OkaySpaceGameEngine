@@ -1373,3 +1373,7 @@ add_test(NAME behavior_tree COMMAND test_behavior_tree)
 add_executable(test_splines test_splines.cpp)
 target_link_libraries(test_splines PRIVATE okay::engine)
 add_test(NAME splines COMMAND test_splines)
+
+add_executable(test_scene_lifecycle test_scene_lifecycle.cpp)
+target_link_libraries(test_scene_lifecycle PRIVATE okay::engine)
+add_test(NAME scene_lifecycle COMMAND test_scene_lifecycle)

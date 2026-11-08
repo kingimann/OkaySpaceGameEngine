@@ -1454,6 +1454,15 @@ add_executable(test_script_batch1 test_script_batch1.cpp)
 target_link_libraries(test_script_batch1 PRIVATE okay::engine)
 add_test(NAME script_batch1 COMMAND test_script_batch1)
 
+add_executable(test_assetmanager test_assetmanager.cpp)
+target_link_libraries(test_assetmanager PRIVATE okay::engine)
+add_test(NAME assetmanager COMMAND test_assetmanager)
+
+# Asset database: GUID metas, move detection, dependency graph, import settings, thumbnails, search
+add_executable(test_asset_database test_asset_database.cpp)
+target_link_libraries(test_asset_database PRIVATE okay::engine)
+add_test(NAME asset_database COMMAND test_asset_database)
+
 # Core audit regressions: math edge cases, ECS/NetWorld hardening, Camera degenerate
 # viewports, Layers names, DataAsset load, input binding persistence.
 add_executable(test_core_audit test_core_audit.cpp)

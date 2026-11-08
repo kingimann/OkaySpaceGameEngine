@@ -6,6 +6,8 @@
 #include "okay/Animation/HumanoidLibrary.hpp"
 #include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
+#include "okay/Components/Camera.hpp"
+#include "okay/Components/NetworkSync.hpp"
 #include <chrono>
 #include <cmath>
 #include <thread>
@@ -17,17 +19,21 @@ int main() {
     auto sink = Log::sink;
     Log::sink = [](Log::Level, const std::string&) {};
 
-    // An older four-field message still parses: the extra reads fail and the
-    // gait values that were present are kept. Checked on the same stream the
-    // receiver uses.
+    // The same parser the receiver uses. A four-field message keeps the gait
+    // and does not invent an action. Eight fields are the action and the look
+    // without a direction. Nine fields add the direction.
     {
-        std::stringstream ss("2 0 1.5 30");
-        int a = 0, seq = 0; ss >> a >> seq;
-        float sp = -1.0f, ang = 0.0f;
-        CHECK(ss >> sp >> ang);
-        int aseq = 0, aid = 0; float ly = 0.0f, lp = 0.0f;
-        CHECK(!(ss >> aseq >> aid >> ly >> lp));
-        CHECK(a == 2 && std::fabs(sp - 1.5f) < 1e-4f && std::fabs(ang - 30.0f) < 1e-4f);
+        AnimSyncView oldv;
+        CHECK(ParseAnimSync("2 0 1.5 30", oldv));
+        CHECK(oldv.anim == 2 && oldv.haveGait && !oldv.haveAction);
+        CHECK(std::fabs(oldv.speed - 1.5f) < 1e-4f && std::fabs(oldv.angle - 30.0f) < 1e-4f);
+        AnimSyncView mid;
+        CHECK(ParseAnimSync("2 0 1.5 30 4 1 35 -12", mid));
+        CHECK(mid.haveAction && !mid.haveParam && mid.actionId == 1);
+        CHECK(std::fabs(mid.lookYaw - 35.0f) < 1e-3f);
+        AnimSyncView full;
+        CHECK(ParseAnimSync("2 0 1.5 30 4 1 35 -12 1", full));
+        CHECK(full.haveParam && std::fabs(full.actionParam - 1.0f) < 1e-4f);
     }
 
     Scene ss("Server");
@@ -64,6 +70,7 @@ int main() {
     pump(15);
 
     CHECK(HumanoidActions::PlayDeath(hero, nullptr));
+    if (sSm) sSm->SetFloat("deathDir", 1.0f);
     sChar->lookYaw = 35.0f;
     sChar->lookPitch = -12.0f;
     pump(40);
@@ -73,9 +80,52 @@ int main() {
     if (pSm) {
         const std::string& cur = pSm->Current();
         CHECK(cur == "Death" || cur == "DeadHold");
+        CHECK(std::fabs(pSm->GetFloat("deathDir") - 1.0f) < 0.5f);
     }
     CHECK(std::fabs(cChar->lookYaw - 35.0f) < 0.5f);
     CHECK(std::fabs(cChar->lookPitch - (-12.0f)) < 0.5f);
+
+    // The proxy prefab looks at the local camera. That must not overwrite the
+    // owner's look, or the head jitters between the two.
+    GameObject* camGo = cs.CreateGameObject("Cam");
+    auto* cam = camGo->AddComponent<Camera>();
+    camGo->transform->SetPosition(Vec3{8.0f, 1.0f, 0.0f});
+    cs.mainCamera = cam;
+    cChar->lookAtCamera = true;
+    pump(8);
+    CHECK(std::fabs(cChar->lookYaw - 35.0f) < 0.5f);
+    (void)cam;
+
+    HumanoidActions::RequestRevive(hero);
+    if (sSm) { sSm->SetBool("dead", false); sSm->GoTo("Idle", 0.0f); }
+    pump(20);
+    CHECK(HumanoidActions::RequestRoll(hero, 2));
+    bool sawRoll = false;
+    for (int i = 0; i < 40 && !sawRoll; ++i) {
+        pump(1);
+        if (pSm && (pSm->Current() == "Roll" || pSm->Current() == "Dodge") && pSm->StateTime() > 0.08f)
+            sawRoll = true;
+    }
+    CHECK(sawRoll);
+    if (pSm) CHECK(std::fabs(pSm->GetFloat("dodgeDir") - 2.0f) < 0.5f);
+    if (pSm) pSm->GoTo("Idle", 0.0f);
+    pump(8);
+    if (pSm) {
+        const std::string& cur = pSm->Current();
+        CHECK(cur != "Roll" && cur != "Dodge");
+    }
+
+    HumanoidActions::SetSwimming(hero, true, 1.5f);
+    pump(20);
+    if (pSm) CHECK(std::fabs(pSm->GetFloat("swimSpeed") - 1.5f) < 0.25f);
+
+    sChar->moveAngle = 90.0f;
+    sChar->moveSpeed = 2.0f;
+    for (int i = 0; i < 10; ++i) {
+        proxy->transform->SetPosition(proxy->transform->Position() + Vec3{0.05f, 0.0f, 0.0f});
+        pump(1);
+    }
+    if (pSm) CHECK(pSm->GetFloat("moveX") > 0.2f);
 
     (void)sNs; (void)cNs;
     Log::sink = sink;

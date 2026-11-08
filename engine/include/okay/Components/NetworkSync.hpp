@@ -38,37 +38,89 @@ inline float MoveAngleFor(const Transform& facing, float vx, float vz) {
     return std::atan2(side, fwd) * 57.2957795f;
 }
 
-inline bool ProxyInAction(const Character* c, int id) {
-    if (!c || !c->gameObject) return false;
-    const AnimStateMachine* sm = nullptr;
+inline AnimStateMachine* BaseLayer(Character* c) {
+    if (!c || !c->gameObject) return nullptr;
     for (const auto& comp : c->gameObject->Components())
-        if (auto* m = dynamic_cast<const AnimStateMachine*>(comp.get()))
-            if (m->layer == 0) { sm = m; break; }
+        if (auto* m = dynamic_cast<AnimStateMachine*>(comp.get()))
+            if (m->layer == 0) return m;
+    return nullptr;
+}
+
+inline bool NameOrPrefix(const std::string& cur, const char* exact, const char* prefix) {
+    return cur == exact || cur.rfind(prefix, 0) == 0;
+}
+
+inline bool ProxyInAction(const Character* c, int id) {
+    AnimStateMachine* sm = BaseLayer(const_cast<Character*>(c));
     if (!sm) return false;
     const std::string& cur = sm->Current();
     switch (id) {
-        case 1: return cur == "Death" || cur == "DeadHold";
-        case 2: return cur == "Roll" || cur == "Dodge";
+        case 1: return NameOrPrefix(cur, "Death", "Death_") || NameOrPrefix(cur, "DeadHold", "DeadHold_");
+        case 2: return NameOrPrefix(cur, "Roll", "Roll_") || NameOrPrefix(cur, "Dodge", "Dodge_");
         case 3: return cur == "SitDown" || cur == "Sit" || cur == "StandUp";
-        case 4: return cur == "Swim";
+        case 4: return NameOrPrefix(cur, "Swim", "Swim_");
         default: return cur == "Idle" || cur == "Walk" || cur == "Run" || cur.empty();
     }
 }
 
-/// Play a replicated action on a proxy. Ids match CharacterAnimBackend:
-/// 1 death, 2 roll, 3 sit, 4 swim, anything else leaves the action.
-/// A machine added mid-session has its Start() clear the state, so callers
-/// re-apply until the proxy is actually in it.
-inline void ApplyRemoteAction(Character* c, int id) {
+inline int ClampDir(float param) {
+    int d = (int)std::lround(param);
+    if (d < 0) d = 0;
+    if (d > 3) d = 3;
+    return d;
+}
+
+/// The blend parameter for the action already playing: death direction, dodge
+/// direction, sit type (10 + type means stand up), or swim speed.
+inline void RefreshRemoteParam(Character* c, int id, float param) {
+    AnimStateMachine* sm = BaseLayer(c);
+    if (!sm) return;
+    if (id == 1) sm->SetFloat("deathDir", (float)ClampDir(param));
+    else if (id == 2) sm->SetFloat("dodgeDir", (float)ClampDir(param));
+    else if (id == 3) {
+        const bool up = param >= 10.0f;
+        float type = up ? param - 10.0f : param;
+        if (type < 0.0f) type = 0.0f;
+        if (type > 2.0f) type = 2.0f;
+        sm->SetFloat("sitType", type);
+        sm->SetBool("sitting", !up);
+    } else if (id == 4) {
+        sm->SetBool("swimming", true);
+        if (param < 0.0f) param = 0.0f;
+        if (param > 8.0f) param = 8.0f;
+        sm->SetFloat("swimSpeed", param);
+    }
+}
+
+/// Play a replicated action on a proxy. Ids: 1 death, 2 roll, 3 sit, 4 swim.
+/// Anything else leaves the action. `param` is the direction or swim speed.
+/// Dive, hit, vault and emotes are not ids: the legacy anim field still carries
+/// jump, crouch and the other built-in poses. A machine added mid-session has
+/// its Start() clear the state, so callers re-apply until the proxy is in it.
+/// A roll is not replayed after it has been in the state (it is a one-shot).
+inline void ApplyRemoteAction(Character* c, int id, float param) {
     if (!c || !c->gameObject) return;
     GameObject* go = c->gameObject;
     AnimStateMachine* sm = HumanoidLibrary::EnsureAnimator(go);
     if (sm) HumanoidActions::MergeMissing(*sm, c, false);
     switch (id) {
-        case 1: HumanoidActions::PlayDeath(go, nullptr); break;
-        case 2: HumanoidActions::RequestRoll(go, 0); break;
-        case 3: HumanoidActions::Play(go, "SitDown", 0.2f); break;
-        case 4: HumanoidActions::SetSwimming(go, true, 0.0f); break;
+        case 1:
+            HumanoidActions::PlayDeath(go, nullptr);   // sets deathDir 0, then we restore
+            RefreshRemoteParam(c, 1, param);
+            break;
+        case 2:
+            HumanoidActions::RequestRoll(go, ClampDir(param));
+            break;
+        case 3:
+            RefreshRemoteParam(c, 3, param);
+            if (sm && param < 10.0f && sm->Current() != "SitDown" && sm->Current() != "Sit")
+                sm->GoTo("SitDown", 0.2f);
+            else if (sm && param >= 10.0f && sm->Current() != "StandUp")
+                sm->GoTo("StandUp", 0.12f);
+            break;
+        case 4:
+            HumanoidActions::SetSwimming(go, true, param < 0.0f ? 0.0f : param);
+            break;
         default:
             if (!sm) break;
             sm->SetBool("dead", false);
@@ -79,6 +131,31 @@ inline void ApplyRemoteAction(Character* c, int id) {
             HumanoidActions::SetSwimming(go, false, 0.0f);
             break;
     }
+}
+
+/// "<anim> <punchSeq> [<speed> <angle> [<actionSeq> <actionId> <lookYaw> <lookPitch> [<actionParam>]]]".
+/// Each later group is optional. An older peer stops when the stream runs out.
+struct AnimSyncView {
+    int anim = 0, punch = 0, actionSeq = 0, actionId = 0;
+    float speed = -1.0f, angle = 0.0f, lookYaw = 0.0f, lookPitch = 0.0f, actionParam = 0.0f;
+    bool haveGait = false, haveAction = false, haveParam = false;
+};
+/// False when `s` has no anim field. Gait, action and actionParam are optional.
+inline bool ParseAnimSync(const std::string& s, AnimSyncView& o) {
+    std::stringstream ss(s);
+    if (!(ss >> o.anim)) return false;
+    if (!(ss >> o.punch)) return true;
+    float sp = 0.0f, ang = 0.0f;
+    if (ss >> sp >> ang && std::isfinite(sp) && std::isfinite(ang)) {
+        o.speed = sp; o.angle = ang; o.haveGait = true;
+    }
+    int aseq = 0, aid = 0; float ly = 0.0f, lp = 0.0f;
+    if (ss >> aseq >> aid >> ly >> lp && std::isfinite(ly) && std::isfinite(lp)) {
+        o.actionSeq = aseq; o.actionId = aid; o.lookYaw = ly; o.lookPitch = lp; o.haveAction = true;
+        float param = 0.0f;
+        if (ss >> param && std::isfinite(param)) { o.actionParam = param; o.haveParam = true; }
+    }
+    return true;
 }
 
 class NetworkSync : public Behaviour {
@@ -122,9 +199,10 @@ public:
         if (m_char && syncAnimation && !OwnedNow() && !m_nm->Predicted(m_id)) {
             DriveProxyGait(dt);
             // A machine created to play the action has Start() clear its state
-            // on the next frame. Keep asking until it is actually in it.
-            if (m_wantAction > 0 && !ProxyInAction(m_char, m_wantAction))
-                ApplyRemoteAction(m_char, m_wantAction);
+            // on the next frame. Keep asking until it is actually in it. A roll
+            // latches once it has been playing, so the clip is not restarted
+            // when it ends while the owner's sequence is still that roll.
+            if (m_wantAction > 0) HoldRemoteAction();
         }
     }
 
@@ -141,6 +219,8 @@ private:
     int             m_lastPunchSeq = -1;  // remote: last punch replayed
     int             m_lastActionSeq = -1; // remote: last action sequence applied
     int             m_wantAction = 0;     // remote: action to hold until the proxy is in it
+    float           m_actionParam = 0.0f; // remote: direction / swim speed for that action
+    bool            m_actionLatched = false; // remote: a one-shot roll has been in its state
     bool            m_wasPunching = false;
     // Proxy gait: what the owner reported, and the smoothed speed this copy
     // actually moves at (the interpolated position, so the feet match it).
@@ -169,6 +249,41 @@ private:
         m_char->moveSpeed = speed;
         const Transform& facing = m_char->transform ? *m_char->transform : *transform;
         m_char->moveAngle = m_haveOwnerGait ? m_ownerAngle : (speed > 0.0f ? MoveAngleFor(facing, m_vx, m_vz) : 0.0f);
+        // The owner already sent this heading (moveAngle). A proxy has no
+        // controller, so the 2D blend never hears moveX / moveZ unless we
+        // write them. Forward is negative moveZ. This is not a new field.
+        FeedMoveAxes(m_char->gameObject, speed, m_char->moveAngle);
+    }
+
+    static void FeedMoveAxes(GameObject* go, float speed, float angleDeg) {
+        if (!go) return;
+        auto feed = [&](GameObject* g) {
+            if (!g) return;
+            for (AnimStateMachine* sm : g->GetComponents<AnimStateMachine>()) {
+                if (sm->layer != 0) continue;
+                const float rad = angleDeg * 0.017453292f;
+                sm->SetFloat("speed", speed);
+                sm->SetFloat("moveX", speed * std::sin(rad));
+                sm->SetFloat("moveZ", -speed * std::cos(rad));
+            }
+        };
+        feed(go);
+        if (go->transform)
+            for (Transform* ch : go->transform->Children())
+                if (ch && ch->gameObject) feed(ch->gameObject);
+    }
+
+    void HoldRemoteAction() {
+        if (!m_char || m_wantAction <= 0) return;
+        const bool entered = ProxyInAction(m_char, m_wantAction);
+        const bool oneShot = m_wantAction == 2;
+        if (!entered && !(oneShot && m_actionLatched))
+            ApplyRemoteAction(m_char, m_wantAction, m_actionParam);
+        else if (entered) {
+            RefreshRemoteParam(m_char, m_wantAction, m_actionParam);
+            if (AnimStateMachine* sm = BaseLayer(m_char))
+                if (sm->StateTime() > 0.05f) m_actionLatched = true;
+        }
     }
 
     bool OwnedNow() const {
@@ -194,38 +309,42 @@ private:
         m_char = FindCharacter();
         if (m_char && syncAnimation) {
             Character* c = m_char; NetworkSync* self = this;
-            // "<anim> <punchSeq> [<moveSpeed> <moveAngle> [<actionSeq> <actionId> <lookYaw> <lookPitch>]]".
-            // Each later group is optional: an older peer stops when the stream
-            // runs out, and a message without the new fields still reads here.
+            // "<anim> <punchSeq> [<moveSpeed> <moveAngle> [<actionSeq> <actionId> <lookYaw> <lookPitch> [<actionParam>]]]".
+            // Each later group is optional. An older peer stops when the stream
+            // runs out. First-person pitch, the raised arm and the camera hide
+            // are not in this message. Dive, hit, vault and emotes are not
+            // action ids. actionParam is death/roll direction, sit type
+            // (10 + type = stand up), or swim speed.
             m_nm->SetSyncExtra(m_id,
                 [c, self]() {
                     std::ostringstream o;
                     o << c->anim << ' ' << self->m_punchSeq << ' ' << c->moveSpeed << ' ' << c->moveAngle
                       << ' ' << c->netActionSeq << ' ' << c->netActionId
-                      << ' ' << c->lookYaw << ' ' << c->lookPitch;
+                      << ' ' << c->lookYaw << ' ' << c->lookPitch
+                      << ' ' << c->netActionParam;
                     return o.str();
                 },
                 [c, self](const std::string& s) {
-                    std::stringstream ss(s); int a = c->anim, seq = self->m_lastPunchSeq;
-                    ss >> a >> seq;
-                    c->anim = a;
-                    if (self->m_lastPunchSeq >= 0 && seq != self->m_lastPunchSeq) c->Punch();
-                    self->m_lastPunchSeq = seq;   // first sample just syncs the counter
-                    float sp = -1.0f, ang = 0.0f;
-                    if (ss >> sp >> ang && std::isfinite(sp) && std::isfinite(ang)) {
-                        self->m_ownerSpeed = sp; self->m_ownerAngle = ang; self->m_haveOwnerGait = true;
+                    AnimSyncView v;
+                    v.anim = c->anim;
+                    v.punch = self->m_lastPunchSeq;
+                    if (!ParseAnimSync(s, v)) return;
+                    c->anim = v.anim;
+                    if (self->m_lastPunchSeq >= 0 && v.punch != self->m_lastPunchSeq) c->Punch();
+                    self->m_lastPunchSeq = v.punch;   // first sample just syncs the counter
+                    if (v.haveGait) {
+                        self->m_ownerSpeed = v.speed; self->m_ownerAngle = v.angle; self->m_haveOwnerGait = true;
                     }
-                    int aseq = 0, aid = 0; float ly = 0.0f, lp = 0.0f;
-                    if (ss >> aseq >> aid >> ly >> lp && std::isfinite(ly) && std::isfinite(lp)) {
-                        const bool changed = self->m_lastActionSeq < 0 || aseq != self->m_lastActionSeq;
-                        if (changed) self->m_wantAction = aid;
-                        if (self->m_wantAction > 0 && (changed || !ProxyInAction(c, self->m_wantAction)))
-                            ApplyRemoteAction(c, self->m_wantAction);
-                        else if (self->m_wantAction == 0 && changed && self->m_lastActionSeq >= 0)
-                            ApplyRemoteAction(c, 0);
-                        self->m_lastActionSeq = aseq;
-                        c->lookYaw = ly;
-                        c->lookPitch = lp;
+                    if (v.haveAction) {
+                        const bool changed = self->m_lastActionSeq < 0 || v.actionSeq != self->m_lastActionSeq;
+                        if (changed) { self->m_wantAction = v.actionId; self->m_actionLatched = false; }
+                        if (v.haveParam) self->m_actionParam = v.actionParam;
+                        if (self->m_wantAction > 0) self->HoldRemoteAction();
+                        else if (changed && self->m_lastActionSeq >= 0)
+                            ApplyRemoteAction(c, 0, 0.0f);
+                        self->m_lastActionSeq = v.actionSeq;
+                        c->lookYaw = v.lookYaw;
+                        c->lookPitch = v.lookPitch;
                     }
                 });
         }

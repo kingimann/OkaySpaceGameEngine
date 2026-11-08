@@ -1342,3 +1342,21 @@ elbows bend down and out, and the object moves with the body.
   **recent state changes** with times.
 - **Thresholds from clip speed** sets a 1D blend tree's thresholds from how fast
   each clip's root actually moves.
+
+## What a remote player sees
+
+The animation sync message stays compatible. It is still `anim`, punch count,
+then optional ground speed and facing-relative angle. After that, optional:
+action sequence, action id, look yaw, look pitch, and one action parameter.
+
+- Action id 1 death, 2 roll, 3 sit, 4 swim. The parameter is the fall or dodge
+  direction (0 forward, 1 back, 2 left, 3 right), the sit type (add 10 while
+  standing up), or the swim speed. A message without it still plays the action
+  forward / treading.
+- Dive, hit, vault and emotes are not in this message. Jump, crouch and the
+  other built-in poses still travel in the original `anim` field.
+- First-person pitch, the raised arm and hiding the local camera are not sent.
+- A proxy writes `moveX` / `moveZ` from the speed and angle already in the
+  message, so a strafe blend faces the same way. It does not add a field.
+- Look is the owner's head target. The proxy eases its own head toward it, and
+  does not also aim at the local camera.

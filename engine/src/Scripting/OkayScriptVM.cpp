@@ -84,6 +84,7 @@
 #include "okay/Components/Tilemap.hpp"
 #include "okay/Components/NPCController.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
+#include "okay/AI/Navigation.hpp"
 #include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Components/Spawner.hpp"
 #include "okay/Components/BuildMode.hpp"
@@ -5498,6 +5499,56 @@ struct OkayScriptVM::Impl {
         b["nav_remaining"] = [navOf](std::vector<Value>& a) {
             std::size_t i = 0; NavMeshAgent* n = navOf(a, i);
             return Value{n ? n->RemainingDistance() : 0.0f};
+        };
+        // ---- Navmesh queries (no agent needed) ----------------------------------
+        // nav_path_exists(x, y, z) -> 1 when a walkable route leads from this object to
+        // the point (nav_path_exists(fx, fy, fz, tx, ty, tz) between two points);
+        // nav_path_length(...) -> that route's length (-1 when there is none);
+        // nav_point_walkable(x, y, z[, maxDist]) -> 1 when the baked navmesh has ground
+        // within maxDist (default 1); nav_nearest_point(x, y, z[, maxDist]) -> the closest
+        // walkable point as a vector (the point itself when there is none within range).
+        // The scene's baked navmesh is used, else the sampled grid (as agents do).
+        auto navRoute = [this, sceneOf](std::vector<Value>& a, std::vector<Vec3>& path) -> bool {
+            Scene* s = sceneOf();
+            if (!s) return false;
+            Vec3 from{}, to{};
+            if (a.size() >= 6) {
+                from = {a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+                to   = {a[3].AsFloat(), a[4].AsFloat(), a[5].AsFloat()};
+            } else if (a.size() >= 3 && rt.host && rt.host->transform) {
+                from = rt.host->transform->Position();
+                to   = {a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+            } else return false;
+            return Navigation::FindPath(*s, from, to, path, 0.4f, rt.host ? rt.host->gameObject : nullptr) && !path.empty();
+        };
+        b["nav_path_exists"] = [navRoute](std::vector<Value>& a) {
+            std::vector<Vec3> path;
+            return Value{navRoute(a, path) ? 1.0f : 0.0f};
+        };
+        b["nav_path_length"] = [navRoute](std::vector<Value>& a) {
+            std::vector<Vec3> path;
+            if (!navRoute(a, path)) return Value{-1.0f};
+            float len = 0.0f;
+            for (std::size_t i = 1; i < path.size(); ++i) len += (path[i] - path[i - 1]).Magnitude();
+            return Value{len};
+        };
+        auto navSample = [sceneOf](std::vector<Value>& a, Vec3& p, Vec3& out) -> bool {
+            Scene* s = sceneOf();
+            if (!s || a.size() < 3) return false;
+            p = {a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+            return Navigation::SamplePosition(*s, p, a.size() > 3 ? a[3].AsFloat() : 1.0f, out);
+        };
+        b["nav_point_walkable"] = [navSample](std::vector<Value>& a) {
+            Vec3 p, out;
+            return Value{navSample(a, p, out) ? 1.0f : 0.0f};
+        };
+        b["nav_nearest_point"] = [navSample](std::vector<Value>& a) {
+            Vec3 p{}, out;
+            if (a.size() < 3) return Value{Vec3::Zero};
+            Vec3 q{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+            std::vector<Value> b2 = a;
+            if (b2.size() < 4) b2.push_back(Value{50.0f});   // "nearest" looks further than "walkable"
+            return Value{navSample(b2, p, out) ? out : q};
         };
         // ---- Behavior trees: the Behavior Tree Runner on this object (or a named one) ----
         // bt_set(key, value) / bt_set("Name", key, value) writes the blackboard,

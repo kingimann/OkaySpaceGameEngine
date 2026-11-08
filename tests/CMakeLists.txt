@@ -1401,3 +1401,8 @@ add_test(NAME script_batch1 COMMAND test_script_batch1)
 add_executable(test_vs_media test_vs_media.cpp)
 target_link_libraries(test_vs_media PRIVATE okay::engine)
 add_test(NAME vs_media COMMAND test_vs_media)
+
+# Script navmesh queries: nav_path_exists / nav_path_length / nav_point_walkable / nav_nearest_point
+add_executable(test_script_nav test_script_nav.cpp)
+target_link_libraries(test_script_nav PRIVATE okay::engine)
+add_test(NAME script_nav COMMAND test_script_nav)

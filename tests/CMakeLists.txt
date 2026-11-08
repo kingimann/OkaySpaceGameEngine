@@ -1369,3 +1369,7 @@ add_test(NAME behavior_tree COMMAND test_behavior_tree)
 add_executable(test_splines test_splines.cpp)
 target_link_libraries(test_splines PRIVATE okay::engine)
 add_test(NAME splines COMMAND test_splines)
+
+add_executable(test_durable_saves test_durable_saves.cpp)
+target_link_libraries(test_durable_saves PRIVATE okay::engine)
+add_test(NAME durable_saves COMMAND test_durable_saves)

@@ -4,7 +4,9 @@
 The pages are the source of truth. Each page holds one or more areas ("## N. Name") and each area
 holds sub-areas ("### N.M Title") written as labelled lines ("- **What:** ..."). This script makes the
 areas table, the per-area summary tables, the "By what you see" table and the A-Z index, and puts the
-hand-written text of docs/feature_map/_header.md and _footer.md around them.
+hand-written text of docs/feature_map/_header.md and _footer.md around them. The two big lookup
+tables are written to docs/feature_map/_index_symptoms.md and _index_az.md so every file stays
+small enough to render on GitHub.
 
   python3 scripts/gen_feature_map.py            rewrite docs/FEATURE_MAP.md
   python3 scripts/gen_feature_map.py --check    exit 1 if docs/FEATURE_MAP.md is out of date
@@ -128,6 +130,9 @@ def build(root):
     nsub = sum(len(a['subs']) for a in areas)
     nparts = sum(len(s['lists'].get('Parts', [])) for a in areas for s in a['subs'])
 
+    def link2(sid, page, title):
+        return f"[{sid}]({page}#{slug(sid + ' ' + title)})"
+
     def link(sid, page, title):
         return f"[{sid}](feature_map/{page}#{slug(sid + ' ' + title)})"
 
@@ -152,19 +157,21 @@ def build(root):
             out.append(f"| {link(s['id'], a['page'], s['title'])} | {esc(s['title'])} | {esc(status)} | "
                        f"{esc(short(f.get('What', ''), 150))} | {esc(short(f.get('Open', '-'), 130))} |")
         out.append('')
-    # By what you see
+    # By what you see (own page)
     rows = []
     for a in areas:
         for s in a['subs']:
             for ph in split_terms(s['f'].get('Seen as', ''), ';'):
                 rows.append((ph, s, a))
     rows.sort(key=lambda r: (r[0].lower(), idkey(r[1]['id'])))
-    out += ['## By what you see', '', 'Find the window, page or symptom, then say the number.', '',
-            '| You see or say | Sub-area |', '|---|---|']
+    sym = ['# By what you see', '',
+           'Generated from the `Seen as` lines of the detail pages by `scripts/gen_feature_map.py`; do not edit.',
+           'Find the window, page or symptom, then say the number. Back to the [overview](../FEATURE_MAP.md).', '',
+           '| You see or say | Sub-area |', '|---|---|']
     for ph, s, a in rows:
-        out.append(f"| {esc(ph)} | {link(s['id'], a['page'], s['title'])} {esc(s['title'])} |")
-    out.append('')
-    # A-Z index
+        sym.append(f"| {esc(ph)} | {link2(s['id'], a['page'], s['title'])} {esc(s['title'])} |")
+    sym.append('')
+    # A-Z index (own page)
     idx = {}
     def add(term, sid):
         k = term.lower()
@@ -174,13 +181,15 @@ def build(root):
         add(a['name'].split(' (')[0], str(a['num']))
         for s in a['subs']:
             add(s['title'], s['id'])
-            for t in split_terms(s['f'].get('Words', ''), ','):
-                add(t, s['id'])
-            for p in s['lists'].get('Parts', []):
-                pm = re.match(r'(\d+\.\d+\.\d+) (.+?)(?: - |$)', p)
+            for t_ in split_terms(s['f'].get('Words', ''), ','):
+                add(t_, s['id'])
+            for p_ in s['lists'].get('Parts', []):
+                pm = re.match(r'(\d+\.\d+\.\d+) (.+?)(?: - |$)', p_)
                 if pm:
                     add(pm.group(2), pm.group(1))
-    out += ['## A-Z index', '', 'Word, then the number(s) to say.', '']
+    az = ['# A-Z index', '',
+          'Generated from the `Words` lines and titles of the detail pages by `scripts/gen_feature_map.py`; do not edit.',
+          'Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).', '']
     letters = {}
     for k in sorted(idx):
         term, sids = idx[k]
@@ -188,10 +197,12 @@ def build(root):
         letters.setdefault(letter, []).append(
             f"{term} ({', '.join(sorted(sids, key=lambda x: tuple(int(y) for y in x.split('.'))))})")
     for letter in sorted(letters, key=lambda c: (c == '#', c)):
-        out.append(f"**{letter}** " + ' · '.join(letters[letter]))
-        out.append('')
+        az.append(f"**{letter}** " + ' · '.join(letters[letter]))
+        az.append('')
     out += ['---', '', ftr, '']
-    return '\n'.join(out), problems, (len(areas), nsub, nparts)
+    return {'docs/FEATURE_MAP.md': '\n'.join(out),
+            'docs/feature_map/_index_symptoms.md': '\n'.join(sym),
+            'docs/feature_map/_index_az.md': '\n'.join(az)}, problems, (len(areas), nsub, nparts)
 
 
 def main():
@@ -201,20 +212,25 @@ def main():
     ap.add_argument('--strict', action='store_true')
     a = ap.parse_args()
     root = os.path.abspath(a.root)
-    text, problems, (na, ns, npart) = build(root)
+    outputs, problems, (na, ns, npart) = build(root)
     for p in problems:
         print('warning:', p, file=sys.stderr)
-    target = os.path.join(root, 'docs', 'FEATURE_MAP.md')
-    if a.check:
-        cur = open(target, encoding='utf-8').read() if os.path.exists(target) else ''
+    stale = []
+    for rel, text in outputs.items():
+        target = os.path.join(root, rel)
+        cur = open(target, encoding='utf-8').read() if os.path.exists(target) else None
         if cur != text:
-            print('docs/FEATURE_MAP.md is out of date: run python3 scripts/gen_feature_map.py', file=sys.stderr)
+            stale.append(rel)
+            if not a.check:
+                with open(target, 'w', encoding='utf-8', newline='\n') as f:
+                    f.write(text)
+    if a.check:
+        if stale:
+            print('out of date: ' + ', '.join(stale) + ': run python3 scripts/gen_feature_map.py', file=sys.stderr)
             return 1
         print(f'up to date ({na} areas, {ns} sub-areas, {npart} parts)')
         return 1 if (a.strict and problems) else 0
-    with open(target, 'w', encoding='utf-8', newline='\n') as f:
-        f.write(text)
-    print(f'wrote docs/FEATURE_MAP.md: {na} areas, {ns} sub-areas, {npart} parts, {len(problems)} warnings')
+    print(f'wrote {len(outputs)} files ({na} areas, {ns} sub-areas, {npart} parts, {len(problems)} warnings)')
     return 1 if (a.strict and problems) else 0
 
 

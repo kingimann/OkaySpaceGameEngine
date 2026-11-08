@@ -15,7 +15,7 @@ while i < len(args):
     if args[i] == '--dir': dirs.append(args[i+1]); i += 2
     else: root = args[i]; i += 1
 texts = []
-for p in [os.path.join(root, 'docs', 'FEATURE_MAP.md')] + glob.glob(os.path.join(root, 'docs', 'feature_map', '*.md')):
+for p in [os.path.join(root, 'docs', 'FEATURE_MAP.md')] + [q for q in glob.glob(os.path.join(root, 'docs', 'feature_map', '*.md')) if not os.path.basename(q).startswith('_index')]:
     if os.path.exists(p): texts.append(open(p, encoding='utf-8', errors='replace').read())
 text = '\n'.join(texts)
 words = set(re.findall(r'[A-Za-z0-9_]+', text))

@@ -2,7 +2,8 @@
 """Lists source files that the feature map (docs/FEATURE_MAP.md and docs/feature_map/*.md) never mentions.
 Usage: check_feature_map.py [repo_root] [--dir PREFIX ...] [--list]
 A file counts as mapped when its path under engine/include/okay (no extension, e.g. Core/Scheduler),
-its repo path, or its file stem as a whole word of at least 6 characters appears in the map text."""
+its repo path, or its file stem as a whole word of at least 6 characters appears in the map text.
+A test file tests/test_X.cpp also counts when X appears in a '- **Tests:**' line of a page."""
 import os, re, sys, glob
 root = '.'
 dirs = []
@@ -18,6 +19,10 @@ for p in [os.path.join(root, 'docs', 'FEATURE_MAP.md')] + glob.glob(os.path.join
     if os.path.exists(p): texts.append(open(p, encoding='utf-8', errors='replace').read())
 text = '\n'.join(texts)
 words = set(re.findall(r'[A-Za-z0-9_]+', text))
+test_words = set()
+for line in text.split('\n'):
+    if line.startswith('- **Tests:**'):
+        test_words.update(re.findall(r'[A-Za-z0-9_]+', line))
 SRC = ('.hpp', '.h', '.cpp', '.c', '.cc', '.py', '.sh', '.bat', '.cmake', '.nsi', '.ts', '.sql')
 SKIP = ('third_party', '/archive/', 'build/', 'tests/assets', 'tests/data', 'tests/export', 'tests/golden')
 roots = ['engine/include/okay', 'engine/src', 'editor', 'launcher', 'player', 'relay', 'sandbox', 'shared',
@@ -41,6 +46,7 @@ def mapped(rel):
     if rel.startswith('engine/src/') and rel[len('engine/src/'):].rsplit('.', 1)[0] in text: return True
     if len(stem) >= 6 and stem in words: return True
     if stem.startswith('test_') and stem[5:] in words and len(stem) >= 9: return True
+    if stem.startswith('test_') and stem[5:] in test_words: return True
     return False
 un = [f for f in sorted(files) if (not dirs or any(f.startswith(d) for d in dirs)) and not mapped(f)]
 tot = [f for f in files if (not dirs or any(f.startswith(d) for d in dirs))]

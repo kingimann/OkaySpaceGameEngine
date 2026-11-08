@@ -33,6 +33,24 @@ Paths are under `engine/include/okay/` unless they start with `editor/`,
 | 17 | Launcher & platform | 17.1 Launcher shell and updater, 17.2 Accounts, 17.3 Friends and parties, 17.4 Chat, 17.5 Forums, 17.6 Marketplace and Workshop, 17.7 Profiles and achievements, 17.8 Servers page, 17.9 Admin, 17.10 Steam and PlayFab, 17.11 Security |
 | 18 | Build, export & release | 18.1 Windows build and installer, 18.2 Web and mobile export, 18.3 CI jobs, 18.4 Release workflow, 18.5 Update feed |
 | 19 | Docs, tests & code health | 19.1 README and docs, 19.2 Test suite, 19.3 QA workflow, 19.4 File splitting |
+| 20 | Asset management (Critical) | 20.1 Asset browser, 20.2 Dependencies and references, 20.3 GUIDs, 20.4 Import settings, 20.5 Thumbnails |
+| 21 | Prefab system (Critical) | 21.1 Reusable objects, 21.2 Nested prefabs, 21.3 Variants, 21.4 Overrides |
+| 22 | Undo/redo & recovery (Critical) | 22.1 Undo history, 22.2 Autosave, 22.3 Crash recovery, 22.4 Backups |
+| 23 | Profiling & debugging (Critical) | 23.1 CPU/GPU profiler, 23.2 Memory tracking, 23.3 Frame debugger, 23.4 Error console |
+| 24 | Plugin & extension system (Critical) | 24.1 C++ plugins, 24.2 Editor extensions, 24.3 Custom nodes, 24.4 Plugin SDK |
+| 25 | Project management (High) | 25.1 Templates, 25.2 Project settings, 25.3 Migration, 25.4 Dependency management |
+| 26 | Shader & material editor (High) | 26.1 Visual shader graphs, 26.2 Material editor, 26.3 Custom shaders, 26.4 PBR |
+| 27 | Optimization tools (High) | 27.1 LOD generation, 27.2 Occlusion culling, 27.3 Batching, 27.4 Streaming |
+| 28 | Version control integration (High) | 28.1 Git integration, 28.2 Diffs, 28.3 Project history, 28.4 Merge conflict tools |
+| 29 | Terrain & world building tools (High) | 29.1 Terrain sculpting, 29.2 Vegetation painting, 29.3 Procedural generation |
+| 30 | Character creator (Medium) | 30.1 Customization, 30.2 Rig generation, 30.3 Clothing, 30.4 Morph targets |
+| 31 | Localization tools (Medium) | 31.1 Translation tables, 31.2 Font fallback, 31.3 Language previews |
+| 32 | Accessibility (High) | 32.1 Controller navigation, 32.2 Subtitles, 32.3 Colorblind options, 32.4 Remapping |
+| 33 | Automated testing (Critical) | 33.1 Play-mode tests, 33.2 Scene validation, 33.3 Regression testing |
+| 34 | Live editing (High) | 34.1 Properties during Play, 34.2 Live object inspector, 34.3 Hot reload |
+| 35 | Save game framework (High) | 35.1 Save slots, 35.2 Checkpoints, 35.3 Serialization, 35.4 Versioned save data |
+
+Areas 20-35 (the planned areas) are listed in their own table near the end.
 
 ## How to point at something
 
@@ -429,6 +447,33 @@ Editor: UI mode in the Scene view, UI inspector overlay.
 | 19.2 | Test suite (about 330 registered tests) | `tests/*` | `qa_workflow.md` | - |
 | 19.3 | QA workflow, rig sweep test | `tests/*` | `qa_workflow.md` | - |
 | 19.4 | Splitting the largest files (editor, launcher, OkayScript VM, serializer) | - | - | See 15.10, 17.1, 13.1, 1.5 |
+
+---
+
+## 20-35. Planned areas
+
+Areas 20-35 are planned features you asked for. Each says what exists today
+(so nothing is built twice), what is missing, and the priority you gave.
+"In flight" means a branch or PR already exists.
+
+| ID | Area (priority) | Exists today | Missing | Related |
+|---|---|---|---|---|
+| 20 | Asset management (Critical) | Project panel and marketplace asset manager (15.4); asset manager core in flight (typed handles, refcounts, async load, hot reload; PR #568) | Asset browser with search and filters, dependency graph and "used by" lookup, persistent GUIDs and a meta file per asset so renames and moves keep references, per-asset import settings, thumbnails | 15.4, 3.6, 1.6, 21 |
+| 21 | Prefab system (Critical) | Prefab files and instantiate (1.6); stable object IDs, prefab overrides and re-apply in flight (branch claude/scene-ids-prefabs) | Nested prefabs, variants, override editor UI (apply, revert, per-field), prefab mode editing, unpack | 1.6, 15.2, 20 |
+| 22 | Undo/redo & recovery (Critical) | Undo is a full-scene text snapshot, 100 steps; autosave (15.9) | Command-based undo (cheap, per-property), undo across Play, crash recovery (restore after a crash), rolling backups and a restore UI | 15.9 |
+| 23 | Profiling & debugging (Critical) | Profiler with categories and trace export in review (PR #559); log file sink; editor console (15.9) | CPU and GPU timeline window, memory tracking by system, frame debugger (draw call list, state, step through), error console filters and links to the source object | 1.10, 2.1, 15.6 |
+| 24 | Plugin & extension system (Critical) | Editor plugin system and Plugins menu (15.8, `editor-plugins.md`) | C++ plugin ABI with versioning and a plugin SDK package, editor extension points (windows, inspectors, menus), custom nodes for visual scripting, plugin manager UI | 15.8, 14.4 |
+| 25 | Project management (High) | Templates (1.6), Create page (17.1), Build Settings (15.7) | Full project settings window, project migration across engine versions, dependency management (packages and versions) | 1.6, 17.1, 15.7 |
+| 26 | Shader & material editor (High) | Materials and procedural textures (2.2) | Visual shader graph, material editor window with live preview, custom shader files across the renderers, PBR material model | 2.1, 2.2 |
+| 27 | Optimization tools (High) | Frustum culling, GPU skinning (2.8) | LOD generation and LOD groups, occlusion culling, static and dynamic batching, asset and scene streaming | 2.8, 2.6, 1.4 |
+| 28 | Version control integration (High) | None | Git panel in the editor (status, commit, branch), text diffs of scenes and prefabs (needs diff-friendly scene text, see 1.5), project history, merge conflict helper for scenes | 1.5, 15 |
+| 29 | Terrain & world building tools (High) | Terrain, voxel terrain, water, splines (2.6, 2.7) | Terrain sculpting brushes, vegetation and detail painting, procedural generation (noise, erosion, scatter) | 2.6 |
+| 30 | Character creator (Medium) | Blocky Character (4.9), Rig Model and Make Playable (3.7), blend shapes (3.6) | Character customization UI, rig generation, clothing and attachment system, morph target sliders | 4.9, 3.7, 5.4 |
+| 31 | Localization tools (Medium) | String tables, plurals and font fallback runtime (1.8); number and date formatting in flight | Translation table editor window, missing-key report, import and export (CSV), language preview in the Game view | 1.8 |
+| 32 | Accessibility (High) | Input actions and rebinding UI (8.3); extended keys, contexts and gamepad curves in flight | Full controller navigation of all UI, subtitles and captions system, colorblind filters and safe palettes, text scaling, remap everything including UI | 8.3, 12.4, 12.7 |
+| 33 | Automated testing (Critical) | About 330 unit tests, five CI jobs (19.2, 18.3) | Play-mode tests (run a scene headless and assert), scene validation (missing references, missing components), regression and golden-image tests, a test runner window | 19.2, 18.3 |
+| 34 | Live editing (High) | Editor Play mode (15.3) | Change properties during Play and keep or revert them, live object inspector for runtime-created objects, script hot reload without leaving Play | 15.2, 15.3, 13 |
+| 35 | Save game framework (High) | Durable saves: atomic writes, versioned and checksummed slots, backups, migration hook (merged, PR #552, `save_games.md`) | Checkpoints, save slot UI components, scene-object state saving (SaveableObject), cloud save hooks | 1.7, 12 |
 
 ---
 

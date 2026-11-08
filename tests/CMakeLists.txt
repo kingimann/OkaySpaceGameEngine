@@ -1369,3 +1369,19 @@ add_test(NAME behavior_tree COMMAND test_behavior_tree)
 add_executable(test_splines test_splines.cpp)
 target_link_libraries(test_splines PRIVATE okay::engine)
 add_test(NAME splines COMMAND test_splines)
+
+add_executable(test_random test_random.cpp)
+target_link_libraries(test_random PRIVATE okay::engine)
+add_test(NAME random COMMAND test_random)
+
+add_executable(test_eventbus test_eventbus.cpp)
+target_link_libraries(test_eventbus PRIVATE okay::engine)
+add_test(NAME eventbus COMMAND test_eventbus)
+
+add_executable(test_utf8 test_utf8.cpp)
+target_link_libraries(test_utf8 PRIVATE okay::engine)
+add_test(NAME utf8 COMMAND test_utf8)
+
+add_executable(test_time_pause test_time_pause.cpp)
+target_link_libraries(test_time_pause PRIVATE okay::engine)
+add_test(NAME time_pause COMMAND test_time_pause)

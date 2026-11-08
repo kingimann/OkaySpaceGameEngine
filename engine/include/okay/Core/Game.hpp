@@ -11,12 +11,12 @@ class Game {
 public:
     // ---- Pause ---------------------------------------------------------
     static bool Paused() { return s_paused; }
-    /// Pause/resume gameplay. Pausing stores the current time scale and sets it to
-    /// 0 (so DeltaTime is 0 and movement/physics freeze); resuming restores it.
+    /// Pause/resume gameplay. Pausing freezes the time (DeltaTime is 0 and
+    /// TimeScale() reads 0, so movement/physics stop). The time scale itself is left
+    /// alone: one set while paused is remembered and applies on resume.
     static void SetPaused(bool paused) {
         if (paused == s_paused) return;
-        if (paused) { s_prevScale = Time::TimeScale(); Time::SetTimeScale(0.0f); }
-        else        { Time::SetTimeScale(s_prevScale); }
+        Time::SetFrozen(paused);
         s_paused = paused;
     }
     static void TogglePause() { SetPaused(!s_paused); }
@@ -26,12 +26,11 @@ public:
     static void RequestQuit()   { s_quit = true; }
     /// Clear the flags — call when (re)starting Play so stale state doesn't leak
     /// between runs.
-    static void Reset() { s_quit = false; if (s_paused) { Time::SetTimeScale(s_prevScale); s_paused = false; } }
+    static void Reset() { s_quit = false; if (s_paused) { Time::SetFrozen(false); s_paused = false; } }
 
 private:
     static inline bool  s_paused    = false;
     static inline bool  s_quit      = false;
-    static inline float s_prevScale = 1.0f;
 };
 
 } // namespace okay

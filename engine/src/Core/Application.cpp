@@ -1,5 +1,6 @@
 #include "okay/Core/Application.hpp"
 #include "okay/Core/Time.hpp"
+#include "okay/Core/Game.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -51,7 +52,7 @@ void Application::Run(Scene& scene) {
         scene.Update(Time::DeltaTime());
         scene.Render(*m_renderer);
 
-        if (Input::GetKeyDown('q')) m_running = false;
+        if (ShouldQuit(m_config, Input::GetKeyDown('q'), Game::QuitRequested())) m_running = false;
 
         ++frame;
         if (m_config.maxFrames > 0 && frame >= m_config.maxFrames) m_running = false;

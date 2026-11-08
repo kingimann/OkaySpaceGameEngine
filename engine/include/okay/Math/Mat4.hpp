@@ -80,6 +80,60 @@ struct Mat4 {
         return Translate(t) * Rotate(r) * Scale(s);
     }
 
+    /// Split an affine matrix into translation, rotation and scale (so that
+    /// TRS(t, r, s) reproduces it). Returns false (outputs still filled best-effort)
+    /// when the matrix is not affine (projective bottom row) or has non-finite values.
+    ///  * A mirroring matrix (negative determinant) puts the reflection on scale.x
+    ///    (scale.x < 0) so that the rotation stays a proper rotation.
+    ///  * Shear cannot be expressed as TRS: columns are Gram-Schmidt orthogonalised
+    ///    (x axis first), giving the closest TRS; the shear is dropped.
+    ///  * A zero-length axis (flattened matrix) gets scale 0 and a rotation basis
+    ///    completed from the other axes, so the rotation is always a valid unit quaternion.
+    bool Decompose(Vec3& translation, Quat& rotation, Vec3& scale) const {
+        bool ok = true;
+        for (int i = 0; i < 16; ++i) if (!std::isfinite(m[i])) ok = false;
+        if (!ok) { translation = Vec3{}; rotation = Quat{}; scale = Vec3{1, 1, 1}; return false; }
+        if (Mathf::Abs(m[3]) > 1e-5f || Mathf::Abs(m[7]) > 1e-5f || Mathf::Abs(m[11]) > 1e-5f ||
+            Mathf::Abs(m[15] - 1.0f) > 1e-5f) ok = false;
+        translation = Vec3{m[12], m[13], m[14]};
+        Vec3 c0{m[0], m[1], m[2]}, c1{m[4], m[5], m[6]}, c2{m[8], m[9], m[10]};
+        const float eps = 1e-8f;
+        float sx = c0.Magnitude();
+        Vec3 n0 = sx > eps ? c0 / sx : Vec3{};
+        Vec3 o1 = c1 - n0 * Vec3::Dot(c1, n0);
+        float sy = o1.Magnitude();
+        Vec3 n1 = sy > eps ? o1 / sy : Vec3{};
+        Vec3 o2 = c2 - n0 * Vec3::Dot(c2, n0) - n1 * Vec3::Dot(c2, n1);
+        float sz = o2.Magnitude();
+        Vec3 n2 = sz > eps ? o2 / sz : Vec3{};
+        // Complete a degenerate basis.
+        auto perp = [](const Vec3& a) {
+            Vec3 t = Mathf::Abs(a.x) < 0.9f ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
+            return Vec3::Cross(a, t).Normalized();
+        };
+        if (sx <= eps) {
+            if (sy > eps && sz > eps) n0 = Vec3::Cross(n1, n2).Normalized();
+            else if (sy > eps) n0 = perp(n1);
+            else if (sz > eps) n0 = perp(n2);
+            else n0 = Vec3{1, 0, 0};
+            sx = 0.0f;
+        }
+        if (sy <= eps) {
+            if (sz > eps) n1 = Vec3::Cross(n2, n0).Normalized();
+            else { n1 = perp(n0); }
+            sy = 0.0f;
+        }
+        if (sz <= eps) { n2 = Vec3::Cross(n0, n1).Normalized(); sz = 0.0f; }
+        // Mirroring: the basis came out left-handed. Flip x (axis and scale together,
+        // so column 0 is unchanged) to get a proper rotation with scale.x < 0.
+        if (Vec3::Dot(Vec3::Cross(n0, n1), n2) < 0.0f) { n0 = -n0; sx = -sx; }
+        scale = Vec3{sx, sy, sz};
+        rotation = Quat::FromRotationMatrix(n0.x, n1.x, n2.x,
+                                            n0.y, n1.y, n2.y,
+                                            n0.z, n1.z, n2.z);
+        return ok;
+    }
+
     /// Planar projection that flattens points onto the horizontal plane y = groundY
     /// along the directional-light direction `lightDir` (the way light travels — it
     /// must point downward). Multiply in WORLD space (vp * PlanarShadow * model) to

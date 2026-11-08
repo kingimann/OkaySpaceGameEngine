@@ -20,7 +20,7 @@ public:
         int   maxFrames    = 0;      // 0 = run until quit; >0 = stop after N frames
         bool  smoothDt     = true;   // step by an evened-out frame time (Time::SmoothDelta)
         bool  clearScreen  = true;   // console backend clears the terminal each frame
-        bool  quitOnQ      = true;   // pressing 'q' ends the loop (turn off when 'q' is a game key)
+        char  quitKey      = 'q';    // pressing it ends the loop; 0 = no quit key
     };
 
     explicit Application(Config config);
@@ -33,9 +33,9 @@ public:
     void Run(Scene& scene);
 
     /// Whether the loop should end after this frame: the game asked to quit
-    /// (Game::RequestQuit), or 'q' was pressed while `quitOnQ` is on.
-    static bool ShouldQuit(const Config& config, bool qPressed, bool quitRequested) {
-        return quitRequested || (config.quitOnQ && qPressed);
+    /// (Game::RequestQuit), or the quit key (`quitKey`, default 'q'; 0 = none) was pressed.
+    static bool ShouldQuit(const Config& config, bool keyPressed, bool quitRequested) {
+        return quitRequested || (config.quitKey != 0 && keyPressed);
     }
 
     /// Request a graceful shutdown of the loop.

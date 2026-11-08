@@ -1390,6 +1390,12 @@ add_executable(test_input_actions test_input_actions.cpp)
 target_link_libraries(test_input_actions PRIVATE okay::engine)
 add_test(NAME input_actions COMMAND test_input_actions)
 
+# Input: F-keys / nav keys / left-right modifiers, input contexts that swallow keys, gamepad dead zones,
+# response curves, trigger thresholds and several controllers
+add_executable(test_input_keys_gamepad test_input_keys_gamepad.cpp)
+target_link_libraries(test_input_keys_gamepad PRIVATE okay::engine)
+add_test(NAME input_keys_gamepad COMMAND test_input_keys_gamepad)
+
 # Save games: slots, whole-scene state, script variables, deferred load, autosave
 add_executable(test_save_game test_save_game.cpp)
 target_link_libraries(test_save_game PRIVATE okay::engine)
@@ -1480,11 +1486,25 @@ add_executable(test_script_batch1 test_script_batch1.cpp)
 target_link_libraries(test_script_batch1 PRIVATE okay::engine)
 add_test(NAME script_batch1 COMMAND test_script_batch1)
 
+add_executable(test_assetmanager test_assetmanager.cpp)
+target_link_libraries(test_assetmanager PRIVATE okay::engine)
+add_test(NAME assetmanager COMMAND test_assetmanager)
+
+# Asset database: GUID metas, move detection, dependency graph, import settings, thumbnails, search
+add_executable(test_asset_database test_asset_database.cpp)
+target_link_libraries(test_asset_database PRIVATE okay::engine)
+add_test(NAME asset_database COMMAND test_asset_database)
+
 # Core audit regressions: math edge cases, ECS/NetWorld hardening, Camera degenerate
 # viewports, Layers names, DataAsset load, input binding persistence.
 add_executable(test_core_audit test_core_audit.cpp)
 target_link_libraries(test_core_audit PRIVATE okay::engine)
 add_test(NAME core_audit COMMAND test_core_audit)
+
+# Core math extras: Quat::Normalized NaN, Color::Parse (hex and "r,g,b")
+add_executable(test_core_math_extra test_core_math_extra.cpp)
+target_link_libraries(test_core_math_extra PRIVATE okay::engine)
+add_test(NAME core_math_extra COMMAND test_core_math_extra)
 
 # Core audit: terminal input session (pty based, so POSIX only).
 if(UNIX)
@@ -1502,6 +1522,35 @@ add_test(NAME vs_media COMMAND test_vs_media)
 add_executable(test_script_nav test_script_nav.cpp)
 target_link_libraries(test_script_nav PRIVATE okay::engine)
 add_test(NAME script_nav COMMAND test_script_nav)
+
+# Math: Mat3, Mat4::Decompose, geometry (Ray/Plane/Sphere/AABB/OBB/Frustum/Capsule), Vec2i/Vec3i, noise, curves, colour spaces, Rng streams
+add_executable(test_math_geometry test_math_geometry.cpp)
+target_link_libraries(test_math_geometry PRIVATE okay::engine)
+add_test(NAME math_geometry COMMAND test_math_geometry)
+
+# Core fixes: Application quit handling, strict Rect::Overlaps, SmoothStep edges, ToEuler near the poles
+add_executable(test_core_fixes test_core_fixes.cpp)
+target_link_libraries(test_core_fixes PRIVATE okay::engine)
+add_test(NAME core_fixes COMMAND test_core_fixes)
+
+# Core tools: CommandLine, Paths, BuildInfo, Stopwatch, StateMachine
+add_executable(test_core_cli test_core_cli.cpp)
+target_link_libraries(test_core_cli PRIVATE okay::engine)
+target_compile_definitions(test_core_cli PRIVATE OKAY_ENGINE_VERSION_FOR_TEST="${PROJECT_VERSION}")
+add_test(NAME core_cli COMMAND test_core_cli)
+
+# Core console: EventBus extras, Cvars, Console, debug overlay lines
+add_executable(test_core_console test_core_console.cpp)
+target_link_libraries(test_core_console PRIVATE okay::engine)
+add_test(NAME core_console COMMAND test_core_console)
+# Localization formatting + plural rules, typed Prefs, FixedTimestep (docs/localization_prefs_time.md)
+add_executable(test_loc_prefs_time test_loc_prefs_time.cpp)
+target_link_libraries(test_loc_prefs_time PRIVATE okay::engine)
+add_test(NAME loc_prefs_time COMMAND test_loc_prefs_time)
+
+add_executable(test_ecs_commands test_ecs_commands.cpp)
+target_link_libraries(test_ecs_commands PRIVATE okay::engine)
+add_test(NAME ecs_commands COMMAND test_ecs_commands)
 
 # Multi-frame scene loads (progress, additive load + unload by handle), ObjectPool, RequireComponent rules
 add_executable(test_scene_load_pool test_scene_load_pool.cpp)

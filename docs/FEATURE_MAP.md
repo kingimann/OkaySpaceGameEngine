@@ -14,7 +14,7 @@ Paths are under `engine/include/okay/` unless they start with `editor/`,
 
 | # | Area | Sub-areas |
 |---|---|---|
-| 1 | Core & scene | 1.1 Loop and time, 1.2 Timers and tweens, 1.3 Scene graph, 1.4 Scene lifecycle, 1.5 Scene serializer, 1.6 Prefabs and templates, 1.7 Saves and prefs, 1.8 Localization, 1.9 Events and ECS, 1.10 Logging and profiling |
+| 1 | Core & scene | 1.1 Loop and time, 1.2 Timers and tweens, 1.3 Scene graph, 1.4 Scene lifecycle, 1.5 Scene serializer, 1.6 Prefabs and templates, 1.7 Saves and prefs, 1.8 Localization, 1.9 Events and ECS, 1.10 Logging and profiling, 1.11 Math, geometry, noise, RNG |
 | 2 | Rendering & world | 2.1 Renderers, 2.2 Materials and textures, 2.3 Lighting and shadows, 2.4 Sky, fog and weather, 2.5 Post-processing, 2.6 Terrain and water, 2.7 Particles and lines, 2.8 Culling and skinning, 2.9 Fonts and images |
 | 3 | 3D modeling & import | 3.1 Edit mode, 3.2 Edge and loop tools, 3.3 Modifiers, 3.4 UV tools, 3.5 Mesh assets and primitives, 3.6 Model import, 3.7 Rigging and playable setup |
 | 4 | Characters & cameras | 4.1 Player Controller, 4.2 Stances and movement, 4.3 2D and 2.5D controllers, 4.4 Shooter and top-down, 4.5 Vehicles, 4.6 Third-person camera, 4.7 First-person camera and hands, 4.8 Virtual cameras and dollies, 4.9 Blocky Character and customization |
@@ -204,16 +204,17 @@ You can also say "area 5 but not Grok's parts" or "everything open in 1".
 
 | ID | Sub-area | Code | Docs | Open |
 |---|---|---|---|---|
-| 1.1 | Loop and time: Application, Game, Time, Random | `Core/Application`, `Game`, `Time`, `Random` | `making_a_game.md` | Fixed-step helper for gameplay code |
+| 1.1 | Loop and time: Application, Game, Time, Random | `Core/Application`, `Game`, `Time`, `Random` | `making_a_game.md`, `core_tools.md`, `localization_prefs_time.md` | `FixedTimestep` helper exists; wire it into more gameplay code |
 | 1.2 | Timers and tweens: Scheduler, Tween, easing | `Core/Scheduler`, `Tween`, `Components/TweenAnimation` | - | Global scheduler PR in review |
 | 1.3 | Scene graph: Scene, GameObject, Transform, components, layers and tags | `Scene/Scene`, `GameObject`, `Transform`, `Component`, `Layers` | `making_a_game.md` | Layer collision matrix, named tags, component registry |
 | 1.4 | Scene lifecycle: Start/Awake order, destroy, scene manager, load | `Scene/SceneManager`, `Scene` | `making_a_game.md` | Async load, unload, DontDestroyOnLoad, pooling (branches in review) |
 | 1.5 | Scene serializer (`okayscene 3`): load, merge, instantiate | `Scene/SceneSerializer` | - | Safe loading in review; stable object IDs; component serializer registry |
 | 1.6 | Prefabs and templates: prefab files, starter players and worlds | `Scene/SceneTemplates`, `UITemplates`, `UIStyles` | `making_a_game.md` | Prefab overrides |
-| 1.7 | Saves and prefs: save games, prefs, data assets, data packs | `Core/SaveData`, `Prefs`, `DataAsset`, `DataPack` | `save_games.md` | Durable saves in review; typed Prefs |
-| 1.8 | Localization: string tables, plurals, font fallback | `Core/Game` (runtime), `Components/*` consumers | `localization.md` | Number and date formatting, plural rules |
-| 1.9 | Events and ECS: EventBus, ECS World, SceneBridge | `Core/EventBus`, `ECS/World`, `ECS/SceneBridge`, `ECS/Systems` | - | ECS command buffer |
+| 1.7 | Saves and prefs: save games, prefs, data assets, data packs | `Core/SaveData`, `Prefs`, `DataAsset`, `DataPack` | `save_games.md`, `localization_prefs_time.md` | Typed Prefs and durable saves done |
+| 1.8 | Localization: string tables, plurals, font fallback | `Core/Game` (runtime), `Components/*` consumers | `localization.md`, `localization_prefs_time.md` | Number/date formatting and plural rules done; more locales |
+| 1.9 | Events and ECS: EventBus, ECS World, SceneBridge | `Core/EventBus` (priority, once, scoped Subscription, queue), `ECS/World`, `ECS/SceneBridge`, `ECS/Systems` | `core_tools.md`, `ecs.md` | ECS command buffer done |
 | 1.10 | Logging and profiling | `Core/Log`, `Core/Profiler` | `core_logging_profiling.md` (in review) | Trace export in review |
+| 1.11 | Math, geometry, noise, RNG: Mat3, Decompose, Bounds/Ray/Plane/OBB/Capsule/ViewFrustum, Vec2i/Vec3i, noise, curves, colour spaces, `Rng` streams | `Math/*`, `Core/Rng` | `math_geometry.md` | Older private noise copies not yet migrated |
 
 Editor: Scene Manager panel (`editor/SceneManagerPanel.*`), Localization window.
 
@@ -458,7 +459,7 @@ Areas 20-35 are planned features you asked for. Each says what exists today
 
 | ID | Area (priority) | Exists today | Missing | Related |
 |---|---|---|---|---|
-| 20 | Asset management (Critical) | Project panel and marketplace asset manager (15.4); asset manager core in flight (typed handles, refcounts, async load, hot reload; PR #568) | Asset browser with search and filters, dependency graph and "used by" lookup, persistent GUIDs and a meta file per asset so renames and moves keep references, per-asset import settings, thumbnails | 15.4, 3.6, 1.6, 21 |
+| 20 | Asset management (Critical) | Project panel and marketplace asset manager (15.4); asset manager core in flight (typed handles, refcounts, async load, hot reload; PR #568); data layer in flight (branch claude/asset-guids-deps, `asset_database.md`): GUID meta files with move/rename/duplicate handling, dependency graph with closure, unused and missing reports, typed import settings with migration and a reimport signal, thumbnail cache, search/filter/page query | Asset browser window and thumbnails grid on top of that data layer, importers that read the import settings, GUID references inside scene files, wiring the build/export closure | 15.4, 3.6, 1.6, 21 |
 | 21 | Prefab system (Critical) | Prefab files and instantiate (1.6); stable object IDs, prefab overrides and re-apply in flight (branch claude/scene-ids-prefabs) | Nested prefabs, variants, override editor UI (apply, revert, per-field), prefab mode editing, unpack | 1.6, 15.2, 20 |
 | 22 | Undo/redo & recovery (Critical) | Undo is a full-scene text snapshot, 100 steps; autosave (15.9) | Command-based undo (cheap, per-property), undo across Play, crash recovery (restore after a crash), rolling backups and a restore UI | 15.9 |
 | 23 | Profiling & debugging (Critical) | Profiler with categories and trace export in review (PR #559); log file sink; editor console (15.9) | CPU and GPU timeline window, memory tracking by system, frame debugger (draw call list, state, step through), error console filters and links to the source object | 1.10, 2.1, 15.6 |

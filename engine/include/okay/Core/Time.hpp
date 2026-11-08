@@ -32,6 +32,12 @@ public:
     static void SetFrozen(bool frozen) { s_frozen = frozen; }
     static bool Frozen() { return s_frozen; }
 
+    /// The length of one fixed gameplay step (default 0.02 s = 50 steps a second, the
+    /// rate scripts' FixedUpdate and physics run at). FixedTimestep reads it when it
+    /// is built without a step. A step that is not a finite positive number is ignored.
+    static float FixedDeltaTime() { return s_fixedDelta; }
+    static void  SetFixedDeltaTime(float step) { if (step > 0.0f && std::isfinite(step)) s_fixedDelta = step; }
+
     /// Frames per second, smoothed, from the measured frame times.
     static float SmoothedFPS() { return s_fps; }
     /// The last frame's time as measured (before SmoothDelta), for FPS readouts
@@ -112,6 +118,7 @@ private:
     static inline double       s_time              = 0.0;
     static inline double       s_unscaledTime      = 0.0;
     static inline float        s_timeScale         = 1.0f;
+    static inline float        s_fixedDelta        = 1.0f / 50.0f;
     static inline bool         s_frozen            = false;
     static inline float        s_fps               = 0.0f;
     static inline std::uint64_t s_frameCount       = 0;
@@ -120,6 +127,85 @@ private:
     static inline float        s_hist[4]           = {0.0f, 0.0f, 0.0f, 0.0f};
     static inline int          s_histAt = 0, s_histN = 0;
     static inline float        s_carry             = 0.0f;    // vsync snapping: measured minus stepped
+};
+
+/// A fixed-timestep accumulator for gameplay code outside physics: feed it each
+/// frame's time and run `Advance`'s count of equal steps, then draw `Alpha()` of
+/// the way to the next one (to interpolate). Scene physics uses the same scheme
+/// (Scene::fixedTimeStep, maxPhysicsCatchUp); this is for anything else that needs
+/// a steady rate (AI ticks, rhythm timing, replays, custom simulations).
+///
+///   FixedTimestep fixed;                       // Time::FixedDeltaTime(), 5 steps at most
+///   ...each frame:
+///   fixed.Run(Time::DeltaTime(), [&](float dt) { Simulate(dt); });
+///   Draw(Lerp(prev, cur, fixed.Alpha()));
+///
+/// Feed it Time::DeltaTime() (scaled: it stands still while paused and speeds up or
+/// slows with the time scale) or Time::UnscaledDeltaTime() (UI, menus). A long frame
+/// runs at most `maxSteps` steps; the time beyond that is dropped (not owed), so a
+/// hitch never spirals into ever more steps.
+class FixedTimestep {
+public:
+    /// `step` <= 0 (or not finite) reads Time::FixedDeltaTime().
+    explicit FixedTimestep(float step = 0.0f, int maxStepsPerFrame = 5) {
+        SetStep(step);
+        SetMaxSteps(maxStepsPerFrame);
+    }
+
+    float Step() const { return (float)m_step; }
+    void  SetStep(float step) {
+        m_step = (double)((step > 0.0f && std::isfinite(step)) ? step : Time::FixedDeltaTime());
+        Clamp();
+    }
+    int   MaxSteps() const { return m_maxSteps; }
+    /// At least 1.
+    void  SetMaxSteps(int n) { m_maxSteps = n < 1 ? 1 : n; Clamp(); }
+
+    /// Add `dt` seconds (negative, NaN and infinite times add nothing) and return how
+    /// many fixed steps are now due, at most MaxSteps(); they are taken off the
+    /// accumulator. A frame that would owe more has the surplus dropped (Dropped()).
+    int Advance(float dt) {
+        if (dt > 0.0f && std::isfinite(dt)) m_acc += (double)dt;
+        const double cap = m_step * (double)m_maxSteps;
+        if (m_acc > cap + kEps * m_step) { m_dropped += m_acc - cap; m_acc = cap; }
+        int n = 0;
+        while (m_acc >= m_step * (1.0 - kEps) && n < m_maxSteps) { m_acc -= m_step; ++n; }
+        if (m_acc < 0.0) m_acc = 0.0;
+        m_steps = n;
+        m_total += (std::uint64_t)n;
+        return n;
+    }
+
+    /// Advance(dt), then call fn(stepSeconds) once per due step. Returns the count.
+    template <class Fn> int Run(float dt, Fn&& fn) {
+        const int n = Advance(dt);
+        const float s = Step();
+        for (int i = 0; i < n; ++i) fn(s);
+        return n;
+    }
+
+    /// How far into the next step the leftover time is: 0 (just stepped) up to
+    /// just under 1. Blend the previous and current state with it.
+    float Alpha() const { return (float)(m_acc / m_step); }
+    /// Time carried toward the next step, seconds.
+    float Accumulated() const { return (float)m_acc; }
+    /// Steps the last Advance returned, and every step returned so far.
+    int   LastSteps() const { return m_steps; }
+    std::uint64_t TotalSteps() const { return m_total; }
+    /// Seconds dropped for exceeding MaxSteps() since the last Reset.
+    double DroppedTime() const { return m_dropped; }
+    /// Forget the carried time and the counters.
+    void Reset() { m_acc = 0.0; m_steps = 0; m_total = 0; m_dropped = 0.0; }
+
+private:
+    void Clamp() { const double cap = m_step * (double)m_maxSteps; if (m_acc > cap) m_acc = cap; }
+    static constexpr double kEps = 1e-6;   // a step short by float rounding still counts
+    double m_step = 0.02;
+    double m_acc = 0.0;
+    double m_dropped = 0.0;
+    std::uint64_t m_total = 0;
+    int m_maxSteps = 5;
+    int m_steps = 0;
 };
 
 } // namespace okay

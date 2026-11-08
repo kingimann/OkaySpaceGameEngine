@@ -9,7 +9,7 @@
 using namespace okay;
 
 // The script a new script file starts with: an empty Start and Update, like a
-// fresh Unity MonoBehaviour. It must load in the language's own script engine,
+// fresh component script. It must load in the language's own script engine,
 // run without a complaint, and stay out of the way (no movement, no logging).
 int main() {
     RUN_SUITE("starter_script");

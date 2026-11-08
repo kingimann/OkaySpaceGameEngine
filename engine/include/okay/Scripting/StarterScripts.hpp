@@ -5,7 +5,7 @@ namespace okay {
 
 /// The script a new, empty script file starts with, per language: the two
 /// functions every script wants, empty, with a line saying when each runs. The
-/// same shape as an empty Unity MonoBehaviour. It lives here (not in the editor)
+/// same shape as an empty component script in a C#-style engine. It lives here (not in the editor)
 /// so a test can load it into the real script engine.
 ///
 /// OkayScript has no class or base type: the file's fields and functions ARE the
@@ -14,11 +14,11 @@ namespace okay {
 inline const char* StarterScriptSource(const std::string& lang) {
     if (lang == "lua")
         return "-- Runs once, before the first frame.\n"
-               "start()\n"
+               "function start()\n"
                "end\n"
                "\n"
                "-- Runs every frame; dt is the seconds since the last one.\n"
-               "update(dt)\n"
+               "function update(dt)\n"
                "end\n";
     if (lang == "csharp")
         return "class Script {\n"

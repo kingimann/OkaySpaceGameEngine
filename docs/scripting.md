@@ -33,7 +33,7 @@ normal scene lifecycle.
 
 Scripts read like C#, and every piece of syntax does something. A script's
 fields and functions **are** the component: there is no class or base type to
-write. A new script starts like a new Unity script, with just the two
+write. A new script starts empty, with just the two
 functions you almost always want:
 
 ```csharp

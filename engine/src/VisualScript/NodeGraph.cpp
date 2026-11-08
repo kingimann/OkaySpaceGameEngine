@@ -240,6 +240,7 @@ int TargetPinFor(const std::string& type) {
         {"NavMoveTo", 1}, {"NavStop", 0}, {"NavArrived", 0},
         {"BtSet", 1}, {"BtGet", 0}, {"BtRun", 0},
         {"GetSplinePoint", 1}, {"SplineLength", 0}, {"SetLinePoints", 1}, {"ClearTrail", 0},
+        {"ParticlePlay", 0}, {"ParticleStop", 0}, {"ParticleBurst", 1},
         {"GetName", 0}, {"GetTag", 0}};
     auto it = kPins.find(type);
     if (it != kPins.end()) return it->second;
@@ -684,6 +685,17 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
     if (type == "SplineLength")    return std::make_unique<SplineLengthNode>();
     if (type == "SetLinePoints")   return std::make_unique<SetLinePointsNode>();
     if (type == "ClearTrail")      return std::make_unique<ClearTrailNode>();
+    if (type == "MusicPlay")       return std::make_unique<MusicPlayNode>(argOr(""));
+    if (type == "MusicStop")       return std::make_unique<MusicStopNode>();
+    if (type == "MusicPause")      return std::make_unique<MusicPauseNode>();
+    if (type == "MusicResume")     return std::make_unique<MusicResumeNode>();
+    if (type == "MusicNext")       return std::make_unique<MusicNextNode>();
+    if (type == "CameraShake")     return std::make_unique<CameraShakeNode>();
+    if (type == "SetFov")          return std::make_unique<SetFovNode>();
+    if (type == "CameraFollow")    return std::make_unique<CameraFollowNode>();
+    if (type == "ParticlePlay")    return std::make_unique<ParticlePlayNode>();
+    if (type == "ParticleStop")    return std::make_unique<ParticleStopNode>();
+    if (type == "ParticleBurst")   return std::make_unique<ParticleBurstNode>();
     // ---- Third wave: loops, switch, 3D transform, colour, clips, shapes ----
     if (type == "ForLoop")    return std::make_unique<ForLoopNode>();
     if (type == "Gate")       return std::make_unique<GateNode>();

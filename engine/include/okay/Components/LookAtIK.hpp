@@ -50,6 +50,13 @@ public:
     Vec3  forwardAxis = Vec3::Forward; ///< the bones' local "forward"
     float weight   = 1.0f;             ///< 0 = off, 1 = full look
     float stateWeight = 1.0f;          ///< x weight; set per state by the Animator state machine
+    /// Slider times the on/off fade and the state's weight. The Scene-view label uses this.
+    float EffectiveWeight() const {
+        const float v = m_fade.value;
+        float fade = ikActive ? 1.0f : 0.0f;
+        if (v >= 0.0f) fade = v * v * (3.0f - 2.0f * v);
+        return weight * stateWeight * fade;
+    }
     bool  ikActive = true;             ///< switch IK on/off; the change eases over fadeTime
     float fadeTime = 0.0f;             ///< seconds to blend IK in/out (0 = instant)
     float maxAngle = 80.0f;            ///< max turn per bone (degrees), keeps it natural
@@ -114,6 +121,10 @@ public:
     // has posed the bones this frame (imported rigs create their per-node
     // Animators lazily, which puts them late in the Update order).
     void LateUpdate(float dt) override {
+        // Start binds the name once. A target set or changed during Play has a
+        // name and no object yet, so resolve it again here.
+        if (!targetObject && !targetName.empty())
+            targetObject = ResolveBone(GetScene(), gameObject, targetName);
         // Last frame's writes come off first, so a still bone (and a rotation-only
         // clip) shows the animated pose before this solve. Weight 0 leaves it there.
         m_restore.Restore();

@@ -349,6 +349,18 @@ int main() {
         auto* lk2 = s4.Find("NPC")->GetComponent<LookAtIK>();
         CHECK(lk2 && lk2->chainNames.size() == 2 && lk2->chainNames[1] == "Head");
         CHECK(lk2 && lk2->targetName == "Player");
+
+        // A name set after Start binds on the next solve.
+        Scene late("looklate");
+        auto* body = late.CreateGameObject("Body");
+        auto* look = body->AddComponent<LookAtIK>();
+        look->chain.push_back(body->transform);
+        late.Start();
+        CHECK(look->targetObject == nullptr);
+        late.CreateGameObject("Mark");
+        look->targetName = "Mark";
+        look->LateUpdate(1.0f / 60.0f);
+        CHECK(look->targetObject && look->targetObject->gameObject && look->targetObject->gameObject->name == "Mark");
     }
 
     // ---- LimbIK on a bone chain: the bones turn (lengths kept), a weight bends

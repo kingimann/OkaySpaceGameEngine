@@ -398,6 +398,18 @@ const Row kRows[] = {
         {"SplineLength", false, "", "N"},
         {"SetLinePoints", true, "L", ""},
         {"ClearTrail", true, "", ""},
+        // Music, camera, particles.
+        {"MusicPlay", true, "", ""},
+        {"MusicStop", true, "N", ""},
+        {"MusicPause", true, "", ""},
+        {"MusicResume", true, "", ""},
+        {"MusicNext", true, "", ""},
+        {"CameraShake", true, "N", ""},
+        {"SetFov", true, "N", ""},
+        {"CameraFollow", true, "TN", ""},
+        {"ParticlePlay", true, "", ""},
+        {"ParticleStop", true, "", ""},
+        {"ParticleBurst", true, "N", ""},
 };
 
 const std::unordered_map<std::string, NodeSignature>& Table() {

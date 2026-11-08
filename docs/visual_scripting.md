@@ -1098,6 +1098,17 @@ The **Engine API** group is the generated list in [engine_api.md](engine_api.md)
 - **Nav Move To** (`NavMoveTo`) — in Point: the object's Nav Mesh Agent walks there (see docs/navigation.md)
 - **Nav Stop** (`NavStop`) — stops the Nav Mesh Agent
 - **Nav Arrived** (`NavArrived`) — out Bool: true once the last Nav Move To point was reached
+- **Play Music** (`MusicPlay`) — setting: track (a file name or playlist number; empty: current/first): crossfades the scene's Music Player
+- **Stop Music** (`MusicStop`) — in Fade (s): fades the music out and stops
+- **Pause Music** (`MusicPause`) — pauses the scene's music
+- **Resume Music** (`MusicResume`) — resumes paused music
+- **Next Music Track** (`MusicNext`) — crossfades to the next playlist track
+- **Camera Shake** (`CameraShake`) — in Strength (0-1, stacks): shakes the main camera
+- **Set Camera FOV** (`SetFov`) — in Degrees (1-179): the main camera's field of view
+- **Camera Follow** (`CameraFollow`) — in Object name, Smoothing: the main camera eases after that object
+- **Play Particles** (`ParticlePlay`) — starts continuous emission on this object's (or the Target's) Particle System
+- **Stop Particles** (`ParticleStop`) — stops continuous emission
+- **Burst Particles** (`ParticleBurst`) — in Count (default 20): emits that many at once
 - **Set Blackboard** (`BtSet`) — in Value; setting: key: writes the Behavior Tree Runner's blackboard (see docs/behavior_trees.md)
 - **Get Blackboard** (`BtGet`) — out Value; setting: key
 - **Run Tree** (`BtRun`) — setting: tree file: loads a .okaybt on the Behavior Tree Runner and starts it

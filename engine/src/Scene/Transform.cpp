@@ -85,7 +85,9 @@ bool Transform::SetParent(Transform* parent, bool worldPositionStays) {
     if (parent == m_parent) return true;
     for (Transform* t = parent; t; t = t->m_parent)
         if (t == this) return false;   // self or a descendant: would form a cycle
-    Vec3 world = Position();
+    const Vec3 world = Position();
+    const Quat worldRot = Rotation();
+    const Vec3 worldScale = LossyScale();
     if (m_parent) {
         auto& sib = m_parent->m_children;
         sib.erase(std::remove(sib.begin(), sib.end(), this), sib.end());
@@ -94,8 +96,19 @@ bool Transform::SetParent(Transform* parent, bool worldPositionStays) {
     if (m_parent) m_parent->m_children.push_back(this);
     if (gameObject)   // a reparent changes which bones / names a model's caches see
         if (Scene* sc = gameObject->scene()) sc->MarkStructureChanged();
-    // Preserve the world position only when asked.
-    if (worldPositionStays) SetPosition(world);
+    // Preserve the world pose (position, rotation and scale) only when asked.
+    if (worldPositionStays) {
+        SetPosition(world);
+        SetRotation(worldRot);
+        // Scale follows LossyScale(): the world scale divided by the new parent's. Under a
+        // rotated parent with non-uniform scale a child turned relative to it would need a
+        // shear, which a TRS transform can't hold: position and rotation stay exact and
+        // the scale is the per-axis lossy one (an axis with zero parent scale is kept).
+        const Vec3 ps = m_parent ? m_parent->LossyScale() : Vec3::One;
+        if (ps.x != 0) localScale.x = worldScale.x / ps.x;
+        if (ps.y != 0) localScale.y = worldScale.y / ps.y;
+        if (ps.z != 0) localScale.z = worldScale.z / ps.z;
+    }
     return true;
 }
 

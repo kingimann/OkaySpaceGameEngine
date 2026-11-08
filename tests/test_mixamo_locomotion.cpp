@@ -4,6 +4,7 @@
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Scene/SceneTemplates.hpp"
 #include "okay/Render/ModelImport.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
@@ -506,6 +507,22 @@ int main() {
             CHECK(c->walkSpeed == 3.0f);      // customised: kept
             CHECK(c->runSpeed < 8.0f);        // still the default: fitted
         }
+        // A shooter player is fitted too, against the shooter's own defaults.
+        Scene s2("shooter");
+        GameObject* sp = Templates::AddThirdPersonPlayer(s2, {0, 0, 0});
+        sp->RemoveComponent(sp->GetComponent<ThirdPersonController>());
+        auto* sh = sp->AddComponent<ThirdPersonShooterController>();
+        const float shWalk = sh->walkSpeed, shRun = sh->runSpeed;
+        AttachCharacterModel(s2, sp, righarness::RigPath("mixamo_t_cm_clips.glb"));
+        CHECK(sh->walkSpeed < shWalk && sh->runSpeed < shRun);
+        // Another model: the fitted speeds are refitted, not mistaken for the author's.
+        const float w1 = sh->walkSpeed;
+        AttachCharacterModel(s2, sp, righarness::RigPath("mixamo_t_cm_clips.glb"));
+        CHECK(sh->walkSpeed == w1 && sh->runSpeed < shRun);
+        // Set back to the default after the fit: that is the author's value now.
+        sh->walkSpeed = shWalk;
+        AttachCharacterModel(s2, sp, righarness::RigPath("mixamo_t_cm_clips.glb"));
+        CHECK(sh->walkSpeed == shWalk);
     }
 
     TEST_MAIN_RESULT();

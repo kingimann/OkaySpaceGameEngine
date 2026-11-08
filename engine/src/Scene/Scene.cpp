@@ -468,13 +468,16 @@ void Scene::FlushDestroyed() {
         bool live = false;
         for (auto& obj : m_objects) if (obj.get() == go) { live = true; break; }
         if (live) {
-            std::vector<Component*> own;   // copy: OnDestroy may add components / objects
-            for (Component* c : m_active) if (c && c->gameObject == go) own.push_back(c);
-            // Not started yet (edit mode, before Play): still release what it
-            // grabbed. An IK target deleted before Play otherwise left the limb
-            // reaching for a freed transform.
-            for (Component* c : m_pending) if (c && c->gameObject == go) own.push_back(c);
-            for (Component* c : own) c->OnDestroy();
+            std::vector<Component*> started, waiting;
+            for (Component* c : m_active) if (c && c->gameObject == go) started.push_back(c);
+            // Still queued for Start (edit mode, or added and destroyed in the
+            // same frame). OnDestroy is not safe there: many components assume
+            // Start already ran (a network manager would shut the socket down,
+            // a weather rig would drop a count it never took). ReleaseUnstarted
+            // is the narrow hook for something grabbed before Start.
+            for (Component* c : m_pending) if (c && c->gameObject == go) waiting.push_back(c);
+            for (Component* c : started) c->OnDestroy();
+            for (Component* c : waiting) c->ReleaseUnstarted();
         }
         auto isOwned = [go](Component* c) { return !c || c->gameObject == go; };
         m_active.erase(std::remove_if(m_active.begin(), m_active.end(), isOwned), m_active.end());

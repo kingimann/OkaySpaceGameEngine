@@ -1037,6 +1037,10 @@ target_link_libraries(test_player_setup PRIVATE okay::engine)
 target_compile_definitions(test_player_setup PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME player_setup COMMAND test_player_setup)
 
+add_executable(test_destroy_unstarted test_destroy_unstarted.cpp)
+target_link_libraries(test_destroy_unstarted PRIVATE okay::engine)
+add_test(NAME destroy_unstarted COMMAND test_destroy_unstarted)
+
 add_executable(test_rig_sweep test_rig_sweep.cpp)
 target_link_libraries(test_rig_sweep PRIVATE okay::engine)
 target_compile_definitions(test_rig_sweep PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

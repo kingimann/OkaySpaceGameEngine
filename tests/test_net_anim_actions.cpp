@@ -34,6 +34,9 @@ int main() {
         AnimSyncView full;
         CHECK(ParseAnimSync("2 0 1.5 30 4 1 35 -12 1", full));
         CHECK(full.haveParam && std::fabs(full.actionParam - 1.0f) < 1e-4f);
+        AnimSyncView cut;
+        CHECK(ParseAnimSync("2 0 1.5 30 4", cut));
+        CHECK(cut.haveGait && !cut.haveAction && !cut.haveParam);
     }
 
     Scene ss("Server");

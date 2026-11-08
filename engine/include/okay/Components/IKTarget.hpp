@@ -70,6 +70,9 @@ public:
 
     void OnDisable() override { ReleaseDrive(); }
     void OnDestroy() override { ReleaseDrive(); }
+    // Edit mode previews the reach before Play ever calls Start. Deleting the
+    // target then still has to let the limb go.
+    void ReleaseUnstarted() override { ReleaseDrive(); }
     void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying) override {
         if (character && dying.count(character)) character = nullptr;
         // The body is going away with the effector. Don't write into it.

@@ -39,8 +39,18 @@ public:
     virtual void LateUpdate(float /*deltaTime*/) {}
     /// Called every frame during the render pass.
     virtual void OnRender(IRenderer& /*renderer*/) {}
-    /// Called when the component or its GameObject is destroyed.
+    /// Called when the component or its GameObject is destroyed, after Start
+    /// has run. Implementations may assume the running life happened: a
+    /// network manager stops its socket, a script fires on_destroy, a weather
+    /// rig drops a count it took while it was alive. It is not called for a
+    /// component that is still waiting to start.
     virtual void OnDestroy() {}
+    /// Called instead of OnDestroy when the object is destroyed before Start.
+    /// Only components that grabbed something earlier (an IK target previewed
+    /// in edit mode, a weather rig whose count was taken at creation) override
+    /// this. The default does nothing, so a never-started component cannot
+    /// tear down another instance's state.
+    virtual void ReleaseUnstarted() {}
     /// The GameObject was switched on / off (its `active` flag changed). Called by
     /// the Scene at the start of the next frame, once per change.
     virtual void OnEnable() {}

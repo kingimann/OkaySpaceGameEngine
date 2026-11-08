@@ -50,7 +50,10 @@ public:
     // ---- Hierarchy -----------------------------------------------------
     Transform* Parent() const { return m_parent; }
     /// Reparent this transform. When `worldPositionStays` is true (the
-    /// default) the world pose is preserved; when false the local pose is kept.
+    /// default) the world pose is preserved: position and rotation exactly, scale as
+    /// LossyScale() (under a rotated parent with non-uniform scale a turned child
+    /// can't keep its exact shape, as that would take a shear). When false the local
+    /// pose is kept.
     /// Refuses (returns false, nothing changes) a parent that is this transform
     /// or one of its descendants, which would make the hierarchy a loop.
     bool SetParent(Transform* parent, bool worldPositionStays = true);

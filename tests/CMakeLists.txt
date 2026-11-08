@@ -206,6 +206,11 @@ add_executable(test_structure_builder test_structure_builder.cpp)
 target_link_libraries(test_structure_builder PRIVATE okay::engine)
 add_test(NAME structure_builder COMMAND test_structure_builder)
 
+# Builds are paid in full or not at all; a full-bag demolish refund drops a pickup
+add_executable(test_inventory_build_charge test_inventory_build_charge.cpp)
+target_link_libraries(test_inventory_build_charge PRIVATE okay::engine)
+add_test(NAME inventory_build_charge COMMAND test_inventory_build_charge)
+
 add_executable(test_builder_mode test_builder_mode.cpp)
 target_link_libraries(test_builder_mode PRIVATE okay::engine)
 add_test(NAME builder_mode COMMAND test_builder_mode)
@@ -905,6 +910,11 @@ add_executable(test_anim_ik_components test_anim_ik_components.cpp)
 target_link_libraries(test_anim_ik_components PRIVATE okay::engine)
 add_test(NAME anim_ik_components COMMAND test_anim_ik_components)
 
+# Animator getters, layer weight, root motion, per-kind IK, and the matching Engine API nodes.
+add_executable(test_anim_ik_tools test_anim_ik_tools.cpp)
+target_link_libraries(test_anim_ik_tools PRIVATE okay::engine)
+add_test(NAME anim_ik_tools COMMAND test_anim_ik_tools)
+
 # Look-At IK shares, clamp and eyes; Limb IK stretch.
 add_executable(test_ik_look_stretch test_ik_look_stretch.cpp)
 target_link_libraries(test_ik_look_stretch PRIVATE okay::engine)
@@ -1401,6 +1411,10 @@ add_executable(test_splines test_splines.cpp)
 target_link_libraries(test_splines PRIVATE okay::engine)
 add_test(NAME splines COMMAND test_splines)
 
+add_executable(test_scene_lifecycle test_scene_lifecycle.cpp)
+target_link_libraries(test_scene_lifecycle PRIVATE okay::engine)
+add_test(NAME scene_lifecycle COMMAND test_scene_lifecycle)
+
 add_executable(test_durable_saves test_durable_saves.cpp)
 target_link_libraries(test_durable_saves PRIVATE okay::engine)
 add_test(NAME durable_saves COMMAND test_durable_saves)
@@ -1422,3 +1436,13 @@ if(UNIX)
     target_link_libraries(test_core_audit_input PRIVATE okay::engine)
     add_test(NAME core_audit_input COMMAND test_core_audit_input)
 endif()
+
+# Visual-script nodes for music, camera and particles
+add_executable(test_vs_media test_vs_media.cpp)
+target_link_libraries(test_vs_media PRIVATE okay::engine)
+add_test(NAME vs_media COMMAND test_vs_media)
+
+# Script navmesh queries: nav_path_exists / nav_path_length / nav_point_walkable / nav_nearest_point
+add_executable(test_script_nav test_script_nav.cpp)
+target_link_libraries(test_script_nav PRIVATE okay::engine)
+add_test(NAME script_nav COMMAND test_script_nav)

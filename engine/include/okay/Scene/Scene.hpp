@@ -41,8 +41,20 @@ public:
     GameObject* Instantiate(const GameObject& prefab);
     GameObject* Instantiate(const GameObject& prefab, const Vec3& position);
 
-    /// Mark a GameObject for destruction; removed at the end of the frame.
+    /// Mark a GameObject for destruction; removed at the end of the frame. Until
+    /// then it keeps its place in the hierarchy (and so its world pose), and its
+    /// OnDestroy still sees its parent.
     void Destroy(GameObject* go);
+    /// Destroy `go` after `seconds` of this scene's time (the Update deltas).
+    /// Destroying it earlier cancels this; asking again keeps the sooner time.
+    /// Zero or less destroys it like Destroy(go).
+    void Destroy(GameObject* go, float seconds);
+    /// Keep `go` and its children when this scene is replaced by RequestLoad (not
+    /// by RequestMerge), with the same objects and instance ids. A kept object that
+    /// still has a parent outside the kept set moves to the root, keeping its pose.
+    /// Timers, tweens and physics contacts of the old scene do not carry over.
+    void DontDestroyOnLoad(GameObject* go);
+    bool IsDontDestroyOnLoad(const GameObject* go) const;
     /// Process the pending-destroy queue now (runs OnDestroy + frees the objects).
     /// Update() calls this each frame; the editor calls it in edit mode so deferred
     /// destroys (e.g. removing a rig) take effect without a full simulation tick.
@@ -50,13 +62,21 @@ public:
 
     /// Request loading a .okayscene file at the end of the current frame
     /// (safe to call from a script/Update). Replaces this scene's contents.
-    void RequestLoad(const std::string& path) { m_pendingLoad = path; m_hasPendingLoad = true; }
+    /// The last load requested in a frame wins (a text load requested before it is
+    /// dropped). `done`, if given, is told whether the file loaded (false too when
+    /// a later request replaced this one).
+    void RequestLoad(const std::string& path, std::function<void(bool)> done = {}) {
+        if (m_pendingLoadDone) m_pendingLoadDone(false);   // the earlier request never ran
+        m_pendingLoad = path; m_hasPendingLoad = true; m_pendingLoadDone = std::move(done);
+        m_hasPendingText = false; m_pendingText.clear(); m_pendingTextAfter = {};
+    }
     bool HasPendingLoad() const { return m_hasPendingLoad; }
     /// Like RequestLoad, from serialized scene text (a save game) instead of a
     /// file; `after` runs once the loaded objects have started.
     void RequestLoadText(std::string text, std::function<void(Scene&)> after = {}) {
+        if (m_pendingLoadDone) { auto d = std::move(m_pendingLoadDone); m_pendingLoadDone = {}; d(false); }
         m_pendingText = std::move(text); m_pendingTextAfter = std::move(after);
-        m_hasPendingText = true; m_hasPendingLoad = false;
+        m_hasPendingText = true; m_hasPendingLoad = false; m_pendingLoad.clear();
     }
 
     /// Additively MERGE another .okayscene into this one at the end of the frame,
@@ -332,7 +352,9 @@ private:
     /// Pick the object under the cursor (main camera, 2D bounds) and dispatch the
     /// OnMouseEnter/Exit/Over/Down/Up/Click messages, tracking state across frames.
     void DispatchPointer();
-    void DispatchActivation();   // OnEnable / OnDisable for objects switched on/off
+    void DispatchActivation();   // OnEnable / OnDisable for components switched on/off
+    void StartComponent(Component* c);   // OnEnable (if owed), then Start
+    void TickDelayedDestroys(float deltaTime);
 
     GameObject* m_mouseHover = nullptr;   // object the cursor was over last frame
     GameObject* m_mousePress = nullptr;   // object a press began on (for click)
@@ -357,6 +379,9 @@ private:
     std::vector<GameObject*> m_destroyQueue;
     std::string m_pendingLoad;
     bool        m_hasPendingLoad = false;
+    std::function<void(bool)> m_pendingLoadDone;
+    std::vector<GameObject*> m_dontDestroy;                       // marked by DontDestroyOnLoad
+    std::vector<std::pair<std::uint64_t, float>> m_delayedDestroy;   // instance id, seconds left
     std::string m_pendingText;
     std::function<void(Scene&)> m_pendingTextAfter;
     bool        m_hasPendingText = false;

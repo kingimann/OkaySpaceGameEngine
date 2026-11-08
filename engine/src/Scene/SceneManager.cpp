@@ -8,6 +8,9 @@ std::vector<std::string>& SceneManager::list() {
     return s_scenes;
 }
 int& SceneManager::activeIndex() { static int s_active = -1; return s_active; }
+// The scene that last loaded. activeIndex() moves to a requested scene right away,
+// and falls back to this if that load fails.
+static int& LoadedIndex() { static int s_loaded = -1; return s_loaded; }
 
 // Strip folders and extension to get a bare scene name ("Assets/Level1.okayscene"
 // -> "Level1") for name-based lookups.
@@ -19,7 +22,7 @@ static std::string StemOf(const std::string& path) {
     return path.substr(start, end - start);
 }
 
-void SceneManager::ClearScenes() { list().clear(); activeIndex() = -1; }
+void SceneManager::ClearScenes() { list().clear(); activeIndex() = -1; LoadedIndex() = -1; }
 
 int SceneManager::AddScene(const std::string& path) {
     auto& l = list();
@@ -53,8 +56,12 @@ int SceneManager::ActiveIndex() { return activeIndex(); }
 bool SceneManager::LoadScene(Scene& scene, int index) {
     auto& l = list();
     if (index < 0 || index >= (int)l.size()) return false;
+    // Set after the request: it settles a request it replaces, which would reset the index.
+    scene.RequestLoad(l[index], [index](bool ok) {
+        if (ok) LoadedIndex() = index;
+        activeIndex() = LoadedIndex();   // a failed load leaves the index where it was
+    });
     activeIndex() = index;
-    scene.RequestLoad(l[index]);
     return true;
 }
 

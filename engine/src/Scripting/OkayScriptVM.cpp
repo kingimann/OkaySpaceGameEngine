@@ -21,6 +21,7 @@
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/CameraFollow.hpp"
 #include "okay/Components/Stats.hpp"
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/Light.hpp"
@@ -31,6 +32,8 @@
 #include "okay/Components/PlayerController.hpp"
 #include "okay/Components/UITheme.hpp"          // grok/ui-theme
 #include "okay/Components/ModelAnimator.hpp"
+#include "okay/Render/ModelImport.hpp"
+#include "okay/Script/AnimIkTools.hpp"
 #include "okay/Components/AnimControl.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Animation/HumanoidActions.hpp"
@@ -83,6 +86,7 @@
 #include "okay/Components/Tilemap.hpp"
 #include "okay/Components/NPCController.hpp"
 #include "okay/Components/NavMeshAgent.hpp"
+#include "okay/AI/Navigation.hpp"
 #include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Components/Spawner.hpp"
 #include "okay/Components/BuildMode.hpp"
@@ -4520,6 +4524,18 @@ struct OkayScriptVM::Impl {
             }
             return Value{};
         };
+        // camera_follow("name"[, smoothing]): the main camera eases after that object
+        // (adds a CameraFollow if it has none). Empty name stops following.
+        b["camera_follow"] = [sceneOf](std::vector<Value>& a) {
+            if (Scene* s = sceneOf()) if (s->mainCamera && s->mainCamera->gameObject) {
+                GameObject* cg = s->mainCamera->gameObject;
+                auto* f = cg->GetComponent<CameraFollow>();
+                if (!f) f = cg->AddComponent<CameraFollow>();
+                f->targetName = a.empty() ? std::string{} : a[0].AsString();
+                if (a.size() > 1) f->smoothing = a[1].AsFloat();
+            }
+            return Value{};
+        };
         // Set the main camera's clear/background color (flash, day-night, fades).
         b["set_bg"] = [sceneOf](std::vector<Value>& a) {
             if (Scene* s = sceneOf()) if (s->mainCamera)
@@ -5486,6 +5502,56 @@ struct OkayScriptVM::Impl {
             std::size_t i = 0; NavMeshAgent* n = navOf(a, i);
             return Value{n ? n->RemainingDistance() : 0.0f};
         };
+        // ---- Navmesh queries (no agent needed) ----------------------------------
+        // nav_path_exists(x, y, z) -> 1 when a walkable route leads from this object to
+        // the point (nav_path_exists(fx, fy, fz, tx, ty, tz) between two points);
+        // nav_path_length(...) -> that route's length (-1 when there is none);
+        // nav_point_walkable(x, y, z[, maxDist]) -> 1 when the baked navmesh has ground
+        // within maxDist (default 1); nav_nearest_point(x, y, z[, maxDist]) -> the closest
+        // walkable point as a vector (the point itself when there is none within range).
+        // The scene's baked navmesh is used, else the sampled grid (as agents do).
+        auto navRoute = [this, sceneOf](std::vector<Value>& a, std::vector<Vec3>& path) -> bool {
+            Scene* s = sceneOf();
+            if (!s) return false;
+            Vec3 from{}, to{};
+            if (a.size() >= 6) {
+                from = {a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+                to   = {a[3].AsFloat(), a[4].AsFloat(), a[5].AsFloat()};
+            } else if (a.size() >= 3 && rt.host && rt.host->transform) {
+                from = rt.host->transform->Position();
+                to   = {a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+            } else return false;
+            return Navigation::FindPath(*s, from, to, path, 0.4f, rt.host ? rt.host->gameObject : nullptr) && !path.empty();
+        };
+        b["nav_path_exists"] = [navRoute](std::vector<Value>& a) {
+            std::vector<Vec3> path;
+            return Value{navRoute(a, path) ? 1.0f : 0.0f};
+        };
+        b["nav_path_length"] = [navRoute](std::vector<Value>& a) {
+            std::vector<Vec3> path;
+            if (!navRoute(a, path)) return Value{-1.0f};
+            float len = 0.0f;
+            for (std::size_t i = 1; i < path.size(); ++i) len += (path[i] - path[i - 1]).Magnitude();
+            return Value{len};
+        };
+        auto navSample = [sceneOf](std::vector<Value>& a, Vec3& p, Vec3& out) -> bool {
+            Scene* s = sceneOf();
+            if (!s || a.size() < 3) return false;
+            p = {a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+            return Navigation::SamplePosition(*s, p, a.size() > 3 ? a[3].AsFloat() : 1.0f, out);
+        };
+        b["nav_point_walkable"] = [navSample](std::vector<Value>& a) {
+            Vec3 p, out;
+            return Value{navSample(a, p, out) ? 1.0f : 0.0f};
+        };
+        b["nav_nearest_point"] = [navSample](std::vector<Value>& a) {
+            Vec3 p{}, out;
+            if (a.size() < 3) return Value{Vec3::Zero};
+            Vec3 q{a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+            std::vector<Value> b2 = a;
+            if (b2.size() < 4) b2.push_back(Value{50.0f});   // "nearest" looks further than "walkable"
+            return Value{navSample(b2, p, out) ? out : q};
+        };
         // ---- Behavior trees: the Behavior Tree Runner on this object (or a named one) ----
         // bt_set(key, value) / bt_set("Name", key, value) writes the blackboard,
         // bt_get(key) / bt_get("Name", key) reads it, bt_run("Assets/Guard.okaybt")
@@ -5927,6 +5993,47 @@ struct OkayScriptVM::Impl {
             if (AnimStateMachine* m = smSelf(); m && !a.empty()) m->SetTrigger(a[0].AsString());
             return Value{};
         };
+        b["anim_get_float"] = [smSelf](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            AnimStateMachine* m = smSelf();
+            return Value{m ? m->GetFloat(a[0].AsString()) : 0.0f};
+        };
+        b["anim_get_bool"] = [smSelf](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            AnimStateMachine* m = smSelf();
+            return Value{(m && m->GetBool(a[0].AsString())) ? 1.0f : 0.0f};
+        };
+        b["anim_get_int"] = [smSelf](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            AnimStateMachine* m = smSelf();
+            return Value{m ? (float)m->GetInt(a[0].AsString()) : 0.0f};
+        };
+        auto layerOf = [selfObj](const Value& which) -> AnimStateMachine* {
+            GameObject* g = selfObj();
+            if (!g) return nullptr;
+            if (which.IsString()) return FindAnimLayer(g, true, which.AsString(), 0);
+            return FindAnimLayer(g, false, {}, (int)std::lround(which.AsFloat()));
+        };
+        b["anim_set_layer_weight"] = [layerOf](std::vector<Value>& a) {
+            if (a.size() < 2) return Value{0.0f};
+            AnimStateMachine* sm = layerOf(a[0]);
+            if (!sm) return Value{0.0f};
+            sm->layerWeight = a[1].AsFloat();
+            return Value{1.0f};
+        };
+        b["anim_get_layer_weight"] = [layerOf](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            AnimStateMachine* sm = layerOf(a[0]);
+            return Value{sm ? sm->layerWeight : 0.0f};
+        };
+        b["set_root_motion"] = [selfObj](std::vector<Value>& a) {
+            const bool on = a.empty() || a[0].AsFloat() != 0.0f;
+            return Value{SetRootMotionOn(selfObj(), on) ? 1.0f : 0.0f};
+        };
+        b["set_character_model"] = [selfObj](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            return Value{SetCharacterModelPath(selfObj(), a[0].AsString()) ? 1.0f : 0.0f};
+        };
         // Actions (HumanoidActions): play_action goes to a state, or a blend-tree
         // motion of that clip name, else play_clip. die/revive drive Death.
         b["play_action"] = [selfObj](std::vector<Value>& a) {
@@ -6120,8 +6227,12 @@ struct OkayScriptVM::Impl {
         // (0..1 per loop; keeps counting past 1 on loops) — for gameplay timing.
         // ---- IK control on this object (any of LimbIK / ChainIK / LookAtIK / AimIK) ----
         //   ik_enable(on)            switch IK on/off (eases over each component's fadeTime)
-        //   ik_set_weight(w)         0..1 influence
-        //   ik_set_target(x, y, z)   world point to reach / look at / aim at
+        //   ik_set_weight(w)         0..1 on every IK component on this object
+        //   ik_set_weight(kind, w)   one of foot, look, aim, hand_l, hand_r, full
+        //                            (also foot_l, foot_r). Looks on this object and its children.
+        //   ik_set_target(x, y, z)   world point on Limb / Chain / Look / Aim
+        //   ik_set_target(limb, "Name") or ik_set_target(limb, x, y, z)
+        //   ik_clear_target(limb)    drop that goal
         //   ik_set_pole(x, y, z)     bend direction point (LimbIK pole / ChainIK pole)
         auto ikEach = [this](auto fn) {
             GameObject* g = rt.host ? rt.host->gameObject : nullptr;
@@ -6141,16 +6252,35 @@ struct OkayScriptVM::Impl {
             ikToggle([&](auto* c) { c->ikActive = on; });
             return Value{};
         };
-        b["ik_set_weight"] = [ikEach, ikToggle](std::vector<Value>& a) {
+        b["ik_set_weight"] = [selfObj, ikEach, ikToggle](std::vector<Value>& a) {
+            if (!a.empty() && a[0].IsString()) {
+                const float w = a.size() > 1 ? a[1].AsFloat() : 1.0f;
+                return Value{SetIkKindWeight(selfObj(), a[0].AsString(), w) ? 1.0f : 0.0f};
+            }
             float w = a.empty() ? 1.0f : a[0].AsFloat();
             ikEach([&](auto* c) { c->weight = w; });
             ikToggle([&](auto* c) { c->weight = w; });
             return Value{};
         };
-        b["ik_set_target"] = [ikEach](std::vector<Value>& a) {
+        b["ik_set_target"] = [selfObj, ikEach](std::vector<Value>& a) {
+            if (!a.empty() && a[0].IsString()) {
+                GameObject* g = selfObj();
+                if (a.size() >= 2 && a[1].IsString()) {
+                    GameObject* named = (g && g->scene()) ? g->scene()->Find(a[1].AsString()) : nullptr;
+                    if (!named) return Value{0.0f};
+                    return Value{SetIkLimbTarget(g, a[0].AsString(), named, nullptr) ? 1.0f : 0.0f};
+                }
+                Vec3 t{a.size() > 1 ? a[1].AsFloat() : 0.0f, a.size() > 2 ? a[2].AsFloat() : 0.0f,
+                       a.size() > 3 ? a[3].AsFloat() : 0.0f};
+                return Value{SetIkLimbTarget(g, a[0].AsString(), nullptr, &t) ? 1.0f : 0.0f};
+            }
             Vec3 t{a.size() > 0 ? a[0].AsFloat() : 0.0f, a.size() > 1 ? a[1].AsFloat() : 0.0f, a.size() > 2 ? a[2].AsFloat() : 0.0f};
             ikEach([&](auto* c) { c->targetObject = nullptr; c->target = t; });
             return Value{};
+        };
+        b["ik_clear_target"] = [selfObj](std::vector<Value>& a) {
+            if (a.empty()) return Value{0.0f};
+            return Value{ClearIkLimbTarget(selfObj(), a[0].AsString()) ? 1.0f : 0.0f};
         };
         // Full Body IK goals on this object:
         //   ik_hand("left"|"right", x, y, z [, weight])   reach a point (weight 0 releases)
@@ -9809,6 +9939,7 @@ struct OkayScriptVM::Impl {
             if (t == "SyncVar") return g->GetComponent<SyncVar>();
             if (t == "FirstPersonHands") return g->GetComponent<FirstPersonHands>() != nullptr;
             if (t == "Animator" || t == "Animation") return true;   // resolved by the anim_* builtins
+            if (t == "IK") return true;                              // resolved by the ik_* builtins
             return false;
         };
         // The engine component a C# type name refers to (for .enabled).
@@ -9931,11 +10062,26 @@ struct OkayScriptVM::Impl {
                 if (m == "SetTrigger") { std::vector<Value> x{arg(0)}; return rt.Call("anim_trigger", x); }
                 if (m == "SetBool")    { std::vector<Value> x{arg(0), Value{arg(1).AsBool() ? 1.0f : 0.0f}}; return rt.Call("anim_set_bool", x); }
                 if (m == "SetFloat" || m == "SetInteger") { std::vector<Value> x{arg(0), arg(1)}; return rt.Call("anim_set_float", x); }
+                if (m == "GetFloat") return rt.Call("anim_get_float", rest);
+                if (m == "GetBool") return rt.Call("anim_get_bool", rest);
+                if (m == "GetInt" || m == "GetInteger") return rt.Call("anim_get_int", rest);
+                if (m == "SetLayerWeight") return rt.Call("anim_set_layer_weight", rest);
+                if (m == "GetLayerWeight") return rt.Call("anim_get_layer_weight", rest);
+                if (m == "SetRootMotion") return rt.Call("set_root_motion", rest);
+                if (m == "SetCharacterModel") return rt.Call("set_character_model", rest);
                 if (m == "Play" || m == "CrossFade" || m == "CrossFadeInFixedTime") {
                     std::vector<Value> x{arg(0)};
                     if (m != "Play" && rest.size() >= 2) x.push_back(arg(1));
                     return rt.Call("play_action", x);
                 }
+                return Value{};
+            }
+            if (t == "IK") {
+                if (m == "SetKindWeight") return rt.Call("ik_set_weight", rest);
+                if (m == "SetLimbTarget") return rt.Call("ik_set_target", rest);
+                if (m == "ClearLimbTarget") return rt.Call("ik_clear_target", rest);
+                if (m == "LookAt") return rt.Call("ik_look_at", rest);
+                if (m == "SetWeight") return rt.Call("ik_set_weight", rest);
                 return Value{};
             }
             if (t == "Rigidbody2D") if (auto* rb = g->GetComponent<Rigidbody2D>()) {

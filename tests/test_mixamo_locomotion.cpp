@@ -3,7 +3,10 @@
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/FirstPersonController.hpp"
+#include "okay/Animation/HumanoidActions.hpp"
+#include "okay/Animation/HumanoidLibrary.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/ThirdPersonShooterController.hpp"
 #include "okay/Scene/SceneTemplates.hpp"
 #include "okay/Render/ModelImport.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
@@ -465,6 +468,55 @@ int main() {
         }
     }
 
+    // Death and wave have no clip on this rig, so the built-in pose is retargeted.
+    {
+        Loco L;
+        CHECK(L.rig && L.ma);
+        if (L.rig && L.ma) {
+            L.AddClip("Idle", 2.0f, 2.0f);
+            L.AddClip("Walking", 1.0f, 20.0f);
+            FixCharacterAnimations(*L.rig.scene, L.rig.player);
+            HumanoidLibrary::EnsureAnimator(L.rig.player);
+            Transform* hips = L.rig.Bone(0);
+            CHECK(hips);
+            if (hips) {
+                for (int i = 0; i < 10; ++i) L.rig.scene->Update(kDt);
+                CHECK(!L.ma->ActionPoseUncovered());   // idle locomotion: the new action-pose rule leaves ClipOverridesPose alone
+                const float standY = hips->Position().y;
+                const Quat standR = hips->Rotation();
+                HumanoidActions::RequestDeath(L.rig.player, 0, nullptr);
+                for (int i = 0; i < 60; ++i) L.rig.scene->Update(kDt);
+                const float drop = standY - hips->Position().y;
+                const float turned = Quat::Angle(standR, hips->Rotation());
+                CHECK(drop > 0.15f || turned > 25.0f);
+                CHECK(!L.ma->ClipOverridesPose());
+            }
+        }
+    }
+    {
+        Loco L;
+        CHECK(L.rig && L.ma);
+        if (L.rig && L.ma) {
+            L.AddClip("Idle", 2.0f, 2.0f);
+            L.AddClip("Walking", 1.0f, 20.0f);
+            FixCharacterAnimations(*L.rig.scene, L.rig.player);
+            HumanoidLibrary::EnsureAnimator(L.rig.player);
+            Transform* hand = L.rig.Bone(8);
+            CHECK(hand);
+            if (hand) {
+                for (int i = 0; i < 10; ++i) L.rig.scene->Update(kDt);
+                const float y0 = hand->Position().y;
+                CHECK(HumanoidActions::Play(L.rig.player, "Wave", 0.05f));
+                float peak = y0;
+                for (int i = 0; i < 45; ++i) {
+                    L.rig.scene->Update(kDt);
+                    peak = std::fmax(peak, hand->Position().y);
+                }
+                CHECK(peak > y0 + 0.12f);
+            }
+        }
+    }
+
     // ---- The controller's own default speeds (4.5 walk / 8 run m/s): W must play the
     // WALK clip and Shift the RUN clip. The stride match used to pick Run for plain W
     // (a 1.4 m/s walk clip next to a 4.5 m/s "walk"), so the character ran when walking.
@@ -506,6 +558,22 @@ int main() {
             CHECK(c->walkSpeed == 3.0f);      // customised: kept
             CHECK(c->runSpeed < 8.0f);        // still the default: fitted
         }
+        // A shooter player is fitted too, against the shooter's own defaults.
+        Scene s2("shooter");
+        GameObject* sp = Templates::AddThirdPersonPlayer(s2, {0, 0, 0});
+        sp->RemoveComponent(sp->GetComponent<ThirdPersonController>());
+        auto* sh = sp->AddComponent<ThirdPersonShooterController>();
+        const float shWalk = sh->walkSpeed, shRun = sh->runSpeed;
+        AttachCharacterModel(s2, sp, righarness::RigPath("mixamo_t_cm_clips.glb"));
+        CHECK(sh->walkSpeed < shWalk && sh->runSpeed < shRun);
+        // Another model: the fitted speeds are refitted, not mistaken for the author's.
+        const float w1 = sh->walkSpeed;
+        AttachCharacterModel(s2, sp, righarness::RigPath("mixamo_t_cm_clips.glb"));
+        CHECK(sh->walkSpeed == w1 && sh->runSpeed < shRun);
+        // Set back to the default after the fit: that is the author's value now.
+        sh->walkSpeed = shWalk;
+        AttachCharacterModel(s2, sp, righarness::RigPath("mixamo_t_cm_clips.glb"));
+        CHECK(sh->walkSpeed == shWalk);
     }
 
     TEST_MAIN_RESULT();

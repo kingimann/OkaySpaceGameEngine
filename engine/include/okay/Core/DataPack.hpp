@@ -71,13 +71,38 @@ struct DataPack {
         return body;
     }
 
+    /// Like Decode, but says why it failed: false (and `out` empty, `error` set) on bad
+    /// magic or a failed checksum. An empty but valid body returns true.
+    static bool TryDecode(const std::string& packed, std::uint64_t key, std::string& out, std::string* error = nullptr) {
+        out.clear();
+        if (!IsPacked(packed)) { if (error) *error = "not a packed file"; return false; }
+        auto get64 = [&](std::size_t off) { std::uint64_t v = 0;
+            for (int i = 0; i < 8; ++i) v |= (std::uint64_t)(unsigned char)packed[off + i] << (i * 8); return v; };
+        const std::uint64_t nonce = get64(4), chk = get64(12);
+        std::string body = packed.substr(kHeader);
+        XorStream(body, key, nonce);
+        if (Fnv(body) != chk) { if (error) *error = "checksum mismatch (tampered, corrupt or wrong key)"; return false; }
+        out = std::move(body);
+        return true;
+    }
+
     /// Convenience with the default key + a content-derived nonce.
     static std::string Pack(const std::string& plain) {
         return Encode(plain, DefaultKey(), Fnv(plain) ^ 0x5DEECE66Dull);
     }
     /// Decode if packed, else return the input unchanged (plaintext back-compat).
+    /// A packed file that fails its checksum gives an empty string; use the overload
+    /// below to tell that from a genuinely empty file.
     static std::string Unpack(const std::string& data) {
         return IsPacked(data) ? Decode(data, DefaultKey()) : data;
+    }
+    /// Same, but `ok` (and `error`, if given) say whether the data was good.
+    static std::string Unpack(const std::string& data, bool* ok, std::string* error = nullptr) {
+        if (ok) *ok = true;
+        if (!IsPacked(data)) return data;
+        std::string out;
+        if (!TryDecode(data, DefaultKey(), out, error) && ok) *ok = false;
+        return out;
     }
 };
 

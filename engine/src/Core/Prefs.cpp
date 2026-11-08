@@ -1,4 +1,5 @@
 #include "okay/Core/Prefs.hpp"
+#include "okay/Core/SaveData.hpp"
 
 #include <fstream>
 #include <limits>
@@ -50,6 +51,7 @@ void Prefs::Delete(const std::string& key) { Store().erase(key); }
 void Prefs::Clear() { Store().clear(); }
 
 namespace {
+const char* const kEndLine = "#end";
 // Encode a string onto a single line: backslash-escape backslashes, newlines,
 // carriage returns and tabs (a raw tab in a key would split it at the wrong
 // place). Files written before tab/CR escaping still decode the same way.
@@ -79,34 +81,44 @@ std::string Decode(const std::string& s) {
 } // namespace
 
 bool Prefs::Save(const std::string& path) {
-    std::ofstream f(path);
-    if (!f) return false;
-    f << "okayprefs 1\n";
+    // Written aside and swapped in (a crash never leaves a half file). The end line
+    // lets Load tell a cut-off file from a complete one; older readers skip it (no tab).
+    std::string out = "okayprefs 2\n";
     for (const auto& [k, v] : Store())
-        f << Encode(k) << '\t' << Encode(v) << '\n';
-    return static_cast<bool>(f);
+        out += Encode(k) + '\t' + Encode(v) + '\n';
+    out += kEndLine;
+    out += '\n';
+    return savefmt::AtomicWrite(path, out);
 }
 
 bool Prefs::Load(const std::string& path) {
     std::ifstream f(path);
-    if (!f) return false;
-    Store().clear();
+    if (!f) { Store().clear(); return false; }   // no file = an empty store
+    // Build the new store aside; the live one is replaced only by a file that read whole.
+    std::unordered_map<std::string, std::string> fresh;
     std::string line;
     std::getline(f, line); // header (ignored if absent)
-    if (line.rfind("okayprefs", 0) != 0) {
+    int version = 1;
+    if (line.rfind("okayprefs", 0) == 0) {
+        version = std::atoi(line.c_str() + 9);
+        if (version < 1) version = 1;
+    } else if (!line.empty()) {
         // No header: treat this first line as data too.
-        if (!line.empty()) {
-            auto tab = line.find('\t');
-            if (tab != std::string::npos)
-                Store()[Decode(line.substr(0, tab))] = Decode(line.substr(tab + 1));
-        }
+        auto tab = line.find('\t');
+        if (tab != std::string::npos)
+            fresh[Decode(line.substr(0, tab))] = Decode(line.substr(tab + 1));
     }
+    bool sawEnd = false;
     while (std::getline(f, line)) {
         if (line.empty()) continue;
+        if (line == kEndLine) { sawEnd = true; continue; }
         auto tab = line.find('\t');
         if (tab == std::string::npos) continue;
-        Store()[Decode(line.substr(0, tab))] = Decode(line.substr(tab + 1));
+        fresh[Decode(line.substr(0, tab))] = Decode(line.substr(tab + 1));
     }
+    if (f.bad()) return false;
+    if (version >= 2 && !sawEnd) return false;   // cut off: keep what we have
+    Store() = std::move(fresh);
     return true;
 }
 

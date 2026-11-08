@@ -34,6 +34,12 @@ add_executable(test_scene_records test_scene_records.cpp)
 target_link_libraries(test_scene_records PRIVATE okay::engine)
 add_test(NAME scene_records COMMAND test_scene_records)
 
+# Safe loading: bad / cut-short / newer documents never damage the live scene
+add_executable(test_scene_safe_load test_scene_safe_load.cpp)
+target_link_libraries(test_scene_safe_load PRIVATE okay::engine)
+target_compile_definitions(test_scene_safe_load PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME scene_safe_load COMMAND test_scene_safe_load)
+
 add_executable(test_remove test_remove.cpp)
 target_link_libraries(test_remove PRIVATE okay::engine)
 add_test(NAME remove_component COMMAND test_remove)
@@ -472,6 +478,10 @@ add_executable(test_net_proxy_gait test_net_proxy_gait.cpp)
 target_link_libraries(test_net_proxy_gait PRIVATE okay::engine)
 add_test(NAME net_proxy_gait COMMAND test_net_proxy_gait)
 
+add_executable(test_net_anim_actions test_net_anim_actions.cpp)
+target_link_libraries(test_net_anim_actions PRIVATE okay::engine)
+add_test(NAME net_anim_actions COMMAND test_net_anim_actions)
+
 add_executable(test_net_spawn test_net_spawn.cpp)
 target_link_libraries(test_net_spawn PRIVATE okay::engine)
 add_test(NAME net_spawn COMMAND test_net_spawn)
@@ -880,6 +890,10 @@ add_executable(test_anim_state_machine test_anim_state_machine.cpp)
 target_link_libraries(test_anim_state_machine PRIVATE okay::engine)
 add_test(NAME anim_state_machine COMMAND test_anim_state_machine)
 
+add_executable(test_ik_state_weight test_ik_state_weight.cpp)
+target_link_libraries(test_ik_state_weight PRIVATE okay::engine)
+add_test(NAME ik_state_weight COMMAND test_ik_state_weight)
+
 # Cutscene sequences: the .okayseq text, evaluation, the SequencePlayer's events and actions
 add_executable(test_sequence test_sequence.cpp)
 target_link_libraries(test_sequence PRIVATE okay::engine)
@@ -893,6 +907,11 @@ add_test(NAME localization COMMAND test_localization)
 add_executable(test_ik_core test_ik_core.cpp)
 target_link_libraries(test_ik_core PRIVATE okay::engine)
 add_test(NAME ik_core COMMAND test_ik_core)
+
+# IK Target, Aim Offset (recoil), and Pose Capture.
+add_executable(test_anim_ik_components test_anim_ik_components.cpp)
+target_link_libraries(test_anim_ik_components PRIVATE okay::engine)
+add_test(NAME anim_ik_components COMMAND test_anim_ik_components)
 
 # Look-At IK shares, clamp and eyes; Limb IK stretch.
 add_executable(test_ik_look_stretch test_ik_look_stretch.cpp)
@@ -913,6 +932,9 @@ add_test(NAME ik_rigs COMMAND test_ik_rigs)
 add_executable(test_vs_nodes test_vs_nodes.cpp)
 target_link_libraries(test_vs_nodes PRIVATE okay::engine)
 add_test(NAME vs_nodes COMMAND test_vs_nodes)
+add_executable(test_vs_inventory test_vs_inventory.cpp)
+target_link_libraries(test_vs_inventory PRIVATE okay::engine)
+add_test(NAME vs_inventory COMMAND test_vs_inventory)
 
 # The Visual Script editor's graph model (save / load / paste), without drawing:
 # it needs the Dear ImGui headers the editor header includes, nothing linked.
@@ -957,6 +979,11 @@ add_executable(test_clip_graph test_clip_graph.cpp)
 target_link_libraries(test_clip_graph PRIVATE okay::engine)
 target_compile_definitions(test_clip_graph PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME clip_graph COMMAND test_clip_graph)
+
+add_executable(test_strafe_blend test_strafe_blend.cpp)
+target_link_libraries(test_strafe_blend PRIVATE okay::engine)
+target_compile_definitions(test_strafe_blend PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME strafe_blend COMMAND test_strafe_blend)
 
 add_executable(test_foot_planting test_foot_planting.cpp)
 target_link_libraries(test_foot_planting PRIVATE okay::engine)
@@ -1381,3 +1408,12 @@ add_test(NAME behavior_tree COMMAND test_behavior_tree)
 add_executable(test_splines test_splines.cpp)
 target_link_libraries(test_splines PRIVATE okay::engine)
 add_test(NAME splines COMMAND test_splines)
+
+add_executable(test_durable_saves test_durable_saves.cpp)
+target_link_libraries(test_durable_saves PRIVATE okay::engine)
+add_test(NAME durable_saves COMMAND test_durable_saves)
+
+# Script builtins batch 1: stats, hierarchy, light setters, WaitUntil/WaitWhile
+add_executable(test_script_batch1 test_script_batch1.cpp)
+target_link_libraries(test_script_batch1 PRIVATE okay::engine)
+add_test(NAME script_batch1 COMMAND test_script_batch1)

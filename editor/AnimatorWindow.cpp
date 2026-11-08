@@ -2659,11 +2659,15 @@ void DrawToolbar(Ctx& c, Ui& u) {
                         shown(ma->runClip), shown(ma->jumpClip), shown(ma->fallClip), shown(ma->landClip));
             ImGui::Text("Crouch: %s\nCrouch walk: %s\nProne: %s\nCrawl: %s\nGet up: %s", shown(ma->crouchClip),
                         shown(ma->crouchWalkClip), shown(ma->proneClip), shown(ma->crawlClip), shown(ma->getUpClip));
-            if (!sm.states.empty()) ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1), "Replaces the %d existing state(s).", (int)sm.states.size());
+            ImGui::Text("Strafe left: %s\nStrafe right: %s\nWalk back: %s\nRun back: %s",
+                        shown(ma->strafeLeftClip), shown(ma->strafeRightClip), shown(ma->walkBackClip), shown(ma->runBackClip));
+            if (!sm.states.empty())
+                ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1), "Keeps the %d existing state(s) and updates Locomotion.", (int)sm.states.size());
             if (ImGui::Button("Build it", ImVec2(-1, 0))) {
                 ed.PushUndo();
                 okay::AutoMapLocomotion(ma);   // fills only the clip slots that are still empty
-                ClipGraph::Build(sm, *ma);
+                if (sm.states.empty()) ClipGraph::Build(sm, *ma);
+                else ClipGraph::InsertLocomotion(sm, *ma);
                 // Movement stays measured: empty slots keep the built-in fallback
                 // and walk/run keep their stride. The graph picks the clips.
                 ClearSel(u);

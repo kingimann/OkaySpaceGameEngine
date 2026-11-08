@@ -358,7 +358,7 @@ int main() {
         Scene c("OLD");
         CHECK(SceneSerializer::Deserialize(c, "okayscene 1\ngameobject 0 \"Old\"\n"
                                               "  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1\n"
-                                              "  spherecollider3d 0.5 0 0 0 1 0 0\n"));
+                                              "  spherecollider3d 0.5 0 0 0 1 0 0\nend\n"));
         GameObject* old = c.Find("Old");
         CHECK(old && old->GetComponent<Rigidbody3D>() && !old->GetComponent<Rigidbody3D>()->continuousCollision);
         CHECK(old && old->GetComponent<SphereCollider3D>() && old->GetComponent<SphereCollider3D>()->isTrigger);

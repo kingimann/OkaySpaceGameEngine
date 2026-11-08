@@ -38,6 +38,7 @@ public:
     Vec3  aimAxis = Vec3::Forward;     ///< the bone-local axis that should point at the target
     Vec3  upAxis  = Vec3::Up;          ///< keeps the bone from rolling around the aim axis
     float weight  = 1.0f;
+    float stateWeight = 1.0f;          ///< x weight; set per state by the Animator state machine
     bool  ikActive = true;             ///< switch IK on/off; the change eases over fadeTime
     float fadeTime = 0.0f;             ///< seconds to blend IK in/out (0 = instant)
     float maxAngle = 180.0f;           ///< clamp the turn from the rest pose (degrees)
@@ -63,7 +64,7 @@ public:
         // Last frame's write comes off first, so weight 0 is exactly the animated
         // pose on this frame (a still bone keeps the pose IK took over from).
         m_restore.Restore();
-        const float w = weight * m_fade.Step(ikActive, fadeTime, dt);
+        const float w = weight * stateWeight * m_fade.Step(ikActive, fadeTime, dt);
         Transform* b = bone ? bone : transform;
         if (w <= 0.0f || !b) { ForgetAim(); return; }
 

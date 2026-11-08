@@ -1,32 +1,62 @@
 # OkaySpaceGameEngine
 
-A **modern C++ (C++17) game engine** with a desktop editor, a game player for
-Windows, the web and mobile, and a launcher. It uses a familiar
-entity–component model — a scene full of `GameObject`s, each composed of
+A C++17 game engine with a desktop editor, a launcher, and a player that runs
+your game on Windows, the web and mobile. Scenes are `GameObject`s made of
 `Component`s, with scripts that hook into an `Awake` / `Start` / `Update`
-lifecycle — implemented from scratch.
+lifecycle. Everything is written from scratch; the core needs only a C++17
+compiler and threads.
 
-- **Engine core** — no required dependencies beyond a C++17 compiler and
-  threads. A few small libraries are vendored in `engine/third_party`
-  (stb image loading, ufbx FBX import, tinyfiledialogs, an 8×8 bitmap font).
-  Optional: libsodium (packet encryption, on by default), Lua, Assimp, Steamworks.
-- **Editor** — Dear ImGui (docking) + SDL2 + OpenGL (`-DOKAY_BUILD_EDITOR=ON`).
-  **Player** — SDL2 only, OpenGL or D3D11 (`-DOKAY_BUILD_PLAYER=ON`).
-- **Console (ASCII) renderer** — the engine also renders to a terminal, so it
-  builds and runs headless (servers, CI). The sandbox demo below uses it:
+## Get started
 
-```
-+----------------------------------------------------------------------+
-|                                        OO                            |
-|                                       oo  AA                         |
-|                                                                      |
-|                                  @@                                  |
-|                                                                      |
-|                                  **                                  |
-+----------------------------------------------------------------------+
-```
-*(The sandbox: `@` sun, `O` orbiting planet with a parented `o` moon, `*` inner
-planet, `A` player ship.)*
+**Windows:** download the latest build from the GitHub Releases page, unzip it
+and run **`OkaySpace.exe`**, the launcher. Create a project there and the editor
+opens. Make a scene, press **Play**, then **File → Build Settings…** (Ctrl+B) to
+export a standalone `<Game>.exe`.
+
+New to the editor? Follow [docs/making_a_game.md](docs/making_a_game.md), from an
+empty editor to a shipped game.
+
+**From source:** see [Build from source](#build-from-source).
+
+## What's in it
+
+Each line links to its guide. The full, grouped list is in
+[docs/README.md](docs/README.md).
+
+- **Editor:** docked Hierarchy, Scene, Inspector, Console, Project and Script
+  Editor panels; prefabs, materials, undo, autosave recovery, plugins.
+  [editor](docs/editor.md), [plugins](docs/editor-plugins.md)
+- **Scenes and rendering:** 2D sprites and 3D meshes, lighting with cascaded
+  shadows, post-processing, a procedural sky, fog and weather, terrain, voxel
+  terrain, water, world streaming. [rendering](docs/rendering.md),
+  [lighting](docs/lighting.md), [modeling](docs/modeling.md)
+- **Characters and animation:** one Player Controller for first and third
+  person, imported FBX/GLB characters with built-in animation on any humanoid
+  rig, an Animator with state machines and blend trees, inverse kinematics,
+  ragdolls. [animation](docs/animation.md), [ik](docs/ik.md),
+  [ragdolls](docs/ragdolls.md), [input](docs/input.md)
+- **Scripting:** OkayScript, a small C#-style language built into every build
+  (Lua and C# are optional), and a visual scripting graph with a no-code Action
+  List. [scripting](docs/scripting.md),
+  [function reference](docs/scripting_reference.md),
+  [visual scripting](docs/visual_scripting.md)
+- **Gameplay systems:** navigation meshes, behavior trees, dialogue and quests,
+  cutscenes, splines, save games, inventory, survival stats, crafting, build
+  mode, vehicles. [docs index](docs/README.md#gameplay-systems)
+- **UI:** a canvas with buttons, sliders, inputs and more, HTML/CSS-style
+  documents, in-world UI, localization. [game UI](docs/game_ui.md),
+  [localization](docs/localization.md)
+- **Audio:** a stereo mixer, WAV/OGG/MP3, music player. [audio](docs/audio.md)
+- **Multiplayer and accounts:** host or join with UDP and optional libsodium
+  encryption, a relay for players behind routers, dedicated servers, voice,
+  accounts and cloud saves, anti-cheat.
+  [multiplayer](docs/launcher-multiplayer.md), [relay](docs/relay.md),
+  [accounts](docs/accounts.md), [anti-cheat](docs/anticheat.md)
+- **Targets:** Windows, WebAssembly and mobile builds, Steam integration.
+  [web and mobile](docs/web_mobile.md), [Steam](docs/steam_release.md)
+
+There is also a console (ASCII) renderer, so the engine builds and runs headless
+for servers and CI.
 
 ## Core concepts
 
@@ -34,403 +64,17 @@ planet, `A` player ship.)*
 |----------------------|-----------------------------------------------------|
 | Game object          | `okay::GameObject`                                  |
 | Component            | `okay::Component`                                   |
-| Script base class    | `okay::OkaySource` / `okay::Behaviour` (Component aliases) |
+| Script base class    | `okay::Behaviour` (alias `okay::OkaySource`)        |
 | Transform            | `okay::Transform` (full parent/child hierarchy)     |
-| Scene                | `okay::Scene`                                        |
-| Camera               | `okay::Camera` (orthographic + perspective)         |
-| Renderers            | `okay::SpriteRenderer` / `okay::MeshRenderer`        |
-| Player prefs         | `okay::Prefs`                                        |
+| Scene                | `okay::Scene`                                       |
+| Camera               | `okay::Camera` (orthographic and perspective)       |
+| Renderers            | `okay::SpriteRenderer` / `okay::MeshRenderer`       |
+| Player prefs         | `okay::Prefs`                                       |
 | Prefab               | `okay::SceneSerializer` `.okayprefab`               |
 | Math types           | `okay::Vec2/Vec3/Quat/Mat4`                         |
-| Statics              | `Mathf`, `Time`, `Input`, `Color`                  |
-| Templated components | `AddComponent<T>()`, `GetComponent<T>()`            |
+| Statics              | `Mathf`, `Time`, `Input`, `Color`                   |
+| Components           | `AddComponent<T>()`, `GetComponent<T>()`            |
 | Lifecycle            | `Awake/Start/Update/LateUpdate/OnDestroy`           |
-
-## Features
-
-- **Entity–Component model** with templated `AddComponent<T>()` / `GetComponent<T>()`.
-- **Lifecycle** driven by the scene: `Awake` → `Start` → `Update` → `LateUpdate`
-  → `OnRender` → `OnDestroy` in a fixed, predictable order.
-- **Transform hierarchy** with local/world position, rotation, scale, and
-  correct world-matrix composition (TRS) through parents.
-- **Math library**: `Vec2`, `Vec3`, `Vec4`, `Quat`, `Mat4`, `Mathf` — vectors,
-  quaternion rotation/slerp, matrix transforms, ortho/perspective projection.
-- **Pluggable renderer** (`IRenderer`) with a built-in `ConsoleRenderer` that
-  rasterizes quads into an ASCII frame buffer with depth sorting.
-- **Game loop** with frame pacing, delta time, smoothed FPS, and a frame cap.
-- **Input**: non-blocking terminal keyboard polling (`GetKey/Down/Up`,
-  `AxisWASD`), gracefully no-ops when not attached to a TTY.
-- **2D physics** — `Rigidbody2D` + box/circle colliders, a `Physics2D` world
-  (gravity, drag, impulse resolution) and `OnCollision2D` / `OnTrigger2D`
-  callbacks, stepped automatically by the scene.
-- **Scheduler** — `Invoke`, `InvokeRepeating`, and value `Tween`s per scene
-  (timed callbacks).
-- **Sprites, textures & text** — `SpriteRenderer` with optional **image
-  textures** (`okay::Image`, PNG/JPG/BMP via stb_image), **sprite-sheet/atlas**
-  sub-regions + **`sortOrder`** layering, `SpriteAnimator` flip-book/atlas
-  animation, and a `TextRenderer` using a built-in **8×8 bitmap font** (no font
-  file) for HUDs and labels. The player draws shaded 3D meshes, rotated/textured
-  layered sprites, tilemaps, particles, and text.
-- **3D primitives** — `Mesh::Cube/Pyramid/Plane/Sphere/Cylinder`, drawn as
-  shaded, back-face-culled, depth-sorted meshes via a perspective `Camera`.
-- **WAV audio** — `AudioClip::LoadWAV` (8/16/24/32-bit + float, resampled) and
-  `SaveWAV`; `AudioSource` clip paths load in the built game and mix live.
-- **Gameplay components (no scripting needed)** — `Mover` (constant velocity),
-  `Spinner` (constant rotation), `Lifetime` (auto-destroy), and `CameraFollow`
-  (smooth chase camera). All serialized and editable in the Inspector.
-- **Mouse + keyboard input** — `GetKey/Down/Up`, `AxisWASD`, `MousePosition`,
-  `GetMouseButton/Down/Up`, fed from the editor/player windows or a terminal.
-- **A\* pathfinding** — `Pathfinding::AStar` over a grid (4/8-directional) or
-  directly over a `Tilemap`, for enemy nav and click-to-move.
-- **Easing & Tween** — the classic easing curve set (`Ease`) plus a one-shot
-  `Tween` for game-feel animation.
-- **Persistent save data** — `Prefs` (PlayerPrefs-style key/value) for high
-  scores and settings, plus a **built-in save system** (`okay::Save` /
-  `SaveFile`): typed values (number/string/`Vector3`), many named files
-  (slots/profiles), write-through to disk, and key management. Scripts use
-  `save()` / `load()` / `save_has` / `save_delete` / `save_exists`, and the
-  editor's **Save Manager** window browses and edits `.okaysave` files.
-- **Keyframe animation** — an `Animator` plays an `AnimationClip` of
-  animation-curve tracks (`position.*`, `rotation.z`, `scale.*`).
-  The inspector has play/pause, a time scrubber, and **Record** to
-  capture the object's transform into keys at the current time. Clips save with
-  the scene.
-- **Starter templates** — `Platformer` / `TopDown` / **`CoinCollector`** (a
-  complete, playable game) / **`MainMenu`** (UI panel + title + Start button) /
-  **`Inventory`** (drag-and-drop bag with slots) build component-wired scenes
-  from the New Project flow.
-- **Utilities** — seedable `Random`, a typed `EventBus`, `Rect`/`Bounds`, extra
-  `Mathf` (InverseLerp, SmoothDamp, LerpAngle…), and `Scene::FindObjectsOfType<T>`.
-- **Multiplayer — host your own server, in ~5 lines** — cross-platform UDP
-  networking (`NetworkManager`): a client/server join handshake, snapshot state
-  sync, player **names** + a server **roster**, peer **joined/left** callbacks,
-  **broadcast** and **targeted** (`SendTo`) custom messages, and a script API so
-  any player can host (`net_host(port)`) or join (`net_join(ip, port)`) and
-  exchange events (`net_send` / `net_poll`). There's a **Multiplayer starter
-  template** (press **H** to host, **J** to join). See the API below.
-- **Visual scripting** — an `ActionList` (Game-Creator-2 style:
-  Trigger → Conditions → Instructions) with ~60 ops including variables/math,
-  transform/physics, prefs, scene loading, **and networking** (`net_host`,
-  `net_join`, `net_send`), plus a node-graph runtime you build in code or text.
-- **Text scripting (OkayScript)** — a tiny language of its own, built for minimal
-  code. No class wrapper, no type declarations, no semicolons: the whole file runs
-  every frame, so a complete behaviour can be one line — `on_key_move(5)`. Define
-  `update(dt)` / `start()` (the `function` keyword is optional) and single-line
-  `if`/`while`/`for` need no braces. High-level, **dt-scaled** one-liners mean you
-  never write `* dt` — `walk`, `spin`, `follow`, `platformer`, `aim`, `cooldown`,
-  `spring_to`, and more. Full language underneath: `if`/`while`/`for`/**foreach**,
-  functions, the **ternary** `?:`, **arrays** and **maps**, a **string** library,
-  and a deep builtin set — input (keyboard+mouse), 2D/3D transform control,
-  `spawn`/`destroy`, `load_scene` + **Scene Manager**, **networking** (`net_*`),
-  physics `raycast_hit`/`overlap`, component control
-  (`set_text`/`set_color`/`set_texture`/`play_sound`), audio/gravity/time-scale,
-  `prefs_*` and **`save()`/`load()`** save data, and
-  `on_collision()`/`on_click()` handlers. (A fuller C-style form also parses so
-  pasted code works, and an optional **C#/Lua** backend sits behind the same
-  `IScriptVM`.) See [`docs/scripting.md`](docs/scripting.md). Scripts are written
-  in a built-in IDE-style editor (a crisp monospace font, syntax highlighting, minimap,
-  autocomplete, outline, inline errors, rename, find references, go-to-line, zoom
-  and snippets).
-- **Terrain** — a heightmap terrain you sculpt with brushes (Raise/
-  Lower, Smooth, Flatten, Set Height, Noise, Erode — each with a Hardness control)
-  or generate (Mountains, Hills, Plains, Plateau, Islands, Ridged Mountains,
-  Canyons). **Erosion** weathers generated terrain into believable landscape
-  (hydraulic droplet sim carves valleys; thermal slumps cliffs), and heightmaps
-  **import/export as PNG** (round-trip with common heightmap and image tools).
-  Bodies walk on it with slope-aware collision (slide / bounce / friction), and a
-  runtime **Terrain Digger** carves it live in Play with an on-ground brush marker.
-  Try the **Terrain Sandbox** template. The heightmap saves with the scene. Size
-  and resolution are uncapped — build maps as large as you like.
-- **Voxel terrain (real caves)** — a smooth marching-cubes `VoxelTerrain` you can
-  dig actual caves, tunnels and overhangs into (not heightmap craters). Generate a
-  cave-riddled landscape and carve it live in Play with the `VoxelDigger` (left
-  mouse digs, right mouse adds), with a brush marker. See the **Voxel Sandbox**
-  template.
-- **Water** — a living `Water` surface: reflective, semi-transparent, with rolling
-  animated waves, a flowing current and sun-glint (not a flat blue plane).
-- **Pause menu** — a no-code `PauseMenu`: press Escape to freeze the game and show
-  Resume / Quit (and optional Main Menu) buttons. Pauses all gameplay and exits the
-  built game cleanly.
-- **Cascaded shadows** — directional cast shadows rendered as several
-  camera-focused cascades so they stay crisp up close while cheaply covering
-  distance on big maps (the practical, DX11-class stand-in for virtual shadow
-  maps). Tunable Shadow distance / Cascades / Softness / Resolution in
-  View > Lighting and Build Settings; distance 0 falls back to a single
-  whole-scene map.
-- **World Partition / streaming** — the `WorldStreamer` component loads a huge map
-  as a grid of cell prefab files, keeping only the chunks near a target (camera or
-  named object) resident (load/unload radii with hysteresis). Build worlds far
-  bigger than RAM; missing cells are skipped so sparse maps just work.
-- **Chaos destruction** — the `Destructible` component shatters voxel blocks (from
-  `BlockBuilder` or any tagged object) into physics debris instead of vanishing,
-  then runs a structural-support pass so blocks that lose their path to the ground
-  collapse under gravity. Optional camera-ray "destruction gun" for instant use.
-- **Materials** — reusable surface presets (albedo, emissive, specular, texture,
-  tiling, unlit, double-sided) saved as `.okaymat` assets and applied to any
-  Mesh Renderer (Save/Load in the inspector, or drag a `.okaymat` from Project).
-- **In-game UI** — a **Canvas** (CanvasScaler: constant-pixel or
-  scale-with-screen) parents the widgets, with one **Event System** routing
-  pointer input. Widgets: `UIButton` (`on_click()`), `UIPanel`, `UIImage`,
-  `UISlider`, `UIStepper` and `UIRating` (`on_change()`), `UIToggle`,
-  `UIProgressBar`, `UIRadialProgress`, `UIInputField` (real OS text input —
-  caret, scroll, Integer/Decimal/Password types), `UIDropdown`, `UITooltip`,
-  and screen-space text. Widgets are richly customizable (rounded corners,
-  borders, gradients, font scale, fills, outlines, data-bound text) and share a
-  library of **17 shapes** — Rectangle, Rounded, Circle, Pill, Triangle,
-  Diamond, Hexagon, Octagon, Parallelogram, Trapezoid, Pentagon, Squircle, Tab
-  (top-rounded) and Arrow Right/Left/Up/Down — used for both the silhouette and
-  the click hit-test. A **Scroll View** (wheel-scrollable, clipped) and **Layout
-  Group** make scrollable, auto-arranged lists — all rendered identically in
-  built games.
-- **UI editing** — select, drag and resize any widget in the Scene
-  view with anchor-correct handles; **snapping** to a pixel grid plus smart
-  edge/center **alignment guides** to the canvas and siblings; arrow-key
-  nudging; a **3×3 anchor preset** grid (re-anchors without moving the widget);
-  Bring to Front / Send to Back, a per-widget **Draw Order** override, Center in
-  Canvas, and Fill Width/Height/Canvas. The UI view's **+ Add** menu has every
-  widget, launcher-look kit pieces (cards, list rows, badges, avatars, switches,
-  spinners, toasts) and 15 prebuilt screens. The screens are main / pause /
-  settings menus, a HUD, shop, game over, loading screen, lobby, scoreboard,
-  leaderboard and matchmaking. See [docs/game_ui.md](docs/game_ui.md).
-- **UI layering** — one draw pass ordered by Canvas **Sort Order**, then each
-  widget's **Draw Order** (0 = default type order; non-zero layers it against any
-  other type, higher on top), then the hierarchy (child over parent, sibling
-  order). The editor preview matches the built game exactly.
-- **UI Toolkit (OkayUI markup)** — a **UIDocument** authors whole HUDs/menus as
-  text: every widget type, customization keys (corner/border/gradient/font/
-  align/outline/fill/…), `tooltip=`, percent sizing (`50%`), `name=` (script-
-  addressable), reusable `style` classes, parameterized `define` custom widgets,
-  live data **binding** (`bind="Score: {score}"`), and inline validation with
-  line numbers.
-- **Tweening & saves** — animate from OkayScript with
-  `tween_move`/`tween_move3`/`tween_scale`/`tween_rotate`/`tween_color`/
-  `tween_fade` (any easing), each with an optional **on-complete callback**;
-  plus **`tween_loop_move`** (ping-pong floaters/patrols), **`tween_punch_scale`**
-  / **`tween_punch_pos`** and **`tween_shake`** for game-feel "juice". And a save
-  system (`save_game`/`load_game`/`save_exists` slots).
-- **Drag & drop (UI *and* world items)** — make any UI widget draggable with a
-  **UI Draggable** component (drop onto a **UI Drop Target**), or any world
-  sprite draggable with **Draggable** (drop onto a **Drop Zone**). Both fire
-  `on_drop()` / `on_receive()` (scripts read `ui_drop_source/target()` and
-  `drop_source/target()`) and share rich options: lock-axis, drag threshold,
-  bring-to-front, **snap-into-slot/zone** (instant inventories), return-to-start,
-  **accept-tag** filtering, **grid snap** (board/tile games), drag-scale, and
-  hover highlight + `on_hover_enter/exit()`. The **Inventory** starter template
-  is a working drag-and-drop bag.
-- **Scriptable Objects (Data Assets)** — reusable `.okaydata` files of named
-  fields for item/enemy/level definitions and config (a scriptable data asset).
-  Create via **Project → New Data Asset**, edit fields in the editor, read from
-  OkayScript with `data_num`/`data_str`/`data_has` and write with
-  `data_set`/`data_save`.
-- **Raycasting from script** — `raycast(ox,oy,dx,dy[,max])` (and 3D
-  `raycast3(...)`) return the **name of the object hit**, with detail accessors
-  `ray_hit()`, `ray_object()`, `ray_x/y()` (point), `ray_nx/ny()` (normal) and
-  `ray_dist()` — for shooting, line-of-sight, ground checks and click-to-select.
-- **Build for desktop, web & mobile** — one project, every target: a
-  self-contained Windows `.exe`, a **WebAssembly** build via Emscripten
-  (`scripts/build-web.sh`), and Android/iOS via SDL2.
-  See [`docs/web_mobile.md`](docs/web_mobile.md).
-- **Steam** integration — a broad API surface (achievements + **progress**,
-  stats + **increment**, **leaderboards**, **Steam Cloud**, friends, overlay)
-  with an in-memory simulation backend by default and the real Steamworks
-  backend behind `-DOKAY_WITH_STEAM`.
-- **Graphical launcher** (account sign-in, searchable game library with
-  favorites, theme modes, New Project templates) that self-updates by pulling
-  the latest prebuilt build from GitHub and swapping it in — no console windows.
-- **Desktop GUI editor** (Dear ImGui docking + SDL2) — **docked**
-  Hierarchy / Scene / Inspector / Console / **Services** / **Script Editor**
-  panels, a Play·Stop·Step·Build toolbar, a polished dark theme, a **New Project**
-  flow with 2D / 3D and **playable templates**, a **2D/3D scene viewport** (orbit
-  camera + shaded meshes), a searchable Hierarchy + Add Component, a filterable
-  colored Console, a filesystem **asset browser** (open scenes / drop in prefabs),
-  Add Component / Inspector for every component, scene save/load, **Build Game**,
-  and an in-app self-updater. Ships as a single self-contained `.exe`
-  (`dist/OkayEngine.exe`). See [`docs/editor.md`](docs/editor.md).
-- **editor polish** — a **Add Component** (centered
-  title + Search, categories that drill into submenus; the Scripts category lists
-  your `.okay` files and "New Script…"); component headers with **enable
-  checkboxes** + right-click **Remove**; a **Tag** dropdown and **Static** flag;
-  **drag assets from Project** onto the Scene (place prefabs/sprites/models) or
-  the Inspector/Hierarchy (attach scripts, apply materials/textures); **gizmo
-  snapping** for move/rotate/scale + **Local/Global** toggle; a **Material
-  inspector** (`.okaymat`), a live **Camera Preview** inset, light **gizmos**,
-  and an **Edit ▸ Project Settings** window.
-- **Crash-safe autosave** — writes a `<scene>.autosave` recovery copy on a timer
-  (File ▸ Autosave), and offers to **Recover** it if the editor didn't close
-  cleanly. A normal Save clears it.
-- **Expanded camera & lighting** — cameras have Clear Flags (Skybox / Solid
-  Color), near/far clip, FOV/size and a render Depth; lights add color
-  **temperature** (Kelvin), **soft** spot cones, and a colored **ambient** tint,
-  with multi-light colored shading shared by the editor and player.
-- **Online services built into the engine & editor** — Steam (achievements,
-  stats, leaderboards, cloud) and multiplayer (host/join, roster, chat) live in
-  the editor's **Services** panel. Ship on Steam via
-  [`docs/steam_release.md`](docs/steam_release.md).
-- **Scene Manager + Scenes panel** — a build list of the project's scenes with
-  by-index / by-name loading, Load Next and Reload (a Scene Manager (
-  Build Settings).
-- **Prefabs** — save any GameObject (and children) as a `.okayprefab` from the
-  Hierarchy right-click, drag it back in to instantiate.
-- **Scene serialization** — save/load scenes (and the hierarchy, plus per-scene
-  sky/ambient render settings) to readable `.okayscene` text files.
-- **Build Settings** — the editor's **Build Game** (Ctrl+B) dialog
-  has product/company names, window size (+ presets), fullscreen/resizable/
-  vsync, "include all project scenes", and a development-build flag. It writes
-  your scene(s) + a `game.okayconfig` next to a tiny SDL2 **player runtime**,
-  renamed `<Game>.exe` — a double-clickable game (2D sprites, shaded 3D meshes
-  with **skybox + lighting**, audio, input) you can ship. The shipped player
-  uses the same **GPU 3D renderer** as the editor (Direct3D 11 — or opt-in
-  Direct3D 12 — on Windows, OpenGL elsewhere; toggle in Build Game), and falls
-  back to the software rasterizer when no GPU is available. All GPU backends
-  shade up to 16 dynamic lights, honour distance fog, and render real directional
-  **cast-shadow maps** (opt-in, with PCF); Direct3D 11/12 add MSAA anti-aliasing.
-  See [`docs/editor.md`](docs/editor.md).
-- **Core has no external dependencies** — just a C++17 compiler, CMake, threads.
-  Optional backends (Lua, C#/Mono, Steam, PlayFab/libcurl) and the editor
-  (SDL2/OpenGL) are opt-in.
-
-## Project layout
-
-```
-engine/
-  include/Okay.hpp            # single public header
-  include/okay/Math/          # Vec2/3/4, Quat, Mat4, Mathf
-  include/okay/Core/          # Application, Time, Log
-  include/okay/Scene/         # Component, Transform, GameObject, Scene
-  include/okay/Components/    # Camera, SpriteRenderer
-  include/okay/Render/        # IRenderer, ConsoleRenderer, Color
-  include/okay/Input/         # Input
-  include/okay/Graphics/      # Image (stb), Font (8x8 bitmap)
-  include/okay/AI/            # Pathfinding (A*)
-  third_party/                # vendored single-header libs (stb, font8x8)
-  src/                        # implementations
-editor/                       # Dear ImGui + SDL2 desktop editor (the engine app)
-player/                       # standalone SDL2 runtime that runs a built game
-sandbox/                      # example "solar system" game
-docs/                         # editor, scripting, Steam release guides
-tests/                        # dependency-free unit tests (CTest)
-```
-
-## How to run it
-
-You have three options, easiest first.
-
-### 1. Open the engine (prebuilt Windows binary)
-
-Download **`dist/OkayEngine.exe`** and double-click it — that single,
-self-contained `.exe` *is* the engine: the full Dear ImGui editor. Make a scene,
-press **Play**, then **File → Build Game** (Ctrl+B) to export a standalone
-`<Game>.exe`. It self-updates from GitHub via **Engine → Check for Updates**.
-
-(`dist/OkaySpace.exe` is the graphical launcher — sign in, browse/launch your
-games, open the editor, and self-update — see below. `dist/OkaySpacePlayer.exe`
-is the standalone runtime that plays a built `.okayscene` game.)
-
-### 2. The launcher (build, auto-update, and run in one step)
-
-```bash
-./launch.sh            # Linux/macOS   (first run builds the launcher)
-launch.bat             # Windows
-```
-
-The launcher checks GitHub for a newer version, pulls it, rebuilds, and starts
-the game. Handy flags: `--check-only`, `--no-update`, `--no-run`,
-`--game <name>`, and `-- <args passed to the game>`.
-
-The launcher's **Account** tab lets a player sign in or create an account, with
-usernames, a "Forgot password?" email reset, and change email / username /
-password from a profile panel. The engine exposes the same accounts to games via
-`okay::Account` and the `account_*` / `cloud_*` / `leaderboard_*` OkayScript
-builtins (token-validated cloud saves and leaderboards). Without a server,
-accounts are stored locally on the device (passwords salted and hashed with
-SHA-256, never in plaintext); point it at a managed backend (Supabase) or your
-own server with `OKAY_ACCOUNT_SERVER` + `OKAY_ACCOUNT_API_KEY` (or compile them
-in for a release that's online by default — only a publishable/anon key is ever
-shipped, protected by row-level security). There's a runnable reference server
-in [`examples/account-server/`](examples/account-server/server.py). See
-[docs/accounts.md](docs/accounts.md) for the full guide, server contract, and
-script API.
-
-### 3. Build from source with CMake
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-
-./build/bin/sandbox            # run the demo (optional arg = frame count)
-cd build && ctest --output-on-failure   # run the tests
-```
-
-In an interactive terminal the demo runs until you press **Q** (move with
-**WASD**); when piped/redirected it runs a fixed number of frames so it stays
-headless-friendly. Or use the helper script: `./scripts/build.sh`.
-
-Requirements: CMake ≥ 3.16 and a C++17 compiler (tested with GCC 13 and
-Clang 18). The core build needs nothing else.
-
-### The visual editor
-
-Want a editor window (hierarchy, inspector, scene view, Play button)?
-
-```bash
-# Debian/Ubuntu: sudo apt-get install libsdl2-dev libgl1-mesa-dev
-cmake -S . -B build -DOKAY_BUILD_EDITOR=ON
-cmake --build build -j
-./build/bin/OkayEngine
-```
-
-Full guide: [`docs/editor.md`](docs/editor.md).
-
-### Windows builds (cross-compiled from Linux)
-
-The Windows `.exe`s are cross-compiled from Linux with MinGW-w64. To build the
-whole Windows distribution (launcher, editor, player + the shared `SDL2.dll`):
-
-```bash
-sudo apt-get install -y mingw-w64 cmake ninja-build
-# SDL2 MinGW dev files from https://github.com/libsdl-org/SDL/releases:
-export SDL2_MINGW_PREFIX=/path/to/SDL2-<ver>/x86_64-w64-mingw32
-./scripts/build-windows-dist.sh        # -> build-win-dist/
-```
-
-CI does this automatically: [`.github/workflows/release.yml`](.github/workflows/release.yml)
-cross-compiles the Windows build on every `v*` tag (and on demand) and attaches
-the zip to the GitHub Release. (`scripts/build-windows-exe.sh` builds just the
-single-file console demo.)
-
-**Distribution layout** — the build is organized so the thing you double-click is
-at the top and the rest is tucked into `Tools/`:
-
-```
-OkaySpace.exe        ← the launcher (start here)
-SDL2.dll             ← required beside OkaySpace.exe
-README.txt
-Tools/
-  OkayEngine.exe        the editor
-  OkaySpacePlayer.exe   standalone game runtime
-  okayspace-relay.exe   multiplayer NAT relay (see docs/relay.md)
-  SDL2.dll              copy — each .exe needs the DLL in its own folder
-  VERSION.txt
-```
-
-Windows resolves load-time DLLs from each exe's own directory, so `SDL2.dll` is
-intentionally duplicated next to the `Tools/` exes — keep every `.exe` together
-with an `SDL2.dll`. Full details in [docs/packaging.md](docs/packaging.md).
-
-### Optional backends
-
-These are off by default to keep the core dependency-free:
-
-```bash
-cmake -S . -B build \
-  -DOKAY_WITH_LUA=ON \        # real Lua scripting   (needs liblua dev)
-  -DOKAY_WITH_CSHARP=ON \     # real C# scripting     (needs Mono + mcs)
-  -DOKAY_WITH_PLAYFAB=ON \    # real PlayFab REST     (needs libcurl)
-  -DOKAY_WITH_STEAM=ON -DSTEAMWORKS_SDK_PATH=/path/to/sdk  # real Steamworks
-```
-
-Without these flags the engine still exposes the same scripting languages and
-Steam/PlayFab APIs via built-in/simulation backends.
 
 ## A taste of the API
 
@@ -462,82 +106,110 @@ int main() {
 }
 ```
 
-## Multiplayer in ~5 lines (host your own server)
-
-Multiplayer is built in — no external service, no account. Any player can host
-a server on a port; others join by IP. From OkayScript:
+Multiplayer is built in. From OkayScript, any player can host and others join:
 
 ```c
 // Press H to host, J to join the machine at 127.0.0.1.
 update(dt) {
-  if (key_down("h")) net_host(45000)              // start a server on this PC
-  if (key_down("j")) net_join("127.0.0.1", 45000) // connect to a host
-
-  // Send your position to everyone, ~10x/sec.
-  net_send("pos", x() + "," + y());
-
-  // Receive whatever peers sent this frame.
+  if (key_down("h")) net_host(45000)
+  if (key_down("j")) net_join("127.0.0.1", 45000)
+  net_send("pos", x() + "," + y());          // tell everyone where you are
   while (net_poll()) {
     if (net_msg_channel() == "pos") { /* net_msg_data(), net_msg_from() */ }
   }
 }
 ```
 
-Full script API: `net_host(port)`, `net_join(ip, port)`, `net_disconnect()`,
-`net_connected()`, `net_is_server()`, `net_is_client()`, `net_id()`,
-`net_peers()`, `net_name(name)`, `net_send(channel, data)`,
-`net_send_to(id, channel, data)`, `net_poll()` + `net_msg_channel/data/from()`,
-and **synced variables** `net_set(key, value)` / `net_get(key)` — a
-server-authoritative shared store (scores, game phase) that every peer sees,
-auto-synced to new joiners.
+No code needed: add a **Network Manager** component, set **Auto Start**, and
+press Play. Players behind routers connect through the bundled relay. See
+[launcher-multiplayer.md](docs/launcher-multiplayer.md) and
+[relay.md](docs/relay.md).
 
-**Players behind home routers?** Run the bundled `okayspace-relay` on any
-reachable host and connect through it with a shared code —
-`net_host_relay(relay_ip, port, "code")` / `net_join_relay(...)` (or
-`HostViaRelay` / `JoinViaRelay` in C++). No port-forwarding; encryption still
-runs end to end. See [docs/relay.md](docs/relay.md).
+## Build from source
 
-**No code at all?** Add a **Network Manager** component, set **Auto Start =
-Host on Play** (or **Join**) with a port/name in the Inspector, and press Play —
-the component hosts/joins on its own, broadcasting its object's Transform. The
-same actions are also **visual-scripting** ops (`net_host`, `net_join`,
-`net_send`, `net_set`), and the editor's **Services → Multiplayer** panel does
-host/join + roster + chat. The **New Project → Multiplayer** template is a
-ready-to-run example. Build the game and share `<Game>.exe` — one player hosts,
-the rest join over LAN or a forwarded port.
+Requirements: CMake 3.16 or newer and a C++17 compiler (tested with GCC 13 and
+Clang 18). The core build needs nothing else.
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+./build/bin/sandbox                          # the demo (WASD to move, Q to quit)
+cd build && ctest --output-on-failure        # the tests
+```
+
+**The editor** needs SDL2 and OpenGL
+(Debian/Ubuntu: `sudo apt-get install libsdl2-dev libgl1-mesa-dev`):
+
+```bash
+cmake -S . -B build -DOKAY_BUILD_EDITOR=ON
+cmake --build build -j
+./build/bin/OkayEngine --dev     # the editor normally starts from the launcher
+```
+
+**The launcher** builds, updates and runs the game in one step:
+`./launch.sh` (Linux/macOS) or `launch.bat` (Windows). Flags: `--check-only`,
+`--no-update`, `--no-run`, `--game <name>`.
+
+**Windows builds** are cross-compiled from Linux with MinGW-w64:
+
+```bash
+sudo apt-get install -y mingw-w64 cmake ninja-build
+export SDL2_MINGW_PREFIX=/path/to/SDL2-<ver>/x86_64-w64-mingw32
+./scripts/build-windows-dist.sh              # -> build-win-dist/
+```
+
+CI does the same on every `v*` tag and attaches the zip to the GitHub Release
+([release.yml](.github/workflows/release.yml)). The result is laid out so the
+launcher is the one thing to double-click and the rest sits in `Tools/`
+(editor, player, relay); see [docs/packaging.md](docs/packaging.md).
+
+**Optional backends** are off by default to keep the core dependency-free:
+
+```bash
+cmake -S . -B build \
+  -DOKAY_WITH_LUA=ON \        # Lua scripting     (needs liblua dev)
+  -DOKAY_WITH_CSHARP=ON \     # C# scripting      (needs Mono + mcs)
+  -DOKAY_WITH_PLAYFAB=ON \    # PlayFab REST      (needs libcurl)
+  -DOKAY_WITH_STEAM=ON -DSTEAMWORKS_SDK_PATH=/path/to/sdk   # Steamworks
+```
+
+Without them the same APIs run on built-in or simulated backends. Packet
+encryption (libsodium) is on by default; turn it off with `-DOKAY_USE_SODIUM=OFF`.
+
+## Project layout
+
+```
+engine/       the engine: include/okay/<area>/ (Animation, Audio, Components,
+              Core, Input, Inventory, Math, Net, Physics, Render, Scene,
+              Scripting, UI, VisualScript, ...), src/, third_party/
+editor/       the Dear ImGui + SDL2 editor
+launcher/     the graphical launcher (sign in, library, updates)
+player/       the runtime that plays an exported game
+relay/        the multiplayer NAT relay
+okayui/       the immediate-mode UI toolkit and its demo
+shared/       code shared by the launcher, editor and player
+sandbox/      the example "solar system" game
+examples/     editor plugins, an account server, network and physics demos
+tests/        unit tests (CTest)
+docs/         guides (start at docs/README.md)
+scripts/      build, Windows packaging and web build scripts
+cmake/        toolchain and build helpers
+supabase/     the anti-cheat session-ticket Edge Function
+dist/         the changelog and prebuilt launcher and player
+```
 
 ## Documentation
 
-The full list, grouped by what you want to do, is in [`docs/README.md`](docs/README.md). The main pages:
-
-- [`docs/making_a_game.md`](docs/making_a_game.md) — **start here**: empty editor → shipped game.
-- [`docs/web_mobile.md`](docs/web_mobile.md) — build your game for the **web** (WASM) and **mobile**.
-- [`docs/editor.md`](docs/editor.md) — the desktop editor and **Build Game**.
-- [`docs/modeling.md`](docs/modeling.md) — the built-in **mesh editor**: primitives, modifiers, sculpting, UV unwrap.
-- [`docs/animation.md`](docs/animation.md) — keyframe clips, **imported (FBX/GLB) animation**, state machine, IK.
-- [`docs/cutscenes.md`](docs/cutscenes.md) — **cutscenes**: sequences of camera shots, keys, cues, events and subtitles, the Timeline window, the Sequence Player.
-- [`docs/rendering.md`](docs/rendering.md) — **post-processing** (bloom, tonemap, grading, vignette, FXAA, SSAO, DoF), the **procedural sky**, **fog** and **weather**.
-- [`docs/scripting.md`](docs/scripting.md) — the OkayScript language + builtins.
-- [`docs/visual_scripting.md`](docs/visual_scripting.md) — the node-graph runtime + no-code Action Lists (incl. **raycasting**).
-- [`docs/survival_kit.md`](docs/survival_kit.md) — ready-made **health / hunger / thirst / stamina / oxygen / temperature** scripts.
-- [`docs/build_mode.md`](docs/build_mode.md) — let **players build** in your game, wire buttons to doors with **logic links**, and save their creations.
-- [`docs/vehicle_controller.md`](docs/vehicle_controller.md) — arcade **vehicle/car controller**.
-- [`docs/navigation.md`](docs/navigation.md) — **navigation meshes**: bake walkable polygons, Nav Mesh Agents, local avoidance, the grid fallback.
-- [`docs/behavior_trees.md`](docs/behavior_trees.md) — **behavior trees**: author NPC AI visually (patrol, perception, chase, attack, scripts), a blackboard, a live view in Play.
-- [`docs/splines.md`](docs/splines.md) — **splines**: curves edited in the Scene view, followers, roads / pipes / fences (Spline Mesh), objects along a curve, **Line and Trail Renderers**.
-- [`docs/ui_world_space.md`](docs/ui_world_space.md) — **in-world (3D) UI**: world canvases and standalone 3D widgets.
-- [`docs/ui_html.md`](docs/ui_html.md) — author menus/HUDs in an **HTML + CSS** subset (UIDocument).
-- [`docs/dialogue_quests.md`](docs/dialogue_quests.md) — **dialogue graphs** (`.okaydialog`, the Dialogue window), **story variables** and **quests** (`.okayquest`, objectives, rewards, tracker and journal).
-- [`docs/localization.md`](docs/localization.md) — **localization**: the string table (`strings.okayloc`), the Localization window, CSV for translators, plurals, the player's language and fonts for every script.
-- [`docs/steam_release.md`](docs/steam_release.md) — shipping on Steam.
+Everything is indexed in **[docs/README.md](docs/README.md)**, grouped by what
+you want to do. Release history is in [ROADMAP.md](ROADMAP.md) and
+[dist/CHANGELOG.txt](dist/CHANGELOG.txt).
 
 ## Extending it
 
-The renderer is the obvious next layer: implement `okay::IRenderer`'s five
-methods against OpenGL/SDL and hand it to `Application::SetRenderer(...)` — the
-scene, components, and scripts need no changes. Other natural additions:
-an asset/resource manager, sprite-sheet atlases, and an audio effects graph.
+To render somewhere new (your own GPU or window layer), implement
+`okay::IRenderer` and pass it to `Application::SetRenderer(...)`. The scene,
+components and scripts need no changes.
 
 ## License
 
-MIT — see `LICENSE`.
+MIT, see `LICENSE`.

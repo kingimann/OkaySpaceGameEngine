@@ -298,7 +298,9 @@ public:
         bool uiBlocked = Input::UICaptured();        // a modal UI (open inventory/chest) pauses look
         bool zoom = !uiBlocked && Input::GetMouseButton(1);
         in.yaw = yaw; in.pitch = pitch;
-        if (m_haveMouse && !uiBlocked) {
+        const int mouseSpace = MouseSpaceGeneration();
+        const bool spaceChanged = mouseSpace != m_mouseSpace;
+        if (m_haveMouse && !uiBlocked && !spaceChanged) {
             float sens = mouseSensitivity * (zoomWithRightMouse && zoom ? zoomSensitivity : 1.0f);
             // Pixels, then degrees. Frame time is not part of this: a long frame
             // must not turn a small move into a flip.
@@ -320,7 +322,7 @@ public:
         // Drop the baseline while a bag is open: the fed mouse switches between locked
         // (accumulated relative) and free (absolute) space, so without this the first
         // frame after closing computes one huge delta and snaps the camera.
-        m_lastMouse = mp; m_haveMouse = !uiBlocked;
+        m_lastMouse = mp; m_haveMouse = !uiBlocked; m_mouseSpace = mouseSpace;
         if (zoom) in.held |= PlayerInput::AltFire;
 
         in.move = uiBlocked ? Vec2{0, 0} : Input::AxisWASD();   // freeze while a bag is open
@@ -886,6 +888,7 @@ private:
     }
 
     Vec2 m_lastMouse{0, 0};
+    int m_mouseSpace = 0;
     bool m_haveMouse = false;
     float m_lookDt = 0.0f;           // this frame's dt, for the look smoothing in ReadLocalInput
     bool m_runToggled = false;

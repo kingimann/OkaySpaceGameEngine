@@ -1871,7 +1871,14 @@ int main(int argc, char** argv) {
             SDL_WarpMouseInWindow(window, ww / 2, wh / 2);
         }
         s_prevInvModal = gameModal;
-        SDL_SetRelativeMouseMode(locked ? SDL_TRUE : SDL_FALSE);
+        // Relative mode only on the transition. Calling it every frame re-warps,
+        // and that warp was added on top of the real delta.
+        static bool s_relLocked = false;
+        if (locked != s_relLocked) {
+            SDL_SetRelativeMouseMode(locked ? SDL_TRUE : SDL_FALSE);
+            okay::NoteMouseSpaceChanged();
+            s_relLocked = locked;
+        }
         // While actively dragging a stack, hide the OS arrow: the dragged icon (drawn
         // centred on the mouse) becomes the pointer. The arrow's hotspot sits at its
         // tip — ~half a slot above where it looks like it's pointing — which biased the

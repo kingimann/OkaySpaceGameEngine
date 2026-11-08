@@ -3,6 +3,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Components/ControllerFeel.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Input/Cursor.hpp"
@@ -54,14 +55,18 @@ public:
         bool uiBlocked = Input::UICaptured();         // a modal UI (open inventory/chest) pauses look
         bool looking = (lockCursor || !lookRequiresRightMouse || Input::GetMouseButton(1)) && !uiBlocked;
         Vec2 mp = Input::MousePosition();
-        if (looking && m_haveMouse) {
-            yaw   -= (mp.x - m_lastMouse.x) * mouseSensitivity;   // mouse-right looks right
-            pitch += (invertY ? 1.0f : -1.0f) * (mp.y - m_lastMouse.y) * mouseSensitivity;
+        const int mouseSpace = MouseSpaceGeneration();
+        const bool spaceChanged = mouseSpace != m_mouseSpace;
+        if (looking && m_haveMouse && !spaceChanged) {
+            float pdx = mp.x - m_lastMouse.x, pdy = mp.y - m_lastMouse.y;
+            LookPixels(pdx, pdy);
+            yaw   -= pdx * mouseSensitivity;   // mouse-right looks right
+            pitch += (invertY ? 1.0f : -1.0f) * pdy * mouseSensitivity;
             pitch  = Mathf::Clamp(pitch, minPitch, maxPitch);
         }
         // Drop the baseline while a bag is open (locked/free mouse space switch) so the
         // camera doesn't snap on the first frame after the panel closes.
-        m_lastMouse = mp; m_haveMouse = !uiBlocked;
+        m_lastMouse = mp; m_haveMouse = !uiBlocked; m_mouseSpace = mouseSpace;
         transform->localRotation = Quat::Euler(pitch, yaw, 0.0f);
 
         // ---- Move (full 3D, relative to where we look) ----
@@ -97,6 +102,7 @@ public:
 
 private:
     Vec2 m_lastMouse{0, 0};
+    int m_mouseSpace = 0;
     bool m_haveMouse = false;
     Vec3 m_vel{0, 0, 0};
 };

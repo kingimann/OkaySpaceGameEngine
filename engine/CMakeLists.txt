@@ -23,6 +23,7 @@ add_library(okay_engine
     src/Scene/SceneSerializer.cpp
     src/Scene/SceneLocalization.cpp
     src/Components/Camera.cpp
+    src/Components/LookAtIK.cpp
     src/Components/SpriteRenderer.cpp
     src/Net/UdpSocket.cpp
     src/Net/AntiCheat.cpp

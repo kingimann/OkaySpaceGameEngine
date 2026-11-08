@@ -434,6 +434,14 @@ inline const std::vector<VsDef>& Registry() {
         {"SetBuildPalette", "Set Build Palette",CAT_ACTION, true, {""}, {}, {}, 1, "Name=prefab|icon, ..."},
         {"SaveCreation",    "Save Creation",    CAT_ACTION, true, {""}, {}, {"Saved"}, 1, "creation name"},
         {"LoadCreation",    "Load Creation",    CAT_ACTION, true, {""}, {}, {"Loaded"}, 1, "creation name"},
+        {"AddItem",         "Add Item",         CAT_ACTION, true, {""}, {"Count"}, {"Left"}, 1, "item"},
+        {"RemoveItem",      "Remove Item",      CAT_ACTION, true, {""}, {"Count"}, {"Removed"}, 1, "item"},
+        {"HasItem",         "Has Item?",        CAT_DATA, false, {}, {"Count"}, {"Bool"}, 1, "item"},
+        {"ItemCount",       "Item Count",       CAT_DATA, false, {}, {}, {"Count"}, 1, "item"},
+        {"EquipItem",       "Equip",            CAT_ACTION, true, {""}, {"Slot"}, {"Equipped"}, 1, "item"},
+        {"CraftItem",       "Craft",            CAT_ACTION, true, {""}, {"Times"}, {"Crafted"}, 1, "recipe output item"},
+        {"LootRoll",        "Loot Roll",        CAT_ACTION, true, {""}, {}, {"Rolled"}, 1, "loot table"},
+        {"SpawnPickup",     "Spawn Pickup",     CAT_ACTION, true, {""}, {"Count", "X", "Y", "Z"}, {"Name"}, 1, "item"},
         // Other objects' variables, save / load.
         {"SetObjectVar",    "Set Object Var",   CAT_VAR, true, {""}, {"Target", "Value"}, {}, 1, "variable"},
         {"GetObjectVar",    "Get Object Var",   CAT_VAR, false, {}, {"Target"}, {"Value"}, 1, "variable"},
@@ -715,7 +723,9 @@ struct VsEditGraph {
             {"NearestWithTag", "Enemy"}, {"Teleport", "self"},
             {"ShowUI", "self"}, {"HideUI", "self"}, {"Delay", "1"}, {"Action", "log Hello"},
             {"Condition", "always"}, {"Actions", "log Hello"},
-            {"SetBuildPalette", "Block=Assets/block.okayprefab"}, {"SaveCreation", "creation"}, {"LoadCreation", "creation"}};
+            {"SetBuildPalette", "Block=Assets/block.okayprefab"}, {"SaveCreation", "creation"}, {"LoadCreation", "creation"},
+            {"AddItem", "item"}, {"RemoveItem", "item"}, {"HasItem", "item"}, {"ItemCount", "item"}, {"EquipItem", "item"},
+            {"CraftItem", "item"}, {"LootRoll", "loot"}, {"SpawnPickup", "item"}};
         if (d) if (auto it = kArg.find(d->type); it != kArg.end()) n.arg = it->second;
         nodes.push_back(n); dirty = true; return n.id;
     }
@@ -1223,6 +1233,8 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
     if (t == "EventName")      return "event_name";
     if (t == "InBuildMode")    return "build_active()";
     if (t == "SaveCreation" || t == "LoadCreation") return "build_exists(" + q(lit("creation")) + ")";
+    if (t == "HasItem")        return "inv_has(" + q(lit("item")) + ", " + In(0, "1") + ")";
+    if (t == "ItemCount")      return "inv_count(" + q(lit("item")) + ")";
     if (t == "GetObjectVar")   return "get_object_var(" + In(0, "\"self\"") + ", " + q(lit("hp")) + ")";
     if (t == "LoadValue")      return "load(" + q(lit("score")) + ", " + In(0, "0") + ")";
     if (t == "Format") {       // "Score: {0} / {1}" -> "Score: " + str(a) + " / " + str(b)
@@ -1449,6 +1461,12 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="ExitBuildMode")  out += ind + "build_exit()\n";
     else if (t=="SaveCreation")   out += ind + "build_save(" + q(arg("creation")) + ")\n";
     else if (t=="LoadCreation")   out += ind + "build_load(" + q(arg("creation")) + ")\n";
+    else if (t=="AddItem")        out += ind + "inv_add(" + q(arg("item")) + ", " + in(0, "1") + ")\n";
+    else if (t=="RemoveItem")     out += ind + "inv_remove(" + q(arg("item")) + ", " + in(0, "1") + ")\n";
+    else if (t=="EquipItem")      out += ind + "equip(" + in(0, "\"\"") + ", " + q(arg("item")) + ")\n";
+    else if (t=="CraftItem")      out += ind + "craft(" + q(arg("item")) + ", " + in(0, "1") + ")\n";
+    else if (t=="LootRoll")       out += ind + "loot_roll(" + q(arg("loot")) + ")\n";
+    else if (t=="SpawnPickup")    out += ind + "spawn_pickup(" + q(arg("item")) + ", " + in(0, "1") + ", " + in(1, "0") + ", " + in(2, "0") + ", " + in(3, "0") + ")\n";
     else if (t=="SetBuildPalette") {   // "Name=prefab|icon, ..." -> one build_palette_add per item
         out += ind + "build_palette_clear()\n";
         auto trim = [](const std::string& v) { size_t a = v.find_first_not_of(" \t"), b = v.find_last_not_of(" \t");

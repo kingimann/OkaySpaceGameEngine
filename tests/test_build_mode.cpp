@@ -627,7 +627,7 @@ int main() {
             future.insert(future.find('\n') + 1, "author \"someone\"\nthumbnail 64 64\n");
             CHECK(BuildCreation::Deserialize(s, future, true, &err));
             CHECK(BuildCreation::PlacedRoots(s).size() == 4);
-            std::string broken = "okaycreation 1\nobject\nokayscene 1\ngameobject 0 \"X\"\n  nosuchfield 1\nend\nendobject\n";
+            std::string broken = "okaycreation 1\nobject\nokayscene 1\ngameobject 0 \"X\"\n  active 1\nendobject\n";   // object never ends
             CHECK(!BuildCreation::Deserialize(s, broken, true, &err));
             CHECK(BuildCreation::PlacedRoots(s).size() == 4);     // untouched
             CHECK(!BuildCreation::Deserialize(s, "okaycreation 1\nobject\nokayscene 1\n", true, &err));
@@ -709,7 +709,7 @@ int main() {
         Scene old("old");
         CHECK(SceneSerializer::Deserialize(old,
             "okayscene 1\nname \"Old\"\ngameobject 0 \"Thing\"\n  active 1\n  parent -1\n"
-            "  transform 1 2 3 0 0 0 1 1 1\nend\n", &err));
+            "  transform 1 2 3 0 0 0 1 1 1 1\nend\n", &err));
         CHECK(old.Find("Thing") && !old.Find("Thing")->GetComponent<Buildable>());
     }
 

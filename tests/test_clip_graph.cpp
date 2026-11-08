@@ -162,6 +162,42 @@ int main() {
         run(true);    // the same readings under a graph
     }
 
+    // No jump clip, but a fall clip: once the jump is heading down, the fall plays.
+    // It used to stay on idle because the switch required the jump clip to be current.
+    {
+        const float dt = 1.0f / 60.0f;
+        Scene scene; scene.physicsEnabled = false;
+        GameObject* go = scene.CreateGameObject("Model");
+        auto* ch = go->AddComponent<Character>();
+        ch->driveExternal = true;
+        auto* ma = go->AddComponent<ModelAnimator>();
+        ma->autoPlay = false;
+        ma->driveByMovement = true;
+        ma->smoothLocomotion = true;
+        ma->builtinFallback = true;
+        ma->clips = {Hold("Idle", 0.0f, 1.0f), Hold("Fall", 1.0f, 1.0f)};
+        ma->idleClip = "Idle";
+        ma->fallClip = "Fall";
+        ma->jumpClip.clear();
+        scene.Start();
+        auto move = [&](float vy, int frames) {
+            for (int i = 0; i < frames; ++i) {
+                Vec3 p = go->transform->localPosition;
+                p.y += vy * dt;
+                go->transform->localPosition = p;
+                scene.Update(dt);
+            }
+        };
+        move(0.0f, 5);
+        CHECK(ma->CurrentName() == "Idle");
+        move(4.0f, 6);
+        CHECK(ma->InAir());
+        CHECK(ma->CurrentName() != "Fall");
+        move(-2.0f, 6);
+        CHECK(ma->InAir());
+        CHECK(ma->CurrentName() == "Fall");
+    }
+
     // ---- A real walk-only rig (no idle, run or jump clip) jumps on a third-person
     // player: the air frames take the built-in jump / fall pose, never the bind
     // T-pose. As attached, and again after "Create Animator from this model's clips".

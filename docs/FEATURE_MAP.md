@@ -34,6 +34,152 @@ Paths are under `engine/include/okay/` unless they start with `editor/`,
 | 18 | Build, export & release | 18.1 Windows build and installer, 18.2 Web and mobile export, 18.3 CI jobs, 18.4 Release workflow, 18.5 Update feed |
 | 19 | Docs, tests & code health | 19.1 README and docs, 19.2 Test suite, 19.3 QA workflow, 19.4 File splitting |
 
+## How to point at something
+
+Three ways, use whichever is easiest:
+
+1. **By number:** "fix 4.2" or "work on 12.4 and 12.3".
+2. **By what you see:** find the window, page or symptom below.
+3. **By word:** look the word up in the A-Z index. If a word is not there,
+   say it anyway and I will search the code and tell you which number it is.
+
+You can also say "area 5 but not Grok's parts" or "everything open in 1".
+
+### By what you see (window, page or symptom)
+
+| You see or say | Sub-area |
+|---|---|
+| The player floats, slides, jumps badly, steps on stairs wrong | 4.2 |
+| Player can't crouch or go prone | 4.2 |
+| Camera behind the player is jittery, clips walls | 4.6 |
+| First-person view, hands, arms, weapon in view | 4.7 |
+| Walking animation feels off, feet slide, wrong speed | 5.3 |
+| Imported character is in a T-pose or has the wrong animation | 5.3, 5.4 |
+| Feet don't touch the ground, hands don't reach things | 5.6, 5.7 |
+| Character falls apart or flops (ragdoll) | 5.8 |
+| Character holding a gun or tool looks wrong | 5.9 |
+| Model imported inside out, dark, or without textures | 3.5, 3.6 |
+| Make a model playable, rig a model | 3.7 |
+| Modeling window, Tab edit mode, loop cut, bevel | 3.1, 3.2 |
+| Shadows look wrong, lights, day and night | 2.3 |
+| Sky, clouds, rain, fog, wind | 2.4 |
+| Game runs at low FPS in the editor | 2.1, 2.8, 15.3 |
+| Hierarchy panel | 15.1 |
+| Inspector, Add Component menu | 15.2 |
+| Scene view, Game view, gizmos | 15.3 |
+| Project panel, importing files, asset manager | 15.4 |
+| Animator window, Animation tab, dope sheet | 15.5 |
+| Build Settings, exporting a game | 15.7, 18.1, 18.2 |
+| Plugins menu | 15.8 |
+| Editor crashes, black screen, layout reset, undo | 15.9 |
+| Script editor, red squiggles, autocomplete | 13.5 |
+| A script does nothing or errors at runtime | 13.1, 13.2, 13.4 |
+| Node editor, wires, nodes missing | 14.1, 14.4 |
+| A button, slider, menu or HUD in the game | 12.2, 12.3, 12.4 |
+| UI is the wrong size on phones or other screens | 12.1, 12.9 |
+| Pause menu, settings screen, loading screen | 12.8 |
+| Inventory, backpack, chest, equipment | 11.1 |
+| Loot drops, item pickups | 11.2 |
+| Crafting | 11.3 |
+| Hunger, thirst, health, status effects | 11.4 |
+| Build mode, placing walls and structures | 11.5 |
+| Enemies chase wrongly, get stuck, walk through walls | 9.1, 9.2 |
+| NPC behavior, behavior tree | 9.4, 9.5 |
+| Cutscene, camera sequence | 10.1 |
+| Dialogue, quests, quest log | 10.2, 10.3 |
+| Sound missing, volume, music | 7.1, 7.3, 7.4 |
+| Keys, mouse, gamepad, rebinding controls | 8.1, 8.2, 8.3 |
+| Things fall through floors, collide wrongly, jitter | 6.1, 6.2, 6.4 |
+| Joints, ropes, hinges | 6.3 |
+| Multiplayer won't connect, lag, rubber-banding | 16.1, 16.2, 16.3 |
+| Joining friends, server list, matchmaking | 16.4, 17.8 |
+| Hosting a dedicated server | 16.5 |
+| Cheating, bans, speed hacks | 16.6 |
+| Voice chat or calls | 16.7, 17.4 |
+| Launcher home, Play page, Create page, library | 17.1 |
+| Launcher update, "new version", What's New | 17.1, 18.5 |
+| Sign in, account, username | 17.2 |
+| Friends list, following, parties | 17.3 |
+| Chat window, messages, GIFs, emoji, polls | 17.4 |
+| Forums | 17.5 |
+| Marketplace, Workshop, downloading assets | 17.6 |
+| Profile page, badges, achievements | 17.7 |
+| Admin, bans, moderation | 17.9 |
+| A release, the installer, the update feed | 18.1, 18.4, 18.5 |
+| CI is red | 18.3 |
+| Saves, progress lost, corrupt save | 1.7 |
+| Loading a scene crashes or loses things | 1.4, 1.5 |
+| Prefab changes don't apply | 1.6 |
+| Language, translations, "1 item / 2 items" | 1.8 |
+
+### A-Z index (word to sub-area)
+
+| Word | Sub-area | Word | Sub-area |
+|---|---|---|---|
+| achievements | 17.7 | joints | 6.3 |
+| action list | 14.6 | keybind | 8.3 |
+| admin | 17.9 | launcher | 17.1 |
+| AI | 9 | layers (physics) | 1.3 |
+| anchors (UI) | 12.1 | layers (animation) | 5.1 |
+| animator | 5.1 | lightmap | 2.3 |
+| anti-cheat | 16.6 | lights | 2.3 |
+| audio | 7 | localization | 1.8 |
+| autosave | 15.9 | loot | 11.2 |
+| avatar (retarget) | 5.4 | marketplace | 17.6 |
+| bake (nav mesh) | 9.1 | materials | 2.2 |
+| behavior tree | 9.4 | matchmaking | 16.4 |
+| blend shapes | 3.6 | mesh | 3.5 |
+| blend tree | 5.1 | minimap | 11.6 |
+| blocky character | 4.9 | mixer | 7.1 |
+| build mode | 11.5 | modifiers (mesh) | 3.3 |
+| Build Settings | 15.7 | NPC | 9.5 |
+| camera | 4.6, 4.7, 4.8 | nav mesh | 9.1, 9.2 |
+| canvas | 12.1 | nodes | 14.4 |
+| chat | 17.4 | object pool | 1.4 |
+| collider | 6.1, 6.2 | OkayScript | 13.1 |
+| console (editor) | 15.9 | particles | 2.7 |
+| controller (player) | 4.1 | pathfinding | 9.1, 9.3 |
+| crafting | 11.3 | physics | 6 |
+| crouch / prone | 4.2 | pin (Hierarchy) | 15.1 |
+| CI | 18.3 | plugins | 15.8 |
+| cutscene | 10.1 | post-processing | 2.5 |
+| day/night | 2.3 | prefab | 1.6 |
+| debugger (visual script) | 14.5 | prefs | 1.7 |
+| dedicated server | 16.5 | profiler | 1.10 |
+| dialogue | 10.2 | quest | 10.3 |
+| dolly | 4.8 | ragdoll | 5.8 |
+| dope sheet | 15.5 | relay | 16.5 |
+| easing | 1.2 | release | 18.4 |
+| ECS | 1.9 | render | 2.1 |
+| editor | 15 | retarget | 5.4 |
+| equipment | 11.1 | rig | 3.7 |
+| event bus | 1.9 | root motion | 5.5 |
+| export | 18.1, 18.2 | save game | 1.7 |
+| feed (update) | 18.5 | scene manager | 1.4 |
+| first person | 4.7 | scheduler | 1.2 |
+| fog | 2.4 | script editor | 13.5 |
+| fonts | 2.9 | serializer | 1.5 |
+| forums | 17.5 | shadows | 2.3 |
+| friends | 17.3 | skinning | 5.5 |
+| gamepad | 8.2 | sky | 2.4 |
+| gizmo | 15.3 | spawner | 11.6 |
+| glTF / FBX | 3.6 | splines | 2.7 |
+| grip / hold | 5.9 | stance | 4.2 |
+| gravity | 6.2, 1.5 | state machine | 5.1 |
+| HTML UI | 12.5 | Steam | 17.10 |
+| humanoid | 5.4 | stride matching | 5.3 |
+| IK | 5.6, 5.7 | survival | 11.4 |
+| import | 3.6 | terrain | 2.6 |
+| input actions | 8.3 | tilemap | 2.6 |
+| inventory | 11.1 | time scale | 1.1 |
+| item database | 11.2 | trails / lines | 2.7 |
+| Lua / C# | 13.3 | tween | 1.2 |
+| UV | 3.4 | vehicle | 4.5 |
+| UI kit | 12.7 | voice | 16.7 |
+| undo | 15.9 | water | 2.6 |
+| updater | 17.1, 18.5 | world space UI | 12.6 |
+| visual script | 14 | WebGL | 18.2 |
+
 ---
 
 ## 1. Core & scene

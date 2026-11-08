@@ -1584,6 +1584,9 @@ void AutoMapLocomotion(ModelAnimator* ma) {
         return (any(words[ci], {"up"}) && any(words[ci], {"get", "getting", "stand", "standing"})) ||
                (proney(ci) && any(words[ci], {"to"}) && any(words[ci], {"stand", "standing", "idle"}));
     };
+    // Back / left / right clips are kept out of the forward slots, unless the model turns
+    // out to have no directional clips: then it maps exactly as it did before they existed.
+    auto mapForward = [&](bool skipDir) {
     for (int pass = 0; pass < 2; ++pass)
         for (int role = 0; role < 6; ++role)
             for (std::size_t ci = 0; ci < ma->clips.size() && slot[role]->empty(); ++ci) {
@@ -1603,8 +1606,10 @@ void AutoMapLocomotion(ModelAnimator* ma) {
                 const bool stance = crouchy(ci) || proney(ci) || getUp(ci);
                 const bool backward = any(words[ci], {"back", "backward", "backwards"});
                 const bool sideways = any(words[ci], {"left", "right", "strafe", "strafing"});
-                if (hit && !stance && !backward && !sideways && !(role < 3 && air)) { *slot[role] = ma->clips[ci].name; used[ci] = true; }
+                if (hit && !stance && !(skipDir && (backward || sideways)) && !(role < 3 && air)) { *slot[role] = ma->clips[ci].name; used[ci] = true; }
             }
+    };
+    mapForward(true);
     const std::function<bool(std::size_t)> roles[5] = {
         [&](std::size_t ci) { return crouchy(ci) && !change(ci) && !moving(ci) && !any(words[ci], {"sneak", "sneaking"}); },
         [&](std::size_t ci) { return crouchy(ci) && !change(ci) && (moving(ci) || any(words[ci], {"sneak", "sneaking"})); },
@@ -1633,6 +1638,7 @@ void AutoMapLocomotion(ModelAnimator* ma) {
     for (int role = 0; role < 4; ++role)
         for (std::size_t ci = 0; ci < ma->clips.size() && dirSlot[role]->empty(); ++ci)
             if (!used[ci] && dirRoles[role](ci)) { *dirSlot[role] = ma->clips[ci].name; used[ci] = true; }
+    if (!ma->HasDirectionalClips()) mapForward(false);
 }
 
 // Switch a retargeted model's locomotion between its clips and the built-in

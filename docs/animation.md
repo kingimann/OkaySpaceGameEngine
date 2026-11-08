@@ -988,11 +988,13 @@ character, and the bone stays over it.
   has a strafe or a back clip. Names map by word: a left strafe or sidestep
   walk (`left` plus `strafe` / `walk`), a right one, `Walk Back`, and `Run Back`.
   Tricks such as Back Flip are not back-walks. With none of those clips,
-  locomotion stays the forward speed blend. The hips then yaw toward travel,
-  around world up in the hips' parent space, and the spine twists back by the
-  same yaw so the chest stays near the facing. A tilted armature does not tip
-  the pelvis. Backward movement with no back clip plays the forward walk in
-  reverse, including when strafe clips exist but a back clip does not.
+  locomotion stays the forward speed blend, exactly as before. Set
+  `legsFollowTravel` (off by default) and the hips ease
+  toward travel (up to 80 degrees, about 0.1 s), around world up in the hips'
+  parent space, with the spine twisting back by the same yaw so the chest stays
+  near the facing. A tilted armature does not tip the pelvis. With that option
+  on, or when strafe clips exist, backward movement with no back clip plays the
+  forward walk in reverse (with hysteresis around 100 degrees).
 - **Layers:** the **+** tab adds a layer, its own states playing over the base
   layer on part of the skeleton. Pick a **Mask bone** (e.g. the spine for
   upper-body actions) and a **Weight**. Layers share the base layer's parameters,

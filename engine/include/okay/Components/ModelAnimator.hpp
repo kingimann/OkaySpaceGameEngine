@@ -139,6 +139,10 @@ public:
     std::string crouchClip, crouchWalkClip, proneClip, crawlClip, getUpClip;
     /// Optional directional locomotion. Empty slots keep the forward walk/run blend.
     std::string strafeLeftClip, strafeRightClip, walkBackClip, runBackClip;
+    /// Opt-in, off by default. With no back or strafe clip for the travel, play the walk
+    /// backward when moving backward and ease the hips (and counter-twist the spine) toward
+    /// the travel. Off, a model without directional clips poses exactly as it always did.
+    bool legsFollowTravel = false;
     /// The stance whose clips play (0 stand, 1 crouch, 2 prone).
     int StanceClips() const { return m_stance; }
 
@@ -326,12 +330,16 @@ public:
         // Direction from the character: 0 forward, +90 right, 180 backward.
         // Without a back clip, a forward walk played backward is a backpedal,
         // not a moonwalk. A back or strafe clip plays as authored instead.
+        // The backward sector has hysteresis (enter past 105, leave under 95), so a
+        // direction that hovers near 100 does not flip the clip back and forth.
         m_cycleSign = 1;
-        if (spd > 0.2f) {
-            float ang = 0.0f;
-            const bool backClip = SlotFilled(SlotWalkBack) || SlotFilled(SlotRunBack);
-            if (TravelDeg(ang) && std::fabs(ang) > 100.0f && !backClip) m_cycleSign = -1;
-        }
+        float travel = 0.0f;
+        if (spd > 0.2f && TravelDeg(travel)) {
+            if (std::fabs(travel) > 105.0f) m_backTravel = true;
+            else if (std::fabs(travel) < 95.0f) m_backTravel = false;
+        } else if (spd < 0.1f) m_backTravel = false;
+        if (m_backTravel && loop && !m_once && (legsFollowTravel || HasDirectionalClips()) &&
+            !SlotFilled(SlotWalkBack) && !SlotFilled(SlotRunBack)) m_cycleSign = -1;
         if (!graph && !externalDrive && spd >= 0.0f && !m_once && !airClip && !builtinNow && m_stance == 0 &&
             HasDirectionalClips() && DirectionalBlendStep(dt, spd)) return;
         if (!graph && !externalDrive && spd >= 0.0f && smoothLocomotion && !m_once && !airClip && !builtinNow) {
@@ -480,8 +488,9 @@ public:
     /// new clip's pose. Runs in LateUpdate so it blends what the node Animators
     /// just wrote this frame (Update order between objects doesn't matter).
     void LateUpdate(float dt) override {
+        UndoYaw();
         CrossfadeStep(dt);
-        YawLowerBody();
+        YawLowerBody(dt);
         // Layers (and anything else that poses on top of the base pose) run
         // after the base pose and its crossfade are final.
         // (Owners unregister in their OnDestroy — RemoveComponent and object
@@ -500,26 +509,41 @@ public:
     }
 
     /// Turn the hips toward the way the body is moving when the clip itself doesn't
-    /// face that way. Moving backward with no back clip plays the walk in reverse
-    /// and the hips take only the leftover yaw, so the legs are not clamped to a
-    /// forward step. A strafe or back clip already faces the travel: leave it.
-    void YawLowerBody() {
+    /// face that way (opt-in: legsFollowTravel). Moving backward with no back clip
+    /// plays the walk in reverse and the hips take only the leftover yaw, so the legs
+    /// are not clamped to a forward step. A strafe or back clip already faces the
+    /// travel: leave it. The turn eases in (time constant 0.08 s, at most 720 deg/s),
+    /// so flipping A to D swings the hips instead of snapping them.
+    void YawLowerBody(float dt) {
         if (!transform) return;
-        if (m_slot == SlotWalkBack || m_slot == SlotRunBack || m_slot == SlotStrafeLeft || m_slot == SlotStrafeRight) return;
+        UndoYaw();
+        Transform* hips = HipsT();
+        Transform* spine = SpineT();
+        float target = 0.0f;
         float ang = 0.0f;
-        if (!TravelDeg(ang)) return;
         Character* ch = nullptr;
-        for (Transform* t = transform; t && !ch; t = t->Parent())
-            if (t->gameObject) ch = t->gameObject->GetComponent<Character>();
-        if (!ch || ch->moveSpeed < 0.2f) return;
-        float yaw = std::fabs(ang) > 100.0f ? (ang > 0.0f ? ang - 180.0f : ang + 180.0f) : ang;
-        if (yaw > 80.0f) yaw = 80.0f;
-        if (yaw < -80.0f) yaw = -80.0f;
-        if (std::fabs(yaw) < 1.0f) return;
-        Transform* hips = NodeT("Hips");
-        if (!hips) hips = NodeT("mixamorig:Hips");
-        if (!hips) hips = NodeT("hip");
-        if (!hips) return;
+        if (legsFollowTravel && TravelDeg(ang))
+            for (Transform* t = transform; t && !ch; t = t->Parent())
+                if (t->gameObject) ch = t->gameObject->GetComponent<Character>();
+        const bool strafing = m_slot == SlotWalkBack || m_slot == SlotRunBack || m_slot == SlotStrafeLeft || m_slot == SlotStrafeRight;
+        if (ch && !strafing) {
+            if (ch->moveSpeed > 0.2f) m_yawOn = true;
+            else if (ch->moveSpeed < 0.1f) m_yawOn = false;
+            if (m_yawOn) {
+                target = m_backTravel ? (ang > 0.0f ? ang - 180.0f : ang + 180.0f) : ang;
+                if (target > 80.0f) target = 80.0f;
+                if (target < -80.0f) target = -80.0f;
+                if (std::fabs(target) < 1.0f) target = 0.0f;
+            }
+        } else m_yawOn = false;
+        float step = (target - m_hipYaw) * (1.0f - std::exp(-dt / 0.08f));
+        const float maxStep = 720.0f * dt;
+        if (step > maxStep) step = maxStep;
+        if (step < -maxStep) step = -maxStep;
+        m_hipYaw += step;
+        if (target == 0.0f && std::fabs(m_hipYaw) < 0.5f) m_hipYaw = 0.0f;
+        const float yaw = m_hipYaw;
+        if (yaw == 0.0f || !hips) return;
         // World up, written in the hips' parent space. Parent-space up is not
         // vertical on a tilted armature, and yawing around it tips the pelvis.
         // local' = AngleAxis(θ, parent⁻¹ · worldUp) · local is a pure world yaw.
@@ -529,19 +553,49 @@ public:
         // Positive moveAngle is toward the body's right (+X when facing -Z).
         // A positive turn about up swings that facing toward -X, so the sign flips
         // and the legs turn toward the travel instead of away from it.
+        m_hipsPre = hips->localRotation;
         hips->localRotation = (Quat::AngleAxis(-yaw, axis) * hips->localRotation).Normalized();
+        m_hipsPost = hips->localRotation;
+        m_spinePre = m_spinePost = Quat();
+        m_yawWritten = true;
         // The hip yaw turns the chest with the legs. Twist the spine back by the
         // same world yaw so the upper body keeps facing the aim.
-        Transform* spine = NodeT("Spine");
-        if (!spine) spine = NodeT("mixamorig:Spine");
-        if (!spine) spine = NodeT("spine");
-        if (!spine) spine = NodeT("Chest");
-        if (!spine) spine = NodeT("mixamorig:Chest");
         if (!spine) return;
         Transform* sp = spine->Parent();
         Vec3 saxis = sp ? sp->Rotation().Inverse() * Vec3::Up : Vec3::Up;
         if (saxis.SqrMagnitude() < 1e-8f) saxis = Vec3::Up;
+        m_spinePre = spine->localRotation;
         spine->localRotation = (Quat::AngleAxis(yaw, saxis) * spine->localRotation).Normalized();
+        m_spinePost = spine->localRotation;
+    }
+    /// Last frame's turn was written on top of the pose. If the pose did not rewrite
+    /// the bone since (a held or paused clip, or a bone with no rotation track), take
+    /// the turn back, so the turns do not pile up and a crossfade never captures one.
+    void UndoYaw() {
+        if (!m_yawWritten) return;
+        m_yawWritten = false;
+        auto same = [](const Quat& p, const Quat& q) {
+            return std::fabs(p.x - q.x) < 1e-5f && std::fabs(p.y - q.y) < 1e-5f &&
+                   std::fabs(p.z - q.z) < 1e-5f && std::fabs(p.w - q.w) < 1e-5f;
+        };
+        Transform* hips = HipsT();
+        Transform* spine = SpineT();
+        if (hips && same(hips->localRotation, m_hipsPost)) hips->localRotation = m_hipsPre;
+        if (spine && same(spine->localRotation, m_spinePost)) spine->localRotation = m_spinePre;
+    }
+    Transform* HipsT() const {
+        Transform* t = NodeT("Hips");
+        if (!t) t = NodeT("mixamorig:Hips");
+        if (!t) t = NodeT("hip");
+        return t;
+    }
+    Transform* SpineT() const {
+        Transform* t = NodeT("Spine");
+        if (!t) t = NodeT("mixamorig:Spine");
+        if (!t) t = NodeT("spine");
+        if (!t) t = NodeT("Chest");
+        if (!t) t = NodeT("mixamorig:Chest");
+        return t;
     }
     /// Travel direction relative to facing, degrees, -180..180. False with no Character.
     bool TravelDeg(float& out) const {
@@ -568,7 +622,7 @@ public:
         TravelDeg(ang);
         // Strafe clips with no back clip: the back sector is the walk-only path,
         // the forward walk played in reverse. The 2D blend has nothing behind it.
-        if (std::fabs(ang) > 100.0f && !SlotFilled(SlotWalkBack) && !SlotFilled(SlotRunBack)) {
+        if (m_backTravel && loop && !SlotFilled(SlotWalkBack) && !SlotFilled(SlotRunBack)) {
             m_cycleSign = -1;
             m_appliedSign = spd > 0.2f ? -1 : 0;
             return false;
@@ -896,6 +950,7 @@ public:
     void CaptureFade(int i, float seconds) {
         Scene* sc = gameObject ? gameObject->scene() : nullptr;
         if (!sc || i < 0 || i >= (int)clips.size()) return;
+        UndoYaw();
         m_fadeTime = seconds;
         m_blend.clear(); m_blendW = 0.0f;
         m_blendVer = sc->StructureVersion();
@@ -1673,6 +1728,11 @@ private:
     float                    m_strideRate = 1.0f;   ///< playback rate that matches the clip's steps to the ground speed
     int                      m_cycleSign = 1;       ///< -1: play the forward walk backward (no back clip)
     int                      m_appliedSign = 0;     ///< what LocomotionSign reports
+    bool                     m_backTravel = false;  ///< travelling backward (with hysteresis)
+    bool                     m_yawOn = false;       ///< hip yaw engaged (speed hysteresis)
+    float                    m_hipYaw = 0.0f;       ///< eased hip yaw, degrees
+    bool                     m_yawWritten = false;  ///< the hips / spine hold last frame's yaw
+    Quat                     m_hipsPre, m_hipsPost, m_spinePre, m_spinePost;
     bool                     m_builtinOwns = false; ///< the built-in animation (not a clip) poses the model
     int                      m_slot = SlotIdle;     ///< the locomotion slot showing (clip or built-in)
     int                      m_prevSlot = SlotIdle; ///< the slot before the last switch

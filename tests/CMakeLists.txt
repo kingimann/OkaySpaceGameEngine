@@ -34,6 +34,12 @@ add_executable(test_scene_records test_scene_records.cpp)
 target_link_libraries(test_scene_records PRIVATE okay::engine)
 add_test(NAME scene_records COMMAND test_scene_records)
 
+# Safe loading: bad / cut-short / newer documents never damage the live scene
+add_executable(test_scene_safe_load test_scene_safe_load.cpp)
+target_link_libraries(test_scene_safe_load PRIVATE okay::engine)
+target_compile_definitions(test_scene_safe_load PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME scene_safe_load COMMAND test_scene_safe_load)
+
 add_executable(test_remove test_remove.cpp)
 target_link_libraries(test_remove PRIVATE okay::engine)
 add_test(NAME remove_component COMMAND test_remove)
@@ -1410,6 +1416,10 @@ add_test(NAME utf8 COMMAND test_utf8)
 add_executable(test_time_pause test_time_pause.cpp)
 target_link_libraries(test_time_pause PRIVATE okay::engine)
 add_test(NAME time_pause COMMAND test_time_pause)
+
+add_executable(test_durable_saves test_durable_saves.cpp)
+target_link_libraries(test_durable_saves PRIVATE okay::engine)
+add_test(NAME durable_saves COMMAND test_durable_saves)
 
 # Script builtins batch 1: stats, hierarchy, light setters, WaitUntil/WaitWhile
 add_executable(test_script_batch1 test_script_batch1.cpp)

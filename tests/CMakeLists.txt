@@ -1406,3 +1406,13 @@ add_test(NAME durable_saves COMMAND test_durable_saves)
 add_executable(test_script_batch1 test_script_batch1.cpp)
 target_link_libraries(test_script_batch1 PRIVATE okay::engine)
 add_test(NAME script_batch1 COMMAND test_script_batch1)
+
+# Core audit: Mathf / Quat / Color edge cases
+add_executable(test_core_audit test_core_audit.cpp)
+target_link_libraries(test_core_audit PRIVATE okay::engine)
+add_test(NAME core_audit COMMAND test_core_audit)
+
+# Localization formatting + plural rules, typed Prefs, FixedTimestep (docs/localization_prefs_time.md)
+add_executable(test_loc_prefs_time test_loc_prefs_time.cpp)
+target_link_libraries(test_loc_prefs_time PRIVATE okay::engine)
+add_test(NAME loc_prefs_time COMMAND test_loc_prefs_time)

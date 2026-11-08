@@ -32,7 +32,7 @@ struct Quat {
 
     Quat Normalized() const {
         float m = Magnitude();
-        if (m < Mathf::Epsilon) return Identity;
+        if (!(m >= Mathf::Epsilon)) return Identity;   // tiny, zero or NaN
         return {x / m, y / m, z / m, w / m};
     }
     void Normalize() { *this = Normalized(); }
@@ -97,8 +97,13 @@ struct Quat {
 
     /// Rotation that orients +Z along `forward` with the given `up`.
     static Quat LookRotation(Vec3 forward, Vec3 up = Vec3::Up) {
+        if (forward.SqrMagnitude() < Mathf::Epsilon) return Identity;
         forward = forward.Normalized();
-        Vec3 right = Vec3::Cross(up, forward).Normalized();
+        Vec3 right = Vec3::Cross(up, forward);
+        if (right.SqrMagnitude() < 1e-12f) {   // forward parallel to up: pick any other up
+            right = Vec3::Cross(Mathf::Abs(forward.z) < 0.9f ? Vec3::Forward : Vec3::Up, forward);
+        }
+        right = right.Normalized();
         up = Vec3::Cross(forward, right);
         float m00 = right.x, m01 = up.x, m02 = forward.x;
         float m10 = right.y, m11 = up.y, m12 = forward.y;

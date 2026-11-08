@@ -49,6 +49,7 @@ struct Mathf {
     }
 
     static float Repeat(float t, float length) {
+        if (!(length > 0.0f)) return 0.0f;   // no length to wrap in (was NaN)
         return Clamp(t - Floor(t / length) * length, 0.0f, length);
     }
 
@@ -92,6 +93,7 @@ struct Mathf {
     static float SmoothDamp(float current, float target, float& velocity,
                             float smoothTime, float deltaTime,
                             float maxSpeed = Infinity) {
+        if (!(deltaTime > 0.0f)) return current;   // no time passed (paused): stay put, keep the velocity
         smoothTime = Max(0.0001f, smoothTime);
         float omega = 2.0f / smoothTime;
         float x = omega * deltaTime;

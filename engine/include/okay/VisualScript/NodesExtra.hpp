@@ -17,6 +17,10 @@
 #include "okay/Components/NavMeshAgent.hpp"
 #include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Components/Spline.hpp"
+#include "okay/Components/Camera.hpp"
+#include "okay/Components/CameraFollow.hpp"
+#include "okay/Components/MusicPlayer.hpp"
+#include "okay/Components/ParticleSystem.hpp"
 #include "okay/Components/LineRenderer.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
@@ -29,7 +33,9 @@
 #include "okay/Components/Seat.hpp"
 #include "okay/Components/BlendShapes.hpp"
 #include "okay/Input/Input.hpp"
+#include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -513,6 +519,100 @@ struct ClearTrailNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph&, VsContext& ctx) override {
         if (auto* tr = ctx.gameObject ? ctx.gameObject->GetComponent<TrailRenderer>() : nullptr) tr->Clear();
+        return 0;
+    }
+};
+// Music: the scene's Music Player (the first one found), like the music_* script calls.
+inline MusicPlayer* VsMusicPlayer(VsContext& ctx) {
+    Scene* s = ctx.gameObject ? ctx.gameObject->scene() : nullptr;
+    if (!s) return nullptr;
+    auto all = s->FindObjectsOfType<MusicPlayer>();
+    return all.empty() ? nullptr : all.front();
+}
+struct MusicPlayNode : VsNode {   // arg = track file or playlist number ("" = the current track, or the first)
+    std::string track;
+    explicit MusicPlayNode(std::string t) : track(std::move(t)) {}
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        MusicPlayer* m = VsMusicPlayer(ctx);
+        if (!m) return 0;
+        if (track.empty()) m->Play(m->CurrentIndex() < 0 ? 0 : m->CurrentIndex());
+        else if (std::all_of(track.begin(), track.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) m->Play(std::atoi(track.c_str()));
+        else m->Play(track);
+        return 0;
+    }
+};
+struct MusicStopNode : VsNode {   // in0 = fade seconds (unwired: 1)
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (MusicPlayer* m = VsMusicPlayer(ctx)) m->Stop(In(0, g, ctx, VsValue{1.0f}).AsFloat());
+        return 0;
+    }
+};
+struct MusicPauseNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override { if (MusicPlayer* m = VsMusicPlayer(ctx)) m->Pause(); return 0; }
+};
+struct MusicResumeNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override { if (MusicPlayer* m = VsMusicPlayer(ctx)) m->Resume(); return 0; }
+};
+struct MusicNextNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override { if (MusicPlayer* m = VsMusicPlayer(ctx)) m->Next(); return 0; }
+};
+// Camera: the scene's main camera.
+inline Camera* VsMainCamera(VsContext& ctx) {
+    Scene* s = ctx.gameObject ? ctx.gameObject->scene() : nullptr;
+    return s ? s->mainCamera : nullptr;
+}
+struct CameraShakeNode : VsNode {   // in0 = strength 0..1 (unwired: 0.5), stacks
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (Camera* c = VsMainCamera(ctx)) c->Shake(In(0, g, ctx, VsValue{0.5f}).AsFloat());
+        return 0;
+    }
+};
+struct SetFovNode : VsNode {   // in0 = field of view in degrees (clamped 1..179)
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (Camera* c = VsMainCamera(ctx)) c->fieldOfView = Mathf::Clamp(In(0, g, ctx, VsValue{60.0f}).AsFloat(), 1.0f, 179.0f);
+        return 0;
+    }
+};
+struct CameraFollowNode : VsNode {   // in0 = object name, in1 = smoothing (unwired: keep; <= 0 snaps)
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        Camera* c = VsMainCamera(ctx);
+        if (!c || !c->gameObject) return 0;
+        auto* f = c->gameObject->GetComponent<CameraFollow>();
+        if (!f) f = c->gameObject->AddComponent<CameraFollow>();
+        const VsValue t = In(0, g, ctx);
+        f->targetName = t.IsString() ? t.AsString() : std::string{};
+        if (HasInput(1)) f->smoothing = In(1, g, ctx).AsFloat();
+        return 0;
+    }
+};
+// Particles: the Particle System on this object (or the Target).
+struct ParticlePlayNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        if (auto* ps = ctx.gameObject ? ctx.gameObject->GetComponent<ParticleSystem>() : nullptr) ps->playing = true;
+        return 0;
+    }
+};
+struct ParticleStopNode : VsNode {
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph&, VsContext& ctx) override {
+        if (auto* ps = ctx.gameObject ? ctx.gameObject->GetComponent<ParticleSystem>() : nullptr) ps->playing = false;
+        return 0;
+    }
+};
+struct ParticleBurstNode : VsNode {   // in0 = count (unwired: 20)
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (auto* ps = ctx.gameObject ? ctx.gameObject->GetComponent<ParticleSystem>() : nullptr)
+            ps->Emit((int)In(0, g, ctx, VsValue{20.0f}).AsFloat());
         return 0;
     }
 };

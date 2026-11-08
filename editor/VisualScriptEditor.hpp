@@ -271,6 +271,18 @@ inline const std::vector<VsDef>& Registry() {
         {"SplineLength",   "Spline Length",       CAT_DATA, false, {}, {}, {"Length"}, 0, nullptr},
         {"SetLinePoints",  "Set Line Points",     CAT_ACTION, true, {""}, {"Points"}, {}, 0, nullptr},
         {"ClearTrail",     "Clear Trail",         CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        // --- Music, camera, particles ---
+        {"MusicPlay",      "Play Music",          CAT_ACTION, true, {""}, {}, {}, 1, "track (file or number)"},
+        {"MusicStop",      "Stop Music",          CAT_ACTION, true, {""}, {"Fade (s)"}, {}, 0, nullptr},
+        {"MusicPause",     "Pause Music",         CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"MusicResume",    "Resume Music",        CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"MusicNext",      "Next Music Track",    CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"CameraShake",    "Camera Shake",        CAT_ACTION, true, {""}, {"Strength"}, {}, 0, nullptr},
+        {"SetFov",         "Set Camera FOV",      CAT_ACTION, true, {""}, {"Degrees"}, {}, 0, nullptr},
+        {"CameraFollow",   "Camera Follow",       CAT_ACTION, true, {""}, {"Object name","Smoothing"}, {}, 0, nullptr},
+        {"ParticlePlay",   "Play Particles",      CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"ParticleStop",   "Stop Particles",      CAT_ACTION, true, {""}, {}, {}, 0, nullptr},
+        {"ParticleBurst",  "Burst Particles",     CAT_ACTION, true, {""}, {"Count"}, {}, 0, nullptr},
         // --- Flow: loops, gates, switches ---
         {"ForLoop",   "For Loop",      CAT_FLOW, true, {"Body","Done"}, {"First","Last"}, {"Index"}, 0, nullptr},
         {"Repeat",    "Repeat N",      CAT_FLOW, true, {"Body"}, {}, {}, 1, "count"},
@@ -1337,6 +1349,20 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="BtRun")       out += ind + "bt_run(" + q(arg("")) + ")\n";
     else if (t=="SetLinePoints") out += ind + "line_set_points(" + in(0, "[]") + ")\n";
     else if (t=="ClearTrail")  out += ind + "trail_clear()\n";
+    else if (t=="MusicPlay") {
+        const bool num = !n->arg.empty() && std::all_of(n->arg.begin(), n->arg.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+        out += ind + "music_play(" + (n->arg.empty() ? std::string() : num ? n->arg : q(n->arg)) + ")\n";
+    }
+    else if (t=="MusicStop")   out += ind + "music_stop(" + in(0, "1") + ")\n";
+    else if (t=="MusicPause")  out += ind + "music_pause()\n";
+    else if (t=="MusicResume") out += ind + "music_resume()\n";
+    else if (t=="MusicNext")   out += ind + "music_next()\n";
+    else if (t=="CameraShake") out += ind + "camera_shake(" + in(0, "0.5") + ")\n";
+    else if (t=="SetFov")      out += ind + "camera_fov(" + in(0, "60") + ")\n";
+    else if (t=="CameraFollow") out += ind + "camera_follow(" + in(0, "\"\"") + ", " + in(1, "5") + ")\n";
+    else if (t=="ParticlePlay") out += ind + "particles_on(true)\n";
+    else if (t=="ParticleStop") out += ind + "particles_on(false)\n";
+    else if (t=="ParticleBurst") out += ind + "emit(" + in(0, "20") + ")\n";
     else if (t=="Cooldown")    out += ind + "// Cooldown (" + VsCommentText(arg("1")) + "s): gate the actions after this with a timer\n";
     else if (t=="ForLoop") {
         const std::string v = "_i" + std::to_string(nodeId);

@@ -21,6 +21,7 @@
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/CameraFollow.hpp"
 #include "okay/Components/Stats.hpp"
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/Light.hpp"
@@ -4517,6 +4518,18 @@ struct OkayScriptVM::Impl {
             if (Scene* s = sceneOf()) if (s->mainCamera) {
                 if (a.empty()) return Value{s->mainCamera->fieldOfView};
                 s->mainCamera->fieldOfView = Mathf::Clamp(a[0].AsFloat(), 1.0f, 179.0f);
+            }
+            return Value{};
+        };
+        // camera_follow("name"[, smoothing]): the main camera eases after that object
+        // (adds a CameraFollow if it has none). Empty name stops following.
+        b["camera_follow"] = [sceneOf](std::vector<Value>& a) {
+            if (Scene* s = sceneOf()) if (s->mainCamera && s->mainCamera->gameObject) {
+                GameObject* cg = s->mainCamera->gameObject;
+                auto* f = cg->GetComponent<CameraFollow>();
+                if (!f) f = cg->AddComponent<CameraFollow>();
+                f->targetName = a.empty() ? std::string{} : a[0].AsString();
+                if (a.size() > 1) f->smoothing = a[1].AsFloat();
             }
             return Value{};
         };

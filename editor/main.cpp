@@ -11704,7 +11704,7 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"build_count","build_count()"}, {"logic_press","logic_press(\"name\")"}, {"logic_state","logic_state(\"name\")"},
         {"set_cam","set_cam(x, y)"}, {"move_cam","move_cam(dx, dy)"}, {"set_cam_zoom","set_cam_zoom(z)"},
         {"camera_shake","camera_shake(strength)"}, {"camera_zoom_to","camera_zoom_to(zoom, seconds)"},
-        {"camera_dutch","camera_dutch(degrees)"}, {"camera_fov","camera_fov(degrees)"},
+        {"camera_dutch","camera_dutch(degrees)"}, {"camera_fov","camera_fov(degrees)"}, {"camera_follow","camera_follow(\"name\", smoothing)"},
         {"set_bg","set_bg(r, g, b)"}, {"set_light","set_light(x, y, z)"}, {"set_ambient","set_ambient(v)"},
         // variables / prefs
         {"set_var","set_var(\"name\", value)"}, {"get_var","get_var(\"name\")"}, {"add_var","add_var(\"name\", amount)"},

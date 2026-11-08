@@ -454,6 +454,7 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `look_at(name)` | rotate (about Z) so local +X faces a named object (turrets, aiming) |
 | `cam_x()` / `cam_y()` / `set_cam(x, y)` / `move_cam(dx, dy)` | read/move the main camera (follow, cutscenes) |
 | `cam_zoom()` / `set_cam_zoom(z)` | read/set the main camera's orthographic size |
+| `camera_follow("name"[, smoothing])` | the main camera eases after that object (adds a Camera Follow if needed; `""` stops); higher smoothing is snappier, 0 snaps |
 | `load_scene(path)` | load a `.okayscene` at end of frame (level change/restart) |
 | `raycast_hit(ox, oy, dx, dy[, dist])` | true if a ray hits a collider |
 | `raycast(ox, oy, dx, dy[, dist])` | cast a ray; returns the **name** of the object hit ("" = miss) |

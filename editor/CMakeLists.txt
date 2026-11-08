@@ -80,6 +80,7 @@ if(WIN32)
     # Explorer / shortcut icon (same icon as the launcher, so they match).
     enable_language(RC)
     target_sources(okay-editor PRIVATE okayspace.rc)
+    okay_win_version(okay-editor "OkaySpace Editor" "OkayEngine.exe")
     target_link_libraries(okay-editor PRIVATE comdlg32 ole32 shell32 user32)
     # dbghelp: the crash handler resolves each backtrace frame to a function name
     # (and file:line where available) so okay_crash.txt is human-readable.

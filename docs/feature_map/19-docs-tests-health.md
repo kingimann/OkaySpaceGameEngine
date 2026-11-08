@@ -1,15 +1,15 @@
 # 19. Docs, tests & code health
 
-The written docs (`docs/`, `README.md`, `ROADMAP.md`), the test suite (`tests/`: 335 test files and 341 `add_test` lines in one
+The written docs (`docs/`, `README.md`, `ROADMAP.md`), the test suite (`tests/`: 343 test files and 349 `add_test` lines in one
 `tests/CMakeLists.txt`), the developer and QA working loop, and the housekeeping that keeps the repository healthy (file sizes,
 stray files, warnings, sanitizers). 19.1 holds the index of every docs file; 19.2 explains how the tests are organised and how to
-run one. PR #572 (engine tools foundation: automated-testing runner) adds tests and edits `tests/CMakeLists.txt`; nothing else
-is moving here.
+run one. PR #572 (engine tools foundation: automated-testing runner) adds tests and edits `tests/CMakeLists.txt`; core wave 4
+(#571) just merged eight tests and four docs pages. Nothing else is moving here.
 
 ## 19. Docs, tests & code health
 
 ### 19.1 README and docs
-- **What:** The user-facing documentation: `README.md` at the repo root, `ROADMAP.md`, and 54 Markdown pages, 16 SQL files and 21 screenshots under `docs/`. `docs/README.md` is the index players and developers start from (this feature map, `docs/FEATURE_MAP.md` and `docs/feature_map/`, and `docs/archive/` are not listed below).
+- **What:** The user-facing documentation: `README.md` at the repo root, `ROADMAP.md`, and 58 Markdown pages, 16 SQL files and 21 screenshots under `docs/`. `docs/README.md` is the index players and developers start from (this feature map, `docs/FEATURE_MAP.md` and `docs/feature_map/`, and `docs/archive/` are not listed below).
 - **Parts:**
   - 19.1.1 Root README - `README.md` - what OkaySpace is, how to download and build, the repo layout (checked against the code in 2.847.0, #544 and #546)
   - 19.1.2 Docs index - `docs/README.md` - links grouped by goal (get started, scripting, characters, gameplay, look and sound, game UI, multiplayer, engine work)
@@ -21,8 +21,8 @@ is moving here.
 - **Editor:** none
 - **Docs:** `docs/README.md`
 - **Tests:** `vs_types` (the engine API page must be current)
-- **Status:** Works - docs exist for most areas; the index is missing five pages (below)
-- **Open:** `docs/README.md` does not link `asset_database.md`, `asset_manager.md`, `core_audit_notes.md`, `layers_tags_cameras.md`, `scene_management.md`; "README matches reality plus a component audit doc" (old map) is still open; `ROADMAP.md` is stale on anti-cheat hardening (see 19.5); `asset_database.md` and `asset_manager.md` say nothing in the engine uses them yet (true when written; recheck before quoting)
+- **Status:** Works - docs exist for most areas; the index is missing nine pages (below)
+- **Open:** `docs/README.md` links none of nine newer pages (the five asset, core-audit, layers and scene pages plus `core_tools.md`, `ecs.md`, `localization_prefs_time.md`, `math_geometry.md`); "README matches reality plus a component audit doc" (old map) is open; `ROADMAP.md` is stale on anti-cheat hardening (19.5); `asset_database.md` and `asset_manager.md` say nothing uses them yet (recheck)
 - **Related:** 19.5, 41.9
 - **Words:** docs, documentation, README, docs index, engine_api, markdown, screenshots, guides, how to
 - **Seen as:** a doc says a feature isn't built but it is; a doc page isn't linked from the index; the API page diverges from the engine
@@ -42,21 +42,25 @@ is moving here.
 | `docs/behavior_trees.md` | NPC behavior trees, blackboard, runner | 9.4 |
 | `docs/build_mode.md` | player build mode and logic links, saving creations | 11.5 |
 | `docs/core_audit_notes.md` | bug-hunt notes for area 1 (ECS, math, camera, layers, DataAsset, input) | 1 |
+| `docs/core_tools.md` | core helpers: quit handling, CommandLine, Paths, EventBus extras, Cvars and Console, Stopwatch, StateMachine | 1 |
 | `docs/core_logging_profiling.md` | Log categories and file sink, frame profiler, trace and CSV export | 1.10 |
 | `docs/cutscenes.md` | sequences (`.okayseq`) and the Timeline window | 10.1 |
 | `docs/day_night_cycle.md` | the DayNightCycle component | 2.3 |
 | `docs/dedicated-server.md` | running and exporting dedicated servers, server.cfg, flags | 16.5 |
 | `docs/dialogue_quests.md` | dialogue graphs, story state, quests | 10.2 |
+| `docs/ecs.md` | ECS iteration under mutation, command buffer, delta snapshots in NetWorld | 1.9 |
 | `docs/editor-plugins.md` | editor plugins written in OkayScript | 15.8 |
 | `docs/editor.md` | the editor, its panels and Build Game | 15 |
 | `docs/engine_api.md` | generated engine API reference (do not edit by hand) | 13.6 |
 | `docs/game_ui.md` | game UI drawn in the launcher's look | 12.7 |
 | `docs/ik.md` | inverse kinematics: feet, hands, look-at, full body | 5.6 |
-| `docs/input.md` | input actions, controllers, rebinding | 8.3 |
+| `docs/input.md` | input actions, keys, contexts, controllers (dead zones and curves), rebinding | 8.3 |
 | `docs/launcher-multiplayer.md` | multiplayer from the launcher: join, invites, browser, matchmaking, tick, authority | 16, 17.15 |
 | `docs/layers_tags_cameras.md` | layer collision matrix, tags, camera stack | 1.3 |
 | `docs/lighting.md` | lights, shadows, lightmaps | 2.3 |
 | `docs/localization.md` | string tables, translators, fonts | 1.8 |
+| `docs/localization_prefs_time.md` | plural rules, number formats, typed Prefs, fixed timestep | 1.8 |
+| `docs/math_geometry.md` | math additions: Mat3, bounds and shape tests, noise, curves, colour spaces, Rng | 1 |
 | `docs/making_a_game.md` | first game from an empty editor to a shipped one | 15 |
 | `docs/modeling.md` | the Modeling window (mesh editor) | 3 |
 | `docs/navigation.md` | navigation meshes and agents | 9.1 |
@@ -105,9 +109,9 @@ is moving here.
 | `docs/images/anticheat/*.png` | 21 screenshots for `docs/anticheat.md` (admin pages, launcher settings, player ban and appeal) | 39 |
 
 ### 19.2 Test suite
-- **What:** About 345 tests (341 `add_test` lines; one sits in a loop that registers five) in one `tests/CMakeLists.txt`, almost all of them a small program that prints `FAIL` lines and returns non-zero. Plus a few shell, SQL and CMake checks. This sub-area is how it is organised; each test belongs to the area it tests.
+- **What:** About 353 tests (349 `add_test` lines; one sits in a loop that registers five) in one `tests/CMakeLists.txt`, almost all of them a small program that prints `FAIL` lines and returns non-zero. Plus a few shell, SQL and CMake checks. This sub-area is how it is organised; each test belongs to the area it tests.
 - **Parts:**
-  - 19.2.1 Layout of `tests/CMakeLists.txt` - `tests/CMakeLists.txt` - 1,501 lines, roughly in the order tests were added (no grouping by area): each test is `add_executable(test_x test_x.cpp)`, a link to `okay::engine` and `add_test(NAME x COMMAND test_x)` under a `#` comment. ctest names drop `test_` except `remove_component` (`test_remove`), `physics_layers` (`test_layers`), `physics_queries` (`test_queries`)
+  - 19.2.1 Layout of `tests/CMakeLists.txt` - `tests/CMakeLists.txt` - 1,541 lines, roughly in the order tests were added (no grouping by area): each test is `add_executable(test_x test_x.cpp)`, a link to `okay::engine` and `add_test(NAME x COMMAND test_x)` under a `#` comment. ctest names drop `test_` except `remove_component` (`test_remove`), `physics_layers` (`test_layers`), `physics_queries` (`test_queries`)
   - 19.2.2 Test harness - `tests/test_framework.hpp` - `CHECK`, `CHECK_NEAR`, `RUN_SUITE(name)`, `TEST_MAIN_RESULT()`; no framework dependency
   - 19.2.3 Conditional tests - `tests/CMakeLists.txt` - `lua` (`OKAY_WITH_LUA`), `csharp` (`OKAY_WITH_CSHARP`), `okayui` (needs SDL2), `ui_renderer_golden` (needs SDL2), `core_audit_input` (UNIX only, uses a pty), `publish_*` and `anticheat_sql` (UNIX only, shell); `vs_editor_model` needs Dear ImGui headers (fetched when tests are configured alone)
   - 19.2.4 Slow and special tests - `tests/CMakeLists.txt` - `loaders_robust` has `TIMEOUT 120`; tests with real sockets sleep and wait, judged from `sleep_for` counts in the sources, not timed (`net`, `dedicated_server`, `net_rooms`, `launcher_join`, `net_spawn`, `net_auth`); `ui_render_bench` is a benchmark; `anticheat_sql` exits 77 (skipped) unless `OKAY_SQL_TEST_PGHOST` names a local Postgres; `anticheat_keys_bad_*` are `WILL_FAIL` on purpose
@@ -121,18 +125,18 @@ is moving here.
 - **Docs:** `docs/qa_workflow.md`
 - **Tests:** `anticheat_keys_ok`, `anticheat_keys_two_ok`, `anticheat_sql`, `publish_official_cleanup`, `publish_supabase_checks`, `ui_renderer_golden`, `rig_sweep`, `qa_pr250`
 - **Status:** Works - the suite runs in CI on every PR (ctest on Ubuntu plus the sanitizer subset)
-- **Open:** possible gaps: nothing is grouped or labelled (`ctest -L` has no labels), no TSan job for `net_races`, tests that need SDL2 or a pty silently disappear when the dependency is missing, six tests run on Windows; the "about 330 tests" figure in the old map is now about 345; PR #572 adds a play-mode, scene-validation and regression test runner (area 33)
+- **Open:** possible gaps: nothing is grouped or labelled (`ctest -L` has no labels), no TSan job for `net_races`, tests that need SDL2 or a pty silently disappear when the dependency is missing, six tests run on Windows; the "about 330 tests" figure in the old map is now about 353; PR #572 adds a play-mode, scene-validation and regression test runner (area 33)
 - **Related:** 18.3, 19.7, 33, 19.3
 - **Words:** tests, ctest, add_test, test_framework, CHECK, ASan, sanitizer, golden image, test suite, run one test, RUN_SUITE, TIMEOUT, WILL_FAIL
 - **Seen as:** CI red on one test; a test passes locally but fails in CI (missing SDL2 or libsodium); a test is skipped; a test needs files that only exist in the repo
 - **Ask me like:** "run only the lag compensation test", "which tests does the sanitizer job run?"
 
-**Test groups (approximate, by test name; the 341 `add_test` lines)**
+**Test groups (approximate, by test name; the 349 `add_test` lines)**
 
 | Group | About | Examples |
 |---|---|---|
 | Networking, anti-cheat, relay, matchmaking, dedicated server, launcher join | 44 | `net_*`, `net_anticheat_*`, `relay_security`, `matchmaker`, `dedicated_server`, `launcher_join` |
-| Core, scene, saves, math, events, time, assets, accounts, Steam | 52 | `scene_*`, `serialize`, `durable_saves`, `prefs`, `ecs`, `account`, `steam` |
+| Core, scene, saves, math, events, time, assets, accounts, Steam | 60 | `scene_*`, `serialize`, `durable_saves`, `prefs`, `ecs`, `account`, `steam` |
 | Animation, IK, characters, rigs | 53 | `anim_*`, `ik_*`, `char_*`, `humanoid_*`, `rig_sweep` |
 | Gameplay: inventory, building, NPC, navigation, dialogue, cameras, controllers | 46 | `inventory_*`, `build_mode`, `navmesh`, `behavior_tree`, `cinemachine` |
 | Modeling, rendering, terrain, particles | 34 | `polymesh`, `modifiers`, `shadows`, `terrain`, `gltf_import` |
@@ -157,7 +161,7 @@ is moving here.
 - **Editor:** none
 - **Docs:** `docs/qa_workflow.md`
 - **Tests:** `rig_sweep`, `qa_pr250`
-- **Status:** Works - the doc is current for the process; the sweep test is one of the 345
+- **Status:** Works - the doc is current for the process; the sweep test is one of the 353
 - **Open:** the workflow needs two cloud sessions and a scheduled message each way (cloud sessions cannot message each other)
 - **Related:** 19.2, 5.4, 33
 - **Words:** QA, quality assurance, workflow, verdict, PASS, bug comment, rig sweep, Xvfb, regression, developer session

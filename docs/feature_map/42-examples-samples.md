@@ -3,7 +3,7 @@
 What a new person can run to see the engine do something: the console sandbox, two console feature demos, a reference account
 server, two editor plugins, the standalone player that runs every built game, and the starter assets. Files: `sandbox/`,
 `examples/`, `player/` and `assets/`. The sandbox and the two C++ demos draw in the terminal; they are not the editor. The
-player is the real runtime, with about 2,660 lines of its own. Nobody is touching these now.
+player is the real runtime, with about 2,670 lines of its own. Nobody is touching these now.
 
 ## 42. Examples, samples & sandbox
 
@@ -100,13 +100,13 @@ player is the real runtime, with about 2,660 lines of its own. Nobody is touchin
 ### 42.6 Standalone player runtime
 - **What:** `okay-player` (shipped as `OkaySpacePlayer.exe` or `<Game>.exe`): the runtime that plays a built game with only SDL2 (no ImGui). It loads `game.okayscene` next to it, draws 2D and 3D, plays audio, reads keyboard, mouse and gamepad, and also runs headless as the dedicated server.
 - **Parts:**
-  - 42.6.1 Startup and game files - `player/main.cpp` (`main` near L1109) - finds `Data/` or the flat layout, reads `game.okayconfig` (window, scene list, fullscreen toggle on Alt+Enter and F11), picks the startup scene (command line, config, `game.okayscene`), save folder, language
-  - 42.6.2 Rendering - `player/main.cpp` (L1475-1620) - hidden window plus a branded boot splash, optional GPU renderer (Direct3D 11 on Windows, OpenGL elsewhere) with a software fallback, in-engine UI pass, Z-buffered 3D
-  - 42.6.3 Multiplayer entry points - `player/main.cpp` (L1186, L1169) - `--join LINK`, `--connect HOST:PORT`, `--password`, `--room`, `--find-match`, `--server` (dedicated), `--login`, `--logout`, `--log FILE`
-  - 42.6.4 In-game windows - `player/main.cpp` (L370, L544) - "Find a server" browser window (`net_browser_open()`), "Finding a match" banner
-  - 42.6.5 Launcher link - `player/main.cpp` (L1655-1760) - once a second writes presence and join link to the launcher through GameIpc, accepts join requests, Shift+Tab asks the launcher for the invite window
-  - 42.6.6 Anti-cheat start - `player/main.cpp` (L1385-1460, L1731) - manifest check, runtime checks and the one client report (39.4, 39.5)
-  - 42.6.7 Item and inventory drawing - `player/main.cpp` (L157-1100) - icons, tooltips, grid inventory, crafting, chests drawn with SDL
+  - 42.6.1 Startup and game files - `player/main.cpp` (`main` near L1110) - finds `Data/` or the flat layout, reads `game.okayconfig` (window, scene list, fullscreen toggle on Alt+Enter and F11), picks the startup scene (command line, config, `game.okayscene`), save folder, language
+  - 42.6.2 Rendering - `player/main.cpp` (L1495-1640) - hidden window plus a branded boot splash, optional GPU renderer (Direct3D 11 on Windows, OpenGL elsewhere) with a software fallback, in-engine UI pass, Z-buffered 3D
+  - 42.6.3 Multiplayer entry points - `player/main.cpp` (L1187, L1214) - `--join LINK`, `--connect HOST:PORT`, `--password`, `--room`, `--find-match`, `--server` (dedicated), `--login`, `--logout`, `--log FILE`
+  - 42.6.4 In-game windows - `player/main.cpp` (L371, L545) - "Find a server" browser window (`net_browser_open()`), "Finding a match" banner
+  - 42.6.5 Launcher link - `player/main.cpp` (L1674-1780) - once a second writes presence and join link to the launcher through GameIpc, accepts join requests, Shift+Tab asks the launcher for the invite window
+  - 42.6.6 Anti-cheat start - `player/main.cpp` (L1405-1480, L1750) - manifest check, runtime checks and the one client report (39.4, 39.5)
+  - 42.6.7 Item and inventory drawing - `player/main.cpp` (L158-1100) - icons, tooltips, grid inventory, crafting, chests drawn with SDL
   - 42.6.8 F1 test panel and OkayUI - `player/main.cpp`, `shared/OkayScriptUIBridge.hpp`, `shared/OkayTestPanel.hpp` - F1 toggles a panel with every OkayUI widget; script `ui_*` calls draw OkayUI widgets
   - 42.6.9 Build targets - `player/CMakeLists.txt` - `okay-player` (renamed `OkaySpacePlayer` and a GUI app on Windows), links OkayUI when present; a separate Emscripten branch builds `okay-player.html` (18.2)
 - **Code:** `player/main.cpp`, `player/CMakeLists.txt`
@@ -115,7 +115,7 @@ player is the real runtime, with about 2,660 lines of its own. Nobody is touchin
 - **Docs:** `docs/packaging.md`, `docs/web_mobile.md`, `docs/dedicated-server.md`
 - **Tests:** `dedicated_server` covers the `--server` argument parsing it uses; nothing else tests `main.cpp`; the CI "Build player runtime" step compiles it and the export check (18.6) runs it
 - **Status:** Works - the shipping runtime; compiled by CI on every PR and run by the export check
-- **Open:** 2,658 lines in one file, with UI drawing, matchmaking windows and server startup mixed in (19.4); behaviour differs slightly from Play in the editor (separate code paths); no automated test of its command line
+- **Open:** 2,674 lines in one file, with UI drawing, matchmaking windows and server startup mixed in (19.4); behaviour differs slightly from Play in the editor (separate code paths); no automated test of its command line
 - **Related:** 18.2, 18.6, 16.5, 17.15, 39.4, 15.3
 - **Words:** player, okay-player, OkaySpacePlayer, runtime, standalone, game.okayconfig, --server, --join, boot splash, fullscreen toggle, F1 test panel, Find a server window
 - **Seen as:** a built game behaves differently from Play in the editor; the game window flashes black at start; fullscreen toggle doesn't work; no console output on Windows (use `--log`)

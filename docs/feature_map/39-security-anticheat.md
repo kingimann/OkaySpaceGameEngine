@@ -81,7 +81,7 @@ hardening items are merged; nobody is touching it now.
   - 39.4.3 Start decision - `shared/AntiCheatIntegrity.hpp` - `DecideStart` and `CheckLaunch`: Off, Report or Enforce from the build (`anticheat=` in `game.okayconfig`), `OKAY_ANTICHEAT` (stricter only) and trusted keys
   - 39.4.4 Ed25519 and SHA-512 - `shared/AntiCheatCrypto.hpp` - libsodium when present, otherwise a portable TweetNaCl port with libsodium's extra checks (canonical S, no small-order R or key); tested against RFC 8032 vectors
   - 39.4.5 File hashing and safe paths - `shared/OfficialGame.hpp` - `okayofficial::Verify` (size plus SHA-256) and path checks shared with the official-game updater
-  - 39.4.6 Launcher and player hooks - `launcher/main.cpp` (L1181), `player/main.cpp` (L1385) - launcher checks the official game and library games with a `game.okayconfig`; the player checks before anything loads; a player built with trusted keys needs a valid signed manifest and takes its mode from it
+  - 39.4.6 Launcher and player hooks - `launcher/main.cpp` (L1181), `player/main.cpp` (L1405) - launcher checks the official game and library games with a `game.okayconfig`; the player checks before anything loads; a player built with trusted keys needs a valid signed manifest and takes its mode from it
   - 39.4.7 Build Settings option - `editor/main.cpp` (Output > Anti-cheat) - Off, Report, Enforce; writes `anticheat=`
 - **Code:** `shared/AntiCheatIntegrity.hpp`, `shared/AntiCheatCrypto.hpp`, `shared/OfficialGame.hpp`, `launcher/main.cpp`, `player/main.cpp`
 - **API:** `okayac::Mode`, `VerifyInstall`, `CheckLaunch`, `DecideStart`, `WriteBuildManifest`, `ed25519::Verify`, env `OKAY_ANTICHEAT`, `OKAY_AC_TRUSTED_KEY` (local test builds only)

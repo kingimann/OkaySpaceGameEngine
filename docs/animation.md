@@ -383,6 +383,13 @@ gone: the machine remembers `animsmactions`, and a later action does not put an
 older one back. **Add built-in actions** on the Animator fills in anything missing
 without overwriting a state you edited.
 
+On a listen server the owner's death, roll, sit and swim, and the head's look
+yaw and pitch, travel on the existing animation sync message. The message
+keeps its old fields and adds an action sequence, an action id, and the look
+angles. A peer that only knows the older message stops reading there and
+still gets the gait. A remote copy plays the action and stays in it; it does
+not keep walking through a death.
+
 Death clips: `Death_F`, `Death_B`, `Death_L`, `Death_R`, and the looping holds
 `DeadHold_F`, `DeadHold_B`, `DeadHold_L`, `DeadHold_R`. `Death_F` falls forward,
 `Death_B` onto the back, and the side clips are mirrors. The last 0.15s of each
@@ -706,6 +713,11 @@ idle. Every locomotion slot is filled on its own:
   per slot (walk 1.4, run 4.0, crouch walk 0.9, crawl 0.5). The Walk and
   Run Thresholds still work: they cap where idle turns into walk and walk
   into run.
+- **Move speeds follow the clips.** The controllers' default 4.5 m/s walk
+  is a jog, which a 1.4 m/s walk clip can't show. When a model with its own
+  Walk (and Run) clip is attached, a Walk Speed or Run Speed still at the
+  default is set to what the clip can show (about 2.0 and 5.0 m/s), so W
+  plays the walk and Shift the run. A speed you changed yourself is kept.
 - **Blends.** Between walk and run both clips are sampled at one shared
   normalized phase, so the feet stay in step through the blend; stepping
   off from a stand starts the walk on the same foot each time. Switching

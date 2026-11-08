@@ -14,6 +14,9 @@ Character and on imported skeletons, and runs after the animation each frame.
 | **Chain IK** | Long chains: tails, tentacles, spider legs, cables. |
 | **Look-At IK** | A head (and some spine) turning to look at a point. |
 | **Aim IK** | Pointing one bone at a target: a gun, a torch, a turret. |
+| **IK Target** | An empty object one limb reaches for. Hands and feet use Full Body IK; the head uses Look-At. |
+| **Aim Offset** | Pitch and yaw on the spine, chest and upper arms, from the camera or a named target, plus a recoil kick. |
+| **Pose Capture** | In Play, store the current pose or the next few seconds as a clip on this model's Animator. |
 
 The quickest start on an imported humanoid is **Set up humanoid IK** in the Model
 Animator inspector. It adds Foot IK and Full Body IK with the bones found by
@@ -33,6 +36,29 @@ From a script on the player:
 - `ik_look_at("Guard")` aims Look-At IK at that object. A second argument is the weight. (`look_at` still turns the whole object.)
 - `crouch()`, `prone()` and `stand()`, or `set_stance(0|1|2)`, change the stance.
 - `ik_look(x, y, z)` aims at a point.
+
+**IK Target.** Add the component to an empty object, or right-click a character
+and choose Add IK Target, then a limb. Pick the character. The limb eases onto
+that object by **Weight** and **Blend time**. Outside Play, moving the object
+previews the reach. Hands and feet drive Full Body IK and default its body
+pull to about 0.2, so a target just past the hand does not dip the whole body.
+While a hand is reaching, Look-At turns the neck and head only.
+
+**Aim Offset.** Add it to the character. **Aim with the camera** pitches from
+the third-person camera's resting pitch, along the crosshair (a hit, otherwise
+a point 80 m out), so a level look does not bend the chest forward. Or type a
+target object's name. A name that matches nothing is called out in the
+inspector. Pitch is about the character's right, in each bone's parent space,
+so a Mixamo mesh that faces -Z kicks back and up instead of bowing forward.
+`recoil(strength)` adds degrees to that pitch, then **Recovery** eases it back.
+It runs after item grips and does not change them.
+
+**Pose Capture.** In Play, **Save pose** stores the current pose as a one-frame
+clip on this Model Animator. **Record** stores the next **Record seconds**.
+`capture_pose()` and `capture_pose(seconds)` do the same. The default name
+Captured is kept unique (Captured, Captured_1, ...). A named clip is replaced.
+On Play, Stop, and Load, an `.okayclip` is added only to a Model Animator whose
+rig has every node that clip poses. Another skeleton in the scene is left alone.
 
 Typed scripts and visual-script Engine API nodes use `Animator` (SetTrigger,
 SetBool, SetFloat, Play, state) and `IK` (LookAt, SetWeight) on the player.

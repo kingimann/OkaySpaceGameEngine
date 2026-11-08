@@ -460,6 +460,7 @@ int main(int argc, char** argv) {
 #include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Components/Seat.hpp"
 #include "okay/Scripting/ScriptUI.hpp"
+#include "okay/Scripting/StarterScripts.hpp"
 #include "okay/Scene/EnsureCamera.hpp"       // every scene keeps a camera
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_sdlrenderer2.h"
@@ -3372,57 +3373,9 @@ void OpenExternal(const std::string& path) {
 std::string ExtFor(const std::string& lang) {
     return lang == "lua" ? "lua" : lang == "csharp" ? "cs" : "okay";
 }
-// A starter script written in the right syntax for each language, so the
-// example actually compiles in the selected backend. OkayScript is C-style
-// (braces + semicolons); Lua uses function...end; C# is class-based.
-const char* StarterScript(const std::string& lang) {
-    if (lang == "lua")
-        return "start()\n    set_pos(0, 0)\nend\n\n"
-               "update(dt)\n    move(2 * dt, 0)\nend\n";
-    if (lang == "csharp")
-        return "class Script {\n    void Start() { Okay.SetPos(0, 0); }\n"
-               "    void Update(float dt) { Okay.Move(2 * dt, 0); }\n}\n";
-    // OkayScript: the file's fields and functions ARE the component (no class
-    // or base type needed). Every line here does something: `public` puts a value
-    // in the Inspector, [Header] groups it there, the types are enforced, and the
-    // engine calls Start / Update / the coroutine by name.
-    return "// Attach this script to an object. Its fields and functions are the component.\n"
-           "\n"
-           "[Header(\"Movement\")]\n"
-           "public float speed = 5;        // public: shows in the Inspector, so you can tune it there\n"
-           "public float hopHeight = 1;\n"
-           "public int maxHops = 3;\n"
-           "\n"
-           "int hops = 0;                   // not public: only this script sees it\n"
-           "\n"
-           "// Runs once, before the first frame.\n"
-           "void Start()\n"
-           "{\n"
-           "    Debug.Log($\"{gameObject.name} is ready\");\n"
-           "}\n"
-           "\n"
-           "// Runs every frame: WASD / the arrow keys move, Space hops (up to maxHops times).\n"
-           "void Update()\n"
-           "{\n"
-           "    float h = Input.GetAxis(\"Horizontal\");\n"
-           "    float v = Input.GetAxis(\"Vertical\");\n"
-           "    transform.position += new Vector3(h, v, 0) * speed * Time.deltaTime;\n"
-           "\n"
-           "    if (Input.GetKeyDown(KeyCode.Space) && hops < maxHops)\n"
-           "    {\n"
-           "        hops++;\n"
-           "        StartCoroutine(Hop());\n"
-           "    }\n"
-           "}\n"
-           "\n"
-           "// A coroutine runs across frames, pausing at each yield.\n"
-           "IEnumerator Hop()\n"
-           "{\n"
-           "    transform.position += Vector3.up * hopHeight;\n"
-           "    yield return new WaitForSeconds(0.25);\n"
-           "    transform.position -= Vector3.up * hopHeight;\n"
-           "}\n";
-}
+// The script a new script file starts with (Scripting/StarterScripts.hpp): an
+// empty Start and Update in the selected language's syntax.
+const char* StarterScript(const std::string& lang) { return okay::StarterScriptSource(lang); }
 
 // A filename stem -> a valid class identifier (letters/digits/_, no leading digit).
 inline std::string ClassIdent(const std::string& stem) {
@@ -11618,6 +11571,8 @@ static const std::vector<std::string>& ScriptCompletions() {
         // object / scene
         "name","set_name","tag","set_tag","has_tag","set_active","self_active","destroy",
         "set_parent","exists","is_active","obj_x","obj_y","dist_to","destroy_obj","count_tag",
+        "child_count","get_child","parent_of","hurt","heal","add_xp","get_hp","get_max_hp","is_dead",
+        "set_light_intensity","set_light_range","set_light_angle","set_light_color",
         "npc_goto","npc_stop","npc_busy","npc_state",
         "nav_move_to","nav_stop","nav_arrived","nav_remaining",
         "bt_set","bt_get","bt_run","bt_stop",
@@ -11809,6 +11764,11 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"tag","tag()"}, {"set_tag","set_tag(\"tag\")"}, {"has_tag","has_tag(\"tag\")"},
         {"is_active","is_active()"}, {"set_active","set_active(on)"}, {"set_name","set_name(\"name\")"},
         {"has_parent","has_parent()"}, {"set_parent","set_parent(\"name\")"},
+        {"child_count","child_count(\"name\")"}, {"get_child","get_child(\"name\", index)"}, {"parent_of","parent_of(\"name\")"},
+        {"hurt","hurt(\"name\", amount)"}, {"heal","heal(\"name\", amount)"}, {"add_xp","add_xp(\"name\", amount)"},
+        {"get_hp","get_hp(\"name\")"}, {"get_max_hp","get_max_hp(\"name\")"}, {"is_dead","is_dead([\"name\"])"},
+        {"set_light_intensity","set_light_intensity(\"name\", v)"}, {"set_light_range","set_light_range(\"name\", v)"},
+        {"set_light_angle","set_light_angle(\"name\", degrees)"}, {"set_light_color","set_light_color(\"name\", r, g, b)"},
         {"cam_x","cam_x()"}, {"cam_y","cam_y()"}, {"cam_zoom","cam_zoom()"},
         // render / look
         {"set_color","set_color(r, g, b)"}, {"set_texture","set_texture(\"path\")"}, {"set_mesh","set_mesh(\"name\")"},
@@ -17712,6 +17672,25 @@ void DrawHierarchy(EditorState& ed) {
                 if (ImGui::MenuItem(g_isolate == node ? "Exit Isolation" : "Isolate", "Shift+I"))
                     g_isolate = (g_isolate == node) ? nullptr : node;
                 if (ImGui::MenuItem("Delete", "Del"))    { ed.DeleteSelected(); ConsoleLog("Deleted"); }
+                if (node->GetComponent<Character>() || node->GetComponent<ModelAnimator>() || node->GetComponent<FullBodyIK>()) {
+                    if (ImGui::BeginMenu("Add IK Target")) {
+                        auto addLimb = [&](int limb, const char* label) {
+                            if (ImGui::MenuItem(label)) {
+                                ed.PushUndo();
+                                if (GameObject* g = IKTarget::Spawn(ed.scene(), node, limb)) {
+                                    ed.Select(g); ed.dirty = true;
+                                    ConsoleLog(std::string("IK Target: ") + label + " on '" + node->name + "'");
+                                }
+                            }
+                        };
+                        addLimb(IKTarget::LeftHand, "Left Hand");
+                        addLimb(IKTarget::RightHand, "Right Hand");
+                        addLimb(IKTarget::LeftFoot, "Left Foot");
+                        addLimb(IKTarget::RightFoot, "Right Foot");
+                        addLimb(IKTarget::Head, "Head");
+                        ImGui::EndMenu();
+                    }
+                }
                 if (!node->GetComponent<Character>()) {
                     ImGui::Separator();
                     // A skinned humanoid keeps its own mesh + weights: the built-in
@@ -29088,6 +29067,14 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Strip the clips' baked forward travel so the CONTROLLER moves the\nbody and the clip only cycles the limbs. Fixes a walking model sliding\naway from its collider and snapping back every loop. On automatically\nfor models set as a player's character.");
             }
             ImGui::TextDisabled("%d clip(s)", ma->ClipCount());
+            if (ImGui::SmallButton("Add clips from Assets##ma")) {
+                const std::string dir = ed.projectDir().empty() ? PoseCapture::AssetBaseDir()
+                                                                : ed.projectDir() + "/Assets";
+                const int n = PoseCapture::ImportFolder(*ma, dir);
+                ConsoleLog(n > 0 ? "Added " + std::to_string(n) + " clip(s) from Assets" : "No new .okayclip files in Assets", n > 0 ? 0 : 1);
+                if (n > 0) ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Load .okayclip files saved by Pose Capture so they can be played.");
             if (ma->ClipCount() == 0) {
                 ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f),
                                    "This model has NO animation clips - it will hold its pose.");
@@ -30403,6 +30390,67 @@ void DrawInspector(EditorState& ed) {
             ImGui::DragFloat("Smoothing##aim", &a->smoothing, 0.5f, 0.0f, 40.0f);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ease speed toward a moved target (per second). 0 = exact/instant (turrets).");
             if (ImGui::SmallButton("Remove##aim")) toRemove = a;
+        }
+    }
+    if (auto* ikt = dynamic_cast<IKTarget*>(curComp)) {
+        if (CompHeader("IK Target", ikt, &toRemove)) {
+            ImGui::TextDisabled("This object is where a hand, foot, or the head reaches.");
+            char cn[64]; std::strncpy(cn, ikt->characterName.c_str(), sizeof(cn) - 1); cn[sizeof(cn) - 1] = '\0';
+            if (ImGui::InputText("Character##ikt", cn, sizeof(cn))) { ikt->characterName = cn; ikt->character = nullptr; ed.dirty = true; }
+            const char* limbs[] = {"Left Hand", "Right Hand", "Left Foot", "Right Foot", "Head"};
+            int limb = ikt->limb;
+            if (limb < 0 || limb > 4) limb = 0;
+            if (ImGui::Combo("Limb##ikt", &limb, limbs, 5)) { ikt->limb = limb; ed.dirty = true; }
+            ImGui::DragFloat("Weight##ikt", &ikt->weight, 0.01f, 0.0f, 1.0f);
+            ImGui::DragFloat("Blend time##ikt", &ikt->blendTime, 0.01f, 0.0f, 2.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to ease the limb onto this object.");
+            if (ImGui::SmallButton("Remove##ikt")) toRemove = ikt;
+        }
+    }
+    if (auto* ao = dynamic_cast<AimOffset*>(curComp)) {
+        if (CompHeader("Aim Offset", ao, &toRemove)) {
+            ImGui::TextDisabled("Pitch and yaw on the spine, chest, and arms. Sits on top of item grips.");
+            ImGui::Checkbox("Aim with the camera##ao", &ao->useCamera);
+            char tn[64]; std::strncpy(tn, ao->targetName.c_str(), sizeof(tn) - 1); tn[sizeof(tn) - 1] = '\0';
+            if (ImGui::InputText("Target object##ao", tn, sizeof(tn))) { ao->targetName = tn; ao->target = nullptr; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("When set, the body aims at this object instead of the camera.");
+            if (!ao->targetName.empty() && !ed.scene().Find(ao->targetName))
+                ImGui::TextColored(ImVec4(0.95f, 0.6f, 0.35f, 1.0f), "Target object '%s' doesn't match any object.", ao->targetName.c_str());
+            ImGui::DragFloat("Weight##ao", &ao->weight, 0.01f, 0.0f, 1.0f);
+            ImGui::DragFloat("Pitch clamp##ao", &ao->pitchClamp, 1.0f, 0.0f, 89.0f);
+            ImGui::DragFloat("Yaw clamp##ao", &ao->yawClamp, 1.0f, 0.0f, 180.0f);
+            ImGui::DragFloat("Spine weight##ao", &ao->spineWeight, 0.01f, 0.0f, 1.0f);
+            ImGui::DragFloat("Chest weight##ao", &ao->chestWeight, 0.01f, 0.0f, 1.0f);
+            ImGui::DragFloat("Arm weight##ao", &ao->armWeight, 0.01f, 0.0f, 1.0f);
+            ImGui::DragFloat("Recoil kick##ao", &ao->kick, 0.1f, 0.0f, 45.0f);
+            ImGui::DragFloat("Recoil recovery##ao", &ao->recovery, 0.1f, 0.0f, 40.0f);
+            if (ImGui::SmallButton("Recoil##ao")) ao->Recoil(1.0f);
+            if (ImGui::SmallButton("Remove##ao")) toRemove = ao;
+        }
+    }
+    if (auto* pc = dynamic_cast<PoseCapture*>(curComp)) {
+        if (CompHeader("Pose Capture", pc, &toRemove)) {
+            ImGui::TextDisabled("In Play, save the pose on the model as a clip the Animator can play.");
+            char nm[64]; std::strncpy(nm, pc->clipName.c_str(), sizeof(nm) - 1); nm[sizeof(nm) - 1] = '\0';
+            if (ImGui::InputText("Clip name##pc", nm, sizeof(nm))) { pc->clipName = nm; ed.dirty = true; }
+            ImGui::DragFloat("Record seconds##pc", &pc->recordSeconds, 0.05f, 0.05f, 30.0f);
+            if (!ed.isPlaying()) ImGui::TextDisabled("Press Play, then save or record.");
+            if (ImGui::Button("Save pose##pc")) {
+                if (!ed.isPlaying()) ConsoleLog("Pose Capture: press Play first.", 1);
+                else {
+                    const int i = pc->CaptureFrame();
+                    ConsoleLog(i >= 0 ? "Saved pose as '" + pc->clipName + "'" : "Pose Capture: this object has no model animator.", i >= 0 ? 0 : 1);
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(pc->IsRecording() ? "Stop##pc" : "Record##pc")) {
+                if (!ed.isPlaying()) ConsoleLog("Pose Capture: press Play first.", 1);
+                else if (pc->IsRecording()) pc->StopRecord();
+                else pc->StartRecord(pc->recordSeconds);
+            }
+            if (pc->IsRecording()) ImGui::Text("Recording %.2fs", pc->RecordedTime());
+            if (!pc->LastFile().empty()) ImGui::TextDisabled("%s", pc->LastFile().c_str());
+            if (ImGui::SmallButton("Remove##pc")) toRemove = pc;
         }
     }
     if (auto* l = dynamic_cast<LookAtIK*>(curComp)) {
@@ -36771,6 +36819,9 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<AnimStateMachine>(), "Animator (states + transitions)")) { go->AddComponent<AnimStateMachine>(); ed.dirty = true; }
             if (item(!go->GetComponent<SpriteAnimator>(), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
             if (item(!go->GetComponent<AimIK>(), "Aim IK (point a bone at a target)")) { go->AddComponent<AimIK>(); ed.dirty = true; }
+            if (item(!go->GetComponent<IKTarget>(), "IK Target (a hand, foot, or the head reaches this)")) { go->AddComponent<IKTarget>(); ed.dirty = true; }
+            if (item(!go->GetComponent<AimOffset>(), "Aim Offset (spine/chest/arms + recoil)")) { go->AddComponent<AimOffset>(); ed.dirty = true; }
+            if (item(!go->GetComponent<PoseCapture>(), "Pose Capture (save the pose as a clip)")) { go->AddComponent<PoseCapture>(); ed.dirty = true; }
             if (item(!go->GetComponent<LookAtIK>(), "Look-At IK (head/eye tracking)")) { go->AddComponent<LookAtIK>(); ed.dirty = true; }
             if (item(!go->GetComponent<FootIK>(), "Foot IK (plant feet on ground)")) { go->AddComponent<FootIK>(); ed.dirty = true; }
             if (item(!go->GetComponent<HumanoidRetarget>(), "Humanoid Retarget (built-in anims on an imported rig)")) {
@@ -39281,6 +39332,14 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             if (g_isolate && !up->IsSelfOrDescendantOf(g_isolate)) continue;
             Transform* t = up->transform;
             Vec3 p = t->Position();
+
+            // Edit mode: an IK Target and an Aim Offset keep showing the pose
+            // while their object is moved. Play mode runs them with the scene.
+            if (!ed.isPlaying()) {
+                const float pdt = ImGui::GetIO().DeltaTime;
+                if (auto* ikt = up->GetComponent<IKTarget>()) ikt->Preview(pdt);
+                if (auto* ao = up->GetComponent<AimOffset>()) ao->Preview(pdt);
+            }
 
             // ---- IK visualization for the selected object -------------------
             // Draw the IK bone chain, the target (orange crosshair) and the pole

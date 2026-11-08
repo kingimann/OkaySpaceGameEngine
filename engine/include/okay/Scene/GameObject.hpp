@@ -4,11 +4,38 @@
 #include <cstdint>
 #include <memory>
 #include <typeinfo>
+#include <typeindex>
+#include <functional>
 #include <string>
 #include <type_traits>
 #include <vector>
 
 namespace okay {
+
+class GameObject;
+
+/// Process-wide, data-driven rules for AddComponent: components a type needs next to
+/// it (RequireComponent) and types that may appear once per object
+/// (DisallowMultipleComponent). Register once at startup (before scenes load);
+/// the rules are then applied to every AddComponent<T> call, the editor's
+/// Add Component menu and the scene loader included. Exact-type match on T.
+class ComponentRules {
+public:
+    struct Requirement {
+        std::type_index type;
+        bool       (*has)(const GameObject&);
+        void       (*add)(GameObject&);
+    };
+    static void AddRequirement(std::type_index owner, Requirement req);
+    static void SetUnique(std::type_index owner);
+    /// True once any rule exists (lets AddComponent skip all of this when none do).
+    static bool Any();
+    static bool IsUnique(std::type_index owner);
+    /// Copy of the requirements of `owner` (empty if none).
+    static std::vector<Requirement> RequirementsOf(std::type_index owner);
+    /// Remove every rule (tests).
+    static void Clear();
+};
 
 /// A named container of Components living in a Scene — the engine's primary
 /// unit of composition, modeled directly on GameObject.
@@ -115,6 +142,13 @@ public:
         active = false;
         m_destroyed = true;
     }
+    /// True if some component has been told OnEnable and not yet OnDisable (it is
+    /// "live"). An object switched off this frame still reads true until the Scene
+    /// delivers OnDisable at the start of the next one.
+    bool HasLiveComponent() const {
+        for (const auto& c : m_components) if (c->m_live) return true;
+        return false;
+    }
     /// True once the scene destroyed this object (it's only a Transform shell now).
     bool IsDestroyed() const { return m_destroyed; }
 
@@ -139,6 +173,11 @@ public:
     /// Transform itself nor any other component can be moved to index 0. Out-of-range
     /// moves or an unknown component are no-ops.
     void MoveComponent(Component* component, int delta);
+
+    /// If another component on this object needs `component` (RequireComponent),
+    /// that dependent; else nullptr. Lets an editor refuse to remove it. RemoveComponent
+    /// itself does not check, so scene teardown and scripts keep working.
+    Component* RequiredBy(const Component* component) const;
 
     /// Remove a specific component (Transform cannot be removed). Returns true
     /// if it was found and removed.
@@ -171,6 +210,8 @@ private:
     /// Routes a freshly added component to the Scene's lifecycle queue.
     /// Defined in GameObject.cpp where the full Scene type is visible.
     void NotifyComponentAdded(Component* component);
+    /// Adds the components `owner` requires that are missing (guards against cycles).
+    void ApplyRequirements(std::type_index owner);
 
     Scene* m_scene = nullptr;
     std::vector<std::unique_ptr<Component>> m_components;
@@ -183,6 +224,12 @@ template <typename T, typename... Args>
 T* GameObject::AddComponent(Args&&... args) {
     static_assert(std::is_base_of<Component, T>::value,
                   "T must derive from okay::Component");
+    if (ComponentRules::Any()) {
+        // DisallowMultipleComponent: a second one is not made; the existing one comes back.
+        if (ComponentRules::IsUnique(typeid(T)))
+            if (T* existing = GetComponent<T>()) return existing;
+        ApplyRequirements(typeid(T));   // RequireComponent: the needed siblings first
+    }
     auto owned = std::make_unique<T>(std::forward<Args>(args)...);
     T* ptr = owned.get();
     ptr->gameObject = this;
@@ -225,6 +272,25 @@ template <typename T>
 void GameObject::CollectComponents(std::vector<T*>& out) const {
     for (std::size_t i = FirstComponentToSearch<T>(m_components, transform); i < m_components.size(); ++i)
         if (T* casted = dynamic_cast<T*>(m_components[i].get())) out.push_back(casted);
+}
+
+/// Declare that every `T` needs a `Req` on its object: AddComponent<T> adds one first
+/// if it is missing. Call once at startup.
+template <typename T, typename Req>
+void RequireComponent() {
+    static_assert(std::is_base_of<Component, T>::value && std::is_base_of<Component, Req>::value,
+                  "both must derive from okay::Component");
+    ComponentRules::AddRequirement(typeid(T), {
+        std::type_index(typeid(Req)),
+        [](const GameObject& g) { return g.GetComponent<Req>() != nullptr; },
+        [](GameObject& g) { g.AddComponent<Req>(); }});
+}
+/// Declare that an object holds at most one `T`: a second AddComponent<T> returns the
+/// existing one. Call once at startup.
+template <typename T>
+void DisallowMultipleComponent() {
+    static_assert(std::is_base_of<Component, T>::value, "T must derive from okay::Component");
+    ComponentRules::SetUnique(typeid(T));
 }
 
 } // namespace okay

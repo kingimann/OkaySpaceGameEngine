@@ -1377,3 +1377,8 @@ add_test(NAME splines COMMAND test_splines)
 add_executable(test_scene_lifecycle test_scene_lifecycle.cpp)
 target_link_libraries(test_scene_lifecycle PRIVATE okay::engine)
 add_test(NAME scene_lifecycle COMMAND test_scene_lifecycle)
+
+# Multi-frame scene loads (progress, additive load + unload by handle), ObjectPool, RequireComponent rules
+add_executable(test_scene_load_pool test_scene_load_pool.cpp)
+target_link_libraries(test_scene_load_pool PRIVATE okay::engine)
+add_test(NAME scene_load_pool COMMAND test_scene_load_pool)

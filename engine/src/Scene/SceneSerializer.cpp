@@ -3440,23 +3440,43 @@ static void CompleteViewToggle(Scene& scene, GameObject* go) {
     }
 }
 
-// Parse a document into `scene`. If `clear` is false, objects are appended
-// (used by Instantiate); `firstNew` receives the first created GameObject.
-static bool ParseInto(Scene& scene, const std::string& text, bool clear,
-                      GameObject** firstNew, std::string* error) {
-    if (clear) scene.Clear();
-    std::istringstream in(text);
-    std::string token;
-
-    if (!(in >> token) || token != "okayscene") {
-        if (error) *error = "missing 'okayscene' header";
-        return false;
-    }
-    int version = 0; in >> version;
-
+// State of a document being parsed, kept so a parse can pause after some objects
+// and carry on later (incremental scene loads).
+struct ParseSession {
+    explicit ParseSession(std::string t) : text(std::move(t)), in(text) {}
+    std::string text;
+    std::istringstream in;
+    bool started = false;
+    int version = 0;
     // file index -> created GameObject, plus deferred parent links.
     std::unordered_map<int, GameObject*> byIndex;
     std::vector<std::pair<int, int>> parentLinks; // child index -> parent index
+};
+
+// Parse (a slice of) a document into `scene`. If `clear` is false, objects are appended
+// (used by Instantiate); `firstNew` receives the first created GameObject. With
+// `maxObjects` > 0 the parse stops after that many objects and sets `finished` false;
+// call again with the same session to continue (`clear` applies on the first call).
+static bool ParseStep(Scene& scene, ParseSession& S, bool clear, GameObject** firstNew,
+                      std::string* error, int maxObjects, bool* finished) {
+    if (finished) *finished = true;
+    if (!S.started && clear) scene.Clear();
+    const std::string& text = S.text;
+    std::istringstream& in = S.in;
+    std::string token;
+
+    if (!S.started) {
+        if (!(in >> token) || token != "okayscene") {
+            if (error) *error = "missing 'okayscene' header";
+            return false;
+        }
+        in >> S.version;
+        S.started = true;
+    }
+    const int version = S.version;
+    auto& byIndex = S.byIndex;
+    auto& parentLinks = S.parentLinks;
+    int madeObjects = 0;
 
     // Record validation. Counts are checked against the input still unread (each
     // element takes at least `minChars` characters), so a bogus count can't make a
@@ -7788,6 +7808,10 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
             if (error) *error = "unexpected token '" + token + "'";
             return false;
         }
+        if (token == "gameobject" && maxObjects > 0 && ++madeObjects >= maxObjects) {
+            if (finished) *finished = false;   // paused between objects
+            return true;
+        }
     }
 
     // Resolve parent links now that every object exists. A link that would make
@@ -7831,6 +7855,81 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
     // Make each loaded UIFrame the source of truth for its widget's fields now, so
     // a script that writes those fields in its Start moves the frame.
     for (auto& [idx, go] : byIndex) { (void)idx; if (go->GetComponent<UIFrame>()) GetUIRect(go); }
+    return true;
+}
+
+static bool ParseInto(Scene& scene, const std::string& text, bool clear,
+                      GameObject** firstNew, std::string* error) {
+    ParseSession S(text);
+    return ParseStep(scene, S, clear, firstNew, error, 0, nullptr);
+}
+
+SceneLoadJob::~SceneLoadJob() = default;
+
+std::unique_ptr<SceneLoadJob> SceneLoadJob::OpenText(std::string text, bool additive, const Vec3& offset) {
+    std::unique_ptr<SceneLoadJob> j(new SceneLoadJob());
+    j->m_size = text.empty() ? 1 : text.size();
+    j->m_session = std::make_unique<ParseSession>(std::move(text));
+    j->m_additive = additive;
+    j->m_offset = offset;
+    return j;
+}
+
+std::unique_ptr<SceneLoadJob> SceneLoadJob::OpenFile(const std::string& path, bool additive,
+                                                     const Vec3& offset, std::string* error) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) { if (error) *error = "cannot open " + path; return nullptr; }
+    std::stringstream ss;
+    ss << f.rdbuf();
+    std::string raw = ss.str();
+    std::string text = DataPack::Unpack(raw);
+    if (text.empty() && DataPack::IsPacked(raw)) { if (error) *error = "tampered or unreadable " + path; return nullptr; }
+    auto j = OpenText(std::move(text), additive, offset);
+    const std::size_t slash = path.find_last_of("/\\");
+    j->m_dir = slash == std::string::npos ? std::string() : path.substr(0, slash + 1);
+    return j;
+}
+
+std::vector<std::uint64_t> SceneLoadJob::AllIds() const {
+    std::vector<std::uint64_t> ids;
+    if (m_session) for (auto& kv : m_session->byIndex) ids.push_back(kv.second->InstanceId());
+    return ids;
+}
+
+float SceneLoadJob::Progress() const {
+    if (m_finished) return m_failed ? 0.0f : 1.0f;
+    if (!m_session || !m_started) return 0.0f;
+    const std::streamoff at = m_session->in.rdbuf()->pubseekoff(0, std::ios::cur, std::ios::in);
+    if (at < 0) return 0.0f;
+    const float f = (float)((double)at / (double)m_size);
+    return f > 0.999f ? 0.999f : f;   // 1 only once the links are resolved
+}
+
+bool SceneLoadJob::Step(Scene& scene, int maxObjects, std::string* error) {
+    if (m_finished) return !m_failed;
+    const std::string prevDir = g_loadingSceneDir;
+    g_loadingSceneDir = m_dir;
+    bool done = true;
+    const bool first = !m_started;
+    m_started = true;
+    const bool ok = ParseStep(scene, *m_session, /*clear=*/!m_additive, nullptr, error, maxObjects, &done);
+    g_loadingSceneDir = prevDir;
+    (void)first;
+    m_created = (int)m_session->byIndex.size();
+    if (!ok) { m_finished = true; m_failed = true; return false; }
+    if (done) {
+        std::vector<int> order;
+        for (auto& kv : m_session->byIndex) order.push_back(kv.first);
+        std::sort(order.begin(), order.end());
+        const bool shift = m_additive && (m_offset.x != 0.0f || m_offset.y != 0.0f || m_offset.z != 0.0f);
+        for (int idx : order) {
+            GameObject* go = m_session->byIndex[idx];
+            if (!go->transform || go->transform->Parent()) continue;
+            if (shift) go->transform->localPosition = go->transform->localPosition + m_offset;
+            m_roots.push_back(go->InstanceId());
+        }
+        m_finished = true;
+    }
     return true;
 }
 

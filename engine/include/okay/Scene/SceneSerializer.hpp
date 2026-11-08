@@ -5,6 +5,7 @@
 #include <vector>
 #include "okay/Math/Vec3.hpp"
 #include "okay/Scene/GameObject.hpp"
+#include "okay/Scene/SceneValidation.hpp"
 
 namespace okay {
 
@@ -139,6 +140,14 @@ public:
     /// textures, audio WAVs, sprite-animator frames). Used by Build Game to copy
     /// the files a shipped game needs alongside the executable.
     static std::vector<std::string> CollectAssetPaths(const Scene& scene);
+
+    /// Check scene text without touching any live scene: component records this build
+    /// does not know, unknown top-level records, referenced asset files that do not
+    /// exist (looked up as written, then under `assetRoot`), `parent` links to objects
+    /// that are not in the file, and duplicate `guid` records. A file that cannot be
+    /// loaded at all reports a LoadError issue.
+    static SceneValidationReport Validate(const std::string& text, const std::string& assetRoot = "");
+    static SceneValidationReport ValidateFile(const std::string& path, const std::string& assetRoot = "");
 };
 
 } // namespace okay

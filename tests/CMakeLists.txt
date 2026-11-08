@@ -1490,3 +1490,7 @@ add_test(NAME scene_ids_prefabs COMMAND test_scene_ids_prefabs)
 add_executable(test_layers_tags_cameras test_layers_tags_cameras.cpp)
 target_link_libraries(test_layers_tags_cameras PRIVATE okay::engine)
 add_test(NAME layers_tags_cameras COMMAND test_layers_tags_cameras)
+
+add_executable(test_scene_hierarchy_search test_scene_hierarchy_search.cpp)
+target_link_libraries(test_scene_hierarchy_search PRIVATE okay::engine)
+add_test(NAME scene_hierarchy_search COMMAND test_scene_hierarchy_search)

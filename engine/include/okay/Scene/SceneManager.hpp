@@ -28,7 +28,8 @@ public:
     static int  IndexOf(const std::string& nameOrPath);
     /// Bare scene name (file stem, no folder or extension) at a build index.
     static std::string SceneName(int index);
-    /// The build index of the scene most recently asked to load (-1 if none).
+    /// The build index of the scene that last LOADED (-1 if none). It moves when a load
+    /// succeeds, not when one is requested, so a missing or corrupt scene file leaves it alone.
     static int  ActiveIndex();
     /// Resolve a build-list name (file stem) OR a raw path to a scene file path,
     /// or "" if unknown. Used by additive scene merges.

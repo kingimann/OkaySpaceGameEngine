@@ -43,7 +43,9 @@ public:
 class GameObject {
 public:
     std::string name;
-    /// Inactive GameObjects are skipped by Update and Render.
+    /// This object's own on/off flag ("activeSelf"). Inactive GameObjects are skipped
+    /// by Update, Render and physics, and so are their children: what the engine
+    /// tests is ActiveInHierarchy(), which also looks at every parent.
     bool active = true;
     /// Scene bookkeeping: the `active` value last reported to OnEnable/OnDisable
     /// (-1 = not seen yet, so the first frame never fires either).
@@ -118,6 +120,19 @@ public:
     /// Every GameObject has a Transform from birth.
     Transform* transform = nullptr;
 
+    /// True when this object and every parent above it are active. A child of an
+    /// inactive parent does not update, render or simulate even if its own `active`
+    /// is true. Walks the parent chain (a few pointer reads for a normal hierarchy).
+    bool ActiveInHierarchy() const {
+        const GameObject* g = this;
+        for (int guard = 0; g && guard < 4096; ++guard) {
+            if (!g->active) return false;
+            const Transform* p = g->transform ? g->transform->Parent() : nullptr;
+            g = p ? p->gameObject : nullptr;
+        }
+        return true;
+    }
+
     /// Attach a new component of type T, forwarding constructor arguments.
     template <typename T, typename... Args>
     T* AddComponent(Args&&... args);
@@ -129,6 +144,18 @@ public:
     /// Return every attached component assignable to T.
     template <typename T>
     std::vector<T*> GetComponents() const;
+
+    /// The first component of type T on this object or, failing that, any object below it
+    /// (depth first, children in sibling order). Inactive objects are skipped, with
+    /// their children, unless `includeInactive`.
+    template <typename T>
+    T* GetComponentInChildren(bool includeInactive = false) const;
+    /// Every component of type T on this object and the objects below it (depth first).
+    template <typename T>
+    std::vector<T*> GetComponentsInChildren(bool includeInactive = false) const;
+    /// The first component of type T on this object or one of its parents, nearest first.
+    template <typename T>
+    T* GetComponentInParent(bool includeInactive = false) const;
 
     /// Append every component assignable to T to `out` (no per-object allocation;
     /// used by Scene::FindObjectsOfType to avoid a temporary vector per object).
@@ -315,6 +342,45 @@ template <typename T>
 void DisallowMultipleComponent() {
     static_assert(std::is_base_of<Component, T>::value, "T must derive from okay::Component");
     ComponentRules::SetUnique(typeid(T));
+}
+
+template <typename T>
+T* GameObject::GetComponentInChildren(bool includeInactive) const {
+    if (!includeInactive && !active) return nullptr;
+    if (T* c = GetComponent<T>()) return c;
+    if (!transform) return nullptr;
+    for (const Transform* child : transform->Children())
+        if (child && child->gameObject)
+            if (T* c = child->gameObject->GetComponentInChildren<T>(includeInactive)) return c;
+    return nullptr;
+}
+
+template <typename T>
+std::vector<T*> GameObject::GetComponentsInChildren(bool includeInactive) const {
+    std::vector<T*> result;
+    std::vector<const GameObject*> stack{this};   // explicit stack: pre-order, children kept in order
+    while (!stack.empty()) {
+        const GameObject* g = stack.back(); stack.pop_back();
+        if (!includeInactive && !g->active) continue;
+        g->CollectComponents<T>(result);
+        if (g->transform) {
+            const auto& kids = g->transform->Children();
+            for (std::size_t i = kids.size(); i-- > 0;)
+                if (kids[i] && kids[i]->gameObject) stack.push_back(kids[i]->gameObject);
+        }
+    }
+    return result;
+}
+
+template <typename T>
+T* GameObject::GetComponentInParent(bool includeInactive) const {
+    for (const GameObject* g = this; g;) {
+        if (includeInactive || g->active)
+            if (T* c = g->GetComponent<T>()) return c;
+        const Transform* p = g->transform ? g->transform->Parent() : nullptr;
+        g = p ? p->gameObject : nullptr;
+    }
+    return nullptr;
 }
 
 } // namespace okay

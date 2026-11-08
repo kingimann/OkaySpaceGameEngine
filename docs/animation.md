@@ -383,6 +383,13 @@ gone: the machine remembers `animsmactions`, and a later action does not put an
 older one back. **Add built-in actions** on the Animator fills in anything missing
 without overwriting a state you edited.
 
+On a listen server the owner's death, roll, sit and swim, and the head's look
+yaw and pitch, travel on the existing animation sync message. The message
+keeps its old fields and adds an action sequence, an action id, and the look
+angles. A peer that only knows the older message stops reading there and
+still gets the gait. A remote copy plays the action and stays in it; it does
+not keep walking through a death.
+
 Death clips: `Death_F`, `Death_B`, `Death_L`, `Death_R`, and the looping holds
 `DeadHold_F`, `DeadHold_B`, `DeadHold_L`, `DeadHold_R`. `Death_F` falls forward,
 `Death_B` onto the back, and the side clips are mirrors. The last 0.15s of each
@@ -620,7 +627,9 @@ model) and the machine watches the capsule's VERTICAL motion — launching
 plays Jump, past the apex Fall loops, and touchdown plays Land once before
 idle/walk/run resumes. It works with every controller, no wiring. In
 in-place mode the jump clip's own root rise is stripped too, so the
-controller's jump arc isn't doubled.
+controller's jump arc isn't doubled. An empty Jump slot does not block
+Fall: once the body is heading down, a filled Fall clip plays even when the
+rise never played a jump clip.
 
 ## Crouch and prone for imported characters
 
@@ -655,6 +664,12 @@ its rest stance aligned, so a T-pose rig stands and moves naturally.
   every locomotion slot the file has no clip for plays the built-in
   animation. The import log says which ("walking='Walking', built-in
   animations retargeted (15/15 bones)").
+- A state that is not a locomotion slot (Death, Wave, sit, roll, emotes)
+  uses that built-in pose when the state's clip, fallback, and blend
+  motions are not on this model, even if Idle or Walk is filled. Idle,
+  Walk, Run, Jump, Fall, Land, Crouch, Crouch Walk, Prone, Crawl, Get Up,
+  and a Locomotion blend that has any of idle, walk, or run, keep the
+  file's clip.
 - The **Humanoid Retarget** component (on the player, next to the
   Character) has a **Weight** slider (blend against the model's bind
   pose), a **Body lean** amount and a **Re-Detect Bones** button after a
@@ -710,7 +725,14 @@ idle. Every locomotion slot is filled on its own:
   is a jog, which a 1.4 m/s walk clip can't show. When a model with its own
   Walk (and Run) clip is attached, a Walk Speed or Run Speed still at the
   default is set to what the clip can show (about 2.0 and 5.0 m/s), so W
-  plays the walk and Shift the run. A speed you changed yourself is kept.
+  plays the walk and Shift the run. This covers the Third Person, Third
+  Person Shooter, First Person, Click To Move, Top Down, Top Down Shooter
+  and Platformer 2.5D controllers (each against its own defaults). A speed
+  you changed yourself is kept, and the fitted values are remembered while
+  the scene is loaded: attaching another model refits a speed still at the
+  fitted value, and a speed you set back to the default afterwards is left
+  alone. A speed deliberately set to exactly the default *before* the first
+  model is attached can't be told from an untouched one, and is fitted.
 - **Blends.** Between walk and run both clips are sampled at one shared
   normalized phase, so the feet stay in step through the blend; stepping
   off from a stand starts the walk on the same foot each time. Switching
@@ -809,9 +831,11 @@ and transitions. Beyond single conditions:
 - **IK weight curve** — under a state's IK weight, **Add curve** shapes foot planting
   over the clip (click to add a key, drag to move it, right-click to remove it).
   The curve is multiplied by the IK weight slider. Full Body IK can have its own
-  curve when it does not follow the foot weight. Foot IK and Full Body IK read
-  the sampled weight; their solvers are unchanged. `SampleIkCurve` evaluates a
-  curve the same way.
+  curve when it does not follow the foot weight. Look-At and Aim use the
+  state's look weight (1 by default, so a state with no foot IK keeps the head;
+  below 0 follows the foot weight).
+  Limb IK and Chain IK follow the Full Body weight. The solvers themselves
+  are unchanged. `SampleIkCurve` evaluates a curve the same way.
 
 Scripts: `anim_set_float`, `anim_set_bool`, `anim_trigger`, `anim_state()`,
 `anim_prev_state()`, `anim_state_time()`, `anim_normalized_time()`.
@@ -982,7 +1006,19 @@ character, and the bone stays over it.
   These are the parameters the player controllers already send.
 - **2D blend trees:** pick *2D (strafe)* on a blend tree. Motions sit on a map;
   drag them, and watch live weights in Play. The controllers send `moveX` / `moveZ`
-  (velocity in the body's frame) for strafing sets.
+  (velocity in the body's frame) for strafing sets. The body faces local -Z, so
+  forward is negative `moveZ` and strafing right is positive `moveX`.
+  **Locomotion setup** on an imported model builds that 2D blend when the file
+  has a strafe or a back clip. Names map by word: a left strafe or sidestep
+  walk (`left` plus `strafe` / `walk`), a right one, `Walk Back`, and `Run Back`.
+  Tricks such as Back Flip are not back-walks. With none of those clips,
+  locomotion stays the forward speed blend, exactly as before. Set
+  `legsFollowTravel` (off by default) and the hips ease
+  toward travel (up to 80 degrees, about 0.1 s), around world up in the hips'
+  parent space, with the spine twisting back by the same yaw so the chest stays
+  near the facing. A tilted armature does not tip the pelvis. With that option
+  on, or when strafe clips exist, backward movement with no back clip plays the
+  forward walk in reverse (with hysteresis around 100 degrees).
 - **Layers:** the **+** tab adds a layer, its own states playing over the base
   layer on part of the skeleton. Pick a **Mask bone** (e.g. the spine for
   upper-body actions) and a **Weight**. Layers share the base layer's parameters,
@@ -997,9 +1033,13 @@ character, and the bone stays over it.
   or leaves the state. It reaches `anim_event()` in scripts and the visual
   scripts' animation event handlers, like clip events. Use it for jump and land
   sounds or to open a hit window.
-- **IK weight:** how much Foot IK and Full Body IK apply in that state, eased
-  over the transition. Set it to 0 for jumps, rolls and falls so the feet aren't
-  pulled to the ground mid-air. Locomotion setup does this for Jump and Fall.
+- **IK weight:** how much Foot IK, Full Body IK, Limb IK, Chain IK, Look-At
+  and Aim apply in that state, eased over the transition. Look-At and Aim
+  use the state's own look weight instead (1 by default). Set the IK weight to
+  0 for jumps, rolls and falls so the feet aren't pulled to the ground
+  mid-air; set the look weight to 0 for death, sit and emotes so the head
+  plays the action instead of staying on a look target. The built-in death,
+  sit, gesture and emote states do.
 - **Start at** on a transition starts the target part-way into its clip, to line
   up the feet between walk and run cycles.
 

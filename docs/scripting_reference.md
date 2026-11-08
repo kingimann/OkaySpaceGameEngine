@@ -129,6 +129,10 @@ function update(dt) {
 | `set_active(b)` / `self_active()` | Enable / query this object |
 | `destroy()` | Destroy this object |
 | `set_parent("name")` / `detach()` | Re-parent / unparent |
+| `child_count("name")` / `get_child("name", i)` / `parent_of("name")` | Hierarchy queries (child name by index; `""` if none) |
+| `hurt("name", n)` / `heal("name", n)` / `add_xp("name", n)` | Damage / heal / grant XP on a named object's `Stats` (or `SurvivalStats` for hurt/heal); fires `on_death` / `on_level_up`; return whether it applied |
+| `get_hp("name")` / `get_max_hp("name")` / `is_dead("name")` | Read health and death state (`is_dead()` with no argument is the humanoid check) |
+| `set_light_intensity("name", v)` / `set_light_range("name", v)` / `set_light_angle("name", deg)` / `set_light_color("name", r,g,b)` | Light component on a named object |
 | `set_text(s)` / `set_color(r,g,b,a)` / `set_texture(p)` | Sibling renderers |
 | `set_mesh("Sphere")` | Swap a sibling MeshRenderer's primitive |
 | `emit(n)` / `play_anim()` / `play_sound()` | Sibling FX, animation, audio |

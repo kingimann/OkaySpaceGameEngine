@@ -27,6 +27,7 @@
 #include "okay/Math/Mathf.hpp"
 #include "okay/Math/IKFade.hpp"
 #include "okay/Math/IKMath.hpp"
+#include "okay/Components/FullBodyIK.hpp"
 #include "okay/Components/IKBones.hpp"
 #include "okay/Components/IKRestore.hpp"
 #include <cmath>
@@ -48,6 +49,7 @@ public:
     bool  aimAtPoint = true;
     Vec3  forwardAxis = Vec3::Forward; ///< the bones' local "forward"
     float weight   = 1.0f;             ///< 0 = off, 1 = full look
+    float stateWeight = 1.0f;          ///< x weight; set per state by the Animator state machine
     bool  ikActive = true;             ///< switch IK on/off; the change eases over fadeTime
     float fadeTime = 0.0f;             ///< seconds to blend IK in/out (0 = instant)
     float maxAngle = 80.0f;            ///< max turn per bone (degrees), keeps it natural
@@ -115,7 +117,7 @@ public:
         // Last frame's writes come off first, so a still bone (and a rotation-only
         // clip) shows the animated pose before this solve. Weight 0 leaves it there.
         m_restore.Restore();
-        float w = weight * m_fade.Step(ikActive, fadeTime, dt);
+        float w = weight * stateWeight * m_fade.Step(ikActive, fadeTime, dt);
         const Vec3 tgt = targetObject ? targetObject->Position() : target;
         if (w > 0.0f && maxDistance > 0.0f && Finite(tgt)) w *= RangeWeight(tgt);
         if (w <= 0.0f || (chain.empty() && eyes.empty())) { ForgetAim(); return; }
@@ -133,11 +135,17 @@ public:
         const Transform* rootBone = chain.empty() ? nullptr : chain.front();
         const Vec3 bodyFwd = rootBone ? SafeNormalize(rootBone->Rotation() * forwardAxis, Vec3::Forward) : Vec3::Forward;
 
+        // A hand reach already placed the arm. Spine and chest carry the
+        // shoulders, and this solve runs after Full Body IK, so turning them
+        // pulls the hand off its target. The neck and head still look.
+        const bool hands = ArmReachActive();
+
         // Root-to-tip: each bone aims its forward at the target. Later bones see
         // the positions their parents just moved them to.
         for (std::size_t i = 0; i < chain.size(); ++i) {
             Transform* b = chain[i];
             if (!b) continue;
+            if (hands && !NeckOrHead(b)) continue;
             Smooth& s = m_smooth[i];
             if (s.bone != b) { s = {}; s.bone = b; }
 
@@ -230,6 +238,26 @@ private:
 
     IKFade m_fade;
     IKRestore m_restore;
+
+    /// A hand effector driven by an IK Target (exactReach) is reaching, on this object or a parent that owns the body.
+    bool ArmReachActive() const {
+        for (Transform* t = transform; t; t = t->Parent()) {
+            if (!t->gameObject) continue;
+            FullBodyIK* fb = t->gameObject->GetComponent<FullBodyIK>();
+            if (!fb || !fb->ikActive || fb->weight <= 0.001f) continue;
+            for (int l = FullBodyIK::LeftHand; l <= FullBodyIK::RightHand; ++l) {
+                const FullBodyIK::Effector& e = fb->effectors[l];
+                if (e.enabled && e.exactReach && e.positionWeight > 0.01f) return true;
+            }
+        }
+        return false;
+    }
+    /// Neck and head sit above the shoulders. Spine and chest do not.
+    static bool NeckOrHead(const Transform* b) {
+        if (!b || !b->gameObject) return false;
+        const int id = FullBodyIK::Classify(b->gameObject->name);
+        return id == FullBodyIK::Neck || id == FullBodyIK::Head;
+    }
     std::vector<Smooth> m_smooth;
     Vec3 m_tgtChar = Vec3::Zero;
     bool m_haveTgt = false;

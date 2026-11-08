@@ -1117,6 +1117,14 @@ The **Engine API** group is the generated list in [engine_api.md](engine_api.md)
 - **Set Build Palette** (`SetBuildPalette`) — setting: Name=prefab|icon, ...
 - **Save Creation** (`SaveCreation`) — out Saved; setting: creation name
 - **Load Creation** (`LoadCreation`) — out Loaded; setting: creation name
+- **Add Item** (`AddItem`) — in Count (1); out Left (how many did not fit); setting: item
+- **Remove Item** (`RemoveItem`) — in Count (1); out Removed (all or nothing); setting: item
+- **Has Item?** (`HasItem`) — in Count (1); out Bool; setting: item
+- **Item Count** (`ItemCount`) — out Count; setting: item
+- **Equip** (`EquipItem`) — in Slot; out Equipped; setting: item (moved from the bag; needs an Equipment component)
+- **Craft** (`CraftItem`) — in Times (1); out Crafted; setting: recipe output item (needs a Crafting component)
+- **Loot Roll** (`LootRoll`) — out Rolled; setting: loot table (extras that do not fit drop next to the object)
+- **Spawn Pickup** (`SpawnPickup`) — in Count (1), X, Y, Z; out Name; setting: item
 - **Set Visible** (`SetVisible`) — in Visible
 - **Pause Game** (`PauseGame`) — in Paused
 - **Quit Game** (`QuitGame`)

@@ -14,6 +14,8 @@
 #include <cctype>
 #include <ctime>
 #include <filesystem>
+#include <functional>
+#include <locale>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -59,27 +61,17 @@ std::unordered_map<std::string, GameObject*> PathIndex(Scene& scene) {
     return m;
 }
 
-std::string Escape(const std::string& s) {
-    std::string o;
-    for (char c : s) {
-        if (c == '\\') o += "\\\\";
-        else if (c == '\n') o += "\\n";
-        else if (c == '\t') o += "\\t";
-        else o += c;
-    }
-    return o;
+using savefmt::Escape;
+using savefmt::Unescape;
+std::string Num(float v) { return savefmt::FormatFloat(v); }
+
+std::size_t g_maxBytes = SaveGame::kDefaultMaxFileBytes;
+std::size_t g_maxLines = SaveGame::kDefaultMaxLines;
+bool g_usedBackup = false;
+std::map<int, std::function<bool(std::string&, std::string*)>>& Migrations() {
+    static std::map<int, std::function<bool(std::string&, std::string*)>> m;
+    return m;
 }
-std::string Unescape(const std::string& s) {
-    std::string o;
-    for (std::size_t i = 0; i < s.size(); ++i) {
-        if (s[i] == '\\' && i + 1 < s.size()) {
-            const char n = s[++i];
-            o += n == 'n' ? '\n' : n == 't' ? '\t' : n;
-        } else o += s[i];
-    }
-    return o;
-}
-std::string Num(float v) { std::ostringstream o; o.precision(9); o << v; return o.str(); }
 
 // A script value as "f:1.5", "b:1", "s:text", "v:1,2,3"; "" for kinds a save can't hold.
 std::string Encode(const vs::VsValue& v) {
@@ -93,12 +85,12 @@ bool Decode(const std::string& t, vs::VsValue& out) {
     if (t.size() < 2 || t[1] != ':') return false;
     const std::string p = t.substr(2);
     switch (t[0]) {
-        case 'f': out = vs::VsValue{(float)std::atof(p.c_str())}; return true;
+        case 'f': out = vs::VsValue{savefmt::ParseFloat(p)}; return true;
         case 'b': out = vs::VsValue{p == "1"}; return true;
         case 's': out = vs::VsValue{Unescape(p)}; return true;
         case 'v': {
             Vec3 v; std::string q = p; std::replace(q.begin(), q.end(), ',', ' ');
-            std::istringstream is(q); is >> v.x >> v.y >> v.z;
+            std::istringstream is(q); is.imbue(std::locale::classic()); is >> v.x >> v.y >> v.z;
             out = vs::VsValue{v}; return true;
         }
     }
@@ -117,36 +109,132 @@ struct Parsed {
     SaveSlotInfo info;
     std::string sceneText;
     std::vector<std::vector<std::string>> state;   // tab-split "--state--" lines
+    std::vector<std::pair<std::string, std::string>> kv;   // the game's Save keys, already unescaped and checked
 };
 
-bool ReadSave(const std::string& slot, Parsed& out, std::string* error) {
-    std::ifstream f(SaveGame::SlotPath(slot), std::ios::binary);
-    if (!f) { if (error) *error = "No save in slot \"" + slot + "\""; return false; }
-    std::string line;
-    if (!std::getline(f, line) || line.rfind("okaygame", 0) != 0) {
-        if (error) *error = "Slot \"" + slot + "\" isn't a save game";
-        return false;
+// Where the file's `okaygame N` header says it stands. A header with no number is 1.
+bool ParseHeaderLine(const std::string& line, int& version) {
+    if (line.rfind("okaygame", 0) != 0) return false;
+    version = std::atoi(line.c_str() + 8);
+    if (version < 1) version = 1;
+    return true;
+}
+
+const char kEndLine[] = "--end--\n";
+const char kSumKey[] = "checksum\t";
+
+// Version 2+ files end with "--end--\nchecksum\t<16 hex>\n"; the sum covers everything
+// before the checksum line. True if present and matching.
+bool VerifyChecksum(const std::string& text, std::string* why) {
+    const std::string tail = std::string(kEndLine) + kSumKey;
+    const std::size_t at = text.rfind(tail);
+    if (at == std::string::npos) { *why = "is cut short (no end marker)"; return false; }
+    const std::size_t sumStart = at + tail.size();
+    std::string hex = text.substr(sumStart);
+    while (!hex.empty() && (hex.back() == '\n' || hex.back() == '\r')) hex.pop_back();
+    if (hex.size() != 16) { *why = "is cut short (bad checksum line)"; return false; }
+    const std::size_t sumLine = at + sizeof(kEndLine) - 1;
+    if (savefmt::Hex16(savefmt::Fnv1a(text.data(), sumLine)) != hex) { *why = "doesn't match its checksum (damaged or edited)"; return false; }
+    return true;
+}
+
+enum class ReadResult { Ok, Missing, Damaged, Newer };
+
+ReadResult ReadSaveFile(const std::string& path, const std::string& slot, Parsed& out, std::string* error) {
+    std::error_code ec;
+    if (!fs::exists(path, ec)) { if (error) *error = "No save in slot \"" + slot + "\""; return ReadResult::Missing; }
+    std::string text, why;
+    if (!savefmt::ReadFileCapped(path, g_maxBytes, text, &why)) {
+        if (error) *error = "Slot \"" + slot + "\" can't be read: " + why;
+        return ReadResult::Damaged;
     }
-    out.info.slot = slot; out.info.exists = true;
-    int section = 0;   // 0 header, 1 scene, 2 state
+    int version = 1;
+    const std::size_t nl = text.find('\n');
+    if (!ParseHeaderLine(text.substr(0, nl), version)) {
+        if (error) *error = "Slot \"" + slot + "\" isn't a save game";
+        return ReadResult::Damaged;
+    }
+    if (version > SaveGame::kFormatVersion) {
+        if (error) *error = "Slot \"" + slot + "\" was saved by a newer version of the game (save format " +
+                            std::to_string(version) + ", this build reads up to " + std::to_string(SaveGame::kFormatVersion) + ")";
+        return ReadResult::Newer;
+    }
+    if (version >= 2 && !VerifyChecksum(text, &why)) {
+        if (error) *error = "Slot \"" + slot + "\" " + why;
+        return ReadResult::Damaged;
+    }
+    // Older saves are brought forward one version at a time (no hook for a step = nothing to change).
+    for (int v = version; v < SaveGame::kFormatVersion; ++v) {
+        auto it = Migrations().find(v);
+        if (it == Migrations().end() || !it->second) continue;
+        std::string merr;
+        if (!it->second(text, &merr)) {
+            if (error) *error = "Slot \"" + slot + "\" couldn't be upgraded from format " + std::to_string(v) + (merr.empty() ? "" : ": " + merr);
+            return ReadResult::Damaged;
+        }
+    }
+    out.info.slot = slot; out.info.exists = true; out.info.version = version;
+    int section = 0;   // 0 header, 1 scene, 2 state, 3 after the end marker
+    std::size_t lines = 0, pos = (nl == std::string::npos) ? text.size() : nl + 1;
     std::string sceneText;
-    while (std::getline(f, line)) {
+    while (pos < text.size()) {
+        if (++lines > g_maxLines) {
+            if (error) *error = "Slot \"" + slot + "\" has too many lines";
+            return ReadResult::Damaged;
+        }
+        std::size_t e = text.find('\n', pos);
+        if (e == std::string::npos) e = text.size();
+        std::string line = text.substr(pos, e - pos);
+        pos = e + 1;
         if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (section == 3) continue;
         if (line == "--scene--") { section = 1; continue; }
         if (line == "--state--") { section = 2; continue; }
+        if (version >= 2 && line == "--end--") { section = 3; continue; }
         if (section == 1) { sceneText += line; sceneText += '\n'; continue; }
         auto cols = SplitTabs(line);
         if (section == 0 && cols.size() >= 2) {
             if (cols[0] == "label") out.info.label = Unescape(cols[1]);
             else if (cols[0] == "scene") out.info.scene = Unescape(cols[1]);
             else if (cols[0] == "savedAt") out.info.savedAt = std::atoll(cols[1].c_str());
-            else if (cols[0] == "playTime") out.info.playTime = (float)std::atof(cols[1].c_str());
+            else if (cols[0] == "playTime") out.info.playTime = savefmt::ParseFloat(cols[1]);
         } else if (section == 2 && !cols.empty()) {
-            out.state.push_back(std::move(cols));
+            if (cols[0] == "kv") {
+                // A bad key row makes the whole slot unusable: it would replace the game's save keys.
+                if (cols.size() < 3 || cols[2].size() < 2 || cols[2][1] != ':') {
+                    if (error) *error = "Slot \"" + slot + "\" is damaged (bad saved-key line)";
+                    return ReadResult::Damaged;
+                }
+                out.kv.emplace_back(Unescape(cols[1]), Unescape(cols[2]));
+            } else {
+                out.state.push_back(std::move(cols));
+            }
         }
     }
     out.sceneText = std::move(sceneText);
-    return true;
+    return ReadResult::Ok;
+}
+
+// The slot, from its file or else from the .bak left by the last good save.
+bool ReadSave(const std::string& slot, Parsed& out, std::string* error) {
+    g_usedBackup = false;
+    const std::string path = SaveGame::SlotPath(slot);
+    std::string err;
+    const ReadResult r = ReadSaveFile(path, slot, out, &err);
+    if (r == ReadResult::Ok) return true;
+    if (r == ReadResult::Damaged) {
+        Parsed b;
+        std::string berr;
+        if (ReadSaveFile(path + ".bak", slot, b, &berr) == ReadResult::Ok) {
+            out = std::move(b);
+            g_usedBackup = true;
+            Log::Warning("Save slot ", slot, " was damaged; loaded its backup instead");
+            if (error) *error = "Slot \"" + slot + "\" was damaged (" + err + "); loaded the backup of the previous save instead";
+            return true;
+        }
+    }
+    if (error) *error = err;
+    return false;
 }
 
 // Put back what the scene text doesn't hold, after the loaded objects started.
@@ -156,19 +244,17 @@ void ApplyState(Scene& scene, const Parsed& p) {
         auto it = index.find(path);
         return it == index.end() ? nullptr : it->second;
     };
-    SaveFile& kv = Save::File(Save::DefaultFile());
-    bool kvTouched = false;
     for (const auto& c : p.state) {
         const std::string& kind = c[0];
         if (kind == "body3" && c.size() >= 3) {
             if (GameObject* g = find(c[1]))
                 if (auto* rb = g->GetComponent<Rigidbody3D>()) {
-                    std::istringstream is(c[2]); is >> rb->velocity.x >> rb->velocity.y >> rb->velocity.z;
+                    std::istringstream is(c[2]); is.imbue(std::locale::classic()); is >> rb->velocity.x >> rb->velocity.y >> rb->velocity.z;
                 }
         } else if (kind == "body2" && c.size() >= 3) {
             if (GameObject* g = find(c[1]))
                 if (auto* rb = g->GetComponent<Rigidbody2D>()) {
-                    std::istringstream is(c[2]); is >> rb->velocity.x >> rb->velocity.y;
+                    std::istringstream is(c[2]); is.imbue(std::locale::classic()); is >> rb->velocity.x >> rb->velocity.y;
                 }
         } else if ((kind == "script" || kind == "graph") && c.size() >= 5) {
             GameObject* g = find(c[1]);
@@ -182,12 +268,15 @@ void ApplyState(Scene& scene, const Parsed& p) {
                 auto graphs = g->GetComponents<VisualScriptComponent>();
                 if (nth < graphs.size()) graphs[nth]->SetVariable(c[3], v);
             }
-        } else if (kind == "kv" && c.size() >= 3) {
-            if (!kvTouched) { kv.Clear(); kvTouched = true; }
-            kv.SetRaw(Unescape(c[1]), Unescape(c[2]));
         }
     }
-    if (kvTouched) Save::Flush(Save::DefaultFile());
+    // The slot was checked whole when it was read, so replacing the game's keys is safe here.
+    if (!p.kv.empty()) {
+        SaveFile& kv = Save::File(Save::DefaultFile());
+        kv.Clear();
+        for (const auto& e : p.kv) kv.SetRaw(e.first, e.second);
+        Save::Flush(Save::DefaultFile());
+    }
     PlayBase() = p.info.playTime;
     PlayBaseAt() = Time::ElapsedTime();
 }
@@ -210,7 +299,7 @@ float SaveGame::PlayTime() { return PlayBase() + std::max(0.0f, Time::ElapsedTim
 bool SaveGame::Save(Scene& scene, const std::string& slot, const std::string& label, std::string* error) {
     if (!ValidSlot(slot)) { if (error) *error = "\"" + slot + "\" isn't a valid slot name (letters, digits, - and _)"; return false; }
     std::ostringstream out;
-    out << "okaygame 1\n";
+    out << "okaygame " << kFormatVersion << "\n";
     out << "label\t" << Escape(label) << "\n";
     out << "scene\t" << Escape(scene.Name()) << "\n";
     out << "savedAt\t" << (long long)std::time(nullptr) << "\n";
@@ -247,23 +336,27 @@ bool SaveGame::Save(Scene& scene, const std::string& slot, const std::string& la
     for (const auto& kv : Save::File(Save::DefaultFile()).Raw())
         out << "kv\t" << Escape(kv.first) << "\t" << Escape(kv.second) << "\n";
 
+    out << kEndLine;
+    std::string text = out.str();
+    // The checksum covers everything up to and including the end marker.
+    text += kSumKey + savefmt::Hex16(savefmt::Fnv1a(text.data(), text.size())) + "\n";
+
     const std::string path = SlotPath(slot);
     std::error_code ec;
     fs::create_directories(fs::path(path).parent_path(), ec);
-    // Write beside it, then swap in, so a crash mid-save never leaves a broken slot.
-    const std::string tmp = path + ".tmp";
-    {
-        std::ofstream f(tmp, std::ios::binary);
-        if (!f || !(f << out.str()) || !f.flush()) {
-            if (error) *error = "Couldn't write " + path;
-            return false;
-        }
+    // Keep the previous save as .bak, but only if it was a good one, so a damaged
+    // file never replaces the last good copy.
+    if (fs::is_regular_file(path, ec)) {
+        std::string old, why;
+        int v = 1;
+        if (savefmt::ReadFileCapped(path, g_maxBytes, old, &why) && ParseHeaderLine(old.substr(0, old.find('\n')), v) &&
+            v <= kFormatVersion && (v < 2 || VerifyChecksum(old, &why)))
+            savefmt::AtomicWrite(path + ".bak", old);
     }
-    fs::rename(tmp, path, ec);
-    if (ec) {
-        fs::remove(path, ec);
-        fs::rename(tmp, path, ec);
-        if (ec) { if (error) *error = "Couldn't write " + path; return false; }
+    // Write beside it, then swap in, so a crash mid-save never leaves a broken slot.
+    if (!savefmt::AtomicWrite(path, text)) {
+        if (error) *error = "Couldn't write " + path;
+        return false;
     }
     Log::Info("Saved game to slot ", slot);
     return true;
@@ -299,13 +392,67 @@ bool SaveGame::Exists(const std::string& slot) {
 
 bool SaveGame::Delete(const std::string& slot) {
     std::error_code ec;
-    return ValidSlot(slot) && fs::remove(SlotPath(slot), ec);
+    if (!ValidSlot(slot)) return false;
+    fs::remove(SlotPath(slot) + ".bak", ec);
+    fs::remove(SlotPath(slot) + ".tmp", ec);
+    return fs::remove(SlotPath(slot), ec);
 }
 
+namespace {
+// Just the header lines of one slot file (label, scene, time), read without the scene.
+bool ReadHeaderOnly(const std::string& path, const std::string& slot, SaveSlotInfo& info) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return false;
+    char buf[8192];
+    f.read(buf, sizeof(buf));
+    const std::string text(buf, (std::size_t)f.gcount());
+    int version = 1;
+    std::size_t pos = text.find('\n');
+    if (!ParseHeaderLine(text.substr(0, pos), version) || version > SaveGame::kFormatVersion) return false;
+    info = SaveSlotInfo();
+    info.slot = slot; info.exists = true; info.version = version;
+    while (pos != std::string::npos && pos + 1 < text.size()) {
+        const std::size_t start = pos + 1;
+        pos = text.find('\n', start);
+        if (pos == std::string::npos) break;   // a line cut by the buffer end: header is done
+        std::string line = text.substr(start, pos - start);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line == "--scene--" || line == "--state--") break;
+        auto cols = SplitTabs(line);
+        if (cols.size() < 2) continue;
+        if (cols[0] == "label") info.label = Unescape(cols[1]);
+        else if (cols[0] == "scene") info.scene = Unescape(cols[1]);
+        else if (cols[0] == "savedAt") info.savedAt = std::atoll(cols[1].c_str());
+        else if (cols[0] == "playTime") info.playTime = savefmt::ParseFloat(cols[1]);
+    }
+    return true;
+}
+} // namespace
+
 SaveSlotInfo SaveGame::Info(const std::string& slot) {
-    Parsed p;
-    if (!ValidSlot(slot) || !ReadSave(slot, p, nullptr)) { SaveSlotInfo i; i.slot = slot; return i; }
-    return p.info;
+    SaveSlotInfo i; i.slot = slot;
+    if (!ValidSlot(slot)) return i;
+    const std::string path = SlotPath(slot);
+    std::error_code ec;
+    if (!fs::exists(path, ec)) return i;
+    if (!ReadHeaderOnly(path, slot, i)) {
+        SaveSlotInfo b;
+        if (ReadHeaderOnly(path + ".bak", slot, b)) return b;   // main file unreadable: show the backup's
+        i = SaveSlotInfo(); i.slot = slot;
+    }
+    return i;
+}
+
+bool SaveGame::LastLoadUsedBackup() { return g_usedBackup; }
+
+void SaveGame::SetLimits(std::size_t maxFileBytes, std::size_t maxLines) {
+    g_maxBytes = maxFileBytes ? maxFileBytes : kDefaultMaxFileBytes;
+    g_maxLines = maxLines ? maxLines : kDefaultMaxLines;
+}
+
+void SaveGame::SetMigration(int fromVersion, Migration fn) {
+    if (fn) Migrations()[fromVersion] = std::move(fn);
+    else Migrations().erase(fromVersion);
 }
 
 std::vector<SaveSlotInfo> SaveGame::List() {

@@ -1,4 +1,5 @@
 #include "okay/Scene/SceneSerializer.hpp"
+#include <iostream>
 #include "okay/Animation/HumanoidLibrary.hpp"
 #include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Components/Seat.hpp"
@@ -153,6 +154,9 @@
 #include "okay/Components/LimbIK.hpp"
 #include "okay/Components/ChainIK.hpp"
 #include "okay/Components/FullBodyIK.hpp"
+#include "okay/Components/IKTarget.hpp"
+#include "okay/Components/AimOffset.hpp"
+#include "okay/Components/PoseCapture.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Components/HoldPrompt.hpp"
 #include "okay/Components/RootMotion.hpp"
@@ -735,6 +739,11 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             !ma->crawlClip.empty() || !ma->getUpClip.empty())
             out << "  modelanimstance " << Quote(ma->crouchClip) << " " << Quote(ma->crouchWalkClip)
                 << " " << Quote(ma->proneClip) << " " << Quote(ma->crawlClip) << " " << Quote(ma->getUpClip) << "\n";
+        if (ma->HasDirectionalClips())
+            out << "  modelanimdir " << Quote(ma->strafeLeftClip) << " " << Quote(ma->strafeRightClip)
+                << " " << Quote(ma->walkBackClip) << " " << Quote(ma->runBackClip) << "\n";
+        if (ma->legsFollowTravel)
+            out << "  modelanimlegs 1\n";
         // Crossfade + clip events — separate optional records (older scenes lack them).
         out << "  modelanimblend " << ma->blendTime << "\n";
         if (ma->rootMotion || ma->rootMotionY || !ma->rootMotionNode.empty() || ma->rootMotionRotation || ma->rootMotionApplyTo)
@@ -873,6 +882,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         if (anyFb) {
             out << "  animsmfb " << asm2->states.size();
             for (const auto& st : asm2->states) out << " " << st.fullBodyIkWeight;
+            out << "\n";
+        }
+        // Look-At / Aim weight, where it stops following the foot weight.
+        bool anyLook = false;
+        for (const auto& st : asm2->states) anyLook = anyLook || st.lookWeight != 1.0f;
+        if (anyLook) {
+            out << "  animsmlk " << asm2->states.size();
+            for (const auto& st : asm2->states) out << " " << st.lookWeight;
             out << "\n";
         }
         // Per-state IK weight curves (foot, then full-body). Written only when
@@ -1292,6 +1309,19 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             << " " << a->weight << " " << a->maxAngle
             << " " << a->target.x << " " << a->target.y << " " << a->target.z
             << " " << a->smoothing << "\n";
+    }
+    if (auto* t = go->GetComponent<IKTarget>()) {
+        out << "  iktarget " << t->limb << " " << Quote(t->characterName)
+            << " " << t->weight << " " << t->blendTime << "\n";
+    }
+    if (auto* ao = go->GetComponent<AimOffset>()) {
+        out << "  aimoffset " << (ao->useCamera ? 1 : 0) << " " << Quote(ao->targetName)
+            << " " << ao->weight << " " << ao->pitchClamp << " " << ao->yawClamp
+            << " " << ao->spineWeight << " " << ao->chestWeight << " " << ao->armWeight
+            << " " << ao->kick << " " << ao->recovery << "\n";
+    }
+    if (auto* pc = go->GetComponent<PoseCapture>()) {
+        out << "  posecap " << Quote(pc->clipName) << " " << pc->recordSeconds << "\n";
     }
     if (auto* l = go->GetComponent<LookAtIK>()) {
         out << "  lookatik " << Quote(l->targetName)
@@ -3440,11 +3470,14 @@ static void CompleteViewToggle(Scene& scene, GameObject* go) {
     }
 }
 
-// Parse a document into `scene`. If `clear` is false, objects are appended
-// (used by Instantiate); `firstNew` receives the first created GameObject.
-static bool ParseInto(Scene& scene, const std::string& text, bool clear,
-                      GameObject** firstNew, std::string* error) {
-    if (clear) scene.Clear();
+// Parse a document into `scene`, which the caller has already cleared if it is
+// a full load. If `clear` is false, objects are appended (used by Instantiate);
+// `firstNew` receives the first created GameObject. Unknown records are skipped
+// and named in `warnings`. This writes straight into `scene`, so ParseInto below
+// only runs it on a scene that a failure can't hurt.
+static bool ParseCore(Scene& scene, const std::string& text, bool clear,
+                      GameObject** firstNew, std::string* error,
+                      std::vector<std::string>* warnings) {
     std::istringstream in(text);
     std::string token;
 
@@ -3452,7 +3485,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
         if (error) *error = "missing 'okayscene' header";
         return false;
     }
-    int version = 0; in >> version;
+    int version = 0;
+    if (!(in >> version) || version < 1) {
+        if (error) *error = "bad 'okayscene' version";
+        return false;
+    }
+    auto warn = [&](const std::string& what) { if (warnings) warnings->push_back(what); };
+    if (version > SceneSerializer::kSceneFormatVersion)
+        warn("scene is format version " + std::to_string(version) + ", newer than this build reads (" +
+             std::to_string(SceneSerializer::kSceneFormatVersion) + "); loading what is understood");
+    // Skip the rest of the current line: records are one per line, so an unknown
+    // one can be stepped over without knowing what its values mean.
+    auto skipLine = [&]() { std::string rest; std::getline(in, rest); };
 
     // file index -> created GameObject, plus deferred parent links.
     std::unordered_map<int, GameObject*> byIndex;
@@ -3564,6 +3608,8 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
             int idx = -1;
             in >> idx;
             std::string name = ReadQuoted(in);
+            if (!in) return bad("truncated gameobject header");
+            if (byIndex.count(idx)) return bad("duplicate gameobject index " + std::to_string(idx));
             GameObject* go = scene.CreateGameObject(name);
             if (firstNew && !*firstNew) *firstNew = go;
             byIndex[idx] = go;
@@ -3577,7 +3623,9 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
             };
 
             std::string field;
-            while (in >> field && field != "end") {
+            bool sawEnd = false;
+            while (in >> field) {
+                if (field == "end") { sawEnd = true; break; }
                 if (field == "active") { int a = 1; in >> a; go->active = (a != 0); }
                 else if (field == "tag") { go->tag = ReadQuoted(in); }
                 else if (field == "static") { int s = 0; in >> s; go->isStatic = (s != 0); }
@@ -3904,6 +3952,18 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ma->proneClip      = ReadQuoted(in);
                     ma->crawlClip      = ReadQuoted(in);
                     ma->getUpClip      = ReadQuoted(in);
+                } else if (field == "modelanimdir") {
+                    auto* ma = go->GetComponent<ModelAnimator>();
+                    if (!ma) ma = go->AddComponent<ModelAnimator>();
+                    ma->strafeLeftClip  = ReadQuoted(in);
+                    ma->strafeRightClip = ReadQuoted(in);
+                    ma->walkBackClip    = ReadQuoted(in);
+                    ma->runBackClip     = ReadQuoted(in);
+                } else if (field == "modelanimlegs") {
+                    auto* ma = go->GetComponent<ModelAnimator>();
+                    if (!ma) ma = go->AddComponent<ModelAnimator>();
+                    int lf = 0; in >> lf;
+                    ma->legsFollowTravel = (lf != 0);
                 } else if (field == "modelanimblend") {
                     auto* ma = go->GetComponent<ModelAnimator>();
                     if (!ma) ma = go->AddComponent<ModelAnimator>();
@@ -4151,6 +4211,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     for (long i = 0; i < n && in; ++i) {
                         float w = -1.0f; in >> w;
                         if (i < (long)sm2->states.size()) sm2->states[i].fullBodyIkWeight = w;
+                    }
+                } else if (field == "animsmlk") {
+                    auto* sm2 = smFor();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n && in; ++i) {
+                        float w = -1.0f; in >> w;
+                        if (i < (long)sm2->states.size()) sm2->states[i].lookWeight = w;
                     }
                 } else if (field == "animsmfall") {
                     auto* sm2 = smFor();
@@ -4455,6 +4522,24 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     { std::string rest; std::getline(in, rest);
                       std::istringstream rs(rest); float sm;
                       if (rs >> sm) a->smoothing = sm; }
+                } else if (field == "iktarget") {
+                    auto* t = go->AddComponent<IKTarget>();
+                    in >> t->limb;
+                    t->characterName = ReadQuoted(in);
+                    in >> t->weight >> t->blendTime;
+                } else if (field == "aimoffset") {
+                    auto* ao = go->AddComponent<AimOffset>();
+                    int cam = 1;
+                    in >> cam;
+                    ao->useCamera = cam != 0;
+                    ao->targetName = ReadQuoted(in);
+                    in >> ao->weight >> ao->pitchClamp >> ao->yawClamp
+                       >> ao->spineWeight >> ao->chestWeight >> ao->armWeight
+                       >> ao->kick >> ao->recovery;
+                } else if (field == "posecap") {
+                    auto* pc = go->AddComponent<PoseCapture>();
+                    pc->clipName = ReadQuoted(in);
+                    in >> pc->recordSeconds;
                 } else if (field == "lookatik") {
                     auto* l = go->AddComponent<LookAtIK>();
                     l->targetName = ReadQuoted(in);
@@ -4571,10 +4656,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                 } else if (field == "chainx2") {
                     // Newer ChainIK data: pole mode/direction + per-joint limits.
                     if (auto* ci = go->GetComponent<ChainIK>()) {
-                        std::size_t nl = 0;
+                        long long nl = 0;
                         in >> ci->poleMode >> ci->poleDir.x >> ci->poleDir.y >> ci->poleDir.z >> nl;
-                        ci->limits.assign(nl, {});
-                        for (std::size_t k = 0; k < nl && in; ++k) {
+                        if (!in || !countOk(nl, 7)) return bad("chainx2: bad limit count");
+                        ci->limits.assign((std::size_t)nl, {});
+                        for (std::size_t k = 0; k < (std::size_t)nl && in; ++k) {
                             IKJointLimit& l = ci->limits[k];
                             int ty = 0, aa = 1;
                             in >> ty >> l.swingMax >> l.hingeMin >> l.hingeMax >> l.twistMin >> l.twistMax >> aa;
@@ -7780,14 +7866,21 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     ReadCurveKv(k, "w", tr->widthCurve);
                     ReadGradientKv(k, "g", tr->colorGradient);
                 } else {
-                    if (error) *error = "unknown field '" + field + "'";
-                    return false;
+                    // A newer build's field: one record per line, so step over it.
+                    warn("skipped unknown field '" + field + "' on object " + std::to_string(idx));
+                    skipLine();
                 }
             }
+            // A read that ran off the end (or choked) leaves the stream failed, so
+            // the loop above stopped without finding 'end'.
+            if (!sawEnd)
+                return bad("object " + std::to_string(idx) + " is cut short (no 'end')");
         } else {
-            if (error) *error = "unexpected token '" + token + "'";
-            return false;
+            // A newer build's top-level record (see the field case above).
+            warn("skipped unknown record '" + token + "'");
+            skipLine();
         }
+        if (in.fail()) return bad("malformed or truncated '" + token + "' record");
     }
 
     // Resolve parent links now that every object exists. A link that would make
@@ -7834,8 +7927,47 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
     return true;
 }
 
-bool SceneSerializer::Deserialize(Scene& scene, const std::string& text, std::string* error) {
-    return ParseInto(scene, text, /*clear=*/true, /*firstNew=*/nullptr, error);
+// Parse `text` into `scene` or leave `scene` as it was. A full load (clear) is
+// checked first by building everything in a throwaway Scene, and the live scene
+// is cleared and filled only once that pass succeeded. An appended load
+// (Instantiate, merge) is a hot path, so it parses once, straight into the
+// scene, and on failure destroys what it added. Everything a parse creates is
+// new (parent links only join objects of the same document), so nothing that
+// was already in the scene points at the rolled-back objects.
+static bool ParseInto(Scene& scene, const std::string& text, bool clear,
+                      GameObject** firstNew, std::string* error,
+                      std::vector<std::string>* warnings = nullptr) {
+    std::vector<std::string> found;
+    auto report = [&]() {
+        if (warnings) warnings->insert(warnings->end(), found.begin(), found.end());
+        else for (const auto& w : found) std::cerr << "[scene] warning: " << w << "\n";
+    };
+    if (clear) {
+        {
+            Scene probe("probe");
+            if (!ParseCore(probe, text, true, nullptr, error, &found)) return false;
+        }
+        report();
+        scene.Clear();
+        return ParseCore(scene, text, true, firstNew, error, nullptr);   // accepted above
+    }
+    const std::size_t base = scene.Objects().size();
+    GameObject* first = nullptr;
+    if (ParseCore(scene, text, false, &first, error, &found)) {
+        report();
+        if (firstNew && !*firstNew) *firstNew = first;
+        return true;
+    }
+    std::vector<GameObject*> added;
+    for (std::size_t i = base; i < scene.Objects().size(); ++i) added.push_back(scene.Objects()[i].get());
+    for (GameObject* go : added) scene.Destroy(go);   // detaches each from any parent too
+    scene.FlushDestroyed();
+    return false;
+}
+
+bool SceneSerializer::Deserialize(Scene& scene, const std::string& text, std::string* error,
+                                  std::vector<std::string>* warnings) {
+    return ParseInto(scene, text, /*clear=*/true, /*firstNew=*/nullptr, error, warnings);
 }
 
 std::string SceneSerializer::SerializeObject(const GameObject& root) {
@@ -7869,6 +8001,7 @@ std::string SceneSerializer::SerializeObject(const GameObject& root) {
             auto it = localIndex.find(parent->gameObject);
             if (it != localIndex.end()) pIdx = it->second;
         }
+        if (!go->prefabSource.empty()) out << "  prefab " << Quote(go->prefabSource) << "\n";
         out << "  parent " << pIdx << "\n";
         WriteComponents(out, go);
         out << "end\n";
@@ -7879,7 +8012,11 @@ std::string SceneSerializer::SerializeObject(const GameObject& root) {
 GameObject* SceneSerializer::Instantiate(Scene& scene, const GameObject& prefab) {
     std::string text = SerializeObject(prefab);
     GameObject* root = nullptr;
-    ParseInto(scene, text, /*clear=*/false, &root, nullptr);
+    std::string error;
+    if (!ParseInto(scene, text, /*clear=*/false, &root, &error)) {
+        std::cerr << "[scene] Instantiate failed: " << error << "\n";
+        return nullptr;
+    }
     return root;
 }
 
@@ -7891,14 +8028,14 @@ bool SceneSerializer::SaveObjectToFile(const GameObject& root, const std::string
 }
 
 GameObject* SceneSerializer::InstantiateFromFile(Scene& scene, const std::string& path,
-                                                 std::string* error) {
+                                                 std::string* error, std::vector<std::string>* warnings) {
     std::ifstream f(path, std::ios::binary);
     if (!f) { if (error) *error = "cannot open " + path; return nullptr; }
     std::stringstream ss; ss << f.rdbuf();
     std::string text = DataPack::Unpack(ss.str());   // decode if obfuscated
     if (text.empty() && DataPack::IsPacked(ss.str())) { if (error) *error = "tampered or unreadable " + path; return nullptr; }
     GameObject* root = nullptr;
-    if (!ParseInto(scene, text, /*clear=*/false, &root, error)) return nullptr;
+    if (!ParseInto(scene, text, /*clear=*/false, &root, error, warnings)) return nullptr;
     // Link the new instance to its source prefab so the editor can apply/revert
     // and reload it. Only the root carries the link.
     if (root) root->prefabSource = path;
@@ -7906,9 +8043,9 @@ GameObject* SceneSerializer::InstantiateFromFile(Scene& scene, const std::string
 }
 
 GameObject* SceneSerializer::InstantiateFromText(Scene& scene, const std::string& text,
-                                                 std::string* error) {
+                                                 std::string* error, std::vector<std::string>* warnings) {
     GameObject* root = nullptr;
-    if (!ParseInto(scene, text, /*clear=*/false, &root, error)) return nullptr;
+    if (!ParseInto(scene, text, /*clear=*/false, &root, error, warnings)) return nullptr;
     return root;
 }
 
@@ -7962,7 +8099,8 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
     return out;
 }
 
-bool SceneSerializer::LoadFromFile(Scene& scene, const std::string& path, std::string* error) {
+bool SceneSerializer::LoadFromFile(Scene& scene, const std::string& path, std::string* error,
+                                   std::vector<std::string>* warnings) {
     std::ifstream f(path, std::ios::binary);
     if (!f) { if (error) *error = "cannot open " + path; return false; }
     std::stringstream ss;
@@ -7974,16 +8112,17 @@ bool SceneSerializer::LoadFromFile(Scene& scene, const std::string& path, std::s
     const std::size_t slash = path.find_last_of("/\\");
     const std::string prevDir = g_loadingSceneDir;
     g_loadingSceneDir = slash == std::string::npos ? std::string() : path.substr(0, slash + 1);
-    const bool ok = Deserialize(scene, text, error);
+    const bool ok = Deserialize(scene, text, error, warnings);
     g_loadingSceneDir = prevDir;
     return ok;
 }
 
 bool SceneSerializer::MergeFromText(Scene& scene, const std::string& text, const Vec3& offset,
-                                    std::vector<GameObject*>* addedRoots, std::string* error) {
+                                    std::vector<GameObject*>* addedRoots, std::string* error,
+                                    std::vector<std::string>* warnings) {
     std::size_t base = scene.Objects().size();          // everything from here is new
     GameObject* first = nullptr;
-    if (!ParseInto(scene, text, /*clear=*/false, &first, error)) return false;
+    if (!ParseInto(scene, text, /*clear=*/false, &first, error, warnings)) return false;
     const bool shift = (offset.x != 0.0f || offset.y != 0.0f || offset.z != 0.0f);
     const auto& objs = scene.Objects();
     for (std::size_t i = base; i < objs.size(); ++i) {
@@ -7998,7 +8137,8 @@ bool SceneSerializer::MergeFromText(Scene& scene, const std::string& text, const
 }
 
 bool SceneSerializer::MergeFromFile(Scene& scene, const std::string& path, const Vec3& offset,
-                                    std::vector<GameObject*>* addedRoots, std::string* error) {
+                                    std::vector<GameObject*>* addedRoots, std::string* error,
+                                    std::vector<std::string>* warnings) {
     std::ifstream f(path, std::ios::binary);
     if (!f) { if (error) *error = "cannot open " + path; return false; }
     std::stringstream ss;
@@ -8006,7 +8146,7 @@ bool SceneSerializer::MergeFromFile(Scene& scene, const std::string& path, const
     std::string raw = ss.str();
     std::string text = DataPack::Unpack(raw);
     if (text.empty() && DataPack::IsPacked(raw)) { if (error) *error = "tampered or unreadable " + path; return false; }
-    return MergeFromText(scene, text, offset, addedRoots, error);
+    return MergeFromText(scene, text, offset, addedRoots, error, warnings);
 }
 
 } // namespace okay

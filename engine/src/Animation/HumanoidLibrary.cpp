@@ -317,6 +317,7 @@ void DefaultGraph(AnimStateMachine& sm, const Character* body) {
     // Gestures and emotions (a script's play_clip, `anim`): they last until the body moves off.
     for (const char* g : {"Wave", "Point", "Clap", "ThumbsUp", "Salute", "WaveBoth", "Cheer", "Sad", "Angry", "Think"}) {
         SM::State s = Clip(g, g);
+        s.lookWeight = 0.0f;   // Wave, Cheer and the rest: the head plays the gesture
         StandOff(s.transitions, {}, 0.2f, true);
         dropFirst(s);
         sm.states.push_back(s);

@@ -144,7 +144,7 @@ public:
         for (std::size_t i = 0; i < chain.size(); ++i) {
             Transform* b = chain[i];
             if (!b) continue;
-            if (hands && !NeckOrHead(b)) continue;
+            if (hands && TurnsTheShoulder(b)) continue;
             Smooth& s = m_smooth[i];
             if (s.bone != b) { s = {}; s.bone = b; }
 
@@ -251,11 +251,13 @@ private:
         }
         return false;
     }
-    /// Neck and head sit above the shoulders. Spine and chest do not.
-    static bool NeckOrHead(const Transform* b) {
+    /// Spine, chest, and limb bones move the shoulders. Neck, head, and a
+    /// bone this rig doesn't classify (often the head tip) still look.
+    static bool TurnsTheShoulder(const Transform* b) {
         if (!b || !b->gameObject) return false;
         const int id = FullBodyIK::Classify(b->gameObject->name);
-        return id == FullBodyIK::Neck || id == FullBodyIK::Head;
+        if (id < 0) return false;
+        return id != FullBodyIK::Neck && id != FullBodyIK::Head;
     }
     std::vector<Smooth> m_smooth;
     Vec3 m_tgtChar = Vec3::Zero;

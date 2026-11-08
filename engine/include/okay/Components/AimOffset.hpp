@@ -50,8 +50,7 @@ public:
     float RecoilPitch() const { return m_recoil; }
 
     void Start() override {
-        if (!target && gameObject && gameObject->scene() && !targetName.empty())
-            if (GameObject* g = gameObject->scene()->Find(targetName)) target = g->transform;
+        ResolveTarget();
         Gather();
     }
 
@@ -61,6 +60,29 @@ public:
 
     void Preview(float dt) { Solve(dt); }
 
+    /// Edit mode turned the component off: put the bones back.
+    void ReleasePreview() {
+        m_restore.Restore();
+        m_bones.clear();
+        m_aimFrom = nullptr;
+        m_gathered = false;
+    }
+
+    void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying) override {
+        if (target && target->gameObject && dying.count(target->gameObject)) target = nullptr;
+        auto going = [&](Transform* t) {
+            return t && t->gameObject && dying.count(t->gameObject);
+        };
+        bool bone = going(m_aimFrom);
+        for (const Bone& b : m_bones) if (going(b.t)) bone = true;
+        if (bone) {
+            m_restore.Clear();
+            m_bones.clear();
+            m_aimFrom = nullptr;
+            m_gathered = false;
+        }
+    }
+
 private:
     struct Bone { Transform* t = nullptr; float w = 0.0f; };
     std::vector<Bone> m_bones;
@@ -68,6 +90,7 @@ private:
     IKRestore m_restore;
     float m_recoil = 0.0f;
     bool m_gathered = false;
+    float m_gotSpine = -1.0f, m_gotChest = -1.0f, m_gotArm = -1.0f;
 
     void Gather() {
         m_bones.clear();
@@ -105,6 +128,17 @@ private:
         m_aimFrom = !chests.empty() ? chests.back() : head;
         if (!m_aimFrom && !spines.empty()) m_aimFrom = spines.back();
         if (!m_aimFrom) m_aimFrom = head;
+        m_gotSpine = spineWeight;
+        m_gotChest = chestWeight;
+        m_gotArm = armWeight;
+    }
+
+    void ResolveTarget() {
+        if (!gameObject || !gameObject->scene()) return;
+        if (target && target->gameObject && !targetName.empty() && target->gameObject->name != targetName)
+            target = nullptr;
+        if (!target && !targetName.empty())
+            if (GameObject* g = gameObject->scene()->Find(targetName)) target = g->transform;
     }
 
     Transform* CameraTransform() const {
@@ -150,13 +184,16 @@ private:
 
     void Solve(float dt) {
         m_restore.Restore();
-        if (!m_gathered) Gather();
+        // Bone weights are read when the bones are gathered. A later edit in
+        // the inspector (or a rig that appears after Start) has to gather again.
+        if (!m_gathered || m_bones.empty() ||
+            m_gotSpine != spineWeight || m_gotChest != chestWeight || m_gotArm != armWeight)
+            Gather();
         if (recovery > 1e-4f)
             m_recoil += (0.0f - m_recoil) * (1.0f - std::exp(-recovery * dt));
         if (!transform || weight <= 0.0f || m_bones.empty()) { m_restore.Commit(); return; }
 
-        if (!target && !targetName.empty() && gameObject->scene())
-            if (GameObject* g = gameObject->scene()->Find(targetName)) target = g->transform;
+        ResolveTarget();
 
         // The body's facing, not this object's local -Z. An imported Mixamo
         // model is yawed 180 so its mesh faces -Z, and its local +X is then the
@@ -167,6 +204,7 @@ private:
         Vec3 aim = from + facing * 8.0f;
         bool haveCamPitch = false;
         float camRelPitch = 0.0f;
+        Vec3 camDir{0, 0, -1};
         if (target) aim = target->Position();
         else if (useCamera) {
             if (Transform* cam = CameraTransform()) {
@@ -174,6 +212,7 @@ private:
                 const float dlen = std::sqrt(dir.SqrMagnitude());
                 if (dlen > 1e-6f) {
                     dir = dir * (1.0f / dlen);
+                    camDir = dir;
                     // Crosshair: a hit along the view, otherwise a point far enough
                     // that the shoulder offset does not tilt the aim.
                     const float reach = 80.0f;
@@ -193,6 +232,14 @@ private:
             }
         }
         Vec3 to = aim - from;
+        if (haveCamPitch) {
+            // The crosshair heading is the camera's forward. A hit on the
+            // ground a step ahead sits off to the shoulder side and yawed the
+            // chest while the body was still looking ahead. Pitch stays the
+            // angle off the resting orbit, above.
+            Vec3 heading{camDir.x, 0.0f, camDir.z};
+            if (heading.SqrMagnitude() > 1e-8f) to = heading.Normalized();
+        }
         if (to.SqrMagnitude() < 1e-8f) { m_restore.Commit(); return; }
         const float yaw = Mathf::Clamp(std::atan2(Vec3::Dot(to, right), Vec3::Dot(to, facing)) * Mathf::Rad2Deg,
                                         -std::fabs(yawClamp), std::fabs(yawClamp));

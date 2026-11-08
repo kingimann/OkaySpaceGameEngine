@@ -470,6 +470,10 @@ void Scene::FlushDestroyed() {
         if (live) {
             std::vector<Component*> own;   // copy: OnDestroy may add components / objects
             for (Component* c : m_active) if (c && c->gameObject == go) own.push_back(c);
+            // Not started yet (edit mode, before Play): still release what it
+            // grabbed. An IK target deleted before Play otherwise left the limb
+            // reaching for a freed transform.
+            for (Component* c : m_pending) if (c && c->gameObject == go) own.push_back(c);
             for (Component* c : own) c->OnDestroy();
         }
         auto isOwned = [go](Component* c) { return !c || c->gameObject == go; };

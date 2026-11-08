@@ -78,9 +78,11 @@ public:
         else { m_layerMask[a] &= ~(1u << b); m_layerMask[b] &= ~(1u << a); }
     }
     bool LayersCollide(int a, int b) const {
-        if (a < 0 || a > 31 || b < 0 || b > 31) return true;
-        return (m_layerMask[a] >> b) & 1u;
+        return (m_layerMask[a & 31] >> (b & 31)) & 1u;   // wraps like the query masks do
     }
+    /// Bit b set = layer b collides with `layer` (usable as a query layerMask).
+    std::uint32_t CollisionMask(int layer) const { return m_layerMask[layer & 31]; }
+    void ResetLayerCollisions() { for (int i = 0; i < 32; ++i) m_layerMask[i] = 0xFFFFFFFFu; }
 
     // ---- Scene queries -------------------------------------------------
     /// While one of these is alive, scene queries (raycasts, sweeps, overlaps)

@@ -61,8 +61,10 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
+#include "okay/Scene/ComponentSerializer.hpp"
 #include "okay/Scene/SceneLocalization.hpp"
 #include "okay/Scene/SceneManager.hpp"
+#include "okay/Scene/ObjectPool.hpp"
 
 // Graphics assets
 #include "okay/Graphics/Image.hpp"

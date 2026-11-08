@@ -1,7 +1,12 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
+#include <atomic>
+#include <chrono>
 #include <mutex>
+#include <random>
+#include <typeindex>
+#include <unordered_set>
 #include <unordered_map>
 
 namespace okay {
@@ -12,12 +17,93 @@ namespace {
 std::mutex g_registryMutex;
 std::unordered_map<std::uint64_t, GameObject*> g_registry;
 std::uint64_t g_nextInstanceId = 1;
+
+std::mutex g_rulesMutex;
+std::atomic<bool> g_anyRules{false};
+std::unordered_map<std::type_index, std::vector<ComponentRules::Requirement>> g_requirements;
+std::unordered_set<std::type_index> g_unique;
+thread_local std::vector<std::type_index> t_applying;   // owners whose requirements are being added
+std::string NewGuid() {   // caller holds g_registryMutex
+    static std::mt19937_64 rng{std::random_device{}() ^ (std::uint64_t)std::chrono::steady_clock::now().time_since_epoch().count()};
+    static const char* hex = "0123456789abcdef";
+    std::string g(32, '0');
+    for (int w = 0; w < 2; ++w) {
+        std::uint64_t v = rng();
+        for (int i = 0; i < 16; ++i) { g[(std::size_t)(w * 16 + i)] = hex[v & 15u]; v >>= 4; }
+    }
+    return g;
+}
 } // namespace
+
+void ComponentRules::AddRequirement(std::type_index owner, Requirement req) {
+    std::lock_guard<std::mutex> lock(g_rulesMutex);
+    auto& v = g_requirements[owner];
+    for (const auto& r : v) if (r.type == req.type) return;   // already declared
+    v.push_back(req);
+    g_anyRules = true;
+}
+void ComponentRules::SetUnique(std::type_index owner) {
+    std::lock_guard<std::mutex> lock(g_rulesMutex);
+    g_unique.insert(owner);
+    g_anyRules = true;
+}
+bool ComponentRules::Any() { return g_anyRules.load(std::memory_order_relaxed); }
+bool ComponentRules::IsUnique(std::type_index owner) {
+    std::lock_guard<std::mutex> lock(g_rulesMutex);
+    return g_unique.count(owner) != 0;
+}
+std::vector<ComponentRules::Requirement> ComponentRules::RequirementsOf(std::type_index owner) {
+    std::lock_guard<std::mutex> lock(g_rulesMutex);
+    auto it = g_requirements.find(owner);
+    return it == g_requirements.end() ? std::vector<Requirement>{} : it->second;
+}
+void ComponentRules::Clear() {
+    std::lock_guard<std::mutex> lock(g_rulesMutex);
+    g_requirements.clear(); g_unique.clear(); g_anyRules = false;
+}
+
+void GameObject::ApplyRequirements(std::type_index owner) {
+    for (const auto& t : t_applying) if (t == owner) return;   // A needs B needs A: stop the loop
+    const auto reqs = ComponentRules::RequirementsOf(owner);
+    if (reqs.empty()) return;
+    t_applying.push_back(owner);
+    for (const auto& r : reqs) {
+        bool inProgress = false;   // that type is itself being added further up: it is coming
+        for (const auto& t : t_applying) if (t == r.type) inProgress = true;
+        if (!inProgress && !r.has(*this)) r.add(*this);
+    }
+    t_applying.pop_back();
+}
+
+Component* GameObject::RequiredBy(const Component* component) const {
+    if (!component || !ComponentRules::Any()) return nullptr;
+    for (const auto& c : m_components) {
+        if (c.get() == component) continue;
+        for (const auto& r : ComponentRules::RequirementsOf(typeid(*c)))
+            if (r.type == std::type_index(typeid(*component))) {
+                // Only blocks if no other component could still satisfy it.
+                int providers = 0;
+                for (const auto& o : m_components)
+                    if (o.get() != component && std::type_index(typeid(*o)) == r.type) ++providers;
+                if (providers == 0) return c.get();
+            }
+    }
+    return nullptr;
+}
+
+bool GameObject::SetGuid(const std::string& guid) {
+    if (guid.empty() || guid.size() > 64) return false;
+    for (char c : guid)
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || c == '-')) return false;
+    m_guid = guid;
+    return true;
+}
 
 GameObject::GameObject(Scene* scene, std::string name)
     : name(std::move(name)), m_scene(scene) {
     std::lock_guard<std::mutex> lock(g_registryMutex);
     m_instanceId = g_nextInstanceId++;
+    m_guid = NewGuid();
     g_registry[m_instanceId] = this;
 }
 

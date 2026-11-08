@@ -65,6 +65,36 @@ bool SceneManager::LoadScene(Scene& scene, int index) {
     return true;
 }
 
+int SceneManager::LoadSceneAsync(Scene& scene, int index, Scene::AsyncLoadOptions opts) {
+    auto& l = list();
+    if (index < 0 || index >= (int)l.size()) return 0;
+    const bool replaces = !opts.additive;
+    if (replaces) {
+        auto done = std::move(opts.onDone);
+        opts.onDone = [index, done](bool ok) {
+            if (ok) LoadedIndex() = index;
+            activeIndex() = LoadedIndex();
+            if (done) done(ok);
+        };
+    }
+    const int h = scene.BeginAsyncLoad(l[index], std::move(opts));
+    if (h && replaces) activeIndex() = index;
+    return h;
+}
+
+int SceneManager::LoadSceneAsyncByName(Scene& scene, const std::string& nameOrPath, Scene::AsyncLoadOptions opts) {
+    int idx = IndexOf(nameOrPath);
+    if (idx >= 0) return LoadSceneAsync(scene, idx, std::move(opts));
+    if (nameOrPath.find('.') != std::string::npos || nameOrPath.find('/') != std::string::npos)
+        return scene.BeginAsyncLoad(nameOrPath, std::move(opts));   // raw path, as LoadSceneByName allows
+    return 0;
+}
+
+bool  SceneManager::IsLoading(const Scene& s, int h) { return s.IsLoading(h); }
+bool  SceneManager::IsLoaded(const Scene& s, int h) { return s.IsLoaded(h); }
+float SceneManager::LoadProgress(const Scene& s, int h) { return s.LoadProgress(h); }
+bool  SceneManager::UnloadScene(Scene& s, int h) { return s.UnloadAdditive(h); }
+
 bool SceneManager::LoadSceneByName(Scene& scene, const std::string& nameOrPath) {
     int idx = IndexOf(nameOrPath);
     if (idx >= 0) return LoadScene(scene, idx);

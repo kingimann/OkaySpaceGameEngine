@@ -92,6 +92,7 @@ add_library(okay_engine
     src/Components/CharacterAnimBackend.cpp
     src/Animation/HumanoidMotion.cpp
     src/Animation/HumanoidLibrary.cpp
+    src/Animation/PlayerSetup.cpp
     src/Animation/HumanoidActions.cpp
     src/Components/AnimClip.cpp
     src/Components/Sequence.cpp

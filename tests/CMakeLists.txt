@@ -1015,6 +1015,11 @@ target_link_libraries(test_make_playable PRIVATE okay::engine)
 target_compile_definitions(test_make_playable PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME make_playable COMMAND test_make_playable)
 
+add_executable(test_player_setup test_player_setup.cpp)
+target_link_libraries(test_player_setup PRIVATE okay::engine)
+target_compile_definitions(test_player_setup PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME player_setup COMMAND test_player_setup)
+
 add_executable(test_rig_sweep test_rig_sweep.cpp)
 target_link_libraries(test_rig_sweep PRIVATE okay::engine)
 target_compile_definitions(test_rig_sweep PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

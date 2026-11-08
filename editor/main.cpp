@@ -32,6 +32,7 @@
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Core/Profiler.hpp"        // CPU/GPU frame profiler
 #include "okay/Animation/HumanoidLibrary.hpp"  // built-in clip names in the Animator clip slot
+#include "okay/Animation/PlayerSetup.hpp"      // controller: wire missing animation and IK
 #include "okay/Animation/ClipGraph.hpp"       // an Animator graph from an imported model's clips
 #include "okay/Scene/UITemplates.hpp"    // prebuilt, droppable UI screens (UI > Prebuilt Screens)
 #include "okay/Components/SettingsScreen.hpp"
@@ -7243,8 +7244,44 @@ static void CharacterModelTools(EditorState& ed, GameObject* go, const char* id)
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Import a 3D model and use it as this player's body: auto-sized,\nfeet grounded, turned to face forward, collider fitted and its\nidle/walk/run clips wired. Or drop a model asset onto this object.");
     GameObject* model = okay::FindCharacterModelRoot(ed.scene(), go);
+    // The Player Controller panel is the one place for this on a switchable
+    // player. The Character header still has Set Character Model, and would
+    // otherwise repeat the same checklist.
+    const bool showSetup = std::strcmp(id, "char") != 0 || !okay::PlayerController::Of(go);
+    const okay::PlayerAnimStatus setup = showSetup ? okay::InspectPlayerAnimation(ed.scene(), go) : okay::PlayerAnimStatus{};
+    if (showSetup && !setup.hasModel) {
+        ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f), "No character model.");
+        ImGui::TextWrapped("Set Character Model, or right-click a model file and choose Make Playable Character. A new player starts in third person. V switches to the eyes. Player Controller, View, changes that.");
+    } else if (showSetup) {
+        const ImVec4 good(0.45f, 0.85f, 0.55f, 1.0f), warn(0.95f, 0.75f, 0.35f, 1.0f);
+        ImGui::TextUnformatted("Rig:");
+        ImGui::SameLine();
+        ImGui::TextColored(setup.bones >= 8 ? good : warn, "%d/15 humanoid bones", setup.bones);
+        if (setup.bones < 8)
+            ImGui::TextWrapped("Built-in walk, foot planting and look-at need 8 bones. Right-click the model and choose Map Humanoid Bones or Rig Model (Humanoid).");
+        ImGui::Text("Foot IK: %s    Look-at: %s    Animator: %s",
+                    setup.footIk ? "on" : "not added",
+                    setup.lookAt ? "on" : "not added",
+                    setup.animator ? "on" : "not added");
+    }
+    if (showSetup) {
+        char wire[64];
+        std::snprintf(wire, sizeof(wire), "Wire animation and IK##%s", id);
+        if (ImGui::Button(wire)) {
+            ed.PushUndo();
+            ConsoleLog(okay::WirePlayerAnimation(ed.scene(), go));
+            ed.dirty = true;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Adds Foot IK, Look-At and the default Animator only when they are missing,\nand matches empty animation slots. A graph, a clip choice, or an IK weight\nyou already set is left as it is. Safe to press again.");
+        ImGui::SameLine();
+        char openA[48];
+        std::snprintf(openA, sizeof(openA), "Open Animator##%s", id);
+        if (ImGui::Button(openA)) g_showAnimatorGraph = true;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Opens the Animator window. Edit the state graph there. Clip slots stay in the Character Model panel.");
+    }
     if (!model) return;
-    ImGui::SameLine();
     std::snprintf(lbl, sizeof(lbl), "Fix Facing##%s", id);
     if (ImGui::SmallButton(lbl)) {
         ed.PushUndo();

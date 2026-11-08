@@ -97,6 +97,7 @@ struct Quat {
 
     /// Rotation that orients +Z along `forward` with the given `up`.
     static Quat LookRotation(Vec3 forward, Vec3 up = Vec3::Up) {
+        if (forward.SqrMagnitude() < Mathf::Epsilon) return Identity;   // no direction: no turn
         forward = forward.Normalized();
         Vec3 right = Vec3::Cross(up, forward).Normalized();
         up = Vec3::Cross(forward, right);

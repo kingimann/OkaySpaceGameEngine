@@ -209,6 +209,7 @@ private:
     static bool s_interactive;
 
     static Vec2     s_mousePos;
+    static bool     s_mouseFed;       // a mouse sample has arrived (first one has no delta)
     static Vec2     s_mousePrevPos;   // cursor position last frame (for MouseDelta)
     static unsigned s_mouseCurrent;   // bitmask of held buttons this frame
     static unsigned s_mousePrevious;  // bitmask from last frame

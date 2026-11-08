@@ -66,7 +66,9 @@ bool DataAsset::Load(const std::string& path) {
     std::ifstream in(path);
     if (!in) {
         if (g_baseDir.empty()) return false;
-        in.open(g_baseDir + path);          // retry relative to the game's base dir
+        std::string full = g_baseDir;       // retry relative to the game's base dir
+        if (full.back() != '/' && full.back() != '\\') full += '/';
+        in.open(full + path);
         if (!in) return false;
     }
     // Only a file that opened replaces the fields.

@@ -200,6 +200,11 @@ add_executable(test_structure_builder test_structure_builder.cpp)
 target_link_libraries(test_structure_builder PRIVATE okay::engine)
 add_test(NAME structure_builder COMMAND test_structure_builder)
 
+# Builds are paid in full or not at all; a full-bag demolish refund drops a pickup
+add_executable(test_inventory_build_charge test_inventory_build_charge.cpp)
+target_link_libraries(test_inventory_build_charge PRIVATE okay::engine)
+add_test(NAME inventory_build_charge COMMAND test_inventory_build_charge)
+
 add_executable(test_builder_mode test_builder_mode.cpp)
 target_link_libraries(test_builder_mode PRIVATE okay::engine)
 add_test(NAME builder_mode COMMAND test_builder_mode)

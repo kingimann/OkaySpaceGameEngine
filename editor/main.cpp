@@ -270,6 +270,15 @@ static void CompileOpenScriptBuffers(okay::Scene& scene) {
     }
 }
 
+// Play grabs the mouse when a controller locks the cursor. Esc, or a focused
+// text field, gives it back so the Hierarchy and Inspector can be clicked
+// without leaving Play. `released` sticks until the caller clears it.
+static bool ReleasePlayCursor(bool playing, bool wantText, bool escapeDown, bool& released) {
+    if (!playing) { released = false; return false; }
+    if (escapeDown || wantText) released = true;
+    return released;
+}
+
 // ----------------------------------------------------------------------------
 // Headless self-test: verifies the editor's model logic with no GUI.
 // ----------------------------------------------------------------------------
@@ -318,6 +327,16 @@ static int RunSelfTest() {
     // Play / stop restores edit state (move during play is reverted).
     ed.Play();
     check(ed.isPlaying(), "is playing");
+    check(ed.selected() == nullptr, "play clears the edit selection");
+    {
+        bool released = false;
+        check(!ReleasePlayCursor(true, false, false, released) && !released, "play keeps the cursor until Esc");
+        check(ReleasePlayCursor(true, false, true, released) && released, "Esc releases the play cursor");
+        check(ReleasePlayCursor(true, false, false, released) && released, "Esc release sticks");
+        released = false;
+        check(ReleasePlayCursor(true, true, false, released) && released, "a text field releases the play cursor");
+        check(!ReleasePlayCursor(false, true, true, released) && !released, "leaving play clears the release");
+    }
     ed.Tick(0.1f);
     ed.Stop();
     check(!ed.isPlaying(), "stopped");
@@ -44400,6 +44419,12 @@ int main(int argc, char** argv) {
         // cursor; the lock's warp is not a look, or Play opens pitched at the sky.
         static bool s_playLookLocked = false;
         static Vec2 s_playLookAnchor{0, 0};
+        // Esc frees the cursor even when a text field has focus. The Script
+        // Editor sets WantTextInput whenever its window is focused, and that
+        // used to skip this whole block: the mouse stayed grabbed and Esc did
+        // nothing, so Hierarchy, Pause and Pose Capture could not be clicked.
+        const bool escapeDown = SDL_GetKeyboardState(nullptr)[SDL_SCANCODE_ESCAPE] != 0;
+        ReleasePlayCursor(ed.isPlaying(), io.WantTextInput, escapeDown, g_gameCursorReleased);
         if (ed.isPlaying() && !io.WantTextInput) {
             const Uint8* ks = SDL_GetKeyboardState(nullptr);
             std::vector<char> down;
@@ -44431,11 +44456,10 @@ int main(int argc, char** argv) {
                 if (auto* ce = up->GetComponent<ChestInventory>()) if (ce->open) gameModal = true;
                 if (auto* mm = up->GetComponent<Minimap>()) if (mm->fullscreen) gameModal = true;
             }
-            // Esc frees the cursor, even when the game itself locked it; a click on the
-            // Game view takes it back.
-            const Uint8* ks2 = SDL_GetKeyboardState(nullptr);
-            if (ks2[SDL_SCANCODE_ESCAPE]) g_gameCursorReleased = true;
-            else if (g_gameCursorReleased && g_gameCanvasHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+            // A click on the Game view takes the cursor back after Esc or a text
+            // field freed it. Esc itself is handled above, including while typing.
+            if (!escapeDown && g_gameCursorReleased && g_gameCanvasHovered &&
+                ImGui::IsMouseClicked(ImGuiMouseButton_Left))
                 g_gameCursorReleased = false;
             // hand-off (mirrors the player): when a bag/chest opens or closes
             // while the game wants a locked cursor, warp the pointer to the Game-view
@@ -44507,6 +44531,12 @@ int main(int argc, char** argv) {
                 Input::FeedMouse(Vec2{rx, ry}, mask);
             }
             InputActions::Tick();
+        } else if (ed.isPlaying()) {
+            // Playing, but a text field has the keyboard. Do not feed the game,
+            // and do not leave the pointer in relative mode from the frame that
+            // grabbed it before the field took focus.
+            s_playLookLocked = false;
+            if (SDL_GetRelativeMouseMode()) SDL_SetRelativeMouseMode(SDL_FALSE);
         } else if (!ed.isPlaying()) {
             s_playLookLocked = false;
             Input::FeedKeys({}); // release everything in edit mode

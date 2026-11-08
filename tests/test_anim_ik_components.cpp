@@ -3,6 +3,7 @@
 #include "okay/Graphics/Image.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
+#include <cstdlib>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -11,6 +12,14 @@
 using namespace okay;
 
 static float Dist(const Vec3& a, const Vec3& b) { return (a - b).Magnitude(); }
+
+// Shot files are optional evidence. OKAY_TEST_OUTPUT collects them; otherwise
+// they go in the temp directory. Neither needs a privileged path.
+static std::filesystem::path ShotDir() {
+    if (const char* e = std::getenv("OKAY_TEST_OUTPUT"))
+        if (*e) return e;
+    return std::filesystem::temp_directory_path() / "okay-test-anim-ik";
+}
 
 static void RemovePoseTemps() {
     namespace fs = std::filesystem;
@@ -705,9 +714,14 @@ int main() {
                 auto m = project(*mark);
                 dot(m.first, m.second, Color(0.35f, 0.75f, 1.0f, 1.0f), 6);
             }
-            std::filesystem::create_directories("/opt/cursor/artifacts");
-            img.SavePNG(path);
+            std::error_code ec;
+            std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
+            CHECK(!ec && img.SavePNG(path));
         };
+        const std::filesystem::path shots = ShotDir();
+        const std::string reachPng = (shots / "ik-hand-reach.png").string();
+        const std::string beforePng = (shots / "aim-before-recoil.png").string();
+        const std::string recoilPng = (shots / "aim-recoil-up.png").string();
 
         Scene reach;
         GameObject* hero = reach.CreateGameObject("Hero");
@@ -728,7 +742,7 @@ int main() {
         for (int i = 0; i < 20; ++i) reach.Update(1.0f / 60.0f);
         CHECK(Dist(hand->transform->Position(), tgt->transform->Position()) < 0.05f);
         const Vec3 reachAt = tgt->transform->Position();
-        save(reach, hero, &reachAt, "/opt/cursor/artifacts/ik-hand-reach.png");
+        save(reach, hero, &reachAt, reachPng);
 
         Scene kick;
         GameObject* player = kick.CreateGameObject("Player");
@@ -750,14 +764,19 @@ int main() {
         aim->pitchClamp = 70.0f;
         kick.Start();
         aim->LateUpdate(0.016f);
-        save(kick, player, nullptr, "/opt/cursor/artifacts/aim-before-recoil.png");
+        save(kick, player, nullptr, beforePng);
         const Vec3 headBefore = head->transform->Position();
         aim->Recoil(1.0f);
         aim->LateUpdate(0.016f);
         const Vec3 headDelta = head->transform->Position() - headBefore;
         CHECK(headDelta.y > 0.002f);
         CHECK(headDelta.z > 0.01f);
-        save(kick, player, nullptr, "/opt/cursor/artifacts/aim-recoil-up.png");
+        save(kick, player, nullptr, recoilPng);
+        std::error_code ec;
+        std::filesystem::remove(reachPng, ec);
+        std::filesystem::remove(beforePng, ec);
+        std::filesystem::remove(recoilPng, ec);
+        if (!std::getenv("OKAY_TEST_OUTPUT")) std::filesystem::remove(shots, ec);
     }
 
     TEST_MAIN_RESULT();

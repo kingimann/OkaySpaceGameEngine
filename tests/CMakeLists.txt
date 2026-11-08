@@ -279,6 +279,14 @@ add_executable(test_profiler test_profiler.cpp)
 target_link_libraries(test_profiler PRIVATE okay::engine)
 add_test(NAME profiler COMMAND test_profiler)
 
+add_executable(test_profiler_export test_profiler_export.cpp)
+target_link_libraries(test_profiler_export PRIVATE okay::engine)
+add_test(NAME profiler_export COMMAND test_profiler_export)
+
+add_executable(test_log test_log.cpp)
+target_link_libraries(test_log PRIVATE okay::engine)
+add_test(NAME log COMMAND test_log)
+
 add_executable(test_datapack test_datapack.cpp)
 target_link_libraries(test_datapack PRIVATE okay::engine)
 add_test(NAME datapack COMMAND test_datapack)
@@ -1425,6 +1433,32 @@ add_executable(test_splines test_splines.cpp)
 target_link_libraries(test_splines PRIVATE okay::engine)
 add_test(NAME splines COMMAND test_splines)
 
+# Scheduler: global (persistent) timers, per-task options, cancel by tag / owner;
+# Tween: callback order, re-entrancy, hitches, lifetime
+add_executable(test_timers_tweens test_timers_tweens.cpp)
+target_link_libraries(test_timers_tweens PRIVATE okay::engine)
+add_test(NAME timers_tweens COMMAND test_timers_tweens)
+
+add_executable(test_random test_random.cpp)
+target_link_libraries(test_random PRIVATE okay::engine)
+add_test(NAME random COMMAND test_random)
+
+add_executable(test_eventbus test_eventbus.cpp)
+target_link_libraries(test_eventbus PRIVATE okay::engine)
+add_test(NAME eventbus COMMAND test_eventbus)
+
+add_executable(test_utf8 test_utf8.cpp)
+target_link_libraries(test_utf8 PRIVATE okay::engine)
+add_test(NAME utf8 COMMAND test_utf8)
+
+add_executable(test_time_pause test_time_pause.cpp)
+target_link_libraries(test_time_pause PRIVATE okay::engine)
+add_test(NAME time_pause COMMAND test_time_pause)
+
+add_executable(test_scene_lifecycle test_scene_lifecycle.cpp)
+target_link_libraries(test_scene_lifecycle PRIVATE okay::engine)
+add_test(NAME scene_lifecycle COMMAND test_scene_lifecycle)
+
 add_executable(test_durable_saves test_durable_saves.cpp)
 target_link_libraries(test_durable_saves PRIVATE okay::engine)
 add_test(NAME durable_saves COMMAND test_durable_saves)
@@ -1433,6 +1467,19 @@ add_test(NAME durable_saves COMMAND test_durable_saves)
 add_executable(test_script_batch1 test_script_batch1.cpp)
 target_link_libraries(test_script_batch1 PRIVATE okay::engine)
 add_test(NAME script_batch1 COMMAND test_script_batch1)
+
+# Core audit regressions: math edge cases, ECS/NetWorld hardening, Camera degenerate
+# viewports, Layers names, DataAsset load, input binding persistence.
+add_executable(test_core_audit test_core_audit.cpp)
+target_link_libraries(test_core_audit PRIVATE okay::engine)
+add_test(NAME core_audit COMMAND test_core_audit)
+
+# Core audit: terminal input session (pty based, so POSIX only).
+if(UNIX)
+    add_executable(test_core_audit_input test_core_audit_input.cpp)
+    target_link_libraries(test_core_audit_input PRIVATE okay::engine)
+    add_test(NAME core_audit_input COMMAND test_core_audit_input)
+endif()
 
 # Visual-script nodes for music, camera and particles
 add_executable(test_vs_media test_vs_media.cpp)

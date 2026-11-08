@@ -1,6 +1,7 @@
 #pragma once
 #include <array>
 #include <cstdint>
+#include <cctype>
 #include <cstdlib>
 #include <string>
 
@@ -53,7 +54,10 @@ struct Layers {
                     int i = std::atoi(tok.c_str());
                     if (i >= 0 && i < 32) mask |= (1u << i);
                 } else {
-                    for (int i = 0; i < 32; ++i) if (Name(i) == tok) { mask |= (1u << i); break; }
+                    // Names match without regard to case ("default" finds "Default").
+                    auto lower = [](std::string s) { for (char& ch : s) ch = (char)std::tolower((unsigned char)ch); return s; };
+                    const std::string want = lower(tok);
+                    for (int i = 0; i < 32; ++i) if (lower(Name(i)) == want) { mask |= (1u << i); break; }
                 }
             }
             start = end + 1;

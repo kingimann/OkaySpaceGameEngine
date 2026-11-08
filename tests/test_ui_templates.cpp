@@ -170,8 +170,8 @@ int main() {
         GameObject* music = nullptr;
         for (Transform* c : settings->transform->Children()) if (c->gameObject->name == "MusicSlider") music = c->gameObject;
         CHECK(music != nullptr);
-        settings->active = false;   // under the pause card: click one screen at a time
         s.Start();
+        settings->active = false;   // under the pause card: click one screen at a time
         if (resume) {
             Vec2 o, sz;
             CHECK(GetUIScreenRect(resume, sw, sh, o, sz));

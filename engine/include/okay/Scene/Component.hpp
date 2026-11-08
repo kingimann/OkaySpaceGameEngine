@@ -31,7 +31,9 @@ public:
     // ---- Lifecycle (called by the Scene) -------------------------------
     /// Called once, immediately after the component is created.
     virtual void Awake() {}
-    /// Called once, before the first Update, if the component is enabled.
+    /// Called once, just before the first Update in which the component is enabled
+    /// and its GameObject is active (a component that starts out disabled, or on an
+    /// inactive object, gets it when it is first switched on).
     virtual void Start() {}
     /// Called every frame.
     virtual void Update(float /*deltaTime*/) {}
@@ -51,8 +53,11 @@ public:
     /// this. The default does nothing, so a never-started component cannot
     /// tear down another instance's state.
     virtual void ReleaseUnstarted() {}
-    /// The GameObject was switched on / off (its `active` flag changed). Called by
-    /// the Scene at the start of the next frame, once per change.
+    /// The component became live (enabled, on an active GameObject) / stopped being
+    /// live: its `enabled` flag or its GameObject's `active` flag flipped. Called by
+    /// the Scene at the start of the next frame, once per change. OnEnable also runs
+    /// once just before the first Start, and OnDisable runs just before OnDestroy
+    /// for a component that is live then. They only ever alternate.
     virtual void OnEnable() {}
     virtual void OnDisable() {}
     /// Objects in `dying` are about to be destroyed (this component survives):
@@ -105,7 +110,11 @@ public:
 
 private:
     friend class Scene;
+    friend class GameObject;
     bool m_started = false;
+    bool m_live = false;   // OnEnable delivered and not yet undone by OnDisable
+    /// OnDisable (if one is owed) ahead of OnDestroy.
+    void DeliverDisableBeforeDestroy();
 };
 
 /// Convenience aliases for user scripts. OkaySpace's scripts subclass

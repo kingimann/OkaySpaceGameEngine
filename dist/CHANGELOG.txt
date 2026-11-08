@@ -1,5 +1,31 @@
 OkaySpace Game Engine — Changelog
 
+v2.847.0
+  Characters
+  - A character model that comes with its own Walk and Run clips now walks
+    when you press W and runs with Shift. The controllers' default 4.5 m/s
+    "walk" is really a jog, so a downloaded walk clip (made for about 1.4 m/s)
+    lost out to the run clip and the character ran when it should walk. When
+    such a model is attached, a Walk Speed or Run Speed that is still at its
+    default is set to a pace the clips can show (about 2.0 and 5.0 m/s). A
+    speed you changed yourself is kept (#541; see docs/animation.md).
+  Scripts and tools
+  - A new script in the Script Editor starts as an empty Start and Update,
+    with a line saying when each runs. The longer example is still in the
+    scripting docs (#543).
+  - On Windows, OkaySpace.exe, OkayEngine.exe, OkaySpacePlayer.exe and the
+    relay now show their own name, description and engine version in the file
+    Properties and in Task Manager, instead of a library's name. They also
+    declare that they run as the current user and never ask for administrator
+    rights (#545).
+  Docs
+  - New docs/README.md indexes every guide by what you want to do. The README
+    is shorter and its claims were checked against the code (a few wrong
+    ones were fixed), and the scripting function reference is now
+    docs/scripting_reference.md (#544).
+  - New docs/FEATURE_MAP.md splits the engine into 19 areas, with the code,
+    docs and editor window for each and what is still open (#546).
+
 v2.846.0
   Characters
   - The built-in walk no longer jerks at every step. At walking speeds the

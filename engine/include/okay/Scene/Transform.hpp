@@ -23,6 +23,19 @@ public:
 
     void SetPosition(const Vec3& worldPos);
     void SetRotation(const Quat& worldRot);
+    /// Set the world-space scale (per axis, as LossyScale() reads it): the local scale
+    /// becomes the wanted scale divided by the parent's lossy scale. An axis whose parent
+    /// scale is zero is left alone. SetScale is the same call.
+    void SetLossyScale(const Vec3& worldScale);
+    void SetScale(const Vec3& worldScale) { SetLossyScale(worldScale); }
+    /// Turn so Forward() points at `worldTarget`, with `worldUp` as the up hint. Does
+    /// nothing when the target is at this position.
+    void LookAt(const Vec3& worldTarget, const Vec3& worldUp = Vec3::Up);
+    /// Rotation as Euler angles in degrees (Z, X, Y order, as Quat::Euler builds it).
+    Vec3 EulerAngles() const { return Rotation().ToEuler(); }
+    void SetEulerAngles(const Vec3& degrees) { SetRotation(Quat::Euler(degrees)); }
+    Vec3 LocalEulerAngles() const { return localRotation.ToEuler(); }
+    void SetLocalEulerAngles(const Vec3& degrees) { localRotation = Quat::Euler(degrees).Normalized(); }
     void Translate(const Vec3& delta) { localPosition += delta; }
     void Rotate(const Vec3& eulerDegrees) {
         localRotation = (localRotation * Quat::Euler(eulerDegrees)).Normalized();
@@ -59,6 +72,11 @@ public:
     bool SetParent(Transform* parent, bool worldPositionStays = true);
     const std::vector<Transform*>& Children() const { return m_children; }
     int ChildCount() const { return static_cast<int>(m_children.size()); }
+    /// Position among the siblings (the parent's child list, or among the scene's root
+    /// objects for a root). -1 when this transform is not in a scene.
+    int GetSiblingIndex() const;
+    /// Move to sibling position `index` (clamped to the valid range), keeping the others' order.
+    void SetSiblingIndex(int index);
     /// Reorder a child among its siblings by `dir` (-1 = earlier/up, +1 = later/
     /// down). No-op if it's already at the end being moved.
     void MoveChild(Transform* child, int dir) {

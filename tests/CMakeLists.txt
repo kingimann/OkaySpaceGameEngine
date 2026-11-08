@@ -1433,3 +1433,7 @@ add_test(NAME vs_media COMMAND test_vs_media)
 add_executable(test_script_nav test_script_nav.cpp)
 target_link_libraries(test_script_nav PRIVATE okay::engine)
 add_test(NAME script_nav COMMAND test_script_nav)
+
+add_executable(test_scene_hierarchy_search test_scene_hierarchy_search.cpp)
+target_link_libraries(test_scene_hierarchy_search PRIVATE okay::engine)
+add_test(NAME scene_hierarchy_search COMMAND test_scene_hierarchy_search)

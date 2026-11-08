@@ -8,9 +8,11 @@ std::vector<std::string>& SceneManager::list() {
     return s_scenes;
 }
 int& SceneManager::activeIndex() { static int s_active = -1; return s_active; }
-// The scene that last loaded. activeIndex() moves to a requested scene right away,
-// and falls back to this if that load fails.
+// The scene that last loaded (activeIndex() follows it once a load succeeds).
 static int& LoadedIndex() { static int s_loaded = -1; return s_loaded; }
+// The index of the load requested last (it may not have run yet), so LoadNextScene
+// called twice in a frame steps twice.
+static int& RequestedIndex() { static int s_requested = -1; return s_requested; }
 
 // Strip folders and extension to get a bare scene name ("Assets/Level1.okayscene"
 // -> "Level1") for name-based lookups.
@@ -22,7 +24,7 @@ static std::string StemOf(const std::string& path) {
     return path.substr(start, end - start);
 }
 
-void SceneManager::ClearScenes() { list().clear(); activeIndex() = -1; LoadedIndex() = -1; }
+void SceneManager::ClearScenes() { list().clear(); activeIndex() = -1; LoadedIndex() = -1; RequestedIndex() = -1; }
 
 int SceneManager::AddScene(const std::string& path) {
     auto& l = list();
@@ -56,12 +58,14 @@ int SceneManager::ActiveIndex() { return activeIndex(); }
 bool SceneManager::LoadScene(Scene& scene, int index) {
     auto& l = list();
     if (index < 0 || index >= (int)l.size()) return false;
-    // Set after the request: it settles a request it replaces, which would reset the index.
+    // The active index moves only once the scene has really loaded: a missing or
+    // corrupt file leaves it (and so Reload / Next) on the last scene that worked.
+    // A request a later one replaces is settled with `false` and changes nothing.
     scene.RequestLoad(l[index], [index](bool ok) {
-        if (ok) LoadedIndex() = index;
-        activeIndex() = LoadedIndex();   // a failed load leaves the index where it was
+        if (ok) { LoadedIndex() = index; activeIndex() = index; }
+        else RequestedIndex() = LoadedIndex();
     });
-    activeIndex() = index;
+    RequestedIndex() = index;   // after the request: it settles one it replaces, which resets this
     return true;
 }
 
@@ -88,13 +92,15 @@ std::string SceneManager::PathForName(const std::string& nameOrPath) {
 
 bool SceneManager::LoadNextScene(Scene& scene) {
     if (list().empty()) return false;
-    int next = (activeIndex() + 1) % (int)list().size();
+    int base = scene.HasPendingLoad() ? RequestedIndex() : activeIndex();
+    int next = (base + 1) % (int)list().size();
     return LoadScene(scene, next);
 }
 
 bool SceneManager::ReloadScene(Scene& scene) {
-    if (activeIndex() < 0) return false;
-    return LoadScene(scene, activeIndex());
+    const int base = scene.HasPendingLoad() ? RequestedIndex() : activeIndex();
+    if (base < 0) return false;
+    return LoadScene(scene, base);
 }
 
 } // namespace okay

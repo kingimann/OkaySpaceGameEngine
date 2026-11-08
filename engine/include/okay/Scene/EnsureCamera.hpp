@@ -27,14 +27,7 @@ inline bool SceneLooks2D(const Scene& s) {
 }
 
 /// True when the object and every parent above it are active.
-inline bool ActiveInHierarchy(const GameObject* go) {
-    for (int guard = 0; go && guard < 256; ++guard) {
-        if (!go->active) return false;
-        const Transform* p = go->transform ? go->transform->Parent() : nullptr;
-        go = p ? p->gameObject : nullptr;
-    }
-    return true;
-}
+inline bool ActiveInHierarchy(const GameObject* go) { return !go || go->ActiveInHierarchy(); }
 /// A camera that can render right now: enabled and active in the hierarchy.
 inline bool CameraUsable(const Camera* c) {
     return c && c->enabled && c->gameObject && ActiveInHierarchy(c->gameObject);

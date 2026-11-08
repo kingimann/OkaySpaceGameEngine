@@ -1315,7 +1315,7 @@ void GLRenderer::DrawLinearDepth(const Scene& scene, const Mat4& vp, const Vec3&
     g.DisableVertexAttribArray(3); g.DisableVertexAttribArray(4);
     for (const auto& up : scene.Objects()) {
         GameObject* go = up.get();
-        if (!go || !go->active || go->HiddenFromCamera(ignore)) continue;
+        if (!go || !go->ActiveInHierarchy() || go->HiddenFromCamera(ignore)) continue;
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || mr->wireframe || !mr->enabled) continue;
         if (mr->color.a < 0.999f) continue;           // transparents don't occlude
@@ -1681,7 +1681,7 @@ void GLRenderer::DrawShadowCasters(const Scene& scene, const Mat4& lightVP, cons
     const Frustum lightFr = Frustum::FromVP(lightVP);   // only casters inside the light's view
     for (const auto& up : scene.Objects()) {
         GameObject* go = up.get();
-        if (!go || !go->active || go->firstPersonOnly || go->HiddenFromCamera(ignore)) continue;
+        if (!go || !go->ActiveInHierarchy() || go->firstPersonOnly || go->HiddenFromCamera(ignore)) continue;
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || mr->wireframe || !mr->enabled || !mr->castShadows) continue;
         if (mr->color.a < 0.999f) continue;   // transparent meshes don't cast
@@ -2013,7 +2013,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
     int drawn = 0, culled = 0;
     for (const auto& up : scene.Objects()) {
         GameObject* go = up.get();
-        if (!go || !go->active || go->HiddenFromCamera(ignore)) continue;
+        if (!go || !go->ActiveInHierarchy() || go->HiddenFromCamera(ignore)) continue;
         if (!(RenderCullingMask() & (1 << (go->layer & 31)))) continue;   // camera layer cull
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr || mr->wireframe || !mr->enabled) continue;

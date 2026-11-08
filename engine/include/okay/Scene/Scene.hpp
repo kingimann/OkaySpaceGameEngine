@@ -6,10 +6,12 @@
 #include "okay/Physics/Physics2D.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Render/Color.hpp"
+#include "okay/Scene/SceneValidation.hpp"
 #include <algorithm>
 #include <memory>
 #include <functional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace okay {
@@ -34,7 +36,10 @@ public:
     /// Create an empty GameObject (with a Transform) owned by this scene.
     GameObject* CreateGameObject(const std::string& name = "GameObject");
 
-    /// Remove every GameObject immediately (used when loading a scene).
+    /// Remove every GameObject immediately (used when loading a scene). Components that
+    /// are live get OnDisable / OnDestroy first, and the 3D physics world and its gravity
+    /// go back to their defaults, like everything else the old scene held. The destructor
+    /// does the same OnDestroy pass.
     void Clear();
 
     /// Clone a prefab (a GameObject and its descendants) into this scene.
@@ -71,6 +76,9 @@ public:
         m_hasPendingText = false; m_pendingText.clear(); m_pendingTextAfter = {};
     }
     bool HasPendingLoad() const { return m_hasPendingLoad; }
+    /// Why the last RequestLoad / RequestLoadText applied by Update failed (it was also
+    /// printed to stderr); empty after a load that worked. The scene is untouched by a failed load.
+    const std::string& LastLoadError() const { return m_lastLoadError; }
     /// Like RequestLoad, from serialized scene text (a save game) instead of a
     /// file; `after` runs once the loaded objects have started.
     void RequestLoadText(std::string text, std::function<void(Scene&)> after = {}) {
@@ -90,6 +98,18 @@ public:
     // ---- Queries -------------------------------------------------------
     GameObject* Find(const std::string& name) const;
     GameObject* FindWithTag(const std::string& tag) const;
+    /// Every object whose tag is `tag`, in scene order.
+    std::vector<GameObject*> FindGameObjectsWithTag(const std::string& tag) const;
+    /// Look an object up by hierarchy path: "Parent/Child/Leaf" starts at a root object
+    /// called "Parent" and follows child names (the first match at each level). A leading
+    /// '/' is allowed. Find() also accepts a path when no object is literally named so.
+    GameObject* FindByPath(const std::string& path) const;
+    /// The objects with no parent, in scene order (the top level of the hierarchy).
+    std::vector<GameObject*> Roots() const;
+    /// Check this scene for broken things (see SceneSerializer::Validate): component
+    /// records and fields it cannot read, missing asset files, broken parent links and
+    /// duplicate guids. Works on the scene's saved form, so runtime-only objects are not covered.
+    SceneValidationReport Validate(const std::string& assetRoot = "") const;
     const std::vector<std::unique_ptr<GameObject>>& Objects() const { return m_objects; }
     /// Bumped whenever objects are created or destroyed (or the scene is cleared):
     /// components that cache GameObject/Transform pointers re-resolve when it changes.
@@ -342,6 +362,8 @@ public:
 
 private:
     void StepPhysics(float deltaTime);
+    void RunFixedUpdate(float step);   // Component::FixedUpdate for every component that can run
+    void DestroyAllLive();             // OnDisable + OnDestroy for live components (Clear, ~Scene)
     float m_physicsAcc = 0.0f;     // frame time not yet simulated
     float m_physicsAlpha = 0.0f;
     int   m_physicsSteps = 0;
@@ -377,6 +399,9 @@ private:
     std::vector<Component*>  m_pending;   // awaiting Awake/Start
     std::vector<Component*>  m_active;    // receive Update each frame
     std::vector<GameObject*> m_destroyQueue;
+    std::unordered_set<const GameObject*> m_destroyQueued;   // members of m_destroyQueue, for O(1) "already queued"
+    std::vector<Component*>* m_flushBatch = nullptr;         // the batch FlushPending is walking (removals null its entries)
+    std::string m_lastLoadError;
     std::string m_pendingLoad;
     bool        m_hasPendingLoad = false;
     std::function<void(bool)> m_pendingLoadDone;

@@ -75,7 +75,7 @@ inline bool ShadowSceneBounds(const Scene& scene, Vec3& lo, Vec3& hi) {
     lo = {1e30f, 1e30f, 1e30f}; hi = {-1e30f, -1e30f, -1e30f};
     bool any = false;
     for (const auto& go : scene.Objects()) {
-        if (!go || !go->active) continue;
+        if (!go || !go->ActiveInHierarchy()) continue;
         auto* mr = go->template GetComponent<MeshRenderer>();
         if (!mr || !mr->enabled || mr->wireframe || mr->DisplayMesh().vertices.empty()) continue;
         Mat4 model = go->transform->LocalToWorldMatrix();

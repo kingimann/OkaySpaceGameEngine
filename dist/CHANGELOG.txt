@@ -1,5 +1,12 @@
 OkaySpace Game Engine — Changelog
 
+v2.846.0
+  Characters
+  - The built-in walk no longer jerks at every step. At walking speeds the
+    hips used to snap up or down by 3 to 10 cm each time a foot touched the
+    ground, which made the legs jitter and the head bob. The hip height is now
+    a smooth curve through the whole stride. Running is unchanged (#540).
+
 v2.845.0
   Characters
   - Downloaded VRoid, Character Creator and Daz characters now animate. Their

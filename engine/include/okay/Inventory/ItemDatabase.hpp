@@ -88,7 +88,8 @@ public:
     const ItemDefinition* Find(const std::string& id) const;
     ItemDefinition* FindMutable(const std::string& id);
     /// The id an item string means: an id as-is, else a legacy name or display name of
-    /// a definition, else (registering a loose definition) the string itself.
+    /// a definition, else (registering a loose definition) the string itself. Surrounding
+    /// whitespace is ignored, and so is case when that picks exactly one definition.
     std::string Resolve(const std::string& nameOrId);
     /// Resolve() then return its definition (never null for a non-empty string).
     const ItemDefinition* Def(const std::string& nameOrId);
@@ -101,6 +102,8 @@ public:
     std::deque<ItemDefinition>& Items() { return m_items; }
     /// Ids used by more than one definition (shown as a warning in the editor).
     std::vector<std::string> DuplicateIds() const;
+    /// Ids that match another id once case is ignored ("Wood" and "wood").
+    std::vector<std::string> CaseConflicts() const;
 
     /// The per-stack limit for `item` in a container whose own limit is `container`
     /// (0 = unlimited): the smaller of the two non-zero limits.

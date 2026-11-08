@@ -279,6 +279,14 @@ add_executable(test_profiler test_profiler.cpp)
 target_link_libraries(test_profiler PRIVATE okay::engine)
 add_test(NAME profiler COMMAND test_profiler)
 
+add_executable(test_profiler_export test_profiler_export.cpp)
+target_link_libraries(test_profiler_export PRIVATE okay::engine)
+add_test(NAME profiler_export COMMAND test_profiler_export)
+
+add_executable(test_log test_log.cpp)
+target_link_libraries(test_log PRIVATE okay::engine)
+add_test(NAME log COMMAND test_log)
+
 add_executable(test_datapack test_datapack.cpp)
 target_link_libraries(test_datapack PRIVATE okay::engine)
 add_test(NAME datapack COMMAND test_datapack)

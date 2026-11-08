@@ -1,5 +1,17 @@
 OkaySpace Game Engine — Changelog
 
+v2.845.0
+  Characters
+  - Downloaded VRoid, Character Creator and Daz characters now animate. Their
+    limb bones (J_Bip_*, CC_Base_*, lThighBend, lShldrBend) weren't read as a
+    humanoid, so they stood still with no walk, run, jump or crouch. They get
+    the built-in animations now (#528).
+  - A Mixamo character that has its own animation clips no longer stays about
+    17 cm too low after you crouch and stand back up. The model eases back to
+    its normal height when the file's clip takes over (#528).
+  - A new rig sweep test puts every test character through idle, walk, run,
+    turn, jump and crouch (#528).
+
 v2.844.0
   Characters
   - An Animator graph on a walk-only model keeps the built-in idle, run and

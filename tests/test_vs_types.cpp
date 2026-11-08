@@ -158,12 +158,17 @@ entry OnUpdate 3
     }
     // ---- Key names that would silently be another key ---------------------------
     {
-        auto v = ValidateGraphText("node 0 OnKey F1\nnode 1 Print\nexec 0 0 1\nentry OnKey:F1 0\n"
+        auto v = ValidateGraphText("node 0 OnKey F13\nnode 1 Print\nexec 0 0 1\nentry OnKey:F13 0\n"
                                    "node 2 OnKey escape\nnode 3 Print\nexec 2 0 3\nentry OnKey:escape 2\n"
-                                   "node 4 Key lshift\nnode 5 Branch\ndata 5 0 4 0\nexec 2 0 5\n");
-        CHECK(Has(v, 0, 0, "'F1' isn't a key"));
-        CHECK(Has(v, 0, 4, "'lshift'"));
+                                   "node 4 Key hyper\nnode 5 Branch\ndata 5 0 4 0\nexec 2 0 5\n");
+        CHECK(Has(v, 0, 0, "'F13' isn't a key"));
+        CHECK(Has(v, 0, 4, "'hyper'"));
         CHECK(!Has(v, 0, 2, "isn't a key"));
+        // F1 and the left/right modifiers are real keys now, so they pass.
+        auto ok = ValidateGraphText("node 0 OnKey F1\nnode 1 Print\nexec 0 0 1\nentry OnKey:F1 0\n"
+                                    "node 4 Key lshift\nnode 5 Branch\ndata 5 0 4 0\nexec 0 0 5\n");
+        CHECK(!Has(ok, 0, 0, "isn't a key"));
+        CHECK(!Has(ok, 0, 4, "isn't a key"));
     }
     // ---- Prefabs that aren't there (checked against the project folder) ----------
     {

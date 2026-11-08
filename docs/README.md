@@ -47,6 +47,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [rendering.md](rendering.md): post-processing, sky, fog and weather.
 - [lighting.md](lighting.md): lighting and shadows.
 - [modeling.md](modeling.md): the built-in mesh editor.
+- [optimization_tools.md](optimization_tools.md): LOD generation, occlusion culling, batching, streaming and the scene optimization report.
 - [audio.md](audio.md): the mixer, music and sound effects.
 
 ## Game UI

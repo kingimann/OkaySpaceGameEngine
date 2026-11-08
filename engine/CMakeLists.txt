@@ -143,6 +143,14 @@ add_library(okay_engine
     src/Modeling/PolyOps.cpp
     src/Modeling/Modifiers.cpp
     src/Modeling/UVUnwrap.cpp
+    src/Optimize/MeshSimplify.cpp
+    src/Optimize/LodGroup.cpp
+    src/Optimize/OcclusionBuffer.cpp
+    src/Optimize/PortalCells.cpp
+    src/Optimize/BatchPlanner.cpp
+    src/Optimize/StreamingGrid.cpp
+    src/Optimize/MipBudget.cpp
+    src/Optimize/SceneOptimizationReport.cpp
     third_party/ufbx/ufbx.c
 )
 

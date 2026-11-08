@@ -1520,3 +1520,27 @@ add_test(NAME scene_ids_prefabs COMMAND test_scene_ids_prefabs)
 add_executable(test_layers_tags_cameras test_layers_tags_cameras.cpp)
 target_link_libraries(test_layers_tags_cameras PRIVATE okay::engine)
 add_test(NAME layers_tags_cameras COMMAND test_layers_tags_cameras)
+# Optimization tools (27): mesh simplification, LOD chains, LOD group selection
+add_executable(test_optimize_simplify test_optimize_simplify.cpp)
+target_link_libraries(test_optimize_simplify PRIVATE okay::engine)
+add_test(NAME optimize_simplify COMMAND test_optimize_simplify)
+
+# Optimization tools (27): CPU occlusion buffer and portal / cell visibility
+add_executable(test_optimize_occlusion test_optimize_occlusion.cpp)
+target_link_libraries(test_optimize_occlusion PRIVATE okay::engine)
+add_test(NAME optimize_occlusion COMMAND test_optimize_occlusion)
+
+# Optimization tools (27): draw call batching planner and static mesh merge
+add_executable(test_optimize_batching test_optimize_batching.cpp)
+target_link_libraries(test_optimize_batching PRIVATE okay::engine)
+add_test(NAME optimize_batching COMMAND test_optimize_batching)
+
+# Optimization tools (27): streaming cell grid and texture mip budget
+add_executable(test_optimize_streaming test_optimize_streaming.cpp)
+target_link_libraries(test_optimize_streaming PRIVATE okay::engine)
+add_test(NAME optimize_streaming COMMAND test_optimize_streaming)
+
+# Optimization tools (27): scene optimization report (JSON / text)
+add_executable(test_optimize_report test_optimize_report.cpp)
+target_link_libraries(test_optimize_report PRIVATE okay::engine)
+add_test(NAME optimize_report COMMAND test_optimize_report)

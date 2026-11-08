@@ -1,7 +1,7 @@
 #pragma once
 // UTF-8 helpers for text players read in any language: walking code points,
 // counting them and cutting a string on a code point boundary. Malformed bytes
-// read as U+FFFD and advance one byte, so a loop over any string always ends.
+// read as U+FFFD and always advance at least one byte, so a loop over any string ends.
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -10,17 +10,30 @@ namespace okay::utf8 {
 
 constexpr std::uint32_t kReplacement = 0xFFFD;
 
-/// The code point at `p`, advancing `p` past it (never past `end`).
+/// The code point at `p`, advancing `p` past it (never past `end`). Overlong forms,
+/// surrogates (U+D800..DFFF), code points above U+10FFFF and bytes that can never
+/// start a sequence (C0, C1, F5..FF) give U+FFFD. A truncated or broken sequence
+/// consumes its valid leading bytes only (the "maximal subpart"), so the byte that
+/// broke it is read again as the start of the next code point.
 inline std::uint32_t Next(const char*& p, const char* end) {
     const unsigned char c = (unsigned char)*p++;
     if (c < 0x80) return c;
-    if (c < 0xC0) return kReplacement;                 // a continuation byte on its own
-    const int extra = c < 0xE0 ? 1 : c < 0xF0 ? 2 : c < 0xF8 ? 3 : -1;
-    if (extra < 0) return kReplacement;
+    if (c < 0xC2 || c > 0xF4) return kReplacement;     // continuation byte alone, C0/C1 overlong, F5..FF
+    const int extra = c < 0xE0 ? 1 : c < 0xF0 ? 2 : 3;
     std::uint32_t cp = c & (0x3Fu >> extra);
     for (int k = 0; k < extra; ++k) {
-        if (p >= end || ((unsigned char)*p & 0xC0) != 0x80) return kReplacement;
-        cp = (cp << 6) | ((unsigned char)*p++ & 0x3F);
+        if (p >= end) return kReplacement;
+        const unsigned char b = (unsigned char)*p;
+        unsigned char lo = 0x80, hi = 0xBF;            // the second byte has tighter bounds for some leads
+        if (k == 0) {
+            if (c == 0xE0) lo = 0xA0;                  // no overlong 3-byte
+            else if (c == 0xED) hi = 0x9F;             // no surrogates
+            else if (c == 0xF0) lo = 0x90;             // no overlong 4-byte
+            else if (c == 0xF4) hi = 0x8F;             // nothing above U+10FFFF
+        }
+        if (b < lo || b > hi) return kReplacement;
+        ++p;
+        cp = (cp << 6) | (b & 0x3F);
     }
     return cp;
 }

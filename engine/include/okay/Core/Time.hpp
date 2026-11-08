@@ -12,13 +12,25 @@ public:
     static float DeltaTime()   { return s_deltaTime; }
     /// Unscaled seconds elapsed since the last frame.
     static float UnscaledDeltaTime() { return s_unscaledDeltaTime; }
-    /// Seconds since the application started (scaled).
-    static float ElapsedTime() { return s_time; }
+    /// Seconds since the application started (scaled). A float, so it loses
+    /// resolution on long runs; ElapsedTimeD() keeps full precision.
+    static float ElapsedTime() { return (float)s_time; }
+    /// Same as ElapsedTime(), accumulated and returned as a double.
+    static double ElapsedTimeD() { return s_time; }
+    /// Seconds since the application started, ignoring timeScale (double).
+    static double UnscaledTime() { return s_unscaledTime; }
     /// Number of frames rendered since startup.
     static std::uint64_t FrameCount() { return s_frameCount; }
     /// Multiplier applied to DeltaTime (1 = normal, 0 = paused).
-    static float TimeScale()   { return s_timeScale; }
-    static void  SetTimeScale(float scale) { s_timeScale = scale; }
+    /// Reads 0 while Game has the time frozen (paused), whatever scale is remembered.
+    static float TimeScale()   { return s_frozen ? 0.0f : s_timeScale; }
+    /// Negative (and NaN) scales are clamped to 0 so DeltaTime never runs backwards.
+    static void  SetTimeScale(float scale) { s_timeScale = scale > 0.0f ? scale : 0.0f; }
+
+    /// Hold DeltaTime at 0 without touching the scale: SetTimeScale calls made while
+    /// frozen are remembered and apply when it is lifted. Game::SetPaused drives this.
+    static void SetFrozen(bool frozen) { s_frozen = frozen; }
+    static bool Frozen() { return s_frozen; }
 
     /// Frames per second, smoothed, from the measured frame times.
     static float SmoothedFPS() { return s_fps; }
@@ -68,8 +80,9 @@ private:
     friend class Application;
     static void Advance(float unscaledDt) {
         s_unscaledDeltaTime = unscaledDt;
-        s_deltaTime = unscaledDt * s_timeScale;
-        s_time += s_deltaTime;
+        s_deltaTime = unscaledDt * TimeScale();
+        s_time += (double)s_deltaTime;
+        s_unscaledTime += (double)unscaledDt;
         ++s_frameCount;
         // The FPS readout follows the measured time (SmoothDelta's input), when there is one.
         s_rawDeltaTime = s_rawPending >= 0.0f ? s_rawPending : unscaledDt;
@@ -82,8 +95,10 @@ private:
 
     static inline float        s_deltaTime         = 0.0f;
     static inline float        s_unscaledDeltaTime = 0.0f;
-    static inline float        s_time              = 0.0f;
+    static inline double       s_time              = 0.0;
+    static inline double       s_unscaledTime      = 0.0;
     static inline float        s_timeScale         = 1.0f;
+    static inline bool         s_frozen            = false;
     static inline float        s_fps               = 0.0f;
     static inline std::uint64_t s_frameCount       = 0;
     static inline float        s_rawDeltaTime      = 0.0f;

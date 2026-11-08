@@ -424,6 +424,10 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `nav_stop()` | stop the Nav Mesh Agent where it is |
 | `nav_arrived()` | 1 once the last `nav_move_to` point was reached |
 | `nav_remaining()` | path length left to the destination (0 when idle) |
+| `nav_path_exists(x, y, z)` | 1 when a walkable route leads from this object to the point (`nav_path_exists(fx, fy, fz, tx, ty, tz)` between two points); needs no agent |
+| `nav_path_length(x, y, z)` | length of that route, -1 when there is none (also takes the six-number form) |
+| `nav_point_walkable(x, y, z[, maxDist])` | 1 when the baked navmesh has ground within `maxDist` (default 1) of the point |
+| `nav_nearest_point(x, y, z[, maxDist])` | the closest walkable point on the baked navmesh as a vector (`maxDist` default 50); the point itself when none is in range |
 | `bt_set(key, value)` | write a value into this object's Behavior Tree blackboard (`bt_set("Name", key, value)` for another object); see [behavior_trees.md](behavior_trees.md) |
 | `bt_get(key)` | read a blackboard value (a number, bool, string, vector or object) |
 | `bt_run("Assets/Guard.okaybt")` | load a behavior tree on this object's Behavior Tree Runner (added when missing) and start it; `bt_run()` starts the current tree over |
@@ -454,6 +458,7 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `look_at(name)` | rotate (about Z) so local +X faces a named object (turrets, aiming) |
 | `cam_x()` / `cam_y()` / `set_cam(x, y)` / `move_cam(dx, dy)` | read/move the main camera (follow, cutscenes) |
 | `cam_zoom()` / `set_cam_zoom(z)` | read/set the main camera's orthographic size |
+| `camera_follow("name"[, smoothing])` | the main camera eases after that object (adds a Camera Follow if needed; `""` stops); higher smoothing is snappier, 0 snaps |
 | `load_scene(path)` | load a `.okayscene` at end of frame (level change/restart) |
 | `raycast_hit(ox, oy, dx, dy[, dist])` | true if a ray hits a collider |
 | `raycast(ox, oy, dx, dy[, dist])` | cast a ray; returns the **name** of the object hit ("" = miss) |

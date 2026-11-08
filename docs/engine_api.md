@@ -544,6 +544,15 @@ The animation graph. On a player it is often on the imported model, and these ca
 | `GetComponent<Animator>().SetBool(name, on)` | `Animator.SetBool/2` | step | name (Text), on (Bool), Target (Object) | - | Set a bool parameter (crouch, prone, grounded). |
 | `GetComponent<Animator>().SetFloat(name, value)` | `Animator.SetFloat/2` | step | name (Text), value (Number), Target (Object) | - | Set a float parameter (speed). |
 | `GetComponent<Animator>().Play(clip)` | `Animator.Play/1` | step | clip (Text), Target (Object) | - | Play one of the model's clips by name. |
+| `GetComponent<Animator>().GetFloat(name)` | `Animator.GetFloat/1` | value | name (Text), Target (Object) | Result (Number) | Read a float parameter (speed). 0 if the graph has no such name. |
+| `GetComponent<Animator>().GetBool(name)` | `Animator.GetBool/1` | value | name (Text), Target (Object) | Result (Bool) | Read a bool parameter (crouch, grounded). |
+| `GetComponent<Animator>().GetInt(name)` | `Animator.GetInt/1` | value | name (Text), Target (Object) | Result (Number) | Read an int parameter. |
+| `GetComponent<Animator>().SetLayerWeight(layer, weight)` | `Animator.SetLayerWeight/2` | step | layer (Text), weight (Number), Target (Object) | Result (Bool) | Set the mix weight of the Animator layer with this name (on this object or its model). |
+| `GetComponent<Animator>().SetLayerWeight(layer, weight)` | `Animator.SetLayerWeight/2:if` | step | layer (Number), weight (Number), Target (Object) | Result (Bool) | Set the mix weight of the Animator layer with this index (0 is the base). |
+| `GetComponent<Animator>().GetLayerWeight(layer)` | `Animator.GetLayerWeight/1` | value | layer (Text), Target (Object) | Result (Number) | Mix weight of the Animator layer with this name. 0 if there is no such layer. |
+| `GetComponent<Animator>().GetLayerWeight(layer)` | `Animator.GetLayerWeight/1:i` | value | layer (Number), Target (Object) | Result (Number) | Mix weight of the Animator layer with this index. 0 if there is no such layer. |
+| `GetComponent<Animator>().SetRootMotion(on)` | `Animator.SetRootMotion/1` | step | on (Bool), Target (Object) | Result (Bool) | Turn root motion on or off for the model on this object (or its child). |
+| `GetComponent<Animator>().SetCharacterModel(path)` | `Animator.SetCharacterModel/1` | step | path (Text), Target (Object) | Result (Bool) | Swap the character model for the file at this path. False if the file does not import. |
 
 ## IK
 
@@ -553,6 +562,10 @@ Look-At, feet and full-body IK on this object.
 |---|---|---|---|---|---|
 | `GetComponent<IK>().LookAt(objectName)` | `IK.LookAt/1` | step | objectName (Text), Target (Object) | - | Aim Look-At IK at the object with this name. |
 | `GetComponent<IK>().SetWeight(weight)` | `IK.SetWeight/1` | step | weight (Number), Target (Object) | - | Set the weight (0..1) of Look-At, Foot and Full Body IK on this object. |
+| `GetComponent<IK>().SetKindWeight(kind, weight)` | `IK.SetKindWeight/2` | step | kind (Text), weight (Number), Target (Object) | Result (Bool) | Set one IK weight: foot, look, aim, hand_l, hand_r or full. Also looks on children. |
+| `GetComponent<IK>().SetLimbTarget(limb, objectName)` | `IK.SetLimbTarget/2` | step | limb (Text), objectName (Text), Target (Object) | Result (Bool) | Reach or look at the object with this name. Limb is hand_l, hand_r, foot_l, foot_r, look, aim or head. |
+| `GetComponent<IK>().SetLimbTarget(limb, x, y, z)` | `IK.SetLimbTarget/4` | step | limb (Text), x (Number), y (Number), z (Number), Target (Object) | Result (Bool) | Reach or look at a world point. Limb is hand_l, hand_r, foot_l, foot_r, look, aim or head. |
+| `GetComponent<IK>().ClearLimbTarget(limb)` | `IK.ClearLimbTarget/1` | step | limb (Text), Target (Object) | Result (Bool) | Drop the goal for that limb so the animation owns it again. |
 
 ## TrailRenderer
 

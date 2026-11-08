@@ -107,6 +107,9 @@ public:
     float lockRelease = 0.3f;      ///< let go once the animated foot is this far from the pin
     /// Whether each foot is pinned right now (0 left, 1 right) — for debugging / UI.
     bool FootLocked(int leg) const { return leg == 0 ? m_leg[0].locked : m_leg[1].locked; }
+    /// This frame's planted sole (editor gizmo). False until a solve has run.
+    bool FootPlanted(int leg) const { return leg == 0 ? m_leg[0].planted : m_leg[1].planted; }
+    Vec3 FootPlantPos(int leg) const { return leg == 0 ? m_leg[0].plantPos : m_leg[1].plantPos; }
     /// Drop both pins and keep them off for `seconds` (a turn-in-place step).
     void ReleaseLocks(float seconds) {
         if (seconds > m_lockHold) m_lockHold = seconds;

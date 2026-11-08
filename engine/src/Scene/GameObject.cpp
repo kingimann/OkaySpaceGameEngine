@@ -65,6 +65,7 @@ bool GameObject::RemoveComponent(Component* component) {
     for (Component* part : parts) RemoveComponent(part);
     for (auto it = m_components.begin(); it != m_components.end(); ++it) {
         if (it->get() == component) {
+            component->DeliverDisableBeforeDestroy();
             component->OnDestroy();
             // Notify after OnDestroy: a query it runs can't cache a component about to be freed.
             if (m_scene) m_scene->NotifyComponentRemoved(component);

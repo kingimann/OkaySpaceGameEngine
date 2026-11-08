@@ -22,6 +22,7 @@
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mathf.hpp"
+#include <cstdint>
 #include <functional>
 #include <unordered_map>
 #include <vector>
@@ -67,10 +68,10 @@ public:
             if (it == m_map.end()) {
                 go = m_factory ? m_factory(m_scene, e) : m_scene.CreateGameObject("Entity");
                 if (!go) return;
-                m_map[e] = go;
+                m_map[e] = go->InstanceId();
                 fresh = true;   // a new object snaps to its spawn pose
             } else {
-                go = it->second;
+                go = GameObject::FromInstanceId(it->second);   // null if the scene freed or destroyed it
             }
             if (go && go->transform) {
                 Transform* tr = go->transform;
@@ -87,7 +88,7 @@ public:
             if (!m_world.alive(kv.first) || !m_world.has<EcsTransform>(kv.first))
                 dead.push_back(kv.first);
         for (Entity e : dead) {
-            if (GameObject* go = m_map[e]) m_scene.Destroy(go);
+            if (GameObject* go = GameObject::FromInstanceId(m_map[e])) m_scene.Destroy(go);
             m_map.erase(e);
         }
     }
@@ -95,7 +96,7 @@ public:
     /// The GameObject mirroring an entity, or nullptr.
     GameObject* gameObjectFor(Entity e) const {
         auto it = m_map.find(e);
-        return it == m_map.end() ? nullptr : it->second;
+        return it == m_map.end() ? nullptr : GameObject::FromInstanceId(it->second);
     }
     std::size_t mappedCount() const { return m_map.size(); }
 
@@ -103,7 +104,7 @@ private:
     World&  m_world;
     Scene&  m_scene;
     Factory m_factory;
-    std::unordered_map<Entity, GameObject*> m_map;
+    std::unordered_map<Entity, std::uint64_t> m_map;   // instance ids: a GameObject the scene freed must not dangle here
 };
 
 } // namespace ecs

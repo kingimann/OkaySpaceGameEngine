@@ -7861,37 +7861,41 @@ static bool ParseCore(Scene& scene, const std::string& text, bool clear,
     return true;
 }
 
-// Parse `text` into `scene` only if the whole document is good. A first pass
-// builds everything in a throwaway Scene; the live scene is touched (cleared,
-// then filled) only once that pass succeeded, so a bad file leaves it as it was.
+// Parse `text` into `scene` or leave `scene` as it was. A full load (clear) is
+// checked first by building everything in a throwaway Scene, and the live scene
+// is cleared and filled only once that pass succeeded. An appended load
+// (Instantiate, merge) is a hot path, so it parses once, straight into the
+// scene, and on failure destroys what it added. Everything a parse creates is
+// new (parent links only join objects of the same document), so nothing that
+// was already in the scene points at the rolled-back objects.
 static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                       GameObject** firstNew, std::string* error,
                       std::vector<std::string>* warnings = nullptr) {
     std::vector<std::string> found;
-    {
-        Scene probe("probe");
-        if (!ParseCore(probe, text, clear, nullptr, error, &found)) return false;
+    auto report = [&]() {
+        if (warnings) warnings->insert(warnings->end(), found.begin(), found.end());
+        else for (const auto& w : found) std::cerr << "[scene] warning: " << w << "\n";
+    };
+    if (clear) {
+        {
+            Scene probe("probe");
+            if (!ParseCore(probe, text, true, nullptr, error, &found)) return false;
+        }
+        report();
+        scene.Clear();
+        return ParseCore(scene, text, true, firstNew, error, nullptr);   // accepted above
     }
-    if (warnings) warnings->insert(warnings->end(), found.begin(), found.end());
-    else for (const auto& w : found) std::cerr << "[scene] warning: " << w << "\n";
-
     const std::size_t base = scene.Objects().size();
-    if (clear) scene.Clear();
     GameObject* first = nullptr;
-    std::string err;
-    if (ParseCore(scene, text, clear, &first, &err, nullptr)) {
+    if (ParseCore(scene, text, false, &first, error, &found)) {
+        report();
         if (firstNew && !*firstNew) *firstNew = first;
         return true;
     }
-    // The first pass accepted this text, so this should not happen; if it does,
-    // don't leave half a clone behind in a scene that was kept.
-    if (!clear) {
-        std::vector<GameObject*> added;
-        for (std::size_t i = base; i < scene.Objects().size(); ++i) added.push_back(scene.Objects()[i].get());
-        for (GameObject* go : added) scene.Destroy(go);
-        scene.FlushDestroyed();
-    }
-    if (error) *error = err;
+    std::vector<GameObject*> added;
+    for (std::size_t i = base; i < scene.Objects().size(); ++i) added.push_back(scene.Objects()[i].get());
+    for (GameObject* go : added) scene.Destroy(go);   // detaches each from any parent too
+    scene.FlushDestroyed();
     return false;
 }
 

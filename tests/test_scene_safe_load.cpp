@@ -4,6 +4,7 @@
 // `okayscene` version is checked.
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include <chrono>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -216,6 +217,71 @@ int main() {
         if (clone && clone->transform->Children().size() == 1)
             CHECK(clone->transform->Children()[0]->gameObject->prefabSource == "prefabs/beta.okayprefab");
         CHECK(SceneSerializer::SerializeObject(*root).find("prefab \"prefabs/beta.okayprefab\"") != std::string::npos);
+    }
+
+    // ---- appended loads parse once and roll back on failure ----
+    {
+        Scene s("a");
+        GameObject* host = s.CreateGameObject("Host");
+        GameObject* kid = s.CreateGameObject("Kid");
+        kid->transform->SetParent(host->transform, false);
+        // 50 objects in a chain of small subtrees.
+        Scene src("src");
+        GameObject* prev = nullptr;
+        for (int i = 0; i < 50; ++i) {
+            GameObject* g = src.CreateGameObject("N" + std::to_string(i));
+            g->AddComponent<SpriteRenderer>();
+            if (prev && i % 5) g->transform->SetParent(prev->transform, false);
+            prev = g;
+        }
+        const std::string text = SceneSerializer::Serialize(src);
+        const std::size_t n = s.Objects().size();
+        const std::string before = SceneSerializer::Serialize(s);
+
+        // Cut at several points: nothing added, hierarchy of existing objects unchanged.
+        for (int i = 1; i <= 9; ++i) {
+            const std::string cut = text.substr(0, text.size() * i / 10);
+            std::string err;
+            if (LastToken(cut) == "end") continue;   // a clean boundary may load
+            CHECK(SceneSerializer::InstantiateFromText(s, cut, &err) == nullptr);
+            CHECK(!err.empty());
+            CHECK(!SceneSerializer::MergeFromText(s, cut));
+            CHECK(s.Objects().size() == n);
+            CHECK(host->transform->Children().size() == 1);
+            CHECK(kid->transform->Parent() == host->transform);
+            CHECK(SceneSerializer::Serialize(s) == before);
+        }
+        // A cycle found only after every object exists (the last step of a parse).
+        const std::string cyc = "okayscene 3\ngameobject 0 \"A\"\n  parent 1\nend\ngameobject 1 \"B\"\n  parent 0\nend\n";
+        CHECK(!SceneSerializer::MergeFromText(s, cyc));
+        CHECK(s.Objects().size() == n);
+        CHECK(host->transform->Children().size() == 1);
+
+        // Success still works, and warnings come back.
+        std::vector<GameObject*> roots;
+        std::vector<std::string> warns;
+        CHECK(SceneSerializer::MergeFromText(s, text.substr(0, text.find('\n') + 1) + "futuretoken 1\n" + text.substr(text.find('\n') + 1), Vec3{1, 0, 0}, &roots, nullptr, &warns));
+        CHECK(s.Objects().size() == n + 50);
+        CHECK(roots.size() == 10);
+        CHECK(Contains(warns, "futuretoken"));
+        CHECK(SceneSerializer::InstantiateFromText(s, text) != nullptr);
+        CHECK(s.Objects().size() == n + 100);
+
+        // Timing (printed, not asserted): one parse per Instantiate, against the
+        // old two (a throwaway parse first, then the real one).
+        using Clock = std::chrono::steady_clock;
+        auto run = [&](bool probeFirst) {
+            Scene t("t");
+            const auto t0 = Clock::now();
+            for (int i = 0; i < 2000; ++i) {
+                if (probeFirst) { Scene p("p"); SceneSerializer::InstantiateFromText(p, text); }
+                SceneSerializer::InstantiateFromText(t, text);
+                t.Clear();
+            }
+            return std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+        };
+        const double once = run(false), twice = run(true);
+        std::cout << "  2000 x 50-object Instantiate: parse once " << once << " ms, parse twice " << twice << " ms\n";
     }
 
     // ---- every scene file in the repo loads and round-trips ----

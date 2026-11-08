@@ -197,9 +197,9 @@ Bones map automatically from common rig names (Mixamo, Blender-style `.L/.R`,
 `ik_foot(...)`, `ik_look(x, y, z)`, `ik_release()` and `ik_reached("left_hand")`. In
 visual scripts: *IK Look At* and *IK Hand Reach*. State machine states have an
 **IK Weight**, so Foot, Full Body, Limb, Chain, Look-At and Aim fade out
-during a roll or a climb and back in after. Look-At and Aim follow that
-weight unless the state sets a look weight of its own. Death, sit, swim and
-the emotes set the look weight to 0.
+during a roll or a climb and back in after. Look-At and Aim keep tracking
+unless the state sets a look weight of its own (default 1; below 0 follows the
+IK weight). Death, sit, gestures and the emotes set it to 0.
 
 ## Troubleshooting
 

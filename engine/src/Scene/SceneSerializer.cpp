@@ -877,7 +877,7 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         }
         // Look-At / Aim weight, where it stops following the foot weight.
         bool anyLook = false;
-        for (const auto& st : asm2->states) anyLook = anyLook || st.lookWeight >= 0.0f;
+        for (const auto& st : asm2->states) anyLook = anyLook || st.lookWeight != 1.0f;
         if (anyLook) {
             out << "  animsmlk " << asm2->states.size();
             for (const auto& st : asm2->states) out << " " << st.lookWeight;

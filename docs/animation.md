@@ -818,7 +818,8 @@ and transitions. Beyond single conditions:
   over the clip (click to add a key, drag to move it, right-click to remove it).
   The curve is multiplied by the IK weight slider. Full Body IK can have its own
   curve when it does not follow the foot weight. Look-At and Aim use the
-  state's look weight when that is set, and otherwise the same foot weight.
+  state's look weight (1 by default, so a state with no foot IK keeps the head;
+  below 0 follows the foot weight).
   Limb IK and Chain IK follow the Full Body weight. The solvers themselves
   are unchanged. `SampleIkCurve` evaluates a curve the same way.
 
@@ -1008,11 +1009,11 @@ character, and the bone stays over it.
   sounds or to open a hit window.
 - **IK weight:** how much Foot IK, Full Body IK, Limb IK, Chain IK, Look-At
   and Aim apply in that state, eased over the transition. Look-At and Aim
-  follow this unless the state sets its own look weight. Set the weight to 0
-  for jumps, rolls and falls so the feet aren't pulled to the ground mid-air,
-  and for death, sit, swim and emotes so the head plays the action instead of
-  staying on a look target. Locomotion setup does this for Jump and Fall.
-  The built-in actions set the look weight to 0.
+  use the state's own look weight instead (1 by default). Set the IK weight to
+  0 for jumps, rolls and falls so the feet aren't pulled to the ground
+  mid-air; set the look weight to 0 for death, sit and emotes so the head
+  plays the action instead of staying on a look target. The built-in death,
+  sit, gesture and emote states do.
 - **Start at** on a transition starts the target part-way into its clip, to line
   up the feet between walk and run cycles.
 

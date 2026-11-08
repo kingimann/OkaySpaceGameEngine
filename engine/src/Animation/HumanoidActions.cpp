@@ -570,7 +570,6 @@ SM::State MakeSwimState() {
     s.blendParam = "swimSpeed";
     s.loop = true;
     s.ikWeight = 0.0f;
-    s.lookWeight = 0.0f;
     s.fullBodyIkWeight = 0.0f;
     // Locked so jump and fall (Any State, and this state is not prone) cannot
     // cut a stroke. Death is an edge on the state itself.
@@ -886,7 +885,6 @@ SM::State MakeDiveState(const char* name, const char* clip, bool loop) {
     s.clip = clip;
     s.loop = loop;
     s.ikWeight = 0.0f;
-    s.lookWeight = 0.0f;
     s.fullBodyIkWeight = 0.0f;
     s.interruptible = false;
     return s;
@@ -1035,7 +1033,7 @@ void EndAt(SM::State& st, const char* to) {
 void AddOneShot(SM& sm, const char* name, const char* clip, float col, float ny, const char* to) {
     if (HasState(sm, name)) return;
     SM::State s;
-    s.name = name; s.clip = clip; s.loop = false; s.ikWeight = 0.0f; s.lookWeight = 0.0f;
+    s.name = name; s.clip = clip; s.loop = false; s.ikWeight = 0.0f;
     // Fall / Jump Any-State would cut a vault the moment the body leaves the
     // ground. Own edges still run, including die.
     s.interruptible = false;
@@ -1206,7 +1204,6 @@ void AddStates(AnimStateMachine& sm, const Character* body, bool force) {
             s.blendParam = "hitDir";
             s.loop = false;
             s.ikWeight = 0.0f;
-            s.lookWeight = 0.0f;
             s.fullBodyIkWeight = 0.0f;
             s.interruptible = true;
             s.motions = {HitClip("Hit_Heavy_F", 0.0f), HitClip("Hit_Heavy_B", 1.0f)};
@@ -1219,7 +1216,6 @@ void AddStates(AnimStateMachine& sm, const Character* body, bool force) {
             s.clip = "Hit_Crouch";
             s.loop = false;
             s.ikWeight = 0.0f;
-            s.lookWeight = 0.0f;
             s.interruptible = true;
             s.nx = col; s.ny = 130.0f;
             sm.states.push_back(std::move(s));
@@ -1230,7 +1226,6 @@ void AddStates(AnimStateMachine& sm, const Character* body, bool force) {
             s.clip = "Hit_Prone";
             s.loop = false;
             s.ikWeight = 0.0f;
-            s.lookWeight = 0.0f;
             s.interruptible = true;
             s.nx = col; s.ny = 220.0f;
             sm.states.push_back(std::move(s));
@@ -1292,7 +1287,7 @@ void AddStates(AnimStateMachine& sm, const Character* body, bool force) {
         const char* home = HasState(sm, "Idle") ? "Idle" : nullptr;
         if (!HasState(sm, "Roll")) {
             SM::State s;
-            s.name = "Roll"; s.clip = "Roll_F"; s.loop = false; s.ikWeight = 0.0f; s.lookWeight = 0.0f; s.interruptible = true;
+            s.name = "Roll"; s.clip = "Roll_F"; s.loop = false; s.ikWeight = 0.0f; s.interruptible = true;
             s.nx = col; s.ny = 40.0f;
             sm.states.push_back(std::move(s));
             if (SM::State* st = FindMutable(sm, "Roll")) EndAt(*st, home);
@@ -1300,7 +1295,7 @@ void AddStates(AnimStateMachine& sm, const Character* body, bool force) {
         if (!HasState(sm, "Dodge")) {
             SM::State s;
             s.name = "Dodge"; s.blendTree = true; s.blendDims = 1; s.blendParam = "dodgeDir";
-            s.loop = false; s.ikWeight = 0.0f; s.lookWeight = 0.0f; s.interruptible = true;
+            s.loop = false; s.ikWeight = 0.0f; s.interruptible = true;
             s.motions = {AtClip("Roll_F", 0.0f), AtClip("Dodge_B", 1.0f), AtClip("Dodge_L", 2.0f), AtClip("Dodge_R", 3.0f)};
             s.nx = col; s.ny = 130.0f;
             sm.states.push_back(std::move(s));
@@ -1308,13 +1303,13 @@ void AddStates(AnimStateMachine& sm, const Character* body, bool force) {
         }
         if (!HasState(sm, "Slide")) {
             SM::State s;
-            s.name = "Slide"; s.clip = "Slide"; s.loop = true; s.ikWeight = 0.0f; s.lookWeight = 0.0f; s.interruptible = true;
+            s.name = "Slide"; s.clip = "Slide"; s.loop = true; s.ikWeight = 0.0f; s.interruptible = true;
             s.nx = col; s.ny = 220.0f;
             sm.states.push_back(std::move(s));
         }
         if (!HasState(sm, "SlideEnd")) {
             SM::State s;
-            s.name = "SlideEnd"; s.clip = "SlideEnd"; s.loop = false; s.ikWeight = 0.0f; s.lookWeight = 0.0f; s.interruptible = true;
+            s.name = "SlideEnd"; s.clip = "SlideEnd"; s.loop = false; s.ikWeight = 0.0f; s.interruptible = true;
             s.nx = col; s.ny = 310.0f;
             sm.states.push_back(std::move(s));
             if (SM::State* st = FindMutable(sm, "SlideEnd")) {
@@ -1369,7 +1364,7 @@ void AddStates(AnimStateMachine& sm, const Character* body, bool force) {
         if (!HasState(sm, "HangShimmy")) {
             SM::State s;
             s.name = "HangShimmy"; s.blendTree = true; s.blendDims = 1; s.blendParam = "shimmy";
-            s.loop = true; s.ikWeight = 0.0f; s.lookWeight = 0.0f; s.interruptible = false;
+            s.loop = true; s.ikWeight = 0.0f; s.interruptible = false;
             SM::Motion l; l.clip = "Hang_Shimmy_L"; l.threshold = -1.0f;
             SM::Motion r; r.clip = "Hang_Shimmy_R"; r.threshold = 1.0f;
             s.motions = {l, r};

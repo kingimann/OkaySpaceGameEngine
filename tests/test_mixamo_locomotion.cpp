@@ -480,6 +480,7 @@ int main() {
             CHECK(hips);
             if (hips) {
                 for (int i = 0; i < 10; ++i) L.rig.scene->Update(kDt);
+                CHECK(!L.ma->ActionPoseUncovered());   // idle locomotion: the new action-pose rule leaves ClipOverridesPose alone
                 const float standY = hips->Position().y;
                 const Quat standR = hips->Rotation();
                 HumanoidActions::RequestDeath(L.rig.player, 0, nullptr);

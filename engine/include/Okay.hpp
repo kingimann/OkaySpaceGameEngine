@@ -12,6 +12,7 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Random.hpp"
+#include "okay/Core/Rng.hpp"
 #include "okay/Core/DataPack.hpp"
 #include "okay/Core/EventBus.hpp"
 #include "okay/Core/Scheduler.hpp"

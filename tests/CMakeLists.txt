@@ -1476,3 +1476,8 @@ add_test(NAME vs_media COMMAND test_vs_media)
 add_executable(test_script_nav test_script_nav.cpp)
 target_link_libraries(test_script_nav PRIVATE okay::engine)
 add_test(NAME script_nav COMMAND test_script_nav)
+
+# Math: Mat3, Mat4::Decompose, geometry (Ray/Plane/Sphere/AABB/OBB/Frustum/Capsule), Vec2i/Vec3i, noise, curves, colour spaces, Rng streams
+add_executable(test_math_geometry test_math_geometry.cpp)
+target_link_libraries(test_math_geometry PRIVATE okay::engine)
+add_test(NAME math_geometry COMMAND test_math_geometry)

@@ -28,14 +28,14 @@ int main() {
         bus.Publish(A{2});
         CHECK((got == std::vector<int>{102}));
     }
-    {   // a handler removed during dispatch still gets the current event (snapshot)
+    {   // a handler removed during dispatch before its turn is skipped
         EventBus bus; int hits = 0; int tok2 = 0;
         bus.Subscribe<A>([&](const A&) { bus.Unsubscribe<A>(tok2); });
         tok2 = bus.Subscribe<A>([&](const A&) { ++hits; });
         bus.Publish(A{0});
-        CHECK(hits == 1);
+        CHECK(hits == 0);
         bus.Publish(A{0});
-        CHECK(hits == 1);
+        CHECK(hits == 0);
     }
 
     // ---- priority ----

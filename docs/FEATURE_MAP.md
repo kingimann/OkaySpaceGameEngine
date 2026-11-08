@@ -208,8 +208,8 @@ You can also say "area 5 but not Grok's parts" or "everything open in 1".
 | 1.2 | Timers and tweens: Scheduler, Tween, easing | `Core/Scheduler`, `Tween`, `Components/TweenAnimation` | - | Global scheduler PR in review |
 | 1.3 | Scene graph: Scene, GameObject, Transform, components, layers and tags | `Scene/Scene`, `GameObject`, `Transform`, `Component`, `Layers` | `making_a_game.md` | Layer collision matrix, named tags, component registry |
 | 1.4 | Scene lifecycle: Start/Awake order, destroy, scene manager, load | `Scene/SceneManager`, `Scene` | `making_a_game.md` | Async load, unload, DontDestroyOnLoad, pooling (branches in review) |
-| 1.5 | Scene serializer (`okayscene 3`): load, merge, instantiate | `Scene/SceneSerializer` | - | Safe loading in review; stable object IDs; component serializer registry |
-| 1.6 | Prefabs and templates: prefab files, starter players and worlds | `Scene/SceneTemplates`, `UITemplates`, `UIStyles` | `making_a_game.md` | Prefab overrides |
+| 1.5 | Scene serializer (`okayscene 3`): load, merge, instantiate | `Scene/SceneSerializer`, `Scene/PrefabTools` | `scene_serializer.md` | Safe loading in review; stable object IDs; component serializer registry; prefab-file records `nestedprefab`, `variant`, `override`, `unset`, `remove`, `under` (older builds skip them) |
+| 1.6 | Prefabs and templates: prefab files, nested prefabs, variants, starter players and worlds | `Scene/PrefabTools`, `SceneTemplates`, `UITemplates`, `UIStyles` | `making_a_game.md`, `prefabs.md`, `prefab_system.md` | Prefab wave 2 pushed (branch claude/prefab-wave2): nested prefabs, variants, unpack, per-field apply and revert, validator; editor override UI still open |
 | 1.7 | Saves and prefs: save games, prefs, data assets, data packs | `Core/SaveData`, `Prefs`, `DataAsset`, `DataPack` | `save_games.md` | Durable saves in review; typed Prefs |
 | 1.8 | Localization: string tables, plurals, font fallback | `Core/Game` (runtime), `Components/*` consumers | `localization.md` | Number and date formatting, plural rules |
 | 1.9 | Events and ECS: EventBus, ECS World, SceneBridge | `Core/EventBus`, `ECS/World`, `ECS/SceneBridge`, `ECS/Systems` | - | ECS command buffer |
@@ -459,7 +459,7 @@ Areas 20-35 are planned features you asked for. Each says what exists today
 | ID | Area (priority) | Exists today | Missing | Related |
 |---|---|---|---|---|
 | 20 | Asset management (Critical) | Project panel and marketplace asset manager (15.4); asset manager core in flight (typed handles, refcounts, async load, hot reload; PR #568); data layer in flight (branch claude/asset-guids-deps, `asset_database.md`): GUID meta files with move/rename/duplicate handling, dependency graph with closure, unused and missing reports, typed import settings with migration and a reimport signal, thumbnail cache, search/filter/page query | Asset browser window and thumbnails grid on top of that data layer, importers that read the import settings, GUID references inside scene files, wiring the build/export closure | 15.4, 3.6, 1.6, 21 |
-| 21 | Prefab system (Critical) | Prefab files and instantiate (1.6); stable object IDs, prefab overrides and re-apply in flight (branch claude/scene-ids-prefabs) | Nested prefabs, variants, override editor UI (apply, revert, per-field), prefab mode editing, unpack | 1.6, 15.2, 20 |
+| 21 | Prefab system (Critical) | Prefab files and instantiate (1.6); stable object IDs, prefab overrides and re-apply (PR #570); nested prefabs with cycle and depth checks, variants and variant chains, unpack, per-record and per-field apply and revert (atomic file rewrite), instance queries and a prefab asset validator in `PrefabTools` (branch claude/prefab-wave2, `prefab_system.md`) | Override editor UI (apply, revert, per-field) on top of `PrefabTools`, prefab mode editing, applying added and removed objects to a prefab, overrides keyed by object id instead of index | 1.6, 15.2, 20 |
 | 22 | Undo/redo & recovery (Critical) | Undo is a full-scene text snapshot, 100 steps; autosave (15.9) | Command-based undo (cheap, per-property), undo across Play, crash recovery (restore after a crash), rolling backups and a restore UI | 15.9 |
 | 23 | Profiling & debugging (Critical) | Profiler with categories and trace export in review (PR #559); log file sink; editor console (15.9) | CPU and GPU timeline window, memory tracking by system, frame debugger (draw call list, state, step through), error console filters and links to the source object | 1.10, 2.1, 15.6 |
 | 24 | Plugin & extension system (Critical) | Editor plugin system and Plugins menu (15.8, `editor-plugins.md`) | C++ plugin ABI with versioning and a plugin SDK package, editor extension points (windows, inspectors, menus), custom nodes for visual scripting, plugin manager UI | 15.8, 14.4 |
@@ -486,4 +486,6 @@ Areas 20-35 are planned features you asked for. Each says what exists today
   load, pooling and RequireComponent (1.4); stable IDs, prefab overrides and
   serializer registry (1.5, 1.6); plural rules, number formatting, typed Prefs and
   fixed timestep (1.8, 1.7, 1.1).
+- Prefab wave 2 (branch claude/prefab-wave2, PR to be opened by the coordinator): nested
+  prefabs, variants, unpack, per-field apply and revert, prefab validator (1.5, 1.6, 21).
 - Animation and IK PRs (#535-#539, #548-#551, #554) belong to Grok's sessions.

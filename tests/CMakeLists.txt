@@ -1499,3 +1499,15 @@ add_test(NAME scene_ids_prefabs COMMAND test_scene_ids_prefabs)
 add_executable(test_layers_tags_cameras test_layers_tags_cameras.cpp)
 target_link_libraries(test_layers_tags_cameras PRIVATE okay::engine)
 add_test(NAME layers_tags_cameras COMMAND test_layers_tags_cameras)
+
+# ---- Prefab system wave 2 (docs/prefab_system.md): nested prefabs, variants, per-field apply / revert
+add_executable(test_prefab_nested test_prefab_nested.cpp)
+target_link_libraries(test_prefab_nested PRIVATE okay::engine)
+add_test(NAME prefab_nested COMMAND test_prefab_nested)
+add_executable(test_prefab_variants test_prefab_variants.cpp)
+target_link_libraries(test_prefab_variants PRIVATE okay::engine)
+add_test(NAME prefab_variants COMMAND test_prefab_variants)
+
+add_executable(test_prefab_apply_revert test_prefab_apply_revert.cpp)
+target_link_libraries(test_prefab_apply_revert PRIVATE okay::engine)
+add_test(NAME prefab_apply_revert COMMAND test_prefab_apply_revert)

@@ -1,7 +1,9 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
+#include <chrono>
 #include <mutex>
+#include <random>
 #include <unordered_map>
 
 namespace okay {
@@ -12,12 +14,32 @@ namespace {
 std::mutex g_registryMutex;
 std::unordered_map<std::uint64_t, GameObject*> g_registry;
 std::uint64_t g_nextInstanceId = 1;
+
+std::string NewGuid() {   // caller holds g_registryMutex
+    static std::mt19937_64 rng{std::random_device{}() ^ (std::uint64_t)std::chrono::steady_clock::now().time_since_epoch().count()};
+    static const char* hex = "0123456789abcdef";
+    std::string g(32, '0');
+    for (int w = 0; w < 2; ++w) {
+        std::uint64_t v = rng();
+        for (int i = 0; i < 16; ++i) { g[(std::size_t)(w * 16 + i)] = hex[v & 15u]; v >>= 4; }
+    }
+    return g;
+}
 } // namespace
+
+bool GameObject::SetGuid(const std::string& guid) {
+    if (guid.empty() || guid.size() > 64) return false;
+    for (char c : guid)
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || c == '-')) return false;
+    m_guid = guid;
+    return true;
+}
 
 GameObject::GameObject(Scene* scene, std::string name)
     : name(std::move(name)), m_scene(scene) {
     std::lock_guard<std::mutex> lock(g_registryMutex);
     m_instanceId = g_nextInstanceId++;
+    m_guid = NewGuid();
     g_registry[m_instanceId] = this;
 }
 

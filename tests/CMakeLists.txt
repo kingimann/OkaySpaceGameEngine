@@ -1393,3 +1393,8 @@ add_test(NAME splines COMMAND test_splines)
 add_executable(test_script_batch1 test_script_batch1.cpp)
 target_link_libraries(test_script_batch1 PRIVATE okay::engine)
 add_test(NAME script_batch1 COMMAND test_script_batch1)
+
+# Persistent object ids, sibling order / enabled flags, duplicate components, component serializer registry, prefab overrides
+add_executable(test_scene_ids_prefabs test_scene_ids_prefabs.cpp)
+target_link_libraries(test_scene_ids_prefabs PRIVATE okay::engine)
+add_test(NAME scene_ids_prefabs COMMAND test_scene_ids_prefabs)

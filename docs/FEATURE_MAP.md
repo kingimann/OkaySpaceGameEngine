@@ -38,10 +38,13 @@ places, so treat an open item as "ask before assuming it is still open".
   worlds), prefabs, save games, prefs, data packs, profiler, localization
   runtime (string tables, plurals, font fallback).
 - **Code:** `engine/include/okay/Core`, `Scene`, `ECS`, `Math`.
-- **Docs:** `making_a_game.md`, `save_games.md`, `localization.md`.
+- **Docs:** `making_a_game.md`, `save_games.md`, `localization.md`, `prefabs.md`,
+  `scene_serializer.md`.
 - **Editor:** Scene Manager panel, Localization window.
-- **Open:** Scene Manager window polish; component serializer registry
-  (the serializer is one very large file); old-scene migration whenever a
+- **Open:** Scene Manager window polish; move the remaining components onto the
+  component serializer registry (only `trailrenderer` is on it so far; the rest
+  is still one very large if/else chain); editor Apply/Revert wiring for prefab
+  overrides; component order is not saved; old-scene migration whenever a
   component changes shape.
 
 ## 2. Rendering & world

@@ -186,6 +186,8 @@
 #include <sstream>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
+#include "okay/Scene/ComponentSerializer.hpp"
 #include <algorithm>
 #include <vector>
 
@@ -474,6 +476,27 @@ static bool IsBuildModeRuntime(GameObject* go) {
     for (Transform* t = go ? go->transform : nullptr; t; t = t->Parent())
         if (t->gameObject && t->gameObject->tag == BuildMode::kRuntimeTag) return true;
     return false;
+}
+
+// Types the format saves more than one of per object (their writers loop over every
+// instance). Anything else is written once, from the first instance only.
+bool AllowsMultiple(const Component* c) {
+    return dynamic_cast<const ScriptComponent*>(c) || dynamic_cast<const VisualScriptComponent*>(c) ||
+           dynamic_cast<const ActionList*>(c) || dynamic_cast<const SyncVar*>(c) ||
+           dynamic_cast<const NetValidator*>(c) || dynamic_cast<const TweenAnimation*>(c) ||
+           dynamic_cast<const AnimStateMachine*>(c);
+}
+
+// `compoff` records for every component that is switched off (per-component flags
+// the individual records may not carry). Keyed by type name + occurrence.
+void WriteDisabledComponents(std::ostream& out, const GameObject* go) {
+    std::unordered_map<std::string, int> seen;
+    for (const auto& c : go->Components()) {
+        if (c.get() == static_cast<const Component*>(go->transform)) continue;
+        const std::string key = ComponentSerializerRegistry::TypeKey(*c);
+        const int occ = seen[key]++;
+        if (!c->enabled) out << "  compoff " << Quote(key) << " " << occ << "\n";
+    }
 }
 
 // Write a GameObject's Transform + all known components (no header/parent line).
@@ -3251,16 +3274,9 @@ void WriteComponents(std::ostream& out, GameObject* go) {
         WriteGradientKv(k, "g", lr->colorGradient);
         out << "\n";
     }
-    if (auto* tr = go->GetComponent<TrailRenderer>()) {
-        out << "  trailrenderer";
-        KvOut k{out};
-        k("time", tr->time)("mindist", tr->minVertexDistance)("width", tr->width).col("c", tr->color)
-         .b("emit", tr->emitting)("align", (int)tr->alignment)("texmode", (int)tr->textureMode)
-         ("tile", tr->tileLength).str("tex", tr->texture)("teleport", tr->teleportDistance);
-        WriteCurveKv(k, "w", tr->widthCurve);
-        WriteGradientKv(k, "g", tr->colorGradient);
-        out << "\n";
-    }
+    // Components that registered with ComponentSerializerRegistry (trailrenderer, ...).
+    ComponentSerializerRegistry::WriteAll(*go, out);
+    WriteDisabledComponents(out, go);
 }
 } // namespace
 
@@ -3337,11 +3353,40 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
         }
     }
     const auto& objs = scene.Objects();
+    auto skipped = [](GameObject* go) {
+        return go->transient || IsGeneratedRig(go) || IsGeneratedViewmodel(go) || IsBuildModeRuntime(go);   // a Character's part rig (and the FP viewmodel arm) is regenerated on load
+    };
+    std::unordered_map<const GameObject*, int> indexOf;
+    indexOf.reserve(objs.size());
+    for (std::size_t i = 0; i < objs.size(); ++i) indexOf[objs[i].get()] = (int)i;
+    // Sibling order. Loading attaches children in file order, so a parent whose
+    // children were reordered later needs the real position written (`sibling`).
+    std::unordered_map<const GameObject*, int> siblingPos;
+    {
+        std::unordered_map<const Transform*, bool> done;
+        for (std::size_t i = 0; i < objs.size(); ++i) {
+            const Transform* par = objs[i]->transform->Parent();
+            if (!par || done[par]) continue;
+            done[par] = true;
+            std::vector<std::pair<int, const GameObject*>> kids;   // (scene index, child) in sibling order
+            for (const Transform* ch : par->Children())
+                if (!skipped(ch->gameObject)) kids.push_back({indexOf[ch->gameObject], ch->gameObject});
+            std::vector<int> sorted;
+            for (auto& k : kids) sorted.push_back(k.first);
+            std::sort(sorted.begin(), sorted.end());
+            for (std::size_t pos = 0; pos < kids.size(); ++pos)
+                if (sorted[pos] != kids[pos].first) {   // not where file order would put it
+                    for (std::size_t q = 0; q < kids.size(); ++q) siblingPos[kids[q].second] = (int)q;
+                    break;
+                }
+        }
+    }
     for (std::size_t i = 0; i < objs.size(); ++i) {
         GameObject* go = objs[i].get();
-        if (go->transient || IsGeneratedRig(go) || IsGeneratedViewmodel(go) || IsBuildModeRuntime(go)) continue;   // a Character's part rig (and the FP viewmodel arm) is regenerated on load
+        if (skipped(go)) continue;
         Transform* t = go->transform;
         out << "gameobject " << i << " " << Quote(go->name) << "\n";
+        out << "  guid " << Quote(go->Guid()) << "\n";
         out << "  active " << (go->active ? 1 : 0) << "\n";
         if (!go->tag.empty()) out << "  tag " << Quote(go->tag) << "\n";
         if (go->isStatic) out << "  static 1\n";
@@ -3350,8 +3395,11 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
         if (go->uiDrawOrder != 0) out << "  uiorder " << go->uiDrawOrder << "\n";
         if (!go->sourceScene.empty()) out << "  srcscene " << Quote(go->sourceScene) << "\n";
         if (!go->prefabSource.empty()) out << "  prefab " << Quote(go->prefabSource) << "\n";
-        int parent = t->Parent() ? IndexOf(scene, t->Parent()->gameObject) : -1;
+        for (const auto& ov : go->prefabOverrides) out << "  override " << ov.object << " " << Quote(ov.line) << "\n";
+        int parent = t->Parent() ? indexOf[t->Parent()->gameObject] : -1;
         out << "  parent " << parent << "\n";
+        auto sp = siblingPos.find(go);
+        if (sp != siblingPos.end()) out << "  sibling " << sp->second << "\n";
         WriteComponents(out, go);
         out << "end\n";
     }
@@ -3488,6 +3536,8 @@ static bool ParseCore(Scene& scene, const std::string& text, bool clear,
     // file index -> created GameObject, plus deferred parent links.
     std::unordered_map<int, GameObject*> byIndex;
     std::vector<std::pair<int, int>> parentLinks; // child index -> parent index
+    std::unordered_map<int, int> siblingHints;    // child index -> saved position among its siblings
+    std::unordered_set<std::string> seenGuids;
 
     // Record validation. Counts are checked against the input still unread (each
     // element takes at least `minChars` characters), so a bogus count can't make a
@@ -3611,6 +3661,7 @@ static bool ParseCore(Scene& scene, const std::string& text, bool clear,
 
             std::string field;
             bool sawEnd = false;
+            std::vector<std::pair<std::string, int>> compOff;   // (type key, occurrence) switched off
             while (in >> field) {
                 if (field == "end") { sawEnd = true; break; }
                 if (field == "active") { int a = 1; in >> a; go->active = (a != 0); }
@@ -7822,17 +7873,29 @@ static bool ParseCore(Scene& scene, const std::string& text, bool clear,
                     k.i("samples", lr->splineSamples);
                     ReadCurveKv(k, "w", lr->widthCurve);
                     ReadGradientKv(k, "g", lr->colorGradient);
-                } else if (field == "trailrenderer") {
-                    auto* tr = go->AddComponent<TrailRenderer>();
-                    KvIn k(in);
-                    int align = 0, texmode = 0;
-                    k.f("time", tr->time); k.f("mindist", tr->minVertexDistance); k.f("width", tr->width);
-                    k.col("c", tr->color); k.b("emit", tr->emitting); k.i("align", align); k.i("texmode", texmode);
-                    tr->alignment = align == 1 ? LineAlignment::Flat : LineAlignment::View;
-                    tr->textureMode = texmode == 1 ? LineTextureMode::Tile : LineTextureMode::Stretch;
-                    k.f("tile", tr->tileLength); k.str("tex", tr->texture); k.f("teleport", tr->teleportDistance);
-                    ReadCurveKv(k, "w", tr->widthCurve);
-                    ReadGradientKv(k, "g", tr->colorGradient);
+                } else if (field == "guid") {
+                    const std::string g = ReadQuoted(in);
+                    // A full load adopts the saved id (so references survive); an additive
+                    // load (Instantiate, paste, merge) keeps the new object's own fresh one.
+                    if (clear) {
+                        if (seenGuids.count(g)) warn("duplicate guid on object " + std::to_string(idx) + "; gave it a new one");
+                        else if (go->SetGuid(g)) seenGuids.insert(g);
+                        else warn("ignored malformed guid on object " + std::to_string(idx));
+                    }
+                } else if (field == "sibling") {
+                    int pos = -1; in >> pos;
+                    if (pos >= 0) siblingHints[idx] = pos;
+                } else if (field == "compoff") {
+                    std::string key = ReadQuoted(in); int occ = 0; in >> occ;
+                    compOff.push_back({key, occ});
+                } else if (field == "override") {
+                    GameObject::PrefabOverride ov; in >> ov.object; ov.line = ReadQuoted(in);
+                    if (in && ov.object >= 0 && !ov.line.empty()) go->prefabOverrides.push_back(ov);
+                } else if (auto reg = ComponentSerializerRegistry::Find(field)) {
+                    // A component that registered itself (no branch in this chain).
+                    std::string rest; std::getline(in, rest);
+                    std::istringstream ls(rest);
+                    reg->read(*go, ls);
                 } else {
                     // A newer build's field: one record per line, so step over it.
                     warn("skipped unknown field '" + field + "' on object " + std::to_string(idx));
@@ -7843,6 +7906,28 @@ static bool ParseCore(Scene& scene, const std::string& text, bool clear,
             // the loop above stopped without finding 'end'.
             if (!sawEnd)
                 return bad("object " + std::to_string(idx) + " is cut short (no 'end')");
+            // Per-component enabled flags, applied last so they win over anything a
+            // record set while building its component. A flag for a component that is
+            // not there (an older or newer build's) is ignored.
+            for (const auto& [key, occ] : compOff) {
+                int seen = 0;
+                for (const auto& c : go->Components())
+                    if (c.get() != static_cast<Component*>(go->transform) && ComponentSerializerRegistry::TypeKey(*c) == key && seen++ == occ) {
+                        c->enabled = false;
+                        break;
+                    }
+            }
+            // Single-instance components appear once per object: a second record of
+            // the same type loads (both exist) but is reported.
+            {
+                std::unordered_map<std::string, int> counts;
+                for (const auto& c : go->Components()) {
+                    if (c.get() == static_cast<Component*>(go->transform)) continue;
+                    const std::string k = ComponentSerializerRegistry::TypeKey(*c);
+                    if (++counts[k] == 2 && !AllowsMultiple(c.get()))
+                        warn("object " + std::to_string(idx) + " has two '" + k + "' components; only the first is saved");
+                }
+            }
         } else {
             // A newer build's top-level record (see the field case above).
             warn("skipped unknown record '" + token + "'");
@@ -7861,6 +7946,43 @@ static bool ParseCore(Scene& scene, const std::string& text, bool clear,
             if (error) *error = "object " + std::to_string(childIdx) + " has a parent cycle (parent " +
                                 std::to_string(parentIdx) + ")";
             return false;
+        }
+    }
+    // Restore saved sibling order. Parent links append in file order, which is not the
+    // order siblings had if they were reordered after creation.
+    if (!siblingHints.empty()) {
+        std::unordered_set<Transform*> parents;
+        for (auto& [childIdx, pos] : siblingHints) {
+            (void)pos;
+            auto c = byIndex.find(childIdx);
+            if (c != byIndex.end() && c->second->transform->Parent()) parents.insert(c->second->transform->Parent());
+        }
+        std::unordered_map<Transform*, int> hint;
+        for (auto& [childIdx, pos] : siblingHints) {
+            auto c = byIndex.find(childIdx);
+            if (c != byIndex.end()) hint[c->second->transform] = pos;
+        }
+        for (Transform* par : parents) {
+            const std::vector<Transform*> cur = par->Children();
+            const std::size_t n = cur.size();
+            std::vector<Transform*> target(n, nullptr);
+            std::vector<Transform*> hinted;
+            for (Transform* ch : cur) if (hint.count(ch)) hinted.push_back(ch);
+            std::stable_sort(hinted.begin(), hinted.end(), [&](Transform* a, Transform* b) { return hint[a] < hint[b]; });
+            for (Transform* ch : hinted) { std::size_t at = (std::size_t)hint[ch]; if (at < n && !target[at]) target[at] = ch; }
+            std::size_t fill = 0;
+            std::unordered_set<Transform*> placedSet;
+            for (Transform* tc : target) if (tc) placedSet.insert(tc);
+            for (Transform* ch : cur) {
+                if (placedSet.count(ch)) continue;
+                while (fill < n && target[fill]) ++fill;
+                if (fill < n) target[fill++] = ch;
+            }
+            for (std::size_t i = 0; i < n; ++i)
+                if (par->Children()[i] != target[i]) {
+                    if (i == 0) par->MoveChildToEdge(target[0], true);
+                    else par->ReorderChild(target[i], target[i - 1], true);
+                }
         }
     }
     // Files from before version 2 gave a Character body its built-in animation
@@ -7970,6 +8092,7 @@ std::string SceneSerializer::SerializeObject(const GameObject& root) {
             if (it != localIndex.end()) pIdx = it->second;
         }
         if (!go->prefabSource.empty()) out << "  prefab " << Quote(go->prefabSource) << "\n";
+        for (const auto& ov : go->prefabOverrides) out << "  override " << ov.object << " " << Quote(ov.line) << "\n";
         out << "  parent " << pIdx << "\n";
         WriteComponents(out, go);
         out << "end\n";
@@ -8115,6 +8238,228 @@ bool SceneSerializer::MergeFromFile(Scene& scene, const std::string& path, const
     std::string text = DataPack::Unpack(raw);
     if (text.empty() && DataPack::IsPacked(raw)) { if (error) *error = "tampered or unreadable " + path; return false; }
     return MergeFromText(scene, text, offset, addedRoots, error, warnings);
+}
+
+
+// ---- Components that use the registry ------------------------------------
+namespace detail {
+void RegisterBuiltinComponentSerializers() {
+    ComponentSerializerRegistry::Entry trail;
+    trail.name = "trailrenderer";
+    trail.write = [](const GameObject& go, std::ostream& out) {
+        auto* tr = go.GetComponent<TrailRenderer>();
+        if (!tr) return;
+        out << "  trailrenderer";
+        KvOut k{out};
+        k("time", tr->time)("mindist", tr->minVertexDistance)("width", tr->width).col("c", tr->color)
+         .b("emit", tr->emitting)("align", (int)tr->alignment)("texmode", (int)tr->textureMode)
+         ("tile", tr->tileLength).str("tex", tr->texture)("teleport", tr->teleportDistance);
+        WriteCurveKv(k, "w", tr->widthCurve);
+        WriteGradientKv(k, "g", tr->colorGradient);
+        out << "\n";
+    };
+    trail.read = [](GameObject& go, std::istream& in) {
+        auto* tr = go.AddComponent<TrailRenderer>();
+        KvIn k(in);
+        int align = 0, texmode = 0;
+        k.f("time", tr->time); k.f("mindist", tr->minVertexDistance); k.f("width", tr->width);
+        k.col("c", tr->color); k.b("emit", tr->emitting); k.i("align", align); k.i("texmode", texmode);
+        tr->alignment = align == 1 ? LineAlignment::Flat : LineAlignment::View;
+        tr->textureMode = texmode == 1 ? LineTextureMode::Tile : LineTextureMode::Stretch;
+        k.f("tile", tr->tileLength); k.str("tex", tr->texture); k.f("teleport", tr->teleportDistance);
+        ReadCurveKv(k, "w", tr->widthCurve);
+        ReadGradientKv(k, "g", tr->colorGradient);
+    };
+    ComponentSerializerRegistry::Register(std::move(trail));
+}
+} // namespace detail
+
+// ---- Prefab overrides -----------------------------------------------------
+namespace {
+struct TextObject {
+    std::string header;                 // the `gameobject <i> "name"` line
+    std::vector<std::string> lines;     // its records, without the closing `end`
+};
+
+// Split serialized scene text into the lines before the first object and the objects.
+void SplitObjects(const std::string& text, std::string& preamble, std::vector<TextObject>& objs) {
+    std::istringstream in(text);
+    std::string line;
+    bool inObj = false;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (!inObj) {
+            if (line.rfind("gameobject ", 0) == 0) { objs.push_back({line, {}}); inObj = true; }
+            else preamble += line + "\n";
+        } else if (line == "end") inObj = false;
+        else objs.back().lines.push_back(line);
+    }
+}
+
+std::string JoinObjects(const std::string& preamble, const std::vector<TextObject>& objs) {
+    std::string out = preamble;
+    for (const auto& o : objs) {
+        out += o.header + "\n";
+        for (const auto& l : o.lines) out += l + "\n";
+        out += "end\n";
+    }
+    return out;
+}
+
+std::string FirstToken(const std::string& line) {
+    std::istringstream ls(line);
+    std::string t; ls >> t;
+    return t;
+}
+
+// Records that describe the object's link to its prefab or its place in a
+// document, not its content: never overridden.
+bool IsBookkeepingRecord(const std::string& tok) {
+    return tok == "prefab" || tok == "override" || tok == "guid" || tok == "sibling" || tok == "parent" ||
+           tok == "srcscene" || tok == "locked" || tok.empty();
+}
+
+// A record's identity inside one object: its name plus which occurrence of it (so two
+// colliders stay distinct). `compoff` lines are identified by their whole text.
+std::string RecordKey(const std::string& line, std::unordered_map<std::string, int>& seen) {
+    const std::string tok = FirstToken(line);
+    if (tok == "compoff") return line;
+    return tok + "#" + std::to_string(seen[tok]++);
+}
+
+bool ReadFileText(const std::string& path, std::string& text, std::string* error) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) { if (error) *error = "cannot open " + path; return false; }
+    std::stringstream ss; ss << f.rdbuf();
+    const std::string raw = ss.str();
+    text = DataPack::Unpack(raw);
+    if (text.empty() && DataPack::IsPacked(raw)) { if (error) *error = "tampered or unreadable " + path; return false; }
+    return true;
+}
+
+// The prefab text with each override's record swapped in (or added, when the
+// prefab has no such record). Overrides that name an object the prefab no longer
+// has are dropped.
+std::string SpliceOverrides(const std::string& prefabText, const std::vector<GameObject::PrefabOverride>& overrides,
+                            std::vector<std::string>* warnings) {
+    std::string preamble;
+    std::vector<TextObject> objs;
+    SplitObjects(prefabText, preamble, objs);
+    for (const auto& ov : overrides) {
+        if (ov.object < 0 || (std::size_t)ov.object >= objs.size()) {
+            if (warnings) warnings->push_back("prefab override for object " + std::to_string(ov.object) + " dropped: the prefab no longer has it");
+            continue;
+        }
+        TextObject& o = objs[(std::size_t)ov.object];
+        const std::string want = "  " + ov.line;
+        std::unordered_map<std::string, int> seen;
+        std::string ovSeen;
+        const std::string ovKeyTok = FirstToken(ov.line);
+        // Which occurrence of its record name does this override mean? Overrides are
+        // captured in record order, so count the earlier overrides of the same name.
+        int occ = 0;
+        for (const auto& prev : overrides) {
+            if (&prev == &ov) break;
+            if (prev.object == ov.object && FirstToken(prev.line) == ovKeyTok) ++occ;
+        }
+        bool replaced = false;
+        if (ovKeyTok != "compoff") {
+            int n = 0;
+            for (auto& l : o.lines)
+                if (FirstToken(l) == ovKeyTok && n++ == occ) { l = want; replaced = true; break; }
+        } else {
+            for (auto& l : o.lines) if (l == want) { replaced = true; break; }
+        }
+        if (!replaced) o.lines.push_back(want);
+    }
+    return JoinObjects(preamble, objs);
+}
+
+void CollectSubtree(GameObject* go, std::vector<GameObject*>& out) {
+    out.push_back(go);
+    for (Transform* c : go->transform->Children()) CollectSubtree(c->gameObject, out);
+}
+} // namespace
+
+bool SceneSerializer::CapturePrefabOverrides(GameObject& instanceRoot, std::string* error) {
+    if (instanceRoot.prefabSource.empty()) { if (error) *error = "object is not a prefab instance"; return false; }
+    std::string fileText;
+    if (!ReadFileText(instanceRoot.prefabSource, fileText, error)) return false;
+    // Canonical form of the prefab: load it into a scratch scene and write it back out,
+    // so both sides of the comparison come from the same writer.
+    Scene scratch("prefab");
+    GameObject* proot = nullptr;
+    if (!ParseInto(scratch, fileText, /*clear=*/false, &proot, error, nullptr) || !proot) {
+        if (error && error->empty()) *error = "empty prefab " + instanceRoot.prefabSource;
+        return false;
+    }
+    std::string pPre, iPre;
+    std::vector<TextObject> pObjs, iObjs;
+    SplitObjects(SerializeObject(*proot), pPre, pObjs);
+    SplitObjects(SerializeObject(instanceRoot), iPre, iObjs);
+
+    std::vector<GameObject::PrefabOverride> found;
+    const std::size_t n = std::min(pObjs.size(), iObjs.size());
+    for (std::size_t i = 0; i < n; ++i) {
+        std::unordered_map<std::string, std::string> base;   // key -> prefab line
+        std::unordered_map<std::string, int> seen;
+        for (const auto& l : pObjs[i].lines) {
+            const std::string tok = FirstToken(l);
+            if (!IsBookkeepingRecord(tok)) base[RecordKey(l, seen)] = l;
+        }
+        seen.clear();
+        for (const auto& l : iObjs[i].lines) {
+            const std::string tok = FirstToken(l);
+            if (IsBookkeepingRecord(tok)) continue;
+            auto b = base.find(RecordKey(l, seen));
+            if (b == base.end() || b->second != l) {
+                std::size_t at = l.find_first_not_of(' ');
+                found.push_back({(int)i, l.substr(at == std::string::npos ? 0 : at)});
+            }
+        }
+    }
+    instanceRoot.prefabOverrides = std::move(found);
+    return true;
+}
+
+GameObject* SceneSerializer::InstantiatePrefab(Scene& scene, const std::string& path,
+                                               const std::vector<GameObject::PrefabOverride>& overrides,
+                                               std::string* error, std::vector<std::string>* warnings) {
+    std::string fileText;
+    if (!ReadFileText(path, fileText, error)) return nullptr;
+    std::vector<std::string> own;
+    const std::string text = SpliceOverrides(fileText, overrides, &own);
+    GameObject* root = nullptr;
+    if (!ParseInto(scene, text, /*clear=*/false, &root, error, warnings)) return nullptr;
+    if (warnings) warnings->insert(warnings->end(), own.begin(), own.end());
+    if (root) { root->prefabSource = path; root->prefabOverrides = overrides; }
+    return root;
+}
+
+GameObject* SceneSerializer::ReapplyPrefab(Scene& scene, GameObject& instanceRoot, std::string* error,
+                                           std::vector<std::string>* warnings) {
+    if (instanceRoot.prefabSource.empty()) { if (error) *error = "object is not a prefab instance"; return nullptr; }
+    GameObject* fresh = InstantiatePrefab(scene, instanceRoot.prefabSource, instanceRoot.prefabOverrides, error, warnings);
+    if (!fresh) return nullptr;   // nothing was added, the instance is as it was
+    // The new instance takes the old one's place: same name, parent, sibling slot, and
+    // the same persistent ids object for object (so references by id stay valid).
+    fresh->name = instanceRoot.name;
+    std::vector<GameObject*> oldSub, newSub;
+    CollectSubtree(&instanceRoot, oldSub);
+    CollectSubtree(fresh, newSub);
+    for (std::size_t i = 0; i < oldSub.size() && i < newSub.size(); ++i)
+        if (oldSub[i]->name == newSub[i]->name || i == 0) newSub[i]->SetGuid(oldSub[i]->Guid());
+    Transform* par = instanceRoot.transform->Parent();
+    if (par) {
+        int slot = 0;
+        for (std::size_t i = 0; i < par->Children().size(); ++i) if (par->Children()[i] == instanceRoot.transform) slot = (int)i;
+        fresh->transform->SetParent(par, /*worldPositionStays=*/false);
+        // Slot `slot` of the list that still holds the old instance is the old one's place.
+        Transform* before = (std::size_t)slot < par->Children().size() ? par->Children()[(std::size_t)slot] : nullptr;
+        if (before && before != fresh->transform) par->ReorderChild(fresh->transform, before, /*after=*/false);
+    }
+    scene.Destroy(&instanceRoot);   // like any Destroy: removed at the end of the frame
+    return fresh;
 }
 
 } // namespace okay

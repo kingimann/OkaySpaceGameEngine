@@ -47,10 +47,11 @@ inline bool ProxyInAction(const Character* c, int id) {
     if (!sm) return false;
     const std::string& cur = sm->Current();
     switch (id) {
-        case 1: return cur == "Death" || cur == "DeadHold";
-        case 2: return cur == "Roll" || cur == "Dodge";
+        // Same names CharacterAnimBackend maps to the action ids.
+        case 1: return cur == "Death" || cur == "DeadHold" || cur.rfind("Death_", 0) == 0 || cur.rfind("DeadHold_", 0) == 0;
+        case 2: return cur == "Roll" || cur == "Dodge" || cur == "Roll_F" || cur.rfind("Dodge_", 0) == 0;
         case 3: return cur == "SitDown" || cur == "Sit" || cur == "StandUp";
-        case 4: return cur == "Swim";
+        case 4: return cur == "Swim" || cur.rfind("Swim_", 0) == 0;
         default: return cur == "Idle" || cur == "Walk" || cur == "Run" || cur.empty();
     }
 }
@@ -123,8 +124,12 @@ public:
             DriveProxyGait(dt);
             // A machine created to play the action has Start() clear its state
             // on the next frame. Keep asking until it is actually in it.
-            if (m_wantAction > 0 && !ProxyInAction(m_char, m_wantAction))
-                ApplyRemoteAction(m_char, m_wantAction);
+            // Once it has stayed in it past that first frame, leave it alone: a
+            // roll that ends before the owner reports "none" must not replay.
+            if (m_wantAction > 0) {
+                if (ProxyInAction(m_char, m_wantAction)) { if (++m_actionFrames >= 2) m_actionSeen = true; }
+                else { m_actionFrames = 0; if (!m_actionSeen) ApplyRemoteAction(m_char, m_wantAction); }
+            }
         }
     }
 
@@ -141,6 +146,8 @@ private:
     int             m_lastPunchSeq = -1;  // remote: last punch replayed
     int             m_lastActionSeq = -1; // remote: last action sequence applied
     int             m_wantAction = 0;     // remote: action to hold until the proxy is in it
+    bool            m_actionSeen = false; // remote: the proxy has held m_wantAction (don't replay it)
+    int             m_actionFrames = 0;   // remote: consecutive frames the proxy has been in it
     bool            m_wasPunching = false;
     // Proxy gait: what the owner reported, and the smoothed speed this copy
     // actually moves at (the interpolated position, so the feet match it).
@@ -216,10 +223,15 @@ private:
                         self->m_ownerSpeed = sp; self->m_ownerAngle = ang; self->m_haveOwnerGait = true;
                     }
                     int aseq = 0, aid = 0; float ly = 0.0f, lp = 0.0f;
-                    if (ss >> aseq >> aid >> ly >> lp && std::isfinite(ly) && std::isfinite(lp)) {
+                    // The sender is untrusted (the host also reads a client's): known
+                    // action ids only, and the look is bounded so the easing stays finite.
+                    if (ss >> aseq >> aid >> ly >> lp && std::isfinite(ly) && std::isfinite(lp)
+                        && aseq >= 0 && aid >= 0 && aid <= 4) {
+                        ly = std::max(-90.0f, std::min(90.0f, ly));
+                        lp = std::max(-90.0f, std::min(90.0f, lp));
                         const bool changed = self->m_lastActionSeq < 0 || aseq != self->m_lastActionSeq;
-                        if (changed) self->m_wantAction = aid;
-                        if (self->m_wantAction > 0 && (changed || !ProxyInAction(c, self->m_wantAction)))
+                        if (changed) { self->m_wantAction = aid; self->m_actionSeen = false; self->m_actionFrames = 0; }
+                        if (self->m_wantAction > 0 && (changed || (!self->m_actionSeen && !ProxyInAction(c, self->m_wantAction))))
                             ApplyRemoteAction(c, self->m_wantAction);
                         else if (self->m_wantAction == 0 && changed && self->m_lastActionSeq >= 0)
                             ApplyRemoteAction(c, 0);

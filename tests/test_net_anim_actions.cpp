@@ -77,7 +77,69 @@ int main() {
     CHECK(std::fabs(cChar->lookYaw - 35.0f) < 0.5f);
     CHECK(std::fabs(cChar->lookPitch - (-12.0f)) < 0.5f);
 
-    (void)sNs; (void)cNs;
+    // Hostile values: huge / non-finite look, unknown or negative action ids.
+    // Raw characters (no state machine rewriting netActionId) stand in for a
+    // peer that writes whatever it likes. "Raw" is host-owned, read by the
+    // client; "Pilot" is client-owned, read by the host.
+    GameObject* raw = ss.CreateGameObject("Raw");
+    auto* rChar = raw->AddComponent<Character>(); rChar->Apply();
+    auto* rNs = raw->AddComponent<NetworkSync>();
+    rNs->netId = "raw"; rNs->authority = NetworkSync::Authority::Host;
+    rNs->Start();
+    GameObject* rProxy = cs.CreateGameObject("Raw");
+    auto* rpChar = rProxy->AddComponent<Character>(); rpChar->Apply();
+    auto* rpNs = rProxy->AddComponent<NetworkSync>();
+    rpNs->netId = "raw"; rpNs->authority = NetworkSync::Authority::Host;
+    rpNs->Start();
+
+    GameObject* pilot = cs.CreateGameObject("Pilot");
+    auto* pChar = pilot->AddComponent<Character>(); pChar->Apply();
+    auto* pNs = pilot->AddComponent<NetworkSync>();
+    pNs->netId = "pilot"; pNs->authority = NetworkSync::Authority::Mine;
+    pNs->Start();
+    GameObject* pHost = ss.CreateGameObject("Pilot");
+    auto* phChar = pHost->AddComponent<Character>(); phChar->Apply();
+    auto* phNs = pHost->AddComponent<NetworkSync>();
+    phNs->netId = "pilot"; phNs->authority = NetworkSync::Authority::Manual; phNs->owned = false;
+    phNs->Start();
+    pump(15);
+
+    auto hasAnim = [](GameObject* g) { return g->GetComponent<AnimStateMachine>() != nullptr; };
+    const struct { float yaw, pitch; int id; } bad[] = {
+        {3e38f, -3e38f, 99}, {NAN, 10.0f, 2}, {10.0f, INFINITY, 1}, {1e9f, 1e9f, -1}, {500.0f, -500.0f, 1000000}};
+    for (const auto& b : bad) {
+        rChar->lookYaw = b.yaw; rChar->lookPitch = b.pitch; rChar->netActionId = b.id; ++rChar->netActionSeq;
+        pChar->lookYaw = b.yaw; pChar->lookPitch = b.pitch; pChar->netActionId = b.id; ++pChar->netActionSeq;
+        pump(25);
+        for (Character* c : {rpChar, phChar}) {
+            CHECK(std::isfinite(c->lookYaw) && std::isfinite(c->lookPitch));
+            CHECK(std::fabs(c->lookYaw) <= 90.0f && std::fabs(c->lookPitch) <= 90.0f);
+        }
+        // A bad id is dropped whole: neither side gains an animator from it.
+        CHECK(!hasAnim(rProxy) && !hasAnim(pHost));
+    }
+    // A clamped (finite) value is still followed.
+    rChar->lookYaw = 500.0f; rChar->lookPitch = -500.0f; rChar->netActionId = 0; ++rChar->netActionSeq;
+    pChar->lookYaw = 500.0f; pChar->lookPitch = -500.0f; pChar->netActionId = 0; ++pChar->netActionSeq;
+    pump(40);
+    CHECK(std::fabs(rpChar->lookYaw - 90.0f) < 0.5f && std::fabs(rpChar->lookPitch + 90.0f) < 0.5f);
+    CHECK(std::fabs(phChar->lookYaw - 90.0f) < 0.5f && std::fabs(phChar->lookPitch + 90.0f) < 0.5f);
+
+    // A roll plays once. The owner keeps reporting "rolling" after the proxy's
+    // roll is over; the proxy must not start it again every frame.
+    rChar->lookYaw = 0.0f; rChar->lookPitch = 0.0f; rChar->netActionId = 2; ++rChar->netActionSeq;
+    int rollStarts = 0; bool wasRoll = false;
+    for (int i = 0; i < 400; ++i) {
+        pump(1);
+        AnimStateMachine* m = rProxy->GetComponent<AnimStateMachine>();
+        const bool inRoll = m && ProxyInAction(rpChar, 2);
+        if (inRoll && !wasRoll) ++rollStarts;
+        wasRoll = inRoll;
+    }
+    CHECK(rollStarts == 1);
+    CHECK(!ProxyInAction(rpChar, 2));
+
+    (void)sNs; (void)cNs; (void)rNs; (void)rpNs; (void)pNs; (void)phNs;
     Log::sink = sink;
     TEST_MAIN_RESULT();
 }

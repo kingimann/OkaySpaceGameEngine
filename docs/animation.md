@@ -383,6 +383,13 @@ gone: the machine remembers `animsmactions`, and a later action does not put an
 older one back. **Add built-in actions** on the Animator fills in anything missing
 without overwriting a state you edited.
 
+On a listen server the owner's death, roll, sit and swim, and the head's look
+yaw and pitch, travel on the existing animation sync message. The message
+keeps its old fields and adds an action sequence, an action id, and the look
+angles. A peer that only knows the older message stops reading there and
+still gets the gait. A remote copy plays the action and stays in it; it does
+not keep walking through a death.
+
 Death clips: `Death_F`, `Death_B`, `Death_L`, `Death_R`, and the looping holds
 `DeadHold_F`, `DeadHold_B`, `DeadHold_L`, `DeadHold_R`. `Death_F` falls forward,
 `Death_B` onto the back, and the side clips are mirrors. The last 0.15s of each

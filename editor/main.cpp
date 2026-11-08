@@ -279,6 +279,37 @@ static bool ReleasePlayCursor(bool playing, bool wantText, bool escapeDown, bool
     return released;
 }
 
+// One frame of that grab. `escapeEdge` is a KEYDOWN in this poll. Reading
+// SDL_GetKeyboardState afterwards misses the tap when the key is already up
+// again, which is normal below 60 Hz: both events sit in one poll, and the
+// toolbar keeps saying "Esc to release". `grabbed` is the previous frame's
+// relative-mouse grab. SDL does not move the absolute cursor while grabbed,
+// so ImGui keeps hitting whatever was under the pointer when Play started
+// (the Play button) and the next click stops the game.
+struct PlayPointerFrame {
+    bool released = false;
+    bool editorSeesMouse = true;
+    bool feedEscapeToGame = false;
+};
+
+static PlayPointerFrame DecidePlayPointer(bool playing, bool wantText, bool escapeEdge,
+                                         bool escapeHeld, bool wasReleased, bool grabbed) {
+    PlayPointerFrame d;
+    if (!playing) return d;
+    const bool esc = escapeEdge || escapeHeld;
+    d.released = wasReleased || esc || wantText;
+    // The press that frees the cursor is the editor's. A new tap once the
+    // cursor is already free can still open a pause menu. A hold that began
+    // during the grab must not become that tap on the next frame.
+    d.feedEscapeToGame = escapeEdge && wasReleased && !wantText;
+    d.editorSeesMouse = !grabbed || escapeEdge || wantText;
+    return d;
+}
+
+// Ctrl+P stops Play even when the Script Editor tab is focused. That window
+// swallows every other shortcut, including with no file open.
+static bool PlayStopShortcut(bool ctrl, bool keyPressed) { return ctrl && keyPressed; }
+
 // ----------------------------------------------------------------------------
 // Headless self-test: verifies the editor's model logic with no GUI.
 // ----------------------------------------------------------------------------
@@ -336,6 +367,20 @@ static int RunSelfTest() {
         released = false;
         check(ReleasePlayCursor(true, true, false, released) && released, "a text field releases the play cursor");
         check(!ReleasePlayCursor(false, true, true, released) && !released, "leaving play clears the release");
+        // A tap whose key-up is already in the same poll: keyboard state is up,
+        // the edge is the only signal. The editor gets the mouse back and the
+        // game does not also pause.
+        PlayPointerFrame tap = DecidePlayPointer(true, false, true, false, false, true);
+        check(tap.released && tap.editorSeesMouse && !tap.feedEscapeToGame,
+              "an Esc tap releases the cursor without pausing");
+        PlayPointerFrame held = DecidePlayPointer(true, false, false, false, false, true);
+        check(!held.released && !held.editorSeesMouse && !held.feedEscapeToGame,
+              "a grabbed cursor does not click editor widgets");
+        PlayPointerFrame again = DecidePlayPointer(true, false, true, false, true, false);
+        check(again.released && again.feedEscapeToGame && again.editorSeesMouse,
+              "Esc after release can reach the game");
+        check(PlayStopShortcut(true, true), "Ctrl+P works while the script editor is focused");
+        check(!PlayStopShortcut(false, true), "P alone does not stop play");
     }
     ed.Tick(0.1f);
     ed.Stop();
@@ -3300,6 +3345,11 @@ bool   g_gameMouseCapture = false;
 // keeps asking for a locked one (FPS/TPS controllers re-lock every frame); clicking
 // in the Game view gives it to the game again.
 bool   g_gameCursorReleased = false;
+// Previous frame locked the play cursor. The poll uses this so a click cannot
+// land on the Play button at the frozen absolute position.
+static bool g_playPointerGrabbed = false;
+// KEYDOWN Escape this poll. Cleared once the frame has read it.
+static bool g_escapeEdge = false;
 bool   g_gameCanvasHovered = false;   // mouse over the Game view's picture (last frame)
 int    g_gameCanvasHoveredFrame = -10; // ImGui frame g_gameCanvasHovered was last set (the Game view may be hidden)
 
@@ -15626,6 +15676,23 @@ static bool OwnShortcutsWindowFocused() {
 // Global keyboard shortcuts (ignored while typing in a field).
 void HandleShortcuts(EditorState& ed) {
     ImGuiIO& io = ImGui::GetIO();
+    // Play/Stop before the text-field return. The Script Editor tab (even with
+    // no file open) owns every shortcut, so Ctrl+P, and a click that never
+    // reaches Stop, left Play with no way out.
+    if (PlayStopShortcut(io.KeyCtrl, ImGui::IsKeyPressed(ImGuiKey_P, false))) {
+        if (ed.isPlaying()) {
+            okay::editor::apreview::Stop(ed.scene());
+            ed.Stop(); g_paused = false; ConsoleLog("Stop");
+        } else {
+            if (g_clearConsoleOnPlay) ConsoleClear();
+            StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed); StopTimelinePreview();
+            okay::editor::apreview::Stop(ed.scene());
+            CompileOpenScriptBuffers(ed.scene());
+            NavigationBeforePlay(ed);
+            ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
+            g_showGame = true; g_focusGameOnPlay = true;
+        }
+    }
     if (io.WantTextInput || OwnShortcutsWindowFocused()) return;
     bool ctrl = io.KeyCtrl;
     const bool animKeys = AnimationTabFocused() || AnimatorGraphFocused() || TimelineFocused() || DialogueWindowFocused() || BehaviorTreeWindowFocused();   // those windows own Delete, Ctrl+C/V/D and F
@@ -15720,23 +15787,6 @@ void HandleShortcuts(EditorState& ed) {
     if (!animKeys && ImGui::IsKeyPressed(ImGuiKey_Delete, false) && ed.selected()) {
         if (SplineDeletePickedPoint(ed)) ConsoleLog("Deleted spline point");   // a picked spline point goes first
         else { ed.DeleteSelected(); ConsoleLog("Deleted selection"); }
-    }
-    // Play/Stop toggle is Ctrl+P. It used to be plain Space, which
-    // clashed with the in-game jump — pressing Space in play mode stopped the game.
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_P, false)) {
-        if (ed.isPlaying()) {
-            okay::editor::apreview::Stop(ed.scene());
-            ed.Stop(); g_paused = false; ConsoleLog("Stop");
-        }
-        else {
-            if (g_clearConsoleOnPlay) ConsoleClear();
-            StopLivePreview(ed); StopAnimPreview(); StopModelScenePreview(ed); StopTimelinePreview();   // previews must not override Play
-            okay::editor::apreview::Stop(ed.scene());
-            CompileOpenScriptBuffers(ed.scene());
-            NavigationBeforePlay(ed);   // surfaces set to bake before Play
-            ed.Play(); g_paused = false; ConsoleLog("Play"); ed.Achievement("HIT_PLAY");
-            g_showGame = true; g_focusGameOnPlay = true; // jump to the Game tab
-        }
     }
     if (ImGui::IsKeyPressed(ImGuiKey_F, false) && ed.selected()) {
         Vec3 pp = ed.selected()->transform->Position();
@@ -44172,7 +44222,16 @@ int main(int argc, char** argv) {
         g_okayUITyped[0] = '\0'; g_okayUIBack = false;   // OkayUI demo's per-frame keys
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
-            ImGui_ImplSDL2_ProcessEvent(&e);
+            if (e.type == SDL_KEYDOWN && !e.key.repeat &&
+                e.key.keysym.scancode == SDL_SCANCODE_ESCAPE)
+                g_escapeEdge = true;
+            // While the play cursor is grabbed, absolute motion is frozen where
+            // the grab began. Feeding those events to ImGui clicks the Play
+            // button and stops the game. The game still reads relative motion.
+            const bool mouseEv = e.type == SDL_MOUSEMOTION || e.type == SDL_MOUSEBUTTONDOWN
+                || e.type == SDL_MOUSEBUTTONUP || e.type == SDL_MOUSEWHEEL;
+            if (!(g_playPointerGrabbed && mouseEv && !g_escapeEdge))
+                ImGui_ImplSDL2_ProcessEvent(&e);
             if (e.type == SDL_QUIT) g_quitRequested = true;
             if (e.type == SDL_CONTROLLERDEVICEADDED && !g_pad) g_pad = SDL_GameControllerOpen(e.cdevice.which);
             if (e.type == SDL_CONTROLLERDEVICEREMOVED && g_pad &&
@@ -44321,8 +44380,13 @@ int main(int argc, char** argv) {
         // Editor sets WantTextInput whenever its window is focused, and that
         // used to skip this whole block: the mouse stayed grabbed and Esc did
         // nothing, so Hierarchy, Pause and Pose Capture could not be clicked.
-        const bool escapeDown = SDL_GetKeyboardState(nullptr)[SDL_SCANCODE_ESCAPE] != 0;
-        ReleasePlayCursor(ed.isPlaying(), io.WantTextInput, escapeDown, g_gameCursorReleased);
+        const bool escapeEdge = g_escapeEdge;
+        g_escapeEdge = false;
+        const bool escapeHeld = SDL_GetKeyboardState(nullptr)[SDL_SCANCODE_ESCAPE] != 0;
+        const bool wasReleased = g_gameCursorReleased;
+        const PlayPointerFrame pointer = DecidePlayPointer(
+            ed.isPlaying(), io.WantTextInput, escapeEdge, escapeHeld, wasReleased, g_playPointerGrabbed);
+        g_gameCursorReleased = pointer.released;
         if (ed.isPlaying() && !io.WantTextInput) {
             const Uint8* ks = SDL_GetKeyboardState(nullptr);
             std::vector<char> down;
@@ -44335,7 +44399,7 @@ int main(int argc, char** argv) {
             if (ks[SDL_SCANCODE_LCTRL]  || ks[SDL_SCANCODE_RCTRL])  down.push_back(Input::KeyCtrl);  // crouch
             if (ks[SDL_SCANCODE_BACKSPACE]) down.push_back((char)8); // text editing
             if (ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_KP_ENTER]) down.push_back('\r');
-            if (ks[SDL_SCANCODE_ESCAPE]) down.push_back((char)27);
+            if (pointer.feedEscapeToGame) down.push_back((char)27);
             if (ks[SDL_SCANCODE_UP])    { down.push_back('w'); down.push_back(Input::KeyUp); }
             if (ks[SDL_SCANCODE_LEFT])  { down.push_back('a'); down.push_back(Input::KeyLeft); }
             if (ks[SDL_SCANCODE_DOWN])  { down.push_back('s'); down.push_back(Input::KeyDown); }
@@ -44356,7 +44420,7 @@ int main(int argc, char** argv) {
             }
             // A click on the Game view takes the cursor back after Esc or a text
             // field freed it. Esc itself is handled above, including while typing.
-            if (!escapeDown && g_gameCursorReleased && g_gameCanvasHovered &&
+            if (!escapeEdge && !escapeHeld && g_gameCursorReleased && g_gameCanvasHovered &&
                 ImGui::IsMouseClicked(ImGuiMouseButton_Left))
                 g_gameCursorReleased = false;
             // hand-off (mirrors the player): when a bag/chest opens or closes
@@ -44400,8 +44464,20 @@ int main(int argc, char** argv) {
                 if (rmb & SDL_BUTTON(SDL_BUTTON_MIDDLE)) mask |= 1u << 2;
                 Input::FeedMouse(s_gameVMouse, mask);
             } else {
-                if (s_playLookLocked)
+                if (s_playLookLocked) {
                     SDL_SetRelativeMouseMode(SDL_FALSE);
+                    // Disabling relative mode puts the cursor back on the Play
+                    // button. Park it in the game view so that restore is not a
+                    // click on Stop. A click there grabs the mouse again.
+                    int ww = 0, wh = 0, ow = 0, oh = 0;
+                    SDL_GetWindowSize(window, &ww, &wh);
+                    SDL_GetRendererOutputSize(renderer, &ow, &oh);
+                    float sx = ow > 0 ? (float)ww / (float)ow : 1.0f;
+                    float sy = oh > 0 ? (float)wh / (float)oh : 1.0f;
+                    int cx = (int)((g_playCanvasPos.x + g_playCanvasSize.x * 0.5f) * sx);
+                    int cy = (int)((g_playCanvasPos.y + g_playCanvasSize.y * 0.5f) * sy);
+                    SDL_WarpMouseInWindow(window, cx, cy);
+                }
                 s_playLookLocked = false;
                 // Mouse, relative to the Game/Scene canvas so UI buttons hit-test
                 // against the same coordinates the preview draws with.
@@ -44428,15 +44504,18 @@ int main(int argc, char** argv) {
                 s_playLookAnchor = {rx, ry};
                 Input::FeedMouse(Vec2{rx, ry}, mask);
             }
+            g_playPointerGrabbed = capture;
             InputActions::Tick();
         } else if (ed.isPlaying()) {
             // Playing, but a text field has the keyboard. Do not feed the game,
             // and do not leave the pointer in relative mode from the frame that
             // grabbed it before the field took focus.
             s_playLookLocked = false;
+            g_playPointerGrabbed = false;
             if (SDL_GetRelativeMouseMode()) SDL_SetRelativeMouseMode(SDL_FALSE);
         } else if (!ed.isPlaying()) {
             s_playLookLocked = false;
+            g_playPointerGrabbed = false;
             Input::FeedKeys({}); // release everything in edit mode
             // Keep the Capture mouse choice for the next Play; just free the pointer and
             // forget the last run's cursor lock.

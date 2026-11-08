@@ -1413,3 +1413,7 @@ add_test(NAME durable_saves COMMAND test_durable_saves)
 add_executable(test_script_batch1 test_script_batch1.cpp)
 target_link_libraries(test_script_batch1 PRIVATE okay::engine)
 add_test(NAME script_batch1 COMMAND test_script_batch1)
+
+add_executable(test_layers_tags_cameras test_layers_tags_cameras.cpp)
+target_link_libraries(test_layers_tags_cameras PRIVATE okay::engine)
+add_test(NAME layers_tags_cameras COMMAND test_layers_tags_cameras)

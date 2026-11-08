@@ -3283,6 +3283,11 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
     out << "name " << Quote(scene.Name()) << "\n";
     if (!scene.uiFont.empty()) out << "uifont " << Quote(scene.uiFont) << "\n";
     out << "gravity " << scene.physics().gravity.x << " " << scene.physics().gravity.y << "\n";
+    if (scene.HasCustomLayerCollisions()) {   // optional: older scenes have none (everything collides)
+        out << "layermatrix";
+        for (int i = 0; i < 32; ++i) out << " " << scene.LayerCollisionMask(i);
+        out << "\n";
+    }
     {
         const auto& rs = scene.renderSettings;
         out << "rendersettings " << (rs.skybox ? 1 : 0) << " "
@@ -3526,6 +3531,14 @@ static bool ParseCore(Scene& scene, const std::string& text, bool clear,
             std::string nm = ReadQuoted(in); if (clear) scene.SetName(nm);
         } else if (token == "uifont") {
             std::string uf = ReadQuoted(in); if (clear) scene.uiFont = uf;
+        } else if (token == "layermatrix") {
+            std::uint32_t rows[32]; bool ok = true;
+            for (int i = 0; i < 32; ++i) { unsigned long long v = 0; if (!(in >> v) || v > 0xFFFFFFFFull) { ok = false; break; } rows[i] = (std::uint32_t)v; }
+            if (!ok) return bad("bad 'layermatrix' record");
+            if (clear)   // a pair collides only when both rows allow it
+                for (int a = 0; a < 32; ++a)
+                    for (int b = a; b < 32; ++b)
+                        scene.SetLayerCollision(a, b, ((rows[a] >> b) & 1u) && ((rows[b] >> a) & 1u));
         } else if (token == "gravity") {
             Vec2 g; in >> g.x >> g.y;
             if (clear) scene.physics().gravity = g;
@@ -3686,7 +3699,7 @@ static bool ParseCore(Scene& scene, const std::string& text, bool clear,
                     in >> std::ws; // optional clearFlags + depth + near + far (added later)
                     if (std::isdigit(in.peek()) || in.peek() == '-') {
                         int cf = 0; in >> cf >> cam->depth >> cam->nearClip >> cam->farClip;
-                        cam->clearFlags = (Camera::ClearFlags)cf;
+                        cam->clearFlags = (Camera::ClearFlags)(cf >= 0 && cf <= 3 ? cf : 0);
                         in >> std::ws; // optional FOV axis + viewport rect (added later)
                         if (std::isdigit(in.peek())) {
                             int fax = 0; in >> fax >> cam->rectX >> cam->rectY >> cam->rectW >> cam->rectH;

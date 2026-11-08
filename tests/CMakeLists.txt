@@ -914,6 +914,9 @@ add_test(NAME ik_rigs COMMAND test_ik_rigs)
 add_executable(test_vs_nodes test_vs_nodes.cpp)
 target_link_libraries(test_vs_nodes PRIVATE okay::engine)
 add_test(NAME vs_nodes COMMAND test_vs_nodes)
+add_executable(test_vs_inventory test_vs_inventory.cpp)
+target_link_libraries(test_vs_inventory PRIVATE okay::engine)
+add_test(NAME vs_inventory COMMAND test_vs_inventory)
 
 # The Visual Script editor's graph model (save / load / paste), without drawing:
 # it needs the Dear ImGui headers the editor header includes, nothing linked.

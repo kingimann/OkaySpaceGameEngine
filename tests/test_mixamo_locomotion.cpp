@@ -3,6 +3,8 @@
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/FirstPersonController.hpp"
+#include "okay/Animation/HumanoidActions.hpp"
+#include "okay/Animation/HumanoidLibrary.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include <algorithm>
 #include <cmath>
@@ -459,6 +461,54 @@ int main() {
             CHECK(DescribeCharacterModel(*L.rig.scene, L.rig.player, info));
             CHECK(info.source == 1 && info.builtinSlots == 0 && info.importedSlots == ModelAnimator::SlotCount);
             CHECK(std::string(CharacterAnimationSourceName(info.source)) == "Imported clips");
+        }
+    }
+
+    // Death and wave have no clip on this rig, so the built-in pose is retargeted.
+    {
+        Loco L;
+        CHECK(L.rig && L.ma);
+        if (L.rig && L.ma) {
+            L.AddClip("Idle", 2.0f, 2.0f);
+            L.AddClip("Walking", 1.0f, 20.0f);
+            FixCharacterAnimations(*L.rig.scene, L.rig.player);
+            HumanoidLibrary::EnsureAnimator(L.rig.player);
+            Transform* hips = L.rig.Bone(0);
+            CHECK(hips);
+            if (hips) {
+                for (int i = 0; i < 10; ++i) L.rig.scene->Update(kDt);
+                const float standY = hips->Position().y;
+                const Quat standR = hips->Rotation();
+                HumanoidActions::RequestDeath(L.rig.player, 0, nullptr);
+                for (int i = 0; i < 60; ++i) L.rig.scene->Update(kDt);
+                const float drop = standY - hips->Position().y;
+                const float turned = Quat::Angle(standR, hips->Rotation());
+                CHECK(drop > 0.15f || turned > 25.0f);
+                CHECK(!L.ma->ClipOverridesPose());
+            }
+        }
+    }
+    {
+        Loco L;
+        CHECK(L.rig && L.ma);
+        if (L.rig && L.ma) {
+            L.AddClip("Idle", 2.0f, 2.0f);
+            L.AddClip("Walking", 1.0f, 20.0f);
+            FixCharacterAnimations(*L.rig.scene, L.rig.player);
+            HumanoidLibrary::EnsureAnimator(L.rig.player);
+            Transform* hand = L.rig.Bone(8);
+            CHECK(hand);
+            if (hand) {
+                for (int i = 0; i < 10; ++i) L.rig.scene->Update(kDt);
+                const float y0 = hand->Position().y;
+                CHECK(HumanoidActions::Play(L.rig.player, "Wave", 0.05f));
+                float peak = y0;
+                for (int i = 0; i < 45; ++i) {
+                    L.rig.scene->Update(kDt);
+                    peak = std::fmax(peak, hand->Position().y);
+                }
+                CHECK(peak > y0 + 0.12f);
+            }
         }
     }
 

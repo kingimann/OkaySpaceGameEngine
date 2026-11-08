@@ -196,7 +196,10 @@ Bones map automatically from common rig names (Mixamo, Blender-style `.L/.R`,
 `ik_set_pole(x, y, z)`, and for Full Body IK `ik_hand("left", x, y, z [, weight])`,
 `ik_foot(...)`, `ik_look(x, y, z)`, `ik_release()` and `ik_reached("left_hand")`. In
 visual scripts: *IK Look At* and *IK Hand Reach*. State machine states have an
-**IK Weight**, so IK can fade out during a roll or a climb and back in after.
+**IK Weight**, so Foot, Full Body, Limb, Chain, Look-At and Aim fade out
+during a roll or a climb and back in after. Look-At and Aim follow that
+weight unless the state sets a look weight of its own. Death, sit, swim and
+the emotes set the look weight to 0.
 
 ## Troubleshooting
 
@@ -208,3 +211,33 @@ visual scripts: *IK Look At* and *IK Hand Reach*. State machine states have an
 - **A limb flips or twists:** add a joint limit (the Elbow / Knee presets are a
   good start).
 - **A hand snaps to a new target:** raise *Target Blend*.
+
+## Animator and IK calls
+
+On the character, in OkayScript:
+
+- `anim_get_float`, `anim_get_bool`, `anim_get_int` read the Animator parameters
+  that `anim_set_float`, `anim_set_bool` and `anim_set_int` write.
+- `anim_set_layer_weight(layer, weight)` and `anim_get_layer_weight(layer)` use
+  a layer index or a layer name.
+- `set_root_motion(on)` turns clip root motion on or off.
+- `set_character_model(path)` swaps the model while the game is running. A
+  missing file returns 0 and leaves the current model.
+- `ik_set_weight(kind, weight)` sets one solver: `foot`, `look`, `aim`,
+  `hand_l`, `hand_r`, or `full` (also `foot_l` / `foot_r`). `ik_set_weight(w)`
+  with a single number still sets every solver on this object.
+- `ik_set_target(limb, objectName)` or `ik_set_target(limb, x, y, z)`, and
+  `ik_clear_target(limb)`. A plain `x, y, z` still aims Limb, Chain, Look and
+  Aim together.
+
+The same calls are on the typed Animator and IK components (`GetFloat`,
+`SetLayerWeight`, `SetRootMotion`, `SetCharacterModel`, `SetKindWeight`,
+`SetLimbTarget`, `ClearLimbTarget`). Visual-script Engine API nodes are
+generated from those bindings. C# and Lua keep their own APIs.
+
+Select a character with Foot IK to draw each foot's probe, the plant point,
+and a locked or free label. Look-At draws its clamp cone and a weight label.
+Those drawings are queued until after the scene image, and only while that
+object is selected. The label is the faded weight times the state's weight,
+so a death state that turns look off reads 0%. Look-At resolves a target name
+again during Play when a name is set and no object is bound yet.

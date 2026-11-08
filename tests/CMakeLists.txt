@@ -872,6 +872,10 @@ add_executable(test_anim_state_machine test_anim_state_machine.cpp)
 target_link_libraries(test_anim_state_machine PRIVATE okay::engine)
 add_test(NAME anim_state_machine COMMAND test_anim_state_machine)
 
+add_executable(test_ik_state_weight test_ik_state_weight.cpp)
+target_link_libraries(test_ik_state_weight PRIVATE okay::engine)
+add_test(NAME ik_state_weight COMMAND test_ik_state_weight)
+
 # Cutscene sequences: the .okayseq text, evaluation, the SequencePlayer's events and actions
 add_executable(test_sequence test_sequence.cpp)
 target_link_libraries(test_sequence PRIVATE okay::engine)
@@ -885,6 +889,11 @@ add_test(NAME localization COMMAND test_localization)
 add_executable(test_ik_core test_ik_core.cpp)
 target_link_libraries(test_ik_core PRIVATE okay::engine)
 add_test(NAME ik_core COMMAND test_ik_core)
+
+# Animator getters, layer weight, root motion, per-kind IK, and the matching Engine API nodes.
+add_executable(test_anim_ik_tools test_anim_ik_tools.cpp)
+target_link_libraries(test_anim_ik_tools PRIVATE okay::engine)
+add_test(NAME anim_ik_tools COMMAND test_anim_ik_tools)
 
 # Look-At IK shares, clamp and eyes; Limb IK stretch.
 add_executable(test_ik_look_stretch test_ik_look_stretch.cpp)
@@ -1009,6 +1018,11 @@ add_test(NAME make_playable COMMAND test_make_playable)
 add_executable(test_gait_continuity test_gait_continuity.cpp)
 target_link_libraries(test_gait_continuity PRIVATE okay::engine)
 add_test(NAME gait_continuity COMMAND test_gait_continuity)
+
+add_executable(test_player_setup test_player_setup.cpp)
+target_link_libraries(test_player_setup PRIVATE okay::engine)
+target_compile_definitions(test_player_setup PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME player_setup COMMAND test_player_setup)
 
 add_executable(test_rig_sweep test_rig_sweep.cpp)
 target_link_libraries(test_rig_sweep PRIVATE okay::engine)

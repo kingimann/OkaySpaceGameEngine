@@ -272,7 +272,11 @@ public:
                 // Apex: a jump turns into a fall once we're heading down.
                 if (vy < -1.0f && m_airSlot == SlotJump) {
                     m_airSlot = SlotFall;
-                    if (!graph && SlotFilled(SlotFall) && CurrentName() == jumpClip) Play(fallClip);
+                    // An empty jump slot never played the jump clip, so the body is
+                    // still on idle. The fall clip still takes over on the way down.
+                    if (!graph && SlotFilled(SlotFall) &&
+                        (jumpClip.empty() || CurrentName() == jumpClip))
+                        Play(fallClip);
                 }
                 // Touchdown: vertical motion dies out (the ground stops us). A jump's
                 // apex also passes zero, so that counts only once we've been
@@ -519,10 +523,16 @@ public:
     }
     /// True while the model's own clip owns the pose: a held clip or a one-shot
     /// (HumanoidRetarget yields until it ends).
+    /// A base-state action with no clip on this rig (death, wave, emotes, sit,
+    /// roll) does not: the built-in pose is retargeted onto the bones.
     bool ClipOverridesPose() const {
-        // With the built-in fallback the clips own the pose except while a slot has none.
-        return m_held || m_once || (!m_builtinOwns && BuiltinFallbackUsable());
+        if (m_held || m_once) return true;
+        if (m_builtinOwns || !BuiltinFallbackUsable()) return false;
+        if (ActionPoseUncovered()) return false;
+        return true;
     }
+    /// The base state machine is in a state this rig has no clip for.
+    bool ActionPoseUncovered() const;
 
     /// An AnimStateMachine on this object registers itself here: while it's on
     /// the object and enabled it picks the clips, and driveByMovement waits.

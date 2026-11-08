@@ -111,7 +111,25 @@ const Built& Data() {
                 }
                 for (const ApiMethod& m : isStatic ? t.staticMethods : t.methods) {
                     VsApiEntry e;
-                    e.type = t.name + "." + m.name + "/" + std::to_string(m.params.size()); e.member = m.name;
+                    e.type = t.name + "." + m.name + "/" + std::to_string(m.params.size());
+                    // Two overloads with the same number of parameters (layer name
+                    // vs layer index) would otherwise share one node type. Tag the
+                    // later one by its parameter kinds so both stay in the menu.
+                    if (b.index.count(e.type)) {
+                        std::string tag;
+                        for (const script::Type& p : m.params) {
+                            switch (p.kind) {
+                                case script::TK::String: tag += 's'; break;
+                                case script::TK::Int:    tag += 'i'; break;
+                                case script::TK::Float:  tag += 'f'; break;
+                                case script::TK::Bool:   tag += 'b'; break;
+                                case script::TK::Vector3: tag += 'v'; break;
+                                default: tag += 'x'; break;
+                            }
+                        }
+                        e.type += ":" + tag;
+                    }
+                    e.member = m.name;
                     e.title = t.name + "." + m.name + "(" + Join(m.paramNames) + ")"; e.doc = m.doc;
                     e.code = prefix + "." + m.name + "(" + Join(m.paramNames) + ")";
                     e.exec = !m.pure;

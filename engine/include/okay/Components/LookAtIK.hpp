@@ -87,6 +87,14 @@ public:
         return SafeNormalize(bone->Rotation().Inverse() * facingWorld, Vec3::Forward);
     }
 
+    /// Weight the gizmo shows: slider, state weight, and the on/off fade.
+    float EffectiveWeight() const {
+        const float v = m_fade.value;
+        float fade = ikActive ? 1.0f : 0.0f;
+        if (v >= 0.0f) fade = v * v * (3.0f - 2.0f * v);
+        return weight * stateWeight * fade;
+    }
+
     /// The share of its turn bone `i` of `n` takes: its boneWeights entry, else a
     /// ramp up to the tip, which always finishes the look.
     static float ShareOf(const std::vector<float>& weights, std::size_t i, std::size_t n) {

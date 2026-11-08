@@ -8,7 +8,6 @@
 #include "okay/Components/FullBodyIK.hpp"
 #include "okay/Components/IKTarget.hpp"
 #include "okay/Components/ModelAnimator.hpp"
-#include "okay/Components/NetworkSync.hpp"
 #include "okay/Environment/Weather.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
@@ -133,14 +132,6 @@ int main() {
         for (const auto& up : plainBack.Objects())
             if (auto* m = up->GetComponent<ModelAnimator>()) kept = m;
         CHECK(kept && kept->strafeLeftClip.empty() && kept->walkBackClip.empty());
-
-        AnimSyncView cut;
-        CHECK(ParseAnimSync("2 0 1.5 30 4", cut));
-        CHECK(cut.haveGait && !cut.haveAction && !cut.haveParam);
-        AnimSyncView full;
-        CHECK(ParseAnimSync("2 0 1.5 30 7 2 -10 4 3", full));
-        CHECK(full.haveAction && full.haveParam && full.actionId == 2);
-        CHECK(std::fabs(full.actionParam - 3.0f) < 1e-4f);
     }
 
     TEST_MAIN_RESULT();

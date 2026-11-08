@@ -114,7 +114,7 @@ inline int Build(AnimStateMachine& sm, const ModelAnimator& ma) {
     const std::string afterAir = land.empty() ? "Locomotion" : "Land";
     if (!jump.empty()) {
         SM::State j; j.name = "Jump"; j.clip = jump; j.loop = false; j.nx = 260; j.ny = 20;
-        j.ikWeight = 0.0f; j.fullBodyIkWeight = 1.0f; j.enterEvent = "jump";
+        j.ikWeight = 0.0f; j.enterEvent = "jump";
         if (!fall.empty()) j.transitions.push_back(tr("Fall", C::OnClipEnd, "", 0, 0.15f));
         SM::Transition down = tr(afterAir, C::BoolTrue, "grounded", 0, 0.1f);
         down.hasExitTime = true; down.exitTime = 0.4f;
@@ -123,7 +123,7 @@ inline int Build(AnimStateMachine& sm, const ModelAnimator& ma) {
         sm.anyState.push_back(tr("Jump", C::Trigger, "jump", 0, 0.1f));
     }
     if (!fall.empty()) {
-        SM::State f; f.name = "Fall"; f.clip = fall; f.nx = 500; f.ny = 20; f.ikWeight = 0.0f; f.fullBodyIkWeight = 1.0f;
+        SM::State f; f.name = "Fall"; f.clip = fall; f.nx = 500; f.ny = 20; f.ikWeight = 0.0f;
         f.transitions.push_back(tr(afterAir, C::BoolTrue, "grounded", 0, 0.1f));
         sm.states.push_back(f);
         const SM::Transition off = also(tr("Fall", C::BoolFalse, "grounded", 0, 0.2f), C::FloatLess, "verticalSpeed", -2.0f);

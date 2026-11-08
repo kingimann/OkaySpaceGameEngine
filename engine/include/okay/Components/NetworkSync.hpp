@@ -176,41 +176,6 @@ private:
         m_char->moveSpeed = speed;
         const Transform& facing = m_char->transform ? *m_char->transform : *transform;
         m_char->moveAngle = m_haveOwnerGait ? m_ownerAngle : (speed > 0.0f ? MoveAngleFor(facing, m_vx, m_vz) : 0.0f);
-        // The owner already sent this heading (moveAngle). A proxy has no
-        // controller, so the 2D blend never hears moveX / moveZ unless we
-        // write them. Forward is negative moveZ. This is not a new field.
-        FeedMoveAxes(m_char->gameObject, speed, m_char->moveAngle);
-    }
-
-    static void FeedMoveAxes(GameObject* go, float speed, float angleDeg) {
-        if (!go) return;
-        auto feed = [&](GameObject* g) {
-            if (!g) return;
-            for (AnimStateMachine* sm : g->GetComponents<AnimStateMachine>()) {
-                if (sm->layer != 0) continue;
-                const float rad = angleDeg * 0.017453292f;
-                sm->SetFloat("speed", speed);
-                sm->SetFloat("moveX", speed * std::sin(rad));
-                sm->SetFloat("moveZ", -speed * std::cos(rad));
-            }
-        };
-        feed(go);
-        if (go->transform)
-            for (Transform* ch : go->transform->Children())
-                if (ch && ch->gameObject) feed(ch->gameObject);
-    }
-
-    void HoldRemoteAction() {
-        if (!m_char || m_wantAction <= 0) return;
-        const bool entered = ProxyInAction(m_char, m_wantAction);
-        const bool oneShot = m_wantAction == 2;
-        if (!entered && !(oneShot && m_actionLatched))
-            ApplyRemoteAction(m_char, m_wantAction, m_actionParam);
-        else if (entered) {
-            RefreshRemoteParam(m_char, m_wantAction, m_actionParam);
-            if (AnimStateMachine* sm = BaseLayer(m_char))
-                if (sm->StateTime() > 0.05f) m_actionLatched = true;
-        }
     }
 
     bool OwnedNow() const {
@@ -248,26 +213,14 @@ private:
                     return o.str();
                 },
                 [c, self](const std::string& s) {
-                    AnimSyncView v;
-                    v.anim = c->anim;
-                    v.punch = self->m_lastPunchSeq;
-                    if (!ParseAnimSync(s, v)) return;
-                    c->anim = v.anim;
-                    if (self->m_lastPunchSeq >= 0 && v.punch != self->m_lastPunchSeq) c->Punch();
-                    self->m_lastPunchSeq = v.punch;   // first sample just syncs the counter
-                    if (v.haveGait) {
-                        self->m_ownerSpeed = v.speed; self->m_ownerAngle = v.angle; self->m_haveOwnerGait = true;
-                    }
-                    if (v.haveAction) {
-                        const bool changed = self->m_lastActionSeq < 0 || v.actionSeq != self->m_lastActionSeq;
-                        if (changed) { self->m_wantAction = v.actionId; self->m_actionLatched = false; }
-                        if (v.haveParam) self->m_actionParam = v.actionParam;
-                        if (self->m_wantAction > 0) self->HoldRemoteAction();
-                        else if (changed && self->m_lastActionSeq >= 0)
-                            ApplyRemoteAction(c, 0, 0.0f);
-                        self->m_lastActionSeq = v.actionSeq;
-                        c->lookYaw = v.lookYaw;
-                        c->lookPitch = v.lookPitch;
+                    std::stringstream ss(s); int a = c->anim, seq = self->m_lastPunchSeq;
+                    ss >> a >> seq;
+                    c->anim = a;
+                    if (self->m_lastPunchSeq >= 0 && seq != self->m_lastPunchSeq) c->Punch();
+                    self->m_lastPunchSeq = seq;   // first sample just syncs the counter
+                    float sp = -1.0f, ang = 0.0f;
+                    if (ss >> sp >> ang && std::isfinite(sp) && std::isfinite(ang)) {
+                        self->m_ownerSpeed = sp; self->m_ownerAngle = ang; self->m_haveOwnerGait = true;
                     }
                     int aseq = 0, aid = 0; float ly = 0.0f, lp = 0.0f;
                     // The sender is untrusted (the host also reads a client's): known

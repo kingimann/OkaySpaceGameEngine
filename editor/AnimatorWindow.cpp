@@ -2653,17 +2653,7 @@ void DrawToolbar(Ctx& c, Ui& u) {
             "with the parameters the player controllers send.");
         if (ImGui::BeginPopup("##aglocosetup")) {
             ModelAnimator* ma = c.ma;
-            auto shown = [&](const std::string& cn) {
-                if (cn.empty()) return std::string("-");
-                if (ma->FindClip(cn) < 0) return cn + " (missing)";
-                return cn;
-            };
-            const std::string idleS = shown(ma->idleClip), walkS = shown(ma->walkClip), runS = shown(ma->runClip);
-            const std::string jumpS = shown(ma->jumpClip), fallS = shown(ma->fallClip), landS = shown(ma->landClip);
-            const std::string crS = shown(ma->crouchClip), crwS = shown(ma->crouchWalkClip), prS = shown(ma->proneClip);
-            const std::string crawlS = shown(ma->crawlClip), upS = shown(ma->getUpClip);
-            const std::string slS = shown(ma->strafeLeftClip), srS = shown(ma->strafeRightClip);
-            const std::string wbS = shown(ma->walkBackClip), rbS = shown(ma->runBackClip);
+            auto shown = [&](const std::string& cn) { return cn.empty() || ma->FindClip(cn) < 0 ? "-" : cn.c_str(); };
             ImGui::TextDisabled("Clips mapped (empty slots are filled from the clip names):");
             ImGui::Text("Idle: %s\nWalk: %s\nRun:  %s\nJump: %s\nFall: %s\nLand: %s", shown(ma->idleClip), shown(ma->walkClip),
                         shown(ma->runClip), shown(ma->jumpClip), shown(ma->fallClip), shown(ma->landClip));

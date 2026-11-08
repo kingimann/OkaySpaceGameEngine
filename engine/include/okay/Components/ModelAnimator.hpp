@@ -21,10 +21,8 @@
 #include "okay/Components/AnimBackend.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/Stance.hpp"
-#include "okay/Animation/HumanoidBones.hpp"
 #include <cctype>
 #include <cstdint>
-#include <cstring>
 #include <functional>
 #include <unordered_map>
 #include <unordered_set>
@@ -163,6 +161,45 @@ public:
     /// the forward speed blend.
     bool HasDirectionalClips() const {
         return !strafeLeftClip.empty() || !strafeRightClip.empty() || !walkBackClip.empty() || !runBackClip.empty();
+    }
+    enum class SlotUse { Plays, Empty, Missing, NoKeys };
+    /// What this slot will do. Empty and Missing both fall back; Missing means a
+    /// name is saved but the clip is not on the model.
+    SlotUse SlotUseOf(int s) const {
+        const std::string& n = SlotClip(s);
+        if (n.empty()) return SlotUse::Empty;
+        const int i = FindClip(n);
+        if (i < 0) return SlotUse::Missing;
+        if (ClipLength(i) <= 0.0f) return SlotUse::NoKeys;
+        return SlotUse::Plays;
+    }
+    /// What an empty or missing slot does. Matches the player: hips yaw and a
+    /// reversed walk only when Legs Follow Travel is on, or when some other
+    /// directional clip is already mapped.
+    static const char* SlotFallback(int s) {
+        switch (s) {
+            case SlotIdle: return "Empty: the first clip, or the built-in idle when Built-in for empty slots is on.";
+            case SlotWalk: return "Empty or missing: the run clip if it exists, otherwise the built-in walk.";
+            case SlotRun: return "Empty or missing: stays on the walk.";
+            case SlotJump: case SlotFall: case SlotLand:
+                return "Empty or missing: that air pose is skipped.";
+            case SlotStrafeLeft: case SlotStrafeRight:
+                return "Empty or missing: a strafe keeps the forward walk. Hips turn only if Legs Follow Travel is on.";
+            case SlotWalkBack: case SlotRunBack:
+                return "Empty or missing: the forward walk plays backward when Legs Follow Travel is on, or another strafe clip is set. Otherwise it plays forward.";
+            default: return "Empty or missing: that stance keeps the standing clips.";
+        }
+    }
+    /// A locomotion slot whose clip name looks like a trick. The assignment is kept.
+    const char* SlotCaution(int s) const {
+        if (s < SlotIdle || s > SlotRunBack) return "";
+        if (s >= SlotCrouch && s <= SlotGetUp) return "";
+        if (SlotUseOf(s) != SlotUse::Plays) return "";
+        std::string key;
+        for (char c : SlotClip(s)) if (std::isalnum((unsigned char)c)) key += (char)std::tolower((unsigned char)c);
+        for (const char* w : {"flip", "dodge", "roll", "attack", "kick", "punch"})
+            if (key.find(w) != std::string::npos) return "This looks like a trick, not a walk. It will still play if you leave it here.";
+        return "";
     }
     /// The clip name a slot plays ("" = empty).
     std::string& SlotClip(int s) {

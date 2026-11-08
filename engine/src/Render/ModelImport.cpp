@@ -1641,6 +1641,17 @@ void AutoMapLocomotion(ModelAnimator* ma) {
     if (!ma->HasDirectionalClips()) mapForward(false);
 }
 
+std::string SuggestUnassignedSlot(const ModelAnimator& ma, int slot) {
+    if (slot < 0 || slot >= ModelAnimator::SlotCount) return {};
+    if (!ma.SlotClip(slot).empty()) return {};
+    ModelAnimator scratch;
+    scratch.clips.resize(ma.clips.size());
+    for (std::size_t i = 0; i < ma.clips.size(); ++i) scratch.clips[i].name = ma.clips[i].name;
+    for (int s = 0; s < ModelAnimator::SlotCount; ++s) scratch.SlotClip(s) = ma.SlotClip(s);
+    AutoMapLocomotion(&scratch);
+    return scratch.SlotClip(slot);
+}
+
 // Switch a retargeted model's locomotion between its clips and the built-in
 // animation to match which slots have a clip: none = pure built-in (the
 // HumanoidRetarget owns every frame), any = clips drive the slots they fill and

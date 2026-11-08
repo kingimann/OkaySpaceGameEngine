@@ -16,6 +16,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [scripting_reference.md](scripting_reference.md): built-in functions, area by area (networking, Steam, JSON, collections, timers, physics events).
 - [visual_scripting.md](visual_scripting.md): the visual scripting text format (OkayVS) and Action Lists.
 - [engine_api.md](engine_api.md): the engine API reference.
+- [core_logging_profiling.md](core_logging_profiling.md): logging (categories, file sink, OKAY_LOG) and the frame profiler (trace and CSV export).
 - [editor-plugins.md](editor-plugins.md): extend the editor with plugins.
 
 ## Characters and animation

@@ -1015,6 +1015,10 @@ target_link_libraries(test_rig_sweep PRIVATE okay::engine)
 target_compile_definitions(test_rig_sweep PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME rig_sweep COMMAND test_rig_sweep)
 
+add_executable(test_starter_script test_starter_script.cpp)
+target_link_libraries(test_starter_script PRIVATE okay::engine)
+add_test(NAME starter_script COMMAND test_starter_script)
+
 add_executable(test_mixamo_locomotion test_mixamo_locomotion.cpp)
 target_link_libraries(test_mixamo_locomotion PRIVATE okay::engine)
 target_compile_definitions(test_mixamo_locomotion PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

@@ -37,7 +37,23 @@ normal scene lifecycle.
 
 Scripts read like C#, and every piece of syntax does something. A script's
 fields and functions **are** the component: there is no class or base type to
-write. New scripts start like this:
+write. A new script starts empty, with just the two
+functions you almost always want:
+
+```csharp
+// Runs once, before the first frame.
+void Start()
+{
+}
+
+// Runs every frame.
+void Update()
+{
+}
+```
+
+Fill them in as you go. A fuller example, with an Inspector field, movement
+from the keyboard and a coroutine:
 
 ```csharp
 // Attach this script to an object. Its fields and functions are the component.

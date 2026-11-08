@@ -37,6 +37,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [timers_and_tweens.md](timers_and_tweens.md): timers that survive scene loads, cancel by tag, and tween behaviour.
 - [build_mode.md](build_mode.md): let players build in your game, logic links, saving creations.
 - [save_games.md](save_games.md): save and load the whole game.
+- [save_framework.md](save_framework.md): saveable objects, checkpoints, quick save and autosave slots, slot headers, migrations, sync hooks, load menus.
 - [day_night_cycle.md](day_night_cycle.md): the day and night cycle.
 - [splines.md](splines.md): splines, followers, lines and trails.
 

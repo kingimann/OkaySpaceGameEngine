@@ -414,3 +414,11 @@ add_library(okay::engine ALIAS okay_engine)
 # ---- Prefab system wave 2 (docs/prefab_system.md): nested prefabs, variants, unpack,
 # per-record / per-field apply and revert, prefab queries and the asset validator.
 target_sources(okay_engine PRIVATE src/Scene/PrefabTools.cpp)
+# ---- Property reflection (docs/properties.md) ----
+# PropertyValue / PropertyDesc, the registry with path access and change hook,
+# snapshot / diff / copy, and the built-in component registrations.
+target_sources(okay_engine PRIVATE
+    src/Scene/Properties.cpp
+    src/Scene/PropertyRegistry.cpp
+    src/Scene/BuiltinProperties.cpp
+)

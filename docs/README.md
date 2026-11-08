@@ -8,6 +8,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [prefabs.md](prefabs.md): prefab instances, overrides and persistent object ids.
 - [prefab_system.md](prefab_system.md): nested prefabs, variants, unpack, per-record and per-field apply and revert, and the prefab validator.
 - [scene_serializer.md](scene_serializer.md): what a scene round trip keeps, and the component serializer registry.
+- [properties.md](properties.md): the property registry: read, write, watch, snapshot and diff any component field by name (the base for per-property undo, live editing and prefab overrides).
 - [editor.md](editor.md): the editor, its panels and Build Game.
 - [undo_recovery.md](undo_recovery.md): command based undo, autosave and crash recovery, rolling file backups.
 - [web_mobile.md](web_mobile.md): web (WASM) and mobile builds.

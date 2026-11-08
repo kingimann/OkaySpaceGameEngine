@@ -1616,3 +1616,8 @@ add_test(NAME prefab_variants COMMAND test_prefab_variants)
 add_executable(test_prefab_apply_revert test_prefab_apply_revert.cpp)
 target_link_libraries(test_prefab_apply_revert PRIVATE okay::engine)
 add_test(NAME prefab_apply_revert COMMAND test_prefab_apply_revert)
+# Property reflection: values and text round trips, registry paths, change hook,
+# snapshot / diff / copy, and a cross-check of every registered property against the scene serializer
+add_executable(test_property_registry test_property_registry.cpp)
+target_link_libraries(test_property_registry PRIVATE okay::engine)
+add_test(NAME property_registry COMMAND test_property_registry)

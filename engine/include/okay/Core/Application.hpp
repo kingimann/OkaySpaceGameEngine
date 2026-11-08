@@ -20,6 +20,7 @@ public:
         int   maxFrames    = 0;      // 0 = run until quit; >0 = stop after N frames
         bool  smoothDt     = true;   // step by an evened-out frame time (Time::SmoothDelta)
         bool  clearScreen  = true;   // console backend clears the terminal each frame
+        char  quitKey      = 'q';    // pressing it ends the loop; 0 = no quit key
     };
 
     explicit Application(Config config);

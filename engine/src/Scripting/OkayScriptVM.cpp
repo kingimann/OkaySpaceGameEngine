@@ -7592,13 +7592,13 @@ struct OkayScriptVM::Impl {
         };
         b["choose"] = [](std::vector<Value>& a) {
             if (!a.empty()) if (auto arr = a[0].AsArray()) if (!arr->empty())
-                return (*arr)[(std::size_t)Random::Shared().Range(0, (int)arr->size() - 1)];
+                return (*arr)[(std::size_t)Random::Shared().Range(0, (int)arr->size())];   // max is exclusive
             return Value{};
         };
         b["shuffle"] = [](std::vector<Value>& a) {
             if (!a.empty()) if (auto arr = a[0].AsArray())
                 for (int i = (int)arr->size() - 1; i > 0; --i)
-                    std::swap((*arr)[i], (*arr)[Random::Shared().Range(0, i)]);
+                    std::swap((*arr)[i], (*arr)[Random::Shared().Range(0, i + 1)]);   // 0..i inclusive: a Fisher-Yates step
             return a.empty() ? Value{} : a[0];
         };
         b["randi"] = [](std::vector<Value>& a) {

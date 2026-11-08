@@ -2,6 +2,7 @@
 #include <Okay.hpp>
 #include <algorithm>
 #include <climits>
+#include <map>
 #include <numeric>
 
 using namespace okay;
@@ -134,6 +135,25 @@ int main() {
         CHECK(r.Weighted({}) == -1);
         CHECK(r.Weighted({0.0f, 0.0f}) == 0);
         CHECK(r.Weighted({-1.0f, 2.0f}) == 1);
+    }
+
+    // --- the script functions choose() and shuffle() use the exclusive upper bound correctly ---
+    // choose() used to ask for 0..size-2, so it never returned the last element; shuffle() swapped
+    // with 0..i-1 instead of 0..i, which only ever produces cyclic orders (never the identity).
+    {
+        int picked[3] = {0, 0, 0};
+        std::map<int, int> orders;
+        for (int i = 0; i < 3000; ++i) {
+            auto vm = CreateScriptVM("okayscript");
+            CHECK(vm->Load("var opts = [1, 2, 3];\nvar pick = choose(opts);\nshuffle(opts);\n"
+                           "var order = opts[0] * 100 + opts[1] * 10 + opts[2];", nullptr));
+            int pick = (int)vm->GetGlobal("pick").AsFloat();
+            if (pick >= 1 && pick <= 3) ++picked[pick - 1];
+            ++orders[(int)vm->GetGlobal("order").AsFloat()];
+        }
+        CHECK(picked[0] > 700 && picked[1] > 700 && picked[2] > 700);   // each about 1000 of 3000
+        CHECK(orders.size() == 6);                                       // all six orders appear
+        CHECK(orders[123] > 250 && orders[123] < 750);                   // including the identity
     }
 
     TEST_MAIN_RESULT();

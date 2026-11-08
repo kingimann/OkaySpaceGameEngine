@@ -37,7 +37,7 @@ Every source plays through one **group**, under the **master** volume:
 - **Ducking**: when it's on, the Music group dips while anything in the Voice group
   plays (level, attack and release are adjustable), so dialogue stays clear.
 
-Open **Window > Panels > Audio Mixer** in the editor to set the levels, watch the
+Open **View > Panels > Audio Mixer** in the editor to set the levels, watch the
 output meters while playing, and try ducking. Levels set there are for the editor
 session; players set their own (below).
 

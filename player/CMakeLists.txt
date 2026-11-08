@@ -41,6 +41,7 @@ endif()
 
 add_executable(okay-player main.cpp)
 target_link_libraries(okay-player PRIVATE okay::engine ${OKAY_PLAYER_SDL_LIB})
+okay_win_version(okay-player "OkaySpace Player" "OkaySpacePlayer.exe")
 target_include_directories(okay-player PRIVATE ${SDL2_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/shared)
 # OkayUI in the runtime: games can render the immediate-mode toolkit (and the F1
 # "Test UI" overlay proves it works in a real game). Linked when available.

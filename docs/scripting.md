@@ -1,5 +1,9 @@
 # OkayScript
 
+> New here? This page is the language guide. The per-area function list
+> (networking, Steam, JSON, collections, timers, physics events) is in
+> [scripting_reference.md](scripting_reference.md). All docs: [README.md](README.md).
+
 OkayScript is the engine's built-in scripting language — a small, dependency-free
 language that ships in every build (no Lua/C# toolchain required). It's its own
 tiny language, designed so you write almost nothing and still do a lot.
@@ -33,7 +37,23 @@ normal scene lifecycle.
 
 Scripts read like C#, and every piece of syntax does something. A script's
 fields and functions **are** the component: there is no class or base type to
-write. New scripts start like this:
+write. A new script starts empty, with just the two
+functions you almost always want:
+
+```csharp
+// Runs once, before the first frame.
+void Start()
+{
+}
+
+// Runs every frame.
+void Update()
+{
+}
+```
+
+Fill them in as you go. A fuller example, with an Inspector field, movement
+from the keyboard and a coroutine:
 
 ```csharp
 // Attach this script to an object. Its fields and functions are the component.
@@ -690,7 +710,7 @@ a basic inventory.
 
 ### Scriptable Objects (Data Assets)
 Reusable `.okaydata` files of named fields (item/enemy/level definitions,
-config). Create with **Project → New Data Asset**.
+config). Create one by right-clicking in the Project panel: **Create → Data Asset**.
 
 | Function | Effect |
 | --- | --- |

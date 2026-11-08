@@ -460,6 +460,7 @@ int main(int argc, char** argv) {
 #include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Components/Seat.hpp"
 #include "okay/Scripting/ScriptUI.hpp"
+#include "okay/Scripting/StarterScripts.hpp"
 #include "okay/Scene/EnsureCamera.hpp"       // every scene keeps a camera
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_sdlrenderer2.h"
@@ -3372,57 +3373,9 @@ void OpenExternal(const std::string& path) {
 std::string ExtFor(const std::string& lang) {
     return lang == "lua" ? "lua" : lang == "csharp" ? "cs" : "okay";
 }
-// A starter script written in the right syntax for each language, so the
-// example actually compiles in the selected backend. OkayScript is C-style
-// (braces + semicolons); Lua uses function...end; C# is class-based.
-const char* StarterScript(const std::string& lang) {
-    if (lang == "lua")
-        return "start()\n    set_pos(0, 0)\nend\n\n"
-               "update(dt)\n    move(2 * dt, 0)\nend\n";
-    if (lang == "csharp")
-        return "class Script {\n    void Start() { Okay.SetPos(0, 0); }\n"
-               "    void Update(float dt) { Okay.Move(2 * dt, 0); }\n}\n";
-    // OkayScript: the file's fields and functions ARE the component (no class
-    // or base type needed). Every line here does something: `public` puts a value
-    // in the Inspector, [Header] groups it there, the types are enforced, and the
-    // engine calls Start / Update / the coroutine by name.
-    return "// Attach this script to an object. Its fields and functions are the component.\n"
-           "\n"
-           "[Header(\"Movement\")]\n"
-           "public float speed = 5;        // public: shows in the Inspector, so you can tune it there\n"
-           "public float hopHeight = 1;\n"
-           "public int maxHops = 3;\n"
-           "\n"
-           "int hops = 0;                   // not public: only this script sees it\n"
-           "\n"
-           "// Runs once, before the first frame.\n"
-           "void Start()\n"
-           "{\n"
-           "    Debug.Log($\"{gameObject.name} is ready\");\n"
-           "}\n"
-           "\n"
-           "// Runs every frame: WASD / the arrow keys move, Space hops (up to maxHops times).\n"
-           "void Update()\n"
-           "{\n"
-           "    float h = Input.GetAxis(\"Horizontal\");\n"
-           "    float v = Input.GetAxis(\"Vertical\");\n"
-           "    transform.position += new Vector3(h, v, 0) * speed * Time.deltaTime;\n"
-           "\n"
-           "    if (Input.GetKeyDown(KeyCode.Space) && hops < maxHops)\n"
-           "    {\n"
-           "        hops++;\n"
-           "        StartCoroutine(Hop());\n"
-           "    }\n"
-           "}\n"
-           "\n"
-           "// A coroutine runs across frames, pausing at each yield.\n"
-           "IEnumerator Hop()\n"
-           "{\n"
-           "    transform.position += Vector3.up * hopHeight;\n"
-           "    yield return new WaitForSeconds(0.25);\n"
-           "    transform.position -= Vector3.up * hopHeight;\n"
-           "}\n";
-}
+// The script a new script file starts with (Scripting/StarterScripts.hpp): an
+// empty Start and Update in the selected language's syntax.
+const char* StarterScript(const std::string& lang) { return okay::StarterScriptSource(lang); }
 
 // A filename stem -> a valid class identifier (letters/digits/_, no leading digit).
 inline std::string ClassIdent(const std::string& stem) {
@@ -11559,7 +11512,7 @@ void DrawScriptDocs() {
     }
 
     ImGui::Spacing();
-    ImGui::TextDisabled("Complete reference — mirrors docs/SCRIPTING.md. Hover a name in the Script Editor for its doc.");
+    ImGui::TextDisabled("Complete reference — mirrors docs/scripting_reference.md. Hover a name in the Script Editor for its doc.");
     if (ImGui::Button("Close")) g_showScriptDocs = false;
     ImGui::End();
 }

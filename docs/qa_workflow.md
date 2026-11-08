@@ -77,7 +77,8 @@ ninja -C build-editor OkayEngine okay-player
 ```
 
 Driving the editor: start `Xvfb :98 -screen 0 1600x1000x24 &`, run the editor
-with `DISPLAY=:98`, use `xdotool` (mousedown/mouseup for clicks) and
+with `DISPLAY=:98` and `OKAY_DEV=1` (or `--dev`; without it the editor exits
+unless a launcher started it), use `xdotool` (mousedown/mouseup for clicks) and
 `import -window root shot.png` for screenshots. Floating ImGui windows can
 steal keyboard focus; re-focus with
 `xdotool windowfocus $(xdotool search --name "OkaySpace Editor" | head -1)`.

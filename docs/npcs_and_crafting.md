@@ -10,8 +10,10 @@ heading. Pick a **Behavior**:
 
 | Behavior | Does |
 |----------|------|
-| Idle   | stands still |
+| Idle   | stands still (a sentry if `aggressive`) |
 | Wander | roams randomly within `wanderRadius` of its spawn |
+| Patrol | walks its list of `waypoints` (loop or ping-pong), waiting at each |
+| Guard  | holds the spawn point and watches; chases intruders if `aggressive` |
 | Follow | approaches the target, stopping at `attackRange` (a pet/companion) |
 | Flee   | runs from the target while it's within `sightRange` (prey) |
 | Chase  | hunts the target within `sightRange`; within `attackRange` it bites for `attackDamage` every `attackInterval` (a predator) — out of sight it wanders. Broadcasts `npc_attack` per hit. |
@@ -42,7 +44,7 @@ exposed. Make a "den" that drips out wolves, a chest that refills loot, etc.
 
 *Add Component ▸ Gameplay ▸ Crafting Menu.* Builds one button per recipe of a sibling
 `Crafting` at play (labelled with the output, wired to craft it), and toggles the
-whole panel with `toggleKey` (default C). Zero UI wiring — add it next to a `Crafting`
+whole panel with `toggleKey` (default K). Zero UI wiring — add it next to a `Crafting`
 + `Inventory` and you have a working craft menu.
 
 ## Crafting

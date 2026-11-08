@@ -1,4 +1,8 @@
-# OkayScript — Scripting in OkaySpace
+# OkayScript function reference
+
+> This page lists the built-in functions area by area (networking, Steam, JSON,
+> collections, timers and more). For how the language itself works, start with
+> [scripting.md](scripting.md). All docs: [README.md](README.md).
 
 OkaySpace games are scripted in **OkayScript**, a small C-style language built
 into the engine. Add a **Script** component to a GameObject (Inspector → Add
@@ -197,7 +201,7 @@ ui_end()
 Every tween accepts an optional easing and an optional **on-complete** function
 name as its trailing argument(s), and **returns an id**. You can use the id with
 `tween_loops`, `tween_delay`, `tween_pause`, `tween_kill` and the `seq_*`
-sequence functions. [docs/scripting.md](docs/scripting.md#tweening-dotween-style)
+sequence functions. [docs/scripting.md](scripting.md#tweening-dotween-style)
 has the full list, plus the **Tween Animation** component for tweens without code.
 
 | Function | Description |
@@ -424,9 +428,9 @@ Wrap risky code in `try` / `catch`, and raise your own errors with `throw`:
 
 ```
 try {
-    var data = from_json(load_prefs("save", "{}"));
+    var data = from_json(prefs_get_str("save", "{}"));
     if (map_count(data) == 0) { throw "no save data"; }
-    load_level(map_get(data, "level"));
+    print("Level: " + map_get(data, "level"));
 } catch (e) {
     print("Load failed: " + e);   // e is the error message
 }

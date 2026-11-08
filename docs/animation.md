@@ -676,7 +676,7 @@ header tooltip and a one-line note saying what they do.
 | Component | Edit it? | What it does |
 |---|---|---|
 | **Character Model** panel (top of the Inspector) | Yes | Which clip fills each slot (Idle, Walk, Run, Jump, Fall, Land, Crouch...), imported or built-in, Stride Match, clip speeds, Body lean, **Fix animations** |
-| The controller (Third Person, First Person...) | Yes | How the player moves: speeds, jump, camera, **Set Character Model...** |
+| The Player Controller (or another controller) | Yes | How the player moves: speeds, jump, camera, **Set Character Model...** |
 | Model Animator (on the model) | Rarely | Holds the model's clips and switches them by how fast the player moves. The panel above edits its slots |
 | Humanoid Retarget | Rarely | Copies the built-in animation onto the model's bones for every empty slot. Weight and Re-Detect Bones live here |
 | Foot IK | Rarely | Plants the feet on slopes and steps |
@@ -706,6 +706,11 @@ idle. Every locomotion slot is filled on its own:
   per slot (walk 1.4, run 4.0, crouch walk 0.9, crawl 0.5). The Walk and
   Run Thresholds still work: they cap where idle turns into walk and walk
   into run.
+- **Move speeds follow the clips.** The controllers' default 4.5 m/s walk
+  is a jog, which a 1.4 m/s walk clip can't show. When a model with its own
+  Walk (and Run) clip is attached, a Walk Speed or Run Speed still at the
+  default is set to what the clip can show (about 2.0 and 5.0 m/s), so W
+  plays the walk and Shift the run. A speed you changed yourself is kept.
 - **Blends.** Between walk and run both clips are sampled at one shared
   normalized phase, so the feet stay in step through the blend; stepping
   off from a stand starts the walk on the same foot each time. Switching

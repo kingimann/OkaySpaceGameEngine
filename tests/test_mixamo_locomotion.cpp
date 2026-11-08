@@ -3,6 +3,9 @@
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/FirstPersonController.hpp"
+#include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Scene/SceneTemplates.hpp"
+#include "okay/Render/ModelImport.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include <algorithm>
 #include <cmath>
@@ -459,6 +462,49 @@ int main() {
             CHECK(DescribeCharacterModel(*L.rig.scene, L.rig.player, info));
             CHECK(info.source == 1 && info.builtinSlots == 0 && info.importedSlots == ModelAnimator::SlotCount);
             CHECK(std::string(CharacterAnimationSourceName(info.source)) == "Imported clips");
+        }
+    }
+
+    // ---- The controller's own default speeds (4.5 walk / 8 run m/s): W must play the
+    // WALK clip and Shift the RUN clip. The stride match used to pick Run for plain W
+    // (a 1.4 m/s walk clip next to a 4.5 m/s "walk"), so the character ran when walking.
+    {
+        righarness::Rig R = righarness::PlayableFromFile("mixamo_t_cm_clips.glb");
+        CHECK(R.model != nullptr);
+        auto* tp = R.player ? R.player->GetComponent<ThirdPersonController>() : nullptr;
+        CHECK(tp != nullptr);
+        ModelAnimator* ma = nullptr;
+        if (R.model)
+            for (const auto& up : R.scene->Objects())
+                if (up->IsSelfOrDescendantOf(R.model) && (ma = up->GetComponent<ModelAnimator>())) break;
+        CHECK(ma != nullptr);
+        if (tp && ma) {
+            std::printf("  fitted speeds: walk %.2f, run %.2f m/s (clips made for %.2f / %.2f)\n", tp->walkSpeed, tp->runSpeed,
+                        ma->SlotClipSpeed(ModelAnimator::SlotWalk), ma->SlotClipSpeed(ModelAnimator::SlotRun));
+            CHECK(tp->walkSpeed < 4.5f && tp->runSpeed < 8.0f);
+            // The fitted pace is one the stride match can show: inside its rate limits.
+            CHECK(tp->walkSpeed / ma->SlotClipSpeed(ModelAnimator::SlotWalk) <= ModelAnimator::kStrideMaxRate);
+            CHECK(tp->runSpeed / ma->SlotClipSpeed(ModelAnimator::SlotRun) <= ModelAnimator::kStrideMaxRate);
+            R.Step(kDt, {}, 120);
+            R.Step(kDt, {'W'}, 120);
+            std::printf("  W: slot %s at stride rate %.2f\n", ModelAnimator::SlotName(ma->ActiveSlot()), ma->CurrentStrideRate());
+            CHECK(ma->ActiveSlot() == ModelAnimator::SlotWalk);
+            R.Step(kDt, {'W', 16}, 120);
+            std::printf("  W + Shift: slot %s at stride rate %.2f\n", ModelAnimator::SlotName(ma->ActiveSlot()), ma->CurrentStrideRate());
+            CHECK(ma->ActiveSlot() == ModelAnimator::SlotRun);
+            R.Step(kDt, {}, 120);
+            CHECK(ma->ActiveSlot() == ModelAnimator::SlotIdle);
+        }
+        // Speeds the user already changed are theirs: attaching a model leaves them.
+        Scene s("custom");
+        GameObject* p = Templates::AddThirdPersonPlayer(s, {0, 0, 0});
+        auto* c = p->GetComponent<ThirdPersonController>();
+        CHECK(c != nullptr);
+        if (c) {
+            c->walkSpeed = 3.0f;
+            AttachCharacterModel(s, p, righarness::RigPath("mixamo_t_cm_clips.glb"));
+            CHECK(c->walkSpeed == 3.0f);      // customised: kept
+            CHECK(c->runSpeed < 8.0f);        // still the default: fitted
         }
     }
 

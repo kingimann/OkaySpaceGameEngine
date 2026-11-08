@@ -48,7 +48,7 @@ inline std::string StripBoneName(const std::string& rawName) {
     std::size_t cut = s0.find_last_of(":|");
     if (cut != std::string::npos) s0 = s0.substr(cut + 1);
     for (char c : s0) nm += (char)std::tolower((unsigned char)c);
-    for (const char* pre : {"def-", "def_", "org-", "mch-", "bip01 ", "bip01_", "bip001 ", "bip001_", "b_", "bone_"})
+    for (const char* pre : {"def-", "def_", "org-", "mch-", "bip01 ", "bip01_", "bip001 ", "bip001_", "j_bip_", "cc_base_", "b_", "bone_"})
         if (nm.rfind(pre, 0) == 0) { nm = nm.substr(std::strlen(pre)); break; }
     if (nm.rfind("mixamorig", 0) == 0) nm = nm.substr(9);
     return nm;
@@ -84,10 +84,17 @@ inline int ClassifyBone(const std::string& rawName, int& score) {
         {"rightupleg", 12}, {"thighr", 12}, {"rthigh", 12}, {"rightupperleg", 12}, {"rightthigh", 12}, {"upperlegr", 12},
         {"rightleg", 13}, {"calfr", 13}, {"shinr", 13}, {"rcalf", 13}, {"rshin", 13}, {"rightlowerleg", 13}, {"lowerlegr", 13}, {"rightknee", 13},
         {"rightfoot", 14}, {"footr", 14}, {"rfoot", 14}, {"rightankle", 14},
+        // VRoid: J_Bip_L_UpperLeg / LowerLeg / UpperArm / LowerArm.
+        {"lupperleg", 9}, {"llowerleg", 10}, {"rupperleg", 12}, {"rlowerleg", 13},
+        {"llowerarm", 4}, {"rlowerarm", 7},
+        // Daz Genesis: lThighBend, lShldrBend, lForearmBend (the twist links are skipped above).
+        {"lshldrbend", 3}, {"lforearmbend", 4}, {"lthighbend", 9},
+        {"rshldrbend", 6}, {"rforearmbend", 7}, {"rthighbend", 12},
     };
     for (const auto& e : kExact) if (key == e.first) { score = 2; return e.second; }
     // Torso: any spine / chest link (the mapper keeps the whole chain).
-    if (key.rfind("spine", 0) == 0 || key.rfind("chest", 0) == 0 || key == "upperchest" || key == "torso") { score = 2; return 1; }
+    if (key.rfind("spine", 0) == 0 || key.rfind("chest", 0) == 0 || key == "upperchest" || key == "torso" ||
+        key.rfind("abdomen", 0) == 0 || key == "waist" || key == "cwaist") { score = 2; return 1; }
     // Looser matches.
     auto endsW = [&](const char* k) {
         std::size_t kl = std::strlen(k);

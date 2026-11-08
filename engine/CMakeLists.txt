@@ -124,6 +124,13 @@ add_library(okay_engine
     src/Graphics/Font.cpp
     src/Graphics/TtfFont.cpp
     src/Graphics/EmbeddedFont.cpp
+    src/Debug/FrameHistory.cpp
+    src/Debug/GpuTimer.cpp
+    src/Debug/RenderStats.cpp
+    src/Debug/MemoryTracker.cpp
+    src/Debug/DrawCallRecorder.cpp
+    src/Debug/ConsoleModel.cpp
+    src/Debug/DebugStatsOverlay.cpp
     src/UI/UIRenderer.cpp
     src/UI/UIBatcher.cpp
     src/UI/UILayoutUpdate.cpp

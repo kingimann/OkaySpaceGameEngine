@@ -725,7 +725,14 @@ idle. Every locomotion slot is filled on its own:
   is a jog, which a 1.4 m/s walk clip can't show. When a model with its own
   Walk (and Run) clip is attached, a Walk Speed or Run Speed still at the
   default is set to what the clip can show (about 2.0 and 5.0 m/s), so W
-  plays the walk and Shift the run. A speed you changed yourself is kept.
+  plays the walk and Shift the run. This covers the Third Person, Third
+  Person Shooter, First Person, Click To Move, Top Down, Top Down Shooter
+  and Platformer 2.5D controllers (each against its own defaults). A speed
+  you changed yourself is kept, and the fitted values are remembered while
+  the scene is loaded: attaching another model refits a speed still at the
+  fitted value, and a speed you set back to the default afterwards is left
+  alone. A speed deliberately set to exactly the default *before* the first
+  model is attached can't be told from an untouched one, and is fitted.
 - **Blends.** Between walk and run both clips are sampled at one shared
   normalized phase, so the feet stay in step through the blend; stepping
   off from a stand starts the walk on the same foot each time. Switching
@@ -999,7 +1006,19 @@ character, and the bone stays over it.
   These are the parameters the player controllers already send.
 - **2D blend trees:** pick *2D (strafe)* on a blend tree. Motions sit on a map;
   drag them, and watch live weights in Play. The controllers send `moveX` / `moveZ`
-  (velocity in the body's frame) for strafing sets.
+  (velocity in the body's frame) for strafing sets. The body faces local -Z, so
+  forward is negative `moveZ` and strafing right is positive `moveX`.
+  **Locomotion setup** on an imported model builds that 2D blend when the file
+  has a strafe or a back clip. Names map by word: a left strafe or sidestep
+  walk (`left` plus `strafe` / `walk`), a right one, `Walk Back`, and `Run Back`.
+  Tricks such as Back Flip are not back-walks. With none of those clips,
+  locomotion stays the forward speed blend, exactly as before. Set
+  `legsFollowTravel` (off by default) and the hips ease
+  toward travel (up to 80 degrees, about 0.1 s), around world up in the hips'
+  parent space, with the spine twisting back by the same yaw so the chest stays
+  near the facing. A tilted armature does not tip the pelvis. With that option
+  on, or when strafe clips exist, backward movement with no back clip plays the
+  forward walk in reverse (with hysteresis around 100 degrees).
 - **Layers:** the **+** tab adds a layer, its own states playing over the base
   layer on part of the skeleton. Pick a **Mask bone** (e.g. the spine for
   upper-body actions) and a **Weight**. Layers share the base layer's parameters,

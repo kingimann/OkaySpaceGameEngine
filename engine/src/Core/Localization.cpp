@@ -32,12 +32,19 @@ std::string Trim(const std::string& s) {
     return s.substr(a, b - a);
 }
 
+// Limits on what a string table file or CSV may hold, so a bad file can't exhaust memory.
+constexpr std::size_t kMaxFileBytes = 64u * 1024u * 1024u;
+constexpr std::size_t kMaxCsvRows = 200000;
+constexpr std::size_t kMaxCsvCols = 512;
+constexpr int kMaxFormatDepth = 16;   // nested {plural} blocks
+
 // ---- .okayloc tokens -----------------------------------------------------------
 // A record is one line of tokens: bare words, or quoted strings with \" \\ \n \t
 // \r escapes. A quoted string may run over several lines (hand-edited files).
 struct Lexer {
     const std::string& s;
     std::size_t i = 0;
+    bool unterminated = false;   // a quoted string ran to the end of the file
 
     void SkipBlanks() { while (i < s.size() && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r')) ++i; }
     bool AtLineEnd() { SkipBlanks(); return i >= s.size() || s[i] == '\n'; }
@@ -63,6 +70,7 @@ struct Lexer {
                 }
             }
             if (i < s.size()) ++i;   // the closing quote
+            else unterminated = true;
             if (quoted) *quoted = true;
             return true;
         }
@@ -122,19 +130,20 @@ char DetectDelimiter(const std::string& s, std::size_t start) {
 }
 
 // RFC 4180 rows: quoted fields may hold the delimiter, doubled quotes and newlines.
-std::vector<std::vector<std::string>> CsvRows(const std::string& s, std::size_t start, char delim) {
+std::vector<std::vector<std::string>> CsvRows(const std::string& s, std::size_t start, char delim, bool* tooBig = nullptr) {
     std::vector<std::vector<std::string>> rows;
     std::vector<std::string> row;
     std::string field;
     bool quoted = false, any = false;
-    auto endField = [&] { row.push_back(field); field.clear(); };
+    bool big = false;
+    auto endField = [&] { if (row.size() < kMaxCsvCols) row.push_back(field); else big = true; field.clear(); };
     auto endRow = [&] {
         endField();
-        rows.push_back(std::move(row));
+        if (rows.size() < kMaxCsvRows) rows.push_back(std::move(row)); else big = true;
         row.clear();
         any = false;
     };
-    for (std::size_t i = start; i < s.size(); ++i) {
+    for (std::size_t i = start; i < s.size() && !big; ++i) {
         const char c = s[i];
         if (quoted) {
             if (c == '"') {
@@ -153,7 +162,8 @@ std::vector<std::vector<std::string>> CsvRows(const std::string& s, std::size_t 
         else if (c == '\r') { if (i + 1 >= s.size() || s[i + 1] != '\n') endRow(); }
         else { field += c; any = true; }
     }
-    if (any || !field.empty() || !row.empty()) endRow();
+    if (!big && (any || !field.empty() || !row.empty())) endRow();
+    if (tooBig) *tooBig = big;
     return rows;
 }
 
@@ -377,11 +387,14 @@ bool StringTable::Parse(const std::string& text, std::string* err) {
     StringTable t;
     bool header = false;
     std::string word, a, b, c;
+    std::size_t counted = 0;   // text before this offset is already in `line`
+    std::size_t line = 1;
     while (lx.i < text.size()) {
         lx.SkipBlanks();
         if (lx.i >= text.size()) break;
         if (text[lx.i] == '\n') { ++lx.i; continue; }
         if (text[lx.i] == '#') { lx.SkipLine(); continue; }
+        for (; counted < lx.i; ++counted) if (text[counted] == '\n') ++line;
         lx.Token(word);
         if (!header) {
             if (word != "okayloc") {
@@ -406,6 +419,11 @@ bool StringTable::Parse(const std::string& text, std::string* err) {
             }
         } else if (word == "text") {
             if (lx.Token(a) && lx.Token(b) && lx.Token(c) && !a.empty() && !b.empty()) t.Set(b, a, c);
+        }
+        if (lx.unterminated) {
+            // An unclosed quote would swallow the rest of the file as one value.
+            if (err) *err = "line " + std::to_string(line) + ": a quoted string is never closed";
+            return false;
         }
         lx.SkipLine();   // the rest of the record (and unknown records)
     }
@@ -450,6 +468,13 @@ std::string StringTable::Write() const {
 bool StringTable::Load(const std::string& path, std::string* err) {
     std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
     if (!f) { if (err) *err = "can't open " + path; return false; }
+    f.seekg(0, std::ios::end);
+    const std::streamoff size = f.tellg();
+    if (size > (std::streamoff)kMaxFileBytes) {
+        if (err) *err = path + " is too large for a string table (" + std::to_string((long long)size) + " bytes)";
+        return false;
+    }
+    f.seekg(0);
     std::stringstream ss;
     ss << f.rdbuf();
     return Parse(ss.str(), err);
@@ -483,7 +508,13 @@ std::string StringTable::ExportCsv(const std::vector<std::string>& langs) const 
 bool StringTable::ImportCsv(const std::string& csv, std::string* err, int* rowsRead) {
     if (rowsRead) *rowsRead = 0;
     const std::size_t start = csv.compare(0, 3, "\xEF\xBB\xBF") == 0 ? 3 : 0;
-    const auto rows = CsvRows(csv, start, DetectDelimiter(csv, start));
+    if (csv.size() > kMaxFileBytes) { if (err) *err = "the file is too large"; return false; }
+    bool tooBig = false;
+    const auto rows = CsvRows(csv, start, DetectDelimiter(csv, start), &tooBig);
+    if (tooBig) {
+        if (err) *err = "too many rows or columns (at most " + std::to_string(kMaxCsvRows) + " rows and " + std::to_string(kMaxCsvCols) + " columns)";
+        return false;
+    }
     if (rows.empty()) { if (err) *err = "the file is empty"; return false; }
     int keyCol = -1, noteCol = -1;
     std::vector<std::pair<int, std::string>> langCols;
@@ -657,6 +688,10 @@ std::string Localization::LocalizeArgs(const std::string& key, const std::vector
 }
 
 std::string Localization::Format(const std::string& pattern, const std::vector<LocArg>& args, const std::string& langIn) {
+    // Plural forms call Format again; a pattern nested deeper than the limit is left as text.
+    static thread_local int depthNow = 0;
+    if (depthNow >= kMaxFormatDepth) return pattern;
+    struct Depth { Depth() { ++depthNow; } ~Depth() { --depthNow; } } depthGuard;
     const std::string lang = langIn.empty() ? Language() : langIn;
     std::string out;
     out.reserve(pattern.size());

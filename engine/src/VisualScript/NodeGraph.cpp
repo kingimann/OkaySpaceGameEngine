@@ -7,6 +7,7 @@
 #include "okay/VisualScript/Nodes.hpp"
 #include "okay/VisualScript/NodesWave4.hpp"
 #include "okay/VisualScript/NodesBuild.hpp"
+#include "okay/VisualScript/NodesInventory.hpp"
 #include "okay/VisualScript/NodesActions.hpp"
 #include "okay/VisualScript/NodesPhysics.hpp"
 #include "okay/VisualScript/NodesStory.hpp"
@@ -348,6 +349,15 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         }
         if (type == "SaveCreation")    return std::make_unique<BuildCreationNode>(false, a0("creation"));
         if (type == "LoadCreation")    return std::make_unique<BuildCreationNode>(true, a0("creation"));
+        // Inventory (the node's text is the item, recipe output or loot table).
+        if (type == "AddItem")        return std::make_unique<InvAddNode>(a0("item"));
+        if (type == "RemoveItem")     return std::make_unique<InvRemoveNode>(a0("item"));
+        if (type == "HasItem")        return std::make_unique<InvHasNode>(a0("item"));
+        if (type == "ItemCount")      return std::make_unique<InvCountNode>(a0("item"));
+        if (type == "EquipItem")      return std::make_unique<InvEquipNode>(a0("item"));
+        if (type == "CraftItem")      return std::make_unique<InvCraftNode>(a0("item"));
+        if (type == "LootRoll")       return std::make_unique<InvLootRollNode>(a0("table"));
+        if (type == "SpawnPickup")    return std::make_unique<InvSpawnPickupNode>(a0("item"));
         if (type == "BroadcastEvent") return std::make_unique<BroadcastEventNode>(a0("Event"));
         if (type == "EventValue")     return std::make_unique<EventValueNode>(false);
         if (type == "EventName")      return std::make_unique<EventValueNode>(true);

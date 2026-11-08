@@ -84,11 +84,11 @@ int main() {
     // --- Application quit logic (Run needs a terminal; the decision is factored out) ---
     {
         Application::Config cfg;
-        CHECK(cfg.quitOnQ);                                      // default keeps the old behaviour
+        CHECK(cfg.quitKey == 'q');                                      // default keeps the old behaviour
         CHECK(Application::ShouldQuit(cfg, true, false));
         CHECK(!Application::ShouldQuit(cfg, false, false));
         CHECK(Application::ShouldQuit(cfg, false, true));        // Game::RequestQuit ends the loop
-        cfg.quitOnQ = false;
+        cfg.quitKey = 0;
         CHECK(!Application::ShouldQuit(cfg, true, false));
         CHECK(Application::ShouldQuit(cfg, true, true));
     }

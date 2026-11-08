@@ -69,9 +69,11 @@ struct Mathf {
         return Clamp01((value - a) / (b - a));
     }
 
-    /// Hermite smoothstep between edges.
+    /// Hermite smoothstep between edges, returning 0..1. Edges may be given in either
+    /// order (from > to mirrors the curve, e.g. a fade-out); equal edges make a step.
     static float SmoothStep(float from, float to, float t) {
-        t = Clamp01((t - from) / (to - from > 0 ? (to - from) : 1.0f));
+        if (from == to) return t >= from ? 1.0f : 0.0f;
+        t = Clamp01((t - from) / (to - from));
         return t * t * (3.0f - 2.0f * t);
     }
 

@@ -204,7 +204,7 @@ You can also say "area 5 but not Grok's parts" or "everything open in 1".
 
 | ID | Sub-area | Code | Docs | Open |
 |---|---|---|---|---|
-| 1.1 | Loop and time: Application, Game, Time, Random | `Core/Application`, `Game`, `Time`, `Random` | `making_a_game.md` | Fixed-step helper for gameplay code |
+| 1.1 | Loop and time: Application, Game, Time, Random | `Core/Application`, `Game`, `Time`, `Random` | `making_a_game.md`, `core_tools.md` | Fixed-step helper for gameplay code |
 | 1.2 | Timers and tweens: Scheduler, Tween, easing | `Core/Scheduler`, `Tween`, `Components/TweenAnimation` | - | Global scheduler PR in review |
 | 1.3 | Scene graph: Scene, GameObject, Transform, components, layers and tags | `Scene/Scene`, `GameObject`, `Transform`, `Component`, `Layers` | `making_a_game.md` | Layer collision matrix, named tags, component registry |
 | 1.4 | Scene lifecycle: Start/Awake order, destroy, scene manager, load | `Scene/SceneManager`, `Scene` | `making_a_game.md` | Async load, unload, DontDestroyOnLoad, pooling (branches in review) |
@@ -212,7 +212,7 @@ You can also say "area 5 but not Grok's parts" or "everything open in 1".
 | 1.6 | Prefabs and templates: prefab files, starter players and worlds | `Scene/SceneTemplates`, `UITemplates`, `UIStyles` | `making_a_game.md` | Prefab overrides |
 | 1.7 | Saves and prefs: save games, prefs, data assets, data packs | `Core/SaveData`, `Prefs`, `DataAsset`, `DataPack` | `save_games.md` | Durable saves in review; typed Prefs |
 | 1.8 | Localization: string tables, plurals, font fallback | `Core/Game` (runtime), `Components/*` consumers | `localization.md` | Number and date formatting, plural rules |
-| 1.9 | Events and ECS: EventBus, ECS World, SceneBridge | `Core/EventBus`, `ECS/World`, `ECS/SceneBridge`, `ECS/Systems` | - | ECS command buffer |
+| 1.9 | Events and ECS: EventBus, ECS World, SceneBridge | `Core/EventBus`, `ECS/World`, `ECS/SceneBridge`, `ECS/Systems` | `core_tools.md` | ECS command buffer |
 | 1.10 | Logging and profiling | `Core/Log`, `Core/Profiler` | `core_logging_profiling.md` (in review) | Trace export in review |
 | 1.11 | Math, geometry, noise, RNG: Mat3, Decompose, Bounds/Ray/Plane/OBB/Capsule/ViewFrustum, Vec2i/Vec3i, noise, curves, colour spaces, `Rng` streams | `Math/*`, `Core/Rng` | `math_geometry.md` | Older private noise copies not yet migrated |
 

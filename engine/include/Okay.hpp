@@ -23,6 +23,14 @@
 #include "okay/Core/SaveGame.hpp"
 #include "okay/Core/Localization.hpp"
 #include "okay/Core/Application.hpp"
+#include "okay/Core/BuildInfo.hpp"
+#include "okay/Core/CommandLine.hpp"
+#include "okay/Core/Paths.hpp"
+#include "okay/Core/Stopwatch.hpp"
+#include "okay/Core/StateMachine.hpp"
+#include "okay/Core/Cvar.hpp"
+#include "okay/Core/Console.hpp"
+#include "okay/Core/DebugOverlay.hpp"
 #include "okay/Core/DisplaySettings.hpp"
 
 // Input

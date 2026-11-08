@@ -150,7 +150,9 @@ struct Quat {
         // Rotation matrix terms (from the unit quaternion).
         float sinx = 2.0f * (w * x - y * z);
         Vec3 e;
-        if (sinx > 0.9999f || sinx < -0.9999f) {   // gimbal lock, looking straight up / down
+        // Gimbal lock only when pitch is within ~0.08 degrees of straight up / down
+        // (the threshold used to be 0.9999, which dropped the roll from 89.2 degrees).
+        if (sinx > 0.999999f || sinx < -0.999999f) {
             // Only yaw and roll together are defined: put it all in the yaw, which
             // (Y * X * Z) is the turn of the first column.
             e.x = sinx > 0.0f ? 90.0f : -90.0f;

@@ -1481,3 +1481,19 @@ add_test(NAME script_nav COMMAND test_script_nav)
 add_executable(test_math_geometry test_math_geometry.cpp)
 target_link_libraries(test_math_geometry PRIVATE okay::engine)
 add_test(NAME math_geometry COMMAND test_math_geometry)
+
+# Core fixes: Application quit handling, strict Rect::Overlaps, SmoothStep edges, ToEuler near the poles
+add_executable(test_core_fixes test_core_fixes.cpp)
+target_link_libraries(test_core_fixes PRIVATE okay::engine)
+add_test(NAME core_fixes COMMAND test_core_fixes)
+
+# Core tools: CommandLine, Paths, BuildInfo, Stopwatch, StateMachine
+add_executable(test_core_cli test_core_cli.cpp)
+target_link_libraries(test_core_cli PRIVATE okay::engine)
+target_compile_definitions(test_core_cli PRIVATE OKAY_ENGINE_VERSION_FOR_TEST="${PROJECT_VERSION}")
+add_test(NAME core_cli COMMAND test_core_cli)
+
+# Core console: EventBus extras, Cvars, Console, debug overlay lines
+add_executable(test_core_console test_core_console.cpp)
+target_link_libraries(test_core_console PRIVATE okay::engine)
+add_test(NAME core_console COMMAND test_core_console)

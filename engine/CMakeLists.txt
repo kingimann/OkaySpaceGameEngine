@@ -1,6 +1,12 @@
 # OkaySpace engine library
 add_library(okay_engine
     src/Core/Application.cpp
+    src/Core/BuildInfo.cpp
+    src/Core/CommandLine.cpp
+    src/Core/Paths.cpp
+    src/Core/Cvar.cpp
+    src/Core/Console.cpp
+    src/Core/DebugOverlay.cpp
     src/Core/SaveGame.cpp
     src/Core/Scheduler.cpp
     src/Core/Tween.cpp
@@ -169,6 +175,8 @@ set_source_files_properties(src/Graphics/Image.cpp src/Graphics/Font.cpp src/Gra
 # The built-in UI font (the launcher's Roboto) lives in shared/RobotoFont.h.
 set_source_files_properties(src/Graphics/EmbeddedFont.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
+# Only BuildInfo.cpp sees the version string, so a version bump recompiles one file.
+set_source_files_properties(src/Core/BuildInfo.cpp PROPERTIES COMPILE_DEFINITIONS "${OKAY_VERSION_DEFINE}")
 # The network layer signs its key exchange with #269's ed25519 (shared/AntiCheatCrypto.hpp)
 # and runs its clock heartbeat (shared/AntiCheatChecks.hpp); the dedicated server
 # files anti-cheat kicks with #270's request builder (shared/AntiCheatBackend.hpp);

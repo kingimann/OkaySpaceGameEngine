@@ -550,7 +550,7 @@ ImU32 ToColor(const Color& c) {
 // A single "which step are we on" breadcrumb + (on Windows) an unhandled-exception
 // handler that reports it. The UI-editing crash reproduces only on some real Windows
 // GPUs (Direct3D) — never under Linux ASan/UBSan or Wine — so this captures the exact
-// step and faulting address on the user's machine. OKAY_TRACE is near-free (a copy
+// step and faulting address on the user's machine. OKAY_BREADCRUMB is near-free (a copy
 // into a static buffer). In a release build ImGui's IM_ASSERT is a no-op, so a UI bug
 // surfaces as a real access violation, which the SEH filter below catches.
 char g_okayTrace[256] = "startup";
@@ -558,7 +558,7 @@ inline void OkayTrace(const char* s) {
     std::strncpy(g_okayTrace, s, sizeof(g_okayTrace) - 1);
     g_okayTrace[sizeof(g_okayTrace) - 1] = '\0';
 }
-#define OKAY_TRACE(s) OkayTrace(s)
+#define OKAY_BREADCRUMB(s) OkayTrace(s)
 
 #if defined(_WIN32)
 // On an unhandled access violation, report the last breadcrumb + faulting module and
@@ -893,7 +893,7 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
         // (The small Animation preview, slot 3, keeps the read-back path: it renders
         // with most of the scene hidden mid-frame and reads back cheaply.)
         if (g_d3dDirect && g_d3dRenderer && slot != 3) {
-            OKAY_TRACE("Render3D:d3d11-direct");
+            OKAY_BREADCRUMB("Render3D:d3d11-direct");
             if (SDL_Texture* t = EnsureViewTarget(slot, rw, rh)) {
                 if (void* dst = ViewTargetD3D(t)) {
                     SDL_RenderFlush(g_sdlRenderer);   // SDL's queued draws go first
@@ -912,7 +912,7 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
             }
         }
         if (!px && g_d3dReady && g_d3dRenderer) {
-            OKAY_TRACE("Render3D:d3d11");   // crash breadcrumb: which backend faulted
+            OKAY_BREADCRUMB("Render3D:d3d11");   // crash breadcrumb: which backend faulted
             // Scene / Game view / Camera Preview redraw every frame: pipeline their read-back
             // (show last frame's image, don't stall on the GPU). The Animation preview and
             // one-off renders stay synchronous.
@@ -923,7 +923,7 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
         }
 #endif
         if (!px && g_glReady && g_glRenderer && g_glWindow && g_glCtx) {
-            OKAY_TRACE("Render3D:gl");
+            OKAY_BREADCRUMB("Render3D:gl");
             SDL_GLContext prevCtx = SDL_GL_GetCurrentContext();
             SDL_Window*   prevWin = SDL_GL_GetCurrentWindow();
             if (SDL_GL_MakeCurrent(g_glWindow, g_glCtx) == 0)
@@ -944,7 +944,7 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     // the software path (next) fills + validates the shared depth for occlusion.
     okay::SceneOcclusionDepth().valid = false;
     if (!px) {
-        OKAY_TRACE("Render3D:software");
+        OKAY_BREADCRUMB("Render3D:software");
         // The CPU rasterizer can't push a big imported model at full panel
         // resolution — auto-drop the render scale with triangle load so the
         // editor stays interactive (the texture upscales linearly for free).
@@ -42009,7 +42009,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     // Project world-space-canvas widgets through the active view BEFORE editing, so
     // they can be picked, dragged and resized in the viewport (the pick/drag helpers
     // go through GetUIScreenRect, which needs this context). Screen-space UI ignores it.
-    OKAY_TRACE(uiPanel ? "UItab:projector" : "Scene:projector");
+    OKAY_BREADCRUMB(uiPanel ? "UItab:projector" : "Scene:projector");
     SetEditorWorldUIProjector(ed, uiCanvasSize, ed.view3D, /*gameView=*/false);
 
     // Only ONE viewport may process UI pick/drag per frame. With both the "Scene" view
@@ -42028,7 +42028,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     // tab — never in the plain 3D/2D Scene view. UI isn't drawn there, so letting
     // EditUIWidgets pick widgets by their (invisible) rects would hijack clicks and block
     // object selection + the Move/Rotate/Scale gizmos. Edit UI in the UI view.
-    OKAY_TRACE(uiPanel ? "UItab:editwidgets" : "Scene:editwidgets");
+    OKAY_BREADCRUMB(uiPanel ? "UItab:editwidgets" : "Scene:editwidgets");
     // With "Show UI in Scene view" the UI is drawn over the scene, so it's editable there too.
     if (ownsUIInteraction && (uiOnly || g_showUIOverlay)) EditUIWidgets(ed, uiCanvasPos, uiCanvasSize, hovered, io, uiOnly);
     else                             g_uiHandled = false;   // scene view (or not the active viewport): leave clicks for object pick / gizmos
@@ -42079,14 +42079,14 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                 dl->AddLine(ImVec2(viewPos.x, gy), ImVec2(uiEnd.x, gy), IM_COL32(120, 180, 255, 40));
             }
         }
-        OKAY_TRACE(uiPanel ? "UItab:overlay" : "UIonly:overlay");
+        OKAY_BREADCRUMB(uiPanel ? "UItab:overlay" : "UIonly:overlay");
         DrawUIOverlay(ed, dl, uiCanvasPos, uiCanvasSize, /*gameView=*/false);
         // Outline every UI element's rect so the whole layout is visible at a glance.
         // A widget outside the screen rect is flagged in RED — that's UI that runs off
         // screen in the built game (so "is my UI visible?" is answerable at a glance).
         // Resolved against the ZOOMED screen (viewSize) + the zoomed resolution-scale set
         // above, so these outlines sit exactly on the widgets DrawUIOverlay drew.
-        OKAY_TRACE("UIonly:allbounds");
+        OKAY_BREADCRUMB("UIonly:allbounds");
         {
             for (const auto& up : ed.scene().Objects()) {
                 GameObject* g = up.get();
@@ -42153,7 +42153,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     okay::UIResolutionScale() = 1.0f;   // never leak the UI-Only preview scale past this view
 
     // Corner overlay (view mode, object count, live FPS, selection).
-    OKAY_TRACE(uiPanel ? "UItab:corner" : "Scene:corner");
+    OKAY_BREADCRUMB(uiPanel ? "UItab:corner" : "Scene:corner");
     char overlay[160];
     std::snprintf(overlay, sizeof(overlay), "%s  |  %d objects  |  %.0f FPS%s%s",
                   ed.view3D ? "3D" : "2D", (int)ed.scene().Objects().size(),
@@ -42162,7 +42162,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                   ed.selected() ? ed.selected()->name.c_str() : "");
     dl->AddText(ImVec2(canvasPos.x + 8, canvasPos.y + 6), IM_COL32(200, 200, 210, 255), overlay);
 
-    OKAY_TRACE(uiPanel ? "UItab:end" : "Scene:end");
+    OKAY_BREADCRUMB(uiPanel ? "UItab:end" : "Scene:end");
     ImGui::End();
 }
 
@@ -43683,7 +43683,7 @@ int main(int argc, char** argv) {
     }
     // Dev/test: crash on purpose after a breadcrumb, to check the crash reports end to end.
     if (const char* c = std::getenv("OKAY_TEST_CRASH"); c && *c) {
-        OKAY_TRACE(c);
+        OKAY_BREADCRUMB(c);
         volatile int* bad = nullptr;
         *bad = 1;
     }

@@ -32,6 +32,7 @@
 #include "okay/Core/Profiler.hpp"        // CPU/GPU frame profiler
 #include "okay/Animation/HumanoidLibrary.hpp"  // built-in clip names in the Animator clip slot
 #include "okay/Animation/ClipGraph.hpp"       // an Animator graph from an imported model's clips
+#include "okay/Render/ModelImport.hpp"        // AutoMapLocomotion / slot suggestions
 #include "okay/Scene/UITemplates.hpp"    // prebuilt, droppable UI screens (UI > Prebuilt Screens)
 #include "okay/Components/SettingsScreen.hpp"
 #include "okay/UI/TooltipPlace.hpp"
@@ -29041,46 +29042,97 @@ void DrawInspector(EditorState& ed) {
 
             SectionHeader("Locomotion (auto idle/walk/run)");
             if (ImGui::Checkbox("Drive by movement##ma", &ma->driveByMovement)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Auto-switch clips based on how fast this object moves.");
-            if (ma->driveByMovement && ma->gameObject)
-                if (auto* sm = ma->gameObject->GetComponent<AnimStateMachine>(); sm && sm->enabled)
-                    ImGui::TextDisabled("The Animation State Machine here picks the clips, so this waits while it's enabled.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Auto-switch clips based on how fast this object moves.\nWith an Animator on this object, the graph plays these slots instead.");
+            AnimStateMachine* locoSm = nullptr;
+            if (ma->gameObject)
+                for (AnimStateMachine* sm : ma->gameObject->GetComponents<AnimStateMachine>())
+                    if (sm->layer == 0) { locoSm = sm; break; }
+            const bool haveLoco = locoSm && std::any_of(locoSm->states.begin(), locoSm->states.end(),
+                                                        [](const AnimStateMachine::State& st) { return st.name == "Locomotion"; });
+            auto pushSlots = [&]() {
+                if (haveLoco) ClipGraph::InsertLocomotion(*locoSm, *ma);
+                ed.dirty = true;
+            };
             if (ma->driveByMovement) {
                 ImGui::SameLine();
                 if (ImGui::Checkbox("Smooth blend##ma", &ma->smoothLocomotion)) ed.dirty = true;
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Blend the two clips around the current speed every frame (1D blend\ntree) instead of switching discretely — half-walking half-running looks\nlike a jog, and foot cycles stay aligned through the blend.");
             }
-            if (ma->driveByMovement) {
-                auto clipCombo = [&](const char* label, std::string& target) {
+            if (!ma->clips.empty()) {
+                if (haveLoco)
+                    ImGui::TextDisabled("Changing a slot updates Locomotion. Your other states, transitions and IK weights stay.");
+                else
+                    ImGui::TextDisabled("These slots are what the player plays. Locomotion setup in the Animator builds a graph from them without removing states you add later.");
+                if (ImGui::SmallButton("Fill empty slots from names##ma")) {
+                    ed.PushUndo();
+                    okay::AutoMapLocomotion(ma);
+                    pushSlots();
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Fills only slots that are still (none), from the clip names.\nA slot you already set is left alone. Does not replace your other states.");
+                auto clipCombo = [&](const char* label, std::string& target, int slot) {
                     std::vector<std::string> nm = ma->ClipNames();
                     int cur = 0; for (int i = 0; i < (int)nm.size(); ++i) if (nm[i] == target) cur = i + 1;
+                    const bool missing = !target.empty() && cur == 0;
                     std::vector<const char*> items; items.push_back("(none)");
                     for (auto& n : nm) items.push_back(n.c_str());
+                    ImGui::PushID(slot);
                     if (ImGui::Combo(label, &cur, items.data(), (int)items.size())) {
-                        target = (cur == 0) ? std::string{} : nm[cur - 1]; ed.dirty = true;
+                        ed.PushUndo();
+                        target = (cur == 0) ? std::string{} : nm[cur - 1];
+                        pushSlots();
                     }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", ModelAnimator::SlotFallback(slot));
+                    if (ma->SlotUseOf(slot) == ModelAnimator::SlotUse::Plays) {
+                        ImGui::SameLine();
+                        const bool prevOn = okay::editor::apreview::ToggleModelClip(
+                            ed.scene(), ma, target, ma->speed, true, ed.isPlaying());
+                        if (prevOn) okay::editor::apreview::DrawTransport(label);
+                    }
+                    if (missing)
+                        ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.35f, 1.0f), "'%s' is not on this model. %s",
+                                           target.c_str(), ModelAnimator::SlotFallback(slot));
+                    else if (ma->SlotUseOf(slot) == ModelAnimator::SlotUse::NoKeys)
+                        ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.35f, 1.0f), "'%s' has no keys, so this slot is skipped.", target.c_str());
+                    else if (const char* caution = ma->SlotCaution(slot); caution && caution[0])
+                        ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f), "%s", caution);
+                    else if (target.empty()) {
+                        const std::string guess = okay::SuggestUnassignedSlot(*ma, slot);
+                        if (!guess.empty()) {
+                            ImGui::TextDisabled("Looks like %s", guess.c_str());
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("Use##slot")) { ed.PushUndo(); target = guess; pushSlots(); }
+                        }
+                    }
+                    ImGui::PopID();
                 };
-                clipCombo("Idle clip##ma", ma->idleClip);
-                clipCombo("Walk clip##ma", ma->walkClip);
-                clipCombo("Run clip##ma",  ma->runClip);
+                clipCombo("Idle clip##ma", ma->idleClip, ModelAnimator::SlotIdle);
+                clipCombo("Walk clip##ma", ma->walkClip, ModelAnimator::SlotWalk);
+                clipCombo("Run clip##ma",  ma->runClip, ModelAnimator::SlotRun);
                 if (ImGui::Checkbox("Stride match##ma", &ma->strideMatch)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play walk / run clips at the pace the body really moves and pick walk or run by it.\nSet the clips' own speeds in the Character Model panel on the player.");
                 ImGui::SameLine();
                 if (ImGui::Checkbox("Built-in for empty slots##ma", &ma->builtinFallback)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("On a retargeted player (Humanoid Retarget), a slot with no clip plays the\nbuilt-in animation instead of freezing the pose.");
-                if (ImGui::DragFloat("Walk threshold##ma", &ma->walkThreshold, 0.05f, 0.0f, 20.0f)) ed.dirty = true;
-                if (ImGui::DragFloat("Run threshold##ma",  &ma->runThreshold,  0.1f,  0.0f, 50.0f)) ed.dirty = true;
-                clipCombo("Jump clip##ma", ma->jumpClip);
-                clipCombo("Fall clip##ma", ma->fallClip);
-                clipCombo("Land clip##ma", ma->landClip);
+                if (ImGui::DragFloat("Walk threshold##ma", &ma->walkThreshold, 0.05f, 0.0f, 20.0f)) { pushSlots(); }
+                if (ImGui::IsItemDeactivatedAfterEdit()) ed.PushUndo();
+                if (ImGui::DragFloat("Run threshold##ma",  &ma->runThreshold,  0.1f,  0.0f, 50.0f)) { pushSlots(); }
+                if (ImGui::IsItemDeactivatedAfterEdit()) ed.PushUndo();
+                clipCombo("Jump clip##ma", ma->jumpClip, ModelAnimator::SlotJump);
+                clipCombo("Fall clip##ma", ma->fallClip, ModelAnimator::SlotFall);
+                clipCombo("Land clip##ma", ma->landClip, ModelAnimator::SlotLand);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Air states from the capsule's vertical motion: launching plays Jump,\npast the apex Fall loops, touchdown plays Land once. Works with any\ncontroller; leave a slot on (none) to skip that state.");
+                clipCombo("Strafe left##ma", ma->strafeLeftClip, ModelAnimator::SlotStrafeLeft);
+                clipCombo("Strafe right##ma", ma->strafeRightClip, ModelAnimator::SlotStrafeRight);
+                clipCombo("Walk back##ma", ma->walkBackClip, ModelAnimator::SlotWalkBack);
+                clipCombo("Run back##ma", ma->runBackClip, ModelAnimator::SlotRunBack);
                 if (ImGui::TreeNode("Crouch / prone clips##ma")) {
-                    clipCombo("Crouch clip##ma", ma->crouchClip);
-                    clipCombo("Crouch walk clip##ma", ma->crouchWalkClip);
-                    clipCombo("Prone clip##ma", ma->proneClip);
-                    clipCombo("Crawl clip##ma", ma->crawlClip);
-                    clipCombo("Get up clip##ma", ma->getUpClip);
+                    clipCombo("Crouch clip##ma", ma->crouchClip, ModelAnimator::SlotCrouch);
+                    clipCombo("Crouch walk clip##ma", ma->crouchWalkClip, ModelAnimator::SlotCrouchWalk);
+                    clipCombo("Prone clip##ma", ma->proneClip, ModelAnimator::SlotProne);
+                    clipCombo("Crawl clip##ma", ma->crawlClip, ModelAnimator::SlotCrawl);
+                    clipCombo("Get up clip##ma", ma->getUpClip, ModelAnimator::SlotGetUp);
                     ImGui::TextDisabled("Follow the player controller's crouch / prone. Getting up\nfrom prone plays Get up once; (none) keeps the standing clips.");
                     ImGui::TreePop();
                 }

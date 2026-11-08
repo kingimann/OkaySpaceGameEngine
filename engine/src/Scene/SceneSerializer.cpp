@@ -735,7 +735,10 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             !ma->crawlClip.empty() || !ma->getUpClip.empty())
             out << "  modelanimstance " << Quote(ma->crouchClip) << " " << Quote(ma->crouchWalkClip)
                 << " " << Quote(ma->proneClip) << " " << Quote(ma->crawlClip) << " " << Quote(ma->getUpClip) << "\n";
-        if (ma->HasDirectionalClips())
+        // Save the names even when the clip is not on the model yet, so a reload
+        // does not drop an assignment that currently falls back.
+        if (!ma->strafeLeftClip.empty() || !ma->strafeRightClip.empty() ||
+            !ma->walkBackClip.empty() || !ma->runBackClip.empty())
             out << "  modelanimdir " << Quote(ma->strafeLeftClip) << " " << Quote(ma->strafeRightClip)
                 << " " << Quote(ma->walkBackClip) << " " << Quote(ma->runBackClip) << "\n";
         // Crossfade + clip events — separate optional records (older scenes lack them).

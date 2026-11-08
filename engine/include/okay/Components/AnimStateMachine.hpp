@@ -336,6 +336,29 @@ public:
         auto it = m.find(name); return it != m.end() && it->second;
     }
 
+    /// Forward motion to play backward when a moveX/moveZ tree has strafe clips
+    /// but nothing behind the body. -1 keeps the normal 2D blend. `hold` stays
+    /// set until the travel comes back inside 80°, so the boundary does not flicker.
+    static int BackpedalMotion(const State& st, float px, float py, bool& hold) {
+        if (st.blendParam != "moveX" || st.blendParamY != "moveZ") { hold = false; return -1; }
+        for (const Motion& m : st.motions) if (m.posY > 0.15f) { hold = false; return -1; }
+        const float mag = std::sqrt(px * px + py * py);
+        if (mag < 0.2f) { hold = false; return -1; }
+        const float ang = std::atan2(px, -py) * 57.2957795f;
+        const float gate = hold ? 80.0f : 100.0f;
+        hold = std::fabs(ang) > gate;
+        if (!hold) return -1;
+        int pick = -1;
+        float best = 1.0e30f;
+        for (int i = 0; i < (int)st.motions.size(); ++i) {
+            const float y = st.motions[i].posY;
+            if (y >= -0.05f) continue;   // idle and strafe sit on or in front of the origin
+            const float d = std::fabs(-y - mag);
+            if (d < best) { best = d; pick = i; }
+        }
+        if (pick < 0) hold = false;
+        return pick;
+    }
     /// 2D blend weights (freeform cartesian, gradient band): every motion gets
     /// a weight from where `p` sits relative to all the others; they sum to 1.
     static void Weights2D(const std::vector<Motion>& ms, float px, float py, std::vector<float>& w) {
@@ -504,15 +527,31 @@ public:
         const float spd = StateSpeed(*cur);
         if (cur->blendTree && m_importHold) ReleaseImported();
         if (cur->blendTree && cur->blendDims == 2) {
-            Weights2D(cur->motions, GetFloat(cur->blendParam), GetFloat(cur->blendParamY), m_bWeights);
+            const float px = GetFloat(cur->blendParam), py = GetFloat(cur->blendParamY);
+            // Strafe clips and no back clip: behind the body the 2D hull has no
+            // sample, so the blend sits on idle and the character slides. Play
+            // the forward walk backward there instead. Other 2D trees are unchanged.
+            const int rev = BackpedalMotion(*cur, px, py, m_reverseBack);
+            if (rev < 0) Weights2D(cur->motions, px, py, m_bWeights);
+            else {
+                m_bWeights.assign(cur->motions.size(), 0.0f);
+                m_bWeights[(std::size_t)rev] = 1.0f;
+            }
             std::vector<int>& idx = m_motionClips;   // reused: no per-frame allocation
             idx.clear();
             for (const Motion& m : cur->motions) idx.push_back(MotionClip(ma, *cur, m.clip));
             const float prevPhase = ma->BlendPhase();
-            ma->SetSpeed(spd * MatchRate(*cur, m_bWeights));
+            const float rate = std::fabs(spd) * MatchRate(*cur, m_bWeights);
+            ma->SetSpeed(rev >= 0 ? -rate : rate);
             ma->SetExternalDrive(ma->BlendMany(dt, idx, m_bWeights));
             float ph = ma->BlendPhase();
-            m_normTime += (ph >= prevPhase) ? ph - prevPhase : ph + 1.0f - prevPhase;
+            if (rev >= 0) {
+                float dph = ph - prevPhase;
+                if (dph > 0.5f) dph -= 1.0f;   // the phase wrapped while playing backward
+                m_normTime += -dph;
+            } else {
+                m_normTime += (ph >= prevPhase) ? ph - prevPhase : ph + 1.0f - prevPhase;
+            }
         } else if (cur->blendTree) {
             int lo, hi; float w;
             PickMotions(*cur, GetFloat(cur->blendParam), lo, hi, w);
@@ -1018,6 +1057,7 @@ private:
     std::unordered_map<std::string, bool>  m_bools;
     std::unordered_map<std::string, bool>  m_triggers;
     std::vector<float> m_bWeights;
+    bool m_reverseBack = false;   ///< backpedal hysteresis for a strafe tree with no back clip
     float m_ikW = 1.0f, m_fbW = 1.0f, m_ikBlend = 0.25f, m_ikEase = 0.0f;
     float m_clock = 0.0f;
     std::vector<HistoryEntry> m_history;

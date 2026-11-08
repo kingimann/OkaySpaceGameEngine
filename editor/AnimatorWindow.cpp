@@ -2653,14 +2653,24 @@ void DrawToolbar(Ctx& c, Ui& u) {
             "with the parameters the player controllers send.");
         if (ImGui::BeginPopup("##aglocosetup")) {
             ModelAnimator* ma = c.ma;
-            auto shown = [&](const std::string& cn) { return cn.empty() || ma->FindClip(cn) < 0 ? "-" : cn.c_str(); };
+            auto shown = [&](const std::string& cn) {
+                if (cn.empty()) return std::string("-");
+                if (ma->FindClip(cn) < 0) return cn + " (missing)";
+                return cn;
+            };
+            const std::string idleS = shown(ma->idleClip), walkS = shown(ma->walkClip), runS = shown(ma->runClip);
+            const std::string jumpS = shown(ma->jumpClip), fallS = shown(ma->fallClip), landS = shown(ma->landClip);
+            const std::string crS = shown(ma->crouchClip), crwS = shown(ma->crouchWalkClip), prS = shown(ma->proneClip);
+            const std::string crawlS = shown(ma->crawlClip), upS = shown(ma->getUpClip);
+            const std::string slS = shown(ma->strafeLeftClip), srS = shown(ma->strafeRightClip);
+            const std::string wbS = shown(ma->walkBackClip), rbS = shown(ma->runBackClip);
             ImGui::TextDisabled("Clips mapped (empty slots are filled from the clip names):");
-            ImGui::Text("Idle: %s\nWalk: %s\nRun:  %s\nJump: %s\nFall: %s\nLand: %s", shown(ma->idleClip), shown(ma->walkClip),
-                        shown(ma->runClip), shown(ma->jumpClip), shown(ma->fallClip), shown(ma->landClip));
-            ImGui::Text("Crouch: %s\nCrouch walk: %s\nProne: %s\nCrawl: %s\nGet up: %s", shown(ma->crouchClip),
-                        shown(ma->crouchWalkClip), shown(ma->proneClip), shown(ma->crawlClip), shown(ma->getUpClip));
+            ImGui::Text("Idle: %s\nWalk: %s\nRun:  %s\nJump: %s\nFall: %s\nLand: %s", idleS.c_str(), walkS.c_str(),
+                        runS.c_str(), jumpS.c_str(), fallS.c_str(), landS.c_str());
+            ImGui::Text("Crouch: %s\nCrouch walk: %s\nProne: %s\nCrawl: %s\nGet up: %s", crS.c_str(),
+                        crwS.c_str(), prS.c_str(), crawlS.c_str(), upS.c_str());
             ImGui::Text("Strafe left: %s\nStrafe right: %s\nWalk back: %s\nRun back: %s",
-                        shown(ma->strafeLeftClip), shown(ma->strafeRightClip), shown(ma->walkBackClip), shown(ma->runBackClip));
+                        slS.c_str(), srS.c_str(), wbS.c_str(), rbS.c_str());
             if (!sm.states.empty())
                 ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1), "Keeps the %d existing state(s) and updates Locomotion.", (int)sm.states.size());
             if (ImGui::Button("Build it", ImVec2(-1, 0))) {

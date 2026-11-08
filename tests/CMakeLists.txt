@@ -1411,6 +1411,12 @@ add_executable(test_splines test_splines.cpp)
 target_link_libraries(test_splines PRIVATE okay::engine)
 add_test(NAME splines COMMAND test_splines)
 
+# Scheduler: global (persistent) timers, per-task options, cancel by tag / owner;
+# Tween: callback order, re-entrancy, hitches, lifetime
+add_executable(test_timers_tweens test_timers_tweens.cpp)
+target_link_libraries(test_timers_tweens PRIVATE okay::engine)
+add_test(NAME timers_tweens COMMAND test_timers_tweens)
+
 add_executable(test_random test_random.cpp)
 target_link_libraries(test_random PRIVATE okay::engine)
 add_test(NAME random COMMAND test_random)

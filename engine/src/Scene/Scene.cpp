@@ -205,6 +205,7 @@ void Scene::Update(float deltaTime) {
 
     FlushDestroyed();
     ResolveMainCamera();   // follow cameras being switched on/off this frame
+    Scheduler::TickGlobal(this, deltaTime);   // process-wide timers: once per frame, however many scenes update
 
     // A deferred scene load (requested via RequestLoad) happens here, after all
     // iteration is done, so it's safe to replace the whole scene.

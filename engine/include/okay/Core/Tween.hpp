@@ -132,6 +132,8 @@ private:
     friend class TweenSequence;
     TweenManager* m_owner = nullptr;
     Handle m_handle = 0;
+    unsigned m_epoch = 0;       // bumped by every RenderAt: lets a render notice a callback re-rendered it
+    int    m_forceLoopEnd = -1; // Complete() on an endless tween: render exactly the end of this loop
     float  m_time = 0.0f;       // seconds on the timeline, delay included
     int    m_loop = 0;          // completed loops
     bool   m_started = false, m_complete = false, m_killed = false, m_nested = false;

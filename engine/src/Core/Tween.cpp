@@ -19,7 +19,7 @@ namespace okay {
 
 float Tweener::FullDuration() const {
     if (loops < 0) return std::numeric_limits<float>::infinity();
-    return delay + Duration() * (float)loops;
+    return delay + Duration() * (float)(loops == 0 ? 1 : loops);   // 0 loops plays once, like SetLoops(0)
 }
 
 float Tweener::ElapsedPercentage() const {
@@ -30,6 +30,7 @@ float Tweener::ElapsedPercentage() const {
 
 void Tweener::Advance(float dt) {
     if (m_killed || paused) return;
+    if (!std::isfinite(dt)) return;   // NaN / infinite frame time: skip it rather than poison the timeline
     if (!backwards && m_complete) return;
     const float next = m_time + (backwards ? -dt : dt) * timeScale;
     if (backwards && next <= 0.0f) { RenderAt(0.0f); paused = true; return; }
@@ -38,6 +39,13 @@ void Tweener::Advance(float dt) {
 
 void Tweener::RenderAt(float time) {
     if (m_killed) return;
+    // Every callback below may Kill / Restart / Goto / Complete this tween, which
+    // renders again (nested). Then this render is stale and must stop: carrying on
+    // would fire callbacks for a state that no longer exists.
+    const unsigned epoch = ++m_epoch;
+    auto stale = [&] { return m_killed || m_epoch != epoch; };
+    const int forcedLoop = m_forceLoopEnd;   // Complete() on an endless tween: end of this loop exactly
+    m_forceLoopEnd = -1;
     const float full = FullDuration();
     if (time < 0.0f) time = 0.0f;
     if (time > full) time = full;
@@ -49,18 +57,22 @@ void Tweener::RenderAt(float time) {
         return;
     }
     if (!m_initialized) { m_initialized = true; DoInit(); }
-    if (!m_started) { m_started = true; if (onStart) onStart(); }
+    if (!m_started) { m_started = true; if (onStart) { onStart(); if (stale()) return; } }
 
     const float d = Duration();
-    const bool finite = loops > 0;
-    const bool done = finite && p >= d * (float)loops;
-    int loop = done ? loops - 1 : (int)std::floor(p / d);
-    float local = done ? d : p - (float)loop * d;
-    const int completed = done ? loops : loop;
+    const int total = loops == 0 ? 1 : loops;
+    const bool finite = total > 0;
+    const bool done = forcedLoop < 0 && finite && p >= d * (float)total;
+    // A frame hitch can skip many loops: floor in double and clamp, so the cast
+    // can't overflow and the callbacks below stay bounded.
+    const double q = std::floor((double)p / (double)d);
+    int loop = forcedLoop >= 0 ? forcedLoop : done ? total - 1 : (int)std::min(q, 2.0e9);
+    float local = (done || forcedLoop >= 0) ? d : Mathf::Clamp(p - (float)loop * d, 0.0f, d);
+    const int completed = done ? total : forcedLoop >= 0 ? forcedLoop + 1 : loop;
     // Loops finished since the last frame: play each one's end first, so a
     // sequence fires what's at the end of a loop even when a big step skips past it.
     for (int L = m_loop; L < completed && L < m_loop + 64; ++L) {
-        if (L == completed - 1 && done) break;   // the final end is applied below
+        if (L == completed - 1 && (done || forcedLoop >= 0)) break;   // the final end is applied below
         const float ue = (loopType == LoopType::Yoyo && (L % 2) == 1) ? 0.0f : 1.0f;
         DoApply(Easing::Evaluate(ease, ue), ue, loopType == LoopType::Incremental ? L : 0);
         if (loopType == LoopType::Restart) DoLoopRestart();
@@ -70,13 +82,25 @@ void Tweener::RenderAt(float time) {
     if (loopType == LoopType::Yoyo && (loop % 2) == 1) u = 1.0f - u;
     const int inc = loopType == LoopType::Incremental ? loop : 0;
     DoApply(Easing::Evaluate(ease, u), u, inc);
-    if (onUpdate) onUpdate();
 
-    if (completed > m_loop && onStepComplete)
-        for (int i = m_loop; i < completed; ++i) onStepComplete();
+    // The loop counter advances one step at a time as the callbacks fire, so a
+    // callback that re-renders (Complete, Goto) sees exactly which crossings are
+    // still owed and fires those itself; this render then stops (stale).
+    const int prevLoop = m_loop;
+    const bool wasComplete = m_complete;
+    m_complete = done;
+    if (onUpdate) { onUpdate(); if (stale()) return; }
+    if (completed > prevLoop) {
+        // One call per loop crossed (a hitch over 3 loops fires 3), bounded so an
+        // absurd step can't stall the frame.
+        const int calls = std::min(completed - prevLoop, 4096);
+        for (int i = 0; i < calls; ++i) {
+            m_loop = prevLoop + i + 1;
+            if (onStepComplete) { onStepComplete(); if (stale()) return; }
+        }
+    }
     m_loop = completed;
-    if (done && !m_complete) { m_complete = true; if (onComplete) onComplete(); }
-    else if (!done) m_complete = false;
+    if (done && !wasComplete && onComplete) onComplete();
 }
 
 void Tweener::Restart(bool includeDelay) {
@@ -98,16 +122,22 @@ void Tweener::Complete() {
     if (m_killed) return;
     if (loops < 0) {   // endless: finish the loop it's in
         const float d = Duration();
-        RenderAt(delay + (std::floor(Elapsed() / d) + 1.0f) * d - 1e-5f);
-        if (onComplete) onComplete();
+        const int k = (int)std::min(std::floor((double)Elapsed() / (double)d), 2.0e9);
+        m_forceLoopEnd = k;
+        RenderAt(delay + (float)(k + 1) * d);
+        if (!m_killed && onComplete) onComplete();
         return;
     }
+    if (m_complete && !backwards) return;   // already at the end: nothing to complete twice
     RenderAt(FullDuration());
 }
 
 void Tweener::Kill(bool complete) {
     if (m_killed) return;
-    if (complete) Complete();
+    if (complete) {
+        Complete();
+        if (m_killed) return;   // a callback during the completion killed it (OnKill already ran)
+    }
     m_killed = true;
     if (onKill) onKill();
 }
@@ -143,7 +173,7 @@ void ValueTween::DoApply(float k, float, int loop) {
 // ---------------------------------------------------------- TweenSequence ----
 
 float TweenSequence::ChildLength(const Tweener& t) {
-    return t.delay + t.Duration() * (float)(t.loops < 0 ? 1 : t.loops);
+    return t.delay + t.Duration() * (float)(t.loops < 0 ? 1 : t.loops == 0 ? 1 : t.loops);
 }
 
 void TweenSequence::Adopt(const std::shared_ptr<Tweener>& t) {
@@ -247,7 +277,7 @@ void TweenSequence::DropDying(const std::unordered_set<const GameObject*>& dying
 
 // ----------------------------------------------------------- TweenManager ----
 
-TweenManager::~TweenManager() = default;
+TweenManager::~TweenManager() { Clear(); }
 
 void TweenManager::Adopt(const std::shared_ptr<Tweener>& t) {
     if (!t || t->m_owner == this) return;
@@ -362,7 +392,13 @@ void TweenManager::OnObjectsDestroyed(const std::unordered_set<const GameObject*
                    m_tweens.end());
 }
 
-void TweenManager::Clear() { m_tweens.clear(); }
+void TweenManager::Clear() {
+    // Silently end them: a tween someone still holds must not look alive, or keep
+    // a pointer to a manager that is going away.
+    std::vector<std::shared_ptr<Tweener>> all;
+    all.swap(m_tweens);
+    for (auto& t : all) { t->m_killed = true; t->m_owner = nullptr; }
+}
 
 // --------------------------------------------------------------- DOTween ----
 
@@ -579,8 +615,10 @@ std::shared_ptr<Tweener> ColorTo(GameObject* go, const Color& to, float duration
     Color* c = ColorOf(go);
     if (!c) return Dummy();
     auto t = std::make_shared<ValueTween>(4,
-        [c]() { return V{c->r, c->g, c->b, c->a}; },
-        [c](const V& v) { c->r = v[0]; c->g = v[1]; c->b = v[2]; c->a = v[3]; },
+        // Look the colour up on every access: a cached Color* would dangle if the
+        // component were removed (or the object destroyed) mid-tween.
+        [go]() { Color* c = ColorOf(go); return c ? V{c->r, c->g, c->b, c->a} : V{}; },
+        [go](const V& v) { if (Color* c = ColorOf(go)) { c->r = v[0]; c->g = v[1]; c->b = v[2]; c->a = v[3]; } },
         V{to.r, to.g, to.b, to.a});
     return Manage(go, t, duration);
 }
@@ -588,8 +626,9 @@ std::shared_ptr<Tweener> ColorTo(GameObject* go, const Color& to, float duration
 std::shared_ptr<Tweener> Fade(GameObject* go, float alpha, float duration) {
     Color* c = ColorOf(go);
     if (!c) return Dummy();
-    auto t = std::make_shared<ValueTween>(1, [c]() { return V{c->a, 0, 0, 0}; },
-                                          [c](const V& v) { c->a = Mathf::Clamp01(v[0]); }, V{alpha, 0, 0, 0});
+    auto t = std::make_shared<ValueTween>(1,
+        [go]() { Color* c = ColorOf(go); return c ? V{c->a, 0, 0, 0} : V{}; },
+        [go](const V& v) { if (Color* c = ColorOf(go)) c->a = Mathf::Clamp01(v[0]); }, V{alpha, 0, 0, 0});
     return Manage(go, t, duration);
 }
 
@@ -621,7 +660,11 @@ std::shared_ptr<Tweener> Text(GameObject* go, const std::string& text, float dur
     cuts->push_back(text.size());
     auto t = std::make_shared<CustomTween>(nullptr, nullptr);
     t->ease = Ease::Linear;
-    t->SetFunctions([tr]() { tr->text.clear(); }, [tr, text, cuts](float k, float, int) {
+    // The TextRenderer is found again on every call (not cached), so removing it mid-tween is harmless.
+    t->SetFunctions([go]() { if (auto* tr = go->GetComponent<TextRenderer>()) tr->text.clear(); },
+                    [go, text, cuts](float k, float, int) {
+        auto* tr = go->GetComponent<TextRenderer>();
+        if (!tr) return;
         const std::size_t chars = cuts->size() - 1;
         const std::size_t n = (std::size_t)std::lround(Mathf::Clamp01(k) * (float)chars);
         tr->text = text.substr(0, (*cuts)[std::min(n, chars)]);
@@ -633,7 +676,9 @@ std::shared_ptr<Tweener> Counter(GameObject* go, float from, float to, float dur
     auto* tr = go ? go->GetComponent<TextRenderer>() : nullptr;
     if (!tr) return Dummy();
     auto t = std::make_shared<ValueTween>(1, [from]() { return V{from, 0, 0, 0}; },
-        [tr, prefix](const V& v) { tr->text = prefix + std::to_string((long long)std::lround(v[0])); }, V{to, 0, 0, 0});
+        [go, prefix](const V& v) {
+            if (auto* tr = go->GetComponent<TextRenderer>()) tr->text = prefix + std::to_string((long long)std::lround(v[0]));
+        }, V{to, 0, 0, 0});
     return Manage(go, t, duration);
 }
 

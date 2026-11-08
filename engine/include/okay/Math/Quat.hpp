@@ -32,7 +32,7 @@ struct Quat {
 
     Quat Normalized() const {
         float m = Magnitude();
-        if (m < Mathf::Epsilon) return Identity;
+        if (!(m >= Mathf::Epsilon)) return Identity;   // tiny, zero or NaN
         return {x / m, y / m, z / m, w / m};
     }
     void Normalize() { *this = Normalized(); }

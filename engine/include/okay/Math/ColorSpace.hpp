@@ -64,27 +64,11 @@ struct ColorSpace {
     /// optional; case-insensitive). The bytes are taken as sRGB values. On failure
     /// returns false and leaves `out` untouched.
     static bool ParseHex(const std::string& text, Color& out) {
-        std::size_t i = 0, n = text.size();
-        while (i < n && (text[i] == ' ' || text[i] == '\t')) ++i;
-        while (n > i && (text[n - 1] == ' ' || text[n - 1] == '\t' || text[n - 1] == '\r' || text[n - 1] == '\n')) --n;
-        if (i < n && text[i] == '#') ++i;
-        else if (n - i >= 2 && text[i] == '0' && (text[i + 1] == 'x' || text[i + 1] == 'X')) i += 2;
-        std::size_t len = n - i;
-        if (len != 3 && len != 4 && len != 6 && len != 8) return false;
-        int v[8];
-        for (std::size_t k = 0; k < len; ++k) {
-            char ch = text[i + k]; int d;
-            if (ch >= '0' && ch <= '9') d = ch - '0';
-            else if (ch >= 'a' && ch <= 'f') d = ch - 'a' + 10;
-            else if (ch >= 'A' && ch <= 'F') d = ch - 'A' + 10;
-            else return false;
-            v[k] = d;
-        }
-        int ch[4] = {255, 255, 255, 255};
-        if (len <= 4) { for (std::size_t k = 0; k < len; ++k) ch[k] = v[k] * 17; }
-        else          { for (std::size_t k = 0; k < len / 2; ++k) ch[k] = v[2 * k] * 16 + v[2 * k + 1]; }
-        out = Color::FromBytes(ch[0], ch[1], ch[2], ch[3]);
-        return true;
+        if (text.find(',') != std::string::npos) return false;   // hex only; Color::Parse also takes "r,g,b"
+        bool ok = false;
+        const Color c = Color::Parse(text, &ok);                  // the one parser
+        if (ok) out = c;
+        return ok;
     }
     /// "#RRGGBB" or, with `withAlpha`, "#RRGGBBAA" (components clamped, rounded to bytes).
     static std::string ToHex(const Color& c, bool withAlpha = false) {

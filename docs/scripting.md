@@ -135,7 +135,7 @@ each one with a warning saying what to delete:
 | Expressions | casts `(int)x`, `$"interpolated {strings}"`, `?:`, `%=`, bitwise `& \| ^`, `++x`, Vector3 maths (`v + w`, `v * 2`, `-v`, `v / 2`), `(a - b).normalized` |
 | Methods on values | strings: `ToUpper`, `ToLower`, `Contains`, `StartsWith`, `EndsWith`, `IndexOf`, `Substring`, `Replace`, `Split`, `Trim`, `PadLeft`...; numbers: `ToString("F2")`; lists: `Add`, `Remove`, `RemoveAt`, `Insert`, `Contains`, `IndexOf`, `Clear`, `Sort`, `Reverse`, `Count`; dictionaries: `Add`, `ContainsKey`, `Remove`, `Keys`, `Values`, `GetValueOrDefault`, `foreach (var kv in d)` |
 | Lambdas | `x => x * 2`, `(a, b) => { ... }`, and defaults `(x = 3) => x + 1`, with `ForEach`, `Where`, `Select`, `Find`, `FindIndex`, `Any`, `All`, `Count`, `RemoveAll`, `OrderBy`, `Sum`, `Max`, `Sort((a, b) => a - b)` |
-| Coroutines | `StartCoroutine(Routine(args))`, `yield return null`, `yield return new WaitForSeconds(t)`, `yield return StartCoroutine(Other())`, `yield break`, `StopCoroutine`, `StopAllCoroutines` |
+| Coroutines | `StartCoroutine(Routine(args))`, `yield return null`, `yield return new WaitForSeconds(t)` (`WaitForSecondsRealtime` ignores time scale), `yield return new WaitUntil(() => cond)`, `yield return new WaitWhile(() => cond)`, `yield return StartCoroutine(Other())`, `yield break`, `StopCoroutine`, `StopAllCoroutines` |
 | Components | `GetComponent<T>()` returns a usable reference: `Rigidbody2D`/`Rigidbody` (`velocity`, `AddForce`, `MovePosition`, `gravityScale`), `SpriteRenderer`/`Renderer` (`color`, `enabled`, `flipX`), `Text` (`text`, `color`), `Animator` (`SetTrigger`, `SetBool`, `SetFloat`, `Play`), `AudioSource` (`Play`, `Stop`, `volume`) |
 | Engine API | `transform.Translate/Rotate/LookAt`, `eulerAngles`/`localEulerAngles`, `Vector3.*` (constants, `Distance`, `Lerp`, `MoveTowards`, `Cross`, `Dot`...), `Mathf.*` (incl. `RoundToInt`, `FloorToInt`), `Random.Range`, `Input.GetKey/GetKeyDown/GetAxis/GetAxisRaw/GetMouseButton`, `Time.time/deltaTime/frameCount`, `Debug.Log/LogWarning/LogError`, `GameObject.Find/FindWithTag`, `Instantiate(prefab, pos, rot)`, `Destroy(obj, delay)`, `Invoke`, `InvokeRepeating`, `CancelInvoke`, `string.Join/IsNullOrEmpty`, `int.Parse` |
 
@@ -402,6 +402,10 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `activate(name)` / `deactivate(name)` | show/hide another object by name |
 | `exists(name)` / `is_active(name)` | query another object by name |
 | `set_parent(name)` / `detach()` / `has_parent()` | parent this object under another / unparent / query (pickups, mounts) |
+| `child_count(name)` / `get_child(name, i)` / `parent_of(name)` | children of a named object (child name by index) / its parent's name, `""` if none |
+| `hurt(name, n)` / `heal(name, n)` / `add_xp(name, n)` | damage / heal / XP on a named object's `Stats` or `SurvivalStats` (fires `on_death`, `on_level_up`) |
+| `get_hp(name)` / `get_max_hp(name)` / `is_dead(name)` | read health / death state of a named object |
+| `set_light_intensity(name, v)` / `set_light_range(name, v)` / `set_light_angle(name, deg)` / `set_light_color(name, r, g, b)` | tune a named object's Light component |
 | `obj_x(name)` / `obj_y(name)` / `obj_z(name)` | read another object's world position |
 | `dist_to(name)` | 2D distance from this object to a named object (enemy AI, doors) |
 | `dist3_to(name)` | full 3D distance to a named object |

@@ -27,9 +27,12 @@
 //
 // Per state: an event fired on enter / exit (to anim_event() and every
 // component's OnAnimationEvent, like clip events) and an IK weight that Foot IK
-// and Full Body IK ease to over the transition (0 = feet free while jumping).
+// Full Body IK, Look-At, Aim, Limb and Chain ease to over the transition
+// (0 = feet free while jumping).
 // An optional curve shapes that weight over the clip; IK components read the
-// sampled result through the same state weight.
+// sampled result through the same state weight. Look and aim can take their
+// own weight (`lookWeight`, 1 by default, so air and prone states keep their
+// head); below 0 they follow the foot weight.
 // A transition can start its target part-way in (`offset`, normalized).
 // ---------------------------------------------------------------------------
 #include "okay/Scene/Component.hpp"
@@ -38,6 +41,10 @@
 #include "okay/Components/CharacterAnimBackend.hpp"
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/FullBodyIK.hpp"
+#include "okay/Components/LookAtIK.hpp"
+#include "okay/Components/AimIK.hpp"
+#include "okay/Components/LimbIK.hpp"
+#include "okay/Components/ChainIK.hpp"
 #include "okay/Components/Stance.hpp"
 #include "okay/Core/Log.hpp"
 #include <algorithm>
@@ -124,7 +131,11 @@ public:
         std::string blendParamY;
         std::string speedParam;     ///< float parameter that multiplies `speed` ("" = none)
         std::string enterEvent, exitEvent;   ///< animation events fired on entering / leaving ("" = none)
-        float       ikWeight = 1.0f;         ///< Foot IK / Full Body IK weight in this state (base layer)
+        float       ikWeight = 1.0f;         ///< Foot / Limb / Chain IK weight in this state (base layer)
+        /// Look-At and Aim weight; 1 keeps the head tracking whatever `ikWeight` is.
+        /// Below 0 follows `ikWeight` (curve included). Death, sit and gestures
+        /// set 0 so the head plays the clip.
+        float       lookWeight = 1.0f;
         /// Weight over normalized clip time. Empty = the constant `ikWeight`.
         /// Keys are multiplied by `ikWeight`, so the slider stays a master gain.
         struct IkKey { float t = 0.0f; float w = 1.0f; };
@@ -446,6 +457,8 @@ public:
     float IKWeight() const { return m_ikW; }
     /// Full Body IK's weight (its own curve, else the foot weight when it follows).
     float FullBodyIKWeight() const { return m_fbW; }
+    /// Look-At and Aim weight (the state's lookWeight, else the foot weight).
+    float LookIKWeight() const { return m_lookW; }
 
     /// The last state changes, oldest first (Play-mode debugging: "why did it
     /// go to Fall?"). `time` is seconds since the machine started.
@@ -469,7 +482,9 @@ public:
         ApplyParamDefaults();
         if (layer == 0) if (AnimBackend* ma = Anim()) ma->SetStateMachine(this);   // driveByMovement waits while we're enabled
     }
+    void OnDisable() override { ReleaseIk(); }
     void OnDestroy() override {
+        ReleaseIk();
         ReleaseImported();
         if (AnimBackend* ma = Anim()) ma->RemovePostPose(this);
         if (m_charBackend) m_charBackend->Detach();
@@ -855,9 +870,15 @@ private:
         for (const Condition& c : tr.extra) if (!Test(c.cond, c.param, c.value, ma, cur)) return false;
         return true;
     }
+    /// Look-At / Aim target. Below 0 follows the foot weight already sampled.
+    static float LookTargetOf(const State& st, float footWeight) {
+        if (st.lookWeight < 0.0f) return footWeight;
+        return std::fmin(std::fmax(st.lookWeight, 0.0f), 1.0f);
+    }
     /// Publish this state's IK weight (constant, or its curve at m_normTime).
     /// A constant still eases across the transition. A curve eases for that
-    /// same blend, then follows the clip. Foot IK / Full Body IK read the result.
+    /// same blend, then follows the clip. Foot, Full Body, Look-At, Aim, Limb
+    /// and Chain IK read the result.
     void ApplyIk(const State& st, float dt) {
         const bool curved = !st.ikCurve.empty() || !st.fullBodyIkCurve.empty();
         const float want = SampleIkCurve(st.ikCurve, m_normTime, st.ikWeight);
@@ -870,6 +891,7 @@ private:
         } else {
             wantFb = std::fmin(std::fmax(st.fullBodyIkWeight, 0.0f), 1.0f);
         }
+        const float wantLook = LookTargetOf(st, want);
         auto chase = [&](float& curW, float target) {
             if (curW == target) return;
             const float step = m_ikBlend > 1e-4f ? dt / m_ikBlend : 1.0f;
@@ -878,20 +900,42 @@ private:
         if (!curved) {
             chase(m_ikW, want);
             chase(m_fbW, wantFb);
+            chase(m_lookW, wantLook);
         } else if (m_ikEase > 1e-4f) {
             chase(m_ikW, want);
             chase(m_fbW, wantFb);
+            chase(m_lookW, wantLook);
             m_ikEase -= dt;
-            if (m_ikEase <= 0.0f) { m_ikW = want; m_fbW = wantFb; }
+            if (m_ikEase <= 0.0f) { m_ikW = want; m_fbW = wantFb; m_lookW = wantLook; }
         } else {
             m_ikW = want;
             m_fbW = wantFb;
+            m_lookW = wantLook;
         }
-        if (gameObject && (m_ikW != m_ikWritten || m_fbW != m_fbWritten || (m_ikRefresh -= dt) <= 0.0f)) {
+        if (gameObject && (m_ikW != m_ikWritten || m_fbW != m_fbWritten || m_lookW != m_lookWritten || (m_ikRefresh -= dt) <= 0.0f)) {
             if (auto* f = gameObject->GetComponent<FootIK>()) f->stateWeight = m_ikW;
             if (auto* b = gameObject->GetComponent<FullBodyIK>()) b->stateWeight = m_fbW;
-            m_ikWritten = m_ikW; m_fbWritten = m_fbW; m_ikRefresh = 0.5f;
+            for (LookAtIK* l : gameObject->GetComponents<LookAtIK>()) l->stateWeight = m_lookW;
+            for (AimIK* a : gameObject->GetComponents<AimIK>()) a->stateWeight = m_lookW;
+            // Hands and chains follow the upper body, not the feet: a jump or a
+            // sit drops foot IK without dropping a reach.
+            for (LimbIK* limb : gameObject->GetComponents<LimbIK>()) limb->stateWeight = m_fbW;
+            for (ChainIK* c : gameObject->GetComponents<ChainIK>()) c->stateWeight = m_fbW;
+            m_ikWritten = m_ikW; m_fbWritten = m_fbW; m_lookWritten = m_lookW; m_ikRefresh = 0.5f;
         }
+    }
+    /// Hand the IK components back to full weight, so a stale state weight
+    /// (a disabled machine left in Death) does not keep them off.
+    void ReleaseIk() {
+        if (layer != 0 || !gameObject) return;
+        m_ikW = m_fbW = m_lookW = 1.0f;
+        m_ikWritten = m_fbWritten = m_lookWritten = -1.0f;
+        if (auto* f = gameObject->GetComponent<FootIK>()) f->stateWeight = 1.0f;
+        if (auto* b = gameObject->GetComponent<FullBodyIK>()) b->stateWeight = 1.0f;
+        for (LookAtIK* l : gameObject->GetComponents<LookAtIK>()) l->stateWeight = 1.0f;
+        for (AimIK* a : gameObject->GetComponents<AimIK>()) a->stateWeight = 1.0f;
+        for (LimbIK* limb : gameObject->GetComponents<LimbIK>()) limb->stateWeight = 1.0f;
+        for (ChainIK* c : gameObject->GetComponents<ChainIK>()) c->stateWeight = 1.0f;
     }
     bool Try(const Transition& tr, AnimBackend* ma, const State* cur, bool presatisfied = false) {
         if (tr.muted || (!presatisfied && !Satisfied(tr, ma, cur))) return false;
@@ -937,6 +981,7 @@ private:
             } else {
                 m_fbW = st.fullBodyIkWeight < 0.0f ? m_ikW : std::fmin(std::fmax(st.fullBodyIkWeight, 0.0f), 1.0f);
             }
+            m_lookW = LookTargetOf(st, m_ikW);
         }
         m_bLo = m_bHi = -1; m_bW = 0.0f;
         m_missingClip = false;
@@ -1018,7 +1063,7 @@ private:
     std::unordered_map<std::string, bool>  m_bools;
     std::unordered_map<std::string, bool>  m_triggers;
     std::vector<float> m_bWeights;
-    float m_ikW = 1.0f, m_fbW = 1.0f, m_ikBlend = 0.25f, m_ikEase = 0.0f;
+    float m_ikW = 1.0f, m_fbW = 1.0f, m_lookW = 1.0f, m_ikBlend = 0.25f, m_ikEase = 0.0f;
     float m_clock = 0.0f;
     std::vector<HistoryEntry> m_history;
     // the transition currently blending (interruption rules)
@@ -1035,7 +1080,7 @@ private:
     bool m_missingClip = false;                       // the current state's clip failed to play
     std::unordered_set<std::string> m_missingWarned;  // warned once per state name
     std::vector<int> m_motionClips;           // per-frame scratch (2D blend tree clip indices)
-    float m_ikWritten = -1.0f, m_fbWritten = -1.0f, m_ikRefresh = 0.0f;   // last IK weights pushed / time to the next push
+    float m_ikWritten = -1.0f, m_fbWritten = -1.0f, m_lookWritten = -1.0f, m_ikRefresh = 0.0f;   // last IK weights pushed / time to the next push
     mutable std::size_t m_findHint = 0;       // FindState's last hit
     float m_fadeT = 0.0f, m_fadeDur = 0.0f;
     bool  m_hooked = false;

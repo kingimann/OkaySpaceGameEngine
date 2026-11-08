@@ -540,6 +540,7 @@ SM::State MakeDeathState() {
     s.blendParam = "deathDir";
     s.loop = false;
     s.ikWeight = 0.0f;
+    s.lookWeight = 0.0f;
     s.fullBodyIkWeight = 0.0f;
     s.interruptible = false;
     s.motions = {MotionAt("Death_F", 0.0f), MotionAt("Death_B", 1.0f), MotionAt("Death_L", 2.0f), MotionAt("Death_R", 3.0f)};
@@ -554,6 +555,7 @@ SM::State MakeHoldState() {
     s.blendParam = "deathDir";
     s.loop = true;
     s.ikWeight = 0.0f;
+    s.lookWeight = 0.0f;
     s.fullBodyIkWeight = 0.0f;
     s.interruptible = false;
     s.motions = {MotionAt("DeadHold_F", 0.0f), MotionAt("DeadHold_B", 1.0f), MotionAt("DeadHold_L", 2.0f), MotionAt("DeadHold_R", 3.0f)};
@@ -604,6 +606,7 @@ SM::State MakeEmoteState(const char* name) {
     s.name = name;
     s.clip = name;
     s.loop = false;
+    s.lookWeight = 0.0f;   // a nod or a shrug does not keep the head on a target
     // Jump, fall and death (Any State) can cut a nod. Walking leaves through
     // the state's own edges below.
     s.interruptible = true;
@@ -946,6 +949,7 @@ SM::State MakeSitTree(const char* name, bool loop) {
     s.blendParam = "sitType";
     s.loop = loop;
     s.ikWeight = 0.0f;
+    s.lookWeight = 0.0f;
     s.fullBodyIkWeight = 1.0f;   // hands stay free for holding
     s.interruptible = true;      // die and jump can cut a sit short
     return s;

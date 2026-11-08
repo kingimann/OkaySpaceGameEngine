@@ -878,6 +878,14 @@ void WriteComponents(std::ostream& out, GameObject* go) {
             for (const auto& st : asm2->states) out << " " << st.fullBodyIkWeight;
             out << "\n";
         }
+        // Look-At / Aim weight, where it stops following the foot weight.
+        bool anyLook = false;
+        for (const auto& st : asm2->states) anyLook = anyLook || st.lookWeight != 1.0f;
+        if (anyLook) {
+            out << "  animsmlk " << asm2->states.size();
+            for (const auto& st : asm2->states) out << " " << st.lookWeight;
+            out << "\n";
+        }
         // Per-state IK weight curves (foot, then full-body). Written only when
         // a state has keys, so older scenes and older builds stay unchanged.
         bool anyIkC = false;
@@ -4167,6 +4175,13 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
                     for (long i = 0; i < n && in; ++i) {
                         float w = -1.0f; in >> w;
                         if (i < (long)sm2->states.size()) sm2->states[i].fullBodyIkWeight = w;
+                    }
+                } else if (field == "animsmlk") {
+                    auto* sm2 = smFor();
+                    long n = 0; in >> n;
+                    for (long i = 0; i < n && in; ++i) {
+                        float w = -1.0f; in >> w;
+                        if (i < (long)sm2->states.size()) sm2->states[i].lookWeight = w;
                     }
                 } else if (field == "animsmfall") {
                     auto* sm2 = smFor();

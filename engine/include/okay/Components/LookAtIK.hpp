@@ -49,6 +49,7 @@ public:
     bool  aimAtPoint = true;
     Vec3  forwardAxis = Vec3::Forward; ///< the bones' local "forward"
     float weight   = 1.0f;             ///< 0 = off, 1 = full look
+    float stateWeight = 1.0f;          ///< x weight; set per state by the Animator state machine
     bool  ikActive = true;             ///< switch IK on/off; the change eases over fadeTime
     float fadeTime = 0.0f;             ///< seconds to blend IK in/out (0 = instant)
     float maxAngle = 80.0f;            ///< max turn per bone (degrees), keeps it natural
@@ -116,7 +117,7 @@ public:
         // Last frame's writes come off first, so a still bone (and a rotation-only
         // clip) shows the animated pose before this solve. Weight 0 leaves it there.
         m_restore.Restore();
-        float w = weight * m_fade.Step(ikActive, fadeTime, dt);
+        float w = weight * stateWeight * m_fade.Step(ikActive, fadeTime, dt);
         const Vec3 tgt = targetObject ? targetObject->Position() : target;
         if (w > 0.0f && maxDistance > 0.0f && Finite(tgt)) w *= RangeWeight(tgt);
         if (w <= 0.0f || (chain.empty() && eyes.empty())) { ForgetAim(); return; }

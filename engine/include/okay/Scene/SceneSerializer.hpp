@@ -1,12 +1,63 @@
 #pragma once
+#include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 #include "okay/Math/Vec3.hpp"
+#include "okay/Scene/GameObject.hpp"
 
 namespace okay {
 
 class Scene;
 class GameObject;
+
+struct ParseSession;
+
+/// A scene document being loaded a few objects at a time. The file is read and
+/// unpacked up front (Open*), then Step() creates up to N objects per call; when the
+/// last one is made the parent links resolve and the job is Finished. Used by
+/// Scene::BeginAsyncLoad; `Step` must be called with the scene the objects go into.
+class SceneLoadJob {
+public:
+    ~SceneLoadJob();
+    SceneLoadJob(const SceneLoadJob&) = delete;
+    SceneLoadJob& operator=(const SceneLoadJob&) = delete;
+
+    /// Read a scene file. `additive`: objects are added to the scene as a merge (the
+    /// host's name / lighting stay, roots move by `offset`); otherwise the scene is
+    /// cleared by the first Step and takes the file's settings. Null + `error` if the
+    /// file cannot be read.
+    static std::unique_ptr<SceneLoadJob> OpenFile(const std::string& path, bool additive,
+                                                  const Vec3& offset = Vec3{0, 0, 0}, std::string* error = nullptr);
+    static std::unique_ptr<SceneLoadJob> OpenText(std::string text, bool additive,
+                                                  const Vec3& offset = Vec3{0, 0, 0});
+
+    /// Create up to `maxObjects` objects (0 = all that are left). False on a parse
+    /// error (the job is then Finished and Failed).
+    bool Step(Scene& scene, int maxObjects, std::string* error = nullptr);
+    bool Started() const { return m_started; }
+    bool Finished() const { return m_finished; }
+    bool Failed() const { return m_failed; }
+    bool Additive() const { return m_additive; }
+    /// How much of the document has been read (0..1; 1 once finished OK).
+    float Progress() const;
+    /// Objects created so far.
+    int  ObjectsCreated() const { return m_created; }
+    /// Instance ids of the top-level objects made (known once Finished).
+    const std::vector<std::uint64_t>& RootIds() const { return m_roots; }
+    /// Instance ids of every object made so far.
+    std::vector<std::uint64_t> AllIds() const;
+
+private:
+    SceneLoadJob() = default;
+    std::unique_ptr<ParseSession> m_session;
+    std::string m_dir;
+    Vec3 m_offset;
+    bool m_additive = false, m_started = false, m_finished = false, m_failed = false;
+    int  m_created = 0;
+    std::size_t m_size = 1;
+    std::vector<std::uint64_t> m_roots;
+};
 
 /// Saves and loads a Scene to a simple, human-readable text format. Covers the
 /// built-in components (Transform, SpriteRenderer, Camera, MeshRenderer,
@@ -67,6 +118,22 @@ public:
     static GameObject* InstantiateFromText(Scene& scene, const std::string& text,
                                            std::string* error = nullptr,
                                            std::vector<std::string>* warnings = nullptr);
+
+    /// Prefab overrides (data only; see docs/prefabs.md). Compare the instance with
+    /// its source prefab file and store every record that differs in
+    /// `instanceRoot.prefabOverrides`. Call it while the prefab file still matches
+    /// what the instance was made from (a later prefab edit would otherwise read as
+    /// an override). False, with `error`, if it is not an instance or the file is bad.
+    static bool CapturePrefabOverrides(GameObject& instanceRoot, std::string* error = nullptr);
+    /// Instantiate a prefab file with `overrides` swapped in over its records.
+    static GameObject* InstantiatePrefab(Scene& scene, const std::string& path,
+                                         const std::vector<GameObject::PrefabOverride>& overrides,
+                                         std::string* error = nullptr, std::vector<std::string>* warnings = nullptr);
+    /// Rebuild an instance from its (possibly edited) prefab file, keeping its
+    /// overrides, name, parent, sibling position and persistent ids. Returns the new
+    /// root and queues the old one for destruction; nullptr leaves the instance as it was.
+    static GameObject* ReapplyPrefab(Scene& scene, GameObject& instanceRoot, std::string* error = nullptr,
+                                     std::vector<std::string>* warnings = nullptr);
 
     /// Collect the unique external asset paths a scene references (sprite
     /// textures, audio WAVs, sprite-animator frames). Used by Build Game to copy

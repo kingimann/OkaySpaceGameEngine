@@ -1476,3 +1476,17 @@ add_test(NAME vs_media COMMAND test_vs_media)
 add_executable(test_script_nav test_script_nav.cpp)
 target_link_libraries(test_script_nav PRIVATE okay::engine)
 add_test(NAME script_nav COMMAND test_script_nav)
+
+# Multi-frame scene loads (progress, additive load + unload by handle), ObjectPool, RequireComponent rules
+add_executable(test_scene_load_pool test_scene_load_pool.cpp)
+target_link_libraries(test_scene_load_pool PRIVATE okay::engine)
+add_test(NAME scene_load_pool COMMAND test_scene_load_pool)
+
+# Persistent object ids, sibling order / enabled flags, duplicate components, component serializer registry, prefab overrides
+add_executable(test_scene_ids_prefabs test_scene_ids_prefabs.cpp)
+target_link_libraries(test_scene_ids_prefabs PRIVATE okay::engine)
+add_test(NAME scene_ids_prefabs COMMAND test_scene_ids_prefabs)
+
+add_executable(test_layers_tags_cameras test_layers_tags_cameras.cpp)
+target_link_libraries(test_layers_tags_cameras PRIVATE okay::engine)
+add_test(NAME layers_tags_cameras COMMAND test_layers_tags_cameras)

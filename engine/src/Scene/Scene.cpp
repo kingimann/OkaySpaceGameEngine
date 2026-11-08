@@ -84,6 +84,7 @@ void Scene::Clear() {
     m_tweens.Clear();
     m_physics.Clear();
     mainCamera = nullptr;
+    ResetLayerCollisions();   // the layer matrix belongs to the scene being cleared
     // The pointer-dispatch state points at objects about to be freed: forget it,
     // or the next Update sends OnMouseExit/Up to freed memory (the 2.813.0 crash
     // when Play restarted or a level loaded while the cursor was over an object).
@@ -630,9 +631,50 @@ GameObject* Scene::Find(const std::string& name) const {
 }
 
 GameObject* Scene::FindWithTag(const std::string& tag) const {
-    for (const auto& o : m_objects)
-        if (o->tag == tag) return o.get();
-    return nullptr;
+    if (tag.empty()) return nullptr;   // "no tag" is not a tag: every untagged object would match
+    auto it = TagIndex().find(tag);
+    return it == TagIndex().end() || it->second.empty() ? nullptr : it->second.front();
+}
+
+std::vector<GameObject*> Scene::FindGameObjectsWithTag(const std::string& tag) const {
+    if (tag.empty()) return {};
+    auto it = TagIndex().find(tag);
+    return it == TagIndex().end() ? std::vector<GameObject*>{} : it->second;
+}
+
+const std::unordered_map<std::string, std::vector<GameObject*>>& Scene::TagIndex() const {
+    const std::uint64_t tv = TagString::Version();
+    if (m_tagIndexStructure != m_structureVersion || m_tagIndexTags != tv || m_tagIndexCount != m_objects.size()) {
+        m_tagIndex.clear();
+        for (const auto& o : m_objects)
+            if (!o->tag.empty()) m_tagIndex[o->tag].push_back(o.get());
+        m_tagIndexStructure = m_structureVersion; m_tagIndexTags = tv; m_tagIndexCount = m_objects.size();
+    }
+    return m_tagIndex;
+}
+
+void Scene::SetLayerCollision(int a, int b, bool enabled) {
+    m_physics.SetLayerCollision(a, b, enabled);
+    m_physics3d.SetLayerCollision(a, b, enabled);
+}
+
+void Scene::ResetLayerCollisions() {
+    m_physics.ResetLayerCollisions();
+    m_physics3d.ResetLayerCollisions();
+}
+
+bool Scene::HasCustomLayerCollisions() const {
+    for (int i = 0; i < 32; ++i) if (m_physics.CollisionMask(i) != 0xFFFFFFFFu) return true;
+    return false;
+}
+
+std::vector<Camera*> Scene::CameraStack() const {
+    std::vector<Camera*> cams;
+    for (const Component* c : m_active)
+        if (auto* cam = dynamic_cast<Camera*>(const_cast<Component*>(c)))
+            if (CameraUsable(cam)) cams.push_back(cam);
+    std::stable_sort(cams.begin(), cams.end(), [](const Camera* a, const Camera* b) { return a->depth < b->depth; });
+    return cams;
 }
 
 void Scene::MoveToFront(GameObject* go) {

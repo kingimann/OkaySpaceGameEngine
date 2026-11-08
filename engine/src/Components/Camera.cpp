@@ -1,15 +1,22 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
+#include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
 
 namespace okay {
 
 void Camera::Awake() {
-    if (main) {
-        if (Scene* s = GetScene()) s->mainCamera = this;
-    }
+    if (!main) return;
+    Scene* s = GetScene();
+    if (!s) return;
+    // A main camera taking over must outrank the current one: a lower-depth camera
+    // waking up later doesn't steal the view (Scene::ResolveMainCamera agrees).
+    Camera* cur = s->mainCamera;
+    const bool takeOver = !cur || cur == this || !CameraUsable(cur) || !cur->main ||
+                          (CameraUsable(this) && depth >= cur->depth);
+    if (takeOver) s->mainCamera = this;
 }
 
 void Camera::ScreenPointToRay(float screenX, float screenY, float screenW, float screenH,

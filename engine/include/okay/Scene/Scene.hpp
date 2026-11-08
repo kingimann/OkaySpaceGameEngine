@@ -11,6 +11,7 @@
 #include <memory>
 #include <functional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace okay {
@@ -123,7 +124,22 @@ public:
 
     // ---- Queries -------------------------------------------------------
     GameObject* Find(const std::string& name) const;
+    /// The first object (in scene order) carrying `tag`; an empty tag matches nothing.
+    /// Served from a tag index (rebuilt only when objects or tags changed).
     GameObject* FindWithTag(const std::string& tag) const;
+    /// Every object carrying `tag`, in scene order.
+    std::vector<GameObject*> FindGameObjectsWithTag(const std::string& tag) const;
+
+    // ---- Layer collision matrix (shared by 2D and 3D physics) ----------
+    /// Whether colliders on layers a and b interact (all do by default). Applies to
+    /// both physics worlds, is saved with the scene, and resets on Clear().
+    void SetLayerCollision(int a, int b, bool enabled);
+    bool LayersCollide(int a, int b) const { return m_physics.LayersCollide(a, b); }
+    /// Bit b set = layer b collides with `layer`: a ready layer mask for a physics query.
+    std::uint32_t LayerCollisionMask(int layer) const { return m_physics.CollisionMask(layer); }
+    /// Every layer collides with every other again.
+    void ResetLayerCollisions();
+    bool HasCustomLayerCollisions() const;
     const std::vector<std::unique_ptr<GameObject>>& Objects() const { return m_objects; }
     /// Bumped whenever objects are created or destroyed (or the scene is cleared):
     /// components that cache GameObject/Transform pointers re-resolve when it changes.
@@ -347,6 +363,10 @@ public:
     /// Re-pick mainCamera from the live cameras (see PickRenderCamera). Runs at the
     /// end of every Update; call it after switching cameras outside of Update.
     void ResolveMainCamera();
+    /// The cameras that can render now (enabled, active in the hierarchy), lowest
+    /// depth first; equal depths keep scene order. Render them in this order: the
+    /// first clears the frame, later ones follow Camera::ClearPlan.
+    std::vector<Camera*> CameraStack() const;
     /// Issue the render pass to the given backend.
     void Render(IRenderer& renderer);
     /// The object the cursor was over at the last OnMouse* dispatch (nullptr if none).
@@ -375,6 +395,10 @@ public:
     };
 
 private:
+    const std::unordered_map<std::string, std::vector<GameObject*>>& TagIndex() const;
+    mutable std::unordered_map<std::string, std::vector<GameObject*>> m_tagIndex;
+    mutable std::uint64_t m_tagIndexStructure = 0, m_tagIndexTags = 0;
+    mutable std::size_t   m_tagIndexCount = 0;
     void StepPhysics(float deltaTime);
     float m_physicsAcc = 0.0f;     // frame time not yet simulated
     float m_physicsAlpha = 0.0f;

@@ -1605,3 +1605,14 @@ add_test(NAME playtest_runner COMMAND okay-playtest --junit ${CMAKE_CURRENT_BINA
                                                       --text ${CMAKE_CURRENT_BINARY_DIR}/okay-playtest.txt)
 add_test(NAME playtest_runner_list COMMAND okay-playtest --list)
 set_tests_properties(playtest_runner_list PROPERTIES PASS_REGULAR_EXPRESSION "selftest\\.script_moves_object")
+# ---- Prefab system wave 2 (docs/prefab_system.md): nested prefabs, variants, per-field apply / revert
+add_executable(test_prefab_nested test_prefab_nested.cpp)
+target_link_libraries(test_prefab_nested PRIVATE okay::engine)
+add_test(NAME prefab_nested COMMAND test_prefab_nested)
+add_executable(test_prefab_variants test_prefab_variants.cpp)
+target_link_libraries(test_prefab_variants PRIVATE okay::engine)
+add_test(NAME prefab_variants COMMAND test_prefab_variants)
+
+add_executable(test_prefab_apply_revert test_prefab_apply_revert.cpp)
+target_link_libraries(test_prefab_apply_revert PRIVATE okay::engine)
+add_test(NAME prefab_apply_revert COMMAND test_prefab_apply_revert)

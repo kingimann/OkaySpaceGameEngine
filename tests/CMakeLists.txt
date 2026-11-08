@@ -1395,6 +1395,10 @@ add_executable(test_splines test_splines.cpp)
 target_link_libraries(test_splines PRIVATE okay::engine)
 add_test(NAME splines COMMAND test_splines)
 
+add_executable(test_durable_saves test_durable_saves.cpp)
+target_link_libraries(test_durable_saves PRIVATE okay::engine)
+add_test(NAME durable_saves COMMAND test_durable_saves)
+
 # Script builtins batch 1: stats, hierarchy, light setters, WaitUntil/WaitWhile
 add_executable(test_script_batch1 test_script_batch1.cpp)
 target_link_libraries(test_script_batch1 PRIVATE okay::engine)

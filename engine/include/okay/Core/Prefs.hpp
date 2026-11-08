@@ -22,9 +22,12 @@ public:
     static void Delete(const std::string& key);
     static void Clear();
 
-    /// Write all keys to `path`. Returns false if the file can't be opened.
+    /// Write all keys to `path`. The file is written aside and swapped in, so a
+    /// crash or full disk leaves the old file alone. False if it couldn't be written.
     static bool Save(const std::string& path);
-    /// Replace in-memory keys with the contents of `path`. Missing file = empty.
+    /// Replace in-memory keys with the contents of `path`. A missing file gives an
+    /// empty store and returns false (no file was read). A file that is cut off or
+    /// unreadable returns false and leaves the current keys untouched.
     static bool Load(const std::string& path);
 
 private:

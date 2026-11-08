@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include "okay/Math/Vec3.hpp"
+#include "okay/Scene/GameObject.hpp"
 
 namespace okay {
 
@@ -117,6 +118,22 @@ public:
     static GameObject* InstantiateFromText(Scene& scene, const std::string& text,
                                            std::string* error = nullptr,
                                            std::vector<std::string>* warnings = nullptr);
+
+    /// Prefab overrides (data only; see docs/prefabs.md). Compare the instance with
+    /// its source prefab file and store every record that differs in
+    /// `instanceRoot.prefabOverrides`. Call it while the prefab file still matches
+    /// what the instance was made from (a later prefab edit would otherwise read as
+    /// an override). False, with `error`, if it is not an instance or the file is bad.
+    static bool CapturePrefabOverrides(GameObject& instanceRoot, std::string* error = nullptr);
+    /// Instantiate a prefab file with `overrides` swapped in over its records.
+    static GameObject* InstantiatePrefab(Scene& scene, const std::string& path,
+                                         const std::vector<GameObject::PrefabOverride>& overrides,
+                                         std::string* error = nullptr, std::vector<std::string>* warnings = nullptr);
+    /// Rebuild an instance from its (possibly edited) prefab file, keeping its
+    /// overrides, name, parent, sibling position and persistent ids. Returns the new
+    /// root and queues the old one for destruction; nullptr leaves the instance as it was.
+    static GameObject* ReapplyPrefab(Scene& scene, GameObject& instanceRoot, std::string* error = nullptr,
+                                     std::vector<std::string>* warnings = nullptr);
 
     /// Collect the unique external asset paths a scene references (sprite
     /// textures, audio WAVs, sprite-animator frames). Used by Build Game to copy

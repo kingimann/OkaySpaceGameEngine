@@ -22,6 +22,7 @@ add_library(okay_engine
     src/Scene/SceneManager.cpp
     src/Scene/ObjectPool.cpp
     src/Scene/SceneSerializer.cpp
+    src/Scene/ComponentSerializer.cpp
     src/Scene/SceneLocalization.cpp
     src/Components/Camera.cpp
     src/Components/SpriteRenderer.cpp

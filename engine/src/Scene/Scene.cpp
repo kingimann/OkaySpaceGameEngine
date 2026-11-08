@@ -61,6 +61,13 @@ GameObject* Scene::CreateGameObject(const std::string& name) {
     return ptr;
 }
 
+GameObject* Scene::FindByGuid(const std::string& guid) const {
+    if (guid.empty()) return nullptr;
+    for (const auto& o : m_objects)
+        if (!o->IsDestroyed() && o->Guid() == guid) return o.get();
+    return nullptr;
+}
+
 void Scene::Clear() {
     vs::ForgetSceneVariables(this);   // a fresh scene (another level loaded) starts with none
     NextScriptVM::ForgetSceneStatics(this);   // ... and script statics start again

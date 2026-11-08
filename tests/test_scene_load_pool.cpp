@@ -153,7 +153,7 @@ int main() {
         CHECK(called && !result);
 
         const std::string bad = TempPath("bad");
-        { std::ofstream f(bad); f << "okayscene 3\ngameobject 0 \"A\"\nend\ngameobject 1 \"B\"\n  bogusfield 1\nend\n"; }
+        { std::ofstream f(bad); f << "okayscene 3\ngameobject 0 \"A\"\nend\ngameobject 1 \"B\"\n"; }   // second object cut short (no end)
         Scene::AsyncLoadOptions ob; ob.additive = true; ob.objectsPerFrame = 1;
         bool bres = true; ob.onDone = [&](bool v) { bres = v; };
         int h = sc.BeginAsyncLoad(bad, ob);

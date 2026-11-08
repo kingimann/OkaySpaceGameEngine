@@ -5,6 +5,8 @@ Pages are grouped by what you are trying to do. New here? Start with
 
 ## Get started
 - [making_a_game.md](making_a_game.md): make your first game, from an empty editor to a shipped one.
+- [prefabs.md](prefabs.md): prefab instances, overrides and persistent object ids.
+- [scene_serializer.md](scene_serializer.md): what a scene round trip keeps, and the component serializer registry.
 - [editor.md](editor.md): the editor, its panels and Build Game.
 - [web_mobile.md](web_mobile.md): web (WASM) and mobile builds.
 - [packaging.md](packaging.md): how a build is laid out for distribution.

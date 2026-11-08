@@ -36,6 +36,9 @@ public:
     /// Create an empty GameObject (with a Transform) owned by this scene.
     GameObject* CreateGameObject(const std::string& name = "GameObject");
 
+    /// The live object with this persistent id (GameObject::Guid), or nullptr.
+    GameObject* FindByGuid(const std::string& guid) const;
+
     /// Remove every GameObject immediately (used when loading a scene).
     void Clear();
 

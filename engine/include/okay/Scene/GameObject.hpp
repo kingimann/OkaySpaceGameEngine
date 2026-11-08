@@ -57,6 +57,16 @@ public:
     /// editor can Apply changes back, Revert to the saved prefab, or reload every
     /// instance when the prefab file changes. Only the instance ROOT carries it.
     std::string prefabSource;
+    /// One field of a prefab instance that differs from its source prefab (see
+    /// docs/prefabs.md). `object` is the depth-first index of the object inside the
+    /// prefab (0 = the instance root); `line` is the whole serialized record, e.g.
+    /// `sprite 64 1 1 1 1 1 1`. Re-applying the prefab keeps these. Data only.
+    struct PrefabOverride {
+        int object = 0;
+        std::string line;
+    };
+    /// The overrides this instance remembers (instance ROOT only, with prefabSource).
+    std::vector<PrefabOverride> prefabOverrides;
     /// Render/physics layer (0-31). A camera's cullingMask selects which layers it
     /// draws (bit 1<<layer); also used by the physics collision matrix.
     int layer = 0;
@@ -195,6 +205,15 @@ public:
     /// A number unique to this object for the whole run (never reused), so scripts
     /// can hold a reference that safely turns into "destroyed" instead of dangling.
     std::uint64_t InstanceId() const { return m_instanceId; }
+    /// A persistent id (32 lowercase hex characters) that, unlike InstanceId, is saved
+    /// with the scene: it is the same after a save and load, and references between
+    /// objects can use it (Scene::FindByGuid). Every new object gets a fresh one;
+    /// Instantiate / paste / merge give the copy its own. A scene file with no guid
+    /// record (older files) gets fresh ids on load.
+    const std::string& Guid() const { return m_guid; }
+    /// Replace the id. Ignored (returns false) unless `guid` is 1 to 64 characters
+    /// of [0-9a-f-]. Used by the loader; callers keep ids unique themselves.
+    bool SetGuid(const std::string& guid);
     /// The live object with this id, or nullptr once it's gone (or destroyed).
     static GameObject* FromInstanceId(std::uint64_t id);
 
@@ -206,6 +225,7 @@ private:
     friend class Scene;
     explicit GameObject(Scene* scene, std::string name);
     std::uint64_t m_instanceId = 0;
+    std::string m_guid;
 
     /// Routes a freshly added component to the Scene's lifecycle queue.
     /// Defined in GameObject.cpp where the full Scene type is visible.

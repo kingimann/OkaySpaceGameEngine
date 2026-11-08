@@ -1460,3 +1460,8 @@ add_test(NAME script_nav COMMAND test_script_nav)
 add_executable(test_scene_load_pool test_scene_load_pool.cpp)
 target_link_libraries(test_scene_load_pool PRIVATE okay::engine)
 add_test(NAME scene_load_pool COMMAND test_scene_load_pool)
+
+# Persistent object ids, sibling order / enabled flags, duplicate components, component serializer registry, prefab overrides
+add_executable(test_scene_ids_prefabs test_scene_ids_prefabs.cpp)
+target_link_libraries(test_scene_ids_prefabs PRIVATE okay::engine)
+add_test(NAME scene_ids_prefabs COMMAND test_scene_ids_prefabs)

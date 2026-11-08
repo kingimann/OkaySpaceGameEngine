@@ -54,7 +54,12 @@ public:
             Vec3 at = character->transform ? character->transform->Position() : Vec3::Zero;
             float y = limb == Head ? 1.6f : limb == LeftFoot || limb == RightFoot ? 0.1f : 1.2f;
             float x = limb == LeftHand || limb == LeftFoot ? -0.35f : limb == RightHand || limb == RightFoot ? 0.35f : 0.0f;
-            g->transform->SetPosition(at + Vec3{x, y, -0.55f});
+            // In front of the character's facing, not world -Z. A turned
+            // character used to get the target off to its side.
+            Quat rot = character->transform ? character->transform->Rotation() : Quat::Identity;
+            Vec3 fwd = rot * Vec3{0, 0, -1};
+            Vec3 right = rot * Vec3{1, 0, 0};
+            g->transform->SetPosition(at + right * x + Vec3{0, y, 0} + fwd * 0.55f);
         }
         return g;
     }
@@ -62,6 +67,24 @@ public:
     void Start() override { Resolve(); }
 
     void LateUpdate(float dt) override { Apply(dt); }
+
+    void OnDisable() override { ReleaseDrive(); }
+    void OnDestroy() override { ReleaseDrive(); }
+    void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying) override {
+        if (character && dying.count(character)) character = nullptr;
+        // The body is going away with the effector. Don't write into it.
+        if (m_drivenHost && dying.count(m_drivenHost)) {
+            m_drivenHost = nullptr;
+            m_drivenLimb = -1;
+        }
+    }
+
+    /// Drop the reach this object was driving (limb switched, disabled, or deleted).
+    void ReleaseDrive() {
+        Release(m_drivenHost, m_drivenLimb);
+        m_drivenHost = nullptr;
+        m_drivenLimb = -1;
+    }
 
     /// Edit mode: set the goal and run the solver so the limb follows while the
     /// target object is moved. Play mode uses LateUpdate plus the solver's own tick.
@@ -82,6 +105,8 @@ private:
     float m_w = 0.0f;
     bool m_have = false;
     bool m_pullSet = false;
+    int m_drivenLimb = -1;
+    GameObject* m_drivenHost = nullptr;
 
     void Resolve() {
         if (character || characterName.empty() || !gameObject || !gameObject->scene()) return;
@@ -93,14 +118,54 @@ private:
         GameObject* host = character;
         if (!host || !transform) return;
         const float goal = weight < 0.0f ? 0.0f : weight;
-        if (!m_have || blendTime <= 1e-4f) m_w = goal;
+        // Ease in from rest. The first frame used to snap to the full weight,
+        // so Blend time did nothing until the weight was changed again.
+        if (!m_have) m_w = 0.0f;
+        m_have = true;
+        if (blendTime <= 1e-4f) m_w = goal;
         else {
             const float k = 1.0f - std::exp(-dt / blendTime);
             m_w += (goal - m_w) * (k < 0.0f ? 0.0f : (k > 1.0f ? 1.0f : k));
         }
-        m_have = true;
+        if (host != m_drivenHost || limb != m_drivenLimb) {
+            Release(m_drivenHost, m_drivenLimb);
+            m_drivenHost = host;
+            m_drivenLimb = limb;
+        }
         if (limb == Head) ApplyHead(host);
         else ApplyLimb(host);
+    }
+
+    static int EffectorIndex(int limb) {
+        return limb == LeftHand ? FullBodyIK::LeftHand
+             : limb == RightHand ? FullBodyIK::RightHand
+             : limb == LeftFoot ? FullBodyIK::LeftFoot
+             : limb == RightFoot ? FullBodyIK::RightFoot
+             : -1;
+    }
+
+    void Release(GameObject* host, int driven) {
+        if (!host || driven < 0) return;
+        if (driven == Head) {
+            if (LookAtIK* look = host->GetComponent<LookAtIK>()) {
+                if (look->targetObject == transform) {
+                    look->targetObject = nullptr;
+                    look->ikActive = false;
+                    look->weight = 0.0f;
+                }
+            }
+            return;
+        }
+        const int li = EffectorIndex(driven);
+        FullBodyIK* fb = host->GetComponent<FullBodyIK>();
+        if (!fb || li < 0) return;
+        FullBodyIK::Effector& e = fb->effectors[li];
+        if (e.target != transform) return;
+        e.enabled = false;
+        e.positionWeight = 0.0f;
+        e.exactReach = false;
+        e.target = nullptr;
+        e.targetName.clear();
     }
 
     void ApplyHead(GameObject* host) {
@@ -130,16 +195,14 @@ private:
             fb->bodyPull = 0.2f;
         }
         m_pullSet = true;
-        const int li = limb == LeftHand ? FullBodyIK::LeftHand
-                     : limb == RightHand ? FullBodyIK::RightHand
-                     : limb == LeftFoot ? FullBodyIK::LeftFoot
-                                        : FullBodyIK::RightFoot;
+        const int li = EffectorIndex(limb);
+        if (li < 0) return;
         FullBodyIK::Effector& e = fb->effectors[li];
         e.target = transform;
         e.targetName = gameObject ? gameObject->name : std::string{};
         e.enabled = m_w > 0.001f;
         e.positionWeight = m_w;
-        e.exactReach = true;
+        e.exactReach = m_w > 0.001f;
         const float goalW = weight < 0.0f ? 0.0f : weight;
         if (blendTime <= 1e-3f || std::fabs(m_w - goalW) < 0.02f) {
             e.targetBlendTime = 0.0f;

@@ -6179,9 +6179,11 @@ struct OkayScriptVM::Impl {
             const float strength = a.empty() ? 1.0f : a[0].AsFloat();
             auto fire = [&](AimOffset* o) { if (o) { o->Recoil(strength); return true; } return false; };
             if (fire(g->GetComponent<AimOffset>())) return Value{1.0f};
-            if (!g->scene()) return Value{0.0f};
-            for (const auto& up : g->scene()->Objects())
-                if (up && up->IsSelfOrDescendantOf(g) && fire(up->GetComponent<AimOffset>())) return Value{1.0f};
+            if (g->scene())
+                for (const auto& up : g->scene()->Objects())
+                    if (up && up->IsSelfOrDescendantOf(g) && fire(up->GetComponent<AimOffset>())) return Value{1.0f};
+            for (Transform* t = g->transform ? g->transform->Parent() : nullptr; t; t = t->Parent())
+                if (t->gameObject && fire(t->gameObject->GetComponent<AimOffset>())) return Value{1.0f};
             return Value{0.0f};
         };
         b["capture_pose"] = [selfObj](std::vector<Value>& a) {
